@@ -102,13 +102,26 @@ export type ReserveAiBudgetStepInput = {
   ordinal: number;
   sourceRoute: string;
   modelId: string;
+  /** Server-derived at admission (`classifyAiUsageRequest`). Pinned on the hold so a settlement
+   *  posted by the gateway — which has no business knowing it — still lands with the right D1
+   *  metadata instead of UNKNOWN, which would make the month read "partial coverage" forever. */
+  requestKind?: AiRequestKind;
   /** Resolved OUTSIDE the transaction — `resolveThbPerUsd` may make an outbound call. */
   thbPerUsd: number;
   thbPerUsdSource: string;
   now?: Date;
 };
 
-/** Reads `CompanyAiConfiguration` + the platform row FRESH under the locks (never the meter cache). */
+/**
+ * Reads `CompanyAiConfiguration` and, only when it matters, the platform row — FRESH under the
+ * locks, never the meter's cache.
+ *
+ * `platform-ai-budget` is a PLATFORM-WIDE advisory lock: taking it on every reservation of every
+ * SPLIT company would serialise unrelated tenants behind one another. It is only needed when this
+ * company INHERITS the default, because then the platform writer can move its effective total. A
+ * company with its own `monthlyBudgetSatang` override cannot be affected by that writer at all, so
+ * it skips the lock. Either way the canonical order holds: config -> (platform) -> ai-budget.
+ */
 async function resolveBudgetUnderLock(
   tx: any,
   config: AppConfigService,
@@ -123,9 +136,13 @@ async function resolveBudgetUnderLock(
     },
   })) as ({ monthlyBudgetSatang: number | null } & CompanyAiBudgetPolicyRow) | null;
   const override = row?.monthlyBudgetSatang != null;
-  const platform = override ? null : await tx.platformAiBudgetConfig.findUnique({
-    where: { id: PLATFORM_CONFIG_ID }, select: { monthlyBudgetSatang: true },
-  });
+  let platform: { monthlyBudgetSatang: number } | null = null;
+  if (!override) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'platform-ai-budget'}))`;
+    platform = await tx.platformAiBudgetConfig.findUnique({
+      where: { id: PLATFORM_CONFIG_ID }, select: { monthlyBudgetSatang: true },
+    });
+  }
   const totalSatang = override ? row!.monthlyBudgetSatang! : platform?.monthlyBudgetSatang ?? config.aiMonthlyBudgetSatang;
   return { totalSatang, override, policy: resolveAiBudgetPolicy({ row, totalSatang, override, monthKey }) };
 }
@@ -239,19 +256,21 @@ export async function reserveAiBudgetStep(
 
   try {
     return await prisma.client.$transaction(async (tx: any) => {
-      // Canonical lock order (spec §12.7). The config lock is shared with the admin writer, so a
-      // cap change and an admission can never pass each other reading different policy states.
+      // Canonical lock order (spec §12.7): company config -> platform (only when this company
+      // inherits the default, see `resolveBudgetUnderLock`) -> company-month budget. The config
+      // lock is shared with the admin writer, so a cap change and an admission can never pass each
+      // other reading different policy states.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${input.companyId}`}))`;
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'platform-ai-budget'}))`;
+      const { policy } = await resolveBudgetUnderLock(tx, config, input.companyId, input.monthKey);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai-budget:${input.companyId}:${input.monthKey}`}))`;
 
-      // R-03: the execution fence comes FIRST. A redelivered webhook must never buy a second hold.
+      // R-03: the execution fence comes first inside the money lock. A redelivered webhook must
+      // never buy a second hold.
       const claimed = await tx.aiBudgetReservation.findUnique({
         where: { invocationKey }, select: { id: true, status: true },
       });
       if (claimed) return { ok: false as const, reason: 'already_claimed' as const, status: claimed.status, reservationId: claimed.id };
 
-      const { policy } = await resolveBudgetUnderLock(tx, config, input.companyId, input.monthKey);
       if (policy.invalidReason) {
         return { ok: false as const, reason: 'unavailable' as const, budgetScope: 'TOTAL' as AiBudgetScope, detail: policy.invalidReason };
       }
@@ -290,7 +309,7 @@ export async function reserveAiBudgetStep(
           policyRevision: policy.revision, sourceRoute: input.sourceRoute, stepKind: input.stepKind,
           attemptKey: input.attemptKey, invocationKey, upperBoundSatang: bound,
           pricingSnapshot: { ...priced.snapshot, thbPerUsdSource: input.thbPerUsdSource },
-          status: 'RESERVED', ownerToken,
+          requestKind: input.requestKind ?? null, status: 'RESERVED', ownerToken,
         },
         select: { id: true },
       });
@@ -384,6 +403,13 @@ export type SettleAiBudgetStepResult =
   | 'invalid-state'
   /** The counters were not non-negative safe integers: nothing settles and the hold stays. */
   | 'invalid-evidence'
+  /**
+   * Provider evidence arrived for a hold that was `RESERVED` (the dispatch mark was lost) or
+   * `CANCELLED` (a cancel proof was wrong). The money is REAL, so it is recorded in full exactly
+   * like a normal settlement — the anomaly is recorded beside it and alerted, never used as a
+   * reason to drop the usage (spec §12.6: real cost must not become zero).
+   */
+  | 'settled-anomaly'
   | 'failed';
 
 export type SettleAiBudgetStepInput = {
@@ -413,17 +439,27 @@ export async function settleAiBudgetStep(
   if (!isMeterableEntry(input.entry)) return 'invalid-evidence';
   const now = input.now ?? new Date();
   let breach: { companyId: string; monthKey: string; bucket: string; reservationId: string; boundSatang: number; actualSatang: number } | undefined;
+  let anomaly: { companyId: string; monthKey: string; bucket: string; reservationId: string; invariant: string } | undefined;
   try {
     const result = await prisma.client.$transaction(async (tx: any) => {
+      // Locator read only: the lock string needs the company and the month. Nothing is decided from
+      // it — the authoritative row is re-read BELOW, under the lock, so the status check can never
+      // run on a row a concurrent cancel or settle has already moved.
+      const locator = await tx.aiBudgetReservation.findUnique({
+        where: { invocationKey: input.invocationKey }, select: { companyId: true, monthKey: true },
+      });
+      if (!locator) return 'unknown-invocation' as const;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai-budget:${locator.companyId}:${locator.monthKey}`}))`;
       const reservation = await tx.aiBudgetReservation.findUnique({ where: { invocationKey: input.invocationKey } });
       if (!reservation) return 'unknown-invocation' as const;
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai-budget:${reservation.companyId}:${reservation.monthKey}`}))`;
 
       const already = await tx.aiUsageEvent.findUnique({ where: { invocationKey: input.invocationKey }, select: { id: true } });
-      if (already) return 'duplicate' as const;
-      // Late evidence for an UNRESOLVED hold is exactly what closes it; a RESERVED row was never
-      // dispatched and a CANCELLED/SETTLED one is terminal.
-      if (reservation.status !== 'DISPATCHED' && reservation.status !== 'UNRESOLVED') return 'invalid-state' as const;
+      if (already || reservation.status === 'SETTLED') return 'duplicate' as const;
+      // `DISPATCHED` is the normal case and `UNRESOLVED` is late evidence closing a hold nobody
+      // could resolve. `RESERVED` and `CANCELLED` mean the dispatch mark or a cancel proof was
+      // wrong — the provider still ran and still cost money, so the evidence is recorded in FULL
+      // and the anomaly is alerted. Dropping it would be the "usage หาย" failure of spec §12.6.
+      const anomalous = reservation.status === 'RESERVED' || reservation.status === 'CANCELLED';
 
       const snapshot = (reservation.pricingSnapshot ?? {}) as { thbPerUsd?: unknown; thbPerUsdSource?: unknown };
       const thbPerUsd = Number(snapshot.thbPerUsd);
@@ -437,7 +473,10 @@ export async function settleAiBudgetStep(
           ok: input.entry.ok, inputTokens: input.entry.inputTokens, outputTokens: input.entry.outputTokens,
           cacheReadInputTokens: input.entry.cacheReadInputTokens, cacheWriteInputTokens: input.entry.cacheWriteInputTokens,
           costSatang, thbPerUsd, thbPerUsdSource: String(snapshot.thbPerUsdSource ?? 'reservation'),
-          requestId: input.meta.requestId, requestKind: input.meta.requestKind ?? null,
+          requestId: input.meta.requestId,
+          // The caller's own classification wins; otherwise the one PINNED on the hold at reserve
+          // time, so a gateway-driven settlement is never UNKNOWN in the D1 breakdown.
+          requestKind: input.meta.requestKind ?? reservation.requestKind ?? null,
           budgetBucket: reservation.bucket,
           usageBasis: normalizeUsageBasis((input.entry as { usageBasis?: unknown }).usageBasis),
           eventKind: 'MODEL_CALL', pricingSnapshot: buildPricingSnapshot(input.entry, thbPerUsd, costSatang),
@@ -448,6 +487,11 @@ export async function settleAiBudgetStep(
         costSatang, inputTokens: input.entry.inputTokens, outputTokens: input.entry.outputTokens,
         cacheReadInputTokens: input.entry.cacheReadInputTokens, cacheWriteInputTokens: input.entry.cacheWriteInputTokens,
       };
+      // Row order is FIXED across every writer of these two tables (`recordCompanyAiUsage`, this
+      // function and `recordCompanyAiCostAdjustment`): month aggregate FIRST, then the bucket rows
+      // in CHAT-before-OCR order. Two transactions taking them in opposite orders is a textbook
+      // deadlock, and the victim's usage would be LOST, not retried.
+      //
       // The PINNED month, never the clock's: a chain that crosses Bangkok midnight still lands here.
       await tx.companyAiMonthlyUsage.upsert({
         where: { companyId_monthKey: { companyId: reservation.companyId, monthKey: reservation.monthKey } },
@@ -470,18 +514,25 @@ export async function settleAiBudgetStep(
           usageBasis: normalizeUsageBasis((input.entry as { usageBasis?: unknown }).usageBasis),
           evidenceJson: { tag: input.entry.tag, modelId: input.entry.modelId, ok: input.entry.ok,
             inputTokens: input.entry.inputTokens, outputTokens: input.entry.outputTokens,
-            cacheReadInputTokens: input.entry.cacheReadInputTokens, cacheWriteInputTokens: input.entry.cacheWriteInputTokens },
+            cacheReadInputTokens: input.entry.cacheReadInputTokens, cacheWriteInputTokens: input.entry.cacheWriteInputTokens,
+            // What the row was when real evidence arrived, so reconciliation can see it.
+            ...(anomalous ? { anomaly: { previousStatus: reservation.status } } : {}) },
         },
       });
       if (breached) {
         breach = { companyId: reservation.companyId, monthKey: reservation.monthKey, bucket: reservation.bucket,
           reservationId: reservation.id, boundSatang: reservation.upperBoundSatang, actualSatang: costSatang };
       }
-      return 'settled' as const;
+      if (anomalous) {
+        anomaly = { companyId: reservation.companyId, monthKey: reservation.monthKey, bucket: reservation.bucket,
+          reservationId: reservation.id, invariant: `evidence_for_${String(reservation.status).toLowerCase()}_hold` };
+      }
+      return anomalous ? 'settled-anomaly' as const : 'settled' as const;
     });
     // Post-commit, the `admitCompanyOcr` precedent: an observability write must never abort a
     // settlement that already holds the money truthfully.
     if (breach) emitSecurityEvent(logger, SECURITY_EVENT.aiCompanyBudgetExceeded, 'HIGH', { ...breach, invariant: 'actual_above_reserved_bound' });
+    if (anomaly) emitSecurityEvent(logger, SECURITY_EVENT.aiCompanyBudgetExceeded, 'HIGH', anomaly);
     return result;
   } catch (err) {
     logger.warn({ msg: 'ai.budget.settle_failed', invocationKey: input.invocationKey, error: (err as Error).message });

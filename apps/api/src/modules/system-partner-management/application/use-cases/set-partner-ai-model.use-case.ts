@@ -264,6 +264,24 @@ export class SetPartnerAiModelUseCase {
         }
       }
 
+      // A SPLIT hold is priced from the company's OWN model (the envelope has to pin one), so a
+      // company inheriting the platform default model refuses every AI call with
+      // `AI_BUDGET_UNAVAILABLE`. The operator must learn that HERE, at save time, not from a shop
+      // that went quiet after a save they were told succeeded.
+      //
+      // `modelId` can only be SET through this writer, never cleared: `null` is not in
+      // `approvedAiModelIds` so the check above rejects it, `set-partner-ocr-config.use-case.ts`
+      // writes `modelId: null` only in its CREATE branch (a fresh row is null anyway) and never in
+      // its update, and `provision-signup.use-case.ts` upserts with `update: {}`. So this one gate
+      // is enough — there is no other path that could null the model under a SPLIT policy.
+      const nextModelId = setsModel ? cmd.modelId ?? null : existing?.modelId ?? null;
+      if (nextModelId === null && (nextActive.mode === 'SPLIT' || nextPending?.mode === 'SPLIT')) {
+        throw new UnprocessableEntityException({
+          code: 'partner_ai_budget_split_requires_model',
+          message: 'partner_ai_budget_split_requires_model',
+        });
+      }
+
       // Committed + held money for this company-month, read under the SAME lock admission takes.
       // Only needed when a SPLIT allocation or a SPLIT company's total is in play (spec §12.4/E-09).
       const splitInvolved = needsTotal && (nextActive.mode === 'SPLIT' || activeMode === 'SPLIT' || nextPending?.mode === 'SPLIT');
@@ -312,9 +330,9 @@ export class SetPartnerAiModelUseCase {
       // SHARED company keeps today's freedom to set any positive total (spec §12.4).
       if (position && (nextActive.mode === 'SPLIT' || activeMode === 'SPLIT')
         && totalSatang < position.spent.TOTAL + position.reserved.TOTAL) {
-        // Object form with a LITERAL code, like the two branches above: the Thai-coverage spec's
-        // discovery only sees a bare string literal or `code: 'literal'`, and the amounts travel as
-        // separate fields so they never become part of the displayed sentence.
+        // Object form with a plain string code, like the two branches above: the web Thai-coverage
+        // spec discovers codes by pattern and cannot see a template literal or a ternary, and the
+        // amounts travel as separate fields so they never become part of the displayed sentence.
         throw new UnprocessableEntityException({
           code: 'partner_ai_budget_total_below_committed',
           message: 'partner_ai_budget_total_below_committed',

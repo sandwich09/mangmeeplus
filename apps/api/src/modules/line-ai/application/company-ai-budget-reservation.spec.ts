@@ -10,6 +10,8 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey } from '@watchdog-bms/contracts';
 import {
   AI_BUDGET_DISPATCHED_SWEEP_MS,
@@ -125,6 +127,62 @@ describe('reserveAiBudgetStep pre-transaction guards (readiness, ADR 0013 §9)',
   });
 });
 
+describe('lock scope: the platform lock is taken only when the company INHERITS the default', () => {
+  /** Captures the advisory-lock keys `reserveAiBudgetStep` takes, in order. */
+  function lockCapturingPrisma(monthlyBudgetSatang: number | null) {
+    const lockOrder: string[] = [];
+    const tx = {
+      $executeRaw: async (_sql: TemplateStringsArray, key: string) => { lockOrder.push(key); return 0; },
+      companyAiConfiguration: {
+        findUnique: async () => ({
+          monthlyBudgetSatang, budgetMode: 'SPLIT',
+          chatMonthlyBudgetSatang: 500_000, ocrMonthlyBudgetSatang: 500_000,
+          budgetConfigVersion: 1, pendingBudgetPolicy: null,
+        }),
+      },
+      platformAiBudgetConfig: { findUnique: async () => ({ monthlyBudgetSatang: 1_000_000 }) },
+      aiBudgetReservation: {
+        findUnique: async () => null, groupBy: async () => [], count: async () => 0,
+        updateMany: async () => ({ count: 0 }),
+        create: async () => ({ id: 'res-1' }),
+      },
+      companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+      companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
+    } as any;
+    return {
+      prisma: { client: { $transaction: async (fn: (t: any) => Promise<unknown>) => fn(tx) } } as never,
+      lockOrder,
+    };
+  }
+  const config = { aiMonthlyBudgetSatang: 1_000_000 } as never;
+  const input = {
+    companyId: 'co-1', monthKey: '2026-09', bucket: 'CHAT' as const, stepKind: 'crm-intake',
+    attemptKey: 'crm:crm-intake:req-1', ordinal: 0, sourceRoute: 'crm-intake',
+    modelId: 'apac.anthropic.claude-3-haiku-20240307-v1:0', thbPerUsd: 33, thbPerUsdSource: 'stored',
+  };
+
+  it('skips the PLATFORM-WIDE lock for a company with its own override', async () => {
+    const { prisma, lockOrder } = lockCapturingPrisma(1_000_000);
+
+    const outcome = await reserveAiBudgetStep(prisma, config, input);
+
+    assert.equal(outcome.ok, true);
+    // Two company-scoped locks only: one tenant's reservations must not serialise every other
+    // tenant's behind a single platform-wide lock.
+    assert.deepEqual(lockOrder, ['partner-ocr-config:co-1', 'ai-budget:co-1:2026-09']);
+  });
+
+  it('takes it, in canonical order, when the company inherits the platform default', async () => {
+    const { prisma, lockOrder } = lockCapturingPrisma(null);
+
+    const outcome = await reserveAiBudgetStep(prisma, config, input);
+
+    assert.equal(outcome.ok, true);
+    // config -> platform -> ai-budget: the same order the admin writers use, so no deadlock.
+    assert.deepEqual(lockOrder, ['partner-ocr-config:co-1', 'platform-ai-budget', 'ai-budget:co-1:2026-09']);
+  });
+});
+
 describe('execution identities (ADR 0013 §4, R-03)', () => {
   it('an invocation key is company + attempt + step kind + bounded call ordinal', () => {
     assert.equal(aiBudgetInvocationKey('co-1', 'line-image:ab12', 'receipt-ocr', 2), 'co-1#line-image:ab12#receipt-ocr#2');
@@ -169,6 +227,31 @@ describe('sweep thresholds (ADR 0013 §6)', () => {
     // 4 × 45s + 15s = 195_000 ms, plus the 180s admission lease. A slow-but-alive call must never
     // be relabelled UNRESOLVED, and UNRESOLVED still counts as reserved either way.
     assert.ok(AI_BUDGET_DISPATCHED_SWEEP_MS > 195_000 + 180_000);
+  });
+});
+
+describe('the fixed aggregate row order (deadlock avoidance)', () => {
+  it('is documented identically in all three writers of the two aggregates', () => {
+    // A contract between three files that Postgres enforces only by killing one of them, so it is
+    // asserted here rather than left to a comment nobody re-reads.
+    const read = (path: string) => readFileSync(join(__dirname, path), 'utf8');
+    for (const [label, source] of [
+      ['reservation engine', read('company-ai-budget-reservation.ts')],
+      ['meter', read('company-ai-usage-meter.ts')],
+    ] as const) {
+      assert.match(source, /Row order is FIXED across every writer/, label);
+    }
+    // And the meter really does upsert the month row before the bucket row.
+    const meter = read('company-ai-usage-meter.ts');
+    assert.ok(
+      meter.indexOf('const aggregate = await tx.companyAiMonthlyUsage.upsert') < meter.indexOf('await upsertBucketUsage(tx, meta.companyId'),
+      'recordCompanyAiUsage must write the MONTH row before the bucket row',
+    );
+    const engine = read('company-ai-budget-reservation.ts');
+    assert.ok(
+      engine.indexOf('await tx.companyAiMonthlyUsage.upsert') < engine.indexOf('await upsertBucketUsage(tx, reservation.companyId'),
+      'settleAiBudgetStep must write the MONTH row before the bucket row',
+    );
   });
 });
 

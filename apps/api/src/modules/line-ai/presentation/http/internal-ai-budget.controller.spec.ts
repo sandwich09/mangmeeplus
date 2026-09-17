@@ -24,7 +24,9 @@ function prismaWithParent(parent: Record<string, unknown> | null) {
     platformAiBudgetConfig: { findUnique: async () => null },
     aiBudgetReservation: {
       findFirst: async () => parent,
-      findUnique: async () => null,
+      // The controller looks the ordinal-0 parent up by its unique invocation key; the engine's own
+      // duplicate check looks up the CHILD key, which does not exist yet.
+      findUnique: async (args: any) => (String(args?.where?.invocationKey ?? '').endsWith('#0') ? parent : null),
       groupBy: async () => [],
       count: async () => 0,
       create: async (args: any) => { created.push(args.data); return { id: 'res-new' }; },
@@ -45,7 +47,7 @@ function prismaWithParent(parent: Record<string, unknown> | null) {
 }
 
 const parentRow = {
-  bucket: 'OCR', sourceRoute: 'receipt-ocr',
+  bucket: 'OCR', sourceRoute: 'receipt-ocr', requestKind: 'IMAGE', status: 'DISPATCHED',
   pricingSnapshot: { modelId: HAIKU, thbPerUsd: 33, thbPerUsdSource: 'stored' },
 };
 
@@ -82,6 +84,8 @@ describe('POST /internal/ai/budget-step', () => {
     assert.equal(created[0].pricingSnapshot.modelId, HAIKU);
     assert.equal(created[0].pricingSnapshot.thbPerUsd, 33, 'priced at the PINNED FX, not a fresh rate');
     assert.equal(created[0].invocationKey, 'co-1#line-image:ab12#receipt-ocr#1');
+    // Inherited, so a gateway-driven settlement is not UNKNOWN in the D1 breakdown.
+    assert.equal(created[0].requestKind, 'IMAGE');
     const envelope = (result as { envelope: { bounds: unknown; maxCalls: number } }).envelope;
     assert.deepEqual(envelope.bounds, AI_BUDGET_STEP_BOUNDS['receipt-ocr']);
     assert.equal(envelope.maxCalls, AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxCalls);
@@ -99,6 +103,13 @@ describe('POST /internal/ai/budget-step', () => {
     const maxCalls = AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxCalls;
 
     assert.deepEqual(await controller.budgetStep('workload-secret', stepBody({ ordinal: maxCalls })),
+      { ok: false, code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' });
+  });
+
+  it('refuses to continue a chain whose ordinal-0 call was PROVEN never to start', async () => {
+    const controller = new InternalAiBudgetController(config, prismaWithParent({ ...parentRow, status: 'CANCELLED' }).prisma);
+
+    assert.deepEqual(await controller.budgetStep('workload-secret', stepBody()),
       { ok: false, code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' });
   });
 

@@ -193,6 +193,7 @@ async function reserveCompanyAiBudgetStep(
   const outcome = await reserveAiBudgetStep(prisma, config, {
     companyId, monthKey, bucket: step.budgetBucket, stepKind: step.stepKind, attemptKey: step.attemptKey,
     ordinal: step.ordinal ?? 0, sourceRoute: step.sourceRoute, modelId: step.modelId,
+    ...(step.requestKind ? { requestKind: step.requestKind } : {}),
     thbPerUsd: fx.rate, thbPerUsdSource: fx.source,
   });
   if (outcome.ok) return { allowed: true, reservation: outcome.reservation };
@@ -569,7 +570,9 @@ export async function recordCompanyAiUsage(
       entry: first!,
       meta: { sourceRoute: meta.sourceRoute, requestId: meta.requestId, requestKind: meta.requestKind },
     });
-    if (settled !== 'settled' && settled !== 'duplicate') {
+    // `settled-anomaly` DID record the money (the hold's status was wrong, not the evidence), and
+    // the engine already raised its own HIGH event; it is visible here but never a rejection.
+    if (settled !== 'settled' && settled !== 'duplicate' && settled !== 'settled-anomaly') {
       logger.warn({ msg: 'ai.budget.settle_rejected', companyId: meta.companyId, sourceRoute: meta.sourceRoute, result: settled });
     }
     if (rest.length === 0) return undefined;
@@ -631,13 +634,13 @@ export async function recordCompanyAiUsage(
 
   const post = await prisma.client.$transaction(async (tx: any) => {
     await tx.aiUsageEvent.createMany({ data: rows });
-    // Bucket slice in the SAME transaction, SHARED companies included (ADR 0013 §3): a later SPLIT
-    // activation and the admin console then read one aggregate instead of re-deriving bucket spend.
-    // An unknown bucket belongs to neither — it still counts against the total and is never guessed.
-    if (meta.budgetBucket) {
-      await upsertBucketUsage(tx, meta.companyId, monthKey, meta.budgetBucket, delta.costSatang, rows.length);
-    }
-    return tx.companyAiMonthlyUsage.upsert({
+    // Row order is FIXED across every writer of these two aggregates (this function,
+    // `settleAiBudgetStep` and `recordCompanyAiCostAdjustment`): the MONTH row first, then the
+    // bucket rows in CHAT-before-OCR order. This function holds no `ai-budget:` lock, so for one
+    // SPLIT company a settle on one lane and this recording on another really do run at the same
+    // time — taking the two rows in opposite orders would deadlock, and the victim's usage would be
+    // LOST (a warn, not a retry), which is exactly the "usage หาย" failure of spec §12.6.
+    const aggregate = await tx.companyAiMonthlyUsage.upsert({
       where: { companyId_monthKey: { companyId: meta.companyId, monthKey } },
       create: { companyId: meta.companyId, monthKey, callCount: rows.length, ...delta },
       update: {
@@ -650,6 +653,13 @@ export async function recordCompanyAiUsage(
       },
       select: { costSatang: true },
     });
+    // Bucket slice in the SAME transaction, SHARED companies included (ADR 0013 §3): a later SPLIT
+    // activation and the admin console then read one aggregate instead of re-deriving bucket spend.
+    // An unknown bucket belongs to neither — it still counts against the total and is never guessed.
+    if (meta.budgetBucket) {
+      await upsertBucketUsage(tx, meta.companyId, monthKey, meta.budgetBucket, delta.costSatang, rows.length);
+    }
+    return aggregate;
   });
 
   const spend = { pre: post.costSatang - delta.costSatang, post: post.costSatang };
@@ -768,6 +778,9 @@ function applyCompanyAiCostAdjustment(
       data: Object.fromEntries(Object.entries(delta).map(([field, value]) => [field, { increment: value }])),
     });
     if (moved.count === 0) return 'refused-negative';
+    // MONTH row first (above), bucket row second — the same fixed order `recordCompanyAiUsage` and
+    // `settleAiBudgetStep` use, so none of the three writers can deadlock against another.
+    //
     // The bucket aggregate moves with the SAME guard, so no bucket total can go negative either.
     // A row whose bucket is UNKNOWN has no bucket aggregate to move — the total above is the whole
     // correction for it, exactly as it was the whole charge.

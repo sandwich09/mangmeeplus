@@ -16,7 +16,7 @@ import { Body, Controller, Headers, HttpCode, Logger, Post } from '@nestjs/commo
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
-import { AI_BUDGET_REFUSAL_CODES, aiBudgetStepBounds, type AiBudgetScope } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, aiBudgetInvocationKey, aiBudgetStepBounds, type AiBudgetScope } from '@watchdog-bms/contracts';
 import { Public } from '../../../../common/security/public.decorator';
 import { assertInternalSecret } from '../../../../common/security/secret-compare';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -90,12 +90,15 @@ export class InternalAiBudgetController {
       return this.refuse('unavailable', 'TOTAL');
     }
 
-    const parent = await this.prisma.client.aiBudgetReservation.findFirst({
-      where: { companyId: body.companyId, monthKey: body.monthKey, attemptKey: body.attemptKey, stepKind: body.stepKind },
-      orderBy: { createdAt: 'asc' },
-      select: { bucket: true, sourceRoute: true, pricingSnapshot: true },
+    // The ordinal-0 row IS the parent: the API always opens an attempt at 0, and the unique
+    // invocation index makes this an exact lookup rather than a scan.
+    const parent = await this.prisma.client.aiBudgetReservation.findUnique({
+      where: { invocationKey: aiBudgetInvocationKey(body.companyId, body.attemptKey, body.stepKind, 0) },
+      select: { bucket: true, sourceRoute: true, pricingSnapshot: true, requestKind: true, status: true },
     });
-    if (!parent) return this.refuse('unavailable', 'TOTAL');
+    // No parent, or a parent that was PROVEN never to have called a provider: nothing may continue
+    // a chain whose first call was cancelled.
+    if (!parent || parent.status === 'CANCELLED') return this.refuse('unavailable', 'TOTAL');
     const snapshot = (parent.pricingSnapshot ?? {}) as { modelId?: unknown; thbPerUsd?: unknown; thbPerUsdSource?: unknown };
     const modelId = typeof snapshot.modelId === 'string' ? snapshot.modelId : '';
     const thbPerUsd = Number(snapshot.thbPerUsd);
@@ -104,6 +107,8 @@ export class InternalAiBudgetController {
       companyId: body.companyId, monthKey: body.monthKey, bucket: parent.bucket as 'CHAT' | 'OCR',
       stepKind: body.stepKind, attemptKey: body.attemptKey, ordinal: body.ordinal,
       sourceRoute: parent.sourceRoute, modelId, thbPerUsd,
+      // Inherited, never taken from the body: the gateway does not classify requests.
+      ...(parent.requestKind ? { requestKind: parent.requestKind as 'TEXT' | 'IMAGE' | 'OTHER' } : {}),
       thbPerUsdSource: typeof snapshot.thbPerUsdSource === 'string' ? snapshot.thbPerUsdSource : 'reservation',
     });
     if (!outcome.ok) {

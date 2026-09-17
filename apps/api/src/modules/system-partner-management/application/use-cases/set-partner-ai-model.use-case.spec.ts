@@ -613,7 +613,9 @@ const split = (over: Partial<PartnerAiBudgetPolicyInput> = {}): PartnerAiBudgetP
 });
 
 const BASE_ROW = {
-  modelId: null as string | null, monthlyBudgetSatang: null as number | null, updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+  // A company that can be put on SPLIT at all has its own approved model: the hold is priced from
+  // that model, so Phase E1b refuses a SPLIT result while `modelId` is null (own tests below).
+  modelId: APPROVED as string | null, monthlyBudgetSatang: null as number | null, updatedAt: new Date('2026-09-01T00:00:00.000Z'),
   budgetMode: 'SHARED', chatMonthlyBudgetSatang: null as number | null, ocrMonthlyBudgetSatang: null as number | null,
   budgetConfigVersion: 0, pendingBudgetPolicy: null as unknown,
 };
@@ -875,6 +877,27 @@ describe('SetPartnerAiModelUseCase — split budget policy', () => {
       { field: 'ocrMonthlyBudgetSatang', before: null, after: 70 },
       { field: 'budgetConfigVersion', before: 1, after: 2 },
     ]);
+  });
+
+  it('refuses a SPLIT result while the company has no model of its own — at SAVE time, not silently', async () => {
+    // Admission prices a hold from the company's OWN model, so a SPLIT company inheriting the
+    // platform default would refuse every AI call with AI_BUDGET_UNAVAILABLE. The operator has to
+    // find that out here, not from a shop that went quiet after a successful-looking save.
+    const noModel = makePolicyPrisma({ row: { modelId: null, monthlyBudgetSatang: 100 } });
+    await rejectsWith(run(noModel, { budgetPolicy: split() }), 'partner_ai_budget_split_requires_model');
+    assert.equal(noModel.row().pendingBudgetPolicy, null, 'nothing was written');
+
+    // ...and the same write that picks a model is accepted, so the operator is never trapped.
+    const fixed = makePolicyPrisma({ row: { modelId: null, monthlyBudgetSatang: 100 } });
+    await run(fixed, { budgetPolicy: split(), modelId: APPROVED, expectedModelId: null });
+    assert.equal(fixed.row().modelId, APPROVED);
+    assert.ok(fixed.row().pendingBudgetPolicy, 'the pending policy was saved alongside the model');
+  });
+
+  it('lets a SHARED company keep inheriting the platform default model', async () => {
+    const shared = makePolicyPrisma({ row: { modelId: null, monthlyBudgetSatang: 100 } });
+    const saved = await run(shared, { monthlyBudgetSatang: 200, expectedMonthlyBudgetSatang: 100 });
+    assert.equal(saved.modelId, null, 'the model gate is a SPLIT rule only');
   });
 
   it('keeps the canonical lock order and refuses a locked company before any policy write', async () => {

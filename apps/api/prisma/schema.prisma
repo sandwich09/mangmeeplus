@@ -3576,6 +3576,9 @@ model AiBudgetReservation {
   upperBoundSatang Int
   /** Model id, unit rates, FX + source, token bounds and attempts the bound was priced with. */
   pricingSnapshot  Json
+  /** Server-derived D1 metadata pinned at reserve time ('TEXT'|'IMAGE'|'OTHER'), so a settlement
+   *  driven by the gateway — which never classifies a request — is not recorded as UNKNOWN. */
+  requestKind      String?
   status           String    @default("RESERVED") // RESERVED|DISPATCHED|SETTLED|UNRESOLVED|CANCELLED
   /** Fencing token: only the holder may cancel, so a stale owner's late compensation is a no-op. */
   ownerToken       String

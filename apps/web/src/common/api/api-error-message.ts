@@ -54,6 +54,9 @@ const CODE_LABELS: Record<string, string> = {
   partner_ai_budget_split_requires_next_month: 'บริษัทนี้มีค่าใช้จ่าย AI ในเดือนนี้แล้ว ให้ตั้งแยกเพดานให้มีผลเดือนถัดไป',
   partner_ai_budget_mode_change_next_month_only: 'การกลับไปใช้งบรวมก้อนเดียวทำได้เฉพาะเดือนถัดไป กรุณาเลือกเดือนที่เริ่มใช้เป็นเดือนถัดไป',
   partner_ai_budget_cap_below_bucket_spend: 'เพดานใหม่ต่ำกว่ายอดที่ส่วนนั้นใช้ไปแล้วในเดือนนี้ ให้ตั้งเพดานที่ลดลงให้มีผลเดือนถัดไป',
+  // Phase E1b: a split hold is priced from the company's own model, so SPLIT is unusable without
+  // one. Refused at SAVE time rather than letting the shop go quiet afterwards.
+  partner_ai_budget_split_requires_model: 'โหมดแยกเพดานต้องเลือกโมเดล AI ของบริษัทก่อน เพราะวงเงินจองคิดจากราคาของโมเดลนั้น กรุณาเลือกโมเดลในช่องด้านบนแล้วบันทึกพร้อมกัน',
   // Phase E1b sibling of the line above: the new TOTAL is below what this company has already
   // spent PLUS what is currently reserved for AI calls in flight this month. Nothing is clamped —
   // the operator raises the total, or waits for the reserved amount to settle.

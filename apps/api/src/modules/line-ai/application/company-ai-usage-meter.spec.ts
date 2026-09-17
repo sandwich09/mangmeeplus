@@ -1687,7 +1687,9 @@ describe('recordCompanyAiUsage bucket aggregate (ADR 0013 §3)', () => {
       ...classifyAiUsageRequest('receipt-ocr', 'image'),
     }, [usage()]);
 
-    assert.deepEqual(ops.map((o) => o.op), ['createMany', 'bucket', 'month']);
+    // Row order is FIXED across all three writers of these aggregates: month FIRST, then bucket.
+    // The reverse order would deadlock against a concurrent `settleAiBudgetStep` and LOSE usage.
+    assert.deepEqual(ops.map((o) => o.op), ['createMany', 'month', 'bucket']);
     const bucket = ops.find((o) => o.op === 'bucket')!.args;
     assert.deepEqual(bucket.where.companyId_monthKey_bucket, { companyId: 'co-1', monthKey: '2026-09', bucket: 'OCR' });
     assert.deepEqual(bucket.update.costSatang, { increment: 347 });

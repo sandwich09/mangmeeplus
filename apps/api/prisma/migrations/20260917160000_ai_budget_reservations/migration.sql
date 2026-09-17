@@ -49,6 +49,8 @@ CREATE TABLE "AiBudgetReservation" (
   "invocationKey"     TEXT NOT NULL,
   "upperBoundSatang"  INTEGER NOT NULL,
   "pricingSnapshot"   JSONB NOT NULL,
+  -- Server-derived D1 metadata, pinned so a gateway-driven settlement is never UNKNOWN.
+  "requestKind"       TEXT,
   "status"            TEXT NOT NULL DEFAULT 'RESERVED',
   "ownerToken"        TEXT NOT NULL,
   "settledCostSatang" INTEGER,
@@ -61,6 +63,7 @@ CREATE TABLE "AiBudgetReservation" (
   "updatedAt"         TIMESTAMP(3) NOT NULL,
   CONSTRAINT "AiBudgetReservation_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "AiBudgetReservation_bucket_check" CHECK ("bucket" IN ('CHAT', 'OCR')),
+  CONSTRAINT "AiBudgetReservation_requestKind_check" CHECK ("requestKind" IN ('TEXT', 'IMAGE', 'OTHER')),
   CONSTRAINT "AiBudgetReservation_status_check"
     CHECK ("status" IN ('RESERVED', 'DISPATCHED', 'SETTLED', 'UNRESOLVED', 'CANCELLED')),
   -- A hold is money: never negative. 0 is legal (a free-priced model would still need a hold row).

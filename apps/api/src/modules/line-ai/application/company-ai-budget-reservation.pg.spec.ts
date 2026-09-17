@@ -28,6 +28,7 @@ import {
   settleAiBudgetStep,
 } from './company-ai-budget-reservation';
 import { SetPartnerAiModelUseCase } from '../../system-partner-management/application/use-cases/set-partner-ai-model.use-case';
+import { SetPlatformAiBudgetUseCase } from '../../system-partner-management/application/use-cases/set-platform-ai-budget.use-case';
 
 const databaseUrl = process.env.AI_BUDGET_RESERVATION_TEST_DATABASE_URL;
 
@@ -61,13 +62,16 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
   } as unknown as AppConfigService;
 
   /** One company per case, so concurrency inside a case cannot be polluted by a neighbour. */
-  async function company(suffix: string, policy: { chat?: number | null; ocr?: number | null; total?: number; mode?: string } = {}) {
+  async function company(suffix: string, policy: { chat?: number | null; ocr?: number | null; total?: number | null; mode?: string } = {}) {
     const companyId = `${tag}-${suffix}`;
     await client.company.create({ data: { id: companyId, name: companyId, businessCategory: 'SERVICE' } });
     await client.companyAiConfiguration.create({
       data: {
         companyId,
-        monthlyBudgetSatang: policy.total ?? TOTAL_CAP,
+        // `total: null` = this company INHERITS the platform default, which is the only case that
+        // needs the platform-wide advisory lock.
+        monthlyBudgetSatang: policy.total === undefined ? TOTAL_CAP : policy.total,
+        modelId: HAIKU,
         budgetMode: policy.mode ?? 'SPLIT',
         chatMonthlyBudgetSatang: policy.chat === undefined ? CHAT_CAP : policy.chat,
         ocrMonthlyBudgetSatang: policy.ocr === undefined ? OCR_CAP : policy.ocr,
@@ -283,10 +287,14 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
       invocationKey: inFlight.reservation.invocationKey, entry: evidence(), meta: { sourceRoute: 'crm-intake' },
     }), 'settled');
     assert.equal((await client.aiBudgetReservation.findUniqueOrThrow({ where: { id: inFlight.reservation.id } })).status, 'SETTLED');
-    // ...and the CANCELLED one cannot be settled afterwards.
+    // ...and if real provider evidence STILL arrives for the cancelled one, the money is recorded
+    // in full as an anomaly rather than dropped (review item 2 / spec §12.6 "usage หาย").
     assert.equal(await settleAiBudgetStep(prisma, {
       invocationKey: stale.reservation.invocationKey, entry: evidence(), meta: { sourceRoute: 'crm-intake' },
-    }), 'invalid-state');
+    }), 'settled-anomaly');
+    const reopened = await client.aiBudgetReservation.findUniqueOrThrow({ where: { id: stale.reservation.id } });
+    assert.equal(reopened.status, 'SETTLED');
+    assert.deepEqual((reopened.evidenceJson as { anomaly: unknown }).anomaly, { previousStatus: 'CANCELLED' });
   });
 
   it('spec §12.3: an actual above the bound records in FULL, flags a breach and closes the scope', async (t) => {
@@ -368,5 +376,193 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
 
     assert.equal(((await reserve(shared, 'CHAT', 0)) as { detail: string }).detail, 'policy_not_split');
     assert.equal(((await reserve(broken, 'CHAT', 0)) as { detail: string }).detail, 'SPLIT_EXCEEDS_TOTAL');
+  });
+
+  // ── Controller review follow-ups 1, 2, 3 and 5 ─────────────────────────────
+
+  it('item 1: 50 rounds of concurrent settle + record + adjust never deadlock and lose nothing', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const companyId = await company('row-order', { total: 100_000_000, chat: 50_000_000, ocr: 50_000_000 });
+    const deadlocks: string[] = [];
+    let settled = 0;
+    let recorded = 0;
+
+    for (let round = 0; round < 50; round += 1) {
+      // One SPLIT company, one month, one bucket: a settle (month row then bucket row) racing a
+      // plain recording of un-enveloped chain usage (same order since the fix) plus a correction.
+      // Before the fix the two took the two aggregate rows in OPPOSITE order and Postgres killed
+      // one of them — and the victim's usage was warned about, never retried.
+      const held = await reserve(companyId, 'CHAT', round, `row-order-${round}`);
+      assert.ok(held.ok);
+      await markAiBudgetStepDispatched(prisma, held.reservation.id, held.reservation.ownerToken);
+      const outcomes = await Promise.allSettled([
+        settleAiBudgetStep(prisma, {
+          invocationKey: held.reservation.invocationKey, entry: evidence(),
+          meta: { sourceRoute: 'crm-intake', requestId: `req-${round}` },
+        }),
+        recordCompanyAiUsage(prisma, config, {
+          companyId, sourceRoute: 'crm-intake', monthKey: MONTH, requestKind: 'TEXT', budgetBucket: 'CHAT',
+          requestId: `rest-${round}`,
+        }, [evidence({ tag: 'crm.intake.rest' })]),
+      ]);
+      for (const outcome of outcomes) {
+        if (outcome.status === 'rejected') deadlocks.push(String((outcome.reason as Error).message).slice(0, 160));
+      }
+      if (outcomes[0]!.status === 'fulfilled' && (outcomes[0] as PromiseFulfilledResult<string>).value === 'settled') settled += 1;
+      if (outcomes[1]!.status === 'fulfilled') recorded += 1;
+    }
+
+    assert.equal(deadlocks.filter((m) => m.includes('40P01') || /deadlock/i.test(m)).length, 0, deadlocks.join(' | '));
+    assert.equal(deadlocks.length, 0, `no transaction may fail at all: ${deadlocks.join(' | ')}`);
+    assert.equal(settled, 50, 'every settlement recorded');
+    assert.equal(recorded, 50, 'every plain recording succeeded');
+
+    // Exactly 100 provider rows, and the two aggregates agree to the satang.
+    const events = await client.aiUsageEvent.findMany({ where: { companyId, eventKind: 'MODEL_CALL' }, select: { costSatang: true } });
+    assert.equal(events.length, 100, 'no usage was lost');
+    const month = await client.companyAiMonthlyUsage.findUniqueOrThrow({ where: { companyId_monthKey: { companyId, monthKey: MONTH } } });
+    const bucket = await client.companyAiMonthlyBucketUsage.findUniqueOrThrow({
+      where: { companyId_monthKey_bucket: { companyId, monthKey: MONTH, bucket: 'CHAT' } },
+    });
+    const expected = events.reduce((sum, row) => sum + row.costSatang, 0);
+    assert.equal(month.costSatang, expected);
+    assert.equal(month.callCount, 100);
+    assert.equal(bucket.costSatang, expected, 'the bucket slice equals the month total');
+    assert.equal(bucket.callCount, 100);
+
+    // ...and one correction moves BOTH aggregates by the same signed delta, same row order.
+    const one = await client.aiUsageEvent.findFirstOrThrow({ where: { companyId, eventKind: 'MODEL_CALL' } });
+    assert.equal(await recordCompanyAiCostAdjustment(prisma, {
+      eventId: one.id, correctionKey: `${tag}-row-order-correction`, costSatang: -7,
+    }), 'applied');
+    const monthAfter = await client.companyAiMonthlyUsage.findUniqueOrThrow({ where: { companyId_monthKey: { companyId, monthKey: MONTH } } });
+    const bucketAfter = await client.companyAiMonthlyBucketUsage.findUniqueOrThrow({
+      where: { companyId_monthKey_bucket: { companyId, monthKey: MONTH, bucket: 'CHAT' } },
+    });
+    assert.equal(monthAfter.costSatang, expected - 7);
+    assert.equal(bucketAfter.costSatang, expected - 7);
+    assert.equal(monthAfter.callCount, 100, 'a correction is never a provider call');
+  });
+
+  it('item 2: provider evidence for a RESERVED or CANCELLED hold is recorded in FULL with an anomaly', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const companyId = await company('anomaly', { total: 1_000_000, chat: 500_000, ocr: 500_000 });
+
+    // (a) the dispatch mark was lost: the row is still RESERVED but the provider ran.
+    const neverMarked = await reserve(companyId, 'CHAT', 0, 'anomaly-reserved');
+    assert.ok(neverMarked.ok);
+    assert.equal(await settleAiBudgetStep(prisma, {
+      invocationKey: neverMarked.reservation.invocationKey, entry: evidence(), meta: { sourceRoute: 'crm-intake' },
+    }), 'settled-anomaly');
+    const a = await client.aiBudgetReservation.findUniqueOrThrow({ where: { id: neverMarked.reservation.id } });
+    assert.equal(a.status, 'SETTLED');
+    assert.ok(a.settledCostSatang! > 0, 'the money is REAL and recorded in full');
+    assert.deepEqual((a.evidenceJson as { anomaly: unknown }).anomaly, { previousStatus: 'RESERVED' });
+    assert.equal(await client.aiUsageEvent.count({ where: { invocationKey: neverMarked.reservation.invocationKey } }), 1);
+
+    // (b) a cancel proof was wrong: the hold was CANCELLED but the provider ran anyway.
+    const wronglyCancelled = await reserve(companyId, 'CHAT', 1, 'anomaly-cancelled');
+    assert.ok(wronglyCancelled.ok);
+    await markAiBudgetStepDispatched(prisma, wronglyCancelled.reservation.id, wronglyCancelled.reservation.ownerToken);
+    assert.equal(await cancelAiBudgetStep(prisma, {
+      reservationId: wronglyCancelled.reservation.id, ownerToken: wronglyCancelled.reservation.ownerToken,
+      proof: 'gateway_pre_provider_refusal',
+    }), true);
+    assert.equal(await settleAiBudgetStep(prisma, {
+      invocationKey: wronglyCancelled.reservation.invocationKey, entry: evidence(), meta: { sourceRoute: 'crm-intake' },
+    }), 'settled-anomaly');
+    const b = await client.aiBudgetReservation.findUniqueOrThrow({ where: { id: wronglyCancelled.reservation.id } });
+    assert.equal(b.status, 'SETTLED');
+    assert.deepEqual((b.evidenceJson as { anomaly: unknown }).anomaly, { previousStatus: 'CANCELLED' });
+
+    // (c) a second settlement of either is a plain duplicate, not a second charge.
+    for (const hold of [neverMarked.reservation, wronglyCancelled.reservation]) {
+      assert.equal(await settleAiBudgetStep(prisma, {
+        invocationKey: hold.invocationKey, entry: evidence(), meta: { sourceRoute: 'crm-intake' },
+      }), 'duplicate');
+    }
+    // (d) malformed evidence still settles nothing, whatever the status.
+    const intact = await reserve(companyId, 'CHAT', 2, 'anomaly-malformed');
+    assert.ok(intact.ok);
+    assert.equal(await settleAiBudgetStep(prisma, {
+      invocationKey: intact.reservation.invocationKey, entry: evidence({ inputTokens: -1 }), meta: { sourceRoute: 'crm-intake' },
+    }), 'invalid-evidence');
+    assert.equal((await client.aiBudgetReservation.findUniqueOrThrow({ where: { id: intact.reservation.id } })).status, 'RESERVED');
+  });
+
+  it('item 2: a cancel racing a settle leaves exactly one outcome and never loses the usage', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const companyId = await company('cancel-race', { total: 1_000_000, chat: 500_000, ocr: 500_000 });
+
+    for (let round = 0; round < 20; round += 1) {
+      const held = await reserve(companyId, 'CHAT', round, `cancel-race-${round}`);
+      assert.ok(held.ok);
+      await markAiBudgetStepDispatched(prisma, held.reservation.id, held.reservation.ownerToken);
+      // Both take the SAME company-month lock, so one of them observes the other's committed state.
+      const [cancelled, settledResult] = await Promise.all([
+        cancelAiBudgetStep(prisma, { reservationId: held.reservation.id, ownerToken: held.reservation.ownerToken, proof: 'gateway_pre_provider_refusal' }),
+        settleAiBudgetStep(prisma, { invocationKey: held.reservation.invocationKey, entry: evidence(), meta: { sourceRoute: 'crm-intake' } }),
+      ]);
+      const row = await client.aiBudgetReservation.findUniqueOrThrow({ where: { id: held.reservation.id } });
+      // Whoever won, the evidence is recorded and the row is SETTLED: a cancel can never make real
+      // provider cost disappear, it can only lose the race or be overridden as an anomaly.
+      assert.ok(['settled', 'settled-anomaly'].includes(settledResult), `${settledResult} (cancelled=${cancelled})`);
+      assert.equal(row.status, 'SETTLED');
+      assert.equal(await client.aiUsageEvent.count({ where: { invocationKey: held.reservation.invocationKey } }), 1);
+    }
+  });
+
+  it('item 3: an INHERITING company racing the platform-default writer 30x never deadlocks', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    // No override => the reserve really does take the platform-wide lock, in canonical order.
+    const companyId = await company('inherit', { total: null, chat: 400_000, ocr: 400_000 });
+    await client.platformAiBudgetConfig.upsert({
+      where: { id: 'platform' },
+      create: { id: 'platform', monthlyBudgetSatang: 1_000_000, ceilingSatang: 10_000_000 },
+      update: { monthlyBudgetSatang: 1_000_000, ceilingSatang: 10_000_000 },
+    });
+    const platformWriter = new SetPlatformAiBudgetUseCase(prisma, config);
+    const errors: string[] = [];
+
+    for (let round = 0; round < 30; round += 1) {
+      const [, saved] = await Promise.allSettled([
+        reserve(companyId, 'CHAT', round, `inherit-${round}`),
+        // RAISING the default is always legal; the point is the lock order, not the validation.
+        platformWriter.execute({
+          monthlyBudgetSatang: 1_000_000 + round + 1, ceilingSatang: 10_000_000,
+          requestingAdminUserId: userId, requestId: randomUUID(),
+        }),
+      ]);
+      if (saved.status === 'rejected') errors.push(String((saved.reason as Error).message).slice(0, 160));
+    }
+
+    assert.equal(errors.filter((m) => m.includes('40P01') || /deadlock/i.test(m)).length, 0, errors.join(' | '));
+    const position = await client.$transaction((tx) => readAiBudgetMonthSnapshot(tx, companyId, MONTH));
+    assert.ok(position.reserved.CHAT > 0, 'the inheriting company really did reserve');
+    assert.ok(position.reserved.CHAT <= 400_000, 'and stayed inside its cap');
+    await client.platformAiBudgetConfig.deleteMany({ where: { id: 'platform' } });
+  });
+
+  it('item 5: requestKind pinned at reserve time lands on a settlement that supplies none', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const companyId = await company('request-kind', { total: 1_000_000, chat: 500_000, ocr: 500_000 });
+    const held = await reserveAiBudgetStep(prisma, config, {
+      companyId, monthKey: MONTH, bucket: 'OCR', stepKind: 'bank-statement',
+      attemptKey: 'statement:import-1', ordinal: 0, sourceRoute: 'bank-statement-extract',
+      modelId: HAIKU, requestKind: 'IMAGE', thbPerUsd: 33, thbPerUsdSource: 'stored',
+    });
+    assert.ok(held.ok);
+    await markAiBudgetStepDispatched(prisma, held.reservation.id, held.reservation.ownerToken);
+
+    // Exactly what `POST /internal/ai/budget-settle` posts: no requestKind, because the gateway
+    // never classifies a request.
+    assert.equal(await settleAiBudgetStep(prisma, {
+      invocationKey: held.reservation.invocationKey,
+      entry: evidence({ tag: 'ocr.bank-statement' }), meta: { sourceRoute: 'bank-statement-extract' },
+    }), 'settled');
+
+    const event = await client.aiUsageEvent.findUniqueOrThrow({ where: { invocationKey: held.reservation.invocationKey } });
+    assert.equal(event.requestKind, 'IMAGE', 'inherited from the hold, not UNKNOWN');
+    assert.equal(event.budgetBucket, 'OCR');
   });
 });
