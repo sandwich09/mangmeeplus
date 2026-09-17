@@ -7,6 +7,7 @@
 // create any source-module draft record. LINE may request/summarize/deep-link only.
 
 import type { AiUsageEntry } from './ai-lineage.js';
+import type { AiBudgetEnvelope } from './ai-budget-bounds.js';
 import type { AiBudgetScope } from './line-ai.js';
 
 // ---- Enums (string unions, repo convention) ----
@@ -279,6 +280,19 @@ export type AiDraftGenerationRequest = {
   facts: string[];
   citations: AiDraftEvidenceCitation[];
   wantsChecklist: boolean;
+  /**
+   * Tenant of the request, sent only under a SPLIT budget envelope: the gateway's receiver boundary
+   * validates that `budgetEnvelope.invocationKey` belongs to THIS company (ADR 0013 §11.1), which
+   * it cannot do without knowing which company asked. Absent for every SHARED request, so the body
+   * of one is unchanged.
+   */
+  companyId?: string;
+  /**
+   * The invocation this draft runs inside (ADR 0013 §6). Optional and additive: an older gateway
+   * ignores it, and this seam only sends it when the API actually holds money for the call, so the
+   * gateway can enforce the bounds that hold was priced at instead of running unbounded.
+   */
+  budgetEnvelope?: AiBudgetEnvelope;
 };
 
 export type AiDraftGenerationError = {

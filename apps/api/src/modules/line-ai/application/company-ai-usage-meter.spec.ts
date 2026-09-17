@@ -1914,3 +1914,121 @@ describe('recordCompanyAiCostAdjustment bucket aggregate', () => {
     assert.equal(state.month.costSatang, 880);
   });
 });
+
+/**
+ * Phase E1c: the gateway now stamps every usage row with the invocation it was held against, so a
+ * multi-call chain settles each of its own calls instead of leaving the remainder metered-but-unheld
+ * (ADR 0013 §11.13, which this closes).
+ */
+describe('recordCompanyAiUsage settles each gateway-tagged invocation (E1c)', () => {
+  const ENVELOPE_KEY = 'co-1#line-image:abc#receipt-ocr#0';
+
+  /**
+   * The settlement engine's own path, cut at its first read: the locator returns nothing, so every
+   * settle answers `unknown-invocation`. That is enough to prove WHICH invocation key each entry
+   * was settled against, which is the whole contract of this seam; the ledger writes themselves are
+   * covered by the reservation engine's own specs (including on real PostgreSQL).
+   */
+  function settleProbe() {
+    const settled: string[] = [];
+    const metered: any[] = [];
+    const client = {
+      companyAiConfiguration: { findUnique: async () => null },
+      $transaction: async (fn: (tx: any) => Promise<any>) => fn({
+        $executeRaw: async () => 1,
+        aiBudgetReservation: {
+          findUnique: async (args: any) => { settled.push(args.where.invocationKey); return null; },
+        },
+        aiUsageEvent: { createMany: async (args: any) => { metered.push(...args.data); return { count: args.data.length }; } },
+        companyAiMonthlyUsage: { upsert: async () => ({ costSatang: 347 }) },
+        companyAiMonthlyBucketUsage: { upsert: async () => ({}) },
+      }),
+    };
+    return { prisma: { client } as any, settled, metered };
+  }
+
+  const meta = {
+    companyId: 'co-1', sourceRoute: 'receipt-ocr', requestId: 'req-1', monthKey: '2026-09',
+    invocationKey: ENVELOPE_KEY, ...classifyAiUsageRequest('receipt-ocr', 'image'),
+  };
+
+  it('settles a whole tagged chain against its own keys, and meters nothing unheld', async () => {
+    const probe = settleProbe();
+
+    await recordCompanyAiUsage(probe.prisma, config, meta, [
+      usage({ tag: 'ocr.receipt.image-read', invocationKey: 'co-1#line-image:abc#receipt-ocr#0' }),
+      usage({ tag: 'ocr.receipt.extract', invocationKey: 'co-1#line-image:abc#receipt-ocr#1' }),
+      usage({ tag: 'ocr.receipt.extract-repair', invocationKey: 'co-1#line-image:abc#receipt-ocr#2' }),
+    ]);
+
+    assert.deepEqual(probe.settled, [
+      'co-1#line-image:abc#receipt-ocr#0',
+      'co-1#line-image:abc#receipt-ocr#1',
+      'co-1#line-image:abc#receipt-ocr#2',
+    ]);
+    assert.deepEqual(probe.metered, [], 'every row is held, so nothing falls through to plain metering');
+  });
+
+  it('keeps the older gateway behaviour for an UNTAGGED chain: first held, remainder metered', async () => {
+    const probe = settleProbe();
+
+    await recordCompanyAiUsage(probe.prisma, config, meta, [
+      usage({ tag: 'ocr.receipt.image-read' }),
+      usage({ tag: 'ocr.receipt.extract' }),
+    ]);
+
+    assert.deepEqual(probe.settled, [ENVELOPE_KEY], 'the first row is this seam own invocation');
+    // Never dropped — real provider spend must not become zero (spec §12.6).
+    assert.deepEqual(probe.metered.map((row) => [row.usageTag, row.invocationKey]),
+      [['ocr.receipt.extract', undefined]]);
+  });
+
+  it('refuses a tag from ANOTHER attempt or tenant, and never settles that key', async () => {
+    const table = [
+      ['another company', 'co-2#line-image:abc#receipt-ocr#1'],
+      ['another attempt', 'co-1#line-image:zzz#receipt-ocr#1'],
+      ['another step kind', 'co-1#line-image:abc#line-turn#1'],
+      ['a non-numeric ordinal', 'co-1#line-image:abc#receipt-ocr#x'],
+      ['a truncated key', 'co-1#line-image:abc'],
+      ['an empty key', ''],
+    ] as const;
+    for (const [label, foreign] of table) {
+      const probe = settleProbe();
+
+      await recordCompanyAiUsage(probe.prisma, config, meta, [
+        usage({ tag: 'ocr.receipt.image-read', invocationKey: ENVELOPE_KEY }),
+        usage({ tag: 'ocr.receipt.extract', invocationKey: foreign }),
+      ]);
+
+      // The envelope key is used once, for the row that really carries it; the foreign tag buys
+      // nothing — the fence is a GLOBAL unique index and must not be reachable from a response.
+      assert.deepEqual(probe.settled, [ENVELOPE_KEY], label);
+      assert.deepEqual(probe.metered.map((row) => row.usageTag), ['ocr.receipt.extract'], label);
+    }
+  });
+
+  it('settles a mixed response by key, using the envelope only for an untagged row', async () => {
+    const probe = settleProbe();
+
+    await recordCompanyAiUsage(probe.prisma, config, meta, [
+      // The ordinal-1 row is tagged, the ordinal-0 one is not (an older row in a rolling deploy).
+      usage({ tag: 'ocr.receipt.extract', invocationKey: 'co-1#line-image:abc#receipt-ocr#1' }),
+      usage({ tag: 'ocr.receipt.image-read' }),
+    ]);
+
+    assert.deepEqual(probe.settled, ['co-1#line-image:abc#receipt-ocr#1', ENVELOPE_KEY]);
+    assert.deepEqual(probe.metered, []);
+  });
+
+  it('ignores the tags entirely for a company with no envelope (SHARED, every company today)', async () => {
+    const probe = settleProbe();
+
+    await recordCompanyAiUsage(probe.prisma, config, { ...meta, invocationKey: undefined }, [
+      usage({ tag: 'ocr.receipt.image-read', invocationKey: ENVELOPE_KEY }),
+    ]);
+
+    assert.deepEqual(probe.settled, [], 'no reservation is touched without an envelope');
+    assert.deepEqual(probe.metered.map((row) => [row.usageTag, row.invocationKey]),
+      [['ocr.receipt.image-read', undefined]]);
+  });
+});

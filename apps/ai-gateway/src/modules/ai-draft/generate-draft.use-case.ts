@@ -42,7 +42,18 @@ export class GenerateDraftUseCase {
       usageTag: 'ai.draft',
     });
     if (!out.ok) {
-      return { ok: false, error: { code: out.error.code, message: out.error.message, retryable: out.error.retryable } };
+      return {
+        ok: false,
+        error: {
+          // `code` is a free string here and documents `AI_BUDGET_REFUSAL_CODES` as the carrier of
+          // a money refusal, so the budget code wins when present: otherwise the draft lane would
+          // see a nameless provider failure and keep retrying a job against a closed gate (§9.1).
+          code: out.error.budgetCode ?? out.error.code,
+          message: out.error.message,
+          retryable: out.error.retryable,
+          ...(out.error.budgetScope ? { budgetScope: out.error.budgetScope } : {}),
+        },
+      };
     }
 
     let parsed: Record<string, unknown>;

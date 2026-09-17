@@ -12,7 +12,7 @@ import { RedisRateLimitService } from '../../../common/security/redis-rate-limit
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
 import { classifyAiUsageRequest, companyAiBudgetRefusal, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
-import { cancelAiBudgetStep, type AiBudgetCancelProof, type ReservedAiBudgetStep } from '../../line-ai/application/company-ai-budget-reservation';
+import { cancelAiBudgetStep, cancelAiBudgetStepIfGatewayUnspent, type AiBudgetCancelProof, type ReservedAiBudgetStep } from '../../line-ai/application/company-ai-budget-reservation';
 import {
   admitCompanyOcr,
   companyOcrErrorCode,
@@ -90,6 +90,11 @@ export class StatementAiExtractClient {
       return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
     }
     const result = await this.extractAdmitted(request, modelPolicy, budgetMonthKey, admission.eventId, hold);
+    // E1c: same proof as the other seams — our refusal code plus zero usage rows means the
+    // gateway's guard stopped this invocation before its provider, so the hold is released.
+    await cancelAiBudgetStepIfGatewayUnspent(this.prisma, hold, {
+      budgetCode: result.errorCode, usage: result.usage,
+    });
     if (isOcrPreProviderRefusal(result)) {
       await this.releaseHold(hold, 'gateway_pre_provider_refusal');
       const released = await releaseCompanyOcrAdmission(this.prisma, {
