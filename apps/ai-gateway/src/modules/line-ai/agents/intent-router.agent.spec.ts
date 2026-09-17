@@ -1415,7 +1415,10 @@ describe('LINE intake router – advisor route under the trusted capability', ()
     const attachments = [{ id: 'a1', mimeType: 'image/jpeg', purpose: 'unknown', contentBase64: 'AAAA' }];
     const router = routerReturning({ intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 0.95, advisorAnswer: socialAnswer() }, (input) => { seen = input; });
     const plan = await router.routeIntake(intake({ attachments, messageText: 'นี่ค่ะ' }));
-    assert.equal(seen!.systemPrompt, intakeRouterSystemPrompt(), 'attachment turn gets the advisor-free prompt');
+    // Cost benchmark R2/R3 (2026-09-17): an attachment turn now also loses the fused-plan capability
+    // and gets the document capture-hint schema, so the expectation is the advisor-free, fused-free
+    // IMAGE prompt. The property under test is unchanged — the advisor route is never offered.
+    assert.equal(seen!.systemPrompt, intakeRouterSystemPrompt({}, true), 'attachment turn gets the advisor-free image prompt');
     // The route was therefore never offered, so the model claiming it is invalid output.
     assert.equal(plan.status, 'UNAVAILABLE');
     assert.equal(plan.intent, 'UNSUPPORTED');
