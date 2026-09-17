@@ -4152,7 +4152,14 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
   const CAPTURE_PERMISSIONS = ['line.ai.query', 'expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create'];
 
   /** A media turn whose intake router meets the money gate. Returns what the turn did to the file. */
-  function mediaHarness(prisma: any, code: string, opts: { pendingCreateFails?: boolean; openRow?: any } = {}) {
+  function mediaHarness(prisma: any, code: string, opts: {
+    pendingCreateFails?: boolean;
+    openRow?: any;
+    permissions?: string[];
+    intakeRouteFn?: () => any;
+    /** The gate closes at the OCR hop instead of at the intake router. */
+    receiptOcrThrows?: boolean;
+  } = {}) {
     const pendingRows: any[] = [];
     (prisma.client as any).lineIntakePendingMedia = {
       findFirst: async () => opts.openRow ?? null,
@@ -4168,9 +4175,9 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     let ocrCalls = 0;
     let expenseDrafts = 0;
     const h = makeUseCase(prisma, {
-      permissions: CAPTURE_PERMISSIONS,
-      intakeRouteFn: () => { throw budgetError(code, 'TOTAL'); },
-      receiptOcrFn: () => { ocrCalls += 1; return { status: 'ok' }; },
+      permissions: opts.permissions ?? CAPTURE_PERMISSIONS,
+      intakeRouteFn: opts.intakeRouteFn ?? (() => { throw budgetError(code, 'TOTAL'); }),
+      receiptOcrFn: () => { ocrCalls += 1; if (opts.receiptOcrThrows) throw budgetError(code, 'TOTAL'); return { status: 'ok' }; },
       initReceiptUpload: { execute: async () => { expenseDrafts += 1; return { expenseId: 'exp-x', attachmentId: 'att-x' }; } },
       completeReceiptUpload: { execute: async () => undefined },
       createUploadIntent: { execute: async () => ({ attachmentId: 'att-budget', uploadUrl: 'https://upload', uploadMethod: 'PUT' }) },
@@ -4353,6 +4360,56 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     assert.equal(expenseDrafts, 0);
     assert.match(h.replies.join('\n'), /งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว/);
     assert.equal((updates.at(-1) as any).data.errorCode, 'AI_MONTHLY_BUDGET_EXCEEDED');
+  });
+
+  it('never swallows a SECOND picture while one question is still open (B-04)', async () => {
+    const { prisma, updates } = makePrisma();
+    // `ensurePendingMedia` answers a DIFFERENT picture with the already-open row and stores nothing.
+    const openRow = { id: 'pending-first', attachmentId: 'att-first', mimeType: 'image/jpeg', lineMessageId: 'line-msg-first', createdAt: new Date() };
+    const h = mediaHarness(prisma, 'AI_MONTHLY_BUDGET_EXCEEDED', { openRow });
+
+    await h.useCase.executeReceiptUpload({
+      webhookEventId: 'evt-budget-second-photo', lineUserId: 'line-user-secret', replyToken: 'reply-budget-second',
+      lineMessageId: 'line-msg-second', messageType: 'image', messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.equal(h.pendingRows.length, 0, 'these bytes really were not stored');
+    assert.equal(h.getOcrCalls(), 0);
+    assert.equal(h.getExpenseDrafts(), 0);
+    const rendered = h.replies.join('\n');
+    assert.equal(h.replies.length, 1, 'one honest answer, not silence');
+    assert.match(rendered, /งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว/);
+    assert.match(rendered, /ยังมีรูปก่อนหน้าที่รอคำตอบอยู่/);
+    assert.match(rendered, /รูปนี้จึงยังไม่ได้เก็บไว้/);
+    assert.equal(rendered.includes('รับรูปไว้แล้ว'), false, 'no retention claim for bytes that were dropped');
+    assert.equal(/1\) ใบเสร็จ/.test(rendered), false, 'the numbered question belongs to the picture that IS parked');
+    const final = (updates.at(-1) as any).data;
+    assert.equal(final.status, 'clarification_required');
+    assert.equal(final.errorCode, 'AI_MONTHLY_BUDGET_EXCEEDED');
+  });
+
+  it('refuses to park a file for a caller without capture permission', async () => {
+    const { prisma, updates } = makePrisma();
+    const h = mediaHarness(prisma, 'AI_MONTHLY_BUDGET_EXCEEDED', {
+      // Signature permission gets this caller past the media entry gate, but they may NOT capture
+      // expenses. The reference-only route then skips the capture denial, and the money gate closes
+      // at the OCR hop.
+      permissions: ['line.ai.query', 'expense.signature.manage'],
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_DOCUMENT_REFERENCE', language: 'th', confidence: 0.95 }),
+      receiptOcrThrows: true,
+    });
+
+    await h.useCase.executeReceiptUpload({
+      webhookEventId: 'evt-budget-no-permission', lineUserId: 'line-user-secret', replyToken: 'reply-budget-no-permission',
+      lineMessageId: 'line-msg-no-permission', messageType: 'image', messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.equal(h.pendingRows.length, 0, 'no file is parked for someone who may not capture');
+    const rendered = h.replies.join('\n');
+    assert.match(rendered, /งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว/);
+    assert.match(rendered, /ยังไม่ได้เก็บหรือบันทึกรายการใด ๆ/);
+    assert.equal(/1\) ใบเสร็จ/.test(rendered), false, 'never offer a capture workflow this user cannot finish');
+    assert.equal((updates.at(-1) as any).data.status, 'ai_budget_exceeded');
   });
 
   it('keeps every non-money OCR governance reason exactly as it was (B-01)', () => {

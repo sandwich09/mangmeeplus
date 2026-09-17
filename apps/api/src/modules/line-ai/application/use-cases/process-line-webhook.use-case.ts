@@ -416,11 +416,31 @@ function aiBudgetReasonTh(errorCode?: string): string | null {
     : null;
 }
 
-/** §9.2: the money gate closed the read AND the bytes could not be parked. Nothing is kept, so the
- *  reply must not imply otherwise — and it must not promise an automatic retry that does not exist. */
-export function formatBudgetMediaSaveFailedReply(errorCode?: string): string {
-  return `⚠️ ${aiBudgetReasonTh(errorCode) ?? 'งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว'} และระบบยังเก็บรูปนี้ไว้ไม่สำเร็จค่ะ `
-    + 'จึงยังไม่ได้บันทึกรายการใด ๆ นะคะ รบกวนบันทึกผ่านเว็บแอป หรือส่งรูปเข้ามาใหม่อีกครั้งภายหลังค่ะ';
+/**
+ * §9.2/B-04: the money gate closed the read AND this picture was NOT kept. Three different ways that
+ * happens, one money reason, and never a retention claim or a retry promise:
+ *
+ * - `save_failed` — parking the bytes threw. Re-sending later is genuinely the way back in.
+ * - `open_question` — the sender already has one picture waiting for its numbered answer, and
+ *   `ensurePendingMedia` answers a DIFFERENT picture with that open row BEFORE storing anything
+ *   (its one-question-at-a-time design). With the budget closed every photo lands there, so the
+ *   silence that lane relies on would swallow a whole stack of receipts. Answering the open
+ *   question is what actually works — re-sending is swallowed again.
+ * - `no_permission` — a reference-only route reached the OCR hop without capture permission, so no
+ *   file may be parked and "1) record as receipt" is not an offer this user can accept.
+ */
+export function formatBudgetMediaNotStoredReply(
+  errorCode: string | undefined,
+  kind: 'save_failed' | 'open_question' | 'no_permission',
+): string {
+  const reason = aiBudgetReasonTh(errorCode) ?? 'งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว';
+  const tail = kind === 'save_failed'
+    ? 'และระบบยังเก็บรูปนี้ไว้ไม่สำเร็จค่ะ จึงยังไม่ได้บันทึกรายการใด ๆ นะคะ รบกวนบันทึกผ่านเว็บแอป หรือส่งรูปเข้ามาใหม่อีกครั้งภายหลังค่ะ'
+    : kind === 'open_question'
+      ? 'และยังมีรูปก่อนหน้าที่รอคำตอบอยู่ค่ะ รูปนี้จึงยังไม่ได้เก็บไว้และยังไม่ได้บันทึกรายการนะคะ '
+        + 'รบกวนตอบคำถามของรูปก่อนหน้าให้เสร็จก่อน หรือบันทึกรายการผ่านเว็บแอปได้เลยค่ะ'
+      : 'จึงยังไม่ได้อ่านรูปนี้ และยังไม่ได้เก็บหรือบันทึกรายการใด ๆ ค่ะ';
+  return `⚠️ ${reason} ${tail}`;
 }
 /** §11 escape: the picture answered a question and is not evidence of anything. Same outcome the
  *  receipt clarify's choice 2 has always had — the bytes stay stored, nothing is recorded. */
@@ -5946,6 +5966,17 @@ export class ProcessLineWebhookUseCase {
       const terminal = permanent
         ? (ocr.errorCode === AI_BUDGET_REFUSAL_CODES.insufficient ? 'ai_budget_insufficient' : 'ai_budget_exceeded')
         : 'provider_unavailable';
+      // A reference-only route (`BUSINESS_DOCUMENT_REFERENCE`) skips the capture denial above, so a
+      // user WITHOUT capture permission can reach this branch when the money gate closes between the
+      // admitted intake call and the OCR hop. Parking a file and offering "1) record as receipt"
+      // would hand them a workflow they are not allowed to finish, so neither happens.
+      if (!canCaptureExpense) {
+        const denied = formatBudgetMediaNotStoredReply(ocr.errorCode, 'no_permission');
+        await this.deliverReply(event, denied);
+        await this.updateEventLog(event.webhookEventId, terminal, ocr.errorCode, companyId,
+          { ...(budgetScope ? { budgetScope } : {}), mediaState: 'not_stored_no_permission' });
+        return { outcome: 'done' };
+      }
       let parked: Awaited<ReturnType<ProcessLineWebhookUseCase['ensurePendingMedia']>> | undefined;
       try {
         parked = await this.ensurePendingMedia(
@@ -5955,36 +5986,47 @@ export class ProcessLineWebhookUseCase {
         // The bytes are NOT stored. Confirming retention from the webhook alone is exactly what
         // §9.2 forbids, so say what is true and keep the money reason.
         this.logger.warn({ msg: 'line_budget_pending_media_failed', requestId, ...safeLineErrorDetails(error) });
-        await this.deliverReply(event, formatBudgetMediaSaveFailedReply(ocr.errorCode));
+        await this.deliverReply(event, formatBudgetMediaNotStoredReply(ocr.errorCode, 'save_failed'));
         await this.updateEventLog(event.webhookEventId, terminal, ocr.errorCode, companyId,
           { ...(budgetScope ? { budgetScope } : {}), mediaState: 'save_failed' });
         return { outcome: 'done' };
       }
-      if (parked.created) {
-        await this.deliverReply(event, reply);
+      // `created: false` means two very different things, and only the message id tells them apart.
+      // A row for THIS message is a genuine redelivery, which every clarify lane answers with
+      // silence. A row for a DIFFERENT message is the one-open-question rule declining to store
+      // these bytes at all — with the money closed that is now the common case, and staying silent
+      // would drop a whole stack of receipts while telling the shop nothing (B-04).
+      const retained = parked.created
+        || (!!parked.pending && parked.pending.lineMessageId === event.lineMessageId);
+      const notStored = !parked.created && !retained
+        ? formatBudgetMediaNotStoredReply(ocr.errorCode, 'open_question')
+        : null;
+      if (parked.created || notStored) {
+        const text = notStored ?? reply;
+        await this.deliverReply(event, text);
         await this.persistIntakeTurn({
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-          userMessagePreview: `${mediaPreviewLabel(parked.pending)}${captionSuffix}`,
-          replyText: reply, intent: 'CLARIFY', refused: true,
+          userMessagePreview: `${notStored ? '[ผู้ใช้ส่งรูป/ไฟล์]' : mediaPreviewLabel(parked.pending)}${captionSuffix}`,
+          replyText: text, intent: 'CLARIFY', refused: true,
         });
-        if (parked.pending) {
+        if (parked.created && parked.pending) {
           await this.appendMediaClarification(event, {
             companyId, chatKey: mediaChatKey(event), requestId, webhookEventId: event.webhookEventId,
             userId: identity.userId, caption, question: reply, pending: parked.pending,
           });
         }
       }
-      // The picture is kept and ONE question is open, so the workflow state stays `clarification_required`
-      // and the money reason rides on the errorCode (spec §9.3). A redelivery of the same message stays
-      // silent exactly as it does on every other clarify lane.
+      // A question is open either way — the one these bytes opened, or the earlier one they were
+      // turned away for — so the workflow state stays `clarification_required` and the money reason
+      // rides on the errorCode (spec §9.3). Only a true redelivery is the silent duplicate.
       await this.updateEventLog(
         event.webhookEventId,
-        parked.created ? 'clarification_required' : 'duplicate_media_pending',
+        parked.created || notStored ? 'clarification_required' : 'duplicate_media_pending',
         ocr.errorCode,
         companyId,
         {
           ...(budgetScope ? { budgetScope } : {}),
-          mediaState: parked.created ? 'retained' : 'redelivered',
+          mediaState: parked.created ? 'retained' : notStored ? 'not_stored_open_question' : 'redelivered',
         },
       );
       return { outcome: 'done' };

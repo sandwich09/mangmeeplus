@@ -211,9 +211,19 @@ export function classifyLineAiGatewayFailure(error: unknown): LineAiGatewayFailu
   };
 }
 
-/** What happened to the customer's picture on this turn. Structured so a budget refusal can be told
- *  apart from one that also lost the file — never a money amount, never company config (spec §9.3). */
-export type LineAiTerminalMediaState = 'retained' | 'save_failed' | 'redelivered';
+/**
+ * What happened to the customer's picture on this turn. Structured so a budget refusal that KEPT the
+ * file can be told apart from one that did not — never a money amount, never company config
+ * (spec §9.3). `redelivered` means the same message arrived twice and the first copy is still parked;
+ * `not_stored_open_question` means a DIFFERENT picture was turned away because one question is
+ * already open, so nothing of it was stored.
+ */
+export type LineAiTerminalMediaState =
+  | 'retained'
+  | 'save_failed'
+  | 'redelivered'
+  | 'not_stored_open_question'
+  | 'not_stored_no_permission';
 
 export function emitLineAiTerminalOutcome(
   logger: { log: (fields: Record<string, unknown>) => void },
