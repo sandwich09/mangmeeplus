@@ -156,6 +156,8 @@ git diff --check
 
 ## 5. Handoff และจุดเสร็จ
 
+**สถานะ 2026-09-18:** งาน implementation ช่วง A, B, C, D1, D2, E1a, E1b, E1c และ F (combined regression) merge เข้า `develop` และ `main` ครบแล้ว (PR #600–#609, #612–#619) โดยให้ Opus 5 เป็นผู้ implement และ Fable 5.1 เป็นผู้คุม/ตรวจทุกช่วง **ยังไม่ได้ deploy ที่ใด** และ SPLIT ยังปิดอยู่หลัง flag `AI_BUDGET_SPLIT_ACTIVATION_ENABLED` ที่ไม่ได้ต่อเข้ากับ deploy script ใด ข้อ §4 (Migration/UAT/Production) และ acceptance ที่ต้องใช้ UAT/LINE จริงยังเปิดอยู่ รายละเอียด หลักฐาน การตัดสินใจที่รอ owner และลำดับถัดไปอยู่ใน [Delivery summary and handoff](../agent-memory/line-intake-cost-and-budget-receipt-behavior-2026-09-17.md#delivery-summary-and-handoff--2026-09-18)
+
 เอกสารเสร็จเมื่อ A–E มี product behavior, architecture/contracts, data/permission/concurrency boundaries, verification และ rollout ชัด อ้างอิงกันได้ และบันทึก owner decision แล้ว Implementation จะเสร็จได้เมื่อ AC-01–16, B/C/D/E, X และ R-01–12 ใน spec มีหลักฐานครบ; partial release A–D ไม่ใช่การปิดงานทั้งหมด
 
 ยังไม่ทราบเปอร์เซ็นต์ประหยัดจริงจนรัน corpus, ยังไม่มีตัวเลข caps ที่ owner ตั้งให้บริษัทจริง และยังไม่ยืนยัน screenshot actor ข้อเท็จจริงเหล่านี้ไม่ทำให้ต้องเดาหรือแก้ live state เพื่อปิดเอกสาร
