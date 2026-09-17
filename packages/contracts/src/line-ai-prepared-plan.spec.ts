@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_PREPARED_PLAN_BOUNDS, parseLineAiPreparedPlan } from './line-ai-prepared-plan.js';
 import {
+  AI_BUDGET_REFUSAL_CODES, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, isAiBudgetTransient, isReceiptOcrRetryableFailure,
   asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome,
   LINE_INTAKE_FUNDING_SOURCES, LINE_INTAKE_ROUTE_INTENTS, LINE_INTAKE_SEMANTIC_OUTCOMES,
 } from './line-ai.js';
@@ -427,5 +428,58 @@ describe('asIntakeRouterCapabilities – receiver-boundary capability validator 
     );
     // A nested object whose ONLY true flags are buried must not activate anything.
     assert.deepEqual(asIntakeRouterCapabilities({ capabilities: { fusedPlan: true } }), {});
+  });
+});
+
+/**
+ * Remediation spec §9.1. These helpers live in `line-ai.ts` beside `isReceiptOcrRetryableFailure`;
+ * they are exercised here because `packages/contracts/package.json` carries a fixed `test` file list
+ * that this change is not allowed to edit, and this is the LINE-AI contract spec already on it.
+ */
+describe('company AI money budget refusals', () => {
+  it('splits permanent exhaustion from transient contention', () => {
+    assert.deepEqual(AI_BUDGET_REFUSAL_CODES, {
+      exceeded: 'AI_MONTHLY_BUDGET_EXCEEDED',
+      insufficient: 'AI_BUDGET_INSUFFICIENT',
+      busy: 'AI_BUDGET_BUSY',
+      unavailable: 'AI_BUDGET_UNAVAILABLE',
+    });
+    const table = [
+      ['AI_MONTHLY_BUDGET_EXCEEDED', true, false],
+      ['AI_BUDGET_INSUFFICIENT', true, false],
+      ['AI_BUDGET_BUSY', false, true],
+      ['AI_BUDGET_UNAVAILABLE', false, true],
+      // Neighbours that must never be mistaken for a money refusal.
+      ['OCR_MONTHLY_LIMIT_EXCEEDED', false, false],
+      ['RECEIPT_QUOTA_EXCEEDED', false, false],
+      ['OCR_FEATURE_DISABLED', false, false],
+      ['AI_LLM_RATE_LIMITED', false, false],
+      ['AI_GATEWAY_TIMEOUT', false, false],
+      [undefined, false, false],
+      [null, false, false],
+      ['', false, false],
+    ] as const;
+    for (const [code, permanent, transient] of table) {
+      assert.equal(isAiBudgetPermanentRefusal(code), permanent, `permanent(${code})`);
+      assert.equal(isAiBudgetTransient(code), transient, `transient(${code})`);
+      assert.equal(isAiBudgetRefusalCode(code), permanent || transient, `known(${code})`);
+    }
+  });
+
+  it('refuses to retry a money refusal that a retry cannot change', () => {
+    const failed = (errorCode?: string) => isReceiptOcrRetryableFailure({ status: 'failed', ...(errorCode ? { errorCode } : {}) });
+    // Exhausted, or not enough left to reserve: the same read this month buys the same answer.
+    assert.equal(failed('AI_MONTHLY_BUDGET_EXCEEDED'), false);
+    assert.equal(failed('AI_BUDGET_INSUFFICIENT'), false);
+    // An unreadable meter is not retried either: it would only re-attempt admission for nothing.
+    assert.equal(failed('AI_BUDGET_UNAVAILABLE'), false);
+    // Contention IS worth one more attempt — the lease frees between calls, and the retry is the
+    // customer pressing the button, bounded by the upload screen's own single retry.
+    assert.equal(failed('AI_BUDGET_BUSY'), true);
+    // Everything the helper already decided stays decided.
+    assert.equal(failed('OCR_MONTHLY_LIMIT_EXCEEDED'), false);
+    assert.equal(failed('OCR_EMPTY_OUTPUT'), true);
+    assert.equal(failed(), true);
+    assert.equal(isReceiptOcrRetryableFailure({ status: 'ok' }), false);
   });
 });

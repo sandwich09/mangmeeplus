@@ -5,6 +5,7 @@ export * from './expense-evidence.js';
 import {
   BUSINESS_DOCUMENT_KINDS,
   RECEIPT_ADDITIONAL_CHARGE_KINDS,
+  type AiBudgetScope,
   type BusinessDocumentClassification,
   type BusinessDocumentKind,
   type ReceiptOcrFieldResult,
@@ -20,6 +21,8 @@ export type ExpenseExtractionResult = {
   missingFields?: string[];
   classification?: BusinessDocumentClassification;
   errorCode?: string;
+  /** Set only when `errorCode` is one of `AI_BUDGET_REFUSAL_CODES` (spec §9.1). Never a money amount. */
+  budgetScope?: AiBudgetScope;
 };
 export type AiVerificationStatus = 'NOT_VERIFIED' | 'VERIFYING' | 'AI_VERIFIED' | 'PARTIAL' | 'NEEDS_REVIEW' | 'FAILED' | 'HUMAN_VERIFIED';
 export type DuplicateStatus = 'NOT_CHECKED' | 'NO_MATCH' | 'POSSIBLE_DUPLICATE' | 'CONFIRMED_DUPLICATE' | 'OVERRIDDEN';

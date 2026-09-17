@@ -1,6 +1,7 @@
 // ---- Item 13: Bank Accounts and Reconciliation ----
 
 import type { AiModelLineage, AiModelPolicy, AiUsageEntry } from './ai-lineage.js';
+import type { AiBudgetScope } from './line-ai.js';
 
 export type BankAccountStatus = 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
 
@@ -254,6 +255,8 @@ export type BankStatementAiExtractResponse = {
   modelId?: string;
   modelLineage?: AiModelLineage[];
   errorCode?: string;
+  /** Set only when `errorCode` is one of `AI_BUDGET_REFUSAL_CODES` (spec §9.1). */
+  budgetScope?: AiBudgetScope;
   /** One entry per model call the gateway made for this request; absent from an older gateway. */
   usage?: AiUsageEntry[];
 };

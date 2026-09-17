@@ -7,6 +7,7 @@
 // create any source-module draft record. LINE may request/summarize/deep-link only.
 
 import type { AiUsageEntry } from './ai-lineage.js';
+import type { AiBudgetScope } from './line-ai.js';
 
 // ---- Enums (string unions, repo convention) ----
 
@@ -280,7 +281,13 @@ export type AiDraftGenerationRequest = {
   wantsChecklist: boolean;
 };
 
-export type AiDraftGenerationError = { code: string; message: string; retryable: boolean };
+export type AiDraftGenerationError = {
+  code: string;
+  message: string;
+  retryable: boolean;
+  /** Set only when `code` is one of `AI_BUDGET_REFUSAL_CODES` (spec §9.1). */
+  budgetScope?: AiBudgetScope;
+};
 
 /** `usage` rides the intersection so both arms carry what the gateway measured (metering §7.1). */
 export type AiDraftGenerationResult = { usage?: AiUsageEntry[] } & (

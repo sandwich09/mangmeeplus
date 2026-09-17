@@ -308,3 +308,65 @@ describe('receipt quota latch', () => {
     assert.doesNotMatch(shown, /receipt_quota_exceeded/);
   });
 });
+
+/**
+ * Remediation spec §9.2 (web) / B-03. The company's monthly AI MONEY is not a flaky read: retrying it
+ * under a fresh request id only spends another admission against a gate that cannot open, and the
+ * saved reason of the attempt that WAS refused must be what a resumed page reports.
+ */
+describe('company AI money refusals on the upload screen', () => {
+  it('never re-reads against a closed money gate, but still retries plain contention', () => {
+    for (const errorCode of ['AI_MONTHLY_BUDGET_EXCEEDED', 'AI_BUDGET_INSUFFICIENT', 'AI_BUDGET_UNAVAILABLE']) {
+      assert.equal(expenseExtractionRetryMode({ status: 'failed', errorCode }), 'none', errorCode);
+    }
+    // Contention frees on its own; the one bounded retry this screen already performs is kept.
+    assert.equal(expenseExtractionRetryMode({ status: 'failed', errorCode: 'AI_BUDGET_BUSY' }), 'new_request');
+    // Unrelated failures keep the behaviour they had.
+    assert.equal(expenseExtractionRetryMode({ status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' }), 'new_request');
+  });
+
+  it('replays this attempt\'s own stored reason instead of asking today\'s budget', () => {
+    const attempt = { requestId: 'ocr-refused', attachmentId: 'att-1' };
+    const detail = {
+      aiVerificationSummaryJson: {
+        // An older read succeeded and still owns the top-level fields; the refusal is its own record.
+        status: 'OCR_EXTRACTED_NEEDS_REVIEW',
+        extractionRequestId: 'ocr-older',
+        extractionAttachmentId: 'att-1',
+        recognizedFields: { vendorName: 'ร้านเดิม' },
+        aiBudgetRefusal: {
+          errorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL',
+          extractionRequestId: 'ocr-refused', extractionAttachmentId: 'att-1',
+        },
+      },
+      attachments: [{ id: 'att-1', purpose: 'expense.receipt.primary', status: 'ACTIVE' }],
+    };
+
+    assert.deepEqual(recoveredExpenseExtraction(detail as any, attempt), {
+      status: 'failed', errorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL',
+    });
+    // A DIFFERENT attempt must not inherit it, and the older success is still recoverable by its id.
+    assert.equal(recoveredExpenseExtraction(detail as any, { requestId: 'ocr-other', attachmentId: 'att-1' }), null);
+    assert.deepEqual(recoveredExpenseExtraction(detail as any, { requestId: 'ocr-older', attachmentId: 'att-1' }), {
+      status: 'ok', fields: { vendorName: 'ร้านเดิม' },
+    });
+    // An unrecognised code is not turned into a refusal result.
+    const bogus = { ...detail, aiVerificationSummaryJson: { ...detail.aiVerificationSummaryJson, aiBudgetRefusal: { ...detail.aiVerificationSummaryJson.aiBudgetRefusal, errorCode: 'SOMETHING_ELSE' } } };
+    assert.equal(recoveredExpenseExtraction(bogus as any, attempt), null);
+  });
+
+  it('asks the server only once for a refused read', async () => {
+    const requestIds: string[] = [];
+    const outcome = await requestExpenseExtractionWithRecovery({
+      attempt: { requestId: 'ocr-budget', attachmentId: 'att-1' },
+      request: async (requestId: string) => {
+        requestIds.push(requestId);
+        return { status: 'failed', errorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' };
+      },
+      read: async () => { throw new Error('a refused read needs no recovery round trip'); },
+      wait: async () => undefined,
+    });
+    assert.deepEqual(requestIds, ['ocr-budget']);
+    assert.equal(expenseExtractionRetryMode(outcome.result), 'none', 'and the caller performs no second attempt');
+  });
+});

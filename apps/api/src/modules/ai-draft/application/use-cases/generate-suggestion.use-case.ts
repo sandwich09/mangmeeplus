@@ -3,7 +3,7 @@ import type { RequestContext, AiDraftGenerationResult, AiRiskLevel, AiSuggestion
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { RedisRateLimitService } from '../../../../common/security/redis-rate-limit.service';
-import { classifyAiUsageRequest, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../../line-ai/application/company-ai-usage-meter';
+import { classifyAiUsageRequest, companyAiBudgetRefusal, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../../line-ai/application/company-ai-usage-meter';
 import { PrismaAiDraftRepository } from '../../infrastructure/prisma-ai-draft.repository';
 import type { PersistCandidateActionInput } from '../../infrastructure/prisma-ai-draft.repository';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
@@ -134,15 +134,24 @@ export class GenerateSuggestionUseCase {
 
       // A real exhaustion is terminal. Admission contention is transient and stays in the
       // provider-unavailable retry lane; no model ran and no spend occurred for the refused job.
+      // Code and scope come from the one shared mapper (spec §9.1); only `retryable` and the
+      // operator message are decided here, because only this lane owns the job retry policy.
+      const refusal = admission.allowed ? null : companyAiBudgetRefusal(admission);
       const result: AiDraftGenerationResult = admission.allowed
         ? admission.value
         : {
           ok: false,
-          error: admission.reason === 'exceeded'
-            ? { code: 'AI_MONTHLY_BUDGET_EXCEEDED', message: 'Monthly AI budget exhausted for this company.', retryable: false }
-            : admission.reason === 'busy'
-              ? { code: 'AI_BUDGET_BUSY', message: 'Another AI action is being metered for this company.', retryable: true }
-              : { code: 'AI_BUDGET_UNAVAILABLE', message: 'AI budget meter is unavailable.', retryable: false },
+          error: {
+            code: refusal!.code,
+            budgetScope: refusal!.budgetScope,
+            message: admission.reason === 'exceeded'
+              ? 'Monthly AI budget exhausted for this company.'
+              : admission.reason === 'busy'
+                ? 'Another AI action is being metered for this company.'
+                : 'AI budget meter is unavailable.',
+            // Permanent money refusals are never re-queued; only lease contention is.
+            retryable: admission.reason === 'busy',
+          },
         };
 
       if (!result.ok) {

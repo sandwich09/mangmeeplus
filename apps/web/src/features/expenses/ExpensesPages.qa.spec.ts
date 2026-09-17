@@ -89,3 +89,33 @@ test('the document-date badge is rendered once per list layout, beside the late 
   assert.equal(dateBadges.length, lateBadges.length, 'exactly one date badge per layout that shows the late badge');
   assert.doesNotMatch(source, /<DocumentDateBadge[^>]*\/>\s*<DocumentDateBadge/, 'no row paints the same badge twice');
 });
+
+/**
+ * Remediation spec §9.2 (web) / B-03. `extractionNotice` lives in a .tsx module this runner cannot
+ * import, so the guard is on its source — the same technique the quota guards above use.
+ */
+test('the money-refusal notices are info, scope-aware, and never the generic failure', () => {
+  const notice = source.slice(source.indexOf('export function extractionNotice('), source.indexOf('// ── Upload Panel'));
+  for (const code of ['exceeded', 'insufficient', 'unavailable', 'busy']) {
+    assert.match(notice, new RegExp(`AI_BUDGET_REFUSAL_CODES\\.${code}`), `${code} needs its own branch`);
+  }
+  // Tone: nothing broke, so the banner must not shout in red.
+  const budgetSection = notice.slice(
+    notice.indexOf('AI_BUDGET_REFUSAL_CODES.exceeded'),
+    notice.lastIndexOf('  return {'),
+  );
+  assert.equal((budgetSection.match(/tone: 'info'/g) ?? []).length, 4, 'all four money reasons are info, not error');
+  assert.doesNotMatch(budgetSection, /tone: 'error'/);
+  assert.doesNotMatch(budgetSection, /expenses\.extract_failed/);
+  assert.doesNotMatch(budgetSection, /setTimeout|retry|request\(/i, 'no automatic retry is started from a notice');
+  // The scope decides the sentence only where the API can prove it.
+  assert.match(notice, /result\.budgetScope === 'OCR'/);
+});
+
+test('a refused read still leaves the draft reachable and the spinner cleared', () => {
+  // `finally` owns both spinners, so no refusal path can leave one turning.
+  assert.match(source, /finally \{ setLoading\(false\); setExtracting\(false\); \}/);
+  // The notice path ends in onSuccess, which carries the draft id — the file and draft survive.
+  assert.match(source, /notice = extractionNotice\(outcome\.result, locale\);/);
+  assert.match(source, /onSuccess\(intent\.expenseId, notice\);/);
+});
