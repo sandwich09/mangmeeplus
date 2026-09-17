@@ -7,6 +7,13 @@ const FIELDS: Array<[PartnerAiAdjustmentField, string, string, 'number'|'string'
   ['modelId','fromModelId','toModelId','string'], ['monthlyBudgetSatang','fromMonthlyBudgetSatang','toMonthlyBudgetSatang','number'],
   ['enabled','fromEnabled','toEnabled','boolean'], ['monthlyLimit','fromMonthlyLimit','toMonthlyLimit','number'],
   ['receiptQuotaEnforced','fromReceiptQuotaEnforced','toReceiptQuotaEnforced','boolean'],
+  // Split CHAT/OCR policy (spec §12.4). Scalars only, like every row above: the pending policy is
+  // audited as the compact string `<mode>:<chat>:<ocr>:<YYYY-MM>`, so scheduling one, editing it
+  // and cancelling it are each a plain before/after pair the number validator cannot reject.
+  ['budgetMode','fromBudgetMode','toBudgetMode','string'], ['chatMonthlyBudgetSatang','fromChatMonthlyBudgetSatang','toChatMonthlyBudgetSatang','number'],
+  ['ocrMonthlyBudgetSatang','fromOcrMonthlyBudgetSatang','toOcrMonthlyBudgetSatang','number'],
+  ['budgetConfigVersion','fromBudgetConfigVersion','toBudgetConfigVersion','number'],
+  ['pendingBudgetPolicy','fromPendingBudgetPolicy','toPendingBudgetPolicy','string'],
 ];
 
 /** Only known scalar fields cross the Admin read boundary; historic raw metadata never does. */

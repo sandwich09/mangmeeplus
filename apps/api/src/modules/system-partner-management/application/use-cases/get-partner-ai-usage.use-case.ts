@@ -18,6 +18,7 @@ import {
   previousBangkokMonthKey,
   resolvePlatformAiBudget,
 } from '../../../line-ai/application/company-ai-usage-meter';
+import { resolveAiBudgetPolicy, toPartnerAiBudgetPolicyDto } from '../../../line-ai/application/company-ai-budget-policy';
 
 const MONTH_SELECT = {
   monthKey: true,
@@ -225,6 +226,14 @@ export class GetPartnerAiUsageUseCase {
           receiptQuotaEnforced: true,
           ocrConfigVersion: true,
           updatedAt: true,
+          // Split policy (spec §12.5): read inside the SAME RepeatableRead snapshot as the spend
+          // it will be shown next to, so the console cannot quote a cap from one moment and the
+          // spend from another.
+          budgetMode: true,
+          chatMonthlyBudgetSatang: true,
+          ocrMonthlyBudgetSatang: true,
+          budgetConfigVersion: true,
+          pendingBudgetPolicy: true,
         },
       });
       // One grouped read feeds tags, kinds, buckets, basis, adjustments and coverage, so every
@@ -295,6 +304,14 @@ export class GetPartnerAiUsageUseCase {
         overrideSatang,
         defaultSatang,
         ceilingSatang: platform.ceilingSatang,
+        // The SAME resolver admission uses (spec §12.5) — the console can never describe a policy
+        // differently from the gate. `reserved`/`available` per bucket arrive in the next phase.
+        policy: toPartnerAiBudgetPolicyDto(resolveAiBudgetPolicy({
+          row: configuration,
+          totalSatang: overrideSatang ?? defaultSatang,
+          override: overrideSatang !== null,
+          monthKey,
+        }), this.config.aiBudgetSplitActivationEnabled === true),
       },
       topTags,
       otherTags,

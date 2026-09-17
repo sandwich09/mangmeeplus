@@ -15,6 +15,7 @@ import type { RedisRateLimitService } from '../../../common/security/redis-rate-
 import { SECURITY_EVENT, emitSecurityEvent } from '../../../common/logger/security-event';
 import { resolveThbPerUsd } from './ai-fx-rate';
 import { buildPricingSnapshot, computeCostSatang } from './ai-model-pricing';
+import { resolveAiBudgetPolicy, type CompanyAiBudgetPolicyRow } from './company-ai-budget-policy';
 
 const logger = new Logger('CompanyAiUsageMeter');
 
@@ -113,7 +114,9 @@ export type CompanyAiBudgetDecision =
   | { allowed: false; reason: 'busy'; retryAfterSeconds: number }
   | { allowed: false; reason: 'unavailable' };
 
-type EffectiveBudget = { budgetSatang: number; override: boolean };
+/** `policyRow` carries the split-policy columns as stored; resolving them needs a pinned month,
+ *  so it happens at the call site and never inside this month-agnostic cache entry. */
+type EffectiveBudget = { budgetSatang: number; override: boolean; policyRow?: CompanyAiBudgetPolicyRow };
 
 /**
  * Configuration may be cached for non-admission observations; paid AI admission bypasses it.
@@ -197,15 +200,24 @@ async function resolveEffectiveBudget(
 ): Promise<EffectiveBudget> {
   const now = Date.now();
   const cached = budgetCache.get(companyId);
-  if (!fresh && cached && cached.expiresAt > now) return { budgetSatang: cached.budgetSatang, override: cached.override };
+  if (!fresh && cached && cached.expiresAt > now) {
+    return { budgetSatang: cached.budgetSatang, override: cached.override, policyRow: cached.policyRow };
+  }
 
   const repository = (prisma.client as any).companyAiConfiguration as
-    | { findUnique(args: unknown): Promise<{ monthlyBudgetSatang: number | null } | null> }
+    | { findUnique(args: unknown): Promise<({ monthlyBudgetSatang: number | null } & CompanyAiBudgetPolicyRow) | null> }
     | undefined;
   // Same precedent as `resolveCompanyAiModelPolicy`: unit-test fakes predating the table omit
   // this delegate; the generated production client always exposes it. A *throwing* read is a
   // different thing and propagates to the caller's fail-closed handling.
-  const row = repository ? await repository.findUnique({ where: { companyId }, select: { monthlyBudgetSatang: true } }) : null;
+  // ONE select — the split-policy columns ride along with the total (spec §12.1), never a second query.
+  const row = repository ? await repository.findUnique({
+    where: { companyId },
+    select: {
+      monthlyBudgetSatang: true, budgetMode: true, chatMonthlyBudgetSatang: true,
+      ocrMonthlyBudgetSatang: true, budgetConfigVersion: true, pendingBudgetPolicy: true,
+    },
+  }) : null;
   const override = row?.monthlyBudgetSatang != null;
   const budgetSatang = override
     ? row!.monthlyBudgetSatang!
@@ -214,7 +226,7 @@ async function resolveEffectiveBudget(
   // `packages/config` dist is the known way that happens. Refuse loudly (the caller turns this
   // into `AI_BUDGET_UNAVAILABLE` plus a warn) rather than pass every call unmetered.
   if (!Number.isFinite(budgetSatang)) throw new Error('AI_MONTHLY_BUDGET_NOT_CONFIGURED');
-  const resolved: EffectiveBudget = { budgetSatang, override };
+  const resolved: EffectiveBudget = { budgetSatang, override, policyRow: row ?? {} };
 
   if (budgetCache.size > 10_000) {
     for (const [candidate, entry] of budgetCache) {
@@ -254,6 +266,24 @@ export async function assertCompanyAiBudget(
     spendSatang = row?.costSatang ?? 0; // no aggregate row yet = nothing spent this month
   } catch (err) {
     logger.warn({ msg: 'ai.budget.read_failed', companyId, error: (err as Error).message });
+    return { allowed: false, reason: 'unavailable' };
+  }
+
+  // Split policy gate (spec §12.1, ADR 0013 §5). SHARED — every company today — falls straight
+  // through to the legacy comparison below. A policy we cannot read, and a SPLIT policy, refuse:
+  // this bounded-overshoot path cannot honour a per-bucket cap, and the reservation engine that
+  // can only arrives in the next phase. Nothing is clamped and no amounts beyond the existing
+  // exceeded event are logged.
+  const policy = resolveAiBudgetPolicy({
+    row: budget.policyRow, totalSatang: budget.budgetSatang, override: budget.override, monthKey,
+  });
+  if (policy.invalidReason || policy.mode === 'SPLIT') {
+    logger.warn({
+      msg: 'ai.budget.policy_unavailable',
+      companyId,
+      monthKey,
+      reason: policy.invalidReason ?? 'split_admission_not_available',
+    });
     return { allowed: false, reason: 'unavailable' };
   }
 
