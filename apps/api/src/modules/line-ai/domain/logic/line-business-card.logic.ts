@@ -449,7 +449,7 @@ export function buildAiBudgetExceededMessage(
   const chatOnly = refusal?.budgetScope === 'CHAT';
   const what = chatOnly ? 'งบ AI ส่วนแชตของเดือนนี้' : 'โควตา AI ของแพ็กเกจเดือนนี้';
   const text = insufficient
-    ? `${chatOnly ? 'งบ AI ส่วนแชต' : 'งบ AI'}ที่เหลือของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ `
+    ? `${chatOnly ? 'งบ AI ส่วนแชตที่เหลือ' : 'งบ AI ที่เหลือ'}ของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ `
       + `${trialTier ? 'ช่วงทดลองมีงบให้ AI ช่วยตอบจำกัดต่อเดือน ' : ''}เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ`
     : trialTier
       ? `${what}ครบแล้วค่ะ ช่วงทดลองมีงบให้ AI ช่วยตอบจำกัดต่อเดือน เดือนหน้าเริ่มใหม่ `
