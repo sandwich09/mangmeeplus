@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { IntentRouterAgent, LINE_INTAKE_ROUTER_SYSTEM_PROMPT } from './intent-router.agent';
+import { IntentRouterAgent, LINE_INTAKE_ROUTER_SYSTEM_PROMPT, intakeRouterSystemPrompt } from './intent-router.agent';
 import { DisabledProvider } from '../infrastructure/provider/disabled.provider';
 import type { BusinessDocumentClassification, LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
@@ -51,8 +51,18 @@ describe('LINE intake router – routeIntake', () => {
     assert.equal(plan.status, 'ROUTED');
     assert.equal(plan.intent, 'SIGNATURE_UPLOAD_TICKET');
     assert.equal(capture.input?.images?.length, 1);
-    assert.equal(capture.input?.systemPrompt, LINE_INTAKE_ROUTER_SYSTEM_PROMPT);
+    // Cost benchmark R3 (2026-09-17): an attachment turn is asked for the DOCUMENT capture-hint
+    // schema, so the expected prompt is the image variant of the same legacy prompt. Everything else
+    // about it — routes, classification, documentText — is byte-identical to the text one.
+    assert.equal(capture.input?.systemPrompt, intakeRouterSystemPrompt({}, true));
     assert.match(LINE_INTAKE_ROUTER_SYSTEM_PROMPT, /multiple independent expense transactions/);
+    // R3 invariants: the document schema drops the fields the media path discards, and never touches
+    // the transcription contract.
+    const imagePrompt = intakeRouterSystemPrompt({}, true);
+    assert.ok(!imagePrompt.includes('"items": [{'), 'a document turn is not asked to itemise twice');
+    assert.match(imagePrompt, /Do NOT return vendorName, description, amount, expenseDate, vatMode, items or missingFields/);
+    assert.match(imagePrompt, /"documentText": "images only: the page transcribed verbatim as markdown/);
+    assert.ok(LINE_INTAKE_ROUTER_SYSTEM_PROMPT.includes('"items": [{'), 'a text capture still returns every item');
     const payload = JSON.parse(capture.input?.messages[0]?.text ?? '{}');
     assert.equal(payload.attachments[0]?.hasImageContent, true);
     assert.ok(!capture.input?.messages[0]?.text.includes('aW1n'), 'image bytes must not leak into the text payload');
