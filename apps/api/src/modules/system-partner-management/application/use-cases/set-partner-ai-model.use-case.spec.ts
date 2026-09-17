@@ -266,7 +266,10 @@ describe('SetPartnerAiModelUseCase', () => {
     const prisma = makePrisma({ existing: { modelId: APPROVED, monthlyBudgetSatang: 321 } });
     prisma.client.companyAiConfiguration.findUnique = async () => { throw new Error('Unprotected configuration read'); };
     await new SetPartnerAiModelUseCase(prisma, makeConfig()).execute(makeCmd({ monthlyBudgetSatang: 400,expectedMonthlyBudgetSatang:321 }));
-    assert.deepEqual(prisma.lockOrder, ['partner-ocr-config:co-1', 'company:co-1', 'platform-ai-budget']);
+    // Phase E1b appends the company-month budget lock LAST, after the platform one (spec §12.7).
+    assert.deepEqual(prisma.lockOrder, [
+      'partner-ocr-config:co-1', 'company:co-1', 'platform-ai-budget', `ai-budget:co-1:${bangkokMonthKey()}`,
+    ]);
     assert.equal(prisma.auditData().metadataJson.fromMonthlyBudgetSatang, 321);
     assert.equal(prisma.auditData().metadataJson.toMonthlyBudgetSatang, 400);
   });
@@ -610,7 +613,9 @@ const split = (over: Partial<PartnerAiBudgetPolicyInput> = {}): PartnerAiBudgetP
 });
 
 const BASE_ROW = {
-  modelId: null as string | null, monthlyBudgetSatang: null as number | null, updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+  // A company that can be put on SPLIT at all has its own approved model: the hold is priced from
+  // that model, so Phase E1b refuses a SPLIT result while `modelId` is null (own tests below).
+  modelId: APPROVED as string | null, monthlyBudgetSatang: null as number | null, updatedAt: new Date('2026-09-01T00:00:00.000Z'),
   budgetMode: 'SHARED', chatMonthlyBudgetSatang: null as number | null, ocrMonthlyBudgetSatang: null as number | null,
   budgetConfigVersion: 0, pendingBudgetPolicy: null as unknown,
 };
@@ -874,10 +879,35 @@ describe('SetPartnerAiModelUseCase — split budget policy', () => {
     ]);
   });
 
+  it('refuses a SPLIT result while the company has no model of its own — at SAVE time, not silently', async () => {
+    // Admission prices a hold from the company's OWN model, so a SPLIT company inheriting the
+    // platform default would refuse every AI call with AI_BUDGET_UNAVAILABLE. The operator has to
+    // find that out here, not from a shop that went quiet after a successful-looking save.
+    const noModel = makePolicyPrisma({ row: { modelId: null, monthlyBudgetSatang: 100 } });
+    await rejectsWith(run(noModel, { budgetPolicy: split() }), 'partner_ai_budget_split_requires_model');
+    assert.equal(noModel.row().pendingBudgetPolicy, null, 'nothing was written');
+
+    // ...and the same write that picks a model is accepted, so the operator is never trapped.
+    const fixed = makePolicyPrisma({ row: { modelId: null, monthlyBudgetSatang: 100 } });
+    await run(fixed, { budgetPolicy: split(), modelId: APPROVED, expectedModelId: null });
+    assert.equal(fixed.row().modelId, APPROVED);
+    assert.ok(fixed.row().pendingBudgetPolicy, 'the pending policy was saved alongside the model');
+  });
+
+  it('lets a SHARED company keep inheriting the platform default model', async () => {
+    const shared = makePolicyPrisma({ row: { modelId: null, monthlyBudgetSatang: 100 } });
+    const saved = await run(shared, { monthlyBudgetSatang: 200, expectedMonthlyBudgetSatang: 100 });
+    assert.equal(saved.modelId, null, 'the model gate is a SPLIT rule only');
+  });
+
   it('keeps the canonical lock order and refuses a locked company before any policy write', async () => {
     const state = makePolicyPrisma({ row: { monthlyBudgetSatang: 100 } });
     await run(state, { budgetPolicy: split() });
-    assert.deepEqual(state.lockOrder, ['partner-ocr-config:co-1', 'company:co-1', 'platform-ai-budget']);
+    // Phase E1b appends the company-month budget lock LAST — the same lock `reserveAiBudgetStep`
+    // and `settleAiBudgetStep` take, so a cap change and a live admission serialize (spec §12.7).
+    assert.deepEqual(state.lockOrder, [
+      'partner-ocr-config:co-1', 'company:co-1', 'platform-ai-budget', `ai-budget:co-1:${THIS_MONTH}`,
+    ]);
     for (const status of ['DISABLED', 'ARCHIVED']) {
       const locked = makePolicyPrisma({ row: { monthlyBudgetSatang: 100 }, status });
       await assert.rejects(run(locked, { budgetPolicy: split() }), UnprocessableEntityException);

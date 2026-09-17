@@ -31,6 +31,7 @@ import {
   assertCompanyAiBudget,
   bangkokMonthKey,
   classifyAiUsageRequest,
+  companyAiBudgetRefusal,
   recordCompanyAiCostAdjustment,
   recordCompanyAiUsage,
   resolvePlatformAiBudget,
@@ -1627,4 +1628,168 @@ describe('assertCompanyAiBudget split policy gate', () => {
       assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, `co-${name}`), { allowed: false, reason: 'unavailable' });
     });
   }
+});
+
+// ── Phase E1b: the shared refusal mapper and the bucket aggregate ────────────
+
+describe('companyAiBudgetRefusal with split scopes (spec §9.1, §12.3)', () => {
+  it('maps insufficient to AI_BUDGET_INSUFFICIENT and reports the scope that blocked', () => {
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'insufficient', spendSatang: 2_900, reservedSatang: 0, budgetSatang: 3_000, budgetScope: 'CHAT' }),
+      { code: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'CHAT' },
+    );
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'insufficient', spendSatang: 0, reservedSatang: 6_900, budgetSatang: 7_000, budgetScope: 'OCR' }),
+      { code: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'OCR' },
+    );
+  });
+
+  it('carries a bucket scope on exceeded too — a full CHAT must not be reported as the TOTAL', () => {
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'exceeded', spendSatang: 3_000, budgetSatang: 3_000, override: true, budgetScope: 'CHAT' }),
+      { code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'CHAT' },
+    );
+  });
+
+  it('keeps TOTAL for every SHARED refusal — byte-for-byte what the five seams see today', () => {
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'exceeded', spendSatang: 10, budgetSatang: 10, override: false }),
+      { code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' },
+    );
+    assert.deepEqual(companyAiBudgetRefusal({ allowed: false, reason: 'unavailable' }), { code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' });
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'busy', retryAfterSeconds: 3 }),
+      { code: 'AI_BUDGET_BUSY', budgetScope: 'TOTAL', retryAfterSeconds: 3 },
+    );
+  });
+});
+
+describe('recordCompanyAiUsage bucket aggregate (ADR 0013 §3)', () => {
+  /** The `fakePrisma` above predates the bucket table on purpose; this one has it. */
+  function bucketPrisma() {
+    const ops: Array<{ op: string; args: any }> = [];
+    const client = {
+      companyAiConfiguration: { findUnique: async () => null },
+      $transaction: async (fn: (tx: any) => Promise<any>) => fn({
+        aiUsageEvent: { createMany: async (args: any) => { ops.push({ op: 'createMany', args }); return { count: args.data.length }; } },
+        companyAiMonthlyUsage: { upsert: async (args: any) => { ops.push({ op: 'month', args }); return { costSatang: 347 }; } },
+        companyAiMonthlyBucketUsage: { upsert: async (args: any) => { ops.push({ op: 'bucket', args }); return {}; } },
+      }),
+    };
+    return { prisma: { client } as any, ops };
+  }
+
+  it('increments the bucket row in the SAME transaction, for a SHARED company too', async () => {
+    const { prisma, ops } = bucketPrisma();
+
+    await recordCompanyAiUsage(prisma, config, {
+      companyId: 'co-1', sourceRoute: 'receipt-ocr', monthKey: '2026-09',
+      ...classifyAiUsageRequest('receipt-ocr', 'image'),
+    }, [usage()]);
+
+    // Row order is FIXED across all three writers of these aggregates: month FIRST, then bucket.
+    // The reverse order would deadlock against a concurrent `settleAiBudgetStep` and LOSE usage.
+    assert.deepEqual(ops.map((o) => o.op), ['createMany', 'month', 'bucket']);
+    const bucket = ops.find((o) => o.op === 'bucket')!.args;
+    assert.deepEqual(bucket.where.companyId_monthKey_bucket, { companyId: 'co-1', monthKey: '2026-09', bucket: 'OCR' });
+    assert.deepEqual(bucket.update.costSatang, { increment: 347 });
+    assert.deepEqual(bucket.update.callCount, { increment: 1 });
+  });
+
+  it('writes no bucket row when the bucket is UNKNOWN — it is never guessed (spec §12.2)', async () => {
+    const { prisma, ops } = bucketPrisma();
+
+    await recordCompanyAiUsage(prisma, config, { companyId: 'co-1', sourceRoute: 'legacy-route' }, [usage()]);
+
+    assert.deepEqual(ops.map((o) => o.op), ['createMany', 'month']);
+  });
+
+  it('a fake that predates the bucket table still records — the aggregate is derived data', async () => {
+    const { prisma, transactions } = fakePrisma();
+
+    const spend = await recordCompanyAiUsage(prisma, config, {
+      companyId: 'co-1', sourceRoute: 'line-turn', ...classifyAiUsageRequest('line-turn', 'text'),
+    }, [usage()]);
+
+    assert.deepEqual(spend, { pre: 0, post: 347 });
+    assert.deepEqual(transactions[0]!.map((o) => o.op), ['createMany', 'upsert']);
+  });
+});
+
+describe('recordCompanyAiCostAdjustment bucket aggregate', () => {
+  /** Ledger fake WITH the bucket table, so both `count === 0` causes can be told apart. */
+  function bucketAdjustmentPrisma(bucketRow: { costSatang: number } | null) {
+    const monthAggregate = { costSatang: 1_000 };
+    const created: any[] = [];
+    let bucket = bucketRow;
+    const client = {
+      $transaction: async (fn: (tx: any) => Promise<any>) => fn({
+        aiUsageEvent: {
+          findUnique: async (args: any) => (args.where.correctionKey !== undefined
+            ? created.find((row) => row.correctionKey === args.where.correctionKey) ?? null
+            : {
+              id: 'evt-1', companyId: 'co-1', monthKey: '2026-09', sourceRoute: 'receipt-ocr',
+              usageTag: 'ocr.receipt.image-read', modelId: 'haiku', thbPerUsd: 33,
+              thbPerUsdSource: 'stored', requestKind: 'IMAGE', budgetBucket: 'OCR',
+              usageBasis: 'PROVIDER_REPORTED', requestId: 'req-1', eventKind: 'MODEL_CALL',
+            }),
+          create: async (args: any) => { created.push(args.data); return args.data; },
+        },
+        companyAiMonthlyUsage: {
+          updateMany: async (args: any) => {
+            const blocked = Object.entries(args.where)
+              .filter(([, v]) => typeof v === 'object' && v !== null && 'gte' in (v as any))
+              .some(([, v]) => monthAggregate.costSatang < (v as any).gte);
+            if (blocked) return { count: 0 };
+            monthAggregate.costSatang += (args.data.costSatang?.increment ?? 0);
+            return { count: 1 };
+          },
+        },
+        companyAiMonthlyBucketUsage: {
+          updateMany: async (args: any) => {
+            if (!bucket || bucket.costSatang < (args.where.costSatang?.gte ?? 0)) return { count: 0 };
+            bucket.costSatang += args.data.costSatang.increment;
+            return { count: 1 };
+          },
+          findUnique: async () => bucket,
+          upsert: async (args: any) => {
+            bucket = bucket ?? { costSatang: args.create.costSatang };
+            if (args.update) bucket.costSatang += args.update.costSatang.increment;
+            return bucket;
+          },
+        },
+      }),
+    };
+    return { prisma: { client } as any, month: monthAggregate, bucketRow: () => bucket, created };
+  }
+
+  it('moves the bucket row with the same non-negative guard as the month row', async () => {
+    const state = bucketAdjustmentPrisma({ costSatang: 500 });
+
+    assert.equal(await recordCompanyAiCostAdjustment(state.prisma, {
+      eventId: 'evt-1', correctionKey: 'c-1', costSatang: -120,
+    }), 'applied');
+    assert.equal(state.month.costSatang, 880);
+    assert.equal(state.bucketRow()!.costSatang, 380);
+  });
+
+  it('refuses when the bucket row EXISTS and the delta would take it negative', async () => {
+    const state = bucketAdjustmentPrisma({ costSatang: 50 });
+
+    assert.equal(await recordCompanyAiCostAdjustment(state.prisma, {
+      eventId: 'evt-1', correctionKey: 'c-2', costSatang: -120,
+    }), 'refused-negative');
+    assert.equal(state.created.length, 0, 'nothing is appended when the move is refused');
+  });
+
+  it('still applies when the bucket row is ABSENT — a row bucketed before the aggregate existed', async () => {
+    // The month total is the authoritative money and it moved; refusing a legitimate correction
+    // because a DERIVED aggregate happens to be missing would be the wrong direction.
+    const state = bucketAdjustmentPrisma(null);
+
+    assert.equal(await recordCompanyAiCostAdjustment(state.prisma, {
+      eventId: 'evt-1', correctionKey: 'c-3', costSatang: -120,
+    }), 'applied');
+    assert.equal(state.month.costSatang, 880);
+  });
 });

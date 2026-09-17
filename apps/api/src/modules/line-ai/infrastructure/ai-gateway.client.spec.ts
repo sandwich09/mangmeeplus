@@ -2,7 +2,9 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { HttpException } from '@nestjs/common';
 import type { LineAiTurnRequest } from '@watchdog-bms/contracts';
+import { AI_BUDGET_STEP_BOUNDS } from '@watchdog-bms/contracts';
 import { __resetCompanyAiBudgetCache } from '../application/company-ai-usage-meter';
+import { aiBudgetAttemptHash } from '../application/company-ai-budget-reservation';
 import { AiGatewayClient, AiGatewayRequestError } from './ai-gateway.client';
 
 const baseTurnRequest: LineAiTurnRequest = {
@@ -675,5 +677,273 @@ describe('AiGatewayClient monthly budget', () => {
     const next = await turnWith(meter.prisma);
     assert.ok(next.error instanceof HttpException);
     assert.equal(next.calls, 0);
+  });
+});
+
+// ── Phase E1b: SPLIT admission, envelopes and attempt identities ─────────────
+
+describe('AiGatewayClient SPLIT admission (spec §12.3/§12.6, ADR 0013 §4/§6)', () => {
+  const HAIKU = 'apac.anthropic.claude-3-haiku-20240307-v1:0';
+  const splitConfig = (over: Record<string, unknown> = {}) => ({
+    aiGatewayInternalUrl: 'http://ai-gateway.test/v1',
+    aiGatewayInternalSecret: 'workload-secret',
+    aiThbPerUsd: 33,
+    aiMonthlyBudgetSatang: 200_000,
+    approvedAiModelIds: [HAIKU],
+    isProduction: false,
+    ...over,
+  }) as any;
+  const delegation = { issue: () => 'signed' } as any;
+
+  /**
+   * Reservation-capable ledger fake. Only what the engine touches: a SPLIT config row, the two
+   * aggregates, and an in-memory reservation table with the unique invocation fence.
+   */
+  function splitPrisma(policy: { total: number; chat: number; ocr: number; spentChat?: number; spentOcr?: number }) {
+    const reservations = new Map<string, any>();
+    const events = new Map<string, any>();
+    const buckets = new Map<string, { costSatang: number; callCount: number }>();
+    const configRow = {
+      modelId: HAIKU, monthlyBudgetSatang: policy.total, budgetMode: 'SPLIT',
+      chatMonthlyBudgetSatang: policy.chat, ocrMonthlyBudgetSatang: policy.ocr,
+      budgetConfigVersion: 1, pendingBudgetPolicy: null,
+    };
+    buckets.set('CHAT', { costSatang: policy.spentChat ?? 0, callCount: 0 });
+    buckets.set('OCR', { costSatang: policy.spentOcr ?? 0, callCount: 0 });
+    const reservationDelegate = {
+      findUnique: async (args: any) => (args.where.invocationKey !== undefined
+        ? [...reservations.values()].find((r) => r.invocationKey === args.where.invocationKey) ?? null
+        : reservations.get(args.where.id) ?? null),
+      findFirst: async () => null,
+      groupBy: async () => [...new Set([...reservations.values()].map((r) => r.bucket))].map((bucket) => ({
+        bucket, status: 'RESERVED',
+        _sum: { upperBoundSatang: [...reservations.values()]
+          .filter((r) => r.bucket === bucket && ['RESERVED', 'DISPATCHED', 'UNRESOLVED'].includes(r.status))
+          .reduce((sum, r) => sum + r.upperBoundSatang, 0) },
+        _count: { _all: 1 },
+      })),
+      count: async () => 0,
+      create: async (args: any) => {
+        if ([...reservations.values()].some((r) => r.invocationKey === args.data.invocationKey)) throw new Error('unique');
+        const row = { id: `res-${reservations.size + 1}`, ...args.data };
+        reservations.set(row.id, row);
+        return { id: row.id };
+      },
+      update: async (args: any) => Object.assign(reservations.get(args.where.id), args.data),
+      updateMany: async (args: any) => {
+        const matched = [...reservations.values()].filter((r) =>
+          (args.where.id === undefined || r.id === args.where.id)
+          && (args.where.ownerToken === undefined || r.ownerToken === args.where.ownerToken)
+          && (args.where.status === undefined
+            || (typeof args.where.status === 'string' ? r.status === args.where.status : args.where.status.in.includes(r.status)))
+          && args.where.createdAt === undefined && args.where.dispatchedAt === undefined);
+        for (const row of matched) Object.assign(row, args.data);
+        return { count: matched.length };
+      },
+    };
+    const tx = {
+      $executeRaw: async () => 0,
+      companyAiConfiguration: { findUnique: async () => configRow },
+      platformAiBudgetConfig: { findUnique: async () => null },
+      aiBudgetReservation: reservationDelegate,
+      companyAiMonthlyUsage: {
+        findUnique: async () => ({ costSatang: (policy.spentChat ?? 0) + (policy.spentOcr ?? 0) }),
+        upsert: async () => ({ costSatang: 0 }),
+      },
+      companyAiMonthlyBucketUsage: {
+        findUnique: async (args: any) => buckets.get(args.where.companyId_monthKey_bucket.bucket) ?? null,
+        upsert: async () => ({}),
+      },
+      aiUsageEvent: {
+        findUnique: async (args: any) => events.get(args.where.invocationKey) ?? null,
+        create: async (args: any) => { events.set(args.data.invocationKey, args.data); return args.data; },
+        createMany: async (args: any) => ({ count: args.data.length }),
+      },
+    };
+    const client = {
+      ...tx,
+      $transaction: async (fn: (t: any) => Promise<any>) => fn(tx),
+    };
+    return { prisma: { client } as any, reservations, events };
+  }
+
+  /** Captures the body the client actually puts on the wire. */
+  function captureFetch(response: unknown, ok = true) {
+    const bodies: any[] = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = async (_url: any, init: any) => {
+      bodies.push(JSON.parse(init.body));
+      return { ok, status: ok ? 200 : 400, json: async () => response } as Response;
+    };
+    return { bodies, restore: () => { globalThis.fetch = original; } };
+  }
+
+  beforeEach(__resetCompanyAiBudgetCache);
+
+  const turnRequest = (over: Record<string, unknown> = {}): LineAiTurnRequest => ({
+    requestId: 'transport-1', webhookEventId: 'evt-9001',
+    userContext: { lineUserId: '[REDACTED]', internalUserId: 'u1', companyId: 'company-1',
+      membershipId: 'm1', permissions: [], roles: ['INVENTORY'], locale: 'th-TH' } as any,
+    // The live webhook path resolves this before building the request (`process-line-webhook`
+    // :4801); under SPLIT it is what the envelope pins the model to.
+    modelPolicy: { modelId: HAIKU }, messageText: 'ยอดขายวันนี้', messagePreviewHash: 'hash', ...over,
+  });
+
+  const usageRow = { tag: 'line.loop', modelId: HAIKU, ok: true, inputTokens: 100, outputTokens: 10,
+    cacheReadInputTokens: 0, cacheWriteInputTokens: 0, usageBasis: 'PROVIDER_REPORTED' };
+
+  it('puts the bounded envelope on the wire and settles the invocation it names', async () => {
+    const { prisma, reservations, events } = splitPrisma({ total: 100_000, chat: 50_000, ocr: 50_000 });
+    const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
+    const fetchStub = captureFetch({ requestId: 'transport-1', usage: [usageRow] });
+    try {
+      await client.requestLineTurn(turnRequest());
+    } finally { fetchStub.restore(); }
+
+    const envelope = fetchStub.bodies[0].budgetEnvelope;
+    assert.ok(envelope, 'the request carries a budgetEnvelope');
+    assert.equal(envelope.stepKind, 'line-turn');
+    assert.equal(envelope.bucket, 'CHAT');
+    assert.equal(envelope.modelId, HAIKU);
+    assert.equal(envelope.maxCalls, AI_BUDGET_STEP_BOUNDS['line-turn'].maxCalls);
+    assert.deepEqual(envelope.bounds, AI_BUDGET_STEP_BOUNDS['line-turn']);
+    // The fencing token is API-only and must NEVER ride on the wire.
+    assert.equal(JSON.stringify(fetchStub.bodies[0]).includes('ownerToken'), false);
+
+    const hold = [...reservations.values()][0];
+    assert.equal(hold.status, 'SETTLED', 'the hold is closed by the invocation evidence');
+    assert.equal(events.size, 1);
+    assert.equal([...events.values()][0].budgetBucket, 'CHAT');
+    assert.equal([...events.values()][0].invocationKey, envelope.invocationKey);
+  });
+
+  it('derives the attempt key from the ORIGINAL webhook event, hashed — never the transport id', async () => {
+    const { prisma, reservations } = splitPrisma({ total: 100_000, chat: 50_000, ocr: 50_000 });
+    const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
+    const fetchStub = captureFetch({ requestId: 'transport-1', usage: [usageRow] });
+    try {
+      await client.requestLineTurn(turnRequest());
+    } finally { fetchStub.restore(); }
+
+    const hold = [...reservations.values()][0];
+    assert.equal(hold.attemptKey, `line-text:${aiBudgetAttemptHash('evt-9001')}`);
+    assert.equal(hold.attemptKey.includes('transport-1'), false, 'the transport id is not the attempt');
+    assert.equal(hold.attemptKey.includes('evt-9001'), false, 'the raw LINE id is hashed');
+    assert.equal(hold.invocationKey, `company-1#${hold.attemptKey}#line-turn#0`);
+  });
+
+  it('a drain reclaim is the same webhook event at the next retry ordinal (R-03)', async () => {
+    const { prisma, reservations } = splitPrisma({ total: 100_000, chat: 50_000, ocr: 50_000 });
+    const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
+    const fetchStub = captureFetch({ requestId: 'transport-2', usage: [usageRow] });
+    try {
+      await client.requestLineTurn(turnRequest(), { retryOrdinal: 2 });
+    } finally { fetchStub.restore(); }
+
+    const hold = [...reservations.values()][0];
+    assert.equal(hold.attemptKey, `line-text:${aiBudgetAttemptHash('evt-9001')}:r2`);
+  });
+
+  it('a CHAT-exhausted company gets AI_MONTHLY_BUDGET_EXCEEDED scoped to CHAT and no provider call', async () => {
+    // CHAT is spent to its cap; OCR is untouched. The refusal must name CHAT, not the TOTAL.
+    const { prisma } = splitPrisma({ total: 100_000, chat: 1_000, ocr: 50_000, spentChat: 1_000 });
+    const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
+    const fetchStub = captureFetch({});
+    let error: unknown;
+    try {
+      await client.requestLineTurn(turnRequest());
+    } catch (err) { error = err; } finally { fetchStub.restore(); }
+
+    assert.ok(error instanceof HttpException);
+    assert.deepEqual(error.getResponse(), { code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'CHAT' });
+    assert.equal(fetchStub.bodies.length, 0, 'no provider call on a money refusal');
+  });
+
+  it('a near-limit CHAT says AI_BUDGET_INSUFFICIENT, never "full" (E-06)', async () => {
+    // Money is LEFT (1 satang under the line-turn bound), so this is insufficient, not exceeded.
+    const bound = 44; // haiku 'line-turn' at FX 33, from the asserted feasibility table
+    const { prisma } = splitPrisma({ total: 100_000, chat: bound + 1, ocr: 50_000, spentChat: 2 });
+    const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
+    const fetchStub = captureFetch({});
+    let error: unknown;
+    try {
+      await client.requestLineTurn(turnRequest());
+    } catch (err) { error = err; } finally { fetchStub.restore(); }
+
+    assert.ok(error instanceof HttpException);
+    assert.deepEqual(error.getResponse(), { code: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'CHAT' });
+  });
+
+  it('an OCR-insufficient image intake reports the OCR scope while CHAT stays open (E-02)', async () => {
+    const { prisma } = splitPrisma({ total: 100_000, chat: 50_000, ocr: 10, spentOcr: 1 });
+    const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
+    const fetchStub = captureFetch({});
+    let error: unknown;
+    try {
+      await client.requestLineIntakeRoute({
+        requestId: 'intake-1', companyId: 'company-1', userId: 'u1', locale: 'th', messageText: '',
+        permissions: [],
+        attachments: [{ id: 'line-msg-77', mimeType: 'image/jpeg', contentBase64: 'AAA', purpose: 'receipt' }],
+      } as any);
+    } catch (err) { error = err; } finally { fetchStub.restore(); }
+
+    assert.ok(error instanceof HttpException);
+    assert.deepEqual(error.getResponse(), { code: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'OCR' });
+    assert.equal(fetchStub.bodies.length, 0);
+  });
+
+  it('a SPLIT turn with no pinned model cannot start — never an unmetered pass (F-07)', async () => {
+    const { prisma } = splitPrisma({ total: 100_000, chat: 50_000, ocr: 50_000 });
+    const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
+    const fetchStub = captureFetch({});
+    let error: unknown;
+    try {
+      // A company inheriting the platform default model: the API cannot name it, so the envelope
+      // cannot pin it and the reservation refuses rather than holding money for an unknown model.
+      await client.requestLineTurn(turnRequest({ modelPolicy: undefined }));
+    } catch (err) { error = err; } finally { fetchStub.restore(); }
+
+    assert.ok(error instanceof HttpException);
+    assert.deepEqual(error.getResponse(), { code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' });
+    assert.equal(fetchStub.bodies.length, 0);
+  });
+
+  it('R-05: an OCR count refusal releases the hold; a retryable provider failure does NOT', async () => {
+    const receipt = {
+      requestId: 'ocr-1', companyId: 'company-1', userId: 'u1', activeCategories: [],
+      attachment: { id: 'line-msg-88', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'AAA' },
+    } as any;
+
+    // (a) the count gate refuses BEFORE any HTTP call -> proven no provider -> the hold is cancelled.
+    const refusedCount = splitPrisma({ total: 100_000, chat: 50_000, ocr: 50_000 });
+    const clientA = new AiGatewayClient(splitConfig(), delegation, undefined, refusedCount.prisma);
+    const fetchA = captureFetch({});
+    try {
+      // `ocrEnabled: false` on the configuration row is the switch `admitCompanyOcr` refuses on.
+      refusedCount.prisma.client.companyAiConfiguration.findUnique = async () => ({
+        modelId: HAIKU, monthlyBudgetSatang: 100_000, budgetMode: 'SPLIT',
+        chatMonthlyBudgetSatang: 50_000, ocrMonthlyBudgetSatang: 50_000,
+        budgetConfigVersion: 1, pendingBudgetPolicy: null, ocrEnabled: false,
+      });
+      const result = await clientA.requestReceiptOcr(receipt);
+      // The count/switch gate answered with its OWN vocabulary (this fake has no OCR tables, so it
+      // is the unavailable branch); what matters is that it refused BEFORE the HTTP call.
+      assert.ok(['OCR_FEATURE_DISABLED', 'OCR_QUOTA_UNAVAILABLE'].includes(result.errorCode!), result.errorCode);
+    } finally { fetchA.restore(); }
+    assert.equal(fetchA.bodies.length, 0, 'the count gate refused before the HTTP call');
+    assert.equal([...refusedCount.reservations.values()][0].status, 'CANCELLED');
+    assert.equal([...refusedCount.reservations.values()][0].evidenceJson.proof, 'ocr_admission_refused');
+
+    // (b) the provider RAN and failed retryably: the read count is refunded, the money is not.
+    const failedProvider = splitPrisma({ total: 100_000, chat: 50_000, ocr: 50_000 });
+    const clientB = new AiGatewayClient(splitConfig(), delegation, undefined, failedProvider.prisma);
+    const fetchB = captureFetch({ status: 'failed', errorCode: 'OCR_EXTRACTION_EMPTY', usage: [usageRow] });
+    try {
+      await clientB.requestReceiptOcr(receipt, { ocrAlreadyAdmitted: true });
+    } finally { fetchB.restore(); }
+    assert.equal(fetchB.bodies.length, 1, 'the provider was called');
+    const hold = [...failedProvider.reservations.values()][0];
+    assert.notEqual(hold.status, 'CANCELLED', 'a provider failure NEVER refunds money (R-05)');
+    assert.equal(hold.status, 'SETTLED', 'it settles against the usage the gateway reported');
   });
 });

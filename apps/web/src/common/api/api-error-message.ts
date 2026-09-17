@@ -54,6 +54,13 @@ const CODE_LABELS: Record<string, string> = {
   partner_ai_budget_split_requires_next_month: 'บริษัทนี้มีค่าใช้จ่าย AI ในเดือนนี้แล้ว ให้ตั้งแยกเพดานให้มีผลเดือนถัดไป',
   partner_ai_budget_mode_change_next_month_only: 'การกลับไปใช้งบรวมก้อนเดียวทำได้เฉพาะเดือนถัดไป กรุณาเลือกเดือนที่เริ่มใช้เป็นเดือนถัดไป',
   partner_ai_budget_cap_below_bucket_spend: 'เพดานใหม่ต่ำกว่ายอดที่ส่วนนั้นใช้ไปแล้วในเดือนนี้ ให้ตั้งเพดานที่ลดลงให้มีผลเดือนถัดไป',
+  // Phase E1b: a split hold is priced from the company's own model, so SPLIT is unusable without
+  // one. Refused at SAVE time rather than letting the shop go quiet afterwards.
+  partner_ai_budget_split_requires_model: 'โหมดแยกเพดานต้องเลือกโมเดล AI ของบริษัทก่อน เพราะวงเงินจองคิดจากราคาของโมเดลนั้น กรุณาเลือกโมเดลในช่องด้านบนแล้วบันทึกพร้อมกัน',
+  // Phase E1b sibling of the line above: the new TOTAL is below what this company has already
+  // spent PLUS what is currently reserved for AI calls in flight this month. Nothing is clamped —
+  // the operator raises the total, or waits for the reserved amount to settle.
+  partner_ai_budget_total_below_committed: 'งบรวมใหม่ต่ำกว่ายอดที่ใช้ไปแล้วบวกยอดที่จองไว้ของเดือนนี้ กรุณาตั้งงบรวมให้ไม่น้อยกว่ายอดใช้บวกยอดจอง หรือรอให้รายการที่จองไว้เสร็จก่อน',
   platform_ai_budget_default_below_split_allocation: 'งบเริ่มต้นใหม่ต่ำกว่าผลรวมเพดานของบริษัทที่ใช้งบเริ่มต้น กรุณาแก้เพดานของบริษัทเหล่านั้น หรือตั้งงบเฉพาะบริษัทก่อนลดงบเริ่มต้น',
   CONTROL_OFFER_RECEIPTS_INVALID: 'ตรวจจำนวนใบเสร็จของแพ็กเกจ กรอกจำนวนเต็มตั้งแต่ 1 ถึง 178,956,970 ใบต่อรอบเดือน รายปีคูณ 12 ให้อัตโนมัติ',
   CONTROL_OFFER_PRICE_INVALID: 'ตรวจราคาของแพ็กเกจ ยอดรวมภาษีต้องอยู่ระหว่าง 10 ถึง 999,999.99 บาท และทศนิยมไม่เกิน 2 ตำแหน่ง',

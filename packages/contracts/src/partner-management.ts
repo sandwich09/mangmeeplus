@@ -220,6 +220,24 @@ export type PartnerAiBudgetPolicyDto = {
   splitActivationEnabled: boolean;
 };
 
+/** One scope's money position. `available` is `cap - spent - reserved`, floored at 0. */
+export type PartnerAiBudgetScopePositionDto = {
+  spentSatang: number;
+  reservedSatang: number;
+  /** `null` under SHARED for a BUCKET: there is no cap to subtract from, not "unlimited". */
+  availableSatang: number | null;
+};
+
+export type PartnerAiBudgetPositionDto = {
+  total: PartnerAiBudgetScopePositionDto;
+  chat: PartnerAiBudgetScopePositionDto;
+  ocr: PartnerAiBudgetScopePositionDto;
+  /** Holds whose provider outcome is still unknown; they keep counting until evidence closes them. */
+  unresolvedHolds: number;
+  /** An actual settled above its reserved bound — admission for that scope is closed (spec §12.3). */
+  breach: boolean;
+};
+
 export const PARTNER_ADJUSTMENT_REASON_MAX_LENGTH = 500;
 export function partnerAdjustmentReason(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= PARTNER_ADJUSTMENT_REASON_MAX_LENGTH
@@ -334,10 +352,15 @@ export type PartnerAiUsageDto = {
     ceilingSatang: number;
     /**
      * The effective CHAT/OCR policy for the current Bangkok month (spec §12.5), resolved by the
-     * same function admission uses. Spend per bucket already lives in `breakdown.byBudgetBucket`;
-     * `reserved`/`available` per bucket are added here in the reservation phase without renaming.
+     * same function admission uses.
      */
     policy: PartnerAiBudgetPolicyDto;
+    /**
+     * Live money position for the current Bangkok month (spec §12.3, ADR 0013 §10). `spent` is the
+     * bucket aggregate — the same number admission compares — and `reserved` is the live sum of
+     * non-terminal holds, so the console can say "not enough left" without ever calling it "full".
+     */
+    position: PartnerAiBudgetPositionDto;
   };
   /** Current month's spend by `usageTag`, highest first, at most 10 rows. */
   topTags: Array<{ tag: string } & PartnerAiUsageMeasuresDto>;

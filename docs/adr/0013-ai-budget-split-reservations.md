@@ -90,3 +90,111 @@ Saving `mode: SPLIT` (active or pending) is refused with a typed error unless th
 - One extra internal HTTP call per provider step, SPLIT companies only.
 - Crashes convert holds into `UNRESOLVED` until reconciled — deliberate: money is never released on a timer.
 - The byte-length input bound is loose (roughly 2–4× for Thai). The bound table is data; it can be tightened with measured evidence without changing the mechanism.
+
+## 11. Implementation notes (E1b)
+
+What this ADR left open, and what the implementation decided. Two of these deviate from the text
+above on purpose; both are marked.
+
+1. **The invocation key is company-scoped — DEVIATION from §4.** `invocationKey` is
+   `<companyId>#<attemptKey>#<stepKind>#<ordinal>`, not `<attemptKey>#<stepKind>#<ordinal>`. The
+   fence behind it (`AiUsageEvent.invocationKey` and `AiBudgetReservation.invocationKey`) is a
+   GLOBAL unique index, so an unscoped key lets one company's attempt key claim the fence another
+   company needs — a cross-tenant refusal driven by a tenant's own identifier. The company id is not
+   personal data and the gateway already holds it, so scoping costs nothing. Caught by a real-DB
+   test whose two companies collided on the same attempt key.
+2. **One step kind per provider CHAIN — reading of §3.** §3 lists the receipt sub-steps
+   (`read / extract / extract-repair / image-reread`) and gives the chain a single
+   `maxCalls = AI_RECEIPT_OCR_MAX_PROVIDER_CALLS`. Those two only reconcile if the step kind names
+   the chain and the ordinal names the call, which is also the only shape
+   `POST /internal/ai/budget-step` can validate (`0 <= ordinal < maxCalls`). So `maxOutputTokens` is
+   the MAXIMUM `maxTokens` across the calls a chain can make, and the research doc records each call
+   it covers with `file:line`.
+3. **A SPLIT company must have an explicit approved `modelId`, and the admin learns it at SAVE
+   time.** The API cannot name the gateway's own default model, so it cannot pin one into the
+   envelope; a SPLIT company whose `CompanyAiConfiguration.modelId` is null is refused at admission
+   with `AI_BUDGET_UNAVAILABLE` (`model_unknown`). A fail-closed gate is only half the answer — a
+   shop that goes quiet after a save the operator was told succeeded is the failure mode. So
+   `SetPartnerAiModelUseCase` also refuses any write whose RESULT is an active or pending SPLIT
+   policy while the resulting `modelId` is null (`partner_ai_budget_split_requires_model`, object
+   form, Thai text in the web map). The same request may set the model and the policy together, so
+   the operator is never trapped. One gate suffices because `modelId` can only be SET through this
+   writer: `null` is not in `approvedAiModelIds` so its own check rejects it,
+   `set-partner-ocr-config.use-case.ts` writes `modelId: null` only in its CREATE branch (a fresh
+   row is null anyway) and never in its update, and `provision-signup.use-case.ts` upserts with
+   `update: {}`.
+4. **`already_claimed` is mapped, not invented.** A duplicate invocation returns a typed
+   `already_claimed` carrying the existing row's status. The meter maps `RESERVED`/`DISPATCHED` to
+   `AI_BUDGET_BUSY` (another execution owns it; the LINE lanes already retry that, bounded) and any
+   terminal status to `AI_BUDGET_UNAVAILABLE`. It is never a second provider execution.
+5. **Sweep constants.** `RESERVED` older than **10 minutes** ⇒ `CANCELLED` with evidence
+   `never_dispatched`; `DISPATCHED` older than **30 minutes** ⇒ `UNRESOLVED` (never released). The
+   second is strictly greater than the longest caller timeout (195s receipt OCR) plus the 180s
+   admission lease. The sweep is lazy: it runs inside the next reserve transaction for that
+   company-month only.
+6. **Provider evidence is NEVER dropped, whatever the hold's status (revised).** The first cut
+   refused evidence for a `RESERVED` or `CANCELLED` row with `invalid-state`, which meant real
+   provider cost went unrecorded — the "usage หาย" failure spec §12.6 exists to prevent. Now:
+   `SETTLED` or an existing event ⇒ `duplicate`; `DISPATCHED`/`UNRESOLVED` ⇒ settle; `RESERVED`
+   (the dispatch mark was lost) or `CANCELLED` (a cancel proof was wrong) ⇒ settle in FULL, mark
+   the row `SETTLED` with `evidenceJson.anomaly.previousStatus`, return the distinct
+   `settled-anomaly`, and raise one HIGH event `evidence_for_<status>_hold` after commit. Malformed
+   evidence still settles nothing and leaves the hold. The reservation is also re-read AFTER the
+   company-month lock is taken (a locator read supplies the lock key only), so the status check can
+   never run on a row a concurrent cancel or settle has already moved.
+7. **Settlement prices the actual at the reservation's PINNED FX**, never at a fresh rate, so the
+   hold and the settlement are comparable and history is never re-priced.
+8. **Cancellation is structurally separated from the OCR count refund (R-05).**
+   `cancelAiBudgetStep` needs an explicit `proof` from a closed union and the reservation's owner
+   token; `releaseCompanyOcrAdmission` takes neither and cannot reach a reservation. The seams call
+   it only for a refused OCR admission (`ocr_admission_refused`) or one of the exact pre-provider
+   refusal shapes (`gateway_pre_provider_refusal`).
+9. **Lock order as implemented.** `partner-ocr-config:<company>` → *(plan-term `SELECT … FOR UPDATE`
+   where the action needs it)* → `platform-ai-budget` → `ai-budget:<company>:<pinned month>`.
+   `settle` and `cancel` take only the last; the admin writers take all of them in that order (the
+   `ai-budget` one added by this phase). **`reserve` takes `platform-ai-budget` only when the
+   company INHERITS the platform default** — it is a platform-WIDE lock, and taking it on every
+   reservation of every SPLIT company would serialise unrelated tenants behind one another. A
+   company with its own `monthlyBudgetSatang` override cannot be affected by the platform writer at
+   all, so it skips the lock; the canonical order is preserved either way.
+
+9b. **Fixed aggregate row order across all three writers.** `recordCompanyAiUsage`,
+   `settleAiBudgetStep` and `recordCompanyAiCostAdjustment` all touch `CompanyAiMonthlyUsage` FIRST
+   and the bucket row second (CHAT before OCR when both). `recordCompanyAiUsage` holds no
+   `ai-budget:` lock, so for one SPLIT company a settle on one lane and a recording on another
+   really do run concurrently; the original code took the two rows in opposite orders, which
+   Postgres resolves by killing one transaction — and the victim's usage is warned about, never
+   retried, so it would be LOST. Proven with 50 concurrent rounds on real PostgreSQL.
+10. **The bucket aggregate is derived data with a tolerant delegate.** `upsertBucketUsage` and
+    `readAiBudgetMonthSnapshot` skip the table when a (unit-test) client does not expose it, the
+    `resolveEffectiveBudget` precedent. The authoritative money stays the `AiUsageEvent` rows and
+    the month total written in the same transaction.
+11. **`requestKind` is pinned on the hold.** `budget-settle` carries no `requestKind` — the gateway
+    never classifies a request — so without this every gateway-settled invocation would land as
+    UNKNOWN and the month would read "partial coverage" forever for SPLIT companies. The
+    server-derived value is stored on `AiBudgetReservation.requestKind` at reserve time (nullable,
+    CHECKed), inherited by `budget-step` children from their ordinal-0 parent, and used by
+    `settleAiBudgetStep` whenever the caller supplies none.
+
+12. **`budget-step` refuses a dead parent.** The ordinal-0 row of that attempt/step kind is looked
+    up by its unique invocation key; if it is `CANCELLED`, nothing may continue a chain whose first
+    call was proven never to start, and the answer is `AI_BUDGET_UNAVAILABLE`.
+
+13. **API-side settlement of a multi-entry response.** Until E1c has the gateway settle each of its
+    own invocations, a response carrying several usage entries settles the FIRST against the
+    envelope and records the rest through the normal metering path with no `invocationKey`, warning
+    `ai.budget.unenveloped_chain_usage`. Nothing is dropped; the remainder is metered but unheld.
+
+## 12. Residuals for E1c and beyond
+
+- `TIMEOUT_INPUT_TOKEN_CEILING = 200_000` (`bedrock.provider.ts:21`) is above every declared input
+  bound, so a SPLIT timeout would settle above its hold and trip the breach path. Spec §12.3
+  requires this to be covered by the reservation or the accounting fixed first. **E1c blocker.**
+- `LineIntakeRouteRequest` carries no webhook event id, so a TEXT intake's attempt key is derived
+  from its transport request id. A LINE redelivery under a new request id would buy a second hold.
+  Closing it needs a contract field.
+- A breach closes its scope until an operator clears `AiBudgetReservation.breach`; there is no
+  operator surface for that yet (the flag is cleared by hand).
+- No reconciliation surface for `UNRESOLVED` holds beyond the count in the admin read.
+- A `settled-anomaly` closes the hold and records the money, but there is no operator workflow for
+  reviewing those rows beyond the HIGH security event and `evidenceJson.anomaly`.

@@ -18,6 +18,7 @@ import {
   type AiBudgetPendingPolicy,
   type CompanyAiBudgetPolicyRow,
 } from '../../../line-ai/application/company-ai-budget-policy';
+import { readAiBudgetMonthSnapshot } from '../../../line-ai/application/company-ai-budget-reservation';
 import { partnerMetadataLockError } from '../../domain/logic/partner-lock.logic';
 import { lockPlanTermCompany } from '../lock-plan-term-company';
 
@@ -230,6 +231,10 @@ export class SetPartnerAiModelUseCase {
       const nextOverride = setsBudget ? budget ?? null : existing?.monthlyBudgetSatang ?? null;
       if (needsTotal) {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'platform-ai-budget'}))`;
+        // Canonical order (spec §12.7), taken LAST: this is the lock `reserveAiBudgetStep` and
+        // `settleAiBudgetStep` hold, so a cap change and a live admission serialize instead of
+        // reading different policy states. Same order in both, therefore no deadlock (R-06).
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai-budget:${cmd.companyId}:${monthKey}`}))`;
         const platform = await resolvePlatformAiBudget({ client: tx } as PrismaService, this.config, true);
         // The ceiling gates new writes; an exact replay above a later-lowered ceiling stays a no-op.
         if (setsBudget && budget != null && budget > platform.ceilingSatang) throw new UnprocessableEntityException(
@@ -259,6 +264,29 @@ export class SetPartnerAiModelUseCase {
         }
       }
 
+      // A SPLIT hold is priced from the company's OWN model (the envelope has to pin one), so a
+      // company inheriting the platform default model refuses every AI call with
+      // `AI_BUDGET_UNAVAILABLE`. The operator must learn that HERE, at save time, not from a shop
+      // that went quiet after a save they were told succeeded.
+      //
+      // `modelId` can only be SET through this writer, never cleared: `null` is not in
+      // `approvedAiModelIds` so the check above rejects it, `set-partner-ocr-config.use-case.ts`
+      // writes `modelId: null` only in its CREATE branch (a fresh row is null anyway) and never in
+      // its update, and `provision-signup.use-case.ts` upserts with `update: {}`. So this one gate
+      // is enough — there is no other path that could null the model under a SPLIT policy.
+      const nextModelId = setsModel ? cmd.modelId ?? null : existing?.modelId ?? null;
+      if (nextModelId === null && (nextActive.mode === 'SPLIT' || nextPending?.mode === 'SPLIT')) {
+        throw new UnprocessableEntityException({
+          code: 'partner_ai_budget_split_requires_model',
+          message: 'partner_ai_budget_split_requires_model',
+        });
+      }
+
+      // Committed + held money for this company-month, read under the SAME lock admission takes.
+      // Only needed when a SPLIT allocation or a SPLIT company's total is in play (spec §12.4/E-09).
+      const splitInvolved = needsTotal && (nextActive.mode === 'SPLIT' || activeMode === 'SPLIT' || nextPending?.mode === 'SPLIT');
+      const position = splitInvolved ? await readAiBudgetMonthSnapshot(tx, cmd.companyId, monthKey) : null;
+
       // Timing (spec §12.5 / E-08): legacy spend is never guessed into buckets, and money already
       // spent in a bucket can never be taken back out of it mid-month.
       if (policyChange === 'ACTIVE' && desired) {
@@ -270,16 +298,46 @@ export class SetPartnerAiModelUseCase {
           if (used && (used.costSatang !== 0 || used.callCount !== 0)) {
             throw new UnprocessableEntityException('partner_ai_budget_split_requires_next_month');
           }
+          // A company with an unresolved or in-flight hold has money committed under the OLD policy
+          // that a fresh bucket allocation could not account for (spec §12.5).
+          if ((position?.reserved.TOTAL ?? 0) > 0 || (position?.unresolvedHolds ?? 0) > 0) {
+            throw new UnprocessableEntityException('partner_ai_budget_split_requires_next_month');
+          }
         }
         if (desired.mode === 'SHARED' && activeMode === 'SPLIT') {
           throw new UnprocessableEntityException('partner_ai_budget_mode_change_next_month_only');
         }
         if (desired.mode === 'SPLIT' && activeMode === 'SPLIT') {
-          const spent = await this.bucketSpend(tx, cmd.companyId, monthKey);
-          if (desired.chatMonthlyBudgetSatang! < spent.CHAT || desired.ocrMonthlyBudgetSatang! < spent.OCR) {
+          // The HIGHER of the two truths about bucket spend, plus the live holds. The bucket
+          // aggregate is what admission compares against, but it only starts at Phase E1b — a
+          // company whose SPLIT month predates it has spend only in the event rows, so taking the
+          // max keeps the floor honest in the transition month instead of letting a cap drop under
+          // money that was already spent.
+          const aggregate = position ? { CHAT: position.spent.CHAT, OCR: position.spent.OCR } : null;
+          const events = await this.bucketSpend(tx, cmd.companyId, monthKey);
+          const spent = {
+            CHAT: Math.max(aggregate?.CHAT ?? 0, events.CHAT),
+            OCR: Math.max(aggregate?.OCR ?? 0, events.OCR),
+          };
+          const held = position?.reserved ?? { CHAT: 0, OCR: 0 };
+          if (desired.chatMonthlyBudgetSatang! < spent.CHAT + held.CHAT
+            || desired.ocrMonthlyBudgetSatang! < spent.OCR + held.OCR) {
             throw new UnprocessableEntityException('partner_ai_budget_cap_below_bucket_spend');
           }
         }
+      }
+      // ...and the TOTAL likewise, for a company whose effective OR resulting mode is SPLIT. A
+      // SHARED company keeps today's freedom to set any positive total (spec §12.4).
+      if (position && (nextActive.mode === 'SPLIT' || activeMode === 'SPLIT')
+        && totalSatang < position.spent.TOTAL + position.reserved.TOTAL) {
+        // Object form with a plain string code, like the two branches above: the web Thai-coverage
+        // spec discovers codes by pattern and cannot see a template literal or a ternary, and the
+        // amounts travel as separate fields so they never become part of the displayed sentence.
+        throw new UnprocessableEntityException({
+          code: 'partner_ai_budget_total_below_committed',
+          message: 'partner_ai_budget_total_below_committed',
+          totalSatang, spentSatang: position.spent.TOTAL, reservedSatang: position.reserved.TOTAL,
+        });
       }
 
       const policyWrite = policyChange === 'ACTIVE' && desired

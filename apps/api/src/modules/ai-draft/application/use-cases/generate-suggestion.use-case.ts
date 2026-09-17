@@ -4,6 +4,8 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { RedisRateLimitService } from '../../../../common/security/redis-rate-limit.service';
 import { classifyAiUsageRequest, companyAiBudgetRefusal, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../../line-ai/application/company-ai-usage-meter';
+import type { ReservedAiBudgetStep } from '../../../line-ai/application/company-ai-budget-reservation';
+import { resolveCompanyAiModelPolicy } from '../../../line-ai/application/company-ai-model-policy';
 import { PrismaAiDraftRepository } from '../../infrastructure/prisma-ai-draft.repository';
 import type { PersistCandidateActionInput } from '../../infrastructure/prisma-ai-draft.repository';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
@@ -97,7 +99,7 @@ export class GenerateSuggestionUseCase {
         return { requestId, status: 'PROVIDER_UNAVAILABLE' };
       }
 
-      const generateAndMeter = async (budgetMonthKey?: string): Promise<AiDraftGenerationResult> => {
+      const generateAndMeter = async (budgetMonthKey?: string, hold?: ReservedAiBudgetStep): Promise<AiDraftGenerationResult> => {
         const generated = await this.provider.generate({
           templateKey: request.templateKey,
           language: request.language,
@@ -116,6 +118,7 @@ export class GenerateSuggestionUseCase {
               this.config,
               {
                 companyId, sourceRoute: 'draft-generate', requestId: request.id, monthKey: budgetMonthKey,
+                ...(hold && { invocationKey: hold.invocationKey }),
                 // Draft generation prompts from server-built facts/citations only — text, CHAT (§12.2).
                 ...classifyAiUsageRequest('draft-generate', 'text'),
               },
@@ -129,7 +132,13 @@ export class GenerateSuggestionUseCase {
       };
 
       const admission = this.prisma && this.config
-        ? await runWithCompanyAiBudgetAdmission(this.prisma, this.config, this.rateLimits, companyId, generateAndMeter)
+        ? await runWithCompanyAiBudgetAdmission(this.prisma, this.config, this.rateLimits, companyId, generateAndMeter, undefined, {
+          // ADR 0013 §4: the draft job id is the attempt; a re-queued job keeps it, so a redelivery
+          // cannot buy a second hold or a second provider call.
+          stepKind: 'draft-generate', attemptKey: `draft:${request.id}`, sourceRoute: 'draft-generate',
+          modelId: (await resolveCompanyAiModelPolicy(this.prisma, companyId, this.config.approvedAiModelIds))?.modelId ?? '',
+          requestId: request.id, ...classifyAiUsageRequest('draft-generate', 'text'),
+        })
         : ({ allowed: true, value: await generateAndMeter() } as const);
 
       // A real exhaustion is terminal. Admission contention is transient and stays in the

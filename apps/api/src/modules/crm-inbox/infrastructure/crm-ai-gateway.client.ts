@@ -25,6 +25,11 @@ import { RedisRateLimitService } from '../../../common/security/redis-rate-limit
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
 import { classifyAiUsageRequest, companyAiBudgetRefusal, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
+import type { ReservedAiBudgetStep } from '../../line-ai/application/company-ai-budget-reservation';
+
+/** The gateway route name IS the step kind (`crm-summary`, `crm-reply-draft`, …) and the bound
+ *  table is keyed by it, so an unlisted CRM route can never be reserved — it refuses instead. */
+const crmStepKind = (path: string): string => path.replace('/internal/ai/', '');
 
 @Injectable()
 export class CrmAiGatewayClient {
@@ -75,12 +80,20 @@ export class CrmAiGatewayClient {
       );
     }
     if (!this.prisma || !companyId) return this.postAdmitted<T>(path, request, requestId, companyId);
+    const modelPolicy = await resolveCompanyAiModelPolicy(this.prisma, companyId, this.config.approvedAiModelIds);
     const admission = await runWithCompanyAiBudgetAdmission(
       this.prisma,
       this.config,
       this.rateLimits,
       companyId,
-      (monthKey) => this.postAdmitted<T>(path, request, requestId, companyId, monthKey),
+      (monthKey, hold) => this.postAdmitted<T>(path, request, requestId, companyId, monthKey, hold, modelPolicy),
+      undefined,
+      {
+        // ADR 0013 §4: the CRM request id is the message/suggestion identity this attempt answers.
+        stepKind: crmStepKind(path), attemptKey: `crm:${crmStepKind(path)}:${requestId}`,
+        sourceRoute: crmStepKind(path), modelId: modelPolicy?.modelId ?? '', requestId,
+        ...classifyAiUsageRequest(crmStepKind(path), 'text'),
+      },
     );
     if (admission.allowed) return admission.value;
     // Same typed code + scope the LINE seam throws (spec §9.1), from the one shared mapper.
@@ -93,6 +106,8 @@ export class CrmAiGatewayClient {
     requestId: string,
     companyId: string | undefined,
     budgetMonthKey?: string,
+    hold?: ReservedAiBudgetStep,
+    resolvedModelPolicy?: Awaited<ReturnType<typeof resolveCompanyAiModelPolicy>>,
   ): Promise<T> {
     const url = `${this.config.aiGatewayInternalUrl}${path}`;
     const secret = this.config.aiGatewayInternalSecret;
@@ -107,10 +122,12 @@ export class CrmAiGatewayClient {
     };
 
     // One resolution per CRM action; an unapproved tenant model throws and fails the action closed.
-    const modelPolicy = this.prisma && companyId
+    // The budgeted path resolved it before admission (the envelope has to pin a model), so reuse it.
+    const modelPolicy = resolvedModelPolicy ?? (this.prisma && companyId
       ? await resolveCompanyAiModelPolicy(this.prisma, companyId, this.config.approvedAiModelIds)
-      : undefined;
-    const governedRequest = { ...(request as Record<string, unknown>), ...(modelPolicy && { modelPolicy }) };
+      : undefined);
+    const governedRequest = { ...(request as Record<string, unknown>), ...(modelPolicy && { modelPolicy }),
+      ...(hold && { budgetEnvelope: hold.envelope }) };
 
     let response: Response;
     try {
@@ -148,6 +165,7 @@ export class CrmAiGatewayClient {
           this.config,
           {
             companyId, sourceRoute: path.replace('/internal/ai/', ''), requestId, monthKey: budgetMonthKey,
+            ...(hold && { invocationKey: hold.invocationKey }),
             // CRM AI is text-only reasoning over inbox threads; never a document read (§12.2).
             ...classifyAiUsageRequest(path.replace('/internal/ai/', ''), 'text'),
           },
