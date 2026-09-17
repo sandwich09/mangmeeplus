@@ -1,4 +1,4 @@
-import { BILLING_TEST_ADDRESS } from './billing-profile-fixture';
+import { BILLING_TEST_ADDRESS, applySyntheticCustomerFields } from './billing-profile-fixture';
 import { selectBillingOption, clickBillingConfiguration, confirmBillingPassword } from './billing-browser-smoke';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -152,8 +152,10 @@ export async function checkBillingSalesCohort(input: Parameters<typeof checkBill
       if (url.pathname === '/v1/customers' && init?.method === 'POST' && !closedAtCustomer) {
         closedAtCustomer = true; await publish([]);
         const form = new URLSearchParams(String(init.body ?? ''));
-        return new Response(JSON.stringify({ object: 'customer', id: `cus_cohort${run.replaceAll('-', '')}`, livemode: false,
-          metadata: { billingAccountId: form.get('metadata[billingAccountId]') } }), { status: 200, headers: { 'content-type': 'application/json' } });
+        const customer = applySyntheticCustomerFields({ object: 'customer', id: `cus_cohort${run.replaceAll('-', '')}`, livemode: false,
+          metadata: { billingAccountId: form.get('metadata[billingAccountId]') } }, form);
+        input.provider.customers!.push(customer);
+        return new Response(JSON.stringify(customer), { status: 200, headers: { 'content-type': 'application/json' } });
       }
       return undefined;
     });
