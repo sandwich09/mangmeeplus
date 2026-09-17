@@ -72,9 +72,15 @@ export class AiGatewayRequestError extends Error {
   }
 }
 
-/** A receipt read is OCR either way; the KIND still reports a PDF honestly as OTHER. */
+/**
+ * A receipt read is OCR either way; the KIND still reports a PDF honestly as OTHER.
+ *
+ * Optional chaining is load-bearing: this is now also evaluated while ASSEMBLING the budget step,
+ * before admission has decided anything, and a request that the rate limit, the model policy or
+ * the money gate is about to refuse may legitimately never carry an attachment.
+ */
 const receiptOcrContent = (request: ReceiptOcrRequest): AiRequestContent =>
-  request.attachment.mimeType === 'application/pdf' ? 'document' : 'image';
+  request.attachment?.mimeType === 'application/pdf' ? 'document' : 'image';
 
 export type GovernedLineIntakeRoutePlan = LineIntakeRoutePlan & {
   /** Present only when a content-bearing LINE media request crossed the OCR governance seam. */
@@ -157,7 +163,9 @@ export class AiGatewayClient {
         // retry ordinal, bounded by the existing delivery cap, so the previous invocation keeps
         // holding its money until evidence arrives instead of being re-run for free.
         stepKind: 'line-turn',
-        attemptKey: `line-text:${aiBudgetAttemptHash(request.webhookEventId)}${options.retryOrdinal ? `:r${options.retryOrdinal}` : ''}`,
+        // `webhookEventId` is required by the contract; the `||` is a guard against a caller that
+        // omits it anyway, so building the step cannot throw before admission has answered.
+        attemptKey: `line-text:${aiBudgetAttemptHash(request.webhookEventId || request.requestId)}${options.retryOrdinal ? `:r${options.retryOrdinal}` : ''}`,
         sourceRoute: 'line-turn', modelId: request.modelPolicy?.modelId ?? '', requestId: request.requestId,
         ...classifyAiUsageRequest('line-turn', turnContent),
       },
@@ -190,7 +198,10 @@ export class AiGatewayClient {
       {
         // The ATTACHMENT id is the provider input identity of a LINE document read — already the
         // durable OCR request fence. Hashed: it is a LINE message id (spec §12.4).
-        stepKind: 'receipt-ocr', attemptKey: `line-image:${aiBudgetAttemptHash(request.attachment.id)}`,
+        // The attachment id is the durable provider-input identity; the transport id is only a
+        // fallback for a malformed request the OCR governance below refuses anyway — assembling the
+        // step must never be the thing that throws.
+        stepKind: 'receipt-ocr', attemptKey: `line-image:${aiBudgetAttemptHash(request.attachment?.id ?? request.requestId)}`,
         sourceRoute: 'receipt-ocr', modelId: modelPolicy?.modelId ?? '', requestId: request.requestId,
         ...classifyAiUsageRequest('receipt-ocr', receiptOcrContent(request)),
       },

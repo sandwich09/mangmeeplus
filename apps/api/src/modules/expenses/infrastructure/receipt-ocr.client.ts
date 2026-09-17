@@ -6,7 +6,7 @@ import { RedisRateLimitService } from '../../../common/security/redis-rate-limit
 import { safeLineErrorDetails } from '../../line-ai/infrastructure/line-reply.adapter';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
-import { classifyAiUsageRequest, companyAiBudgetRefusal, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
+import { classifyAiUsageRequest, companyAiBudgetRefusal, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission, type AiRequestContent } from '../../line-ai/application/company-ai-usage-meter';
 import { cancelAiBudgetStep, type AiBudgetCancelProof, type ReservedAiBudgetStep } from '../../line-ai/application/company-ai-budget-reservation';
 import {
   type CompanyOcrAdmissionIdentity,
@@ -22,6 +22,17 @@ import {
 // response body that carries the usage the meter bills from — so the provider spend would land on
 // neither meter, and the trial AI budget is calibrated from both.
 const EXTRACT_TIMEOUT_MS = AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS;
+
+/**
+ * A receipt read is OCR either way; the KIND still reports a PDF honestly as OTHER.
+ *
+ * Optional chaining is load-bearing, not defensive noise: this is evaluated while ASSEMBLING the
+ * budget step, before admission has decided anything, and a request that would be refused by the
+ * rate limit, the missing secret, the model policy or the money gate may legitimately never carry
+ * an attachment. Reading it eagerly turned seven of those refusals into a `TypeError`.
+ */
+const receiptOcrContent = (request: ReceiptOcrRequest): AiRequestContent =>
+  request.attachment?.mimeType === 'application/pdf' ? 'document' : 'image';
 
 @Injectable()
 export class ReceiptOcrClient {
@@ -63,7 +74,7 @@ export class ReceiptOcrClient {
         // exactly the attempt boundary money must follow. No LINE id, no prompt text.
         stepKind: 'receipt-ocr', attemptKey: `receipt-web:${request.requestId}`,
         sourceRoute: 'receipt-ocr', modelId: modelPolicy?.modelId ?? '', requestId: request.requestId,
-        ...classifyAiUsageRequest('receipt-ocr', request.attachment.mimeType === 'application/pdf' ? 'document' : 'image'),
+        ...classifyAiUsageRequest('receipt-ocr', receiptOcrContent(request)),
       },
     );
     if (admission.allowed) return admission.value;
@@ -172,7 +183,7 @@ export class ReceiptOcrClient {
         {
           companyId: request.companyId, sourceRoute: 'receipt-ocr', requestId: request.requestId, monthKey: budgetMonthKey,
           ...(hold && { invocationKey: hold.invocationKey }),
-          ...classifyAiUsageRequest('receipt-ocr', request.attachment.mimeType === 'application/pdf' ? 'document' : 'image'),
+          ...classifyAiUsageRequest('receipt-ocr', receiptOcrContent(request)),
         },
         result.usage,
       );
