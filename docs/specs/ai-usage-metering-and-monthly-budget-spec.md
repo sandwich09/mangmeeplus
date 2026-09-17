@@ -1,5 +1,7 @@
 # AI Usage Metering & Monthly Budget Spec (Admin-Only)
 
+2026-09-17 design extension: the owner requested separate CHAT/OCR caps, accurate refusal/receipt UX, intake cost reduction and usage visibility in the [combined NOGROUP remediation spec](line-ai-ledger-lifecycle-remediation-spec-th.md). Its §11–12 defines additive reporting and opt-in SPLIT reservation semantics; the bounded-overshoot policy below describes legacy SHARED behavior. The extension is specified, not implemented or activated. Admin-only access, Bangkok month, actual metering and OCR/package gates remain authoritative.
+
 ## 1. Status
 
 - Date: 2026-07-28 (Asia/Bangkok)
