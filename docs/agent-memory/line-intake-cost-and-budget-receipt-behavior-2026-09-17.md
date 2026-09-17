@@ -102,6 +102,19 @@ Verification:
 Next:
 - Implement the unified [plan](../plans/line-ai-ledger-lifecycle-remediation-plan-th.md) when requested. The earlier explanation is complete; do not ask again whether the owner wants reserve versus split caps.
 
+## Phase C implementation — 2026-09-17
+
+Status: งาน C ปิดรอบ implementation แล้วบน branch `codex/line-ai-remediation-c-intake-cost-20260917` (ยัง **ไม่** deploy, ยังไม่ merge). หลักฐานทั้งหมดอยู่ใน [cost benchmark before/after](../research/line-ai-intake-cost-benchmark-2026-09-17.md).
+
+- **Frozen corpus + harness** อยู่ใน repo: `scripts/line-ai-intake-cost.corpus.ts` (hash `cf9bce443b3012ef39a081670614b8651fa55483aa34043376978d4b13becce2` ตรึงด้วย spec ข้างกัน), `scripts/line-ai-intake-cost-benchmark.ts` ขับ controller/orchestrator จริงใน process เดียวผ่าน `runWithUsageContext` — ห้ามรันใน CI เพราะใช้เงินจริง และต้องรันจาก `apps/ai-gateway` (decorators + `sharp`).
+- **Baseline จริง (Sonnet 4.6, ap-southeast-1, FX 33, 2 รอบ):** 82 attempted / 212 calls / THB 70.47; `line.intake-route` 53.3% ของต้นทุน; component split output 51.6% > input 19.9% > cache read 18.3% > cache write 10.1%. ต่อคอล: text intake warm THB 0.312 / cold 1.710; image intake warm 0.764 / cold 1.975 (คนละ prefix เพราะ advisor ถูกลบเมื่อมี attachment).
+- **ที่ implement:** (1) ไม่ส่ง fused-plan section + tool catalog บน image intake (ลบ `caps.fusedPlan` เมื่อมี attachment เหมือนที่ทำกับ advisor) และ (2) ไม่ขอ capture hints ที่ media path ทิ้งบน image turn. **ผล:** THB/attempted 0.86 → 0.75 (−13.2%), THB/successful 0.93 → 0.79 (−14.3%), image −26%, text flat, calls/task 2.59 เท่าเดิม, routing 95.1% → 96.3%, parse fail 1 → 0, truncation 0, OCR fields เท่าเดิม, และการประหยัดอยู่ใน `line.intake-route` ทั้งหมด (37.56 → 28.31).
+- **ที่วัดแล้ว revert:** การให้ `generateWithTools` นับ `toolConfig` เข้า cache-checkpoint gate ไม่ได้ผล — prefix ของ native tool loop (system 2,382 chars + tool specs 425–1,408 chars) อยู่ที่ ~780–1,050 tokens ต่ำกว่าเพดาน 1,024 tokens ของโมเดล จึงไม่เกิด cache write/read เลย (วัดจริง cr=0 cw=0 ทั้งก่อนและหลัง). **แก้ความเข้าใจผิดจาก baseline:** THB 8.70 ของ `line.loop` ไม่ได้มาจาก prefix ที่ไม่ถูก cache แต่มาจาก user message ต่อคอล + tool_results transcript ที่โตขึ้นทุกรอบ ซึ่ง cache prefix แก้ไม่ได้.
+- **บทเรียนถ้อยคำ prompt:** ประโยค "put everything you read from the page in documentText instead" ทำให้ transcription ยาวขึ้น → stage 2 reconcile รายการไม่ลง → vision re-read ยิงเพิ่ม → thermal slip จาก 2 เป็น 4 calls. คำสั่งลด output ที่พูดถึง `documentText` ต้องเป็นกลางเรื่องความยาวเสมอ.
+- **สิ่งที่พบแต่ไม่แก้ (ต้องตัดสินใจแยก):** `enabledFeatures` ใน payload เป็น `[]` เสมอทั้งที่ prompt บอกให้ใช้เป็น source of truth; intake เห็น 56 tools แต่ `line.plan-route` เห็น 61 เพราะ controller ไม่ส่ง `draftEditEnabled`; reuse intake route แทน `line.plan-route` (THB 5.35/7.6% แต่ `intentMatch:false` มีจริง); ขยาย `LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES` (THB 0.62 ต่อ business read — เป็น product decision ของ owner); `line.loop`/`line.critic`/`line.compose`/`ocr.receipt.image-*` ยังไม่ถูก cache เลยรวม THB 14.5.
+- **ค่าใช้จ่ายการวัด:** Stage 1 THB 92.58 + Stage 2 THB 84.83 = **THB 177.41** บน profile `watchdog-bedrock` (ledger `spend-ledger.jsonl` ใน scratch). ไม่มีการเรียก AWS API อื่นนอกจาก `bedrock-runtime`, ไม่แตะ UAT/Production, corpus สังเคราะห์ 100%.
+- **ยังไม่ปิด:** C-04 (ส่วน "ไม่มี extra call เพื่อหา budget bucket" เป็นของงาน E), X-02 (ต้องมี UAT journey จริง) และการ deploy ทั้งหมด
+
 ## Phase D1 implementation — 2026-09-17
 
 Status: implemented on branch `codex/line-ai-remediation-d1-usage-20260917` (worktree only, not pushed, no PR, no deploy).
