@@ -25,7 +25,14 @@ import { safeLineErrorDetails } from './line-reply.adapter';
 import { ActorDelegationService } from './actor-delegation.service';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { PrismaService } from '../../../common/database/prisma.service';
-import { companyAiBudgetRefusal, recordCompanyAiUsage, retryBusyAdmission, runWithCompanyAiBudgetAdmission } from '../application/company-ai-usage-meter';
+import {
+  type AiRequestContent,
+  classifyAiUsageRequest,
+  companyAiBudgetRefusal,
+  recordCompanyAiUsage,
+  retryBusyAdmission,
+  runWithCompanyAiBudgetAdmission,
+} from '../application/company-ai-usage-meter';
 import { resolveCompanyAiModelPolicy } from '../application/company-ai-model-policy';
 import {
   type CompanyOcrAdmissionIdentity,
@@ -57,6 +64,10 @@ export class AiGatewayRequestError extends Error {
     this.name = 'AiGatewayRequestError';
   }
 }
+
+/** A receipt read is OCR either way; the KIND still reports a PDF honestly as OTHER. */
+const receiptOcrContent = (request: ReceiptOcrRequest): AiRequestContent =>
+  request.attachment.mimeType === 'application/pdf' ? 'document' : 'image';
 
 export type GovernedLineIntakeRoutePlan = LineIntakeRoutePlan & {
   /** Present only when a content-bearing LINE media request crossed the OCR governance seam. */
@@ -120,6 +131,10 @@ export class AiGatewayClient {
         request.requestId,
         LINE_TURN_TIMEOUT_MS,
         monthKey,
+        // Inline bytes only: a storageKey-only attachment is not content the model receives.
+        // The bucket stays CHAT either way (§12.2) — this only reports what was sent.
+        !request.attachments?.some((a) => a.contentBase64) ? 'text'
+          : request.attachments.some((a) => a.contentBase64 && a.mimeType !== 'application/pdf') ? 'image' : 'document',
       ),
       options.busyWaitDeadlineMs,
       request.attachments?.length ? 'media' : 'chat',
@@ -135,6 +150,7 @@ export class AiGatewayClient {
     if (!this.config.aiGatewayInternalSecret) {
       return this.postInternal<ReceiptOcrResponse>(
         '/internal/ai/receipt-ocr', request, request.requestId, RECEIPT_OCR_TIMEOUT_MS,
+        undefined, receiptOcrContent(request),
       );
     }
     const modelPolicy = await resolveCompanyAiModelPolicy(
@@ -179,6 +195,7 @@ export class AiGatewayClient {
         request.requestId,
         RECEIPT_OCR_TIMEOUT_MS,
         budgetMonthKey,
+        receiptOcrContent(request),
       );
     } catch (error) {
       const status = error instanceof AiGatewayRequestError ? error.httpStatus : undefined;
@@ -250,7 +267,7 @@ export class AiGatewayClient {
   ): Promise<GovernedLineIntakeRoutePlan> {
     if (!mediaId) {
       return this.postInternal<LineIntakeRoutePlan>(
-        '/internal/ai/line-intake-route', request, request.requestId, LINE_INTAKE_TIMEOUT_MS, budgetMonthKey,
+        '/internal/ai/line-intake-route', request, request.requestId, LINE_INTAKE_TIMEOUT_MS, budgetMonthKey, 'text',
       );
     }
     const admission = await admitCompanyOcr(this.prisma, {
@@ -271,8 +288,10 @@ export class AiGatewayClient {
     }
     onAdmitted?.(admission);
     try {
+      // `mediaId` is set only for a JPEG/PNG that crossed the governed image-intake seam, so the
+      // whole call is an image read (and therefore OCR) — exactly the §12.2 rule, no re-derivation.
       const plan = await this.postInternal<LineIntakeRoutePlan>(
-        '/internal/ai/line-intake-route', request, request.requestId, LINE_INTAKE_MEDIA_TIMEOUT_MS, budgetMonthKey,
+        '/internal/ai/line-intake-route', request, request.requestId, LINE_INTAKE_MEDIA_TIMEOUT_MS, budgetMonthKey, 'image',
       );
       if (plan.status === 'UNAVAILABLE') {
         if (plan.errorCode === 'PROVIDER_DISABLED' || plan.errorCode === 'PROVIDER_CONFIG_MISSING') {
@@ -358,6 +377,8 @@ export class AiGatewayClient {
     requestId: string,
     timeoutMs: number,
     budgetMonthKey?: string,
+    /** What this caller put in the request, for the server-derived bucket/kind (spec §12.2). */
+    content: AiRequestContent = 'text',
   ): Promise<T> {
     const url = `${this.config.aiGatewayInternalUrl}${path}`;
     const secret = this.config.aiGatewayInternalSecret;
@@ -407,6 +428,7 @@ export class AiGatewayClient {
       requestId,
       (result as { usage?: AiUsageEntry[] })?.usage,
       budgetMonthKey,
+      content,
     );
     return result;
   }
@@ -418,10 +440,16 @@ export class AiGatewayClient {
     requestId: string,
     usage: AiUsageEntry[] | undefined,
     monthKey?: string,
+    content: AiRequestContent = 'text',
   ): Promise<void> {
     if (!companyId) return;
     try {
-      await recordCompanyAiUsage(this.prisma, this.config, { companyId, sourceRoute, requestId, monthKey }, usage);
+      await recordCompanyAiUsage(
+        this.prisma,
+        this.config,
+        { companyId, sourceRoute, requestId, monthKey, ...classifyAiUsageRequest(sourceRoute, content) },
+        usage,
+      );
     } catch (err) {
       this.logger.warn({ msg: 'ai.usage.record_failed', sourceRoute, requestId, ...safeLineErrorDetails(err) });
     }

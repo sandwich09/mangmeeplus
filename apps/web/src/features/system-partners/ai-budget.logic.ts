@@ -117,3 +117,71 @@ export async function reloadAfterOcrConfigConflict(
   await reload();
   return true;
 }
+
+// ── D1 usage breakdown (remediation spec §11.1, §11.3) ───────────────────────
+
+/**
+ * Baht per provider call. `calls = 0` is '—', never '฿0.00': a month with adjustments but no call
+ * has cost and no denominator, and a zero average would read as "AI is free this month".
+ */
+export function aiAverageCostLabel(costSatang: number, calls: number): string {
+  return calls > 0 ? satangToBaht(costSatang / calls) : '—';
+}
+
+export const AI_REQUEST_KIND_LABELS: Record<string, string> = {
+  TEXT: 'ข้อความ',
+  IMAGE: 'รูปภาพ',
+  OTHER: 'ไฟล์อื่น',
+  UNKNOWN: 'ไม่ทราบประเภท',
+};
+
+export const AI_BUDGET_BUCKET_LABELS: Record<string, string> = {
+  CHAT: 'แชตและ AI ทั่วไป',
+  OCR: 'AI อ่านเอกสาร',
+  UNKNOWN: 'ไม่ทราบประเภท',
+};
+
+export const AI_USAGE_BASIS_LABELS: Record<string, string> = {
+  PROVIDER_REPORTED: 'ผู้ให้บริการรายงานจริง',
+  CONSERVATIVE_ESTIMATE: 'ค่าประมาณเมื่อหมดเวลา',
+  UNKNOWN: 'ไม่ทราบที่มา',
+};
+
+/** Missing priced evidence is UNAVAILABLE, never ฿0.00 (spec §11.2). */
+export function aiCacheCostLabel(cacheCostSatang: { read: number; write: number } | null): string {
+  return cacheCostSatang === null
+    ? 'ไม่มีข้อมูล'
+    : `อ่าน ${satangToBaht(cacheCostSatang.read)} / เขียน ${satangToBaht(cacheCostSatang.write)}`;
+}
+
+/** Labels the rollout month honestly instead of implying the whole month was tagged. */
+export function aiCoverageNotice(
+  coverage: { status: 'complete' | 'partial' | 'none'; calls: number; callsWithMetadata: number; firstMetadataAt: string | null },
+  formatDate: (value: string) => string,
+): string | null {
+  if (coverage.status === 'complete' || coverage.calls === 0) return null;
+  const since = coverage.firstMetadataAt ? ` เริ่มเก็บตั้งแต่ ${formatDate(coverage.firstMetadataAt)}` : '';
+  return coverage.status === 'none'
+    ? `เดือนนี้ยังไม่มีการแยกประเภท จึงแสดงเป็น “ไม่ทราบประเภท” ทั้งหมด${since}`
+    : `เดือนนี้แยกประเภทได้ ${coverage.callsWithMetadata.toLocaleString('th-TH')} จาก ${coverage.calls.toLocaleString('th-TH')} ครั้ง ส่วนที่เหลือแสดงเป็น “ไม่ทราบประเภท”${since}`;
+}
+
+/** Says so when any of the month's spend rests on estimated or unknown counters (F-11). */
+export function aiUsageBasisNote(rows: Array<{ usageBasis: string; costSatang: number; calls: number }>): string | null {
+  const estimated = rows.find((row) => row.usageBasis === 'CONSERVATIVE_ESTIMATE');
+  const unknown = rows.find((row) => row.usageBasis === 'UNKNOWN');
+  const parts = [
+    estimated && estimated.calls > 0 ? `ค่าประมาณเมื่อหมดเวลา ${estimated.calls.toLocaleString('th-TH')} ครั้ง (${satangToBaht(estimated.costSatang)})` : null,
+    unknown && unknown.calls > 0 ? `ไม่ทราบที่มา ${unknown.calls.toLocaleString('th-TH')} ครั้ง (${satangToBaht(unknown.costSatang)})` : null,
+  ].filter(Boolean);
+  return parts.length === 0 ? null : `token บางส่วนไม่ได้วัดจริง: ${parts.join(' · ')}`;
+}
+
+/**
+ * During a rolling deploy this page can be served by a pre-D1 API, whose response carries no
+ * `breakdown`/`otherTags` at all. The contract types stay required — the current API always sends
+ * them — but the screen must degrade to the old card instead of throwing on a missing field.
+ */
+export function hasAiUsageBreakdown(usage: { breakdown?: unknown } | null | undefined): boolean {
+  return !!usage && typeof usage.breakdown === 'object' && usage.breakdown !== null;
+}

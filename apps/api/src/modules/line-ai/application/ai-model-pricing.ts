@@ -68,3 +68,45 @@ export function computeCostSatang(
     unknownModel: !known,
   };
 }
+
+/** The priced evidence stamped on a new `AiUsageEvent` (remediation spec §11.2). */
+export type AiPricingSnapshot = {
+  /** USD per million tokens actually charged — the max table when the model id matched nothing. */
+  usdPerMTok: AiModelPrices;
+  thbPerUsd: number;
+  /** True when `usdPerMTok` is the max-price fallback rather than a matched model row. */
+  unknownModel: boolean;
+  /** Per-component satang; `rounding` closes the gap so the five sum EXACTLY to `costSatang`. */
+  componentSatang: { input: number; output: number; cacheRead: number; cacheWrite: number; rounding: number };
+};
+
+/**
+ * Splits an already-computed `costSatang` into its components. The authoritative number stays the
+ * single half-up rounding in `computeCostSatang`: each component is rounded the same way and the
+ * residue lands in `rounding`, so the snapshot can never contradict the money on the row.
+ */
+export function buildPricingSnapshot(
+  entry: PricedUsage,
+  thbPerUsd: number,
+  costSatang: number,
+): AiPricingSnapshot {
+  const { prices, known } = resolveAiModelPrices(entry.modelId);
+  const satang = (tokens: number, usdPerMTok: number) =>
+    Math.round((tokens * usdPerMTok * thbPerUsd * 100) / 1_000_000);
+  const input = satang(entry.inputTokens, prices.input);
+  const output = satang(entry.outputTokens, prices.output);
+  const cacheRead = satang(entry.cacheReadInputTokens, prices.cacheRead);
+  const cacheWrite = satang(entry.cacheWriteInputTokens, prices.cacheWrite);
+  return {
+    usdPerMTok: prices,
+    thbPerUsd,
+    unknownModel: !known,
+    componentSatang: {
+      input,
+      output,
+      cacheRead,
+      cacheWrite,
+      rounding: costSatang - (input + output + cacheRead + cacheWrite),
+    },
+  };
+}

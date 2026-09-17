@@ -191,6 +191,10 @@ export class BedrockProvider implements IModelProvider {
       cacheReadInputTokens: usage?.cacheReadInputTokens ?? 0,
       cacheWriteInputTokens: usage?.cacheWriteInputTokens ?? 0,
       durationMs: Date.now() - startedAt,
+      // A timeout's ceiling estimate must never reach the console as measured tokens (spec §11.2).
+      // A non-timeout error carries no counters at all, so the basis stays absent rather than guessed.
+      ...(usageEstimated ? { usageBasis: 'CONSERVATIVE_ESTIMATE' as const }
+        : usage ? { usageBasis: 'PROVIDER_REPORTED' as const } : {}),
     };
     try {
       appendUsage(entry);

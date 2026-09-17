@@ -302,6 +302,7 @@ describe('OpenAiProvider usage collection', () => {
       // The Responses API has no cache-write counter.
       cacheWriteInputTokens: 0,
       durationMs: entries[0]!.durationMs,
+      usageBasis: 'PROVIDER_REPORTED',
     });
   });
 
@@ -327,6 +328,7 @@ describe('OpenAiProvider usage collection', () => {
     assert.equal(entries[0]!.ok, false);
     assert.equal(entries[0]!.inputTokens, 0, 'a failed call never bills tokens it may have carried');
     assert.equal(entries[0]!.cacheReadInputTokens, 0);
+    assert.equal(entries[0]!.usageBasis, undefined, 'zeroed counters are not provider-reported usage');
     assert.equal(capture.lines.length, 0, 'the stdout line stays success-only');
   });
 

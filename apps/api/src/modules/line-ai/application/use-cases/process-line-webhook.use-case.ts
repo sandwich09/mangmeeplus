@@ -3704,7 +3704,9 @@ export class ProcessLineWebhookUseCase {
       // Consumption-marker state is unreadable. Continuing with "no open clarifications" is NOT
       // fail-closed: a bare "590" answering an earlier question would be routed as a new capture.
       if (!(err instanceof ConsumptionMarkerUnavailableError)) throw err;
-      this.logger.warn({ msg: 'line_ai_marker_unavailable', requestId });
+      // `reason` separates a missing consumer group, an unreadable Redis and an incomplete scan for
+      // operators; the customer reply and the terminal status stay the same for all of them.
+      this.logger.warn({ msg: 'line_ai_marker_unavailable', requestId, reason: err.reason });
       await this.deliverReply(event, ERROR_REPLY);
       await this.updateEventLog(event.webhookEventId, 'marker_unavailable', 'CONSUMPTION_MARKER_UNAVAILABLE', companyId);
       return;

@@ -398,6 +398,26 @@ describe('BedrockProvider prompt caching', () => {
     assert.equal(entries[0]!.outputTokens, 17);
     assert.equal(capture.lines[0]!['errorCode'], 'PROVIDER_TIMEOUT');
     assert.equal(capture.lines[0]!['usageEstimated'], true);
+    // F-11: the ceiling estimate must reach the API labelled as an estimate, not as measured tokens.
+    assert.equal(entries[0]!.usageBasis, 'CONSERVATIVE_ESTIMATE');
+  });
+
+  it('leaves the basis absent when a non-timeout error supplied no counters at all', async () => {
+    const provider = makeProvider();
+    (provider as any).client = { send: async () => { throw Object.assign(new Error('boom'), { name: 'ThrottlingException' }); } };
+    const capture = captureUsageLines();
+    const entries = await runWithUsageContext({ companyId: 'company-1' }, async () => {
+      try {
+        await provider.generateText({ messages: [{ role: 'user', text: 'q' }] });
+      } finally {
+        capture.restore();
+      }
+      return drainUsage();
+    });
+
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0]!.ok, false);
+    assert.equal(entries[0]!.usageBasis, undefined, 'never guess a basis the provider did not supply');
   });
 
   it('renders cacheableContext as the leading block in generateWithTools too', async () => {
@@ -515,6 +535,8 @@ describe('BedrockProvider prompt caching', () => {
       cacheReadInputTokens: 2210,
       cacheWriteInputTokens: 12,
       durationMs: entries[0]!.durationMs,
+      // Counters came out of the Converse response, so the console may show them as measured.
+      usageBasis: 'PROVIDER_REPORTED',
     });
     assert.equal(typeof entries[0]!.durationMs, 'number');
     // The stdout line still fires exactly once, now carrying the tenant the collector knows.
