@@ -1,4 +1,4 @@
-import { type LineAiAnswerCard, type LineAiTurnResponse } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, type AiBudgetScope, type LineAiAnswerCard, type LineAiTurnResponse } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { lineMessagePreview as preview } from './line-message-preview.logic';
 import {
@@ -435,16 +435,33 @@ export function buildSignupStatusCard(companyName: string, businessHours: boolea
  *
  * "ช่วงทดลอง" appears only for the trial tier; a paying shop is told about its package instead.
  */
-export function buildAiBudgetExceededMessage(trialTier: boolean): LineReplyMessage {
-  const text = trialTier
-    ? 'โควตา AI ของแพ็กเกจเดือนนี้ครบแล้วค่ะ ช่วงทดลองมีงบให้ AI ช่วยตอบจำกัดต่อเดือน เดือนหน้าเริ่มใหม่ '
-      + 'หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ'
-    : 'โควตา AI ของแพ็กเกจเดือนนี้ครบแล้วค่ะ เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ';
+export function buildAiBudgetExceededMessage(
+  trialTier: boolean,
+  /** The typed refusal, when the caller has one (spec §9.1). Absent ⇒ the legacy TOTAL-exhausted card. */
+  refusal?: { budgetErrorCode?: string; budgetScope?: AiBudgetScope },
+): LineReplyMessage {
+  // §9.1: money is LEFT — it just cannot cover this job's upper bound. Saying "ครบ/เต็ม" here would
+  // be false, and the shop would stop trying smaller work that still fits.
+  const insufficient = refusal?.budgetErrorCode === AI_BUDGET_REFUSAL_CODES.insufficient;
+  // §9.2: a CHAT-bucket refusal names the chat part. It deliberately does NOT promise that receipts
+  // still work — that needs the saved split policy AND current OCR eligibility, which no caller can
+  // prove until §12 ships. Until then the card says less rather than something it cannot stand by.
+  const chatOnly = refusal?.budgetScope === 'CHAT';
+  const what = chatOnly ? 'งบ AI ส่วนแชตของเดือนนี้' : 'โควตา AI ของแพ็กเกจเดือนนี้';
+  const text = insufficient
+    ? `${chatOnly ? 'งบ AI ส่วนแชตที่เหลือ' : 'งบ AI ที่เหลือ'}ของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ `
+      + `${trialTier ? 'ช่วงทดลองมีงบให้ AI ช่วยตอบจำกัดต่อเดือน ' : ''}เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ`
+    : trialTier
+      ? `${what}ครบแล้วค่ะ ช่วงทดลองมีงบให้ AI ช่วยตอบจำกัดต่อเดือน เดือนหน้าเริ่มใหม่ `
+        + 'หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ'
+      : `${what}ครบแล้วค่ะ เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ`;
   return {
     type: 'flex',
     altText: preview(text, 400),
     contents: bubble(
-      { title: 'โควตา AI เดือนนี้ครบแล้ว', badge: '💚 ครบโควตาเดือนนี้', text },
+      insufficient
+        ? { title: 'งบ AI เดือนนี้เหลือไม่พอ', badge: '💚 งบเหลือไม่พอเริ่มงาน', text }
+        : { title: chatOnly ? 'งบ AI ส่วนแชตเดือนนี้ครบแล้ว' : 'โควตา AI เดือนนี้ครบแล้ว', badge: '💚 ครบโควตาเดือนนี้', text },
       undefined,
       '',
       [

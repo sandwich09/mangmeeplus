@@ -246,8 +246,10 @@ jq -e '
 ' "$policy" >/dev/null
 test "$(grep -c 'Name=ReplicationGroupId' "$script")" -eq 1
 for terminal_class in delivered clarification intentional_noop permission_refusal feature_disabled \
-  provider_unavailable timeout delivery_pending failed_terminal; do
+  budget_refusal provider_unavailable timeout delivery_pending failed_terminal; do
   grep -Fq "$terminal_class" "$deploy"
+  # Every class the API can emit must also be on the dashboard, or a refusal simply disappears.
+  grep -Fq "_line_ai_${terminal_class}" "$script"
 done
 
 echo 'runtime-alarms.spec.sh: ok'

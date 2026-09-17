@@ -4137,6 +4137,299 @@ describe('ProcessLineWebhookUseCase – the monthly AI budget is not congestion 
   });
 });
 
+/**
+ * Remediation spec §9.1/§9.2, criteria B-01…B-05.
+ *
+ * Production 2026-09-17: the company's monthly AI MONEY ran out. `tryRouteIntake` caught the 429,
+ * replaced the code with `ROUTER_UNREACHABLE`, and the turn walked straight back into the same
+ * closed gate — twice per message on text, and on the image lane it then told the shop the document
+ * reader was "ขัดข้องชั่วคราว" for what was an explicit, permanent policy decision.
+ */
+describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec §9.2)', () => {
+  const budgetError = (code: string, budgetScope?: string) => {
+    const error: any = new Error(code);
+    error.getStatus = () => 429;
+    error.getResponse = () => ({ code, ...(budgetScope ? { budgetScope } : {}) });
+    return error;
+  };
+  const CAPTURE_PERMISSIONS = ['line.ai.query', 'expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create'];
+
+  /** A media turn whose intake router meets the money gate. Returns what the turn did to the file. */
+  function mediaHarness(prisma: any, code: string, opts: {
+    pendingCreateFails?: boolean;
+    openRow?: any;
+    permissions?: string[];
+    intakeRouteFn?: () => any;
+    /** The gate closes at the OCR hop instead of at the intake router. */
+    receiptOcrThrows?: boolean;
+  } = {}) {
+    const pendingRows: any[] = [];
+    (prisma.client as any).lineIntakePendingMedia = {
+      findFirst: async () => opts.openRow ?? null,
+      findUnique: async () => pendingRows.at(-1) ?? opts.openRow ?? null,
+      create: async ({ data }: any) => {
+        if (opts.pendingCreateFails) throw new Error('ATTACHMENT_STORE_DOWN');
+        const row = { id: 'pending-budget', createdAt: new Date(), ...data };
+        pendingRows.push(row);
+        return row;
+      },
+      updateMany: async () => ({ count: 1 }),
+    };
+    let ocrCalls = 0;
+    let expenseDrafts = 0;
+    const h = makeUseCase(prisma, {
+      permissions: opts.permissions ?? CAPTURE_PERMISSIONS,
+      intakeRouteFn: opts.intakeRouteFn ?? (() => { throw budgetError(code, 'TOTAL'); }),
+      receiptOcrFn: () => { ocrCalls += 1; if (opts.receiptOcrThrows) throw budgetError(code, 'TOTAL'); return { status: 'ok' }; },
+      initReceiptUpload: { execute: async () => { expenseDrafts += 1; return { expenseId: 'exp-x', attachmentId: 'att-x' }; } },
+      completeReceiptUpload: { execute: async () => undefined },
+      createUploadIntent: { execute: async () => ({ attachmentId: 'att-budget', uploadUrl: 'https://upload', uploadMethod: 'PUT' }) },
+      completeAttachmentUpload: { execute: async () => undefined },
+    });
+    (h.useCase as any).downloadLineMedia = async () => ({
+      fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+      checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
+    });
+    (h.useCase as any).uploadLineMedia = async () => undefined;
+    return { ...h, pendingRows, getOcrCalls: () => ocrCalls, getExpenseDrafts: () => expenseDrafts };
+  }
+
+  it('answers a text turn from the intake refusal itself — the gate is never asked twice (B-01/B-02)', async () => {
+    const { prisma, updates } = makePrisma();
+    // No `aiGatewayFn`: a second gate attempt would throw "AI Gateway not expected" and fail here.
+    const h = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      intakeRouteFn: () => { throw budgetError('AI_MONTHLY_BUDGET_EXCEEDED', 'TOTAL'); },
+    });
+
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-budget-intake', messageText: 'ยอดขายวันนี้' });
+
+    assert.equal(h.getAiGatewayCalled(), false, 'B-02: no second provider/gate call after a money refusal');
+    const rendered = JSON.stringify(h.sentMessages);
+    assert.match(rendered, /โควตา AI ของแพ็กเกจเดือนนี้ครบแล้วค่ะ/);
+    assert.equal(rendered.includes('ขัดข้องชั่วคราว'), false, 'a policy refusal is not a temporary outage');
+    const final = (updates.at(-1) as any).data;
+    assert.equal(final.status, 'ai_budget_exceeded');
+    // §9.1: the durable row used to say LINE_AI_RATE_LIMITED, which loses the reason on replay.
+    assert.equal(final.errorCode, 'AI_MONTHLY_BUDGET_EXCEEDED');
+  });
+
+  it('queues nothing for the reclaim worker when the money gate is already closed (B-02)', async () => {
+    const { prisma, updates } = makePrisma();
+    // This harness owns a ledger. No `aiGatewayFn`: reaching the model throws "AI Gateway not expected".
+    const h = makeLedgerUseCase(prisma, { intakeRouteFn: () => { throw budgetError('AI_MONTHLY_BUDGET_EXCEEDED', 'TOTAL'); } });
+
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-budget-no-ledger', messageText: 'ยอดขายวันนี้' });
+
+    assert.deepEqual(h.ledgerCalls.turns, [], 'a refusal that cannot change this month must not be queued for retry');
+    assert.deepEqual(h.ledgerCalls.acks, []);
+    assert.match(JSON.stringify(h.sentMessages), /โควตา AI ของแพ็กเกจเดือนนี้ครบแล้วค่ะ/);
+    assert.equal((updates.at(-1) as any).data.status, 'ai_budget_exceeded');
+  });
+
+  it('says the budget could not be CHECKED for AI_BUDGET_UNAVAILABLE, and never that it is full', async () => {
+    const { prisma, updates } = makePrisma();
+    const h = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      intakeRouteFn: () => { throw budgetError('AI_BUDGET_UNAVAILABLE'); },
+    });
+
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-budget-unavailable', messageText: 'ยอดขายวันนี้' });
+
+    assert.equal(h.getAiGatewayCalled(), false);
+    const rendered = JSON.stringify(h.sentMessages);
+    assert.match(rendered, /ยังตรวจสอบงบ AI ของร้านไม่ได้/);
+    assert.equal(/ครบแล้ว|เต็มแล้ว|โควตา/.test(rendered), false, 'an unreadable meter is not exhaustion');
+    assert.equal((updates.at(-1) as any).data.errorCode, 'AI_BUDGET_UNAVAILABLE');
+  });
+
+  it('leaves AI_BUDGET_BUSY on its existing bounded path — contention is not exhaustion', async () => {
+    const { prisma, updates } = makePrisma();
+    const h = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      intakeRouteFn: () => { throw budgetError('AI_BUDGET_BUSY'); },
+      aiGatewayFn: () => { throw budgetError('AI_BUDGET_BUSY'); },
+    });
+
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-budget-busy', messageText: 'ยอดขายวันนี้' });
+
+    assert.equal(h.getAiGatewayCalled(), true, 'busy keeps the legacy fall-through');
+    assert.equal((updates.at(-1) as any).data.status, 'rate_limited');
+    assert.equal(JSON.stringify(h.sentMessages).includes('ครบแล้ว'), false, 'busy must never read as "out of quota"');
+  });
+
+  it('keeps the picture, says why, and reads nothing (B-02/B-04)', async () => {
+    const { prisma, updates } = makePrisma();
+    const h = mediaHarness(prisma, 'AI_MONTHLY_BUDGET_EXCEEDED');
+
+    await h.useCase.executeReceiptUpload({
+      webhookEventId: 'evt-budget-image', lineUserId: 'line-user-secret', replyToken: 'reply-budget-image',
+      lineMessageId: 'line-msg-budget', messageType: 'image', messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.equal(h.getOcrCalls(), 0, 'B-02: a refused intake must not buy a second OCR admission');
+    assert.equal(h.getExpenseDrafts(), 0, 'no expense is created from a refused read');
+    assert.equal(h.pendingRows.length, 1, 'the bytes are parked so the numbered question can be answered');
+    const rendered = h.replies.join('\n');
+    assert.match(rendered, /รับรูปไว้แล้วค่ะ/);
+    assert.match(rendered, /งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว/);
+    assert.match(rendered, /ยังไม่ได้บันทึกรายการค่าใช้จ่าย/);
+    assert.match(rendered, /1\) ใบเสร็จ/, 'the existing numbered clarify still follows');
+    assert.equal(rendered.includes('ระบบอ่านเอกสารขัดข้องชั่วคราว'), false, 'the false outage story is gone');
+    const final = (updates.at(-1) as any).data;
+    // §9.3: the picture is kept and one question is open, so the workflow state is preserved and the
+    // money reason rides on the errorCode.
+    assert.equal(final.status, 'clarification_required');
+    assert.equal(final.errorCode, 'AI_MONTHLY_BUDGET_EXCEEDED');
+  });
+
+  it('never says "ครบ/เต็ม" when the money is only insufficient', async () => {
+    const { prisma } = makePrisma();
+    const h = mediaHarness(prisma, 'AI_BUDGET_INSUFFICIENT');
+
+    await h.useCase.executeReceiptUpload({
+      webhookEventId: 'evt-budget-insufficient', lineUserId: 'line-user-secret', replyToken: 'reply-budget-insufficient',
+      lineMessageId: 'line-msg-insufficient', messageType: 'image', messagingChannelId: 'msg-channel-1',
+    });
+
+    const rendered = h.replies.join('\n');
+    assert.match(rendered, /งบ AI ที่เหลือไม่พอเริ่มอ่านรูปนี้/);
+    assert.equal(/เต็มแล้ว|ครบแล้ว/.test(rendered), false);
+  });
+
+  it('does not claim retention when the file could not be stored (B-04)', async () => {
+    const { prisma, updates } = makePrisma();
+    const h = mediaHarness(prisma, 'AI_MONTHLY_BUDGET_EXCEEDED', { pendingCreateFails: true });
+
+    await h.useCase.executeReceiptUpload({
+      webhookEventId: 'evt-budget-save-failed', lineUserId: 'line-user-secret', replyToken: 'reply-budget-save-failed',
+      lineMessageId: 'line-msg-save-failed', messageType: 'image', messagingChannelId: 'msg-channel-1',
+    });
+
+    const rendered = h.replies.join('\n');
+    assert.match(rendered, /ยังเก็บรูปนี้ไว้ไม่สำเร็จ/);
+    assert.equal(rendered.includes('รับรูปไว้แล้ว'), false, 'never confirm retention from webhook receipt alone');
+    assert.equal(h.getOcrCalls(), 0);
+    assert.equal((updates.at(-1) as any).data.status, 'ai_budget_exceeded');
+  });
+
+  it('stays silent on a redelivery that finds the question already open (B-04)', async () => {
+    const { prisma, updates } = makePrisma();
+    const openRow = { id: 'pending-open', attachmentId: 'att-open', mimeType: 'image/jpeg', lineMessageId: 'line-msg-open', createdAt: new Date() };
+    const h = mediaHarness(prisma, 'AI_MONTHLY_BUDGET_EXCEEDED', { openRow });
+
+    await h.useCase.executeReceiptUpload({
+      webhookEventId: 'evt-budget-redelivery', lineUserId: 'line-user-secret', replyToken: 'reply-budget-redelivery',
+      lineMessageId: 'line-msg-open', messageType: 'image', messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.deepEqual(h.replies, [], 'a redelivery must not answer the same question twice');
+    assert.equal(h.getOcrCalls(), 0);
+    assert.equal((updates.at(-1) as any).data.status, 'duplicate_media_pending');
+    assert.equal((updates.at(-1) as any).data.errorCode, 'AI_MONTHLY_BUDGET_EXCEEDED');
+  });
+
+  it('keeps the reason when the gate closes at the OCR hop instead of the router (B-01)', async () => {
+    const { prisma, updates } = makePrisma();
+    const pendingRows: any[] = [];
+    (prisma.client as any).lineIntakePendingMedia = {
+      findFirst: async () => null,
+      findUnique: async () => pendingRows.at(-1) ?? null,
+      create: async ({ data }: any) => { const row = { id: 'pending-late', createdAt: new Date(), ...data }; pendingRows.push(row); return row; },
+      updateMany: async () => ({ count: 1 }),
+    };
+    let expenseDrafts = 0;
+    const h = makeUseCase(prisma, {
+      permissions: CAPTURE_PERMISSIONS,
+      // The router was admitted; the money ran out before the document read.
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95 }),
+      receiptOcrFn: () => { throw budgetError('AI_MONTHLY_BUDGET_EXCEEDED', 'TOTAL'); },
+      initReceiptUpload: { execute: async () => { expenseDrafts += 1; return { expenseId: 'exp-y', attachmentId: 'att-y' }; } },
+      completeReceiptUpload: { execute: async () => undefined },
+      createUploadIntent: { execute: async () => ({ attachmentId: 'att-late', uploadUrl: 'https://upload', uploadMethod: 'PUT' }) },
+      completeAttachmentUpload: { execute: async () => undefined },
+    });
+    (h.useCase as any).downloadLineMedia = async () => ({
+      fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+      checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
+    });
+    (h.useCase as any).uploadLineMedia = async () => undefined;
+
+    await h.useCase.executeReceiptUpload({
+      webhookEventId: 'evt-budget-late', lineUserId: 'line-user-secret', replyToken: 'reply-budget-late',
+      lineMessageId: 'line-msg-late', messageType: 'image', messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.equal(expenseDrafts, 0);
+    assert.match(h.replies.join('\n'), /งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว/);
+    assert.equal((updates.at(-1) as any).data.errorCode, 'AI_MONTHLY_BUDGET_EXCEEDED');
+  });
+
+  it('never swallows a SECOND picture while one question is still open (B-04)', async () => {
+    const { prisma, updates } = makePrisma();
+    // `ensurePendingMedia` answers a DIFFERENT picture with the already-open row and stores nothing.
+    const openRow = { id: 'pending-first', attachmentId: 'att-first', mimeType: 'image/jpeg', lineMessageId: 'line-msg-first', createdAt: new Date() };
+    const h = mediaHarness(prisma, 'AI_MONTHLY_BUDGET_EXCEEDED', { openRow });
+
+    await h.useCase.executeReceiptUpload({
+      webhookEventId: 'evt-budget-second-photo', lineUserId: 'line-user-secret', replyToken: 'reply-budget-second',
+      lineMessageId: 'line-msg-second', messageType: 'image', messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.equal(h.pendingRows.length, 0, 'these bytes really were not stored');
+    assert.equal(h.getOcrCalls(), 0);
+    assert.equal(h.getExpenseDrafts(), 0);
+    const rendered = h.replies.join('\n');
+    assert.equal(h.replies.length, 1, 'one honest answer, not silence');
+    assert.match(rendered, /งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว/);
+    assert.match(rendered, /ยังมีรูปก่อนหน้าที่รอคำตอบอยู่/);
+    assert.match(rendered, /รูปนี้จึงยังไม่ได้เก็บไว้/);
+    assert.equal(rendered.includes('รับรูปไว้แล้ว'), false, 'no retention claim for bytes that were dropped');
+    assert.equal(/1\) ใบเสร็จ/.test(rendered), false, 'the numbered question belongs to the picture that IS parked');
+    const final = (updates.at(-1) as any).data;
+    assert.equal(final.status, 'clarification_required');
+    assert.equal(final.errorCode, 'AI_MONTHLY_BUDGET_EXCEEDED');
+  });
+
+  it('refuses to park a file for a caller without capture permission', async () => {
+    const { prisma, updates } = makePrisma();
+    const h = mediaHarness(prisma, 'AI_MONTHLY_BUDGET_EXCEEDED', {
+      // Signature permission gets this caller past the media entry gate, but they may NOT capture
+      // expenses. The reference-only route then skips the capture denial, and the money gate closes
+      // at the OCR hop.
+      permissions: ['line.ai.query', 'expense.signature.manage'],
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_DOCUMENT_REFERENCE', language: 'th', confidence: 0.95 }),
+      receiptOcrThrows: true,
+    });
+
+    await h.useCase.executeReceiptUpload({
+      webhookEventId: 'evt-budget-no-permission', lineUserId: 'line-user-secret', replyToken: 'reply-budget-no-permission',
+      lineMessageId: 'line-msg-no-permission', messageType: 'image', messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.equal(h.pendingRows.length, 0, 'no file is parked for someone who may not capture');
+    const rendered = h.replies.join('\n');
+    assert.match(rendered, /งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว/);
+    assert.match(rendered, /ยังไม่ได้เก็บหรือบันทึกรายการใด ๆ/);
+    assert.equal(/1\) ใบเสร็จ/.test(rendered), false, 'never offer a capture workflow this user cannot finish');
+    assert.equal((updates.at(-1) as any).data.status, 'ai_budget_exceeded');
+  });
+
+  it('keeps every non-money OCR governance reason exactly as it was (B-01)', () => {
+    // A fix, not a re-classification: the stable OCR reasons must not drift into the money wording.
+    assert.match(formatOcrGovernanceClarifyReply('OCR_FEATURE_DISABLED'), /บริษัทปิดการอ่านเอกสารด้วย AI/);
+    assert.match(formatOcrGovernanceClarifyReply('OCR_MONTHLY_LIMIT_EXCEEDED'), /ใช้สิทธิ์อ่านเอกสารด้วย AI ครบเดือนนี้แล้ว/);
+    assert.match(formatOcrGovernanceClarifyReply(undefined, true), /ระบบอ่านเอกสารขัดข้องชั่วคราว/);
+    for (const code of ['OCR_FEATURE_DISABLED', 'OCR_MONTHLY_LIMIT_EXCEEDED', 'OCR_QUOTA_UNAVAILABLE', undefined]) {
+      assert.equal(formatOcrGovernanceClarifyReply(code, true).includes('งบ AI'), false, `${code} must not mention the money budget`);
+    }
+    // …and the money reasons never borrow the OCR-count wording.
+    assert.equal(formatOcrGovernanceClarifyReply('AI_MONTHLY_BUDGET_EXCEEDED', true).includes('สิทธิ์อ่านเอกสาร'), false);
+    assert.match(formatOcrGovernanceClarifyReply('AI_BUDGET_UNAVAILABLE', true), /ยังตรวจสอบงบ AI ของร้านไม่ได้/);
+    assert.match(formatOcrGovernanceClarifyReply('AI_BUDGET_BUSY', true), /กำลังประมวลผลงานก่อนหน้าอยู่/);
+  });
+});
+
 describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
   for (const failure of ['busy', 'timeout']) it(`keeps ${failure} feedback intermediate so the queue can deliver the final answer`, async () => {
     const { prisma, turnOutcomeWrites, updates } = makePrisma();

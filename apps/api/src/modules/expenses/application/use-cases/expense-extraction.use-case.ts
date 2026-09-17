@@ -6,6 +6,7 @@ import { ReceiptOcrClient } from '../../infrastructure/receipt-ocr.client';
 import { isStaleOcrApply, ocrLineVatRateUnknown, ReceiptOcrApplyService } from '../services/receipt-ocr-apply.service';
 import { deriveTaxEvidence, isExpenseExtractionEligible, isSuccessfulNonReceiptClassification, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import type { AiModelLineage, BusinessDocumentClassification, ExpenseExtractionResult, RequestContext } from '@watchdog-bms/contracts';
+import { isAiBudgetRefusalCode } from '@watchdog-bms/contracts';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { bangkokMonthKey } from '../../../line-ai/application/company-ai-usage-meter';
@@ -152,7 +153,14 @@ export class RequestReceiptExtractionUseCase {
 
       if (response.status !== 'ok') {
         const status = response.status === 'not_configured' ? 'not_configured' : 'failed';
-        return this.finish(ctx, expenseId, status, attachment.id, response.modelLineage, response.errorCode);
+        // Spec §9.1: the money reason must survive a reload. It is written BESIDE whatever a previous
+        // read left on the summary — never replacing it — so the file, the draft and everything the
+        // reviewer already typed stay exactly as they were, and a resumed attempt replays THIS
+        // attempt's reason instead of asking the gate again under today's budget.
+        if (isAiBudgetRefusalCode(response.errorCode)) {
+          await this.persistBudgetRefusal(ctx, expense, attachment.id, response.errorCode, response.budgetScope);
+        }
+        return this.finish(ctx, expenseId, status, attachment.id, response.modelLineage, response.errorCode, response.budgetScope);
       }
 
       if (!response.classification) return this.finish(ctx, expenseId, 'failed', attachment.id, response.modelLineage);
@@ -283,6 +291,44 @@ export class RequestReceiptExtractionUseCase {
     }
   }
 
+  /**
+   * Stamp this attempt's money refusal onto the saved summary (spec §9.1 "durable result").
+   * Nested under its own key with its own request/attachment ids: the top-level extraction fields
+   * belong to whichever read last SUCCEEDED, and moving them here would make a later recovery
+   * replay that old success against this refused attempt's id.
+   *
+   * Best effort. A concurrent edit (optimistic-lock miss) must not turn a refusal into a 500 —
+   * the refusal itself is already the answer, and the audit row above records it either way.
+   */
+  private async persistBudgetRefusal(
+    ctx: RequestContext,
+    expense: { id: string; updatedAt?: Date | null; aiVerificationSummaryJson?: Record<string, unknown> | null },
+    attachmentId: string,
+    errorCode: string,
+    budgetScope?: string,
+  ): Promise<void> {
+    try {
+      await this.repo.updateExpense({
+        id: expense.id,
+        companyId: ctx.companyId,
+        updatedByUserId: ctx.userId,
+        ...(expense.updatedAt ? { expectedUpdatedAt: expense.updatedAt } : {}),
+        aiVerificationSummaryJson: {
+          ...(expense.aiVerificationSummaryJson ?? {}),
+          aiBudgetRefusal: {
+            errorCode,
+            ...(budgetScope ? { budgetScope } : {}),
+            extractionRequestId: ctx.requestId,
+            extractionAttachmentId: attachmentId,
+            at: new Date().toISOString(),
+          },
+        },
+      });
+    } catch (error) {
+      this.logger.warn({ msg: 'ai.budget.refusal_not_persisted', expenseId: expense.id, ...safeLineErrorDetails(error) });
+    }
+  }
+
   private async finish(
     ctx: RequestContext,
     expenseId: string,
@@ -290,9 +336,10 @@ export class RequestReceiptExtractionUseCase {
     attachmentId?: string,
     modelLineage?: AiModelLineage[],
     errorCode?: string,
+    budgetScope?: ExpenseExtractionResult['budgetScope'],
   ): Promise<ExpenseExtractionResult> {
     await this.auditOutcome(ctx, expenseId, status, attachmentId, 0, undefined, modelLineage, errorCode);
-    return { status, ...(errorCode ? { errorCode } : {}) };
+    return { status, ...(errorCode ? { errorCode } : {}), ...(budgetScope ? { budgetScope } : {}) };
   }
 
   private auditOutcome(

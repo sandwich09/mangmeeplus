@@ -1105,7 +1105,7 @@ ensure_log_group() {
       --region "$REGION"
     local terminal_class
     for terminal_class in delivered clarification intentional_noop permission_refusal feature_disabled \
-      provider_unavailable timeout delivery_pending failed_terminal; do
+      budget_refusal provider_unavailable timeout delivery_pending failed_terminal; do
       aws_cmd logs put-metric-filter \
         --log-group-name "$log_group" \
         --filter-name "line-ai-terminal-${terminal_class}" \

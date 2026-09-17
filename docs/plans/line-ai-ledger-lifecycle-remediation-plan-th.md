@@ -37,14 +37,16 @@ Owner เลือกแยกเพดาน CHAT/OCR ภายในเพด�
 
 ### B. Budget reason, receipt fallback และ terminal — spec §9
 
-- [ ] ขยาย contract/result เดิมให้ known budget error และ optional scope ผ่าน API client/intake/OCR/dispatcher/web โดยไม่เสียเหตุ
-- [ ] Short-circuit AI fallbacks เมื่อ budget denied; persist pending file ตามสิทธิ์ได้โดยไม่สร้าง expense หรือเรียก AI
-- [ ] ใช้ deterministic Thai replies แยก exceeded/insufficient/busy/unavailable/OCR quota; ยืนยัน retained เฉพาะเมื่อ persistence สำเร็จ
-- [ ] Web OCR error ไม่ล้างไฟล์หรือ manual fields; ไม่ auto retry งบเต็ม/ไม่สัญญา background retry
-- [ ] Budget terminal class และ support intentional outcome ชัด; delivery pending/failure และ unknown failure ยังอยู่ใน metrics
-- [ ] ตรวจ consumer ของ terminal union/metrics ก่อนเพิ่ม class และยืนยัน full receipt permission/plan/count behavior
-- [ ] ส่ง reason/scope ลง durable web extraction/LINE/job result; recovery ของ attempt เดิมไม่เขียนเหตุใหม่จาก budget ปัจจุบัน
-- [ ] แก้ drain/statement/CRM/draft permanent budget refusal ไม่ให้ generic retry จนเปลี่ยนเหตุเป็น delivery cap/poison failure; busy/unavailable ยัง hold ตามเดิม
+Implementation ครบและมี focused automated evidence (contracts/api/web specs + infra spec scripts) ส่วนเกณฑ์ยอมรับ B-01…B-06 และ R-09 ใน spec §13 ยังไม่ติ๊ก เพราะ §14 ห้ามติ๊ก acceptance จาก unit tests อย่างเดียว ต้องมี UAT/real LINE + web journey ตาม X-02 ก่อน
+
+- [x] ขยาย contract/result เดิมให้ known budget error และ optional scope ผ่าน API client/intake/OCR/dispatcher/web โดยไม่เสียเหตุ
+- [x] Short-circuit AI fallbacks เมื่อ budget denied; persist pending file ตามสิทธิ์ได้โดยไม่สร้าง expense หรือเรียก AI
+- [x] ใช้ deterministic Thai replies แยก exceeded/insufficient/busy/unavailable/OCR quota; ยืนยัน retained เฉพาะเมื่อ persistence สำเร็จ
+- [x] Web OCR error ไม่ล้างไฟล์หรือ manual fields; ไม่ auto retry งบเต็ม/ไม่สัญญา background retry
+- [x] Budget terminal class และ support intentional outcome ชัด; delivery pending/failure และ unknown failure ยังอยู่ใน metrics
+- [x] ตรวจ consumer ของ terminal union/metrics ก่อนเพิ่ม class และยืนยัน full receipt permission/plan/count behavior
+- [x] ส่ง reason/scope ลง durable web extraction/LINE/job result; recovery ของ attempt เดิมไม่เขียนเหตุใหม่จาก budget ปัจจุบัน
+- [x] แก้ drain/statement/CRM/draft permanent budget refusal ไม่ให้ generic retry จนเปลี่ยนเหตุเป็น delivery cap/poison failure; busy/unavailable ยัง hold ตามเดิม
 
 ไฟล์หลัก: `packages/contracts/src/line-ai.ts`, `apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.ts`, `process-line-webhook.use-case.ts`, `domain/logic/line-ai-terminal-outcome.logic.ts`, receipt OCR client/use case และ web expense extraction states ที่ใช้อยู่
 

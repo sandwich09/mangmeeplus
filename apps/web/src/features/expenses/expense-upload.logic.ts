@@ -1,5 +1,6 @@
 import { ATTACHMENT_UPLOAD_ACCEPT, IMAGE_UPLOAD_ACCEPT, attachmentMimeTypeForFileName, classifyUploadSourceFile } from '@/common/files/upload-file.logic';
 import {
+  isAiBudgetRefusalCode,
   isReceiptOcrRetryableFailure,
   type ExpenseExtractionResult,
   type ReceiptOcrFieldResult,
@@ -101,6 +102,27 @@ export function recoveredExpenseExtraction(
   attempt: ExpenseExtractionAttempt,
 ): ExpenseExtractionResult | null {
   const summary = detail.aiVerificationSummaryJson;
+  // Spec §9.1: this attempt's own stored money refusal IS its answer. Replaying it must never ask
+  // the gate again — a second request would be priced against the CURRENT budget and could report
+  // success for an attempt that was refused. Checked before the success path and against its own
+  // ids, because the top-level extraction fields belong to whichever read last succeeded.
+  const refusal = summary?.['aiBudgetRefusal'] as
+    { errorCode?: unknown; budgetScope?: unknown; extractionRequestId?: unknown; extractionAttachmentId?: unknown } | undefined;
+  if (
+    refusal
+    && refusal.extractionRequestId === attempt.requestId
+    && refusal.extractionAttachmentId === attempt.attachmentId
+    && activePrimaryReceiptAttachmentId(detail.attachments) === attempt.attachmentId
+    && isAiBudgetRefusalCode(typeof refusal.errorCode === 'string' ? refusal.errorCode : undefined)
+  ) {
+    return {
+      status: 'failed',
+      errorCode: refusal.errorCode as string,
+      ...(refusal.budgetScope === 'TOTAL' || refusal.budgetScope === 'CHAT' || refusal.budgetScope === 'OCR'
+        ? { budgetScope: refusal.budgetScope }
+        : {}),
+    };
+  }
   if (
     summary?.['status'] !== 'OCR_EXTRACTED_NEEDS_REVIEW'
     || summary['extractionRequestId'] !== attempt.requestId
