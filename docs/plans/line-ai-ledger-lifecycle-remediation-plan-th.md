@@ -96,11 +96,11 @@ Implementation ครบและมี focused automated evidence (contracts/ap
 
 ### D2. Split admin UI และ end-to-end — spec §11–13
 
-- [ ] แสดง saved/pending policy, total, CHAT/OCR caps, spent/reserved/available, unknown/partial coverage และ activation month
-- [ ] Form validation/CAS conflict/reload/audit; company switch ไม่แสดงยอดของบริษัทก่อนหน้า ปุ่ม save ไม่ใช้ stale values
-- [ ] แสดง insufficient แยก exceeded และ reserved แยก spent; การอ่านใบเสร็จต่อหลัง CHAT เต็มต้องผ่าน total/OCR/count/plan/permission จริง
-- [ ] Real HTTP DTO/controller mapping และ audit field allowlist รองรับ absent/null/zero/pending fields ไม่ให้ fields ใหม่ถูก ignore
-- [ ] Partner support timeline, receipt grant/plan adjustment warnings และ signup ops อ่าน effective CHAT/OCR readiness โดยไม่สื่อว่า receipt grants เพิ่มเงิน AI
+- [x] แสดง saved/pending policy, total, CHAT/OCR caps, spent/reserved/available, unknown/partial coverage และ activation month — `AiBudgetPolicyPanel` ใน `PartnerDetailPage.tsx` + `ai-budget.logic.ts`; หลักฐานเบราว์เซอร์ `docs/qa/evidence/ai-budget-split-2026-09-17/` (shared-no-split, pending-next-month, split-no-usage, split-reserved-unresolved, policy-invalid, breach-flag ที่ 1440 และ 390 px)
+- [x] Form validation/CAS conflict/reload/audit; company switch ไม่แสดงยอดของบริษัทก่อนหน้า ปุ่ม save ไม่ใช้ stale values — validation/conflict helpers มี unit test ครบใน `ai-budget.logic.spec.ts`; `generation` token + `key={ai-budget-<companyId>}` เดิมยกเลิก request ค้างและ reset draft ทุกครั้งที่โหลด; หลักฐาน validation-caps-exceed-total (ยอดที่บันทึกไม่ขยับตาม draft) และ conflict-409-after-second-tab
+- [x] แสดง insufficient แยก exceeded และ reserved แยก spent; การอ่านใบเสร็จต่อหลัง CHAT เต็มต้องผ่าน total/OCR/count/plan/permission จริง — ตาราง spent/reserved/available ต่อ scope พร้อมป้าย “กันไว้ระหว่างเรียก AI” (split-reserved-unresolved); `readAiBudgetReadiness` แยก `EXHAUSTED` / `INSUFFICIENT_FOR_KNOWN_BOUND` / `CLOSED` และ readiness ที่ไม่รู้ bound บอกได้เพียง “ยังมีงบ”; gate เดิมของ count/plan/permission ไม่ถูกแตะ
+- [x] Real HTTP DTO/controller mapping และ audit field allowlist รองรับ absent/null/zero/pending fields ไม่ให้ fields ใหม่ถูก ignore — หลักฐานเบราว์เซอร์บันทึกผ่าน `PUT /v1/system/partners/:id/ai-model` จริง: `zero-cap-saved` (cap `0`), `pending-cancelled` (`budgetPolicy: null`), `server-refusal-thai` (cap ต่ำกว่า bucket spend), `conflict-409-after-second-tab` (stale `expectedBudgetRevision`), `audit-history` (ตั้งล่วงหน้า → แก้ → ยกเลิก), `locked-company` และ `read-only-operator`
+- [x] Partner support timeline, receipt grant/plan adjustment warnings และ signup ops อ่าน effective CHAT/OCR readiness โดยไม่สื่อว่า receipt grants เพิ่มเงิน AI — ทั้งสี่ทางเรียก `readAiBudgetReadiness` (resolver เดียวกับ admission + `readAiBudgetMonthSnapshot`); SHARED ให้ผลเดิมทุกตัวอักษร โดย assertion เดิมของทุก spec ไม่ถูกแก้แม้แถวเดียว (harness/fake ของ `partner-support-tools.spec.ts` และ `signup-ops-alert.service.spec.ts` ถูกขยายให้ใส่ state ของ SPLIT ได้ และรอบ review เพิ่มเคสใหม่ในทั้งสองไฟล์ — แต่ไม่มี assertion เดิมข้อไหนถูกเปลี่ยน), SPLIT ได้ `AI_OCR_BUDGET_REACHED` / `aiOcrBudgetReached` เป็นคำพูดล้วนไม่มีจำนวนเงิน และบรรทัดอธิบายเดิมยังบอกว่าเพิ่มใบเสร็จไม่ได้เพิ่มงบ AI
 - [ ] Regression รวม NOGROUP + split denial + receipt persistence และตรวจ webhook/expense/usage/reservation/delivery พร้อมกัน
 
 ## 3. Verification matrix
