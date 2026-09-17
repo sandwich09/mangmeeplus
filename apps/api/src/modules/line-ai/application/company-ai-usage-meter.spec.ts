@@ -693,6 +693,48 @@ describe('recordCompanyAiUsage', () => {
     assert.equal(transactions[0]![0]!.args.data[0].usageBasis, null);
   });
 
+  // ── Untrusted gateway payload (controller follow-up 5) ─────────────────────
+
+  for (const [label, bad] of [
+    ['a negative counter', { inputTokens: -1_000_000 }],
+    ['NaN', { outputTokens: Number.NaN }],
+    ['a float', { cacheReadInputTokens: 12.5 }],
+    ['a numeric string', { cacheWriteInputTokens: '500' }],
+    ['an unsafe integer', { inputTokens: Number.MAX_SAFE_INTEGER + 2 }],
+    ['an empty modelId', { modelId: '' }],
+    ['a missing tag', { tag: undefined }],
+    ['a non-boolean ok', { ok: 'yes' }],
+  ] as Array<[string, Record<string, unknown>]>) {
+    it(`never prices or writes an entry with ${label}`, async () => {
+      const { prisma, transactions } = fakePrisma();
+
+      const spend = await recordCompanyAiUsage(prisma, config, { companyId: 'co-1', sourceRoute: 'line-turn', requestId: 'req-bad' }, [usage(bad as any)]);
+
+      assert.equal(spend, undefined);
+      assert.equal(transactions.length, 0, 'a malformed counter must never reach the aggregate');
+      assert.deepEqual(warnings.filter((w) => w?.msg === 'ai.usage.malformed_entry'), [
+        { msg: 'ai.usage.malformed_entry', sourceRoute: 'line-turn', requestId: 'req-bad', companyId: 'co-1' },
+      ]);
+      assert.equal(warnings.filter((w) => w?.msg === 'ai.usage.absent').length, 1, 'an all-bad batch behaves like an absent one');
+    });
+  }
+
+  it('keeps the good entries of a mixed batch and drops only the malformed one', async () => {
+    const { prisma, transactions } = fakePrisma();
+
+    const spend = await recordCompanyAiUsage(prisma, config, { companyId: 'co-1', sourceRoute: 'line-turn', requestId: 'req-mixed' }, [
+      usage({ inputTokens: -5 } as any),
+      usage(),
+    ]);
+
+    assert.deepEqual(spend, { pre: 0, post: 347 }, 'only the good entry is billed');
+    assert.equal(transactions[0]!.map((o) => o.op).length, 2);
+    assert.equal(transactions[0]![0]!.args.data.length, 1, 'exactly one row is written');
+    assert.deepEqual(transactions[0]![1]!.args.update.callCount, { increment: 1 });
+    assert.equal(warnings.filter((w) => w?.msg === 'ai.usage.malformed_entry').length, 1);
+    assert.equal(warnings.filter((w) => w?.msg === 'ai.usage.absent').length, 0);
+  });
+
   for (const [label, entry] of [
     ['awkward fractions', usage({ inputTokens: 1, outputTokens: 3, cacheReadInputTokens: 7, cacheWriteInputTokens: 11 })],
     ['cache-only', usage({ inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 123_457, cacheWriteInputTokens: 1 })],
@@ -817,6 +859,48 @@ describe('recordCompanyAiCostAdjustment', () => {
     );
     assert.equal(aggregate.costSatang, 1_000);
     assert.equal(created.length, 0);
+  });
+
+  /** The exact P2002 shape Prisma 7's pg adapter produced against real PostgreSQL — note the
+   *  QUOTED column name and the absent `meta.target`. Pinned so an adapter upgrade cannot
+   *  silently turn a concurrent replay back into a thrown 500. */
+  const adapterP2002 = (field: string) => Object.assign(new Error('Unique constraint failed'), {
+    code: 'P2002',
+    meta: {
+      modelName: 'AiUsageEvent',
+      driverAdapterError: {
+        name: 'DriverAdapterError',
+        cause: { originalCode: '23505', kind: 'UniqueConstraintViolation', constraint: { fields: [`"${field}"`] } },
+      },
+    },
+  });
+
+  it('reports a LOST unique-index race as duplicate, not as a thrown error', async () => {
+    const { prisma, aggregate } = adjustmentPrisma();
+    const base = prisma.client.$transaction;
+    // The findUnique saw nothing (the winner had not committed yet); the INSERT loses the race.
+    prisma.client.$transaction = (fn: any) => base((tx: any) => fn({
+      ...tx, aiUsageEvent: { ...tx.aiUsageEvent, create: async () => { throw adapterP2002('correctionKey'); } },
+    }));
+
+    assert.equal(
+      await recordCompanyAiCostAdjustment(prisma, { eventId: 'evt-1', correctionKey: 'race', costSatang: -120 }),
+      'duplicate',
+    );
+    assert.equal(aggregate.costSatang, 880, 'the fake cannot roll back, but the real transaction does');
+  });
+
+  it('still propagates a unique violation on any OTHER constraint', async () => {
+    const { prisma } = adjustmentPrisma();
+    const base = prisma.client.$transaction;
+    prisma.client.$transaction = (fn: any) => base((tx: any) => fn({
+      ...tx, aiUsageEvent: { ...tx.aiUsageEvent, create: async () => { throw adapterP2002('requestId'); } },
+    }));
+
+    await assert.rejects(
+      () => recordCompanyAiCostAdjustment(prisma, { eventId: 'evt-1', correctionKey: 'k', costSatang: -1 }),
+      { code: 'P2002' },
+    );
   });
 
   it('refuses an unknown event and refuses to correct a correction', async () => {

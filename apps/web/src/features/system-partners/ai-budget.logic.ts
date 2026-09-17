@@ -177,11 +177,11 @@ export function aiUsageBasisNote(rows: Array<{ usageBasis: string; costSatang: n
   return parts.length === 0 ? null : `token บางส่วนไม่ได้วัดจริง: ${parts.join(' · ')}`;
 }
 
-/** Top 10 + “อื่น ๆ” must equal the event-derived month total, or the table is lying. */
-export function aiTagsReconcile(
-  topTags: Array<{ costSatang: number }>,
-  otherTags: { costSatang: number },
-  totalCostSatang: number,
-): boolean {
-  return topTags.reduce((sum, row) => sum + row.costSatang, 0) + otherTags.costSatang === totalCostSatang;
+/**
+ * During a rolling deploy this page can be served by a pre-D1 API, whose response carries no
+ * `breakdown`/`otherTags` at all. The contract types stay required — the current API always sends
+ * them — but the screen must degrade to the old card instead of throwing on a missing field.
+ */
+export function hasAiUsageBreakdown(usage: { breakdown?: unknown } | null | undefined): boolean {
+  return !!usage && typeof usage.breakdown === 'object' && usage.breakdown !== null;
 }

@@ -135,3 +135,22 @@ Next:
 - R-12 stays open on its cost-corpus half; the baseline-corpus plan items belong to phase C.
 - `recordCompanyAiCostAdjustment` has no caller; phase E wires late-actual settlement to it.
 - The migration adds four CHECK constraints to `AiUsageEvent`, which Postgres validates with a table scan under an ACCESS EXCLUSIVE lock. The table is small (about 92 rows/company-month on Production) so this is expected to be brief, but it was only measured against an empty catalog here.
+
+### D1 controller review follow-ups — 2026-09-17
+
+Five hardening changes on top of the D1 commit, same branch:
+
+1. **Version skew.** `AiUsageBreakdown` now returns `null` unless `hasAiUsageBreakdown(usage)` (a new one-line predicate in `ai-budget.logic.ts`), and the "อื่น ๆ" row uses `usage.otherTags?.tags ?? 0`. A rolling deploy that serves this page from a pre-D1 API degrades to the old card instead of throwing mid-render. The contract types stay required — the current API always sends both fields.
+2. **Dead code.** `aiTagsReconcile` and its test are deleted; reconciliation is structural on the server and already asserted in the use-case spec.
+3. **Adjustment race.** Two callers with the same `correctionKey` can both pass the `findUnique`; the loser's INSERT raised P2002 out of `$transaction` instead of the documented `'duplicate'`. `recordCompanyAiCostAdjustment` now catches that ONE case outside the transaction. **Measured, not assumed:** Prisma 7's pg adapter leaves `meta.target` undefined and reports the column through `meta.driverAdapterError.cause.constraint.fields` **quoted** — `['"correctionKey"']`. The first attempt compared unquoted and the real-PG test caught it. The detector strips quotes, also accepts `meta.target` and a constraint/index name, and re-throws everything else.
+4. **Malformed snapshot.** The grouped SQL wrapped each component in `CASE WHEN jsonb_typeof(...) = 'number' THEN (...)::numeric END`, rounded and cast once after the `SUM`. One snapshot row with a non-number component now contributes NULL instead of aborting the cast and taking the whole partner page down.
+5. **Gateway trust boundary.** `recordCompanyAiUsage` drops an entry whose four counters are not non-negative safe integers, or whose `modelId`/`tag` is not a non-empty string, or whose `ok` is not a boolean (that last clause is beyond the letter of the review: a non-boolean would fail the insert for every sibling row in the batch). Dropped entries log one `ai.usage.malformed_entry` warn with ids only — never the payload — and the remaining entries are still recorded. An all-malformed batch takes the existing `ai.usage.absent` path. A negative counter can no longer lower a company's month aggregate.
+
+Verification of the follow-ups (fresh throwaway `postgres:16-alpine`, `mangmee-d1-pg2-18263`, db `d1b_10977`, 127.0.0.1:15583, migrated and stopped afterwards):
+
+- `pnpm exec tsx --test --test-reporter=tap` (apps/api, meter + get-partner-ai-usage) **with** `DATABASE_URL` + `OCR_REQUIRE_POSTGRES=true`: 135 tests, 135 pass, 0 fail, 0 skipped. The real-PG case proves the `Promise.all` race returns exactly `['applied','duplicate']`, the aggregate moved once (1250 → 1150) and only one `race-key` row exists, and that a row whose snapshot holds the string `'5'` in `componentSatang.cacheRead` reports `{ read: 0, write: 7 }` for its slice instead of failing the read.
+- Same focused api set without `DATABASE_URL` (meter, get-partner-ai-usage, ai-gateway.client, crm-ai-gateway.client, partner.controller, security-event-emitters): 197 tests, 193 pass, 0 fail, 4 skipped (the real-PG cases).
+- `pnpm test` (apps/web): 1745 tests, 1745 pass, 0 fail.
+- api typecheck rc=0, web typecheck rc=0 (both serialised on the `/tmp/mangmee-heavy.lock` mkdir mutex). `git diff --check` clean.
+
+The ai-gateway typecheck was not re-run: no gateway file changed in this round.

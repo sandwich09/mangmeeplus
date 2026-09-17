@@ -9,6 +9,7 @@ import {
   __resetCompanyAiBudgetCache,
   bangkokMonthKey,
   previousBangkokMonthKey,
+  recordCompanyAiCostAdjustment,
 } from '../../../line-ai/application/company-ai-usage-meter';
 
 const CURRENT = bangkokMonthKey();
@@ -463,9 +464,20 @@ describe('GetPartnerAiUsageUseCase', () => {
           eventKind: 'COST_ADJUSTMENT', adjustsEventId: tagged.id, correctionKey: `settle-${randomUUID()}`,
         },
       });
+      // A snapshot whose cacheRead component is a STRING (a future writer, or a manual fix). The
+      // cast must not abort the whole admin read; the malformed component contributes nothing and
+      // its well-formed sibling still counts.
+      await prisma.aiUsageEvent.create({
+        data: {
+          ...base, sourceRoute: 'line-turn', usageTag: 'line_turn', costSatang: 0,
+          inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0,
+          requestKind: 'TEXT', budgetBucket: 'CHAT', usageBasis: 'PROVIDER_REPORTED',
+          pricingSnapshot: { componentSatang: { input: 0, output: 0, cacheRead: '5', cacheWrite: 7, rounding: 0 } },
+        },
+      });
       await prisma.companyAiMonthlyUsage.create({
         data: {
-          companyId, monthKey: CURRENT, costSatang: 1_250, callCount: 2,
+          companyId, monthKey: CURRENT, costSatang: 1_250, callCount: 3,
           inputTokens: 2_800, outputTokens: 400, cacheReadInputTokens: 5_000, cacheWriteInputTokens: 4_000,
         },
       });
@@ -474,16 +486,19 @@ describe('GetPartnerAiUsageUseCase', () => {
       const result = await new GetPartnerAiUsageUseCase({ client: prisma } as any, makeConfig()).execute(companyId);
 
       assert.equal(result.breakdown.total.costSatang, 1_250);
-      assert.equal(result.breakdown.total.calls, 2, 'the adjustment row is not a provider call');
+      assert.equal(result.breakdown.total.calls, 3, 'the adjustment row is not a provider call');
       assert.equal(result.current?.costSatang, 1_250, 'the running aggregate agrees with the events');
       assert.deepEqual(result.breakdown.adjustments, { costSatang: -150, rows: 1 });
       assert.deepEqual(result.breakdown.byBudgetBucket.map((row) => [row.budgetBucket, row.costSatang, row.calls]),
-        [['CHAT', 0, 0], ['OCR', 850, 1], ['UNKNOWN', 400, 1]]);
+        [['CHAT', 0, 1], ['OCR', 850, 1], ['UNKNOWN', 400, 1]]);
       assert.deepEqual(result.breakdown.byRequestKind.find((row) => row.requestKind === 'IMAGE')!.cacheCostSatang,
         { read: 5, write: 50 }, 'component cost is summed out of the JSON snapshot');
+      assert.deepEqual(result.breakdown.byRequestKind.find((row) => row.requestKind === 'TEXT')!.cacheCostSatang,
+        { read: 0, write: 7 }, 'a string component contributes nothing instead of aborting the read');
+      assert.deepEqual(result.breakdown.total.cacheCostSatang, { read: 5, write: 57 });
       assert.equal(result.breakdown.byRequestKind.find((row) => row.requestKind === 'UNKNOWN')!.cacheCostSatang, null);
       assert.deepEqual(result.breakdown.coverage.status, 'partial');
-      assert.equal(result.breakdown.coverage.callsWithMetadata, 1);
+      assert.equal(result.breakdown.coverage.callsWithMetadata, 2);
       assert.equal(
         result.topTags.reduce((sum, row) => sum + row.costSatang, 0) + result.otherTags.costSatang,
         result.breakdown.total.costSatang,
@@ -499,6 +514,18 @@ describe('GetPartnerAiUsageUseCase', () => {
           eventKind: 'COST_ADJUSTMENT', adjustsEventId: tagged.id, correctionKey: applied.correctionKey!,
         },
       }));
+
+      // Two settlements of the same evidence racing each other: the loser's INSERT hits the unique
+      // index, its whole transaction rolls back, and it reports 'duplicate' rather than throwing.
+      const raced = await Promise.all([
+        recordCompanyAiCostAdjustment({ client: prisma } as any, { eventId: tagged.id, correctionKey: 'race-key', costSatang: -100 }),
+        recordCompanyAiCostAdjustment({ client: prisma } as any, { eventId: tagged.id, correctionKey: 'race-key', costSatang: -100 }),
+      ]);
+      assert.deepEqual([...raced].sort(), ['applied', 'duplicate']);
+      assert.equal((await prisma.companyAiMonthlyUsage.findUniqueOrThrow({
+        where: { companyId_monthKey: { companyId, monthKey: CURRENT } }, select: { costSatang: true, callCount: true },
+      })).costSatang, 1_150, 'the aggregate moved exactly once');
+      assert.equal(await prisma.aiUsageEvent.count({ where: { companyId, correctionKey: 'race-key' } }), 1);
     } finally {
       if (companyId) await prisma.company.deleteMany({ where: { id: companyId } });
       await prisma.$disconnect().catch(() => undefined);

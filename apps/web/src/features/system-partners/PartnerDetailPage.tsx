@@ -74,6 +74,7 @@ import {
   budgetBarWidth,
   budgetPercent,
   budgetTextClass,
+  hasAiUsageBreakdown,
   OCR_CONFIG_STALE_MESSAGE,
   parseBudgetBahtInput,
   parseOcrMonthlyLimitInput,
@@ -1315,6 +1316,9 @@ function AiMeasureRow({ label, measures }: { label: string; measures: PartnerAiU
 /** Current-month kind/bucket/basis breakdown (remediation spec §11.1). Read-only: nothing here
  *  depends on the unsaved budget/OCR draft below, so a typed-but-unsaved value never moves a number. */
 function AiUsageBreakdown({ usage }: { usage: PartnerAiUsageDto }) {
+  // Version skew: a rolling deploy can serve this page from a pre-D1 API with no breakdown at all.
+  // Fall back to the old card rather than throwing on the first missing field.
+  if (!hasAiUsageBreakdown(usage)) return null;
   const { breakdown } = usage;
   const coverageNotice = aiCoverageNotice(breakdown.coverage, formatThaiDate);
   const basisNote = aiUsageBasisNote(breakdown.byUsageBasis);
@@ -1601,7 +1605,8 @@ function AiUsageBudgetSection({
                       <td className="py-2.5 tabular-nums text-gray-600">{aiCacheCostLabel(row.cacheCostSatang)}</td>
                     </tr>
                   ))}
-                  {usage.otherTags.tags > 0 && (
+                  {/* Optional chaining for the same version skew: a pre-D1 response has no remainder row. */}
+                  {(usage.otherTags?.tags ?? 0) > 0 && (
                     <tr className="border-b border-gray-100 bg-gray-50">
                       <td className="py-2.5 pr-4 text-gray-700">อื่น ๆ ({usage.otherTags.tags.toLocaleString('th-TH')} ประเภท)</td>
                       <td className="py-2.5 pr-4 tabular-nums text-gray-800">{satangToBaht(usage.otherTags.costSatang)}</td>

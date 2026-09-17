@@ -239,8 +239,13 @@ export class GetPartnerAiUsageUseCase {
           COALESCE(SUM("outputTokens"), 0)::int AS "outputTokens",
           COALESCE(SUM("cacheReadInputTokens"), 0)::int AS "cacheReadInputTokens",
           COALESCE(SUM("cacheWriteInputTokens"), 0)::int AS "cacheWriteInputTokens",
-          SUM(("pricingSnapshot" #>> '{componentSatang,cacheRead}')::int)::int AS "cacheReadSatang",
-          SUM(("pricingSnapshot" #>> '{componentSatang,cacheWrite}')::int)::int AS "cacheWriteSatang",
+          -- A snapshot whose component is not a JSON number contributes NULL instead of aborting
+          -- the cast: one malformed row (a future writer, a manual fix) must not take the whole
+          -- admin page down. SUM over nothing stays NULL, which is how UNAVAILABLE is reported.
+          ROUND(SUM(CASE WHEN jsonb_typeof("pricingSnapshot" #> '{componentSatang,cacheRead}') = 'number'
+            THEN ("pricingSnapshot" #>> '{componentSatang,cacheRead}')::numeric END))::int AS "cacheReadSatang",
+          ROUND(SUM(CASE WHEN jsonb_typeof("pricingSnapshot" #> '{componentSatang,cacheWrite}') = 'number'
+            THEN ("pricingSnapshot" #>> '{componentSatang,cacheWrite}')::numeric END))::int AS "cacheWriteSatang",
           MIN("createdAt") AS "firstAt"
         FROM "AiUsageEvent"
         WHERE "companyId" = ${companyId} AND "monthKey" = ${monthKey}

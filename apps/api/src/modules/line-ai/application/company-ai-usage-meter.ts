@@ -69,6 +69,22 @@ function normalizeUsageBasis(value: unknown): string | null {
   return value === 'PROVIDER_REPORTED' || value === 'CONSERVATIVE_ESTIMATE' ? value : null;
 }
 
+const nonNegativeCount = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) >= 0;
+const presentString = (value: unknown): boolean => typeof value === 'string' && value !== '';
+
+/**
+ * The gateway's `usage` array is parsed wire JSON, not a validated payload. An entry whose four
+ * counters are not non-negative safe integers is dropped BEFORE pricing: a negative or NaN counter
+ * must never be able to lower a company's month aggregate or poison the whole batch's write.
+ * `ok` is checked too, because a non-boolean would fail the insert for every sibling row.
+ */
+function isMeterableEntry(entry: AiUsageEntry | undefined): boolean {
+  return !!entry
+    && presentString(entry.modelId) && presentString(entry.tag) && typeof entry.ok === 'boolean'
+    && nonNegativeCount(entry.inputTokens) && nonNegativeCount(entry.outputTokens)
+    && nonNegativeCount(entry.cacheReadInputTokens) && nonNegativeCount(entry.cacheWriteInputTokens);
+}
+
 /** Month-to-date spend either side of this recording, so phase 4 can detect a threshold
  *  crossing exactly once (the unique aggregate row serializes concurrent increments). */
 export type CompanyAiUsageSpend = { pre: number; post: number };
@@ -364,7 +380,20 @@ export async function recordCompanyAiUsage(
   meta: CompanyAiUsageMeta,
   entries: AiUsageEntry[] | undefined,
 ): Promise<CompanyAiUsageSpend | undefined> {
-  if (!entries || entries.length === 0) {
+  // Trust boundary: drop what cannot be priced, keep the rest. Counts and ids only in the warn —
+  // never the entry itself, which came off the wire (PDPA posture).
+  const priceable = (entries ?? []).filter((entry) => {
+    if (isMeterableEntry(entry)) return true;
+    logger.warn({
+      msg: 'ai.usage.malformed_entry',
+      sourceRoute: meta.sourceRoute,
+      requestId: meta.requestId,
+      companyId: meta.companyId,
+    });
+    return false;
+  });
+
+  if (priceable.length === 0) {
     // Artifact/gateway version skew is the usual cause; visible, never fatal (criterion 10).
     logger.warn({
       msg: 'ai.usage.absent',
@@ -380,7 +409,7 @@ export async function recordCompanyAiUsage(
   // rate and stamps it — plus where that rate came from, so a fallback leaves a mark on the row
   // and not only in a log line that rotates (spec §6.4 + addendum).
   const fx = await resolveThbPerUsd(prisma, config);
-  const rows = entries.map((entry) => {
+  const rows = priceable.map((entry) => {
     const { costSatang, unknownModel } = computeCostSatang(entry, fx.rate);
     if (unknownModel) {
       logger.warn({
@@ -482,6 +511,25 @@ export type CompanyAiCostAdjustment = {
 };
 
 /**
+ * True only for a unique violation on `AiUsageEvent.correctionKey`. Prisma 7's pg driver adapter
+ * leaves `meta.target` undefined and reports the column through the driver-adapter cause, QUOTED
+ * (`"correctionKey"`) — verified against real PostgreSQL, not assumed. The legacy `meta.target`
+ * and a constraint/index NAME are accepted too, because which of the three a given adapter fills
+ * in is not something this module should depend on. Anything else is a real failure and keeps
+ * propagating.
+ */
+function isCorrectionKeyConflict(error: unknown): boolean {
+  const err = error as { code?: unknown; meta?: Record<string, any> } | null;
+  if (err?.code !== 'P2002') return false;
+  const constraint = err.meta?.['driverAdapterError']?.cause?.constraint;
+  const fields = constraint?.fields ?? err.meta?.['target'];
+  if ((Array.isArray(fields) ? fields : [fields])
+    .some((field) => typeof field === 'string' && field.replace(/"/g, '') === 'correctionKey')) return true;
+  const name = typeof constraint === 'string' ? constraint : constraint?.index ?? constraint?.name;
+  return typeof name === 'string' && name.includes('correctionKey');
+}
+
+/**
  * Appends an audited `COST_ADJUSTMENT` row and moves the ORIGINAL row's month aggregate by the same
  * signed deltas, in one transaction. It is never a provider call: `callCount` is untouched, so
  * averages and `topTags.calls` keep counting model calls only.
@@ -502,6 +550,22 @@ export async function recordCompanyAiCostAdjustment(
     cacheReadInputTokens: adjustment.cacheReadInputTokens ?? 0,
     cacheWriteInputTokens: adjustment.cacheWriteInputTokens ?? 0,
   };
+  try {
+    return await applyCompanyAiCostAdjustment(prisma, adjustment, delta);
+  } catch (err) {
+    // Concurrency: two callers can both pass the `findUnique` below, and the loser's INSERT hits
+    // the unique index. Its WHOLE transaction — including the aggregate move — is rolled back, so
+    // the observable outcome is exactly the fast-path replay: the correction applied once.
+    if (isCorrectionKeyConflict(err)) return 'duplicate';
+    throw err;
+  }
+}
+
+function applyCompanyAiCostAdjustment(
+  prisma: PrismaService,
+  adjustment: CompanyAiCostAdjustment,
+  delta: Record<string, number>,
+): Promise<'applied' | 'duplicate' | 'unknown-event' | 'refused-negative'> {
   return prisma.client.$transaction(async (tx: any) => {
     const replay = await tx.aiUsageEvent.findUnique({ where: { correctionKey: adjustment.correctionKey }, select: { id: true } });
     if (replay) return 'duplicate';

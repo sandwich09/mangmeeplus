@@ -7,7 +7,7 @@ import {
   aiAverageCostLabel,
   aiCacheCostLabel,
   aiCoverageNotice,
-  aiTagsReconcile,
+  hasAiUsageBreakdown,
   aiUsageBasisNote,
   budgetBarClass,
   budgetBarWidth,
@@ -215,9 +215,11 @@ describe('AI usage breakdown labels (remediation spec §11.1)', () => {
     assert.equal(aiUsageBasisNote([{ usageBasis: 'CONSERVATIVE_ESTIMATE', costSatang: 0, calls: 0 }]), null);
   });
 
-  it('proves top 10 + อื่น ๆ reconciles with the month total', () => {
-    assert.equal(aiTagsReconcile([{ costSatang: 700 }, { costSatang: 300 }], { costSatang: 250 }, 1_250), true);
-    assert.equal(aiTagsReconcile([{ costSatang: 700 }], { costSatang: 0 }, 1_250), false);
-    assert.equal(aiTagsReconcile([], { costSatang: 0 }, 0), true);
+  it('hides the whole section for a pre-D1 response instead of throwing mid-render', () => {
+    // A rolling deploy can serve this page from an API that predates the breakdown fields.
+    assert.equal(hasAiUsageBreakdown({ breakdown: { monthKey: '2026-09' } }), true);
+    assert.equal(hasAiUsageBreakdown({}), false);
+    assert.equal(hasAiUsageBreakdown({ breakdown: null }), false);
+    assert.equal(hasAiUsageBreakdown(null), false);
   });
 });
