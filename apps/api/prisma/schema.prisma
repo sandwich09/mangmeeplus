@@ -422,6 +422,8 @@ model Company {
   aiConfiguration                   CompanyAiConfiguration?
   aiUsageEvents                     AiUsageEvent[]
   aiMonthlyUsage                    CompanyAiMonthlyUsage[]
+  aiMonthlyBucketUsage              CompanyAiMonthlyBucketUsage[]
+  aiBudgetReservations              AiBudgetReservation[]
   ocrUsageEvents                    CompanyOcrUsageEvent[]
   billingReceiptGrants              BillingReceiptGrant[]
   ocrMonthlyUsage                   CompanyOcrMonthlyUsage[]
@@ -3483,6 +3485,9 @@ model AiUsageEvent {
   adjustsEventId        String?
   /** COST_ADJUSTMENT only: replay fence, so a re-sent correction cannot double-apply. */
   correctionKey         String?  @unique
+  /** Phase E1b settlement fence: the provider invocation this row settles. NULL on every legacy
+   *  and SHARED row, and NULLs never collide, so the unique index costs them nothing. */
+  invocationKey         String?  @unique
   createdAt             DateTime @default(now())
   company               Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
@@ -3529,6 +3534,64 @@ model CompanyAiMonthlyUsage {
   company               Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@unique([companyId, monthKey])
+}
+
+// Per-bucket slice of the month aggregate above (remediation spec §12.4, ADR 0013 §3). Written in
+// the SAME transaction as `AiUsageEvent` + `CompanyAiMonthlyUsage` whenever the bucket is known —
+// SHARED companies included — so a later SPLIT activation and the admin console read one aggregate
+// instead of re-deriving bucket spend by scanning the event table.
+model CompanyAiMonthlyBucketUsage {
+  id         String   @id @default(cuid())
+  companyId  String
+  monthKey   String // 'YYYY-MM', Asia/Bangkok
+  bucket     String // 'CHAT' | 'OCR'
+  costSatang Int      @default(0)
+  callCount  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, monthKey, bucket])
+}
+
+// One durable money hold per provider invocation a SPLIT company is about to make (spec §12.3/§12.6,
+// ADR 0013 §3). `reserved` is always the live SUM of `upperBoundSatang` over the non-terminal rows
+// of a company-month, read under the `ai-budget:<company>:<month>` advisory lock — there is no
+// second counter that could drift away from these rows.
+model AiBudgetReservation {
+  id             String @id @default(cuid())
+  companyId      String
+  /** PINNED at reserve time. A chain that crosses Bangkok midnight still settles into this month. */
+  monthKey       String
+  bucket         String // 'CHAT' | 'OCR'
+  /** The `resolveAiBudgetPolicy` revision this hold was admitted under, for reconciliation. */
+  policyRevision String
+  sourceRoute    String
+  stepKind       String
+  /** Stable per logical user attempt; never a transport request id, never a raw LINE id. */
+  attemptKey     String
+  /** `<attemptKey>#<stepKind>#<ordinal>` — the one execution identity money is charged against. */
+  invocationKey  String @unique
+  /** Priced from the declared bound, rounded UP to a whole satang for THIS invocation. */
+  upperBoundSatang Int
+  /** Model id, unit rates, FX + source, token bounds and attempts the bound was priced with. */
+  pricingSnapshot  Json
+  status           String    @default("RESERVED") // RESERVED|DISPATCHED|SETTLED|UNRESOLVED|CANCELLED
+  /** Fencing token: only the holder may cancel, so a stale owner's late compensation is a no-op. */
+  ownerToken       String
+  settledCostSatang Int?
+  usageBasis        String? // 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE'
+  evidenceJson      Json?
+  /** Actual settled above the reserved bound: admission for the scope closes until an operator clears it. */
+  breach            Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  dispatchedAt      DateTime?
+  settledAt         DateTime?
+  updatedAt         DateTime  @updatedAt
+  company           Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, monthKey, status])
+  @@index([companyId, monthKey, bucket, status])
 }
 
 // One row per OCR action admitted immediately before a provider call. The unique request fence

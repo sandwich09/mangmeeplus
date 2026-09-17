@@ -7,6 +7,7 @@ import { safeLineErrorDetails } from '../../line-ai/infrastructure/line-reply.ad
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
 import { classifyAiUsageRequest, companyAiBudgetRefusal, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
+import { cancelAiBudgetStep, type AiBudgetCancelProof, type ReservedAiBudgetStep } from '../../line-ai/application/company-ai-budget-reservation';
 import {
   type CompanyOcrAdmissionIdentity,
   admitCompanyOcr,
@@ -54,7 +55,16 @@ export class ReceiptOcrClient {
       this.config,
       this.rateLimits,
       request.companyId,
-      (monthKey) => this.extractOcrAdmitted(request, modelPolicy, monthKey, options.onAdmitted),
+      (monthKey, hold) => this.extractOcrAdmitted(request, modelPolicy, monthKey, options.onAdmitted, hold),
+      undefined,
+      {
+        // ADR 0013 §4: the client's own extraction request id IS the logical attempt — the upload
+        // screen reuses it for a lost response and rotates it for an explicit re-read, which is
+        // exactly the attempt boundary money must follow. No LINE id, no prompt text.
+        stepKind: 'receipt-ocr', attemptKey: `receipt-web:${request.requestId}`,
+        sourceRoute: 'receipt-ocr', modelId: modelPolicy?.modelId ?? '', requestId: request.requestId,
+        ...classifyAiUsageRequest('receipt-ocr', request.attachment.mimeType === 'application/pdf' ? 'document' : 'image'),
+      },
     );
     if (admission.allowed) return admission.value;
     // Refused BEFORE `admitCompanyOcr`, so no OCR read was counted and there is nothing to release.
@@ -68,6 +78,7 @@ export class ReceiptOcrClient {
     modelPolicy: AiModelPolicy | undefined,
     budgetMonthKey?: string,
     onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void,
+    hold?: ReservedAiBudgetStep,
   ): Promise<ReceiptOcrResponse> {
     const admission = await admitCompanyOcr(this.prisma, {
       companyId: request.companyId,
@@ -80,11 +91,16 @@ export class ReceiptOcrClient {
       // P10-L §15.1: the plan slip ceiling is always measured here; this flag decides whether it refuses.
       enforceReceiptQuota: this.config.receiptQuotaEnforced,
     });
-    if (!admission.allowed) return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
+    if (!admission.allowed) {
+      // The money hold was taken BEFORE this count/switch/plan gate (ADR 0013 §5). The gate refusing
+      // here is proof that no provider call started, so this exact hold is released — and only it.
+      await this.releaseHold(hold, 'ocr_admission_refused');
+      return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
+    }
     onAdmitted?.(admission);
     let result: ReceiptOcrResponse;
     try {
-      result = await this.extractAdmitted(request, modelPolicy, budgetMonthKey);
+      result = await this.extractAdmitted(request, modelPolicy, budgetMonthKey, hold);
     } catch (error) {
       this.logger.warn({ msg: 'receipt OCR response invalid', requestId: request.requestId, ...safeLineErrorDetails(error) });
       result = { status: 'failed', errorCode: 'OCR_JSON_PARSE_FAILED' };
@@ -94,6 +110,10 @@ export class ReceiptOcrClient {
     // request id, which buys a second admission, so keeping this one charges a 15-read trial twice
     // for one flaky upload (P10-L §15.1 residual-1).
     if (isOcrPreProviderRefusal(result) || isOcrRetryableProviderFailure(result)) {
+      // R-05: ONLY the pre-provider proof releases money. `isOcrRetryableProviderFailure` says the
+      // provider may well have run and cost real money, so it refunds the customer's READ COUNT
+      // below and never touches the hold — `releaseCompanyOcrAdmission` cannot reach a reservation.
+      if (isOcrPreProviderRefusal(result)) await this.releaseHold(hold, 'gateway_pre_provider_refusal');
       const released = await releaseCompanyOcrAdmission(this.prisma, {
         companyId: request.companyId,
         sourceRoute: 'receipt-ocr-web',
@@ -109,13 +129,19 @@ export class ReceiptOcrClient {
     return result;
   }
 
+  /** The one place this seam may release money, and only with a proof that no provider ran. */
+  private async releaseHold(hold: ReservedAiBudgetStep | undefined, proof: AiBudgetCancelProof): Promise<void> {
+    if (hold) await cancelAiBudgetStep(this.prisma, { reservationId: hold.id, ownerToken: hold.ownerToken, proof });
+  }
+
   private async extractAdmitted(
     request: ReceiptOcrRequest,
     modelPolicy: AiModelPolicy | undefined,
     budgetMonthKey?: string,
+    hold?: ReservedAiBudgetStep,
   ): Promise<ReceiptOcrResponse> {
     const secret = this.config.aiGatewayInternalSecret!;
-    const governedRequest = { ...request, ...(modelPolicy && { modelPolicy }) };
+    const governedRequest = { ...request, ...(modelPolicy && { modelPolicy }), ...(hold && { budgetEnvelope: hold.envelope }) };
     let response: Response;
     try {
       response = await fetch(`${this.config.aiGatewayInternalUrl}/internal/ai/receipt-ocr`, {
@@ -145,6 +171,7 @@ export class ReceiptOcrClient {
         this.config,
         {
           companyId: request.companyId, sourceRoute: 'receipt-ocr', requestId: request.requestId, monthKey: budgetMonthKey,
+          ...(hold && { invocationKey: hold.invocationKey }),
           ...classifyAiUsageRequest('receipt-ocr', request.attachment.mimeType === 'application/pdf' ? 'document' : 'image'),
         },
         result.usage,
