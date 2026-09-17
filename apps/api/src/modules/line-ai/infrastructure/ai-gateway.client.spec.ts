@@ -832,6 +832,47 @@ describe('AiGatewayClient SPLIT admission (spec §12.3/§12.6, ADR 0013 §4/§6)
     assert.equal(hold.invocationKey, `company-1#${hold.attemptKey}#line-turn#0`);
   });
 
+  it('derives a TEXT intake attempt from the webhook event when the caller sends one (E1c)', async () => {
+    // E1b left this open: `LineIntakeRouteRequest` carried no webhook id, so a redelivery under a
+    // fresh transport id bought a SECOND hold for the same message. E1c added the contract field.
+    const { prisma, reservations } = splitPrisma({ total: 100_000, chat: 50_000, ocr: 50_000 });
+    const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
+    const fetchStub = captureFetch({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 });
+    try {
+      await client.requestLineIntakeRoute({
+        requestId: 'transport-77', webhookEventId: 'evt-9001', companyId: 'company-1', userId: 'u1',
+        locale: 'th-TH', messageText: 'ยอดขายวันนี้', permissions: [],
+      });
+    } finally { fetchStub.restore(); }
+
+    const hold = [...reservations.values()][0];
+    assert.ok(hold, 'a SPLIT text intake must be ADMITTED, not refused for a model nobody resolved');
+    assert.equal(hold.pricingSnapshot.modelId, HAIKU, 'the text lane prices the tenant approved model');
+    assert.equal(hold.stepKind, 'line-intake-text');
+    assert.equal(hold.attemptKey, `line-text:${aiBudgetAttemptHash('evt-9001')}`);
+    assert.equal(hold.attemptKey.includes('transport-77'), false, 'the transport id is not the attempt');
+    assert.equal(hold.attemptKey.includes('evt-9001'), false, 'the raw LINE id is hashed');
+    // The gateway must be able to rebuild the fence from the body it received.
+    assert.equal(hold.invocationKey, `company-1#${hold.attemptKey}#line-intake-text#0`);
+    // And the field itself is inert on the wire: the intake router builds its prompt from an
+    // explicit allowlist, so it never becomes model input.
+    assert.equal(fetchStub.bodies[0].webhookEventId, 'evt-9001');
+  });
+
+  it('keeps the request-id fallback for an intake caller that sends no webhook event', async () => {
+    const { prisma, reservations } = splitPrisma({ total: 100_000, chat: 50_000, ocr: 50_000 });
+    const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
+    const fetchStub = captureFetch({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 });
+    try {
+      await client.requestLineIntakeRoute({
+        requestId: 'transport-77', companyId: 'company-1', userId: 'u1',
+        locale: 'th-TH', messageText: 'ยอดขายวันนี้', permissions: [],
+      });
+    } finally { fetchStub.restore(); }
+
+    assert.equal([...reservations.values()][0].attemptKey, `line-text:${aiBudgetAttemptHash('transport-77')}`);
+  });
+
   it('a drain reclaim is the same webhook event at the next retry ordinal (R-03)', async () => {
     const { prisma, reservations } = splitPrisma({ total: 100_000, chat: 50_000, ocr: 50_000 });
     const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);

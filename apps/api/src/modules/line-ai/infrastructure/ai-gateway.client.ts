@@ -285,18 +285,19 @@ export class AiGatewayClient {
     const media = request.attachments?.find((attachment) =>
       Boolean(attachment.contentBase64)
       && (attachment.mimeType === 'image/jpeg' || attachment.mimeType === 'image/png'));
-    let modelPolicy: Awaited<ReturnType<typeof resolveCompanyAiModelPolicy>>;
-    if (media) {
-      if (!this.config.aiGatewayInternalSecret) {
-        return {
-          status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
-          errorCode: 'ROUTER_UNREACHABLE', ocrAdmission: 'denied', ocrErrorCode: 'AI_GATEWAY_UNAVAILABLE',
-        };
-      }
-      // Match the receipt OCR seam: a bad tenant policy is local readiness and must fail before
-      // the durable document-read admission.
-      modelPolicy = await resolveCompanyAiModelPolicy(this.prisma, companyId, this.config.approvedAiModelIds);
+    if (media && !this.config.aiGatewayInternalSecret) {
+      return {
+        status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
+        errorCode: 'ROUTER_UNREACHABLE', ocrAdmission: 'denied', ocrErrorCode: 'AI_GATEWAY_UNAVAILABLE',
+      };
     }
+    // Resolved for BOTH lanes, like every other cost-bearing seam (receipt OCR, CRM). E1b resolved
+    // it only when the intake carried a picture, which left the TEXT lane reserving with an empty
+    // model id — and a SPLIT company's every text message would then be refused `model_unknown`
+    // (ADR 0013 §11.3), i.e. the shop goes quiet on chat while the picture lane still works.
+    // For the media lane this still runs BEFORE the durable document-read admission, so a bad
+    // tenant policy remains local readiness rather than a spent OCR count.
+    const modelPolicy = await resolveCompanyAiModelPolicy(this.prisma, companyId, this.config.approvedAiModelIds);
     const plan = await this.runBudgeted(
       companyId,
       (monthKey, hold) => this.requestLineIntakeRouteAdmitted(request, media?.id, monthKey, options.retryWebhookEventId, options.onAdmitted, hold),

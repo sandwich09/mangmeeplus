@@ -217,9 +217,14 @@ async function settle(
 }
 
 /**
- * Wraps one provider. `generateWithTools` is defined only when the inner provider has it, because
- * the orchestrator treats a missing implementation as "not capable" and falls back to its JSON
- * loop — a decorator that always exposed it would silently change that choice.
+ * Wraps one provider in the money guard.
+ *
+ * A `Proxy` rather than a new object literal, for two reasons that are the same reason: the
+ * decorator must change the two generate methods and NOTHING else. `generateWithTools` therefore
+ * stays absent when the inner provider has none — the orchestrator reads that as "not capable" and
+ * falls back to its JSON loop, so an always-present method would silently change which loop runs —
+ * and everything else about the provider (its configured model, its client) reads through, so a
+ * caller or a spec that inspects the real provider still sees it.
  */
 export function withAiBudgetEnvelope(inner: IModelProvider, opts: AiBudgetProviderOptions): IModelProvider {
   const guard = async <I extends ProviderInput | ProviderToolsInput, O>(
@@ -245,10 +250,17 @@ export function withAiBudgetEnvelope(inner: IModelProvider, opts: AiBudgetProvid
     }
   };
 
-  const decorated: IModelProvider = {
-    generateText: (input) => guard(input, (bounded) => inner.generateText(bounded)),
-  };
-  const withTools = inner.generateWithTools?.bind(inner);
-  if (withTools) decorated.generateWithTools = (input) => guard(input, (bounded) => withTools(bounded));
-  return decorated;
+  return new Proxy(inner, {
+    get(target, prop, receiver) {
+      if (prop === 'generateText' && typeof target.generateText === 'function') {
+        return (input: ProviderInput) => guard(input, (bounded) => target.generateText(bounded));
+      }
+      if (prop === 'generateWithTools' && typeof target.generateWithTools === 'function') {
+        return (input: ProviderToolsInput) => guard(input, (bounded) => target.generateWithTools!(bounded));
+      }
+      const value = Reflect.get(target, prop, receiver);
+      // Bound to the real provider, so anything else stays callable with its own `this`.
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
 }
