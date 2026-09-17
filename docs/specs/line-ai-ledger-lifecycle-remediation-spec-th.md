@@ -406,10 +406,10 @@ Cutover ต้องมีหลักฐาน **ครบทุก writer/runt
 - [ ] B-04 LINE แจ้ง retained เฉพาะเมื่อ persist สำเร็จ; no-permission, save failure, pending retention และ duplicate webhook ไม่สร้าง expense/ส่งข้อความซ้ำผิดสถานะ
 - [ ] B-05 Scope CHAT เต็มไม่รับประกัน OCR ถ้า OCR/count/plan/total gate ปิด; static menu ยังเป็น deterministic
 - [ ] B-06 Known budget refusal/support pause ไม่ถูกนับ generic outage; delivery failure/pending และ unknown statuses ยังมองเห็นจริง
-- [ ] C-01 มีก่อน/หลังบน corpus text/image, cold/warm cache และ cost ต่อ successful task รวมทุก tag/retry
-- [ ] C-02 ต้นทุนลดตาม §10 โดย critical routing/permission/correction cases ผ่าน และ OCR field accuracy ไม่ลด; ไม่เพียงย้ายค่าใช้จ่ายไป tag อื่น
-- [ ] C-03 บิลยาว/รูปอ่านยากไม่เกิด truncation หรือ retry เพิ่มจากลด output; valid transcription/plan reuse ยังคงถูกต้อง
-- [ ] C-04 Cache metrics บันทึกตามจริง; โมเดล/config เดิม และไม่มี extra call เพื่อหา budget bucket
+- [x] C-01 มีก่อน/หลังบน corpus text/image, cold/warm cache และ cost ต่อ successful task รวมทุก tag/retry — [benchmark §4/§10](../research/line-ai-intake-cost-benchmark-2026-09-17.md) corpus hash `cf9bce44…` เดียวกันทั้งสองรอบ, THB/successful 0.93 → 0.79, cold/warm รายคอลใน §10.4, per-tag ครบทุก tag ใน §10.3
+- [x] C-02 ต้นทุนลดตาม §10 โดย critical routing/permission/correction cases ผ่าน และ OCR field accuracy ไม่ลด; ไม่เพียงย้ายค่าใช้จ่ายไป tag อื่น — routing 95.1% → 96.3%, successful 76 → 77 (ไม่มี task ใด success → fail), correction/clarification/denied-capability rows ผ่านทั้งหมด, OCR fields เท่าเดิม, และการประหยัดทั้งหมดอยู่ใน `line.intake-route` โดย tag อื่นไม่ขยับเกิน THB 0.25
+- [x] C-03 บิลยาว/รูปอ่านยากไม่เกิด truncation หรือ retry เพิ่มจากลด output; valid transcription/plan reuse ยังคงถูกต้อง — truncation 0 → 0, calls/task 2.59 เท่าเดิม, `ocr.receipt.image-reread` 8 → 8 และ `ocr.receipt.image-read` 10 → 10, `documentText` ไม่หด (152–1,276 chars) และ 22-item bill กับ low-contrast slip ยังอ่านยอด/วันที่/ร้านถูกต้อง
+- [ ] C-04 Cache metrics บันทึกตามจริง; โมเดล/config เดิม และไม่มี extra call เพื่อหา budget bucket — cache read/write บันทึกตามจริงทุกคอล และโมเดล/region/config เดิมไม่เปลี่ยน แต่ข้อ "ไม่มี extra call เพื่อหา budget bucket" เป็นของงาน E (bucket classification ยังไม่ implement) จึงยังไม่ปิด
 - [ ] D-01 API/web แสดง total, kinds, buckets, cache, average, other tags และ partial history ได้ตรง snapshot และ reconcile กับ ledger
 - [x] D-02 Historical unknown ไม่ถูกเดา, missing pricing ไม่เป็น 0, component rounding มีหลักฐาน และ calls ไม่ถูกแสดงเป็นจำนวนใบเสร็จ — ผ่านด้วย focused specs + real-PostgreSQL breakdown (2026-09-17, D1)
 - [ ] D-03 Loading/error/retry/read-only, saved/draft, stale version, company switch, desktop/mobile และ audit history ผ่าน; tenant API อ่าน/แก้ budget ไม่ได้
