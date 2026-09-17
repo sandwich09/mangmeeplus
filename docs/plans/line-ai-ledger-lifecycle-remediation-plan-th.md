@@ -53,10 +53,10 @@ Owner เลือกแยกเพดาน CHAT/OCR ภายในเพด�
 - [ ] เพิ่ม additive server-derived request kind/budget bucket, pricing/component snapshot และ execution identity โดยไม่ rewrite history
 - [ ] ส่ง usageBasis ตลอด provider/interceptor/API/ledger; เพิ่ม MODEL_CALL/COST_ADJUSTMENT และ reconcile signed deltas โดย callCount ไม่เพิ่มจาก correction
 - [ ] ระบุ unknown/partial metadata อย่างชัดเจน; no inferred backfill จาก tag/request peers
-- [ ] ทำ baseline corpus text/image, cold/warm cache และต้นทุนรวมทุก calls/retries ต่อ successful task
+- [x] ทำ baseline corpus text/image, cold/warm cache และต้นทุนรวมทุก calls/retries ต่อ successful task — [baseline 2026-09-17](../research/line-ai-intake-cost-benchmark-2026-09-17.md): 82 attempted tasks / 212 calls / THB 70.47 บน Sonnet 4.6 จริง; cold/warm วัดรายคอลตาม §4.4 (run นี้ warm 96% จึงต้องถ่วงน้ำหนักด้วยตัวเลข cold รายคอล ไม่ใช่ค่าเฉลี่ยของ run)
 - [ ] ต่อ `GET ai-usage` ให้รวม totals/top tags/other tags/request kind/buckets/cache ใน snapshot เดียว พร้อม contract tests
 - [ ] เพิ่ม frontend breakdown/average/coverage/Thai labels, loading/error/retry/read-only และไม่สับสน calls กับ receipt counts
-- [ ] Freeze baseline manifest/expected outcomes/repetitions; รายงาน attempted-task cost และ completion/refusal/parse rates ควบคู่ successful-task cost
+- [x] Freeze baseline manifest/expected outcomes/repetitions; รายงาน attempted-task cost และ completion/refusal/parse rates ควบคู่ successful-task cost — manifest `scripts/line-ai-intake-cost.corpus.ts` hash `cf9bce44…` ตรึงด้วย `scripts/line-ai-intake-cost.corpus.spec.ts`; repetitions=2, FX=33; รายงาน THB/attempted 0.86 คู่กับ THB/successful 0.93 พร้อม refusal 0.0% / parse 1.2% / truncation 0.0%
 
 ไฟล์หลัก: `apps/api/prisma/schema.prisma` + additive migration, `packages/contracts/src/ai-lineage.ts`, `partner-management.ts`, `company-ai-usage-meter.ts`, `get-partner-ai-usage.use-case.ts`, `PartnerDetailPage.tsx`, `system-partners.api.ts` และ logic/specs ที่เกี่ยวข้อง
 
