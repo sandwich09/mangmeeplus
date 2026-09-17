@@ -1,6 +1,6 @@
 # Agent Memory: UAT LINE chat NOGROUP — 2026-09-17
 
-Status: Diagnosis and expanded A–E remediation spec/plan complete. Owner requested all cost/budget/receipt fixes in the existing NOGROUP spec and chose separate CHAT/OCR caps. Implementation, tests and live activation remain pending. Production failures at 20:29 KST are confirmed as company monthly AI budget exhaustion; exact screenshot actor identity remains unverified. No application fix, budget adjustment or cloud mutation performed.
+Status: Phase A (ledger lifecycle) IMPLEMENTED AND MERGED to `develop` + `main` (PRs #600 / #601) together with phases B–F of the same spec; NOT deployed — UAT keeps the symptom until a build containing Phase A is deployed under the UAT protocol. Full state and next steps: [delivery summary and handoff](line-intake-cost-and-budget-receipt-behavior-2026-09-17.md#delivery-summary-and-handoff--2026-09-18). Earlier status: Diagnosis and expanded A–E remediation spec/plan complete. Owner requested all cost/budget/receipt fixes in the existing NOGROUP spec and chose separate CHAT/OCR caps. Implementation, tests and live activation remain pending. Production failures at 20:29 KST are confirmed as company monthly AI budget exhaustion; exact screenshot actor identity remains unverified. No application fix, budget adjustment or cloud mutation performed.
 Owner: thawatchai + Codex
 Scope: Diagnose UAT/Production reports and prepare one spec/plan covering ledger lifecycle, budget refusal/receipt handling, intake cost, AI Budget visibility and separate CHAT/OCR caps.
 
