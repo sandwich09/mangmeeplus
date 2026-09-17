@@ -17,6 +17,7 @@ import { Logger } from '@nestjs/common';
 import {
   aiBudgetInvocationKey,
   aiBudgetStepBounds,
+  isAiBudgetRefusalCode,
   type AiBudgetEnvelope,
   type AiBudgetScope,
   type AiUsageEntry,
@@ -392,6 +393,57 @@ export async function cancelAiBudgetStep(
     logger.warn({ msg: 'ai.budget.cancel_failed', reservationId: input.reservationId, error: (err as Error).message });
     return false;
   }
+}
+
+/**
+ * Did the GATEWAY refuse this invocation before its provider ran? (Phase E1c.)
+ *
+ * The gateway's own money guard refuses a call whose model, `maxTokens`, request size or call index
+ * is outside the declared envelope, and refuses every call of a request whose envelope did not
+ * validate. Such an answer carries one of OUR refusal codes and NO usage row at all — the decorator
+ * refuses before the provider, and both providers append a row for every call they make. That pair
+ * is the proof: a code we emit, plus zero rows, means nothing was spent on this invocation.
+ *
+ * Deliberately strict in the "spent" direction: ANY usage row on the response blocks the release,
+ * because a chain refused at ordinal >= 1 (the read already ran, the extract could not be funded)
+ * carries the earlier call's row and must keep paying for it. An untagged row counts too — the
+ * response path settles the first one against this very invocation.
+ *
+ * This is NOT `isOcrPreProviderRefusal`, on purpose: that predicate also drives the OCR READ-COUNT
+ * refund, and R-05 requires count refunds and money releases to stay structurally separate.
+ */
+export function gatewayRefusedWithoutSpending(
+  budgetCode: string | null | undefined,
+  usage: AiUsageEntry[] | undefined,
+): boolean {
+  return isAiBudgetRefusalCode(budgetCode) && (usage?.length ?? 0) === 0;
+}
+
+/**
+ * Releases the hold of an invocation the gateway refused before its provider (E1c).
+ *
+ * Without this, one misdeclared bound piles up permanent `DISPATCHED -> UNRESOLVED` holds and
+ * closes a bucket with nothing spent. `gateway_pre_provider_refusal` is the existing proof and the
+ * existing owner-token fence applies. If evidence for this invocation somehow arrives afterwards,
+ * it is still recorded IN FULL through the `settled-anomaly` path (§11.6) with a HIGH event — a
+ * wrong cancel proof can never turn real provider cost into zero.
+ *
+ * A refusal at ordinal >= 1 reaches here with the PARENT's hold and the parent's usage row, so the
+ * guard above declines: the child step was refused before it reserved anything, so there is no
+ * child hold to release either way.
+ */
+export async function cancelAiBudgetStepIfGatewayUnspent(
+  prisma: PrismaService,
+  hold: ReservedAiBudgetStep | undefined,
+  answer: { budgetCode?: string | null; usage?: AiUsageEntry[] },
+): Promise<boolean> {
+  if (!hold || !gatewayRefusedWithoutSpending(answer.budgetCode, answer.usage)) return false;
+  const cancelled = await cancelAiBudgetStep(prisma, {
+    reservationId: hold.id, ownerToken: hold.ownerToken, proof: 'gateway_pre_provider_refusal',
+  });
+  logger.warn({ msg: 'ai.budget.gateway_refusal_released', companyId: hold.companyId,
+    stepKind: hold.stepKind, budgetCode: answer.budgetCode, cancelled });
+  return cancelled;
 }
 
 export type SettleAiBudgetStepResult =

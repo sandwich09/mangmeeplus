@@ -885,6 +885,51 @@ describe('AiGatewayClient SPLIT admission (spec §12.3/§12.6, ADR 0013 §4/§6)
     assert.equal(hold.attemptKey, `line-text:${aiBudgetAttemptHash('evt-9001')}:r2`);
   });
 
+  it('releases the hold when the GATEWAY refused this invocation before its provider (E1c)', async () => {
+    // The gateway's own guard (a model or bound outside the envelope, or an envelope that did not
+    // validate) answers one of OUR codes with NO usage row. Leaving that hold DISPATCHED would let
+    // one misdeclared bound close a bucket with nothing spent.
+    const { prisma, reservations, events } = splitPrisma({ total: 100_000, chat: 50_000, ocr: 50_000 });
+    const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
+    const fetchStub = captureFetch({ requestId: 'transport-1', errorCode: 'AI_BUDGET_UNAVAILABLE' });
+    try {
+      await client.requestLineTurn(turnRequest());
+    } finally { fetchStub.restore(); }
+
+    const hold = [...reservations.values()][0];
+    assert.equal(hold.status, 'CANCELLED');
+    assert.equal((hold.evidenceJson as { proof: string }).proof, 'gateway_pre_provider_refusal');
+    assert.equal(events.size, 0, 'nothing was spent, so nothing is billed');
+  });
+
+  it('keeps the hold when the refusal came mid-chain, after a call that DID run', async () => {
+    // ordinal 0 read, ordinal 1 refused: the response carries the money code AND the read's row.
+    // Releasing then would un-bill a real provider call (R-05).
+    const { prisma, reservations, events } = splitPrisma({ total: 100_000, chat: 50_000, ocr: 50_000 });
+    const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
+    const fetchStub = captureFetch({ requestId: 'transport-1', errorCode: 'AI_BUDGET_INSUFFICIENT', usage: [usageRow] });
+    try {
+      await client.requestLineTurn(turnRequest());
+    } finally { fetchStub.restore(); }
+
+    const hold = [...reservations.values()][0];
+    assert.equal(hold.status, 'SETTLED', 'the invocation that ran is settled, never cancelled');
+    assert.equal(events.size, 1);
+  });
+
+  it('keeps the hold for a failure that is not a money answer', async () => {
+    const { prisma, reservations } = splitPrisma({ total: 100_000, chat: 50_000, ocr: 50_000 });
+    const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
+    const fetchStub = captureFetch({ requestId: 'transport-1', errorCode: 'ORCHESTRATOR_FAILED' });
+    try {
+      await client.requestLineTurn(turnRequest());
+    } finally { fetchStub.restore(); }
+
+    // Unknown provider cost: the hold stays and becomes UNRESOLVED, which is the designed
+    // conservative outcome — money is never released on a guess.
+    assert.equal([...reservations.values()][0].status, 'DISPATCHED');
+  });
+
   it('a CHAT-exhausted company gets AI_MONTHLY_BUDGET_EXCEEDED scoped to CHAT and no provider call', async () => {
     // CHAT is spent to its cap; OCR is untouched. The refusal must name CHAT, not the TOTAL.
     const { prisma } = splitPrisma({ total: 100_000, chat: 1_000, ocr: 50_000, spentChat: 1_000 });

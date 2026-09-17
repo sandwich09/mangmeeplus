@@ -276,11 +276,9 @@ of the two money seams only.
 **Before an operator may open `AI_BUDGET_SPLIT_ACTIVATION_ENABLED`** — honest readiness checklist,
 none of it done by this phase:
 
-1. **`draft-generate` is held but NOT enforced.** `generate-suggestion.use-case.ts` reserves a
-   `draft-generate` step and settles its response, but builds the gateway request field by field and
-   never attaches `hold.envelope`; the request contract also carries no `companyId`, which the
-   receiver boundary needs to validate a fence. Either wire the envelope through that seam or accept
-   that one seam runs with an API-side hold and no gateway enforcement — and say which, in writing.
+1. ~~`draft-generate` is held but NOT enforced.~~ **CLOSED** by the controller-review follow-up
+   below: the request contract gained optional `companyId` + `budgetEnvelope`, the draft use case
+   attaches both when a hold exists, and `createProvider` runs that seam on the envelope's model.
 2. **The declared input ceilings are still declared, not measured** (research doc §5.1). No session
    has confirmed the p100 real prompt against production traffic, and byte length is 2–4× loose for
    Thai. Measure a week of real `line-turn` and `receipt-ocr` prompts against
@@ -289,10 +287,11 @@ none of it done by this phase:
    a chain refused mid-way (the partial result and the Thai copy the shop actually sees), a
    near-limit `insufficient` that must never read "เต็ม", and a timeout. Nothing in this phase ran
    against a real provider or a real LINE channel.
-4. **A pre-provider refusal at ordinal 0 leaves the hold `DISPATCHED → UNRESOLVED`**, because the
-   API cannot prove no provider ran (`isOcrPreProviderRefusal` does not name the budget codes). It
-   holds money that provably was never spent, and there is still no operator surface for
-   reconciling `UNRESOLVED` holds or clearing `breach`. Decide who clears them and how, first.
+4. **The MONEY of a pre-provider refusal is released now** (follow-up below), but the OCR READ
+   COUNT of such a refusal is still consumed on the three OCR seams — `isOcrPreProviderRefusal`
+   deliberately does not name the budget codes, because R-05 keeps count refunds separate from
+   money. One read per misdeclared bound. And there is still **no operator surface** for
+   reconciling `UNRESOLVED` holds or clearing `breach`: decide who clears them and how, first.
 5. **A PDF whose page objects live in compressed object streams is refused** under an envelope
    (its page count cannot be proven from its bytes). That is fail-closed by design, but it refuses a
    document a SHARED company reads today — check real customer PDFs before switching an OCR-heavy
@@ -301,3 +300,37 @@ none of it done by this phase:
    enforcement lives in the gateway now, so the gateway and API versions must be pinned together:
    an older gateway ignores `budgetEnvelope` entirely and would run a SPLIT company unenforced
    while the API holds its money.
+
+##### E1c controller-review follow-ups — 2026-09-17
+
+Three items, all landed on the same branch.
+
+1. **`draft-generate` enforced, not just held.** Optional `companyId` + `budgetEnvelope` on
+   `AiDraftGenerationRequest` (additive; an older gateway ignores them), attached by
+   `generate-suggestion.use-case.ts` ONLY when a hold exists — a SHARED body still carries exactly
+   its eight original fields, asserted by a test. That seam sends no per-request model policy, so
+   `createProvider` now prefers the envelope's `modelId` over the deployment default when an
+   envelope is present; without one nothing changes. A metadata guard in `app.boot.spec.ts` asserts
+   all three internal AI controllers carry `AiUsageInterceptor`, since a cost-bearing route without
+   it would see no envelope at all. Tests: the SPLIT draft request carries the envelope and settles
+   by its invocation key; the SHARED body is unchanged; a gateway refusal releases the hold.
+2. **A hold the gateway provably never spent is RELEASED.** One shared predicate —
+   `gatewayRefusedWithoutSpending(budgetCode, usage)`: one of OUR codes plus ZERO usage rows —
+   feeding `cancelAiBudgetStepIfGatewayUnspent`, which cancels with the existing
+   `gateway_pre_provider_refusal` proof under the existing owner fence. Five wiring points (one hook
+   in `ai-gateway.client.ts::postInternal` serves all three LINE routes; plus the receipt-OCR web
+   client, the statement client, the CRM client reading `error.budgetCode`, and the draft use case).
+   ANY usage row blocks the release, so a mid-chain refusal keeps paying for the call that ran, and
+   a refusal at ordinal >= 1 has no child hold anyway. Not folded into `isOcrPreProviderRefusal`
+   (R-05). Late evidence for a cancelled invocation still records in full through `settled-anomaly`.
+3. **The sequential-call assumption is documented and guarded.** Positional attribution is only
+   sound while one request's provider calls do not overlap (true today — the single `Promise.all`
+   runs ERP tool calls). An in-flight mark on the request's budget state refuses an overlapping
+   guarded call with `AI_BUDGET_UNAVAILABLE` before it claims an ordinal, so a future change fails
+   loudly instead of settling one invocation's tokens against another.
+
+Re-verification on the final tree: `pnpm --filter @watchdog-bms/ai-gateway test` **1150/1150**;
+`pnpm --filter @watchdog-bms/api test` rc=0, zero failure markers; `pnpm --filter @watchdog-bms/web
+test` **1752/1752**; contracts **253/253**; acceptance rc=0 (api-behavior **1472/1472**,
+gateway-behavior **369/369**); `pnpm test:harness` **17/17**; ai-gateway and api `tsc --noEmit`
+rc=0; `git diff --check` clean.

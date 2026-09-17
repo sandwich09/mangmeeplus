@@ -285,15 +285,13 @@ the usage rows and the responses are identical, and no money seam is called at a
 
 ### 13b. Residuals after E1c
 
-- **`draft-generate` holds money but sends no envelope.** `generate-suggestion.use-case.ts` reserves
-  a `draft-generate` step and settles its response, but builds the gateway request field by field
-  and never attaches `hold.envelope`, so the gateway cannot enforce that seam's bounds. The request
-  contract also carries no `companyId`, which the receiver boundary needs to validate a fence. A
-  single-call chain, so nothing can be stepped past — but it is not enforced either.
-- A pre-provider refusal at **ordinal 0** (an invalid envelope, a bound violation, a model mismatch)
-  is not in `isOcrPreProviderRefusal`'s list, so the API cannot prove no provider ran and the hold
-  stays `DISPATCHED → UNRESOLVED` instead of being cancelled. Conservative and safe, but it holds
-  money that provably was never spent.
+- ~~`draft-generate` holds money but sends no envelope.~~ **CLOSED** (§13c.12).
+- ~~A pre-provider refusal at ordinal 0 leaves the hold `DISPATCHED → UNRESOLVED`.~~ **CLOSED for
+  the MONEY** (§13c.13). The OCR read COUNT is still consumed by such a refusal on the three OCR
+  seams: `isOcrPreProviderRefusal` deliberately does not name the budget codes (R-05 keeps count
+  refunds separate from money), so a gateway bound refusal releases the hold but not the read. One
+  read per misdeclared bound, visible in the OCR console; deciding whether a *gateway* refusal
+  should also refund the count is an owner decision about the count contract, not about money.
 - The declared input ceilings are still **declared, not measured** against production traffic
   (research doc §5.1), and byte length is loose for Thai. E1c enforces them; nobody has yet
   confirmed the p100 real prompt fits.
@@ -303,3 +301,37 @@ the usage rows and the responses are identical, and no money seam is called at a
 - `LineIntakeRoutePlan` has no `budgetScope` field, so an intake refused by the gateway reaches the
   API with the code only. Intake is a one-call chain, so this is reachable only through version
   skew.
+
+### 13c. Controller-review follow-ups (E1c)
+
+12. **`draft-generate` is enforced now, not just held.** `AiDraftGenerationRequest` gained OPTIONAL
+    `companyId` and `budgetEnvelope`; `generate-suggestion.use-case.ts` attaches both only when a
+    hold exists, so a SHARED body still carries exactly its eight original fields and an older
+    gateway ignores two unknown ones. That seam passes no per-request model policy, so
+    `createProvider` now prefers the ENVELOPE's `modelId` over the deployment default when one is
+    present — any other model would be refused by the guard anyway, so this turns a guaranteed
+    `model_mismatch` into the call the reservation actually priced. A metadata guard in
+    `app.boot.spec.ts` asserts all three internal AI controllers carry `AiUsageInterceptor`, since a
+    cost-bearing route without it would see no envelope at all.
+13. **A hold the gateway provably never spent is RELEASED.** One shared predicate,
+    `gatewayRefusedWithoutSpending(budgetCode, usage)`: one of OUR refusal codes plus ZERO usage
+    rows means the decorator stopped before the provider, and both providers append a row for every
+    call they make. `cancelAiBudgetStepIfGatewayUnspent` then cancels with the existing
+    `gateway_pre_provider_refusal` proof and the existing owner fence. Wired in five places — one
+    hook in `ai-gateway.client.ts::postInternal` covers all three LINE routes, plus the receipt-OCR
+    web client, the statement client, the CRM client (whose code lives on `error.budgetCode`) and
+    the draft use case. Deliberately strict in the "spent" direction: ANY usage row blocks the
+    release, so a chain refused at ordinal >= 1 keeps paying for the call that ran — and a refusal
+    at ordinal >= 1 has no child hold to release anyway, because the step was refused before it
+    reserved. This is NOT folded into `isOcrPreProviderRefusal`, which also drives the OCR
+    read-count refund (R-05 keeps count refunds and money structurally separate). If evidence for a
+    cancelled invocation somehow arrives later, §11.6's `settled-anomaly` path still records it in
+    FULL with a HIGH event, so a wrong proof can never turn real cost into zero.
+14. **The sequential-call assumption is documented and guarded.** Evidence is attributed
+    POSITIONALLY (`tagUsageInvocation(fromIndex, key)`), which is sound only while the provider calls
+    of one request do not overlap — true today, since the single `Promise.all` in this gateway runs
+    ERP tool calls and no specialist calls a provider concurrently. Two concurrent calls would both
+    take `fromIndex` before either appended, and the second would tag and settle the first one's
+    row. An in-flight mark on the request's budget state now refuses the overlapping call with
+    `AI_BUDGET_UNAVAILABLE` (`concurrent_provider_call`) before it claims an ordinal, so a future
+    change fails loudly instead of mis-attributing money. Inert without an envelope.

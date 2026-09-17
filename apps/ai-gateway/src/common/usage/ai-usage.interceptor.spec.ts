@@ -628,3 +628,67 @@ describe('withAiBudgetEnvelope: a provider that cannot estimate its own timeout'
     assert.deepEqual([drained[0]!.inputTokens, drained[0]!.usageBasis], [0, undefined]);
   });
 });
+
+describe('withAiBudgetEnvelope: evidence attribution is positional, so calls may not overlap', () => {
+  /** Holds the provider open until released, so two guarded calls really are in flight together. */
+  function blockingProvider(log: ReturnType<typeof trace>) {
+    let release: (() => void) | undefined;
+    const provider: IModelProvider = {
+      generateText: async () => {
+        log.events.push('provider');
+        await new Promise<void>((resolve) => { release = resolve; });
+        appendUsage(entry('ocr.receipt.image-read'));
+        return { ok: true, text: 'answer', stopReason: 'end_turn' };
+      },
+    };
+    return { provider, release: () => release?.() };
+  }
+
+  it('refuses the SECOND overlapping call instead of mis-attributing its evidence', async () => {
+    const log = trace();
+    const blocking = blockingProvider(log);
+    const result = await runWithUsageContext({ companyId: 'co-1', budget: activeState(OCR_ENVELOPE) }, async () => {
+      const first = guarded(blocking.provider, fakeSeam(log), log).generateText(textInput());
+      // The first call is parked inside the provider; a concurrent second one would take the same
+      // `fromIndex` and tag the first call's row as its own.
+      const second = await guarded(fakeProvider(log), fakeSeam(log), log).generateText(textInput());
+      blocking.release();
+      await first;
+      return second;
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.ok === false ? result.error.budgetCode : undefined, 'AI_BUDGET_UNAVAILABLE');
+    assert.ok(log.events.includes('log:concurrent_provider_call'));
+    // Exactly ONE provider ran, and the ordinal was never claimed for the refused call: the first
+    // call still settles as ordinal 0.
+    assert.equal(log.events.filter((e) => e === 'provider').length, 1);
+    assert.ok(log.events.includes('settle:co-1#line-image:abc#receipt-ocr#0:true:none'));
+    assert.equal(log.events.some((e) => e.startsWith('step:')), false);
+  });
+
+  it('allows the next call once the first has finished — a chain is sequential, not blocked', async () => {
+    const log = trace();
+    const provider = () => guarded(fakeProvider(log), fakeSeam(log), log);
+    await runWithUsageContext({ companyId: 'co-1', budget: activeState(OCR_ENVELOPE) }, async () => {
+      await provider().generateText(textInput());
+      await provider().generateText(textInput());
+    });
+
+    assert.deepEqual(log.events.filter((e) => e === 'provider').length, 2);
+    assert.equal(log.events.includes('log:concurrent_provider_call'), false);
+  });
+
+  it('never blocks a request with no envelope, however it overlaps', async () => {
+    const log = trace();
+    const blocking = blockingProvider(log);
+    const results = await runWithUsageContext({ companyId: 'co-1' }, async () => {
+      const first = guarded(blocking.provider, fakeSeam(log), log).generateText(textInput());
+      const second = guarded(fakeProvider(log), fakeSeam(log), log).generateText(textInput());
+      blocking.release();
+      return Promise.all([first, second]);
+    });
+
+    assert.deepEqual(results.map((r) => r.ok), [true, true]);
+  });
+});

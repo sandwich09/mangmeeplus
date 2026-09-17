@@ -38,6 +38,7 @@ import { resolveCompanyAiModelPolicy } from '../application/company-ai-model-pol
 import {
   aiBudgetAttemptHash,
   cancelAiBudgetStep,
+  cancelAiBudgetStepIfGatewayUnspent,
   type AiBudgetCancelProof,
   type ReservedAiBudgetStep,
 } from '../application/company-ai-budget-reservation';
@@ -506,6 +507,15 @@ export class AiGatewayClient {
     }
 
     const result = (await response.json()) as T;
+    // E1c: the gateway's own guard can refuse this invocation BEFORE its provider (a model or
+    // bound outside the envelope, or an envelope that did not validate). Such an answer carries
+    // one of our refusal codes and zero usage rows, which is proof nothing was spent — so the
+    // hold is released here instead of becoming a permanent UNRESOLVED one. All three routes of
+    // this client report their code on `errorCode`, so one hook covers them.
+    await cancelAiBudgetStepIfGatewayUnspent(this.prisma, hold, {
+      budgetCode: (result as { errorCode?: string })?.errorCode,
+      usage: (result as { usage?: AiUsageEntry[] })?.usage,
+    });
     // One seam for all three routes ('line-turn' | 'receipt-ocr' | 'line-intake-route');
     // sourceRoute comes from the path, the tenant from the request envelope.
     await this.meterUsage(

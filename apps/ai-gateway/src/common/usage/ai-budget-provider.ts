@@ -32,7 +32,9 @@ import type { IModelProvider, ProviderInput, ProviderToolsInput } from '../../mo
 import type { AiBudgetSeam } from './ai-budget-seam';
 import {
   claimBudgetCallOrdinal,
+  claimBudgetInFlight,
   currentBudgetState,
+  releaseBudgetInFlight,
   tagUsageInvocation,
   usageEntryCount,
   type BudgetRequestState,
@@ -262,22 +264,34 @@ export function withAiBudgetEnvelope(inner: IModelProvider, opts: AiBudgetProvid
       opts.log({ msg: 'ai.budget.gateway_refused', reason: 'envelope_invalid' });
       return { ok: false, error: unavailable('TOTAL', 'envelope_invalid') };
     }
-    const admission = await admit(state, input, opts);
-    if (!admission.ok) return { ok: false, error: admission.error };
-    // Recorded BEFORE the call so the rows this call appends — and only those — are the evidence.
-    const fromIndex = usageEntryCount();
-    let timedOut: { requestedMaxTokens: number | undefined } | undefined;
+    // Evidence is attributed POSITIONALLY (`fromIndex` below), which is sound only while the
+    // provider calls of one request are sequential — true today, since the single `Promise.all` in
+    // this gateway runs ERP tool calls. An overlap would let this call tag and settle the other
+    // call's row, so it is refused rather than mis-attributed. Cheap, and it fails loudly.
+    if (!claimBudgetInFlight()) {
+      opts.log({ msg: 'ai.budget.gateway_refused', stepKind: state.envelope.stepKind, reason: 'concurrent_provider_call' });
+      return { ok: false, error: unavailable(state.envelope.bucket, 'concurrent_provider_call') };
+    }
     try {
-      const output = await call(input);
-      if ((output as { ok?: unknown; error?: ProviderError }).ok === false
-        && (output as { error?: ProviderError }).error?.code === 'PROVIDER_TIMEOUT') {
-        timedOut = { requestedMaxTokens: input.maxTokens };
+      const admission = await admit(state, input, opts);
+      if (!admission.ok) return { ok: false, error: admission.error };
+      // Recorded BEFORE the call so the rows this call appends — and only those — are the evidence.
+      const fromIndex = usageEntryCount();
+      let timedOut: { requestedMaxTokens: number | undefined } | undefined;
+      try {
+        const output = await call(input);
+        if ((output as { ok?: unknown; error?: ProviderError }).ok === false
+          && (output as { error?: ProviderError }).error?.code === 'PROVIDER_TIMEOUT') {
+          timedOut = { requestedMaxTokens: input.maxTokens };
+        }
+        return output;
+      } finally {
+        // In `finally` so a throw from the provider (or from a parser inside it) still settles the
+        // money it already spent, exactly as the providers log their own usage from `finally`.
+        await settle(state, admission.invocationKey, fromIndex, opts, timedOut);
       }
-      return output;
     } finally {
-      // In `finally` so a throw from the provider (or from a parser inside it) still settles the
-      // money it already spent, exactly as the providers log their own usage from `finally`.
-      await settle(state, admission.invocationKey, fromIndex, opts, timedOut);
+      releaseBudgetInFlight();
     }
   };
 

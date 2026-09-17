@@ -33,6 +33,8 @@ export type BudgetRequestState =
       requestId?: string;
       /** Provider calls already claimed by this request; the next call's ordinal. */
       calls: number;
+      /** A guarded provider call is in flight. See {@link claimBudgetInFlight}. */
+      inFlight?: boolean;
     };
 
 type UsageStore = { companyId?: string; entries: AiUsageEntry[]; budget?: BudgetRequestState };
@@ -85,6 +87,30 @@ export function claimBudgetCallOrdinal(): number {
   return budget.calls++;
 }
 
+/**
+ * Marks a guarded provider call as in flight, or reports that one already is.
+ *
+ * Attribution of money to an invocation is positional (see {@link tagUsageInvocation}), which is
+ * only sound while the provider calls of ONE request are SEQUENTIAL. They are today — the single
+ * `Promise.all` in this gateway runs ERP tool calls, not provider calls — so this is a guard
+ * against a future change, not a live case: the decorator refuses an overlapping call rather than
+ * charging one invocation for another's tokens. Outside an envelope it always allows, so nothing
+ * about a SHARED request changes.
+ */
+export function claimBudgetInFlight(): boolean {
+  const budget = storage.getStore()?.budget;
+  if (budget?.status !== 'active') return true;
+  if (budget.inFlight) return false;
+  budget.inFlight = true;
+  return true;
+}
+
+/** Releases the in-flight mark. Always called from the decorator's `finally`. */
+export function releaseBudgetInFlight(): void {
+  const budget = storage.getStore()?.budget;
+  if (budget?.status === 'active') budget.inFlight = false;
+}
+
 /** How many usage rows this request has collected — the index the next provider call appends at. */
 export function usageEntryCount(): number {
   return storage.getStore()?.entries.length ?? 0;
@@ -96,6 +122,12 @@ export function usageEntryCount(): number {
  * The rows are the same objects the interceptor drains onto the response, so this is what makes
  * the response path an idempotent duplicate of the evidence path (ADR 0013 §7) — and what the
  * decorator posts as that invocation's evidence.
+ *
+ * ATTRIBUTION IS POSITIONAL, so it assumes the provider calls of one request do not OVERLAP: two
+ * concurrent calls would both take `fromIndex` before either appended, and the second would tag —
+ * and settle — the first one's row as well. That assumption holds today (the only `Promise.all` in
+ * this gateway runs ERP tool calls, and no specialist calls a provider concurrently), and
+ * {@link claimBudgetInFlight} makes a future overlap fail loudly instead of mis-attributing money.
  */
 export function tagUsageInvocation(fromIndex: number, invocationKey: string): AiUsageEntry[] {
   const store = storage.getStore();

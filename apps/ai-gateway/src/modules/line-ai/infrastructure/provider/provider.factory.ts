@@ -15,16 +15,22 @@ export function createProvider(
   opts?: { modelId?: string; timeoutMs?: number },
 ): IModelProvider {
   const timeoutMs = opts?.timeoutMs ?? config.aiToolTimeoutMs;
+  // Under a SPLIT envelope the model the MONEY was reserved for wins over the deployment default,
+  // for a route whose caller passes no per-request policy (`draft-generate`). Any other model is
+  // refused by the guard below anyway, so preferring the envelope's turns a guaranteed
+  // `model_mismatch` into the call the reservation actually priced. Unset without an envelope, so
+  // every SHARED request keeps the exact model it picks today.
+  const envelopeModelId = currentBudgetEnvelope()?.modelId;
   if (config.modelProvider === 'openai') {
     const apiKey = config.openAiApiKey;
     if (!apiKey) return new DisabledProvider();
-    const modelId = opts?.modelId ?? config.openAiModel;
+    const modelId = opts?.modelId ?? envelopeModelId ?? config.openAiModel;
     assertApproved(config, 'openai', modelId, config.openAiProcessingRegion);
     return budgeted(config, modelId, new OpenAiProvider({ apiKey, model: modelId, timeoutMs }));
   }
   if (config.modelProvider === 'bedrock') {
     const region = config.bedrockRegion;
-    const modelId = opts?.modelId ?? config.bedrockModelId;
+    const modelId = opts?.modelId ?? envelopeModelId ?? config.bedrockModelId;
     // ponytail: fail safe with DisabledProvider if Bedrock is misconfigured
     if (!region || !modelId) return new DisabledProvider();
     assertApproved(config, 'bedrock', modelId, region);
