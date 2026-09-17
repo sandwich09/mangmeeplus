@@ -566,137 +566,6 @@ jobs:
       # anything: a DI mistake passes the whole suite and only fails when the container starts.
       - run: pnpm --filter @watchdog-bms/api test:boot
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-      - name: Test account email OTP and billing recipient against isolated PostgreSQL
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        env:
-          PGPASSWORD: watchdog_ci
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/email_otp_test
-          EMAIL_OTP_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/email_otp_test
-          EMAIL_ACCESS_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/email_otp_test
-        run: |
-          python3 infra/postmark/config_test.py
-          psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c 'CREATE DATABASE email_otp_test'
-          pnpm --filter @watchdog-bms/api exec prisma migrate deploy
-          pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/infrastructure/postmark-configuration.spec.ts src/modules/system-partner-management/application/partner-ai-adjustment-history.spec.ts src/modules/auth/domain/logic/email-otp.logic.spec.ts src/modules/auth/application/account-email-otp.postgres.spec.ts src/modules/billing/application/billing-email-recipient.postgres.spec.ts src/modules/auth/application/email-access.pg.spec.ts
-      - name: Test Postmark and Stripe billing HTTP flows against isolated PostgreSQL
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        env:
-          PGPASSWORD: watchdog_ci
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-        run: |
-          psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c 'CREATE DATABASE watchdog_postmark_ci'
-          pnpm --filter @watchdog-bms/api exec prisma migrate deploy
-          pnpm --filter @watchdog-bms/api exec tsx --tsconfig tsconfig.json --test src/modules/auth/postmark-delivery.pg.spec.ts src/modules/billing/billing-receipts.pg.spec.ts src/modules/billing/billing-grace.pg.spec.ts src/modules/billing/billing-trial-carryover.pg.spec.ts src/modules/billing/billing-caps.pg.spec.ts src/modules/billing/billing-issues.pg.spec.ts src/modules/line-ai/line-delivery-access.pg.spec.ts src/modules/line-ai/line-read-evidence.pg.spec.ts src/modules/line-ai/line-ledger-delivery.pg.spec.ts
-          BILLING_SETTINGS_TEST_DATABASE_URL="$DATABASE_URL" BILLING_ISSUE_TEST_DATABASE_URL="$DATABASE_URL" pnpm --filter @watchdog-bms/api exec tsx --tsconfig tsconfig.json --test src/modules/billing/billing-settings.pg.spec.ts src/modules/billing/billing-issue-resolution.pg.spec.ts
-          AUTH_LINE_BINDING_TEST_DATABASE_URL="$DATABASE_URL" pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/line-binding.pg.spec.ts
-          node apps/api/dist/apps/api/src/scripts/postmark-http-smoke.js
-          node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          pnpm exec playwright install --with-deps chromium
-          BILLING_TRIAL_CARRYOVER_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_PLAN_CHANGE_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test signup and billing recovery with real browser and isolated providers
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        timeout-minutes: 10
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-          BILLING_SIGNUP_JOURNEY_ONLY: '1'
-        run: |
-          node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_PROVIDER_SCANS_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_EMAIL_VERIFICATION_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_EMAIL_ACCESS_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_EMAIL_RESET_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_APPLY_RETRY_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_REPEAT_APPLY_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test optional LINE contact email in the browser
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        timeout-minutes: 3
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/email_otp_test
-          REDIS_URL: redis://127.0.0.1:6379
-          API_PORT: '3153'
-          WEB_PORT: '3154'
-          LINE_LIFF_ID: 1234567890-Synthetic
-          NEXT_DIST_DIR: .next/email-otp-liff
-        run: pnpm exec playwright test e2e/line-signup-contact-email.spec.ts --workers=1
-      - name: Test shared LINE credential publication without restart
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        timeout-minutes: 5
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-        run: |
-          pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/infrastructure/system-line-push.spec.ts src/modules/system-partner-management/application/use-cases/set-shared-line-credential.use-case.spec.ts
-          BILLING_LINE_CREDENTIALS_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_LINE_BINDING_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test recorded billing support outcomes with real browser
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        timeout-minutes: 5
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-          BILLING_SUPPORT_OUTCOMES_ONLY: '1'
-        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test scheduled Stripe discovery with real browser
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        timeout-minutes: 7
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-          BILLING_SCAN_SCHEDULE_ONLY: '1'
-          BILLING_BROWSER_E2E: '1'
-        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test scoped historical invoice discovery with real browser
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        timeout-minutes: 7
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-          BILLING_INVOICE_SCANS_ONLY: '1'
-          BILLING_BROWSER_E2E: '1'
-        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test verified original invoice import with real browser
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        timeout-minutes: 7
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-          BILLING_INVOICE_IMPORT_ONLY: '1'
-          BILLING_BROWSER_E2E: '1'
-        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test approved cohorts, case deadlines, policy schedule and Stripe configuration with browser recovery
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        timeout-minutes: 10
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-          BILLING_SALES_COHORT_ONLY: '1'
-          BILLING_BROWSER_E2E: '1'
-        run: |
-          node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_CONFIG_ONLY=1 BILLING_SUPPORT_SLA_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_CONFIG_ONLY=1 BILLING_SCHEDULED_POLICY_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_CONFIG_ONLY=1 BILLING_READINESS_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test invoice adjustment observations and privileged documents with browser
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        timeout-minutes: 7
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-          BILLING_ADJUSTMENTS_ONLY: '1'
-          BILLING_BROWSER_E2E: '1'
-        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
       - name: Test legal release evidence gates
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         run: |
@@ -739,6 +608,212 @@ jobs:
           path: release/agentcore/
           if-no-files-found: error
           retention-days: 90
+
+  billing-integration:
+    name: Billing Integration (${{ matrix.suite }})
+    if: >-
+      needs.resolve-source.outputs.code_changed == 'true' &&
+      needs.resolve-source.outputs.recovery_only != 'true' &&
+      needs.resolve-source.outputs.release_controller_only != 'true' &&
+      inputs.validated_ci_run_id == ''
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [backend, customer, operations]
+    services:
+      billing-redis:
+        image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      recovery-postgres:
+        image: postgres:18.3-alpine@sha256:54451ecb8ab38c24c3ec123f2fd501303a3a1856a5c66e98cecf2460d5e1e9d7
+        env:
+          POSTGRES_USER: watchdog
+          POSTGRES_PASSWORD: watchdog_ci
+          POSTGRES_DB: watchdog_recovery_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U watchdog -d watchdog_recovery_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - name: Install production PDF fonts
+        run: |
+          # Match the API runtime font prerequisite; fallback fonts have different text metrics.
+          # Fonts come from Ubuntu; unrelated runner Chrome feeds must not block their installation.
+          test -s /etc/apt/sources.list.d/ubuntu.sources
+          ubuntu_sources=(-o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-)
+          sudo apt-get "${ubuntu_sources[@]}" update
+          sudo apt-get "${ubuntu_sources[@]}" install -y --no-install-recommends fonts-noto-core fontconfig
+          fc-match -f '%{family}\n' 'Noto Sans Thai' | grep -Fx 'Noto Sans Thai'
+      - run: pnpm install --frozen-lockfile
+      - name: Build isolated billing API
+        run: |
+          pnpm --filter @watchdog-bms/config build
+          pnpm --filter @watchdog-bms/contracts build
+          pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+          pnpm --filter @watchdog-bms/api build
+      - name: Prepare isolated billing databases
+        env:
+          PGPASSWORD: watchdog_ci
+        run: |
+          for database in email_otp_test watchdog_postmark_ci; do
+            psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c "CREATE DATABASE $database"
+            DATABASE_URL="postgresql://watchdog:watchdog_ci@127.0.0.1:5432/$database" pnpm --filter @watchdog-bms/api exec prisma migrate deploy
+          done
+      - name: Install billing browser
+        if: matrix.suite != 'backend'
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Test trial carryover and cadence changes with real browser
+        if: matrix.suite == 'customer'
+        env:
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          REDIS_URL: redis://127.0.0.1:6379
+        run: |
+          BILLING_TRIAL_CARRYOVER_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_PLAN_CHANGE_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+      - name: Test account email OTP and billing recipient against isolated PostgreSQL
+        if: matrix.suite == 'backend'
+        env:
+          PGPASSWORD: watchdog_ci
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/email_otp_test
+          EMAIL_OTP_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/email_otp_test
+          EMAIL_ACCESS_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/email_otp_test
+        run: |
+          python3 infra/postmark/config_test.py
+          pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/infrastructure/postmark-configuration.spec.ts src/modules/system-partner-management/application/partner-ai-adjustment-history.spec.ts src/modules/auth/domain/logic/email-otp.logic.spec.ts src/modules/auth/application/account-email-otp.postgres.spec.ts src/modules/billing/application/billing-email-recipient.postgres.spec.ts src/modules/auth/application/email-access.pg.spec.ts
+      - name: Test Postmark and Stripe billing HTTP flows against isolated PostgreSQL
+        if: matrix.suite == 'backend'
+        env:
+          PGPASSWORD: watchdog_ci
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          REDIS_URL: redis://127.0.0.1:6379
+        run: |
+          pnpm --filter @watchdog-bms/api exec tsx --tsconfig tsconfig.json --test src/modules/auth/postmark-delivery.pg.spec.ts src/modules/billing/billing-receipts.pg.spec.ts src/modules/billing/billing-grace.pg.spec.ts src/modules/billing/billing-trial-carryover.pg.spec.ts src/modules/billing/billing-caps.pg.spec.ts src/modules/billing/billing-issues.pg.spec.ts src/modules/line-ai/line-delivery-access.pg.spec.ts src/modules/line-ai/line-read-evidence.pg.spec.ts src/modules/line-ai/line-ledger-delivery.pg.spec.ts
+          BILLING_SETTINGS_TEST_DATABASE_URL="$DATABASE_URL" BILLING_ISSUE_TEST_DATABASE_URL="$DATABASE_URL" pnpm --filter @watchdog-bms/api exec tsx --tsconfig tsconfig.json --test src/modules/billing/billing-settings.pg.spec.ts src/modules/billing/billing-issue-resolution.pg.spec.ts
+          AUTH_LINE_BINDING_TEST_DATABASE_URL="$DATABASE_URL" pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/line-binding.pg.spec.ts
+          node apps/api/dist/apps/api/src/scripts/postmark-http-smoke.js
+          node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+      - name: Test signup and billing recovery with real browser and isolated providers
+        if: matrix.suite == 'customer'
+        timeout-minutes: 10
+        env:
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          REDIS_URL: redis://127.0.0.1:6379
+          BILLING_SIGNUP_JOURNEY_ONLY: '1'
+        run: |
+          node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_PROVIDER_SCANS_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_EMAIL_VERIFICATION_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_EMAIL_ACCESS_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_EMAIL_RESET_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_APPLY_RETRY_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_REPEAT_APPLY_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+      - name: Test optional LINE contact email in the browser
+        if: matrix.suite == 'customer'
+        timeout-minutes: 3
+        env:
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/email_otp_test
+          REDIS_URL: redis://127.0.0.1:6379
+          API_PORT: '3153'
+          WEB_PORT: '3154'
+          LINE_LIFF_ID: 1234567890-Synthetic
+          NEXT_DIST_DIR: .next/email-otp-liff
+        run: pnpm exec playwright test e2e/line-signup-contact-email.spec.ts --workers=1
+      - name: Test shared LINE credential publication without restart
+        if: matrix.suite == 'customer'
+        timeout-minutes: 5
+        env:
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          REDIS_URL: redis://127.0.0.1:6379
+        run: |
+          pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/infrastructure/system-line-push.spec.ts src/modules/system-partner-management/application/use-cases/set-shared-line-credential.use-case.spec.ts
+          BILLING_LINE_CREDENTIALS_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_LINE_BINDING_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+      - name: Test recorded billing support outcomes with real browser
+        if: matrix.suite == 'operations'
+        timeout-minutes: 5
+        env:
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          REDIS_URL: redis://127.0.0.1:6379
+          BILLING_SUPPORT_OUTCOMES_ONLY: '1'
+        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+      - name: Test scheduled Stripe discovery with real browser
+        if: matrix.suite == 'operations'
+        timeout-minutes: 7
+        env:
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          REDIS_URL: redis://127.0.0.1:6379
+          BILLING_SCAN_SCHEDULE_ONLY: '1'
+          BILLING_BROWSER_E2E: '1'
+        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+      - name: Test scoped historical invoice discovery with real browser
+        if: matrix.suite == 'operations'
+        timeout-minutes: 7
+        env:
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          REDIS_URL: redis://127.0.0.1:6379
+          BILLING_INVOICE_SCANS_ONLY: '1'
+          BILLING_BROWSER_E2E: '1'
+        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+      - name: Test verified original invoice import with real browser
+        if: matrix.suite == 'operations'
+        timeout-minutes: 7
+        env:
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          REDIS_URL: redis://127.0.0.1:6379
+          BILLING_INVOICE_IMPORT_ONLY: '1'
+          BILLING_BROWSER_E2E: '1'
+        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+      - name: Test approved cohorts, case deadlines, policy schedule and Stripe configuration with browser recovery
+        if: matrix.suite == 'operations'
+        timeout-minutes: 10
+        env:
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          REDIS_URL: redis://127.0.0.1:6379
+          BILLING_SALES_COHORT_ONLY: '1'
+          BILLING_BROWSER_E2E: '1'
+        run: |
+          node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_CONFIG_ONLY=1 BILLING_SUPPORT_SLA_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_CONFIG_ONLY=1 BILLING_SCHEDULED_POLICY_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_CONFIG_ONLY=1 BILLING_READINESS_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+      - name: Test invoice adjustment observations and privileged documents with browser
+        if: matrix.suite == 'operations'
+        timeout-minutes: 7
+        env:
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          REDIS_URL: redis://127.0.0.1:6379
+          BILLING_ADJUSTMENTS_ONLY: '1'
+          BILLING_BROWSER_E2E: '1'
+        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
 
   security-audit:
     name: Security Audit
@@ -877,6 +952,7 @@ jobs:
       needs.resolve-source.result == 'success' &&
       (inputs.validated_ci_run_id != '' ||
       (needs.typecheck-and-test.result == 'success' &&
+      needs.billing-integration.result == 'success' &&
       needs.security-audit.result == 'success' &&
       needs.secret-scan.result == 'success' &&
       needs.docker-build.result == 'success' &&
@@ -885,6 +961,7 @@ jobs:
     needs:
       - resolve-source
       - typecheck-and-test
+      - billing-integration
       - security-audit
       - secret-scan
       - docker-build
@@ -1086,6 +1163,7 @@ jobs:
       needs.resolve-source.result == 'success' &&
       (inputs.validated_ci_run_id != '' ||
       (needs.typecheck-and-test.result == 'success' &&
+      needs.billing-integration.result == 'success' &&
       needs.security-audit.result == 'success' &&
       needs.secret-scan.result == 'success' &&
       needs.docker-build.result == 'success' &&
@@ -1094,6 +1172,7 @@ jobs:
     needs:
       - resolve-source
       - typecheck-and-test
+      - billing-integration
       - security-audit
       - secret-scan
       - docker-build
