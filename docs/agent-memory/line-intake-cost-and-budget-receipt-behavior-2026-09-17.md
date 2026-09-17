@@ -331,3 +331,58 @@ Still open after D2: D-03 (loading/error/retry, company switch and audit history
 tenant API denial untested), R-08 (cap `0`, `budgetPolicy: null`, locked company and audit-history
 through the real page), R-10 (active holds are visible on the AI budget console but the billing
 grant/plan warnings stay words-only per §11.4 — an owner call), and everything UAT-only.
+
+#### D2 controller-review follow-ups — 2026-09-17
+
+Ten items. Three were real defects the D2 diff introduced, the rest were wording and evidence gaps.
+
+**The one that mattered most.** `sweepTrialBudgets` originally iterated the month's USAGE rows, so a
+trial with no usage row was never counted. The D2 rewrite iterated the trial list instead, which
+means a SHARED trial with a budget of 0 and NO usage satisfied `0 >= 0` — and with the platform
+default at 0 satang that is EVERY trial, i.e. a daily false "ร้านทดลองใช้งบ AI หมดหลายร้านวันนี้".
+Restored to iterating the usage rows. Also narrowed what counts: only `EXHAUSTED` or `policyInvalid`,
+never a bucket `CLOSED` by an operator's own cap of 0 — that is a decision, not an incident, and
+announcing it daily trains operators to ignore the alert.
+
+**Timeline wording.** Three bugs in the new SPLIT lines: both shares gone with the total still open
+returned the chat line claiming "แต่ส่วนอ่านเอกสารยังเหลือ" (false — needs `C + O < T` to reproduce,
+which is why the first fixture missed it); a cap of 0 read as "ใช้…ครบแล้ว"; and the policy-invalid
+line asserted `SPLIT_EXCEEDS_TOTAL` when the reason can equally be `SPLIT_CAPS_MISSING` or
+`POLICY_MALFORMED`. All three now have a test. The TOTAL line is asserted byte-identical.
+
+**Web.** `aiBudgetCapLabel` was reused for the "เหลือใช้ได้" column, so an exhausted bucket rendered
+"ปิดส่วนนี้ (0 บาท)" — a CAP of 0 and ฿0.00 LEFT are different facts. Dedicated
+`aiBudgetAvailableLabel` (`null` → "ตามงบรวม"). `hasAiBudgetPolicy` now guards the draft prefill: a
+pre-E1a API sends no `budget.policy`, and the unguarded call threw inside `loadUsage`'s try, putting
+the WHOLE card into its error state. The adjustment reason is validated before the confirm dialog in
+both handlers (it used to print "เหตุผล: —", take the confirmation, then refuse). And a locked
+company and a read-only operator are now two facts with two sentences — plus `canManage === false`
+disables the existing total-budget and OCR forms, which a read-only operator could previously
+operate all the way to a 403.
+
+**Evidence, rebuilt.** Element screenshots instead of full pages: 34 files / 4.0 MB for 17 subjects,
+against 22 files / 8.5 MB for 11 before (mean 400 KB → 107 KB). Five new R-08 subjects, all through
+the real writer: `zero-cap-saved`, `pending-cancelled`, `audit-history` (schedule → edit → cancel),
+`locked-company`, `bucket-exhausted`, plus `shared-breakdown` as D-01's web half.
+
+Two lessons for the next evidence run:
+
+1. **Do not export `S3_ENDPOINT` when running `prisma/seed.ts`.** The attachment-storage step then
+   tries to reach a MinIO this stack does not run and the seed exits 1 *after* writing most rows —
+   which looks like success if you only check that the companies exist. Run the seed with
+   `DATABASE_URL`, `APP_ENV`, `NODE_ENV` and the two encryption keys, nothing else.
+2. **A greyed button is not evidence.** `disabled:opacity-50` photographs as a coloured button, so
+   the read-only and locked subjects now ASSERT every control's `disabled` property, with a control
+   case (a manager on an ACTIVE company) so they cannot pass by accident.
+
+Ticks after the fixes: **R-08 ticked**, every clause named with its artifact. **D-03 still open** —
+loading/error/retry and company switch have no screenshot (pre-existing behaviour D2 did not touch);
+its tenant-API clause is now covered by a real `DenyByDefaultGuard` assertion in
+`partner.controller.spec.ts` over `aiUsage` and `setAiModelConfig`. **R-10 still open** on "active
+holds" for the billing warnings — an owner call, since §11.4 lets a readiness without a known bound
+say only "ยังมีงบ".
+
+Re-verification: focused api specs — `signup-ops-alert.service.spec.ts` **21/21**,
+`partner-support-tools.spec.ts` **40/40**, `partner.controller.spec.ts` **22/22**,
+`company-ai-usage-meter.spec.ts` **148 (146 pass / 2 skipped)**, `billing-financial.spec.ts` **4/4**,
+web `ai-budget.logic.spec.ts` **39/39**. Full suites and typechecks in the report below.
