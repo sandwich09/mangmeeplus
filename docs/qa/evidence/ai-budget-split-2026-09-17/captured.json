@@ -1,0 +1,172 @@
+[
+  {
+    "file": "shared-no-split-1440.png",
+    "width": 1440,
+    "note": "SHARED: mode \"งบรวมก้อนเดียว\", per-scope table, both bucket caps \"ยังไม่ตั้ง\" and their money left as \"ตามงบรวม\""
+  },
+  {
+    "file": "shared-breakdown-1440.png",
+    "width": 1440,
+    "note": "D1 breakdown on the same card: total, byBudgetBucket, byRequestKind, byUsageBasis, averages, cache cost both priced and \"ไม่มีข้อมูล\", partial coverage, and the cost-adjustment line"
+  },
+  {
+    "file": "pending-next-month-1440.png",
+    "width": 1440,
+    "note": "Scheduled SPLIT as \"เริ่มเดือน …\" in its own box, separate from ใช้อยู่, with the cancel action"
+  },
+  {
+    "file": "split-no-usage-1440.png",
+    "width": 1440,
+    "note": "SPLIT active this month, zero spend and zero holds: both caps shown, money left equal to the cap"
+  },
+  {
+    "file": "split-reserved-unresolved-1440.png",
+    "width": 1440,
+    "note": "spent / reserved / available per scope, reserved labelled \"กันไว้ระหว่างเรียก AI\", plus \"กำลังตรวจสอบยอดที่จอง\""
+  },
+  {
+    "file": "bucket-exhausted-1440.png",
+    "width": 1440,
+    "note": "The OCR share spent to the satang: cap ฿7,000.00, money left ฿0.00 — an exhausted bucket is not a cap of 0"
+  },
+  {
+    "file": "policy-invalid-1440.png",
+    "width": 1440,
+    "note": "SPLIT_EXCEEDS_TOTAL as a red notice: AI is refused for this company, and what to fix"
+  },
+  {
+    "file": "breach-flag-1440.png",
+    "width": 1440,
+    "note": "An actual above its reserved bound: the scope is closed, the full actual is kept, and the operator is told before changing caps"
+  },
+  {
+    "file": "validation-caps-exceed-total-1440.png",
+    "width": 1440,
+    "note": "C + O > the SAVED total refused client-side, and the saved numbers did not move with the draft (asserted)"
+  },
+  {
+    "file": "server-refusal-thai-1440.png",
+    "width": 1440,
+    "note": "partner_ai_budget_cap_below_bucket_spend from the real writer, shown through translateApiError in Thai"
+  },
+  {
+    "file": "conflict-409-after-second-tab-1440.png",
+    "width": 1440,
+    "note": "A stale expectedBudgetRevision answers 409; the page reloads the saved state first, then says to re-check"
+  },
+  {
+    "file": "zero-cap-saved-1440.png",
+    "width": 1440,
+    "note": "A cap of 0 saved through the real writer: the CAP reads \"ปิดส่วนนี้ (0 บาท)\" while the money left in it reads ฿0.00"
+  },
+  {
+    "file": "pending-cancelled-1440.png",
+    "width": 1440,
+    "note": "budgetPolicy: null through the real writer: the scheduled box is gone and the active policy is untouched"
+  },
+  {
+    "file": "audit-history-1440.png",
+    "width": 1440,
+    "note": "The audit list after three real saves: a scheduled policy, an edit of it, and a cancellation — each a readable before/after pair in Thai"
+  },
+  {
+    "file": "locked-company-1440.png",
+    "width": 1440,
+    "note": "A DISABLED company: the panel names the COMPANY as the reason (not the operator permission), and the total-budget form, the OCR form and the split form on the same card are all read-only (asserted, not photographed)"
+  },
+  {
+    "file": "read-only-operator-1440.png",
+    "width": 1440,
+    "note": "system.partner_dashboard.read without system.partner_ai_model.manage: every number is readable while the total-budget form, the OCR form and the split form are all read-only (asserted, not photographed)"
+  },
+  {
+    "file": "activation-flag-off-1440.png",
+    "width": 1440,
+    "note": "splitActivationEnabled false: the SPLIT choice is disabled with one explanatory sentence while SHARED and cancel-pending stay usable"
+  },
+  {
+    "file": "shared-no-split-390.png",
+    "width": 390,
+    "note": "SHARED: mode \"งบรวมก้อนเดียว\", per-scope table, both bucket caps \"ยังไม่ตั้ง\" and their money left as \"ตามงบรวม\""
+  },
+  {
+    "file": "shared-breakdown-390.png",
+    "width": 390,
+    "note": "D1 breakdown on the same card: total, byBudgetBucket, byRequestKind, byUsageBasis, averages, cache cost both priced and \"ไม่มีข้อมูล\", partial coverage, and the cost-adjustment line"
+  },
+  {
+    "file": "pending-next-month-390.png",
+    "width": 390,
+    "note": "Scheduled SPLIT as \"เริ่มเดือน …\" in its own box, separate from ใช้อยู่, with the cancel action"
+  },
+  {
+    "file": "split-no-usage-390.png",
+    "width": 390,
+    "note": "SPLIT active this month, zero spend and zero holds: both caps shown, money left equal to the cap"
+  },
+  {
+    "file": "split-reserved-unresolved-390.png",
+    "width": 390,
+    "note": "spent / reserved / available per scope, reserved labelled \"กันไว้ระหว่างเรียก AI\", plus \"กำลังตรวจสอบยอดที่จอง\""
+  },
+  {
+    "file": "bucket-exhausted-390.png",
+    "width": 390,
+    "note": "The OCR share spent to the satang: cap ฿7,000.00, money left ฿0.00 — an exhausted bucket is not a cap of 0"
+  },
+  {
+    "file": "policy-invalid-390.png",
+    "width": 390,
+    "note": "SPLIT_EXCEEDS_TOTAL as a red notice: AI is refused for this company, and what to fix"
+  },
+  {
+    "file": "breach-flag-390.png",
+    "width": 390,
+    "note": "An actual above its reserved bound: the scope is closed, the full actual is kept, and the operator is told before changing caps"
+  },
+  {
+    "file": "validation-caps-exceed-total-390.png",
+    "width": 390,
+    "note": "C + O > the SAVED total refused client-side, and the saved numbers did not move with the draft (asserted)"
+  },
+  {
+    "file": "server-refusal-thai-390.png",
+    "width": 390,
+    "note": "partner_ai_budget_cap_below_bucket_spend from the real writer, shown through translateApiError in Thai"
+  },
+  {
+    "file": "conflict-409-after-second-tab-390.png",
+    "width": 390,
+    "note": "A stale expectedBudgetRevision answers 409; the page reloads the saved state first, then says to re-check"
+  },
+  {
+    "file": "zero-cap-saved-390.png",
+    "width": 390,
+    "note": "A cap of 0 saved through the real writer: the CAP reads \"ปิดส่วนนี้ (0 บาท)\" while the money left in it reads ฿0.00"
+  },
+  {
+    "file": "pending-cancelled-390.png",
+    "width": 390,
+    "note": "budgetPolicy: null through the real writer: the scheduled box is gone and the active policy is untouched"
+  },
+  {
+    "file": "audit-history-390.png",
+    "width": 390,
+    "note": "The audit list after three real saves: a scheduled policy, an edit of it, and a cancellation — each a readable before/after pair in Thai"
+  },
+  {
+    "file": "locked-company-390.png",
+    "width": 390,
+    "note": "A DISABLED company: the panel names the COMPANY as the reason (not the operator permission), and the total-budget form, the OCR form and the split form on the same card are all read-only (asserted, not photographed)"
+  },
+  {
+    "file": "read-only-operator-390.png",
+    "width": 390,
+    "note": "system.partner_dashboard.read without system.partner_ai_model.manage: every number is readable while the total-budget form, the OCR form and the split form are all read-only (asserted, not photographed)"
+  },
+  {
+    "file": "activation-flag-off-390.png",
+    "width": 390,
+    "note": "splitActivationEnabled false: the SPLIT choice is disabled with one explanatory sentence while SHARED and cancel-pending stay usable"
+  }
+]

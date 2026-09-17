@@ -13,7 +13,11 @@ const date=(value:string)=>new Date(value).toLocaleString('th-TH',{timeZone:'Asi
 const state:Record<string,string>={PREVIEW:'ตรวจจำนวนก่อนส่งคำขอ',AWAITING_APPROVAL:'รอยืนยันรายการ',SUCCEEDED:'ปรับใบเสร็จแล้ว',CANCELLED:'ยกเลิกคำขอแล้ว'};
 const api=<T,>(path:string,body?:unknown,key?:string)=>authedApiFetch<T>(`/system/billing${path}`,{cache:'no-store',suppressErrorToast:true,...body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json',...key?{'Idempotency-Key':key}:{}},body:JSON.stringify(body)}});
 const errors:Record<string,string>={CONTROL_RECEIPT_TERM_REQUIRED:'ร้านนี้ยังไม่มีระยะใช้งานหรือหมดอายุแล้ว กลับไปตรวจและต่ออายุแพ็กเกจก่อน',CONTROL_PAID_RECEIPTS_REQUIRED:'หน้านี้เพิ่มใบเสร็จให้แพ็กเกจที่ชำระเงินและยังไม่หมดอายุ กรุณากลับไปดูสถานะแพ็กเกจ',CONTROL_COMPANY_HELD:'บริษัทนี้ถูกพักใช้งาน กรุณาตรวจสถานะบริษัทก่อน',CONTROL_OPERATION_IN_PROGRESS:'มีรายการเดิมกำลังดำเนินการ เปิดสถานะแพ็กเกจเพื่อตรวจให้เสร็จก่อน',CONTROL_PREVIEW_STALE:'ข้อมูลหรือวันหมดอายุเปลี่ยนแล้ว ยกเลิกคำขอเดิมและตรวจข้อมูลใหม่'};
-const readWarnings={OCR_DISABLED:'ร้านนี้ปิดการอ่านเอกสารด้วย AI อยู่',OCR_LIMIT_REACHED:'ร้านนี้ใช้จำนวนครั้งอ่านเอกสารครบแล้ว',AI_BUDGET_REACHED:'ร้านนี้ใช้งบ AI ครบแล้ว'};
+const readWarnings={OCR_DISABLED:'ร้านนี้ปิดการอ่านเอกสารด้วย AI อยู่',OCR_LIMIT_REACHED:'ร้านนี้ใช้จำนวนครั้งอ่านเอกสารครบแล้ว',AI_BUDGET_REACHED:'ร้านนี้ใช้งบ AI ครบแล้ว',
+  // Spec §11.4: the total still has money, but the share this shop allocated to reading documents
+  // does not — so "ยังมีงบเหลือ" must not read as "อ่านใบเสร็จต่อได้". Neutral about the cause (used
+  // up, or a cap of 0) and about the other shares, either of which may also be gone.
+  AI_OCR_BUDGET_REACHED:'เดือนนี้ร้านนี้ไม่มีงบ AI สำหรับอ่านเอกสารเหลือแล้ว (ใช้ครบหรือตั้งเพดานไว้ 0 บาท) งบส่วนอื่นที่เหลืออยู่ใช้อ่านเอกสารไม่ได้'};
 function message(error:unknown){return errors[apiErrorCode(error)??'']??apiErrorMessage(error);}
 
 export default function BillingReceiptAdjustmentsPage({companyId,operationId}:{companyId?:string;operationId?:string}){

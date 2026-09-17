@@ -493,8 +493,12 @@ export class PartnerController {
   @RequirePermissions('system.partner_dashboard.read')
   @ApiOperation({ summary: 'Get partner AI spend meter: current/previous month, effective budget, top usage tags' })
   @ApiResponse({ status: 200 })
-  aiUsage(@Param('partnerCompanyId') companyId: string) {
-    return this.getAiUsage.execute(companyId);
+  async aiUsage(@Param('partnerCompanyId') companyId: string, @Req() req: AuthedRequest) {
+    const usage = await this.getAiUsage.execute(companyId);
+    // Reading this card is `system.partner_dashboard.read`; every control on it is
+    // `system.partner_ai_model.manage`. Telling the page which one the caller holds is what lets a
+    // read-only operator see all the numbers and no form (spec §11.3) instead of a 403 on save.
+    return { ...usage, canManage: req.context.permissions.includes('system.partner_ai_model.manage') };
   }
 
   // ---- P29 plan limits & term ----
