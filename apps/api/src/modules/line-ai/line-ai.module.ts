@@ -129,6 +129,7 @@ import { RecoverOrphanLineEventsUseCase } from './application/use-cases/recover-
 
 // Controllers
 import { InternalToolsController } from './presentation/http/internal-tools.controller';
+import { InternalAiBudgetController } from './presentation/http/internal-ai-budget.controller';
 import { LineAiLedgerInternalController } from './presentation/http/line-ai-ledger-internal.controller';
 import { LineWebhookController } from '../auth/presentation/line-webhook.controller';
 
@@ -218,7 +219,7 @@ const erpTools = [
     FeatureLaunchModule,
     ExternalSignupModule,
   ],
-  controllers: [InternalToolsController, LineAiLedgerInternalController, LineWebhookController],
+  controllers: [InternalToolsController, InternalAiBudgetController, LineAiLedgerInternalController, LineWebhookController],
   providers: [
     LineReplyAdapter,
     ActorDelegationService,

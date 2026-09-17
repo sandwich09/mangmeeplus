@@ -16,6 +16,13 @@ import { SECURITY_EVENT, emitSecurityEvent } from '../../../common/logger/securi
 import { resolveThbPerUsd } from './ai-fx-rate';
 import { buildPricingSnapshot, computeCostSatang } from './ai-model-pricing';
 import { resolveAiBudgetPolicy, type CompanyAiBudgetPolicyRow } from './company-ai-budget-policy';
+import {
+  markAiBudgetStepDispatched,
+  reserveAiBudgetStep,
+  settleAiBudgetStep,
+  upsertBucketUsage,
+  type ReservedAiBudgetStep,
+} from './company-ai-budget-reservation';
 
 const logger = new Logger('CompanyAiUsageMeter');
 
@@ -28,6 +35,9 @@ export type CompanyAiUsageMeta = {
   /** Server-derived, from {@link classifyAiUsageRequest}; absent = the row reports UNKNOWN. */
   requestKind?: AiRequestKind;
   budgetBucket?: AiBudgetBucket;
+  /** SPLIT only: the invocation this response settles. Present => the reservation engine owns the
+   *  write, so the same evidence can never be billed twice (ADR 0013 §7). */
+  invocationKey?: string;
 };
 
 // ── Server-derived classification (remediation spec §12.2) ───────────────────
@@ -65,8 +75,10 @@ export function classifyAiUsageRequest(
   };
 }
 
-/** The gateway response is untrusted wire JSON; only the two known values may reach the ledger. */
-function normalizeUsageBasis(value: unknown): string | null {
+/** The gateway response is untrusted wire JSON; only the two known values may reach the ledger.
+ *  Exported as a PURE helper for the reservation engine's settlement writer — it stays the one
+ *  place a `usageBasis` becomes a column value. */
+export function normalizeUsageBasis(value: unknown): string | null {
   return value === 'PROVIDER_REPORTED' || value === 'CONSERVATIVE_ESTIMATE' ? value : null;
 }
 
@@ -78,8 +90,11 @@ const presentString = (value: unknown): boolean => typeof value === 'string' && 
  * counters are not non-negative safe integers is dropped BEFORE pricing: a negative or NaN counter
  * must never be able to lower a company's month aggregate or poison the whole batch's write.
  * `ok` is checked too, because a non-boolean would fail the insert for every sibling row.
+ *
+ * Exported as a PURE helper so settlement applies the identical guard: malformed evidence must
+ * settle nothing and leave the hold, never move an aggregate.
  */
-function isMeterableEntry(entry: AiUsageEntry | undefined): boolean {
+export function isMeterableEntry(entry: AiUsageEntry | undefined): boolean {
   return !!entry
     && presentString(entry.modelId) && presentString(entry.tag) && typeof entry.ok === 'boolean'
     && nonNegativeCount(entry.inputTokens) && nonNegativeCount(entry.outputTokens)
@@ -109,19 +124,22 @@ export function previousBangkokMonthKey(now: Date = new Date()): string {
 
 /** Refusals carry the numbers the seam's event needs; `allowed` is the only branch a seam continues on. */
 export type CompanyAiBudgetDecision =
-  | { allowed: true }
-  | { allowed: false; reason: 'exceeded'; spendSatang: number; budgetSatang: number; override: boolean }
+  /** Under SPLIT the admitted action also carries the hold it runs inside (spec §12.3). */
+  | { allowed: true; reservation?: ReservedAiBudgetStep }
+  | { allowed: false; reason: 'exceeded'; spendSatang: number; budgetSatang: number; override: boolean; budgetScope?: AiBudgetScope }
+  /** Money is LEFT but not enough for this step's declared bound — never "เต็ม" (spec §12.3). */
+  | { allowed: false; reason: 'insufficient'; spendSatang: number; reservedSatang: number; budgetSatang: number; budgetScope: AiBudgetScope }
   | { allowed: false; reason: 'busy'; retryAfterSeconds: number }
-  | { allowed: false; reason: 'unavailable' };
+  | { allowed: false; reason: 'unavailable'; budgetScope?: AiBudgetScope };
 
 /**
  * The ONE place a money refusal becomes the typed code + scope every seam forwards (spec §9.1).
  * Before this each seam spelled the same ternary itself, which is how the LINE lanes ended up
  * throwing away the code and answering "temporarily unavailable" for an explicit budget decision.
  *
- * `budgetScope` is what this meter actually checked, never a guess: today it only ever reads the
- * company TOTAL, so TOTAL is the only truthful value. §12 adds the CHAT/OCR buckets and this
- * function is where they will be reported from — nothing downstream has to change again.
+ * `budgetScope` is what this meter actually checked, never a guess. The SHARED path reads the
+ * company TOTAL and says so; a SPLIT reservation reports the scope that actually blocked, which is
+ * why the decision carries it rather than this function re-deriving it.
  */
 export function companyAiBudgetRefusal(
   decision: Exclude<CompanyAiBudgetDecision, { allowed: true }>,
@@ -129,10 +147,78 @@ export function companyAiBudgetRefusal(
   return {
     code: decision.reason === 'exceeded'
       ? AI_BUDGET_REFUSAL_CODES.exceeded
-      : decision.reason === 'busy' ? AI_BUDGET_REFUSAL_CODES.busy : AI_BUDGET_REFUSAL_CODES.unavailable,
-    budgetScope: 'TOTAL',
+      : decision.reason === 'insufficient'
+        ? AI_BUDGET_REFUSAL_CODES.insufficient
+        : decision.reason === 'busy' ? AI_BUDGET_REFUSAL_CODES.busy : AI_BUDGET_REFUSAL_CODES.unavailable,
+    budgetScope: (decision as { budgetScope?: AiBudgetScope }).budgetScope ?? 'TOTAL',
     ...(decision.reason === 'busy' ? { retryAfterSeconds: decision.retryAfterSeconds } : {}),
   };
+}
+
+/**
+ * What a seam must be able to name before a SPLIT company may start a provider call (spec §12.6).
+ * The bucket is server-derived by {@link classifyAiUsageRequest}; the attempt key is stable per
+ * logical user attempt and carries no prompt text, raw LINE id or secret.
+ */
+export type CompanyAiBudgetStep = {
+  stepKind: string;
+  attemptKey: string;
+  /** Named to match {@link classifyAiUsageRequest}'s result, so a seam spreads it in directly. */
+  budgetBucket: AiBudgetBucket;
+  sourceRoute: string;
+  /** The company's approved model. A SPLIT company without one cannot pin an envelope: admission
+   *  refuses `unavailable` rather than reserving against a model the gateway might not use. */
+  modelId: string;
+  /** Bounded call index inside the step kind; the API-side seam always starts an attempt at 0. */
+  ordinal?: number;
+  requestKind?: AiRequestKind;
+  requestId?: string;
+};
+
+/**
+ * The SPLIT half of admission: price the step's declared bound and hold it, or refuse with the
+ * scope that actually blocked. Kept here rather than in the engine because this is where the
+ * decision vocabulary every seam already understands is spoken.
+ */
+async function reserveCompanyAiBudgetStep(
+  prisma: PrismaService,
+  config: AppConfigService,
+  companyId: string,
+  monthKey: string,
+  step: CompanyAiBudgetStep,
+): Promise<CompanyAiBudgetDecision> {
+  // OUTSIDE the transaction on purpose: resolving FX may make an outbound call, and no network may
+  // happen while the company-month lock is held.
+  const fx = await resolveThbPerUsd(prisma, config);
+  const outcome = await reserveAiBudgetStep(prisma, config, {
+    companyId, monthKey, bucket: step.budgetBucket, stepKind: step.stepKind, attemptKey: step.attemptKey,
+    ordinal: step.ordinal ?? 0, sourceRoute: step.sourceRoute, modelId: step.modelId,
+    ...(step.requestKind ? { requestKind: step.requestKind } : {}),
+    thbPerUsd: fx.rate, thbPerUsdSource: fx.source,
+  });
+  if (outcome.ok) return { allowed: true, reservation: outcome.reservation };
+  if (outcome.reason === 'exceeded') {
+    emitSecurityEvent(logger, SECURITY_EVENT.aiCompanyBudgetExceeded, 'HIGH', {
+      companyId, monthKey, budgetScope: outcome.budgetScope,
+      spendSatang: outcome.spendSatang, budgetSatang: outcome.capSatang, override: outcome.override,
+    });
+    return { allowed: false, reason: 'exceeded', spendSatang: outcome.spendSatang,
+      budgetSatang: outcome.capSatang, override: outcome.override, budgetScope: outcome.budgetScope };
+  }
+  if (outcome.reason === 'insufficient') {
+    return { allowed: false, reason: 'insufficient', spendSatang: outcome.spendSatang,
+      reservedSatang: outcome.reservedSatang, budgetSatang: outcome.capSatang, budgetScope: outcome.budgetScope };
+  }
+  if (outcome.reason === 'already_claimed') {
+    // R-03: never a second execution. A hold another owner is still running is exactly the
+    // transient `busy` the LINE lanes already retry; a terminal one cannot be re-run at all.
+    logger.warn({ msg: 'ai.budget.invocation_already_claimed', companyId, monthKey, stepKind: step.stepKind, status: outcome.status });
+    return outcome.status === 'RESERVED' || outcome.status === 'DISPATCHED'
+      ? { allowed: false, reason: 'busy', retryAfterSeconds: 2 }
+      : { allowed: false, reason: 'unavailable' };
+  }
+  logger.warn({ msg: 'ai.budget.reserve_unavailable', companyId, monthKey, stepKind: step.stepKind, reason: outcome.detail });
+  return { allowed: false, reason: 'unavailable', budgetScope: outcome.budgetScope };
 }
 
 /** `policyRow` carries the split-policy columns as stored; resolving them needs a pinned month,
@@ -273,6 +359,9 @@ export async function assertCompanyAiBudget(
   config: AppConfigService,
   companyId: string,
   monthKey: string = bangkokMonthKey(),
+  /** Supplied only by a seam that can name the step it is about to run (spec §12.6). Without it a
+   *  SPLIT company keeps refusing: production must never fall back to an unmetered pass (F-07). */
+  step?: CompanyAiBudgetStep,
 ): Promise<CompanyAiBudgetDecision> {
   let budget: EffectiveBudget;
   let spendSatang: number;
@@ -298,15 +387,19 @@ export async function assertCompanyAiBudget(
   const policy = resolveAiBudgetPolicy({
     row: budget.policyRow, totalSatang: budget.budgetSatang, override: budget.override, monthKey,
   });
-  if (policy.invalidReason || policy.mode === 'SPLIT') {
+  if (policy.invalidReason || (policy.mode === 'SPLIT' && !step)) {
     logger.warn({
       msg: 'ai.budget.policy_unavailable',
       companyId,
       monthKey,
-      reason: policy.invalidReason ?? 'split_admission_not_available',
+      reason: policy.invalidReason ?? 'split_step_not_declared',
     });
     return { allowed: false, reason: 'unavailable' };
   }
+  // SPLIT: the bounded-overshoot comparison below cannot honour a per-bucket cap, so admission
+  // moves to the reservation engine — one durable hold per provider invocation, priced from the
+  // step's declared bound (spec §12.3). SHARED falls straight through, byte-for-byte as before.
+  if (policy.mode === 'SPLIT') return reserveCompanyAiBudgetStep(prisma, config, companyId, monthKey, step!);
 
   if (spendSatang >= budget.budgetSatang) {
     emitSecurityEvent(logger, SECURITY_EVENT.aiCompanyBudgetExceeded, 'HIGH', {
@@ -331,7 +424,7 @@ export async function runWithCompanyAiBudgetAdmission<T>(
   config: AppConfigService,
   rateLimits: RedisRateLimitService | undefined,
   companyId: string,
-  action: (monthKey: string) => Promise<T>,
+  action: (monthKey: string, hold?: ReservedAiBudgetStep) => Promise<T>,
   /** Optional admission lane (UAT 2026-08-27). A media turn makes model calls back-to-back for up
    *  to ~45s, so one combined lease made chat impossible while a photo processed — the poll gaps
    *  are milliseconds. A lane suffix gives chat and media their OWN single-flight lease. The
@@ -340,6 +433,8 @@ export async function runWithCompanyAiBudgetAdmission<T>(
    *  accepted in exchange for "คุยระหว่างรูปได้จริง". Callers that pass no lane keep the exact
    *  legacy combined lease. */
   laneKey?: 'chat' | 'media',
+  /** SPLIT admission needs the step a seam is about to run. Absent = today's SHARED-only path. */
+  step?: CompanyAiBudgetStep,
 ): Promise<({ allowed: true; value: T } | Exclude<CompanyAiBudgetDecision, { allowed: true }>)> {
   const monthKey = bangkokMonthKey();
   const leaseKey = `${companyId}:${monthKey}${laneKey ? `:${laneKey}` : ''}`;
@@ -372,9 +467,17 @@ export async function runWithCompanyAiBudgetAdmission<T>(
   }
 
   try {
-    const budget = await assertCompanyAiBudget(prisma, config, companyId, monthKey);
+    const budget = await assertCompanyAiBudget(prisma, config, companyId, monthKey, step);
     if (!budget.allowed) return budget;
-    return { allowed: true, value: await action(monthKey) };
+    // SHARED keeps the exact legacy path: no reservation, no envelope, no dispatch mark.
+    if (!budget.reservation) return { allowed: true, value: await action(monthKey) };
+    // The DISPATCHED mark is durably committed BEFORE the seam's HTTP call, which is what makes a
+    // stale `RESERVED` row provable evidence that no provider ever started (ADR 0013 §6).
+    if (!await markAiBudgetStepDispatched(prisma, budget.reservation.id, budget.reservation.ownerToken)) {
+      logger.warn({ msg: 'ai.budget.dispatch_lost', companyId, monthKey, stepKind: budget.reservation.stepKind });
+      return { allowed: false, reason: 'unavailable' };
+    }
+    return { allowed: true, value: await action(monthKey, budget.reservation) };
   } finally {
     if (shared) {
       try {
@@ -455,6 +558,28 @@ export async function recordCompanyAiUsage(
     return undefined;
   }
 
+  // SPLIT: the reservation engine owns the write for the enveloped invocation, so the hold is
+  // released by the SAME transaction that records the money and the fence makes a replay a no-op.
+  // A multi-call chain returns more entries than the one invocation this seam enveloped; until
+  // E1c has the gateway settle each of its own calls, the remainder is metered through the normal
+  // path below (never dropped — that would turn real provider spend into zero).
+  if (meta.invocationKey) {
+    const [first, ...rest] = priceable;
+    const settled = await settleAiBudgetStep(prisma, {
+      invocationKey: meta.invocationKey,
+      entry: first!,
+      meta: { sourceRoute: meta.sourceRoute, requestId: meta.requestId, requestKind: meta.requestKind },
+    });
+    // `settled-anomaly` DID record the money (the hold's status was wrong, not the evidence), and
+    // the engine already raised its own HIGH event; it is visible here but never a rejection.
+    if (settled !== 'settled' && settled !== 'duplicate' && settled !== 'settled-anomaly') {
+      logger.warn({ msg: 'ai.budget.settle_rejected', companyId: meta.companyId, sourceRoute: meta.sourceRoute, result: settled });
+    }
+    if (rest.length === 0) return undefined;
+    logger.warn({ msg: 'ai.budget.unenveloped_chain_usage', companyId: meta.companyId, sourceRoute: meta.sourceRoute, entries: rest.length });
+    return recordCompanyAiUsage(prisma, config, { ...meta, invocationKey: undefined }, rest);
+  }
+
   const monthKey = meta.monthKey ?? bangkokMonthKey();
   // One resolution per recording, not per row: every row of this recording is priced at the same
   // rate and stamps it — plus where that rate came from, so a fallback leaves a mark on the row
@@ -509,7 +634,13 @@ export async function recordCompanyAiUsage(
 
   const post = await prisma.client.$transaction(async (tx: any) => {
     await tx.aiUsageEvent.createMany({ data: rows });
-    return tx.companyAiMonthlyUsage.upsert({
+    // Row order is FIXED across every writer of these two aggregates (this function,
+    // `settleAiBudgetStep` and `recordCompanyAiCostAdjustment`): the MONTH row first, then the
+    // bucket rows in CHAT-before-OCR order. This function holds no `ai-budget:` lock, so for one
+    // SPLIT company a settle on one lane and this recording on another really do run at the same
+    // time — taking the two rows in opposite orders would deadlock, and the victim's usage would be
+    // LOST (a warn, not a retry), which is exactly the "usage หาย" failure of spec §12.6.
+    const aggregate = await tx.companyAiMonthlyUsage.upsert({
       where: { companyId_monthKey: { companyId: meta.companyId, monthKey } },
       create: { companyId: meta.companyId, monthKey, callCount: rows.length, ...delta },
       update: {
@@ -522,6 +653,13 @@ export async function recordCompanyAiUsage(
       },
       select: { costSatang: true },
     });
+    // Bucket slice in the SAME transaction, SHARED companies included (ADR 0013 §3): a later SPLIT
+    // activation and the admin console then read one aggregate instead of re-deriving bucket spend.
+    // An unknown bucket belongs to neither — it still counts against the total and is never guessed.
+    if (meta.budgetBucket) {
+      await upsertBucketUsage(tx, meta.companyId, monthKey, meta.budgetBucket, delta.costSatang, rows.length);
+    }
+    return aggregate;
   });
 
   const spend = { pre: post.costSatang - delta.costSatang, post: post.costSatang };
@@ -640,6 +778,43 @@ function applyCompanyAiCostAdjustment(
       data: Object.fromEntries(Object.entries(delta).map(([field, value]) => [field, { increment: value }])),
     });
     if (moved.count === 0) return 'refused-negative';
+    // MONTH row first (above), bucket row second — the same fixed order `recordCompanyAiUsage` and
+    // `settleAiBudgetStep` use, so none of the three writers can deadlock against another.
+    //
+    // The bucket aggregate moves with the SAME guard, so no bucket total can go negative either.
+    // A row whose bucket is UNKNOWN has no bucket aggregate to move — the total above is the whole
+    // correction for it, exactly as it was the whole charge.
+    if (original.budgetBucket) {
+      const bucketDelta = delta['costSatang']!;
+      if (bucketDelta >= 0) {
+        // A legacy row predating the bucket aggregate has no row yet; a positive correction opens it.
+        await upsertBucketUsage(tx, original.companyId, original.monthKey, original.budgetBucket, bucketDelta, 0);
+      } else if (tx.companyAiMonthlyBucketUsage) {
+        const bucketMoved = await tx.companyAiMonthlyBucketUsage.updateMany({
+          where: {
+            companyId: original.companyId, monthKey: original.monthKey, bucket: original.budgetBucket,
+            costSatang: { gte: -bucketDelta },
+          },
+          data: { costSatang: { increment: bucketDelta } },
+        });
+        // `count === 0` has two very different causes. If the row EXISTS the guard blocked it, and
+        // the whole correction is refused. If it does not exist — a row bucketed before this phase
+        // added the aggregate, so there is nothing to decrement — the month total above already IS
+        // the whole correction, exactly as it was the whole charge. Refusing then would reject a
+        // legitimate correction because a DERIVED aggregate happens to be absent.
+        if (bucketMoved.count === 0) {
+          const present = await tx.companyAiMonthlyBucketUsage.findUnique({
+            where: {
+              companyId_monthKey_bucket: {
+                companyId: original.companyId, monthKey: original.monthKey, bucket: original.budgetBucket,
+              },
+            },
+            select: { costSatang: true },
+          });
+          if (present) return 'refused-negative';
+        }
+      }
+    }
     await tx.aiUsageEvent.create({
       data: {
         ...carried, ...delta, ok: true, eventKind: 'COST_ADJUSTMENT',

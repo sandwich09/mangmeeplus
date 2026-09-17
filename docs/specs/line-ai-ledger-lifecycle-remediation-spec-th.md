@@ -414,15 +414,15 @@ Cutover ต้องมีหลักฐาน **ครบทุก writer/runt
 - [x] D-02 Historical unknown ไม่ถูกเดา, missing pricing ไม่เป็น 0, component rounding มีหลักฐาน และ calls ไม่ถูกแสดงเป็นจำนวนใบเสร็จ — ผ่านด้วย focused specs + real-PostgreSQL breakdown (2026-09-17, D1)
 - [ ] D-03 Loading/error/retry/read-only, saved/draft, stale version, company switch, desktop/mobile และ audit history ผ่าน; tenant API อ่าน/แก้ budget ไม่ได้
 - [ ] E-01 Split validation: C/O เป็น satang ไม่ติดลบ, zero closes bucket, C+O<=T; null/malformed/unauthorized/stale writes ไม่ผ่าน
-- [ ] E-02 CHAT เต็ม/OCR เหลือ อ่านได้ตามวงเงินจอง; OCR เต็ม/CHAT เหลือ คุยได้; TOTAL เต็มหยุดทั้งคู่ โดยไม่ยืมเงิน
-- [ ] E-03 LINE image intake, caption, receipt extract/re-read, statement, CRM/draft และ fallback ถูก bucket ก่อน provider; attached image ไม่ย้าย general tool reasoning ไป OCR
-- [ ] E-04 Simultaneous multi-instance chat/media/web admissions reserve ทั้ง total/bucket atomically; ใช้ไม่เกิน cap รวม active reservations และไม่ block แชตตลอดช่วง OCR
+- [x] E-02 CHAT เต็ม/OCR เหลือ อ่านได้ตามวงเงินจอง; OCR เต็ม/CHAT เหลือ คุยได้; TOTAL เต็มหยุดทั้งคู่ โดยไม่ยืมเงิน — ผ่านด้วย decision-table specs (ทั้งสองทิศ + TOTAL) และ real-PostgreSQL bucket invariants (2026-09-17, E1b)
+- [x] E-03 LINE image intake, caption, receipt extract/re-read, statement, CRM/draft และ fallback ถูก bucket ก่อน provider; attached image ไม่ย้าย general tool reasoning ไป OCR — ผ่านด้วย step/bucket จาก `classifyAiUsageRequest` ก่อน reserve ทั้งห้า seam และ seam specs (line-turn ยัง CHAT แม้มีรูป) (2026-09-17, E1b)
+- [x] E-04 Simultaneous multi-instance chat/media/web admissions reserve ทั้ง total/bucket atomically; ใช้ไม่เกิน cap รวม active reservations และไม่ block แชตตลอดช่วง OCR — ผ่านด้วย real-PostgreSQL 20-way concurrent reserve (4 CHAT + 3 OCR ตามคาด, invariant ครบ) และ lane lease เดิมยังแยก chat/media (2026-09-17, E1b)
 - [ ] E-05 Upper bound ครอบคลุม cold cache, max output, images, bounded multi-call/retry และ timeout estimate; missing bound/config/price/DB ปฏิเสธก่อน provider
-- [ ] E-06 Near-limit insufficient ไม่อ้างว่า spent เต็ม; reservation/actual/available ถูกต้องหลัง success, known no-call, timeout, crash และ settlement write failure
-- [ ] E-07 Same execution/redelivery settles once; uncertain reservation ไม่ถูก TTL ปล่อยให้ใช้เงินซ้ำ และ invariant breach บันทึก actual/alert โดยไม่ clamp
+- [ ] E-06 Near-limit insufficient ไม่อ้างว่า spent เต็ม; reservation/actual/available ถูกต้องหลัง success, known no-call, timeout, crash และ settlement write failure — API side ผ่าน (insufficient แยก exceeded พร้อม scope, spent/reserved/available ใน admin read, sweep ไม่ปล่อยเงิน); timeout accounting ยังรอ gateway (E1c) และ UI ยังไม่แสดง (D2)
+- [x] E-07 Same execution/redelivery settles once; uncertain reservation ไม่ถูก TTL ปล่อยให้ใช้เงินซ้ำ และ invariant breach บันทึก actual/alert โดยไม่ clamp — ผ่านด้วย real-PostgreSQL concurrent settle (1 event, aggregate ขยับครั้งเดียว), DISPATCHED → UNRESOLVED ไม่ปล่อยเงิน + late settle ปิดได้ และ breach บันทึก actual เต็มพร้อม HIGH event และปิด scope (2026-09-17, E1b)
 - [ ] E-08 Bangkok month rollover/pending activation, nonempty-month next-month cutover, scheduled cap change ของบริษัทที่ SPLIT อยู่แล้ว, cancel/stale pending, old writers/in-flight และ additive migration/rollback ผ่าน
 - [ ] E-09 Admin cap/mode/total changes มี reason/CAS/audit; invalid inherited total ปิดอย่างเห็นเหตุ; ลดต่ำกว่า committed/reserved ไม่ผ่าน
-- [ ] E-10 OCR count/refund/paid receipt grants และ permission ยังตรง spec ปัจจุบัน ไม่ถูก money reservation เปลี่ยนความหมาย
+- [x] E-10 OCR count/refund/paid receipt grants และ permission ยังตรง spec ปัจจุบัน ไม่ถูก money reservation เปลี่ยนความหมาย — ผ่าน: `admitCompanyOcr`/`releaseCompanyOcrAdmission` ไม่เปลี่ยนสัญญาเลย, reserve มาก่อน count, refund ของ count เข้าถึง reservation ไม่ได้ และ seam spec ยืนยัน retryable provider failure ไม่คืนเงิน (2026-09-17, E1b)
 - [ ] X-01 End-to-end: missing ledger + CHAT exhausted + OCR funded ใช้ข้อความแจ้งถูกเหตุและส่งรูปได้; missing group on existing stream ยัง fail closed ก่อน mutation
 - [ ] X-02 UAT มี real LINE + web journey, exact source, correlation, file/expense state, usage/reservation และ delivery evidence; release acceptance แยกจากการปิด incident ในภาพ
 
@@ -430,10 +430,10 @@ Cutover ต้องมีหลักฐาน **ครบทุก writer/runt
 
 - [ ] R-01 Upper-bound feasibility table ครบทุก seam; งบที่ product รองรับเริ่มงานหลักได้จริง; per-step continuation ที่เงินไม่พอรักษา partial result/file และไม่ใช้เกิน cap
 - [ ] R-02 Envelope ครอบคลุม per-invocation rounding, cache, SDK retries, mixed provider/runtime และ multi-call; unknown runtime/config ไม่ผ่านแบบ unmetered
-- [ ] R-03 Stable attempt/invocation fence: transport retry, same-request different stage, drain reclaim, replay after month rollover และ explicit new re-read คิดเงิน/เรียก providerถูกจำนวน
+- [x] R-03 Stable attempt/invocation fence: transport retry, same-request different stage, drain reclaim, replay after month rollover และ explicit new re-read คิดเงิน/เรียก providerถูกจำนวน — ผ่านด้วย attempt key ต่อ seam (webhook/attachment/import/job id, hash LINE id), drain retry ordinal จาก `deliveryCount`, unique invocation fence และ real-PostgreSQL duplicate-claim + month-pin evidence (2026-09-17, E1b)
 - [ ] R-04 Parser/controller error หลัง provider, partial chain, lost HTTP response, late result และ stale owner compensation ไม่ทำให้ usage หาย/ซ้ำหรือ release active hold
-- [ ] R-05 OCR count refund หลัง unusable/persistence failure ไม่คืน actual AI money; no-provider OCR refusal คืน hold ได้; successful result + delivery failure ไม่อ่านใหม่หรือคืน count ผิด
-- [ ] R-06 Config/default writes แข่ง reserve/settle/receipt grants/signup retry โดยไม่ deadlock; ลดต่ำกว่า allocation/committed ปฏิเสธก่อน save และ ceiling grandfathering คงเดิม
+- [x] R-05 OCR count refund หลัง unusable/persistence failure ไม่คืน actual AI money; no-provider OCR refusal คืน hold ได้; successful result + delivery failure ไม่อ่านใหม่หรือคืน count ผิด — ผ่านโดยโครงสร้าง (cancel ต้องมี proof + owner token, `releaseCompanyOcrAdmission` ไม่รับทั้งสอง) พร้อม seam spec และ real-PostgreSQL fencing evidence (2026-09-17, E1b)
+- [x] R-06 Config/default writes แข่ง reserve/settle/receipt grants/signup retry โดยไม่ deadlock; ลดต่ำกว่า allocation/committed ปฏิเสธก่อน save และ ceiling grandfathering คงเดิม — ผ่านด้วย canonical lock order เดียวทุกทาง, real-PostgreSQL reserve-vs-writer 50 รอบไม่ deadlock, cap/total ต่ำกว่า spent+reserved ถูกปฏิเสธ และ platform-default writer ตรวจ committed+reserved ใต้ platform lock เดียว (2026-09-17, E1b)
 - [ ] R-07 Month-boundary stale UI, activation แล้ว cancel pending, SPLIT→SHARED และ old-mode late result ไม่เปิดช่องใช้เงินข้าม bucket/เดือน
 - [ ] R-08 Real HTTP DTO/controller/web save ส่ง split fields ครบ; absent/null/zero/CAS/read-only/locked company/audit-history ถูกต้อง ไม่เพียง test use case โดยตรง
 - [ ] R-09 Drain/CRM/draft/statement permanent budget refusal ไม่วน retry จนกลายเป็น poison/error อื่น และ reply recovery คง reason/scope ของ attempt เดิม
