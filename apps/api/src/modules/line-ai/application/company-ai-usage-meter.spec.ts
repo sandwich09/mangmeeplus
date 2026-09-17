@@ -37,6 +37,12 @@ import {
   retryBusyAdmission,
   runWithCompanyAiBudgetAdmission,
 } from './company-ai-usage-meter';
+import {
+  nextBangkokMonthKey,
+  resolveAiBudgetPolicy,
+  type AiBudgetPendingPolicy,
+  type CompanyAiBudgetPolicyRow,
+} from './company-ai-budget-policy';
 
 const config = { aiThbPerUsd: 33 } as any;
 
@@ -1491,4 +1497,134 @@ describe('AI gateway timeout budget', () => {
     const perCallBudgets = gatewaySource.match(/timeoutMs: DOCUMENT_OCR_TIMEOUT_MS/g) ?? [];
     assert.ok(perCallBudgets.length >= 3, 'read, extract and re-read providers all carry the budget');
   });
+});
+
+// ── Split CHAT/OCR budget policy (remediation spec §12.1/§12.5, ADR 0013) ────────────
+
+const policyRow = (over: Partial<CompanyAiBudgetPolicyRow> = {}): CompanyAiBudgetPolicyRow => ({
+  budgetMode: 'SHARED', chatMonthlyBudgetSatang: null, ocrMonthlyBudgetSatang: null,
+  budgetConfigVersion: 0, pendingBudgetPolicy: null, ...over,
+});
+const resolve = (row: CompanyAiBudgetPolicyRow | null | undefined, monthKey = '2026-09', totalSatang = 100) =>
+  resolveAiBudgetPolicy({ row, totalSatang, override: false, monthKey });
+const pending = (over: Partial<AiBudgetPendingPolicy> = {}): AiBudgetPendingPolicy => ({
+  mode: 'SPLIT', chatMonthlyBudgetSatang: 30, ocrMonthlyBudgetSatang: 70, effectiveMonthKey: '2026-10', ...over,
+});
+
+describe('resolveAiBudgetPolicy', () => {
+  it('resolves every company that exists today — and every pre-column test fake — as SHARED', () => {
+    for (const row of [null, undefined, {}, policyRow(), { monthlyBudgetSatang: 500 } as CompanyAiBudgetPolicyRow]) {
+      const policy = resolve(row);
+      assert.deepEqual(
+        { mode: policy.mode, source: policy.source, pending: policy.pending, invalidReason: policy.invalidReason },
+        { mode: 'SHARED', source: 'ACTIVE', pending: null, invalidReason: undefined },
+      );
+    }
+  });
+
+  it('keeps a SHARED company SHARED with caps that were merely left behind — null is "not set", never unlimited', () => {
+    const policy = resolve(policyRow({ chatMonthlyBudgetSatang: 30, ocrMonthlyBudgetSatang: 70 }));
+    assert.equal(policy.mode, 'SHARED');
+    assert.equal(policy.invalidReason, undefined, 'C+O is not validated while the caps are not enforced');
+    assert.deepEqual([policy.chatCapSatang, policy.ocrCapSatang], [30, 70]);
+  });
+
+  it('spec §12.1 example T=100 C=30 O=70: an active SPLIT exposes both caps and stays valid at exactly T', () => {
+    const policy = resolve(policyRow({ budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 30, ocrMonthlyBudgetSatang: 70 }));
+    assert.deepEqual(
+      { mode: policy.mode, chat: policy.chatCapSatang, ocr: policy.ocrCapSatang, invalid: policy.invalidReason },
+      { mode: 'SPLIT', chat: 30, ocr: 70, invalid: undefined },
+    );
+  });
+
+  it('treats 0 as a closed bucket, not as "unset"', () => {
+    const policy = resolve(policyRow({ budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 0, ocrMonthlyBudgetSatang: 100 }));
+    assert.equal(policy.invalidReason, undefined);
+    assert.equal(policy.chatCapSatang, 0);
+  });
+
+  it('a FUTURE pending policy changes nothing yet and is reported separately', () => {
+    const policy = resolve(policyRow({ pendingBudgetPolicy: pending() }), '2026-09');
+    assert.equal(policy.mode, 'SHARED', 'the company is still SHARED until October');
+    assert.equal(policy.source, 'ACTIVE');
+    assert.deepEqual(policy.pending, pending());
+  });
+
+  it('a pending policy whose month has ARRIVED is the effective policy — no cron, the month keys decide', () => {
+    for (const monthKey of ['2026-10', '2026-11']) {
+      const policy = resolve(policyRow({ pendingBudgetPolicy: pending() }), monthKey);
+      assert.deepEqual(
+        { mode: policy.mode, chat: policy.chatCapSatang, ocr: policy.ocrCapSatang, source: policy.source, pending: policy.pending },
+        { mode: 'SPLIT', chat: 30, ocr: 70, source: 'PENDING_ACTIVATED', pending: null },
+      );
+    }
+  });
+
+  it('R-07: the revision moves when the month turns, even though the row version never did', () => {
+    const row = policyRow({ pendingBudgetPolicy: pending() });
+    assert.equal(resolve(row, '2026-09').revision, '0:2026-09:ACTIVE');
+    assert.equal(resolve(row, '2026-10').revision, '0:2026-10:PENDING_ACTIVATED');
+    assert.notEqual(resolve(row, '2026-09').revision, resolve(row, '2026-10').revision);
+    // And a plain month rollover without any pending policy still re-fences an open page.
+    assert.notEqual(resolve(policyRow(), '2026-09').revision, resolve(policyRow(), '2026-10').revision);
+    assert.equal(resolve(policyRow({ budgetConfigVersion: 4 })).revision, '4:2026-09:ACTIVE');
+  });
+
+  for (const [name, row, reason] of [
+    ['SPLIT with one cap never set', policyRow({ budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 30 }), 'SPLIT_CAPS_MISSING'],
+    ['SPLIT with neither cap set', policyRow({ budgetMode: 'SPLIT' }), 'SPLIT_CAPS_MISSING'],
+    ['C + O above the live total', policyRow({ budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 31, ocrMonthlyBudgetSatang: 70 }), 'SPLIT_EXCEEDS_TOTAL'],
+    ['a negative cap', policyRow({ budgetMode: 'SPLIT', chatMonthlyBudgetSatang: -1, ocrMonthlyBudgetSatang: 10 }), 'POLICY_MALFORMED'],
+    ['a fractional cap', policyRow({ budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 1.5, ocrMonthlyBudgetSatang: 10 }), 'POLICY_MALFORMED'],
+    ['a mode nothing understands', policyRow({ budgetMode: 'HALF' }), 'POLICY_MALFORMED'],
+    ['pending JSON that is not an object', policyRow({ pendingBudgetPolicy: 'SPLIT' }), 'POLICY_MALFORMED'],
+    ['pending JSON missing its month', policyRow({ pendingBudgetPolicy: { mode: 'SPLIT', chatMonthlyBudgetSatang: 1, ocrMonthlyBudgetSatang: 1 } }), 'POLICY_MALFORMED'],
+    ['pending JSON with a bad month', policyRow({ pendingBudgetPolicy: pending({ effectiveMonthKey: '2026-13' }) }), 'POLICY_MALFORMED'],
+    ['an activated pending policy that no longer fits the total', policyRow({ pendingBudgetPolicy: pending({ chatMonthlyBudgetSatang: 60, effectiveMonthKey: '2026-09' }) }), 'SPLIT_EXCEEDS_TOTAL'],
+  ] as const) {
+    it(`fails closed on ${name} with ${reason}, never by clamping`, () => {
+      const policy = resolve(row);
+      assert.equal(policy.invalidReason, reason);
+    });
+  }
+});
+
+describe('assertCompanyAiBudget split policy gate', () => {
+  const withPolicy = (row: CompanyAiBudgetPolicyRow & { monthlyBudgetSatang?: number | null }) => ({
+    client: {
+      companyAiConfiguration: { findUnique: async () => row },
+      companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+    },
+  } as any);
+
+  it('leaves the SHARED path byte-for-byte: a fake with none of the new columns still admits', async () => {
+    const { prisma } = budgetPrisma({ monthlyBudgetSatang: 10_000, spendSatang: 0 });
+    assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, 'co-legacy-fake'), { allowed: true });
+  });
+
+  it('refuses a SPLIT company as unavailable — the shared overshoot path cannot honour a bucket cap', async () => {
+    const prisma = withPolicy({ monthlyBudgetSatang: 100, budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 30, ocrMonthlyBudgetSatang: 70 });
+    assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, 'co-split'), { allowed: false, reason: 'unavailable' });
+  });
+
+  it('refuses an ACTIVATED pending SPLIT the same way, without any config write having happened', async () => {
+    const prisma = withPolicy({ monthlyBudgetSatang: 100, pendingBudgetPolicy: pending({ effectiveMonthKey: bangkokMonthKey() }) });
+    assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, 'co-activated'), { allowed: false, reason: 'unavailable' });
+  });
+
+  it('still admits a company whose pending SPLIT is only scheduled for next month', async () => {
+    const prisma = withPolicy({ monthlyBudgetSatang: 100, pendingBudgetPolicy: pending({ effectiveMonthKey: nextBangkokMonthKey() }) });
+    assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, 'co-scheduled'), { allowed: true });
+  });
+
+  for (const [name, row] of [
+    ['an unreadable policy', { budgetMode: 'SPLIT', chatMonthlyBudgetSatang: null, ocrMonthlyBudgetSatang: 70 }],
+    ['malformed pending JSON', { pendingBudgetPolicy: { mode: 'NOPE' } }],
+    ['an allocation above the total', { budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 90, ocrMonthlyBudgetSatang: 90 }],
+  ] as const) {
+    it(`refuses ${name} as unavailable rather than passing it as SHARED`, async () => {
+      const prisma = withPolicy({ monthlyBudgetSatang: 100, ...row });
+      assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, `co-${name}`), { allowed: false, reason: 'unavailable' });
+    });
+  }
 });

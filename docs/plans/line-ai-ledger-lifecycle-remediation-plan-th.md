@@ -76,8 +76,8 @@ Implementation ครบและมี focused automated evidence (contracts/ap
 
 ### E1. Split config และ financial admission — spec §12
 
-- [ ] เพิ่ม active mode/caps/version และ pending policy พร้อม effective month ใน config; validate C/O>=0, C+O<=effective total และ preserve SHARED default โดยไม่ทับค่าปัจจุบันด้วยค่าเดือนหน้า
-- [ ] ขยาย admin DTO/use case/audit history ด้วย reason + expected version + exact replay no-op; config/ceiling writers ทุกทางห้ามทำ split state ผิดโดยเงียบ
+- [x] เพิ่ม active mode/caps/version และ pending policy พร้อม effective month ใน config; validate C/O>=0, C+O<=effective total และ preserve SHARED default โดยไม่ทับค่าปัจจุบันด้วยค่าเดือนหน้า — ผ่านด้วย additive migration + resolver truth table + real-PostgreSQL CHECK/CAS evidence (2026-09-17, E1a)
+- [x] ขยาย admin DTO/use case/audit history ด้วย reason + expected version + exact replay no-op; config/ceiling writers ทุกทางห้ามทำ split state ผิดโดยเงียบ — ผ่านด้วย real `SetAiModelBodyDto`/controller-mapping specs, audit + history allowlist และ platform-default vs ceiling / signup / OCR-config regression tests (2026-09-17, E1a)
 - [ ] Inventory ทุก cost-bearing seam: LINE intake/text/media, receipt web/LINE, statement, CRM และ draft; classify CHAT/OCR จาก API ก่อน AI
 - [ ] กำหนด finite upper bound/execution envelope ต่อ provider step รวม images/cache/output/SDK attempts/timeout และ per-invocation rounding; ตรึง pricing/FX พร้อม minimum viable cap table
 - [ ] Simple one-call API reserve และ multi-call gateway budget-step seam ใช้ API-owned authenticated reservation เดียวกัน; ไม่จอง whole chain ซ้ำ และเก็บ partial result เมื่อ step ถัดไป insufficient
@@ -89,8 +89,8 @@ Implementation ครบและมี focused automated evidence (contracts/ap
 - [ ] ใช้ canonical config/company/plan/platform/month/bucket lock order; platform default validation และ signup/other writers ไม่ข้าม split caps หรือทำ deadlock
 - [ ] จัดการ transport uncertainty/crash/meter failure แบบ conservative ไม่ TTL-release อัตโนมัติ; มี operator evidence สำหรับ unresolved reservation
 - [ ] Usage หลัง controller/parser error/partial chain ส่งถึง authenticated settlement/recovery แม้ outer HTTP หาย; audit correction และ original-month balance ไม่เพิ่ม callCount
-- [ ] ป้องกัน old writer/old binary ที่ไม่รู้ SPLIT, pin month และระบุ next-month activation สำหรับบริษัทมี spend อยู่แล้ว
-- [ ] Effective policy revision ข้ามเดือน/cancel activated pending/SPLIT→SHARED ต้องไม่เปิด shared allowance โดยไม่ตั้งใจ; materialize predecessor ก่อน config write
+- [x] ป้องกัน old writer/old binary ที่ไม่รู้ SPLIT, pin month และระบุ next-month activation สำหรับบริษัทมี spend อยู่แล้ว — ผ่านสำหรับ config/admission path: additive defaults, guarded signup/OCR/platform writers, resolver ใช้ month ที่ตรึงแล้ว และ current-month SPLIT ถูกปฏิเสธเมื่อเดือนนั้นมี usage (2026-09-17, E1a) การ pin month ของ reservation ยังเป็นงาน phase ถัดไป
+- [x] Effective policy revision ข้ามเดือน/cancel activated pending/SPLIT→SHARED ต้องไม่เปิด shared allowance โดยไม่ตั้งใจ; materialize predecessor ก่อน config write — ผ่านด้วย revision ที่ผูก version+month+source, materialisation ก่อน CAS พร้อม audit และ real-PostgreSQL cancel-after-activation (2026-09-17, E1a)
 
 **จุดพร้อมเปิด E1:** ทุก seam ที่บริษัท SPLIT เข้าถึงต้องมี upper bound + enforced envelope + idempotent settlement ครบ มิฉะนั้นยังปิด activation ของบริษัทนั้น ไม่ใช้สูตรเฉลี่ยหรือ bypass ชั่วคราว งาน A–D เดินต่อได้โดยไม่ต้องเปิด E
 

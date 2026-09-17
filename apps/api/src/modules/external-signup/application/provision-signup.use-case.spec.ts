@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, Logger } from '@nestjs/common';
+import { Prisma } from '../../../generated/prisma/client';
 import { ProvisionSignupUseCase, mapBusinessCategory } from './provision-signup.use-case';
 
 const REQUEST = {
@@ -42,6 +43,9 @@ function harness(options: {
   /** §15.6 (c): the core reports a fence taken from an abandoned attempt. */
   reclaimedStale?: boolean;
   priorCompanyCount?: number;
+  /** F-09: how many rows the guarded trial-budget stamp matched, and whether a split policy blocked it. */
+  aiConfigStampCount?: number;
+  aiConfigGuardedCount?: number;
 } = {}) {
   const onboardingCalls: any[] = [];
   const companyUpdates: any[] = [];
@@ -56,6 +60,7 @@ function harness(options: {
   const planTermStamps: any[] = [];
   const aiConfigUpserts: any[] = [];
   const aiConfigStamps: any[] = [];
+  const aiConfigGuardProbes: any[] = [];
   const lineContexts: any[] = [];
 
   const request = { ...REQUEST, ...(options.request ?? {}) };
@@ -82,7 +87,9 @@ function harness(options: {
       },
       companyAiConfiguration: {
         upsert: async (args: any) => { aiConfigUpserts.push(args); return {}; },
-        updateMany: async (args: any) => { aiConfigStamps.push(args); return { count: 1 }; },
+        // F-09: 0 = the guarded stamp matched nothing (an admin-set budget, or a split policy).
+        updateMany: async (args: any) => { aiConfigStamps.push(args); return { count: options.aiConfigStampCount ?? 1 }; },
+        count: async (args: any) => { aiConfigGuardProbes.push(args); return options.aiConfigGuardedCount ?? 0; },
       },
       lineCompanyContext: { upsert: async (args: any) => { lineContexts.push(args); return {}; } },
       companySignupRequest: { update: (args: any) => { requestUpdates.push(args); return Promise.resolve({}); } },
@@ -130,7 +137,7 @@ function harness(options: {
   return {
     useCase: new ProvisionSignupUseCase(prisma, core, onboarding, config, adminDirectory, lineNotify, opsAlerts),
     onboardingCalls, companyUpdates, requestUpdates, audits, advances, completed, failures, planTermUpserts,
-    planTermUpdates, planTermStamps, aiConfigUpserts, aiConfigStamps, lineContexts, linePushes, alerts,
+    planTermUpdates, planTermStamps, aiConfigUpserts, aiConfigStamps, aiConfigGuardProbes, lineContexts, linePushes, alerts,
   };
 }
 
@@ -214,6 +221,33 @@ describe('the trial guards are the same for both sources (Owner 2026-09-05)', ()
     assert.equal(h.aiConfigStamps.length, 1);
     assert.equal(h.aiConfigStamps[0].where.monthlyBudgetSatang, null, 'only a budget nobody has set');
     assert.equal(h.aiConfigStamps[0].data.monthlyBudgetSatang, 8000);
+  });
+
+  it('F-09: the trial cap can only land on a SHARED row with nothing scheduled, and says so when it skips', async () => {
+    const h = harness();
+    await h.useCase.execute(CMD);
+    // The stamp itself carries the guard, so a SPLIT or already-scheduled company is never matched
+    // — a retry must not lower a total an admin allocated across CHAT and OCR (spec §11.4).
+    assert.equal(h.aiConfigStamps[0].where.budgetMode, 'SHARED');
+    assert.deepEqual(h.aiConfigStamps[0].where.pendingBudgetPolicy, { equals: Prisma.DbNull });
+    // The create path for a brand-new company is unchanged: no policy fields at all.
+    assert.deepEqual(Object.keys(h.aiConfigUpserts[0].create).sort(), ['companyId', 'monthlyBudgetSatang']);
+
+    const warns: any[] = [];
+    const originalWarn = Logger.prototype.warn;
+    Logger.prototype.warn = function warn(entry: any) { warns.push(entry); return undefined as any; };
+    try {
+      const skipped = harness({ aiConfigStampCount: 0, aiConfigGuardedCount: 1 });
+      await skipped.useCase.execute(CMD);
+      assert.equal(skipped.aiConfigGuardProbes.length, 1, 'it looks at WHY the stamp matched nothing');
+      assert.ok(warns.some((entry) => entry?.msg === 'signup.ai_budget.split_policy_preserved'));
+      // A plain "already has a budget" retry is silent — only a preserved split policy is logged.
+      warns.length = 0;
+      await harness({ aiConfigStampCount: 0, aiConfigGuardedCount: 0 }).useCase.execute(CMD);
+      assert.equal(warns.filter((entry) => entry?.msg === 'signup.ai_budget.split_policy_preserved').length, 0);
+    } finally {
+      Logger.prototype.warn = originalWarn;
+    }
   });
 
   it('keeps the genuinely LINE-only guard off a web-form shop', async () => {

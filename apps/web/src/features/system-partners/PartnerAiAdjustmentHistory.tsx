@@ -5,10 +5,25 @@ import {apiErrorMessage} from '@/common/api/api-error-message';
 import {formatThaiDateTime} from '@/common/i18n/thai-date';
 import {getPartnerAiAdjustments} from './system-partners.api';
 
-const labels:Record<PartnerAiAdjustmentField,string>={modelId:'รุ่น AI',monthlyBudgetSatang:'งบ AI ต่อเดือน',enabled:'การอ่านเอกสารด้วย AI',monthlyLimit:'จำนวนครั้งอ่านเอกสารต่อเดือน',receiptQuotaEnforced:'การจำกัดใบเสร็จตามแพ็กเกจ'};
+const labels:Record<PartnerAiAdjustmentField,string>={modelId:'รุ่น AI',monthlyBudgetSatang:'งบ AI ต่อเดือน',enabled:'การอ่านเอกสารด้วย AI',monthlyLimit:'จำนวนครั้งอ่านเอกสารต่อเดือน',receiptQuotaEnforced:'การจำกัดใบเสร็จตามแพ็กเกจ',
+  budgetMode:'โหมดงบ AI',chatMonthlyBudgetSatang:'เพดานแชต AI ต่อเดือน',ocrMonthlyBudgetSatang:'เพดานอ่านเอกสารต่อเดือน',budgetConfigVersion:'เวอร์ชันการตั้งค่างบ',pendingBudgetPolicy:'งบที่ตั้งให้เริ่มเดือนถัดไป'};
+const SATANG_FIELDS=new Set<PartnerAiAdjustmentField>(['monthlyBudgetSatang','chatMonthlyBudgetSatang','ocrMonthlyBudgetSatang']);
+const baht=(v:number)=>`${(v/100).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2})} บาท`;
+/** The audit stores a scheduled policy as the scalar `<mode>:<chat>:<ocr>:<YYYY-MM>` (spec §12.4). */
+function pendingText(v:string):string {
+  const [mode,chat,ocr,month]=v.split(':');
+  if(!month)return v;
+  return mode==='SPLIT'?`แยกเพดาน แชต ${baht(Number(chat))} / อ่านเอกสาร ${baht(Number(ocr))} เริ่ม ${month}`:`งบรวมก้อนเดียว เริ่ม ${month}`;
+}
 function value(field:PartnerAiAdjustmentField,v:string|number|boolean|null):string {
-  if(v===null)return field==='monthlyLimit'?'ไม่จำกัด':'ใช้ค่าเริ่มต้นของระบบ';
-  if(field==='monthlyBudgetSatang'&&typeof v==='number')return `${(v/100).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2})} บาท`;
+  if(v===null)return field==='monthlyLimit'?'ไม่จำกัด'
+    :field==='pendingBudgetPolicy'?'ไม่มี'
+    // A split cap is never "inherit": null means the operator has not allocated it (spec §12.1).
+    :field==='chatMonthlyBudgetSatang'||field==='ocrMonthlyBudgetSatang'?'ยังไม่ตั้ง'
+    :'ใช้ค่าเริ่มต้นของระบบ';
+  if(field==='budgetMode')return v==='SPLIT'?'แยกเพดานแชตกับอ่านเอกสาร':'งบรวมก้อนเดียว';
+  if(field==='pendingBudgetPolicy'&&typeof v==='string')return pendingText(v);
+  if(SATANG_FIELDS.has(field)&&typeof v==='number')return baht(v);
   if(typeof v==='boolean')return field==='receiptQuotaEnforced'?(v?'บังคับโควตา':'นับอย่างเดียว'):(v?'เปิด':'ปิด');
   return typeof v==='number'?v.toLocaleString('th-TH'):v;
 }
