@@ -89,7 +89,10 @@ export class BillingCollection {
         if (!state.policy || !state.revision || !state.gates.new_sales || !targetInput) throw review();
         assertPolicyReady(state.policy);
         const { tier, interval, offer } = paidVariant(targetInput.offerKey, targetInput.interval, state.policy);
-        if (!isUpgrade(offer, accepted.current.quote.offer) || state.policy.planChanges !== 'UPGRADE_PRORATED_DOWNGRADE_PERIOD_END') throw review();
+        const currentOffer = accepted.current.quote.offer;
+        const lowerTier = isUpgrade({ ...offer, interval: currentOffer.interval }, currentOffer);
+        const monthlyNext = offer.offerKey === currentOffer.offerKey && currentOffer.interval === 'year' && offer.interval === 'month';
+        if ((!lowerTier && !monthlyNext) || state.policy.planChanges !== 'UPGRADE_PRORATED_DOWNGRADE_PERIOD_END') throw review();
         const priceId = state.policy.priceIds[`${tier}:${interval}`];
         if (!priceId) throw review();
         assertStripePrice(await this.stripe.request('GET', `/prices/${priceId}`), offer, state.policy, account.livemode, priceId);

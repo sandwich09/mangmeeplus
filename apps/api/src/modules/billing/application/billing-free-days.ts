@@ -181,7 +181,7 @@ export class BillingFreeDays {
             requestId: row.id, reason: 'stripe_verified_admin_gift_days' }, tx);
         }
         await tx.billingReceiptGrant.updateMany({ where: { billingAccountId: account.id, companyId: account.companyId,
-          kind: { not: 'ADMIN_ADJUSTMENT' }, revokedAt: null, expiresAt: { gt: row.createdAt, lt: after } }, data: { expiresAt: after } });
+          kind: { in: ['INITIAL', 'RENEWAL', 'REPEAT', 'UPGRADE'] }, revokedAt: null, expiresAt: { gt: row.createdAt, lt: after } }, data: { expiresAt: after } });
         await tx.billingAccount.update({ where: { id: account.id }, data: { paidThrough: after, nextChargeAt: source.cancel ? null : after,
           termProjectionHash: termProjectionHash(term), pendingPlanChangeId: pendingId, activeCollectionOperationId: null, version: { increment: 1 }, observedAt: now, nextReconcileAt: now } });
         await tx.billingOperation.update({ where: { id: row.id }, data: { state: 'SUCCEEDED', errorCode: null, resultJson: json({ ...journal, scheduleId: graph.schedule!.id }), observedAt: now, version: { increment: 1 } } });

@@ -99,8 +99,9 @@ export type BillingQuote = {
   offer: BillingOffer; subtotalSatang: number; taxSatang: number; totalSatang: number;
   taxTreatment: BillingTaxTreatment; consentRevision: string; paidStart: 'IMMEDIATE' | 'AFTER_TRIAL';
   billingEmail: string; trialEndsAt: string | null; usage: BillingReceiptUsage;
-  purchase?: { kind: 'INITIAL' | 'REPEAT' | 'RESTART' | 'UPGRADE'; previousPaidThrough: string | null; projectedPaidThrough: string;
-    receiptUnitsAdded: number; projectedRemainingReceipts: number };
+  purchase?: { kind: 'INITIAL' | 'REPEAT' | 'RESTART' | 'UPGRADE'; previousInterval?: BillingInterval; previousPaidThrough: string | null; projectedPaidThrough: string;
+    receiptUnitsAdded: number; projectedRemainingReceipts: number;
+    trialCarryover?: { receiptUnits: number; expiresAt: string } };
   upgrade?: { prorationAt: string; nextRenewalTotalSatang: number;
     segments: { start: string; end: string; amountSatang: number; receiptUnitsAdded: number }[] };
   capacity?: BillingCapacityImpact;

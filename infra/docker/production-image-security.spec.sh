@@ -196,7 +196,12 @@ grep -Fq "':(exclude)docs/**'" "$ci"
 grep -Fq "github.event_name == 'workflow_call'" "$ci"
 grep -Fq "github.event_name == 'workflow_dispatch'" "$ci"
 grep -Fq "inputs.validated_ci_run_id != ''" "$ci"
-test "$(grep -Fc "inputs.validated_ci_run_id == ''" "$ci")" -eq 7
+test "$(grep -Fc "inputs.validated_ci_run_id == ''" "$ci")" -eq 8
+# Billing shards run independently, but neither publisher may bypass their result.
+grep -Fq 'suite: [backend, customer, operations]' "$ci"
+grep -Fq 'fail-fast: false' "$ci"
+test "$(grep -Fc '      - billing-integration' "$ci")" -eq 2
+test "$(grep -Fc "needs.billing-integration.result == 'success' &&" "$ci")" -eq 2
 grep -Fq '.head_sha == $sha' "$ci"
 grep -Fq '.path == ".github/workflows/ci.yml"' "$ci"
 grep -Fq 'validationRunId:$validationRunId' "$ci"

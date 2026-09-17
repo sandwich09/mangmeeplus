@@ -80,7 +80,7 @@ export async function checkBillingOfferMatrix(input:Parameters<typeof checkBilli
         assert.equal(check.status,200,JSON.stringify(check));attempt=await db.billingAttempt.findUniqueOrThrow({where:{id:check.body.attemptId}});
       }
       const expected=terms[tier],units=expected.units*(interval==='year'?12:1),amount=expected[interval];
-      assert.equal(quote.totalSatang,amount);assert.equal(quote.purchase.receiptUnitsAdded,units);
+      assert.equal(quote.totalSatang,amount);assert.equal(quote.purchase.receiptUnitsAdded,units);assert.equal(quote.purchase.trialCarryover.receiptUnits,15);assert.equal(quote.purchase.projectedRemainingReceipts,units+15);
       assert.equal(quote.offer.branchLimit,expected.branches);assert.equal(quote.offer.employeeLimit,expected.members);
       const body={quoteId:quote.quoteId,consentRevision:quote.consentRevision,accepted:true,channel};
       const replay=await request(`${own}/checkout`,'POST',body,{'idempotency-key':attempt.idempotencyKey});assert.equal(replay.body.attemptId,attempt.id);
@@ -93,7 +93,7 @@ export async function checkBillingOfferMatrix(input:Parameters<typeof checkBilli
       Object.assign(session,{status:'complete',subscription:subId});
       provider.subscriptions!.push({id:subId,object:'subscription',livemode:false,customer:session.customer,metadata:session.metadata,status:'active',cancel_at_period_end:false,
         collection_method:'charge_automatically',billing_mode:{type:'classic'},billing_cycle_anchor:start,items:{data:[{id:itemId,price:priceId,quantity:1,current_period_start:start,current_period_end:end}]}});
-      provider.invoices!.push({id:invoiceId,object:'invoice',livemode:false,customer:session.customer,parent:{subscription_details:{subscription:subId}},status:'paid',collection_method:'charge_automatically',
+      provider.invoices!.push({id:invoiceId,object:'invoice',livemode:false,customer:session.customer,parent:{subscription_details:{subscription:subId}},status:'paid',status_transitions:{paid_at:start},collection_method:'charge_automatically',
         currency:'thb',billing_reason:'subscription_create',amount_remaining:0,total:amount,amount_paid:amount,starting_balance:0,number:`TEST-${name}`,created:start,
         hosted_invoice_url:'https://invoice.stripe.com/i/matrix',invoice_pdf:'https://invoice.stripe.com/i/matrix/pdf'});
       provider.lines!.push({id:`il_Matrix${key}`,invoice:invoiceId,parent:{type:'subscription_item_details',subscription_item_details:{subscription:subId,subscription_item:itemId,proration:false}},
@@ -103,9 +103,10 @@ export async function checkBillingOfferMatrix(input:Parameters<typeof checkBilli
         amount_refunded:0,disputed:false,receipt_url:'https://pay.stripe.com/receipts/matrix'};provider.charges!.push(charge);
       provider.intents!.push({id:intentId,livemode:false,status:'succeeded',currency:'thb',amount_received:amount,customer:session.customer,latest_charge:charge});
       await input.reconcile(accountId);await input.reconcile(accountId);
-      const grants=await db.billingReceiptGrant.findMany({where:{companyId}});assert.equal(grants.length,1);assert.equal(grants[0].units,units);
+      const grants=await db.billingReceiptGrant.findMany({where:{companyId}});assert.equal(grants.length,2);assert.equal(grants.find(grant=>grant.kind==='INITIAL')?.units,units);
+      const trial=grants.find(grant=>grant.kind==='TRIAL_CARRYOVER');assert.equal(trial?.units,15);assert.equal(trial?.expiresAt.toISOString(),endDate.toISOString());
       const term=await db.companyPlanTerm.findUniqueOrThrow({where:{companyId}});assert.equal(term.tierKey,tier);assert.equal(term.branchLimit,expected.branches);assert.equal(term.employeeLimit,expected.members);
-      assert.equal(term.termEndsAt?.toISOString(),endDate.toISOString());assert.equal((await request(own)).body.usage.remaining,units);
+      assert.equal(term.termEndsAt?.toISOString(),endDate.toISOString());assert.equal((await request(own)).body.usage.remaining,units+15);
       const paid=(await request(`${own}/attempts/${attempt.id}`)).body;assert.equal(paid.paymentState,'PAID');assert.equal(paid.applyState,'APPLIED');
       for(const kind of ['invoice','pdf','receipt'])assert.equal((await request(`${own}/documents/${paid.invoiceReference}/open`,'POST',{kind})).status,200);
       if(browser) {

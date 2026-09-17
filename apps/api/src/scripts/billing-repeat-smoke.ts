@@ -115,8 +115,18 @@ export function repeatProviderFixture(run: string, provider: Record<string, Obje
         phases: [0, 1].filter(i => form.has(`phases[${i}][start_date]`)).map(i => ({ start_date: Number(form.get(`phases[${i}][start_date]`)), end_date: Number(form.get(`phases[${i}][end_date]`)),
           items: [{ price: form.get(`phases[${i}][items][0][price]`), quantity: 1, tax_rates: form.has(`phases[${i}][items][0][tax_rates][0]`) ? [form.get(`phases[${i}][items][0][tax_rates][0]`)] : [] }], billing_cycle_anchor: form.get(`phases[${i}][billing_cycle_anchor]`) })) });
       const scheduledSub = provider.subscriptions!.find(s => s.id === schedule.subscription)!;
+      const oldPrice = scheduledSub.items.data[0].price;
       scheduledSub.items.data[0].price = schedule.phases[0].items[0].price;
       scheduledSub.items.data[0].tax_rates = schedule.phases[0].items[0].tax_rates;
+      if (oldPrice.endsWith('Month') && scheduledSub.items.data[0].price.endsWith('Year')) {
+        const now = Math.floor(Date.now()/1000), end = Math.min(schedule.phases[0].end_date, appendPackageInterval(new Date(now*1000),'year').getTime()/1000);
+        scheduledSub.billing_cycle_anchor = now; scheduledSub.items.data[0].current_period_start = now; scheduledSub.items.data[0].current_period_end = end;
+        const id = `in_cadence${randomUUID().replaceAll('-', '')}`;
+        provider.invoices!.push({id, object:'invoice', livemode:false, customer:scheduledSub.customer, parent:{subscription_details:{subscription:scheduledSub.id}},
+          status:'paid', billing_reason:'subscription_update', collection_method:'charge_automatically', currency:'thb', total:0, amount_paid:0, amount_remaining:0, starting_balance:0, created:now});
+        invoiceLines.set(id,[{parent:{type:'subscription_item_details',subscription_item_details:{subscription:scheduledSub.id,proration:false}},
+          pricing:{price_details:{price:scheduledSub.items.data[0].price}},currency:'thb',livemode:false,quantity:1,period:{start:now,end}}]);
+      }
       if (form.has('metadata[mangmeeCollectionOperation]') || form.has('metadata[mangmeeFreeDaysOperation]')) {
         scheduledSub.cancel_at = schedule.end_behavior === 'cancel' ? schedule.phases.at(-1).end_date : null;
         scheduledSub.cancel_at_period_end = false;
@@ -181,8 +191,11 @@ export async function checkRepeatPurchase(input: {
     const page = browser.page;
     await page.goto(`${browser.origin}/companies/${companyId}/billing?interval=year`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/, exact: true }).click();
-    await page.locator('article').filter({ hasText: 'Pro' }).getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
-    await page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ' }).getByText(/เพิ่ม 1200 ใบ/).waitFor();
+    await page.locator('article').filter({ hasText: 'Pro' }).getByRole('button', { name: 'ซื้อแพ็กเกจเดิมเพิ่ม', exact: true }).click();
+    await page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ' }).locator('dl').getByText('1,200 ใบ', { exact: false }).waitFor();
+    const review = await page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ' }).innerText();
+    assert.ok(review.includes(new Date(q.purchase.projectedPaidThrough).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })));
+    assert.ok(!review.includes('วันทดลอง'));
   }
   fixture.lose('checkout');
   const pending = await checkout(q); assert.equal(pending.body.state, 'UNKNOWN');

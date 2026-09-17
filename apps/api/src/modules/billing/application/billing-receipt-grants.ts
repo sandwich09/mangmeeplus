@@ -48,7 +48,7 @@ export async function grantPaidPackageReceipts(tx: Prisma.TransactionClient, inp
   if (input.kind === 'REPEAT') {
     // Carry only still-valid paid units; lapse/revocation cannot be undone by a later purchase.
     await tx.billingReceiptGrant.updateMany({ where: {
-      companyId: input.companyId, billingAccountId: input.billingAccountId, revokedAt: null, kind: { not: 'ADMIN_ADJUSTMENT' },
+      companyId: input.companyId, billingAccountId: input.billingAccountId, revokedAt: null, kind: { in: ['INITIAL', 'RENEWAL', 'REPEAT', 'UPGRADE'] },
       availableAt: { lte: input.availableAt }, expiresAt: { gt: input.availableAt, lt: input.expiresAt },
     }, data: { expiresAt: input.expiresAt } });
   }
