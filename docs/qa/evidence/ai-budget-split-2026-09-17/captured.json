@@ -1,0 +1,112 @@
+[
+  {
+    "file": "shared-no-split-1440.png",
+    "width": 1440,
+    "note": "SHARED: mode, per-scope position with both bucket caps \"ยังไม่ตั้ง\", D1 breakdown and partial-coverage note"
+  },
+  {
+    "file": "pending-next-month-1440.png",
+    "width": 1440,
+    "note": "Scheduled SPLIT shown as \"เริ่มเดือน …\", separate from ใช้อยู่, with a cancel action"
+  },
+  {
+    "file": "split-no-usage-1440.png",
+    "width": 1440,
+    "note": "SPLIT active this month, zero spend and zero holds: caps shown, available equals the cap"
+  },
+  {
+    "file": "split-reserved-unresolved-1440.png",
+    "width": 1440,
+    "note": "Per-scope spent / reserved / available plus \"กำลังตรวจสอบยอดที่จอง\"; reserved is labelled กันไว้ระหว่างเรียก AI"
+  },
+  {
+    "file": "policy-invalid-1440.png",
+    "width": 1440,
+    "note": "SPLIT_EXCEEDS_TOTAL rendered as a red notice with what to fix; AI is refused for this company"
+  },
+  {
+    "file": "breach-flag-1440.png",
+    "width": 1440,
+    "note": "An actual above its reserved bound: the scope is closed, the full actual is kept, and the operator is told before changing caps"
+  },
+  {
+    "file": "validation-caps-exceed-total-1440.png",
+    "width": 1440,
+    "note": "C + O > the SAVED total refused client-side, and the saved numbers did not move with the draft"
+  },
+  {
+    "file": "server-refusal-thai-1440.png",
+    "width": 1440,
+    "note": "partner_ai_budget_cap_below_bucket_spend from the real writer, shown through translateApiError in Thai"
+  },
+  {
+    "file": "conflict-409-after-second-tab-1440.png",
+    "width": 1440,
+    "note": "A stale expectedBudgetRevision answers 409; the page reloads the saved state first, then says to re-check"
+  },
+  {
+    "file": "shared-no-split-390.png",
+    "width": 390,
+    "note": "SHARED: mode, per-scope position with both bucket caps \"ยังไม่ตั้ง\", D1 breakdown and partial-coverage note"
+  },
+  {
+    "file": "pending-next-month-390.png",
+    "width": 390,
+    "note": "Scheduled SPLIT shown as \"เริ่มเดือน …\", separate from ใช้อยู่, with a cancel action"
+  },
+  {
+    "file": "split-no-usage-390.png",
+    "width": 390,
+    "note": "SPLIT active this month, zero spend and zero holds: caps shown, available equals the cap"
+  },
+  {
+    "file": "split-reserved-unresolved-390.png",
+    "width": 390,
+    "note": "Per-scope spent / reserved / available plus \"กำลังตรวจสอบยอดที่จอง\"; reserved is labelled กันไว้ระหว่างเรียก AI"
+  },
+  {
+    "file": "policy-invalid-390.png",
+    "width": 390,
+    "note": "SPLIT_EXCEEDS_TOTAL rendered as a red notice with what to fix; AI is refused for this company"
+  },
+  {
+    "file": "breach-flag-390.png",
+    "width": 390,
+    "note": "An actual above its reserved bound: the scope is closed, the full actual is kept, and the operator is told before changing caps"
+  },
+  {
+    "file": "validation-caps-exceed-total-390.png",
+    "width": 390,
+    "note": "C + O > the SAVED total refused client-side, and the saved numbers did not move with the draft"
+  },
+  {
+    "file": "server-refusal-thai-390.png",
+    "width": 390,
+    "note": "partner_ai_budget_cap_below_bucket_spend from the real writer, shown through translateApiError in Thai"
+  },
+  {
+    "file": "conflict-409-after-second-tab-390.png",
+    "width": 390,
+    "note": "A stale expectedBudgetRevision answers 409; the page reloads the saved state first, then says to re-check"
+  },
+  {
+    "file": "activation-flag-off-1440.png",
+    "width": 1440,
+    "note": "splitActivationEnabled false: SPLIT is disabled with one explanatory sentence, SHARED and cancel-pending stay usable"
+  },
+  {
+    "file": "activation-flag-off-390.png",
+    "width": 390,
+    "note": "splitActivationEnabled false: SPLIT is disabled with one explanatory sentence, SHARED and cancel-pending stay usable"
+  },
+  {
+    "file": "read-only-operator-1440.png",
+    "width": 1440,
+    "note": "system.partner_dashboard.read without system.partner_ai_model.manage: the position is shown, the form is gone"
+  },
+  {
+    "file": "read-only-operator-390.png",
+    "width": 390,
+    "note": "system.partner_dashboard.read without system.partner_ai_model.manage: the position is shown, the form is gone"
+  }
+]
