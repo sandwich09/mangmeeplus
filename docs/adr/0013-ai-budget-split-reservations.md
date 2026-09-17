@@ -187,14 +187,119 @@ above on purpose; both are marked.
 
 ## 12. Residuals for E1c and beyond
 
-- `TIMEOUT_INPUT_TOKEN_CEILING = 200_000` (`bedrock.provider.ts:21`) is above every declared input
-  bound, so a SPLIT timeout would settle above its hold and trip the breach path. Spec §12.3
-  requires this to be covered by the reservation or the accounting fixed first. **E1c blocker.**
-- `LineIntakeRouteRequest` carries no webhook event id, so a TEXT intake's attempt key is derived
-  from its transport request id. A LINE redelivery under a new request id would buy a second hold.
-  Closing it needs a contract field.
+- ~~`TIMEOUT_INPUT_TOKEN_CEILING = 200_000` (`bedrock.provider.ts:21`) is above every declared input
+  bound, so a SPLIT timeout would settle above its hold and trip the breach path.~~ **CLOSED by
+  E1c** (§13.5): under an envelope the estimate is the declared bound; with no envelope the legacy
+  ceiling is untouched.
+- ~~`LineIntakeRouteRequest` carries no webhook event id, so a TEXT intake's attempt key is derived
+  from its transport request id.~~ **CLOSED by E1c** (§13.7): the contract gained an optional
+  `webhookEventId`, the webhook use case sends it, and the fallback stays for callers that do not.
 - A breach closes its scope until an operator clears `AiBudgetReservation.breach`; there is no
   operator surface for that yet (the flag is cleared by hand).
 - No reconciliation surface for `UNRESOLVED` holds beyond the count in the admin read.
 - A `settled-anomaly` closes the hold and records the money, but there is no operator workflow for
   reviewing those rows beyond the HIGH security event and `evidenceJson.anomaly`.
+
+## 13. Implementation notes (E1c)
+
+The gateway half. What §6 left open, and what the implementation decided. The hard property is
+that a request WITHOUT a `budgetEnvelope` — every company today, all `SHARED` — behaves exactly as
+before: the same provider object is handed the caller's own input object, so the bytes, the prompts,
+the usage rows and the responses are identical, and no money seam is called at all.
+
+1. **One `Proxy`, created in `createProvider`.** `withAiBudgetEnvelope`
+   (`apps/ai-gateway/src/common/usage/ai-budget-provider.ts`) wraps the provider the factory built.
+   A `Proxy` rather than a new object literal, because the decorator must change the two generate
+   methods and NOTHING else: `generateWithTools` stays absent when the inner provider has none (the
+   orchestrator reads a missing implementation as "not capable" and falls back to its JSON loop, so
+   an always-present method would silently change which loop runs), and everything else about the
+   provider still reads through. `DisabledProvider` is deliberately not wrapped — it makes no
+   provider call and can spend nothing, so stepping or settling it would invent an invocation.
+2. **The envelope is validated at the RECEIVER boundary, fail-closed, and "invalid" is not
+   "absent".** `AiUsageInterceptor` parses `budgetEnvelope` with `parseAiBudgetEnvelope`
+   (`packages/contracts/src/ai-budget-bounds.ts`, beside the table it enforces so the two cannot
+   drift) and stores one of three states in the existing usage context: absent, `invalid`, or
+   `active`. `invalid` refuses every provider call of that request with `AI_BUDGET_UNAVAILABLE`
+   instead of running unmetered — a body that names an undeclared step kind, widens its own bounds
+   by one token, carries a bucket outside CHAT/OCR, or whose `invocationKey` does not rebuild as
+   `<thisCompany>#<attemptKey>#<stepKind>#<ordinal>` is refused rather than reconciled. The company
+   segment makes the fence untakeable by another tenant's response.
+3. **The refusal travels as a `ProviderError`.** `PROVIDER_BUDGET_EXHAUSTED` already existed for
+   spec §9.4; E1c adds `budgetCode` beside the existing `budgetScope`. That is the one shape every
+   route in this gateway already surfaces in its OWN error envelope, so a money refusal reaches the
+   API as `AI_BUDGET_*` + scope through the existing mappings (`{status:'failed', errorCode,
+   budgetScope}` for receipt OCR and bank statements, an `UNAVAILABLE` route plan for intake, the
+   whole `ProviderError` for CRM) with no new error channel. Routes read `budgetCode ?? code`, so
+   every non-budget failure keeps its exact existing code.
+4. **The ordinal counter belongs to the REQUEST, not to a provider.** One receipt chain builds three
+   separate providers through `createProvider`; they share one call index because it lives in the
+   request-scoped context. Call 0 uses the invocation the API reserved and dispatched; call `n >= 1`
+   calls `POST /internal/ai/budget-step` BEFORE the provider and uses the invocation key that comes
+   back (re-validated at that ordinal). A call at `ordinal >= maxCalls` is refused without a
+   round-trip, because the seam would answer the same `unavailable`.
+5. **A timeout is settled at the DECLARED bound.** `conservativeTimeoutUsage` reads the envelope's
+   `bounds.maxInputTokens` (and clamps the requested output to `maxOutputTokens`) instead of the
+   200,000-token model-context ceiling, which closes §12's blocker: settling above the hold would
+   have reported an invariant breach — closing the company's admission — over a call that exceeded
+   nothing. A provider that cannot estimate its own timeout at all (the OpenAI adapter appends
+   zeros with no basis) is estimated by the decorator in place, so the evidence and the response
+   copy carry the same numbers and the same honest `CONSERVATIVE_ESTIMATE`. A NON-timeout error is
+   never estimated: a rejected request bought no inference, and charging a bound for a throttle
+   would be the opposite error.
+6. **Evidence is posted for success, provider error, timeout and a throw**, from a `finally` — the
+   same place the providers log their own usage — so a parser or controller error after the provider
+   cannot turn real cost into zero (R-04). One bounded retry; a failure is logged with ids only and
+   NEVER fails the business call, which leaves the hold `DISPATCHED → UNRESOLVED`, the designed
+   conservative outcome. A call that reported no usage row at all settles nothing and says so
+   (`ai.budget.evidence_missing`) rather than inventing a number. Every row is stamped with its own
+   `invocationKey`, so the copy that rides back on the HTTP response is an idempotent duplicate:
+   `recordCompanyAiUsage` now settles each tagged entry by ITS OWN key (validated as another call
+   index of the same attempt) and the unique fence makes the second arrival a no-op. That closes
+   §11.13 — a multi-call chain is fully held instead of metering the remainder unheld — while an
+   untagged chain from an older gateway keeps the previous first-row behaviour and its warn.
+7. **`webhookEventId` on `LineIntakeRouteRequest`** closes §12's second residual. It is sent by
+   `tryRouteIntake` from both call sites and hashed into the TEXT intake's attempt key; the request
+   id remains the fallback. The field is inert in the gateway: the intake router builds its model
+   payload from an explicit field allowlist, so a request carrying it produces byte-identical
+   prompts.
+8. **A runtime that cannot honour an envelope refuses SPLIT traffic.** The AgentCore passthrough runs
+   the model in its own process — it cannot budget-step before a call, and its rows arrive after
+   every call is paid for — so `LineAiTurnUseCase` answers `AI_BUDGET_UNAVAILABLE` with the honest
+   "the budget could not be CHECKED" copy instead of falling back to an unreserved runtime (§12.6).
+9. **SDK attempts are pinned to the number the hold priced.** `AI_BUDGET_STEP_ATTEMPTS = 1` mirrors
+   the `attempts: 1` in `priceAiStepUpperBound`'s snapshot; `createProvider` passes it to
+   `BedrockRuntimeClient` only under an envelope, so the SDK default (3) is untouched otherwise.
+10. **The input bound is proven from the request, and an unprovable one refuses.** UTF-8 byte length
+    of the system prompt, the cacheable context, every message and — on the native loop — the tool
+    specs, which is where the 32 KB LINE catalogue shows up. Images use
+    `AI_BUDGET_IMAGE_TOKEN_CEILING`; a PDF's page count is bounded from its own bytes (`/Count` and
+    `/Type /Page`, the larger of the two) and a document whose pages cannot be counted, or that
+    exceeds `AI_BUDGET_DOCUMENT_MAX_PAGES`, is refused rather than guessed. An absent `maxTokens` is
+    refused too: the provider default (2048/1024) is above several declared output bounds, and no
+    production call site omits it.
+11. **Found and fixed while testing: the TEXT intake seam reserved with no model.**
+    `requestLineIntakeRoute` resolved the tenant model policy only when the intake carried a
+    picture, so a SPLIT company's every text message would have been refused `model_unknown`
+    (§11.3) — the shop goes quiet on chat while the picture lane still works. It is now resolved for
+    both lanes, like every other cost-bearing seam.
+
+### 13b. Residuals after E1c
+
+- **`draft-generate` holds money but sends no envelope.** `generate-suggestion.use-case.ts` reserves
+  a `draft-generate` step and settles its response, but builds the gateway request field by field
+  and never attaches `hold.envelope`, so the gateway cannot enforce that seam's bounds. The request
+  contract also carries no `companyId`, which the receiver boundary needs to validate a fence. A
+  single-call chain, so nothing can be stepped past — but it is not enforced either.
+- A pre-provider refusal at **ordinal 0** (an invalid envelope, a bound violation, a model mismatch)
+  is not in `isOcrPreProviderRefusal`'s list, so the API cannot prove no provider ran and the hold
+  stays `DISPATCHED → UNRESOLVED` instead of being cancelled. Conservative and safe, but it holds
+  money that provably was never spent.
+- The declared input ceilings are still **declared, not measured** against production traffic
+  (research doc §5.1), and byte length is loose for Thai. E1c enforces them; nobody has yet
+  confirmed the p100 real prompt fits.
+- A PDF whose page objects live in **compressed object streams** shows neither marker, so it is
+  refused under an envelope. Correct fail-closed behaviour, but it would refuse a document a SHARED
+  company reads fine today.
+- `LineIntakeRoutePlan` has no `budgetScope` field, so an intake refused by the gateway reaches the
+  API with the code only. Intake is a one-call chain, so this is reachable only through version
+  skew.

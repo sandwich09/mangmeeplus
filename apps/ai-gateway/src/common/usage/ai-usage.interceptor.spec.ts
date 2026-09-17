@@ -166,7 +166,11 @@ function fakeProvider(
         ...(opts.timeout ? { inputTokens: 30_000, usageBasis: 'CONSERVATIVE_ESTIMATE' as const } : {}),
       });
     }
-    if (opts.fail) return { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'timed out', retryable: true } };
+    if (opts.fail) {
+      return opts.timeout
+        ? { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'timed out', retryable: true } }
+        : { ok: false, error: { code: 'PROVIDER_THROTTLED', message: 'slow down', retryable: true } };
+    }
     const out: ProviderOutput = { ok: true, text: 'answer', stopReason: 'end_turn' };
     log.outputs.push(out);
     return out;
@@ -491,7 +495,7 @@ describe('withAiBudgetEnvelope: invocation evidence', () => {
     );
 
     assert.equal(result.ok, false);
-    assert.equal(result.ok === false ? result.error.code : undefined, 'PROVIDER_TIMEOUT', 'the provider error is not rewritten');
+    assert.equal(result.ok === false ? result.error.code : undefined, 'PROVIDER_THROTTLED', 'the provider error is not rewritten');
     assert.deepEqual(log.events, ['provider', 'settle:co-1#line-image:abc#receipt-ocr#0:false:none']);
   });
 
@@ -564,5 +568,63 @@ describe('withAiBudgetEnvelope: invocation evidence', () => {
 
     assert.equal(second.ok, false);
     assert.ok(log.events.includes('log:company_unknown'));
+  });
+});
+
+describe('withAiBudgetEnvelope: a provider that cannot estimate its own timeout', () => {
+  /** The OpenAI adapter's shape: an aborted call appends zeros with NO basis at all. */
+  function zeroTimeoutProvider(log: ReturnType<typeof trace>): IModelProvider {
+    return {
+      generateText: async () => {
+        log.events.push('provider');
+        appendUsage({ ...entry('ocr.receipt.extract'), ok: false, inputTokens: 0, outputTokens: 0 });
+        return { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'timed out', retryable: true } };
+      },
+    };
+  }
+
+  it('settles it at the declared bound, labelled an estimate — never at zero (spec §12.6)', async () => {
+    const log = trace();
+    const drained = await runWithUsageContext({ companyId: 'co-1', budget: activeState(OCR_ENVELOPE) }, async () => {
+      await guarded(zeroTimeoutProvider(log), fakeSeam(log), log).generateText(textInput());
+      return drainUsage();
+    });
+
+    assert.deepEqual(log.events, [
+      'provider', 'settle:co-1#line-image:abc#receipt-ocr#0:false:CONSERVATIVE_ESTIMATE',
+    ]);
+    // The response copy carries the SAME numbers, so whichever path lands first records the same
+    // money and the other is an idempotent duplicate.
+    assert.deepEqual(
+      [drained[0]!.inputTokens, drained[0]!.outputTokens, drained[0]!.usageBasis],
+      [AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxInputTokens, 4096, 'CONSERVATIVE_ESTIMATE'],
+    );
+  });
+
+  it('leaves a provider-reported basis exactly as measured', async () => {
+    const log = trace();
+    const drained = await runWithUsageContext({ companyId: 'co-1', budget: activeState(OCR_ENVELOPE) }, async () => {
+      await guarded(fakeProvider(log), fakeSeam(log), log).generateText(textInput());
+      return drainUsage();
+    });
+
+    assert.equal(drained[0]!.usageBasis, undefined, 'a SUCCESS is never relabelled as an estimate');
+    assert.equal(drained[0]!.inputTokens, 10);
+  });
+
+  it('does not estimate a non-timeout failure — a rejected request cost no inference', async () => {
+    const log = trace();
+    const throttled: IModelProvider = {
+      generateText: async () => {
+        appendUsage({ ...entry('ocr.receipt.extract'), ok: false, inputTokens: 0, outputTokens: 0 });
+        return { ok: false, error: { code: 'PROVIDER_THROTTLED', message: 'slow down', retryable: true } };
+      },
+    };
+    const drained = await runWithUsageContext({ companyId: 'co-1', budget: activeState(OCR_ENVELOPE) }, async () => {
+      await guarded(throttled, fakeSeam(log), log).generateText(textInput());
+      return drainUsage();
+    });
+
+    assert.deepEqual([drained[0]!.inputTokens, drained[0]!.usageBasis], [0, undefined]);
   });
 });

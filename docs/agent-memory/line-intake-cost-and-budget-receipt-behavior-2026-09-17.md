@@ -222,3 +222,82 @@ The FULL api suite (`pnpm --filter @watchdog-bms/api test`, which CI runs) had n
 4. **CI-database hygiene.** `PlatformAiBudgetConfig` is a singleton shared with the sibling specs in that CI step: the one test that needs it now borrows the row and `after()` restores it byte-for-byte (or deletes it if there was none). Pool lowered 30 → 25 against `max_connections = 100`, and `after()` closes it in a `finally`. Proven by running the step's sibling specs, then this spec, then the siblings again on one database: 215/215 both times.
 
 Gates on the final tree: `pnpm --filter @watchdog-bms/api test` rc=0 / 0 `not ok`, and the same 469-file list under TAP = **7624 tests, 7524 pass, 0 fail, 100 skipped**; real-PG spec invoked exactly as the CI step will (identical env var names) **16/16**; acceptance rc=0 (api-behavior **1466/1466**, gateway-behavior **361/361**); `pnpm test:harness` **17/17**; `pnpm --filter @watchdog-bms/web test` **1752/1752**; api typecheck rc=0; pins `status=current`; `git diff --check` clean.
+
+#### Phase E1c implementation — 2026-09-17
+
+The gateway half of ADR 0013: the AI Gateway can no longer spend outside what the API reserved.
+Branch `codex/line-ai-remediation-e1c-gateway-envelope-20260917`, on top of E1b's `1fd19156`.
+
+**The hard property first.** A request without a `budgetEnvelope` — every company today, all
+`SHARED` — is untouched. The guard is a `Proxy` over the real provider that changes only
+`generateText`/`generateWithTools`, and with no envelope in the request context it hands the inner
+provider the caller's OWN input object and returns its own result: same bytes, same prompts, same
+usage rows, same response, and no money seam is called. The full gateway suite (1,146 tests) passes
+with every pre-existing spec unedited, including the one that reads the configured model off the
+provider the factory built — which is why a `Proxy` and not a new object.
+
+**What was built.** `withAiBudgetEnvelope` in `apps/ai-gateway/src/common/usage/ai-budget-provider.ts`,
+applied inside `createProvider` (the single choke point every agent in every module goes through),
+plus `ai-budget-seam.ts` for the two internal API calls and `parseAiBudgetEnvelope` in
+`packages/contracts/src/ai-budget-bounds.ts` beside the table it enforces. The interceptor validates
+the envelope at the receiver boundary and stores absent / `invalid` / `active` in the existing usage
+context; `invalid` refuses every provider call of that request rather than running unmetered. Per
+call: the model must match the hold's, `maxTokens` must be declared and inside the output bound, the
+request must be provably inside the input bound (UTF-8 bytes + tool specs + 2,000/image +
+3,000/PDF-page with at most 8 pages, and an uncountable PDF refuses), call 0 uses the invocation the
+API reserved, call `n >= 1` wins its own `budget-step` BEFORE the provider, a call past `maxCalls`
+never happens, and every invocation's evidence is posted afterwards from a `finally`. Full rule
+table and decisions: ADR 0013 §13.
+
+**Two E1b residuals closed.** `TIMEOUT_INPUT_TOKEN_CEILING = 200_000` no longer applies under an
+envelope (the estimate is the declared bound, so a SPLIT timeout can no longer settle above its hold
+and trip the breach path); `LineIntakeRouteRequest` gained an optional `webhookEventId` so a TEXT
+intake's attempt key is the original webhook event instead of a transport id a redelivery mints
+afresh. On the API side `recordCompanyAiUsage` now settles each gateway-tagged usage row against its
+own invocation key — a multi-call chain is fully held instead of metering the remainder unheld — and
+the AgentCore passthrough refuses SPLIT traffic instead of falling back to an unreserved runtime.
+
+**One real defect found while testing.** `requestLineIntakeRoute` resolved the tenant model policy
+only when the intake carried a picture, so a SPLIT company's TEXT lane reserved with an empty model
+id and every text message would have been refused `model_unknown`: the shop goes quiet on chat while
+the picture lane keeps working. Fixed by resolving it for both lanes, like every other cost-bearing
+seam, with a regression test that asserts the hold exists and prices the tenant's approved model.
+
+**Verification on the final tree** (each heavy run behind `/tmp/mangmee-heavy.lock`):
+`pnpm --filter @watchdog-bms/ai-gateway test` **1146/1146, 0 fail**; `pnpm --filter @watchdog-bms/api
+test` rc=0 with zero failure markers (~10,036 tests, dot reporter, no known failures after merging
+E1b `1fd19156`); `pnpm --filter @watchdog-bms/web test` **1752/1752**; `pnpm --filter
+@watchdog-bms/contracts test` **253/253**; `node scripts/run-line-ai-whole-chain-acceptance.mjs`
+rc=0 (8 suites, 21 repository scenarios); `pnpm test:harness` **17/17**; ai-gateway and api
+`tsc --noEmit` rc=0 (api needs `NODE_OPTIONS=--max-old-space-size=8192` on this machine);
+`git diff --check` clean. No cloud, LINE or provider access; fake providers and an in-process fake
+of the two money seams only.
+
+**Before an operator may open `AI_BUDGET_SPLIT_ACTIVATION_ENABLED`** — honest readiness checklist,
+none of it done by this phase:
+
+1. **`draft-generate` is held but NOT enforced.** `generate-suggestion.use-case.ts` reserves a
+   `draft-generate` step and settles its response, but builds the gateway request field by field and
+   never attaches `hold.envelope`; the request contract also carries no `companyId`, which the
+   receiver boundary needs to validate a fence. Either wire the envelope through that seam or accept
+   that one seam runs with an API-side hold and no gateway enforcement — and say which, in writing.
+2. **The declared input ceilings are still declared, not measured** (research doc §5.1). No session
+   has confirmed the p100 real prompt against production traffic, and byte length is 2–4× loose for
+   Thai. Measure a week of real `line-turn` and `receipt-ocr` prompts against
+   `AI_BUDGET_STEP_BOUNDS` — a shadow count is enough — before any company is switched.
+3. **UAT must exercise a real SPLIT company end to end**: a funded receipt chain (read → extract),
+   a chain refused mid-way (the partial result and the Thai copy the shop actually sees), a
+   near-limit `insufficient` that must never read "เต็ม", and a timeout. Nothing in this phase ran
+   against a real provider or a real LINE channel.
+4. **A pre-provider refusal at ordinal 0 leaves the hold `DISPATCHED → UNRESOLVED`**, because the
+   API cannot prove no provider ran (`isOcrPreProviderRefusal` does not name the budget codes). It
+   holds money that provably was never spent, and there is still no operator surface for
+   reconciling `UNRESOLVED` holds or clearing `breach`. Decide who clears them and how, first.
+5. **A PDF whose page objects live in compressed object streams is refused** under an envelope
+   (its page count cannot be proven from its bytes). That is fail-closed by design, but it refuses a
+   document a SHARED company reads today — check real customer PDFs before switching an OCR-heavy
+   company.
+6. **Rollback still means "no binary that ignores SPLIT may serve a SPLIT company"** (ADR §8). The
+   enforcement lives in the gateway now, so the gateway and API versions must be pinned together:
+   an older gateway ignores `budgetEnvelope` entirely and would run a SPLIT company unenforced
+   while the API holds its money.

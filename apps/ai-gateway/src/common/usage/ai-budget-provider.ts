@@ -25,6 +25,7 @@ import {
   type AiBudgetEnvelope,
   type AiBudgetRefusalCode,
   type AiBudgetScope,
+  type AiUsageEntry,
   type ProviderError,
 } from '@watchdog-bms/contracts';
 import type { IModelProvider, ProviderInput, ProviderToolsInput } from '../../modules/line-ai/infrastructure/provider/provider.port';
@@ -189,15 +190,39 @@ async function admit(
   return { ok: true, invocationKey: step.envelope.invocationKey };
 }
 
+/**
+ * A timed-out call whose provider could not report counters is settled at the DECLARED bound, not
+ * at zero (spec §12.6: real provider cost must never become 0).
+ *
+ * The Bedrock provider already estimates a timeout itself (at the envelope's bound since E1c), so
+ * this changes nothing there. It is what makes the envelope hold for a provider that reports zeros
+ * on an abort — the OpenAI adapter — without touching that provider's behaviour for the SHARED
+ * companies that are all of them today. The row is mutated IN PLACE, so the evidence and the copy
+ * that rides back on the HTTP response carry the same numbers and the same honest basis.
+ */
+function estimateTimeoutInPlace(
+  entry: AiUsageEntry,
+  state: Extract<BudgetRequestState, { status: 'active' }>,
+  requestedMaxTokens: number | undefined,
+): void {
+  if (entry.usageBasis) return;
+  const { bounds } = state.envelope;
+  entry.inputTokens = Math.max(entry.inputTokens, bounds.maxInputTokens);
+  entry.outputTokens = Math.max(entry.outputTokens, Math.min(requestedMaxTokens ?? bounds.maxOutputTokens, bounds.maxOutputTokens));
+  entry.usageBasis = 'CONSERVATIVE_ESTIMATE';
+}
+
 /** Posts this invocation's evidence and tags the response rows with its key. Never throws. */
 async function settle(
   state: Extract<BudgetRequestState, { status: 'active' }>,
   invocationKey: string,
   fromIndex: number,
   opts: AiBudgetProviderOptions,
+  timedOut: { requestedMaxTokens: number | undefined } | undefined,
 ): Promise<void> {
   const tagged = tagUsageInvocation(fromIndex, invocationKey);
   const entry = tagged[0];
+  if (entry && timedOut) estimateTimeoutInPlace(entry, state, timedOut.requestedMaxTokens);
   if (!entry) {
     // A provider that reported nothing measurable leaves the hold DISPATCHED -> UNRESOLVED rather
     // than settling an invented number or a zero (spec §12.6: real cost must never become 0).
@@ -241,12 +266,18 @@ export function withAiBudgetEnvelope(inner: IModelProvider, opts: AiBudgetProvid
     if (!admission.ok) return { ok: false, error: admission.error };
     // Recorded BEFORE the call so the rows this call appends — and only those — are the evidence.
     const fromIndex = usageEntryCount();
+    let timedOut: { requestedMaxTokens: number | undefined } | undefined;
     try {
-      return await call(input);
+      const output = await call(input);
+      if ((output as { ok?: unknown; error?: ProviderError }).ok === false
+        && (output as { error?: ProviderError }).error?.code === 'PROVIDER_TIMEOUT') {
+        timedOut = { requestedMaxTokens: input.maxTokens };
+      }
+      return output;
     } finally {
       // In `finally` so a throw from the provider (or from a parser inside it) still settles the
       // money it already spent, exactly as the providers log their own usage from `finally`.
-      await settle(state, admission.invocationKey, fromIndex, opts);
+      await settle(state, admission.invocationKey, fromIndex, opts, timedOut);
     }
   };
 
