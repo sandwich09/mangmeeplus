@@ -593,6 +593,7 @@ jobs:
           AUTH_LINE_BINDING_TEST_DATABASE_URL="$DATABASE_URL" pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/line-binding.pg.spec.ts
           node apps/api/dist/apps/api/src/scripts/postmark-http-smoke.js
           node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          pnpm exec playwright install --with-deps chromium
           BILLING_TRIAL_CARRYOVER_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
           BILLING_PLAN_CHANGE_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
       - name: Test signup and billing recovery with real browser and isolated providers
@@ -604,7 +605,6 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379
           BILLING_SIGNUP_JOURNEY_ONLY: '1'
         run: |
-          pnpm exec playwright install --with-deps chromium
           node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
           BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_PROVIDER_SCANS_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
           BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_EMAIL_VERIFICATION_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
