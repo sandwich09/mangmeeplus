@@ -247,9 +247,15 @@ export class SetPartnerAiModelUseCase {
         if (!allocation || allocation.mode !== 'SPLIT') continue;
         if (allocation.chat === null || allocation.ocr === null) throw new UnprocessableEntityException('partner_ai_budget_split_caps_required');
         if (allocation.chat + allocation.ocr > totalSatang) {
-          throw new UnprocessableEntityException(policyChange
-            ? `partner_ai_budget_split_exceeds_total: ${allocation.chat} + ${allocation.ocr} > ${totalSatang}`
-            : `partner_ai_budget_total_below_split_allocation: ${allocation.chat} + ${allocation.ocr} > ${totalSatang}`);
+          // Object form, like every other typed refusal here: a STABLE `code` the web translates and
+          // the Thai-coverage spec can discover, with the numbers as separate fields instead of glued
+          // into the sentence. This route is `system.partner_ai_model.manage` only, so the amounts are
+          // an operator's to see — but they still never become the displayed string. Two literal
+          // branches rather than a ternary inside `code:`, so the code stays greppable.
+          const detail = { chatCapSatang: allocation.chat, ocrCapSatang: allocation.ocr, totalSatang };
+          throw policyChange
+            ? new UnprocessableEntityException({ code: 'partner_ai_budget_split_exceeds_total', message: 'partner_ai_budget_split_exceeds_total', ...detail })
+            : new UnprocessableEntityException({ code: 'partner_ai_budget_total_below_split_allocation', message: 'partner_ai_budget_total_below_split_allocation', ...detail });
         }
       }
 
