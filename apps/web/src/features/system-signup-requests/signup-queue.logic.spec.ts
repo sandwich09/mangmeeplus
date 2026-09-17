@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { COMPANY_BUSINESS_CATEGORIES, type AdminSignupQueueItemDto } from '@watchdog-bms/contracts';
+import { COMPANY_BUSINESS_CATEGORIES, SIGNUP_DISCOVERY_SOURCE_OPTIONS, signupDiscoveryLabel, type AdminSignupQueueItemDto } from '@watchdog-bms/contracts';
 import {
   approveLabel,
   BUSINESS_CATEGORY_LABELS,
@@ -40,6 +40,15 @@ function item(overrides: Partial<AdminSignupQueueItemDto> = {}): AdminSignupQueu
     ...overrides,
   };
 }
+
+it('uses identical discovery labels for the queue and company details, including legacy rows', () => {
+  assert.equal(signupDiscoveryLabel(), 'ไม่ระบุ');
+  for (const { value, label } of SIGNUP_DISCOVERY_SOURCE_OPTIONS) {
+    assert.equal(signupDiscoveryLabel(value), label);
+  }
+  assert.equal(signupDiscoveryLabel('OTHER', 'เพื่อนแนะนำ'), 'อื่น ๆ — เพื่อนแนะนำ');
+  assert.equal(signupDiscoveryLabel('TIKTOK', 'old text'), 'TikTok');
+});
 
 // P10-L: approving a LINE application opens the shop immediately and tells the customer in LINE.
 // The page's confirm copy branches on this, because promising an email here promises nothing.

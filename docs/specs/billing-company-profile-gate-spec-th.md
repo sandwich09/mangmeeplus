@@ -1,0 +1,17 @@
+# ข้อมูลบริษัทก่อนซื้อแพ็กเกจ
+
+Owner decision 2026-09-17: ให้ทำตามข้อเสนอ popup/กลับไปกรอกข้อมูล/กลับมาซื้อต่อ โดยใช้ชื่อจดทะเบียนก่อน ถ้าเว้นว่างใช้ชื่อร้านที่สมัครไว้ และส่งข้อมูลชุดนี้ไป Stripe พร้อมตรวจ bug/gap/impact และ merge main + develop หลัง CI ผ่าน
+
+- ก่อนเริ่มซื้อใหม่ INITIAL/RESTART/REPEAT/UPGRADE ต้องมีที่อยู่ line1, ตำบล/แขวง, อำเภอ/เขต, จังหวัด และรหัสไปรษณีย์ไทย 5 หลัก; trim ก่อนตรวจ ชื่อบนเอกสารใช้ registeredName.trim() ก่อน name.trim() เสมอ หากไม่มีทั้งคู่ถือว่าขาดชื่อ ที่อยู่เพิ่มเติมไม่บังคับ
+- ประเภทธุรกิจ/ช่องทางรู้จัก/เลขภาษี/คำตอบ VAT ไม่เพิ่มเป็นเงื่อนไขซื้อจากมตินี้; ใช้ verified account email ตามกติกาเดิม ไม่ผูก purchase readiness เข้ากับความครบของหลักฐาน legal tax identity
+- เมื่อกดซื้อและข้อมูลไม่ครบ เปิด Modal เดิมพร้อมรายการช่องที่ขาด ปุ่ม “กรอกข้อมูลบริษัท” และ “ไว้ก่อน”; กลับหน้าข้อมูลร้านของบริษัทเดียวกัน โดยเก็บเฉพาะ package/interval/channel ที่ whitelist ไม่รับ return URL ภายนอก
+- หลังบันทึกสำเร็จกลับมาทบทวนแพ็กเกจที่เลือก ต้องยืนยันราคา/ชื่อ/ที่อยู่/เงื่อนไขก่อนชำระ ไม่สั่งชำระอัตโนมัติ ห้ามหายข้อมูลเมื่อ error; เปลี่ยนบริษัท/หมด session/ไม่มีสิทธิ์ต้องไม่ส่งข้อมูลไปผิดบริษัท
+- Backend ตรวจที่ quote และก่อน checkout mutation; bind normalized name/address ลง quote snapshot และตรวจใหม่ก่อนเริ่ม provider call หากข้อมูลเปลี่ยนให้ทบทวน quote ใหม่ ข้อมูลที่ไม่เกี่ยวกับการออกเอกสาร เช่น TSIC ไม่ทำให้ quote เก่าหมดอายุ
+- ส่งชื่อ/ที่อยู่ไป Company-bound Stripe Customer ทั้งสร้างใหม่และลูกค้าเดิม ก่อนเริ่ม Checkout: country TH, line1 บ้านเลขที่/ถนน, line2 ที่อยู่เพิ่มเติม+ตำบล/แขวง, city อำเภอ/เขต, state จังหวัด, postal_code รหัสไปรษณีย์ รักษา verified email/customer/account/mode binding เดิม ใช้ API version ที่ repository pin
+- Stripe error/timeout ห้ามเดินหน้าชำระและห้ามแสดงว่าพร้อมแล้ว; การยืนยัน/ลองซ้ำใช้ command identity เดิม และไม่ปล่อยให้คำสั่ง profile ที่ผลยังไม่ชัดเขียนทับการซื้อใหม่จากอีกคำสั่ง
+- Quote เก่าที่ไม่มี profile ต้องสร้างใหม่ก่อนเริ่มขาย แต่ session/paid invoice เดิมยังตรวจผล/เปิดเอกสาร/เปิดสิทธิ์จากหลักฐานเดิมได้ ไม่เพิ่ม prerequisite ให้ paid fulfillment/recovery/การยกเลิก/บัตร/ประวัติ และไม่แก้เอกสารที่ออกแล้ว
+- Expired owner ต้องเข้าถึงข้อมูลร้านที่จำเป็นต่อการซื้อใหม่ได้ โดยคง membership/owner/permission/tenant/security holds; ไม่เปิด business routes ให้บริษัทหมดอายุทั่วไป
+
+Acceptance: shared rules + HTTP direct bypass/stale/error/race + Stripe payload new/existing + actual company-form→billing browser mobile/desktop + existing billing/LINE/signup regression. Provider simulation ต้องระบุแยกจาก Stripe sandbox/live; ไม่มี deploy หรือ charge จริงในงานนี้
+
+อ้างอิง: [Stripe Customer billing address](https://docs.stripe.com/invoicing/customer), [Customer parameters](https://docs.stripe.com/api/customers/create); implementation must preserve repository-pinned Stripe version and existing recovery journals.

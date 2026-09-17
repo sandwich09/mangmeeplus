@@ -6,6 +6,7 @@
  */
 import { isEmail } from 'class-validator';
 import type { LineSignupIntent } from '@watchdog-bms/contracts';
+import { SIGNUP_DISCOVERY_SOURCE_OPTIONS, SIGNUP_DISCOVERY_OTHER_MAX, type SignupDiscoverySource } from '@watchdog-bms/contracts';
 
 /** Spec §3.2: 1–120 characters. Duplicates across shops are legal (P10 §4C). */
 export const LINE_SIGNUP_COMPANY_NAME_MAX = 120;
@@ -13,6 +14,21 @@ export const LINE_SIGNUP_REFERRAL_CODE_MAX = 128;
 export const LINE_SIGNUP_CONTACT_EMAIL_MAX = 254;
 export const LINE_SIGNUP_INTENTS: readonly LineSignupIntent[] = ['FIRST_SHOP', 'ADD_SHOP'];
 export const LINE_OPTIONAL_EMAIL_POLICY = 'LINE_CONTACT_OPTIONAL_V1';
+
+export function normalizeSignupDiscovery(source: unknown, other: unknown): {
+  discoverySource: SignupDiscoverySource | null; discoverySourceOther: string | null;
+} {
+  if (source != null && !SIGNUP_DISCOVERY_SOURCE_OPTIONS.some((option) => option.value === source)) {
+    throw new Error('line_signup_discovery_source_invalid');
+  }
+  if (other != null && (typeof other !== 'string' || other.trim().length > SIGNUP_DISCOVERY_OTHER_MAX)) {
+    throw new Error('line_signup_discovery_other_invalid');
+  }
+  return {
+    discoverySource: (source as SignupDiscoverySource | null | undefined) ?? null,
+    discoverySourceOther: source === 'OTHER' && typeof other === 'string' ? other.trim() || null : null,
+  };
+}
 
 export function optionalLineContactEmail(value: unknown): string | null {
   if (value == null || (typeof value === 'string' && !value.trim())) return null;

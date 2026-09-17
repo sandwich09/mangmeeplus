@@ -9,6 +9,7 @@ import {
 import { Transform, Type } from 'class-transformer';
 import type { Request } from 'express';
 import type { LineSignupStatusDto, LineSignupSubmitAcceptedDto } from '@watchdog-bms/contracts';
+import { SIGNUP_DISCOVERY_SOURCE_OPTIONS, SIGNUP_DISCOVERY_OTHER_MAX, type SignupDiscoverySource } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { publicApiBase, requiredWebAppBase } from '../../../../common/http/public-api-base';
 import { Public } from '../../../../common/security/public.decorator';
@@ -46,6 +47,9 @@ export class LineSignupSubmitBodyDto {
   @Transform(({ value }) => typeof value === 'string' ? value.trim().toLowerCase() || null : value)
   @IsOptional() @IsEmail() @MaxLength(LINE_SIGNUP_CONTACT_EMAIL_MAX) contactEmail?: string | null;
   @IsString() @IsOptional() @MaxLength(LINE_SIGNUP_REFERRAL_CODE_MAX) @Matches(/^[A-Za-z0-9_-]*$/) referralCode?: string;
+  @IsOptional() @IsIn(SIGNUP_DISCOVERY_SOURCE_OPTIONS.map((option) => option.value)) discoverySource?: SignupDiscoverySource | null;
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() || null : value)
+  @IsOptional() @IsString() @MaxLength(SIGNUP_DISCOVERY_OTHER_MAX) discoverySourceOther?: string | null;
   @IsObject() @ValidateNested() @Type(() => LineSignupLegalDto) legal!: LineSignupLegalDto;
 }
 
@@ -104,6 +108,8 @@ export class PublicLineSignupController {
       companyName: dto.companyName,
       phoneNumber: dto.phoneNumber,
       contactEmail: dto.contactEmail,
+      discoverySource: dto.discoverySource,
+      discoverySourceOther: dto.discoverySourceOther,
       ...(dto.referralCode ? { referralCode: dto.referralCode } : {}),
       legal: dto.legal,
       ...(req.headers['user-agent'] ? { userAgent: String(req.headers['user-agent']) } : {}),

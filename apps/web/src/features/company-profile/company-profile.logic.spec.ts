@@ -448,6 +448,27 @@ describe('buildShopSave — one press, both halves, nothing lost', () => {
   const CURRENT = { registeredName: null, taxId: null, addressJson: null };
   const BLANK_FORM = { registeredName: '', taxId: '', address: BLANK_ADDRESS };
 
+  it('saves TSIC alone without a legal-identity change and uses its own version', () => {
+    const current = { ...CURRENT, businessType: { code: '01111', other: null, version: 4 } };
+    assert.deepEqual(buildShopSave({ ...OPEN, legalIdentityVersion: 0 }, current, { ...BLANK_FORM, businessTypeCode: '56101', businessTypeOther: 'old text' }, { current: 'UNKNOWN', chosen: 'UNKNOWN' }), {
+      identityPatch: null, vatStatus: null, businessTypePatch: { code: '56101', other: null, expectedVersion: 4 },
+    });
+    assert.deepEqual(buildShopSave({ ...OPEN, legalIdentityVersion: 0 }, current, { ...BLANK_FORM, businessTypeCode: '' }, { current: 'UNKNOWN', chosen: 'UNKNOWN' }), {
+      identityPatch: null, vatStatus: null, businessTypePatch: { code: null, other: null, expectedVersion: 4 },
+    });
+  });
+
+  it('requires OTHER text, trims it and treats unchanged saved text as no changes', () => {
+    const otherForm = { ...BLANK_FORM, businessTypeCode: 'OTHER', businessTypeOther: ' ธุรกิจทดสอบ ' };
+    const vat = { current: 'UNKNOWN', chosen: 'UNKNOWN' } as const;
+    assert.deepEqual(buildShopSave({ ...OPEN, legalIdentityVersion: 0 }, CURRENT, otherForm, vat), {
+      identityPatch: null, vatStatus: null, businessTypePatch: { code: 'OTHER', other: 'ธุรกิจทดสอบ', expectedVersion: 0 },
+    });
+    assert.deepEqual(buildShopSave({ ...OPEN, legalIdentityVersion: 0 }, { ...CURRENT, businessType: { code: 'OTHER', other: 'ธุรกิจทดสอบ', version: 1 } }, otherForm, vat), { error: NO_CHANGES_MESSAGE });
+    const invalid = buildShopSave({ ...OPEN, legalIdentityVersion: 0 }, CURRENT, { ...otherForm, businessTypeOther: ' ' }, { current: 'UNKNOWN', chosen: 'REGISTERED' });
+    assert.deepEqual(invalid, { error: 'กรุณาระบุประเภทธุรกิจอื่น ๆ' });
+  });
+
   it('sends only the identity when the VAT answer is unchanged', () => {
     const result = buildShopSave(
       { ...OPEN, legalIdentityVersion: 3 },

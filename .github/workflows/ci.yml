@@ -420,6 +420,12 @@ jobs:
       - name: Check Nest providers carry constructor metadata in the swc build
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         run: node apps/api/scripts/check-di-metadata.mjs
+      - name: Test company profile, discovery and billing prerequisites
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        run: |
+          pnpm exec tsx --test packages/contracts/src/company-business-type.spec.ts packages/contracts/src/billing-company-profile.spec.ts
+          pnpm --filter @watchdog-bms/api exec tsx --test src/modules/data-model-core/presentation/http/company-business-type.controller.spec.ts src/modules/system-partner-management/application/use-cases/get-partner-detail.use-case.spec.ts src/modules/billing/application/billing-company-profile.spec.ts src/modules/billing/application/billing-profile-recovery.spec.ts
+          pnpm --filter @watchdog-bms/web exec tsx --test src/features/billing/billing-profile-navigation.spec.ts
       - name: Typecheck and test durable release recovery against PostgreSQL
         if: needs.resolve-source.outputs.release_controller_only != 'true'
         env:

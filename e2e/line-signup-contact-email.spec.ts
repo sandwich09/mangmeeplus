@@ -64,6 +64,14 @@ for (const width of [390, 1280]) {
     await expect(email).not.toHaveAttribute('required', '');
     await expect(page.locator('input[type="password"]')).toHaveCount(0);
     await expect(page.locator('#contact-email-help')).toContainText('ก่อนชำระแพ็กเกจ');
+    const discoveryOther = page.getByLabel('ระบุช่องทางอื่น ๆ', { exact: true });
+    await expect(page.locator('input[name="discovery-source"]:checked')).toHaveCount(0);
+    await expect(discoveryOther).toBeHidden();
+    await page.getByRole('radio', { name: 'อื่น ๆ', exact: true }).check();
+    await expect(discoveryOther).toBeVisible();
+    await expect(discoveryOther).toBeEnabled();
+    await expect(discoveryOther).toHaveAttribute('maxlength', '200');
+    await discoveryOther.fill(' เพื่อนแนะนำ ');
     await email.fill('not-an-email');
     await submit.click();
     await expect(email).toBeFocused();
@@ -79,6 +87,8 @@ for (const width of [390, 1280]) {
     await expect(page.getByLabel('เบอร์มือถือ', { exact: true })).toHaveValue('0812345678');
     expect(submissions).toHaveLength(1);
     expect(submissions[0]?.contactEmail).toBe('shop+contact@example.test');
+    expect(submissions[0]?.discoverySource).toBe('OTHER');
+    expect(submissions[0]?.discoverySourceOther).toBe('เพื่อนแนะนำ');
     expect(submissions[0]).not.toHaveProperty('password');
     expect(submissions[0]?.legal.displayChallenge).toMatch(/^[a-f0-9]{64}$/);
     await expect(page.getByText('ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง', { exact: true })).toBeVisible();
@@ -86,12 +96,17 @@ for (const width of [390, 1280]) {
     await page.screenshot({ path: info.outputPath(`signup-contact-email-${width}.png`), fullPage: true });
 
     await email.fill('');
+    await page.getByRole('radio', { name: 'Facebook', exact: true }).check();
+    await expect(discoveryOther).toBeHidden();
+    await expect(discoveryOther).toBeDisabled();
     await submit.click();
     await expect(page.locator('#progress-view')).toBeVisible();
     await expect(page.locator('#progress-title')).toHaveText('รับคำขอแล้ว');
     await expect(page.locator('body')).not.toContainText('line-e2e-1');
     expect(submissions).toHaveLength(2);
     expect(submissions[1]?.contactEmail).toBe('');
+    expect(submissions[1]?.discoverySource).toBe('FACEBOOK');
+    expect(submissions[1]).not.toHaveProperty('discoverySourceOther');
     expect(submissions[1]?.legal.displayChallenge).toMatch(/^[a-f0-9]{64}$/);
   });
 }
@@ -166,6 +181,8 @@ test('a completed response and reopen stay completed until the owner explicitly 
   const response = await page.goto(`${urls.api}/auth/line/link-page/signup`);
   expect(response?.headers()['content-security-policy']).toContain("script-src 'self' https://static.line-scdn.net");
   await page.getByLabel('ชื่อร้าน', { exact: true }).fill('ร้านพร้อมใช้');
+  await page.getByRole('radio', { name: 'อื่น ๆ', exact: true }).check();
+  await page.getByLabel('ระบุช่องทางอื่น ๆ', { exact: true }).fill('เพื่อนแนะนำ');
   await page.getByLabel('เบอร์มือถือ', { exact: true }).fill('0812345678');
   await page.getByLabel('อีเมลติดต่อร้าน (ไม่บังคับ)', { exact: true }).fill('ready@example.test');
   await page.getByRole('button', { name: 'ยอมรับและเริ่มทดลองใช้ฟรี', exact: true }).click();
@@ -184,6 +201,9 @@ test('a completed response and reopen stay completed until the owner explicitly 
 
   await page.getByRole('button', { name: 'เปิดร้านเพิ่ม', exact: true }).click();
   await expect(page.locator('#form-view')).toBeVisible();
+  await expect(page.locator('input[name="discovery-source"]:checked')).toHaveCount(0);
+  await expect(page.getByLabel('ระบุช่องทางอื่น ๆ', { exact: true })).toHaveValue('');
+  await expect(page.getByLabel('ระบุช่องทางอื่น ๆ', { exact: true })).toBeHidden();
   await page.getByLabel('ชื่อร้าน', { exact: true }).fill('ร้านที่สอง');
   await page.getByRole('button', { name: 'ยืนยันเปิดร้านเพิ่ม', exact: true }).click();
   await expect(page.locator('#progress-title')).toHaveText('รับคำขอแล้ว');
@@ -193,6 +213,8 @@ test('a completed response and reopen stay completed until the owner explicitly 
   expect(submissions).toHaveLength(2);
   expect(submissions[0]?.intent).toBe('FIRST_SHOP');
   expect(submissions[1]?.intent).toBe('ADD_SHOP');
+  expect(submissions[0]?.discoverySourceOther).toBe('เพื่อนแนะนำ');
+  expect(submissions[1]).not.toHaveProperty('discoverySource');
   expect(submissions[1]?.submissionId).not.toBe(submissions[0]?.submissionId);
   await page.screenshot({ path: info.outputPath('signup-completed-reopen-add-shop-390.png'), fullPage: true });
 });

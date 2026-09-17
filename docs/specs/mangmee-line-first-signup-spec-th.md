@@ -1,5 +1,18 @@
 # Auto-register จาก LINE OA (LINE-first Signup) — Spec P10-L
 
+## Owner amendment 2026-09-17 — รู้จักเราทางไหน
+
+Owner approved the interactive demo and requested implementation on the existing LINE signup form.
+
+- Add a single-choice field before legal acceptance: Website, IG, TikTok, Facebook, อื่น ๆ. Use the approved two-column layout with อื่น ๆ spanning the row.
+- This is optional attribution, matching the demo. No default selection; existing clients can omit it. Selecting อื่น ๆ reveals a text input (trimmed, maximum 200 characters, also optional). Switching away hides/disables it and sends no stale other text. A fresh ADD_SHOP form starts with no attribution selected.
+- Persist nullable `CompanySignupRequest.discoverySource` (`WEBSITE | IG | TIKTOK | FACEBOOK | OTHER`) and `discoverySourceOther`. Only OTHER may retain text. This is separate from `source=line-oa` and influencer `referralCode`; neither existing field is repurposed.
+- Validate enum/type/length at HTTP and use-case boundaries. Unknown choices or malformed text return field guidance. Attribution does not grant identity, permission, approval, offer or account ownership.
+- Include normalized nonempty attribution in the stable submission fingerprint and equality checks. Omitted attribution preserves historical fingerprints, and saved retries reuse their exact payload. Contact-email correction preserves the original attribution.
+- Return attribution in token-owned progress and the existing permission-protected admin queue; render it as plain text. Legacy rows remain unset. Additive nullable migration only, no guessed backfill.
+- Admin Console company detail (`/system/partners/:id`, overview → ข้อมูลบริษัท) permanently shows รู้จักเราทางไหน as read-only metadata via the earliest company-linked signup (createdAt/id ascending, no queue/state filter). Later applications returning to an existing company do not overwrite original attribution. Legacy/manual companies show ไม่ระบุ. Reuse the existing `system.partner_dashboard.read` permission and persist only on the signup request, avoiding duplicate company columns.
+- Verify UI show/hide, request payload, lost-response replay/conflict, correction, source/code separation, validation, admin mapping, mobile/desktop layout and existing signup/security paths. No live rollout is included in this request.
+
 > แก้ไข 2026-09-16: เรื่องอีเมลใช้ [spec สมัคร LINE แบบไม่บังคับอีเมลและยืนยัน OTP ก่อนจ่าย](signup-optional-email-otp-billing-spec-th.md) เป็นกฎปัจจุบัน: อีเมลติดต่อร้านใน LINE เป็นทางเลือก, web claim ยังต้องมีอีเมล, การอนุมัติชำระใหม่ต้องใช้อีเมลบัญชีที่ยืนยันแล้ว และเปลี่ยนผู้รับเอกสารเดิมของบริษัทด้วยการตรวจและยืนยันแยก ข้อความเดิมด้านล่างที่ขัดกันเป็นประวัติ ไม่ใช่กฎสำหรับ implementation รอบนี้
 
 > **Implementation status — IN PROGRESS:** สถานะโค้ด, CI, งานที่ยังค้าง และข้อจำกัดล่าสุดอยู่ที่ [implementation status](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). ผล E2E และ source ที่ทดสอบดู [หลักฐานกลาง](../evidence/billing-integration-2026-09-13/README.md); แยกผลจำลองออกจากผล native provider และไม่รวมจำนวนทดสอบที่ซ้ำกัน. ข้อความตามวันที่ด้านล่างเป็นประวัติของแต่ละช่วงงาน. ยังไม่ deploy; การ merge develop/main ต้องผ่าน CI และตรวจ scope ที่ค้างก่อน.

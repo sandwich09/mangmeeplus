@@ -240,6 +240,8 @@ describe('P10-L LIFF client script', () => {
       phone?: string;
       contactEmail?: string;
       companyName?: string;
+      discoverySource?: string;
+      discoverySourceOther?: string;
       fetchThrows?: Error;
       sendMessagesFails?: Error;
       stored?: Record<string, string>;
@@ -298,7 +300,15 @@ describe('P10-L LIFF client script', () => {
       'phone-number-error': { textContent: '', hidden: true },
       'contact-email': input('contact-email', options.contactEmail ?? ' Shop@Example.COM '),
       'contact-email-error': { textContent: '', hidden: true },
+      'discovery-source': element('discovery-source', input('discovery-source', '')),
+      'discovery-source-error': { textContent: '', hidden: true },
+      'discovery-other-fields': { hidden: true },
+      'discovery-source-other': { ...input('discovery-source-other', options.discoverySourceOther ?? ''), disabled: true },
+      'discovery-source-other-error': { textContent: '', hidden: true },
     };
+    const choices = ['WEBSITE', 'IG', 'TIKTOK', 'FACEBOOK', 'OTHER'].map((value) => ({
+      value, checked: value === options.discoverySource,
+    }));
     const closeButtons = [{ addEventListener: listen('close') }];
     const views = [
       { id: 'retry-view', hidden: true },
@@ -318,7 +328,8 @@ describe('P10-L LIFF client script', () => {
           },
         },
         getElementById: (id: string) => elements[id] ?? views.find((view) => view.id === id) ?? null,
-        querySelectorAll: (selector: string) => (selector === '[data-close]' ? closeButtons : views),
+        querySelectorAll: (selector: string) => selector === 'input[name="discovery-source"]' ? choices : (selector === '[data-close]' ? closeButtons : views),
+        querySelector: () => choices.find((choice) => choice.checked) ?? null,
         createElement: () => element('created-' + Math.random()),
       },
       liff: {
@@ -357,6 +368,10 @@ describe('P10-L LIFF client script', () => {
       elements, views, calls, handlers, storage, sentMessages,
       closed: () => closed,
       focused,
+      chooseDiscovery: async (value: string) => {
+        choices.forEach((choice) => { choice.checked = choice.value === value; });
+        for (const handler of handlers['discovery-source'] ?? []) await handler();
+      },
       tone: () => String(elements['status']!.className).replace('notice notice-', ''),
       click: async (key: string) => {
         for (const handler of handlers[key] ?? []) await handler();
@@ -545,8 +560,24 @@ describe('P10-L LIFF client script', () => {
     assert.equal(h.calls.length, 1, 'invalid local fields never reach POST');
   });
 
+  it('toggles OTHER and omits its stale text after choosing a named channel', async () => {
+    const h = runSignupScript('null');
+    await settle(); await settle();
+    await h.chooseDiscovery('OTHER');
+    assert.equal(h.elements['discovery-other-fields']!.hidden, false);
+    assert.equal(h.elements['discovery-source-other']!.disabled, false);
+    h.elements['discovery-source-other']!.value = 'เพื่อนแนะนำ';
+    await h.chooseDiscovery('FACEBOOK');
+    assert.equal(h.elements['discovery-other-fields']!.hidden, true);
+    assert.equal(h.elements['discovery-source-other']!.disabled, true);
+    await h.click('link'); await settle();
+    const body = JSON.parse(h.calls[1]!.init.body);
+    assert.equal(body.discoverySource, 'FACEBOOK');
+    assert.equal(body.discoverySourceOther, undefined);
+  });
+
   it('persists the exact submission before POST and reuses it after a lost response', async () => {
-    const first = runSignupScript('null', [{ status: 200, body: 'null' }], { fetchThrows: new Error('lost response') });
+    const first = runSignupScript('null', [{ status: 200, body: 'null' }], { fetchThrows: new Error('lost response'), discoverySource: 'OTHER', discoverySourceOther: ' เพื่อนแนะนำ ' });
     await settle(); await settle(); await first.click('link'); await settle();
     const stored = Object.fromEntries(first.storage.entries());
     const firstBody = JSON.parse(first.calls[1]!.init.body);
@@ -563,6 +594,9 @@ describe('P10-L LIFF client script', () => {
     assert.equal(retriedBody.submissionId, firstBody.submissionId);
     assert.equal(retriedBody.intent, firstBody.intent);
     assert.equal(retriedBody.companyName, firstBody.companyName);
+    assert.equal(firstBody.discoverySource, 'OTHER');
+    assert.equal(retriedBody.discoverySourceOther, 'เพื่อนแนะนำ');
+    assert.deepEqual(retriedBody, firstBody);
     assert.equal(retriedBody.idToken, 'aaa.bbb.ccc', 'the fresh token is never stored');
     assert.equal(JSON.stringify(stored).includes('aaa.bbb.ccc'), false);
   });

@@ -8,6 +8,7 @@ import {
   type PlanTierKey,
   SIGNUP_REJECTION_REASON_MAX_LENGTH,
   SIGNUP_RESOLUTION_NOTE_MAX_LENGTH,
+  signupDiscoveryLabel,
   type AdminSignupDecisionBody,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -985,6 +986,11 @@ export default function SignupQueuePage() {
                               </a>
                             ) : (
                               <p className="text-xs text-gray-500">—</p>
+                            )}
+                            {item.discoverySource && (
+                              <p className="mt-1 break-words text-xs text-gray-600">
+                                รู้จักเราทางไหน: {signupDiscoveryLabel(item.discoverySource, item.discoverySourceOther)}
+                              </p>
                             )}
                             {/* LEGAL-LIFF-01: the binding acceptance happened before this row
                                 existed, and its time is the evidence an operator may be asked for. */}

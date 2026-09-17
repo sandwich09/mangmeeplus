@@ -1,4 +1,6 @@
 import { BillingEmailRecipient } from './billing-email-recipient';
+import { assertBillingProfileUnchanged, requireBillingProfile, stripeBillingProfile, stripeBillingProfileMatches } from './billing-company-profile';
+import { companyBillingProfile } from '@watchdog-bms/contracts';
 import { assertAccountEmailProof, lockAccountEmail, verifiedAccountEmailProof } from '../../auth/application/account-email-state';
 import type { EmailProof } from '../../auth/domain/logic/email-otp.logic';
 import { BillingAdminCollection } from './billing-admin-collection';
@@ -225,6 +227,7 @@ export class BillingService {
     const company = await this.prisma.client.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
     if (!company) throw new NotFoundException();
     const term = company.planTerm;
+    const billingProfile = requireBillingProfile(company);
     if (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && term?.termDisabledAt)) throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมงาน');
     if (!term || (!['FREE_TRIAL_15'].includes(term.tierKey) && !await this.account(company.id))) {
       throw billingError('BILLING_LEGACY_REVIEW_REQUIRED', 'แพ็กเกจเดิมต้องให้ทีมงานตรวจสอบก่อนซื้อ');
@@ -278,7 +281,7 @@ export class BillingService {
     const quote: BillingQuote = { quoteId, companyId: company.id, companyName: company.name, policyRevision: state.revision.id,
       expiresAt: new Date(Date.now() + 600_000).toISOString(), offer: { ...offer, availability: 'AVAILABLE', reason: null },
       ...quoteTotals(upgrade?.amountSatang ?? offer.priceSatang, state.policy.taxTreatment), taxTreatment: state.policy.taxTreatment!, consentRevision: state.policy.consentRevision,
-      paidStart: state.policy.paidStart!, billingEmail: emailProof.email,
+      paidStart: state.policy.paidStart!, billingEmail: emailProof.email, billingProfile,
       trialEndsAt: term?.tierKey === 'FREE_TRIAL_15' && term.termEndsAt > new Date() ? term.termEndsAt.toISOString() : null,
       usage: await this.usage(company.id) };
     if (capacityPreview) quote.capacity = capacityPreview;
@@ -345,6 +348,7 @@ export class BillingService {
       assertPolicyReady(state.policy);
       const company = await tx.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
       if (!company || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))) throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ');
+      assertBillingProfileUnchanged(company, snapshot.quote);
       if ((company.planTerm?.updatedAt.toISOString() ?? null) !== snapshot.termVersion) throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์บริษัทเปลี่ยน กรุณาตรวจสอบใหม่');
       if (account?.activeAttemptId || (account?.baseSubscriptionId && !snapshot.repeat && !snapshot.restart)) throw billingError('BILLING_PURCHASE_PENDING', 'มีรายการชำระเงินอยู่แล้ว กรุณาตรวจสถานะเดิม');
       if (snapshot.restart && (!account || account.baseSubscriptionId !== snapshot.restart.subscriptionId || account.contractAttemptId !== snapshot.restart.contractAttemptId ||
@@ -384,13 +388,29 @@ export class BillingService {
           await assertAccountEmailProof(tx, context.userId, snapshot.emailProof);
         });
         customerRequestUnconfirmed = true;
-        const customer = await this.stripe.request('POST', '/customers', { name: snapshot.quote.companyName, email: snapshot.quote.billingEmail,
+        const customer = await this.stripe.request('POST', '/customers', { ...stripeBillingProfile(snapshot.quote.billingProfile!), email: snapshot.quote.billingEmail,
           metadata: { billingAccountId: account.id } }, `mm:${account.id}:customer`);
         if (typeof customer.id !== 'string' || !customer.id.startsWith('cus_')) throw new StripeRequestError('UNKNOWN', 'invalid_customer');
         customerId = customer.id;
         await this.prisma.client.billingAccount.updateMany({ where: { id: account.id, customerId: null }, data: { customerId } });
         const mapped = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
         if (mapped.customerId !== customerId) throw new StripeRequestError('UNKNOWN', 'customer_binding_changed');
+        customerRequestUnconfirmed = false;
+      }
+      const customer = await this.stripe.request('GET', `/customers/${customerId}`);
+      if (customer.id !== customerId || customer.email !== snapshot.quote.billingEmail || customer.metadata?.billingAccountId !== account.id)
+        throw billingError('BILLING_RECIPIENT_UPDATE_REQUIRED', 'ผู้รับเอกสารเปลี่ยนแล้ว กรุณาตรวจข้อมูลบริษัทก่อนเริ่มชำระเงินใหม่');
+      if (!stripeBillingProfileMatches(customer, snapshot.quote.billingProfile!)) {
+        // Retain an ambiguous profile write until its original idempotent command is settled.
+        // No Checkout can be sent while this marker is unconfirmed.
+        const profileSync = { startedAt: new Date().toISOString(), customerId, confirmed: false };
+        await this.prisma.client.billingAttempt.update({ where: { id: attempt.id }, data: { collectionJson: { profileSync } } });
+        customerRequestUnconfirmed = true;
+        const updated = await this.stripe.request('POST', `/customers/${customerId}`,
+          stripeBillingProfile(snapshot.quote.billingProfile!), `mm:${attempt.id}:billing-profile`);
+        if (updated.id !== customerId || updated.metadata?.billingAccountId !== account.id || !stripeBillingProfileMatches(updated, snapshot.quote.billingProfile!))
+          throw new StripeRequestError('UNKNOWN', 'customer_profile_unconfirmed');
+        await this.prisma.client.billingAttempt.update({ where: { id: attempt.id }, data: { collectionJson: { profileSync: { ...profileSync, confirmed: true } } } });
         customerRequestUnconfirmed = false;
       }
       // Recheck authoritative stop barrier immediately before the external financial request.
@@ -402,6 +422,7 @@ export class BillingService {
         assertCompanyCanBuy(state.policy, context.companyId);
         const company = await tx.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
         if (!company || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))) throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ');
+        assertBillingProfileUnchanged(company, snapshot.quote);
         if ((company.planTerm?.updatedAt.toISOString() ?? null) !== snapshot.termVersion || company.name !== snapshot.quote.companyName) throw billingError('BILLING_QUOTE_STALE', 'ข้อมูลบริษัทหรือสิทธิ์เปลี่ยน กรุณาตรวจสอบใหม่');
         await lockAccountEmail(tx, context.userId);
         await assertAccountEmailProof(tx, context.userId, snapshot.emailProof);
@@ -436,7 +457,7 @@ export class BillingService {
       const code = error instanceof StripeRequestError ? error.code : 'command_unconfirmed';
       // Only release a reservation when we know no financial request succeeded. A network timeout
       // or malformed provider success retains it for reconciliation and cannot permit a second sale.
-      if ((!financialRequestStarted && !customerRequestUnconfirmed) || (financialRequestStarted && error instanceof StripeRequestError && error.outcome === 'REJECTED')) {
+      if ((!financialRequestStarted && !customerRequestUnconfirmed) || (error instanceof StripeRequestError && error.outcome === 'REJECTED')) {
         await this.prisma.client.$transaction(async (tx) => {
           await lockPlanTermCompany(tx, context.companyId);
           const changed = await tx.billingAttempt.updateMany({ where: { id: attempt.id, status: { in: ['CREATING', 'REQUESTING'] } }, data: { status: 'FAILED', errorCode: code, version: { increment: 1 } } });
@@ -489,7 +510,7 @@ export class BillingService {
     const refundReviewPending = !!(account && await pendingRefund(this.prisma.client, account));
     const issues = this.config.stripeAccountId ? await this.prisma.client.billingIssue.findMany({ where: { companyId: company.id, stripeAccountId: this.stripe.accountId,
       livemode: this.stripe.livemode, state: { not: 'RESOLVED' } }, take: 10, select: { id: true, kind: true } }) : [];
-    return { companyId: company.id, companyName: company.name, mode: this.stripe.enabled ? (this.stripe.livemode ? 'LIVE' : 'TEST') : 'DISABLED',
+    return { companyId: company.id, companyName: company.name, billingProfile: companyBillingProfile(company), mode: this.stripe.enabled ? (this.stripe.livemode ? 'LIVE' : 'TEST') : 'DISABLED',
       collectionPause: account?.collectionPauseJson as BillingStatus['collectionPause'],
       purchaseEligibility: eligible ? 'ELIGIBLE' : 'COMPANY_SALES_CLOSED', refundReviewPending,
       policyRevision: settings?.revision?.id ?? null, ...state, subscriptionState: account?.subscriptionState ?? 'NONE',

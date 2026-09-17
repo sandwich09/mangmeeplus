@@ -1,5 +1,30 @@
 # LINE AI concise owner summaries and count preservation
 
+## Owner amendment — 2026-09-17: one complete summary format
+
+The owner requested the same expense-summary presentation from the chat/Quick Reply
+and rich-menu entries: total amount, record count, effective date range and source.
+This supersedes the historical amount-only behavior below for broad sole
+`expense.list_recent` summaries, including amount questions.
+
+- Reuse the existing prepared expense formatter in the full response path. Both
+  render the same source data without model composition or another ERP read.
+- Use the tool's echoed effective period in both paths, including one-sided date
+  requests. Never replace it with conversation dates or assume a missing period.
+- Preserve the source reference, web link and as-of metadata. No preview records or
+  payment/status breakdowns in a broad summary. Keep the excluded-cancelled note.
+- Use only a nonnegative safe-integer `data.total` for the count; missing/invalid
+  count is explicitly unavailable, never inferred from previews or another key.
+  Zero remains a successful summary. Incomplete/invalid totals stay unavailable.
+- Explicit count/subset/detail questions retain their existing safeguards and
+  behavior. Daily closing, multi-tool answers, permissions, company/branch/own
+  scope, routing and prepared-lane admission remain unchanged.
+- Verify prepared/full reply and card parity on identical fixtures, zero state,
+  cancelled records, effective periods, missing count, Thai/English and existing
+  permission/unavailable regression paths. No live deployment is part of this edit.
+
+## Historical implementation
+
 Status: MERGED DEVELOP via [PR #288](https://github.com/MangmeeDev/mangmeeplus/pull/288)
 at `c6f3d06f0558ef9dd3a0944ae2065bbae67946a0`, 2026-08-27T05:30:29Z, after
 [CI33041868515](https://github.com/MangmeeDev/mangmeeplus/actions/runs/33041868515)

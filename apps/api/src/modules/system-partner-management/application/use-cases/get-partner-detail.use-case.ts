@@ -2,9 +2,11 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import {
   PLATFORM_INVARIANT_FEATURE_KEYS,
+  COMPANY_LEGAL_ADDRESS_KEYS,
   parentFeatureKey,
   type LineContextHealth,
   type PartnerCompanyDetailDto,
+  type SignupDiscoverySource,
 } from '@watchdog-bms/contracts';
 import { isCurrentEntitlementNormalization } from '../../../employee-access/application/normalize-entitlements';
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
@@ -30,6 +32,10 @@ export class GetPartnerDetailUseCase {
         registeredName: true,
         brandName: true,
         taxId: true,
+        addressJson: true,
+        businessTypeCode: true,
+        businessTypeOther: true,
+        businessTypeVersion: true,
         timezone: true,
         locale: true,
         baseCurrency: true,
@@ -40,6 +46,13 @@ export class GetPartnerDetailUseCase {
         activatedAt: true,
         disabledAt: true,
         archivedAt: true,
+        signupRequests: {
+          // Read the original company-linked signup, including completed/archived shops.
+          // A later return-to-existing request must not replace acquisition attribution.
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          take: 1,
+          select: { discoverySource: true, discoverySourceOther: true },
+        },
         featureEntitlements: {
           select: { featureKey: true, enabled: true, updatedAt: true },
           orderBy: { featureKey: 'asc' },
@@ -67,6 +80,9 @@ export class GetPartnerDetailUseCase {
     });
 
     if (!c) throw new NotFoundException(`Partner company "${companyId}" not found.`);
+
+    const signup = c.signupRequests[0];
+    const address = c.addressJson && typeof c.addressJson === 'object' && !Array.isArray(c.addressJson) ? c.addressJson : {};
 
     const vat = await this.vatRegistration.get(companyId);
     const vatRegistration = {
@@ -96,6 +112,12 @@ export class GetPartnerDetailUseCase {
     return {
       id: c.id,
       name: c.name,
+      addressJson: Object.fromEntries(COMPANY_LEGAL_ADDRESS_KEYS
+        .filter((key) => typeof address[key] === 'string')
+        .map((key) => [key, address[key]])),
+      businessType: { code: c.businessTypeCode ?? null, other: c.businessTypeOther ?? null, version: c.businessTypeVersion ?? 0 },
+      discoverySource: (signup?.discoverySource as SignupDiscoverySource | null) ?? undefined,
+      discoverySourceOther: signup?.discoverySource === 'OTHER' ? signup.discoverySourceOther ?? undefined : undefined,
       vatRegistration,
       registeredName: c.registeredName ?? undefined,
       brandName: c.brandName ?? undefined,

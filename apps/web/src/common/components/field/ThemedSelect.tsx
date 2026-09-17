@@ -21,6 +21,9 @@ export type ThemedSelectProps = {
   name?: string;
   className?: string;
   children?: ReactNode;
+  /** Filter plain-text options by label or value inside a large dropdown. */
+  searchable?: boolean;
+  searchPlaceholder?: string;
   id?: string;
   'aria-label'?: string;
   'aria-describedby'?: string;
@@ -41,7 +44,7 @@ function collectOptions(children: ReactNode): ThemedOption[] {
   return options;
 }
 
-export function ThemedSelect({ value, defaultValue, onChange, disabled = false, required = false, name, className, children, id, 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid }: ThemedSelectProps) {
+export function ThemedSelect({ value, defaultValue, onChange, disabled = false, required = false, name, className, children, id, searchable = false, searchPlaceholder = 'ค้นหาตัวเลือก', 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid }: ThemedSelectProps) {
   const triggerId = useId();
   const listboxId = useId();
   const detailsRef = useRef<HTMLDetailsElement>(null);
@@ -50,6 +53,7 @@ export function ThemedSelect({ value, defaultValue, onChange, disabled = false, 
   const panelRef = useRef<HTMLDivElement>(null);
   const [uncontrolledValue, setUncontrolledValue] = useState(defaultValue === undefined ? undefined : String(defaultValue));
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
 
   // Guarded so a stray Escape elsewhere on the page never yanks focus back here.
   // The option list is portaled, so it has to be named as "inside" explicitly.
@@ -68,6 +72,9 @@ export function ThemedSelect({ value, defaultValue, onChange, disabled = false, 
   const options = collectOptions(children);
   const current = value === undefined ? (uncontrolledValue ?? options[0]?.value ?? '') : String(value);
   const selected = options.find((option) => option.value === current) ?? options[0];
+  const terms = query.trim().toLocaleLowerCase().split(/\s+/);
+  const visibleOptions = searchable ? options.filter((option) => terms.every((term) =>
+    `${option.value} ${typeof option.label === 'string' ? option.label : ''}`.toLocaleLowerCase().includes(term))) : options;
 
   function select(nextValue: string) {
     if (value === undefined) setUncontrolledValue(nextValue);
@@ -78,6 +85,7 @@ export function ThemedSelect({ value, defaultValue, onChange, disabled = false, 
 
   function moveOptionFocus(event: KeyboardEvent<HTMLDivElement>) {
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'].includes(event.key)) return;
+    if (event.target instanceof HTMLInputElement && ['Home', 'End'].includes(event.key)) return;
     event.preventDefault();
     if (event.key === 'Escape') {
       detailsRef.current?.removeAttribute('open');
@@ -85,15 +93,17 @@ export function ThemedSelect({ value, defaultValue, onChange, disabled = false, 
       return;
     }
     const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]'));
+    if (!buttons.length) return;
     const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
     const next = event.key === 'Home' ? 0
       : event.key === 'End' ? buttons.length - 1
-        : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+        : index < 0 ? (event.key === 'ArrowDown' ? 0 : buttons.length - 1)
+          : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
     buttons[next]?.focus();
   }
 
   return (
-    <details ref={detailsRef} onToggle={(event) => setOpen(event.currentTarget.open)} className="group relative min-w-0">
+    <details ref={detailsRef} onToggle={(event) => { setOpen(event.currentTarget.open); if (!event.currentTarget.open) setQuery(''); }} className="group relative min-w-0">
       {name && (
         <input
           ref={inputRef}
@@ -141,13 +151,16 @@ export function ThemedSelect({ value, defaultValue, onChange, disabled = false, 
         panelRef={panelRef}
         height={240}
         minAnchorWidth
-        id={listboxId}
-        role="listbox"
-        aria-labelledby={id ?? triggerId}
+        matchAnchorWidth={searchable}
         onKeyDown={moveOptionFocus}
         className="z-[100000] max-h-60 min-w-[10rem] overflow-y-auto rounded-xl border border-gray-200 bg-white p-1.5 shadow-[var(--shadow-theme-md)]"
       >
-        {options.map((option, index) => {
+        {searchable && <input type="search" value={query} autoFocus aria-label={searchPlaceholder}
+          placeholder={searchPlaceholder} onChange={(event) => setQuery(event.target.value)}
+          className="mangmee-input sticky top-0 mb-1 w-full bg-white" />}
+        {visibleOptions.length === 0 && <p role="status" className="px-3 py-2 text-sm text-gray-500">ไม่พบตัวเลือกที่ตรงกับคำค้น</p>}
+        <div id={listboxId} role="listbox" aria-labelledby={id ?? triggerId}>
+        {visibleOptions.map((option, index) => {
           const isSelected = option.value === current;
           return (
             <button
@@ -167,6 +180,7 @@ export function ThemedSelect({ value, defaultValue, onChange, disabled = false, 
             </button>
           );
         })}
+        </div>
       </PopoverPanel>
     </details>
   );

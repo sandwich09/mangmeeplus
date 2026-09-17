@@ -1,3 +1,4 @@
+import { BILLING_TEST_ADDRESS } from './billing-profile-fixture';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { billingOffer, type BillingPolicy } from '@watchdog-bms/contracts';
@@ -34,7 +35,7 @@ export async function checkBillingUpgrade(input: {
   const settings=await client.billingSettings.findUniqueOrThrow({where:{stripeAccountId_livemode:{stripeAccountId:source.stripeAccountId,livemode:false}}});
   const revision=await client.billingPolicyRevision.create({data:{stripeAccountId:source.stripeAccountId,livemode:false,version:settings.version+1000,state:'ACTIVE',policyJson:policy as unknown as Prisma.InputJsonValue,createdByUserId:input.userId}});
   await client.billingSettings.update({where:{id:settings.id},data:{policyRevisionId:revision.id,version:{increment:1}}});
-  await client.company.create({data:{id:companyId,name:'Synthetic prepaid upgrade'}});
+  await client.company.create({data:{id:companyId,name:'Synthetic prepaid upgrade',addressJson:BILLING_TEST_ADDRESS}});
   const role=await client.role.create({data:{companyId,scopeKey:companyId,key:'OWNER',name:'Synthetic upgrade owner'}});
   const permission=await client.permission.findUniqueOrThrow({where:{key:'account.session.read'}});
   await client.rolePermission.create({data:{roleId:role.id,permissionId:permission.id}});
