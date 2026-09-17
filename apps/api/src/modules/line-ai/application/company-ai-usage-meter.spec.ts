@@ -1836,3 +1836,81 @@ describe('readAiBudgetReadiness — the truth table admin surfaces must agree wi
     });
   });
 });
+
+describe('recordCompanyAiCostAdjustment bucket aggregate', () => {
+  /** Ledger fake WITH the bucket table, so both `count === 0` causes can be told apart. */
+  function bucketAdjustmentPrisma(bucketRow: { costSatang: number } | null) {
+    const monthAggregate = { costSatang: 1_000 };
+    const created: any[] = [];
+    let bucket = bucketRow;
+    const client = {
+      $transaction: async (fn: (tx: any) => Promise<any>) => fn({
+        aiUsageEvent: {
+          findUnique: async (args: any) => (args.where.correctionKey !== undefined
+            ? created.find((row) => row.correctionKey === args.where.correctionKey) ?? null
+            : {
+              id: 'evt-1', companyId: 'co-1', monthKey: '2026-09', sourceRoute: 'receipt-ocr',
+              usageTag: 'ocr.receipt.image-read', modelId: 'haiku', thbPerUsd: 33,
+              thbPerUsdSource: 'stored', requestKind: 'IMAGE', budgetBucket: 'OCR',
+              usageBasis: 'PROVIDER_REPORTED', requestId: 'req-1', eventKind: 'MODEL_CALL',
+            }),
+          create: async (args: any) => { created.push(args.data); return args.data; },
+        },
+        companyAiMonthlyUsage: {
+          updateMany: async (args: any) => {
+            const blocked = Object.entries(args.where)
+              .filter(([, v]) => typeof v === 'object' && v !== null && 'gte' in (v as any))
+              .some(([, v]) => monthAggregate.costSatang < (v as any).gte);
+            if (blocked) return { count: 0 };
+            monthAggregate.costSatang += (args.data.costSatang?.increment ?? 0);
+            return { count: 1 };
+          },
+        },
+        companyAiMonthlyBucketUsage: {
+          updateMany: async (args: any) => {
+            if (!bucket || bucket.costSatang < (args.where.costSatang?.gte ?? 0)) return { count: 0 };
+            bucket.costSatang += args.data.costSatang.increment;
+            return { count: 1 };
+          },
+          findUnique: async () => bucket,
+          upsert: async (args: any) => {
+            bucket = bucket ?? { costSatang: args.create.costSatang };
+            if (args.update) bucket.costSatang += args.update.costSatang.increment;
+            return bucket;
+          },
+        },
+      }),
+    };
+    return { prisma: { client } as any, month: monthAggregate, bucketRow: () => bucket, created };
+  }
+
+  it('moves the bucket row with the same non-negative guard as the month row', async () => {
+    const state = bucketAdjustmentPrisma({ costSatang: 500 });
+
+    assert.equal(await recordCompanyAiCostAdjustment(state.prisma, {
+      eventId: 'evt-1', correctionKey: 'c-1', costSatang: -120,
+    }), 'applied');
+    assert.equal(state.month.costSatang, 880);
+    assert.equal(state.bucketRow()!.costSatang, 380);
+  });
+
+  it('refuses when the bucket row EXISTS and the delta would take it negative', async () => {
+    const state = bucketAdjustmentPrisma({ costSatang: 50 });
+
+    assert.equal(await recordCompanyAiCostAdjustment(state.prisma, {
+      eventId: 'evt-1', correctionKey: 'c-2', costSatang: -120,
+    }), 'refused-negative');
+    assert.equal(state.created.length, 0, 'nothing is appended when the move is refused');
+  });
+
+  it('still applies when the bucket row is ABSENT — a row bucketed before the aggregate existed', async () => {
+    // The month total is the authoritative money and it moved; refusing a legitimate correction
+    // because a DERIVED aggregate happens to be missing would be the wrong direction.
+    const state = bucketAdjustmentPrisma(null);
+
+    assert.equal(await recordCompanyAiCostAdjustment(state.prisma, {
+      eventId: 'evt-1', correctionKey: 'c-3', costSatang: -120,
+    }), 'applied');
+    assert.equal(state.month.costSatang, 880);
+  });
+});

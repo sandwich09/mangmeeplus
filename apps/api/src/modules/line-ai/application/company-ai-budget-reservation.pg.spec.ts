@@ -51,6 +51,9 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
   let client: PrismaClient;
   let prisma: PrismaService;
   let unreachable: string | null = null;
+  /** `PlatformAiBudgetConfig` is a SINGLETON row shared with every sibling spec in the CI database,
+   *  so the one test that needs it borrows it and `after()` puts it back exactly as it was. */
+  let platformRowBefore: { monthlyBudgetSatang: number; ceilingSatang: number } | null | undefined;
 
   const config = {
     aiMonthlyBudgetSatang: 1_000_000,
@@ -98,7 +101,10 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
     const url = new URL(databaseUrl!);
     assert.ok(['127.0.0.1', 'localhost'].includes(url.hostname), 'requires an explicit local test database');
     // 20 concurrent interactive transactions need a pool that can hold them.
-    client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl!, max: 30 }) });
+    // 20 concurrent interactive transactions need a pool that can hold them, plus a little slack
+    // for the outer client. Well inside the default `max_connections` of 100, and this spec is its
+    // own sequential `tsx --test` invocation in CI, so it never competes with a sibling.
+    client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl!, max: 25 }) });
     prisma = { client } as unknown as PrismaService;
     unreachable = await pgSpecUnreachableReason(() => client.$queryRaw`SELECT 1`, 'AI_BUDGET_RESERVATION_REQUIRE_POSTGRES');
     if (unreachable) return;
@@ -118,6 +124,8 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
         await client.companyAiConfiguration.deleteMany({ where });
         await client.company.deleteMany({ where: { id: { startsWith: tag } } });
         await client.user.delete({ where: { id: userId } });
+        if (platformRowBefore === null) await client.platformAiBudgetConfig.deleteMany({ where: { id: 'platform' } });
+        else if (platformRowBefore) await client.platformAiBudgetConfig.update({ where: { id: 'platform' }, data: platformRowBefore });
       }
     } finally {
       await client.$disconnect();
@@ -521,6 +529,9 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
       create: { id: 'platform', monthlyBudgetSatang: 1_000_000, ceilingSatang: 10_000_000 },
       update: { monthlyBudgetSatang: 1_000_000, ceilingSatang: 10_000_000 },
     });
+    platformRowBefore = await client.platformAiBudgetConfig.findUnique({
+      where: { id: 'platform' }, select: { monthlyBudgetSatang: true, ceilingSatang: true },
+    });
     const platformWriter = new SetPlatformAiBudgetUseCase(prisma, config);
     const errors: string[] = [];
 
@@ -540,7 +551,6 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
     const position = await client.$transaction((tx) => readAiBudgetMonthSnapshot(tx, companyId, MONTH));
     assert.ok(position.reserved.CHAT > 0, 'the inheriting company really did reserve');
     assert.ok(position.reserved.CHAT <= 400_000, 'and stayed inside its cap');
-    await client.platformAiBudgetConfig.deleteMany({ where: { id: 'platform' } });
   });
 
   it('item 5: requestKind pinned at reserve time lands on a settlement that supplies none', async (t) => {
