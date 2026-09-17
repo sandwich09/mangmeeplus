@@ -7590,7 +7590,15 @@ ${link}`, ctx.companyId, access);
         busyWaitDeadlineMs: Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS });
       if (result.status === 'not_configured') return { status: 'NOT_CONFIGURED', fields: null, classification: null };
       if (result.status !== 'ok') {
-        return { status: 'OCR_FAILED', fields: null, classification: null, ...(result.errorCode ? { errorCode: result.errorCode } : {}) };
+        // The SCOPE travels with the code (spec §9.1 / B-01). `ReceiptOcrResponse.budgetScope` is
+        // set whenever `errorCode` is one of ours — which is how a chain the GATEWAY refused
+        // mid-way (E1c `budget-step` said no at ordinal >= 1) reports which ceiling it hit. Only
+        // the thrown-429 path below used to carry it, so a gateway-reported money refusal reached
+        // the terminal row and `line.ai.terminal` with `budgetScope` absent and CHAT/OCR/TOTAL
+        // indistinguishable.
+        return { status: 'OCR_FAILED', fields: null, classification: null,
+          ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+          ...(result.budgetScope ? { budgetScope: result.budgetScope } : {}) };
       }
       return {
         status: 'OCR_EXTRACTED_NEEDS_REVIEW',
