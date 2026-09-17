@@ -25,7 +25,7 @@ import { RedisRateLimitService } from '../../../common/security/redis-rate-limit
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
 import { classifyAiUsageRequest, companyAiBudgetRefusal, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
-import type { ReservedAiBudgetStep } from '../../line-ai/application/company-ai-budget-reservation';
+import { cancelAiBudgetStepIfGatewayUnspent, type ReservedAiBudgetStep } from '../../line-ai/application/company-ai-budget-reservation';
 
 /** The gateway route name IS the step kind (`crm-summary`, `crm-reply-draft`, …) and the bound
  *  table is keyed by it, so an unlisted CRM route can never be reserved — it refuses instead. */
@@ -156,6 +156,16 @@ export class CrmAiGatewayClient {
       throw new Error('AI_GATEWAY_BAD_RESPONSE');
     }
 
+    // E1c: a CRM result reports a refusal on its `error` (the whole `ProviderError` crosses), so
+    // the budget code is `error.budgetCode`. Our code plus zero usage rows proves the gateway's
+    // guard stopped this invocation before its provider, so the hold is released rather than left
+    // permanently UNRESOLVED.
+    if (this.prisma) {
+      await cancelAiBudgetStepIfGatewayUnspent(this.prisma, hold, {
+        budgetCode: (result as { error?: { budgetCode?: string } })?.error?.budgetCode,
+        usage: (result as { usage?: AiUsageEntry[] })?.usage,
+      });
+    }
     // sourceRoute from the path: 'crm-summary', 'crm-reply-draft', … Metering must never
     // fail a CRM action the model already ran (spec §6.7).
     if (this.prisma && companyId) {

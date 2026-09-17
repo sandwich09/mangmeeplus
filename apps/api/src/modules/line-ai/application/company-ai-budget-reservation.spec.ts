@@ -12,13 +12,15 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey } from '@watchdog-bms/contracts';
+import { AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, type AiUsageEntry } from '@watchdog-bms/contracts';
 import {
   AI_BUDGET_DISPATCHED_SWEEP_MS,
   AI_BUDGET_RESERVED_SWEEP_MS,
   aiBudgetAttemptHash,
   cancelAiBudgetStep,
+  cancelAiBudgetStepIfGatewayUnspent,
   decideAiBudgetStep,
+  gatewayRefusedWithoutSpending,
   markAiBudgetStepDispatched,
   reserveAiBudgetStep,
   settleAiBudgetStep,
@@ -346,5 +348,105 @@ describe('cancelAiBudgetStep (R-04 fencing, R-05 no money back without proof)', 
 
     assert.equal(await cancelAiBudgetStep(prisma, { reservationId: 'gone', ownerToken: 'o', proof: 'never_dispatched' }), false);
     assert.equal(updates.length, 0);
+  });
+});
+
+/**
+ * Phase E1c: releasing a hold the GATEWAY provably never spent. Without this, one misdeclared
+ * bound would pile up permanent `DISPATCHED -> UNRESOLVED` holds and close a bucket with nothing
+ * spent. The proof is OUR refusal code plus zero usage rows.
+ */
+describe('gatewayRefusedWithoutSpending (E1c no-spend proof)', () => {
+  const row = (over: Partial<AiUsageEntry> = {}): AiUsageEntry => ({
+    tag: 'ocr.receipt.image-read', modelId: 'haiku', ok: true, inputTokens: 10, outputTokens: 2,
+    cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 1, ...over,
+  });
+
+  it('is true only for OUR codes with no usage at all', () => {
+    for (const code of ['AI_BUDGET_UNAVAILABLE', 'AI_BUDGET_INSUFFICIENT', 'AI_MONTHLY_BUDGET_EXCEEDED', 'AI_BUDGET_BUSY']) {
+      assert.equal(gatewayRefusedWithoutSpending(code, undefined), true, code);
+      assert.equal(gatewayRefusedWithoutSpending(code, []), true, code);
+    }
+  });
+
+  it('is false for every failure that is not a money answer', () => {
+    // A provider outage, a truncated read, a bad mime type: the hold's fate is decided elsewhere,
+    // and guessing "no spend" from any of these would release money a provider may have cost.
+    for (const code of ['PROVIDER_TIMEOUT', 'OCR_OUTPUT_TRUNCATED', 'UNSUPPORTED_MIME_TYPE',
+      'OCR_MONTHLY_LIMIT_EXCEEDED', 'ROUTER_UNREACHABLE', 'PROVIDER_BUDGET_EXHAUSTED', '', null, undefined]) {
+      assert.equal(gatewayRefusedWithoutSpending(code, []), false, String(code));
+    }
+  });
+
+  it('is false whenever ANY usage row came back — a mid-chain refusal keeps paying', () => {
+    // The receipt read ran at ordinal 0 and the extract could not be funded: the response carries
+    // `AI_BUDGET_INSUFFICIENT` AND the read's row. Releasing the hold would un-bill a real call.
+    assert.equal(gatewayRefusedWithoutSpending('AI_BUDGET_INSUFFICIENT',
+      [row({ invocationKey: 'co-1#a#receipt-ocr#0' })]), false);
+    // An UNTAGGED row counts too: the response path settles the first one against this invocation.
+    assert.equal(gatewayRefusedWithoutSpending('AI_BUDGET_INSUFFICIENT', [row()]), false);
+  });
+});
+
+describe('cancelAiBudgetStepIfGatewayUnspent (E1c, one helper for every seam shape)', () => {
+  const hold = {
+    id: 'res-1', companyId: 'co-1', monthKey: '2026-09', bucket: 'OCR' as const, stepKind: 'receipt-ocr',
+    attemptKey: 'line-image:abc', invocationKey: 'co-1#line-image:abc#receipt-ocr#0', ordinal: 0,
+    upperBoundSatang: 777, ownerToken: 'owner-1',
+    envelope: {
+      attemptKey: 'line-image:abc', stepKind: 'receipt-ocr' as const,
+      invocationKey: 'co-1#line-image:abc#receipt-ocr#0', bucket: 'OCR' as const, monthKey: '2026-09',
+      modelId: 'haiku', bounds: { ...AI_BUDGET_STEP_BOUNDS['receipt-ocr'] },
+      maxCalls: AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxCalls,
+    },
+  };
+
+  /** The exact field each seam reads its budget code from (all five, one table). */
+  const seamShapes: Array<[string, { budgetCode?: string | null; usage?: AiUsageEntry[] }]> = [
+    // receipt-ocr / bank-statement: `{status:'failed', errorCode}`
+    ['{status:failed, errorCode}', { budgetCode: 'AI_BUDGET_UNAVAILABLE' }],
+    // line-turn: the turn response's own errorCode
+    ['turn response errorCode', { budgetCode: 'AI_BUDGET_UNAVAILABLE', usage: [] }],
+    // line-intake-route: the UNAVAILABLE route plan's errorCode
+    ['intake plan errorCode', { budgetCode: 'AI_BUDGET_INSUFFICIENT' }],
+    // CRM: the whole ProviderError crosses, so the code is on `error.budgetCode`
+    ['CRM error.budgetCode', { budgetCode: 'AI_MONTHLY_BUDGET_EXCEEDED' }],
+    // draft-generate: `{ok:false, error:{code}}`
+    ['draft error.code', { budgetCode: 'AI_BUDGET_UNAVAILABLE' }],
+  ];
+
+  it('releases the hold with the pre-provider proof, for every seam shape', async () => {
+    for (const [label, answer] of seamShapes) {
+      const { prisma, updates } = fakePrisma({ count: 1 });
+
+      assert.equal(await cancelAiBudgetStepIfGatewayUnspent(prisma, hold, answer), true, label);
+      assert.deepEqual(updates[0]!.where['status'], { in: ['RESERVED', 'DISPATCHED'] }, label);
+      assert.equal(updates[0]!.where['ownerToken'], 'owner-1', label);
+      assert.equal((updates[0]!.data['evidenceJson'] as { proof: string }).proof, 'gateway_pre_provider_refusal', label);
+    }
+  });
+
+  it('touches nothing when there is no hold, or when the answer is not a no-spend refusal', async () => {
+    const noHold = fakePrisma({ count: 1 });
+    assert.equal(await cancelAiBudgetStepIfGatewayUnspent(noHold.prisma, undefined, { budgetCode: 'AI_BUDGET_UNAVAILABLE' }), false);
+    assert.deepEqual(noHold.updates, []);
+
+    const spent = fakePrisma({ count: 1 });
+    assert.equal(await cancelAiBudgetStepIfGatewayUnspent(spent.prisma, hold, {
+      budgetCode: 'AI_BUDGET_INSUFFICIENT',
+      usage: [{ tag: 'ocr.receipt.image-read', modelId: 'haiku', ok: true, inputTokens: 1, outputTokens: 1,
+        cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 1 }],
+    }), false, 'a refusal at ordinal >= 1 arrives with the PARENT hold and the parent row');
+    assert.deepEqual(spent.updates, []);
+
+    const failed = fakePrisma({ count: 1 });
+    assert.equal(await cancelAiBudgetStepIfGatewayUnspent(failed.prisma, hold, { budgetCode: 'PROVIDER_TIMEOUT' }), false);
+    assert.deepEqual(failed.updates, []);
+  });
+
+  it('reports a fenced no-op honestly instead of claiming a release', async () => {
+    // A stale owner, or a hold already settled: the CAS matches nothing and the caller learns so.
+    const { prisma } = fakePrisma({ count: 0 });
+    assert.equal(await cancelAiBudgetStepIfGatewayUnspent(prisma, hold, { budgetCode: 'AI_BUDGET_UNAVAILABLE' }), false);
   });
 });

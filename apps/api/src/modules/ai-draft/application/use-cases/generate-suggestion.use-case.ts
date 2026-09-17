@@ -4,7 +4,7 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { RedisRateLimitService } from '../../../../common/security/redis-rate-limit.service';
 import { classifyAiUsageRequest, companyAiBudgetRefusal, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../../line-ai/application/company-ai-usage-meter';
-import type { ReservedAiBudgetStep } from '../../../line-ai/application/company-ai-budget-reservation';
+import { cancelAiBudgetStepIfGatewayUnspent, type ReservedAiBudgetStep } from '../../../line-ai/application/company-ai-budget-reservation';
 import { resolveCompanyAiModelPolicy } from '../../../line-ai/application/company-ai-model-policy';
 import { PrismaAiDraftRepository } from '../../infrastructure/prisma-ai-draft.repository';
 import type { PersistCandidateActionInput } from '../../infrastructure/prisma-ai-draft.repository';
@@ -109,7 +109,21 @@ export class GenerateSuggestionUseCase {
           facts: evidence.facts,
           citations: evidence.citations.map((c) => ({ label: c.label, valuePreview: c.valuePreview })),
           wantsChecklist: evidence.wantsChecklist,
+          // E1c: this seam reserved money, so the gateway must be able to ENFORCE what it reserved
+          // (ADR 0013 §6) — without the envelope it held a hold and ran unbounded. Both fields ride
+          // only when there IS a hold, so a SHARED request body stays byte-identical and an older
+          // gateway simply ignores two unknown fields. `companyId` is what the gateway's receiver
+          // boundary needs to prove the invocation fence belongs to this tenant.
+          ...(hold ? { companyId, budgetEnvelope: hold.envelope } : {}),
         });
+        // A gateway refusal before its provider (model/bound/envelope outside what was reserved)
+        // carries our code and no usage row: release the hold instead of leaving it UNRESOLVED.
+        if (this.prisma) {
+          await cancelAiBudgetStepIfGatewayUnspent(this.prisma, hold, {
+            budgetCode: generated.ok ? undefined : generated.error.code,
+            usage: generated.usage,
+          });
+        }
         // Keep the admission lease through the ledger write so the next action reads this cost.
         if (this.prisma && this.config) {
           try {

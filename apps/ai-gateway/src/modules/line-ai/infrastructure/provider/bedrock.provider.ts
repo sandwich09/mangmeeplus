@@ -2,12 +2,15 @@ import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-r
 import type { ContentBlock, ConverseCommandOutput, Message, SystemContentBlock, TokenUsage, ToolUseBlock } from '@aws-sdk/client-bedrock-runtime';
 import type { IModelProvider, ProviderInput, ProviderOutput, ProviderToolCall, ProviderToolsInput, ProviderToolsOutput } from './provider.port';
 import type { AiUsageEntry, ProviderError } from '@watchdog-bms/contracts';
-import { appendUsage, currentUsageCompanyId } from '../../../../common/usage/usage-context';
+import { appendUsage, currentBudgetEnvelope, currentUsageCompanyId } from '../../../../common/usage/usage-context';
 
 export type BedrockProviderConfig = {
   region: string;
   modelId: string;
   timeoutMs: number;
+  /** SDK attempts for one invocation. Set only under a SPLIT budget envelope, where the hold
+   *  prices exactly one attempt (ADR 0013 §6); absent keeps the SDK's own default. */
+  maxAttempts?: number;
 };
 
 /** Minimum covered text before a cache checkpoint is worth emitting. Claude Sonnet 4.x will not
@@ -25,7 +28,10 @@ export class BedrockProvider implements IModelProvider {
   private readonly client: BedrockRuntimeClient;
 
   constructor(private readonly cfg: BedrockProviderConfig) {
-    this.client = new BedrockRuntimeClient({ region: cfg.region });
+    this.client = new BedrockRuntimeClient({
+      region: cfg.region,
+      ...(cfg.maxAttempts ? { maxAttempts: cfg.maxAttempts } : {}),
+    });
   }
 
   async generateText(input: ProviderInput): Promise<ProviderOutput> {
@@ -243,14 +249,25 @@ export class BedrockProvider implements IModelProvider {
   }
 }
 
-/** Bedrock exposes no token counts after an aborted Converse request. The monthly meter must not
- *  call that spend free, so it prices the maximum current input context and requested output. */
+/**
+ * Bedrock exposes no token counts after an aborted Converse request. The monthly meter must not
+ * call that spend free, so it prices the maximum current input context and requested output.
+ *
+ * Under a SPLIT budget envelope the ceiling is the envelope's DECLARED input bound instead of the
+ * 200k model-context one: the reservation was priced at the declared bound, so settling a timeout
+ * above it would report an invariant breach — closing the company's admission — for a call that
+ * never exceeded anything (ADR 0013 §12 residual 1, spec §12.3). It is still the most conservative
+ * number this invocation could legitimately cost, never 0 and never lowered to pass a gate.
+ */
 function conservativeTimeoutUsage(command: ConverseCommand): TokenUsage {
-  const outputTokens = Math.max(1, command.input.inferenceConfig?.maxTokens ?? 2048);
+  const bounds = currentBudgetEnvelope()?.bounds;
+  const inputTokens = bounds?.maxInputTokens ?? TIMEOUT_INPUT_TOKEN_CEILING;
+  const requested = Math.max(1, command.input.inferenceConfig?.maxTokens ?? 2048);
+  const outputTokens = bounds ? Math.min(requested, bounds.maxOutputTokens) : requested;
   return {
-    inputTokens: TIMEOUT_INPUT_TOKEN_CEILING,
+    inputTokens,
     outputTokens,
-    totalTokens: TIMEOUT_INPUT_TOKEN_CEILING + outputTokens,
+    totalTokens: inputTokens + outputTokens,
     cacheReadInputTokens: 0,
     cacheWriteInputTokens: 0,
   };

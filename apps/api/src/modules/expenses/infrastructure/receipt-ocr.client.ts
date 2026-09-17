@@ -7,7 +7,7 @@ import { safeLineErrorDetails } from '../../line-ai/infrastructure/line-reply.ad
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
 import { classifyAiUsageRequest, companyAiBudgetRefusal, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission, type AiRequestContent } from '../../line-ai/application/company-ai-usage-meter';
-import { cancelAiBudgetStep, type AiBudgetCancelProof, type ReservedAiBudgetStep } from '../../line-ai/application/company-ai-budget-reservation';
+import { cancelAiBudgetStep, cancelAiBudgetStepIfGatewayUnspent, type AiBudgetCancelProof, type ReservedAiBudgetStep } from '../../line-ai/application/company-ai-budget-reservation';
 import {
   type CompanyOcrAdmissionIdentity,
   admitCompanyOcr,
@@ -116,6 +116,12 @@ export class ReceiptOcrClient {
       this.logger.warn({ msg: 'receipt OCR response invalid', requestId: request.requestId, ...safeLineErrorDetails(error) });
       result = { status: 'failed', errorCode: 'OCR_JSON_PARSE_FAILED' };
     }
+    // E1c: a refusal by the gateway's own money guard (model/bound/envelope outside what was
+    // reserved) carries our code and no usage row, so this hold provably paid for nothing. The
+    // OCR read COUNT is a separate decision and stays with `isOcrPreProviderRefusal` below (R-05).
+    await cancelAiBudgetStepIfGatewayUnspent(this.prisma, hold, {
+      budgetCode: result.errorCode, usage: result.usage,
+    });
     // Two reasons to hand the read back. `isOcrPreProviderRefusal` proves no provider ran.
     // `isOcrRetryableProviderFailure` does not — but the upload screen retries it under a fresh
     // request id, which buys a second admission, so keeping this one charges a 15-read trial twice

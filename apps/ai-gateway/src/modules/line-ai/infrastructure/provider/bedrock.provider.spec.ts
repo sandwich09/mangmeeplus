@@ -2,6 +2,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BedrockProvider, CACHE_MIN_CHARS, TIMEOUT_INPUT_TOKEN_CEILING } from './bedrock.provider';
 import { drainUsage, runWithUsageContext } from '../../../../common/usage/usage-context';
+import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
+import { createProvider } from './provider.factory';
+import {
+  AI_BUDGET_STEP_ATTEMPTS, AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, parseAiBudgetEnvelope,
+} from '@watchdog-bms/contracts';
 
 function makeProvider(timeoutMs = 10000) {
   return new BedrockProvider({ region: 'ap-southeast-1', modelId: 'test-model', timeoutMs });
@@ -609,4 +614,143 @@ describe('BedrockProvider prompt caching', () => {
     assert.equal(capture.lines[0]!['cacheWriteInputTokens'], 4000);
     assert.equal(capture.lines[0]!['cacheReadInputTokens'], 0);
   });
+});
+
+/**
+ * Phase E1c closes the E1b blocker recorded in ADR 0013 §12: the legacy 200,000-token timeout
+ * ceiling is ABOVE every declared input bound, so a SPLIT timeout would settle above its hold and
+ * trip the invariant-breach path — closing a company's admission over a call that never exceeded
+ * anything. Under an envelope the estimate becomes the declared bound instead.
+ */
+describe('BedrockProvider conservative timeout under a budget envelope (E1c)', () => {
+  const envelope = parseAiBudgetEnvelope({
+    attemptKey: 'line-image:abc',
+    stepKind: 'receipt-ocr',
+    invocationKey: aiBudgetInvocationKey('co-1', 'line-image:abc', 'receipt-ocr', 0),
+    bucket: 'OCR',
+    monthKey: '2026-09',
+    modelId: 'test-model',
+    bounds: { ...AI_BUDGET_STEP_BOUNDS['receipt-ocr'] },
+    maxCalls: AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxCalls,
+  }, 'co-1')!;
+
+  function abortingProvider() {
+    const provider = makeProvider(1);
+    (provider as any).client = {
+      send: (_command: unknown, options: { abortSignal: AbortSignal }) => new Promise((_resolve, reject) => {
+        options.abortSignal.addEventListener('abort', () => {
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+        });
+      }),
+    };
+    return provider;
+  }
+
+  async function timeoutEntry(budget?: { status: 'active'; envelope: typeof envelope; sourceRoute: string; calls: number }) {
+    const provider = abortingProvider();
+    const capture = captureUsageLines();
+    return runWithUsageContext({ companyId: 'co-1', ...(budget ? { budget } : {}) }, async () => {
+      try {
+        await provider.generateText({ messages: [{ role: 'user', text: 'q' }], maxTokens: 4096 });
+      } finally {
+        capture.restore();
+      }
+      return drainUsage()[0]!;
+    });
+  }
+
+  it('estimates at the envelope declared input bound, never the 200k model-context ceiling', async () => {
+    const entry = await timeoutEntry({ status: 'active', envelope, sourceRoute: 'receipt-ocr', calls: 1 });
+
+    assert.equal(entry.inputTokens, AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxInputTokens);
+    assert.ok(entry.inputTokens < TIMEOUT_INPUT_TOKEN_CEILING, 'a SPLIT timeout must settle inside its hold');
+    assert.equal(entry.outputTokens, 4096);
+    // Still an estimate, never zero and never "measured" (spec §11.2).
+    assert.equal(entry.usageBasis, 'CONSERVATIVE_ESTIMATE');
+    assert.equal(entry.ok, false);
+  });
+
+  it('clamps a requested output above the declared bound to that bound', async () => {
+    const provider = abortingProvider();
+    const capture = captureUsageLines();
+    const entry = await runWithUsageContext(
+      { companyId: 'co-1', budget: { status: 'active', envelope, sourceRoute: 'receipt-ocr', calls: 1 } },
+      async () => {
+        try {
+          // The decorator refuses this before the provider in production; the estimate must be
+          // inside the hold even if some future caller reaches here another way.
+          await provider.generateText({ messages: [{ role: 'user', text: 'q' }] });
+        } finally {
+          capture.restore();
+        }
+        return drainUsage()[0]!;
+      },
+    );
+
+    assert.equal(entry.outputTokens, Math.min(2048, AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxOutputTokens));
+  });
+
+  it('keeps the legacy ceiling for a request with no envelope — every company today', async () => {
+    const entry = await timeoutEntry();
+
+    assert.equal(entry.inputTokens, TIMEOUT_INPUT_TOKEN_CEILING);
+    assert.equal(entry.outputTokens, 4096);
+  });
+
+  it('pins the SDK to one attempt only under an envelope (ADR 0013 §6 step 3)', async () => {
+    // The reservation prices exactly one attempt, so a silent SDK retry would spend a second
+    // invocation's money against one hold. The SDK default is 3.
+    const resolve = (provider: unknown) => (provider as any).client.config.maxAttempts();
+    assert.equal(await resolve(new BedrockProvider({
+      region: 'ap-southeast-1', modelId: 'test-model', timeoutMs: 1, maxAttempts: AI_BUDGET_STEP_ATTEMPTS,
+    })), 1);
+    assert.equal(await resolve(makeProvider()), 3, 'without an envelope the SDK default is untouched');
+  });
+
+  it('wires the money decorator from the factory, and only when an envelope is present', async () => {
+    const config = {
+      modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', bedrockModelId: 'test-model',
+      aiToolTimeoutMs: 1000, erpCoreInternalUrl: 'http://api.test/v1', aiGatewayInternalSecret: 's',
+    } as any;
+    const budget = { status: 'active' as const, envelope, sourceRoute: 'receipt-ocr', calls: 0 };
+
+    // The guard is a Proxy over the real provider, so what the factory configured is still
+    // readable: the attempt pin is decided from the request context, not from a caller flag.
+    assert.equal((createProvider(config) as any).cfg.maxAttempts, undefined);
+    assert.equal(runWithUsageContext({ companyId: 'co-1', budget },
+      () => (createProvider(config) as any).cfg.maxAttempts), AI_BUDGET_STEP_ATTEMPTS);
+
+    // Under an envelope the factory's provider refuses a request outside the declared bounds
+    // BEFORE any SDK call — which is only possible if `createProvider` applied the decorator.
+    const refused = await runWithUsageContext({ companyId: 'co-1', budget }, () =>
+      createProvider(config).generateText({
+        messages: [{ role: 'user', text: 'q' }], maxTokens: 999_999, usageTag: 'ocr.receipt.extract',
+      }));
+    assert.equal(refused.ok, false);
+    assert.equal(refused.ok === false ? refused.error.budgetCode : undefined, 'AI_BUDGET_UNAVAILABLE');
+    assert.equal(refused.ok === false ? refused.error.budgetScope : undefined, 'OCR');
+
+    // The SAME request with no envelope reaches the SDK, exactly as today — no bound, no refusal.
+    const originalSend = BedrockRuntimeClient.prototype.send;
+    let sent = 0;
+    (BedrockRuntimeClient.prototype as any).send = async () => {
+      sent += 1;
+      return { output: { message: { content: [{ text: 'ok' }] } }, stopReason: 'end_turn' };
+    };
+    const capture = captureUsageLines();
+    try {
+      const allowed = await runWithUsageContext({ companyId: 'co-1' }, () =>
+        createProvider(config).generateText({
+          messages: [{ role: 'user', text: 'q' }], maxTokens: 999_999, usageTag: 'ocr.receipt.extract',
+        }));
+      assert.equal(allowed.ok, true);
+      assert.equal(sent, 1);
+    } finally {
+      capture.restore();
+      (BedrockRuntimeClient.prototype as any).send = originalSend;
+    }
+  });
+
 });

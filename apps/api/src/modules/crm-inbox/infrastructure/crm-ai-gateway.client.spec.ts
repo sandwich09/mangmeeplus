@@ -225,3 +225,93 @@ describe('CrmAiGatewayClient monthly budget', () => {
     assert.equal(calls, 1);
   });
 });
+
+/**
+ * Phase E1c. A CRM result reports a refusal on its `error` (the whole `ProviderError` crosses the
+ * boundary), so the budget code is `error.budgetCode` — a shape no other seam has.
+ */
+describe('CrmAiGatewayClient releases a hold the gateway never spent (E1c)', () => {
+  const MODEL = 'apac.model-v1';
+
+  /** Reservation-capable fake: one SPLIT config row, the aggregates and a hold table. */
+  function splitPrisma() {
+    const reservations = new Map<string, any>();
+    const configRow = {
+      modelId: MODEL, monthlyBudgetSatang: 200_000, budgetMode: 'SPLIT',
+      chatMonthlyBudgetSatang: 100_000, ocrMonthlyBudgetSatang: 100_000,
+      budgetConfigVersion: 1, pendingBudgetPolicy: null,
+    };
+    const tx: any = {
+      $executeRaw: async () => 0,
+      companyAiConfiguration: { findUnique: async () => configRow },
+      platformAiBudgetConfig: { findUnique: async () => null },
+      aiBudgetReservation: {
+        findUnique: async (args: any) => (args.where.invocationKey !== undefined
+          ? [...reservations.values()].find((r) => r.invocationKey === args.where.invocationKey) ?? null
+          : reservations.get(args.where.id) ?? null),
+        findFirst: async () => null,
+        groupBy: async () => [],
+        count: async () => 0,
+        create: async (args: any) => {
+          const row = { id: `res-${reservations.size + 1}`, ...args.data };
+          reservations.set(row.id, row);
+          return { id: row.id };
+        },
+        updateMany: async (args: any) => {
+          const matched = [...reservations.values()].filter((r) =>
+            (args.where.id === undefined || r.id === args.where.id)
+            && (args.where.ownerToken === undefined || r.ownerToken === args.where.ownerToken)
+            && (args.where.status === undefined
+              || (typeof args.where.status === 'string' ? r.status === args.where.status : args.where.status.in.includes(r.status)))
+            && args.where.createdAt === undefined && args.where.dispatchedAt === undefined);
+          for (const row of matched) Object.assign(row, args.data);
+          return { count: matched.length };
+        },
+      },
+      companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }), upsert: async () => ({ costSatang: 0 }) },
+      companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }), upsert: async () => ({}) },
+      aiUsageEvent: { findUnique: async () => null, create: async (args: any) => args.data, createMany: async (args: any) => ({ count: args.data.length }) },
+    };
+    const client = { ...tx, $transaction: async (fn: (t: any) => Promise<any>) => fn(tx) };
+    return { prisma: { client } as any, reservations };
+  }
+
+  async function summariseWith(response: unknown): Promise<{ reservations: Map<string, any>; body?: any }> {
+    const { prisma, reservations } = splitPrisma();
+    const client = new CrmAiGatewayClient(config, rateLimits, prisma);
+    const originalFetch = globalThis.fetch;
+    let body: any;
+    globalThis.fetch = async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return { ok: true, json: async () => response } as Response;
+    };
+    try {
+      await client.requestCrmSummary(summaryRequest);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    return { reservations, body };
+  }
+
+  it('cancels the hold when `error.budgetCode` is ours and no usage came back', async () => {
+    const { reservations, body } = await summariseWith({
+      requestId: 'req-1', status: 'unavailable',
+      error: { code: 'PROVIDER_BUDGET_EXHAUSTED', message: 'input_bound_exceeded', retryable: false,
+        budgetScope: 'CHAT', budgetCode: 'AI_BUDGET_UNAVAILABLE' },
+    });
+
+    const hold = [...reservations.values()][0];
+    assert.ok(body.budgetEnvelope, 'the CRM seam already put the envelope on the wire in E1b');
+    assert.equal(hold.status, 'CANCELLED');
+    assert.equal((hold.evidenceJson as { proof: string }).proof, 'gateway_pre_provider_refusal');
+  });
+
+  it('keeps the hold for an ordinary provider failure, whatever its message says', async () => {
+    const { reservations } = await summariseWith({
+      requestId: 'req-1', status: 'unavailable',
+      error: { code: 'PROVIDER_TIMEOUT', message: 'timed out', retryable: true },
+    });
+
+    assert.equal([...reservations.values()][0].status, 'DISPATCHED', 'unknown cost: never released on a guess');
+  });
+});

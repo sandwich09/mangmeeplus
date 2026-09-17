@@ -56,6 +56,18 @@ export type AiBudgetStepBounds = {
 export const AI_BUDGET_IMAGE_TOKEN_CEILING = 2_000;
 /** Per-PDF-page token ceiling; the declared document bounds admit at most 8 pages (research doc §3). */
 export const AI_BUDGET_DOCUMENT_PAGE_TOKEN_CEILING = 3_000;
+/**
+ * Pages the declared 30,000-token document bound admits at 3,000 tokens each, leaving ~6,000 for
+ * the instructions (research doc §3.4). E1c refuses a document it cannot prove is within this.
+ */
+export const AI_BUDGET_DOCUMENT_MAX_PAGES = 8;
+/**
+ * SDK attempts one invocation may make. The API prices exactly this many
+ * (`apps/api/src/modules/line-ai/application/ai-model-pricing.ts`, `attempts: 1` in the pricing
+ * snapshot), so E1c pins the client to it: a second SDK attempt would spend a second invocation's
+ * money against one hold.
+ */
+export const AI_BUDGET_STEP_ATTEMPTS = 1;
 
 export const AI_BUDGET_STEP_BOUNDS: Readonly<Record<AiBudgetStepKind, AiBudgetStepBounds>> = {
   // 1,500 = the fused-plan branch of `intent-router.agent.ts:423` (the plain branch is 1,000).
@@ -118,4 +130,71 @@ export type AiBudgetEnvelope = {
  */
 export function aiBudgetInvocationKey(companyId: string, attemptKey: string, stepKind: string, ordinal: number): string {
   return `${companyId}#${attemptKey}#${stepKind}#${ordinal}`;
+}
+
+/** `YYYY-MM`, Asia/Bangkok — the same shape `POST /internal/ai/budget-step` accepts. */
+const MONTH_KEY = /^\d{4}-(0[1-9]|1[0-2])$/;
+/** Same ceilings as the internal DTOs, so an envelope the gateway accepts is one the seam accepts. */
+const MAX_ATTEMPT_KEY = 256;
+const MAX_MODEL_ID = 128;
+
+function boundedString(value: unknown, max: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= max;
+}
+
+/**
+ * The gateway's receiver-boundary validation of `budgetEnvelope` (ADR 0013 §6, spec §12.3).
+ *
+ * The body is wire JSON, so this is strict and FAIL-CLOSED: `undefined` means "do not run this
+ * request under an envelope", and E1c turns that into `AI_BUDGET_UNAVAILABLE` rather than an
+ * unmetered provider call. Every field that decides money is re-derived from the declared table
+ * rather than trusted: a caller cannot widen its own bounds, name an undeclared step kind, or
+ * borrow another company's invocation fence.
+ *
+ * Kept beside {@link AI_BUDGET_STEP_BOUNDS} so the table and the check that enforces it cannot
+ * drift, and pure (no node builtins) so the web bundle that compiles these contracts stays clean.
+ */
+export function parseAiBudgetEnvelope(
+  value: unknown,
+  /** The tenant of the request being validated — the invocation fence must belong to it. */
+  companyId: string,
+  /** Which call index this envelope is expected to authorise. The API always issues ordinal 0. */
+  ordinal = 0,
+): AiBudgetEnvelope | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (!boundedString(companyId, MAX_ATTEMPT_KEY)) return undefined;
+  if (!boundedString(raw['attemptKey'], MAX_ATTEMPT_KEY)) return undefined;
+  if (!boundedString(raw['stepKind'], 64)) return undefined;
+  if (!boundedString(raw['modelId'], MAX_MODEL_ID)) return undefined;
+  if (!boundedString(raw['monthKey'], 7) || !MONTH_KEY.test(raw['monthKey'])) return undefined;
+  if (raw['bucket'] !== 'CHAT' && raw['bucket'] !== 'OCR') return undefined;
+
+  const bounds = aiBudgetStepBounds(raw['stepKind']);
+  if (!bounds) return undefined;
+  // The declared table is the authority; a body that disagrees with it by one token is refused
+  // rather than reconciled, because the disagreement IS the version skew we must not spend through.
+  const declared = raw['bounds'];
+  if (!declared || typeof declared !== 'object' || Array.isArray(declared)) return undefined;
+  const asBounds = declared as Record<string, unknown>;
+  if (asBounds['maxInputTokens'] !== bounds.maxInputTokens
+    || asBounds['maxOutputTokens'] !== bounds.maxOutputTokens
+    || asBounds['maxCalls'] !== bounds.maxCalls) return undefined;
+  if (raw['maxCalls'] !== bounds.maxCalls) return undefined;
+  if (!Number.isSafeInteger(ordinal) || ordinal < 0 || ordinal >= bounds.maxCalls) return undefined;
+  // The fence must be the one THIS company's attempt owns at THIS call index. An envelope whose
+  // key does not rebuild is either skewed or another tenant's, and neither may spend here.
+  if (raw['invocationKey'] !== aiBudgetInvocationKey(companyId, raw['attemptKey'], raw['stepKind'], ordinal)) {
+    return undefined;
+  }
+  return {
+    attemptKey: raw['attemptKey'],
+    stepKind: raw['stepKind'] as AiBudgetStepKind,
+    invocationKey: raw['invocationKey'],
+    bucket: raw['bucket'],
+    monthKey: raw['monthKey'],
+    modelId: raw['modelId'],
+    bounds: { ...bounds },
+    maxCalls: bounds.maxCalls,
+  };
 }

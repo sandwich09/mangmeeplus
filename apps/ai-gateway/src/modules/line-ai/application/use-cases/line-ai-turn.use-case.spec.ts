@@ -1,7 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LineAiTurnUseCase } from './line-ai-turn.use-case';
-import type { LineAiTurnRequest } from '@watchdog-bms/contracts';
+import {
+  AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, parseAiBudgetEnvelope, type LineAiTurnRequest,
+} from '@watchdog-bms/contracts';
+import { runWithUsageContext } from '../../../../common/usage/usage-context';
 
 const validReq: LineAiTurnRequest = {
   requestId: 'req-spec',
@@ -529,5 +532,70 @@ describe('LineAiTurnUseCase – company feature switched off', () => {
     const resp = await useCaseReturning({ status: 'forbidden', errorCode: 'ERP_PERMISSION_DENIED' }).execute(validReq);
     assert.equal(resp.refused, true);
     assert.match(resp.replyText, /ไม่มีสิทธิ์/);
+  });
+});
+
+/**
+ * Spec §12.6 / ADR 0013 §6: a runtime that cannot honour an invocation envelope must REFUSE SPLIT
+ * traffic. The AgentCore artifact runs the model in its own process — it cannot budget-step before
+ * a call, and its usage arrives only after every call is already paid for.
+ */
+describe('LineAiTurnUseCase – a runtime that cannot honour the envelope refuses SPLIT traffic', () => {
+  const envelope = parseAiBudgetEnvelope({
+    attemptKey: 'line-text:def',
+    stepKind: 'line-turn',
+    invocationKey: aiBudgetInvocationKey('company-1', 'line-text:def', 'line-turn', 0),
+    bucket: 'CHAT',
+    monthKey: '2026-09',
+    modelId: 'test-model',
+    bounds: { ...AI_BUDGET_STEP_BOUNDS['line-turn'] },
+    maxCalls: AI_BUDGET_STEP_BOUNDS['line-turn'].maxCalls,
+  }, 'company-1')!;
+
+  const agentcoreConfig = { lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'agentcore' } as any;
+
+  it('never invokes AgentCore under an envelope, and says the budget could not be checked', async () => {
+    let invoked = false;
+    const runtime = { invoke: async () => { invoked = true; throw new Error('must not run'); } } as any;
+    const useCase = new LineAiTurnUseCase(makeErpTools(), makeOrchestrator(), agentcoreConfig, runtime);
+
+    const result = await runWithUsageContext(
+      { companyId: 'company-1', budget: { status: 'active', envelope, sourceRoute: 'line-turn', calls: 0 } },
+      () => useCase.execute(validReq),
+    );
+
+    assert.equal(invoked, false, 'a SPLIT turn must never reach an unreserved runtime');
+    assert.equal(result.refused, true);
+    assert.equal(result.errorCode, 'AI_BUDGET_UNAVAILABLE');
+    // Honest copy: the meter could not be READ — never "full", never "something broke" (§9.1).
+    assert.match(result.replyText, /ยังตรวจสอบงบ AI ของร้านไม่ได้/);
+    assert.doesNotMatch(result.replyText, /เกิดข้อผิดพลาดชั่วคราว/);
+  });
+
+  it('refuses an envelope that did not validate for the same reason', async () => {
+    let invoked = false;
+    const runtime = { invoke: async () => { invoked = true; throw new Error('must not run'); } } as any;
+    const useCase = new LineAiTurnUseCase(makeErpTools(), makeOrchestrator(), agentcoreConfig, runtime);
+
+    const result = await runWithUsageContext(
+      { companyId: 'company-1', budget: { status: 'invalid' } },
+      () => useCase.execute(validReq),
+    );
+
+    assert.equal(invoked, false);
+    assert.equal(result.errorCode, 'AI_BUDGET_UNAVAILABLE');
+  });
+
+  it('still routes to AgentCore for a request with no envelope — every company today', async () => {
+    let invoked = false;
+    const runtime = makeAgentcoreRuntime({ replyText: 'reply from agentcore' });
+    const wrapped = { invoke: async (...args: unknown[]) => { invoked = true; return (runtime as any).invoke(...args); } } as any;
+    const useCase = new LineAiTurnUseCase(makeErpTools(), makeOrchestrator(), agentcoreConfig, wrapped);
+
+    const result = await runWithUsageContext({ companyId: 'company-1' }, () => useCase.execute(validReq));
+
+    assert.equal(invoked, true);
+    assert.equal(result.replyText, 'reply from agentcore');
+    assert.equal(result.errorCode, undefined);
   });
 });
