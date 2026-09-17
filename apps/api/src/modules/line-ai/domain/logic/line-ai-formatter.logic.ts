@@ -4,7 +4,7 @@
  * are composed by the AI Gateway and rendered by `formatLineReply`.
  * No NestJS, Prisma, HTTP, LINE SDK, AI provider, or storage imports.
  */
-import type { LineAiRefusalReason } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, type LineAiRefusalReason } from '@watchdog-bms/contracts';
 // One base-URL resolution for the whole app. The previous local const fell back to the production
 // host, so any environment without WEB_BASE_URL/PUBLIC_BASE_URL sent its users to production.
 import { webLink } from '../../../../common/http/web-link';
@@ -48,6 +48,20 @@ export const REFUSAL_MESSAGES: Record<LineAiRefusalReason, string> = {
   line_delivery_failure:
     '❌ เกิดข้อผิดพลาดในการส่งข้อความ กรุณาลองใหม่อีกครั้งนะคะ',
 };
+
+/**
+ * Spec §9.4: the deterministic notice a RECLAIMED turn gets when the company's AI money can no
+ * longer pay for it. Plain text, no model, no money figure, no company configuration — the live
+ * path sends a flex card with package buttons, but the drain pushes text through its own seam and
+ * this is the exact string its stored-delivery integrity check re-derives.
+ */
+export function formatAiBudgetRefusalNotice(code: string): string {
+  return code === AI_BUDGET_REFUSAL_CODES.insufficient
+    ? '💚 งบ AI ที่เหลือของเดือนนี้ไม่พอตอบข้อความก่อนหน้านี้ค่ะ น้องมั่งมีจึงยังไม่ได้ตอบให้นะคะ '
+      + 'เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยค่ะ'
+    : '💚 โควตา AI ของแพ็กเกจเดือนนี้ครบแล้วค่ะ น้องมั่งมีจึงยังไม่ได้ตอบข้อความก่อนหน้านี้ให้นะคะ '
+      + 'เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยค่ะ';
+}
 
 export function formatRefusal(reason: LineAiRefusalReason, webPath?: string): string {
   const base = REFUSAL_MESSAGES[reason];

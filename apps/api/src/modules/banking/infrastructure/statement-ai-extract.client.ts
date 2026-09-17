@@ -11,7 +11,7 @@ import { AI_BANK_STATEMENT_MAX_PROVIDER_CALLS, aiGatewayClientTimeoutMs } from '
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
-import { recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
+import { companyAiBudgetRefusal, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
 import {
   admitCompanyOcr,
   companyOcrErrorCode,
@@ -58,12 +58,10 @@ export class StatementAiExtractClient {
       (monthKey) => this.extractOcrAdmitted(request, modelPolicy, monthKey),
     );
     if (admission.allowed) return admission.value;
-    return {
-      status: 'failed',
-      errorCode: admission.reason === 'exceeded' ? 'AI_MONTHLY_BUDGET_EXCEEDED'
-        : admission.reason === 'busy' ? 'AI_BUDGET_BUSY'
-        : 'AI_BUDGET_UNAVAILABLE',
-    };
+    // Refused BEFORE `admitCompanyOcr`: no OCR read counted, nothing to release, uploaded source
+    // untouched. The scope rides along so the import screen can name the ceiling (spec §9.1).
+    const refusal = companyAiBudgetRefusal(admission);
+    return { status: 'failed', errorCode: refusal.code, budgetScope: refusal.budgetScope };
   }
 
   private async extractOcrAdmitted(

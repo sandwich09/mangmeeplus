@@ -128,6 +128,7 @@ journey_dashboard_body() {
               [$lineNamespace, ($linePrefix + "_line_ai_intentional_noop"), {label:"Intentional no-op"}],
               [$lineNamespace, ($linePrefix + "_line_ai_permission_refusal"), {label:"Permission refusal"}],
               [$lineNamespace, ($linePrefix + "_line_ai_feature_disabled"), {label:"Feature disabled"}],
+              [$lineNamespace, ($linePrefix + "_line_ai_budget_refusal"), {label:"AI budget refusal"}],
               [$lineNamespace, ($linePrefix + "_line_ai_provider_unavailable"), {label:"Provider unavailable"}],
               [$lineNamespace, ($linePrefix + "_line_ai_timeout"), {label:"Timeout"}],
               [$lineNamespace, ($linePrefix + "_line_ai_delivery_pending"), {label:"Delivery pending"}],

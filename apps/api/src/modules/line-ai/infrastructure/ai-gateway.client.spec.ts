@@ -642,7 +642,7 @@ describe('AiGatewayClient monthly budget', () => {
     assert.ok(error instanceof HttpException);
     assert.equal(error.getStatus(), 429);
     // A monthly cap has no meaningful retry window, unlike the per-minute bucket.
-    assert.deepEqual(error.getResponse(), { code: 'AI_MONTHLY_BUDGET_EXCEEDED' });
+    assert.deepEqual(error.getResponse(), { code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' });
     assert.equal(calls, 0);
   });
 
@@ -657,7 +657,7 @@ describe('AiGatewayClient monthly budget', () => {
     const { error, calls } = await turnWith(broken);
 
     assert.ok(error instanceof HttpException);
-    assert.deepEqual(error.getResponse(), { code: 'AI_BUDGET_UNAVAILABLE' });
+    assert.deepEqual(error.getResponse(), { code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' });
     assert.equal(calls, 0);
   });
 

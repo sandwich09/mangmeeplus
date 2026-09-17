@@ -1,4 +1,12 @@
-import { LINE_AI_ERROR_CODES, type LineAiRefusalReason } from '@watchdog-bms/contracts';
+import {
+  AI_BUDGET_REFUSAL_CODES,
+  LINE_AI_ERROR_CODES,
+  isAiBudgetPermanentRefusal,
+  isAiBudgetRefusalCode,
+  type AiBudgetRefusalCode,
+  type AiBudgetScope,
+  type LineAiRefusalReason,
+} from '@watchdog-bms/contracts';
 
 export const LINE_AI_TERMINAL_CLASSES = [
   'delivered',
@@ -8,16 +16,50 @@ export const LINE_AI_TERMINAL_CLASSES = [
   'feature_disabled',
   'provider_unavailable',
   'timeout',
+  // Spec §9.3: the company's monthly AI MONEY ran out and the turn answered that correctly. A policy
+  // refusal that was delivered is not an AI outage, so it must not sit in `failed_terminal` with the
+  // real failures — but it is also not `delivered`, so the money reason stays countable on its own.
+  'budget_refusal',
   'delivery_pending',
   'failed_terminal',
 ] as const;
 
 export type LineAiTerminalClass = (typeof LINE_AI_TERMINAL_CLASSES)[number];
 export type LineAiGatewayFailureOutcome = {
-  status: 'ai_error' | 'provider_unavailable' | 'rate_limited' | 'ai_budget_exceeded';
+  status: 'ai_error' | 'provider_unavailable' | 'rate_limited' | 'ai_budget_exceeded' | 'ai_budget_insufficient';
   errorCode: string;
-  replyKind: 'timeout' | 'unavailable' | 'rate_limited' | 'budget_exceeded';
+  replyKind: 'timeout' | 'unavailable' | 'rate_limited' | 'budget_exceeded' | 'budget_unavailable';
+  /** Present only for a refusal our OWN money gate produced. */
+  budgetCode?: AiBudgetRefusalCode;
+  budgetScope?: AiBudgetScope;
 };
+
+/** The durable statuses a money refusal ends on. Separate from the generic failures so the row (and
+ *  the alarm) can tell "we said no on purpose" from "the assistant broke". */
+const BUDGET_REFUSAL_STATUSES = new Set(['ai_budget_exceeded', 'ai_budget_insufficient']);
+
+/**
+ * Our OWN money gate's 429 — and only that. The body code has to be one `companyAiBudgetRefusal`
+ * emits; any other 429, provider error or similarly named message keeps its existing handling
+ * (spec §9.1: a lookalike error is not authority to change a budget answer).
+ */
+export function knownAiBudgetRefusal(error: unknown): { code: AiBudgetRefusalCode; budgetScope?: AiBudgetScope } | null {
+  const status = typeof (error as { getStatus?: unknown })?.getStatus === 'function'
+    ? (error as { getStatus: () => number }).getStatus()
+    : undefined;
+  if (status !== 429) return null;
+  const response = typeof (error as { getResponse?: unknown })?.getResponse === 'function'
+    ? (error as { getResponse: () => unknown }).getResponse()
+    : undefined;
+  if (!response || typeof response !== 'object') return null;
+  const { code, budgetScope } = response as { code?: unknown; budgetScope?: unknown };
+  if (!isAiBudgetRefusalCode(typeof code === 'string' ? code : undefined)) return null;
+  return {
+    code: code as AiBudgetRefusalCode,
+    // Only an explicit, recognised scope is carried — never inferred.
+    ...(budgetScope === 'TOTAL' || budgetScope === 'CHAT' || budgetScope === 'OCR' ? { budgetScope } : {}),
+  };
+}
 
 const NON_TERMINAL_STATUSES = new Set(['received', 'processing', 'response_ready']);
 const CLARIFICATION_STATUSES = new Set([
@@ -52,14 +94,21 @@ export function classifyLineAiTerminalOutcome(
   errorCode?: string | null,
 ): LineAiTerminalClass | null {
   if (NON_TERMINAL_STATUSES.has(status)) return null;
+  // Delivery truth outranks semantics (spec §9.3): a refusal the customer never received must keep
+  // looking broken, so these two stay AHEAD of the budget branch below.
   if (status === 'delivery_pending') return 'delivery_pending';
   if (status === 'failed_terminal' || status.startsWith('orphan_')) return 'failed_terminal';
+  if (BUDGET_REFUSAL_STATUSES.has(status)) return 'budget_refusal';
   if (
     status === 'rate_limited'
     || status === 'batched'
     || status === 'duplicate_media_pending'
     || status === 'safety_crisis'
     || status === 'privacy_rumor'
+    // An intentional 24h AI pause the customer asked for by tapping "ติดต่อเจ้าหน้าที่". Nothing
+    // failed and nothing is owed on this turn; without this it fell through to `failed_terminal`
+    // and every support handover looked like an AI outage.
+    || status === 'support_follow_up'
   ) {
     return 'intentional_noop';
   }
@@ -72,9 +121,17 @@ export function classifyLineAiTerminalOutcome(
   if (status === 'feature_disabled' || status === 'unsupported_module' || status === 'unsupported_yet' || status === 'launch_route_closed') return 'feature_disabled';
   if (status === 'ai_timeout' || /TIMEOUT/.test(errorCode ?? '')) return 'timeout';
   if (status === 'unavailable_delivered' || status === 'provider_unavailable') return 'provider_unavailable';
+  // Spec §9.3 "หากเก็บรูปไว้รอคำตอบให้รักษา clarification state โดยแนบ budget reason": an image turn
+  // that kept the picture and asked the numbered question is still WAITING on the customer, so the
+  // workflow class stays `clarification` and the money reason rides along as the errorCode. Only a
+  // turn with nothing left to answer is reclassified below.
   if (CLARIFICATION_STATUSES.has(status)) return 'clarification';
   if (PERMISSION_REFUSAL_STATUSES.has(status)) return 'permission_refusal';
   if (DELIVERED_STATUSES.has(status) || status.startsWith('staff_menu_')) return 'delivered';
+  // A delivered refusal whose durable reason is a permanent money refusal, on a status this
+  // classifier does not otherwise know. Last, so it can only ever rescue rows that would have been
+  // counted as an outage — never reclassify one of the explicit classes above.
+  if (isAiBudgetPermanentRefusal(errorCode)) return 'budget_refusal';
   return 'failed_terminal';
 }
 
@@ -115,11 +172,29 @@ export function classifyLineAiGatewayFailure(error: unknown): LineAiGatewayFailu
   // G-05: the monthly budget running out is NOT congestion. It used to collapse into `rate_limited`,
   // whose reply asks the shop to wait and try again — advice that can never work this month, and
   // that invites more spending attempts. It gets its own outcome and its own answer.
-  if (status === 429 && code === 'AI_MONTHLY_BUDGET_EXCEEDED') {
+  //
+  // Spec §9.1 "Code/scope ต้องอยู่ใน durable result": the errorCode used to be RATE_LIMITED here, so
+  // the durable row said "rate limited" for a money refusal and the reason was gone by the time
+  // anyone replayed it. The real budget code is stored instead — the same string every other seam
+  // carries — and the scope rides beside it.
+  const budget = knownAiBudgetRefusal(error);
+  if (budget && isAiBudgetPermanentRefusal(budget.code)) {
     return {
-      status: 'ai_budget_exceeded',
-      errorCode: LINE_AI_ERROR_CODES.RATE_LIMITED,
+      status: budget.code === AI_BUDGET_REFUSAL_CODES.insufficient ? 'ai_budget_insufficient' : 'ai_budget_exceeded',
+      errorCode: budget.code,
       replyKind: 'budget_exceeded',
+      budgetCode: budget.code,
+      ...(budget.budgetScope ? { budgetScope: budget.budgetScope } : {}),
+    };
+  }
+  // The meter itself could not be read. Not exhaustion, not congestion: say it could not be checked.
+  if (budget?.code === AI_BUDGET_REFUSAL_CODES.unavailable) {
+    return {
+      status: 'provider_unavailable',
+      errorCode: budget.code,
+      replyKind: 'budget_unavailable',
+      budgetCode: budget.code,
+      ...(budget.budgetScope ? { budgetScope: budget.budgetScope } : {}),
     };
   }
   if (status === 429 && code !== 'AI_BUDGET_UNAVAILABLE') {
@@ -136,9 +211,20 @@ export function classifyLineAiGatewayFailure(error: unknown): LineAiGatewayFailu
   };
 }
 
+/** What happened to the customer's picture on this turn. Structured so a budget refusal can be told
+ *  apart from one that also lost the file — never a money amount, never company config (spec §9.3). */
+export type LineAiTerminalMediaState = 'retained' | 'save_failed' | 'redelivered';
+
 export function emitLineAiTerminalOutcome(
   logger: { log: (fields: Record<string, unknown>) => void },
-  input: { webhookEventId: string; status: string; errorCode?: string | null; companyId?: string | null },
+  input: {
+    webhookEventId: string;
+    status: string;
+    errorCode?: string | null;
+    companyId?: string | null;
+    budgetScope?: AiBudgetScope | null;
+    mediaState?: LineAiTerminalMediaState | null;
+  },
 ): void {
   const terminalClass = classifyLineAiTerminalOutcome(input.status, input.errorCode);
   if (!terminalClass) return;
@@ -151,6 +237,10 @@ export function emitLineAiTerminalOutcome(
       status: input.status,
       terminalClass,
       errorCode: input.errorCode ?? null,
+      // Emitted only when the turn really carried them, so the metric filters above stay unchanged
+      // and no row gains a field it has no evidence for.
+      ...(input.budgetScope ? { budgetScope: input.budgetScope } : {}),
+      ...(input.mediaState ? { mediaState: input.mediaState } : {}),
     });
   } catch {
     // Telemetry cannot change the outcome it observes.

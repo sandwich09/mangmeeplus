@@ -8,7 +8,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
-import type { AiUsageEntry } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, type AiBudgetRefusalCode, type AiBudgetScope, type AiUsageEntry } from '@watchdog-bms/contracts';
 import type { AppConfigService } from '../../../common/config/app-config.service';
 import type { PrismaService } from '../../../common/database/prisma.service';
 import type { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
@@ -53,6 +53,27 @@ export type CompanyAiBudgetDecision =
   | { allowed: false; reason: 'exceeded'; spendSatang: number; budgetSatang: number; override: boolean }
   | { allowed: false; reason: 'busy'; retryAfterSeconds: number }
   | { allowed: false; reason: 'unavailable' };
+
+/**
+ * The ONE place a money refusal becomes the typed code + scope every seam forwards (spec §9.1).
+ * Before this each seam spelled the same ternary itself, which is how the LINE lanes ended up
+ * throwing away the code and answering "temporarily unavailable" for an explicit budget decision.
+ *
+ * `budgetScope` is what this meter actually checked, never a guess: today it only ever reads the
+ * company TOTAL, so TOTAL is the only truthful value. §12 adds the CHAT/OCR buckets and this
+ * function is where they will be reported from — nothing downstream has to change again.
+ */
+export function companyAiBudgetRefusal(
+  decision: Exclude<CompanyAiBudgetDecision, { allowed: true }>,
+): { code: AiBudgetRefusalCode; budgetScope: AiBudgetScope; retryAfterSeconds?: number } {
+  return {
+    code: decision.reason === 'exceeded'
+      ? AI_BUDGET_REFUSAL_CODES.exceeded
+      : decision.reason === 'busy' ? AI_BUDGET_REFUSAL_CODES.busy : AI_BUDGET_REFUSAL_CODES.unavailable,
+    budgetScope: 'TOTAL',
+    ...(decision.reason === 'busy' ? { retryAfterSeconds: decision.retryAfterSeconds } : {}),
+  };
+}
 
 type EffectiveBudget = { budgetSatang: number; override: boolean };
 

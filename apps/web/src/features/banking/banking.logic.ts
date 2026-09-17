@@ -194,6 +194,10 @@ const EXTRACT_ERROR_MESSAGES: Record<string, string> = {
     extract_ocr_limit_exceeded: 'ใช้ OCR ครบจำนวนของเดือนนี้แล้ว — กรุณาใช้ไฟล์ CSV จากธนาคาร หรือติดต่อผู้ดูแล',
     extract_ocr_duplicate_request: 'คำขออ่านไฟล์นี้เคยถูกรับแล้ว — ตรวจรายการเดิมก่อนลองอัปโหลดอีกครั้ง',
     extract_ocr_quota_unavailable: 'ตรวจสอบสิทธิ์ OCR ไม่สำเร็จชั่วคราว — กรุณาลองใหม่ภายหลังหรือใช้ไฟล์ CSV',
+    // Spec §9.4: the company's monthly AI money, not the OCR count. Re-photographing the page cannot
+    // help, so the way out is the CSV the bank already provides (or a bigger package).
+    extract_ai_budget_exhausted: 'งบ AI ของเดือนนี้ไม่พออ่านไฟล์นี้แล้ว — ไฟล์ยังอยู่ กรุณาใช้ไฟล์ CSV จากธนาคาร หรือติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ',
+    extract_ai_budget_unavailable: 'ยังตรวจสอบงบ AI ไม่ได้ จึงยังไม่ได้อ่านไฟล์นี้ — ไฟล์ยังอยู่ กรุณาลองใหม่ภายหลังหรือใช้ไฟล์ CSV',
     extract_ocr_failed: 'อ่านรูปภาพไม่สำเร็จ ลองถ่ายใหม่ให้ชัดขึ้น หรือใช้ไฟล์ CSV จากธนาคาร',
     extract_file_too_large: 'ไฟล์ใหญ่เกินกำหนด',
     extract_unsupported_mime_type: 'รองรับเฉพาะไฟล์ PDF, JPG, PNG',

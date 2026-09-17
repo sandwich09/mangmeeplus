@@ -98,8 +98,8 @@ import { FEATURE_TEMPORARILY_UNAVAILABLE, loadEntitledFeatureKeys } from '../../
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
-import type { BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import type { AiBudgetScope, BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, LINE_CLARIFICATION_SOURCE_MAX_BYTES, type LedgerEntry, type LedgerSubRequestInput } from '../line-ai-ledger.service';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
@@ -133,7 +133,9 @@ import {
   classifyLineAiGatewayFailure,
   classifyLineAiTerminalOutcome,
   emitLineAiTerminalOutcome,
+  knownAiBudgetRefusal,
   terminalStatusForLineTurn,
+  type LineAiTerminalMediaState,
 } from '../../domain/logic/line-ai-terminal-outcome.logic';
 
 export type LineTextEvent = {
@@ -273,6 +275,11 @@ type LineReceiptAdmissionAttempt = { identity?: CompanyOcrAdmissionIdentity; com
 
 const MEDIA_PROCESSING_FAILED_REPLY = '📷 ขออภัยค่ะ ระบบประมวลผลรูปนี้ไม่สำเร็จ รบกวนส่งรูปเดิมอีกครั้งนะคะ ถ้ารูปนี้เคยบันทึกไว้แล้ว ระบบจะแจ้งเตือนรายการซ้ำให้ค่ะ';
 const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วลองใหม่อีกครั้งนะคะ';
+/** Spec §9.1 `AI_BUDGET_UNAVAILABLE`: the meter could not be READ. It is not the budget card (we do
+ *  not know that the budget is full) and not the generic error (nothing broke on the customer's
+ *  side). Deterministic, no model call, no money figure, no company configuration. */
+const AI_BUDGET_UNAVAILABLE_REPLY = '⏳ ตอนนี้ยังตรวจสอบงบ AI ของร้านไม่ได้ค่ะ น้องมั่งมีเลยยังไม่เริ่มงานให้ '
+  + 'รบกวนลองใหม่อีกครั้งในอีกสักครู่นะคะ ระหว่างนี้ใช้งานผ่านเว็บแอปได้ตามปกติค่ะ';
 /** Post-OCR branch ambiguity (multi-branch company, no defaultable head office): the read
  *  succeeded, only the branch decision is missing — send the user to the web picker honestly.
  *  Says "เอกสาร", not "ใบเสร็จ": the same refusal now answers the check-bill lane, where calling
@@ -374,6 +381,14 @@ const MEDIA_CLARIFY_REPLY = [
  * is "the read failed", not the bare "what is this picture?" that reads as if the photo were the
  * problem (owner UX review 2026-08-29). */
 export function formatOcrGovernanceClarifyReply(errorCode?: string, readFailed = false): string {
+  // §9.2: the company's AI MONEY closed the read. The picture IS kept (this branch only runs once
+  // `ensurePendingMedia` has a row), nothing was recorded, and no automatic retry is promised. The
+  // old wording — "ระบบอ่านเอกสารขัดข้องชั่วคราว" — was a false outage story for a policy decision.
+  const budgetReason = aiBudgetReasonTh(errorCode);
+  if (budgetReason) {
+    return `${isAiBudgetPermanentRefusal(errorCode) ? '💚' : '⏳'} รับรูปไว้แล้วค่ะ แต่${budgetReason} `
+      + `จึงยังไม่ได้อ่านและยังไม่ได้บันทึกรายการค่าใช้จ่ายนะคะ\n\n${MEDIA_CLARIFY_REPLY}`;
+  }
   const notice = errorCode === 'OCR_FEATURE_DISABLED'
     ? 'บริษัทปิดการอ่านเอกสารด้วย AI ไว้ค่ะ ระบบยังเก็บไฟล์นี้ไว้ได้ แต่จะไม่อ่านข้อมูลให้อัตโนมัติ'
     : errorCode === 'OCR_MONTHLY_LIMIT_EXCEEDED'
@@ -386,6 +401,26 @@ export function formatOcrGovernanceClarifyReply(errorCode?: string, readFailed =
             ? '📷 น้องอ่านรูปนี้ไม่สำเร็จค่ะ ระบบอ่านเอกสารขัดข้องชั่วคราว รูปยังเก็บไว้ให้และยังไม่ได้บันทึกรายการนะคะ'
             : null;
   return notice ? `${notice}\n\n${MEDIA_CLARIFY_REPLY}` : MEDIA_CLARIFY_REPLY;
+}
+/**
+ * The REASON half of a money refusal on the image lane — and nothing else. Kept separate from any
+ * claim about the picture so the "kept it" and the "could not keep it" replies can never disagree
+ * about why the read stopped (spec §9.1: exceeded, insufficient, busy and unavailable stay distinct;
+ * `insufficient` must never read as "เต็ม/ครบ").
+ */
+function aiBudgetReasonTh(errorCode?: string): string | null {
+  return errorCode === AI_BUDGET_REFUSAL_CODES.exceeded ? 'งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว'
+    : errorCode === AI_BUDGET_REFUSAL_CODES.insufficient ? 'งบ AI ที่เหลือไม่พอเริ่มอ่านรูปนี้'
+    : errorCode === AI_BUDGET_REFUSAL_CODES.unavailable ? 'ตอนนี้ยังตรวจสอบงบ AI ของร้านไม่ได้'
+    : errorCode === AI_BUDGET_REFUSAL_CODES.busy ? 'ระบบกำลังประมวลผลงานก่อนหน้าอยู่'
+    : null;
+}
+
+/** §9.2: the money gate closed the read AND the bytes could not be parked. Nothing is kept, so the
+ *  reply must not imply otherwise — and it must not promise an automatic retry that does not exist. */
+export function formatBudgetMediaSaveFailedReply(errorCode?: string): string {
+  return `⚠️ ${aiBudgetReasonTh(errorCode) ?? 'งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว'} และระบบยังเก็บรูปนี้ไว้ไม่สำเร็จค่ะ `
+    + 'จึงยังไม่ได้บันทึกรายการใด ๆ นะคะ รบกวนบันทึกผ่านเว็บแอป หรือส่งรูปเข้ามาใหม่อีกครั้งภายหลังค่ะ';
 }
 /** §11 escape: the picture answered a question and is not evidence of anything. Same outcome the
  *  receipt clarify's choice 2 has always had — the bytes stay stored, nothing is recorded. */
@@ -463,8 +498,10 @@ type ReceiptOcrPreflight = {
   fields: ReceiptOcrFieldResult | null;
   classification: BusinessDocumentClassification | null;
   /** Gateway reason for a failed read (OCR_EMPTY_OUTPUT, PROVIDER_TIMEOUT, …). Absent when the
-   *  gateway call itself threw — that case is OCR_FAILED with no code. */
+   *  gateway call itself threw AND the throw was not one of our own money refusals (spec §9.1). */
   errorCode?: string;
+  /** Present only alongside a money `errorCode`, and only when the gate reported it. */
+  budgetScope?: AiBudgetScope;
 };
 
 type DownloadedLineMedia = {
@@ -1774,8 +1811,28 @@ export class ProcessLineWebhookUseCase {
           : {}),
       }, { busyWaitDeadlineMs: input.busyWaitDeadlineMs, retryWebhookEventId: input.retryWebhookEventId, onAdmitted: input.onAdmitted });
     } catch (err) {
-      this.logger.warn({ msg: 'LINE intake route unavailable', requestId: input.requestId, ...safeLineErrorDetails(err) });
-      return { status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode: 'ROUTER_UNREACHABLE' };
+      // Spec §9.1: our own money gate refused BEFORE any provider ran. Collapsing that into
+      // `ROUTER_UNREACHABLE` is what lost the reason and sent the turn straight back into the same
+      // closed gate (a second `ai.company_budget.exceeded` event per message, and a false
+      // "the document reader is temporarily down" on the image lane). Only a 429 whose body code is
+      // one WE emit is trusted here; every other error keeps the legacy handling verbatim.
+      const budget = knownAiBudgetRefusal(err);
+      this.logger.warn({ msg: 'LINE intake route unavailable', requestId: input.requestId,
+        ...(budget ? { budgetErrorCode: budget.code } : {}), ...safeLineErrorDetails(err) });
+      if (!budget) {
+        return { status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode: 'ROUTER_UNREACHABLE' };
+      }
+      return {
+        status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
+        errorCode: budget.code,
+        budgetErrorCode: budget.code,
+        ...(budget.budgetScope ? { budgetScope: budget.budgetScope } : {}),
+        // `ocrErrorCode` is the existing carrier that makes `tryExtractReceiptFields` answer without
+        // calling the provider again — reused here so a refused image turn costs zero further calls
+        // and zero OCR reads (B-02). BUSY is deliberately left out: its lease frees between a media
+        // turn's model calls, so the OCR attempt's own bounded busy-wait is still worth taking.
+        ...(budget.code === 'AI_BUDGET_BUSY' ? {} : { ocrAdmission: 'denied' as const, ocrErrorCode: budget.code }),
+      };
     }
   }
 
@@ -4763,6 +4820,32 @@ export class ProcessLineWebhookUseCase {
         : {}),
     };
 
+    // Spec §9.2 / B-02: the money gate already refused this turn at the intake router, so the model
+    // call below would meet the SAME closed gate a second time — a second `ai.company_budget.exceeded`
+    // security event for one message, and a ledger turn the drain then retries against a gate that
+    // cannot open this month. Answered here, AFTER every deterministic fallback above has had its
+    // chance (those cost nothing and must keep working while the money is out) and BEFORE the ledger
+    // entry, so nothing is queued for a retry that cannot succeed. The reply is the same one the
+    // gateway-failure branch below sends, because it is the same refusal.
+    // BUSY is deliberately NOT short-circuited: its lease frees between calls, so the turn keeps its
+    // existing bounded wait and its existing ledger follow-up.
+    if (routePlan.budgetErrorCode && routePlan.budgetErrorCode !== AI_BUDGET_REFUSAL_CODES.busy) {
+      const permanent = isAiBudgetPermanentRefusal(routePlan.budgetErrorCode);
+      await (permanent
+        ? this.deliverRequiredMessages(event, [buildAiBudgetExceededMessage(await this.isTrialTier(companyId), routePlan)])
+        : this.deliverReply(event, AI_BUDGET_UNAVAILABLE_REPLY));
+      await this.updateEventLog(
+        event.webhookEventId,
+        permanent
+          ? (routePlan.budgetErrorCode === AI_BUDGET_REFUSAL_CODES.insufficient ? 'ai_budget_insufficient' : 'ai_budget_exceeded')
+          : 'provider_unavailable',
+        routePlan.budgetErrorCode,
+        companyId,
+        routePlan.budgetScope ? { budgetScope: routePlan.budgetScope } : undefined,
+      );
+      return;
+    }
+
     // 7.5 Item 10F: durable `turn` entry BEFORE the gateway call — a crash mid-turn leaves it
     // unacked and the reclaim worker re-runs it (at-least-once is safe: read-only channel).
     const ledgerTurnId = this.ledger
@@ -4789,16 +4872,17 @@ export class ProcessLineWebhookUseCase {
       // ledger entry for the reclaim worker to keep retrying against a closed admission.
       if (failure.replyKind === 'budget_exceeded') {
         await this.deliverRequiredMessages(event, [
-          buildAiBudgetExceededMessage(await this.isTrialTier(companyId)),
+          buildAiBudgetExceededMessage(await this.isTrialTier(companyId), { budgetErrorCode: failure.budgetCode, budgetScope: failure.budgetScope }),
         ]);
         if (ledgerTurnId && this.ledger) {
           await this.ledger.ack(
             { key: ledgerKey(companyId, chatKey), id: ledgerTurnId, companyId, turnId: requestId, kind: 'turn' },
             'refused',
-            { reason: 'ai_monthly_budget_exceeded' },
+            { reason: failure.budgetCode ?? 'ai_monthly_budget_exceeded' },
           );
         }
-        await this.updateEventLog(event.webhookEventId, failure.status, failure.errorCode, companyId);
+        await this.updateEventLog(event.webhookEventId, failure.status, failure.errorCode, companyId,
+          failure.budgetScope ? { budgetScope: failure.budgetScope } : undefined);
         return;
       }
       if (ledgerTurnId) this.intermediateDeliveries.add(event);
@@ -4806,11 +4890,14 @@ export class ProcessLineWebhookUseCase {
         event,
         failure.replyKind === 'timeout'
           ? formatRefusal('ai_timeout')
+          // The meter could not be read — say that, rather than the generic "something broke".
+          : failure.replyKind === 'budget_unavailable' ? AI_BUDGET_UNAVAILABLE_REPLY
           // With a ledger entry the reclaim drain WILL answer this turn — say so instead of
           // inviting a resend that would double-answer. No entry ⇒ the legacy resend copy.
           : failure.replyKind === 'rate_limited' ? (ledgerTurnId ? BUSY_FOLLOW_UP_REPLY : RATE_LIMIT_REPLY) : ERROR_REPLY,
       );
-      await this.updateEventLog(event.webhookEventId, failure.status, failure.errorCode, companyId);
+      await this.updateEventLog(event.webhookEventId, failure.status, failure.errorCode, companyId,
+        failure.budgetScope ? { budgetScope: failure.budgetScope } : undefined);
       // The turn entry stays unacked on purpose: the reclaim worker retries it later and
       // pushes the answer, so a gateway outage cannot silently lose the request.
       return;
@@ -5844,6 +5931,65 @@ export class ProcessLineWebhookUseCase {
     }
 
     if (!await this.mayDeliverBusinessReply(event)) { admissionAttempt.receiptRequested = true; return; }
+
+    // §9.2 LINE image: the company's AI MONEY closed this read. `tryRouteIntake` refused before any
+    // provider ran and forwarded the code, so nothing has been read, no usage row exists and no OCR
+    // read was counted. Answered here, beside the receipt-quota branch and before
+    // `decideLineBusinessDocument`, for the same reason: the generic "อ่านเอกสารขัดข้องชั่วคราว" is a
+    // false outage story for a policy decision, and it invited a resend that spends nothing but the
+    // customer's patience. Retention is claimed ONLY from a pending row that really exists (B-04).
+    if (isAiBudgetRefusalCode(ocr.errorCode)) {
+      const reply = formatOcrGovernanceClarifyReply(ocr.errorCode, true);
+      const permanent = isAiBudgetPermanentRefusal(ocr.errorCode);
+      // Whichever hop actually met the gate is the one that knows the scope.
+      const budgetScope = routePlan.budgetScope ?? ocr.budgetScope;
+      const terminal = permanent
+        ? (ocr.errorCode === AI_BUDGET_REFUSAL_CODES.insufficient ? 'ai_budget_insufficient' : 'ai_budget_exceeded')
+        : 'provider_unavailable';
+      let parked: Awaited<ReturnType<ProcessLineWebhookUseCase['ensurePendingMedia']>> | undefined;
+      try {
+        parked = await this.ensurePendingMedia(
+          ctx, event, companyId, identity.userId, caption, media, receiptClarifyQuestion(event),
+        );
+      } catch (error) {
+        // The bytes are NOT stored. Confirming retention from the webhook alone is exactly what
+        // §9.2 forbids, so say what is true and keep the money reason.
+        this.logger.warn({ msg: 'line_budget_pending_media_failed', requestId, ...safeLineErrorDetails(error) });
+        await this.deliverReply(event, formatBudgetMediaSaveFailedReply(ocr.errorCode));
+        await this.updateEventLog(event.webhookEventId, terminal, ocr.errorCode, companyId,
+          { ...(budgetScope ? { budgetScope } : {}), mediaState: 'save_failed' });
+        return { outcome: 'done' };
+      }
+      if (parked.created) {
+        await this.deliverReply(event, reply);
+        await this.persistIntakeTurn({
+          userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: `${mediaPreviewLabel(parked.pending)}${captionSuffix}`,
+          replyText: reply, intent: 'CLARIFY', refused: true,
+        });
+        if (parked.pending) {
+          await this.appendMediaClarification(event, {
+            companyId, chatKey: mediaChatKey(event), requestId, webhookEventId: event.webhookEventId,
+            userId: identity.userId, caption, question: reply, pending: parked.pending,
+          });
+        }
+      }
+      // The picture is kept and ONE question is open, so the workflow state stays `clarification_required`
+      // and the money reason rides on the errorCode (spec §9.3). A redelivery of the same message stays
+      // silent exactly as it does on every other clarify lane.
+      await this.updateEventLog(
+        event.webhookEventId,
+        parked.created ? 'clarification_required' : 'duplicate_media_pending',
+        ocr.errorCode,
+        companyId,
+        {
+          ...(budgetScope ? { budgetScope } : {}),
+          mediaState: parked.created ? 'retained' : 'redelivered',
+        },
+      );
+      return { outcome: 'done' };
+    }
+
     const decision = decideLineBusinessDocument(routePlan, ocr, caption.length > 0);
     if (ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW' && isSuccessfulNonReceiptClassification(ocr.classification)) {
       admissionAttempt.receiptRequested = false;
@@ -7401,8 +7547,16 @@ ${link}`, ctx.companyId, access);
         classification: result.classification ?? null,
       };
     } catch (err) {
-      this.logger.warn({ msg: 'Receipt OCR unavailable', ...safeLineErrorDetails(err) });
-      return { status: 'OCR_FAILED', fields: null, classification: null };
+      // §9.1: `requestReceiptOcr` throws OUR 429 when the money gate closes mid-turn (the intake
+      // route may have been admitted, or carried no image at all). Dropping it here is the second
+      // half of the production defect: the turn then answered "ระบบอ่านเอกสารขัดข้องชั่วคราว" for an
+      // explicit budget decision. Any other throw keeps the code-less OCR_FAILED it always had.
+      const budget = knownAiBudgetRefusal(err);
+      this.logger.warn({ msg: 'Receipt OCR unavailable', ...(budget ? { budgetErrorCode: budget.code } : {}), ...safeLineErrorDetails(err) });
+      return {
+        status: 'OCR_FAILED', fields: null, classification: null,
+        ...(budget ? { errorCode: budget.code, ...(budget.budgetScope ? { budgetScope: budget.budgetScope } : {}) } : {}),
+      };
     }
   }
 
@@ -7450,7 +7604,14 @@ ${link}`, ctx.companyId, access);
     };
   }
 
-  private async updateEventLog(webhookEventId: string, status: string, errorCode?: string, companyId?: string) {
+  private async updateEventLog(
+    webhookEventId: string,
+    status: string,
+    errorCode?: string,
+    companyId?: string,
+    /** Structured telemetry only (spec §9.3) — the durable row already carries status + errorCode. */
+    telemetry?: { budgetScope?: AiBudgetScope; mediaState?: LineAiTerminalMediaState },
+  ) {
     const result = await this.prisma.client.lineWebhookEventLog.updateMany({
       where: {
         webhookEventId,
@@ -7473,7 +7634,7 @@ ${link}`, ctx.companyId, access);
     }).catch(() => null);
     const terminalClass = classifyLineAiTerminalOutcome(status, errorCode);
     if (result?.count === 1) {
-      emitLineAiTerminalOutcome(this.logger, { webhookEventId, companyId, status, errorCode });
+      emitLineAiTerminalOutcome(this.logger, { webhookEventId, companyId, status, errorCode, ...telemetry });
     } else if (terminalClass) {
       this.logger.warn({
         msg: 'line.ai.terminal.persistence_not_advanced',

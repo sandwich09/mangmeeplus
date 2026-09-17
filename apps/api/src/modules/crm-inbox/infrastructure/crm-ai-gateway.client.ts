@@ -24,7 +24,7 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
-import { recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
+import { companyAiBudgetRefusal, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
 
 @Injectable()
 export class CrmAiGatewayClient {
@@ -83,10 +83,8 @@ export class CrmAiGatewayClient {
       (monthKey) => this.postAdmitted<T>(path, request, requestId, companyId, monthKey),
     );
     if (admission.allowed) return admission.value;
-    const body = admission.reason === 'busy'
-      ? { code: 'AI_BUDGET_BUSY', retryAfterSeconds: admission.retryAfterSeconds }
-      : { code: admission.reason === 'exceeded' ? 'AI_MONTHLY_BUDGET_EXCEEDED' : 'AI_BUDGET_UNAVAILABLE' };
-    throw new HttpException(body, HttpStatus.TOO_MANY_REQUESTS);
+    // Same typed code + scope the LINE seam throws (spec §9.1), from the one shared mapper.
+    throw new HttpException(companyAiBudgetRefusal(admission), HttpStatus.TOO_MANY_REQUESTS);
   }
 
   private async postAdmitted<T>(

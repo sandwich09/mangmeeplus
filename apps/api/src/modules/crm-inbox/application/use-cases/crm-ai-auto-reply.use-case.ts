@@ -6,6 +6,7 @@ import { PrismaCrmRepository } from '../../../crm/infrastructure/prisma-crm.repo
 import { PrismaCrmInboxRepository } from '../../infrastructure/prisma-crm-inbox.repository';
 import { CrmAiContextRepository } from '../../infrastructure/crm-ai-context.repository';
 import { CrmAiGatewayClient } from '../../infrastructure/crm-ai-gateway.client';
+import { knownAiBudgetRefusal } from '../../../line-ai/domain/logic/line-ai-terminal-outcome.logic';
 import { toCrmAiWindow } from './crm-ai-assist.use-case';
 import {
   matchStandaloneGreeting,
@@ -199,14 +200,24 @@ export class CrmAiAutoReplyUseCase implements CrmAutoReplyAgentPort {
 
       return this.outbound(input, requestId, turnClass ?? 'QUESTION', reply.draftText);
     } catch (error) {
+      // §9.4: the company's AI money gate is one of the things that lands here. It is not retried by
+      // this lane either way (one best-effort attempt per inbound message, no queue), but recording
+      // it as a bare `exception` hid the one reason an operator can actually act on. The typed code
+      // and scope are kept; nothing else about the outcome changes.
+      const budget = knownAiBudgetRefusal(error);
       this.logger.warn({
         msg: 'CRM auto-reply skipped after best-effort failure',
         companyId: input.channel.companyId,
         conversationId: input.conversation.id,
         requestId,
+        ...(budget ? { budgetErrorCode: budget.code } : {}),
         error: (error as Error).message,
       });
-      return this.skip(input, requestId, 'FAILED', { turnClass, sent: false, reason: 'exception' });
+      return this.skip(input, requestId, 'FAILED', {
+        turnClass, sent: false,
+        reason: budget?.code ?? 'exception',
+        ...(budget?.budgetScope ? { budgetScope: budget.budgetScope } : {}),
+      });
     }
   }
 

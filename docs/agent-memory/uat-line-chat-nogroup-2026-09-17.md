@@ -118,3 +118,34 @@ Next: execute the unified plan only on an implementation request. The owner has 
 - Frozen benchmark denominators now include attempted/completed/refused/failed work; no apparent savings from dropping failures or suppressing calls through insufficient reservations.
 - Scope remains documentation review/corrections. Runtime code/tests, benchmark runs, migrations and UAT acceptance are still pending. Next implementation must satisfy R-01–12 as well as prior AC/B/C/D/E/X gates; do not claim hard-cap readiness from written requirements.
 - Review verification passed: scoped `git diff --check`; document validator checked 7 documents, 54 local links, 53 unique unchecked acceptance criteria and 13 existing planned test paths. The review's F-01–12 findings map explicitly to R acceptance cases. Validated the illustrative 4-call input-ceiling arithmetic locally; this is not a provider benchmark or runtime test.
+
+## Phase B implementation — 2026-09-17
+
+Branch `codex/line-ai-remediation-b-budget-20260917` (worktree). Scope: spec §9.1–§9.4 only; no Prisma/schema change, no dependency change, no cloud/LINE/provider access.
+
+Decisions:
+
+- One shared vocabulary in `packages/contracts/src/line-ai.ts`: `AiBudgetScope`, `AI_BUDGET_REFUSAL_CODES` (adds `AI_BUDGET_INSUFFICIENT`), `isAiBudgetPermanentRefusal`, `isAiBudgetTransient`, `isAiBudgetRefusalCode`. Every seam keeps its existing envelope; only the code and the scope are shared.
+- One mapper, `companyAiBudgetRefusal(decision)` in `company-ai-usage-meter.ts`, is the single place a decision becomes code + scope. All five money seams (LINE gateway `runBudgeted`, receipt OCR client, statement client, CRM client, draft use case) call it. `budgetScope` is `TOTAL` because the meter only reads the company total today; §12 fills in CHAT/OCR from that one function.
+- Only a 429 `HttpException` whose body code is one we emit is trusted (`knownAiBudgetRefusal`). A provider 429, a non-429 carrying the same string, or a bare `Error` message keeps today's handling exactly.
+- Short-circuit rule: exceeded / insufficient / unavailable stop the turn at the intake refusal (no second gate call, no OCR, no usage row, no second security event). `AI_BUDGET_BUSY` deliberately keeps its existing bounded busy-wait and its existing ledger follow-up — the lease frees between a media turn's model calls.
+- Terminal classes: added `budget_refusal` AFTER `delivery_pending` and `failed_terminal`/`orphan_*`, so delivery truth still outranks semantics. An image turn that kept the picture and asked the numbered question keeps `clarification_required` (class `clarification`) and carries the budget `errorCode`; only a turn with nothing left to answer becomes `budget_refusal`. `support_follow_up` is now `intentional_noop`. Unknown statuses still fall to `failed_terminal`.
+- Durable reason: `classifyLineAiGatewayFailure` now stores the real budget code instead of `LINE_AI_RATE_LIMITED`, and `emitLineAiTerminalOutcome` gained optional `budgetScope` + `mediaState` (`retained` / `save_failed` / `redelivered`). No money amount or company configuration is emitted.
+- Traced the "answer 1 while the budget is closed" continuation: `resolvePendingMediaAsReceipt` creates the draft from the stored attachment and replies from saved facts. It makes no provider or gate call at all, so the outcome is already honest and non-looping (a zero-amount NEEDS_REVIEW draft plus the web link). No change was needed there.
+
+Files changed: `packages/contracts/src/{line-ai,expenses,banking,ai-draft-suggestion}.ts`; `apps/api` — `company-ai-usage-meter.ts`, `ai-gateway.client.ts`, `process-line-webhook.use-case.ts`, `drain-line-ledger.use-case.ts`, `line-ai-terminal-outcome.logic.ts`, `line-ai-formatter.logic.ts`, `line-business-card.logic.ts`, `receipt-ocr.client.ts`, `expense-extraction.use-case.ts`, `statement-ai-extract.client.ts`, `statement-import.use-case.ts`, `crm-ai-gateway.client.ts`, `crm-ai-assist.use-case.ts`, `crm-ai-auto-reply.use-case.ts`, `generate-suggestion.use-case.ts`, `customer-journey-signal.catalog.ts`; `apps/web` — `ExpensesPages.tsx`, `expense-upload.logic.ts`, `workspace-dictionary.ts`, `banking.logic.ts`, `InboxAiPanel.tsx`; infra — `runtime-alarms.sh`, `deploy.sh` (+ both spec scripts and the generated pin update in `validate-production-maintenance-release.sh` / `deploy-production.yml`).
+
+Verification (all from the worktree, heavy typechecks serialised on the `/tmp/mangmee-heavy.lock` mkdir mutex):
+
+- `pnpm --filter @watchdog-bms/contracts build` — ok. `pnpm --filter @watchdog-bms/api typecheck` — ok. `pnpm --filter @watchdog-bms/web exec tsc --noEmit` — ok. AI gateway untouched, so its typecheck was not run.
+- API focused specs (`pnpm exec tsx --test --test-reporter=spec` from `apps/api`): 764 tests / 0 fail / 2 pre-existing skips across terminal-outcome, LINE gateway client, CRM gateway client, CRM assist, draft generation, usage meter, first-signup webhook, business card, LINE webhook, ledger drain, expense extraction, statement import and the two security-event specs.
+- Contracts: `pnpm exec tsx --test src/line-ai-prepared-plan.spec.ts` — 41/0 (the budget truth table lives there because `packages/contracts/package.json` carries a fixed file list this change may not edit).
+- Web: `pnpm exec tsx --test` on `expense-upload.logic.spec.ts`, `ExpensesPages.qa.spec.ts`, `workspace-i18n.spec.ts`, `banking.logic.spec.ts` — 85/0.
+- `bash infra/monitoring/runtime-alarms.spec.sh` — ok. `bash infra/prod-ecs-express/production-serving-mode.spec.sh` — PASS. `node infra/security/sync-production-maintenance-release-pins.mjs --check` — current. `git diff --check` — clean.
+- Red-on-old checks (temporary one-line reverts, restored and re-verified byte-identical): 6/8 new webhook tests, the OCR-hop test, and 4/7 new drain tests fail without the fix; the "behaviour unchanged" guards (busy fall-through, non-money OCR reasons, delivery-cap park) stay green by design.
+
+Remaining:
+
+- Spec §13 acceptance B-01…B-06 and R-09 are deliberately still unchecked: §14 forbids ticking acceptance on unit tests alone, and B-03/B-04/B-05 and X-02 need the real LINE and web journeys.
+- Nothing emits `AI_BUDGET_INSUFFICIENT` or a `CHAT`/`OCR` scope yet — §12 (Phase E) does. This phase only recognises and carries them, and the CHAT card deliberately does not promise that receipts still work.
+- The CRM inbox panel now says the money reason instead of "temporarily unavailable", but `crm-ai-auto-reply.use-case.ts` has no spec file in the fixed `apps/api` test list, so its budget-reason change is covered by typecheck only.

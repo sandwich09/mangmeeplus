@@ -170,8 +170,11 @@ describe('P10-L door and status cards (§3.1/§7)', () => {
     // Everything else keeps the behaviour it had: this is a fix, not a re-classification.
     const busy = { getStatus: () => 429, getResponse: () => ({ code: 'AI_BUDGET_BUSY' }) };
     assert.equal(classifyLineAiGatewayFailure(busy).replyKind, 'rate_limited');
+    // Spec §9.1: an unreadable meter now says so in its own words instead of borrowing the generic
+    // provider-outage line — the terminal STATUS is unchanged, only the reply and the stored code.
     const unavailable = { getStatus: () => 429, getResponse: () => ({ code: 'AI_BUDGET_UNAVAILABLE' }) };
-    assert.equal(classifyLineAiGatewayFailure(unavailable).replyKind, 'unavailable');
+    assert.equal(classifyLineAiGatewayFailure(unavailable).replyKind, 'budget_unavailable');
+    assert.equal(classifyLineAiGatewayFailure(unavailable).status, 'provider_unavailable');
   });
 });
 

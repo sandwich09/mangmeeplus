@@ -6,7 +6,7 @@ import { RedisRateLimitService } from '../../../common/security/redis-rate-limit
 import { safeLineErrorDetails } from '../../line-ai/infrastructure/line-reply.adapter';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
-import { recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
+import { companyAiBudgetRefusal, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
 import {
   type CompanyOcrAdmissionIdentity,
   admitCompanyOcr,
@@ -57,12 +57,10 @@ export class ReceiptOcrClient {
       (monthKey) => this.extractOcrAdmitted(request, modelPolicy, monthKey, options.onAdmitted),
     );
     if (admission.allowed) return admission.value;
-    return {
-      status: 'failed',
-      errorCode: admission.reason === 'exceeded' ? 'AI_MONTHLY_BUDGET_EXCEEDED'
-        : admission.reason === 'busy' ? 'AI_BUDGET_BUSY'
-        : 'AI_BUDGET_UNAVAILABLE',
-    };
+    // Refused BEFORE `admitCompanyOcr`, so no OCR read was counted and there is nothing to release.
+    // The scope rides along so the web notice can say which ceiling closed (spec §9.1).
+    const refusal = companyAiBudgetRefusal(admission);
+    return { status: 'failed', errorCode: refusal.code, budgetScope: refusal.budgetScope };
   }
 
   private async extractOcrAdmitted(

@@ -24,6 +24,7 @@ import {
 } from '../observability/customer-journey-signal.catalog';
 import { customerJourneyFailure, observeCustomerJourney } from '../observability/customer-journey-audit';
 import { CUSTOMER_JOURNEY_FAILURE_MATRIX } from '../observability/customer-journey-failure-matrix.catalog';
+import { LINE_AI_TERMINAL_CLASSES } from '../../modules/line-ai/domain/logic/line-ai-terminal-outcome.logic';
 
 const REPO_ROOT = join(__dirname, '../../../../..');
 const DEPLOY_SCRIPT = join(REPO_ROOT, 'infra/prod-ecs-express/deploy.sh');
@@ -250,6 +251,21 @@ describe('P9-0 customer journey signal contract', () => {
       assert.ok(signal.denominator.name.length > 0 && signal.numerator.name.length > 0);
       assert.ok(signal.latencyClock.start.length > 0 && signal.latencyClock.end.length > 0);
     }
+  });
+
+  // Remediation spec §9.3 (B-06): the class list and its metric consumer must move together, or a
+  // new terminal class simply vanishes from reconciliation instead of showing up somewhere wrong.
+  it('classifies every LINE AI terminal class in the journey catalog', () => {
+    const signal = CUSTOMER_JOURNEY_SIGNALS.find((candidate) => candidate.key === 'line-ai-answer')!;
+    const classified = new Set([
+      ...signal.successTerminalValues, ...signal.neutralTerminalValues, ...signal.failureTerminalValues,
+    ]);
+    assert.deepEqual([...LINE_AI_TERMINAL_CLASSES].filter((value) => !classified.has(value)), []);
+    // A delivered money refusal is neither an outage nor a served answer.
+    const has = (values: readonly string[]) => values.includes('budget_refusal');
+    assert.equal(has(signal.neutralTerminalValues), true);
+    assert.equal(has(signal.failureTerminalValues), false);
+    assert.equal(has(signal.successTerminalValues), false);
   });
 
   it('keeps metric dimensions low-cardinality and excludes tenant/customer/document identity', () => {
