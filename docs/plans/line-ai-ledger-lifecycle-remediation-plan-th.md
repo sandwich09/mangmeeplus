@@ -64,11 +64,11 @@ Owner เลือกแยกเพดาน CHAT/OCR ภายในเพด�
 
 ### C. Intake cost — spec §10.2
 
-- [ ] ระบุ prompt/context/catalog ซ้ำที่พิสูจน์ได้จาก baseline; ไม่รื้อ router หรือเพิ่ม classifier/model call ใหม่
-- [ ] ปรับ scoped context และ cache prefix ด้วย builder เดิม โดยคง permission/provenance/clarification contracts
-- [ ] ปรับ output bounds เฉพาะเมื่อ corpus ยืนยันว่าไม่ truncate/เพิ่ม retries; dense receipts และ correction ต้องคง accuracy
-- [ ] รักษา valid documentText/preparedPlan reuse; ตัด duplicate calls เฉพาะที่พบจริง
-- [ ] เก็บผลก่อน/หลังทั้ง user task แยก text/image และ cache state; ไม่ถือว่าผ่านจาก tag intake ลดอย่างเดียว
+- [x] ระบุ prompt/context/catalog ซ้ำที่พิสูจน์ได้จาก baseline; ไม่รื้อ router หรือเพิ่ม classifier/model call ใหม่ — [benchmark §5/§9.2/§9.3](../research/line-ai-intake-cost-benchmark-2026-09-17.md): พบ fused section + ~22.6KB catalog บน image intake ที่ preparedPlan ไม่เคยถูก emit (0/5 ก่อนแก้, 0/18 หลังแก้) และ capture hints ที่ media path ทิ้ง (พิสูจน์ทุก consumer ด้วย file:line); ไม่เพิ่ม classifier หรือ model call ใหม่
+- [x] ปรับ scoped context และ cache prefix ด้วย builder เดิม โดยคง permission/provenance/clarification contracts — ใช้ `asIntakeRouterCapabilities`/`intakeRouterSystemPrompt` เดิม, ลบ capability แบบเดียวกับ advisor; image prefix 39,459 → 12,499 chars (cached tokens 10,657 → 3,504) และยังได้ cache checkpoint; permissions/valueCandidates/openClarifications/recentCapturedExpenses/documentClassification ไม่ถูกตัด
+- [x] ปรับ output bounds เฉพาะเมื่อ corpus ยืนยันว่าไม่ truncate/เพิ่ม retries; dense receipts และ correction ต้องคง accuracy — image intake output 1,188 → 587 tokens (max 4,792 → 1,451) โดยเพดาน 8,000 ไม่เปลี่ยน; truncation 0 → 0, `ocr.receipt.image-reread` 8 → 8 calls, OCR fields 10/10, 10/10, 2/2, 8/10 เท่าเดิม, correction rows ผ่านทั้งสองรอบ
+- [x] รักษา valid documentText/preparedPlan reuse; ตัด duplicate calls เฉพาะที่พบจริง — `documentText` และคำสั่ง transcription ไม่เปลี่ยน (ความยาว 152–1,276 chars ไม่หด), reuse ยังทำงาน (thermal/low-contrast จบใน 2 calls); ไม่มี duplicate call ใดถูกตัดเพิ่มในรอบนี้ — R4 (`line.plan-route`) เลื่อนออกเพราะ `intentMatch:false`
+- [x] เก็บผลก่อน/หลังทั้ง user task แยก text/image และ cache state; ไม่ถือว่าผ่านจาก tag intake ลดอย่างเดียว — [§10](../research/line-ai-intake-cost-benchmark-2026-09-17.md): THB/attempted 0.86 → 0.75, THB/successful 0.93 → 0.79, image −26%, text flat, calls/task 2.59 เท่าเดิม และตาราง per-tag แสดงว่าไม่มี tag อื่นเพิ่มเกิน THB 0.25
 
 ไฟล์หลัก: `apps/ai-gateway/src/modules/line-ai/agents/intent-router.agent.ts`, prompt/catalog builders, `line-intake-router.agent.spec.ts`, receipt controller/provider paths เฉพาะที่ผลวัดชี้ว่าจำเป็น ไม่เปลี่ยน per-company model policy
 

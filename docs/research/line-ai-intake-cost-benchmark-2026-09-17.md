@@ -1,6 +1,6 @@
-# LINE intake cost benchmark — baseline (2026-09-17)
+# LINE intake cost benchmark — baseline and after (2026-09-17)
 
-Stage 1 of งาน C ([spec §10](../specs/line-ai-ledger-lifecycle-remediation-spec-th.md), [plan §C/D1](../plans/line-ai-ledger-lifecycle-remediation-plan-th.md)).
+Stage 1 (baseline, §1–§7) and Stage 2 (implementation and re-measurement, §9–§12) of งาน C ([spec §10](../specs/line-ai-ledger-lifecycle-remediation-spec-th.md), [plan §C/D1](../plans/line-ai-ledger-lifecycle-remediation-plan-th.md)).
 This document records the frozen corpus, the measurement method, the **baseline** numbers measured
 against real Amazon Bedrock, the deterministic prompt accounting, and a ranked list of optimisation
 candidates. **No prompt, catalog, context builder, token bound or provider setting was changed to
@@ -464,3 +464,322 @@ pnpm --filter @watchdog-bms/ai-gateway exec tsx --test \
 
 The harness must never run in CI. Raw JSONL, summary JSON and the per-run Markdown table stay in the
 scratch directory; only the manifest, its spec, the harness and this document are committed.
+
+---
+
+# Stage 2 — implemented, measured
+
+Controller decision: implement **R1, R2, R3 only**. Outcome: **R2 and R3 shipped; R1 measured and
+reverted** because its premise did not hold (§9.1). R4 and R5 are recorded, not done (§11).
+
+Re-measured on the SAME frozen corpus (hash `cf9bce44…`), same model, region, capability set,
+FX 33, `--pace-ms 2000`, 2 repetitions. Run `after-2026-09-17T16-05-…` versus baseline
+`baseline-2026-09-17T15-17-59-772Z`.
+
+## 9. What changed
+
+### 9.1 R1 — cache the native tool-loop prefix: implemented, measured, REVERTED
+
+Implemented as the controller specified: the `generateWithTools` checkpoint gate was widened to weigh
+`toolConfig` + system (tools precede system in the Converse cached prefix), Bedrock's own minimum-size
+rule kept, no TTL or other provider setting touched, OpenAI untouched, and the tool specs sorted by
+name so the same tool set serialises to the same bytes.
+
+It bought nothing, because the prefix is too small to cache at all:
+
+| loop prefix | chars | ≈ tokens | clears the model's 1,024-token cache floor? |
+| --- | ---: | ---: | --- |
+| system prompt alone (`ORCHESTRATOR_NATIVE_LOOP_PROMPT`) | 2,382 (on the wire) | ~650 | no |
+| + 1 tool + `ask_user` (`expense.get_breakdown`) | 2,968 | ~804 | no |
+| + 1 tool + `ask_user` (`expense.explain_record`, the largest single tool) | 3,368 | ~913 | no |
+| + 3 tools + `ask_user` | 3,866 | ~1,048 | borderline |
+
+Measured on the wire with R1 in place: `line.loop` still reported `cacheReadInputTokens=0` and
+`cacheWriteInputTokens=0` on every call. Three ways, as asked:
+
+| `line.loop` | today (uncached) | after-cold (cache write) | after-warm (cache read) |
+| --- | --- | --- | --- |
+| measured | 36 calls, 54,326 input tokens, THB 8.70 | **never occurred** — no checkpoint materialised | **never occurred** |
+
+There is therefore no cold penalty to weigh against a warm share, and no break-even point to state:
+the change is inert, not a loss. The baseline's attribution of THB 8.70 to "an uncached prefix" was
+**wrong**, and this is the correction: the 54,326 input tokens are dominated by the **per-call user
+message** (messageText + subRequests + conversationContext + valueCandidates, 233–681 chars) plus the
+`tool_results` transcript that grows with each iteration — all of which sit AFTER the prefix and cannot
+be cached by a prefix checkpoint. Shipping an inert provider change would be dead code, so R1 was
+reverted in full (`bedrock.provider.ts`, its spec, and the `nativeToolSpecs` sort all restored to the
+merge commit). `line.loop` cost is unchanged between the two runs (THB 8.70 → 8.95, run-to-run
+variance on an untouched path).
+
+The real lever on `line.loop` is the per-call payload and the number of iterations, which is R4/R5
+territory, not a caching change.
+
+### 9.2 R2 — no fused-plan section and no tool catalog on an IMAGE intake: SHIPPED
+
+`intent-router.agent.ts` `routeIntake` now deletes `caps.fusedPlan` for a request that carries an
+attachment, in the same place and style as the existing `advisor` deletion. Consequences, all verified:
+
+- the image system prompt becomes the legacy non-fused prompt (previously shipped behaviour);
+- `cacheableContext` is not built at all, so the 22,659-char tool catalog is gone from image calls;
+- **the glossary still reaches the model**: with `fusedPlan` off, `businessGlossary` returns to the
+  DATA payload through the existing legacy branch — measured on the wire, 339 chars, image column;
+- the image system prompt is 12,499 chars, still above `CACHE_MIN_CHARS` (4,000), so the image prefix
+  **still gets its cache checkpoint** — measured cache read 3,504 tokens per warm image intake;
+- `maxTokens` for an image stays 8,000 and the `documentText` instruction is byte-identical.
+
+Empirical check the controller asked for: **0 image intakes emitted a `preparedPlan`** — 0 of 5 on the
+PRE-change code (run `prechange-preparedplan-count`, the fused section and catalog present) and 0 of
+18 after. The model already never produced one for a picture, so the section and the catalog were paid
+for and discarded on every image turn. Structurally it could never have been used either: the media
+path in `process-line-webhook.use-case.ts` never builds a `LineAiTurnRequest`, the only carrier of
+`preparedPlan`.
+
+### 9.3 R3 — stop asking an IMAGE intake for capture hints the media path discards: SHIPPED
+
+Proof first, read-only, as required. Every read of `routePlan.captureHints` reachable from
+`executeReceiptUploadInner` (`process-line-webhook.use-case.ts` 5423–6160) and from everything it
+calls:
+
+| file:line | field read |
+| --- | --- |
+| `process-line-webhook.use-case.ts:5994` | `sourceDocumentType` — and only as a fallback behind `sourceDocumentTypeFromClassification(decision.classification)` |
+| `process-line-webhook.use-case.ts:5996` | `sourceDocumentLanguage` |
+| `process-line-webhook.use-case.ts:6003` | `confidence` |
+| `process-line-webhook.use-case.ts:6006` | `expenseCategoryId` |
+| `process-line-webhook.use-case.ts:6009` | `confidence` |
+| `process-line-webhook.use-case.ts:6032` | `confidence` |
+| `process-line-webhook.use-case.ts:6112` | `confidence` |
+| `process-line-webhook.use-case.ts:6133` | `businessPurpose`, and only when the caption literally contains it |
+
+Callees checked and confirmed NOT to read capture hints: `decideLineBusinessDocument`
+(`process-line-webhook.use-case.ts:511`, reads `status`, `intent`, `documentClassification` and the OCR
+result only, and prefers `ocr.classification ?? routePlan.documentClassification`);
+`LineExpenseDraftConversationUseCase.startFromReceipt`
+(`line-expense-draft-conversation.use-case.ts:120`, takes `ocrFields` / `businessPurpose` /
+`suggestedCategoryId`); `handleSubstituteMediaArrival` (deterministic caption and awaiting-scan signals);
+`ensurePendingMedia`, `appendMediaClarification`, `createLineSignatureAsset` (no hint reads).
+
+The two full-hint consumers are on the TEXT path only and are untouched:
+`process-line-webhook.use-case.ts:4349/4442/4503` → `CaptureLineExpenseNoteUseCase` →
+`expense-document.use-case.ts:133/142/152/160/177` (`validateCaptureHints`), and
+`captureBeforeSubstituteContinuation` (`process-line-webhook.use-case.ts:6957`, called once at 3857,
+signature `event: LineTextEvent`, and it BUILDS its own `{ amount, description }` rather than reading
+the route plan's).
+
+So an image turn is now asked for `targetExpenseId`, `sourceDocumentType`, `sourceDocumentLanguage`,
+`businessPurpose`, `expenseCategoryId` and `confidence` only, and told explicitly not to return
+`vendorName`, `description`, `amount`, `expenseDate`, `vatMode`, `items` or `missingFields`.
+`targetExpenseId` is **kept** deliberately even though the media path never consumes it: it is one
+short string and the one field whose absence could silently detach an answer from its draft.
+`documentClassification`, `documentText` and the 8,000-token bound are untouched. Both shapes remain
+acceptable to `parseIntakePlan`, which builds `captureHints` key by key with every field optional, so a
+gateway and an API of different vintages interoperate in both directions.
+
+**One wording iteration was needed and is worth recording.** The first version of the new section said
+"return ONLY these, and put everything you read from the page in documentText instead". That pushed a
+longer transcription (thermal slip 398 → 441 chars), which destabilised stage 2's item reconciliation
+and fired the vision re-read: the short thermal slip went from **2 calls to 4** (THB 2.47). Removing
+that clause and replacing it with "documentText itself is UNCHANGED: transcribe the page exactly as its
+own field description above requires, no more and no less" put it back to 2 calls at THB 1.23 cold /
+0.85 warm. An output instruction that mentions `documentText` at all has to be neutral about its
+length.
+
+## 10. Before / after
+
+### 10.1 Overall, text, image
+
+| group | attempted | successful | calls/task | THB / attempted | THB / successful | routing acc. | parse fail | truncation | p50 ms | p90 ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| overall before | 82 | 76 | 2.59 | 0.86 | 0.93 | 95.1% | 1 | 0 | 7,300 | 24,436 |
+| overall after | 82 | **77** | 2.59 | **0.75 (−13.2%)** | **0.79 (−14.3%)** | **96.3%** | **0** | 0 | 7,432 | 24,798 |
+| text before | 64 | 60 | 2.38 | 0.60 | 0.64 | 93.8% | 1 | 0 | 6,529 | 18,895 |
+| text after | 64 | **61** | 2.38 | 0.59 (−2.6%) | 0.62 (−4.2%) | **95.3%** | **0** | 0 | 6,735 | 19,678 |
+| image before | 18 | 16 | 3.33 | 1.77 | 1.99 | 100% | 0 | 0 | 22,684 | 84,796 |
+| image after | 18 | 16 | 3.33 | **1.31 (−26.0%)** | **1.47 (−26.0%)** | 100% | 0 | 0 | **18,310 (−19%)** | **68,160 (−20%)** |
+
+Run total THB 70.47 → **61.19**. Calls per task identical at every level. Zero failed provider calls in
+both runs. The text path's ±3% is run-to-run variance on a byte-identical prompt, not an effect: the
+per-call warm text intake is THB 0.312 → 0.315.
+
+### 10.2 Cost by component (whole run)
+
+| component | before | after |
+| --- | ---: | ---: |
+| output | 36.34 | **31.12** |
+| input | 14.05 | 14.32 |
+| cache read | 12.88 | 11.87 |
+| cache write | 7.14 | **3.88** |
+
+Tokens: output 73,414 → 62,861; cache write 57,695 → 31,376; cache read 1,300,961 → 1,198,526.
+
+### 10.3 Per usage tag — nothing moved to another tag
+
+| tag | calls | THB before | THB after | out tokens | cache write tokens |
+| --- | ---: | ---: | ---: | --- | --- |
+| `line.intake-route` | 82 → 82 | 37.56 | **28.31 (−24.6%)** | 40,092 → 29,528 | 33,327 → 7,008 |
+| `ocr.receipt.extract` | 24 → 24 | 11.68 | 11.47 | 15,951 → 15,578 | 11,560 → 11,560 |
+| `line.loop` | 36 → 36 | 8.70 | 8.95 | 6,707 → 7,203 | 0 → 0 |
+| `line.plan-route` | 28 → 28 | 5.35 | 5.36 | 3,317 → 3,316 | 8,987 → 8,987 |
+| `ocr.receipt.image-reread` | 8 → 8 | 1.97 | 1.97 | 2,783 → 2,800 | 0 → 0 |
+| `ocr.receipt.image-read` | 10 → 10 | 1.97 | 1.95 | 2,012 → 1,969 | 0 → 0 |
+| `line.critic` | 14 → 14 | 1.33 | 1.31 | 1,192 → 1,185 | 0 → 0 |
+| `line.compose` | 8 → 8 | 1.32 | 1.28 | 1,214 → 1,135 | 0 → 0 |
+| `line.casual` | 2 → 2 | 0.59 | 0.59 | 146 → 147 | 3,821 → 3,821 |
+
+Every saving lands in `line.intake-route`. Call counts are identical tag by tag, and no other tag moved
+by more than THB 0.25. C-02's "not merely moving cost to another tag" is satisfied by construction here.
+
+### 10.4 Intake per call, cold and warm
+
+| intake call | n | input | output | cache read | cache write | THB / call |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| image cold before | 2 | 703 | 1,186 | 0 | 10,657 | 1.975 |
+| image cold after | 2 | 841 | **725** | 0 | **3,504** | **0.875 (−55.7%)** |
+| image warm before | 16 | 706 | 1,189 | 10,657 | 0 | 0.764 |
+| image warm after | 16 | 844 | **570** | **3,504** | 0 | **0.399 (−47.8%)** |
+| text warm before | 63 | 494 | 291 | 12,013 | 0 | 0.312 |
+| text warm after | 64 | 494 | 296 | 12,013 | 0 | 0.315 (flat) |
+| text cold before | 1 | 447 | 364 | 0 | 12,013 | 1.710 |
+| text cold after | 0 | — | — | — | — | not sampled |
+
+The image prefix fell from 39,459 chars / 10,657 cached tokens to 12,499 chars / 3,504 cached tokens
+(−67%), and image intake output from a mean of 1,188 tokens (max 4,792) to **587 (max 1,451)**. Those
+two numbers are R2 and R3 respectively.
+
+Weighted at Production's observed intake mix (69% warm / 31% cold, §8.2): an image intake goes from
+`0.69×0.764 + 0.31×1.975 = THB 1.14` to `0.69×0.399 + 0.31×0.875 = THB 0.55` — **−52%**. Text intake is
+unchanged at either mix.
+
+### 10.5 Attribution per proposal
+
+The three changes touch disjoint tags, so the full run attributes them without extra spend:
+
+| proposal | where it shows | measured effect |
+| --- | ---: | --- |
+| R1 | `line.loop` cache counters | **none** — prefix below the model's cache floor; reverted (§9.1) |
+| R2 | image `line.intake-route` cache write / read tokens | 10,657 → 3,504 cached prefix tokens per call: THB **−1.10** cold, **−0.07** warm |
+| R3 | image `line.intake-route` output tokens | 1,188 → 587 mean output tokens per call: THB **−0.30** per image intake |
+| R2+R3 together | image tasks | THB/attempted 1.77 → 1.31, THB/successful 1.99 → 1.47, latency p50 −19% |
+
+An isolated R2-only run was not purchased: R2 moves only cache tokens and R3 only output tokens, and
+both are reported separately per call above, so the split is already measured rather than estimated.
+
+### 10.6 Quality, task by task, everywhere anything changed
+
+Aggregate: successful 76 → 77, routing accuracy 95.1% → 96.3%, parse failures 1 → 0, truncations 0 → 0,
+provider errors 0 → 0, calls per task unchanged. OCR field accuracy identical:
+`grandTotalAmount` 10/10 → 10/10, `expenseDate` 10/10 → 10/10, `vatAmount` 2/2 → 2/2,
+`vendorName` 8/10 → 8/10.
+
+**Nothing flipped from success to failure.** Two rows changed verdict, both on the byte-identical text
+prompt, so neither is attributable to this change:
+
+| task | pass | before | after | note |
+| --- | ---: | --- | --- | --- |
+| `text-capture-amount-only` | 1 | FAIL — routed `EXPENSE_DOCUMENT_CAPTURE` | **PASS** — routed `CLARIFY` | improvement; text prompt unchanged, so this is model variance on the known baseline weakness |
+| `text-capture-amount-only` | 2 | FAIL — routed `EXPENSE_DOCUMENT_CAPTURE` | FAIL — same | unchanged |
+| `text-out-of-scope-product-advice` | 1 | FAIL — `ROUTER_JSON_PARSE_FAILED` | FAIL — routed `ADVISOR_CONVERSATION` | still a failure, different shape; the parse failure disappeared |
+| `text-out-of-scope-product-advice` | 2 | FAIL — routed `ADVISOR_CONVERSATION` | FAIL — same | unchanged |
+| `image-vat-tax-invoice` | 1, 2 | FAIL — vendor "สมมติ**ช**ัพพลาย" | FAIL — same ซ/ช confusion | unchanged; total, VAT and date exact in both runs |
+
+`documentText` lengths per image row, before → after: 398→430, 1,060→1,060, 495→630, 273→308,
+157→152, 278→282 (pass 1) and 424→413, 1,166→1,276, 495→630, 270→308, 157→152, 279→282 (pass 2). No
+systematic shrinkage — the one 5-char drop is the handwritten bill, whose fields all still read
+correctly. C-03 (no truncation, no extra retries, transcription reuse still valid) holds: truncations
+0 → 0, `ocr.receipt.image-reread` 8 → 8 calls, `ocr.receipt.image-read` 10 → 10 calls.
+
+## 11. Found, not changed
+
+Recorded for a later decision, with file:line, exactly as instructed:
+
+- **R4 — reuse the intake route instead of a second `line.plan-route` call.** Worth THB 5.35 / 7.6% of
+  the corpus and ~3s per business read, but `maybeShadowComparePreparedPlan`
+  (`orchestrator.agent.ts:788`) already logs `intentMatch:false` on real turns, so adopting the fused
+  plan can change which tool runs. Needs its own evidence; not in this delivery.
+- **R5 — widen `LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES`.** Measured **THB 0.62 per business-read turn**
+  (THB 0.93 full-agentic vs THB 0.31 prepared, 28 of 34 reads missed the lane) and 4.1 calls → 1. Each
+  new family is a compiled deterministic answer replacing a model-composed one: a product behaviour
+  change for the owner to decide, not a prompt trim.
+- **`enabledFeatures` in the intake payload is always `[]`.** `tryRouteIntake`
+  (`process-line-webhook.use-case.ts:1732`) never sets it, while the system prompt
+  (`intent-router.agent.ts`, "Use the feature/tool catalog from the user payload as the source of
+  truth") points the model at it, and the real catalog rides the cacheable block under the same key
+  name. Costs 2 chars; it is a wording/contract contradiction, not a saving.
+- **Intake sees 56 tools, `line.plan-route` sees 61.** `LineAiInternalController.lineIntakeRoute`
+  (`line-ai-internal.controller.ts:143`) constructs `new IntentRouterAgent(provider)` without
+  `draftEditEnabled`, while `OrchestratorAgent.run` (`orchestrator.agent.ts:469`) passes
+  `this.config.lineAiDraftEditEnabled` (true in production). A fused prepared plan therefore can never
+  propose a draft-edit tool. Fixing it would GROW the text intake prefix by ~2,885 chars, so it is a
+  correctness question, not a cost one. (After R2 this no longer affects image calls at all — they
+  carry no catalog.)
+- **Three baseline quality misses, unchanged and not addressed by this work:** a bare
+  "350 บาท" routed to capture against the prompt's own amount-AND-purpose rule
+  (`intent-router.agent.ts`, EXPENSE_DOCUMENT_CAPTURE route meaning); "ช่วงนี้ควรขายอะไรดีคะ" answered
+  as social advice rather than `UNSUPPORTED` (the plan-route prompt names this exact phrase as
+  `unsupported_module` at `intent-router.agent.ts:78`); and the ซ/ช vendor transcription on the
+  synthetic tax invoice.
+- **`line.loop`, `line.critic`, `line.compose`, `ocr.receipt.image-read` and
+  `ocr.receipt.image-reread` are all completely uncached** (zero cache read and zero cache write across
+  both runs, THB 14.5 combined). For the loop the cause is now measured (§9.1): the prefix is below the
+  model's cache floor. The others send a large system prompt per call with no checkpoint —
+  `ocr.receipt.extract`'s 19,889-char prompt DOES cache, the 2,192-char re-read prompt does not. Not
+  investigated further in this delivery.
+
+## 12. Stage 2 verification and commands
+
+```sh
+# specs (all green): corpus integrity, both intake-router suites, provider, all three orchestrator
+# suites, prepared-plan security, the internal controller
+cd <worktree>
+pnpm exec tsx --test scripts/line-ai-intake-cost.corpus.spec.ts
+pnpm --filter @watchdog-bms/ai-gateway exec tsx --test \
+  src/modules/line-ai/agents/line-intake-router.agent.spec.ts \
+  src/modules/line-ai/agents/intent-router.agent.spec.ts \
+  src/modules/line-ai/infrastructure/provider/bedrock.provider.spec.ts \
+  src/modules/line-ai/infrastructure/provider/openai.provider.spec.ts \
+  src/modules/line-ai/agents/orchestrator.agent.spec.ts \
+  src/modules/line-ai/agents/orchestrator-native-loop.agent.spec.ts \
+  src/modules/line-ai/agents/orchestrator-model-loop.agent.spec.ts \
+  src/modules/line-ai/agents/prepared-simple-read-security.spec.ts \
+  src/modules/line-ai/presentation/http/line-ai-internal.controller.spec.ts
+
+# typecheck behind the machine-wide mkdir mutex
+until mkdir /tmp/mangmee-heavy.lock 2>/dev/null; do sleep 15; done
+(cd <worktree> && pnpm --filter @watchdog-bms/ai-gateway exec tsc --noEmit); rc=$?
+rmdir /tmp/mangmee-heavy.lock; echo rc=$rc
+
+git diff --check
+
+# the after-run (THB 61.19)
+cd <worktree>/apps/ai-gateway
+MODEL_PROVIDER=bedrock AWS_PROFILE=watchdog-bedrock AWS_SDK_LOAD_CONFIG=1 \
+  BEDROCK_REGION=ap-southeast-1 BEDROCK_MODEL_ID=global.anthropic.claude-sonnet-4-6 \
+  AI_PROMPT_LOGGING_ENABLED=false \
+  pnpm exec tsx ../../scripts/line-ai-intake-cost-benchmark.ts \
+    --label after --repetitions 2 --max-thb 65 --thb-per-usd 33 --pace-ms 2000 \
+    --out <scratch>/after --ledger <scratch>/spend-ledger.jsonl
+
+# the pre-change preparedPlan count (5 image tasks, R2/R3 temporarily reverted)
+pnpm exec tsx ../../scripts/line-ai-intake-cost-benchmark.ts \
+  --label prechange-preparedplan-count --repetitions 1 --max-thb 12 --pace-ms 2000 \
+  --only image-thermal-short,image-vat-tax-invoice,image-check-bill-quantity-only,image-product-photo,image-signature-crop \
+  --out <scratch>/prechange --ledger <scratch>/spend-ledger.jsonl
+```
+
+Harness change in Stage 2: two boolean telemetry fields per task record, `preparedPlanPresent` and
+`advisorAnswerPresent`, read off the parsed plan AFTER the call. Nothing about the request changed, and
+the corpus manifest and its hash are untouched (`cf9bce44…` in both runs).
+
+Spend: Stage 1 THB 92.58, Stage 2 THB 84.83, **phase total THB 177.41** of the THB 250 ceiling.
+
+## 13. Stage 2 limitations
+
+- Every §7 limitation still applies (synthetic pages, stubbed ERP tools, n = 2, pacing, region).
+- The after-run sampled **no cold text intake** (0 of 64) and only 2 cold image intakes, so the cold
+  figures rest on 2 samples per side. The prefix-token counts they are derived from are exact.
+- R1 was measured on a corpus whose business reads offer 1–3 tools. A deployment that offers many more
+  tools per turn could push the loop prefix over the model's cache floor and make R1 pay; the numbers
+  in §9.1 are the ones to re-check before revisiting it.
+- The text-path deltas in §10.1 (±3%) and the two verdict flips in §10.6 are model variance on a
+  byte-identical prompt. Two repetitions cannot separate a small real effect from that noise — but the
+  prompt bytes are provably unchanged, which is the stronger argument.

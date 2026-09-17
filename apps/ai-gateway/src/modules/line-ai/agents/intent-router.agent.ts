@@ -234,16 +234,76 @@ An identity question ("คุณเป็นใคร", "ชื่ออะไ�
 A request to be TAUGHT how to use the assistant or the system — how to start, how to use it, what it can do (สอน, วิธีใช้, ใช้งานยังไง, เริ่มยังไง, ทำอะไรได้บ้าง, มือใหม่, "teach me", "how do I use", "how to start") — is NEVER ADVISOR_CONVERSATION: return "intent": "UNSUPPORTED" with NO advisorAnswer (and, when the fused pre-plan section is offered, its zero-tool capability_help plan exactly as that section describes); the server renders the walkthrough itself, scoped to the user's features and permissions.
 "answerText" is 1–3 short sentences and never a list, numbered steps, or a tutorial.`;
 
+/** The capture-hint schema a TEXT turn is asked for. Byte-identical to the pre-2026-09-17 block:
+ *  the API's text capture path feeds every one of these fields to `CaptureLineExpenseNoteUseCase`
+ *  (`process-line-webhook.use-case.ts` 4349/4442, `expense-document.use-case.ts` `validateCaptureHints`),
+ *  so nothing here may be trimmed. */
+const TEXT_CAPTURE_HINTS_SECTION = `captureHints (EXPENSE_DOCUMENT_CAPTURE or EXPENSE_DRAFT_CONTINUATION only; omit unknown fields, never invent values):
+{
+  "targetExpenseId": "EXPENSE_DRAFT_CONTINUATION only; id copied from activeExpenseDrafts",
+  "sourceDocumentType": "RECEIPT"|"TAX_INVOICE"|"TRANSFER_SLIP"|"HANDWRITTEN_CASH_BILL"|"SUPPLIER_BILL"|"MARKETPLACE_ORDER_SCREENSHOT"|"EXPENSE_NOTE_TEXT"|"OTHER_EXPENSE_DOCUMENT"|"NEEDS_REVIEW",
+  "sourceDocumentLanguage": "BCP-47 hint such as th, en, zh",
+  "vendorName": string, "description": string, "businessPurpose": string, "expenseDate": "YYYY-MM-DD",
+  "amount": "total amount as plain decimal string", "vatMode": "NO_VAT"|"VAT_INCLUDED"|"VAT_EXCLUDED"|"EXEMPT"|"NEEDS_REVIEW",
+  "expenseCategoryId": "id chosen ONLY from activeCategories in the payload; omit if none clearly fits",
+  "items": [{
+    "itemRef": "existing I01/I02 from activeExpenseDrafts when answering that item",
+    "sourceText": "exact short span from this message naming the item",
+    "description": string, "quantity": "plain positive decimal", "unit": string,
+    "unitPrice": "plain decimal", "totalAmount": "plain decimal",
+    "expenseCategoryId": "active category id only",
+    "accountingClass": "OPEX"|"ASSET"|"INVENTORY"|"LIABILITY"|"REVENUE"|"UNKNOWN",
+    "itemBehavior": "STOCKABLE"|"NON_STOCK"|"SERVICE"|"UNKNOWN",
+    "taxTreatment": "one short advisory label", "confidence": number, "missingFields": []
+  }],
+  "confidence": number 0..1, "missingFields": string[]
+}
+Preserve EVERY item the user names, even when quantity or price is missing. Never collapse different items into one description and never invent quantity 1 or price 0. For "ซื้อกระดาษ A4 กับโน้ตบุ๊ก ... โน้ตบุ๊ก 1 เครื่อง 25000" return two items and leave the paper quantity/price absent.`;
+
+/** The capture-hint schema an IMAGE turn is asked for.
+ *
+ *  A turn carrying an attachment goes down `executeReceiptUploadInner`, and every read of
+ *  `routePlan.captureHints` reachable from there consumes exactly five fields:
+ *  `sourceDocumentType` (5994, itself only a fallback behind the OCR classification),
+ *  `sourceDocumentLanguage` (5996), `confidence` (6003/6009/6032/6112), `expenseCategoryId` (6006)
+ *  and `businessPurpose` (6133, and only when the caption literally contains it). Everything else —
+ *  vendor, description, amount, expenseDate, vatMode and the whole `items[]` array — is discarded,
+ *  because `ocr.receipt.extract` re-derives those from `documentText` and `decideLineBusinessDocument`
+ *  takes `ocr.classification ?? routePlan.documentClassification`: OCR wins whenever it ran. The model
+ *  was therefore being paid to itemise the same receipt twice, and image intake output (mean 1,189
+ *  tokens, max 4,792 on a 22-line bill) is ~76% of a warm image intake's cost.
+ *
+ *  `targetExpenseId` is kept deliberately: it is one short string, and it is the one field whose
+ *  absence could silently detach an answer from the draft it belongs to.
+ *  `documentText`, `documentClassification` and the 8,000-token image budget are UNCHANGED — this
+ *  removes duplicated extraction, never transcription. Every field stays optional at the parser
+ *  (`parseIntakePlan` builds captureHints key by key), so an older or newer API on the other side of
+ *  the wire keeps working either way. */
+const IMAGE_CAPTURE_HINTS_SECTION = `captureHints (EXPENSE_DOCUMENT_CAPTURE or EXPENSE_DRAFT_CONTINUATION only; omit unknown fields, never invent values). This turn carries a document, so the page's own values are read from documentText downstream — return ONLY these fields here:
+{
+  "targetExpenseId": "EXPENSE_DRAFT_CONTINUATION only; id copied from activeExpenseDrafts",
+  "sourceDocumentType": "RECEIPT"|"TAX_INVOICE"|"TRANSFER_SLIP"|"HANDWRITTEN_CASH_BILL"|"SUPPLIER_BILL"|"MARKETPLACE_ORDER_SCREENSHOT"|"EXPENSE_NOTE_TEXT"|"OTHER_EXPENSE_DOCUMENT"|"NEEDS_REVIEW",
+  "sourceDocumentLanguage": "BCP-47 hint such as th, en, zh",
+  "businessPurpose": "why the money was spent, ONLY when the message text says so",
+  "expenseCategoryId": "id chosen ONLY from activeCategories in the payload; omit if none clearly fits",
+  "confidence": number 0..1
+}
+Do NOT return vendorName, description, amount, expenseDate, vatMode, items or missingFields for a document turn — they are read from documentText, so repeating them here only makes the answer longer. documentText itself is UNCHANGED: transcribe the page exactly as its own field description above requires, no more and no less.`;
+
 /** Trusted, bounded capabilities the API turns on per request. Default (all false) MUST reproduce the
  *  exact legacy prompt byte-for-byte — no fused/substitute/advisor sections, no cost/routing change. */
 export type IntakeRouterCapabilities = { fusedPlan?: boolean; substituteSemantic?: boolean; reimbursementSemantic?: boolean; advisor?: boolean };
 
 /**
- * Build the LINE Intake Router system prompt. With no capabilities the result is the byte-exact legacy
- * prompt; each capability appends ONLY its own section (fused prepared plan / substitute semantics /
- * expense-vs-reimbursement semantics).
+ * Build the LINE Intake Router system prompt. With no capabilities and no image the result is the
+ * byte-exact legacy prompt; each capability appends ONLY its own section (fused prepared plan /
+ * substitute semantics / expense-vs-reimbursement semantics).
+ *
+ * `hasImage` swaps ONLY the captureHints schema for the reduced document one (see
+ * {@link IMAGE_CAPTURE_HINTS_SECTION}). It defaults to false, so every text call — and every existing
+ * caller and spec that passes one argument — keeps the exact prompt it had before.
  */
-export function intakeRouterSystemPrompt(caps: IntakeRouterCapabilities = {}): string {
+export function intakeRouterSystemPrompt(caps: IntakeRouterCapabilities = {}, hasImage = false): string {
   const substituteEnum = caps.substituteSemantic ? ' | "SUBSTITUTE_RECEIPT_CONTINUATION"' : '';
   const reimbursementEnum = caps.reimbursementSemantic ? ' | "REIMBURSEMENT_REQUEST_START"' : '';
   const advisorEnum = caps.advisor ? ' | "ADVISOR_CONVERSATION"' : '';
@@ -300,27 +360,7 @@ For EXPENSE_DOCUMENT_CAPTURE or BUSINESS_DOCUMENT_REFERENCE images, include docu
 missingRequiredSignals and contradictionSignals accept ONLY the codes listed above — never free text, never a code you invent. Pick the closest listed code and leave the array empty when none fits; put any wording of your own in evidenceSignals instead. A card/EDC payment slip that proves payment but shows no itemised goods is PAYMENT_EVIDENCE_ONLY.
 Classification is advisory. Quantity/items without a transaction total are ORDER_OR_CHECK_BILL, never RECEIPT. Quotations, appointments, bookings, reservations, and non-financial images are never expense receipts because they show an amount.
 A ledger, notebook page, phone screenshot, or handwritten summary containing multiple independent expense transactions or per-row totals is MULTI_DOCUMENT with MULTIPLE_DOCUMENTS even when it is physically one page. Route it as EXPENSE_DOCUMENT_CAPTURE for safe clarification; never collapse its grand total into one expense.
-captureHints (EXPENSE_DOCUMENT_CAPTURE or EXPENSE_DRAFT_CONTINUATION only; omit unknown fields, never invent values):
-{
-  "targetExpenseId": "EXPENSE_DRAFT_CONTINUATION only; id copied from activeExpenseDrafts",
-  "sourceDocumentType": "RECEIPT"|"TAX_INVOICE"|"TRANSFER_SLIP"|"HANDWRITTEN_CASH_BILL"|"SUPPLIER_BILL"|"MARKETPLACE_ORDER_SCREENSHOT"|"EXPENSE_NOTE_TEXT"|"OTHER_EXPENSE_DOCUMENT"|"NEEDS_REVIEW",
-  "sourceDocumentLanguage": "BCP-47 hint such as th, en, zh",
-  "vendorName": string, "description": string, "businessPurpose": string, "expenseDate": "YYYY-MM-DD",
-  "amount": "total amount as plain decimal string", "vatMode": "NO_VAT"|"VAT_INCLUDED"|"VAT_EXCLUDED"|"EXEMPT"|"NEEDS_REVIEW",
-  "expenseCategoryId": "id chosen ONLY from activeCategories in the payload; omit if none clearly fits",
-  "items": [{
-    "itemRef": "existing I01/I02 from activeExpenseDrafts when answering that item",
-    "sourceText": "exact short span from this message naming the item",
-    "description": string, "quantity": "plain positive decimal", "unit": string,
-    "unitPrice": "plain decimal", "totalAmount": "plain decimal",
-    "expenseCategoryId": "active category id only",
-    "accountingClass": "OPEX"|"ASSET"|"INVENTORY"|"LIABILITY"|"REVENUE"|"UNKNOWN",
-    "itemBehavior": "STOCKABLE"|"NON_STOCK"|"SERVICE"|"UNKNOWN",
-    "taxTreatment": "one short advisory label", "confidence": number, "missingFields": []
-  }],
-  "confidence": number 0..1, "missingFields": string[]
-}
-Preserve EVERY item the user names, even when quantity or price is missing. Never collapse different items into one description and never invent quantity 1 or price 0. For "ซื้อกระดาษ A4 กับโน้ตบุ๊ก ... โน้ตบุ๊ก 1 เครื่อง 25000" return two items and leave the paper quantity/price absent.
+${hasImage ? IMAGE_CAPTURE_HINTS_SECTION : TEXT_CAPTURE_HINTS_SECTION}
 correctionHints (EXPENSE_CAPTURE_CORRECTION only; omit unknown fields, never invent values):
 {
   "targetExpenseId": "id copied from recentCapturedExpenses — omit when the message does not identify one",
@@ -389,7 +429,21 @@ export class IntentRouterAgent {
     // so a turn carrying one is never even OFFERED the route. Deleting the capability here — not just
     // instructing the prompt — makes the prompt, the parser and the cost identical to advisor-off, so a
     // model that ignored the instruction still cannot return ADVISOR_CONVERSATION for a picture.
-    if (caps.advisor && (request.attachments?.length ?? 0) > 0) delete caps.advisor;
+    const hasAttachment = (request.attachments?.length ?? 0) > 0;
+    if (caps.advisor && hasAttachment) delete caps.advisor;
+    // Same deletion, same reason, for the fused prepared plan (cost benchmark 2026-09-17 §6 R2).
+    // A prepared plan produced on an image turn can NEVER be consumed: the media path in
+    // `process-line-webhook.use-case.ts` (`executeReceiptUploadInner`) answers deterministically or
+    // calls receipt OCR — it never builds a `LineAiTurnRequest`, which is the only carrier of
+    // `preparedPlan`. The prompt already ordered the model to omit it "whenever ... an attachment",
+    // so this deletes a section and a ~22.6 KB tool catalog that were being paid for and thrown away:
+    // 7,100 fewer cached prefix tokens per image intake (THB 0.07 warm, THB 0.88 cold, measured).
+    // Deleting the capability — not just instructing the prompt — also means the parser never even
+    // looks for one, exactly like the advisor deletion above. The image prompt becomes the legacy
+    // non-fused prompt, which puts `businessGlossary` back in the DATA payload (see `payload` below)
+    // so the model still receives it, and the 13,121-char system prompt still clears CACHE_MIN_CHARS,
+    // so the image prefix still gets its cache checkpoint.
+    if (caps.fusedPlan && hasAttachment) delete caps.fusedPlan;
 
     const payload = {
       messageText: request.messageText,
@@ -413,7 +467,7 @@ export class IntentRouterAgent {
     };
 
     const result = await this.provider.generateText({
-      systemPrompt: intakeRouterSystemPrompt(caps),
+      systemPrompt: intakeRouterSystemPrompt(caps, hasAttachment),
       // The ~21KB glossary + tool catalog is a cost/latency price paid ONLY when fused planning needs it.
       ...(caps.fusedPlan ? { cacheableContext: JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog(this.draftEditEnabled) }) } : {}),
       messages: [{ role: 'user', text: JSON.stringify(payload) }],

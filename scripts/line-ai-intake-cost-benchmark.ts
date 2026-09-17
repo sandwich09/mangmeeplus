@@ -391,6 +391,10 @@ type TaskRecord = {
   success: boolean;
   successReasons: string[];
   routedIntent?: string;
+  /** Telemetry only (Stage 2): whether the intake answer carried a fused prepared plan / advisor
+   *  draft. Read off the parsed plan AFTER the call — it changes nothing that is sent to the model. */
+  preparedPlanPresent: boolean;
+  advisorAnswerPresent: boolean;
   expectedIntents: string[];
   routingCorrect: boolean;
   permissionOutcome: 'allowed' | 'denied';
@@ -624,6 +628,8 @@ function finishRecord(input: {
     success: reasons.length === 0 && outcome === 'completed',
     successReasons: reasons,
     ...(plan.status === 'ROUTED' ? { routedIntent: plan.intent } : {}),
+    preparedPlanPresent: !!plan.preparedPlan,
+    advisorAnswerPresent: !!plan.advisorAnswer,
     expectedIntents: [...task.expect.intents],
     routingCorrect,
     permissionOutcome: task.expect.permissionOutcome,
@@ -994,6 +1000,7 @@ function budgetStoppedRecord(task: IntakeCostTask, pass: number, runId: string):
   return {
     runId, label: OPTS.label, pass, taskId: task.id, kind: task.kind, coverage: task.coverage,
     outcome: 'budget_stopped', success: false, successReasons: ['run stopped on the spend guard'],
+    preparedPlanPresent: false, advisorAnswerPresent: false,
     expectedIntents: [...task.expect.intents], routingCorrect: false,
     permissionOutcome: task.expect.permissionOutcome, followOn: 'none',
     latencyMs: 0, wallClockMs: 0, calls: 0, costSatang: 0, usage: [], callShapes: [],
