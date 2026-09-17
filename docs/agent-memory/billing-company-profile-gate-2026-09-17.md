@@ -1,6 +1,6 @@
 # Agent Memory: Billing company profile prerequisite
 
-Status: Implemented; local regression and integration review in progress before exact-head CI and merges to main + develop.
+Status: Implemented; local acceptance passed; PRs #610 (main) and #611 (develop) awaiting corrected exact-head CI.
 Owner: thawatchai + Codex
 Scope: Approved purchase prerequisite popup, safe company-form return, billing document name/address and surrounding impact; deliver earlier LINE summary, signup discovery and company TSIC/admin work together.
 Decisions:
@@ -17,6 +17,7 @@ Artifacts:
 Verification:
 - Real Nest HTTP + PostgreSQL + Next/Chromium at 390/1280 px: missing popup → expired-owner form save → original annual PRO/LINE selection → registered-name/address review → explicit Stripe handoff PASS; no checkout before confirmation. Provider simulation only, no real charge. Evidence `/tmp/company-tsic-check/billing-browser/`.
 - API focused suite: 300 passed, none skipped (auth, signup, TSIC and admin). Profile timeout recovery unit: 1 passed. Web focused suite: 151 passed, none skipped. LINE summary/security suite: 218 passed, none skipped. Shared master/profile: 2 passed.
-- All migrations from empty task-owned PostgreSQL database PASS; Prisma generate, contracts/config/API build PASS. Monorepo typecheck and full billing surrounding flows running; results to be recorded before handoff.
+- All migrations from empty task-owned PostgreSQL database PASS; Prisma generate, contracts/config/API build PASS. Monorepo typecheck PASS. Actual PostgreSQL/HTTP customer journeys PASS (90 scenarios: initial/repeat/restart/upgrade/downgrade/capacity/history/tenant/owner/provider recovery). Offer matrix PASS for all 12 combinations of paid tier, month/year and web/LINE.
 - Official Stripe references checked 2026-09-17: https://docs.stripe.com/invoicing/customer and https://docs.stripe.com/api/customers/create. Existing pinned API version retained.
-Next: Finish surrounding regressions, reconcile latest main/develop, exact-head PR CI, then merge both and record result. No UAT/Production operation in scope.
+- Integrated latest main `f6dda9a3` cleanly. Initial PR CI `35249736508` / `35249759035` stopped before fan-out because adding focused tests changed the pinned CI file. Regenerated exact local maintenance pins with the repository script; no release workflow dispatched. Company profile remounts per company to prevent stale form state crossing a switch.
+Next: Exact-head CI for PRs #610/#611, then merge both and record result. No UAT/Production operation in scope.
