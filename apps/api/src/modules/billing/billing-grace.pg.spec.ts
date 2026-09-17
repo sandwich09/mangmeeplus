@@ -99,9 +99,24 @@ test('renewal grace with real PostgreSQL and simulated Stripe (not native channe
     const lifecycle = { execute: async () => { throw new Error('Unexpected lifecycle mutation'); } } as unknown as ConstructorParameters<typeof BillingReconcilerService>[4];
     const reconciler = new BillingReconcilerService(prisma, {} as ConstructorParameters<typeof BillingReconcilerService>[1], stripe, billing, lifecycle);
     return { companyId, accountId: account.id, end, subscription, renewal, reconciler, snapshot, lines, initialInvoice, stripe,
+      evidence: (proposed: BillingSnapshot, bill = initialInvoice) => paidInvoiceEvidence(bill, subscription, [lines.get(initialInvoice.id)!],
+        [payment(initialInvoice.id)], intent(initialInvoice.id), charge(initialInvoice.id), proposed, false),
       run: () => reconciler.reconcileAccount(account.id), deletes: () => deleteCalls, loseResponse: () => { loseDeleteResponse = true; } };
   }
   try {
+    await t.test('trial carryover requires verified paid time while old invoice hashes remain compatible', async () => {
+      const f = await fixture();
+      const snapshot = { ...f.snapshot, trialCarryover: { units: 9, trialEndsAt: new Date().toISOString() } };
+      const start = f.lines.get(f.initialInvoice.id)!.period.start;
+      const original = f.evidence(f.snapshot);
+      for (const paidAt of [undefined, '123', start - 1, Math.floor(Date.now() / 1000) + 60]) {
+        assert.throws(() => f.evidence(snapshot, { ...f.initialInvoice, status_transitions: { paid_at: paidAt } }));
+      }
+      const invoice = { ...f.initialInvoice, status_transitions: { paid_at: start } };
+      assert.equal(f.evidence(snapshot, invoice).paidAt?.getTime(), start * 1000);
+      assert.equal(f.evidence(f.snapshot, invoice).evidenceHash, original.evidenceHash);
+      assert.equal(f.evidence(snapshot, { ...invoice, billing_reason: 'subscription_cycle' }).paidAt, undefined);
+    });
     await t.test('paid renewal fulfills only the original matching request; replay leaves the next request open', async () => {
       const f = await fixture();
       const request = await client.packageChangeRequest.create({data:{companyId:f.companyId,requestedByUserId:'synthetic-owner',
@@ -252,15 +267,17 @@ test('renewal grace with real PostgreSQL and simulated Stripe (not native channe
       assert.equal((await client.billingAccount.findUniqueOrThrow({ where: { id: f.accountId } })).graceEndsAt, null);
       assert.equal(f.deletes(), 0);
     });
-    await t.test('grace and recovery preserve the fixed expiry of Admin-granted receipts', async () => {
+    await t.test('grace and recovery preserve the fixed expiry of Admin and trial receipts', async () => {
+      for (const kind of ['ADMIN_ADJUSTMENT', 'TRIAL_CARRYOVER']) {
       const f=await fixture(),end=new Date(f.end*1000),start=new Date(end.getTime()-86400000);
       const gift=await client.billingReceiptGrant.create({data:{companyId:f.companyId,billingAccountId:f.accountId,sourceKey:'synthetic-admin-grace',sourceHash:'synthetic-admin-proof',
-        kind:'ADMIN_ADJUSTMENT',units:3,availableAt:start,serviceStart:start,serviceEnd:end,expiresAt:end,policyRevisionId:'ADMIN_APPROVED'}});
+        kind,units:3,availableAt:start,serviceStart:start,serviceEnd:end,expiresAt:end,policyRevisionId:'TEST_ONLY'}});
       await f.run();
       assert.equal((await client.billingReceiptGrant.findUniqueOrThrow({where:{id:gift.id}})).expiresAt.toISOString(),end.toISOString());
       Object.assign(f.renewal,{status:'paid',amount_paid:49900,amount_remaining:0});f.subscription.status='active';await f.run();
       assert.equal((await client.billingReceiptGrant.findUniqueOrThrow({where:{id:gift.id}})).expiresAt.toISOString(),end.toISOString());
       assert.equal((await client.billingReceiptGrant.findUniqueOrThrow({where:{id:gift.id}})).units,3);
+      }
     });
 
     await t.test('admin hold, changed term, and unrelated invoice cannot unlock or extend a company', async () => {

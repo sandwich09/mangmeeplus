@@ -6,6 +6,7 @@ export const billingControl = 'inline-flex min-h-11 items-center justify-center 
 
 export const billingField = 'mangmee-input mt-2 block min-h-11 w-full min-w-0 !text-base';
 export const billingLink = 'inline-flex min-h-11 items-center rounded-lg px-2 text-base text-brand-800 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-brand-700';
+export const billingBackControl = 'inline-flex min-h-11 items-center gap-2 rounded-lg text-sm font-medium text-gray-600 no-underline transition hover:text-brand-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700 disabled:cursor-not-allowed disabled:opacity-50';
 
 export const billingPrimaryControl = `${billingControl} !border-brand-700 !bg-brand-700 !text-white hover:!bg-brand-800`;
 

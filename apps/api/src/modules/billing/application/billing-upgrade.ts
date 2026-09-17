@@ -1,4 +1,4 @@
-import { BILLING_PAID_TIERS, type BillingOffer, type BillingPolicy } from '@watchdog-bms/contracts';
+import { BILLING_PAID_TIERS, billingOffer, type BillingOffer, type BillingPolicy } from '@watchdog-bms/contracts';
 import type { BillingAccount, Prisma } from '../../../generated/prisma/client';
 import { billingError, hashBilling, quoteTotals } from '../domain/billing-policy';
 import { proratedPackagePrice, proratedReceiptIncrease } from '../domain/billing-package';
@@ -6,7 +6,7 @@ import type { StripeClient, StripeObject } from '../infrastructure/stripe.client
 import type { BillingSnapshot } from './billing.service';
 
 export type UpgradeSegment = { grantId: string; invoiceId: string; start: string; end: string; oldOffer: BillingOffer;
-  amountSatang: number; receiptUnitsAdded: number };
+  newOffer?: BillingOffer; amountSatang: number; receiptUnitsAdded: number };
 export type UpgradeSource = { prorationAt: string; sourceHash: string; segments: UpgradeSegment[]; amountSatang: number;
   receiptUnitsAdded: number; previewId: string; previewHash: string };
 const review = () => billingError('BILLING_UPGRADE_REVIEW', 'ข้อมูลส่วนต่างแพ็กเกจต้องตรวจสอบ กรุณาติดต่อทีมงานหรือกลับไปดูสถานะสมาชิก');
@@ -54,21 +54,25 @@ export async function upgradeHistory(db: Prisma.TransactionClient, account: Bill
     if (grant.units !== original.quote.offer.receiptAllowance || Math.max(at.getTime(), grant.serviceStart.getTime()) !== cursor ||
       grant.serviceEnd <= grant.serviceStart || grant.serviceEnd > account.paidThrough!) throw review();
     cursor = grant.serviceEnd.getTime();
-    let accepted = original;
+    let accepted = original, acceptedOffer = original.quote.offer;
     for (const delta of upgrades) {
       const changed = invoiceFor(delta).contractSnapshot as unknown as BillingSnapshot;
       const oldSegment = changed.upgrade?.segments.find(s => s.grantId === grant.id);
       if (!oldSegment) continue;
+      const nextOffer = oldSegment.newOffer ?? changed.quote.offer;
       if (oldSegment.start !== grant.serviceStart.toISOString() || oldSegment.end !== grant.serviceEnd.toISOString() ||
-        hashBilling(oldSegment.oldOffer) !== hashBilling(accepted.quote.offer) || !isUpgrade(accepted.quote.offer, changed.quote.offer) ||
+        hashBilling(oldSegment.oldOffer) !== hashBilling(acceptedOffer) || !isUpgrade(acceptedOffer, nextOffer) || nextOffer.offerKey !== changed.quote.offer.offerKey ||
         changed.upgrade?.receiptUnitsAdded !== delta.units) throw review();
       accepted = changed;
+      acceptedOffer = nextOffer;
     }
-    if (!isUpgrade(accepted.quote.offer, offer) || accepted.policy.taxTreatment !== policy.taxTreatment) throw review();
+    // Purchased monthly and annual segments retain their own prices/allowances after a cadence change.
+    const targetOffer = acceptedOffer.interval === offer.interval ? offer : billingOffer(offer.offerKey, acceptedOffer.interval, policy);
+    if (!isUpgrade(acceptedOffer, targetOffer) || accepted.policy.taxTreatment !== policy.taxTreatment) throw review();
     return { grantId: grant.id, invoiceId: invoice.id, start: grant.serviceStart.toISOString(), end: grant.serviceEnd.toISOString(),
-      oldOffer: accepted.quote.offer, amountSatang: proratedPackagePrice(accepted.quote.offer.priceSatang, offer.priceSatang, grant.serviceStart, grant.serviceEnd, at),
+      oldOffer: acceptedOffer, ...(acceptedOffer.interval !== offer.interval ? { newOffer: targetOffer } : {}), amountSatang: proratedPackagePrice(acceptedOffer.priceSatang, targetOffer.priceSatang, grant.serviceStart, grant.serviceEnd, at),
       receiptUnitsAdded: proratedReceiptIncrease([{ start: grant.serviceStart, end: grant.serviceEnd,
-        oldAllowance: accepted.quote.offer.receiptAllowance, newAllowance: offer.receiptAllowance }], at) };
+        oldAllowance: acceptedOffer.receiptAllowance, newAllowance: targetOffer.receiptAllowance }], at) };
   });
   cursor = skipFree(cursor, account.paidThrough.getTime());
   if (!segments.length && gifts.length && cursor === account.paidThrough.getTime()) throw billingError('BILLING_UPGRADE_GIFT_ONLY', 'เวลาที่เหลือเป็นวันแถม ซื้อแพ็กเกจเดิมเพิ่มก่อน แล้วจึงเปลี่ยนเป็นแพ็กเกจที่สูงขึ้น');

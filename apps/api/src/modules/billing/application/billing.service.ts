@@ -31,11 +31,12 @@ import { PartnerLifecycleTransitionUseCase } from '../../system-partner-manageme
 import { termProjectionHash } from '../domain/paid-invoice';
 import { receiptQuotaSnapshot } from '../../line-ai/application/company-ocr-governance';
 import { paidReceiptBalance } from './billing-receipt-grants';
+import { trialReceiptCarryover, type TrialCarryoverSource } from './billing-trial-carryover';
 import { billingState } from '../domain/billing-state';
 import { BillingFreeDays } from './billing-free-days';
 import { detectBillingIssue } from './billing-issues';
 
-export type BillingSnapshot = { emailProof?: EmailProof; quote: BillingQuote; priceId: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange } };
+export type BillingSnapshot = { trialCarryover?: TrialCarryoverSource; emailProof?: EmailProof; quote: BillingQuote; priceId: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange } };
 const CLOSED_GATES = Object.fromEntries(BILLING_ACTIONS.map((key) => [key, false]));
 
 @Injectable()
@@ -284,6 +285,7 @@ export class BillingService {
     const impact = fullPackagePurchaseImpact({ tier, interval, offer, verifiedPaidAt: new Date(Math.floor(Date.now() / 1000) * 1000),
       paidThrough: repeat ? new Date(repeat.paidThrough) : null, remainingPaidReceipts: repeat ? quote.usage.remaining ?? 0 : 0, anchorDay: repeat?.anchorDay });
     quote.purchase = { kind: repeat ? 'REPEAT' : restart ? 'RESTART' : 'INITIAL', previousPaidThrough: repeat?.paidThrough ?? restart?.paidThrough ?? null,
+      ...(repeat && repeat.sourceInterval !== interval && !existing?.pendingPlanChangeId ? { previousInterval: repeat.sourceInterval } : {}),
       projectedPaidThrough: impact.paidThrough.toISOString(), receiptUnitsAdded: impact.receiptUnitsAdded,
       projectedRemainingReceipts: impact.remainingReceipts + (repeat ? 0 : (await paidReceiptBalance(this.prisma.client,company.id,null)).remaining) };
     if (upgrade) {
@@ -300,7 +302,12 @@ export class BillingService {
       quote.pendingPlanChange = { operationId: pending.row.id, oldEffectiveAt: pending.proposed.paidThrough, newEffectiveAt: quote.purchase!.projectedPaidThrough,
         offer: pending.proposed.snapshot.quote.offer, totalSatang: pending.proposed.snapshot.quote.totalSatang, capacity: capacityImpact(options, pending.proposed.change.selection) };
     }
-    const snapshot: BillingSnapshot = { emailProof, ...(pending ? { pendingChange: { id: pending.row.id, version: pending.row.version, proposed: pending.proposed } } : {}), quote, priceId, policy: state.policy, settingsVersion: state.settings.version, termVersion: term?.updatedAt.toISOString() ?? null, termHash: termProjectionHash(term), ...(repeat ? { repeat } : {}), ...(restart ? { restart } : {}), ...(upgrade ? { upgrade } : {}), ...(capacity ? { capacity } : {}) };
+    const trialCarryover = quote.purchase.kind === 'INITIAL' ? await trialReceiptCarryover(this.prisma.client, company.id) : undefined;
+    if (trialCarryover) {
+      quote.purchase.trialCarryover = { receiptUnits: trialCarryover.units, expiresAt: quote.purchase.projectedPaidThrough };
+      quote.purchase.projectedRemainingReceipts += trialCarryover.units;
+    }
+    const snapshot: BillingSnapshot = { ...(trialCarryover ? { trialCarryover } : {}), emailProof, ...(pending ? { pendingChange: { id: pending.row.id, version: pending.row.version, proposed: pending.proposed } } : {}), quote, priceId, policy: state.policy, settingsVersion: state.settings.version, termVersion: term?.updatedAt.toISOString() ?? null, termHash: termProjectionHash(term), ...(repeat ? { repeat } : {}), ...(restart ? { restart } : {}), ...(upgrade ? { upgrade } : {}), ...(capacity ? { capacity } : {}) };
     await this.prisma.client.billingQuote.create({ data: { id: quoteId, companyId: company.id, initiatingUserId: context.userId,
       policyRevisionId: state.revision.id, snapshotJson: snapshot as unknown as Prisma.InputJsonValue, expiresAt: new Date(quote.expiresAt) } });
     return quote;

@@ -9050,7 +9050,7 @@ model BillingAccount {
   @@index([observedAt])
 }
 
-/// Purchased or independently approved Admin units. Only a manual Admin grant has no paid account.
+/// Purchased, once-only trial carryover, or independently approved Admin units. Only a manual Admin grant has no paid account.
 model BillingReceiptGrant {
   id                String @id @default(uuid())
   companyId         String

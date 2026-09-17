@@ -3,7 +3,7 @@ import { stripeId, type StripeObject } from '../infrastructure/stripe.client';
 import { billingError, hashBilling, paidVariant } from './billing-policy';
 
 export type PaidInvoiceEvidence = {
-  kind: 'INITIAL' | 'RENEWAL';
+  kind: 'INITIAL' | 'RENEWAL'; paidAt?: Date;
   invoiceId: string; subscriptionId: string; customerId: string; chargeId: string;
   number: string | null; totalSatang: number; taxSatang: number; paidSatang: number;
   refundedSatang: number; disputed: boolean; feeSatang: number | null; periodStart: Date; periodEnd: Date; evidenceHash: string;
@@ -45,13 +45,16 @@ export function paidInvoiceEvidence(invoice: StripeObject, subscription: StripeO
   const taxSatang = Array.isArray(invoice.total_taxes) ? invoice.total_taxes.reduce((sum: number, tax: StripeObject) => sum + tax.amount, 0) : 0;
   if (taxSatang !== snapshot.quote.taxSatang) reject();
   const balance = charge.balance_transaction;
-  return { kind: invoice.billing_reason === 'subscription_create' ? 'INITIAL' : 'RENEWAL',
+  const carriesTrial = invoice.billing_reason === 'subscription_create' && !!snapshot.trialCarryover;
+  const paidAt = invoice.status_transitions?.paid_at;
+  if (carriesTrial && (!Number.isSafeInteger(paidAt) || paidAt < line.period.start || paidAt * 1000 > Date.now())) reject();
+  return { ...(carriesTrial ? { paidAt: new Date(paidAt * 1000) } : {}), kind: invoice.billing_reason === 'subscription_create' ? 'INITIAL' : 'RENEWAL',
     invoiceId: invoice.id, subscriptionId: subscriptionId!, customerId: customerId!, chargeId: charge.id,
     number: typeof invoice.number === 'string' ? invoice.number : null, totalSatang: invoice.total, taxSatang, paidSatang: invoice.amount_paid,
     refundedSatang: charge.amount_refunded, disputed: charge.disputed,
     feeSatang: balance && typeof balance === 'object' && balance.currency === 'thb' && Number.isSafeInteger(balance.fee) ? balance.fee : null,
     periodStart: new Date(line.period.start * 1000), periodEnd: new Date(line.period.end * 1000),
-    evidenceHash: hashBilling([invoice.id, subscriptionId, customerId, charge.id, invoice.total, invoice.amount_paid, snapshot.priceId, line.period.start, line.period.end]),
+    evidenceHash: hashBilling([invoice.id, subscriptionId, customerId, charge.id, invoice.total, invoice.amount_paid, snapshot.priceId, line.period.start, line.period.end, ...(carriesTrial ? [paidAt] : [])]),
   };
 }
 
