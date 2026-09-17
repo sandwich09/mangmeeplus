@@ -24,7 +24,7 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
-import { recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
+import { classifyAiUsageRequest, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
 
 @Injectable()
 export class CrmAiGatewayClient {
@@ -148,7 +148,11 @@ export class CrmAiGatewayClient {
         await recordCompanyAiUsage(
           this.prisma,
           this.config,
-          { companyId, sourceRoute: path.replace('/internal/ai/', ''), requestId, monthKey: budgetMonthKey },
+          {
+            companyId, sourceRoute: path.replace('/internal/ai/', ''), requestId, monthKey: budgetMonthKey,
+            // CRM AI is text-only reasoning over inbox threads; never a document read (§12.2).
+            ...classifyAiUsageRequest(path.replace('/internal/ai/', ''), 'text'),
+          },
           (result as { usage?: AiUsageEntry[] })?.usage,
         );
       } catch (err) {

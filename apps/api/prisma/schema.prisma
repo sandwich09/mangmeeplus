@@ -3454,6 +3454,23 @@ model AiUsageEvent {
   thbPerUsd             Decimal  @db.Decimal(10, 4) // the rate this row was priced at (spec §6.4)
   thbPerUsdSource       String // 'live-cache'|'fetched'|'stored'|'env-fallback' (spec §6.4 addendum)
   requestId             String?
+  // ── D1 usage metadata (remediation spec §11.2). Plain strings like the columns above; all
+  // nullable so legacy rows and an older API writer report UNKNOWN instead of being guessed at.
+  // Deliberately NO execution/invocation unique fence here: attempt vs invocation vs transport
+  // identity is defined in Phase E (§12.6), and a unique fence added now would turn a metering
+  // REPLAY into a LOST usage write rather than a deduplicated one.
+  requestKind           String? // 'TEXT' | 'IMAGE' | 'OTHER'; null = legacy/unknown
+  budgetBucket          String? // 'CHAT' | 'OCR'; null = legacy/unknown
+  usageBasis            String? // 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE'; null = legacy/unknown
+  eventKind             String   @default("MODEL_CALL") // 'MODEL_CALL' | 'COST_ADJUSTMENT'
+  /** Unit rates/FX this row was priced at plus per-component satang incl. a `rounding` term, so
+   *  the components sum EXACTLY to costSatang. Null on legacy rows: component cost is then
+   *  UNAVAILABLE, never 0. History is never re-priced at today's rates. */
+  pricingSnapshot       Json?
+  /** COST_ADJUSTMENT only: the MODEL_CALL row whose evidence changed. */
+  adjustsEventId        String?
+  /** COST_ADJUSTMENT only: replay fence, so a re-sent correction cannot double-apply. */
+  correctionKey         String?  @unique
   createdAt             DateTime @default(now())
   company               Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 

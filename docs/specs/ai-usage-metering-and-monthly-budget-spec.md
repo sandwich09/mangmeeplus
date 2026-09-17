@@ -487,3 +487,30 @@ accepts baht decimals under the same two-decimal rule.
 Cost-bearing admission must read the current company override and, when inherited, the current platform budget before deciding. The older60-second configuration-cache allowance applies only to non-admission observations, not permission to spend after an Admin change. Admin budget/ceiling reads also use the current stored settings. This requires a small DB read per new AI admission; reuse the existing company/month lease and live spend check. Already admitted work may finish and record its actual cost, as before. Configuration invalidation must not clear active admission leases; the full reset remains a test-only seam. Verify lowered/raised/inherited changes from another writer without a local cache reset, read failure, and an active action racing a configuration change.
 
 Platform-setting writes serialize with company override ceiling validation. Read the current audit predecessor and enforce the ceiling within the transaction before a new override write; an exact replay of an already committed value remains a no-op even if the ceiling was subsequently lowered. Platform setting changes do not revoke previously grandfathered overrides.
+
+## Usage metadata extension — 2026-09-17 (remediation §11)
+
+Additive only. Every column is nullable or carries a default equal to today's meaning, so a pre-D1 writer keeps inserting valid rows and a pre-D1 reader is unaffected. Nothing is backfilled and no historical cost is re-priced.
+
+`AiUsageEvent` gains:
+
+- `requestKind` — `TEXT` | `IMAGE` | `OTHER`; NULL = legacy/unknown, reported as `UNKNOWN`.
+- `budgetBucket` — `CHAT` | `OCR`; NULL = legacy/unknown. Set by the API from the request it built, before the provider call — never from model output, a `usageTag` prefix, or user text.
+- `usageBasis` — `PROVIDER_REPORTED` | `CONSERVATIVE_ESTIMATE`; NULL = legacy/unknown. Carried on `AiUsageEntry` from the gateway provider that measured the call; a timeout ceiling estimate must never be displayed as measured tokens.
+- `eventKind` — default `MODEL_CALL`; the only other value is `COST_ADJUSTMENT`.
+- `pricingSnapshot` (JSONB) — the USD-per-MTok rates and FX actually charged plus per-component satang and a `rounding` term, so the components sum exactly to `costSatang`. `costSatang` itself is still the one half-up rounding in `computeCostSatang`. NULL on legacy rows: component cost is then UNAVAILABLE, never 0.
+- `adjustsEventId` + `correctionKey` (UNIQUE) — an audited append-only correction bound to the original event, with a replay fence.
+
+There is deliberately **no** execution/invocation unique key in this phase: that identity is defined in the split-cap phase, and adding the fence now would turn a metering replay into a lost usage write rather than a deduplicated one.
+
+`recordCompanyAiCostAdjustment` applies signed cost/token deltas to the ORIGINAL row's month aggregate in the same transaction, never increments `callCount`, refuses atomically if any aggregate would go negative, and is idempotent on `correctionKey`. No HTTP endpoint and no caller yet.
+
+`PartnerAiUsageDto` gains (existing fields and meanings unchanged, money still integer satang):
+
+- `breakdown.total` — the event-derived month total, alongside `current`, which stays the running `CompanyAiMonthlyUsage` aggregate. Both are exposed rather than reconciled away.
+- `breakdown.byRequestKind` / `byBudgetBucket` / `byUsageBasis` — each always includes its `UNKNOWN` row, so every slice reconciles with `breakdown.total`.
+- `breakdown.adjustments`, `breakdown.coverage` (`complete`/`partial`/`none` plus `firstMetadataAt`).
+- `topTags` enriched with token components and cache cost, plus `otherTags` so top-10 + other equals the month total.
+- `calls` counts `MODEL_CALL` rows only; `_count._all` is no longer used, so a correction can never be shown as a provider call.
+
+Permissions are unchanged (`system.partner_dashboard.read`), there is no tenant endpoint, and the response still carries no request ids, prompts or document data.

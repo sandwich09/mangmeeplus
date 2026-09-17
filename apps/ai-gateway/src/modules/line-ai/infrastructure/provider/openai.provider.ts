@@ -202,6 +202,9 @@ export class OpenAiProvider implements IModelProvider {
       // The Responses API exposes no cache-write counter; 0 keeps the entry shape uniform.
       cacheWriteInputTokens: 0,
       durationMs: Date.now() - startedAt,
+      // This provider never estimates: either the response carried counters, or the entry reports
+      // zeros with no basis at all. Absent is the honest answer (spec §11.2).
+      ...(!errorCode && usage ? { usageBasis: 'PROVIDER_REPORTED' as const } : {}),
     };
     try {
       appendUsage(entry);
