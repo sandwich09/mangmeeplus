@@ -65,9 +65,9 @@ export async function checkBillingOfferMatrix(input:Parameters<typeof checkBilli
       if(browser) {
         const page=browser.page;await page.setViewportSize({width:390,height:844});
         await page.goto(`${browser.origin}/companies/${companyId}/billing?offer=${tier}&interval=${interval}&channel=${channel}`,{waitUntil:'domcontentloaded'});
-        await page.getByText((await request('/v1/auth/account/email/otp')).body.email, { exact: true }).first().waitFor();
+        await page.getByRole('button', { name: /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/, exact: true }).click();
         assert.equal(await page.getByRole('button',{name:interval==='year'?'รายปี':'รายเดือน',exact:true}).getAttribute('aria-pressed'),'true');
-        await page.getByRole('article').filter({has:page.getByRole('heading',{name:terms[tier].label,exact:true})}).getByRole('button',{name:'ตรวจสอบราคา',exact:true}).click();
+        await page.getByRole('article').filter({has:page.getByRole('heading',{name:terms[tier].label,exact:true})}).getByRole('button',{name:'เลือกแพ็กเกจนี้',exact:true}).click();
         await page.getByRole('heading',{name:`ยืนยันซื้อ ${terms[tier].label} ${interval==='year'?'รายปี':'รายเดือน'}`,exact:true}).waitFor();
         await page.getByRole('checkbox').check();await page.getByRole('button',{name:'ยืนยันและไปชำระที่ Stripe',exact:true}).click();
         await page.waitForURL('https://checkout.stripe.com/**');
@@ -110,7 +110,7 @@ export async function checkBillingOfferMatrix(input:Parameters<typeof checkBilli
       for(const kind of ['invoice','pdf','receipt'])assert.equal((await request(`${own}/documents/${paid.invoiceReference}/open`,'POST',{kind})).status,200);
       if(browser) {
         const page=browser.page;await page.goto(`${browser.origin}/companies/${companyId}/billing/return?attempt=${attempt.id}`,{waitUntil:'domcontentloaded'});
-        await page.getByRole('heading',{name:'ชำระแล้ว เปิดใช้งานแล้ว',exact:true}).waitFor();await page.getByRole('button',{name:'เปิดใบเสร็จ',exact:true}).waitFor();
+        await page.getByRole('heading',{name:'ชำระแล้ว เปิดใช้งานแล้ว',exact:true}).waitFor();await page.getByRole('button',{name:'ประวัติ',exact:true}).click();await page.getByRole('link',{name:'ดูเอกสาร',exact:true}).first().waitFor();
         assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
         await page.screenshot({path:`${browser.evidenceDir}/matrix-${name}.png`,fullPage:false});
       }

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { todayCivilDate, type CompanyIdentityResponse, type CompanyLegalAddress, type VatRegistrationStatus } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { ChevronDownIcon } from '@/common/icons';
 import { TextField } from '@/common/components/field';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { LoadingState } from '@/common/components/state';
@@ -66,6 +67,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
   const canManageShop = permissions.includes('company.legal_identity.manage');
   const canManageVat = permissions.includes('company.vat_registration.manage');
   const toast = useToast();
+  const [section, setSection] = useState<'shop' | 'account'>('shop');
   const [identity, setIdentity] = useState<CompanyIdentityResponse | null>(null);
   const [emailLoginEnabled, setEmailLoginEnabled] = useState(false);
   const [account, setAccount] = useState<AccountProfileState | null>(null);
@@ -142,7 +144,13 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
     if (loading || loadError) return undefined;
     const jump = () => {
       const id = sectionIdFromHash(window.location.hash);
-      if (id) document.getElementById(id)?.scrollIntoView({ block: 'start' });
+      if (id) {
+        setSection(id === 'account' ? 'account' : 'shop');
+        requestAnimationFrame(() => {
+          if (id === 'vat-status') document.getElementById(id)?.scrollIntoView({ block: 'start' });
+          else window.scrollTo({ top: 0 });
+        });
+      }
     };
     if (!jumpedToHash.current) {
       jumpedToHash.current = true;
@@ -260,7 +268,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
     }
   };
 
-  if (loading) {
+  if (loading && !identity) {
     return (
       <MangmeePage eyebrow="ตั้งค่า" title="ข้อมูลร้านและบัญชีของฉัน">
         <LoadingState label="กำลังโหลด..." />
@@ -268,7 +276,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
     );
   }
 
-  if (loadError) {
+  if (loadError && !identity) {
     return (
       <MangmeePage eyebrow="ตั้งค่า" title="ข้อมูลร้านและบัญชีของฉัน">
         <MangmeeCard className="p-5 sm:p-6">
@@ -297,9 +305,20 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
     <MangmeePage
       eyebrow="ตั้งค่า"
       title="ข้อมูลร้านและบัญชีของฉัน"
-      description="กรอกทีหลังได้ ไม่ต้องกรอกครบก็ใช้งานได้ตามปกติค่ะ"
+      description="เลือกเรื่องที่ต้องการแก้ไข ข้อมูลร้านใช้ในเอกสาร ส่วนบัญชีเป็นข้อมูลส่วนตัวของคุณ"
     >
+      <nav aria-label="หมวดการตั้งค่า" className="mb-6 flex gap-1 border-b border-gray-200">
+        {(['shop', 'account'] as const).map(value => <button type="button" key={value}
+          aria-pressed={section === value} onClick={() => {
+            setSection(value);
+            window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${value}`);
+          }} className={`min-h-12 border-b-2 px-5 py-3 text-base font-semibold ${section === value ? 'border-brand-600 text-brand-700' : 'border-transparent text-gray-600 hover:text-brand-700'}`}>
+          {value === 'shop' ? 'ข้อมูลร้าน' : 'บัญชีของฉัน'}
+        </button>)}
+      </nav>
+      {loadError && <Banner tone="error">{loadError}</Banner>}
       <div className="grid gap-5">
+        <div hidden={section !== 'shop'}>
         <MangmeeCard className="p-5 sm:p-6">
           <SectionHeading
             id="shop"
@@ -343,7 +362,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
               inputMode="numeric"
               disabled={!canEditShop || shopSaving}
               hint="ตัวเลข 13 หลัก"
-              onChange={(event) => setTaxId(event.target.value)}
+              onChange={(event) => setTaxId(event.target.value.replace(/[^0-9]/g, '').slice(0, 13))}
             />
             <div className="grid gap-4 sm:grid-cols-2">
               {addressField('line1', 'ที่อยู่ (บ้านเลขที่ ถนน)')}
@@ -396,13 +415,10 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
             </div>
           )}
         </MangmeeCard>
+        </div>
 
-        <MangmeeCard className="p-5 sm:p-6">
-          <SectionHeading
-            id="account"
-            title="บัญชีของฉัน"
-            hint="เผื่อวันหนึ่งเปลี่ยนมือถือแล้ว LINE หลุด จะได้กลับเข้าร้านได้ค่ะ"
-          />
+        <div id="account" hidden={section !== 'account'} className="scroll-mt-24">
+          <h2 className="sr-only">บัญชีของฉัน</h2>
 
           <AccountEmailOtpPanel onState={next => {
             setEmailLoginEnabled(Boolean(next.emailLoginEnabled));
@@ -410,14 +426,20 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
             invalidateChecklist();
           }} />
 
-          <div className="mt-6 grid gap-4 border-t border-gray-200 pt-5">
+          <details className="mangmee-card group mt-5 p-5 sm:p-6">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 [&::-webkit-details-marker]:hidden">
+              <span><span className="block text-base font-semibold text-gray-900">เบอร์มือถือ</span><span className="mt-1 block text-sm text-gray-500">{account?.phoneNumber || 'ยังไม่ได้ระบุเบอร์มือถือ'}</span></span>
+              <span className="flex shrink-0 items-center gap-2 text-sm font-semibold text-brand-700"><span className="group-open:hidden">แก้ไข</span><span className="hidden group-open:inline">ปิด</span><ChevronDownIcon aria-hidden="true" className="h-5 w-5 group-open:rotate-180" /></span>
+            </summary>
+            <div className="mt-4 grid gap-4">
             <TextField
               label="เบอร์มือถือ"
               value={phone}
-              inputMode="tel"
+              inputMode="numeric"
+              autoComplete="tel-national"
               disabled={phoneSaving}
               hint={PHONE_HINT}
-              onChange={(event) => setPhone(event.target.value)}
+              onChange={(event) => setPhone(event.target.value.replace(/[^0-9]/g, '').slice(0, 10))}
             />
             {phoneError && <Banner tone="error">{phoneError}</Banner>}
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -436,14 +458,20 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                 </button>
               )}
             </div>
-          </div>
+            </div>
+          </details>
 
-          <div className="mt-6 grid gap-4 border-t border-gray-200 pt-5">
+          <details className="mangmee-card group mt-5 p-5 sm:p-6">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 [&::-webkit-details-marker]:hidden">
+              <span><span className="block text-base font-semibold text-gray-900">รหัสผ่านสำรอง</span><span className="mt-1 block text-sm text-gray-500">{account?.hasPassword ? 'ตั้งค่าแล้ว' : 'ยังไม่ได้ตั้งค่า'}</span></span>
+              <span className="flex shrink-0 items-center gap-2 text-sm font-semibold text-brand-700"><span className="group-open:hidden">จัดการ</span><span className="hidden group-open:inline">ปิด</span><ChevronDownIcon aria-hidden="true" className="h-5 w-5 group-open:rotate-180" /></span>
+            </summary>
+            <div className="mt-4 grid gap-4">
             <h3 className="text-sm font-semibold text-gray-900">ตั้งรหัสผ่านสำรอง</h3>
             {account?.hasPassword ? (
               <p className="text-sm text-gray-600">
                 บัญชีนี้มีรหัสผ่านอยู่แล้วค่ะ{' '}
-                <Link className="underline" href="/change-password">เปลี่ยนรหัสผ่าน</Link>
+                <Link className="font-semibold text-brand-700 underline underline-offset-4" href="/change-password">เปลี่ยนรหัสผ่าน</Link>
               </p>
             ) : (
               <>
@@ -501,8 +529,9 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                 </button>
               </>
             )}
-          </div>
-        </MangmeeCard>
+            </div>
+          </details>
+        </div>
       </div>
     </MangmeePage>
   );

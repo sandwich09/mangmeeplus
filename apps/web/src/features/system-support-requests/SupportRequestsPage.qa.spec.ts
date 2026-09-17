@@ -106,7 +106,7 @@ test('the table scrolls inside its own box rather than widening the page on a ph
 // §2.2 delta: this badge is the primary notification channel, so it must fail silent rather than
 // blank the header, and must never render a confident zero it has not actually measured.
 test('the system nav carries an OPEN count that tolerates its own 403', () => {
-  assert.match(header, /คำขอคุยกับเจ้าหน้าที่/);
+  assert.match(header, /ขอความช่วยเหลือ/);
   assert.match(header, /setOpenCount\(null\)/, 'a failure renders no badge, never a confident zero');
   assert.match(header, /openSupportCount !== null && openSupportCount > 0/);
 });

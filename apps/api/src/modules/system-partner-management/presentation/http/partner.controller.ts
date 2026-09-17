@@ -207,8 +207,10 @@ export class PartnerController {
     @Query('status') status?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('q') q?: string,
   ) {
     return this.listPartners.execute({
+      q,
       status,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,

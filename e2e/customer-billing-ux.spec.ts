@@ -1,0 +1,149 @@
+import { test, expect } from './harness/fixtures';
+import { gotoCompany } from './harness/e2e-utils';
+import { expectNoClientError } from './harness/auth';
+
+for (const width of [1280, 390]) {
+  test(`BILLING-UX package and picker have consistent navigation at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    await page.setViewportSize({ width, height: 900 });
+    const writes: string[] = [];
+    page.on('request', request => { if (request.method() === 'POST' && request.url().includes('/billing')) writes.push(request.url()); });
+    await gotoCompany(page, companyId, '/settings/branches');
+    if (width < 768) await page.getByRole('button', { name: 'สลับเมนู', exact: true }).click();
+    await page.locator('aside a[href$="/billing"]').click();
+    const title = page.getByRole('heading', { name: 'แพ็กเกจและการชำระเงิน', exact: true });
+    await expect(title).toBeVisible();
+    await expect(page.locator('aside')).toHaveCount(1);
+    await expect(page.getByRole('link', { name: /กลับแดชบอร์ด|กลับไปใช้งาน/ })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'เลือกบริษัทอื่น', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงินอีกครั้ง' })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ' })).toContainText('ใบเสร็จคงเหลือ');
+    const emailPanel = page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true });
+    await expect(emailPanel).toHaveCount(0);
+    await expect(emailPanel.locator('.mangmee-card')).toHaveCount(0);
+    await expect(page.getByText('ยืนยันอีเมลก่อนชำระเงิน', { exact: true })).toHaveCount(0);
+    await expect(emailPanel.getByText('ไม่ได้รับรหัสยืนยันทางอีเมล', { exact: true })).toHaveCount(0);
+    await page.reload();
+    await expect(title).toBeVisible();
+    await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ' })).toBeVisible();
+    await expect(emailPanel).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'สลับบริษัท', exact: true })).toBeVisible();
+    await expect(page.locator('aside')).toHaveCount(1);
+    await expect(page.getByRole('link', { name: /กลับแดชบอร์ด|กลับไปใช้งาน/ })).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: info.outputPath(`billing-overview-${width}.png`), fullPage: true });
+
+    const companies = await (await page.request.get('/api/v1/auth/me/companies')).json();
+    const other = companies.data.find((item: { companyId: string; roles: string[]; expired?: boolean }) => item.companyId !== companyId && item.roles.includes('OWNER') && !item.expired);
+    expect(other, 'local fixture has another owned company').toBeTruthy();
+    await page.getByRole('button', { name: 'สลับบริษัท', exact: true }).click();
+    await page.getByRole('button', { name: new RegExp(other.companyName) }).click();
+    await expect(page).toHaveURL(new RegExp(`/companies/${other.companyId}/billing$`));
+    await expect(title).toBeVisible();
+    await expect(page.getByRole('link', { name: 'เลือกบริษัทอื่น', exact: true })).toHaveCount(0);
+
+    // Standalone recovery picker remains available from its existing deep link.
+    await page.goto(`/billing/companies?fromCompany=${companyId}`);
+    await expect(page.getByRole('heading', { name: 'เลือกบริษัทที่จะจัดการแพ็กเกจ' })).toBeVisible();
+    const back = page.getByRole('link', { name: /^กลับแพ็กเกจของ / });
+    await expect(back).toHaveAttribute('href', `/companies/${companyId}/billing`);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: info.outputPath(`billing-picker-${width}.png`), fullPage: true });
+    await back.click();
+    await expect(title).toBeVisible();
+    await expect(page.locator('aside')).toHaveCount(1);
+    await page.goto(`/billing/companies?fromCompany=${companyId}`);
+    await page.getByRole('link', { name: /^ดูแพ็กเกจของ / }).filter({ hasText: 'ดูแพ็กเกจ' }).first().click();
+    await expect(title).toBeVisible();
+    await expect(page.getByRole('link', { name: 'เลือกบริษัทอื่น', exact: true })).toHaveCount(0);
+    expect(writes).toEqual([]);
+    await expectNoClientError(page);
+  });
+}
+
+test('BILLING-UX reads account email without an editor and fails closed for recipient changes', async ({ authedPage: page, companyId }) => {
+  let failRead = false, requirement = 'READY';
+  await page.route('**/api/v1/auth/account/email/otp', route => route.fulfill({ status: failRead ? 503 : 200, json: failRead ? { message: 'Temporary test outage' } : {
+    email: 'owner@example.com', emailVerified: true, emailRequirement: requirement, emailRevision: 0,
+    hasPassword: true, lineLinked: false, challenge: null, serverNow: new Date().toISOString(),
+  } }));
+  await page.route(`**/api/v1/companies/${companyId}/billing/recipient`, route => route.fulfill({ json: { hasCustomer: true, email: 'accounts@example.com', operation: null, busy: false } }));
+  await page.goto(`/companies/${companyId}/billing`);
+  await page.getByRole('button', { name: 'การต่ออายุและชำระเงิน', exact: true }).click();
+  const recipient = page.getByRole('region', { name: 'ผู้รับเอกสารของบริษัท', exact: true });
+  const changeRecipient = recipient.getByRole('button', { name: 'ใช้เมลที่ยืนยันแล้วสำหรับเอกสารในอนาคต', exact: true });
+  await expect(changeRecipient).toBeEnabled();
+  await expect(page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'เปลี่ยนอีเมล', exact: true })).toHaveCount(0);
+  failRead = true;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('alert').filter({ hasText: 'ยังตรวจสอบอีเมลบัญชีไม่ได้' })).toBeVisible();
+  await expect(changeRecipient).toBeDisabled();
+  failRead = false; requirement = 'CHANGE_PENDING';
+  await page.getByRole('button', { name: 'ลองใหม่', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'ยังตรวจสอบอีเมลบัญชีไม่ได้' })).toHaveCount(0);
+  await expect(changeRecipient).toBeDisabled();
+  await expect(recipient.getByRole('link', { name: 'ไปที่บัญชีของฉัน', exact: true })).toHaveAttribute('href', `/companies/${companyId}/settings/profile#account`);
+  await expect(recipient).toContainText('accounts@example.com');
+});
+
+test('BILLING-UX payment recheck tells the truth and documents return to history', async ({ authedPage: page, companyId }) => {
+  let refreshes = 0, fail = false;
+  await page.route(`**/api/v1/companies/${companyId}/billing`, async route => {
+    const original = await route.fetch();
+    const data = await original.json();
+    await route.fulfill({ json: { ...data, paymentState: 'PENDING', allowedActions: [] } });
+  });
+  await page.route(`**/api/v1/companies/${companyId}/billing/refresh`, async route => {
+    refreshes++;
+    await route.fulfill({ status: fail ? 503 : 200, json: fail ? { message: 'Temporary test outage' } : { queued: true } });
+  });
+  await page.goto(`/companies/${companyId}/billing`);
+  const check = page.getByRole('button', { name: 'ตรวจผลการชำระเงินอีกครั้ง', exact: true });
+  await expect(check).toBeVisible();
+  expect(refreshes).toBe(0);
+  await check.click();
+  await expect(page.getByRole('status').filter({ hasText: 'ส่งคำขอตรวจสอบแล้ว' })).toContainText('ยังไม่ใช่ผลยืนยันการชำระเงิน');
+  expect(refreshes).toBe(1);
+  await page.getByRole('button', { name: 'อัปเดตข้อมูล', exact: true }).click();
+  expect(refreshes).toBe(1);
+  fail = true;
+  await check.click();
+  await expect(page.getByRole('alert').filter({ hasText: 'ยังยืนยันผลรายการไม่ได้' })).toBeVisible();
+  await expect(page.locator('aside')).toHaveCount(1);
+
+  const invoiceId = '00000000-0000-4000-8000-000000000001';
+  await page.route(`**/api/v1/companies/${companyId}/billing/invoices/${invoiceId}/adjustments/refunds`, route => route.fulfill({ json: {
+    mode: 'TEST', invoiceNumber: 'TEST-INVOICE', canOpenDocuments: false, observedAt: new Date().toISOString(), kind: 'refunds', items: [], nextCursor: null,
+  } }));
+  await page.goto(`/companies/${companyId}/billing/invoices/${invoiceId}`);
+  await expect(page.getByRole('heading', { name: 'เอกสารการชำระเงิน', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'กลับไปประวัติการชำระเงิน', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/billing#billing-history$`));
+  await expect(page.getByRole('region', { name: 'ประวัติการชำระเงิน', exact: true })).toBeVisible();
+});
+
+test('BILLING-UX recovery never mounts business reads and picker rejects an unowned return company', async ({ authedPage: page, companyId }) => {
+  const businessReads: string[] = [];
+  page.on('request', request => { if (/\/branches\?|\/notifications|\/profile-checklist/.test(request.url())) businessReads.push(request.url()); });
+  const response = await page.request.get(`/api/v1/companies/${companyId}/billing`);
+  expect(response.ok()).toBeTruthy();
+  const expiredOverview = { ...await response.json(), accessState: 'EXPIRED', allowedActions: [] };
+  await page.route(`**/api/v1/companies/${companyId}/billing`, route => route.fulfill({ json: expiredOverview }));
+  await page.goto(`/companies/${companyId}/billing`);
+  await expect(page.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toBeVisible();
+  await expect(page.locator('aside')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'กลับหน้าเลือกบริษัท', exact: true })).toBeVisible();
+  expect(businessReads).toEqual([]);
+  await page.goto(`/account/email?company=${companyId}&interval=year`);
+  await expect(page.getByRole('heading', { name: 'จัดการอีเมลบัญชี', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true })).toBeVisible();
+  const back = page.getByRole('link', { name: 'กลับไปเลือกแพ็กเกจ', exact: true });
+  await expect(back).toHaveAttribute('href', `/companies/${companyId}/billing?interval=year`);
+  await back.click();
+  await expect(page.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toBeVisible();
+  expect(businessReads).toEqual([]);
+  await page.goto('/billing/companies?fromCompany=not-an-owned-company');
+  await expect(page.getByRole('heading', { name: 'เลือกบริษัทที่จะจัดการแพ็กเกจ' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'กลับหน้าหลัก', exact: true })).toHaveAttribute('href', '/');
+  await expect(page.locator('a[href*="not-an-owned-company"]')).toHaveCount(0);
+});

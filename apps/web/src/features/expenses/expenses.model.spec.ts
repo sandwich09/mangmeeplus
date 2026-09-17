@@ -1177,3 +1177,13 @@ it('counts a personal source and its claim projection once, including either sid
     assert.equal(kpi.counted, 1);
   }
 });
+
+
+describe('receipt review document date', () => {
+  it('does not promote an unknown storage date into a user input', () => {
+    const detail = { status: 'NEEDS_REVIEW', expenseDate: '2026-09-17T00:00:00Z', lines: [], vatMode: 'NO_VAT', aiVerificationSummaryJson: { dateStatus: 'unverified' } } as unknown as ExpenseDetail;
+    assert.equal(reviewValues(detail).expenseDate, '');
+    assert.equal(reviewValues({ ...detail, aiVerificationSummaryJson: { dateStatus: 'verified' } }).expenseDate, '2026-09-17');
+    assert.equal(reviewValues({ ...detail, aiVerificationSummaryJson: null }).expenseDate, '2026-09-17', 'legacy known dates remain unchanged');
+  });
+});

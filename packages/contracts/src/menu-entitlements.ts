@@ -9,6 +9,8 @@ export type MenuEntitlementBinding = {
   entitlementKeys: string[];
   gatePermissions: string[];
   retainedGatePermissions?: string[];
+  /** Contextual review routes keep their permissions without becoming a primary menu. */
+  navigation?: 'contextual';
   status: 'ready' | 'planned';
 };
 
@@ -152,6 +154,7 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
   },
   {
     navKey: 'ai-suggestions',
+    navigation: 'contextual',
     labelTh: 'AI แนะนำ',
     group: 'operate',
     iconKey: 'PieChartIcon',

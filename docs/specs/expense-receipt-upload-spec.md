@@ -1693,3 +1693,8 @@ an operator decision, not authorization to migrate a shared database in local de
 - Reimbursement payout workflow from item 14.
 - Fixed asset capitalization handoff from item 21.
 - Bulk expense import/export beyond accountant evidence export.
+
+### Receipt date clarification — 2026-09-17
+- The upload page has no receipt-date input (owner follow-up 2026-09-17). Read the date from AI; if unread, leave the review field empty for the user. An omitted date is unknown, never a confirmed upload/today date.
+- Use the existing `dateStatus`/`dateResolution` contract: a date explicitly entered by the user takes precedence over re-extraction; otherwise use the date read from the receipt.
+- If unread, list/review show no document date and confirmation stays blocked by the existing date-review guard. Preserve legacy records; no data migration. The required database date remains an internal placeholder only while `dateStatus=unverified`.

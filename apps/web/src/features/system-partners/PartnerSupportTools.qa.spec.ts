@@ -9,7 +9,7 @@ const lookup = readFileSync(new URL('./UserLookupSection.tsx', import.meta.url),
 test('the shop timeline and the message box are actually mounted on the partner page', () => {
   // A section that exists as a component and is never rendered is the shape of gap this slice was
   // written to close (§8: support has one page to work from).
-  assert.match(partnerPage, /<ShopTimelineSection key=\{`timeline-\$\{companyId\}`\} companyId=\{companyId\} \/>/);
+  assert.match(partnerPage, /<ShopTimelineSection key=\{`timeline-\$\{companyId\}`\} companyId=\{companyId\}\s*\/>/);
   assert.match(partnerPage, /<ShopMessageSection\s+key=\{`message-\$\{companyId\}`\}/);
 });
 

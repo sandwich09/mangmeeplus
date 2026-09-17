@@ -2,9 +2,11 @@
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { openSync, closeSync, mkdirSync } from 'node:fs';
+import { openSync, closeSync, mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { chromium } from '@playwright/test';
+import { chromium, type Page } from '@playwright/test';
+import assert from 'node:assert/strict';
+import type { BillingConfigurationOperation } from '@watchdog-bms/contracts';
 
 export async function startBillingBrowser(input: { apiOrigin: string; token: string; companyId: string }) {
   const root = process.cwd(), evidenceDir = resolve(process.env.BILLING_BROWSER_EVIDENCE_DIR ?? `/tmp/mangmee-billing-browser-evidence-${process.pid}`);
@@ -15,9 +17,11 @@ export async function startBillingBrowser(input: { apiOrigin: string; token: str
       server.close(() => done(address.port)); });
   });
   const origin = `http://127.0.0.1:${port}`;
+  // Each server has a different API origin; never reuse another server's compiled routes/rewrites.
+  const distDir = `.next/billing-browser-${process.pid}-${port}`;
   const log = openSync(`${evidenceDir}/next.log`, 'w', 0o600);
   const child = spawn(process.execPath, [resolve(root, 'apps/web/node_modules/next/dist/bin/next'), 'dev', '--hostname', '127.0.0.1', '--port', String(port)], {
-    cwd: resolve(root, 'apps/web'), env: { ...process.env, NODE_ENV: 'development', NEXT_TELEMETRY_DISABLED: '1',
+    cwd: resolve(root, 'apps/web'), env: { ...process.env, NODE_ENV: 'development', NEXT_TELEMETRY_DISABLED: '1', NEXT_DIST_DIR: distDir,
       INTERNAL_API_URL: `${input.apiOrigin}/v1`, NEXT_PUBLIC_API_BASE_URL: `${input.apiOrigin}/v1`, WEB_BASE_URL: origin }, stdio: ['ignore', log, log],
   });
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
@@ -27,6 +31,7 @@ export async function startBillingBrowser(input: { apiOrigin: string; token: str
       try{await closed;}catch{if(child.exitCode===null&&child.signalCode===null){const killed=once(child,'close');child.kill('SIGKILL');await killed;}}
     }
     closeSync(log);
+    rmSync(resolve(root, 'apps/web', distDir), { recursive: true, force: true });
   };
 
   try {
@@ -50,4 +55,27 @@ export async function startBillingBrowser(input: { apiOrigin: string; token: str
     await page.goto(`${origin}/companies/${input.companyId}/billing?channel=line`, { waitUntil: 'domcontentloaded' });
     return { page, origin, evidenceDir, close: async () => { try{await browser?.close();}finally{await stop();} } };
   } catch (error) { try{await browser?.close();}finally{await stop();} throw error; }
+}
+
+export async function selectBillingOption(page: Page, label: string, option: string) {
+  await page.getByRole('combobox', { name: label, exact: true }).click();
+  await page.getByRole('option', { name: option, exact: true }).click();
+}
+
+export async function clickBillingConfiguration(page: Page, label: string) {
+  const pending = page.waitForResponse(response => response.request().method() === 'POST'
+    && /\/system\/billing\/configuration-(drafts|changes)(\/|$)/.test(new URL(response.url()).pathname));
+  await page.getByRole('button', { name: label, exact: true }).click();
+  const response = await pending;
+  assert.ok(response.ok(), `configuration action returned ${response.status()}`);
+  return await response.json() as BillingConfigurationOperation;
+}
+
+export async function confirmBillingPassword(page: Page, password: string) {
+  const input = page.getByLabel('รหัสผ่านปัจจุบัน', { exact: true });
+  if (await input.isVisible()) {
+    await input.fill(password);
+    await page.getByRole('button', { name: 'ยืนยันรหัสผ่าน', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: 'ยืนยันตัวตนแล้ว' }).waitFor();
+  }
 }

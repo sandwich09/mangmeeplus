@@ -5952,10 +5952,7 @@ export class ProcessLineWebhookUseCase {
       originalFileName: media.fileName,
       mimeType: media.mimeType,
       byteSize: media.byteSize,
-      // A calendar date, not the instant the photo arrived: a full timestamp in a date column
-      // made the row invisible to the list's day filter, and the UTC day is yesterday for
-      // anyone sending a receipt before 07:00 Bangkok.
-      expenseDate: todayCivilDate(),
+      // Let OCR or the user supply the document date.
       note: 'LINE receipt upload',
       captureSource: 'LINE_UPLOAD',
       lineCapture: { lineMessageId: event.lineMessageId, lineEventId: event.webhookEventId, chatKeyHash: chatKeyHashOf(event) },

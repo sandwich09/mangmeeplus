@@ -122,7 +122,7 @@ export async function checkBillingBatches(input:Parameters<typeof checkBillingCo
           assert.ok(accepted,'delayed real request must pass its bounded rate limit');await leave();release();await done;
         }finally{release();await page.unroute(pattern);}
       };
-      await page.goto(`${browser.origin}/system/billing`,{waitUntil:'domcontentloaded'});await page.getByRole('link',{name:'ตรวจหลายบริษัท',exact:true}).click();await page.getByLabel('ค้นหาบริษัท',{exact:true}).fill(`batch-${run}`);
+      await page.goto(`${browser.origin}/system/billing`,{waitUntil:'domcontentloaded'});await page.locator('summary').filter({hasText:'ตรวจสอบกับ Stripe'}).click();await page.getByRole('link',{name:/^ตรวจสถานะหลายบริษัท/}).click();await page.getByLabel('ค้นหาบริษัท',{exact:true}).fill(`batch-${run}`);
       await page.getByRole('button',{name:'ค้นหา',exact:true}).click();await page.getByRole('checkbox',{name:companies[0]!.name,exact:true}).check();
       await page.getByRole('button',{name:'บริษัทหน้าถัดไป',exact:true}).click();await page.getByRole('checkbox',{name:companies[26]!.name,exact:true}).check();await page.getByLabel('เหตุผลการตรวจ',{exact:true}).fill('ตรวจจากมือถือและกลับงานเดิม');
       op=await press('ตรวจบริษัทที่เลือกก่อนยืนยัน','/batches/preview');ids.push(op.id);await page.waitForURL(new RegExp(op.id));await page.reload();await page.getByRole('heading',{name:'ตรวจบริษัทที่เลือกก่อนยืนยัน',exact:true}).waitFor();
@@ -139,15 +139,15 @@ export async function checkBillingBatches(input:Parameters<typeof checkBillingCo
       await page.route(route,async r=>{const res=await r.fetch(),value=await res.json();arrive({status:res.status(),value});if(res.status()===200){ids.push(value.id);await held;}await r.fulfill({response:res});});
       let late:any;
       try{for(let i=0;i<3;i++){const response=new Promise<any>(r=>arrive=r);await page.getByRole('button',{name:'ตรวจบริษัทที่เลือกก่อนยืนยัน',exact:true}).click();const r=await response;if(r.status===200){late=r.value;break;}assert.equal(r.status,429);assert.ok(r.value.retryAfterSeconds<=60);await page.getByRole('alert').filter({hasText:'รอ'}).waitFor();await new Promise(resolve=>setTimeout(resolve,(r.value.retryAfterSeconds+1)*1000));}assert.ok(late);
-        await page.getByRole('link',{name:'บริษัท',exact:true}).click();await page.waitForURL(new RegExp('/system/billing$'));release();await page.getByRole('heading',{name:'ดูแลแพ็กเกจและการชำระเงิน',exact:true}).waitFor();assert.ok(page.url().endsWith('/system/billing'));
+        await page.getByRole('link',{name:'บริษัท',exact:true}).click();await page.waitForURL(new RegExp('/system/billing$'));release();await page.getByRole('heading',{name:'แพ็กเกจและการชำระเงิน',exact:true}).waitFor();assert.ok(page.url().endsWith('/system/billing'));
       }finally{release();await page.unroute(route);}
-      await page.getByRole('link',{name:'ตรวจหลายบริษัท',exact:true}).click();await page.getByRole('article').filter({hasText:'เก็บงานเมื่อออกจากหน้าจอ'}).getByRole('link',{name:'เปิดงานตรวจเดิม',exact:true}).click();await page.waitForURL(new RegExp(late.id));
+      await page.locator('summary').filter({hasText:'ตรวจสอบกับ Stripe'}).click();await page.getByRole('link',{name:/^ตรวจสถานะหลายบริษัท/}).click();await page.getByRole('article').filter({hasText:'เก็บงานเมื่อออกจากหน้าจอ'}).getByRole('link',{name:'เปิดงานตรวจเดิม',exact:true}).click();await page.waitForURL(new RegExp(late.id));
       await press('ยกเลิกคำขอนี้','/cancel');await page.getByRole('heading',{name:'หยุดคำขอแล้ว',exact:true}).waitFor();await page.screenshot({path:`${browser.evidenceDir}/admin-batch-stopped-mobile.png`,fullPage:true});
       cases.push('browser-batch-late-real-preview-cannot-navigate-after-leave-original-history-recovers-and-cancels');
 
       let downloads=0;const recordDownload=()=>{downloads++;};page.on('download',recordDownload);
       try{await delayed(`**/api/v1/system/billing/batches/${late.id}/export`,'GET','ดาวน์โหลดผลตรวจ',async()=>{await page.getByRole('link',{name:'บริษัท',exact:true}).click();await page.waitForURL(new RegExp('/system/billing$'));});
-        await page.getByRole('heading',{name:'ดูแลแพ็กเกจและการชำระเงิน',exact:true}).waitFor();await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));assert.equal(downloads,0);
+        await page.getByRole('heading',{name:'แพ็กเกจและการชำระเงิน',exact:true}).waitFor();await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));assert.equal(downloads,0);
       }finally{page.off('download',recordDownload);}
       cases.push('browser-batch-late-real-export-after-leave-never-downloads-file-on-destination');
 
@@ -161,8 +161,8 @@ export async function checkBillingBatches(input:Parameters<typeof checkBillingCo
 
       const caseRow=await db.billingIssue.create({data:{companyId:companyIds[2],stripeAccountId,livemode:false,kind:'RECONCILIATION_FAILED',referenceId:`case-${run}`}});extraCaseIds.push(caseRow.id);
       await page.goto(`${browser.origin}/system/billing/issues/${caseRow.id}`,{waitUntil:'domcontentloaded'});await page.getByLabel('บันทึกการดำเนินการ',{exact:true}).fill('รับงานเดิมก่อนออกจากหน้าจอ');
-      await delayed(`**/api/v1/system/billing/issues/${caseRow.id}`,'PATCH','รับเคสนี้',async()=>{await page.getByRole('link',{name:'คิวตรวจสอบ',exact:true}).click();await page.waitForURL(new RegExp('/system/billing/issues$'));});
-      await page.getByRole('heading',{name:'คิวตรวจสอบการชำระเงิน',exact:true}).waitFor();assert.ok(page.url().endsWith('/system/billing/issues'));
+      await delayed(`**/api/v1/system/billing/issues/${caseRow.id}`,'PATCH','รับเคสนี้',async()=>{await page.getByRole('link',{name:'ปัญหาการชำระเงิน',exact:true}).click();await page.waitForURL(new RegExp('/system/billing/issues$'));});
+      await page.getByRole('heading',{name:'ปัญหาการชำระเงิน',exact:true}).waitFor();assert.ok(page.url().endsWith('/system/billing/issues'));
       await page.goto(`${browser.origin}/system/billing/issues/${caseRow.id}`,{waitUntil:'domcontentloaded'});await page.getByRole('region',{name:'รายละเอียดเคส',exact:true}).getByText(/รับงานแล้ว/).first().waitFor();assert.equal((await db.billingIssue.findUniqueOrThrow({where:{id:caseRow.id}})).assigneeUserId,input.userIds[0]);
       cases.push('browser-original-case-late-real-save-cannot-overwrite-queue-and-original-assignment-survives-return');
 

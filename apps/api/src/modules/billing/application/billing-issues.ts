@@ -1,4 +1,4 @@
-import type { BillingIssue, Prisma } from '../../../generated/prisma/client';
+import type { BillingAccount, BillingIssue, Prisma } from '../../../generated/prisma/client';
 import { billingError, validSupportSla } from '../domain/billing-policy';
 
 type Identity=Pick<BillingIssue,'stripeAccountId'|'livemode'|'companyId'|'kind'|'referenceId'>;
@@ -54,4 +54,17 @@ export async function detectBillingIssue(tx:Prisma.TransactionClient,identity:Id
     metadataJson:{episode:row.episode,previousState:before?.state??null,previousAssignee:before?.assigneeUserId??null,kind:row.kind,mode:row.livemode?'LIVE':'TEST',
       slaPolicyRevisionId:row.slaPolicyRevisionId,slaStartedAt:row.slaStartedAt?.toISOString()??null,slaDueAt:row.slaDueAt?.toISOString()??null}}});
   return row;
+}
+
+// Only an applied, verified original invoice can resolve a paid-application problem.
+export async function resolveAppliedInvoiceIssues(tx:Prisma.TransactionClient,account:Pick<BillingAccount,'id'|'companyId'|'stripeAccountId'|'livemode'>,invoiceId:string) {
+  if(!await tx.billingAccount.findFirst({where:{id:account.id,companyId:account.companyId,stripeAccountId:account.stripeAccountId,livemode:account.livemode},select:{id:true}}))return;
+  const invoice=await tx.billingInvoice.findFirst({where:{id:invoiceId,billingAccountId:account.id,
+    applyStatus:'APPLIED',appliedAt:{not:null},providerStatus:'paid'},select:{id:true,providerInvoiceId:true,evidenceHash:true,paidSatang:true,totalSatang:true}});
+  if(!invoice?.evidenceHash||invoice.paidSatang<=0||invoice.paidSatang!==invoice.totalSatang)return;
+  const issues=await tx.billingIssue.findMany({where:{companyId:account.companyId,stripeAccountId:account.stripeAccountId,livemode:account.livemode,
+    kind:{in:['PAID_NOT_APPLIED','PAID_HELD']},referenceId:{in:[invoice.id,invoice.providerInvoiceId]},state:{not:'RESOLVED'}},
+    orderBy:[{kind:'asc'},{referenceId:'asc'}]});
+  for(const issue of issues)await resolveBillingIssue(tx,{companyId:issue.companyId,stripeAccountId:issue.stripeAccountId,livemode:issue.livemode,
+    kind:issue.kind,referenceId:issue.referenceId},'ORIGINAL_INVOICE_APPLIED');
 }

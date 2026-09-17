@@ -245,7 +245,7 @@ describe('PasswordLoginUseCase', () => {
     const closed = { getStatus: async () => ({ effectiveState: 'CLOSED' }) } as any;
     const result = await new PasswordLoginUseCase(prisma, issueToken, accepted, closed)
       .execute('system-admin', 'watchdogbms11');
-    assert.equal(result.redirectPath, '/system/platform-access');
+    assert.equal(result.redirectPath, '/system/partners');
     assert.equal(result.legalAcceptanceRequired, false);
   });
 
@@ -515,7 +515,7 @@ describe('PasswordLoginUseCase', () => {
     const result = await new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance).execute('thawatchai.watchdog', 'watchdogbms11');
 
     assert.equal(result.companyId, null);
-    assert.equal(result.redirectPath, '/system/platform-access');
+    assert.equal(result.redirectPath, '/system/partners');
   });
 
   it('only considers active memberships whose company is active', async () => {

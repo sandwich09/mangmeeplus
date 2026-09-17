@@ -34,21 +34,21 @@
 - `AFTER_READINESS` หมายถึงเป้าหมายเปิดขายหลัง implementation/การทดสอบ/config/นโยบายที่เกี่ยวข้องผ่าน; **ขณะนี้ paid ทุก tier ยัง disabled**. Trial ไม่มีการบังคับบัตร ไม่มี Checkout/Subscription/การตัดเงินจากการสมัครเฉย ๆ; การเปลี่ยนเป็น paid ต้อง opt-in แยก.
 - VAT ปัจจุบัน OFF ตามมติ 2026-09-13; การเปิดภายหลังต้องเลือก inclusive/exclusive และยืนยัน fiscal identity ใน Admin; invoice แสดงยอดตาม approved policy. Stripe Receipt ไม่ถูกแปลงเป็นใบกำกับภาษีไทยเต็มรูปแบบเพียงเพราะมี PDF.
 
-## 2. สมัครอย่างเดียว: 7 เมนูตาม default ที่ตั้งไว้
+## 2. สมัครอย่างเดียว: 7 ความสามารถตาม default ที่ตั้งไว้
 
 หลังผ่าน signup/identity/approval ที่เกี่ยวข้องและ provision สำเร็จ ทั้ง web และ LINE ต้องได้ `FEATURE_PACKAGE_PRESETS.starter` ตรงกันทุก key พร้อม `FREE_TRIAL_15`: **1 สาขา / ผู้ใช้รวม 2 คน / อ่านใบเสร็จ 15 ใบต่อเดือนตั้งแต่วันแรก / trial default 30 วันจาก provision**. ไม่เริ่มนับตั้งแต่กรอก lead หรือ pending review และไม่ตีความเป็นแพ็กเกจฟรีถาวร. Admin override เดิมมี provenance แยก.
 
-| เมนูที่ผู้ใช้เห็น | feature/child keys ตาม default |
+| ความสามารถที่ได้รับ | feature/child keys ตาม default |
 |---|---|
 | แดชบอร์ด | `dashboard_notifications` |
-| AI แนะนำ | `ai_line_assistant` |
+| ผู้ช่วย AI เบื้องหลัง — ไม่มีเมนู AI แนะนำ | `ai_line_assistant` |
 | ค่าใช้จ่ายและใบเสร็จ | `expenses`, `expenses.list`, `expenses.upload`, `expenses.manual`, `expenses.categories`, `expenses.evidence`, `expenses.signatures` |
 | การเบิกจ่าย | `reimbursement` |
 | พนักงานและสิทธิ์ | `employee_access`, `employee_access.employees`, `employee_access.roles`, `employee_access.overview` |
 | ตั้งค่าบริษัท | `company_settings`, `company_settings.branches`, `company_settings.security` |
 | การแจ้งเตือน | `dashboard_notifications` — ใช้ key ร่วมกับแดชบอร์ด |
 
-นี่คือ **7 เมนู / 6 parent families / 17 explicit entitlement keys** ไม่ใช่ 7 parent keys. Reuse [menu preset](../../packages/contracts/src/menu-entitlements.ts) และ [menu mirror §8](partner-package-menu-mirror-spec.md); อย่าใช้ `DEFAULT_ENABLED_FEATURE_KEYS` ของ admin onboarding ที่กว้างกว่า หรือเพิ่ม CRM/สินค้า/ภาษี/บัญชีทั้งชุดเพื่อทำให้ตัวนับเป็น 7. Explicit false สำหรับ keys นอก starter; foundation invariant และ role/branch permissions ยังบังคับ. สมาชิกที่เป็นพนักงานไม่จำเป็นต้องเห็นทุกเมนูเหมือน OWNER.
+นี่คือ **7 ความสามารถ / 6 parent families / 17 explicit entitlement keys** ตามมติเจ้าของ 2026-09-17: แสดง 6 ทางเข้าการใช้งานรวมการแจ้งเตือนที่ส่วนหัว และคง AI เป็นเบื้องหลัง; route ตรวจคำแนะนำเดิมยังเปิดตามสิทธิ์ได้ ไม่ใช่ 7 parent keys. Reuse [menu preset](../../packages/contracts/src/menu-entitlements.ts) และ [menu mirror §8](partner-package-menu-mirror-spec.md); อย่าใช้ `DEFAULT_ENABLED_FEATURE_KEYS` ของ admin onboarding ที่กว้างกว่า หรือเพิ่ม CRM/สินค้า/ภาษี/บัญชีทั้งชุดเพื่อทำให้ตัวนับเป็น 7. Explicit false สำหรับ keys นอก starter; foundation invariant และ role/branch permissions ยังบังคับ. สมาชิกที่เป็นพนักงานไม่จำเป็นต้องเห็นทุกเมนูเหมือน OWNER.
 
 เส้นทางจริงคือ [signup provisioning](../../apps/api/src/modules/external-signup/application/provision-signup.use-case.ts) → [onboarding](../../apps/api/src/modules/system-onboarding/application/use-cases/create-company-onboarding.use-case.ts). Retry/adopt existing company ต้องไม่เขียน preset ทับ paid tier, วันหมดอายุ, admin exception หรือ entitlement ที่เปลี่ยนภายหลัง. หน้า marketing lead success ยังไม่ใช่ provision success; easy web signup ใช้ [unified signup](unified-easy-signup-spec-th.md) และ E0 แยก.
 
@@ -109,8 +109,8 @@ PE30 ต้องทดสอบทั้ง blocked SYSTEM output **และ**
 
 ## 7. UI และ LINE ที่ต้องไปกลับได้
 
-- Marketing/app pricing: toggle “รายเดือน / รายปี”; สลับแล้วราคา/ยอดเรียกเก็บ/ประหยัด/รอบต่ออายุและโควตาที่ได้รับเปลี่ยนพร้อมกัน. แพ็กรายเดือนให้ 30/50/100 ใบต่อการซื้อ; รายปีให้ 360/600/1,200 ใบทันที ไม่มีเติมรายเดือน. Trial แยกจาก STARTER249 และมี 7 เมนู/15ใบต่อเดือน/30วันชัดเจน. Loading/error/stale catalog มี retry; ไม่มี fallback เป็นราคา/availability ที่ยอมซื้อได้.
-- Summary: บริษัทที่เลือก, trial/paid tier, interval, สิทธิ์7เมนู, used/remaining/reset, paid-through/วันต่ออายุ และ pending change แสดงแยก. เลือกปีต้องเห็น “เรียกเก็บ 2,490 บาทต่อปี” ไม่ใช้249บาท/เดือนเป็นยอดสัญญา.
+- Marketing/app pricing: toggle “รายเดือน / รายปี”; สลับแล้วราคา/ยอดเรียกเก็บ/ประหยัด/รอบต่ออายุและโควตาที่ได้รับเปลี่ยนพร้อมกัน. แพ็กรายเดือนให้ 30/50/100 ใบต่อการซื้อ; รายปีให้ 360/600/1,200 ใบทันที ไม่มีเติมรายเดือน. Trial แยกจาก STARTER249 และมี 7 ความสามารถ/15ใบต่อเดือน/30วันชัดเจน. Loading/error/stale catalog มี retry; ไม่มี fallback เป็นราคา/availability ที่ยอมซื้อได้.
+- Summary: บริษัทที่เลือก, trial/paid tier, interval, สิทธิ์7ความสามารถ, used/remaining/reset, paid-through/วันต่ออายุ และ pending change แสดงแยก. เลือกปีต้องเห็น “เรียกเก็บ 2,490 บาทต่อปี” ไม่ใช้249บาท/เดือนเป็นยอดสัญญา.
 - Review → Checkout → checking → applied → protected expense/upload/branch/member action → กลับ summary. Back/cancel/refresh/login/legal/password/403/429/5xx/UNKNOWN มี safe return/reference ตาม U01–U12; ไม่เกิด purchase จาก GET, LINE message หรือ success query.
 - LINE rich menu promotion และ webhook handler อ่าน approved catalog เดียวกัน; 6 native menu actions เดิมคงรูปแบบ. การ์ดเก่าหรือ “เปลี่ยนแพ็กเกจ” ต้อง revalidate ปัจจุบันและเลือกบริษัทก่อน; support request ไม่ใช่การซื้อ. Generic entry รักษา offer+interval เป็น untrusted hint ผ่าน safe login/LIFF; ชำระจริงต้อง OWNER ของบริษัทที่ตรวจแล้ว.
 - Feature denial มีเหตุผลถูกประเภท (coming soon / ไม่อยู่ในแพ็กเกจ / ไม่มี permission / quota / expired / hold), พร้อม action ที่อนุญาต เช่นกลับหน้าหลัก/รอรอบใหม่/ดูแพ็กเกจที่เปิด/ติดต่อ. ห้ามปุ่ม “ซื้อเพื่อใช้” พาเข้าการจ่าย Enterprise ที่ล็อก.
@@ -134,9 +134,9 @@ Admin console must distinguish commercial plan tier/interval, editable quota lim
 
 Changing a package/feature requires both positive and negative proof: visible menus match effective grants; direct URL/API/tools still refuse disallowed actions; switch back uses current permissions and launch readiness without reviving unauthorized roles or replaying old financial work. Concurrent payment, manual feature save and policy revision preserve explicit override and provenance. Do not reset usage, recreate users/branches or enable Enterprise/tax specialist gates while restoring access.
 
-### 9.2 Seven menus are not seven unlimited business permissions
+### 9.2 Seven capabilities are not unlimited business permissions
 
-Each starter menu must be tested with OWNER and a restricted employee against its actual APIs: dashboard widgets/drilldowns; expense list/detail/upload/manual/evidence/signatures; reimbursement own/approval/finance; AI suggestions/LINE; employees/roles/branch scope; company settings; notification list/read/deeplinks. Hide or disable unavailable actions with truthful reasons while the API checks again. No company-wide aggregate if the source cannot enforce the caller's branch/own scope; [] restricted-empty is never ALL.
+Each starter capability must be tested with OWNER and a restricted employee against its actual APIs: dashboard widgets/drilldowns; expense list/detail/upload/manual/evidence/signatures; reimbursement own/approval/finance; AI suggestions/LINE; employees/roles/branch scope; company settings; notification list/read/deeplinks. Hide or disable unavailable actions with truthful reasons while the API checks again. No company-wide aggregate if the source cannot enforce the caller's branch/own scope; [] restricted-empty is never ALL.
 
 Turning a feature off is not blanket data deletion or unconditional refusal of every historical action. Keep the existing [runoff matrix](feature-entitlement-runoff-matrix.md): retained pre-cutoff reimbursement/payment/external WHT work follows its source/permission rules; new root work stays blocked. `employee_access` and `company_settings` remain foundation invariants. Read-only/manual tax review and external50ทวิ handoff are distinct from closed SYSTEM issuance. Enterprise Coming soon does not create a paywall for completing existing authorized obligations.
 

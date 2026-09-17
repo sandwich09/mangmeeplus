@@ -1,0 +1,40 @@
+{
+  "observedAt": "2026-09-16T15:57:40.176998+00:00",
+  "scope": "Operation detail reached from billing issue history",
+  "status": "PASS",
+  "checks": {
+    "local_e2e": "billing-admin-directory5/5 PASS (17.0s)",
+    "web_typecheck": "PASS",
+    "git_diff_check": "PASS",
+    "native_viewports": [
+      1512,
+      390
+    ],
+    "mobile_document_width": 390
+  },
+  "acceptance": [
+    "Task/status/meaning/facts/next action in themed surface",
+    "Original reason and references folded, no self-link or main UUID",
+    "History-to-detail roundtrip preserves validated issue/queue/cursor",
+    "Real preview/submit/queued cancellation through existing API guards",
+    "503 preserves old data and disables detail mutations;403 clears;retry recovers",
+    "Read-only state variants do not render financial action buttons",
+    "Direct/batch paths and invalid or repeated navigation parameters covered"
+  ],
+  "simulation": "Local HTTP/PG synthetic payment evidence; state/read failures simulated explicitly; new detail test never invokes worker/provider",
+  "native": "Read-only inspection of retained cancelled fixture; viewport restored",
+  "reviewUrl": "http://localhost:3000/system/billing/operations/2fed4c9d-9abc-406e-ab6c-60dc53101673?issue=23f77a1a-b0fb-4aeb-bc4f-aa7851044f43",
+  "limits": [
+    "No full console or live provider mutation suite",
+    "Provider/import/delivery presentation uses existing contract; no external provider calls"
+  ],
+  "ci_push_merge_deploy": false,
+  "sha256": {
+    "apps/web/app/system/billing/operations/[id]/page.tsx": "91cccaacd44eef7c5795e63f0061dddd1526268d5ce98e1fac1ed3668a1df114",
+    "apps/web/src/features/billing-admin/BillingOperationDetail.tsx": "b69d13d988101f2aaa6e5082403c15ff0fab646e11fc3863ec6ad572c4f2c049",
+    "apps/web/src/features/billing-admin/BillingOperationPanel.tsx": "a82070c09384ba760450b5759d512de5100a25176d4abddcce02af8c48ce2ca2",
+    "apps/web/src/features/billing-admin/BillingIssueResolutionPanel.tsx": "6f33b958f3d460dd94eab45808f47249d2e03950c86ad4e60751a15f7180ed2a",
+    "apps/web/src/features/billing-admin/BillingAdminPage.tsx": "a5decdeb4c9287d5504a450f976a3b6ffb7265601c5783d86dbc61dde7b2f201",
+    "e2e/billing-admin-directory.spec.ts": "7beb0c793348c10cc987298153eb6c1ce38905ee60d7cbd33888d652f40dd361"
+  }
+}

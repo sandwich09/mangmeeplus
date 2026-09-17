@@ -13,7 +13,7 @@ import { LaunchGateGuardService } from '../../../feature-launch/application/laun
 import { assertExpenseRootOpen } from '../expense-launch-gate';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import type { ExpenseRecord } from '../../domain/models/expense.model';
-import { civilDateToUtcDate, coerceCivilDate } from '@watchdog-bms/contracts';
+import { civilDateToUtcDate, coerceCivilDate, todayCivilDate } from '@watchdog-bms/contracts';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
 import { lockFundingEvidence } from '../../infrastructure/substitute-funding.guard';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
@@ -47,7 +47,7 @@ export class InitReceiptUploadUseCase {
       originalFileName: string;
       mimeType: string;
       byteSize: number;
-      expenseDate: string;
+      expenseDate?: string;
       branchId?: string;
       note?: string;
       captureSource?: 'WEB_UPLOAD' | 'LINE_UPLOAD';
@@ -65,7 +65,9 @@ export class InitReceiptUploadUseCase {
     if (!isBranchInScope(ctx.scopes ?? {}, cmd.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
     // Reject before reserving storage or creating an attachment, not only when saving the draft.
     const branchId = await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, cmd.branchId);
-    const expenseDate = civilDateToUtcDate(coerceCivilDate(cmd.expenseDate));
+    const suppliedDate = cmd.expenseDate === undefined ? undefined : coerceCivilDate(cmd.expenseDate);
+    // The required storage column keeps an internal placeholder; unknown is explicit from creation.
+    const expenseDate = civilDateToUtcDate(suppliedDate ?? todayCivilDate());
 
     // LINE reserves the unique expense identity before storage. Web preserves its existing order.
     const createAttachment = (expenseId?: string) => this.createIntent.execute(ctx, {
@@ -94,6 +96,10 @@ export class InitReceiptUploadUseCase {
       // Date-only after shared validation/coercion. An instant from the LINE path must never put a
       // time into the column, or the list's day filter cannot see the row.
       expenseDate,
+      aiVerificationSummaryJson: suppliedDate ? {
+        dateStatus: 'verified',
+        dateResolution: { expenseDate: suppliedDate, resolvedByUserId: ctx.userId, resolvedAt: new Date().toISOString() },
+      } : { dateStatus: 'unverified', missingFields: ['expenseDate'] },
       currency: 'THB',
       vatMode: 'NO_VAT',
       inputVatClaimStatus: mode === 'SIMPLE' ? 'NON_CLAIMABLE' : 'NEEDS_REVIEW',

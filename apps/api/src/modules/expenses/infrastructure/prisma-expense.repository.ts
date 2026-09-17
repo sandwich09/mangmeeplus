@@ -537,6 +537,7 @@ export class PrismaExpenseRepository {
           taxEvidenceStatus: (input.taxEvidenceStatus ?? 'NEEDS_REVIEW') as any,
           taxEvidenceReasonCode: input.taxEvidenceReasonCode,
           sourceChannelMetadataJson: input.sourceChannelMetadataJson as any,
+          aiVerificationSummaryJson: input.aiVerificationSummaryJson as any,
           vendorNameSnapshot: input.vendorNameSnapshot,
           vatCaptureSnapshotJson: input.vatCaptureSnapshotJson as any,
           whtInputJson: input.whtInputJson as any,

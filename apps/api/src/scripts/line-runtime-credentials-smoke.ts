@@ -61,10 +61,11 @@ export async function checkLineRuntimeCredentials(input:{app:INestApplication;pr
    const waiting=await db.notificationDelivery.findUniqueOrThrow({where:{id:delivery.id}});assert.equal(waiting.status,'QUEUED');assert.equal(waiting.errorCode,'HTTP_503');assert.equal(waiting.attemptCount,1);
    const oldQueueCall=calls.at(-1)!;assert.equal(oldQueueCall.token,`Bearer ${config.lineMessagingChannelAccessToken}`);
    const page=browser.page;await page.setViewportSize({width:390,height:844});await page.goto(`${browser.origin}/system/line-settings`,{waitUntil:'domcontentloaded'});
-   await page.getByRole('heading',{name:'การเชื่อมต่อ LINE ของระบบ',exact:true}).waitFor();
+   await page.getByRole('heading',{name:'ตั้งค่า LINE',exact:true}).waitFor();
+   await page.getByText('เปลี่ยนกุญแจเชื่อมต่อ LINE',{exact:true}).click();
    await page.getByLabel('Channel Secret ใหม่',{exact:true}).fill(secret);await page.getByLabel('Channel Access Token ใหม่',{exact:true}).fill(token);
    await page.getByLabel('เหตุผลการเปลี่ยน',{exact:true}).fill(body.reason);await page.getByLabel('รหัสผ่านปัจจุบันของผู้ดูแล',{exact:true}).fill(password);
-   await page.getByRole('checkbox').check();await page.getByRole('button',{name:'ตรวจ token และบันทึกกุญแจ LINE',exact:true}).click();
+   await page.getByRole('checkbox').check();await page.getByRole('button',{name:'ตรวจและบันทึกกุญแจ LINE',exact:true}).click();
    await page.getByRole('status').filter({hasText:'บันทึกกุญแจรุ่นใหม่แล้ว'}).waitFor();
    const published=await db.platformLineCredential.findUniqueOrThrow({where:{credentialKind:'LINE_MESSAGING_API'}}),meta=(await request(base)).body;
    assert.equal(meta.version,1);assert.equal(meta.source,'DATABASE');assert.equal(meta.inboundVerifiedAt,null);assert.ok(meta.tokenValidatedAt);
@@ -121,10 +122,13 @@ export async function checkLineRuntimeCredentials(input:{app:INestApplication;pr
    }
    await db.platformLineCredential.update({where:{id:published.id},data:{encryptedSecretJson:version2.encryptedSecretJson}});
    cases.push('line-corrupt-published-credential-blocks-inbound-outbound-without-environment-fallback');
-   await page.getByRole('button',{name:'โหลดสถานะ LINE ล่าสุด',exact:true}).click();await page.getByRole('region',{name:'สถานะ LINE ปัจจุบัน'}).getByText(/รุ่นที่บันทึก: 2/).waitFor();
+   await page.getByRole('button',{name:'อัปเดตสถานะ',exact:true}).click();
+   await page.getByText('ข้อมูลบัญชีและประวัติการตั้งค่า',{exact:true}).click();
+   await page.getByRole('region',{name:'สถานะ LINE ปัจจุบัน'}).getByText('บันทึกจากหน้าแอดมิน · รุ่น 2',{exact:true}).waitFor();
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);await page.addStyleTag({content:'nextjs-portal{display:none!important}'});await page.screenshot({path:`${browser.evidenceDir}/line-runtime-credentials-mobile.png`,fullPage:true});
    assert.doesNotMatch(JSON.stringify(await page.evaluate(()=>({local:{...localStorage},session:{...sessionStorage}}))),new RegExp(token));
-   await page.reload({waitUntil:'domcontentloaded'});await page.getByRole('heading',{name:'การเชื่อมต่อ LINE ของระบบ',exact:true}).waitFor();
+   await page.reload({waitUntil:'domcontentloaded'});await page.getByRole('heading',{name:'ตั้งค่า LINE',exact:true}).waitFor();
+   await page.getByText('เปลี่ยนกุญแจเชื่อมต่อ LINE',{exact:true}).click();
    assert.equal(await page.getByLabel('Channel Secret ใหม่',{exact:true}).inputValue(),'');
    const logs=await db.auditLog.findMany({where:{actorUserId:input.userId,action:'system.shared_line_credential.published'}});assert.equal(logs.length,2);
    assert.ok(!JSON.stringify([meta,logs]).includes(secret));assert.ok(!JSON.stringify([meta,logs]).includes(token));

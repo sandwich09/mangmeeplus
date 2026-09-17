@@ -1,0 +1,47 @@
+{
+  "scope": "Five billing destinations task clarity correction",
+  "environment": "local isolated mangmee_ux database; no real provider credentials",
+  "result": "15 distinct local checks pass across initial and targeted runs",
+  "commands": [
+    {
+      "command": "python3 .env.kamal/local-ux-20260916/run.py pnpm exec playwright test e2e/billing-admin-directory.spec.ts e2e/billing-admin-menu-ux.spec.ts --project chromium --workers 1",
+      "result": "14 passed, 1 failed; uppercase fixture selector and h2 role=status corrected"
+    },
+    {
+      "command": "python3 .env.kamal/local-ux-20260916/run.py pnpm exec playwright test e2e/billing-admin-menu-ux.spec.ts --project chromium --workers 1 --grep 'settings preserves|settlement has'",
+      "result": "2 passed (4.4s)"
+    },
+    {
+      "command": "python3 .env.kamal/local-ux-20260916/run.py pnpm exec playwright test e2e/billing-admin-menu-ux.spec.ts --project chromium --workers 1 --grep 'plan tools|paid invoice recovery'",
+      "result": "2 passed (5.5s)"
+    },
+    {
+      "command": "pnpm --filter @watchdog-bms/web typecheck",
+      "result": "PASS final code"
+    },
+    {
+      "command": "git diff --check",
+      "result": "PASS"
+    }
+  ],
+  "coverage": [
+    "37 billing routes: heading, recovery navigation, no horizontal mobile overflow, themed selects, no view-triggered writes",
+    "Real local source-binding error for synthetic paid invoice; mock denied/missing/pending/connection states",
+    "Settings topic draft preservation, invalid hidden input recovery, preview replacing editor and password-gated submit",
+    "Settlement Bangkok conversion/default completed-day range, invalid dates/times and idempotent retry with mocked POST",
+    "Plan blocked state links directly to payments; repair refresh preserves reason draft"
+  ],
+  "nativeReview": [
+    "settings desktop/mobile",
+    "settlement presets and Thai calendar",
+    "invoice binding failure",
+    "paid invoice repair",
+    "blocked plan"
+  ],
+  "limitations": [
+    "UI/contract and isolated local regression only; no claim of all live financial E2E",
+    "No provider payment/refund/email execution",
+    "No CI, push, merge or deploy"
+  ],
+  "reviewUrl": "http://localhost:3000/system/billing/settings"
+}

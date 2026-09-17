@@ -1,5 +1,6 @@
 'use client';
-import { billingControl, billingLabel } from '../billing/billing-display';
+import { billingField, billingControl, billingLabel } from '../billing/billing-display';
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import Link from 'next/link';
 import { useRouter,useSearchParams } from 'next/navigation';
 import { useEffect,useRef,useState } from 'react';
@@ -7,7 +8,7 @@ import type { BillingScanSchedule,BillingScanScheduleOperation } from '@watchdog
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 const base='/system/billing/provider-scans',button=billingControl;
-const field='block min-h-11 w-full min-w-0 rounded-lg border p-2',time=(value:string|null)=>value?new Date(value).toLocaleString('th-TH'):'ยังไม่มี';
+const field=billingField,time=(value:string|null)=>value?formatThaiDateTime(value):'ยังไม่มี';
 const states={PREVIEW:'รอยืนยันการตั้งค่า',SUCCEEDED:'เผยแพร่การตั้งค่าแล้ว',CANCELLED:'ยกเลิกฉบับตั้งค่าแล้ว'};
 const api=<T,>(path:string,body?:unknown,key?:string)=>authedApiFetch<T>(`${base}/schedule${path}`,{cache:'no-store',suppressErrorToast:true,
   ...(body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json',...(key?{'Idempotency-Key':key}:{})},body:JSON.stringify(body)})});
@@ -41,7 +42,7 @@ export function BillingScanSchedulePanel() {
       setRecord(result);router.replace(`${base}?schedule=${result.id}`,{scroll:false});setReload(v=>v+1);
     }catch(error){setError(apiErrorMessage(error));}finally{setPassword('');setBusy(false);}
   }
-  return <section aria-label="การตรวจ Stripe ตามรอบ" className="space-y-4 rounded-xl border p-4">
+  return <section aria-label="การตรวจ Stripe ตามรอบ" className="space-y-4 rounded-xl border border-gray-200 p-4 bg-white">
     <h2 className="text-lg font-bold">ตรวจรายการที่ตกหล่นตามรอบ</h2>
     <p>เปิดเพื่อตรวจเหตุการณ์ใหม่ต่อจากรอบที่เสร็จแล้ว ระบบจะหยุดรอให้งานเดิมกู้คืนหรือยกเลิกก่อนเริ่มรอบใหม่ ประวัติใบแจ้งหนี้ที่เก่ากว่าช่วงค้นหายังต้องตรวจแยก</p>
     {error&&<p role="alert" className="rounded-lg bg-red-50 p-3">{error}</p>}

@@ -1,0 +1,33 @@
+{
+  "date": "2026-09-17",
+  "timezone": "Asia/Bangkok",
+  "scope": ["company detail organization", "email status and retention theme", "shared LINE settings theme"],
+  "status": "local verification passed; owner review pending",
+  "checks": {
+    "playwright": {
+      "command": "python3 .env.kamal/local-ux-20260916/run.py pnpm exec playwright test e2e/system-settings-ux.spec.ts e2e/system-admin.spec.ts --project chromium --workers 1 --grep 'email theme|LINE settings|company detail|SYS-02|SYS-04'",
+      "passed": 5,
+      "failed": 0,
+      "durationSeconds": 12.1,
+      "coverage": ["history filters and pagination", "draft preservation across refresh and sections", "missing configuration and denied states", "browser back and support context", "390px overflow", "isolated company feature confirmation cycle", "no unexpected writes"]
+    },
+    "webTypecheck": "passed: pnpm --filter @watchdog-bms/web typecheck",
+    "diffCheck": "passed: git diff --check",
+    "nativeChrome": "desktop inspection of company overview/package, email and LINE; three local tabs left open"
+  },
+  "evidenceLimits": {
+    "emailAndLine": "API response fixtures; no real provider calls or credentials submitted",
+    "company": "real local seed reads and draft navigation; SYS-04 mutation uses an isolated disposable local fixture",
+    "mobile": "automated 390px layout and interaction checks",
+    "notClaimed": "complete live provider E2E or whole-application UX coverage"
+  },
+  "delivery": {
+    "company": "http://localhost:3000/system/partners/seed-local-company?view=overview",
+    "email": "http://localhost:3000/system/email-delivery",
+    "line": "http://localhost:3000/system/line-settings",
+    "ci": false,
+    "push": false,
+    "merge": false,
+    "deploy": false
+  }
+}

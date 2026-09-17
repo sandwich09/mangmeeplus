@@ -180,8 +180,8 @@ export async function checkRepeatPurchase(input: {
   if (browser) {
     const page = browser.page;
     await page.goto(`${browser.origin}/companies/${companyId}/billing?interval=year`, { waitUntil: 'domcontentloaded' });
-    await page.getByText((await request('/v1/auth/account/email/otp')).body.email, { exact: true }).first().waitFor();
-    await page.locator('article').filter({ hasText: 'Pro' }).getByRole('button', { name: 'ตรวจสอบราคา', exact: true }).click();
+    await page.getByRole('button', { name: /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/, exact: true }).click();
+    await page.locator('article').filter({ hasText: 'Pro' }).getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
     await page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ' }).getByText(/เพิ่ม 1200 ใบ/).waitFor();
   }
   fixture.lose('checkout');

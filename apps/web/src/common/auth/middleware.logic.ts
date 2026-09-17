@@ -5,6 +5,7 @@ const MUTATING_METHOD = /^(POST|PUT|PATCH|DELETE)$/i;
 /** Pages that require a signed-in session cookie. */
 export function isProtectedPagePath(pathname: string): boolean {
   return pathname === '/legal-acceptance'
+    || pathname === '/account/email'
     || pathname === '/billing/companies'
     || pathname.startsWith('/legal-acceptance/')
     || pathname.startsWith('/companies/')

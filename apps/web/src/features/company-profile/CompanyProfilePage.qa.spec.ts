@@ -176,7 +176,7 @@ describe('the account section asks for what a login actually needs', () => {
     const html = renderLoaded({ permissions: OWNER, account: {
       ...LINE_ONLY_ACCOUNT, email: 'new@example.com', pendingEmail: 'new@example.com',
     } });
-    assert.match(html, /หากยังรับรหัสไม่ได้.*ติดต่อทีมงาน/);
+    assert.match(html, /หากยังไม่ได้รับ.*ติดต่อทีมงาน/);
   });
 });
 
@@ -198,7 +198,7 @@ describe('handlers that no static render reaches', () => {
   });
 
   it('sends the username with the first password and reports the stored form back', () => {
-    const savePassword = block('const savePassword = async () => {', 'if (loading) {');
+    const savePassword = block('const savePassword = async () => {', 'if (loading && !identity) {');
     assert.match(savePassword, /passwordFormError\(account, \{ password, confirmPassword, username: newUsername \}\)/);
     assert.match(savePassword, /setMyFirstPassword\(password, newUsername\.trim\(\) \|\| undefined\)/);
     assert.match(savePassword, /saved\.username/, 'the login name is lower-cased server-side; the user has to be told');
@@ -207,7 +207,7 @@ describe('handlers that no static render reaches', () => {
   // The native fragment jump already ran against an empty page, so the page has to redo it once
   // the sections exist — otherwise "ใส่เลย" lands the owner at the top (rehearsal 26).
   it('jumps to the hashed section once the sections are in the DOM', () => {
-    const effect = block('const jumpedToHash = useRef(false);', 'if (loading) {');
+    const effect = block('const jumpedToHash = useRef(false);', 'if (loading && !identity) {');
     assert.match(effect, /if \(loading \|\| loadError\) return undefined;/, 'the sections do not exist yet while loading');
     assert.match(effect, /sectionIdFromHash\(window\.location\.hash\)/, 'only the page\u2019s own ids may reach the DOM');
     assert.match(effect, /document\.getElementById\(id\)\?\.scrollIntoView\(\{ block: 'start' \}\)/);

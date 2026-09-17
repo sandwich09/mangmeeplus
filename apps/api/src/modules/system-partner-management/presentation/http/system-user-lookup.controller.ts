@@ -15,7 +15,7 @@ export class SystemUserLookupController {
   @ApiOperation({ summary: 'Look up a person by email, username or name across every company' })
   @ApiResponse({ status: 200 })
   @ApiResponse({ status: 422, description: 'q is shorter than 2 or longer than 120 characters' })
-  lookup(@Query('q') q?: string) {
-    return this.lookupUsers.execute(q);
+  lookup(@Query('q') q?: string, @Query('status') status?: string) {
+    return this.lookupUsers.execute(q, status);
   }
 }

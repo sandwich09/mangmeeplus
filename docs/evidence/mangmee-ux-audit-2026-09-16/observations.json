@@ -1,0 +1,92 @@
+{
+  "kind": "HEURISTIC_NATIVE_SAMPLE_NOT_FULL_E2E",
+  "source": "2221b24df9dde13378e4bb204e805c7e2421965c",
+  "uatSource": "7ccff81178e547817d5d21571aa88ee2dde94628",
+  "viewports": [
+    {
+      "width": 1512,
+      "height": 745
+    },
+    {
+      "width": 390,
+      "height": 844
+    }
+  ],
+  "observations": [
+    {
+      "id": "UX01",
+      "surface": "billing_mobile",
+      "verifiedEmailPanelsBeforeStatus": 2,
+      "paidHeadingY": 941,
+      "planSelectionY": 1506,
+      "historyY": 2616,
+      "documentScrollWidth": 390,
+      "scope": "native authenticated owner; active paid package"
+    },
+    {
+      "id": "UX02",
+      "surface": "receipt_review_mobile",
+      "nextButton": {
+        "top": 684,
+        "height": 44
+      },
+      "cancelButton": {
+        "top": 736,
+        "height": 44
+      },
+      "deleteButton": {
+        "top": 788,
+        "height": 44
+      },
+      "firstInputY": 819,
+      "inputFontPx": 16,
+      "documentScrollWidth": 390,
+      "scope": "initial fold; fields reachable by scrolling; no mutation performed"
+    },
+    {
+      "id": "UX04",
+      "surface": "dashboard_today_filter",
+      "fontPx": 15,
+      "fontWeight": 700,
+      "foreground": "#ffffff",
+      "background": "#16a34a",
+      "contrastRatio": 3.2957336053312796,
+      "ancestorOpacity": 1,
+      "ancestorFilters": "none",
+      "mixBlendMode": "normal",
+      "normalTextThreshold": 4.5
+    },
+    {
+      "id": "UX03",
+      "surface": "published_marketing_pricing",
+      "publishedTrialPlacement": "Pro / 100 receipts / 5 branches / 10 employees",
+      "localTemplateTrial": "FREE_TRIAL / 15 receipts / 1 branch / 2 employees",
+      "deployPerformed": false
+    },
+    {
+      "id": "UX05",
+      "surface": "admin_configuration",
+      "sourceEvidence": "BillingConfigurationPage.tsx:95-104 password proof precedes draft form; proof valid5minutes",
+      "renderEvidence": "prior same-release local mobile screenshot; not fresh admin UAT session"
+    },
+    {
+      "id": "UX09",
+      "surface": "line_rich_menu",
+      "source": "scripts/line-oa/rich-menu-v2-ver2.manifest.json",
+      "assetInspected": true,
+      "nativeDeviceInspected": false
+    }
+  ],
+  "focusedChecks": {
+    "themeDesignAndAccent": "PASS_8_OF_8",
+    "command": "pnpm --filter @watchdog-bms/web exec tsx --test src/common/components/mangmee/mangmee-design.spec.ts src/common/components/mangmee/mangmee-interactive-theme.spec.ts"
+  },
+  "viewportRestored": {
+    "width": 1512,
+    "height": 745
+  },
+  "uiImplementationThisAudit": false,
+  "newCIDispatch": false,
+  "merge": false,
+  "deploy": false
+}

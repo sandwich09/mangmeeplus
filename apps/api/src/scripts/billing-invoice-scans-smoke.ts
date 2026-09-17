@@ -125,7 +125,9 @@ export async function checkBillingInvoiceScans(input:ProviderScansSmokeInput&{ro
       assert.ok(navigation?.ok(),'Admin company document must load successfully');assert.equal(companyResponse.status(),200);
       assert.equal((await companyResponse.json()).accountId,account.id);
       await page.getByRole('region',{name:'ข้อมูลการชำระเงินบริษัท',exact:true}).waitFor();
-      await page.getByRole('link',{name:'ตรวจประวัติใบแจ้งหนี้ Stripe',exact:true}).click();await page.waitForURL(`**/companies/${companyId}/invoice-scans`);
+      await page.getByRole('link',{name:'ปรับแพ็กเกจและตรวจสอบ',exact:true}).click();
+      await page.getByText('ตรวจข้อมูลกับ Stripe เพิ่มเติม',{exact:true}).click();
+      await page.getByRole('link',{name:'ค้นหาใบแจ้งหนี้ที่ยังไม่เข้ามั่งมี',exact:true}).click();await page.waitForURL(`**/companies/${companyId}/invoice-scans`);
       await page.getByLabel('เหตุผล',{exact:true}).fill('ตรวจประวัติจากเว็บและกู้ผลที่ค้าง');let lostResponse=false,createdId='';
       await page.route(`**/companies/${companyId}/invoice-scans`,async route=>{
         if(route.request().method()!=='POST'||lostResponse){await route.continue();return;}
@@ -142,7 +144,7 @@ export async function checkBillingInvoiceScans(input:ProviderScansSmokeInput&{ro
       const panel=page.getByRole('region',{name:'รายการใบแจ้งหนี้ที่ตรวจพบ',exact:true});await panel.getByRole('link',{name:'ตรวจใบแจ้งหนี้เดิมและผลให้สิทธิ์',exact:true}).click();
       await page.waitForURL(`**/apply-invoices/${mapped.id}`);await page.goBack({waitUntil:'domcontentloaded'});await page.waitForURL(`**/invoice-scans/${createdId}`);
       await panel.getByRole('link',{name:'เปิดเคสตรวจใบแจ้งหนี้ของบริษัท',exact:true}).first().click();await page.waitForURL(`**/system/billing/issues/${review.id}`);
-      await page.getByRole('link',{name:'เปิดงานตรวจใบแจ้งหนี้ของบริษัท',exact:true}).click();await page.waitForURL(`**/companies/${companyId}/invoice-scans`);
+      await page.getByRole('link',{name:'ตรวจใบแจ้งหนี้ของบริษัท',exact:true}).click();await page.waitForURL(`**/companies/${companyId}/invoice-scans`);
       await page.getByRole('link',{name:'ตรวจครบช่วงที่เลือก · ตรวจประวัติจากเว็บและกู้ผลที่ค้าง',exact:true}).click();await page.waitForURL(`**/invoice-scans/${createdId}`);
       await expect(page.getByRole('heading',{name:'ตรวจครบช่วงที่เลือก',exact:true})).toBeVisible();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
       await page.addStyleTag({content:'nextjs-portal { display: none; }'});await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`${evidenceDir}/admin-invoice-discovery-mobile.png`,fullPage:true});

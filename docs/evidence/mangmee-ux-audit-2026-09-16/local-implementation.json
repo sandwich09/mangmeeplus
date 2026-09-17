@@ -1,0 +1,33 @@
+{
+  "state": "local_owner_review",
+  "merge": false,
+  "ciDispatched": false,
+  "deployed": false,
+  "checks": {
+    "web_typecheck": "PASS",
+    "api_typecheck": "PASS",
+    "web_focused": 99,
+    "session_focused": 27,
+    "api_focused_including_pg_race": 53,
+    "browser_e2e": 6,
+    "theme_final_recheck": 8
+  },
+  "browser": {
+    "billing_mobile_width": 390,
+    "status_y": 236,
+    "email_disclosure_open": false,
+    "primary_height": 44,
+    "primary_contrast": 5.0155974781,
+    "horizontal_overflow": false,
+    "return_workspace_shell": true,
+    "receipt_menu": "next + more; cancel/delete reachable",
+    "admin_mobile": "collapsed grouped navigation; draft before password",
+    "marketing": "trial15, owner included in account counts, CTA animation none"
+  },
+  "limits": [
+    "Stripe/Postmark disconnected locally; no paid sales",
+    "No full native LINE device test or rich-menu artwork replacement",
+    "No full route/state/device acceptance claim"
+  ],
+  "runtime": "ignored .env.kamal/local-ux-20260916"
+}

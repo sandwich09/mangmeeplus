@@ -206,6 +206,7 @@ export type BillingOperatorCompany = {
 };
 export type BillingOperatorIssue = { id: string; companyId: string | null; companyName?:string|null; kind: string; reference: string;
   operationType?:string|null;
+  relatedInvoiceId?:string|null; relatedRefundOperationId?:string|null; resolvedAt?:string|null;
   state: string; assigneeUserId: string | null; note: string | null; version: number; createdAt: string; updatedAt: string;
   assigneeName: string | null; assigneeAvailable: boolean; backupUserId: string | null; backupName: string | null; backupAvailable: boolean;
   priority: 'NORMAL' | 'HIGH' | 'CRITICAL'; followUpAt: string | null; overdue: boolean; episode: number; lastSeenAt: string;
@@ -216,7 +217,8 @@ export type BillingSupportOutcome = { id:string;issueId:string;companyId:string|
   kind:BillingSupportOutcomeKind;note:string;actorUserId:string;createdAt:string;recordedAt:string|null;expiresAt:string;version:number;
   state:'PREVIEW'|'SUCCEEDED'|'CANCELLED';previewHash:string;canSubmit:boolean;canCancel:boolean };
 export type BillingOperatorOverview = { mode: BillingMode | 'DISABLED'; capabilities: string[]; platformScope: boolean; canManageScopes?: boolean;
-  companies: BillingOperatorCompany[]; nextCursor: string | null };
+  companies: BillingOperatorCompany[]; nextCursor: string | null;
+  pagination?: { page: number; pageSize: number; total: number } };
 export type BillingBatchView={id:string;version:number;previewHash:string;state:string;mode:BillingMode;reason:string;createdAt:string;expiresAt:string;
   progress:'PREVIEW'|'PENDING'|'REVIEW'|'CHECKED'|'PARTIAL'|'STOPPED';checked:number;pending:number;review:number;stopped:number;canSubmit:boolean;canCancel:boolean;canExport:boolean;
   items:{companyId:string;companyName:string;operationId:string|null;state:string;observedAt:string|null;reviewCaseId:string|null;pendingAttempt:boolean|null;issueCount:number|null}[]};

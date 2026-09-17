@@ -35,7 +35,7 @@ Journey: เปิดบริษัท → เลือกแพ็กเกจ
 5. **แพ็กเกจสำเร็จรูป** (เริ่มต้น / มาตรฐาน / ครบวงจร) กดครั้งเดียวเซ็ตทั้งชุด แล้วปรับรายเมนูต่อได้
 6. **บันทึกรวมครั้งเดียว** มีสรุป diff ก่อนบันทึก แยกชัดว่าอะไร "จะหายไป" (อันตราย) กับ "จะเพิ่มเข้ามา"
 7. **ห้ามเปลี่ยนสิ่งที่ลูกค้าเดิมเห็นอยู่** การเพิ่มสวิตช์ใหม่ต้องสืบทอดค่าจากกติกาเดิมแบบตรง ๆ (§6) ไม่มี migration ของ Prisma
-8. `expense_auto_post` ไม่ใช่เมนู — ย้ายไปส่วน "การทำงานเบื้องหลัง" แยกจากกระจกเมนู และคง guard COA readiness เดิม
+8. `expense_auto_post` และ `ai_line_assistant` เป็นการทำงานเบื้องหลัง แยกจากกระจกเมนู ตามมติเจ้าของ 2026-09-17: ซ่อนทางเข้า `ai-suggestions` จากเมนูหลักและพรีวิวเมนูด้วย `navigation: contextual` แต่คง route สำหรับตรวจคำแนะนำตามสิทธิ์เดิม ไม่ใช่การปิด entitlement หรือ API; การปิดสวิตช์ AI จริงยังใช้ gate เดิม ส่วน expense auto-post คง guard COA readiness
 9. บริษัท DISABLED/ARCHIVED (`fieldsLocked`) ล็อกทุกสวิตช์เหมือนเดิม
 
 ## 4. สวิตช์ใหม่ 3 ตัว + การบังคับใช้ที่หายไป 1 จุด
@@ -67,6 +67,7 @@ export type MenuEntitlementBinding = {
   parentFeatureKey: string | null;  // parent สำหรับ ownership/submenu; ไม่ใช่ตัวชี้ว่าเป็น foundation
   entitlementKeys: string[];        // key ที่การ์ดเขียนเวลา toggle; ว่าง = foundation ปิดไม่ได้
   gatePermissions: string[];        // คัดลอกจาก WorkspaceModule.requiredAnyPermissions ตรง ๆ
+  navigation?: 'contextual';        // ไม่แสดงในเมนูหลัก; route ยังตรวจสิทธิ์เดิม
   status: 'ready' | 'planned';
 };
 ```
@@ -99,7 +100,7 @@ export type MenuEntitlementBinding = {
 | `inventory` | คลังสินค้า | operate | `inventory` | `[inventory]` |
 | `procurement` | จัดซื้อ | operate | `procurement` | `[procurement.suppliers, procurement.purchase_requests, procurement.purchase_orders, procurement.goods_receipts]` |
 | `workflow` | เวิร์กโฟลว์ | operate | `workflow_automation` | `[workflow_automation]` |
-| `ai-suggestions` | AI แนะนำ | operate | `ai_line_assistant` | `[ai_line_assistant]` |
+| `ai-suggestions` (contextual; ไม่ใช่เมนูหลัก) | ผู้ช่วย AI ทาง LINE — สวิตช์เบื้องหลัง | operate | `ai_line_assistant` | `[ai_line_assistant]` |
 | `expenses` | ค่าใช้จ่ายและใบเสร็จ | finance | `expenses` | `[expenses]` |
 | `reimbursements` | การเบิกจ่าย | finance | `reimbursement` | `[reimbursement]` |
 | `journal` | สมุดรายวัน | finance | `double_entry_ledger` | `[double_entry_ledger]` |
@@ -159,13 +160,13 @@ toggleMenu(state, binding, next) -> changes: Array<{featureKey, enabled}>
 
 | preset | ประกอบด้วย |
 |---|---|
-| `starter` เริ่มต้น | `dashboard_notifications`, `expenses`, `expenses.list`, `expenses.upload`, `expenses.manual`, `expenses.categories`, `expenses.evidence`, `expenses.signatures`, `reimbursement`, `ai_line_assistant`, `employee_access`, `employee_access.employees`, `employee_access.roles`, `employee_access.overview`, `company_settings`, `company_settings.branches`, `company_settings.security` — แสดง 7 เมนู: แดชบอร์ด, AI แนะนำ, ค่าใช้จ่ายและใบเสร็จ, การเบิกจ่าย, พนักงานและสิทธิ์, ตั้งค่าบริษัท, การแจ้งเตือน |
+| `starter` เริ่มต้น | `dashboard_notifications`, `expenses`, `expenses.list`, `expenses.upload`, `expenses.manual`, `expenses.categories`, `expenses.evidence`, `expenses.signatures`, `reimbursement`, `ai_line_assistant`, `employee_access`, `employee_access.employees`, `employee_access.roles`, `employee_access.overview`, `company_settings`, `company_settings.branches`, `company_settings.security` — คง 7 ความสามารถ: 6 ทางเข้าการใช้งาน (แดชบอร์ด, ค่าใช้จ่ายและใบเสร็จ, การเบิกจ่าย, พนักงานและสิทธิ์, ตั้งค่าบริษัท, การแจ้งเตือนที่ส่วนหัว) และผู้ช่วย AI เบื้องหลัง ไม่เพิ่มเมนูใหม่ทดแทน |
 | `standard` มาตรฐาน | ทุก key ของ starter + `crm`, `crm.inbox`, `crm.customers`, `product_catalog`, `line_oa`, `sales_documents`, `thai_tax`, `double_entry_ledger`, `reports`, `crm.overview`, `crm.leads`, `crm.pipeline`, `crm.followups`, `crm.bookings`, `inventory` |
 | `full` ครบวงจร | ทุก key **ยกเว้น** `expense_auto_post` (ต้องผ่าน COA readiness ก่อน จึงเปิดเองเท่านั้น) |
 
 กด preset = เตรียมค่าลงสถานะที่ยังไม่บันทึก (ไม่ยิง API ทันที) แล้วผู้ใช้ปรับต่อได้
 
-คำตัดสินเจ้าของ 2026-09-11: “เริ่มต้น” หมายถึง preset 7 เมนูนี้เสมอ แยกจากแพ็กเกจราคา บริษัทใหม่ที่ไม่ได้ระบุ preset ใช้ starter; การเปลี่ยนราคา/อายุไม่เปลี่ยนสิทธิ์ และบริษัทเดิมเก็บสิทธิ์เดิมไว้ ดู [Starter QA fixes](starter-web-qa-fixes-spec.md)
+คำตัดสินเจ้าของ 2026-09-11: “เริ่มต้น” หมายถึง preset เดิมนี้เสมอ (มติ 2026-09-17 ปรับการแสดงผลเป็น 6 ทางเข้าและ AI เบื้องหลัง โดยคง keys เดิม) แยกจากแพ็กเกจราคา บริษัทใหม่ที่ไม่ได้ระบุ preset ใช้ starter; การเปลี่ยนราคา/อายุไม่เปลี่ยนสิทธิ์ และบริษัทเดิมเก็บสิทธิ์เดิมไว้ ดู [Starter QA fixes](starter-web-qa-fixes-spec.md)
 
 Preset เป็น data contract แบบ explicit: `applyPreset` เขียนแถวให้ทุก entitlement key และเขียน key ที่ไม่อยู่ใน preset เป็น `false` จึงต้องระบุ child key ทุกตัวที่ตั้งใจเปิด ห้ามพึ่ง inheritance
 
@@ -187,6 +188,7 @@ API regression guard สร้างแถวแบบเดียวกับ `
 │     ▾ เมนูย่อย 5/6                                │  │ 💵 การเบิกจ่าย    │ │
 │  💵 การเบิกจ่าย             /reimburse…   [●]     │  └──────────────────┘ │
 │ ── การทำงานเบื้องหลัง (ไม่ใช่เมนู) ──────────     │  ☐ แสดงเมนูที่ปิดด้วย  │
+│  ⚡ ผู้ช่วย AI ทาง LINE                 [●]     │                        │
 │  ⚡ ลงบัญชีค่าใช้จ่ายอัตโนมัติ            [○]     │                        │
 └── มีการเปลี่ยนแปลง 3 รายการ  [คืนค่า] [ตรวจสอบและบันทึก] ────────────────┘
 ```

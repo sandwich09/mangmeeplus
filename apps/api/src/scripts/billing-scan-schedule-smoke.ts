@@ -178,7 +178,7 @@ export async function checkBillingScanSchedule(input:ProviderScansSmokeInput&{ro
       await panel.getByRole('link',{name:'เปิดงานตรวจอัตโนมัติล่าสุด',exact:true}).click();await page.waitForURL('**/system/billing/provider-scans/*');
       await page.getByRole('link',{name:'กลับรายการงานตรวจ',exact:true}).click();await page.waitForURL('**/system/billing/provider-scans');
       await page.goto(`${origin}/system/billing/issues/${gap.id}`,{waitUntil:'domcontentloaded'});
-      await page.getByRole('link',{name:'ตรวจการตั้งค่าและช่วงเวลาที่ตกหล่น',exact:true}).click();await page.waitForURL('**/system/billing/provider-scans');
+      await page.getByRole('link',{name:'ตรวจงานค้นหารายการ Stripe',exact:true}).click();await page.waitForURL('**/system/billing/provider-scans');
       await page.goto(`${origin}/system/billing/provider-scans?schedule=${randomUUID()}`,{waitUntil:'domcontentloaded'});await panel.getByRole('alert').waitFor();
       await panel.getByRole('link',{name:'กลับประวัติรอบตรวจ',exact:true}).click();await page.waitForURL('**/system/billing/provider-scans');
       cases.push('browser-schedule-stale-copy-cancel-password-publish-committed-response-loss-same-record-retry-reload-mobile-run-return');

@@ -234,6 +234,7 @@ export type CreateExpenseRecordInput = {
   taxEvidenceStatus?: TaxEvidenceStatus;
   taxEvidenceReasonCode?: TaxEvidenceReasonCode;
   sourceChannelMetadataJson?: Record<string, unknown>;
+  aiVerificationSummaryJson?: Record<string, unknown>;
   vendorNameSnapshot?: string;
   vatCaptureSnapshotJson?: import('@watchdog-bms/contracts').ExpenseVatCaptureSnapshotV1;
   whtInputJson?: import('@watchdog-bms/contracts').ExpenseWhtCapture;

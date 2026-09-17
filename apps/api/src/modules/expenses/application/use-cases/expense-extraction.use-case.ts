@@ -161,6 +161,8 @@ export class RequestReceiptExtractionUseCase {
       // changes its fingerprint, so this does not approve the newly read facts.
       const priorSummary = expense.aiVerificationSummaryJson ?? {};
       const evidenceReviewMetadata = {
+        ...(priorSummary['dateStatus'] ? { dateStatus: priorSummary['dateStatus'] } : {}),
+        ...(priorSummary['dateResolution'] ? { dateResolution: priorSummary['dateResolution'] } : {}),
         ...(priorSummary['documentEvidenceDraft'] ? { documentEvidenceDraft: priorSummary['documentEvidenceDraft'] } : {}),
         ...(priorSummary['documentReview'] ? { documentReview: priorSummary['documentReview'] } : {}),
       };

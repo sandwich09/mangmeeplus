@@ -202,11 +202,14 @@ test.describe('EXP — expenses + receipts', () => {
 
   // EXP-UX-01 / plan 13.11.A: ส่งตรวจสอบ has to END on the list. The old behaviour reloaded the
   // detail page in place, so the user could not tell the submit from a no-op.
-  test('EXP-04B @smoke ส่งตรวจสอบ lands on the list with the row highlighted and its status shown', async ({ authedPage, api, companyId }) => {
-    const created = await createExpense(api, companyId);
+  test('EXP-04B @smoke ส่งตรวจสอบ lands on the list with the row highlighted and its status shown', async ({ authedPage, api, request, companyId }) => {
+    test.skip(process.env['S3_E2E'] !== '1' && process.env['S3_E2E_ACTIVE'] !== '1', 'This submit journey requires an attached and reviewed receipt; run with local MinIO and S3_E2E=1.');
+    const created = await createExpenseWithReceipt(api, request, companyId);
     await gotoCompany(authedPage, companyId, `/expenses/${created.id}`);
     await authedPage.getByRole('textbox', { name: /ชื่อผู้ขาย/ }).first().fill('E2E Vendor');
     await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await expect(authedPage.getByRole('heading', { name: 'ตรวจสอบเอกสารและหลักฐานภาษี', exact: true })).toBeVisible();
+    await authedPage.getByRole('button', { name: 'บันทึกการตรวจ', exact: true }).click();
     await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();
 
     const submit = authedPage.getByRole('button', { name: /ส่งตรวจสอบ/ });
@@ -229,7 +232,11 @@ test.describe('EXP — expenses + receipts', () => {
   test('EXP-04A @p1 cancellation dialog keeps or rejects a draft with API truth', async ({ authedPage, api, companyId }) => {
     const created = await createExpense(api, companyId);
     await gotoCompany(authedPage, companyId, `/expenses/${created.id}`);
-    // ยกเลิกรายการ renders on every guided step now that the stepper is display-only.
+    await authedPage.setViewportSize({ width: 390, height: 844 });
+    // Invalid drafts remain rejectable through the secondary-action menu on the first step.
+    await expect(authedPage.getByRole('button', { name: 'ถัดไป', exact: true })).toBeDisabled();
+    await expect(authedPage.getByRole('button', { name: 'ยกเลิกรายการ', exact: true })).not.toBeVisible();
+    await authedPage.locator('summary').filter({ hasText: /^เพิ่มเติม$/ }).click();
     await authedPage.getByRole('button', { name: 'ยกเลิกรายการ', exact: true }).click();
 
     const dialog = authedPage.getByRole('dialog', { name: 'ยืนยันการยกเลิกรายการ' });
@@ -243,6 +250,7 @@ test.describe('EXP — expenses + receipts', () => {
     await expect(dialog).toBeHidden();
     expect((await json<ExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`))).status).toBe('DRAFT');
 
+    await authedPage.locator('summary').filter({ hasText: /^เพิ่มเติม$/ }).click();
     await authedPage.getByRole('button', { name: 'ยกเลิกรายการ', exact: true }).click();
     await expect(reason).toHaveValue('');
     await reason.fill('บันทึกรายการผิด');
@@ -469,6 +477,7 @@ test('EXP-26 @p1 keeps a backdated document in its intake month and labels both 
   const exportRequestPromise = authedPage.waitForRequest((request) => (
     request.method() === 'POST' && new URL(request.url()).pathname.endsWith(`/companies/${companyId}/expenses/accountant-package`)
   ));
+  await authedPage.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).click();
   await authedPage.getByRole('button', { name: 'ส่งออก Excel' }).click();
   const exportPayload = (await exportRequestPromise).postDataJSON();
   expect(exportPayload.dateField).toBe('expenseDate');
@@ -915,10 +924,12 @@ test.describe('expense list filter retention', () => {
   const columns = (page: any) => page.getByRole('combobox', { name: 'คอลัมน์ที่ส่งออก' });
 
   async function chooseFullColumns(page: any) {
+    await page.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).click();
     await expect(columns(page)).toHaveText(SUMMARY);
     await columns(page).click();
     await page.getByRole('option', { name: FULL, exact: true }).click();
     await expect(columns(page)).toHaveText(FULL);
+    await page.getByRole('dialog', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).getByRole('button', { name: 'ปิด', exact: true }).click();
   }
 
   /** Navigate the way a user does — the sidebar — so Next routes on the client. */
@@ -930,23 +941,29 @@ test.describe('expense list filter retention', () => {
   }
 
   test('EXP-20 @p1 keeps the filter across a row detail round trip', async ({ authedPage, api, companyId }) => {
-    await createExpense(api, companyId);
-    await gotoCompany(authedPage, companyId, '/expenses');
-    await chooseFullColumns(authedPage);
+    const ownDraft = await createExpense(api, companyId);
+    try {
+      await gotoCompany(authedPage, companyId, '/expenses');
+      await chooseFullColumns(authedPage);
 
-    // Into the detail route by clicking a row, and back out via the กลับ link — both client-side.
-    await authedPage.getByTestId('expenses-row').first().click();
-    await authedPage.waitForURL(/\/expenses\/[^/]+$/);
-    await authedPage.getByRole('link', { name: /กลับไปรายการค่าใช้จ่าย|Back to expenses/ }).click();
-    await authedPage.waitForURL(/\/expenses$/);
+      // Into the detail route by clicking a row, and back out via the กลับ link — both client-side.
+      await authedPage.getByTestId('expenses-row').first().click();
+      await authedPage.waitForURL(/\/expenses\/[^/]+$/);
+      await authedPage.getByRole('link', { name: /กลับไปรายการค่าใช้จ่าย|Back to expenses/ }).click();
+      await authedPage.waitForURL(/\/expenses$/);
 
-    await expect(columns(authedPage)).toHaveText(FULL);
+      await authedPage.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).click();
+      await expect(columns(authedPage)).toHaveText(FULL);
+    } finally {
+      expect((await api.delete(`companies/${companyId}/expenses/${ownDraft.id}`)).status()).toBe(204);
+    }
   });
 
   test('EXP-21 @p1 resets the filter on reload', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/expenses');
     await chooseFullColumns(authedPage);
     await authedPage.reload();
+    await authedPage.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).click();
     await expect(columns(authedPage)).toHaveText(SUMMARY);
   });
 
@@ -955,6 +972,7 @@ test.describe('expense list filter retention', () => {
     await chooseFullColumns(authedPage);
     await clickSidebar(authedPage, '/dashboard');
     await clickSidebar(authedPage, '/expenses');
+    await authedPage.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).click();
     await expect(columns(authedPage)).toHaveText(SUMMARY);
   });
 
@@ -965,6 +983,7 @@ test.describe('expense list filter retention', () => {
     await chooseFullColumns(authedPage);
     await clickSidebar(authedPage, '/expenses/evidence');
     await clickSidebar(authedPage, '/expenses');
+    await authedPage.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).click();
     await expect(columns(authedPage)).toHaveText(SUMMARY);
   });
 });
@@ -991,4 +1010,97 @@ test('EXP-EVIDENCE @p1 pending evidence saves and reopens without enabling Next 
   const saved = await json<FullExpenseDetail>(await api.get(path));
   expect(saved.aiVerificationSummaryJson?.documentReview).toBeUndefined();
   expect(saved.substituteReceiptEvidence).toBeFalsy();
+});
+
+// Opening export options must not move the trigger or the list, including on mobile.
+for (const width of [1280, 390]) {
+  test(`EXP-EXPORT @p1 export dialog keeps layout and selected format at ${width}px`, async ({ authedPage: page, companyId }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const requests: Array<Record<string, unknown>> = [];
+    await page.route('**/expenses/accountant-package', async (route) => {
+      requests.push(route.request().postDataJSON());
+      await route.fulfill({ status: 503, json: { message: 'ทดสอบส่งออกไม่สำเร็จ กรุณาลองอีกครั้ง' } });
+    });
+    await gotoCompany(page, companyId, '/expenses');
+    const trigger = page.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true });
+    const listSearch = page.getByPlaceholder('ค้นหาผู้ขาย / เลขที่เอกสาร', { exact: true });
+    await trigger.scrollIntoViewIfNeeded();
+    const before = { trigger: await trigger.boundingBox(), list: await listSearch.boundingBox() };
+    await trigger.click();
+    const dialog = page.getByRole('dialog', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true });
+    await expect(dialog).toBeVisible();
+    expect(await trigger.boundingBox()).toEqual(before.trigger);
+    expect(await listSearch.boundingBox()).toEqual(before.list);
+    expect(requests).toHaveLength(0);
+    await dialog.getByRole('combobox', { name: 'คอลัมน์ที่ส่งออก', exact: true }).click();
+    await page.getByRole('option', { name: 'แบบเต็ม (สำนักงานบัญชี)', exact: true }).click();
+    await dialog.getByRole('button', { name: 'ส่งออก Excel', exact: true }).click();
+    await expect(dialog.getByRole('alert')).toBeVisible();
+    expect(requests).toHaveLength(1);
+    expect(requests[0].columnSet).toBe('full');
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    expect(await trigger.boundingBox()).toEqual(before.trigger);
+    await trigger.click();
+    await expect(dialog.getByRole('combobox', { name: 'คอลัมน์ที่ส่งออก', exact: true })).toHaveText('แบบเต็ม (สำนักงานบัญชี)');
+    await dialog.getByRole('button', { name: 'ปิด', exact: true }).click();
+    expect(await listSearch.boundingBox()).toEqual(before.list);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+  });
+}
+
+test('EXP-DATE upload leaves receipt date to AI or review and omits it from the request', async ({ authedPage: page, api, companyId }, info) => {
+  const bodies: Record<string, unknown>[] = [];
+  await page.route('**/expenses/receipt-uploads', async route => {
+    bodies.push(route.request().postDataJSON());
+    await route.fulfill({ status: 400, json: { message: 'Synthetic upload stopped before creating data' } });
+  });
+  await gotoCompany(page, companyId, '/expenses/upload');
+  const { items: branches } = await json<{ items: Array<{ id: string; name: string; type: string }> }>(await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`));
+  await chooseThemedOption(page, page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true }), branchOptionName(branches[0]!));
+  await expect(page.getByRole('combobox', { name: 'วันที่ในใบเสร็จ', exact: true })).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath('receipt-upload-steps.png'), fullPage: true });
+  await page.locator('input[type=file].hidden').setInputFiles({ name: 'synthetic-receipt.png', mimeType: 'image/png', buffer: uniqueReceiptPng() });
+  await page.getByRole('button', { name: 'ให้ AI อ่านใบเสร็จ', exact: true }).click();
+  await expect.poll(() => bodies.length).toBe(1);
+  expect(bodies[0]).not.toHaveProperty('expenseDate');
+  await expect(page.getByRole('combobox', { name: 'วันที่ในใบเสร็จ', exact: true })).toHaveCount(0);
+});
+
+for (const width of [1280, 390]) {
+  test(`EXP-STEPS signature instructions stay in order at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    await page.setViewportSize({ width, height: 900 });
+    await gotoCompany(page, companyId, '/expenses/signatures');
+    const steps = page.getByRole('heading', { name: 'ลายเซ็นของฉันทำงานอย่างไร', exact: true }).locator('..').locator('ol > li');
+    await expect(steps).toHaveCount(3);
+    const boxes = await steps.evaluateAll(items => items.map(item => { const r = item.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height }; }));
+    if (width >= 1024) {
+      expect(boxes[0].y).toBe(boxes[1].y); expect(boxes[1].y).toBe(boxes[2].y);
+      expect(Math.abs(boxes[0].width - boxes[2].width)).toBeLessThan(1);
+    } else {
+      expect(boxes[1].y).toBeGreaterThan(boxes[0].y + boxes[0].height);
+      expect(boxes[2].y).toBeGreaterThan(boxes[1].y + boxes[1].height);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`signature-steps-${width}.png`), fullPage: true });
+  });
+}
+
+test('EXP-DATE intake API retains unknown or explicitly entered receipt dates', async ({ api, companyId }) => {
+  const { items: branches } = await json<{ items: Array<{ id: string }> }>(await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`));
+  for (const date of [undefined, '2026-09-12']) {
+    const intent = await json<ReceiptUploadIntent>(await api.post(`companies/${companyId}/expenses/receipt-uploads`, { data: {
+      originalFileName: 'synthetic-date-check.png', mimeType: 'image/png', byteSize: 12, branchId: branches[0]!.id,
+      note: unique('EXP-DATE own disposable fixture'), ...(date ? { expenseDate: date } : {}),
+    } }));
+    try {
+      const detail = await json<FullExpenseDetail>(await api.get(`companies/${companyId}/expenses/${intent.expenseId}`));
+      expect(detail.aiVerificationSummaryJson?.dateStatus).toBe(date ? 'verified' : 'unverified');
+      if (date) expect(detail.expenseDate.slice(0, 10)).toBe(date);
+      else expect(detail.aiVerificationSummaryJson?.missingFields).toContain('expenseDate');
+    } finally {
+      expect((await api.delete(`companies/${companyId}/expenses/${intent.expenseId}`)).status()).toBe(204);
+    }
+  }
 });

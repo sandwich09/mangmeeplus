@@ -37,6 +37,8 @@ export async function checkBillingAdjustments(input:{prisma:PrismaService;compan
     if(result.status===429){await new Promise(resolve=>setTimeout(resolve,(result.body.retryAfterSeconds??60)*1000+200));result=await input.request(path,method,body,{'x-company-id':input.companyId});}
     return result;
   };
+  // Isolated runs create only their own read/document fixture permissions.
+  for(const key of ['system.billing.read','system.billing.financial.read','system.billing.document.read']) await db.permission.upsert({where:{key},create:{key,description:key},update:{}});
   const role=await db.role.create({data:{scopeKey:'system',isSystem:true,key:`ADJUSTMENTS_${run}`,name:'Synthetic adjustment reader',permissions:{create:
     (await db.permission.findMany({where:{key:{in:['system.billing.read','system.billing.financial.read']}}})).map(p=>({permissionId:p.id}))}}});
   const scope=await db.billingOperatorScope.create({data:{userId:input.userId,companyId:input.companyId,stripeAccountId:account.stripeAccountId,livemode:false,createdByUserId:input.userId}});
@@ -84,22 +86,24 @@ export async function checkBillingAdjustments(input:{prisma:PrismaService;compan
       // Respect the same customer command budget after the preceding negative API cases.
       await new Promise(resolve=>setTimeout(resolve,61000));
       await page.goto(`${origin}/companies/${input.companyId}/billing?channel=line`,{waitUntil:'domcontentloaded'});
-      await page.getByRole('link',{name:'ตรวจการคืนเงินและเอกสารปรับยอด',exact:true}).first().click();
+      await page.getByRole('button',{name:'ประวัติ',exact:true}).click();
+      await page.getByRole('link',{name:'ดูเอกสาร',exact:true}).first().click();
       await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).waitFor();await page.getByText('ต้องทำขั้นตอนเพิ่มเติม',{exact:false}).first().waitFor();
-      await page.getByRole('button',{name:'รายการหน้าถัดไป',exact:true}).click();await page.getByText(refunds[25]!.id,{exact:true}).waitFor();
-      await page.getByRole('button',{name:'กลับไปหน้าแรก',exact:true}).click();await page.getByText(refunds[0]!.id,{exact:true}).waitFor();
-      fail=true;await page.getByRole('button',{name:'โหลดรายการล่าสุด',exact:true}).click();await page.getByRole('alert').filter({hasText:'โหลดรายการไม่ได้ กรุณาตรวจสิทธิ์'}).waitFor();assert.equal(await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).count(),0);
-      fail=false;await page.getByRole('button',{name:'โหลดรายการล่าสุด',exact:true}).click();await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).waitFor();
-      await page.getByLabel('รายการที่ต้องการดู',{exact:true}).selectOption('credit-notes');await page.getByText(notes[0]!.number,{exact:true}).waitFor();
+      await page.getByRole('button',{name:'รายการหน้าถัดไป',exact:true}).click();await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).getByRole('article').nth(1).waitFor();assert.equal(await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).getByRole('article').count(),2);
+      await page.getByRole('button',{name:'กลับไปหน้าแรก',exact:true}).click();await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).getByRole('article').nth(24).waitFor();assert.equal(await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).getByRole('article').count(),25);
+      fail=true;await page.getByRole('button',{name:'อัปเดตข้อมูล',exact:true}).click();await page.getByRole('alert').filter({hasText:'อ่านข้อมูลจาก Stripe ไม่สำเร็จ'}).waitFor();assert.equal(await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).count(),0);
+      fail=false;await page.getByRole('button',{name:'ลองอ่านข้อมูลอีกครั้ง',exact:true}).click();await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).waitFor();
+      await page.getByRole('combobox',{name:'รายการที่ต้องการดู',exact:true}).click();await page.getByRole('option',{name:'เอกสารปรับยอด',exact:true}).click();await page.getByText(notes[0]!.number,{exact:true}).waitFor();
       await page.screenshot({path:`${evidenceDir}/customer-adjustments-mobile.png`,fullPage:true});
       await page.reload({waitUntil:'domcontentloaded'});await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).waitFor();
       await page.getByRole('link',{name:'กลับไปประวัติการชำระเงิน',exact:true}).click();await page.getByRole('region',{name:'ประวัติการชำระเงิน'}).waitFor();
-      await page.goBack({waitUntil:'domcontentloaded'});await page.getByRole('heading',{name:'การคืนเงินและเอกสารปรับยอด',exact:true}).waitFor();
-      await page.goto(`${origin}/system/billing/companies/${input.companyId}`,{waitUntil:'domcontentloaded'});
-      await page.getByRole('link',{name:'ตรวจการคืนเงินและเอกสารปรับยอด',exact:true}).first().click();await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).waitFor();
-      await page.getByLabel('รายการที่ต้องการดู',{exact:true}).selectOption('credit-notes');await page.getByText(notes[0]!.number,{exact:true}).waitFor();
+      await page.goBack({waitUntil:'domcontentloaded'});await page.getByRole('heading',{name:'เอกสารการชำระเงิน',exact:true}).waitFor();
+      await page.goto(`${origin}/system/billing/companies/${input.companyId}?view=payments`,{waitUntil:'domcontentloaded'});
+      await page.getByRole('link',{name:'ดูเอกสารและยอดเงิน',exact:true}).first().click();await page.getByText('ประวัติคืนเงินและเอกสารปรับยอด',{exact:true}).click();await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).waitFor();
+      await page.getByRole('combobox',{name:'รายการที่ต้องการดู',exact:true}).click();await page.getByRole('option',{name:'เอกสารปรับยอด',exact:true}).click();await page.getByText(notes[0]!.number,{exact:true}).waitFor();
       const target=`https://pay.stripe.com/credit_notes/${run}0/pdf`;await page.route(target,route=>route.fulfill({contentType:'text/html',body:'Synthetic Stripe credit-note PDF'}));
       await page.getByRole('button',{name:'เปิด PDF เอกสารปรับยอด',exact:true}).first().click();await page.waitForURL(target);await page.goBack({waitUntil:'domcontentloaded'});
+      await page.getByText('ประวัติคืนเงินและเอกสารปรับยอด',{exact:true}).click();
       await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).waitFor();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       await page.screenshot({path:`${evidenceDir}/admin-adjustments-mobile.png`,fullPage:true});await page.unroute(target);
       cases.push('browser-line-origin-refund-history-pagination-error-retry-reload-back-and-admin-credit-note-document-return');

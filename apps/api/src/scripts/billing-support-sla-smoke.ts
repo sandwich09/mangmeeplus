@@ -1,3 +1,4 @@
+import { selectBillingOption, clickBillingConfiguration, confirmBillingPassword } from './billing-browser-smoke';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type { checkBillingConfigurationDrafts } from './billing-configuration-drafts-smoke';
@@ -37,27 +38,29 @@ export async function checkBillingSupportSla(input: Parameters<typeof checkBilli
     if (browser) {
       const page = browser.page; await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(`${browser.origin}/system/billing/settings`, { waitUntil: 'domcontentloaded' });
-      await page.getByLabel('ใช้กำหนดเวลาติดตามเคสส่วนกลาง', { exact: true }).check();
+      await selectBillingOption(page, 'หัวข้อการตั้งค่า', 'เวลาติดตามปัญหาการชำระเงิน');
+      await page.getByLabel('กำหนดเวลาติดตามปัญหาอัตโนมัติ', { exact: true }).check();
       for (const [label, value] of [['ปกติ', '60'], ['สูง', '30'], ['วิกฤต', '5']]) await page.getByLabel(`ติดตามระดับ${label}ภายใน (นาที)`, { exact: true }).fill(value!);
       await page.getByLabel('เหตุผลการเปลี่ยนค่า', { exact: true }).fill('ตั้งเวลาติดตามเคสใหม่โดยผู้ดูแล');
-      await page.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'ฉบับร่างที่บันทึกไว้' }).waitFor();
-      const draft = await page.getByRole('link', { name: 'เปิดลิงก์คำขอนี้', exact: true }).getAttribute('href'); assert.ok(draft);
+      const saved = await clickBillingConfiguration(page, 'บันทึกฉบับร่าง');
+      await page.getByRole('status').filter({ hasText: 'บันทึกฉบับร่างแล้ว' }).waitFor();
+      const draft = `/system/billing/configuration-changes/${saved.id}`;
       await page.goto(`${browser.origin}${draft}`, { waitUntil: 'domcontentloaded' });
+      await selectBillingOption(page, 'หัวข้อการตั้งค่า', 'เวลาติดตามปัญหาการชำระเงิน');
       assert.equal(await page.getByLabel('ติดตามระดับสูงภายใน (นาที)', { exact: true }).inputValue(), '30');
-      await page.getByRole('button', { name: 'ตรวจผลกระทบการตั้งค่า', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'ตรวจผลกระทบก่อนส่ง' }).waitFor();
+      const reviewed = await clickBillingConfiguration(page, '2. ตรวจผลก่อนยืนยัน');
+      await page.getByRole('heading', { name: '2. ตรวจผลก่อนยืนยัน', exact: true }).waitFor();
       await page.getByRole('region', { name: 'ผลต่อกำหนดเวลาติดตามเคส', exact: true }).getByText('เดิม: ปิดเกณฑ์อัตโนมัติ', { exact: true }).waitFor();
-      await proof(); await page.getByRole('button', { name: 'บันทึกคำขอก่อนยืนยัน', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'รอยืนยันรายการ' }).waitFor();
-      const href = await page.getByRole('link', { name: 'เปิดลิงก์คำขอนี้', exact: true }).getAttribute('href'); assert.ok(href);
+      await confirmBillingPassword(page, input.password); await page.getByRole('button', { name: 'บันทึกคำขอก่อนยืนยัน', exact: true }).click();
+      await page.getByRole('heading', { name: '3. ยืนยันใช้การตั้งค่า', exact: true }).waitFor();
+      const href = `/system/billing/configuration-changes/${reviewed.id}`;
       const waiting = (await request(`${base}/configuration-changes/${href.split('/').at(-1)}`)).body;
       assert.ok(waiting.allowedActions.includes('approve'));
       await proof(approveRequest); const second = input.secondBrowser!.pages()[0]!;
       await second.goto(`${browser.origin}${href}`, { waitUntil: 'domcontentloaded' });
       await second.getByRole('button', { name: 'อนุมัติและใช้ค่าชุดนี้', exact: true }).click();
-      await second.getByRole('status').filter({ hasText: 'การตั้งค่านี้มีผลแล้ว' }).waitFor();
-      await second.reload({ waitUntil: 'domcontentloaded' }); await second.getByRole('status').filter({ hasText: 'การตั้งค่านี้มีผลแล้ว' }).waitFor();
+      await second.getByRole('heading', { name: 'การตั้งค่านี้มีผลแล้ว', exact: true }).waitFor();
+      await second.reload({ waitUntil: 'domcontentloaded' }); await second.getByRole('heading', { name: 'การตั้งค่านี้มีผลแล้ว', exact: true }).waitFor();
       assert.ok(await second.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await second.screenshot({ path: `${browser.evidenceDir}/admin-support-sla-policy-mobile.png`, fullPage: true });
       cases.push('browser-sla-draft-reload-impact-independent-approval-result-return-mobile');
@@ -82,14 +85,13 @@ export async function checkBillingSupportSla(input: Parameters<typeof checkBilli
     assert.equal(override.body.effectiveFollowUpAt, manual); assert.equal(override.body.slaDueAt, changed.body.slaDueAt);
     if (browser) {
       const page = browser.page; await page.goto(`${browser.origin}/system/billing/issues/${normal.id}`, { waitUntil: 'domcontentloaded' });
-      await page.getByText(/ใช้เวลาที่ผู้ดูแลกำหนดทับอยู่/).waitFor();
+      await page.getByText('ข้อมูลอ้างอิงสำหรับตรวจสอบภายใน',{exact:true}).click();await page.getByText(/ใช้เวลาที่ผู้ดูแลกำหนดทับอยู่/).waitFor();await page.getByText('ผู้รับผิดชอบและบันทึกติดตาม',{exact:true}).click();
       await page.getByLabel('เวลาติดตามภายใน', { exact: true }).fill(''); await page.getByLabel('บันทึกการดำเนินการ', { exact: true }).fill('กลับมาใช้เกณฑ์ส่วนกลางเดิม');
       await page.getByRole('button', { name: 'บันทึกสถานะ', exact: true }).click();
       await page.getByText(`รอรับงาน · เวอร์ชัน ${override.body.version + 1}`, { exact: true }).waitFor({state:'attached'});
-      await page.getByText('ข้อมูลอ้างอิงเคส',{exact:true}).click();
       await page.getByText(`รอรับงาน · เวอร์ชัน ${override.body.version + 1}`, { exact: true }).waitFor();
       await page.reload({ waitUntil: 'domcontentloaded' }); await page.getByRole('region', { name: 'รายละเอียดเคส', exact: true }).waitFor();
-      assert.equal(await page.getByLabel('เวลาติดตามภายใน', { exact: true }).inputValue(), '');
+      await page.getByText('ผู้รับผิดชอบและบันทึกติดตาม',{exact:true}).click();assert.equal(await page.getByLabel('เวลาติดตามภายใน', { exact: true }).inputValue(), '');
     } else assert.equal((await patch(normal.id, override.body.version, { followUpAt: null })).status, 200);
     const cleared = await detail(normal.id); assert.equal(cleared.followUpAt, null); assert.equal(cleared.effectiveFollowUpAt, changed.body.slaDueAt);
     const race = await Promise.all([patch(normal.id, cleared.version, { priority: 'HIGH' }), patch(normal.id, cleared.version, { priority: 'NORMAL' }, approveRequest)]);
@@ -145,12 +147,13 @@ export async function checkBillingSupportSla(input: Parameters<typeof checkBilli
       const filtered = page.waitForResponse(r => {
         const url = new URL(r.url()); return url.pathname === '/api/v1/system/billing/issues' && url.searchParams.get('queue') === 'OVERDUE' && !url.searchParams.has('cursor') && r.request().method() === 'GET';
       });
-      await page.getByLabel('กรองคิว', { exact: true }).selectOption('OVERDUE');
+      await page.getByRole('combobox', { name: 'แสดงรายการ', exact: true }).click();
+      await page.getByRole('option', { name: 'เกินกำหนดติดตาม', exact: true }).click();
       const filteredResponse = await filtered; assert.equal(filteredResponse.status(), 200);
       assert.equal(new URL(filteredResponse.url()).pathname, '/api/v1/system/billing/issues', JSON.stringify({ url: filteredResponse.url(), type: filteredResponse.headers()['content-type'] }));
       const filteredPage = await filteredResponse.json(); assert.ok(filteredPage.nextCursor);
       const renderedRows = (rows: { id: string }[]) => page.waitForFunction(ids => {
-        const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('section[aria-label="รายการเคส"] a'));
+        const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('section[aria-label="รายการปัญหาการชำระเงิน"] article a'));
         return links.length === ids.length && links.every((link, index) => new URL(link.href).pathname === `/system/billing/issues/${ids[index]}`);
       }, rows.map(row => row.id));
       await page.waitForURL(`${browser.origin}/system/billing/issues?queue=OVERDUE`);
@@ -165,17 +168,17 @@ export async function checkBillingSupportSla(input: Parameters<typeof checkBilli
       assert.equal(nextResponse.status(), 200);
       await renderedRows((await nextResponse.json()).items);
       await page.getByRole('button', { name: 'หน้าแรก', exact: true }).waitFor();
-      const link = page.getByRole('region', { name: 'รายการเคส', exact: true }).locator(`a[href^="/system/billing/issues/${overdueIds.at(-1)}?"]`);
+      const link = page.getByRole('region', { name: 'รายการปัญหาการชำระเงิน', exact: true }).locator(`a[href^="/system/billing/issues/${overdueIds.at(-1)}?"]`);
       await link.waitFor(); const href = await link.getAttribute('href'); assert.ok(href); await link.click();
-      await page.waitForURL(`${browser.origin}${href}`); await page.getByRole('region', { name: 'รายละเอียดเคส', exact: true }).getByText(/เลยเวลาติดตาม/).waitFor();
-      await page.reload({ waitUntil: 'domcontentloaded' }); await page.getByRole('region', { name: 'รายละเอียดเคส', exact: true }).getByText(/กำหนดจากเกณฑ์ส่วนกลาง/).waitFor();
+      await page.waitForURL(`${browser.origin}${href}`); await page.getByRole('region', { name: 'รายละเอียดเคส', exact: true }).getByText(/เกินกำหนดติดตาม/).waitFor();
+      await page.reload({ waitUntil: 'domcontentloaded' }); await page.getByText('ข้อมูลอ้างอิงสำหรับตรวจสอบภายใน',{exact:true}).click();await page.getByRole('region', { name: 'รายละเอียดเคส', exact: true }).getByText(/กำหนดจากเกณฑ์ส่วนกลาง/).waitFor();
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await page.screenshot({ path: `${browser.evidenceDir}/admin-support-sla-case-mobile.png`, fullPage: true });
       const returnQuery=new URL(`${browser.origin}${href}`).search;
-      await page.getByRole('link', { name: 'คิวตรวจสอบ', exact: true }).click(); await page.waitForURL(`${browser.origin}/system/billing/issues${returnQuery}`);
-      await page.getByRole('button',{name:'หน้าแรก',exact:true}).waitFor();assert.equal(await page.getByLabel('กรองคิว',{exact:true}).inputValue(),'OVERDUE');
+      await page.getByRole('link', { name: 'ปัญหาการชำระเงิน', exact: true }).click(); await page.waitForURL(`${browser.origin}/system/billing/issues${returnQuery}`);
+      await page.getByRole('button',{name:'หน้าแรก',exact:true}).waitFor();assert.match(await page.getByRole('combobox',{name:'แสดงรายการ',exact:true}).innerText(),/เกินกำหนดติดตาม/);
       await page.reload({waitUntil:'domcontentloaded'});await page.getByRole('button',{name:'หน้าแรก',exact:true}).waitFor();
-      assert.equal(await page.getByLabel('กรองคิว',{exact:true}).inputValue(),'OVERDUE');
+      assert.match(await page.getByRole('combobox',{name:'แสดงรายการ',exact:true}).innerText(),/เกินกำหนดติดตาม/);
       cases.push('browser-sla-manual-clear-reload-overdue-pagination-case-return-mobile');
       if (slowSession) cases.push('browser-sla-slow-rendering-api-response-bound-paging');
     }

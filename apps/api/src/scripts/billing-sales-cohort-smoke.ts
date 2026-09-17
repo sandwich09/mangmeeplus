@@ -1,3 +1,4 @@
+import { selectBillingOption, clickBillingConfiguration, confirmBillingPassword } from './billing-browser-smoke';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type { checkBillingConfigurationDrafts } from './billing-configuration-drafts-smoke';
@@ -49,7 +50,8 @@ export async function checkBillingSalesCohort(input: Parameters<typeof checkBill
     if (browser) {
       const page = browser.page; await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(`${browser.origin}/system/billing/settings`, { waitUntil: 'domcontentloaded' });
-      await page.getByLabel('เปิดรับรายการซื้อใหม่สำหรับ', { exact: true }).selectOption('selected');
+      await selectBillingOption(page, 'หัวข้อการตั้งค่า', 'เปิด–ปิดการซื้อและบริการ');
+      await selectBillingOption(page, 'เปิดรับรายการซื้อใหม่สำหรับ', 'เฉพาะบริษัทที่เลือก');
       await page.getByLabel('ค้นหาบริษัทสำหรับเปิดขาย', { exact: true }).fill(pilot.id);
       await page.getByRole('button', { name: 'ค้นหาบริษัทสำหรับกลุ่ม', exact: true }).click();
       await page.getByRole('button', { name: `เพิ่ม ${pilot.name} เข้ากลุ่ม`, exact: true }).click();
@@ -69,22 +71,24 @@ export async function checkBillingSalesCohort(input: Parameters<typeof checkBill
       await page.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
       await page.locator('main').getByRole('alert').filter({ hasText: 'ยังยืนยันผลไม่ได้' }).waitFor();
       await page.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'ฉบับร่างที่บันทึกไว้' }).waitFor();
+      await page.getByRole('status').filter({ hasText: 'บันทึกฉบับร่างแล้ว' }).waitFor();
       await page.unroute('**/system/billing/configuration-drafts');
-      const href = await page.getByRole('link', { name: 'เปิดลิงก์คำขอนี้', exact: true }).getAttribute('href'); assert.ok(href); assert.ok(href.endsWith(savedId));
+      const href = `/system/billing/configuration-changes/${savedId}`;
+      await page.locator(`a[href="${href}"]`).waitFor();
       await page.goto(`${browser.origin}${href}`, { waitUntil: 'domcontentloaded' });
+      await selectBillingOption(page, 'หัวข้อการตั้งค่า', 'เปิด–ปิดการซื้อและบริการ');
       await page.getByRole('button', { name: `นำ ${pilot.name} ออกจากกลุ่ม`, exact: true }).waitFor();
-      await page.getByRole('button', { name: 'ตรวจผลกระทบการตั้งค่า', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'ตรวจผลกระทบก่อนส่ง' }).waitFor();
-      await proof(); await page.getByRole('button', { name: 'บันทึกคำขอก่อนยืนยัน', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'รอยืนยันรายการ' }).waitFor();
-      const target = await page.getByRole('link', { name: 'เปิดลิงก์คำขอนี้', exact: true }).getAttribute('href'); assert.ok(target);
+      const reviewed = await clickBillingConfiguration(page, '2. ตรวจผลก่อนยืนยัน');
+      await page.getByRole('heading', { name: '2. ตรวจผลก่อนยืนยัน', exact: true }).waitFor();
+      await confirmBillingPassword(page, input.password); await page.getByRole('button', { name: 'บันทึกคำขอก่อนยืนยัน', exact: true }).click();
+      await page.getByRole('heading', { name: '3. ยืนยันใช้การตั้งค่า', exact: true }).waitFor();
+      const target = `/system/billing/configuration-changes/${reviewed.id}`;
       await proof(approveRequest); const second = input.secondBrowser!.pages()[0]!;
       await second.goto(`${browser.origin}${target}`, { waitUntil: 'domcontentloaded' });
       await second.getByRole('button', { name: 'อนุมัติและใช้ค่าชุดนี้', exact: true }).click();
-      await second.getByRole('status').filter({ hasText: 'การตั้งค่านี้มีผลแล้ว' }).waitFor();
+      await second.getByRole('heading', { name: 'การตั้งค่านี้มีผลแล้ว', exact: true }).waitFor();
       await second.reload({ waitUntil: 'domcontentloaded' });
-      await second.getByRole('status').filter({ hasText: 'การตั้งค่านี้มีผลแล้ว' }).waitFor();
+      await second.getByRole('heading', { name: 'การตั้งค่านี้มีผลแล้ว', exact: true }).waitFor();
       assert.ok(await second.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await second.screenshot({ path: `${browser.evidenceDir}/admin-sales-cohort-mobile.png`, fullPage: true });
       cases.push('browser-cohort-company-selection-lost-draft-response-same-command-reload-independent-approval-permanent-result-mobile');
@@ -118,16 +122,18 @@ export async function checkBillingSalesCohort(input: Parameters<typeof checkBill
     }
     if (browser) {
       const page = browser.page; await page.goto(`${browser.origin}/companies/${input.companyId}/billing?channel=line`, { waitUntil: 'domcontentloaded' });
-      await page.getByRole('status').filter({ hasText: 'ยังไม่เปิดรับรายการซื้อใหม่สำหรับบริษัทนี้' }).waitFor();
+      await page.getByRole('status').filter({ hasText: 'บริษัทนี้ยังซื้อหรือเปลี่ยนแพ็กเกจผ่านเว็บไม่ได้' }).waitFor();
       assert.equal(await page.getByRole('region', { name: 'เลือกแพ็กเกจ', exact: true }).count(), 0);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-      await page.getByRole('button', { name: 'ตรวจสอบสถานะ', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'ประวัติ', exact: true }).click();
+      await page.getByRole('region', { name: 'ประวัติการชำระเงิน', exact: true }).waitFor();
       await page.goto(`${browser.origin}/system/billing/settings`, { waitUntil: 'domcontentloaded' });
-      await page.getByLabel('เปิดรับรายการซื้อใหม่สำหรับ', { exact: true }).selectOption('all');
+      await selectBillingOption(page, 'หัวข้อการตั้งค่า', 'เปิด–ปิดการซื้อและบริการ');
+      await selectBillingOption(page, 'เปิดรับรายการซื้อใหม่สำหรับ', 'ทุกบริษัท รวมบริษัทที่จะสมัครภายหลัง');
       await page.getByLabel('เหตุผลการเปลี่ยนค่า', { exact: true }).fill('เปิดรับทุกบริษัทอีกครั้ง');
-      await page.getByRole('button', { name: 'ตรวจผลกระทบการตั้งค่า', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'ตรวจผลกระทบก่อนส่ง' }).waitFor();
-      const href = await page.getByRole('link', { name: 'เปิดลิงก์คำขอนี้', exact: true }).getAttribute('href'); assert.ok(href);
+      const reviewed = await clickBillingConfiguration(page, '2. ตรวจผลก่อนยืนยัน');
+      await page.getByRole('heading', { name: '2. ตรวจผลก่อนยืนยัน', exact: true }).waitFor();
+      const href = `/system/billing/configuration-changes/${reviewed.id}`;
       const op = (await request(`${base}/configuration-changes/${href.split('/').at(-1)}`)).body;
       assert.equal((await approve(await submit(op))).body.state, 'SUCCEEDED');
       cases.push('browser-cohort-excluded-line-entry-readable-history-refresh-and-return-to-admin-reopen');

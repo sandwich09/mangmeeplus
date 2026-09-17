@@ -2,10 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
-// `lineLoginAvailable` is set by a mount effect, and effects never run under renderToStaticMarkup,
-// so the LINE button is absent from every static render of this page by construction. Ordering is
-// therefore asserted against the source, the way the notification page spec asserts its post-mount
-// behaviour.
+// Availability is resolved after mount; source checks cover the QR lane's ordering.
+// Browser tests cover loading, unavailable, retry and ready states.
 const source = readFileSync(new URL('./LoginPage.tsx', import.meta.url), 'utf8');
 
 describe('LoginPage qr-approve lane', () => {

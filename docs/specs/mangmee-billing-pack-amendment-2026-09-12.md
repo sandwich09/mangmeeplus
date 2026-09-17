@@ -16,7 +16,7 @@
 | ยกเลิก | มีผลสิ้นรอบที่จ่ายแล้ว; ยกเลิกไม่เท่ากับ refund |
 | VAT | ปัจจุบัน OFF เพราะบริษัทยังไม่จด VAT. Admin เปิด/ปิดได้โดยไม่ deploy/restart; เมื่อเปิดต้องระบุรวม/บวกภาษี อัตรา และข้อมูลกิจการใน preview ก่อนอนุมัติ revision. ไม่แก้เอกสารเก่าที่จ่ายแล้ว |
 | Refund / dispute / หนี้เก่า | เจ้าหน้าที่ตรวจเป็นรายกรณี พร้อม permission, preview, audit และ idempotency. ไม่คืน quota/เงินอัตโนมัติจาก webhook สถานะที่ยังไม่ยืนยัน |
-| ค่าเริ่มต้น / Coming soon | สมัครเฉย ๆ คง 7 เมนู / FREE_TRIAL_15 เดิม. Enterprise 1,999 ทั้งเดือน/ปี และ SYSTEM ภ.ง.ด.53/50 ทวิล็อกไม่รับชำระ; ไม่เปลี่ยน manual/external tax workflows เดิม |
+| ค่าเริ่มต้น / Coming soon | สมัครเฉย ๆ คง 7 ความสามารถ / FREE_TRIAL_15 เดิม. Enterprise 1,999 ทั้งเดือน/ปี และ SYSTEM ภ.ง.ด.53/50 ทวิล็อกไม่รับชำระ; ไม่เปลี่ยน manual/external tax workflows เดิม |
 
 ### สูตร upgrade และขอบเขตโควตา
 
@@ -181,3 +181,6 @@ Reactivation after a commercial suspension uses normal employee management: chec
 
 
 Calendar boundary detail: separate purchased-time extension from the future collection phase. Extend paid time with the existing verified Stripe billing_cycle_anchor day and calendar clamping. The consolidated zero phase retains that anchor. The future paid phase explicitly uses phase_start, so its one-period end is calculated from that phase's own start date; e.g. a future paid phase starting28February ends28March, while a prepaid extension on an existing day31 anchor can run through31March. After a paid phase resets the provider anchor, later repurchase previews read that observed anchor rather than an obsolete first-ever invoice date. This preserves all already-purchased time and the displayed next collection date; do not schedule a supposed one-period phase with a mismatched end date. See [Stripe billing cycle](https://docs.stripe.com/billing/subscriptions/billing-cycle) and the schedule phase_start contract above.
+
+
+Presentation amendment 2026-09-17: starter entitlement keys and quota remain unchanged. Seven capabilities now appear as six navigation entries (including notifications in the header) plus background AI; “AI แนะนำ” is not a primary menu. See [package entitlement spec §2](mangmee-package-entitlements-spec-th.md).

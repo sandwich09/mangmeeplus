@@ -9,7 +9,7 @@ const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'Reimb
 describe('reimbursement self-service entry', () => {
   it('uses the effective create permission on every screen width, with matching unavailable-create guidance', () => {
     assert.match(source, /canCreate=\{permissions\.includes\('reimbursement\.create'\)\}/);
-    assert.match(source, /\{canCreate && \([\s\S]*?reimbursements\/new[\s\S]*?min-h-11 w-full sm:w-auto/);
+    assert.match(source, /actions=\{permissions\.includes\('reimbursement\.create'\) && tab === 'mine' \? \([\s\S]*?reimbursements\/new[\s\S]*?min-h-11 w-full sm:w-auto/);
     assert.match(source, /\? canCreate \? 'กด "สร้างคำขอเบิก" เพื่อเริ่มคำขอแรกของคุณ' : REIMBURSEMENT_CREATE_UNAVAILABLE/);
     const createPage = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ReimbursementCreatePage.tsx'), 'utf8');
     assert.match(createPage, /editing \? !canUpdate : !canCreate/);

@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { apiErrorMessage } from '@/common/api/api-error-message';
-import { Button } from '@/common/components/button';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { roleKeyDisplayName } from '@/features/employee-access/role-picker.logic';
 import {
@@ -107,7 +109,18 @@ function UserCard({ user }: { user: SystemUserLookupItemDto }) {
       {user.memberships.length === 0 ? (
         <p className="px-4 py-6 text-center text-sm text-gray-400">ยังไม่มีบริษัทที่ผูกกับบัญชีนี้</p>
       ) : (
-        <div className="overflow-x-auto">
+        <>
+        <ul className="divide-y divide-gray-100 sm:hidden">
+          {user.memberships.map(membership => <li key={membership.companyId} className="space-y-2 px-4 py-3">
+            <Link href={`/system/partners/${membership.companyId}`} className="inline-flex min-h-11 items-center text-base font-medium text-brand-800 underline underline-offset-4">{membership.companyName}</Link>
+            <p className="text-sm text-gray-700">บทบาท: {membership.roleKeys.length ? membership.roleKeys.map(roleKeyDisplayName).join(' · ') : 'ยังไม่มีบทบาท'}</p>
+            <dl className="grid grid-cols-2 gap-2 text-sm text-gray-600">
+              <div><dt>สถานะบริษัท</dt><dd className="mt-1 text-gray-900">{COMPANY_STATUS_LABEL[membership.companyStatus]}</dd></div>
+              <div><dt>สถานะสมาชิก</dt><dd className="mt-1 text-gray-900">{membershipStatusLabel(membership, hasMergeTrail)}</dd></div>
+            </dl>
+          </li>)}
+        </ul>
+        <div className="hidden overflow-x-auto sm:block">
           <table className="min-w-full divide-y divide-gray-200 text-left text-sm">
             <thead className="bg-gray-50 text-xs font-medium text-gray-500">
               <tr>
@@ -120,7 +133,7 @@ function UserCard({ user }: { user: SystemUserLookupItemDto }) {
             <tbody className="divide-y divide-gray-100 text-gray-700">
               {user.memberships.map((membership) => (
                 <tr key={membership.companyId} className="align-top">
-                  <td className="px-4 py-2 font-medium text-gray-900">{membership.companyName}</td>
+                  <td className="px-4 py-2 font-medium text-gray-900"><Link href={`/system/partners/${membership.companyId}`} className="inline-flex min-h-11 items-center text-brand-800 underline underline-offset-4">{membership.companyName}</Link></td>
                   <td className="px-4 py-2 text-xs text-gray-600">
                     {membership.roleKeys.length > 0
                       ? membership.roleKeys.map(roleKeyDisplayName).join(' · ')
@@ -137,89 +150,83 @@ function UserCard({ user }: { user: SystemUserLookupItemDto }) {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </article>
   );
 }
 
 export default function UserLookupSection() {
-  const [term, setTerm] = useState('');
+  const params = useSearchParams();
+  const q = params.get('userQ') ?? '';
+  const status = params.get('userStatus') ?? '';
+  const [term, setTerm] = useState(q);
   const [users, setUsers] = useState<SystemUserLookupItemDto[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const q = term.trim();
-    // The API answers 422 below 2 characters; refusing here keeps the round trip out of it.
-    if (q.length < 2) {
-      setError('กรุณาพิมพ์คำค้นอย่างน้อย 2 ตัวอักษร');
-      setUsers(null);
-      return;
-    }
-    setLoading(true);
+  function update(changes: Record<string, string>) {
+    const next = new URLSearchParams(params.toString());
+    for (const [key, value] of Object.entries(changes)) value ? next.set(key, value) : next.delete(key);
+    window.history.replaceState(null, '', `/system/partners?${next}`);
+  }
+  useEffect(() => setTerm(q), [q]);
+  useEffect(() => {
+    let active = true;
     setError(null);
-    try {
-      setUsers((await lookupUsers(q)).items);
-    } catch (err) {
-      const e = err as Error & { status?: number };
-      setError(e.status === 403 ? 'คุณไม่มีสิทธิ์ค้นหาผู้ใช้' : apiErrorMessage(err));
-      setUsers(null);
-    } finally {
-      setLoading(false);
-    }
-  };
+    setUsers(null);
+    if (!q) { setLoading(false); return; }
+    if (q.length < 2) { setLoading(false); setError('กรุณาพิมพ์คำค้นอย่างน้อย 2 ตัวอักษร'); return; }
+    setLoading(true);
+    lookupUsers(q, status || undefined).then(result => {
+      if (active) setUsers(result.items);
+    }).catch(err => {
+      if (active) setError((err as { status?: number }).status === 403 ? 'คุณไม่มีสิทธิ์ค้นหาผู้ใช้' : apiErrorMessage(err));
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [q, status, retry]);
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (term.trim().length < 2) { setError('กรุณาพิมพ์คำค้นอย่างน้อย 2 ตัวอักษร'); setUsers(null); return; }
+    update({ userQ: term.trim() });
+    setRetry(value => value + 1);
+  }
+  function clear() {
+    setTerm(''); setError(null); setUsers(null);
+    update({ userQ: '', userStatus: '' });
+    setRetry(value => value + 1);
+  }
 
   return (
-    <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
-      <div>
-        <h2 className="text-base font-semibold text-gray-900">ค้นหาผู้ใช้</h2>
-        <p className="mt-0.5 text-sm text-gray-500">
-          ดูผู้ใช้รายคน พร้อมบริษัททั้งหมดที่ผูกอยู่ บทบาท การเชื่อม LINE และประวัติการรวมบัญชี
-        </p>
-      </div>
-
-      <form onSubmit={handleSubmit} className="flex flex-col gap-2 sm:flex-row">
-        <label htmlFor="user-lookup-q" className="sr-only">คำค้นหาผู้ใช้</label>
-        <input
-          id="user-lookup-q"
-          type="search"
-          value={term}
-          onChange={(e) => setTerm(e.target.value)}
-          maxLength={120}
-          placeholder="อีเมล ชื่อผู้ใช้ หรือชื่อ"
-          className="h-11 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-900 focus:border-brand-400 focus:outline-none sm:h-10"
-        />
-        <Button type="submit" loading={loading} className="sm:w-auto">
-          ค้นหา
-        </Button>
-      </form>
-
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
-
-      {loading && (
-        <div className="space-y-2" aria-hidden>
-          {[...Array(2)].map((_, i) => (
-            <div key={i} className="h-24 animate-pulse rounded-lg border border-gray-200 bg-white" />
-          ))}
-        </div>
-      )}
-
-      {!loading && !error && users !== null && (
-        users.length === 0 ? (
-          <p className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-12 text-center text-sm text-gray-400">
-            ไม่พบผู้ใช้ที่ตรงกับคำค้น
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {users.map((user) => <UserCard key={user.userId} user={user} />)}
+    <section aria-label="ค้นหาผู้ใช้งาน" aria-busy={loading} className="space-y-4 p-4 sm:p-6">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3 lg:flex-row lg:items-end">
+        <div className="min-w-0 flex-1">
+          <label htmlFor="user-lookup-q" className="mb-2 block text-sm font-medium text-gray-700">ค้นหาผู้ใช้งาน</label>
+          <div className="flex gap-2">
+            <input id="user-lookup-q" type="search" value={term} onChange={e => setTerm(e.target.value)} maxLength={120} placeholder="ชื่อ อีเมล หรือชื่อผู้ใช้" aria-describedby="user-search-help" className="mangmee-input min-h-11 min-w-0 flex-1 !text-base" />
+            <button type="submit" className="min-h-11 rounded-lg border border-gray-300 px-4 font-medium text-gray-700 hover:bg-gray-50">ค้นหา</button>
           </div>
-        )
-      )}
+        </div>
+        <div className="w-full lg:w-52">
+          <label className="mb-2 block text-sm font-medium text-gray-700">สถานะผู้ใช้งาน</label>
+          <ThemedSelect aria-label="สถานะผู้ใช้งาน" value={status} className="min-h-11 !text-base" onChange={e => update({ userStatus: e.target.value })}>
+            <option value="">ทุกสถานะ</option>
+            {Object.entries(USER_STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </ThemedSelect>
+        </div>
+        <button type="button" onClick={clear} title="ล้างคำค้นและสถานะที่เลือก" className="min-h-11 shrink-0 whitespace-nowrap rounded-lg border border-gray-300 bg-white px-4 font-medium text-gray-700 hover:bg-gray-50 focus-visible:outline-brand-700">ล้างตัวกรอง</button>
+      </form>
+      <p id="user-search-help" className="text-sm text-gray-600">ค้นหาจากชื่ออย่างน้อย 2 ตัวอักษร หรือกรอกอีเมล / ชื่อผู้ใช้ให้ครบ</p>
+      {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-700"><p>{error}</p>{q.length >= 2 && <button type="button" onClick={() => setRetry(value => value + 1)} className="min-h-11 underline">ลองอีกครั้ง</button>}</div>}
+      <p role="status" className="text-sm text-gray-600">{loading ? 'กำลังค้นหาผู้ใช้งาน…' : users ? `แสดง ${users.length} คน สำหรับ “${q}”${users.length === 20 ? ' · แสดงสูงสุด 20 คน กรุณาระบุคำค้นให้ชัดขึ้น' : ''}` : ''}</p>
+      {loading && <div aria-hidden="true" className="h-24 animate-pulse rounded-lg bg-gray-100" />}
+      {!loading && !error && (users === null ? (
+        <div className="rounded-lg bg-gray-50 px-4 py-10 text-center"><p className="font-medium text-gray-800">ค้นหาผู้ใช้งานที่ต้องการดูแล</p><p className="mt-2 text-sm text-gray-600">ดูบริษัทที่สังกัด บทบาท และการเชื่อม LINE ของแต่ละคน</p></div>
+      ) : users.length === 0 ? (
+        <div className="rounded-lg bg-gray-50 px-4 py-10 text-center"><p className="font-medium text-gray-800">ไม่พบผู้ใช้งานที่ตรงกับการค้นหา</p><p className="mt-2 text-sm text-gray-600">ลองเปลี่ยนคำค้นหรือเลือกสถานะอื่น</p><button onClick={clear} className="mt-2 min-h-11 px-3 text-brand-800 underline">ล้างการค้นหาและตัวกรอง</button></div>
+      ) : <div className="space-y-4">{users.map(user => <UserCard key={user.userId} user={user} />)}</div>)}
     </section>
   );
 }

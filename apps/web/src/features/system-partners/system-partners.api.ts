@@ -121,16 +121,18 @@ export function setPlatformAccess(
 }
 
 export async function listPartners(params?: {
+  q?: string;
   status?: string;
   page?: number;
   pageSize?: number;
 }): Promise<PaginatedPartnersDto> {
   const q = new URLSearchParams();
+  if (params?.q) q.set('q', params.q);
   if (params?.status) q.set('status', params.status);
   if (params?.page) q.set('page', String(params.page));
   if (params?.pageSize) q.set('pageSize', String(params.pageSize));
   const qs = q.toString() ? `?${q.toString()}` : '';
-  return apiFetch<PaginatedPartnersDto>(`/v1/system/partners${qs}`);
+  return apiFetch<PaginatedPartnersDto>(`/v1/system/partners${qs}`, { suppressErrorToast: true });
 }
 
 export async function getPartnerDetail(companyId: string): Promise<PartnerCompanyDetailDto> {
@@ -215,8 +217,10 @@ export async function setPlatformAiBudget(dto: SetPlatformAiBudgetDto): Promise<
 
 /** Person-centric lookup across every company: one email can own several, and merged accounts
  *  leave a trail the per-company screens cannot show. */
-export async function lookupUsers(q: string): Promise<SystemUserLookupDto> {
-  return apiFetch<SystemUserLookupDto>(`/v1/system/users/lookup?q=${encodeURIComponent(q)}`, {
+export async function lookupUsers(q: string, status?: string): Promise<SystemUserLookupDto> {
+  const params = new URLSearchParams({ q });
+  if (status) params.set('status', status);
+  return apiFetch<SystemUserLookupDto>(`/v1/system/users/lookup?${params}`, {
     suppressErrorToast: true,
   });
 }

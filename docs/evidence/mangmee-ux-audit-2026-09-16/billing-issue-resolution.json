@@ -1,0 +1,49 @@
+{
+  "scope": "Actionable billing issue detail and proof-based application issue closure",
+  "date": "2026-09-16",
+  "environment": "isolated local mangmee_ux",
+  "checks": {
+    "contracts_build": "PASS",
+    "api_build": "PASS",
+    "api_typecheck": "PASS",
+    "web_typecheck": "PASS",
+    "diff_check": "PASS",
+    "postgres_scenario_subtests": 5,
+    "postgres_total_including_parent": 6,
+    "existing_directory_queue_browser_cases": 3,
+    "new_detail_browser_cases": 1
+  },
+  "browser": [
+    "desktop 1512px",
+    "mobile 390px; expanded tracking no overflow",
+    "real login/API/database; explicit worker drain scoped to owned fixture",
+    "preview and confirmation do not auto-close",
+    "failed source read and retry; unmatched source recovery; original queue return"
+  ],
+  "limits": [
+    "provider evidence is synthetic",
+    "no external payment/mail or whole-console acceptance",
+    "subscription/repeat call sites wired to tested resolver; full paid-provider harness not rerun",
+    "no CI, push, merge or deploy"
+  ],
+  "retained_review_fixture": {
+    "companyId": "local-ux-issue-review-20260916",
+    "accountId": "734b0dbb-6082-4e1f-9aba-41a2b20937d7",
+    "invoiceId": "7f1deccc-d9ce-44b6-b7b5-6af230e3cb33",
+    "issueId": "23f77a1a-b0fb-4aeb-bc4f-aa7851044f43",
+    "url": "http://localhost:3000/system/billing/issues/23f77a1a-b0fb-4aeb-bc4f-aa7851044f43"
+  },
+  "source_sha256": {
+    "apps/api/src/modules/billing/application/billing-issues.ts": "0bd38afca52b96ab231ce907f002de8ff51743637b3340563d8193d8e0a04e54",
+    "apps/api/src/modules/billing/application/billing-admin.service.ts": "32e5fd05b1056d245874fb17effb5a2215fff9ed2f38ca31579756673af62ce5",
+    "apps/api/src/modules/billing/application/billing-operations.service.ts": "64619eb8f33fbcea496f2a196b5c328e2db84e1516b5f47be5a67ff31d15fe40",
+    "apps/api/src/modules/billing/application/billing-reconciler.service.ts": "88bb0fa4c8c6cf14a5a3d78d714e4354b1d59f449e2c0b1275f565638c3fa4ce",
+    "apps/api/src/modules/billing/application/billing-repeat.ts": "0caa18c73d08b0d6f5839891d094870ff68a42e2edbb753c4a0f14a129e57391",
+    "apps/web/src/features/billing-admin/BillingAdminPage.tsx": "9225b877f25c931407da574ebcb79fbc9fbad4172e8d6f63a468c9992909408f",
+    "apps/web/src/features/billing-admin/BillingIssueResolutionPanel.tsx": "5c05127c2ce30022527d31396d01b31431eac12a30a1156bd6caddb139afeaf5",
+    "apps/web/src/features/billing-admin/BillingOperationPanel.tsx": "721ba4a84cd91a7c92e41e78b427b250175bcf89d710a5c0a98cdc5cdd05743a",
+    "packages/contracts/src/billing.ts": "968606c9077470dbc9cdf9eb9b6a71dd53e4d98be482d2e75e260c4f3fcc3e9c",
+    "apps/api/src/modules/billing/billing-issue-resolution.pg.spec.ts": "2dd4a2340559a4eb76944da3c40ab0796f10e310b4831e712b00dea7b2231072",
+    "e2e/billing-admin-directory.spec.ts": "3ba686d5cf86d1e6272e0f110580d062f6a9c8713b5237ca308127d031e484fc"
+  }
+}

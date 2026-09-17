@@ -36,8 +36,12 @@ function mergeTrailEntry(userId: string, row: MergeRow): SystemUserMergeTrailDto
 export class LookupUsersUseCase {
   constructor(private readonly prisma: PrismaService) {}
 
-  async execute(rawQuery: string | undefined): Promise<SystemUserLookupDto> {
+  async execute(rawQuery: string | undefined, status?: string): Promise<SystemUserLookupDto> {
+    if (rawQuery !== undefined && typeof rawQuery !== 'string') throw new UnprocessableEntityException('คำค้นผู้ใช้งานไม่ถูกต้อง');
     const q = (rawQuery ?? '').trim();
+    if (status && !['ACTIVE', 'SUSPENDED', 'DISABLED'].includes(status)) {
+      throw new UnprocessableEntityException('สถานะผู้ใช้งานไม่ถูกต้อง');
+    }
     if (q.length < USER_LOOKUP_MIN_QUERY || q.length > USER_LOOKUP_MAX_QUERY) {
       throw new UnprocessableEntityException(
         `คำค้นต้องมีความยาว ${USER_LOOKUP_MIN_QUERY} ถึง ${USER_LOOKUP_MAX_QUERY} ตัวอักษร`,
@@ -48,6 +52,7 @@ export class LookupUsersUseCase {
     // traversed here. This screen answers "who is this person", not "what is their password".
     const users = await this.prisma.client.user.findMany({
       where: {
+        ...(status ? { status: status as 'ACTIVE' | 'SUSPENDED' | 'DISABLED' } : {}),
         OR: [
           { email: q.toLowerCase() },
           { username: q },

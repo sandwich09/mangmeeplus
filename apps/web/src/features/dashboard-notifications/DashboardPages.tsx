@@ -301,7 +301,7 @@ export function CompanyDashboardPage({
               onClick={() => setPeriodKind(tab.kind)}
               className={`shrink-0 whitespace-nowrap min-h-11 rounded-[10px] px-[17px] py-[9px] text-[15px] font-bold sm:min-h-0 shadow-[var(--shadow-theme-sm)] ${
                 tab.kind === periodKind
-                  ? 'bg-brand-600 text-white'
+                  ? 'bg-brand-700 text-white'
                   : 'border border-gray-200 bg-white text-gray-600 shadow-none'
               }`}
             >
@@ -320,12 +320,16 @@ export function CompanyDashboardPage({
         </div>
       </div>
 
-      {permissions.includes('crm.inbox.read') && <CrmDailyBriefCard companyId={companyId} periodKind={periodKind} refreshToken={refreshToken} />}
-
       {/* P10-L §15.4: OWNER-only, and `company.legal_identity.manage` is exactly that today
           (permission-registry.spec.ts keeps it owner-only pending QP2) — so it gates on the
           authority to fix what the card asks for, not on a role name the dashboard never receives. */}
       {permissions.includes('company.legal_identity.manage') && <ProfileCompletenessCard companyId={companyId} />}
+
+      {permissions.includes('crm.inbox.read') && <details className="rounded-xl border border-gray-200 bg-white p-4">
+        <summary className="min-h-11 cursor-pointer py-2 font-semibold">สรุปงานลูกค้าและการขาย</summary>
+        <CrmDailyBriefCard companyId={companyId} periodKind={periodKind} refreshToken={refreshToken} />
+      </details>}
+
 
       {error && (
         <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[15px] font-medium text-red-700">{error}</div>

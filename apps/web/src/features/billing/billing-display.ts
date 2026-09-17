@@ -2,7 +2,12 @@ import type {MouseEvent} from 'react';
 import type {BillingReceiptUsage, BillingApprovalMode} from '@watchdog-bms/contracts';
 export { billingLabel, billingPlanLabel, billingOfferLabel, billingPermissionLabel, billingEventLabel, billingDeliveryLabel, billingIssueLabel, billingTimelineLabel } from '@watchdog-bms/contracts';
 
-export const billingControl = 'inline-flex min-h-11 items-center justify-center rounded-xl border border-gray-300 px-4 py-2 text-base font-semibold disabled:cursor-not-allowed disabled:opacity-50';
+export const billingControl = 'inline-flex min-h-11 items-center justify-center rounded-xl border border-gray-300 px-4 py-2 text-base font-semibold bg-white text-gray-700 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700 disabled:cursor-not-allowed disabled:opacity-50';
+
+export const billingField = 'mangmee-input mt-2 block min-h-11 w-full min-w-0 !text-base';
+export const billingLink = 'inline-flex min-h-11 items-center rounded-lg px-2 text-base text-brand-800 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-brand-700';
+
+export const billingPrimaryControl = `${billingControl} !border-brand-700 !bg-brand-700 !text-white hover:!bg-brand-800`;
 
 export function billingMonthlyAllowanceText(usage:Pick<BillingReceiptUsage,'monthlyAllowance'>):string|null {
   const monthly=usage.monthlyAllowance;if(!monthly)return null;

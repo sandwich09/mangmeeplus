@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { logoutCurrentSession } from '@/common/auth/session';
@@ -41,80 +41,72 @@ function useOpenSupportCount(pathname: string, enabled: boolean): number | null 
 }
 
 const SECTIONS = [
-  { href: '/system/platform-access', label: 'เปิด–ปิดระบบ' },
-  { href: '/system/partners', label: 'พาร์ทเนอร์' },
-  { href: '/system/signup-requests', label: 'คำขอสมัครใช้งาน' },
-  { href: '/system/email-delivery', label: 'สถานะอีเมล' },
-  { href: SUPPORT_REQUESTS_HREF, label: 'คำขอคุยกับเจ้าหน้าที่' },
-  // ค้นหาผู้ใช้ is a section on the partners page, not a tab — /system/users redirects there.
-  { href: '/system/company-onboardings/new', label: 'เปิดบริษัทใหม่' },
-  { href: '/system/data-rights', label: 'สิทธิข้อมูล' },
-  { href: '/system/line-settings', label: 'LINE' },
-  { href: '/system/ai-budget', label: 'AI Budget' },
-  { href: '/system/billing', label: 'การชำระเงิน' },
+  { href: '/system/partners', label: 'บริษัทและผู้ใช้งาน', group: 'ลูกค้า' },
+  { href: '/system/billing', label: 'การชำระเงิน', group: 'ลูกค้า' },
+  { href: SUPPORT_REQUESTS_HREF, label: 'ขอความช่วยเหลือ', group: 'คำขอและการติดต่อ' },
+  { href: '/system/signup-requests', label: 'คำขอสมัครใช้งาน', group: 'คำขอและการติดต่อ' },
+  { href: '/system/data-rights', label: 'คำขอเกี่ยวกับข้อมูล', group: 'คำขอและการติดต่อ' },
+  { href: '/system/email-delivery', label: 'สถานะอีเมล', group: 'คำขอและการติดต่อ' },
+  { href: '/system/line-settings', label: 'ตั้งค่า LINE', group: 'ตั้งค่าระบบ' },
+  { href: '/system/ai-budget', label: 'งบการใช้ AI', group: 'ตั้งค่าระบบ' },
+  { href: '/system/platform-access', label: 'เปิด–ปิดบริการ', group: 'ตั้งค่าระบบ' },
 ];
 
-const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean; emailAllowed?: boolean }> = ({ billingOnly = false, billingAllowed = false, emailAllowed = false }) => {
+const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean; emailAllowed?: boolean; environment?: string }> = ({ billingOnly = false, billingAllowed = false, emailAllowed = false, environment }) => {
+  const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
   const pathname = usePathname();
+  useEffect(() => setMenuOpen(false), [pathname]);
   const openSupportCount = useOpenSupportCount(pathname, !billingOnly);
+  const sections = SECTIONS.filter(section => billingOnly ? section.href === '/system/billing' :
+    (section.href !== '/system/billing' || billingAllowed) && (section.href !== '/system/email-delivery' || emailAllowed));
+  const groups = [...new Set(sections.map(section => section.group))];
 
   const handleSignOut = async () => {
     if (signingOut) return;
     setSigningOut(true);
     if (!(await logoutCurrentSession())) {
       setSigningOut(false);
-      // Themed dialog instead of window.alert(): the browser alert ignored the app theme.
       setSignOutFailed(true);
     }
   };
 
   return (
-    <header className="sticky top-0 z-40 flex w-full flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-3 lg:px-6">
-      <div className="flex min-w-0 flex-wrap items-center gap-3">
-        <Link href={billingOnly ? "/system/billing" : "/system/partners"} className="mr-1 text-sm font-semibold text-gray-900">
-          {billingOnly ? 'มั่งมี · ดูแลการชำระเงิน' : 'มั่งมี · ผู้ดูแลระบบ'}
-        </Link>
-        <nav aria-label="ส่วนงานผู้ดูแลระบบ" className="no-scrollbar flex max-w-full items-center gap-1 overflow-x-auto whitespace-nowrap md:max-w-none md:overflow-x-visible md:whitespace-normal">
-          {SECTIONS.filter(section => billingOnly ? section.href === '/system/billing' :
-            (section.href !== '/system/billing' || billingAllowed) && (section.href !== '/system/email-delivery' || emailAllowed)).map((section) => {
-            const active = pathname.startsWith(section.href);
-            return (
-              <Link
-                key={section.href}
-                href={section.href}
-                aria-current={active ? 'page' : undefined}
-                className={`rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors ${
-                  active ? 'bg-brand-50 text-brand-700' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
-                }`}
-              >
-                {section.label}
-                {section.href === SUPPORT_REQUESTS_HREF && openSupportCount !== null && openSupportCount > 0 && (
-                  <span className="ml-1.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-red-100 px-1.5 py-0.5 text-xs font-semibold text-red-700">
-                    {openSupportCount > 99 ? '99+' : openSupportCount}
-                  </span>
-                )}
-              </Link>
-            );
-          })}
+    <>
+      <header className="sticky top-0 z-40 flex min-h-20 flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-3 lg:px-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <button ref={menuButton} type="button" aria-expanded={menuOpen} aria-controls="system-navigation" onClick={() => setMenuOpen(value => !value)} className="min-h-11 rounded-lg border border-gray-200 px-3 text-sm font-medium text-gray-700 lg:hidden">
+            {menuOpen ? 'ปิดเมนู' : 'เมนู'}{openSupportCount ? ` (${openSupportCount})` : ''}
+          </button>
+          <Link href={billingOnly ? '/system/billing' : '/system/partners'} className="text-base font-semibold text-gray-900 lg:text-lg">มั่งมี <span className="hidden font-normal text-gray-500 sm:inline">/ ผู้ดูแลระบบ</span></Link>
+          {environment && <span className={`rounded-md border px-2 py-1 text-xs font-medium ${environment === 'ระบบจริง' ? 'border-green-200 bg-green-50 text-green-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>{environment}</span>}
+        </div>
+        <button type="button" onClick={handleSignOut} disabled={signingOut} aria-busy={signingOut} className="min-h-11 rounded-lg px-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+          {signingOut ? 'กำลังออกจากระบบ…' : 'ออกจากระบบ'}
+        </button>
+      </header>
+      <aside className={`${menuOpen ? 'block' : 'hidden'} mangmee-safe-bottom border-b border-gray-200 bg-white lg:fixed lg:bottom-0 lg:left-0 lg:top-20 lg:z-30 lg:block lg:w-64 lg:border-b-0 lg:border-r`} onKeyDown={event => {
+        if (event.key === 'Escape' && menuOpen) { setMenuOpen(false); menuButton.current?.focus(); }
+      }}>
+        <nav id="system-navigation" aria-label="ส่วนงานผู้ดูแลระบบ" className="max-h-[70dvh] space-y-6 overflow-y-auto px-3 py-5 lg:h-full lg:max-h-none lg:py-6">
+          {groups.map(group => <div key={group}>
+            <p className="mb-2 px-3 text-xs font-semibold text-gray-500">{group}</p>
+            <ul className="space-y-1">
+              {sections.filter(section => section.group === group).map(section => {
+                const active = pathname === section.href || pathname.startsWith(`${section.href}/`) || (section.href === '/system/partners' && pathname.startsWith('/system/company-onboardings/'));
+                return <li key={section.href}><Link href={section.href} onClick={() => setMenuOpen(false)} aria-current={active ? 'page' : undefined} className={`flex min-h-12 items-center justify-between gap-2 rounded-lg border-l-4 px-3 py-2 text-base ${active ? 'border-brand-700 bg-brand-50 font-semibold text-brand-800' : 'border-transparent text-gray-700 hover:bg-gray-50'}`}>
+                  {section.label}
+                  {section.href === SUPPORT_REQUESTS_HREF && openSupportCount !== null && openSupportCount > 0 && <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-red-100 px-1.5 py-0.5 text-xs font-semibold text-red-700">{openSupportCount > 99 ? '99+' : openSupportCount}</span>}
+                </Link></li>;
+              })}
+            </ul>
+          </div>)}
         </nav>
-      </div>
-      <button
-        type="button"
-        onClick={handleSignOut}
-        disabled={signingOut} aria-busy={Boolean(signingOut)}
-        className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-      >
-        {signingOut ? 'กำลังออกจากระบบ...' : 'ออกจากระบบ'}
-      </button>
-      <AlertModal
-        open={signOutFailed}
-        title="ออกจากระบบ"
-        message="ออกจากระบบไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง"
-        onClose={() => setSignOutFailed(false)}
-      />
-    </header>
+      </aside>
+      <AlertModal open={signOutFailed} title="ออกจากระบบ" message="ออกจากระบบไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง" onClose={() => setSignOutFailed(false)} />
+    </>
   );
 };
 

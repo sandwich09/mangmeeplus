@@ -86,8 +86,8 @@ export function AiSuggestionsHubPage({ companyId, permissions = [] }: { companyI
     <div className="space-y-5 p-6">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">AI แนะนำ (AI Suggestions)</h1>
-          <p className="text-sm text-gray-500">AI แนะนำและร่างได้ การสร้างร่างในระบบต้องรีวิวและยืนยันที่นี่เท่านั้น</p>
+          <h1 className="text-2xl font-bold text-gray-900">คำแนะนำจาก AI</h1>
+          <p className="text-sm text-gray-500">เลือกเรื่องที่ต้องการให้ช่วย คุณจะได้ตรวจและยืนยันก่อนสร้างร่างในระบบ</p>
         </div>
         <button className={btnClass} disabled={!canRequest} onClick={() => setShowRequest(true)}>ขอคำแนะนำ</button>
       </div>
@@ -99,8 +99,8 @@ export function AiSuggestionsHubPage({ companyId, permissions = [] }: { companyI
       )}
 
       {guidance.length > 0 && (
-        <section className="rounded-lg border border-gray-200 bg-white p-4">
-          <h2 className="font-semibold">เริ่มใช้งานตามสิทธิ์ของคุณ</h2>
+        <details className="rounded-lg border border-gray-200 bg-white p-4">
+          <summary className="min-h-11 cursor-pointer py-2 font-semibold">วิธีใช้งานและงานที่ AI ช่วยได้</summary>
           <p className="mt-1 text-sm text-gray-500">วิธีใช้งานของระบบสำหรับงานที่คุณทำได้ การเปิดแต่ละหน้าจะตรวจสิทธิ์อีกครั้ง</p>
           <ul className="mt-3 space-y-3">
             {guidance.map((item) => <li key={item.path}>
@@ -108,7 +108,7 @@ export function AiSuggestionsHubPage({ companyId, permissions = [] }: { companyI
               <p className="text-sm text-gray-600">{item.help}</p>
             </li>)}
           </ul>
-        </section>
+        </details>
       )}
 
       <div className="flex gap-2 overflow-x-auto border-b border-gray-200">
@@ -124,7 +124,7 @@ export function AiSuggestionsHubPage({ companyId, permissions = [] }: { companyI
       {loading ? (
         <div className="text-sm text-gray-500">กำลังโหลด...</div>
       ) : rows.length === 0 ? (
-        <div className="rounded border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">ไม่มีคำแนะนำในหมวดนี้</div>
+        <div className="rounded border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500"><p>ยังไม่มีคำแนะนำในหมวดนี้</p><p className="mt-2 text-base">{canRequest ? 'กด “ขอคำแนะนำ” ด้านบน แล้วเลือกเรื่องที่ต้องการให้ช่วย' : 'คุณยังเปิดอ่านวิธีใช้งานและทำรายการที่มีสิทธิ์ได้'}</p></div>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 text-left text-sm">

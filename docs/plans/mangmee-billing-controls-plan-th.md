@@ -454,3 +454,8 @@ Native source hash and account/term/lease/version fence prevent overwriting a co
 Verification: real HTTP/PostgreSQL/browser preview→independent approval→worker→provider observation→owner status→resume; self/foreign/scope denial, invalid date, old invoice impact, source drift, lost response/same command, approval revocation and audit rollback. Stripe transport is simulated. Reference: https://docs.stripe.com/billing/subscriptions/pause-payment (read 2026-09-15). No native send/payment/deploy is authorized by this check.
 
 Final integration correction 2026-09-16: verify collection-only Admin permission through actual HTTP and browser, including absent package/gift controls, denied gift preview, independent approval and current permission withdrawal. Shared preview endpoint checks financial read; command service retains collection/override separation before provider observation and again in transaction. No broadened package permission.
+
+
+### C03 actionable issue detail local follow-up — 2026-09-16
+
+Owner requested action-oriented issue detail. Implementation/acceptance checklist is in [system UI alignment plan](mangmee-system-ui-alignment-plan.md#actionable-billing-issue-detail-follow-up); source-state rules above are reflected in the controls spec. Include exact source mapping, audited application-issue closure, already-applied observation, failed-operation recovery, optional tracking and local browser review. This scoped follow-up does not reopen unrelated C01–C08 work or authorize CI, merge, push or deploy.

@@ -274,6 +274,15 @@ describe('groupNavItems', () => {
 });
 
 describe('buildNavItems', () => {
+  it('omits the AI hub from navigation while retaining authorized contextual review links', () => {
+    for (const permission of ['ai.suggestion.read', 'ai.suggestion.read_own']) {
+      const modules = filterModulesByPermissions(WORKSPACE_MODULES, [permission]);
+      assert.ok(modules.some(module => module.key === 'ai-suggestions'));
+      assert.equal(buildNavItems(modules, 'co', 'th', {}, [permission]).some(item => item.key === 'ai-suggestions'), false);
+      assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, [permission], 'co', '/companies/co/ai-suggestions/retained-review'), true);
+    }
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, [], 'co', '/companies/co/ai-suggestions/retained-review'), false);
+  });
   it('keeps planned modules clickable for owner workspace access', () => {
     const item = buildNavItems(WORKSPACE_MODULES, 'owner-company', 'en', {}).find((nav) => nav.key === 'booking');
     assert.equal(item?.href, '/companies/owner-company/bookings');
@@ -307,7 +316,7 @@ describe('buildNavItems', () => {
         const modules = filterModulesByPermissions(WORKSPACE_MODULES, [permission]);
         assert.ok(modules.some((module) => module.key === moduleKey), `${path}: module ${permission}`);
         const item = buildNavItems(modules, 'co', 'th', {}, [permission]).find((nav) => nav.key === moduleKey);
-        if (path === '/reports' && permission === 'report.snapshot.read') {
+        if (path === '/ai-suggestions' || (path === '/reports' && permission === 'report.snapshot.read')) {
           assert.equal(item, undefined, `${path}: retained-only history intentionally has no row`);
         } else {
           assert.equal(item?.href, `/companies/co${path}`, `${path}: nav ${permission}`);
@@ -955,5 +964,25 @@ describe('resolveMenuKey', () => {
 
   it('skips targets with no href', () => {
     assert.deepEqual(collectMenuTargets([{ key: 'x', label: 'x', icon: null, group: 'main' } as NavItem]), []);
+  });
+});
+
+
+describe('owner billing navigation', () => {
+  it('places one billing entry under company settings', () => {
+    const items = buildNavItems(WORKSPACE_MODULES, 'co', 'th', {}, ALL_MODULE_PERMISSIONS, ['OWNER']);
+    const settings = items.find(item => item.key === 'settings')!;
+    assert.equal(settings.subItems?.filter(item => item.href === '/companies/co/billing').length, 1);
+    assert.equal(items.filter(item => item.href === '/companies/co/billing').length, 0);
+  });
+  it('keeps billing available without granting business settings when all feature modules are absent', () => {
+    const items = buildNavItems([], 'co', 'th', {}, [], ['OWNER']);
+    const settings = items.find(item => item.key === 'settings')!;
+    assert.equal(settings.href, undefined);
+    assert.deepEqual(settings.subItems?.map(item => item.href), ['/companies/co/billing']);
+  });
+  it('does not add owner billing for a non-owner with full module permissions', () => {
+    const items = buildNavItems(WORKSPACE_MODULES, 'co', 'th', {}, ALL_MODULE_PERMISSIONS, ['ADMIN']);
+    assert.equal(collectMenuTargets(items).some(item => item.href.endsWith('/billing')), false);
   });
 });

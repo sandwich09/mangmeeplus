@@ -1,4 +1,5 @@
 import type React from 'react';
+import { MENU_ENTITLEMENT_BINDINGS } from '@watchdog-bms/contracts';
 import type { WorkspaceModule, NavGroup, NavItem } from './web-core-workspace.model';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { t } from '@/common/i18n/workspace-i18n.logic';
@@ -164,6 +165,7 @@ export function buildNavItems(
     ...modules.flatMap((module) => module.requiredAnyPermissions),
     ...ROUTE_PERMISSION_RULES.flatMap((rule) => rule.anyOf),
   ],
+  roles: readonly string[] = [],
 ): NavItem[] {
   const moduleMap = new Map(modules.map((mod) => [mod.key, mod]));
   // 'notifications' stays here so the module never renders as a top-level row: the notification
@@ -172,6 +174,8 @@ export function buildNavItems(
 
   const moduleItems = modules.flatMap((mod) => {
     if (settingsChildKeys.has(mod.key)) return [];
+    // Hide the entry only: existing review links and background AI retain their permission gates.
+    if (MENU_ENTITLEMENT_BINDINGS.some((binding) => binding.navKey === mod.key && binding.navigation === 'contextual')) return [];
     // Retained-only Reports (snapshot read without the catalog) can no longer create anything, and
     // the sidebar cannot tell whether this company ever produced an artifact — for the launch
     // package it never did, so the row would be a permanently empty one. The page keeps its route
@@ -350,6 +354,19 @@ export function buildNavItems(
     return [item];
   });
 
+  // Billing is an owner account task, independent of paid feature access. Keep it reachable
+  // even when the owner has no other settings entries; the billing API still checks OWNER.
+  if (roles.includes('OWNER')) {
+    let settings = moduleItems.find(item => item.key === 'settings');
+    if (!settings) {
+      settings = { key: 'settings', label: t('module.settings', locale), icon: iconMap.HorizontalDotsIcon ?? null, group: 'admin', subItems: [] };
+      moduleItems.push(settings);
+    }
+    settings.subItems = [...(settings.subItems ?? []), {
+      key: 'settings.billing', label: 'แพ็กเกจและการชำระเงิน', href: `/companies/${companyId}/billing`,
+      icon: iconMap.BoxIcon ?? null, tone: 'slate',
+    }];
+  }
   return [...moduleItems, buildUserGuideNavItem(companyId, iconMap)];
 }
 

@@ -730,7 +730,7 @@ export const workspaceDictionary = {
     'expenses.upload_dropzone_hint': 'รองรับ JPG/JPEG PNG HEIC (รูปจากไอโฟน) หรือ PDF · รูปใหญ่จะถูกย่ออัตโนมัติ · หรือส่งจาก LINE ได้เลย',
     // WEB-05: the field writes `expenseDate`, so it must name the date printed on the paper.
     'expenses.upload_receipt_date': 'วันที่ในใบเสร็จ',
-    'expenses.upload_receipt_date_hint': 'ตัวอย่าง: วันที่ที่พิมพ์บนใบเสร็จ ไม่ใช่วันนี้',
+    'expenses.upload_receipt_date_hint': 'เว้นว่างให้ AI อ่านจากใบเสร็จ หรือเลือกวันที่ตามเอกสารเอง',
     'expenses.upload_note': 'หมายเหตุ (ไม่บังคับ)',
     'expenses.upload_note_placeholder': 'เช่น ค่ากาแฟทีมงาน',
     'expenses.upload_ai_strip_before': 'AI จะอ่านชื่อผู้ขาย ยอดเงิน และภาษีให้อัตโนมัติ แล้วสร้างเป็น',
@@ -2195,7 +2195,7 @@ export const workspaceDictionary = {
     'expenses.upload_capture_hint': 'Frame the receipt so the total and the date are readable · or just send it over LINE',
     'expenses.upload_dropzone_hint': 'Supports JPG/JPEG, PNG, HEIC (iPhone photos), or PDF · large images are resized automatically · or send directly from LINE',
     'expenses.upload_receipt_date': 'Date on the receipt',
-    'expenses.upload_receipt_date_hint': 'Example: the date printed on the receipt, not today',
+    'expenses.upload_receipt_date_hint': 'Leave blank for AI to read the receipt date, or enter the date shown on the document.',
     'expenses.upload_note': 'Note (optional)',
     'expenses.upload_note_placeholder': 'e.g. team coffee expense',
     'expenses.upload_ai_strip_before': 'AI will read the vendor name, amount, and tax automatically and create a ',

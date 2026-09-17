@@ -5,8 +5,8 @@ import { legalAcceptancePath } from '@/common/auth/session-gate.logic';
 import { rememberPendingRedirect } from './auth.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { useEffect, useRef, useState } from 'react';
-const field = 'mt-2 min-h-12 w-full min-w-0 rounded-xl border border-gray-300 px-4 py-3 text-base';
-const button = 'min-h-12 rounded-xl border px-4 py-3 text-base font-semibold disabled:opacity-50';
+const field = 'mangmee-input mt-2 min-h-12 w-full min-w-0 text-base';
+const button = 'mangmee-btn mangmee-btn-secondary min-h-12 text-base';
 type Result = { companyId?: string; passwordChangeRequired?: boolean; legalAcceptanceRequired?: boolean; email?: string; kind?: string; state?: string; message?: string; code?: string; redirectPath?: string;
   deliveryStatus?: string; retryAt?: string; retryAfterSeconds?: number };
 export default function EmailAccessPage() {
@@ -68,20 +68,20 @@ export default function EmailAccessPage() {
         ? 'ยังยืนยันผลส่งไม่ได้ หากได้รับรหัสสามารถกรอกได้ หรือรอขอรหัสใหม่' : 'ยังส่งรหัสไม่สำเร็จ กรุณาตรวจอีเมลแล้วขอรหัสใหม่');
     });
   }
-  return <main className="min-h-dvh bg-gray-50 px-4 py-8 text-gray-900"><section className="mx-auto max-w-md space-y-5 rounded-2xl border bg-white p-5 sm:p-8">
-    <Link href="/login" className="inline-block py-2 text-green-700">← กลับหน้าเข้าสู่ระบบ</Link>
-    <h1 className="text-2xl font-bold">เข้าใช้งานด้วยอีเมล</h1>
-    <p className="text-base leading-7 text-gray-600">ลูกค้าใหม่เริ่มใช้ฟรีได้ ลูกค้าเดิมใช้รหัสทางอีเมลที่เปิดไว้กับบัญชี</p>
+  return <main className="min-h-dvh bg-gray-50 px-4 py-8 text-gray-900"><section className="mangmee-card mx-auto max-w-md space-y-5 p-5 sm:p-8">
+    <Link href="/login" className="inline-block py-2 text-brand-700">← กลับหน้าเข้าสู่ระบบ</Link>
+    <h1 className="text-2xl font-bold">เข้าสู่ระบบด้วยรหัส OTP</h1>
+    <p className="text-base leading-7 text-gray-600">กรอกอีเมลเพื่อรับรหัสยืนยันแบบใช้ครั้งเดียว (OTP) 6 หลัก แล้วนำรหัสมากรอกในขั้นตอนถัดไป</p>
     {error && <p ref={alert} tabIndex={-1} role="alert" className="rounded-xl bg-red-50 p-3 text-red-800">{error}</p>}
     {step === 'email' && <form className="space-y-5" onSubmit={e => { e.preventDefault(); send(); }}>
       <label className="block" htmlFor="access-email">อีเมลของคุณ<input id="access-email" className={field} type="email" autoComplete="email" maxLength={254} required value={email} disabled={!ready || busy} onChange={e => { setEmail(e.target.value); key.current = ''; }} /></label>
-      <button className={`${button} w-full bg-green-700 text-white`} disabled={!ready || busy || wait > 0} aria-busy={busy}>{!ready ? 'กำลังเตรียมหน้า…' : busy ? 'กำลังส่งรหัส…' : wait ? `ขอรหัสใหม่ได้ใน ${wait} วินาที` : 'รับรหัสทางอีเมล'}</button>
+      <button className="mangmee-btn mangmee-btn-primary min-h-12 w-full text-base" disabled={!ready || busy || wait > 0} aria-busy={busy}>{!ready ? 'กำลังเตรียมหน้า…' : busy ? 'กำลังส่งรหัส…' : wait ? `ขอรหัสใหม่ได้ใน ${wait} วินาที` : 'ส่งรหัส OTP ไปที่อีเมล'}</button>
     </form>}
     {step === 'code' && <form className="space-y-4" onSubmit={e => { e.preventDefault(); void run(async () => apply(await call('confirm', { code }))); }}>
       <p className="break-words">อีเมล <strong>{email}</strong></p><p role="status" className="text-gray-600">{notice}</p>
       <label className="block" htmlFor="access-code">รหัส 6 หลัก<input id="access-code" ref={otp} className={`${field} tracking-widest`} type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="[0-9]{6}" required value={code} disabled={!ready || busy} onChange={e => setCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))} /></label>
       <p className="text-gray-600">รหัสใช้ได้ 10 นาที หากเปิดเว็บอีกอุปกรณ์ ให้ขอรหัสจากอุปกรณ์นั้น</p>
-      <button className={`${button} w-full bg-green-700 text-white`} disabled={!ready || busy || code.length !== 6} aria-busy={busy}>{busy ? 'กำลังยืนยัน…' : 'ยืนยันและดำเนินการต่อ'}</button>
+      <button className="mangmee-btn mangmee-btn-primary min-h-12 w-full text-base" disabled={!ready || busy || code.length !== 6} aria-busy={busy}>{busy ? 'กำลังยืนยัน…' : 'ยืนยันและดำเนินการต่อ'}</button>
       <div className="flex flex-wrap gap-3"><button type="button" className={button} disabled={!ready || busy || wait > 0} aria-busy={busy} onClick={() => send(true)}>{wait ? `ขอใหม่ใน ${wait} วินาที` : 'ขอรหัสใหม่'}</button><button type="button" className={button} disabled={!ready || busy} onClick={() => { setStep('email'); key.current = ''; }}>แก้อีเมล</button></div>
     </form>}
     {step === 'signup' && <form className="space-y-4" onSubmit={e => { e.preventDefault(); void run(async () => apply(await call('signup', { companyName, displayName, phoneNumber, consentVersion: 'EMAIL_SIGNUP_V1' }))); }}>
@@ -90,10 +90,10 @@ export default function EmailAccessPage() {
       <label className="block" htmlFor="access-name">ชื่อผู้ติดต่อ<input id="access-name" className={field} required maxLength={160} autoComplete="name" value={displayName} disabled={!ready || busy} onChange={e => setDisplayName(e.target.value)} /></label>
       <label className="block" htmlFor="access-phone">เบอร์มือถือ<input id="access-phone" className={field} type="tel" required maxLength={20} autoComplete="tel" value={phoneNumber} disabled={!ready || busy} onChange={e => setPhone(e.target.value)} /></label>
       <p className="text-sm leading-6 text-gray-600">เมื่อกดเริ่มใช้ฟรี ถือว่าได้รับทราบ <Link className="underline" href="/terms" target="_blank">ข้อกำหนดการใช้งาน</Link> และ <Link className="underline" href="/privacy" target="_blank">ประกาศความเป็นส่วนตัว</Link> แล้ว โดยจะยืนยันการยอมรับเมื่อเข้าระบบครั้งแรก ทีมงานอาจตรวจคำขอก่อนเปิดร้าน</p>
-      <button className={`${button} w-full bg-green-700 text-white`} disabled={!ready || busy} aria-busy={busy}>{busy ? 'กำลังเปิดร้าน…' : 'เริ่มใช้ฟรี'}</button>
+      <button className="mangmee-btn mangmee-btn-primary min-h-12 w-full text-base" disabled={!ready || busy} aria-busy={busy}>{busy ? 'กำลังเปิดร้าน…' : 'เริ่มใช้ฟรี'}</button>
     </form>}
     {step === 'status' && <div className="space-y-4"><h2 className="text-xl font-semibold">{state === 'REJECTED' || state === 'SUSPENDED' ? 'กรุณาติดต่อทีมงานเรื่องคำขอของคุณ' : 'ทีมงานกำลังตรวจคำขอของคุณ'}</h2><p>{['PENDING_REVIEW', 'RECEIVED', 'VALIDATED', 'REJECTED'].includes(state) ? 'ยังไม่เริ่มนับวันทดลองใช้ฟรี กลับมาตรวจสถานะได้ด้วยอีเมลเดิม' : 'กำลังดำเนินการกับคำขอเดิม กรุณากดตรวจสถานะอีกครั้ง หากยังเข้าไม่ได้ให้ติดต่อทีมงาน'}</p><button className={button} disabled={!ready || busy} aria-busy={busy} onClick={() => void run(async () => apply(await call('status')))}>ตรวจสถานะอีกครั้ง</button></div>}
-    {step === 'existing' && <div className="space-y-4"><p>บัญชีนี้ยังใช้รหัสทางอีเมลเข้าไม่ได้ กรุณาเข้าด้วยรหัสผ่านหรือ LINE เดิม แล้วเปิด “เข้าสู่ระบบด้วยรหัสทางอีเมล” ในหน้าความปลอดภัย</p><Link className={`${button} block text-center`} href="/login">เข้าสู่ระบบด้วยวิธีเดิม</Link><Link className="block py-2 text-green-700" href="/forgot-password">ลืมรหัสผ่าน</Link></div>}
+    {step === 'existing' && <div className="space-y-4"><p>บัญชีนี้ยังใช้รหัสทางอีเมลเข้าไม่ได้ กรุณาเข้าด้วยรหัสผ่านหรือ LINE เดิม แล้วเปิด “เข้าสู่ระบบด้วยรหัสทางอีเมล” ในหน้าบัญชีของฉัน</p><Link className={`${button} block text-center`} href="/login">เข้าสู่ระบบด้วยวิธีเดิม</Link><Link className="block py-2 text-brand-700" href="/forgot-password">ลืมรหัสผ่าน</Link></div>}
     <p className="text-sm leading-6 text-gray-600">ติดปัญหา ติดต่อทีมงาน <a className="underline" href="tel:0982565628">098-256-5628</a></p>
   </section></main>;
 }

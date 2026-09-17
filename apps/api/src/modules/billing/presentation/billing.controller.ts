@@ -392,8 +392,9 @@ export class BillingAdminController {
   }
   @Get('overview') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
   overview(@Req() req: AuthedRequest, @Query() query: unknown) {
-    const fields = bodyFields(query, ['cursor','search']);
-    return this.admin.overview(req.context, fields.cursor === undefined ? undefined : textField(fields.cursor,128), fields.search === undefined || fields.search === '' ? '' : textField(fields.search,100));
+    const fields = bodyFields(query, ['cursor','search','page']);
+    const page = fields.page === undefined ? undefined : Number(textField(fields.page, 7));
+    return this.admin.overview(req.context, fields.cursor === undefined ? undefined : textField(fields.cursor,128), fields.search === undefined || fields.search === '' ? '' : textField(fields.search,100), page);
   }
   @Post('companies/:id/timeline/export') @HttpCode(200) @RequirePermissions('system.billing.export') @Header('Cache-Control','no-store')
   async exportTimeline(@Req() req:AuthedRequest,@Param('id') id:string,@Body() body:BillingTimelineExportDto) {

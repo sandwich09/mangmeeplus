@@ -67,13 +67,14 @@ export async function checkBillingCollection(input: {
   if (browser && prepaid) {
     const page = browser.page;
     await page.goto(`${browser.origin}/companies/${companyId}/billing`, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: 'ตรวจสอบการกลับมาต่ออายุ', exact: true }).click();
+    await page.getByRole('button', { name: 'การต่ออายุและชำระเงิน', exact: true }).click();
+    await page.getByRole('button', { name: 'เปิดต่ออายุอัตโนมัติ', exact: true }).click();
     await page.getByRole('button', { name: 'ยืนยันกลับมาต่ออายุ', exact: true }).click();
     await page.getByRole('status').filter({ hasText: 'รอตรวจยืนยันการต่ออายุ' }).waitFor();
     await input.scan();
     await page.getByRole('button', { name: 'ตรวจผลการต่ออายุ', exact: true }).click();
     await page.getByRole('status').filter({ hasText: 'ยืนยันกลับมาต่ออายุแล้ว' }).waitFor();
-    await page.getByRole('button', { name: 'ตรวจสอบการหยุดต่ออายุ', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'หยุดต่ออายุอัตโนมัติ', exact: true }).waitFor();
     await page.getByText('ระบบต่ออายุตามสัญญาที่เลือกไว้', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await page.screenshot({ path: `${browser.evidenceDir}/customer-collection-mobile.png`, fullPage: true });

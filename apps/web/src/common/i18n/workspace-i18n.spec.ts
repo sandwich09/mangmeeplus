@@ -38,7 +38,7 @@ describe('workspace-i18n', () => {
   it('names the receipt date field after the date on the receipt, with an example', () => {
     assert.strictEqual(t('expenses.upload_receipt_date', 'th'), 'วันที่ในใบเสร็จ');
     assert.doesNotMatch(t('expenses.upload_receipt_date', 'th'), /อัพโหลด|อัปโหลด/);
-    assert.match(t('expenses.upload_receipt_date_hint', 'th'), /ไม่ใช่วันนี้/);
+    assert.match(t('expenses.upload_receipt_date_hint', 'th'), /เว้นว่างให้ AI อ่าน/);
   });
 
   it('falls back to key for unknown key (cast as any)', () => {

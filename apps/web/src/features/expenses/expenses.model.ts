@@ -560,7 +560,8 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
     vendorTaxIdSnapshot: detail.vendorTaxIdSnapshot ?? '',
     vendorEntityKindSnapshot: detail.vendorEntityKindSnapshot ?? '',
     vendorDocumentNumber: detail.vendorDocumentNumber ?? '',
-    expenseDate: source?.header.expenseDate === null ? '' : (source?.header.expenseDate ?? detail.expenseDate.slice(0, 10)),
+    expenseDate: source ? source.header.expenseDate ?? ''
+      : expenseDateIsReadable(detail.aiVerificationSummaryJson) ? detail.expenseDate.slice(0, 10) : '',
     vatMode: detail.vatMode,
     vatSource,
     ...(detail.whtInputJson && { whtInput: { inputType: detail.whtInputJson.inputType, value: detail.whtInputJson.value,

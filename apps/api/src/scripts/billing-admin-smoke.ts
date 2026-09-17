@@ -41,16 +41,18 @@ export async function checkBillingAdmin(input: {
       const record = (request: { url(): string }) => { if (/\/api\/.*(?:system\/partners|system\/support-requests)/.test(request.url())) background.push(request.url()); };
       page.on('request', record);
       await page.goto(`${browser.origin}/system/billing/companies/${companyIds[0]}`, { waitUntil: 'domcontentloaded' });
-      await page.getByRole('region', { name: 'ข้อมูลการชำระเงินบริษัท' }).getByText('ขอบเขตนี้ไม่มีสิทธิ์ดูรายละเอียดจำนวนเงิน', { exact: true }).waitFor();
+      await page.getByRole('link', { name: 'รายการชำระเงิน', exact: true }).click();
+      await page.getByRole('region', { name: 'รายการชำระเงินของบริษัท' }).getByText('บัญชีนี้ไม่มีสิทธิ์ดูรายละเอียดจำนวนเงิน', { exact: true }).waitFor();
       assert.equal(await page.getByRole('link', { name: 'เปิด–ปิดระบบ', exact: true }).count(), 0);
       assert.equal(background.length, 0, 'billing delegate must not mount partner/support APIs');
       await page.goto(`${browser.origin}/system/billing/issues/${issue.id}`, { waitUntil: 'domcontentloaded' });
+      await page.getByText('ผู้รับผิดชอบและบันทึกติดตาม', { exact: true }).click();
       await page.getByRole('textbox', { name: 'บันทึกการดำเนินการ', exact: true }).fill(update.note);
-      await page.getByRole('button', { name: 'รับเคสนี้', exact: true }).click();
+      await page.getByRole('button', { name: 'รับเรื่องนี้', exact: true }).click();
       const caseRegion = page.getByRole('region', { name: 'รายละเอียดเคส' });
-      await caseRegion.getByText('รับงานแล้ว · เวอร์ชัน 1', { exact: true }).waitFor({ state: 'attached' });
-      await caseRegion.getByText('ข้อมูลอ้างอิงเคส', { exact: true }).click();
-      await caseRegion.getByText('รับงานแล้ว · เวอร์ชัน 1', { exact: true }).waitFor();
+      await caseRegion.getByRole('status', { name: 'สถานะปัญหา', exact: true }).filter({ hasText: 'รับงานแล้ว' }).waitFor();
+      await caseRegion.getByText('บันทึกล่าสุด: รับเรื่องเพื่อตรวจและแก้ปัญหาการชำระเงิน', { exact: true }).waitFor();
+      assert.equal(await page.getByRole('textbox', { name: 'บันทึกการดำเนินการ', exact: true }).inputValue(), update.note, 'taking a case preserves the unsaved note');
       await page.screenshot({ path: `${browser.evidenceDir}/admin-issue-mobile.png`, fullPage: true });
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
       page.off('request', record);
@@ -114,31 +116,34 @@ async function checkOperations(input: Parameters<typeof checkBillingAdmin>[0] & 
   if (browser) {
     const page = browser.page;
     await page.goto(`${browser.origin}/system/billing/companies/${companyId}`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('link', { name: 'ปรับแพ็กเกจและตรวจสอบ', exact: true }).click();
+    await page.getByText('ตรวจข้อมูลกับ Stripe เพิ่มเติม', { exact: true }).click();
+    await page.getByText('บันทึกเหตุผล (ระบบใส่ให้แล้ว)', { exact: true }).click();
     await page.getByRole('textbox', { name: 'เหตุผลการตรวจสอบ', exact: true }).fill('ตรวจสอบจากหน้าเว็บ');
-    await page.getByRole('button', { name: 'ตรวจสอบผลกระทบ', exact: true }).click();
-    await page.getByRole('status').filter({ hasText: 'ตรวจสอบก่อนส่งคำสั่ง' }).waitFor();
-    const permanentLink=page.getByRole('link', { name: 'เปิดลิงก์คำสั่งนี้', exact: true });
+    await page.getByRole('button', { name: 'ตรวจสอบรายการนี้', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: 'ตรวจข้อมูลก่อนยืนยัน' }).waitFor();
+    await page.getByText('ประวัติและข้อมูลอ้างอิง', { exact: true }).click();
+    const permanentLink=page.getByRole('link', { name: 'เปิดรายละเอียดการดำเนินการนี้', exact: true });
     const permanentPath=await permanentLink.getAttribute('href');assert.ok(permanentPath);
     await permanentLink.click();await page.waitForURL(`${browser.origin}${permanentPath}`);
-    // Both pages contain the same controls. Wait for the destination's unique heading, not
-    // a still-visible submit button on the departing company page.
-    await page.getByRole('heading',{name:'คำสั่งตรวจสอบการชำระเงิน',exact:true}).waitFor();
-    await page.getByRole('status').filter({ hasText: 'ตรวจสอบก่อนส่งคำสั่ง' }).waitFor();
+    // Wait for the detail page before confirming this operation.
+    await page.getByRole('heading',{name:'รายละเอียดการดำเนินการ',exact:true}).waitFor();
+    await page.getByRole('status').filter({ hasText: 'รอยืนยัน' }).waitFor();
     const submit = async () => {
       const response = page.waitForResponse(r => r.url().endsWith('/system/billing/operations') && r.request().method() === 'POST');
-      await page.getByRole('button', { name: 'ยืนยันส่งคำสั่งตรวจสอบ', exact: true }).click();
+      await page.getByRole('button', { name: 'ยืนยันดำเนินการ', exact: true }).click();
       return response;
     };
     const submitted = await submit(),accepted=await submitted.json();assert.equal(submitted.status(),202,JSON.stringify(accepted));assert.equal(accepted.state,'QUEUED');
-    try{await page.getByRole('status').filter({ hasText: 'รอระบบตรวจสอบ' }).waitFor();}
+    try{await page.getByRole('status').filter({ hasText: 'รอระบบดำเนินการ' }).waitFor();}
     catch(error){await page.screenshot({path:`${browser.evidenceDir}/admin-operation-failure.png`,fullPage:true});
       console.error(JSON.stringify({stage:'admin-submit-display',pathname:new URL(page.url()).pathname,acceptedState:accepted.state,acceptedVersion:accepted.version,
         current:(await request(`${base}/operations/${accepted.id}`)).body.state,visible:await page.getByRole('region',{name:'คำสั่งตรวจสอบการชำระเงิน',exact:true}).innerText()}));throw error;}
-    await drain(); await page.getByRole('button', { name: 'โหลดคำสั่งล่าสุด', exact: true }).click();
-    await page.getByRole('status').filter({ hasText: 'ตรวจสอบสถานะล่าสุดแล้ว' }).waitFor();
+    await drain(); await page.getByRole('button', { name: 'อัปเดตสถานะ', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: 'ดำเนินการเสร็จแล้ว' }).waitFor();
     await page.screenshot({ path: `${browser.evidenceDir}/admin-operation-mobile.png`, fullPage: true });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    await page.getByRole('link', { name: 'กลับไปบริษัท', exact: true }).click();
+    await page.getByRole('link', { name: 'ดูข้อมูลและสิทธิ์ของบริษัท', exact: true }).click();
     await page.getByRole('region', { name: 'ข้อมูลการชำระเงินบริษัท' }).waitFor();
   }
   return ['admin-operation-preview-dedupe-and-competing-resource-reservation', 'admin-operation-provider-failure-permission-revoke-and-same-command-retry',

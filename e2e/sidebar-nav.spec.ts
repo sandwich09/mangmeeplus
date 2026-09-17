@@ -94,3 +94,16 @@ test.describe('NAV — sidebar active state', () => {
     await expect.poll(() => openSubmenuLabels(authedPage)).toContain('ค่าใช้จ่ายและใบเสร็จ');
   });
 });
+
+
+test('NAV-BILLING owner package link belongs to company settings', async ({ authedPage: page, companyId }) => {
+  await gotoCompany(page, companyId, '/settings/branches');
+  const parent = page.locator('aside li').filter({ has: page.locator('a[href$="/billing"]') });
+  await expect(parent.locator('button.menu-item')).toHaveText(/ตั้งค่าบริษัท/);
+  const billing = page.locator('aside a[href$="/billing"]');
+  await expect(billing).toHaveCount(1);
+  await expect(billing).toHaveClass(/menu-dropdown-item/);
+  await billing.click();
+  await expect(page).toHaveURL(new RegExp(`/companies/${companyId}/billing$`));
+  await expectNoClientError(page);
+});

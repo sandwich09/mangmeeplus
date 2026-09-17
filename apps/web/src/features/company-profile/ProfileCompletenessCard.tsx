@@ -41,40 +41,21 @@ export function ProfileCompletenessCard({ companyId }: { companyId: string }) {
   return (
     <section
       aria-labelledby="profile-completeness-title"
-      className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-[var(--shadow-theme-sm)]"
+      className="mt-5 rounded-2xl border border-gray-200 bg-white p-4"
     >
-      <h2 id="profile-completeness-title" className="text-[15px] font-bold text-amber-900">ยังกรอกไม่ครบอีกนิดเดียวค่ะ</h2>
-      <p className="mt-1 text-sm text-amber-800">
-        ใช้งานได้ตามปกติอยู่แล้วนะคะ กรอกเพิ่มไว้เผื่อต้องออกเอกสารภาษี และเผื่อ LINE หลุด
-      </p>
-      <ul className="mt-3 grid gap-2">
-        {incompleteItems.map((item) => (
-          <li key={item.key}>
-            <Link
-              href={companyProfileHref(companyId, item.hash)}
-              className="inline-flex items-center gap-2 text-sm font-medium text-amber-900 underline decoration-amber-300 underline-offset-4 hover:decoration-amber-600"
-            >
-              <span aria-hidden="true">•</span>
-              {item.label}
-            </Link>
-          </li>
-        ))}
-      </ul>
-      <div className="mt-4 grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-3">
-        <button
-          type="button"
-          onClick={dismiss}
-          className="mangmee-btn mangmee-btn-secondary !min-h-12 w-full !text-base !font-bold"
-        >
-          ไว้ก่อน
-        </button>
-        <Link
-          href={companyProfileHref(companyId, incompleteItems[0]!.hash)}
-          className="mangmee-btn mangmee-btn-primary !min-h-12 w-full !text-base !font-bold"
-        >
-          กรอกข้อมูลให้ครบ
-        </Link>
-      </div>
+      <details>
+        <summary id="profile-completeness-title" className="min-h-11 cursor-pointer py-2 text-base font-semibold text-gray-700">ข้อมูลร้านยังไม่ครบ · เพิ่มภายหลังได้</summary>
+        <p className="mt-1 text-base text-gray-600">ใช้งานได้ตามปกติ เพิ่มข้อมูลเพื่อออกเอกสารและช่วยกู้บัญชี</p>
+        <ul className="mt-2 grid gap-1">
+          {incompleteItems.map((item) => (
+            <li key={item.key}><Link href={companyProfileHref(companyId, item.hash)} className="inline-flex min-h-11 items-center text-base text-brand-700 underline underline-offset-4">{item.label}</Link></li>
+          ))}
+        </ul>
+        <div className="mt-3 flex flex-wrap gap-3">
+          <Link href={companyProfileHref(companyId, incompleteItems[0]!.hash)} className="mangmee-btn mangmee-btn-secondary !min-h-11 !text-base">กรอกข้อมูลให้ครบ</Link>
+          <button type="button" onClick={dismiss} className="min-h-11 px-3 text-base text-gray-600 underline">ไว้ก่อน</button>
+        </div>
+      </details>
     </section>
   );
 }

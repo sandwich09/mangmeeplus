@@ -155,8 +155,10 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   // WEB-03: which field is wrong, said next to that field. `noValidate` stays — the browser's own
   // bubble is English-only and unstyled — so the form owns the check instead.
   const [fieldErrors, setFieldErrors] = useState<{ identifier?: string; password?: string }>({});
-  // Server-driven: the button appears only where the API reports the LINE channel available.
-  const [lineLoginAvailable, setLineLoginAvailable] = useState(false);
+  // Keep the option visible; only the server can enable the OAuth/QR actions.
+  const [lineLoginState, setLineLoginState] = useState<'loading' | 'available' | 'unavailable' | 'error'>('loading');
+  const [lineCheck, setLineCheck] = useState(0);
+  const lineLoginAvailable = lineLoginState === 'available';
   // P12-3a desktop QR login. The desktop secret lives in an HttpOnly cookie the BFF sets, so
   // nothing here holds a credential — only the picture, the countdown and the poll.
   const [qrOpen, setQrOpen] = useState(false);
@@ -175,16 +177,21 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
 
   useEffect(() => {
     let active = true;
-    void fetch('/api/auth/line-login/availability')
-      .then((response) => response.json())
-      .then((data: { available?: boolean }) => {
-        if (active) setLineLoginAvailable(Boolean(data?.available));
+    setLineLoginState('loading');
+    void fetch('/api/auth/line-login/availability', { signal: AbortSignal.timeout(10_000) })
+      .then((response) => {
+        if (!response.ok) throw new Error('line_availability_failed');
+        return response.json();
       })
-      .catch(() => {});
+      .then((data: { available?: boolean }) => {
+        if (typeof data?.available !== 'boolean') throw new Error('line_availability_invalid');
+        if (active) setLineLoginState(data.available ? 'available' : 'unavailable');
+      })
+      .catch(() => { if (active) setLineLoginState('error'); });
     return () => {
       active = false;
     };
-  }, []);
+  }, [lineCheck]);
 
   // Restore the session from the refresh cookie, then bounce back through /login so the server
   // route re-validates it and picks the landing path. Only a real 401 is signed-out; a timeout or
@@ -399,11 +406,13 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   const lineLoginButton = (
     <button
       type="button"
+      disabled={!lineLoginAvailable}
+      aria-describedby={!lineLoginAvailable ? 'line-login-status' : undefined}
       onClick={() => window.location.assign(withLineExternalBrowser(nextPath ? lineStartUrl(nextPath) : '/api/auth/line-login/start', navigator.userAgent))}
-      className="mt-4 flex h-12 w-full items-center justify-center gap-2.5 rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 transition hover:border-[#06C755]"
+      className="mt-4 flex h-12 w-full items-center justify-center gap-2.5 rounded-xl border-[1.5px] border-gray-200 bg-white text-[15.5px] font-semibold text-gray-900 transition enabled:hover:border-[#06C755] disabled:cursor-not-allowed disabled:text-gray-400"
     >
-      <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#06C755] text-sm font-extrabold text-white">L</span>
-      เข้าสู่ระบบด้วย LINE
+      <span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-md bg-[#06C755] text-sm font-extrabold text-white">L</span>
+      {locale === 'th' ? 'เข้าสู่ระบบด้วย LINE' : 'Sign in with LINE'}
     </button>
   );
 
@@ -570,16 +579,26 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             </Button>
           </form>
 
-          {!linkMode && <Link href={nextPath ? `/email-access?next=${encodeURIComponent(nextPath)}` : "/email-access"} className="mt-3 block rounded-xl border px-4 py-3 text-center text-base font-semibold text-brand-700">รับรหัสทางอีเมล</Link>}
+          {!linkMode && <><Link href={nextPath ? `/email-access?next=${encodeURIComponent(nextPath)}` : "/email-access"} className="mt-3 block rounded-xl border px-4 py-3 text-center text-base font-semibold text-brand-700">{locale === 'th' ? 'เข้าสู่ระบบด้วยรหัส OTP' : 'Sign in with an email code'}</Link><p className="mt-2 text-center text-sm text-gray-500">{locale === 'th' ? 'รับรหัส 6 หลักทางอีเมล เพื่อใช้แทนรหัสผ่าน' : 'Get a 6-digit code by email instead of using a password.'}</p></>}
 
+          {qrApproveLead ? null : (
+            <>
+              {orDivider}
+              {lineLoginButton}
+            </>
+          )}
+          {!lineLoginAvailable && (
+            <div id="line-login-status" role="status" className="mt-2 text-center text-sm leading-6 text-gray-500">
+              {lineLoginState === 'loading'
+                ? (locale === 'th' ? 'กำลังตรวจสอบการเข้าสู่ระบบด้วย LINE…' : 'Checking LINE sign-in…')
+                : lineLoginState === 'unavailable'
+                  ? (locale === 'th' ? 'ยังไม่เปิดให้เข้าสู่ระบบด้วย LINE ในขณะนี้ ใช้รหัสผ่านหรือเข้าสู่ระบบด้วยรหัส OTP ทางอีเมลได้' : 'LINE sign-in is not enabled right now. Use your password or an email code.')
+                  : (locale === 'th' ? 'ตรวจสอบสถานะ LINE ไม่สำเร็จ' : 'Could not check LINE sign-in availability.')}
+              {lineLoginState === 'error' && <button type="button" onClick={() => setLineCheck(value => value + 1)} className="mx-auto block min-h-11 px-3 font-semibold text-brand-700 underline">{locale === 'th' ? 'ลองตรวจสอบอีกครั้ง' : 'Try again'}</button>}
+            </div>
+          )}
           {lineLoginAvailable ? (
             <>
-              {qrApproveLead ? null : (
-                <>
-                  {orDivider}
-                  {lineLoginButton}
-                </>
-              )}
               {/* Scanning is only useful where the phone is a second device, so the entry point is
                   desktop-only; on a phone the LINE button above already is the shortest path. */}
               <div className="mt-3 hidden md:flex">

@@ -692,3 +692,27 @@ describe('LINE receipt durable identity and reserved attachment recovery', () =>
       lineCapture: { lineMessageId: 'same-message', lineEventId: 'event', chatKeyHash: 'chat' } }), /Forbidden/);
   });
 });
+
+
+describe('receipt document date at intake', () => {
+  for (const supplied of [undefined, '2026-09-12']) it(`keeps ${supplied ?? 'missing date'} distinct from the intake day`, async () => {
+    let created: any;
+    const uc = new InitReceiptUploadUseCase(
+      { ...branchValidation, createExpense: async (input: any) => { created = input; return { id: 'date-test' }; } } as any,
+      { execute: async () => ({ attachmentId: 'att', uploadUrl: '/upload', uploadMethod: 'PUT', expiresAt: new Date() }) } as any,
+      { log: async () => undefined } as any,
+      { execute: async () => ({ mode: 'SIMPLE' }) } as any, openLaunchGate,
+    );
+    await uc.execute(ctx, { originalFileName: 'receipt.png', mimeType: 'image/png', byteSize: 1, branchId: 'branch-default', ...(supplied ? { expenseDate: supplied } : {}) });
+    const summary = created.aiVerificationSummaryJson;
+    assert.equal(summary.dateStatus, supplied ? 'verified' : 'unverified');
+    if (supplied) {
+      assert.equal(created.expenseDate.toISOString().slice(0, 10), supplied);
+      assert.equal(summary.dateResolution.expenseDate, supplied);
+      assert.equal(summary.dateResolution.resolvedByUserId, ctx.userId);
+    } else {
+      assert.deepEqual(summary.missingFields, ['expenseDate']);
+      assert.equal(summary.dateResolution, undefined);
+    }
+  });
+});

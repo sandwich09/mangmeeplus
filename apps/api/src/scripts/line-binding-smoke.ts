@@ -62,10 +62,12 @@ export async function checkLineBinding(input: { app: INestApplication; prisma: P
     }
     await db.membershipRole.create({ data: { membershipId: input.membershipId, roleId: admin.id } });
     await page.goto(`${browser.origin}/system/partners/${input.companyId}`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('link', { name: 'สมาชิก', exact: true }).click();
     await page.getByText('ตรวจช่องทาง LINE ของระบบ แล้วออก QR ใหม่เพื่อซ่อมการเชื่อมต่อ', { exact: true }).waitFor();
     const issuedResponse = page.waitForResponse(response => response.url().endsWith(`/members/${input.userId}/line-link-token`) && response.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Issue LINE QR', exact: true }).click();
-    await page.getByRole('button', { name: 'Issue QR', exact: true }).click();
+    await page.getByText('จัดการสมาชิก', { exact: true }).click();
+    await page.getByRole('button', { name: 'สร้าง QR ผูก LINE', exact: true }).click();
+    await page.getByRole('button', { name: 'สร้าง QR', exact: true }).click();
     const issued = await issuedResponse; assert.equal(issued.status(), 200);
     const issuedBody = await issued.json(), raw = new URL(issuedBody.lineLink.linkUrl).searchParams.get('token')!;
     assert.match(raw, /^[A-Za-z0-9_-]{32}$/);
@@ -104,7 +106,9 @@ export async function checkLineBinding(input: { app: INestApplication; prisma: P
     assert.equal(pushes.length, 1); assert.equal(pushes[0].to, identity.providerUserId);
     assert.equal(await db.passwordResetToken.count({ where: { userId: input.userId, status: 'PENDING' } }), 1);
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: 'Issue LINE QR', exact: true }).waitFor();
+    await page.getByRole('link', { name: 'สมาชิก', exact: true }).click();
+    await page.getByText('จัดการสมาชิก', { exact: true }).click();
+    await page.getByRole('button', { name: 'สร้าง QR ผูก LINE', exact: true }).waitFor();
     assert.equal(await page.getByText('ตรวจช่องทาง LINE ของระบบ แล้วออก QR ใหม่เพื่อซ่อมการเชื่อมต่อ', { exact: true }).count(), 0);
     assert.deepEqual(await db.companyPlanTerm.findUniqueOrThrow({ where: { companyId: input.companyId } }), beforePlan);
     cases.push('repaired-account-and-admin-state-original-recovery-request-delivers-on-current-binding-without-package-change');
@@ -112,8 +116,8 @@ export async function checkLineBinding(input: { app: INestApplication; prisma: P
     assert.equal(typeof recoveryPassword, 'string');
     const oldRecovery = await db.passwordResetToken.findFirstOrThrow({ where: { userId: input.userId, status: 'PENDING' } });
     const unlinkedResponse = page.waitForResponse(response => response.url().endsWith(`/members/${input.userId}/line-unlink`) && response.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Unlink LINE', exact: true }).click();
-    await page.getByRole('dialog').getByRole('button', { name: 'Unlink LINE', exact: true }).click();
+    await page.getByRole('button', { name: 'ยกเลิกการผูก LINE', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'ยกเลิกการผูก LINE', exact: true }).click();
     assert.equal((await unlinkedResponse).status(), 200);
     assert.equal((await db.passwordResetToken.findUniqueOrThrow({ where: { id: oldRecovery.id } })).status, 'REVOKED');
     assert.equal((await request('/v1/auth/password/login', 'POST', { username, password: recoveryPassword })).status, 401);

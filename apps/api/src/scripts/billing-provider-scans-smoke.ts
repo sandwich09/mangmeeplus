@@ -143,7 +143,7 @@ export async function checkBillingProviderScans(input:ProviderScansSmokeInput) {
       await page.getByRole('link',{name:'ตรวจครบช่วงที่เลือก · ตรวจจากหน้าจอจริง',exact:true}).click();await page.waitForURL(`**/system/billing/provider-scans/${id}`);
       await page.getByRole('link',{name:'เหตุการณ์ที่รับไว้',exact:true}).click();await page.waitForURL('**/system/billing/provider-events');
       await page.goto(`${browser.origin}/system/billing/issues/${failureCase.id}`,{waitUntil:'domcontentloaded'});
-      await page.getByRole('link',{name:'เปิดงานค้นหาเหตุการณ์ของเคสนี้',exact:true}).click();await page.waitForURL(`**/system/billing/provider-scans/${id}`);
+      await page.getByRole('link',{name:'ดูรายการต้นทาง',exact:true}).click();await page.waitForURL(`**/system/billing/provider-scans/${id}`);
     }
     assert.deepEqual(await financialSnapshot(),originalFinancials,'discovery cannot rewrite invoices or receipt grants');
     return ['provider-discovery-platform-scope-strict-window-idempotent-redacted-admission','provider-discovery-webhook-race-original-evidence-and-financials-preserved',

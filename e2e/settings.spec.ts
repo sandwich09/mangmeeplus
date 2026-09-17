@@ -497,3 +497,39 @@ test.describe('SET — settings', () => {
     await expect(viewer.getByText(/อ่านอย่างเดียว/)).toHaveCount(0);
   });
 });
+
+for (const width of [1280, 390]) {
+  test(`SET-BRANCH-UX focused editor and error recovery at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    await page.setViewportSize({ width, height: 900 });
+    let attempts = 0;
+    await page.route(`**/companies/${companyId}/branches/**`, async route => {
+      if (route.request().method() !== 'PATCH') return route.continue();
+      attempts++;
+      await route.fulfill({ status: 409, json: { code: 'branch_last_active_required', message: 'ต้องมีสาขาที่ใช้งานอย่างน้อยหนึ่งสาขา' } });
+    });
+    await gotoCompany(page, companyId, '/settings/branches');
+    await expect(page.getByRole('heading', { name: 'รายชื่อสาขา', exact: true })).toBeVisible();
+    const edit = page.getByRole('button', { name: /^แก้ไขสาขา / }).first();
+    await expect(edit).toBeVisible();
+    await page.screenshot({ path: info.outputPath(`branches-${width}.png`), fullPage: true });
+    await edit.click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await dialog.getByLabel('ชื่อสาขา', { exact: true }).fill('ร่างแก้สาขา ไม่บันทึกจริง');
+    await dialog.getByRole('button', { name: 'บันทึก', exact: true }).click();
+    await expect(dialog.getByRole('alert')).toBeVisible();
+    await expect(dialog.getByLabel('ชื่อสาขา', { exact: true })).toHaveValue('ร่างแก้สาขา ไม่บันทึกจริง');
+    expect(attempts).toBe(1);
+    await dialog.getByRole('button', { name: 'สร้างสาขาใหม่ก่อน' }).click();
+    await expect(page.getByRole('dialog', { name: 'เพิ่มสาขา', exact: true })).toBeVisible();
+    await dialog.getByLabel('รหัสสาขา (A-Z, 0-9)', { exact: true }).fill('TESTUX');
+    await dialog.getByLabel('ชื่อสาขา', { exact: true }).fill('สาขาทดสอบ ไม่บันทึกจริง');
+    await dialog.getByLabel('รหัสสาขาภาษี (5 หลัก ไม่บังคับ)', { exact: false }).fill('123');
+    await expect(dialog.getByRole('button', { name: 'บันทึกสาขาใหม่' })).toBeDisabled();
+    await page.screenshot({ path: info.outputPath(`branch-editor-${width}.png`), fullPage: true });
+    await dialog.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(edit).toBeFocused();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}

@@ -1,0 +1,45 @@
+{
+  "scope": "Billing issue queue and shared navigation wording",
+  "status": "local-ready-for-owner-review",
+  "typecheck": {
+    "web": "passed",
+    "api": "passed"
+  },
+  "e2e": {
+    "file": "e2e/billing-admin-directory.spec.ts",
+    "passed": 3,
+    "newQueueCase": 1,
+    "realFixtureIssues": 27,
+    "checks": [
+      "themed assigned/unassigned/overdue filters",
+      "cursor paging",
+      "detail return with filter and page preserved",
+      "clear resets cursor",
+      "mobile no overflow",
+      "503 actual reference and retry",
+      "403 removes privileged navigation and stale results",
+      "zero billing mutation requests"
+    ],
+    "simulated": [
+      "503",
+      "403"
+    ]
+  },
+  "nativeInspection": {
+    "desktopWidth": 1512,
+    "mobileWidth": 390,
+    "states": [
+      "empty",
+      "populated",
+      "themed filter open"
+    ],
+    "viewportReset": true,
+    "visualFixturesCleaned": true
+  },
+  "localUrl": "http://localhost:3000/system/billing/issues",
+  "limits": [
+    "Full payment mutation smoke suites not rerun",
+    "No API/schema/payment policy change this follow-up",
+    "No CI, merge, push or deployment"
+  ]
+}

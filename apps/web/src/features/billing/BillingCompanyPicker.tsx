@@ -2,9 +2,11 @@
 import { useEffect, useState } from 'react';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
+import { MangmeeBadge, MangmeeCard } from '@/common/components/mangmee';
+import BillingCustomerFrame from './BillingCustomerFrame';
 
 type CompanyChoice = { companyId: string; companyName: string; roles: string[]; expired: boolean };
-export default function BillingCompanyPicker({ query }: { query: string }) {
+export default function BillingCompanyPicker({ query, fromCompany }: { query: string; fromCompany?: string }) {
   const [companies, setCompanies] = useState<CompanyChoice[] | null>(null), [error, setError] = useState(''), [reload, setReload] = useState(0);
   useEffect(() => {
     let active = true;
@@ -14,14 +16,18 @@ export default function BillingCompanyPicker({ query }: { query: string }) {
       .catch(e => { if (active) { setCompanies(null); setError(apiErrorMessage(e)); } });
     return () => { active = false; };
   }, [reload]);
-  return <main className="mx-auto max-w-2xl space-y-5 p-6 sm:p-10">
-    <h1 className="text-2xl font-bold">เลือกบริษัทที่จะจัดการแพ็กเกจ</h1><p>ตรวจสอบชื่อบริษัทก่อนดูราคาและชำระเงิน</p>
-    {error && <div role="alert"><p>{error}</p><button className="mt-3 rounded-xl border px-4 py-3" onClick={() => setReload(value => value + 1)}>ลองใหม่</button></div>}
+  const origin = companies?.find(company => company.companyId === fromCompany);
+  return <BillingCustomerFrame title="เลือกบริษัทที่จะจัดการแพ็กเกจ" description="ดูแพ็กเกจและประวัติการชำระเงินของบริษัทที่คุณเป็นเจ้าของ"
+    backHref={origin ? `/companies/${encodeURIComponent(origin.companyId)}/billing` : '/'} backLabel={origin ? `กลับแพ็กเกจของ ${origin.companyName}` : 'กลับหน้าหลัก'}>
+    {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4"><p>{error}</p><button className="mangmee-btn mangmee-btn-secondary mt-3" onClick={() => setReload(value => value + 1)}>ลองใหม่</button></div>}
     {!companies && !error && <p role="status">กำลังตรวจสอบบริษัทที่คุณเป็นเจ้าของ…</p>}
     {companies?.length === 0 && <p>ยังไม่มีบริษัทที่คุณเป็นเจ้าของ กรุณาให้เจ้าของบริษัทดำเนินการ หรือติดต่อทีมมั่งมี</p>}
-    {companies?.map(company => <a key={company.companyId} className="block rounded-xl border bg-white p-5" href={`/companies/${encodeURIComponent(company.companyId)}/billing${query ? `?${query}` : ''}`}>
-      <span className="font-semibold">{company.companyName}</span><span className="mt-1 block text-sm text-gray-600">{company.expired ? 'ครบกำหนดใช้งาน · เข้าดูสถานะและชำระเงิน' : 'ดูแพ็กเกจและประวัติการชำระเงิน'}</span>
-    </a>)}
-    <footer className="border-t pt-5"><a className="underline" href="mailto:contact@mangmeeplus.com">ติดต่อทีมมั่งมี</a></footer>
-  </main>;
+    {companies && companies.length > 0 && <MangmeeCard className="divide-y divide-gray-100">
+      {companies.map(company => <div key={company.companyId} className="flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6">
+        <div className="min-w-0"><h2 className="break-words text-lg font-bold text-gray-900">{company.companyName}</h2><p className="mt-2 text-sm text-gray-500">{company.expired ? <MangmeeBadge tone="amber">ครบกำหนดใช้งาน</MangmeeBadge> : 'แพ็กเกจและเอกสารการชำระเงิน'}</p></div>
+        <a className="mangmee-btn mangmee-btn-secondary" aria-label={`ดูแพ็กเกจของ ${company.companyName}`} href={`/companies/${encodeURIComponent(company.companyId)}/billing${query ? `?${query}` : ''}`}>ดูแพ็กเกจ<span aria-hidden="true">→</span></a>
+      </div>)}
+    </MangmeeCard>}
+    <footer className="border-t border-gray-200 pt-5 text-sm text-gray-500"><a className="inline-flex min-h-11 items-center text-brand-700 underline" href="mailto:contact@mangmeeplus.com">ติดต่อทีมมั่งมี</a></footer>
+  </BillingCustomerFrame>;
 }

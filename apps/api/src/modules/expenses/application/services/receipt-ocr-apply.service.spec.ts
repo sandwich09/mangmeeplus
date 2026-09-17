@@ -1845,3 +1845,21 @@ describe('receipt tax integrity regressions', () => {
     assert.ok(result.result.reviewReasons.some((reason) => reason.includes('หัก ณ ที่จ่าย')));
   });
 });
+
+
+describe('OCR preserves an explicitly entered receipt date', () => {
+  for (const ocrDate of [undefined, '2026-09-13']) it(`retains user date when OCR returns ${ocrDate ?? 'no date'}`, async () => {
+    let written: any;
+    const tx = { expenseRecord: {
+      findFirst: async () => ({ expenseDate: new Date('2026-09-12T00:00:00Z'),
+        aiVerificationSummaryJson: { dateStatus: 'verified', dateResolution: { expenseDate: '2026-09-12', resolvedByUserId: 'user-1' } }, lines: [] }),
+      update: async ({ data }: any) => { written = data; return {}; },
+    } };
+    const service = new ReceiptOcrApplyService(makeApplyPrisma(tx) as any, makeDuplicateRepo() as any);
+    const result = await service.apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1', { expenseDate: ocrDate });
+    assert.equal('expenseDate' in written, false);
+    assert.equal(result.dateStatus, 'verified');
+    assert.equal(result.dateVerified, true);
+    assert.ok(!result.reviewReasons.includes(RECEIPT_REVIEW_REASONS.dateUnverified));
+  });
+});
