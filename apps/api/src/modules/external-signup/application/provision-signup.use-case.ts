@@ -4,6 +4,7 @@ import {
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
+import { Prisma } from '../../../generated/prisma/client';
 import { CreateCompanyOnboardingUseCase } from '../../system-onboarding/application/use-cases/create-company-onboarding.use-case';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { SignupAdminNotifyService } from './signup-admin-notify.service';
@@ -486,10 +487,18 @@ export class ProvisionSignupUseCase {
       });
       // `null` is the schema's "inherit the platform default", so this caps a shop that has never
       // been given a budget and leaves an admin-set one — raised or lowered — exactly alone (F9).
-      await this.prisma.client.companyAiConfiguration.updateMany({
-        where: { companyId, monthlyBudgetSatang: null },
+      // Review F-09: a SPLIT or scheduled-SPLIT company inherits the default too, and lowering its
+      // total here could put `C + O` above `T` — a policy the admin set, silently invalidated by a
+      // retry. Those rows are skipped and logged; the governed writer owns them.
+      const capped = await this.prisma.client.companyAiConfiguration.updateMany({
+        where: { companyId, monthlyBudgetSatang: null, budgetMode: 'SHARED', pendingBudgetPolicy: { equals: Prisma.DbNull } },
         data: { monthlyBudgetSatang: this.config.lineFreeAiBudgetSatang },
       });
+      if (capped.count === 0 && await this.prisma.client.companyAiConfiguration.count({
+        where: { companyId, monthlyBudgetSatang: null, NOT: { AND: [{ budgetMode: 'SHARED' }, { pendingBudgetPolicy: { equals: Prisma.DbNull } }] } },
+      }) > 0) {
+        new Logger(ProvisionSignupUseCase.name).warn({ msg: 'signup.ai_budget.split_policy_preserved', companyId, requestId });
+      }
     });
 
     // Review B-06: an owner with a second shop otherwise meets a company picker instead of the shop

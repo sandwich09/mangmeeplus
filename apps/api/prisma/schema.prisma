@@ -3428,6 +3428,18 @@ model CompanyAiConfiguration {
   ocrMonthlyLimit            Int? // null = unlimited; Platform Admin only (OCR governance spec §4)
   receiptQuotaEnforced       Boolean? // trial/manual plan override; null inherits startup; paid grants always enforce
   ocrConfigVersion           Int      @default(0) // monotonic CAS fence; increment only on real OCR config change
+  // ── Split CHAT/OCR budget policy (remediation spec §12.4, ADR 0013 §3). Every existing company
+  // stays SHARED, which is today's code path byte-for-byte; a `null` cap under SHARED means "not
+  // set", never "unlimited". `budgetConfigVersion` is a CAS fence of its OWN, separate from
+  // `ocrConfigVersion`, so an OCR count edit never invalidates an open budget page (and vice versa).
+  budgetMode                 String   @default("SHARED") // 'SHARED' | 'SPLIT' (CHECK in the migration)
+  chatMonthlyBudgetSatang    Int? // >= 0; 0 closes the CHAT bucket. null = not set
+  ocrMonthlyBudgetSatang     Int? // >= 0; 0 closes the OCR bucket. null = not set
+  budgetConfigVersion        Int      @default(0)
+  // `{ mode, chatMonthlyBudgetSatang, ocrMonthlyBudgetSatang, effectiveMonthKey }` for a policy
+  // that starts in a FUTURE Bangkok month. It never replaces the active columns until its month
+  // arrives — the resolver compares month keys, so no cron is involved.
+  pendingBudgetPolicy        Json?
   updatedBySystemAdminUserId String?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt

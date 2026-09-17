@@ -814,6 +814,14 @@ describe('apiConfigSchema LINE AI latency/autonomy Phase-1 flags', () => {
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED: 'false' }).LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED, false);
   });
 
+  it('the CHAT/OCR split activation gate defaults off and opts in only on an explicit boolean', () => {
+    // ADR 0013 §9: this is the one switch that lets a company leave SHARED. It is wired into no
+    // deploy script, so UAT and Production parse this default and cannot change behaviour on merge.
+    assert.equal(apiConfigSchema.parse(base).AI_BUDGET_SPLIT_ACTIVATION_ENABLED, false);
+    assert.equal(apiConfigSchema.parse({ ...base, AI_BUDGET_SPLIT_ACTIVATION_ENABLED: 'true' }).AI_BUDGET_SPLIT_ACTIVATION_ENABLED, true);
+    assert.equal(apiConfigSchema.parse({ ...base, AI_BUDGET_SPLIT_ACTIVATION_ENABLED: 'false' }).AI_BUDGET_SPLIT_ACTIVATION_ENABLED, false);
+  });
+
   it('Flex→text delivery fallback defaults off and opts in only on an explicit boolean', () => {
     assert.equal(apiConfigSchema.parse(base).LINE_AI_FLEX_TEXT_FALLBACK_ENABLED, false);
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_FLEX_TEXT_FALLBACK_ENABLED: 'true' }).LINE_AI_FLEX_TEXT_FALLBACK_ENABLED, true);
