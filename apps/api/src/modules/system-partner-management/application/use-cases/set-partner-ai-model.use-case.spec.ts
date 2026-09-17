@@ -266,7 +266,10 @@ describe('SetPartnerAiModelUseCase', () => {
     const prisma = makePrisma({ existing: { modelId: APPROVED, monthlyBudgetSatang: 321 } });
     prisma.client.companyAiConfiguration.findUnique = async () => { throw new Error('Unprotected configuration read'); };
     await new SetPartnerAiModelUseCase(prisma, makeConfig()).execute(makeCmd({ monthlyBudgetSatang: 400,expectedMonthlyBudgetSatang:321 }));
-    assert.deepEqual(prisma.lockOrder, ['partner-ocr-config:co-1', 'company:co-1', 'platform-ai-budget']);
+    // Phase E1b appends the company-month budget lock LAST, after the platform one (spec §12.7).
+    assert.deepEqual(prisma.lockOrder, [
+      'partner-ocr-config:co-1', 'company:co-1', 'platform-ai-budget', `ai-budget:co-1:${bangkokMonthKey()}`,
+    ]);
     assert.equal(prisma.auditData().metadataJson.fromMonthlyBudgetSatang, 321);
     assert.equal(prisma.auditData().metadataJson.toMonthlyBudgetSatang, 400);
   });
@@ -877,7 +880,11 @@ describe('SetPartnerAiModelUseCase — split budget policy', () => {
   it('keeps the canonical lock order and refuses a locked company before any policy write', async () => {
     const state = makePolicyPrisma({ row: { monthlyBudgetSatang: 100 } });
     await run(state, { budgetPolicy: split() });
-    assert.deepEqual(state.lockOrder, ['partner-ocr-config:co-1', 'company:co-1', 'platform-ai-budget']);
+    // Phase E1b appends the company-month budget lock LAST — the same lock `reserveAiBudgetStep`
+    // and `settleAiBudgetStep` take, so a cap change and a live admission serialize (spec §12.7).
+    assert.deepEqual(state.lockOrder, [
+      'partner-ocr-config:co-1', 'company:co-1', 'platform-ai-budget', `ai-budget:co-1:${THIS_MONTH}`,
+    ]);
     for (const status of ['DISABLED', 'ARCHIVED']) {
       const locked = makePolicyPrisma({ row: { monthlyBudgetSatang: 100 }, status });
       await assert.rejects(run(locked, { budgetPolicy: split() }), UnprocessableEntityException);

@@ -107,7 +107,15 @@ export type AiBudgetEnvelope = {
   maxCalls: number;
 };
 
-/** `<attemptKey>#<stepKind>#<ordinal>` — the ONE identity money is charged against (ADR 0013 §4). */
-export function aiBudgetInvocationKey(attemptKey: string, stepKind: string, ordinal: number): string {
-  return `${attemptKey}#${stepKind}#${ordinal}`;
+/**
+ * `<companyId>#<attemptKey>#<stepKind>#<ordinal>` — the ONE identity money is charged against.
+ *
+ * ADR 0013 §4 writes this key WITHOUT the company segment. It is added here deliberately, because
+ * the fence behind it (`AiUsageEvent.invocationKey` and `AiBudgetReservation.invocationKey`) is a
+ * GLOBAL unique index: an unscoped key would let one company's attempt key claim the fence another
+ * company needs, turning a tenant's own identifier into a cross-tenant refusal. The company id is
+ * not personal data and the gateway already holds it, so scoping costs nothing.
+ */
+export function aiBudgetInvocationKey(companyId: string, attemptKey: string, stepKind: string, ordinal: number): string {
+  return `${companyId}#${attemptKey}#${stepKind}#${ordinal}`;
 }

@@ -40,6 +40,10 @@ const CODE_LABELS: Record<string, string> = {
   partner_adjustment_reason_required: 'กรุณาระบุเหตุผลที่ปรับ ตั้งแต่ 1 ถึง 500 ตัวอักษร',
   partner_ai_previous_value_required: 'โหลดข้อมูล AI ล่าสุดก่อนตรวจสอบและบันทึกอีกครั้ง',
   partner_ai_configuration_changed: 'มีผู้แก้การตั้งค่า AI แล้ว กรุณาโหลดข้อมูลล่าสุดและตรวจสอบก่อนบันทึกใหม่',
+  // System Admin only: the new TOTAL is below the money this company has already spent plus the
+  // money currently reserved for AI calls in flight this month (spec §12.4 / E-09). Nothing is
+  // clamped — the operator raises the total, or waits for the reserved amount to settle.
+  partner_ai_budget_total_below_committed: 'งบรวมใหม่ต่ำกว่ายอดที่ใช้ไปแล้วบวกยอดที่จองไว้ของเดือนนี้ กรุณาตั้งงบรวมให้ไม่น้อยกว่ายอดใช้+ยอดจอง หรือรอให้รายการที่จองไว้เสร็จก่อน',
   CONTROL_OFFER_RECEIPTS_INVALID: 'ตรวจจำนวนใบเสร็จของแพ็กเกจ กรอกจำนวนเต็มตั้งแต่ 1 ถึง 178,956,970 ใบต่อรอบเดือน รายปีคูณ 12 ให้อัตโนมัติ',
   CONTROL_OFFER_PRICE_INVALID: 'ตรวจราคาของแพ็กเกจ ยอดรวมภาษีต้องอยู่ระหว่าง 10 ถึง 999,999.99 บาท และทศนิยมไม่เกิน 2 ตำแหน่ง',
   CONTROL_OFFER_CAPACITY_INVALID: 'กรอกเพดานสาขาและผู้ใช้ให้ครบทั้งสองช่อง เป็นจำนวนเต็มตั้งแต่ 1 ถึง 1,000 ผู้ใช้นับรวมเจ้าของ',

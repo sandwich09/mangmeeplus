@@ -31,6 +31,7 @@ import {
   assertCompanyAiBudget,
   bangkokMonthKey,
   classifyAiUsageRequest,
+  companyAiBudgetRefusal,
   recordCompanyAiCostAdjustment,
   recordCompanyAiUsage,
   resolvePlatformAiBudget,
@@ -1627,4 +1628,88 @@ describe('assertCompanyAiBudget split policy gate', () => {
       assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, `co-${name}`), { allowed: false, reason: 'unavailable' });
     });
   }
+});
+
+// ── Phase E1b: the shared refusal mapper and the bucket aggregate ────────────
+
+describe('companyAiBudgetRefusal with split scopes (spec §9.1, §12.3)', () => {
+  it('maps insufficient to AI_BUDGET_INSUFFICIENT and reports the scope that blocked', () => {
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'insufficient', spendSatang: 2_900, reservedSatang: 0, budgetSatang: 3_000, budgetScope: 'CHAT' }),
+      { code: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'CHAT' },
+    );
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'insufficient', spendSatang: 0, reservedSatang: 6_900, budgetSatang: 7_000, budgetScope: 'OCR' }),
+      { code: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'OCR' },
+    );
+  });
+
+  it('carries a bucket scope on exceeded too — a full CHAT must not be reported as the TOTAL', () => {
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'exceeded', spendSatang: 3_000, budgetSatang: 3_000, override: true, budgetScope: 'CHAT' }),
+      { code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'CHAT' },
+    );
+  });
+
+  it('keeps TOTAL for every SHARED refusal — byte-for-byte what the five seams see today', () => {
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'exceeded', spendSatang: 10, budgetSatang: 10, override: false }),
+      { code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' },
+    );
+    assert.deepEqual(companyAiBudgetRefusal({ allowed: false, reason: 'unavailable' }), { code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' });
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'busy', retryAfterSeconds: 3 }),
+      { code: 'AI_BUDGET_BUSY', budgetScope: 'TOTAL', retryAfterSeconds: 3 },
+    );
+  });
+});
+
+describe('recordCompanyAiUsage bucket aggregate (ADR 0013 §3)', () => {
+  /** The `fakePrisma` above predates the bucket table on purpose; this one has it. */
+  function bucketPrisma() {
+    const ops: Array<{ op: string; args: any }> = [];
+    const client = {
+      companyAiConfiguration: { findUnique: async () => null },
+      $transaction: async (fn: (tx: any) => Promise<any>) => fn({
+        aiUsageEvent: { createMany: async (args: any) => { ops.push({ op: 'createMany', args }); return { count: args.data.length }; } },
+        companyAiMonthlyUsage: { upsert: async (args: any) => { ops.push({ op: 'month', args }); return { costSatang: 347 }; } },
+        companyAiMonthlyBucketUsage: { upsert: async (args: any) => { ops.push({ op: 'bucket', args }); return {}; } },
+      }),
+    };
+    return { prisma: { client } as any, ops };
+  }
+
+  it('increments the bucket row in the SAME transaction, for a SHARED company too', async () => {
+    const { prisma, ops } = bucketPrisma();
+
+    await recordCompanyAiUsage(prisma, config, {
+      companyId: 'co-1', sourceRoute: 'receipt-ocr', monthKey: '2026-09',
+      ...classifyAiUsageRequest('receipt-ocr', 'image'),
+    }, [usage()]);
+
+    assert.deepEqual(ops.map((o) => o.op), ['createMany', 'bucket', 'month']);
+    const bucket = ops.find((o) => o.op === 'bucket')!.args;
+    assert.deepEqual(bucket.where.companyId_monthKey_bucket, { companyId: 'co-1', monthKey: '2026-09', bucket: 'OCR' });
+    assert.deepEqual(bucket.update.costSatang, { increment: 347 });
+    assert.deepEqual(bucket.update.callCount, { increment: 1 });
+  });
+
+  it('writes no bucket row when the bucket is UNKNOWN — it is never guessed (spec §12.2)', async () => {
+    const { prisma, ops } = bucketPrisma();
+
+    await recordCompanyAiUsage(prisma, config, { companyId: 'co-1', sourceRoute: 'legacy-route' }, [usage()]);
+
+    assert.deepEqual(ops.map((o) => o.op), ['createMany', 'month']);
+  });
+
+  it('a fake that predates the bucket table still records — the aggregate is derived data', async () => {
+    const { prisma, transactions } = fakePrisma();
+
+    const spend = await recordCompanyAiUsage(prisma, config, {
+      companyId: 'co-1', sourceRoute: 'line-turn', ...classifyAiUsageRequest('line-turn', 'text'),
+    }, [usage()]);
+
+    assert.deepEqual(spend, { pre: 0, post: 347 });
+    assert.deepEqual(transactions[0]!.map((o) => o.op), ['createMany', 'upsert']);
+  });
 });

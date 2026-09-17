@@ -776,7 +776,7 @@ function applyCompanyAiCostAdjustment(
       if (bucketDelta >= 0) {
         // A legacy row predating the bucket aggregate has no row yet; a positive correction opens it.
         await upsertBucketUsage(tx, original.companyId, original.monthKey, original.budgetBucket, bucketDelta, 0);
-      } else {
+      } else if (tx.companyAiMonthlyBucketUsage) {
         const bucketMoved = await tx.companyAiMonthlyBucketUsage.updateMany({
           where: {
             companyId: original.companyId, monthKey: original.monthKey, bucket: original.budgetBucket,

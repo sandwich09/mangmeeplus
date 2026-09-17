@@ -144,6 +144,14 @@ describe('GetPartnerAiUsageUseCase', () => {
       // Every existing company resolves SHARED with no caps and no pending policy (spec §12.5).
       policy: { mode: 'SHARED', chatCapSatang: null, ocrCapSatang: null, source: 'ACTIVE',
         revision: `0:${bangkokMonthKey()}:ACTIVE`, pending: null, splitActivationEnabled: false },
+      // Phase E1b: the live money position. Under SHARED a BUCKET has no cap to subtract from, so
+      // its `available` is null — "not set", never "unlimited" (spec §12.1).
+      position: {
+        total: { spentSatang: 0, reservedSatang: 0, availableSatang: 5_000_000 },
+        chat: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
+        ocr: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
+        unresolvedHolds: 0, breach: false,
+      },
     });
   });
 
@@ -157,6 +165,14 @@ describe('GetPartnerAiUsageUseCase', () => {
       ceilingSatang: 50_000_000,
       policy: { mode: 'SHARED', chatCapSatang: null, ocrCapSatang: null, source: 'ACTIVE',
         revision: `0:${bangkokMonthKey()}:ACTIVE`, pending: null, splitActivationEnabled: false },
+      // Phase E1b: the live money position. Under SHARED a BUCKET has no cap to subtract from, so
+      // its `available` is null — "not set", never "unlimited" (spec §12.1).
+      position: {
+        total: { spentSatang: 0, reservedSatang: 0, availableSatang: 900_000 },
+        chat: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
+        ocr: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
+        unresolvedHolds: 0, breach: false,
+      },
     });
   });
 

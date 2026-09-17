@@ -153,6 +153,44 @@ async function liveSpend(tx: any, companyId: string, monthKey: string, bucket: A
 }
 
 /**
+ * The admission comparison of ADR 0013 §5, as a pure function so the whole decision table is
+ * testable without a database.
+ *
+ * TOTAL is checked before the bucket, because the total is the ceiling neither bucket may cross;
+ * and inside each scope `exceeded` (the cap is REACHED — nothing more runs this month) is separate
+ * from `insufficient` (money is left, just not this step's bound). A cap of 0 therefore closes its
+ * bucket through `exceeded` at spend 0, which is exactly "this bucket is not allowed".
+ */
+export function decideAiBudgetStep(input: {
+  bucket: AiBudgetBucket;
+  boundSatang: number;
+  totalSatang: number;
+  capSatang: number;
+  spent: { total: number; bucket: number };
+  reserved: { total: number; bucket: number };
+  override: boolean;
+}): Exclude<AiBudgetReserveOutcome, { ok: true } | { reason: 'already_claimed' }> | { ok: true } {
+  const { boundSatang: bound, spent, reserved } = input;
+  if (spent.total >= input.totalSatang) {
+    return { ok: false, reason: 'exceeded', budgetScope: 'TOTAL',
+      spendSatang: spent.total, capSatang: input.totalSatang, override: input.override };
+  }
+  if (spent.total + reserved.total + bound > input.totalSatang) {
+    return { ok: false, reason: 'insufficient', budgetScope: 'TOTAL',
+      spendSatang: spent.total, reservedSatang: reserved.total, capSatang: input.totalSatang };
+  }
+  if (spent.bucket >= input.capSatang) {
+    return { ok: false, reason: 'exceeded', budgetScope: input.bucket,
+      spendSatang: spent.bucket, capSatang: input.capSatang, override: input.override };
+  }
+  if (spent.bucket + reserved.bucket + bound > input.capSatang) {
+    return { ok: false, reason: 'insufficient', budgetScope: input.bucket,
+      spendSatang: spent.bucket, reservedSatang: reserved.bucket, capSatang: input.capSatang };
+  }
+  return { ok: true };
+}
+
+/**
  * The lazy sweep (ADR 0013 §6) — no cron, no worker. It runs inside the reserve transaction for
  * THIS company-month only, before the sums, so a crashed owner's holds are resolved by the next
  * call that needs the money rather than by a timer that could free a live one.
@@ -196,7 +234,7 @@ export async function reserveAiBudgetStep(
   if (!priced) return { ok: false, reason: 'unavailable', budgetScope: 'TOTAL', detail: 'price_unavailable' };
 
   const now = input.now ?? new Date();
-  const invocationKey = aiBudgetInvocationKey(input.attemptKey, input.stepKind, input.ordinal);
+  const invocationKey = aiBudgetInvocationKey(input.companyId, input.attemptKey, input.stepKind, input.ordinal);
   const ownerToken = randomUUID();
 
   try {
@@ -240,23 +278,11 @@ export async function reserveAiBudgetStep(
       const reserved = await liveReserved(tx, input.companyId, input.monthKey, input.bucket);
       const bound = priced.upperBoundSatang;
 
-      // TOTAL before the bucket, exactly as ADR 0013 §5 spells it.
-      if (spend.total >= policy.totalSatang) {
-        return { ok: false as const, reason: 'exceeded' as const, budgetScope: 'TOTAL' as AiBudgetScope,
-          spendSatang: spend.total, capSatang: policy.totalSatang, override: policy.override };
-      }
-      if (spend.total + reserved.total + bound > policy.totalSatang) {
-        return { ok: false as const, reason: 'insufficient' as const, budgetScope: 'TOTAL' as AiBudgetScope,
-          spendSatang: spend.total, reservedSatang: reserved.total, capSatang: policy.totalSatang };
-      }
-      if (spend.bucket >= capSatang) {
-        return { ok: false as const, reason: 'exceeded' as const, budgetScope: input.bucket as AiBudgetScope,
-          spendSatang: spend.bucket, capSatang, override: policy.override };
-      }
-      if (spend.bucket + reserved.bucket + bound > capSatang) {
-        return { ok: false as const, reason: 'insufficient' as const, budgetScope: input.bucket as AiBudgetScope,
-          spendSatang: spend.bucket, reservedSatang: reserved.bucket, capSatang };
-      }
+      const decision = decideAiBudgetStep({
+        bucket: input.bucket, boundSatang: bound, totalSatang: policy.totalSatang, capSatang,
+        spent: spend, reserved, override: policy.override,
+      });
+      if (!decision.ok) return decision;
 
       const created = await tx.aiBudgetReservation.create({
         data: {
@@ -476,6 +502,11 @@ export async function upsertBucketUsage(
   costSatang: number,
   callCount: number,
 ): Promise<void> {
+  // Tolerant delegate, the `resolveEffectiveBudget` / `resolveCompanyAiModelPolicy` precedent:
+  // unit-test fakes that predate this table omit it, and the generated production client always
+  // exposes it. Safe to skip, because this row is DERIVED — the authoritative money is the
+  // `AiUsageEvent` rows and the month total written in the same transaction.
+  if (!tx.companyAiMonthlyBucketUsage) return;
   await tx.companyAiMonthlyBucketUsage.upsert({
     where: { companyId_monthKey_bucket: { companyId, monthKey, bucket } },
     create: { companyId, monthKey, bucket, costSatang, callCount },
@@ -504,6 +535,19 @@ export async function readAiBudgetMonthSnapshot(
   companyId: string,
   monthKey: string,
 ): Promise<AiBudgetMonthSnapshot> {
+  // Same tolerance as `upsertBucketUsage`: a fake that predates these tables reports an empty
+  // position rather than throwing. Production always has both delegates.
+  if (!tx.companyAiMonthlyBucketUsage || !tx.aiBudgetReservation) {
+    const total = typeof tx.companyAiMonthlyUsage?.findUnique === 'function'
+      ? await tx.companyAiMonthlyUsage.findUnique({
+        where: { companyId_monthKey: { companyId, monthKey } }, select: { costSatang: true },
+      })
+      : null;
+    return {
+      spent: { TOTAL: total?.costSatang ?? 0, CHAT: 0, OCR: 0 },
+      reserved: { TOTAL: 0, CHAT: 0, OCR: 0 }, unresolvedHolds: 0, breach: false,
+    };
+  }
   const month = await tx.companyAiMonthlyUsage.findUnique({
     where: { companyId_monthKey: { companyId, monthKey } }, select: { costSatang: true },
   });

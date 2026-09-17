@@ -90,3 +90,74 @@ Saving `mode: SPLIT` (active or pending) is refused with a typed error unless th
 - One extra internal HTTP call per provider step, SPLIT companies only.
 - Crashes convert holds into `UNRESOLVED` until reconciled — deliberate: money is never released on a timer.
 - The byte-length input bound is loose (roughly 2–4× for Thai). The bound table is data; it can be tightened with measured evidence without changing the mechanism.
+
+## 11. Implementation notes (E1b)
+
+What this ADR left open, and what the implementation decided. Two of these deviate from the text
+above on purpose; both are marked.
+
+1. **The invocation key is company-scoped — DEVIATION from §4.** `invocationKey` is
+   `<companyId>#<attemptKey>#<stepKind>#<ordinal>`, not `<attemptKey>#<stepKind>#<ordinal>`. The
+   fence behind it (`AiUsageEvent.invocationKey` and `AiBudgetReservation.invocationKey`) is a
+   GLOBAL unique index, so an unscoped key lets one company's attempt key claim the fence another
+   company needs — a cross-tenant refusal driven by a tenant's own identifier. The company id is not
+   personal data and the gateway already holds it, so scoping costs nothing. Caught by a real-DB
+   test whose two companies collided on the same attempt key.
+2. **One step kind per provider CHAIN — reading of §3.** §3 lists the receipt sub-steps
+   (`read / extract / extract-repair / image-reread`) and gives the chain a single
+   `maxCalls = AI_RECEIPT_OCR_MAX_PROVIDER_CALLS`. Those two only reconcile if the step kind names
+   the chain and the ordinal names the call, which is also the only shape
+   `POST /internal/ai/budget-step` can validate (`0 <= ordinal < maxCalls`). So `maxOutputTokens` is
+   the MAXIMUM `maxTokens` across the calls a chain can make, and the research doc records each call
+   it covers with `file:line`.
+3. **A SPLIT company must have an explicit approved `modelId`.** The API cannot name the gateway's
+   own default model, so it cannot pin one into the envelope. A SPLIT company whose
+   `CompanyAiConfiguration.modelId` is null is refused with `AI_BUDGET_UNAVAILABLE`
+   (`model_unknown`) rather than reserving against an unknown model. Setting the model is an
+   operator action, consistent with the §9 readiness gate.
+4. **`already_claimed` is mapped, not invented.** A duplicate invocation returns a typed
+   `already_claimed` carrying the existing row's status. The meter maps `RESERVED`/`DISPATCHED` to
+   `AI_BUDGET_BUSY` (another execution owns it; the LINE lanes already retry that, bounded) and any
+   terminal status to `AI_BUDGET_UNAVAILABLE`. It is never a second provider execution.
+5. **Sweep constants.** `RESERVED` older than **10 minutes** ⇒ `CANCELLED` with evidence
+   `never_dispatched`; `DISPATCHED` older than **30 minutes** ⇒ `UNRESOLVED` (never released). The
+   second is strictly greater than the longest caller timeout (195s receipt OCR) plus the 180s
+   admission lease. The sweep is lazy: it runs inside the next reserve transaction for that
+   company-month only.
+6. **A `RESERVED` row that receives evidence is refused (`invalid-state`).** The `DISPATCHED` mark
+   is committed before every provider call, so evidence for a `RESERVED` row is an ordering
+   violation. Refusing keeps the hold rather than accepting money against a row the sweep may have
+   already cancelled — but it also means such evidence is not recorded. Residual, see §12.
+7. **Settlement prices the actual at the reservation's PINNED FX**, never at a fresh rate, so the
+   hold and the settlement are comparable and history is never re-priced.
+8. **Cancellation is structurally separated from the OCR count refund (R-05).**
+   `cancelAiBudgetStep` needs an explicit `proof` from a closed union and the reservation's owner
+   token; `releaseCompanyOcrAdmission` takes neither and cannot reach a reservation. The seams call
+   it only for a refused OCR admission (`ocr_admission_refused`) or one of the exact pre-provider
+   refusal shapes (`gateway_pre_provider_refusal`).
+9. **Lock order as implemented.** `partner-ocr-config:<company>` → *(plan-term `SELECT … FOR UPDATE`
+   where the action needs it)* → `platform-ai-budget` → `ai-budget:<company>:<pinned month>`, bucket
+   rows CHAT then OCR. `reserve` takes all three advisory locks; `settle` and `cancel` take only the
+   last; the admin writer takes all of them in that order (the `ai-budget` one added by this phase).
+10. **The bucket aggregate is derived data with a tolerant delegate.** `upsertBucketUsage` and
+    `readAiBudgetMonthSnapshot` skip the table when a (unit-test) client does not expose it, the
+    `resolveEffectiveBudget` precedent. The authoritative money stays the `AiUsageEvent` rows and
+    the month total written in the same transaction.
+11. **API-side settlement of a multi-entry response.** Until E1c has the gateway settle each of its
+    own invocations, a response carrying several usage entries settles the FIRST against the
+    envelope and records the rest through the normal metering path with no `invocationKey`, warning
+    `ai.budget.unenveloped_chain_usage`. Nothing is dropped; the remainder is metered but unheld.
+
+## 12. Residuals for E1c and beyond
+
+- `TIMEOUT_INPUT_TOKEN_CEILING = 200_000` (`bedrock.provider.ts:21`) is above every declared input
+  bound, so a SPLIT timeout would settle above its hold and trip the breach path. Spec §12.3
+  requires this to be covered by the reservation or the accounting fixed first. **E1c blocker.**
+- `LineIntakeRouteRequest` carries no webhook event id, so a TEXT intake's attempt key is derived
+  from its transport request id. A LINE redelivery under a new request id would buy a second hold.
+  Closing it needs a contract field.
+- A breach closes its scope until an operator clears `AiBudgetReservation.breach`; there is no
+  operator surface for that yet (the flag is cleared by hand).
+- No reconciliation surface for `UNRESOLVED` holds beyond the count in the admin read.
+- Evidence arriving for a `RESERVED` row (note 6) is refused and therefore unrecorded. Accepting it
+  with a HIGH alert would be the money-safer choice; deliberately left as the brief specified.
