@@ -3,6 +3,7 @@
  * Money is computed once, at record time, from these prices and the configured THB rate —
  * never re-derived later, so a price or FX change only affects future rows.
  */
+import { aiBudgetStepBounds, type AiBudgetStepBounds } from '@watchdog-bms/contracts';
 
 export type AiModelPrices = {
   /** USD per million tokens. */
@@ -66,6 +67,52 @@ export function computeCostSatang(
   return {
     costSatang: Math.round((usdPerMTok * thbPerUsd * 100) / 1_000_000),
     unknownModel: !known,
+  };
+}
+
+/** What a reservation pins: the exact inputs its `upperBoundSatang` was computed from (ADR 0013 §3). */
+export type AiStepBoundSnapshot = {
+  stepKind: string;
+  modelId: string;
+  /** The whole matched row, so a later price change leaves this hold reproducible. */
+  usdPerMTok: AiModelPrices;
+  /** The rate `maxInputTokens` was charged at: the HIGHER of input and cache-write. */
+  inputUsdPerMTok: number;
+  unknownModel: boolean;
+  thbPerUsd: number;
+  bounds: AiBudgetStepBounds;
+  /** Provider attempts inside ONE call under an envelope; E1c pins the SDK to this. */
+  attempts: 1;
+};
+
+/**
+ * Prices ONE provider invocation's declared bound (remediation spec §12.3).
+ *
+ * Every token of `maxInputTokens` is charged at the HIGHER of the input and cache-write rates: a
+ * cold cache writes the whole prompt at the more expensive rate, and assuming a cache hit would
+ * under-reserve. Rounding is UP and happens PER INVOCATION — a chain of four calls holds four
+ * ceilings, because four actuals each rounded half-up can otherwise exceed one summed ceiling.
+ *
+ * `null` means "this cannot be priced" and the caller must refuse with `AI_BUDGET_UNAVAILABLE`:
+ * an unknown step kind (nobody declared a bound) or an unusable FX rate. An unknown MODEL is not
+ * a refusal — `resolveAiModelPrices` already costs it out at the maximum configured price.
+ */
+export function priceAiStepUpperBound(
+  stepKind: string,
+  modelId: string,
+  thbPerUsd: number,
+): { upperBoundSatang: number; snapshot: AiStepBoundSnapshot } | null {
+  const bounds = aiBudgetStepBounds(stepKind);
+  if (!bounds || !Number.isFinite(thbPerUsd) || thbPerUsd <= 0) return null;
+  const { prices, known } = resolveAiModelPrices(modelId);
+  const inputUsdPerMTok = Math.max(prices.input, prices.cacheWrite);
+  const usdPerMTok = bounds.maxInputTokens * inputUsdPerMTok + bounds.maxOutputTokens * prices.output;
+  return {
+    upperBoundSatang: Math.ceil((usdPerMTok * thbPerUsd * 100) / 1_000_000),
+    snapshot: {
+      stepKind, modelId, usdPerMTok: prices, inputUsdPerMTok,
+      unknownModel: !known, thbPerUsd, bounds, attempts: 1,
+    },
   };
 }
 

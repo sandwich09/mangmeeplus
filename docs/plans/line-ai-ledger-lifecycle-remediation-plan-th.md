@@ -55,10 +55,10 @@ Implementation ครบและมี focused automated evidence (contracts/ap
 - [x] เพิ่ม additive server-derived request kind/budget bucket, pricing/component snapshot โดยไม่ rewrite history — execution identity ยัง**ไม่**ทำในช่วงนี้ตาม §12.6 (ดูหมายเหตุด้านล่าง)
 - [x] ส่ง usageBasis ตลอด provider/interceptor/API/ledger; เพิ่ม MODEL_CALL/COST_ADJUSTMENT และ reconcile signed deltas โดย callCount ไม่เพิ่มจาก correction
 - [x] ระบุ unknown/partial metadata อย่างชัดเจน; no inferred backfill จาก tag/request peers
-- [ ] ทำ baseline corpus text/image, cold/warm cache และต้นทุนรวมทุก calls/retries ต่อ successful task
+- [x] ทำ baseline corpus text/image, cold/warm cache และต้นทุนรวมทุก calls/retries ต่อ successful task — [baseline 2026-09-17](../research/line-ai-intake-cost-benchmark-2026-09-17.md): 82 attempted tasks / 212 calls / THB 70.47 บน Sonnet 4.6 จริง; cold/warm วัดรายคอลตาม §4.4 (run นี้ warm 96% จึงต้องถ่วงน้ำหนักด้วยตัวเลข cold รายคอล ไม่ใช่ค่าเฉลี่ยของ run)
 - [x] ต่อ `GET ai-usage` ให้รวม totals/top tags/other tags/request kind/buckets/cache ใน snapshot เดียว พร้อม contract tests
 - [ ] เพิ่ม frontend breakdown/average/coverage/Thai labels, loading/error/retry/read-only และไม่สับสน calls กับ receipt counts
-- [ ] Freeze baseline manifest/expected outcomes/repetitions; รายงาน attempted-task cost และ completion/refusal/parse rates ควบคู่ successful-task cost
+- [x] Freeze baseline manifest/expected outcomes/repetitions; รายงาน attempted-task cost และ completion/refusal/parse rates ควบคู่ successful-task cost — manifest `scripts/line-ai-intake-cost.corpus.ts` hash `cf9bce44…` ตรึงด้วย `scripts/line-ai-intake-cost.corpus.spec.ts`; repetitions=2, FX=33; รายงาน THB/attempted 0.86 คู่กับ THB/successful 0.93 พร้อม refusal 0.0% / parse 1.2% / truncation 0.0%
 
 หมายเหตุสถานะ D1 (2026-09-17): migration `20260917140000_ai_usage_metadata` เป็น additive ล้วน มี CHECK ของค่าที่รับได้ และ unique `correctionKey` สำหรับ replay fence เท่านั้น **ไม่**เพิ่ม execution/invocation unique key เพราะ semantics อยู่ใน §12.6 ของงาน E และการใส่ fence ตอนนี้จะทำให้ metering replay กลายเป็น usage ที่หายแทนที่จะถูก dedupe ข้อ frontend ยังเปิดอยู่เพราะมีเพียง unit test ของ logic กับ typecheck ยังไม่มีหลักฐาน render จริง desktop/mobile ตาม D matrix ส่วนข้อ baseline corpus ทั้งสองเป็นของงานต้นทุน (C) ตามเดิม
 
@@ -66,31 +66,31 @@ Implementation ครบและมี focused automated evidence (contracts/ap
 
 ### C. Intake cost — spec §10.2
 
-- [ ] ระบุ prompt/context/catalog ซ้ำที่พิสูจน์ได้จาก baseline; ไม่รื้อ router หรือเพิ่ม classifier/model call ใหม่
-- [ ] ปรับ scoped context และ cache prefix ด้วย builder เดิม โดยคง permission/provenance/clarification contracts
-- [ ] ปรับ output bounds เฉพาะเมื่อ corpus ยืนยันว่าไม่ truncate/เพิ่ม retries; dense receipts และ correction ต้องคง accuracy
-- [ ] รักษา valid documentText/preparedPlan reuse; ตัด duplicate calls เฉพาะที่พบจริง
-- [ ] เก็บผลก่อน/หลังทั้ง user task แยก text/image และ cache state; ไม่ถือว่าผ่านจาก tag intake ลดอย่างเดียว
+- [x] ระบุ prompt/context/catalog ซ้ำที่พิสูจน์ได้จาก baseline; ไม่รื้อ router หรือเพิ่ม classifier/model call ใหม่ — [benchmark §5/§9.2/§9.3](../research/line-ai-intake-cost-benchmark-2026-09-17.md): พบ fused section + ~22.6KB catalog บน image intake ที่ preparedPlan ไม่เคยถูก emit (0/5 ก่อนแก้, 0/18 หลังแก้) และ capture hints ที่ media path ทิ้ง (พิสูจน์ทุก consumer ด้วย file:line); ไม่เพิ่ม classifier หรือ model call ใหม่
+- [x] ปรับ scoped context และ cache prefix ด้วย builder เดิม โดยคง permission/provenance/clarification contracts — ใช้ `asIntakeRouterCapabilities`/`intakeRouterSystemPrompt` เดิม, ลบ capability แบบเดียวกับ advisor; image prefix 39,459 → 12,499 chars (cached tokens 10,657 → 3,504) และยังได้ cache checkpoint; permissions/valueCandidates/openClarifications/recentCapturedExpenses/documentClassification ไม่ถูกตัด
+- [x] ปรับ output bounds เฉพาะเมื่อ corpus ยืนยันว่าไม่ truncate/เพิ่ม retries; dense receipts และ correction ต้องคง accuracy — image intake output 1,188 → 587 tokens (max 4,792 → 1,451) โดยเพดาน 8,000 ไม่เปลี่ยน; truncation 0 → 0, `ocr.receipt.image-reread` 8 → 8 calls, OCR fields 10/10, 10/10, 2/2, 8/10 เท่าเดิม, correction rows ผ่านทั้งสองรอบ
+- [x] รักษา valid documentText/preparedPlan reuse; ตัด duplicate calls เฉพาะที่พบจริง — `documentText` และคำสั่ง transcription ไม่เปลี่ยน (ความยาว 152–1,276 chars ไม่หด), reuse ยังทำงาน (thermal/low-contrast จบใน 2 calls); ไม่มี duplicate call ใดถูกตัดเพิ่มในรอบนี้ — R4 (`line.plan-route`) เลื่อนออกเพราะ `intentMatch:false`
+- [x] เก็บผลก่อน/หลังทั้ง user task แยก text/image และ cache state; ไม่ถือว่าผ่านจาก tag intake ลดอย่างเดียว — [§10](../research/line-ai-intake-cost-benchmark-2026-09-17.md): THB/attempted 0.86 → 0.75, THB/successful 0.93 → 0.79, image −26%, text flat, calls/task 2.59 เท่าเดิม และตาราง per-tag แสดงว่าไม่มี tag อื่นเพิ่มเกิน THB 0.25
 
 ไฟล์หลัก: `apps/ai-gateway/src/modules/line-ai/agents/intent-router.agent.ts`, prompt/catalog builders, `line-intake-router.agent.spec.ts`, receipt controller/provider paths เฉพาะที่ผลวัดชี้ว่าจำเป็น ไม่เปลี่ยน per-company model policy
 
 ### E1. Split config และ financial admission — spec §12
 
-- [ ] เพิ่ม active mode/caps/version และ pending policy พร้อม effective month ใน config; validate C/O>=0, C+O<=effective total และ preserve SHARED default โดยไม่ทับค่าปัจจุบันด้วยค่าเดือนหน้า
-- [ ] ขยาย admin DTO/use case/audit history ด้วย reason + expected version + exact replay no-op; config/ceiling writers ทุกทางห้ามทำ split state ผิดโดยเงียบ
-- [ ] Inventory ทุก cost-bearing seam: LINE intake/text/media, receipt web/LINE, statement, CRM และ draft; classify CHAT/OCR จาก API ก่อน AI
-- [ ] กำหนด finite upper bound/execution envelope ต่อ provider step รวม images/cache/output/SDK attempts/timeout และ per-invocation rounding; ตรึง pricing/FX พร้อม minimum viable cap table
-- [ ] Simple one-call API reserve และ multi-call gateway budget-step seam ใช้ API-owned authenticated reservation เดียวกัน; ไม่จอง whole chain ซ้ำ และเก็บ partial result เมื่อ step ถัดไป insufficient
-- [ ] เพิ่ม durable reservation/unique settlement และ bucket aggregates บน actual usage ledger เดิม; atomic total+bucket reserve, settle, partial release
-- [ ] แยก transport/attempt/invocation identities; durable execution claim ก่อน provider และ owner fencing หลัง timeout/reclaim; same request ต่างขั้นคิดครบและ late result ไม่คิดซ้ำ
-- [ ] ใส่ reservation ก่อน OCR count admission; budget refusal ไม่กิน count ส่วน refund/paid grants คงตาม spec ที่ใช้อยู่จริง
-- [ ] ทดสอบตาม onboarding Issue 4: refund usable-result quota ไม่คืน AI money; no-call refusal คืน hold ได้ และ delayed compensation ไม่กระทบ owner ใหม่
-- [ ] ถือ lock สั้นเฉพาะ DB transactions; คง media/chat scheduling และการคุยระหว่างอ่านรูป
-- [ ] ใช้ canonical config/company/plan/platform/month/bucket lock order; platform default validation และ signup/other writers ไม่ข้าม split caps หรือทำ deadlock
-- [ ] จัดการ transport uncertainty/crash/meter failure แบบ conservative ไม่ TTL-release อัตโนมัติ; มี operator evidence สำหรับ unresolved reservation
+- [x] เพิ่ม active mode/caps/version และ pending policy พร้อม effective month ใน config; validate C/O>=0, C+O<=effective total และ preserve SHARED default โดยไม่ทับค่าปัจจุบันด้วยค่าเดือนหน้า — ผ่านด้วย additive migration + resolver truth table + real-PostgreSQL CHECK/CAS evidence (2026-09-17, E1a)
+- [x] ขยาย admin DTO/use case/audit history ด้วย reason + expected version + exact replay no-op; config/ceiling writers ทุกทางห้ามทำ split state ผิดโดยเงียบ — ผ่านด้วย real `SetAiModelBodyDto`/controller-mapping specs, audit + history allowlist และ platform-default vs ceiling / signup / OCR-config regression tests (2026-09-17, E1a)
+- [x] Inventory ทุก cost-bearing seam: LINE intake/text/media, receipt web/LINE, statement, CRM และ draft; classify CHAT/OCR จาก API ก่อน AI — ผ่านด้วย step kind ครบทุก seam ใน `AI_BUDGET_STEP_BOUNDS`, `classifyAiUsageRequest` ก่อน provider ทุกทาง และ focused specs + real-PostgreSQL bucket aggregate (2026-09-17, E1b)
+- [ ] กำหนด finite upper bound/execution envelope ต่อ provider step รวม images/cache/output/SDK attempts/timeout และ per-invocation rounding; ตรึง pricing/FX พร้อม minimum viable cap table — API side ครบ (`priceAiStepUpperBound` cold-cache/ceil-per-invocation + pinned snapshot + feasibility table ใน `docs/research/ai-budget-step-bounds-2026-09-17.md` และ asserted ใน spec, 2026-09-17 E1b) แต่ยังไม่ปิด: gateway ยังไม่บังคับ envelope และ `TIMEOUT_INPUT_TOKEN_CEILING=200_000` ยังเกินทุก bound (งาน E1c)
+- [ ] Simple one-call API reserve และ multi-call gateway budget-step seam ใช้ API-owned authenticated reservation เดียวกัน; ไม่จอง whole chain ซ้ำ และเก็บ partial result เมื่อ step ถัดไป insufficient — API reserve + `POST /internal/ai/budget-step`/`budget-settle` ลงแล้วและ boot ผ่าน (2026-09-17, E1b) แต่ partial-result behaviour ต้องรอ gateway เรียก seam (งาน E1c)
+- [x] เพิ่ม durable reservation/unique settlement และ bucket aggregates บน actual usage ledger เดิม; atomic total+bucket reserve, settle, partial release — ผ่านด้วย additive migration (`AiBudgetReservation`, `CompanyAiMonthlyBucketUsage`, `AiUsageEvent.invocationKey` unique), reserve/settle ใน transaction เดียว และ real-PostgreSQL 20-way concurrency + concurrent-settle-once evidence (2026-09-17, E1b)
+- [x] แยก transport/attempt/invocation identities; durable execution claim ก่อน provider และ owner fencing หลัง timeout/reclaim; same request ต่างขั้นคิดครบและ late result ไม่คิดซ้ำ — ผ่านด้วย attempt key ต่อ seam (hash LINE id), `<company>#<attempt>#<stepKind>#<ordinal>` unique fence, DISPATCHED mark ก่อน HTTP, owner-token fencing และ real-PostgreSQL duplicate/late-settle evidence (2026-09-17, E1b)
+- [x] ใส่ reservation ก่อน OCR count admission; budget refusal ไม่กิน count ส่วน refund/paid grants คงตาม spec ที่ใช้อยู่จริง — ผ่านด้วย reserve ก่อน `admitCompanyOcr` ทั้งสาม OCR seam, cancel เฉพาะ proof และ `releaseCompanyOcrAdmission` เข้าถึง reservation ไม่ได้ (2026-09-17, E1b)
+- [x] ทดสอบตาม onboarding Issue 4: refund usable-result quota ไม่คืน AI money; no-call refusal คืน hold ได้ และ delayed compensation ไม่กระทบ owner ใหม่ — ผ่านด้วย seam spec (retryable provider failure = SETTLED ไม่ CANCELLED) + real-PostgreSQL owner-token fencing (2026-09-17, E1b)
+- [x] ถือ lock สั้นเฉพาะ DB transactions; คง media/chat scheduling และการคุยระหว่างอ่านรูป — ผ่าน: FX resolve ก่อนเปิด transaction, ไม่มี network ใน transaction, lane lease เดิมยังเป็น scheduler และ chat/media lane ไม่เปลี่ยน (2026-09-17, E1b)
+- [x] ใช้ canonical config/company/plan/platform/month/bucket lock order; platform default validation และ signup/other writers ไม่ข้าม split caps หรือทำ deadlock — ผ่านด้วย order `partner-ocr-config → plan-term → platform-ai-budget → ai-budget:<company>:<month>` ทั้ง reserve/settle/writer, platform writer อ่าน committed+reserved ใต้ platform lock เดียว และ real-PostgreSQL reserve-vs-writer 50 รอบไม่ deadlock (2026-09-17, E1b)
+- [ ] จัดการ transport uncertainty/crash/meter failure แบบ conservative ไม่ TTL-release อัตโนมัติ; มี operator evidence สำหรับ unresolved reservation — กลไกลงแล้ว (DISPATCHED → UNRESOLVED ไม่ปล่อยเงิน, lazy sweep, admin read แสดง unresolvedHolds/breach) แต่ยังไม่มี operator surface สำหรับ reconcile/clear breach
 - [ ] Usage หลัง controller/parser error/partial chain ส่งถึง authenticated settlement/recovery แม้ outer HTTP หาย; audit correction และ original-month balance ไม่เพิ่ม callCount
-- [ ] ป้องกัน old writer/old binary ที่ไม่รู้ SPLIT, pin month และระบุ next-month activation สำหรับบริษัทมี spend อยู่แล้ว
-- [ ] Effective policy revision ข้ามเดือน/cancel activated pending/SPLIT→SHARED ต้องไม่เปิด shared allowance โดยไม่ตั้งใจ; materialize predecessor ก่อน config write
+- [x] ป้องกัน old writer/old binary ที่ไม่รู้ SPLIT, pin month และระบุ next-month activation สำหรับบริษัทมี spend อยู่แล้ว — ผ่านสำหรับ config/admission path: additive defaults, guarded signup/OCR/platform writers, resolver ใช้ month ที่ตรึงแล้ว และ current-month SPLIT ถูกปฏิเสธเมื่อเดือนนั้นมี usage (2026-09-17, E1a) การ pin month ของ reservation ยังเป็นงาน phase ถัดไป
+- [x] Effective policy revision ข้ามเดือน/cancel activated pending/SPLIT→SHARED ต้องไม่เปิด shared allowance โดยไม่ตั้งใจ; materialize predecessor ก่อน config write — ผ่านด้วย revision ที่ผูก version+month+source, materialisation ก่อน CAS พร้อม audit และ real-PostgreSQL cancel-after-activation (2026-09-17, E1a)
 
 **จุดพร้อมเปิด E1:** ทุก seam ที่บริษัท SPLIT เข้าถึงต้องมี upper bound + enforced envelope + idempotent settlement ครบ มิฉะนั้นยังปิด activation ของบริษัทนั้น ไม่ใช้สูตรเฉลี่ยหรือ bypass ชั่วคราว งาน A–D เดินต่อได้โดยไม่ต้องเปิด E
 

@@ -11,6 +11,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -109,12 +110,29 @@ const unlessNullish = ValidateIf((_object, value) => value !== undefined && valu
 
 // Exported for the DTO boundary spec: the null-vs-absent distinction below is the whole
 // contract of a partial update, and it is worth pinning against the real global pipe.
+/**
+ * Split CHAT/OCR allocation (spec §12.4). Nested so class-validator actually walks it —
+ * `whitelist` would otherwise strip an unvalidated object wholesale. Caps are nullable by design:
+ * `null` = not set, `0` = a closed bucket, and the use case (not this DTO) decides which
+ * combinations are legal, because those rules depend on live spend and the effective total.
+ */
+export class AiBudgetPolicyBodyDto {
+  @IsIn(['SHARED', 'SPLIT']) mode!: 'SHARED' | 'SPLIT';
+  @ValidateIf((_object, value) => value !== null) @IsInt() @Min(0) chatMonthlyBudgetSatang!: number | null;
+  @ValidateIf((_object, value) => value !== null) @IsInt() @Min(0) ocrMonthlyBudgetSatang!: number | null;
+  @IsString() @Matches(/^\d{4}-(0[1-9]|1[0-2])$/) effectiveMonthKey!: string;
+}
+
 export class SetAiModelBodyDto {
   @IsString() @IsNotEmpty() @MaxLength(PARTNER_ADJUSTMENT_REASON_MAX_LENGTH) reason!: string;
   @IsString() @IsOptional() @IsNotEmpty() modelId?: string;
   @unlessNullish @IsInt() monthlyBudgetSatang?: number | null;
   @unlessNullish @IsString() expectedModelId?: string | null;
   @unlessNullish @IsInt() expectedMonthlyBudgetSatang?: number | null;
+  // Absent = preserve; explicit null = cancel a FUTURE pending policy. Same null-vs-absent
+  // contract as the budget above, which is why this is `unlessNullish` and not `@IsOptional`.
+  @unlessNullish @ValidateNested() @Type(() => AiBudgetPolicyBodyDto) budgetPolicy?: AiBudgetPolicyBodyDto | null;
+  @IsOptional() @IsString() @IsNotEmpty() @MaxLength(64) expectedBudgetRevision?: string;
 }
 
 export class SetOcrConfigBodyDto {
@@ -404,9 +422,10 @@ export class PartnerController {
 
   @Put(':partnerCompanyId/ai-model')
   @RequirePermissions('system.partner_ai_model.manage')
-  @ApiOperation({ summary: 'Set approved AI model and/or monthly AI budget for partner company' })
+  @ApiOperation({ summary: 'Set approved AI model, monthly AI budget and/or CHAT/OCR budget policy for partner company' })
   @ApiResponse({ status: 200 })
-  @ApiResponse({ status: 422, description: 'Empty body, modelId not in approved list, or budget below 1 / above the platform ceiling' })
+  @ApiResponse({ status: 409, description: 'Budget policy changed (or the Bangkok month turned) after the operator loaded it; reload before saving' })
+  @ApiResponse({ status: 422, description: 'Empty body, modelId not in approved list, budget below 1 / above the platform ceiling, or a budget policy the split rules refuse' })
   setAiModelConfig(
     @Param('partnerCompanyId') companyId: string,
     @Body() dto: SetAiModelBodyDto,
@@ -419,6 +438,8 @@ export class PartnerController {
       monthlyBudgetSatang: dto.monthlyBudgetSatang,
       expectedModelId: dto.expectedModelId,
       expectedMonthlyBudgetSatang: dto.expectedMonthlyBudgetSatang,
+      budgetPolicy: dto.budgetPolicy,
+      expectedBudgetRevision: dto.expectedBudgetRevision,
       requestingAdminUserId: req.context.userId,
       requestId: req.context.requestId,
     });

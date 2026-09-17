@@ -32,8 +32,15 @@ import {
   recordCompanyAiUsage,
   retryBusyAdmission,
   runWithCompanyAiBudgetAdmission,
+  type CompanyAiBudgetStep,
 } from '../application/company-ai-usage-meter';
 import { resolveCompanyAiModelPolicy } from '../application/company-ai-model-policy';
+import {
+  aiBudgetAttemptHash,
+  cancelAiBudgetStep,
+  type AiBudgetCancelProof,
+  type ReservedAiBudgetStep,
+} from '../application/company-ai-budget-reservation';
 import {
   type CompanyOcrAdmissionIdentity,
   admitCompanyOcr,
@@ -65,9 +72,15 @@ export class AiGatewayRequestError extends Error {
   }
 }
 
-/** A receipt read is OCR either way; the KIND still reports a PDF honestly as OTHER. */
+/**
+ * A receipt read is OCR either way; the KIND still reports a PDF honestly as OTHER.
+ *
+ * Optional chaining is load-bearing: this is now also evaluated while ASSEMBLING the budget step,
+ * before admission has decided anything, and a request that the rate limit, the model policy or
+ * the money gate is about to refuse may legitimately never carry an attachment.
+ */
 const receiptOcrContent = (request: ReceiptOcrRequest): AiRequestContent =>
-  request.attachment.mimeType === 'application/pdf' ? 'document' : 'image';
+  request.attachment?.mimeType === 'application/pdf' ? 'document' : 'image';
 
 export type GovernedLineIntakeRoutePlan = LineIntakeRoutePlan & {
   /** Present only when a content-bearing LINE media request crossed the OCR governance seam. */
@@ -101,7 +114,11 @@ export class AiGatewayClient {
     private readonly prisma: PrismaService,
   ) {}
 
-  async requestLineTurn(request: LineAiTurnRequest, options: { busyWaitDeadlineMs?: number } = {}): Promise<LineAiTurnResponse> {
+  async requestLineTurn(
+    request: LineAiTurnRequest,
+    /** `retryOrdinal` is the ledger drain's `deliveryCount`: the same attempt, the next try. */
+    options: { busyWaitDeadlineMs?: number; retryOrdinal?: number } = {},
+  ): Promise<LineAiTurnResponse> {
     await this.assertRateLimit('llm', request.userContext.companyId);
     const { internalUserId: userId, companyId, membershipId, permissions, entitledFeatureKeys } = request.userContext;
     const entitled = entitledFeatureKeys === undefined
@@ -123,9 +140,11 @@ export class AiGatewayClient {
             })),
         ]),
     );
+    const turnContent: AiRequestContent = !request.attachments?.some((a) => a.contentBase64) ? 'text'
+      : request.attachments.some((a) => a.contentBase64 && a.mimeType !== 'application/pdf') ? 'image' : 'document';
     return this.runBudgeted(
       request.userContext.companyId,
-      (monthKey) => this.postInternal<LineAiTurnResponse>(
+      (monthKey, hold) => this.postInternal<LineAiTurnResponse>(
         '/internal/ai/line-turn',
         { ...request, actorDelegations },
         request.requestId,
@@ -133,11 +152,23 @@ export class AiGatewayClient {
         monthKey,
         // Inline bytes only: a storageKey-only attachment is not content the model receives.
         // The bucket stays CHAT either way (§12.2) — this only reports what was sent.
-        !request.attachments?.some((a) => a.contentBase64) ? 'text'
-          : request.attachments.some((a) => a.contentBase64 && a.mimeType !== 'application/pdf') ? 'image' : 'document',
+        turnContent,
+        hold,
       ),
       options.busyWaitDeadlineMs,
       request.attachments?.length ? 'media' : 'chat',
+      {
+        // ADR 0013 §4: the ORIGINAL webhook event is the attempt, never the transport request id
+        // (the drain mints a fresh one on every reclaim). A reclaim is the SAME attempt at the next
+        // retry ordinal, bounded by the existing delivery cap, so the previous invocation keeps
+        // holding its money until evidence arrives instead of being re-run for free.
+        stepKind: 'line-turn',
+        // `webhookEventId` is required by the contract; the `||` is a guard against a caller that
+        // omits it anyway, so building the step cannot throw before admission has answered.
+        attemptKey: `line-text:${aiBudgetAttemptHash(request.webhookEventId || request.requestId)}${options.retryOrdinal ? `:r${options.retryOrdinal}` : ''}`,
+        sourceRoute: 'line-turn', modelId: request.modelPolicy?.modelId ?? '', requestId: request.requestId,
+        ...classifyAiUsageRequest('line-turn', turnContent),
+      },
     );
   }
 
@@ -161,9 +192,19 @@ export class AiGatewayClient {
     const governedRequest = { ...request, ...(modelPolicy && { modelPolicy }) };
     return this.runBudgeted(
       companyId,
-      (monthKey) => this.requestReceiptOcrAdmitted(governedRequest, monthKey, options),
+      (monthKey, hold) => this.requestReceiptOcrAdmitted(governedRequest, monthKey, options, hold),
       options.busyWaitDeadlineMs,
       'media',
+      {
+        // The ATTACHMENT id is the provider input identity of a LINE document read — already the
+        // durable OCR request fence. Hashed: it is a LINE message id (spec §12.4).
+        // The attachment id is the durable provider-input identity; the transport id is only a
+        // fallback for a malformed request the OCR governance below refuses anyway — assembling the
+        // step must never be the thing that throws.
+        stepKind: 'receipt-ocr', attemptKey: `line-image:${aiBudgetAttemptHash(request.attachment?.id ?? request.requestId)}`,
+        sourceRoute: 'receipt-ocr', modelId: modelPolicy?.modelId ?? '', requestId: request.requestId,
+        ...classifyAiUsageRequest('receipt-ocr', receiptOcrContent(request)),
+      },
     );
   }
 
@@ -171,6 +212,7 @@ export class AiGatewayClient {
     request: ReceiptOcrRequest,
     budgetMonthKey?: string,
     options: { ocrAlreadyAdmitted?: boolean; admissionIdentity?: CompanyOcrAdmissionIdentity; onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void } = {},
+    hold?: ReservedAiBudgetStep,
   ): Promise<ReceiptOcrResponse> {
     let identity = options.admissionIdentity;
     if (!options.ocrAlreadyAdmitted) {
@@ -183,7 +225,11 @@ export class AiGatewayClient {
         monthKey: budgetMonthKey,
         enforceReceiptQuota: this.config.receiptQuotaEnforced,
       });
-      if (!admission.allowed) return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
+      if (!admission.allowed) {
+        // Money was held before this count/switch/plan gate; its refusal proves no provider ran.
+        await this.releaseHold(hold, 'ocr_admission_refused');
+        return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
+      }
       identity = admission;
       options.onAdmitted?.(admission);
     }
@@ -196,10 +242,14 @@ export class AiGatewayClient {
         RECEIPT_OCR_TIMEOUT_MS,
         budgetMonthKey,
         receiptOcrContent(request),
+        hold,
       );
     } catch (error) {
       const status = error instanceof AiGatewayRequestError ? error.httpStatus : undefined;
       const refusal = status !== undefined && isOcrPreProviderHttpStatus(status);
+      // R-05: only the locally observed pre-provider 4xx releases money. A transport failure has
+      // UNKNOWN provider cost, so its hold stays and becomes UNRESOLVED — never cancelled.
+      if (refusal) await this.releaseHold(hold, 'gateway_pre_provider_refusal');
       if (identity) {
         const released = await releaseCompanyOcrAdmission(this.prisma, {
           companyId: request.companyId,
@@ -214,6 +264,7 @@ export class AiGatewayClient {
     }
     // A system failure before usable fields can release customer admission. Provider usage was
     // recorded independently by postInternal and is never removed by this compensation.
+    if (isOcrPreProviderRefusal(result)) await this.releaseHold(hold, 'gateway_pre_provider_refusal');
     if (identity && (isOcrPreProviderRefusal(result) || isOcrRetryableProviderFailure(result))) {
       const released = await releaseCompanyOcrAdmission(this.prisma, {
         companyId: request.companyId,
@@ -234,6 +285,7 @@ export class AiGatewayClient {
     const media = request.attachments?.find((attachment) =>
       Boolean(attachment.contentBase64)
       && (attachment.mimeType === 'image/jpeg' || attachment.mimeType === 'image/png'));
+    let modelPolicy: Awaited<ReturnType<typeof resolveCompanyAiModelPolicy>>;
     if (media) {
       if (!this.config.aiGatewayInternalSecret) {
         return {
@@ -243,13 +295,22 @@ export class AiGatewayClient {
       }
       // Match the receipt OCR seam: a bad tenant policy is local readiness and must fail before
       // the durable document-read admission.
-      await resolveCompanyAiModelPolicy(this.prisma, companyId, this.config.approvedAiModelIds);
+      modelPolicy = await resolveCompanyAiModelPolicy(this.prisma, companyId, this.config.approvedAiModelIds);
     }
     const plan = await this.runBudgeted(
       companyId,
-      (monthKey) => this.requestLineIntakeRouteAdmitted(request, media?.id, monthKey, options.retryWebhookEventId, options.onAdmitted),
+      (monthKey, hold) => this.requestLineIntakeRouteAdmitted(request, media?.id, monthKey, options.retryWebhookEventId, options.onAdmitted, hold),
       options.busyWaitDeadlineMs,
       media ? 'media' : 'chat',
+      {
+        // A picture routes AND transcribes in ONE provider call, so the whole call is OCR (§12.2).
+        // The LINE message id is the durable identity of that picture; the text lane has no webhook
+        // id on this contract and falls back to its request id (see ADR 0013 implementation notes).
+        stepKind: media ? 'line-intake-image' : 'line-intake-text',
+        attemptKey: media ? `line-image:${aiBudgetAttemptHash(media.id)}` : `line-text:${aiBudgetAttemptHash(request.requestId)}`,
+        sourceRoute: 'line-intake-route', modelId: modelPolicy?.modelId ?? '', requestId: request.requestId,
+        ...classifyAiUsageRequest('line-intake-route', media ? 'image' : 'text'),
+      },
     );
     // The AI Gateway is a separate service; its optional prepared plan is untrusted wire JSON. Re-bound
     // it here (discard an invalid plan) before the API ever forwards it into a LineAiTurnRequest.
@@ -264,10 +325,11 @@ export class AiGatewayClient {
     budgetMonthKey?: string,
     retryWebhookEventId?: string,
     onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void,
+    hold?: ReservedAiBudgetStep,
   ): Promise<GovernedLineIntakeRoutePlan> {
     if (!mediaId) {
       return this.postInternal<LineIntakeRoutePlan>(
-        '/internal/ai/line-intake-route', request, request.requestId, LINE_INTAKE_TIMEOUT_MS, budgetMonthKey, 'text',
+        '/internal/ai/line-intake-route', request, request.requestId, LINE_INTAKE_TIMEOUT_MS, budgetMonthKey, 'text', hold,
       );
     }
     const admission = await admitCompanyOcr(this.prisma, {
@@ -281,6 +343,8 @@ export class AiGatewayClient {
       enforceReceiptQuota: this.config.receiptQuotaEnforced,
     });
     if (!admission.allowed) {
+      // Held money first, count second (ADR 0013 §5): this refusal proves no provider call started.
+      await this.releaseHold(hold, 'ocr_admission_refused');
       return {
         status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
         errorCode: 'ROUTER_UNREACHABLE', ocrAdmission: 'denied', ocrErrorCode: companyOcrErrorCode(admission),
@@ -291,10 +355,12 @@ export class AiGatewayClient {
       // `mediaId` is set only for a JPEG/PNG that crossed the governed image-intake seam, so the
       // whole call is an image read (and therefore OCR) — exactly the §12.2 rule, no re-derivation.
       const plan = await this.postInternal<LineIntakeRoutePlan>(
-        '/internal/ai/line-intake-route', request, request.requestId, LINE_INTAKE_MEDIA_TIMEOUT_MS, budgetMonthKey, 'image',
+        '/internal/ai/line-intake-route', request, request.requestId, LINE_INTAKE_MEDIA_TIMEOUT_MS, budgetMonthKey, 'image', hold,
       );
       if (plan.status === 'UNAVAILABLE') {
         if (plan.errorCode === 'PROVIDER_DISABLED' || plan.errorCode === 'PROVIDER_CONFIG_MISSING') {
+          // The two statuses that prove the router never reached its provider.
+          await this.releaseHold(hold, 'gateway_pre_provider_refusal');
           const released = await releaseCompanyOcrAdmission(this.prisma, {
             companyId: request.companyId,
             sourceRoute: 'receipt-ocr-line',
@@ -319,6 +385,7 @@ export class AiGatewayClient {
       const status = error instanceof AiGatewayRequestError ? error.httpStatus : undefined;
       const refusal = status !== undefined && isOcrPreProviderHttpStatus(status);
       if (refusal) {
+        await this.releaseHold(hold, 'gateway_pre_provider_refusal');
         const released = await releaseCompanyOcrAdmission(this.prisma, {
           companyId: request.companyId,
           sourceRoute: 'receipt-ocr-line',
@@ -359,10 +426,21 @@ export class AiGatewayClient {
     }
   }
 
-  private async runBudgeted<T>(companyId: string | undefined, action: (monthKey?: string) => Promise<T>, busyWaitDeadlineMs?: number, laneKey?: 'chat' | 'media'): Promise<T> {
+  /** The one place this client may release money, and only with a proof that no provider ran. */
+  private async releaseHold(hold: ReservedAiBudgetStep | undefined, proof: AiBudgetCancelProof): Promise<void> {
+    if (hold) await cancelAiBudgetStep(this.prisma, { reservationId: hold.id, ownerToken: hold.ownerToken, proof });
+  }
+
+  private async runBudgeted<T>(
+    companyId: string | undefined,
+    action: (monthKey?: string, hold?: ReservedAiBudgetStep) => Promise<T>,
+    busyWaitDeadlineMs?: number,
+    laneKey?: 'chat' | 'media',
+    step?: CompanyAiBudgetStep,
+  ): Promise<T> {
     if (!companyId) return action();
     const admission = await retryBusyAdmission(
-      () => runWithCompanyAiBudgetAdmission(this.prisma, this.config, this.rateLimits, companyId, action, laneKey),
+      () => runWithCompanyAiBudgetAdmission(this.prisma, this.config, this.rateLimits, companyId, action, laneKey, step),
       busyWaitDeadlineMs,
     );
     if (admission.allowed) return admission.value;
@@ -379,6 +457,9 @@ export class AiGatewayClient {
     budgetMonthKey?: string,
     /** What this caller put in the request, for the server-derived bucket/kind (spec §12.2). */
     content: AiRequestContent = 'text',
+    /** SPLIT only: the hold this call runs inside. Its envelope rides on the wire (ADR 0013 §6);
+     *  the owner token never does. An older gateway ignores the unknown field. */
+    hold?: ReservedAiBudgetStep,
   ): Promise<T> {
     const url = `${this.config.aiGatewayInternalUrl}${path}`;
     const secret = this.config.aiGatewayInternalSecret;
@@ -397,7 +478,7 @@ export class AiGatewayClient {
       response = await fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify(request),
+        body: JSON.stringify(hold ? { ...(request as Record<string, unknown>), budgetEnvelope: hold.envelope } : request),
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
@@ -429,6 +510,7 @@ export class AiGatewayClient {
       (result as { usage?: AiUsageEntry[] })?.usage,
       budgetMonthKey,
       content,
+      hold?.invocationKey,
     );
     return result;
   }
@@ -441,13 +523,14 @@ export class AiGatewayClient {
     usage: AiUsageEntry[] | undefined,
     monthKey?: string,
     content: AiRequestContent = 'text',
+    invocationKey?: string,
   ): Promise<void> {
     if (!companyId) return;
     try {
       await recordCompanyAiUsage(
         this.prisma,
         this.config,
-        { companyId, sourceRoute, requestId, monthKey, ...classifyAiUsageRequest(sourceRoute, content) },
+        { companyId, sourceRoute, requestId, monthKey, ...(invocationKey && { invocationKey }), ...classifyAiUsageRequest(sourceRoute, content) },
         usage,
       );
     } catch (err) {

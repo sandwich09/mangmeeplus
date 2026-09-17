@@ -31,12 +31,19 @@ import {
   assertCompanyAiBudget,
   bangkokMonthKey,
   classifyAiUsageRequest,
+  companyAiBudgetRefusal,
   recordCompanyAiCostAdjustment,
   recordCompanyAiUsage,
   resolvePlatformAiBudget,
   retryBusyAdmission,
   runWithCompanyAiBudgetAdmission,
 } from './company-ai-usage-meter';
+import {
+  nextBangkokMonthKey,
+  resolveAiBudgetPolicy,
+  type AiBudgetPendingPolicy,
+  type CompanyAiBudgetPolicyRow,
+} from './company-ai-budget-policy';
 
 const config = { aiThbPerUsd: 33 } as any;
 
@@ -1490,5 +1497,299 @@ describe('AI gateway timeout budget', () => {
   it('leaves the four-call chain visible in the gateway, so the count cannot drift unnoticed', () => {
     const perCallBudgets = gatewaySource.match(/timeoutMs: DOCUMENT_OCR_TIMEOUT_MS/g) ?? [];
     assert.ok(perCallBudgets.length >= 3, 'read, extract and re-read providers all carry the budget');
+  });
+});
+
+// ── Split CHAT/OCR budget policy (remediation spec §12.1/§12.5, ADR 0013) ────────────
+
+const policyRow = (over: Partial<CompanyAiBudgetPolicyRow> = {}): CompanyAiBudgetPolicyRow => ({
+  budgetMode: 'SHARED', chatMonthlyBudgetSatang: null, ocrMonthlyBudgetSatang: null,
+  budgetConfigVersion: 0, pendingBudgetPolicy: null, ...over,
+});
+const resolve = (row: CompanyAiBudgetPolicyRow | null | undefined, monthKey = '2026-09', totalSatang = 100) =>
+  resolveAiBudgetPolicy({ row, totalSatang, override: false, monthKey });
+const pending = (over: Partial<AiBudgetPendingPolicy> = {}): AiBudgetPendingPolicy => ({
+  mode: 'SPLIT', chatMonthlyBudgetSatang: 30, ocrMonthlyBudgetSatang: 70, effectiveMonthKey: '2026-10', ...over,
+});
+
+describe('resolveAiBudgetPolicy', () => {
+  it('resolves every company that exists today — and every pre-column test fake — as SHARED', () => {
+    for (const row of [null, undefined, {}, policyRow(), { monthlyBudgetSatang: 500 } as CompanyAiBudgetPolicyRow]) {
+      const policy = resolve(row);
+      assert.deepEqual(
+        { mode: policy.mode, source: policy.source, pending: policy.pending, invalidReason: policy.invalidReason },
+        { mode: 'SHARED', source: 'ACTIVE', pending: null, invalidReason: undefined },
+      );
+    }
+  });
+
+  it('keeps a SHARED company SHARED with caps that were merely left behind — null is "not set", never unlimited', () => {
+    const policy = resolve(policyRow({ chatMonthlyBudgetSatang: 30, ocrMonthlyBudgetSatang: 70 }));
+    assert.equal(policy.mode, 'SHARED');
+    assert.equal(policy.invalidReason, undefined, 'C+O is not validated while the caps are not enforced');
+    assert.deepEqual([policy.chatCapSatang, policy.ocrCapSatang], [30, 70]);
+  });
+
+  it('spec §12.1 example T=100 C=30 O=70: an active SPLIT exposes both caps and stays valid at exactly T', () => {
+    const policy = resolve(policyRow({ budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 30, ocrMonthlyBudgetSatang: 70 }));
+    assert.deepEqual(
+      { mode: policy.mode, chat: policy.chatCapSatang, ocr: policy.ocrCapSatang, invalid: policy.invalidReason },
+      { mode: 'SPLIT', chat: 30, ocr: 70, invalid: undefined },
+    );
+  });
+
+  it('treats 0 as a closed bucket, not as "unset"', () => {
+    const policy = resolve(policyRow({ budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 0, ocrMonthlyBudgetSatang: 100 }));
+    assert.equal(policy.invalidReason, undefined);
+    assert.equal(policy.chatCapSatang, 0);
+  });
+
+  it('a FUTURE pending policy changes nothing yet and is reported separately', () => {
+    const policy = resolve(policyRow({ pendingBudgetPolicy: pending() }), '2026-09');
+    assert.equal(policy.mode, 'SHARED', 'the company is still SHARED until October');
+    assert.equal(policy.source, 'ACTIVE');
+    assert.deepEqual(policy.pending, pending());
+  });
+
+  it('a pending policy whose month has ARRIVED is the effective policy — no cron, the month keys decide', () => {
+    for (const monthKey of ['2026-10', '2026-11']) {
+      const policy = resolve(policyRow({ pendingBudgetPolicy: pending() }), monthKey);
+      assert.deepEqual(
+        { mode: policy.mode, chat: policy.chatCapSatang, ocr: policy.ocrCapSatang, source: policy.source, pending: policy.pending },
+        { mode: 'SPLIT', chat: 30, ocr: 70, source: 'PENDING_ACTIVATED', pending: null },
+      );
+    }
+  });
+
+  it('R-07: the revision moves when the month turns, even though the row version never did', () => {
+    const row = policyRow({ pendingBudgetPolicy: pending() });
+    assert.equal(resolve(row, '2026-09').revision, '0:2026-09:ACTIVE');
+    assert.equal(resolve(row, '2026-10').revision, '0:2026-10:PENDING_ACTIVATED');
+    assert.notEqual(resolve(row, '2026-09').revision, resolve(row, '2026-10').revision);
+    // And a plain month rollover without any pending policy still re-fences an open page.
+    assert.notEqual(resolve(policyRow(), '2026-09').revision, resolve(policyRow(), '2026-10').revision);
+    assert.equal(resolve(policyRow({ budgetConfigVersion: 4 })).revision, '4:2026-09:ACTIVE');
+  });
+
+  for (const [name, row, reason] of [
+    ['SPLIT with one cap never set', policyRow({ budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 30 }), 'SPLIT_CAPS_MISSING'],
+    ['SPLIT with neither cap set', policyRow({ budgetMode: 'SPLIT' }), 'SPLIT_CAPS_MISSING'],
+    ['C + O above the live total', policyRow({ budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 31, ocrMonthlyBudgetSatang: 70 }), 'SPLIT_EXCEEDS_TOTAL'],
+    ['a negative cap', policyRow({ budgetMode: 'SPLIT', chatMonthlyBudgetSatang: -1, ocrMonthlyBudgetSatang: 10 }), 'POLICY_MALFORMED'],
+    ['a fractional cap', policyRow({ budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 1.5, ocrMonthlyBudgetSatang: 10 }), 'POLICY_MALFORMED'],
+    ['a mode nothing understands', policyRow({ budgetMode: 'HALF' }), 'POLICY_MALFORMED'],
+    ['pending JSON that is not an object', policyRow({ pendingBudgetPolicy: 'SPLIT' }), 'POLICY_MALFORMED'],
+    ['pending JSON missing its month', policyRow({ pendingBudgetPolicy: { mode: 'SPLIT', chatMonthlyBudgetSatang: 1, ocrMonthlyBudgetSatang: 1 } }), 'POLICY_MALFORMED'],
+    ['pending JSON with a bad month', policyRow({ pendingBudgetPolicy: pending({ effectiveMonthKey: '2026-13' }) }), 'POLICY_MALFORMED'],
+    ['an activated pending policy that no longer fits the total', policyRow({ pendingBudgetPolicy: pending({ chatMonthlyBudgetSatang: 60, effectiveMonthKey: '2026-09' }) }), 'SPLIT_EXCEEDS_TOTAL'],
+  ] as const) {
+    it(`fails closed on ${name} with ${reason}, never by clamping`, () => {
+      const policy = resolve(row);
+      assert.equal(policy.invalidReason, reason);
+    });
+  }
+});
+
+describe('assertCompanyAiBudget split policy gate', () => {
+  const withPolicy = (row: CompanyAiBudgetPolicyRow & { monthlyBudgetSatang?: number | null }) => ({
+    client: {
+      companyAiConfiguration: { findUnique: async () => row },
+      companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+    },
+  } as any);
+
+  it('leaves the SHARED path byte-for-byte: a fake with none of the new columns still admits', async () => {
+    const { prisma } = budgetPrisma({ monthlyBudgetSatang: 10_000, spendSatang: 0 });
+    assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, 'co-legacy-fake'), { allowed: true });
+  });
+
+  it('refuses a SPLIT company as unavailable — the shared overshoot path cannot honour a bucket cap', async () => {
+    const prisma = withPolicy({ monthlyBudgetSatang: 100, budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 30, ocrMonthlyBudgetSatang: 70 });
+    assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, 'co-split'), { allowed: false, reason: 'unavailable' });
+  });
+
+  it('refuses an ACTIVATED pending SPLIT the same way, without any config write having happened', async () => {
+    const prisma = withPolicy({ monthlyBudgetSatang: 100, pendingBudgetPolicy: pending({ effectiveMonthKey: bangkokMonthKey() }) });
+    assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, 'co-activated'), { allowed: false, reason: 'unavailable' });
+  });
+
+  it('still admits a company whose pending SPLIT is only scheduled for next month', async () => {
+    const prisma = withPolicy({ monthlyBudgetSatang: 100, pendingBudgetPolicy: pending({ effectiveMonthKey: nextBangkokMonthKey() }) });
+    assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, 'co-scheduled'), { allowed: true });
+  });
+
+  for (const [name, row] of [
+    ['an unreadable policy', { budgetMode: 'SPLIT', chatMonthlyBudgetSatang: null, ocrMonthlyBudgetSatang: 70 }],
+    ['malformed pending JSON', { pendingBudgetPolicy: { mode: 'NOPE' } }],
+    ['an allocation above the total', { budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 90, ocrMonthlyBudgetSatang: 90 }],
+  ] as const) {
+    it(`refuses ${name} as unavailable rather than passing it as SHARED`, async () => {
+      const prisma = withPolicy({ monthlyBudgetSatang: 100, ...row });
+      assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, `co-${name}`), { allowed: false, reason: 'unavailable' });
+    });
+  }
+});
+
+// ── Phase E1b: the shared refusal mapper and the bucket aggregate ────────────
+
+describe('companyAiBudgetRefusal with split scopes (spec §9.1, §12.3)', () => {
+  it('maps insufficient to AI_BUDGET_INSUFFICIENT and reports the scope that blocked', () => {
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'insufficient', spendSatang: 2_900, reservedSatang: 0, budgetSatang: 3_000, budgetScope: 'CHAT' }),
+      { code: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'CHAT' },
+    );
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'insufficient', spendSatang: 0, reservedSatang: 6_900, budgetSatang: 7_000, budgetScope: 'OCR' }),
+      { code: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'OCR' },
+    );
+  });
+
+  it('carries a bucket scope on exceeded too — a full CHAT must not be reported as the TOTAL', () => {
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'exceeded', spendSatang: 3_000, budgetSatang: 3_000, override: true, budgetScope: 'CHAT' }),
+      { code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'CHAT' },
+    );
+  });
+
+  it('keeps TOTAL for every SHARED refusal — byte-for-byte what the five seams see today', () => {
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'exceeded', spendSatang: 10, budgetSatang: 10, override: false }),
+      { code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' },
+    );
+    assert.deepEqual(companyAiBudgetRefusal({ allowed: false, reason: 'unavailable' }), { code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' });
+    assert.deepEqual(
+      companyAiBudgetRefusal({ allowed: false, reason: 'busy', retryAfterSeconds: 3 }),
+      { code: 'AI_BUDGET_BUSY', budgetScope: 'TOTAL', retryAfterSeconds: 3 },
+    );
+  });
+});
+
+describe('recordCompanyAiUsage bucket aggregate (ADR 0013 §3)', () => {
+  /** The `fakePrisma` above predates the bucket table on purpose; this one has it. */
+  function bucketPrisma() {
+    const ops: Array<{ op: string; args: any }> = [];
+    const client = {
+      companyAiConfiguration: { findUnique: async () => null },
+      $transaction: async (fn: (tx: any) => Promise<any>) => fn({
+        aiUsageEvent: { createMany: async (args: any) => { ops.push({ op: 'createMany', args }); return { count: args.data.length }; } },
+        companyAiMonthlyUsage: { upsert: async (args: any) => { ops.push({ op: 'month', args }); return { costSatang: 347 }; } },
+        companyAiMonthlyBucketUsage: { upsert: async (args: any) => { ops.push({ op: 'bucket', args }); return {}; } },
+      }),
+    };
+    return { prisma: { client } as any, ops };
+  }
+
+  it('increments the bucket row in the SAME transaction, for a SHARED company too', async () => {
+    const { prisma, ops } = bucketPrisma();
+
+    await recordCompanyAiUsage(prisma, config, {
+      companyId: 'co-1', sourceRoute: 'receipt-ocr', monthKey: '2026-09',
+      ...classifyAiUsageRequest('receipt-ocr', 'image'),
+    }, [usage()]);
+
+    // Row order is FIXED across all three writers of these aggregates: month FIRST, then bucket.
+    // The reverse order would deadlock against a concurrent `settleAiBudgetStep` and LOSE usage.
+    assert.deepEqual(ops.map((o) => o.op), ['createMany', 'month', 'bucket']);
+    const bucket = ops.find((o) => o.op === 'bucket')!.args;
+    assert.deepEqual(bucket.where.companyId_monthKey_bucket, { companyId: 'co-1', monthKey: '2026-09', bucket: 'OCR' });
+    assert.deepEqual(bucket.update.costSatang, { increment: 347 });
+    assert.deepEqual(bucket.update.callCount, { increment: 1 });
+  });
+
+  it('writes no bucket row when the bucket is UNKNOWN — it is never guessed (spec §12.2)', async () => {
+    const { prisma, ops } = bucketPrisma();
+
+    await recordCompanyAiUsage(prisma, config, { companyId: 'co-1', sourceRoute: 'legacy-route' }, [usage()]);
+
+    assert.deepEqual(ops.map((o) => o.op), ['createMany', 'month']);
+  });
+
+  it('a fake that predates the bucket table still records — the aggregate is derived data', async () => {
+    const { prisma, transactions } = fakePrisma();
+
+    const spend = await recordCompanyAiUsage(prisma, config, {
+      companyId: 'co-1', sourceRoute: 'line-turn', ...classifyAiUsageRequest('line-turn', 'text'),
+    }, [usage()]);
+
+    assert.deepEqual(spend, { pre: 0, post: 347 });
+    assert.deepEqual(transactions[0]!.map((o) => o.op), ['createMany', 'upsert']);
+  });
+});
+
+describe('recordCompanyAiCostAdjustment bucket aggregate', () => {
+  /** Ledger fake WITH the bucket table, so both `count === 0` causes can be told apart. */
+  function bucketAdjustmentPrisma(bucketRow: { costSatang: number } | null) {
+    const monthAggregate = { costSatang: 1_000 };
+    const created: any[] = [];
+    let bucket = bucketRow;
+    const client = {
+      $transaction: async (fn: (tx: any) => Promise<any>) => fn({
+        aiUsageEvent: {
+          findUnique: async (args: any) => (args.where.correctionKey !== undefined
+            ? created.find((row) => row.correctionKey === args.where.correctionKey) ?? null
+            : {
+              id: 'evt-1', companyId: 'co-1', monthKey: '2026-09', sourceRoute: 'receipt-ocr',
+              usageTag: 'ocr.receipt.image-read', modelId: 'haiku', thbPerUsd: 33,
+              thbPerUsdSource: 'stored', requestKind: 'IMAGE', budgetBucket: 'OCR',
+              usageBasis: 'PROVIDER_REPORTED', requestId: 'req-1', eventKind: 'MODEL_CALL',
+            }),
+          create: async (args: any) => { created.push(args.data); return args.data; },
+        },
+        companyAiMonthlyUsage: {
+          updateMany: async (args: any) => {
+            const blocked = Object.entries(args.where)
+              .filter(([, v]) => typeof v === 'object' && v !== null && 'gte' in (v as any))
+              .some(([, v]) => monthAggregate.costSatang < (v as any).gte);
+            if (blocked) return { count: 0 };
+            monthAggregate.costSatang += (args.data.costSatang?.increment ?? 0);
+            return { count: 1 };
+          },
+        },
+        companyAiMonthlyBucketUsage: {
+          updateMany: async (args: any) => {
+            if (!bucket || bucket.costSatang < (args.where.costSatang?.gte ?? 0)) return { count: 0 };
+            bucket.costSatang += args.data.costSatang.increment;
+            return { count: 1 };
+          },
+          findUnique: async () => bucket,
+          upsert: async (args: any) => {
+            bucket = bucket ?? { costSatang: args.create.costSatang };
+            if (args.update) bucket.costSatang += args.update.costSatang.increment;
+            return bucket;
+          },
+        },
+      }),
+    };
+    return { prisma: { client } as any, month: monthAggregate, bucketRow: () => bucket, created };
+  }
+
+  it('moves the bucket row with the same non-negative guard as the month row', async () => {
+    const state = bucketAdjustmentPrisma({ costSatang: 500 });
+
+    assert.equal(await recordCompanyAiCostAdjustment(state.prisma, {
+      eventId: 'evt-1', correctionKey: 'c-1', costSatang: -120,
+    }), 'applied');
+    assert.equal(state.month.costSatang, 880);
+    assert.equal(state.bucketRow()!.costSatang, 380);
+  });
+
+  it('refuses when the bucket row EXISTS and the delta would take it negative', async () => {
+    const state = bucketAdjustmentPrisma({ costSatang: 50 });
+
+    assert.equal(await recordCompanyAiCostAdjustment(state.prisma, {
+      eventId: 'evt-1', correctionKey: 'c-2', costSatang: -120,
+    }), 'refused-negative');
+    assert.equal(state.created.length, 0, 'nothing is appended when the move is refused');
+  });
+
+  it('still applies when the bucket row is ABSENT — a row bucketed before the aggregate existed', async () => {
+    // The month total is the authoritative money and it moved; refusing a legitimate correction
+    // because a DERIVED aggregate happens to be missing would be the wrong direction.
+    const state = bucketAdjustmentPrisma(null);
+
+    assert.equal(await recordCompanyAiCostAdjustment(state.prisma, {
+      eventId: 'evt-1', correctionKey: 'c-3', costSatang: -120,
+    }), 'applied');
+    assert.equal(state.month.costSatang, 880);
   });
 });

@@ -18,6 +18,8 @@ import {
   previousBangkokMonthKey,
   resolvePlatformAiBudget,
 } from '../../../line-ai/application/company-ai-usage-meter';
+import { resolveAiBudgetPolicy, toPartnerAiBudgetPolicyDto } from '../../../line-ai/application/company-ai-budget-policy';
+import { readAiBudgetMonthSnapshot } from '../../../line-ai/application/company-ai-budget-reservation';
 
 const MONTH_SELECT = {
   monthKey: true,
@@ -225,6 +227,14 @@ export class GetPartnerAiUsageUseCase {
           receiptQuotaEnforced: true,
           ocrConfigVersion: true,
           updatedAt: true,
+          // Split policy (spec §12.5): read inside the SAME RepeatableRead snapshot as the spend
+          // it will be shown next to, so the console cannot quote a cap from one moment and the
+          // spend from another.
+          budgetMode: true,
+          chatMonthlyBudgetSatang: true,
+          ocrMonthlyBudgetSatang: true,
+          budgetConfigVersion: true,
+          pendingBudgetPolicy: true,
         },
       });
       // One grouped read feeds tags, kinds, buckets, basis, adjustments and coverage, so every
@@ -261,14 +271,17 @@ export class GetPartnerAiUsageUseCase {
       });
       const currentUploads = await this.countUploadedReceipts(tx, companyId, monthKey);
       const previousUploads = await this.countUploadedReceipts(tx, companyId, previousMonthKey);
-      return { company, months, configuration, breakdownRows, platform, ocrMonths, ocrSources, currentUploads, previousUploads };
+      // Spend, live holds and the breach flag from the SAME RepeatableRead snapshot as the caps
+      // they are shown next to, so the console cannot quote a balance from a different moment.
+      const budgetPosition = await readAiBudgetMonthSnapshot(tx, companyId, monthKey);
+      return { company, months, configuration, breakdownRows, platform, ocrMonths, ocrSources, currentUploads, previousUploads, budgetPosition };
     }, {
       isolationLevel: 'RepeatableRead',
       maxWait: 5_000,
       timeout: 15_000,
     });
 
-    const { company, months, configuration, breakdownRows, platform, ocrMonths, ocrSources, currentUploads, previousUploads } = reads;
+    const { company, months, configuration, breakdownRows, platform, ocrMonths, ocrSources, currentUploads, previousUploads, budgetPosition } = reads;
 
     if (!company) throw new NotFoundException(`Partner company "${companyId}" not found.`);
 
@@ -276,6 +289,16 @@ export class GetPartnerAiUsageUseCase {
 
     const overrideSatang = configuration?.monthlyBudgetSatang ?? null;
     const defaultSatang = platform.monthlyBudgetSatang;
+    const policy = resolveAiBudgetPolicy({
+      row: configuration, totalSatang: overrideSatang ?? defaultSatang,
+      override: overrideSatang !== null, monthKey,
+    });
+    // `cap - spent - reserved`, floored at 0. A SHARED bucket has no cap to subtract from, so its
+    // `available` is null — "not set", never "unlimited" (spec §12.1).
+    const scope = (capSatang: number | null, spentSatang: number, reservedSatang: number) => ({
+      spentSatang, reservedSatang,
+      availableSatang: capSatang === null ? null : Math.max(0, capSatang - spentSatang - reservedSatang),
+    });
     const month = (key: string): PartnerAiUsageMonthDto | null => months.find((m) => m.monthKey === key) ?? null;
     const ocrMonth = (key: string, uploadedReceiptDocumentCount: number): PartnerOcrUsageMonthDto => ({
       monthKey: key,
@@ -295,6 +318,16 @@ export class GetPartnerAiUsageUseCase {
         overrideSatang,
         defaultSatang,
         ceilingSatang: platform.ceilingSatang,
+        // The SAME resolver admission uses (spec §12.5) — the console can never describe a policy
+        // differently from the gate.
+        policy: toPartnerAiBudgetPolicyDto(policy, this.config.aiBudgetSplitActivationEnabled === true),
+        position: {
+          total: scope(overrideSatang ?? defaultSatang, budgetPosition.spent.TOTAL, budgetPosition.reserved.TOTAL),
+          chat: scope(policy.mode === 'SPLIT' ? policy.chatCapSatang : null, budgetPosition.spent.CHAT, budgetPosition.reserved.CHAT),
+          ocr: scope(policy.mode === 'SPLIT' ? policy.ocrCapSatang : null, budgetPosition.spent.OCR, budgetPosition.reserved.OCR),
+          unresolvedHolds: budgetPosition.unresolvedHolds,
+          breach: budgetPosition.breach,
+        },
       },
       topTags,
       otherTags,

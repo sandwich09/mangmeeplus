@@ -232,7 +232,10 @@ export class DrainLineLedgerUseCase {
     };
     let response: Awaited<ReturnType<AiGatewayClient['requestLineTurn']>>;
     try {
-      response = await this.aiGateway.requestLineTurn(turnRequest);
+      // ADR 0013 §4: a reclaim is the SAME attempt (the original webhook event) at the NEXT retry
+      // ordinal — never a fresh random identity, even though `requestId` above is one. The ordinal
+      // is the existing `deliveryCount`, already bounded by `lineAiLedgerDeliveryCap`.
+      response = await this.aiGateway.requestLineTurn(turnRequest, { retryOrdinal: deliveryCount });
     } catch (err) {
       // §9.4 / F-08: a PERMANENT money refusal is an answer, not a transient fault. It used to land
       // in `execute`'s generic catch, stay unacked, be reclaimed until `lineAiLedgerDeliveryCap` and

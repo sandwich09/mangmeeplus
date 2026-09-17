@@ -372,6 +372,11 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts',
       'src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.spec.ts',
       'src/modules/line-ai/presentation/http/internal-tools.controller.spec.ts',
+      // §12 money admission for a SPLIT company: the reservation decision table, the execution
+      // identities and the two internal budget seams the gateway will call. `pnpm test`'s
+      // per-package list does not name either file, so this runner is what executes them.
+      'src/modules/line-ai/application/company-ai-budget-reservation.spec.ts',
+      'src/modules/line-ai/presentation/http/internal-ai-budget.controller.spec.ts',
       'src/modules/line-ai/application/line-message-buffer.service.spec.ts',
       // §8.3 DB-backed neutral intake state: the four zero-write guarantees (outage, stale/expired,
       // cross-user, cross-chat/company). `pnpm test`'s per-package list does not name this file, so

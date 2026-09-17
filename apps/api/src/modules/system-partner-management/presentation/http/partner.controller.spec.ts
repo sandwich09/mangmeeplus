@@ -212,6 +212,47 @@ describe('PartnerController', () => {
     }
   });
 
+  it('the ai-model body DTO carries the split policy through the real pipe instead of stripping it', async () => {
+    // Review F-07: contracts and a use case are not enough — this route binds a DTO class and the
+    // global whitelisting pipe drops anything the class does not declare.
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+    const run = (body: Record<string, unknown>) =>
+      pipe.transform({ reason: 'ปรับตามคำขอ', ...body }, { type: 'body', metatype: SetAiModelBodyDto }) as Promise<any>;
+    const policy = { mode: 'SPLIT', chatMonthlyBudgetSatang: 3_000, ocrMonthlyBudgetSatang: 7_000, effectiveMonthKey: '2026-10' };
+
+    const saved = await run({ budgetPolicy: policy, expectedBudgetRevision: '2:2026-09:ACTIVE' });
+    assert.deepEqual({ ...saved.budgetPolicy }, policy, 'every nested field must survive whitelisting');
+    assert.equal(saved.expectedBudgetRevision, '2:2026-09:ACTIVE');
+    // 0 closes a bucket and null means "not set" — both must reach the use case, unlike absent.
+    assert.equal((await run({ budgetPolicy: { ...policy, chatMonthlyBudgetSatang: 0 } })).budgetPolicy.chatMonthlyBudgetSatang, 0);
+    assert.equal((await run({ budgetPolicy: { ...policy, mode: 'SHARED', ocrMonthlyBudgetSatang: null } })).budgetPolicy.ocrMonthlyBudgetSatang, null);
+    assert.equal((await run({ budgetPolicy: null })).budgetPolicy, null, 'null must survive — it cancels a future policy');
+    assert.equal((await run({ monthlyBudgetSatang: 1 })).budgetPolicy, undefined, 'absent must stay absent, not become null');
+
+    for (const poison of [
+      { budgetPolicy: { ...policy, mode: 'HALF' } },
+      { budgetPolicy: { ...policy, chatMonthlyBudgetSatang: -1 } },
+      { budgetPolicy: { ...policy, ocrMonthlyBudgetSatang: 1.5 } },
+      { budgetPolicy: { ...policy, effectiveMonthKey: '2026-13' } },
+      { budgetPolicy: { ...policy, effectiveMonthKey: 'next month' } },
+      { budgetPolicy: 'SPLIT' },
+      { expectedBudgetRevision: '' },
+    ]) {
+      await assert.rejects(() => run(poison), BadRequestException, `expected rejection for ${JSON.stringify(poison)}`);
+    }
+  });
+
+  it('setAiModelConfig() maps the split fields explicitly, so neither can be silently dropped', async () => {
+    let called: any;
+    const ctrl = makeCtrl({ setAiModel: { execute: async (cmd: any) => { called = cmd; return { companyId: 'co-1' }; } } as any });
+    const budgetPolicy = { mode: 'SPLIT', chatMonthlyBudgetSatang: 3_000, ocrMonthlyBudgetSatang: 7_000, effectiveMonthKey: '2026-10' } as any;
+    await ctrl.setAiModelConfig('co-1', { reason: 'ปรับตามคำขอ', budgetPolicy, expectedBudgetRevision: '2:2026-09:ACTIVE' } as any, makeReq());
+    assert.deepEqual(called.budgetPolicy, budgetPolicy);
+    assert.equal(called.expectedBudgetRevision, '2:2026-09:ACTIVE');
+    assert.equal(called.companyId, 'co-1');
+    assert.equal(called.requestingAdminUserId, 'admin-1');
+  });
+
   it('each endpoint has @RequirePermissions metadata', () => {
     const proto = PartnerController.prototype as unknown as Record<string, unknown>;
     const cases: Array<[string, string]> = [

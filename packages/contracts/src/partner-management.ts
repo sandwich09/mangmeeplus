@@ -185,6 +185,64 @@ export type SetPartnerAiModelDto = {
   monthlyBudgetSatang?: number | null;
   expectedModelId?: string | null;
   expectedMonthlyBudgetSatang?: number | null;
+  /**
+   * Separate CHAT/OCR caps (remediation spec §12.4). Absent = preserve whatever is saved;
+   * `null` = cancel a FUTURE pending policy only (it can never revert an already-effective one);
+   * an object = the desired policy for `effectiveMonthKey`, which must be the current or the next
+   * Bangkok month. Saving `SPLIT` is refused entirely unless the server's activation flag is on.
+   */
+  budgetPolicy?: PartnerAiBudgetPolicyInput | null;
+  /** Required with `budgetPolicy`: the `budget.policy.revision` of the read this edit is based on. */
+  expectedBudgetRevision?: string;
+};
+
+export type PartnerAiBudgetMode = 'SHARED' | 'SPLIT';
+
+/** `0` closes that bucket; `null` means "not set", never "unlimited". SPLIT requires both caps. */
+export type PartnerAiBudgetPolicyInput = {
+  mode: PartnerAiBudgetMode;
+  chatMonthlyBudgetSatang: number | null;
+  ocrMonthlyBudgetSatang: number | null;
+  /** 'YYYY-MM', Asia/Bangkok. */
+  effectiveMonthKey: string;
+};
+
+/**
+ * The effective policy for one company and one pinned Bangkok month, as the API's single resolver
+ * decided it — the same value admission compares against (spec §12.5).
+ */
+export type PartnerAiBudgetPolicyDto = {
+  mode: PartnerAiBudgetMode;
+  chatCapSatang: number | null;
+  ocrCapSatang: number | null;
+  /** `PENDING_ACTIVATED` = a scheduled policy's month has arrived and it is already in force. */
+  source: 'ACTIVE' | 'PENDING_ACTIVATED';
+  /** CAS fence: binds the row version, the pinned month and the source (review R-07). */
+  revision: string;
+  /** Only a policy whose month is still in the FUTURE. It changes nothing yet. */
+  pending: PartnerAiBudgetPolicyInput | null;
+  /** Set => this company's AI admission is refused until an operator fixes the policy. */
+  invalidReason?: 'SPLIT_CAPS_MISSING' | 'SPLIT_EXCEEDS_TOTAL' | 'POLICY_MALFORMED';
+  /** ADR 0013 §9 readiness gate; false = the console must not offer SPLIT as savable. */
+  splitActivationEnabled: boolean;
+};
+
+/** One scope's money position. `available` is `cap - spent - reserved`, floored at 0. */
+export type PartnerAiBudgetScopePositionDto = {
+  spentSatang: number;
+  reservedSatang: number;
+  /** `null` under SHARED for a BUCKET: there is no cap to subtract from, not "unlimited". */
+  availableSatang: number | null;
+};
+
+export type PartnerAiBudgetPositionDto = {
+  total: PartnerAiBudgetScopePositionDto;
+  chat: PartnerAiBudgetScopePositionDto;
+  ocr: PartnerAiBudgetScopePositionDto;
+  /** Holds whose provider outcome is still unknown; they keep counting until evidence closes them. */
+  unresolvedHolds: number;
+  /** An actual settled above its reserved bound — admission for that scope is closed (spec §12.3). */
+  breach: boolean;
 };
 
 export const PARTNER_ADJUSTMENT_REASON_MAX_LENGTH = 500;
@@ -192,7 +250,11 @@ export function partnerAdjustmentReason(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= PARTNER_ADJUSTMENT_REASON_MAX_LENGTH
     ? value.trim() : null;
 }
-export type PartnerAiAdjustmentField = 'modelId' | 'monthlyBudgetSatang' | 'enabled' | 'monthlyLimit' | 'receiptQuotaEnforced';
+export type PartnerAiAdjustmentField = 'modelId' | 'monthlyBudgetSatang' | 'enabled' | 'monthlyLimit' | 'receiptQuotaEnforced'
+  // Split-policy history (spec §12.4). Scalars only, like every field above: `pendingBudgetPolicy`
+  // is rendered as the compact string `<mode>:<chat>:<ocr>:<YYYY-MM>` so a scheduled change, an
+  // edit of one and a cancellation each show up as a plain before/after pair.
+  | 'budgetMode' | 'chatMonthlyBudgetSatang' | 'ocrMonthlyBudgetSatang' | 'budgetConfigVersion' | 'pendingBudgetPolicy';
 export type PartnerAiAdjustmentHistory = {
   items: Array<{ id:string; recordedAt:string; actorId:string|null; actorName:string|null; source:'ADMIN_ADJUSTMENT'|'LEGACY_ADMIN'; reason:string|null;
     changes:Array<{field:PartnerAiAdjustmentField;before:string|number|boolean|null;after:string|number|boolean|null}> }>;
@@ -295,6 +357,17 @@ export type PartnerAiUsageDto = {
     overrideSatang: number | null;
     defaultSatang: number;
     ceilingSatang: number;
+    /**
+     * The effective CHAT/OCR policy for the current Bangkok month (spec §12.5), resolved by the
+     * same function admission uses.
+     */
+    policy: PartnerAiBudgetPolicyDto;
+    /**
+     * Live money position for the current Bangkok month (spec §12.3, ADR 0013 §10). `spent` is the
+     * bucket aggregate — the same number admission compares — and `reserved` is the live sum of
+     * non-terminal holds, so the console can say "not enough left" without ever calling it "full".
+     */
+    position: PartnerAiBudgetPositionDto;
   };
   /** Current month's spend by `usageTag`, highest first, at most 10 rows. */
   topTags: Array<{ tag: string } & PartnerAiUsageMeasuresDto>;

@@ -12,6 +12,7 @@ import { RedisRateLimitService } from '../../../common/security/redis-rate-limit
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
 import { classifyAiUsageRequest, companyAiBudgetRefusal, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
+import { cancelAiBudgetStep, type AiBudgetCancelProof, type ReservedAiBudgetStep } from '../../line-ai/application/company-ai-budget-reservation';
 import {
   admitCompanyOcr,
   companyOcrErrorCode,
@@ -55,7 +56,14 @@ export class StatementAiExtractClient {
       this.config,
       this.rateLimits,
       request.companyId,
-      (monthKey) => this.extractOcrAdmitted(request, modelPolicy, monthKey),
+      (monthKey, hold) => this.extractOcrAdmitted(request, modelPolicy, monthKey, hold),
+      undefined,
+      {
+        // ADR 0013 §4: the import's own request id is the logical attempt for a statement read.
+        stepKind: 'bank-statement', attemptKey: `statement:${request.requestId}`,
+        sourceRoute: 'bank-statement-extract', modelId: modelPolicy?.modelId ?? '', requestId: request.requestId,
+        ...classifyAiUsageRequest('bank-statement-extract', 'image'),
+      },
     );
     if (admission.allowed) return admission.value;
     // Refused BEFORE `admitCompanyOcr`: no OCR read counted, nothing to release, uploaded source
@@ -68,6 +76,7 @@ export class StatementAiExtractClient {
     request: BankStatementAiExtractRequest,
     modelPolicy: AiModelPolicy | undefined,
     budgetMonthKey?: string,
+    hold?: ReservedAiBudgetStep,
   ): Promise<BankStatementAiExtractResponse> {
     const admission = await admitCompanyOcr(this.prisma, {
       companyId: request.companyId,
@@ -75,9 +84,14 @@ export class StatementAiExtractClient {
       requestId: request.requestId,
       monthKey: budgetMonthKey,
     });
-    if (!admission.allowed) return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
-    const result = await this.extractAdmitted(request, modelPolicy, budgetMonthKey, admission.eventId);
+    if (!admission.allowed) {
+      // The hold was taken before this gate; the gate refusing is proof no provider call started.
+      await this.releaseHold(hold, 'ocr_admission_refused');
+      return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
+    }
+    const result = await this.extractAdmitted(request, modelPolicy, budgetMonthKey, admission.eventId, hold);
     if (isOcrPreProviderRefusal(result)) {
+      await this.releaseHold(hold, 'gateway_pre_provider_refusal');
       const released = await releaseCompanyOcrAdmission(this.prisma, {
         companyId: request.companyId,
         sourceRoute: 'bank-statement-extract',
@@ -89,14 +103,20 @@ export class StatementAiExtractClient {
     return result;
   }
 
+  /** The one place this seam may release money, and only with a proof that no provider ran (R-05). */
+  private async releaseHold(hold: ReservedAiBudgetStep | undefined, proof: AiBudgetCancelProof): Promise<void> {
+    if (hold) await cancelAiBudgetStep(this.prisma, { reservationId: hold.id, ownerToken: hold.ownerToken, proof });
+  }
+
   private async extractAdmitted(
     request: BankStatementAiExtractRequest,
     modelPolicy: AiModelPolicy | undefined,
     budgetMonthKey: string | undefined,
     eventId: string,
+    hold?: ReservedAiBudgetStep,
   ): Promise<BankStatementAiExtractResponse> {
     const secret = this.config.aiGatewayInternalSecret!;
-    const governedRequest = { ...request, ...(modelPolicy && { modelPolicy }) };
+    const governedRequest = { ...request, ...(modelPolicy && { modelPolicy }), ...(hold && { budgetEnvelope: hold.envelope }) };
     let response: Response;
     try {
       response = await fetch(`${this.config.aiGatewayInternalUrl}/internal/ai/bank-statement-extract`, {
@@ -116,6 +136,8 @@ export class StatementAiExtractClient {
     if (!response.ok) {
       this.logger.error({ msg: 'statement extract gateway error', status: response.status, requestId: request.requestId });
       if (isOcrPreProviderHttpStatus(response.status)) {
+        // A locally observed 4xx from the gateway proves it refused before any provider call.
+        await this.releaseHold(hold, 'gateway_pre_provider_refusal');
         const released = await releaseCompanyOcrAdmission(this.prisma, {
           companyId: request.companyId,
           sourceRoute: 'bank-statement-extract',
@@ -134,6 +156,7 @@ export class StatementAiExtractClient {
         this.config,
         {
           companyId: request.companyId, sourceRoute: 'bank-statement-extract', requestId: request.requestId, monthKey: budgetMonthKey,
+          ...(hold && { invocationKey: hold.invocationKey }),
           // The contract admits JPEG/PNG only, so this seam is always an image read.
           ...classifyAiUsageRequest('bank-statement-extract', 'image'),
         },

@@ -2,7 +2,10 @@ import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import type { PlatformAiBudgetDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
-import { invalidateCompanyAiBudgetConfiguration } from '../../../line-ai/application/company-ai-usage-meter';
+import { Prisma } from '../../../../generated/prisma/client';
+import { bangkokMonthKey, invalidateCompanyAiBudgetConfiguration } from '../../../line-ai/application/company-ai-usage-meter';
+import { readAiBudgetMonthSnapshot } from '../../../line-ai/application/company-ai-budget-reservation';
+import { parsePendingBudgetPolicy } from '../../../line-ai/application/company-ai-budget-policy';
 
 /** Single-row table (spec §7.3): the platform has exactly one budget configuration. */
 const PLATFORM_CONFIG_ID = 'platform';
@@ -56,6 +59,44 @@ export class SetPlatformAiBudgetUseCase {
         where: { id: PLATFORM_CONFIG_ID },
         select: { monthlyBudgetSatang: true, ceilingSatang: true },
       });
+      // F-05/R-06: lowering the DEFAULT changes the live total of every company that inherits it.
+      // A split allocation that no longer fits would fail closed at the next AI call — the shop
+      // would just stop, after a save the operator was told succeeded. Refuse instead, naming the
+      // affected companies. Read-only, under the platform lock alone: taking company locks here
+      // would invert the canonical order (spec §12.7) and deadlock against a concurrent config write.
+      const previousDefault = existing?.monthlyBudgetSatang ?? this.config.aiMonthlyBudgetSatang;
+      if (cmd.monthlyBudgetSatang < previousDefault) {
+        const inheriting = await tx.companyAiConfiguration.findMany({
+          where: {
+            monthlyBudgetSatang: null,
+            OR: [{ budgetMode: 'SPLIT' }, { NOT: { pendingBudgetPolicy: { equals: Prisma.DbNull } } }],
+          },
+          select: { companyId: true, budgetMode: true, chatMonthlyBudgetSatang: true, ocrMonthlyBudgetSatang: true, pendingBudgetPolicy: true },
+        });
+        // Committed + held money of an inheriting SPLIT company is the second way a lowered default
+        // stops a shop silently (spec §12.4/E-09): the allocation may still fit while the money
+        // already spent and held does not. Read-only, still under the platform lock alone.
+        const monthKey = bangkokMonthKey();
+        const committed = new Map<string, number>();
+        for (const row of inheriting.filter((r) => r.budgetMode === 'SPLIT')) {
+          const snapshot = await readAiBudgetMonthSnapshot(tx, row.companyId, monthKey);
+          committed.set(row.companyId, snapshot.spent.TOTAL + snapshot.reserved.TOTAL);
+        }
+        const affected = inheriting.filter((row) => [
+          row.budgetMode === 'SPLIT' ? { chat: row.chatMonthlyBudgetSatang, ocr: row.ocrMonthlyBudgetSatang } : null,
+          ((policy) => policy?.mode === 'SPLIT'
+            ? { chat: policy.chatMonthlyBudgetSatang, ocr: policy.ocrMonthlyBudgetSatang } : null)(parsePendingBudgetPolicy(row.pendingBudgetPolicy)),
+        ].some((allocation) => allocation != null && (allocation.chat ?? 0) + (allocation.ocr ?? 0) > cmd.monthlyBudgetSatang)
+          || (committed.get(row.companyId) ?? 0) > cmd.monthlyBudgetSatang);
+        if (affected.length > 0) {
+          throw new UnprocessableEntityException({
+            code: 'platform_ai_budget_default_below_split_allocation',
+            message: `monthlyBudgetSatang ${cmd.monthlyBudgetSatang} is below the CHAT+OCR allocation of ${affected.length} inheriting company/companies.`,
+            affectedCompanyCount: affected.length,
+            affectedCompanyIds: affected.map((row) => row.companyId),
+          });
+        }
+      }
       const result = await tx.platformAiBudgetConfig.upsert({
         where: { id: PLATFORM_CONFIG_ID },
         create: {

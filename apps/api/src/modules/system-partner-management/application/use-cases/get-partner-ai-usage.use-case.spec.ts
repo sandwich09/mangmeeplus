@@ -11,6 +11,7 @@ import {
   previousBangkokMonthKey,
   recordCompanyAiCostAdjustment,
 } from '../../../line-ai/application/company-ai-usage-meter';
+import { nextBangkokMonthKey } from '../../../line-ai/application/company-ai-budget-policy';
 
 const CURRENT = bangkokMonthKey();
 const PREVIOUS = previousBangkokMonthKey();
@@ -57,6 +58,8 @@ function makePrisma(opts: {
   ocrMonths?: Array<{ monthKey: string; usedCount: number }>;
   ocrSources?: Array<{ monthKey: string; sourceRoute: string; _count: { _all: number } }>;
   uploads?: [number, number];
+  /** Split policy columns of the same configuration row (spec §12.5). */
+  policy?: Record<string, unknown>;
 } = {}) {
   const calls: { monthWhere?: any; rawSql?: string; rawParams?: unknown[]; ocrGroupBy?: any; uploadWhere?: any[]; transactionOptions?: any } = {};
   let uploadIndex = 0;
@@ -68,7 +71,8 @@ function makePrisma(opts: {
         findMany: async (args: any) => { calls.monthWhere = args.where; return opts.months ?? []; },
       },
       companyAiConfiguration: {
-        findUnique: async () => (opts.overrideSatang === undefined && !opts.ocrConfig ? null : {
+        findUnique: async () => (opts.overrideSatang === undefined && !opts.ocrConfig && !opts.policy ? null : {
+          ...opts.policy,
           monthlyBudgetSatang: opts.overrideSatang ?? null,
           ocrEnabled: opts.ocrConfig?.enabled ?? true,
           ocrMonthlyLimit: opts.ocrConfig?.monthlyLimit ?? null,
@@ -137,6 +141,17 @@ describe('GetPartnerAiUsageUseCase', () => {
       overrideSatang: null,
       defaultSatang: 5_000_000,
       ceilingSatang: 50_000_000,
+      // Every existing company resolves SHARED with no caps and no pending policy (spec §12.5).
+      policy: { mode: 'SHARED', chatCapSatang: null, ocrCapSatang: null, source: 'ACTIVE',
+        revision: `0:${bangkokMonthKey()}:ACTIVE`, pending: null, splitActivationEnabled: false },
+      // Phase E1b: the live money position. Under SHARED a BUCKET has no cap to subtract from, so
+      // its `available` is null — "not set", never "unlimited" (spec §12.1).
+      position: {
+        total: { spentSatang: 0, reservedSatang: 0, availableSatang: 5_000_000 },
+        chat: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
+        ocr: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
+        unresolvedHolds: 0, breach: false,
+      },
     });
   });
 
@@ -148,6 +163,16 @@ describe('GetPartnerAiUsageUseCase', () => {
       overrideSatang: 900_000,
       defaultSatang: 5_000_000,
       ceilingSatang: 50_000_000,
+      policy: { mode: 'SHARED', chatCapSatang: null, ocrCapSatang: null, source: 'ACTIVE',
+        revision: `0:${bangkokMonthKey()}:ACTIVE`, pending: null, splitActivationEnabled: false },
+      // Phase E1b: the live money position. Under SHARED a BUCKET has no cap to subtract from, so
+      // its `available` is null — "not set", never "unlimited" (spec §12.1).
+      position: {
+        total: { spentSatang: 0, reservedSatang: 0, availableSatang: 900_000 },
+        chat: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
+        ocr: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
+        unresolvedHolds: 0, breach: false,
+      },
     });
   });
 
@@ -546,5 +571,36 @@ describe('GetPartnerAiUsageUseCase', () => {
     assert.equal(previousBangkokMonthKey(new Date('2026-03-15T00:00:00.000Z')), '2026-02');
     // Bangkok is +7: 23:30 UTC on the last day of July is already August there.
     assert.equal(previousBangkokMonthKey(new Date('2026-07-31T23:30:00.000Z')), '2026-07');
+  });
+});
+
+describe('GetPartnerAiUsageUseCase budget policy', () => {
+  const read = (opts: Parameters<typeof makePrisma>[0], splitEnabled = false) =>
+    new GetPartnerAiUsageUseCase(makePrisma(opts), { ...makeConfig(), aiBudgetSplitActivationEnabled: splitEnabled }).execute('co-1');
+
+  it('reports an ACTIVE split with both caps and the revision the writer will fence on', async () => {
+    const result = await read({ overrideSatang: 10_000, policy: {
+      budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 3_000, ocrMonthlyBudgetSatang: 7_000, budgetConfigVersion: 2, pendingBudgetPolicy: null,
+    } }, true);
+    assert.deepEqual(result.budget.policy, {
+      mode: 'SPLIT', chatCapSatang: 3_000, ocrCapSatang: 7_000, source: 'ACTIVE',
+      revision: `2:${CURRENT}:ACTIVE`, pending: null, splitActivationEnabled: true,
+    });
+  });
+
+  it('separates "in force now" from "starts next month" so the console can show both', async () => {
+    const pending = { mode: 'SPLIT', chatMonthlyBudgetSatang: 3_000, ocrMonthlyBudgetSatang: 7_000, effectiveMonthKey: nextBangkokMonthKey() };
+    const result = await read({ overrideSatang: 10_000, policy: { budgetMode: 'SHARED', budgetConfigVersion: 1, pendingBudgetPolicy: pending } });
+    assert.equal(result.budget.policy.mode, 'SHARED');
+    assert.deepEqual(result.budget.policy.pending, pending);
+    assert.equal(result.budget.policy.splitActivationEnabled, false, 'the console must not offer SPLIT while the gate is shut');
+  });
+
+  it('surfaces an allocation that no longer fits the live total instead of quietly showing caps', async () => {
+    const result = await read({ overrideSatang: 5_000, policy: {
+      budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 3_000, ocrMonthlyBudgetSatang: 7_000, budgetConfigVersion: 2, pendingBudgetPolicy: null,
+    } }, true);
+    assert.equal(result.budget.policy.invalidReason, 'SPLIT_EXCEEDS_TOTAL');
+    assert.equal(result.budget.effectiveSatang, 5_000, 'the total the seams compare against is unchanged');
   });
 });
