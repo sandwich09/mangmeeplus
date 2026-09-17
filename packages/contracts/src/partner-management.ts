@@ -342,6 +342,13 @@ export type PartnerAiUsageBreakdownDto = {
 
 /** Partner-console AI spend meter (metering spec §7.7) — system-admin surface only. */
 export type PartnerAiUsageDto = {
+  /**
+   * Whether the CALLER may write this card. Reading is `system.partner_dashboard.read`; every
+   * control on it is `system.partner_ai_model.manage`, so a read-only operator keeps all the
+   * numbers and gets no form (spec §11.3/§11.4). Optional: a pre-D2 API omits it, and the web then
+   * keeps today's behaviour of showing the form and letting the server answer 403.
+   */
+  canManage?: boolean;
   current: PartnerAiUsageMonthDto | null;
   previous: PartnerAiUsageMonthDto | null;
   budget: {

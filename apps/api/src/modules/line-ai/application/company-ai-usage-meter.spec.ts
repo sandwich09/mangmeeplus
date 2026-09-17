@@ -44,6 +44,7 @@ import {
   type AiBudgetPendingPolicy,
   type CompanyAiBudgetPolicyRow,
 } from './company-ai-budget-policy';
+import { readAiBudgetReadiness } from './company-ai-budget-readiness';
 
 const config = { aiThbPerUsd: 33 } as any;
 
@@ -1713,6 +1714,126 @@ describe('recordCompanyAiUsage bucket aggregate (ADR 0013 §3)', () => {
 
     assert.deepEqual(spend, { pre: 0, post: 347 });
     assert.deepEqual(transactions[0]!.map((o) => o.op), ['createMany', 'upsert']);
+  });
+});
+
+// ── The ONE readiness projection every admin/ops surface reads (spec §11.4, R-10) ────────────
+
+describe('readAiBudgetReadiness — the truth table admin surfaces must agree with', () => {
+  /** A fake carrying the four delegates the snapshot reads, so every state is expressible. */
+  const tx = (state: {
+    total?: number;
+    buckets?: Array<{ bucket: string; costSatang: number }>;
+    holds?: Array<{ bucket: string; status: string; upperBoundSatang: number }>;
+    breach?: number;
+  } = {}) => ({
+    companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: state.total ?? 0 }) },
+    companyAiMonthlyBucketUsage: { findMany: async () => state.buckets ?? [] },
+    aiBudgetReservation: {
+      groupBy: async () => (state.holds ?? []).map((hold) => ({
+        bucket: hold.bucket, status: hold.status,
+        _sum: { upperBoundSatang: hold.upperBoundSatang }, _count: { _all: 1 },
+      })),
+      count: async () => state.breach ?? 0,
+    },
+  });
+  const split = (chat: number, ocr: number) => ({
+    budgetMode: 'SPLIT', chatMonthlyBudgetSatang: chat, ocrMonthlyBudgetSatang: ocr, budgetConfigVersion: 1,
+  });
+  const readiness = (client: any, row: any, totalSatang: number, boundSatang?: number) =>
+    readAiBudgetReadiness(client, { companyId: 'co-1', monthKey: '2026-09', row, totalSatang,
+      ...(boundSatang === undefined ? {} : { boundSatang }) });
+
+  it('SHARED reports both buckets AS the total — byte-for-byte what every surface printed before', async () => {
+    // Open: 3000 of 10000 spent.
+    assert.deepEqual(await readiness(tx({ total: 3000 }), null, 10_000), {
+      mode: 'SHARED', total: 'OK', chat: 'OK', ocr: 'OK', unresolvedHolds: 0, breach: false,
+    });
+    // Reached: the legacy rule was `spend >= budget`, and it still is.
+    assert.deepEqual(await readiness(tx({ total: 10_000 }), { budgetMode: 'SHARED' }, 10_000), {
+      mode: 'SHARED', total: 'EXHAUSTED', chat: 'EXHAUSTED', ocr: 'EXHAUSTED', unresolvedHolds: 0, breach: false,
+    });
+    // A SHARED row may carry informational caps; §12.1 says they are NOT enforced.
+    const informational = { budgetMode: 'SHARED', chatMonthlyBudgetSatang: 0, ocrMonthlyBudgetSatang: 0 };
+    const answer = await readiness(tx({ total: 1 }), informational, 10_000);
+    assert.equal(answer.ocr, 'OK');
+    assert.equal(answer.chat, 'OK');
+  });
+
+  it('SPLIT: CHAT full leaves OCR open, and OCR full leaves CHAT open — no borrowing (§12.1)', async () => {
+    const chatFull = await readiness(
+      tx({ total: 3000, buckets: [{ bucket: 'CHAT', costSatang: 3000 }] }), split(3000, 7000), 10_000);
+    assert.equal(chatFull.chat, 'EXHAUSTED');
+    assert.equal(chatFull.ocr, 'OK');
+    assert.equal(chatFull.total, 'OK');
+
+    const ocrFull = await readiness(
+      tx({ total: 7000, buckets: [{ bucket: 'OCR', costSatang: 7000 }] }), split(3000, 7000), 10_000);
+    assert.equal(ocrFull.ocr, 'EXHAUSTED');
+    assert.equal(ocrFull.chat, 'OK');
+    assert.equal(ocrFull.total, 'OK');
+  });
+
+  it('SPLIT: the TOTAL stays the ceiling neither bucket may cross', async () => {
+    const answer = await readiness(
+      tx({ total: 10_000, buckets: [{ bucket: 'CHAT', costSatang: 3000 }, { bucket: 'OCR', costSatang: 7000 }] }),
+      split(3000, 7000), 10_000);
+    assert.equal(answer.total, 'EXHAUSTED');
+  });
+
+  it('a cap of 0 is CLOSED, not EXHAUSTED — the bucket is not allowed at all (§12.1)', async () => {
+    const answer = await readiness(tx(), split(10_000, 0), 10_000);
+    assert.equal(answer.ocr, 'CLOSED');
+    assert.equal(answer.chat, 'OK');
+  });
+
+  it('an unreadable policy closes every scope and names the reason — fail closed like admission', async () => {
+    for (const [row, reason] of [
+      [{ budgetMode: 'SPLIT', chatMonthlyBudgetSatang: null, ocrMonthlyBudgetSatang: 7000 }, 'SPLIT_CAPS_MISSING'],
+      [split(9000, 7000), 'SPLIT_EXCEEDS_TOTAL'],
+      [{ budgetMode: 'SHARED', pendingBudgetPolicy: { mode: 'WAT' } }, 'POLICY_MALFORMED'],
+    ] as const) {
+      assert.deepEqual(await readiness(tx({ total: 0 }), row, 10_000), {
+        mode: reason === 'SPLIT_EXCEEDS_TOTAL' || reason === 'SPLIT_CAPS_MISSING' ? 'SPLIT' : 'SHARED',
+        total: 'CLOSED', chat: 'CLOSED', ocr: 'CLOSED', policyInvalid: reason,
+        unresolvedHolds: 0, breach: false,
+      });
+    }
+  });
+
+  it('reports unresolved holds and the breach flag beside the scopes, never folded into them', async () => {
+    const answer = await readiness(tx({
+      total: 100, buckets: [{ bucket: 'OCR', costSatang: 100 }],
+      holds: [{ bucket: 'OCR', status: 'UNRESOLVED', upperBoundSatang: 400 }], breach: 1,
+    }), split(3000, 7000), 10_000);
+
+    assert.equal(answer.unresolvedHolds, 1);
+    assert.equal(answer.breach, true);
+    // Money is still left in both buckets; the two flags are what an operator acts on.
+    assert.equal(answer.ocr, 'OK');
+    assert.equal(answer.chat, 'OK');
+  });
+
+  it('only a caller with a known bound may hear INSUFFICIENT; general readiness says "money is left"', async () => {
+    const state = { total: 6900, buckets: [{ bucket: 'OCR', costSatang: 6900 }] };
+    // §11.4: without a bound, a surface may only say money is left — never that the next picture starts.
+    assert.equal((await readiness(tx(state), split(3000, 7000), 10_000)).ocr, 'OK');
+    // With one: 6900 + 0 held + 500 > the 7000 cap. Money is left, so this is NOT "เต็ม" (§12.3).
+    assert.equal((await readiness(tx(state), split(3000, 7000), 10_000, 500)).ocr, 'INSUFFICIENT_FOR_KNOWN_BOUND');
+    // Live holds count against the bound exactly as they do at admission, and a bound that fits
+    // the cap EXACTLY still fits — the same `>` comparison `decideAiBudgetStep` makes.
+    const held = { ...state, holds: [{ bucket: 'OCR', status: 'RESERVED', upperBoundSatang: 90 }] };
+    assert.equal((await readiness(tx(held), split(3000, 7000), 10_000, 10)).ocr, 'OK');
+    assert.equal((await readiness(tx(held), split(3000, 7000), 10_000, 11)).ocr, 'INSUFFICIENT_FOR_KNOWN_BOUND');
+  });
+
+  it('a fake predating the reservation tables reports the TOTAL it can read, and zeroes the rest', async () => {
+    // The tolerance `readAiBudgetMonthSnapshot` already gives: the support timeline's own prisma
+    // fake has no bucket/reservation delegates, and must still get today's SHARED answer.
+    const legacy = { companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 10_000 }) } };
+    assert.deepEqual(await readiness(legacy, null, 10_000), {
+      mode: 'SHARED', total: 'EXHAUSTED', chat: 'EXHAUSTED', ocr: 'EXHAUSTED', unresolvedHolds: 0, breach: false,
+    });
   });
 });
 
