@@ -1,6 +1,6 @@
 # Agent Memory: LINE intake cost and receipt behavior at AI budget cap
 
-Status: Read-only Production diagnosis complete; owner subsequently requested all fixes in the existing NOGROUP spec and selected separate CHAT/OCR caps. Unified spec/plan prepared; no application or budget changes.
+Status: IMPLEMENTED AND MERGED to `develop` + `main` (phases A, B, C, D1, D2, E1a, E1b, E1c, F; PRs #600–#609, #612–#619), NOT deployed; SPLIT caps stay dark behind an unwired flag; UAT acceptance and owner decisions are listed in "Delivery summary and handoff — 2026-09-18" at the end of this file. Original diagnosis (2026-09-17): read-only Production diagnosis complete; the owner then requested all fixes in the existing NOGROUP spec and selected separate CHAT/OCR caps.
 Owner: thawatchai + Codex
 Scope: Explain the screenshot's THB55.67 `line.intake-route` usage and whether receipt uploads/OCR remain available after the affected company's monthly AI money budget is exhausted.
 
@@ -628,3 +628,40 @@ is driven at the `AiGatewayClient` seam rather than through the webhook, because
 pass a 25-second busy-wait deadline and `busy` IS the correct answer for a live hold — through the
 webhook that assertion would be a 25-second sleep. Spec §13 acceptance lines are therefore all still
 unticked; X-01 carries an annotation naming exactly what is proven in-process and what is left.
+
+## Delivery summary and handoff — 2026-09-18
+
+Owner order (2026-09-17): implement the combined spec/plan with **Opus 5 as implementer and Fable 5.1 as controller/reviewer**, then merge to `develop` + `main` after CI. Every phase went through the same loop: implementer brief → controller review of the diff for bugs, gaps and surrounding impact → follow-ups → full local gate on the base-merged tree (contracts, ai-gateway, api FULL suite, web FULL suite, whole-chain acceptance runner, harness, typechecks, maintenance pins, `git diff --check`) → PR pair → strict chain (every CI run of the exact head green, then admin-merge pinned to that head).
+
+| Phase | What | PRs (develop / main) |
+| --- | --- | --- |
+| A | Redis ledger lifecycle — a fresh/expired chat no longer dies on `NOGROUP` | #600 / #601 |
+| D1 | usage metadata + AI Budget breakdown | #602 / #603 |
+| B | typed budget refusals, receipt fallback, `budget_refusal` terminal class, metric filter | #604 / #605 |
+| E1a | SPLIT policy resolver + admin writer (dark), ADR 0013 | #606 / #607 |
+| C | intake cost: R2 + R3 shipped (−13.2% THB/attempted task, image −26%), R1 measured inert and reverted | #608 / #609 |
+| E1b | per-step reservations, evidence-driven settlement, internal seams (dark) | #612 / #613 |
+| E1c | gateway enforces the envelope; unspent holds released; draft seam enforced (dark) | #614 / #615 |
+| D2 | split admin UI, one readiness projection for four surfaces, browser evidence | #616 / #617 |
+| F | combined regression (9 tests) + `budgetScope` carry fix on the receipt OCR response path | #618 / #619 |
+
+Defects the controller review or the combined suite caught before merge (all fixed, each with a test): a second picture silently dropped while the budget is closed; pending-media park without capture permission (B); web crash on API version skew and a cost-adjustment race (D1); opposite aggregate row order → deadlock → lost usage, provider evidence dropped for `RESERVED`/`CANCELLED` holds, SPLIT saved without a company model silently refusing every call, an eager `attachment.mimeType` dereference breaking the web receipt-OCR seam (E1b); `draft-generate` holding money while running unenforced, permanent `UNRESOLVED` holds after a pre-provider gateway refusal, positional evidence attribution assuming sequential calls (E1c); trial-budget ops alert counting budget-0/no-usage trials, available ฿0.00 rendered as "closed", whole AI card failing on a pre-E1a API (D2); gateway mid-chain money refusal losing its CHAT/OCR/TOTAL scope (F).
+
+### State
+
+- **Nothing is deployed.** As read on 2026-09-17, UAT serves `1468ea70` and Production `fc2838c4`. The UAT "cannot start a chat by typing" symptom is fixed by Phase A only once a build containing it is deployed to UAT. Any Production promotion of a `main` at or after `1468ea70` REQUIRES Phase A (Production predates the fail-closed read guard) — it is in `main` now.
+- The Production report (company monthly AI budget exhausted, THB 80.62 of 80) is NOT fixed by code: it needs an admin budget change for that company or the next Bangkok month. Phase B only makes the refusal honest (typed copy, receipt bytes kept, no provider call, no read count).
+- Three additive migrations ship with the next deploy: `20260917140000_ai_usage_metadata`, `20260917150000_ai_budget_split_policy`, `20260917160000_ai_budget_reservations`. No backfill, no usage-cost rewrite.
+- **SPLIT stays dark**: `AI_BUDGET_SPLIT_ACTIVATION_ENABLED` defaults to `false` and is wired into NO deploy script. Every company is `SHARED`; a `SHARED` request carries no envelope and creates no reservation row (asserted byte-for-byte in the gateway and in combined scenario 1). The readiness checklist that must be completed before anyone opens the flag is in "Phase E1c implementation" above.
+- Spec §13: 28 acceptance lines ticked, 25 open. The open ones need evidence no local run can give (spec §14): AC-10…AC-16, B-01…B-06, X-01, X-02 (real LINE / UAT), C-04, D-03 (loading/error/retry + company-switch captures), E-01, E-06, E-08, E-09, R-01, R-07, R-09, R-10, R-12.
+
+### Next (in order)
+
+1. Read `docs/runbooks/cloud-environment-operations.md` and `docs/runbooks/uat-production-v2-deployment.md`, then deploy the current `main` to UAT under that protocol (record the exact run ids; no duplicate dispatch).
+2. UAT acceptance with a synthetic/admin-approved company: type on a brand-new chat (A), budget-refusal copy for text and picture incl. the kept picture (B), web manual/upload path, AI budget page incl. the flag-off split panel (D1/D2). Tick spec lines only from that evidence.
+3. Owner decisions still open: R5 (wider deterministic formatter ≈ THB 0.62 per business read); R-10 wording for active holds on billing warnings; whether a gateway pre-provider budget refusal should refund the OCR READ COUNT (money is already released); who reconciles `UNRESOLVED` / `breach` holds and on which surface; real CHAT/OCR caps per company.
+4. Only after 1–3 and the E1c readiness checklist: a runbook-governed decision to wire and open the activation flag for one company, next-month activation for any company with spend in the current month.
+
+### Residuals recorded, not changed
+
+`append()` recreates a vanished consumer group at id 0; the context limit is applied before the consumption-marker filter; `enabledFeatures` is always `[]` on intake; intake 56 vs plan-route 61 tools; a throwing model-policy read before admission surfaces as `ROUTER_UNREACHABLE` rather than a money code (customer copy still ends up right); `LineIntakeRoutePlan` has no `budgetScope`; "ไม่พอเริ่มอ่านรูปนี้" wording on a mid-chain refusal; lazy sweep transitions are proven only by the real-PostgreSQL spec; no operator surface for `UNRESOLVED`/breach/anomaly holds; `Billing Integration (operations)` can flake with `429 !== 200` on unrelated diffs (rerun the failed job only).
