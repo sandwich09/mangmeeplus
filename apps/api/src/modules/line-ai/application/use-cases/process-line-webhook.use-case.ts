@@ -1767,6 +1767,8 @@ export class ProcessLineWebhookUseCase {
    */
   private async tryRouteIntake(input: {
     requestId: string;
+    /** The original webhook event — the intake's money ATTEMPT identity (ADR 0013 §4). */
+    webhookEventId?: string;
     retryWebhookEventId?: string;
     onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void;
     companyId: string;
@@ -1788,6 +1790,9 @@ export class ProcessLineWebhookUseCase {
         : [];
       return await this.aiGateway.requestLineIntakeRoute({
         requestId: input.requestId,
+        // Not part of the model payload — the intake router builds its prompt from an explicit
+        // field allowlist — so this only reaches the budget attempt key.
+        ...(input.webhookEventId ? { webhookEventId: input.webhookEventId } : {}),
         companyId: input.companyId,
         userId: input.userId,
         locale: 'th-TH',
@@ -4118,6 +4123,7 @@ export class ProcessLineWebhookUseCase {
     const busyWaitDeadlineMs = Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS;
     const routePlan = await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({
       requestId,
+      webhookEventId: event.webhookEventId,
       companyId,
       userId: identity.userId,
       permissions: resolvedAccess.permissions,
@@ -5723,6 +5729,7 @@ export class ProcessLineWebhookUseCase {
     const captionCandidates = computeValueCandidates(normalizeLineText(caption));
     const routePlan = await this.tryRouteIntake({
       requestId,
+      webhookEventId: event.webhookEventId,
       retryWebhookEventId: event.webhookEventId,
       onAdmitted: (identity) => { admissionAttempt.identity = identity; admissionAttempt.companyId = companyId; },
       companyId,

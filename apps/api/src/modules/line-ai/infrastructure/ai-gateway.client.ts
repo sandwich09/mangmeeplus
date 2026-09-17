@@ -293,10 +293,14 @@ export class AiGatewayClient {
       media ? 'media' : 'chat',
       {
         // A picture routes AND transcribes in ONE provider call, so the whole call is OCR (§12.2).
-        // The LINE message id is the durable identity of that picture; the text lane has no webhook
-        // id on this contract and falls back to its request id (see ADR 0013 implementation notes).
+        // The LINE message id is the durable identity of that picture; the text lane uses the
+        // ORIGINAL webhook event when the caller sends one (E1c closed that contract gap) and only
+        // falls back to the transport request id for a caller that does not — a fallback a LINE
+        // redelivery under a fresh request id would let buy a second hold.
         stepKind: media ? 'line-intake-image' : 'line-intake-text',
-        attemptKey: media ? `line-image:${aiBudgetAttemptHash(media.id)}` : `line-text:${aiBudgetAttemptHash(request.requestId)}`,
+        attemptKey: media
+          ? `line-image:${aiBudgetAttemptHash(media.id)}`
+          : `line-text:${aiBudgetAttemptHash(request.webhookEventId ?? request.requestId)}`,
         sourceRoute: 'line-intake-route', modelId: modelPolicy?.modelId ?? '', requestId: request.requestId,
         ...classifyAiUsageRequest('line-intake-route', media ? 'image' : 'text'),
       },

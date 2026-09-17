@@ -30,6 +30,14 @@ export type AiUsageEntry = {
    * reports UNKNOWN. A conservative timeout ceiling must never be displayed as measured tokens.
    */
   usageBasis?: AiUsageBasis;
+  /**
+   * The budget invocation this call was held against (ADR 0013 §6/§7), set by the gateway only
+   * under a `budgetEnvelope`. It makes the response path an IDEMPOTENT duplicate of the evidence
+   * the gateway already posted to `POST /internal/ai/budget-settle`: the API settles each tagged
+   * entry by its own key and the unique fence turns the second arrival into a no-op. Absent from
+   * an older gateway and from every SHARED company, where the normal metering path applies.
+   */
+  invocationKey?: string;
 };
 
 export type AiUsageBasis = 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE';
