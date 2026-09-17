@@ -172,9 +172,11 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
     if (r.kind === 'answer') assert.match(r.replyText, /^ค่าใช้จ่าย: 100\.00 บาท \(2 รายการ\)/);
   });
 
-  it('prefers the validated proposed input over the tool-echoed period, and never fabricates one', () => {
+  it('uses the effective source period even for one-sided or conflicting proposed dates, and never fabricates one', () => {
     const requested = formatPreparedSimpleRead(EXPENSE, expenseOutput(expenseData()), { ...TH, proposedInput: { fromDate: '2026-07-01', toDate: '2026-07-31' } });
-    if (requested.kind === 'answer') assert.match(requested.replyText, /\nช่วง: 2026-07-01 – 2026-07-31/);
+    if (requested.kind === 'answer') assert.match(requested.replyText, /\nช่วง: 2026-08-01 – 2026-08-25/);
+    const oneSided = formatPreparedSimpleRead(EXPENSE, expenseOutput(expenseData()), { ...TH, proposedInput: { fromDate: '2026-08-01' } });
+    if (oneSided.kind === 'answer') assert.match(oneSided.replyText, /\nช่วง: 2026-08-01 – 2026-08-25/);
     // No proposed dates (the tool's current-month default): the tool's own echoed window is stated.
     const echoed = formatPreparedSimpleRead(EXPENSE, expenseOutput(expenseData()), { ...TH, proposedInput: {} });
     if (echoed.kind === 'answer') assert.match(echoed.replyText, /\nช่วง: 2026-08-01 – 2026-08-25/);

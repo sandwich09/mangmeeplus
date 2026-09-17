@@ -1,3 +1,4 @@
+import { BILLING_TEST_ADDRESS, applySyntheticCustomerFields } from './billing-profile-fixture';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import type {BillingPolicy} from '@watchdog-bms/contracts';
@@ -17,7 +18,7 @@ export async function checkBillingOfferTerms(input:Parameters<typeof checkBillin
     if(method==='GET'&&path===`/prices/${priceId}`)return response({id:priceId,object:'price',livemode:false,active:true,type:'recurring',product:'prod_Pro',currency:'thb',unit_amount:mismatch?terms.annualPriceSatang+1:terms.annualPriceSatang,
       recurring:{interval:'year',interval_count:1,usage_type:'licensed'},billing_scheme:'per_unit',tax_behavior:'inclusive'});
     if(method==='POST'&&path==='/customers'&&form.get('metadata[billingAccountId]')===(await db.billingAccount.findFirst({where:{companyId}}))?.id){
-      accountId=form.get('metadata[billingAccountId]')!;const customer={id:customerId,object:'customer',livemode:false,email:form.get('email'),metadata:{billingAccountId:accountId}};provider.customers!.push(customer);writes++;return response(customer);
+      accountId=form.get('metadata[billingAccountId]')!;const customer=applySyntheticCustomerFields({id:customerId,object:'customer',livemode:false,email:form.get('email'),metadata:{billingAccountId:accountId}},form);provider.customers!.push(customer);writes++;return response(customer);
     }
     if(method==='POST'&&path==='/checkout/sessions'&&form.get('mode')==='subscription'&&form.get('customer')===customerId){
       const key=new Headers(init?.headers).get('idempotency-key')!;if(ownedSessions.has(key))return response(ownedSessions.get(key));
@@ -90,7 +91,7 @@ export async function checkBillingOfferTerms(input:Parameters<typeof checkBillin
     cases.push('offer-terms-public-catalog-revision-shared-default-trial-and-enterprise-lock-without-financial-mutation');
 
     if(browser&&process.env.MANGMEE_MARKETING_DIR){const {checkBillingMarketing}=await import('./billing-marketing-smoke');cases.push(...(await checkBillingMarketing({page:browser.page,appOrigin:browser.origin,directory:process.env.MANGMEE_MARKETING_DIR,evidenceDir:browser.evidenceDir,expectedPro:{monthlySatang:109901,annualSatang:1099001,annualReceipts:1500,branches:7,members:25}})).map(name=>`offer-terms-${name}`));await browser.page.setViewportSize({width:390,height:844});}
-    input.companyIds.push(companyId);await db.company.create({data:{id:companyId,name:'ร้านทดสอบราคาและสิทธิ์ใหม่'}});
+    input.companyIds.push(companyId);await db.company.create({data:{id:companyId,name:'ร้านทดสอบราคาและสิทธิ์ใหม่',addressJson:BILLING_TEST_ADDRESS}});
     const owner=await db.membershipRole.findFirstOrThrow({where:{membershipId:input.membershipId,role:{key:'OWNER'}}});
     const member=await db.companyMembership.create({data:{companyId,userId:input.userIds[0]!,roles:{create:{roleId:owner.roleId}}}});await input.recordLegal(input.userIds[0]!,member.id,companyId);
     await db.companyPlanTerm.create({data:{companyId,tierKey:'FREE_TRIAL_15',branchLimit:1,employeeLimit:2,monthlySlipLimit:15,termStartAt:new Date(Date.now()-86400000),termEndsAt:new Date(Date.now()+29*86400000)}});

@@ -2,7 +2,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ConflictException, UnauthorizedException, UnprocessableEntityException } from '@nestjs/common';
 import { currentLegalRelease } from '../../auth/application/legal-acceptance.service';
-import { SubmitLineSignupUseCase } from './submit-line-signup.use-case';
+import { SubmitLineSignupUseCase, lineSignupPayloadHash } from './submit-line-signup.use-case';
+
+import { canonicalFingerprint } from '../../../common/security/canonical-fingerprint';
+import { SIGNUP_DISCOVERY_SOURCE_OPTIONS } from '@watchdog-bms/contracts';
 
 const RELEASE = currentLegalRelease('th');
 const LEGAL = { ...RELEASE, locale: 'th' };
@@ -220,6 +223,41 @@ function harness(options: {
 }
 
 describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
+  it('persists discovery independently of source/referral and rejects changed replays', async () => {
+    for (const { value } of SIGNUP_DISCOVERY_SOURCE_OPTIONS) {
+      const h = harness();
+      const cmd = { ...CMD, referralCode: 'campaign-1', discoverySource: value, discoverySourceOther: ' เพื่อนแนะนำ ' };
+      const result = await h.useCase.execute(cmd, NOW);
+      assert.equal(h.created[0].discoverySource, value);
+      assert.equal(h.created[0].discoverySourceOther, value === 'OTHER' ? 'เพื่อนแนะนำ' : null);
+      assert.equal(h.created[0].source, 'line-oa');
+      assert.equal(h.created[0].referralCode, 'campaign-1');
+      assert.equal(result.progress?.discoverySource, value);
+      await h.useCase.execute({ ...cmd, discoverySourceOther: 'เพื่อนแนะนำ' }, NOW);
+      await assert.rejects(() => h.useCase.execute({ ...cmd, discoverySource: null }, NOW), /line_signup_submission_conflict/);
+      if (value === 'OTHER') await assert.rejects(() => h.useCase.execute({ ...cmd, discoverySourceOther: 'โฆษณา' }, NOW), /line_signup_submission_conflict/);
+      assert.equal(h.created.length, 1);
+    }
+  });
+
+  it('keeps historical payload fingerprints when discovery is omitted', () => {
+    const input = { ...CMD, referralCode: null, discoverySource: null, discoverySourceOther: null };
+    const verified = { providerUserId: 'Uline-1', channelId: 'channel-1' };
+    assert.equal(lineSignupPayloadHash(input, verified), canonicalFingerprint({
+      companyName: input.companyName, phoneNumber: input.phoneNumber, contactEmail: input.contactEmail,
+      referralCode: null, intent: input.intent, legal: input.legal,
+      lineProviderUserId: verified.providerUserId, lineChannelId: verified.channelId,
+    }));
+  });
+
+  it('rejects malformed discovery before persisting', async () => {
+    const h = harness();
+    for (const fields of [{ discoverySource: 'unknown' }, { discoverySource: [] }, { discoverySourceOther: {} }, { discoverySource: 'OTHER', discoverySourceOther: 'ก'.repeat(201) }]) {
+      await assert.rejects(() => h.useCase.execute({ ...CMD, ...fields } as any, NOW), BadRequestException);
+    }
+    assert.equal(h.created.length, 0);
+  });
+
   it('queues reapplication after rejection for manual review even with an unused changed email and no prior shop', async () => {
     for (const contactEmail of ['shop@example.test', 'changed@example.test']) {
       const h = harness({ approvalMode: 'AUTO_FREE', priorRejected: true });
@@ -360,7 +398,7 @@ describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
 
   it('corrects contact under the request version and invalidates the earlier review before resuming', async () => {
     const h = harness();
-    const initial = await h.useCase.execute(CMD, NOW);
+    const initial = await h.useCase.execute({ ...CMD, discoverySource: 'OTHER', discoverySourceOther: 'เพื่อนแนะนำ' }, NOW);
     h.patchRequest({
       reviewResolution: 'REQUEST_INFO', resolutionNote: 'อีเมลไม่ถูกต้อง',
       resolvedAt: NOW, resolvedByUserId: 'admin-1',
@@ -378,6 +416,8 @@ describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
     }, NOW);
 
     assert.equal(corrected.progress?.contactEmail, 'corrected@example.test');
+    assert.equal(corrected.progress?.discoverySource, 'OTHER');
+    assert.equal(corrected.progress?.discoverySourceOther, 'เพื่อนแนะนำ');
     assert.equal(corrected.progress?.state, 'PENDING_REVIEW');
     const mutation = h.updates.find((update: any) => update.data.contactEmail === 'corrected@example.test');
     assert.equal(mutation.data.reviewResolution, null);

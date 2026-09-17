@@ -6,6 +6,7 @@
 // by prisma-enum-parity.spec.ts. Adding a value in one place and not the other fails that spec.
 import type { BuyerSnapshotV1 } from './buyer-snapshot-v1.js';
 import type { CivilDate } from './civil-date.js';
+import type { CompanyBusinessType } from './company-business-type.js';
 
 // ─── Enum mirrors (§4.1) ─────────────────────────────────────────────────────
 
@@ -120,6 +121,8 @@ export type MaskedCompanyIdentity = {
 /** What `company.legal_identity.read` adds. */
 export type FullCompanyIdentity = {
   masked: false;
+  /** Self-reported activity, independent of legal tax evidence and the onboarding category. */
+  businessType?: CompanyBusinessType;
   displayName: string;
   registeredName: string | null;
   taxId: string | null;

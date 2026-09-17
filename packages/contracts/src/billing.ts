@@ -1,4 +1,5 @@
 import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity } from './plan-term.js';
+import type { BillingCompanyProfile } from './billing-company-profile.js';
 
 export const STRIPE_API_VERSION = '2026-08-26.dahlia' as const;
 export const BILLING_PAID_TIERS = ['STARTER_249', 'BASIC_499', 'PRO_999'] as const;
@@ -95,6 +96,8 @@ export type BillingReceiptUsage = {
   monthlyAllowance?: { limit: number | null; used: number; additionalRemaining: number; additionalExpiresAt: string | null };
 };
 export type BillingQuote = {
+  /** Absent only on legacy quotes/history; new purchases require a reviewed profile. */
+  billingProfile?: BillingCompanyProfile;
   quoteId: string; companyId: string; companyName: string; policyRevision: string; expiresAt: string;
   offer: BillingOffer; subtotalSatang: number; taxSatang: number; totalSatang: number;
   taxTreatment: BillingTaxTreatment; consentRevision: string; paidStart: 'IMMEDIATE' | 'AFTER_TRIAL';
@@ -116,6 +119,7 @@ export type BillingCapacityImpact = { retainedBranches: string[]; suspendedBranc
   defaults: { member: string; branch: string | null }[] };
 export type BillingCollectionPause = {behavior:'keep_as_draft'|'void'|'mark_uncollectible'|'unknown';resumesAt:string|null};
 export type BillingStatus = {
+  billingProfile?: BillingCompanyProfile;
   collectionPause?: BillingCollectionPause|null;
   companyId: string; companyName: string; mode: BillingMode | 'DISABLED'; policyRevision: string | null;
   paymentState: 'NONE' | 'PENDING' | 'UNKNOWN' | 'PAID' | 'FAILED' | 'ACTION_REQUIRED';

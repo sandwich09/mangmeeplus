@@ -1,9 +1,10 @@
 'use client';
 
 import Link from 'next/link';
+import { billingProfileReturnHref } from '@/features/billing/billing-profile-navigation';
 import { AccountEmailOtpPanel } from '@/features/auth/AccountEmailOtpPanel';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { todayCivilDate, type CompanyIdentityResponse, type CompanyLegalAddress, type VatRegistrationStatus } from '@watchdog-bms/contracts';
+import { todayCivilDate, DBD_TSIC_ACTIVITIES, COMPANY_BUSINESS_TYPE_OTHER_MAX, type CompanyIdentityResponse, type CompanyLegalAddress, type VatRegistrationStatus } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { ChevronDownIcon } from '@/common/icons';
@@ -15,6 +16,7 @@ import {
   getAccountProfile,
   getCompanyIdentity,
   patchCompanyIdentity,
+  patchCompanyBusinessType,
   putVatRegistration,
   setMyFirstPassword,
   setMyPhoneNumber,
@@ -82,6 +84,9 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
   const [shopError, setShopError] = useState<string | null>(null);
   const [vatError, setVatError] = useState<string | null>(null);
   const [shopSaving, setShopSaving] = useState(false);
+  const [businessTypeCode, setBusinessTypeCode] = useState('');
+  const [businessTypeOther, setBusinessTypeOther] = useState('');
+  const [businessTypeError, setBusinessTypeError] = useState<string | null>(null);
 
   // บัญชีของฉัน
   const [phone, setPhone] = useState('');
@@ -92,6 +97,8 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSaving, setPasswordSaving] = useState(false);
+  const [billingReturnHref, setBillingReturnHref] = useState<string | null>(null);
+  useEffect(() => { setBillingReturnHref(billingProfileReturnHref(companyId, window.location.search)); }, [companyId]);
 
   // L1: the dashboard card caches its answer for 10 minutes, so without this the item the owner
   // just completed keeps reading as missing on the next dashboard visit.
@@ -121,6 +128,8 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
         setRegisteredName(nextIdentity.identity.registeredName ?? '');
         setTaxId(nextIdentity.identity.taxId ?? '');
         setAddress({ ...EMPTY_ADDRESS, ...(nextIdentity.identity.addressJson ?? {}) });
+        setBusinessTypeCode(nextIdentity.identity.businessType?.code ?? '');
+        setBusinessTypeOther(nextIdentity.identity.businessType?.other ?? '');
       }
       setVatChoice(nextIdentity.vatRegistration?.status ?? 'UNKNOWN');
       setPhone(nextAccount.phoneNumber ?? '');
@@ -177,10 +186,11 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
     if (!control || !canEditShop) return;
     setShopError(null);
     setVatError(null);
+    setBusinessTypeError(null);
     const plan = buildShopSave(
       control,
-      full ? { registeredName: full.registeredName, taxId: full.taxId, addressJson: full.addressJson as Record<string, unknown> | null } : null,
-      { registeredName, taxId, address },
+      full ? { registeredName: full.registeredName, taxId: full.taxId, addressJson: full.addressJson as Record<string, unknown> | null, businessType: full.businessType } : null,
+      { registeredName, taxId, address, businessTypeCode, businessTypeOther },
       { current: serverVatStatus, chosen: vatChoice },
     );
     if ('error' in plan) {
@@ -201,8 +211,12 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
           setShopError(fields.length > 0 ? fields.join(' · ') : apiErrorMessage(error));
         }
       }
-      // Attempted even when the identity half failed: the two are independent writes behind one
-      // press, and nothing typed is lost either way.
+      // These writes are independent: attempt each changed section and preserve typed values
+      // even when another section fails.
+      if (plan.businessTypePatch) {
+        try { await patchCompanyBusinessType(companyId, plan.businessTypePatch); }
+        catch (error) { failed = true; setBusinessTypeError(apiErrorMessage(error)); }
+      }
       if (plan.vatStatus && identity?.vatRegistration) {
         try {
           await putVatRegistration(companyId, {
@@ -218,6 +232,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
       invalidateChecklist();
       if (!failed) toast.success('บันทึกข้อมูลร้านแล้วค่ะ');
       await load();
+      if (!failed && billingReturnHref) window.location.assign(billingReturnHref);
     } finally {
       setShopSaving(false);
     }
@@ -349,11 +364,35 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
             </dl>
           ) : (
           <div className="grid gap-4">
+            <div>
+              <label htmlFor="business-type" className="mb-2 block text-sm font-medium text-gray-900">ประเภทธุรกิจ</label>
+              <ThemedSelect
+                id="business-type" aria-label="ประเภทธุรกิจ" searchable
+                searchPlaceholder="ค้นหาชื่อธุรกิจหรือรหัส TSIC"
+                value={businessTypeCode} disabled={!canEditShop || shopSaving}
+                onChange={(event) => {
+                  setBusinessTypeCode(event.target.value);
+                  if (event.target.value !== 'OTHER') setBusinessTypeOther('');
+                }}
+              >
+                <option value="">ยังไม่ระบุ</option>
+                <option value="OTHER">อื่น ๆ</option>
+                {DBD_TSIC_ACTIVITIES.map((row) => <option key={row.code} value={row.code}>{`${row.code} — ${row.label}`}</option>)}
+              </ThemedSelect>
+              <p className="mt-1 text-sm text-gray-500">เลือกกิจกรรมหลักของร้าน อ้างอิง <a href="https://tsic.dbd.go.th/index" target="_blank" rel="noreferrer" className="underline">รหัสธุรกิจ DBD (TSIC)</a></p>
+            </div>
+            {businessTypeCode === 'OTHER' && (
+              <TextField label="ระบุประเภทธุรกิจอื่น ๆ" value={businessTypeOther}
+                maxLength={COMPANY_BUSINESS_TYPE_OTHER_MAX} required
+                disabled={!canEditShop || shopSaving}
+                onChange={(event) => setBusinessTypeOther(event.target.value)} />
+            )}
+            {businessTypeError && <Banner tone="error">{businessTypeError}</Banner>}
             <TextField
               label="ชื่อจดทะเบียน"
               value={registeredName}
               disabled={!canEditShop || shopSaving}
-              hint="ชื่อตามหนังสือรับรอง ไม่ใช่ชื่อร้านที่ใช้เรียกกัน"
+              hint="ใช้ชื่อจดทะเบียนบนใบแจ้งหนี้และใบเสร็จ หากเว้นว่างจะใช้ชื่อร้านที่สมัครไว้"
               onChange={(event) => setRegisteredName(event.target.value)}
             />
             <TextField
@@ -410,8 +449,9 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                 disabled={shopSaving} aria-busy={Boolean(shopSaving)}
                 onClick={() => void saveShop()}
               >
-                {shopSaving ? 'กำลังบันทึก...' : 'บันทึกข้อมูลร้าน'}
+                {shopSaving ? 'กำลังบันทึก...' : billingReturnHref ? 'บันทึกและกลับไปซื้อแพ็กเกจ' : 'บันทึกข้อมูลร้าน'}
               </button>
+              {billingReturnHref && <Link href={billingReturnHref} className={LINK_BUTTON}>กลับไปซื้อแพ็กเกจ</Link>}
             </div>
           )}
         </MangmeeCard>

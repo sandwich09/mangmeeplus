@@ -4,6 +4,8 @@ import type {
   PatchCompanyIdentityRequest,
   PatchCompanyIdentityResult,
   PutVatRegistrationRequest,
+  CompanyBusinessType,
+  PatchCompanyBusinessTypeRequest,
 } from '@watchdog-bms/contracts';
 
 /** Mirrors `AccountSecurityState` on the API (`get-account-security-state.use-case.ts`). */
@@ -36,6 +38,10 @@ export function patchCompanyIdentity(
 
 export function putVatRegistration(companyId: string, body: PutVatRegistrationRequest): Promise<unknown> {
   return apiFetch(`/v1/companies/${companyId}/vat-registration`, { method: 'PUT', body: JSON.stringify(body) });
+}
+
+export function patchCompanyBusinessType(companyId: string, body: PatchCompanyBusinessTypeRequest): Promise<CompanyBusinessType> {
+  return apiFetch(`/v1/companies/${companyId}/identity/business-type`, { method: 'PATCH', body: JSON.stringify(body) });
 }
 
 export function getAccountProfile(): Promise<AccountProfileState> {

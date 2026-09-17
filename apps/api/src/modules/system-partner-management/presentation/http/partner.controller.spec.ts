@@ -332,6 +332,7 @@ function detailCompany(marker: { status: string; normalizerVersion: number; coho
     aiConfiguration: null,
     entitlementSet: { setVersion: 7 },
     entitlementNormalization: marker,
+    signupRequests: [],
     memberships: [],
   };
 }

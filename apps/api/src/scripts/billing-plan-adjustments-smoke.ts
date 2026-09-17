@@ -1,4 +1,5 @@
 import {ensureBillingCompanyProof} from './billing-configuration-drafts-smoke';
+import { BILLING_TEST_ADDRESS } from './billing-profile-fixture';
 import assert from 'node:assert/strict';
 import {checkBillingFeatureControls} from './billing-feature-controls-smoke';
 import {checkBillingFreeDays} from './billing-free-days-smoke';
@@ -21,7 +22,7 @@ export async function checkBillingPlanAdjustments(input:Parameters<typeof checkB
   let accountId:string|undefined,ownerRoleId:string|undefined,partnerRoleId:string|undefined,providerWrites=0;
   input.transport(async(url,init)=>{if(url.hostname==='api.stripe.com'&&init?.method&&init.method!=='GET'){providerWrites++;throw Error('Plan adjustment cannot write to Stripe');}return undefined;});
   try{
-    await db.company.create({data:{id:companyId,name:'ร้านทดสอบสิทธิ์แพ็กเกจ'}});
+    await db.company.create({data:{id:companyId,name:'ร้านทดสอบสิทธิ์แพ็กเกจ',addressJson:BILLING_TEST_ADDRESS}});
     const sessionPermission=await db.permission.findUniqueOrThrow({where:{key:'account.session.read'}});
     const role=await db.role.create({data:{companyId,scopeKey:companyId,key:'OWNER',name:'Synthetic plan owner',permissions:{create:{permissionId:sessionPermission.id}}}});ownerRoleId=role.id;
     const owner=await db.companyMembership.create({data:{companyId,userId:input.userIds[0]!,roles:{create:{roleId:role.id}}}});

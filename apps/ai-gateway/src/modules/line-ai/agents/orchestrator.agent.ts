@@ -604,6 +604,8 @@ export class OrchestratorAgent {
         currentDate: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }),
         conversationContext: req.conversationContext,
         valueCandidates: req.valueCandidates,
+        sourceRefs: composed.sourceRefs,
+        asOf: composableOutputs.find((output) => output.toolData?.length)?.asOf,
       });
       if (askUserQuestion) replyText = `${replyText}\n${askUserQuestion}`;
       if (nativeRan) {

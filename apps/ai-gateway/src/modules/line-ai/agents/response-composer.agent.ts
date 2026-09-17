@@ -11,6 +11,7 @@ import { LINE_CAPABILITY_GROUPS, LINE_TOOL_REGISTRY, canAdvertiseReceiptCapture,
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { MANGMEE_JOKE_BANK } from './mangmee-joke-bank';
 import { MANGMEE_PERSONA_PROMPT } from './mangmee-persona';
+import { formatExpenseSummary } from './prepared-simple-read-formatter';
 
 export const RESPONSE_COMPOSER_SYSTEM_PROMPT = `
 You are the Response Composer Agent for MangmeePlus LINE AI.
@@ -50,7 +51,7 @@ const ANSWER_COMPOSER_SYSTEM_PROMPT = [
   'Answer in the same language as the question. Short LINE chat style, plain text, no markdown, no JSON.',
   'The FIRST line must be the direct answer to the question — lead with the number or fact itself (e.g. "ค่าใช้จ่ายเดือนนี้ 12,450 บาท"), never with preamble.',
   'After the first line: at most 3 more short lines of the most useful context (period covered, biggest item, or one next step). Total reply under ~400 characters unless the user explicitly asked for a full list.',
-  'For a broad expense summary or amount question, answer with the total only. If a count is explicitly requested, include the source count. List records, vendors, or status breakdowns only when explicitly requested, and cap any list at 5 lines.',
+  'For a broad expense summary or amount question, include the source total, record count and effective period. List records, vendors, or status breakdowns only when explicitly requested, and cap any list at 5 lines.',
   'Never claim any business action was performed, approved, paid, or posted.',
   'Return only the reply text.',
 ].join('\n');
@@ -521,7 +522,7 @@ export class ResponseComposerAgent {
     toolData: Array<{ tool: string; data: unknown }>,
     groundedFallback: string,
     provider: IModelProvider,
-    opts: { planLanguage?: string; locale?: string; currentDate?: string; conversationContext?: LineAiConversationContext; valueCandidates?: LineAiValueCandidates } = {},
+    opts: { planLanguage?: string; locale?: string; currentDate?: string; conversationContext?: LineAiConversationContext; valueCandidates?: LineAiValueCandidates; sourceRefs?: SourceRef[]; asOf?: string } = {},
   ): Promise<string> {
     if (toolData.length === 0) return groundedFallback;
     // Daily closing bucket labels carry accounting semantics (due is not approval; currencies
@@ -547,15 +548,21 @@ export class ResponseComposerAgent {
       ? language === 'en' ? `• Expense count (excluding rejected or voided records): ${count} records` : `• จำนวนค่าใช้จ่ายในระบบ (ไม่รวมยกเลิกหรือถูกปฏิเสธ): ${count} รายการ`
       : language === 'en' ? 'The expense count is unavailable in this data. Please check the web app.' : 'ยังไม่มีข้อมูลจำนวนค่าใช้จ่ายที่ยืนยันได้ กรุณาตรวจสอบในเว็บค่ะ';
     const summary = expense?.['summary'];
-    const expenseTotalOnly = soleExpense && !expenseCountRequested
+    const expenseSummaryRequested = soleExpense && !expenseCountRequested
       && summary && typeof summary === 'object' && !Array.isArray(summary)
       && !requestsExpenseBreakdown(question)
       && !/(?:รายการ|อะไร|ร้านไหน|ใคร|ผู้ขาย|ล่าสุด|สถานะ|จ่ายแล้ว|ยังไม่จ่าย|ค้าง|รอตรวจ|ยืนยัน|\blist\b|\bwhich\b|vendor|latest|status|paid|unpaid|pending|confirmed)/iu.test(question);
-    const totalLine = expenseTotalOnly ? groundedFallback.split('\n').find((line) => line.trimStart().startsWith('• ยอดทั้งหมด:')) : undefined;
-    const fallback = expenseCountRequested ? `${countLine}\n${groundedFallback}` : totalLine?.replace('ยอดทั้งหมด:', 'ยอดรวม:') ?? groundedFallback;
+    if (expenseSummaryRequested) {
+      const formatted = formatExpenseSummary(expense, { language, locale: opts.locale ?? 'th-TH' },
+        opts.sourceRefs?.find((source) => source.module === 'expenses' && source.entityType === 'expense_summary'), opts.asOf);
+      return formatted.kind === 'answer' ? formatted.replyText : language === 'en'
+        ? 'Expense summary is unavailable in this data. Please check the web app.'
+        : 'ยังไม่มีข้อมูลสรุปค่าใช้จ่ายที่ยืนยันได้ กรุณาตรวจสอบในเว็บค่ะ';
+    }
+    const fallback = expenseCountRequested ? `${countLine}\n${groundedFallback}` : groundedFallback;
     // Keep count and amount roles authoritative: numeric membership cannot stop a model
     // from replacing the current total with a date, context amount or user-value candidate.
-    if (expenseCountRequested || expenseTotalOnly) return fallback;
+    if (expenseCountRequested) return fallback;
     const annotatedToolData = toolData.map((entry) => ({ ...entry, state: isExplicitEmptyData(entry.data) ? 'empty' : 'data' }));
     const hasEmptyResults = annotatedToolData.some((entry) => entry.state === 'empty');
     const result = await provider.generateText({

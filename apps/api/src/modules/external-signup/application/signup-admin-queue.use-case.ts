@@ -6,6 +6,7 @@ import type {
   AdminSignupQueueItemDto,
   AdminSignupReissueDto,
   LineSignupEligibleCompanyDto,
+  SignupDiscoverySource,
 } from '@watchdog-bms/contracts';
 import { COMPANY_BUSINESS_CATEGORIES, SIGNUP_RESOLUTION_NOTE_MAX_LENGTH } from '@watchdog-bms/contracts';
 import type { CompanySignupRequest, Prisma } from '../../../generated/prisma/client';
@@ -1140,6 +1141,8 @@ function toQueueItem(
     version: request.version,
     state: request.state,
     companyName: request.companyName,
+    discoverySource: (request.discoverySource as SignupDiscoverySource | null) ?? undefined,
+    discoverySourceOther: request.discoverySource === 'OTHER' ? request.discoverySourceOther ?? undefined : undefined,
     ownerDisplayName: request.ownerDisplayName,
     // Omitted rather than blanked when the application came from LINE: the queue shows "—" and no
     // reader can mistake an empty string for a real address (review B-03).

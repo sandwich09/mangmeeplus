@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { expect } from '@playwright/test';
 import type { PrismaService } from '../common/database/prisma.service';
 import type { startBillingBrowser } from './billing-browser-smoke';
 
@@ -89,8 +90,9 @@ export async function checkBillingAdjustments(input:{prisma:PrismaService;compan
       await page.getByRole('button',{name:'ประวัติ',exact:true}).click();
       await page.getByRole('link',{name:'ดูเอกสาร',exact:true}).first().click();
       await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).waitFor();await page.getByText('ต้องทำขั้นตอนเพิ่มเติม',{exact:false}).first().waitFor();
-      await page.getByRole('button',{name:'รายการหน้าถัดไป',exact:true}).click();await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).getByRole('article').nth(1).waitFor();assert.equal(await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).getByRole('article').count(),2);
-      await page.getByRole('button',{name:'กลับไปหน้าแรก',exact:true}).click();await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).getByRole('article').nth(24).waitFor();assert.equal(await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).getByRole('article').count(),25);
+      // The previous page also has a second article; wait for the new page's exact count.
+      await page.getByRole('button',{name:'รายการหน้าถัดไป',exact:true}).click();await expect(page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).getByRole('article')).toHaveCount(2,{timeout:30000});
+      await page.getByRole('button',{name:'กลับไปหน้าแรก',exact:true}).click();await expect(page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).getByRole('article')).toHaveCount(25,{timeout:30000});
       fail=true;await page.getByRole('button',{name:'อัปเดตข้อมูล',exact:true}).click();await page.getByRole('alert').filter({hasText:'อ่านข้อมูลจาก Stripe ไม่สำเร็จ'}).waitFor();assert.equal(await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).count(),0);
       fail=false;await page.getByRole('button',{name:'ลองอ่านข้อมูลอีกครั้ง',exact:true}).click();await page.getByRole('region',{name:'รายละเอียดการปรับยอด'}).waitFor();
       await page.getByRole('combobox',{name:'รายการที่ต้องการดู',exact:true}).click();await page.getByRole('option',{name:'เอกสารปรับยอด',exact:true}).click();await page.getByText(notes[0]!.number,{exact:true}).waitFor();

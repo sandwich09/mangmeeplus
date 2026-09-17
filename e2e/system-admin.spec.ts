@@ -20,6 +20,33 @@ async function login(page: any, username: string, password: string) {
 }
 
 test.describe('SYS — system admin', () => {
+  test('SYS discovery attribution stays visible in company information on mobile and desktop', async ({ page }, info) => {
+    await login(page, SEED_USERS.systemAdmin.username, SEED_USERS.systemAdmin.password);
+    // Real admin page/session; only company detail data is controlled for this presentation check.
+    let discoverySource: string | undefined = 'OTHER';
+    await page.route(`**/api/v1/system/partners/${COMPANY_ID}`, async (route) => {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      await route.fulfill({ response, json: {
+        ...await response.json(), discoverySource,
+        discoverySourceOther: discoverySource === 'OTHER' ? 'เพื่อนแนะนำ <script>test</script>' : undefined,
+      } });
+    });
+    for (const width of [390, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`/system/partners/${COMPANY_ID}`);
+      const overview = page.getByRole('region', { name: 'ภาพรวมบริษัท', exact: true });
+      await expect(overview.getByText('รู้จักเราทางไหน', { exact: true })).toBeVisible();
+      await expect(overview.getByText('อื่น ๆ — เพื่อนแนะนำ <script>test</script>', { exact: true })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: info.outputPath(`company-discovery-${width}.png`), fullPage: true });
+    }
+    discoverySource = undefined;
+    await page.reload();
+    await expect(page.getByText('รู้จักเราทางไหน', { exact: true }).locator('..')).toContainText('ไม่ระบุ');
+    await expectNoClientError(page);
+  });
+
   test('SYS-01 @smoke system partner list renders for system admin', async ({ page }) => {
     await login(page, SEED_USERS.systemAdmin.username, SEED_USERS.systemAdmin.password);
     await page.goto('/system/partners');

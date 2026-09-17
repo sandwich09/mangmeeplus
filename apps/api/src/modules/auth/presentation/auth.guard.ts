@@ -58,6 +58,7 @@ const TERM_RECOVERY_ROUTES = new Set([
   'GET /v1/plan-term/notice', 'GET /v1/auth/me', 'GET /v1/auth/me/companies',
   'GET /v1/auth/legal-acceptance', 'POST /v1/auth/legal-acceptance',
   'POST /v1/auth/password/change', 'POST /v1/auth/logout',
+  'GET /v1/auth/account/security',
 ]);
 
 // Account email proof is a prerequisite for payment, including after a term hold.
@@ -70,6 +71,13 @@ export function isAccountEmailRecoveryRoute(method: string, path: string): boole
 
 // Only implemented billing and package-request read/create routes may recover a term hold.
 // Session, legal/platform access, tenant and route permissions still apply; mutations require OWNER.
+export function isCompanyProfileRecoveryRoute(method: string, path: string): boolean {
+  const clean = cleanRequestPath(path).toLowerCase(), prefix = '/v1/companies/[^/]+';
+  return ((method === 'GET' || method === 'PATCH') && new RegExp(`^${prefix}/identity$`).test(clean))
+    || (method === 'PATCH' && new RegExp(`^${prefix}/identity/business-type$`).test(clean))
+    || (method === 'PUT' && new RegExp(`^${prefix}/vat-registration$`).test(clean));
+}
+
 export function isBillingRecoveryRoute(method: string, path: string): boolean {
   const clean = cleanRequestPath(path).toLowerCase();
   if ((method === 'GET' || method === 'POST') && /^\/v1\/companies\/[^/]+\/package-change-requests$/.test(clean)) return true;
@@ -216,7 +224,7 @@ export class AuthGuard implements CanActivate {
     try {
       // Only authenticated, explicitly scoped recovery/session reads can resolve a term hold.
       // Permissions/legal/platform/session checks below still apply; never expose this as input.
-      const allowTermRecovery = TERM_RECOVERY_ROUTES.has(`${req.method} ${cleanPath}`) || isBillingRecoveryRoute(req.method, cleanPath) || isAccountEmailRecoveryRoute(req.method, cleanPath);
+      const allowTermRecovery = TERM_RECOVERY_ROUTES.has(`${req.method} ${cleanPath}`) || isBillingRecoveryRoute(req.method, cleanPath) || isAccountEmailRecoveryRoute(req.method, cleanPath) || isCompanyProfileRecoveryRoute(req.method, cleanPath);
       req.context = await this.resolveContext.execute(subject, requestId, authProvider, companyId, allowTermRecovery);
       req.context.sessionId = session.id;
     } catch (error) {
@@ -261,7 +269,12 @@ export class AuthGuard implements CanActivate {
     // P29) matches nothing here and is completely unaffected. SYSTEM_ADMIN is exempt for the same
     // reason it is exempt from the platform-closed gate above: the console that fixes an expiry
     // must not be lockable by one.
-    if (!isTermExpiryExempt(reqPath) && !isBillingRecoveryRoute(req.method, reqPath) && !req.context.roles.includes('SYSTEM_ADMIN')) {
+    const ownerProfileRecovery = isCompanyProfileRecoveryRoute(req.method, reqPath) && req.context.roles.includes('OWNER');
+    if (isCompanyProfileRecoveryRoute(req.method, reqPath) && !ownerProfileRecovery && !req.context.roles.includes('SYSTEM_ADMIN')) {
+      const company = await this.prisma.client.company.findUnique({ where: { id: req.context.companyId }, select: { status: true } });
+      if (company?.status !== 'ACTIVE') throw new ForbiddenException('เฉพาะเจ้าของบริษัทเท่านั้นที่แก้ข้อมูลเพื่อซื้อแพ็กเกจใหม่ได้');
+    }
+    if (!isTermExpiryExempt(reqPath) && !isBillingRecoveryRoute(req.method, reqPath) && !ownerProfileRecovery && !req.context.roles.includes('SYSTEM_ADMIN')) {
       const term = await this.prisma.client.companyPlanTerm.findUnique({
         where: { companyId: req.context.companyId },
         select: { termEndsAt: true },

@@ -10,10 +10,12 @@ import {
   IsString,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import {
   LEGAL_IDENTITY_CORRECTION_REASONS,
   USER_LEGAL_IDENTITY_CHANGE_KINDS,
+  COMPANY_BUSINESS_TYPE_OTHER_MAX,
   type CompanyLegalAddress,
   type LegalIdentityCorrectionReason,
   type UserLegalIdentityChangeKind,
@@ -40,6 +42,12 @@ class PatchCompanyIdentityBodyDto {
 
 class CompleteCaptureBodyDto {
   @Type(() => Number) @IsInt() @Min(0) expectedLegalIdentityVersion!: number;
+}
+
+export class PatchCompanyBusinessTypeBodyDto {
+  @IsInt() @Min(0) expectedVersion!: number;
+  @ValidateIf((_object, value) => value !== null) @IsString() @MaxLength(5) code!: string | null;
+  @IsOptional() @IsString() @MaxLength(COMPANY_BUSINESS_TYPE_OTHER_MAX) other?: string | null;
 }
 
 @Controller('companies/:companyId/identity')
@@ -80,5 +88,17 @@ export class CompanyIdentityController {
   ) {
     assertRouteCompany(ctx, companyId);
     return this.identity.completeCapture(ctx, companyId, body.expectedLegalIdentityVersion);
+  }
+
+  @Patch('business-type')
+  @RequirePermissions('company.legal_identity.manage')
+  @ApiOperation({ summary: 'Update the self-reported DBD TSIC activity without changing tax identity' })
+  async patchBusinessType(
+    @ReqCtx() ctx: RequestContext,
+    @Param('companyId') companyId: string,
+    @Body() body: PatchCompanyBusinessTypeBodyDto,
+  ) {
+    assertRouteCompany(ctx, companyId);
+    return this.identity.patchBusinessType(ctx, companyId, body);
   }
 }

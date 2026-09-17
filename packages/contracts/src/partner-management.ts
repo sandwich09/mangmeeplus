@@ -1,7 +1,9 @@
 // ---- Item 10A Partner Management DTOs ----
 
 import type { CivilDate } from './civil-date.js';
-import type { VatRegistrationStatus } from './company-tax-identity.js';
+import type { CompanyLegalAddress, VatRegistrationStatus } from './company-tax-identity.js';
+import type { CompanyBusinessType } from './company-business-type.js';
+import type { SignupDiscoverySource } from './external-signup.js';
 
 export type PartnerCompanyStatus = 'ACTIVE' | 'DISABLED' | 'ARCHIVED' | 'SUSPENDED';
 export type PartnerCredentialKind = 'LINE_MESSAGING_API' | 'LINE_LOGIN' | 'LINE_LIFF';
@@ -71,6 +73,11 @@ export type PaginatedPartnersDto = {
 export type PartnerCompanyDetailDto = {
   id: string;
   name: string;
+  addressJson?: Partial<CompanyLegalAddress>;
+  businessType?: CompanyBusinessType;
+  /** Original signup attribution, readable even after the request leaves the review queue. */
+  discoverySource?: SignupDiscoverySource;
+  discoverySourceOther?: string;
   /**
    * VAT registration as of today. `version` is the compare-and-set token for editing it —
    * an admin console must not overwrite an answer given from the company's own screen.

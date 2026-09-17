@@ -1,3 +1,4 @@
+import { BILLING_TEST_ADDRESS, applySyntheticCustomerFields } from './billing-profile-fixture';
 import { checkEmailAccess } from './email-access-smoke';
 import { checkBillingAdjustments } from './billing-adjustments-smoke';
 import { checkBillingSupportOutcomes } from './billing-support-outcomes-smoke';
@@ -106,6 +107,7 @@ async function main() {
     if (path.startsWith('/tax_ids/')) return response({ id: path.split('/').at(-1), object: 'tax_id', type: 'th_vat', value: '0105567123456', owner: { type: 'self' }, customer: null });
     if (path === '/customers' && init?.method === 'POST') {
       const customer = { object: 'customer', id: `cus_${run}`, livemode: false, email: form.get('email'), metadata: { billingAccountId: form.get('metadata[billingAccountId]') } };
+      applySyntheticCustomerFields(customer, form);
       provider.customers.push(customer); return response(customer);
     }
     if (path === '/checkout/sessions' && init?.method === 'POST') {
@@ -124,7 +126,7 @@ async function main() {
       return response(session);
     }
     const updatingCustomer = provider.customers.find(c => path === `/customers/${c.id}`);
-    if (updatingCustomer && init?.method === 'POST') { updatingCustomer.email = form.get('email'); return response(updatingCustomer); }
+    if (updatingCustomer && init?.method === 'POST') { applySyntheticCustomerFields(updatingCustomer, form); return response(updatingCustomer); }
     if (path === '/customers') return response(list(provider.customers));
     if (path === '/checkout/sessions') return response(list(provider.sessions.filter(s => s.customer === url.searchParams.get('customer'))));
     if (path === '/subscriptions') return response(list(provider.subscriptions.filter(s => s.customer === url.searchParams.get('customer'))));
@@ -154,12 +156,12 @@ async function main() {
   let browser: Awaited<ReturnType<typeof import('./billing-browser-smoke').startBillingBrowser>> | undefined;
   try {
     await app.listen(0, '127.0.0.1'); const origin = await app.getUrl();
-    await client.company.createMany({ data: companyIds.map(id => ({ id, name: 'Synthetic billing company' })) });
+    await client.company.createMany({ data: companyIds.map(id => ({ id, name: 'Synthetic billing company', addressJson: BILLING_TEST_ADDRESS })) });
     await client.user.createMany({ data: userIds.map(id => ({ id, displayName: 'Synthetic billing user', email: `${id}@example.test`, emailVerifiedAt: new Date() })) });
     await client.externalIdentity.create({ data: { userId: userIds[0]!, provider: 'LINE', providerChannelId: `channel-${run}`, providerUserId: `U${run}` } });
     const permission = await client.permission.upsert({ where: { key: 'account.session.read' }, create: { key: 'account.session.read', description: 'Read own session' }, update: {} });
     const role = await client.role.create({ data: { companyId: companyIds[0]!, scopeKey: companyIds[0]!, key: 'OWNER', name: 'Synthetic owner', permissions: { create: { permissionId: permission.id } } } }); roleId = role.id;
-    for(const key of ['notification.read','notification.delivery.retry','company.setup.manage']){
+    for(const key of ['notification.read','notification.delivery.retry','company.setup.manage','company.setup.read','company.legal_identity.read','company.legal_identity.manage','company.vat_registration.read','company.vat_registration.manage']){
       const noticePermission = await client.permission.upsert({ where: { key }, create: { key, description: key }, update: {} });
       await client.rolePermission.create({ data: { roleId, permissionId: noticePermission.id } });
     }
@@ -260,6 +262,34 @@ async function main() {
       return;
     }
     if (process.env.BILLING_CONFIG_ONLY !== '1') {
+    const companyId = companyIds[0]!, profilePath = `/v1/companies/${companyId}/identity`;
+    await client.company.update({ where: { id: companyId }, data: { addressJson: {}, registeredName: null } });
+    const missingProfile = await request(`${base}/quote`, 'POST', { offerKey: 'PRO_999', interval: 'year', billingEmail: 'ignored@example.test' });
+    assert.equal(missingProfile.body.code, 'BILLING_COMPANY_PROFILE_REQUIRED');
+    assert.deepEqual(missingProfile.body.missingFields, ['line1', 'subdistrict', 'district', 'province', 'postalCode']);
+    assert.equal(provider.customers.length, 0); assert.equal(checkoutCalls, 0);
+    await client.company.update({ where: { id: companyId }, data: { addressJson: BILLING_TEST_ADDRESS, registeredName: ' ' } });
+    const fallbackQuote = await request(`${base}/quote`, 'POST', { offerKey: 'PRO_999', interval: 'year', billingEmail: 'ignored@example.test' });
+    assert.equal(fallbackQuote.status, 200, JSON.stringify(fallbackQuote));
+    assert.equal(fallbackQuote.body.billingProfile.name, 'Synthetic billing company');
+    const staleBody = { quoteId: fallbackQuote.body.quoteId, consentRevision: fallbackQuote.body.consentRevision, accepted: true, channel: 'web' };
+    await client.company.update({ where: { id: companyId }, data: { registeredName: 'บริษัท ทดสอบเอกสาร จำกัด' } });
+    assert.equal((await request(`${base}/checkout`, 'POST', staleBody, { 'idempotency-key': randomUUID() })).body.code, 'BILLING_QUOTE_STALE');
+    await client.company.update({ where: { id: companyId }, data: { addressJson: { ...BILLING_TEST_ADDRESS, postalCode: '1011a' } } });
+    assert.equal((await request(`${base}/checkout`, 'POST', staleBody, { 'idempotency-key': randomUUID() })).body.code, 'BILLING_COMPANY_PROFILE_REQUIRED');
+    assert.equal(await client.billingAttempt.count({ where: { initiatingUserId: userIds[0] } }), 0);
+    await client.company.update({ where: { id: companyId }, data: { addressJson: BILLING_TEST_ADDRESS, status: 'DISABLED' } });
+    await client.companyPlanTerm.update({ where: { companyId }, data: { termDisabledAt: new Date() } });
+    const repairProfile = await request(profilePath); assert.equal(repairProfile.status, 200, JSON.stringify(repairProfile));
+    const repaired = await request(profilePath, 'PATCH', { expectedLegalIdentityVersion: repairProfile.body.control.legalIdentityVersion,
+      changeKind: 'INITIAL_CAPTURE', addressJson: { ...BILLING_TEST_ADDRESS, line1: '99 ถนนทดสอบแก้ไข' } });
+    assert.equal(repaired.status, 200, JSON.stringify(repaired));
+    await client.role.update({ where: { id: roleId }, data: { key: 'STAFF' } });
+    assert.equal((await request(profilePath)).status, 403);
+    await client.role.update({ where: { id: roleId }, data: { key: 'OWNER' } });
+    await client.company.update({ where: { id: companyId }, data: { addressJson: BILLING_TEST_ADDRESS, status: 'ACTIVE' } });
+    await client.companyPlanTerm.update({ where: { companyId }, data: { termDisabledAt: null } });
+    cases.push('company-profile-required-before-quote-or-checkout-registered-name-priority-fallback-stale-quote-expired-owner-repair');
     assert.equal((await fetch(`${origin}${base}`)).status, 401);
     assert.equal((await request(base, 'GET', undefined, { 'x-company-id': companyIds[1]! })).status, 403);
     const before = await request(base); assert.equal(before.status, 200); assert.equal(before.body.accessState, trialCarryoverOnly ? 'ACTIVE' : 'EXPIRED');
@@ -273,6 +303,7 @@ async function main() {
     assert.equal((await request(`${base}/quote`, 'POST', { offerKey: 'PRO_999', interval: 'year', billingEmail: 'owner@example.test', amount: 1 })).status, 400);
     assert.equal(checkoutCalls, 0); cases.push('hidden-enterprise-and-forged-price-rejected');
     if (process.env.BILLING_BROWSER_E2E === '1') {
+      await client.company.update({ where: { id: companyIds[0] }, data: { addressJson: {} } });
       const { startBillingBrowser } = await import('./billing-browser-smoke');
       browser = await startBillingBrowser({ apiOrigin: origin, token, companyId: companyIds[0]! });
       const { page } = browser;
@@ -290,7 +321,24 @@ async function main() {
       await page.getByRole('button', { name: /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/, exact: true }).click();
       await page.getByRole('button', { name: 'รายปี', exact: true }).click();
       await page.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
+      await page.getByRole('dialog', { name: 'กรอกข้อมูลบริษัทก่อนซื้อแพ็กเกจ' }).waitFor();
+      await page.setViewportSize({ width: 390, height: 900 });
+      await page.screenshot({ path: `${browser.evidenceDir}/company-profile-required-mobile.png`, fullPage: true });
+      await page.getByRole('link', { name: 'กรอกข้อมูลบริษัท', exact: true }).click();
+      await page.getByRole('heading', { name: 'ข้อมูลร้าน', exact: true }).waitFor();
+      for (const [label, value] of Object.entries({ 'ที่อยู่ (บ้านเลขที่ ถนน)': BILLING_TEST_ADDRESS.line1,
+        'ตำบล / แขวง': BILLING_TEST_ADDRESS.subdistrict, 'อำเภอ / เขต': BILLING_TEST_ADDRESS.district,
+        'จังหวัด': BILLING_TEST_ADDRESS.province, 'รหัสไปรษณีย์': BILLING_TEST_ADDRESS.postalCode })) {
+        await page.getByRole('textbox', { name: label, exact: true }).fill(value);
+      }
+      await page.getByRole('button', { name: 'บันทึกและกลับไปซื้อแพ็กเกจ', exact: true }).click();
       await page.getByRole('heading', { name: /ยืนยันซื้อ/ }).waitFor();
+      assert.match(page.url(), /offer=PRO_999&interval=year&channel=line&profile=updated/);
+      assert.match(await page.getByLabel('ข้อมูลออกเอกสาร', { exact: true }).innerText(), /บริษัท ทดสอบเอกสาร จำกัด/);
+      assert.equal(checkoutCalls, 0);
+      await page.screenshot({ path: `${browser.evidenceDir}/company-profile-purchase-review-mobile.png`, fullPage: true });
+      await page.setViewportSize({ width: 1280, height: 900 });
+      cases.push('browser-profile-popup-missing-fields-expired-owner-save-return-selected-package-name-address-review-no-auto-charge');
       const toggleSales = async (enabled: boolean) => {
         await client.billingSettings.update({ where: { id: `${accountId}:test` }, data: {
           gatesJson: Object.fromEntries(BILLING_ACTIONS.map(action => [action, action === 'new_sales' ? enabled : action!=='refunds'])), version: { increment: 1 },
@@ -327,8 +375,16 @@ async function main() {
     const body = { quoteId: quote.body.quoteId, consentRevision: quote.body.consentRevision, accepted: true, channel: 'line' };
     const key = storedAttempt?.idempotencyKey ?? randomUUID(); const checkout = await request(`${base}/checkout`, 'POST', body, { 'idempotency-key': key });
     assert.equal(checkout.status, 200, JSON.stringify(checkout.body)); assert.equal(checkout.body.state, 'OPEN');
+    assert.equal(provider.customers[0]!.name, 'บริษัท ทดสอบเอกสาร จำกัด');
+    assert.deepEqual(provider.customers[0]!.address, { country: 'TH', line1: BILLING_TEST_ADDRESS.line1, line2: BILLING_TEST_ADDRESS.subdistrict,
+      city: BILLING_TEST_ADDRESS.district, state: BILLING_TEST_ADDRESS.province, postal_code: BILLING_TEST_ADDRESS.postalCode });
     const replay = await request(`${base}/checkout`, 'POST', body, { 'idempotency-key': key });
     assert.equal(replay.body.attemptId, checkout.body.attemptId); assert.equal(checkoutCalls, 1);
+    if (process.env.BILLING_PROFILE_ONLY === '1') {
+      cases.push('registered-name-and-all-address-parts-reach-stripe-new-customer-single-checkout');
+      console.log(JSON.stringify({ provider: 'simulated', app: 'real HTTP/PostgreSQL/Next', cases }, null, 2));
+      return;
+    }
     assert.equal((await request(`${base}/checkout`, 'POST', { ...body, channel: 'web' }, { 'idempotency-key': key })).status, 409);
     assert.equal((await request(`/v1/companies/${companyIds[1]}/billing/attempts/${checkout.body.attemptId}`)).status, 404);
     assert.equal(await client.billingReceiptGrant.count({ where: { companyId: companyIds[0] } }), 0);

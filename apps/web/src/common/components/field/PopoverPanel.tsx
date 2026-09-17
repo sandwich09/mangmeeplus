@@ -22,6 +22,8 @@ type Props = {
   /** Floor, not a cap: the panel starts at the anchor's width and grows to fit long
    *  option labels (capped by maxWidth below) instead of cutting them off. */
   minAnchorWidth?: boolean;
+  /** Keep searchable lists aligned while their filtered content changes width. */
+  matchAnchorWidth?: boolean;
   className: string;
   children: ReactNode;
 } & Omit<HTMLAttributes<HTMLDivElement>, 'className' | 'children' | 'style'>;
@@ -29,7 +31,7 @@ type Props = {
 // Measurable (laid out, capped like the placed panel) but not yet visible.
 const UNPLACED: CSSProperties = { position: 'fixed', top: 0, left: 0, maxWidth: 'calc(100vw - 16px)', visibility: 'hidden' };
 
-export function PopoverPanel({ open, anchorRef, panelRef, height, minAnchorWidth = false, className, children, ...rest }: Props) {
+export function PopoverPanel({ open, anchorRef, panelRef, height, minAnchorWidth = false, matchAnchorWidth = false, className, children, ...rest }: Props) {
   const [style, setStyle] = useState<CSSProperties | null>(null);
 
   useEffect(() => {
@@ -48,7 +50,7 @@ export function PopoverPanel({ open, anchorRef, panelRef, height, minAnchorWidth
       }
       const below = window.innerHeight - rect.bottom - 8;
       const above = rect.top - 8;
-      const panelWidth = Math.max(panelRef.current?.getBoundingClientRect().width ?? 0, minAnchorWidth ? rect.width : 0);
+      const panelWidth = matchAnchorWidth ? rect.width : Math.max(panelRef.current?.getBoundingClientRect().width ?? 0, minAnchorWidth ? rect.width : 0);
       const left = Math.min(Math.max(rect.left, 8), Math.max(8, window.innerWidth - panelWidth - 8));
       // Fixed panels cannot be scrolled into view, so a panel that does not fit below
       // hangs off the trigger's top edge instead (pinned by `bottom`, so a short panel
@@ -62,6 +64,7 @@ export function PopoverPanel({ open, anchorRef, panelRef, height, minAnchorWidth
         // override the component's max-h class and let a long list grow past it.
         maxHeight: Math.max(Math.min(height, flip ? above : below), 96),
         ...(minAnchorWidth ? { minWidth: rect.width } : {}),
+        ...(matchAnchorWidth ? { width: rect.width } : {}),
         ...(flip ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 }),
       });
     };
@@ -78,7 +81,7 @@ export function PopoverPanel({ open, anchorRef, panelRef, height, minAnchorWidth
       window.visualViewport?.removeEventListener('resize', place);
       window.visualViewport?.removeEventListener('scroll', place);
     };
-  }, [open, height, minAnchorWidth, anchorRef, panelRef]);
+  }, [open, height, minAnchorWidth, matchAnchorWidth, anchorRef, panelRef]);
 
   // Mounted invisible until placed, never withheld: `place` reads the panel's own
   // width to keep it inside the viewport, and a panel that is not in the DOM yet
