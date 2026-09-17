@@ -56,7 +56,7 @@ const CODE_LABELS: Record<string, string> = {
   partner_ai_budget_cap_below_bucket_spend: 'เพดานใหม่ต่ำกว่ายอดที่ส่วนนั้นใช้ไปแล้วในเดือนนี้ ให้ตั้งเพดานที่ลดลงให้มีผลเดือนถัดไป',
   // Phase E1b: a split hold is priced from the company's own model, so SPLIT is unusable without
   // one. Refused at SAVE time rather than letting the shop go quiet afterwards.
-  partner_ai_budget_split_requires_model: 'โหมดแยกเพดานต้องเลือกโมเดล AI ของบริษัทก่อน เพราะวงเงินจองคิดจากราคาของโมเดลนั้น กรุณาเลือกโมเดลในช่องด้านบนแล้วบันทึกพร้อมกัน',
+  partner_ai_budget_split_requires_model: 'โหมดแยกเพดานต้องตั้งรุ่น AI ของบริษัทก่อน เพราะวงเงินที่จองไว้คิดจากราคาของรุ่นนั้น กรุณาเปิดหัวข้อ เปลี่ยนรุ่น AI ของบริษัท เลือกรุ่นแล้วกดบันทึกที่หัวข้อนั้น จากนั้นกลับมาบันทึกการแยกเพดานอีกครั้ง',
   // Phase E1b sibling of the line above: the new TOTAL is below what this company has already
   // spent PLUS what is currently reserved for AI calls in flight this month. Nothing is clamped —
   // the operator raises the total, or waits for the reserved amount to settle.

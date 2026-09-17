@@ -347,3 +347,167 @@ Re-verification on the final tree: `pnpm --filter @watchdog-bms/ai-gateway test`
 test` **1752/1752**; contracts **253/253**; acceptance rc=0 (api-behavior **1472/1472**,
 gateway-behavior **369/369**); `pnpm test:harness` **17/17**; ai-gateway and api `tsc --noEmit`
 rc=0; `git diff --check` clean.
+
+## Phase D2 implementation — 2026-09-17
+
+Split-budget admin UI, ONE readiness projection for every admin/ops surface, and real browser
+evidence. Branch `codex/line-ai-remediation-d2-split-admin-ui-20260917`, on top of the E1b tip
+`1fd19156` (merged in, receipt-OCR seam regression and spec registration already fixed there).
+
+### One readiness projection, four consumers
+
+`apps/api/src/modules/line-ai/application/company-ai-budget-readiness.ts` — `readAiBudgetReadiness(tx, …)`
+answers mode, a per-scope state for TOTAL/CHAT/OCR (`OK` | `EXHAUSTED` | `INSUFFICIENT_FOR_KNOWN_BOUND`
+| `CLOSED`), `policyInvalid`, `unresolvedHolds` and `breach` from the SAME `resolveAiBudgetPolicy`
+admission uses plus ONE `readAiBudgetMonthSnapshot`. Its own file so the existing policy↔meter import
+cycle is not widened (nothing imports it back; `test:boot` stays green).
+
+Two decisions worth keeping:
+
+- **`OK` means only "money is left".** A scope answers `INSUFFICIENT_FOR_KNOWN_BOUND` only when the
+  caller passes `boundSatang`; pricing stays the reservation engine's job, so the bound is handed in
+  rather than re-derived from a model and an FX rate. No consumer passes one today, which is exactly
+  §11.4's "readiness ทั่วไปที่ยังไม่รู้ bound บอกได้เพียง ยังมีงบ".
+- **Under SHARED both buckets ARE the total answer.** That is what makes every consumer's SHARED
+  output byte-for-byte today's, proven by the existing specs with their assertions untouched.
+
+| Surface | Before | After (SPLIT only; SHARED unchanged) |
+| --- | --- | --- |
+| `get-partner-timeline.use-case.ts` | one line: `ใช้งบ AI ของเดือนนี้ครบแล้ว` from total spend vs total budget | + `ตอนนี้ยังคุยกับ AI ไม่ได้` / `ใช้งบ AI ส่วนแชต…ครบแล้ว แต่ส่วนอ่านเอกสารยังเหลือ`, + the receipt-side mirror, + an unreadable policy as `ตั้งค่างบ AI ของร้านไม่ถูกต้อง…` (a setting to fix, not money spent) |
+| `billing-receipt-adjustments.readWarnings` | `AI_BUDGET_REACHED` on total only | + additive `AI_OCR_BUDGET_REACHED` = `ร้านนี้ใช้งบ AI ส่วนอ่านเอกสารครบแล้ว งบส่วนแชตที่เหลืออยู่ใช้อ่านเอกสารไม่ได้`, emitted ONLY when the total is still open so the two can never double up |
+| `billing-plan-adjustments.unchanged` | `aiBudgetSatang` / `aiUsedSatang` (total) | + additive optional `aiOcrBudgetReached`, rendered as one amber line; no second money pair |
+| `signup-ops-alert.sweepTrialBudgets` | total-only, and the platform default from **ENV** | platform default from the settings ROW; a SPLIT or unreadable-policy trial gets the per-company projection |
+
+The sweep keeps its TOTAL comparison on the two bulk reads on purpose (`ponytail:` comment at the
+loop): up to 500 trials every 15 minutes would become ~2,000 queries. Only a `SPLIT` row, or a
+`SHARED` row with a non-null `pendingBudgetPolicy` (which can be malformed), pays for a projection.
+
+An invalid policy closes every scope, so on the receipt-grant page it surfaces as `AI_BUDGET_REACHED`
+rather than its own warning — the brief allowed exactly ONE additive union member, and the exact
+reason is the red notice on the AI budget page. Wrong wording, right direction (AI really is refused).
+
+### Admin UI
+
+`AiBudgetPolicyPanel` inside the existing "การใช้งานและงบ AI" card; every derivation in
+`ai-budget.logic.ts` with unit tests, component is presentation only.
+
+- Shown from SAVED server state only: mode, a per-scope table (cap / spent / **กันไว้ระหว่างเรียก AI** /
+  available), `unresolvedHolds` as `กำลังตรวจสอบยอดที่จอง`, the breach flag, the pending policy as
+  `เริ่มเดือน …` in its own box beside a cancel action, `invalidReason` as a red notice **with what to
+  fix**, and `ยังไม่ตั้ง` for a cap that is not set (never "unlimited").
+- The month options come from the month the **SERVER** pinned in the same response
+  (`aiBudgetCurrentMonthKey`), never the browser clock — otherwise the page and the writer would
+  disagree around Bangkok midnight.
+- `aiBudgetDraftChanged` compares against the ACTIVE policy for a current-month draft and the PENDING
+  one for a next-month draft, mirroring the writer's own `policyChange`, so re-saving stored state
+  keeps Save disabled instead of writing an audit row.
+- New parse results carry **`notice`, not `message`**: `no-raw-api-error-display.spec.ts` rejects any
+  `x.message` reaching a toast or a return, and the two older parsers only pass through an
+  exact-snippet exemption. A different field name keeps that guard at full strength.
+- `GET .../ai-usage` now also answers `canManage` (from the caller's `permissions`), because the web
+  had no capability plumbing at all: a read-only operator used to see the form and get a 403 on save.
+
+Known rough edge: a SPLIT save on a company with no `modelId` is refused with
+`partner_ai_budget_split_requires_model`, whose Thai text says "เลือกโมเดลในช่องด้านบนแล้วบันทึกพร้อมกัน" —
+but the model field lives in a DIFFERENT section, so the operator must save the model there first.
+The writer accepts both in one request; only the UI cannot send them together.
+
+### Browser evidence
+
+`docs/qa/evidence/ai-budget-split-2026-09-17/` — 22 PNGs (11 subjects × 1440 px and 390 px) plus a
+README with the exact commands and the seeded state behind each image. Real HTTP, real DOM: a
+throwaway `postgres:16-alpine` on **15481** (db `d2_evidence`) + `redis:7-alpine` on **16381**, API on
+**3071** with `AI_BUDGET_SPLIT_ACTIVATION_ENABLED=true` in that process env only, web dev on **3070**,
+and a SECOND pair on **3072/3073** with the flag absent for the flag-off capture. All stopped and
+removed; nothing else on the machine was touched.
+
+Three things that cost time and are worth remembering:
+
+1. **`next dev` rewrites the tracked `apps/web/next-env.d.ts`** to whatever `NEXT_DIST_DIR` it is
+   given (and drops an untracked `apps/web/AGENTS.md` + `CLAUDE.md`). `playwright.config.ts` warns
+   about it; restore with `git checkout -- apps/web/next-env.d.ts` before committing.
+2. **An exact replay is a deliberate no-op, not a conflict.** The first 409 scenario had the page
+   send the same allocation the "second tab" had just stored, so the writer returned 200 with no
+   version bump and no conflict — correct behaviour, useless evidence. The case now derives both
+   values from the live read and asserts the revision actually moved.
+3. **The read-only operator needs the ROLE, not just the permission.** `/system/*` is gated on the
+   role key `SYSTEM_ADMIN` (`session-gate.logic.ts`) while controls are gated on permissions, and
+   there is exactly one SYSTEM_ADMIN role. The evidence user uses the repo's documented
+   company-role-override shape (`Role` is unique on `(scopeKey, key)`, so a company-scoped row may
+   reuse a system role's key) holding the platform permission set MINUS
+   `system.partner_ai_model.manage`. Throwaway-DB data only.
+
+The partner detail page's tabs are `<Link>` elements, so the AI card is reached at
+`/system/partners/<id>?view=ai` rather than by clicking a button.
+
+### Verification
+
+- Focused api specs: `company-ai-usage-meter.spec.ts` **148 tests / 146 pass / 2 skipped / 0 fail**
+  (includes the new 8-case projection truth table), `partner-support-tools.spec.ts` **37/37** (all
+  pre-existing SHARED assertions untouched), `signup-ops-alert.service.spec.ts` **19/19**,
+  `billing-financial.spec.ts` **4/4**, `ai-budget.logic.spec.ts` (web) **41/41**.
+- FULL `pnpm --filter @watchdog-bms/api test` rc=0, **10,520 passing dots, zero failures** — the nine
+  base failures are gone with the E1b merge.
+- `pnpm --filter @watchdog-bms/web test` **1763/1763**; `pnpm --filter @watchdog-bms/contracts test`
+  **248/248**; `node scripts/run-line-ai-whole-chain-acceptance.mjs` rc=0; `pnpm test:harness`
+  **17/17**; api `typecheck` rc=0; web `tsc --noEmit` rc=0; `git diff --check` clean.
+
+Still open after D2: D-03 (loading/error/retry, company switch and audit history have no screenshot;
+tenant API denial untested), R-08 (cap `0`, `budgetPolicy: null`, locked company and audit-history
+through the real page), R-10 (active holds are visible on the AI budget console but the billing
+grant/plan warnings stay words-only per §11.4 — an owner call), and everything UAT-only.
+
+#### D2 controller-review follow-ups — 2026-09-17
+
+Ten items. Three were real defects the D2 diff introduced, the rest were wording and evidence gaps.
+
+**The one that mattered most.** `sweepTrialBudgets` originally iterated the month's USAGE rows, so a
+trial with no usage row was never counted. The D2 rewrite iterated the trial list instead, which
+means a SHARED trial with a budget of 0 and NO usage satisfied `0 >= 0` — and with the platform
+default at 0 satang that is EVERY trial, i.e. a daily false "ร้านทดลองใช้งบ AI หมดหลายร้านวันนี้".
+Restored to iterating the usage rows. Also narrowed what counts: only `EXHAUSTED` or `policyInvalid`,
+never a bucket `CLOSED` by an operator's own cap of 0 — that is a decision, not an incident, and
+announcing it daily trains operators to ignore the alert.
+
+**Timeline wording.** Three bugs in the new SPLIT lines: both shares gone with the total still open
+returned the chat line claiming "แต่ส่วนอ่านเอกสารยังเหลือ" (false — needs `C + O < T` to reproduce,
+which is why the first fixture missed it); a cap of 0 read as "ใช้…ครบแล้ว"; and the policy-invalid
+line asserted `SPLIT_EXCEEDS_TOTAL` when the reason can equally be `SPLIT_CAPS_MISSING` or
+`POLICY_MALFORMED`. All three now have a test. The TOTAL line is asserted byte-identical.
+
+**Web.** `aiBudgetCapLabel` was reused for the "เหลือใช้ได้" column, so an exhausted bucket rendered
+"ปิดส่วนนี้ (0 บาท)" — a CAP of 0 and ฿0.00 LEFT are different facts. Dedicated
+`aiBudgetAvailableLabel` (`null` → "ตามงบรวม"). `hasAiBudgetPolicy` now guards the draft prefill: a
+pre-E1a API sends no `budget.policy`, and the unguarded call threw inside `loadUsage`'s try, putting
+the WHOLE card into its error state. The adjustment reason is validated before the confirm dialog in
+both handlers (it used to print "เหตุผล: —", take the confirmation, then refuse). And a locked
+company and a read-only operator are now two facts with two sentences — plus `canManage === false`
+disables the existing total-budget and OCR forms, which a read-only operator could previously
+operate all the way to a 403.
+
+**Evidence, rebuilt.** Element screenshots instead of full pages: 34 files / 4.0 MB for 17 subjects,
+against 22 files / 8.5 MB for 11 before (mean 400 KB → 107 KB). Five new R-08 subjects, all through
+the real writer: `zero-cap-saved`, `pending-cancelled`, `audit-history` (schedule → edit → cancel),
+`locked-company`, `bucket-exhausted`, plus `shared-breakdown` as D-01's web half.
+
+Two lessons for the next evidence run:
+
+1. **Do not export `S3_ENDPOINT` when running `prisma/seed.ts`.** The attachment-storage step then
+   tries to reach a MinIO this stack does not run and the seed exits 1 *after* writing most rows —
+   which looks like success if you only check that the companies exist. Run the seed with
+   `DATABASE_URL`, `APP_ENV`, `NODE_ENV` and the two encryption keys, nothing else.
+2. **A greyed button is not evidence.** `disabled:opacity-50` photographs as a coloured button, so
+   the read-only and locked subjects now ASSERT every control's `disabled` property, with a control
+   case (a manager on an ACTIVE company) so they cannot pass by accident.
+
+Ticks after the fixes: **R-08 ticked**, every clause named with its artifact. **D-03 still open** —
+loading/error/retry and company switch have no screenshot (pre-existing behaviour D2 did not touch);
+its tenant-API clause is now covered by a real `DenyByDefaultGuard` assertion in
+`partner.controller.spec.ts` over `aiUsage` and `setAiModelConfig`. **R-10 still open** on "active
+holds" for the billing warnings — an owner call, since §11.4 lets a readiness without a known bound
+say only "ยังมีงบ".
+
+Re-verification: focused api specs — `signup-ops-alert.service.spec.ts` **21/21**,
+`partner-support-tools.spec.ts` **40/40**, `partner.controller.spec.ts` **22/22**,
+`company-ai-usage-meter.spec.ts` **148 (146 pass / 2 skipped)**, `billing-financial.spec.ts` **4/4**,
+web `ai-budget.logic.spec.ts` **39/39**. Full suites and typechecks in the report below.

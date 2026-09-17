@@ -1,10 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { BadRequestException, ForbiddenException, ValidationPipe } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, ValidationPipe, type ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { PartnerController, SetAiModelBodyDto, SetFeaturesBodyDto, SetOcrConfigBodyDto } from './partner.controller';
 import { SystemAiBudgetController } from './system-ai-budget.controller';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import { REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
+import { DenyByDefaultGuard } from '../../../../common/security/deny-by-default.guard';
 import { ALL_FEATURE_ENTITLEMENT_KEYS } from '@watchdog-bms/contracts';
 import { NORMALIZER_VERSION } from '../../../employee-access/application/normalize-entitlements';
 import { GetPartnerDetailUseCase } from '../../application/use-cases/get-partner-detail.use-case';
@@ -152,9 +154,13 @@ describe('PartnerController', () => {
   it('aiUsage() returns the meter for the partner company', async () => {
     let called: any;
     const ctrl = makeCtrl({ getAiUsage: { execute: async (companyId: string) => { called = companyId; return { current: null, previous: null, budget: { effectiveSatang: 1, overrideSatang: null, defaultSatang: 1, ceilingSatang: 2 }, topTags: [] }; } } as any });
-    const result = await ctrl.aiUsage('co-1') as any;
+    const result = await ctrl.aiUsage('co-1', makeReq(['system.partner_ai_model.manage'])) as any;
     assert.equal(called, 'co-1');
     assert.equal(result.budget.overrideSatang, null);
+    // The page needs to know whether THIS caller may write the card: reading it is
+    // `system.partner_dashboard.read`, every control on it is `system.partner_ai_model.manage`.
+    assert.equal(result.canManage, true);
+    assert.equal((await ctrl.aiUsage('co-1', makeReq(['system.partner_dashboard.read'])) as any).canManage, false);
   });
 
   it('setOcrConfiguration() passes absolute state and admin context to the use case', async () => {
@@ -284,6 +290,37 @@ describe('PartnerController', () => {
     assert.equal(result.lineLink.cmd.memberUserId, 'user-9');
     assert.equal(result.lineLink.cmd.requestingAdminUserId, 'admin-1');
     assert.ok(result.lineLink.cmd.apiBaseUrl.startsWith('https://'), result.lineLink.cmd.apiBaseUrl);
+  });
+
+  // Spec §11.2/D-03: "ห้ามเพิ่ม tenant endpoint สำหรับอ่าน usage/budget". These two routes ARE the
+  // whole budget surface, so the denial is asserted through the guard that actually enforces it —
+  // metadata alone would only prove the decorator is present, not that a caller is refused.
+  it('refuses the budget read and the budget write to anyone without the permission', () => {
+    const guard = new DenyByDefaultGuard(new Reflector());
+    const proto = PartnerController.prototype as unknown as Record<string, unknown>;
+    const contextFor = (method: string, permissions: string[]) => ({
+      getHandler: () => proto[method] as () => unknown,
+      getClass: () => PartnerController,
+      switchToHttp: () => ({ getRequest: () => ({ context: { permissions } }) }),
+    }) as unknown as ExecutionContext;
+
+    for (const method of ['aiUsage', 'setAiModelConfig']) {
+      // An ordinary tenant user: company permissions only, neither platform permission.
+      assert.throws(() => guard.canActivate(contextFor(method, ['expense.read', 'expense.create'])),
+        /Insufficient permissions/, `${method} must refuse a tenant caller`);
+      // And no session at all is a 401, never a silent pass.
+      assert.throws(() => guard.canActivate({
+        getHandler: () => proto[method] as () => unknown, getClass: () => PartnerController,
+        switchToHttp: () => ({ getRequest: () => ({}) }),
+      } as unknown as ExecutionContext), /Authentication is required/);
+    }
+
+    // The read permission alone opens the READ and still refuses the WRITE — the exact boundary
+    // `canManage` describes to the page.
+    assert.equal(guard.canActivate(contextFor('aiUsage', ['system.partner_dashboard.read'])), true);
+    assert.throws(() => guard.canActivate(contextFor('setAiModelConfig', ['system.partner_dashboard.read'])),
+      /Insufficient permissions/);
+    assert.equal(guard.canActivate(contextFor('setAiModelConfig', ['system.partner_ai_model.manage'])), true);
   });
 
   it('the platform AI budget routes carry the same manage permission on read and write', () => {
