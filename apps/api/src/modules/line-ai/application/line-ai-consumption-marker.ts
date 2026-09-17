@@ -37,9 +37,14 @@ export type MarkerTransactionClient = {
  *  enter NO intake branch: continuing with an empty clarification list is not fail-closed —
  *  a bare date/amount answer would be misrouted as a brand-new capture. */
 export class ConsumptionMarkerUnavailableError extends Error {
-  constructor(cause: unknown) {
+  /** Machine-readable cause for operators (`stream_absent` never reaches here — it is not an
+   *  outage). The customer reply and the terminal status are the same whatever this says. */
+  readonly reason: string;
+
+  constructor(cause: unknown, reason = 'marker_unavailable') {
     super(`line_ai_consumption_marker_unavailable: ${(cause as Error)?.message ?? 'unknown'}`);
     this.name = 'ConsumptionMarkerUnavailableError';
+    this.reason = reason;
   }
 }
 

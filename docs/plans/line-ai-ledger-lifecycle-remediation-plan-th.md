@@ -26,12 +26,12 @@ Owner เลือกแยกเพดาน CHAT/OCR ภายในเพด�
 
 ### A. Ledger lifecycle — spec §4–7
 
-- [ ] เพิ่ม fake regression absent stream/missing group ให้สะท้อน Redis NOGROUP และแดงบนต้นเหตุ
-- [ ] เพิ่ม exact-key `exists` ใน interface เดิม; เฉพาะ XPENDING NOGROUP + EXISTS=0 เท่านั้นที่คืน empty
-- [ ] Existing stream, failed EXISTS, other Redis errors และ marker lookup failure ยัง unavailable
-- [ ] คง append/TTL/ack/claim/durable marker/tenant/chat semantics ไม่สร้าง/reset group ใน read path
-- [ ] เพิ่ม structured reason ที่ไม่มี raw LINE/chat key และ dispatcher coverage direct text + delivery
-- [ ] เพิ่ม bounded pending pagination/incomplete read outcome สำหรับ >50 entries และหลายผู้ถาม; isolate missing-group key ใน reclaim โดยไม่ปิด healthy key ทั้ง batch
+- [x] เพิ่ม fake regression absent stream/missing group ให้สะท้อน Redis NOGROUP และแดงบนต้นเหตุ
+- [x] เพิ่ม exact-key `exists` ใน interface เดิม; เฉพาะ XPENDING NOGROUP + EXISTS=0 เท่านั้นที่คืน empty
+- [x] Existing stream, failed EXISTS, other Redis errors และ marker lookup failure ยัง unavailable
+- [x] คง append/TTL/ack/claim/durable marker/tenant/chat semantics ไม่สร้าง/reset group ใน read path
+- [x] เพิ่ม structured reason ที่ไม่มี raw LINE/chat key และ dispatcher coverage direct text + delivery
+- [x] เพิ่ม bounded pending pagination/incomplete read outcome สำหรับ >50 entries และหลายผู้ถาม; isolate missing-group key ใน reclaim โดยไม่ปิด healthy key ทั้ง batch
 
 ไฟล์หลัก: `line-ai-ledger.service.ts`, service specs และ `process-line-webhook.use-case.spec.ts` ใน `apps/api/src/modules/line-ai/application/` ไม่มี schema change ในช่วง A
 

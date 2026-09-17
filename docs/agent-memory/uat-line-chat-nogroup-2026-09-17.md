@@ -118,3 +118,80 @@ Next: execute the unified plan only on an implementation request. The owner has 
 - Frozen benchmark denominators now include attempted/completed/refused/failed work; no apparent savings from dropping failures or suppressing calls through insufficient reservations.
 - Scope remains documentation review/corrections. Runtime code/tests, benchmark runs, migrations and UAT acceptance are still pending. Next implementation must satisfy R-01–12 as well as prior AC/B/C/D/E/X gates; do not claim hard-cap readiness from written requirements.
 - Review verification passed: scoped `git diff --check`; document validator checked 7 documents, 54 local links, 53 unique unchecked acceptance criteria and 13 existing planned test paths. The review's F-01–12 findings map explicitly to R acceptance cases. Validated the illustrative 4-call input-ceiling arithmetic locally; this is not a provider benchmark or runtime test.
+
+## Phase A implementation — 2026-09-17
+
+Branch `codex/line-ai-remediation-a-ledger-20260917` in worktree `/private/tmp/mangmee-line-ai-remediation-20260917`, cut from `origin/develop acfb6b8c`. Code only, no schema, no migration, no `package.json`, no workflow, no cloud/LINE access.
+
+### Decisions
+
+- `openWaitingUser` keeps calling `XPENDING` first. Only that call's `NOGROUP` is eligible for the absence exemption, matched on the error code / message prefix (`isNoGroupError`), never a substring of arbitrary text. `EXISTS` on the exact key is read only afterwards: `0` → confirmed absent → `[]`; `1` → `group_missing` → fail closed; anything else, or a failing `EXISTS` → `redis_unavailable` → fail closed. Errors from `XRANGE`, entry parsing and the durable marker lookup cannot reach the exemption.
+- The read path never repairs state: no `XGROUP CREATE … 0` or `$`, no replay, no delete. A later `append()` still recreates stream and group exactly as before, so an expired key behaves like a new chat.
+- Bounded pagination by stream id (exclusive `(<id>` start), `PENDING_SCAN_COUNT=50` per page and `PENDING_SCAN_MAX_PAGES=4` — 200 entries, the default `LINE_AI_LEDGER_MAXLEN`. The existing `limit` (3) is still the early stop. A budget exhausted while entries may remain throws `scan_incomplete` rather than returning an empty list that would invite a new capture. A non-array reply or a row that is not `[string, …]` is `malformed_response`, not an empty PEL. A row trimmed between `XPENDING` and `XRANGE` is skipped, never reconstructed.
+- `claimOpenEntries` is now isolated per key: `NOGROUP` + `EXISTS=0` is skipped quietly (expired between `SCAN` and claim), `NOGROUP` + `EXISTS=1` is logged `ai.line.ledger.claim_group_missing` and skipped without recreating the group, and any other error (or an unusable `EXISTS`) returns what was claimed so far so a real outage cannot grind through 200 keys at one command timeout each.
+- `ConsumptionMarkerUnavailableError` gained an optional `reason` (default `marker_unavailable`, so existing constructor calls and `instanceof` checks are unchanged). The dispatcher's `line_ai_marker_unavailable` warn carries it. Terminal status `marker_unavailable`, error code `CONSUMPTION_MARKER_UNAVAILABLE` and the customer reply are unchanged.
+- Privacy (§6): the raw Redis `NOGROUP` message embeds company id and LINE user/group id, so no new or changed log line prints the key or the provider message. Lifecycle logs carry `reason` plus `chatKeyHash = hashMessagePreview(chatKey)`; other Redis errors reuse the existing `safeLineErrorDetails` sanitizer (error class/code only). Confirmed absence logs at `log`, never `warn`.
+
+### Files
+
+- `apps/api/src/modules/line-ai/application/line-ai-ledger.service.ts` — `exists` on `LedgerRedis`, `isNoGroupError`, `pendingPage`, `streamStateAfterNoGroup`, paginated `openWaitingUser`, per-key isolated `claimOpenEntries`, sanitized logs.
+- `apps/api/src/modules/line-ai/application/line-ai-consumption-marker.ts` — optional `reason` on `ConsumptionMarkerUnavailableError`.
+- `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts` — `reason` added to the existing `line_ai_marker_unavailable` warn (one line).
+- `apps/api/src/modules/line-ai/application/line-ai-ledger.service.spec.ts` — `FakeRedis` made faithful (NOGROUP from `xpending`/`xreadgroup`/`xautoclaim`, `exists`, `XPENDING` start-id incl. exclusive form and COUNT, numeric stream-id ordering, hooks for expiry / destroyed group / failing EXISTS / WRONGTYPE / malformed reply / creation between XPENDING and EXISTS), log capture, 13 new tests and an env-gated real-Redis block.
+- `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts` — `openWaitingUser` override on `makeLedgerUseCase` and two dispatcher tests.
+
+### Verification
+
+```
+cd /private/tmp/mangmee-line-ai-remediation-20260917/apps/api
+pnpm exec tsx --test --test-reporter=spec src/modules/line-ai/application/line-ai-ledger.service.spec.ts src/modules/line-ai/application/line-ai-consumption-marker.spec.ts src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts
+  → tests 88, pass 88, fail 0
+pnpm exec tsx --test --test-reporter=dot src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts
+  → 694 pass, 0 fail
+LINE_AI_LEDGER_REDIS_TEST_URL='redis://127.0.0.1:6379/15' pnpm exec tsx --test --test-reporter=spec src/modules/line-ai/application/line-ai-ledger.service.spec.ts
+  → tests 37, pass 37, fail 0 (real local Redis 7.4.10, db 15; unset → the block SKIPs, tests 32)
+pnpm --filter @watchdog-bms/api typecheck   → rc=0
+git diff --check                            → clean
+```
+
+The real-Redis block covers absent key → NOGROUP → `[]`, short-TTL expiry → `[]`, `XGROUP DESTROY` → `group_missing` with entries and group state untouched, group + empty PEL → `[]`, paging the real `XPENDING key group (<id> + 50` exclusive-start form (55 entries from another member then the asker's, found), `scan_incomplete` on a 201-entry PEL, a real `WRONGTYPE` from a plain string on a ledger key, and tenant/user/chat isolation. It runs on synthetic tagged keys, deletes only the exact keys it named, and never calls `claimOpenEntries` (its SCAN would reach other sessions' keys on a shared server). `DBSIZE` of db 15 was 0 before and after the run.
+
+Red→green (AC-09): with the HEAD sources restored and the faithful fake in place the ledger spec was `tests 32, pass 20, fail 12`, the first-message case failing with
+
+```
+✖ AC-01/AC-09: a brand-new chat reads empty, and the read creates no stream or group
+  Error [ConsumptionMarkerUnavailableError]: line_ai_consumption_marker_unavailable:
+  NOGROUP No such key 'lineai:ledger:c1:Uab12cd34ef56ab78cd90ef12ab34cd56'
+  or consumer group 'lineai-turn' in XPENDING with GROUP option
+    at LineAiLedgerService.openWaitingUser (line-ai-ledger.service.ts:356:13)
+```
+
+which is the UAT incident reproduced in a unit test. After the fix the same file is 32/32 (33/33 with real Redis).
+
+Evidence class per ticked acceptance criterion (spec §14 forbids ticking from unit tests alone, so the fake-only parts are named explicitly):
+
+| AC | Evidence |
+| --- | --- |
+| AC-01 | Real Redis (absent key → NOGROUP → `[]`, nothing created) + dispatcher test for the routing half |
+| AC-02 | Real Redis (short-TTL expiry) + fake (a later append recreates stream and group) |
+| AC-03 | Real Redis (`XGROUP DESTROY`, `XLEN` and `XINFO GROUPS` unchanged) + fake |
+| AC-04 | Real Redis (group + ack-emptied PEL) + fake |
+| AC-05 | Real Redis (asker sees pendingMedia/source proof; other member, other chat, other company read `[]`) + fake |
+| AC-06 | Fake: marker present while the entry is STILL in the PEL (asserted), so the lost-XACK premise is real; marker-lookup failure throws `marker_unavailable`; dispatcher test proves no gateway call and no mutation |
+| AC-07 | **WRONGTYPE is real Redis** (a plain string on a ledger key). Connection error, failing `EXISTS` and a non-0/1 `EXISTS` reply are **fake-only**; a command timeout is not simulated separately — it takes the identical non-NOGROUP branch |
+| AC-08 | **Fake-only** — key expiry and creation between XPENDING and EXISTS need injected timing that a real server cannot be made to reproduce deterministically; asserts exactly one XPENDING and one EXISTS, so there is no retry loop |
+| AC-09 | The saved red→green output above (HEAD sources, faithful fake) |
+| AC-13 | **Fake-only** — asserts the captured log payloads, which is the only place log level and fields are observable |
+| R-11 | Pagination past the first page and `scan_incomplete` are **real Redis** (the exclusive `(<id>` start is our own invention, so it is proven against redis 7.4.10 locally; production is ElastiCache 7.1). Malformed XPENDING replies and the `claimOpenEntries` isolation cases are **fake-only** — a malformed reply cannot be produced by a correct server, and reclaim SCANs keys this process does not own |
+
+### Remaining
+
+- AC-10, AC-11, AC-12, AC-14, AC-15, AC-16 stay open: they need a UAT real-LINE journey with terminal/delivery evidence, and AC-15 needs the signed production release protocol. Nothing here was deployed or promoted.
+- Phase A does not touch budget refusal, intake cost, dashboard or split caps (scopes B–E).
+
+### Known residuals (not changed in this phase)
+
+1. **Context limit is applied before the consumption-marker filter.** `openWaitingUser` stops paginating at `limit` (3) and only then filters durable consumption markers, so three consumed-but-unacked entries from the same asker inside the 15-minute window can hide a fourth genuinely open question until the drain expires them. Pre-existing behaviour, unchanged here. Impact is bounded because durable intake state (`LineIntakeStateRepository`), not this stream, authorises financial continuation — the stream is a bounded reference only.
+2. **`append()` still recreates a vanished group at id 0.** It runs `XGROUP CREATE … 0 MKSTREAM` before every append, so the next append on an EXISTING stream whose group was destroyed (for example a media clarification arriving after the read already refused with `group_missing`) silently recreates the group at `0` and re-delivers up to 50 old entries into the PEL. The durable delivery/outcome stores are what stop duplicate sends. Spec §3 and §4.4 deliberately keep append/ack out of this phase, so the read path was fixed without touching it.
+3. **`ai.line.ledger.ack_failed` and `ai.line.ledger.append_failed` still log the raw provider message** (`line-ai-ledger.service.ts:322` and `:523`), which would embed the raw key if a `NOGROUP` ever surfaced from `xreadgroup`/`xack`. Same privacy family as §6, but they are unchanged best-effort lines outside this phase's diff.
+4. **A `null` XPENDING reply is now `malformed_response` (fail closed)** where the old code read it as an empty PEL. Deliberate — the reply shape is the absence proof — and a correct server never returns null for the extended `XPENDING key group - + count` form, but it is a behaviour change, not a pure bug fix.

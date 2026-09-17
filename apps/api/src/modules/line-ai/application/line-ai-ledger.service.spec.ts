@@ -1,10 +1,24 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import Redis from 'ioredis';
 import { LineAiLedgerService, ledgerKey, parseLedgerKey, fieldsToEntry, LEDGER_GROUP, type LedgerRedis } from './line-ai-ledger.service';
-import { clarificationMarkerKey } from './line-ai-consumption-marker';
+import { ConsumptionMarkerUnavailableError, clarificationMarkerKey } from './line-ai-consumption-marker';
+import { hashMessagePreview } from '../domain/logic/line-ai-classifier.logic';
+
+/** Stream ids sort numerically, not lexicographically: '10-0' precedes '9-0' as a string. */
+function cmpId(a: string, b: string): number {
+  const [aMs, aSeq] = a.split('-').map(Number);
+  const [bMs, bSeq] = b.split('-').map(Number);
+  return aMs - bMs || aSeq - bSeq;
+}
 
 // In-memory Redis Streams fake: only the surface the ledger uses (XADD MAXLEN, consumer group
-// PEL semantics, XAUTOCLAIM idle/delivery counting, XRANGE/XPENDING/SCAN/EXPIRE).
+// PEL semantics, XAUTOCLAIM idle/delivery counting, XRANGE/XPENDING/EXISTS/SCAN/EXPIRE).
+//
+// Faithful about the thing the UAT incident turned on: real Redis does NOT answer an empty list
+// for a group that does not exist, it raises `NOGROUP No such key ... or consumer group ...`.
+// The old fake returned `[]`, which is exactly why "a brand-new chat cannot start" passed CI.
 class FakeRedis implements LedgerRedis {
   nowMs = 1_000_000;
   streams = new Map<string, Array<{ id: string; fields: string[] }>>();
@@ -12,15 +26,45 @@ class FakeRedis implements LedgerRedis {
   delivered = new Map<string, Set<string>>();
   ttls = new Map<string, number>();
   failing = false;
+  /** Outage/protocol simulation hooks, each scoped to one shape of failure. */
+  failExists = false;
+  existsReply: number | undefined;
+  wrongType = new Set<string>();
+  malformedPending: unknown | undefined;
+  failKeys = new Set<string>();
+  /** Keys SCAN reports that no longer hold a stream — the expired-between-scan-and-claim race. */
+  scanExtraKeys: string[] = [];
+  /** Fires at the top of EXISTS, so a test can create the key/group between XPENDING and EXISTS. */
+  beforeExists: (() => void) | undefined;
+  calls: string[] = [];
+  xpendingArgs: Array<{ key: string; start: string; count: number }> = [];
   private seq = 0;
 
   private assertUp(): void {
     if (this.failing) throw new Error('connection refused');
   }
 
+  /** The PEL, or the error real Redis raises for a key/group that is not there. */
+  private groupOrThrow(key: string, command: string): Map<string, { deliveryCount: number; lastDeliveryMs: number }> {
+    const pel = this.pels.get(key);
+    if (pel) return pel;
+    throw new Error(`NOGROUP No such key '${key}' or consumer group '${LEDGER_GROUP}' in ${command} with GROUP option`);
+  }
+
+  /** TTL expiry: the stream and its group both vanish, exactly as an expired key does. */
+  expireKey(key: string): void {
+    this.streams.delete(key); this.pels.delete(key); this.delivered.delete(key); this.ttls.delete(key);
+  }
+
+  /** XGROUP DESTROY: the entries survive, the group does not. */
+  destroyGroup(key: string): void {
+    this.pels.delete(key); this.delivered.delete(key);
+  }
+
   async xgroup(...args: Array<string | number>): Promise<unknown> {
     this.assertUp();
     const key = String(args[1]);
+    this.calls.push('xgroup');
     if (this.pels.has(key)) throw new Error('BUSYGROUP Consumer Group name already exists');
     this.streams.set(key, this.streams.get(key) ?? []);
     this.pels.set(key, new Map());
@@ -50,9 +94,9 @@ class FakeRedis implements LedgerRedis {
   async xreadgroup(...args: Array<string | number>): Promise<unknown> {
     this.assertUp();
     const key = String(args[6]);
+    const pel = this.groupOrThrow(key, 'XREADGROUP');
     const stream = this.streams.get(key) ?? [];
     const seen = this.delivered.get(key) ?? new Set<string>();
-    const pel = this.pels.get(key) ?? new Map();
     const fresh = stream.filter((e) => !seen.has(e.id));
     for (const entry of fresh) {
       seen.add(entry.id);
@@ -71,9 +115,11 @@ class FakeRedis implements LedgerRedis {
   async xautoclaim(...args: Array<string | number>): Promise<unknown> {
     this.assertUp();
     const key = String(args[0]);
+    this.calls.push(`xautoclaim:${key}`);
+    if (this.failKeys.has(key)) throw new Error('connection refused');
     const minIdle = Number(args[3]);
     const count = Number(args[6]);
-    const pel = this.pels.get(key) ?? new Map<string, { deliveryCount: number; lastDeliveryMs: number }>();
+    const pel = this.groupOrThrow(key, 'XAUTOCLAIM');
     const stream = this.streams.get(key) ?? [];
     const claimed: Array<[string, string[]]> = [];
     for (const [id, meta] of pel) {
@@ -91,15 +137,38 @@ class FakeRedis implements LedgerRedis {
     this.assertUp();
     const stream = this.streams.get(key) ?? [];
     return stream
-      .filter((e) => (start === '-' || e.id >= start) && (end === '+' || e.id <= end))
+      .filter((e) => (start === '-' || cmpId(e.id, start) >= 0) && (end === '+' || cmpId(e.id, end) <= 0))
       .map((e) => [e.id, e.fields]);
   }
 
+  /** `XPENDING key group <start> + <count>`, with the Redis 6.2 exclusive `(<id>` start form. */
   async xpending(...args: Array<string | number>): Promise<unknown> {
     this.assertUp();
     const key = String(args[0]);
-    const pel = this.pels.get(key) ?? new Map<string, { deliveryCount: number; lastDeliveryMs: number }>();
-    return [...pel.entries()].map(([id, meta]) => [id, 'consumer', this.nowMs - meta.lastDeliveryMs, meta.deliveryCount]);
+    const start = String(args[2]);
+    const count = Number(args[4]);
+    this.calls.push('xpending');
+    this.xpendingArgs.push({ key, start, count });
+    if (this.wrongType.has(key)) throw new Error('WRONGTYPE Operation against a key holding the wrong kind of value');
+    if (this.failKeys.has(key)) throw new Error('connection refused');
+    const pel = this.groupOrThrow(key, 'XPENDING');
+    if (this.malformedPending !== undefined) return this.malformedPending;
+    const exclusive = start.startsWith('(');
+    const from = exclusive ? start.slice(1) : start;
+    return [...pel.entries()]
+      .sort(([a], [b]) => cmpId(a, b))
+      .filter(([id]) => from === '-' || (exclusive ? cmpId(id, from) > 0 : cmpId(id, from) >= 0))
+      .slice(0, count)
+      .map(([id, meta]) => [id, 'consumer', this.nowMs - meta.lastDeliveryMs, meta.deliveryCount]);
+  }
+
+  async exists(key: string): Promise<number> {
+    this.calls.push('exists');
+    this.beforeExists?.();
+    this.assertUp();
+    if (this.failExists) throw new Error('connection refused');
+    if (this.existsReply !== undefined) return this.existsReply;
+    return this.streams.has(key) ? 1 : 0;
   }
 
   async expire(key: string, seconds: number): Promise<number> {
@@ -111,7 +180,7 @@ class FakeRedis implements LedgerRedis {
   async scan(_cursor: string, ...args: Array<string | number>): Promise<[string, string[]]> {
     this.assertUp();
     const pattern = String(args[1]).replace('*', '');
-    return ['0', [...this.streams.keys()].filter((k) => k.startsWith(pattern))];
+    return ['0', [...this.streams.keys(), ...this.scanExtraKeys].filter((k) => k.startsWith(pattern))];
   }
 
   async quit(): Promise<unknown> { return 'OK'; }
@@ -145,9 +214,18 @@ function makeService(overrides: Record<string, unknown> = {}) {
     },
   } as any;
   const service = new LineAiLedgerService(config, audit, prisma);
+  // AC-13: capture every log payload so a test can prove no raw key / LINE id is ever printed,
+  // and that a confirmed-absent stream is not logged at `warn`.
+  const logs: Array<{ level: 'log' | 'warn'; payload: any }> = [];
+  (service as any).logger = {
+    log: (payload: any) => logs.push({ level: 'log', payload }),
+    warn: (payload: any) => logs.push({ level: 'warn', payload }),
+    error: () => undefined,
+    debug: () => undefined,
+  };
   const redis = new FakeRedis();
   service.attachClient(redis);
-  return { service, redis, auditEvents, prisma, markerKeys, markerState };
+  return { service, redis, auditEvents, prisma, markerKeys, markerState, logs };
 }
 
 const NOW = new Date('2026-07-07T10:00:00.000Z');
@@ -225,7 +303,8 @@ describe('LineAiLedgerService (item 10F, fake Redis)', () => {
   });
 
   it('suppresses an entry whose durable consumption marker exists, even with the Redis ack lost', async () => {
-    const { service, markerKeys } = makeService();
+    const { service, redis, markerKeys } = makeService();
+    const key = ledgerKey('c1', 'chat1');
     await service.appendSubRequests({
       companyId: 'c1', chatKey: 'chat1', turnId: 't1', webhookEventId: 'evt1', userId: 'u1', now: NOW,
       items: [{ text: 'แก้ยอด', state: 'waiting_user', clarifyQuestion: 'รายการไหน' }],
@@ -235,6 +314,7 @@ describe('LineAiLedgerService (item 10F, fake Redis)', () => {
 
     // The mutation committed and wrote the marker; XACK then failed and was swallowed.
     markerKeys.add(clarificationMarkerKey('c1', ledgerKey('c1', 'chat1'), open.id));
+    assert.equal(redis.pels.get(key)?.has(open.id), true, 'the lost ack is the premise: the entry is STILL pending in Redis');
 
     assert.deepEqual(await service.openWaitingUser('c1', 'chat1', 'u1', NOW), [], 'consumed entry must not be re-offered');
   });
@@ -256,7 +336,13 @@ describe('LineAiLedgerService (item 10F, fake Redis)', () => {
     markerState.failMarkers = true;
 
     // Fail-closed on purpose: an empty list here would let a bare "590" be routed as a new capture.
-    await assert.rejects(() => service.openWaitingUser('c1', 'chat1', 'u1', NOW), /consumption_marker_unavailable/);
+    await assert.rejects(() => service.openWaitingUser('c1', 'chat1', 'u1', NOW), (err: unknown) => {
+      assert.ok(err instanceof ConsumptionMarkerUnavailableError);
+      // AC-06: the marker lookup sits OUTSIDE the Redis try/catch, so it can never be relabelled
+      // as a stream-lifecycle outcome by the NOGROUP exemption.
+      assert.equal(err.reason, 'marker_unavailable');
+      return true;
+    });
   });
 
   it('claimOpenEntries honors min-idle and reports growing delivery counts', async () => {
@@ -377,5 +463,355 @@ describe('Stored question source transport', () => {
     await assert.rejects(service.openWaitingUser('company-1', 'chat', 'user-1'), /consumption_marker_unavailable/);
     const disabled = makeService({ lineAiLedgerEnabled: false }).service;
     assert.deepEqual(await disabled.openWaitingUser('company-1', 'chat', 'user-1'), []);
+  });
+});
+
+/**
+ * Spec `line-ai-ledger-lifecycle-remediation-spec-th.md` §4. On UAT a brand-new chat could not be
+ * started at all: `XPENDING` on a stream that does not exist yet raises NOGROUP, the catch turned
+ * every read error into unavailable, and the turn ended `marker_unavailable` before any routing —
+ * while the stream/group are only created by `append()`, which that turn never reaches.
+ *
+ * The distinction the whole section turns on: a CONFIRMED-absent stream is a normal lifecycle
+ * state, an unreadable one is not, and only `EXISTS` on the exact key tells them apart.
+ */
+const LINE_CHAT_ID = 'Uab12cd34ef56ab78cd90ef12ab34cd56';
+
+/** Asserts the typed refusal AND its machine-readable cause, which is the whole point of `reason`. */
+async function rejectsWithReason(run: () => Promise<unknown>, reason: string): Promise<void> {
+  await assert.rejects(run, (err: unknown) => {
+    assert.ok(err instanceof ConsumptionMarkerUnavailableError, `expected ConsumptionMarkerUnavailableError, got ${String(err)}`);
+    assert.equal(err.reason, reason);
+    return true;
+  });
+}
+
+function waitingItems(count: number, from = 0) {
+  return Array.from({ length: count }, (_, i) => ({
+    text: `คำถามที่ ${from + i}`, state: 'waiting_user' as const, clarifyQuestion: `ข้อ ${from + i} ปีไหน?`,
+  }));
+}
+
+describe('Ledger lifecycle: absent stream, missing group and bounded reads (§4)', () => {
+  it('AC-01/AC-09: a brand-new chat reads empty, and the read creates no stream or group', async () => {
+    const { service, redis } = makeService();
+
+    assert.deepEqual(await service.openWaitingUser('c1', LINE_CHAT_ID, 'u1', NOW), []);
+
+    assert.equal(redis.streams.size, 0, 'a read must never create the stream');
+    assert.equal(redis.pels.size, 0, 'a read must never create the consumer group');
+    assert.equal(redis.calls.includes('xgroup'), false, 'no XGROUP CREATE in the read path');
+    assert.deepEqual(redis.calls, ['xpending', 'exists'], 'EXISTS is read only AFTER the NOGROUP, once');
+  });
+
+  it('AC-02: an expired key behaves like a new chat, and the next append recreates stream and group', async () => {
+    const { service, redis } = makeService();
+    const key = ledgerKey('c1', 'chat1');
+    await service.appendSubRequests({ companyId: 'c1', chatKey: 'chat1', turnId: 't1', webhookEventId: 'e1', userId: 'u1', now: NOW, items: waitingItems(1) });
+    assert.equal((await service.openWaitingUser('c1', 'chat1', 'u1', NOW)).length, 1);
+
+    redis.expireKey(key); // TTL elapsed: stream and group both gone
+
+    assert.deepEqual(await service.openWaitingUser('c1', 'chat1', 'u1', NOW), [], 'expiry reads exactly like a new chat');
+    assert.ok(await service.appendTurn({ companyId: 'c1', chatKey: 'chat1', turnId: 't2', webhookEventId: 'e2', userId: 'u1', text: 'ว่าไง', now: NOW }));
+    assert.equal(redis.pels.get(key)?.size, 1, 'the append recreates stream and group exactly as before');
+    assert.equal(redis.ttls.get(key), 3600);
+  });
+
+  it('AC-03: an existing stream whose group vanished fails closed, untouched', async () => {
+    const { service, redis } = makeService();
+    const key = ledgerKey('c1', 'chat1');
+    await service.appendSubRequests({ companyId: 'c1', chatKey: 'chat1', turnId: 't1', webhookEventId: 'e1', userId: 'u1', now: NOW, items: waitingItems(2) });
+    redis.destroyGroup(key);
+    const entriesBefore = JSON.stringify(redis.streams.get(key));
+    redis.calls.length = 0;
+
+    await rejectsWithReason(() => service.openWaitingUser('c1', 'chat1', 'u1', NOW), 'group_missing');
+
+    assert.equal(JSON.stringify(redis.streams.get(key)), entriesBefore, 'entries are never replayed, trimmed or rewritten');
+    assert.equal(redis.pels.has(key), false, 'the group is never recreated by a read');
+    assert.equal(redis.calls.includes('xgroup'), false, 'no XGROUP CREATE ... 0 and no $ reset');
+  });
+
+  it('AC-04: an existing group with an empty PEL still answers the turn normally', async () => {
+    const { service, redis } = makeService();
+    const key = ledgerKey('c1', 'chat1');
+    const id = await service.appendTurn({ companyId: 'c1', chatKey: 'chat1', turnId: 't1', webhookEventId: 'e1', userId: 'u1', text: 'x', now: NOW });
+    await service.ack({ key, id: id!, companyId: 'c1', turnId: 't1', kind: 'turn' }, 'acked');
+    assert.equal(redis.pels.get(key)?.size, 0);
+
+    assert.deepEqual(await service.openWaitingUser('c1', 'chat1', 'u1', NOW), []);
+  });
+
+  it('AC-05: the asker gets their stored file and proof; no other user, chat or company can', async () => {
+    const { service } = makeService();
+    const pendingMedia = { pendingMediaId: 'pm-1', attachmentId: 'att-1', mimeType: 'image/jpeg' };
+    await service.appendSubRequests({
+      companyId: 'c1', chatKey: 'chat1', turnId: 't1', webhookEventId: 'e1', userId: 'u1', now: NOW,
+      items: [{ text: 'รูปนี้ของอะไร', state: 'waiting_user', clarifyQuestion: 'ใบเสร็จหรือสลิป?', sourceContext: '{"original":"proof"}', pendingMedia }],
+    });
+
+    const [open] = await service.openWaitingUser('c1', 'chat1', 'u1', NOW);
+    assert.deepEqual(open?.pendingMedia, pendingMedia);
+    assert.equal(open?.entry.sourceContext, '{"original":"proof"}');
+
+    assert.deepEqual(await service.openWaitingUser('c1', 'chat1', 'u2', NOW), [], 'another member');
+    assert.deepEqual(await service.openWaitingUser('c1', 'chat2', 'u1', NOW), [], 'another chat');
+    assert.deepEqual(await service.openWaitingUser('c2', 'chat1', 'u1', NOW), [], 'another company');
+  });
+
+  it('AC-07: connection error, WRONGTYPE, a failing EXISTS and an unusable EXISTS reply all fail closed', async () => {
+    const outage = makeService();
+    outage.redis.failing = true;
+    await rejectsWithReason(() => outage.service.openWaitingUser('c1', 'chat1', 'u1', NOW), 'redis_unavailable');
+
+    const wrong = makeService();
+    wrong.redis.wrongType.add(ledgerKey('c1', 'chat1'));
+    await rejectsWithReason(() => wrong.service.openWaitingUser('c1', 'chat1', 'u1', NOW), 'redis_unavailable');
+
+    const blindExists = makeService();
+    blindExists.redis.failExists = true;
+    await rejectsWithReason(() => blindExists.service.openWaitingUser('c1', 'chat1', 'u1', NOW), 'redis_unavailable');
+
+    const oddExists = makeService();
+    oddExists.redis.existsReply = 7; // not exactly 0 or 1 → absence is not proven
+    await rejectsWithReason(() => oddExists.service.openWaitingUser('c1', 'chat1', 'u1', NOW), 'redis_unavailable');
+  });
+
+  it('AC-08: a key created between XPENDING and EXISTS fails closed, with no retry loop', async () => {
+    const { service, redis } = makeService();
+    const key = ledgerKey('c1', 'chat1');
+    redis.beforeExists = () => { redis.streams.set(key, []); redis.pels.set(key, new Map()); };
+
+    await rejectsWithReason(() => service.openWaitingUser('c1', 'chat1', 'u1', NOW), 'group_missing');
+
+    assert.equal(redis.xpendingArgs.length, 1, 'exactly one XPENDING — the race is accepted, never retried');
+    assert.equal(redis.calls.filter((c) => c === 'exists').length, 1);
+  });
+
+  it('R-11: finds the asker’s question past the first page of a busy group chat', async () => {
+    const { service, redis } = makeService({ lineAiLedgerMaxLen: 500 });
+    const base = { companyId: 'c1', chatKey: 'group1', turnId: 't1', webhookEventId: 'e1', now: NOW };
+    await service.appendSubRequests({ ...base, userId: 'other', items: waitingItems(55) });
+    await service.appendSubRequests({ ...base, userId: 'u1', items: [{ text: 'บันทึกบิล 9/11/37', state: 'waiting_user', clarifyQuestion: 'ปีไหน?' }] });
+
+    const open = await service.openWaitingUser('c1', 'group1', 'u1', NOW);
+
+    assert.equal(open.length, 1, 'entry 56 must not be invisible because 50 other members came first');
+    assert.equal(open[0].question, 'ปีไหน?');
+    assert.equal(redis.xpendingArgs.length, 2);
+    assert.ok(redis.xpendingArgs[1].start.startsWith('('), 'the next page starts at an exclusive id');
+  });
+
+  it('R-11: an exhausted scan budget is an explicit incomplete read, never an empty list', async () => {
+    const { service } = makeService({ lineAiLedgerMaxLen: 500 });
+    await service.appendSubRequests({ companyId: 'c1', chatKey: 'group1', turnId: 't1', webhookEventId: 'e1', userId: 'other', now: NOW, items: waitingItems(201) });
+
+    // Returning [] here would invite a brand-new capture for a message that is an answer.
+    await rejectsWithReason(() => service.openWaitingUser('c1', 'group1', 'u1', NOW), 'scan_incomplete');
+  });
+
+  it('R-11: a malformed XPENDING reply is a protocol failure, not an empty PEL', async () => {
+    for (const reply of ['not-an-array', null, [['ok', 'c', 0, 1], [42, 'c', 0, 1]]]) {
+      const { service, redis } = makeService();
+      await service.appendSubRequests({ companyId: 'c1', chatKey: 'chat1', turnId: 't1', webhookEventId: 'e1', userId: 'u1', now: NOW, items: waitingItems(1) });
+      redis.malformedPending = reply;
+      await rejectsWithReason(() => service.openWaitingUser('c1', 'chat1', 'u1', NOW), 'malformed_response');
+    }
+  });
+
+  it('R-11: reclaim isolates a vanished key and a corrupt group, and still claims the healthy one', async () => {
+    const { service, redis, logs } = makeService();
+    for (const chatKey of ['corrupt', 'healthy']) {
+      await service.appendTurn({ companyId: 'c1', chatKey, turnId: `t-${chatKey}`, webhookEventId: `e-${chatKey}`, userId: 'u1', text: 'x', now: NOW });
+    }
+    redis.destroyGroup(ledgerKey('c1', 'corrupt'));
+    redis.scanExtraKeys.push(ledgerKey('c1', 'vanished')); // SCAN saw it; its TTL elapsed since
+    redis.nowMs += 5000;
+    redis.calls.length = 0;
+
+    const claimed = await service.claimOpenEntries(10, 1000);
+
+    assert.equal(claimed.length, 1);
+    assert.equal(claimed[0].entry.chatKey, 'healthy', 'one bad key must not cost the batch every later key');
+    assert.equal(redis.calls.includes(`xautoclaim:${ledgerKey('c1', 'vanished')}`), true, 'the sweep continued past both bad keys');
+    assert.equal(redis.calls.includes('xgroup'), false, 'a corrupt group is reported, never recreated');
+    assert.equal(logs.filter((l) => l.payload?.msg === 'ai.line.ledger.claim_group_missing').length, 1, 'corruption is distinct from normal expiry');
+  });
+
+  it('R-11: a genuine Redis outage stops the reclaim batch instead of timing out on every key', async () => {
+    const { service, redis } = makeService();
+    for (const chatKey of ['first', 'second']) {
+      await service.appendTurn({ companyId: 'c1', chatKey, turnId: `t-${chatKey}`, webhookEventId: `e-${chatKey}`, userId: 'u1', text: 'x', now: NOW });
+    }
+    redis.failKeys.add(ledgerKey('c1', 'first'));
+    redis.nowMs += 5000;
+
+    assert.deepEqual(await service.claimOpenEntries(10, 1000), []);
+    assert.equal(redis.calls.includes(`xautoclaim:${ledgerKey('c1', 'second')}`), false, 'no grinding through 200 keys at one command timeout each');
+  });
+
+  it('AC-13: lifecycle logs carry a hash and a reason — never the raw key, and absence is not an outage', async () => {
+    const { service, redis, logs } = makeService();
+
+    await service.openWaitingUser('c1', LINE_CHAT_ID, 'u1', NOW);
+    const absent = logs.at(-1)!;
+    assert.equal(absent.level, 'log', 'a confirmed-absent stream is normal lifecycle, never a warning');
+    assert.equal(absent.payload.reason, 'stream_absent');
+    assert.equal(absent.payload.chatKeyHash, hashMessagePreview(LINE_CHAT_ID));
+
+    await service.appendSubRequests({ companyId: 'c1', chatKey: LINE_CHAT_ID, turnId: 't1', webhookEventId: 'e1', userId: 'u1', now: NOW, items: waitingItems(1) });
+    redis.destroyGroup(ledgerKey('c1', LINE_CHAT_ID));
+    await assert.rejects(() => service.openWaitingUser('c1', LINE_CHAT_ID, 'u1', NOW));
+
+    const rendered = JSON.stringify(logs);
+    assert.equal(rendered.includes(LINE_CHAT_ID), false, 'the raw LINE id must never reach a log');
+    assert.equal(rendered.includes(ledgerKey('c1', LINE_CHAT_ID)), false, 'nor the raw Redis key the NOGROUP error embeds');
+    assert.equal(logs.at(-1)!.payload.reason, 'group_missing');
+  });
+});
+
+/**
+ * Optional real-Redis coverage: a fake is only ever as faithful as the last incident taught us, and
+ * this one was invisible for exactly that reason. Runs only with `LINE_AI_LEDGER_REDIS_TEST_URL`
+ * set, against a dedicated db index, on synthetic keys it creates under a random tag. It deletes
+ * only those exact keys — never FLUSHDB/FLUSHALL/KEYS and never a scan-delete.
+ */
+const redisTestUrl = process.env.LINE_AI_LEDGER_REDIS_TEST_URL;
+
+describe('LineAiLedgerService on real Redis Streams', { skip: !redisTestUrl }, () => {
+  /**
+   * One client and one random tag per test. `own()`/`keyFor()` name a key AND register it, and the
+   * teardown deletes exactly those keys — no SCAN, no pattern, nothing this test did not create.
+   * `claimOpenEntries` is deliberately never exercised here: its SCAN would reach keys that belong
+   * to other sessions sharing this server.
+   */
+  async function withRealRedis(
+    run: (ctx: {
+      service: LineAiLedgerService;
+      client: Redis;
+      companyId: string;
+      otherCompanyId: string;
+      chat: (name: string) => string;
+      own: (name: string) => string;
+      keyFor: (companyId: string, name: string) => string;
+    }) => Promise<void>,
+    config: Record<string, unknown> = {},
+  ): Promise<void> {
+    const url = new URL(redisTestUrl!);
+    assert.ok(['localhost', '127.0.0.1'].includes(url.hostname), 'local Redis only');
+    assert.ok(url.pathname !== '' && url.pathname !== '/' && url.pathname !== '/0', 'use a dedicated db index, never the default');
+    const client = new Redis(redisTestUrl!, { maxRetriesPerRequest: 1, commandTimeout: 2000 });
+    const tag = randomUUID();
+    const companyId = `company-${tag}`;
+    const otherCompanyId = `company-other-${tag}`;
+    const chat = (name: string) => `chat-${name}-${tag}`;
+    const tracked = new Set<string>();
+    const keyFor = (cid: string, name: string) => {
+      const key = ledgerKey(cid, chat(name));
+      tracked.add(key);
+      return key;
+    };
+    const own = (name: string) => keyFor(companyId, name);
+    const { service } = makeService(config);
+    service.attachClient(client as unknown as LedgerRedis);
+    try {
+      await run({ service, client, companyId, otherCompanyId, chat, own, keyFor });
+    } finally {
+      if (tracked.size > 0) await client.del(...tracked);
+      await client.quit();
+    }
+  }
+
+  it('tells an absent stream, an expired key and a destroyed group apart', async () => {
+    await withRealRedis(async ({ service, client, companyId, chat, own }) => {
+      const seed = (name: string) => service.appendSubRequests({
+        companyId, chatKey: chat(name), turnId: 't1', webhookEventId: 'e1', userId: 'u1', now: NOW, items: waitingItems(1),
+      });
+
+      // 1. Never created: real Redis raises NOGROUP, absence is confirmed, the turn proceeds.
+      assert.deepEqual(await service.openWaitingUser(companyId, chat('fresh'), 'u1', NOW), []);
+      assert.equal(await client.exists(own('fresh')), 0, 'and the read created nothing');
+
+      // 2. A key whose TTL elapsed reads exactly like a brand-new chat.
+      await seed('expiring');
+      assert.equal((await service.openWaitingUser(companyId, chat('expiring'), 'u1', NOW)).length, 1);
+      await client.pexpire(own('expiring'), 50);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      assert.deepEqual(await service.openWaitingUser(companyId, chat('expiring'), 'u1', NOW), []);
+
+      // 3. Entries still there, group gone: fail closed and never repair.
+      await seed('destroyed');
+      await client.xgroup('DESTROY', own('destroyed'), LEDGER_GROUP);
+      await rejectsWithReason(() => service.openWaitingUser(companyId, chat('destroyed'), 'u1', NOW), 'group_missing');
+      assert.equal(await client.xlen(own('destroyed')), 1, 'entries untouched');
+      assert.deepEqual(await client.xinfo('GROUPS', own('destroyed')), [], 'the group is never recreated by a read');
+
+      // 4. Group present, PEL emptied by an ack: an ordinary empty read.
+      const id = await service.appendTurn({ companyId, chatKey: chat('empty'), turnId: 't1', webhookEventId: 'e1', userId: 'u1', text: 'x', now: NOW });
+      await service.ack({ key: own('empty'), id: id!, companyId, turnId: 't1', kind: 'turn' }, 'acked');
+      assert.deepEqual(await service.openWaitingUser(companyId, chat('empty'), 'u1', NOW), []);
+    });
+  });
+
+  /** The exclusive `(<id>` start is OUR pagination invention; only a real server can prove the
+   *  `XPENDING key group (<id> + 50` form does what the fake assumes it does. */
+  it('pages the real XPENDING by exclusive id and finds the asker beyond the first page', async () => {
+    await withRealRedis(async ({ service, companyId, chat, own }) => {
+      own('busy');
+      const base = { companyId, chatKey: chat('busy'), turnId: 't1', webhookEventId: 'e1', now: NOW };
+      await service.appendSubRequests({ ...base, userId: 'other', items: waitingItems(55) });
+      await service.appendSubRequests({ ...base, userId: 'u1', items: [{ text: 'บันทึกบิล 9/11/37', state: 'waiting_user', clarifyQuestion: 'ปีไหน?' }] });
+
+      const open = await service.openWaitingUser(companyId, chat('busy'), 'u1', NOW);
+
+      assert.equal(open.length, 1, 'entry 56 must not be invisible because 55 other members came first');
+      assert.equal(open[0].question, 'ปีไหน?');
+    }, { lineAiLedgerMaxLen: 500 });
+  });
+
+  it('raises scan_incomplete when a real PEL outruns the page budget', async () => {
+    await withRealRedis(async ({ service, companyId, chat, own }) => {
+      own('flood');
+      await service.appendSubRequests({
+        companyId, chatKey: chat('flood'), turnId: 't1', webhookEventId: 'e1', userId: 'other', now: NOW, items: waitingItems(201),
+      });
+
+      await rejectsWithReason(() => service.openWaitingUser(companyId, chat('flood'), 'u1', NOW), 'scan_incomplete');
+    }, { lineAiLedgerMaxLen: 500 });
+  });
+
+  it('treats a key of the wrong type as a Redis failure, never as an absent stream', async () => {
+    await withRealRedis(async ({ service, client, companyId, chat, own }) => {
+      await client.set(own('stringy'), 'not-a-stream'); // real WRONGTYPE, not a fabricated one
+
+      await rejectsWithReason(() => service.openWaitingUser(companyId, chat('stringy'), 'u1', NOW), 'redis_unavailable');
+    });
+  });
+
+  it('isolates the asker from another member, another chat and another company', async () => {
+    await withRealRedis(async ({ service, client, companyId, otherCompanyId, chat, own, keyFor }) => {
+      const pendingMedia = { pendingMediaId: 'pm-1', attachmentId: 'att-1', mimeType: 'image/jpeg' };
+      own('iso');
+      const otherChatKey = own('iso-elsewhere');
+      const otherCompanyKey = keyFor(otherCompanyId, 'iso');
+      await service.appendSubRequests({
+        companyId, chatKey: chat('iso'), turnId: 't1', webhookEventId: 'e1', userId: 'u1', now: NOW,
+        items: [{ text: 'รูปนี้ของอะไร', state: 'waiting_user', clarifyQuestion: 'ใบเสร็จหรือสลิป?', sourceContext: '{"original":"proof"}', pendingMedia }],
+      });
+
+      const [open] = await service.openWaitingUser(companyId, chat('iso'), 'u1', NOW);
+      assert.deepEqual(open?.pendingMedia, pendingMedia);
+      assert.equal(open?.entry.sourceContext, '{"original":"proof"}');
+
+      // Another member reads the SAME live stream and its non-empty PEL, and still gets nothing.
+      assert.deepEqual(await service.openWaitingUser(companyId, chat('iso'), 'u2', NOW), []);
+
+      // Another chat and another company are different keys entirely: absent, hence empty.
+      assert.deepEqual(await service.openWaitingUser(companyId, chat('iso-elsewhere'), 'u1', NOW), []);
+      assert.equal(await client.exists(otherChatKey), 0, 'a sibling chat is a separate, absent key');
+      assert.deepEqual(await service.openWaitingUser(otherCompanyId, chat('iso'), 'u1', NOW), []);
+      assert.equal(await client.exists(otherCompanyKey), 0, 'and so is another tenant');
+    });
   });
 });
