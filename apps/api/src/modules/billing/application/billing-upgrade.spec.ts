@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BILLING_DRAFT_POLICY } from '@watchdog-bms/contracts';
+import { BILLING_DRAFT_POLICY, billingOffer } from '@watchdog-bms/contracts';
 import { proratedPackagePrice } from '../domain/billing-package';
-import { upgradePreview } from './billing-upgrade';
+import { upgradePreview, upgradeHistory } from './billing-upgrade';
 import { BillingRepeat } from './billing-repeat';
 
 test('money proration uses actual seconds and rounds half up per prepaid segment', () => {
@@ -47,6 +47,11 @@ test('prepaid source recheck accepts later zero cycles but blocks external colle
   const repeat=new BillingRepeat({} as any,{request:async()=>observed} as any,{} as any);
   const check=(sub:Record<string,any>)=>(repeat as any).assertOriginalCollection(sub,account,source,'year');
   await check(original);
+  // A purchased annual extension must still validate the original monthly renewal phase.
+  observed=structuredClone(schedule);observed.phases[1].end_date=Date.parse('2028-02-01Z')/1000;
+  await (repeat as any).assertOriginalCollection(original,account,{...source,sourceInterval:'month'},'year');
+  await assert.rejects(check(original));
+  observed=structuredClone(schedule);
   for(const mutate of [(s:Record<string,any>)=>s.phases[1].items[0].price='price_other',
     (s:Record<string,any>)=>s.phases[1].items[0].tax_rates=['txr_other'],(s:Record<string,any>)=>s.phases[1].end_date++,
     (s:Record<string,any>)=>s.phases[0].add_invoice_items=[{}],(s:Record<string,any>)=>s.end_behavior='cancel']){
@@ -55,4 +60,48 @@ test('prepaid source recheck accepts later zero cycles but blocks external colle
   observed=structuredClone(schedule);
   await assert.rejects(check({...original,pending_update:{}}));
   await assert.rejects(check({...original,items:{data:[{...original.items.data[0],price:'price_other'}]}}));
+});
+
+
+test('mixed monthly/annual purchases keep each paid price through successive upgrades', async () => {
+  const at=new Date('2026-01-16T00:00:00Z'), monthStart=new Date('2026-01-01Z'), monthEnd=new Date('2026-02-01Z'), yearEnd=new Date('2027-02-01Z');
+  const month=billingOffer('STARTER_249','month'), year=billingOffer('STARTER_249','year');
+  const grant=(id:string,kind:string,offer:typeof month,start:Date,end:Date)=>({id,kind,sourceKey:id,units:offer.receiptAllowance,serviceStart:start,serviceEnd:end,
+    availableAt:monthStart,expiresAt:yearEnd,revokedAt:null,sourceHash:id});
+  const grants:any[]=[grant('month','INITIAL',month,monthStart,monthEnd),grant('year','REPEAT',year,monthEnd,yearEnd)];
+  const invoice=(g:any,offer:typeof month)=>({id:g.id,appliedAt:at,applyStatus:'APPLIED',providerStatus:'paid',paidSatang:offer.priceSatang,totalSatang:offer.priceSatang,
+    refundedSatang:0,disputed:false,evidenceHash:g.id,periodStart:g.serviceStart,periodEnd:g.serviceEnd,contractSnapshot:{quote:{offer},policy:BILLING_DRAFT_POLICY}});
+  const invoices:any[]=[invoice(grants[0],month),invoice(grants[1],year)];
+  const db:any={billingReceiptGrant:{findMany:async()=>grants},billingInvoice:{findMany:async()=>invoices},billingOperation:{findMany:async()=>[]}};
+  const account:any={id:'account',companyId:'company',baseSubscriptionId:'sub',paidThrough:yearEnd};
+  const basic=billingOffer('BASIC_499','year');
+  const first=await upgradeHistory(db,account,basic,BILLING_DRAFT_POLICY,at.toISOString());
+  assert.equal(first.segments[0]!.newOffer!.interval,'month');
+  assert.equal(first.segments[0]!.amountSatang,proratedPackagePrice(24900,49900,monthStart,monthEnd,at));
+  assert.equal(first.segments[1]!.amountSatang,250000);assert.equal(first.segments[1]!.receiptUnitsAdded,240);
+  const delta=grant('upgrade','UPGRADE',basic,at,yearEnd);delta.units=first.receiptUnitsAdded;grants.push(delta);
+  const paid:any=invoice(delta,basic);paid.contractSnapshot.upgrade=first;invoices.push(paid);
+  const next=await upgradeHistory(db,account,billingOffer('PRO_999','year'),BILLING_DRAFT_POLICY,new Date(+at+1000).toISOString());
+  assert.equal(next.segments[0]!.oldOffer.offerKey,'BASIC_499');assert.equal(next.segments[0]!.oldOffer.interval,'month');
+  assert.equal(next.segments[1]!.amountSatang,500000);assert.equal(next.segments[1]!.receiptUnitsAdded,600);
+  paid.contractSnapshot.upgrade.segments[0].oldOffer={...month,priceSatang:1};
+  await assert.rejects(upgradeHistory(db,account,billingOffer('PRO_999','year'),BILLING_DRAFT_POLICY,new Date(+at+1000).toISOString()));
+});
+
+
+test('zero-valued cadence invoices are recognized only when the completed journal recorded them', async () => {
+  const start=Date.parse('2026-01-16Z')/1000,end=Date.parse('2027-01-16Z')/1000;
+  const account:any={id:'account',baseSubscriptionId:'sub',customerId:'cus',livemode:false};
+  const invoice:any={id:'in_update',object:'invoice',livemode:false,customer:'cus',parent:{subscription_details:{subscription:'sub'}},
+    status:'paid',total:0,amount_paid:0,amount_remaining:0,currency:'thb',billing_reason:'subscription_update',collection_method:'charge_automatically',starting_balance:0};
+  const line:any={pricing:{price_details:{price:'price_zero'}},currency:'thb',quantity:1,livemode:false,
+    parent:{subscription_item_details:{subscription:'sub',proration:false}},period:{start,end}};
+  const journal={completed:true,phaseStart:start,paidThrough:new Date(end*1000).toISOString(),zeroInvoiceIds:['in_update']};
+  const repeat=new BillingRepeat({client:{billingAttempt:{findMany:async()=>[{collectionJson:journal,quoteSnapshot:{repeat:{zeroPriceId:'price_zero'}}}]}}} as any,{} as any,{} as any);
+  assert.equal(await repeat.ownedZeroInvoice(account,invoice,[line]),true);
+  assert.equal(await repeat.ownedZeroInvoice(account,{...invoice,id:'in_unrelated'},[line]),false);
+  assert.equal(await repeat.ownedZeroInvoice(account,{...invoice,total:1},[line]),false);
+  assert.equal(await repeat.ownedZeroInvoice(account,{...invoice,customer:'foreign'},[line]),false);
+  assert.equal(await repeat.ownedZeroInvoice(account,invoice,[{...line,period:{start,end:end+1}}]),false);
+  journal.completed=false;assert.equal(await repeat.ownedZeroInvoice(account,invoice,[line]),false);
 });

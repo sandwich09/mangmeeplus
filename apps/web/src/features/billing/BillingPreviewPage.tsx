@@ -9,7 +9,7 @@ import { createBillingPreview, previewScenarios, type PreviewScenario } from './
 
 const button = 'mangmee-btn mangmee-btn-secondary';
 const money = (value: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(value / 100);
-type CheckoutPreview = Pick<BillingQuote, 'offer' | 'totalSatang'>;
+type CheckoutPreview = Pick<BillingQuote, 'offer' | 'totalSatang' | 'purchase'>;
 
 export default function BillingPreviewPage({ companyId }: { companyId: string }) {
   const [scenario, setScenario] = useState<PreviewScenario>('start'), [revision, setRevision] = useState(0);
@@ -18,7 +18,7 @@ export default function BillingPreviewPage({ companyId }: { companyId: string })
   const [checkout, setCheckout] = useState<CheckoutPreview | null>(null);
   const [documentKind, setDocumentKind] = useState('receipt');
   const preview = useMemo(() => ({
-    api: createBillingPreview(companyId, scenario, checkout?.offer ?? null, quote => { setCheckout(quote); setView('checkout'); }),
+    api: createBillingPreview(companyId, scenario, checkout, quote => { setCheckout(quote); setView('checkout'); }),
     readAccountEmail: async () => ({ email: 'preview@example.com', emailVerified: true, emailRevision: 0, emailRequirement: 'READY' as const,
       hasPassword: true, lineLinked: false, serverNow: new Date().toISOString(), challenge: null }),
     navigate: (url: string, kind: 'checkout' | 'portal' | 'document') => {
@@ -27,7 +27,7 @@ export default function BillingPreviewPage({ companyId }: { companyId: string })
       else setView(kind);
     },
     openDocumentHistory: () => { setReturnSection('history'); setView('document-history'); },
-    startWithPlans: ['start', 'capacity', 'expired', 'quote-error'].includes(scenario),
+    startWithPlans: ['start', 'capacity', 'capacity-work', 'expired', 'quote-error'].includes(scenario),
     // Selecting a scenario or restarting intentionally replaces all simulated state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [companyId, scenario, revision]);
@@ -37,7 +37,7 @@ export default function BillingPreviewPage({ companyId }: { companyId: string })
     back: () => setView('journey'),
   }), []);
   function choose(next: PreviewScenario) {
-    if (['start', 'capacity', 'upgrade', 'expired', 'quote-error'].includes(next)) setCheckout(null);
+    if (['start', 'capacity', 'capacity-work', 'upgrade', 'scheduled-change', 'expired', 'quote-error'].includes(next)) setCheckout(null);
     setReturnSection('package'); setScenario(next); setRevision(value => value + 1); setView('journey');
   }
   const currentPreview = useMemo(() => ({ ...preview, initialSection: returnSection }), [preview, returnSection]);
@@ -45,13 +45,13 @@ export default function BillingPreviewPage({ companyId }: { companyId: string })
   return <BillingWorkspaceContext.Provider value={true}>
     <div className="space-y-6">
       <section aria-label="ตัวควบคุมพรีวิว" className="rounded-xl border border-gray-200 bg-white p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-bold text-amber-800">พรีวิวทุกขั้นตอน · เฉพาะ local</h2><p className="mt-1 text-xs text-gray-500">ข้อมูลตัวอย่าง · ไม่เปลี่ยนบริษัทหรือเรียกเก็บเงินจริง</p></div><Link href={`/companies/${encodeURIComponent(companyId)}/billing`} className="text-sm font-semibold text-brand-700 underline">ออกจากพรีวิว</Link></div>
-        <div className="mt-3 flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-bold text-amber-800">พรีวิวทุกขั้นตอน · เฉพาะ local</h2><p className="mt-1 text-xs text-gray-500">จำลองตามกรณีที่เลือก ไม่ใช่แพ็กเกจจริงของบริษัท · ไม่เปลี่ยนข้อมูลหรือเรียกเก็บเงินจริง</p></div><Link href={`/companies/${encodeURIComponent(companyId)}/billing`} className="text-sm font-semibold text-brand-700 underline">ออกจากพรีวิว</Link></div>
+        <div className="mt-3 grid gap-3 sm:flex sm:flex-wrap sm:items-center">
           <label className="text-sm text-gray-600" htmlFor="billing-preview-scenario">เลือกหน้าจอที่ต้องการดู</label>
-          <select id="billing-preview-scenario" className="mangmee-input min-w-0 flex-1 sm:max-w-xs" value={scenario} onChange={event => choose(event.target.value as PreviewScenario)}>
+          <select id="billing-preview-scenario" className="mangmee-input min-w-0 flex-1 sm:max-w-sm" value={scenario} onChange={event => choose(event.target.value as PreviewScenario)}>
             {Object.entries(previewScenarios).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </select>
-          <button type="button" className={button} onClick={() => choose(scenario)}>เริ่มใหม่</button>
+          <button type="button" className={`${button} justify-self-start`} onClick={() => choose(scenario)}>เริ่มใหม่</button>
         </div>
       </section>
       {view === 'journey' && <BillingPage key={`${scenario}-${revision}`} companyId={companyId} preview={currentPreview} returning={returning} returnAttemptId={returning ? 'preview-attempt' : null} />}

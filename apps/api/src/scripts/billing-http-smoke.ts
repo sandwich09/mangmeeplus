@@ -44,6 +44,7 @@ import { checkReceiptQuotaRuntime } from './receipt-quota-runtime-smoke';
 
 type ProviderObject = Record<string, any>;
 async function main() {
+  const trialCarryoverOnly = process.env.BILLING_TRIAL_CARRYOVER_ONLY === '1';
   const databaseUrl = process.env.BILLING_TEST_DATABASE_URL;
   assert.ok(databaseUrl, 'BILLING_TEST_DATABASE_URL is required');
   const db = new URL(databaseUrl);
@@ -97,7 +98,7 @@ async function main() {
     }
     if (path === '/account') return response({ id: accountId, settings: { invoices: { default_account_tax_ids: ['txi_Synthetic'] } } });
     if (path.startsWith('/prices/')) return response({ id: path.split('/').at(-1), object: 'price', livemode: false, active: true, type: 'recurring',
-      product: path.includes('Starter') ? 'prod_Starter' : path.includes('Basic') ? 'prod_Basic' : 'prod_Pro', currency: 'thb', unit_amount: path.includes('Zero') ? 0 : path.includes('Starter') ? 249000 : path.includes('Basic') ? 499000 : 999000, recurring: { interval: 'year', interval_count: 1, usage_type: 'licensed' }, billing_scheme: 'per_unit',
+      product: path.includes('Starter') ? 'prod_Starter' : path.includes('Basic') ? 'prod_Basic' : 'prod_Pro', currency: 'thb', unit_amount: path.includes('Zero') ? 0 : (path.includes('Starter') ? 24900 : path.includes('Basic') ? 49900 : 99900) * (path.includes('Month') ? 1 : 10), recurring: { interval: path.includes('Month') ? 'month' : 'year', interval_count: 1, usage_type: 'licensed' }, billing_scheme: 'per_unit',
       tax_behavior: path.includes('Exclusive') ? 'exclusive' : 'inclusive' });
     if (path.startsWith('/billing_portal/configurations/')) return response({ id: path.split('/').at(-1), object: 'billing_portal.configuration', livemode: false, active: true,
       features: { payment_method_update: { enabled: true }, subscription_update: { enabled: false }, subscription_cancel: { enabled: false } } });
@@ -166,8 +167,9 @@ async function main() {
       const membership = await client.companyMembership.create({ data: { companyId, userId: userIds[0]!, roles: { create: { roleId } } } });
       if (companyId === companyIds[0]) memberId = membership.id;
       await client.companyPlanTerm.create({ data: { companyId, tierKey: 'FREE_TRIAL_15', branchLimit: 1, employeeLimit: 2, monthlySlipLimit: 15,
-        termStartAt: new Date(Date.now() - 31 * 86400000), termEndsAt: new Date(Date.now() - 60000) } });
+        termStartAt: new Date(Date.now() - (trialCarryoverOnly ? 1 : 31) * 86400000), termEndsAt: new Date(Date.now() + (trialCarryoverOnly ? 7 * 86400000 : -60000)) } });
     }
+    if (trialCarryoverOnly) for (let i = 0; i < 6; i++) assert.equal((await admitCompanyOcr(prisma, { companyId: companyIds[0]!, sourceRoute: i % 2 ? 'receipt-ocr-line' : 'receipt-ocr-web', requestId: `trial-before-${i}`, enforceReceiptQuota: true })).allowed, true);
     const release = currentLegalRelease('th');
     await client.$transaction(tx => app.get(LegalAcceptanceService).recordFromEvidence(tx, { userId: userIds[0]!, companyId: companyIds[0]!, membershipId: memberId,
       requestId: run, evidence: { ...release, locale: 'th', legalAcceptedAt: new Date() } }));
@@ -260,7 +262,7 @@ async function main() {
     if (process.env.BILLING_CONFIG_ONLY !== '1') {
     assert.equal((await fetch(`${origin}${base}`)).status, 401);
     assert.equal((await request(base, 'GET', undefined, { 'x-company-id': companyIds[1]! })).status, 403);
-    const before = await request(base); assert.equal(before.status, 200); assert.equal(before.body.accessState, 'EXPIRED');
+    const before = await request(base); assert.equal(before.status, 200); assert.equal(before.body.accessState, trialCarryoverOnly ? 'ACTIVE' : 'EXPIRED');
     cases.push('real-session-tenant-and-expired-owner-recovery');
     const requestPath=`/v1/companies/${companyIds[0]}/package-change-requests`;
     const originalRequest=await request(requestPath,'POST',{requestedTierKey:'PRO_999',note:'ขอซื้อ Pro เพื่อเพิ่มใบเสร็จให้ร้าน'});
@@ -303,6 +305,10 @@ async function main() {
       await page.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
       await page.getByRole('heading', { name: /ยืนยันซื้อ/ }).waitFor();
       cases.push('browser-runtime-sales-gate-refresh-invalidates-review-and-recovers-without-restart');
+      if (trialCarryoverOnly) {
+        const review = await page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ', exact: true }).innerText();
+        assert.match(review, /ยกยอดจากทดลองใช้/); assert.match(review, /1,209 ใบ/);
+      }
       await page.screenshot({ path: `${browser.evidenceDir}/quote-desktop.png`, fullPage: true });
       await page.getByRole('checkbox').check();
       await page.getByRole('button', { name: 'ยืนยันและไปชำระที่ Stripe' }).click();
@@ -313,6 +319,11 @@ async function main() {
     const storedQuote = storedAttempt ? await client.billingQuote.findUniqueOrThrow({ where: { id: storedAttempt.quoteId } }) : null;
     const quote = storedQuote ? { status: 200, body: (storedQuote.snapshotJson as any).quote } : await request(`${base}/quote`, 'POST', { offerKey: 'PRO_999', interval: 'year', billingEmail: 'owner@example.test' });
     assert.equal(quote.status, 200, JSON.stringify(quote.body)); assert.equal(quote.body.totalSatang, 999000); assert.equal(quote.body.offer.receiptAllowance, 1200);
+    if (trialCarryoverOnly) {
+      assert.equal(quote.body.purchase.trialCarryover.receiptUnits, 9);
+      assert.equal(quote.body.purchase.projectedRemainingReceipts, 1209);
+      assert.equal((await admitCompanyOcr(prisma, { companyId: companyIds[0]!, sourceRoute: 'receipt-ocr-web', requestId: 'trial-during-checkout', enforceReceiptQuota: true })).allowed, true);
+    } else assert.equal(quote.body.purchase.trialCarryover, undefined);
     const body = { quoteId: quote.body.quoteId, consentRevision: quote.body.consentRevision, accepted: true, channel: 'line' };
     const key = storedAttempt?.idempotencyKey ?? randomUUID(); const checkout = await request(`${base}/checkout`, 'POST', body, { 'idempotency-key': key });
     assert.equal(checkout.status, 200, JSON.stringify(checkout.body)); assert.equal(checkout.body.state, 'OPEN');
@@ -331,7 +342,7 @@ async function main() {
       items: { data: [{ id: `si_${run}`, price: 'price_ProYear', quantity: 1, current_period_start: start, current_period_end: end }] } }; provider.subscriptions.push(subscription);
     provider.invoices.push({ id: invoiceId, object: 'invoice', livemode: false, customer: session.customer, parent: { subscription_details: { subscription: subId } }, status: 'paid',
       collection_method: 'charge_automatically', currency: 'thb', billing_reason: 'subscription_create', amount_remaining: 0, total: 999000, amount_paid: 999000, starting_balance: 0,
-      number: 'SYNTHETIC-1', created: start, hosted_invoice_url: 'https://invoice.stripe.com/i/synthetic', invoice_pdf: 'https://invoice.stripe.com/i/synthetic/pdf' });
+      number: 'SYNTHETIC-1', created: start, status_transitions: { paid_at: start }, hosted_invoice_url: 'https://invoice.stripe.com/i/synthetic', invoice_pdf: 'https://invoice.stripe.com/i/synthetic/pdf' });
     provider.lines.push({ id: `il_${run}`, invoice: invoiceId, parent: { type: 'subscription_item_details', subscription_item_details: { subscription: subId, subscription_item: `si_${run}`, proration: false } },
       pricing: { price_details: { price: 'price_ProYear' } }, currency: 'thb', quantity: 1, livemode: false, period: { start, end } });
     provider.payments.push({ id: `inpay_${run}`, object: 'invoice_payment', livemode: false, status: 'paid', invoice: invoiceId,
@@ -373,7 +384,7 @@ async function main() {
         memberships: initialOptions.memberships.map((m: any) => ({ id: m.id, defaultBranchId: null })) } }, { 'idempotency-key': randomUUID() });
     assert.equal(initialRepair.status, 202, JSON.stringify(initialRepair.body));
     };
-    if(process.env.BILLING_PACKAGE_REQUEST_ONLY==='1')await repairInitialCapacity();
+    if(process.env.BILLING_PACKAGE_REQUEST_ONLY==='1' || trialCarryoverOnly)await repairInitialCapacity();
     else cases.push(...await checkBillingApplyRetry({prisma,operations:app.get(BillingOperationsService),companyIds,stripeAccountId:accountId,origin,request,browser,
       signToken:(sid,userId)=>new JwtService().sign({sub:userId,sid},{secret,algorithm:'HS256',issuer:DEFAULT_JWT_ISSUER,audience:DEFAULT_JWT_AUDIENCE,expiresIn:3600}),
       recordLegal:(userId,membershipId,companyId)=>client.$transaction(tx=>app.get(LegalAcceptanceService).recordFromEvidence(tx,{userId,companyId,membershipId,
@@ -389,9 +400,16 @@ async function main() {
     cases.push('initial-paid-held-capacity-retains-original-command-and-repairs-without-repayment');
     const after = await request(base); assert.equal(after.status, 200, JSON.stringify(after));
     assert.equal(after.body.paymentState, 'PAID'); assert.equal(after.body.applyState, 'APPLIED'); assert.equal(after.body.accessState, 'ACTIVE');
-    assert.equal(after.body.usage.remaining, 1200); assert.equal(after.body.usage.cadence, 'PAID_GRANTS');
+    assert.equal(after.body.usage.remaining, trialCarryoverOnly ? 1208 : 1200); assert.equal(after.body.usage.cadence, 'PAID_GRANTS');
     assert.equal(after.body.paidThrough, new Date(end * 1000).toISOString());
-    assert.equal(await client.billingReceiptGrant.count({ where: { companyId: companyIds[0] } }), 1);
+    assert.equal(await client.billingReceiptGrant.count({ where: { companyId: companyIds[0] } }), trialCarryoverOnly ? 2 : 1);
+    if (trialCarryoverOnly) {
+      const carry = await client.billingReceiptGrant.findFirstOrThrow({ where: { companyId: companyIds[0], kind: 'TRIAL_CARRYOVER' } });
+      assert.equal(carry.units, 8); assert.equal(carry.expiresAt.toISOString(), new Date(end * 1000).toISOString());
+      await app.get(BillingReconcilerService).reconcileAccount(initialAccount.id);
+      assert.equal((await request(base)).body.usage.remaining, 1208);
+      cases.push('trial-review-nine-rechecks-eight-after-checkout-consumption-and-grants-once-after-held-repair');
+    }
     const paidAttempt = await request(`${base}/attempts/${checkout.body.attemptId}`);
     assert.equal(paidAttempt.body.paymentState, 'PAID'); assert.equal(paidAttempt.body.applyState, 'APPLIED');
     assert.ok(paidAttempt.body.invoiceReference);
@@ -405,14 +423,14 @@ async function main() {
     assert.notEqual(nextRequest.body.id,originalRequest.body.id);assert.equal(nextRequest.body.status,'OPEN');
     await webhook(`evt_second${run}`); await request('/v1/internal/billing/drain', 'POST', {}, { 'x-worker-token': workerToken });
     await drainNotifications();
-    assert.equal(await client.billingReceiptGrant.count({ where: { companyId: companyIds[0] } }), 1);
+    assert.equal(await client.billingReceiptGrant.count({ where: { companyId: companyIds[0] } }), trialCarryoverOnly ? 2 : 1);
     // Stripe sandbox proved schedule transitions replace the item ID. Reprocessing the
     // historical invoice must still succeed without minting another receipt grant.
     subscription.items.data[0]!.id = `si_replaced${run}`;
     await webhook(`evt_history${run}`);
     const historical = await request('/v1/internal/billing/drain', 'POST', {}, { 'x-worker-token': workerToken });
     assert.equal(historical.body.failed, 0, JSON.stringify(historical));
-    assert.equal(await client.billingReceiptGrant.count({ where: { companyId: companyIds[0] } }), 1);
+    assert.equal(await client.billingReceiptGrant.count({ where: { companyId: companyIds[0] } }), trialCarryoverOnly ? 2 : 1);
     cases.push('historical-paid-invoice-survives-replaced-subscription-item');
     assert.equal((await client.packageChangeRequest.findUniqueOrThrow({where:{id:nextRequest.body.id}})).status,'OPEN');
     assert.equal(await client.auditLog.count({where:{companyId:companyIds[0],action:'billing.package_request.fulfilled'}}),1);
@@ -429,6 +447,7 @@ async function main() {
       console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-provider-simulation',passed:cases,browserE2E:Boolean(browser),simulatedProviders:['Stripe','Postmark','LINE'],realProviderPayment:false}));return;
     }
     if (process.env.BILLING_PLAN_CHANGE_ONLY === '1') {
+      cases.push(...await checkBillingPlanChange({ request, prisma, companyIds, userId:userIds[0]!, provider, fixture:repeatFixture, cadence:true, reconcile:id=>app.get(BillingReconcilerService).reconcileAccount(id) }));
       cases.push(...await checkBillingPlanChange({ request, prisma, companyIds, userId:userIds[0]!, provider, fixture:repeatFixture, browser, reconcile:id=>app.get(BillingReconcilerService).reconcileAccount(id) }));
       console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-provider-simulation',passed:cases,simulatedProviders:['Stripe','Postmark','LINE'],realProviderPayment:false,browserE2E:Boolean(browser)}));return;
     }
@@ -464,13 +483,13 @@ async function main() {
       }
     }
     for (const sourceRoute of ['receipt-ocr-web', 'receipt-ocr-line'] as const) assert.equal((await admitCompanyOcr(prisma, { companyId: companyIds[0]!, sourceRoute, requestId: `${run}-${sourceRoute}`, monthKey: '2026-09' })).allowed, true);
-    assert.equal((await request(base)).body.usage.remaining, 1198);
+    assert.equal((await request(base)).body.usage.remaining, trialCarryoverOnly ? 1206 : 1198);
     cases.push('verified-payment-atomic-automatic-unlock-and-shared-web-line-quota');
     if (browser) {
       const { page } = browser;
       await page.goto(`${browser.origin}/companies/${companyIds[0]}/billing/return?attempt=${checkout.body.attemptId}`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('heading', { name: 'ชำระแล้ว เปิดใช้งานแล้ว', exact: true }).waitFor();
-      assert.match(await page.getByRole('region', { name: 'สถานะแพ็กเกจ' }).innerText(), /1198/);
+      assert.match(await page.getByRole('region', { name: 'สถานะแพ็กเกจ' }).innerText(), trialCarryoverOnly ? /1206/ : /1198/);
       await page.getByRole('button', { name: 'ประวัติ', exact: true }).click();
       await page.getByRole('link', { name: 'ดูเอกสาร', exact: true }).first().waitFor();
       await page.setViewportSize({ width: 390, height: 844 });
@@ -510,6 +529,9 @@ async function main() {
     assert.equal((await request(`${base}/documents/${documentId}/open`, 'POST', { kind: 'receipt' })).status, 403);
     await client.membershipRole.create({ data: { membershipId: memberId, roleId } });
     cases.push('protected-invoice-pdf-receipt-tenant-owner-and-url-allowlist');
+    if (trialCarryoverOnly) {
+      console.log(JSON.stringify({ layer: 'real-Nest-HTTP-PostgreSQL-provider-simulation', passed: cases, browserE2E: Boolean(browser), realProviderPayment: false })); return;
+    }
     if (process.env.BILLING_RESTART_ONLY !== '1') {
     const billingAccount = await client.billingAccount.findFirstOrThrow({ where: { companyId: companyIds[0], stripeAccountId: accountId } });
     const collectionInput = { request, prisma, companyId: companyIds[0]!, otherCompanyId: companyIds[1]!, membershipId: memberId, ownerRoleId: roleId,
@@ -540,7 +562,7 @@ async function main() {
         browser = await startBillingBrowser({ apiOrigin: origin, token, companyId: companyIds[0]! });
       }
     }
-    if (process.env.BILLING_RESTART_ONLY !== '1') cases.push(...await checkBillingConfiguration({ request, prisma, provider,companyIds,repeatFixture,reconcile:id=>app.get(BillingReconcilerService).reconcileAccount(id), companyId: companyIds[0]!, userIds, membershipId: memberId, stripeAccountId: accountId, browser,
+    if (process.env.BILLING_RESTART_ONLY !== '1' && process.env.BILLING_CUSTOMER_JOURNEYS_ONLY !== '1') cases.push(...await checkBillingConfiguration({ request, prisma, provider,companyIds,repeatFixture,reconcile:id=>app.get(BillingReconcilerService).reconcileAccount(id), companyId: companyIds[0]!, userIds, membershipId: memberId, stripeAccountId: accountId, browser,
       transport: hook => { journeyTransport = hook; },
       scanAccounts:()=>request('/v1/internal/billing/scan','POST',{}, {'x-worker-token':workerToken}),
       drainProviderScans:()=>request('/v1/internal/billing/provider-scans/drain','POST',{}, {'x-worker-token':workerToken}),
@@ -564,7 +586,11 @@ async function main() {
       } }));
     if (process.env.BILLING_CONFIG_ONLY !== '1' && process.env.BILLING_RESTART_ONLY !== '1') cases.push(...await checkBillingUpgrade({ request, prisma, companyIds, userId: userIds[0]!, provider, fixture: repeatFixture, browser, reconcile: id => app.get(BillingReconcilerService).reconcileAccount(id) }));
     if (process.env.BILLING_CONFIG_ONLY !== '1' && process.env.BILLING_RESTART_ONLY !== '1') cases.push(...await checkBillingPlanChange({ request, prisma, companyIds, userId:userIds[0]!, provider, fixture:repeatFixture, browser, reconcile:id=>app.get(BillingReconcilerService).reconcileAccount(id) }));
-    cases.push(...await checkReceiptQuotaRuntime({ request, prisma, userId: userIds[0]!, membershipId: memberId, browser }));
+    cases.push(...await checkReceiptQuotaRuntime({ request, prisma, userId: userIds[0]!, membershipId: memberId, browser: process.env.BILLING_CUSTOMER_JOURNEYS_ONLY === '1' ? undefined : browser }));
+    if (process.env.BILLING_CUSTOMER_JOURNEYS_ONLY === '1') {
+      console.log(JSON.stringify({ layer: 'real-Nest-HTTP-PostgreSQL-provider-simulation', passed: cases,
+        browserE2E: Boolean(browser), simulatedProviders: ['Stripe', 'Postmark', 'LINE'], realProviderPayment: false })); return;
+    }
     cases.push(...await checkProviderEvents());
     cases.push(...await checkClaimHistory());
     cases.push(...await checkMailMonitoring());

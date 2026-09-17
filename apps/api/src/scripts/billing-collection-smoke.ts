@@ -75,7 +75,7 @@ export async function checkBillingCollection(input: {
     await page.getByRole('button', { name: 'ตรวจผลการต่ออายุ', exact: true }).click();
     await page.getByRole('status').filter({ hasText: 'ยืนยันกลับมาต่ออายุแล้ว' }).waitFor();
     await page.getByRole('button', { name: 'หยุดต่ออายุอัตโนมัติ', exact: true }).waitFor();
-    await page.getByText('ระบบต่ออายุตามสัญญาที่เลือกไว้', { exact: true }).waitFor();
+    await page.getByText('ต่ออายุอัตโนมัติเปิดอยู่', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await page.screenshot({ path: `${browser.evidenceDir}/customer-collection-mobile.png`, fullPage: true });
   } else {

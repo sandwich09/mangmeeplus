@@ -21,8 +21,10 @@ import { upgradeHistory } from './billing-upgrade';
 import type { BillingService, BillingSnapshot } from './billing.service';
 
 export type RepeatSource = { subscriptionId: string; paidThrough: string; productId: string; zeroPriceId: string;
+  sourceInterval?: BillingOffer['interval'];
   currentPriceId: string; currentPeriodStart: number; sourcePriceId: string; sourceTaxRateId: string | null; currentTaxRateId?: string | null; sourceTotal: number; anchorDay: number; billingCycleAnchor?: number; scheduleId: string | null };
 type Journal = { commands: Record<string, { at: string; hash: string }>; beforeInvoiceIds?: string[]; heldAt?: number;
+  zeroInvoiceIds?: string[];
   checkoutExpiresAt?: number; scheduleId?: string; phaseStart?: number; paidThrough?: string; serviceStart?: string;
   completed?: boolean; aborted?: boolean; abortRequested?: boolean };
 const json = (value: unknown) => value as Prisma.InputJsonValue;
@@ -40,7 +42,9 @@ export class BillingRepeat {
     if (await this.prisma.client.billingIssue.count({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
       livemode: account.livemode, kind: 'FINANCIAL_REVIEW', state: { not: 'RESOLVED' } } })) throw review();
     const contracts = await collectionContract(this.prisma.client, account), accepted = contracts.current, future = contracts.future;
-    if (accepted.quote.offer.offerKey !== offer.offerKey || accepted.quote.offer.interval !== offer.interval) {
+    const annualConversion = accepted.quote.offer.interval === 'month' && offer.interval === 'year' && accepted.quote.offer.offerKey === offer.offerKey;
+    if (annualConversion && contracts.pending) throw billingError('BILLING_CADENCE_PENDING_CHANGE', 'มีรายการเปลี่ยนแพ็กเกจรอบถัดไป กรุณาตรวจสอบและยกเลิกรายการนั้นก่อนซื้อรายปี');
+    if (accepted.quote.offer.offerKey !== offer.offerKey || (accepted.quote.offer.interval !== offer.interval && !annualConversion)) {
       throw billingError('BILLING_PLAN_CHANGE_REQUIRED', 'กรุณาใช้รายการเปลี่ยนแพ็กเกจสำหรับการเปลี่ยนระดับหรือรอบชำระ');
     }
     const zeroPriceId = policy.zeroPriceIds?.[`${offer.offerKey as 'STARTER_249' | 'BASIC_499' | 'PRO_999'}:${offer.interval}`];
@@ -75,10 +79,11 @@ export class BillingRepeat {
     const giftBoundary = gifts.map(row => row.proposedJson as unknown as { accountId: string; dayExtension: { subscriptionId: string; after: string } })
       .filter(row => row.accountId === account.id && row.dayExtension?.subscriptionId === account.baseSubscriptionId)
       .map(row => Date.parse(row.dayExtension.after)).filter(at => Number.isSafeInteger(at) && at <= account.paidThrough!.getTime()).sort((a,b) => b-a)[0];
-    const anchorDay = new Date(giftBoundary ?? subscription.billing_cycle_anchor*1000).getUTCDate();
+    // Changing the zero-price cadence can reset Stripe's anchor; preserve the purchased anniversary.
+    const anchorDay = giftBoundary ? new Date(giftBoundary).getUTCDate() : accepted.repeat?.anchorDay ?? new Date(subscription.billing_cycle_anchor*1000).getUTCDate();
     const source = { subscriptionId: account.baseSubscriptionId, paidThrough: account.paidThrough.toISOString(), productId, zeroPriceId,
       currentPriceId: stripeId(subscription.items.data[0].price)!, currentPeriodStart: subscription.items.data[0].current_period_start,
-      sourcePriceId: future.priceId, sourceTaxRateId: future.policy.taxRateId, sourceTotal: future.quote.totalSatang,
+      sourcePriceId: future.priceId, sourceInterval: future.quote.offer.interval, sourceTaxRateId: future.policy.taxRateId, sourceTotal: future.quote.totalSatang,
       currentTaxRateId: stripeId(subscription.items.data[0].price) === accepted.priceId ? accepted.policy.taxRateId : null,
       anchorDay, billingCycleAnchor: subscription.billing_cycle_anchor, scheduleId };
     await this.assertOriginalCollection(subscription, account, source, offer.interval);
@@ -118,7 +123,7 @@ export class BillingRepeat {
       phases[0].start_date !== schedule.current_phase?.start_date || phases[0].end_date * 1000 !== Date.parse(source.paidThrough) ||
       phases[1].start_date * 1000 !== Date.parse(source.paidThrough) || stripeId(phases[0].items?.[0]?.price) !== source.currentPriceId ||
       stripeId(phases[1].items?.[0]?.price) !== source.sourcePriceId ||
-      phases[1].end_date * 1000 !== appendPackageInterval(new Date(source.paidThrough), interval).getTime() ||
+      phases[1].end_date * 1000 !== appendPackageInterval(new Date(source.paidThrough), source.sourceInterval ?? interval).getTime() ||
       phases[1].billing_cycle_anchor !== 'phase_start' ||
       phases.some((p: StripeObject) => !simpleCollection(p) || (p.items?.[0]?.discounts?.length ?? 0) || p.items?.length !== 1 || p.items[0]?.quantity !== 1 || (p.discounts?.length ?? 0) ||
         (p.add_invoice_items?.length ?? 0) || taxes(p.default_tax_rates).length || p.trial_end || p.automatic_tax?.enabled ||
@@ -357,9 +362,13 @@ export class BillingRepeat {
     const invoices = await this.stripe.list('/invoices', { subscription: source.subscriptionId });
     for (let invoice of invoices.filter(i => !journal.beforeInvoiceIds!.includes(i.id))) {
       const lines = await this.stripe.list(`/invoices/${invoice.id}/lines`, {}), line = lines[0];
+      const cadenceUpdate = paid && invoice.total === 0 && invoice.billing_reason === 'subscription_update' &&
+        source.sourceInterval && source.sourceInterval !== snapshot.quote.offer.interval && journal.commands.scheduleUpdate &&
+        invoice.created >= Math.floor(Date.parse(journal.commands.scheduleUpdate.at) / 1000) &&
+        line?.pricing?.price_details?.price === source.zeroPriceId && line?.period?.end * 1000 <= Date.parse(journal.paidThrough!);
       if (invoice.livemode !== account.livemode || stripeId(invoice.customer) !== account.customerId ||
           stripeId(invoice.parent?.subscription_details?.subscription) !== source.subscriptionId || invoice.created < journal.heldAt! ||
-          invoice.billing_reason !== 'subscription_cycle' || invoice.collection_method !== 'charge_automatically' ||
+          (invoice.billing_reason !== 'subscription_cycle' && !cadenceUpdate) || invoice.collection_method !== 'charge_automatically' ||
           invoice.currency !== 'thb' || invoice.amount_paid !== 0 || ![0, source.sourceTotal].includes(invoice.total) ||
           lines.length !== 1 || line?.parent?.subscription_item_details?.proration !== false ||
           stripeId(line?.parent?.subscription_item_details?.subscription) !== source.subscriptionId ||
@@ -367,6 +376,7 @@ export class BillingRepeat {
           line?.currency !== 'thb' || line?.livemode !== account.livemode || line?.quantity !== 1 ||
           !Number.isSafeInteger(line?.period?.start) || !Number.isSafeInteger(line?.period?.end) || line.period.start >= line.period.end ||
           (invoice.total > 0 ? line.period.start * 1000 < Date.parse(source.paidThrough) : line.period.start < source.currentPeriodStart)) throw review();
+      if (cadenceUpdate && invoice.status === 'paid') journal.zeroInvoiceIds = [...new Set([...(journal.zeroInvoiceIds ?? []), invoice.id])];
       if (invoice.status === 'void' || (invoice.total === 0 && invoice.status === 'paid')) continue;
       if (!paid) {
         if (invoice.status !== 'draft') throw review();
@@ -376,6 +386,10 @@ export class BillingRepeat {
         continue;
       }
       if (invoice.status === 'draft' && invoice.auto_advance === false) invoice = await command(`finalize_${invoice.id}`, `/invoices/${invoice.id}/finalize`, { auto_advance: false });
+      if (invoice.total === 0 && invoice.status === 'paid' && invoice.amount_paid === 0) {
+        if (cadenceUpdate) journal.zeroInvoiceIds = [...new Set([...(journal.zeroInvoiceIds ?? []), invoice.id])];
+        continue;
+      }
       if (invoice.status !== 'open' || invoice.auto_advance !== false || invoice.amount_paid !== 0) throw review();
       const voided = await command(`void_${invoice.id}`, `/invoices/${invoice.id}/void`, {});
       if (voided.id !== invoice.id || voided.status !== 'void' || voided.amount_paid !== 0) throw review();
@@ -387,7 +401,7 @@ export class BillingRepeat {
     if (invoice.object !== 'invoice' || invoice.livemode !== account.livemode || stripeId(invoice.customer) !== account.customerId ||
         stripeId(invoice.parent?.subscription_details?.subscription) !== account.baseSubscriptionId || invoice.status !== 'paid' ||
         invoice.total !== 0 || invoice.amount_paid !== 0 || invoice.amount_remaining !== 0 || invoice.currency !== 'thb' ||
-        invoice.billing_reason !== 'subscription_cycle' || invoice.collection_method !== 'charge_automatically' || invoice.starting_balance !== 0 ||
+        !['subscription_cycle', 'subscription_update'].includes(invoice.billing_reason) || invoice.collection_method !== 'charge_automatically' || invoice.starting_balance !== 0 ||
         lines.length !== 1 || line?.currency !== 'thb' || line?.quantity !== 1 || line?.livemode !== account.livemode ||
         line?.parent?.subscription_item_details?.proration !== false || stripeId(line?.parent?.subscription_item_details?.subscription) !== account.baseSubscriptionId ||
         !Number.isSafeInteger(line?.period?.start) || !Number.isSafeInteger(line?.period?.end) || line.period.start >= line.period.end) return false;
@@ -396,6 +410,7 @@ export class BillingRepeat {
     return attempts.some(attempt => {
       const journal = attempt.collectionJson as unknown as Journal | null, snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
       return journal?.completed && snapshot.repeat && line.pricing?.price_details?.price === snapshot.repeat.zeroPriceId &&
+        (invoice.billing_reason === 'subscription_cycle' || journal.zeroInvoiceIds?.includes(invoice.id)) &&
         line.period.start >= journal.phaseStart! && line.period.end * 1000 <= Date.parse(journal.paidThrough!);
     });
   }

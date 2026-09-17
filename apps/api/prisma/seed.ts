@@ -47,17 +47,17 @@ const COMPANY_VIEW_USER = {
 };
 
 const QA_ROLE_ACCOUNTS = [
-  { roleKey: 'OWNER', username: 'qa.owner', password: 'Qa@Owner123', displayName: 'อรอนงค์ เจ้าของกิจการ', email: 'qa.owner@watchdog.local' },
-  { roleKey: 'COMPANY_VIEW', username: 'qa.company', password: 'Qa@Company123', displayName: 'ชญานิศ ผู้บริหาร', email: 'qa.company@watchdog.local' },
-  { roleKey: 'ADMIN', username: 'qa.admin', password: 'Qa@Admin123', displayName: 'ณัฐชา ผู้ดูแลระบบ', email: 'qa.admin@watchdog.local' },
-  { roleKey: 'MANAGER', username: 'qa.manager', password: 'Qa@Manager123', displayName: 'ศิริพร ผู้จัดการสาขา', email: 'qa.manager@watchdog.local' },
-  { roleKey: 'SALES', username: 'qa.sales', password: 'Qa@Sales123', displayName: 'พิมพ์ชนก ฝ่ายขาย', email: 'qa.sales@watchdog.local' },
-  { roleKey: 'INVENTORY', username: 'qa.inventory', password: 'Qa@Inventory123', displayName: 'กิตติพงษ์ คลังสินค้า', email: 'qa.inventory@watchdog.local' },
-  { roleKey: 'FINANCE', username: 'qa.finance', password: 'Qa@Finance123', displayName: 'วราภรณ์ ฝ่ายการเงิน', email: 'qa.finance@watchdog.local' },
-  { roleKey: 'ACCOUNTANT', username: 'qa.accountant', password: 'Qa@Accountant123', displayName: 'สุภาวดี นักบัญชี', email: 'qa.accountant@watchdog.local' },
-  { roleKey: 'MARKETING', username: 'qa.marketing', password: 'Qa@Marketing123', displayName: 'ธัญญารัตน์ การตลาด', email: 'qa.marketing@watchdog.local' },
-  { roleKey: 'STAFF', username: 'qa.staff', password: 'Qa@Staff123', displayName: 'ปวีณ์ พนักงานทั่วไป', email: 'qa.staff@watchdog.local' },
-  { roleKey: 'AUDITOR_READONLY', username: 'qa.auditor', password: 'Qa@Auditor123', displayName: 'ชลธิชา ผู้ตรวจสอบ', email: 'qa.auditor@watchdog.local' },
+  { roleKey: 'OWNER', jobTitle: 'เจ้าของกิจการ', username: 'qa.owner', password: 'Qa@Owner123', displayName: 'อรอนงค์ เจ้าของกิจการ', email: 'qa.owner@watchdog.local' },
+  { roleKey: 'COMPANY_VIEW', jobTitle: 'ผู้บริหาร', username: 'qa.company', password: 'Qa@Company123', displayName: 'ชญานิศ ผู้บริหาร', email: 'qa.company@watchdog.local' },
+  { roleKey: 'ADMIN', jobTitle: 'ผู้ดูแลระบบ', username: 'qa.admin', password: 'Qa@Admin123', displayName: 'ณัฐชา ผู้ดูแลระบบ', email: 'qa.admin@watchdog.local' },
+  { roleKey: 'MANAGER', jobTitle: 'ผู้จัดการสาขา', username: 'qa.manager', password: 'Qa@Manager123', displayName: 'ศิริพร ผู้จัดการสาขา', email: 'qa.manager@watchdog.local' },
+  { roleKey: 'SALES', jobTitle: 'พนักงานขาย', username: 'qa.sales', password: 'Qa@Sales123', displayName: 'พิมพ์ชนก ฝ่ายขาย', email: 'qa.sales@watchdog.local' },
+  { roleKey: 'INVENTORY', jobTitle: 'เจ้าหน้าที่คลังสินค้า', username: 'qa.inventory', password: 'Qa@Inventory123', displayName: 'กิตติพงษ์ คลังสินค้า', email: 'qa.inventory@watchdog.local' },
+  { roleKey: 'FINANCE', jobTitle: 'เจ้าหน้าที่การเงิน', username: 'qa.finance', password: 'Qa@Finance123', displayName: 'วราภรณ์ ฝ่ายการเงิน', email: 'qa.finance@watchdog.local' },
+  { roleKey: 'ACCOUNTANT', jobTitle: 'นักบัญชี', username: 'qa.accountant', password: 'Qa@Accountant123', displayName: 'สุภาวดี นักบัญชี', email: 'qa.accountant@watchdog.local' },
+  { roleKey: 'MARKETING', jobTitle: 'เจ้าหน้าที่การตลาด', username: 'qa.marketing', password: 'Qa@Marketing123', displayName: 'ธัญญารัตน์ การตลาด', email: 'qa.marketing@watchdog.local' },
+  { roleKey: 'STAFF', jobTitle: 'พนักงานทั่วไป', username: 'qa.staff', password: 'Qa@Staff123', displayName: 'ปวีณ์ พนักงานทั่วไป', email: 'qa.staff@watchdog.local' },
+  { roleKey: 'AUDITOR_READONLY', jobTitle: 'ผู้ตรวจสอบบัญชี', username: 'qa.auditor', password: 'Qa@Auditor123', displayName: 'ชลธิชา ผู้ตรวจสอบ', email: 'qa.auditor@watchdog.local' },
 ] as const;
 
 const SYSTEM_ADMIN_USERNAME = process.env['SEED_SYSTEM_ADMIN_USERNAME'] ?? 'thawatchai.watchdog';
@@ -82,10 +82,10 @@ const ROOM45_BRANCHES = [
 ] as const;
 
 const ROOM45_STAFF = [
-  { key: 'mind', userId: 'seed-room45-user-mind', profileId: 'seed-room45-employee-mind', displayName: 'มายด์', legalName: 'มายด์ Room45', email: 'mind@room45.local', phoneNumber: '081-045-4501', roleKey: 'SALES', branchCode: 'SIAM', identityLast4: '4501' },
-  { key: 'nice', userId: 'seed-room45-user-nice', profileId: 'seed-room45-employee-nice', displayName: 'ไนซ์', legalName: 'ไนซ์ Room45', email: 'nice@room45.local', phoneNumber: '081-045-4502', roleKey: 'MANAGER', branchCode: 'AREE', identityLast4: '4502' },
-  { key: 'praew', userId: 'seed-room45-user-praew', profileId: 'seed-room45-employee-praew', displayName: 'แพรว', legalName: 'แพรว Room45', email: 'praew@room45.local', phoneNumber: '081-045-4503', roleKey: 'SALES', branchCode: 'THONG', identityLast4: '4503' },
-  { key: 'toey', userId: 'seed-room45-user-toey', profileId: 'seed-room45-employee-toey', displayName: 'เตย', legalName: 'เตย Room45', email: 'toey@room45.local', phoneNumber: '081-045-4504', roleKey: 'SALES', branchCode: 'AREE', identityLast4: '4504' },
+  { key: 'mind', jobTitle: 'ที่ปรึกษาความงาม', userId: 'seed-room45-user-mind', profileId: 'seed-room45-employee-mind', displayName: 'มายด์', legalName: 'มายด์ Room45', email: 'mind@room45.local', phoneNumber: '081-045-4501', roleKey: 'SALES', branchCode: 'SIAM', identityLast4: '4501' },
+  { key: 'nice', jobTitle: 'ผู้จัดการสาขา', userId: 'seed-room45-user-nice', profileId: 'seed-room45-employee-nice', displayName: 'ไนซ์', legalName: 'ไนซ์ Room45', email: 'nice@room45.local', phoneNumber: '081-045-4502', roleKey: 'MANAGER', branchCode: 'AREE', identityLast4: '4502' },
+  { key: 'praew', jobTitle: 'ที่ปรึกษาความงาม', userId: 'seed-room45-user-praew', profileId: 'seed-room45-employee-praew', displayName: 'แพรว', legalName: 'แพรว Room45', email: 'praew@room45.local', phoneNumber: '081-045-4503', roleKey: 'SALES', branchCode: 'THONG', identityLast4: '4503' },
+  { key: 'toey', jobTitle: 'ที่ปรึกษาความงาม', userId: 'seed-room45-user-toey', profileId: 'seed-room45-employee-toey', displayName: 'เตย', legalName: 'เตย Room45', email: 'toey@room45.local', phoneNumber: '081-045-4504', roleKey: 'SALES', branchCode: 'AREE', identityLast4: '4504' },
 ] as const;
 
 type Room45StaffKey = (typeof ROOM45_STAFF)[number]['key'];
@@ -239,6 +239,7 @@ async function seedQaRoleAccounts(companyId: string, branchId: string, createdBy
         membershipId: membership.id,
         displayName: account.displayName,
         legalName: account.displayName,
+        jobTitle: account.jobTitle,
         firstName: account.displayName.split(' ')[0],
         nickname: account.username.replace('qa.', '').toUpperCase(),
         identityType: 'THAI_NATIONAL_ID',
@@ -249,6 +250,10 @@ async function seedQaRoleAccounts(companyId: string, branchId: string, createdBy
         status: 'ACTIVE',
         createdByUserId,
       },
+    });
+    await prisma.employeeAccessProfile.updateMany({
+      where: { id: `seed-qa-profile-${account.roleKey.toLowerCase()}`, companyId, OR: [{ jobTitle: null }, { jobTitle: '' }] },
+      data: { jobTitle: account.jobTitle },
     });
   }
 }
@@ -341,6 +346,7 @@ async function seedRoom45DemoWorkspace(companyId: string, ownerUserId: string, h
         displayName: staff.displayName,
         legalName: staff.legalName,
         firstName: staff.displayName,
+        jobTitle: staff.jobTitle,
         identityType: 'THAI_NATIONAL_ID',
         identityLast4: staff.identityLast4,
         identityHash: `seed-room45-identity-${staff.key}`,
@@ -349,6 +355,10 @@ async function seedRoom45DemoWorkspace(companyId: string, ownerUserId: string, h
         status: 'ACTIVE',
         createdByUserId: ownerUserId,
       },
+    });
+    await db.employeeAccessProfile.updateMany({
+      where: { id: staff.profileId, companyId, OR: [{ jobTitle: null }, { jobTitle: '' }] },
+      data: { jobTitle: staff.jobTitle },
     });
   }
 

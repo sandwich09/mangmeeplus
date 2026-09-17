@@ -18,6 +18,7 @@ import { BillingService, type BillingSnapshot } from './billing.service';
 import { restartFits, restartSource } from './billing-restart';
 import { observeBillingCharges, recordBillingFinancials } from './billing-financial';
 import { grantPaidPackageReceipts } from './billing-receipt-grants';
+import { grantTrialReceiptCarryover } from './billing-trial-carryover';
 import { fulfillPaidPackageRequest } from './billing-package-request';
 import { applyCapacity, attemptCapacity, capacityOptions, capacityValid } from './billing-capacity';
 
@@ -456,7 +457,7 @@ export class BillingReconcilerService {
         const updated = await tx.companyPlanTerm.update({ where: { companyId: account.companyId }, data: { termEndsAt: graceEnd, termDisabledAt: null } });
         // Preserve the unspent old units, never mint a renewal grant for an unpaid invoice.
         await tx.billingReceiptGrant.updateMany({ where: { billingAccountId: account.id, companyId: account.companyId,
-          kind: { not: 'ADMIN_ADJUSTMENT' }, revokedAt: null, expiresAt: current.paidThrough! }, data: { expiresAt: graceEnd } });
+          kind: { in: ['INITIAL', 'RENEWAL', 'REPEAT', 'UPGRADE'] }, revokedAt: null, expiresAt: current.paidThrough! }, data: { expiresAt: graceEnd } });
         if (company.status === 'DISABLED') await this.lifecycle.execute({ companyId: account.companyId, targetStatus: 'ACTIVE',
           requestingAdminUserId: null, requestId: unpaid.id, reason: 'stripe_renewal_grace' }, tx);
         await tx.billingAccount.update({ where: { id: account.id }, data: { termProjectionHash: termProjectionHash(updated) } });
@@ -554,9 +555,12 @@ export class BillingReconcilerService {
       }
       if (!current.paidThrough || evidence.periodEnd > current.paidThrough) {
         const offer = snapshot.quote.offer;
+        if (evidence.kind === 'INITIAL' && !restarting) await grantTrialReceiptCarryover(tx, {
+          companyId: company.id, billingAccountId: account.id, invoiceId: invoice.id, policyRevisionId: snapshot.quote.policyRevision,
+          source: snapshot.trialCarryover, paidAt: evidence.paidAt, periodEnd: evidence.periodEnd });
         if (capacity) await applyCapacity(tx, company.id, offer, capacity, applyingChange ? planChange!.initiatorUserId : contract.initiatingUserId, invoice.id);
         if (current.graceEndsAt && current.paidThrough) await tx.billingReceiptGrant.updateMany({ where: { billingAccountId: account.id,
-          companyId: company.id, kind: { not: 'ADMIN_ADJUSTMENT' }, expiresAt: current.graceEndsAt, serviceEnd: { lte: current.paidThrough } }, data: { expiresAt: current.paidThrough } });
+          companyId: company.id, kind: { in: ['INITIAL', 'RENEWAL', 'REPEAT', 'UPGRADE'] }, expiresAt: current.graceEndsAt, serviceEnd: { lte: current.paidThrough } }, data: { expiresAt: current.paidThrough } });
         const term = await tx.companyPlanTerm.upsert({ where: { companyId: company.id }, create: {
           companyId: company.id, tierKey: offer.offerKey, branchLimit: offer.branchLimit, employeeLimit: offer.employeeLimit, monthlySlipLimit: offer.monthlySlipLimit,
           termStartAt: evidence.periodStart, termEndsAt: evidence.periodEnd, lastRenewedAt: new Date(),
