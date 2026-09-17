@@ -797,7 +797,22 @@ function applyCompanyAiCostAdjustment(
           },
           data: { costSatang: { increment: bucketDelta } },
         });
-        if (bucketMoved.count === 0) return 'refused-negative';
+        // `count === 0` has two very different causes. If the row EXISTS the guard blocked it, and
+        // the whole correction is refused. If it does not exist — a row bucketed before this phase
+        // added the aggregate, so there is nothing to decrement — the month total above already IS
+        // the whole correction, exactly as it was the whole charge. Refusing then would reject a
+        // legitimate correction because a DERIVED aggregate happens to be absent.
+        if (bucketMoved.count === 0) {
+          const present = await tx.companyAiMonthlyBucketUsage.findUnique({
+            where: {
+              companyId_monthKey_bucket: {
+                companyId: original.companyId, monthKey: original.monthKey, bucket: original.budgetBucket,
+              },
+            },
+            select: { costSatang: true },
+          });
+          if (present) return 'refused-negative';
+        }
       }
     }
     await tx.aiUsageEvent.create({
