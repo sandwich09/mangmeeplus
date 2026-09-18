@@ -5076,6 +5076,23 @@ describe('LINE file lane (capture appendix §3)', () => {
     assert.equal(stored.capabilityJson.pdfAutomaticRead, true);
   });
 
+  for (const [name, event, expected] of [
+    ['a 1:1 chat', FILE_EVENT, 'line-user-secret'],
+    ['a group chat', { ...FILE_EVENT, pushTargetId: 'Cgroup-chat-id' }, 'Cgroup-chat-id'],
+  ] as const) {
+    it(`records the chat the result may be pushed back into — ${name} (W07-int)`, async () => {
+      const net = stubFetch();
+      const h = captureHarness();
+      try {
+        await h.useCase.executeReceiptUpload(event as typeof FILE_EVENT);
+      } finally { net.restore(); }
+      const group = h.captureState.groups[0];
+      assert.equal(group.linePushTargetId, expected);
+      // It matches the hash the group already records, which is what the push checks it against.
+      assert.equal(group.lineChatKeyHash, chatKeyHashOf(event as { lineUserId: string; pushTargetId?: string }));
+    });
+  }
+
   it('a caption riding with the file becomes the group note, not a manual-entry chat', async () => {
     const net = stubFetch();
     const h = captureHarness();

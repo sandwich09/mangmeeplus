@@ -6851,6 +6851,9 @@ export class ProcessLineWebhookUseCase {
     const created = await this.createCaptureGroup!.execute(ctx, {
       intakeChannel: 'LINE',
       lineChatKeyHash: chatKeyHashOf(event),
+      // The chat this file arrived in, so the result can be pushed back INTO it — a group chat
+      // cannot be recovered from the hash above (appendix §3, W02-LINE deviation 2).
+      linePushTargetId: event.pushTargetId ?? event.lineUserId,
       ...(input.branchId ? { branchId: input.branchId } : {}),
       // A caption riding with the file is the customer's own note about this work — never a
       // manual-entry conversation (§17.6 forbids one as error recovery).

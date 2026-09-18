@@ -3046,6 +3046,11 @@ model ExpenseCaptureGroup {
   /// Reviewed order/payment/document/upload dates and which one each scope uses.
   expenseDateSourceJson Json?
   lineChatKeyHash       String?
+  /// The chat the LINE lane may push this group's result INTO (`pushTargetId ?? lineUserId`, the
+  /// same value the ledger uses as `chatKey`). `lineChatKeyHash` is a hash, so a group chat could
+  /// not be addressed from it at all (W02-LINE deviation 2). Server-set, never in an HTTP dto, and
+  /// cleared by the retention sweep with the rest of the group's LINE data.
+  linePushTargetId      String?
   acceptedAllocationId  String?
   /// `<groupId>:<allocationRevision>` — the database fence that makes handoff idempotent (§9).
   handoffBatchKey       String?                     @unique
@@ -3154,6 +3159,11 @@ model ExpenseCaptureObservation {
   @@unique([companyId, fileId, version])
   // The group detail read model loads every observation of a group; §2.2 lists only the unique.
   @@index([companyId, groupId])
+  // A converted expense (§3.1) has NO file, and Postgres counts every NULL as distinct — so the
+  // unique above enforces nothing for it. The partial index that does is raw SQL in the
+  // 20260919120000 migration (`ExpenseCaptureObservation_companyId_expenseId_version_key`,
+  // WHERE "fileId" IS NULL); Prisma cannot express a partial unique, so `prisma migrate diff`
+  // does not see it and must not be allowed to drop it.
 }
 
 /// Reviewed business allocation snapshot. At most one ACCEPTED per group, enforced in the

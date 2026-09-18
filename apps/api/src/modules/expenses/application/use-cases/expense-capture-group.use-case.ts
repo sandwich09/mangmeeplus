@@ -184,7 +184,11 @@ export class CreateExpenseCaptureGroupUseCase {
 
   async execute(
     ctx: RequestContext,
-    cmd: { branchId?: string; note?: string; intakeChannel?: 'WEB' | 'LINE'; lineChatKeyHash?: string },
+    cmd: {
+      branchId?: string; note?: string; intakeChannel?: 'WEB' | 'LINE'; lineChatKeyHash?: string;
+      /** The chat id the LINE lane may push this group's result back into (§3, W07-int). */
+      linePushTargetId?: string;
+    },
   ): Promise<{ groupId: string; revision: number; webPath: string }> {
     if (!CREATE_PERMISSIONS.some((key) => ctx.permissions.includes(key))) {
       throw new ForbiddenException('Missing permission: expense.receipt.upload');
@@ -207,6 +211,8 @@ export class CreateExpenseCaptureGroupUseCase {
         companyId: ctx.companyId, branchId: branchId ?? null, createdByUserId: ctx.userId,
         intakeChannel, note: cmd.note?.trim() ? cmd.note.trim() : null,
         lineChatKeyHash: cmd.lineChatKeyHash ?? null,
+        // Only ever from the LINE lane's own event, and only alongside the hash it must match.
+        linePushTargetId: cmd.lineChatKeyHash ? cmd.linePushTargetId ?? null : null,
       });
       await this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId,

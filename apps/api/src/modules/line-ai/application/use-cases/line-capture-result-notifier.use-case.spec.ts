@@ -13,9 +13,14 @@ type Scenario = {
   permissions?: string[];
   userStatus?: string;
   lineChatKeyHash?: string | null;
+  linePushTargetId?: string | null;
   payload?: Record<string, unknown>;
   pushResult?: string;
   companyId?: string;
+  /** §3.2: what `AutoHandoffSingleDocumentCaptureUseCase` answers for this group. */
+  autoHandoff?: 'expense' | 'skipped' | 'throws';
+  /** How many events the drain claims — two rows means the same result delivered twice. */
+  events?: number;
 };
 
 function makeNotifier(scenario: Scenario = {}) {
@@ -24,10 +29,13 @@ function makeNotifier(scenario: Scenario = {}) {
   const pushes: Array<{ to: string; messages: any[]; key?: string }> = [];
   const attemptUpdates: any[] = [];
   const closes: Array<{ groupId: string; reason: string }> = [];
-  const events = [{
-    id: 'outbox-1', companyId: scenario.companyId ?? 'company-1', eventType: LINE_CAPTURE_READ_FINISHED_EVENT_TYPE,
-    claimToken: 'token-1', payloadJson: { groupId: 'group-1', ...(scenario.payload ?? {}) },
-  }];
+  const handoffCalls: string[] = [];
+  const expenses: string[] = [];
+  const events = Array.from({ length: scenario.events ?? 1 }, (_value, index) => ({
+    id: `outbox-${index + 1}`, companyId: scenario.companyId ?? 'company-1',
+    eventType: LINE_CAPTURE_READ_FINISHED_EVENT_TYPE,
+    claimToken: `token-${index + 1}`, payloadJson: { groupId: 'group-1', ...(scenario.payload ?? {}) },
+  }));
 
   const prisma = {
     client: {
@@ -35,6 +43,12 @@ function makeNotifier(scenario: Scenario = {}) {
       externalIdentity: { findFirst: async () => (scenario.linked === false ? null : { providerUserId: LINE_USER }) },
       companyFeatureEntitlement: { findMany: async () => [] },
       lineIntakeAttempt: { findMany: async () => [{ id: 'attempt-1' }] },
+      expenseRecord: {
+        findFirst: async () => ({
+          vendorNameSnapshot: 'ร้านค้าดี', grandTotalAmount: '250.0000', currency: 'THB',
+          sourceDocumentType: 'RECEIPT', expenseDate: new Date('2026-07-25T00:00:00.000Z'),
+        }),
+      },
     },
   } as any;
 
@@ -45,7 +59,8 @@ function makeNotifier(scenario: Scenario = {}) {
     {
       readFinishedSnapshot: async (_companyId: string, groupId: string) => ({
         group: { id: groupId, status: 'OPEN', intakeChannel: scenario.intakeChannel ?? 'LINE',
-          createdByUserId: 'user-1', lineChatKeyHash: scenario.lineChatKeyHash === undefined ? CHAT_HASH : scenario.lineChatKeyHash, branchId: null },
+          createdByUserId: 'user-1', lineChatKeyHash: scenario.lineChatKeyHash === undefined ? CHAT_HASH : scenario.lineChatKeyHash,
+          linePushTargetId: scenario.linePushTargetId ?? null, branchId: null },
         jobs: scenario.jobs ?? [{ id: 'job-1', status: 'DONE', pausedReason: null, lastErrorCode: null }],
         observations: 1,
         webPath: `/companies/company-1/expenses/capture/${groupId}`,
@@ -62,8 +77,20 @@ function makeNotifier(scenario: Scenario = {}) {
       markPublished: async (input: any) => { published.push(input.id); return true; },
       markFailed: async (input: any) => { failed.push({ id: input.id, error: input.error }); return true; },
     } as any,
+    {
+      // The real use case refuses a group it has already handed off (`handoff_exists`), so a second
+      // delivery of the same event cannot make a second expense — the fake does exactly that.
+      execute: async (_ctx: any, groupId: string) => {
+        handoffCalls.push(groupId);
+        if (scenario.autoHandoff === 'throws') throw new Error('handoff_exploded');
+        if (scenario.autoHandoff !== 'expense') return { skipped: 'not_single_document' };
+        if (expenses.length > 0) return { skipped: 'handoff_exists' };
+        expenses.push('expense-9');
+        return { expenseId: 'expense-9' };
+      },
+    } as any,
   );
-  return { notifier, published, failed, pushes, attemptUpdates, closes };
+  return { notifier, published, failed, pushes, attemptUpdates, closes, handoffCalls, expenses };
 }
 
 const pushedText = (h: ReturnType<typeof makeNotifier>): string => h.pushes[0]?.messages[0]?.text ?? '';
@@ -139,7 +166,8 @@ describe('LINE capture result push (appendix §3)', () => {
   for (const [name, scenario] of [
     ['an unlinked user', { linked: false }],
     ['a user who lost capture permission', { permissions: ['expense.read'] }],
-    ['a group chat whose id cannot be recovered from its hash', { lineChatKeyHash: 'some-other-chat-hash' }],
+    ['a chat the recorded hash matches neither way', { lineChatKeyHash: 'some-other-chat-hash' }],
+    ['a stored push target that does not match the recorded chat', { linePushTargetId: 'Cnot-this-chat' }],
   ] as const) {
     it(`${name} gets no push, and the attempt records the result as undelivered`, async () => {
       const h = makeNotifier(scenario as Scenario);
@@ -165,6 +193,79 @@ describe('LINE capture result push (appendix §3)', () => {
     const h = makeNotifier();
     await h.notifier.execute();
     assert.equal(h.attemptUpdates[0].reasonCode, 'result_delivered');
+  });
+
+  it('§3.2: an eligible single document becomes one expense, and the push carries ITS summary', async () => {
+    const h = makeNotifier({ autoHandoff: 'expense', payload: { status: 'DONE', issuerName: 'ร้านค้าดี', documentCount: 1 } });
+    const result = await h.notifier.execute();
+    assert.deepEqual(h.handoffCalls, ['group-1']);
+    assert.deepEqual(h.expenses, ['expense-9']);
+    assert.equal(result.pushed, 1);
+    // The receipt card's own rows, off the derived source — not the group summary.
+    assert.match(pushedText(h), /ร้าน: ร้านค้าดี/);
+    assert.match(pushedText(h), /ยอดในใบเสร็จ: 250\.00 บาท/);
+    assert.match(pushedText(h), /ประเภทเอกสาร: ใบเสร็จรับเงิน/);
+    assert.match(pushedText(h), /วันที่: /);
+    assert.match(pushedText(h), /ยังไม่ยืนยันรายการ/);
+    assert.match(pushedText(h), /ตรวจสอบและยืนยันในเว็บแอป/);
+    assert.match(pushedText(h), /\/companies\/company-1\/expenses\/expense-9/);
+    assert.ok(!/expenses\/capture\/group-1/.test(pushedText(h)), 'the expense replaces the group link');
+    // §17.5 must point a later "ไฟล์เมื่อกี้…" at the record, not at the work it closed.
+    assert.equal(h.attemptUpdates[0].targetType, 'expense');
+    assert.equal(h.attemptUpdates[0].targetId, 'expense-9');
+    assert.equal(h.attemptUpdates[0].outcome, 'STORED_READ_DONE');
+  });
+
+  for (const [name, scenario] of [
+    ['the use case refuses it', { autoHandoff: 'skipped' }],
+    ['the use case throws', { autoHandoff: 'throws' }],
+  ] as const) {
+    it(`keeps the group link when ${name}`, async () => {
+      const h = makeNotifier({ ...(scenario as Scenario), payload: { status: 'DONE', issuerName: 'ร้านค้าดี', documentTotal: '250.00', documentCount: 1 } });
+      const result = await h.notifier.execute();
+      assert.equal(result.pushed, 1);
+      assert.match(pushedText(h), /อ่านเอกสารแล้วค่ะ พบ ร้านค้าดี/);
+      assert.match(pushedText(h), /expenses\/capture\/group-1/);
+      assert.equal(h.expenses.length, 0);
+      assert.equal(h.attemptUpdates[0].targetType, undefined, 'the attempt still points at the group');
+    });
+  }
+
+  for (const [name, payload] of [
+    ['a multi-document read', { status: 'DONE', documentCount: 3 }],
+    ['a classified non-receipt (NR)', { status: 'DONE', classification: { contentKind: 'DOCUMENT', documentKind: 'QUOTATION' } }],
+  ] as const) {
+    it(`never auto-hands off ${name}`, async () => {
+      const h = makeNotifier({ autoHandoff: 'expense', payload: payload as Record<string, unknown> });
+      await h.notifier.execute();
+      assert.equal(h.expenses.length, 0, 'no expense is created');
+      assert.ok(!/expenses\/expense-9/.test(pushedText(h)));
+    });
+  }
+
+  it('§3.2 is idempotent: a replayed event makes no second expense', async () => {
+    const h = makeNotifier({ autoHandoff: 'expense', events: 2, payload: { status: 'DONE', documentCount: 1 } });
+    await h.notifier.execute();
+    assert.deepEqual(h.handoffCalls, ['group-1', 'group-1'], 'both deliveries ask');
+    assert.deepEqual(h.expenses, ['expense-9'], 'only the first one creates');
+    assert.deepEqual(h.published, ['outbox-1', 'outbox-2']);
+    assert.match(pushedText(h), /ตรวจสอบและยืนยันในเว็บแอป/);
+    assert.match(h.pushes[1]?.messages[0]?.text ?? '', /expenses\/capture\/group-1/);
+  });
+
+  it('a group chat is answered IN the group chat it arrived from', async () => {
+    const groupChat = 'Cgroup-chat-id';
+    const h = makeNotifier({ linePushTargetId: groupChat, lineChatKeyHash: hashMessagePreview(groupChat) });
+    const result = await h.notifier.execute();
+    assert.equal(result.pushed, 1);
+    assert.equal(h.pushes[0].to, groupChat, 'W02-LINE deviation 2 is closed: not only 1:1 chats');
+    assert.equal(h.attemptUpdates[0].reasonCode, 'result_delivered');
+  });
+
+  it('a 1:1 capture with no stored target still reaches the sender', async () => {
+    const h = makeNotifier();
+    await h.notifier.execute();
+    assert.equal(h.pushes[0].to, LINE_USER);
   });
 
   it('an event with no group id settles without pushing anything', async () => {

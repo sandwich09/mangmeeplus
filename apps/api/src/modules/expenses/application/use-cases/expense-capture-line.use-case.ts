@@ -249,7 +249,7 @@ export class ExpenseCaptureLineUseCase {
    * The CALLER re-checks access before it speaks — this only reports what the group holds.
    */
   async readFinishedSnapshot(companyId: string, groupId: string): Promise<{
-    group: { id: string; status: string; intakeChannel: string; createdByUserId: string; lineChatKeyHash: string | null; branchId: string | null };
+    group: { id: string; status: string; intakeChannel: string; createdByUserId: string; lineChatKeyHash: string | null; linePushTargetId: string | null; branchId: string | null };
     jobs: Array<{ id: string; status: string; pausedReason: string | null; lastErrorCode: string | null }>;
     observations: number;
     webPath: string;
@@ -263,7 +263,8 @@ export class ExpenseCaptureLineUseCase {
     return {
       group: {
         id: group.id, status: group.status, intakeChannel: group.intakeChannel,
-        createdByUserId: group.createdByUserId, lineChatKeyHash: group.lineChatKeyHash, branchId: group.branchId,
+        createdByUserId: group.createdByUserId, lineChatKeyHash: group.lineChatKeyHash,
+        linePushTargetId: group.linePushTargetId, branchId: group.branchId,
       },
       jobs: jobs.map((job) => ({
         id: job.id, status: job.status, pausedReason: job.pausedReason, lastErrorCode: job.lastErrorCode,

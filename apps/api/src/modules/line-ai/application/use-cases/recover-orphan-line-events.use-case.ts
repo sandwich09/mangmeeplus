@@ -334,6 +334,20 @@ export class RecoverOrphanLineEventsUseCase {
     // what a customer sent, so it must not outlive the event.
     const attempts = await this.prisma.client.lineIntakeAttempt.findMany({ where: { createdAt: { lt: before } }, select: { id: true }, orderBy: { createdAt: 'asc' }, take: MAX_PURGE_BATCH });
     if (attempts.length) await this.prisma.client.lineIntakeAttempt.deleteMany({ where: { id: { in: attempts.map(row => row.id) } } });
+    // Capture appendix §8: a capture group keeps the raw chat id its result is pushed into, which is
+    // customer data of the same kind. A group nothing has touched for the capture retention window
+    // loses it here — the result then falls back to the sender's own 1:1 chat, and nothing else on
+    // the group changes. (The file `markDeleted` half of §8 is still unbuilt; see the W07-int note.)
+    const captureBefore = new Date(now - this.config.expenseCaptureRetentionDays * 24 * 60 * 60 * 1000);
+    const staleTargets = await this.prisma.client.expenseCaptureGroup.findMany({
+      where: { linePushTargetId: { not: null }, updatedAt: { lt: captureBefore } },
+      select: { id: true }, orderBy: { updatedAt: 'asc' }, take: MAX_PURGE_BATCH,
+    });
+    if (staleTargets.length) {
+      await this.prisma.client.expenseCaptureGroup.updateMany({
+        where: { id: { in: staleTargets.map((row) => row.id) } }, data: { linePushTargetId: null },
+      });
+    }
     const expired = await this.prisma.client.lineWebhookEventLog.findMany({
       where: { createdAt: { lt: before } },
       select: { id: true },

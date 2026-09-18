@@ -147,12 +147,11 @@ export const CAPTURE_READ_PAUSED_REPLY = (link: string, pausedReason: string | n
   + `กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่\n${link}`;
 
 /**
- * The DONE summary the LINE result push sends today.
+ * The DONE summary the LINE result push sends when the group stays a group.
  *
- * TODO(W05): appendix §3.2 auto-handoff replaces THIS sentence with the derived source's own
- * receipt summary and its expense link, for the single-document/single-issuer/eligible case only.
- * Everything else — multi-document, mixed issuers, blockers — keeps the group link below. Kept as
- * one function precisely so W05 changes one place and no other lane learns a second wording.
+ * §3.2's auto-handoff replaces it with `formatCaptureAutoHandoffReply` below, for the
+ * single-document/single-issuer/eligible case only. Everything else — multi-document, mixed
+ * issuers, a classified non-receipt, blockers — keeps the group link here.
  */
 export function formatCaptureReadFinishedReply(input: {
   link: string;
@@ -168,4 +167,39 @@ export function formatCaptureReadFinishedReply(input: {
   const found = [issuer ? `พบ ${issuer}` : 'พบเอกสาร 1 ฉบับ', total ? `ยอด ${total}` : '']
     .filter(Boolean).join(' ');
   return `📄 อ่านเอกสารแล้วค่ะ ${found} — ตรวจและสร้างรายการค่าใช้จ่ายในเว็บ: ${input.link}`;
+}
+
+const CAPTURE_MONEY_FORMATTER = new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** Same user-facing date shape the receipt reply prints, e.g. 25 ก.ค. 2569. */
+const CAPTURE_DATE_FORMATTER = new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric' });
+
+/**
+ * §3.2: the auto-handoff's summary — the rows the LINE receipt card prints today
+ * (`formatPaypersReply` compact), read off the derived source instead of the OCR result, and
+ * pointing at the EXPENSE rather than the group. A row the source does not carry is left out
+ * rather than printed as a placeholder that reads like a fact.
+ */
+export function formatCaptureAutoHandoffReply(input: {
+  link: string;
+  vendorName?: string | null;
+  amount?: string | number | null;
+  currency?: string | null;
+  documentTypeLabel?: string | null;
+  expenseDate?: Date | string | null;
+}): string {
+  const amount = input.amount === null || input.amount === undefined || !Number.isFinite(Number(input.amount))
+    ? null : Number(input.amount);
+  const date = input.expenseDate ? new Date(input.expenseDate) : null;
+  const vendor = input.vendorName?.trim();
+  return [
+    '🧾 อ่านเอกสารแล้ว บันทึกเป็นร่างรายการให้แล้วค่ะ',
+    ...(vendor ? [`ร้าน: ${vendor}`] : []),
+    `ยอดในใบเสร็จ: ${amount === null ? 'ยังอ่านยอดไม่ได้'
+      : `${CAPTURE_MONEY_FORMATTER.format(amount)}${input.currency && input.currency !== 'THB' ? ` ${input.currency}` : ' บาท'}`}`,
+    ...(input.documentTypeLabel ? [`ประเภทเอกสาร: ${input.documentTypeLabel}`] : []),
+    ...(date && !Number.isNaN(date.getTime()) ? [`วันที่: ${CAPTURE_DATE_FORMATTER.format(date)}`] : []),
+    'ยังไม่ยืนยันรายการ',
+    '',
+    `✅ ตรวจสอบและยืนยันในเว็บแอป:\n${input.link}`,
+  ].join('\n');
 }

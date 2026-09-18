@@ -58,6 +58,8 @@ export type CaptureGroupRow = {
   handoffBatchKey: string | null;
   acceptedAllocationId: string | null;
   lineChatKeyHash: string | null;
+  /** The raw chat id a LINE result may be pushed into. Server-set; never leaves the API in a dto. */
+  linePushTargetId: string | null;
   note: string | null;
   closedReason: string | null;
   closedAt: Date | null;
@@ -119,12 +121,14 @@ export class PrismaExpenseCaptureRepository {
   createGroup(db: CaptureDb, input: {
     companyId: string; branchId: string | null; createdByUserId: string;
     intakeChannel: 'WEB' | 'LINE'; note?: string | null; lineChatKeyHash?: string | null;
+    linePushTargetId?: string | null;
   }): Promise<CaptureGroupRow> {
     return db.expenseCaptureGroup.create({
       data: {
         companyId: input.companyId, branchId: input.branchId, createdByUserId: input.createdByUserId,
         intakeChannel: input.intakeChannel, note: input.note ?? null,
         lineChatKeyHash: input.lineChatKeyHash ?? null,
+        linePushTargetId: input.linePushTargetId ?? null,
       },
     }) as Promise<CaptureGroupRow>;
   }
