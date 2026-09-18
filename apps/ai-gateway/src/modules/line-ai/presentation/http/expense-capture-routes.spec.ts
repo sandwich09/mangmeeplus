@@ -16,12 +16,16 @@ import {
   AI_BUDGET_STEP_BOUNDS,
   EXPENSE_CAPTURE_CONTRACT_VERSION,
   aiBudgetInvocationKey,
+  BUSINESS_DOCUMENT_CONTENT_KINDS,
+  BUSINESS_DOCUMENT_DIRECTIONS,
+  BUSINESS_DOCUMENT_EVIDENCE_ROLES,
+  BUSINESS_DOCUMENT_TRANSACTION_STATES,
   type ExpenseCaptureExtractRequest,
   type ExpenseCaptureReadRequest,
 } from '@watchdog-bms/contracts';
 import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
 import { BASE64_MEDIA_ROUTES, LineAiInternalController } from './line-ai-internal.controller';
-import { CAPTURE_BLANK_PAGE_MARKER, parseCaptureObservationsJson, parseCaptureReadPages } from '../../domain/logic/expense-capture-read.logic';
+import { CAPTURE_BLANK_PAGE_MARKER, CAPTURE_EXTRACT_PROMPT, parseCaptureObservationsJson, parseCaptureReadPages } from '../../domain/logic/expense-capture-read.logic';
 
 const config = {
   aiGatewayInternalSecret: 'secret',
@@ -316,6 +320,66 @@ describe('capture observation parser', () => {
   it('returns null when nothing survives, so the caller can spend its repair', () => {
     assert.equal(parseCaptureObservationsJson('{"documents":[]}', WINDOW_TEXT), null);
     assert.equal(parseCaptureObservationsJson('not json', WINDOW_TEXT), null);
+  });
+
+  /**
+   * W08 benchmark defect, 2026-09-19. The prompt described the classification object by NAMING its
+   * keys and left every enum open, so a real Bedrock read of a clean two-page receipt answered
+   * `contentKind: "RECEIPT"`, `businessDirection: "EXPENSE"`, `transactionState: "COMPLETED"` —
+   * plausible words, none of them in the allowlist. `parseBusinessDocumentClassification` dropped
+   * the document, the parser then had none, and the whole window came back OCR_SCHEMA_INVALID
+   * after a wasted repair retry. The prompt must carry the allowlist itself, from the contract.
+   */
+  /**
+   * W08 benchmark defect, 2026-09-19. `printedPages` is what §16.8 reconciliation reads to decide
+   * "this document says it has 3 pages and I have seen 1 and 3". Nothing produced it: the prompt
+   * asked only for `printedPage`, the parser never looked, and the assembly's only source was the
+   * merge of two window observations. A complete 20-page receipt read in ONE window therefore knew
+   * page 1 of 20 and reported the other nineteen as missing.
+   */
+  it('reads every printed page number the window covered, sorted and bounded (W08)', () => {
+    const parsed = parseCaptureObservationsJson(observationsJson({
+      documents: [{
+        ref: 'd1', pageIndexes: [0, 1], kind: 'RECEIPT', family: 'EXPENSE_EVIDENCE',
+        issuer: { name: 'ร้านตัวอย่าง จำกัด' }, classification: classification(),
+        printedPage: { number: 1, of: 2 }, printedPages: [2, 1, 2, 0, -3, 'x'],
+      }],
+    }), WINDOW_TEXT);
+    assert.deepEqual(parsed?.documents[0]!.printedPages, [1, 2], 'deduped, sorted, junk dropped');
+    assert.ok(CAPTURE_EXTRACT_PROMPT.includes('"printedPages":[1,2]'), 'and the prompt asks for it');
+  });
+
+  it('leaves printedPages absent when the model reports none', () => {
+    const parsed = parseCaptureObservationsJson(observationsJson({}), WINDOW_TEXT);
+    assert.equal(parsed?.documents[0]!.printedPages, undefined);
+  });
+
+  it('spells out every classification value the parser will accept (W08)', () => {
+    for (const value of [
+      ...BUSINESS_DOCUMENT_CONTENT_KINDS,
+      ...BUSINESS_DOCUMENT_DIRECTIONS,
+      ...BUSINESS_DOCUMENT_TRANSACTION_STATES,
+      ...BUSINESS_DOCUMENT_EVIDENCE_ROLES,
+    ]) {
+      assert.ok(CAPTURE_EXTRACT_PROMPT.includes(`"${value}"`), `the prompt never offers ${value}`);
+    }
+    assert.ok(CAPTURE_EXTRACT_PROMPT.includes('CLOSED'), 'and it says the lists are closed');
+  });
+
+  it('drops a document whose classification is outside the allowlist, exactly as production did', () => {
+    const invented = parseCaptureObservationsJson(observationsJson({
+      documents: [{
+        ref: 'd1', pageIndexes: [0], kind: 'RECEIPT', family: 'EXPENSE_EVIDENCE',
+        issuer: { name: 'ร้านค้าตัวอย่าง' },
+        classification: {
+          contentKind: 'RECEIPT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
+          businessDirection: 'EXPENSE', transactionState: 'COMPLETED', evidenceRoles: ['EXPENSE_EVIDENCE'],
+          confidence: 0.95, evidenceSignals: [], amountSignals: [], settlementSignals: [],
+          missingRequiredSignals: [], contradictionSignals: [], requiresClarification: false,
+        },
+      }],
+    }), WINDOW_TEXT);
+    assert.equal(invented, null, 'which is why the prompt has to name the values');
   });
 });
 

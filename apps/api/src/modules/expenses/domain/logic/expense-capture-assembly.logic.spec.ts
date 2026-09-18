@@ -291,6 +291,24 @@ describe('capture assembly — pages and documents', () => {
     assert.equal(result.reconciliation[0]!.suspectedMissingPages, false);
   });
 
+  /**
+   * W08 benchmark defect, 2026-09-19. ONE window that covers the whole document is the normal case,
+   * and it carries ONE `printedPage`. Until `printedPages` was actually produced, a complete
+   * 20-page receipt read in one window claimed page 1 of 20 and nineteen holes — UXE-15 telling a
+   * customer to find pages that are all there.
+   */
+  it('A82: one window that saw every printed page of a complete document reports nothing missing', () => {
+    const complete = assemble([observations({
+      documents: [document({ pageIndexes: [0, 1], printedPage: { number: 1, of: 2 }, printedPages: [1, 2] })],
+    })], 2);
+    assert.equal(complete.reconciliation[0]!.suspectedMissingPages, false);
+
+    const holed = assemble([observations({
+      documents: [document({ pageIndexes: [0, 1], printedPage: { number: 1, of: 3 }, printedPages: [1, 3] })],
+    })], 2);
+    assert.equal(holed.reconciliation[0]!.suspectedMissingPages, true, 'and a real gap is still a gap');
+  });
+
   it('a blank page contributes nothing and does not make the file multi-document', () => {
     const result = assemble([observations({
       items: [item({ id: '0:1', amount: '10.00' })],

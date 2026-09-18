@@ -24,7 +24,7 @@ import { LaunchShadowProbe } from '../../../feature-launch/application/launch-sh
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
 import { admitCompanyOcr, companyOcrErrorCode, releaseCompanyOcrAdmission, type CompanyOcrSourceRoute } from '../../../line-ai/application/company-ocr-governance';
 import { safeLineErrorDetails } from '../../../line-ai/infrastructure/line-reply.adapter';
-import { assembleCaptureObservations } from '../../domain/logic/expense-capture-assembly.logic';
+import { assembleCaptureObservations, planWindows, priorDocuments } from '../../domain/logic/expense-capture-assembly.logic';
 import { isExpenseExtractionEligible } from '../../domain/logic/expense-document.logic';
 import { captureFieldsFromObservations } from '../../domain/logic/expense-capture-fields.logic';
 import { planCaptureSinglePageChunk, planCapturePreprocessing, type CaptureChunkPlan } from '../../domain/logic/expense-capture-preprocess.logic';
@@ -678,57 +678,6 @@ function markWindow(
     ...manifest,
     windows: manifest.windows.map((window) => window.id === windowId ? { ...window, state } : window),
   };
-}
-
-/**
- * Consecutive read pages grouped into windows inside the declared 12,000-character ceiling (§4.3).
- * Splitting on PAGES rather than mid-text is what keeps an item block and its total in one window.
- */
-export function planWindows(
-  pages: CaptureCheckpoint['pages'],
-): Array<{ id: string; pageIndexes: number[]; pages: ExpenseCaptureExtractWindow['pages'] }> {
-  const ordered = Object.entries(pages)
-    .map(([index, page]) => ({ pageIndex: Number(index), text: page.text ?? '' }))
-    .filter((page) => Number.isSafeInteger(page.pageIndex) && page.text.trim().length > 0)
-    .sort((left, right) => left.pageIndex - right.pageIndex);
-  const windows: Array<{ id: string; pageIndexes: number[]; pages: ExpenseCaptureExtractWindow['pages'] }> = [];
-  let current: { id: string; pageIndexes: number[]; pages: ExpenseCaptureExtractWindow['pages']; chars: number } | null = null;
-  for (const page of ordered) {
-    // A single page longer than the window budget still gets its own window: the ceiling is a
-    // window rule, and refusing the page outright would lose a read that is already paid for.
-    const text = page.text.slice(0, EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars);
-    if (current && current.chars + text.length > EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars) {
-      windows.push({ id: current.id, pageIndexes: current.pageIndexes, pages: current.pages });
-      current = null;
-    }
-    if (!current) current = { id: `w${windows.length + 1}`, pageIndexes: [], pages: [], chars: 0 };
-    current.pageIndexes.push(page.pageIndex);
-    current.pages.push({ pageIndex: page.pageIndex, text });
-    current.chars += text.length;
-  }
-  if (current) windows.push({ id: current.id, pageIndexes: current.pageIndexes, pages: current.pages });
-  return windows;
-}
-
-/** What a later window is told about the documents earlier windows already found (§4.3). */
-export function priorDocuments(
-  windows: Record<string, ExpenseCaptureObservations>,
-): NonNullable<ExpenseCaptureExtractWindow['priorDocuments']> {
-  const out: NonNullable<ExpenseCaptureExtractWindow['priorDocuments']> = [];
-  for (const observations of Object.values(windows)) {
-    for (const document of observations.documents ?? []) {
-      if (out.length >= EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxDocumentsPerWindow) return out;
-      out.push({
-        ref: document.ref,
-        ...(document.issuer?.name ? { issuerName: document.issuer.name } : {}),
-        ...(document.documentNumber ? { documentNumber: document.documentNumber } : {}),
-        ...(document.documentDate ? { documentDate: document.documentDate } : {}),
-        ...(document.currency ? { currency: document.currency } : {}),
-        openTotals: !(observations.totals ?? []).some((total) => total.documentRef === document.ref && total.kind === 'document_total'),
-      });
-    }
-  }
-  return out;
 }
 
 export type { CaptureCheckpoint, RunOutcome };

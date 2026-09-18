@@ -8,6 +8,10 @@
  * text here, and anything that fails is dropped to unknown rather than carried into the ledger.
  */
 import {
+  BUSINESS_DOCUMENT_CONTENT_KINDS,
+  BUSINESS_DOCUMENT_DIRECTIONS,
+  BUSINESS_DOCUMENT_EVIDENCE_ROLES,
+  BUSINESS_DOCUMENT_TRANSACTION_STATES,
   EXPENSE_CAPTURE_OBSERVATION_LIMITS,
   extractValueCandidates,
   mapThaiDigits,
@@ -116,6 +120,9 @@ export function parseCaptureReadPages(
   return pages;
 }
 
+/** `"A"|"B"|"C"` from the contract's own allowlist, so the prompt cannot drift from the parser. */
+const options = (values: readonly string[]): string => values.map((value) => `"${value}"`).join('|');
+
 /** Stage 2: the observation contract of §4.3, with the retail rules of spec §16.2 spelled out. */
 export const CAPTURE_EXTRACT_PROMPT = `
 You read ONE WINDOW of already-transcribed pages of ONE file for MangmeePlus and return the facts it prints.
@@ -129,8 +136,11 @@ ABSOLUTE RULES
 - Every object carries "evidenceSpan": one short exact substring (at most 200 characters) copied from the window text that shows where you read it. An object with no verbatim span is dropped.
 - One file may contain several documents and several purchases. Never merge two bills because the shop name matches, and never split one bill because it spans pages.
 
-documents[]: {"ref":"d1","pageIndexes":[0],"kind":"RECEIPT|TAX_INVOICE|ABBREVIATED_TAX_INVOICE|SUPPLIER_INVOICE_OR_BILL|ORDER_OR_CHECK_BILL|QUOTATION|PURCHASE_ORDER|DELIVERY_NOTE|TRANSFER_SLIP|MARKETPLACE_ORDER|HANDWRITTEN_CASH_BILL|APPOINTMENT_CARD|BOOKING_CONFIRMATION|RESERVATION_CONFIRMATION|SIGNATURE_IMAGE|OTHER_BUSINESS_DOCUMENT|NON_FINANCIAL_IMAGE|NEEDS_REVIEW","family":"EXPENSE_EVIDENCE|COMMERCIAL_DOCUMENT|PAYMENT_EVIDENCE|SCHEDULING_DOCUMENT|SIGNATURE_ASSET|OTHER_BUSINESS_DOCUMENT|NON_BUSINESS","issuer":{"name":"printed legal issuer/payee name","taxId":"13 digits","branchCode":"printed branch","storefront":"printed shop/store name","platform":"printed marketplace name"},"buyer":{"name":"","taxId":""},"documentNumber":"printed running number","documentDate":"YYYY-MM-DD","currency":"THB","printedPage":{"number":1,"of":3},"continuationOfRef":"ref of the document in PRIOR_DOCUMENTS this one continues","classification":{...}}
-- classification uses exactly the object shape of the single-receipt reader: contentKind, documentFamily, documentKind, businessDirection, transactionState, evidenceRoles, confidence, evidenceSignals, amountSignals, settlementSignals, missingRequiredSignals, contradictionSignals, requiresClarification. All signal spans must be exact substrings of the window text.
+documents[]: {"ref":"d1","pageIndexes":[0],"kind":"RECEIPT|TAX_INVOICE|ABBREVIATED_TAX_INVOICE|SUPPLIER_INVOICE_OR_BILL|ORDER_OR_CHECK_BILL|QUOTATION|PURCHASE_ORDER|DELIVERY_NOTE|TRANSFER_SLIP|MARKETPLACE_ORDER|HANDWRITTEN_CASH_BILL|APPOINTMENT_CARD|BOOKING_CONFIRMATION|RESERVATION_CONFIRMATION|SIGNATURE_IMAGE|OTHER_BUSINESS_DOCUMENT|NON_FINANCIAL_IMAGE|NEEDS_REVIEW","family":"EXPENSE_EVIDENCE|COMMERCIAL_DOCUMENT|PAYMENT_EVIDENCE|SCHEDULING_DOCUMENT|SIGNATURE_ASSET|OTHER_BUSINESS_DOCUMENT|NON_BUSINESS","issuer":{"name":"printed legal issuer/payee name","taxId":"13 digits","branchCode":"printed branch","storefront":"printed shop/store name","platform":"printed marketplace name"},"buyer":{"name":"","taxId":""},"documentNumber":"printed running number","documentDate":"YYYY-MM-DD","currency":"THB","printedPage":{"number":1,"of":3},"printedPages":[1,2],"continuationOfRef":"ref of the document in PRIOR_DOCUMENTS this one continues","classification":{...}}
+- classification is the object of the single-receipt reader and every enum below is CLOSED — a value outside its list makes the whole document unusable, so never invent one:
+  {"contentKind":${options(BUSINESS_DOCUMENT_CONTENT_KINDS)},"documentFamily":<the family list above>,"documentKind":<the kind list above>,"businessDirection":${options(BUSINESS_DOCUMENT_DIRECTIONS)},"transactionState":${options(BUSINESS_DOCUMENT_TRANSACTION_STATES)},"evidenceRoles":[${options(BUSINESS_DOCUMENT_EVIDENCE_ROLES)}],"confidence":0.0,"evidenceSignals":[],"amountSignals":[],"settlementSignals":[],"missingRequiredSignals":[],"contradictionSignals":[],"requiresClarification":false}
+  A page of one file is one document, so contentKind is DOCUMENT even when the file holds several; a purchase the buyer made is PURCHASE_EXPENSE; a receipt that prints settlement is PAID and evidenceRoles ["EXPENSE_SUPPORT"]. All signal spans must be exact substrings of the window text.
+- printedPages lists EVERY page number this document prints inside THIS window, in order (printedPage.number is the first of them). A document whose pages are all in this window must list them all: the reader decides "a page is missing" from the gaps in this list, so an incomplete list invents a hole in a complete receipt.
 - When a page continues a document listed in PRIOR_DOCUMENTS (a carried-forward total, the same printed number, an explicit "continued"), set continuationOfRef to that ref instead of describing a new document.
 
 items[]: {"id":"<page>:<line>","documentRef":"d1","description":"printed row name","quantity":"printed","unit":"printed","packSize":"printed","unitPrice":"printed","amount":"the row's own printed money column","listPrice":"printed before-discount price","taxMarker":"the row's printed tax letter or symbol, copied as printed","event":"sale|void|discount|price_correction|zero_price_promo|reward|info|unknown","linkedItemId":"the id of the row this one cancels or corrects","evidenceSpan":"..."}
@@ -234,6 +244,12 @@ export function parseCaptureObservationsJson(
     const buyerRecord = asRecord(row['buyer']);
     const documentDate = trimmed(row['documentDate'], 32);
     const printedPage = asRecord(row['printedPage']);
+    // A printed page number starts at 1 — `positiveInt` also admits 0, which no page prints.
+    const printedPages = [...new Set(asArray(row['printedPages'])
+      .map((value) => positiveInt(value))
+      .filter((value): value is number => value !== undefined && value >= 1))]
+      .sort((left, right) => left - right)
+      .slice(0, 64);
     documentRefs.add(ref);
     documents.push({
       ref,
@@ -265,6 +281,10 @@ export function parseCaptureObservationsJson(
         ...optional('number', positiveInt(printedPage['number'])),
         ...optional('of', positiveInt(printedPage['of'])),
       } } : {}),
+      // §16.8: the assembly decides "a page is missing" from the printed numbers it has SEEN. One
+      // window that covers a whole document therefore has to report all of them, or every complete
+      // multi-page receipt reads as a document with a hole in it.
+      ...(printedPages.length > 0 ? { printedPages } : {}),
       ...optional('continuationOfRef', trimmed(row['continuationOfRef'], 64)),
       classification,
     });

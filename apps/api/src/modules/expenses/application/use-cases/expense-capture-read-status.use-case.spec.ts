@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { GetExpenseReadStatusUseCase } from './expense-capture-read-status.use-case';
+import { ExpenseCaptureAccessService } from './expense-capture-group.use-case';
 
 const ctx = {
   requestId: 'req-1', userId: 'user-1', companyId: 'co-1', membershipId: 'mem-1',
@@ -49,6 +50,25 @@ describe('read status (appendix §9)', () => {
       fileId: 'file-1', attachmentId: 'att-1', status: 'READING', pagesRead: 2, pageCount: 4,
       pausedReason: null, lastErrorCode: null, updatedAt: '2026-09-18T10:00:00.000Z',
     }]);
+  });
+
+  /**
+   * A47 / IG13. Polling is how a customer watches a read they already paid for finish. It is a
+   * READ, so the intake flag may not touch it — proven against the REAL access service with
+   * `EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED=false`, not the fake one the other cases use.
+   */
+  it('still answers while new intake is disabled (A47)', async () => {
+    const { uc } = harness();
+    const capture = {
+      client: {},
+      findGroup: async () => ({ id: 'group-1', companyId: 'co-1', branchId: null, createdByUserId: 'user-1' }),
+    } as any;
+    const closed = new ExpenseCaptureAccessService(capture, { expenseCaptureGroupIntakeEnabled: false } as any);
+    assert.throws(() => closed.assertIntakeOpen(), 'the same service really is refusing new evidence');
+
+    const result = await new GetExpenseReadStatusUseCase((uc as any).prisma, closed, (uc as any).expenses).group(ctx, 'group-1');
+    assert.equal(result.files.length, 1);
+    assert.equal(result.files[0]?.status, 'READING', 'a read in flight keeps reporting its progress');
   });
 
   it('carries the paused reason and the failure code the UI turns into Thai', async () => {

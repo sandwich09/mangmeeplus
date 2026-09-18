@@ -1,6 +1,6 @@
 # Implementation Plan: หลักฐานซื้อ marketplace/ค้าปลีก/ค่าขนส่งผ่าน LINE อัปโหลด และเปลี่ยนใบเสร็จ
 
-Status: Planned v0.11, 2026-09-17. Paired with spec v0.11: W00–W08, D01–D09, A01–A88, IG01–IG29, E01–E27. On failed reading, notify that the file is saved and link directly to the same Web review/manual work item. No reread CTA or manual-entry dialogue as error recovery. Application/runtime/UX verification remains NOT_RUN.
+Status: Implemented v1 2026-09-19 — UAT/LINE/UX40+ acceptance open. (was Planned v0.11, 2026-09-17.) Paired with spec v0.11: W00–W08, D01–D09, A01–A88, IG01–IG29, E01–E27. On failed reading, notify that the file is saved and link directly to the same Web review/manual work item. No reread CTA or manual-entry dialogue as error recovery. W01–W08 delivered locally and verified by the full gate; per-row verdicts in the [acceptance matrix](../qa/evidence/marketplace-buyer-expense-capture-2026-09-19/acceptance-matrix.md). Nothing is deployed: UAT/production, real LINE and the UX 40+ sessions remain open.
 Spec: [ข้อกำหนดผลิตภัณฑ์และการเชื่อมระบบ](../specs/marketplace-buyer-expense-capture-spec-th.md)
 Research: [วิเคราะห์หกมุม](../research/marketplace-buyer-receipt-brainstorm-2026-09-14-th.md)
 Corpus: [45 public purchase/order cases + 9 supplemental cases](../research/marketplace-buyer-public-corpus-2026-09-14-th.md)
@@ -316,18 +316,18 @@ IG: IG03/IG04/IG05/IG07/IG09/IG11
 ### W08 — ตรวจรับและเตรียมเปิดใช้
 
 Owner: ผู้พัฒนา feature + QA/UX/AI + Product/บัญชีในผลลัพธ์ที่รับรอง
-Status: Planned
+Status: Delivered locally 2026-09-19 — acceptance matrix, browser evidence bundle, compatibility proofs, owner-authorised Bedrock benchmark, §8 retention sweep. UAT/LINE/UX40+ open.
 Depends on: W01–W07 / D05
 
-- [ ] ทดสอบthree-entry parity + replacement state/race/failure matrix§16.4 และ§16.6; file unchangedไม่ใช่proofว่าค่าถูก และอ่านสำเร็จไม่ใช่signatureverified
-- [ ] รันA01–A88ตามmappingและบันทึกผลจริงต่อfixture/case; skipหรือmockไม่ใช้แทนหลักฐานDB/browserที่กำหนด
-- [ ] วัดAIด้วยheld-out purchase bundles แยกmoney/scope/item completeness/payment/refund/unknown/false-ready; ไม่อ้างaccuracyจาก45publicreferences
-- [ ] ทดสอบผู้ใช้40–49/50–59/60+ที่มีทักษะต่างกัน เริ่มdiscovery6–8คน ใช้uploadหลายภาพ/ตัดส่วนตัว/แก้ยอด/พักกลับ/ใบรับรอง/แยกsaved-issued-submitted-paid
+- [x] ทดสอบthree-entry parity + replacement state/race/failure matrix§16.4 และ§16.6; file unchangedไม่ใช่proofว่าค่าถูก และอ่านสำเร็จไม่ใช่signatureverified — `expense-capture-lane-parity.spec.ts`, `expense-upload.use-case.spec.ts` (§16.4), `expense-capture-read-runner.service.spec.ts`; electronic ยังเป็น NOT_CHECKED/UNAVAILABLE เท่านั้น (D09 ยังไม่ทำ)
+- [x] รันA01–A88ตามmappingและบันทึกผลจริงต่อfixture/case; skipหรือmockไม่ใช้แทนหลักฐานDB/browserที่กำหนด — เมทริกซ์ 2026-09-19: PASSED 65 / PARTIAL 21 / NOT_RUN 2
+- [ ] (ยังไม่ทำ — ต้องใช้ชุดเอกสารที่ได้รับสิทธิ์; รอบนี้วัดด้วย fixture สังเคราะห์เท่านั้น ดู `docs/research/expense-capture-read-benchmark-2026-09-19.md`) วัดAIด้วยheld-out purchase bundles แยกmoney/scope/item completeness/payment/refund/unknown/false-ready; ไม่อ้างaccuracyจาก45publicreferences
+- [ ] (ยังไม่ทำ — UX 40+) ทดสอบผู้ใช้40–49/50–59/60+ที่มีทักษะต่างกัน เริ่มdiscovery6–8คน ใช้uploadหลายภาพ/ตัดส่วนตัว/แก้ยอด/พักกลับ/ใบรับรอง/แยกsaved-issued-submitted-paid
 - [ ] ทดสอบ§17 UXE-01–27/unknown fallback และA83–A88 รวมคำถามตามไฟล์ที่ถูกปฏิเสธก่อนcapture/ไม่มีevent/หลายไฟล์/AIไม่พร้อมด้วยerror injectionผ่านสามทาง รวมผลmutationหาย/ส่งข้อความล้มเหลว/ไม่มีผู้รับช่วยจริง; บันทึกว่าผู้ใช้เข้าใจสถานะและทำต่อได้ ไม่ตรวจแค่ข้อความตรงsnapshot
 - [ ] เก็บindependent completion, correction timeของผู้ซื้อ/บัญชี, recovery success, false confidence, providerlatency/cost ตามเกณฑ์D05
-- [ ] ทดสอบold/newcontract/worker compatibility, disable-new-intakeและงานค้าง, retained evidence, normal receipt regressions
-- [ ] ปิดIGตามsliceด้วยdecision+implementation+evidence; ผลผิดผู้จ่าย/สกุล/ยอด/paidและduplicatefinancial consumptionเป็นreleaseblockerในชุดregressionที่ตกลง
-- [ ] บันทึกข้อจำกัดและreadinessตามrouteจริง; งานcloud/releaseภายหลังต้องอ่านrunbooksและผ่านprotocolของrepoก่อนทำ
+- [x] ทดสอบold/newcontract/worker compatibility, disable-new-intakeและงานค้าง, retained evidence, normal receipt regressions — `expense-capture-compatibility.spec.ts` + สามเคส flag-off ข้าง harness เดิม + §8 retention sweep ใน `expense-capture.pg.spec.ts`; หมายเหตุ rollback อยู่ใน README ของ bundle
+- [x] ปิดIGตามsliceด้วยdecision+implementation+evidence (21 ปิด / 8 เปิด); ผลผิดผู้จ่าย/สกุล/ยอด/paidและduplicatefinancial consumptionเป็นreleaseblockerในชุดregressionที่ตกลง
+- [x] บันทึกข้อจำกัดและreadinessตามrouteจริง (เมทริกซ์ + README + research note); งานcloud/releaseภายหลังต้องอ่านrunbooksและผ่านprotocolของrepoก่อนทำ
 
 - [ ] A75–A82ต้องมีผลจริงบนLINE/new-upload/replacement รวมsingle-page10MB; goldenfieldaccuracy/completeness/qualityเทียบต้นฉบับ, resumabilityเมื่อworkerตาย และขอบtransport/base64; เวลา/costวัดจากfixtureไม่สัญญา10วินาทีโดยไม่มีข้อมูล
 
@@ -336,134 +336,140 @@ IG: IG01–IG29; Acceptance: A01–A88
 
 ## 6. Traceability: acceptance → งานและหลักฐาน
 
-ตารางนี้เป็น authoritative ของการ map acceptance→งาน ส่วน "Acceptance หลัก" ใต้แต่ละ W เป็นรายการย่อที่ไม่ exhaustive แต่ละแถวคือข้อกำหนดใน spec §10; ทุกแถวยังเป็น **Planned** ผลverificationให้บันทึกตามข้อ10 ไม่ใช้mappingเป็นเครื่องหมายผ่าน
+ตารางนี้เป็น authoritative ของการ map acceptance→งาน ส่วน "Acceptance หลัก" ใต้แต่ละ W เป็นรายการย่อที่ไม่ exhaustive แต่ละแถวคือข้อกำหนดใน spec §10; mapping เองไม่ใช่เครื่องหมายผ่าน ผลจริงอยู่ในคอลัมน์ขวาสุดและในเมทริกซ์ที่อ้างถึง
 
-| Acceptance | งานที่รับผิดชอบ | หลักฐานสำคัญ |
-|---|---|---|
-| A01 | W02/W03/W07/W08 | ordinary single-file receipt และค่าใช้จ่ายเดิมผ่านจริง |
-| A02 | W02/W03 | หลายภาพ/หน้าซ้อนครบและนับครั้งเดียว |
-| A03 | W04/W05 | Decimal allocation รวม1,290 และส่วน810/480ตรงfixture |
-| A04 | W04/W05/W07 | original1,290→eligible810→full-sourceclaim810 |
-| A05 | W04/W07 | บริษัทจ่ายรวม/ส่วนตัวคงfacts ไม่มีemployeeclaimผิดroute |
-| A06 | W03/W04 | futurecashbackไม่ลดpayableปัจจุบัน |
-| A07 | W03/W04 | parent/childdiscountและnetshippingไม่นับซ้ำ |
-| A08 | W04/W07 | unsupportedtaxคงfactsและrejectเฉพาะaction |
-| A09 | W01/W05/W07 | validatedsharedlineageใช้ได้; unrelatedambiguousยังreject |
-| A10 | W01/W05/W06/W07 | DBconcurrencyและlostresponseเกิดผลเงิน/เอกสารครั้งเดียว |
-| A11 | W04/W05/W06 | selection/payerเปลี่ยนแล้วpreviewเก่าใช้ไม่ได้ |
-| A12 | W03/W04 | lateOCRไม่ทับค่าที่คนตรวจ |
-| A13 | W06/W07 | lateinvoice/refundไม่ซื้อซ้ำหรือเขียนทับpostedhistory |
-| A14 | W02/W04/W06 | พัก/กลับงานเดิมพร้อมสถานะที่userเข้าใจ |
-| A15 | W01/W02/W05/W07 | API/DB/downloadcross-company/branch/actorถูกปฏิเสธ |
-| A16 | W01/W05 | differentimage/groupaliasของorderเดิมยังกันใช้ซ้ำ |
-| A17 | W05/W06/W07 | source รอใบรับรองสร้างได้แต่เบิกไม่ได้; certify810พร้อมoriginal1,290; PERSONALไม่คืนเงินตอนissue; resolver ผ่านหลัง ISSUED เมื่อ facts ครบ |
-| A18 | W06 | บางร้านมีใบเสร็จ บางร้านใช้ใบรับรองเฉพาะscope |
-| A19 | W04/W06 | missingVAT/unpaidไม่auto-createcertificate |
-| A20 | W06/W07 | COMPANYissue/retry/paymentครั้งเดียว; zero/full/partial fixtures และ partial บล็อก issuance ทั้งใบโดยไม่ rewrite history |
-| A21 | W06/W07 | DIGITAL/PAPER/verifiedpayerตามidentityและsignaturepolicy |
-| A22 | W04/W06 | แก้factหลังpreview/sign/issueใช้invalidate/correctionถูกสถานะ |
-| A23 | W03/W06 | PaidbyQR+Transferยังไม่paid/eligiblecertificate |
-| A24 | W03/W04/W07 | order45,900กับreceipt47,900แยกfactsโดยไม่แต่งdiscount |
-| A25 | W03 | subtotalรวมส่ง/taxsummaryไม่บวกซ้ำ |
-| A26 | W03 | historyคนละorderแยก; panelซ้ำไม่เพิ่มสินค้า |
-| A27 | W03/W04 | qty/variant/bundle/giftเป็นแถวที่พิสูจน์ได้ |
-| A28 | W03/W04 | cropped/collapsed/missingfieldsคงunknown |
-| A29 | W03 | futurecoupon/coinsไม่กลายเป็นapplieddiscount |
-| A30 | W03/W07 | refundcurrentstep/destination/bankconfirmationแยกกัน |
-| A31 | W03/W04/W07 | foreign/BNPLไม่แปลงเป็นTHBหรือcashadvanceเอง |
-| A32 | W04/W05/W07 | verified actual payer ต่างจาก uploader ตาม D06; creator ไม่ถูกปลอม และไม่บังคับใบรับรองนอกเกณฑ์ |
-| A33 | W03/W06 | ปุ่มReceiptไม่ใช่เอกสารreceiptที่ได้แล้ว |
-| A34 | W03/W04/W06 | checkoutmismatchเก็บร่าง ไม่สร้างbalancingrow/paidcertificate |
-| A35 | W01/W02/W06 | append/replace/detachและretentionทุกsource |
-| A36 | W01/W02/W03 | per-filepersist/resumeหลังpartialupload/responseหาย |
-| A37 | W03/W04 | 41items/แถวเสียไม่ทำsummaryดูพร้อมitemallocation |
-| A38 | W01/W05/W08 | raw API/worker guards; rollout fixture พิสูจน์ว่า binary ที่ไม่รองรับไม่เข้าถึง capture records ก่อนเปิด intake |
-| A39 | W01/W05/W07 | list/count/export/ledgerไม่รวมparent+source+projectionซ้ำ |
-| A40 | W06/W07 | partialcertificatecompletionทำต่อเฉพาะsourceค้าง |
-| A41 | W00/W01/W04/W05 | known business zero ไม่มี zero-money destination; capture-only retention/access ตาม D08 รวมส่วนตัวทั้งหมดและงานทิ้งค้าง |
-| A42 | W03/W04/W07 | order/payment/invoice/uploaddatesข้ามเดือนยังมีที่มา |
-| A43 | W02/W03 | quota/attemptidentity/lostresponseใช้ผลที่เก็บแล้ว |
-| A44 | W01/W05/W06/W07 | merge/splitหลังsign/consumptionไม่ย้ายสิทธิเงินหรือลายเซ็น |
-| A45 | W02/W04/W06 | LINEหลายงาน/ภาพมาช้าไม่แก้ผิดgroup/source |
-| A46 | W01/W02/W07 | child/originalaccessตรวจจริงบนview/download/export/LINE |
-| A47 | W01/W08 | disable intake ยังอ่าน/กู้คืนตามสิทธิ; ไม่ rollback ไป binary ที่ไม่รองรับหลังมีข้อมูลใหม่; route/entitlement/runoff เดิมผ่าน |
-| A48 | W03/W04/W06 | group/source/selectionrevisionป้องกันlateworkerทับreview |
-| A49 | W03/W04/W08 | RC-A01: ยอด68; ไม่สร้างจ่าย500 |
-| A50 | W03/W04/W08 | RC-A02: ลดครั้งเดียว รักษาscope/แถวอ้างอิง |
-| A51 | W03/W04/W07/W08 | RC-A03: document222 กับsettlement44+178และpoints balanceแยก; ไม่auto-approve reimbursement |
-| A52 | W03/W04/W08 | RC-A04: saleใหม่53; ไม่ทำเป็นcoupon/refundนอกหลักฐาน |
-| A53 | W03/W04/W08 | RC-A05: quantity/UOM/packไม่คูณซ้ำ, tax groupและยอดรวมถูก, codeไม่กลายเป็นrate |
-| A54 | W01/W02/W03/W08 | RC-A06: แยกdocument/transactionและsame-file lineage ไม่รวมเป็นซื้อเดียว |
-| A55 | W01/W05/W07/W08 | RC-A07: evidenceมาทีหลังไม่เพิ่มexpense/claim/paymentซ้ำ |
-| A56 | W03/W04/W08 | RC-A08: ยอด35; ไม่สร้างสินค้าคูปองหรือใช้เลขคิวเป็นreceipt ID |
-| A57 | W03/W04/W08 | RC-A09: ไม่แปลงแต้มเป็นยอดเงินหรือpayer identity |
-| A58 | W03/W04/W08 | RC-A10: เก็บsource conflict ไม่ปรับยอดตามป้ายโดยเดา |
-| A59 | W02/W03/W04/W08 | RC-A11: completenessตรงภาพ, ไม่ให้แบ่งส่วนตัวจากitem blockที่หาย, save/recoveryผ่าน |
-| A60 | W05/W06/W07/W08 | RC-A12: recoveryถูกชนิด; ใบรับรองไม่แทนtax invoice; late document/correctionไม่จ่ายซ้ำ |
-| A61 | W01/W02/W03/W08 | RC-A13: แยกdocument typeกับcontainer; ต้นฉบับไม่เปลี่ยน, text/OCRมีprovenanceและขัดกันแล้วไม่false-ready |
-| A62 | W01/W03/W04/W08 | RC-A14: ผลตรวจแยกmethod/pass/fail/not-checked/unavailable; อ่านได้ไม่เท่ากับตรวจผ่าน, ตรวจผ่านไม่เท่ากับอนุมัติภาษี/เบิก; ใช้fixtureที่ไม่ได้redactทับsigned original  baselineพิสูจน์not-checked/unavailable; pass/failตามmethodต้องมีfixtureเมื่อเปิดautomatedverificationตามD09 และยังห้ามอ้างว่ามีตัวตรวจจากbaselineเพียงอย่างเดียว |
-| A63 | W01/W05/W06/W07/W08 | RC-A15: เสนอผูกซื้อเดิมโดยไม่เพิ่มยอด; ความต่างเลขเอกสาร/issuer/ยอดเข้าตรวจและcorrectionตามlock ไม่overwriteหลักฐานหรือเงินที่postแล้ว |
-| A64 | W02/W03/W06/W08 | RC-A16: saved draftยังอยู่, มีทางเพิ่มหลักฐาน/กรอกต่อ/ขอร้าน; ไม่ปล่อยpasswordสู่log/prompt ไม่สร้างใบรับรองหรือแอบอนุมัติเพื่อข้ามerror |
-| A65 | W02/W03/W08 | RC-A17: document/page coverageถูกต้อง; ไม่จำกัดหนึ่งไฟล์เท่ากับหนึ่งซื้อ และไม่ใช้summaryแทนcomplete item reviewโดยไม่แจ้ง |
-| A66 | W01/W02/W03/W07/W08 | RC-A18: เก็บเฉพาะหลักฐานที่มีสิทธิ, tenant/accessครบ; contentเป็นข้อมูลไม่ใช่คำสั่ง, ไม่fetch arbitrary URL/ส่งไฟล์ออกเอง; ข้อมูลประกอบวิธีตรวจไม่สูญหาย |
-| A67 | W02/W03/W08 | RC-A19: ตรวจขอบ4MB/4MiB/10MiBและ+1byte; FE/BEใช้10MiBเดียวกัน, ไฟล์ภายในขอบเข้าautomatic pipeline; เกินขอบไม่อ้างเก็บสำเร็จหรือทับต้นฉบับ และคงงานเดิมไว้ |
-| A68 | W01/W02/W03/W04/W08 | LINE integration: เก็บ bytes/target ที่อนุญาตก่อนบอกเก็บแล้ว; clarification ผูกงานและไฟล์เดิม ไม่สร้าง expense ก่อนรู้ scope; ไม่ยกเลิก MULTI_DOCUMENT guard ใน single-expense contract |
-| A69 | W02/W03/W04/W08 | three-entry parity: facts/ยอด/unknown/completeness/verification semantics และ policy version ตรงกัน; ต่างได้เฉพาะช่องทางกับขนาดที่มีสัญญาชัด ไม่มี prompt แยกจนอ่านคนละยอด |
-| A70 | W01/W02/W03/W04/W08 | Replaceสำเร็จแต่failed readingให้Webกรอกงานเดิมตาม§17.6พร้อมcurrentfile/humanfactsและprovenance; ไม่เสนอOCRretry ไม่แสดงverifiedจากไฟล์เก่า unknownตรวจสถานะก่อน |
-| A71 | W01/W02/W03/W04/W08 | replacement concurrency: complete ต้องตรวจ expected target attachment และ revision ที่ผู้ใช้เริ่มเปลี่ยน; มี winner เดียวหรือแจ้ง conflict ไม่ให้ stale upload ทับ; stale OCR/notice/cache ไม่เปลี่ยนผลของไฟล์ปัจจุบัน |
-| A72 | W01/W02/W05/W06/W07/W08 | replacement state matrix: ใช้ตาราง §16.4; อนุญาตตาม server guards และ correction เดิม; ทุกผล deny/conflict มีทางกลับงานที่ถูกต้อง ไม่ retire หลักฐานที่ใช้ลงนามหรือจ่ายแล้ว |
-| A73 | W02/W03/W04/W06/W08 | replacement semantic identity: ถาม/แสดงความต่างก่อนยอมรับ facts ใหม่; ไม่เอา vendor/item/tax/payment จากสองซื้อปนกัน ไม่เติมช่องว่างด้วยค่าจากเอกสารเก่าโดยไม่มี provenance; งานใหม่ต้องเริ่มตามสิทธิและไม่ทำรายการเดิมหาย |
-| A74 | W02/W03/W08 | PDF capability: แยก stored กับ readable; แสดงสาเหตุ/ทางกรอกต่อหรือแนบไฟล์อื่น; ไม่ใช้ first-page/summary เป็น complete และไม่เปลี่ยน provider policy หรือส่งข้อมูลออกเพื่อแก้ error โดยปริยาย |
-| A75 | W01/W02/W03/W08 | PDF10,000,000/10,485,760bytes ทั้งtext/scanned/mixed pages ผ่านLINE/อัปโหลด/เปลี่ยนใบเสร็จ: ระบบรับต้นฉบับและเริ่มautomatic bounded readingทั้งไฟล์; ขนาดเกิน4MBเพียงอย่างเดียวไม่คืนunsupported/manual-only; ส่งผลที่อ่านได้พร้อมข้อขัดกันเข้าสู่review; ถ้ามีหน้าค้างหรืออ่านไม่สำเร็จต้องเป็นpartial ไม่อ้างอ่านครบ |
-| A76 | W02/W03/W08 | PDFหน้าเดียว10MBหรือหน้าหนึ่งยังเกินขอบproviderหลังแยก: renderสำเนาและแบ่งregions/tilesที่ตรวจขนาดจริง พร้อมoverview+พิกัด/ส่วนซ้อน; อ่านตัวเลขเล็ก/ภาษาไทยได้ตามgolden fixture ไม่ลดภาพจนข้อมูลหาย; ไม่เปลี่ยนต้นฉบับ |
-| A77 | W03/W04/W05/W08 | headerร้านหน้า1, สินค้าหลายchunk, totalท้ายใบ และมีหลายใบในPDF: assembleobservationsตามdocument/page/region+stableline IDs ไม่บวกsubtotal/totalซ้ำหรือmergeจากชื่อสินค้า; cross-pageidentity/void/ส่วนลดและunknownมีprovenanceก่อนallocation |
-| A78 | W01/W02/W03/W04/W08 | workerหยุดหลังอ่านบางส่วน/retryผลหาย/ผู้ใช้เปลี่ยนprimaryหรือสิทธิระหว่างอ่านไฟล์10MB: ผลchunkที่สำเร็จยังอยู่; resumeเฉพาะงานค้างและreuseattemptตามgovernance; ไม่สร้างexpense/claimซ้ำ; rechecktenant/actor/revisionก่อนapply/notifyและstaleไม่ทับใหม่ |
-| A79 | W01/W02/W03/W08 | 10MBมีหลายร้อยหน้า/รูปขยายใหญ่มาก/เกินtoken-budgetหรือquotaหมดกลางงาน: จำกัดpage-per-batch/pixels/memory/time/concurrencyและขนาดHTTPจริง; ทำต่อด้วยcheckpointหรือแสดงpaused/incompleteตามเหตุจริง ไม่ตัดหน้าเงียบหรือบังคับลูกค้าแบ่งPDFเพราะ4MB; sizeไม่ใช่unlimitedbudget |
-| A80 | W01/W02/W03/W06/W08 | e-Taxต้นฉบับ10MBถูกsplit/rasterเพื่ออ่าน; encrypted/corruptบางส่วน: hash/bytes/versionต้นฉบับคงเดิม; signature/timestampตรวจoriginalเท่านั้น; derivativeมีlineageไม่อ้างเป็นต้นฉบับ, errorชี้หน้า/สาเหตุและเก็บผลที่สำเร็จ; ไม่ออกใบรับรองอัตโนมัติ |
-| A81 | W01/W02/W03/W04/W08 | PDF 2/5/10/20 หน้า ทั้ง native/scanned/mixed และใบเดียวต่อหลายหน้า: มี manifest ครบทุกหน้าเรียงตามไฟล์และเลขหน้าที่พิมพ์เป็นหลักฐานแยก; header/footer/carry-forward ไม่สร้างยอดหรือรายการซ้ำ; ไม่ใช้เพดาน 17 หน้าของ certificate preview เป็นเพดาน reader; ผ่านทั้งสามทาง |
-| A82 | W02/W03/W04/W08 | แยกblank/failed/missingและfile/document completeness; failed/partialเปิดWebกรอกข้อมูลขาด+แนบหน้าที่ขาดในงานเดิม ไม่มีuser rereadหรือmergeคนละบิล |
-| A83 | W00/W01/W02/W03/W04/W06/W07/W08 | UXE-01–27และunknownมีสถานะ/actionตามสิทธิ์; OCRfailedใช้saved-file notice+Websame-work link ไม่มีerror rereadหรือmanual-entry chat; linkrouteต้องใช้ได้จริง |
-| A84 | W01/W02/W03/W04/W06/W07/W08 | ผลบันทึก/สร้างใบเบิก/ออกใบรับรองหาย, กดซ้ำ, cancel, สิทธิหรือsourceเปลี่ยนระหว่างerror: ตรวจสถานะด้วยoperationเดิมก่อนretryผลที่ไม่ทราบ; ไม่สร้าง/จ่าย/นับอ่านซ้ำ, source/สิทธิตรงตอนกด, retryเฉพาะส่วนค้าง, cancelไม่เท่ากับลบไฟล์หรือถอนเอกสารการเงิน |
-| A85 | W02/W04/W06/W07/W08 | UX40+กดลิงก์ถึงWebงานเดิมพร้อมไฟล์/partialfacts; login-return/mobile/permissions/stateตรง ไม่อัปโหลดหรือสร้างใหม่และไม่สับสนsaved/submitted/paid |
-| A86 | W00/W01/W02/W03/W04/W08 | LINEถามย้อนหลังว่าไฟล์เมื่อกี้ส่งไม่ได้/ทำไมอ่านไม่ได้/ต้องส่งใหม่ไหม หลังrejectionหรือrestartโดยยังไม่มีexpense: ตอบจากreason/stage/size-limit-at-attempt/persist-stateที่APIตรวจสิทธิ์และอ้างอิงattemptเดิมได้; สาเหตุoversizeไม่กลายเป็นdownloaderrorทั่วไป; คำถามอย่างเดียวไม่OCRซ้ำ/สร้างร่าง/แก้เงิน |
-| A87 | W01/W02/W04/W08 | มีหลายไฟล์หรือหลายงาน/ไฟล์ชื่อซ้ำ/ไม่มีevent/retentionหมด/สิทธิ์เปลี่ยน/ข้อความLINEมาช้า: เลือกเฉพาะattemptที่actor/company/chatเข้าถึงได้; ผูกเป้าหมายด้วยreferenceที่serverตรวจได้ ไม่เลือกlatestผิดงาน; ไม่พบข้อมูลหรือlookupล่มตอบต่างกันและไม่เดาสาเหตุ/เปิดเผยงานอื่น |
-| A88 | W01/W02/W03/W04/W06/W07/W08 | ผู้ใช้ถามเหตุผลขณะAI/provider/quotaไม่พร้อม, ถามซ้ำหลังrecoveryหรือlimitเปลี่ยน, หรือส่งข้อความแจ้งผลไม่สำเร็จ: ใช้คำตอบสถานะจากserverและfallbackเดิมเมื่อเหมาะสม; แสดงเหตุที่เกิดตอนนั้นแยกสถานะปัจจุบัน; ไม่ต้องอ่านไฟล์อีกเพื่ออธิบายerror ไม่ให้คำตอบถามสถานะกลายเป็นคำสั่งretry และไม่อ้างส่งข้อความถึงแล้วหากdeliveryไม่สำเร็จ |
+ผลรอบ 2026-09-19 (W08) มาจาก [acceptance matrix](../qa/evidence/marketplace-buyer-expense-capture-2026-09-19/acceptance-matrix.md) เท่านั้น — แถวไหนเขียน `PASSED` ต้องมีเทสต์ที่รันจริงในรอบนั้น;
+`PARTIAL` คือพิสูจน์ส่วนที่ตรวจด้วยเครื่องได้แล้ว และยังเหลือ UAT/production, LINE จริง, ชุดเอกสารที่ได้รับสิทธิ์
+หรือการทดสอบผู้ใช้ 40+; `NOT_RUN` คือยังไม่ได้แตะเลย
+
+| Acceptance | งานที่รับผิดชอบ | หลักฐานสำคัญ | สถานะ 2026-09-19 |
+|---|---|---|---|
+| A01 | W02/W03/W07/W08 | ordinary single-file receipt และค่าใช้จ่ายเดิมผ่านจริง | PASSED |
+| A02 | W02/W03 | หลายภาพ/หน้าซ้อนครบและนับครั้งเดียว | PASSED |
+| A03 | W04/W05 | Decimal allocation รวม1,290 และส่วน810/480ตรงfixture | PASSED |
+| A04 | W04/W05/W07 | original1,290→eligible810→full-sourceclaim810 | PASSED |
+| A05 | W04/W07 | บริษัทจ่ายรวม/ส่วนตัวคงfacts ไม่มีemployeeclaimผิดroute | PASSED |
+| A06 | W03/W04 | futurecashbackไม่ลดpayableปัจจุบัน | PASSED |
+| A07 | W03/W04 | parent/childdiscountและnetshippingไม่นับซ้ำ | PASSED |
+| A08 | W04/W07 | unsupportedtaxคงfactsและrejectเฉพาะaction | PASSED |
+| A09 | W01/W05/W07 | validatedsharedlineageใช้ได้; unrelatedambiguousยังreject | PASSED |
+| A10 | W01/W05/W06/W07 | DBconcurrencyและlostresponseเกิดผลเงิน/เอกสารครั้งเดียว | PASSED |
+| A11 | W04/W05/W06 | selection/payerเปลี่ยนแล้วpreviewเก่าใช้ไม่ได้ | PASSED |
+| A12 | W03/W04 | lateOCRไม่ทับค่าที่คนตรวจ | PASSED |
+| A13 | W06/W07 | lateinvoice/refundไม่ซื้อซ้ำหรือเขียนทับpostedhistory | PARTIAL |
+| A14 | W02/W04/W06 | พัก/กลับงานเดิมพร้อมสถานะที่userเข้าใจ | PARTIAL |
+| A15 | W01/W02/W05/W07 | API/DB/downloadcross-company/branch/actorถูกปฏิเสธ | PASSED |
+| A16 | W01/W05 | differentimage/groupaliasของorderเดิมยังกันใช้ซ้ำ | PASSED |
+| A17 | W05/W06/W07 | source รอใบรับรองสร้างได้แต่เบิกไม่ได้; certify810พร้อมoriginal1,290; PERSONALไม่คืนเงินตอนissue; resolver ผ่านหลัง ISSUED เมื่อ facts ครบ | PASSED |
+| A18 | W06 | บางร้านมีใบเสร็จ บางร้านใช้ใบรับรองเฉพาะscope | PASSED |
+| A19 | W04/W06 | missingVAT/unpaidไม่auto-createcertificate | PASSED |
+| A20 | W06/W07 | COMPANYissue/retry/paymentครั้งเดียว; zero/full/partial fixtures และ partial บล็อก issuance ทั้งใบโดยไม่ rewrite history | PASSED |
+| A21 | W06/W07 | DIGITAL/PAPER/verifiedpayerตามidentityและsignaturepolicy | PARTIAL |
+| A22 | W04/W06 | แก้factหลังpreview/sign/issueใช้invalidate/correctionถูกสถานะ | PASSED |
+| A23 | W03/W06 | PaidbyQR+Transferยังไม่paid/eligiblecertificate | PASSED |
+| A24 | W03/W04/W07 | order45,900กับreceipt47,900แยกfactsโดยไม่แต่งdiscount | PASSED |
+| A25 | W03 | subtotalรวมส่ง/taxsummaryไม่บวกซ้ำ | PASSED |
+| A26 | W03 | historyคนละorderแยก; panelซ้ำไม่เพิ่มสินค้า | PASSED |
+| A27 | W03/W04 | qty/variant/bundle/giftเป็นแถวที่พิสูจน์ได้ | PASSED |
+| A28 | W03/W04 | cropped/collapsed/missingfieldsคงunknown | PASSED |
+| A29 | W03 | futurecoupon/coinsไม่กลายเป็นapplieddiscount | PASSED |
+| A30 | W03/W07 | refundcurrentstep/destination/bankconfirmationแยกกัน | PARTIAL |
+| A31 | W03/W04/W07 | foreign/BNPLไม่แปลงเป็นTHBหรือcashadvanceเอง | PASSED |
+| A32 | W04/W05/W07 | verified actual payer ต่างจาก uploader ตาม D06; creator ไม่ถูกปลอม และไม่บังคับใบรับรองนอกเกณฑ์ | PASSED |
+| A33 | W03/W06 | ปุ่มReceiptไม่ใช่เอกสารreceiptที่ได้แล้ว | PASSED |
+| A34 | W03/W04/W06 | checkoutmismatchเก็บร่าง ไม่สร้างbalancingrow/paidcertificate | PASSED |
+| A35 | W01/W02/W06 | append/replace/detachและretentionทุกsource | PASSED |
+| A36 | W01/W02/W03 | per-filepersist/resumeหลังpartialupload/responseหาย | PASSED |
+| A37 | W03/W04 | 41items/แถวเสียไม่ทำsummaryดูพร้อมitemallocation | PASSED |
+| A38 | W01/W05/W08 | raw API/worker guards; rollout fixture พิสูจน์ว่า binary ที่ไม่รองรับไม่เข้าถึง capture records ก่อนเปิด intake | PASSED |
+| A39 | W01/W05/W07 | list/count/export/ledgerไม่รวมparent+source+projectionซ้ำ | PASSED |
+| A40 | W06/W07 | partialcertificatecompletionทำต่อเฉพาะsourceค้าง | PASSED |
+| A41 | W00/W01/W04/W05 | known business zero ไม่มี zero-money destination; capture-only retention/access ตาม D08 รวมส่วนตัวทั้งหมดและงานทิ้งค้าง | PASSED |
+| A42 | W03/W04/W07 | order/payment/invoice/uploaddatesข้ามเดือนยังมีที่มา | PASSED |
+| A43 | W02/W03 | quota/attemptidentity/lostresponseใช้ผลที่เก็บแล้ว | PASSED |
+| A44 | W01/W05/W06/W07 | merge/splitหลังsign/consumptionไม่ย้ายสิทธิเงินหรือลายเซ็น | PASSED |
+| A45 | W02/W04/W06 | LINEหลายงาน/ภาพมาช้าไม่แก้ผิดgroup/source | PARTIAL |
+| A46 | W01/W02/W07 | child/originalaccessตรวจจริงบนview/download/export/LINE | PARTIAL |
+| A47 | W01/W08 | disable intake ยังอ่าน/กู้คืนตามสิทธิ; ไม่ rollback ไป binary ที่ไม่รองรับหลังมีข้อมูลใหม่; route/entitlement/runoff เดิมผ่าน | PASSED |
+| A48 | W03/W04/W06 | group/source/selectionrevisionป้องกันlateworkerทับreview | PASSED |
+| A49 | W03/W04/W08 | RC-A01: ยอด68; ไม่สร้างจ่าย500 | PASSED |
+| A50 | W03/W04/W08 | RC-A02: ลดครั้งเดียว รักษาscope/แถวอ้างอิง | PASSED |
+| A51 | W03/W04/W07/W08 | RC-A03: document222 กับsettlement44+178และpoints balanceแยก; ไม่auto-approve reimbursement | PARTIAL |
+| A52 | W03/W04/W08 | RC-A04: saleใหม่53; ไม่ทำเป็นcoupon/refundนอกหลักฐาน | PASSED |
+| A53 | W03/W04/W08 | RC-A05: quantity/UOM/packไม่คูณซ้ำ, tax groupและยอดรวมถูก, codeไม่กลายเป็นrate | PASSED |
+| A54 | W01/W02/W03/W08 | RC-A06: แยกdocument/transactionและsame-file lineage ไม่รวมเป็นซื้อเดียว | PASSED |
+| A55 | W01/W05/W07/W08 | RC-A07: evidenceมาทีหลังไม่เพิ่มexpense/claim/paymentซ้ำ | PARTIAL |
+| A56 | W03/W04/W08 | RC-A08: ยอด35; ไม่สร้างสินค้าคูปองหรือใช้เลขคิวเป็นreceipt ID | PASSED |
+| A57 | W03/W04/W08 | RC-A09: ไม่แปลงแต้มเป็นยอดเงินหรือpayer identity | PASSED |
+| A58 | W03/W04/W08 | RC-A10: เก็บsource conflict ไม่ปรับยอดตามป้ายโดยเดา | PASSED |
+| A59 | W02/W03/W04/W08 | RC-A11: completenessตรงภาพ, ไม่ให้แบ่งส่วนตัวจากitem blockที่หาย, save/recoveryผ่าน | NOT_RUN |
+| A60 | W05/W06/W07/W08 | RC-A12: recoveryถูกชนิด; ใบรับรองไม่แทนtax invoice; late document/correctionไม่จ่ายซ้ำ | PARTIAL |
+| A61 | W01/W02/W03/W08 | RC-A13: แยกdocument typeกับcontainer; ต้นฉบับไม่เปลี่ยน, text/OCRมีprovenanceและขัดกันแล้วไม่false-ready | PARTIAL |
+| A62 | W01/W03/W04/W08 | RC-A14: ผลตรวจแยกmethod/pass/fail/not-checked/unavailable; อ่านได้ไม่เท่ากับตรวจผ่าน, ตรวจผ่านไม่เท่ากับอนุมัติภาษี/เบิก; ใช้fixtureที่ไม่ได้redactทับsigned original  baselineพิสูจน์not-checked/unavailable; pass/failตามmethodต้องมีfixtureเมื่อเปิดautomatedverificationตามD09 และยังห้ามอ้างว่ามีตัวตรวจจากbaselineเพียงอย่างเดียว | PARTIAL |
+| A63 | W01/W05/W06/W07/W08 | RC-A15: เสนอผูกซื้อเดิมโดยไม่เพิ่มยอด; ความต่างเลขเอกสาร/issuer/ยอดเข้าตรวจและcorrectionตามlock ไม่overwriteหลักฐานหรือเงินที่postแล้ว | PARTIAL |
+| A64 | W02/W03/W06/W08 | RC-A16: saved draftยังอยู่, มีทางเพิ่มหลักฐาน/กรอกต่อ/ขอร้าน; ไม่ปล่อยpasswordสู่log/prompt ไม่สร้างใบรับรองหรือแอบอนุมัติเพื่อข้ามerror | PASSED |
+| A65 | W02/W03/W08 | RC-A17: document/page coverageถูกต้อง; ไม่จำกัดหนึ่งไฟล์เท่ากับหนึ่งซื้อ และไม่ใช้summaryแทนcomplete item reviewโดยไม่แจ้ง | PASSED |
+| A66 | W01/W02/W03/W07/W08 | RC-A18: เก็บเฉพาะหลักฐานที่มีสิทธิ, tenant/accessครบ; contentเป็นข้อมูลไม่ใช่คำสั่ง, ไม่fetch arbitrary URL/ส่งไฟล์ออกเอง; ข้อมูลประกอบวิธีตรวจไม่สูญหาย | PASSED |
+| A67 | W02/W03/W08 | RC-A19: ตรวจขอบ4MB/4MiB/10MiBและ+1byte; FE/BEใช้10MiBเดียวกัน, ไฟล์ภายในขอบเข้าautomatic pipeline; เกินขอบไม่อ้างเก็บสำเร็จหรือทับต้นฉบับ และคงงานเดิมไว้ | PASSED |
+| A68 | W01/W02/W03/W04/W08 | LINE integration: เก็บ bytes/target ที่อนุญาตก่อนบอกเก็บแล้ว; clarification ผูกงานและไฟล์เดิม ไม่สร้าง expense ก่อนรู้ scope; ไม่ยกเลิก MULTI_DOCUMENT guard ใน single-expense contract | PARTIAL |
+| A69 | W02/W03/W04/W08 | three-entry parity: facts/ยอด/unknown/completeness/verification semantics และ policy version ตรงกัน; ต่างได้เฉพาะช่องทางกับขนาดที่มีสัญญาชัด ไม่มี prompt แยกจนอ่านคนละยอด | PASSED |
+| A70 | W01/W02/W03/W04/W08 | Replaceสำเร็จแต่failed readingให้Webกรอกงานเดิมตาม§17.6พร้อมcurrentfile/humanfactsและprovenance; ไม่เสนอOCRretry ไม่แสดงverifiedจากไฟล์เก่า unknownตรวจสถานะก่อน | PASSED |
+| A71 | W01/W02/W03/W04/W08 | replacement concurrency: complete ต้องตรวจ expected target attachment และ revision ที่ผู้ใช้เริ่มเปลี่ยน; มี winner เดียวหรือแจ้ง conflict ไม่ให้ stale upload ทับ; stale OCR/notice/cache ไม่เปลี่ยนผลของไฟล์ปัจจุบัน | PASSED |
+| A72 | W01/W02/W05/W06/W07/W08 | replacement state matrix: ใช้ตาราง §16.4; อนุญาตตาม server guards และ correction เดิม; ทุกผล deny/conflict มีทางกลับงานที่ถูกต้อง ไม่ retire หลักฐานที่ใช้ลงนามหรือจ่ายแล้ว | PASSED |
+| A73 | W02/W03/W04/W06/W08 | replacement semantic identity: ถาม/แสดงความต่างก่อนยอมรับ facts ใหม่; ไม่เอา vendor/item/tax/payment จากสองซื้อปนกัน ไม่เติมช่องว่างด้วยค่าจากเอกสารเก่าโดยไม่มี provenance; งานใหม่ต้องเริ่มตามสิทธิและไม่ทำรายการเดิมหาย | PARTIAL |
+| A74 | W02/W03/W08 | PDF capability: แยก stored กับ readable; แสดงสาเหตุ/ทางกรอกต่อหรือแนบไฟล์อื่น; ไม่ใช้ first-page/summary เป็น complete และไม่เปลี่ยน provider policy หรือส่งข้อมูลออกเพื่อแก้ error โดยปริยาย | PASSED |
+| A75 | W01/W02/W03/W08 | PDF10,000,000/10,485,760bytes ทั้งtext/scanned/mixed pages ผ่านLINE/อัปโหลด/เปลี่ยนใบเสร็จ: ระบบรับต้นฉบับและเริ่มautomatic bounded readingทั้งไฟล์; ขนาดเกิน4MBเพียงอย่างเดียวไม่คืนunsupported/manual-only; ส่งผลที่อ่านได้พร้อมข้อขัดกันเข้าสู่review; ถ้ามีหน้าค้างหรืออ่านไม่สำเร็จต้องเป็นpartial ไม่อ้างอ่านครบ | PARTIAL |
+| A76 | W02/W03/W08 | PDFหน้าเดียว10MBหรือหน้าหนึ่งยังเกินขอบproviderหลังแยก: renderสำเนาและแบ่งregions/tilesที่ตรวจขนาดจริง พร้อมoverview+พิกัด/ส่วนซ้อน; อ่านตัวเลขเล็ก/ภาษาไทยได้ตามgolden fixture ไม่ลดภาพจนข้อมูลหาย; ไม่เปลี่ยนต้นฉบับ | PARTIAL |
+| A77 | W03/W04/W05/W08 | headerร้านหน้า1, สินค้าหลายchunk, totalท้ายใบ และมีหลายใบในPDF: assembleobservationsตามdocument/page/region+stableline IDs ไม่บวกsubtotal/totalซ้ำหรือmergeจากชื่อสินค้า; cross-pageidentity/void/ส่วนลดและunknownมีprovenanceก่อนallocation | PASSED |
+| A78 | W01/W02/W03/W04/W08 | workerหยุดหลังอ่านบางส่วน/retryผลหาย/ผู้ใช้เปลี่ยนprimaryหรือสิทธิระหว่างอ่านไฟล์10MB: ผลchunkที่สำเร็จยังอยู่; resumeเฉพาะงานค้างและreuseattemptตามgovernance; ไม่สร้างexpense/claimซ้ำ; rechecktenant/actor/revisionก่อนapply/notifyและstaleไม่ทับใหม่ | PASSED |
+| A79 | W01/W02/W03/W08 | 10MBมีหลายร้อยหน้า/รูปขยายใหญ่มาก/เกินtoken-budgetหรือquotaหมดกลางงาน: จำกัดpage-per-batch/pixels/memory/time/concurrencyและขนาดHTTPจริง; ทำต่อด้วยcheckpointหรือแสดงpaused/incompleteตามเหตุจริง ไม่ตัดหน้าเงียบหรือบังคับลูกค้าแบ่งPDFเพราะ4MB; sizeไม่ใช่unlimitedbudget | PASSED |
+| A80 | W01/W02/W03/W06/W08 | e-Taxต้นฉบับ10MBถูกsplit/rasterเพื่ออ่าน; encrypted/corruptบางส่วน: hash/bytes/versionต้นฉบับคงเดิม; signature/timestampตรวจoriginalเท่านั้น; derivativeมีlineageไม่อ้างเป็นต้นฉบับ, errorชี้หน้า/สาเหตุและเก็บผลที่สำเร็จ; ไม่ออกใบรับรองอัตโนมัติ | PARTIAL |
+| A81 | W01/W02/W03/W04/W08 | PDF 2/5/10/20 หน้า ทั้ง native/scanned/mixed และใบเดียวต่อหลายหน้า: มี manifest ครบทุกหน้าเรียงตามไฟล์และเลขหน้าที่พิมพ์เป็นหลักฐานแยก; header/footer/carry-forward ไม่สร้างยอดหรือรายการซ้ำ; ไม่ใช้เพดาน 17 หน้าของ certificate preview เป็นเพดาน reader; ผ่านทั้งสามทาง | PASSED |
+| A82 | W02/W03/W04/W08 | แยกblank/failed/missingและfile/document completeness; failed/partialเปิดWebกรอกข้อมูลขาด+แนบหน้าที่ขาดในงานเดิม ไม่มีuser rereadหรือmergeคนละบิล | PASSED |
+| A83 | W00/W01/W02/W03/W04/W06/W07/W08 | UXE-01–27และunknownมีสถานะ/actionตามสิทธิ์; OCRfailedใช้saved-file notice+Websame-work link ไม่มีerror rereadหรือmanual-entry chat; linkrouteต้องใช้ได้จริง | PARTIAL |
+| A84 | W01/W02/W03/W04/W06/W07/W08 | ผลบันทึก/สร้างใบเบิก/ออกใบรับรองหาย, กดซ้ำ, cancel, สิทธิหรือsourceเปลี่ยนระหว่างerror: ตรวจสถานะด้วยoperationเดิมก่อนretryผลที่ไม่ทราบ; ไม่สร้าง/จ่าย/นับอ่านซ้ำ, source/สิทธิตรงตอนกด, retryเฉพาะส่วนค้าง, cancelไม่เท่ากับลบไฟล์หรือถอนเอกสารการเงิน | PASSED |
+| A85 | W02/W04/W06/W07/W08 | UX40+กดลิงก์ถึงWebงานเดิมพร้อมไฟล์/partialfacts; login-return/mobile/permissions/stateตรง ไม่อัปโหลดหรือสร้างใหม่และไม่สับสนsaved/submitted/paid | NOT_RUN |
+| A86 | W00/W01/W02/W03/W04/W08 | LINEถามย้อนหลังว่าไฟล์เมื่อกี้ส่งไม่ได้/ทำไมอ่านไม่ได้/ต้องส่งใหม่ไหม หลังrejectionหรือrestartโดยยังไม่มีexpense: ตอบจากreason/stage/size-limit-at-attempt/persist-stateที่APIตรวจสิทธิ์และอ้างอิงattemptเดิมได้; สาเหตุoversizeไม่กลายเป็นdownloaderrorทั่วไป; คำถามอย่างเดียวไม่OCRซ้ำ/สร้างร่าง/แก้เงิน | PARTIAL |
+| A87 | W01/W02/W04/W08 | มีหลายไฟล์หรือหลายงาน/ไฟล์ชื่อซ้ำ/ไม่มีevent/retentionหมด/สิทธิ์เปลี่ยน/ข้อความLINEมาช้า: เลือกเฉพาะattemptที่actor/company/chatเข้าถึงได้; ผูกเป้าหมายด้วยreferenceที่serverตรวจได้ ไม่เลือกlatestผิดงาน; ไม่พบข้อมูลหรือlookupล่มตอบต่างกันและไม่เดาสาเหตุ/เปิดเผยงานอื่น | PARTIAL |
+| A88 | W01/W02/W03/W04/W06/W07/W08 | ผู้ใช้ถามเหตุผลขณะAI/provider/quotaไม่พร้อม, ถามซ้ำหลังrecoveryหรือlimitเปลี่ยน, หรือส่งข้อความแจ้งผลไม่สำเร็จ: ใช้คำตอบสถานะจากserverและfallbackเดิมเมื่อเหมาะสม; แสดงเหตุที่เกิดตอนนั้นแยกสถานะปัจจุบัน; ไม่ต้องอ่านไฟล์อีกเพื่ออธิบายerror ไม่ให้คำตอบถามสถานะกลายเป็นคำสั่งretry และไม่อ้างส่งข้อความถึงแล้วหากdeliveryไม่สำเร็จ | PARTIAL |
 
 ## 7. Traceability: gap → งานที่ต้องปิด
 
-ทุก IG ยัง **Open**; วงเล็บ P0 เป็น financial gate ตาม spec ไม่ใช่เหตุProductionปัจจุบัน IG15 เพิ่มในรอบรีวิว 2026-09-15
+รอบ 2026-09-19 (W08): **ปิดแล้ว 21 เปิดอยู่ 8** ตาม [acceptance matrix](../qa/evidence/marketplace-buyer-expense-capture-2026-09-19/acceptance-matrix.md);
+วงเล็บ P0 เป็น financial gate ตาม spec ไม่ใช่เหตุProductionปัจจุบัน IG15 เพิ่มในรอบรีวิว 2026-09-15
+แปดข้อที่ยังเปิดคือ IG09, IG10, IG14, IG20, IG21, IG25, IG28, IG29 — เหตุผลรายข้ออยู่ในเมทริกซ์
 
-| Gap | งาน | หลักฐานปิด gap |
-|---|---|---|
-| IG01 (P0) | W01/W02/W06 | append/replace/resume/retention ผ่านAPI+browserและissued-source references |
-| IG02 | W03/W04 | multi-evidence schemaและcompleteness/limit/summary fixtures |
-| IG03 (P0) | W01/W05/W07 | servercapture-onlyguardsและread/export/ledgerreconciliation |
-| IG04 (P0) | W01/W04/W05/W07 | payer/full-source/lineage/locksผ่านresolverและDBrace |
-| IG05 (P0) | W05/W06/W07 | partialcertificate/paymentprogressและretryไม่เกิดผลซ้ำ |
-| IG06 | W03/W04/W06 | staleOCR/snapshot/signaturetestsร่วมgrouprevision |
-| IG07 (P0) | W01/W05/W06/W07 | alias/merge/split/siblingidentityและconsumptioninvariants |
-| IG08 | W02/W03 | per-attemptadmission/usage/quota-mid-batchrecovery |
-| IG09 | W00/W01/W02/W03/W07 | original evidence authorization/retention ผ่านทุก surface; D08 ครอบ capture-only และ AI processor ก่อนข้อมูลจริง/G1 |
-| IG10 | W02/W04/W06 | LINEtarget+wizardreturn+save/resumeถูกงาน/ร้าน |
-| IG11 (P0) | W00/W04/W05/W06/W07 | decisionD03/D04และsupportedrouteจริง; unsupportedไม่finalize |
-| IG12 | W03/W04/W05/W07 | zerocompany/quantity/gifts/multipleeventdates |
-| IG13 | W00/W01/W08 | capability/migration/oldnewconsumer/disableintakefixtures ผ่าน launch gate + entitlement เดิม ไม่ใช่กลไกใหม่ |
-| IG14 | W00/W03/W08 | authorizedThaiheldoutlabels, actualAIevalและ40+usabilityresults |
-| IG15 | W00/W01 | permission key/entitlement ตาม D07 และ server rejection ของ actor ที่ไม่มีสิทธิในทุก endpoint |
-| IG16 (P1) | W03/W04/W08 | normalize signed eventsก่อนexpense materialization; ไม่absหรือเปิดnegativeทุกแถว; monetary role/provenance/Decimal; A49–A52/A56/A57 |
-| IG17 (P1) | W03/W04/W07/W08 | แยกqty/UOM/packกับdisplay count, อ่านlegend/unknown และreuseper-line tax; ไม่ใช้7%ทั้งใบ/ไม่เดาZERO_RATED; A53/A58/A59 |
-| IG18 (P1) | W02/W03/W08 | D02ระบุupload/extraction/provider limitsแยกและหน่วยbytes; shared threshold+error recoveryทั้งสามทาง; A67/A69/A74 |
-| IG19 (P1) | W01/W02/W03/W08 | capability typed errors, page/document completeness, boundedreuse/retry; รักษาvision reader policyเดิมจนD02ตัดสิน; A61/A65/A74 |
-| IG20 (P1) | W01/W02/W03/W04/W08 | durable capture/pending identityตามสิทธิ; ไม่บอกเก็บแล้วก่อนpersist,ไม่lost bytesหลังถามกลับ; scope/target/versionก่อนgroup routing; ปิดfile/PDF preflight gapจากE15ด้วยbounded reader; A68/A69/A75/A81 |
-| IG21 (P1) | W01/W02/W03/W04/W07/W08 | original hash/version+derivative, not-checked/failed/unavailableต่างกัน, D09/authorized evidence; screenshotยังreviewได้ตามpolicy; A61/A62/A64/A66 |
-| IG22 (P1) | W01/W02/W03/W04/W08 | invalidate current-source verificationโดยรักษาค่าคนพร้อมprovenance; diff/reviewก่อนใช้กับไฟล์ใหม่ ไม่ปนสองซื้อ; A70/A73 |
-| IG23 (P0) | W01/W02/W05/W06/W07/W08 | expected old attachment+revisionจากUI/LINE, transaction/idempotency/old-result fence, state matrixและretention; A63/A71/A72 |
-| IG24 (P0) | W01/W05/W06/W07/W08 | document relations/candidatesที่ตรวจแล้วและconsumptionข้ามช่องทาง; ไม่mergeจากยอด/โลโก้; replacement/creditผ่านcorrection; A54/A55/A60/A63/A69 |
-| IG25 (P1) | W00/W08 | authorized bundlesครบ5แบรนด์, held-outไม่รั่วข้ามภาพเดียวกัน; UX40+ผ่านreplacement/recovery, sample countsไม่ใช่ผลผ่าน; A49–A74 |
-| IG26 (P1) | W01/W02/W03/W04/W08 | เพิ่มbounded page/region preprocessing + manifest/reassembly; ขนาดส่วนย่อยวัดจริง, overview/overlap dedupและtinyprintquality; A75/A76/A77/A80 |
-| IG27 (P1) | W00/W01/W02/W03/W08 | durable bounded runner, perchunkcheckpoint+attemptidentity, HTTP/base64/pixels budgets, source/actorcheckตอนทำต่อ; A78/A79; ไม่manual-onlyจาก4MB |
-| IG28 (P1) | W00/W01/W02/W03/W04/W06/W07/W08 | §17 UXE-01–27, reason/persist-state/action contractร่วม; unknown-result status-before-retry, no false saved/charged/sent claim, parityและUX40+; A83–A85 |
-| IG29 (P1) | W00/W01/W02/W03/W04/W06/W07/W08 | §17.5 safe pre-capture outcome/reason, scoped status lookup, no-event/ambiguous/expired distinction, grounded human-language replyและread-only fallback; A86–A88 |
+| Gap | งาน | หลักฐานปิด gap | สถานะ 2026-09-19 |
+|---|---|---|---|
+| IG01 (P0) | W01/W02/W06 | append/replace/resume/retention ผ่านAPI+browserและissued-source references | ปิดแล้ว |
+| IG02 | W03/W04 | multi-evidence schemaและcompleteness/limit/summary fixtures | ปิดแล้ว |
+| IG03 (P0) | W01/W05/W07 | servercapture-onlyguardsและread/export/ledgerreconciliation | ปิดแล้ว |
+| IG04 (P0) | W01/W04/W05/W07 | payer/full-source/lineage/locksผ่านresolverและDBrace | ปิดแล้ว |
+| IG05 (P0) | W05/W06/W07 | partialcertificate/paymentprogressและretryไม่เกิดผลซ้ำ | ปิดแล้ว |
+| IG06 | W03/W04/W06 | staleOCR/snapshot/signaturetestsร่วมgrouprevision | ปิดแล้ว |
+| IG07 (P0) | W01/W05/W06/W07 | alias/merge/split/siblingidentityและconsumptioninvariants | ปิดแล้ว |
+| IG08 | W02/W03 | per-attemptadmission/usage/quota-mid-batchrecovery | ปิดแล้ว |
+| IG09 | W00/W01/W02/W03/W07 | original evidence authorization/retention ผ่านทุก surface; D08 ครอบ capture-only และ AI processor ก่อนข้อมูลจริง/G1 | ยังเปิด |
+| IG10 | W02/W04/W06 | LINEtarget+wizardreturn+save/resumeถูกงาน/ร้าน | ยังเปิด |
+| IG11 (P0) | W00/W04/W05/W06/W07 | decisionD03/D04และsupportedrouteจริง; unsupportedไม่finalize | ปิดแล้ว |
+| IG12 | W03/W04/W05/W07 | zerocompany/quantity/gifts/multipleeventdates | ปิดแล้ว |
+| IG13 | W00/W01/W08 | capability/migration/oldnewconsumer/disableintakefixtures ผ่าน launch gate + entitlement เดิม ไม่ใช่กลไกใหม่ | ปิดแล้ว |
+| IG14 | W00/W03/W08 | authorizedThaiheldoutlabels, actualAIevalและ40+usabilityresults | ยังเปิด |
+| IG15 | W00/W01 | permission key/entitlement ตาม D07 และ server rejection ของ actor ที่ไม่มีสิทธิในทุก endpoint | ปิดแล้ว |
+| IG16 (P1) | W03/W04/W08 | normalize signed eventsก่อนexpense materialization; ไม่absหรือเปิดnegativeทุกแถว; monetary role/provenance/Decimal; A49–A52/A56/A57 | ปิดแล้ว |
+| IG17 (P1) | W03/W04/W07/W08 | แยกqty/UOM/packกับdisplay count, อ่านlegend/unknown และreuseper-line tax; ไม่ใช้7%ทั้งใบ/ไม่เดาZERO_RATED; A53/A58/A59 | ปิดแล้ว |
+| IG18 (P1) | W02/W03/W08 | D02ระบุupload/extraction/provider limitsแยกและหน่วยbytes; shared threshold+error recoveryทั้งสามทาง; A67/A69/A74 | ปิดแล้ว |
+| IG19 (P1) | W01/W02/W03/W08 | capability typed errors, page/document completeness, boundedreuse/retry; รักษาvision reader policyเดิมจนD02ตัดสิน; A61/A65/A74 | ปิดแล้ว |
+| IG20 (P1) | W01/W02/W03/W04/W08 | durable capture/pending identityตามสิทธิ; ไม่บอกเก็บแล้วก่อนpersist,ไม่lost bytesหลังถามกลับ; scope/target/versionก่อนgroup routing; ปิดfile/PDF preflight gapจากE15ด้วยbounded reader; A68/A69/A75/A81 | ยังเปิด |
+| IG21 (P1) | W01/W02/W03/W04/W07/W08 | original hash/version+derivative, not-checked/failed/unavailableต่างกัน, D09/authorized evidence; screenshotยังreviewได้ตามpolicy; A61/A62/A64/A66 | ยังเปิด |
+| IG22 (P1) | W01/W02/W03/W04/W08 | invalidate current-source verificationโดยรักษาค่าคนพร้อมprovenance; diff/reviewก่อนใช้กับไฟล์ใหม่ ไม่ปนสองซื้อ; A70/A73 | ปิดแล้ว |
+| IG23 (P0) | W01/W02/W05/W06/W07/W08 | expected old attachment+revisionจากUI/LINE, transaction/idempotency/old-result fence, state matrixและretention; A63/A71/A72 | ปิดแล้ว |
+| IG24 (P0) | W01/W05/W06/W07/W08 | document relations/candidatesที่ตรวจแล้วและconsumptionข้ามช่องทาง; ไม่mergeจากยอด/โลโก้; replacement/creditผ่านcorrection; A54/A55/A60/A63/A69 | ปิดแล้ว |
+| IG25 (P1) | W00/W08 | authorized bundlesครบ5แบรนด์, held-outไม่รั่วข้ามภาพเดียวกัน; UX40+ผ่านreplacement/recovery, sample countsไม่ใช่ผลผ่าน; A49–A74 | ยังเปิด |
+| IG26 (P1) | W01/W02/W03/W04/W08 | เพิ่มbounded page/region preprocessing + manifest/reassembly; ขนาดส่วนย่อยวัดจริง, overview/overlap dedupและtinyprintquality; A75/A76/A77/A80 | ปิดแล้ว |
+| IG27 (P1) | W00/W01/W02/W03/W08 | durable bounded runner, perchunkcheckpoint+attemptidentity, HTTP/base64/pixels budgets, source/actorcheckตอนทำต่อ; A78/A79; ไม่manual-onlyจาก4MB | ปิดแล้ว |
+| IG28 (P1) | W00/W01/W02/W03/W04/W06/W07/W08 | §17 UXE-01–27, reason/persist-state/action contractร่วม; unknown-result status-before-retry, no false saved/charged/sent claim, parityและUX40+; A83–A85 | ยังเปิด |
+| IG29 (P1) | W00/W01/W02/W03/W04/W06/W07/W08 | §17.5 safe pre-capture outcome/reason, scoped status lookup, no-event/ambiguous/expired distinction, grounded human-language replyและread-only fallback; A86–A88 | ยังเปิด |
 
 ## 8. Verification ที่รันเมื่อพัฒนาแต่ละส่วน
 

@@ -45,3 +45,70 @@ Next (after W07-int): the rest of W07 — claim revalidate at submit/approve, fi
 | W04b | Opus 5 | done 2026-09-19 | web full test 1,849 pass / 0 fail (364 suites; new `expense-capture-review.logic.spec.ts` 19, `ExpenseCaptureGroupPage.qa.spec.ts` 16); `pnpm --filter @watchdog-bms/web lint` (next typegen + tsc --noEmit) clean; pins `--check` status=current; `git diff --check` clean | Branch `codex/mkt-w04b-review-ui-20260918`, `apps/web/**` only. Group page now carries the §13.4 summary (shop/item counts with the completeness qualifier, paid/company/personal, payer) + four separate state chips (§13.2), blockers with their "ทางทำต่อ" above the one primary action, facts per document (reconciliation chip, totals, payment state, items with "ไม่ทราบ" never 0, components by role, "ดูหน้าที่อ้างอิง", per-document แก้ข้อมูล through `POST …/facts`), the two questions of spec §3 with per-item personal steppers, payer select, reviewer-only tax + expense-date block, `POST …/review` (partial answers allowed), the split preview with "ดูที่มาการแบ่ง" provenance and accept, the handoff confirm/idempotency/UXE-24 path and the derived-source list with the employee claim link. Also `/expenses/capture` list, the "งานรับหลักฐาน" entry point and the "จากกลุ่มหลักฐาน" badge. 8 deviations in appendix §18 (handoff route still W05's, `claimReady`/`selection` rebuilt from the allocation snapshot, file-level human provenance, employees endpoint for the payer picker). NOT done here: LINE summary (W02-LINE), regenerate after handoff, certificate line (W06), usability 40+ (D05, owner) |
 | W06 | Opus 5 | done 2026-09-19 | contracts build + test 324 pass; api full test 8,121 tests / 8,021 pass / 0 fail (100 skipped = pg specs without a URL) + `tsc --noEmit` clean; web full test 1,857 pass / 0 fail + typecheck/lint clean; `expense-capture-certificate.pg.spec.ts` 5 pass against a throwaway Postgres (docker `postgres:16-alpine`, 127.0.0.1:15473, removed afterwards); whole-chain runner rc=0 (8 suites); `pnpm test:harness` 17 pass; pins `--check` status=current; `git diff --check` clean. New specs: `substitute-receipt-capture.use-case.spec.ts` 12, `expense-capture-certificate.pg.spec.ts` 5, +3 group-page cases, +4 web logic cases, +3 QA cases | Branch `codex/mkt-w06-certificate-20260918`. Delivered: `captureCertificateGate` (§12.1/§12.2/§14.3 — reserved allocation, paid document, no mismatch, funding route, `receipt_present` for a shop that has its own receipt), the D04 sentence inside `snapshotJson.captureAllocation` and printed under the amount on both the sheet and the PAPER attestation, `derivedSources[].certificate`/`nextAction` so the group says "ร้าน A ออกแล้ว / ร้าน B รอลงนาม", the wizard's "กลับไปกลุ่มหลักฐาน" links and its prefill from the reviewed facts. **No migration**; the payment-once, PAPER/DIGITAL and `assertFullSubstitutePayment` rules are untouched. 10 deviations in appendix §22.3 — notably the gate binding to `captureAllocationId` (so §3.1/§3.2 sources keep today's path), the extra `substitute_capture_funding_route_mismatch` code, and prefill living on the web rather than as API defaults. NOT done here: shop-document recovery (§16.5), rendered-PDF/browser + UX 40+ evidence (W08), W07 |
 | W07-int | Opus 5 | done 2026-09-19 | contracts build + test 324 pass; config build + test 144 pass; api full test 8,155 tests / 8,055 pass / 0 fail (100 skipped = pg specs without a URL) + `tsc --noEmit` clean; web full test 1,868 pass / 0 fail + `next typegen && tsc --noEmit` clean; ai-gateway 1,233 pass + typecheck clean; workers 43 pass + typecheck clean; 4 capture pg specs 27 pass against a throwaway Postgres (docker `postgres:16-alpine`, 127.0.0.1:15487, removed afterwards) and `prisma migrate diff` shows no capture drift; whole-chain runner rc=0 (1,563 + 387 + 4 + 4 pass, 0 fail, 8 suites); `pnpm test:harness` 17 pass; pins `--check` status=current; `git diff --check` clean | Branch `codex/mkt-w07int-integration-20260918`. ONE additive migration `20260919120000_expense_capture_push_target` (`ExpenseCaptureGroup.linePushTargetId` + the partial unique index that closes the NULL-distinct hole under a converted group's facts). Delivered: the LINE caller for `AutoHandoffSingleDocumentCaptureUseCase` with the derived source's own receipt card (§3.2), the group-chat push target (W02-LINE deviation 2 retired), §17.5 answers for an OPEN group and for derived sources, the review page reading `multiDocument`/`applied` from `read-status`, `sourceStale` retired on a current-primary apply, three-lane parity (LINE's megabyte formatter now matches the web's), the five wave-report defects (null `readJobId`, ACCEPTED-first allocation ordering, per-JOB time + new `memory_budget` derivative ceiling, `defer_text` for a question caption, the unfinished-group choice on a new selection), the `?expenseId=` deep link, and the capture gate at preview/certify/approve. 16 deviations in appendix §23.2. NOT done here: the rest of W07 (claim revalidate, projection, ledger), the §8 file sweep, §16.5, W08, any deploy |
+
+---
+
+## W08 closure — 2026-09-19
+
+Status: **W01–W08 delivered locally and verified by the full gate. NOTHING IS DEPLOYED.**
+Acceptance: A01–A88 = 65 PASSED / 21 PARTIAL / 2 NOT_RUN; IG01–IG29 = 21 closed / 8 open;
+UXE-01–27 = 22/5/0; NR01–NR09 = 9 PASSED (mapping and wording, delivery is real LINE);
+CC01–CC10 = 0/4/6 — synthetic coverage only, no courier document was ever read.
+
+Owner: controller session directs; Opus 5 implemented W08 on `codex/mkt-w08-acceptance-20260918`.
+
+### Artifacts (W08)
+
+- `docs/qa/evidence/marketplace-buyer-expense-capture-2026-09-19/acceptance-matrix.md` — every
+  A/IG/UXE/NR/CC row with the spec + `it` title that proves it, or the reason it is not proven.
+- `docs/qa/evidence/marketplace-buyer-expense-capture-2026-09-19/` — 13 subjects × 1440/390 px,
+  `README.md` (what each image proves, what is NOT captured, the rollback note) and the committed
+  `seed-capture-evidence.ts`.
+- `docs/research/expense-capture-read-benchmark-2026-09-19.md` + `scripts/expense-capture-read-benchmark.ts`
+  + `scripts/expense-capture-read.fixtures.ts` (+ its free spec, registered in `pnpm test:harness`).
+- Code: the §8 retention sweep in `recover-orphan-line-events.use-case.ts`; two W03 reader fixes in
+  `apps/ai-gateway/src/modules/line-ai/domain/logic/expense-capture-read.logic.ts`; `planWindows` /
+  `priorDocuments` moved to `expense-capture-assembly.logic.ts`; new
+  `apps/api/src/modules/expenses/expense-capture-compatibility.spec.ts`.
+- Appendix: §8 now records the retention sweep as implemented (with its two deviations) and §15
+  item 5 records the Bedrock replay as done.
+
+### Verification (2026-09-19, base `9c1f9dad`)
+
+contracts 324 pass; config 144 pass; api full test rc=0 (11,183 passing, 0 fail) + `tsc --noEmit`
+clean; the four capture pg specs 28 pass / 0 skipped against a throwaway Postgres (`127.0.0.1:15521`,
+removed afterwards); web 1,868 pass + lint clean; ai-gateway 1,237 pass + typecheck clean; workers
+43 pass + typecheck clean; whole-chain runner rc=0 (1,961 pass, 8 suites); `pnpm test:harness`
+27 pass; pins `--check` `status=current`; `git diff --check` clean. Benchmark: 8 fixtures,
+documents/items/totals exact on all 8, THB 27.51 for the run, THB 60.01 cumulative for this task of
+the authorised 100.
+
+### What the benchmark found (both fixed here)
+
+1. `CAPTURE_EXTRACT_PROMPT` named the classification keys but left four enums open, so a real read
+   answered `contentKind: "RECEIPT"` / `businessDirection: "EXPENSE"` and the parser dropped the
+   only document — **every** capture window, every lane, came back `OCR_SCHEMA_INVALID`.
+2. `printedPages` was consumed by `hasMissingPages` and produced by nobody, so a complete 20-page
+   receipt read in one window reported nineteen missing pages (UXE-15 on a complete document).
+
+### สิ่งที่เจ้าของต้องทำต่อ
+
+1. **Deploy ตาม runbook** `docs/runbooks/uat-production-v2-deployment.md` (UAT ก่อน แล้วค่อย
+   production) — ยังไม่มีอะไรถูก deploy เลย. ของที่ต้องไปพร้อมกัน:
+   - migrations: `20260918120000_expense_capture_foundation`, `20260919120000_expense_capture_push_target`
+     (additive ทั้งคู่; ไม่มี drop/rename)
+   - worker ใหม่: `apps/workers/src/modules/expense-capture-read` (scan worker → internal drain)
+   - flags ที่ค่าเริ่มต้นใช้ได้เลย: `EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED=true` (มีใน `deploy.sh` แล้ว),
+     `EXPENSE_CAPTURE_PDF_MAX_PAGES=60`, `EXPENSE_CAPTURE_READ_CONCURRENCY=2`,
+     `EXPENSE_CAPTURE_RETENTION_DAYS=90`, `EXPENSE_CAPTURE_DERIVATIVE_MAX_BYTES=67108864`
+   - **LINE ledger worker tick เปลี่ยนงาน**: sweep เดิมที่เรียกทุกนาทีตอนนี้กวาดไฟล์ของกลุ่มที่หมด
+     ระยะเก็บด้วย (100 กลุ่ม/tick, หนึ่ง `markDeleted` transaction ต่อไฟล์) — ตรวจเวลารันของ tick นั้น
+     หลัง deploy รอบแรก
+2. **ยืนยัน D03 / D07 / D08** แล้วบันทึกกลับใน appendix §15 (ตอนนี้ใช้ค่าเริ่มต้นที่เสนอไว้):
+   นโยบายส่วนลด/ค่าส่ง, เปิด intake ทั้งสองสภาพแวดล้อม, และเก็บไฟล์ 90 วันสำหรับกลุ่มที่ไม่มีเอกสารการเงิน
+3. **UX 40+** — A85, CC09, IG25/IG28 ปิดไม่ได้ด้วยโค้ด ต้องนั่งดูผู้ใช้จริง 6–8 คนตาม D05
+4. **ชุดเอกสารที่ได้รับสิทธิ์** — A59/A60/A62/A76 และ CC04–CC07/CC10 รอเอกสารจริง (ค้าปลีก 5 แบรนด์ +
+   ขนส่ง) ห้ามอ้างความแม่นยำจาก fixture สังเคราะห์ของ W08
+
+Next: (owner) UAT deploy per runbook → D03/D07/D08 confirmations → UX 40+ → authorised bundles.
+No further code work is queued for this feature.

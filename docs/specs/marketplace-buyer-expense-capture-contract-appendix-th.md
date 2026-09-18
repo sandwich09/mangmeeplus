@@ -177,6 +177,17 @@ Flag: `EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED` (`packages/config` api schema, defa
 ## 8. D08/D09
 
 - D08: ไฟล์ของกลุ่มอยู่ใต้ processor/retention เดิมของ attachment (Postgres blob, ClamAV, AI provider เดิม); กลุ่มที่จบ `CLOSED_NO_HANDOFF`/`CANCELLED` หรือ `OPEN` ที่ไม่มีการเปลี่ยนแปลง ≥ `EXPENSE_CAPTURE_RETENTION_DAYS` (default 90 = `AI_DATA_RETENTION_DAYS`) → ไฟล์ที่ไม่มี expense/certificate อ้าง ถูก `markDeleted` โดย sweep เดียวกับ purge; บันทึกใน ROPA ว่าเป็น "เอกสารหลักฐานค่าใช้จ่าย" ฐานสัญญา/ประโยชน์อันชอบธรรม เจ้าของยืนยันข้อ 15
+  - **Implemented 2026-09-19 (W08)** ใน `recover-orphan-line-events.use-case.ts` (`purgeExpiredCaptureData`)
+    พร้อมกับการล้าง `linePushTargetId` ที่ W07-int ทำไว้แล้ว — ปิดข้อ 23.2 ข้อ 13 ที่ยังค้าง
+    ต่างจากตัวอักษรข้างบนสองข้อ: (ก) เกณฑ์อายุ `updatedAt < now − RETENTION_DAYS` ใช้กับ
+    `CLOSED_NO_HANDOFF`/`CANCELLED` ด้วย ไม่ใช่เฉพาะ `OPEN` — เจตนาของ D08 คือ *ระยะเก็บ* และการลบ
+    หลักฐานทันทีที่ผู้ใช้กดยกเลิกไม่ใช่สิ่งที่ข้อนี้ขอ; (ข) ไฟล์ที่ `markDeleted` ปฏิเสธ (retention hold
+    ของใบรับรอง หรือ claim ที่ยังมีชีวิต) ถือเป็นผลปกติ ไม่ใช่ error — แถวนั้นถูกข้ามไว้ให้รอบถัดไป
+    หลังลบ: แถวไฟล์เป็น `DETACHED` เหตุผล `retention`, job ที่ค้างถูก `CANCELLED`, และ audit
+    `expense.capture_group.retention_purge` หนึ่งแถวต่อกลุ่ม (ids/counts เท่านั้น) กลุ่ม `HANDED_OFF`
+    ไม่อยู่ในขอบเขตเลย; 100 กลุ่มต่อ tick
+    พิสูจน์: `recover-orphan-line-events.use-case.spec.ts` (3 เคส) และ `expense-capture.pg.spec.ts`
+    "deletes the orphan evidence of an aged-out group and keeps what an expense still uses (§8 retention)"
 - D09: ทุกไฟล์มี `electronicVerification.status ∈ {NOT_CHECKED, UNAVAILABLE}` เท่านั้นในรอบนี้; UI แสดง "ยังไม่ได้ตรวจสอบเอกสารอิเล็กทรอนิกส์"; ไม่มีคำว่า passed/verified จากการอ่านสำเร็จ
 
 ## 9. API ของกลุ่ม (NestJS `expenses` module; ทุก endpoint ตรวจ company/branch/permission ที่ server)
@@ -302,6 +313,11 @@ W01 (schema/contracts/guards/pg) → W02-web (multi-file, replace intent, resume
 3. D08: กลุ่มที่ไม่มีเอกสารการเงิน — ลบไฟล์หลัง 90 วัน (`EXPENSE_CAPTURE_RETENTION_DAYS`)
 4. D04 wording ใบรับรองส่วนบริษัท (ข้อ 7)
 5. Bedrock replay ด้วย fixture สังเคราะห์เพื่อพิสูจน์ pipeline จริง (ประมาณ ≤ THB 100 ภายใต้ ledger เดิม `watchdog-bedrock`)
+   — **ทำแล้ว 2026-09-19 (W08)**: `scripts/expense-capture-read-benchmark.ts`, 8 fixtures, ใช้จริง
+   THB 27.51 ต่อรอบ, รวมทั้งงานนี้ THB 60.01 จาก 100; ผลและข้อจำกัดอยู่ใน
+   `docs/research/expense-capture-read-benchmark-2026-09-19.md` และมันเจอบั๊กจริงสองข้อของ W03
+   (prompt ไม่ได้บอกค่า enum ของ classification → ทุก window ตอบ `OCR_SCHEMA_INVALID`;
+   `printedPages` ไม่มีใครผลิต → ใบหลายหน้าที่ครบถูกแจ้งว่าหน้าขาด) แก้แล้วทั้งคู่
 
 ## 16. Implementation notes (W01, 2026-09-18)
 

@@ -8,11 +8,13 @@
  * rounding or discount (spec §6 rule 9, §16.2).
  */
 import Decimal from 'decimal.js';
+import { EXPENSE_CAPTURE_OBSERVATION_LIMITS } from '@watchdog-bms/contracts';
 import type {
   ExpenseCaptureAssembledObservations,
   ExpenseCaptureComponentObservation,
   ExpenseCaptureDocumentObservation,
   ExpenseCaptureDocumentReconciliation,
+  ExpenseCaptureExtractWindow,
   ExpenseCaptureItemObservation,
   ExpenseCaptureObservations,
   ExpenseCapturePaymentObservation,
@@ -305,4 +307,55 @@ function hasMissingPages(document: ExpenseCaptureDocumentObservation, pageCount:
   if (seen.size === 0) return false;
   for (let page = 1; page <= of; page += 1) if (!seen.has(page)) return true;
   return false;
+}
+
+/**
+ * Consecutive read pages grouped into windows inside the declared 12,000-character ceiling (§4.3).
+ * Splitting on PAGES rather than mid-text is what keeps an item block and its total in one window.
+ */
+export function planWindows(
+  pages: Record<string, { text?: string }>,
+): Array<{ id: string; pageIndexes: number[]; pages: ExpenseCaptureExtractWindow['pages'] }> {
+  const ordered = Object.entries(pages)
+    .map(([index, page]) => ({ pageIndex: Number(index), text: page.text ?? '' }))
+    .filter((page) => Number.isSafeInteger(page.pageIndex) && page.text.trim().length > 0)
+    .sort((left, right) => left.pageIndex - right.pageIndex);
+  const windows: Array<{ id: string; pageIndexes: number[]; pages: ExpenseCaptureExtractWindow['pages'] }> = [];
+  let current: { id: string; pageIndexes: number[]; pages: ExpenseCaptureExtractWindow['pages']; chars: number } | null = null;
+  for (const page of ordered) {
+    // A single page longer than the window budget still gets its own window: the ceiling is a
+    // window rule, and refusing the page outright would lose a read that is already paid for.
+    const text = page.text.slice(0, EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars);
+    if (current && current.chars + text.length > EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars) {
+      windows.push({ id: current.id, pageIndexes: current.pageIndexes, pages: current.pages });
+      current = null;
+    }
+    if (!current) current = { id: `w${windows.length + 1}`, pageIndexes: [], pages: [], chars: 0 };
+    current.pageIndexes.push(page.pageIndex);
+    current.pages.push({ pageIndex: page.pageIndex, text });
+    current.chars += text.length;
+  }
+  if (current) windows.push({ id: current.id, pageIndexes: current.pageIndexes, pages: current.pages });
+  return windows;
+}
+
+/** What a later window is told about the documents earlier windows already found (§4.3). */
+export function priorDocuments(
+  windows: Record<string, ExpenseCaptureObservations>,
+): NonNullable<ExpenseCaptureExtractWindow['priorDocuments']> {
+  const out: NonNullable<ExpenseCaptureExtractWindow['priorDocuments']> = [];
+  for (const observations of Object.values(windows)) {
+    for (const document of observations.documents ?? []) {
+      if (out.length >= EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxDocumentsPerWindow) return out;
+      out.push({
+        ref: document.ref,
+        ...(document.issuer?.name ? { issuerName: document.issuer.name } : {}),
+        ...(document.documentNumber ? { documentNumber: document.documentNumber } : {}),
+        ...(document.documentDate ? { documentDate: document.documentDate } : {}),
+        ...(document.currency ? { currency: document.currency } : {}),
+        openTotals: !(observations.totals ?? []).some((total) => total.documentRef === document.ref && total.kind === 'document_total'),
+      });
+    }
+  }
+  return out;
 }
