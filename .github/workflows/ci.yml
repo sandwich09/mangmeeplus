@@ -556,6 +556,10 @@ jobs:
           # CAS and the §2.4 lock order are all properties of real indexes and real advisory locks.
           EXPENSE_CAPTURE_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_p27_ci
           EXPENSE_CAPTURE_REQUIRE_POSTGRES: 'true'
+          # Capture appendix §4.5: disjoint claims, lease expiry and the fence that stops a dead
+          # runner overwriting the new owner are properties of FOR UPDATE SKIP LOCKED, not of a fake.
+          EXPENSE_CAPTURE_READ_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_p27_ci
+          EXPENSE_CAPTURE_READ_REQUIRE_POSTGRES: 'true'
         run: |
           psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c 'CREATE DATABASE watchdog_p27_ci'
           pnpm --filter @watchdog-bms/api exec prisma migrate deploy
@@ -574,6 +578,8 @@ jobs:
             src/modules/line-ai/application/company-ai-credit-holds.pg.spec.ts
           pnpm --filter @watchdog-bms/api exec tsx --test \
             src/modules/expenses/expense-capture.pg.spec.ts
+          pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/expenses/expense-capture-read.pg.spec.ts
       - name: Harness manifests (protected corpus + golden stores)
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         run: pnpm test:harness

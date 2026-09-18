@@ -15,6 +15,7 @@ import {
   type ExpenseCaptureGroupListItemDto,
   type ExpenseCaptureObservations,
   type ExpenseCaptureReadManifest,
+  type ExpenseCaptureReadStatusDto,
   type RequestContext,
 } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -41,6 +42,7 @@ import {
   expenseCaptureWebPath,
 } from '../../domain/logic/expense-capture.logic';
 import { PrismaExpenseCaptureRepository, type CaptureDb, type CaptureGroupRow } from '../../infrastructure/prisma-expense-capture.repository';
+import { ExpenseCaptureReadRunnerService } from '../services/expense-capture-read-runner.service';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { lockFundingEvidence } from '../../infrastructure/substitute-funding.guard';
 import { EXPENSE_LAUNCH_ROUTE_CLOSED_MESSAGE, assertExpenseRootOpen } from '../expense-launch-gate';
@@ -151,6 +153,59 @@ export class ExpenseCaptureAccessService {
       allowedMimeTypes: [...ALLOWED_ATTACHMENT_MIME_TYPES],
       pdfAutomaticRead: true,
       pdfMaxPagesAutomatic: this.config.expenseCapturePdfMaxPages,
+    };
+  }
+}
+
+/**
+ * What the review page polls while a PDF is being read (§9 `GET .../expenses/{e}/read-status`).
+ *
+ * A pure READ: it never starts a job and never re-reads a page. The web calls it on a timer, so
+ * anything it did would happen once a second.
+ */
+@Injectable()
+export class GetExpenseReadStatusUseCase {
+  constructor(
+    private readonly capture: PrismaExpenseCaptureRepository,
+    private readonly expenses: PrismaExpenseRepository,
+  ) {}
+
+  async execute(ctx: RequestContext, expenseId: string): Promise<ExpenseCaptureReadStatusDto> {
+    const canRead = ctx.permissions.includes('expense.read')
+      || ctx.permissions.includes('expense.review')
+      || ctx.permissions.includes('expense.read_own');
+    if (!canRead) throw new ForbiddenException('Missing permission: expense.read');
+    const expense = await this.expenses.findById(ctx.companyId, expenseId);
+    if (!expense) throw new NotFoundException('Expense not found');
+    if (!ctx.permissions.includes('expense.read') && !ctx.permissions.includes('expense.review')
+      && expense.createdByUserId !== ctx.userId) {
+      throw new ForbiddenException('Missing permission: expense.read');
+    }
+    const job = await this.capture.findJobByExpense(this.capture.client, ctx.companyId, expenseId);
+    if (!job) {
+      return {
+        jobId: null, status: null, pagesRead: 0, pageCount: null, pausedReason: null,
+        lastErrorCode: null, multiDocument: false, applied: false,
+      };
+    }
+    const manifest = (job.manifestJson ?? null) as ExpenseCaptureReadManifest | null;
+    const observation = await this.capture.client.expenseCaptureObservation.findFirst({
+      where: { companyId: ctx.companyId, jobId: job.id },
+      orderBy: { version: 'desc' },
+      select: { payloadJson: true },
+    });
+    const facts = (observation?.payloadJson ?? null) as { multiDocument?: boolean } | null;
+    return {
+      jobId: job.id,
+      status: job.status,
+      pagesRead: expenseCapturePagesRead(manifest),
+      pageCount: manifest?.pageCount ?? null,
+      pausedReason: (job.pausedReason ?? null) as ExpenseCaptureReadStatusDto['pausedReason'],
+      lastErrorCode: job.lastErrorCode ?? null,
+      multiDocument: facts?.multiDocument === true,
+      // The draft carries the read only when `receipt-ocr-apply` committed it: a stale fence or a
+      // multi-document file leaves the facts stored and the draft untouched (§4.5).
+      applied: job.status === 'DONE' && facts?.multiDocument !== true && !!expense.aiVerifiedAt,
     };
   }
 }
@@ -440,6 +495,7 @@ export class CompleteExpenseCaptureFileUseCase {
     private readonly completeUpload: CompleteAttachmentUploadUseCase,
     private readonly attachments: PrismaAttachmentRepository,
     private readonly audit: AuditService,
+    private readonly runner: ExpenseCaptureReadRunnerService,
   ) {}
 
   /**
@@ -547,6 +603,12 @@ export class CompleteExpenseCaptureFileUseCase {
       }, tx);
 
       return { fileId, attachmentId: existing.attachmentId, revision, readJobId: job.id, uploadState: 'STORED', replayed: false };
+    }).then((result) => {
+      // Start the read in THIS process without making the upload wait for a provider (§4.5).
+      // Fire-and-forget by contract: `kick` swallows its own errors, and the scan worker claims
+      // the job anyway if this process dies before it gets there.
+      if (!result.replayed && result.readJobId) this.runner.kick(result.readJobId);
+      return result;
     });
   }
 }

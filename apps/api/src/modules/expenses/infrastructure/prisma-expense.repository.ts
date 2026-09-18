@@ -616,7 +616,7 @@ export class PrismaExpenseRepository {
     companyId: string,
     expenseId: string,
     primaryAttachmentId: string | null,
-  ): Promise<{ id: string; bucket: string; objectKey: string; objectVersionId?: string; mimeType: string; byteSize: number } | null> {
+  ): Promise<{ id: string; bucket: string; objectKey: string; objectVersionId?: string; mimeType: string; byteSize: number; checksumSha256?: string } | null> {
     const links = await this.prisma.client.attachmentLink.findMany({
       where: {
         companyId,
@@ -637,6 +637,9 @@ export class PrismaExpenseRepository {
       objectVersionId: attachment.objectVersionId ?? undefined,
       mimeType: attachment.mimeType,
       byteSize: Number(attachment.byteSize),
+      // The capture read job fences on the ORIGINAL bytes; without the checksum a replaced file
+      // would be read under the old job's identity.
+      ...(attachment.checksumSha256 ? { checksumSha256: attachment.checksumSha256 } : {}),
     };
   }
 

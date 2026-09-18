@@ -11,6 +11,7 @@ import {
   DetachExpenseCaptureFileUseCase,
   GetExpenseCaptureCapabilityUseCase,
   GetExpenseCaptureGroupUseCase,
+  GetExpenseReadStatusUseCase,
   ListExpenseCaptureGroupsUseCase,
 } from '../../application/use-cases/expense-capture-group.use-case';
 import {
@@ -46,6 +47,7 @@ export class ExpenseCaptureController {
     private readonly detachFile: DetachExpenseCaptureFileUseCase,
     private readonly closeGroup: CloseExpenseCaptureGroupUseCase,
     private readonly convert: ConvertExpenseToCaptureGroupUseCase,
+    private readonly readStatusUseCase: GetExpenseReadStatusUseCase,
   ) {}
 
   @Get('capture-capability')
@@ -113,6 +115,16 @@ export class ExpenseCaptureController {
   @RequireAnyPermission('expense.update', 'expense.review')
   close(@ReqCtx() ctx: RequestContext, @Param('groupId') groupId: string, @Body() body: CloseExpenseCaptureGroupDto) {
     return this.closeGroup.execute(ctx, groupId, body);
+  }
+
+  /**
+   * The PDF read of one expense (§9). Polled by the review page — read-only, and it never starts
+   * a read: an endpoint that re-queued on every poll would read a 20-page file once a second.
+   */
+  @Get(':expenseId/read-status')
+  @RequireAnyPermission('expense.read', 'expense.read_own', 'expense.review')
+  readStatus(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
+    return this.readStatusUseCase.execute(ctx, expenseId);
   }
 
   /** §3.1 "แยกเป็นกลุ่มหลักฐาน": the expense keeps its id, its link and every amount. */
