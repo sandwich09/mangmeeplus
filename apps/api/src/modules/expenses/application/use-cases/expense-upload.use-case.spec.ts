@@ -265,6 +265,7 @@ describe('receipt upload use cases', () => {
       primaries?: string[];
       sharedLinks?: Record<string, number>;
       holds?: string[];
+      otherLinks?: Array<{ attachmentId: string; targetType: string; targetId: string }>;
     } = {}) => {
       const audits: any[] = [];
       const retirement = receiptRetirement(options);

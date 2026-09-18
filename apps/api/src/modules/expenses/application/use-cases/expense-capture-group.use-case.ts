@@ -243,22 +243,34 @@ export class ListExpenseCaptureGroupsUseCase {
       page, pageSize,
     });
 
-    const items: ExpenseCaptureGroupListItemDto[] = [];
-    for (const group of rows) {
-      const files = await this.capture.listFiles(db, ctx.companyId, group.id);
-      const jobs = await this.capture.listJobsByGroup(db, ctx.companyId, group.id);
-      items.push({
-        groupId: group.id,
-        status: group.status,
-        intakeChannel: group.intakeChannel,
-        fileCount: files.filter((file) => file.uploadState !== 'DETACHED').length,
-        filesRead: jobs.filter((job) => job.status === 'DONE').length,
-        createdByUserId: group.createdByUserId,
-        createdAt: group.createdAt.toISOString(),
-        updatedAt: group.updatedAt.toISOString(),
-        webPath: expenseCaptureWebPath(ctx.companyId, group.id),
-      });
-    }
+    // Two queries for the whole page, not two per row.
+    const groupIds = rows.map((group) => group.id);
+    const [files, jobs] = await Promise.all([
+      this.capture.listFileStatesForGroups(db, ctx.companyId, groupIds),
+      this.capture.listJobStatesForGroups(db, ctx.companyId, groupIds),
+    ]);
+    const tally = (source: Array<{ groupId: string | null }>, keep: (row: never) => boolean) => {
+      const counts = new Map<string, number>();
+      for (const row of source) {
+        if (!row.groupId || !keep(row as never)) continue;
+        counts.set(row.groupId, (counts.get(row.groupId) ?? 0) + 1);
+      }
+      return counts;
+    };
+    const fileCounts = tally(files, (row: { uploadState: string }) => row.uploadState !== 'DETACHED');
+    const readCounts = tally(jobs, (row: { status: string }) => row.status === 'DONE');
+
+    const items: ExpenseCaptureGroupListItemDto[] = rows.map((group) => ({
+      groupId: group.id,
+      status: group.status,
+      intakeChannel: group.intakeChannel,
+      fileCount: fileCounts.get(group.id) ?? 0,
+      filesRead: readCounts.get(group.id) ?? 0,
+      createdByUserId: group.createdByUserId,
+      createdAt: group.createdAt.toISOString(),
+      updatedAt: group.updatedAt.toISOString(),
+      webPath: expenseCaptureWebPath(ctx.companyId, group.id),
+    }));
     return { items, total, page, pageSize };
   }
 }

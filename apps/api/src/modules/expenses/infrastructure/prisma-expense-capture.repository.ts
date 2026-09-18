@@ -105,6 +105,23 @@ export class PrismaExpenseCaptureRepository {
     return changed.count === 1 ? input.expectedRevision + 1 : null;
   }
 
+  /** One query for a page of groups: the list must not fan out into two reads per row. */
+  listFileStatesForGroups(db: CaptureDb, companyId: string, groupIds: readonly string[]) {
+    if (groupIds.length === 0) return Promise.resolve([] as Array<{ groupId: string; uploadState: string }>);
+    return db.expenseCaptureFile.findMany({
+      where: { companyId, groupId: { in: [...groupIds] } },
+      select: { groupId: true, uploadState: true },
+    }) as Promise<Array<{ groupId: string; uploadState: string }>>;
+  }
+
+  listJobStatesForGroups(db: CaptureDb, companyId: string, groupIds: readonly string[]) {
+    if (groupIds.length === 0) return Promise.resolve([] as Array<{ groupId: string | null; status: string }>);
+    return db.expenseCaptureReadJob.findMany({
+      where: { companyId, groupId: { in: [...groupIds] } },
+      select: { groupId: true, status: true },
+    }) as Promise<Array<{ groupId: string | null; status: string }>>;
+  }
+
   listFiles(db: CaptureDb, companyId: string, groupId: string) {
     return db.expenseCaptureFile.findMany({
       where: { companyId, groupId },

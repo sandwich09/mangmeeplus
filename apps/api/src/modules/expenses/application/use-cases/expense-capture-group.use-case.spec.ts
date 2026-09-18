@@ -96,6 +96,18 @@ class FakeCaptureRepo {
     return group.revision;
   }
 
+  async listFileStatesForGroups(_db: any, companyId: string, groupIds: string[]) {
+    return [...this.files.values()]
+      .filter((file) => file.companyId === companyId && groupIds.includes(file.groupId))
+      .map((file) => ({ groupId: file.groupId, uploadState: file.uploadState }));
+  }
+
+  async listJobStatesForGroups(_db: any, companyId: string, groupIds: string[]) {
+    return this.jobs
+      .filter((job) => job.companyId === companyId && groupIds.includes(job.groupId))
+      .map((job) => ({ groupId: job.groupId, status: job.status }));
+  }
+
   async listFiles(_db: any, companyId: string, groupId: string) {
     return [...this.files.values()]
       .filter((file) => file.companyId === companyId && file.groupId === groupId)
