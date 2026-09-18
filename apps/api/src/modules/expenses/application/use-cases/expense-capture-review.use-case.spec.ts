@@ -132,6 +132,24 @@ class FakeCaptureRepo {
   async isActiveCompanyMember(_db: any, input: any) {
     return this.members.has(`${input.companyId}:${input.userId}:${input.branchId ?? 'none'}`);
   }
+
+  // W05: the derived sources a handed-off group produced, and whether anything has used them.
+  // Kept as real rows so "handed off with nothing to rewrite" and "handed off but untouched" are
+  // different states here, exactly as they are in the database.
+  derivedSources: Array<{ companyId: string; captureGroupId: string; id: string }> = [];
+  consumers: Array<{ expenseId: string; reason: string }> = [];
+
+  async listDerivedSourceStates(_db: any, companyId: string, groupId: string) {
+    return this.derivedSources.filter((row) => row.companyId === companyId && row.captureGroupId === groupId);
+  }
+
+  async findHandoffConsumers(_db: any, _companyId: string, _groupId: string) { return this.consumers; }
+
+  async isReopenableAfterHandoff(db: any, companyId: string, groupId: string) {
+    const rows = await this.listDerivedSourceStates(db, companyId, groupId);
+    if (rows.length === 0) return false;
+    return (await this.findHandoffConsumers(db, companyId, groupId)).length === 0;
+  }
 }
 
 const audits: any[] = [];
@@ -281,6 +299,30 @@ describe('review', () => {
     );
   });
 
+  // W05 §9 regenerate / §3.2: the ONE way back in. A LINE group that auto-handed-off, or a batch
+  // nobody has touched, may be divided again — the next handoff rewrites the same expenses.
+  it('reopens a handed-off group whose derived sources are all still unused', async () => {
+    const app = build();
+    Object.assign(app.capture.groups.get('g-1'), { status: 'HANDED_OFF', handoffState: 'ACTIVE' });
+    app.capture.derivedSources.push({ companyId: 'co-1', captureGroupId: 'g-1', id: 'exp-1' });
+
+    const result = await reviewAll(app);
+    assert.equal(result.status, 'PREVIEW');
+    assert.equal(result.result.summary.companyAmount, '140.00');
+  });
+
+  it('refuses to reopen once one derived source has been used', async () => {
+    const app = build();
+    Object.assign(app.capture.groups.get('g-1'), { status: 'HANDED_OFF', handoffState: 'ACTIVE' });
+    app.capture.derivedSources.push({ companyId: 'co-1', captureGroupId: 'g-1', id: 'exp-1' });
+    app.capture.consumers.push({ expenseId: 'exp-1', reason: 'claim' });
+
+    await assert.rejects(
+      () => reviewAll(app),
+      (error: unknown) => status(error) === 409 && code(error) === 'expense_capture_handoff_active',
+    );
+  });
+
   for (const [label, body] of [
     ['a selection quantity that is not a number', { selection: { 'f1:1:1': { companyQuantity: 'สองชิ้น' } } }],
     ['a negative selection', { selection: { 'f1:1:1': { companyQuantity: '-1' } } }],
@@ -410,6 +452,18 @@ describe('accept', () => {
       (error: unknown) => status(error) === 409 && code(error) === 'expense_capture_handoff_active',
     );
   });
+
+  it('accepts again on a handed-off group whose batch is still untouched (W05 regenerate)', async () => {
+    const app = build();
+    app.capture.derivedSources.push({ companyId: 'co-1', captureGroupId: 'g-1', id: 'exp-1' });
+    Object.assign(app.capture.groups.get('g-1'), { status: 'HANDED_OFF', handoffState: 'ACTIVE' });
+    const preview = await reviewAll(app);
+
+    const accepted = await app.accept.execute(ctx(REVIEWER), 'g-1', preview.allocationId, { expectedRevision: preview.revision });
+    assert.equal(accepted.status, 'ACCEPTED');
+    // The group stays HANDED_OFF: only a handoff moves that, and it is the next step.
+    assert.equal(app.capture.groups.get('g-1').status, 'HANDED_OFF');
+  });
 });
 
 // ─── facts ────────────────────────────────────────────────────────────────────
@@ -495,6 +549,8 @@ describe('facts edit', () => {
   it('refuses once the group has handed off — the expense is where a correction goes', async () => {
     const app = build();
     Object.assign(app.capture.groups.get('g-1'), { status: 'HANDED_OFF', handoffState: 'ACTIVE' });
+    app.capture.derivedSources.push({ companyId: 'co-1', captureGroupId: 'g-1', id: 'exp-1' });
+    app.capture.consumers.push({ expenseId: 'exp-1', reason: 'paid' });
     await assert.rejects(
       () => app.patchFacts.execute(ctx(), 'g-1', { fileId: 'f1', patch: { items: [{ id: '1:1', amount: '1.00' }] }, expectedRevision: 1 }),
       (error: unknown) => status(error) === 409 && code(error) === 'expense_capture_handoff_active',

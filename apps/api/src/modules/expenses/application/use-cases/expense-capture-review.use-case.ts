@@ -62,9 +62,23 @@ function assertRevision(expectedRevision: number): void {
   }
 }
 
-/** OPEN and not handed off: once derived sources exist, correction belongs to the expense (§9). */
-function assertReviewable(group: CaptureGroupRow): void {
-  if (group.handoffState === 'ACTIVE') throw handoffActive();
+/**
+ * OPEN and not handed off: once derived sources exist, correction belongs to the expense (§9).
+ *
+ * ONE exception, added by W05 (§9 regenerate / §3.2 "มีของส่วนตัวด้วย"): a group whose derived
+ * sources are ALL still unused may be divided again, and the next handoff rewrites them in place.
+ * The moment any of them is paid, posted, claimed or certified — or the group handed off without
+ * producing one at all — this closes for good and the correction is made at that expense.
+ */
+async function assertReviewable(
+  capture: PrismaExpenseCaptureRepository,
+  ctx: RequestContext,
+  group: CaptureGroupRow,
+): Promise<void> {
+  if (group.handoffState === 'ACTIVE') {
+    if (!await capture.isReopenableAfterHandoff(capture.client, ctx.companyId, group.id)) throw handoffActive();
+    return;
+  }
   if (group.status !== 'OPEN') {
     throw conflict('expense_capture_group_closed', 'งานรับหลักฐานนี้ปิดแล้ว ไม่สามารถแก้ไขได้');
   }
@@ -154,7 +168,7 @@ export class PatchExpenseCaptureFactsUseCase {
     assertRevision(cmd.expectedRevision);
     const group = await this.access.load(ctx, groupId);
     if (!this.access.canMutate(ctx, group)) throw new ForbiddenException('Missing permission: expense.update');
-    assertReviewable(group);
+    await assertReviewable(this.capture, ctx, group);
     if (group.revision !== cmd.expectedRevision) throw revisionConflict();
 
     return this.capture.transaction(async (tx) => {
@@ -238,7 +252,7 @@ export class ReviewExpenseCaptureGroupUseCase {
     assertRevision(cmd.expectedRevision);
     const group = await this.access.load(ctx, groupId);
     if (!this.access.canMutate(ctx, group)) throw new ForbiddenException('Missing permission: expense.update');
-    assertReviewable(group);
+    await assertReviewable(this.capture, ctx, group);
     if (group.revision !== cmd.expectedRevision) throw revisionConflict();
 
     const reviewer = ctx.permissions.includes('expense.review');
@@ -388,8 +402,11 @@ export class AcceptExpenseCaptureAllocationUseCase {
       && result?.outcome === 'READY';
     if (!reviewer && !selfClaim) throw new ForbiddenException('Missing permission: expense.review');
 
-    if (group.handoffState === 'ACTIVE') throw handoffActive();
-    if (group.status !== 'OPEN') {
+    // W05: same reopen exception as `assertReviewable` — an untouched batch may be redecided.
+    if (group.handoffState === 'ACTIVE' && !await this.capture.isReopenableAfterHandoff(this.capture.client, ctx.companyId, groupId)) {
+      throw handoffActive();
+    }
+    if (group.handoffState !== 'ACTIVE' && group.status !== 'OPEN') {
       throw conflict('expense_capture_group_closed', 'งานรับหลักฐานนี้ปิดแล้ว ไม่สามารถยอมรับการจัดส่วนได้');
     }
     if (allocation.status !== 'PREVIEW') {
