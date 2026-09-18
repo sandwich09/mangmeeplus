@@ -367,6 +367,245 @@ describe('receipt upload use cases', () => {
     });
   });
 
+  /**
+   * Spec §16.4 as the server enforces it: which state may change a receipt, which one may only add
+   * to it, and what a retry of a lost answer is allowed to do. Every case here is a 409 the UI
+   * cannot fake its way around — the checks run before the bytes are even verified.
+   */
+  describe('file intents: replace and append (§16.4)', () => {
+    const NOW = new Date('2026-09-18T10:00:00.000Z');
+
+    function intentHarness(options: {
+      expense?: Record<string, unknown>;
+      certificate?: { status: string } | null;
+      liveClaim?: boolean;
+      permissions?: string[];
+    } = {}) {
+      const audits: any[] = [];
+      const updates: any[] = [];
+      const retirement = receiptRetirement({ primaries: ['att-old', 'att-new'] });
+      const expense = {
+        id: 'expense-1', updatedAt: NOW, status: 'NEEDS_REVIEW', createdByUserId: 'user-1',
+        duplicateStatus: 'NO_MATCH', primaryAttachmentId: 'att-old', paymentStatus: 'UNPAID',
+        paidAmount: '0', postingStatus: 'not_required', aiVerificationSummaryJson: null,
+        sourceChannelMetadataJson: null, captureSource: 'WEB_UPLOAD', lineMessageId: null,
+        ...options.expense,
+      };
+      const prisma = {
+        client: {
+          user: { findFirst: async () => ({ id: 'user-1' }) },
+          $transaction: async (run: any) => run(retirement.tx),
+          expenseSubstituteReceiptEvidence: { findFirst: async ({ where }: any) => (
+            options.certificate && where.status.in.includes(options.certificate.status) ? { id: 'ev-1' } : null) },
+          reimbursementLine: { findFirst: async () => (options.liveClaim ? { id: 'line-1' } : null) },
+        },
+      } as any;
+      const ctxWithPermissions = {
+        ...ctx, authProvider: 'watchdog',
+        permissions: options.permissions ?? ['expense.receipt.upload', 'attachment.create'],
+      };
+      const uc = new CompleteReceiptUploadUseCase(
+        {
+          findById: async () => expense,
+          runDuplicateCheck: async () => ({ openCandidates: 0, duplicateStatus: 'NO_MATCH' }),
+          findByIdWithRelations: async () => ({
+            id: 'expense-1', primaryAttachmentId: 'att-new', attachments: [],
+            vendorDocumentNumber: null, vendorTaxIdSnapshot: null, expenseDate: new Date(),
+            grandTotalAmount: '0', vendorCounterpartyId: null,
+          }),
+          findNearDuplicates: async () => [],
+          findExpenseIdsByAttachmentChecksum: async () => [],
+          createDuplicateCandidate: async () => undefined,
+          linkAttachment: async () => undefined,
+          updateExpense: async (input: any, withinTx?: (tx: any) => Promise<void>) => {
+            await withinTx?.(retirement.tx);
+            updates.push(input);
+            return { id: input.id };
+          },
+        } as any,
+        { execute: async () => ({ id: 'att-new' }) } as any,
+        { log: async (entry: any) => { audits.push(entry); } } as any,
+        { append: async () => undefined } as any,
+        retirement.attachments,
+        prisma,
+        { resolveAccess: async () => ctxWithPermissions } as any,
+      );
+      const run = (cmd: Record<string, unknown>) => uc.execute(ctxWithPermissions, {
+        expenseId: 'expense-1', attachmentId: 'att-new', byteSize: 123, ...cmd,
+      } as any);
+      return { run, updates, audits, retirement };
+    }
+
+    const conflictCode = async (run: Promise<unknown>) => run.then(
+      () => 'no-conflict',
+      (error: any) => error.getResponse?.()?.code ?? error.message,
+    );
+
+    it('refuses a replace whose target primary is no longer the current one', async () => {
+      const { run, updates } = intentHarness();
+      assert.equal(
+        await conflictCode(run({ intent: 'replace', expectedUpdatedAt: NOW.toISOString(), expectedPrimaryAttachmentId: 'att-someone-else' })),
+        'expense_receipt_replace_conflict',
+      );
+      assert.deepEqual(updates, [], 'nothing was written');
+    });
+
+    it('refuses a replace that names no revision, and one that names a stale revision', async () => {
+      for (const cmd of [
+        { intent: 'replace', expectedPrimaryAttachmentId: 'att-old' },
+        { intent: 'replace', expectedUpdatedAt: '2026-09-18T09:00:00.000Z', expectedPrimaryAttachmentId: 'att-old' },
+      ]) {
+        const { run, updates } = intentHarness();
+        assert.equal(await conflictCode(run(cmd)), 'expense_revision_conflict');
+        assert.deepEqual(updates, []);
+      }
+    });
+
+    it('returns a record already sent for confirmation to review, for a reviewer only', async () => {
+      const reviewer = intentHarness({
+        expense: { status: 'READY_FOR_CONFIRMATION' },
+        permissions: ['expense.review', 'attachment.create'],
+      });
+      await reviewer.run({ intent: 'replace', expectedUpdatedAt: NOW.toISOString(), expectedPrimaryAttachmentId: 'att-old' });
+      assert.equal(reviewer.updates[0].status, 'NEEDS_REVIEW', 'READY may not survive its own evidence being swapped');
+      const audited = reviewer.audits.find((entry) => entry.action === 'expense.upload.complete');
+      assert.deepEqual(
+        [audited?.metadataJson?.intent, audited?.metadataJson?.statusFrom, audited?.metadataJson?.statusTo],
+        ['replace', 'READY_FOR_CONFIRMATION', 'NEEDS_REVIEW'],
+      );
+
+      const uploader = intentHarness({ expense: { status: 'READY_FOR_CONFIRMATION' } });
+      assert.equal(
+        await conflictCode(uploader.run({ intent: 'replace', expectedUpdatedAt: NOW.toISOString(), expectedPrimaryAttachmentId: 'att-old' })),
+        'expense_receipt_replace_locked',
+      );
+      assert.deepEqual(uploader.updates, []);
+    });
+
+    it('refuses both intents once money, posting or a final status exists', async () => {
+      const locked = [
+        { paymentStatus: 'PARTIALLY_PAID', paidAmount: '50' },
+        { postingStatus: 'posted' },
+        { status: 'CONFIRMED' },
+        { status: 'VOIDED' },
+      ];
+      for (const state of locked) {
+        for (const intent of ['replace', 'append'] as const) {
+          const { run, updates } = intentHarness({ expense: state });
+          assert.equal(
+            await conflictCode(run({ intent, expectedUpdatedAt: NOW.toISOString(), expectedPrimaryAttachmentId: 'att-old' })),
+            'expense_receipt_replace_locked',
+            `${intent} ${JSON.stringify(state)}`,
+          );
+          assert.deepEqual(updates, []);
+        }
+      }
+    });
+
+    it('a PREPARED certificate blocks the replace but still accepts supporting evidence', async () => {
+      const replace = intentHarness({ certificate: { status: 'PREPARED' } });
+      assert.equal(
+        await conflictCode(replace.run({ intent: 'replace', expectedUpdatedAt: NOW.toISOString(), expectedPrimaryAttachmentId: 'att-old' })),
+        'substitute_evidence_locks_expense',
+      );
+
+      const append = intentHarness({ certificate: { status: 'PREPARED' } });
+      await append.run({ intent: 'append', expectedUpdatedAt: NOW.toISOString() });
+      assert.equal(append.updates.length, 1, 'a supporting file that changes no fact is the existing flow');
+      assert.equal(append.updates[0].primaryAttachmentId, undefined, 'append never moves the primary');
+      assert.deepEqual(append.retirement.softDeleted, [], 'append never retires anything');
+
+      const signed = intentHarness({ certificate: { status: 'ISSUED' } });
+      assert.equal(
+        await conflictCode(signed.run({ intent: 'append', expectedUpdatedAt: NOW.toISOString() })),
+        'substitute_evidence_locks_expense',
+      );
+    });
+
+    it('refuses either intent while a live claim points at the record', async () => {
+      const { run } = intentHarness({ liveClaim: true });
+      assert.equal(
+        await conflictCode(run({ intent: 'replace', expectedUpdatedAt: NOW.toISOString(), expectedPrimaryAttachmentId: 'att-old' })),
+        'substitute_source_has_live_claim',
+      );
+    });
+
+    it('marks the kept values as read from the replaced file, without deleting them', async () => {
+      const { run, updates } = intentHarness({
+        expense: {
+          aiVerificationSummaryJson: {
+            status: 'OCR_EXTRACTED_NEEDS_REVIEW', extractionAttachmentId: 'att-old',
+            recognizedFields: { vendorName: 'ร้านเดิม' },
+          },
+        },
+      });
+      await run({ intent: 'replace', expectedUpdatedAt: NOW.toISOString(), expectedPrimaryAttachmentId: 'att-old' });
+
+      const summary = updates[0].aiVerificationSummaryJson;
+      assert.equal(summary.sourceAttachmentId, 'att-old');
+      assert.equal(summary.sourceStale, true);
+      assert.deepEqual(summary.recognizedFields, { vendorName: 'ร้านเดิม' }, 'reviewed values survive the swap');
+      assert.equal('extractionAttachmentId' in summary, false, 'the old read no longer claims a live primary');
+      assert.equal(updates[0].aiVerificationStatus, 'NOT_VERIFIED');
+    });
+
+    it('answers a retried operation with the first result, and a different file with a conflict', async () => {
+      const operationId = '11111111-2222-4333-8444-555555555555';
+      const completed = {
+        sourceChannelMetadataJson: {
+          replaceOperations: [{ operationId, intent: 'replace', attachmentId: 'att-new', checksumSha256: null, at: NOW.toISOString() }],
+        },
+      };
+      // The retry carries the revision the user saw BEFORE the first attempt landed, on purpose.
+      const replay = intentHarness({ expense: completed });
+      await replay.run({ intent: 'replace', operationId, expectedUpdatedAt: '2026-01-01T00:00:00.000Z', expectedPrimaryAttachmentId: 'whatever' });
+      assert.deepEqual(replay.updates, [], 'the same operation writes exactly once');
+
+      const different = intentHarness({ expense: completed });
+      assert.equal(
+        await conflictCode(different.run({ intent: 'replace', attachmentId: 'att-other', operationId, expectedUpdatedAt: NOW.toISOString(), expectedPrimaryAttachmentId: 'att-old' })),
+        'expense_receipt_replace_operation_conflict',
+      );
+    });
+
+    it('records the operation, bounded, so the history cannot grow without limit', async () => {
+      const previous = Array.from({ length: 10 }, (_, index) => ({
+        operationId: `op-${index}`, intent: 'replace', attachmentId: `att-${index}`, checksumSha256: null, at: NOW.toISOString(),
+      }));
+      const { run, updates } = intentHarness({ expense: { sourceChannelMetadataJson: { channel: 'LINE', replaceOperations: previous } } });
+      await run({ intent: 'replace', operationId: '99999999-2222-4333-8444-555555555555', expectedUpdatedAt: NOW.toISOString(), expectedPrimaryAttachmentId: 'att-old' });
+
+      const stored = updates[0].sourceChannelMetadataJson;
+      assert.equal(stored.channel, 'LINE', 'the rest of the channel metadata is untouched');
+      assert.equal(stored.replaceOperations.length, 10);
+      assert.equal(stored.replaceOperations.at(-1).operationId, '99999999-2222-4333-8444-555555555555');
+      assert.equal(stored.replaceOperations.at(0).operationId, 'op-1', 'the oldest row is the one that leaves');
+    });
+
+    it('leaves the legacy completion exactly as it was when no intent is named', async () => {
+      const { run, updates, audits } = intentHarness({ expense: { status: 'READY_FOR_CONFIRMATION' }, liveClaim: true, certificate: { status: 'ISSUED' } });
+      await run({});
+      assert.equal(updates[0].primaryAttachmentId, 'att-new');
+      assert.equal(updates[0].status, 'READY_FOR_CONFIRMATION', 'no intent, no status change');
+      assert.equal(updates[0].aiVerificationSummaryJson, undefined, 'no intent, no provenance rewrite');
+      assert.equal(updates[0].sourceChannelMetadataJson, undefined);
+      const audited = audits.find((entry) => entry.action === 'expense.upload.complete');
+      assert.equal(audited?.metadataJson?.intent, undefined);
+    });
+
+    it('refuses the two shapes that mean nothing: append onto the primary, replace of a supporting file', async () => {
+      const { run } = intentHarness();
+      await assert.rejects(
+        () => run({ intent: 'append', purpose: 'expense.receipt.primary', expectedUpdatedAt: NOW.toISOString() }),
+        /use "replace"/,
+      );
+      await assert.rejects(
+        () => run({ intent: 'replace', purpose: 'expense.receipt.supporting', expectedUpdatedAt: NOW.toISOString() }),
+        /targets the primary receipt/,
+      );
+    });
+  });
+
   it('flags a visually equivalent primary receipt when its verified bytes changed', async () => {
     const created: any[] = [];
     const uc = new DuplicateCheckUseCase({
