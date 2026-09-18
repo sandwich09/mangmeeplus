@@ -277,3 +277,70 @@ Edge decisions worth carrying:
   One end of a written range settles the order for both (`1/9–15/9/68` reads 15 as the day).
 - **`newSince` joined the backed date fields** with `newUntil`. Spec §3.2 lists it, and leaving one end
   of a now-closed window unguarded would have let an invented start define the window the answer states.
+
+### Verification (all local, 2026-09-18, heavy jobs behind `/tmp/mangmee-heavy.lock`)
+
+| command | result |
+| --- | --- |
+| `pnpm --filter @watchdog-bms/contracts test` | 324/324 pass (253 before H4) |
+| `pnpm --filter @watchdog-bms/ai-gateway test` | 1,209/1,209 pass, 144 suites |
+| gateway `tsc --noEmit` | clean |
+| FULL `pnpm --filter @watchdog-bms/api test` | exit 0, 10,574 dot-tests, 0 failures |
+| api `tsc --noEmit` (`--max-old-space-size=8192`) | clean |
+| `pnpm --filter @watchdog-bms/web test` | 1,780/1,780 pass |
+| `node scripts/run-line-ai-whole-chain-acceptance.mjs` | PASS, 8 suites, 21 repository + 3 controlled-external scenarios |
+| `pnpm test:harness` | 17/17 |
+| `pnpm exec tsx --test scripts/line-ai-intake-cost.corpus.spec.ts` | 9/9 (NOT part of CI or `test:harness` — pre-existing gap) |
+| `node infra/security/sync-production-maintenance-release-pins.mjs --check` | `status=current` (no pinned file touched) |
+| `git diff --check` | clean |
+| `prepared-simple-read-security.spec.ts` | unmodified and passing |
+
+### Bedrock replay (P-06), owner-authorised, on the remaining R5 phase budget
+
+Run `h4-period-2026-09-18T10-04-17-532Z`, git `3e65f7a6`, corpus v2 `ae237f27…`, 2 repetitions,
+THB 33/USD, `--max-thb 40`. 40 records: 39 completed, 39 successful, 0 refusals/parse failures/
+truncations; the 40th was stopped by the spend guard.
+
+| question | the resolver read | the tool received | match |
+| --- | --- | --- | --- |
+| ยอดขายเมื่อวาน | `day 2026-09-16` | `sales {from/to 2026-09-16}` | yes |
+| ค่าใช้จ่ายเดือนที่แล้ว | `month 2026-08-01..31` | `expense.list_recent {from/to}` | yes |
+| VAT เดือนที่แล้ว | `month 2026-08` | `tax {periodKey 2026-08}` | yes |
+| ลูกค้าใหม่สัปดาห์ที่แล้ว | `week 2026-09-07..13` | `crm {newSince/newUntil}` | yes |
+| ยอดขาย ส.ค. 68 | `month 2025-08` | `sales {2025-08-01..31}` | yes |
+| ค่าใช้จ่าย 1-15 ก.ย. | `range 2026-09-01..15` | `expense.list_recent {from/to}` | yes |
+| ปิดยอดเมื่อวานซืน | `day 2026-09-15` | `daily_closing {date}` | yes |
+| ยอดขายปีที่แล้ว | `year 2025` | `sales {2025-01-01..12-31}` | yes |
+| how much did we sell last month? | `month 2026-08` | `sales {2026-08-01..31}` | yes |
+
+**31 of 33 records matched (93.9%)**; both misses are the permission-denied task, which calls no tool
+at all, so 31/31 = 100% of the records that reached a tool. Period questions cost THB 0.336 per
+successful answer at 0.94 provider calls each (the lane serves 15 of the 17 that ran). The existing
+business reads keep success 22/22 and routing 22/22; their lane hits are 14/22 against the R5
+after-run's 16/22, entirely because `text-read-daily-closing` returned `no_prepared_plan` in both
+passes — the two-requests-in-one message §14 already recorded as a plan-shape miss.
+
+Spend: R5 16.52 + H4 smoke 0.01 + a first attempt stopped at 29.07 (the harness was not forwarding
+period-only candidates, so it could not measure P-06 — recorded in the ledger with that reason) +
+40.23 = **THB 85.83 of the owner's THB 100 R5 phase guard**. Ledger
+`<scratch>/agent-h2/spend-ledger.jsonl`; detail in
+[research §15](../research/line-ai-intake-cost-benchmark-2026-09-17.md#15-h4-period-replay--the-tool-gets-the-period-the-resolver-read-wave-2-h4-2026-09-18).
+
+### Findings worth carrying
+
+- **A period is a value candidate too.** Both producers gated the `valueCandidates` payload on amounts
+  and dates, so "ยอดขายเมื่อวาน" reached the gateway with nothing to select from. Fixed in the webhook
+  and in the benchmark; any future producer needs the same three-way check.
+- **The prepared lane's exact-equality check needed no change at all.** Widening what is *backed*
+  (candidate boundaries, today, the current month) was enough to turn "เดือนที่แล้ว" from a guaranteed
+  fallback into a one-call deterministic answer, without touching a single security rule.
+- **A timed-out provider call is metered at 200,000 input tokens** (`usageEstimated`), so one 15-second
+  timeout cost THB 21.44 — more than the other 39 records together. Safe for a guard, but never compare
+  per-task cost across runs without checking for one.
+- **The agentic path states the period through a fact, not a template.** `periodFact` puts
+  `ช่วงข้อมูล` in the grounded facts and the deterministic draft, but the final sentence there is still
+  model-composed, so the WORD is guaranteed only on the prepared lane. Making it deterministic on both
+  would mean appending a period line the model may already have written.
+
+Next: controller review of this diff, then the PR pair and the strict CI chain; P-07 after a UAT
+deploy (ask the five period questions on real LINE).
