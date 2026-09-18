@@ -293,7 +293,7 @@ describe('split AI budget policy helpers', () => {
     });
     // Exactly the total still fits; one satang more does not.
     assert.equal(validateAiBudgetDraft({ ...draft, ocr: '70.01' }, saved).ok, false);
-    assert.match((validateAiBudgetDraft({ ...draft, ocr: '80' }, saved) as { notice: string }).notice, /เกินงบรวมที่บันทึกไว้/);
+    assert.match((validateAiBudgetDraft({ ...draft, ocr: '80' }, saved) as { notice: string }).notice, /เกินเครดิตรวมที่บันทึกไว้/);
     // Both caps are required — an empty one is never read as "no cap on that bucket".
     assert.match((validateAiBudgetDraft({ ...draft, ocr: '' }, saved) as { notice: string }).notice, /เพดานอ่านเอกสาร/);
     assert.match((validateAiBudgetDraft({ ...draft, chat: '' }, saved) as { notice: string }).notice, /เพดานแชต/);
@@ -347,7 +347,7 @@ describe('split AI budget policy helpers', () => {
     assert.equal(aiBudgetAvailableLabel(0), '฿0.00');
     assert.equal(aiBudgetAvailableLabel(3000), '฿30.00');
     // A SHARED bucket has no separate cap, so what is left there IS the shared total.
-    assert.equal(aiBudgetAvailableLabel(null), 'ตามงบรวม');
+    assert.equal(aiBudgetAvailableLabel(null), 'ตามเครดิตรวม');
     assert.notEqual(aiBudgetAvailableLabel(null), aiBudgetCapLabel(null));
     assert.notEqual(aiBudgetAvailableLabel(0), aiBudgetCapLabel(0));
   });
@@ -384,7 +384,7 @@ describe('split AI budget policy helpers', () => {
     assert.match(scheduled, /ปิดส่วนนี้/);
     const reverting = aiBudgetPendingText(
       { mode: 'SHARED', chatMonthlyBudgetSatang: null, ocrMonthlyBudgetSatang: null, effectiveMonthKey: '2026-10' }, month)!;
-    assert.match(reverting, /งบรวมก้อนเดียว/);
+    assert.match(reverting, /เครดิตรวมก้อนเดียว/);
   });
 
   it('treats only the two 409 fences as "reload and re-check"', async () => {
@@ -411,7 +411,7 @@ describe('split AI budget policy helpers', () => {
   });
 
   it('labels the two modes and the reserved column in Thai', () => {
-    assert.equal(AI_BUDGET_MODE_LABELS.SHARED, 'งบรวมก้อนเดียว');
+    assert.equal(AI_BUDGET_MODE_LABELS.SHARED, 'เครดิตรวมก้อนเดียว');
     assert.equal(AI_BUDGET_MODE_LABELS.SPLIT, 'แยกเพดานแชตและอ่านเอกสาร');
     // Reserved money is not spend and adds no provider call; the label has to say so.
     assert.equal(AI_BUDGET_RESERVED_NOTE, 'กันไว้ระหว่างเรียก AI');

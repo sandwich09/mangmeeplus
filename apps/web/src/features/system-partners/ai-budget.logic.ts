@@ -37,7 +37,7 @@ export function parseBudgetBahtInput(raw: string): BudgetInputParse {
   const satang = Number(parts[1]) * 100 + Number((parts[2] ?? '').padEnd(2, '0'));
   if (!Number.isSafeInteger(satang)) return { ok: false, message: 'จำนวนเงินมากเกินไป กรุณาตรวจตัวเลขแล้วกรอกใหม่' };
   if (satang < 100) {
-    return { ok: false, message: 'กรอกงบตั้งแต่ 1 บาท หากต้องการหยุดใช้ AI ให้ปิดสิทธิ์ผู้ช่วย AI ของบริษัท' };
+    return { ok: false, message: 'กรอกเครดิตตั้งแต่ 1 บาท หากต้องการหยุดใช้ AI ให้ปิดสิทธิ์ผู้ช่วย AI ของบริษัท' };
   }
   return { ok: true, monthlyBudgetSatang: satang };
 }
@@ -189,12 +189,12 @@ export function hasAiUsageBreakdown(usage: { breakdown?: unknown } | null | unde
 // ── Split CHAT/OCR budget policy (remediation spec §11.3, §12.4, §12.5) ──────
 
 export const AI_BUDGET_MODE_LABELS: Record<string, string> = {
-  SHARED: 'งบรวมก้อนเดียว',
+  SHARED: 'เครดิตรวมก้อนเดียว',
   SPLIT: 'แยกเพดานแชตและอ่านเอกสาร',
 };
 
 export const AI_BUDGET_SCOPE_LABELS = {
-  total: 'งบรวมทั้งเดือน',
+  total: 'เครดิตรวมทั้งเดือน',
   chat: 'เพดานแชตและ AI ทั่วไป',
   ocr: 'เพดาน AI อ่านเอกสาร',
 } as const;
@@ -319,7 +319,7 @@ export function validateAiBudgetDraft(
   if (chat.satang + ocr.satang > saved.totalSatang) {
     return {
       ok: false,
-      notice: `ผลรวมเพดาน ${satangToBaht(chat.satang + ocr.satang)} เกินงบรวมที่บันทึกไว้ ${satangToBaht(saved.totalSatang)} กรุณาลดเพดานหรือบันทึกงบรวมที่สูงขึ้นก่อน`,
+      notice: `ผลรวมเพดาน ${satangToBaht(chat.satang + ocr.satang)} เกินเครดิตรวมที่บันทึกไว้ ${satangToBaht(saved.totalSatang)} กรุณาลดเพดานหรือบันทึกเครดิตรวมที่สูงขึ้นก่อน`,
     };
   }
   return {
@@ -392,7 +392,7 @@ export const aiBudgetCapLabel = (capSatang: number | null): string =>
  * cap: what is left there is simply the shared total, not a setting somebody forgot.
  */
 export const aiBudgetAvailableLabel = (availableSatang: number | null): string =>
-  availableSatang === null ? 'ตามงบรวม' : satangToBaht(availableSatang);
+  availableSatang === null ? 'ตามเครดิตรวม' : satangToBaht(availableSatang);
 
 /**
  * During a rolling deploy this page can be served by a pre-E1a API, whose `budget` carries neither
@@ -414,10 +414,10 @@ export function aiBudgetInvalidNotice(invalidReason: string | undefined): string
   if (!invalidReason) return null;
   const fix: Record<string, string> = {
     SPLIT_CAPS_MISSING: 'โหมดแยกเพดานถูกตั้งไว้แต่ยังไม่มีเพดานครบทั้งสองส่วน กรอกทั้งเพดานแชตและเพดานอ่านเอกสาร (ใส่ 0 หากต้องการปิดส่วนนั้น) แล้วบันทึก',
-    SPLIT_EXCEEDS_TOTAL: 'ผลรวมเพดานแชตและอ่านเอกสารเกินงบรวมของเดือนนี้ ลดเพดานอย่างน้อยหนึ่งส่วน หรือเพิ่มงบรวมก่อน แล้วบันทึกอีกครั้ง',
+    SPLIT_EXCEEDS_TOTAL: 'ผลรวมเพดานแชตและอ่านเอกสารเกินเครดิตรวมของเดือนนี้ ลดเพดานอย่างน้อยหนึ่งส่วน หรือเพิ่มเครดิตรวมก่อน แล้วบันทึกอีกครั้ง',
     POLICY_MALFORMED: 'ค่าที่บันทึกไว้อ่านไม่ได้ ตั้งโหมดและเพดานใหม่ทั้งชุดแล้วบันทึก',
   };
-  return `ตอนนี้ระบบปฏิเสธการเรียก AI ของบริษัทนี้ทุกช่องทาง เพราะการตั้งค่างบไม่ถูกต้อง — ${fix[invalidReason] ?? 'ตั้งโหมดและเพดานใหม่ทั้งชุดแล้วบันทึก'}`;
+  return `ตอนนี้ระบบปฏิเสธการเรียก AI ของบริษัทนี้ทุกช่องทาง เพราะการตั้งค่าเครดิตไม่ถูกต้อง — ${fix[invalidReason] ?? 'ตั้งโหมดและเพดานใหม่ทั้งชุดแล้วบันทึก'}`;
 }
 
 /** "เริ่มเดือน …" — a scheduled policy, kept visually apart from "ใช้อยู่" (spec §12.5). */
@@ -428,19 +428,19 @@ export function aiBudgetPendingText(
   if (!pending) return null;
   const allocation = pending.mode === 'SPLIT'
     ? `แชต ${aiBudgetCapLabel(pending.chatMonthlyBudgetSatang)} · อ่านเอกสาร ${aiBudgetCapLabel(pending.ocrMonthlyBudgetSatang)}`
-    : 'กลับไปใช้งบรวมก้อนเดียว';
+    : 'กลับไปใช้เครดิตรวมก้อนเดียว';
   return `เริ่มเดือน ${formatMonth(pending.effectiveMonthKey)}: ${AI_BUDGET_MODE_LABELS[pending.mode] ?? pending.mode} — ${allocation}`;
 }
 
 /** The activation gate is a server readiness flag (ADR 0013 §9), not a permission problem. */
 export const AI_BUDGET_SPLIT_DISABLED_NOTE =
-  'ระบบยังไม่เปิดให้แยกเพดานแชตกับอ่านเอกสาร จึงบันทึกโหมดแยกเพดานไม่ได้ ยังดูยอดได้ทุกส่วน และยังตั้งงบรวมก้อนเดียวหรือยกเลิกค่าที่ตั้งให้เริ่มเดือนถัดไปได้ตามปกติ';
+  'ระบบยังไม่เปิดให้แยกเพดานแชตกับอ่านเอกสาร จึงบันทึกโหมดแยกเพดานไม่ได้ ยังดูยอดได้ทุกส่วน และยังตั้งเครดิตรวมก้อนเดียวหรือยกเลิกค่าที่ตั้งให้เริ่มเดือนถัดไปได้ตามปกติ';
 
 /** Holds are not spend and add no provider call — label them so, wherever the number appears. */
 export const AI_BUDGET_RESERVED_NOTE = 'กันไว้ระหว่างเรียก AI';
 
 export const AI_BUDGET_STALE_MESSAGE =
-  'ข้อมูลงบ AI ถูกแก้จากที่อื่นหรือขึ้นเดือนใหม่แล้ว ระบบโหลดค่าล่าสุดให้ กรุณาตรวจสอบก่อนบันทึกอีกครั้ง';
+  'ข้อมูลเครดิต AI ถูกแก้จากที่อื่นหรือขึ้นเดือนใหม่แล้ว ระบบโหลดค่าล่าสุดให้ กรุณาตรวจสอบก่อนบันทึกอีกครั้ง';
 
 /** The two 409 fences this writer can answer; both mean "reload, then re-check before saving". */
 export function isAiBudgetPolicyConflict(code: string | null | undefined): boolean {

@@ -251,10 +251,10 @@ describe('the timeline last line: why the assistant is refusing right now', () =
     assert.equal(detail, 'อ่านใบเสร็จครบ 15 ใบของเดือนนี้แล้ว');
   });
 
-  it('names the AI budget, against the shop own override', async () => {
+  it('names the AI credit, against the shop own override', async () => {
     assert.equal(
       await refusalOf({ planTerm: liveTerm, aiUsage: { costSatang: 8000 } }),
-      'ใช้งบ AI ของเดือนนี้ครบแล้ว',
+      'เครดิต AI ของเดือนนี้หมดแล้ว',
     );
     assert.equal(
       await refusalOf({
@@ -281,7 +281,7 @@ describe('the timeline last line: why the assistant is refusing right now', () =
         aiConfig: split(3000, 7000), aiBuckets: [{ bucket: 'OCR', costSatang: 7000 }] });
 
       assert.equal(refusal?.label, 'ตอนนี้ยังอ่านใบเสร็จด้วย AI ไม่ได้');
-      assert.equal(refusal?.detail, 'ใช้งบ AI ส่วนอ่านเอกสารของเดือนนี้ครบแล้ว แต่ส่วนแชตยังเหลือ');
+      assert.equal(refusal?.detail, 'เครดิต AI ส่วนอ่านเอกสารของเดือนนี้หมดแล้ว แต่ส่วนแชตยังเหลือ');
     });
 
     it('says the chat share is gone while documents can still be read', async () => {
@@ -296,17 +296,17 @@ describe('the timeline last line: why the assistant is refusing right now', () =
       const refusal = await line({ planTerm: liveTerm, aiUsage: { costSatang: 10000 },
         aiConfig: split(3000, 7000), aiBuckets: [{ bucket: 'OCR', costSatang: 7000 }, { bucket: 'CHAT', costSatang: 3000 }] });
 
-      assert.equal(refusal?.detail, 'ใช้งบ AI ของเดือนนี้ครบแล้ว');
+      assert.equal(refusal?.detail, 'เครดิต AI ของเดือนนี้หมดแล้ว');
     });
 
     it('a cap that no longer fits the total is shown as a setting to fix, not as money spent', async () => {
       const refusal = await line({ planTerm: liveTerm, aiConfig: split(9000, 7000) });
 
       assert.equal(refusal?.label, 'ตอนนี้ AI ยังทำงานให้ร้านไม่ได้');
-      assert.match(refusal!.detail!, /การตั้งค่างบ AI ของร้านไม่ถูกต้อง/);
+      assert.match(refusal!.detail!, /การตั้งค่าเครดิต AI ของร้านไม่ถูกต้อง/);
       // The reason can be any of three, so this line must not assert one of them; it points at the
       // page where the exact red notice lives.
-      assert.doesNotMatch(refusal!.detail!, /รวมกันไม่เกินงบรวม/);
+      assert.doesNotMatch(refusal!.detail!, /รวมกันไม่เกินเครดิตรวม/);
       assert.match(refusal!.detail!, /AI และโควตา/);
     });
 
@@ -327,7 +327,7 @@ describe('the timeline last line: why the assistant is refusing right now', () =
     it('a cap of 0 reads as a share the operator closed, not as money that ran out', async () => {
       const closed = await line({ planTerm: liveTerm, aiConfig: split(10000, 0) });
       assert.equal(closed?.label, 'ตอนนี้ยังอ่านใบเสร็จด้วย AI ไม่ได้');
-      assert.match(closed!.detail!, /ตั้งเพดานงบ AI ส่วนอ่านเอกสารไว้ 0 บาท/);
+      assert.match(closed!.detail!, /ตั้งเพดานเครดิต AI ส่วนอ่านเอกสารไว้ 0 บาท/);
       assert.doesNotMatch(closed!.detail!, /ครบแล้ว/);
 
       const chatClosed = await line({ planTerm: liveTerm, aiConfig: split(0, 10000) });
@@ -338,7 +338,7 @@ describe('the timeline last line: why the assistant is refusing right now', () =
     it('keeps the TOTAL line byte-identical to the legacy one', async () => {
       const refusal = await line({ planTerm: liveTerm, aiUsage: { costSatang: 10000 },
         aiConfig: split(3000, 7000) });
-      assert.equal(refusal?.detail, 'ใช้งบ AI ของเดือนนี้ครบแล้ว');
+      assert.equal(refusal?.detail, 'เครดิต AI ของเดือนนี้หมดแล้ว');
     });
 
     it('leaves a funded split shop with no refusal line at all', async () => {
@@ -365,7 +365,7 @@ describe('current Admin AI support explanation',()=>{
     const options:Options={aiUsage:{costSatang:9000},platformBudget:{monthlyBudgetSatang:20000,ceilingSatang:100000}},h=harness(options);
     assert.equal((await h.controller.partnerTimeline('co-1')).entries.some(e=>e.kind==='ai_refusal'),false);
     options.platformBudget={monthlyBudgetSatang:8000,ceilingSatang:100000};
-    assert.equal((await h.controller.partnerTimeline('co-1')).entries.find(e=>e.kind==='ai_refusal')?.detail,'ใช้งบ AI ของเดือนนี้ครบแล้ว');
+    assert.equal((await h.controller.partnerTimeline('co-1')).entries.find(e=>e.kind==='ai_refusal')?.detail,'เครดิต AI ของเดือนนี้หมดแล้ว');
   });
 });
 
