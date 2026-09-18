@@ -1,0 +1,150 @@
+# Spec: LINE AI — คำว่า "เครดิต AI", ข้อความปฏิเสธการอ่านเอกสาร และคำตอบธุรกิจแบบ deterministic (wave 2)
+
+## 1. สถานะและขอบเขต
+
+- วันที่: 2026-09-18
+- สถานะ: owner decision รับแล้ว (ข้อความ 2026-09-18); ยังไม่ implement / deploy
+- ต่อจาก: [spec NOGROUP/budget/cost/split](line-ai-ledger-lifecycle-remediation-spec-th.md) (A–F merge แล้ว, ยังไม่ deploy) และ [ADR 0013](../adr/0013-ai-budget-split-reservations.md)
+- ผู้ใช้: เจ้าของร้าน/พนักงานที่คุยกับน้องมั่งมีผ่าน LINE, ผู้ใช้เว็บที่อัปโหลดเอกสาร, System Admin ที่ดูแลเครดิตและ billing
+- [แผนงาน](../plans/line-ai-credit-wording-and-deterministic-reads-plan-th.md)
+- [ต้นทุนและผล benchmark ที่ใช้ตัดสินใจ](../research/line-ai-intake-cost-benchmark-2026-09-17.md)
+
+Owner decisions 2026-09-18 (ถอดจากข้อความจริง):
+
+| # | Decision | ผลต่อ spec นี้ |
+| --- | --- | --- |
+| 1 | "เปลี่ยน งบ AI เป็น เครดิต" | §3: คำที่ผู้ใช้และแอดมินเห็นทุกที่ใช้ "เครดิต AI" แทน "งบ AI" / "โควตา AI" |
+| 2 | ส่งใบเสร็จแล้ว "ไม่ได้อ่านและไม่ได้บันทึก" จะเกิดเฉพาะเคสเครดิตอ่านเอกสารหมด ให้ใช้ข้อความ "เครดิตสำหรับการอ่านเอกสารไม่พอ" เพราะแยกแชตกับ OCR แล้ว | §4: รวมทุกสาเหตุฝั่งเงิน/จำนวนใบของการอ่านเอกสารเป็นข้อความเดียว |
+| 3 | การตรวจเครดิต (concept เครดิต) จะตามมาเร็ว ๆ นี้ | §8: spec นี้เปลี่ยนเฉพาะคำและข้อความ ไม่เปลี่ยนความหมาย/หน่วย/การคิดเงิน |
+| 4 | R5: ใช้ deterministic; คำถามแบบ "แยก" ให้โมเดลแต่งคำตอบได้ แต่ตัวเลข/การคำนวณห้ามมาจาก LLM; ให้คำแนะนำได้; Production ต้องเปิดด้วย | §6 |
+| 5 | เห็นด้วยกับข้อความเตือนเงินที่กันไว้บนหน้า billing แต่ใช้คำว่าเครดิต | §5.3 |
+| 6 | เครดิตแชต 80 บาท และใบเสร็จ 15 ใบ ต้องแยกกัน จึงเกิน 80 บาท | §7: ตัวเลขตั้งต้นของร้านทดลอง |
+
+สิ่งที่ spec นี้ **ไม่** ทำ: concept/หน่วย/การซื้อเครดิต, การตรวจเครดิต, หน้าจัดการเงินที่กันไว้ค้าง (รอ owner ยืนยัน), การตั้งค่าเครดิตให้บริษัทจริง
+
+## 2. หลักฐานที่ใช้
+
+| หลักฐาน | ข้อสรุป |
+| --- | --- |
+| โค้ดปัจจุบัน (develop ≥ `665eb3c0`) | ข้อความ "งบ AI"/"โควตา AI" มี ~101 จุดใน 25 ไฟล์ (LINE reply, Flex card, drain notice, web dictionary, banking/CRM/expenses notices, partner console, billing admin, timeline, ops alert, browser smoke scripts) |
+| `process-line-webhook.use-case.ts` `aiBudgetReasonTh` / `formatOcrGovernanceClarifyReply` / `formatBudgetMediaNotStoredReply` | การปฏิเสธอ่านรูปมี 4 เหตุฝั่งเงิน (`exceeded`, `insufficient`, `unavailable`, `busy`) + 3 เหตุฝั่ง governance (`OCR_FEATURE_DISABLED`, `OCR_MONTHLY_LIMIT_EXCEEDED`, `OCR_QUOTA_UNAVAILABLE`) และบอกสถานะไฟล์แยกจากเหตุเสมอ |
+| `line-business-card.logic.ts` `buildAiBudgetExceededMessage`, `line-ai-formatter.logic.ts` `formatAiBudgetRefusalNotice` | การ์ดฝั่งแชตแยก TOTAL / CHAT และ exceeded / insufficient; drain notice เป็น exact string ที่ integrity check ตรวจซ้ำ |
+| `prepared-simple-read-formatter.ts`, `prepared-simple-read.logic.ts` | เลน deterministic มี 4 family (`sales.get_sales_summary::single_metric`, `expense.list_recent::single_metric`, `accounting.get_summary::list`, `expense.get_daily_closing::single_metric`); เงื่อนไข eligibility 20 ข้อ; env allowlist ทำได้แค่ "แคบลง" |
+| `infra/prod-ecs-express/deploy.sh` (parity 2026-08-30) | `LINE_AI_PREPARED_SIMPLE_READ_ENABLED=true` และ allowlist 4 family เป็น default ทั้ง UAT/Production แล้ว (comment เก่าที่ว่า production ปฏิเสธ allowlist ล้าสมัย) แต่ prod baseline 2026-09-03 เลนนี้ตอบ 0/9 |
+| Benchmark C after-run (2026-09-17, corpus `cf9bce44…`) | business read 24 งาน: เลน deterministic ตอบ 8 (1 call), อีก 16 ใช้ 6–7 calls; งานที่พลาดเลน: VAT/ภาษี, สินค้าใกล้หมด, ปิดยอดรายวัน (family มีแล้วแต่พลาด), เจ้าหนี้ค้างจ่าย, ลูกค้าใหม่ CRM, ค่าใช้จ่ายแยกหมวด, อธิบายรายการ |
+| `response-composer.agent.ts` | เส้นทางปกติ (agentic) มี numeric guard: ตัวเลขทุกตัวในคำตอบต้องมีอยู่ใน tool data/คำถาม/บริบท มิฉะนั้น fallback เป็นข้อความ grounded; โมเดลเป็นชั้น "ขัดเกลาภาษา" เท่านั้น |
+| Production baseline 2026-09-04 (`AiUsageEvent`) | ใบเสร็จผ่าน LINE ≈ 213 satang เฉลี่ย / 305 p90; แชต ≈ 78 satang p50; งาน C ลด image intake −26% |
+
+## 3. คำศัพท์ (ใช้ทุก surface)
+
+| เดิม | ใหม่ | หมายเหตุ |
+| --- | --- | --- |
+| งบ AI | **เครดิต AI** | ใช้ "เครดิต AI" ไม่ใช่ "เครดิต" ลอย ๆ เพราะระบบบัญชีใช้คำว่าเครดิต (เดบิต/เครดิต, บัตรเครดิต, เครดิตภาษี) อยู่แล้ว |
+| งบ AI ส่วนแชต / เพดานแชต | **เครดิต AI ส่วนแชต** | |
+| งบ AI สำหรับ/ส่วนอ่านเอกสาร, สิทธิ์อ่านเอกสารด้วย AI (จำนวนครั้ง) | **เครดิตสำหรับการอ่านเอกสาร** | ครอบทั้งเงินส่วน OCR และจำนวนใบ (§4) |
+| โควตา AI ของแพ็กเกจเดือนนี้ครบแล้ว | **เครดิต AI ของเดือนนี้หมดแล้ว** | |
+| ใช้งบ AI ครบแล้ว / งบเต็ม | **เครดิต AI หมดแล้ว** (exceeded) — ห้ามใช้ "หมด/ครบ/เต็ม" กับกรณี insufficient (§9.1 เดิม) | |
+| งบ AI ที่เหลือไม่พอ… | **เครดิต AI ที่เหลือไม่พอ…** | insufficient |
+| ยังตรวจสอบงบ AI ไม่ได้ | **ยังตรวจสอบเครดิต AI ไม่ได้** | unavailable |
+| กันไว้ระหว่างเรียก AI (reserved) | **เครดิตที่กันไว้ระหว่างเรียก AI** | |
+
+กติกา: จำนวนเงินยังแสดงเป็นบาทที่เดิม; ไม่มี surface ใดได้ตัวเลขเงินเพิ่มจากที่เคยแสดง; ชื่อ field/enum/error code/telemetry ไม่เปลี่ยน (เปลี่ยนเฉพาะข้อความที่คนอ่าน); คำภาษาอังกฤษใน UI ที่มีอยู่ ("AI budget") เปลี่ยนเป็น "AI credit" แบบเดียวกัน
+
+## 4. ข้อความปฏิเสธการอ่านเอกสาร (LINE และเว็บ)
+
+ข้อเท็จจริงสามอย่างต้องอยู่ครบและตรงจริงเสมอ: (1) เหตุ (2) สถานะไฟล์ — เก็บไว้แล้ว / เก็บไม่สำเร็จ / ไม่ได้เก็บ (3) ยังไม่ได้บันทึกรายการ และห้ามสัญญาว่าจะลองใหม่เอง ห้ามมีตัวเลขเงิน
+
+| เหตุ (code) | ข้อความเหตุ (ส่วนแรกของ reply) |
+| --- | --- |
+| เงินส่วนอ่านเอกสารหมด (`AI_MONTHLY_BUDGET_EXCEEDED` scope OCR หรือ TOTAL บนเส้นทางรูป), เงินเหลือไม่พอเริ่มอ่าน (`AI_BUDGET_INSUFFICIENT`), จำนวนใบครบ (`OCR_MONTHLY_LIMIT_EXCEEDED`) | **เครดิตสำหรับการอ่านเอกสารไม่พอ** |
+| ตรวจเครดิตไม่ได้ (`AI_BUDGET_UNAVAILABLE`, `OCR_QUOTA_UNAVAILABLE`) | ตอนนี้ยังตรวจสอบเครดิต AI ของร้านไม่ได้ |
+| ระบบกำลังทำงานก่อนหน้า (`AI_BUDGET_BUSY`) | ระบบกำลังประมวลผลงานก่อนหน้าอยู่ |
+| ผู้ดูแลปิดการอ่านเอกสาร (`OCR_FEATURE_DISABLED`) | บริษัทปิดการอ่านเอกสารด้วย AI ไว้ค่ะ (คงเดิม) |
+
+ตัวอย่างประกอบ (รูปเก็บไว้แล้ว): `💚 รับรูปไว้แล้วค่ะ แต่เครดิตสำหรับการอ่านเอกสารไม่พอ จึงยังไม่ได้อ่านและยังไม่ได้บันทึกรายการค่าใช้จ่ายนะคะ` + ตัวเลือกเดิม (บันทึกเป็นใบเสร็จ/เก็บไว้เฉย ๆ/…) ตามที่ `MEDIA_CLARIFY_REPLY` มีอยู่; กรณีเก็บรูปไม่สำเร็จ/มีรูปรอคำตอบ/ไม่มีสิทธิ์ ใช้ tail เดิมของ `formatBudgetMediaNotStoredReply` แต่เปลี่ยนเหตุตามตารางนี้
+
+สิ่งที่ยังแยกจากกันภายใน: code, scope, terminal class, การคืน/ไม่คืนจำนวนใบ (R-05) และเงินที่จอง — spec นี้รวมเฉพาะ **คำที่ลูกค้าอ่าน** ไม่รวม semantics
+
+เว็บ (อัปโหลดเอกสาร/สเตทเมนต์/CRM): key ใน `workspace-dictionary.ts`, `banking.logic.ts`, `InboxAiPanel.tsx` และ error map ใช้คำตาม §3 และประโยคเหตุตาม §4 โดยคงข้อเท็จจริงว่าไฟล์ยังอยู่และยังไม่ได้อ่าน
+
+## 5. ข้อความฝั่งแชต, แอดมิน และ billing
+
+### 5.1 แชต (Flex card + drain notice)
+
+| กรณี | หัวการ์ด | ข้อความ |
+| --- | --- | --- |
+| TOTAL หมด | เครดิต AI เดือนนี้หมดแล้ว | เครดิต AI ของเดือนนี้หมดแล้วค่ะ (ร้านทดลอง: ช่วงทดลองมีเครดิต AI จำกัดต่อเดือน) เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ |
+| CHAT หมด | เครดิต AI ส่วนแชตเดือนนี้หมดแล้ว | เครดิต AI ส่วนแชตของเดือนนี้หมดแล้วค่ะ … (ส่วนอ่านเอกสารยังใช้ได้ถ้ามีเครดิต — ไม่ต้องอ้าง เพราะยังพิสูจน์จากการ์ดไม่ได้) |
+| insufficient | เครดิต AI เดือนนี้เหลือไม่พอ | เครดิต AI (ส่วนแชต) ที่เหลือของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ … |
+| drain notice (reclaimed turn) | — | ข้อความ text เดิมโดยแทนคำตาม §3; integrity check ต้องอัปเดตให้ตรง exact string ใหม่ |
+
+ปุ่ม "ดูแพ็กเกจ" / "ขอเปลี่ยนแพ็กเกจ" คงเดิม
+
+### 5.2 System Admin console (partner detail → AI และโควตา) และ support timeline
+
+เปลี่ยนคำตาม §3 ทุก label/heading/notice/toast/confirm/ประวัติการปรับ (`PartnerAiAdjustmentHistory`) รวม browser smoke `admin-ai-adjustments-smoke.ts` ที่ยึดข้อความ exact; ความหมายและตัวเลขไม่เปลี่ยน; หัวข้อ "แยกเพดานงบ AI ของบริษัทนี้" → "แยกเพดานเครดิต AI ของบริษัทนี้"; timeline "ใช้งบ AI ของเดือนนี้ครบแล้ว" → "เครดิต AI ของเดือนนี้หมดแล้ว" และประโยคส่วนแชต/อ่านเอกสารตาม §3
+
+### 5.3 Billing admin (owner decision 5)
+
+- `readWarnings` ใบเสร็จ: `AI_BUDGET_REACHED` → "ร้านนี้ใช้เครดิต AI ของเดือนนี้หมดแล้ว"; `AI_OCR_BUDGET_REACHED` → "เดือนนี้ร้านนี้ไม่มีเครดิตสำหรับการอ่านเอกสารเหลือแล้ว (ใช้หมดหรือตั้งเพดานไว้ 0 บาท) เครดิตส่วนอื่นที่เหลืออยู่ใช้อ่านเอกสารไม่ได้"
+- เพิ่ม warning คำล้วน (member ใหม่ของ `BillingReceiptReadWarning`, additive): `AI_CREDIT_HOLDS_PENDING` → "มีงาน AI ที่กำลังทำอยู่หรือยังไม่ทราบผล ระบบกันเครดิตไว้ชั่วคราว เครดิตที่ใช้ได้จริงอาจต่ำกว่าที่แสดง ตรวจได้ที่หมวด AI และโควตา" เมื่อ `readAiBudgetReadiness` รายงาน reserved > 0 หรือ `unresolvedHolds` > 0 ในเดือนนี้ (ไม่มีตัวเลขเงิน)
+- หน้าปรับแพ็กเกจ (`BillingPlanAdjustmentUnchanged`, แสดงเงินอยู่แล้ว): เพิ่ม field additive `aiReservedSatang` และ `aiUnresolvedHolds` และบรรทัด "เครดิต AI เดือนนี้ X บาท · ใช้แล้ว Y บาท · กันไว้ระหว่างเรียก AI Z บาท" + เมื่อ unresolved > 0: "มี N รายการที่ยังไม่ทราบผลจากผู้ให้บริการ AI เครดิตส่วนนั้นยังถูกกันไว้"
+- SHARED และ SPLIT ให้ warning นี้เหมือนกัน; บริษัทที่ไม่มี hold ต้องได้ผลเดิมทุกตัวอักษร (นอกจากคำตาม §3)
+
+## 6. คำตอบธุรกิจแบบ deterministic (R5, owner decision 4)
+
+### 6.1 หลักการ
+
+- คำถามอ่านข้อมูลธุรกิจแบบ "ค่าเดียว/รายการเดียว" ตอบด้วย formatter ที่ compile ไว้ (เลน prepared simple-read) — 1 model call (intake) เท่านั้น
+- คำถามแบบ "แยก" (แยกหมวด/สาขา/ช่วงเวลา, เปรียบเทียบ, อธิบายรายการ) ใช้เส้นทางปกติ: tool คืนข้อเท็จจริง → `compose()` deterministic → โมเดล "ขัดเกลาภาษา" และเพิ่มคำแนะนำได้ **แต่ตัวเลขทุกตัวต้องมาจาก tool data หรือการคำนวณในโค้ด** — numeric guard เดิมของ composer เป็นกลไกบังคับ (ตัวเลขที่ไม่มีใน tool data/คำถาม/บริบท ⇒ fallback เป็นข้อความ grounded) และต้องมี test ที่พิสูจน์ว่า "ตัวเลขที่โมเดลคำนวณเอง" (ผลต่าง/เปอร์เซ็นต์/ผลรวมที่ tool ไม่ได้ให้) ถูกปฏิเสธ ถ้าผลิตภัณฑ์ต้องการผลต่าง/เปอร์เซ็นต์ ให้โค้ดคำนวณแล้วใส่เป็น fact ก่อน
+- Production เปิดเลนนี้ (owner): ยืนยันว่า deploy default ปัจจุบันเปิดอยู่จริงทั้ง UAT/Production; แก้ comment ล้าสมัยใน `deploy.sh`; family ใหม่ทุกตัวเข้า allowlist default
+- ข้อจำกัดที่พบตอน implement (2026-09-18) และ **ไม่แก้**: guard ที่ปฏิเสธคำแนะนำจริง ๆ ไม่ใช่ numeric guard แต่เป็น vocabulary guard `preservesSemanticGrounding` — ทุกคำในคำตอบต้องอยู่ใน tool data / คำถาม / `SAFE_REPLY_WORDS` ฉะนั้นประโยคแนะนำที่ใช้คำอย่าง "ควร", "ราคา", "ผู้ขาย" หรือแม้แต่ "นะคะ" จะ fallback เป็น grounded text; และคำใน `SAFE_REPLY_WORDS` ที่เป็นคำประสม (เช่น `ตรวจสอบ`) ไม่เคย match เพราะ `Intl.Segmenter` ตัดเป็น `ตรวจ`+`สอบ` (`response-composer.agent.ts` `SAFE_REPLY_WORDS`/`wordTokens`). การขยายรายการคำ = ขยายสิ่งที่โมเดลพูดได้ ต้องเป็น owner decision แยก ไม่ใช่ผลพลอยได้ของ wave นี้
+
+### 6.2 family ที่ต้องเพิ่ม (จากงานที่พลาดเลนใน corpus)
+
+| งานใน corpus | tool::answerShape (ยืนยันแล้วตอน implement 2026-09-18) | ประเภท |
+| --- | --- | --- |
+| ปิดยอดรายวัน (`text-read-daily-closing`) | `expense.get_daily_closing::single_metric` — family มีแล้วและ eligible จริง; ที่พลาดเลนคือแผนของ router เพราะข้อความใน corpus ถามสองข้อในประโยคเดียว (`not_simple` / `no_simple_answer_shape`) → ไม่แก้ | ค่าเดียว |
+| ภาษี/VAT งวดที่ tool อ่าน | `tax.get_vat_summary::single_metric` | ค่าเดียว |
+| สินค้าใกล้หมด | `inventory.list_low_stock::list` | รายการ |
+| เจ้าหนี้ค้างจ่าย | `procurement.get_ap_outstanding::single_metric` + `::list` | ค่าเดียว/รายการ |
+| ลูกค้าใหม่ (CRM) | `crm.get_customer_summary::single_metric` + `::list` | รายการ/ค่าเดียว |
+| ค่าใช้จ่ายแยกหมวด, อธิบายรายการ | ไม่เพิ่ม family — เป็นคำถามแบบ "แยก/อธิบาย" → เส้นทางปกติตาม §6.1 | โมเดลแต่ง (grounded) |
+
+AP และ CRM ลงทะเบียนสอง shape เพราะคำถามจริงมีทั้งแบบ "เท่าไหร่" และ "มีใคร/อะไรบ้าง" ในขณะที่คำตอบ deterministic เป็นข้อความเดียวกัน; `answerShape` เป็นคำแนะนำที่ไม่เชื่อถือและมีหน้าที่แค่เลือก formatter จึงไม่เพิ่มสิทธิ์หรือคำพูดใหม่ (สอดคล้องกับแถว AP ที่ spec เปิดไว้ทั้งสอง shape อยู่แล้ว)
+
+แต่ละ family ต้องมี: shape ที่ตรวจแล้ว (`unverified` เมื่อไม่ตรง), rounding/หน่วย/ช่วงเวลา/ที่มา/as-of เหมือน family เดิม, ภาษาไทย/อังกฤษตาม locale, security spec เดิม (`prepared-simple-read-security.spec.ts`) ผ่านโดยไม่แก้เคสเดิม, และคำตอบไม่ต่างจากข้อเท็จจริงที่เส้นทางปกติตอบ (ตรวจกับ corpus)
+
+### 6.3 หลักฐานที่ต้องมี
+
+- Unit: formatter ทุก family (ค่า/รายการ/ว่าง/underestimate flag/locale), eligibility ของงานที่เคยพลาด
+- Corpus replay (ต้องใช้ Bedrock จริง — รอ owner อนุญาตงบ; harness เดิม `scripts/line-ai-intake-cost-benchmark.ts` corpus `cf9bce44…`): prepared-lane hit บน business read เพิ่มจาก 8/24 เป็น ≥ 16/24, routing/answer ไม่ถดถอย, ต้นทุน THB/successful task ลด, calls/turn ลด; รายงานก่อน/หลังใน research doc
+- Production: หลัง deploy อ่าน `line.ai.prepared_lane` (หรือ telemetry ที่มีอยู่) ว่าเลนตอบจริง ไม่ใช่ 0/N
+
+## 7. ตัวเลขตั้งต้นของร้านทดลอง (owner decision 6)
+
+- เครดิต AI ส่วนแชต: **80 บาท/เดือน**
+- เครดิตสำหรับการอ่านเอกสาร: **15 ใบ/เดือน** (จำนวนใบ = โควตาใบเสร็จของแพ็กเกจทดลองที่มีอยู่แล้ว) — เพดานเงินส่วน OCR เป็น guard ภายในที่ต้อง **ไม่** สะดุดก่อนจำนวนใบ: 15 ใบ × p90 ≈ 3.05 บาท (ก่อนงาน C; หลังงาน C ≈ 2.8) × เผื่ออ่านซ้ำ/หลายหน้า 1.3 ≈ **60 บาท**
+- เพดานรวม (T) = 80 + 60 = **140 บาท/เดือน**
+- การนำไปใช้: ตั้งต่อบริษัทได้ที่หน้าแอดมินหลัง deploy (flag เปิดแล้วตาม PR #622/#623); ค่า default ต่อแพ็กเกจ (ทดลอง/Starter/Basic/Pro) ยังไม่มี — เป็นส่วนหนึ่งของ concept เครดิต (owner decision 3) ไม่ใช่ spec นี้
+- ห้าม auto-allocate ให้บริษัทจริงจาก spec นี้; การตั้งค่าจริงเป็นการกระทำของแอดมินและต้องมี reason/audit เดิม
+
+## 8. สิ่งที่ไม่ทำใน wave นี้
+
+concept/หน่วย/การเติมเครดิต, การตรวจเครดิตแบบใหม่, การเปลี่ยนความหมายของงบรวม/เพดาน, หน้าจัดการเงินที่กันไว้ค้าง (`UNRESOLVED`/breach) — รอ owner ยืนยันข้อเสนอ, การเปลี่ยน error code/enum/telemetry, การเปลี่ยนภาษาโมเดล/prompt ของ intake
+
+## 9. Acceptance
+
+- [ ] W-01 ไม่มีข้อความที่ผู้ใช้/แอดมินอ่านเห็นคำว่า "งบ AI" หรือ "โควตา AI" เหลืออยู่ใน apps/packages/scripts (ยกเว้น code/enum/telemetry) และคำใหม่ตรง §3 ทุกจุด; web dictionary/error map/Flex/drain notice/admin/billing/timeline/ops alert ครบ
+- [ ] W-02 เส้นทางรูป: ทุกสาเหตุใน §4 แถวแรกตอบ "เครดิตสำหรับการอ่านเอกสารไม่พอ" พร้อมสถานะไฟล์จริงและ "ยังไม่ได้บันทึกรายการ"; unavailable/busy/disabled คงแยก; ไม่มีตัวเลขเงิน; code/scope/terminal class/การคืนจำนวนใบ ไม่เปลี่ยน (whole-chain + combined regression ผ่านโดยแก้เฉพาะ expected text)
+- [ ] W-03 เส้นทางแชตและ drain notice ตรง §5.1; integrity check ของ stored delivery ตรง exact string ใหม่
+- [ ] W-04 Billing: warning `AI_CREDIT_HOLDS_PENDING` และ field `aiReservedSatang`/`aiUnresolvedHolds` แสดงเมื่อมี hold; บริษัทที่ไม่มี hold ผลเดิม; ไม่มีเงินรั่วไปหน้า owner
+- [x] W-05 Deterministic: family ใหม่ตาม §6.2 มี formatter + tests (`prepared-simple-read-formatter.spec.ts` F4–F7, eligibility ของทั้ง 4 family ใน `prepared-simple-read.logic.spec.ts`); security spec เดิมผ่านโดยไม่แก้เคสเดิม; allowlist default ใน `deploy.sh` มี 10 family ทั้ง UAT/Production และ `production-serving-mode.spec.sh` pin ครบทุก key — **ยกเว้น** งาน daily-closing: family มีและ eligible จริง (pin ด้วย test) แต่ข้อความใน corpus เป็นคำถามสองข้อในประโยคเดียว จึงพลาดเลนเพราะแผนของ router เอง (`not_simple` / `no_simple_answer_shape`) ไม่ใช่ข้อบกพร่องของ gate/formatter — ไม่แก้ (§14 ของ research doc)
+- [x] W-06 Grounded breakdown: `response-composer.agent.spec.ts` พิสูจน์ว่าผลต่าง/เปอร์เซ็นต์/ผลรวมย่อย/ค่าเฉลี่ยที่โมเดลคำนวณเองถูกปฏิเสธและ fallback เป็น grounded text, และคำตอบที่ไม่เพิ่มตัวเลขใหม่ผ่านได้; ปิดช่องโหว่เลขไทย (๐-๙) ที่ numeric guard และ polish guard มองไม่เห็นเลย พร้อม test — ข้อจำกัดที่เหลือ: vocabulary guard (`preservesSemanticGrounding`) ปฏิเสธคำแนะนำที่ใช้คำนอก source/SAFE list (ดู §6.1 residual ด้านล่าง) ไม่ได้ขยายเพราะจะเป็นการเปิดกว้างให้โมเดลพูดได้มากขึ้น
+- [x] W-07 Corpus replay ก่อน/หลัง (owner อนุญาต 2026-09-18): hit 8 → **16**/22 business-read records, routing 22/22 เท่าเดิม, success 22/22 ไม่มี success→fail, THB/successful 0.942 → 0.750, calls/turn 4.27 → 2.50; spend THB 16.52 จากเพดาน 100 ([research §14](../research/line-ai-intake-cost-benchmark-2026-09-17.md))
+- [ ] W-08 Browser evidence: หน้าแอดมิน AI และโควตา + billing ใบเสร็จ/แพ็กเกจ ที่ 1440/390 px ด้วยคำใหม่ และ smoke script ผ่าน
+- [ ] W-09 UAT: ส่งรูปเมื่อเครดิตอ่านเอกสารหมด และพิมพ์เมื่อเครดิตแชตหมด เห็นข้อความตาม §4/§5 จริงบน LINE (เปิดหลัง deploy)
+
+## 10. ส่งมอบ
+
+ห้าม tick acceptance จาก unit test เพียงอย่างเดียวเมื่อเกณฑ์ระบุ corpus/browser/UAT; บันทึก commands, counts, source SHA และข้อจำกัดใน task memory `docs/agent-memory/line-ai-credit-wording-wave2-2026-09-18.md`

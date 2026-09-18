@@ -63,6 +63,13 @@ const ORCHESTRATOR_TOOL_LOOP_PROMPT = [
 // a date the model converted itself (e.g. a Buddhist-era year kept as CE) is dropped, so the
 // tool falls back to its default period instead of reading a corrupted one.
 const LOOP_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+// Every input field that names THE DAY an answer is about, so all of them get the same civil-date format
+// and deterministic-backing check. `date` (expense.get_daily_closing) was missing from that list, which
+// let a model-written day — any string at all — reach the daily-closing tool unchecked on the prepared
+// lane the F3 family serves. Window-start fields (`newSince`, `weekStart`) stay out on purpose: the tool
+// re-validates them, replaces an unusable one with its own default, and echoes back the window it really
+// used, which the compiled answer then states — so they cannot make an answer claim the wrong day.
+const DATE_INPUT_FIELDS = new Set(['fromDate', 'toDate', 'date']);
 function sanitizeToolInput(meta: ToolMeta, raw: unknown, allowedDates?: ReadonlySet<string>): Record<string, unknown> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const allowed = new Set([...(meta.requiredInputFields ?? []), ...(meta.optionalInputFields ?? [])]);
@@ -72,7 +79,7 @@ function sanitizeToolInput(meta: ToolMeta, raw: unknown, allowedDates?: Readonly
     if (typeof value === 'boolean') { input[key] = value; continue; }
     if (typeof value === 'number' && Number.isFinite(value)) { input[key] = value; continue; }
     if (typeof value !== 'string' || value.length === 0 || value.length > 120) continue;
-    if (key === 'fromDate' || key === 'toDate') {
+    if (DATE_INPUT_FIELDS.has(key)) {
       if (!LOOP_DATE_PATTERN.test(value)) continue;
       if (allowedDates && allowedDates.size > 0 && !allowedDates.has(value)) continue;
     }
@@ -460,9 +467,16 @@ export class OrchestratorAgent {
     // with a deterministic formatter — no router.route, native/model loop, critic, or composer. ANY
     // pre-call failure runs ZERO prepared calls and falls through to the fresh, non-narrowed route()
     // below; a post-call outcome is answered here (never re-executing the tool).
-    if (this.config.lineAiPreparedSimpleReadEnabled && req.preparedPlan) {
-      const laneResult = await this.executePreparedSimpleRead(ctx, req, startMs);
-      if (laneResult) return laneResult;
+    if (this.config.lineAiPreparedSimpleReadEnabled) {
+      if (req.preparedPlan) {
+        const laneResult = await this.executePreparedSimpleRead(ctx, req, startMs);
+        if (laneResult) return laneResult;
+      } else if (req.intakeIntent === 'BUSINESS_READ_QUESTION') {
+        // The denominator for "the lane answered X of N business reads" on production: a read turn that
+        // arrived with NO prepared plan at all leaves no other trace in this service, so it logs the same
+        // message with its own reason. Ids and enums only — never message text.
+        this.logger.log({ msg: 'line.ai.prepared_simple_read.fallback', requestId: req.requestId, reason: 'no_prepared_plan' });
+      }
     }
 
     // Route intents. Fresh, non-narrowed delegation preserved (Phase 3 shadow may then compare).
