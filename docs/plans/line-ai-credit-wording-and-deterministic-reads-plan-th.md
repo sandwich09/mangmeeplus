@@ -19,12 +19,12 @@
 
 ### H2. Deterministic business reads (R5) — spec §6
 
-- [ ] หาเหตุที่ `text-read-daily-closing` พลาดเลนทั้งที่ family มี (eligibility reason จาก `prepared-simple-read.logic.ts`) และแก้ให้ผ่านโดยไม่ลด security
-- [ ] เพิ่ม family: ภาษี/VAT, สินค้าใกล้หมด, เจ้าหนี้ค้างจ่าย, ลูกค้าใหม่ CRM (ชื่อ tool::shape จริงจาก registry) — formatter + unit tests + security spec เดิมผ่าน + `COMPILED_PREPARED_FAMILY_KEYS` + allowlist default ใน `deploy.sh` (UAT/Production เท่ากัน) + pins re-sync
-- [ ] Grounded breakdown: test ใน `response-composer.agent.spec.ts` ว่าตัวเลขที่โมเดลคำนวณเอง (ผลต่าง/เปอร์เซ็นต์/ผลรวมที่ tool ไม่ให้) ถูกปฏิเสธ → fallback grounded; คำแนะนำไม่มีตัวเลขใหม่ผ่าน; ถ้าพบช่องโหว่ในการ์ด ให้ปิดพร้อม test
-- [ ] แก้ comment ล้าสมัยใน `deploy.sh` ("production still refuses…") ให้ตรงความจริง; ยืนยัน `production-serving-mode.spec.sh` ครอบ family ใหม่
-- [ ] Corpus replay ก่อน/หลัง (Bedrock จริง, รอ owner อนุญาตงบ; harness เดิม, corpus `cf9bce44…`, spend guard) → research doc ส่วนใหม่ "R5 after-run"; ถ้ายังไม่อนุญาต ให้บันทึกว่า W-07 รอ
-- [ ] Docs: spec W-05, W-06 (unit), W-07 (corpus) tick ตามหลักฐาน; task memory
+- [x] หาเหตุที่ `text-read-daily-closing` พลาดเลนทั้งที่ family มี — เหตุคือแผนของ router เอง (ข้อความใน corpus ถามสองข้อ: checklist ปิดร้าน + ยังค้างจ่ายอะไร) ⇒ `not_simple` หรือ `no_simple_answer_shape`; pin ทุก variant ไว้ใน `prepared-simple-read.logic.spec.ts` พร้อม test ว่า read เดี่ยวยัง eligible และ F3 ยังตอบได้ → ไม่แก้ ไม่ลด security
+- [x] เพิ่ม family: `tax.get_vat_summary::single_metric`, `inventory.list_low_stock::list`, `procurement.get_ap_outstanding::single_metric|list`, `crm.get_customer_summary::single_metric|list` — formatter + unit tests (F4–F7) + eligibility tests + security spec เดิมผ่านโดยไม่แก้ + `COMPILED_PREPARED_FAMILY_KEYS` (10 keys) + allowlist default ใน `deploy.sh` (ค่าเดียวกันทั้งสอง env) + pins re-sync
+- [x] Grounded breakdown: tests ใน `response-composer.agent.spec.ts` (ผลต่าง/เปอร์เซ็นต์/ผลรวมย่อย/ค่าเฉลี่ย ถูกปฏิเสธ; คำตอบที่ไม่เพิ่มตัวเลขใหม่ผ่าน); ปิดช่องโหว่ "เลขไทย" ที่ทั้ง numeric guard และ polish guard มองไม่เห็น พร้อม test ทั้งสองทาง
+- [x] แก้ comment ล้าสมัยใน `deploy.sh` ให้ตรงความจริง (parity default ON ทั้งสอง env ตั้งแต่ 2026-08-30); `production-serving-mode.spec.sh` pin ครบทั้ง 10 family
+- [x] Corpus replay ก่อน/หลัง (owner อนุญาต 2026-09-18, Bedrock จริงผ่าน profile `watchdog-bedrock`, corpus `cf9bce44…`, `--max-thb 60`, ใช้จริง THB 16.52): hit 8 → 16/22, routing/success เท่าเดิม, THB/successful −20.4%, calls/turn −41% → research doc §14 "R5 after-run"
+- [x] Docs: spec W-05, W-06, W-07 tick ตามหลักฐาน; task memory
 
 ### H3. รอ owner (ไม่ทำใน wave นี้)
 
