@@ -13,6 +13,7 @@ import {
 import { SIGNUP_PENDING_REVIEW_EVENT_TYPE } from '../../../external-signup/application/signup-admin-notify.service';
 import { LINE_SIGNUP_PUSH_EVENT_TYPE, LINE_SUPPORT_NOTICE_EVENT_TYPE } from '../../../external-signup/application/line-signup-notify.service';
 import { SIGNUP_OPS_ALERT_EVENT_TYPE } from '../../../external-signup/application/signup-ops-alert.service';
+import { EXPENSE_CAPTURE_READ_FINISHED_EVENT } from '../../../expenses/application/services/expense-capture-read-runner.service';
 
 import { POSTMARK_EVENT_TYPE } from '../../../auth/application/email-delivery.service';
 
@@ -100,6 +101,10 @@ export class DrainWorkflowOutboxUseCase {
         LINE_SIGNUP_PUSH_EVENT_TYPE,
         LINE_SUPPORT_NOTICE_EVENT_TYPE,
         SIGNUP_OPS_ALERT_EVENT_TYPE,
+        // The capture read's terminal notification (appendix §4.5): the web polls `read-status`
+        // and the LINE wave drains this event itself. Publishing it as a generic workflow event
+        // would mark it delivered while nobody told the customer their file had been read.
+        EXPENSE_CAPTURE_READ_FINISHED_EVENT,
       ],
     });
     const sweep = this.shadow.startSweep('outbox.drain');
