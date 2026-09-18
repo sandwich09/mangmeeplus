@@ -90,6 +90,12 @@ async function bootstrap() {
     SwaggerModule.setup('docs', app, document);
   }
 
+  // Hold-reconciliation spec §3: SIGTERM must close the listener and then let
+  // `AiBudgetShutdownService` finish the guarded provider calls already running and post their
+  // settle evidence. Without the hooks Nest ignores the signal and the runtime kills the process
+  // with money held and no way for anyone to know what it cost.
+  app.enableShutdownHooks();
+
   const port = config.port;
   const host = config.host;
   await app.listen(port, host);

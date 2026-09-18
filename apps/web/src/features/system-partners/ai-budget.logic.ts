@@ -144,6 +144,9 @@ export const AI_BUDGET_BUCKET_LABELS: Record<string, string> = {
 export const AI_USAGE_BASIS_LABELS: Record<string, string> = {
   PROVIDER_REPORTED: 'ผู้ให้บริการรายงานจริง',
   CONSERVATIVE_ESTIMATE: 'ค่าประมาณเมื่อหมดเวลา',
+  // Hold spec §4.2: an operator closed a stranded hold at the amount that was held for it. Money
+  // with no measurement behind it and no model call attached, which is why it says "operator".
+  OPERATOR_CHARGED_AT_BOUND: 'operator คิดตามยอดที่กันไว้',
   UNKNOWN: 'ไม่ทราบที่มา',
 };
 
@@ -455,4 +458,118 @@ export async function reloadAfterAiBudgetConflict(
   if (!isAiBudgetPolicyConflict(code)) return false;
   await reload();
   return true;
+}
+
+// ── Held credit that needs an operator decision (hold-reconciliation spec §4.1–4.2) ─────────────
+
+/**
+ * Thai for the declared step kinds (`packages/contracts/src/ai-budget-bounds.ts`). One entry per
+ * kind in that table; a kind not listed falls back to its own id, which is what the operator would
+ * have to grep for anyway. The words are the ones the rest of the console already uses: "แชต",
+ * "อ่านเอกสาร", "ลูกค้าสัมพันธ์".
+ */
+export const AI_BUDGET_STEP_KIND_LABELS: Record<string, string> = {
+  'line-intake-text': 'ข้อความจาก LINE',
+  'line-intake-image': 'รูปจาก LINE',
+  'line-turn': 'แชตกับผู้ช่วย AI',
+  'receipt-ocr': 'อ่านใบเสร็จ',
+  'bank-statement': 'อ่านรายการเดินบัญชี',
+  'crm-summary': 'ลูกค้าสัมพันธ์ — สรุป',
+  'crm-reply-draft': 'ลูกค้าสัมพันธ์ — ร่างข้อความตอบ',
+  'crm-intake': 'ลูกค้าสัมพันธ์ — อ่านข้อความเข้า',
+  'crm-customer-profile-extract': 'ลูกค้าสัมพันธ์ — ดึงข้อมูลลูกค้า',
+  'crm-booking-extract': 'ลูกค้าสัมพันธ์ — ดึงข้อมูลนัดหมาย',
+  'crm-insights': 'ลูกค้าสัมพันธ์ — ข้อสังเกต',
+  'crm-broadcast': 'ลูกค้าสัมพันธ์ — ข้อความบรอดแคสต์',
+  'crm-trust-score': 'ลูกค้าสัมพันธ์ — คะแนนความน่าเชื่อถือ',
+  'draft-generate': 'ร่างเอกสารให้',
+};
+
+export const aiCreditHoldStepLabel = (stepKind: string): string =>
+  AI_BUDGET_STEP_KIND_LABELS[stepKind] ?? stepKind;
+
+/** What the row is waiting for. A breach is NOT a stranded hold: it is money already recorded. */
+export const AI_CREDIT_HOLD_KIND_LABELS = {
+  UNRESOLVED_HOLD: 'ยังไม่ทราบผล',
+  BREACH: 'ใช้เกินที่กันไว้',
+} as const;
+
+export const aiCreditHoldKindLabel = (kind: string): string =>
+  AI_CREDIT_HOLD_KIND_LABELS[kind as keyof typeof AI_CREDIT_HOLD_KIND_LABELS] ?? kind;
+
+/**
+ * How long the credit has been held, in the coarsest unit that is still true. Rounded DOWN, so a
+ * hold is never reported as older than it is, and a clock skew that makes `createdAt` look
+ * fractionally future reads "เมื่อสักครู่" instead of a negative age.
+ */
+export function aiCreditHoldAgeLabel(createdAt: string, now: Date = new Date()): string {
+  const ms = now.getTime() - new Date(createdAt).getTime();
+  if (!Number.isFinite(ms) || ms < 60_000) return 'เมื่อสักครู่';
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return `${minutes.toLocaleString('th-TH')} นาที`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours.toLocaleString('th-TH')} ชั่วโมง`;
+  return `${Math.floor(hours / 24).toLocaleString('th-TH')} วัน`;
+}
+
+export type AiCreditHoldAction = 'release' | 'charge_at_bound' | 'acknowledge_breach';
+
+export const AI_CREDIT_HOLD_ACTION_LABELS: Record<AiCreditHoldAction, string> = {
+  release: 'ปล่อยเครดิตที่กันไว้',
+  charge_at_bound: 'คิดตามยอดที่กันไว้',
+  acknowledge_breach: 'รับทราบ',
+};
+
+/**
+ * The confirm dialog's body: what happens to the MONEY, in words, before the operator commits.
+ *
+ * Each action is irreversible in the sense that matters — released credit is spendable again the
+ * moment it is released, and a charge lands in the month's spend — so the sentence names the amount
+ * and the consequence rather than asking "are you sure?".
+ */
+export function aiCreditHoldConsequence(
+  action: AiCreditHoldAction,
+  hold: { upperBoundSatang: number; settledCostSatang: number | null; stepKind: string },
+  reason: string,
+): { title: string; message: string; confirmLabel: string } {
+  const amount = satangToBaht(hold.upperBoundSatang);
+  const step = aiCreditHoldStepLabel(hold.stepKind);
+  const tail = `\nเหตุผล: ${reason}`;
+  if (action === 'release') {
+    return {
+      title: 'ยืนยันปล่อยเครดิตที่กันไว้',
+      message: `${step} · ${amount}\nหลังยืนยัน เครดิต ${amount} จะกลับมาให้ร้านใช้ได้ทันที และจะไม่มีการบันทึกค่าใช้จ่ายจากรายการนี้\n`
+        + `ทำเมื่อมั่นใจว่างานนี้ไม่ได้เรียก AI จริง ถ้ามีหลักฐานการใช้จริงมาถึงภายหลัง ระบบจะบันทึกยอดจริงเพิ่มเอง${tail}`,
+      confirmLabel: 'ปล่อยเครดิตที่กันไว้',
+    };
+  }
+  if (action === 'charge_at_bound') {
+    return {
+      title: 'ยืนยันคิดตามยอดที่กันไว้',
+      message: `${step} · ${amount}\nหลังยืนยัน ระบบจะบันทึก ${amount} เป็นค่าใช้จ่ายจริงของเดือนนี้ และเครดิตที่กันไว้จะกลายเป็นยอดใช้แล้ว\n`
+        + 'ยอดนี้เป็นยอดที่กันไว้ ไม่ใช่ยอดที่วัดจากผู้ให้บริการ จึงไม่นับเป็นจำนวนครั้งที่เรียกโมเดล\n'
+        + `ทำเมื่อมั่นใจว่างานนี้เรียก AI จริงแต่ผลไม่กลับมา${tail}`,
+      confirmLabel: 'คิดตามยอดที่กันไว้',
+    };
+  }
+  const settled = hold.settledCostSatang === null ? amount : satangToBaht(hold.settledCostSatang);
+  return {
+    title: 'ยืนยันรับทราบรายการใช้เกินที่กันไว้',
+    message: `${step} · ใช้จริง ${settled} จากที่กันไว้ ${amount}\nหลังยืนยัน ระบบจะเปิดรับงาน AI ของส่วนนี้อีกครั้ง ยอดที่บันทึกไว้ไม่เปลี่ยน และไม่มีการคืนเครดิต\n`
+      + `ตรวจเพดานของส่วนนี้ก่อน ถ้ายังต่ำเกินไป งานถัดไปจะถูกปฏิเสธเพราะเครดิตไม่พอ${tail}`,
+    confirmLabel: 'รับทราบ',
+  };
+}
+
+/** The one-line help under the table. Why a release is safe even when the operator guesses wrong. */
+export const AI_CREDIT_HOLD_HELP_NOTE =
+  'ถ้ามีหลักฐานการใช้จริงมาถึงภายหลัง ระบบจะบันทึกยอดจริงเพิ่มเอง';
+
+export const AI_CREDIT_HOLD_EMPTY_NOTE = 'ไม่มีรายการค้าง';
+
+/** The 409s these three actions answer; both mean "the list you are looking at is stale". */
+export function isAiCreditHoldConflict(code: string | null | undefined): boolean {
+  return code === 'partner_ai_credit_hold_already_resolved'
+    || code === 'partner_ai_credit_breach_already_acknowledged'
+    || code === 'partner_ai_credit_hold_not_found';
 }

@@ -377,6 +377,9 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       // per-package list does not name either file, so this runner is what executes them.
       'src/modules/line-ai/application/company-ai-budget-reservation.spec.ts',
       'src/modules/line-ai/presentation/http/internal-ai-budget.controller.spec.ts',
+      // Hold reconciliation (hold spec §4): the operator boundary for credit nothing will ever
+      // release by itself. Not in `apps/api/package.json`'s fixed list, so this runner executes it.
+      'src/modules/system-partner-management/application/use-cases/partner-ai-credit-holds.use-case.spec.ts',
       // Phase F: the COMBINED regression — ledger NOGROUP, split denial, receipt persistence,
       // usage, reservations and delivery asserted together on one turn through the real webhook
       // use case. Not in `apps/api/package.json`'s fixed list, so this runner is what executes it.

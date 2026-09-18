@@ -6,7 +6,10 @@ import {formatThaiDateTime} from '@/common/i18n/thai-date';
 import {getPartnerAiAdjustments} from './system-partners.api';
 
 const labels:Record<PartnerAiAdjustmentField,string>={modelId:'รุ่น AI',monthlyBudgetSatang:'เครดิต AI ต่อเดือน',enabled:'การอ่านเอกสารด้วย AI',monthlyLimit:'จำนวนครั้งอ่านเอกสารต่อเดือน',receiptQuotaEnforced:'การจำกัดใบเสร็จตามแพ็กเกจ',
-  budgetMode:'โหมดเครดิต AI',chatMonthlyBudgetSatang:'เพดานแชต AI ต่อเดือน',ocrMonthlyBudgetSatang:'เพดานอ่านเอกสารต่อเดือน',budgetConfigVersion:'เวอร์ชันการตั้งค่าเครดิต',pendingBudgetPolicy:'เครดิตที่ตั้งให้เริ่มเดือนถัดไป'};
+  budgetMode:'โหมดเครดิต AI',chatMonthlyBudgetSatang:'เพดานแชต AI ต่อเดือน',ocrMonthlyBudgetSatang:'เพดานอ่านเอกสารต่อเดือน',budgetConfigVersion:'เวอร์ชันการตั้งค่าเครดิต',pendingBudgetPolicy:'เครดิตที่ตั้งให้เริ่มเดือนถัดไป',
+  creditHoldStatus:'เครดิตที่กันไว้ค้าง',creditBreachAcknowledged:'การรับทราบรายการใช้เกินที่กันไว้'};
+/** The hold statuses the three operator decisions move between (hold spec §4.2). */
+const HOLD_STATUS_TH:Record<string,string>={UNRESOLVED:'ยังไม่ทราบผล',CANCELLED:'ปล่อยเครดิตคืนแล้ว',SETTLED:'คิดเป็นค่าใช้จ่ายแล้ว'};
 const SATANG_FIELDS=new Set<PartnerAiAdjustmentField>(['monthlyBudgetSatang','chatMonthlyBudgetSatang','ocrMonthlyBudgetSatang']);
 const baht=(v:number)=>`${(v/100).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2})} บาท`;
 /** The audit stores a scheduled policy as the scalar `<mode>:<chat>:<ocr>:<YYYY-MM>` (spec §12.4). */
@@ -23,8 +26,10 @@ function value(field:PartnerAiAdjustmentField,v:string|number|boolean|null):stri
     :'ใช้ค่าเริ่มต้นของระบบ';
   if(field==='budgetMode')return v==='SPLIT'?'แยกเพดานแชตกับอ่านเอกสาร':'เครดิตรวมก้อนเดียว';
   if(field==='pendingBudgetPolicy'&&typeof v==='string')return pendingText(v);
+  if(field==='creditHoldStatus'&&typeof v==='string')return HOLD_STATUS_TH[v]??v;
   if(SATANG_FIELDS.has(field)&&typeof v==='number')return baht(v);
-  if(typeof v==='boolean')return field==='receiptQuotaEnforced'?(v?'บังคับโควตา':'นับอย่างเดียว'):(v?'เปิด':'ปิด');
+  if(typeof v==='boolean')return field==='receiptQuotaEnforced'?(v?'บังคับโควตา':'นับอย่างเดียว')
+    :field==='creditBreachAcknowledged'?(v?'รับทราบแล้ว':'ยังไม่รับทราบ'):(v?'เปิด':'ปิด');
   return typeof v==='number'?v.toLocaleString('th-TH'):v;
 }
 export default function PartnerAiAdjustmentHistory({companyId}:{companyId:string}) {

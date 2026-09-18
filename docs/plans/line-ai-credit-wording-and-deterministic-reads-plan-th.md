@@ -31,13 +31,14 @@
 
 ### H3. เคลียร์เครดิตที่กันไว้ค้าง — [spec แยก](../specs/line-ai-credit-hold-reconciliation-spec-th.md) (owner อนุมัติ 2026-09-18)
 
-เริ่มหลัง H1 merge (ใช้คำว่า "เครดิต AI" และแตะไฟล์หน้าแอดมินชุดเดียวกัน)
+เริ่มหลัง H1 merge (ใช้คำว่า "เครดิต AI" และแตะไฟล์หน้าแอดมินชุดเดียวกัน) — **IMPLEMENTED + verified ในเครื่อง 2026-09-18**, ยังไม่ deploy
 
-- [ ] ชั้น 1 gateway: durable settle retry นอกเส้นทางคำขอ + graceful drain บน SIGTERM (J-01, J-02) — SHARED byte-identical
-- [ ] ชั้น 2 API: `GET …/ai-credit-holds` (sweep แล้วอ่าน), actions release / charge_at_bound / acknowledge_breach พร้อม reason + audit + history; migration additive (`breachAcknowledgedAt/By`), `AiUsageBasis` + `OPERATOR_CHARGED_AT_BOUND`, Thai error texts; pg spec (J-03, J-04, J-07)
-- [ ] ชั้น 2 web: section "เครดิตที่กันไว้ค้าง" ในหน้า AI และโควตา + ประวัติ; browser evidence (J-05)
-- [ ] ชั้น 3: sweep `ai_credit_holds_unresolved` + config `AI_CREDIT_HOLD_ALERT_AFTER_HOURS` (J-06)
-- [ ] Docs: spec J-01…J-07 tick ตามหลักฐาน; J-08 หลัง UAT; task memory
+- [x] ชั้น 1 gateway: durable settle retry นอกเส้นทางคำขอ + graceful drain บน SIGTERM (J-01, J-02) — SHARED byte-identical: `ai-budget-durability.ts` (คิว + in-flight gauge ระดับโปรเซส), `ai-budget-shutdown.service.ts`, `main.ts` `enableShutdownHooks()`; ไม่มี envelope ⇒ ไม่แตะทั้งคิวและ gauge
+- [x] ชั้น 2 API: `GET …/ai-credit-holds` (sweep แล้วอ่าน), actions release / charge_at_bound / acknowledge_breach พร้อม reason + audit + history; migration additive `20260918100000_ai_credit_hold_reconciliation` (`breachAcknowledgedAt/By` + ขยาย `usageBasis` CHECK), `AiUsageBasis` + `OPERATOR_CHARGED_AT_BOUND`, Thai error texts; pg spec `company-ai-credit-holds.pg.spec.ts` (J-03, J-04, J-07)
+- [x] ชั้น 2 web: section "เครดิตที่กันไว้ค้าง" ในหน้า AI และโควตา + ประวัติ; [browser evidence](../qa/evidence/line-ai-credit-holds-2026-09-18/README.md) 12 subject × 1440/390 (J-05)
+- [x] ชั้น 3: sweep `ai_credit_holds_unresolved` + config `AI_CREDIT_HOLD_ALERT_AFTER_HOURS` (default 24) บน reminder-sweep ตัวเดิม (J-06)
+- [x] Docs: spec J-01…J-07 tick แล้ว; J-08 ยังเปิดรอ UAT; [ADR 0013 §14](../adr/0013-ai-budget-split-reservations.md#14-implementation-notes-h3); task memory
+- [ ] ค้าง: ยังไม่มี platform role แบบ read-only จริง (shell gate เป็น role-based) — owner decision, บันทึกไว้ใน evidence README และ ADR §14
 
 ### H4. รอ owner (ไม่ทำใน wave นี้)
 

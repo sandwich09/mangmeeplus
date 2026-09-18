@@ -61,6 +61,12 @@ const CODE_LABELS: Record<string, string> = {
   // spent PLUS what is currently reserved for AI calls in flight this month. Nothing is clamped —
   // the operator raises the total, or waits for the reserved amount to settle.
   partner_ai_budget_total_below_committed: 'เครดิตรวมใหม่ต่ำกว่ายอดที่ใช้ไปแล้วบวกยอดที่กันไว้ของเดือนนี้ กรุณาตั้งเครดิตรวมให้ไม่น้อยกว่ายอดใช้บวกยอดที่กันไว้ หรือรอให้รายการที่กันไว้เสร็จก่อน',
+  // Hold reconciliation (hold spec §4.2). Each one tells the operator what to do next, because the
+  // list is refreshed automatically after any of these three — the row simply will not be there.
+  partner_ai_credit_hold_not_found: 'ไม่พบรายการเครดิตที่กันไว้นี้ในบริษัทนี้ กรุณาโหลดรายการล่าสุดแล้วตรวจสอบอีกครั้ง',
+  partner_ai_credit_hold_already_resolved: 'รายการนี้ถูกปิดไปแล้ว อาจมีผลการใช้จริงเข้ามาหรือมีผู้ดูแลอีกคนจัดการก่อน กรุณาโหลดรายการล่าสุดก่อนทำรายการใหม่',
+  partner_ai_credit_breach_already_acknowledged: 'รายการใช้เกินที่กันไว้นี้ถูกรับทราบไปแล้ว กรุณาโหลดรายการล่าสุดเพื่อดูสถานะปัจจุบัน',
+  partner_ai_credit_hold_action_failed: 'ทำรายการกับเครดิตที่กันไว้ไม่สำเร็จ ยังไม่มีการเปลี่ยนแปลงใด กรุณาโหลดรายการล่าสุดและลองอีกครั้ง',
   platform_ai_budget_default_below_split_allocation: 'เครดิตเริ่มต้นใหม่ต่ำกว่าผลรวมเพดานของบริษัทที่ใช้เครดิตเริ่มต้น กรุณาแก้เพดานของบริษัทเหล่านั้น หรือตั้งเครดิตเฉพาะบริษัทก่อนลดเครดิตเริ่มต้น',
   CONTROL_OFFER_RECEIPTS_INVALID: 'ตรวจจำนวนใบเสร็จของแพ็กเกจ กรอกจำนวนเต็มตั้งแต่ 1 ถึง 178,956,970 ใบต่อรอบเดือน รายปีคูณ 12 ให้อัตโนมัติ',
   CONTROL_OFFER_PRICE_INVALID: 'ตรวจราคาของแพ็กเกจ ยอดรวมภาษีต้องอยู่ระหว่าง 10 ถึง 999,999.99 บาท และทศนิยมไม่เกิน 2 ตำแหน่ง',

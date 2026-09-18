@@ -80,6 +80,8 @@ export class AppConfigService {
   get lineSignupAdminAlertBudgetExhaustedPerDay(): number {
     return this.config.LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY;
   }
+  /** Hold spec §5: how old an UNRESOLVED AI credit hold must be before ops is told. */
+  get aiCreditHoldAlertAfterHours(): number { return this.config.AI_CREDIT_HOLD_ALERT_AFTER_HOURS; }
   get lineSignupBusinessDays(): string { return this.config.LINE_SIGNUP_BUSINESS_DAYS; }
   get lineSignupBusinessHours(): string { return this.config.LINE_SIGNUP_BUSINESS_HOURS; }
   /** Review G-01: enforcing the monthly slip ceiling is a first for every existing shop, so it
