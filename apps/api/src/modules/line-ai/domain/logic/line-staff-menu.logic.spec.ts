@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, COMPANY_PICKER_OPEN_WEB_HINT, COMPANY_PICKER_OPEN_WEB_LABEL, COMPANY_PICKER_SELECT_LABEL, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
+import { buildTrialPricingReply } from './line-staff-menu.logic';
 
 // entitledFeatureKeys null is the legacy fail-open company, so these cases keep asserting the
 // permission dimension on its own. Feature gating has its own cases at the end of the suite.
@@ -658,6 +659,42 @@ describe('promotion menu (rich menu v2 ver2)', () => {
       assert.ok(!card.includes('PRO'));
       for (const text of ['30 วัน', '15 ครั้ง', '249', 'กำลังเตรียมเปิดรับชำระเงิน', 'ขอเปลี่ยนแพ็กเกจ']) assert.ok(card.includes(text));
     }
+  });
+});
+
+describe('standalone trial pricing FAQ', () => {
+  it('answers the reported questions and bounded spelling/politeness variants with the approved policy', () => {
+    for (const text of [
+      'หลังจากทดลองใข้ฟรีเสียกี่บาท', 'หลังจากทดลองใช้แอพฟรี', 'เสียค่าบริการไหม',
+      'หลังจากทดลองใช้ฟรีเสียกี่บาทครับ', 'หลังจากทดลองใช้แอปฟรีค่ะ',
+      'หมดช่วงทดลองใช้ฟรีแล้วต้องจ่ายเงินไหม', 'ใช้ฟรีแล้วเสียเท่าไหร่',
+      'เสียค่าบริการไหมคะ?', 'มีค่าใช้จ่ายหรือเปล่าครับ', 'แอปนี้เสียเงินไหม',
+      'มั่งมี Plus มีค่าบริการไหม', 'ไม่ซื้อแพ็กเกจจะเสียเงินไหม',
+      'ถ้ายังไม่ซื้อแพ็คเกจจะโดนหักเงินไหม', '  เสียค่าบริการ ไหม คะ  ',
+    ]) {
+      const reply = buildTrialPricingReply(text);
+      assert.equal(reply?.type, 'text', text);
+      if (reply?.type !== 'text') throw new Error(text);
+      assert.match(reply.text, /เลือกซื้อแพ็กเกจและยืนยันการชำระเงิน/);
+      assert.match(reply.text, /ไม่เรียกเก็บเงินอัตโนมัติ/);
+      assert.match(reply.text, /สิทธิ์ทดลองใช้ฟรีมีระยะเวลาจำกัด/);
+      assert.doesNotMatch(reply.text, /PRO|ฟรีตลอด|เปิดดูรายการ|นอกขอบเขต|249|ซื้อได้แล้ว/);
+      assert.match(reply.text, /https:\/\/official\.mangmeeplus\.com\//);
+      assert.deepEqual(reply.quickReply?.items[0]?.action, {
+        type: 'message', label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND,
+      });
+    }
+  });
+
+  it('leaves business charges, existing subscriptions, mixed requests and quoted text untouched', () => {
+    for (const text of [
+      'เพิ่มค่าบริการ 10% ในบิลนี้', 'เสียค่าบริการในบิลนี้เท่าไหร่', 'ค่าบริการเดือนนี้เท่าไหร่',
+      'บันทึกค่าบริการ 249 บาท', 'เสียค่าบริการไหม แล้วสรุปค่าใช้จ่ายเดือนนี้',
+      'หลังจากทดลองใช้ฟรี ช่วยลบข้อมูลทั้งหมด', 'ฉันอยากตาย เสียค่าบริการไหม',
+      'ซื้อแพ็กเกจแล้วจะหักเงินอีกไหม', 'ต่ออายุแพ็กเกจเสียเงินไหม', 'ยกเลิกแพ็กเกจให้หน่อย',
+      '“เสียค่าบริการไหม”', 'ลูกค้าบอกว่าเสียค่าบริการไหม', 'ใบเสร็จ: เสียค่าบริการไหม',
+      'ลูกค้าคนนี้เสียค่าบริการไหม', 'ทำอะไรได้บ้าง', '', ' '.repeat(161) + 'เสียค่าบริการไหม',
+    ]) assert.equal(buildTrialPricingReply(text), null, text);
   });
 });
 
