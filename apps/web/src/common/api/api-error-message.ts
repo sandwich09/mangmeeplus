@@ -156,6 +156,11 @@ const CODE_LABELS: Record<string, string> = {
   expense_capture_company_paid_personal_portion: 'บริษัทจ่ายเต็มจำนวนแต่มีของส่วนตัวรวมอยู่ ยังไม่รองรับการเรียกคืนส่วนตัวจากบริษัท',
   expense_capture_totals_identity_failed: 'ยอดที่แบ่งได้ยังไม่ตรงกับยอดรวมของเอกสาร กรุณาแจ้งผู้ดูแลระบบพร้อมรหัสอ้างอิง',
   expense_capture_tax_review_pending: 'รอตรวจภาษีก่อน จึงจะนำไปทำใบเบิกได้',
+  // W05 — สร้างรายการค่าใช้จ่ายจากการจัดส่วนที่ยอมรับแล้ว และการสร้างใหม่
+  expense_capture_handoff_consumed: 'รายการค่าใช้จ่ายที่สร้างจากงานนี้ถูกนำไปใช้แล้ว (จ่ายเงิน บันทึกบัญชี ใบเบิก หรือใบรับรอง) กรุณาแก้ไขที่รายการค่าใช้จ่ายนั้นแทน',
+  expense_capture_handoff_totals_invalid: 'ยอดของรายการที่จะสร้างยังไม่ตรงกับยอดที่ตรวจไว้ กรุณาแจ้งผู้ดูแลระบบพร้อมรหัสอ้างอิง',
+  expense_capture_handoff_blocked: 'ยังมีรายการที่ต้องตรวจก่อน จึงจะสร้างรายการค่าใช้จ่ายได้',
+  expense_capture_no_company_portion: 'การจัดส่วนนี้สรุปว่าไม่มีส่วนของบริษัท จึงไม่มีรายการค่าใช้จ่ายให้สร้าง',
   // Spec §16.4 / UXE-21 and UXE-22: changing or adding a receipt file. The first two are "someone
   // moved this while you were choosing" — the file you sent is not evidence of anything yet, so the
   // way out is to reopen the record. The third is a state that has to be handled where it happened.

@@ -662,10 +662,31 @@ export type ExpenseSummary = {
    * `aiVerificationSummaryJson`; absent on rows captured before §5.2, which read as `verified`.
    */
   dateStatus?: ExpenseDocumentDateStatus;
+  /**
+   * The capture group this expense is a derived source of (appendix §5), or null/absent on every
+   * ordinary expense. Present on the LIST so a row can be badged "จากกลุ่มหลักฐาน" without a
+   * second request — the group itself is never a row here, it holds no money (A39).
+   */
+  captureGroupId?: string | null;
   uploadedAt: string;
   createdByUserId: string;
   createdAt: string;
   updatedAt: string;
+};
+
+/**
+ * Where a derived source came from, for the expense detail page (appendix §5, A39/A46).
+ * The amounts are the reviewed allocation's, copied into `aiVerificationSummaryJson` at handoff:
+ * `paidTotal` is what actually left the buyer, `companyAmount` what this expense is.
+ */
+export type ExpenseCaptureLineage = {
+  groupId: string;
+  scopeKey: string | null;
+  allocationId: string | null;
+  webPath: string;
+  paidTotal: string | null;
+  companyAmount: string | null;
+  personalAmount: string | null;
 };
 
 export type ExpenseTotalsIdentity = {
@@ -820,6 +841,8 @@ export type ExpenseDetail = ExpenseSummary & {
   postingError: string | null;
   payments: ExpensePaymentSummary[];
   substituteReceiptEvidence: SubstituteReceiptEvidenceSummary | null;
+  /** Appendix §5: set only on a derived source of a capture group; null on everything else. */
+  captureGroup?: ExpenseCaptureLineage | null;
 };
 
 export type CreateExpenseDraftInput = {

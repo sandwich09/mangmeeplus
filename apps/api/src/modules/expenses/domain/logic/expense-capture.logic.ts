@@ -165,7 +165,28 @@ export type CaptureGroupStateForActions = {
     outcome: CaptureAllocationOutcome;
     blockers: readonly ExpenseCaptureBlocker[];
   } | null;
+  /**
+   * W05 §9: this group already handed off, and every derived source it produced is STILL unused —
+   * so it may be divided again and the next handoff rewrites them in place. False the moment one
+   * is paid, posted, claimed or certified.
+   */
+  reopenable?: boolean;
 };
+
+/**
+ * W05: a handed-off group is not a dead end and not an open one. Either its batch is untouched —
+ * and the whole review → accept → handoff loop reopens, rewriting the same expenses (§9 regenerate,
+ * §3.2 "มีของส่วนตัวด้วย") — or something downstream has used it and the correction belongs to that
+ * expense, not to a second division of the same purchase (A11/A44).
+ */
+function handedOffActions(state: CaptureGroupStateForActions): ExpenseCaptureAction[] {
+  if (!state.canMutate || !state.reopenable) return [];
+  const actions: ExpenseCaptureAction[] = ['review'];
+  const allocation = state.allocation;
+  if (allocation?.status === 'PREVIEW' && allocation.outcome !== 'BLOCKED') actions.push('accept_allocation');
+  if (allocation?.status === 'ACCEPTED' && allocation.outcome === 'READY') actions.push('handoff');
+  return actions;
+}
 
 /**
  * What the group is waiting for, and what the caller may do — decided HERE, on the server, and
@@ -174,6 +195,14 @@ export type CaptureGroupStateForActions = {
  */
 export function captureGroupBlockers(state: CaptureGroupStateForActions): ExpenseCaptureBlocker[] {
   const blockers: ExpenseCaptureBlocker[] = [];
+  // W05: handed off and already used somewhere. Say where the work continues instead of offering
+  // a division of a purchase that has already been claimed, paid or certified.
+  if (state.status === 'HANDED_OFF' && !state.reopenable) {
+    return [{
+      code: 'expense_capture_handoff_consumed',
+      messageTh: 'รายการค่าใช้จ่ายที่สร้างจากงานนี้ถูกนำไปใช้แล้ว กรุณาแก้ไขที่รายการค่าใช้จ่ายนั้นแทน',
+    }];
+  }
   if (state.status !== 'OPEN') return blockers;
   if (state.storedFiles === 0) {
     blockers.push({
@@ -210,6 +239,7 @@ export function captureGroupBlockers(state: CaptureGroupStateForActions): Expens
 }
 
 export function captureGroupAllowedActions(state: CaptureGroupStateForActions): ExpenseCaptureAction[] {
+  if (state.status === 'HANDED_OFF') return handedOffActions(state);
   if (state.status !== 'OPEN') return [];
   const actions: ExpenseCaptureAction[] = [];
   // The intake flag closes NEW evidence only (A47): everything already in the group stays
@@ -224,7 +254,7 @@ export function captureGroupAllowedActions(state: CaptureGroupStateForActions): 
     actions.push('accept_allocation');
   }
   // Only an accepted allocation with company money to hand over can become derived sources (W05).
-  if (state.canMutate && allocation?.status === 'ACCEPTED' && allocation.outcome === 'READY' && state.handoffState === 'NONE') {
+  if (state.canMutate && allocation?.status === 'ACCEPTED' && allocation.outcome === 'READY' && state.handoffState !== 'ACTIVE') {
     actions.push('handoff');
   }
   if (state.canMutate && state.handoffState !== 'ACTIVE') actions.push('close');

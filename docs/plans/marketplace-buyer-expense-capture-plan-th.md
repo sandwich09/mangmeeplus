@@ -224,19 +224,19 @@ IG: IG06/IG10/IG11/IG12
 ### W05 — Eligible sources และการใช้ยอดครั้งเดียว
 
 Owner: API expense/reimbursement/database
-Status: Planned
+Status: Delivered 2026-09-19 (W05) — ดู appendix §18 สำหรับ deviations
 Depends on: W04 / D01 / D03 / D06 สำหรับ funding route ที่จะใช้
 
 จุดแก้หลัก: [expense repository](../../apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts), [funding guard](../../apps/api/src/modules/expenses/infrastructure/substitute-funding.guard.ts), [source resolver](../../apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts), [duplicate detection](../../apps/api/src/modules/expenses/application/services/expense-duplicate-detection.ts)
 
-- [ ] สร้าง derived expense sources ตาม legal/document scope จาก accepted snapshot แบบ atomic/idempotent batch; ไม่มี expense รวมอีกก้อนที่ลงเงินได้
-- [ ] แต่ละsourceเต็มยอดส่วนบริษัท เช่น810; ไม่overridefull-source resolverให้เบิก810จากsource1290
-- [ ] employee source ที่มีหลักฐานครบต้องผ่าน [readReimbursementSource](../../apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts:18) ก่อนใบเบิก: payer D06, lines/netPayable/totals identity และ tax guards; source รอใบรับรองสร้างเพื่อเข้า W06 ได้แต่ยังไม่ claim-ready ทดสอบ rejection ก่อน ISSUED และ resolver ผ่านหลัง W06 เมื่อ facts อื่นครบ
-- [ ] company-funded ใช้ expense/certificate validation ของ route นั้น ไม่บังคับ reimbursement resolver และไม่ใช้ข้อห้าม VAT/WHT ของ employee route เหมารวม; source รอ review ไม่เปิด final mutation
-- [ ] canonical lineage/permission/actual payer binding พร้อม one-active funding route และoperation keysที่query/lockได้
-- [ ] retries/concurrent users/route-switch/group aliasesไม่ใช้ยอดซ้ำ; valid siblingsแชร์หลักฐานได้ผ่านlineageที่ตรวจแล้วโดยไม่ปิดambiguous-source guardรวม
-- [ ] merge/split/cancel/regenerateไม่ย้ายconsumed sourceหรือลายเซ็น; คืนสิทธิใช้ใหม่เฉพาะเมื่อพิสูจน์ว่าไม่มีผลเงิน/active consumptionค้าง
-- [ ] source0ไม่ถูกmaterializeเป็นpositive-money expense; unknownยังต้องreview
+- [x] สร้าง derived expense sources ตาม legal/document scope จาก accepted snapshot แบบ atomic/idempotent batch; ไม่มี expense รวมอีกก้อนที่ลงเงินได้ — W05: `POST …/handoff`, `handoffBatchKey = <groupId>:<allocationId>` + unique `(companyId, captureGroupId, captureScopeKey)`; pg spec พิสูจน์ two concurrent → หนึ่ง batch
+- [x] แต่ละsourceเต็มยอดส่วนบริษัท เช่น810; ไม่overridefull-source resolverให้เบิก810จากsource1290 — W05: header/lines มาจาก scope ตรง ๆ, `expenseTotalsIdentityError` ตรวจก่อนเขียน
+- [x] employee source ที่มีหลักฐานครบต้องผ่าน [readReimbursementSource](../../apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts:18) ก่อนใบเบิก: payer D06, lines/netPayable/totals identity และ tax guards — W05 pg spec: payer ผ่าน / ผู้อัปโหลดไม่ผ่าน; `claimReady` ของ scope บอกว่าใบเบิกทำได้แล้วหรือยัง (ใบรับรอง = W06)
+- [x] company-funded ใช้ expense/certificate validation ของ route นั้น ไม่บังคับ reimbursement resolver — W05: route COMPANY → `payerUserId` เป็น null, tax คัดลอกตาม facts, source เป็น NEEDS_REVIEW ไม่มี final mutation
+- [x] canonical lineage/permission/actual payer binding พร้อม one-active funding route และoperation keysที่query/lockได้ — W05: 4 lineage columns + `handoffBatchKey`; สิทธิ์ §6 (creator `expense.create|expense.receipt.upload` หรือ `expense.review`)
+- [x] retries/concurrent users/route-switch/group aliasesไม่ใช้ยอดซ้ำ; valid siblingsแชร์หลักฐานได้ผ่านlineageที่ตรวจแล้ว — W05 pg spec: replay คืน batch เดิม; named sibling ผ่าน, ไม่ระบุ/นอกกลุ่มยัง ambiguous
+- [x] merge/split/cancel/regenerateไม่ย้ายconsumed sourceหรือลายเซ็น; คืนสิทธิใช้ใหม่เฉพาะเมื่อพิสูจน์ว่าไม่มีผลเงิน/active consumptionค้าง — W05: `findHandoffConsumers` (status/paid/posted/claim/claim projection/certificate) → 409 `expense_capture_handoff_consumed`
+- [x] source0ไม่ถูกmaterializeเป็นpositive-money expense; unknownยังต้องreview — W05: `NO_COMPANY_PORTION` ตอบ 409 ไม่สร้างแถว, scope ที่ยังมี blocker ถูกปฏิเสธก่อนเขียน
 
 - [ ] siblingdocuments/ภาพ/PDF/ใบเต็มรูปต่างเลขของซื้อเดียวมีpurchase lineageและconsumptionเดียว; เชื่อมเมื่อหลักฐานหรือreviewยืนยัน ไม่ใช้hash/ยอด/brandเป็นคำตัดสินเดียว
 - [ ] primary replacement, same-purchase supplemental และnew-purchase routingไม่สร้างderivedsourceซ้ำหรือเปลี่ยนreserved/consumedscope; concurrentcomplete/retryผ่านA71/A72
@@ -287,7 +287,7 @@ Depends on: W05 และ W06 สำหรับ certificate branch
 - [ ] employee-funded eligible sourcesเข้าใบเบิกเดิมเต็มsourceพร้อมsnapshot; ordinary company expense sourceไม่ถูกconfirm/payขนานกัน
 - [ ] company-fundedเข้าexpense pathตามfacts; ของส่วนตัว/unsupportedtaxต้องมีrepresentationหรือเก็บรอ ไม่ซ่อนเงินออกจริง
 - [ ] submit/approve/finance projection/confirm/payment revalidategroup/source/payer/policy revisionและlocks; ไม่มีfinal mutationจากAI
-- [ ] list/count/source-picker/export/evidence/LINEแสดงrolesและยอดcompanyตามownerของการรับรู้ ไม่บวกparent+source+projectionซ้ำ
+- [x] list/count/export/evidence/LINEไม่บวกparent+source+projectionซ้ำ (ส่วน source-picker/projection ยังเป็นงาน W07) — W05: `ExpenseSummary.captureGroupId`, `ExpenseDetail.captureGroup`, `evidenceRef` เพิ่ม group, `source_channel` fallback `OTHER`; pg spec เดินจริงผ่าน `listExpenses`/dashboard pending/`listRecentLineCaptures` ว่ามีครั้งเดียวและกลุ่มไม่โผล่ (A39)
 - [ ] ทุกdownload/deep link/exportตรวจสิทธิoriginal evidence; child accessไม่ขยายสิทธิparentและไม่เท่ากับredactส่วนตัว
 - [ ] invoice/refundตามมาเชื่อมpurchaseเดิม; signed/paid/postedใช้correct/reverseตามระบบ ไม่silent overwrite
 - [ ] retryจากresponseหายและpartial downstream workกลับdestinationเดิมพร้อมสถานะจริง

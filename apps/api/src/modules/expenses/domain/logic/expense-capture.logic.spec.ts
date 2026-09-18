@@ -138,6 +138,37 @@ describe('server-derived blockers and actions', () => {
   it('withholds close while a handoff is active, because derived expenses exist', () => {
     assert.equal(captureGroupAllowedActions(state({ handoffState: 'ACTIVE' })).includes('close'), false);
   });
+
+  /**
+   * W05 §9: a handed-off group is neither open nor finished. While every derived source it made is
+   * still unused it may be divided again — the next handoff rewrites the same expenses; the moment
+   * one is used it offers nothing, and says where the work continues instead.
+   */
+  it('reopens the review loop on a handed-off group whose batch is untouched', () => {
+    const handedOff = (over: Record<string, unknown> = {}) => state({
+      status: 'HANDED_OFF', handoffState: 'ACTIVE', reopenable: true, ...over,
+    });
+    assert.deepEqual(captureGroupAllowedActions(handedOff()), ['review']);
+    assert.deepEqual(
+      captureGroupAllowedActions(handedOff({ allocation: { status: 'PREVIEW', outcome: 'READY', blockers: [] } })),
+      ['review', 'accept_allocation'],
+    );
+    assert.deepEqual(
+      captureGroupAllowedActions(handedOff({ allocation: { status: 'ACCEPTED', outcome: 'READY', blockers: [] } })),
+      ['review', 'handoff'],
+    );
+    // Never `close` and never `add_file`: the batch of expenses is what those would orphan.
+    assert.equal(captureGroupAllowedActions(handedOff()).includes('close'), false);
+    assert.deepEqual(captureGroupBlockers(handedOff()), []);
+  });
+
+  it('offers nothing and names the reason once a derived source has been used', () => {
+    const consumed = state({ status: 'HANDED_OFF', handoffState: 'ACTIVE', reopenable: false });
+    assert.deepEqual(captureGroupAllowedActions(consumed), []);
+    assert.deepEqual(captureGroupBlockers(consumed).map((blocker) => blocker.code), ['expense_capture_handoff_consumed']);
+    // A viewer who may not change the group is offered nothing either way.
+    assert.deepEqual(captureGroupAllowedActions(state({ status: 'HANDED_OFF', handoffState: 'ACTIVE', reopenable: true, canMutate: false })), []);
+  });
 });
 
 describe('LINE intake attempt file label', () => {

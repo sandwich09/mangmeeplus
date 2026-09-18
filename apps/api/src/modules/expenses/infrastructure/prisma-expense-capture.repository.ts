@@ -34,6 +34,8 @@ export type CaptureReadJobRow = {
   updatedAt: Date;
   completedAt: Date | null;
 };
+/** §9: the statuses a derived source may still be released from — nothing downstream has used it. */
+const CAPTURE_UNCONSUMED_STATUSES = ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] as const;
 
 export type CaptureGroupRow = {
   id: string;
@@ -51,7 +53,10 @@ export type CaptureGroupRow = {
   /** `{ [scopeKey]: 'payment' | 'document' | 'order' | { date } }` — the reviewed date per scope. */
   expenseDateSourceJson: unknown;
   handoffState: 'NONE' | 'ACTIVE' | 'RELEASED';
+  /** `<groupId>:<allocationId>`, or `<groupId>:auto` for the §3.2 LINE auto handoff. */
+  handoffBatchKey: string | null;
   acceptedAllocationId: string | null;
+  lineChatKeyHash: string | null;
   note: string | null;
   closedReason: string | null;
   closedAt: Date | null;
@@ -541,6 +546,103 @@ export class PrismaExpenseCaptureRepository {
       where: { companyId, captureGroupId: groupId },
       select: { id: true, captureScopeKey: true, status: true, grandTotalAmount: true, payerUserId: true },
       orderBy: { id: 'asc' },
+    });
+  }
+
+  // ─── W05: handoff, regenerate and the single-use fence (appendix §9) ─────────
+
+  /** Everything a regenerate has to judge before it may delete or rewrite a derived source. */
+  listDerivedSourceStates(db: CaptureDb, companyId: string, groupId: string) {
+    return db.expenseRecord.findMany({
+      where: { companyId, captureGroupId: groupId },
+      select: {
+        id: true, captureScopeKey: true, captureAllocationId: true, status: true, updatedAt: true,
+        paidAmount: true, paymentStatus: true, postingStatus: true, journalEntryId: true,
+        sourceReimbursementRequestId: true, grandTotalAmount: true, netPayableAmount: true,
+        primaryAttachmentId: true, createdByUserId: true,
+      },
+      orderBy: { id: 'asc' },
+    });
+  }
+
+  /**
+   * §9 regenerate: which derived sources are already USED, and by what. A source that reached any
+   * of these has consequences outside the group — money, a claim, a signature, a ledger entry — and
+   * releasing it would move a decision somebody else already made (A44/A11). Returns one reason per
+   * expense, the first that applies, so the message can name the thing to go and look at.
+   */
+  async findHandoffConsumers(db: CaptureDb, companyId: string, groupId: string): Promise<Array<{ expenseId: string; reason: string }>> {
+    const rows = await this.listDerivedSourceStates(db, companyId, groupId);
+    if (rows.length === 0) return [];
+    const ids = rows.map((row) => row.id);
+    const [claims, certificates] = await Promise.all([
+      db.reimbursementLine.findMany({
+        where: {
+          companyId, linkedExpenseId: { in: ids },
+          request: { status: { notIn: ['REJECTED', 'CANCELLED', 'VOIDED'] } },
+        },
+        select: { linkedExpenseId: true },
+      }),
+      db.expenseSubstituteReceiptEvidence.findMany({
+        where: { companyId, expenseId: { in: ids }, status: { in: ['PREPARED', 'PAYER_CERTIFIED', 'ISSUED'] } },
+        select: { expenseId: true },
+      }),
+    ]);
+    const claimed = new Set(claims.map((row) => row.linkedExpenseId));
+    const certified = new Set(certificates.map((row) => row.expenseId));
+
+    const consumers: Array<{ expenseId: string; reason: string }> = [];
+    for (const row of rows) {
+      const reason = !(CAPTURE_UNCONSUMED_STATUSES as readonly string[]).includes(row.status) ? 'status'
+        : row.paymentStatus !== 'UNPAID' || Number(row.paidAmount ?? 0) > 0 ? 'paid'
+          : row.postingStatus !== 'not_required' || row.journalEntryId ? 'posted'
+            : row.sourceReimbursementRequestId ? 'claim_projection'
+              : claimed.has(row.id) ? 'claim'
+                : certified.has(row.id) ? 'certificate'
+                  : null;
+      if (reason) consumers.push({ expenseId: row.id, reason });
+    }
+    return consumers;
+  }
+
+  /**
+   * Drop a derived source the group is rebuilding. Its `AttachmentLink` rows go; the attachment
+   * OBJECTS stay, because the group still claims the same bytes (§2.3 — the delete use case marks
+   * them deleted, which is exactly the difference between deleting an expense and releasing one).
+   * `ExpenseLine`, `ReceiptExtraction` and the duplicate-candidate rows cascade with the record.
+   */
+  async deleteDerivedSource(db: CaptureDb, companyId: string, expenseId: string, expectedUpdatedAt: Date): Promise<boolean> {
+    await db.attachmentLink.deleteMany({ where: { companyId, targetType: 'expense.record', targetId: expenseId } });
+    const deleted = await db.expenseRecord.deleteMany({ where: { companyId, id: expenseId, updatedAt: expectedUpdatedAt } });
+    return deleted.count === 1;
+  }
+
+  /**
+   * §9 regenerate + §3.2: may a handed-off group be reviewed and accepted again? Only when it
+   * actually produced derived sources and NONE of them has been used — a group whose expense is
+   * already in a claim, paid or certified is corrected at that expense, never by re-dividing the
+   * purchase behind it (A11/A44). A handed-off group with no derived source at all stays refused:
+   * there is nothing to rewrite, so reopening it would orphan a batch key.
+   */
+  async isReopenableAfterHandoff(db: CaptureDb, companyId: string, groupId: string): Promise<boolean> {
+    const rows = await this.listDerivedSourceStates(db, companyId, groupId);
+    if (rows.length === 0) return false;
+    return (await this.findHandoffConsumers(db, companyId, groupId)).length === 0;
+  }
+
+  /** The accepted allocation a handoff is allowed to use, read under the group lock. */
+  findAcceptedAllocation(db: CaptureDb, companyId: string, groupId: string, allocationId: string) {
+    return db.expenseCaptureAllocation.findFirst({
+      where: { companyId, groupId, id: allocationId, status: 'ACCEPTED' },
+    });
+  }
+
+  /** STORED files in manifest order — the evidence a derived source links as its receipt. */
+  listStoredFiles(db: CaptureDb, companyId: string, groupId: string) {
+    return db.expenseCaptureFile.findMany({
+      where: { companyId, groupId, uploadState: 'STORED' },
+      orderBy: { position: 'asc' },
+      select: { id: true, attachmentId: true, position: true },
     });
   }
 

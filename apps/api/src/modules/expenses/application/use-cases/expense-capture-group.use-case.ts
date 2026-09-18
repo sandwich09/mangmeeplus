@@ -323,6 +323,10 @@ export class GetExpenseCaptureGroupUseCase {
     });
 
     const stored = fileDtos.filter((file) => file.uploadState === 'STORED');
+    // W05 §9: only asked once the batch exists, so an ordinary group costs no extra query.
+    const reopenable = group.handoffState === 'ACTIVE'
+      ? await this.capture.isReopenableAfterHandoff(db, ctx.companyId, groupId)
+      : false;
     const state = {
       status: group.status,
       handoffState: group.handoffState,
@@ -331,6 +335,7 @@ export class GetExpenseCaptureGroupUseCase {
       hasFacts: observations.length > 0,
       intakeEnabled: this.config.expenseCaptureGroupIntakeEnabled,
       canMutate: this.access.canMutate(ctx, group),
+      reopenable,
       // W04a: what the current allocation says decides the rest of the blockers and the actions.
       allocation: allocation ? {
         status: allocation.status,

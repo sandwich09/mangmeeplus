@@ -73,6 +73,8 @@ export type AccountantIndexSource = {
   wetSignedScanAttachmentIds?: string[];
   webUrl: string;
   notes: string | null;
+  /** Capture appendix §5: set only on a derived source; it rides in the evidence ref, not a column. */
+  captureGroupId?: string | null;
 };
 
 const CAPTURE_SOURCE_TO_CHANNEL: Record<string, string> = {
@@ -82,8 +84,29 @@ const CAPTURE_SOURCE_TO_CHANNEL: Record<string, string> = {
   API_INTERNAL: 'API',
 };
 
-export function evidenceRef(expenseNumber: string | null, expenseId: string, attachmentId: string): string {
-  return `${expenseNumber ?? expenseId}-${attachmentId.slice(-8)}`;
+/**
+ * The channel an accountant reads, never the storage enum. A capture source this map does not know
+ * is a NEW enum value, and leaking its name into the one artefact that leaves the system turns an
+ * internal rename into a changed export column; `OTHER` says the same thing and stays stable.
+ */
+export function exportSourceChannel(captureSource: string): string {
+  return CAPTURE_SOURCE_TO_CHANNEL[captureSource] ?? 'OTHER';
+}
+
+/**
+ * The key that ties an index row to a file in the evidence folder. A derived source carries its
+ * capture group in it (appendix §5) so an accountant holding two receipts split out of one payment
+ * can see they came from one job — and an ordinary expense's ref is byte-for-byte what it was, so
+ * every existing package and golden still reconciles.
+ */
+export function evidenceRef(
+  expenseNumber: string | null,
+  expenseId: string,
+  attachmentId: string,
+  captureGroupId?: string | null,
+): string {
+  const base = `${expenseNumber ?? expenseId}-${attachmentId.slice(-8)}`;
+  return captureGroupId ? `${base}-g${captureGroupId.slice(-8)}` : base;
 }
 
 /** Accounting period = YYYY-MM from document date, falling back to uploaded date. */
@@ -111,7 +134,7 @@ export function buildAccountantIndexRow(source: AccountantIndexSource): Accounta
     document_date: source.expenseDate ?? '',
     expense_number: source.expenseNumber ?? source.expenseId,
     expense_status: source.status,
-    source_channel: CAPTURE_SOURCE_TO_CHANNEL[source.captureSource] ?? source.captureSource,
+    source_channel: exportSourceChannel(source.captureSource),
     source_document_type: source.sourceDocumentType,
     tax_evidence_status: source.taxEvidenceStatus,
     tax_evidence_reason: source.taxEvidenceReasonCode ?? '',
@@ -145,8 +168,8 @@ export function buildAccountantIndexRow(source: AccountantIndexSource): Accounta
     funding_source: source.fundingSource ?? '',
     certifying_payer_name: source.certifyingPayerName ?? '',
     substitute_evidence_provenance: source.substituteEvidenceProvenance ?? '',
-    primary_evidence_ref: primary ? evidenceRef(source.expenseNumber, source.expenseId, primary.id) : '',
-    supporting_evidence_refs: supporting.map((a) => evidenceRef(source.expenseNumber, source.expenseId, a.id)).join(','),
+    primary_evidence_ref: primary ? evidenceRef(source.expenseNumber, source.expenseId, primary.id, source.captureGroupId) : '',
+    supporting_evidence_refs: supporting.map((a) => evidenceRef(source.expenseNumber, source.expenseId, a.id, source.captureGroupId)).join(','),
     web_url: source.webUrl,
     notes: source.notes ?? '',
     additional_charges_amount: source.additionalChargesAmount,
@@ -213,11 +236,12 @@ export type ManifestEntrySource = {
   downloadUrl: string;
   downloadUrlExpiresAt: string;
   webUrl: string;
+  captureGroupId?: string | null;
 };
 
 export function buildManifestEntry(source: ManifestEntrySource): EvidenceManifestEntry {
   return {
-    evidence_ref: evidenceRef(source.expenseNumber, source.expenseId, source.attachment.id),
+    evidence_ref: evidenceRef(source.expenseNumber, source.expenseId, source.attachment.id, source.captureGroupId),
     expense_id: source.expenseId,
     attachment_id: source.attachment.id,
     file_name: source.attachment.originalFileName,
