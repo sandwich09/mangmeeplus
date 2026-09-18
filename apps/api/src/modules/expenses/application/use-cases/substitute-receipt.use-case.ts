@@ -1,5 +1,5 @@
 import { EXPENSE_RECEIPT_SOURCE_TYPES, expenseEvidenceAssessment, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
-import { BadRequestException, ConflictException, ForbiddenException, HttpException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, Inject, Injectable, Logger, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
   hasCheckBillSubstituteRoutingResolution,
   isCivilDate,
@@ -32,6 +32,12 @@ import {
   type SubstituteReceiptSnapshot,
 } from '../../domain/logic/substitute-receipt.logic';
 import { assertSubstitutePaymentDetails, assertSubstituteFactsComplete } from '../../domain/logic/substitute-funding.logic';
+import { assembleCaptureFacts } from '../../domain/logic/expense-capture-facts.logic';
+import {
+  captureCertificateGate,
+  captureFundingRouteRefusal,
+  type CaptureCertificateRefusal,
+} from '../../domain/logic/expense-capture-certificate.logic';
 import { hasBlockingNonExpenseClassification } from '../../domain/logic/expense-status.logic';
 import { renderSubstitutePaperPreviewPages, renderSubstituteReceiptPaperArtifactPdf, renderSubstituteReceiptPdf } from '../../domain/logic/substitute-receipt-pdf.logic';
 import { renderPaymentVoucherSvg } from '../../domain/logic/payment-voucher.logic';
@@ -232,6 +238,39 @@ function validateEligibility(
   throw new BadRequestException(issue);
 }
 
+function captureRefusal(refusal: CaptureCertificateRefusal): HttpException {
+  const body = { code: refusal.code, message: refusal.message };
+  return refusal.status === 409 ? new ConflictException(body) : new UnprocessableEntityException(body);
+}
+
+/**
+ * W06 §12.1/§12.2/§14.3 — the capture-only additions to eligibility, on top of the unchanged rules
+ * above. Applies to a source the handoff derived from an ACCEPTED allocation; a converted expense
+ * (§3.1) or a LINE auto-handoff source (§3.2) has no allocation to reserve and stays on the
+ * ordinary path it already had.
+ */
+async function assertCaptureSourceEligible(
+  repo: PrismaExpenseRepository,
+  companyId: string,
+  expense: ExpenseRecordWithRelations,
+  fundingSource: 'COMPANY' | 'PERSONAL_ADVANCE',
+): Promise<void> {
+  if (!expense.captureGroupId || !expense.captureAllocationId) return;
+  const context = await repo.findCaptureCertificateContext(companyId, expense);
+  if (!context) throw captureRefusal({
+    code: 'substitute_capture_allocation_superseded', status: 409,
+    message: 'การจัดส่วนเปลี่ยนไปแล้ว กรุณาสร้างรายการใหม่ก่อนทำใบรับรอง',
+  });
+  const gate = captureCertificateGate({
+    group: context.group,
+    source: { captureAllocationId: expense.captureAllocationId, captureScopeKey: expense.captureScopeKey ?? null },
+    facts: assembleCaptureFacts(context.observations),
+  });
+  if (gate.outcome === 'refused') throw captureRefusal(gate);
+  const routeRefusal = captureFundingRouteRefusal(context.group.fundingRoute, fundingSource);
+  if (routeRefusal) throw captureRefusal(routeRefusal);
+}
+
 async function buildSnapshot(
   repo: PrismaExpenseRepository,
   companyId: string,
@@ -256,8 +295,14 @@ async function buildSnapshot(
       certificationText: buildSubstituteCertificationText(original.payer.name, payerPosition, true),
       correction: { evidenceId: evidence.correctionOfEvidenceId, reason: evidence.correctionReason ?? '' } };
   }
+  // W06/D04: recorded inside the snapshot, so the certified checksum covers the share this
+  // document states. A correction reuses the original snapshot above and keeps its own block.
+  const captureAllocation = expense.captureAllocationId
+    ? await repo.findSubstituteCaptureAllocation(companyId, expense)
+    : null;
   return {
     schemaVersion: 2,
+    ...(captureAllocation ? { captureAllocation } : {}),
     fundingSource: evidence.fundingSource ?? null,
     paymentStatement: evidence.fundingSource === 'COMPANY' ? `ชำระด้วยเงินของ${company.name.startsWith('บริษัท') ? '' : 'บริษัท '}${company.name} เต็มจำนวน` : 'พนักงานสำรองจ่ายด้วยเงินส่วนตัวเต็มจำนวน',
     documentNumber: evidence.documentNumber,
@@ -527,6 +572,7 @@ export class PrepareSubstituteReceiptUseCase {
     if (!expense) throw new NotFoundException(`Expense ${expenseId} not found.`);
     assertBranch(ctx, expense.branchId);
     validateEligibility(expense, input.reasonCode, { routeCheckBill: input.routeCheckBill === true });
+    await assertCaptureSourceEligible(this.repo, ctx.companyId, expense, input.fundingSource);
     if (!amendment && (!hasCurrentExpenseEvidenceReview(expense) || expenseEvidenceAssessment(expense)?.route !== 'SUBSTITUTE_RECEIPT')) {
       throw new BadRequestException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: 'ระบุปัญหาเอกสารและบันทึกการตรวจล่าสุดก่อนจัดทำใบรับรอง' });
     }

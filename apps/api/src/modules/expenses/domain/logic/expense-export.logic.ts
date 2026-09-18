@@ -106,7 +106,12 @@ export function evidenceRef(
   captureGroupId?: string | null,
 ): string {
   const base = `${expenseNumber ?? expenseId}-${attachmentId.slice(-8)}`;
-  return captureGroupId ? `${base}-g${captureGroupId.slice(-8)}` : base;
+  return captureGroupId ? `${base}-${captureGroupRef(captureGroupId)}` : base;
+}
+
+/** How a capture group is named to a human: the same token the evidence ref already carries. */
+export function captureGroupRef(captureGroupId: string): string {
+  return `g${captureGroupId.slice(-8)}`;
 }
 
 /** Accounting period = YYYY-MM from document date, falling back to uploaded date. */

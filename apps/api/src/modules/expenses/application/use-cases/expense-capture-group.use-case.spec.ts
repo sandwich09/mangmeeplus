@@ -211,9 +211,17 @@ class FakeCaptureRepo {
     return [...this.expenses.values()]
       .filter((expense) => expense.companyId === companyId && expense.captureGroupId === groupId)
       .map((expense) => ({
-        id: expense.id, captureScopeKey: expense.captureScopeKey ?? null, status: expense.status,
+        id: expense.id, captureScopeKey: expense.captureScopeKey ?? null,
+        captureAllocationId: expense.captureAllocationId ?? null, status: expense.status,
         grandTotalAmount: expense.grandTotalAmount ?? '0', payerUserId: expense.payerUserId ?? null,
       }));
+  }
+
+  /** W06: certificates the test seeded on a derived source, keyed the way the repository keys them. */
+  certificates = new Map<string, any>();
+
+  async listDerivedCertificates(_db: any, _companyId: string, expenseIds: string[]) {
+    return new Map(expenseIds.filter((id) => this.certificates.has(id)).map((id) => [id, this.certificates.get(id)]));
   }
 }
 
@@ -727,7 +735,11 @@ describe('converting an expense into a capture group (§3.1)', () => {
     const result = await app.convert.execute(ctx(), 'e-1', { expectedUpdatedAt: updatedAt.toISOString() });
     const detail = await app.get.execute(ctx({ permissions: ['expense.read'] }), result.groupId);
     assert.equal(detail.facts?.documents[0]?.issuer.taxId, '0105560012345');
-    assert.deepEqual(detail.derivedSources, [{ expenseId: 'e-1', scopeKey: 'issuer:0105560012345', status: 'NEEDS_REVIEW', grandTotalAmount: '321.50', payerUserId: null }]);
+    // W06: a §3.1 conversion has no allocation to reserve, so the ordinary certificate rules decide.
+    assert.deepEqual(detail.derivedSources, [{
+      expenseId: 'e-1', scopeKey: 'issuer:0105560012345', status: 'NEEDS_REVIEW', grandTotalAmount: '321.50',
+      payerUserId: null, certificate: null, nextAction: 'certificate_available',
+    }]);
   });
 
   it('refuses a stale expectedUpdatedAt', async () => {

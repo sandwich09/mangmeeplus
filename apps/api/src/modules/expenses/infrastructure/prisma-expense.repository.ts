@@ -21,6 +21,7 @@ import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastr
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import { expenseTotalsIdentity } from '../domain/logic/expense-totals.logic';
 import { expenseCaptureWebPath } from '../domain/logic/expense-capture.logic';
+import { captureGroupRef } from '../domain/logic/expense-export.logic';
 import type {
   ExpenseRecord, ExpenseRecordWithRelations, ExpensePaymentRecord, CreateExpenseRecordInput,
   UpdateExpenseRecordInput, ExpenseLineInput, PaginatedExpenses, SignatureAssetRecord, SubstituteReceiptEvidenceRecord,
@@ -169,6 +170,28 @@ function captureLineage(expense: ExpenseRecord): import('@watchdog-bms/contracts
     paidTotal: money('paidTotal'),
     companyAmount: money('companyAmount'),
     personalAmount: money('personalAmount'),
+  };
+}
+
+/** W06/D04: the allocation block the certificate snapshot prints, or null when there is nothing to
+ *  state — an ordinary expense, an auto-handoff source (§3.2, no allocation) or a pre-W05 row. */
+export function captureAllocationSnapshot(
+  expense: ExpenseRecord,
+  allocation: { groupRevision: number; policyVersion: string } | null,
+): import('../domain/logic/substitute-receipt.logic').SubstituteReceiptCaptureAllocation | null {
+  const lineage = captureLineage(expense);
+  if (!lineage?.allocationId || !expense.captureScopeKey || !allocation) return null;
+  if (lineage.paidTotal === null || lineage.companyAmount === null) return null;
+  return {
+    groupId: lineage.groupId,
+    groupRef: captureGroupRef(lineage.groupId),
+    allocationId: lineage.allocationId,
+    allocationRevision: allocation.groupRevision,
+    scopeKey: expense.captureScopeKey,
+    paidTotal: lineage.paidTotal,
+    companyAmount: lineage.companyAmount,
+    personalAmount: lineage.personalAmount ?? '0.00',
+    policyVersion: allocation.policyVersion,
   };
 }
 
@@ -1234,6 +1257,48 @@ export class PrismaExpenseRepository {
       ? await this.prisma.client.branch.findFirst({ where: { id: branchId, companyId }, select: { name: true } })
       : null;
     return { name: company.registeredName?.trim() || company.name, nameSource: company.registeredName?.trim() ? 'REGISTERED' : 'DISPLAY_NAME', taxId: company.taxId, branchName: branch?.name ?? null };
+  }
+
+  /**
+   * W06 §12/§14.3: the two capture reads a certificate needs, and nothing else. `allocation` is
+   * what the printed share statement is revision-stamped with; `group`/`observations` are what the
+   * gate judges (reserved allocation, paid document, no mismatch). Both are null-safe for the
+   * ordinary expenses that make up almost every certificate.
+   */
+  async findCaptureCertificateContext(companyId: string, expense: ExpenseRecord): Promise<{
+    group: { handoffState: string; acceptedAllocationId: string | null; fundingRoute: string };
+    allocation: { groupRevision: number; policyVersion: string } | null;
+    observations: import('../domain/logic/expense-capture-facts.logic').CaptureObservationRow[];
+  } | null> {
+    if (!expense.captureGroupId) return null;
+    const [group, allocation, observations] = await Promise.all([
+      this.prisma.client.expenseCaptureGroup.findFirst({
+        where: { companyId, id: expense.captureGroupId },
+        select: { handoffState: true, acceptedAllocationId: true, fundingRoute: true },
+      }),
+      expense.captureAllocationId
+        ? this.prisma.client.expenseCaptureAllocation.findFirst({
+          where: { companyId, id: expense.captureAllocationId },
+          select: { groupRevision: true, policyVersion: true },
+        })
+        : Promise.resolve(null),
+      this.prisma.client.expenseCaptureObservation.findMany({
+        where: { companyId, groupId: expense.captureGroupId, stale: false },
+        orderBy: [{ createdAt: 'asc' }],
+        select: { id: true, fileId: true, expenseId: true, version: true, source: true, payloadJson: true },
+      }),
+    ]);
+    return group ? { group, allocation, observations } : null;
+  }
+
+  /** The snapshot block alone: preview, certify and approve rebuild the same document (§12.2). */
+  async findSubstituteCaptureAllocation(companyId: string, expense: ExpenseRecord) {
+    if (!expense.captureAllocationId) return null;
+    const allocation = await this.prisma.client.expenseCaptureAllocation.findFirst({
+      where: { companyId, id: expense.captureAllocationId },
+      select: { groupRevision: true, policyVersion: true },
+    });
+    return captureAllocationSnapshot(expense, allocation);
   }
 
   async findSubstituteEvidenceAttachments(

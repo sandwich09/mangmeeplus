@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import { branchScopeWhere, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
+import type { ExpenseCaptureDerivedCertificateDto } from '@watchdog-bms/contracts';
 
 export type CaptureDb = Prisma.TransactionClient | PrismaService['client'];
 
@@ -544,9 +545,32 @@ export class PrismaExpenseCaptureRepository {
   listDerivedSources(db: CaptureDb, companyId: string, groupId: string) {
     return db.expenseRecord.findMany({
       where: { companyId, captureGroupId: groupId },
-      select: { id: true, captureScopeKey: true, status: true, grandTotalAmount: true, payerUserId: true },
+      select: {
+        id: true, captureScopeKey: true, captureAllocationId: true, status: true,
+        grandTotalAmount: true, payerUserId: true,
+      },
       orderBy: { id: 'asc' },
     });
+  }
+
+  /**
+   * W06 §12/A40: the certificate each derived source currently has, so the group can say which shop
+   * is issued and which is still waiting. Superseded versions are history, not the current state.
+   */
+  async listDerivedCertificates(db: CaptureDb, companyId: string, expenseIds: string[]) {
+    if (expenseIds.length === 0) return new Map<string, ExpenseCaptureDerivedCertificateDto>();
+    const rows = await db.expenseSubstituteReceiptEvidence.findMany({
+      where: { companyId, expenseId: { in: expenseIds }, status: { not: 'SUPERSEDED' } },
+      select: { id: true, expenseId: true, status: true, signatureMode: true, fundingSource: true, documentNumber: true, version: true },
+      orderBy: { version: 'asc' },
+    });
+    return new Map(rows.map((row) => [row.expenseId, {
+      evidenceId: row.id,
+      status: row.status as ExpenseCaptureDerivedCertificateDto['status'],
+      signatureMode: row.signatureMode as ExpenseCaptureDerivedCertificateDto['signatureMode'],
+      fundingSource: row.fundingSource as ExpenseCaptureDerivedCertificateDto['fundingSource'],
+      documentNumber: row.documentNumber,
+    }]));
   }
 
   // ─── W05: handoff, regenerate and the single-use fence (appendix §9) ─────────
