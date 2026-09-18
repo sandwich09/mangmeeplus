@@ -5,6 +5,8 @@ import {
   formatDateClarifyQuestion,
   formatThaiDate,
   isAmbiguousDateCandidate,
+  formatThaiPeriodRange,
+  isAmbiguousPeriodCandidate,
   mapThaiDigits,
   toIsoDate,
   VALUE_ASSUMPTIONS,
@@ -324,5 +326,169 @@ describe('receipt mode reads a printed Thai DD/MM date, with the assumption reco
       extractValueCandidates('จ่าย 250 บาท วันที่ 7-6-69', TODAY),
       extractValueCandidates('จ่าย 250 บาท วันที่ 7-6-69', TODAY, { documentContext: 'chat' }),
     );
+  });
+});
+
+// ── period resolution (period-resolution spec §3.1, P-01) ────────────────────
+//
+// Table-driven: one row per vocabulary case the spec's §3.1 table requires, plus the turnover,
+// leap-day, era and future/fuzzy edges. `today` is INJECTED in every row — nothing here reads the
+// clock — and every row also proves the candidate's span is an exact substring of the source text
+// (ADR 0011: the user's message is annotated, never rewritten).
+
+type PeriodRow = {
+  text: string;
+  today: string;
+  /** Expected first candidate, or null when the text must produce none. */
+  expect: null | {
+    kind: string;
+    fromDate: string;
+    toDate: string;
+    monthKey?: string;
+    source?: string;
+    label?: string;
+    assumptions?: string[];
+  };
+};
+
+const FRIDAY = '2026-09-18';
+
+const PERIOD_TABLE: PeriodRow[] = [
+  // days
+  { text: 'วันนี้ขายได้เท่าไหร่', today: FRIDAY, expect: { kind: 'day', fromDate: FRIDAY, toDate: FRIDAY, source: 'relative', label: 'วันนี้ (18 ก.ย. 2569)' } },
+  { text: 'how much did we sell today', today: FRIDAY, expect: { kind: 'day', fromDate: FRIDAY, toDate: FRIDAY } },
+  { text: 'ยอดขายเมื่อวาน', today: FRIDAY, expect: { kind: 'day', fromDate: '2026-09-17', toDate: '2026-09-17', label: 'เมื่อวาน (17 ก.ย. 2569)' } },
+  { text: 'เมื่อวานนี้ใช้เงินเท่าไหร่', today: FRIDAY, expect: { kind: 'day', fromDate: '2026-09-17', toDate: '2026-09-17' } },
+  { text: 'yesterday sales', today: FRIDAY, expect: { kind: 'day', fromDate: '2026-09-17', toDate: '2026-09-17' } },
+  { text: 'ยอดขายวันก่อน', today: FRIDAY, expect: { kind: 'day', fromDate: '2026-09-17', toDate: '2026-09-17', assumptions: ['day_before_read_as_yesterday'] } },
+  { text: 'ปิดยอดเมื่อวานซืน', today: FRIDAY, expect: { kind: 'day', fromDate: '2026-09-16', toDate: '2026-09-16' } },
+  { text: 'sales the day before yesterday', today: FRIDAY, expect: { kind: 'day', fromDate: '2026-09-16', toDate: '2026-09-16' } },
+  { text: 'ยอดขาย 3 วันก่อน', today: FRIDAY, expect: { kind: 'day', fromDate: '2026-09-15', toDate: '2026-09-15' } },
+  { text: 'ยอดขาย ๓ วันก่อน', today: FRIDAY, expect: { kind: 'day', fromDate: '2026-09-15', toDate: '2026-09-15' } },
+  { text: 'sales 5 days ago', today: FRIDAY, expect: { kind: 'day', fromDate: '2026-09-13', toDate: '2026-09-13' } },
+  // several days back
+  { text: 'ค่าใช้จ่าย 7 วันล่าสุด', today: FRIDAY, expect: { kind: 'last_n_days', fromDate: '2026-09-12', toDate: FRIDAY, assumptions: ['last_n_days_include_today'] } },
+  { text: 'ยอดขาย 3 วันที่ผ่านมา', today: FRIDAY, expect: { kind: 'last_n_days', fromDate: '2026-09-16', toDate: FRIDAY } },
+  { text: 'expenses last 7 days', today: FRIDAY, expect: { kind: 'last_n_days', fromDate: '2026-09-12', toDate: FRIDAY } },
+  { text: 'ยอดขาย 30 วันย้อนหลัง', today: FRIDAY, expect: { kind: 'last_n_days', fromDate: '2026-08-20', toDate: FRIDAY } },
+  // weeks — Monday to Sunday, Bangkok
+  { text: 'สัปดาห์นี้ขายได้เท่าไหร่', today: FRIDAY, expect: { kind: 'week', fromDate: '2026-09-14', toDate: FRIDAY, assumptions: ['week_monday_sunday', 'period_clamped_to_today'] } },
+  { text: 'อาทิตย์นี้ขายได้เท่าไหร่', today: FRIDAY, expect: { kind: 'week', fromDate: '2026-09-14', toDate: FRIDAY } },
+  { text: 'sales this week', today: FRIDAY, expect: { kind: 'week', fromDate: '2026-09-14', toDate: FRIDAY } },
+  { text: 'ค่าใช้จ่ายสัปดาห์ที่แล้ว', today: FRIDAY, expect: { kind: 'week', fromDate: '2026-09-07', toDate: '2026-09-13', label: 'สัปดาห์ที่แล้ว (7–13 ก.ย. 2569)' } },
+  { text: 'ค่าใช้จ่ายอาทิตย์ที่แล้ว', today: FRIDAY, expect: { kind: 'week', fromDate: '2026-09-07', toDate: '2026-09-13' } },
+  { text: 'ค่าใช้จ่ายสัปดาห์ก่อน', today: FRIDAY, expect: { kind: 'week', fromDate: '2026-09-07', toDate: '2026-09-13' } },
+  { text: 'expenses last week', today: FRIDAY, expect: { kind: 'week', fromDate: '2026-09-07', toDate: '2026-09-13' } },
+  { text: 'ยอดขาย 2 สัปดาห์ที่แล้ว', today: FRIDAY, expect: { kind: 'week', fromDate: '2026-08-31', toDate: '2026-09-06' } },
+  // a week that starts on a Monday and one that ends on a Sunday
+  { text: 'สัปดาห์นี้', today: '2026-09-14', expect: { kind: 'week', fromDate: '2026-09-14', toDate: '2026-09-14' } },
+  { text: 'สัปดาห์นี้', today: '2026-09-20', expect: { kind: 'week', fromDate: '2026-09-14', toDate: '2026-09-20' } },
+  // months
+  { text: 'เดือนนี้ใช้เงินไปเท่าไหร่แล้ว', today: FRIDAY, expect: { kind: 'month', fromDate: '2026-09-01', toDate: FRIDAY, monthKey: '2026-09', assumptions: ['period_clamped_to_today'] } },
+  { text: 'expenses this month', today: FRIDAY, expect: { kind: 'month', fromDate: '2026-09-01', toDate: FRIDAY, monthKey: '2026-09' } },
+  { text: 'ค่าใช้จ่ายเดือนที่แล้ว', today: FRIDAY, expect: { kind: 'month', fromDate: '2026-08-01', toDate: '2026-08-31', monthKey: '2026-08', label: 'เดือนที่แล้ว (1–31 ส.ค. 2569)' } },
+  { text: 'ค่าใช้จ่ายเดือนก่อน', today: FRIDAY, expect: { kind: 'month', fromDate: '2026-08-01', toDate: '2026-08-31', monthKey: '2026-08' } },
+  { text: 'expenses last month', today: FRIDAY, expect: { kind: 'month', fromDate: '2026-08-01', toDate: '2026-08-31', monthKey: '2026-08' } },
+  // turnover: last month across the year boundary, and the leap February
+  { text: 'ค่าใช้จ่ายเดือนที่แล้ว', today: '2026-01-15', expect: { kind: 'month', fromDate: '2025-12-01', toDate: '2025-12-31', monthKey: '2025-12' } },
+  { text: 'ค่าใช้จ่ายเดือนที่แล้ว', today: '2024-03-10', expect: { kind: 'month', fromDate: '2024-02-01', toDate: '2024-02-29', monthKey: '2024-02' } },
+  { text: 'ยอดขายเมื่อวาน', today: '2024-03-01', expect: { kind: 'day', fromDate: '2024-02-29', toDate: '2024-02-29' } },
+  { text: 'ยอดขายเมื่อวาน', today: '2026-01-01', expect: { kind: 'day', fromDate: '2025-12-31', toDate: '2025-12-31' } },
+  { text: 'ยอดขาย 3 เดือนที่แล้ว', today: '2026-01-15', expect: { kind: 'month', fromDate: '2025-10-01', toDate: '2025-10-31', monthKey: '2025-10' } },
+  { text: 'ยอดขาย 13 เดือนที่แล้ว', today: FRIDAY, expect: { kind: 'month', fromDate: '2025-08-01', toDate: '2025-08-31', monthKey: '2025-08' } },
+  // past the N ceiling: recognised but not pinned down → no candidate, the tool uses its default
+  { text: 'ยอดขาย 25 เดือนที่แล้ว', today: FRIDAY, expect: null },
+  // month names ± year (พ.ศ. / ค.ศ. / two digits by the normalizer's existing era rules)
+  { text: 'ยอดขาย ส.ค. 68', today: FRIDAY, expect: { kind: 'month', fromDate: '2025-08-01', toDate: '2025-08-31', monthKey: '2025-08', source: 'named_month', assumptions: ['two_digit_year_resolved_thai_month'] } },
+  { text: 'ยอดขายสิงหาคม 2568', today: FRIDAY, expect: { kind: 'month', fromDate: '2025-08-01', toDate: '2025-08-31', monthKey: '2025-08', assumptions: ['era_read_be', 'year_read_be'] } },
+  { text: 'sales in August 2025', today: FRIDAY, expect: { kind: 'month', fromDate: '2025-08-01', toDate: '2025-08-31', monthKey: '2025-08' } },
+  { text: 'ยอดขาย ส.ค.', today: FRIDAY, expect: { kind: 'month', fromDate: '2026-08-01', toDate: '2026-08-31', monthKey: '2026-08', assumptions: ['year_assumed_latest_past'] } },
+  { text: 'ยอดขาย ธ.ค.', today: FRIDAY, expect: { kind: 'month', fromDate: '2025-12-01', toDate: '2025-12-31', monthKey: '2025-12', assumptions: ['year_assumed_latest_past'] } },
+  // quarters (calendar)
+  { text: 'ไตรมาสนี้ขายได้เท่าไหร่', today: FRIDAY, expect: { kind: 'quarter', fromDate: '2026-07-01', toDate: FRIDAY } },
+  { text: 'ไตรมาสที่แล้วขายได้เท่าไหร่', today: FRIDAY, expect: { kind: 'quarter', fromDate: '2026-04-01', toDate: '2026-06-30' } },
+  { text: 'ยอดขาย Q2 2568', today: FRIDAY, expect: { kind: 'quarter', fromDate: '2025-04-01', toDate: '2025-06-30', source: 'explicit' } },
+  { text: 'ยอดขายไตรมาส 1', today: FRIDAY, expect: { kind: 'quarter', fromDate: '2026-01-01', toDate: '2026-03-31' } },
+  // years (calendar, never fiscal)
+  { text: 'ยอดขายปีนี้', today: FRIDAY, expect: { kind: 'year', fromDate: '2026-01-01', toDate: FRIDAY, assumptions: ['period_clamped_to_today'] } },
+  { text: 'ยอดขายปีที่แล้ว', today: FRIDAY, expect: { kind: 'year', fromDate: '2025-01-01', toDate: '2025-12-31', label: 'ปีที่แล้ว (1 ม.ค. – 31 ธ.ค. 2568)' } },
+  { text: 'ยอดขายปีก่อน', today: FRIDAY, expect: { kind: 'year', fromDate: '2025-01-01', toDate: '2025-12-31' } },
+  { text: 'sales last year', today: FRIDAY, expect: { kind: 'year', fromDate: '2025-01-01', toDate: '2025-12-31' } },
+  { text: 'ยอดขายปี 2568', today: FRIDAY, expect: { kind: 'year', fromDate: '2025-01-01', toDate: '2025-12-31', source: 'explicit', assumptions: ['era_read_be', 'year_read_be'] } },
+  { text: 'sales in year 2025', today: FRIDAY, expect: { kind: 'year', fromDate: '2025-01-01', toDate: '2025-12-31' } },
+  // explicit ranges
+  { text: 'ค่าใช้จ่าย 1-15 ก.ย.', today: FRIDAY, expect: { kind: 'range', fromDate: '2026-09-01', toDate: '2026-09-15', source: 'explicit', label: '1–15 ก.ย. 2569' } },
+  { text: 'ตั้งแต่ 1 ถึง 15 กันยายน', today: FRIDAY, expect: { kind: 'range', fromDate: '2026-09-01', toDate: '2026-09-15' } },
+  { text: 'from 1 to 15 Sep', today: FRIDAY, expect: { kind: 'range', fromDate: '2026-09-01', toDate: '2026-09-15' } },
+  { text: 'ยอดขาย 1/9–15/9/68', today: FRIDAY, expect: { kind: 'range', fromDate: '2025-09-01', toDate: '2025-09-15' } },
+  { text: 'ยอดขาย 2026-09-01 ถึง 2026-09-15', today: FRIDAY, expect: { kind: 'range', fromDate: '2026-09-01', toDate: '2026-09-15' } },
+  // future periods carry no candidate: there is no data to read
+  { text: 'ยอดขายพรุ่งนี้', today: FRIDAY, expect: null },
+  { text: 'ยอดขายเดือนหน้า', today: FRIDAY, expect: null },
+  { text: 'ยอดขายปีหน้า', today: FRIDAY, expect: null },
+  { text: 'sales next week', today: FRIDAY, expect: null },
+  // words nobody can pin down stay out (the tool then uses its default and the answer says so)
+  { text: 'ต้นเดือนนี้ขายได้เท่าไหร่', today: FRIDAY, expect: null },
+  { text: 'ปลายเดือนขายได้เท่าไหร่', today: FRIDAY, expect: null },
+  { text: 'ช่วงนี้ขายได้เท่าไหร่', today: FRIDAY, expect: null },
+  { text: 'เร็ว ๆ นี้ขายดีไหม', today: FRIDAY, expect: null },
+  // a question that merely CONTAINS a month-abbreviation substring is not a month question:
+  // `มีค` (มี.ค. without its dots) is inside the extremely common `มีค่าใช้จ่าย`
+  { text: 'เดือนนี้มีค่าใช้จ่ายเท่าไหร่', today: FRIDAY, expect: { kind: 'month', fromDate: '2026-09-01', toDate: FRIDAY, monthKey: '2026-09' } },
+];
+
+describe('resolvePeriodCandidates (spec §3.1)', () => {
+  for (const row of PERIOD_TABLE) {
+    it(`${row.text} @ ${row.today} → ${row.expect ? `${row.expect.kind} ${row.expect.fromDate}..${row.expect.toDate}` : 'no period'}`, () => {
+      const periods = extractValueCandidates(row.text, row.today).periods ?? [];
+      if (!row.expect) {
+        assert.deepEqual(periods, [], `expected no period for "${row.text}"`);
+        return;
+      }
+      const hit = periods[0];
+      assert.ok(hit, `expected a period candidate for "${row.text}"`);
+      assert.equal(hit.kind, row.expect.kind);
+      assert.equal(hit.fromDate, row.expect.fromDate);
+      assert.equal(hit.toDate, row.expect.toDate);
+      assert.equal(hit.monthKey, row.expect.monthKey);
+      if (row.expect.source) assert.equal(hit.source, row.expect.source);
+      if (row.expect.label) assert.equal(hit.label, row.expect.label);
+      for (const assumption of row.expect.assumptions ?? []) {
+        assert.ok(hit.assumptions.includes(assumption), `missing assumption ${assumption} on "${row.text}"`);
+      }
+      // ADR 0011: annotation only — the span must be a literal slice of what the user typed.
+      assert.ok(row.text.includes(hit.span), `span "${hit.span}" is not a substring of the message`);
+    });
+  }
+
+  it('resolves several periods in one message and keeps them in reading order', () => {
+    const periods = extractValueCandidates('เมื่อวานกับเดือนที่แล้วต่างกันเท่าไหร่', FRIDAY).periods ?? [];
+    assert.deepEqual(periods.map((p) => `${p.kind}:${p.fromDate}`), ['day:2026-09-17', 'month:2026-08-01']);
+  });
+
+  it('emits no periods at all without an injected today (the resolver never reads the clock)', () => {
+    assert.equal(extractValueCandidates('ยอดขายเดือนที่แล้ว').periods, undefined);
+    assert.equal(extractValueCandidates('สวัสดีค่ะ', FRIDAY).periods, undefined);
+  });
+
+  it('a two-digit year with no month name stays ambiguous and may not back an input', () => {
+    const [hit] = extractValueCandidates('ยอดขายปี 68', FRIDAY).periods ?? [];
+    assert.ok(hit);
+    assert.ok(hit.assumptions.includes(VALUE_ASSUMPTIONS.ambiguousTwoDigitYear));
+    assert.equal(isAmbiguousPeriodCandidate(hit), true);
+    assert.equal(isAmbiguousPeriodCandidate({ assumptions: ['week_monday_sunday'] }), false);
+  });
+
+  it('formats Thai period ranges for a day, a month, a cross-month and a cross-year window', () => {
+    assert.equal(formatThaiPeriodRange('2026-09-17', '2026-09-17'), '17 ก.ย. 2569');
+    assert.equal(formatThaiPeriodRange('2026-08-01', '2026-08-31'), '1–31 ส.ค. 2569');
+    assert.equal(formatThaiPeriodRange('2026-08-31', '2026-09-06'), '31 ส.ค. – 6 ก.ย. 2569');
+    assert.equal(formatThaiPeriodRange('2025-01-01', '2026-12-31'), '1 ม.ค. 2568 – 31 ธ.ค. 2569');
+  });
+
+  it('leaves the amount and date candidates of an existing turn untouched', () => {
+    const before = extractValueCandidates('จ่ายค่าวิน 60 บาท วันที่ 9/11/2537', TODAY);
+    assert.equal(before.amounts.some((a) => a.value === '60'), true);
+    assert.equal(before.dates.some((d) => d.isoDate === '1994-11-09'), true);
   });
 });

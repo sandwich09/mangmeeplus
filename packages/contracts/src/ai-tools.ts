@@ -544,7 +544,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'crm.get_customer_summary',
-    description: 'Read scoped customer counts by active, archived, and new-customer status.',
+    description: 'Read scoped customer counts by active, archived, and new-customer status. The new-customer window is [newSince, newUntil] inclusive; it defaults to the current month.',
     businessSubjects: ['customer'],
     questionKinds: ['summary', 'breakdown'],
     category: 'read_summary',
@@ -553,7 +553,9 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['crm', 'sales', 'general'],
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['newSince'],
+    // `newUntil` closes the window (period-resolution spec §3.3): with a start only, "ลูกค้าใหม่
+    // เดือนที่แล้ว" counted this month's customers too.
+    optionalInputFields: ['newSince', 'newUntil'],
   },
   {
     name: 'crm.search_customers',
@@ -1007,7 +1009,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'tax.get_vat_summary',
-    description: 'Read VAT summary for the current open period.',
+    description: 'Read the VAT summary for one monthly period (periodKey YYYY-MM; defaults to the current period).',
     businessSubjects: ['tax'],
     questionKinds: ['summary', 'breakdown'],
     category: 'read_summary',
@@ -1016,6 +1018,9 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'tax'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
+    // Period-resolution spec §3.3: the tool has always accepted a period key, but with no whitelisted
+    // input neither lane could ask for one, so "ภาษีเดือนที่แล้ว" was answered for the current period.
+    optionalInputFields: ['periodKey'],
   },
   {
     name: 'tax.get_wht_summary',
