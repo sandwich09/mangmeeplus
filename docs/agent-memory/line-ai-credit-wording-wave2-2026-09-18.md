@@ -215,4 +215,65 @@ Owner-facing items still open: the credit CONCEPT (units, top-up, verification, 
 
 ## H4 — period resolution (owner decision 2026-09-18, after the wave-2 handoff)
 
-Spec: [line-ai-period-resolution-spec-th.md](../specs/line-ai-period-resolution-spec-th.md). Status: spec written, implementation starting on branch `codex/line-ai-wave2-h4-period-resolution-20260918`. Decisions: periods are resolved by CODE (`packages/contracts` value normalizer) and the model only selects from them (ADR 0011); default = current month (daily closing = today); week = Monday–Sunday Bangkok; calendar year, not fiscal; "วันก่อน" read as yesterday with an assumption marker; future periods produce no candidate.
+Spec: [line-ai-period-resolution-spec-th.md](../specs/line-ai-period-resolution-spec-th.md)
+(P-01…P-06 ticked with evidence, P-07 open until a UAT deploy),
+[plan H4](../plans/line-ai-credit-wording-and-deterministic-reads-plan-th.md).
+Status: IMPLEMENTED and locally verified on branch `codex/line-ai-wave2-h4-period-resolution-20260918`
+(worktree `/private/tmp/mangmee-line-ai-wave2-h4-20260918`, off docs commit `2eefe3bd`); five local
+commits, nothing pushed, nothing deployed.
+
+Decisions: periods are resolved by CODE (`packages/contracts` value normalizer) and the model only
+selects from them (ADR 0011); default = current month (daily closing = today); week = Monday–Sunday
+Bangkok; calendar year, not fiscal; "วันก่อน" read as yesterday with an assumption marker; future
+periods produce no candidate.
+
+### Artifacts
+
+| file | why |
+| --- | --- |
+| `packages/contracts/src/line-ai-value-normalizer.ts` | `LineAiPeriodCandidate`, `PERIOD_ASSUMPTIONS`, `resolvePeriodCandidates`, `formatThaiPeriodRange`, `isAmbiguousPeriodCandidate`; `extractValueCandidates` emits `periods` when it has a `todayIso` |
+| `packages/contracts/src/line-ai-value-normalizer.spec.ts` | 68-row vocabulary table + 5 behaviour tests (P-01) |
+| `packages/contracts/src/ai-tools.ts` | `tax.get_vat_summary` → `optionalInputFields: ['periodKey']`; `crm.get_customer_summary` → `['newSince','newUntil']`; both descriptions say what the default is |
+| `apps/ai-gateway/.../agents/orchestrator.agent.ts` | `PERIOD_SELECTION_RULE` shared by both loops, `PeriodGuard`, `periodBackedValues`, `allowedLoopPeriods`, `preparedAllowedPeriods`, `selectedPeriodCandidate`, `turnPeriodSource`; `newSince`/`newUntil` join the date fields and `periodKey` gets its own membership check |
+| `apps/ai-gateway/.../agents/intent-router.agent.ts` | the fused-plan and captureHints sections tell the model to COPY a `periods` entry, never to compute one |
+| `apps/ai-gateway/.../agents/prepared-simple-read-formatter.ts` | `periodLabel` on the format context; `ช่วง: <คำ> (<วันที่>)` on sales/expense/accounting/VAT/CRM, the day phrase on daily closing, and the CRM window printed closed |
+| `apps/ai-gateway/.../agents/agent-types.ts` | `periodFact` — the agentic path's period line, built from the window the TOOL echoed |
+| `apps/ai-gateway/.../agents/{accounting-summary,inventory}.agent.ts` | the optional `periodLabel` argument and the period fact, appended only for a tool whose read landed |
+| `apps/api/.../use-cases/erp-crm-tools.use-case.ts` + `crm-customer.use-case.ts` + `prisma-crm.repository.ts` | the closed `[newSince, newUntil]` window in Bangkok days, defaulted to the current month and echoed on both ends |
+| `apps/api/.../use-cases/erp-tax-tools.use-case.ts` | `periodKey` shape-checked here too; a malformed key defaults instead of reaching the repository |
+| `apps/api/.../use-cases/process-line-webhook.use-case.ts` | `computeValueCandidates` keeps a payload whose only value is a period |
+| `scripts/line-ai-intake-cost.corpus.ts` (+ spec) | corpus **v2** (`INTAKE_COST_CORPUS_VERSION = 2`), 9 appended period tasks, new hash `ae237f27…` |
+| `scripts/line-ai-intake-cost-benchmark.ts` | the stub ERP client records the input each tool received per task, the record carries the resolver's periods, the report scores them, and the request builders forward a period-only candidate payload |
+
+### The vocabulary as implemented
+
+| group | read | result |
+| --- | --- | --- |
+| day | วันนี้/today, เมื่อวาน(นี้)/yesterday, **วันก่อน** (+`day_before_read_as_yesterday`), เมื่อวานซืน/day before yesterday, N วันก่อน / N วันที่แล้ว / N days ago (N ≤ 366) | `day` |
+| last N days | N วันที่ผ่านมา / N วันล่าสุด / N วันย้อนหลัง / last\|past N days | `last_n_days`, ends today, `last_n_days_include_today` |
+| week | สัปดาห์/อาทิตย์ + นี้\|ที่แล้ว\|ก่อน, this\|last week, N สัปดาห์ที่แล้ว / N weeks ago | `week`, Mon–Sun, `week_monday_sunday` |
+| month | เดือนนี้/this month, เดือนที่แล้ว\|เดือนก่อน/last\|previous month, N เดือนที่แล้ว (N ≤ 24), ชื่อเดือน ± ปี | `month` + `monthKey` |
+| quarter | ไตรมาสนี้\|ที่แล้ว\|ก่อน, this\|last quarter, ไตรมาส 1–4 / Q1–Q4 ± ปี | `quarter` (calendar) |
+| year | ปีนี้/this year, ปีที่แล้ว\|ปีก่อน/last year, ปี\|year NNNN | `year` (calendar) |
+| range | `1–15 ก.ย. [68]`, `ตั้งแต่ 1 ถึง 15 กันยายน`, `from 1 to 15 Sep`, `1/9–15/9/68`, and any two unambiguous date candidates separated by a range marker | `range` |
+
+Edge decisions worth carrying:
+
+- **`label` is the Thai phrase WITH its dates** (`เดือนที่แล้ว (1–31 ส.ค. 2569)`), not the word plus a
+  month qualifier as §3.1's example shows. §3.4 requires the word AND the dates in the answer, and one
+  field that already reads correctly beats two that must be recombined at print time.
+- **A current period ends TODAY** (`period_clamped_to_today`), which is exactly the window
+  `currentMonthRange()` computes, so "เดือนนี้" asks for the same days the tool would have defaulted to
+  and no answer ever asks for future data.
+- **A phrase the resolver recognises but cannot pin down consumes its span** — "25 เดือนที่แล้ว" (past the
+  N ceiling) yields NO candidate rather than being re-read by the looser `เดือนที่แล้ว` rule.
+- **The undotted Thai month abbreviations are excluded from period reading.** `THAI_MONTHS` carries
+  มค/กพ/มีค/… for receipt OCR, and Thai has no word spaces, so `มีค` is a substring of the very common
+  `มีค่าใช้จ่าย`: every "เดือนนี้มีค่าใช้จ่ายเท่าไหร่" would have produced a spurious March period. Pinned
+  by a test. English `may` is likewise read as a month only when a year follows it.
+- **A two-digit year keeps the normalizer's existing era rules**: a Thai month name anchors พ.ศ., an
+  English one ค.ศ., and a fully numeric range resolves the era by plausibility only when the วัน/เดือน
+  order is already certain — otherwise it stays `ambiguous_two_digit_year` and cannot back an input.
+  One end of a written range settles the order for both (`1/9–15/9/68` reads 15 as the day).
+- **`newSince` joined the backed date fields** with `newUntil`. Spec §3.2 lists it, and leaving one end
+  of a now-closed window unguarded would have let an invented start define the window the answer states.

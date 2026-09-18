@@ -42,12 +42,12 @@
 
 ### H4. การตีความช่วงเวลา — [spec แยก](../specs/line-ai-period-resolution-spec-th.md) (owner decision 2026-09-18: default เดือนปัจจุบัน; ระบุช่วงเมื่อไหร่ต้องตามนั้น)
 
-- [ ] ตัวแปลช่วงเวลาใน `packages/contracts` (`periods` บน `LineAiValueCandidates`, ตาราง test ≥ 40 กรณี) (P-01)
-- [ ] Gateway: prompt เลือกจาก `periods` เท่านั้น; allowed dates/sanitizer รวม candidate; `periodKey`/`newUntil` whitelisted แบบมีหลักฐาน; เลน deterministic รับช่วงสัมพัทธ์ (P-02, P-03)
-- [ ] API tools: `tax.get_vat_summary` รับ `periodKey`; `crm.get_customer_summary` รับ `newUntil`; default เดือนปัจจุบันยืนยันทุก tool (P-04)
-- [ ] คำตอบระบุช่วง (คำ + วันที่) + telemetry `periodSource` (P-05)
-- [ ] Corpus ชุดช่วงเวลา + Bedrock replay ในวงเงินที่เหลือ (P-06); P-07 หลัง UAT
-- [ ] Docs: spec P-01…P-06 tick ตามหลักฐาน; task memory
+- [x] ตัวแปลช่วงเวลาใน `packages/contracts` (`periods` บน `LineAiValueCandidates`, ตาราง test ≥ 40 กรณี) (P-01)
+- [x] Gateway: prompt เลือกจาก `periods` เท่านั้น; allowed dates/sanitizer รวม candidate; `periodKey`/`newUntil` whitelisted แบบมีหลักฐาน; เลน deterministic รับช่วงสัมพัทธ์ (P-02, P-03)
+- [x] API tools: `tax.get_vat_summary` รับ `periodKey`; `crm.get_customer_summary` รับ `newUntil`; default เดือนปัจจุบันยืนยันทุก tool (P-04)
+- [x] คำตอบระบุช่วง (คำ + วันที่) + telemetry `periodSource` (P-05)
+- [x] Corpus ชุดช่วงเวลา (v2, 9 งาน) + Bedrock replay ในวงเงินที่เหลือ (P-06); P-07 หลัง UAT
+- [x] Docs: spec P-01…P-06 tick ตามหลักฐาน; task memory
 
 ### H5. รอ owner (ไม่ทำใน wave นี้)
 

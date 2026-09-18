@@ -83,11 +83,11 @@ LineAiPeriodCandidate = {
 
 ## 4. Acceptance
 
-- [ ] P-01 ตัวแปลช่วงเวลา: ตาราง test ≥ 40 กรณี (ไทย/อังกฤษ, พ.ศ./ค.ศ./สองหลัก, N-forms, ข้ามเดือน/ปี, ปีอธิกสุรทิน, วันจันทร์-อาทิตย์, today ที่ฉีดเข้า) ตรงตาม §3.1 ทุกกรณี; ไม่มีการเขียนข้อความผู้ใช้ใหม่
-- [ ] P-02 Gateway: sanitizer/allowed dates รับเฉพาะวันที่ที่ candidate รองรับ; วันที่ที่โมเดลคิดเองถูกทิ้ง (test); prompt สั่งเลือกจาก `periods`
-- [ ] P-03 เลน deterministic ตอบคำถามช่วงสัมพัทธ์ได้ (เมื่อวาน/เดือนที่แล้ว/สัปดาห์ที่แล้ว/ปีที่แล้ว/ส.ค. 68) โดย security spec เดิมผ่าน และเส้นทางปกติได้ input เดียวกัน
-- [ ] P-04 `tax.get_vat_summary` ตอบงวดที่ระบุ; `crm.get_customer_summary` นับตามหน้าต่าง [since, until]; default ทุก tool ใน §3.3 = เดือนปัจจุบัน (ยกเว้นปิดยอดรายวัน)
-- [ ] P-05 คำตอบระบุช่วงที่ใช้ (คำ + วันที่) ทั้งเลนสำเร็จรูปและเส้นทางปกติ
+- [x] P-01 ตัวแปลช่วงเวลา: ตาราง test ≥ 40 กรณี (ไทย/อังกฤษ, พ.ศ./ค.ศ./สองหลัก, N-forms, ข้ามเดือน/ปี, ปีอธิกสุรทิน, วันจันทร์-อาทิตย์, today ที่ฉีดเข้า) ตรงตาม §3.1 ทุกกรณี; ไม่มีการเขียนข้อความผู้ใช้ใหม่ — `resolvePeriodCandidates` ใน `packages/contracts/src/line-ai-value-normalizer.ts`; ตาราง 68 แถว + 5 test เพิ่มใน `line-ai-value-normalizer.spec.ts` (contracts 324/324 ผ่าน) ทุกแถวยืนยันว่า `span` เป็น substring ของข้อความเดิม
+- [x] P-02 Gateway: sanitizer/allowed dates รับเฉพาะวันที่ที่ candidate รองรับ; วันที่ที่โมเดลคิดเองถูกทิ้ง (test); prompt สั่งเลือกจาก `periods` — `orchestrator.agent.ts` (`periodBackedValues`, `allowedLoopPeriods`, `preparedAllowedPeriods`, `periodKey`/`newUntil`/`newSince` ใน sanitizer), prompt เดียวกันทั้งสอง loop + `FUSED_PLAN_SECTION`; test: วันที่ที่ไม่มี candidate ถูกทิ้งทั้งเลนสำเร็จรูปและ model loop
+- [x] P-03 เลน deterministic ตอบคำถามช่วงสัมพัทธ์ได้ (เมื่อวาน/เดือนที่แล้ว/สัปดาห์ที่แล้ว/ปีที่แล้ว/ส.ค. 68) โดย security spec เดิมผ่าน และเส้นทางปกติได้ input เดียวกัน — 5 test ใน `orchestrator.agent.spec.ts` (ยอดขายเดือนที่แล้ว / ค่าใช้จ่ายสัปดาห์ที่แล้ว / ปิดยอดเมื่อวาน / VAT เดือนที่แล้ว / ลูกค้าใหม่เดือนที่แล้ว) + test เทียบ input ของ tool ระหว่างสองเส้นทาง; `prepared-simple-read-security.spec.ts` ไม่ถูกแก้และยังผ่าน
+- [x] P-04 `tax.get_vat_summary` ตอบงวดที่ระบุ; `crm.get_customer_summary` นับตามหน้าต่าง [since, until]; default ทุก tool ใน §3.3 = เดือนปัจจุบัน (ยกเว้นปิดยอดรายวัน) — `optionalInputFields` ใหม่ใน `ai-tools.ts`, `erp-crm-tools.use-case.ts` + `summarizeCustomers` รับ `newUntil`, `erp-tax-tools.use-case.ts` ตรวจรูปแบบ `YYYY-MM` เอง; test ครบทั้ง 5 tool ของตาราง §3.3 (`erp-business-tools.use-case.spec.ts` §3.3 default period)
+- [x] P-05 คำตอบระบุช่วงที่ใช้ (คำ + วันที่) ทั้งเลนสำเร็จรูปและเส้นทางปกติ — `periodLabel` ส่งผ่าน `PreparedFormatContext` (`ช่วง: เดือนที่แล้ว (1–31 ส.ค. 2569)`) ทุก family ที่มีช่วง + `periodFact` ของ specialist บนเส้นทางปกติ; telemetry `periodSource` อยู่บนทุกบรรทัด log ของเลน (`served`/`fallback`/`honest_terminal`) — loop ไม่มีบรรทัด log ต่อ tool call ให้เติม
 - [ ] P-06 Corpus: เพิ่มชุดคำถามช่วงเวลา (≥ 8 งาน) ใน corpus เวอร์ชันใหม่ (hash ใหม่ บันทึกไว้) — Bedrock replay ในวงเงินที่ owner อนุญาตแล้ว (เหลือจาก R5) พิสูจน์ว่า tool ได้รับช่วงที่ตรงกับตัวแปล ≥ 90% ของงาน และไม่มี regression ของงานเดิม
 - [ ] P-07 UAT: ถามจริงบน LINE 5 แบบ (เมื่อวาน, เดือนที่แล้ว, สัปดาห์ที่แล้ว, ปีที่แล้ว, ชื่อเดือน+ปี) ได้ช่วงถูกต้องและคำตอบระบุช่วง (หลัง deploy)
 
