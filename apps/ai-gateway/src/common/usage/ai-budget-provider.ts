@@ -30,6 +30,7 @@ import {
 } from '@watchdog-bms/contracts';
 import type { IModelProvider, ProviderInput, ProviderToolsInput } from '../../modules/line-ai/infrastructure/provider/provider.port';
 import type { AiBudgetSeam } from './ai-budget-seam';
+import { beginGuardedProviderCall, endGuardedProviderCall } from './ai-budget-durability';
 import {
   claimBudgetCallOrdinal,
   claimBudgetInFlight,
@@ -236,6 +237,7 @@ async function settle(
       invocationKey,
       sourceRoute: state.sourceRoute,
       ...(state.requestId ? { requestId: state.requestId } : {}),
+      ...(opts.companyId ? { companyId: opts.companyId } : {}),
       entry,
     });
   } catch {
@@ -278,6 +280,9 @@ export function withAiBudgetEnvelope(inner: IModelProvider, opts: AiBudgetProvid
       // Recorded BEFORE the call so the rows this call appends — and only those — are the evidence.
       const fromIndex = usageEntryCount();
       let timedOut: { requestedMaxTokens: number | undefined } | undefined;
+      // Process-wide gauge, so a SIGTERM waits for this call and its settlement instead of killing
+      // them (hold spec §3). Only under an envelope: a SHARED request never reaches this line.
+      beginGuardedProviderCall();
       try {
         const output = await call(input);
         if ((output as { ok?: unknown; error?: ProviderError }).ok === false
@@ -289,6 +294,7 @@ export function withAiBudgetEnvelope(inner: IModelProvider, opts: AiBudgetProvid
         // In `finally` so a throw from the provider (or from a parser inside it) still settles the
         // money it already spent, exactly as the providers log their own usage from `finally`.
         await settle(state, admission.invocationKey, fromIndex, opts, timedOut);
+        endGuardedProviderCall();
       }
     } finally {
       releaseBudgetInFlight();

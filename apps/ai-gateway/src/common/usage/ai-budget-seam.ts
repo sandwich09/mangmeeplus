@@ -9,6 +9,7 @@
  * counters and typed codes crosses: never a prompt, a cap, a balance or a company name.
  */
 import { AI_BUDGET_REFUSAL_CODES, parseAiBudgetEnvelope, type AiBudgetEnvelope, type AiBudgetRefusalCode, type AiBudgetScope, type AiUsageEntry } from '@watchdog-bms/contracts';
+import { enqueueSettleEvidence } from './ai-budget-durability';
 
 export type AiBudgetStepOutcome =
   | { ok: true; envelope: AiBudgetEnvelope }
@@ -29,6 +30,8 @@ export type AiBudgetSeam = {
     invocationKey: string;
     sourceRoute: string;
     requestId?: string;
+    /** Ids only, for the durable queue's log lines (hold spec §3). Optional: a fake may omit it. */
+    companyId?: string;
     entry: AiUsageEntry;
   }): Promise<AiBudgetSettleOutcome>;
 };
@@ -118,21 +121,32 @@ export function createAiBudgetSeam(
           ...(input.entry.usageBasis ? { usageBasis: input.entry.usageBasis } : {}),
         },
       };
-      for (let attempt = 1; attempt <= SETTLE_ATTEMPTS; attempt += 1) {
+      /** One post, classified. Reused verbatim by the durable queue's re-posts (hold spec §3). */
+      const attemptOnce = async (): Promise<AiBudgetSettleOutcome> => {
         const result = await post('budget-settle', body);
-        if (result.ok) {
-          const outcome = (result.json as { result?: unknown } | undefined)?.result;
-          if (typeof outcome === 'string' && RECORDED.has(outcome)) return 'recorded';
-          // A rejection is a state problem the API already logged and alerted on; retrying it would
-          // only repeat it. The hold stays DISPATCHED -> UNRESOLVED, which is the designed
-          // conservative outcome (ADR 0013 §6): money is never released without evidence.
-          log({ msg: 'ai.budget.settle_rejected', sourceRoute: input.sourceRoute, result: String(outcome) });
-          return 'rejected';
-        }
+        if (!result.ok) return 'unreachable';
+        const outcome = (result.json as { result?: unknown } | undefined)?.result;
+        if (typeof outcome === 'string' && RECORDED.has(outcome)) return 'recorded';
+        // A rejection is a state problem the API already logged and alerted on; retrying it would
+        // only repeat it. The hold stays DISPATCHED -> UNRESOLVED, which is the designed
+        // conservative outcome (ADR 0013 §6): money is never released without evidence.
+        log({ msg: 'ai.budget.settle_rejected', sourceRoute: input.sourceRoute, result: String(outcome) });
+        return 'rejected';
+      };
+
+      for (let attempt = 1; attempt <= SETTLE_ATTEMPTS; attempt += 1) {
+        const outcome = await attemptOnce();
+        if (outcome !== 'unreachable') return outcome;
         if (attempt < SETTLE_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, SETTLE_RETRY_MS));
       }
-      // Never fails the business call (ADR 0013 §6 step 4): the reservation stays held instead.
+      // Never fails the business call (ADR 0013 §6 step 4). Before hold spec §3 the hold went
+      // straight to UNRESOLVED here; now the evidence is parked and re-posted off the request path,
+      // so only an API that stays unreachable for the whole window strands the money.
       log({ msg: 'ai.budget.settle_unreachable', sourceRoute: input.sourceRoute, attempts: SETTLE_ATTEMPTS });
+      enqueueSettleEvidence({
+        invocationKey: input.invocationKey, sourceRoute: input.sourceRoute,
+        companyId: input.companyId, attempts: SETTLE_ATTEMPTS, post: attemptOnce,
+      }, log);
       return 'unreachable';
     },
   };
