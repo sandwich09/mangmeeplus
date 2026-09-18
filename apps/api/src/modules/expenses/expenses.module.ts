@@ -62,6 +62,20 @@ import {
   CreateAccountantPackageUseCase,
 } from './application/use-cases/expense-evidence.use-case';
 import { CompanySubstituteReceiptController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController } from './presentation/http/expense.controller';
+import { ExpenseCaptureController } from './presentation/http/expense-capture.controller';
+import { PrismaExpenseCaptureRepository } from './infrastructure/prisma-expense-capture.repository';
+import {
+  AddExpenseCaptureFileUseCase,
+  CloseExpenseCaptureGroupUseCase,
+  CompleteExpenseCaptureFileUseCase,
+  ConvertExpenseToCaptureGroupUseCase,
+  CreateExpenseCaptureGroupUseCase,
+  DetachExpenseCaptureFileUseCase,
+  ExpenseCaptureAccessService,
+  GetExpenseCaptureCapabilityUseCase,
+  GetExpenseCaptureGroupUseCase,
+  ListExpenseCaptureGroupsUseCase,
+} from './application/use-cases/expense-capture-group.use-case';
 import { ReceiptOcrApplyService } from './application/services/receipt-ocr-apply.service';
 import { GetExpenseCapturePolicyUseCase } from './application/use-cases/expense-capture-policy.use-case';
 import { RequestReceiptExtractionUseCase } from './application/use-cases/expense-extraction.use-case';
@@ -81,9 +95,23 @@ import { LineDraftPreviewStore } from './application/services/line-draft-preview
   // FeatureLaunchModule supplies the guard that fences the two roots of the expenses journey
   // (manual draft, receipt upload) on `expenses/DEFAULT`.
   imports: [AuditModule, DashboardNotificationsModule, DataModelCoreModule, TaxModule, FeatureLaunchModule],
-  controllers: [ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController, CompanySubstituteReceiptController],
+  // ExpenseCaptureController FIRST: `ExpenseController` owns `@Get(':expenseId')` on the same
+  // path, and Express matches in registration order — a later `capture-groups` literal would be
+  // read as an expense id.
+  controllers: [ExpenseCaptureController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController, CompanySubstituteReceiptController],
   providers: [
     PrismaExpenseRepository,
+    PrismaExpenseCaptureRepository,
+    ExpenseCaptureAccessService,
+    GetExpenseCaptureCapabilityUseCase,
+    CreateExpenseCaptureGroupUseCase,
+    ListExpenseCaptureGroupsUseCase,
+    GetExpenseCaptureGroupUseCase,
+    AddExpenseCaptureFileUseCase,
+    CompleteExpenseCaptureFileUseCase,
+    DetachExpenseCaptureFileUseCase,
+    CloseExpenseCaptureGroupUseCase,
+    ConvertExpenseToCaptureGroupUseCase,
     ReceiptOcrClient,
     ReceiptOcrApplyService,
     ExpenseTransactionTaxService,
@@ -143,6 +171,11 @@ import { LineDraftPreviewStore } from './application/services/line-draft-preview
   ],
   exports: [
     PrismaExpenseRepository,
+    // W02-LINE needs the attempt log and the group intake from the LINE webhook lane.
+    PrismaExpenseCaptureRepository,
+    CreateExpenseCaptureGroupUseCase,
+    AddExpenseCaptureFileUseCase,
+    CompleteExpenseCaptureFileUseCase,
     GetExpenseUseCase,
     ReceiptOcrApplyService,
     CreateExpenseDraftUseCase,

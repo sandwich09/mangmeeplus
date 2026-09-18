@@ -79,6 +79,11 @@ export type ExpenseRecord = {
   pendingPostingSourceType: 'expense.record' | 'expense.payment' | null;
   pendingPostingSourceId: string | null;
   postingError: string | null;
+  // Capture lineage (appendix §2.3). Null on every ordinary expense; never set from a client DTO.
+  captureGroupId?: string | null;
+  captureAllocationId?: string | null;
+  captureScopeKey?: string | null;
+  payerUserId?: string | null;
   note: string | null;
   internalMemo: string | null;
   createdByUserId: string;

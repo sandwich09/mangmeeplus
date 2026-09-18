@@ -118,6 +118,18 @@ const CODE_LABELS: Record<string, string> = {
   reimbursement_requester_unavailable: 'ผู้รับเงินคืนต้องเป็นสมาชิกที่ใช้งานได้ในบริษัทและสาขานี้',
   substitute_paid_expense_amount_locked: 'รายการนี้จ่ายเงินแล้ว หากต้องแก้ยอดให้ดำเนินการแก้ไขรายการจ่ายก่อน ข้อมูลเอกสารอื่นยังแก้และลงนามใหม่ได้',
   expense_receipt_removal_locked: 'นำใบเสร็จออกได้เฉพาะรายการฉบับร่างหรือรอตรวจสอบที่ยังไม่จ่ายเงินและยังไม่บันทึกบัญชี',
+  // Buyer expense capture (งานรับหลักฐาน). Each one says what to do next: a group is a job the
+  // user came back to finish, so a dead end here loses the evidence they already sent.
+  expense_capture_group_revision_conflict: 'งานรับหลักฐานนี้เปลี่ยนไปแล้ว กรุณาเปิดข้อมูลล่าสุดแล้วทำรายการอีกครั้ง',
+  expense_capture_group_closed: 'งานรับหลักฐานนี้ปิดแล้ว หากต้องแนบหลักฐานเพิ่ม กรุณาเริ่มงานใหม่',
+  expense_capture_group_exists: 'รายการนี้อยู่ในงานรับหลักฐานอยู่แล้ว กรุณาเปิดงานเดิมเพื่อทำต่อ',
+  expense_capture_file_state_invalid: 'ไฟล์นี้ถูกตัดออกหรือถูกปฏิเสธแล้ว กรุณาแนบไฟล์ใหม่',
+  expense_capture_file_detach_blocked: 'ไฟล์นี้เป็นหลักฐานของรายการค่าใช้จ่ายหรือใบรับรองแล้ว หากต้องนำออกให้จัดการที่รายการนั้นก่อน',
+  expense_capture_handoff_active: 'งานนี้สร้างรายการค่าใช้จ่ายไปแล้ว กรุณาจัดการที่รายการค่าใช้จ่ายนั้น',
+  expense_capture_convert_ineligible: 'แยกเป็นกลุ่มหลักฐานได้เฉพาะรายการที่ยังไม่ยืนยัน ยังไม่จ่ายเงิน และยังไม่อยู่ในใบเบิกหรือใบรับรอง',
+  expense_capture_no_evidence: 'ยังไม่มีไฟล์หลักฐานในงานนี้ กรุณาแนบไฟล์',
+  expense_capture_read_pending: 'เก็บไฟล์แล้ว กำลังอ่านเอกสาร กรุณารอสักครู่แล้วเปิดดูอีกครั้ง',
+  expense_capture_facts_unavailable: 'ยังไม่มีข้อมูลจากไฟล์นี้ กดกรอกข้อมูลต่อเพื่อบันทึกด้วยตัวเองได้',
   invalid_response: 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง',
   duplicate_supplier_document_number: 'เลขที่เอกสารผู้ขายนี้ถูกบันทึกสำหรับผู้ขายรายนี้แล้ว กรุณาตรวจสอบบิลเดิมก่อนสร้างซ้ำ',
   // Permissions / scope

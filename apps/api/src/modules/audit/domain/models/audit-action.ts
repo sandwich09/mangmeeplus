@@ -67,6 +67,13 @@ export const AuditAction = {
   ACCESS_CRM_CUSTOMER_SELF_ERASURE_REQUEST: 'access.crm_customer.self_erasure.request',
   /** L-11: append-only correction event describing a PDPA field-level redaction of prior audit rows. */
   PDPA_AUDIT_REDACTED: 'pdpa.audit.redacted',
+  // Buyer expense capture (contract appendix §2/§9). Ids and enum values only in metadata —
+  // never a file name, a caption or anything transcribed off a customer's document.
+  EXPENSE_CAPTURE_GROUP_CREATE: 'expense.capture_group.create',
+  EXPENSE_CAPTURE_GROUP_FILE_ADD: 'expense.capture_group.file_add',
+  EXPENSE_CAPTURE_GROUP_FILE_DETACH: 'expense.capture_group.file_detach',
+  EXPENSE_CAPTURE_GROUP_CLOSE: 'expense.capture_group.close',
+  EXPENSE_CAPTURE_GROUP_CONVERT: 'expense.capture_group.convert',
   ACCESS_ROLE_CREATE: 'access.role.create',
   ACCESS_ROLE_UPDATE: 'access.role.update',
   ACCESS_ROLE_DISABLE: 'access.role.disable',

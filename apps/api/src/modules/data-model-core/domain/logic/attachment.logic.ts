@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
-const ALLOWED_MIME_TYPES = new Set([
+/** The capture capability endpoint reports this list, so no client hard-codes it (§4.1). */
+export const ALLOWED_ATTACHMENT_MIME_TYPES = [
   'image/jpeg', 'image/png',
   'application/pdf',
-]);
+] as const;
+
+const ALLOWED_MIME_TYPES = new Set<string>(ALLOWED_ATTACHMENT_MIME_TYPES);
 
 const ALLOWED_EXTENSIONS_BY_MIME_TYPE: Readonly<Record<string, readonly string[]>> = {
   'application/pdf': ['pdf'],
@@ -33,9 +36,18 @@ const ACCOUNTING_DOCUMENT_ATTACHMENT_PURPOSES = new Set([
   'accounting.document.supporting',
 ]);
 
+/**
+ * A capture group is the CANONICAL owner of its evidence (appendix §2.3): the file hangs off the
+ * group, and a derived expense may link the same bytes as its own receipt. One purpose only —
+ * anything else on this target type is not evidence the group collected.
+ */
+export const EXPENSE_CAPTURE_GROUP_TARGET_TYPE = 'expense.capture_group';
+export const EXPENSE_CAPTURE_EVIDENCE_PURPOSE = 'expense.capture.evidence';
+
 export function isAllowedAttachmentTarget(targetType: string, purpose: string): boolean {
   return (targetType === 'expense.record' && EXPENSE_ATTACHMENT_PURPOSES.has(purpose))
-    || (targetType === 'accounting.document' && ACCOUNTING_DOCUMENT_ATTACHMENT_PURPOSES.has(purpose));
+    || (targetType === 'accounting.document' && ACCOUNTING_DOCUMENT_ATTACHMENT_PURPOSES.has(purpose))
+    || (targetType === EXPENSE_CAPTURE_GROUP_TARGET_TYPE && purpose === EXPENSE_CAPTURE_EVIDENCE_PURPOSE);
 }
 
 export const SIGNATURE_ASSET_TARGET_TYPE = 'company.signature_asset';
