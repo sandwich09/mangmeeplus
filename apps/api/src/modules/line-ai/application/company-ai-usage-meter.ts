@@ -47,8 +47,14 @@ export type AiBudgetBucket = 'CHAT' | 'OCR';
 /** What the API put in the request it is about to send — never a model reading of it. */
 export type AiRequestContent = 'text' | 'image' | 'document';
 
-/** The two seams whose whole purpose is reading a document; both are OCR at any content type. */
-const OCR_SOURCE_ROUTES = new Set(['receipt-ocr', 'bank-statement-extract']);
+/**
+ * The seams whose whole purpose is reading a document; all are OCR at any content type.
+ *
+ * `receipt-capture` covers both capture stages (`capture-read` transcribes a chunk, `capture-extract`
+ * turns that text into facts). The extract call carries no media at all, and it would land on the
+ * CHAT budget if the ROUTE did not decide — a document read must never be split across two buckets.
+ */
+const OCR_SOURCE_ROUTES = new Set(['receipt-ocr', 'bank-statement-extract', 'receipt-capture']);
 /** The one route whose bucket depends on the request: a picture puts it on the governed reader. */
 const IMAGE_GATED_SOURCE_ROUTE = 'line-intake-route';
 

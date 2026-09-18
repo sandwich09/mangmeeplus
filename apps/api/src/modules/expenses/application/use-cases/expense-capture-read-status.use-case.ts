@@ -29,6 +29,13 @@ export type ExpenseReadStatusFile = {
   pausedReason: ExpenseCapturePausedReason | null;
   lastErrorCode: string | null;
   updatedAt: string;
+  /**
+   * Expense lane only (W03 runner): the assembly found more than one document or issuer, so the
+   * result was stored but NOT applied to the draft — the page offers "แยกเป็นกลุ่มหลักฐาน".
+   */
+  multiDocument?: boolean;
+  /** Expense lane only: `receipt-ocr-apply` committed the read onto the draft (§4.5). */
+  applied?: boolean;
 };
 
 export type ExpenseReadStatusResult = { files: ExpenseReadStatusFile[] };
@@ -100,10 +107,27 @@ export class GetExpenseReadStatusUseCase {
       orderBy: { createdAt: 'desc' },
       take: 1,
       select: {
-        fileId: true, attachmentId: true, status: true, pausedReason: true,
+        id: true, fileId: true, attachmentId: true, status: true, pausedReason: true,
         lastErrorCode: true, manifestJson: true, updatedAt: true,
       },
     });
-    return { files: jobs.map((job) => statusFile(job as ReadJobRow)) };
+    const files = await Promise.all(jobs.map(async (job) => {
+      const file = statusFile(job as ReadJobRow);
+      // The assembled observation carries the multi-document verdict; the draft carries the read
+      // only when the apply committed it (a stale fence or a multi-document file leaves the facts
+      // stored and the draft untouched).
+      const observation = await this.prisma.client.expenseCaptureObservation.findFirst({
+        where: { companyId: ctx.companyId, jobId: job.id },
+        orderBy: { version: 'desc' },
+        select: { payloadJson: true },
+      });
+      const multiDocument = (observation?.payloadJson as { multiDocument?: boolean } | null)?.multiDocument === true;
+      return {
+        ...file,
+        multiDocument,
+        applied: file.status === 'DONE' && !multiDocument && !!expense.aiVerifiedAt,
+      };
+    }));
+    return { files };
   }
 }

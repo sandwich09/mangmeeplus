@@ -1,9 +1,39 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../common/database/prisma.service';
-import type { Prisma } from '../../../generated/prisma/client';
+import { Prisma } from '../../../generated/prisma/client';
 import { branchScopeWhere, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
 
 export type CaptureDb = Prisma.TransactionClient | PrismaService['client'];
+
+/** The drain DTO caps at 5; this is the hard ceiling the repository will honour either way. */
+export const MAX_CAPTURE_CLAIM_BATCH = 5;
+
+/** The columns `claimReadJobs` returns — the row as stored, not a DTO. */
+export type CaptureReadJobRow = {
+  id: string;
+  companyId: string;
+  ownerType: 'CAPTURE_GROUP' | 'EXPENSE';
+  groupId: string | null;
+  expenseId: string | null;
+  fileId: string | null;
+  attachmentId: string;
+  attachmentChecksum: string;
+  objectVersionId: string | null;
+  status: 'QUEUED' | 'PREPARING' | 'READING' | 'PARTIAL' | 'PAUSED' | 'FAILED' | 'DONE' | 'CANCELLED';
+  ocrAdmissionRequestId: string;
+  manifestJson: unknown;
+  checkpointJson: unknown;
+  attempts: number;
+  leaseOwner: string | null;
+  leasedUntil: Date | null;
+  pausedReason: string | null;
+  lastErrorCode: string | null;
+  providerCallCount: number;
+  expectedSourceUpdatedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  completedAt: Date | null;
+};
 
 export type CaptureGroupRow = {
   id: string;
@@ -220,7 +250,7 @@ export class PrismaExpenseCaptureRepository {
     companyId: string; ownerType: 'CAPTURE_GROUP' | 'EXPENSE'; groupId?: string | null;
     expenseId?: string | null; fileId?: string | null; attachmentId: string;
     attachmentChecksum: string; objectVersionId?: string | null; ocrAdmissionRequestId: string;
-    manifestJson: unknown;
+    manifestJson: unknown; expectedSourceUpdatedAt?: Date;
   }) {
     return db.expenseCaptureReadJob.create({
       data: {
@@ -230,6 +260,9 @@ export class PrismaExpenseCaptureRepository {
         objectVersionId: input.objectVersionId ?? null,
         ocrAdmissionRequestId: input.ocrAdmissionRequestId,
         manifestJson: input.manifestJson as Prisma.InputJsonValue,
+        // The `receipt-ocr-apply` fence for `ownerType EXPENSE` (§4.5): the draft version read
+        // BEFORE the job started, so a correction made while it runs is never overwritten.
+        ...(input.expectedSourceUpdatedAt ? { expectedSourceUpdatedAt: input.expectedSourceUpdatedAt } : {}),
       },
     });
   }
@@ -237,6 +270,132 @@ export class PrismaExpenseCaptureRepository {
   findJobByFile(db: CaptureDb, companyId: string, fileId: string) {
     return db.expenseCaptureReadJob.findFirst({
       where: { companyId, fileId }, orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  findJobById(db: CaptureDb, jobId: string) {
+    return db.expenseCaptureReadJob.findUnique({ where: { id: jobId } });
+  }
+
+  /** The newest non-terminal job for one expense — what `read-status` polls and W03 resumes. */
+  findJobByExpense(db: CaptureDb, companyId: string, expenseId: string) {
+    return db.expenseCaptureReadJob.findFirst({
+      where: { companyId, expenseId }, orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Idempotency for the expense lane (§3): the same expense + attachment + bytes reuses the job
+   * that is already running instead of buying a second OCR admission for one upload.
+   */
+  findLiveJobForAttachment(db: CaptureDb, input: {
+    companyId: string; expenseId: string; attachmentId: string; attachmentChecksum: string;
+  }) {
+    return db.expenseCaptureReadJob.findFirst({
+      where: {
+        companyId: input.companyId, expenseId: input.expenseId, attachmentId: input.attachmentId,
+        attachmentChecksum: input.attachmentChecksum,
+        status: { notIn: ['DONE', 'FAILED', 'CANCELLED'] },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * One-statement claim in the `prisma-outbox.repository.ts` shape: `FOR UPDATE SKIP LOCKED` picks
+   * rows no other runner holds, and the same statement stamps the lease that fences every later
+   * write. Concurrent runners therefore get DISJOINT jobs without a lock table of our own.
+   *
+   * `QUEUED|READING|PARTIAL` with an expired or absent lease is the resume set: a runner that died
+   * mid-file leaves READING rows whose checkpoint the next claimer continues from.
+   */
+  async claimReadJobs(input: {
+    batchSize: number; leaseOwner: string; leaseMs: number; db?: CaptureDb;
+  }): Promise<CaptureReadJobRow[]> {
+    const batchSize = Math.max(1, Math.min(Math.trunc(input.batchSize) || 1, MAX_CAPTURE_CLAIM_BATCH));
+    const claimed: CaptureReadJobRow[] = [];
+    // One statement per job, not one per batch: the per-COMPANY ceiling of §4.5 is expressed as
+    // "no live lease for this company", and inside a single multi-row UPDATE the subquery sees the
+    // pre-update snapshot — five queued jobs of one shop would all pass it at once. Claiming them
+    // one at a time makes the second claim see the first one's lease. The batch is at most 5.
+    for (let index = 0; index < batchSize; index += 1) {
+      const row = await this.claimNextReadJob(input);
+      if (!row) break;
+      claimed.push(row);
+    }
+    return claimed;
+  }
+
+  /** The claim statement itself: one job, skipping rows and companies another runner holds. */
+  async claimNextReadJob(input: { leaseOwner: string; leaseMs: number; db?: CaptureDb }): Promise<CaptureReadJobRow | null> {
+    const db = input.db ?? this.prisma.client;
+    const rows = await db.$queryRaw<CaptureReadJobRow[]>(Prisma.sql`
+      UPDATE "ExpenseCaptureReadJob" j
+      SET status = 'READING', "leaseOwner" = ${input.leaseOwner},
+          "leasedUntil" = now() + make_interval(secs => ${input.leaseMs / 1000}),
+          attempts = j.attempts + 1, "updatedAt" = now()
+      WHERE j.id = (
+        SELECT id FROM "ExpenseCaptureReadJob"
+        WHERE status IN ('QUEUED', 'READING', 'PARTIAL')
+          AND ("leasedUntil" IS NULL OR "leasedUntil" < now())
+          AND "companyId" NOT IN (
+            SELECT "companyId" FROM "ExpenseCaptureReadJob"
+            WHERE status IN ('PREPARING', 'READING') AND "leasedUntil" >= now()
+          )
+        ORDER BY "createdAt" ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING j.*
+    `);
+    return rows[0] ?? null;
+  }
+
+  /** Claim ONE job by id for the in-process kick, under the same lease rules as the drain. */
+  async claimReadJob(input: { jobId: string; leaseOwner: string; leaseMs: number; db?: CaptureDb }): Promise<CaptureReadJobRow | null> {
+    const db = input.db ?? this.prisma.client;
+    const rows = await db.$queryRaw<CaptureReadJobRow[]>(Prisma.sql`
+      UPDATE "ExpenseCaptureReadJob" j
+      SET status = 'READING', "leaseOwner" = ${input.leaseOwner},
+          "leasedUntil" = now() + make_interval(secs => ${input.leaseMs / 1000}),
+          attempts = j.attempts + 1, "updatedAt" = now()
+      WHERE j.id = ${input.jobId}
+        AND j.status IN ('QUEUED', 'READING', 'PARTIAL')
+        AND (j."leasedUntil" IS NULL OR j."leasedUntil" < now())
+      RETURNING j.*
+    `);
+    return rows[0] ?? null;
+  }
+
+  /**
+   * EVERY write after a claim goes through here. The `leaseOwner` predicate is the fence: a runner
+   * whose lease expired and was reclaimed elsewhere matches zero rows and stops silently, instead
+   * of overwriting the checkpoint the new owner is building (§4.5).
+   */
+  async updateJobFenced(input: {
+    jobId: string; leaseOwner: string; data: Record<string, unknown>; db?: CaptureDb;
+  }): Promise<boolean> {
+    const db = input.db ?? this.prisma.client;
+    const changed = await db.expenseCaptureReadJob.updateMany({
+      where: { id: input.jobId, leaseOwner: input.leaseOwner },
+      data: input.data as never,
+    });
+    return changed.count === 1;
+  }
+
+  /** Extend the lease between chunks; a lost lease answers false and the runner stops. */
+  renewJobLease(input: { jobId: string; leaseOwner: string; leaseMs: number; db?: CaptureDb }): Promise<boolean> {
+    return this.updateJobFenced({
+      ...input,
+      data: { leasedUntil: new Date(Date.now() + input.leaseMs) },
+    });
+  }
+
+  /** The page count the group list shows beside "อ่านแล้ว n จาก m หน้า". */
+  async setFilePageCount(db: CaptureDb, input: { companyId: string; fileId: string; pageCount: number }): Promise<void> {
+    await db.expenseCaptureFile.updateMany({
+      where: { companyId: input.companyId, id: input.fileId },
+      data: { pageCount: input.pageCount },
     });
   }
 

@@ -102,6 +102,7 @@ export const SHADOW_SURFACES = {
   crmNewConversationScan: 'crm.newconv.scan',
   crmInboxRetry: 'crm.inbox.retry',
   expenseAutoPostDrain: 'expense.auto_post.drain',
+  expenseCaptureReadDrain: 'expense.capture_read.drain',
 
   notificationsDeliverySweep: 'notifications.delivery.sweep',
   notificationsOndemandSnapshot: 'notifications.ondemand.snapshot',
@@ -119,7 +120,7 @@ export const SHADOW_SURFACES = {
 export const notificationSweepSurface = (sweep: string): string => `notifications.sweep.${sweep}`;
 
 /**
- * All 63 ASYNC rows of `docs/specs/feature-entitlement-runoff-matrix.json`, in matrix order.
+ * All 65 ASYNC rows of `docs/specs/feature-entitlement-runoff-matrix.json`, in matrix order.
  *
  * OQ-3 (shipped attribution stays, is never extended): four rows carry a gateKey the approved matrix
  * still records as UNRESOLVED, because piece 3 shipped that attribution in code and it is externally
@@ -138,6 +139,7 @@ export const SHADOW_SURFACE_CATALOG: readonly ShadowSurfaceRow[] = [
   { surfaceId: "startCrmCampaignWorker (queue 'crm-campaign-delivery')", gateKey: 'crm', coverage: 'PROXY', surface: SHADOW_SURFACES.crmCampaignDelivery, note: 'OQ-3 shipped attribution: matrix row is UNRESOLVED (crm vs line_oa); piece 3 recorded crm' },
   { surfaceId: "startLineAiLedgerWorker (queue 'line-ai-ledger')", gateKey: 'ai_line_assistant', coverage: 'PROXY', surface: SHADOW_SURFACES.aiLedgerDrain },
   { surfaceId: "startExpenseAutoPostWorker (queue 'expense-auto-post')", gateKey: 'expense_auto_post', coverage: 'PROXY', surface: SHADOW_SURFACES.expenseAutoPostDrain },
+  { surfaceId: "startExpenseCaptureReadWorker (queue 'expense-capture-read')", gateKey: 'expenses', coverage: 'PROXY', surface: SHADOW_SURFACES.expenseCaptureReadDrain },
   { surfaceId: 'LineMessageBufferService (in-process per-chat worker)', gateKey: 'ai_line_assistant', coverage: 'PROXY', surface: SHADOW_SURFACES.lineWebhookEmployee, note: 'in-API timers, but the gate is downstream at the webhook turn this buffer releases' },
 
   // ── CRON (1) ────────────────────────────────────────────────────────────────────────────────
@@ -170,6 +172,7 @@ export const SHADOW_SURFACE_CATALOG: readonly ShadowSurfaceRow[] = [
   { surfaceId: 'POST /v1/internal/ai/draft-requests/generate', gateKey: 'ai_line_assistant', coverage: 'INSTRUMENTED', surface: SHADOW_SURFACES.aiDraftGenerate },
   { surfaceId: 'POST /v1/internal/ai/line-ledger/drain', gateKey: 'ai_line_assistant', coverage: 'INSTRUMENTED', surface: SHADOW_SURFACES.aiLedgerDrain },
   { surfaceId: 'POST /v1/internal/ledger/expense-auto-post/drain', gateKey: 'expense_auto_post', coverage: 'INSTRUMENTED', surface: SHADOW_SURFACES.expenseAutoPostDrain, note: 'probes every ACTIVE company before the entitlement filter (Group-E)' },
+  { surfaceId: 'POST /v1/internal/expenses/capture-read/drain', gateKey: 'expenses', coverage: 'INSTRUMENTED', surface: SHADOW_SURFACES.expenseCaptureReadDrain, note: 'probes every company whose read job was claimed, before the job runs (contract appendix §4.5)' },
 
   // ── OUTBOX (12) ─────────────────────────────────────────────────────────────────────────────
   { surfaceId: 'DrainWorkflowOutboxUseCase', gateKey: 'workflow_automation', coverage: 'INSTRUMENTED', surface: SHADOW_SURFACES.outboxDrain },

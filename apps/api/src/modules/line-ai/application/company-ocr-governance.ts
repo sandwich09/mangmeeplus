@@ -15,13 +15,22 @@ export const LINE_RECEIPT_RETRY_WAIT_CODE = 'RETRYABLE_OCR_ADMISSION_WAIT';
 
 const logger = new Logger('CompanyOcrGovernance');
 
-export type CompanyOcrSourceRoute = 'receipt-ocr-web' | 'receipt-ocr-line' | 'bank-statement-extract';
+export type CompanyOcrSourceRoute =
+  | 'receipt-ocr-web' | 'receipt-ocr-line' | 'bank-statement-extract'
+  /** Appendix §4.6: ONE admission per capture read job — one file, however many provider chunks. */
+  | 'receipt-capture-web' | 'receipt-capture-line';
 
 /**
  * P10-L §15.1: the routes the COMMERCIAL slip ceiling applies to. A bank statement is an accounting
  * import, not one of the receipts the shop bought, so it answers to the ops brake alone.
+ *
+ * A capture read IS one of the shop's receipts — a multi-page PDF read through the capture pipeline
+ * must cost exactly what the same document costs when it arrives as one photo, so both capture
+ * routes count here and the job's own admission fence keeps a retry from counting twice.
  */
-const PLAN_QUOTA_ROUTES = new Set<CompanyOcrSourceRoute>(['receipt-ocr-web', 'receipt-ocr-line']);
+const PLAN_QUOTA_ROUTES = new Set<CompanyOcrSourceRoute>([
+  'receipt-ocr-web', 'receipt-ocr-line', 'receipt-capture-web', 'receipt-capture-line',
+]);
 
 /** The commercial allowance excludes bank statements; the operational aggregate still includes them. */
 export function countReceiptOcrAdmissions(db: Pick<PrismaService['client'], 'companyOcrUsageEvent'>, companyId: string, monthKey?: string, monthlyBaseOnly = false): Promise<number> {

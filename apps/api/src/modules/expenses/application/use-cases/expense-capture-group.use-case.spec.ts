@@ -298,16 +298,19 @@ function build(options: { intakeEnabled?: boolean; repo?: FakeCaptureRepo } = {}
       return object && object.companyId === companyId ? { ...object } : null;
     },
   } as any;
+  // W03's fire-and-forget start. It records rather than runs: `complete` must answer the upload
+  // without ever waiting for a provider.
+  const runner = { kicked: [] as string[], kick(jobId: string) { this.kicked.push(jobId); } };
 
   return {
-    capture, access, intents, completed, objects,
+    capture, access, intents, completed, objects, runner,
     duringCompleteUpload: (hook: () => void) => { onCompleteUpload = hook; },
     capability: new GetExpenseCaptureCapabilityUseCase(access),
     create: new CreateExpenseCaptureGroupUseCase(capture as any, expenses, access, audit, openLaunchGate),
     list: new ListExpenseCaptureGroupsUseCase(capture as any),
     get: new GetExpenseCaptureGroupUseCase(capture as any, access, appConfig),
     addFile: new AddExpenseCaptureFileUseCase(capture as any, access, createIntent, audit, openLaunchGate),
-    completeFile: new CompleteExpenseCaptureFileUseCase(capture as any, expenses, access, completeUpload, attachments, audit),
+    completeFile: new CompleteExpenseCaptureFileUseCase(capture as any, expenses, access, completeUpload, attachments, audit, runner as any),
     detachFile: new DetachExpenseCaptureFileUseCase(capture as any, access, attachments, audit),
     closeGroup: new CloseExpenseCaptureGroupUseCase(capture as any, access, audit),
     convert: new ConvertExpenseToCaptureGroupUseCase(capture as any, expenses, access, audit, openLaunchGate, capture as any),

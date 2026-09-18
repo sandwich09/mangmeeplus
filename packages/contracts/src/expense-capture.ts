@@ -11,6 +11,7 @@
  * reviewer decides.
  */
 import type {
+  AiBudgetScope,
   BusinessDocumentClassification,
   BusinessDocumentFamily,
   BusinessDocumentKind,
@@ -205,7 +206,8 @@ export type ExpenseCaptureReadResponse = {
   contractVersion: number;
   pages?: ExpenseCaptureReadPage[];
   errorCode?: string;
-  budgetScope?: string;
+  /** Present only with an `AI_BUDGET_*` code: which ceiling refused (spec §9.1). */
+  budgetScope?: AiBudgetScope;
   usage?: AiUsageEntry[];
   modelLineage?: AiModelLineage;
 };
@@ -241,7 +243,7 @@ export type ExpenseCaptureExtractResponse = {
   contractVersion: number;
   observations?: ExpenseCaptureObservations;
   errorCode?: string;
-  budgetScope?: string;
+  budgetScope?: AiBudgetScope;
   usage?: AiUsageEntry[];
   modelLineage?: AiModelLineage;
 };
@@ -277,6 +279,11 @@ export type ExpenseCaptureDocumentObservation = {
   documentDate?: string;
   currency?: string;
   printedPage?: { number?: number; of?: number };
+  /**
+   * Assembly-only: every printed page number this document showed, so `1 of 3` + `3 of 3` in a
+   * two-page file is visibly missing page 2 (§16.8). The gateway never sets it.
+   */
+  printedPages?: number[];
   continuationOfRef?: string;
   classification: BusinessDocumentClassification;
 };
@@ -356,6 +363,30 @@ export type ExpenseCaptureObservations = {
   completeness: ExpenseCaptureCompleteness;
 };
 
+/**
+ * What the deterministic assembly proved about ONE document (§4.4). The API computes this with
+ * `decimal.js` from printed values only: `insufficient` is the honest answer when the page never
+ * printed enough to check, and a `mismatch` is shown to the reviewer rather than balanced away.
+ */
+export type ExpenseCaptureDocumentReconciliation = {
+  documentRef: string;
+  status: 'reconciled' | 'mismatch' | 'insufficient';
+  /** The printed `document_total`, when the read found one. */
+  documentTotal?: string;
+  /** `Σ sale − Σ void − Σ applied_discount + Σ charge`, absent when nothing could be summed. */
+  computedTotal?: string;
+  difference?: string;
+  /** A printed `page n of m` says the file is missing pages the reader never saw (§16.8). */
+  suspectedMissingPages: boolean;
+};
+
+/** The assembled observation a job stores: the merged facts plus what they reconcile to. */
+export type ExpenseCaptureAssembledObservations = ExpenseCaptureObservations & {
+  reconciliation: ExpenseCaptureDocumentReconciliation[];
+  /** More than one document or issuer in one file: never applied to a single expense (§3). */
+  multiDocument: boolean;
+};
+
 /** Declared per-window ceilings of §4.3; past them `itemsTruncated` is true, never a silent cut. */
 export const EXPENSE_CAPTURE_OBSERVATION_LIMITS = {
   maxItemsPerWindow: 120,
@@ -403,3 +434,17 @@ export const emptyExpenseCaptureReadManifest = (): ExpenseCaptureReadManifest =>
 export function expenseCapturePagesRead(manifest: ExpenseCaptureReadManifest | null | undefined): number {
   return (manifest?.pages ?? []).filter((page) => page.state === 'read' || page.state === 'blank').length;
 }
+
+/** What the web polls while a PDF is being read (§9 `read-status`, both owner types). */
+export type ExpenseCaptureReadStatusDto = {
+  jobId: string | null;
+  status: ExpenseCaptureReadStatus | null;
+  pagesRead: number;
+  pageCount: number | null;
+  pausedReason: ExpenseCapturePausedReason | null;
+  lastErrorCode: string | null;
+  /** True once the assembly found more than one document or issuer — W04 offers the split. */
+  multiDocument: boolean;
+  /** Whether the read result was written onto the expense draft (`ownerType EXPENSE` only). */
+  applied: boolean;
+};

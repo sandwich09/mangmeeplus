@@ -18,12 +18,16 @@ const job = (patch: Record<string, unknown> = {}) => ({
   ...patch,
 });
 
-function harness(options: { jobs?: unknown[]; expense?: Record<string, unknown> | null; related?: boolean } = {}) {
+function harness(options: { jobs?: unknown[]; expense?: Record<string, unknown> | null; related?: boolean; observation?: { payloadJson: unknown } | null } = {}) {
   const queries: any[] = [];
   const prisma = {
     client: {
       expenseCaptureReadJob: {
         findMany: async (args: any) => { queries.push(args); return options.jobs ?? [job()]; },
+      },
+      // The expense lane also reads the job's assembled observation for the multi-document verdict.
+      expenseCaptureObservation: {
+        findFirst: async () => (options.observation === undefined ? null : options.observation),
       },
     },
   } as any;
@@ -60,6 +64,26 @@ describe('read status (appendix §9)', () => {
     assert.deepEqual(queries[0].where, { companyId: 'co-1', expenseId: 'expense-1' });
     assert.deepEqual(queries[0].orderBy, { createdAt: 'desc' });
     assert.equal(queries[0].take, 1);
+  });
+
+  it('reports the multi-document verdict and whether the read was applied to the draft', async () => {
+    const multi = harness({
+      expense: { id: 'expense-1', branchId: null, createdByUserId: 'user-2', aiVerifiedAt: new Date() },
+      jobs: [job({ status: 'DONE' })],
+      observation: { payloadJson: { multiDocument: true } },
+    });
+    const split = await multi.uc.expense(ctx, 'expense-1');
+    assert.equal(split.files[0]?.multiDocument, true);
+    assert.equal(split.files[0]?.applied, false);
+
+    const applied = harness({
+      expense: { id: 'expense-1', branchId: null, createdByUserId: 'user-2', aiVerifiedAt: new Date() },
+      jobs: [job({ status: 'DONE' })],
+      observation: { payloadJson: { multiDocument: false } },
+    });
+    const done = await applied.uc.expense(ctx, 'expense-1');
+    assert.equal(done.files[0]?.multiDocument, false);
+    assert.equal(done.files[0]?.applied, true);
   });
 
   it('answers 404 for an expense of another company and 403 outside the branch scope', async () => {

@@ -157,30 +157,32 @@ IG: IG01/IG09/IG10
 ### W03 — อ่านหลักฐานแบบมี scope และไม่ฝืนเติมค่าที่ขาด
 
 Owner: AI Gateway + API extraction
-Status: Planned
+Status: Delivered 2026-09-18 (W03: preprocessing, gateway contract routes, durable job runner, assembly/reconciliation, web PDF lane)
 Depends on: W02 / D02 extraction contract
 
 จุดแก้หลัก: [Gateway reader/prompt/parser](../../apps/ai-gateway/src/modules/line-ai/presentation/http/line-ai-internal.controller.ts:157), [LINE OCR client](../../apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.ts:120), [OCR contract](../../packages/contracts/src/line-ai.ts), [extract use case](../../apps/api/src/modules/expenses/application/use-cases/expense-extraction.use-case.ts), [OCR client](../../apps/api/src/modules/expenses/infrastructure/receipt-ocr.client.ts), [OCR apply](../../apps/api/src/modules/expenses/application/services/receipt-ocr-apply.service.ts), [document classification](../../apps/ai-gateway/src/modules/line-ai/domain/logic/business-document-classification.logic.ts)
 
-- [ ] group extractionเก็บpage/regionหรือexact span, document/order/store/item/component identities และ completeness; ไฟล์เดียวอาจหลายorder/หลายpanel
-- [ ] อ่าน monetary roles แยก charge/discount/tax/tender/reward/refund/summary และความสัมพันธ์included/parent-child; ไม่รวมสิ่งที่ซ้ำ — เริ่มตาม spec §13.3 คือ schema กลางที่เก็บ label/scope/ที่มา แล้วเพิ่ม mapping เฉพาะที่มีตัวอย่างรองรับ ไม่ต้องได้ taxonomy เต็มก่อน G1
-- [ ] ตรวจ source-reported amounts/สมการด้วยDecimal; แยก observed/inferred/policy-derived; ไม่สร้างrounding/discountเพื่อปิดยอด
-- [ ] รองรับเกินlimit/แถวเสียด้วยincomplete stateที่รักษาต้นฉบับ; summary fallbackไม่อ้างว่าพร้อมแบ่งสินค้า
-- [ ] แยก method/paid/refund timeline/destination/currency และวันที่แต่ละเหตุการณ์; unknownไม่เป็น0/THB/paid
-- [ ] reuseผลที่ตรงrevision, per-attempt budget/admission และ retryตามgovernanceเดิม; quotaหมดกลางชุดยังเก็บ/แก้ต่อได้
-- [ ] ป้องกันprompt injectionจากเอกสารและlate resultทับreview; Gatewayเรียกpermission-checked APIsเท่านั้น
-- [ ] sharedreceipt rules/contract/parser/applyครอบretail events/pack/tax/settlementตาม§16.2ทั้งสามทาง; ไม่แยกpromptตามหน้า
-- [ ] เพิ่มgroup outputก่อนแก้MULTI_DOCUMENT routing; legacy single-expenseไม่รับfieldsรวมหลายธุรกรรม
-- [ ] electronic original/derivative, pagecoverage และmethod-specific verificationตามD09; preserve vision-reader policy/sharedbank-statement behaviorตามD02
+- [x] group extractionเก็บpage/regionหรือexact span, document/order/store/item/component identities และ completeness; ไฟล์เดียวอาจหลายorder/หลายpanel
+- [x] อ่าน monetary roles แยก charge/discount/tax/tender/reward/refund/summary และความสัมพันธ์included/parent-child; ไม่รวมสิ่งที่ซ้ำ — เริ่มตาม spec §13.3 คือ schema กลางที่เก็บ label/scope/ที่มา แล้วเพิ่ม mapping เฉพาะที่มีตัวอย่างรองรับ ไม่ต้องได้ taxonomy เต็มก่อน G1
+- [x] ตรวจ source-reported amounts/สมการด้วยDecimal; แยก observed/inferred/policy-derived; ไม่สร้างrounding/discountเพื่อปิดยอด
+- [x] รองรับเกินlimit/แถวเสียด้วยincomplete stateที่รักษาต้นฉบับ; summary fallbackไม่อ้างว่าพร้อมแบ่งสินค้า
+- [x] แยก method/paid/refund timeline/destination/currency และวันที่แต่ละเหตุการณ์; unknownไม่เป็น0/THB/paid
+- [x] reuseผลที่ตรงrevision, per-attempt budget/admission และ retryตามgovernanceเดิม; quotaหมดกลางชุดยังเก็บ/แก้ต่อได้
+- [x] ป้องกันprompt injectionจากเอกสารและlate resultทับreview; Gatewayเรียกpermission-checked APIsเท่านั้น
+- [x] sharedreceipt rules/contract/parser/applyครอบretail events/pack/tax/settlementตาม§16.2ทั้งสามทาง; ไม่แยกpromptตามหน้า
+- [x] เพิ่มgroup outputก่อนแก้MULTI_DOCUMENT routing; legacy single-expenseไม่รับfieldsรวมหลายธุรกรรม
+- [x] electronic original/derivative, pagecoverage และmethod-specific verificationตามD09; preserve vision-reader policy/sharedbank-statement behaviorตามD02
 - [ ] replacement OCR observationsต้องผูกattachment/version และแสดงdiff/unknown; ไม่เติมข้อมูลใบใหม่ด้วยfactsใบเก่าโดยไม่แสดงที่มา
 
-- [ ] เพิ่มreceiptPDFpreprocessingก่อนsharedreader: copiesหน้าเป็นboundedPDFตามขนาดจริง; ถ้าหน้าเดียวเกินให้render/rasterเป็นboundedregionsพร้อมoverviewและพิกัด/overlap ไม่ลดtinytextจนอ่านผิด
-- [ ] ทุกcallตรวจprovider limits+serializedHTTP/base64+pixels/tokens; schedulerจำกัดconcurrency/time/memory, checkpointต่อchunk; text-nativeเป็นoptimizationภายใต้D02 ไม่สลับreaderpolicyโดยปริยาย
-- [ ] page/regionobservationsรวมตามdocumentgraphก่อนnormalize/allocate; headers/footers/totals/overlapไม่บวกซ้ำและsame-nameitemsไม่ถูกdedupเอง; ไม่บีบtranscriptionทุกหน้าลง4096tokensแล้วอ้างครบ
-- [ ] หลายหน้าตาม§16.8: manifestครบทุกหน้า, page/read-stateและdocument-completenessแยกกัน, carry-forward/blank/missing-page/multiple-invoice grouping; A81/A82
-- [ ] partialretry/budgetexhausted/stale/cancelและข้อความ/recoveryมีกฎตาม§16.7/17; logicalcustomerjobแยกprovidercallsและusageledger ไม่ใช้จำนวนchunkคิดcustomerreceiptใหม่เงียบ ๆ; A75–A80
+- [x] เพิ่มreceiptPDFpreprocessingก่อนsharedreader: copiesหน้าเป็นboundedPDFตามขนาดจริง; ถ้าหน้าเดียวเกินให้render/rasterเป็นboundedregionsพร้อมoverviewและพิกัด/overlap ไม่ลดtinytextจนอ่านผิด
+- [x] ทุกcallตรวจprovider limits+serializedHTTP/base64+pixels/tokens; schedulerจำกัดconcurrency/time/memory, checkpointต่อchunk; text-nativeเป็นoptimizationภายใต้D02 ไม่สลับreaderpolicyโดยปริยาย
+- [x] page/regionobservationsรวมตามdocumentgraphก่อนnormalize/allocate; headers/footers/totals/overlapไม่บวกซ้ำและsame-nameitemsไม่ถูกdedupเอง; ไม่บีบtranscriptionทุกหน้าลง4096tokensแล้วอ้างครบ
+- [x] หลายหน้าตาม§16.8: manifestครบทุกหน้า, page/read-stateและdocument-completenessแยกกัน, carry-forward/blank/missing-page/multiple-invoice grouping; A81/A82
+- [x] partialretry/budgetexhausted/stale/cancelและข้อความ/recoveryมีกฎตาม§16.7/17; logicalcustomerjobแยกprovidercallsและusageledger ไม่ใช้จำนวนchunkคิดcustomerreceiptใหม่เงียบ ๆ; A75–A80
 
 Exit: ส่งผลที่มีหลักฐานตรวจย้อนกลับได้พร้อมunknown/incomplete ไม่เปลี่ยนสถานะเงินเอง; foreign/BNPLรับเป็นcaptureตามขอบเขต
+
+W03 delivered 2026-09-18 — สิ่งที่ยังไม่ปิดในรอบนี้: `replacement OCR observations` (ผูก attachment/version + diff) ยังอยู่กับ W02-web/W05; accuracy บน corpus จริงและ Bedrock replay เป็นงานของ controller (§15.5); LINE auto-handoff ของกลุ่มไฟล์เดียวอยู่ W05/W07 ดูเงื่อนไข/ค่าที่ตั้งจริงใน [appendix ข้อ 17](../specs/marketplace-buyer-expense-capture-contract-appendix-th.md)
 Checks: schema/parser fixtures, actual extraction against authorized examples เมื่อพร้อม, source-reference validity, quota/lost-response/stale-result tests; แยก OCR correctness จาก readiness
 Acceptance หลัก: A01/A02/A06/A07/A12/A23–A31/A33/A34/A36/A37/A42/A43/A48
 IG: IG02/IG06/IG08/IG12/IG14

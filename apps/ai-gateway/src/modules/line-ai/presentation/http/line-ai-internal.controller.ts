@@ -14,12 +14,20 @@ import { LineAiTurnUseCase } from '../../application/use-cases/line-ai-turn.use-
 import { createProvider } from '../../infrastructure/provider/provider.factory';
 import { IntentRouterAgent } from '../../agents/intent-router.agent';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
-import { AI_DOCUMENT_OCR_TIMEOUT_MS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, VALUE_ASSUMPTIONS, type AiBudgetScope, type AiModelLineage, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
+import {
+  CAPTURE_EXTRACT_PROMPT,
+  MAX_CAPTURE_PAGE_TEXT_CHARS,
+  captureReadPrompt,
+  parseCaptureNaturalText,
+  parseCaptureObservationsJson,
+  parseCaptureReadPages,
+} from '../../domain/logic/expense-capture-read.logic';
+import { AI_DOCUMENT_OCR_TIMEOUT_MS, EXPENSE_CAPTURE_CONTRACT_VERSION, EXPENSE_CAPTURE_OBSERVATION_LIMITS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, VALUE_ASSUMPTIONS, type AiBudgetScope, type AiModelLineage, type ExpenseCaptureExtractRequest, type ExpenseCaptureExtractResponse, type ExpenseCaptureObservations, type ExpenseCaptureReadChunk, type ExpenseCaptureReadRequest, type ExpenseCaptureReadResponse, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
 
 // JSON bodies on these routes carry base64 media and need main.ts's 16mb parser
 // (UPLOAD_MAX_BYTES 10MB inflates to ~13.7MB in base64); every other route stays at
 // HTTP_BODY_LIMIT. A media-carrying route missing here 413s on real camera photos.
-export const BASE64_MEDIA_ROUTES = /^\/v1\/internal\/ai\/(receipt-ocr|bank-statement-extract|line-intake-route)$/;
+export const BASE64_MEDIA_ROUTES = /^\/v1\/internal\/ai\/(receipt-ocr|bank-statement-extract|line-intake-route|capture-read|capture-extract)$/;
 
 // Document OCR needs its own budget: a dense real-photo receipt regularly takes document reads
 // past the 15s ERP tool-call timeout (prod failures 2026-07-14).
@@ -39,6 +47,36 @@ const MAX_RECEIPT_CATEGORY_CATALOGUE = 100;
 // an expense document, and the summary line is the honest answer.
 const MAX_RECEIPT_OCR_LINES = 40;
 const RECEIPT_EXTRACTION_MAX_TOKENS = 8192;
+/** Bedrock's own ceiling. The API sends far fewer — its budget bound is the tighter one (§4.1). */
+const MAX_CAPTURE_CHUNK_IMAGES = 20;
+/** `=== PAGE n ===` headers the API's own 12,000-char window budget does not count. */
+const WINDOW_DELIMITER_SLACK = 400;
+
+/** The image blocks one capture chunk sends: a lone page, or an overview plus its tiles. */
+function captureChunkImages(chunk: ExpenseCaptureReadChunk): Array<{ mimeType: 'image/jpeg' | 'image/png'; contentBase64: string }> {
+  const supported = (mimeType: string): mimeType is 'image/jpeg' | 'image/png' =>
+    mimeType === 'image/jpeg' || mimeType === 'image/png';
+  if (chunk.kind === 'tiles') {
+    // Overview first: it carries the layout the tiles are regions of.
+    return [...(chunk.images ?? [])]
+      .filter((image) => image?.contentBase64 && supported(image.mimeType))
+      .sort((left, right) => (left.role === right.role ? left.index - right.index : left.role === 'overview' ? -1 : 1))
+      .map((image) => ({ mimeType: image.mimeType as 'image/jpeg' | 'image/png', contentBase64: image.contentBase64 }));
+  }
+  if (chunk.kind === 'image' && chunk.contentBase64 && supported(chunk.mimeType)) {
+    return [{ mimeType: chunk.mimeType, contentBase64: chunk.contentBase64 }];
+  }
+  return [];
+}
+
+function captureReadUserText(chunk: ExpenseCaptureReadChunk): string {
+  if (chunk.kind === 'tiles') {
+    return 'The first image is an overview of ONE page; the rest are overlapping regions of that same page in reading order. Transcribe that page once.';
+  }
+  return chunk.kind === 'pdf'
+    ? 'Transcribe every page of the attached document, in order.'
+    : 'Transcribe the attached page.';
+}
 
 type ReceiptUnderstanding =
   | { ok: true; fields?: ReceiptOcrResponse['fields']; classification?: ReceiptOcrResponse['classification'] }
@@ -348,6 +386,173 @@ export class LineAiInternalController {
     // date for MULTI_DOCUMENT would let a future consumer collapse the ledger despite the classifier.
     const safeFields = classification?.contentKind === 'MULTI_DOCUMENT' ? undefined : fields;
     return { ok: true, ...(safeFields ? { fields: safeFields } : {}), ...(classification ? { classification } : {}) };
+  }
+
+  /**
+   * Stage 1 of the capture contract (§4.3): transcribe ONE bounded chunk, page by page.
+   *
+   * The API already split the file to fit the provider — this route never sees a 10 MB original.
+   * It refuses rather than adapts: a PDF on a non-Bedrock provider, an unknown contract version or
+   * a chunk carrying no readable payload all answer typed, because the alternative is a read that
+   * silently covers fewer pages than the manifest claims.
+   */
+  @Public()
+  @Post('capture-read')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Internal: transcribe one bounded capture chunk (API service only)' })
+  async captureRead(
+    @Headers('x-internal-secret') secret: string | undefined,
+    @Body() body: ExpenseCaptureReadRequest,
+  ): Promise<ExpenseCaptureReadResponse> {
+    assertInternalSecret(secret, this.config.aiGatewayInternalSecret);
+    const chunk = body?.chunk;
+    if (!body?.requestId || !body.companyId || !body.userId || !chunk?.id || !Array.isArray(chunk.pageIndexes) || chunk.pageIndexes.length === 0) {
+      throw new BadRequestException('Invalid capture read payload.');
+    }
+    const contractVersion = EXPENSE_CAPTURE_CONTRACT_VERSION;
+    if (body.contractVersion !== contractVersion) {
+      return { status: 'failed', contractVersion, errorCode: 'CAPTURE_CONTRACT_VERSION_UNSUPPORTED' };
+    }
+    const isPdf = chunk.kind === 'pdf';
+    // A PDF still needs Bedrock, whose Converse document block is the only channel that carries one.
+    if (isPdf && this.config.modelProvider !== 'bedrock') {
+      return { status: 'not_configured', contractVersion, errorCode: 'PDF_PROVIDER_UNSUPPORTED' };
+    }
+    const images = captureChunkImages(chunk);
+    if (isPdf ? !chunk.contentBase64 : images.length === 0) {
+      return { status: 'failed', contractVersion, errorCode: 'CAPTURE_CHUNK_EMPTY' };
+    }
+    if (images.length > MAX_CAPTURE_CHUNK_IMAGES) {
+      return { status: 'failed', contractVersion, errorCode: 'CAPTURE_CHUNK_TOO_MANY_IMAGES' };
+    }
+
+    const modelId = body.modelPolicy?.modelId ?? this.config.documentAiModelId;
+    const reader = createProvider(this.config, { modelId, timeoutMs: DOCUMENT_OCR_TIMEOUT_MS });
+    const read = await reader.generateText({
+      systemPrompt: captureReadPrompt(bedrockOcrPrompt(isPdf ? 'PDF' : 'image'), chunk.pageIndexes.length, chunk.kind),
+      messages: [{ role: 'user', text: captureReadUserText(chunk) }],
+      ...(isPdf
+        ? { documents: [{ mimeType: 'application/pdf' as const, contentBase64: chunk.contentBase64! }] }
+        : { images }),
+      maxTokens: RECEIPT_EXTRACTION_MAX_TOKENS,
+      usageTag: 'ocr.capture.read',
+    });
+    if (!read.ok) return { status: 'failed', contractVersion, ...providerErrorEnvelope(read.error) };
+    const text = parseCaptureNaturalText(read.text, MAX_CAPTURE_PAGE_TEXT_CHARS * chunk.pageIndexes.length);
+    if (!text) return { status: 'failed', contractVersion, errorCode: 'OCR_EMPTY_OUTPUT' };
+    // `max_tokens` does NOT lose the chunk: the pages that completed keep their text and only the
+    // last one is reported truncated, so the API re-splits that page instead of re-reading all.
+    const pages = parseCaptureReadPages(text, chunk.pageIndexes, read.stopReason === 'max_tokens');
+    if (pages.length === 0) return { status: 'failed', contractVersion, errorCode: 'OCR_EMPTY_OUTPUT' };
+    this.logger.log({
+      msg: 'capture chunk read', requestId: body.requestId, chunkId: chunk.id, kind: chunk.kind,
+      pages: pages.length, expectedPages: chunk.pageIndexes.length,
+      truncated: pages.some((page) => page.truncated), blank: pages.filter((page) => page.blank).length,
+    });
+    return {
+      status: 'ok', contractVersion, pages,
+      modelLineage: modelLineage(this.config, 'expense_capture_read', modelId),
+    };
+  }
+
+  /**
+   * Stage 2 of the capture contract (§4.3): one window of read text becomes observations.
+   *
+   * The window is text the API itself stored from stage 1, so every value the model returns can be
+   * — and is — checked back against it. One repair retry is spent only on a structurally broken
+   * answer, never on a provider error and never on a refusal: re-asking a model that answered
+   * "this window prints no total" cannot make a total appear.
+   */
+  @Public()
+  @Post('capture-extract')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Internal: extract capture observations from one window (API service only)' })
+  async captureExtract(
+    @Headers('x-internal-secret') secret: string | undefined,
+    @Body() body: ExpenseCaptureExtractRequest,
+  ): Promise<ExpenseCaptureExtractResponse> {
+    assertInternalSecret(secret, this.config.aiGatewayInternalSecret);
+    const window = body?.window;
+    if (!body?.requestId || !body.companyId || !body.userId || !window || !Array.isArray(window.pages) || window.pages.length === 0) {
+      throw new BadRequestException('Invalid capture extract payload.');
+    }
+    const contractVersion = EXPENSE_CAPTURE_CONTRACT_VERSION;
+    if (body.contractVersion !== contractVersion) {
+      return { status: 'failed', contractVersion, errorCode: 'CAPTURE_CONTRACT_VERSION_UNSUPPORTED' };
+    }
+    const windowText = window.pages
+      .map((page) => `=== PAGE ${page.pageIndex} ===\n${typeof page.text === 'string' ? page.text : ''}`)
+      .join('\n');
+    // Splitting windows is the API's job (§4.3). A window past the declared ceiling is refused
+    // rather than truncated, because a truncated window reads as a complete one downstream.
+    if (windowText.length > EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars + WINDOW_DELIMITER_SLACK) {
+      return { status: 'failed', contractVersion, errorCode: 'CAPTURE_WINDOW_TOO_LARGE' };
+    }
+
+    const modelId = body.modelPolicy?.modelId ?? this.config.documentAiModelId;
+    const provider = createProvider(this.config, { modelId, timeoutMs: DOCUMENT_OCR_TIMEOUT_MS });
+    const activeCategories = boundedReceiptCategories(body.activeCategories);
+    let observations = await this.extractCaptureWindow(provider, windowText, window, activeCategories);
+    if (!observations.ok && (observations.errorCode === 'OCR_JSON_PARSE_FAILED' || observations.errorCode === 'OCR_SCHEMA_INVALID')) {
+      observations = await this.extractCaptureWindow(provider, windowText, window, activeCategories, true);
+    }
+    if (!observations.ok) {
+      return {
+        status: 'failed', contractVersion, errorCode: observations.errorCode,
+        ...(observations.budgetScope ? { budgetScope: observations.budgetScope } : {}),
+      };
+    }
+    this.logger.log({
+      msg: 'capture window extracted', requestId: body.requestId, pages: window.pageIndexes?.length ?? window.pages.length,
+      documents: observations.observations.documents.length, items: observations.observations.items.length,
+      components: observations.observations.components.length,
+      itemsTruncated: observations.observations.completeness.itemsTruncated,
+    });
+    return {
+      status: 'ok', contractVersion, observations: observations.observations,
+      modelLineage: modelLineage(this.config, 'expense_capture_extract', modelId),
+    };
+  }
+
+  private async extractCaptureWindow(
+    provider: ReturnType<typeof createProvider>,
+    windowText: string,
+    window: ExpenseCaptureExtractRequest['window'],
+    activeCategories: Array<{ id: string; name: string }>,
+    repair = false,
+  ): Promise<
+    | { ok: true; observations: ExpenseCaptureObservations }
+    | { ok: false; errorCode: string; budgetScope?: AiBudgetScope }
+  > {
+    const extraction = await provider.generateText({
+      systemPrompt: CAPTURE_EXTRACT_PROMPT,
+      messages: [{
+        role: 'user',
+        text: [
+          'ACTIVE_CATEGORY_CATALOG_START',
+          JSON.stringify(activeCategories),
+          'ACTIVE_CATEGORY_CATALOG_END',
+          'PRIOR_DOCUMENTS_START',
+          JSON.stringify((window.priorDocuments ?? []).slice(0, EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxDocumentsPerWindow)),
+          'PRIOR_DOCUMENTS_END',
+          'WINDOW_TEXT_START',
+          windowText,
+          'WINDOW_TEXT_END',
+          ...(repair ? ['The previous response was not valid JSON for the schema. Return ONE complete JSON object with the documents, items, components, totals, payments, refunds and completeness keys. Keep every value verbatim from the window text and do not invent facts to fill the schema.'] : []),
+        ].join('\n'),
+      }],
+      maxTokens: RECEIPT_EXTRACTION_MAX_TOKENS,
+      usageTag: repair ? 'ocr.capture.extract-repair' : 'ocr.capture.extract',
+    });
+    if (!extraction.ok) return { ok: false, ...providerErrorEnvelope(extraction.error) };
+    if (extraction.stopReason === 'max_tokens') return { ok: false, errorCode: 'OCR_OUTPUT_TRUNCATED' };
+    const parsed = parseCaptureObservationsJson(extraction.text, windowText);
+    if (!parsed) {
+      try { JSON.parse(extraction.text.match(/\{[\s\S]*\}/)?.[0] ?? extraction.text); }
+      catch { return { ok: false, errorCode: 'OCR_JSON_PARSE_FAILED' }; }
+      return { ok: false, errorCode: 'OCR_SCHEMA_INVALID' };
+    }
+    return { ok: true, observations: parsed };
   }
 
   @Public()

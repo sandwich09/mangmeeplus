@@ -32,6 +32,7 @@ import { ProvisionSignupUseCase } from '../external-signup/application/provision
 import { SignupAdminNotifyService } from '../external-signup/application/signup-admin-notify.service';
 import { SubmitLineSignupUseCase } from '../external-signup/application/submit-line-signup.use-case';
 import { GetExpenseCapturePolicyUseCase } from '../expenses/application/use-cases/expense-capture-policy.use-case';
+import { PrismaExpenseCaptureRepository } from '../expenses/infrastructure/prisma-expense-capture.repository';
 import { RequestReceiptExtractionUseCase } from '../expenses/application/use-cases/expense-extraction.use-case';
 import { CompleteReceiptUploadUseCase, InitReceiptUploadUseCase } from '../expenses/application/use-cases/expense-upload.use-case';
 import { ReceiptOcrApplyService } from '../expenses/application/services/receipt-ocr-apply.service';
@@ -207,7 +208,8 @@ describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => 
           ],
         } } satisfies ReceiptOcrResponse);
       };
-      const extract = new RequestReceiptExtractionUseCase(repo, storage, new ReceiptOcrClient(config, rateLimits, prisma), new ReceiptOcrApplyService(prisma, repo), audit, prisma);
+      const extract = new RequestReceiptExtractionUseCase(repo, storage, new ReceiptOcrClient(config, rateLimits, prisma), new ReceiptOcrApplyService(prisma, repo), audit, prisma,
+        new PrismaExpenseCaptureRepository(prisma), { kick: () => undefined } as any);
       await assert.rejects(extract.execute({ ...ctx, companyId: `${tag}-another-company` }, intent.expenseId));
       const result = await extract.execute(ctx, intent.expenseId);
       assert.equal(result.status, 'ok');

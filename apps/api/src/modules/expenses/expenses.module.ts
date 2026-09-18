@@ -63,6 +63,9 @@ import {
 } from './application/use-cases/expense-evidence.use-case';
 import { CompanySubstituteReceiptController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController } from './presentation/http/expense.controller';
 import { ExpenseCaptureController } from './presentation/http/expense-capture.controller';
+import { ExpenseCaptureReadInternalController } from './presentation/http/expense-capture-read-internal.controller';
+import { ExpenseCaptureReadClient } from './infrastructure/expense-capture-read.client';
+import { ExpenseCaptureReadRunnerService } from './application/services/expense-capture-read-runner.service';
 import { PrismaExpenseCaptureRepository } from './infrastructure/prisma-expense-capture.repository';
 import {
   AddExpenseCaptureFileUseCase,
@@ -105,7 +108,7 @@ import { LineDraftPreviewStore } from './application/services/line-draft-preview
   // ExpenseCaptureController FIRST: `ExpenseController` owns `@Get(':expenseId')` on the same
   // path, and Express matches in registration order — a later `capture-groups` literal would be
   // read as an expense id.
-  controllers: [ExpenseCaptureController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController, CompanySubstituteReceiptController],
+  controllers: [ExpenseCaptureController, ExpenseCaptureReadInternalController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController, CompanySubstituteReceiptController],
   providers: [
     PrismaExpenseRepository,
     PrismaExpenseCaptureRepository,
@@ -124,6 +127,8 @@ import { LineDraftPreviewStore } from './application/services/line-draft-preview
     ReviewExpenseCaptureGroupUseCase,
     AcceptExpenseCaptureAllocationUseCase,
     GetExpenseReadStatusUseCase,
+    ExpenseCaptureReadClient,
+    ExpenseCaptureReadRunnerService,
     ReceiptOcrClient,
     ReceiptOcrApplyService,
     ExpenseTransactionTaxService,
@@ -189,6 +194,7 @@ import { LineDraftPreviewStore } from './application/services/line-draft-preview
     AddExpenseCaptureFileUseCase,
     CompleteExpenseCaptureFileUseCase,
     ExpenseCaptureLineUseCase,
+    ExpenseCaptureReadRunnerService,
     GetExpenseUseCase,
     ReceiptOcrApplyService,
     CreateExpenseDraftUseCase,

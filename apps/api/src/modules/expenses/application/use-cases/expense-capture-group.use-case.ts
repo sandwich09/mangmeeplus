@@ -42,6 +42,7 @@ import {
   expenseCaptureWebPath,
 } from '../../domain/logic/expense-capture.logic';
 import { PrismaExpenseCaptureRepository, type CaptureDb, type CaptureGroupRow } from '../../infrastructure/prisma-expense-capture.repository';
+import { ExpenseCaptureReadRunnerService } from '../services/expense-capture-read-runner.service';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { lockFundingEvidence } from '../../infrastructure/substitute-funding.guard';
 import { EXPENSE_LAUNCH_ROUTE_CLOSED_MESSAGE, assertExpenseRootOpen } from '../expense-launch-gate';
@@ -446,6 +447,7 @@ export class CompleteExpenseCaptureFileUseCase {
     private readonly completeUpload: CompleteAttachmentUploadUseCase,
     private readonly attachments: PrismaAttachmentRepository,
     private readonly audit: AuditService,
+    private readonly runner: ExpenseCaptureReadRunnerService,
   ) {}
 
   /**
@@ -553,6 +555,12 @@ export class CompleteExpenseCaptureFileUseCase {
       }, tx);
 
       return { fileId, attachmentId: existing.attachmentId, revision, readJobId: job.id, uploadState: 'STORED', replayed: false };
+    }).then((result) => {
+      // Start the read in THIS process without making the upload wait for a provider (§4.5).
+      // Fire-and-forget by contract: `kick` swallows its own errors, and the scan worker claims
+      // the job anyway if this process dies before it gets there.
+      if (!result.replayed && result.readJobId) this.runner.kick(result.readJobId);
+      return result;
     });
   }
 }
