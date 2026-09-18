@@ -182,6 +182,27 @@ describe('RequestReceiptExtractionUseCase', () => {
     assert.deepEqual(runner.kicked, [result.readJobId]);
   });
 
+  /**
+   * A01 / IG13 (W08). The capture wave routed PDFs to a durable job. An IMAGE — the shape every
+   * existing receipt in production has — must stay on the synchronous path it has always used:
+   * one provider call, applied in the same request, and no capture row of any kind.
+   */
+  it('leaves the image lane on the synchronous path, with no capture job (A01)', async () => {
+    const { useCase, storage, client, capture, runner, applyCalls } = makeUseCase({
+      gatewayResult: { status: 'ok', fields: { vendorName: 'ร้านทดสอบ', grandTotalAmount: '321.00', missingFields: [], confidence: 0.9 }, classification: classification() },
+    });
+
+    const result = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+
+    assert.equal(result.status, 'ok');
+    assert.equal(result.readJobId, undefined, 'nothing to poll: the answer is in this response');
+    assert.equal(storage.getObject.mock.callCount(), 1, 'the bytes are read here, as before');
+    assert.equal(client.extract.mock.callCount(), 1, 'one synchronous provider call, as before');
+    assert.equal(applyCalls.length, 1, 'and it is applied to the draft in the same request');
+    assert.deepEqual(capture.jobs, [], 'no read job');
+    assert.deepEqual(runner.kicked, [], 'and the capture runner is never started');
+  });
+
   it('reuses the live job for the same PDF instead of buying a second OCR read', async () => {
     const { useCase, capture, runner } = makeUseCase({
       attachment: { ...baseAttachment, mimeType: 'application/pdf', checksumSha256: 'sha-pdf' },

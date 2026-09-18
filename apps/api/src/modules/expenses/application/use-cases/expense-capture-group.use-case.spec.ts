@@ -474,7 +474,15 @@ describe('capture group files', () => {
 
     const completed = await closed.completeFile.execute(ctx(), groupId, added.fileId, { expectedRevision: added.revision });
     assert.equal(completed.uploadState, 'STORED');
+    // W08/IG13: the reserved upload finishes AND its read is admitted and started. A47 asks for
+    // "ยังอ่าน/กู้คืน…ได้" — a flag that stranded a paid-for read would fail exactly here.
+    assert.equal(closed.capture.jobs.length, 1, 'the queued read job still exists with intake closed');
+    assert.equal(closed.runner.kicked.length, 1, 'and the runner is still started for it');
+    // The read model is still served, and it is the SERVER that drops the button.
     assert.equal((await closed.get.execute(ctx({ permissions: ['expense.read'] }), groupId)).allowedActions.includes('add_file'), false);
+    const view = await closed.get.execute(ctx({ permissions: ['expense.read', 'expense.update'] }), groupId);
+    assert.deepEqual(view.allowedActions, ['detach_file', 'close'], 'detach and close still end the work');
+    assert.equal(view.files.length, 1, 'and the evidence already stored is still readable');
     const detached = await closed.detachFile.execute(ctx(), groupId, added.fileId, { reason: 'ส่งผิดไฟล์', expectedRevision: completed.revision });
     assert.equal(detached.cancelledJobs, 1);
     await closed.closeGroup.execute(ctx(), groupId, { reason: 'CANCELLED', expectedRevision: detached.revision });

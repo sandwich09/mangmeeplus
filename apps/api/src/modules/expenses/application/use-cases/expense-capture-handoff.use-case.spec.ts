@@ -250,7 +250,7 @@ const code = (error: any) => error?.getResponse?.()?.code ?? error?.response?.co
 const status = (error: any) => error?.getStatus?.();
 const body = (error: any) => error?.getResponse?.() ?? {};
 
-function build(options: { payload?: ExpenseCaptureObservations; intakeChannel?: 'WEB' | 'LINE'; group?: Record<string, unknown> } = {}) {
+function build(options: { payload?: ExpenseCaptureObservations; intakeChannel?: 'WEB' | 'LINE'; group?: Record<string, unknown>; intakeEnabled?: boolean } = {}) {
   const capture = new FakeCaptureRepo();
   capture.groups.set('g-1', {
     id: 'g-1', companyId: 'co-1', branchId: 'branch-1', createdByUserId: 'user-1',
@@ -268,7 +268,8 @@ function build(options: { payload?: ExpenseCaptureObservations; intakeChannel?: 
   capture.jobs.push({ id: 'job-1', companyId: 'co-1', groupId: 'g-1', fileId: 'f1', status: 'DONE' });
 
   const expenses = new FakeExpenseRepo(capture);
-  const access = new ExpenseCaptureAccessService(capture as any, config);
+  const access = new ExpenseCaptureAccessService(capture as any,
+    options.intakeEnabled === false ? { ...config, expenseCaptureGroupIntakeEnabled: false } : config);
   return {
     capture, expenses,
     handoff: new HandoffExpenseCaptureGroupUseCase(capture as any, expenses as any, access, audit, outbox),
@@ -326,6 +327,20 @@ describe('handoff', () => {
     assert.deepEqual(audits.at(-1).metadataJson.expenseIds.sort(), app.capture.expenses.map((row) => row.id).sort());
     assert.equal(outboxEvents.at(-1).eventType, 'expense.capture_handoff.created');
     assert.equal(outboxEvents.at(-1).payload.data.handoffBatchKey, 'g-1:alloc-1');
+  });
+
+  /**
+   * A47 / IG13 (W08). Turning intake off must stop NEW evidence, not strand a group whose files
+   * are already stored and already reviewed. Handing that group off is how the customer finishes.
+   */
+  it('hands off with intake closed (A47)', async () => {
+    const app = build({ intakeEnabled: false });
+    const { allocationId, expectedRevision } = accept(app, allocationResult(twoSellers()));
+
+    const result = await app.handoff.execute(ctx(), 'g-1', { allocationId, expectedRevision, idempotencyKey: 'key-closed' });
+
+    assert.equal(result.expenses.length, 2, 'the work already in the system still reaches money');
+    assert.equal(app.capture.groups.get('g-1').status, 'HANDED_OFF');
   });
 
   it('answers a second call for the same allocation with the first batch, writing nothing', async () => {

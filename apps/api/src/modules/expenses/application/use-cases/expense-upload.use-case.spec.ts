@@ -204,6 +204,61 @@ describe('receipt upload use cases', () => {
     assert.equal(updates[0].status, 'NEEDS_REVIEW');
   });
 
+  /**
+   * A01 / A38 / IG13 (W08). §16.4 added `intent`, `expectedPrimaryAttachmentId` and `operationId`
+   * to this route. A client that predates them — an old web bundle, a queued job, a raw caller —
+   * sends none of the three, and must get the pre-feature behaviour byte for byte: no revision
+   * fence, no stale-provenance rewrite, no operation ledger, and an audit row with exactly the two
+   * keys it always had. Asserted with `deepEqual`, so a field added to the legacy branch fails here.
+   */
+  it('writes exactly the legacy row when a completion carries no intent', async () => {
+    const updates: any[] = [];
+    const links: any[] = [];
+    const audits: any[] = [];
+    const outboxes: any[] = [];
+    const retirement = receiptRetirement();
+    const expense = {
+      updatedAt: new Date('2026-09-15T10:00:00Z'), id: 'expense-1', status: 'DRAFT',
+      createdByUserId: 'user-1', duplicateStatus: 'NO_MATCH', primaryAttachmentId: 'att-old',
+      sourceChannelMetadataJson: null, aiVerificationSummaryJson: { extractionAttachmentId: 'att-old' },
+    };
+    const uc = new CompleteReceiptUploadUseCase(
+      {
+        findById: async () => ({ ...expense }),
+        runDuplicateCheck: async () => ({ openCandidates: 0, duplicateStatus: 'NO_MATCH' }),
+        findByIdWithRelations: async () => ({ id: 'expense-1', primaryAttachmentId: 'att-1', attachments: [], vendorDocumentNumber: null, vendorTaxIdSnapshot: null, expenseDate: new Date(), grandTotalAmount: '0', vendorCounterpartyId: null }),
+        findNearDuplicates: async () => [],
+        findExpenseIdsByAttachmentChecksum: async () => [],
+        createDuplicateCandidate: async () => undefined,
+        linkAttachment: async (...args: unknown[]) => { links.push(args.slice(0, 3)); },
+        updateExpense: async (input: any, withinTx?: (tx: any) => Promise<void>) => {
+          await withinTx?.(retirement.tx);
+          updates.push(input);
+          return { id: input.id };
+        },
+      } as any,
+      { execute: async () => ({ id: 'att-1' }) } as any,
+      { log: async (entry: any) => { audits.push(entry); } } as any,
+      { append: async (eventType: string, _t: string, _id: string, payload: any) => { outboxes.push({ eventType, payload }); } } as any,
+      retirement.attachments,
+      retirement.prisma,
+      { resolveAccess: async () => ctx } as any,
+    );
+
+    await uc.execute(ctx, { expenseId: 'expense-1', attachmentId: 'att-1', byteSize: 123 });
+
+    assert.deepEqual(updates, [{
+      id: 'expense-1', companyId: 'co-1', updatedByUserId: 'user-1',
+      expectedUpdatedAt: expense.updatedAt,
+      primaryAttachmentId: 'att-1', status: 'NEEDS_REVIEW',
+    }], 'no sourceStale, no aiVerificationStatus rewrite, no replaceOperations ledger');
+    assert.deepEqual(links, [['expense-1', 'att-1', 'expense.receipt.primary']]);
+    const uploadAudit = audits.find((entry) => entry.action === 'expense.upload.complete');
+    assert.deepEqual(uploadAudit.metadataJson, { attachmentId: 'att-1', purpose: 'expense.receipt.primary' });
+    assert.deepEqual(outboxes.map((event) => event.eventType), ['expense.receipt_uploaded']);
+    assert.deepEqual(outboxes[0].payload.data, { expenseId: 'expense-1', attachmentId: 'att-1', purpose: 'expense.receipt.primary' });
+  });
+
   it('flags the same verified file automatically for both web and LINE uploads', async () => {
     for (const captureSource of ['WEB_UPLOAD', 'LINE_UPLOAD']) {
       const candidates: any[] = [];
