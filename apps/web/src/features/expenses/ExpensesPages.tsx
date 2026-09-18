@@ -216,6 +216,13 @@ export function nonExpenseNotice(classification: Pick<BusinessDocumentClassifica
 }
 
 export function extractionNotice(result: ExpenseExtractionResult, locale: SupportedLocale): ExtractionNotice {
+  // Appendix §3: the read could not finish inside the request, so it is a durable job now. The file
+  // is stored either way — the review page follows the job from here and fills in the rest.
+  if (result.readStatus && result.readStatus !== 'DONE') {
+    return result.readStatus === 'FAILED'
+      ? { tone: 'error', message: t('expenses.capture.read_failed', locale) }
+      : { tone: 'info', message: t('expenses.capture.read_stored_reading', locale) };
+  }
   if (result.status === 'ok') {
     const fields = result.fields;
     const summary = [

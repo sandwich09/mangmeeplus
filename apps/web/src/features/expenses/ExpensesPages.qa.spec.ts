@@ -152,6 +152,15 @@ test('the picker and the dropzone take several files; the camera still takes one
   assert.equal((source.match(/accept=\{RECEIPT_UPLOAD_ACCEPT\} multiple/g) ?? []).length, 2);
 });
 
+test('a read that became a durable job says the file is saved, not that it was read', () => {
+  const notice = source.slice(source.indexOf('export function extractionNotice('), source.indexOf('// ── Upload Panel'));
+  assert.match(notice, /if \(result\.readStatus && result\.readStatus !== 'DONE'\) \{/);
+  assert.match(notice, /expenses\.capture\.read_failed/);
+  assert.match(notice, /expenses\.capture\.read_stored_reading/);
+  // It has to answer before the success branch, or a pending read reads as "AI อ่านเอกสารแล้ว".
+  assert.ok(notice.indexOf('result.readStatus') < notice.indexOf("result.status === 'ok'"));
+});
+
 test('the client no longer carries a PDF ceiling of its own', () => {
   assert.doesNotMatch(source, /MAX_PDF_EXTRACTION_BYTES|upload_pdf_too_large/);
   // The 4 MB message is retired in both locales: a 10 MiB PDF is read automatically (§4.1).
