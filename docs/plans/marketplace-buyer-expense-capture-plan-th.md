@@ -213,7 +213,7 @@ Depends on: W03; D03 เฉพาะกฎที่ใช้กับยอด
 
 Exit: original1,290/บริษัท810/ส่วนตัว480และที่มาการแบ่งยังอยู่ครบ; คนกลับมาแก้ต่อได้และไม่ต้องคำนวณคูปองเอง
 Checks: Decimal property/invariant tests รวม totals identity ของบรรทัดที่สร้าง, stale revision/permission checks, review save/reload และ usability discovery40+ ของsummary/recovery
-Checks ที่รันแล้ว (W04b, 2026-09-19): `pnpm --filter @watchdog-bms/web test` 1,851 pass / 0 fail (รวม logic spec ใหม่ 19 เคส + QA spec 16 เคส), `pnpm --filter @watchdog-bms/web lint` (tsc --noEmit) clean, pins `--check` status=current, `git diff --check` clean — usability 40+ (D05) ยังไม่ได้ทำ ไม่นับว่าผ่าน
+Checks ที่รันแล้ว (W04b, 2026-09-19): `pnpm --filter @watchdog-bms/web test` 1,849 pass / 0 fail (รวม logic spec ใหม่ 19 เคส + QA spec 16 เคส), `pnpm --filter @watchdog-bms/web lint` (tsc --noEmit) clean, pins `--check` status=current, `git diff --check` clean — usability 40+ (D05) ยังไม่ได้ทำ ไม่นับว่าผ่าน
 Acceptance หลัก: A03–A08/A11/A12/A14/A19/A24/A27/A28/A31/A32/A34/A37/A41/A42/A45/A48
 IG: IG06/IG10/IG11/IG12
 
