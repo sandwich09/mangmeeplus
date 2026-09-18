@@ -13,6 +13,7 @@ import {
   GetExpenseCaptureGroupUseCase,
   ListExpenseCaptureGroupsUseCase,
 } from '../../application/use-cases/expense-capture-group.use-case';
+import { GetExpenseReadStatusUseCase } from '../../application/use-cases/expense-capture-read-status.use-case';
 import {
   AddExpenseCaptureFileDto,
   CloseExpenseCaptureGroupDto,
@@ -46,6 +47,7 @@ export class ExpenseCaptureController {
     private readonly detachFile: DetachExpenseCaptureFileUseCase,
     private readonly closeGroup: CloseExpenseCaptureGroupUseCase,
     private readonly convert: ConvertExpenseToCaptureGroupUseCase,
+    private readonly readStatus: GetExpenseReadStatusUseCase,
   ) {}
 
   @Get('capture-capability')
@@ -81,6 +83,13 @@ export class ExpenseCaptureController {
     return this.getGroup.execute(ctx, groupId);
   }
 
+  /** Polled every few seconds while a file is being read (§9): reads job rows, starts nothing. */
+  @Get('capture-groups/:groupId/read-status')
+  @RequireAnyPermission('expense.read', 'expense.read_own', 'expense.review')
+  groupReadStatus(@ReqCtx() ctx: RequestContext, @Param('groupId') groupId: string) {
+    return this.readStatus.group(ctx, groupId);
+  }
+
   @Post('capture-groups/:groupId/files')
   @RequireAnyPermission('expense.receipt.upload', 'expense.receipt.line_upload', 'expense.create', 'expense.review')
   add(@ReqCtx() ctx: RequestContext, @Param('groupId') groupId: string, @Body() body: AddExpenseCaptureFileDto) {
@@ -113,6 +122,13 @@ export class ExpenseCaptureController {
   @RequireAnyPermission('expense.update', 'expense.review')
   close(@ReqCtx() ctx: RequestContext, @Param('groupId') groupId: string, @Body() body: CloseExpenseCaptureGroupDto) {
     return this.closeGroup.execute(ctx, groupId, body);
+  }
+
+  /** The single-expense read job of §3, for the review page's progress line. */
+  @Get(':expenseId/read-status')
+  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.create', 'expense.review', 'expense.confirm', 'expense.receipt.upload', 'expense.receipt.line_upload')
+  expenseReadStatus(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
+    return this.readStatus.expense(ctx, expenseId);
   }
 
   /** §3.1 "แยกเป็นกลุ่มหลักฐาน": the expense keeps its id, its link and every amount. */

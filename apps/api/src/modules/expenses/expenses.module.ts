@@ -76,6 +76,7 @@ import {
   GetExpenseCaptureGroupUseCase,
   ListExpenseCaptureGroupsUseCase,
 } from './application/use-cases/expense-capture-group.use-case';
+import { GetExpenseReadStatusUseCase } from './application/use-cases/expense-capture-read-status.use-case';
 import { ReceiptOcrApplyService } from './application/services/receipt-ocr-apply.service';
 import { GetExpenseCapturePolicyUseCase } from './application/use-cases/expense-capture-policy.use-case';
 import { RequestReceiptExtractionUseCase } from './application/use-cases/expense-extraction.use-case';
@@ -112,6 +113,7 @@ import { LineDraftPreviewStore } from './application/services/line-draft-preview
     DetachExpenseCaptureFileUseCase,
     CloseExpenseCaptureGroupUseCase,
     ConvertExpenseToCaptureGroupUseCase,
+    GetExpenseReadStatusUseCase,
     ReceiptOcrClient,
     ReceiptOcrApplyService,
     ExpenseTransactionTaxService,
