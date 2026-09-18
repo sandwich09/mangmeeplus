@@ -1,0 +1,176 @@
+/**
+ * Spec §17.5 as a pure table: attempt facts in, one Thai sentence out.
+ *
+ * It is deliberately free of Prisma, permissions and HTTP. The handler that calls it has already
+ * decided WHICH attempts this actor may see; this file only decides what may honestly be SAID about
+ * them — and §17.5's hardest rule is exactly that distinction: "ไม่พบ event" and "ค้นสถานะไม่ได้"
+ * are different answers, and neither may be dressed as "the file was too big".
+ */
+
+export type LineFileAttemptStage = 'DOWNLOAD' | 'SECURITY' | 'PERSIST' | 'READ' | 'ROUTE';
+
+export type LineFileAttemptOutcome =
+  | 'REJECTED' | 'STORED' | 'STORED_READING' | 'STORED_READ_FAILED'
+  | 'STORED_READ_PARTIAL' | 'STORED_READ_DONE' | 'UNKNOWN';
+
+export type LineFileAttemptFacts = {
+  ref: string;
+  messageType: 'image' | 'file';
+  fileNameSanitized: string | null;
+  stage: LineFileAttemptStage;
+  reasonCode: string;
+  outcome: LineFileAttemptOutcome;
+  declaredFileSize: number | null;
+  measuredByteSize: number | null;
+  capability: { maxBytes?: number; allowedMimeTypes?: string[]; pdfAutomaticRead?: boolean };
+  createdAt: Date;
+  /** Set only when the caller re-read the target through a permission-checked read. */
+  currentStatus?: string | null;
+  recoveryAction?: { kind: 'open_web' | 'resend' | 'choose_smaller' | 'choose_other_file' | 'wait'; url?: string };
+};
+
+export const FILE_ATTEMPT_NONE_REPLY =
+  'ตอนนี้ยังไม่พบไฟล์ที่จะอ่านค่ะ กด + → ไฟล์ แล้วเลือกส่งไฟล์นั้นในแชตนี้อีกครั้งได้เลย';
+
+export const FILE_ATTEMPT_LOOKUP_FAILED_REPLY =
+  'ตอนนี้ยังตรวจสอบสถานะไม่ได้ จึงยังยืนยันไม่ได้ว่าไฟล์ถูกเก็บหรือยัง';
+
+export const FILE_ATTEMPT_AMBIGUOUS_LEAD = 'หมายถึงไฟล์ไหนคะ';
+
+/** The word the customer used. §17.1: "คำว่ารูป/ไฟล์/เอกสารตรงกับสิ่งที่ส่ง". */
+export const mediaWordTh = (messageType: 'image' | 'file'): string => (messageType === 'file' ? 'ไฟล์' : 'รูป');
+
+const megabytes = (bytes: number): string => {
+  const mb = bytes / 1_048_576;
+  return (mb >= 10 ? mb.toFixed(0) : mb.toFixed(1)).replace(/\.0$/, '');
+};
+
+const named = (attempt: LineFileAttemptFacts): string =>
+  attempt.fileNameSanitized ? `${mediaWordTh(attempt.messageType)} ${attempt.fileNameSanitized}` : `${mediaWordTh(attempt.messageType)}ที่ส่งมา`;
+
+const timeLabel = (at: Date): string =>
+  new Intl.DateTimeFormat('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }).format(at);
+
+/** The list shown when more than one attempt could be the one the customer means (§17.5). */
+export function fileAttemptChoiceList(attempts: readonly LineFileAttemptFacts[]): string {
+  return [
+    FILE_ATTEMPT_AMBIGUOUS_LEAD,
+    ...attempts.map((attempt, index) =>
+      `${index + 1}) ${named(attempt)} · ${timeLabel(attempt.createdAt)} · ${shortStateTh(attempt)}`),
+  ].join('\n');
+}
+
+function shortStateTh(attempt: LineFileAttemptFacts): string {
+  switch (attempt.outcome) {
+    case 'REJECTED': return 'ยังไม่ได้เก็บไฟล์';
+    case 'STORED': return 'เก็บไฟล์แล้ว';
+    case 'STORED_READING': return 'กำลังอ่านเอกสาร';
+    case 'STORED_READ_FAILED': return 'เก็บไฟล์แล้ว อ่านไม่สำเร็จ';
+    case 'STORED_READ_PARTIAL': return 'เก็บไฟล์แล้ว อ่านได้บางส่วน';
+    case 'STORED_READ_DONE': return 'อ่านเอกสารเสร็จแล้ว';
+    default: return 'ยังยืนยันสถานะไม่ได้';
+  }
+}
+
+/**
+ * One attempt → the §17.5 sentence for it.
+ *
+ * `resolvedFrom` is the EARLIER attempt for the same file when the problem has since been fixed:
+ * §17.5's last row ("ตอนแรก {เหตุ} ตอนนี้ {สถานะล่าสุด} แล้ว") exists so a customer is never answered
+ * from a stale error and made to send or pay twice.
+ */
+export function fileAttemptAnswer(
+  attempt: LineFileAttemptFacts,
+  resolvedFrom?: LineFileAttemptFacts,
+): string {
+  if (resolvedFrom && resolvedFrom.outcome === 'REJECTED' && attempt.outcome !== 'REJECTED') {
+    return `ตอนแรก ${rejectionCauseTh(resolvedFrom)} ตอนนี้ ${shortStateTh(attempt)} แล้วค่ะ${linkTail(attempt)}`;
+  }
+  if (attempt.outcome === 'REJECTED') return rejectionSentence(attempt);
+  return storedSentence(attempt);
+}
+
+/** The cause half only, for the "problem already fixed" sentence. */
+function rejectionCauseTh(attempt: LineFileAttemptFacts): string {
+  switch (attempt.reasonCode) {
+    case 'oversize_declared':
+    case 'oversize_measured':
+      return 'ไฟล์ใหญ่เกินขนาดที่ระบบรับได้';
+    case 'METADATA_REJECTED':
+    case 'EXTENSION_MIME_MISMATCH':
+      return 'ไฟล์ชนิดนี้ยังไม่รองรับ';
+    case 'CONTENT_REJECTED':
+    case 'MALWARE_DETECTED':
+    case 'MALWARE_SCAN_FAILED':
+      return 'ไฟล์ไม่ผ่านการตรวจความปลอดภัย';
+    case 'persist_failed':
+      return 'ระบบเก็บไฟล์ไม่สำเร็จ';
+    default:
+      return 'ระบบรับไฟล์จาก LINE ไม่สำเร็จ';
+  }
+}
+
+function rejectionSentence(attempt: LineFileAttemptFacts): string {
+  const limit = attempt.capability.maxBytes;
+  const measured = attempt.measuredByteSize ?? attempt.declaredFileSize;
+  if ((attempt.reasonCode === 'oversize_declared' || attempt.reasonCode === 'oversize_measured') && limit && measured) {
+    return `ไฟล์ ${attempt.fileNameSanitized ?? 'ที่ส่งมา'} ขนาด ${megabytes(measured)} MB `
+      + `เกินขนาดที่ระบบรับได้ ${megabytes(limit)} MB จึงยังไม่ได้เก็บไฟล์นี้ — `
+      + 'เลือกไฟล์ที่เล็กกว่าแล้วส่งอีกครั้งได้เลยค่ะ';
+  }
+  if (attempt.reasonCode === 'METADATA_REJECTED' || attempt.reasonCode === 'EXTENSION_MIME_MISMATCH') {
+    const kinds = attempt.capability.allowedMimeTypes?.length
+      ? attempt.capability.allowedMimeTypes.map(mimeLabel).filter((label, index, all) => all.indexOf(label) === index).join(', ')
+      : 'PDF, PNG, JPG';
+    return `ไฟล์ชนิดนี้ยังไม่รองรับค่ะ จึงยังไม่ได้เก็บไฟล์นี้ — กรุณาเลือก ${kinds} แล้วส่งอีกครั้งนะคะ`;
+  }
+  if (attempt.reasonCode === 'CONTENT_REJECTED' || attempt.reasonCode === 'MALWARE_DETECTED'
+    || attempt.reasonCode === 'MALWARE_SCAN_FAILED') {
+    return `${named(attempt)} ไม่ผ่านการตรวจความปลอดภัยค่ะ จึงยังไม่ได้เก็บไฟล์นี้ — `
+      + 'กรุณาส่งไฟล์ต้นฉบับที่ดาวน์โหลดจากต้นทางอีกครั้งนะคะ';
+  }
+  if (attempt.reasonCode === 'persist_failed') {
+    return `ระบบเก็บ${named(attempt)}ไม่สำเร็จค่ะ จึงยังไม่ได้บันทึกรายการใด ๆ — รบกวนส่งไฟล์เดิมอีกครั้งนะคะ`;
+  }
+  // §17.5 row 4: a download failure whose cause we genuinely do not know. Never widened into
+  // "too large" or "expired" — that guess is the defect this row exists to prevent.
+  return 'ตอนนั้นระบบรับไฟล์จาก LINE ไม่สำเร็จ แต่ยังระบุสาเหตุแน่ชัดไม่ได้ค่ะ — '
+    + 'ถ้ายังไม่พบไฟล์ในเว็บ รบกวนส่งไฟล์เดิมอีกครั้งนะคะ';
+}
+
+function storedSentence(attempt: LineFileAttemptFacts): string {
+  const link = linkTail(attempt);
+  switch (attempt.outcome) {
+    case 'STORED_READING':
+      return `เก็บ${named(attempt)}ไว้แล้วค่ะ กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ${link}`;
+    case 'STORED_READ_FAILED':
+      return `เก็บ${named(attempt)}ไว้แล้วค่ะ แต่อ่านข้อมูลไม่สำเร็จ กดกรอกข้อมูลต่อได้ที่นี่${link || ''}`;
+    case 'STORED_READ_PARTIAL':
+      return `เก็บ${named(attempt)}ไว้แล้วค่ะ แต่ยังอ่านข้อมูลไม่ครบ กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่${link || ''}`;
+    case 'STORED_READ_DONE':
+      return `อ่าน${named(attempt)}เสร็จแล้วค่ะ${attempt.currentStatus ? ` สถานะตอนนี้ ${attempt.currentStatus}` : ''}${link}`;
+    case 'STORED':
+      return `เก็บ${named(attempt)}ไว้แล้วค่ะ ยังไม่ได้อ่านข้อมูลอัตโนมัตินะคะ${link}`;
+    default:
+      // UXE-25 / §17.5 "unknown": an outcome we never resolved is never reported as saved.
+      return FILE_ATTEMPT_LOOKUP_FAILED_REPLY;
+  }
+}
+
+const linkTail = (attempt: LineFileAttemptFacts): string =>
+  attempt.recoveryAction?.url ? `\n${attempt.recoveryAction.url}` : '';
+
+function mimeLabel(mimeType: string): string {
+  if (mimeType === 'application/pdf') return 'PDF';
+  if (mimeType === 'image/png') return 'PNG';
+  if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') return 'JPG';
+  return mimeType.split('/').pop()?.toUpperCase() ?? mimeType;
+}
+
+/**
+ * UXE-25: the read finished but LINE never accepted the push. The answer must say the RESULT is
+ * ready and where to see it, without claiming the customer was told.
+ */
+export const FILE_ATTEMPT_DELIVERY_FAILED_REPLY = (link: string): string =>
+  `อ่านเอกสารเสร็จแล้วค่ะ แต่ส่งผลให้ทางแชตนี้ไม่สำเร็จ จึงยังไม่ได้แจ้งผลก่อนหน้านี้ `
+  + `เปิดดูผลได้ที่นี่\n${link}`;
