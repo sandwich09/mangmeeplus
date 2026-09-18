@@ -256,3 +256,18 @@ Next:
   form and acknowledged its informational tax limitation, but created no certificate. Step2 requires
   missing payer/funds, actual payment date and reason; asked owner rather than invent financial facts.
   No payment checkbox, legal signature, substitute cancellation or final expense confirmation done.
+
+## Review artifact and restart-fence correction
+
+- Controller PR634: https://github.com/MangmeeDev/mangmeeplus/pull/634, attached to the task.
+  Initial reviewed head0d6facd6 (rebased onto currentmaincc17a699), CI35324442127 started. No duplicate
+  deployment was dispatched. Protection reportsREVIEW_REQUIRED. Application source remains0b0058ad.
+- Actual non-root KMS challenge sign/verify passed08:28:26UTC using the new Production key.
+  Private signing-preflight/result.json is explicitlySIGNING_PREFLIGHT_NOT_RELEASE_ACCEPTANCE.
+- Self-review found that stopped containers with restart=always could return after host restart.
+  Candidate inventory now includes stopped containers, rollback disables restart before verifying
+  their stopped state, and first migration rejects any preexisting app container. Regression proves
+  an exited auto-restart worker blocks ECS restoration until restart is disabled.52tests pass1.457s.
+  This is a new controller correction, so the next PR-head CI supersedes the initial run; no app image
+  rebuild or cloud mutation is needed. The prior full security suite passed before this correction;
+  exact updated-head CI must run its security checks before merge.

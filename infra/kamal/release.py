@@ -373,7 +373,7 @@ class Release:
             for service, hosts in self.target['hosts'].items():
                 label = self.target['servicePrefix'] + ('' if service == 'api-web' else '-'+service)
                 for host in hosts:
-                    require(not self.remote(host,['docker','ps','--filter','label=service='+label,'--format','{{.ID}}']).strip(),
+                    require(not self.remote(host,['docker','ps','--all','--filter','label=service='+label,'--format','{{.ID}}']).strip(),
                             'Staged hosts already run applications; reconcile before a first migration')
             self.migration.routes(public=False)
             self.migration.old_routes()
@@ -1147,7 +1147,7 @@ if(p.worker&&process.env.QUEUE_ENABLED!=='false'){
         rows = []
         label = self.target['servicePrefix']+('' if service == 'api-web' else '-'+service)
         for host in self.target['hosts'][service]:
-            ids = self.remote(host, ['docker','ps','--filter','label=service='+label,'--format','{{.ID}}']).split()
+            ids = self.remote(host, ['docker','ps','--all','--filter','label=service='+label,'--format','{{.ID}}']).split()
             for cid in ids:
                 info = json.loads(self.remote(host, ['docker','inspect',cid]))[0]
                 values = dict(v.split('=',1) for v in info['Config']['Env'])
@@ -1156,7 +1156,13 @@ if(p.worker&&process.env.QUEUE_ENABLED!=='false'){
         return rows
 
     def assert_candidate_workers_stopped(self):
-        require(not self.candidate_services('workers'), 'Candidate workers must be stopped before restoring ECS consumers')
+        self.assert_candidate_service_stopped('workers')
+
+    def assert_candidate_service_stopped(self, service):
+        for _, info in self.candidate_services(service):
+            require(info['State']['Status'] in ('exited','created') and not info['State']['Running']
+                    and info['HostConfig']['RestartPolicy']['Name'] in ('','no'),
+                    'Candidate application must remain stopped with automatic restart disabled')
 
     def stop_candidate_workers(self):
         self.stop_candidate_service('workers')
@@ -1166,11 +1172,9 @@ if(p.worker&&process.env.QUEUE_ENABLED!=='false'){
         for host, info in self.candidate_services(service):
             self.migration.intent('stop-candidate-'+service+'-'+host['instanceId'], {'containerId':info['Id']})
             self.remote(host, ['docker','update','--restart=no',info['Id']])
-            self.remote(host, ['docker','stop','--time','180',info['Id']], timeout=240)
-            stopped = json.loads(self.remote(host, ['docker','inspect',info['Id']]))[0]
-            require(stopped['State']['Status'] == 'exited' and not stopped['State']['Running']
-                    and stopped['HostConfig']['RestartPolicy']['Name'] == 'no', 'Candidate application did not remain stopped')
-        require(not self.candidate_services(service), 'Candidate application remains running')
+            if info['State']['Running'] or info['State']['Status'] == 'restarting':
+                self.remote(host, ['docker','stop','--time','180',info['Id']], timeout=240)
+        self.assert_candidate_service_stopped(service)
 
     def verify_ecs_build_authority(self):
         self.tool(['./node_modules/.bin/tsx','prisma/verify-feature-launch-build-authority.ts'],

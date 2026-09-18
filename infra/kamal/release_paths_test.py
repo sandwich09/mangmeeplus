@@ -13,6 +13,30 @@ from release_source_test import accepted
 
 
 class ReleasePaths(unittest.TestCase):
+    def test_exited_candidate_workers_with_restart_policy_still_block_ecs_restore(self):
+        r = m.Release.__new__(m.Release)
+        r.target = target('production'); r.build = {'sourceCommit':'a'*40}
+        container = {'Id':'candidate','State':{'Running':False,'Status':'exited'},
+            'HostConfig':{'RestartPolicy':{'Name':'always'}},'Config':{'Env':['GIT_SHA='+'a'*40]}}
+        calls = []
+        def remote(host, args, **kwargs):
+            calls.append(args)
+            if args[:2] == ['docker','ps']:
+                self.assertIn('--all', args)
+                return 'candidate'
+            if args[:2] == ['docker','update']:
+                container['HostConfig']['RestartPolicy']['Name'] = 'no'
+                return ''
+            self.assertEqual(args[:2], ['docker','inspect'])
+            return json.dumps([container])
+        r.remote = remote
+        with self.assertRaisesRegex(ValueError, 'automatic restart disabled'):
+            r.assert_candidate_workers_stopped()
+        r.migration = type('Journal',(),{'intent':lambda *args:None})()
+        r.stop_candidate_workers()
+        r.assert_candidate_workers_stopped()
+        self.assertTrue(any(c[:3] == ['docker','update','--restart=no'] for c in calls))
+
     def test_migration_can_recover_a_publication_failure_but_not_lose_database_recovery_inputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             old = Path(tmp)
