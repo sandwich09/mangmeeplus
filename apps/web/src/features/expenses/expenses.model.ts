@@ -357,6 +357,8 @@ export function lateDocumentDays(expense: Pick<ExpenseSummary, 'expenseDate' | '
 
 export type ExpenseDetail = ExpenseSummary & {
   primaryAttachmentId?: string | null;
+  /** Set once this expense belongs to a capture group (appendix §2.3); null on every other record. */
+  captureGroupId?: string | null;
   extractionId?: string | null;
   sourceDraft?: ExpenseSourceDraft | null;
   /** Suggested input Tax Code from this expense's category. A hint for the line picker only. */

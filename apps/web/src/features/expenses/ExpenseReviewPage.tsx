@@ -13,6 +13,7 @@ import { useConfirm } from '@/common/components/modal/use-confirm';
 import { Modal } from '@/common/components/modal/Modal';
 import { ThemedSteps } from '@/common/components/steps/ThemedSteps';
 import { CoverLoader } from '@/common/components/state/CoverLoader';
+import { apiErrorCode } from '@/common/api/api-error-message';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
@@ -23,10 +24,15 @@ import { findForbiddenChars, REASON_MAX_LENGTH, sanitizeReasonInput } from '@/co
 import { downloadDocumentAsPdf } from '@/common/files/download-document-pdf';
 import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import {
-  acknowledgeOcrTotal, confirmDuplicate, confirmExpense, deleteExpense, dismissDuplicate, fetchAttachmentPreviewBlob, getExpense,
+  acknowledgeOcrTotal, confirmDuplicate, confirmExpense, convertExpenseToCaptureGroup, deleteExpense, dismissDuplicate,
+  fetchAttachmentPreviewBlob, getExpense, getExpenseReadStatus,
   markExpenseReady, markExpenseReadyAsReviewer, recordExpensePayment, rejectExpense,
   requestExpenseExtraction, removeExpenseReceipt, runDuplicateCheck, updateExpenseReviewFields, uploadExpenseEvidenceFile, voidExpense,
 } from './expenses.api';
+import {
+  capturePausedReasonKey, captureReadAgainAllowed, captureReadIsRunning, captureReadNotice,
+  type ExpenseReadStatusFile,
+} from './expense-capture-status.logic';
 import {
   AI_MISSING_FIELD_LABELS, AI_SUMMARY_STATUS_LABELS, ATTACHMENT_PURPOSE_LABELS, isWetSignedScanAttachment,
   CAPTURE_SOURCE_LABELS, EXPENSE_VAT_MODE_LABELS, PAYMENT_METHOD_LABELS, POSTING_STATUS_LABELS,
@@ -123,6 +129,11 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const [paymentNotice, setPaymentNotice] = useState<string | null>(null);
   const [paymentFailure, setPaymentFailure] = useState<ExpensePaymentFailure | 'refresh_failed' | null>(null);
   const [receiptUploading, setReceiptUploading] = useState(false);
+  // §16.4 / §17.6: the file intents, the durable read job, and the two answers a conflict can give.
+  const fileOperationRef = useRef<{ key: string; operationId: string } | null>(null);
+  const [conflictReload, setConflictReload] = useState(false);
+  const [splitting, setSplitting] = useState(false);
+  const [readState, setReadState] = useState<ExpenseReadStatusFile | null>(null);
   const [preview, setPreview] = useState<ExpensePreviewSource | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewSaving, setPreviewSaving] = useState(false);
@@ -250,6 +261,56 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     try { setDetail(await getExpense(companyId, expenseId)); } catch (e) { setError(err(e)); } finally { setLoading(false); }
   }, [companyId, expenseId]);
   useEffect(() => { void load(); }, [load]);
+
+  /** One operation id per (intent, file, revision); a retry of the same thing reuses it verbatim. */
+  const fileOperationId = (intent: 'replace' | 'append', file: File, revision: string): string => {
+    const key = `${intent}:${revision}:${file.name}:${file.size}`;
+    const current = fileOperationRef.current?.key === key
+      ? fileOperationRef.current
+      : { key, operationId: globalThis.crypto.randomUUID() };
+    fileOperationRef.current = current;
+    return current.operationId;
+  };
+
+  /** UXE-21/UXE-22: a conflict is answered with "open the latest data", never with a silent retry. */
+  const setFileIntentError = (cause: unknown) => {
+    const code = apiErrorCode(cause);
+    setConflictReload(code === 'expense_revision_conflict' || code === 'expense_receipt_replace_conflict'
+      || code === 'expense_receipt_replace_operation_conflict' || code === 'EXPENSE_UPDATE_CONFLICT');
+    setError(err(cause, locale));
+  };
+
+  // Appendix §3: a PDF is read by a durable job, so the page follows the job instead of waiting on a
+  // request. Polling starts only for a record that HAS a file, stops the moment the job is terminal,
+  // and never asks for another read.
+  useEffect(() => {
+    setReadState(null);
+    if (!detail?.primaryAttachmentId) return;
+    let cancelled = false;
+    void getExpenseReadStatus(companyId, expenseId)
+      .then((result) => { if (!cancelled) setReadState(result.files[0] ?? null); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [companyId, expenseId, detail?.primaryAttachmentId]);
+
+  const readRunning = captureReadIsRunning(readState?.status ?? null);
+  useEffect(() => {
+    if (!readRunning) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void getExpenseReadStatus(companyId, expenseId)
+        .then((result) => {
+          if (cancelled) return;
+          const file = result.files[0] ?? null;
+          setReadState(file);
+          // DONE is the only state that changed the record's own facts.
+          if (file?.status === 'DONE') void load();
+        })
+        .catch(() => undefined);
+    }, 3_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [companyId, expenseId, load, readRunning]);
+
   useEffect(() => {
     extractionRunIdRef.current += 1;
     extractionAttemptRef.current = null;
@@ -425,11 +486,25 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     finally { receiptRemovalPending.current = false; setReceiptRemoving(false); }
   };
 
+  /**
+   * "เปลี่ยนไฟล์ใบเสร็จนี้" = `replace` (spec §16.4). The server is told which revision and which
+   * primary the user was looking at, so a record someone else changed meanwhile answers a conflict
+   * instead of quietly taking this file; the operation id is minted per attempt and REUSED when the
+   * same file is sent again, so a lost response resolves to the first result, not a second winner.
+   */
   const attachPrimaryReceipt = async (file: File, branchId: string | null) => {
-    const reread = shouldRereadReplacedReceipt({ status: detail?.status ?? '', canExtract });
-    setReceiptUploading(true); setError(null);
+    if (!detail) return;
+    const reread = shouldRereadReplacedReceipt({ status: detail.status, canExtract });
+    const operationId = fileOperationId('replace', file, detail.updatedAt);
+    setReceiptUploading(true); setError(null); setConflictReload(false);
     try {
-      const attachmentId = await uploadExpenseEvidenceFile(companyId, expenseId, branchId, file, 'expense.receipt.primary');
+      const attachmentId = await uploadExpenseEvidenceFile(companyId, expenseId, branchId, file, 'expense.receipt.primary', {
+        intent: 'replace',
+        expectedUpdatedAt: detail.updatedAt,
+        ...(detail.primaryAttachmentId ? { expectedPrimaryAttachmentId: detail.primaryAttachmentId } : {}),
+        operationId,
+      });
+      fileOperationRef.current = null;
       extractionRunIdRef.current += 1;
       extractionAttemptRef.current = null;
       extractionRequestRunningRef.current = false;
@@ -437,7 +512,33 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       await load(); onRefresh();
       toast.success(t('expenses.receipt_attached', locale));
       if (reread) await extractAgain(attachmentId);
-    } catch (e) { setError(err(e)); } finally { setReceiptUploading(false); }
+    } catch (e) { setFileIntentError(e); } finally { setReceiptUploading(false); }
+  };
+
+  /** "แนบหลักฐานเพิ่ม" = `append`: supporting evidence only, never the primary, never a retire. */
+  const appendSupportingReceipt = async (file: File, branchId: string | null) => {
+    if (!detail) return;
+    const operationId = fileOperationId('append', file, detail.updatedAt);
+    setReceiptUploading(true); setError(null); setConflictReload(false);
+    try {
+      await uploadExpenseEvidenceFile(companyId, expenseId, branchId, file, 'expense.receipt.supporting', {
+        intent: 'append', expectedUpdatedAt: detail.updatedAt, operationId,
+      });
+      fileOperationRef.current = null;
+      await load(); onRefresh();
+      toast.success(t('expenses.receipt_attached', locale));
+    } catch (e) { setFileIntentError(e); } finally { setReceiptUploading(false); }
+  };
+
+  /** §3.1: one file turned out to hold several documents — move the work into a capture group. */
+  const splitIntoCaptureGroup = async () => {
+    if (!detail || splitting) return;
+    setSplitting(true); setError(null);
+    try {
+      const group = await convertExpenseToCaptureGroup(companyId, expenseId, { expectedUpdatedAt: detail.updatedAt });
+      router.push(group.webPath || `/companies/${companyId}/expenses/capture/${encodeURIComponent(group.groupId)}`);
+    } catch (e) { setFileIntentError(e); }
+    finally { setSplitting(false); }
   };
 
   const checkDuplicates = async () => {
@@ -601,6 +702,26 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const hasPriceMismatch = hasAiGrandTotalMismatch(detail.aiVerifiedFieldsJson, detail.grandTotalAmount);
   const isZeroAmount = Number(detail.grandTotalAmount) === 0;
   const aiMap = detail.aiVerificationSummaryJson as Record<string, unknown> | null;
+  // §17.2 mapping of the durable read job. DONE says nothing here — the filled fields are the
+  // result — so only a running read or an ending that did NOT read everything speaks.
+  const readNotice = readState && readState.status !== 'DONE' ? captureReadNotice(readState) : null;
+  const readPausedKey = capturePausedReasonKey(readState?.pausedReason ?? null);
+  const readNoticeText = readNotice
+    ? Object.entries(readNotice.params ?? {}).reduce(
+      (message, [key, value]) => message.replace(`{${key}}`, value),
+      t(readNotice.messageKey, locale),
+    ) + (readPausedKey ? ` (${t(readPausedKey, locale)})` : '')
+    : '';
+  // §3.1: the reader found more than one document in this one file.
+  const multiDocumentDetected = (aiMap?.['classification'] as { contentKind?: string } | undefined)?.contentKind === 'MULTI_DOCUMENT';
+  /**
+   * "อ่านเอกสารอีกครั้ง" is a deliberate intent on a file that has NOT just failed to be read
+   * (§17.6). After a terminal failure — or under an error notice — the way forward is this form,
+   * and offering a reread there is the loop the spec removed.
+   */
+  const readAgainAllowed = captureReadAgainAllowed({
+    canExtract, readStatus: readState?.status ?? null, noticeTone: notice?.tone ?? null,
+  });
   const classificationBlocked = deriveExpenseClassificationReviewState(aiMap, canReview).blocked;
   const checkBillBlocked = isBlockedCheckBillClassification(aiMap);
   const classificationBlockMessage = t(checkBillBlocked ? 'expenses.check_bill_workflow_blocked' : 'expenses.non_expense_workflow_blocked', locale);
@@ -862,6 +983,28 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           The info-tone one only restates what the AI strip and the form fields below already show,
           so it is kept for the no-summary case and dropped once a summary exists. */}
       {notice && (notice.tone === 'error' ? <ErrorBanner message={notice.message} /> : !aiMap && <InfoBanner message={notice.message} />)}
+      {/* §17.6: the READ's own state, beside the file and persisted — not a toast that scrolls away.
+          A terminal failure says the file is saved and points at this form; it offers no reread. */}
+      {readNotice && (readNotice.tone === 'error'
+        ? <ErrorBanner message={readNoticeText} />
+        : <InfoBanner message={readNoticeText} />)}
+      {/* §16.4: values read from the file that was replaced, until a person confirms them here. */}
+      {aiMap?.['sourceStale'] === true && <InfoBanner message={t('expenses.capture.source_stale', locale)} />}
+      {multiDocumentDetected && (
+        <div className="space-y-2">
+          <InfoBanner message={t('expenses.capture.multi_document', locale)} />
+          {canMutateDraft && (
+            <button type="button" className={cx(ghostClass, 'min-h-11')} disabled={splitting || receiptUploading} aria-busy={Boolean(splitting)} onClick={() => void splitIntoCaptureGroup()}>
+              {t('expenses.capture.split_to_group', locale)}
+            </button>
+          )}
+        </div>
+      )}
+      {detail.captureGroupId && (
+        <Link className="inline-flex min-h-11 items-center text-sm font-semibold text-brand-600 underline" href={`/companies/${companyId}/expenses/capture/${encodeURIComponent(detail.captureGroupId)}`}>
+          {t('expenses.capture.open_group', locale)}
+        </Link>
+      )}
       {!notice && storedNonExpenseNotice && <InfoBanner message={storedNonExpenseNotice.message} />}
       {storedClassificationOverrideNotice && <InfoBanner message={storedClassificationOverrideNotice} />}
       <ForeignCurrencyNotice summary={aiMap} />
@@ -1117,7 +1260,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           {EXPENSE_DATE_STATUS_LABELS.assumed}
         </span>
       )}
-      {canExtract && (
+      {readAgainAllowed && (
         <button className={cx(ghostClass, 'ml-auto')} onClick={() => void extractAgain()} disabled={actionLoading || extractionLoading || receiptUploading} aria-busy={Boolean(actionLoading || extractionLoading)} data-loading-indicator>
           <span className="inline-flex items-center justify-center gap-2">
             {extractionLoading && <InlineSpinner />}
@@ -1255,6 +1398,23 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     </label>
   );
   const replaceReceiptControl = receiptFileInput(t('expenses.replace_receipt', locale));
+  /** §16.4's second intent, side by side with the first so the two are told apart before clicking. */
+  const appendEvidenceControl = canMutateDraft && (
+    <label className="cursor-pointer">
+      <span className={cx(ghostClass, 'inline-flex min-h-11')}>{receiptUploading ? uploadBusyLabel : t('expenses.capture.add_files', locale)}</span>
+      <input
+        className="hidden"
+        type="file"
+        accept={ATTACHMENT_UPLOAD_ACCEPT}
+        disabled={receiptUploading || receiptRemoving}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (file) void appendSupportingReceipt(file, detail.branchId);
+        }}
+      />
+    </label>
+  );
   const removeReceiptControl = (attachment: ExpenseDetail['attachments'][number] | undefined) =>
     attachment && isRemovableFilePurpose(attachment.purpose) && canMutateDraft
       && ['DRAFT', 'NEEDS_REVIEW'].includes(detail.status) && detail.paymentStatus === 'UNPAID' ? (
@@ -1287,6 +1447,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       {confirmDialog}
       <MangmeePage eyebrow={backLink} title={pageTitle} meta={pageMeta}>
         {error && <ErrorBanner message={error} />}
+        {/* UXE-21: the record moved under this attempt. Nothing was changed, and the way on is the
+            latest data — never a silent retry of a write whose target no longer exists. */}
+        {error && conflictReload && (
+          <button type="button" className={cx(ghostClass, 'min-h-11')} onClick={() => { setConflictReload(false); setError(null); void load(); }}>
+            {t('expenses.capture.reload_latest', locale)}
+          </button>
+        )}
         {readySourceDraftMessage && canReview && (
           <button type="button" className={btnClass} disabled={actionLoading} aria-busy={Boolean(actionLoading)}
             onClick={() => { void doAction(() => updateExpenseReviewFields(companyId, expenseId, { expectedUpdatedAt: detail.updatedAt })).then((reopened) => { if (reopened) setStep('data'); }); }}>
@@ -1372,6 +1539,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                           the newest primary upload becomes the receipt — but the control was rendered only
                           while there were zero attachments, so a wrong file could never be corrected here. */}
                       {replaceReceiptControl}
+                      {appendEvidenceControl}
                       {removeReceiptControl(activeAttachment)}
                       {attachments.length > 1 && (
                         <>
@@ -1414,7 +1582,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                   {/* The phone is where receipts are actually reviewed, so the "wrong file" fix has to be
                       here too — the desktop viewer header alone would have left mobile with no way out. */}
                   {replaceReceiptControl && (
-                    <div className="flex justify-end border-b border-gray-100 px-5 py-2">{replaceReceiptControl}</div>
+                    <div className="flex flex-wrap justify-end gap-2 border-b border-gray-100 px-5 py-2">
+                      {replaceReceiptControl}
+                      {appendEvidenceControl}
+                    </div>
                   )}
                   {attachments.map((attachment) => (
                     <div key={`${attachment.id}:${attachment.purpose}`} className="flex items-center gap-2 border-b border-gray-100 pr-5 last:border-b-0">
@@ -1464,7 +1635,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                         <div className="space-y-4">
                           {noticesBlock}
                           {aiPrefillBanner}
-                          {!aiMap && step === 'data' && canExtract && (
+                          {!aiMap && step === 'data' && readAgainAllowed && (
                             <button className={ghostClass} onClick={() => void extractAgain()} disabled={actionLoading || extractionLoading || receiptUploading} aria-busy={Boolean(actionLoading || extractionLoading)} data-loading-indicator>
                               <span className="inline-flex items-center justify-center gap-2">
                                 {extractionLoading && <InlineSpinner />}
