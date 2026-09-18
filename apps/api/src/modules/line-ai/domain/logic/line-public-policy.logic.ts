@@ -64,11 +64,15 @@ function normalizedQuestion(value: string): string {
     .replace(/แพ็คเกจ/gu, 'แพ็กเกจ').replace(/มั้ย/gu, 'ไหม');
 }
 
+const charge = /^(?:(?:แอป|แอพ|ระบบ)นี้|มั่งมี(?:พลัส|Plus)?)?(?:ต้อง)?(?:เสีย|มี|คิด|เก็บ)(?:ค่าบริการ|ค่าใช้จ่าย|เงิน)(?:ไหม|หรือเปล่า|หรือไม่)$/iu;
+const noPurchase = /^(?:ถ้า)?(?:ยัง)?ไม่ซื้อแพ็กเกจ(?:เพิ่ม)?(?:จะ)?(?:ต้องจ่ายเงิน|เสียเงิน|เสียค่าบริการ|โดนหักเงิน|ถูกเก็บเงิน)(?:ไหม|หรือเปล่า|หรือไม่)$/u;
+
 const FOLLOW_UP = /^(?:ต้องสมัครต่อไหม|(?:แบบ)?(?:หมดอายุฟรีแล้ว)?(?:ถามว่า)?บังคับ(?:สมัครต่อ|ซื้อ|จ่ายเงิน)?ไหม|ไม่ต่อได้ไหม|ไม่ซื้อได้ไหม|ต้องจ่ายไหม|จะโดนหักเงินไหม|แน่(?:ใจ)?นะ|จริงไหม|แล้วข้อมูล(?:จะ)?หายไหม|(?:กดลิง(?:ก์|ค์)?|เข้า)(?:แล้ว)?(?:มา|ไป|เป็น)หน้าค่าใช้จ่าย|ลิง(?:ก์|ค์)?ผิด|กดแล้วไม่เจอแพ็กเกจ)$/u;
 
 /** Only these short, whole-message follow-ups may read the last delivered public topic. */
 export function isPublicPolicyFollowUp(messageText: string): boolean {
-  return FOLLOW_UP.test(normalizedQuestion(messageText));
+  const text = normalizedQuestion(messageText);
+  return FOLLOW_UP.test(text) || charge.test(text) || noPurchase.test(text);
 }
 
 function answer(topic: PublicPolicyTopic): PublicPolicyAnswer {
@@ -80,8 +84,8 @@ export function resolvePublicPolicyAnswer(messageText: string, previous?: Public
   if (!text) return null;
   // Whole-string matching deliberately leaves mixed requests, quotations and business mutations alone.
   const trialQuestion = /^(?:หลังจาก|หลัง|เมื่อ|พอ|ถ้า)?(?:หมด|จบ)?(?:ช่วง)?(?:ทดลอง(?:ใช้|ใข้)?(?:แอป|แอพ|ระบบ)?ฟรี|ใช้ฟรี|โปร(?:โมชั่น|โมชัน)?ฟรี)(?:หมด|จบ|สิ้นสุด)?(?:แล้ว)?(?:จะ)?(?:ต้อง)?(?:(?:(?:เสีย|จ่าย|มี|คิด|เก็บ)(?:เงิน|ค่าบริการ|ค่าใช้จ่าย)?)?(?:กี่บาท|เท่าไหร่|เท่าไร|ไหม|หรือเปล่า|หรือไม่)?|(?:ทำ(?:ยังไง|อย่างไร|ไง)|เป็น(?:ยังไง|อย่างไร)|ทำอะไร)(?:ต่อ)?|(?:ใช้|ใช้งาน)ต่อ(?:ยังไง|อย่างไร|ได้ไหม)|(?:บังคับ)?(?:สมัครต่อ|ซื้อแพ็กเกจ)(?:ไหม|หรือเปล่า))$/u;
-  const charge = /^(?:(?:แอป|แอพ|ระบบ)นี้|มั่งมี(?:พลัส|Plus)?)?(?:ต้อง)?(?:เสีย|มี|คิด|เก็บ)(?:ค่าบริการ|ค่าใช้จ่าย|เงิน)(?:ไหม|หรือเปล่า|หรือไม่)$/iu;
-  const noPurchase = /^(?:ถ้า)?(?:ยัง)?ไม่ซื้อแพ็กเกจ(?:เพิ่ม)?(?:จะ)?(?:ต้องจ่ายเงิน|เสียเงิน|เสียค่าบริการ|โดนหักเงิน|ถูกเก็บเงิน)(?:ไหม|หรือเปล่า|หรือไม่)$/u;
+  if (previous && !['trial', 'trial_limits', 'card'].includes(previous)
+    && (charge.test(text) || noPurchase.test(text))) return answer('paid_renewal');
   if (trialQuestion.test(text) || charge.test(text) || noPurchase.test(text)
     || /^(?:แบบ)?หมดอายุฟรีแล้วบังคับสมัครต่อไหม$/u.test(text)) return answer('trial');
 
@@ -105,5 +109,5 @@ export function resolvePublicPolicyAnswer(messageText: string, previous?: Public
   if (text === 'แล้วข้อมูลหายไหม' || text === 'แล้วข้อมูลจะหายไหม') return answer('data');
   if (/^(?:แน่(?:ใจ)?นะ|จริงไหม)$/u.test(text)) return answer(previous);
   // A paid-plan follow-up must never inherit the unpaid-trial assurance.
-  return answer(['trial', 'trial_limits', 'card', 'data'].includes(previous) ? 'trial' : 'paid_renewal');
+  return answer(['trial', 'trial_limits', 'card'].includes(previous) ? 'trial' : 'paid_renewal');
 }

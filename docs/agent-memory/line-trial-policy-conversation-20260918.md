@@ -26,5 +26,5 @@ Verification:
 - API typecheck passed (Node 22, 8 GB heap); contracts/config built and Prisma generated in the isolated checkout.
 - Official public URL inspected: site provides package information. FAQ cards and text fallback always use `https://official.mangmeeplus.com/`, never a tenant expense URL.
 - No browser/Prod session changes or deployment performed. Context uses the existing durable-outcome flag (normal UAT/Prod workflow default true); disabling it deliberately disables contextual inference.
-- Exact-head CI: pending.
+- Exact-head CI: first run 35361717215 superseded by the paid-context review fix; awaiting the updated head. Generic cost questions after a purchased-plan answer retain paid-renewal context, including after the shared data-policy topic.
 Next: implement and verify, PR/merge develop, integrate same set into main; leave deployment to normal cycle.

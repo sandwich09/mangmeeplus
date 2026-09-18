@@ -3322,9 +3322,8 @@ export class ProcessLineWebhookUseCase {
     }
     // Public trial policy contains no account data and needs no AI. Ordinary support text still
     // belongs to the human handling the case; do not resume the assistant or swallow that reply.
-    const policyAnswer = resolvePublicPolicyAnswer(event.messageText)
-      ?? (isPublicPolicyFollowUp(event.messageText)
-        ? resolvePublicPolicyAnswer(event.messageText, await this.lastDeliveredPublicPolicy(event)) : null);
+    const previousPolicy = isPublicPolicyFollowUp(event.messageText) ? await this.lastDeliveredPublicPolicy(event) : undefined;
+    const policyAnswer = resolvePublicPolicyAnswer(event.messageText, previousPolicy);
     if (policyAnswer && !await this.assistantPaused(event.lineUserId)) {
       this.publicPolicyTopics.set(event, policyAnswer.topic);
       await this.deliverRequiredMessages(event, [buildPublicPolicyCardMessage(policyAnswer)]);

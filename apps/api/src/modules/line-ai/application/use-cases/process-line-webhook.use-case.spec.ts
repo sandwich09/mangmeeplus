@@ -956,7 +956,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const config = { lineAiTerminalOutcomeReplayEnabled: true, lineAiFlexTextFallbackEnabled: true };
     const h = makeUseCase(prisma, { config });
     await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'paid-1', messageText: 'ซื้อแพ็กเกจแล้วจะหักเงินอีกไหม' });
-    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'paid-2', messageText: 'ต้องสมัครต่อไหม' });
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'paid-2', messageText: 'เสียค่าบริการไหม' });
     assert.match(h.sentMessages[1].canonicalText, /ตามเงื่อนไขที่คุณยอมรับตอนซื้อ/);
     assert.doesNotMatch(h.sentMessages[1].canonicalText, /ไม่บังคับสมัครต่อ/);
     const sends: any[][] = [];

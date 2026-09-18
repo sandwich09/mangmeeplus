@@ -752,7 +752,10 @@ describe('public policy conversation', () => {
       assert.match(answer!.text, expected);
       assert.equal(buildPublicPolicyCardMessage(answer!).type, 'flex');
     }
-    assert.equal(resolvePublicPolicyAnswer('จะโดนหักเงินไหม', 'paid_renewal')?.topic, 'paid_renewal');
+    for (const text of ['จะโดนหักเงินไหม', 'เสียค่าบริการไหม', 'ไม่ซื้อแพ็กเกจจะเสียเงินไหม']) {
+      assert.equal(resolvePublicPolicyAnswer(text, 'paid_renewal')?.topic, 'paid_renewal');
+    }
+    assert.equal(resolvePublicPolicyAnswer('ต้องสมัครต่อไหม', 'data')?.topic, 'paid_renewal');
     assert.equal(resolvePublicPolicyAnswer('แน่นะ', 'cancellation')?.topic, 'cancellation');
   });
 
