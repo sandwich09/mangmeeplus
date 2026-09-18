@@ -1,6 +1,6 @@
 # Agent Memory: LINE AI wave 2 — เครดิต AI wording, receipt refusal copy, deterministic reads
 
-Status: spec + plan written 2026-09-18 from owner decisions (message 2026-09-18). H1 (wording / receipt copy / billing holds), H2 (deterministic reads, R5, incl. the owner-authorised corpus replay) and **H3 (hold reconciliation — all three layers)** IMPLEMENTED and verified locally; H2 in CI (PRs #624 / #626), H1 merged with H2 and going through the controller gate; H3 awaiting the controller gate. Nothing deployed; hold-spec J-08 (UAT) is the only acceptance item still open.
+Status: WAVE 2 IMPLEMENTED AND MERGED to `develop` + `main` (H2 #624/#626, H1 #627/#628, H3 #630/#631, 2026-09-18) after the activation-flag PRs #622/#623; NOT deployed; spec W-01…W-08 and J-01…J-07 ticked with evidence, W-09/J-08 (UAT) open. See "Wave 2 delivery summary and handoff" at the end of this file.
 Owner: thawatchai + Fable 5.1 (controller) + Opus 5 (implementer)
 Scope: [spec](../specs/line-ai-credit-wording-and-deterministic-reads-spec-th.md), [plan](../plans/line-ai-credit-wording-and-deterministic-reads-plan-th.md). Continues the A–F remediation ([handoff](line-intake-cost-and-budget-receipt-behavior-2026-09-17.md#delivery-summary-and-handoff--2026-09-18)).
 Decisions:
@@ -195,3 +195,20 @@ Findings worth carrying:
 - `prisma migrate diff` in Prisma 7 takes `--from-config-datasource` / `--to-schema`;
   `--from-schema-datasource` and `--shadow-database-url` print the help text and exit 0, which reads
   like a pass. Always check the output, never the exit code alone.
+
+## Wave 2 delivery summary and handoff — 2026-09-18
+
+Owner decisions of 2026-09-18 delivered the same way as wave 1 (Opus 5 implements, Fable 5.1 reviews every diff for bugs/gaps/impact, full local gate on the base-merged tree, PR pair, strict CI chain, admin-merge to `develop` + `main`):
+
+| Phase | What | PRs (develop / main) |
+| --- | --- | --- |
+| G0 | `AI_BUDGET_SPLIT_ACTIVATION_ENABLED=true` as the UAT + Production deploy default (owner decision; SPLIT is savable, no company changes by itself) | #622 / #623 |
+| H2 | R5 — four new deterministic families (VAT, low stock, AP outstanding, CRM new customers), Thai-numeral hole in the composer numeric guard closed, `date` sanitizer, telemetry denominator; owner-authorised Bedrock replay: prepared-lane hits 8 → 16 of 22 business reads, THB/successful task −20.4%, spend THB 16.52 | #624 / #626 |
+| H1 | "เครดิต AI" wording everywhere people read it; picture-lane refusal collapsed to "เครดิตสำหรับการอ่านเอกสารไม่พอ"; billing hold warnings; guard test against the old words; evidence bundle | #627 / #628 |
+| H3 | held-credit reconciliation: gateway durable settle queue + graceful drain, operator console (release / charge-at-bound / acknowledge-breach with audit + history), 15-minute alert, pg spec, evidence bundle | #630 / #631 |
+
+Defects caught before merge: api typecheck error in H2 (`SourceRef` literal type lost in a spread — the implementer had run tests, not `tsc`), Thai numerals bypassing both composer guards (H2), gateway `main.ts` pin left stale after `enableShutdownHooks()` (H3 — the pins check belongs in every brief's verify list).
+
+State: NOTHING IS DEPLOYED. The next deploy carries migrations `20260917140000`, `20260917150000`, `20260917160000` (wave 1) and `20260918100000_ai_credit_hold_reconciliation` (H3), all additive. After a runbook-governed UAT deploy: W-09 (credit wording seen on real LINE) and J-08 (clear a synthetic stranded hold through the real page) close the two open lines.
+
+Owner-facing items still open: the credit CONCEPT (units, top-up, verification, per-package defaults — the trial numbers chat 80 / documents 60 / total 140 THB are per-company admin settings until then); a read-only platform role (today every real login is `SYSTEM_ADMIN`, so `canManage:false` surfaces are unreachable); `tax.get_vat_summary` exposes no period input (last month cannot be asked on either path); the composer vocabulary guard is what blocks most advice wording (widening it is a product decision).
