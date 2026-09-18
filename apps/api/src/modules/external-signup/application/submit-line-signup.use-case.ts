@@ -1,7 +1,7 @@
 import {
   BadRequestException, ConflictException, Injectable, NotFoundException, UnprocessableEntityException,
 } from '@nestjs/common';
-import type { LineSignupIntent, LineSignupSubmitAcceptedDto } from '@watchdog-bms/contracts';
+import type { LineSignupIntent, LineSignupSubmitAcceptedDto, SignupDiscoverySource } from '@watchdog-bms/contracts';
 import type { CompanySignupRequest, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
@@ -23,6 +23,7 @@ import {
   lineExternalSignupId,
   normalizeLineCompanyName,
   normalizeReferralCode,
+  normalizeSignupDiscovery,
   requireThaiMobile,
   optionalLineContactEmail,
   LINE_OPTIONAL_EMAIL_POLICY,
@@ -45,6 +46,8 @@ export type SubmitLineSignupCommand = {
   /** Contact syntax is checked here; it is never proof of mailbox or account ownership. */
   contactEmail?: string | null;
   referralCode?: string;
+  discoverySource?: SignupDiscoverySource | null;
+  discoverySourceOther?: string | null;
   legal: {
     documentVersion: string;
     statementSha256: string;
@@ -63,6 +66,8 @@ type NormalizedLineSubmission = Readonly<{
   phoneNumber: string;
   contactEmail: string | null;
   referralCode: string | null;
+  discoverySource: SignupDiscoverySource | null;
+  discoverySourceOther: string | null;
   intent: LineSignupIntent;
   legal: SubmitLineSignupCommand['legal'];
 }>;
@@ -208,6 +213,7 @@ export class SubmitLineSignupUseCase {
         phoneNumber: current.phoneNumber ?? '',
         contactEmail,
         referralCode: current.referralCode,
+        ...normalizeSignupDiscovery(current.discoverySource, current.discoverySourceOther),
         intent: current.lineSignupIntent === 'ADD_SHOP' ? 'ADD_SHOP' : 'FIRST_SHOP',
         legal: {
           documentVersion: current.legalDocumentVersion ?? '',
@@ -524,6 +530,8 @@ export class SubmitLineSignupUseCase {
         consentVersion: evidence.documentVersion,
         phoneNumber: input.phoneNumber,
         ...(input.referralCode ? { referralCode: input.referralCode } : {}),
+        discoverySource: input.discoverySource,
+        discoverySourceOther: input.discoverySourceOther,
         ...(input.attachUserId ? { attachUserId: input.attachUserId } : {}),
         lineProviderUserId: verified.providerUserId,
         lineChannelId: verified.channelId,
@@ -625,12 +633,13 @@ function normalizeSubmission(cmd: SubmitLineSignupCommand): NormalizedLineSubmis
       phoneNumber: requireThaiMobile(cmd.phoneNumber),
       contactEmail: optionalLineContactEmail(cmd.contactEmail),
       referralCode: normalizeReferralCode(cmd.referralCode),
+      ...normalizeSignupDiscovery(cmd.discoverySource, cmd.discoverySourceOther),
       intent: cmd.intent,
       legal: cmd.legal,
     };
   } catch (error) {
     const code = (error as Error).message;
-    if (code.startsWith('line_signup_phone_') || code.startsWith('line_signup_email_')) {
+    if (code.startsWith('line_signup_phone_') || code.startsWith('line_signup_email_') || code.startsWith('line_signup_discovery_')) {
       throw new BadRequestException(code);
     }
     throw new UnprocessableEntityException(code);
@@ -646,6 +655,8 @@ export function lineSignupPayloadHash(
     phoneNumber: input.phoneNumber,
     contactEmail: input.contactEmail,
     referralCode: input.referralCode,
+    // Keep legacy fingerprints byte-equivalent when this optional question was omitted.
+    ...(input.discoverySource ? { discoverySource: input.discoverySource, discoverySourceOther: input.discoverySourceOther } : {}),
     intent: input.intent,
     legal: input.legal,
     lineProviderUserId: verified.providerUserId,
@@ -671,6 +682,8 @@ function sameLineSubmission(
     && request.phoneNumber === input.phoneNumber
     && request.contactEmail === input.contactEmail
     && request.referralCode === input.referralCode
+    && (request.discoverySource ?? null) === input.discoverySource
+    && (request.discoverySourceOther ?? null) === input.discoverySourceOther
     && request.legalDocumentVersion === input.legal.documentVersion
     && request.legalStatementSha256 === input.legal.statementSha256
     && request.legalReleaseFingerprintSha256 === input.legal.releaseFingerprintSha256

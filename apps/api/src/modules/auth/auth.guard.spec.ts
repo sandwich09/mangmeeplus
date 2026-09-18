@@ -1,7 +1,7 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
-import { AuthGuard, isBillingRecoveryRoute, isAccountEmailRecoveryRoute } from './presentation/auth.guard';
+import { AuthGuard, isBillingRecoveryRoute, isAccountEmailRecoveryRoute, isCompanyProfileRecoveryRoute } from './presentation/auth.guard';
 import { DenyByDefaultGuard } from '../../common/security/deny-by-default.guard';
 import { IS_PUBLIC_ROUTE_KEY } from '../../common/security/public.decorator';
 import { REQUIRED_ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } from '../../common/security/permissions.decorator';
@@ -626,6 +626,30 @@ describe('DenyByDefaultGuard', () => {
 
 
 describe('billing recovery boundaries', () => {
+  it('allows expired owners to repair only the company profile routes and keeps staff and legal gates', async () => {
+    const routes = [['GET', 'identity'], ['PATCH', 'identity'], ['PATCH', 'identity/business-type'], ['PUT', 'vat-registration']];
+    const expired = prismaFor('test-sub', null, { termEndsAt: new Date(0) });
+    expired.client.company = { findUnique: async () => ({ status: 'ACTIVE' }) };
+    let roles = ['OWNER'], recovery = false;
+    const resolver = { execute: async (...args: any[]) => {
+      recovery = args[4]; return { ...await noopResolve.execute(args[0], args[1]), roles };
+    } } as any;
+    const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolver, localConfig, expired, acceptedLegal);
+    for (const [method, suffix] of routes) {
+      const path = `/v1/companies/c1/${suffix}`;
+      assert.equal(isCompanyProfileRecoveryRoute(method!, path), true);
+      assert.equal(await guard.canActivate(makeContext({ method, path, authHeader: 'Bearer token' })), true);
+      assert.equal(recovery, true);
+      roles = ['STAFF'];
+      await assert.rejects(guard.canActivate(makeContext({ method, path, authHeader: 'Bearer token' })), ForbiddenException);
+      roles = ['OWNER'];
+    }
+    for (const [method, path] of [['POST', 'identity'], ['DELETE', 'identity'], ['PATCH', 'identity/other'], ['GET', 'expenses']])
+      assert.equal(isCompanyProfileRecoveryRoute(method!, `/v1/companies/c1/${path}`), false);
+    const legal = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolver, localConfig, expired,
+      { isRequired: async () => true } as any);
+    await assert.rejects(legal.canActivate(makeContext({ path: '/v1/companies/c1/identity', authHeader: 'Bearer token' })), ForbiddenException);
+  });
   it('keeps email OTP and company recipient recovery available after expiry without widening account mutations', async () => {
     const routes = [
       ['GET', '/v1/auth/account/email/otp'], ['GET', '/v1/auth/account/email/otp/challenge'],

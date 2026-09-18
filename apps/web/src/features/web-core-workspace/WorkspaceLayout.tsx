@@ -61,7 +61,8 @@ const ACCESS_CONTEXT_POLL_MS = 60_000;
 export default function WorkspaceLayoutClient({ children, companyId, session }: Props) {
   const pathname = usePathname();
   // Layouts survive client navigation; resolve billing access on both entry paths.
-  if (isBillingCustomerRecoveryPath(pathname, companyId)) return <BillingWorkspaceLayout companyId={companyId} session={session}>{children}</BillingWorkspaceLayout>;
+  if (isBillingCustomerRecoveryPath(pathname, companyId) || pathname === `/companies/${encodeURIComponent(companyId)}/settings/profile`)
+    return <BillingWorkspaceLayout companyId={companyId} session={session}>{children}</BillingWorkspaceLayout>;
   return <BusinessWorkspaceLayout companyId={companyId} session={session}>{children}</BusinessWorkspaceLayout>;
 }
 

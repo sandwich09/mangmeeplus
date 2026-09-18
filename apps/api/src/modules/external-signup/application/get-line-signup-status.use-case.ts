@@ -4,6 +4,7 @@ import type {
   LineSignupIntent,
   LineSignupReviewResolution,
   LineSignupStatusDto,
+  SignupDiscoverySource,
 } from '@watchdog-bms/contracts';
 import type { CompanySignupRequest } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -111,6 +112,8 @@ function toProgress(
     phoneNumber: request.phoneNumber ?? '',
     contactEmail: request.contactEmail ?? '',
     ...(request.referralCode ? { referralCode: request.referralCode } : {}),
+    discoverySource: (request.discoverySource as SignupDiscoverySource | null) ?? undefined,
+    discoverySourceOther: request.discoverySource === 'OTHER' ? request.discoverySourceOther ?? undefined : undefined,
     intent,
     ...(resolution ? { resolution } : {}),
     ...(resolution === 'REQUEST_INFO' && request.resolutionNote

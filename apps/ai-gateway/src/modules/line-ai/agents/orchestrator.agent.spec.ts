@@ -415,7 +415,7 @@ describe('OrchestratorAgent', () => {
     assert.ok(okCalls.every((call) => call.status === 'ok' && call.errorCode === undefined), 'success must not invent an errorCode');
   });
 
-  it('keeps broad expense amounts concise while preserving source-backed details and counts on request', async () => {
+  it('shows a complete broad expense summary while preserving source-backed details and counts on request', async () => {
     const calledTools: string[] = [];
     const erpTools = {
       invoke: async (tool: any) => {
@@ -425,6 +425,7 @@ describe('OrchestratorAgent', () => {
           status: tool.name === 'expense.list_recent' ? 'ok' : 'unsupported_module',
           data: tool.name === 'expense.list_recent' ? {
             total: 7,
+            period: { fromDate: '2026-09-01', toDate: '2026-09-17' },
             summary: {
               totalAmount: 11875,
               pendingAmount: 0,
@@ -453,7 +454,7 @@ describe('OrchestratorAgent', () => {
     assert.ok(result.replyText.includes('11,875.00'));
     assert.ok(!result.replyText.includes('สิ้นกำหนดวันนี้'));
     assert.ok(!result.replyText.includes('เกินกำหนด'));
-    assert.equal(result.replyText, '• ยอดรวม: 11,875.00 บาท');
+    assert.match(result.replyText, /^ค่าใช้จ่าย: 11,875\.00 บาท \(7 รายการ\)\nช่วง: 2026-09-01 – 2026-09-17\nที่มา: รายการค่าใช้จ่าย\nข้อมูล ณ /);
     assert.doesNotMatch(result.replyText, /รอตรวจสอบ|ยืนยันแล้ว|จ่ายแล้ว|ยังไม่จ่าย|บริษัท โฟลว์แอคเคาท์/);
     assert.ok(!result.replyText.includes('expense-draft-empty'));
     assert.deepEqual(result.webLinks, [{ label: 'รายการค่าใช้จ่าย', path: '/companies/company-1/expenses' }]);
@@ -470,6 +471,30 @@ describe('OrchestratorAgent', () => {
       assert.equal(counted.sourceRefs[0]?.permissionChecked, true);
       assert.equal(counted.presentation?.cards[0]?.text, counted.replyText);
     }
+
+    // Both committed menu entries send this text; either execution lane must produce the same card.
+    const menuReq = makeReq('ดูค่าใช้จ่ายเดือนนี้');
+    menuReq.userContext.permissions.push('expense.read');
+    const full = await orchestrator.run(menuReq);
+    const preparedPlan = parseLineAiPreparedPlan({
+      version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'single_metric',
+      intentPlan: planFor(menuReq.messageText),
+      proposedCalls: [{ toolName: 'expense.list_recent', input: {} }],
+    });
+    assert.ok(preparedPlan);
+    let providerCalls = 0;
+    globalThis.fetch = async () => { providerCalls += 1; throw new Error('prepared read must not call a provider'); };
+    const before = calledTools.length;
+    const prepared = await new OrchestratorAgent(erpTools, makeConfig({
+      lineAiPreparedSimpleReadEnabled: true,
+      lineAiDeterministicResponseFamilies: ['expense.list_recent::single_metric'],
+    })).run({ ...menuReq, preparedPlan, intakeIntent: 'BUSINESS_READ_QUESTION', actorDelegations: { 'expense.list_recent': ['test-delegation'] } });
+    assert.equal(providerCalls, 0, 'proves prepared execution rather than an unnoticed fallback');
+    assert.deepEqual(calledTools.slice(before), ['expense.list_recent']);
+    assert.equal(prepared.replyText, full.replyText);
+    assert.deepEqual(prepared.presentation, full.presentation);
+    assert.deepEqual(prepared.sourceRefs, full.sourceRefs);
+    assert.deepEqual(prepared.webLinks, full.webLinks);
   });
 
   it('expense query with unavailable tool does not fall back to accounting no-data copy', async () => {

@@ -15,6 +15,7 @@ import { StripeClient, stripeId, verifyStripeSignature, type StripeObject } from
 import { hashBilling } from '../domain/billing-policy';
 import { paidInvoiceEvidence, termProjectionHash, type PaidInvoiceEvidence } from '../domain/paid-invoice';
 import { BillingService, type BillingSnapshot } from './billing.service';
+import { stripeBillingProfile, stripeBillingProfileMatches } from './billing-company-profile';
 import { restartFits, restartSource } from './billing-restart';
 import { observeBillingCharges, recordBillingFinancials } from './billing-financial';
 import { grantPaidPackageReceipts } from './billing-receipt-grants';
@@ -39,6 +40,35 @@ export function validBillingEvent(event: StripeObject, accountId: string, livemo
 export class BillingReconcilerService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService, private readonly stripe: StripeClient,
     private readonly billing: BillingService, private readonly lifecycle: PartnerLifecycleTransitionUseCase, @Optional() private readonly planAdjustments?: BillingPlanAdjustmentsService) {}
+
+  /** A profile-only timeout has no payment to fulfill: settle that exact write, then allow a fresh review. */
+  private async settleProfileSync(account: BillingAccount, attempt: BillingAttempt, lease: string): Promise<boolean> {
+    const marker = (attempt.collectionJson as { profileSync?: { startedAt: string; customerId: string; confirmed: boolean } } | null)?.profileSync;
+    if (!marker || (marker.confirmed && attempt.status !== 'CREATING') || attempt.checkoutSessionId || !['CREATING', 'UNKNOWN'].includes(attempt.status)) return false;
+    const snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
+    const age = Date.now() - Date.parse(marker.startedAt);
+    if (snapshot.repeat || !snapshot.quote.billingProfile || marker.customerId !== account.customerId || !Number.isFinite(age) || age >= 23 * 3600000)
+      throw new Error('billing.profile_sync_review');
+    if (age < 60_000) return true;
+    const customer = await this.stripe.request('GET', `/customers/${account.customerId}`);
+    if (customer.id !== account.customerId || customer.metadata?.billingAccountId !== account.id) throw new Error('billing.customer_binding');
+    const updated = marker.confirmed ? customer : await this.stripe.request('POST', `/customers/${account.customerId}`,
+      stripeBillingProfile(snapshot.quote.billingProfile), `mm:${attempt.id}:billing-profile`);
+    if (updated.id !== account.customerId || updated.metadata?.billingAccountId !== account.id || !stripeBillingProfileMatches(updated, snapshot.quote.billingProfile))
+      throw new Error('billing.profile_sync_unconfirmed');
+    await this.prisma.client.$transaction(async tx => {
+      await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+      const changed = await tx.billingAttempt.updateMany({ where: { id: attempt.id, status: { in: ['CREATING', 'UNKNOWN'] },
+        checkoutSessionId: null, collectionJson: { equals: attempt.collectionJson as Prisma.InputJsonValue } },
+        data: { status: 'FAILED', errorCode: 'BILLING_PROFILE_SYNC_RETRY', version: { increment: 1 },
+          collectionJson: { profileSync: { ...marker, confirmed: true } } } });
+      if (!changed.count) throw new Error('billing.profile_sync_changed');
+      await tx.billingAccount.updateMany({ where: { id: account.id, activeAttemptId: attempt.id }, data: { activeAttemptId: null, version: { increment: 1 } } });
+      await tx.billingIssue.updateMany({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
+        kind: 'UNKNOWN_ATTEMPT', referenceId: attempt.id, state: { not: 'RESOLVED' } }, data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
+    });
+    return true;
+  }
 
   async receive(raw: Buffer | undefined, signature: string | undefined): Promise<{ accepted: true }> {
     if (!this.stripe.enabled || !this.config.stripeWebhookSecret) throw new ServiceUnavailableException('Stripe receiver is not configured');
@@ -161,6 +191,7 @@ export class BillingReconcilerService {
         account = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
       }
       if (!account.customerId) return;
+      if (attempt && await this.settleProfileSync(account, attempt, leaseToken)) return;
       if (account.activeEmailOperationId) {
         await this.billing.emailRecipient.advance(account, leaseToken);
         account = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });

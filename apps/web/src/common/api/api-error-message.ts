@@ -559,6 +559,10 @@ const CODE_LABELS: Record<string, string> = {
   // ---- ตั้งค่าบริษัทและ VAT ----
   // จนถึง L-E ข้อความนี้ชี้ไปหน้าที่ยังไม่มีอยู่จริง ตอนนี้มีแล้วจึงเรียกชื่อเมนูตรง ๆ
   company_tax_identity_incomplete: 'ข้อมูลผู้เสียภาษีของบริษัทยังไม่ครบ กรุณากรอกให้ครบที่ ตั้งค่า › ข้อมูลร้านและบัญชีของฉัน ก่อน',
+  company_business_type_invalid: 'เลือกประเภทธุรกิจจากรายการ DBD หรือเลือกอื่น ๆ',
+  company_business_type_other_required: 'กรุณาระบุประเภทธุรกิจอื่น ๆ',
+  company_business_type_other_invalid: 'ระบุประเภทธุรกิจอื่น ๆ ไม่เกิน 200 ตัวอักษร',
+  company_business_type_version_conflict: 'ประเภทธุรกิจถูกแก้ไขแล้ว กรุณาโหลดหน้าใหม่ก่อนบันทึกอีกครั้ง',
   identity_change_kind_not_allowed: 'ข้อมูลชนิดนี้แก้เองไม่ได้ กรุณาติดต่อฝ่ายสนับสนุน',
   vat_registration_future_fact_conflict:
     'มีการบันทึกสถานะจดทะเบียน VAT ล่วงหน้าไว้แล้ว กรุณาเลือกว่าจะแทนที่รายการเดิมหรือไม่',

@@ -146,8 +146,7 @@ function plural(count: number, word: string): string {
 
 /** The specialist's permission-checked source: its reference, the `Source:` line, and the deep link that
  *  is the answer's next action. Taken from the fact the tool grounded — never invented here. */
-function groundedSource(output: SpecialistOutput, english: boolean): { sourceRefs: SourceRef[]; webLinks: LineAiWebLink[]; sourceText: string } {
-  const sourceRef = output.facts.find((fact) => fact.sourceRef)?.sourceRef;
+function groundedSource(sourceRef: SourceRef | undefined, english: boolean): { sourceRefs: SourceRef[]; webLinks: LineAiWebLink[]; sourceText: string } {
   return {
     sourceRefs: sourceRef ? [sourceRef] : [],
     webLinks: sourceRef?.webPath ? [{ label: sourceRef.label, path: sourceRef.webPath }] : [],
@@ -200,30 +199,42 @@ function formatSalesSummarySingleMetric(output: SpecialistOutput, ctx: PreparedF
  * so the family returns `unverified` rather than answering with a number that is too small.
  */
 function formatExpenseListRecentSingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
-  const data = sourceData(output, 'expense.list_recent');
+  return formatExpenseSummary(sourceData(output, 'expense.list_recent'), ctx,
+    output.facts.find((fact) => fact.sourceRef)?.sourceRef, output.asOf);
+}
+
+/** Shared by prepared and full replies; the tool's effective period and count are authoritative. */
+export function formatExpenseSummary(
+  data: Record<string, unknown> | undefined,
+  ctx: PreparedFormatContext,
+  sourceRef?: SourceRef,
+  asOf?: string,
+): PreparedFormatResult {
   const summary = data?.['summary'];
   if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return { kind: 'unverified' };
   const totals = summary as Record<string, unknown>;
   const total = totals['totalAmount'];
   if (typeof total !== 'number' && typeof total !== 'string') return { kind: 'unverified' };
+  if (typeof total === 'number' ? !Number.isFinite(total)
+    : !PLAIN_DECIMAL.test(total.replace(/,/g, ''))) return { kind: 'unverified' };
   if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
 
   const english = isEnglish(ctx);
-  const count = typeof data?.['total'] === 'number' ? data['total'] as number
-    : typeof totals['countedItems'] === 'number' ? totals['countedItems'] as number : undefined;
+  const count = data?.['total'];
+  const countAvailable = typeof count === 'number' && Number.isSafeInteger(count) && count >= 0;
   const cancelled = typeof totals['cancelledCount'] === 'number' ? totals['cancelledCount'] as number : 0;
-  const { sourceRefs, webLinks, sourceText } = groundedSource(output, english);
+  const { sourceRefs, webLinks, sourceText } = groundedSource(sourceRef, english);
 
   const label = english ? 'Expenses' : 'ค่าใช้จ่าย';
   const amount = english ? `${moneyText(total)} THB` : `${moneyText(total)} บาท`;
-  const countText = count === undefined ? ''
+  const countText = !countAvailable ? (english ? ' (record count unavailable)' : ' (ยังยืนยันจำนวนรายการไม่ได้)')
     : english ? ` (${plural(count, 'record')})` : ` (${groupThousands(String(count))} รายการ)`;
   const cancelledText = cancelled > 0
     ? (english ? `\nExcludes ${plural(cancelled, 'rejected or voided record')}`
       : `\nไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ ${groupThousands(String(cancelled))} รายการ`)
     : '';
 
-  const replyText = `${label}: ${amount}${countText}${cancelledText}${periodLine(ctx.proposedInput, data, english)}${sourceText}${asOfLine(output.asOf, english)}`;
+  const replyText = `${label}: ${amount}${countText}${cancelledText}${periodLine(undefined, data, english)}${sourceText}${asOfLine(asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -272,7 +283,7 @@ function formatAccountingSummaryList(output: SpecialistOutput, ctx: PreparedForm
   if (rows.reduce((sum, row) => sum + row.count, 0) !== total) return { kind: 'unverified' };
 
   const english = isEnglish(ctx);
-  const { sourceRefs, webLinks, sourceText } = groundedSource(output, english);
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
   rows.sort((a, b) => b.count - a.count || a.type.localeCompare(b.type));
   const shown = rows.slice(0, MAX_DOCUMENT_TYPE_LINES);
   const typeLines = shown.map((row) => {
@@ -386,7 +397,7 @@ function formatExpenseDailyClosingSingleMetric(output: SpecialistOutput, ctx: Pr
       : `\nรอตรวจหลักฐานทั้งหมด ${groupThousands(String(blockerCount))} รายการ`)
     : '';
 
-  const { sourceRefs, webLinks, sourceText } = groundedSource(output, english);
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
   // REQUIRED (spec G5, §5-F3): recorded entries, never bank movement. There is no bank feed (P18).
   const honestyText = english
     ? `\n(From entries recorded in the system${asOfHere ? `, up to ${asOfHere.time}` : ''} — not bank money in/out)`

@@ -1,5 +1,8 @@
 import {
   todayCivilDate,
+  normalizeCompanyBusinessType,
+  type CompanyBusinessType,
+  type PatchCompanyBusinessTypeRequest,
   COMPANY_PROFILE_ACCOUNT_HASH,
   COMPANY_PROFILE_SHOP_HASH,
   type CompanyIdentityControl,
@@ -259,8 +262,8 @@ export function writeChecklistCache(
 /** Exported so `buildShopSave` can tell "nothing to send" from a real validation problem. */
 export const NO_CHANGES_MESSAGE = 'ยังไม่มีอะไรเปลี่ยนค่ะ';
 
-export type ShopForm = { registeredName: string; taxId: string; address: Record<string, string | null | undefined> };
-export type CurrentIdentity = { registeredName: string | null; taxId: string | null; addressJson: Record<string, unknown> | null } | null;
+export type ShopForm = { registeredName: string; taxId: string; address: Record<string, string | null | undefined>; businessTypeCode?: string; businessTypeOther?: string };
+export type CurrentIdentity = { registeredName: string | null; taxId: string | null; addressJson: Record<string, unknown> | null; businessType?: CompanyBusinessType } | null;
 
 /**
  * The exact PATCH body this form should send, or the Thai reason it should not send one.
@@ -335,16 +338,31 @@ export function buildShopSave(
   form: ShopForm,
   vat: { current: VatRegistrationStatus; chosen: VatRegistrationStatus },
   today?: string,
-): { identityPatch: Record<string, unknown> | null; vatStatus: VatFactStatus | null } | { error: string } {
+): { identityPatch: Record<string, unknown> | null; vatStatus: VatFactStatus | null; businessTypePatch?: PatchCompanyBusinessTypeRequest } | { error: string } {
+  let businessTypePatch: PatchCompanyBusinessTypeRequest | undefined;
+  if (form.businessTypeCode !== undefined) {
+    let value;
+    try { value = normalizeCompanyBusinessType(form.businessTypeCode || null, form.businessTypeOther); }
+    catch (error) {
+      const code = (error as Error).message;
+      return { error: code === 'company_business_type_other_required' ? 'กรุณาระบุประเภทธุรกิจอื่น ๆ'
+        : code === 'company_business_type_other_invalid' ? 'ระบุประเภทธุรกิจอื่น ๆ ไม่เกิน 200 ตัวอักษร'
+          : 'เลือกประเภทธุรกิจจากรายการ DBD หรือเลือกอื่น ๆ' };
+    }
+    if (value.code !== (current?.businessType?.code ?? null) || value.other !== (current?.businessType?.other ?? null)) {
+      businessTypePatch = { ...value, expectedVersion: current?.businessType?.version ?? 0 };
+    }
+  }
+  const business = businessTypePatch ? { businessTypePatch } : {};
   const vatStatus = vat.chosen !== 'UNKNOWN' && vat.chosen !== vat.current ? vat.chosen : null;
   const patch = buildIdentityPatch(control, current, form, today);
   if ('error' in patch) {
     // A real validation problem stops the whole press: saving the VAT answer while telling the
     // owner their tax id is wrong is the half-saved state this change exists to remove.
     if (patch.error !== NO_CHANGES_MESSAGE) return patch;
-    return vatStatus ? { identityPatch: null, vatStatus } : { error: NO_CHANGES_MESSAGE };
+    return vatStatus || businessTypePatch ? { identityPatch: null, vatStatus, ...business } : { error: NO_CHANGES_MESSAGE };
   }
-  return { identityPatch: patch.body, vatStatus };
+  return { identityPatch: patch.body, vatStatus, ...business };
 }
 
 export type EmailSectionMode = 'unavailable' | 'edit' | 'pending' | 'verified' | 'unverified' | 'none';

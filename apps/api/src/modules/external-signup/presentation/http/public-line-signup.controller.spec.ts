@@ -108,6 +108,21 @@ describe('PublicLineSignupController — the flag is the rollback', () => {
  * use-case is the inner half. Both are asserted, because either one alone lets a blank through.
  */
 describe('LineSignupSubmitBodyDto — optional syntax-only contact email', () => {
+  it('validates discovery choices/text and forwards both fields', async () => {
+    const errors = (fields: Record<string, unknown>) => validateSync(plainToInstance(LineSignupSubmitBodyDto, { ...BODY, ...fields }))
+      .filter((error) => error.property.startsWith('discovery'));
+    for (const discoverySource of [undefined, null, 'WEBSITE', 'IG', 'TIKTOK', 'FACEBOOK', 'OTHER']) {
+      assert.deepEqual(errors({ discoverySource }), []);
+    }
+    for (const discoverySource of ['', 'other', 1, [], {}]) assert.ok(errors({ discoverySource }).length);
+    for (const discoverySourceOther of [1, [], {}, 'ก'.repeat(201)]) assert.ok(errors({ discoverySourceOther }).length);
+    assert.deepEqual(errors({ discoverySource: 'OTHER', discoverySourceOther: 'ก'.repeat(200) }), []);
+    const dto = plainToInstance(LineSignupSubmitBodyDto, { ...BODY, discoverySource: 'OTHER', discoverySourceOther: ' เพื่อนแนะนำ ' });
+    const h = harness(true);
+    await h.controller.create(dto, REQ);
+    assert.equal(h.submits[0].discoverySource, 'OTHER');
+    assert.equal(h.submits[0].discoverySourceOther, 'เพื่อนแนะนำ');
+  });
   const errors = (contactEmail: unknown) => validateSync(plainToInstance(LineSignupSubmitBodyDto, { ...BODY, contactEmail }))
     .filter((error) => error.property === 'contactEmail');
   it('normalizes before validating and admits nonexistent mailbox domains', () => {

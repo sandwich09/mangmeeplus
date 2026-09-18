@@ -29,6 +29,9 @@ function makePrisma(seed: {
       registeredName: 'บริษัท ทดสอบ จำกัด',
       taxId: '0105556000001',
       addressJson: ADDRESS,
+      businessTypeCode: null,
+      businessTypeOther: null,
+      businessTypeVersion: 0,
       timezone: 'Asia/Bangkok',
       legalIdentityVersion: 2,
       legalIdentityCaptureCompletedAt: null,
@@ -63,11 +66,12 @@ function makePrisma(seed: {
         return state.company;
       },
       updateMany: async ({ where, data }: any) => {
+        if (where.businessTypeVersion !== undefined && where.businessTypeVersion !== state.company.businessTypeVersion) return { count: 0 };
         if (where.legalIdentityCaptureCompletedAt === null && state.company.legalIdentityCaptureCompletedAt !== null) {
           return { count: 0 };
         }
         writes.push('company.updateMany');
-        Object.assign(state.company, data);
+        Object.assign(state.company, data, data.businessTypeVersion ? { businessTypeVersion: state.company.businessTypeVersion + data.businessTypeVersion.increment } : {});
         return { count: 1 };
       },
     },
@@ -104,6 +108,41 @@ function ctx(permissions: string[]) {
 
 const SETUP_ONLY = ['company.setup.read'];
 const FULL = ['company.setup.read', 'company.legal_identity.read', 'company.vat_registration.read', 'company.branch.read'];
+
+describe('CompanyIdentityUseCase business type', () => {
+  it('saves TSIC/OTHER with CAS and audit without changing legal or policy classification', async () => {
+    const { prisma, state } = makePrisma({ company: { businessCategory: 'RETAIL' } });
+    const entries: any[] = [];
+    const service = new CompanyIdentityUseCase(prisma, { log: async (...args: any[]) => { entries.push(args); } } as any);
+    const actor = ctx(['company.legal_identity.manage']);
+    assert.deepEqual(await service.patchBusinessType(actor, 'co-1', { expectedVersion: 0, code: '56101' }), { code: '56101', other: null, version: 1 });
+    await assert.rejects(() => service.patchBusinessType(actor, 'co-1', { expectedVersion: 0, code: 'OTHER', other: 'stale' }), ConflictException);
+    assert.deepEqual(await service.patchBusinessType(actor, 'co-1', { expectedVersion: 1, code: 'OTHER', other: ' ธุรกิจทดสอบ ' }), { code: 'OTHER', other: 'ธุรกิจทดสอบ', version: 2 });
+    await service.patchBusinessType(actor, 'co-1', { expectedVersion: 2, code: '01111', other: 'old text' });
+    assert.equal(state.company.businessTypeOther, null);
+    assert.equal(state.company.businessCategory, 'RETAIL');
+    assert.equal(state.company.legalIdentityVersion, 2);
+    assert.equal(state.company.tinExistsStatus, 'VERIFIED');
+    assert.equal(state.revisions.length, 0);
+    assert.equal(entries.length, 3);
+    assert.equal(entries[0][0].action, 'company.business_type.update');
+    assert.equal(JSON.stringify(entries).includes('ธุรกิจทดสอบ'), false, 'free text is not copied to audit');
+    const full = await service.get(ctx(FULL), 'co-1');
+    assert.ok(full.identity && !full.identity.masked);
+    assert.deepEqual(full.identity.businessType, { code: '01111', other: null, version: 3 });
+    const masked = await service.get(ctx(SETUP_ONLY), 'co-1');
+    assert.equal('businessType' in masked.identity!, false);
+  });
+
+  it('rejects invalid codes, blank OTHER, wrong types and overlong descriptions before any write', async () => {
+    const { prisma, writes } = makePrisma({});
+    const service = new CompanyIdentityUseCase(prisma, audit);
+    for (const input of [{ code: '99999' }, { code: 'A' }, { code: 'OTHER', other: ' ' }, { code: 'OTHER', other: 'ก'.repeat(201) }, { code: '56101', other: {} }, { code: undefined }, { code: '56101', expectedVersion: -1 }]) {
+      await assert.rejects(() => service.patchBusinessType(ctx([]), 'co-1', { expectedVersion: 0, ...input } as any), UnprocessableEntityException);
+    }
+    assert.deepEqual(writes, []);
+  });
+});
 
 describe('CompanyIdentityUseCase.get', () => {
   // Absent, not null: "you cannot see this" and "this company cannot issue" are different

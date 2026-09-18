@@ -1,6 +1,23 @@
 // P10 Flow B — public auto-register + admin review queue contracts.
 // Spec: docs/specs/mangmee-external-signup-contract-spec-th.md (amendment v2 2026-08-30).
 
+/** Self-reported discovery, separate from a signup rail or an influencer referral code. */
+export const SIGNUP_DISCOVERY_SOURCE_OPTIONS = [
+  { value: 'WEBSITE', label: 'Website' },
+  { value: 'IG', label: 'IG' },
+  { value: 'TIKTOK', label: 'TikTok' },
+  { value: 'FACEBOOK', label: 'Facebook' },
+  { value: 'OTHER', label: 'อื่น ๆ' },
+] as const;
+export type SignupDiscoverySource = typeof SIGNUP_DISCOVERY_SOURCE_OPTIONS[number]['value'];
+export const SIGNUP_DISCOVERY_OTHER_MAX = 200;
+
+/** Display the same attribution in the signup queue and the company's admin profile. */
+export function signupDiscoveryLabel(source?: SignupDiscoverySource | null, other?: string | null): string {
+  const label = SIGNUP_DISCOVERY_SOURCE_OPTIONS.find((option) => option.value === source)?.label;
+  return label ? label + (source === 'OTHER' && other ? ` — ${other}` : '') : 'ไม่ระบุ';
+}
+
 /**
  * Offer catalog 2026-08-30 (Billing §8).
  *
@@ -106,6 +123,8 @@ export type SignupClaimResultDto = {
 // ── Admin review queue (System Admin only) ──
 
 export type AdminSignupQueueItemDto = {
+  discoverySource?: SignupDiscoverySource;
+  discoverySourceOther?: string;
   requestId: string;
   version: number;
   state: string;
@@ -320,6 +339,8 @@ export type LineSignupLegalEvidenceDto = {
 };
 
 export type LineSignupSubmitDto = {
+  discoverySource?: SignupDiscoverySource | null;
+  discoverySourceOther?: string | null;
   /** LIFF ID token. The ONLY identity input; the profile the client shows is never trusted. */
   idToken: string;
   /** Client-stable UUID, persisted before POST and reused verbatim after a lost response. */
@@ -349,6 +370,8 @@ export type LineSignupEligibleCompanyDto = {
 };
 
 export type LineSignupProgressDto = {
+  discoverySource?: SignupDiscoverySource;
+  discoverySourceOther?: string;
   requestId: string;
   submissionId: string;
   version: number;

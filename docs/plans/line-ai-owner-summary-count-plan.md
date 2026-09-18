@@ -6,6 +6,20 @@ authoring/refreeze steps below are retained, not live-provider or main acceptanc
 
 Spec: [response contract](../specs/line-ai-owner-summary-count-spec.md).
 
+## 2026-09-17 summary parity amendment
+
+- [x] Share the prepared expense summary formatter with the full composer and
+  carry existing source/as-of metadata through its caller.
+- [x] Align both paths on the tool's effective date range and canonical count;
+  preserve detail/count safeguards and unavailable/permission behavior.
+- [x] Verify reply/card parity and focused regressions; run gateway typecheck.
+- [x] Record implementation evidence and local-only completion in
+  [task memory](../agent-memory/line-expense-summary-entry-parity-2026-09-17.md):
+  218/218 focused tests, zero skipped; gateway typecheck and scoped diff check pass.
+  No deploy or live LINE acceptance.
+
+## Historical completed plan
+
 - [x] Inspect exact PR #264 commit/diff and current develop callers/API count basis.
 - [x] Create a clean branch from fetched develop; do not modify the old PR branch.
 - [x] Port only the intended composer and Flex-heading behavior using current files.

@@ -36,7 +36,7 @@ import {
   LINE_ID_TOKEN_MAX_LENGTH,
   LINE_ID_TOKEN_PATTERN,
 } from '../../../common/security/liff-page.security';
-import { CURRENT_LEGAL_DOCUMENTS, legalAcceptanceStatements } from '@watchdog-bms/contracts';
+import { CURRENT_LEGAL_DOCUMENTS, legalAcceptanceStatements, SIGNUP_DISCOVERY_SOURCE_OPTIONS, SIGNUP_DISCOVERY_OTHER_MAX } from '@watchdog-bms/contracts';
 import { currentLegalRelease } from '../application/legal-acceptance.service';
 // The one place the signup form's length limit is decided; the input must not drift from it.
 import { LINE_SIGNUP_COMPANY_NAME_MAX } from '../../external-signup/domain/line-signup.logic';
@@ -550,6 +550,9 @@ export class AuthController {
         + '\n    .legal{margin-top:20px;padding:12px;background:var(--ground);border:1px solid var(--line);border-radius:10px;font-size:14px}'
         + '\n    .legal li{margin-bottom:6px}'
         + '\n    .fine{color:var(--muted);font-size:14px}'
+        + '\n    .discovery{border:0;padding:0;margin:24px 0 0;min-width:0}.discovery legend{font-weight:600;padding:0}.discovery .fine{margin:4px 0 12px}'
+        + '\n    .discovery-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.discovery-option{display:flex;align-items:center;gap:9px;min-height:48px;margin:0;padding:12px;border:1px solid var(--line);border-radius:10px;font-weight:400;cursor:pointer}'
+        + '\n    .discovery-option input{width:18px;min-height:18px;height:18px;margin:0;padding:0;flex-shrink:0;accent-color:var(--brand-dark)}.discovery-option:has(input:checked){border-color:var(--brand-dark);background:var(--ground)}.discovery-option:last-child{grid-column:1/-1}'
         // No <p> wrapper around the button: a hidden button inside a visible paragraph still left
         // that paragraph's margins on the page, as a 16px gap under the notice (review LOW-5).
         + '\n    #notice-action{margin-bottom:12px}',
@@ -574,6 +577,19 @@ export class AuthController {
         <input id="contact-email" type="email" inputmode="email" maxlength="254" autocomplete="email" autocapitalize="none" aria-describedby="contact-email-help" />
         <p id="contact-email-error" class="field-error" hidden></p>
         <p id="contact-email-help" class="fine">เพิ่มภายหลังได้ ก่อนชำระแพ็กเกจจะให้ยืนยันอีเมลสำหรับรับเอกสาร ใช้งานผ่าน LINE ได้ทันที</p>
+        <fieldset id="discovery-source" class="discovery" tabindex="-1" aria-describedby="discovery-source-help discovery-source-error">
+          <legend>รู้จักเราทางไหน</legend>
+          <p id="discovery-source-help" class="fine">เลือก 1 ช่องทาง (ไม่บังคับ)</p>
+          <div class="discovery-options">
+            ${SIGNUP_DISCOVERY_SOURCE_OPTIONS.map((option) => `<label class="discovery-option"><input type="radio" name="discovery-source" value="${option.value}" /><span>${option.label}</span></label>`).join('\n            ')}
+          </div>
+          <p id="discovery-source-error" class="field-error" hidden></p>
+          <div id="discovery-other-fields" hidden>
+            <label for="discovery-source-other">ระบุช่องทางอื่น ๆ</label>
+            <input id="discovery-source-other" type="text" maxlength="${SIGNUP_DISCOVERY_OTHER_MAX}" placeholder="เช่น เพื่อนแนะนำ" aria-describedby="discovery-source-other-error" disabled />
+            <p id="discovery-source-other-error" class="field-error" hidden></p>
+          </div>
+        </fieldset>
         <section class="legal">
           <p>${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.titleTh)} และ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.privacy.titleTh)} ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.displayVersionTh)}</p>
           <ul>
