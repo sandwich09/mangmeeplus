@@ -177,7 +177,24 @@ if grep -Fq 'LINE_AI_ADVISOR_MODE=$LINE_AI_ADVISOR_MODE_INPUT is not activated' 
   echo "FAIL: production still fails closed on advisor mode" >&2; exit 1
 fi
 grep -Fq 'LINE_AI_BUFFER_DEBOUNCE_MS_INPUT=1000' "$deploy"
-grep -Fq 'sales.get_sales_summary::single_metric' "$deploy"
+# Every compiled family in prepared-simple-read-formatter.ts must be in the default allowlist, in BOTH
+# environments (one unconditional default): a family that ships compiled but unlisted is dead code in
+# production, and the whole point of the R5 wave is that these answer deterministically there too.
+for family in \
+  'sales.get_sales_summary::single_metric' \
+  'expense.list_recent::single_metric' \
+  'accounting.get_summary::list' \
+  'expense.get_daily_closing::single_metric' \
+  'tax.get_vat_summary::single_metric' \
+  'inventory.list_low_stock::list' \
+  'procurement.get_ap_outstanding::single_metric' \
+  'procurement.get_ap_outstanding::list' \
+  'crm.get_customer_summary::single_metric' \
+  'crm.get_customer_summary::list'; do
+  if ! grep -Fq "$family" "$deploy"; then
+    echo "FAIL: compiled family $family missing from the deploy default allowlist" >&2; exit 1
+  fi
+done
 if grep -Fq 'LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES is not activated' "$deploy"; then
   echo "FAIL: production still fails closed on deterministic families" >&2; exit 1
 fi

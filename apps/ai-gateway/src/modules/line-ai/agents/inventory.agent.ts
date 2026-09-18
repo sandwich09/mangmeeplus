@@ -77,7 +77,9 @@ export class InventoryAgent {
         facts.push({ label: 'สินค้า', value: `${String(data['name'] ?? '')}${data['sku'] ? ` (${String(data['sku'])})` : ''}`, ...(result.sourceRefs[0] && { sourceRef: result.sourceRefs[0] }) });
       } else if (tool.name === 'inventory.list_low_stock') {
         if (typeof data['count'] !== 'number') { readFailed = true; toolData.pop(); continue; }
-        facts.push({ label: 'สินค้าใกล้หมด', value: `${data['count']} รายการ` });
+        // The permission-checked source has to ride the fact: it is what the answer cites and links to,
+        // and the compiled low-stock family reads it from here like every other read family.
+        facts.push({ label: 'สินค้าใกล้หมด', value: `${data['count']} รายการ`, ...(result.sourceRefs[0] && { sourceRef: result.sourceRefs[0] }) });
       } else if (tool.name === 'inventory.get_stock_balance') {
         if (!Array.isArray(result.data)) { readFailed = true; toolData.pop(); continue; }
         const items = result.data;
@@ -104,6 +106,9 @@ export class InventoryAgent {
       toolCalls,
       requiresHumanReview: false,
       toolData,
+      // The tool's as-of was collected above and then dropped, so every inventory answer claimed no
+      // as-of state at all. Carried like the other specialists do.
+      ...(asOf ? { asOf } : {}),
     };
   }
 }

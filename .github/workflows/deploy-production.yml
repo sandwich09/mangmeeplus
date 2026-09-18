@@ -418,7 +418,7 @@ jobs:
           fi
       - name: Verify maintenance release policy and final source bytes
         env:
-          EXPECTED_MAINTENANCE_RELEASE_VALIDATOR_SHA256: b4cd3e92bf15849763e1bf2f5a687c5d6991ea8dd8e445aee08b8a5390901dc1
+          EXPECTED_MAINTENANCE_RELEASE_VALIDATOR_SHA256: 55e3b3979fffc02aedd243b07c91b3f8346be204873ba9ae3251e85bb2cfca61
         run: |
           set -euo pipefail
           test "$(sha256sum infra/security/validate-production-maintenance-release.sh | awk '{print $1}')" \
