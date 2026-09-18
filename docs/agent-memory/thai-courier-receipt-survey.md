@@ -1,6 +1,6 @@
 # Agent Memory: thai-courier-receipt-survey
 
-Status: Research checked 2026-09-18; spec §18 and plan §12 cover CC01–CC10. Owner-approved non-receipt replies NR01–NR09 recorded in spec §18.4 / plan §12.1; post-edit document checks PASS. No application implementation, external form submission, commit, merge or deployment in this turn.
+Status: Courier research, CC01–CC10 and owner-approved NR01–NR09 documentation finalized for delivery through develop PR #643 and main PR #644; authoritative merge state is in the linked PR records. Paired document checks PASS. Application implementation, live AI/LINE/UX validation and deployment remain outside this documentation delivery.
 Owner: Codex / root
 Scope: Buyer-side Thai courier receipts and expenses through existing LINE AI, upload and replacement; short/full/electronic documents, UX40+ and eligible substitute-receipt continuation.
 
@@ -22,6 +22,7 @@ Open questions:
 - Current 10 MiB/multipage and pending-to-Web requirements are planned, not implemented by this survey. VAT/tax eligibility and reimbursement follow existing policy decisions, not logos or historical templates.
 
 Artifacts:
+- v0.11 documentation delivery: [develop PR #643](https://github.com/MangmeeDev/mangmeeplus/pull/643) and [main PR #644](https://github.com/MangmeeDev/mangmeeplus/pull/644) contain the same nine scoped documentation files. GitHub records retain the exact final reviewed heads, merge outcomes and merge commits. The user explicitly authorized admin merge without waiting for CI on 2026-09-18; no deployment is dispatched.
 - [Research](../research/thai-courier-receipt-survey-2026-09-18-th.md)
 - [Source/specimen catalog](../research/thai-courier-receipt-survey-2026-09-18.json)
 - [Spec §18](../specs/marketplace-buyer-expense-capture-spec-th.md)
