@@ -52,6 +52,8 @@ function makeHarness(rows: Row[], opts: {
     client: {
       lineReadEvidence: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
       lineLedgerDelivery: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
+    // The pre-capture LINE intake diagnostic ages out in this same sweep (capture appendix §2.2).
+    lineIntakeAttempt: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
       lineTurnOutcome: {
         findMany: async ({ where }: any) => [...outcomeStore.values()].filter((outcome) => (
           (where.webhookEventId?.in as string[] | undefined)?.includes(outcome.webhookEventId) !== false
