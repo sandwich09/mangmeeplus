@@ -10,6 +10,34 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Current Production Kamal — 2026-09-18 14:42 UTC
+
+This checkpoint supersedes the staging/ECS inventory below. The owner-authorized migration and
+first isolated hotfix0b0058ad completed as20260918T113740Z-2b1e04fa under explicit browser HTTP waiver.
+Current serving source is`1406d3825db2eb7d70987b207c80f89ae05edb3b`, operation
+`20260918T143800Z-e6c3b860`, state`ACCEPTED_WITH_BROWSER_HTTP_WAIVER`, KMSverified/publicOPEN.
+All four containers (API in two AZs, AI, workers) match exactsource/config/deepreadiness.
+AgentCore`watchdog_orchestrator_production_kamal-Ik7N9qDX8R` uses`kamal_production_a`, version5;
+previous0b provider remains version4 onb. Hosts/IPs in the table below remain current.
+
+All three original ECS services are parked0/0 and have no running task. Actual API/AI stopped
+13:17:57/13:18:31UTC; retain oldworker signedSTOPPED evidence because its task record expired.
+The ECS rollback window was explicitly closed, obsolete build authority retired through existing
+audit path, temporary`first-migration-20260918` IAM policy removed, and signed closure installed.
+Subsequent recovery uses native Kamal prior-container/provider snapshots, not the closed migration
+rollback procedure. Shared ALB/RDS/Redis and oldECS configs/images/history remain retained;
+both legacy Production workflows remain disabled. No DNS/Cloudflare change.
+
+Operator changed Wi-Fi: the existing three TCP22 rules now allow only`49.228.220.223/32`
+in place of`49.229.201.224/32`. This authorized drift is not yet reflected in CloudFormation's old
+OperatorCidr parameter; preserve it during future stack updates. Ordinary release/signing uses
+non-root`mangmee-kamal-production`; infrastructure bootstrap/retirement used owner`thawatchai`.
+
+Full failure retention, acceptance limitations, exact times and integration results:
+[Two-hotfix release evidence](../evidence/production-two-hotfixes-2026-09-18.md).
+Do not interpret waived browser identity/logout checks as standard protocolPASS or reuse the
+old owner acceptance as proof of future candidates. The release-specific override hash is signed.
+
 ## Production Kamal staging — 2026-09-18, no application cutover
 
 Latest operation checkpoint09:46UTC: the first app handover20260918T085755Z-860908a6 failed at

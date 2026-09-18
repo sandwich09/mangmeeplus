@@ -51,6 +51,22 @@ The owner named Chrome developer for the existing `prodmangmeeplus` session, and
 company Snd Prd for the receipt/substitute/cancel/confirm business journey. Do not use seed accounts
 or reset credentials, and do not mark a mocked browser regression as this live journey.
 
+## Scoped owner browser waiver for September18 Production hotfixes
+
+After manually trying the first release, the owner explicitly stopped further browser checks and
+instructed continuing the isolated card fix and both branch integrations. This exception applies only
+to source`0b0058ad` / operation`20260918T113740Z-2b1e04fa` and source`1406d382` /
+operation`20260918T143800Z-e6c3b860`. The first is signed`OWNER_ACCEPTED_BROWSER_HTTP_WAIVED`;
+the second is signed`ACCEPTED_WITH_BROWSER_HTTP_WAIVER`. Neither claims standard §E identity,
+flags, logout204 or post-logout401 checks were completed. The second explicitly records that the
+owner did not manually test the future candidate. Owner decision/override hashes are signed.
+
+Exact source/config/readiness, public OPEN, KMS verification, failure retention and mutation guards
+remain in force. The original interrupted first acceptance is retained. No generic browser bypass
+was added to the controller, and this waiver is not authority for a future release. Do not resume
+browser testing of these releases against the owner's stop instruction.
+[Actual evidence, timing, rollback and branch integration](../evidence/production-two-hotfixes-2026-09-18.md).
+
 ## Owner-authorized UAT Kamal stability proof — 2026-09-11
 
 The owner explicitly requires consolidated rehearsal and fixes before the next live run, followed by
