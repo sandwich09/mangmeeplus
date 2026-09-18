@@ -200,9 +200,10 @@ class FirstMigration:
         return retained
 
     def traffic_prerequisites(self):
-        """Exercise CF's parameter and rule reads before publication or worker handover."""
+        """Exercise CF's parameter, output and rule reads before worker handover."""
         stack = self.aws(['cloudformation', 'describe-stacks', '--stack-name', self.stack])['Stacks'][0]
         require(stack['StackStatus'] in STABLE_STACK_STATES, 'Migration stack is not stable')
+        self.output_prerequisites(stack)
         ami = next(p['ParameterValue'] for p in stack['Parameters'] if p['ParameterKey'] == 'UbuntuAmi')
         images = self.aws(['ec2', 'describe-images', '--image-ids', ami])['Images']
         require(len(images) == 1 and images[0]['ImageId'] == ami and images[0]['State'] == 'available',
@@ -214,6 +215,48 @@ class FirstMigration:
         self.state['trafficPrerequisites'] = {'stackStatus': stack['StackStatus'], 'imageId': ami,
             'ruleArns': rules, 'readPermissionsVerified': True}
         self.save()
+
+    def output_prerequisites(self, stack):
+        # ponytail: this one migration has a fixed output contract, not a generic CF resolver.
+        target = self.release.target
+        role = 'mangmee-kamal-production-deployrole'
+        expected = {'VpcId': target['hosts']['api-web'][0]['vpcId'],
+            'RepositoryUri': f'{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/' + target['repository'],
+            'DeployRoleArn': f'arn:aws:iam::{ACCOUNT}:role/' + role,
+            'SigningKeyArn': target['signingKeyArn'], 'AgentRuntimeArn': target['agentcoreRuntimeArn']}
+        refs = {'VpcId': 'Vpc', 'ApiTargetGroup': 'ApiTargets', 'AiTargetGroup': 'AiTargets'}
+        attrs = {'RepositoryUri': ['Images', 'RepositoryUri'], 'DeployRoleArn': ['DeployRole', 'Arn'],
+            'SigningKeyArn': ['SigningKey', 'Arn'], 'AgentRuntimeArn': ['AgentRuntime', 'AgentRuntimeArn']}
+        hosts = target['hosts']['api-web'] + target['hosts']['ai-gateway'] + target['hosts']['workers']
+        require(len(target['hosts']['api-web']) == 2 and len(target['hosts']['ai-gateway']) == 1
+                and len(target['hosts']['workers']) == 1, 'Migration output host topology changed')
+        for name, host in zip(('ApiA', 'ApiB', 'Ai', 'Workers'), hosts):
+            refs[name + 'Instance'] = name + 'Server'
+            attrs[name + 'PublicIp'] = [name + 'Server', 'PublicIp']
+            expected.update({name + 'Instance': host['instanceId'], name + 'PublicIp': host['address']})
+        outputs = {row['OutputKey']: row['OutputValue'] for row in stack.get('Outputs', [])}
+        require(len(stack.get('Outputs', [])) == len(refs) + len(attrs)
+                and set(outputs) == set(refs) | set(attrs), 'Migration stack output contract changed')
+        require(all(outputs[k] == v for k, v in expected.items()), 'Migration stack output identity changed')
+        template = self.aws(['cloudformation', 'get-template', '--stack-name', self.stack])['TemplateBody']
+        if isinstance(template, str): template = json.loads(template)
+        values = {k: v['Value'] for k, v in template.get('Outputs', {}).items()}
+        require(values == {**{k: {'Ref': v} for k, v in refs.items()},
+            **{k: {'Fn::GetAtt': v} for k, v in attrs.items()}}, 'Unreviewed migration output provider')
+        # CF can refresh unchanged resources while resolving GetAtt after both rules have switched.
+        observed = {'DeployRoleArn': self.aws(['iam', 'get-role', '--role-name', role])['Role']['Arn'],
+            'RepositoryUri': self.aws(['ecr', 'describe-repositories', '--repository-names', target['repository']])['repositories'][0]['repositoryUri'],
+            'SigningKeyArn': self.aws(['kms', 'describe-key', '--key-id', target['signingKeyArn']])['KeyMetadata']['Arn'],
+            'AgentRuntimeArn': self.aws(['bedrock-agentcore-control', 'get-agent-runtime', '--agent-runtime-id',
+                target['agentcoreRuntimeArn'].rsplit('/', 1)[1]])['agentRuntimeArn']}
+        data = self.aws(['ec2', 'describe-instances', '--instance-ids', *[h['instanceId'] for h in hosts]])
+        instances = {i['InstanceId']: i for row in data['Reservations'] for i in row['Instances']}
+        require(set(instances) == {h['instanceId'] for h in hosts}, 'Incomplete migration output instance readback')
+        for name, host in zip(('ApiA', 'ApiB', 'Ai', 'Workers'), hosts):
+            observed[name + 'PublicIp'] = instances[host['instanceId']].get('PublicIpAddress')
+        require(all(observed[k] == outputs[k] for k in observed), 'Migration output provider readback changed')
+        self.state['outputPrerequisites'] = {'verified': True, 'outputKeys': sorted(outputs),
+            'providerReadKeys': sorted(observed)}
 
     def verify_ecs_provider(self):
         values = {v['name']:v['value'] for v in self.state['ecsBaseline']['ai-gateway']['body']['primaryContainer']['environment']}

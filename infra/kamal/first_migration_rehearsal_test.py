@@ -24,6 +24,24 @@ class Cloud:
     def __init__(self, release, status='CREATE_COMPLETE'):
         self.release = release
         self.template, _ = migration_tests.MigrationBoundaries().template()
+        self.output_values = {
+            'VpcId': 'vpc-123', 'RepositoryUri': '311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/' + release.target['repository'],
+            'DeployRoleArn': 'arn:aws:iam::311414082667:role/mangmee-kamal-production-deployrole',
+            'SigningKeyArn': release.target['signingKeyArn'], 'AgentRuntimeArn': release.target['agentcoreRuntimeArn'],
+            'ApiTargetGroup': 'ApiTargets', 'AiTargetGroup': 'AiTargets'}
+        self.instances = []
+        self.template['Outputs'] = {key: {'Value': value} for key, value in {
+            'VpcId': {'Ref': 'Vpc'}, 'ApiTargetGroup': {'Ref': 'ApiTargets'}, 'AiTargetGroup': {'Ref': 'AiTargets'},
+            'RepositoryUri': {'Fn::GetAtt': ['Images', 'RepositoryUri']},
+            'DeployRoleArn': {'Fn::GetAtt': ['DeployRole', 'Arn']},
+            'SigningKeyArn': {'Fn::GetAtt': ['SigningKey', 'Arn']},
+            'AgentRuntimeArn': {'Fn::GetAtt': ['AgentRuntime', 'AgentRuntimeArn']}}.items()}
+        for name, host in zip(('ApiA', 'ApiB', 'Ai', 'Workers'),
+                [h for hosts in release.target['hosts'].values() for h in hosts]):
+            self.output_values.update({name + 'Instance': host['instanceId'], name + 'PublicIp': host['address']})
+            self.template['Outputs'].update({name + 'Instance': {'Value': {'Ref': name + 'Server'}},
+                name + 'PublicIp': {'Value': {'Fn::GetAtt': [name + 'Server', 'PublicIp']}}})
+            self.instances.append({'InstanceId': host['instanceId'], 'PublicIpAddress': host['address']})
         self.status = status
         self.calls = []
         self.changes = {}
@@ -39,8 +57,17 @@ class Cloud:
             result = {'TemplateBody': copy.deepcopy(self.template)}
         elif (service, operation) == ('cloudformation', 'describe-stacks'):
             result = {'Stacks': [{'StackStatus': self.status,
+                'Outputs': [{'OutputKey': k, 'OutputValue': v} for k, v in self.output_values.items()],
                 'Parameters': [{'ParameterKey': 'OperatorCidr', 'ParameterValue': '192.0.2.1/32'},
                     {'ParameterKey': 'UbuntuAmi', 'ParameterValue': 'ami-simulation'}]}]}
+        elif (service, operation) == ('iam', 'get-role'):
+            result = {'Role': {'Arn': self.output_values['DeployRoleArn']}}
+        elif (service, operation) == ('ec2', 'describe-instances'):
+            result = {'Reservations': [{'Instances': self.instances}]}
+        elif (service, operation) == ('ecr', 'describe-repositories'):
+            result = {'repositories': [{'repositoryUri': self.output_values['RepositoryUri']}]}
+        elif (service, operation) == ('bedrock-agentcore-control', 'get-agent-runtime'):
+            result = {'agentRuntimeArn': self.output_values['AgentRuntimeArn']}
         elif (service, operation) == ('ec2', 'describe-images'):
             result = {'Images': [{'ImageId': 'ami-simulation', 'State': 'available'}]}
         elif (service, operation) == ('elbv2', 'describe-tags'):
@@ -80,7 +107,7 @@ class Cloud:
                     'Type': 'forward', 'TargetGroupArn': name.replace('StagingRoute', 'Targets')}]})
             result = {'Rules': rows}
         elif (service, operation) == ('kms', 'describe-key'):
-            result = {'KeyMetadata': {'SigningAlgorithms': ['ECDSA_SHA_256']}}
+            result = {'KeyMetadata': {'Arn': self.output_values['SigningKeyArn'], 'SigningAlgorithms': ['ECDSA_SHA_256']}}
         elif (service, operation) == ('kms', 'sign'):
             # A deterministic fake KMS response, explicitly not a real KMS signature.
             self.signature = hashlib.sha256(Path(value('--message')[8:]).read_bytes()).digest()
@@ -106,6 +133,7 @@ def release(root):
     r.target.update(cutoverComplete=False, browserAcceptanceUserId='cmt8k20fs00000q319isxwkc5',
         migration={'stackArn': 'arn:aws:cloudformation:ap-southeast-1:311414082667:stack/mangmee-kamal-production/simulation',
             'state': 'INFRASTRUCTURE_STAGED_NO_APPLICATION'})
+    r.hosts = {h['instanceId']: h for hosts in r.target['hosts'].values() for h in hosts}
     r.aws_prefix = []
     r.changed = []
     r.secrets = set()
@@ -227,7 +255,8 @@ class CutoverRehearsal(unittest.TestCase):
             self.assertFalse(restored['migration']['publicTraffic'])
 
     def test_each_missing_production_browser_check_prevents_enrollment(self):
-        for check in ('identityVerified', 'systemAdminPermission', 'customerOpen', 'logout', 'sessionRejectedAfterLogout'):
+        for check in ('ownerLogin', 'systemAdminPermission', 'customerOpen', 'authenticatedRead', 'logout',
+                'sessionRejectedAfterLogout', 'identityVerified', 'noPasswordOrLegalAction', 'servingLive', 'canOpen'):
             with self.subTest(check=check), tempfile.TemporaryDirectory() as tmp:
                 r, _ = release(Path(tmp)); browser_proof(r, check)
                 with self.assertRaisesRegex(ValueError, 'incomplete or failed'): r.browser_acceptance()
@@ -257,9 +286,13 @@ class CutoverRehearsal(unittest.TestCase):
     def test_failed_change_set_is_retained_without_a_second_execution(self):
         with tempfile.TemporaryDirectory() as tmp:
             r, cloud = release(Path(tmp))
+            original = copy.deepcopy(cloud.template)
             def aws(args, **kwargs):
                 result = r.aws(args, **kwargs)
                 if args[:2] == ['cloudformation', 'execute-change-set']:
+                    # Actual failure: rules switched, then GetAtt failed and CF restored the template.
+                    self.assertNotEqual(cloud.template, original)
+                    cloud.template = copy.deepcopy(original)
                     cloud.status = 'UPDATE_ROLLBACK_COMPLETE'
                 return result
             r.migration.aws = aws
@@ -281,7 +314,9 @@ class CutoverRehearsal(unittest.TestCase):
             self.assertFalse((r.work / 'accepted.sig').exists())
 
     def test_missing_provider_read_permission_fails_before_any_mutation(self):
-        for denied in [('ec2', 'describe-images'), ('elbv2', 'describe-tags')]:
+        for denied in [('ec2', 'describe-images'), ('elbv2', 'describe-tags'), ('iam', 'get-role'),
+                ('ec2', 'describe-instances'), ('ecr', 'describe-repositories'), ('kms', 'describe-key'),
+                ('bedrock-agentcore-control', 'get-agent-runtime')]:
             with self.subTest(denied=denied), tempfile.TemporaryDirectory() as tmp:
                 r, cloud = release(Path(tmp))
                 r.migration.routes(public=False)
@@ -295,5 +330,28 @@ class CutoverRehearsal(unittest.TestCase):
                 self.assertFalse(cloud.changes)
                 self.assertNotIn('trafficPrerequisites', r.migration.state)
 
+
+
+    def test_output_drift_and_unreviewed_output_fail_before_mutation(self):
+        for change in ('missing', 'unexpected', 'wrong-role', 'wrong-ip', 'wrong-getatt'):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as tmp:
+                r, cloud = release(Path(tmp)); r.migration.routes(public=False)
+                if change == 'missing': del cloud.output_values['DeployRoleArn']
+                elif change == 'unexpected': cloud.output_values['ExtraOutput'] = 'unreviewed'
+                elif change == 'wrong-role': cloud.output_values['DeployRoleArn'] += '-foreign'
+                elif change == 'wrong-ip': cloud.instances[0]['PublicIpAddress'] = '192.0.2.99'
+                else: cloud.template['Outputs']['DeployRoleArn']['Value']['Fn::GetAtt'][0] = 'ForeignRole'
+                with self.assertRaises(ValueError): r.migration.traffic_prerequisites()
+                self.assertFalse(r.changed)
+                self.assertFalse(cloud.changes)
+
+    def test_every_browser_binding_rejects_foreign_or_stale_evidence(self):
+        for field in ('operationId', 'sourceCommit', 'releaseId', 'environment', 'origin', 'userId', 'rollbackOf'):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                r, _ = release(Path(tmp)); r.args.rollback = 'prior-operation'; browser_proof(r)
+                path = r.work / 'browser-acceptance.json'; proof = m.read(path)
+                proof[field] = 'foreign'; m.write(path, proof)
+                with self.assertRaisesRegex(ValueError, 'mismatch'): r.browser_acceptance()
+                self.assertFalse((r.state / 'target.json').exists())
 
 if __name__ == '__main__': unittest.main()
