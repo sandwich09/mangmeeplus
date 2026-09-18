@@ -382,3 +382,35 @@ W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAl
 6. **`sourceStale` ถูกล้างตอนคนกดบันทึกการตรวจ** ใน `UpdateExpenseDraftUseCase` (พร้อม `missingFields` เดิม) — W03 ยังต้องล้างตอน apply ผลอ่านใหม่; ตอนตั้ง flag จะถอด `extractionAttachmentId` ออกจาก summary ด้วย เพื่อไม่ให้ fence ของ `updateExpense` (ผล OCR ที่กลับช้า) ชี้ไปยังไฟล์ที่ถูกแทนแล้ว
 7. **หน้า `/expenses/capture/{groupId}` ส่งเฉพาะโครง** ตามลำดับงาน: header/สถานะ, รายการไฟล์ + สถานะอ่านต่อไฟล์ + polling 3 วินาที, แนบเพิ่ม/ตัดออก/เก็บไว้ก่อน/ไม่มีส่วนของบริษัท, preview เดิม และ slot ว่าง `CaptureFactsSection`/`CaptureAllocationSection` ให้ W04; ปุ่มทุกปุ่มมาจาก `allowedActions` ของ server
 8. **ยังไม่ได้ทำใน W02-web**: LINE lane ทั้งหมด (W02-LINE), การอ่านจริง/manifest ที่มีหน้า (W03), สรุปร้าน/สินค้า/ยอด/ผู้จ่ายบนหน้ากลุ่ม (W04) — ข้อความ "ทั้งสามทางรับ PDF 10 MiB แล้ว save→queue/read" ยังติ๊กไม่ได้จนกว่า W03 จะมี runner จริง
+
+## 18. Implementation notes (W04b — หน้ากลุ่ม/รายการงานรับหลักฐาน, 2026-09-19)
+
+W04b ส่งเฉพาะ `apps/web/**`: หน้า `/companies/{c}/expenses/capture/{groupId}` เต็มรูป (สรุป §13.4, facts ราย
+เอกสาร + แก้ข้อมูล, คำถามสองข้อ + ส่วนของบริษัท, ยอมรับการจัดส่วน, ปุ่มสร้างรายการค่าใช้จ่าย, derived sources)
+และหน้ารายการ `/companies/{c}/expenses/capture` ไม่มีการแก้ API/contract/gateway ในรอบนี้
+
+สิ่งที่ต่างจากตัวอักษรของเอกสารนี้ พร้อมเหตุผล (ไม่เปลี่ยนกติกาเงิน/สิทธิ):
+
+1. **ปุ่ม handoff ยิง `POST …/handoff` ที่ W05 ยังไม่ส่ง** — 404 = "ยังสร้างรายการค่าใช้จ่ายจากงานนี้ไม่ได้ในตอนนี้"
+   (ไม่ใช่ข้อความว่าสร้างไม่สำเร็จ), 5xx/หลุดเน็ต = UXE-24 "กำลังตรวจสอบผลรายการก่อนทำต่อ" แล้ว re-GET กลุ่มเพื่อดู
+   `derivedSources` จริง ชนิดผลลัพธ์ประกาศไว้ใน `expenses.api.ts` ตามข้อ 9 (W05 ย้ายเข้า contract เมื่อถึงคิว)
+2. **`claimReady` ของ derived source อ่านจาก scope ของ allocation ที่ยอมรับแล้ว** เพราะ `ExpenseCaptureDerivedSourceDto`
+   (ข้อ 9/W01) ไม่มีฟิลด์นี้ — จับคู่ด้วย `captureScopeKey`; ปุ่ม "เตรียมใบเบิก" จึงขึ้นเฉพาะ route `EMPLOYEE` +
+   `claimReady` มิฉะนั้นเป็นข้อความ "รอตรวจภาษีก่อนเตรียมใบเบิก" (ไม่พาไปหน้าที่ resolver จะปฏิเสธ)
+3. **จำนวน "ส่วนตัว" ตอนเปิดหน้าใหม่สร้างกลับจาก `result.scopes[].lines[].provenance`** เพราะ
+   `ExpenseCaptureAllocationDto` ไม่ได้ส่ง `selectionJson` — แถวที่ไม่มีบรรทัดในผล = ส่วนบริษัท 0 (ส่วนตัวทั้งแถว)
+   ยกเว้นแถวที่ "อ่านยอดไม่ได้" ซึ่งคงไว้ที่ส่วนตัว 0 เพื่อไม่พลิกคำตอบของผู้ตรวจเอง (A28/A41) — ทางแก้ถาวรคือเพิ่ม
+   `selection` ลง dto (มี `ponytail:` note ไว้ในโค้ด)
+4. **ป้าย "แก้โดยผู้ใช้" เป็นระดับไฟล์ ไม่ใช่ระดับฟิลด์** เพราะ `CaptureFactsView` (ข้อ 17.12) ไม่ได้พา
+   `provenance` ของ observation `source: HUMAN` ออกมา — ใช้ `facts.files[].source === 'HUMAN'`
+5. **ตัวเลือกผู้จ่ายคนอื่นใช้ `GET …/settings/employees`** (ไม่มี endpoint รายชื่อสมาชิกแบบเบาในข้อ 9) โหลดเฉพาะเมื่อ
+   ผู้ใช้มี `expense.review` และเลือก "พนักงานสำรองจ่าย"; ถ้า 403 รายการจะเหลือ "ฉัน" อย่างเดียวและ server ยังตรวจ
+   สมาชิก/สาขาเองทุกครั้ง (ข้อ 6)
+6. **"ดูหน้าที่อ้างอิง" ใช้ fragment `#page=n` ของตัวอ่าน PDF ในเบราว์เซอร์** (เอกสารเก็บ `pageIndexes` ไว้ที่ระดับ
+   เอกสาร ไม่ใช่ระดับแถว) ไม่เพิ่ม prop ให้ `DocumentPreviewModal`
+7. **`taxReview` ถูกส่งเฉพาะเมื่อผู้มี `expense.review` แตะค่าจริง** และ `expenseDateChoice` ส่งเฉพาะ scope ที่เลือก —
+   ค่าเริ่มต้นบนจอคือค่าที่ server คืนมา (`scope.vatMode/…/expenseDateSource`) จึงไม่มีการ "ประทับ" การตัดสินที่ไม่มี
+   คนตัดสิน (ข้อ 7 / §17.3 ข้อ 5)
+8. **ยังไม่ทำใน W04b**: LINE summary (W02-LINE), หน้าจอ regenerate หลัง handoff (server คืน `allowedActions: []`
+   เมื่อกลุ่มไม่ `OPEN` แล้ว จึงยังไม่มีปุ่มให้กด — W05 ตัดสินว่าจะเปิดทางไหน), ใบรับรองต่อ source (W06 เติมบรรทัด
+   "ใบรับรอง: —"), `?expenseId=` บนหน้าใบเบิกใหม่ยังไม่ถูกอ่านโดย `ReimbursementCreatePage` (ลิงก์พาไปหน้าร่างเปล่า)

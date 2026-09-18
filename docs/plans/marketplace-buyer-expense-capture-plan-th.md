@@ -196,8 +196,9 @@ Depends on: W03; D03 เฉพาะกฎที่ใช้กับยอด
 หมายเหตุชื่อ: `expense-source-draft.logic.ts` และ `expense-source-draft.model.ts` ที่มีอยู่เดิมคือร่างบทสนทนา LINE ไม่ใช่งานจัดสรรของ W04 อย่านำมาใช้เป็น seam และอย่าเรียกของใหม่ว่า source draft (ดู spec §4)
 
 สถานะ 2026-09-18: **W04a (API) ส่งแล้ว** — engine + `facts`/`review`/`accept` (รายละเอียดและ deviation ใน appendix ข้อ 17) ช่องที่ยังว่างคือหน้ากลุ่ม/LINE summary = **W04b**
+สถานะ 2026-09-19: **W04b (เว็บ) ส่งแล้ว** — หน้ากลุ่ม `/expenses/capture/{groupId}` สรุป/facts/แก้ข้อมูล/ส่วนบริษัท/ยอมรับ/สร้างรายการ + หน้ารายการงานรับหลักฐาน (appendix ข้อ 18) ที่ยังเหลือคือ LINE summary (W02-LINE) และ usability 40+ (D05, เจ้าของ)
 
-- [ ] สรุปยอด/ร้าน/สินค้า/ผู้จ่ายในหน้าตรวจเดิม เปิดdetailเพิ่มได้ และแสดงblockerที่กระทบactionก่อนกด *(W04b; server ส่ง `facts`/`allocation`/`blockers`/`allowedActions` ให้แล้ว)*
+- [x] สรุปยอด/ร้าน/สินค้า/ผู้จ่ายในหน้าตรวจเดิม เปิดdetailเพิ่มได้ และแสดงblockerที่กระทบactionก่อนกด *(W04b; สรุป §13.4 + ป้ายสถานะ 4 แกนแยกกัน + blocker พร้อม "ทางทำต่อ" อยู่เหนือปุ่มหลัก — spec ใน `ExpenseCaptureGroupPage.qa.spec.ts` / `expense-capture-review.logic.spec.ts`)*
 - [x] รับ business/personal selectionระดับจำนวนโดยไม่เลือก“บริษัททั้งหมด”ให้เอง; purposeทั่วไปยังoptional — `businessUse UNKNOWN` = blocker ไม่ใช่ค่าเริ่มต้น; `selection` เป็นจำนวนต่อแถว, แถวที่ไม่มี quantity แบ่งไม่ได้
 - [x] ผูก actual payerตามสิทธิ ไม่ใช้uploader/ชื่อผู้รับสินค้าแทนผู้รับเงินคืน — payer ต้องเป็นสมาชิก ACTIVE ในสาขา, payer ≠ ตัวเองต้อง `expense.review`
 - [x] source breakdownก่อนunique inferenceก่อนpolicy allocation; largest remainderถึงสตางค์พร้อมstable ties/eligible caps/provenance — `shareByBasis` + provenance ต่อบรรทัด (componentId/share/remainderAdjust/shippingShare)
@@ -206,12 +207,13 @@ Depends on: W03; D03 เฉพาะกฎที่ใช้กับยอด
 - [x] unknown/unsupportedคงทางพัก; business amount0ที่ยืนยันแล้วจบเป็นหลักฐานไม่มีเงินส่งต่อ — `NO_COMPANY_PORTION` ที่ accept แล้วปิดกลุ่มเป็น `CLOSED_NO_HANDOFF`; unknown ไม่ถูกนับเป็น 0
 - [x] เลือก expenseDateจากfactsที่reviewตามปลายทาง ไม่ใช้upload dateทับpayment/invoice/order date — `expenseDateChoice` per scope, ไม่มีวันที่ = blocker (ไม่ใช้วันนี้)
 
-- [ ] หน้าตรวจ/LINE summaryใช้document total, settlement, expense allocationและclaim amountแยก; coins/CPN/points/void/taxlegendไม่รู้ต้องมีเหตุผลและmanual review
+- [ ] หน้าตรวจ/LINE summaryใช้document total, settlement, expense allocationและclaim amountแยก; coins/CPN/points/void/taxlegendไม่รู้ต้องมีเหตุผลและmanual review *(เว็บ: W04b ส่งแล้ว — ยอดเอกสาร/ยอดที่ต้องจ่าย/ยอดที่ระบุว่าจ่ายแล้ว แยกช่อง, `future_reward` = "ไม่ลดยอด", void/ของแถมเป็นป้ายของแถว, unknown = "ไม่ทราบ" ไม่ใช่ 0; LINE summary = W02-LINE)*
 - [ ] เปลี่ยนใบเสร็จแสดงdiff/provenanceของfactsใหม่กับค่าที่คนตรวจ; ไม่mixidentity/rows/paymentจากคนละซื้อ; READYกลับNEEDS_REVIEWเมื่อprimaryเปลี่ยนและfinalactionรอreview
-- [ ] แสดงfile saved/reading/partial/read failed/not-checkedตามจริงบนทั้งสามทาง; เก็บร่าง/แนบเพิ่ม/อ่านใหม่และsupplier recoveryมีทางทำต่อสำหรับ40+
+- [ ] แสดงfile saved/reading/partial/read failed/not-checkedตามจริงบนทั้งสามทาง; เก็บร่าง/แนบเพิ่ม/อ่านใหม่และsupplier recoveryมีทางทำต่อสำหรับ40+ *(เว็บ: W02-web + W04b ส่งแล้ว; LINE = W02-LINE; การทดสอบกับผู้ใช้ 40+ จริงยังเปิดอยู่ตาม D05)*
 
 Exit: original1,290/บริษัท810/ส่วนตัว480และที่มาการแบ่งยังอยู่ครบ; คนกลับมาแก้ต่อได้และไม่ต้องคำนวณคูปองเอง
 Checks: Decimal property/invariant tests รวม totals identity ของบรรทัดที่สร้าง, stale revision/permission checks, review save/reload และ usability discovery40+ ของsummary/recovery
+Checks ที่รันแล้ว (W04b, 2026-09-19): `pnpm --filter @watchdog-bms/web test` 1,851 pass / 0 fail (รวม logic spec ใหม่ 19 เคส + QA spec 16 เคส), `pnpm --filter @watchdog-bms/web lint` (tsc --noEmit) clean, pins `--check` status=current, `git diff --check` clean — usability 40+ (D05) ยังไม่ได้ทำ ไม่นับว่าผ่าน
 Acceptance หลัก: A03–A08/A11/A12/A14/A19/A24/A27/A28/A31/A32/A34/A37/A41/A42/A45/A48
 IG: IG06/IG10/IG11/IG12
 
