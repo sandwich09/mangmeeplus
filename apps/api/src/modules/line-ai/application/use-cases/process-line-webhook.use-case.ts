@@ -28,7 +28,7 @@ import {
   CompleteReceiptUploadUseCase,
 } from '../../../expenses/application/use-cases/expense-upload.use-case';
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
-import { listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
+import { LINE_RECENT_CAPTURE_WINDOW_MS, listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
 import { receiptProgressLabel, receiptStatusQuestion } from '../../domain/logic/line-receipt-status.logic';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import type { ExpenseRecord } from '../../../expenses/domain/models/expense.model';
@@ -97,6 +97,7 @@ import {
 import { ExpenseCaptureLineUseCase, LINE_CAPTURE_NOTE_MAX_CHARS, LINE_CAPTURE_SAME_WORK_WINDOW_MS } from '../../../expenses/application/use-cases/expense-capture-line.use-case';
 import {
   CAPTURE_READ_FAILED_REPLY,
+  captureGroupStatusReply,
   classifyNonReceiptCase,
   NON_RECEIPT_PERSISTING_CASES,
   nonReceiptReply,
@@ -3931,9 +3932,22 @@ export class ProcessLineWebhookUseCase {
             : `${amountValue.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${expense.currency && expense.currency !== 'THB' ? expense.currency : 'บาท'}`;
           lines.push(`${lines.length + 1}) ${number ? `บิล ${number} · ` : ''}${amount}\n${receiptProgressLabel(expense.status, verification)}\nเปิดรายการที่ ${lines.length + 1}: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expense.id}`)}`);
         }
+        // §17.5 / appendix §3: a LINE file that has not (yet) become an expense is still real work.
+        // It lives in the capture aggregate, which the expense list above cannot see — so the same
+        // question is answered from the group's own read state rather than with "ยังไม่พบรายการ".
+        const openGroups = lines.length === 0 && this.captureLine
+          ? await this.captureLine.listOpenChatGroupProgress({
+            companyId, userId: identity.userId, lineChatKeyHash: chatKeyHashOf(event),
+            windowMs: LINE_RECENT_CAPTURE_WINDOW_MS,
+          }).catch(() => [])
+          : [];
         reply = lines.length
           ? `ตรวจพบรายการล่าสุดจากแชทนี้ ${lines.length} ใบค่ะ\n\n${lines.join('\n\n')}\n\nถ้ายังมีรูปที่ไม่ปรากฏในรายการนี้ ระบบยังยืนยันผลของรูปนั้นไม่ได้ค่ะ\nดูรายการทั้งหมด: ${listLink}`
-          : `ยังไม่พบรายการจากแชทนี้ในช่วง 24 ชั่วโมงล่าสุด จึงยังยืนยันว่าอ่านเสร็จไม่ได้ค่ะ\nดูรายการในเว็บ: ${listLink}`;
+          : openGroups.length
+            ? openGroups.map((group) => captureGroupStatusReply(
+              absoluteWebLink(this.config.webBaseUrl, group.webPath), group.reading,
+            )).join('\n\n')
+            : `ยังไม่พบรายการจากแชทนี้ในช่วง 24 ชั่วโมงล่าสุด จึงยังยืนยันว่าอ่านเสร็จไม่ได้ค่ะ\nดูรายการในเว็บ: ${listLink}`;
       } catch (error) {
         this.logger.warn({ msg: 'line_receipt_status_unavailable', ...safeLineErrorDetails(error) });
       }

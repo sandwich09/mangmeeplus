@@ -638,6 +638,7 @@ function makeHarness(opts: {
           createdAt: new Date(), updatedAt: new Date(), status: 'OPEN', note: group.note ?? null } : null;
       },
       listOpenSameWorkGroups: async () => opts.openSameWorkGroups ?? [],
+      listOpenChatGroupProgress: async () => opts.openChatGroups ?? [],
       moveFileToGroup: async (_ctx: any, input: any) => { captureState.moves.push(input); return { ...input, requeuedJob: false }; },
       closeMergedGroup: async (_ctx: any, groupId: string, reason: string) => { captureState.closes.push({ groupId, reason }); return true; },
       markReadFailed: async (_companyId: string, jobId: string, errorCode: string) => {
@@ -4603,6 +4604,29 @@ describe('receipt progress grounded in persisted records', () => {
     assert.match(h.replies[0] ?? '', /บิล failed · ยังไม่ทราบยอด/);
     assert.doesNotMatch(h.replies[0] ?? '', /· 0\.00 บาท/);
     assert.equal(h.routeRequests.length, 0);
+  });
+
+  for (const [name, reading, pattern] of [
+    ['a finished read waiting on the web', false, /ไฟล์เมื่อกี้อ่านแล้ว รอตรวจและสร้างรายการในเว็บ/],
+    ['a read still running', true, /ไฟล์เมื่อกี้กำลังอ่านอยู่ค่ะ/],
+  ] as const) {
+    it(`answers for an OPEN capture group with no expense yet — ${name} (§17.5)`, async () => {
+      const h = makeHarness({
+        permissions: ['expense.receipt.line_upload'], recentCaptures: [],
+        openChatGroups: [{ groupId: 'group-7', webPath: '/companies/company-1/expenses/capture/group-7', reading }],
+      } as any);
+      await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ใบเสร็จเสร็จหรือยัง' });
+      assert.match(h.replies[0] ?? '', pattern);
+      assert.match(h.replies[0] ?? '', /expenses\/capture\/group-7/);
+      // The old answer claimed nothing had been received at all; the file exists and was read.
+      assert.doesNotMatch(h.replies[0] ?? '', /ยังไม่พบรายการจากแชทนี้/);
+    });
+  }
+
+  it('still says so when the chat has neither an expense nor an open capture group', async () => {
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload'], recentCaptures: [] });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ใบเสร็จเสร็จหรือยัง' });
+    assert.match(h.replies[0] ?? '', /ยังไม่พบรายการจากแชทนี้/);
   });
 
   it('reports lookup failure honestly and does not ask the model to invent progress', async () => {

@@ -169,6 +169,15 @@ export function formatCaptureReadFinishedReply(input: {
   return `📄 อ่านเอกสารแล้วค่ะ ${found} — ตรวจและสร้างรายการค่าใช้จ่ายในเว็บ: ${input.link}`;
 }
 
+/**
+ * §17.5 for a capture group that has NOT become an expense: the status question is asked against
+ * the expense list, and a group is not in it. Without this the honest-sounding "ยังไม่พบรายการ" is
+ * wrong — the file was read, and the work is waiting on the web.
+ */
+export const captureGroupStatusReply = (link: string, reading: boolean): string => (reading
+  ? `ไฟล์เมื่อกี้กำลังอ่านอยู่ค่ะ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้ ระหว่างนี้เปิดดูได้ที่: ${link}`
+  : `ไฟล์เมื่อกี้อ่านแล้ว รอตรวจและสร้างรายการในเว็บ: ${link}`);
+
 const CAPTURE_MONEY_FORMATTER = new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 /** Same user-facing date shape the receipt reply prints, e.g. 25 ก.ค. 2569. */
 const CAPTURE_DATE_FORMATTER = new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric' });
