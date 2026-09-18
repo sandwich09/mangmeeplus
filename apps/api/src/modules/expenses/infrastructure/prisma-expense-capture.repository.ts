@@ -309,15 +309,6 @@ export class PrismaExpenseCaptureRepository {
     });
   }
 
-  /** Same retention window and batch size as the webhook-log purge it runs beside. */
-  async purgeLineIntakeAttempts(cutoff: Date, batchSize = 500, db: CaptureDb = this.prisma.client): Promise<number> {
-    const stale = await db.lineIntakeAttempt.findMany({
-      where: { createdAt: { lt: cutoff } }, select: { id: true }, take: batchSize,
-    });
-    if (stale.length === 0) return 0;
-    const deleted = await db.lineIntakeAttempt.deleteMany({ where: { id: { in: stale.map((row) => row.id) } } });
-    return deleted.count;
-  }
 }
 
 const ATTEMPT_FILE_NAME_MAX = 80;
@@ -326,7 +317,11 @@ const ATTEMPT_FILE_NAME_MAX = 80;
 export function sanitizeAttemptFileName(fileName: string | null | undefined): string | null {
   if (!fileName) return null;
   const base = fileName.split(/[\\/]/).pop() ?? '';
-  // eslint-disable-next-line no-control-regex
-  const safe = base.replace(/[ -]/g, '').trim();
+  // Code points, not a character-class regex: a control character written literally into a source
+  // file is exactly the kind of thing a reviewer cannot see.
+  const safe = [...base]
+    .filter((char) => { const code = char.codePointAt(0) ?? 0; return code >= 0x20 && code !== 0x7f; })
+    .join('')
+    .trim();
   return safe ? safe.slice(0, ATTEMPT_FILE_NAME_MAX) : null;
 }

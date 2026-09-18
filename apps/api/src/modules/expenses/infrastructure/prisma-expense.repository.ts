@@ -580,6 +580,8 @@ export class PrismaExpenseRepository {
     checksumSha256: string,
     db: ExpenseDb = this.prisma.client,
     scopes: { branchIds?: string[] } = {},
+    /** Derived sources of THIS capture group share the file by design (§5) — never a duplicate. */
+    excludeCaptureGroupId?: string | null,
   ): Promise<string[]> {
     const attachments = await db.attachmentObject.findMany({
       where: { companyId, checksumSha256, status: 'ACTIVE' as any },
@@ -602,6 +604,7 @@ export class PrismaExpenseRepository {
         companyId,
         id: { in: links.map((link) => link.targetId) },
         status: { not: 'VOIDED' as any },
+        ...(excludeCaptureGroupId ? { NOT: { captureGroupId: excludeCaptureGroupId } } : {}),
         ...branchScopeWhere(scopes),
       },
       select: { id: true },
@@ -2748,7 +2751,7 @@ export class PrismaExpenseRepository {
     since: Date,
     db: ExpenseDb = this.prisma.client,
     scopes: { branchIds?: string[] } = {},
-  ): Promise<Array<{ id: string; checksumSha256: string | null; perceptualHash: string | null; vendorDocumentNumber: string | null; vendorTaxId: string | null; expenseDate: string | null; grandTotalAmount: string; vendorCounterpartyId: string | null; vendorName: string | null }>> {
+  ): Promise<Array<{ id: string; checksumSha256: string | null; perceptualHash: string | null; vendorDocumentNumber: string | null; vendorTaxId: string | null; expenseDate: string | null; grandTotalAmount: string; vendorCounterpartyId: string | null; vendorName: string | null; captureGroupId: string | null }>> {
     const rows = await db.expenseRecord.findMany({
       where: {
         companyId,
@@ -2757,7 +2760,9 @@ export class PrismaExpenseRepository {
         createdAt: { gte: since },
         ...branchScopeWhere(scopes),
       },
-      select: { id: true, primaryAttachmentId: true, vendorDocumentNumber: true, vendorTaxIdSnapshot: true, vendorNameSnapshot: true, expenseDate: true, grandTotalAmount: true, vendorCounterpartyId: true },
+      // `captureGroupId` travels with the fingerprint so the caller can drop a SIBLING of the same
+      // capture group: those expenses share one file on purpose (appendix §5) and are not copies.
+      select: { id: true, primaryAttachmentId: true, vendorDocumentNumber: true, vendorTaxIdSnapshot: true, vendorNameSnapshot: true, expenseDate: true, grandTotalAmount: true, vendorCounterpartyId: true, captureGroupId: true },
       orderBy: { createdAt: 'desc' },
       take: 200,
     });
@@ -2779,6 +2784,7 @@ export class PrismaExpenseRepository {
       grandTotalAmount: r.grandTotalAmount?.toString() ?? '0',
       vendorCounterpartyId: r.vendorCounterpartyId,
       vendorName: r.vendorNameSnapshot,
+      captureGroupId: r.captureGroupId ?? null,
     }));
   }
 

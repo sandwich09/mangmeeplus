@@ -30,7 +30,10 @@ export async function readReimbursementSource(tx: Prisma.TransactionClient, comp
     // Paper names/uploader accounts do not establish a repayment beneficiary.
     if (!certificate.payerUserId) throw sourceError('reimbursement_source_payer_unlinked');
     if (certificate.payerUserId !== requesterUserId) throw sourceError('reimbursement_source_wrong_payer');
-  } else if (expense.createdByUserId !== requesterUserId) {
+  } else if ((expense.payerUserId ?? expense.createdByUserId) !== requesterUserId) {
+    // Appendix §5 payer order: certificate (above) → `expense.payerUserId` → uploader. The middle
+    // one is server-set from reviewed evidence, so a colleague who uploaded on the payer's behalf
+    // no longer blocks the payer's own claim — and it still never lets a third party claim.
     throw sourceError('reimbursement_source_wrong_payer');
   }
   if (new Decimal(String(expense.whtAmount ?? 0)).gt(0) || expense.lines.some(line => line.whtAmount.gt(0)) || ['CLAIMABLE', 'NEEDS_REVIEW'].includes(expense.inputVatClaimStatus) || expense.vatMode === 'NEEDS_REVIEW' || expense.taxEvidenceStatus === 'NEEDS_REVIEW') {
@@ -48,6 +51,10 @@ export async function readReimbursementSource(tx: Prisma.TransactionClient, comp
   }, lines: expense.lines.map(line => ({ chargeKind: line.chargeKind, lineSubtotalAmount: money(line.lineSubtotalAmount), discountAmount: money(line.discountAmount), taxableAmount: money(line.taxableAmount), vatAmount: money(line.vatAmount), whtAmount: money(line.whtAmount), lineTotalAmount: money(line.lineTotalAmount) })) })) throw sourceError('reimbursement_source_fields_mismatch');
   return {
     schemaVersion: 1, expenseId, expenseUpdatedAt: expense.updatedAt.toISOString(), requesterUserId,
+    // Additive on schemaVersion 1, and OMITTED when there is no payer: `assertReimbursementSources`
+    // deep-compares a pinned snapshot against a freshly read one, so emitting `payerUserId: null`
+    // would make every claim drafted before this deploy read as changed.
+    ...(expense.payerUserId ? { payerUserId: expense.payerUserId } : {}),
     expenseDate: expense.expenseDate.toISOString(), paymentDate: iso(certificate?.paymentDate ?? expense.paidAt), paymentMethod: certificate?.paymentMethod ?? expense.paymentMethod ?? null,
     currency: expense.currency,
     seller: { name: expense.vendorNameSnapshot ?? '', taxId: expense.vendorTaxIdSnapshot ?? null, branchCode: expense.vendorBranchCodeSnapshot ?? null, documentNumber: expense.vendorDocumentNumber ?? null },
@@ -94,9 +101,20 @@ export async function resolveReimbursementSourceLines<T extends SourceLine>(tx: 
     let expenseId = line.linkedExpenseId ?? undefined;
     if (line.attachmentId) {
       const links = await tx.attachmentLink.findMany({ where: { companyId, attachmentId: line.attachmentId, targetType: 'expense.record' }, select: { targetId: true } });
-      const sources = await tx.expenseRecord.findMany({ where: { companyId, id: { in: links.map((link: any) => link.targetId) }, sourceReimbursementRequestId: null }, select: { id: true } });
-      if (sources.length > 1 || (expenseId && sources.some((source: any) => source.id !== expenseId))) throw sourceError('reimbursement_source_ambiguous');
-      expenseId ??= sources[0]?.id;
+      const sources = await tx.expenseRecord.findMany({ where: { companyId, id: { in: links.map((link: any) => link.targetId) }, sourceReimbursementRequestId: null }, select: { id: true, captureGroupId: true } });
+      /**
+       * A capture group's derived sources cite ONE file on purpose — one receipt, several issuers
+       * (appendix §5) — so once the claim names which of them it is claiming, its own siblings are
+       * not rival interpretations of that file. Everything else still is: with no
+       * `linkedExpenseId` two sources are ambiguous as before, and an expense outside the group
+       * that shares the file keeps the claim ambiguous even when one is named (A09/A16).
+       */
+      const linkedGroupId = expenseId ? sources.find((source: any) => source.id === expenseId)?.captureGroupId ?? null : null;
+      const rivals = linkedGroupId
+        ? sources.filter((source: any) => source.id === expenseId || source.captureGroupId !== linkedGroupId)
+        : sources;
+      if (rivals.length > 1 || (expenseId && rivals.some((source: any) => source.id !== expenseId))) throw sourceError('reimbursement_source_ambiguous');
+      expenseId ??= rivals[0]?.id;
     }
     if (!expenseId) { result.push({ ...line, sourceExpenseSnapshot: undefined }); continue; }
     if (used.has(expenseId)) throw sourceError('expense_already_claimed');

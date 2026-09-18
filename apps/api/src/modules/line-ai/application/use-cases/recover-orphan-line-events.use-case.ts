@@ -329,6 +329,11 @@ export class RecoverOrphanLineEventsUseCase {
     if (proofs.length) await this.prisma.client.lineReadEvidence.deleteMany({ where: { id: { in: proofs.map(row => row.id) } } });
     const deliveries = await this.prisma.client.lineLedgerDelivery.findMany({ where: { createdAt: { lt: before } }, select: { id: true }, orderBy: { createdAt: 'asc' }, take: MAX_PURGE_BATCH });
     if (deliveries.length) await this.prisma.client.lineLedgerDelivery.deleteMany({ where: { id: { in: deliveries.map(row => row.id) } } });
+    // Capture appendix §2.2: the pre-capture intake diagnostic ages out in the SAME sweep and the
+    // same window as the webhook log it explains. It holds no payload, but it is still a record of
+    // what a customer sent, so it must not outlive the event.
+    const attempts = await this.prisma.client.lineIntakeAttempt.findMany({ where: { createdAt: { lt: before } }, select: { id: true }, orderBy: { createdAt: 'asc' }, take: MAX_PURGE_BATCH });
+    if (attempts.length) await this.prisma.client.lineIntakeAttempt.deleteMany({ where: { id: { in: attempts.map(row => row.id) } } });
     const expired = await this.prisma.client.lineWebhookEventLog.findMany({
       where: { createdAt: { lt: before } },
       select: { id: true },
