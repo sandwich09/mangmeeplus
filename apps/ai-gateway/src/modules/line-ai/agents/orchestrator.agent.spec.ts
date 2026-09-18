@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildAnswerPresentation, OrchestratorAgent, withoutRefusedCoverage } from './orchestrator.agent';
 import { ResponseComposerAgent } from './response-composer.agent';
-import { parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { extractValueCandidates, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import type { LineAiPreparedPlan, LineAiTurnRequest } from '@watchdog-bms/contracts';
 
 // A valid, already-bounded prepared plan for a permitted inventory read (matches makeReq permissions).
@@ -843,7 +843,9 @@ describe('prepared simple-read lane telemetry', () => {
     assert.deepEqual(laneLogs(logs).map((e) => [e.msg, e.reason]),
       [['line.ai.prepared_simple_read.fallback', 'no_prepared_plan']]);
     // No message text, no LINE id — the lane's telemetry stays ids and enums.
-    assert.deepEqual(Object.keys(laneLogs(logs)[0] ?? {}).sort(), ['msg', 'reason', 'requestId']);
+    assert.deepEqual(Object.keys(laneLogs(logs)[0] ?? {}).sort(), ['msg', 'periodSource', 'reason', 'requestId']);
+    // Spec §3.4: the period enum rides every lane line; this message named none.
+    assert.equal(laneLogs(logs)[0]?.periodSource, 'default');
   });
 
   it('says nothing about the lane for a turn that is not a business read, or when the lane is off', async () => {
@@ -855,5 +857,233 @@ describe('prepared simple-read lane telemetry', () => {
     const otherLogs = sink(other);
     await other.run({ ...makeReq('สวัสดีค่ะ'), intakeIntent: 'ADVISOR_CONVERSATION' } as LineAiTurnRequest);
     assert.deepEqual(laneLogs(otherLogs), []);
+  });
+});
+
+// ── H4 period resolution (period-resolution spec §3.2/§3.3/§3.4, P-02/P-03/P-05) ──
+//
+// The calendar is resolved by CODE in `packages/contracts`; these tests prove the gateway only ever
+// hands a tool a period the resolver READ from the user's own words — and that the deterministic lane
+// and the model loop hand it the SAME one for the same message.
+
+describe('OrchestratorAgent period resolution', () => {
+  const bangkokToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+  const laneConfig = (families: string[]) => makeConfig({
+    lineAiPreparedSimpleReadEnabled: true, lineAiDeterministicResponseFamilies: families,
+  });
+  function sink(orchestrator: OrchestratorAgent) {
+    const logs: any[] = [];
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), warn: () => {}, error: () => {} };
+    return logs;
+  }
+  const laneLogs = (logs: any[]) => logs.filter((e) => typeof e.msg === 'string' && e.msg.startsWith('line.ai.prepared_simple_read'));
+
+  const READ_TOOLS: Record<string, {
+    subject: string; agent: string; permissions: string[]; answerShape: 'single_metric' | 'list';
+    data: (from: string, to: string) => Record<string, unknown>;
+  }> = {
+    'sales.get_sales_summary': {
+      subject: 'sale', agent: 'sales', permissions: ['crm.report.read'], answerShape: 'single_metric',
+      data: (from, to) => ({ totalSales: '512000.00', currency: 'THB', transactionCount: 318, period: { fromDate: from, toDate: to } }),
+    },
+    'expense.list_recent': {
+      subject: 'expense', agent: 'accounting', permissions: ['expense.read'], answerShape: 'single_metric',
+      data: (from, to) => ({ total: 4, summary: { totalAmount: '42870.00', cancelledCount: 0 }, period: { fromDate: from, toDate: to } }),
+    },
+    'expense.get_daily_closing': {
+      subject: 'expense', agent: 'accounting', permissions: ['expense.read'], answerShape: 'single_metric',
+      // The real `expense.get_daily_closing` shape: the specialist refuses anything less.
+      data: (from) => {
+        const bucket = { total: 0, items: [], totals: [] as unknown[] };
+        return {
+          date: from, timezone: 'Asia/Bangkok', scope: { kind: 'all_branches' },
+          occurredToday: {
+            items: { total: 2, items: [] },
+            totals: [{ currency: 'THB', total: '3120.0000', count: 2 }],
+            paid: [{ currency: 'THB', total: '3120.0000', count: 2 }],
+            outstanding: [],
+          },
+          dueEndOfDay: { ...bucket, items: { total: 0, items: [] } },
+          overdue: { ...bucket, items: { total: 0, items: [] } },
+          unscheduledOutstanding: { ...bucket, items: { total: 0, items: [] } },
+          submittedToday: { count: 0 }, pendingReview: { count: 0 },
+          evidenceBlockers: { count: 0 }, duplicateRisks: { count: 0 },
+        };
+      },
+    },
+    'tax.get_vat_summary': {
+      subject: 'tax', agent: 'tax', permissions: ['tax.period.read', 'tax.event.read'], answerShape: 'single_metric',
+      data: (from) => ({
+        periodKey: from.slice(0, 7), status: 'OPEN', currency: 'THB',
+        vatOutput: '35840.00', vatInput: '29960.00', netVat: '5880.00', eventCount: 214,
+      }),
+    },
+    'crm.get_customer_summary': {
+      subject: 'customer', agent: 'crm', permissions: ['crm.customer.read'], answerShape: 'single_metric',
+      data: (from, to) => ({ total: 42, active: 40, newCustomers: 5, newCustomersSince: from, newCustomersUntil: to, totalIncludesArchived: true, totalExcludesMerged: true }),
+    },
+  };
+
+  /** Records the input every tool actually received, and answers with that family's real shape. */
+  function recordingErpTools(from: string, to: string) {
+    const seen: Array<{ tool: string; input: Record<string, unknown> }> = [];
+    const client = {
+      invoke: async (tool: any, _ctx: unknown, input: Record<string, unknown> = {}) => {
+        seen.push({ tool: tool.name, input });
+        return {
+          toolName: tool.name, status: 'ok',
+          data: READ_TOOLS[tool.name]?.data(from, to) ?? { count: 0 },
+          sourceRefs: [{ label: tool.name, module: tool.sourceModule, entityType: 'tool', permissionChecked: true, webPath: `/x/${tool.name}` }],
+          // The read happens NOW, whatever period it covers — so a yesterday closing is not "today".
+          asOf: `${bangkokToday()}T04:00:00.000Z`,
+        };
+      },
+    } as any;
+    return { client, seen };
+  }
+
+  function periodRequest(messageText: string, toolName: string, input?: Record<string, unknown>): LineAiTurnRequest {
+    const meta = READ_TOOLS[toolName]!;
+    const base = makeReq(messageText);
+    const plan = input === undefined ? undefined : parseLineAiPreparedPlan({
+      version: 1, complexity: 'simple', confidence: 0.95, responseMode: 'simple_grounded',
+      answerShape: meta.answerShape, intakeIntent: 'BUSINESS_READ_QUESTION',
+      intentPlan: {
+        status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+        intents: [{ intent: 'read_summary', subject: meta.subject, agent: meta.agent, priority: 1, requiredTools: [toolName], missingContext: [] }],
+      },
+      proposedCalls: [{ toolName, input }],
+    });
+    if (input !== undefined && !plan) throw new Error('prepared plan fixture did not parse');
+    return {
+      ...base,
+      userContext: { ...base.userContext, permissions: [...base.userContext.permissions, ...meta.permissions] },
+      valueCandidates: extractValueCandidates(messageText, bangkokToday()),
+      intakeIntent: 'BUSINESS_READ_QUESTION',
+      actorDelegations: { [toolName]: ['test-delegation'] },
+      ...(plan ? { preparedPlan: plan } : {}),
+    } as LineAiTurnRequest;
+  }
+
+  /** The one period the resolver read from this message. */
+  function period(messageText: string) {
+    const hit = extractValueCandidates(messageText, bangkokToday()).periods?.[0];
+    assert.ok(hit, `the resolver read no period from "${messageText}"`);
+    return hit;
+  }
+
+  // P-03: each relative-period question is served by the prepared lane with the EXACT boundaries the
+  // resolver produced, and the answer names the period in the user's own words (P-05).
+  const LANE_CASES: Array<{ message: string; tool: string; input: (p: ReturnType<typeof period>) => Record<string, unknown>; expect: RegExp }> = [
+    {
+      message: 'ยอดขายเดือนที่แล้วเท่าไหร่', tool: 'sales.get_sales_summary',
+      input: (p) => ({ fromDate: p.fromDate, toDate: p.toDate }), expect: /\nช่วง: เดือนที่แล้ว \(/,
+    },
+    {
+      message: 'ค่าใช้จ่ายสัปดาห์ที่แล้วเท่าไหร่', tool: 'expense.list_recent',
+      input: (p) => ({ fromDate: p.fromDate, toDate: p.toDate }), expect: /\nช่วง: สัปดาห์ที่แล้ว \(/,
+    },
+    {
+      message: 'ปิดยอดเมื่อวานเป็นยังไง', tool: 'expense.get_daily_closing',
+      input: (p) => ({ date: p.fromDate }), expect: /^เมื่อวาน \(/,
+    },
+    {
+      message: 'VAT เดือนที่แล้วต้องยื่นเท่าไหร่', tool: 'tax.get_vat_summary',
+      input: (p) => ({ periodKey: p.monthKey! }), expect: /\nช่วง: เดือนที่แล้ว \(/,
+    },
+    {
+      message: 'ลูกค้าใหม่เดือนที่แล้วกี่ราย', tool: 'crm.get_customer_summary',
+      input: (p) => ({ newSince: p.fromDate, newUntil: p.toDate }), expect: /\nช่วง: เดือนที่แล้ว \(/,
+    },
+  ];
+
+  for (const testCase of LANE_CASES) {
+    it(`serves "${testCase.message}" from the prepared lane with the resolver's own boundaries`, async () => {
+      const resolved = period(testCase.message);
+      const proposed = testCase.input(resolved);
+      const { client, seen } = recordingErpTools(resolved.fromDate, resolved.toDate);
+      const orchestrator = new OrchestratorAgent(client, laneConfig([`${testCase.tool}::single_metric`]));
+      const logs = sink(orchestrator);
+      const result = await orchestrator.run(periodRequest(testCase.message, testCase.tool, proposed));
+
+      assert.deepEqual(seen, [{ tool: testCase.tool, input: proposed }], 'the tool must receive exactly the resolved period');
+      assert.deepEqual(laneLogs(logs).map((e) => [e.msg, e.periodSource]),
+        [['line.ai.prepared_simple_read.served', 'relative']]);
+      assert.match(result.replyText, testCase.expect);
+    });
+  }
+
+  it('drops a date the model invented and keeps one a candidate backs (prepared lane)', async () => {
+    const message = 'ยอดขายเดือนที่แล้วเท่าไหร่';
+    const resolved = period(message);
+    // A period nobody said: no candidate backs it, the sanitizer drops it, exact equality fails, and
+    // the lane falls back BEFORE any call rather than reading a window the user never asked for.
+    const invented = recordingErpTools(resolved.fromDate, resolved.toDate);
+    const lane = new OrchestratorAgent(invented.client, laneConfig(['sales.get_sales_summary::single_metric']));
+    const logs = sink(lane);
+    await lane.run(periodRequest(message, 'sales.get_sales_summary', { fromDate: '2019-01-01', toDate: '2019-01-31' }));
+    assert.deepEqual(laneLogs(logs).map((e) => [e.msg, e.reason, e.periodSource]),
+      [['line.ai.prepared_simple_read.fallback', 'input_sanitizer_changed', 'relative']]);
+    assert.deepEqual(invented.seen.map((call) => call.input), [{}], 'the fallback path must not read the invented window');
+  });
+
+  it('refuses a period key that is not a candidate month or the current one', async () => {
+    const message = 'VAT เดือนที่แล้วต้องยื่นเท่าไหร่';
+    const resolved = period(message);
+    const recorded = recordingErpTools(resolved.fromDate, resolved.toDate);
+    const lane = new OrchestratorAgent(recorded.client, laneConfig(['tax.get_vat_summary::single_metric']));
+    const logs = sink(lane);
+    await lane.run(periodRequest(message, 'tax.get_vat_summary', { periodKey: '2019-01' }));
+    assert.deepEqual(laneLogs(logs).map((e) => [e.msg, e.reason]),
+      [['line.ai.prepared_simple_read.fallback', 'input_sanitizer_changed']]);
+  });
+
+  it('hands the tool the same input on the model loop as on the prepared lane, for the same message', async () => {
+    const message = 'ยอดขายเดือนที่แล้วเท่าไหร่';
+    const resolved = period(message);
+    const proposed = { fromDate: resolved.fromDate, toDate: resolved.toDate };
+
+    const prepared = recordingErpTools(resolved.fromDate, resolved.toDate);
+    await new OrchestratorAgent(prepared.client, laneConfig(['sales.get_sales_summary::single_metric']))
+      .run(periodRequest(message, 'sales.get_sales_summary', proposed));
+
+    // Model loop: the router routes the sales read, then the loop proposes the SAME candidate window.
+    const loop = recordingErpTools(resolved.fromDate, resolved.toDate);
+    globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      const firstUserText = String(body.input?.[0]?.content?.[0]?.text ?? '{}');
+      let payload: any = {};
+      try { payload = JSON.parse(firstUserText.slice(firstUserText.lastIndexOf('\n') + 1)); } catch { payload = {}; }
+      if (typeof payload.reply === 'string') return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
+      if (Array.isArray(payload.availableTools)) {
+        return { ok: true, json: async () => ({ output_text: JSON.stringify({ callTool: 'sales.get_sales_summary', input: proposed }) }) } as Response;
+      }
+      if (Array.isArray(payload.toolsCalled) || typeof payload.answer === 'string') {
+        return { ok: true, json: async () => ({ output_text: '{}' }) } as Response;
+      }
+      return { ok: true, json: async () => ({ output_text: JSON.stringify(planFor(payload.messageText ?? message)) }) } as Response;
+    }) as typeof fetch;
+    await new OrchestratorAgent(loop.client, makeConfig()).run(periodRequest(message, 'sales.get_sales_summary'));
+
+    assert.deepEqual(loop.seen, prepared.seen, 'both paths must read the same window for the same message');
+  });
+
+  it('drops a model-invented window on the model loop too, so the tool applies its default', async () => {
+    const message = 'ยอดขายเดือนที่แล้วเท่าไหร่';
+    const resolved = period(message);
+    const loop = recordingErpTools(resolved.fromDate, resolved.toDate);
+    globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      const firstUserText = String(body.input?.[0]?.content?.[0]?.text ?? '{}');
+      let payload: any = {};
+      try { payload = JSON.parse(firstUserText.slice(firstUserText.lastIndexOf('\n') + 1)); } catch { payload = {}; }
+      if (typeof payload.reply === 'string') return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
+      if (Array.isArray(payload.availableTools)) {
+        return { ok: true, json: async () => ({ output_text: JSON.stringify({ callTool: 'sales.get_sales_summary', input: { fromDate: '2019-01-01', toDate: '2019-01-31' } }) }) } as Response;
+      }
+      return { ok: true, json: async () => ({ output_text: JSON.stringify(planFor(payload.messageText ?? message)) }) } as Response;
+    }) as typeof fetch;
+    await new OrchestratorAgent(loop.client, makeConfig()).run(periodRequest(message, 'sales.get_sales_summary'));
+    assert.deepEqual(loop.seen.map((call) => call.input), [{}], 'an unbacked window is dropped, not read');
   });
 });
