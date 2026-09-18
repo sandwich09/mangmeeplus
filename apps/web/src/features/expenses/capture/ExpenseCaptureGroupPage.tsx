@@ -468,12 +468,20 @@ export function ExpenseCaptureGroupPage({ companyId, groupId, userId, permission
                 <li key={source.expenseId} className="rounded-xl border border-gray-200 bg-white p-3.5">
                   <p className="text-base font-semibold text-gray-800">{source.label} · {baht(source.grandTotalAmount)}</p>
                   <p className="mt-1"><StatusBadge status={source.status} /></p>
-                  {/* W06 fills the certificate line; until then it says nothing it cannot know. */}
-                  <p className="mt-1 text-sm text-gray-500">{t('expenses.capture.derived_certificate', locale)}</p>
+                  {/* W06 §12.3: this shop's own certificate state — never the group's (A40). */}
+                  <p className="mt-1 text-sm text-gray-500">
+                    {t(source.certificateStatusKey, locale)}
+                    {source.certificate ? ` · ${source.certificate.documentNumber}` : ''}
+                  </p>
                   <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                     <Link className={cx(ghostClass, 'inline-flex min-h-11 items-center justify-center')} href={`/companies/${companyId}/expenses/${source.expenseId}`}>
                       {t('expenses.capture.derived_open', locale)}
                     </Link>
+                    {source.certificateHref && source.certificateLabelKey && (
+                      <Link className={cx(ghostClass, 'inline-flex min-h-11 items-center justify-center')} href={source.certificateHref}>
+                        {t(source.certificateLabelKey, locale)}
+                      </Link>
+                    )}
                     {source.claimHref
                       ? (
                         <Link className={cx(ghostClass, 'inline-flex min-h-11 items-center justify-center')} href={source.claimHref}>

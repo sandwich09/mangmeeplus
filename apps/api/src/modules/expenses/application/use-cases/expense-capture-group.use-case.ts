@@ -33,6 +33,7 @@ import { PrismaAttachmentRepository } from '../../../data-model-core/infrastruct
 import { FEATURE_TEMPORARILY_UNAVAILABLE } from '../../../employee-access/application/entitlement.helper';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
 import { assembleCaptureFacts } from '../../domain/logic/expense-capture-facts.logic';
+import { captureCertificateGate, captureDerivedNextAction } from '../../domain/logic/expense-capture-certificate.logic';
 import {
   buildExpenseFactsObservation,
   type ExpenseFactsInput,
@@ -295,6 +296,8 @@ export class GetExpenseCaptureGroupUseCase {
       this.capture.findGroupAllocation(db, ctx.companyId, groupId),
       this.capture.listDerivedSources(db, ctx.companyId, groupId),
     ]);
+    // W06 §12/A40: one lookup per group, so a page can say "ร้าน A ออกแล้ว / ร้าน B รอลงนาม".
+    const certificates = await this.capture.listDerivedCertificates(db, ctx.companyId, derived.map((row) => row.id));
 
     const jobByFile = new Map(jobs.map((job) => [job.fileId, job]));
     const fileDtos: ExpenseCaptureFileDto[] = files.map((file) => {
@@ -344,11 +347,12 @@ export class GetExpenseCaptureGroupUseCase {
       } : null,
     };
 
+    const facts = observations.length > 0 ? assembleCaptureFacts(observations) : null;
     return {
       ...groupDto(group),
       // W04a §4.4: one assembled view across every file, HUMAN over AI, nothing invented. It is
       // structurally an `ExpenseCaptureObservations` plus the per-document state and the summary.
-      facts: observations.length > 0 ? assembleCaptureFacts(observations) : null,
+      facts,
       files: fileDtos,
       allocation: allocation ? {
         allocationId: allocation.id,
@@ -364,13 +368,20 @@ export class GetExpenseCaptureGroupUseCase {
         invalidatedReason: allocation.invalidatedReason,
         result: allocation.resultJson,
       } satisfies ExpenseCaptureAllocationDto : null,
-      derivedSources: derived.map((row) => ({
-        expenseId: row.id,
-        scopeKey: row.captureScopeKey ?? '',
-        status: row.status,
-        grandTotalAmount: row.grandTotalAmount.toString(),
-        payerUserId: row.payerUserId,
-      })),
+      derivedSources: derived.map((row) => {
+        const certificate = certificates.get(row.id) ?? null;
+        return {
+          expenseId: row.id,
+          scopeKey: row.captureScopeKey ?? '',
+          status: row.status,
+          grandTotalAmount: row.grandTotalAmount.toString(),
+          payerUserId: row.payerUserId,
+          certificate,
+          nextAction: captureDerivedNextAction(captureCertificateGate({
+            group, source: { captureAllocationId: row.captureAllocationId, captureScopeKey: row.captureScopeKey }, facts,
+          }), certificate),
+        };
+      }),
       blockers: captureGroupBlockers(state),
       allowedActions: captureGroupAllowedActions(state),
       webPath: expenseCaptureWebPath(ctx.companyId, groupId),

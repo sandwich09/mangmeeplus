@@ -211,9 +211,20 @@ class FakeCaptureRepo {
     return [...this.expenses.values()]
       .filter((expense) => expense.companyId === companyId && expense.captureGroupId === groupId)
       .map((expense) => ({
-        id: expense.id, captureScopeKey: expense.captureScopeKey ?? null, status: expense.status,
+        id: expense.id, captureScopeKey: expense.captureScopeKey ?? null,
+        captureAllocationId: expense.captureAllocationId ?? null, status: expense.status,
         grandTotalAmount: expense.grandTotalAmount ?? '0', payerUserId: expense.payerUserId ?? null,
       }));
+  }
+
+  /** W05: nothing in these fakes consumes a derived source, so a handed-off group stays reopenable. */
+  async isReopenableAfterHandoff() { return true; }
+
+  /** W06: certificates the test seeded on a derived source, keyed the way the repository keys them. */
+  certificates = new Map<string, any>();
+
+  async listDerivedCertificates(_db: any, _companyId: string, expenseIds: string[]) {
+    return new Map(expenseIds.filter((id) => this.certificates.has(id)).map((id) => [id, this.certificates.get(id)]));
   }
 }
 
@@ -727,7 +738,11 @@ describe('converting an expense into a capture group (§3.1)', () => {
     const result = await app.convert.execute(ctx(), 'e-1', { expectedUpdatedAt: updatedAt.toISOString() });
     const detail = await app.get.execute(ctx({ permissions: ['expense.read'] }), result.groupId);
     assert.equal(detail.facts?.documents[0]?.issuer.taxId, '0105560012345');
-    assert.deepEqual(detail.derivedSources, [{ expenseId: 'e-1', scopeKey: 'issuer:0105560012345', status: 'NEEDS_REVIEW', grandTotalAmount: '321.50', payerUserId: null }]);
+    // W06: a §3.1 conversion has no allocation to reserve, so the ordinary certificate rules decide.
+    assert.deepEqual(detail.derivedSources, [{
+      expenseId: 'e-1', scopeKey: 'issuer:0105560012345', status: 'NEEDS_REVIEW', grandTotalAmount: '321.50',
+      payerUserId: null, certificate: null, nextAction: 'certificate_available',
+    }]);
   });
 
   it('refuses a stale expectedUpdatedAt', async () => {
@@ -773,5 +788,87 @@ describe('converting an expense into a capture group (§3.1)', () => {
       () => app.convert.execute(ctx({ companyId: 'co-2' }), 'e-1', { expectedUpdatedAt: updatedAt.toISOString() }),
       (error: any) => error.getStatus() === 404,
     );
+  });
+});
+
+describe('certificate progress per derived source (W06, A40)', () => {
+  const issuer = (taxId: string, name: string) => ({
+    ref: `doc-${taxId}`, pageIndexes: [0], kind: 'MARKETPLACE_ORDER', family: 'ORDER',
+    issuer: { name, taxId }, documentNumber: `${name}-1`, documentDate: '2026-09-18', currency: 'THB',
+    classification: { documentKind: 'MARKETPLACE_ORDER', confidence: 0.9 },
+  });
+
+  function handedOff() {
+    const app = build();
+    const group = { id: 'g-ab', companyId: 'co-1', branchId: 'branch-1', createdByUserId: 'user-1',
+      intakeChannel: 'WEB', revision: 3, status: 'HANDED_OFF', businessUse: 'MIXED', fundingRoute: 'EMPLOYEE',
+      payerUserId: 'payer-1', handoffState: 'ACTIVE', acceptedAllocationId: 'alloc-1', closedReason: null,
+      closedAt: null, note: null, createdAt: new Date(), updatedAt: new Date() };
+    app.capture.groups.set(group.id, group);
+    app.capture.observations.push({
+      id: 'obs-1', companyId: 'co-1', groupId: group.id, fileId: 'file-1', version: 1, source: 'AI', stale: false,
+      payloadJson: {
+        documents: [issuer('0105560012345', 'ร้านเอ'), issuer('0105560099999', 'ร้านบี')],
+        items: [
+          { id: '0:1', documentRef: 'doc-0105560012345', description: 'กระดาษ', quantity: '1', unitPrice: '810.00', amount: '810.00', event: 'sale', evidenceSpan: 'กระดาษ' },
+          { id: '0:2', documentRef: 'doc-0105560099999', description: 'ปากกา', quantity: '1', unitPrice: '480.00', amount: '480.00', event: 'sale', evidenceSpan: 'ปากกา' },
+        ],
+        components: [],
+        totals: [
+          { documentRef: 'doc-0105560012345', kind: 'document_total', amount: '810.00', evidenceSpan: '810' },
+          { documentRef: 'doc-0105560099999', kind: 'document_total', amount: '480.00', evidenceSpan: '480' },
+        ],
+        payments: [
+          { documentRef: 'doc-0105560012345', method: 'BANK_TRANSFER', status: 'paid', amount: '810.00', occurredAt: '2026-09-18', evidenceSpan: 'จ่ายแล้ว' },
+          { documentRef: 'doc-0105560099999', method: 'BANK_TRANSFER', status: 'paid', amount: '480.00', occurredAt: '2026-09-18', evidenceSpan: 'จ่ายแล้ว' },
+        ],
+        refunds: [],
+        completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [0], notes: [] },
+      },
+    });
+    for (const [id, taxId, amount] of [['e-a', '0105560012345', '810.00'], ['e-b', '0105560099999', '480.00']] as const) {
+      app.capture.expenses.set(id, {
+        id, companyId: 'co-1', branchId: 'branch-1', createdByUserId: 'user-1', status: 'NEEDS_REVIEW',
+        grandTotalAmount: amount, payerUserId: 'payer-1', captureGroupId: group.id,
+        captureAllocationId: 'alloc-1', captureScopeKey: `issuer:${taxId}`, updatedAt: new Date(),
+      });
+    }
+    return app;
+  }
+
+  it('says which shop is issued and which one may still be prepared', async () => {
+    const app = handedOff();
+    app.capture.certificates.set('e-a', {
+      evidenceId: 'sub-a', status: 'ISSUED', signatureMode: 'DIGITAL',
+      fundingSource: 'PERSONAL_ADVANCE', documentNumber: 'SRC-E-A-V1',
+    });
+
+    const detail = await app.get.execute(ctx({ permissions: ['expense.read'] }), 'g-ab');
+
+    assert.deepEqual(detail.derivedSources.map((source) => [source.expenseId, source.nextAction]), [
+      ['e-a', 'certificate_issued'],
+      ['e-b', 'certificate_available'],
+    ]);
+    assert.equal(detail.derivedSources[0]!.certificate?.documentNumber, 'SRC-E-A-V1');
+    assert.equal(detail.derivedSources[1]!.certificate, null, 'B has no document to open yet');
+  });
+
+  it('blocks the shop whose allocation moved on, and never the sibling that did not', async () => {
+    const app = handedOff();
+    app.capture.expenses.get('e-b')!.captureAllocationId = 'alloc-0';
+
+    const detail = await app.get.execute(ctx({ permissions: ['expense.read'] }), 'g-ab');
+
+    assert.equal(detail.derivedSources.find((source) => source.expenseId === 'e-a')?.nextAction, 'certificate_available');
+    assert.equal(detail.derivedSources.find((source) => source.expenseId === 'e-b')?.nextAction, 'blocked');
+  });
+
+  it('offers no certificate for a shop that issued a receipt (A18)', async () => {
+    const app = handedOff();
+    app.capture.observations[0]!.payloadJson.documents[1]!.kind = 'RECEIPT';
+
+    const detail = await app.get.execute(ctx({ permissions: ['expense.read'] }), 'g-ab');
+
+    assert.equal(detail.derivedSources.find((source) => source.expenseId === 'e-b')?.nextAction, 'receipt_present');
   });
 });

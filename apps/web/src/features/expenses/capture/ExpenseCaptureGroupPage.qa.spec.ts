@@ -163,3 +163,31 @@ test('a revision conflict offers the latest data instead of a second attempt (UX
   assert.match(allocation, /blockedCodes/);
   assert.match(allocation, /translateApiError\(code\) \?\? code/);
 });
+
+// ─── W06: the certificate line of each derived source (§12.3, A18/A40) ────────
+
+test('each shop shows its own certificate state and the link that continues it', () => {
+  // The row reads the server's per-source decision; the page never guesses eligibility itself.
+  assert.match(source, /t\(source\.certificateStatusKey, locale\)/);
+  assert.match(source, /source\.certificateHref && source\.certificateLabelKey/);
+  assert.match(source, /source\.certificate \? ` · \$\{source\.certificate\.documentNumber\}` : ''/);
+  assert.equal(workspaceDictionary.th['expenses.capture.derived_certificate_start'], 'จัดทำใบรับรองแทนใบเสร็จ');
+  assert.equal(workspaceDictionary.th['expenses.capture.derived_certificate_open'], 'ดูใบรับรอง');
+  assert.equal(workspaceDictionary.th['expenses.capture.derived_certificate_receipt'], 'มีใบเสร็จใช้ได้');
+  assert.match(workspaceDictionary.th['expenses.capture.derived_certificate_issued'], /ออกแล้ว/);
+  assert.match(workspaceDictionary.th['expenses.capture.derived_certificate_prepared'], /รอลงนาม/);
+  for (const key of [
+    'expenses.capture.derived_certificate_available', 'expenses.capture.derived_certificate_prepared',
+    'expenses.capture.derived_certificate_certified', 'expenses.capture.derived_certificate_issued',
+    'expenses.capture.derived_certificate_receipt', 'expenses.capture.derived_certificate_blocked',
+    'expenses.capture.derived_certificate_start', 'expenses.capture.derived_certificate_open',
+    'expenses.capture.certificate_reason_order', 'expenses.capture.certificate_reason_slip',
+  ] as const) {
+    assert.ok(workspaceDictionary.en[key], `${key} has no English`);
+  }
+});
+
+test('the certificate link keeps the 44px touch target of every other action on the row', () => {
+  const row = source.slice(source.indexOf('source.certificateHref'), source.indexOf('source.claimHref'));
+  assert.match(row, /min-h-11/);
+});

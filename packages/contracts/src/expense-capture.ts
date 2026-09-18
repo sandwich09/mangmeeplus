@@ -133,6 +133,27 @@ export type ExpenseCaptureAllocationDto = {
   result: unknown;
 };
 
+/**
+ * W06 §12: the substitute-receipt certificate of ONE derived source. A group never has one — the
+ * certificate belongs to the source whose payee, amount and evidence it certifies (§12.2).
+ */
+export type ExpenseCaptureDerivedCertificateDto = {
+  evidenceId: string;
+  status: 'PREPARED' | 'PAYER_CERTIFIED' | 'ISSUED' | 'SUPERSEDED';
+  signatureMode: 'DIGITAL' | 'PAPER';
+  fundingSource: 'COMPANY' | 'PERSONAL_ADVANCE' | null;
+  documentNumber: string;
+};
+
+/**
+ * What this one source is waiting for (§14.3, A40): the group shows "ร้าน A ออกแล้ว / ร้าน B รอลงนาม"
+ * and continues with B only. `receipt_present` is the A18/A19 outcome — a scope that already has a
+ * usable receipt is never offered a certificate.
+ */
+export type ExpenseCaptureDerivedNextAction =
+  | 'certificate_available' | 'certificate_prepared' | 'certificate_certified' | 'certificate_issued'
+  | 'receipt_present' | 'blocked';
+
 /** A derived source is an ordinary `ExpenseRecord`; the group only reports the lineage. */
 export type ExpenseCaptureDerivedSourceDto = {
   expenseId: string;
@@ -140,6 +161,9 @@ export type ExpenseCaptureDerivedSourceDto = {
   status: string;
   grandTotalAmount: string;
   payerUserId: string | null;
+  /** The current (non-superseded) certificate of this source, or null while it has none. */
+  certificate: ExpenseCaptureDerivedCertificateDto | null;
+  nextAction: ExpenseCaptureDerivedNextAction;
 };
 
 /**

@@ -408,6 +408,22 @@ export type CaptureDerivedRow = {
   label: string;
   claimReady: boolean;
   claimHref: string | null;
+  /** W06 §12.3: where this shop's certificate work continues, and what to call that link. */
+  nextAction: ExpenseCaptureDerivedSourceDto['nextAction'];
+  certificate: ExpenseCaptureDerivedSourceDto['certificate'];
+  certificateHref: string | null;
+  certificateLabelKey: DictionaryKey | null;
+  certificateStatusKey: DictionaryKey;
+};
+
+/** One row per shop, so "ร้าน A ออกแล้ว / ร้าน B รอลงนาม" is what the page reads (A40). */
+const CERTIFICATE_STATUS_KEYS: Record<ExpenseCaptureDerivedSourceDto['nextAction'], DictionaryKey> = {
+  certificate_available: 'expenses.capture.derived_certificate_available',
+  certificate_prepared: 'expenses.capture.derived_certificate_prepared',
+  certificate_certified: 'expenses.capture.derived_certificate_certified',
+  certificate_issued: 'expenses.capture.derived_certificate_issued',
+  receipt_present: 'expenses.capture.derived_certificate_receipt',
+  blocked: 'expenses.capture.derived_certificate_blocked',
 };
 
 /**
@@ -424,6 +440,7 @@ export function captureDerivedRows(
   return group.derivedSources.map((source: ExpenseCaptureDerivedSourceDto) => {
     const scope = scopes.get(source.scopeKey);
     const claimReady = scope ? captureClaimReady(scope, group.fundingRoute) : false;
+    const nextAction = source.nextAction ?? 'blocked';
     return {
       expenseId: source.expenseId,
       scopeKey: source.scopeKey,
@@ -434,8 +451,62 @@ export function captureDerivedRows(
       claimHref: claimReady
         ? `/companies/${companyId}/reimbursements/new?expenseId=${encodeURIComponent(source.expenseId)}`
         : null,
+      nextAction,
+      certificate: source.certificate ?? null,
+      // §12.3: "จัดทำ" only where the server says a certificate may start; otherwise the document
+      // that exists. A shop with its own receipt gets neither — it gets the chip that says so.
+      certificateHref: source.certificate
+        ? `/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(source.certificate.evidenceId)}`
+        : nextAction === 'certificate_available'
+          ? `/companies/${companyId}/expenses/substitute-receipts/new?expenseId=${encodeURIComponent(source.expenseId)}`
+          : null,
+      certificateLabelKey: source.certificate
+        ? 'expenses.capture.derived_certificate_open'
+        : nextAction === 'certificate_available' ? 'expenses.capture.derived_certificate_start' : null,
+      certificateStatusKey: CERTIFICATE_STATUS_KEYS[nextAction] ?? CERTIFICATE_STATUS_KEYS.blocked,
     };
   });
+}
+
+/**
+ * W06 §12.2 — what the certificate wizard may fill in for the payer on a derived source, taken
+ * from the facts the group already reviewed. Everything here is a starting value the human can
+ * change: the payer still types the reason and the business purpose themselves.
+ */
+export type CaptureCertificatePrefill = {
+  fundingSource: 'COMPANY' | 'PERSONAL_ADVANCE' | '';
+  payerUserId: string | null;
+  /** The reviewed payment date, never today and never the upload day (A42). */
+  paymentDate: string | null;
+  paymentMethod: string | null;
+  /** A suggestion for "why is there no receipt", offered as text to accept — never pre-typed. */
+  missingReasonSuggestionKey: DictionaryKey | null;
+};
+
+const CAPTURE_PAYMENT_METHODS = new Set(['CASH', 'BANK_TRANSFER', 'CARD', 'CHEQUE', 'OTHER']);
+
+export function captureCertificatePrefill(
+  group: Pick<ExpenseCaptureGroupDetailDto, 'derivedSources' | 'facts' | 'fundingRoute' | 'allocation'>,
+  expenseId: string,
+): CaptureCertificatePrefill | null {
+  const source = group.derivedSources.find((row) => row.expenseId === expenseId);
+  if (!source) return null;
+  // The accepted allocation is what derived this source; the group's own answer may be mid-edit.
+  const fundingRoute = group.allocation?.status === 'ACCEPTED' ? group.allocation.fundingRoute : group.fundingRoute;
+  const facts = captureFactsView(group);
+  const documents = (facts?.documents ?? []).filter((document) => document.scopeKey === source.scopeKey);
+  const refs = new Set(documents.map((document) => document.ref));
+  const payment = (facts?.payments ?? []).find((row) => refs.has(row.documentRef) && row.status === 'paid');
+  const kind = documents[0]?.kind;
+  return {
+    fundingSource: fundingRoute === 'EMPLOYEE' ? 'PERSONAL_ADVANCE' : fundingRoute === 'COMPANY' ? 'COMPANY' : '',
+    payerUserId: source.payerUserId,
+    paymentDate: payment?.occurredAt?.slice(0, 10) ?? null,
+    paymentMethod: payment?.method && CAPTURE_PAYMENT_METHODS.has(payment.method) ? payment.method : null,
+    missingReasonSuggestionKey: kind === 'MARKETPLACE_ORDER' || kind === 'ORDER_OR_CHECK_BILL'
+      ? 'expenses.capture.certificate_reason_order'
+      : kind === 'TRANSFER_SLIP' ? 'expenses.capture.certificate_reason_slip' : null,
+  };
 }
 
 // ─── Tax review labels (§7) ───────────────────────────────────────────────────

@@ -8,7 +8,7 @@ import type {
 import { workspaceDictionary } from '../../../common/i18n/workspace-dictionary';
 import {
   captureAllocation, captureBlockerRows, captureClaimReady, captureDateChoicePayload, captureDateOption,
-  captureDerivedRows, captureHandoffConfirmParams, captureItemEventKey, capturePayer,
+  captureCertificatePrefill, captureDerivedRows, captureHandoffConfirmParams, captureItemEventKey, capturePayer,
   capturePersonalFromAllocation, capturePersonalMax, captureProvenanceRows, captureReadState,
   captureReconciliationChip, captureComponentRoleKey, capturePaymentNoticeKey, captureSelectionPayload,
   captureStateChips, captureSummary, captureText,
@@ -335,7 +335,7 @@ test('"เตรียมใบเบิก" appears only for an employee-funded
 
   const detail = withAllocation(allocationResult({ scopes: [scope({ claimReady: true })] }), {
     fundingRoute: 'EMPLOYEE',
-    derivedSources: [{ expenseId: 'exp-1', scopeKey: 'issuer:ร้านเอ', status: 'NEEDS_REVIEW', grandTotalAmount: '810.00', payerUserId: 'user-2' }],
+    derivedSources: [{ expenseId: 'exp-1', scopeKey: 'issuer:ร้านเอ', status: 'NEEDS_REVIEW', grandTotalAmount: '810.00', payerUserId: 'user-2', certificate: null, nextAction: 'certificate_available' as const }],
   });
   const [row] = captureDerivedRows(detail, 'co-1');
   assert.equal(row!.label, 'ร้านเอ');
@@ -343,7 +343,7 @@ test('"เตรียมใบเบิก" appears only for an employee-funded
 
   const waiting = captureDerivedRows(withAllocation(allocationResult(), {
     fundingRoute: 'EMPLOYEE',
-    derivedSources: [{ expenseId: 'exp-1', scopeKey: 'issuer:ร้านเอ', status: 'NEEDS_REVIEW', grandTotalAmount: '810.00', payerUserId: 'user-2' }],
+    derivedSources: [{ expenseId: 'exp-1', scopeKey: 'issuer:ร้านเอ', status: 'NEEDS_REVIEW', grandTotalAmount: '810.00', payerUserId: 'user-2', certificate: null, nextAction: 'certificate_available' as const }],
   }), 'co-1');
   assert.equal(waiting[0]!.claimHref, null, 'a source waiting for its tax review gets no claim link');
 });
@@ -392,4 +392,85 @@ test('every key this file can return exists in both locales', () => {
     assert.ok(workspaceDictionary.th[key]?.trim().length, `${key} has no Thai`);
     assert.ok(workspaceDictionary.en[key]?.trim().length, `${key} has no English`);
   }
+});
+
+// ─── W06: the certificate of each derived source (§12.2/§12.3, A18/A40) ───────
+
+const derived = (over: Partial<ExpenseCaptureGroupDetailDto['derivedSources'][number]> = {}) => ({
+  expenseId: 'exp-1', scopeKey: 'issuer:ร้านเอ', status: 'NEEDS_REVIEW', grandTotalAmount: '810.00',
+  payerUserId: 'user-2', certificate: null, nextAction: 'certificate_available' as const, ...over,
+});
+
+test('the row links to the wizard only where the server says a certificate may start', () => {
+  const available = captureDerivedRows(group({ derivedSources: [derived()] }), 'co-1')[0]!;
+  assert.equal(available.certificateHref, '/companies/co-1/expenses/substitute-receipts/new?expenseId=exp-1');
+  assert.equal(available.certificateLabelKey, 'expenses.capture.derived_certificate_start');
+  assert.equal(available.certificateStatusKey, 'expenses.capture.derived_certificate_available');
+
+  const issued = captureDerivedRows(group({ derivedSources: [derived({
+    nextAction: 'certificate_issued',
+    certificate: { evidenceId: 'ev-1', status: 'ISSUED', signatureMode: 'DIGITAL', fundingSource: 'PERSONAL_ADVANCE', documentNumber: 'SRC-1' },
+  })] }), 'co-1')[0]!;
+  assert.equal(issued.certificateHref, '/companies/co-1/expenses/substitute-receipts/ev-1');
+  assert.equal(issued.certificateLabelKey, 'expenses.capture.derived_certificate_open');
+
+  // A18: the shop that has its own receipt is offered nothing to prepare.
+  const receipt = captureDerivedRows(group({ derivedSources: [derived({ nextAction: 'receipt_present' })] }), 'co-1')[0]!;
+  assert.equal(receipt.certificateHref, null);
+  assert.equal(receipt.certificateLabelKey, null);
+  assert.equal(receipt.certificateStatusKey, 'expenses.capture.derived_certificate_receipt');
+
+  const blocked = captureDerivedRows(group({ derivedSources: [derived({ nextAction: 'blocked' })] }), 'co-1')[0]!;
+  assert.equal(blocked.certificateHref, null);
+  assert.equal(blocked.certificateStatusKey, 'expenses.capture.derived_certificate_blocked');
+});
+
+test('the wizard starts from what the group reviewed, never from today (§12.2, A42)', () => {
+  const paid = group({
+    fundingRoute: 'EMPLOYEE',
+    derivedSources: [derived()],
+    facts: facts({
+      documents: [document({ kind: 'MARKETPLACE_ORDER' })],
+      payments: [{ documentRef: 'file-1:doc-1', method: 'BANK_TRANSFER', status: 'paid', amount: '1290.00', occurredAt: '2026-09-15T00:00:00.000Z', evidenceSpan: 'จ่ายแล้ว', fileId: 'file-1' }],
+    }),
+  });
+  assert.deepEqual(captureCertificatePrefill(paid, 'exp-1'), {
+    fundingSource: 'PERSONAL_ADVANCE',
+    payerUserId: 'user-2',
+    paymentDate: '2026-09-15',
+    paymentMethod: 'BANK_TRANSFER',
+    missingReasonSuggestionKey: 'expenses.capture.certificate_reason_order',
+  });
+
+  // Company-funded: the certificate says the company paid, because that is what was reviewed.
+  assert.equal(captureCertificatePrefill(group({ fundingRoute: 'COMPANY', derivedSources: [derived()] }), 'exp-1')?.fundingSource, 'COMPANY');
+  // Nothing reviewed yet, nothing prefilled — and no payment date invented.
+  const unknown = captureCertificatePrefill(group({ derivedSources: [derived()] }), 'exp-1')!;
+  assert.equal(unknown.fundingSource, '');
+  assert.equal(unknown.paymentDate, null);
+  assert.equal(unknown.paymentMethod, null);
+  assert.equal(captureCertificatePrefill(group({ derivedSources: [] }), 'exp-1'), null);
+});
+
+test('the prefill follows the accepted allocation while the group is being re-answered', () => {
+  const reReviewed = group({
+    fundingRoute: 'COMPANY', derivedSources: [derived()],
+    allocation: {
+      allocationId: 'alloc-1', groupRevision: 3, policyVersion: 'shared-discount-v1+shipping-by-eligible-item-v1',
+      status: 'ACCEPTED', fundingRoute: 'EMPLOYEE', payerUserId: 'user-2', computedByUserId: 'user-1',
+      computedAt: '2026-09-18T01:00:00.000Z', acceptedByUserId: 'user-1', acceptedAt: '2026-09-18T02:00:00.000Z',
+      invalidatedReason: null, result: allocationResult(),
+    },
+  });
+  assert.equal(captureCertificatePrefill(reReviewed, 'exp-1')?.fundingSource, 'PERSONAL_ADVANCE');
+});
+
+test('a payment method the certificate form cannot hold is left for the payer to choose', () => {
+  const odd = group({
+    fundingRoute: 'EMPLOYEE', derivedSources: [derived()],
+    facts: facts({
+      payments: [{ documentRef: 'file-1:doc-1', method: 'CRYPTO', status: 'paid', amount: '1.00', occurredAt: '2026-09-15', evidenceSpan: 'x', fileId: 'file-1' }],
+    }),
+  });
+  assert.equal(captureCertificatePrefill(odd, 'exp-1')?.paymentMethod, null);
 });
