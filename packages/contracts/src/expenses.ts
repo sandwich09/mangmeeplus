@@ -11,6 +11,7 @@ import {
   type ReceiptOcrFieldResult,
 } from './line-ai.js';
 import type { BuyerEntityKind } from './company-tax-identity.js';
+import type { ExpenseCaptureReadStatus } from './expense-capture.js';
 import type { ExpenseDocumentDateStatus } from './line-ai-value-normalizer.js';
 
 export type ExpenseStatus = 'DRAFT' | 'EXTRACTING' | 'NEEDS_REVIEW' | 'READY_FOR_CONFIRMATION' | 'CONFIRMED' | 'REJECTED' | 'VOIDED';
@@ -23,6 +24,13 @@ export type ExpenseExtractionResult = {
   errorCode?: string;
   /** Set only when `errorCode` is one of `AI_BUDGET_REFUSAL_CODES` (spec §9.1). Never a money amount. */
   budgetScope?: AiBudgetScope;
+  /**
+   * Capture appendix §3: a read that could not finish inside the request answers with the durable
+   * job instead of a result. Absent means the read was synchronous, exactly as before — the client
+   * that does not know these fields keeps its current behaviour.
+   */
+  readJobId?: string;
+  readStatus?: ExpenseCaptureReadStatus;
 };
 export type AiVerificationStatus = 'NOT_VERIFIED' | 'VERIFYING' | 'AI_VERIFIED' | 'PARTIAL' | 'NEEDS_REVIEW' | 'FAILED' | 'HUMAN_VERIFIED';
 export type DuplicateStatus = 'NOT_CHECKED' | 'NO_MATCH' | 'POSSIBLE_DUPLICATE' | 'CONFIRMED_DUPLICATE' | 'OVERRIDDEN';
@@ -1556,6 +1564,26 @@ export type AccountantPackageResult = {
 };
 
 export type RemoveExpenseReceiptInput = { expectedUpdatedAt: string; purpose?: Exclude<ExpenseAttachmentPurpose, 'expense.signature.asset'> };
+
+/**
+ * Spec §16.4: which of the two file intents the user chose. "เปลี่ยนไฟล์ใบเสร็จนี้" is `replace`
+ * and "แนบหลักฐานเพิ่ม" is `append`; a completion that names neither is the legacy call and keeps
+ * its exact behaviour, so old clients and the LINE lane are untouched.
+ */
+export type ExpenseReceiptUploadIntent = 'replace' | 'append';
+
+export type CompleteExpenseReceiptUploadInput = {
+  checksumSha256?: string;
+  byteSize?: number;
+  purpose?: string;
+  intent?: ExpenseReceiptUploadIntent;
+  /** The expense revision the user was looking at when they picked the target (§16.4). */
+  expectedUpdatedAt?: string;
+  /** The primary this replace is meant to swap out; a different one now is a conflict, not a win. */
+  expectedPrimaryAttachmentId?: string;
+  /** Reused verbatim on retry: the same operation answers the same result instead of a second file. */
+  operationId?: string;
+};
 
 /** A recorded payment can precede expense confirmation (e.g. issuing a substitute receipt). */
 export function canVoidExpenseFinancialState(expense: {

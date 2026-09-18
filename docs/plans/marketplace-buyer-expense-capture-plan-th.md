@@ -114,8 +114,8 @@ Depends on: W00 / D01 / D06 / D07 และขอบเขต intake D02
 - [x] ให้ list/read แสดงงาน capture ได้โดยไม่สื่อว่าเป็นยอดบริษัทที่รับรู้แล้ว; versions ที่ไม่เข้าใจ source role ปฏิเสธ final mutation — W01: `GET capture-groups` เป็นรายการแยก ไม่มียอดเงิน; `facts` ว่างจนกว่าจะมี observation จริง
 
 - [x] (ครึ่ง schema) ขยายsource/document/representation lineageและสถานะextractionแยกelectronicverificationตามD09 โดยreuseattachment/hash/objectversionเดิม; query/lock keysต้องครอบcross-channelduplicates — W01 วางคอลัมน์ `electronicVerificationJson`/`attachmentChecksum`/`objectVersionId`/`preprocessVersion` และ duplicate keys แล้ว; สถานะ extraction จริงมากับ W03
-- [ ] ออกcontractของreplaceพร้อมexpected old attachment/version + expected expense/group revision + operation identityและtyped conflicts; completeต้องinvalidateผลตรวจที่ผูกsourceเก่าแบบatomicโดยไม่ลบค่าที่คนยืนยัน
-- [ ] servermutationmatrix§16.4ครอบclaimDRAFT/submitted, PREPARED/PAYER_CERTIFIED/ISSUED, paid/posted/voidedและpermissionchange; ไม่ใช้UIเป็นguard
+- [x] ออกcontractของreplaceพร้อมexpected old attachment/version + expected expense/group revision + operation identityและtyped conflicts; completeต้องinvalidateผลตรวจที่ผูกsourceเก่าแบบatomicโดยไม่ลบค่าที่คนยืนยัน — W02-web: `CompleteExpenseReceiptUploadInput` + 4 conflict codes; ค่าที่คนตรวจแล้วคงอยู่พร้อม `sourceAttachmentId`/`sourceStale` และ `aiVerificationStatus = NOT_VERIFIED`
+- [x] servermutationmatrix§16.4ครอบclaimDRAFT/submitted, PREPARED/PAYER_CERTIFIED/ISSUED, paid/posted/voidedและpermissionchange; ไม่ใช้UIเป็นguard — W02-web: ตรวจก่อนยืนยัน bytes ทุกครั้ง, reuse `substitute_evidence_locks_expense`/`substitute_source_has_live_claim`, PREPARED ยังรับ supporting ได้ (11 เคสใน `expense-upload.use-case.spec.ts`)
 
 - [ ] durablejob/manifestผูกcompany/actor/attachmenthash+objectversion/preprocessversion/attempt; perpage/regioncheckpoint, boundedlease/cancel/stale/paused states และserverstatusทำต่อหลังUIปิดได้ — W01 วางตาราง `ExpenseCaptureReadJob` + manifest ว่าง + cancel ตอน detach ไว้แล้ว; runner/lease/checkpoint เป็นงาน W03 จึงยังไม่ติ๊ก
 - [ ] existinguploadconfig/transport/security/retentionต้องรับ10MiBตามcapabilityที่เปิด; originalbytesไม่ผ่านAIเป็นก้อนใหญ่ก่อนpreprocess; internalAIcallsผ่านpermission-checkedAPI ไม่มีGatewayDBaccess
@@ -129,23 +129,23 @@ IG: IG01/IG03/IG04/IG07/IG09/IG13/IG15
 ### W02 — อัปโหลดหลายไฟล์และกลับมาทำต่อ
 
 Owner: Web/API/LINE intake
-Status: Planned
+Status: W02-web done (2026-09-19) — multi-file intake, group page shell, replace/append contract, read-status recovery; W02-LINE ยังไม่ส่ง
 Depends on: W01 / D02 upload contract
 
 จุดแก้หลัก: [ExpenseReviewPage: เปลี่ยนใบเสร็จ](../../apps/web/src/features/expenses/ExpenseReviewPage.tsx:428), [replacement policy](../../apps/web/src/features/expenses/expenses.model.ts:1705), [LINE webhook](../../apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts:5815), [ExpensesPages](../../apps/web/src/features/expenses/ExpensesPages.tsx), [upload UI logic](../../apps/web/src/features/expenses/expense-upload.logic.ts), [expense client](../../apps/web/src/features/expenses/expenses.api.ts), [upload use cases](../../apps/api/src/modules/expenses/application/use-cases/expense-upload.use-case.ts), [remove receipt](../../apps/api/src/modules/expenses/application/use-cases/remove-expense-receipt.use-case.ts), [LINE continuation](../../apps/api/src/modules/expenses/application/use-cases/line-expense-draft-conversation.use-case.ts)
 
-- [ ] ทางเข้าปัจจุบันรับหลายไฟล์/หลายหน้าเป็น recoverable work item; ไม่วน init แล้วสร้าง unrelated expense ต่อไฟล์
-- [ ] per-file identity/manifest/status และ resumable intent; complete/retryใช้identityเดิมเมื่อผลตอบกลับหาย
-- [ ] “เพิ่มหลักฐาน” append; “เปลี่ยนไฟล์นี้” replace เฉพาะเป้าหมาย; detach/cleanupไม่ลบไฟล์ที่ source/signature ยังอ้าง
-- [ ] กลับจากปิดหน้าแสดงส่วนที่ server เก็บแล้ว ขอเลือกใหม่เฉพาะไฟล์ที่ bytes ยังไม่ถึง ไม่สัญญาว่าเก็บไฟล์บนbrowserได้ทุกกรณี
+- [x] ทางเข้าปัจจุบันรับหลายไฟล์/หลายหน้าเป็น recoverable work item; ไม่วน init แล้วสร้าง unrelated expense ต่อไฟล์ — W02-web: `UploadPanel` ส่ง ≥ 2 ไฟล์เข้า `POST capture-groups` ครั้งเดียวแล้ววนเฉพาะ `files`/`complete`; ไฟล์เดียวยังเป็น expense เดิมทุก request (guard ใน `ExpensesPages.qa.spec.ts`)
+- [x] per-file identity/manifest/status และ resumable intent; complete/retryใช้identityเดิมเมื่อผลตอบกลับหาย — W02-web: state machine ใน `expense-capture-upload.logic.ts` (PENDING→UPLOADING→STORED/FAILED/UNKNOWN), retry ใช้ `fileId` เดิม, ผลหาย = UNKNOWN + ตรวจสอบสถานะ (12 เคสใน `expense-capture-upload.logic.spec.ts`)
+- [x] “เพิ่มหลักฐาน” append; “เปลี่ยนไฟล์นี้” replace เฉพาะเป้าหมาย; detach/cleanupไม่ลบไฟล์ที่ source/signature ยังอ้าง — W02-web: `intent` บน `…/receipt-uploads/{a}/complete` + matrix §16.4 ที่ server; append ไม่แตะ primary และไม่ retire (spec ใน `expense-upload.use-case.spec.ts`); detach guard เป็นของ W01
+- [x] กลับจากปิดหน้าแสดงส่วนที่ server เก็บแล้ว ขอเลือกใหม่เฉพาะไฟล์ที่ bytes ยังไม่ถึง ไม่สัญญาว่าเก็บไฟล์บนbrowserได้ทุกกรณี — W02-web: manifest ใน sessionStorage + `mergeCaptureManifest` ให้สถานะจาก server ชนะเสมอ และไฟล์ที่ bytes ไม่ถึง = “เลือกไฟล์นี้ใหม่”
 - [ ] LINEผูกgroup/source/actor/branchจากบริบทที่ยืนยันได้; หลายงานหรือภาพที่มาช้าให้เลือกงานเมื่อกำกวม
-- [ ] single-file/camera/drop/review เดิมยังทำงาน; failed-reading notice+ลิงก์Webงานเดิมตาม§17.6 แยกsaved/unknown; ไม่มีerror reread/manual-entry chat; A83–A85
-- [ ] ต่อหน้าเปลี่ยนใบเสร็จด้วย expected target/revision, append-vs-replace intent และ state matrix §16.4; re-readใช้ไฟล์ที่commitจริง
+- [x] (เว็บ) single-file/camera/drop/review เดิมยังทำงาน; failed-reading notice+ลิงก์Webงานเดิมตาม§17.6 แยกsaved/unknown; ไม่มีerror reread; A83–A85 — W02-web: กล้องยังไฟล์เดียว, ข้อความ `expenses.extract_failed`/`:704`/`:724` ไม่ชวนอ่านซ้ำแล้ว และปุ่มอ่านซ้ำถูกซ่อนทุก terminal failure; ฝั่งแชต LINE อยู่ที่ W02-LINE
+- [x] ต่อหน้าเปลี่ยนใบเสร็จด้วย expected target/revision, append-vs-replace intent และ state matrix §16.4; re-readใช้ไฟล์ที่commitจริง — W02-web: `expectedUpdatedAt` + `expectedPrimaryAttachmentId` + `operationId` (idempotent/conflict) และ READY → NEEDS_REVIEW แบบ atomic
 - [ ] PDF limits/capability/error messagesตรงกันทั้งสามทาง; รับไฟล์สำเร็จแยกจากอ่านสำเร็จ และไม่re-encodesigned PDFเพื่อผ่านgate
 - [ ] LINEcaptionlessPDF/หลายเอกสาร/latefileต้องมีdurable pending work/clarificationที่กลับงานเดิม ไม่resetหลักฐาน; เก็บsafe rejection reasonก่อนมีexpenseและตอบคำถามย้อนหลังตาม§17.5; แก้E15/IG20ที่file/PDFไม่มีcontentBase64จนOCRถูกข้าม โดยต่อoriginalเข้าboundedpipeline ไม่ส่ง10MBตรงให้provider
 
 - [ ] ทั้งสามทางรับPDF10MiBแล้วsave→queue/readพร้อมstatus/progressที่serverยืนยัน; ปรับข้อความ4MBmanual-onlyออกสำหรับขนาดที่รองรับ; ไม่บังคับผู้ใช้split/compressเอง
-- [ ] status/reopen/retryเมื่อHTTPผลหายใช้jobเดิม; replacementหยุดapplyงานเก่าตามrevisionและpreserveoriginal; ไม่มีfinalLINEส่งจนrecipient/permission/versionตรงและdeliveryสำเร็จจริง
+- [ ] status/reopen/retryเมื่อHTTPผลหายใช้jobเดิม; replacementหยุดapplyงานเก่าตามrevisionและpreserveoriginal; ไม่มีfinalLINEส่งจนrecipient/permission/versionตรงและdeliveryสำเร็จจริง — W02-web ทำฝั่ง status/reopen/retry (`GET …/read-status` + polling 3 วิ) และ provenance `sourceStale` ของไฟล์เก่าแล้ว; การหยุด apply ของ job เก่าเป็นงาน W03, LINE delivery เป็นงาน W02-LINE
 
 Exit: ส่ง4ไฟล์ สำเร็จ2แล้วตัดเน็ต กลับมาทำต่อโดยไม่สูญงาน/สร้างdraftซ้ำ และเพิ่มหน้า2ไม่ retire หน้า1
 Checks: upload/retention/API permission tests, local browser บนmobile+desktop และ LINE payload/retry tests โดยไม่ส่งข้อความจริงถึงลูกค้า

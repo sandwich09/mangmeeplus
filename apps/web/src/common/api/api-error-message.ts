@@ -156,6 +156,13 @@ const CODE_LABELS: Record<string, string> = {
   expense_capture_company_paid_personal_portion: 'บริษัทจ่ายเต็มจำนวนแต่มีของส่วนตัวรวมอยู่ ยังไม่รองรับการเรียกคืนส่วนตัวจากบริษัท',
   expense_capture_totals_identity_failed: 'ยอดที่แบ่งได้ยังไม่ตรงกับยอดรวมของเอกสาร กรุณาแจ้งผู้ดูแลระบบพร้อมรหัสอ้างอิง',
   expense_capture_tax_review_pending: 'รอตรวจภาษีก่อน จึงจะนำไปทำใบเบิกได้',
+  // Spec §16.4 / UXE-21 and UXE-22: changing or adding a receipt file. The first two are "someone
+  // moved this while you were choosing" — the file you sent is not evidence of anything yet, so the
+  // way out is to reopen the record. The third is a state that has to be handled where it happened.
+  expense_revision_conflict: 'รายการนี้มีการเปลี่ยนแปลง กรุณาเปิดข้อมูลล่าสุดก่อนทำต่อ',
+  expense_receipt_replace_conflict: 'ไฟล์ใบเสร็จของรายการนี้ถูกเปลี่ยนไปแล้ว กรุณาเปิดข้อมูลล่าสุดก่อนเปลี่ยนไฟล์อีกครั้ง',
+  expense_receipt_replace_locked: 'สถานะของรายการนี้ไม่อนุญาตให้เปลี่ยนหรือแนบไฟล์ตรงนี้ กรุณาเปิดรายการเดิมเพื่อดำเนินการตามขั้นตอนที่รองรับ',
+  expense_receipt_replace_operation_conflict: 'รายการเปลี่ยนไฟล์นี้ถูกใช้กับไฟล์อื่นไปแล้ว กรุณาเปิดข้อมูลล่าสุดแล้วเลือกไฟล์อีกครั้ง',
   invalid_response: 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง',
   duplicate_supplier_document_number: 'เลขที่เอกสารผู้ขายนี้ถูกบันทึกสำหรับผู้ขายรายนี้แล้ว กรุณาตรวจสอบบิลเดิมก่อนสร้างซ้ำ',
   // Permissions / scope
