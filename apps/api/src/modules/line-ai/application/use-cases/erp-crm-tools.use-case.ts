@@ -7,6 +7,11 @@ import { currentMonthRange } from './erp-tools.use-case';
 
 function now(): string { return new Date().toISOString(); }
 
+/** A civil date the model may have proposed, or undefined so the caller applies its own default. */
+function civilDay(value: unknown): string | undefined {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined;
+}
+
 function toCtx(ctx: ErpToolContext): RequestContext {
   return {
     requestId: ctx.requestId ?? '',
@@ -40,20 +45,29 @@ export class CrmGetCustomerSummaryTool implements ErpReadToolPort {
   toolName = 'crm.get_customer_summary';
   constructor(private readonly getSummary: GetCrmCustomerSummaryUseCase) {}
 
-  async execute(ctx: ErpToolContext, input?: { newSince?: string }): Promise<ToolResult> {
+  async execute(ctx: ErpToolContext, input?: { newSince?: string; newUntil?: string }): Promise<ToolResult> {
     const asOf = now();
     if (!ctx.permissions.includes('crm.customer.read')) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
-    const candidate = typeof input?.newSince === 'string' ? input.newSince : '';
-    const newSince = /^\d{4}-\d{2}-\d{2}$/.test(candidate) ? candidate : currentMonthRange().fromDate;
-    const summary = await this.getSummary.execute(toCtx(ctx), new Date(`${newSince}T00:00:00+07:00`));
+    // Period-resolution spec §3.3: the new-customer window is [newSince, newUntil] INCLUSIVE, in
+    // Bangkok civil days, and defaults to the current month — the same default every other
+    // period-scoped read tool applies. Without an end, "ลูกค้าใหม่เดือนที่แล้ว" counted this month too.
+    const month = currentMonthRange();
+    const newSince = civilDay(input?.newSince) ?? month.fromDate;
+    const newUntil = civilDay(input?.newUntil) ?? month.toDate;
+    const summary = await this.getSummary.execute(
+      toCtx(ctx),
+      new Date(`${newSince}T00:00:00+07:00`),
+      new Date(`${newUntil}T23:59:59.999+07:00`),
+    );
     return {
       toolName: this.toolName,
       status: 'ok',
       data: {
         ...summary,
         newCustomersSince: newSince,
+        newCustomersUntil: newUntil,
         totalIncludesArchived: true,
         totalExcludesMerged: true,
       },

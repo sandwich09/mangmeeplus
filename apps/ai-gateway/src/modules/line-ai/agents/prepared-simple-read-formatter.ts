@@ -26,6 +26,10 @@ export type PreparedFormatContext = {
   /** The VALIDATED proposed tool input (post-sanitizer, exact-equality checked). Its fromDate/toDate name
    *  the requested period so the answer is never period-ambiguous. Never authorization — DATA only. */
   proposedInput?: Record<string, unknown>;
+  /** Period-resolution spec §3.4: the Thai label of the period candidate the validated input SELECTED
+   *  — the user's own words plus the dates, e.g. `เดือนที่แล้ว (1–31 ส.ค. 2569)`. Set only when the
+   *  input matched a candidate exactly, so it can never name a window the tool did not read. */
+  periodLabel?: string;
 };
 
 const isEnglish = (ctx: PreparedFormatContext): boolean =>
@@ -56,7 +60,15 @@ function rangePhrase(from: string | undefined, to: string | undefined): string |
  * own echoed effective period. It NEVER fabricates: when neither names a period, it returns '' and the reply
  * simply omits the period line rather than asserting a default the tool may not have used.
  */
-function periodLine(proposedInput: Record<string, unknown> | undefined, data: Record<string, unknown> | undefined, english: boolean): string {
+function periodLine(
+  proposedInput: Record<string, unknown> | undefined,
+  data: Record<string, unknown> | undefined,
+  english: boolean,
+  periodLabel?: string,
+): string {
+  // The label already reads as Thai ("เดือนที่แล้ว (1–31 ส.ค. 2569)"), so it replaces the bare ISO
+  // range for a Thai answer; an English answer keeps the ISO dates it has always printed.
+  if (!english && periodLabel) return `\nช่วง: ${periodLabel}`;
   const from = typeof proposedInput?.['fromDate'] === 'string' ? proposedInput['fromDate'] as string : undefined;
   const to = typeof proposedInput?.['toDate'] === 'string' ? proposedInput['toDate'] as string : undefined;
   let phrase = rangePhrase(from, to);
@@ -199,7 +211,7 @@ function formatSalesSummarySingleMetric(output: SpecialistOutput, ctx: PreparedF
     ? (english ? `\nSource: ${sourceRef.label}` : `\nที่มา: ${sourceRef.label}`)
     : '';
 
-  const replyText = `${label}: ${amount}${countText}${periodLine(ctx.proposedInput, data, english)}${sourceText}${asOfLine(output.asOf, english)}`;
+  const replyText = `${label}: ${amount}${countText}${periodLine(ctx.proposedInput, data, english, ctx.periodLabel)}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -248,7 +260,7 @@ export function formatExpenseSummary(
       : `\nไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ ${groupThousands(String(cancelled))} รายการ`)
     : '';
 
-  const replyText = `${label}: ${amount}${countText}${cancelledText}${periodLine(undefined, data, english)}${sourceText}${asOfLine(asOf, english)}`;
+  const replyText = `${label}: ${amount}${countText}${cancelledText}${periodLine(undefined, data, english, ctx.periodLabel)}${sourceText}${asOfLine(asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -313,7 +325,7 @@ function formatAccountingSummaryList(output: SpecialistOutput, ctx: PreparedForm
   const headline = english
     ? `Accounting documents: ${plural(total, 'record')}`
     : `เอกสารบัญชี: ${groupThousands(String(total))} รายการ`;
-  const replyText = `${headline}${typeLines}${moreText}${periodLine(ctx.proposedInput, data, english)}${sourceText}${asOfLine(output.asOf, english)}`;
+  const replyText = `${headline}${typeLines}${moreText}${periodLine(ctx.proposedInput, data, english, ctx.periodLabel)}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -390,7 +402,8 @@ function formatExpenseDailyClosingSingleMetric(output: SpecialistOutput, ctx: Pr
   const [, , month, dayOfMonth] = CIVIL_DATE.exec(day)!;
   const dayPhrase = asOfHere?.day === day
     ? (english ? `Today (${day})` : `วันนี้ (${Number(dayOfMonth)} ${THAI_MONTH_ABBR[Number(month) - 1]})`)
-    : (english ? `On ${day}` : `วันที่ ${day}`);
+    // Spec §3.4: "ปิดยอดเมื่อวาน" answers for "เมื่อวาน (17 ก.ย. 2569)", not a bare ISO day.
+    : (english ? `On ${day}` : ctx.periodLabel ? ctx.periodLabel : `วันที่ ${day}`);
 
   // Honest zero: a day with nothing recorded says so, and states no amount the tool did not return.
   const headline = english
@@ -464,7 +477,8 @@ function formatTaxVatSummarySingleMetric(output: SpecialistOutput, ctx: Prepared
     ? '\n(Not certified by an accountant — check before filing)'
     : '\n(ยังไม่ผ่านการรับรองจากนักบัญชี กรุณาตรวจสอบก่อนยื่นแบบ)';
 
-  const replyText = `${headline}${sidesText}${statusText}${sourceText}${asOfLine(output.asOf, english)}${certifyText}`;
+  const replyText = `${headline}${sidesText}${statusText}`
+    + `${periodLine(undefined, undefined, english, ctx.periodLabel)}${sourceText}${asOfLine(output.asOf, english)}${certifyText}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -528,6 +542,7 @@ function formatApOutstandingSingleMetric(output: SpecialistOutput, ctx: Prepared
 function formatCrmCustomerSummaryList(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
   const data = sourceData(output, 'crm.get_customer_summary');
   const since = data?.['newCustomersSince'];
+  const until = data?.['newCustomersUntil'];
   const created = data?.['newCustomers'];
   const total = data?.['total'];
   const active = data?.['active'];
@@ -537,9 +552,15 @@ function formatCrmCustomerSummaryList(output: SpecialistOutput, ctx: PreparedFor
 
   const english = isEnglish(ctx);
   const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  // The window is CLOSED since the tool gained `newUntil` (spec §3.3), so the answer states both ends
+  // rather than implying "…until now"; a tool version that sends no end keeps the old open phrasing.
+  const closed = typeof until === 'string' && CIVIL_DATE.test(until);
+  const window = english
+    ? (closed ? `${since} – ${until}` : `since ${since}`)
+    : (closed ? `${since} – ${until}` : `ตั้งแต่ ${since}`);
   const headline = english
-    ? `New customers since ${since}: ${plural(created, 'customer')}`
-    : `ลูกค้าใหม่ตั้งแต่ ${since}: ${groupThousands(String(created))} ราย`;
+    ? `New customers ${window}: ${plural(created, 'customer')}`
+    : `ลูกค้าใหม่${closed ? ' ' : ''}${window}: ${groupThousands(String(created))} ราย`;
   const totalText = english
     ? `\nTotal ${plural(total, 'customer')} (${groupThousands(String(active))} active)`
     : `\nลูกค้าทั้งหมด ${groupThousands(String(total))} ราย (ใช้งานอยู่ ${groupThousands(String(active))} ราย)`;
@@ -555,7 +576,8 @@ function formatCrmCustomerSummaryList(output: SpecialistOutput, ctx: PreparedFor
     ? (english ? `\n(Total: ${basis.join(' · ')})` : `\n(ยอดรวม: ${basis.join(' · ')})`)
     : '';
 
-  const replyText = `${headline}${totalText}${basisText}${sourceText}${asOfLine(output.asOf, english)}`;
+  const replyText = `${headline}${totalText}${basisText}`
+    + `${periodLine(undefined, undefined, english, ctx.periodLabel)}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 

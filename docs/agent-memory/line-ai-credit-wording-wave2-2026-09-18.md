@@ -212,3 +212,135 @@ Defects caught before merge: api typecheck error in H2 (`SourceRef` literal type
 State: NOTHING IS DEPLOYED. The next deploy carries migrations `20260917140000`, `20260917150000`, `20260917160000` (wave 1) and `20260918100000_ai_credit_hold_reconciliation` (H3), all additive. After a runbook-governed UAT deploy: W-09 (credit wording seen on real LINE) and J-08 (clear a synthetic stranded hold through the real page) close the two open lines.
 
 Owner-facing items still open: the credit CONCEPT (units, top-up, verification, per-package defaults — the trial numbers chat 80 / documents 60 / total 140 THB are per-company admin settings until then); a read-only platform role (today every real login is `SYSTEM_ADMIN`, so `canManage:false` surfaces are unreachable); `tax.get_vat_summary` exposes no period input (last month cannot be asked on either path); the composer vocabulary guard is what blocks most advice wording (widening it is a product decision).
+
+## H4 — period resolution (owner decision 2026-09-18, after the wave-2 handoff)
+
+Spec: [line-ai-period-resolution-spec-th.md](../specs/line-ai-period-resolution-spec-th.md)
+(P-01…P-06 ticked with evidence, P-07 open until a UAT deploy),
+[plan H4](../plans/line-ai-credit-wording-and-deterministic-reads-plan-th.md).
+Status: IMPLEMENTED and locally verified on branch `codex/line-ai-wave2-h4-period-resolution-20260918`
+(worktree `/private/tmp/mangmee-line-ai-wave2-h4-20260918`, off docs commit `2eefe3bd`); five local
+commits, nothing pushed, nothing deployed.
+
+Decisions: periods are resolved by CODE (`packages/contracts` value normalizer) and the model only
+selects from them (ADR 0011); default = current month (daily closing = today); week = Monday–Sunday
+Bangkok; calendar year, not fiscal; "วันก่อน" read as yesterday with an assumption marker; future
+periods produce no candidate.
+
+### Artifacts
+
+| file | why |
+| --- | --- |
+| `packages/contracts/src/line-ai-value-normalizer.ts` | `LineAiPeriodCandidate`, `PERIOD_ASSUMPTIONS`, `resolvePeriodCandidates`, `formatThaiPeriodRange`, `isAmbiguousPeriodCandidate`; `extractValueCandidates` emits `periods` when it has a `todayIso` |
+| `packages/contracts/src/line-ai-value-normalizer.spec.ts` | 68-row vocabulary table + 5 behaviour tests (P-01) |
+| `packages/contracts/src/ai-tools.ts` | `tax.get_vat_summary` → `optionalInputFields: ['periodKey']`; `crm.get_customer_summary` → `['newSince','newUntil']`; both descriptions say what the default is |
+| `apps/ai-gateway/.../agents/orchestrator.agent.ts` | `PERIOD_SELECTION_RULE` shared by both loops, `PeriodGuard`, `periodBackedValues`, `allowedLoopPeriods`, `preparedAllowedPeriods`, `selectedPeriodCandidate`, `turnPeriodSource`; `newSince`/`newUntil` join the date fields and `periodKey` gets its own membership check |
+| `apps/ai-gateway/.../agents/intent-router.agent.ts` | the fused-plan and captureHints sections tell the model to COPY a `periods` entry, never to compute one |
+| `apps/ai-gateway/.../agents/prepared-simple-read-formatter.ts` | `periodLabel` on the format context; `ช่วง: <คำ> (<วันที่>)` on sales/expense/accounting/VAT/CRM, the day phrase on daily closing, and the CRM window printed closed |
+| `apps/ai-gateway/.../agents/agent-types.ts` | `periodFact` — the agentic path's period line, built from the window the TOOL echoed |
+| `apps/ai-gateway/.../agents/{accounting-summary,inventory}.agent.ts` | the optional `periodLabel` argument and the period fact, appended only for a tool whose read landed |
+| `apps/api/.../use-cases/erp-crm-tools.use-case.ts` + `crm-customer.use-case.ts` + `prisma-crm.repository.ts` | the closed `[newSince, newUntil]` window in Bangkok days, defaulted to the current month and echoed on both ends |
+| `apps/api/.../use-cases/erp-tax-tools.use-case.ts` | `periodKey` shape-checked here too; a malformed key defaults instead of reaching the repository |
+| `apps/api/.../use-cases/process-line-webhook.use-case.ts` | `computeValueCandidates` keeps a payload whose only value is a period |
+| `scripts/line-ai-intake-cost.corpus.ts` (+ spec) | corpus **v2** (`INTAKE_COST_CORPUS_VERSION = 2`), 9 appended period tasks, new hash `ae237f27…` |
+| `scripts/line-ai-intake-cost-benchmark.ts` | the stub ERP client records the input each tool received per task, the record carries the resolver's periods, the report scores them, and the request builders forward a period-only candidate payload |
+
+### The vocabulary as implemented
+
+| group | read | result |
+| --- | --- | --- |
+| day | วันนี้/today, เมื่อวาน(นี้)/yesterday, **วันก่อน** (+`day_before_read_as_yesterday`), เมื่อวานซืน/day before yesterday, N วันก่อน / N วันที่แล้ว / N days ago (N ≤ 366) | `day` |
+| last N days | N วันที่ผ่านมา / N วันล่าสุด / N วันย้อนหลัง / last\|past N days | `last_n_days`, ends today, `last_n_days_include_today` |
+| week | สัปดาห์/อาทิตย์ + นี้\|ที่แล้ว\|ก่อน, this\|last week, N สัปดาห์ที่แล้ว / N weeks ago | `week`, Mon–Sun, `week_monday_sunday` |
+| month | เดือนนี้/this month, เดือนที่แล้ว\|เดือนก่อน/last\|previous month, N เดือนที่แล้ว (N ≤ 24), ชื่อเดือน ± ปี | `month` + `monthKey` |
+| quarter | ไตรมาสนี้\|ที่แล้ว\|ก่อน, this\|last quarter, ไตรมาส 1–4 / Q1–Q4 ± ปี | `quarter` (calendar) |
+| year | ปีนี้/this year, ปีที่แล้ว\|ปีก่อน/last year, ปี\|year NNNN | `year` (calendar) |
+| range | `1–15 ก.ย. [68]`, `ตั้งแต่ 1 ถึง 15 กันยายน`, `from 1 to 15 Sep`, `1/9–15/9/68`, and any two unambiguous date candidates separated by a range marker | `range` |
+
+Edge decisions worth carrying:
+
+- **`label` is the Thai phrase WITH its dates** (`เดือนที่แล้ว (1–31 ส.ค. 2569)`), not the word plus a
+  month qualifier as §3.1's example shows. §3.4 requires the word AND the dates in the answer, and one
+  field that already reads correctly beats two that must be recombined at print time.
+- **A current period ends TODAY** (`period_clamped_to_today`), which is exactly the window
+  `currentMonthRange()` computes, so "เดือนนี้" asks for the same days the tool would have defaulted to
+  and no answer ever asks for future data.
+- **A phrase the resolver recognises but cannot pin down consumes its span** — "25 เดือนที่แล้ว" (past the
+  N ceiling) yields NO candidate rather than being re-read by the looser `เดือนที่แล้ว` rule.
+- **The undotted Thai month abbreviations are excluded from period reading.** `THAI_MONTHS` carries
+  มค/กพ/มีค/… for receipt OCR, and Thai has no word spaces, so `มีค` is a substring of the very common
+  `มีค่าใช้จ่าย`: every "เดือนนี้มีค่าใช้จ่ายเท่าไหร่" would have produced a spurious March period. Pinned
+  by a test. English `may` is likewise read as a month only when a year follows it.
+- **A two-digit year keeps the normalizer's existing era rules**: a Thai month name anchors พ.ศ., an
+  English one ค.ศ., and a fully numeric range resolves the era by plausibility only when the วัน/เดือน
+  order is already certain — otherwise it stays `ambiguous_two_digit_year` and cannot back an input.
+  One end of a written range settles the order for both (`1/9–15/9/68` reads 15 as the day).
+- **`newSince` joined the backed date fields** with `newUntil`. Spec §3.2 lists it, and leaving one end
+  of a now-closed window unguarded would have let an invented start define the window the answer states.
+
+### Verification (all local, 2026-09-18, heavy jobs behind `/tmp/mangmee-heavy.lock`)
+
+| command | result |
+| --- | --- |
+| `pnpm --filter @watchdog-bms/contracts test` | 324/324 pass (253 before H4) |
+| `pnpm --filter @watchdog-bms/ai-gateway test` | 1,209/1,209 pass, 144 suites |
+| gateway `tsc --noEmit` | clean |
+| FULL `pnpm --filter @watchdog-bms/api test` | exit 0, 10,574 dot-tests, 0 failures |
+| api `tsc --noEmit` (`--max-old-space-size=8192`) | clean |
+| `pnpm --filter @watchdog-bms/web test` | 1,780/1,780 pass |
+| `node scripts/run-line-ai-whole-chain-acceptance.mjs` | PASS, 8 suites, 21 repository + 3 controlled-external scenarios |
+| `pnpm test:harness` | 17/17 |
+| `pnpm exec tsx --test scripts/line-ai-intake-cost.corpus.spec.ts` | 9/9 (NOT part of CI or `test:harness` — pre-existing gap) |
+| `node infra/security/sync-production-maintenance-release-pins.mjs --check` | `status=current` (no pinned file touched) |
+| `git diff --check` | clean |
+| `prepared-simple-read-security.spec.ts` | unmodified and passing |
+
+### Bedrock replay (P-06), owner-authorised, on the remaining R5 phase budget
+
+Run `h4-period-2026-09-18T10-04-17-532Z`, git `3e65f7a6`, corpus v2 `ae237f27…`, 2 repetitions,
+THB 33/USD, `--max-thb 40`. 40 records: 39 completed, 39 successful, 0 refusals/parse failures/
+truncations; the 40th was stopped by the spend guard.
+
+| question | the resolver read | the tool received | match |
+| --- | --- | --- | --- |
+| ยอดขายเมื่อวาน | `day 2026-09-16` | `sales {from/to 2026-09-16}` | yes |
+| ค่าใช้จ่ายเดือนที่แล้ว | `month 2026-08-01..31` | `expense.list_recent {from/to}` | yes |
+| VAT เดือนที่แล้ว | `month 2026-08` | `tax {periodKey 2026-08}` | yes |
+| ลูกค้าใหม่สัปดาห์ที่แล้ว | `week 2026-09-07..13` | `crm {newSince/newUntil}` | yes |
+| ยอดขาย ส.ค. 68 | `month 2025-08` | `sales {2025-08-01..31}` | yes |
+| ค่าใช้จ่าย 1-15 ก.ย. | `range 2026-09-01..15` | `expense.list_recent {from/to}` | yes |
+| ปิดยอดเมื่อวานซืน | `day 2026-09-15` | `daily_closing {date}` | yes |
+| ยอดขายปีที่แล้ว | `year 2025` | `sales {2025-01-01..12-31}` | yes |
+| how much did we sell last month? | `month 2026-08` | `sales {2026-08-01..31}` | yes |
+
+**31 of 33 records matched (93.9%)**; both misses are the permission-denied task, which calls no tool
+at all, so 31/31 = 100% of the records that reached a tool. Period questions cost THB 0.336 per
+successful answer at 0.94 provider calls each (the lane serves 15 of the 17 that ran). The existing
+business reads keep success 22/22 and routing 22/22; their lane hits are 14/22 against the R5
+after-run's 16/22, entirely because `text-read-daily-closing` returned `no_prepared_plan` in both
+passes — the two-requests-in-one message §14 already recorded as a plan-shape miss.
+
+Spend: R5 16.52 + H4 smoke 0.01 + a first attempt stopped at 29.07 (the harness was not forwarding
+period-only candidates, so it could not measure P-06 — recorded in the ledger with that reason) +
+40.23 = **THB 85.83 of the owner's THB 100 R5 phase guard**. Ledger
+`<scratch>/agent-h2/spend-ledger.jsonl`; detail in
+[research §15](../research/line-ai-intake-cost-benchmark-2026-09-17.md#15-h4-period-replay--the-tool-gets-the-period-the-resolver-read-wave-2-h4-2026-09-18).
+
+### Findings worth carrying
+
+- **A period is a value candidate too.** Both producers gated the `valueCandidates` payload on amounts
+  and dates, so "ยอดขายเมื่อวาน" reached the gateway with nothing to select from. Fixed in the webhook
+  and in the benchmark; any future producer needs the same three-way check.
+- **The prepared lane's exact-equality check needed no change at all.** Widening what is *backed*
+  (candidate boundaries, today, the current month) was enough to turn "เดือนที่แล้ว" from a guaranteed
+  fallback into a one-call deterministic answer, without touching a single security rule.
+- **A timed-out provider call is metered at 200,000 input tokens** (`usageEstimated`), so one 15-second
+  timeout cost THB 21.44 — more than the other 39 records together. Safe for a guard, but never compare
+  per-task cost across runs without checking for one.
+- **The agentic path states the period through a fact, not a template.** `periodFact` puts
+  `ช่วงข้อมูล` in the grounded facts and the deterministic draft, but the final sentence there is still
+  model-composed, so the WORD is guaranteed only on the prepared lane. Making it deterministic on both
+  would mean appending a period line the model may already have written.
+
+Next: controller review of this diff, then the PR pair and the strict CI chain; P-07 after a UAT
+deploy (ask the five period questions on real LINE).

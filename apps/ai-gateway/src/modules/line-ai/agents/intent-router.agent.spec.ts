@@ -759,8 +759,11 @@ describe('LINE intake router prompt contract – instructs the bounded preparedP
     assert.match(P, /never invent a tool, subject, agent, date, id, scope, or permission/);
     assert.match(P, /field NAMES listed in that tool's catalog requiredInputFields\/optionalInputFields/);
     assert.match(P, /NEVER include a branch, company, tenant, location, scope, or permission field/);
-    assert.match(P, /a date ONLY as a candidate isoDate/);
-    assert.match(P, /use input \{\} so the tool applies its default period/);
+    assert.match(P, /a day ONLY as a candidate isoDate/);
+    // Period-resolution spec §3.2: a period is COPIED from valueCandidates.periods, never computed.
+    assert.match(P, /a PERIOD only by copying one valueCandidates\.periods entry/);
+    assert.match(P, /NEVER compute a date, a month end, a week boundary or an era yourself/);
+    assert.match(P, /use input \{\} so the tool applies its default \(current month; daily closing: today\)/);
   });
 
   it('keeps casual/capability outer UNSUPPORTED with a zero-tool inner plan, and gives an exact parser-valid refusal intent', () => {
