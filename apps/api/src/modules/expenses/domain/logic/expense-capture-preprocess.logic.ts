@@ -57,7 +57,8 @@ export const EXPENSE_CAPTURE_PREPROCESS_LIMITS = Object.freeze({
   scannedPageTextChars: 20,
 } as const);
 
-export type ExpenseCapturePreprocessLimits = typeof EXPENSE_CAPTURE_PREPROCESS_LIMITS;
+/** Widened from the frozen table on purpose: a test (and a future per-tenant tune) overrides one. */
+export type ExpenseCapturePreprocessLimits = { -readonly [K in keyof typeof EXPENSE_CAPTURE_PREPROCESS_LIMITS]: number };
 
 export type CaptureChunkImage = {
   bytes: Buffer;

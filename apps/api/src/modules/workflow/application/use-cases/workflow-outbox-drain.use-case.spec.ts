@@ -100,6 +100,10 @@ describe('DrainWorkflowOutboxUseCase', () => {
       // §15.6 ops alerts ride the same drain. Claimed here, the operators would simply never be
       // told the day the machine stopped approving or a customer's push failed.
       'notify.signup_ops_alert.requested',
+      // The capture read's terminal notification: the web polls `read-status` and the LINE
+      // wave drains this itself. Published here it would count as delivered while the shop
+      // was never told its file had been read (contract appendix §4.5).
+      'expense.capture_read.finished',
     ]);
   });
 

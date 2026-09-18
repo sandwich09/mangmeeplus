@@ -197,7 +197,12 @@ export class ExpenseCaptureReadRunnerService {
     const plan = await planCapturePreprocessing(object.bytes, attachment.mimeType, {
       maxPages: this.config.expenseCapturePdfMaxPages,
     });
-    if (plan.failure) return { status: 'FAILED', errorCode: plan.failure };
+    if (plan.failure) {
+      // D09 (§2.2): a file we cannot open is a file whose electronic origin cannot be checked
+      // either — `UNAVAILABLE`, never the `NOT_CHECKED` of a file nobody has looked at yet.
+      await this.markElectronicUnavailable(job, owner);
+      return { status: 'FAILED', errorCode: plan.failure };
+    }
 
     let manifest = buildManifest(plan);
     // The manifest is durable BEFORE the first provider call, so a crash mid-read still tells the
@@ -452,6 +457,24 @@ export class ExpenseCaptureReadRunnerService {
       return false;
     }
     return true;
+  }
+
+  /** Encrypted or corrupt bytes: say so on the job manifest AND on the group's file row (§2.2). */
+  private async markElectronicUnavailable(job: CaptureReadJobRow, owner: string): Promise<void> {
+    const manifest: ExpenseCaptureReadManifest = {
+      ...emptyExpenseCaptureReadManifest(),
+      electronicVerification: { status: 'UNAVAILABLE' },
+    };
+    await this.capture.updateJobFenced({ jobId: job.id, leaseOwner: owner, data: { manifestJson: manifest as never } });
+    if (!job.fileId) return;
+    try {
+      await this.capture.client.expenseCaptureFile.updateMany({
+        where: { companyId: job.companyId, id: job.fileId },
+        data: { electronicVerificationJson: { status: 'UNAVAILABLE', method: null, checkedAt: null } },
+      });
+    } catch (error) {
+      this.logger.warn({ msg: 'capture.read.electronic_state_not_stored', jobId: job.id, ...safeLineErrorDetails(error) });
+    }
   }
 
   /** Checkpoint + manifest + call count in ONE fenced write, after every chunk and window. */

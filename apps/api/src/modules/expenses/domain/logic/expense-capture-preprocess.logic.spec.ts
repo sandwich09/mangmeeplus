@@ -16,6 +16,7 @@ import {
   captureTileRects,
   planCaptureSinglePageChunk,
   planCapturePreprocessing,
+  type ExpenseCapturePreprocessLimits,
 } from './expense-capture-preprocess.logic';
 
 /** A native-text PDF: header on page 1, rows on every page, a total on the last one. */
@@ -60,7 +61,7 @@ function encrypt(bytes: Buffer): Buffer {
   return Buffer.from(bytes.toString('latin1').replace('/Type /XRef', '/Type /XRef\n/Encrypt 1 0 R'), 'latin1');
 }
 
-const plan = (bytes: Buffer, mimeType = 'application/pdf', maxPages = 60, limits?: typeof EXPENSE_CAPTURE_PREPROCESS_LIMITS) =>
+const plan = (bytes: Buffer, mimeType = 'application/pdf', maxPages = 60, limits?: ExpenseCapturePreprocessLimits) =>
   planCapturePreprocessing(bytes, mimeType, { maxPages, ...(limits ? { limits } : {}) });
 
 describe('capture preprocessing — declared bounds', () => {

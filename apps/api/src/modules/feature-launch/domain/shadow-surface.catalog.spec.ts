@@ -166,14 +166,25 @@ describe('per-family shadow coverage', () => {
     assert.deepEqual(expectedShadowSurfaces('expense_auto_post', 'DEFAULT'), ['expense.auto_post.drain']);
   });
 
-  it('closes the seven FIN producer families on outbox.drain alone (ruling OQ-2)', () => {
+  it('closes six of the seven FIN producer families on outbox.drain alone (ruling OQ-2)', () => {
     for (const gateKey of [
-      'double_entry_ledger', 'expenses', 'sales_documents', 'thai_tax',
+      'double_entry_ledger', 'sales_documents', 'thai_tax',
       'procurement', 'reimbursement', 'bank_reconciliation',
     ]) {
       assert.equal(shadowCoverageComplete(gateKey), true, gateKey);
       assert.deepEqual(expectedShadowSurfaces(gateKey, 'DEFAULT'), ['outbox.drain'], gateKey);
     }
+  });
+
+  it('expects the capture read drain on top of the producer row for expenses', () => {
+    // `expenses` is the one FIN family that owns an async surface of its own: the bounded PDF
+    // reader (contract appendix §4.5) is a worker-triggered scanner, instrumented on the API side
+    // where the claim happens, so its evidence must be expected as well as the producer row's.
+    assert.equal(shadowCoverageComplete('expenses'), true);
+    assert.deepEqual(expectedShadowSurfaces('expenses', 'DEFAULT'), [
+      'expense.capture_read.drain',
+      'outbox.drain',
+    ]);
   });
 
   it('expects every workflow_automation surface on its DEFAULT route', () => {

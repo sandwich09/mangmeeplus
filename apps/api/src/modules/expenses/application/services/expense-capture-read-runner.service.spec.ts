@@ -65,9 +65,12 @@ async function build(options: {
   applyResult?: Record<string, unknown>;
   expense?: Record<string, unknown> | null;
   maxPages?: number;
+  corruptBytes?: boolean;
   jobOver?: Record<string, unknown>;
 } = {}) {
-  const bytes = await textPdf(options.pages ?? 1);
+  const bytes = options.corruptBytes
+    ? Buffer.from('%PDF-1.7\nthis file cannot be opened')
+    : await textPdf(options.pages ?? 1);
   const ownerType = options.ownerType ?? 'EXPENSE';
   const job: any = {
     id: 'job-1', companyId: 'co-1', ownerType,
@@ -84,6 +87,7 @@ async function build(options: {
   };
   const writes: Array<{ owner: string; data: Record<string, unknown>; accepted: boolean }> = [];
   const observationsStored: any[] = [];
+  const fileWrites: any[] = [];
   const outbox: any[] = [];
   const released: any[] = [];
   const admissions: any[] = [];
@@ -95,6 +99,7 @@ async function build(options: {
         updateMany: async () => ({ count: 1 }),
         findFirst: async () => observationsStored.at(-1) ?? null,
       },
+      expenseCaptureFile: { updateMany: async (input: any) => { fileWrites.push(input.data); return { count: 1 }; } },
     },
     updateJobFenced: async (input: any) => {
       const accepted = input.leaseOwner === leaseOwner;
@@ -205,7 +210,7 @@ async function build(options: {
   );
 
   return {
-    runner, job, writes, outbox, released, admissions, observationsStored,
+    runner, job, writes, outbox, released, admissions, observationsStored, fileWrites,
     readCalls, extractCalls, applyCalls,
     loseLease: () => { leaseOwner = 'someone-else'; },
     restore: () => undefined,
@@ -390,6 +395,19 @@ describe('capture read runner — boundaries', () => {
       assert.equal(terminal(harness).status, 'FAILED');
       assert.equal(terminal(harness).lastErrorCode, 'source_changed');
       assert.equal(harness.readCalls.length, 0);
+    } finally { harness.restore(); }
+  });
+
+  it('reports an unreadable file as electronically UNCHECKABLE, not merely unchecked', async () => {
+    // D09 baseline has two states, and a file nobody can open is the second one: the UI must never
+    // show "ยังไม่ได้ตรวจสอบ" for bytes that cannot be opened at all (appendix §2.2).
+    harness = await build({ ownerType: 'CAPTURE_GROUP', corruptBytes: true });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      assert.equal(terminal(harness).lastErrorCode, 'corrupt_pdf');
+      const manifest = harness.writes.find((write) => (write.data as any).manifestJson)!.data as any;
+      assert.equal(manifest.manifestJson.electronicVerification.status, 'UNAVAILABLE');
+      assert.equal(harness.fileWrites[0]!.electronicVerificationJson.status, 'UNAVAILABLE');
     } finally { harness.restore(); }
   });
 
