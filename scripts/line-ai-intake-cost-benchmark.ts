@@ -305,10 +305,29 @@ const STUB_DATA: Record<string, unknown> = {
       { key: 'cat-office-03', label: 'ค่าอุปกรณ์สำนักงาน', amount: '12000.00' },
     ],
   },
+  // Real `ExpenseGetDailyClosingTool` shape (apps/api .../erp-expense-daily-closing.use-case.ts): the
+  // civil day, the tool's timezone, the branch scope, and the five per-currency buckets with their own
+  // item envelopes. The old `businessDate`/`totals` keys are not what that tool returns, so the
+  // specialist refused every daily-closing result and the compiled F3 family could never verify one
+  // (seen in the H4 replay: `ปิดยอดเมื่อวานซืน` reached the tool with the right day and still answered
+  // with the honest terminal). Same magnitudes as the old keys.
   'expense.get_daily_closing': {
-    businessDate: '2026-09-17',
-    totals: { paidAmount: '3120.00', unpaidAmount: '890.00', overdueAmount: '0.00' },
-    reviewItems: [{ id: 'exp-2', reason: 'NEEDS_REVIEW', amount: '890.00' }],
+    date: '2026-09-17',
+    timezone: 'Asia/Bangkok',
+    scope: { kind: 'all_branches' },
+    occurredToday: {
+      items: { total: 4, items: [], remaining: 0 },
+      totals: [{ currency: 'THB', total: '4010.0000', count: 4 }],
+      paid: [{ currency: 'THB', total: '3120.0000', count: 3 }],
+      outstanding: [{ currency: 'THB', total: '890.0000', count: 1 }],
+    },
+    dueEndOfDay: { items: { total: 0, items: [], remaining: 0 }, totals: [] },
+    overdue: { items: { total: 0, items: [], remaining: 0 }, totals: [] },
+    unscheduledOutstanding: { items: { total: 1, items: [], remaining: 0 }, totals: [{ currency: 'THB', total: '890.0000', count: 1 }] },
+    submittedToday: { count: 4 },
+    pendingReview: { count: 1 },
+    evidenceBlockers: { count: 1 },
+    duplicateRisks: { count: 0 },
   },
   'expense.get_detail': { id: 'exp-9001', expenseDate: '2026-09-17', vendorName: 'ร้านทดสอบ', amount: '1284.00', lines: [{ description: 'อาหาร', amount: '1200.00' }, { description: 'ค่าบริการ', amount: '84.00' }] },
   'expense.explain_record': {
