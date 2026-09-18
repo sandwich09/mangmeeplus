@@ -484,6 +484,32 @@ describe('facts edit', () => {
     assert.deepEqual(audits.at(-1).metadataJson.fields, ['item.amount']);
   });
 
+  it('W04a gap: a group created by CONVERSION has no file, and its facts are still editable', async () => {
+    const app = build({ observations: null });
+    // §3.1: the converted expense's facts live under `expenseId` with `fileId` null, so the key the
+    // assembled view hands the page back is `expense:<id>` — the id the patch must target by.
+    app.capture.observations.push({
+      id: 'obs-converted', companyId: 'co-1', groupId: 'g-1', fileId: null, expenseId: 'exp-1',
+      version: 1, source: 'EXPENSE_FACTS', basedOnVersion: null, stale: false, payloadJson: facts(),
+    });
+
+    const result = await app.patchFacts.execute(ctx(), 'g-1', {
+      fileId: 'expense:exp-1', patch: { items: [{ id: '1:2', amount: '55.00' }] }, expectedRevision: 1,
+    });
+    assert.equal(result.version, 2);
+    const written = app.capture.observations.at(-1)!;
+    assert.equal(written.source, 'HUMAN');
+    assert.equal(written.fileId, null, 'no file to attribute it to');
+    assert.equal(written.expenseId, 'exp-1', 'the expense is what identifies these facts');
+    assert.equal(written.payloadJson.items[1]!.amount, '55.00');
+
+    // And the version really is per expense, not shared across every fileless row in the company.
+    const second = await app.patchFacts.execute(ctx(), 'g-1', {
+      fileId: 'expense:exp-1', patch: { items: [{ id: '1:1', amount: '90.00' }] }, expectedRevision: result.revision,
+    });
+    assert.equal(second.version, 3);
+  });
+
   it('A48 — the edit invalidates the preview and the acceptance built on the old numbers', async () => {
     const app = build();
     const preview = await reviewAll(app);
