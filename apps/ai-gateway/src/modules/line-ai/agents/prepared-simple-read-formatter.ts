@@ -144,6 +144,20 @@ function plural(count: number, word: string): string {
   return `${groupThousands(String(count))} ${word}${count === 1 ? '' : 's'}`;
 }
 
+/** A count a family may state: a safe non-negative integer the tool itself totalled — never a float,
+ *  never a string, so a re-typed or partially-parsed field is refused instead of rendered. */
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+/** A money value `moneyText` can render EXACTLY: a finite JS number or a plain decimal string. Anything
+ *  else (null, an object, a formatted phrase) means the family did not get the number it promises. */
+function isMoney(value: unknown): value is string | number {
+  return typeof value === 'number'
+    ? Number.isFinite(value)
+    : typeof value === 'string' && PLAIN_DECIMAL.test(value.replace(/,/g, ''));
+}
+
 /** The specialist's permission-checked source: its reference, the `Source:` line, and the deep link that
  *  is the answer's next action. Taken from the fact the tool grounded — never invented here. */
 function groundedSource(sourceRef: SourceRef | undefined, english: boolean): { sourceRefs: SourceRef[]; webLinks: LineAiWebLink[]; sourceText: string } {
@@ -408,6 +422,144 @@ function formatExpenseDailyClosingSingleMetric(output: SpecialistOutput, ctx: Pr
 }
 
 /**
+ * F4 — `tax.get_vat_summary` as one filing metric ("VAT เดือนนี้ต้องยื่นเท่าไหร่"). From the tool's real
+ * result it states the period key the tool actually read, the net amount with the SIDE it falls on (a
+ * net below zero is input-heavy, never printed as a negative "ต้องนำส่ง"), both sides with the ACTIVE
+ * event count behind them, the raw period status uninterpreted (so an already-FILED period cannot read
+ * as "still to pay"), source, as-of, and the REQUIRED not-certified line — this is a read summary, not a
+ * filed return, and the tool carries the same disclaimer. The currency must be stated by the tool: the
+ * unit is never assumed. The tool's no-data branch returns a message instead of amounts, so it yields
+ * `unverified` and the lane answers with the honest terminal rather than a zero nobody computed.
+ */
+function formatTaxVatSummarySingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'tax.get_vat_summary');
+  const periodKey = data?.['periodKey'];
+  const currency = data?.['currency'];
+  const net = data?.['netVat'];
+  const vatOutput = data?.['vatOutput'];
+  const vatInput = data?.['vatInput'];
+  const events = data?.['eventCount'];
+  if (typeof periodKey !== 'string' || !periodKey.trim()) return { kind: 'unverified' };
+  if (typeof currency !== 'string' || !currency.trim()) return { kind: 'unverified' };
+  if (!isMoney(net) || !isMoney(vatOutput) || !isMoney(vatInput) || !isCount(events)) return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const unit = !english && currency === 'THB' ? 'บาท' : currency;
+  const negative = typeof net === 'number' ? net < 0 : net.trim().startsWith('-');
+  const magnitude = typeof net === 'number' ? Math.abs(net) : net.trim().replace(/^-/, '');
+  const amount = `${moneyText(magnitude)} ${unit}`;
+  const headline = english
+    ? `VAT ${periodKey}: ${negative ? `input VAT exceeds output VAT by ${amount}` : `${amount} to remit`}`
+    : `VAT งวด ${periodKey}: ${negative ? `ภาษีซื้อมากกว่าภาษีขาย ${amount}` : `ต้องนำส่ง ${amount}`}`;
+  const sidesText = english
+    ? `\nOutput VAT ${moneyText(vatOutput)} ${unit} · Input VAT ${moneyText(vatInput)} ${unit} (${plural(events, 'record')})`
+    : `\nภาษีขาย ${moneyText(vatOutput)} ${unit} · ภาษีซื้อ ${moneyText(vatInput)} ${unit} (${groupThousands(String(events))} รายการ)`;
+  const status = data?.['status'];
+  const statusText = typeof status === 'string' && status.trim()
+    ? (english ? `\nPeriod status: ${status}` : `\nสถานะงวด: ${status}`)
+    : '';
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  const certifyText = english
+    ? '\n(Not certified by an accountant — check before filing)'
+    : '\n(ยังไม่ผ่านการรับรองจากนักบัญชี กรุณาตรวจสอบก่อนยื่นแบบ)';
+
+  const replyText = `${headline}${sidesText}${statusText}${sourceText}${asOfLine(output.asOf, english)}${certifyText}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
+/**
+ * F5 — `inventory.list_low_stock` as the at-or-below-reorder-point list ("สินค้าอะไรใกล้หมดบ้าง"). The
+ * tool returns the COMPLETE `count` of items at or below their reorder point plus a bounded ten-row
+ * preview whose rows carry ids, quantities and location ids only — no product name, sku or unit. So the
+ * answer states the grounded count with the low-stock report as source and link and names NO product: a
+ * name is not in this result to state, and a bubble of product ids would say nothing a shop owner can use.
+ */
+function formatInventoryLowStockList(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'inventory.list_low_stock');
+  const count = data?.['count'];
+  if (!isCount(count)) return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  const headline = english
+    ? `Low stock: ${plural(count, 'item')} at or below the reorder point`
+    : `สินค้าใกล้หมด (ถึงหรือต่ำกว่าจุดสั่งซื้อ): ${groupThousands(String(count))} รายการ`;
+
+  const replyText = `${headline}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
+/**
+ * F6 — `procurement.get_ap_outstanding` as one unpaid-supplier metric ("ยอดค้างจ่ายซัพพลายเออร์เท่าไหร่").
+ * The tool returns its own aging cut-off day, the complete outstanding total (no page cap upstream) and
+ * the number of suppliers behind it; the answer states the total for that stated day with the supplier
+ * count, source, as-of and link. The top-supplier preview is NOT printed: its `supplier` field is the
+ * supplier id, not a display name (`ap-reporting.use-case.ts`), so naming one would put an id in the bubble.
+ */
+function formatApOutstandingSingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'procurement.get_ap_outstanding');
+  const asOfDate = data?.['asOfDate'];
+  const total = data?.['totalOutstanding'];
+  const suppliers = data?.['supplierCount'];
+  if (typeof asOfDate !== 'string' || !CIVIL_DATE.test(asOfDate)) return { kind: 'unverified' };
+  if (!isMoney(total) || !isCount(suppliers)) return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  const headline = english
+    ? `Unpaid supplier bills as of ${asOfDate}: ${moneyText(total)} THB (${plural(suppliers, 'supplier')})`
+    : `ยอดค้างจ่ายเจ้าหนี้ ณ ${asOfDate}: ${moneyText(total)} บาท (เจ้าหนี้ ${groupThousands(String(suppliers))} ราย)`;
+
+  const replyText = `${headline}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
+/**
+ * F7 — `crm.get_customer_summary` as this period's new-customer read ("เดือนนี้มีลูกค้าใหม่กี่ราย"). The
+ * tool returns the day the new-customer window starts (the validated `newSince`, or the current month by
+ * default) with the new / total / active counts and the two basis flags for `total`. The answer states
+ * the new count for that stated day, the total with its active share, and the tool's OWN basis for that
+ * total — printed because the number means different things with and without archived and merged records.
+ * No customer name, id or contact ever reaches the bubble: this result carries counts only.
+ */
+function formatCrmCustomerSummaryList(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'crm.get_customer_summary');
+  const since = data?.['newCustomersSince'];
+  const created = data?.['newCustomers'];
+  const total = data?.['total'];
+  const active = data?.['active'];
+  if (typeof since !== 'string' || !CIVIL_DATE.test(since)) return { kind: 'unverified' };
+  if (!isCount(created) || !isCount(total) || !isCount(active)) return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  const headline = english
+    ? `New customers since ${since}: ${plural(created, 'customer')}`
+    : `ลูกค้าใหม่ตั้งแต่ ${since}: ${groupThousands(String(created))} ราย`;
+  const totalText = english
+    ? `\nTotal ${plural(total, 'customer')} (${groupThousands(String(active))} active)`
+    : `\nลูกค้าทั้งหมด ${groupThousands(String(total))} ราย (ใช้งานอยู่ ${groupThousands(String(active))} ราย)`;
+  const includesArchived = data?.['totalIncludesArchived'];
+  const excludesMerged = data?.['totalExcludesMerged'];
+  const basis = [
+    includesArchived === true ? (english ? 'includes archived' : 'นับรวมลูกค้าที่เก็บเข้าคลัง')
+      : includesArchived === false ? (english ? 'excludes archived' : 'ไม่รวมลูกค้าที่เก็บเข้าคลัง') : undefined,
+    excludesMerged === true ? (english ? 'excludes merged records' : 'ไม่รวมรายการที่ถูกรวมบัญชี')
+      : excludesMerged === false ? (english ? 'includes merged records' : 'นับรวมรายการที่ถูกรวมบัญชี') : undefined,
+  ].filter(Boolean);
+  const basisText = basis.length > 0
+    ? (english ? `\n(Total: ${basis.join(' · ')})` : `\n(ยอดรวม: ${basis.join(' · ')})`)
+    : '';
+
+  const replyText = `${headline}${totalText}${basisText}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
+/**
  * Authoritative deterministic terminal copy for a prepared read that did NOT reach a verified success —
  * an unavailable/error/failed source, or a success the compiled formatter could not verify. It states an
  * honest outcome with NO fabricated facts, numbers, source, or completion, and instantiates no composer /
@@ -430,6 +582,17 @@ const COMPILED_FORMATTERS: ReadonlyMap<string, (output: SpecialistOutput, ctx: P
     [preparedFamilyKey('expense.list_recent', 'single_metric'), formatExpenseListRecentSingleMetric],
     [preparedFamilyKey('accounting.get_summary', 'list'), formatAccountingSummaryList],
     [preparedFamilyKey('expense.get_daily_closing', 'single_metric'), formatExpenseDailyClosingSingleMetric],
+    [preparedFamilyKey('tax.get_vat_summary', 'single_metric'), formatTaxVatSummarySingleMetric],
+    [preparedFamilyKey('inventory.list_low_stock', 'list'), formatInventoryLowStockList],
+    // `answerShape` is untrusted advice that selects a renderer and nothing else, and both read shapes of
+    // these two questions have the SAME verified deterministic answer ("ยอดค้างจ่ายเท่าไหร่" vs "เจ้าหนี้ราย
+    // ไหนค้าง", "ลูกค้าใหม่กี่ราย" vs "ลูกค้าใหม่มีใครบ้าง"). Registering both keys therefore adds no new
+    // copy and no new authority; it only stops the lane from missing because the router advised the other
+    // shape (spec §6.2 already lists AP as single_metric OR list).
+    [preparedFamilyKey('procurement.get_ap_outstanding', 'single_metric'), formatApOutstandingSingleMetric],
+    [preparedFamilyKey('procurement.get_ap_outstanding', 'list'), formatApOutstandingSingleMetric],
+    [preparedFamilyKey('crm.get_customer_summary', 'single_metric'), formatCrmCustomerSummaryList],
+    [preparedFamilyKey('crm.get_customer_summary', 'list'), formatCrmCustomerSummaryList],
   ]);
 
 /** The exact set of families that have a compiled formatter (before operator narrowing). */

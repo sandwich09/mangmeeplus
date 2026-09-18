@@ -135,6 +135,13 @@ const PROD_FLAGS = {
     'expense.list_recent::single_metric',
     'accounting.get_summary::list',
     'expense.get_daily_closing::single_metric',
+    // Wave 2 R5 (spec §6.2), same default as deploy.sh in both environments since 2026-09-18.
+    'tax.get_vat_summary::single_metric',
+    'inventory.list_low_stock::list',
+    'procurement.get_ap_outstanding::single_metric',
+    'procurement.get_ap_outstanding::list',
+    'crm.get_customer_summary::single_metric',
+    'crm.get_customer_summary::list',
   ],
 } as const;
 
@@ -316,9 +323,24 @@ const STUB_DATA: Record<string, unknown> = {
   'accounting.list_recent_documents': { total: 2, items: [{ id: 'doc-1', kind: 'INVOICE', amount: '12000.00' }] },
   'accounting.get_document_detail': { id: 'doc-1', kind: 'INVOICE', amount: '12000.00', lines: [{ description: 'บริการ', amount: '12000.00' }] },
   'accounting.get_receivable_summary': { outstandingAmount: '86000.00', overdueAmount: '12000.00' },
-  'procurement.get_ap_outstanding': { outstandingAmount: '124500.00', overdueAmount: '18200.00', supplierCount: 6 },
+  // Real `ProcurementApOutstandingTool` shape (apps/api .../erp-business-tools.use-case.ts): the aging
+  // cut-off day, the Decimal-string total, the supplier count, and a preview keyed by supplier ID. The
+  // previous `outstandingAmount`/`overdueAmount` keys are not what that tool returns, so the compiled AP
+  // family could never verify them — same magnitudes, correct field names.
+  'procurement.get_ap_outstanding': {
+    asOfDate: '2026-09-17', totalOutstanding: '124500.0000', supplierCount: 6,
+    topSuppliers: [{ supplier: 'sup-1', totalOutstanding: '48200.0000' }, { supplier: 'sup-2', totalOutstanding: '31100.0000' }],
+  },
   'procurement.get_summary': { openPurchaseOrders: 3, totalAmount: '96000.00' },
-  'tax.get_vat_summary': { periodKey: '2026-08', outputVat: '35840.00', inputVat: '29960.00', payable: '5880.00' },
+  // Real `TaxGetVatSummaryTool` shape (apps/api .../erp-tax-tools.use-case.ts): `vatOutput`/`vatInput`/
+  // `netVat` as 2-decimal strings from `displayMoney`, the period status, the ACTIVE event count, the
+  // currency, and the tool's own disclaimer. Same magnitudes as the old outputVat/inputVat/payable keys.
+  'tax.get_vat_summary': {
+    periodKey: '2026-08', status: 'OPEN',
+    vatOutput: '35840.00', vatInput: '29960.00', netVat: '5880.00',
+    eventCount: 214, currency: 'THB',
+    disclaimer: 'ข้อมูลสรุปนี้ยังไม่ผ่านการรับรองจากนักบัญชี กรุณาตรวจสอบและยืนยันก่อนยื่นแบบ',
+  },
   'tax.get_upcoming_tax_obligations': { count: 2, items: [{ code: 'PP30', dueDate: '2026-09-23' }] },
   'tax.get_wht_summary': { periodKey: '2026-08', amount: '4200.00' },
   'reports.get_monthly_report_summary': { periodKey: '2026-09', revenue: '512000.00', expense: '427800.00' },
