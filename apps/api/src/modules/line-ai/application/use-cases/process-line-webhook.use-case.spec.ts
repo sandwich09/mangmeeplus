@@ -868,13 +868,23 @@ describe('toAiTurnIntent (free-form model intent → AiTurn enum)', () => {
 describe('ProcessLineWebhookUseCase', () => {
   it('answers trial pricing for linked and unlinked users with durable delivery and zero model calls', async () => {
     for (const identityUserId of ['user-1', null]) {
-      for (const messageText of ['หลังจากทดลองใข้ฟรีเสียกี่บาท', 'หลังจากทดลองใช้แอพฟรี', 'เสียค่าบริการไหม']) {
+      for (const messageText of ['หลังจากทดลองใข้ฟรีเสียกี่บาท', 'หลังจากทดลองใช้แอพฟรี', 'เสียค่าบริการไหม',
+        'หลังหมดโปรฟรีแล้วเป็นยังไงต่อ', 'หลังจากทดลองฟรีเสียกี่บาท', 'หลังโปรฟรีหมดแล้วทำยังไงต่อ']) {
         const { prisma, updates, turnOutcomeWrites, identityQueries } = makePrisma({ identityUserId });
-        const { useCase, replies, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma, {
+        const { useCase, replies, sentMessages, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma, {
           config: { lineAiTerminalOutcomeReplayEnabled: true },
         });
         await useCase.execute({ ...BASE_EVENT, messageText });
         assert.match(replies[0] ?? '', /เลือกซื้อแพ็กเกจและยืนยันการชำระเงิน/);
+        const card = sentMessages[0];
+        assert.equal(card.type, 'flex', 'trial policy must use the standard assistant card');
+        assert.equal(card.contents.header.contents[0].text, 'ทดลองใช้ฟรีและการใช้งานต่อ');
+        assert.match(JSON.stringify(card.contents.body), /ไม่เรียกเก็บเงินอัตโนมัติ/);
+        assert.deepEqual(card.contents.footer.contents[0].action, {
+          type: 'uri', label: 'ดูแพ็กเกจ', uri: 'https://official.mangmeeplus.com/',
+        });
+        assert.match(card.canonicalText, /https:\/\/official\.mangmeeplus\.com\//, 'text fallback retains the package link');
+        assert.equal(card.quickReply.items[0].action.text, 'ติดต่อเจ้าหน้าที่');
         assert.equal(replies.length, 1);
         assert.equal(turnOutcomeWrites.length, 1);
         assert.equal(identityQueries.length, 0, 'public policy must not read private account facts');

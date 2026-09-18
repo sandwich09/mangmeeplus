@@ -2,6 +2,7 @@ import { AI_BUDGET_REFUSAL_CODES, type AiBudgetScope, type LineAiAnswerCard, typ
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { lineMessagePreview as preview } from './line-message-preview.logic';
 import {
+  buildTrialPricingReply,
   EMPLOYEE_DOOR_COMMAND,
   PACKAGE_CHANGE_COMMAND,
   STAFF_CONTACT_COMMAND,
@@ -119,6 +120,23 @@ function bubble(
         })),
       },
     } : {}),
+  };
+}
+
+/** Public policy uses the same card as assistant answers, without a tenant or model lookup. */
+export function buildTrialPricingCardMessage(messageText: string): LineReplyMessage | null {
+  const reply = buildTrialPricingReply(messageText);
+  if (!reply || reply.type !== 'text') return null;
+  const packageUrl = 'https://official.mangmeeplus.com/';
+  return {
+    type: 'flex',
+    altText: preview(reply.text, 400),
+    canonicalText: reply.text,
+    quickReply: reply.quickReply,
+    contents: bubble({
+      title: 'ทดลองใช้ฟรีและการใช้งานต่อ',
+      text: reply.text.replace(packageUrl, 'ปุ่มดูแพ็กเกจด้านล่าง'),
+    }, undefined, '', [{ label: 'ดูแพ็กเกจ', uri: packageUrl }]),
   };
 }
 
