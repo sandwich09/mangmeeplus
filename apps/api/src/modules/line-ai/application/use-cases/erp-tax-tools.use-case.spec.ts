@@ -261,3 +261,37 @@ describe('item-11B LINE AI tax adapters', () => {
     assert.equal(result.sourceRefs[0]?.entityId, undefined);
   });
 });
+
+describe('tax.get_vat_summary period input (period-resolution spec §3.3, P-04)', () => {
+  const vatPermissions = ['tax.period.read', 'tax.event.read'];
+  function repoFor(seen: string[]) {
+    return {
+      findPeriod: async (_companyId: string, _formType: string, periodKey: string) => {
+        seen.push(periodKey);
+        return { id: `period-${periodKey}`, periodKey, status: 'OPEN' };
+      },
+      findEventsByPeriod: async () => [
+        { eventType: 'VAT_OUTPUT', taxAmount: '700.00' },
+        { eventType: 'VAT_INPUT', taxAmount: '200.00' },
+      ],
+    } as any;
+  }
+  const currentPeriodKey = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }).slice(0, 7);
+
+  it('reads the period the caller states, and says which period it read', async () => {
+    const seen: string[] = [];
+    const result = await new TaxGetVatSummaryTool(repoFor(seen)).execute({ ...baseCtx, permissions: vatPermissions }, { periodKey: '2026-08' });
+    assert.deepEqual(seen, ['2026-08']);
+    assert.equal((result.data as Record<string, unknown>)['periodKey'], '2026-08');
+    assert.equal((result.data as Record<string, unknown>)['netVat'], '500.00');
+  });
+
+  it('defaults to the CURRENT period, and replaces a malformed key rather than passing it through', async () => {
+    const seen: string[] = [];
+    const tool = new TaxGetVatSummaryTool(repoFor(seen));
+    await tool.execute({ ...baseCtx, permissions: vatPermissions }, {});
+    await tool.execute({ ...baseCtx, permissions: vatPermissions }, { periodKey: 'เดือนที่แล้ว' });
+    await tool.execute({ ...baseCtx, permissions: vatPermissions }, { periodKey: '2026-08-01' });
+    assert.deepEqual(seen, [currentPeriodKey(), currentPeriodKey(), currentPeriodKey()]);
+  });
+});

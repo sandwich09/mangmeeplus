@@ -570,7 +570,9 @@ export class ListCrmCustomersUseCase {
 export class GetCrmCustomerSummaryUseCase {
   constructor(private readonly repo: PrismaCrmRepository) {}
 
-  async execute(ctx: RequestContext, newSince: Date) {
+  /** `newUntil` (exclusive-of-nothing: the instant the window ENDS, inclusive) closes the
+   *  new-customer window. Omitted, the window runs to now, exactly as it always did. */
+  async execute(ctx: RequestContext, newSince: Date, newUntil?: Date) {
     requirePermission(ctx, 'crm.customer.read');
     const access = customerAccessProfile(ctx);
     const hasAllRows = access.operationalAll || access.accountingAll || access.marketingAll;
@@ -579,6 +581,7 @@ export class GetCrmCustomerSummaryUseCase {
       ...(!hasAllRows && { ownerUserId: ctx.userId }),
       ...(ctx.scopes.branchIds ? { branchIds: ctx.scopes.branchIds } : {}),
       newSince,
+      ...(newUntil ? { newUntil } : {}),
     });
   }
 }

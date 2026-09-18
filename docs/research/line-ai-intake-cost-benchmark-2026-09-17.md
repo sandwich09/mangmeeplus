@@ -882,3 +882,120 @@ MODEL_PROVIDER=bedrock AWS_PROFILE=watchdog-bedrock AWS_SDK_LOAD_CONFIG=1 \
   two tools return, so the agentic fact for both is the placeholder
   `ข้อมูลพร้อมแล้ว (ดูรายละเอียดในเว็บแอป)` and the numbers reach the customer only through the model.
   The compiled families remove that dependency for these two questions.
+
+## 15. H4 period replay — the tool gets the period the resolver read (wave 2 H4, 2026-09-18)
+
+Owner-authorised replay of the [period-resolution spec](../specs/line-ai-period-resolution-spec-th.md)
+P-06, on the remaining R5 phase budget. Real Bedrock, corpus **v2**
+(`ae237f275d85a1d8e1be5a44f4325822d6f35d148ef2bac1415a0874f581ab83`), 2 repetitions, THB 33/USD, the
+nine new period tasks plus the eleven business-read tasks of the R5 after-run.
+
+```sh
+cd apps/ai-gateway
+MODEL_PROVIDER=bedrock AWS_PROFILE=watchdog-bedrock AWS_SDK_LOAD_CONFIG=1 \
+  BEDROCK_REGION=ap-southeast-1 BEDROCK_MODEL_ID=global.anthropic.claude-sonnet-4-6 \
+  pnpm exec tsx ../../scripts/line-ai-intake-cost-benchmark.ts --smoke \
+    --max-thb 40 --thb-per-usd 33 --label h4-smoke --out <scratch>/agent-h4/h4-period
+MODEL_PROVIDER=bedrock AWS_PROFILE=watchdog-bedrock AWS_SDK_LOAD_CONFIG=1 \
+  BEDROCK_REGION=ap-southeast-1 BEDROCK_MODEL_ID=global.anthropic.claude-sonnet-4-6 \
+  pnpm exec tsx ../../scripts/line-ai-intake-cost-benchmark.ts \
+    --label h4-period --repetitions 2 --thb-per-usd 33 --max-thb 40 \
+    --only text-period-sales-yesterday,text-period-expense-last-month,text-period-tax-vat-last-month,\
+text-period-crm-last-week,text-period-sales-named-month,text-period-expense-explicit-range,\
+text-period-daily-closing-day-before,text-period-sales-last-year,text-period-sales-last-month-en,\
+text-read-sales-month,text-read-expense-total,text-read-expense-breakdown,text-read-tax-vat,\
+text-read-inventory-low,text-read-daily-closing,text-read-glossary-shorthand,text-read-ap-outstanding,\
+text-read-crm-new-customers,text-read-explain-record,text-denied-read-no-query-permission \
+    --out <scratch>/agent-h4/h4-period2 --ledger <scratch>/agent-h2/spend-ledger.jsonl
+```
+
+Run `h4-period-2026-09-18T10-04-17-532Z`, git `3e65f7a6`. 40 records attempted, 39 completed, **39
+successful, 0 refusals, 0 parse failures, 0 truncations**, routing 97.5% (the single miss is the last
+record, stopped by the spend guard).
+
+### 15.1 Did the tool get the period the resolver read?
+
+The stub ERP client now records the input every tool received per task, and the record carries the
+periods `resolvePeriodCandidates` read from that task's message, so this is a mechanical comparison —
+no judgement, no model.
+
+**31 of 33 records matched (93.9%).** Both misses are the same task,
+`text-denied-read-no-query-permission`, which holds no `line.ai.query` permission and therefore makes
+ZERO tool calls: there is no input to compare. **Of the 31 records that actually called a tool, 31
+matched — 100%.**
+
+| question (new period task) | the resolver read | the tool received |
+| --- | --- | --- |
+| ยอดขายเมื่อวานเท่าไหร่คะ | `day 2026-09-16..2026-09-16` | `sales.get_sales_summary {fromDate:2026-09-16,toDate:2026-09-16}` |
+| ค่าใช้จ่ายเดือนที่แล้วรวมเท่าไหร่คะ | `month 2026-08-01..2026-08-31` | `expense.list_recent {fromDate:2026-08-01,toDate:2026-08-31}` |
+| VAT เดือนที่แล้วยอดเท่าไหร่คะ | `month 2026-08` | `tax.get_vat_summary {periodKey:2026-08}` |
+| สัปดาห์ที่แล้วมีลูกค้าใหม่กี่รายคะ | `week 2026-09-07..2026-09-13` | `crm.get_customer_summary {newSince:2026-09-07,newUntil:2026-09-13}` |
+| ยอดขาย ส.ค. 68 เท่าไหร่คะ | `month 2025-08-01..2025-08-31` | `sales.get_sales_summary {fromDate:2025-08-01,toDate:2025-08-31}` |
+| ค่าใช้จ่าย 1-15 ก.ย. รวมเท่าไหร่คะ | `range 2026-09-01..2026-09-15` | `expense.list_recent {fromDate:2026-09-01,toDate:2026-09-15}` |
+| ปิดยอดเมื่อวานซืนเป็นยังไงบ้างคะ | `day 2026-09-15..2026-09-15` | `expense.get_daily_closing {date:2026-09-15}` |
+| ยอดขายปีที่แล้วเท่าไหร่คะ | `year 2025-01-01..2025-12-31` | `sales.get_sales_summary {fromDate:2025-01-01,toDate:2025-12-31}` |
+| how much did we sell last month? | `month 2026-08-01..2026-08-31` | `sales.get_sales_summary {fromDate:2026-08-01,toDate:2026-08-31}` |
+
+Identical in both passes (the English one ran once; the second was the record the guard stopped).
+`ส.ค. 68` reaching **2025**-08 is the single most valuable line here: the model never converted the
+พ.ศ. year — it copied a candidate the normalizer's existing era rules had already resolved.
+
+The period questions are also CHEAP, because the deterministic lane now serves them: 0.94 provider
+calls per task and **THB 0.336 per successful answer**, against THB 1.569 for the older business
+reads in the same run.
+
+| group | records | successful | routing | calls/task | THB/successful | lane served |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| new period tasks | 18 (1 budget-stopped) | 17/17 | 17/17 | 0.94 | 0.336 | 15 of 17 |
+| existing business reads | 22 | 22/22 | 22/22 | 2.45 | 1.569 (0.660 without one timeout, below) | 14 of 22 |
+
+### 15.2 Regression check on the existing business reads
+
+Success and routing are **22/22 and 22/22, exactly as in the R5 after-run** — no read that worked
+before fails now, and every one still routes to the same intake intent. Two differences are worth
+stating plainly:
+
+- **Lane hits are 14 of 22, not the 16 of 22 of the R5 after-run.** The whole difference is
+  `text-read-daily-closing`, which fell back with `no_prepared_plan` in BOTH passes: the intake router
+  returned no prepared plan at all for it. That corpus message is two requests in one
+  ("วันนี้ปิดร้านต้องเช็คอะไรบ้าง ยังค้างจ่ายอะไรไหม"), which §14 already recorded as a plan-shape miss
+  rather than a gate or formatter defect, so it is the one task in this set whose lane hit is a coin
+  toss from run to run. The other six non-hits are unchanged and by design: `expense.get_breakdown` and
+  `expense.explain_record` have no compiled family (4 records), and the permission-denied task never
+  reaches the lane (2 records).
+- **THB/successful reads 1.569 against 0.750 before**, and all of that gap is ONE infrastructure blip:
+  a `line.loop` call for `text-read-daily-closing` (pass 1) hit `PROVIDER_TIMEOUT` and is metered at the
+  harness's pessimistic `usageEstimated` ceiling of 200,000 input tokens — THB 21.44 for a single call
+  that returned nothing. Replacing that record with its own pass-2 cost gives THB 14.52 for the 22
+  read records, i.e. **0.660 per successful read, better than the 0.750 of the after-run**. The
+  estimate is deliberately conservative for the spend guard and is not evidence of a cost regression.
+
+### 15.3 Spend
+
+| entry | THB |
+| --- | ---: |
+| R5 smoke + after-run (§14) | 16.52 |
+| H4 credential smoke | 0.01 |
+| H4 replay, first attempt — stopped by the implementer (see below) | 29.07 |
+| H4 replay, `h4-period-2026-09-18T10-04-17-532Z` | 40.23 |
+| **phase total against the owner's THB 100 guard** | **85.83** |
+
+The first attempt was stopped after 32 records because it could not measure what it was for: the
+harness's request builders gated `valueCandidates` on amounts and dates alone, so a question whose only
+value is a PERIOD reached the gateway with no candidates at all. Its THB 29.07 is recorded in the
+ledger with that reason; the fix is `hasValueCandidates` in the benchmark, mirroring
+`computeValueCandidates` in the webhook.
+
+### 15.4 Found in the H4 replay, not changed
+
+- **A timed-out provider call is metered at 200,000 input tokens.** `usageEstimated: true` makes one
+  15-second timeout cost more than the other 39 records put together, which is safe for a spend guard
+  but makes any per-task cost comparison fragile. Pre-existing, unrelated to period resolution.
+- **`scripts/line-ai-intake-cost.corpus.spec.ts` is not wired into CI or `pnpm test:harness`.** The
+  corpus hash pin — the thing that keeps a baseline and an after-run comparable — is therefore only
+  checked when somebody runs that file by hand. Pre-existing; it was run by hand for this change.
+- **The daily-closing stub had the pre-R5 shape** (`businessDate`/`totals` instead of
+  `date`/`occurredToday`/`scope`), so the accounting specialist refused every daily-closing result and
+  the compiled F3 family could never verify one. The replay made it visible — "ปิดยอดเมื่อวานซืน" reached
+  the tool with exactly the resolved day and still answered with the honest terminal. Fixed in the
+  harness after the run (fixture only); a future run should serve that family too.

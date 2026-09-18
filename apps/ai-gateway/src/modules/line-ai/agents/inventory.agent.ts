@@ -3,6 +3,7 @@
  * Allowlisted tools: inventory.list_low_stock, inventory.get_stock_balance, inventory.summarize_stock_movements.
  */
 import type { AgentContext } from './agent-types';
+import { periodFact } from './agent-types';
 import type { AgentIntentItem, SpecialistOutput, AgentFact, AgentToolCall } from '@watchdog-bms/contracts';
 import { LINE_TOOL_REGISTRY } from '@watchdog-bms/contracts';
 import type { ErpToolClient } from '../infrastructure/erp-tool.client';
@@ -33,7 +34,15 @@ function hasExplicitShape(data: unknown): boolean {
 export class InventoryAgent {
   constructor(private readonly erpTools: ErpToolClient) {}
 
-  async run(ctx: AgentContext, intentItem: AgentIntentItem, toolBudget: number, toolInput: Record<string, unknown> = {}): Promise<SpecialistOutput> {
+  async run(
+    ctx: AgentContext,
+    intentItem: AgentIntentItem,
+    toolBudget: number,
+    toolInput: Record<string, unknown> = {},
+    /** Period-resolution spec §3.4: the period this turn asked for, in the user's words plus its dates.
+     *  Stock levels are a state as of NOW, so only the movement summary carries a window at all. */
+    periodLabel?: string,
+  ): Promise<SpecialistOutput> {
     const requested = new Set(intentItem.requiredTools);
     const tools = LINE_TOOL_REGISTRY
       .filter((t) => ALLOWED_TOOLS.has(t.name))
@@ -87,6 +96,8 @@ export class InventoryAgent {
       } else if (tool.name === 'inventory.summarize_stock_movements') {
         if (data['inQty'] === undefined || data['outQty'] === undefined) { readFailed = true; toolData.pop(); continue; }
         facts.push({ label: 'รับเข้า', value: String(data['inQty']) }, { label: 'ส่งออก', value: String(data['outQty']) });
+        const period = periodFact(data, periodLabel);
+        if (period) facts.push(period);
       }
     }
 

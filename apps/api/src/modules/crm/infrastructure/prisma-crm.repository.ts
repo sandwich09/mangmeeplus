@@ -353,6 +353,8 @@ export class PrismaCrmRepository {
     ownerUserId?: string;
     branchIds?: string[];
     newSince: Date;
+    /** Inclusive end of the new-customer window; omitted, the window runs to now. */
+    newUntil?: Date;
   }): Promise<{ total: number; active: number; inactive: number; archived: number; newCustomers: number }> {
     const scope = {
       companyId: where.companyId,
@@ -364,7 +366,13 @@ export class PrismaCrmRepository {
       this.db.crmCustomer.count({ where: { ...scope, status: 'ACTIVE' } as any }),
       this.db.crmCustomer.count({ where: { ...scope, status: 'INACTIVE' } as any }),
       this.db.crmCustomer.count({ where: { ...scope, status: 'ARCHIVED' } as any }),
-      this.db.crmCustomer.count({ where: { ...scope, status: { not: 'MERGED' }, createdAt: { gte: where.newSince } } as any }),
+      this.db.crmCustomer.count({
+        where: {
+          ...scope,
+          status: { not: 'MERGED' },
+          createdAt: { gte: where.newSince, ...(where.newUntil ? { lte: where.newUntil } : {}) },
+        } as any,
+      }),
     ]);
     return { total, active, inactive, archived, newCustomers };
   }

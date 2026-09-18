@@ -40,7 +40,16 @@
 - [x] Docs: spec J-01…J-07 tick แล้ว; J-08 ยังเปิดรอ UAT; [ADR 0013 §14](../adr/0013-ai-budget-split-reservations.md#14-implementation-notes-h3); task memory
 - [ ] ค้าง: ยังไม่มี platform role แบบ read-only จริง (shell gate เป็น role-based) — owner decision, บันทึกไว้ใน evidence README และ ADR §14
 
-### H4. รอ owner (ไม่ทำใน wave นี้)
+### H4. การตีความช่วงเวลา — [spec แยก](../specs/line-ai-period-resolution-spec-th.md) (owner decision 2026-09-18: default เดือนปัจจุบัน; ระบุช่วงเมื่อไหร่ต้องตามนั้น)
+
+- [x] ตัวแปลช่วงเวลาใน `packages/contracts` (`periods` บน `LineAiValueCandidates`, ตาราง test ≥ 40 กรณี) (P-01)
+- [x] Gateway: prompt เลือกจาก `periods` เท่านั้น; allowed dates/sanitizer รวม candidate; `periodKey`/`newUntil` whitelisted แบบมีหลักฐาน; เลน deterministic รับช่วงสัมพัทธ์ (P-02, P-03)
+- [x] API tools: `tax.get_vat_summary` รับ `periodKey`; `crm.get_customer_summary` รับ `newUntil`; default เดือนปัจจุบันยืนยันทุก tool (P-04)
+- [x] คำตอบระบุช่วง (คำ + วันที่) + telemetry `periodSource` (P-05)
+- [x] Corpus ชุดช่วงเวลา (v2, 9 งาน) + Bedrock replay ในวงเงินที่เหลือ (P-06); P-07 หลัง UAT
+- [x] Docs: spec P-01…P-06 tick ตามหลักฐาน; task memory
+
+### H5. รอ owner (ไม่ทำใน wave นี้)
 
 - concept เครดิต (หน่วย/เติม/ตรวจ/ค่า default ต่อแพ็กเกจ) — owner decision 3
 - ตั้งเครดิตจริงให้บริษัท (spec §7: แชต 80 / อ่านเอกสาร 60 / รวม 140 บาท สำหรับร้านทดลอง) — การกระทำของแอดมินหลัง deploy
@@ -52,6 +61,7 @@
 | H1 | focused specs ของทุกไฟล์ที่แก้ + FULL api suite + FULL web suite + contracts + whole-chain runner + harness + typechecks + smoke script ที่แก้ (รันจริงถ้ารันได้ในเครื่อง) + browser evidence + `git diff --check`; guard: grep "งบ AI\|โควตา AI" ใน apps/packages/scripts = 0 (ยกเว้น allowlist ที่ระบุเหตุผล) |
 | H2 | gateway FULL suite + security spec + whole-chain (gateway-behavior) + deploy.sh spec + pins + corpus replay (owner อนุญาตงบ ≈ THB 60–100 แล้ว 2026-09-18) |
 | H3 | gateway FULL suite (retry/drain specs) + api FULL suite + pg spec ใหม่ใน ci.yml step P27/OCR + web FULL suite + whole-chain + harness + browser evidence |
+| H4 | contracts FULL suite (resolver table) + gateway FULL suite + api FULL suite + whole-chain + harness + corpus replay (วงเงินที่เหลือจาก R5) |
 | ทั้งสอง | merge develop ก่อน PR; CI เขียวทุก run ของ head; admin-merge develop + main |
 
 Focused starting commands (ตรวจ path จริงตอน implement; ไม่เพิ่ม package script):
