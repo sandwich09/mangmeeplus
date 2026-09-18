@@ -1,5 +1,16 @@
 # Agent Memory: Production Kamal migration and two release paths
 
+Status: COMPLETE under the owner's explicit browser HTTP waiver. Both isolated Production hotfixes are deployed and their behavior is merged into main and develop.
+Owner: thawatchai + Codex
+Scope: authorized ECS-to-Kamal migration, isolated trial-pricing/cancelled-substitute receipt fix, then isolated trial FAQ card/semantic fix. No unrelated UAT/main backlog deployed.
+Decisions: preserve exact Production baselines; retain failed attempts; stop browser checks per owner; sign explicit waiver without fabricated observations.
+Open questions: None required for this delivery. Default urllib supplemental public read returned403; cause unproved, while signed OPEN and three public-route/login observations passed.
+Artifacts: [Consolidated report](../evidence/production-two-hotfixes-2026-09-18.md); private signed receipts, rollback/closure and bounded runtime observations retained.
+Verification: first owner-waived signed operation20260918T113740Z-2b1e04fa; second signed20260918T143800Z-e6c3b860; exact source/config/readiness and customerOPEN; integration CI35348631418/35349893178 passed. Three short runtime samples show4matching containers/restart0/no selected error pattern.
+Next: No further deployment or browser verification for this task. Keep exact previous-container/provider snapshots and authorized SSH drift for future operations.
+
+## Historical checkpoints (superseded by completion above)
+
 Status: infrastructure/bootstrap and combined build/local DB rehearsal passed; first-migration controller preparation continues. Production remains ECS fc2838c4; no application release or cutover.
 Owner: thawatchai + Codex
 Scope: Owner explicitly chose migrating Production to Kamal, then requested isolated-hotfix and
@@ -369,3 +380,306 @@ Next:
 - Existing explicit ECS recovery20260918T091745Z-318a0d41 was already dispatched before this
   instruction. Let that operation finish safely; do not interrupt it or start duplicate recovery.
   No new forward retry has been dispatched.
+
+## Consolidated correction PR635 / pending real rollback proof
+
+- New isolated correction checkout`/Users/thawatchai/.codex/worktrees/prod-kamal-cutover-rehearsal/mangmeeplus`,
+  branchcodex/prod-kamal-cutover-rehearsal-20260918, commit518172a7ae0582ecfa7950a38f765469e4850f3c.
+  DraftPR635opened/attached; exactCI35331533827running, watched in execsession8274. No merge/retry.
+- Diagnostic full61tests only the2knownfailures, then one correction; final62Kamaltests pass0.972s.
+  Realparser is used through simulatedcutover/sign/enroll/rollback after removal of diagnosticshim.
+  AddedpreflightreadAMIandownedruletags beforepublication/workerstop. Exactroute/templateguards retained.
+- Local releasepins/gitdiffcheckpass. Firstfullsecuritysuite stopped atmissingtsx(exit254), not a fullpass.
+  Identical lock and unchanged application tree verified against originalcontroller169469d9; reused its
+  installednode_modules via localuntrackedignoredsymlinks. Complete suite rerunexec72678 writes
+  rehearsal/security-complete.log. Do not alterpackage.json or claim incompletechecks passed.
+- ProposedtemporaryIAMv4SHA2563ebd43982a39fd1d941c1d425087e7765e0af01493c49c8667093510ca47e88e;
+  stillNOTINSTALLEDwhilecurrentrecoveryalive. Region/expiryboundedDescribeImages/DescribeTags,
+  exact2ownedrulehandlerwrites. Readsimulations4pass and4ownedModifyRule/SetRulePrioritiespass.
+  IAMsimulator deniesexacttagactions but officialELBv2supportsexactlistener-ruleARNs; nevergrantstarwrites.
+  Ownerbootstrapreadonlytaginventory finds only3AWS-managedCFtags oneachownedrule. Later verifyactual
+  scopedAddTags/RemoveTags with temporaryuniqueproofkey, exactreadback/restoration, beforeforwardretry.
+- Ownerauth/me JSON and independent renderedownertab325833587 prove currentSYSTEM_ADMIN identity,
+  launch-gatemanage and no requiredpassword/legalaction. FreshadminpageOPEN/live. Privatepartial
+  identity-observation.json retained; no completebrowser-acceptance.json. NativeChromeAX/screenshot
+  unavailable. Oneownerquestionawaits actualfreshcanOpen/effectiveState/servingMode+HTTP200,logout204,
+  andpostlogoutauth/me401 asrequiredbyrunbook§E. Keep recovery8800/20260918T091745Z-318a0d41alive.
+
+- Security local completion09:53UTC: all shellcontracts passed; finalTypeScript command initially
+  failed4filesbecausegeneratedPrismaclientwasmissing. Ran the sameCIprismagenerate(noDBconnection),
+  then exactremaining4specs passed26tests/5suites in977.510ms. No functionalcodewaschangedforenvironment
+  setup. Bothfailurelogsandfinalsecurity-typescript-tail.logretained. Removedonlyourtemporarydependency
+  symlinksafterchecks; no change to the frozen controller dependencies. PR635bodyupdatedwithtruthful
+  composedlocalverification; exactCI35331533827stillrunning and no newcommit/push invalidates itshead.
+
+- AWSAccessAnalyzerValidatePolicy of proposedIAMv4 returnedzero findings andno pagination. This confirms
+  policysyntax/service-resourcesupport but doesnotreplaceactuallivepermissionproof. No IAMmutation.
+  Privateiam-v4-validation.jsonretained inrehearsalcheckout. Main remainsfrozenpendingrealrollbackproof.
+
+## Real rollback completion — 2026-09-18
+
+- Owner instructed “ทำต่อสิ รออะไร”; resumed nativeChrome worked. Actual fresh Network proved
+  platform-access200/OPEN/live/canOpentrue, clickedlogout204, reloadedownercreatedauth/me401.
+  Evidencebrowser-network-observation.json plus independentlycheckedidentity bound to the existing
+  recovery. No credentials, no gatewrite, no fabricated acceptance.
+- Recovery20260918T091745Z-318a0d41 terminalROLLED_BACK_TO_ECS; all5phasespass;
+  KMS ECDSA_SHA_256 verified; acceptedSHA256a7d9566a92f7c6dfe510a7759d3141bf2aa6222ee8b78d0853801c03be3599c8.
+  Elapsed2541.857s including browserwait2034.622s;
+  actualrestorephase459.939s. Originalfc ECS/provider37 retained, legacyworkflowsrestored,
+  activeoperation removed. This is rollback success, not hotfixpromotion. Mainfreezenowreleased.
+
+## Reconciled prerequisites after signed rollback
+
+- Temporary scoped IAM v4 installed once and exact readback verified after rollback, using owner
+  bootstrap profile thawatchai. Policy SHA2563ebd43982a39fd1d941c1d425087e7765e0af01493c49c8667093510ca47e88e;
+  unchanged expiry2026-09-18T13:53:49.513914Z. AccessAnalyzer returned zero findings.
+- Actual non-root DescribeImages/DescribeTags passed. Initial AddTags probe with two resources
+  returned validation error (only one resource can be tagged at a time), with no changed tags.
+  Correct per-rule AddTags/RemoveTags passed on both exact owned rules; exact original tags restored.
+  scoped-rule-tag-proof-per-rule.json retains PASSED/restoredExact evidence. No traffic mutation.
+- Stopped candidate cleanup stopped-candidate-cleanup-20260918T1005Z passed under shared local and
+  native remote locks. Retained full private inspections/logs; removed only four exact failed,
+  stopped containers after ID/image/source/restart checks. No images/volumes removed. All four
+  app service labels now absent on new hosts; proxies and original ECS services retained.
+- Corrected-controller real readonly preflight20260918T100709Z-1a6aa503 passed38.609s,
+  PREFLIGHT_PASSED_NO_DEPLOYMENT. No new forward apply or image rebuild. Rehearsal checkout shares
+  original authoritative production state through its ignored .env.kamal/production symlink.
+- PR635 is ready, exacthead518172a7 unchanged. CI35331533827 Typecheck/Test and customer/operations
+  billing passed; backend billing remains running at10:12UTC. No duplicate CI dispatched.
+
+## Second forward operation after consolidated proof
+
+- Exact CI35331533827 completedSUCCESS. PR635 adminmerged10:14:51UTC as
+  main39fb9d175e2427e723c3821aff69423a13926d6f; all functionalcontrollerfiles match main.
+  No active release/recoveryworkflow, no active localoperation/target beforeapply.
+- Readonly preapply import created Python bytecode; moved only created __pycache__ folders into
+  ignored private evidence, repeated clean-tree proof with bytecode disabled. No apply occurred
+  before this local guard was corrected.
+- One forward apply started from corrected B checkout, sharing A state, at10:16:11.808104UTC:
+  operation20260918T101611Z-1069a958, execsession59871. Controller/main frozen until signed
+  acceptance. Appcandidate0b0058ad, baselinefc2838c4, exact preparedbuild unchanged.
+  UAT/READY/PROD workflow IDsNOT_DISPATCHED. Preflight49.717s/preparedbuild+regressions3.452s passed.
+  No duplicate retry. Monitor existing operation and retain actual browser evidence for it.
+
+## Second traffic failure and consolidated output-read audit
+
+- Forward20260918T101611Z-1069a958 terminalFAILED_RECONCILIATION_REQUIRED732.44s at native
+  rollout/traffic. ECSoldworker601f3d8b...verifiedSTOPPED; all new services ready. Both owned
+  listener rules actually reachedUPDATE_COMPLETE10:28:17-18UTC, then stack output resolution
+  lackediam:GetRole on exactmangmee-kamal-production-deployrole. This is a brief actual public
+  switch followed by AWSrollback, not a claim that traffic never changed.
+- StackUPDATE_ROLLBACK_COMPLETE10:28:25.786UTC. Fresh fulltemplate and bothstaging+bothECSrules
+  exactlymatch retainedoriginal; change-setARN EXECUTE_FAILED. The name+stack lookup returned
+  ChangeSetNotFound; ARN read succeeded and originalfailedread is retained in tool record.
+- Consolidated simulation had not modelled nativeCF GetAtt read permissions for unchanged stack
+  outputs. Do not call that coverage complete. Audit every output type/required native reads
+  together before the next forward attempt, including KMS, IAM, ECR, EC2 and AgentCore.
+- One explicit recovery20260918T103003Z-7bfbc4ef startedfromsamefrozencontroller39fb9d17,
+  exec78384; migrationrollbackpreflight25.92spassed. No next forward attempt/IAMchange.
+  Ownerloggedin currentprodmangmeeplus session again; browseradminOPEN/liveobserved beforefailure.
+  Freshrecoveryacceptance remains required. NativeChromeAX/screenshotcurrentlyunavailable;
+  owneraskedtoopenDeveloperwindow. ExistingAPI-tabtoolreloadblockedERR_BLOCKED_BY_CLIENT.
+
+
+## Second rollback signed; complete output audit and UAT comparison
+
+- Recovery20260918T103003Z-7bfbc4ef completed2026-09-18T10:46:02.545899UTC,
+  ROLLED_BACK_TO_ECS, all5phasesPASS. Actual restoration465.032s; total957.756s;
+  browser/customeracceptance454.240s includes owner wait. Exact original fc2838c4 source/config/
+  immutableimages read back running on all3 ECSservices; newworker task e13ae7b192fa4fffbb3ce53375f3cac8.
+- Owner supplied current Chrome Developer identity/permission, OPEN/live/canOpen, actual logout204
+  and postlogout401. Recorded explicitly as owner-observed evidence, not automated browser capture.
+  Controller rechecked publicOPEN/login200 and actual ECSruntime before KMS ECDSA_SHA_256 verification.
+  AcceptedSHA2568bbfa19ce385cd96b34228789ad803bea93016b2dce9bb3e206051581b2f1c99.
+  Legacy workflows restored, activeoperation absent, target remains unenrolled. Mainfreeze released.
+- Compared retained UAT hotfix20260917T141152Z-297dcbcc source1468ea7088a961af81ebce173df9a5d4028c96bd:
+  all11phasesPASS279.406s, acceptedSHA256ddeeaaea03bdc52ae96cbb60ee35336454f2de83712ce3c9563ebd53a52581b9;
+  actual nonroot KMSVerify re-run true. This is retained signed smoke proof, not a fresh UAT deployment
+  or Production browser acceptance. UAT has no first-migration CF/oldworker handover; its policy has no
+  IAMGetRole/CFupdate. Its login/logout exception does not apply to Production.
+- Audited actual native provider schemas for all15stackoutputs: EC2, IAMRole, ECR, KMS, AgentCore.
+  Initial nonroot30readcalls found27denied/3passed; not every denied optionalread is fatal (KMS provider
+  soft-fails some metadata reads). Proposedv5 IAM validation0findings and8simulationgroupsallallowed.
+  Installedv5 only after signedrollback10:49:25UTC, exact policy readbackPASS; SHA256
+  c2e67aa6fe34a88bea9d59a044b7bccca063301ba6763051205cba2c9e1cdf6a. Added8read-only statements,
+  exact resource scope where supported, unchangedexpiry13:53:49.513914UTC, no newmutationpermissions.
+- Isolatedcontrollercheckout codex/prod-kamal-output-preflight-20260918 from main39fb9d17.
+  Full64testdiagnostic ran to end beforefunctionalfix:10failing subcases (5missing outputprovider reads,
+  5outputdrift/unknownGetAtt), remainingchainpassed. One bounded output-preflightfix now64testsPASS.
+  Tests model actual rules-switch then CFrollback; all10browserchecks and7bindingfields failclosed;
+  success chain reaches synthetic KMSsign/enroll and separate signedECSrollback. Synthetic != live proof.
+  No thirdforward dispatched. Actualv5 providerread audit in progress; fullCI not started yet.
+
+
+- Actualv5 nonrootaudit33checksPASS (31successfulresponses,2expectedabsentECRpolicies), noAccessDenied.
+  Exactnewcontroller output/trafficprerequisites live-read passed, then complete readonly preflight
+  20260918T105515Z-63810cf3PREFLIGHT_PASSED_NO_DEPLOYMENT47.515s. ConditionalSSMDescribeAssociation
+  remains simulated-only because noassociationID; LaunchTemplate notapplicable totheseinstances.
+- Exactcandidatecleanup stopped-candidate-cleanup-20260918T1055Z removed4verifiedstopped secondattempt
+  containers underlocal/remote locks afterretaining fullprivateinspect/logs; images/volumes retained.
+- PR638opened/attached https://github.com/MangmeeDev/mangmeeplus/pull/638,
+  exactheadf666d27c8098c81fe477124efdd654fd278149fd, CI35336871465inprogress. ControllercheckoutC
+  shares authoritativeProdstate throughignoredsymlink. No newforwardapply; no rootcheckoutchanges.
+- Freshapplication scope proof confirms exactly2commits and15approvedpaths relativefc baseline,
+  noPrisma/package/lock changes andnoUAT/main applicationbacklog. Nativebrowser showsadminlogout/loginpage.
+
+
+## CI638 customer failure isolated; no forward deployment
+
+- CI35336871465 attempt1 customerjob105573685689 failed10:56:42UTC in plan-change command's
+  adminapplyretry:page showedloaderror, nextlinkabsent30stimeout. Outer diagnosticcustomerpage remained
+  syntheticStripecheckout; it is not the actualfailedadminpage. NoHTTPstatusretained, rootcauseunproved.
+  OtherCIjobs stillrunning. Never relabel this failure or claim productbugfixed.
+- App/packages/package+lock trees exactlyunchangedfrompassingparent39fb9d17. Replayed the same2CI
+  commands onNode22.23.2, isolatedPostgreSQL18.3/Redis7 andrealheadlessNextbrowser: trial31groupsPASS,
+  plan36groupsPASS. No code/assertion/timeouts changed. Initial localsetup failedbeforeexecution due
+  missingconfigdist, then completedexistingCIconfigbuild; originalsetuplogretained. PrivateC evidence
+  ci-customer-replay-proof.json andbrowser-replay-2-* contain results.
+- PriorcomparableunresolvedNextnavigationfailures documented in email-passwordless-signup-2026-09-16.md;
+  do not assert this is the same rootcause. OnceexistingCIisterminal, onefailed-job-only replay onexacthead
+  is justified by unchangedapp + successfullocalexactcommands. Do not startnewfullCI orProdtestretry.
+- Ownerloggedinprodmangmeeplus again at11:04-11:05UTC. ToolactuallyobservedadminOPEN/livepage.
+  Keepcurrentsession forpostdeploy; don'tlogoutearly. NativeChromeUIisreadableagain. DevToolspreexisting
+  Headersviewcontainedsessionheaders; closedDevTools immediately anddidnotretain/reuseanysecret.
+  Passwordpicker didnotautofill; ownerperformedlogin. Existingauthtab maystilldisplayprior401 untilfreshread.
+- Actualreadonlyalarmread10:56:43UTC:all19Productionhost/security/rollback/runtimealarmsOK.
+
+
+- CI35336871465 attempt1 operationsjob105573685687 alsofailed11:05:42UTC onSupportSLAcase detail
+  showingloaderror/missingoverduetext30stimeout. NativeHTTPstatus notretained; rootcauseunproved.
+  Localexactsource replay of thefailedcommand and2subsequentcommands passed SLA8/schedule12/readiness19
+  browsergroups. Read-only untracked localPlaywrightresponseobserver capturedsyntheticHTTPerrors, including
+  intentionallyinjectedreadinessfaults; do notlabelthemnewproductfailures. Privateci-operations-replay-proof.json.
+  No trackedcode/assertion/timeoutchange. Bothrounds of ownedlocalPostgreSQL/Redis fixtures/volumesremoved.
+- CIremaining Typecheck/Test reachedproductionmaintenancecontrols; backendbillingstillrunning.
+  No failed-jobrerun yet andnoProdapply. Do onefailed-job-only rerun afterparentterminal.
+- Integration inspectiononly: existingmodernmain/developv2evidence contract already permits a reviewed
+  SOURCE_DOCUMENT despite retainedoldmissingreason, unlikeoldProd. Do notblindlycherry-picklegacy0bguards
+  overv2; carrybehaviourregression pluspricing intointegration afterProd completes. PR629stilldraftunchanged.
+
+
+## CI attempt 2 and owner session retained
+
+- CI35336871465 attempt1 reached terminal failure with only customer/operations browser jobs failed.
+  One failed-job-only retry dispatched2026-09-18T11:18:05.107260UTC on unchanged
+  f666d27c8098c81fe477124efdd654fd278149fd; private marker DISPATCHED_ONCE prevents another retry.
+  Attempt2 still running at11:24UTC; all other required checks already pass. No new Prod apply.
+- Owner again confirmed login; actual Chrome Developer admin DOM shows OPEN/live. Keep the session
+  for fresh post-deployment identity/read/logout acceptance, not stale recovery evidence.
+- Local browser replay generated next-env paths, a screenshot and Next agent files in C; all retained
+  under private generated-browser-fixtures and exact checkout restored. No application diff added.
+
+- While CI638 attempt2 runs, prepared integration locally only: branch codex/line-trial-pricing-integration-20260918
+  merged current develope1f81a7c (local merge615c300b), then commit65e20e16 adds retained historical
+  missing-receipt reason to the existing cancelled-certificate final-transaction regression. No new
+  receipt runtime patch needed on v2. Pricing394/atomic28/contracts10/web37 tests and API typecheck PASS.
+  Source is held locally; PR629 not pushed/merged and UAT not deployed. Keep isolated Prodcandidate0b unchanged.
+
+
+## Owner pause for scope clarification — 2026-09-18T11:33:55.280223+00:00
+
+Owner said “แปบนึง ที่ให้ hotfix ไปมีแค่นิดเดียวเองนะ”. Hold any further merge or forward deploy while clarifying the separation between the two application fixes and the previously authorized ECS-to-Kamal migration. No third forward operation was dispatched. CI638 attempt2 was already running; no new CI or cloud operation started for this pause. Production remains the signed recovered ECS baseline; integration changes remain local.
+
+- Owner resumed with “โอเค งั้นทำต่อ” after clarifying Stripe is a repository CI test, not part of the hotfix. Resume the same authorized scoped migration/hotfix flow; prior hold lifted at 2026-09-18T11:35:03.712525+00:00. CI35336871465 attempt2 is on its final operations browser step; no duplicate CI or forward operation.
+
+
+## Third forward started after exact-head CI and scoped merge
+
+- CI35336871465 attempt2 terminal SUCCESS on f666d27c8098c81fe477124efdd654fd278149fd, all PR638
+  required checks pass. Owner-authorized admin merge completed as e4189b9d7e31e24c00b8b2c94c06656d7300d074.
+  Every functional controller file in C matches merged main; checkout clean. Initial local inspection
+  needed explicit module search path; generated bytecode retained privately and clean state restored.
+- One forward apply started2026-09-18T11:37:40.734456UTC:20260918T113740Z-2b1e04fa, exec26684, PID4121.
+  Retained C/rehearsal forward-3-process.json and forward-3-apply.log prevent duplicate dispatch.
+  No other deployment/recovery workflow was active, no active operation or target enrollment, and
+  temporary migration authority had >130minutes remaining. Main freeze begins at controllere4189b9d.
+- Application remains0b0058ad onfc2838c4, exact2commits/15paths. Prepared build reused; no newer
+  main/develop/UAT application backlog. UAT/READY/PROD workflowIDs NOT_DISPATCHED (local operation).
+- Owner authorized using LeoPard845 receipt and filling test fields for SndPrd business journey.
+  Clearly label supplied test values; do not invent actual payment/legal attestation. Journey remains
+  pending after deployment; existing admin session retained for fresh same-operation acceptance.
+
+- Forward20260918T113740Z-2b1e04fa reached AWAITING_BROWSER_ACCEPTANCE at11:50:20.497214UTC,
+  secondsToWebsiteReady759.766. Native rollout/readback PASSED569.821s; oldworker e13ae... verified
+  STOPPED before newworker start, CloudFormation public switch VERIFIED. All earlier phases passed.
+  Actual fresh admin page reload shows OPEN/live; initial selected page had moved to supportrequests,
+  returned via the visible platform-access link. Native Chrome Network became readable briefly, then
+  noWindowsAvailable. Existing standalone auth/me navigation returns401 without request bearer and
+  is not the authenticated app request; do not use it as current identity or postlogout proof.
+- Owner requested fresh same-operation auth/me identity/permissions, systemplatformaccess200 OPEN/live/
+  canOpen and logout204/postlogout401 through Network. No acceptance file has been fabricated.
+  Controller exec26684 remains alive with locks/mainfreeze; signed acceptance and enrollment pending.
+- Business receipt845 form reloaded on deployed candidate; no business mutation performed yet.
+
+
+## Current forward browser and business observations; next owner scope
+
+- Fresh native Chrome Network after forward observed system/platform-access HTTP200 with effectiveState OPEN, servingMode live and canOpen true; no gate write. Identity and logout are still pending. A manually entered read-only Console auth/me fetch returned HTTP401 before logout; this is NOT post-logout proof. Earlier inference that the standalone navigation lacked a bearer is unproven: exact source AuthGuard does support cookie fallback. Investigate current browser request/session before certifying acceptance.
+- Native macOS control repeatedly reports noWindowsAvailable/ScreenCaptureKit failures or silently leaves Console input unchanged. Owner opened Developer window and said ready; DOM browser control still works. No credential extracted, no acceptance file written, no second deployment dispatched. Active forward process and main freeze remain.
+- Authorized Snd Prd LeoPard845 journey: prepared unsigned paper certificate SRC-202609-00003 (cmu6wlblw0008387lqp135z39) on expense cmtxqig2k0gbp204dller8tor using explicitly labelled test fields. No signature/upload/issuance or payment posting. Cancelled it using UI; success toast and cancelled history verified. Original receipt confirmation remains pending.
+- Owner added follow-up scope: after current acceptance merge hotfix behavior into main and develop; then a second isolated Prod hotfix for trial FAQ Flex-card formatting and semantic coverage of “หลังหมดโปรฟรีแล้วเป็นยังไงต่อ”. Measure stability and actual times of both rounds, then merge second patch into main+develop. No unrelated application backlog permitted. Current first release must terminalize before another Prod operation.
+
+- At12:22UTC CUA verified original LeoPard845 receipt confirmation succeeded as EXP-202609-00002, status ยืนยันแล้ว. Original attached cash bill visually verified, cancelled SRC-202609-00003 history retained. Still unpaid and awaiting accounting, no payment/signature/journal action. Private same-operation business-receipt-observation.json retained. Browser admin acceptance remains separate and pending.
+
+## Handoff checkpoint 2026-09-18T12:29:37.379167+00:00
+
+- Second scoped application patch prepared in managed trial-faq-card-hotfix-20260918 worktree, branch codex/trial-faq-card-prod-hotfix-20260918, commit1406d3825db2eb7d70987b207c80f89ae05edb3b on exact0b baseline. Standard business bubble with official-package CTA and complete canonical fallback; trial-end matcher variants. Five app/test paths plus memory only,343tests/APItypecheck/diffcheckPASS. No push/second deploy/main+develop merge yet.
+- Main remains exact frozen e4189b9d and develop e1f81a7c at fresh remote read. PR629 remains original published draft; locally prepared integration65e20e16 not pushed.
+- Fresh AWS alarm read after forward: all19host/security/resource/rollback alarmsOK. Six old ECS TargetTracking alarms separately show highOK/lowALARM or workerINSUFFICIENT_DATA, consistent with retained idle/parked ECS capacity; not counted as19acceptance alarms. No alarm configuration changed.
+- Current admin Console read-only auth/me query before logout returned401. Follow-up read-only no-store auth/me+platform query has been placed in Console but CUA cannot send Enter reliably; owner asked only to click at command end and press Enter once. No response yet. Keep this question pending; no fabricated identity/logout acceptance. Public unauthenticated curl confirms401 DYNAMIC/private-no-store, not evidence of logged-in identity.
+- Process4121/exec26684 remains alive, AWAITING_BROWSER_ACCEPTANCE. Migration IAM expiry still13:53:49.513914UTC; do not extend/change IAM during this operation. Ordinary next releases also require reviewed ECS rollback-window closure, per infra/kamal/README.md115 and release.py305. Do not remove enrollment guard to bypass it.
+
+## Owner ends additional browser verification
+
+- Owner explicitly said `ไม่ต้องตรวจแล้ว เสียเวลา ฉัน้ข้าไปลองแล้ว` after asking another method. Stop additional browser/HTTP/audit checks; retain owner manual acceptance separately, never mark unobserved identity/logout HTTP checks passed. Exact decision is retained in the active operation owner-acceptance-decision.json.
+- Alternate control failed: blocked direct API navigation, native AX/keyboard ineffective, AppleScript timed out, browser read-only scope has no fetch. No further attempts. Temporary read-only support session watchdog-bedrock-dev-39zquavinvlsgnvb6opdrfd554 exited without a SQL query. Direct SSH to both API hosts timed out; no runtime mutation.
+- Existing controller only accepts all browser check booleans true and has no owner-waiver or resume path. A truthful terminal owner acceptance needs explicit reconciliation; do not manufacture browser-acceptance.json or delete active/remote locks. Application remains live at 0b0058ad, latest hotfix 1406d382 remains local and verified, main/develop integrations pending.
+
+- Owner-stop handling: interrupted only controller PID4121 at its confirmed browser wait; no container/traffic/DB change. Original result remains `FAILED_RECONCILIATION_REQUIRED`, stopped13:01:48.137930UTC. Command elapsed5047.380s; website ready759.766s; browser wait4287.612s. Do not present84m07.380s as application rollout time.
+- Signed separate `owner-accepted.json` with state `OWNER_MANUAL_ACCEPTANCE_BROWSER_HTTP_WAIVED`, explicit unobserved checks and original receipt/business hashes. KMS ECDSA_SHA_256 verify=true; SHA256 `848fe4a50bd26c117e2e197723989c95fce739cb3f54d63d79ea942692c3f50c`. This is owner decision evidence, not a false standard browser-acceptance PASS. Enrollment/remote lock release remain pending; original run artifacts are preserved.
+- Concrete connectivity blocker: current workstation egress49.228.220.223 differs from Production SSH allowlist49.229.201.224/32. Both enrolled API hosts are still running with their enrolled addresses. Existing nonroot reader confirms only old/32 on API security group sg-00103756fceaa534a. Asked owner whether to rotate operator access to new/32 or return to prior network. This required access decision is pending; no security-group or IAM change made.
+- New application commit1406d3825db2eb7d70987b207c80f89ae05edb3b pushed on codex/trial-faq-card-prod-hotfix-20260918, isolated on first hotfix0b0058ad.343tests/typecheck pass. Production and main/develop merges are still pending reconciliation; no duplicate deploy dispatched.
+- DraftPR639 https://github.com/MangmeeDev/mangmeeplus/pull/639 created and attached, base first-hotfix branch; no merge or deployment yet. Next: owner network access choice; truthful same-operation reconciliation; first integration main/develop; reviewed rollback-window closure; second hotfix; second integration. Do not restart browser checks after owner stopped them.
+
+## WiFi rotation, owner reconciliation and rollback-window closure plan
+
+- Owner authorized continuing after changing WiFi. Rotated only the existing three SSH/TCP22 rules from49.229.201.224/32 to49.228.220.223/32; exact rule readback matches. No broader CIDR/IAM/runtime change. Owner bootstrap profile thawatchai used only for this infrastructure prerequisite; releases use nonroot mangmee-kamal-production. Preserve this authorized drift in future stack updates.
+- Same operation reconciled under the explicit owner browser waiver: exact4containers/config/proxy readback and retained ECS capacity/build authority checked; signed result state OWNER_ACCEPTED_BROWSER_HTTP_WAIVED, KMS verified, enrollment installed retaining ecsRollbackBaseline. No browser login/logout repeated or falsely certified. Original stopped receipt retained as result-before-owner-reconciliation.json. Only this operation's verified remote/local locks released. Main freeze is lifted under owner acceptance.
+- Reviewed next-step scope before mutations: close the retained ECS rollback window by parking only the old API/AI services at0/0 (workers already0/0), await their actual STOPPED tasks, retain their configurations/images/history and shared ALB/RDS/Redis. Verify current Kamal source0b0058ad remains exact; retire obsolete build authority using the existing permission/audit-aware retireLaunchBuilds path. Remove only temporary first-migration-20260918 inline policy, keep ordinary deploy permissions and both legacy Production workflows disabled. Update enrollment only after signed closure evidence. Do not simply delete ecsRollbackBaseline.
+- The next isolated card hotfix uses source1406d382 on0b0058ad. Owner stopped repeated browser checks: any no-browser acceptance must explicitly state NOT_PERFORMED_OWNER_WAIVED for login/logout, bind the owner decision and operator override hash, and retain automated source/config/readiness/publicOPEN/signature evidence. It must not claim owner manually tested the future candidate.
+
+- Reconciled first release at13:09:29.471638UTC with actual same-source4container/config/proxy readback and preserved ECS build authority; final accepted.json SHA438fde898c33ee708069e935be59935e04bb305251883c1e5acaa82eed64c71e, KMS verified. State explicitly OWNER_ACCEPTED_BROWSER_HTTP_WAIVED. Private operator reconciliation script retained/hashes auditable; original interruption receipt preserved.
+- Old API/AI capacity updates submitted once13:11:27/13:11:29UTC. Classic DescribeServices returned misleading0/0 before actual STOPPED; corrected user update immediately and used Express configurations/task states. API actualSTOPPED13:17:57UTC; AI13:18:31UTC; both complete Express singleton0/0 verified13:18:36–40. Old worker historicalSTOPPED signed proof retained; its old task record has expired from ECS API, no current running tasks. No fake current worker task status.
+- Rollback-window closure completed and signed: all old services parked0/0; existing retireLaunchBuilds retired16obsolete authority rows with audit; removed only temporary first-migration-20260918 inline policy. Preserved shared ALB/RDS/Redis, service configs/images/history; legacy Production workflows remain disabled. Target ECS rollback guard removed only after signed actual closure. Subsequent rollback uses native Kamal prior-container/provider snapshots.
+- First integration PR629 updated to65e20e164cdab54bb4b9259b46c76ac9d0746f60 and marked ready; exact-head CI35348631418 running. Second integration worktree/branche64a2da6 created locally on that source,427focusedtests pass; first raw tsc attempt hit default4GB Node heap, retry with8GB (same code) running. No duplicate deploy or CI rerun.
+- Candidate1406d382 standalone immutable build PASSED13:16:46.426334UTC; command194.790s (3m14.790), start13:13:31.636794UTC. API build109.877s/tools-base82.872s partly parallel, do not sum phase seconds as wall time. Preparation reuses that exact source/build; apply still awaits first integration.
+
+- Second preparation operation20260918T132054Z-07bf4d3d PREPARED_NO_DEPLOYMENT in57.009s (command57.110s): full current Kamal baseline, exact source/build, complete configuration and secret freshness passed after rollback-window closure. Source/build unchanged; no apply yet.
+- New integration candidatecefa946b (app cherrypicke64a2da6 plus scoped memory update) pushed as draftPR640 https://github.com/MangmeeDev/mangmeeplus/pull/640 and attached.427tests and8GB APItypecheck passed. Draft stays unmerged until Production card deployment. PR639 is the separate exact isolated source on0b; do not substitute PR640 for Production.
+- Operator-only no-repeat-browser wrapper is restricted to1406d382on0b0058ad, production/hotfix/no rollback/no firstmigration. Offline executable contract rejects foreign scope, retains allservice readiness, includes override+ownerdecision hashes, and never asserts browser HTTP checks or future owner testing. Core controller/source/config/security gates unchanged. Final signed state explicitly ACCEPTED_WITH_BROWSER_HTTP_WAIVER.
+
+## First hotfix integration complete; second forward ready
+
+- Exact-head CI35348631418 finishedSUCCESS13:34:07UTC on65e20e164cdab54bb4b9259b46c76ac9d0746f60, all9validationchecksPASS and5publicationjobs correctlySKIPPED. Wall24m02s from13:10:05. No CI retry.
+- PR629 owner-authorized admin merge todevelop completed13:35:03UTC as6f4d1b913a4e5ecd740a761d6c6ae42522496111. Same verifiedhead merged tomain with GitHub merge API as75207d31660e75918d31eb248b37554ff59fb970, expected merge tree2c2c5ebeff941c811d31723920dd3a9d9369bb82. Main application diff contains exactly6scopedfiles; no duplicated source CI. RequiredCI was already successful before both merges.
+- Second integrationPR640 exact-head CI35349893178 on cefa946bf7ebb33978793c78eaf065db03bc6e9c started13:23:03UTC, running. Do not merge until second live deploy accepted.
+- Before secondapply: active.json absent and signedrollback-windowclosure present. Broad workflow scan found old queued Readiness31611733340; inspect its identity/jobs before applying rather than claim zero globalqueuedruns. Controllerbase75207d3 intended frozen during apply. UAT/READY/PRODworkflowIDs NOT_DISPATCHED; secondapply not yet dispatched.
+
+- Queue reconciliation: exact known nonexecutable metadata ghost31611733340 was freshly proved unchanged head33ed788c/timestamp2026-08-12/checksuite85752682208; jobs/check-runs/pending-deployments all0. Existing documented provider incident permits excluding only this identity. No other actual active Production/readiness/recoveryrun. No cancellation/deletion/retry of ghost. Privatecard-zero-active-proof.json retained.
+- Secondapply started once13:37:50.270458UTC, localoperation20260918T133750Z-80b36194, PID16738/exec44505; C/rehearsal/card-apply-process.json and card-apply.log retained. Source1406d382 on0b; controller/main75207d3frozen. Existing exact validated build reused. Keep same operation until signed terminal; no duplicate dispatch.
+
+
+## Second publication reconciliation and accepted forward
+
+- Initial apply20260918T133750Z-80b36194 failed before service mutation at tools docker push240s timeout; terminal374.262s. Exact readback2026-09-18T13:49:25UTC: all4old0bcontainers running/restart0, active/remote locks absent,3applicationimages inECR andtoolsImageNotFound. No process or deployment retry while outcome unknown.
+- Registry-only completion of the missing exact tools image took258.563s, finished13:54:23.389772UTC and ECRdigestverified. No service/provider/DB action. The core controller timeout was not changed; this explicitly prepopulates the missing layers and is included in total costs/timing.
+- One reviewed retry20260918T143800Z-e6c3b860 started14:38:00UTC with exactsamepreparedsource/build. All11phasesPASS including custom owner-waived customer acceptance; terminalACCEPTED_WITH_BROWSER_HTTP_WAIVER14:42:13.723972UTC, receipt252.880s/command253.009s, website230.844s, native82.306s, signature1.269s.
+- KMSverified accepted.json SHA5e4ff39fe097b2e65409d736d8ce93b6abdeba6892234a1ebfc0e7f1130fc5f9. All4runtime source1406d382/fullconfig/deepreadiness matched; publicOPEN. AgentCorekamal_production_a/version5. Prior0bcontainer/provider snapshot preserved for native rollback; this second rollback not exercised. active.json released by controller. Mainfreeze lifted after signedterminal.
+- Owner waiver retained inside signedacceptance: login/logout/current-adminHTTP NOT_PERFORMED_OWNER_WAIVED; futureCandidateManuallyTestedByOwner=false. No repeat browser work and no actualLINEsend. Exact-head CI35349893178 passed23m59s on cefa946b without rerun; integration after boundedruntime/public stability observation.
+
+
+## Final integration and stability
+
+- PR640 mergeddevelop70d1359d18d2db977be57dc8f621a59fdb70cce6 at14:45:05UTC; same validatedheadcefa946b mergedmainad4250871a313908c21a036b20d420008575c87a. Main treea81d0a74 matches reviewed drymerge. PR639 closedasdelivered, no historicalbranchmainmerge and no newdeploy.
+- Three postrelease samples14:42:42–14:44:15: exact4sourcecontainers stableIDs, restart0, boundedlogselectederrorcounts0, all6publicrouteHTTP200 and3loginOPENmarkers. State-extractornulls retained; signedcontroller provesstateOPEN. Extra defaulturllibread403retained separately, causeunproved. Alarm19OK with9legacyECScoverage distinguished;6oldECStargettrackingINSUFFICIENT_DATA. This is short observation, not load or long-term proof.
+- Full actualtiming, failedattempts, waiverlimits, priorECSrollback and bothbranchmerges recorded in docs/evidence/production-two-hotfixes-2026-09-18.md. No furtherbrowser/LINE/customerdata mutations. Unrelatedrootworkingchanges remain untouched.
