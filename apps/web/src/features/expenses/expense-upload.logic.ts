@@ -15,7 +15,6 @@ import {
 // this budget forces the quality floor — and the OCR grounding check then drops an unverifiable
 // tax id rather than guessing, which is why it came back empty instead of wrong.
 export const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
-export const MAX_PDF_EXTRACTION_BYTES = 4 * 1024 * 1024;
 // Long edge of a re-encoded photo, and the floor the JPEG quality ladder stops at. Both are set
 // for reading 13 small digits, not for looking at a picture: below ~0.7 the artefacts close the
 // counters of 6/8/9 and merge adjacent digits.
