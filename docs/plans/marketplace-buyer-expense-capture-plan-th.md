@@ -290,20 +290,20 @@ IG: IG01/IG05/IG06/IG10/IG11
 ### W07 — Expense/ใบเบิกเดิม และยอดในหน้ารายการ/รายงาน
 
 Owner: Expense/reimbursement/ledger integration + Web/API
-Status: Planned
+Status: W07-int ส่งแล้ว (2026-09-19) — เย็บตะเข็บระหว่าง wave: ผู้เรียก auto-handoff ของ LINE, ปลายทาง push ของแชตกลุ่ม, read-status บนหน้า review, ความเท่ากันสามทาง, deep link ใบเบิก, gate ใบรับรองหลัง prepare; ส่วน claim revalidate/finance projection/ledger ยังเปิดอยู่
 Depends on: W05 และ W06 สำหรับ certificate branch
 
 จุดแก้หลัก: [source resolver](../../apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts), [reimbursement repository](../../apps/api/src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.ts), [claim materializer](../../apps/api/src/modules/reimbursements/application/services/materialize-claim-expenses.service.ts), [expense draft/confirmation](../../apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts), [expense export](../../apps/api/src/modules/expenses/domain/logic/expense-export.logic.ts), [reimbursement client](../../apps/web/src/features/reimbursements/reimbursements.api.ts)
 
 - [ ] employee-funded eligible sourcesเข้าใบเบิกเดิมเต็มsourceพร้อมsnapshot; ordinary company expense sourceไม่ถูกconfirm/payขนานกัน
 - [ ] company-fundedเข้าexpense pathตามfacts; ของส่วนตัว/unsupportedtaxต้องมีrepresentationหรือเก็บรอ ไม่ซ่อนเงินออกจริง
-- [ ] submit/approve/finance projection/confirm/payment revalidategroup/source/payer/policy revisionและlocks; ไม่มีfinal mutationจากAI
+- [ ] submit/approve/finance projection/confirm/payment revalidategroup/source/payer/policy revisionและlocks; ไม่มีfinal mutationจากAI — W07-int ทำเฉพาะสายใบรับรอง: capture gate ทำงานซ้ำที่ preview/certify/approve และปฏิเสธ `substitute_capture_allocation_superseded` (`substitute-receipt-capture.use-case.spec.ts`); submit/approve ของใบเบิกและ finance projection ยังเปิดอยู่
 - [x] list/count/export/evidence/LINEไม่บวกparent+source+projectionซ้ำ (ส่วน source-picker/projection ยังเป็นงาน W07) — W05: `ExpenseSummary.captureGroupId`, `ExpenseDetail.captureGroup`, `evidenceRef` เพิ่ม group, `source_channel` fallback `OTHER`; pg spec เดินจริงผ่าน `listExpenses`/dashboard pending/`listRecentLineCaptures` ว่ามีครั้งเดียวและกลุ่มไม่โผล่ (A39)
-- [ ] ทุกdownload/deep link/exportตรวจสิทธิoriginal evidence; child accessไม่ขยายสิทธิparentและไม่เท่ากับredactส่วนตัว
+- [x] ทุกdownload/deep link/exportตรวจสิทธิoriginal evidence; child accessไม่ขยายสิทธิparentและไม่เท่ากับredactส่วนตัว — W07-int: `?expenseId=` ของหน้าใบเบิกใหม่ไม่ให้สิทธิ์อะไรเลย ต้องผ่าน `getReimbursementSourceOptions` ที่ server ตรวจ branch/ผู้ขอ/eligibility ก่อน (`ReimbursementCreatePage.qa.spec.ts`); ลิงก์ "กรอกข้อมูลต่อ" ของ LINE ยังผ่าน `/l/{token}` เดิม และ dto ของกลุ่มไม่ส่ง `linePushTargetId` ออกไป (`expense-capture-group.use-case.spec.ts`)
 - [ ] invoice/refundตามมาเชื่อมpurchaseเดิม; signed/paid/postedใช้correct/reverseตามระบบ ไม่silent overwrite
 - [ ] retryจากresponseหายและpartial downstream workกลับdestinationเดิมพร้อมสถานะจริง
 
-- [ ] export/list/detail/LINEstatus/evidencedownloadสะท้อนcurrent-source reviewและelectronic statusแยกกัน; ไม่ยกผลตรวจไฟล์เก่าให้ไฟล์ใหม่ และoriginal/derivativeaccessตรวจต่อrequest
+- [x] export/list/detail/LINEstatus/evidencedownloadสะท้อนcurrent-source reviewและelectronic statusแยกกัน; ไม่ยกผลตรวจไฟล์เก่าให้ไฟล์ใหม่ และoriginal/derivativeaccessตรวจต่อrequest — W05 ทำ list/export/detail; W07-int: LINE status ตอบ derived source (กติกา provenance เดียวกับ `expense.explain_record`) และตอบกลุ่มที่ยังไม่มี expense ได้, `receipt-ocr-apply` ล้าง `sourceStale` เฉพาะเมื่ออ่านไฟล์ปัจจุบัน (ไม่ยกผลไฟล์เก่าให้ไฟล์ใหม่), electronic ยังเป็น `NOT_CHECKED`/`UNAVAILABLE` แยกจากผลอ่าน
 - [ ] claimDRAFTที่sourceเปลี่ยนต้องrevalidateก่อนsubmit; submitted/paid/postedใช้correctionrouteตามสิทธิ ไม่แก้projectionหรือสร้างpaymentจากlateinvoice
 - [ ] ตรวจstock/asset/third-party payment intentเฉพาะdestinationที่มีจริง; unsupportedไม่กลายเป็นexpense/claimอัตโนมัติจากชื่อร้าน
 

@@ -133,7 +133,7 @@ Scope: ไม่เปลี่ยนกติกาเงิน/สิทธิ
 - ตาราง `ExpenseCaptureReadJob` เป็น queue; claim หนึ่ง statement แบบ `prisma-outbox.repository.ts:92-105` (`UPDATE … WHERE id IN (SELECT id … WHERE status IN ('QUEUED','READING','PARTIAL') AND (leasedUntil IS NULL OR leasedUntil < now()) ORDER BY createdAt LIMIT n FOR UPDATE SKIP LOCKED) RETURNING *`) ตั้ง `leaseOwner`, `leasedUntil = now + 120 s`, `attempts + 1`; ต่ออายุ lease หลังทุก chunk; checkpoint หลังทุก chunk/window ก่อนรับงานถัดไป; ทุก write หลัง claim เป็น `updateMany` fenced ด้วย `leaseOwner` (คืน boolean)
 - ผู้รัน: `ExpenseCaptureReadRunnerService` ใน API: (1) kick ทันทีหลัง persist ใน process เดียวกัน (claim ตัวเองแล้วประมวลผลแบบ fire-and-forget) (2) `POST /v1/internal/expenses/capture-read/drain` (`assertWorkerToken`, DTO class `batchSize ≤ 5`) claim งานที่ lease หมด/ค้าง แล้วเริ่มประมวลผลใน process โดยไม่ await (ตอบ `{ claimed }` ทันที) — เรียกจาก scan worker ใหม่ `apps/workers/src/modules/expense-capture-read/expense-capture-read-worker.ts` (`startScanWorker`, interval 30,000 ms) ลงทะเบียนใน `apps/workers/src/main.ts` (ไฟล์ pinned → re-pin) + แถวใน `SHADOW_SURFACE_CATALOG` + `main.spec.ts`; concurrency ต่อ process ≤ 2 jobs, ต่อบริษัท ≤ 1 job (`EXPENSE_CAPTURE_READ_CONCURRENCY`)
 - อ่านต้นฉบับผ่าน `AttachmentStoragePort.getObject` (ไม่แตะไฟล์ pinned `create-upload-intent`/`create-download-url`/`s3-storage.adapter`)
-- งบต่อ job: `providerCallCount ≤ 40`, เวลา ≤ 15 นาที, pixels ต่อ render ≤ 32M (reuse `SUBSTITUTE_RECEIPT_PDF_LIMITS.maxRasterPixels`), memory: ประมวลผลทีละ chunk; เกิน → `PAUSED` พร้อม `pausedReason` (`call_budget|time_budget|page_limit|ai_credit`) และผลที่เก็บแล้ว
+- งบต่อ job: `providerCallCount ≤ 40`, เวลา ≤ 15 นาที (สะสมทุกครั้งที่รัน — W07-int), pixels ต่อ render ≤ 32M (reuse `SUBSTITUTE_RECEIPT_PDF_LIMITS.maxRasterPixels`), memory: ประมวลผลทีละ chunk และ derivative รวมต่อ job ≤ `EXPENSE_CAPTURE_DERIVATIVE_MAX_BYTES` (default 64 MiB — W07-int); เกิน → `PAUSED` พร้อม `pausedReason` (`call_budget|time_budget|page_limit|ai_credit|memory_budget`) และผลที่เก็บแล้ว
 - Cancel/stale: replace primary หรือ detach ไฟล์ → job `CANCELLED`; ผลที่กลับหลัง cancel ไม่ apply; ตรวจ actor/company/branch/revision ก่อน apply/notify ทุกครั้ง; ownerType EXPENSE ใช้ `expectedSourceUpdatedAt` กับ `receipt-ocr-apply` fence เดิม
 
 ### 4.6 Quota/เงิน (reuse governance เดิม)
@@ -218,7 +218,7 @@ GET    /v1/companies/{c}/expenses/{expenseId}/read-status              (job ข�
 | บริษัทปิด AI/ไม่มี provider | `OCR_FEATURE_DISABLED`/`not_configured` | STORED | UXE-11 | |
 | เครดิต/โควตาหมด | `OCR_MONTHLY_LIMIT_EXCEEDED`/`AI_MONTHLY_BUDGET_EXCEEDED`/`AI_BUDGET_INSUFFICIENT` | STORED / PAUSED(ai_credit) | UXE-12 (คำว่า เครดิต) | |
 | อ่านบางส่วน | job `PARTIAL` | STORED_READ_PARTIAL | UXE-13 | |
-| หยุดเพราะขอบ | job `PAUSED` (`page_limit|call_budget|time_budget`) | STORED_READ_PARTIAL | UXE-14 | |
+| หยุดเพราะขอบ | job `PAUSED` (`page_limit|call_budget|time_budget|memory_budget`) | STORED_READ_PARTIAL | UXE-14 | |
 | หน้าขาด | assembly `suspectedMissingPages` | DONE | UXE-15 แนบหลักฐานเพิ่ม | web group page |
 | ยอดขัดกัน | `reconciliation: mismatch`/ambiguous grouping | DONE | UXE-16 ตรวจจุดที่ไม่ตรง | |
 | electronic | `electronicVerification.NOT_CHECKED/UNAVAILABLE` | — | UXE-17 (ยังตรวจไม่ได้) | |
@@ -448,7 +448,7 @@ W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAl
 ### 19.4 ส่วนที่ต่างจากตัวอักษรของเอกสารนี้ (W02-LINE)
 
 1. **A45 / §17.5 ambiguity ผูกคำตอบด้วย `LineIntakeAttempt` ไม่ใช่ ledger `waiting_user`** — เอกสารข้อ 10.1 เสนอ ledger kind ใหม่ แต่คำตอบ "1" ย้ายไบต์ระหว่างกลุ่มจริง การผูกจึงต้องทนต่อ Redis ล่ม; `LineIntakeAttempt` เป็น Postgres, มี (company, userHash, chatHash) ครบ, และถูก purge ตาม retention เดียวกันอยู่แล้ว ผลข้างเคียง: ไม่ต้องขยาย `clarificationSourceCurrent` ซึ่งเป็นเส้นทางตรวจ source ที่ยาวที่สุดในไฟล์
-2. **push ผลอ่านไปได้เฉพาะแชต 1:1** — `lineChatKeyHash` เป็น hash จึงกู้ group id กลับไม่ได้ กรณีกลุ่มแชตจึงบันทึกเป็น undelivered (`LINE_DELIVERY_FAILED`) ให้ §17.5 ตอบ UXE-25 แทนการเดาปลายทาง
+2. **push ผลอ่านไปได้เฉพาะแชต 1:1** — `lineChatKeyHash` เป็น hash จึงกู้ group id กลับไม่ได้ กรณีกลุ่มแชตจึงบันทึกเป็น undelivered (`LINE_DELIVERY_FAILED`) ให้ §17.5 ตอบ UXE-25 แทนการเดาปลายทาง — **แทนที่โดย W07-int (ข้อ 23.2 ข้อ 1)**: กลุ่มเก็บ `linePushTargetId` ไว้แล้ว แชตกลุ่มจึงตอบได้ในแชตที่ไฟล์มา ส่วน hash ยังเป็นตัวยืนยันปลายทาง
 3. **ไม่มี scan worker ใหม่** — drain ใหม่ขี่ tick เดิมของ `line-ai-ledger-worker.ts` (`callInternal` เส้นที่สาม) เพราะ `apps/workers/src/main.ts` เป็นไฟล์ pinned และ worker ใหม่ไม่ได้ให้พฤติกรรมเพิ่ม
 4. **`line.explain_file_attempt` ยังไม่อยู่ใน router catalog** — spec §17.5 บังคับให้มีคำตอบ deterministic เมื่อ AI ไม่พร้อม ซึ่งทำครบแล้วใน handler; แถวใน `LINE_AI_FEATURE_COVERAGE` จึงเป็น `feature_gated` พร้อมเหตุผล ไม่ใช่ `covered` และไม่ได้เพิ่มบรรทัด system prompt (ไฟล์ agents เป็นของ wave อื่น)
 5. **tool ฝั่ง LLM เห็นเฉพาะ attempt ที่ผูกกับผู้ใช้คนนั้น** — `ErpToolContext` มี `chatKeyHash` แต่ไม่มี LINE user id การอ่านทั้งแชตในกลุ่มจะเปิดชื่อไฟล์ของสมาชิกคนอื่น จึงระบุตัวผู้ใช้ทางอ้อมจากกลุ่มที่เขาสร้าง (`listChatIntakeAttempts`) ผู้ใช้ที่ยังไม่มี target ในหน้าต่างนั้นจะไม่เห็นอะไรเลย — handler deterministic (ซึ่งมี lineUserId) ยังตอบได้ตามปกติ
@@ -469,7 +469,7 @@ W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAl
 10. **`usable` ที่ตัดสิน release ของ OCR count คือ "มี document อย่างน้อยหนึ่ง" ไม่ใช่สถานะ**: `PARTIAL` ที่ได้ร้าน+ยอดถือว่าคุ้มการอ่านที่ลูกค้าจ่าย ส่วน `DONE` ที่ไม่ได้อะไรเลยคืน count ให้ลูกค้า
 11. **`GET .../capture-groups/{g}/read-status` ยังไม่ทำเป็น route แยก** — สถานะรายไฟล์อยู่ใน `GET capture-groups/{g}` (W01) ครบแล้ว และ W04 เป็นผู้ใช้; route ของ expense เดี่ยว (`GET .../expenses/{e}/read-status`) ทำแล้วเพราะ W02-web poll
 12. **งบจริงที่ตั้งไว้**: `providerCallCount ≤ 40`, เวลา ≤ 15 นาทีต่อการรันหนึ่งครั้ง, lease 120 s ต่ออายุหลังทุก chunk, `attempts ≥ 5` → `FAILED/attempts_exhausted`, window ≤ 12,000 ตัวอักษร, ข้อความต่อหน้าที่เก็บใน checkpoint ≤ 20,000 ตัวอักษร
-13. **ยังไม่ทำใน W03**: LINE auto-handoff (ข้อ 3.2 = W05/W07), allocation (W04), การบริโภค outbox event `expense.capture_read.finished` (LINE wave), และ Bedrock replay จริงด้วย fixture สังเคราะห์ (controller session ตามข้อ 15.5)
+13. **ยังไม่ทำใน W03**: LINE auto-handoff (ข้อ 3.2 = W05/W07 — **ผู้เรียกจริงส่งใน W07-int ข้อ 23.2 ข้อ 2**), allocation (W04), การบริโภค outbox event `expense.capture_read.finished` (LINE wave — ส่งใน W02-LINE), และ Bedrock replay จริงด้วย fixture สังเคราะห์ (controller session ตามข้อ 15.5)
 
 ## 21. Implementation notes (W04b — หน้ากลุ่ม/รายการงานรับหลักฐาน, 2026-09-19)
 
@@ -502,6 +502,7 @@ W04b ส่งเฉพาะ `apps/web/**`: หน้า `/companies/{c}/expens
 8. **ยังไม่ทำใน W04b**: LINE summary (W02-LINE), หน้าจอ regenerate หลัง handoff (server คืน `allowedActions: []`
    เมื่อกลุ่มไม่ `OPEN` แล้ว จึงยังไม่มีปุ่มให้กด — W05 ตัดสินว่าจะเปิดทางไหน), ใบรับรองต่อ source (W06 เติมบรรทัด
    "ใบรับรอง: —"), `?expenseId=` บนหน้าใบเบิกใหม่ยังไม่ถูกอ่านโดย `ReimbursementCreatePage` (ลิงก์พาไปหน้าร่างเปล่า)
+   — **ปิดแล้วใน W07-int (ข้อ 23.2 ข้อ 14)**
 
 ## 18. Implementation notes (W05 — handoff, single use, lineage in list/export, 2026-09-19)
 
@@ -566,7 +567,7 @@ W05 ส่ง `POST …/handoff` (ข้อ 9), กติกาการสร�
 8. **`PrismaExpenseRepository.createExpense` รับ `db?` เพิ่ม** และ `CreateExpenseRecordInput` รับ `status`/`aiVerificationStatus`/`vendor*`/lineage/`payerUserId` — derived source ต้องเกิดในทรานแซกชันเดียวกับ lock ของกลุ่ม และเขียนครบในคำสั่งเดียว (`UpdateExpenseRecordInput` ตัด lineage ออกโดยตั้งใจ เพราะ `updateExpense` ไม่ได้พา field เหล่านี้)
 9. **`ExpenseSummary.captureGroupId` / `ExpenseDetail.captureGroup` เป็นการเพิ่มฟิลด์ล้วน ๆ** และ `captureGroup` อ่านยอดจาก `aiVerificationSummaryJson` ที่ handoff เขียนไว้ จึงไม่ต้อง query ตาราง capture ในหน้ารายละเอียด
 10. **`allowedActions` ของกลุ่มที่ `HANDED_OFF`** คืน `review` (+`accept_allocation`/`handoff` ตามสถานะ allocation) เมื่อ reopen ได้ และคืน `[]` พร้อม blocker `expense_capture_handoff_consumed` เมื่อใช้ไปแล้ว — W01 คืน `[]` เสมอสำหรับสถานะที่ไม่ใช่ `OPEN`
-11. **ยังไม่ได้ทำใน W05**: หน้าเว็บของ derived sources บนหน้ากลุ่ม (W04b), ใบรับรองรายร้าน (W06), การต่อ claim/projection/ledger ทั้งหมดของ W07, และผู้เรียก auto-handoff จริงจาก lane LINE (W02-LINE)
+11. **ยังไม่ได้ทำใน W05**: หน้าเว็บของ derived sources บนหน้ากลุ่ม (W04b), ใบรับรองรายร้าน (W06), การต่อ claim/projection/ledger ทั้งหมดของ W07, และผู้เรียก auto-handoff จริงจาก lane LINE (W02-LINE) — **ผู้เรียกส่งแล้วใน W07-int**: `LineCaptureResultNotifierUseCase` เรียกเมื่อผลเป็น `DONE`, ไม่ใช่เคส NR และ `documentCount ≤ 1`
 
 ## 22. Implementation notes (W06 — ใบรับรองต่อ derived source, 2026-09-19)
 
@@ -634,3 +635,61 @@ W06 ส่ง: กติกาเพิ่มของ eligibility บน derive
    เกี่ยวกับยอดในใบ) — การแก้ยอดบังคับให้ลงนามใหม่อยู่แล้ว ผู้ลงนามจึงเห็นทั้งสองค่าก่อนเซ็น
 10. **ยังไม่ได้ทำใน W06**: ทางขอเอกสารจากร้าน (spec §16.5), หลักฐาน UX 40+ และ PDF ที่เรนเดอร์จริงบนเบราว์เซอร์ (W08),
     การต่อ claim/projection ของ W07 และการ deploy ใด ๆ
+11. **gate ทำงานเฉพาะตอน prepare** — **แก้ใน W07-int (ข้อ 23.2 ข้อ 15)**: preview/certify/approve เรียกซ้ำทุกครั้ง
+    (ยกเว้น correction) มิฉะนั้น allocation ที่ถูกแทนที่ระหว่าง prepare กับ approve จะออกใบรับรองที่อ้างการแบ่งส่วนที่กลุ่มไม่บันทึกแล้ว
+
+## 23. Implementation notes (W07-int — เย็บตะเข็บระหว่าง wave, 2026-09-19)
+
+W07-int ไม่ได้ส่ง slice ใหม่ แต่ต่อสิ่งที่ wave ก่อนหน้าเขียนขนานกันแล้วไม่ได้บรรจบ: ผู้เรียก auto-handoff ของ LINE
+(ข้อ 3.2), ปลายทาง push ของแชตกลุ่ม, read-status บนหน้าเว็บ, ความเท่ากันของสามทาง, ช่องว่างที่แต่ละ wave บันทึกไว้เอง,
+deep link ใบเบิก และ gate ใบรับรองหลังขั้น prepare
+
+### 23.1 Migration เดียว (`20260919120000_expense_capture_push_target`)
+
+1. `ExpenseCaptureGroup.linePushTargetId String?` — chat id ที่ผลการอ่านถูก push กลับเข้าไปได้ (`event.pushTargetId ?? event.lineUserId`
+   ค่าเดียวกับที่ ledger ใช้เป็น `chatKey`) server ตั้งเท่านั้น ไม่มีใน dto ใด และ sweep retention ล้างทิ้ง
+2. Partial unique index `ExpenseCaptureObservation_companyId_expenseId_version_key ... WHERE "fileId" IS NULL` — raw SQL
+   เพราะ Prisma เขียน partial unique ไม่ได้; schema มีคอมเมนต์ชี้ไว้และ `migrate diff` ไม่มองว่าเป็น drift (ตรวจแล้วบน throwaway DB)
+
+### 23.2 สิ่งที่ต่างจากตัวอักษรของเอกสารนี้ พร้อมเหตุผล (ไม่มีข้อใดเปลี่ยนกติกาเงิน/สิทธิ)
+
+1. **ข้อ 19.4 ข้อ 2 (W02-LINE) ถูกแทนที่**: "push ผลอ่านไปได้เฉพาะแชต 1:1" ไม่ใช่ข้อจำกัดอีกต่อไป — `lineChatKeyHash`
+   ยัง**ยืนยัน**ปลายทางเท่านั้น (hash กู้กลับไม่ได้จริง) แต่ `linePushTargetId` เป็นปลายทางเอง; กลุ่มที่ไม่มีค่านี้
+   (ทุกกลุ่มก่อน migration นี้) fallback ไปแชต 1:1 ของผู้ส่งเหมือนเดิม และทั้งสองทางถูกเทียบกับ hash ที่บันทึกไว้ก่อน push
+2. **auto-handoff ถูกเรียกเมื่อ `documentCount ≤ 1` และไม่ใช่เคส NR** — use case เป็นผู้ตัดสินจริง (`captureAutoHandoffEligibility`)
+   แต่การถามล่วงหน้าด้วยค่าที่ event พกมาแล้ว ทำให้ผลหลายฉบับไม่ต้องเปิดทรานแซกชันและ lock กลุ่มโดยเปล่าประโยชน์;
+   NR01–NR08 ไม่เข้าเส้นทางนี้เลยตาม §18.4 ("ไม่ auto-handoff ผล NR")
+3. **สรุปของ auto-handoff อยู่ใน `formatCaptureAutoHandoffReply`** (`line-non-receipt-reply.logic.ts`) ไม่ได้ reuse
+   `formatPaypersReply` — ตัวนั้นอยู่ใน `process-line-webhook.use-case.ts` (ไฟล์ 8,000 บรรทัดที่ import logic module นี้อยู่แล้ว
+   จึงเป็น cycle) และ CTA ที่ข้อนี้ต้องการคือ "ตรวจสอบและยืนยันในเว็บแอป" ไม่ใช่ "เปิดดูรายการ" ของโหมด compact;
+   แถวที่พิมพ์คือ ร้าน / ยอด / ประเภทเอกสาร (`SOURCE_DOCUMENT_TYPE_LABELS` จาก contracts) / วันที่ / "ยังไม่ยืนยันรายการ"
+4. **`ExpenseCapturePausedReason` เพิ่ม `memory_budget`** (ข้อ 4.6 ระบุ 4 ค่า) — งบ derivative ต่อ job
+   (`EXPENSE_CAPTURE_DERIVATIVE_MAX_BYTES` default 67,108,864) หยุดแบบเดียวกับ `call_budget` คือเก็บผลที่อ่านแล้วไว้;
+   ข้อความไทย "ไฟล์ใหญ่เกินที่อ่านอัตโนมัติได้ในรอบเดียว" ทั้ง LINE และ dictionary ของเว็บ
+5. **เวลา 15 นาทีของข้อ 4.6 เป็นของ JOB ไม่ใช่ของการรันครั้งเดียว** — `checkpointJson.runMillis` สะสมทุกครั้งที่รัน
+   (`derivativeBytes` เช่นกัน); ก่อนหน้านี้ job ที่ตายนาทีที่ 14 ได้เวลาใหม่เต็ม 15 นาทีทุกครั้งที่ถูก claim
+6. **`findGroupAllocation` ถาม 2 statement** — `orderBy: { status: 'asc' }` ไม่ได้แปลว่า ACCEPTED มาก่อน: Postgres
+   เรียง enum ตามลำดับที่ประกาศ และ enum นี้ประกาศ `PREVIEW` ก่อน `ACCEPTED` กลุ่มที่ reopen แล้ว (§18.2) จึงเคยตอบด้วย
+   ข้อเสนอแทนการตัดสินที่ derived source ถูกสร้างจาก
+7. **`megabytes` ของ §17.5 เปลี่ยนเป็นทศนิยมหนึ่งตำแหน่งเสมอ** ให้ตรงกับ `captureMegabytes` ของเว็บ — ไฟล์เดียวกันกับ
+   ขอบเดียวกันเคยพิมพ์ "10 MB" ที่ LINE และ "10.0 MB" ที่เว็บ
+8. **`readJobId` ของ `complete` เป็น `null` ไม่ใช่ `''`** (W01) และ dto ทั้งสองฝั่งตามนั้น — `''` เป็นค่าที่ผู้เรียกส่งต่อได้
+   ราวกับเป็น id (`markReadFailed('')` ตอบ false ซึ่งอ่านเหมือน "terminal แล้ว")
+9. **caption ที่เป็นคำถามมากับ `file` ตอบเป็น text turn ของตัวเอง** (`defer_text` ที่ buffer รองรับอยู่แล้ว) และไม่ถูกเก็บเป็น
+   `note` ของกลุ่ม; ยกเว้นเคส A45 ที่เพิ่งถาม "งานเดิม/ใบใหม่" ไป — turn ที่สองจะทับคำถามที่รอคำตอบอยู่
+10. **`ensurePendingMedia` P2002: intent ที่แพ้ race ไม่ถูกส่งให้ `ObjectVersionCleanupService`** — service นั้นลบ *version*
+    ของ object ที่มีอยู่ ส่วนผู้แพ้ข้าม `uploadLineMedia` ไปเลยจึงไม่เคยมี version ให้ลบ และ prefix ของ producer ก็ไม่รับ;
+    สิ่งที่เหลือคือแถว `AttachmentObject` สถานะ `PENDING_UPLOAD` ที่ไม่มีไบต์ และหลุดจาก `sumPendingBytes`
+    (หน้าต่าง `createdAfter`) ไปเอง — **ยอมรับ** พร้อมเหตุผลนี้ในโค้ด
+11. **`multiDocument` บนหน้า review อ่านจาก `GET …/read-status`** เมื่อมี read job; เส้นทางรูปเดี่ยวแบบ sync ที่ไม่มี job
+    ยังใช้ `classification.contentKind` ของตัวเอง (ถ้าตัดทิ้งจะทำให้ notice ของ lane นั้นหายไปทั้งหมด)
+12. **`receipt-ocr-apply` รับ `sourceAttachmentId` เพิ่ม** และล้าง `sourceStale`/`sourceAttachmentId` เมื่ออ่านไฟล์ที่เป็น
+    primary ปัจจุบัน — เส้นทาง sync ประกอบ summary ใหม่ทั้งก้อนจึงล้างให้ฟรีอยู่แล้ว ส่วน job lane ไม่เขียน summary เลย
+13. **§8 ยังไม่มี sweep ลบไฟล์ของกลุ่ม** (`EXPENSE_CAPTURE_RETENTION_DAYS` ประกาศไว้แต่ไม่มีผู้ใช้) W07-int จึงล้าง
+    `linePushTargetId` ตามอายุในสweep เดียวกับ `LineIntakeAttempt` เท่านั้น — การลบไฟล์เป็นงานที่ยังเปิดอยู่
+14. **`?expenseId=` ของหน้าใบเบิกใหม่ถาม server เสมอ** (`getReimbursementSourceOptions(…, { expenseId })`) แล้วจึงเติมบรรทัดที่ 1
+    ผ่าน builder ตัวเดียวกับ picker; source ที่เบิกไม่ได้พิมพ์เหตุผลของ server แทนที่จะปล่อยฟอร์มเปล่า (ปิดช่องว่างข้อ 21.8)
+15. **capture gate ทำงานซ้ำที่ preview/certify/approve** ไม่ใช่เฉพาะ prepare — `assertPreparedExpenseUnchanged` เห็นแค่
+    expense ไม่เห็นกลุ่มยอมรับ allocation ใหม่; เอกสาร correction ยังใช้เส้นทางเดิมด้วยเหตุผลเดียวกับ `validateEligibility`
+16. **ยังไม่ได้ทำใน W07-int**: ส่วนที่เหลือของ W07 (claim revalidate ตอน submit/approve, finance projection, ledger),
+    §16.5 ทางขอเอกสารจากร้าน, sweep ลบไฟล์ของ §8, W08 และการ deploy ใด ๆ
