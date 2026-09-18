@@ -382,3 +382,68 @@ W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAl
 6. **`sourceStale` ถูกล้างตอนคนกดบันทึกการตรวจ** ใน `UpdateExpenseDraftUseCase` (พร้อม `missingFields` เดิม) — W03 ยังต้องล้างตอน apply ผลอ่านใหม่; ตอนตั้ง flag จะถอด `extractionAttachmentId` ออกจาก summary ด้วย เพื่อไม่ให้ fence ของ `updateExpense` (ผล OCR ที่กลับช้า) ชี้ไปยังไฟล์ที่ถูกแทนแล้ว
 7. **หน้า `/expenses/capture/{groupId}` ส่งเฉพาะโครง** ตามลำดับงาน: header/สถานะ, รายการไฟล์ + สถานะอ่านต่อไฟล์ + polling 3 วินาที, แนบเพิ่ม/ตัดออก/เก็บไว้ก่อน/ไม่มีส่วนของบริษัท, preview เดิม และ slot ว่าง `CaptureFactsSection`/`CaptureAllocationSection` ให้ W04; ปุ่มทุกปุ่มมาจาก `allowedActions` ของ server
 8. **ยังไม่ได้ทำใน W02-web**: LINE lane ทั้งหมด (W02-LINE), การอ่านจริง/manifest ที่มีหน้า (W03), สรุปร้าน/สินค้า/ยอด/ผู้จ่ายบนหน้ากลุ่ม (W04) — ข้อความ "ทั้งสามทางรับ PDF 10 MiB แล้ว save→queue/read" ยังติ๊กไม่ได้จนกว่า W03 จะมี runner จริง
+
+## 18. Implementation notes (W05 — handoff, single use, lineage in list/export, 2026-09-19)
+
+W05 ส่ง `POST …/handoff` (ข้อ 9), กติกาการสร้างใหม่ (regenerate), auto-handoff ของกลุ่ม LINE ไฟล์เดียว (ข้อ 3.2), และ lineage ใน read model/export (ข้อ 5) หน้าเว็บของ derived sources (W04b) กับใบรับรองรายร้าน (W06) ยังไม่ทำในรอบนี้
+
+### 18.1 ตารางแปลง scope → ExpenseRecord/ExpenseLine
+
+`buildDerivedSourceDraft` (`expense-capture-handoff.logic.ts`) เป็นที่เดียวที่แปลง ทุกค่าคัดลอกจาก snapshot ที่ยอมรับแล้ว ไม่มีการคำนวณใหม่
+
+| ค่าปลายทาง | มาจาก |
+|---|---|
+| `captureSource` | `group.intakeChannel = LINE` → `LINE_UPLOAD`, อื่น → `WEB_UPLOAD` |
+| `status` / `aiVerificationStatus` | `NEEDS_REVIEW` เสมอ |
+| `createdByUserId` | `ctx.userId` ของผู้กด (auto-handoff ใช้ `group.createdByUserId`) — ไม่ปลอม |
+| `payerUserId` | `allocation.payerUserId` เมื่อ `fundingRoute = EMPLOYEE`; route อื่นเป็น null |
+| `branchId` | `group.branchId` |
+| `expenseDate` | `scope.expenseDate` (ผู้ตรวจเลือกแล้ว; ไม่มี → 422 ไม่ default เป็นวันนี้) |
+| `currency` / `vatMode` / `inputVatClaimStatus` / `taxEvidenceStatus` | `scope.*` ตรงตัว (§7 ไม่บังคับค่าให้ผ่าน resolver) |
+| `sourceDocumentType` | `sourceDocumentTypeFromClassification` → `toSourceDocumentType` ของเอกสารแรกใน scope ที่แปลงได้; อื่น `NEEDS_REVIEW` |
+| `vendorNameSnapshot` / `vendorTaxIdSnapshot` / `vendorBranchCodeSnapshot` | `scope.issuer.name` / `.taxId` / `.branchCode` |
+| `vendorDocumentNumber` | `documentNumber` ของเอกสารแรกใน `scope.documentRefs` ที่มีเลข |
+| `subtotal/discount/taxable/vat/grandTotal/netPayable/outstandingAmount` | `scope.totals.*` (`outstanding = netPayable`, ยังไม่จ่าย) |
+| `whtAmount` | `'0.0000'` — เส้นทาง capture ไม่หัก ณ ที่จ่าย |
+| `aiVerificationSummaryJson` | `{ dateStatus: 'verified', expenseDateSource, captureGroupId, allocationId, scopeKey, paidTotal, companyAmount, personalAmount, policyVersion }` |
+| `sourceChannelMetadataJson` | `{ channel, kind: 'capture_group', captureGroupId, allocationId, scopeKey, chatKeyHash? }` |
+| `captureGroupId` / `captureAllocationId` / `captureScopeKey` | จาก context/scope |
+| `primaryAttachmentId` + links | ไฟล์ของ scope ตามลำดับ manifest: ตัวแรก `expense.receipt.primary`, ที่เหลือ `expense.receipt.supporting` |
+| `ExpenseLine[]` | `scope.lines` (สินค้า) แล้วต่อด้วย `scope.charges` (`chargeKind`); `quantity/unitPrice/discountAmount/vatRate` และ `totals.*` ตรงตัว, `whtRate = null`, `reviewStatus = NEEDS_REVIEW`, `expenseCategoryId/accountHintKey/taxCategory = null` |
+
+ก่อนเขียนทุกครั้ง: `expenseTotalsIdentityError` ต้องเป็น null บน "แถวที่กำลังจะเขียน" มิฉะนั้น 422 `expense_capture_handoff_totals_invalid` (ไม่ปัดยอดให้ตรง) และ scope ที่ยังมี blocker อื่นนอกจาก `expense_capture_tax_review_pending` ถูกปฏิเสธด้วย 422 `expense_capture_handoff_blocked`
+
+### 18.2 สถานะของ `handoffState`/`status` และ guard ของแต่ละทาง
+
+| จาก | action | guard | ไป |
+|---|---|---|---|
+| `OPEN` / `NONE` | `handoff` | สิทธิ์ §6 · `expectedRevision` · `acceptedAllocationId = allocationId` · allocation `ACCEPTED` · `outcome READY` · `group.revision = allocation.groupRevision + 1` · derived sources เดิม (ถ้ามี จาก ข้อ 3.1) ยังไม่ถูกใช้ | `HANDED_OFF` / `ACTIVE` + `handoffBatchKey` |
+| `HANDED_OFF` / `ACTIVE` | `handoff` ด้วย batch key เดิม | — | ตอบ batch เดิม `replayed: true` ไม่เขียนอะไร |
+| `HANDED_OFF` / `ACTIVE` | `facts`/`review`/`accept` | `isReopenableAfterHandoff` = มี derived source ≥ 1 และไม่มีตัวใดถูกใช้ | คงอยู่ `HANDED_OFF` / `ACTIVE` (allocation ใหม่) |
+| `HANDED_OFF` / `ACTIVE` | `handoff` ด้วย allocation ใหม่ | เหมือนแถวแรก + ทุก derived source ยังไม่ถูกใช้ | `HANDED_OFF` / `ACTIVE` + batch key ใหม่ |
+| `HANDED_OFF` / `ACTIVE` | `close` | — | 409 `expense_capture_handoff_active` (ตามเดิมของ W01) |
+| `CLOSED_NO_HANDOFF` / `CANCELLED` | `handoff` | — | 409 `expense_capture_group_closed` |
+
+### 18.3 การตรวจ "ถูกใช้ไปแล้ว" ของ regenerate (`findHandoffConsumers`)
+
+ต่อ derived source ทุกตัวของกลุ่ม คืนเหตุผลแรกที่เข้าเงื่อนไข: `status` (ไม่อยู่ใน DRAFT|NEEDS_REVIEW|READY_FOR_CONFIRMATION) → `paid` (`paymentStatus ≠ UNPAID` หรือ `paidAmount > 0`) → `posted` (`postingStatus ≠ not_required` หรือมี `journalEntryId`) → `claim_projection` (`sourceReimbursementRequestId`) → `claim` (`ReimbursementLine.linkedExpenseId` ในคำขอที่ไม่ terminal) → `certificate` (`ExpenseSubstituteReceiptEvidence` สถานะ PREPARED|PAYER_CERTIFIED|ISSUED) มีตัวใดตัวหนึ่ง = 409 `expense_capture_handoff_consumed` พร้อม `expenseIds`
+
+ในการสร้างใหม่: scope ที่ allocation ใหม่ยังมี → เขียนทับ expense เดิมในที่เดิม (CAS `updatedAt` → 409 `EXPENSE_UPDATE_CONFLICT`; `ReceiptExtraction`/ไฟล์คงอยู่); scope ที่หายไป → ลบ expense กับ `AttachmentLink` ของมัน แต่ไม่แตะ `AttachmentObject` เพราะกลุ่มยังอ้างไฟล์เดิมอยู่
+
+### 18.4 เงื่อนไข auto-handoff (ข้อ 3.2)
+
+`AutoHandoffSingleDocumentCaptureUseCase` (ไม่มี HTTP route; wave LINE เป็นผู้เรียก) คืน `{ expenseId }` หรือ `{ skipped }` โดย skip เมื่อ: `handoff_exists` · `group_not_open` · `not_line_channel` · `not_single_file` (ไฟล์ที่ยังอยู่ ≠ 1 หรือยังไม่ STORED) · `read_not_done` · `not_single_document` / `not_single_issuer` · `not_expense_document` (ชนิดไม่อยู่ในชุดของเส้นทางใบเสร็จเดี่ยว) · `document_mismatch` · `unknown_amounts` · `blocked` (allocation ไม่ได้ให้ scope เดียวที่ไม่มี blocker) — ผลลัพธ์คือ expense `NEEDS_REVIEW` เหมือนใบเสร็จ LINE วันนี้, `acceptedAllocationId = null`, `handoffBatchKey = <groupId>:auto`
+
+### 18.5 สิ่งที่ต่างจากตัวอักษรของเอกสารนี้ พร้อมเหตุผล (ไม่มีข้อใดเปลี่ยนกติกาเงิน/สิทธิ)
+
+1. **ไม่มีคอลัมน์ `handoffIdempotencyKey` และไม่มี migration ในรอบนี้** — ข้อ 9 กำหนดว่า `idempotencyKey` ผูกกับ `(groupId, allocationId)` ซึ่งก็คือ `handoffBatchKey` ที่ unique อยู่แล้ว การเรียกซ้ำด้วยคู่เดิมคือเจตนาเดียวกันไม่ว่าจะถือ key อะไร จึงเก็บคอลัมน์ที่สองไม่ได้ประโยชน์; DTO ยังรับและตรวจรูป `idempotencyKey` ตามสัญญา
+2. **`group.revision = allocation.groupRevision + 1` ไม่ใช่ `=`** — `accept` ของ W04a bump revision หลังสร้าง allocation เสมอ ดังนั้นเงื่อนไข "เท่ากัน" ตามตัวอักษรจะ 409 ทุกครั้ง ค่าที่ถูกคือ "ไม่มีอะไรเกิดขึ้นหลังการยอมรับ" = ห่างกันหนึ่งขั้น (เพิ่มไฟล์/ตัดไฟล์หลัง accept จะทำให้ห่างมากกว่านั้นและต้องตรวจใหม่)
+3. **`handoffState = RELEASED` ไม่ถูกบันทึกจริง** — การปล่อยกับการสร้างชุดใหม่อยู่ในทรานแซกชันเดียว ผู้อ่านจึงไม่มีทางเห็นสถานะกลาง การเขียน `RELEASED` แล้วทับด้วย `ACTIVE` ทันทีเป็น write ที่ไม่มีใครสังเกตได้; ร่องรอยการปล่อยอยู่ใน audit `releasedExpenseIds`/`rewrittenExpenseIds` แทน
+4. **`review`/`accept` เปิดใหม่ได้บนกลุ่มที่ handoff แล้วเมื่อทุก derived source ยังไม่ถูกใช้** (`isReopenableAfterHandoff`) — brief ขอข้อยกเว้นนี้เฉพาะกลุ่ม auto-handoff แต่ข้อ 9 ต้องการ regenerate ด้วย และเงื่อนไขทางการเงินเหมือนกันทุกประการ กลุ่มที่ handoff แล้วแต่ไม่มี derived source เลยยังตอบ 409 `expense_capture_handoff_active` ตามเดิม
+5. **ไม่เพิ่ม `expense.capture_handoff.created` ใน `excludeEventTypes` ของ `workflow-outbox-drain`** — generic drain แปลง event ที่ไม่มี rule เป็นแถว `WorkflowEventInbox` สถานะ `SKIPPED` ซึ่งเป็นพฤติกรรมเดียวกับ `expense.receipt_uploaded` ของทุก draft วันนี้ ไม่มีผู้บริโภคเฉพาะให้แย่ง และ event ถูก append **หลัง** commit เพราะ `OutboxAppendService` เขียนด้วย client ของตัวเอง
+6. **`evidenceRef` ของ derived source เป็น `<ref เดิม>-g<8 ตัวท้ายของ groupId>`** — ข้อ 5 บอกให้ "เพิ่ม captureGroupId" แต่ไม่มีคอลัมน์ใหม่ใน accountant index (ข้อ 12 ห้าม) การใส่ใน ref ทำให้ผู้ทำบัญชีเห็นว่าใบสองใบมาจากงานเดียวกัน และ ref ของค่าใช้จ่ายทั่วไป**ไม่เปลี่ยนแม้แต่ไบต์เดียว** (golden CSV เดิมจึงยังผ่าน)
+7. **`source_channel` ของ export ใช้ fallback `'OTHER'`** แทนการพ่นชื่อ enum ดิบ — enum เก็บของที่เพิ่มภายหลังจะกลายเป็นคอลัมน์ที่เปลี่ยนรูปในไฟล์ที่ส่งออกนอกระบบ
+8. **`PrismaExpenseRepository.createExpense` รับ `db?` เพิ่ม** และ `CreateExpenseRecordInput` รับ `status`/`aiVerificationStatus`/`vendor*`/lineage/`payerUserId` — derived source ต้องเกิดในทรานแซกชันเดียวกับ lock ของกลุ่ม และเขียนครบในคำสั่งเดียว (`UpdateExpenseRecordInput` ตัด lineage ออกโดยตั้งใจ เพราะ `updateExpense` ไม่ได้พา field เหล่านี้)
+9. **`ExpenseSummary.captureGroupId` / `ExpenseDetail.captureGroup` เป็นการเพิ่มฟิลด์ล้วน ๆ** และ `captureGroup` อ่านยอดจาก `aiVerificationSummaryJson` ที่ handoff เขียนไว้ จึงไม่ต้อง query ตาราง capture ในหน้ารายละเอียด
+10. **`allowedActions` ของกลุ่มที่ `HANDED_OFF`** คืน `review` (+`accept_allocation`/`handoff` ตามสถานะ allocation) เมื่อ reopen ได้ และคืน `[]` พร้อม blocker `expense_capture_handoff_consumed` เมื่อใช้ไปแล้ว — W01 คืน `[]` เสมอสำหรับสถานะที่ไม่ใช่ `OPEN`
+11. **ยังไม่ได้ทำใน W05**: หน้าเว็บของ derived sources บนหน้ากลุ่ม (W04b), ใบรับรองรายร้าน (W06), การต่อ claim/projection/ledger ทั้งหมดของ W07, และผู้เรียก auto-handoff จริงจาก lane LINE (W02-LINE)
