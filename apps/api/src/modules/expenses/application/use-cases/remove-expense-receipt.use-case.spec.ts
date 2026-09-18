@@ -6,6 +6,7 @@ const at = new Date('2026-09-10T00:00:00Z');
 const ctx = { companyId: 'company', userId: 'owner', permissions: ['expense.update'], scopes: {}, requestId: 'req' } as any;
 function fixture(options: Record<string, any> = {}) {
   const writes: any[] = [], deleted: string[] = [], audit: any[] = [];
+  let links: any[] | undefined = options.links;
   const expense = { id: 'expense', companyId: 'company', branchId: 'branch', createdByUserId: 'owner', status: 'NEEDS_REVIEW', paymentStatus: 'UNPAID', paidAmount: { gt: () => false }, postingStatus: 'not_required', updatedAt: at, primaryAttachmentId: 'receipt', ...options.expense };
   const tx = {
     $executeRaw: async () => 1,
@@ -16,8 +17,16 @@ function fixture(options: Record<string, any> = {}) {
     attachmentLink: {
       findMany: async () => [],
       findFirst: async ({ where }: any) => typeof where.attachmentId === 'object' ? null : options.missingFile || where.attachmentId !== 'receipt' || where.purpose !== (options.purpose ?? 'expense.receipt.primary') ? null : { attachment: { originalFileName: 'receipt.jpg' } },
-      deleteMany: async ({ where }: any) => { deleted.push(where.attachmentId); },
-      count: async () => options.shared ? 1 : 0,
+      deleteMany: async ({ where }: any) => {
+        deleted.push(where.attachmentId);
+        if (links) links = links.filter((link: any) => !(link.attachmentId === where.attachmentId
+          && link.targetType === where.targetType && link.targetId === where.targetId && link.purpose === where.purpose));
+      },
+      // With `links` the count runs against real rows, so the query's own WHERE decides whether a
+      // file is still referenced — that is what has to notice a capture group (appendix §5).
+      count: async ({ where }: any) => (links
+        ? links.filter((link: any) => link.attachmentId === where.attachmentId).length
+        : options.shared ? 1 : 0),
     },
     expenseSubstituteReceiptEvidence: { findFirst: async () => options.evidence ? { id: 'evidence' } : null },
     reimbursementLine: { findFirst: async () => options.claim ? { id: 'claim' } : null },
@@ -43,6 +52,23 @@ describe('remove primary receipt', () => {
     const f = fixture({ shared: true }); await f.useCase.execute(ctx, 'expense', 'receipt', at.toISOString());
     assert.deepEqual(f.deleted, ['receipt']); assert.deepEqual(f.softDeleted, []);
   });
+  it('keeps the bytes when a capture group still lists the file, and deletes them when it does not', async () => {
+    const shared = fixture({ links: [
+      { attachmentId: 'receipt', targetType: 'expense.record', targetId: 'expense', purpose: 'expense.receipt.primary' },
+      { attachmentId: 'receipt', targetType: 'expense.capture_group', targetId: 'group-1', purpose: 'expense.capture.evidence' },
+    ] });
+    await shared.useCase.execute(ctx, 'expense', 'receipt', at.toISOString());
+    assert.deepEqual(shared.deleted, ['receipt'], 'the expense stops pointing at it');
+    assert.deepEqual(shared.softDeleted, [], 'but the group still needs the bytes');
+    assert.equal(shared.audit[0].metadataJson.sharedFileRetained, true);
+
+    const alone = fixture({ links: [
+      { attachmentId: 'receipt', targetType: 'expense.record', targetId: 'expense', purpose: 'expense.receipt.primary' },
+    ] });
+    await alone.useCase.execute(ctx, 'expense', 'receipt', at.toISOString());
+    assert.deepEqual(alone.softDeleted, ['receipt']);
+  });
+
   for (const [label, options, actor, id, expected] of [
     ['tenant', {}, { ...ctx, companyId: 'other' }, 'receipt', at.toISOString()],
     ['ownership', {}, { ...ctx, userId: 'other' }, 'receipt', at.toISOString()],

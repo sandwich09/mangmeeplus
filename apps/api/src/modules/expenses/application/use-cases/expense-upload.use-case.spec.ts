@@ -31,7 +31,13 @@ const ctx = {
  * Attachment collaborators for CompleteReceiptUploadUseCase's replace path.
  * `primaries` are the ACTIVE `expense.receipt.primary` links the expense already holds.
  */
-function receiptRetirement(options: { primaries?: string[]; sharedLinks?: Record<string, number>; holds?: string[] } = {}) {
+function receiptRetirement(options: {
+  primaries?: string[];
+  sharedLinks?: Record<string, number>;
+  holds?: string[];
+  /** Real rows for the shared-link count, so the WHERE clause itself is under test. */
+  otherLinks?: Array<{ attachmentId: string; targetType: string; targetId: string }>;
+} = {}) {
   const unlinked: string[] = [];
   const softDeleted: string[] = [];
   const tx = {
@@ -40,7 +46,10 @@ function receiptRetirement(options: { primaries?: string[]; sharedLinks?: Record
       findMany: async ({ where }: any) => (where.OR ? [] : options.primaries ?? [])
         .filter((id) => id !== where.attachmentId.not)
         .map((attachmentId) => ({ attachmentId })),
-      count: async ({ where }: any) => options.sharedLinks?.[where.attachmentId] ?? 0,
+      count: async ({ where }: any) => (options.otherLinks
+        ? options.otherLinks.filter((link) => link.attachmentId === where.attachmentId
+          && !(link.targetType === where.NOT.targetType && link.targetId === where.NOT.targetId)).length
+        : options.sharedLinks?.[where.attachmentId] ?? 0),
       deleteMany: async ({ where }: any) => { unlinked.push(where.attachmentId); return { count: 1 }; },
     },
   };
@@ -315,6 +324,28 @@ describe('receipt upload use cases', () => {
       const shared = completeReplace({ primaries: ['att-old', 'att-new'], sharedLinks: { 'att-old': 1 } });
       await run(shared);
       assert.deepEqual(shared.retirement.softDeleted, [], 'a file another record points at is not ours to retire');
+    });
+
+    // Capture appendix §5: a file a capture group still lists is SHARED evidence. The replace path
+    // must see the new `expense.capture_group` target through the same count it already runs — if
+    // that clause ever narrows to `expense.record`, the group's manifest loses its bytes.
+    it('keeps a file the capture group still links, through the existing shared-link count', async () => {
+      const harness = completeReplace({
+        primaries: ['att-old', 'att-new'],
+        otherLinks: [{ attachmentId: 'att-old', targetType: 'expense.capture_group', targetId: 'group-1' }],
+      });
+      await run(harness);
+      assert.deepEqual(harness.retirement.softDeleted, [], 'the group still needs this file');
+      assert.deepEqual(harness.retirement.unlinked, []);
+    });
+
+    it('retires a file no capture group links, even when the group links a different one', async () => {
+      const harness = completeReplace({
+        primaries: ['att-old', 'att-new'],
+        otherLinks: [{ attachmentId: 'att-other', targetType: 'expense.capture_group', targetId: 'group-1' }],
+      });
+      await run(harness);
+      assert.deepEqual(harness.retirement.softDeleted, ['att-old']);
     });
 
     it('does nothing on a first upload — there is no earlier receipt to retire', async () => {
