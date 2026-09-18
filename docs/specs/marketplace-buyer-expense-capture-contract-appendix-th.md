@@ -587,7 +587,7 @@ W06 ส่ง: กติกาเพิ่มของ eligibility บน derive
 | scope มีเอกสาร `RECEIPT|TAX_INVOICE|ABBREVIATED_TAX_INVOICE` ที่มียอดพิมพ์ | ไม่เสนอใบรับรอง (A18/A19) | `nextAction = receipt_present`; prepare ยังตอบด้วยกฎเดิม `valid_receipt_normal_path` |
 | ไม่มีเอกสารใดใน scope ที่ `paymentStatus = paid` (A23) | ปฏิเสธ | `substitute_capture_unpaid_evidence` / 422 |
 | มีเอกสารใน scope ที่ `reconciliation = mismatch` (A34) | ปฏิเสธ | `substitute_capture_document_mismatch` / 422 |
-| `fundingSource` ไม่ตรง `group.fundingRoute` (EMPLOYEE↔PERSONAL_ADVANCE, COMPANY↔COMPANY) | ปฏิเสธ | `substitute_capture_funding_route_mismatch` / 422 |
+| `fundingSource` ไม่ตรง `fundingRoute` ของ allocation ที่สร้าง source นั้น (EMPLOYEE↔PERSONAL_ADVANCE, COMPANY↔COMPANY; ไม่ใช่ค่าที่กลุ่มกำลังถูกตรวจใหม่) | ปฏิเสธ | `substitute_capture_funding_route_mismatch` / 422 |
 | อื่น ๆ | ทำใบรับรองได้ | `nextAction = certificate_available` |
 
 กลุ่มไม่มีใบรับรองของตัวเองโดยโครงสร้าง: route ของใบรับรองรับ `expenseId` และกลุ่มไม่ใช่ `ExpenseRecord`

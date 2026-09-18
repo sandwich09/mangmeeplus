@@ -452,6 +452,19 @@ test('the wizard starts from what the group reviewed, never from today (§12.2, 
   assert.equal(captureCertificatePrefill(group({ derivedSources: [] }), 'exp-1'), null);
 });
 
+test('the prefill follows the accepted allocation while the group is being re-answered', () => {
+  const reReviewed = group({
+    fundingRoute: 'COMPANY', derivedSources: [derived()],
+    allocation: {
+      allocationId: 'alloc-1', groupRevision: 3, policyVersion: 'shared-discount-v1+shipping-by-eligible-item-v1',
+      status: 'ACCEPTED', fundingRoute: 'EMPLOYEE', payerUserId: 'user-2', computedByUserId: 'user-1',
+      computedAt: '2026-09-18T01:00:00.000Z', acceptedByUserId: 'user-1', acceptedAt: '2026-09-18T02:00:00.000Z',
+      invalidatedReason: null, result: allocationResult(),
+    },
+  });
+  assert.equal(captureCertificatePrefill(reReviewed, 'exp-1')?.fundingSource, 'PERSONAL_ADVANCE');
+});
+
 test('a payment method the certificate form cannot hold is left for the payer to choose', () => {
   const odd = group({
     fundingRoute: 'EMPLOYEE', derivedSources: [derived()],

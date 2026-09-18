@@ -486,18 +486,20 @@ export type CaptureCertificatePrefill = {
 const CAPTURE_PAYMENT_METHODS = new Set(['CASH', 'BANK_TRANSFER', 'CARD', 'CHEQUE', 'OTHER']);
 
 export function captureCertificatePrefill(
-  group: Pick<ExpenseCaptureGroupDetailDto, 'derivedSources' | 'facts' | 'fundingRoute'>,
+  group: Pick<ExpenseCaptureGroupDetailDto, 'derivedSources' | 'facts' | 'fundingRoute' | 'allocation'>,
   expenseId: string,
 ): CaptureCertificatePrefill | null {
   const source = group.derivedSources.find((row) => row.expenseId === expenseId);
   if (!source) return null;
+  // The accepted allocation is what derived this source; the group's own answer may be mid-edit.
+  const fundingRoute = group.allocation?.status === 'ACCEPTED' ? group.allocation.fundingRoute : group.fundingRoute;
   const facts = captureFactsView(group);
   const documents = (facts?.documents ?? []).filter((document) => document.scopeKey === source.scopeKey);
   const refs = new Set(documents.map((document) => document.ref));
   const payment = (facts?.payments ?? []).find((row) => refs.has(row.documentRef) && row.status === 'paid');
   const kind = documents[0]?.kind;
   return {
-    fundingSource: group.fundingRoute === 'EMPLOYEE' ? 'PERSONAL_ADVANCE' : group.fundingRoute === 'COMPANY' ? 'COMPANY' : '',
+    fundingSource: fundingRoute === 'EMPLOYEE' ? 'PERSONAL_ADVANCE' : fundingRoute === 'COMPANY' ? 'COMPANY' : '',
     payerUserId: source.payerUserId,
     paymentDate: payment?.occurredAt?.slice(0, 10) ?? null,
     paymentMethod: payment?.method && CAPTURE_PAYMENT_METHODS.has(payment.method) ? payment.method : null,

@@ -1267,7 +1267,7 @@ export class PrismaExpenseRepository {
    */
   async findCaptureCertificateContext(companyId: string, expense: ExpenseRecord): Promise<{
     group: { handoffState: string; acceptedAllocationId: string | null; fundingRoute: string };
-    allocation: { groupRevision: number; policyVersion: string } | null;
+    allocation: { groupRevision: number; policyVersion: string; fundingRoute: string } | null;
     observations: import('../domain/logic/expense-capture-facts.logic').CaptureObservationRow[];
   } | null> {
     if (!expense.captureGroupId) return null;
@@ -1279,7 +1279,7 @@ export class PrismaExpenseRepository {
       expense.captureAllocationId
         ? this.prisma.client.expenseCaptureAllocation.findFirst({
           where: { companyId, id: expense.captureAllocationId },
-          select: { groupRevision: true, policyVersion: true },
+          select: { groupRevision: true, policyVersion: true, fundingRoute: true },
         })
         : Promise.resolve(null),
       this.prisma.client.expenseCaptureObservation.findMany({

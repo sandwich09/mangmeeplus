@@ -114,7 +114,7 @@ function repoFor(expense: any, context: any, over: Record<string, unknown> = {})
 
 const context = (over: Record<string, unknown> = {}) => ({
   group: { handoffState: 'ACTIVE', acceptedAllocationId: ALLOCATION_ID, fundingRoute: 'EMPLOYEE' },
-  allocation: { groupRevision: 4, policyVersion: 'shared-discount-v1+shipping-by-eligible-item-v1' },
+  allocation: { groupRevision: 4, policyVersion: 'shared-discount-v1+shipping-by-eligible-item-v1', fundingRoute: 'EMPLOYEE' },
   observations: [observation()],
   ...over,
 });
@@ -201,6 +201,14 @@ describe('substitute receipt on a derived capture source', () => {
       () => new PrepareSubstituteReceiptUseCase(repo, audit, notification).execute(ctx(), 'exp-a', prepareInput({ fundingSource: 'COMPANY' })),
       (error: any) => error.getStatus() === 422 && code(error) === 'substitute_capture_funding_route_mismatch',
     );
+  });
+
+  it('judges the funding source against the allocation that derived the source, not a re-review in progress', async () => {
+    // Someone is re-answering "who paid" on the group; the accepted allocation still says EMPLOYEE.
+    const repo = repoFor(derivedExpense(), context({
+      group: { handoffState: 'ACTIVE', acceptedAllocationId: ALLOCATION_ID, fundingRoute: 'COMPANY' },
+    }));
+    await new PrepareSubstituteReceiptUseCase(repo, audit, notification).execute(ctx(), 'exp-a', prepareInput());
   });
 
   it('keeps the "มีใบเสร็จใช้ได้" outcome for a shop that issued a receipt (A18/A19)', async () => {

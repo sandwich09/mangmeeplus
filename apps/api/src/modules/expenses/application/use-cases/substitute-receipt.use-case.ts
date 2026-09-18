@@ -267,7 +267,8 @@ async function assertCaptureSourceEligible(
     facts: assembleCaptureFacts(context.observations),
   });
   if (gate.outcome === 'refused') throw captureRefusal(gate);
-  const routeRefusal = captureFundingRouteRefusal(context.group.fundingRoute, fundingSource);
+  // The route that DERIVED this source, not whatever the group is being re-reviewed as right now.
+  const routeRefusal = captureFundingRouteRefusal(context.allocation?.fundingRoute ?? context.group.fundingRoute, fundingSource);
   if (routeRefusal) throw captureRefusal(routeRefusal);
 }
 
