@@ -337,3 +337,82 @@ the usage rows and the responses are identical, and no money seam is called at a
     row. An in-flight mark on the request's budget state now refuses the overlapping call with
     `AI_BUDGET_UNAVAILABLE` (`concurrent_provider_call`) before it claims an ordinal, so a future
     change fails loudly instead of mis-attributing money. Inert without an envelope.
+
+## 14. Implementation notes (H3)
+
+The operator half. §7 said a crash "converts holds into `UNRESOLVED` until reconciled" and §11.6
+promised a breach stays closed "until an operator clears it"; neither had a surface, and §12's
+residual list said so. What H3 decided, and the three places it deviates from the text above.
+
+1. **Evidence is no longer lost while the process is alive — DEVIATION from §6 step 4.** §6 says a
+   failed settle "leaves the reservation `DISPATCHED` → `UNRESOLVED`, never silently free". It still
+   can, but only after ten minutes of an unreachable API: the two inline attempts are followed by an
+   in-process queue (`ai-budget-durability.ts`) that re-posts the SAME body off the request path at
+   1s/5s/30s/60s, capped at 1,000 entries and ~10 minutes, dropping with
+   `ai.budget.settle_evidence_dropped` (ids only) on overflow or expiry. `rejected` is terminal, as
+   inline: the API decided, and retrying repeats it. The queue is process-wide because
+   `createProvider` builds a fresh seam per provider, and its timer is `unref`ed so a parked retry
+   can never be the reason a process refuses to exit.
+2. **The drain budget is 20s, because the live gateway's stop timeout is ECS's own 30s.**
+   `infra/prod-ecs-express/deploy.sh` sets NO `stopTimeout` on the Express `primaryContainer` — that
+   shape has no such field — so the container gets the ECS default. `infra/kamal/config.json`'s
+   `stop_timeout: 180` belongs to the native path, which is not what serves production today.
+   `AI_GATEWAY_SHUTDOWN_DRAIN_MS` (gateway config, max 110s) exists so the number can follow the
+   platform without another code change. The drain waits for the in-flight gauge, then flushes the
+   queue IGNORING its backoff, then logs one counts-only line.
+3. **`operator_released` is a cancel proof with no owner token — DEVIATION from §11.8.** Every other
+   proof is fenced on the reservation's `ownerToken`, which is right for a machine compensation: a
+   stale owner must not release a hold a new owner relies on. A stranded hold has no live owner at
+   all — that is why it is stranded — so the operator path is fenced on `status = 'UNRESOLVED'` plus
+   the reservation id and the route's company id instead, and it carries the actor and the reason on
+   the row. `cancelAiBudgetStep` keeps its owner fence untouched; this is a sibling, not a
+   weakening. §11.6's `settled-anomaly` still records late evidence in FULL with a HIGH event, so a
+   wrong release can overshoot a month's cap but can never turn real provider cost into zero.
+4. **The acknowledged breach is a second column, not a cleared flag.** `breach` is the historical
+   fact and is never unset; `breachAcknowledgedAt/By` is the operator's decision, and ONE predicate
+   (`UNACKNOWLEDGED_BREACH`) is what the admission gate, the month snapshot and the operator list
+   all compare against. Clearing `breach` instead would have erased the only evidence that a bound
+   was ever exceeded.
+5. **"Charge at the bound" is money without a model call.** It goes through `settleAiBudgetStep`
+   (one writer owns the `invocationKey` fence, the fixed aggregate row order and the pinned month)
+   with an `operator` block that pins `costSatang = upperBoundSatang`, zero tokens,
+   `usageBasis = 'OPERATOR_CHARGED_AT_BOUND'` and `eventKind = 'COST_ADJUSTMENT'`. The event kind is
+   reused rather than invented because the D1 breakdown already means exactly that by it — "moves
+   money and counters but is not a provider call" — so `calls`, `coverage` and the web's
+   "ซึ่งไม่นับเป็นจำนวนครั้งที่เรียกโมเดล" line all hold with no new branch. The event's `modelId`
+   is the one the bound was PRICED for, because that is the model that would have run and the basis
+   already says the number was not measured. Charging exactly the bound can never open a breach.
+6. **`normalizeUsageBasis` was NOT widened.** The new basis is a member of the `AiUsageBasis`
+   contract, but the wire guard that turns the gateway's untrusted JSON into a column value still
+   accepts the two provider values only. Otherwise a buggy or hostile gateway could label a real
+   model call an operator decision — and, through the `COST_ADJUSTMENT` above, make a paid call
+   invisible in the month's call count.
+7. **The operator's audit row IS the history row.** `PartnerAiAdjustmentHistory` is derived from
+   `AuditLog`, so the three new `AuditAction` members are added to its `ACTIONS` list and the rows
+   carry `targetType: 'company'` with the reservation id in the metadata — an operator asking "what
+   was done to this shop's AI credit" sees cap edits and hold decisions in ONE list. The row is
+   written INSIDE the deciding transaction, so money cannot move without it.
+8. **The read route runs the sweep itself.** The sweep is lazy by design (inside the next reserve
+   for that company-month), so a quiet company would show `DISPATCHED` rows admission has already
+   decided are `UNRESOLVED`. `sweepAiBudgetCompanyMonth` takes only the last lock of the canonical
+   order, exactly as `settle` and `cancel` do, and never throws: a sweep that could not run leaves a
+   stale list, which is better than refusing the page.
+9. **Found while building the evidence: there is no read-only platform role.** `canManage: false`
+   is an API fact the page has handled since D2, but `apps/web/app/system/layout.tsx` admits only a
+   membership carrying the `SYSTEM_ADMIN` role key, and that role holds every `system.*`
+   permission — so no real login can reach this page read-only. Recorded in
+   [the evidence README](../qa/evidence/line-ai-credit-holds-2026-09-18/README.md#how-the-read-only-operator-was-reached-and-what-that-says-about-the-product);
+   an owner decision, not something H3 should change on its own.
+
+### 14b. Residuals after H3
+
+- A hard crash (OOM, `kill -9`, host loss) still strands a hold: no queue survives the process, and
+  §2 of the hold spec records why CloudWatch recovery was not built instead.
+- No bulk action and no TTL, by design. An operator with forty stranded holds presses forty buttons;
+  the alert counts COMPANIES so it stays one thing to look at, but the page does not batch.
+- `settled-anomaly` rows still have no operator workflow beyond the HIGH event and
+  `evidenceJson.anomaly` — unchanged by H3, and now more reachable, because an operator release is a
+  new way for one to appear.
+- The alert links to the partner LIST, not to the companies it counted: `deliver(kind, dayKey)`
+  receives only the kind and the day, and putting company ids in an ops alert payload would be a
+  different privacy decision.

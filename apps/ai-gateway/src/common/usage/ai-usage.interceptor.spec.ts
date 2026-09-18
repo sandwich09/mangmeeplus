@@ -12,7 +12,14 @@ import {
   type BudgetRequestState,
 } from './usage-context';
 import { pdfPageUpperBound, withAiBudgetEnvelope } from './ai-budget-provider';
-import type { AiBudgetSeam, AiBudgetSettleOutcome, AiBudgetStepOutcome } from './ai-budget-seam';
+import { createAiBudgetSeam, type AiBudgetSeam, type AiBudgetSettleOutcome, type AiBudgetStepOutcome } from './ai-budget-seam';
+import {
+  SETTLE_EVIDENCE_MAX_AGE_MS, SETTLE_EVIDENCE_MAX_ENTRIES,
+  beginGuardedProviderCall, drainAiBudgetDurability, endGuardedProviderCall, enqueueSettleEvidence,
+  guardedProviderCallsInFlight, resetSettleEvidence, runSettleEvidenceQueue, settleEvidenceDepth,
+  type DurabilityLog, type SettleEvidenceOutcome,
+} from './ai-budget-durability';
+import { AiBudgetShutdownService } from './ai-budget-shutdown.service';
 import type {
   IModelProvider, ProviderInput, ProviderOutput, ProviderToolsInput,
 } from '../../modules/line-ai/infrastructure/provider/provider.port';
@@ -690,5 +697,263 @@ describe('withAiBudgetEnvelope: evidence attribution is positional, so calls may
     });
 
     assert.deepEqual(results.map((r) => r.ok), [true, true]);
+  });
+});
+
+// ── Hold-reconciliation spec §3: do not lose the evidence while this process is alive ────────────
+//
+// Same file as the envelope machinery above and for the same reason recorded there: the gateway's
+// `package.json` carries a FIXED `test` list this change may not edit, and this is the
+// usage/metering spec already on it. Every test below drives the queue and the drain with an
+// explicit clock — no real timers, no real signals.
+
+describe('durable settle retry: the evidence queue', () => {
+  const lines = (): { log: DurabilityLog; seen: Array<Record<string, unknown>> } => {
+    const seen: Array<Record<string, unknown>> = [];
+    return { log: (line) => { seen.push(line); }, seen };
+  };
+
+  const item = (
+    id: string,
+    post: () => Promise<SettleEvidenceOutcome>,
+  ): Parameters<typeof enqueueSettleEvidence>[0] => ({
+    invocationKey: `co-1#attempt-${id}#line-turn#0`, sourceRoute: 'line-turn',
+    companyId: 'co-1', attempts: 2, post,
+  });
+
+  it('re-posts a failing settle until it succeeds, then never again', async () => {
+    resetSettleEvidence();
+    const { log, seen } = lines();
+    let calls = 0;
+    // Fails twice more in the queue, then the API comes back.
+    enqueueSettleEvidence(item('a', async () => (++calls < 3 ? 'unreachable' : 'recorded')), log, 0);
+
+    // Backoff: 1s, then 5s, then it succeeds. Nothing is posted before its delay is up.
+    assert.deepEqual(await runSettleEvidenceQueue(log, 500), { posted: 0, dropped: 0, remaining: 1 });
+    assert.equal(calls, 0, 'the first delay is 1s, so nothing was posted at 500ms');
+    await runSettleEvidenceQueue(log, 1_000);
+    assert.equal(calls, 1);
+    await runSettleEvidenceQueue(log, 1_000 + 5_000);
+    assert.equal(calls, 2);
+    assert.deepEqual(await runSettleEvidenceQueue(log, 1_000 + 5_000 + 30_000), { posted: 1, dropped: 0, remaining: 0 });
+    assert.equal(calls, 3);
+
+    // …and it is posted exactly ONCE successfully: the item is gone, so a later pass cannot bill again.
+    await runSettleEvidenceQueue(log, 10 * 60_000 - 1);
+    assert.equal(calls, 3);
+    assert.equal(settleEvidenceDepth(), 0);
+    assert.equal(seen.filter((line) => line['msg'] === 'ai.budget.settle_evidence_posted').length, 1);
+    resetSettleEvidence();
+  });
+
+  it('stops re-posting a REJECTED settle — the API already decided, and it logged it', async () => {
+    resetSettleEvidence();
+    const { log } = lines();
+    let calls = 0;
+    enqueueSettleEvidence(item('b', async () => { calls += 1; return 'rejected'; }), log, 0);
+    await runSettleEvidenceQueue(log, 1_000);
+    await runSettleEvidenceQueue(log, 120_000);
+    assert.equal(calls, 1);
+    assert.equal(settleEvidenceDepth(), 0);
+    resetSettleEvidence();
+  });
+
+  it('drops evidence older than the window instead of retrying forever', async () => {
+    resetSettleEvidence();
+    const { log, seen } = lines();
+    enqueueSettleEvidence(item('c', async () => 'unreachable'), log, 0);
+    const result = await runSettleEvidenceQueue(log, SETTLE_EVIDENCE_MAX_AGE_MS);
+    assert.deepEqual(result, { posted: 0, dropped: 1, remaining: 0 });
+    const dropped = seen.find((line) => line['msg'] === 'ai.budget.settle_evidence_dropped');
+    assert.equal(dropped?.['reason'], 'expired');
+    // Ids only: no prompt, no cap, no balance ever reaches a log line on the money path.
+    assert.deepEqual(Object.keys(dropped ?? {}).sort(),
+      ['attempts', 'invocationKey', 'msg', 'reason', 'sourceRoute']);
+    resetSettleEvidence();
+  });
+
+  it('caps the queue and logs the overflow with ids only', async () => {
+    resetSettleEvidence();
+    const { log, seen } = lines();
+    for (let i = 0; i < SETTLE_EVIDENCE_MAX_ENTRIES; i += 1) {
+      assert.equal(enqueueSettleEvidence(item(`full-${i}`, async () => 'unreachable'), log, 0), true);
+    }
+    assert.equal(enqueueSettleEvidence(item('overflow', async () => 'recorded'), log, 0), false);
+    const dropped = seen.filter((line) => line['msg'] === 'ai.budget.settle_evidence_dropped');
+    assert.equal(dropped.length, 1);
+    assert.equal(dropped[0]?.['reason'], 'queue_full');
+    assert.equal(dropped[0]?.['depth'], SETTLE_EVIDENCE_MAX_ENTRIES);
+    assert.equal(settleEvidenceDepth(), SETTLE_EVIDENCE_MAX_ENTRIES);
+    resetSettleEvidence();
+  });
+
+  it('is what the seam parks a settle in after its two inline attempts — without delaying the call', async () => {
+    resetSettleEvidence();
+    const { log, seen } = lines();
+    let posts = 0;
+    const seam = createAiBudgetSeam(
+      { baseUrl: 'http://api.test/v1', secret: 'shh', timeoutMs: 50 },
+      log,
+      (async () => { posts += 1; throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch,
+    );
+
+    const started = Date.now();
+    const outcome = await seam.settle({
+      invocationKey: 'co-1#attempt-x#line-turn#0', sourceRoute: 'line-turn', companyId: 'co-1',
+      entry: entry('line.turn'),
+    });
+
+    assert.equal(outcome, 'unreachable');
+    assert.equal(posts, 2, 'exactly the two inline attempts — the queue does not run on this path');
+    assert.equal(settleEvidenceDepth(), 1, 'the evidence is parked, not lost');
+    assert.ok(Date.now() - started < 1_000, 'the business call waits for the 200ms retry only');
+    assert.ok(seen.some((line) => line['msg'] === 'ai.budget.settle_unreachable'));
+
+    // The queue re-posts the SAME body through the same seam, so a recovered API settles it.
+    await runSettleEvidenceQueue(log, Date.now() + 1_000);
+    assert.equal(posts, 3);
+    resetSettleEvidence();
+  });
+
+  it('parks nothing when the settle succeeds', async () => {
+    resetSettleEvidence();
+    const { log } = lines();
+    const seam = createAiBudgetSeam(
+      { baseUrl: 'http://api.test/v1', secret: 'shh', timeoutMs: 50 },
+      log,
+      (async () => ({ ok: true, json: async () => ({ result: 'duplicate' }) })) as unknown as typeof fetch,
+    );
+    assert.equal(await seam.settle({
+      invocationKey: 'co-1#attempt-y#line-turn#0', sourceRoute: 'line-turn', entry: entry('line.turn'),
+    }), 'recorded');
+    assert.equal(settleEvidenceDepth(), 0);
+    resetSettleEvidence();
+  });
+});
+
+describe('graceful drain on SIGTERM', () => {
+  const lines = (): { log: DurabilityLog; seen: Array<Record<string, unknown>> } => {
+    const seen: Array<Record<string, unknown>> = [];
+    return { log: (line) => { seen.push(line); }, seen };
+  };
+
+  /** A fake clock the drain advances by sleeping, so nothing waits on a real timer. */
+  function fakeClock() {
+    let nowMs = 0;
+    return {
+      now: () => nowMs,
+      sleep: async (ms: number) => { nowMs += ms; },
+      advance: (ms: number) => { nowMs += ms; },
+    };
+  }
+
+  it('waits for a guarded provider call in flight, then flushes the evidence, then summarises', async () => {
+    resetSettleEvidence();
+    const { log, seen } = lines();
+    const clock = fakeClock();
+    let posts = 0;
+    enqueueSettleEvidence({
+      invocationKey: 'co-1#attempt-d#line-turn#0', sourceRoute: 'line-turn', companyId: 'co-1',
+      attempts: 2, post: async () => { posts += 1; return 'recorded'; },
+    }, log, 0);
+
+    beginGuardedProviderCall();
+    assert.equal(guardedProviderCallsInFlight(), 1);
+    // The call finishes 300ms into the drain: the gauge drops while the drain is sleeping.
+    const original = clock.sleep;
+    let slept = 0;
+    const sleep = async (ms: number) => { slept += ms; if (slept >= 300) endGuardedProviderCall(); await original(ms); };
+
+    const summary = await drainAiBudgetDurability({ budgetMs: 20_000, log, sleep, now: clock.now });
+
+    assert.equal(summary.inFlightAtExit, 0, 'the drain waited for the call instead of killing it');
+    assert.ok(summary.waitedMs >= 300, `waited ${summary.waitedMs}ms`);
+    // Flushed ignoring its own backoff: the evidence was queued at t=0 with a 1s delay, and the
+    // drain still posted it — a settle posted after the process exits is a stranded hold.
+    assert.equal(posts, 1);
+    assert.deepEqual({ posted: summary.posted, dropped: summary.dropped, remaining: summary.remaining },
+      { posted: 1, dropped: 0, remaining: 0 });
+    const done = seen.filter((line) => line['msg'] === 'ai.budget.drain_complete');
+    assert.equal(done.length, 1, 'exactly one summary line');
+    assert.deepEqual(Object.keys(done[0] ?? {}).sort(),
+      ['dropped', 'inFlightAtExit', 'msg', 'posted', 'remaining', 'waitedMs'], 'counts only');
+    resetSettleEvidence();
+  });
+
+  it('gives up on a call that outlasts the budget rather than being SIGKILLed mid-flush', async () => {
+    resetSettleEvidence();
+    const { log } = lines();
+    const clock = fakeClock();
+    beginGuardedProviderCall();
+    const summary = await drainAiBudgetDurability({ budgetMs: 1_000, log, sleep: clock.sleep, now: clock.now });
+    assert.equal(summary.inFlightAtExit, 1, 'reported honestly rather than waited on forever');
+    assert.ok(summary.waitedMs >= 1_000 && summary.waitedMs < 2_000);
+    endGuardedProviderCall();
+    resetSettleEvidence();
+  });
+
+  it('is a no-op with nothing held — which is every SHARED-only deployment', async () => {
+    resetSettleEvidence();
+    const { log, seen } = lines();
+    const summary = await drainAiBudgetDurability({ budgetMs: 20_000, log, now: () => 0, sleep: async () => {} });
+    assert.deepEqual(summary, { waitedMs: 0, inFlightAtExit: 0, posted: 0, dropped: 0, remaining: 0 });
+    assert.equal(seen.length, 1);
+    resetSettleEvidence();
+  });
+
+  it('the shutdown service drains with the configured budget when Nest calls the hook', async () => {
+    resetSettleEvidence();
+    let posts = 0;
+    // Real clock here: this test drives the actual hook, so the item must not already be expired.
+    enqueueSettleEvidence({
+      invocationKey: 'co-1#attempt-h#line-turn#0', sourceRoute: 'line-turn', companyId: 'co-1',
+      attempts: 2, post: async () => { posts += 1; return 'recorded'; },
+    }, () => {}, Date.now());
+    const warn = console.warn;
+    const said: string[] = [];
+    console.warn = (line: string) => { said.push(String(line)); };
+    try {
+      await new AiBudgetShutdownService({ shutdownDrainMs: 20_000 } as never).onApplicationShutdown('SIGTERM');
+    } finally {
+      console.warn = warn;
+    }
+    assert.equal(posts, 1);
+    const summary = said.map((line) => JSON.parse(line)).find((line) => line.msg === 'ai.budget.drain_complete');
+    assert.equal(summary?.signal, 'SIGTERM');
+    assert.equal(summary?.posted, 1);
+    resetSettleEvidence();
+  });
+
+  it('a request with NO envelope marks nothing in flight, so a drain has nothing to wait for', async () => {
+    resetSettleEvidence();
+    const log = trace();
+    await runWithUsageContext({ companyId: 'co-1' }, async () => {
+      const provider = guarded(fakeProvider(log), fakeSeam(log), log);
+      assert.equal(guardedProviderCallsInFlight(), 0);
+      await provider.generateText(textInput());
+    });
+    assert.equal(guardedProviderCallsInFlight(), 0);
+    assert.equal(settleEvidenceDepth(), 0);
+    assert.equal(log.events.some((e) => e.startsWith('settle:')), false);
+    resetSettleEvidence();
+  });
+
+  it('a guarded call IS counted while it runs, and released when it ends', async () => {
+    resetSettleEvidence();
+    const log = trace();
+    let release = () => {};
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const provider: IModelProvider = {
+      generateText: async () => { await blocked; appendUsage(entry('line.turn')); return { ok: true, text: 'answer', stopReason: 'end_turn' }; },
+    };
+    await runWithUsageContext({ companyId: 'co-1', budget: activeState(OCR_ENVELOPE) }, async () => {
+      const running = guarded(provider, fakeSeam(log), log).generateText(textInput());
+      await tick(5);
+      assert.equal(guardedProviderCallsInFlight(), 1, 'the drain can see this call');
+      release();
+      await running;
+    });
+    assert.equal(guardedProviderCallsInFlight(), 0, 'released from the decorator finally');
+    resetSettleEvidence();
   });
 });

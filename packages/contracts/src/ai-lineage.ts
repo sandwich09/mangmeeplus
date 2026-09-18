@@ -40,4 +40,14 @@ export type AiUsageEntry = {
   invocationKey?: string;
 };
 
-export type AiUsageBasis = 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE';
+/**
+ * Where a usage row's counters and cost came from.
+ *
+ * The first two are the PROVIDER's answer, reported by the gateway. `OPERATOR_CHARGED_AT_BOUND` is
+ * not: it is written only by the API when a System Admin closes an unresolved hold at its own
+ * declared upper bound (hold-reconciliation spec §4.2), with zero tokens and no provider call. The
+ * gateway can never report it — `normalizeUsageBasis` (the untrusted-wire guard in
+ * `company-ai-usage-meter.ts`) still accepts the two provider values only — so a buggy or hostile
+ * gateway cannot label a real model call as an operator decision.
+ */
+export type AiUsageBasis = 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE' | 'OPERATOR_CHARGED_AT_BOUND';

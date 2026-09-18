@@ -1,0 +1,23 @@
+{
+  "viewport": {
+    "width": 390,
+    "height": 900
+  },
+  "capturedAt": "2026-09-18T06:50:15.566Z",
+  "clientErrors": [],
+  "images": [
+    {
+      "name": "holds-read-only-operator",
+      "file": "holds-read-only-operator-390.png",
+      "bytes": 39657,
+      "clip": {
+        "x": 25,
+        "y": 2418,
+        "width": 340,
+        "height": 491
+      },
+      "note": "A real login WITHOUT system.partner_ai_model.manage: every number, no button, no reason box.",
+      "pageOverflowPx": 0
+    }
+  ]
+}

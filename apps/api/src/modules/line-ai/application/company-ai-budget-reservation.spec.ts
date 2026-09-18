@@ -16,8 +16,13 @@ import { AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, type AiUsageEntry } from 
 import {
   AI_BUDGET_DISPATCHED_SWEEP_MS,
   AI_BUDGET_RESERVED_SWEEP_MS,
+  acknowledgeAiBudgetBreach,
   aiBudgetAttemptHash,
   cancelAiBudgetStep,
+  chargeAiBudgetHoldAtBound,
+  listAiBudgetCreditHolds,
+  releaseAiBudgetHoldByOperator,
+  shortenInvocationKey,
   cancelAiBudgetStepIfGatewayUnspent,
   decideAiBudgetStep,
   gatewayRefusedWithoutSpending,
@@ -448,5 +453,331 @@ describe('cancelAiBudgetStepIfGatewayUnspent (E1c, one helper for every seam sha
     // A stale owner, or a hold already settled: the CAS matches nothing and the caller learns so.
     const { prisma } = fakePrisma({ count: 0 });
     assert.equal(await cancelAiBudgetStepIfGatewayUnspent(prisma, hold, { budgetCode: 'AI_BUDGET_UNAVAILABLE' }), false);
+  });
+});
+
+// ── Operator reconciliation of stranded money (hold spec §4.2) ──────────────────────────────────
+//
+// The CAS shapes, the audit metadata and the refusal vocabulary. Whether the locks actually
+// serialize two operators, and whether the aggregates really move once, is
+// `company-ai-credit-holds.pg.spec.ts` against real PostgreSQL.
+
+type OperatorRow = {
+  companyId: string; monthKey: string; status: string; bucket: string; stepKind: string;
+  invocationKey: string; upperBoundSatang: number; breach: boolean; breachAcknowledgedAt: Date | null;
+  pricingSnapshot?: unknown;
+};
+
+const HOLD: OperatorRow = {
+  companyId: 'c1', monthKey: '2026-09', status: 'UNRESOLVED', bucket: 'OCR', stepKind: 'receipt-ocr',
+  invocationKey: aiBudgetInvocationKey('c1', 'attempt-1', 'receipt-ocr', 0), upperBoundSatang: 47,
+  breach: false, breachAcknowledgedAt: null,
+  pricingSnapshot: { modelId: 'apac.anthropic.claude-3-haiku-20240307-v1:0', thbPerUsd: 33, thbPerUsdSource: 'stored' },
+};
+
+const DECISION = {
+  reservationId: 'res-1', companyId: 'c1', actorUserId: 'admin-1', requestId: 'req-1',
+  reason: 'ยืนยันกับผู้ให้บริการแล้วว่าไม่ได้เรียก',
+};
+
+/** Records every write, so the fence and the audit row can both be asserted from one call. */
+function operatorPrisma(options: { count?: number; row?: OperatorRow | null } = {}) {
+  const updates: Recorded[] = [];
+  const audits: Array<Record<string, unknown>> = [];
+  const row = options.row === undefined ? HOLD : options.row;
+  const tx = {
+    $executeRaw: async () => 0,
+    aiBudgetReservation: {
+      updateMany: async (args: Recorded) => { updates.push(args); return { count: options.count ?? 1 }; },
+    },
+    auditLog: { create: async (args: { data: Record<string, unknown> }) => { audits.push(args.data); return args.data; } },
+  };
+  const client = {
+    aiBudgetReservation: { findUnique: async () => row },
+    $transaction: async (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+  };
+  return { prisma: { client } as never, updates, audits };
+}
+
+const AUDIT = { action: 'ai.credit_hold.released' };
+
+describe('releaseAiBudgetHoldByOperator (hold spec §4.2)', () => {
+  it('is fenced on UNRESOLVED and needs no owner token — the stranded hold has no live owner', async () => {
+    const { prisma, updates } = operatorPrisma();
+
+    const outcome = await releaseAiBudgetHoldByOperator(prisma, DECISION, AUDIT);
+
+    assert.deepEqual(outcome, { ok: true, status: 'CANCELLED', chargedSatang: 0 });
+    assert.deepEqual(updates[0]!.where, { id: 'res-1', companyId: 'c1', status: 'UNRESOLVED' });
+    assert.equal('ownerToken' in updates[0]!.where, false, 'the owner fence is deliberately absent here');
+    assert.equal(updates[0]!.data['status'], 'CANCELLED');
+  });
+
+  it('records the operator proof, the actor and the reason on the row itself', async () => {
+    const { prisma, updates } = operatorPrisma();
+    await releaseAiBudgetHoldByOperator(prisma, DECISION, AUDIT);
+    const evidence = updates[0]!.data['evidenceJson'] as { proof: string; operator: { userId: string; reason: string } };
+    assert.equal(evidence.proof, 'operator_released');
+    assert.deepEqual(evidence.operator, { userId: 'admin-1', reason: DECISION.reason });
+  });
+
+  it('writes the audit row in the SAME transaction, as a `company` target the history reads', async () => {
+    const { prisma, audits } = operatorPrisma();
+    await releaseAiBudgetHoldByOperator(prisma, DECISION, AUDIT);
+
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0]!['action'], 'ai.credit_hold.released');
+    assert.equal(audits[0]!['targetType'], 'company');
+    assert.equal(audits[0]!['targetId'], 'c1');
+    assert.equal(audits[0]!['riskLevel'], 'CRITICAL');
+    const metadata = audits[0]!['metadataJson'] as Record<string, unknown>;
+    assert.equal(metadata['source'], 'ADMIN_ADJUSTMENT');
+    assert.equal(metadata['reason'], DECISION.reason);
+    assert.equal(metadata['reservationId'], 'res-1');
+    assert.equal(metadata['releasedSatang'], 47);
+    // The two before/after pairs `partner-ai-adjustment-history.ts` renders in Thai.
+    assert.equal(metadata['fromCreditHoldStatus'], 'UNRESOLVED');
+    assert.equal(metadata['toCreditHoldStatus'], 'CANCELLED');
+  });
+
+  it('refuses a reservation id that belongs to another tenant, and writes nothing', async () => {
+    const { prisma, updates, audits } = operatorPrisma({ row: { ...HOLD, companyId: 'other-co' } });
+
+    assert.deepEqual(await releaseAiBudgetHoldByOperator(prisma, DECISION, AUDIT), { ok: false, reason: 'not-found' });
+    assert.deepEqual(updates, []);
+    assert.deepEqual(audits, []);
+  });
+
+  it('answers already-resolved when the CAS matched nothing, and writes no audit row', async () => {
+    const { prisma, audits } = operatorPrisma({ count: 0 });
+
+    assert.deepEqual(await releaseAiBudgetHoldByOperator(prisma, DECISION, AUDIT),
+      { ok: false, reason: 'already-resolved' });
+    assert.deepEqual(audits, [], 'no money moved, so there is nothing to audit');
+  });
+
+  it('answers not-found for a hold that is gone', async () => {
+    const { prisma, updates } = operatorPrisma({ row: null });
+    assert.deepEqual(await releaseAiBudgetHoldByOperator(prisma, DECISION, AUDIT), { ok: false, reason: 'not-found' });
+    assert.deepEqual(updates, []);
+  });
+});
+
+describe('acknowledgeAiBudgetBreach (hold spec §4.2)', () => {
+  const ACK_AUDIT = { action: 'ai.credit_breach.acknowledged' };
+  const breached = { ...HOLD, status: 'SETTLED', breach: true, settledCostSatang: 60 } as OperatorRow;
+
+  it('is fenced on an UNACKNOWLEDGED breach and touches no money', async () => {
+    const { prisma, updates } = operatorPrisma({ row: breached });
+
+    const outcome = await acknowledgeAiBudgetBreach(prisma, DECISION, ACK_AUDIT);
+
+    assert.deepEqual(outcome, { ok: true, status: 'SETTLED', chargedSatang: 0 });
+    assert.deepEqual(updates[0]!.where, { id: 'res-1', companyId: 'c1', breach: true, breachAcknowledgedAt: null });
+    assert.deepEqual(Object.keys(updates[0]!.data).sort(), ['breachAcknowledgedAt', 'breachAcknowledgedByUserId']);
+    assert.equal(updates[0]!.data['breachAcknowledgedByUserId'], 'admin-1');
+  });
+
+  it('keeps the breach FACT — only the acknowledgement is written', async () => {
+    const { prisma, updates } = operatorPrisma({ row: breached });
+    await acknowledgeAiBudgetBreach(prisma, DECISION, ACK_AUDIT);
+    assert.equal('breach' in updates[0]!.data, false, 'the historical flag is never cleared');
+    assert.equal('settledCostSatang' in updates[0]!.data, false);
+    assert.equal('status' in updates[0]!.data, false);
+  });
+
+  it('refuses a row that carries no breach at all', async () => {
+    const { prisma, updates } = operatorPrisma({ row: HOLD });
+    assert.deepEqual(await acknowledgeAiBudgetBreach(prisma, DECISION, ACK_AUDIT), { ok: false, reason: 'not-found' });
+    assert.deepEqual(updates, []);
+  });
+
+  it('answers already-acknowledged on a repeat', async () => {
+    const { prisma, audits } = operatorPrisma({ row: breached, count: 0 });
+    assert.deepEqual(await acknowledgeAiBudgetBreach(prisma, DECISION, ACK_AUDIT),
+      { ok: false, reason: 'already-acknowledged' });
+    assert.deepEqual(audits, []);
+  });
+
+  it('audits the acknowledgement as a breach transition, not a status one', async () => {
+    const { prisma, audits } = operatorPrisma({ row: breached });
+    await acknowledgeAiBudgetBreach(prisma, DECISION, ACK_AUDIT);
+    const metadata = audits[0]!['metadataJson'] as Record<string, unknown>;
+    assert.equal(metadata['fromCreditBreachAcknowledged'], false);
+    assert.equal(metadata['toCreditBreachAcknowledged'], true);
+    assert.equal('chargedSatang' in metadata, false, 'acknowledging moves no money');
+  });
+});
+
+describe('the UNACKNOWLEDGED breach predicate is what closes a scope', () => {
+  it('both the admission check and the snapshot count only rows with no acknowledgement', () => {
+    // The whole point of the two new columns: `breach` stays true forever, so if either of these
+    // two reads still counted it, acknowledging would change nothing at all.
+    const engine = readFileSync(join(__dirname, 'company-ai-budget-reservation.ts'), 'utf8');
+    assert.match(engine, /const UNACKNOWLEDGED_BREACH = \{ breach: true, breachAcknowledgedAt: null \}/);
+    assert.equal((engine.match(/\.\.\.UNACKNOWLEDGED_BREACH/g) ?? []).length, 3,
+      'the admission gate, the month snapshot and the operator list all use the one predicate');
+    assert.equal(/count\(\{ where: \{ companyId, monthKey, breach: true \} \}\)/.test(engine), false,
+      'no read may count an acknowledged breach as closing a scope');
+  });
+});
+
+describe('chargeAiBudgetHoldAtBound (hold spec §4.2)', () => {
+  const CHARGE_AUDIT = { action: 'ai.credit_hold.charged_at_bound' };
+
+  /** Everything `settleAiBudgetStep` touches, so the whole write can be asserted from one call. */
+  function settlePrisma(row: OperatorRow | null, over: { event?: unknown } = {}) {
+    const writes: Record<string, Array<Record<string, unknown>>> = { event: [], month: [], bucket: [], reservation: [], audit: [] };
+    const tx = {
+      $executeRaw: async () => 0,
+      aiBudgetReservation: {
+        findUnique: async () => (row ? { id: 'res-1', ...row, requestKind: 'IMAGE' } : null),
+        update: async (args: { data: Record<string, unknown> }) => { writes['reservation']!.push(args.data); return args.data; },
+      },
+      aiUsageEvent: {
+        findUnique: async () => over.event ?? null,
+        create: async (args: { data: Record<string, unknown> }) => { writes['event']!.push(args.data); return args.data; },
+      },
+      companyAiMonthlyUsage: {
+        upsert: async (args: Record<string, unknown>) => { writes['month']!.push(args); return args; },
+      },
+      companyAiMonthlyBucketUsage: {
+        upsert: async (args: Record<string, unknown>) => { writes['bucket']!.push(args); return args; },
+      },
+      auditLog: { create: async (args: { data: Record<string, unknown> }) => { writes['audit']!.push(args.data); return args.data; } },
+    };
+    const client = {
+      aiBudgetReservation: { findUnique: async () => row },
+      $transaction: async (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+    };
+    return { prisma: { client } as never, writes };
+  }
+
+  it('charges the hold OWN bound, with zero tokens and the operator basis', async () => {
+    const { prisma, writes } = settlePrisma(HOLD);
+
+    const outcome = await chargeAiBudgetHoldAtBound(prisma, DECISION, CHARGE_AUDIT);
+
+    assert.deepEqual(outcome, { ok: true, status: 'SETTLED', chargedSatang: 47 });
+    const event = writes['event']![0]!;
+    assert.equal(event['costSatang'], 47, 'the declared bound, not a price computed from zero tokens');
+    assert.equal(event['inputTokens'], 0);
+    assert.equal(event['outputTokens'], 0);
+    assert.equal(event['usageBasis'], 'OPERATOR_CHARGED_AT_BOUND');
+    assert.equal(event['invocationKey'], HOLD.invocationKey, 'the same fence a real settlement uses');
+    // The model the bound was PRICED for — the honest answer, and `usageBasis` says it was not measured.
+    assert.equal(event['modelId'], 'apac.anthropic.claude-3-haiku-20240307-v1:0');
+    // D1 metadata is inherited from the hold rather than becoming UNKNOWN.
+    assert.equal(event['requestKind'], 'IMAGE');
+    assert.equal(event['budgetBucket'], 'OCR');
+  });
+
+  it('is money without a model call: COST_ADJUSTMENT and callCount 0 in both aggregates (J-07)', async () => {
+    const { prisma, writes } = settlePrisma(HOLD);
+    await chargeAiBudgetHoldAtBound(prisma, DECISION, CHARGE_AUDIT);
+
+    assert.equal(writes['event']![0]!['eventKind'], 'COST_ADJUSTMENT');
+    const month = writes['month']![0]! as { create: Record<string, unknown>; update: Record<string, unknown> };
+    assert.equal(month.create['callCount'], 0);
+    assert.deepEqual(month.update['callCount'], { increment: 0 });
+    assert.equal(month.create['costSatang'], 47);
+    const bucket = writes['bucket']![0]! as { create: Record<string, unknown>; update: Record<string, unknown> };
+    assert.equal(bucket.create['callCount'], 0);
+    assert.equal(bucket.create['costSatang'], 47);
+  });
+
+  it('never opens a breach — the charge lands exactly ON the bound', async () => {
+    const { prisma, writes } = settlePrisma(HOLD);
+    await chargeAiBudgetHoldAtBound(prisma, DECISION, CHARGE_AUDIT);
+    const reservation = writes['reservation']![0]!;
+    assert.equal(reservation['breach'], false);
+    assert.equal(reservation['status'], 'SETTLED');
+    assert.equal(reservation['settledCostSatang'], 47);
+    assert.equal(reservation['usageBasis'], 'OPERATOR_CHARGED_AT_BOUND');
+    const operator = (reservation['evidenceJson'] as { operator?: Record<string, unknown> }).operator;
+    assert.deepEqual(operator, { action: 'charge_at_bound', userId: 'admin-1', reason: DECISION.reason });
+  });
+
+  it('audits inside the money transaction, with the charged amount', async () => {
+    const { prisma, writes } = settlePrisma(HOLD);
+    await chargeAiBudgetHoldAtBound(prisma, DECISION, CHARGE_AUDIT);
+    assert.equal(writes['audit']!.length, 1);
+    const metadata = writes['audit']![0]!['metadataJson'] as Record<string, unknown>;
+    assert.equal(metadata['chargedSatang'], 47);
+    assert.equal(metadata['toCreditHoldStatus'], 'SETTLED');
+  });
+
+  for (const [label, row] of [
+    ['a hold real evidence already settled', { ...HOLD, status: 'SETTLED' }],
+    ['a hold another operator released', { ...HOLD, status: 'CANCELLED' }],
+    ['a hold still in flight', { ...HOLD, status: 'DISPATCHED' }],
+  ] as const) {
+    it(`refuses ${label} without writing anything`, async () => {
+      const { prisma, writes } = settlePrisma(row as OperatorRow);
+      assert.deepEqual(await chargeAiBudgetHoldAtBound(prisma, DECISION, CHARGE_AUDIT),
+        { ok: false, reason: 'already-resolved' });
+      assert.deepEqual(writes['event'], []);
+      assert.deepEqual(writes['month'], []);
+      assert.deepEqual(writes['audit'], []);
+    });
+  }
+
+  it('cannot double-charge: an existing event for this invocation is a refusal, not a second row', async () => {
+    const { prisma, writes } = settlePrisma(HOLD, { event: { id: 'evt-1' } });
+    assert.deepEqual(await chargeAiBudgetHoldAtBound(prisma, DECISION, CHARGE_AUDIT),
+      { ok: false, reason: 'already-resolved' });
+    assert.deepEqual(writes['event'], []);
+  });
+
+  it('refuses another tenant id and a missing hold', async () => {
+    const other = settlePrisma({ ...HOLD, companyId: 'other-co' });
+    assert.deepEqual(await chargeAiBudgetHoldAtBound(other.prisma, DECISION, CHARGE_AUDIT), { ok: false, reason: 'not-found' });
+    const gone = settlePrisma(null);
+    assert.deepEqual(await chargeAiBudgetHoldAtBound(gone.prisma, DECISION, CHARGE_AUDIT), { ok: false, reason: 'not-found' });
+  });
+});
+
+describe('listAiBudgetCreditHolds and the shortened invocation key', () => {
+  it('asks for UNRESOLVED holds OR unacknowledged breaches across the given months, newest first', async () => {
+    let asked: Record<string, unknown> = {};
+    const prisma = { client: { aiBudgetReservation: { findMany: async (args: Record<string, unknown>) => { asked = args; return []; } } } } as never;
+
+    await listAiBudgetCreditHolds(prisma, 'c1', ['2026-09', '2026-08']);
+
+    const where = asked['where'] as Record<string, unknown>;
+    assert.equal(where['companyId'], 'c1');
+    assert.deepEqual(where['monthKey'], { in: ['2026-09', '2026-08'] });
+    assert.deepEqual(where['OR'], [{ status: 'UNRESOLVED' }, { breach: true, breachAcknowledgedAt: null }]);
+    assert.deepEqual(asked['orderBy'], [{ createdAt: 'desc' }, { id: 'desc' }]);
+  });
+
+  it('labels a row by what it needs, and never ships a message or the full fence value', async () => {
+    const rows = [
+      { id: 'r1', status: 'UNRESOLVED', stepKind: 'line-turn', bucket: 'CHAT', sourceRoute: 'line-turn',
+        requestKind: 'TEXT', upperBoundSatang: 21, settledCostSatang: null, monthKey: '2026-09',
+        createdAt: new Date('2026-09-17T03:00:00.000Z'), dispatchedAt: null,
+        invocationKey: aiBudgetInvocationKey('c1', 'a'.repeat(32), 'line-turn', 0), breach: false, breachAcknowledgedAt: null },
+      { id: 'r2', status: 'SETTLED', stepKind: 'receipt-ocr', bucket: 'OCR', sourceRoute: 'receipt-ocr-web',
+        requestKind: null, upperBoundSatang: 47, settledCostSatang: 60, monthKey: '2026-08',
+        createdAt: new Date('2026-08-30T03:00:00.000Z'), dispatchedAt: new Date('2026-08-30T03:00:01.000Z'),
+        invocationKey: aiBudgetInvocationKey('c1', 'b'.repeat(32), 'receipt-ocr', 2), breach: true, breachAcknowledgedAt: null },
+    ];
+    const prisma = { client: { aiBudgetReservation: { findMany: async () => rows } } } as never;
+
+    const listed = await listAiBudgetCreditHolds(prisma, 'c1', ['2026-09', '2026-08']);
+
+    assert.deepEqual(listed.map((hold) => hold.kind), ['UNRESOLVED_HOLD', 'BREACH']);
+    assert.equal(listed[1]!.settledCostSatang, 60);
+    assert.equal(listed[0]!.invocationKeyShort, 'aaaaaaaa…#line-turn#0');
+    assert.equal(listed[1]!.invocationKeyShort, 'bbbbbbbb…#receipt-ocr#2');
+    for (const hold of listed) {
+      assert.equal(hold.invocationKeyShort.includes('c1#'), false, 'the company segment is dropped');
+      assert.ok(hold.invocationKeyShort.length < 40);
+    }
+  });
+
+  it('shortens a malformed key instead of throwing', () => {
+    assert.equal(shortenInvocationKey('nonsense'), 'nonsense');
+    assert.equal(shortenInvocationKey('x'.repeat(50)).length, 24);
   });
 });

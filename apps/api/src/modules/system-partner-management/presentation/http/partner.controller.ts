@@ -56,6 +56,7 @@ import {
 } from '../../application/use-cases/company-plan-term.use-cases';
 import { GetPartnerTimelineUseCase } from '../../application/use-cases/get-partner-timeline.use-case';
 import { SendPartnerLineMessageUseCase } from '../../application/use-cases/send-partner-line-message.use-case';
+import { PartnerAiCreditHoldsUseCase } from '../../application/use-cases/partner-ai-credit-holds.use-case';
 
 /** Derived from the frozen catalog so the DTO can never drift from the presets it validates. */
 const PLAN_TIER_KEYS = Object.keys(PLAN_TIER_PRESETS) as PlanTierKey[];
@@ -149,6 +150,15 @@ export class PartnerAiAdjustmentHistoryQueryDto {
   @IsOptional() @IsString() @IsNotEmpty() @MaxLength(100) cursor?: string;
 }
 
+/**
+ * Every hold-reconciliation action takes exactly one field (hold spec §4.2). The use case owns the
+ * rule (`partnerAdjustmentReason`: trimmed, 1..500); this fences the shape so a 600-character body
+ * never reaches a money transaction.
+ */
+export class PartnerAiCreditHoldActionBodyDto {
+  @IsString() @IsNotEmpty() @MaxLength(PARTNER_ADJUSTMENT_REASON_MAX_LENGTH) reason!: string;
+}
+
 export class SetPartnerVatRegistrationBodyDto {
   @IsIn(VAT_FACT_STATUSES) status!: VatFactStatus;
   @IsString() @IsNotEmpty() effectiveFrom!: string;
@@ -215,6 +225,7 @@ export class PartnerController {
     private readonly endWarmup: EndPlanTermWarmupUseCase,
     private readonly timeline: GetPartnerTimelineUseCase,
     private readonly lineMessage: SendPartnerLineMessageUseCase,
+    private readonly aiCreditHoldsUseCase: PartnerAiCreditHoldsUseCase,
   ) {}
 
   @Get()
@@ -499,6 +510,90 @@ export class PartnerController {
     // `system.partner_ai_model.manage`. Telling the page which one the caller holds is what lets a
     // read-only operator see all the numbers and no form (spec §11.3) instead of a 403 on save.
     return { ...usage, canManage: req.context.permissions.includes('system.partner_ai_model.manage') };
+  }
+
+  // ---- Held-credit reconciliation (hold spec §4) ----
+
+  // Reading rides the dashboard permission like every other partner read; the three actions below
+  // are `system.partner_ai_model.manage`, the same key the caps are written with. `canManage` tells
+  // the page which one the caller holds, so a read-only operator sees the table and no buttons.
+  @Get(':partnerCompanyId/ai-credit-holds')
+  @RequirePermissions('system.partner_dashboard.read')
+  @ApiOperation({
+    summary: 'List UNRESOLVED AI credit holds and unacknowledged breaches for the current and '
+      + 'previous Bangkok month, after running the same lazy sweep admission runs',
+  })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404 })
+  aiCreditHolds(@Param('partnerCompanyId') companyId: string, @Req() req: AuthedRequest) {
+    return this.aiCreditHoldsUseCase.read({
+      companyId,
+      canManage: req.context.permissions.includes('system.partner_ai_model.manage'),
+    });
+  }
+
+  @Post(':partnerCompanyId/ai-credit-holds/:reservationId/release')
+  @HttpCode(200)
+  @RequirePermissions('system.partner_ai_model.manage')
+  @ApiOperation({ summary: 'Release one UNRESOLVED hold: the credit is free immediately and no usage is recorded' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404, description: 'No such hold in this company' })
+  @ApiResponse({ status: 409, description: 'Evidence or another operator already closed this hold' })
+  releaseAiCreditHold(
+    @Param('partnerCompanyId') companyId: string,
+    @Param('reservationId') reservationId: string,
+    @Body() dto: PartnerAiCreditHoldActionBodyDto,
+    @Req() req: AuthedRequest,
+  ) {
+    return this.aiCreditHoldsUseCase.release(this.holdCommand(companyId, reservationId, dto, req));
+  }
+
+  @Post(':partnerCompanyId/ai-credit-holds/:reservationId/charge-at-bound')
+  @HttpCode(200)
+  @RequirePermissions('system.partner_ai_model.manage')
+  @ApiOperation({ summary: 'Settle one UNRESOLVED hold at its own declared upper bound (no tokens, not a model call)' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404 })
+  @ApiResponse({ status: 409, description: 'Evidence or another operator already closed this hold' })
+  chargeAiCreditHoldAtBound(
+    @Param('partnerCompanyId') companyId: string,
+    @Param('reservationId') reservationId: string,
+    @Body() dto: PartnerAiCreditHoldActionBodyDto,
+    @Req() req: AuthedRequest,
+  ) {
+    return this.aiCreditHoldsUseCase.chargeAtBound(this.holdCommand(companyId, reservationId, dto, req));
+  }
+
+  @Post(':partnerCompanyId/ai-credit-holds/:reservationId/acknowledge-breach')
+  @HttpCode(200)
+  @RequirePermissions('system.partner_ai_model.manage')
+  @ApiOperation({ summary: 'Acknowledge one breach row: money untouched, admission for that scope reopens' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404, description: 'No such hold in this company, or it carries no breach' })
+  @ApiResponse({ status: 409, description: 'Already acknowledged' })
+  acknowledgeAiCreditBreach(
+    @Param('partnerCompanyId') companyId: string,
+    @Param('reservationId') reservationId: string,
+    @Body() dto: PartnerAiCreditHoldActionBodyDto,
+    @Req() req: AuthedRequest,
+  ) {
+    return this.aiCreditHoldsUseCase.acknowledgeBreach(this.holdCommand(companyId, reservationId, dto, req));
+  }
+
+  /** One shape for the three actions, so a route cannot forget the actor or the request id. */
+  private holdCommand(
+    companyId: string,
+    reservationId: string,
+    dto: PartnerAiCreditHoldActionBodyDto,
+    req: AuthedRequest,
+  ) {
+    return {
+      companyId,
+      reservationId,
+      reason: dto.reason,
+      requestingAdminUserId: req.context.userId,
+      requestId: req.context.requestId,
+    };
   }
 
   // ---- P29 plan limits & term ----

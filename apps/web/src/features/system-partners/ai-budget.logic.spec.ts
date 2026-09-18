@@ -1,7 +1,16 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { AI_BUDGET_STEP_BOUNDS } from '@watchdog-bms/contracts';
 import {
   AI_BUDGET_BUCKET_LABELS,
+  AI_CREDIT_HOLD_ACTION_LABELS,
+  AI_CREDIT_HOLD_EMPTY_NOTE,
+  AI_CREDIT_HOLD_HELP_NOTE,
+  aiCreditHoldAgeLabel,
+  aiCreditHoldConsequence,
+  aiCreditHoldKindLabel,
+  aiCreditHoldStepLabel,
+  isAiCreditHoldConflict,
   AI_BUDGET_MODE_LABELS,
   AI_BUDGET_RESERVED_NOTE,
   AI_BUDGET_SPLIT_DISABLED_NOTE,
@@ -417,5 +426,94 @@ describe('split AI budget policy helpers', () => {
     assert.equal(AI_BUDGET_RESERVED_NOTE, 'กันไว้ระหว่างเรียก AI');
     assert.match(AI_BUDGET_SPLIT_DISABLED_NOTE, /ยังไม่เปิด/);
     assert.match(AI_BUDGET_STALE_MESSAGE, /โหลดค่าล่าสุด/);
+  });
+});
+
+describe('held credit that needs an operator decision (hold spec §4.1–4.2)', () => {
+  const hold = (over: Partial<{ upperBoundSatang: number; settledCostSatang: number | null; stepKind: string }> = {}) => ({
+    upperBoundSatang: 4_700, settledCostSatang: null as number | null, stepKind: 'receipt-ocr', ...over,
+  });
+
+  it('labels every declared step kind in Thai, and falls back to the id for an unknown one', () => {
+    // The table is the contract: a step kind that can be reserved must be readable in the console.
+    for (const stepKind of Object.keys(AI_BUDGET_STEP_BOUNDS)) {
+      const label = aiCreditHoldStepLabel(stepKind);
+      assert.notEqual(label, stepKind, `${stepKind} has no Thai label`);
+      assert.equal(/[a-z]-/.test(label), false, `${label} still reads like an id`);
+    }
+    assert.equal(aiCreditHoldStepLabel('something-new'), 'something-new');
+  });
+
+  it('says what the row is waiting for', () => {
+    assert.equal(aiCreditHoldKindLabel('UNRESOLVED_HOLD'), 'ยังไม่ทราบผล');
+    assert.equal(aiCreditHoldKindLabel('BREACH'), 'ใช้เกินที่กันไว้');
+    assert.equal(aiCreditHoldKindLabel('WHAT'), 'WHAT');
+  });
+
+  it('ages a hold in the coarsest unit that is still true, rounded DOWN', () => {
+    const now = new Date('2026-09-18T12:00:00.000Z');
+    const ago = (ms: number) => new Date(now.getTime() - ms).toISOString();
+    assert.equal(aiCreditHoldAgeLabel(ago(30_000), now), 'เมื่อสักครู่');
+    assert.equal(aiCreditHoldAgeLabel(ago(90_000), now), '1 นาที');
+    assert.equal(aiCreditHoldAgeLabel(ago(59 * 60_000), now), '59 นาที');
+    assert.equal(aiCreditHoldAgeLabel(ago(60 * 60_000), now), '1 ชั่วโมง');
+    assert.equal(aiCreditHoldAgeLabel(ago(23.9 * 60 * 60_000), now), '23 ชั่วโมง');
+    assert.equal(aiCreditHoldAgeLabel(ago(50 * 60 * 60_000), now), '2 วัน');
+    // A clock skew must never print a negative age, and a broken date must not print NaN.
+    assert.equal(aiCreditHoldAgeLabel(new Date(now.getTime() + 60_000).toISOString(), now), 'เมื่อสักครู่');
+    assert.equal(aiCreditHoldAgeLabel('not-a-date', now), 'เมื่อสักครู่');
+  });
+
+  it('spells out the money consequence of a RELEASE before the operator commits', () => {
+    const text = aiCreditHoldConsequence('release', hold(), 'ไม่ได้เรียกจริง');
+    assert.equal(text.confirmLabel, AI_CREDIT_HOLD_ACTION_LABELS.release);
+    assert.match(text.message, /฿47\.00/);
+    assert.match(text.message, /กลับมาให้ร้านใช้ได้ทันที/);
+    assert.match(text.message, /ไม่มีการบันทึกค่าใช้จ่าย/);
+    // The safety net the help line promises has to be in the dialog too.
+    assert.match(text.message, new RegExp(AI_CREDIT_HOLD_HELP_NOTE));
+    assert.match(text.message, /เหตุผล: ไม่ได้เรียกจริง/);
+    assert.match(text.message, /อ่านใบเสร็จ/);
+  });
+
+  it('spells out the money consequence of a CHARGE, including that it is not a model call', () => {
+    const text = aiCreditHoldConsequence('charge_at_bound', hold(), 'ผลไม่กลับมา');
+    assert.equal(text.confirmLabel, AI_CREDIT_HOLD_ACTION_LABELS.charge_at_bound);
+    assert.match(text.message, /บันทึก ฿47\.00 เป็นค่าใช้จ่ายจริงของเดือนนี้/);
+    assert.match(text.message, /ไม่นับเป็นจำนวนครั้งที่เรียกโมเดล/);
+    assert.match(text.message, /เหตุผล: ผลไม่กลับมา/);
+  });
+
+  it('says an ACKNOWLEDGEMENT moves no money and reopens the scope, with the real actual', () => {
+    const text = aiCreditHoldConsequence('acknowledge_breach', hold({ settledCostSatang: 6_000 }), 'ตรวจแล้ว');
+    assert.equal(text.confirmLabel, AI_CREDIT_HOLD_ACTION_LABELS.acknowledge_breach);
+    assert.match(text.message, /ใช้จริง ฿60\.00 จากที่กันไว้ ฿47\.00/);
+    assert.match(text.message, /เปิดรับงาน AI ของส่วนนี้อีกครั้ง/);
+    assert.match(text.message, /ไม่มีการคืนเครดิต/);
+    // A breach row with no settled figure still reads as money, never as an empty string.
+    assert.match(aiCreditHoldConsequence('acknowledge_breach', hold(), 'r').message, /ใช้จริง ฿47\.00/);
+  });
+
+  it('treats the three hold refusals as "your list is stale", and nothing else', () => {
+    for (const code of ['partner_ai_credit_hold_already_resolved',
+      'partner_ai_credit_breach_already_acknowledged', 'partner_ai_credit_hold_not_found']) {
+      assert.equal(isAiCreditHoldConflict(code), true, code);
+    }
+    // A failed action changed nothing, so the list is NOT stale — the operator may simply retry.
+    assert.equal(isAiCreditHoldConflict('partner_ai_credit_hold_action_failed'), false);
+    assert.equal(isAiCreditHoldConflict(null), false);
+  });
+
+  it('labels the operator basis in the D1 breakdown without calling it a measurement', () => {
+    const label = AI_USAGE_BASIS_LABELS['OPERATOR_CHARGED_AT_BOUND']!;
+    assert.match(label, /operator/);
+    assert.match(label, /ยอดที่กันไว้/);
+    assert.notEqual(label, AI_USAGE_BASIS_LABELS['PROVIDER_REPORTED']);
+  });
+
+  it('keeps the empty state and the help line to one line each', () => {
+    assert.equal(AI_CREDIT_HOLD_EMPTY_NOTE, 'ไม่มีรายการค้าง');
+    assert.equal(AI_CREDIT_HOLD_HELP_NOTE.includes('\n'), false);
+    assert.match(AI_CREDIT_HOLD_HELP_NOTE, /ระบบจะบันทึกยอดจริงเพิ่มเอง/);
   });
 });

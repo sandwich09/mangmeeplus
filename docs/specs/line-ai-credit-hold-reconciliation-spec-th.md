@@ -3,7 +3,7 @@
 ## 1. สถานะและขอบเขต
 
 - วันที่: 2026-09-18
-- สถานะ: owner อนุมัติข้อเสนอ 3 ชั้น (ข้อความ 2026-09-18 "5. ok ตามข้อเสนอ"); ยังไม่ implement / deploy
+- สถานะ: owner อนุมัติข้อเสนอ 3 ชั้น (ข้อความ 2026-09-18 "5. ok ตามข้อเสนอ"); **implement แล้วครบทั้ง 3 ชั้น และ verify ในเครื่อง** (J-01…J-07 ติ๊กแล้ว); ยังไม่ deploy — J-08 (UAT) ยังเปิด
 - ต่อจาก: [ADR 0013](../adr/0013-ai-budget-split-reservations.md) (reservation lifecycle, `UNRESOLVED`, `breach`, no TTL release), [spec wave 2](line-ai-credit-wording-and-deterministic-reads-spec-th.md) (คำว่า "เครดิต AI")
 - ผู้ใช้: System Admin (`system.partner_ai_model.manage`), operator อ่านอย่างเดียว (`system.partner_dashboard.read`), และร้านค้า (เห็นผลทางอ้อม: เครดิตที่กันไว้ค้างทำให้เครดิตที่ใช้ได้น้อยลง)
 - [แผนงาน](../plans/line-ai-credit-wording-and-deterministic-reads-plan-th.md) (### H3)
@@ -54,14 +54,14 @@
 
 ## 6. Acceptance
 
-- [ ] J-01 Gateway: settle ที่ล้มเหลวถูกโพสต์ซ้ำนอกเส้นทางคำขอจนสำเร็จภายใน backoff; business call ไม่ช้าลง; คิวมีเพดาน; SHARED byte-identical (spec เดิมไม่แตะ)
-- [ ] J-02 Gateway: SIGTERM ระหว่าง provider call ⇒ call จบ, หลักฐานโพสต์แล้วจึงออก; log สรุป; ทดสอบด้วย fake provider/fake API ในโปรเซส
-- [ ] J-03 API: route อ่านคืนรายการถูกต้องหลัง sweep; permission read/manage/tenant ถูกปฏิเสธถูกต้อง (DenyByDefaultGuard test)
-- [ ] J-04 API: release/charge_at_bound/acknowledge ถูกต้องบน PostgreSQL จริง (pg spec: fence, ซ้ำ ⇒ 409, ไม่ deadlock กับ reserve/settle ที่แข่งกัน, late evidence หลัง release ⇒ `settled-anomaly` บันทึกเต็ม, aggregate ถูกต้อง, breach ack เปิด admission)
-- [ ] J-05 Web: section ใหม่ที่ 1440/390 (ว่าง, มีรายการ, read-only, locked, หลังกดปล่อย, หลังกดคิดตามยอด, breach ack) — browser evidence; ประวัติการปรับแสดงแถวใหม่เป็นไทย
-- [ ] J-06 Alert: ทดสอบ sweep นับ/throttle/ข้อความ; ไม่มีเงินลูกค้าในข้อความ
-- [ ] J-07 D1 breakdown: basis ใหม่แสดงป้ายไทยและไม่ถูกนับเป็นจำนวน call ของโมเดล
-- [ ] J-08 UAT: จำลอง hold ค้าง (synthetic) แล้วเคลียร์ผ่านหน้าเว็บจริง; ไม่แตะบริษัทจริง
+- [x] J-01 Gateway: settle ที่ล้มเหลวถูกโพสต์ซ้ำนอกเส้นทางคำขอจนสำเร็จภายใน backoff; business call ไม่ช้าลง; คิวมีเพดาน; SHARED byte-identical (spec เดิมไม่แตะ) — `ai-usage.interceptor.spec.ts` (fake API ล้ม 2 ครั้งในคิวแล้วสำเร็จ → โพสต์สำเร็จครั้งเดียว; `rejected` ไม่ retry; หมดอายุ 10 นาที; ล้น 1,000 → `settle_evidence_dropped`; seam คืน `unreachable` ใน < 1s และคิวไม่ได้รันในเส้นทางนั้น; ไม่มี envelope ⇒ ไม่ settle ไม่นับ in-flight)
+- [x] J-02 Gateway: SIGTERM ระหว่าง provider call ⇒ call จบ, หลักฐานโพสต์แล้วจึงออก; log สรุป; ทดสอบด้วย fake provider/fake API ในโปรเซส — `app.enableShutdownHooks()` + `AiBudgetShutdownService`; เทสต์เรียก hook ตรง ๆ (รอ in-flight แล้ว flush ข้าม backoff, 1 บรรทัดสรุปเฉพาะตัวเลข, call ที่เกิน budget รายงานตรง ๆ ไม่รอค้าง, ไม่มีอะไรค้าง ⇒ no-op)
+- [x] J-03 API: route อ่านคืนรายการถูกต้องหลัง sweep; permission read/manage/tenant ถูกปฏิเสธถูกต้อง (DenyByDefaultGuard test) — `partner-ai-credit-holds.use-case.spec.ts` (sweep ทั้งเดือนนี้และเดือนก่อนก่อนอ่าน, DTO ไม่มีข้อความลูกค้า, bucket/requestKind ที่ไม่รู้จัก = UNKNOWN), `partner.controller.spec.ts` (guard: tenant caller และ read-only ถูกปฏิเสธที่ 3 action, read เปิดได้), pg spec ยืนยันว่า sweep เปลี่ยน DISPATCHED → UNRESOLVED ก่อน list
+- [x] J-04 API: release/charge_at_bound/acknowledge ถูกต้องบน PostgreSQL จริง — `company-ai-credit-holds.pg.spec.ts` 10/10 (กด 2 และ 6 ครั้งพร้อมกัน ⇒ ชนะ 1 เสมอ และ audit 1 แถว; charge ขยับ aggregate เดือน+bucket ครั้งเดียว `callCount = 0`; ปล่อยแล้วคิดไม่ได้/คิดแล้วปล่อยไม่ได้; reservation ของ tenant อื่น = not-found ไม่เขียนอะไร; ack เปิด OCR กลับมาโดย CHAT ไม่เคยถูกปิด และเงินที่บันทึกไม่เปลี่ยน; late evidence หลัง release ⇒ `settled-anomaly` บันทึกเต็ม + `anomaly.previousStatus = CANCELLED`; 20 รอบ decision แข่งกับ reserve/settle ไม่ deadlock)
+- [x] J-05 Web: section ใหม่ที่ 1440/390 — [browser evidence](../qa/evidence/line-ai-credit-holds-2026-09-18/README.md): 12 subject × 2 viewport (ว่าง, มีรายการ, breach, locked, read-only, confirm ทั้ง 3, หลังกดทั้ง 3, ประวัติ), overflow 0 px ทุกภาพ, ไม่มี client error; ประวัติการปรับแสดง 3 แถวใหม่เป็นไทยครบ
+- [x] J-06 Alert: ทดสอบ sweep นับ/throttle/ข้อความ; ไม่มีเงินลูกค้าในข้อความ — `signup-ops-alert.service.spec.ts` (นับ **บริษัท** ไม่ใช่แถว, เกณฑ์อายุจาก `AI_CREDIT_HOLD_ALERT_AFTER_HOURS` และ breach ไม่มีเกณฑ์อายุ, วันละ 1 ครั้งตาม Bangkok day และไม่กลบ kind อื่น, ข้อความไม่มีตัวเลขใด ๆ และไม่มีชื่อร้าน, ลิงก์ไปหน้า partner)
+- [x] J-07 D1 breakdown: basis ใหม่แสดงป้ายไทยและไม่ถูกนับเป็นจำนวน call ของโมเดล — `OPERATOR_CHARGED_AT_BOUND` อยู่ใน `byUsageBasis` พร้อมป้าย "operator คิดตามยอดที่กันไว้"; เขียนเป็น `eventKind = COST_ADJUSTMENT` จึงไม่เข้า `calls`/`coverage` แต่ยอดเงินยัง reconcile กับ `total` (`get-partner-ai-usage.use-case.spec.ts` + pg spec)
+- [ ] J-08 UAT: จำลอง hold ค้าง (synthetic) แล้วเคลียร์ผ่านหน้าเว็บจริง; ไม่แตะบริษัทจริง — ยังไม่ทำ (ต้อง deploy UAT ก่อน)
 
 ## 7. ไม่ทำ
 

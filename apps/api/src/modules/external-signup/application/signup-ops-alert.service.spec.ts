@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   SIGNUP_OPS_ALERT_EVENT_TYPE,
   SignupOpsAlertService,
+  signupOpsAlertBodyTh,
   signupOpsAlertEventKey,
   signupOpsAlertTitleTh,
 } from './signup-ops-alert.service';
@@ -27,6 +28,9 @@ function harness(options: {
   threshold?: number;
   notificationSkipped?: boolean;
   admins?: Array<{ companyId: string; userId: string }>;
+  /** Hold spec §5: the companies `groupBy(['companyId'])` finds with stranded credit. */
+  holdCompanies?: Array<{ companyId: string; _count: { _all: number } }>;
+  holdAlertAfterHours?: number;
 } = {}) {
   // A real key→row map, so "once per condition per Bangkok day" is proven by the same mechanism
   // production relies on (the outbox unique index) rather than by counting calls.
@@ -36,6 +40,7 @@ function harness(options: {
   const pushes: Array<{ userIds: string[]; text: string }> = [];
   const planTermQueries: any[] = [];
   const outboxCounts: any[] = [];
+  const reservationQueries: any[] = [];
 
   const prisma = {
     client: {
@@ -55,7 +60,10 @@ function harness(options: {
       companyAiMonthlyBucketUsage: {
         findMany: async (args: any) => (options.buckets ?? []).filter((row) => row.companyId === args.where.companyId),
       },
-      aiBudgetReservation: { groupBy: async () => [], count: async () => 0 },
+      aiBudgetReservation: {
+        groupBy: async (args: any) => { reservationQueries.push(args); return options.holdCompanies ?? []; },
+        count: async () => 0,
+      },
       platformAiBudgetConfig: { findUnique: async () => options.platformBudget ?? null },
     },
   } as any;
@@ -84,6 +92,7 @@ function harness(options: {
   const config = {
     lineSignupAdminAlertBudgetExhaustedPerDay: options.threshold ?? 5,
     aiMonthlyBudgetSatang: 8000,
+    aiCreditHoldAlertAfterHours: options.holdAlertAfterHours ?? 24,
   } as any;
 
   const logs: any[] = [];
@@ -91,7 +100,7 @@ function harness(options: {
 
   return {
     service: new SignupOpsAlertService(prisma, outbox, notificationUseCase, adminNotify, config, logger),
-    outboxRows, appended, notifications, pushes, planTermQueries, outboxCounts, logs,
+    outboxRows, appended, notifications, pushes, planTermQueries, outboxCounts, reservationQueries, logs,
   };
 }
 
@@ -326,5 +335,68 @@ describe('SignupOpsAlertService.sweepStuckPushes — L-B follow-up (a)', () => {
     assert.deepEqual(where.status, { in: ['PENDING', 'FAILED'] });
     assert.deepEqual(where.OR[0].createdAt, { lt: new Date(EVENING.getTime() - 60 * 60_000) });
     assert.deepEqual(where.OR[1].attempts, { gte: 3 });
+  });
+});
+
+describe('SignupOpsAlertService.sweepUnresolvedCreditHolds — hold spec §5', () => {
+  it('stays quiet when no company is holding stranded credit', async () => {
+    const h = harness({ holdCompanies: [] });
+    assert.deepEqual(await h.service.sweepUnresolvedCreditHolds(EVENING), { companies: 0, raised: false });
+    assert.equal(h.outboxRows.size, 0);
+  });
+
+  it('counts COMPANIES, not rows — one broken shop is one thing to look at', async () => {
+    const h = harness({ holdCompanies: [
+      { companyId: 'co-1', _count: { _all: 40 } },
+      { companyId: 'co-2', _count: { _all: 1 } },
+    ] });
+
+    assert.deepEqual(await h.service.sweepUnresolvedCreditHolds(EVENING), { companies: 2, raised: true });
+  });
+
+  it('asks for UNRESOLVED holds past the configured age, or ANY unacknowledged breach', async () => {
+    const h = harness({ holdCompanies: [{ companyId: 'co-1', _count: { _all: 1 } }], holdAlertAfterHours: 6 });
+    await h.service.sweepUnresolvedCreditHolds(EVENING);
+
+    const where = h.reservationQueries[0].where;
+    assert.deepEqual(h.reservationQueries[0].by, ['companyId']);
+    // Age from when the hold was TAKEN: the shop has been short of that credit since `createdAt`.
+    assert.deepEqual(where.OR[0], { status: 'UNRESOLVED', createdAt: { lt: new Date(EVENING.getTime() - 6 * 60 * 60_000) } });
+    // A breach closes a scope from the moment it happens, so it has no age threshold at all.
+    assert.deepEqual(where.OR[1], { breach: true, breachAcknowledgedAt: null });
+  });
+
+  it('announces once per Bangkok day and keeps its own kind apart from the others', async () => {
+    const h = harness({ holdCompanies: [{ companyId: 'co-1', _count: { _all: 1 } }] });
+    await h.service.sweepUnresolvedCreditHolds(EVENING);
+    await h.service.sweepUnresolvedCreditHolds(EVENING);
+    await h.service.raise('trial_budget_exhausted', EVENING);
+    await h.service.sweepUnresolvedCreditHolds(AFTER_MIDNIGHT);
+
+    assert.deepEqual([...h.outboxRows.keys()], [
+      signupOpsAlertEventKey('ai_credit_holds_unresolved', '2026-09-05'),
+      signupOpsAlertEventKey('trial_budget_exhausted', '2026-09-05'),
+      signupOpsAlertEventKey('ai_credit_holds_unresolved', '2026-09-06'),
+    ]);
+  });
+
+  it('says what to open, with no shop name and no customer money figure', async () => {
+    const h = harness({ holdCompanies: [{ companyId: 'co-1', _count: { _all: 3 } }] });
+    await h.service.sweepUnresolvedCreditHolds(EVENING);
+    await h.service.deliver('ai_credit_holds_unresolved', '2026-09-05');
+
+    const title = signupOpsAlertTitleTh('ai_credit_holds_unresolved');
+    const body = signupOpsAlertBodyTh('ai_credit_holds_unresolved');
+    assert.match(title, /เครดิต AI ที่กันไว้ค้าง/);
+    assert.match(body, /เครดิตที่กันไว้ค้าง/);
+    for (const text of [title, body]) {
+      assert.equal(/\d/.test(text), false, `no figure of any kind belongs in "${text}"`);
+      assert.equal(/co-1/.test(text), false);
+    }
+    // It links to the partner list, not the signup queue: this is decided per company on that page.
+    assert.equal(h.notifications[0].deepLinkHref, '/system/partners');
+    assert.equal(h.notifications[0].periodKey, '2026-09-05');
+    assert.equal(h.notifications[0].sourceId, 'ai_credit_holds_unresolved');
+    assert.match(h.pushes[0]!.text, /system\/partners/);
   });
 });

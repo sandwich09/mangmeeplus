@@ -55,6 +55,9 @@ export class SignupClaimEmailInternalController {
     // L-B follow-up (a): a throttled push never terminalizes, so `countDead()` never sees it and
     // nothing else would ever notice a shop's "พร้อมใช้แล้ว" stuck behind the OA quota.
     const stuckPushes = await this.opsAlerts.sweepStuckPushes();
+    // hold-reconciliation spec §5: held AI credit is never released on a timer, so a stranded hold
+    // is silent unless something counts the rows. Same timer, same daily throttle.
+    const creditHolds = await this.opsAlerts.sweepUnresolvedCreditHolds();
     // line-support-request-spec-th §2.4: the 24h assistant pause expires by itself, so the request
     // behind it must too — otherwise the operator inbox fills with rows nobody is waiting on.
     const supportRequests = await this.lineNotify.sweepExpiredSupportRequests();
@@ -70,6 +73,7 @@ export class SignupClaimEmailInternalController {
       profileGuardQueued: profileGuard.queued,
       trialBudgetsExhausted: trialBudgets.exhausted,
       stuckPushes: stuckPushes.stuck,
+      aiCreditHoldCompanies: creditHolds.companies,
       supportRequestsExpired: supportRequests.expired,
       supportRequestsPurged: supportPurge.purged,
       purgedIntake: intake.purgedIntake,

@@ -218,6 +218,10 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // operators are told. One shop is a customer being enthusiastic; five is a pricing or abuse
   // signal. Positive on purpose — 0 would alert on a day nothing happened.
   LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY: z.coerce.number().int().positive().default(5),
+  // Hold-reconciliation spec §5: how old an UNRESOLVED hold has to be before the 15-minute sweep
+  // announces it. Held credit is money the shop cannot use, so the default is one day — long enough
+  // that a slow settlement is never announced, short enough that nobody waits a week.
+  AI_CREDIT_HOLD_ALERT_AFTER_HOURS: z.coerce.number().int().positive().default(24),
   // Asia/Bangkok office window the "within a business day" promise is measured against.
   // Days are a MON..SUN range; hours are HH:MM-HH:MM on a 24h clock.
   LINE_SIGNUP_BUSINESS_DAYS: z.string().regex(/^(MON|TUE|WED|THU|FRI|SAT|SUN)-(MON|TUE|WED|THU|FRI|SAT|SUN)$/).default('MON-SAT'),
@@ -523,6 +527,12 @@ export const aiGatewayConfigSchema = baseConfigSchema.extend({
   AGENTCORE_MAX_MESSAGE_CHARS: z.coerce.number().int().positive().default(8000),
   AGENTCORE_MAX_ATTACHMENTS: z.coerce.number().int().positive().default(10),
   AGENTCORE_MAX_CONCURRENT_INVOCATIONS: z.coerce.number().int().positive().default(16),
+  // Hold-reconciliation spec §3: on SIGTERM the gateway waits for guarded provider calls to finish
+  // and then flushes its settle-evidence queue, within this budget. It MUST stay below the
+  // container's stop timeout, or the runtime SIGKILLs mid-flush and the wait made things worse.
+  // `infra/prod-ecs-express/deploy.sh` sets no `stopTimeout` on the Express `primaryContainer` (the
+  // shape has no such field), so the live gateway gets ECS's own 30-second default — hence 20s.
+  AI_GATEWAY_SHUTDOWN_DRAIN_MS: z.coerce.number().int().positive().max(110_000).default(20_000),
   CORS_ALLOWED_ORIGINS: z.string().default(''),
   HTTP_BODY_LIMIT: z.string().default('1mb'),
   SWAGGER_ENABLED: envBoolean.default(false),

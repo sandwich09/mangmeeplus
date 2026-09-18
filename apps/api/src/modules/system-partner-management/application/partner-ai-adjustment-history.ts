@@ -2,7 +2,11 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { PartnerAiAdjustmentField, PartnerAiAdjustmentHistory } from '@watchdog-bms/contracts';
 import type { Prisma } from '../../../generated/prisma/client';
 
-const ACTIONS = ['system.partner_ai_model.update', 'system.partner_ocr_config.update'];
+const ACTIONS = ['system.partner_ai_model.update', 'system.partner_ocr_config.update',
+  // Hold reconciliation (hold spec §4.2). Same card, same reason column, same Thai rendering: an
+  // operator reading "what was done to this company's AI credit" must see cap edits and hold
+  // decisions in ONE list, not two.
+  'ai.credit_hold.released', 'ai.credit_hold.charged_at_bound', 'ai.credit_breach.acknowledged'];
 const FIELDS: Array<[PartnerAiAdjustmentField, string, string, 'number'|'string'|'boolean']> = [
   ['modelId','fromModelId','toModelId','string'], ['monthlyBudgetSatang','fromMonthlyBudgetSatang','toMonthlyBudgetSatang','number'],
   ['enabled','fromEnabled','toEnabled','boolean'], ['monthlyLimit','fromMonthlyLimit','toMonthlyLimit','number'],
@@ -14,6 +18,11 @@ const FIELDS: Array<[PartnerAiAdjustmentField, string, string, 'number'|'string'
   ['ocrMonthlyBudgetSatang','fromOcrMonthlyBudgetSatang','toOcrMonthlyBudgetSatang','number'],
   ['budgetConfigVersion','fromBudgetConfigVersion','toBudgetConfigVersion','number'],
   ['pendingBudgetPolicy','fromPendingBudgetPolicy','toPendingBudgetPolicy','string'],
+  // Hold reconciliation (hold spec §4.2): one before/after pair per operator decision. Release and
+  // charge-at-bound both move the hold's status, acknowledgement moves the breach flag, and the
+  // money figure travels in the audit metadata rather than in the rendered field name.
+  ['creditHoldStatus','fromCreditHoldStatus','toCreditHoldStatus','string'],
+  ['creditBreachAcknowledged','fromCreditBreachAcknowledged','toCreditBreachAcknowledged','boolean'],
 ];
 
 /** Only known scalar fields cross the Admin read boundary; historic raw metadata never does. */

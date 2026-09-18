@@ -41,6 +41,14 @@ export const AuditAction = {
   AI_TOOL_INVOKE: 'ai.tool.invoke',
   AI_TOOL_INVOKE_DENIED: 'ai.tool.invoke.denied',
   AI_TOOL_INVOKE_FAILED: 'ai.tool.invoke.failed',
+  /**
+   * Hold-reconciliation spec §4.2 — a System Admin's decision about held AI credit. These three are
+   * the ONLY way money leaves or enters a stranded hold outside provider evidence, so each one is a
+   * CRITICAL row carrying the reason, and `partner-ai-adjustment-history.ts` renders them in Thai.
+   */
+  AI_CREDIT_HOLD_RELEASED: 'ai.credit_hold.released',
+  AI_CREDIT_HOLD_CHARGED_AT_BOUND: 'ai.credit_hold.charged_at_bound',
+  AI_CREDIT_BREACH_ACKNOWLEDGED: 'ai.credit_breach.acknowledged',
   // Item 10C Employee Access and Role Management
   ACCESS_EMPLOYEE_CREATE: 'access.employee.create',
   ACCESS_EMPLOYEE_UPDATE: 'access.employee.update',
