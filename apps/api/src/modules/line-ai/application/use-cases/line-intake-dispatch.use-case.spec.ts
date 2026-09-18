@@ -181,6 +181,8 @@ function makeHarness(opts: {
   realMediaDownload?: boolean;
   /** A45: the OPEN LINE groups this chat already has inside the same-work window. */
   openSameWorkGroups?: Array<{ groupId: string; firstFileName: string | null; updatedAt: Date; status: string; note: string | null; createdAt: Date; webPath: string }>;
+  /** §17.5: the OPEN groups of this chat and whether their reader is still running. */
+  openChatGroups?: Array<{ groupId: string; webPath: string; reading: boolean }>;
   captureGroupCreateThrows?: Error;
   receiptOcrResult?: any;
   governReceiptAdmission?: boolean;
