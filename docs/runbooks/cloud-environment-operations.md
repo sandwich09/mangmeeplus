@@ -10,6 +10,45 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Production Kamal staging — 2026-09-18, no application cutover
+
+The owner authorized ECS-to-Kamal migration with isolated application candidate
+`0b0058adbc7353ec906a33746867af2a235b0934`. Latest read-only proof at08:19UTC still finds all three
+ECS services running one task each on `fc2838c4cb691033f41595c0d43587f10377d33c`; capacity remains1/2.
+API/AI original listener rules retain weighted target groups100/0. Inspect `ForwardConfig.TargetGroups`
+and the healthy task IPs; do not assume every forward action has a top-level `TargetGroupArn`.
+Old AgentCore remains READY/version37. Customer traffic has not been switched to Kamal.
+
+New stack `mangmee-kamal-production` is CREATE_COMPLETE (63Add, no replacement/deletion), executed
+once as `hotfix-infrastructure-20260918T070019Z`; VPC`vpc-033eebb5100e0dbbf`10.93.0.0/24.
+
+| Role | Instance | Public IP | Private IP |
+| --- | --- | --- | --- |
+| API AZa | `i-04afe07799fd19f5d` |54.169.102.70|10.93.0.10|
+| API AZb | `i-01951e536e32a875d` |13.213.1.94|10.93.0.42|
+| AI AZc | `i-0e04890bef2ec1bfb` |18.140.237.182|10.93.0.74|
+| workers AZa | `i-028c8f2e05fe5cd84` |13.212.141.178|10.93.0.106|
+
+These four hosts are running and incur cost; only Docker/Kamal proxies were bootstrapped. Host keys
+were verified from AWS console output. No app/consumer is running there. Separate runtime roles,
+encrypted disks, IMDSv2, DB/cache boundaries,14-day log groups and host alarms are provisioned.
+Two new ALB rules require the exact operator49.229.201.224/32; original ECS rules remain intact.
+Do not start application containers or workers as an untracked test against Production queues.
+
+Ordinary non-root profile`mangmee-kamal-production` assumes the new scoped deploy role from
+`watchdog-bedrock`. Bootstrap-only owner profile`thawatchai` provisioned the new stack and temporary
+inline policy`first-migration-20260918`. That policy expires2026-09-18T13:53:49.513914Z and permits
+only the original worker service/family/pass-roles, new stack/owned listener rules, and exact old
+provider readback. Existing API/AI service mutation is excluded. GetAgentRuntimeEndpoint also checks
+the parent runtime ARN; both exact read resources must be authorized. No ordinary app deploy uses root.
+
+Private target remains`cutoverComplete:false`; do not manufacture enrollment. Use the reviewed
+[first-migration command and recovery procedure](../../infra/kamal/README.md#first-ecs-to-kamal-migration).
+Local preparation`20260918T080339Z-c854a9c3` passed64.852s/425focused app tests using the independently
+completed360.504s candidate build. These are not live deploy/rollback timings. Signed Production
+acceptance and actual SYSTEM_ADMIN/customer OPEN remain outstanding.
+[Full inventory, retained failures and operation ledger](../agent-memory/production-kamal-two-release-paths-2026-09-18.md).
+
 ## Isolated AWS rehearsal completed — 2026-09-14
 
 Later owner-requested UAT power resume: both retained Kamal hosts are running again (API

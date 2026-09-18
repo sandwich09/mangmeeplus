@@ -32,6 +32,25 @@ proof. Operator และ agent ทุกคนต้องใช้ runbook น
 Release ledger ขั้นต่ำต้องมี `candidate`, `controller`, `UAT_RUN_ID`, `READY_RUN_ID`, `PROD_RUN_ID`,
 Passport/READY/Result artifact digest, serving mode, legal evidence/owner reference และผล final acceptance.
 
+## Owner-authorized Production Kamal migration — 2026-09-18
+
+The owner explicitly selected ECS-to-Kamal migration and the isolated Hotfix path first, combining
+pricing8f5b508a with cancelled-certificate confirmation0b0058ad. This application candidate is based
+on servingfc2838c4 and does not include the UAT/main backlog. The separate signed-UAT promotion
+path continues to require exact tested image digests and no Production rebuild. This scoped choice
+does not waive controller review/CI, current-administrator acceptance, signature verification,
+configuration/authority checks, failure retention or customer OPEN requirements.
+
+Use [Kamal release and first-migration instructions](../../infra/kamal/README.md) and record local
+operation IDs separately from workflow IDs. UAT/READY/PROD workflow IDs are `NOT_DISPATCHED` for
+the isolated local operation, never borrowed from another release. Initial infrastructure staging
+and local build/preparation are not live release completion. Retain the original ECS source, routes,
+provider and build authority through the first rollback window. Both signed acceptance and actual
+§E administrator/live/OPEN/logout evidence must pass before `cutoverComplete:true` enrollment.
+The owner named Chrome developer for the existing `prodmangmeeplus` session, and Chrome Thawatchai
+company Snd Prd for the receipt/substitute/cancel/confirm business journey. Do not use seed accounts
+or reset credentials, and do not mark a mocked browser regression as this live journey.
+
 ## Owner-authorized UAT Kamal stability proof — 2026-09-11
 
 The owner explicitly requires consolidated rehearsal and fixes before the next live run, followed by
