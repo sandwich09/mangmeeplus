@@ -7,8 +7,14 @@
  * that sends one gets a 400 from `forbidNonWhitelisted` rather than a quiet write.
  */
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsISO8601, IsNotEmpty, IsOptional, IsString, MaxLength, Min, ValidateIf } from 'class-validator';
-import { EXPENSE_CAPTURE_CLOSE_REASONS, type ExpenseCaptureCloseReason } from '@watchdog-bms/contracts';
+import { IsIn, IsInt, IsISO8601, IsNotEmpty, IsObject, IsOptional, IsString, MaxLength, Min, ValidateIf } from 'class-validator';
+import {
+  EXPENSE_CAPTURE_CLOSE_REASONS,
+  type CaptureFactsPatch,
+  type ExpenseCaptureBusinessUse,
+  type ExpenseCaptureCloseReason,
+  type ExpenseCaptureFundingRoute,
+} from '@watchdog-bms/contracts';
 
 export class CreateExpenseCaptureGroupDto {
   @IsOptional() @IsString() @MaxLength(64) branchId?: string;
@@ -42,4 +48,26 @@ export class CloseExpenseCaptureGroupDto extends ExpenseCaptureRevisionDto {
 /** §3.1 conversion fences on the expense's own revision, like every other expense mutation. */
 export class ConvertExpenseToCaptureGroupDto {
   @IsString() @IsISO8601({ strict: true }) expectedUpdatedAt!: string;
+}
+
+/**
+ * W04a §9. The three payload maps (`patch`, `selection`, `taxReview`, `expenseDateChoice`) are
+ * keyed by ids the server assigned, so `class-validator` can only say "an object" here; the shape
+ * inside is checked field by field in the domain logic and the use case, which is where the
+ * allowed fields and enums live and where an unknown one has to be REFUSED rather than stripped.
+ */
+export class ExpenseCaptureFactsDto extends ExpenseCaptureRevisionDto {
+  @IsString() @IsNotEmpty() @MaxLength(128) fileId!: string;
+  @IsObject() patch!: CaptureFactsPatch;
+}
+
+export class ExpenseCaptureReviewDto extends ExpenseCaptureRevisionDto {
+  @IsIn(['UNKNOWN', 'ALL_COMPANY', 'MIXED']) businessUse!: ExpenseCaptureBusinessUse;
+  @IsIn(['UNKNOWN', 'COMPANY', 'EMPLOYEE']) fundingRoute!: ExpenseCaptureFundingRoute;
+  @IsOptional() @IsObject() selection?: Record<string, { companyQuantity: string }>;
+  // Sent only to CHANGE the payer; omitting it keeps whoever the group already records. `null`
+  // clears it. The server still checks membership and the permission to name somebody else (§5).
+  @ValidateIf((_o, value) => value !== undefined && value !== null) @IsString() @MaxLength(64) payerUserId?: string | null;
+  @IsOptional() @IsObject() taxReview?: Record<string, unknown>;
+  @IsOptional() @IsObject() expenseDateChoice?: Record<string, unknown>;
 }

@@ -98,7 +98,15 @@ describe('server-derived blockers and actions', () => {
       captureGroupBlockers(state({ hasFacts: false })).map((blocker) => blocker.code),
       ['expense_capture_facts_unavailable'],
     );
-    assert.deepEqual(captureGroupBlockers(state()), []);
+    // W04a: facts with nobody having said what is the company's is its own blocker.
+    assert.deepEqual(
+      captureGroupBlockers(state()).map((blocker) => blocker.code),
+      ['expense_capture_review_required'],
+    );
+    assert.deepEqual(
+      captureGroupBlockers(state({ allocation: { status: 'PREVIEW', outcome: 'READY', blockers: [] } })),
+      [],
+    );
   });
 
   it('a closed group blocks nothing and allows nothing', () => {
@@ -113,6 +121,18 @@ describe('server-derived blockers and actions', () => {
 
   it('offers nothing but reading to a viewer who may not change the group', () => {
     assert.deepEqual(captureGroupAllowedActions(state({ canMutate: false })), []);
+  });
+
+  it('W04a: accept appears on an unblocked preview, handoff only on an accepted READY one', () => {
+    const allocation = (over: Record<string, unknown>) => state({ allocation: { status: 'PREVIEW', outcome: 'READY', blockers: [], ...over } });
+    assert.equal(captureGroupAllowedActions(allocation({})).includes('accept_allocation'), true);
+    assert.equal(captureGroupAllowedActions(allocation({})).includes('handoff'), false);
+    assert.equal(captureGroupAllowedActions(allocation({ outcome: 'BLOCKED' })).includes('accept_allocation'), false);
+    const accepted = captureGroupAllowedActions(allocation({ status: 'ACCEPTED' }));
+    assert.equal(accepted.includes('handoff'), true);
+    assert.equal(accepted.includes('accept_allocation'), false);
+    // Nothing to hand off when the answer was "there is no company portion" (A41).
+    assert.equal(captureGroupAllowedActions(allocation({ status: 'ACCEPTED', outcome: 'NO_COMPANY_PORTION' })).includes('handoff'), false);
   });
 
   it('withholds close while a handoff is active, because derived expenses exist', () => {

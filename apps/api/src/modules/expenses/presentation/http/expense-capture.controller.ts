@@ -14,12 +14,20 @@ import {
   ListExpenseCaptureGroupsUseCase,
 } from '../../application/use-cases/expense-capture-group.use-case';
 import {
+  AcceptExpenseCaptureAllocationUseCase,
+  PatchExpenseCaptureFactsUseCase,
+  ReviewExpenseCaptureGroupUseCase,
+} from '../../application/use-cases/expense-capture-review.use-case';
+import {
   AddExpenseCaptureFileDto,
   CloseExpenseCaptureGroupDto,
   CompleteExpenseCaptureFileDto,
   ConvertExpenseToCaptureGroupDto,
   CreateExpenseCaptureGroupDto,
   DetachExpenseCaptureFileDto,
+  ExpenseCaptureFactsDto,
+  ExpenseCaptureRevisionDto,
+  ExpenseCaptureReviewDto,
 } from './expense-capture.dtos';
 
 /**
@@ -46,6 +54,9 @@ export class ExpenseCaptureController {
     private readonly detachFile: DetachExpenseCaptureFileUseCase,
     private readonly closeGroup: CloseExpenseCaptureGroupUseCase,
     private readonly convert: ConvertExpenseToCaptureGroupUseCase,
+    private readonly patchFacts: PatchExpenseCaptureFactsUseCase,
+    private readonly review: ReviewExpenseCaptureGroupUseCase,
+    private readonly acceptAllocation: AcceptExpenseCaptureAllocationUseCase,
   ) {}
 
   @Get('capture-capability')
@@ -107,6 +118,34 @@ export class ExpenseCaptureController {
     @Body() body: DetachExpenseCaptureFileDto,
   ) {
     return this.detachFile.execute(ctx, groupId, fileId, body);
+  }
+
+  /**
+   * W04a §9. The decorator is the coarse gate; the use case decides the real rule — the creator
+   * with `expense.update` or a reviewer for facts and review, `expense.review` (or the payer's own
+   * self-claim) for an acceptance. A decorator cannot know whose group or whose money it is.
+   */
+  @Post('capture-groups/:groupId/facts')
+  @RequireAnyPermission('expense.update', 'expense.review')
+  facts(@ReqCtx() ctx: RequestContext, @Param('groupId') groupId: string, @Body() body: ExpenseCaptureFactsDto) {
+    return this.patchFacts.execute(ctx, groupId, body);
+  }
+
+  @Post('capture-groups/:groupId/review')
+  @RequireAnyPermission('expense.update', 'expense.review')
+  reviewGroup(@ReqCtx() ctx: RequestContext, @Param('groupId') groupId: string, @Body() body: ExpenseCaptureReviewDto) {
+    return this.review.execute(ctx, groupId, body);
+  }
+
+  @Post('capture-groups/:groupId/allocations/:allocationId/accept')
+  @RequireAnyPermission('expense.update', 'expense.review')
+  accept(
+    @ReqCtx() ctx: RequestContext,
+    @Param('groupId') groupId: string,
+    @Param('allocationId') allocationId: string,
+    @Body() body: ExpenseCaptureRevisionDto,
+  ) {
+    return this.acceptAllocation.execute(ctx, groupId, allocationId, body);
   }
 
   @Post('capture-groups/:groupId/close')

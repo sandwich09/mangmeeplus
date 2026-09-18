@@ -195,14 +195,16 @@ Depends on: W03; D03 เฉพาะกฎที่ใช้กับยอด
 
 หมายเหตุชื่อ: `expense-source-draft.logic.ts` และ `expense-source-draft.model.ts` ที่มีอยู่เดิมคือร่างบทสนทนา LINE ไม่ใช่งานจัดสรรของ W04 อย่านำมาใช้เป็น seam และอย่าเรียกของใหม่ว่า source draft (ดู spec §4)
 
-- [ ] สรุปยอด/ร้าน/สินค้า/ผู้จ่ายในหน้าตรวจเดิม เปิดdetailเพิ่มได้ และแสดงblockerที่กระทบactionก่อนกด
-- [ ] รับ business/personal selectionระดับจำนวนโดยไม่เลือก“บริษัททั้งหมด”ให้เอง; purposeทั่วไปยังoptional
-- [ ] ผูก actual payerตามสิทธิ ไม่ใช้uploader/ชื่อผู้รับสินค้าแทนผู้รับเงินคืน
-- [ ] source breakdownก่อนunique inferenceก่อนpolicy allocation; largest remainderถึงสตางค์พร้อมstable ties/eligible caps/provenance
-- [ ] ผลการแบ่งต้องแตกเป็นบรรทัดที่ผ่าน `expenseTotalsIdentityError` ตาม vatMode ปลายทาง; tax classification มาจาก facts/review ตาม D03 เมื่อ employee route ยังไม่รองรับให้เก็บรอ ไม่บังคับ classification ให้ resolver รับ
-- [ ] serverสร้างreviewed allocation snapshot ผูกrevision/policy/payer/selection; การเปลี่ยนfactsทำให้previewที่เกี่ยวข้องหมดอายุ
-- [ ] unknown/unsupportedคงทางพัก; business amount0ที่ยืนยันแล้วจบเป็นหลักฐานไม่มีเงินส่งต่อ
-- [ ] เลือก expenseDateจากfactsที่reviewตามปลายทาง ไม่ใช้upload dateทับpayment/invoice/order date
+สถานะ 2026-09-18: **W04a (API) ส่งแล้ว** — engine + `facts`/`review`/`accept` (รายละเอียดและ deviation ใน appendix ข้อ 17) ช่องที่ยังว่างคือหน้ากลุ่ม/LINE summary = **W04b**
+
+- [ ] สรุปยอด/ร้าน/สินค้า/ผู้จ่ายในหน้าตรวจเดิม เปิดdetailเพิ่มได้ และแสดงblockerที่กระทบactionก่อนกด *(W04b; server ส่ง `facts`/`allocation`/`blockers`/`allowedActions` ให้แล้ว)*
+- [x] รับ business/personal selectionระดับจำนวนโดยไม่เลือก“บริษัททั้งหมด”ให้เอง; purposeทั่วไปยังoptional — `businessUse UNKNOWN` = blocker ไม่ใช่ค่าเริ่มต้น; `selection` เป็นจำนวนต่อแถว, แถวที่ไม่มี quantity แบ่งไม่ได้
+- [x] ผูก actual payerตามสิทธิ ไม่ใช้uploader/ชื่อผู้รับสินค้าแทนผู้รับเงินคืน — payer ต้องเป็นสมาชิก ACTIVE ในสาขา, payer ≠ ตัวเองต้อง `expense.review`
+- [x] source breakdownก่อนunique inferenceก่อนpolicy allocation; largest remainderถึงสตางค์พร้อมstable ties/eligible caps/provenance — `shareByBasis` + provenance ต่อบรรทัด (componentId/share/remainderAdjust/shippingShare)
+- [x] ผลการแบ่งต้องแตกเป็นบรรทัดที่ผ่าน `expenseTotalsIdentityError` ตาม vatMode ปลายทาง; tax classification มาจาก facts/review ตาม D03 เมื่อ employee route ยังไม่รองรับให้เก็บรอ ไม่บังคับ classification ให้ resolver รับ — identity null by construction (property test 200 ชุด); `tax_review_pending` เป็น scope-level ไม่บล็อก accept
+- [x] serverสร้างreviewed allocation snapshot ผูกrevision/policy/payer/selection; การเปลี่ยนfactsทำให้previewที่เกี่ยวข้องหมดอายุ — `ExpenseCaptureAllocation` PREVIEW/ACCEPTED/SUPERSEDED/INVALIDATED + CAS `expectedRevision`
+- [x] unknown/unsupportedคงทางพัก; business amount0ที่ยืนยันแล้วจบเป็นหลักฐานไม่มีเงินส่งต่อ — `NO_COMPANY_PORTION` ที่ accept แล้วปิดกลุ่มเป็น `CLOSED_NO_HANDOFF`; unknown ไม่ถูกนับเป็น 0
+- [x] เลือก expenseDateจากfactsที่reviewตามปลายทาง ไม่ใช้upload dateทับpayment/invoice/order date — `expenseDateChoice` per scope, ไม่มีวันที่ = blocker (ไม่ใช้วันนี้)
 
 - [ ] หน้าตรวจ/LINE summaryใช้document total, settlement, expense allocationและclaim amountแยก; coins/CPN/points/void/taxlegendไม่รู้ต้องมีเหตุผลและmanual review
 - [ ] เปลี่ยนใบเสร็จแสดงdiff/provenanceของfactsใหม่กับค่าที่คนตรวจ; ไม่mixidentity/rows/paymentจากคนละซื้อ; READYกลับNEEDS_REVIEWเมื่อprimaryเปลี่ยนและfinalactionรอreview

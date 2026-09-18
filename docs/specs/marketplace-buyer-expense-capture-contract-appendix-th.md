@@ -315,3 +315,58 @@ W01 (schema/contracts/guards/pg) → W02-web (multi-file, replace intent, resume
 6. **flag ปิด = ปฏิเสธเฉพาะการรับหลักฐานใหม่** (สร้างกลุ่ม / เพิ่มไฟล์ / แปลง expense เป็นกลุ่ม) ส่วน `POST …/files/{f}/complete` ยังทำงานได้ เพราะเป็นการปิดงานอัปโหลดที่จองไว้แล้ว (recovery) ตามเจตนา A47 ที่ให้ job ค้างจบได้ — มี unit test ยืนยันทั้งสองฝั่ง
 7. **payer ใน snapshot ของ resolver**: ใส่ `payerUserId` เฉพาะเมื่อมีค่า (ไม่ใส่ `null`) เพราะ `assertReimbursementSources` เทียบ snapshot ที่ปักไว้กับที่อ่านใหม่แบบ deep-equal — การใส่ `null` จะทำให้ใบเบิกทุกใบที่ร่างไว้ก่อน deploy กลายเป็น `reimbursement_source_changed`
 8. **ค่าที่ยังไม่ทำใน W01** (ตามลำดับงานข้อ 14): runner/lease/checkpoint ของ job, preprocessing, gateway routes สองเส้น, allocation math, handoff, web/LINE surface — W01 วางเฉพาะ schema, contract, config/flag, API ของกลุ่ม, guard ของ lineage และ pg proof
+
+## 17. Implementation notes (W04a — allocation engine + review/accept API, 2026-09-18)
+
+W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAllocation` (§7) และ 3 endpoint ของข้อ 9 (`facts`, `review`, `allocations/{a}/accept`) หน้ากลุ่ม (W04b) และ handoff (W05) ยังไม่ทำในรอบนี้
+
+### 17.1 ลำดับการคิดเงิน (policy `shared-discount-v1+shipping-by-eligible-item-v1`)
+
+ทุกขั้นใช้ largest remainder ถึงสตางค์ tie-break ตาม item id (`shareByBasis`) และ Σ share = ยอดต้นทางเสมอ
+
+1. `base_i` = `amount` ถ้ามี ไม่มีจึงใช้ `quantity × unitPrice` (ไม่คูณซ้ำ, spec §6 ข้อ 1); อ่านไม่ได้ = unknown ไม่ใช่ 0
+2. − `applied_discount` scope `item` ที่ `parentId` ชี้มาที่แถวนั้น → `net1`
+3. − `applied_discount` scope `order|document` แบ่งตามสัดส่วน `net1` ของสินค้าในเอกสารนั้น → `net2`
+4. − `applied_discount` scope `checkout` แบ่งตามสัดส่วน `net2` ของสินค้าทุกเอกสาร**ในไฟล์เดียวกัน** (= "หลังส่วนลดร้าน" ข้อ 7) → `net3`
+5. + `charge` scope `shipping|order` หัก `applied_discount` scope `shipping` ของเอกสารเดียวกันก่อน (นับครั้งเดียว) แล้วแบ่งตาม `net3`; charge scope อื่นแบ่งแบบเดียวกัน
+6. ส่วนของบริษัทต่อแถว = ยอดแต่ละก้อน × `companyQty / (quantity − voidedQuantity)` ปัดสตางค์ HALF_UP; ที่เหลือเป็นส่วนตัว (ข้อ 5 ของ spec §6: ส่วนลดของสินค้าส่วนตัวถูกทิ้ง ไม่ย้ายมาให้บริษัท)
+7. ต่อ scope (ผู้ออกเอกสาร) สร้างบรรทัดผ่าน `calcLineTotals` + `calcDocumentTotals` → `expenseTotalsIdentityError` เป็น null โดยโครงสร้าง (ยืนยันทุก fixture + property test 200 ชุด); ไม่ผ่านเมื่อไรคืน blocker `expense_capture_totals_identity_failed` พร้อมข้อความ ไม่มีการปัดยอดให้ตรง
+
+**ตัวอย่าง A03 (basis ที่บันทึกไว้ในเทสต์):** ร้านเอ 1,000.00 + ร้านบี 500.00 = 1,500.00; ส่วนลดร้าน 100.00 (scope order, ร้านเอ); คูปอง 140.00 (scope checkout) แบ่งตามฐานหลังส่วนลดร้าน 900 : 500 จาก 1,400 → ร้านเอ 90.00 / ร้านบี 50.00; ค่าส่ง 100.00 − ส่วนลดค่าส่ง 70.00 = 30.00 อยู่กับพัสดุของร้านบี → **ร้านเอ 810.00 / ร้านบี 480.00 / รวมจ่าย 1,290.00** และทั้งสองเอกสาร `reconciled`
+
+### 17.2 Blocker (code → เมื่อไรเกิด → อะไรทำให้หาย)
+
+| code | ระดับ | เกิดเมื่อ | หายเมื่อ |
+|---|---|---|---|
+| `expense_capture_business_use_required` | group | `businessUse = UNKNOWN` | ส่ง `businessUse` ใน `review` |
+| `expense_capture_funding_route_required` | group | `fundingRoute = UNKNOWN` | ส่ง `fundingRoute` |
+| `expense_capture_payer_required` | group | route `EMPLOYEE` ไม่มี `payerUserId` | ระบุผู้จ่ายที่เป็นสมาชิก ACTIVE |
+| `expense_capture_company_paid_personal_portion` | group | route `COMPANY` และมีส่วนตัว > 0 (A05) | เปลี่ยน selection หรือเปลี่ยน route |
+| `expense_capture_item_amount_unknown` | scope + group | สินค้าที่เลือกเป็นของบริษัทยังไม่มียอด (A28/A41) | แก้ผ่าน `POST …/facts` |
+| `expense_capture_document_mismatch` | scope + group | เอกสารใน scope `reconciliation = mismatch` (A24/A34/A58) | แก้ facts ให้ตรงหลักฐาน |
+| `expense_capture_component_unclassified` | scope + group | มี `unclassified`/`tax_unknown` และเอกสารยังไม่ reconciled | ระบุ `role` ผ่าน `facts` |
+| `expense_capture_expense_date_required` | scope + group | ไม่มีวันที่ หรือวันที่ที่เลือกเป็นอนาคต (A42) | `expenseDateChoice` หรือแก้ facts |
+| `expense_capture_currency_unsupported` | scope + group | `currency ≠ THB` (A31) | ยังไม่รองรับในรุ่นนี้ |
+| `expense_capture_totals_identity_failed` | scope + group | identity ไม่ผ่าน (bug guard) | แจ้งผู้ดูแลระบบ |
+| `expense_capture_tax_review_pending` | scope เท่านั้น | route `EMPLOYEE` ที่ยังไม่ `NON_CLAIMABLE` + ไม่มี `NEEDS_REVIEW` | `taxReview` โดยผู้มี `expense.review` |
+| `expense_capture_review_required` | group (read model) | มี facts แต่ยังไม่มี allocation | กด `review` |
+
+`outcome = BLOCKED` เมื่อมี group blocker; `NO_COMPANY_PORTION` เมื่อไม่มี blocker และส่วนบริษัท = 0; มิฉะนั้น `READY` — `tax_review_pending` เป็น scope-level เท่านั้นจึงไม่บล็อกการ accept (§7: source เกิดได้ ใบเบิกรอตรวจภาษี)
+
+### 17.3 สิ่งที่ต่างจากตัวอักษรของเอกสารนี้ พร้อมเหตุผล (ไม่มีข้อใดเปลี่ยนกติกาเงิน/สิทธิ)
+
+1. **Blocker code มี prefix `expense_capture_`** (brief เขียน `payer_required` ฯลฯ) เพราะ `api-error-message.ts` เป็น map ไทยแบน ๆ ของทั้งระบบ — key ชื่อ `payer_required` จะถูกฟีเจอร์แรกที่เขียนยึดไป suffix ตรงกับชื่อเดิมทุกตัว
+2. **Item/component id ถูก namespace เป็น `<fileId>:<id>`** เหมือน documentRef (ข้อนี้ระบุเฉพาะ documentRef) — `id` ของ item คือ `<page>:<line>` ซึ่งซ้ำกันได้ข้ามไฟล์ และ `selection` ต้องชี้แถวเดียวได้แน่นอน; endpoint `facts` รับทั้งแบบ namespace และแบบดิบ
+3. **สูตร reconciliation ของ §4.4 ขยายเป็น** `Σ sale − Σ void − Σ applied_discount (ทุก scope) + Σ charge (ทุก scope) + Σ tax_additional` เพราะ §4.4 เขียนเฉพาะ `scope order/document`: ส่วนลดค่าส่งและส่วนลดระดับ item เป็นเงินจริงบนเอกสารเช่นกัน และใบกำกับภาษีแบบ VAT บวกเพิ่มต้องบวก `tax_additional` มิฉะนั้นทุกใบจะ `mismatch`
+4. **ส่วนลด scope `checkout` ถูกปันให้แต่ละเอกสารด้วยสัดส่วนเดียวกับ allocation** ก่อนเทียบ `document_total` — ไม่เช่นนั้นคูปองที่พิมพ์ใต้ร้านเดียวจะทำให้ทั้งสองเอกสารของ A03 `mismatch` ทั้งที่ยอดถูกต้อง
+5. **ค่าเริ่มต้นของภาษี**: เอกสารมี tax component แต่ผู้ออกไม่มีเลขภาษี 13 หลัก → `NEEDS_REVIEW` (ข้อ 7 เขียนว่า "else NO_VAT") เพราะการตั้ง `NO_VAT` บนเอกสารที่พิมพ์ VAT คือการแปลง VAT เป็น 0 ซึ่ง A08 ห้าม; `taxEvidenceStatus` ไม่มีค่าเริ่มต้นที่ผ่าน resolver (คง `NEEDS_REVIEW` จนผู้มีสิทธิ์ตัดสิน) ตามข้อ 7 "ไม่บังคับค่าเพื่อให้ผ่าน resolver"
+6. **`vatRate` ต่อบรรทัด** มาจาก `taxMarker` ของแถวเมื่อมีแถวใดแถวหนึ่งมี marker; ถ้าไม่มีแถวใดมีเลย จึงใช้ rate ที่อ่านได้จาก label ของ tax component (legend ของทั้งใบ) — ทั้งสองทางเป็นเลขที่พิมพ์จริง ไม่มี 7% โดยปริยาย (A53) และ code1/code2 ไม่เป็น rate
+7. **`quantity` ที่เอกสารไม่ได้พิมพ์** ถือเป็น 1 หน่วยแบบแบ่งไม่ได้ (เลือกได้แค่ 0 หรือทั้งแถว) และบันทึก `quantityInferred: true` ใน provenance ตาม §16.2 ที่ห้ามเปิดแบ่งจำนวนที่ไม่รู้
+8. **บรรทัดที่ `companyGross / companyQty` ไม่ลงตัวที่ 4 ตำแหน่ง** ถูกออกเป็น `quantity = 1, unitPrice = ส่วนของบริษัททั้งก้อน` และเก็บจำนวนจริงไว้ใน provenance เพื่อให้ `round2(qty × unitPrice)` ตรงกับยอดเป๊ะหลังเก็บลงคอลัมน์ `Decimal(18,4)`
+9. **scope ที่ส่วนบริษัท = 0 และไม่มี unknown ถูกตัดออกจาก `scopes[]` พร้อม blocker ของมัน** (ข้อ 8 ของ brief) แต่ยอดส่วนตัวยังนับใน `summary` และ facts ยังแสดงทุกเอกสาร — scope ที่เป็น 0 เพราะ "อ่านยอดไม่ได้" ไม่ถูกตัด (A41)
+10. **`charge` scope `document|checkout|item` ออกเป็น `chargeKind: OTHER`** (ข้อ 3 ของ brief กำหนดเฉพาะ shipping → `DELIVERY`) ไม่เดา `SERVICE_CHARGE` จาก label
+11. **`allowedActions` ไม่มี `edit_facts`** เพราะ `EXPENSE_CAPTURE_ACTIONS` ของ W01 มี 6 ค่าและเป็น contract ที่ wave นี้ไม่แก้ — สิทธิ์แก้ facts เท่ากับ `review` (§6 แถวเดียวกัน)
+12. **`facts` ใน group detail dto** เป็น `CaptureFactsView` ซึ่ง assignable กับ `ExpenseCaptureObservations` (มี 6 array + `completeness`) จึงเป็นการเพิ่มฟิลด์ล้วน ๆ ไม่แก้ `expense-capture.ts`
+13. **หน่วยของตัวเลขใน snapshot**: `totals`/`lines`/`charges` เป็น 4 ตำแหน่งตาม `calcDocumentTotals` (คอลัมน์เงินของ repo) ส่วน `companyAmount`/`personalAmount`/`paidTotal`/`summary`/provenance share เป็น 2 ตำแหน่ง (ตัวเลขที่คนอ่านและใบรับรองอ้าง)
+14. **`accept` ของ creator**: อนุญาตเฉพาะ `outcome = READY` + route `EMPLOYEE` + `payerUserId = ผู้กด` (self-claim) และบันทึก `rule` ใน audit; กรณีอื่นต้อง `expense.review`
+15. **`review` ซ้ำเมื่อมี ACCEPTED อยู่** (และ `handoffState = NONE`) จะ `INVALIDATED` ตัวเก่าด้วยเหตุ `review_recomputed` และล้าง `acceptedAllocationId` (A11); ถ้า `handoffState = ACTIVE` ทั้ง `facts`/`review`/`accept` ตอบ 409 `expense_capture_handoff_active` (แก้ที่รายการค่าใช้จ่ายแทน)
