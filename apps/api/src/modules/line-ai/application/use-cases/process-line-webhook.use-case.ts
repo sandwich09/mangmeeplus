@@ -81,12 +81,34 @@ import type { ExpenseRecordWithRelations } from '../../../expenses/domain/models
 import { CreateUploadIntentUseCase } from '../../../data-model-core/application/use-cases/create-upload-intent.use-case';
 import { CompleteAttachmentUploadUseCase } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
 import {
+  ALLOWED_ATTACHMENT_MIME_TYPES,
   canonicalAttachmentExtension,
   inspectAttachmentBytes,
   normalizeAttachmentMimeType,
   validateAttachmentFileName,
   validateAttachmentMeta,
 } from '../../../data-model-core/domain/logic/attachment.logic';
+import { PrismaExpenseCaptureRepository, sanitizeAttemptFileName } from '../../../expenses/infrastructure/prisma-expense-capture.repository';
+import {
+  AddExpenseCaptureFileUseCase,
+  CompleteExpenseCaptureFileUseCase,
+  CreateExpenseCaptureGroupUseCase,
+} from '../../../expenses/application/use-cases/expense-capture-group.use-case';
+import { ExpenseCaptureLineUseCase, LINE_CAPTURE_NOTE_MAX_CHARS, LINE_CAPTURE_SAME_WORK_WINDOW_MS } from '../../../expenses/application/use-cases/expense-capture-line.use-case';
+import {
+  CAPTURE_READ_FAILED_REPLY,
+  classifyNonReceiptCase,
+  NON_RECEIPT_PERSISTING_CASES,
+  nonReceiptReply,
+  type LineNonReceiptCase,
+} from '../../domain/logic/line-non-receipt-reply.logic';
+import {
+  fileAttemptAnswer,
+  fileAttemptChoiceList,
+  FILE_ATTEMPT_LOOKUP_FAILED_REPLY,
+  FILE_ATTEMPT_NONE_REPLY,
+  type LineFileAttemptFacts,
+} from '../../domain/logic/line-file-attempt-answer.logic';
 import { AttachmentMalwareScanner } from '../../../data-model-core/infrastructure/attachment-malware-scanner';
 import { deriveTaxEvidence, isExpenseExtractionEligible, isSuccessfulNonReceiptClassification, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../../expenses/domain/logic/expense-document.logic';
 import { isStaleOcrApply, ReceiptOcrApplyService, toMoney4, type ReceiptCategorySuggestion, type ReceiptOcrApplyOutcome } from '../../../expenses/application/services/receipt-ocr-apply.service';
@@ -174,6 +196,8 @@ export type LineReceiptUploadEvent = {
   handoff?: LineHandoffRecipient;
   /** Internal buffer hook: settle any in-flight pre-reply feedback before the answer. */
   beforeReply?: () => Promise<void>;
+  /** Set by the capture lanes only (appendix §3): the handoff surface this reply's link belongs to. */
+  handoffSurface?: string;
 };
 
 /** `defer_text` = the intake router judged the accompanying caption to be a
@@ -261,9 +285,12 @@ const AI_OPT_OUT_REPLY = 'คุณปิดการใช้งานผู้
 export { LEGAL_ACCEPTANCE_REQUIRED_REPLY } from '../../domain/logic/line-business-card.logic';
 const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ใช้งาน LINE AI สำหรับบริษัทนี้ค่ะ';
 const ERROR_REPLY = '⏳ ขออภัยค่ะ เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ';
-/** The photo's bytes never arrived from LINE, so "nothing was saved" is provably true — say so,
- *  and name the photo as the thing to resend (a generic "ลองใหม่" left users unsure what failed). */
-const MEDIA_DOWNLOAD_FAILED_REPLY = '📷 น้องยังรับรูปจาก LINE ไม่สำเร็จค่ะ ยังไม่ได้บันทึกรายการใด ๆ จากรูปนี้นะคะ รบกวนส่งรูปเดิมอีกครั้งค่ะ';
+/** The bytes never arrived from LINE, so "nothing was saved" is provably true — say so, and name
+ *  what to resend (a generic "ลองใหม่" left users unsure what failed). §17.1: the noun matches what
+ *  the customer actually sent, so a PDF is never called a รูป (UXE-03). */
+export const mediaDownloadFailedReply = (messageType: 'image' | 'file'): string => messageType === 'file'
+  ? '📄 น้องยังรับไฟล์จาก LINE ไม่สำเร็จค่ะ ยังไม่ได้บันทึกรายการใด ๆ จากไฟล์นี้นะคะ รบกวนส่งไฟล์เดิมอีกครั้งค่ะ'
+  : '📷 น้องยังรับรูปจาก LINE ไม่สำเร็จค่ะ ยังไม่ได้บันทึกรายการใด ๆ จากรูปนี้นะคะ รบกวนส่งรูปเดิมอีกครั้งค่ะ';
 /** The media turn failed somewhere after the bytes arrived, so the record state is uncertain —
  *  no "nothing was saved" promise here; the duplicate-file warning covers an honest resend. */
 class LineDeliveryError extends Error {
@@ -273,7 +300,9 @@ const SAVED_LINE_RECEIPT = Symbol('saved-line-receipt');
 type SavedLineReceipt = { expenseId: string; companyId: string; uploaded: boolean };
 type LineReceiptAdmissionAttempt = { identity?: CompanyOcrAdmissionIdentity; companyId?: string; receiptRequested: boolean; usablePersisted: boolean };
 
-const MEDIA_PROCESSING_FAILED_REPLY = '📷 ขออภัยค่ะ ระบบประมวลผลรูปนี้ไม่สำเร็จ รบกวนส่งรูปเดิมอีกครั้งนะคะ ถ้ารูปนี้เคยบันทึกไว้แล้ว ระบบจะแจ้งเตือนรายการซ้ำให้ค่ะ';
+export const mediaProcessingFailedReply = (messageType: 'image' | 'file'): string => messageType === 'file'
+  ? '📄 ขออภัยค่ะ ระบบประมวลผลไฟล์นี้ไม่สำเร็จ รบกวนส่งไฟล์เดิมอีกครั้งนะคะ ถ้าไฟล์นี้เคยบันทึกไว้แล้ว ระบบจะแจ้งเตือนรายการซ้ำให้ค่ะ'
+  : '📷 ขออภัยค่ะ ระบบประมวลผลรูปนี้ไม่สำเร็จ รบกวนส่งรูปเดิมอีกครั้งนะคะ ถ้ารูปนี้เคยบันทึกไว้แล้ว ระบบจะแจ้งเตือนรายการซ้ำให้ค่ะ';
 const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วลองใหม่อีกครั้งนะคะ';
 /** Spec §9.1 `AI_BUDGET_UNAVAILABLE`: the meter could not be READ. It is not the budget card (we do
  *  not know that the budget is full) and not the generic error (nothing broke on the customer's
@@ -502,6 +531,52 @@ function mediaChatKey(event: LineReceiptUploadEvent): string {
   return event.pushTargetId ?? event.lineUserId;
 }
 
+/**
+ * A45: the marker written on the intake attempt of the SECOND file, naming the earlier group it
+ * might belong to. It is a `LineIntakeAttempt` row rather than a ledger entry on purpose — the
+ * answer moves stored bytes between groups, and that binding must survive a Redis outage.
+ */
+export const SAME_WORK_QUESTION_PREFIX = 'same_work_question:';
+/** Written over the prefix above once the customer has answered, so "1" can only land once. */
+export const SAME_WORK_ANSWERED_REASON = 'same_work_answered';
+/** The §17.5 ambiguity list, bound to the next turn the same way (`targetId` = the chosen refs). */
+export const FILE_ATTEMPT_SELECT_REASON = 'file_attempt_select';
+
+/**
+ * §18.4 NR04/NR05 on the EXPENSE path: the record already exists, so this is a lead-in that names
+ * the document kind — never a refusal, and never the "ยังไม่ได้สร้างรายการ" wording §18.4 reserves
+ * for a lane with no expense. NR04's amount is printed only when the reader actually read one.
+ */
+export function expensePathNonReceiptLead(
+  classification: BusinessDocumentClassification | null,
+  grandTotalAmount?: string,
+): string | null {
+  const nr = classifyNonReceiptCase(classification);
+  if (nr !== 'NR04' && nr !== 'NR05_SLIP' && nr !== 'NR05_ORDER') return null;
+  const amount = Number(grandTotalAmount);
+  return nonReceiptReply(nr, {
+    classification,
+    ...(nr === 'NR04' && grandTotalAmount && Number.isFinite(amount) && amount > 0 ? { amountLabel: moneyLabel(grandTotalAmount) } : {}),
+  });
+}
+
+/** A45's answer. Numbers first (the quick replies send "1"/"2"), then the words they carry. */
+export function parseSameWorkAnswer(text: string): 'existing' | 'new' | null {
+  const normalized = text.normalize('NFC').replace(/\s+/gu, '').trim();
+  if (!normalized || normalized.length > 24) return null;
+  if (/^1[)．.]?$/u.test(normalized) || /งานเดิม|ใบเดิม|อันเดิม|ของเดิม/u.test(normalized)) return 'existing';
+  if (/^2[)．.]?$/u.test(normalized) || /ใบใหม่|งานใหม่|คนละใบ|อันใหม่/u.test(normalized)) return 'new';
+  return null;
+}
+
+/** A45's question. The earlier file is named so "งานเดิม" means something the customer can check. */
+export function sameWorkQuestionText(firstFileName: string | null, at: Date): string {
+  const label = [firstFileName, new Intl.DateTimeFormat('th-TH', {
+    hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok',
+  }).format(at)].filter(Boolean).join(' · ');
+  return `📎 เก็บไฟล์แล้วค่ะ ไฟล์นี้เป็นเอกสารของงานเดิม (${label}) หรือใบใหม่คะ\n1) งานเดิม\n2) ใบใหม่`;
+}
+
 /** RECEIPT-05's own numbered question, recorded on the row it belongs to. The pending row is scoped
  *  per user while conversations are per chat, so the chat is part of the record: an answer typed in
  *  a different chat must not resolve bytes that were questioned in this one. */
@@ -545,6 +620,24 @@ type DownloadedLineMedia = {
   contentBase64?: string;
   bytes: Buffer;
 };
+
+/**
+ * §17.5 / IG20: why the bytes never arrived, kept typed all the way to the `LineIntakeAttempt` row.
+ * These strings ARE the attempt's `reasonCode` — no second vocabulary to drift out of sync with.
+ */
+export type LineMediaDownloadReason =
+  | 'credentials_unavailable' | 'oversize_declared' | 'oversize_measured'
+  | 'download_http' | 'download_timeout' | 'download_failed';
+
+export type LineMediaDownloadResult =
+  | { ok: true; media: DownloadedLineMedia }
+  | {
+    ok: false;
+    reason: LineMediaDownloadReason;
+    declaredFileSize?: number;
+    measuredByteSize?: number;
+    httpStatus?: number;
+  };
 
 /** Reads a fetch body without ever retaining more than `maxBytes`. This is the authoritative
  *  limit for chunked responses whose Content-Length is absent or dishonest. */
@@ -614,30 +707,45 @@ function decideLineBusinessDocument(
   return { outcome: 'reference', classification: ocr.classification };
 }
 
-function formatBusinessDocumentReply(
+/**
+ * Spec §18.4 NR01–NR08, with today's copy kept for the rows §18.4 does not describe.
+ *
+ * The NR table is consulted FIRST because its whole purpose is that the customer is told which
+ * document they actually sent: the old merged "ใบเสนอราคา/ใบสั่งซื้อ/ใบส่งของ" line named three
+ * kinds and confirmed none, and a courier parcel label — the most common shipping document there
+ * is — had no sentence at all. `captureLink` is passed ONLY by a caller that has already persisted
+ * the bytes, so the CTA can never appear over a file that was not kept (§18.4).
+ */
+export function formatBusinessDocumentReply(
   classification: BusinessDocumentClassification | null,
   webBaseUrl: string | undefined,
   companyId: string,
+  options: { captureLink?: string; amountLabel?: string } = {},
 ): string {
   if (!classification) return MEDIA_CLARIFY_REPLY;
   if (classification.contentKind === 'MULTI_DOCUMENT') return '📄 พบเอกสารมากกว่า 1 ฉบับในภาพ กรุณาถ่ายแยกเอกสารละ 1 ภาพ เพื่อไม่ให้ยอดหรือร้านค้าถูกรวมผิดค่ะ';
   if (classification.contentKind === 'UNREADABLE') return '📷 ยังอ่านเอกสารนี้ได้ไม่ชัด กรุณาถ่ายใหม่ให้เห็นทั้งใบ ภาพตรง ไม่เบลอ และไม่มีแสงสะท้อนค่ะ';
+  const nr = classifyNonReceiptCase(classification);
+  // NR06 stays with the check-bill continuation, which owns its three payment choices.
+  if (nr && nr !== 'NR06') {
+    return nonReceiptReply(nr, {
+      classification,
+      ...(options.amountLabel ? { amountLabel: options.amountLabel } : {}),
+      ...(options.captureLink && NON_RECEIPT_PERSISTING_CASES.includes(nr) ? { captureLink: options.captureLink } : {}),
+    });
+  }
   switch (classification.documentKind) {
     case 'ORDER_OR_CHECK_BILL':
       return classification.missingRequiredSignals.includes('MISSING_MONETARY_AMOUNT')
         || classification.missingRequiredSignals.includes('MISSING_TRANSACTION_TOTAL')
         ? '🧾 เอกสารนี้เป็นรายการสั่งซื้อ/เช็กบิล แต่ยังไม่พบยอดเงินรวม จึงยังไม่บันทึกเป็นค่าใช้จ่าย กรุณาส่งบิลหรือใบเสร็จฉบับสุดท้ายที่มีจำนวนเงินค่ะ'
         : '🧾 เอกสารนี้เป็นรายการสั่งซื้อ/เช็กบิลที่ยังไม่ยืนยันการรับชำระ จึงไม่จัดเป็นใบเสร็จ กรุณาส่งใบเสร็จฉบับสุดท้าย หรือระบุให้บันทึกเป็นบิลค้างชำระค่ะ';
-    case 'QUOTATION':
-    case 'PURCHASE_ORDER':
-    case 'DELIVERY_NOTE':
-      return `📄 พบว่าเป็นใบเสนอราคา/ใบสั่งซื้อ/ใบส่งของ ซึ่งยังไม่ใช่หลักฐานค่าใช้จ่ายฉบับสุดท้าย ระบบจึงไม่สร้างร่างค่าใช้จ่าย\nตรวจสอบงานขาย/บัญชีในเว็บ: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/accounting`)}`;
     case 'APPOINTMENT_CARD':
     case 'BOOKING_CONFIRMATION':
     case 'RESERVATION_CONFIRMATION':
       return `📅 พบเอกสารนัดหมาย/การจอง จึงไม่สร้างร่างค่าใช้จ่ายหรือยืนยันการจองอัตโนมัติ\nตรวจสอบการจองในเว็บ: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/bookings`)}`;
-    case 'NON_FINANCIAL_IMAGE':
-      return '🖼️ รูปนี้ไม่ใช่เอกสารค่าใช้จ่ายหรือเอกสารธุรกิจ จึงไม่ได้สร้างรายการใดๆ ค่ะ';
+    // NON_FINANCIAL_IMAGE, the commercial kinds, the invoice, the slip and NEEDS_REVIEW are all
+    // answered by the NR table above; only kinds §18.4 does not describe reach this switch.
     default:
       if (classification.missingRequiredSignals.includes('MISSING_MONETARY_AMOUNT') || classification.missingRequiredSignals.includes('MISSING_TRANSACTION_TOTAL')) {
         return '🧾 ยังไม่พบยอดเงินรวมที่เป็นบวก จึงยังไม่บันทึกเป็นค่าใช้จ่าย กรุณาส่งเอกสารฉบับที่เห็นยอดชำระชัดเจนค่ะ';
@@ -1570,6 +1678,14 @@ export class ProcessLineWebhookUseCase {
     // absent, `LINE_AI_DRAFT_EDIT_ENABLED` is effectively off: no preview card, no confirm
     // handling, and the correction lane keeps exactly today's honest behaviour.
     @Optional() private readonly draftUpdate?: LineDraftUpdateUseCase,
+    // W02-LINE (capture appendix §3/§17.5). Same rule as above — appended, `@Optional()`. Absent,
+    // the `file` lane and the pre-capture diagnostic are simply off and every existing lane keeps
+    // today's behaviour byte for byte.
+    @Optional() private readonly captureRepo?: PrismaExpenseCaptureRepository,
+    @Optional() private readonly createCaptureGroup?: CreateExpenseCaptureGroupUseCase,
+    @Optional() private readonly addCaptureFile?: AddExpenseCaptureFileUseCase,
+    @Optional() private readonly completeCaptureFile?: CompleteExpenseCaptureFileUseCase,
+    @Optional() private readonly captureLine?: ExpenseCaptureLineUseCase,
   ) {}
 
   /**
@@ -2819,7 +2935,7 @@ export class ProcessLineWebhookUseCase {
    *  `line_push_fallback_used` line, and the push result overwrites it — so the value never escapes
    *  and every observable byte of the legacy path is unchanged. */
   private async attemptDelivery(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient; handoffSurface?: string },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
     // P12-3b: the ONE place every reply and its push fallback pass through, so wrapping here covers
@@ -2833,7 +2949,9 @@ export class ProcessLineWebhookUseCase {
     // the replayed answer would carry a link that cannot open. Plain is the honest bytes to store.
     const outgoing = this.handoffLinks && !this.config.lineAiTerminalOutcomeReplayEnabled
       ? await this.handoffLinks.wrapOutgoingLineContent(
-        event.handoff ? { ...event.handoff, lineUserId: event.pushTargetId ?? event.lineUserId, surface: 'line_ai_reply' } : null,
+        // `handoffSurface` labels the ONE lane whose link is not an assistant answer but a capture
+        // intake receipt (appendix §3) — audit and adoption measurement only; the mint is identical.
+        event.handoff ? { ...event.handoff, lineUserId: event.pushTargetId ?? event.lineUserId, surface: event.handoffSurface ?? 'line_ai_reply' } : null,
         messages,
       )
       : messages;
@@ -3768,8 +3886,25 @@ export class ProcessLineWebhookUseCase {
       await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
       return false;
     };
+    // A45: "1) งานเดิม / 2) ใบใหม่" about two LINE files. Deterministic and before the model, like
+    // every other numbered answer here — and bound to the question that was actually asked, so a
+    // "1" typed an hour later cannot merge two groups nobody was asked about.
+    if (canCaptureExpense && parseSameWorkAnswer(normalizedText)) {
+      const merged = await this.resolveSameWorkAnswer(event, expenseDraftCtx, resolvedAccess, {
+        userId: identity.userId, companyId, normalizedText,
+      });
+      if (merged) return;
+    }
     const statusQuestion = receiptStatusQuestion(normalizedText);
-    if (statusQuestion && (statusQuestion === 'receipt' || openWaiting.length === 0)) {
+    // §17.5, deterministic and BEFORE any model: a question about a file that may never have become
+    // an expense cannot be answered from the expense list, and must still answer when AI is down.
+    if (statusQuestion === 'file_attempt') {
+      const answered = await this.answerFileAttemptQuestion(event, expenseDraftCtx, resolvedAccess, {
+        userId: identity.userId, companyId, normalizedText,
+      });
+      if (answered) return;
+    }
+    if (statusQuestion === 'receipt' || (statusQuestion === 'contextual' && openWaiting.length === 0)) {
       const listLink = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`);
       let reply = `ตอนนี้ยังตรวจสอบสถานะใบเสร็จให้ไม่ได้ค่ะ เปิดดูรายการล่าสุดได้ที่ ${listLink}`;
       if (!canCaptureExpense) reply = receiptDeniedReply(resolvedAccess);
@@ -5546,7 +5681,7 @@ export class ProcessLineWebhookUseCase {
         return { outcome: 'done' };
       }
       this.logger.error({ msg: 'LINE receipt upload error', webhookEventId: event.webhookEventId, ...safeLineErrorDetails(err) });
-      await this.deliverReply(event, MEDIA_PROCESSING_FAILED_REPLY).catch(() => {});
+      await this.deliverReply(event, mediaProcessingFailedReply(event.messageType)).catch(() => {});
       await this.releaseWebhookEvent(event.webhookEventId, 'RETRYABLE_RECEIPT_UPLOAD_ERROR');
       return { outcome: 'done' };
     } finally {
@@ -5684,14 +5819,26 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    const media = await this.timeStage(event.webhookEventId, 'receipt_download', () => this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize));
-    if (!media) {
-      await this.deliverReply(event, MEDIA_DOWNLOAD_FAILED_REPLY);
+    const downloaded = await this.timeStage(event.webhookEventId, 'receipt_download', () => this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize));
+    if (!downloaded.ok) {
+      // §17.5: the reason is recorded BEFORE the payload scrub, so "ไฟล์เมื่อกี้ทำไมส่งไม่ได้" is
+      // answerable after a restart from a row that never held the payload in the first place.
+      await this.recordIntakeAttempt(event, {
+        companyId, stage: 'DOWNLOAD', reasonCode: downloaded.reason, outcome: 'REJECTED',
+        ...(downloaded.declaredFileSize !== undefined ? { declaredFileSize: downloaded.declaredFileSize } : {}),
+        ...(downloaded.measuredByteSize !== undefined ? { measuredByteSize: downloaded.measuredByteSize } : {}),
+      });
+      await this.deliverReply(event, mediaDownloadFailedReply(event.messageType));
       await this.releaseWebhookEvent(event.webhookEventId, 'RETRYABLE_LINE_MEDIA_DOWNLOAD_FAILED', companyId);
       return;
     }
+    const media = downloaded.media;
     const mediaRejectionReason = await this.lineMediaRejectionReason(media);
     if (mediaRejectionReason) {
+      await this.recordIntakeAttempt(event, {
+        companyId, stage: 'SECURITY', reasonCode: mediaRejectionReason, outcome: 'REJECTED',
+        measuredByteSize: media.byteSize, fileName: media.fileName,
+      });
       await this.deliverReply(event, MEDIA_SECURITY_REJECTED_REPLY);
       await this.audit.log({
         companyId,
@@ -5740,6 +5887,28 @@ export class ProcessLineWebhookUseCase {
       ].join('\n'), companyId, access);
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
+    }
+
+    // ── Capture appendix §3, LINE column: a `file` is a DOCUMENT lane ──────────
+    //
+    // A LINE `file` never carried `contentBase64` (image-only at the download), so it reached the
+    // router and OCR with nothing to look at and fell out as "clarify" with the bytes discarded
+    // (IG20/E15). It now takes its own lane: download → security → capture group → async read →
+    // result push. No OCR call, no `decideLineBusinessDocument`, and the bytes are persisted BEFORE
+    // anything claims they were kept (§16.7 "ต้นฉบับต้อง persist ก่อนบอกเก็บไฟล์แล้ว").
+    //
+    // A chat with open substitute work keeps its existing arrival handler: a PDF scan of a signed
+    // certificate belongs to THAT question, not to a new evidence group.
+    if (event.messageType === 'file' && canCaptureExpense && this.captureLine && this.createCaptureGroup) {
+      const substituteOpen = this.substituteReceiptContinuation && access.permissions.includes('expense.receipt.upload')
+        ? await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event)).catch(() => null)
+        : null;
+      if (!substituteOpen) {
+        return await this.captureLineFile({
+          event, ctx, access, companyId, userId: identity.userId, media,
+          caption: captionText?.trim() ?? '',
+        });
+      }
     }
 
     // LINE Intake Router: semantic classification of the media message
@@ -6127,18 +6296,64 @@ export class ProcessLineWebhookUseCase {
         );
         return { outcome: 'done' };
       }
+      // §18.4 "การเก็บและผูกงาน": NR01–NR03 and NR08 are SUCCESSFUL reads whose document is real
+      // evidence the customer may still want. This branch used to answer and discard the bytes
+      // (§18.4 "ของเดิมและช่องว่าง"), so the "กรอกข้อมูลต่อ" it now offers has somewhere to go:
+      // persist first, and only offer the CTA when the persist actually confirmed.
+      const nrCase = decision.outcome === 'reference' ? classifyNonReceiptCase(decision.classification) : null;
+      const captureLink = nrCase && NON_RECEIPT_PERSISTING_CASES.includes(nrCase) && canCaptureExpense
+        ? await this.persistNonReceiptEvidence(ctx, event, { media, caption }).catch((error) => {
+          this.logger.warn({ msg: 'line_non_receipt_persist_failed', requestId, ...safeLineErrorDetails(error) });
+          return undefined;
+        })
+        : undefined;
       const reply = decision.outcome === 'reference'
-        ? formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId)
+        ? formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId,
+          { ...(captureLink ? { captureLink } : {}) })
         : MEDIA_UNSUPPORTED_REPLY;
       await this.deliverCompletedReply(event, reply, companyId, access);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
       });
-      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      // Only a persist that CONFIRMED reports retention (§17.2); every other row keeps today's
+      // silence rather than claiming a state nobody verified.
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId,
+        captureLink ? { mediaState: 'retained' } : undefined);
       return;
     }
     if (decision.outcome === 'clarify') {
+      // §17.6 (v0.11, owner decision): a PROVIDER failure on an image we can keep is no longer a
+      // "รูปนี้เป็นอะไรคะ 1/2/3" question. The picture is persisted as its own capture group, its
+      // read is closed FAILED so nothing re-reads it, and the customer is sent straight to the web
+      // form. The clarify question stays for the cases it was written for: a router that could not
+      // route, ambiguous content, and the governance refusals (feature off / already admitted),
+      // which are policy states rather than a failed read.
+      const readFailedOnStorableImage = decision.persistMedia && canCaptureExpense
+        && ocr.status === 'OCR_FAILED'
+        && ocr.errorCode !== 'OCR_FEATURE_DISABLED' && ocr.errorCode !== 'OCR_REQUEST_ALREADY_ADMITTED'
+        && routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE'
+        && Boolean(this.captureLine && this.createCaptureGroup);
+      if (readFailedOnStorableImage) {
+        const link = await this.persistNonReceiptEvidence(ctx, event, {
+          media, caption, readFailedCode: ocr.errorCode ?? 'OCR_FAILED',
+        }).catch((error) => {
+          this.logger.warn({ msg: 'line_read_failed_capture_persist_failed', requestId, ...safeLineErrorDetails(error) });
+          return undefined;
+        });
+        if (link) {
+          const failedReply = CAPTURE_READ_FAILED_REPLY(link);
+          await this.deliverCompletedReply(event, failedReply, companyId, access);
+          await this.persistIntakeTurn({
+            userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+            userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: failedReply, intent: 'EVIDENCE_CAPTURE',
+          });
+          await this.updateEventLog(event.webhookEventId, 'completed', ocr.errorCode, companyId, { mediaState: 'retained' });
+          return { outcome: 'done' };
+        }
+        // Persist failed: fall through to the pending-media clarify, which keeps its own honest
+        // copy — §17.6 forbids claiming "เก็บไฟล์ไว้แล้ว" without a persisted identity.
+      }
       const reply = decision.persistMedia
         ? formatOcrGovernanceClarifyReply(ocr.errorCode, ocr.status === 'OCR_FAILED')
         : formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId);
@@ -6368,6 +6583,11 @@ export class ProcessLineWebhookUseCase {
       });
     // Source facts remain durable and editable, but sending a photo never starts a questionnaire.
     const replyTexts = await this.savedReceiptReplies(event, companyId, intent.expenseId, caption);
+    // §18.4 NR04/NR05: the document DID pass eligibility and a record exists, so the expense summary
+    // is unchanged — only the one sentence naming what kind of document this is leads it. "ยังไม่ได้
+    // สร้างรายการ" is impossible here by construction, which is exactly §18.4's rule.
+    const nrOnExpense = expensePathNonReceiptLead(decision.classification, ocrFields?.grandTotalAmount);
+    if (nrOnExpense) replyTexts[0] = `${nrOnExpense}\n\n${replyTexts[0]!}`;
     await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
     await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, intent.expenseId, access.scopes);
     await this.persistIntakeTurn({
@@ -6417,6 +6637,396 @@ export class ProcessLineWebhookUseCase {
     }
   }
 
+  /** The web target of a capture group — the ONE place the LINE lanes build it (appendix §10). */
+  private captureGroupLink(companyId: string, groupId: string): string {
+    return absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/capture/${groupId}`);
+  }
+
+  /**
+   * A45: resolve the "งานเดิม / ใบใหม่" question this chat was asked about a second LINE file.
+   *
+   * "1" moves the file into the earlier group and closes the emptied one CANCELLED — no bytes are
+   * deleted, ever. "2" keeps both, which is also what NO answer does: appendix §3 forbids merging
+   * on timing alone, so silence is the safe state and this only ever acts on an explicit word.
+   * Returns false when no such question is open, leaving the turn to its normal route.
+   */
+  private async resolveSameWorkAnswer(
+    event: LineTextEvent,
+    ctx: RequestContext,
+    access: { permissions: string[]; roles: string[] },
+    input: { userId: string; companyId: string; normalizedText: string },
+  ): Promise<boolean> {
+    if (!this.captureRepo || !this.captureLine) return false;
+    const answer = parseSameWorkAnswer(input.normalizedText);
+    if (!answer) return false;
+    const chatKeyHash = chatKeyHashOf(event);
+    const since = new Date(Date.now() - LINE_CAPTURE_SAME_WORK_WINDOW_MS);
+    const rows = await this.captureRepo.listLineIntakeAttempts({
+      companyId: input.companyId, lineUserIdHash: hashMessagePreview(event.lineUserId),
+      chatKeyHash, since, take: 10,
+    }).catch(() => []);
+    const open = rows.find((row) => row.stage === 'ROUTE' && row.reasonCode.startsWith(SAME_WORK_QUESTION_PREFIX));
+    if (!open?.targetId) return false;
+    const earlierGroupId = open.reasonCode.slice(SAME_WORK_QUESTION_PREFIX.length);
+    const newGroupId = open.targetId;
+    let reply: string;
+    if (answer === 'new') {
+      reply = '📄 รับทราบค่ะ เก็บเป็นงานใหม่ให้แล้ว เปิดดูได้ที่: ' + this.captureGroupLink(input.companyId, newGroupId);
+    } else {
+      const persisted = await this.captureLine.findGroupByLineMessageId(input.companyId, open.lineMessageId ?? '')
+        .catch(() => null);
+      if (!persisted || persisted.groupId !== newGroupId) return false;
+      try {
+        await this.captureLine.moveFileToGroup(ctx, {
+          fileId: persisted.fileId, fromGroupId: newGroupId, toGroupId: earlierGroupId,
+        });
+        await this.captureLine.closeMergedGroup(ctx, newGroupId, 'MERGED_INTO_EARLIER_LINE_GROUP');
+      } catch (error) {
+        // Nothing was lost: both groups still hold their own bytes. Say what is true.
+        this.logger.warn({ msg: 'line_capture_same_work_merge_failed', ...safeLineErrorDetails(error) });
+        await this.deliverCompletedReply(event,
+          'ตอนนี้ยังรวมไฟล์เข้างานเดิมให้ไม่ได้ค่ะ ไฟล์ทั้งสองยังเก็บไว้ครบ เปิดตรวจในเว็บได้ที่: '
+          + this.captureGroupLink(input.companyId, earlierGroupId), input.companyId, access);
+        await this.updateEventLog(event.webhookEventId, 'completed', 'LINE_CAPTURE_MERGE_FAILED', input.companyId);
+        return true;
+      }
+      reply = '📄 รวมไฟล์เข้างานเดิมให้แล้วค่ะ เปิดดูได้ที่: ' + this.captureGroupLink(input.companyId, earlierGroupId);
+    }
+    // Consume the question so a second "1" cannot merge anything again.
+    await this.captureRepo.updateLineIntakeAttemptOutcome({
+      id: open.id, outcome: 'STORED_READING', reasonCode: SAME_WORK_ANSWERED_REASON,
+    }).catch(() => false);
+    await this.deliverCompletedReply(event, reply, input.companyId, access);
+    await this.persistIntakeTurn({
+      userId: input.userId, companyId: input.companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: input.normalizedText, replyText: reply, intent: 'EVIDENCE_CAPTURE',
+    });
+    await this.updateEventLog(event.webhookEventId, 'completed', undefined, input.companyId);
+    return true;
+  }
+  /**
+   * §17.5 "ไฟล์เมื่อกี้ทำไมส่งไม่ได้" — deterministic, read-only, no OCR and no model.
+   *
+   * Returns false ONLY when this deployment has no attempt log at all, in which case the caller
+   * keeps today's behaviour rather than inventing an answer. Everything else — including "we could
+   * not look" and "no attempt found" — is answered here, because §17.5's whole point is that those
+   * two are DIFFERENT answers and neither may be dressed up as a cause.
+   */
+  private async answerFileAttemptQuestion(
+    event: LineTextEvent,
+    ctx: RequestContext,
+    access: { permissions: string[]; roles: string[] },
+    input: { userId: string; companyId: string; normalizedText: string },
+  ): Promise<boolean> {
+    if (!this.captureRepo) return false;
+    const chatKeyHash = chatKeyHashOf(event);
+    const lineUserIdHash = hashMessagePreview(event.lineUserId);
+    let reply: string;
+    try {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const rows = await this.captureRepo.listLineIntakeAttempts({
+        companyId: input.companyId, lineUserIdHash, chatKeyHash, since, take: 5,
+      });
+      // Bookkeeping rows (the A45 question, an earlier ambiguity list) are not files to report on.
+      const attempts = rows.filter((row) => row.stage !== 'ROUTE');
+      if (attempts.length === 0) {
+        reply = FILE_ATTEMPT_NONE_REPLY;
+      } else {
+        // A numbered answer to an ambiguity list already shown wins over a fresh list (§17.5).
+        const chosen = await this.resolveFileAttemptChoice(input, chatKeyHash, lineUserIdHash, input.normalizedText);
+        const facts = await Promise.all(attempts.map((row) => this.toFileAttemptFacts(ctx, access, row)));
+        const picked = chosen ? facts.find((fact) => fact.ref === chosen) : undefined;
+        // Same lineMessageId twice = the same file, first rejected then stored: §17.5's last row.
+        const byMessage = (ref: string) => rows.find((row) => row.id === ref)?.lineMessageId ?? null;
+        if (picked || facts.length === 1) {
+          const target = picked ?? facts[0]!;
+          const messageId = byMessage(target.ref);
+          const earlier = messageId
+            ? facts.find((fact) => fact.ref !== target.ref && byMessage(fact.ref) === messageId && fact.outcome === 'REJECTED')
+            : undefined;
+          reply = fileAttemptAnswer(target, earlier);
+        } else {
+          reply = fileAttemptChoiceList(facts);
+          await this.recordFileAttemptChoiceList(event, input.companyId, facts.map((fact) => fact.ref));
+        }
+      }
+    } catch (error) {
+      // §17.5: a lookup that failed is NEVER reported as "no file found".
+      this.logger.warn({ msg: 'line_file_attempt_lookup_failed', ...safeLineErrorDetails(error) });
+      reply = FILE_ATTEMPT_LOOKUP_FAILED_REPLY;
+    }
+    await this.deliverCompletedReply(event, reply, input.companyId, access);
+    await this.persistIntakeTurn({
+      userId: input.userId, companyId: input.companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: input.normalizedText, replyText: reply, intent: 'UNKNOWN',
+    });
+    await this.updateEventLog(event.webhookEventId, 'completed', undefined, input.companyId);
+    return true;
+  }
+
+  /** One attempt row → the facts §17.5 may speak from, with the target's CURRENT state attached. */
+  private async toFileAttemptFacts(
+    ctx: RequestContext,
+    access: { permissions: string[] },
+    row: {
+      id: string; messageType: string; fileNameSanitized: string | null; stage: string; reasonCode: string;
+      outcome: string; declaredFileSize: number | null; measuredByteSize: number | null;
+      capabilityJson: unknown; createdAt: Date; targetType: string | null; targetId: string | null;
+    },
+  ): Promise<LineFileAttemptFacts> {
+    const facts: LineFileAttemptFacts = {
+      ref: row.id,
+      messageType: row.messageType === 'file' ? 'file' : 'image',
+      fileNameSanitized: row.fileNameSanitized,
+      stage: row.stage as LineFileAttemptFacts['stage'],
+      reasonCode: row.reasonCode,
+      outcome: row.outcome as LineFileAttemptFacts['outcome'],
+      declaredFileSize: row.declaredFileSize,
+      measuredByteSize: row.measuredByteSize,
+      capability: (row.capabilityJson ?? {}) as LineFileAttemptFacts['capability'],
+      createdAt: row.createdAt,
+    };
+    if (row.targetType === 'capture_group' && row.targetId && this.captureLine) {
+      // Re-read the CURRENT state: an attempt row records the moment, never the outcome that
+      // arrived minutes later (§17.5 "ไม่ตอบจาก error เก่า").
+      const snapshot = await this.captureLine.readFinishedSnapshot(ctx.companyId, row.targetId).catch(() => null);
+      if (snapshot && snapshot.group.createdByUserId === ctx.userId) {
+        const statuses = snapshot.jobs.map((job) => job.status);
+        facts.outcome = statuses.includes('FAILED') ? 'STORED_READ_FAILED'
+          : statuses.includes('PARTIAL') || statuses.includes('PAUSED') ? 'STORED_READ_PARTIAL'
+          : statuses.length > 0 && statuses.every((status) => status === 'DONE') ? 'STORED_READ_DONE'
+          : statuses.length > 0 ? 'STORED_READING'
+          : 'STORED';
+        facts.recoveryAction = { kind: 'open_web', url: this.captureGroupLink(ctx.companyId, row.targetId) };
+      }
+    } else if (row.targetType === 'expense' && row.targetId && this.expenseRepo) {
+      const expense = await this.expenseRepo.findById(ctx.companyId, row.targetId).catch(() => null);
+      if (expense && expense.createdByUserId === ctx.userId && access.permissions.length > 0) {
+        facts.currentStatus = receiptProgressLabel(expense.status, expense.aiVerificationStatus);
+        facts.recoveryAction = { kind: 'open_web', url: absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`) };
+      }
+    }
+    return facts;
+  }
+
+  /** The ambiguity list is bound to the NEXT turn through its own durable row (§17.5). */
+  private async recordFileAttemptChoiceList(event: LineTextEvent, companyId: string, refs: string[]): Promise<void> {
+    if (!this.captureRepo) return;
+    await this.captureRepo.recordLineIntakeAttempt({
+      companyId, lineUserIdHash: hashMessagePreview(event.lineUserId), chatKeyHash: chatKeyHashOf(event),
+      webhookEventId: event.webhookEventId, messageType: 'file', capabilityJson: this.captureCapability(),
+      stage: 'ROUTE', reasonCode: FILE_ATTEMPT_SELECT_REASON, outcome: 'UNKNOWN',
+      targetType: 'attempt_list', targetId: refs.slice(0, 5).join(','),
+    }).catch((error) => this.logger.warn({ msg: 'line_file_attempt_list_not_recorded', ...safeLineErrorDetails(error) }));
+  }
+
+  /** "2" after a numbered ambiguity list resolves to the attempt that list printed second. */
+  private async resolveFileAttemptChoice(
+    input: { companyId: string },
+    chatKeyHash: string,
+    lineUserIdHash: string,
+    text: string,
+  ): Promise<string | undefined> {
+    const choice = numberedSelection(text, 5);
+    if (!choice || !this.captureRepo) return undefined;
+    const since = new Date(Date.now() - LINE_AI_CONTEXT_WINDOW_MINUTES * 60 * 1000);
+    const rows = await this.captureRepo.listLineIntakeAttempts({
+      companyId: input.companyId, lineUserIdHash, chatKeyHash, since, take: 10,
+    }).catch(() => []);
+    const list = rows.find((row) => row.stage === 'ROUTE' && row.reasonCode === FILE_ATTEMPT_SELECT_REASON);
+    return list?.targetId?.split(',')[choice - 1];
+  }
+
+  /**
+   * Bytes → a LINE capture group, in the order §16.7 requires: reserve, upload, complete, and only
+   * then say anything about retention. Reuses W01's three use cases as they are, so the permission
+   * checks, the pending-bytes quota, the malware re-key, the attachment link and the read job all
+   * stay in one place.
+   */
+  private async persistLineCaptureGroup(
+    ctx: RequestContext,
+    event: LineReceiptUploadEvent,
+    input: { media: DownloadedLineMedia; caption: string; branchId?: string },
+  ): Promise<{ groupId: string; fileId: string; attachmentId: string; readJobId: string; link: string }> {
+    const created = await this.createCaptureGroup!.execute(ctx, {
+      intakeChannel: 'LINE',
+      lineChatKeyHash: chatKeyHashOf(event),
+      ...(input.branchId ? { branchId: input.branchId } : {}),
+      // A caption riding with the file is the customer's own note about this work — never a
+      // manual-entry conversation (§17.6 forbids one as error recovery).
+      ...(input.caption ? { note: input.caption.slice(0, LINE_CAPTURE_NOTE_MAX_CHARS) } : {}),
+    });
+    const file = await this.addCaptureFile!.execute(ctx, created.groupId, {
+      originalFileName: input.media.fileName,
+      mimeType: input.media.mimeType,
+      byteSize: input.media.byteSize,
+      expectedRevision: created.revision,
+      lineMessageId: event.lineMessageId,
+    });
+    await putLineMediaUpload(file, input.media, this.config.publicApiBaseUrl);
+    const completed = await this.completeCaptureFile!.execute(ctx, created.groupId, file.fileId, {
+      byteSize: input.media.byteSize,
+      ...(input.media.checksumSha256 ? { checksumSha256: input.media.checksumSha256 } : {}),
+      expectedRevision: file.revision,
+      lineMessageId: event.lineMessageId,
+    });
+    return {
+      groupId: created.groupId, fileId: file.fileId, attachmentId: file.attachmentId,
+      readJobId: completed.readJobId, link: this.captureGroupLink(ctx.companyId, created.groupId),
+    };
+  }
+
+  /** A45: quick replies for "งานเดิม หรือ ใบใหม่". Numbered, like every other LINE choice here. */
+  private static sameWorkQuickReply(): NonNullable<LineReplyMessage['quickReply']> {
+    return {
+      items: [
+        { type: 'action', action: { type: 'message', label: 'งานเดิม', text: '1' } },
+        { type: 'action', action: { type: 'message', label: 'ใบใหม่', text: '2' } },
+      ],
+    };
+  }
+
+  /**
+   * The LINE `file` lane (appendix §3, §16.7, A68/A75/A81).
+   *
+   * Never loses bytes: a second file inside the same-work window is persisted as its OWN group and
+   * THEN asked about (A45) — the alternative, holding it until the customer answers, is the design
+   * where an unanswered question silently discards a receipt.
+   */
+  private async captureLineFile(input: {
+    event: LineReceiptUploadEvent;
+    ctx: RequestContext;
+    access: { permissions: string[]; roles: string[] };
+    companyId: string;
+    userId: string;
+    media: DownloadedLineMedia;
+    caption: string;
+  }): Promise<LineMediaTurnOutcome> {
+    const { event, ctx, access, companyId, media, caption } = input;
+    event.handoffSurface = 'line_capture_intake';
+
+    // Redelivery (new webhookEventId, same lineMessageId): W01's unique index means this message
+    // already produced a group, so answer with THAT one instead of storing the bytes twice.
+    const existing = await this.captureLine!.findGroupByLineMessageId(companyId, event.lineMessageId);
+    if (existing) {
+      await this.deliverCompletedReply(
+        event, this.fileStoredReply(this.captureGroupLink(companyId, existing.groupId)), companyId, access,
+      );
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId, { mediaState: 'redelivered' });
+      return { outcome: 'done' };
+    }
+
+    const sameWork = await this.captureLine!.listOpenSameWorkGroups({
+      companyId, userId: input.userId, lineChatKeyHash: chatKeyHashOf(event),
+    }).catch(() => []);
+
+    const branchId = await this.resolveLineCaptureBranchId(companyId, ctx.membershipId, ctx.scopes ?? {});
+    let persisted: Awaited<ReturnType<ProcessLineWebhookUseCase['persistLineCaptureGroup']>>;
+    try {
+      persisted = await this.persistLineCaptureGroup(ctx, event, {
+        media, caption, ...(branchId ? { branchId } : {}),
+      });
+    } catch (error) {
+      // §17.2/§17.6: a persist that failed may NEVER be reported as "เก็บไฟล์ไว้แล้ว". The typed
+      // reason is recorded; a branch-selection refusal keeps its own deterministic copy.
+      await this.recordIntakeAttempt(event, {
+        companyId, stage: 'PERSIST', reasonCode: 'persist_failed', outcome: 'REJECTED',
+        measuredByteSize: media.byteSize, fileName: media.fileName,
+      });
+      const deterministic = lineCaptureFailureReply(error, BRANCH_RETRY_RESEND);
+      if (deterministic) {
+        await this.deliverReply(event, deterministic.reply).catch(() => {});
+        await this.updateEventLog(event.webhookEventId, deterministic.status, deterministic.errorCode, companyId);
+        return { outcome: 'done' };
+      }
+      throw error;
+    }
+
+    await this.recordIntakeAttempt(event, {
+      companyId, stage: 'PERSIST', reasonCode: 'stored', outcome: 'STORED_READING',
+      measuredByteSize: media.byteSize, fileName: media.fileName,
+      targetType: 'capture_group', targetId: persisted.groupId,
+    });
+
+    const earlier = sameWork.find((group) => group.groupId !== persisted.groupId);
+    if (earlier) {
+      // The bytes are already safe; only the GROUPING is in question. Recorded as its own ROUTE
+      // attempt so the answer in the next text turn resolves against the question that was asked,
+      // not against whatever groups happen to be open by then (A45 "ไม่รวมจากเวลาใกล้กันเอง").
+      await this.recordIntakeAttempt(event, {
+        companyId, stage: 'ROUTE', reasonCode: `${SAME_WORK_QUESTION_PREFIX}${earlier.groupId}`,
+        outcome: 'STORED_READING', measuredByteSize: media.byteSize, fileName: media.fileName,
+        targetType: 'capture_group', targetId: persisted.groupId,
+      });
+      const question = sameWorkQuestionText(earlier.firstFileName, earlier.updatedAt);
+      await this.deliverReply(event, question, ProcessLineWebhookUseCase.sameWorkQuickReply());
+      await this.persistIntakeTurn({
+        userId: input.userId, companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: `[ผู้ใช้ส่งไฟล์เอกสาร #${persisted.attachmentId}]${caption ? ` ${caption}` : ''}`,
+        replyText: question, intent: 'CLARIFY',
+      });
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId, { mediaState: 'retained' });
+      return { outcome: 'done' };
+    }
+
+    await this.deliverCompletedReply(event, this.fileStoredReply(persisted.link), companyId, access);
+    await this.persistIntakeTurn({
+      userId: input.userId, companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: `[ผู้ใช้ส่งไฟล์เอกสาร #${persisted.attachmentId}]${caption ? ` ${caption}` : ''}`,
+      replyText: this.fileStoredReply(persisted.link), intent: 'EVIDENCE_CAPTURE',
+    });
+    await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId, { mediaState: 'retained' });
+    return { outcome: 'done' };
+  }
+
+  /**
+   * The image lane's persist (§17.6 and §18.4 NR01–NR03/NR08): the same capture group the file lane
+   * builds, minus the read. `readFailedCode` closes the job immediately — this image has ALREADY
+   * been read once and failed, and §17.6 forbids offering a re-read as error recovery.
+   *
+   * Returns the link only when the persist confirmed; `undefined` means the caller must NOT say the
+   * file was kept.
+   */
+  private async persistNonReceiptEvidence(
+    ctx: RequestContext,
+    event: LineReceiptUploadEvent,
+    input: { media: DownloadedLineMedia; caption: string; readFailedCode?: string },
+  ): Promise<string | undefined> {
+    if (!this.captureLine || !this.createCaptureGroup || !this.addCaptureFile || !this.completeCaptureFile) return undefined;
+    const existing = await this.captureLine.findGroupByLineMessageId(ctx.companyId, event.lineMessageId).catch(() => null);
+    if (existing) return this.captureGroupLink(ctx.companyId, existing.groupId);
+    const branchId = await this.resolveLineCaptureBranchId(ctx.companyId, ctx.membershipId, ctx.scopes ?? {});
+    let persisted: Awaited<ReturnType<ProcessLineWebhookUseCase['persistLineCaptureGroup']>>;
+    try {
+      persisted = await this.persistLineCaptureGroup(ctx, event, {
+        media: input.media, caption: input.caption, ...(branchId ? { branchId } : {}),
+      });
+    } catch (error) {
+      await this.recordIntakeAttempt(event, {
+        companyId: ctx.companyId, stage: 'PERSIST', reasonCode: 'persist_failed', outcome: 'REJECTED',
+        measuredByteSize: input.media.byteSize, fileName: input.media.fileName,
+      });
+      throw error;
+    }
+    if (input.readFailedCode) {
+      await this.captureLine.markReadFailed(ctx.companyId, persisted.readJobId, input.readFailedCode).catch(() => false);
+    }
+    await this.recordIntakeAttempt(event, {
+      companyId: ctx.companyId, stage: input.readFailedCode ? 'READ' : 'PERSIST',
+      reasonCode: input.readFailedCode ?? 'stored',
+      outcome: input.readFailedCode ? 'STORED_READ_FAILED' : 'STORED_READING',
+      measuredByteSize: input.media.byteSize, fileName: input.media.fileName,
+      targetType: 'capture_group', targetId: persisted.groupId,
+    });
+    return persisted.link;
+  }
+
+  /** §16.7 UX: persisted, being read, and where to look while it is — nothing about a deadline. */
+  private fileStoredReply(link: string): string {
+    return '📄 เก็บไฟล์แล้วค่ะ กำลังอ่านเอกสาร เสร็จแล้วน้องจะสรุปให้ทางแชตนี้'
+      + (link ? ` ระหว่างนี้เปิดดูได้ที่: ${link}` : '');
+  }
+
   private async resumeCapturedReceipt(
     event: LineReceiptUploadEvent,
     ctx: RequestContext,
@@ -6436,8 +7046,26 @@ export class ProcessLineWebhookUseCase {
       });
       let media: DownloadedLineMedia | null = null;
       if (intent.uploadRequired !== false) {
-        media = await this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize);
-        if (!media || await this.lineMediaRejectionReason(media)) throw new Error('LINE_RECEIPT_MEDIA_UNAVAILABLE');
+        // Unchanged behaviour: this lane still throws. The typed reason is recorded on the way past
+        // so a later "ไฟล์เมื่อกี้…" question is not blind to a resume that could not fetch bytes.
+        const resumed = await this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize);
+        if (!resumed.ok) {
+          await this.recordIntakeAttempt(event, {
+            companyId: ctx.companyId, stage: 'DOWNLOAD', reasonCode: resumed.reason, outcome: 'REJECTED',
+            ...(resumed.declaredFileSize !== undefined ? { declaredFileSize: resumed.declaredFileSize } : {}),
+            targetType: 'expense', targetId: expense.id,
+          });
+          throw new Error('LINE_RECEIPT_MEDIA_UNAVAILABLE');
+        }
+        media = resumed.media;
+        const rejection = await this.lineMediaRejectionReason(media);
+        if (rejection) {
+          await this.recordIntakeAttempt(event, {
+            companyId: ctx.companyId, stage: 'SECURITY', reasonCode: rejection, outcome: 'REJECTED',
+            measuredByteSize: media.byteSize, fileName: media.fileName, targetType: 'expense', targetId: expense.id,
+          });
+          throw new Error('LINE_RECEIPT_MEDIA_UNAVAILABLE');
+        }
         await this.uploadLineMedia(intent, media);
       }
       expense = await this.completeReceiptUpload!.execute(ctx, {
@@ -7652,6 +8280,77 @@ ${link}`, ctx.companyId, access);
     await putLineMediaUpload(intent, media, this.config.publicApiBaseUrl);
   }
 
+  /**
+   * The capability the customer was judged against AT THIS MOMENT (appendix §2.2 `capabilityJson`).
+   * Snapshotted with every attempt so a later answer quotes the limit that actually applied, not
+   * whatever the config says by the time the question is asked (§17.5).
+   */
+  private captureCapability(): { maxBytes: number; allowedMimeTypes: string[]; pdfAutomaticRead: true } {
+    return {
+      maxBytes: this.config.uploadMaxBytes,
+      allowedMimeTypes: [...ALLOWED_ATTACHMENT_MIME_TYPES],
+      pdfAutomaticRead: true,
+    };
+  }
+
+  /**
+   * One `LineIntakeAttempt` row per media turn stage (§17.5 / A86–A88).
+   *
+   * Never throws and never blocks the turn: a diagnostic that can sink a customer's upload is worse
+   * than no diagnostic. Never carries raw payload, reply tokens or the bytes — only the sanitised
+   * name, the sizes, the capability of the moment and the stage/reason.
+   */
+  private async recordIntakeAttempt(
+    event: LineReceiptUploadEvent,
+    input: {
+      companyId?: string;
+      stage: 'DOWNLOAD' | 'SECURITY' | 'PERSIST' | 'READ' | 'ROUTE';
+      reasonCode: string;
+      outcome?: 'REJECTED' | 'STORED' | 'STORED_READING' | 'STORED_READ_FAILED' | 'STORED_READ_PARTIAL' | 'STORED_READ_DONE' | 'UNKNOWN';
+      declaredFileSize?: number;
+      measuredByteSize?: number;
+      fileName?: string;
+      targetType?: 'capture_group' | 'pending_media' | 'expense' | 'attempt_list';
+      targetId?: string;
+    },
+  ): Promise<string | undefined> {
+    if (!this.captureRepo) return undefined;
+    try {
+      const row = await this.captureRepo.recordLineIntakeAttempt({
+        companyId: input.companyId ?? null,
+        lineUserIdHash: hashMessagePreview(event.lineUserId),
+        chatKeyHash: chatKeyHashOf(event),
+        webhookEventId: event.webhookEventId,
+        lineMessageId: event.lineMessageId,
+        messageType: event.messageType,
+        fileNameSanitized: sanitizeAttemptFileName(input.fileName ?? event.fileName),
+        declaredFileSize: input.declaredFileSize ?? event.fileSize ?? null,
+        measuredByteSize: input.measuredByteSize ?? null,
+        capabilityJson: this.captureCapability(),
+        stage: input.stage,
+        reasonCode: input.reasonCode,
+        ...(input.outcome ? { outcome: input.outcome } : {}),
+        targetType: input.targetType ?? null,
+        targetId: input.targetId ?? null,
+      });
+      return row.id;
+    } catch (error) {
+      this.logger.warn({ msg: 'line_intake_attempt_not_recorded', webhookEventId: event.webhookEventId, ...safeLineErrorDetails(error) });
+      return undefined;
+    }
+  }
+
+  /** Same rule as above: an outcome update that fails leaves the row at its earlier, honest state. */
+  private async updateIntakeAttempt(
+    attemptId: string | undefined,
+    outcome: 'REJECTED' | 'STORED' | 'STORED_READING' | 'STORED_READ_FAILED' | 'STORED_READ_PARTIAL' | 'STORED_READ_DONE' | 'UNKNOWN',
+    patch: { stage?: 'DOWNLOAD' | 'SECURITY' | 'PERSIST' | 'READ' | 'ROUTE'; reasonCode?: string; targetType?: string; targetId?: string } = {},
+  ): Promise<void> {
+    if (!attemptId || !this.captureRepo) return;
+    await this.captureRepo.updateLineIntakeAttemptOutcome({ id: attemptId, outcome, ...patch })
+      .catch((error) => this.logger.warn({ msg: 'line_intake_attempt_not_updated', ...safeLineErrorDetails(error) }));
+  }
+
   private async lineMediaRejectionReason(media: DownloadedLineMedia): Promise<string | null> {
     if (validateAttachmentMeta(media.mimeType, media.byteSize, this.config.uploadMaxBytes)) return 'METADATA_REJECTED';
     if (validateAttachmentFileName(media.fileName, media.mimeType)) return 'EXTENSION_MIME_MISMATCH';
@@ -7664,28 +8363,55 @@ ${link}`, ctx.companyId, access);
     }
   }
 
-  private async downloadLineMedia(lineMessageId: string, messageType: 'image' | 'file', fileName?: string, fileSize?: number): Promise<DownloadedLineMedia | null> {
+  /**
+   * §17.5 / IG20: this used to collapse SIX different failures into one `null`, and the caller then
+   * stored a reason it never had. Every branch now names itself, so the intake attempt records what
+   * actually happened and "ไฟล์เมื่อกี้ทำไมส่งไม่ได้" can be answered from a fact instead of a guess.
+   *
+   * Both callers keep their behaviour: a failure is still the download-failed reply and still the
+   * retryable release; `resumeCapturedReceipt` still throws.
+   */
+  private async downloadLineMedia(lineMessageId: string, messageType: 'image' | 'file', fileName?: string, fileSize?: number): Promise<LineMediaDownloadResult> {
+    const maxBytes = this.config.uploadMaxBytes;
     const accessToken = (await this.lineCredentials.get().catch(() => null))?.accessToken;
-    if (!accessToken) return null;
-    if (fileSize !== undefined && (fileSize <= 0 || fileSize > this.config.uploadMaxBytes)) return null;
-    const response = await fetch(`https://api-data.line.me/v2/bot/message/${encodeURIComponent(lineMessageId)}/content`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      signal: AbortSignal.timeout(LINE_MEDIA_DOWNLOAD_TIMEOUT_MS),
-    }).catch(() => null);
-    if (!response?.ok) return null;
+    if (!accessToken) return { ok: false, reason: 'credentials_unavailable' };
+    // The webhook's own metadata, before a byte is fetched: §17.5 forbids downloading past the
+    // limit just to have something to explain.
+    if (fileSize !== undefined && (fileSize <= 0 || fileSize > maxBytes)) {
+      return { ok: false, reason: 'oversize_declared', declaredFileSize: fileSize };
+    }
+    let response: Response | null = null;
+    let timedOut = false;
+    try {
+      response = await fetch(`https://api-data.line.me/v2/bot/message/${encodeURIComponent(lineMessageId)}/content`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(LINE_MEDIA_DOWNLOAD_TIMEOUT_MS),
+      });
+    } catch (error) {
+      // `AbortSignal.timeout` rejects with a TimeoutError; anything else is a transport fault.
+      timedOut = (error as { name?: string })?.name === 'TimeoutError';
+    }
+    if (!response) return { ok: false, reason: timedOut ? 'download_timeout' : 'download_failed' };
+    if (!response.ok) return { ok: false, reason: 'download_http', httpStatus: response.status };
     const declaredSize = Number(response.headers.get('content-length') ?? 0);
-    if (declaredSize > this.config.uploadMaxBytes) return null;
-    const bytes = await readResponseBodyLimited(response, this.config.uploadMaxBytes);
-    if (!bytes) return null;
+    if (declaredSize > maxBytes) return { ok: false, reason: 'oversize_declared', declaredFileSize: declaredSize };
+    if (!response.body) return { ok: false, reason: 'download_failed' };
+    const bytes = await readResponseBodyLimited(response, maxBytes).catch(() => null);
+    // The bounded reader returns null only after it has seen more than the limit, so this is the
+    // MEASURED oversize — a chunked response whose Content-Length lied, or was absent.
+    if (!bytes) return { ok: false, reason: 'oversize_measured', ...(declaredSize ? { declaredFileSize: declaredSize } : {}) };
     const mimeType = normalizeAttachmentMimeType(response.headers.get('content-type'), bytes);
     const extension = canonicalAttachmentExtension(mimeType) ?? 'bin';
     return {
-      fileName: fileName ?? `line-receipt-${lineMessageId}.${extension}`,
-      mimeType,
-      byteSize: bytes.byteLength,
-      checksumSha256: createHash('sha256').update(bytes).digest('hex'),
-      contentBase64: messageType === 'image' ? bytes.toString('base64') : undefined,
-      bytes,
+      ok: true,
+      media: {
+        fileName: fileName ?? `line-receipt-${lineMessageId}.${extension}`,
+        mimeType,
+        byteSize: bytes.byteLength,
+        checksumSha256: createHash('sha256').update(bytes).digest('hex'),
+        contentBase64: messageType === 'image' ? bytes.toString('base64') : undefined,
+        bytes,
+      },
     };
   }
 
