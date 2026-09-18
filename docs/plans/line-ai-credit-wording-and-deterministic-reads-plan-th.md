@@ -9,13 +9,16 @@
 
 ### H1. คำว่า "เครดิต AI" + ข้อความปฏิเสธการอ่านเอกสาร + billing hold warnings — spec §3, §4, §5
 
-- [ ] ทำ mapping ครบทุกจุดที่ผู้ใช้/แอดมินอ่าน (LINE reply, Flex card, drain notice + integrity check, web dictionary, banking/CRM/expenses notices, partner console + adjustment history, timeline, ops alert, billing pages, browser smoke scripts) ตาม spec §3; ไม่แตะ code/enum/telemetry/ชื่อ field
-- [ ] เส้นทางรูป: `aiBudgetReasonTh` + governance notice รวมเหตุฝั่งเงิน/จำนวนใบเป็น "เครดิตสำหรับการอ่านเอกสารไม่พอ"; unavailable/busy/disabled คงแยก; tail สถานะไฟล์เดิม; code/scope/class/count-refund เดิม (พิสูจน์ด้วย whole-chain + combined regression ที่แก้เฉพาะ expected text)
-- [ ] เส้นทางแชต: การ์ด TOTAL/CHAT/insufficient และ drain notice ตาม §5.1
-- [ ] Billing: `AI_CREDIT_HOLDS_PENDING` (additive) + `aiReservedSatang`/`aiUnresolvedHolds` (additive) + label; บริษัทไม่มี hold ผลเดิม; ไม่มีเงินไปหน้า owner
-- [ ] Web: Thai error map/dictionary coverage spec ผ่าน; ไม่มี "งบ AI"/"โควตา AI" เหลือ (guard test แบบ grep ใน spec ที่ลงทะเบียนแล้ว)
-- [ ] Browser evidence 1440/390: หน้าแอดมิน AI และโควตา, billing ใบเสร็จ/แพ็กเกจ (มี hold และไม่มี hold) → `docs/qa/evidence/line-ai-credit-wording-2026-09-18/`
-- [ ] Docs: spec W-01…W-04, W-08 tick ตามหลักฐาน; task memory
+สถานะ: **ทำแล้ว** บนสาขา `codex/line-ai-wave2-h1-credit-wording-20260918` (ยัง local, ยังไม่ merge/deploy); หลักฐานใน spec §9.1 และ task memory
+
+- [x] ทำ mapping ครบทุกจุดที่ผู้ใช้/แอดมินอ่าน (LINE reply, Flex card, drain notice + integrity check, web dictionary, banking/CRM/expenses notices, partner console + adjustment history, timeline, ops alert, billing pages, browser smoke scripts, sidebar "เครดิตการใช้ AI") ตาม spec §3; ไม่แตะ code/enum/telemetry/ชื่อ field
+- [x] เส้นทางรูป: `aiBudgetReasonTh` + governance notice รวมเหตุฝั่งเงิน/จำนวนใบเป็น "เครดิตสำหรับการอ่านเอกสารไม่พอ"; unavailable/busy/disabled คงแยก; tail สถานะไฟล์เดิม; code/scope/class/count-refund เดิม (พิสูจน์ด้วย whole-chain + combined regression ที่แก้เฉพาะ expected text)
+- [x] เส้นทางแชต: การ์ด TOTAL/CHAT/insufficient และ drain notice ตาม §5.1
+- [x] Billing: `AI_CREDIT_HOLDS_PENDING` (additive) + `aiReservedSatang`/`aiUnresolvedHolds` (additive, ใส่เมื่อ > 0) + label; บริษัทไม่มี hold ผลเดิม; ไม่มีเงินไปหน้า owner (ทุก consumer ของ union เป็น System Admin only)
+- [x] Web: Thai error map/dictionary coverage spec ผ่าน; ไม่มี "งบ AI"/"โควตา AI" เหลือ (guard test แบบ grep ใน `api-error-coverage.spec.ts` ที่ลงทะเบียนแล้ว)
+- [x] Browser evidence 1440/390: หน้าแอดมิน AI และโควตา, billing ใบเสร็จ/แพ็กเกจ (มี hold และไม่มี hold) → `docs/qa/evidence/line-ai-credit-wording-2026-09-18/`
+- [x] Docs: spec W-01…W-04, W-08 tick ตามหลักฐาน (+ §9.1); task memory
+- [ ] ค้าง: `admin-ai-adjustments-smoke.ts` แก้ selector แล้วแต่รันในเครื่องไม่ได้ (billing-http-smoke harness) → รอ CI; W-09 UAT รอ deploy
 
 ### H2. Deterministic business reads (R5) — spec §6
 

@@ -151,7 +151,7 @@ describe('P10-L door and status cards (§3.1/§7)', () => {
 
   it('names the trial only for the trial tier (G-05, §15.1)', () => {
     const trial = JSON.stringify(buildAiBudgetExceededMessage(true));
-    assert.match(trial, /โควตา AI ของแพ็กเกจเดือนนี้ครบแล้วค่ะ/);
+    assert.match(trial, /เครดิต AI ของเดือนนี้หมดแล้วค่ะ/);
     assert.match(trial, /ช่วงทดลอง/);
     assert.match(trial, /ขอเปลี่ยนแพ็กเกจ/);
     // The reply this replaces; sending it here is the bug G-05 names.

@@ -278,7 +278,7 @@ const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผ�
 /** Spec §9.1 `AI_BUDGET_UNAVAILABLE`: the meter could not be READ. It is not the budget card (we do
  *  not know that the budget is full) and not the generic error (nothing broke on the customer's
  *  side). Deterministic, no model call, no money figure, no company configuration. */
-const AI_BUDGET_UNAVAILABLE_REPLY = '⏳ ตอนนี้ยังตรวจสอบงบ AI ของร้านไม่ได้ค่ะ น้องมั่งมีเลยยังไม่เริ่มงานให้ '
+const AI_BUDGET_UNAVAILABLE_REPLY = '⏳ ตอนนี้ยังตรวจสอบเครดิต AI ของร้านไม่ได้ค่ะ น้องมั่งมีเลยยังไม่เริ่มงานให้ '
   + 'รบกวนลองใหม่อีกครั้งในอีกสักครู่นะคะ ระหว่างนี้ใช้งานผ่านเว็บแอปได้ตามปกติค่ะ';
 /** Post-OCR branch ambiguity (multi-branch company, no defaultable head office): the read
  *  succeeded, only the branch decision is missing — send the user to the web picker honestly.
@@ -386,35 +386,48 @@ export function formatOcrGovernanceClarifyReply(errorCode?: string, readFailed =
   // old wording — "ระบบอ่านเอกสารขัดข้องชั่วคราว" — was a false outage story for a policy decision.
   const budgetReason = aiBudgetReasonTh(errorCode);
   if (budgetReason) {
-    return `${isAiBudgetPermanentRefusal(errorCode) ? '💚' : '⏳'} รับรูปไว้แล้วค่ะ แต่${budgetReason} `
+    return `${isDocumentReadingCreditSpent(errorCode) ? '💚' : '⏳'} รับรูปไว้แล้วค่ะ แต่${budgetReason} `
       + `จึงยังไม่ได้อ่านและยังไม่ได้บันทึกรายการค่าใช้จ่ายนะคะ\n\n${MEDIA_CLARIFY_REPLY}`;
   }
   const notice = errorCode === 'OCR_FEATURE_DISABLED'
     ? 'บริษัทปิดการอ่านเอกสารด้วย AI ไว้ค่ะ ระบบยังเก็บไฟล์นี้ไว้ได้ แต่จะไม่อ่านข้อมูลให้อัตโนมัติ'
-    : errorCode === 'OCR_MONTHLY_LIMIT_EXCEEDED'
-      ? '📊 บริษัทใช้สิทธิ์อ่านเอกสารด้วย AI ครบเดือนนี้แล้วค่ะ ระบบยังเก็บไฟล์นี้ไว้ได้ แต่จะไม่อ่านข้อมูลให้อัตโนมัติ'
-      : errorCode === 'OCR_QUOTA_UNAVAILABLE'
-        ? '⏳ ระบบตรวจสอบสิทธิ์การอ่านเอกสารไม่ได้ชั่วคราวค่ะ ระบบยังเก็บไฟล์นี้ไว้ได้ แต่จะไม่อ่านข้อมูลให้อัตโนมัติ'
-        : errorCode === 'OCR_REQUEST_ALREADY_ADMITTED'
-          ? '✅ ระบบรับคำขออ่านเอกสารนี้ไว้แล้วค่ะ เพื่อป้องกันการนับซ้ำ จึงไม่ส่งอ่านซ้ำ'
-          : readFailed
-            ? '📷 น้องอ่านรูปนี้ไม่สำเร็จค่ะ ระบบอ่านเอกสารขัดข้องชั่วคราว รูปยังเก็บไว้ให้และยังไม่ได้บันทึกรายการนะคะ'
-            : null;
+    : errorCode === 'OCR_REQUEST_ALREADY_ADMITTED'
+      ? '✅ ระบบรับคำขออ่านเอกสารนี้ไว้แล้วค่ะ เพื่อป้องกันการนับซ้ำ จึงไม่ส่งอ่านซ้ำ'
+      : readFailed
+        ? '📷 น้องอ่านรูปนี้ไม่สำเร็จค่ะ ระบบอ่านเอกสารขัดข้องชั่วคราว รูปยังเก็บไว้ให้และยังไม่ได้บันทึกรายการนะคะ'
+        : null;
   return notice ? `${notice}\n\n${MEDIA_CLARIFY_REPLY}` : MEDIA_CLARIFY_REPLY;
 }
 /**
- * The REASON half of a money refusal on the image lane — and nothing else. Kept separate from any
- * claim about the picture so the "kept it" and the "could not keep it" replies can never disagree
- * about why the read stopped (spec §9.1: exceeded, insufficient, busy and unavailable stay distinct;
- * `insufficient` must never read as "เต็ม/ครบ").
+ * The REASON half of a document-reading refusal on the image lane — and nothing else. Kept separate
+ * from any claim about the picture so the "kept it" and the "could not keep it" replies can never
+ * disagree about why the read stopped.
+ *
+ * Credit-wording spec §4 (owner decision 2, 2026-09-18): the customer gets ONE sentence for every
+ * ceiling that stops a document read — the OCR money share, TOTAL money met on this lane, a
+ * shortfall against this read's bound, and the monthly read COUNT. Splitting chat from OCR is what
+ * made that honest: on this lane there is nothing left to read documents with, whichever ceiling
+ * closed first, and the shop cannot act on the difference. What stays separate is the pair the shop
+ * CAN act on: "we could not check" (retry) and "an earlier job is still running" (wait).
+ *
+ * Internally nothing merges — code, `budgetScope`, terminal class, the read-count refund
+ * (`isOcrPreProviderRefusal`) and reservation behaviour are untouched (§9.1 of the ledger spec still
+ * keeps exceeded/insufficient/busy/unavailable distinct end to end).
  */
 function aiBudgetReasonTh(errorCode?: string): string | null {
-  return errorCode === AI_BUDGET_REFUSAL_CODES.exceeded ? 'งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว'
-    : errorCode === AI_BUDGET_REFUSAL_CODES.insufficient ? 'งบ AI ที่เหลือไม่พอเริ่มอ่านรูปนี้'
-    : errorCode === AI_BUDGET_REFUSAL_CODES.unavailable ? 'ตอนนี้ยังตรวจสอบงบ AI ของร้านไม่ได้'
+  return errorCode === AI_BUDGET_REFUSAL_CODES.exceeded
+      || errorCode === AI_BUDGET_REFUSAL_CODES.insufficient
+      || errorCode === 'OCR_MONTHLY_LIMIT_EXCEEDED' ? 'เครดิตสำหรับการอ่านเอกสารไม่พอ'
+    : errorCode === AI_BUDGET_REFUSAL_CODES.unavailable
+      || errorCode === 'OCR_QUOTA_UNAVAILABLE' ? 'ตอนนี้ยังตรวจสอบเครดิต AI ของร้านไม่ได้'
     : errorCode === AI_BUDGET_REFUSAL_CODES.busy ? 'ระบบกำลังประมวลผลงานก่อนหน้าอยู่'
     : null;
 }
+/** 💚 ("not this month") vs ⏳ ("try again shortly") for the reasons above. The read COUNT ceiling is
+ *  as permanent as the money ones, so it cannot ride `isAiBudgetPermanentRefusal`, which answers for
+ *  the money codes only and must keep doing exactly that everywhere else. */
+const isDocumentReadingCreditSpent = (errorCode?: string): boolean =>
+  isAiBudgetPermanentRefusal(errorCode) || errorCode === 'OCR_MONTHLY_LIMIT_EXCEEDED';
 
 /**
  * §9.2/B-04: the money gate closed the read AND this picture was NOT kept. Three different ways that
@@ -433,7 +446,7 @@ export function formatBudgetMediaNotStoredReply(
   errorCode: string | undefined,
   kind: 'save_failed' | 'open_question' | 'no_permission',
 ): string {
-  const reason = aiBudgetReasonTh(errorCode) ?? 'งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว';
+  const reason = aiBudgetReasonTh(errorCode) ?? 'เครดิตสำหรับการอ่านเอกสารไม่พอ';
   const tail = kind === 'save_failed'
     ? 'และระบบยังเก็บรูปนี้ไว้ไม่สำเร็จค่ะ จึงยังไม่ได้บันทึกรายการใด ๆ นะคะ รบกวนบันทึกผ่านเว็บแอป หรือส่งรูปเข้ามาใหม่อีกครั้งภายหลังค่ะ'
     : kind === 'open_question'

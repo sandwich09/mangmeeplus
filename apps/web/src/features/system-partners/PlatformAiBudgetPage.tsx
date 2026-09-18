@@ -43,7 +43,7 @@ export default function PlatformAiBudgetPage() {
         const e = err as Error & { status?: number };
         setLoadError(
           e.status === 403
-            ? 'คุณไม่มีสิทธิ์ตั้งค่างบ AI กลาง กรุณาติดต่อผู้ดูแลระบบ'
+            ? 'คุณไม่มีสิทธิ์ตั้งค่าเครดิต AI กลาง กรุณาติดต่อผู้ดูแลระบบ'
             : apiErrorMessage(err),
         );
       }
@@ -60,7 +60,7 @@ export default function PlatformAiBudgetPage() {
       }
       // Empty means "inherit" for a company override; the platform itself has nothing to inherit.
       if (parsed.monthlyBudgetSatang === null) {
-        toast.error('กรุณาระบุงบประมาณรายเดือนเริ่มต้นและเพดานรายเดือนให้ครบ');
+        toast.error('กรุณาระบุเครดิตรายเดือนเริ่มต้นและเพดานรายเดือนให้ครบ');
         return;
       }
       satang.push(parsed.monthlyBudgetSatang);
@@ -70,7 +70,7 @@ export default function PlatformAiBudgetPage() {
     setSaving(true);
     try {
       apply(await setPlatformAiBudget({ monthlyBudgetSatang, ceilingSatang }));
-      toast.success('บันทึกงบ AI กลางแล้ว');
+      toast.success('บันทึกเครดิต AI กลางแล้ว');
     } catch (err) {
       // Reviewed API codes/messages keep their actionable copy; unknown diagnostics stay hidden.
       toast.error(apiErrorMessage(err));
@@ -87,13 +87,13 @@ export default function PlatformAiBudgetPage() {
         <div className="flex items-center gap-2 text-sm text-gray-500">
           <Link href="/system/partners" className="hover:text-brand-700">บริษัท</Link>
           <span>/</span>
-          <span className="text-gray-900 font-medium">งบ AI กลาง</span>
+          <span className="text-gray-900 font-medium">เครดิต AI กลาง</span>
         </div>
 
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">งบ AI กลาง</h1>
+          <h1 className="text-xl font-semibold text-gray-900">เครดิต AI กลาง</h1>
           <p className="text-sm text-gray-500 mt-1">
-            บริษัทที่ไม่ได้ตั้งงบเฉพาะจะใช้งบเริ่มต้นนี้ ส่วนเพดานใช้จำกัดงบที่ผู้ดูแลตั้งให้แต่ละบริษัท
+            บริษัทที่ไม่ได้ตั้งเครดิตเฉพาะจะใช้เครดิตเริ่มต้นนี้ ส่วนเพดานใช้จำกัดเครดิตที่ผู้ดูแลตั้งให้แต่ละบริษัท
           </p>
         </div>
 
@@ -107,15 +107,15 @@ export default function PlatformAiBudgetPage() {
         ) : (
           <>
             <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-              <strong>ค่าที่ใช้อยู่:</strong> งบเริ่มต้น {satangToBaht(budget.monthlyBudgetSatang)} ต่อเดือน
+              <strong>ค่าที่ใช้อยู่:</strong> เครดิตเริ่มต้น {satangToBaht(budget.monthlyBudgetSatang)} ต่อเดือน
               เพดาน {satangToBaht(budget.ceilingSatang)} ต่อบริษัท
-              การลดเพดานมีผลกับการตั้งงบครั้งต่อไป งบเฉพาะบริษัทที่ตั้งสูงไว้แล้วจะยังคงเดิม
+              การลดเพดานมีผลกับการตั้งเครดิตครั้งต่อไป เครดิตเฉพาะบริษัทที่ตั้งสูงไว้แล้วจะยังคงเดิม
             </div>
 
             <div className="rounded-lg border border-gray-200 bg-white px-5 py-4 space-y-4">
               <div>
                 <label className="block text-sm text-gray-600 mb-1" htmlFor="platform-ai-monthly-budget">
-                  งบเริ่มต้นต่อเดือน (บาท) *
+                  เครดิตเริ่มต้นต่อเดือน (บาท) *
                 </label>
                 <input
                   id="platform-ai-monthly-budget"
@@ -131,7 +131,7 @@ export default function PlatformAiBudgetPage() {
 
               <div>
                 <label className="block text-sm text-gray-600 mb-1" htmlFor="platform-ai-ceiling">
-                  เพดานงบที่ตั้งให้แต่ละบริษัท (บาท) *
+                  เพดานเครดิตที่ตั้งให้แต่ละบริษัท (บาท) *
                 </label>
                 <input
                   id="platform-ai-ceiling"
