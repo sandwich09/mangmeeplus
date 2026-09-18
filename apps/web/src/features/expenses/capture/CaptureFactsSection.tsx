@@ -6,7 +6,7 @@ import type {
   ExpenseCaptureGroupDetailDto,
 } from '@watchdog-bms/contracts';
 import { MangmeeBadge, MangmeeCard, cx } from '@/common/components/mangmee';
-import { apiErrorMessage } from '@/common/api/api-error-message';
+import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { postCaptureFacts } from '../expenses.api';
@@ -57,6 +57,7 @@ export function CaptureFactsSection({ companyId, group, canEdit, onChanged, onOp
   const [documentDraft, setDocumentDraft] = useState<DocumentDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
 
   const byDocument = useMemo(() => {
     const map = new Map<string, { items: CaptureFactsItem[]; components: CaptureFactsComponent[] }>();
@@ -131,7 +132,7 @@ export function CaptureFactsSection({ companyId, group, canEdit, onChanged, onOp
     });
     if (totals.length > 0) patch.totals = totals;
 
-    setSaving(true); setError(null);
+    setSaving(true); setError(null); setStale(false);
     try {
       await postCaptureFacts(companyId, group.groupId, {
         fileId: source.fileId, patch, expectedRevision: group.revision,
@@ -139,14 +140,23 @@ export function CaptureFactsSection({ companyId, group, canEdit, onChanged, onOp
       setEditing(null);
       // Re-read rather than patch what is on screen: the server re-assembles and re-reconciles.
       await onChanged();
-    } catch (cause) { setError(apiErrorMessage(cause)); }
-    finally { setSaving(false); }
+    } catch (cause) {
+      setError(apiErrorMessage(cause));
+      // UXE-21: somebody changed this group while the form was open — the way out is the latest
+      // data, not a second save of what is now the wrong revision.
+      setStale(apiErrorCode(cause) === 'expense_capture_group_revision_conflict');
+    } finally { setSaving(false); }
   };
 
   return (
     <MangmeeCard className="p-4">
       <h2 className="text-lg font-semibold text-gray-800">{t('expenses.capture.facts_section', locale)}</h2>
       {error && <div className="mt-3"><ErrorBanner message={error} /></div>}
+      {stale && (
+        <button type="button" className={cx(ghostClass, 'mt-2 min-h-11 w-full sm:w-auto')} onClick={() => void onChanged()}>
+          {t('expenses.capture.reload_latest', locale)}
+        </button>
+      )}
       <ul className="mt-3 space-y-4">
         {facts.documents.map((doc) => {
           const rows = byDocument.get(doc.ref) ?? { items: [], components: [] };
