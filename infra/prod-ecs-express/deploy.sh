@@ -195,10 +195,13 @@ fi
 case "$LINE_AI_BUFFER_DEBOUNCE_MS_INPUT" in ''|*[!0-9]*)
   echo "ERROR: LINE_AI_BUFFER_DEBOUNCE_MS must be a positive integer (milliseconds)" >&2; exit 2 ;;
 esac
-# The four compiled families (prepared-simple-read-formatter.ts) — UAT only; unknown keys can
-# only narrow, never widen, and production still refuses any non-empty allowlist below.
+# Every compiled family (prepared-simple-read-formatter.ts `COMPILED_FORMATTERS`), the SAME default in
+# both environments since the 2026-08-30 parity pass — production does NOT refuse a non-empty allowlist
+# (only `maintenance_only` blanks it, further down). Owner decision 2026-09-18 (spec §6): the R5 families
+# are on in Production too. Unknown keys can only narrow, never widen: `activePreparedFamilies` filters
+# the compiled registry, so a key here that has no compiled formatter is inert.
 if [ -z "$LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT" ]; then
-  LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT="sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric"
+  LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT="sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric,tax.get_vat_summary::single_metric,inventory.list_low_stock::list,procurement.get_ap_outstanding::single_metric,procurement.get_ap_outstanding::list,crm.get_customer_summary::single_metric,crm.get_customer_summary::list"
 fi
 case "$LINE_AI_LOADING_ON_ACCEPT_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: LINE_AI_LOADING_ON_ACCEPT_ENABLED must be exactly true or false" >&2; exit 2 ;;

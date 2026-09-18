@@ -913,3 +913,77 @@ describe('isTeachingRequest – deterministic teaching trigger (capability-help 
     }
   });
 });
+
+// ── W-06: the grounded-breakdown guard (spec §6.1, owner decision 4) ───────────────────────────────
+// A "แยกหมวด" question stays on the agentic path on purpose: the tool returns the facts, `compose()` is
+// deterministic, and the model is only a language layer. What makes that safe is that EVERY number in
+// the model's answer must already exist in the tool data, the question, the conversation or the value
+// candidates — so a difference, a percentage, a partial sum or an average the MODEL computed is refused
+// and the deterministic grounded text is returned instead. Fixture shape copied from the real
+// `expense.get_breakdown` result (apps/api .../erp-business-tools.use-case.ts): the per-category and
+// per-branch roll-ups the corpus task `text-read-expense-breakdown` actually receives. The figures are
+// chosen so that no derived value collides with a grounded one: 8,000 − 3,250 = 4,750, 3,250 + 1,200 =
+// 4,450, 8,000 / 12,450 = 64.3 %, 12,450 / 3 = 4,150 — none of them appear anywhere in the data.
+describe('ResponseComposerAgent.composeAnswer – grounded breakdown guard (W-06)', () => {
+  const agent = new ResponseComposerAgent();
+  const QUESTION = 'ขอสรุปค่าใช้จ่ายเดือนนี้แยกตามหมวดหน่อยค่ะ';
+  const BREAKDOWN = [{
+    tool: 'expense.get_breakdown',
+    data: {
+      period: { fromDate: '2026-09-01', toDate: '2026-09-30', defaultedToCurrentMonth: true },
+      totalCount: 9,
+      totalAmount: '12450.0000',
+      byCategory: [
+        { category: 'ค่าวัตถุดิบ', count: 5, totalAmount: '8000.0000' },
+        { category: 'ค่าขนส่ง', count: 3, totalAmount: '3250.0000' },
+        { category: 'ค่าไฟฟ้า', count: 1, totalAmount: '1200.0000' },
+      ],
+      byBranch: [{ branch: 'ส่วนกลาง (ไม่ระบุสาขา)', count: 9, totalAmount: '12450.0000' }],
+    },
+  }];
+  const GROUNDED_BREAKDOWN = '• ค่าใช้จ่าย: 9 รายการ รวม 12,450.00 บาท';
+  const replies = (text: string): IModelProvider => ({ async generateText() { return { ok: true, text }; } });
+  const compose = (answer: string) => agent.composeAnswer(QUESTION, BREAKDOWN, GROUNDED_BREAKDOWN, replies(answer));
+
+  it('refuses every number the model computed itself and returns the deterministic grounded text', async () => {
+    const computed: Array<[string, string]> = [
+      ['a difference', 'ค่าวัตถุดิบ 8,000.00 บาท ค่าขนส่ง 3,250.00 บาท ต่างกัน 4,750.00 บาท'],
+      ['a percentage', 'ค่าวัตถุดิบ 8,000.00 บาท คิดเป็น 64.3% ของ 12,450.00 บาท'],
+      ['a partial sum the tool never totalled', 'ค่าขนส่ง 3,250.00 บาท และค่าไฟฟ้า 1,200.00 บาท รวม 4,450.00 บาท'],
+      ['an average', 'ค่าใช้จ่ายเฉลี่ยต่อหมวด 4,150.00 บาท'],
+      // Same invented difference written with thousands separators removed / added: the guard compares
+      // numeric VALUES, so neither spelling gets through.
+      ['a difference without separators', 'ค่าวัตถุดิบ 8000.00 บาท ค่าขนส่ง 3250.00 บาท ต่างกัน 4750 บาท'],
+    ];
+    for (const [label, answer] of computed) {
+      assert.equal(await compose(answer), GROUNDED_BREAKDOWN, `${label} must not reach the customer`);
+    }
+  });
+
+  it('reads Thai numerals as numbers, so a figure written ๑๒,๓๔๕ is checked like 12,345', async () => {
+    // Before this guard normalised Thai digits, `\d` (ASCII-only) and `\p{L}` (letters only) BOTH missed
+    // them, so a number in Thai numerals passed every check untested. These two answers are the same
+    // sentence with the same word tokens — only the VALUE differs — so accept/refuse here is decided by
+    // the numeric membership test alone.
+    assert.notEqual(await compose('ค่าใช้จ่ายทั้งหมด ๑๒,๔๕๐ บาท ค่ะ'), GROUNDED_BREAKDOWN, 'a grounded total in Thai numerals is still grounded');
+    assert.equal(await compose('ค่าใช้จ่ายทั้งหมด ๑๒,๓๔๕ บาท ค่ะ'), GROUNDED_BREAKDOWN, 'an invented total in Thai numerals is refused');
+  });
+
+  it('keeps the model wording when it adds no number of its own', async () => {
+    // Owner decision 4: the model may phrase the answer and point the owner somewhere. Every number here
+    // is the tool's; the sentence the tool did not contain carries no figure, so the wording survives.
+    const answer = 'ค่าใช้จ่ายเดือนนี้รวม 12,450.00 บาท หมวดค่าวัตถุดิบ 8,000.00 บาท กรุณาใช้ข้อมูลในระบบตามรายการนี้ค่ะ';
+    assert.equal(await compose(answer), answer);
+    // …and the grounded per-category figures may be restated in full.
+    const restated = 'ค่าใช้จ่ายเดือนนี้ 9 รายการ รวม 12,450.00 บาท ค่าวัตถุดิบ 8,000.00 บาท ค่าขนส่ง 3,250.00 บาท ค่าไฟฟ้า 1,200.00 บาท';
+    assert.equal(await compose(restated), restated);
+  });
+
+  it('polishLanguage refuses an invented number in Thai numerals as well as in ASCII', async () => {
+    const polished = (text: string): IModelProvider => ({ async generateText() { return { ok: true, text }; } });
+    assert.equal(await agent.polishLanguage(GROUNDED, polished('• ยอดทั้งหมด: ๙๙,๙๙๙ บาท'), {}), GROUNDED);
+    assert.equal(await agent.polishLanguage(GROUNDED, polished('• ยอดทั้งหมด: 99,999 บาท'), {}), GROUNDED);
+    // The grounded amount itself, re-spelled in Thai numerals, is not an invented number.
+    assert.notEqual(await agent.polishLanguage(GROUNDED, polished('ยอดทั้งหมด ๑๑,๘๗๕.๐๐ บาท ยังไม่จ่าย ๐'), {}), GROUNDED);
+  });
+});

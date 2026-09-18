@@ -79,19 +79,24 @@ export class InventoryListLowStockTool implements ErpReadToolPort {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
     const { items } = await this.report.execute(toCtx(ctx), { lowStockOnly: true, branchIds: ctx.branchIds });
-    const sourceRefs: SourceRef[] = items.map((b) => ({
-      label: `สินค้า ${b.productId}`,
-      module: 'inventory',
-      entityType: 'stock_balance',
-      entityId: b.productId,
-      asOf,
-      permissionChecked: true,
-      webPath: `/companies/${ctx.companyId}/inventory/products/${b.productId}`,
-    }));
-    if (sourceRefs.length === 0) sourceRefs.push({
-      label: 'สินค้าใกล้หมด', module: 'inventory', entityType: 'low_stock_report', asOf,
-      permissionChecked: true, webPath: `/companies/${ctx.companyId}/inventory`,
-    });
+    // The low-stock REPORT is this answer's source, so it leads the refs whether or not the list is
+    // empty: a caller that cites `sourceRefs[0]` must cite the report and link to it, not one arbitrary
+    // product id (the per-product refs, kept after it, carry an id as their whole label).
+    const sourceRefs: SourceRef[] = [
+      {
+        label: 'สินค้าใกล้หมด', module: 'inventory', entityType: 'low_stock_report', asOf,
+        permissionChecked: true, webPath: `/companies/${ctx.companyId}/inventory`,
+      },
+      ...items.map((b) => ({
+        label: `สินค้า ${b.productId}`,
+        module: 'inventory',
+        entityType: 'stock_balance',
+        entityId: b.productId,
+        asOf,
+        permissionChecked: true,
+        webPath: `/companies/${ctx.companyId}/inventory/products/${b.productId}`,
+      })),
+    ];
     return { toolName: this.toolName, status: 'ok', data: { count: items.length, items: items.slice(0, 10).map((b) => ({ productId: b.productId, quantity: b.quantity, locationId: b.locationId })) }, sourceRefs, asOf };
   }
 }

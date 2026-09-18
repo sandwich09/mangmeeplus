@@ -791,3 +791,69 @@ describe('OrchestratorAgent – prepared-plan lanes (latency/autonomy Phases 3�
     assert.ok(logs.some((e) => e.msg === 'line.ai.fused_plan.shadow'), 'shadow comparison logged');
   });
 });
+
+// ── Prepared-lane telemetry: production must be readable after deploy (wave 2 H2, spec §6.3) ───────
+// Three messages carry the whole picture, all of them ids/enums only: `line.ai.prepared_simple_read
+// .served` (the lane answered, with `tool` + `answerShape`), `.honest_terminal` (the lane owned the turn
+// but the read did not verify, with `tool` + `status`), and `.fallback` (the lane deferred, with the
+// eligibility `reason`). The fallback reason is what says WHY a read did not take the lane, so the
+// 0-of-9 production baseline can be explained rather than just observed.
+describe('prepared simple-read lane telemetry', () => {
+  const laneConfig = (families: string[]) => makeConfig({
+    lineAiPreparedSimpleReadEnabled: true, lineAiDeterministicResponseFamilies: families,
+  });
+  function sink(orchestrator: OrchestratorAgent) {
+    const logs: any[] = [];
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), warn: () => {}, error: () => {} };
+    return logs;
+  }
+  const laneLogs = (logs: any[]) => logs.filter((e) => typeof e.msg === 'string' && e.msg.startsWith('line.ai.prepared_simple_read'));
+
+  it('logs served with the family it answered from', async () => {
+    const orchestrator = new OrchestratorAgent(makeOkErpTools(), laneConfig(['inventory.list_low_stock::list']));
+    const logs = sink(orchestrator);
+    await orchestrator.run({
+      ...makeReq('สินค้าอะไรใกล้หมดบ้าง'),
+      preparedPlan: { ...preparedInventoryPlan(), answerShape: 'list' } as LineAiPreparedPlan,
+      intakeIntent: 'BUSINESS_READ_QUESTION',
+      actorDelegations: { 'inventory.list_low_stock': ['test-delegation'] },
+    });
+    assert.deepEqual(laneLogs(logs).map((e) => [e.msg, e.tool, e.answerShape]),
+      [['line.ai.prepared_simple_read.served', 'inventory.list_low_stock', 'list']]);
+    assert.equal(laneLogs(logs)[0]?.requestId, 'req-test');
+  });
+
+  it('logs the eligibility reason when the lane defers before any call', async () => {
+    const orchestrator = new OrchestratorAgent(makeOkErpTools(), laneConfig([]));
+    const logs = sink(orchestrator);
+    await orchestrator.run({
+      ...makeReq('สินค้าอะไรใกล้หมดบ้าง'),
+      preparedPlan: preparedInventoryPlan(),
+      intakeIntent: 'BUSINESS_READ_QUESTION',
+      actorDelegations: { 'inventory.list_low_stock': ['test-delegation'] },
+    });
+    assert.deepEqual(laneLogs(logs).map((e) => [e.msg, e.reason]),
+      [['line.ai.prepared_simple_read.fallback', 'formatter_family_not_allowed']]);
+  });
+
+  it('logs a business read that carried no prepared plan, so the N of "X of N" is countable', async () => {
+    const orchestrator = new OrchestratorAgent(makeOkErpTools(), laneConfig(['inventory.list_low_stock::list']));
+    const logs = sink(orchestrator);
+    await orchestrator.run({ ...makeReq('สินค้าอะไรใกล้หมดบ้าง'), intakeIntent: 'BUSINESS_READ_QUESTION' });
+    assert.deepEqual(laneLogs(logs).map((e) => [e.msg, e.reason]),
+      [['line.ai.prepared_simple_read.fallback', 'no_prepared_plan']]);
+    // No message text, no LINE id — the lane's telemetry stays ids and enums.
+    assert.deepEqual(Object.keys(laneLogs(logs)[0] ?? {}).sort(), ['msg', 'reason', 'requestId']);
+  });
+
+  it('says nothing about the lane for a turn that is not a business read, or when the lane is off', async () => {
+    const off = new OrchestratorAgent(makeOkErpTools(), makeConfig({ lineAiPreparedSimpleReadEnabled: false }));
+    const offLogs = sink(off);
+    await off.run({ ...makeReq('สินค้าอะไรใกล้หมดบ้าง'), preparedPlan: preparedInventoryPlan(), intakeIntent: 'BUSINESS_READ_QUESTION' });
+    assert.deepEqual(laneLogs(offLogs), []);
+    const other = new OrchestratorAgent(makeOkErpTools(), laneConfig(['inventory.list_low_stock::list']));
+    const otherLogs = sink(other);
+    await other.run({ ...makeReq('สวัสดีค่ะ'), intakeIntent: 'ADVISOR_CONVERSATION' } as LineAiTurnRequest);
+    assert.deepEqual(laneLogs(otherLogs), []);
+  });
+});

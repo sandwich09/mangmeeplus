@@ -103,3 +103,118 @@ describe('preparedSimpleReadEligibility – ineligible (falls back to full agent
     assert.equal(reason(preparedSimpleReadEligibility(validPlan({ answerShape: 'summary' }), { ...baseCtx, enabledFamilies: new Set(['sales.get_sales_summary::summary']) })), 'no_simple_answer_shape');
   });
 });
+
+// ── Why `text-read-daily-closing` misses the lane although F3 is compiled (wave 2 H2, spec §6.2) ────
+// The corpus message is `วันนี้ปิดร้านต้องเช็คอะไรบ้าง ยังค้างจ่ายอะไรไหม` — a closing CHECKLIST plus a
+// second question about what is still unpaid. In the 2026-09-17 after-run it cost 6 calls
+// (intake-route → plan-route → loop → loop → critic → loop) with a prepared plan PRESENT, i.e. the lane
+// fell back BEFORE any call and the full path then covered both halves. These cases replay the
+// eligibility chain over the plan shapes the intake prompt can produce for that message and pin the
+// reason for each, so the finding is a test rather than an assertion: every one of them is the ROUTER's
+// plan (two requests, or no simple answer shape), not a defect in the gate or in the F3 formatter — the
+// last case proves the family still serves the moment the intake does emit one simple read.
+const DAILY_TOOL = 'expense.get_daily_closing';
+const DAILY_FAMILY = `${DAILY_TOOL}::single_metric`;
+const dailyCtx: PreparedSimpleReadContext = {
+  ...baseCtx,
+  permissions: ['expense.read', 'procurement.ap.report'],
+  enabledFamilies: new Set([DAILY_FAMILY, 'procurement.get_ap_outstanding::single_metric']),
+};
+const dailyIntent = (over: Record<string, unknown> = {}) => ({
+  intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1,
+  requiredTools: [DAILY_TOOL], missingContext: [], ...over,
+});
+function dailyPlan(over: Partial<Record<string, unknown>> = {}, intents: Array<Record<string, unknown>> = [dailyIntent()]): LineAiPreparedPlan {
+  const plan = parseLineAiPreparedPlan({
+    version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'single_metric',
+    intentPlan: { status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [], intents },
+    proposedCalls: [{ toolName: DAILY_TOOL, input: {} }],
+    ...over,
+  });
+  if (!plan) throw new Error('fixture did not parse');
+  return plan;
+}
+
+describe('preparedSimpleReadEligibility – text-read-daily-closing (the corpus miss)', () => {
+  const reason = (r: ReturnType<typeof preparedSimpleReadEligibility>) => (r.eligible ? 'ELIGIBLE' : r.reason);
+
+  it('two requests in one message: the plan is complex / multi-tool, so the lane defers (not the gate\'s doing)', () => {
+    // The parser enforces its one-intent/one-call invariants only for a plan that CLAIMS `simple`, so a
+    // two-request plan does reach the gate — and is refused there for being what it is.
+    const twoRequests = dailyPlan(
+      {
+        complexity: 'complex', responseMode: 'full_agentic', confidence: 0.7,
+        proposedCalls: [{ toolName: DAILY_TOOL, input: {} }, { toolName: 'procurement.get_ap_outstanding', input: {} }],
+      },
+      [dailyIntent(), { intent: 'read_summary', subject: 'procurement', agent: 'accounting', priority: 2, requiredTools: ['procurement.get_ap_outstanding'], missingContext: [] }],
+    );
+    assert.equal(reason(preparedSimpleReadEligibility(twoRequests, dailyCtx)), 'not_simple');
+    // Same message, same two requests, but the model still called it simple: the plan then has two
+    // intents / two calls and the parser refuses the wrapper outright (no plan reaches the gate at all).
+    assert.equal(parseLineAiPreparedPlan({
+      version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'single_metric',
+      intentPlan: { status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [], intents: [dailyIntent(), dailyIntent()] },
+      proposedCalls: [{ toolName: DAILY_TOOL, input: {} }],
+    }), undefined);
+  });
+
+  it('a checklist has no simple answer shape: an omitted or summary shape defers before any call', () => {
+    assert.equal(reason(preparedSimpleReadEligibility(dailyPlan({ answerShape: undefined }), dailyCtx)), 'no_simple_answer_shape');
+    assert.equal(reason(preparedSimpleReadEligibility(dailyPlan({ answerShape: 'summary' }), dailyCtx)), 'no_simple_answer_shape');
+    assert.equal(reason(preparedSimpleReadEligibility(dailyPlan({ answerShape: 'comparison' }), dailyCtx)), 'no_simple_answer_shape');
+  });
+
+  it('a plan that answers only one half with the other half\'s tool never parses, let alone runs', () => {
+    // requiredTools says daily closing, the proposed call says AP: the wrapper is refused outright, so a
+    // mixed-up two-request plan cannot reach the gate — or answer half the message as if it were all of it.
+    assert.equal(parseLineAiPreparedPlan({
+      version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'single_metric',
+      intentPlan: { status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [], intents: [dailyIntent()] },
+      proposedCalls: [{ toolName: 'procurement.get_ap_outstanding', input: {} }],
+    }), undefined);
+  });
+
+  it('ONE simple daily-closing read IS eligible — the compiled family works once the intake emits one', () => {
+    const result = preparedSimpleReadEligibility(dailyPlan(), dailyCtx);
+    assert.equal(result.eligible, true);
+    if (result.eligible) {
+      assert.equal(result.call.toolName, DAILY_TOOL);
+      assert.equal(result.answerShape, 'single_metric');
+      assert.equal(result.tool.category, 'read_summary');
+    }
+    // `anyOfPermissions` is what gates this tool: none of them held ⇒ no lane, whatever the plan says.
+    assert.equal(reason(preparedSimpleReadEligibility(dailyPlan(), { ...dailyCtx, permissions: ['procurement.ap.report'] })), 'permission_denied');
+    // And the family must be allow-listed by the operator, exactly as for the original four.
+    assert.equal(reason(preparedSimpleReadEligibility(dailyPlan(), { ...dailyCtx, enabledFamilies: new Set() })), 'formatter_family_not_allowed');
+  });
+});
+
+// ── The four wave-2 R5 families are reachable through the same gate (spec §6.2) ─────────────────────
+describe('preparedSimpleReadEligibility – wave 2 R5 families', () => {
+  const reason = (r: ReturnType<typeof preparedSimpleReadEligibility>) => (r.eligible ? 'ELIGIBLE' : r.reason);
+  const cases: Array<{ tool: string; shape: 'single_metric' | 'list'; subject: string; agent: string; permissions: string[] }> = [
+    { tool: 'tax.get_vat_summary', shape: 'single_metric', subject: 'tax', agent: 'tax', permissions: ['tax.period.read', 'tax.event.read'] },
+    { tool: 'inventory.list_low_stock', shape: 'list', subject: 'inventory', agent: 'inventory', permissions: ['inventory.product.read', 'inventory.report.read'] },
+    { tool: 'procurement.get_ap_outstanding', shape: 'single_metric', subject: 'procurement', agent: 'accounting', permissions: ['procurement.ap.report'] },
+    { tool: 'crm.get_customer_summary', shape: 'list', subject: 'customer', agent: 'crm', permissions: ['crm.customer.read'] },
+  ];
+
+  for (const { tool, shape, subject, agent, permissions } of cases) {
+    it(`${tool}::${shape} is eligible with its own permissions, and refused without them`, () => {
+      const plan = parseLineAiPreparedPlan({
+        version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: shape,
+        intentPlan: {
+          status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+          intents: [{ intent: 'read_summary', subject, agent, priority: 1, requiredTools: [tool], missingContext: [] }],
+        },
+        proposedCalls: [{ toolName: tool, input: {} }],
+      });
+      assert.ok(plan, `${tool} fixture did not parse`);
+      const ctx: PreparedSimpleReadContext = { ...baseCtx, permissions, enabledFamilies: new Set([`${tool}::${shape}`]) };
+      assert.equal(reason(preparedSimpleReadEligibility(plan, ctx)), 'ELIGIBLE');
+      assert.equal(reason(preparedSimpleReadEligibility(plan, { ...ctx, permissions: [] })), 'permission_denied');
+      // Compiled ≠ active: an empty operator allowlist still refuses every one of them.
+      assert.equal(reason(preparedSimpleReadEligibility(plan, { ...ctx, enabledFamilies: new Set() })), 'formatter_family_not_allowed');
+    });
+  }
+});
