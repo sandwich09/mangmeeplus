@@ -568,7 +568,7 @@ describe('LineAiTurnUseCase – a runtime that cannot honour the envelope refuse
     assert.equal(result.refused, true);
     assert.equal(result.errorCode, 'AI_BUDGET_UNAVAILABLE');
     // Honest copy: the meter could not be READ — never "full", never "something broke" (§9.1).
-    assert.match(result.replyText, /ยังตรวจสอบงบ AI ของร้านไม่ได้/);
+    assert.match(result.replyText, /ยังตรวจสอบเครดิต AI ของร้านไม่ได้/);
     assert.doesNotMatch(result.replyText, /เกิดข้อผิดพลาดชั่วคราว/);
   });
 

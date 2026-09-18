@@ -1,0 +1,72 @@
+[
+  {
+    "id": "partner-ai-credit-shared",
+    "viewport": "390",
+    "bytes": 24724,
+    "proves": "head of the partner AI-and-quota card on a SHARED company: heading \"การใช้งานและเครดิต AI\", \"เครดิต AI ต่อเดือนของบริษัทนี้ — ใช้หมดเมื่อไร …\" and \"ใช้เดือนนี้ ฿42.00 จากเครดิต ฿140.00\" — no \"งบ AI\" anywhere",
+    "band": {
+      "top": 461,
+      "height": 271
+    }
+  },
+  {
+    "id": "partner-ai-credit-form",
+    "viewport": "390",
+    "bytes": 24249,
+    "proves": "the credit form on the same card: \"เหตุผลที่ปรับเครดิต AI\" (label and aria-label), \"เครดิต AI ต่อเดือน (บาท)\", the button \"ตรวจเครดิตก่อนบันทึก\", the diff line \"เครดิต AI: …\" and \"เว้นว่างเพื่อใช้เครดิตเริ่มต้น …\" — these are the exact strings admin-ai-adjustments-smoke.ts pins",
+    "band": {
+      "top": 1560,
+      "height": 293
+    }
+  },
+  {
+    "id": "partner-ai-credit-shared-position",
+    "viewport": "390",
+    "bytes": 68647,
+    "proves": "the credit-position panel on the SAME SHARED company: \"แยกเพดานเครดิต AI ของบริษัทนี้\", mode \"เครดิตรวมก้อนเดียว\", the per-scope table whose reserved column is headed \"กันไว้ระหว่างเรียก AI\" and whose remaining reads \"ตามเครดิตรวม\", the footnote \"…คือเครดิตที่ระบบกันไว้ให้งานที่กำลังเรียก AI อยู่…\", plus \"โหมดเครดิต AI\" and \"บันทึกเพดานเครดิต AI\"",
+    "band": {
+      "top": 1861,
+      "height": 898
+    }
+  },
+  {
+    "id": "partner-ai-credit-split-holds",
+    "viewport": "390",
+    "bytes": 74209,
+    "proves": "the same panel on a SPLIT company with live holds: mode \"แยกเพดานแชตและอ่านเอกสาร\", the reserved column populated per scope, and the unresolved-hold notice \"มี 1 รายการที่ยังไม่ทราบผลจากผู้ให้บริการ AI — เครดิตส่วนนั้นยังถูกกันไว้จนกว่าจะได้ผลจริง\"",
+    "band": {
+      "top": 1895,
+      "height": 988
+    }
+  },
+  {
+    "id": "billing-receipt-warnings-no-holds",
+    "viewport": "390",
+    "bytes": 20244,
+    "proves": "receipt-adjustments read warnings on a company with NO hold: only the three pre-existing lines, now reading \"ร้านนี้ใช้เครดิต AI ของเดือนนี้หมดแล้ว\" and \"ตรวจที่เมนูเครดิตการใช้ AI\"",
+    "band": {
+      "top": 368,
+      "height": 178
+    }
+  },
+  {
+    "id": "billing-receipt-warnings-holds",
+    "viewport": "390",
+    "bytes": 19792,
+    "proves": "the new AI_CREDIT_HOLDS_PENDING warning ALONE on a company whose credit is not exhausted: \"มีงาน AI ที่กำลังทำอยู่หรือยังไม่ทราบผล ระบบกันเครดิตไว้ชั่วคราว …\" with no figure",
+    "band": {
+      "top": 368,
+      "height": 162
+    }
+  },
+  {
+    "id": "billing-plan-credit-holds",
+    "viewport": "390",
+    "bytes": 31569,
+    "proves": "plan-adjustments \"unchanged\" panel with holds: \"เครดิต AI เดือนนี้ X บาท · ใช้แล้ว Y บาท · กันไว้ระหว่างเรียก AI Z บาท\" plus \"มี N รายการที่ยังไม่ทราบผลจากผู้ให้บริการ AI เครดิตส่วนนั้นยังถูกกันไว้\"",
+    "band": {
+      "top": 280,
+      "height": 302
+    }
+  }
+]

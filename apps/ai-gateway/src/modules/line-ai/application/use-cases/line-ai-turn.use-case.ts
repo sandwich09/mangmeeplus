@@ -29,7 +29,7 @@ const ERROR_REPLY = '⏳ เกิดข้อผิดพลาดชั่ว�
 /** Spec §9.1: say the budget could not be CHECKED, never that it is full and never "something
  *  broke". Same wording the API uses for its own `AI_BUDGET_UNAVAILABLE`, so one situation reads
  *  the same to the shop whichever hop refused it. */
-const AI_BUDGET_UNAVAILABLE_REPLY = '⏳ ตอนนี้ยังตรวจสอบงบ AI ของร้านไม่ได้ค่ะ น้องมั่งมีเลยยังไม่เริ่มงานให้ '
+const AI_BUDGET_UNAVAILABLE_REPLY = '⏳ ตอนนี้ยังตรวจสอบเครดิต AI ของร้านไม่ได้ค่ะ น้องมั่งมีเลยยังไม่เริ่มงานให้ '
   + 'รบกวนลองใหม่อีกครั้งในอีกสักครู่นะคะ ระหว่างนี้ใช้งานผ่านเว็บแอปได้ตามปกติค่ะ';
 const NO_DATA_REPLY = '📭 ไม่พบข้อมูลที่ตรงกันค่ะ กรุณาลองถามใหม่อีกครั้งนะคะ';
 const CAPTURE_PENDING_REPLY = [

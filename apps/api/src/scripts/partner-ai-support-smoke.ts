@@ -23,7 +23,7 @@ export async function checkPartnerAiSupport(input:Parameters<typeof checkBilling
     if(browser){await browser.page.getByRole('button',{name:'โหลดประวัติร้านล่าสุด',exact:true}).click();await browser.page.getByText('ตอนนี้ยังอ่านใบเสร็จด้วย AI ไม่ได้',{exact:true}).waitFor({state:'hidden'});}
     cases.push('admin-ai-support-paid-admission-exhaustion-and-additional-grant-do-not-use-legacy-monthly-cap-or-block-all-chat');
 
-    await db.companyAiMonthlyUsage.create({data:{companyId,monthKey,costSatang:20000}});facts=await read();assert.equal(facts[0].detail,'ใช้งบ AI ของเดือนนี้ครบแล้ว');assert.equal(facts[0].label,'ตอนนี้ AI ยังทำงานให้ร้านไม่ได้');
+    await db.companyAiMonthlyUsage.create({data:{companyId,monthKey,costSatang:20000}});facts=await read();assert.equal(facts[0].detail,'เครดิต AI ของเดือนนี้หมดแล้ว');assert.equal(facts[0].label,'ตอนนี้ AI ยังทำงานให้ร้านไม่ได้');
     if(browser){await browser.page.getByRole('button',{name:'โหลดประวัติร้านล่าสุด',exact:true}).click();await browser.page.getByText(facts[0].detail,{exact:true}).waitFor();}
     await db.companyAiConfiguration.update({where:{companyId},data:{monthlyBudgetSatang:30000}});assert.deepEqual(await read(),[]);
     await db.companyAiConfiguration.update({where:{companyId},data:{ocrEnabled:false}});facts=await read();assert.equal(facts[0].label,'ตอนนี้ยังอ่านใบเสร็จด้วย AI ไม่ได้');assert.equal(facts[0].detail,'ผู้ดูแลปิดการอ่านเอกสารด้วย AI ไว้');
