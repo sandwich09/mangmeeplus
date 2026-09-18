@@ -1748,10 +1748,12 @@ describe('readAiBudgetReadiness — the truth table admin surfaces must agree wi
     // Open: 3000 of 10000 spent.
     assert.deepEqual(await readiness(tx({ total: 3000 }), null, 10_000), {
       mode: 'SHARED', total: 'OK', chat: 'OK', ocr: 'OK', unresolvedHolds: 0, breach: false,
+      reserved: { TOTAL: 0, CHAT: 0, OCR: 0 },
     });
     // Reached: the legacy rule was `spend >= budget`, and it still is.
     assert.deepEqual(await readiness(tx({ total: 10_000 }), { budgetMode: 'SHARED' }, 10_000), {
       mode: 'SHARED', total: 'EXHAUSTED', chat: 'EXHAUSTED', ocr: 'EXHAUSTED', unresolvedHolds: 0, breach: false,
+      reserved: { TOTAL: 0, CHAT: 0, OCR: 0 },
     });
     // A SHARED row may carry informational caps; §12.1 says they are NOT enforced.
     const informational = { budgetMode: 'SHARED', chatMonthlyBudgetSatang: 0, ocrMonthlyBudgetSatang: 0 };
@@ -1796,7 +1798,9 @@ describe('readAiBudgetReadiness — the truth table admin surfaces must agree wi
       assert.deepEqual(await readiness(tx({ total: 0 }), row, 10_000), {
         mode: reason === 'SPLIT_EXCEEDS_TOTAL' || reason === 'SPLIT_CAPS_MISSING' ? 'SPLIT' : 'SHARED',
         total: 'CLOSED', chat: 'CLOSED', ocr: 'CLOSED', policyInvalid: reason,
-        unresolvedHolds: 0, breach: false,
+        // Fail-closed still reports the held position: an operator fixing the policy has to know
+        // credit is parked (credit-wording spec §5.3).
+        unresolvedHolds: 0, breach: false, reserved: { TOTAL: 0, CHAT: 0, OCR: 0 },
       });
     }
   });
@@ -1809,6 +1813,8 @@ describe('readAiBudgetReadiness — the truth table admin surfaces must agree wi
 
     assert.equal(answer.unresolvedHolds, 1);
     assert.equal(answer.breach, true);
+    // §5.3: the same snapshot reports the held satang per scope, so a consumer never reads it twice.
+    assert.deepEqual(answer.reserved, { TOTAL: 400, CHAT: 0, OCR: 400 });
     // Money is still left in both buckets; the two flags are what an operator acts on.
     assert.equal(answer.ocr, 'OK');
     assert.equal(answer.chat, 'OK');
@@ -1833,6 +1839,7 @@ describe('readAiBudgetReadiness — the truth table admin surfaces must agree wi
     const legacy = { companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 10_000 }) } };
     assert.deepEqual(await readiness(legacy, null, 10_000), {
       mode: 'SHARED', total: 'EXHAUSTED', chat: 'EXHAUSTED', ocr: 'EXHAUSTED', unresolvedHolds: 0, breach: false,
+      reserved: { TOTAL: 0, CHAT: 0, OCR: 0 },
     });
   });
 });

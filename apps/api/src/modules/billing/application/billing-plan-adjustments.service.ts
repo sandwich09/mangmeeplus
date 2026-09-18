@@ -52,7 +52,12 @@ export class BillingPlanAdjustmentsService {
     return {remainingReceipts:(await paidReceiptBalance(tx,s.company.id,s.account.id)).remaining,termEndsAt:s.company.planTerm.termEndsAt.toISOString(),
       nextChargeAt:s.account.nextChargeAt?.toISOString()??null,ocrEnabled:c?.ocrEnabled!==false,ocrMonthlyLimit:c?.ocrMonthlyLimit??null,aiBudgetSatang:budget,aiUsedSatang:spend?.costSatang??0,
       // Under SHARED `ocr` IS `total`, so a SHARED company's panel is byte-for-byte today's.
-      ...(money.total==='OK'&&money.ocr!=='OK'?{aiOcrBudgetReached:true}:{})};
+      ...(money.total==='OK'&&money.ocr!=='OK'?{aiOcrBudgetReached:true}:{}),
+      // Credit-wording spec §5.3, from the SAME projection: held credit sits between "used" and
+      // "available", so extending a package while a hold is open must not read as free credit.
+      // Absent when zero, so a company with no hold keeps today's panel byte for byte.
+      ...(money.reserved.TOTAL>0?{aiReservedSatang:money.reserved.TOTAL}:{}),
+      ...(money.unresolvedHolds>0?{aiUnresolvedHolds:money.unresolvedHolds}:{})};
   }
   private source(s:Awaited<ReturnType<BillingPlanAdjustmentsService['scope']>>){
     const a=s.account,t=s.company.planTerm;
