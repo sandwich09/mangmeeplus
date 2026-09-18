@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { workspaceDictionary } from '../../common/i18n/workspace-dictionary';
 
 const source = readFileSync(new URL('./ExpensesPages.tsx', import.meta.url), 'utf8');
 
@@ -110,6 +111,54 @@ test('the money-refusal notices are info, scope-aware, and never the generic fai
   assert.doesNotMatch(budgetSection, /setTimeout|retry|request\(/i, 'no automatic retry is started from a notice');
   // The scope decides the sentence only where the API can prove it.
   assert.match(notice, /result\.budgetScope === 'OCR'/);
+});
+
+/**
+ * Capture appendix §3/§11 (W02-web). One file is still one expense, byte for byte: the group lane
+ * only opens at two files or more, and it never touches an expense's primary receipt.
+ */
+test('one file keeps the existing expense path, in the same three requests', () => {
+  const single = source.slice(source.indexOf('const handleUpload = async ()'), source.indexOf('const flow = ['));
+  assert.match(single, /if \(selectedFiles\.length > 1 \|\| captureGroup\) \{ await handleGroupUpload\(\); return; \}/);
+  assert.match(single, /const intent = await initReceiptUpload\(companyId, \{/);
+  assert.match(single, /await uploadReceiptFile\(intent\.uploadUrl/);
+  assert.match(single, /await completeReceiptUpload\(companyId, intent\.expenseId, intent\.attachmentId, \{ byteSize: file\.size \}\)/);
+  assert.match(single, /requestExpenseExtractionWithRecovery\(/);
+});
+
+test('the group lane reserves, uploads and completes per file — never the primary-replace path', () => {
+  const group = source.slice(source.indexOf('const handleGroupUpload = async ()'), source.indexOf('const retryCaptureFile'));
+  assert.match(group, /createExpenseCaptureGroup\(companyId, \{/);
+  assert.match(group, /runCaptureUpload\(\{/);
+  assert.doesNotMatch(group, /uploadExpenseEvidenceFile|completeReceiptUpload|initReceiptUpload/,
+    'a capture file is never completed through an expense receipt route');
+  // The machine itself is exercised in expense-capture-upload.logic.spec.ts; this is the wiring.
+  assert.match(source, /addFile: async \(groupId, body\) => \{/);
+  assert.match(source, /completeFile: async \(groupId, fileId, body\) => \{/);
+});
+
+test('every file stored leaves for the group page, and the manifest is dropped with it', () => {
+  const settle = source.slice(source.indexOf('const settleCaptureUpload'), source.indexOf('const handleGroupUpload'));
+  assert.match(settle, /if \(allCaptureFilesStored\(files\)\) \{/);
+  assert.match(settle, /writeCaptureManifest\(storage, null, companyId\);/);
+  assert.match(settle, /router\.push\(`\/companies\/\$\{companyId\}\/expenses\/capture\/\$\{encodeURIComponent\(groupId\)\}`\)/);
+  // Still unfinished: the manifest is what the reopened tab resumes from.
+  assert.match(settle, /writeCaptureManifest\(storage, \{ companyId, groupId, revision, files \}, companyId\)/);
+});
+
+test('the picker and the dropzone take several files; the camera still takes one photo', () => {
+  assert.match(source, /accept="image\/\*" capture="environment" className="sr-only"/);
+  assert.doesNotMatch(source, /capture="environment"[^>]*multiple/);
+  assert.equal((source.match(/accept=\{RECEIPT_UPLOAD_ACCEPT\} multiple/g) ?? []).length, 2);
+});
+
+test('the client no longer carries a PDF ceiling of its own', () => {
+  assert.doesNotMatch(source, /MAX_PDF_EXTRACTION_BYTES|upload_pdf_too_large/);
+  // The 4 MB message is retired in both locales: a 10 MiB PDF is read automatically (§4.1).
+  assert.equal('expenses.upload_pdf_too_large' in workspaceDictionary.th, false);
+  assert.equal('expenses.upload_pdf_too_large' in workspaceDictionary.en, false);
+  assert.match(source, /captureFileRejection\(file, capability\)/);
+  assert.match(source, /getExpenseCaptureCapability\(companyId\)/);
 });
 
 test('a refused read still leaves the draft reachable and the spinner cleared', () => {

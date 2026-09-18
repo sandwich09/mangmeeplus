@@ -3,7 +3,13 @@ import type {
   ExpenseSummary, ExpenseDetail, ExpenseCategorySummary, ExpenseStatus,
   SignatureAssetSummary, SharedEvidenceView, AccountantPackageResult,
 } from './expenses.model';
+import type { CaptureUploadIntent } from './expense-capture-upload.logic';
+import type { ExpenseReadStatusFile } from './expense-capture-status.logic';
 import type {
+  CompleteExpenseReceiptUploadInput,
+  ExpenseCaptureCapabilityDto,
+  ExpenseCaptureCloseReason,
+  ExpenseCaptureGroupDetailDto,
   ApproveSubstituteReceiptInput,
   CertifySubstituteReceiptInput,
   CreateExpenseDraftInput,
@@ -205,6 +211,8 @@ export async function uploadExpenseEvidenceFile(
   branchId: string | null,
   file: File,
   purpose: 'expense.receipt.primary' | 'expense.receipt.supporting' | 'expense.payment.evidence',
+  /** Spec §16.4: which intent this is, and the revision/target the user was looking at. */
+  fileIntent?: Omit<CompleteExpenseReceiptUploadInput, 'byteSize' | 'purpose' | 'checksumSha256'>,
 ): Promise<string> {
   return withGenericUploadError(async () => {
     file = await prepareAttachmentUpload(file);
@@ -222,7 +230,7 @@ export async function uploadExpenseEvidenceFile(
       },
     );
     await uploadReceiptFile(intent.uploadUrl, intent.uploadMethod, file, intent.uploadHeaders);
-    await completeReceiptUpload(companyId, expenseId, intent.attachmentId, { byteSize: file.size, purpose });
+    await completeReceiptUpload(companyId, expenseId, intent.attachmentId, { byteSize: file.size, purpose, ...fileIntent });
     return intent.attachmentId;
   });
 }
@@ -231,11 +239,93 @@ export async function completeReceiptUpload(
   companyId: string,
   expenseId: string,
   attachmentId: string,
-  body?: { checksumSha256?: string; byteSize?: number; purpose?: string },
+  body?: CompleteExpenseReceiptUploadInput,
 ): Promise<ExpenseSummary> {
   return withGenericUploadError(() =>
     apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/receipt-uploads/${attachmentId}/complete`, { method: 'POST', body: JSON.stringify(body ?? {}) }),
   );
+}
+
+// ── Capture group (appendix §9) ───────────────────────────────────────────────
+
+export async function getExpenseCaptureCapability(companyId: string): Promise<ExpenseCaptureCapabilityDto> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/capture-capability`);
+}
+
+export async function createExpenseCaptureGroup(
+  companyId: string,
+  body: { branchId?: string; note?: string },
+): Promise<{ groupId: string; revision: number; webPath: string }> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/capture-groups`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function getExpenseCaptureGroup(companyId: string, groupId: string): Promise<ExpenseCaptureGroupDetailDto> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/capture-groups/${groupId}`);
+}
+
+export async function addExpenseCaptureFile(
+  companyId: string,
+  groupId: string,
+  body: { originalFileName: string; mimeType: string; byteSize: number; expectedRevision: number },
+): Promise<CaptureUploadIntent & { expiresAt: string }> {
+  return withGenericUploadError(async () => {
+    assertAllowedUploadFile({ name: body.originalFileName, type: body.mimeType });
+    return apiFetch(`/v1/companies/${companyId}/expenses/capture-groups/${groupId}/files`, { method: 'POST', body: JSON.stringify(body) });
+  });
+}
+
+export async function completeExpenseCaptureFile(
+  companyId: string,
+  groupId: string,
+  fileId: string,
+  body: { byteSize?: number; checksumSha256?: string; expectedRevision: number },
+): Promise<{ fileId: string; attachmentId: string; revision: number; readJobId: string; uploadState: string; replayed: boolean }> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/capture-groups/${groupId}/files/${fileId}/complete`, {
+    method: 'POST', body: JSON.stringify(body),
+  });
+}
+
+export async function detachExpenseCaptureFile(
+  companyId: string,
+  groupId: string,
+  fileId: string,
+  body: { reason: string; expectedRevision: number },
+): Promise<{ fileId: string; revision: number }> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/capture-groups/${groupId}/files/${fileId}/detach`, {
+    method: 'POST', body: JSON.stringify(body),
+  });
+}
+
+export async function closeExpenseCaptureGroup(
+  companyId: string,
+  groupId: string,
+  body: { reason: ExpenseCaptureCloseReason; expectedRevision: number },
+): Promise<{ groupId: string; status: string; revision: number }> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/capture-groups/${groupId}/close`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** §3.1 "แยกเป็นกลุ่มหลักฐาน": the expense keeps its id and every amount. */
+export async function convertExpenseToCaptureGroup(
+  companyId: string,
+  expenseId: string,
+  body: { expectedUpdatedAt: string },
+): Promise<{ groupId: string; webPath: string }> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/capture-group`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** Polling reads (appendix §9). Neither starts, resumes nor re-prices a read. */
+export async function getExpenseCaptureGroupReadStatus(
+  companyId: string,
+  groupId: string,
+): Promise<{ files: ExpenseReadStatusFile[] }> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/capture-groups/${groupId}/read-status`);
+}
+
+export async function getExpenseReadStatus(
+  companyId: string,
+  expenseId: string,
+): Promise<{ files: ExpenseReadStatusFile[] }> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/read-status`);
 }
 
 export async function requestExpenseExtraction(companyId: string, expenseId: string, requestId?: string): Promise<ExpenseExtractionResult> {
