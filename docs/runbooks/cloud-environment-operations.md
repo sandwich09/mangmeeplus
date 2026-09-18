@@ -60,6 +60,24 @@ completed360.504s candidate build. These are not live deploy/rollback timings. S
 acceptance and actual SYSTEM_ADMIN/customer OPEN remain outstanding.
 [Full inventory, retained failures and operation ledger](../agent-memory/production-kamal-two-release-paths-2026-09-18.md).
 
+## Production first-migration output reads — 2026-09-18
+
+A conditions-only CloudFormation update can complete both listener rules and then roll back while
+resolving an unchanged output. Operation `20260918T101611Z-1069a958` failed on `iam:GetRole` for the
+stack's `DeployRoleArn` after both rules switched. Read every output provider before worker handover;
+valid change-set scope and runtime deployment permissions alone do not prove this boundary.
+
+The staged stack has15outputs from EC2, IAM, ECR, KMS and AgentCore. Read-only AWS registry schema
+inspection identified each native resource READ permission set. Grant only bounded metadata reads
+under the existing migration expiry, and verify actual nonroot calls; IAM simulation alone is not
+live permission proof. KMS's provider soft-fails some optional metadata reads, so an audit denial is
+not automatically a fatal GetAtt failure. ECR policy-not-found is distinct from access denied.
+
+Explicit recovery `20260918T103003Z-7bfbc4ef` is signed `ROLLED_BACK_TO_ECS`; all three ECS services
+read back original source `fc2838c4cb691033f41595c0d43587f10377d33c`, customer OPEN/live and logout
+acceptance passed. No Kamal Production enrollment or completed hotfix is implied. See
+[output audit and verification](../agent-memory/production-kamal-output-preflight-2026-09-18.md).
+
 ## Isolated AWS rehearsal completed — 2026-09-14
 
 Later owner-requested UAT power resume: both retained Kamal hosts are running again (API
