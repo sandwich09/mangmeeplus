@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ForbiddenException, ValidationPipe, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { PartnerController, SetAiModelBodyDto, SetFeaturesBodyDto, SetOcrConfigBodyDto } from './partner.controller';
+import { PartnerAiCreditHoldActionBodyDto, PartnerController, SetAiModelBodyDto, SetFeaturesBodyDto, SetOcrConfigBodyDto } from './partner.controller';
 import { SystemAiBudgetController } from './system-ai-budget.controller';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import { REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
@@ -38,6 +38,12 @@ function makeUCs() {
     endWarmup: { execute: async () => ({ term: { companyId: 'co-1', warmupUntil: undefined } }) } as any,
     timeline: { execute: async () => ({ entries: [] }) } as any,
     lineMessage: { execute: async () => ({ delivered: 1 }) } as any,
+    aiCreditHolds: {
+      read: async (input: any) => ({ canManage: input.canManage, companyLocked: false, items: [], monthKeys: ['2026-09', '2026-08'] }),
+      release: async (cmd: any) => ({ id: cmd.reservationId, action: 'release', status: 'CANCELLED', chargedSatang: 0, cmd }),
+      chargeAtBound: async (cmd: any) => ({ id: cmd.reservationId, action: 'charge_at_bound', status: 'SETTLED', chargedSatang: 47, cmd }),
+      acknowledgeBreach: async (cmd: any) => ({ id: cmd.reservationId, action: 'acknowledge_breach', status: 'SETTLED', chargedSatang: 0, cmd }),
+    } as any,
   };
 }
 
@@ -51,7 +57,7 @@ function makeCtrl(overrides: Partial<ReturnType<typeof makeUCs>> = {}) {
     // VAT registration: delegated to the company's own service, not re-implemented here.
     { put: async () => ({ version: 1, resultKind: 'APPLIED', replayed: false }) } as any,
     uc.getPlanTerm, {execute:async()=>({items:[],nextCursor:null})} as any, uc.setPlanTerm, uc.renewPlanTerm, uc.endWarmup,
-    uc.timeline, uc.lineMessage,
+    uc.timeline, uc.lineMessage, uc.aiCreditHolds,
   );
 }
 
@@ -272,6 +278,11 @@ describe('PartnerController', () => {
       ['aiAdjustments', 'system.partner_ai_model.manage'],
       // Read-only meter: reuses the partner detail read permission, no new permission (spec §7.7).
       ['aiUsage', 'system.partner_dashboard.read'],
+      // Held credit (hold spec §4): the list rides the dashboard read, every decision is a write.
+      ['aiCreditHolds', 'system.partner_dashboard.read'],
+      ['releaseAiCreditHold', 'system.partner_ai_model.manage'],
+      ['chargeAiCreditHoldAtBound', 'system.partner_ai_model.manage'],
+      ['acknowledgeAiCreditBreach', 'system.partner_ai_model.manage'],
       // Issuing a bearer QR is a member-management action, gated like unlink and password reset.
       ['issueLineLinkToken', 'system.partner_member.manage'],
     ];
@@ -304,7 +315,8 @@ describe('PartnerController', () => {
       switchToHttp: () => ({ getRequest: () => ({ context: { permissions } }) }),
     }) as unknown as ExecutionContext;
 
-    for (const method of ['aiUsage', 'setAiModelConfig']) {
+    for (const method of ['aiUsage', 'setAiModelConfig', 'aiCreditHolds', 'releaseAiCreditHold',
+      'chargeAiCreditHoldAtBound', 'acknowledgeAiCreditBreach']) {
       // An ordinary tenant user: company permissions only, neither platform permission.
       assert.throws(() => guard.canActivate(contextFor(method, ['expense.read', 'expense.create'])),
         /Insufficient permissions/, `${method} must refuse a tenant caller`);
@@ -321,6 +333,50 @@ describe('PartnerController', () => {
     assert.throws(() => guard.canActivate(contextFor('setAiModelConfig', ['system.partner_dashboard.read'])),
       /Insufficient permissions/);
     assert.equal(guard.canActivate(contextFor('setAiModelConfig', ['system.partner_ai_model.manage'])), true);
+
+    // Held credit draws the same boundary: an operator may LOOK at stranded money and not move it.
+    assert.equal(guard.canActivate(contextFor('aiCreditHolds', ['system.partner_dashboard.read'])), true);
+    for (const method of ['releaseAiCreditHold', 'chargeAiCreditHoldAtBound', 'acknowledgeAiCreditBreach']) {
+      assert.throws(() => guard.canActivate(contextFor(method, ['system.partner_dashboard.read'])),
+        /Insufficient permissions/, `${method} must refuse a read-only operator`);
+      assert.equal(guard.canActivate(contextFor(method, ['system.partner_ai_model.manage'])), true);
+    }
+  });
+
+  it('aiCreditHolds() tells the page whether the caller may act, from the caller permissions', async () => {
+    const ctrl = makeCtrl();
+    assert.equal((await ctrl.aiCreditHolds('co-1', makeReq(['system.partner_ai_model.manage'])) as any).canManage, true);
+    assert.equal((await ctrl.aiCreditHolds('co-1', makeReq(['system.partner_dashboard.read'])) as any).canManage, false);
+  });
+
+  it('the three hold actions pass both ids, the reason and the admin context to the use case', async () => {
+    const ctrl = makeCtrl();
+    const body = { reason: 'ยืนยันแล้วว่าไม่ได้เรียก' };
+    const req = makeReq(['system.partner_ai_model.manage']);
+    for (const [call, action] of [
+      [() => ctrl.releaseAiCreditHold('co-1', 'res-9', body, req), 'release'],
+      [() => ctrl.chargeAiCreditHoldAtBound('co-1', 'res-9', body, req), 'charge_at_bound'],
+      [() => ctrl.acknowledgeAiCreditBreach('co-1', 'res-9', body, req), 'acknowledge_breach'],
+    ] as Array<[() => Promise<unknown>, string]>) {
+      const result = await call() as any;
+      assert.equal(result.action, action);
+      assert.equal(result.cmd.companyId, 'co-1');
+      assert.equal(result.cmd.reservationId, 'res-9');
+      assert.equal(result.cmd.reason, body.reason);
+      assert.equal(result.cmd.requestingAdminUserId, 'admin-1');
+      assert.equal(result.cmd.requestId, 'req-1');
+    }
+  });
+
+  it('the hold action body rejects an empty or over-long reason at the HTTP boundary', async () => {
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+    const meta = { type: 'body' as const, metatype: PartnerAiCreditHoldActionBodyDto };
+    await assert.rejects(pipe.transform({}, meta), BadRequestException);
+    await assert.rejects(pipe.transform({ reason: '' }, meta), BadRequestException);
+    await assert.rejects(pipe.transform({ reason: 'x'.repeat(501) }, meta), BadRequestException);
+    // `whitelist`/`forbidNonWhitelisted`: nothing but the reason may reach a money transaction.
+    await assert.rejects(pipe.transform({ reason: 'ok', chargedSatang: 1 }, meta), BadRequestException);
+    assert.deepEqual({ ...(await pipe.transform({ reason: 'ok' }, meta) as object) }, { reason: 'ok' });
   });
 
   it('the platform AI budget routes carry the same manage permission on read and write', () => {

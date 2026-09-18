@@ -24,7 +24,14 @@ export type SignupOpsAlertKind =
   | 'line_push_stuck'
   // line-support-request-spec-th §2.2.3: a customer was told "รับเรื่องแล้ว" and NO channel
   // delivered anything — no admin LINE push landed and the support letter did not go out.
-  | 'support_unreachable';
+  | 'support_unreachable'
+  // hold-reconciliation spec §5: AI credit is held against a shop's month with no outcome nobody
+  // will ever deliver, or a breach is keeping a scope closed. Both need a human decision, and
+  // neither raises anything by itself — holds are deliberately never released on a timer.
+  | 'ai_credit_holds_unresolved';
+
+/** Where held AI credit is reconciled: the partner list, then the company's AI-and-quota card. */
+export const PARTNER_LIST_PATH = '/system/partners';
 
 /** A customer's one owed message has been unsent for this long — long past "the OA blinked". */
 export const STUCK_PUSH_AFTER_MS = 60 * 60_000;
@@ -48,6 +55,8 @@ export function signupOpsAlertTitleTh(kind: SignupOpsAlertKind): string {
       return 'ข้อความ พร้อมใช้แล้ว ค้างส่งไม่ออก';
     case 'support_unreachable':
       return 'มีลูกค้ารอคุยกับเจ้าหน้าที่ แต่แจ้งทีมงานไม่ได้';
+    case 'ai_credit_holds_unresolved':
+      return 'มีเครดิต AI ที่กันไว้ค้างรอการตรวจสอบ';
   }
 }
 
@@ -65,6 +74,10 @@ export function signupOpsAlertBodyTh(kind: SignupOpsAlertKind): string {
       return 'มีร้านที่ยังไม่ได้รับข้อความว่าเปิดร้านให้แล้ว อาจถึงโควตาข้อความของ OA เปิดคิวเพื่อตรวจสอบค่ะ';
     case 'support_unreachable':
       return 'คำขออยู่ในหน้า คำขอคุยกับเจ้าหน้าที่ แล้ว แต่ไม่มีช่องทางไหนแจ้งสำเร็จ เปิดหน้าคำขอเพื่อตอบลูกค้าค่ะ';
+    case 'ai_credit_holds_unresolved':
+      // No shop name, no amount: this is an ops alert about state, and the operator decides per
+      // company on the page. Only the page it names carries money figures.
+      return 'มีร้านที่ระบบกันเครดิต AI ไว้แล้วยังไม่ทราบผล หรือมีรายการใช้เกินที่กันไว้ที่ยังไม่รับทราบ เปิดหน้าร้านแล้วดูหมวด AI และโควตา หัวข้อ เครดิตที่กันไว้ค้าง ค่ะ';
   }
 }
 
@@ -130,7 +143,11 @@ export class SignupOpsAlertService {
     // The one alert whose action is not in the signup queue: an unreachable support request is
     // answered from the support inbox, and pointing an operator at the wrong page is the same
     // failure as not telling them.
-    const href = kind === 'support_unreachable' ? SUPPORT_QUEUE_PATH : SIGNUP_QUEUE_PATH;
+    const href = kind === 'support_unreachable' ? SUPPORT_QUEUE_PATH
+      // Held credit is decided per company on the partner page; the alert counts companies, so it
+      // points at the list rather than guessing which one the operator should open first.
+      : kind === 'ai_credit_holds_unresolved' ? PARTNER_LIST_PATH
+      : SIGNUP_QUEUE_PATH;
     let opened = false;
     for (const [companyId, userIds] of groupByCompany(admins)) {
       const result = await this.notifications.execute({
@@ -252,6 +269,42 @@ export class SignupOpsAlertService {
     if (stuck === 0) return { stuck, raised: false };
     await this.raise('line_push_stuck', now);
     return { stuck, raised: true };
+  }
+
+  /**
+   * Hold-reconciliation spec §5. AI credit that a shop cannot use and nothing will ever release by
+   * itself: an `UNRESOLVED` hold older than `AI_CREDIT_HOLD_ALERT_AFTER_HOURS`, or a breach still
+   * closing a scope because nobody has acknowledged it.
+   *
+   * Counted from the rows themselves on the same 15-minute timer as the two sweeps above, for the
+   * same reason: it is a question about STATE, and holds are deliberately never resolved by a timer,
+   * so without this nobody is told at all. Announced once per Bangkok day through the existing
+   * throttle, and COMPANIES are counted rather than rows — one broken company with forty stranded
+   * invocations is one thing to look at, not forty.
+   */
+  async sweepUnresolvedCreditHolds(now = new Date()): Promise<{ companies: number; raised: boolean }> {
+    const staleBefore = new Date(now.getTime() - this.config.aiCreditHoldAlertAfterHours * 60 * 60_000);
+    // `groupBy` on the company alone: the answer is "how many shops", and the per-company detail
+    // belongs on the page the alert links to, never in the alert.
+    const rows = await this.prisma.client.aiBudgetReservation.groupBy({
+      by: ['companyId'],
+      where: {
+        OR: [
+          // Age is measured from when the hold was TAKEN. `dispatchedAt` would restart the clock for
+          // a row the sweep moved late, and the shop has been short of credit since `createdAt`.
+          { status: 'UNRESOLVED', createdAt: { lt: staleBefore } },
+          { breach: true, breachAcknowledgedAt: null },
+        ],
+      },
+      _count: { _all: true },
+      // Prisma requires an explicit order beside `take`. Stable and arbitrary: only the COUNT of
+      // distinct companies is used, never which ones.
+      orderBy: { companyId: 'asc' },
+      take: 500,
+    });
+    if (rows.length === 0) return { companies: 0, raised: false };
+    await this.raise('ai_credit_holds_unresolved', now);
+    return { companies: rows.length, raised: true };
   }
 }
 

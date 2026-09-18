@@ -33,6 +33,12 @@ const logger = new Logger('CompanyAiBudgetReservation');
 
 /** Holds that still owe the company money — the exact set `reserved` sums over. */
 const LIVE_STATUSES = ['RESERVED', 'DISPATCHED', 'UNRESOLVED'] as const;
+/**
+ * A breach that still CLOSES its scope. The `breach` column is the historical fact and is never
+ * cleared; `breachAcknowledgedAt` is the operator's audited decision, and only an UNacknowledged
+ * row keeps admission shut (hold spec §4.2, ADR 0013 §11.6 "until an operator clears it").
+ */
+const UNACKNOWLEDGED_BREACH = { breach: true, breachAcknowledgedAt: null } as const;
 /** Bucket rows are always touched in this order, so two settlements cannot deadlock on them. */
 const BUCKET_ORDER: readonly AiBudgetBucket[] = ['CHAT', 'OCR'];
 
@@ -68,7 +74,14 @@ export type AiBudgetCancelProof =
   /** The gateway answered one of the exact pre-provider refusal shapes (`isOcrPreProviderRefusal`). */
   | 'gateway_pre_provider_refusal'
   /** The lazy sweep: a `RESERVED` row that was never dispatched. */
-  | 'never_dispatched';
+  | 'never_dispatched'
+  /**
+   * A System Admin decided an `UNRESOLVED` hold was never spent (hold spec §4.2). The ONLY proof
+   * that is a human decision rather than machine evidence: it carries the actor and the reason, it
+   * is fenced on `status = 'UNRESOLVED'` instead of the owner token (the owner is gone — that is
+   * why the hold is stranded), and late evidence still lands in FULL through `settled-anomaly`.
+   */
+  | 'operator_released';
 
 export type ReservedAiBudgetStep = {
   id: string;
@@ -212,6 +225,11 @@ export function decideAiBudgetStep(input: {
  * The lazy sweep (ADR 0013 §6) — no cron, no worker. It runs inside the reserve transaction for
  * THIS company-month only, before the sums, so a crashed owner's holds are resolved by the next
  * call that needs the money rather than by a timer that could free a live one.
+ *
+ * Exported through {@link sweepAiBudgetCompanyMonth} because the operator's reconciliation read has
+ * to run the SAME sweep before listing (hold spec §2): a company with no new traffic would
+ * otherwise show `DISPATCHED` rows that admission has already decided are `UNRESOLVED`. Idempotent
+ * — it only moves rows whose own timestamps are already past the thresholds.
  */
 async function sweepCompanyMonth(tx: any, companyId: string, monthKey: string, now: Date): Promise<void> {
   await tx.aiBudgetReservation.updateMany({
@@ -224,6 +242,32 @@ async function sweepCompanyMonth(tx: any, companyId: string, monthKey: string, n
     where: { companyId, monthKey, status: 'DISPATCHED', dispatchedAt: { lt: new Date(now.getTime() - AI_BUDGET_DISPATCHED_SWEEP_MS) } },
     data: { status: 'UNRESOLVED' },
   });
+}
+
+/**
+ * Runs the admission sweep for one company-month from OUTSIDE a reserve, under the same
+ * `ai-budget:<company>:<month>` lock and in the same canonical order (it takes only the last lock,
+ * exactly as `settle` and `cancel` do). Idempotent and safe to call before every operator read.
+ *
+ * Never throws: a sweep that could not run leaves the list showing `DISPATCHED` rows, which is a
+ * stale read, not a wrong decision — and refusing the whole page would be worse.
+ */
+export async function sweepAiBudgetCompanyMonth(
+  prisma: PrismaService,
+  companyId: string,
+  monthKey: string,
+  now = new Date(),
+): Promise<boolean> {
+  try {
+    await prisma.client.$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai-budget:${companyId}:${monthKey}`}))`;
+      await sweepCompanyMonth(tx, companyId, monthKey, now);
+    });
+    return true;
+  } catch (err) {
+    logger.warn({ msg: 'ai.budget.sweep_failed', companyId, monthKey, error: (err as Error).message });
+    return false;
+  }
 }
 
 /**
@@ -287,8 +331,10 @@ export async function reserveAiBudgetStep(
 
       // An actual above its bound closed this scope (spec §12.3). Nothing else may start here
       // until an operator clears the flag; the money already recorded is never clamped.
+      // `breachAcknowledgedAt: null` is what "until an operator clears it" now means (hold spec
+      // §4.2): the breach FACT is kept forever, the acknowledgement is what reopens admission.
       const breached = await tx.aiBudgetReservation.count({
-        where: { companyId: input.companyId, monthKey: input.monthKey, bucket: input.bucket, breach: true },
+        where: { ...UNACKNOWLEDGED_BREACH, companyId: input.companyId, monthKey: input.monthKey, bucket: input.bucket },
       });
       if (breached > 0) {
         return { ok: false as const, reason: 'unavailable' as const, budgetScope: input.bucket as AiBudgetScope, detail: 'invariant_breach' };
@@ -446,6 +492,213 @@ export async function cancelAiBudgetStepIfGatewayUnspent(
   return cancelled;
 }
 
+// ── Operator reconciliation of stranded money (hold spec §4.2) ───────────────────────────────────
+
+/**
+ * What every operator decision carries. `companyId` is the ROUTE parameter and is compared with the
+ * row's own: a reservation id belonging to another tenant must answer "not found", never act.
+ */
+export type AiBudgetOperatorDecision = {
+  reservationId: string;
+  companyId: string;
+  actorUserId: string;
+  requestId: string;
+  /** Already validated by `partnerAdjustmentReason` at the boundary; stored on the row and audited. */
+  reason: string;
+  now?: Date;
+};
+
+export type AiBudgetOperatorOutcome =
+  | { ok: true; status: 'CANCELLED' | 'SETTLED'; chargedSatang: number }
+  /** No such hold in THIS company, or the row is not the kind this action can act on. */
+  | { ok: false; reason: 'not-found' }
+  /** The fence held: another operator (or real evidence) already closed this hold. */
+  | { ok: false; reason: 'already-resolved' }
+  | { ok: false; reason: 'already-acknowledged' }
+  | { ok: false; reason: 'failed' };
+
+/** Audit action strings, passed in so the taxonomy stays in the audit module (`AuditAction`). */
+export type AiBudgetOperatorAudit = { action: string; riskLevel?: 'HIGH' | 'CRITICAL' };
+
+/** The one place an operator decision becomes an `AuditLog` row — inside the deciding transaction,
+ *  so money can never move without its history row (`PartnerAiAdjustmentHistory` reads these). */
+async function writeOperatorAudit(
+  tx: any,
+  input: AiBudgetOperatorDecision,
+  audit: AiBudgetOperatorAudit,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  await tx.auditLog.create({
+    data: {
+      companyId: input.companyId,
+      actorUserId: input.actorUserId,
+      action: audit.action,
+      // `company`, not the reservation: this is the row `partnerAiAdjustmentHistory` reads, and an
+      // operator asking "what was done to this shop's AI credit" must see cap edits and hold
+      // decisions in ONE list. The reservation id travels in the metadata below.
+      targetType: 'company',
+      targetId: input.companyId,
+      requestId: input.requestId,
+      result: 'SUCCESS',
+      riskLevel: audit.riskLevel ?? 'CRITICAL',
+      metadataJson: {
+        source: 'ADMIN_ADJUSTMENT', entryPoint: 'SYSTEM_PARTNER_ADMIN', reason: input.reason,
+        reservationId: input.reservationId, ...metadata,
+      },
+    },
+  });
+}
+
+/** The locator read every operator action starts from. Nothing is DECIDED from it — the row is
+ *  re-read under the lock — it only supplies the lock key and the 404. */
+async function findOperatorHold(prisma: PrismaService, input: AiBudgetOperatorDecision) {
+  return prisma.client.aiBudgetReservation.findUnique({
+    where: { id: input.reservationId },
+    select: {
+      companyId: true, monthKey: true, status: true, bucket: true, stepKind: true,
+      invocationKey: true, upperBoundSatang: true, breach: true, breachAcknowledgedAt: true,
+      pricingSnapshot: true,
+    },
+  }) as Promise<{
+    companyId: string; monthKey: string; status: string; bucket: string; stepKind: string;
+    invocationKey: string; upperBoundSatang: number; breach: boolean; breachAcknowledgedAt: Date | null;
+    pricingSnapshot: unknown;
+  } | null>;
+}
+
+/**
+ * `UNRESOLVED -> CANCELLED` by an operator's audited decision (hold spec §4.2). The held credit is
+ * free immediately and NO usage event is written — this asserts the provider was never paid.
+ *
+ * Fenced on `status = 'UNRESOLVED'` under the company-month lock, so two operators pressing the
+ * button race to exactly one winner and the loser gets `already-resolved`. The owner token is
+ * deliberately NOT required: a stranded hold's owner process is gone, which is why it is stranded.
+ * `cancelAiBudgetStep` keeps its owner fence for the machine proofs (R-05) and this is a sibling
+ * path rather than a weakening of it.
+ *
+ * If real evidence for this invocation arrives later it is still recorded IN FULL through the
+ * `settled-anomaly` path (ADR 0013 §11.6) with a HIGH event, so a wrong release can overshoot the
+ * month's cap but can never turn real provider cost into zero.
+ */
+export async function releaseAiBudgetHoldByOperator(
+  prisma: PrismaService,
+  input: AiBudgetOperatorDecision,
+  audit: AiBudgetOperatorAudit,
+): Promise<AiBudgetOperatorOutcome> {
+  const now = input.now ?? new Date();
+  try {
+    const row = await findOperatorHold(prisma, input);
+    if (!row || row.companyId !== input.companyId) return { ok: false, reason: 'not-found' };
+    return await prisma.client.$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai-budget:${row.companyId}:${row.monthKey}`}))`;
+      const { count } = await tx.aiBudgetReservation.updateMany({
+        where: { id: input.reservationId, companyId: input.companyId, status: 'UNRESOLVED' },
+        data: {
+          status: 'CANCELLED',
+          evidenceJson: {
+            proof: 'operator_released' satisfies AiBudgetCancelProof,
+            cancelledAt: now.toISOString(),
+            operator: { userId: input.actorUserId, reason: input.reason },
+          },
+        },
+      });
+      if (count !== 1) return { ok: false as const, reason: 'already-resolved' as const };
+      await writeOperatorAudit(tx, input, audit, {
+        monthKey: row.monthKey, bucket: row.bucket, stepKind: row.stepKind,
+        releasedSatang: row.upperBoundSatang, proof: 'operator_released',
+        fromCreditHoldStatus: 'UNRESOLVED', toCreditHoldStatus: 'CANCELLED',
+      });
+      return { ok: true as const, status: 'CANCELLED' as const, chargedSatang: 0 };
+    });
+  } catch (err) {
+    logger.warn({ msg: 'ai.budget.operator_release_failed', reservationId: input.reservationId, error: (err as Error).message });
+    return { ok: false, reason: 'failed' };
+  }
+}
+
+/**
+ * `breach = true, breachAcknowledgedAt IS NULL -> acknowledged` (hold spec §4.2). Touches no money:
+ * the recorded actual and the `breach` fact both stay exactly as they are. What changes is that
+ * {@link readAiBudgetMonthSnapshot} and the admission check stop counting this row, so the scope
+ * reopens — the "until an operator clears it" ADR 0013 §11.6 promised and never had a surface for.
+ */
+export async function acknowledgeAiBudgetBreach(
+  prisma: PrismaService,
+  input: AiBudgetOperatorDecision,
+  audit: AiBudgetOperatorAudit,
+): Promise<AiBudgetOperatorOutcome> {
+  const now = input.now ?? new Date();
+  try {
+    const row = await findOperatorHold(prisma, input);
+    if (!row || row.companyId !== input.companyId || !row.breach) return { ok: false, reason: 'not-found' };
+    return await prisma.client.$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai-budget:${row.companyId}:${row.monthKey}`}))`;
+      const { count } = await tx.aiBudgetReservation.updateMany({
+        where: { id: input.reservationId, companyId: input.companyId, breach: true, breachAcknowledgedAt: null },
+        data: { breachAcknowledgedAt: now, breachAcknowledgedByUserId: input.actorUserId },
+      });
+      if (count !== 1) return { ok: false as const, reason: 'already-acknowledged' as const };
+      await writeOperatorAudit(tx, input, audit, {
+        monthKey: row.monthKey, bucket: row.bucket, stepKind: row.stepKind,
+        boundSatang: row.upperBoundSatang,
+        fromCreditBreachAcknowledged: false, toCreditBreachAcknowledged: true,
+      });
+      return { ok: true as const, status: 'SETTLED' as const, chargedSatang: 0 };
+    });
+  } catch (err) {
+    logger.warn({ msg: 'ai.budget.operator_ack_failed', reservationId: input.reservationId, error: (err as Error).message });
+    return { ok: false, reason: 'failed' };
+  }
+}
+
+/**
+ * `UNRESOLVED -> SETTLED` at the hold's OWN declared upper bound (hold spec §4.2): the operator has
+ * decided the provider probably was paid and the conservative number is the honest one.
+ *
+ * It goes through {@link settleAiBudgetStep} rather than writing its own rows, so the money lands
+ * through the one writer that owns the `invocationKey` fence, the fixed aggregate row order and the
+ * pinned month. That is also what makes a double charge impossible: the second attempt finds the
+ * row no longer `UNRESOLVED`.
+ */
+export async function chargeAiBudgetHoldAtBound(
+  prisma: PrismaService,
+  input: AiBudgetOperatorDecision,
+  audit: AiBudgetOperatorAudit,
+): Promise<AiBudgetOperatorOutcome> {
+  const row = await findOperatorHold(prisma, input);
+  if (!row || row.companyId !== input.companyId) return { ok: false, reason: 'not-found' };
+  const result = await settleAiBudgetStep(prisma, {
+    invocationKey: row.invocationKey,
+    // Zero tokens on purpose: nothing was measured. The cost is the reservation's own bound, which
+    // `settleAiBudgetStep` reads from the row — never from these counters.
+    entry: {
+      tag: 'ai.credit_hold.charged_at_bound', modelId: operatorChargeModelId(row), ok: true,
+      inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0,
+      durationMs: 0, usageBasis: 'OPERATOR_CHARGED_AT_BOUND',
+    },
+    meta: { sourceRoute: 'operator-credit-hold', requestId: input.requestId },
+    ...(input.now ? { now: input.now } : {}),
+    operator: { chargeAtBound: true, decision: input, audit },
+  });
+  if (result === 'settled') return { ok: true, status: 'SETTLED', chargedSatang: row.upperBoundSatang };
+  if (result === 'unknown-invocation') return { ok: false, reason: 'not-found' };
+  if (result === 'operator-hold-not-unresolved' || result === 'duplicate') return { ok: false, reason: 'already-resolved' };
+  return { ok: false, reason: 'failed' };
+}
+
+/**
+ * `AiUsageEvent.modelId` is NOT NULL, and the model the invocation was PRICED for is the honest
+ * answer: it is the model that would have run, the prices are the ones the bound was computed from,
+ * and `usageBasis` already says the number is an operator decision rather than a measurement. Only
+ * an unreadable snapshot falls back to naming the decision itself.
+ */
+function operatorChargeModelId(row: { stepKind: string; pricingSnapshot: unknown }): string {
+  const snapshot = (row.pricingSnapshot ?? {}) as { modelId?: unknown };
+  return typeof snapshot.modelId === 'string' && snapshot.modelId !== ''
+    ? snapshot.modelId
+    : `operator:charged-at-bound:${row.stepKind}`;
+}
+
 export type SettleAiBudgetStepResult =
   | 'settled'
   /** An event already carries this invocation key — the fence held, nothing was billed twice. */
@@ -462,6 +715,8 @@ export type SettleAiBudgetStepResult =
    * reason to drop the usage (spec §12.6: real cost must not become zero).
    */
   | 'settled-anomaly'
+  /** Operator mode only: the hold this decision named is no longer `UNRESOLVED` (hold spec §4.2). */
+  | 'operator-hold-not-unresolved'
   | 'failed';
 
 export type SettleAiBudgetStepInput = {
@@ -469,6 +724,15 @@ export type SettleAiBudgetStepInput = {
   entry: AiUsageEntry;
   meta: { sourceRoute: string; requestId?: string; requestKind?: AiRequestKind };
   now?: Date;
+  /**
+   * The operator "charge at the declared bound" decision (hold spec §4.2). Present ⇒ the cost is
+   * the reservation's OWN `upperBoundSatang` instead of a price computed from the evidence, the row
+   * is fenced on `status = 'UNRESOLVED'`, the event is a `COST_ADJUSTMENT` (so it is money without
+   * a model call, exactly like a correction), and the audit row is written in THIS transaction.
+   *
+   * Absent ⇒ every byte of the machine settlement path below behaves as before.
+   */
+  operator?: { chargeAtBound: true; decision: AiBudgetOperatorDecision; audit: AiBudgetOperatorAudit };
 };
 
 /**
@@ -505,6 +769,14 @@ export async function settleAiBudgetStep(
       const reservation = await tx.aiBudgetReservation.findUnique({ where: { invocationKey: input.invocationKey } });
       if (!reservation) return 'unknown-invocation' as const;
 
+      const operator = input.operator;
+      // An operator decision is fenced BEFORE the duplicate check, because "someone already closed
+      // this hold" must be a refusal the operator sees (409), never a silent success.
+      if (operator) {
+        if (reservation.companyId !== operator.decision.companyId) return 'unknown-invocation' as const;
+        if (reservation.status !== 'UNRESOLVED') return 'operator-hold-not-unresolved' as const;
+      }
+
       const already = await tx.aiUsageEvent.findUnique({ where: { invocationKey: input.invocationKey }, select: { id: true } });
       if (already || reservation.status === 'SETTLED') return 'duplicate' as const;
       // `DISPATCHED` is the normal case and `UNRESOLVED` is late evidence closing a hold nobody
@@ -516,7 +788,17 @@ export async function settleAiBudgetStep(
       const snapshot = (reservation.pricingSnapshot ?? {}) as { thbPerUsd?: unknown; thbPerUsdSource?: unknown };
       const thbPerUsd = Number(snapshot.thbPerUsd);
       if (!Number.isFinite(thbPerUsd) || thbPerUsd <= 0) return 'invalid-state' as const;
-      const { costSatang } = computeCostSatang(input.entry, thbPerUsd);
+      // The operator charged the DECLARED bound, which is the number this hold has been holding all
+      // along — never a price recomputed from the zero counters the decision carries.
+      const costSatang = operator ? reservation.upperBoundSatang : computeCostSatang(input.entry, thbPerUsd).costSatang;
+      // Money without a provider call, exactly like an audited cost correction: `COST_ADJUSTMENT`
+      // is what keeps it out of `calls` and out of `coverage` in the D1 breakdown while its cost
+      // still reconciles with the month total (hold spec J-07).
+      const eventKind = operator ? 'COST_ADJUSTMENT' : 'MODEL_CALL';
+      const callCount = operator ? 0 : 1;
+      const usageBasis = operator
+        ? 'OPERATOR_CHARGED_AT_BOUND'
+        : normalizeUsageBasis((input.entry as { usageBasis?: unknown }).usageBasis);
 
       await tx.aiUsageEvent.create({
         data: {
@@ -530,8 +812,8 @@ export async function settleAiBudgetStep(
           // time, so a gateway-driven settlement is never UNKNOWN in the D1 breakdown.
           requestKind: input.meta.requestKind ?? reservation.requestKind ?? null,
           budgetBucket: reservation.bucket,
-          usageBasis: normalizeUsageBasis((input.entry as { usageBasis?: unknown }).usageBasis),
-          eventKind: 'MODEL_CALL', pricingSnapshot: buildPricingSnapshot(input.entry, thbPerUsd, costSatang),
+          usageBasis,
+          eventKind, pricingSnapshot: buildPricingSnapshot(input.entry, thbPerUsd, costSatang),
           invocationKey: input.invocationKey,
         },
       });
@@ -547,30 +829,42 @@ export async function settleAiBudgetStep(
       // The PINNED month, never the clock's: a chain that crosses Bangkok midnight still lands here.
       await tx.companyAiMonthlyUsage.upsert({
         where: { companyId_monthKey: { companyId: reservation.companyId, monthKey: reservation.monthKey } },
-        create: { companyId: reservation.companyId, monthKey: reservation.monthKey, callCount: 1, ...delta },
+        create: { companyId: reservation.companyId, monthKey: reservation.monthKey, callCount, ...delta },
         update: {
-          costSatang: { increment: delta.costSatang }, callCount: { increment: 1 },
+          costSatang: { increment: delta.costSatang }, callCount: { increment: callCount },
           inputTokens: { increment: delta.inputTokens }, outputTokens: { increment: delta.outputTokens },
           cacheReadInputTokens: { increment: delta.cacheReadInputTokens },
           cacheWriteInputTokens: { increment: delta.cacheWriteInputTokens },
         },
       });
-      await upsertBucketUsage(tx, reservation.companyId, reservation.monthKey, reservation.bucket, costSatang, 1);
+      await upsertBucketUsage(tx, reservation.companyId, reservation.monthKey, reservation.bucket, costSatang, callCount);
 
       // No clamp, ever. The FULL actual is already recorded above; this only closes the scope.
+      // An operator charge lands exactly ON the bound, so this decision can never open a breach.
       const breached = costSatang > reservation.upperBoundSatang;
       await tx.aiBudgetReservation.update({
         where: { id: reservation.id },
         data: {
           status: 'SETTLED', settledCostSatang: costSatang, settledAt: now, breach: breached,
-          usageBasis: normalizeUsageBasis((input.entry as { usageBasis?: unknown }).usageBasis),
+          usageBasis,
           evidenceJson: { tag: input.entry.tag, modelId: input.entry.modelId, ok: input.entry.ok,
             inputTokens: input.entry.inputTokens, outputTokens: input.entry.outputTokens,
             cacheReadInputTokens: input.entry.cacheReadInputTokens, cacheWriteInputTokens: input.entry.cacheWriteInputTokens,
             // What the row was when real evidence arrived, so reconciliation can see it.
-            ...(anomalous ? { anomaly: { previousStatus: reservation.status } } : {}) },
+            ...(anomalous ? { anomaly: { previousStatus: reservation.status } } : {}),
+            // Who decided, and why — the row itself says it was not measured.
+            ...(operator ? { operator: { action: 'charge_at_bound', userId: operator.decision.actorUserId, reason: operator.decision.reason } } : {}) },
         },
       });
+      // In the SAME transaction as the money: an operator's money decision may never commit
+      // without its audit (and therefore history) row.
+      if (operator) {
+        await writeOperatorAudit(tx, operator.decision, operator.audit, {
+          monthKey: reservation.monthKey, bucket: reservation.bucket, stepKind: reservation.stepKind,
+          chargedSatang: costSatang, usageBasis: 'OPERATOR_CHARGED_AT_BOUND',
+          fromCreditHoldStatus: 'UNRESOLVED', toCreditHoldStatus: 'SETTLED',
+        });
+      }
       if (breached) {
         breach = { companyId: reservation.companyId, monthKey: reservation.monthKey, bucket: reservation.bucket,
           reservationId: reservation.id, boundSatang: reservation.upperBoundSatang, actualSatang: costSatang };
@@ -663,7 +957,7 @@ export async function readAiBudgetMonthSnapshot(
     _sum: { upperBoundSatang: true },
     _count: { _all: true },
   });
-  const breached = await tx.aiBudgetReservation.count({ where: { companyId, monthKey, breach: true } });
+  const breached = await tx.aiBudgetReservation.count({ where: { ...UNACKNOWLEDGED_BREACH, companyId, monthKey } });
   const spentOf = (bucket: string) => buckets.find((b: any) => b.bucket === bucket)?.costSatang ?? 0;
   const heldOf = (bucket: string) => holds.filter((h: any) => h.bucket === bucket)
     .reduce((sum: number, h: any) => sum + (h._sum.upperBoundSatang ?? 0), 0);
@@ -674,4 +968,82 @@ export async function readAiBudgetMonthSnapshot(
       .reduce((sum: number, h: any) => sum + (h._count?._all ?? 0), 0),
     breach: breached > 0,
   };
+}
+
+/**
+ * The operator's reconciliation list for one company and a set of pinned months (hold spec §4.1).
+ *
+ * Two kinds of row, read in one query because they are the same table and the operator triages them
+ * together: an `UNRESOLVED` hold (money held with no outcome) and an UNACKNOWLEDGED `breach` (money
+ * recorded above its bound, closing a scope). Newest first.
+ *
+ * Money, ids, timestamps and declared kinds only — never a prompt, a message or a LINE identifier.
+ * The invocation key is shortened here rather than in the DTO mapper so the full execution identity
+ * never leaves this file.
+ */
+export type AiBudgetCreditHoldRow = {
+  id: string;
+  status: string;
+  kind: 'UNRESOLVED_HOLD' | 'BREACH';
+  stepKind: string;
+  bucket: string;
+  sourceRoute: string;
+  requestKind: string | null;
+  upperBoundSatang: number;
+  settledCostSatang: number | null;
+  monthKey: string;
+  createdAt: Date;
+  dispatchedAt: Date | null;
+  invocationKeyShort: string;
+};
+
+export async function listAiBudgetCreditHolds(
+  prisma: PrismaService,
+  companyId: string,
+  monthKeys: string[],
+): Promise<AiBudgetCreditHoldRow[]> {
+  const rows = await prisma.client.aiBudgetReservation.findMany({
+    where: {
+      companyId,
+      monthKey: { in: monthKeys },
+      OR: [{ status: 'UNRESOLVED' }, { ...UNACKNOWLEDGED_BREACH }],
+    },
+    select: {
+      id: true, status: true, stepKind: true, bucket: true, sourceRoute: true, requestKind: true,
+      upperBoundSatang: true, settledCostSatang: true, monthKey: true, createdAt: true,
+      dispatchedAt: true, invocationKey: true, breach: true, breachAcknowledgedAt: true,
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    // A company-month holds tens of rows at worst (one per invocation), and only the stranded ones
+    // land here. The cap is a guard against a pathological month, not a pagination design.
+    take: 200,
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    status: row.status,
+    // A row can be both; the breach is the one that closes a scope, so it wins the label.
+    kind: row.breach && row.breachAcknowledgedAt === null ? 'BREACH' : 'UNRESOLVED_HOLD',
+    stepKind: row.stepKind,
+    bucket: row.bucket,
+    sourceRoute: row.sourceRoute,
+    requestKind: row.requestKind,
+    upperBoundSatang: row.upperBoundSatang,
+    settledCostSatang: row.settledCostSatang,
+    monthKey: row.monthKey,
+    createdAt: row.createdAt,
+    dispatchedAt: row.dispatchedAt,
+    invocationKeyShort: shortenInvocationKey(row.invocationKey),
+  }));
+}
+
+/**
+ * `<companyId>#<attemptHash>#<stepKind>#<ordinal>` shortened to something an operator can read out
+ * loud and match against a log line, without shipping the full fence value to a browser. The
+ * company segment is dropped (the page is already scoped to it) and the attempt hash is truncated.
+ */
+export function shortenInvocationKey(invocationKey: string): string {
+  const parts = invocationKey.split('#');
+  if (parts.length < 4) return invocationKey.slice(0, 24);
+  const [, attempt, stepKind, ordinal] = parts as [string, string, string, string];
+  return `${attempt.slice(0, 8)}…#${stepKind}#${ordinal}`;
 }
