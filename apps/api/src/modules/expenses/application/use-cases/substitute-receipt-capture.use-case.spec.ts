@@ -7,7 +7,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { expenseEvidenceFingerprint } from '@watchdog-bms/contracts';
-import { PrepareSubstituteReceiptUseCase, PreviewSubstituteReceiptUseCase } from './substitute-receipt.use-case';
+import {
+  ApproveSubstituteReceiptUseCase,
+  CertifySubstituteReceiptUseCase,
+  PrepareSubstituteReceiptUseCase,
+  PreviewSubstituteReceiptUseCase,
+} from './substitute-receipt.use-case';
 import {
   captureCertificateGate,
   captureDerivedNextAction,
@@ -281,6 +286,89 @@ describe('substitute receipt on a derived capture source', () => {
     assert.equal(wholeSheet.includes('ตามการจัดส่วนที่ตรวจแล้ว'), false);
     // The share statement never claims the payment evidence shows the company amount (§12.2/A17).
     assert.equal(/สลิป|หลักฐานธนาคาร/.test(captureAllocationStatement({ captureAllocation: snapshotWith().captureAllocation! })!), false);
+  });
+
+  /**
+   * W07-int: prepare was the only place the capture gate ran. Everything after it checked that the
+   * EXPENSE had not moved (`assertPreparedExpenseUnchanged`), which cannot see the GROUP accept a
+   * different allocation — so a certificate could still be previewed, signed and approved stating a
+   * division the group no longer records.
+   */
+  describe('the gate runs again at every step after prepare', () => {
+    const preparedEvidence = (over: Record<string, unknown> = {}) => ({
+      id: 'sub-a', companyId: 'co-1', expenseId: 'exp-a', branchId: null, version: 1, status: 'PREPARED',
+      documentNumber: 'SRC-EXP-A-V1', snapshotJson: null, fundingSource: 'PERSONAL_ADVANCE',
+      originalSourceDocumentType: 'MARKETPLACE_ORDER_SCREENSHOT', reasonCode: 'PAYEE_CANNOT_ISSUE',
+      missingReceiptReason: 'ร้านไม่ออกใบเสร็จ', businessPurpose: 'ซื้อของใช้สำนักงาน',
+      paymentEvidenceAttachmentIds: ['att-slip'], supportingAttachmentIds: ['att-source'],
+      paymentDate: now, paymentMethod: 'BANK_TRANSFER', note: null, payerUserId: 'payer-1', payerName: 'สมชาย',
+      payeeName: 'ร้านเอ', payeeAddress: null, payeeTaxId: null, expenseUpdatedAtAtPreparation: now,
+      correctionOfEvidenceId: null, signatureMode: 'DIGITAL', updatedAt: now,
+      certifiedArtifactChecksumSha256: 'certified-artifact', payerSignatureAttachmentId: 'sig-1',
+      payerSignatureChecksumSha256: 'sig-checksum',
+      ...over,
+    } as any);
+    /** The group has accepted a DIFFERENT allocation since the certificate was prepared. */
+    const supersededRepo = (evidence: any) => ({
+      ...repoFor(derivedExpense(), context({
+        group: { handoffState: 'ACTIVE', acceptedAllocationId: 'alloc-2', fundingRoute: 'EMPLOYEE' },
+      })),
+      findSubstituteEvidence: async () => evidence,
+    });
+    const superseded = (error: any) => error.getStatus() === 409
+      && code(error) === 'substitute_capture_allocation_superseded';
+
+    it('refuses the preview', async () => {
+      await assert.rejects(
+        () => new PreviewSubstituteReceiptUseCase(supersededRepo(preparedEvidence()) as any)
+          .execute({ ...ctx('payer-1'), userId: 'payer-1' }, 'exp-a', 'sub-a', {}),
+        superseded,
+      );
+    });
+
+    it('refuses the signature', async () => {
+      await assert.rejects(
+        () => new CertifySubstituteReceiptUseCase(
+          supersededRepo(preparedEvidence()) as any, {} as any, audit, notification, { enqueue: async () => true } as any,
+        ).execute({ ...ctx('payer-1'), userId: 'payer-1' }, 'exp-a', 'sub-a', {
+          certificationAcknowledged: true, previewChecksumSha256: 'whatever',
+          expectedEvidenceUpdatedAt: now.toISOString(),
+        } as any),
+        superseded,
+      );
+    });
+
+    it('refuses the approval — the last gate before the document is real', async () => {
+      const evidence = preparedEvidence({ status: 'PAYER_CERTIFIED', snapshotJson: { schemaVersion: 2 } });
+      await assert.rejects(
+        () => new ApproveSubstituteReceiptUseCase(
+          supersededRepo(evidence) as any, {} as any, audit, { enqueue: async () => true } as any,
+        ).execute({ ...ctx('approver-1'), permissions: ['expense.review', 'expense.confirm'] }, 'exp-a', 'sub-a', {
+          approvalAcknowledged: true, certifiedArtifactChecksumSha256: 'certified-artifact',
+          expectedEvidenceUpdatedAt: now.toISOString(),
+        } as any),
+        superseded,
+      );
+    });
+
+    it('still lets an unchanged allocation through all three', async () => {
+      const repo = (evidence: any) => ({ ...repoFor(derivedExpense(), context()), findSubstituteEvidence: async () => evidence });
+      // Preview is the one that completes without any signature machinery.
+      const preview = await new PreviewSubstituteReceiptUseCase(repo(preparedEvidence()) as any)
+        .execute({ ...ctx('payer-1'), userId: 'payer-1' }, 'exp-a', 'sub-a', {});
+      assert.ok(preview.previewChecksumSha256);
+      // Certify and approve get past the gate and stop at their own next check, not at this one.
+      await assert.rejects(
+        () => new CertifySubstituteReceiptUseCase(
+          repo(preparedEvidence()) as any, {} as any, audit, notification, { enqueue: async () => true } as any,
+        ).execute({ ...ctx('payer-1'), userId: 'payer-1' }, 'exp-a', 'sub-a', {
+          certificationAcknowledged: true, previewChecksumSha256: 'a-stale-preview',
+          expectedEvidenceUpdatedAt: now.toISOString(),
+        } as any),
+        (error: any) => code(error) !== 'substitute_capture_allocation_superseded'
+          && /preview no longer matches/.test(error.message),
+      );
+    });
   });
 
   it('reports what each shop is waiting for, so a retry continues with B only (A40)', () => {
