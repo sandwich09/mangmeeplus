@@ -382,6 +382,8 @@ export type ExpenseDetail = ExpenseSummary & {
   taxEvidenceReasonCode: TaxEvidenceReasonCode | null;
   substituteReceiptGeneratedAt: string | null;
   substituteReceiptEvidence: SubstituteReceiptEvidenceSummary | null;
+  /** Appendix §5: set only on a derived source of a capture group; absent on everything else. */
+  captureGroup?: import('@watchdog-bms/contracts').ExpenseCaptureLineage | null;
   aiVerifiedFieldsJson: Record<string, unknown> | null;
   aiVerificationSummaryJson: Record<string, unknown> | null;
   vatCaptureSnapshotJson: ExpenseVatCaptureSnapshotV1 | null;
