@@ -287,9 +287,14 @@ export type BillingScopeChange = { approvalMode?: BillingApprovalMode | null; id
   current: BillingOperatorScopeView | null; expiresAt: string; scopeExpiresAt: string | null; reason: string; observedAt: string | null;
   allowedActions: ('submit' | 'approve' | 'cancel')[] };
 
-/** `AI_OCR_BUDGET_REACHED` is the SPLIT-only case (spec §11.4/R-10): the company's total AI money is
- *  not gone, but the share allocated to reading documents is. Under SHARED it can never appear. */
-export type BillingReceiptReadWarning = 'OCR_DISABLED'|'OCR_LIMIT_REACHED'|'AI_BUDGET_REACHED'|'AI_OCR_BUDGET_REACHED';
+/** `AI_OCR_BUDGET_REACHED` is the SPLIT-only case (spec §11.4/R-10): the company's total AI credit is
+ *  not gone, but the share allocated to reading documents is. Under SHARED it can never appear.
+ *
+ *  `AI_CREDIT_HOLDS_PENDING` is additive (credit-wording spec §5.3): AI jobs are running or their
+ *  provider outcome is still unknown, so credit is held and the usable balance can be lower than the
+ *  numbers this console shows. Words only — like every member here, it carries no money. It is
+ *  orthogonal to the three above and may appear with any of them, under SHARED and SPLIT alike. */
+export type BillingReceiptReadWarning = 'OCR_DISABLED'|'OCR_LIMIT_REACHED'|'AI_BUDGET_REACHED'|'AI_OCR_BUDGET_REACHED'|'AI_CREDIT_HOLDS_PENDING';
 export type BillingReceiptAdjustmentInput = {type:'GRANT_RECEIPTS'|'REVOKE_RECEIPTS';units?:number;expiresAt?:string;grantId?:string;sourceHash:string;reason:string};
 export type BillingAdminReceiptGrant = {id:string;units:number;used:number;remaining:number;expiresAt:string;revokedAt:string|null;active:boolean};
 export type BillingReceiptAdjustmentOperation = BillingOperationView & {companyName:string;previewHash:string;units:number;grantExpiresAt:string;
@@ -300,9 +305,13 @@ export type BillingReceiptAdjustments = {companyId:string;companyName:string;sou
   remaining:number|null;canCreate:boolean;blockedReason:string|null;readWarnings:BillingReceiptReadWarning[];items:BillingReceiptAdjustmentOperation[];nextCursor:string|null};
 
 /** `aiOcrBudgetReached` is additive and SPLIT-only (spec §11.4): the total money shown below is not
- *  gone, but the share allocated to reading documents is — so "งบ AI … ใช้แล้ว …" alone would read
- *  as though the remainder were available for receipts. Absent under SHARED, as it is today. */
-export type BillingPlanAdjustmentUnchanged = {remainingReceipts:number;termEndsAt:string;nextChargeAt:string|null;ocrEnabled:boolean;ocrMonthlyLimit:number|null;aiBudgetSatang:number;aiUsedSatang:number;aiOcrBudgetReached?:boolean};
+ *  gone, but the share allocated to reading documents is — so "เครดิต AI … ใช้แล้ว …" alone would
+ *  read as though the remainder were available for receipts. Absent under SHARED, as it is today.
+ *
+ *  `aiReservedSatang`/`aiUnresolvedHolds` are additive too (credit-wording spec §5.3) and present
+ *  only when non-zero, so a company with no hold keeps today's panel byte for byte. This surface
+ *  already shows AI money to a System Admin; no owner-facing view reads this type. */
+export type BillingPlanAdjustmentUnchanged = {remainingReceipts:number;termEndsAt:string;nextChargeAt:string|null;ocrEnabled:boolean;ocrMonthlyLimit:number|null;aiBudgetSatang:number;aiUsedSatang:number;aiOcrBudgetReached?:boolean;aiReservedSatang?:number;aiUnresolvedHolds?:number};
 export type BillingPlanAdjustmentInput = {type:'GRANT_OVERRIDE'|'REVOKE_OVERRIDE'|'GRANT_FREE_DAYS'|'CHANGE_COLLECTION';collectionAction?:'PAUSE'|'RESUME';resumesAt?:string;days?:number;tierKey?:'STARTER_249'|'BASIC_499'|'PRO_999';
   branchLimit?:number;employeeLimit?:number;expiresAt?:string;overrideId?:string;sourceHash:string;reason:string};
 export type BillingPlanAdjustmentOperation = BillingOperationView & {companyName:string;previewHash:string;before:CompanyPlanCapacity;after:CompanyPlanCapacity;

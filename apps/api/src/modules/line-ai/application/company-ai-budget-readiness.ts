@@ -44,6 +44,13 @@ export type AiBudgetReadiness = {
   /** Holds whose provider outcome is still unknown; they keep counting until evidence closes them. */
   unresolvedHolds: number;
   /**
+   * Credit held by live reservations this company-month, per scope, straight from the snapshot this
+   * function already reads. `TOTAL` is CHAT + OCR. Reported so a consumer that needs to say "credit
+   * is held" (the billing previews, §5.3 of the credit-wording spec) does not read the snapshot a
+   * second time and risk describing a different instant than the scope states above.
+   */
+  reserved: { TOTAL: number; CHAT: number; OCR: number };
+  /**
    * An actual settled above its reserved bound somewhere in this company-month. The snapshot counts
    * it company-wide and cannot attribute it to one bucket, so it is reported beside the scopes
    * rather than folded into them — the admin page is where an operator resolves it.
@@ -90,7 +97,8 @@ export async function readAiBudgetReadiness(
     return 'OK';
   };
   const total = scope(input.totalSatang, snapshot.spent.TOTAL, snapshot.reserved.TOTAL);
-  const base = { mode: policy.mode, unresolvedHolds: snapshot.unresolvedHolds, breach: snapshot.breach };
+  const base = { mode: policy.mode, unresolvedHolds: snapshot.unresolvedHolds, breach: snapshot.breach,
+    reserved: snapshot.reserved };
 
   // Fail closed, exactly like `reserveAiBudgetStep`: a policy we cannot read is not a SHARED policy,
   // and nothing may start in any scope until an operator fixes it.

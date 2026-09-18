@@ -43,7 +43,7 @@ export function signupOpsAlertTitleTh(kind: SignupOpsAlertKind): string {
     case 'provisioning_failed':
       return 'เปิดร้านให้ลูกค้าไม่สำเร็จ';
     case 'trial_budget_exhausted':
-      return 'ร้านทดลองใช้งบ AI หมดหลายร้านวันนี้';
+      return 'ร้านทดลองใช้เครดิต AI หมดหลายร้านวันนี้';
     case 'line_push_stuck':
       return 'ข้อความ พร้อมใช้แล้ว ค้างส่งไม่ออก';
     case 'support_unreachable':
@@ -60,7 +60,7 @@ export function signupOpsAlertBodyTh(kind: SignupOpsAlertKind): string {
     case 'provisioning_failed':
       return 'มีคำขอที่เปิดร้านไม่สำเร็จ เปิดแท็บ มีปัญหา ในคิวเพื่อกดลองใหม่ค่ะ';
     case 'trial_budget_exhausted':
-      return 'ร้านทดลองที่ใช้งบ AI ครบแล้วเกินเกณฑ์ที่ตั้งไว้ เปิดคิวเพื่อตรวจสอบค่ะ';
+      return 'ร้านทดลองที่ใช้เครดิต AI หมดแล้วเกินเกณฑ์ที่ตั้งไว้ เปิดคิวเพื่อตรวจสอบค่ะ';
     case 'line_push_stuck':
       return 'มีร้านที่ยังไม่ได้รับข้อความว่าเปิดร้านให้แล้ว อาจถึงโควตาข้อความของ OA เปิดคิวเพื่อตรวจสอบค่ะ';
     case 'support_unreachable':

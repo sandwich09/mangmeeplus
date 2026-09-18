@@ -1376,7 +1376,7 @@ function AiUsageBreakdown({ usage }: { usage: PartnerAiUsageDto }) {
       )}
 
       <div>
-        <p className="text-xs font-medium text-gray-500">งบตามส่วน</p>
+        <p className="text-xs font-medium text-gray-500">เครดิตตามส่วน</p>
         <ul className="mt-1">
           {breakdown.byBudgetBucket.map((row) => (
             <AiMeasureRow key={row.budgetBucket} label={AI_BUDGET_BUCKET_LABELS[row.budgetBucket] ?? row.budgetBucket} measures={row} />
@@ -1443,7 +1443,7 @@ function AiBudgetPolicyPanel({
   return (
     <section className="space-y-4 border-t-2 border-gray-100 pt-5" aria-labelledby="ai-budget-policy-title">
       <div>
-        <h3 id="ai-budget-policy-title" className="text-base font-bold text-gray-900">แยกเพดานงบ AI ของบริษัทนี้</h3>
+        <h3 id="ai-budget-policy-title" className="text-base font-bold text-gray-900">แยกเพดานเครดิต AI ของบริษัทนี้</h3>
         <p className="mt-1 text-sm leading-6 text-gray-600">
           ใช้อยู่: <strong className="font-bold text-gray-900">{AI_BUDGET_MODE_LABELS[policy.mode] ?? policy.mode}</strong>
           {policy.source === 'PENDING_ACTIVATED' && ' · เริ่มมีผลแล้วตามที่ตั้งไว้ล่วงหน้า'}
@@ -1493,25 +1493,25 @@ function AiBudgetPolicyPanel({
         </table>
       </div>
       <p className="text-xs leading-5 text-gray-500">
-        “{AI_BUDGET_RESERVED_NOTE}” คือเงินที่ระบบกันไว้ให้งานที่กำลังเรียก AI อยู่ ยังไม่ใช่ค่าใช้จ่ายจริง
+        “{AI_BUDGET_RESERVED_NOTE}” คือเครดิตที่ระบบกันไว้ให้งานที่กำลังเรียก AI อยู่ ยังไม่ใช่ค่าใช้จ่ายจริง
         และยังไม่นับเป็นจำนวนครั้งที่เรียกโมเดล · เพดานที่ยังไม่ตั้งหมายถึงยังไม่กำหนด ไม่ใช่ไม่จำกัด
       </p>
       {position.unresolvedHolds > 0 && (
         <p data-testid="ai-budget-unresolved" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
-          กำลังตรวจสอบยอดที่จอง {position.unresolvedHolds.toLocaleString('th-TH')} รายการ — ยังนับเป็นเงินที่กันไว้จนกว่าจะได้ผลจริงจากผู้ให้บริการ
+          มี {position.unresolvedHolds.toLocaleString('th-TH')} รายการที่ยังไม่ทราบผลจากผู้ให้บริการ AI — เครดิตส่วนนั้นยังถูกกันไว้จนกว่าจะได้ผลจริง
         </p>
       )}
       {position.breach && (
         <p role="alert" data-testid="ai-budget-breach" className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-900">
-          มีรายการที่ใช้เงินเกินยอดที่จองไว้ ระบบหยุดรับงานใหม่ของส่วนนั้นไว้แล้ว และบันทึกค่าใช้จ่ายจริงไว้ครบ กรุณาตรวจสอบก่อนปรับเพดาน
+          มีรายการที่ใช้เครดิตเกินที่กันไว้ ระบบหยุดรับงานใหม่ของส่วนนั้นไว้แล้ว และบันทึกค่าใช้จ่ายจริงไว้ครบ กรุณาตรวจสอบก่อนปรับเพดาน
         </p>
       )}
 
       {!canEdit ? (
         <p data-testid="ai-budget-read-only" className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm leading-6 text-gray-600">
           {canManage
-            ? 'บริษัทนี้อ่านได้อย่างเดียวตามสถานะบริษัท จึงแก้โหมดหรือเพดานงบ AI ไม่ได้ เปลี่ยนสถานะได้ในหมวดภาพรวม'
-            : 'บัญชีของคุณดูข้อมูลได้ แต่ยังไม่มีสิทธิ์แก้โหมดหรือเพดานงบ AI'}
+            ? 'บริษัทนี้อ่านได้อย่างเดียวตามสถานะบริษัท จึงแก้โหมดหรือเพดานเครดิต AI ไม่ได้ เปลี่ยนสถานะได้ในหมวดภาพรวม'
+            : 'บัญชีของคุณดูข้อมูลได้ แต่ยังไม่มีสิทธิ์แก้โหมดหรือเพดานเครดิต AI'}
         </p>
       ) : (
         <>
@@ -1521,7 +1521,7 @@ function AiBudgetPolicyPanel({
             </p>
           )}
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block text-sm font-bold text-gray-700" htmlFor="ai-budget-mode">โหมดงบ AI
+            <label className="block text-sm font-bold text-gray-700" htmlFor="ai-budget-mode">โหมดเครดิต AI
               <select id="ai-budget-mode" className={`${inputClass} mt-1 min-h-12 text-base`} value={draft.mode}
                 disabled={saving || busy} onChange={(e) => onDraft({ ...draft, mode: e.target.value as AiBudgetDraft['mode'] })}>
                 <option value="SHARED">{AI_BUDGET_MODE_LABELS.SHARED}</option>
@@ -1551,17 +1551,17 @@ function AiBudgetPolicyPanel({
             </label>
           </div>
           <p className="text-xs leading-5 text-gray-500">
-            ผลรวมเพดานต้องไม่เกินงบรวมที่บันทึกไว้ {satangToBaht(usage.budget.effectiveSatang)} · ใส่ 0 เพื่อปิดส่วนนั้น
-            {' · '}งบรวมด้านบนต้องบันทึกก่อน ระบบตรวจกับค่าที่บันทึกแล้วเท่านั้น
+            ผลรวมเพดานต้องไม่เกินเครดิตรวมที่บันทึกไว้ {satangToBaht(usage.budget.effectiveSatang)} · ใส่ 0 เพื่อปิดส่วนนั้น
+            {' · '}เครดิตรวมด้านบนต้องบันทึกก่อน ระบบตรวจกับค่าที่บันทึกแล้วเท่านั้น
           </p>
-          <label className="block text-base">เหตุผลที่ปรับเพดานงบ AI
-            <textarea aria-label="เหตุผลที่ปรับเพดานงบ AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500}
+          <label className="block text-base">เหตุผลที่ปรับเพดานเครดิต AI
+            <textarea aria-label="เหตุผลที่ปรับเพดานเครดิต AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500}
               value={reason} disabled={saving || busy} onChange={(e) => onReason(e.target.value)} />
           </label>
           <button type="button" className={`${btnPrimary} min-h-12 min-w-32 text-base`}
             data-testid="ai-budget-policy-save"
             disabled={saving || busy || !changed} aria-busy={saving} onClick={onSave}>
-            {saving ? 'กำลังบันทึก…' : 'บันทึกเพดานงบ AI'}
+            {saving ? 'กำลังบันทึก…' : 'บันทึกเพดานเครดิต AI'}
           </button>
         </>
       )}
@@ -1633,11 +1633,11 @@ function AiUsageBudgetSection({
   const handleBudgetSave = async () => {
     if(!usage||locked||budgetLoading||ocrLoading||policyLoading)return;
     const reason=partnerAdjustmentReason(budgetReason);
-    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับงบ AI','error');return;}
+    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับเครดิต AI','error');return;}
     const parsed=parseBudgetBahtInput(budgetInput);
     if(!parsed.ok){showToast(parsed.message, 'error');return;}
     const token=generation.current,desired=parsed.monthlyBudgetSatang??usage.budget.defaultSatang;
-    const accepted=await confirm({title:'ตรวจงบ AI ก่อนบันทึก',message:`งบต่อเดือน ${satangToBaht(usage.budget.effectiveSatang)} → ${satangToBaht(desired)} ใช้แล้ว ${satangToBaht(usage.current?.costSatang??0)}${desired<=(usage.current?.costSatang??0)?' หลังบันทึกจะใช้ AI เพิ่มไม่ได้จนกว่าจะเพิ่มงบหรือขึ้นเดือนใหม่':''}\nงบใหม่ใช้กับงานที่เริ่มหลังบันทึก งานที่เริ่มแล้วจะทำจนจบและนับค่าใช้จ่ายตามจริง\nเหตุผล: ${reason}`,confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
+    const accepted=await confirm({title:'ตรวจเครดิต AI ก่อนบันทึก',message:`เครดิตต่อเดือน ${satangToBaht(usage.budget.effectiveSatang)} → ${satangToBaht(desired)} ใช้แล้ว ${satangToBaht(usage.current?.costSatang??0)}${desired<=(usage.current?.costSatang??0)?' หลังบันทึกจะใช้ AI เพิ่มไม่ได้จนกว่าจะเพิ่มเครดิตหรือขึ้นเดือนใหม่':''}\nเครดิตใหม่ใช้กับงานที่เริ่มหลังบันทึก งานที่เริ่มแล้วจะทำจนจบและนับค่าใช้จ่ายตามจริง\nเหตุผล: ${reason}`,confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
     if(!accepted||token!==generation.current)return;
     setBudgetLoading(true);
     try {
@@ -1645,7 +1645,7 @@ function AiUsageBudgetSection({
       if(token!==generation.current)return;
       setUsage(prev=>prev?{...prev,budget:{...prev.budget,overrideSatang:result.monthlyBudgetSatang,effectiveSatang:result.monthlyBudgetSatang??prev.budget.defaultSatang}}:prev);
       setBudgetReason('');onChanged();
-      showToast(result.monthlyBudgetSatang===null?'บันทึกแล้ว บริษัทนี้ใช้งบ AI ตามค่าเริ่มต้นของระบบ':`บันทึกงบ AI ต่อเดือน ${satangToBaht(result.monthlyBudgetSatang)} แล้ว`,'success');
+      showToast(result.monthlyBudgetSatang===null?'บันทึกแล้ว บริษัทนี้ใช้เครดิต AI ตามค่าเริ่มต้นของระบบ':`บันทึกเครดิต AI ต่อเดือน ${satangToBaht(result.monthlyBudgetSatang)} แล้ว`,'success');
     }catch(err){
       if(token!==generation.current)return;
       showToast(apiErrorMessage(err),'error');
@@ -1670,7 +1670,7 @@ function AiUsageBudgetSection({
   ) => {
     if(!usage||locked||policyLoading||budgetLoading||ocrLoading)return;
     const reason=partnerAdjustmentReason(policyReason);
-    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับเพดานงบ AI','error');return;}
+    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับเพดานเครดิต AI','error');return;}
     const token=generation.current;
     setPolicyLoading(true);
     try {
@@ -1695,7 +1695,7 @@ function AiUsageBudgetSection({
     if(!usage||!policyDraft)return;
     // Before the dialog: a confirm that prints "เหตุผล: —" and then refuses after the operator
     // pressed Confirm is a wasted decision.
-    if(!partnerAdjustmentReason(policyReason)){showToast('กรุณาระบุเหตุผลที่ปรับเพดานงบ AI','error');return;}
+    if(!partnerAdjustmentReason(policyReason)){showToast('กรุณาระบุเหตุผลที่ปรับเพดานเครดิต AI','error');return;}
     const token=generation.current,monthKey=aiBudgetCurrentMonthKey(usage);
     const validated=validateAiBudgetDraft(policyDraft,{
       // The SAVED total, never the unsaved override draft above: it is the number the server compares.
@@ -1704,15 +1704,15 @@ function AiUsageBudgetSection({
     });
     if(!validated.ok){showToast(validated.notice,'error');return;}
     const scheduled=validated.policy.effectiveMonthKey!==monthKey;
-    const accepted=await confirm({title:'ตรวจเพดานงบ AI ก่อนบันทึก',
+    const accepted=await confirm({title:'ตรวจเพดานเครดิต AI ก่อนบันทึก',
       message:`${AI_BUDGET_MODE_LABELS[validated.policy.mode]}${validated.policy.mode==='SPLIT'?` — แชต ${aiBudgetCapLabel(validated.policy.chatMonthlyBudgetSatang)} · อ่านเอกสาร ${aiBudgetCapLabel(validated.policy.ocrMonthlyBudgetSatang)}`:''}\n${scheduled?`เริ่มเดือน ${formatThaiMonth(validated.policy.effectiveMonthKey)} ค่าที่ใช้อยู่เดือนนี้ไม่เปลี่ยน`:'มีผลกับงานที่เริ่มหลังบันทึก งานที่เริ่มแล้วจะทำจนจบและนับค่าใช้จ่ายตามจริง'}\nเหตุผล: ${partnerAdjustmentReason(policyReason)??'—'}`,
       confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
     if(!accepted||token!==generation.current)return;
-    await savePolicy({budgetPolicy:validated.policy},scheduled?'ตั้งเพดานงบ AI ให้เริ่มเดือนถัดไปแล้ว':'บันทึกเพดานงบ AI แล้ว');
+    await savePolicy({budgetPolicy:validated.policy},scheduled?'ตั้งเพดานเครดิต AI ให้เริ่มเดือนถัดไปแล้ว':'บันทึกเพดานเครดิต AI แล้ว');
   };
 
   const handleCancelPending = async () => {
-    if(!partnerAdjustmentReason(policyReason)){showToast('กรุณาระบุเหตุผลที่ปรับเพดานงบ AI','error');return;}
+    if(!partnerAdjustmentReason(policyReason)){showToast('กรุณาระบุเหตุผลที่ปรับเพดานเครดิต AI','error');return;}
     const token=generation.current;
     const accepted=await confirm({title:'ยกเลิกค่าที่ตั้งให้เริ่มเดือนถัดไป',
       message:'หลังยกเลิก เดือนถัดไปจะใช้โหมดและเพดานที่ใช้อยู่ตอนนี้ต่อไป ค่าที่ใช้อยู่เดือนนี้ไม่เปลี่ยน',
@@ -1785,7 +1785,7 @@ function AiUsageBudgetSection({
   };
 
   return (
-    <SectionCard title="การใช้งานและงบ AI">
+    <SectionCard title="การใช้งานและเครดิต AI">
       {usageLoading && <p role="status" aria-busy="true" className="mb-3 flex items-center gap-2 text-sm text-gray-500"><span aria-hidden="true" className="action-loading-spinner h-4 w-4 rounded-full border-2 border-current border-t-transparent" />กำลังโหลดข้อมูล AI...</p>}
       {usageError ? (
         <div className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4">
@@ -1804,7 +1804,7 @@ function AiUsageBudgetSection({
       ) : (
         <>
           <p className="text-xs text-gray-500">
-            งบ AI ต่อเดือนของบริษัทนี้ — ใช้ครบเมื่อไร ระบบจะปฏิเสธการเรียก AI ทุกช่องทางจนถึงเดือนถัดไป
+            เครดิต AI ต่อเดือนของบริษัทนี้ — ใช้หมดเมื่อไร ระบบจะปฏิเสธการเรียก AI ทุกช่องทางจนถึงเดือนถัดไป
             เว้นว่างไว้ = ใช้ค่าเริ่มต้นของแพลตฟอร์ม
           </p>
 
@@ -1813,7 +1813,7 @@ function AiUsageBudgetSection({
               <p className="text-sm text-gray-700">
                 ใช้เดือนนี้{' '}
                 <span className="font-semibold tabular-nums text-gray-900">{satangToBaht(spendSatang)}</span>
-                {' จากงบ '}
+                {' จากเครดิต '}
                 <span className="tabular-nums">{satangToBaht(usage.budget.effectiveSatang)}</span>
                 {usage.budget.overrideSatang === null ? ' (ค่าเริ่มต้นของระบบ)' : ' (Admin ปรับให้)' }
               </p>
@@ -1881,12 +1881,12 @@ function AiUsageBudgetSection({
             </div>
           )}
 
-          <label className="block text-base">เหตุผลที่ปรับงบ AI
-            <textarea aria-label="เหตุผลที่ปรับงบ AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={budgetReason} disabled={budgetLoading||ocrLoading||policyLoading||locked} onChange={e=>setBudgetReason(e.target.value)} />
+          <label className="block text-base">เหตุผลที่ปรับเครดิต AI
+            <textarea aria-label="เหตุผลที่ปรับเครดิต AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={budgetReason} disabled={budgetLoading||ocrLoading||policyLoading||locked} onChange={e=>setBudgetReason(e.target.value)} />
           </label>
           <div className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3">
             <div className="flex-1">
-              <label className="block text-xs text-gray-500 mb-1" htmlFor="ai-monthly-budget">งบ AI ต่อเดือน (บาท)</label>
+              <label className="block text-xs text-gray-500 mb-1" htmlFor="ai-monthly-budget">เครดิต AI ต่อเดือน (บาท)</label>
               <input
                 id="ai-monthly-budget"
                 className={`${inputClass} min-h-11 text-base`}
@@ -1904,12 +1904,12 @@ function AiUsageBudgetSection({
               disabled={budgetLoading || ocrLoading || policyLoading || locked} aria-busy={Boolean(budgetLoading)}
               onClick={() => void handleBudgetSave()}
             >
-              {budgetLoading ? 'กำลังบันทึก…' : 'ตรวจงบก่อนบันทึก'}
+              {budgetLoading ? 'กำลังบันทึก…' : 'ตรวจเครดิตก่อนบันทึก'}
             </button>
           </div>
-          <p className="break-words text-sm text-gray-600">งบ AI: {usage.budget.overrideSatang === null ? 'ค่าเริ่มต้นแพลตฟอร์ม' : satangToBaht(usage.budget.overrideSatang)} → {budgetInput.trim() ? `฿${budgetInput}` : 'ค่าเริ่มต้นแพลตฟอร์ม'}</p>
+          <p className="break-words text-sm text-gray-600">เครดิต AI: {usage.budget.overrideSatang === null ? 'ค่าเริ่มต้นแพลตฟอร์ม' : satangToBaht(usage.budget.overrideSatang)} → {budgetInput.trim() ? `฿${budgetInput}` : 'ค่าเริ่มต้นแพลตฟอร์ม'}</p>
           <p className="text-xs text-gray-400">
-            เว้นว่างเพื่อใช้งบเริ่มต้น {satangToBaht(usage.budget.defaultSatang)} ตั้งได้ไม่เกิน {satangToBaht(usage.budget.ceilingSatang)}
+            เว้นว่างเพื่อใช้เครดิตเริ่มต้น {satangToBaht(usage.budget.defaultSatang)} ตั้งได้ไม่เกิน {satangToBaht(usage.budget.ceilingSatang)}
           </p>
 
           {policyDraft && (
@@ -2879,7 +2879,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
       </section>}
       {opened('members')&&<section hidden={view!=='members'} aria-label="สมาชิกบริษัท" className="space-y-5"><p className="text-gray-600">ตรวจสมาชิกและการผูก LINE เลือกดำเนินการเฉพาะคนที่ต้องการดูแล</p><MembersSection companyId={companyId} showToast={showToast}/></section>}
       {opened('package')&&<section hidden={view!=='package'} aria-label="แพ็กเกจและฟีเจอร์บริษัท" className="space-y-5"><PlanTermSection key={`term-${companyId}`} companyId={companyId} companyStatus={currentStatus} fieldsLocked={fieldsLocked} showToast={showToast}/><PackageMenuSection companyId={companyId} entitlements={detail.featureEntitlements} setVersion={detail.setVersion} fieldsLocked={fieldsLocked} normalizationPending={isNormalizationPending(detail.entitlementNormalizationPending)} showToast={showToast} onSaved={load}/></section>}
-      {opened('ai')&&<section hidden={view!=='ai'} aria-label="AI และโควตาบริษัท" className="space-y-5"><p className="text-gray-600">ดูการใช้งานและปรับงบ AI หรือจำนวนเอกสาร ระบบให้ตรวจผลกระทบก่อนบันทึก</p>
+      {opened('ai')&&<section hidden={view!=='ai'} aria-label="AI และโควตาบริษัท" className="space-y-5"><p className="text-gray-600">ดูการใช้งานและปรับเครดิต AI หรือจำนวนเอกสาร ระบบให้ตรวจผลกระทบก่อนบันทึก</p>
         <AiUsageBudgetSection key={`ai-budget-${companyId}`} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} onChanged={()=>setAiHistoryRefresh(n=>n+1)} />
         <details className="rounded-xl border border-gray-200 bg-white p-4"><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">เปลี่ยนรุ่น AI ของบริษัท</summary>
         {/* AI model */}
