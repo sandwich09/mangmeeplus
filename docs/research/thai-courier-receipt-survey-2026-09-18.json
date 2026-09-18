@@ -1,0 +1,744 @@
+{
+  "title": "Thai courier receipts: public evidence and proposed regression scope",
+  "checked_at": "2026-09-18",
+  "timezone": "Asia/Bangkok",
+  "scope": "Buyer-side freight/service expenses and reimbursement; not seller COD revenue reconciliation",
+  "status": "research_only_no_application_implementation",
+  "freshness": {
+    "channels_checked": 7,
+    "document_records": 11,
+    "visually_inspected_records": 9,
+    "text_only_records": 2,
+    "public_transaction_copies_not_authenticated": 7,
+    "guide_example_records": 4,
+    "original_transaction_signatures_verified": 0,
+    "newest_visually_inspected_transaction_date": "2026-02-23",
+    "latest_layout_verified_for_all_providers": false,
+    "missing_actual_specimen_providers": [
+      "J&T Express",
+      "SPX Express",
+      "SCG Express"
+    ],
+    "note": "Checked date, publication date, PDF modification date and specimen transaction date are separate. Records are not authorized golden/training fixtures."
+  },
+  "sources": [
+    {
+      "id": "S01",
+      "provider": "Thailand Post",
+      "authority": "official_provider",
+      "url": "https://www.thailandpost.co.th/un/article_detail/product/568/11751",
+      "method": "web_text",
+      "supports": "COD payment proof via SMS/tracking; separate from sender freight payment"
+    },
+    {
+      "id": "S02",
+      "provider": "KEX",
+      "authority": "official_provider",
+      "url": "https://th.kex-express.com/en/terms-and-conditions-of-cod",
+      "method": "web_text",
+      "supports": "COD Postpaid E-Tax Invoice delivery to registered email; service-specific"
+    },
+    {
+      "id": "S03",
+      "provider": "Flash Express",
+      "authority": "official_provider",
+      "url": "https://www.flashexpress.co.th/fle/call-center/invoice-application/",
+      "method": "web_text",
+      "supports": "App receipt request by selected tracking numbers; email delivery"
+    },
+    {
+      "id": "S04",
+      "provider": "J&T Express",
+      "authority": "official_provider",
+      "url": "https://www.jtexpress.co.th/FAQ",
+      "method": "browser_read_only",
+      "supports": "Current FAQ inspected; no invoice workflow/specimen established by this page"
+    },
+    {
+      "id": "S05",
+      "provider": "SPX Express",
+      "authority": "official_provider",
+      "url": "https://spx.co.th/th",
+      "method": "web_text",
+      "supports": "Official menu links to full tax-invoice request form S06"
+    },
+    {
+      "id": "S06",
+      "provider": "SPX Express",
+      "authority": "official_linked_form",
+      "url": "https://docs.google.com/forms/d/1FJfxf-H4Fdug0tyKNX2nvMO4nsFY_NbAcpnE5wVTqtk/viewform",
+      "method": "browser_read_only_no_submission",
+      "supports": "Temporary receipt to full tax invoice; receipt reference, buyer identity, email and evidence requested; displayed 15-day request condition",
+      "not_established": [
+        "signed_e_tax",
+        "latest_actual_document_layout"
+      ]
+    },
+    {
+      "id": "S07",
+      "provider": "DHL Express",
+      "authority": "official_provider",
+      "url": "https://www.dhl.com/discover/th-th/ship-with-dhl/services/dhl-mybill-online-accounting-management",
+      "published_at": "2025-01-28",
+      "method": "web_text",
+      "supports": "MyBill invoice/receipt viewing and download"
+    },
+    {
+      "id": "S08",
+      "provider": "DHL Express",
+      "authority": "official_provider",
+      "url": "https://www.dhl.com/discover/th-th/logistics-advice/import-export-advice/import-duty-faq",
+      "method": "web_text",
+      "supports": "Customs Receipt and Duty Invoice are separate document roles"
+    },
+    {
+      "id": "S09",
+      "provider": "SCG Express",
+      "authority": "official_provider",
+      "url": "https://www.scgexpress.co.th/faq/",
+      "method": "web_text",
+      "supports": "Service types; no current receipt specimen or e-tax procedure established"
+    },
+    {
+      "id": "S10",
+      "provider": null,
+      "authority": "official_revenue_department",
+      "url": "https://www.rd.go.th/67521.html",
+      "document_date": "2025-01-27",
+      "method": "web_text",
+      "supports": "Distinction and replacement relation between abbreviated and full tax invoices; fact-specific ruling, not blanket eligibility"
+    },
+    {
+      "id": "S11",
+      "provider": null,
+      "authority": "official_revenue_department",
+      "url": "https://etax.rd.go.th/etax_staticpage/app/emag/flipbook_2567/pdf/07_Validation.pdf",
+      "method": "indexed_text_not_rendered",
+      "supports": "Digital signature validation is distinct from OCR; no transaction signature verified"
+    },
+    {
+      "id": "S12",
+      "provider": "DHL Express",
+      "authority": "official_provider_guide",
+      "url": "https://mydhl.express.dhl/content/dam/downloads/th/th/electronic-billing/dhl_mybill_userguide_th_th.pdf.coredownload.pdf",
+      "method": "local_pdf_render_visual",
+      "pdf_pages": 25,
+      "inspected_pages": [
+        23,
+        24
+      ],
+      "metadata_created_year": 2018,
+      "metadata_modified_date": "2026-06-19",
+      "supports": "Historical full invoice plus shipment detail specimen, not proof of latest layout"
+    },
+    {
+      "id": "S13",
+      "provider": "KEX",
+      "authority": "third_party_host_unverified_guide",
+      "url": "https://cdnc.heyzine.com/files/uploaded/3090dc098e512f7b6e41292aa5499bdd394bf7a8.pdf",
+      "method": "local_pdf_render_visual",
+      "pdf_pages": 31,
+      "inspected_pages": [
+        21
+      ],
+      "metadata_created_date": "2025-01-20",
+      "supports": "Three sample document types on one page, not three actual receipt transactions"
+    },
+    {
+      "id": "S14",
+      "provider": "Flash Express",
+      "authority": "third_party_public_copy",
+      "url": "https://anyflip.com/aedqx/nkop/basic",
+      "method": "web_text_only_browser_challenge_not_bypassed",
+      "published_at": "2022-01-19",
+      "collection_pages": 26,
+      "inspected_record_count": 2,
+      "supports": "Historical full invoice text; column order and signature unverified; not all collection pages inspected"
+    },
+    {
+      "id": "S15",
+      "provider": "Thailand Post",
+      "authority": "third_party_public_copy",
+      "url": "https://pantip.com/topic/43993748",
+      "method": "linked_image_visual"
+    },
+    {
+      "id": "S16",
+      "provider": "Thailand Post",
+      "authority": "third_party_public_copy",
+      "url": "https://pantip.com/topic/41718569",
+      "method": "linked_image_visual"
+    },
+    {
+      "id": "S17",
+      "provider": "Thailand Post",
+      "authority": "third_party_public_copy",
+      "url": "https://pantip.com/topic/40150433",
+      "method": "linked_image_visual"
+    },
+    {
+      "id": "S18",
+      "provider": "KEX",
+      "authority": "third_party_public_copy",
+      "url": "https://pantip.com/topic/42424040",
+      "method": "linked_image_visual"
+    },
+    {
+      "id": "S19",
+      "provider": "Flash Express",
+      "authority": "third_party_public_copy",
+      "url": "https://phatsadu.org/tracking/flashexpress",
+      "method": "linked_image_visual"
+    }
+  ],
+  "providers": [
+    {
+      "name": "Thailand Post",
+      "official_sources": [
+        "S01"
+      ],
+      "specimen_ids": [
+        "C01",
+        "C02",
+        "C03"
+      ],
+      "latest_actual_specimen_date": "2026-02-23",
+      "gap": "Current full invoice and original electronic freight receipt"
+    },
+    {
+      "name": "KEX",
+      "aliases": [
+        "Kerry Express",
+        "เคอรี่"
+      ],
+      "official_sources": [
+        "S02"
+      ],
+      "specimen_ids": [
+        "C04",
+        "C05",
+        "C06",
+        "C07"
+      ],
+      "latest_actual_specimen_date": "2023-12-23",
+      "latest_guide_specimen_date": "2024-11-22",
+      "gap": "Current full invoice and original signed file; guide host not verified official"
+    },
+    {
+      "name": "Flash Express",
+      "official_sources": [
+        "S03"
+      ],
+      "specimen_ids": [
+        "C08",
+        "C09",
+        "C10"
+      ],
+      "latest_actual_specimen_date": "2021-07-02",
+      "gap": "Current visual full/short specimens and original signed file; full samples text-only"
+    },
+    {
+      "name": "J&T Express",
+      "official_sources": [
+        "S04"
+      ],
+      "specimen_ids": [],
+      "latest_actual_specimen_date": null,
+      "gap": "Actual current short/full/electronic specimens and official issuance guidance"
+    },
+    {
+      "name": "SPX Express",
+      "official_sources": [
+        "S05",
+        "S06"
+      ],
+      "specimen_ids": [],
+      "latest_actual_specimen_date": null,
+      "gap": "Actual temporary/full pair and electronic format/signature evidence"
+    },
+    {
+      "name": "DHL Express",
+      "official_sources": [
+        "S07",
+        "S08",
+        "S12"
+      ],
+      "specimen_ids": [
+        "C11"
+      ],
+      "latest_actual_specimen_date": null,
+      "latest_guide_specimen_date": "2018-10-08",
+      "gap": "Current actual invoice/receipt pair, customs documents and original signed file"
+    },
+    {
+      "name": "SCG Express",
+      "official_sources": [
+        "S09"
+      ],
+      "specimen_ids": [],
+      "latest_actual_specimen_date": null,
+      "gap": "Actual current short/full/electronic specimens and official issuance guidance"
+    }
+  ],
+  "specimens": [
+    {
+      "id": "C01",
+      "provider": "Thailand Post",
+      "source_id": "S15",
+      "media_url": "https://f.ptcdn.info/631/090/000/mm0a367fh4LbVrOTr3A-o.jpg",
+      "document_date": "2026-02-23",
+      "document_kind": "receipt",
+      "display_title": "ใบรับเงิน",
+      "evidence": "public_transaction_copy_not_authenticated",
+      "inspection": "visual",
+      "currency": "THB",
+      "amounts": {
+        "total": "52.00"
+      },
+      "observations": [
+        "Receipt, shipment and payment references are distinct",
+        "Loyalty QR is not payment evidence by itself"
+      ]
+    },
+    {
+      "id": "C02",
+      "provider": "Thailand Post",
+      "source_id": "S16",
+      "media_url": "https://f.ptcdn.info/123/079/000/rlx16ubuvHjujpnEHQ9-o.jpg",
+      "document_date": "2022-08-13",
+      "document_kind": "receipt_abbreviated_tax_invoice",
+      "display_title": "ใบรับเงิน/ใบกำกับภาษีอย่างย่อ",
+      "evidence": "public_transaction_copy_not_authenticated",
+      "inspection": "visual",
+      "currency": "THB",
+      "amounts": {
+        "freight_non_vat": "2400.00",
+        "packaging_vat_inclusive": "100.00",
+        "packaging_tax_base": "93.46",
+        "vat": "6.54",
+        "total": "2500.00",
+        "cash_tendered": "3000.00",
+        "change": "500.00"
+      },
+      "observations": [
+        "Tax treatment is read per charge, not inferred for all courier services",
+        "Cash tendered and change are not expense totals"
+      ]
+    },
+    {
+      "id": "C03",
+      "provider": "Thailand Post",
+      "source_id": "S17",
+      "media_url": "https://f.ptcdn.info/651/070/000/qfkflxkhdM53aNOXz9Z-o.png",
+      "document_date": "2020-08-23",
+      "document_kind": "receipt",
+      "display_title": "ใบรับเงิน",
+      "evidence": "public_transaction_copy_not_authenticated",
+      "inspection": "visual",
+      "currency": "THB",
+      "parcel_count": 3,
+      "amounts": {
+        "lines": [
+          "85.00",
+          "85.00",
+          "125.00"
+        ],
+        "total": "295.00"
+      },
+      "observations": [
+        "Several tracking references can belong to one receipt",
+        "Weight is not a multiplier for an already priced parcel charge"
+      ]
+    },
+    {
+      "id": "C04",
+      "provider": "KEX",
+      "brand_on_document": "Kerry Express",
+      "source_id": "S18",
+      "media_url": "https://f.ptcdn.info/756/082/000/s69l431hi79bN18le75h6-o.jpg",
+      "document_date": "2023-12-23",
+      "document_kind": "receipt",
+      "evidence": "public_transaction_copy_not_authenticated",
+      "inspection": "visual",
+      "currency": "THB",
+      "amounts": {
+        "subtotal": "30.00",
+        "discount": "5.00",
+        "fuel": "0.00",
+        "total": "25.00"
+      },
+      "observations": [
+        "Visual evidence overrides incorrect image-search summary of subtotal"
+      ]
+    },
+    {
+      "id": "C05",
+      "provider": "KEX",
+      "source_id": "S13",
+      "pages": [
+        21
+      ],
+      "region": "center",
+      "document_date": "2024-11-22",
+      "document_kind": "receipt",
+      "evidence": "guide_example",
+      "inspection": "visual",
+      "currency": "THB",
+      "amounts": {
+        "freight_lines": [
+          "100.00",
+          "100.00"
+        ],
+        "fuel_lines": [
+          "2.00",
+          "2.00"
+        ],
+        "subtotal": "200.00",
+        "fuel_total": "4.00",
+        "discount_total": "0.00",
+        "total": "204.00"
+      },
+      "observations": [
+        "Do not add both line fuel and summary fuel twice"
+      ]
+    },
+    {
+      "id": "C06",
+      "provider": "KEX",
+      "source_id": "S13",
+      "pages": [
+        21
+      ],
+      "region": "left",
+      "document_date": "2024-11-22",
+      "document_kind": "shipping_label",
+      "evidence": "guide_example",
+      "inspection": "visual",
+      "expense_positive_example": false,
+      "observations": [
+        "Tracking/barcode/CW weight are not price or proof of payment"
+      ]
+    },
+    {
+      "id": "C07",
+      "provider": "KEX",
+      "source_id": "S13",
+      "pages": [
+        21
+      ],
+      "region": "right",
+      "document_date": "2024-11-22",
+      "document_kind": "parcel_deposit_note",
+      "evidence": "guide_example",
+      "inspection": "visual",
+      "expense_positive_example": false,
+      "piece_count": 3,
+      "observations": [
+        "Piece count, weight and acceptance signature do not prove amount paid"
+      ]
+    },
+    {
+      "id": "C08",
+      "provider": "Flash Express",
+      "source_id": "S19",
+      "media_url": "https://phatsadu.org/images/receipt/flash.jpg",
+      "document_date": "2019-02-13",
+      "document_kind": "temporary_receipt",
+      "display_title": "ใบเสร็จรับเงินชั่วคราว",
+      "evidence": "public_transaction_copy_not_authenticated",
+      "inspection": "visual",
+      "currency": "THB",
+      "parcel_count": 4,
+      "amounts": {
+        "unit_freight": "35.00",
+        "total": "140.00"
+      },
+      "observations": [
+        "Temporary receipt is not automatically an abbreviated tax invoice"
+      ]
+    },
+    {
+      "id": "C09",
+      "provider": "Flash Express",
+      "source_id": "S14",
+      "record_position": 1,
+      "document_date": "2021-07-01",
+      "document_kind": "receipt_full_tax_invoice",
+      "evidence": "public_transaction_copy_not_authenticated",
+      "inspection": "text_only",
+      "currency": "THB",
+      "amounts": {
+        "before_vat": "1029.80",
+        "vat": "19.88",
+        "total": "1049.68"
+      },
+      "signature_verification": "not_performed",
+      "observations": [
+        "Text states replacement of temporary receipt",
+        "Several freight and COD-fee items",
+        "Printed digital signature text is not verified signature; row values require visual review"
+      ]
+    },
+    {
+      "id": "C10",
+      "provider": "Flash Express",
+      "source_id": "S14",
+      "record_position": 2,
+      "document_date": "2021-07-02",
+      "document_kind": "receipt_full_tax_invoice",
+      "evidence": "public_transaction_copy_not_authenticated",
+      "inspection": "text_only",
+      "currency": "THB",
+      "amounts": {
+        "before_vat": "155.12",
+        "vat": "1.88",
+        "total": "157.00"
+      },
+      "signature_verification": "not_performed",
+      "observations": [
+        "Unused zero-quantity rows must not change monetary total",
+        "Not a visual golden fixture"
+      ]
+    },
+    {
+      "id": "C11",
+      "provider": "DHL Express",
+      "source_id": "S12",
+      "pages": [
+        23,
+        24
+      ],
+      "document_date": "2018-10-08",
+      "shipment_date": "2018-09-26",
+      "due_date": "2018-11-07",
+      "document_kind": "invoice_tax_invoice_with_shipment_detail",
+      "evidence": "guide_example",
+      "inspection": "visual",
+      "currency": "THB",
+      "amounts": {
+        "freight": "1028.00",
+        "fuel": "179.90",
+        "vat": "0.00",
+        "total": "1207.90"
+      },
+      "printed_tax_treatment": "Taxable 0%",
+      "observations": [
+        "Two pages form one specimen and repeat the same total",
+        "Invoice, shipment and due dates differ",
+        "Invoice is not automatically a paid receipt",
+        "2026 PDF modification date does not make the 2018 specimen current"
+      ]
+    }
+  ],
+  "spec_integration": {
+    "baseline_version": "0.11",
+    "extension": "courier_discovery_2026-09-18",
+    "spec_section": "18",
+    "plan_section": "12",
+    "implementation_status": "planned_not_implemented",
+    "regression_cases": [
+      {
+        "id": "CC01",
+        "related_acceptance": [
+          "A53",
+          "A61",
+          "A68"
+        ],
+        "work_packages": [
+          "W00",
+          "W02",
+          "W03",
+          "W04",
+          "W08"
+        ]
+      },
+      {
+        "id": "CC02",
+        "related_acceptance": [
+          "A54",
+          "A65",
+          "A82"
+        ],
+        "work_packages": [
+          "W01",
+          "W02",
+          "W03",
+          "W08"
+        ]
+      },
+      {
+        "id": "CC03",
+        "related_acceptance": [
+          "A50",
+          "A51",
+          "A53",
+          "A57"
+        ],
+        "work_packages": [
+          "W03",
+          "W04",
+          "W08"
+        ]
+      },
+      {
+        "id": "CC04",
+        "related_acceptance": [
+          "A51",
+          "A61",
+          "A68"
+        ],
+        "work_packages": [
+          "W00",
+          "W03",
+          "W04",
+          "W07",
+          "W08"
+        ]
+      },
+      {
+        "id": "CC05",
+        "related_acceptance": [
+          "A55",
+          "A60",
+          "A63",
+          "A71",
+          "A74"
+        ],
+        "work_packages": [
+          "W01",
+          "W02",
+          "W05",
+          "W06",
+          "W07",
+          "W08"
+        ]
+      },
+      {
+        "id": "CC06",
+        "related_acceptance": [
+          "A54",
+          "A55",
+          "A63",
+          "A65"
+        ],
+        "work_packages": [
+          "W01",
+          "W03",
+          "W04",
+          "W07",
+          "W08"
+        ]
+      },
+      {
+        "id": "CC07",
+        "related_acceptance": [
+          "A61",
+          "A62",
+          "A66"
+        ],
+        "work_packages": [
+          "W00",
+          "W01",
+          "W03",
+          "W04",
+          "W08"
+        ]
+      },
+      {
+        "id": "CC08",
+        "related_acceptance": [
+          "A64",
+          "A67",
+          "A69",
+          "A70",
+          "A75",
+          "A82",
+          "A83",
+          "A84",
+          "A85",
+          "A86",
+          "A87",
+          "A88"
+        ],
+        "work_packages": [
+          "W02",
+          "W03",
+          "W04",
+          "W08"
+        ]
+      },
+      {
+        "id": "CC09",
+        "related_acceptance": [
+          "A01",
+          "A60",
+          "A64",
+          "A85"
+        ],
+        "work_packages": [
+          "W04",
+          "W06",
+          "W08"
+        ]
+      },
+      {
+        "id": "CC10",
+        "related_acceptance": [
+          "A61",
+          "A62",
+          "A66",
+          "A69"
+        ],
+        "decisions": [
+          "D05",
+          "D09"
+        ],
+        "work_packages": [
+          "W00",
+          "W08"
+        ]
+      }
+    ],
+    "channel_parity": [
+      "LINE_AI",
+      "web_upload",
+      "web_replace"
+    ],
+    "failed_read_recovery": {
+      "requires_confirmed_persist": true,
+      "link_label": "กรอกข้อมูลต่อ",
+      "same_work": true,
+      "offer_error_reread": false,
+      "create_certificate_automatically": false
+    },
+    "non_receipt_replies": {
+      "status": "requirements_approved_implementation_pending",
+      "approved_at": "2026-09-18",
+      "spec_section": "18.4",
+      "plan_section": "12.1",
+      "parent_cases": ["CC01", "CC04", "CC08", "CC09"],
+      "case_ids": ["NR01", "NR02", "NR03", "NR04", "NR05", "NR06", "NR07", "NR08", "NR09"],
+      "recognized_other_document_is_read_failure": false,
+      "reject_all_non_receipts": false,
+      "reuse_existing_expense_eligibility": true,
+      "reuse_existing_check_bill_choices": true,
+      "retain_reference_media_only_with_expense_purpose_and_permission": true,
+      "saved_copy_requires_confirmed_persist": true,
+      "web_link_requires_persisted_authorized_same_work": true,
+      "create_placeholder_expense_for_web_link": false,
+      "same_work_proof_append_required": true,
+      "auto_certificate_from_non_receipt": false,
+      "application_verification": "NOT_RUN"
+    },
+    "permissions_note": "Source availability does not grant model-training or fixture rights. Obtain authorized originals; redact display copies without claiming redacted derivatives retain original signatures."
+  },
+  "verification": {
+    "application_tests": "NOT_RUN_FOR_COURIER_SCOPE",
+    "ai_accuracy": "NOT_RUN",
+    "ux40plus": "NOT_RUN",
+    "specimen_authenticity": "NOT_VERIFIED",
+    "cryptographic_signatures": "NOT_VERIFIED",
+    "external_form_submissions": 0,
+    "caveat": "Earlier API29/Web54 handler tests are separate evidence and do not establish courier accuracy."
+  }
+}
