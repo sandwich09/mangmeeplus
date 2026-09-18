@@ -271,3 +271,101 @@ Next:
   This is a new controller correction, so the next PR-head CI supersedes the initial run; no app image
   rebuild or cloud mutation is needed. The prior full security suite passed before this correction;
   exact updated-head CI must run its security checks before merge.
+
+## Pending owner input and exact-head CI checkpoint
+
+- Current PR634 head`169469d992a04ebab23ae17840e2857654f56146`, CI`35324778464`.
+  Fresh read: Typecheck and Test (including complete security script), Security Audit, Secret Scan,
+  Production Config Validation, Migration Review and Billing Integration(customer) allSUCCESS.
+  Billing Integration(operations/backend) remainIN_PROGRESS. No failure reported yet. GitHub still
+  saysBLOCKED/REVIEW_REQUIRED. Do not merge until the exact head's complete CI passes and review is
+  satisfied, or the owner explicitly waives only the reviewer requirement.
+- Async owner questions are pending: normal approving review versus admin merge after allCIpasses;
+  and actual funds/payer/payment date/reason for the845baht LeoPard substitute document. No answer
+  has been received, and elapsed time is not approval or a financial fact.
+- Superseded CI35324442127 is terminalCANCELLED. The attempted cancellation returned “already
+  completed”; do not attribute its final cancellation to that unsuccessful call. Current run is the
+  legitimate new controller head, not a duplicate deployment. `gh run watch` session86357 watches
+  only currentCI, writes migration-preparation/ci-35324778464-watch.log, and exits naturally on terminal.
+- All4new-host status alarms areOK. To avoid mistaking missing-data OK for health, actual last10min
+  StatusCheckFailed metrics were read:10datapoints/host, maximum0 for everyhost at08:33:39UTC.
+  Private host-status-metrics.json retains the results. These are host checks, not app acceptance.
+- Chrome developer/profilemangmeeplus.com browser5/adminTab325833565 remains at Production OPEN/live.
+  Thawatchai browser4/receiptTab325833568 remains on the linked substitute form step2. Both agent-created
+  tabs are markedhandoff. No certificate or legal signature was created; no original expense confirmed.
+  Exact auth/me identity/permission/status remains unproved because direct navigation is blocked.
+  Native UI activation was interrupted by user activity; continue through the requested profile and
+  do not infer identity or bypass browser controls. Both sessions remain logged in for later acceptance.
+- Infrastructure remains staged and paid/running, temporary IAM expiry13:53:49.513914UTC unchanged.
+  App publication/Proddeploy/traffic/worker handover have NOT started. Serving ECS source remainsfc.
+  Staging targetcutoverCompletefalse; no ordinarytarget.json. Preserve old ECS rollback authority.
+- This final checkpoint is intentionally a local documentation update while exact-head CI runs;
+  committing/pushing it now would invalidate the tested PR head. Include it in the later evidence
+  update, preserving the controller commit and source boundaries above.
+
+## Owner-authorized admin merge and first apply — 2026-09-18
+
+- Owner explicitly instructed “admin merge เลย”, waiving only the missing reviewer after full CI.
+  Exact head169469d992a04ebab23ae17840e2857654f56146 CI35324778464 completedSUCCESS; all
+  validation/security/billing jobs passed, image publication jobs correctlySKIPPED for this PR.
+- PR634 admin-merged once2026-09-18T08:56:38Z. Merge/controller main
+  `0c308982b4c3df4d1ce0e9f1b18a001174c49e8e`; exact functional controller bytes match main.
+  No unfinished GitHub workflow was listed before apply; no active local Production operation or
+  enrolled target exists. First local byte-check invocation missed the Python module search path;
+  corrected read-only check passed without controller changes. No deploy retry was involved.
+- Application candidate remains0b0058adbc7353ec906a33746867af2a235b0934 onfc2838c4 baseline,
+  using the retained validated build. UAT/READY/PROD workflow IDsNOT_DISPATCHED. One local first
+  migration apply is starting; capture its operation ID/result before any further action.
+- The separate financial-facts question for the845baht substitute receipt remains unanswered.
+  This admin-merge instruction is not a payment fact or substitute-document signature.
+
+- Single first-apply operation`20260918T085755Z-860908a6` started08:57:55UTC, exec session91119;
+  targetpreflight44.752s, prepared build/regressions2.744s, freshconfig6.869s and legacyworkflow
+  fence23.107s passed. Publishing/pulling underway; no second apply. The pre-cutover actual Chrome
+  DevTools network UI proved authenticatedGET/api/v1/system/platform-access200 withOPEN,live,
+  canOpentrue; exact auth/me identity/permissions remain outstanding. This is baseline evidence only.
+
+- First apply publish/pull passed295.221s; four immutable images are in the private publication.json.
+  Config freshness8.649s/provider16.237s/database-and-feature-authority49.691s passed.
+  New AI/API rollout completed; targetHealthVerifiedtrue covers both API AZs and the AI target.
+  Original worker park has INTENT_RECORDED; AWS readback capacity0/0 is replacing1/2. Exact old
+  worker taskb70e9f5da6e94727895190e2885f3224 isDEACTIVATING/desiredSTOPPED, not yetSTOPPED.
+  New workers and customer traffic have not been switched at this checkpoint. Both legacy Prod
+  deploy workflows aredisabled_manually. Do not launch another apply/recovery while this run lives.
+- Optional new-group CloudWatch DescribeLogStreams reads with existingwatchdog-bedrock reader were
+  denied for both new API/AI groups; no IAM change/root fallback was used. Native logging driver is
+  configured, but actual CloudWatch delivery is not yet independently proved. Runtime health proof
+  is separate. Browser native close-inspector action was interrupted by user activity; no repeated
+  foreground control. Existing browser tabs remain markedhandoff; exact admin identity/logout and
+  the real receipt/substitute/cancel/confirm journey remain outstanding.
+
+## First apply failure, retained boundary and explicit ECS recovery
+
+- Operation20260918T085755Z-860908a6 terminalFAILED_RECONCILIATION_REQUIRED1044.582s.
+  NewAPI(twoAZs)/DB,AI,workers/Redis/internalAPI allpassed; oldworkersVERIFIED_STOPPED.
+  Traffic change setkamal-20260918T085755Z-860908a6-public reachedEXECUTE_FAILED; stack
+  UPDATE_ROLLBACK_COMPLETE09:15:26.248UTC. AWS event root cause: missingec2:DescribeImages,
+  required to validate the existingAWS::EC2::Image::Id parameter under the non-root deploy role.
+- Read-only reconciliation proves exact original template and both operator-only rules restored.
+  Old ECS customerAPI/AI and provider remain serving; newworkers are the only active consumers
+  until explicit recovery stops them first. No duplicate execute-change-set/redeploy was issued.
+  Private reconcile-{change-set,stack,events}.private.json and reconcile-traffic-restored.json retain
+  realAWS evidence. Hostalarms all4OK at09:14:04.972591UTC.
+- Additional controller defect discovered by code inspection: aws() requiresJSON for everycommand,
+  but successfulexecute-change-set returns an empty body. Fix/test both that response handling and
+  the missing read-only prerequisite before another forward release; retain the original failure.
+- Re-read mandatory deployment protocol; no unfinished GitHub workflow. Explicit reviewed existing
+  ECSrollback command started once, execsession8800, same stagedtarget/source/path/testargs with
+  --rollback20260918T085755Z-860908a6. Its controller files remain frozen on mergedmain0c308982.
+- Recovery operation`20260918T091745Z-318a0d41`; result`.env.kamal/production/runs/20260918T091745Z-318a0d41/result.json`. Do not modify current controller while it runs.
+
+## Owner correction: consolidate complete rehearsal before next fix/retry
+
+- Owner instructed “ให้จำลองไปจนจบก่อน ค่อยแก้ครั้งเดียวจะได้ไม่เสียเวลา”. No next forward
+  Production deployment until complete end-to-end simulation covers remaining traffic/readiness,
+  actual AWS response formats and IAM prerequisites, browser acceptance, signing/enrollment and
+  rollback; gather failures first, then apply one scoped correction set. Clearly distinguish
+  simulation proof from actual live acceptance and any untestable external prerequisite.
+- Existing explicit ECS recovery20260918T091745Z-318a0d41 was already dispatched before this
+  instruction. Let that operation finish safely; do not interrupt it or start duplicate recovery.
+  No new forward retry has been dispatched.
