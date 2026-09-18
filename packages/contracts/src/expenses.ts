@@ -23,6 +23,13 @@ export type ExpenseExtractionResult = {
   errorCode?: string;
   /** Set only when `errorCode` is one of `AI_BUDGET_REFUSAL_CODES` (spec §9.1). Never a money amount. */
   budgetScope?: AiBudgetScope;
+  /**
+   * Appendix §3: a PDF is read by a durable job, not inside the HTTP request. `status: 'ok'` with
+   * a `readJobId` means "the file is stored and the read has started", and the review page polls
+   * `GET .../read-status`. Absent for the unchanged synchronous image path.
+   */
+  readJobId?: string;
+  readStatus?: 'QUEUED' | 'PREPARING' | 'READING' | 'PARTIAL' | 'PAUSED' | 'FAILED' | 'DONE' | 'CANCELLED';
 };
 export type AiVerificationStatus = 'NOT_VERIFIED' | 'VERIFYING' | 'AI_VERIFIED' | 'PARTIAL' | 'NEEDS_REVIEW' | 'FAILED' | 'HUMAN_VERIFIED';
 export type DuplicateStatus = 'NOT_CHECKED' | 'NO_MATCH' | 'POSSIBLE_DUPLICATE' | 'CONFIRMED_DUPLICATE' | 'OVERRIDDEN';
