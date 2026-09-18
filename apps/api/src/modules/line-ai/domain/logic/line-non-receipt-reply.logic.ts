@@ -137,12 +137,14 @@ export function capturePausedReasonTh(reason: string | null | undefined): string
 export const CAPTURE_READ_FAILED_REPLY = (link: string): string =>
   `อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว กด${CONTINUE_IN_WEB_LABEL}ได้ที่นี่\n${link}`;
 
+// The partial/paused sentences of §17.6 say "กรอกข้อมูลส่วนที่ขาด", not "กรอกข้อมูลต่อส่วนที่ขาด" —
+// spelled out rather than composed from the button label, which belongs to the other two.
 export const CAPTURE_READ_PARTIAL_REPLY = (link: string): string =>
-  `อ่านข้อมูลได้บางส่วนค่ะ เก็บไฟล์ไว้แล้ว กด${CONTINUE_IN_WEB_LABEL}ส่วนที่ขาดต่อได้ที่นี่\n${link}`;
+  `อ่านข้อมูลได้บางส่วนค่ะ เก็บไฟล์ไว้แล้ว กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่\n${link}`;
 
 export const CAPTURE_READ_PAUSED_REPLY = (link: string, pausedReason: string | null | undefined): string =>
   `เก็บไฟล์ไว้แล้วค่ะ แต่ยังอ่านข้อมูลไม่ครบ (${capturePausedReasonTh(pausedReason)}) `
-  + `กด${CONTINUE_IN_WEB_LABEL}ส่วนที่ขาดต่อได้ที่นี่\n${link}`;
+  + `กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่\n${link}`;
 
 /**
  * The DONE summary the LINE result push sends today.

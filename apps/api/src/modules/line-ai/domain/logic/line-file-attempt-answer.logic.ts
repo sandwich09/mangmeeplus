@@ -48,6 +48,14 @@ const megabytes = (bytes: number): string => {
 const named = (attempt: LineFileAttemptFacts): string =>
   attempt.fileNameSanitized ? `${mediaWordTh(attempt.messageType)} ${attempt.fileNameSanitized}` : `${mediaWordTh(attempt.messageType)}ที่ส่งมา`;
 
+/**
+ * The same label INSIDE a sentence. Thai runs words together, but a Latin file name needs air on
+ * both sides or "invoice-aug.pdfไว้แล้ว" is what the customer reads — so a named file keeps its
+ * spaces and an unnamed one collapses to the natural Thai phrase.
+ */
+const namedInline = (attempt: LineFileAttemptFacts): string =>
+  attempt.fileNameSanitized ? `${mediaWordTh(attempt.messageType)} ${attempt.fileNameSanitized} ` : `${mediaWordTh(attempt.messageType)}นี้`;
+
 const timeLabel = (at: Date): string =>
   new Intl.DateTimeFormat('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }).format(at);
 
@@ -126,11 +134,11 @@ function rejectionSentence(attempt: LineFileAttemptFacts): string {
   }
   if (attempt.reasonCode === 'CONTENT_REJECTED' || attempt.reasonCode === 'MALWARE_DETECTED'
     || attempt.reasonCode === 'MALWARE_SCAN_FAILED') {
-    return `${named(attempt)} ไม่ผ่านการตรวจความปลอดภัยค่ะ จึงยังไม่ได้เก็บไฟล์นี้ — `
+    return `${namedInline(attempt)}ไม่ผ่านการตรวจความปลอดภัยค่ะ จึงยังไม่ได้เก็บไฟล์นี้ — `
       + 'กรุณาส่งไฟล์ต้นฉบับที่ดาวน์โหลดจากต้นทางอีกครั้งนะคะ';
   }
   if (attempt.reasonCode === 'persist_failed') {
-    return `ระบบเก็บ${named(attempt)}ไม่สำเร็จค่ะ จึงยังไม่ได้บันทึกรายการใด ๆ — รบกวนส่งไฟล์เดิมอีกครั้งนะคะ`;
+    return `ระบบเก็บ${namedInline(attempt)}ไม่สำเร็จค่ะ จึงยังไม่ได้บันทึกรายการใด ๆ — รบกวนส่งไฟล์เดิมอีกครั้งนะคะ`;
   }
   // §17.5 row 4: a download failure whose cause we genuinely do not know. Never widened into
   // "too large" or "expired" — that guess is the defect this row exists to prevent.
@@ -142,15 +150,15 @@ function storedSentence(attempt: LineFileAttemptFacts): string {
   const link = linkTail(attempt);
   switch (attempt.outcome) {
     case 'STORED_READING':
-      return `เก็บ${named(attempt)}ไว้แล้วค่ะ กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ${link}`;
+      return `เก็บ${namedInline(attempt)}ไว้แล้วค่ะ กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ${link}`;
     case 'STORED_READ_FAILED':
-      return `เก็บ${named(attempt)}ไว้แล้วค่ะ แต่อ่านข้อมูลไม่สำเร็จ กดกรอกข้อมูลต่อได้ที่นี่${link || ''}`;
+      return `เก็บ${namedInline(attempt)}ไว้แล้วค่ะ แต่อ่านข้อมูลไม่สำเร็จ กดกรอกข้อมูลต่อได้ที่นี่${link || ''}`;
     case 'STORED_READ_PARTIAL':
-      return `เก็บ${named(attempt)}ไว้แล้วค่ะ แต่ยังอ่านข้อมูลไม่ครบ กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่${link || ''}`;
+      return `เก็บ${namedInline(attempt)}ไว้แล้วค่ะ แต่ยังอ่านข้อมูลไม่ครบ กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่${link || ''}`;
     case 'STORED_READ_DONE':
-      return `อ่าน${named(attempt)}เสร็จแล้วค่ะ${attempt.currentStatus ? ` สถานะตอนนี้ ${attempt.currentStatus}` : ''}${link}`;
+      return `อ่าน${namedInline(attempt)}เสร็จแล้วค่ะ${attempt.currentStatus ? ` สถานะตอนนี้ ${attempt.currentStatus}` : ''}${link}`;
     case 'STORED':
-      return `เก็บ${named(attempt)}ไว้แล้วค่ะ ยังไม่ได้อ่านข้อมูลอัตโนมัตินะคะ${link}`;
+      return `เก็บ${namedInline(attempt)}ไว้แล้วค่ะ ยังไม่ได้อ่านข้อมูลอัตโนมัตินะคะ${link}`;
     default:
       // UXE-25 / §17.5 "unknown": an outcome we never resolved is never reported as saved.
       return FILE_ATTEMPT_LOOKUP_FAILED_REPLY;

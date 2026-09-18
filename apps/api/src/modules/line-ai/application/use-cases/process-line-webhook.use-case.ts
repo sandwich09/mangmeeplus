@@ -6863,7 +6863,7 @@ export class ProcessLineWebhookUseCase {
       expectedRevision: created.revision,
       lineMessageId: event.lineMessageId,
     });
-    await putLineMediaUpload(file, input.media, this.config.publicApiBaseUrl);
+    await this.uploadLineMedia(file, input.media);
     const completed = await this.completeCaptureFile!.execute(ctx, created.groupId, file.fileId, {
       byteSize: input.media.byteSize,
       ...(input.media.checksumSha256 ? { checksumSha256: input.media.checksumSha256 } : {}),
