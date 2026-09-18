@@ -7,6 +7,13 @@ const SALES = 'sales.get_sales_summary::single_metric';
 const EXPENSE = 'expense.list_recent::single_metric';
 const ACCOUNTING = 'accounting.get_summary::list';
 const DAILY = 'expense.get_daily_closing::single_metric';
+// Wave 2 R5 (spec §6.2): the four questions that used 6–7 model calls in the 2026-09-17 corpus run.
+const VAT = 'tax.get_vat_summary::single_metric';
+const LOW_STOCK = 'inventory.list_low_stock::list';
+const AP = 'procurement.get_ap_outstanding::single_metric';
+const AP_LIST = 'procurement.get_ap_outstanding::list';
+const CRM = 'crm.get_customer_summary::single_metric';
+const CRM_LIST = 'crm.get_customer_summary::list';
 const TH = { language: 'th', locale: 'th-TH' };
 const EN = { language: 'en', locale: 'en-US' };
 
@@ -20,8 +27,9 @@ function salesOutput(data: Record<string, unknown>): SpecialistOutput {
 }
 
 describe('prepared-simple-read compiled formatter registry', () => {
-  it('exposes exactly the compiled families (sales, F1 expense, F2 accounting, F3 daily — compiled ≠ active)', () => {
-    assert.deepEqual([...COMPILED_PREPARED_FAMILY_KEYS], [SALES, EXPENSE, ACCOUNTING, DAILY]);
+  it('exposes exactly the compiled families (sales, F1 expense, F2 accounting, F3 daily, F4–F7 R5 — compiled ≠ active)', () => {
+    assert.deepEqual([...COMPILED_PREPARED_FAMILY_KEYS],
+      [SALES, EXPENSE, ACCOUNTING, DAILY, VAT, LOW_STOCK, AP, AP_LIST, CRM, CRM_LIST]);
     // Compiling a family does NOT enable it: the operator allowlist is empty by default, so the lane
     // stays dormant until each family passes its own blind pairwise eval (plan Phase 5 gate).
     assert.deepEqual([...activePreparedFamilies([])], []);
@@ -521,5 +529,297 @@ describe('F3 expense.get_daily_closing::single_metric — ค่าใช้จ�
     // Another family's data can never be answered as this one.
     assert.equal(formatPreparedSimpleRead(DAILY, expenseOutput(expenseData()), TH).kind, 'unverified');
     assert.equal(formatPreparedSimpleRead(EXPENSE, dailyOutput(dailyData()), TH).kind, 'unverified');
+  });
+});
+
+// ── F4 — tax.get_vat_summary::single_metric ("ภาษีมูลค่าเพิ่มงวดนี้ต้องยื่นเท่าไหร่") ─────────────────
+// Fixture shape copied from the real tool result (apps/api .../erp-tax-tools.use-case.ts
+// `TaxGetVatSummaryTool`): the period key it read, the period `status`, `vatOutput` / `vatInput` /
+// `netVat` as 2-decimal STRINGS (`displayMoney`), the ACTIVE `eventCount`, `currency`, and a disclaimer.
+const VAT_SOURCE: SourceRef = {
+  label: 'งวดภาษี 2026-08', module: 'tax', entityType: 'tax_period',
+  permissionChecked: true, webPath: '/companies/c1/tax',
+};
+const vatOutput = (data: Record<string, unknown>): SpecialistOutput => readOutput('tax.get_vat_summary', data, VAT_SOURCE);
+const vatData = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  periodKey: '2026-08', status: 'OPEN',
+  vatOutput: '10000.00', vatInput: '6500.00', netVat: '3500.00',
+  eventCount: 12, currency: 'THB',
+  disclaimer: 'ข้อมูลสรุปนี้ยังไม่ผ่านการรับรองจากนักบัญชี กรุณาตรวจสอบและยืนยันก่อนยื่นแบบ',
+  ...over,
+});
+
+describe('F4 tax.get_vat_summary::single_metric — VAT งวดนี้', () => {
+  it('answers with the net payable, both sides, the raw period status, source, as-of and the not-certified line (Thai)', () => {
+    const r = formatPreparedSimpleRead(VAT, vatOutput(vatData()), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind !== 'answer') return;
+    assert.match(r.replyText, /^VAT งวด 2026-08: ต้องนำส่ง 3,500\.00 บาท/);
+    assert.match(r.replyText, /\nภาษีขาย 10,000\.00 บาท · ภาษีซื้อ 6,500\.00 บาท \(12 รายการ\)/);
+    assert.match(r.replyText, /\nสถานะงวด: OPEN/);
+    assert.match(r.replyText, /\nที่มา: งวดภาษี 2026-08/);
+    assert.match(r.replyText, /\nข้อมูล ณ 2026-08-25/);
+    // REQUIRED: a read summary is never presented as a certified/filed return.
+    assert.match(r.replyText, /\n\(ยังไม่ผ่านการรับรองจากนักบัญชี กรุณาตรวจสอบก่อนยื่นแบบ\)$/);
+    assert.equal(r.webLinks[0]?.path, '/companies/c1/tax');
+    assert.equal(r.replyText, r.replyText.normalize('NFC'));
+  });
+
+  it('answers in English with the same grounded numbers', () => {
+    const r = formatPreparedSimpleRead(VAT, vatOutput(vatData()), EN);
+    assert.equal(r.kind, 'answer');
+    if (r.kind !== 'answer') return;
+    assert.match(r.replyText, /^VAT 2026-08: 3,500\.00 THB to remit/);
+    assert.match(r.replyText, /\nOutput VAT 10,000\.00 THB · Input VAT 6,500\.00 THB \(12 records\)/);
+    assert.match(r.replyText, /\nPeriod status: OPEN/);
+    assert.match(r.replyText, /\n\(Not certified by an accountant — check before filing\)$/);
+  });
+
+  it('never states a negative amount to remit: an input-heavy period says which side is bigger', () => {
+    for (const net of ['-1200.00', -1200]) {
+      const th = formatPreparedSimpleRead(VAT, vatOutput(vatData({ netVat: net, vatOutput: '5000.00', vatInput: '6200.00' })), TH);
+      assert.equal(th.kind, 'answer');
+      if (th.kind === 'answer') {
+        assert.match(th.replyText, /^VAT งวด 2026-08: ภาษีซื้อมากกว่าภาษีขาย 1,200\.00 บาท/);
+        assert.doesNotMatch(th.replyText, /ต้องนำส่ง|-1,200/);
+      }
+      const en = formatPreparedSimpleRead(VAT, vatOutput(vatData({ netVat: net, vatOutput: '5000.00', vatInput: '6200.00' })), EN);
+      if (en.kind === 'answer') assert.match(en.replyText, /^VAT 2026-08: input VAT exceeds output VAT by 1,200\.00 THB/);
+    }
+  });
+
+  it('renders an explicit-empty period as an honest zero', () => {
+    const r = formatPreparedSimpleRead(VAT, vatOutput(vatData({ vatOutput: '0.00', vatInput: '0.00', netVat: '0.00', eventCount: 0 })), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') assert.match(r.replyText, /^VAT งวด 2026-08: ต้องนำส่ง 0\.00 บาท\nภาษีขาย 0\.00 บาท · ภาษีซื้อ 0\.00 บาท \(0 รายการ\)/);
+  });
+
+  it('states the currency the tool reported and never assumes baht', () => {
+    const r = formatPreparedSimpleRead(VAT, vatOutput(vatData({ currency: 'USD' })), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') {
+      assert.match(r.replyText, /ต้องนำส่ง 3,500\.00 USD/);
+      assert.doesNotMatch(r.replyText, /บาท/);
+    }
+    // No currency at all → the unit cannot be stated, so nothing is.
+    const noCurrency = vatData();
+    delete noCurrency['currency'];
+    assert.equal(formatPreparedSimpleRead(VAT, vatOutput(noCurrency), TH).kind, 'unverified');
+  });
+
+  it('returns unverified for the tool\'s no-data branch and for any missing/typeless amount', () => {
+    // The real "ยังไม่มีข้อมูล VAT งวดนี้" result carries a message instead of amounts — never a zero.
+    assert.equal(formatPreparedSimpleRead(VAT, vatOutput({
+      periodKey: '2026-08', message: 'ยังไม่มีข้อมูล VAT งวดนี้', disclaimer: 'ซิงค์ข้อมูลก่อนหรือตรวจสอบกับนักบัญชี',
+    }), TH).kind, 'unverified');
+    for (const broken of [
+      vatData({ netVat: null }), vatData({ netVat: 'สามพัน' }), vatData({ vatInput: undefined }),
+      vatData({ eventCount: '12' }), vatData({ eventCount: 1.5 }), vatData({ periodKey: '' }),
+      vatData({ truncated: true }),
+    ]) {
+      assert.equal(formatPreparedSimpleRead(VAT, vatOutput(broken), TH).kind, 'unverified');
+    }
+    // Omits the status line rather than inventing one; the rest of the answer still renders.
+    const noStatus = vatData();
+    delete noStatus['status'];
+    const r = formatPreparedSimpleRead(VAT, vatOutput(noStatus), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') assert.doesNotMatch(r.replyText, /สถานะงวด/);
+  });
+});
+
+// ── F5 — inventory.list_low_stock::list ("สินค้าอะไรใกล้หมดบ้าง") ──────────────────────────────────
+// Fixture shape copied from the real tool result (apps/api .../erp-tools.use-case.ts
+// `InventoryListLowStockTool`): the COMPLETE `count` of at-or-below-reorder-point items plus a ten-row
+// preview of `{productId, quantity, locationId}` — no name, sku or unit anywhere in the result.
+const LOW_STOCK_SOURCE: SourceRef = {
+  label: 'สินค้าใกล้หมด', module: 'inventory', entityType: 'low_stock_report',
+  permissionChecked: true, webPath: '/companies/c1/inventory',
+};
+const lowStockOutput = (data: Record<string, unknown>): SpecialistOutput =>
+  ({ ...readOutput('inventory.list_low_stock', data, LOW_STOCK_SOURCE), agent: 'inventory' });
+const lowStockData = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  count: 3,
+  items: [
+    { productId: '11111111-1111-4111-8111-111111111111', quantity: '2.0000', locationId: 'loc-1' },
+    { productId: '22222222-2222-4222-8222-222222222222', quantity: '0.0000', locationId: 'loc-1' },
+    { productId: '33333333-3333-4333-8333-333333333333', quantity: '1.5000', locationId: 'loc-2' },
+  ],
+  ...over,
+});
+
+describe('F5 inventory.list_low_stock::list — สินค้าใกล้หมด', () => {
+  it('answers with the grounded count, the low-stock report as source, as-of and link (Thai)', () => {
+    const r = formatPreparedSimpleRead(LOW_STOCK, lowStockOutput(lowStockData()), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind !== 'answer') return;
+    assert.match(r.replyText, /^สินค้าใกล้หมด \(ถึงหรือต่ำกว่าจุดสั่งซื้อ\): 3 รายการ/);
+    assert.match(r.replyText, /\nที่มา: สินค้าใกล้หมด/);
+    assert.match(r.replyText, /\nข้อมูล ณ 2026-08-25/);
+    assert.equal(r.webLinks[0]?.path, '/companies/c1/inventory');
+    assert.equal(r.replyText, r.replyText.normalize('NFC'));
+    // The result carries no product name, so none is claimed — and no raw id reaches the bubble.
+    assert.doesNotMatch(r.replyText, /11111111|loc-1|2\.0000/);
+  });
+
+  it('answers in English and renders an explicit-empty result as an honest zero', () => {
+    const en = formatPreparedSimpleRead(LOW_STOCK, lowStockOutput(lowStockData({ count: 1, items: [lowStockData()['items'] as never].flat().slice(0, 1) })), EN);
+    if (en.kind === 'answer') assert.match(en.replyText, /^Low stock: 1 item at or below the reorder point/);
+    const zero = formatPreparedSimpleRead(LOW_STOCK, lowStockOutput({ count: 0, items: [] }), TH);
+    assert.equal(zero.kind, 'answer');
+    if (zero.kind === 'answer') assert.match(zero.replyText, /^สินค้าใกล้หมด \(ถึงหรือต่ำกว่าจุดสั่งซื้อ\): 0 รายการ/);
+    const zeroEn = formatPreparedSimpleRead(LOW_STOCK, lowStockOutput({ count: 0, items: [] }), EN);
+    if (zeroEn.kind === 'answer') assert.match(zeroEn.replyText, /^Low stock: 0 items at or below the reorder point/);
+  });
+
+  it('returns unverified for a missing/typeless count, an incompleteness flag, or another tool\'s data', () => {
+    for (const broken of [{ items: [] }, { count: '3' }, { count: -1 }, { count: 2.5 }, lowStockData({ truncated: true })]) {
+      assert.equal(formatPreparedSimpleRead(LOW_STOCK, lowStockOutput(broken), TH).kind, 'unverified');
+    }
+    assert.equal(formatPreparedSimpleRead(LOW_STOCK, expenseOutput(expenseData()), TH).kind, 'unverified');
+  });
+});
+
+// ── F6 — procurement.get_ap_outstanding::single_metric / ::list ("ยอดค้างจ่ายซัพพลายเออร์") ────────
+// Fixture shape copied from the real tool result (apps/api .../erp-business-tools.use-case.ts
+// `ProcurementApOutstandingTool`): the aging cut-off day, the complete outstanding total as a Decimal
+// STRING, the supplier count, and a five-row preview whose `supplier` is the supplier ID.
+const AP_SOURCE: SourceRef = {
+  label: 'เจ้าหนี้ค้างจ่าย', module: 'procurement', entityType: 'ap_aging',
+  permissionChecked: true, webPath: '/companies/c1/procurement',
+};
+const apOutput = (data: Record<string, unknown>): SpecialistOutput => readOutput('procurement.get_ap_outstanding', data, AP_SOURCE);
+const apData = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  asOfDate: '2026-08-25',
+  totalOutstanding: '125400.0000',
+  supplierCount: 8,
+  topSuppliers: [{ supplier: '44444444-4444-4444-8444-444444444444', totalOutstanding: '50000.0000' }],
+  ...over,
+});
+
+describe('F6 procurement.get_ap_outstanding — ยอดค้างจ่ายเจ้าหนี้', () => {
+  it('answers with the total for the tool\'s own cut-off day, the supplier count, source, as-of and link', () => {
+    const r = formatPreparedSimpleRead(AP, apOutput(apData()), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind !== 'answer') return;
+    assert.match(r.replyText, /^ยอดค้างจ่ายเจ้าหนี้ ณ 2026-08-25: 125,400\.00 บาท \(เจ้าหนี้ 8 ราย\)/);
+    assert.match(r.replyText, /\nที่มา: เจ้าหนี้ค้างจ่าย/);
+    assert.match(r.replyText, /\nข้อมูล ณ 2026-08-25/);
+    assert.equal(r.webLinks[0]?.path, '/companies/c1/procurement');
+    assert.equal(r.replyText, r.replyText.normalize('NFC'));
+    // `supplier` is the supplier ID, not a display name — so no supplier is named.
+    assert.doesNotMatch(r.replyText, /44444444|50,000/);
+  });
+
+  it('serves the same deterministic answer for the list shape (the advice picks the renderer only)', () => {
+    const metric = formatPreparedSimpleRead(AP, apOutput(apData()), TH);
+    const list = formatPreparedSimpleRead(AP_LIST, apOutput(apData()), TH);
+    assert.equal(list.kind, 'answer');
+    if (metric.kind === 'answer' && list.kind === 'answer') assert.equal(list.replyText, metric.replyText);
+  });
+
+  it('answers in English and renders a fully-paid day as an honest zero', () => {
+    const en = formatPreparedSimpleRead(AP, apOutput(apData()), EN);
+    if (en.kind === 'answer') assert.match(en.replyText, /^Unpaid supplier bills as of 2026-08-25: 125,400\.00 THB \(8 suppliers\)/);
+    const zero = formatPreparedSimpleRead(AP, apOutput(apData({ totalOutstanding: '0.0000', supplierCount: 0, topSuppliers: [] })), TH);
+    assert.equal(zero.kind, 'answer');
+    if (zero.kind === 'answer') assert.match(zero.replyText, /^ยอดค้างจ่ายเจ้าหนี้ ณ 2026-08-25: 0\.00 บาท \(เจ้าหนี้ 0 ราย\)/);
+  });
+
+  it('renders an exact Decimal-string total unchanged and rounds satang half-up', () => {
+    const exact = formatPreparedSimpleRead(AP, apOutput(apData({ totalOutstanding: '90071992547409.93' })), TH);
+    if (exact.kind === 'answer') {
+      assert.match(exact.replyText, /90,071,992,547,409\.93 บาท/);
+      assert.doesNotMatch(exact.replyText, /409\.94/);
+    }
+    const half = formatPreparedSimpleRead(AP, apOutput(apData({ totalOutstanding: '1.005' })), TH);
+    if (half.kind === 'answer') assert.match(half.replyText, /1\.01 บาท/);
+  });
+
+  it('returns unverified for a missing/unparseable cut-off day, total or supplier count', () => {
+    for (const broken of [
+      apData({ asOfDate: 'today' }), apData({ asOfDate: undefined }),
+      apData({ totalOutstanding: null }), apData({ totalOutstanding: '125,400 บาท' }),
+      apData({ supplierCount: '8' }), apData({ truncated: true }),
+    ]) {
+      assert.equal(formatPreparedSimpleRead(AP, apOutput(broken), TH).kind, 'unverified');
+    }
+    assert.equal(formatPreparedSimpleRead(AP, dailyOutput(dailyData()), TH).kind, 'unverified');
+  });
+});
+
+// ── F7 — crm.get_customer_summary::single_metric / ::list ("เดือนนี้มีลูกค้าใหม่กี่ราย") ─────────────
+// Fixture shape copied from the real tool result (apps/api .../erp-crm-tools.use-case.ts
+// `CrmGetCustomerSummaryTool` + `summarizeCustomers`): the new/total/active/inactive/archived counts,
+// the validated `newCustomersSince` day, and the two basis flags that give `total` its meaning.
+const CRM_SOURCE: SourceRef = {
+  label: 'ลูกค้า', module: 'crm', entityType: 'customer_summary',
+  permissionChecked: true, webPath: '/companies/c1/customers',
+};
+const crmOutput = (data: Record<string, unknown>): SpecialistOutput =>
+  ({ ...readOutput('crm.get_customer_summary', data, CRM_SOURCE), agent: 'crm' });
+const crmData = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  total: 42, active: 40, inactive: 0, archived: 2, newCustomers: 3,
+  newCustomersSince: '2026-08-01', totalIncludesArchived: true, totalExcludesMerged: true,
+  ...over,
+});
+
+describe('F7 crm.get_customer_summary — ลูกค้าใหม่', () => {
+  it('answers with the new count for the tool\'s own window, the total with its basis, source and as-of', () => {
+    const r = formatPreparedSimpleRead(CRM, crmOutput(crmData()), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind !== 'answer') return;
+    assert.match(r.replyText, /^ลูกค้าใหม่ตั้งแต่ 2026-08-01: 3 ราย/);
+    assert.match(r.replyText, /\nลูกค้าทั้งหมด 42 ราย \(ใช้งานอยู่ 40 ราย\)/);
+    assert.match(r.replyText, /\n\(ยอดรวม: นับรวมลูกค้าที่เก็บเข้าคลัง · ไม่รวมรายการที่ถูกรวมบัญชี\)/);
+    assert.match(r.replyText, /\nที่มา: ลูกค้า/);
+    assert.match(r.replyText, /\nข้อมูล ณ 2026-08-25/);
+    assert.equal(r.webLinks[0]?.path, '/companies/c1/customers');
+    assert.equal(r.replyText, r.replyText.normalize('NFC'));
+  });
+
+  it('serves the same deterministic answer for the single_metric and list shapes', () => {
+    const metric = formatPreparedSimpleRead(CRM, crmOutput(crmData()), TH);
+    const list = formatPreparedSimpleRead(CRM_LIST, crmOutput(crmData()), TH);
+    assert.equal(list.kind, 'answer');
+    if (metric.kind === 'answer' && list.kind === 'answer') assert.equal(list.replyText, metric.replyText);
+  });
+
+  it('answers in English and renders a month with no new customer as an honest zero', () => {
+    const en = formatPreparedSimpleRead(CRM, crmOutput(crmData()), EN);
+    if (en.kind === 'answer') {
+      assert.match(en.replyText, /^New customers since 2026-08-01: 3 customers/);
+      assert.match(en.replyText, /\nTotal 42 customers \(40 active\)/);
+      assert.match(en.replyText, /\n\(Total: includes archived · excludes merged records\)/);
+    }
+    const zero = formatPreparedSimpleRead(CRM, crmOutput(crmData({ newCustomers: 0 })), TH);
+    assert.equal(zero.kind, 'answer');
+    if (zero.kind === 'answer') assert.match(zero.replyText, /^ลูกค้าใหม่ตั้งแต่ 2026-08-01: 0 ราย/);
+    const one = formatPreparedSimpleRead(CRM, crmOutput(crmData({ newCustomers: 1 })), EN);
+    if (one.kind === 'answer') assert.match(one.replyText, /^New customers since 2026-08-01: 1 customer\n/);
+  });
+
+  it('states the basis the tool actually reported, and omits the line when it reports none', () => {
+    const flipped = formatPreparedSimpleRead(CRM, crmOutput(crmData({ totalIncludesArchived: false, totalExcludesMerged: false })), TH);
+    if (flipped.kind === 'answer') assert.match(flipped.replyText, /\n\(ยอดรวม: ไม่รวมลูกค้าที่เก็บเข้าคลัง · นับรวมรายการที่ถูกรวมบัญชี\)/);
+    const silent = crmData();
+    delete silent['totalIncludesArchived'];
+    delete silent['totalExcludesMerged'];
+    const r = formatPreparedSimpleRead(CRM, crmOutput(silent), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') assert.doesNotMatch(r.replyText, /ยอดรวม:/);
+  });
+
+  it('returns unverified for a missing window day or any non-count figure, and never names a customer', () => {
+    for (const broken of [
+      crmData({ newCustomersSince: 'เดือนนี้' }), crmData({ newCustomersSince: undefined }),
+      crmData({ newCustomers: '3' }), crmData({ total: null }), crmData({ active: 2.5 }),
+      crmData({ truncated: true }),
+    ]) {
+      assert.equal(formatPreparedSimpleRead(CRM, crmOutput(broken), TH).kind, 'unverified');
+    }
+    // A summary that somehow carried rows would still print counts only.
+    const withRows = formatPreparedSimpleRead(CRM, crmOutput(crmData({ items: [{ displayName: 'ร้านลุงมี' }] })), TH);
+    if (withRows.kind === 'answer') assert.doesNotMatch(withRows.replyText, /ลุงมี/);
   });
 });

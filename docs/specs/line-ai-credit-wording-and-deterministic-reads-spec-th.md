@@ -98,17 +98,20 @@ Owner decisions 2026-09-18 (ถอดจากข้อความจริง)
 - คำถามอ่านข้อมูลธุรกิจแบบ "ค่าเดียว/รายการเดียว" ตอบด้วย formatter ที่ compile ไว้ (เลน prepared simple-read) — 1 model call (intake) เท่านั้น
 - คำถามแบบ "แยก" (แยกหมวด/สาขา/ช่วงเวลา, เปรียบเทียบ, อธิบายรายการ) ใช้เส้นทางปกติ: tool คืนข้อเท็จจริง → `compose()` deterministic → โมเดล "ขัดเกลาภาษา" และเพิ่มคำแนะนำได้ **แต่ตัวเลขทุกตัวต้องมาจาก tool data หรือการคำนวณในโค้ด** — numeric guard เดิมของ composer เป็นกลไกบังคับ (ตัวเลขที่ไม่มีใน tool data/คำถาม/บริบท ⇒ fallback เป็นข้อความ grounded) และต้องมี test ที่พิสูจน์ว่า "ตัวเลขที่โมเดลคำนวณเอง" (ผลต่าง/เปอร์เซ็นต์/ผลรวมที่ tool ไม่ได้ให้) ถูกปฏิเสธ ถ้าผลิตภัณฑ์ต้องการผลต่าง/เปอร์เซ็นต์ ให้โค้ดคำนวณแล้วใส่เป็น fact ก่อน
 - Production เปิดเลนนี้ (owner): ยืนยันว่า deploy default ปัจจุบันเปิดอยู่จริงทั้ง UAT/Production; แก้ comment ล้าสมัยใน `deploy.sh`; family ใหม่ทุกตัวเข้า allowlist default
+- ข้อจำกัดที่พบตอน implement (2026-09-18) และ **ไม่แก้**: guard ที่ปฏิเสธคำแนะนำจริง ๆ ไม่ใช่ numeric guard แต่เป็น vocabulary guard `preservesSemanticGrounding` — ทุกคำในคำตอบต้องอยู่ใน tool data / คำถาม / `SAFE_REPLY_WORDS` ฉะนั้นประโยคแนะนำที่ใช้คำอย่าง "ควร", "ราคา", "ผู้ขาย" หรือแม้แต่ "นะคะ" จะ fallback เป็น grounded text; และคำใน `SAFE_REPLY_WORDS` ที่เป็นคำประสม (เช่น `ตรวจสอบ`) ไม่เคย match เพราะ `Intl.Segmenter` ตัดเป็น `ตรวจ`+`สอบ` (`response-composer.agent.ts` `SAFE_REPLY_WORDS`/`wordTokens`). การขยายรายการคำ = ขยายสิ่งที่โมเดลพูดได้ ต้องเป็น owner decision แยก ไม่ใช่ผลพลอยได้ของ wave นี้
 
 ### 6.2 family ที่ต้องเพิ่ม (จากงานที่พลาดเลนใน corpus)
 
-| งานใน corpus | tool::answerShape (ยืนยันชื่อจริงตอน implement) | ประเภท |
+| งานใน corpus | tool::answerShape (ยืนยันแล้วตอน implement 2026-09-18) | ประเภท |
 | --- | --- | --- |
-| ปิดยอดรายวัน (`text-read-daily-closing`) | `expense.get_daily_closing::single_metric` — family มีแล้ว แต่พลาดเลน: หาเหตุ (eligibility reason) แล้วแก้ | ค่าเดียว |
-| ภาษี/VAT เดือนนี้ | `tax.*::single_metric` | ค่าเดียว |
-| สินค้าใกล้หมด | `inventory.*::list` | รายการ |
-| เจ้าหนี้ค้างจ่าย | `ap.*::single_metric` หรือ `::list` | ค่าเดียว/รายการ |
-| ลูกค้าใหม่ (CRM) | `crm.*::list` | รายการ |
+| ปิดยอดรายวัน (`text-read-daily-closing`) | `expense.get_daily_closing::single_metric` — family มีแล้วและ eligible จริง; ที่พลาดเลนคือแผนของ router เพราะข้อความใน corpus ถามสองข้อในประโยคเดียว (`not_simple` / `no_simple_answer_shape`) → ไม่แก้ | ค่าเดียว |
+| ภาษี/VAT งวดที่ tool อ่าน | `tax.get_vat_summary::single_metric` | ค่าเดียว |
+| สินค้าใกล้หมด | `inventory.list_low_stock::list` | รายการ |
+| เจ้าหนี้ค้างจ่าย | `procurement.get_ap_outstanding::single_metric` + `::list` | ค่าเดียว/รายการ |
+| ลูกค้าใหม่ (CRM) | `crm.get_customer_summary::single_metric` + `::list` | รายการ/ค่าเดียว |
 | ค่าใช้จ่ายแยกหมวด, อธิบายรายการ | ไม่เพิ่ม family — เป็นคำถามแบบ "แยก/อธิบาย" → เส้นทางปกติตาม §6.1 | โมเดลแต่ง (grounded) |
+
+AP และ CRM ลงทะเบียนสอง shape เพราะคำถามจริงมีทั้งแบบ "เท่าไหร่" และ "มีใคร/อะไรบ้าง" ในขณะที่คำตอบ deterministic เป็นข้อความเดียวกัน; `answerShape` เป็นคำแนะนำที่ไม่เชื่อถือและมีหน้าที่แค่เลือก formatter จึงไม่เพิ่มสิทธิ์หรือคำพูดใหม่ (สอดคล้องกับแถว AP ที่ spec เปิดไว้ทั้งสอง shape อยู่แล้ว)
 
 แต่ละ family ต้องมี: shape ที่ตรวจแล้ว (`unverified` เมื่อไม่ตรง), rounding/หน่วย/ช่วงเวลา/ที่มา/as-of เหมือน family เดิม, ภาษาไทย/อังกฤษตาม locale, security spec เดิม (`prepared-simple-read-security.spec.ts`) ผ่านโดยไม่แก้เคสเดิม, และคำตอบไม่ต่างจากข้อเท็จจริงที่เส้นทางปกติตอบ (ตรวจกับ corpus)
 
@@ -136,9 +139,9 @@ concept/หน่วย/การเติมเครดิต, การตร
 - [x] W-02 เส้นทางรูป: ทุกสาเหตุใน §4 แถวแรกตอบ "เครดิตสำหรับการอ่านเอกสารไม่พอ" พร้อมสถานะไฟล์จริงและ "ยังไม่ได้บันทึกรายการ"; unavailable/busy/disabled คงแยก; ไม่มีตัวเลขเงิน; code/scope/terminal class/การคืนจำนวนใบ ไม่เปลี่ยน (whole-chain + combined regression ผ่านโดยแก้เฉพาะ expected text)
 - [x] W-03 เส้นทางแชตและ drain notice ตรง §5.1; integrity check ของ stored delivery ตรง exact string ใหม่
 - [x] W-04 Billing: warning `AI_CREDIT_HOLDS_PENDING` และ field `aiReservedSatang`/`aiUnresolvedHolds` แสดงเมื่อมี hold; บริษัทที่ไม่มี hold ผลเดิม; ไม่มีเงินรั่วไปหน้า owner
-- [ ] W-05 Deterministic: family ใหม่ตาม §6.2 มี formatter + tests; งาน daily-closing ที่เคยพลาดเลนตอบผ่านเลน; security spec เดิมผ่าน; allowlist default ใน deploy.sh มี family ใหม่ทั้ง UAT/Production
-- [ ] W-06 Grounded breakdown: test พิสูจน์ว่าตัวเลขที่โมเดลคำนวณเองถูกปฏิเสธและ fallback เป็น grounded text; คำแนะนำ (ไม่มีตัวเลขใหม่) ผ่านได้
-- [ ] W-07 Corpus replay ก่อน/หลัง (เมื่อ owner อนุญาตงบ): hit ≥ 16/24, routing ≥ เดิม, THB/successful task ลด, calls/turn ลด, ไม่มี task success→fail
+- [x] W-05 Deterministic: family ใหม่ตาม §6.2 มี formatter + tests (`prepared-simple-read-formatter.spec.ts` F4–F7, eligibility ของทั้ง 4 family ใน `prepared-simple-read.logic.spec.ts`); security spec เดิมผ่านโดยไม่แก้เคสเดิม; allowlist default ใน `deploy.sh` มี 10 family ทั้ง UAT/Production และ `production-serving-mode.spec.sh` pin ครบทุก key — **ยกเว้น** งาน daily-closing: family มีและ eligible จริง (pin ด้วย test) แต่ข้อความใน corpus เป็นคำถามสองข้อในประโยคเดียว จึงพลาดเลนเพราะแผนของ router เอง (`not_simple` / `no_simple_answer_shape`) ไม่ใช่ข้อบกพร่องของ gate/formatter — ไม่แก้ (§14 ของ research doc)
+- [x] W-06 Grounded breakdown: `response-composer.agent.spec.ts` พิสูจน์ว่าผลต่าง/เปอร์เซ็นต์/ผลรวมย่อย/ค่าเฉลี่ยที่โมเดลคำนวณเองถูกปฏิเสธและ fallback เป็น grounded text, และคำตอบที่ไม่เพิ่มตัวเลขใหม่ผ่านได้; ปิดช่องโหว่เลขไทย (๐-๙) ที่ numeric guard และ polish guard มองไม่เห็นเลย พร้อม test — ข้อจำกัดที่เหลือ: vocabulary guard (`preservesSemanticGrounding`) ปฏิเสธคำแนะนำที่ใช้คำนอก source/SAFE list (ดู §6.1 residual ด้านล่าง) ไม่ได้ขยายเพราะจะเป็นการเปิดกว้างให้โมเดลพูดได้มากขึ้น
+- [x] W-07 Corpus replay ก่อน/หลัง (owner อนุญาต 2026-09-18): hit 8 → **16**/22 business-read records, routing 22/22 เท่าเดิม, success 22/22 ไม่มี success→fail, THB/successful 0.942 → 0.750, calls/turn 4.27 → 2.50; spend THB 16.52 จากเพดาน 100 ([research §14](../research/line-ai-intake-cost-benchmark-2026-09-17.md))
 - [x] W-08 Browser evidence: หน้าแอดมิน AI และโควตา + billing ใบเสร็จ/แพ็กเกจ ที่ 1440/390 px ด้วยคำใหม่ ([bundle 2026-09-18](../qa/evidence/line-ai-credit-wording-2026-09-18/README.md), 7 subject × 2 viewport) — ส่วน smoke script: `admin-ai-adjustments-smoke.ts` อัปเดต selector ตามคำใหม่แล้ว แต่ **ยังไม่ได้รันในเครื่อง** (ต้องใช้ billing-http-smoke harness + Stripe fixture + browser ตัวที่สอง) จึงรอผล CI
 - [ ] W-09 UAT: ส่งรูปเมื่อเครดิตอ่านเอกสารหมด และพิมพ์เมื่อเครดิตแชตหมด เห็นข้อความตาม §4/§5 จริงบน LINE (เปิดหลัง deploy)
 

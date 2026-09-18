@@ -667,8 +667,20 @@ function boundCasualReply(reply: string, fallback: string, requireCompleteBounda
 // number that is absent from the grounded reply (commas ignored). This is what stops the
 // language layer from inventing or altering business figures.
 function groundedNumbers(text: string): Set<string> {
-  const matches = text.match(/\d[\d,]*(?:\.\d+)?/g) ?? [];
+  const matches = asciiDigits(text).match(/\d[\d,]*(?:\.\d+)?/g) ?? [];
   return new Set(matches.map((m) => m.replace(/,/g, '')));
+}
+
+/**
+ * Thai numerals → ASCII BEFORE any numeric membership test. JS `\d` is ASCII-only, `\p{L}` skips digits
+ * entirely and NFKC leaves Thai digits alone, so a figure the model wrote as "๓,๐๐๐" used to pass BOTH
+ * the numeric guard and the semantic word guard untested — exactly the invented-number case these guards
+ * exist to catch. Applied to the allowed side as well, so the two sides always compare like with like.
+ * ponytail: Thai only, because the reply is Thai or English; add a block when another locale needs one.
+ */
+const THAI_DIGITS = '๐๑๒๓๔๕๖๗๘๙';
+function asciiDigits(text: string): string {
+  return text.replace(/[๐-๙]/g, (digit) => String(THAI_DIGITS.indexOf(digit)));
 }
 
 function preservesGrounding(grounded: string, polished: string): boolean {
@@ -690,7 +702,7 @@ function looksLikeJson(text: string): boolean {
 }
 
 function numericValues(text: string): Set<number> {
-  const matches = text.match(/\d[\d,]*(?:\.\d+)?/g) ?? [];
+  const matches = asciiDigits(text).match(/\d[\d,]*(?:\.\d+)?/g) ?? [];
   return new Set(matches.map((m) => Number.parseFloat(m.replace(/,/g, ''))).filter((n) => Number.isFinite(n)));
 }
 

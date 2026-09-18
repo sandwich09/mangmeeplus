@@ -783,3 +783,102 @@ Spend: Stage 1 THB 92.58, Stage 2 THB 84.83, **phase total THB 177.41** of the T
 - The text-path deltas in §10.1 (±3%) and the two verdict flips in §10.6 are model variance on a
   byte-identical prompt. Two repetitions cannot separate a small real effect from that noise — but the
   prompt bytes are provably unchanged, which is the stronger argument.
+
+## 14. R5 after-run — deterministic business reads (wave 2 H2, 2026-09-18)
+
+R5 was recorded, not done, in §11. The owner took it in [wave 2 spec §6](../specs/line-ai-credit-wording-and-deterministic-reads-spec-th.md)
+(decision 4), four families were compiled, and this is the measured result. Same harness, same frozen
+corpus (`cf9bce44…`), same FX (THB 33/USD), same pacing (2,000 ms), 2 repetitions — business-read TEXT
+tasks only, because R5 does not touch the image path.
+
+| | before (`after-2026-09-17T16-13-27-267Z`) | after (`r5-after-2026-09-18T05-24-00-176Z`) |
+| --- | ---: | ---: |
+| records (11 tasks × 2 passes) | 22 | 22 |
+| prepared-lane hit (`calls == 1`) | **8** | **16** |
+| successful tasks | 22 / 22 | 22 / 22 |
+| routing correct | 22 / 22 | 22 / 22 |
+| calls / turn | 4.27 | **2.50** |
+| THB total | 20.72 | **16.51** |
+| THB / successful task | 0.942 | **0.750** (−20.4%) |
+
+No task went success → fail and no route changed. The after-run paid ONE cold cacheable-prefix write
+(`text-read-sales-month` pass 1, THB 1.68 against THB 0.31 warm) that the before subset did not, because
+it ran first in a shorter run; on warm-equivalent cost the saving is ≈ 27%, so the 20.4% above is the
+conservative figure.
+
+Per task (`calls` before → after; ✓ = served by the prepared lane):
+
+| task | before | after | |
+| --- | ---: | ---: | --- |
+| `text-read-sales-month` | 1 ✓ | 1 ✓ | already compiled |
+| `text-read-expense-total` | 1 ✓ | 1 ✓ | already compiled |
+| `text-read-glossary-shorthand` | 1 ✓ | 1 ✓ | already compiled |
+| `text-read-tax-vat` | 6 | **1 ✓** | new `tax.get_vat_summary::single_metric` |
+| `text-read-inventory-low` | 6 | **1 ✓** | new `inventory.list_low_stock::list` |
+| `text-read-ap-outstanding` | 6 | **1 ✓** | new `procurement.get_ap_outstanding::single_metric` |
+| `text-read-crm-new-customers` | 6 | **1 ✓** | new `crm.get_customer_summary::list` |
+| `text-read-expense-breakdown` | 7 / 6 | 6 / 7 | no family by design (spec §6.2) |
+| `text-read-explain-record` | 7 / 6 | 6 / 7 | no family by design (deterministic explain template) |
+| `text-read-daily-closing` | 6 | 7 / 6 | family exists, plan defers — see below |
+| `text-denied-read-no-query-permission` | 1 | 1 | permission refusal, unchanged |
+
+`text-read-daily-closing` still misses the lane, and the eligibility replay
+(`prepared-simple-read.logic.spec.ts`) says why: the message is two requests in one
+(`วันนี้ปิดร้านต้องเช็คอะไรบ้าง ยังค้างจ่ายอะไรไหม` — a closing checklist AND what is still unpaid), so the
+intake either marks the plan `complex` (gate reason `not_simple`) or emits no simple `answerShape`
+(`no_simple_answer_shape`), and the full path then answers both halves. That is the router's plan doing
+its job, not a defect in the gate or in the F3 formatter: one simple daily-closing read IS eligible and
+IS served (pinned by test). Nothing was changed for it.
+
+Answer facts were checked separately from cost, because the harness ERP client is a stub: each family's
+answer is pinned against the REAL tool result shape in `prepared-simple-read-formatter.spec.ts`, and the
+lane was replayed provider-free over the harness's own stub data to prove all four log
+`line.ai.prepared_simple_read.served` (a formatted answer) rather than `.honest_terminal`. Two stub
+entries were corrected to the real tool shapes in the same change — `tax.get_vat_summary`
+(`vatOutput`/`vatInput`/`netVat`/`eventCount`/`currency`, not `outputVat`/`inputVat`/`payable`) and
+`procurement.get_ap_outstanding` (`asOfDate`/`totalOutstanding`/`topSuppliers`, not
+`outstandingAmount`/`overdueAmount`) — so those two tasks' answer TEXT is not comparable across the two
+runs; their cost, calls, routing and success are (the stub is never metered and never reaches the intake
+prompt).
+
+Spend: smoke THB 0.01 + run THB 16.51 = **THB 16.52** of the THB 100 authorised for this phase
+(`--max-thb 60` per run, ledger `…/agent-h2/spend-ledger.jsonl`).
+
+```sh
+# both runs, from apps/ai-gateway (the header's required cwd)
+MODEL_PROVIDER=bedrock AWS_PROFILE=watchdog-bedrock AWS_SDK_LOAD_CONFIG=1 \
+  BEDROCK_REGION=ap-southeast-1 BEDROCK_MODEL_ID=global.anthropic.claude-sonnet-4-6 \
+  pnpm exec tsx ../../scripts/line-ai-intake-cost-benchmark.ts --smoke \
+    --max-thb 60 --thb-per-usd 33 --label r5-smoke --out <scratch>/agent-h2/r5-after
+
+MODEL_PROVIDER=bedrock AWS_PROFILE=watchdog-bedrock AWS_SDK_LOAD_CONFIG=1 \
+  BEDROCK_REGION=ap-southeast-1 BEDROCK_MODEL_ID=global.anthropic.claude-sonnet-4-6 \
+  pnpm exec tsx ../../scripts/line-ai-intake-cost-benchmark.ts \
+    --label r5-after --repetitions 2 --thb-per-usd 33 --max-thb 60 \
+    --only text-read-sales-month,text-read-expense-total,text-read-expense-breakdown,text-read-tax-vat,text-read-inventory-low,text-read-daily-closing,text-read-glossary-shorthand,text-read-ap-outstanding,text-read-crm-new-customers,text-read-explain-record,text-denied-read-no-query-permission \
+    --out <scratch>/agent-h2/r5-after
+```
+
+### 14.1 Found in the R5 after-run, not changed
+
+- **`tax.get_vat_summary` has no whitelisted input field, so no lane and no loop can ask for another
+  period.** `LINE_TOOL_REGISTRY` (`packages/contracts/src/ai-tools.ts`) lists neither
+  `requiredInputFields` nor `optionalInputFields` for it, while the tool itself accepts `periodKey`
+  (`erp-tax-tools.use-case.ts:189`) and defaults to the CURRENT period. `text-read-tax-vat` asks about
+  `เดือนที่แล้ว`, and both paths therefore read the current period. The compiled family makes that
+  visible — it prints `VAT งวด <periodKey>` from the tool's own answer — where a model-composed reply
+  could have called the current period "last month". Pre-existing; the fix is to whitelist `periodKey`
+  (with a `YYYY-MM` format check) and re-measure, which changes the intake catalog and so belongs in its
+  own round.
+- **AP aging adds every currency into one total.** `ap-reporting.use-case.ts:27` sums
+  `outstandingAmount` across bills regardless of `row.currency` and then reports `currency: 'THB'`, and
+  the LINE tool drops the currency field entirely, so the compiled answer states baht on the tool's own
+  authority. Single-currency companies are unaffected; a multi-currency one would read a wrong total on
+  both paths.
+- **`ap-reporting.use-case.ts:39` sets `supplierDisplayName` to the supplier ID**, so `topSuppliers` can
+  never be shown to a customer. The compiled family prints no supplier for that reason.
+- **The accounting-summary specialist's generic shaping misses AP/VAT count keys.**
+  `accounting-summary.agent.ts:406` looks for `total`/`count`/`outstandingTotal`/… , none of which these
+  two tools return, so the agentic fact for both is the placeholder
+  `ข้อมูลพร้อมแล้ว (ดูรายละเอียดในเว็บแอป)` and the numbers reach the customer only through the model.
+  The compiled families remove that dependency for these two questions.
