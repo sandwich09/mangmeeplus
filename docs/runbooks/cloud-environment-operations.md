@@ -12,6 +12,17 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ## Production Kamal staging — 2026-09-18, no application cutover
 
+Latest operation checkpoint09:46UTC: the first app handover20260918T085755Z-860908a6 failed at
+CloudFormation AMI permission validation. AWS restored the original staging template/rules and
+stack isUPDATE_ROLLBACK_COMPLETE. Explicit recovery20260918T091745Z-318a0d41 restored all3
+ECS services tofc2838c4 and provider37; candidate containers are stopped with restartdisabled.
+Customer traffic remains on ECS. Recovery is stillAWAITING_BROWSER_ACCEPTANCE, with its process
+and release lock alive; do not start a second recovery or forward run. Current admin identity is
+proved; freshcanOpen/logout204/postlogout401 and signed rollback completion remain outstanding.
+The inventory below predates this failed handover. New hosts still incur cost. Retain failed
+containers/evidence until signed recovery, then reconcile only those exact stopped containers.
+[Consolidated rehearsal and correction](../agent-memory/production-kamal-cutover-rehearsal-2026-09-18.md).
+
 The owner authorized ECS-to-Kamal migration with isolated application candidate
 `0b0058adbc7353ec906a33746867af2a235b0934`. Latest read-only proof at08:19UTC still finds all three
 ECS services running one task each on `fc2838c4cb691033f41595c0d43587f10377d33c`; capacity remains1/2.

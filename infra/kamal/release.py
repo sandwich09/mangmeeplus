@@ -262,7 +262,11 @@ class Release:
 
     def aws(self, args, **kwargs):
         try:
-            return json.loads(self.command(self.aws_prefix + args + ['--output', 'json'], **kwargs))
+            output = self.command(self.aws_prefix + args + ['--output', 'json'], **kwargs)
+            # ExecuteChangeSet succeeds without a response body; reads must still return JSON.
+            if args[:2] == ['cloudformation', 'execute-change-set'] and not output.strip():
+                return {}
+            return json.loads(output)
         except (ValueError, RuntimeError) as error:
             raise RuntimeError('AWS '+':'.join(args[:2])+' failed; no automatic mutation retry') from error
 
@@ -376,6 +380,7 @@ class Release:
                     require(not self.remote(host,['docker','ps','--all','--filter','label=service='+label,'--format','{{.ID}}']).strip(),
                             'Staged hosts already run applications; reconcile before a first migration')
             self.migration.routes(public=False)
+            self.migration.traffic_prerequisites()
             self.migration.old_routes()
             self.migration.verify_ecs_provider()
         self.receipt['targetVerified'] = True

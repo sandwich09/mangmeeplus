@@ -84,6 +84,15 @@ complete path/test arguments. This mode requires `cutoverComplete:false`, migrat
 `INFRASTRUCTURE_STAGED_NO_APPLICATION`, actual stack ARN, baseline SHA and unexpired temporary
 authority; it never accepts an ordinary completed enrollment. `--prepare` still only reads AWS.
 
+Preflight reads the stack's Ubuntu AMI and both owned rule tags before publishing or changing workers.
+The temporary migration role needs `ec2:DescribeImages` and ELB `DescribeTags` (read actions require
+resource`*`, bounded by region/expiry). The ListenerRule provider declares ModifyRule,
+SetRulePriorities, AddTags and RemoveTags; constrain writes to the two owned rule ARNs. Do not grant
+wildcard tag writes to satisfy IAM simulator differences. Verify actual scoped API permissions
+before the forward run. Stable `UPDATE_ROLLBACK_COMPLETE` is accepted only with the same retained
+route/template checks; in-progress or failed rollback remains blocked. Successful ExecuteChangeSet
+has an empty body; completion still requires matching operation events and exact template/rule readback.
+
 Apply requires controller bytes from current main. Freeze main and all Production release/recovery
 work for the operation. The controller fences the two legacy Production deployment workflows and
 checks for unfinished durable operations. Keep the shared recovery workflow idle; it is not disabled

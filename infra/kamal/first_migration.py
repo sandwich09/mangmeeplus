@@ -14,6 +14,7 @@ from release_source import full_sha, require
 ACCOUNT = '311414082667'
 REGION = 'ap-southeast-1'
 CLUSTER = 'watchdog-bms-prod'
+STABLE_STACK_STATES = ('CREATE_COMPLETE', 'UPDATE_COMPLETE', 'UPDATE_ROLLBACK_COMPLETE')
 SERVICES = {'api-web': 'watchdog-bms-api-web-pub', 'ai-gateway': 'watchdog-bms-ai-gateway-v2', 'workers': 'watchdog-bms-workers'}
 SERVICE_FIELDS = ('executionRoleArn', 'healthCheckPath', 'primaryContainer', 'taskRoleArn',
                   'networkConfiguration', 'cpu', 'memory', 'scalingTarget')
@@ -198,6 +199,22 @@ class FirstMigration:
         else: self.state['ecsRoutes']=retained; self.save()
         return retained
 
+    def traffic_prerequisites(self):
+        """Exercise CF's parameter and rule reads before publication or worker handover."""
+        stack = self.aws(['cloudformation', 'describe-stacks', '--stack-name', self.stack])['Stacks'][0]
+        require(stack['StackStatus'] in STABLE_STACK_STATES, 'Migration stack is not stable')
+        ami = next(p['ParameterValue'] for p in stack['Parameters'] if p['ParameterKey'] == 'UbuntuAmi')
+        images = self.aws(['ec2', 'describe-images', '--image-ids', ami])['Images']
+        require(len(images) == 1 and images[0]['ImageId'] == ami and images[0]['State'] == 'available',
+                'Migration stack AMI is not available for CloudFormation validation')
+        rules = sorted(r['RuleArn'] for r in self.state['stagingRoutes'])
+        tags = self.aws(['elbv2', 'describe-tags', '--resource-arns', *rules])['TagDescriptions']
+        require(len(tags) == 2 and sorted(t['ResourceArn'] for t in tags) == rules,
+                'Incomplete migration rule tag readback')
+        self.state['trafficPrerequisites'] = {'stackStatus': stack['StackStatus'], 'imageId': ami,
+            'ruleArns': rules, 'readPermissionsVerified': True}
+        self.save()
+
     def verify_ecs_provider(self):
         values = {v['name']:v['value'] for v in self.state['ecsBaseline']['ai-gateway']['body']['primaryContainer']['environment']}
         arn = values['AGENTCORE_RUNTIME_ARN']; qualifier = values['AGENTCORE_RUNTIME_QUALIFIER']
@@ -372,7 +389,7 @@ class FirstMigration:
         template = self.release.work / (name + '.json')
         template.write_text(json.dumps(after, separators=(',', ':'))); template.chmod(0o600)
         stack = self.aws(['cloudformation', 'describe-stacks', '--stack-name', self.stack])['Stacks'][0]
-        require(stack['StackStatus'] in ('CREATE_COMPLETE', 'UPDATE_COMPLETE'), 'Migration stack is not stable')
+        require(stack['StackStatus'] in STABLE_STACK_STATES, 'Migration stack is not stable')
         params = self.release.work / (name + '-parameters.json')
         write(params, [{'ParameterKey': p['ParameterKey'], 'UsePreviousValue': True} for p in stack['Parameters']])
         step = self.intent(name, {'templateSha256': hashlib.sha256(template.read_bytes()).hexdigest()})
