@@ -166,7 +166,7 @@ fi
 # production fail-closed block; only the debounce EXPERIMENT keeps its production rejection above.
 for aligned in LINE_WEB_HANDOFF_ENABLED LINE_AI_EXACT_GREETING_ENABLED \
     LINE_AI_LOADING_ON_ACCEPT_ENABLED LINE_AI_FUSED_PLAN_SHADOW_ENABLED \
-    LINE_AI_PREPARED_SIMPLE_READ_ENABLED; do
+    LINE_AI_PREPARED_SIMPLE_READ_ENABLED AI_BUDGET_SPLIT_ACTIVATION_ENABLED; do
   grep -Fq "${aligned}_INPUT=true" "$deploy"
   if grep -Fq "${aligned}=true is not activated" "$deploy"; then
     echo "FAIL: production still fails closed on ${aligned}=true" >&2; exit 1
@@ -190,6 +190,16 @@ assert_rejected deploy-invalid-fused-shadow-boolean \
 assert_rejected deploy-invalid-prepared-simple-read-boolean \
   'LINE_AI_PREPARED_SIMPLE_READ_ENABLED must be exactly true or false' \
   env -i PATH="$PATH" DEPLOY_ENV=uat LINE_AI_PREPARED_SIMPLE_READ_ENABLED=yes bash "$deploy" all
+assert_rejected deploy-invalid-split-activation-boolean \
+  'AI_BUDGET_SPLIT_ACTIVATION_ENABLED must be exactly true or false' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat AI_BUDGET_SPLIT_ACTIVATION_ENABLED=yes bash "$deploy" all
+# Owner decision 2026-09-18 (ADR 0013 §9): the SPLIT activation gate is ON in both environments, so
+# the api container must actually carry it — it is the only consumer (the key lives in
+# apiConfigSchema alone), and a quiesced runtime must not let an admin save a new budget policy.
+grep -Fq 'AI_BUDGET_SPLIT_ACTIVATION_ENABLED_INPUT="${AI_BUDGET_SPLIT_ACTIVATION_ENABLED:-}"' "$deploy"
+grep -Fq 'SERVING_AI_BUDGET_SPLIT_ACTIVATION_ENABLED=false' "$deploy"
+test "$(grep -Fc -- '--arg aiBudgetSplitActivationEnabled "$SERVING_AI_BUDGET_SPLIT_ACTIVATION_ENABLED"' "$deploy")" -eq 1
+test "$(grep -Fc '{name:"AI_BUDGET_SPLIT_ACTIVATION_ENABLED", value:$aiBudgetSplitActivationEnabled}' "$deploy")" -eq 1
 assert_rejected deploy-invalid-deterministic-families-charset \
   'LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES must be a comma-separated allowlist of' \
   env -i PATH="$PATH" DEPLOY_ENV=uat \

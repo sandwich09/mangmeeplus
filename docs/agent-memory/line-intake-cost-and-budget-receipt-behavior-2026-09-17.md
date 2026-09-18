@@ -286,8 +286,11 @@ rc=0 (8 suites, 21 repository scenarios); `pnpm test:harness` **17/17**; ai-gate
 `git diff --check` clean. No cloud, LINE or provider access; fake providers and an in-process fake
 of the two money seams only.
 
-**Before an operator may open `AI_BUDGET_SPLIT_ACTIVATION_ENABLED`** — honest readiness checklist,
-none of it done by this phase:
+**Before any COMPANY is switched to SPLIT** — honest readiness checklist, none of it done by this
+phase. The flag itself was opened by the owner on 2026-09-18 (see
+[Owner decision — activation flag ON](#owner-decision--activation-flag-on-2026-09-18)) with these
+items accepted as owner risk; they are still the conditions for saving a SPLIT policy for a real
+company, which remains an explicit admin action:
 
 1. ~~`draft-generate` is held but NOT enforced.~~ **CLOSED** by the controller-review follow-up
    below: the request contract gained optional `companyId` + `budgetEnvelope`, the draft use case
@@ -652,7 +655,7 @@ Defects the controller review or the combined suite caught before merge (all fix
 - **Nothing is deployed.** As read on 2026-09-17, UAT serves `1468ea70` and Production `fc2838c4`. The UAT "cannot start a chat by typing" symptom is fixed by Phase A only once a build containing it is deployed to UAT. Any Production promotion of a `main` at or after `1468ea70` REQUIRES Phase A (Production predates the fail-closed read guard) — it is in `main` now.
 - The Production report (company monthly AI budget exhausted, THB 80.62 of 80) is NOT fixed by code: it needs an admin budget change for that company or the next Bangkok month. Phase B only makes the refusal honest (typed copy, receipt bytes kept, no provider call, no read count).
 - Three additive migrations ship with the next deploy: `20260917140000_ai_usage_metadata`, `20260917150000_ai_budget_split_policy`, `20260917160000_ai_budget_reservations`. No backfill, no usage-cost rewrite.
-- **SPLIT stays dark**: `AI_BUDGET_SPLIT_ACTIVATION_ENABLED` defaults to `false` and is wired into NO deploy script. Every company is `SHARED`; a `SHARED` request carries no envelope and creates no reservation row (asserted byte-for-byte in the gateway and in combined scenario 1). The readiness checklist that must be completed before anyone opens the flag is in "Phase E1c implementation" above.
+- **SPLIT stays dark**: `AI_BUDGET_SPLIT_ACTIVATION_ENABLED` defaults to `false` and is wired into NO deploy script. Every company is `SHARED`; a `SHARED` request carries no envelope and creates no reservation row (asserted byte-for-byte in the gateway and in combined scenario 1). The readiness checklist that must be completed before anyone opens the flag is in "Phase E1c implementation" above. **Superseded 2026-09-18** for the flag only — it is now wired and ON in both deploy defaults; see [Owner decision — activation flag ON](#owner-decision--activation-flag-on-2026-09-18). Every company is still `SHARED`.
 - Spec §13: 28 acceptance lines ticked, 25 open. The open ones need evidence no local run can give (spec §14): AC-10…AC-16, B-01…B-06, X-01, X-02 (real LINE / UAT), C-04, D-03 (loading/error/retry + company-switch captures), E-01, E-06, E-08, E-09, R-01, R-07, R-09, R-10, R-12.
 
 ### Next (in order)
@@ -665,3 +668,49 @@ Defects the controller review or the combined suite caught before merge (all fix
 ### Residuals recorded, not changed
 
 `append()` recreates a vanished consumer group at id 0; the context limit is applied before the consumption-marker filter; `enabledFeatures` is always `[]` on intake; intake 56 vs plan-route 61 tools; a throwing model-policy read before admission surfaces as `ROUTER_UNREACHABLE` rather than a money code (customer copy still ends up right); `LineIntakeRoutePlan` has no `budgetScope`; "ไม่พอเริ่มอ่านรูปนี้" wording on a mid-chain refusal; lazy sweep transitions are proven only by the real-PostgreSQL spec; no operator surface for `UNRESOLVED`/breach/anomaly holds; `Billing Integration (operations)` can flake with `429 !== 200` on unrelated diffs (rerun the failed job only).
+
+## Owner decision — activation flag ON (2026-09-18)
+
+The owner decided that `AI_BUDGET_SPLIT_ACTIVATION_ENABLED` must be **ON (`true`) in both the UAT
+and the Production deploy defaults**. This is the "wire and open the flag" half of "Next" item 4,
+taken out of order and ahead of the UAT acceptance in items 1–2; the per-company half of that item
+stands unchanged.
+
+What was wired (config/infra only — no application code changed):
+
+- `infra/prod-ecs-express/deploy.sh` — the flag follows the `LINE_AI_LOADING_ON_ACCEPT_ENABLED`
+  pattern exactly: `AI_BUDGET_SPLIT_ACTIVATION_ENABLED_INPUT="${AI_BUDGET_SPLIT_ACTIVATION_ENABLED:-}"`,
+  default `true` when empty (no environment branch, no production fail-closed block), a strict
+  `true|false` guard, `SERVING_AI_BUDGET_SPLIT_ACTIVATION_ENABLED`, forced back to `false` under
+  `maintenance_only` with the other AI switches, and one `--arg`/`{name:…}` pair in the **api-web**
+  task definition only — `apiConfigSchema` is the only schema that carries the key, so the gateway
+  and workers must not see it. Both deploy workflows end in this script (`deploy-uat.yml` through
+  `infra/uat/deploy-with-runtime-mutex.sh`, `deploy-production-v2.yml` directly).
+- `infra/prod-ecs-express/production-serving-mode.spec.sh` — the flag joined the "aligned flags
+  default ON" loop and gained a strict-boolean rejection test plus four contract greps (input line,
+  maintenance `false`, exactly one `--arg`, exactly one task-definition entry).
+- `infra/kamal/config.json` — declared `"true"` under both `uat.api-web` and `production.api-web`,
+  as the Kamal README requires for a new optional setting.
+- `packages/config` was deliberately **not** touched: the schema default stays `false` (its test
+  pins that), so any runtime not given the key stays dark.
+- `deploy.sh` is a pinned maintenance-enforcement file, so
+  `node infra/security/sync-production-maintenance-release-pins.mjs` re-pinned `expected_deploy` and
+  the validator digest that `.github/workflows/deploy-production.yml` carries; `--check` now prints
+  `status=current`. Those two generated hash lines are the only validator/workflow bytes that changed.
+
+What the decision does **not** change: no company changes mode. Every company stays `SHARED` until a
+System Admin saves a policy through `PUT /v1/system/partners/:id/ai-model`, which keeps the whole
+ADR §8 validation, the reason + audit flow and next-month activation for a company with spend this
+month. The open readiness items — declared-not-measured bounds, no real-provider SPLIT journey on
+UAT, no operator surface for `UNRESOLVED`/`breach`, compressed-object-stream PDFs refused under an
+envelope, gateway and API pinned together for rollback — are accepted as owner risk **for the flag**
+and remain the checklist for switching an actual company (see the E1c list above, ADR 0013 §9, spec
+X-02, plan §4).
+
+Verification (this change only; no cloud, LINE or provider access, nothing deployed):
+`bash infra/prod-ecs-express/production-serving-mode.spec.sh` PASS;
+`bash infra/docker/production-image-security.spec.sh` rc=0 (26/26);
+`bash infra/security/sync-production-maintenance-release-pins.spec.sh` PASS;
+`node infra/security/sync-production-maintenance-release-pins.mjs --check` →
+`exactFiles=48 … status=current`; `pnpm --filter @watchdog-bms/config test` (the `false` default
+still pinned); `pnpm test:harness`; `git diff --check` clean.
