@@ -73,7 +73,7 @@ Spec เป็นแหล่งกติกาและ acceptance; แผน�
 ### W00 — ปิดแบบของ slice และเตรียมหลักฐานทดสอบ
 
 Owner: ผู้พัฒนา feature; Product/บัญชีเฉพาะ policy; QA/UX/AI เฉพาะ fixture และเกณฑ์ตรวจรับ
-Status: Planned; งาน research/static review ในข้อ2เสร็จแล้ว แต่ W00 ยังไม่เสร็จ
+Status: In progress 2026-09-18 — decisions v1 (D01/D02/D06/D07/D09 ปิดระดับโค้ด; D03/D04/D08 เป็นค่าเริ่มต้นรอเจ้าของยืนยัน) อยู่ใน [contract appendix](../specs/marketplace-buyer-expense-capture-contract-appendix-th.md); fixture manifest สังเคราะห์ในภาคผนวก §13; authorized Thai bundles/UX 40+ ยังเปิด (D05)
 
 - [ ] อ่าน spec/plan/memory ล่าสุดและเทียบ working tree ที่จะลงมือ ไม่อ้างเลขบรรทัด E01–E24 ว่ายังคงเดิมเสมอ
 - [ ] ระบุ slice-1 contract: A ข้อไหนอยู่ใน slice แรก (ข้อเสนอ: employee-funded, ไม่เกินสองร้าน, ยังไม่มีใบรับรอง) และข้อไหนเลื่อน เพื่อไม่ให้ W00 กลายเป็นงานเอกสารยาวก่อนมีโค้ด

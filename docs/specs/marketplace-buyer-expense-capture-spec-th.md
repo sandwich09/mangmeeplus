@@ -4,7 +4,7 @@ Status: Proposed v0.11, 2026-09-17. Paired with plan v0.11: W00–W08, D01–D09
 Owner: Product owner / Codex
 Scope: ผู้ซื้อ Shopee, Lazada, TikTok Shop, 7-Eleven, Lotus’s, Big C, Makro, CJ MORE และบริการขนส่งในไทย เพื่อรายการบริษัทและเบิกเงิน; กระดาษ/ภาพหน้าจอ/PDF/electronic ทั้ง LINE AI, อัปโหลดใหม่ และหน้าเปลี่ยนใบเสร็จ
 User follow-up: explicitly include the existing ใบรับรองแทนใบเสร็จรับเงิน journey in this solution; see section 12. This is part of the baseline, not a later optional feature.
-Plan: [Implementation plan W00–W08 พร้อม dependency และ acceptance mapping](../plans/marketplace-buyer-expense-capture-plan-th.md)
+Plan: [Implementation plan W00–W08 พร้อม dependency และ acceptance mapping](../plans/marketplace-buyer-expense-capture-plan-th.md) · Contract appendix (W00 decisions 2026-09-18): [capture group, bounded PDF reading, derived sources](marketplace-buyer-expense-capture-contract-appendix-th.md)
 Background: [งานค้นคว้าและวิเคราะห์หกมุม](../research/marketplace-buyer-receipt-brainstorm-2026-09-14-th.md)
 Source cases: [ทะเบียน 45 เคสและข้อจำกัด](../research/marketplace-buyer-public-corpus-2026-09-14-th.md) · [JSON](../research/marketplace-buyer-public-corpus-2026-09-14.json)
 

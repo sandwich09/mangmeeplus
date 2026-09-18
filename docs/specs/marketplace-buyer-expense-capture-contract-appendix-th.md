@@ -1,0 +1,304 @@
+# Contract appendix: capture group, bounded PDF reading, derived expense sources (W00)
+
+Status: W00 decisions v1, 2026-09-18 — implementation contract for W01–W08 of [spec v0.11](marketplace-buyer-expense-capture-spec-th.md) / [plan v0.11](../plans/marketplace-buyer-expense-capture-plan-th.md). เอกสารนี้ปิด D01/D02/D06/D07/D09 ในระดับที่โค้ดใช้ได้ และเสนอค่าเริ่มต้นของ D03/D04/D08 ที่เจ้าของต้องยืนยัน (ข้อ 15) ทุกข้อในเอกสารนี้อ้างโค้ดจริงบน `origin/develop` `70d1359d` (2026-09-18) ตัวเลขบรรทัดอาจเลื่อนเมื่อโค้ดเปลี่ยน
+Owner: Product owner (นโยบาย) / controller session (contract)
+Scope: ไม่เปลี่ยนกติกาเงิน/สิทธิ/ใบรับรองของ spec; ถ้าข้อใดขัดกับ spec ให้ถือ spec และแก้เอกสารนี้ในงานเดียวกัน
+
+## 1. Slice ที่ส่งมอบในรอบนี้ (2026-09-18)
+
+รอบนี้ implement ทั้ง W01–W07 และส่วนที่เครื่องทำได้ของ W08 บน branch เดียว รวมเป็น PR ต่อ `develop` และ `main` อย่างละหนึ่ง (คำสั่งเจ้าของ) โดย:
+
+- ทำได้ในรอบนี้: schema/API/gateway/web/LINE ของ capture group, multi-file, bounded PDF 10 MiB/หลายหน้า, allocation, derived sources, ใบรับรองต่อ source, handoff/resolver/export, §17 error copy + Web recovery link, §17.5 LINE ถามย้อนหลัง, §18.4 NR replies, unit/PG/browser evidence บน throwaway stack, synthetic fixtures
+- บันทึกเป็น NOT_RUN/owner-owned (ไม่อ้างผ่าน): UX 40+ กับผู้ใช้จริง (D05), authorized Thai golden bundles/real electronic originals (D05/D09), การวัด accuracy บน corpus จริง, UAT/Production deploy และ acceptance บน LINE จริง (runbook), นโยบายบริษัทจริง (D03 ต่อบริษัท)
+- ไม่ทำ: automated e-Tax signature/timestamp verification (D09 baseline = not-checked), automatic mailbox/URL fetching, refund posting, BNPL/foreign settlement, multi-payer
+
+## 2. D01 — Persistence ที่เล็กที่สุดที่บังคับ invariants ได้
+
+### 2.1 ทางเลือกและเหตุผล
+
+| ทางเลือก | ผล | ตัดสิน |
+|---|---|---|
+| A. `ExpenseRecord` เป็น parent แบบ capture-only (discriminator `sourceRole`) | ต้องเพิ่ม guard ใน consumer ทุกตัวของ `ExpenseRecord` (list/count/export/dashboard/LINE tools/duplicate/confirm/pay/claim/certificate — inventory ข้อ 12 มี ≥ 20 จุด) และ binary เก่าที่ไม่รู้จัก discriminator จะปฏิบัติกับ parent เป็นค่าใช้จ่ายจริง (IG03/IG13/A38) | **ไม่เลือก** |
+| B. Capture group เป็น aggregate แยก ไม่มี `ExpenseRecord` จน handoff; derived source = `ExpenseRecord` ปกติที่มี lineage columns | parent ไม่มีทางเข้า list/report/confirm/claim โดยโครงสร้าง; binary เก่าไม่เห็นตารางใหม่ และเห็น derived source เป็นค่าใช้จ่ายปกติซึ่งถูกต้องทางการเงิน; consumer ที่ต้องแก้เหลือ resolver ambiguity + duplicate scoring + picker/evidence payer (ข้อ 6) | **เลือก** |
+
+ทาง B รักษา A01: การอัปโหลดรูปเดียว/PDF เดียวบนเว็บยังสร้าง `ExpenseRecord` ตอน init เหมือนเดิม (ข้อ 3) กลุ่มเกิดเฉพาะเมื่อมีหลายไฟล์, ผู้ใช้ประกาศของส่วนตัว/หลายร้าน, หรือช่องทาง LINE ส่งไฟล์ (PDF)
+
+### 2.2 ตารางใหม่ (additive migration เดียว; ทุก id เป็น cuid เหมือนโมดูล; เงินเป็น `Decimal(18,4)` string ตาม repo)
+
+**`ExpenseCaptureGroup`** — งานรวมหลักฐานหนึ่งงาน (บริษัท/สาขาเดียว)
+- `id, companyId, branchId, createdByUserId, intakeChannel ExpenseCaptureIntakeChannel (WEB|LINE)`
+- `status ExpenseCaptureGroupStatus`: `OPEN` (รับไฟล์/อ่าน/ตรวจ) → `HANDED_OFF` (สร้าง derived sources แล้ว, handoff ACTIVE) → `CLOSED_NO_HANDOFF` (ยืนยันว่าไม่มีส่วนบริษัท/ส่วนตัวทั้งหมด) | `CANCELLED`
+- `revision Int @default(1)` — เพิ่มทุก mutation; ทุก mutation รับ `expectedRevision` (409 `expense_capture_group_revision_conflict`)
+- `businessUse ExpenseCaptureBusinessUse (UNKNOWN|ALL_COMPANY|MIXED)`, `fundingRoute ExpenseCaptureFundingRoute (UNKNOWN|COMPANY|EMPLOYEE)`, `payerUserId String?` (สมาชิก ACTIVE ที่ server ตรวจ)
+- `taxReviewJson Json?` — ผลตรวจภาษีต่อ scope โดยผู้มีสิทธิ (`{ [scopeKey]: { vatMode, inputVatClaimStatus, taxEvidenceStatus, reviewedByUserId, reviewedAt } }`)
+- `expenseDateSourceJson Json?` — วันที่ต่อเหตุการณ์ที่ตรวจแล้ว (`order|payment|document|upload` + เลือกใช้ค่าไหนเป็น `expenseDate` ต่อ scope)
+- `lineChatKeyHash String?` (LINE binding), `acceptedAllocationId String?`, `handoffBatchKey String? @unique` (`<groupId>:<allocationRevision>`), `handoffState ExpenseCaptureHandoffState (NONE|ACTIVE|RELEASED)`
+- `closedReason String?, closedAt DateTime?, createdAt, updatedAt`
+- `@@unique([companyId, id])`, `@@index([companyId, createdByUserId, status])`, `@@index([companyId, status, updatedAt])`
+
+**`ExpenseCaptureFile`** — manifest รายไฟล์ (per-file identity/status สำหรับ resume)
+- `id, companyId, groupId, attachmentId @unique, position Int, uploadState ExpenseCaptureFileState (PENDING_UPLOAD|STORED|REJECTED|DETACHED)`
+- `originalFileName, mimeType, byteSize Int, checksumSha256 String?, pageCount Int?, addedByUserId, lineMessageId String?, detachedAt DateTime?, detachedReason String?, createdAt, updatedAt`
+- `electronicVerificationJson Json` default `{ "status": "NOT_CHECKED", "method": null, "checkedAt": null }` (D09 baseline; ค่า `UNAVAILABLE` เมื่อไฟล์ติดรหัส/เสีย)
+- `@@unique([companyId, groupId, attachmentId])`, `@@unique([companyId, lineMessageId])` (partial where not null), `@@index([companyId, groupId, position])`
+
+**`ExpenseCaptureReadJob`** — งานอ่านแบบ durable ต่อไฟล์ (ใช้ได้ทั้ง group และ expense เดี่ยว)
+- `id, companyId, ownerType ExpenseCaptureReadOwner (CAPTURE_GROUP|EXPENSE), groupId String?, expenseId String?, fileId String?, attachmentId, attachmentChecksum, objectVersionId String?`
+- `preprocessVersion Int @default(1)`, `contractVersion Int @default(1)`, `status ExpenseCaptureReadStatus (QUEUED|PREPARING|READING|PARTIAL|PAUSED|FAILED|DONE|CANCELLED)`
+- `ocrAdmissionRequestId String` (= OCR count admission fence ครั้งเดียวต่อ job), `manifestJson Json` (ข้อ 5.4), `checkpointJson Json` (ผล chunk/window ที่สำเร็จ), `attempts Int @default(0)`, `leaseOwner String?, leasedUntil DateTime?`, `pausedReason String?, lastErrorCode String?, lastErrorAt DateTime?`, `providerCallCount Int @default(0)`, `expectedSourceUpdatedAt DateTime?` (fence สำหรับ ownerType EXPENSE), `createdAt, updatedAt, completedAt DateTime?`
+- `@@index([status, leasedUntil])`, `@@index([companyId, groupId])`, `@@index([companyId, expenseId])`
+
+**`ExpenseCaptureObservation`** — facts ที่ประกอบแล้วต่อไฟล์ (versioned)
+- `id, companyId, groupId String?, expenseId String?, fileId String?, jobId String?, version Int, source ExpenseCaptureObservationSource (AI|HUMAN|EXPENSE_FACTS), basedOnVersion Int?, payloadJson Json` (document graph ข้อ 5.3 พร้อม completeness/reconciliation), `modelLineageJson Json?`, `stale Boolean @default(false)`, `createdByUserId String?`, `createdAt`
+- `@@unique([companyId, fileId, version])`
+
+**`ExpenseCaptureAllocation`** — reviewed business allocation snapshot
+- `id, companyId, groupId, groupRevision Int, policyVersion String` (`shared-discount-v1`, `shipping-by-eligible-item-v1`), `selectionJson Json` (item → companyQuantity), `inputJson Json` (observation versions ที่ใช้), `resultJson Json` (ต่อ scope: issuer, บรรทัด, charges, discount shares, provenance, totals ที่ผ่าน identity), `fundingRoute, payerUserId String?, computedByUserId, computedAt, status ExpenseCaptureAllocationStatus (PREVIEW|ACCEPTED|SUPERSEDED|INVALIDATED)`, `acceptedByUserId String?, acceptedAt DateTime?, invalidatedReason String?`
+- `@@index([companyId, groupId, status])`; มี ACCEPTED ได้ครั้งละหนึ่ง (บังคับใน transaction ใต้ lock กลุ่ม)
+
+**`LineIntakeAttempt`** — safe pre-capture diagnostic (§17.5) — ไม่เก็บ raw payload/ชื่อไฟล์ดิบ/secret
+- `id, companyId String?, lineUserIdHash, chatKeyHash String?, webhookEventId String?, lineMessageId String?, messageType (image|file), fileNameSanitized String?` (ตัดเหลือ ≤ 80 ตัวอักษร ไม่มี path), `declaredFileSize Int?, measuredByteSize Int?, capabilityJson Json` (`{ maxBytes, allowedMimeTypes, pdfAutomaticRead: true }` ณ เวลานั้น), `stage LineIntakeAttemptStage (DOWNLOAD|SECURITY|PERSIST|READ|ROUTE)`, `reasonCode String`, `outcome LineIntakeAttemptOutcome (REJECTED|STORED|STORED_READING|STORED_READ_FAILED|STORED_READ_PARTIAL|STORED_READ_DONE|UNKNOWN)`, `targetType String?` (`capture_group|pending_media|expense`), `targetId String?`, `createdAt, updatedAt`
+- `@@index([companyId, lineUserIdHash, createdAt])`; purge ด้วย `AI_DATA_RETENTION_DAYS` ใน sweep เดียวกับ `LineWebhookEventLog`
+
+### 2.3 คอลัมน์เพิ่มบนตารางเดิม (additive, nullable)
+
+- `ExpenseRecord`: `captureGroupId String?`, `captureAllocationId String?`, `captureScopeKey String?`, `payerUserId String?` (D06); `@@unique([companyId, captureGroupId, captureScopeKey])` (partial, non-null); `@@index([companyId, payerUserId])`
+- `AttachmentLink.targetType` ค่าใหม่ `'expense.capture_group'` กับ purpose `'expense.capture.evidence'`; `isAllowedAttachmentTarget` (`attachment.logic.ts:24-39`) รับ target ใหม่; ไฟล์ของกลุ่มเป็น canonical owner; derived source ได้ link `expense.receipt.primary`/`supporting` ของไฟล์ที่เกี่ยวข้อง (validated lineage ข้อ 6)
+- Legacy rows ทุกตารางคง semantics เดิม (ค่า null = ไม่ใช่งาน capture) ไม่มี backfill
+
+### 2.4 Lock order (ต่อจาก canonical order เดิม)
+
+`<companyId>:duplicate-reconciliation` → `<companyId>:reimbursement-evidence:*` (sorted; `lockFundingEvidence`) → `<companyId>:expense-capture:<groupId>` → `<companyId>:<expenseId>:substitute-receipt` → `ai-budget:<company>:<month>` ทุก transaction ที่แตะ group + expense ต้องเรียงตามนี้ (pg spec พิสูจน์ไม่ deadlock กับ reserve/settle เดิม)
+
+## 3. Lanes: ทางเข้าสามทางกับสองรูปแบบไฟล์
+
+| ทางเข้า | รูป 1 ไฟล์ | PDF 1 ไฟล์ (≤ 10,485,760 bytes) | หลายไฟล์ / เพิ่มหลักฐาน / ประกาศของส่วนตัว-หลายร้าน |
+|---|---|---|---|
+| Web อัปโหลดใหม่ | เหมือนเดิมทุกขั้น (init → complete → sync OCR) | `ExpenseRecord` ตอน init เหมือนเดิม; การอ่านเป็น `ExpenseCaptureReadJob(ownerType EXPENSE)` async; หน้า review แสดง "อ่านแล้ว n จาก m หน้า"; ผลเอกสารเดียว apply ผ่าน `receipt-ocr-apply` เดิม; พบหลายเอกสาร/หลายร้าน → notice + ปุ่ม "แยกเป็นกลุ่มหลักฐาน" (แปลงเป็นกลุ่ม ข้อ 3.1) | สร้าง `ExpenseCaptureGroup` (ช่อง WEB) หนึ่ง job ต่อไฟล์; หน้า `/companies/{c}/expenses/capture/{groupId}` |
+| Web เปลี่ยนใบเสร็จ / แนบเพิ่ม | replace เดิม + `expectedAttachmentId/expectedUpdatedAt` + state matrix §16.4; รูป → sync reread ตาม policy เดิม | เหมือนซ้าย แต่ reread เป็น job async ผูก attachment/objectVersion ปัจจุบัน | "แนบหลักฐานเพิ่ม" = append (supporting ในงานเดิม) ไม่เรียก primary-replace; ถ้าผู้ใช้บอกว่าเป็นคนละร้าน/ซื้อใหม่ → แยกกลุ่ม/งานใหม่ |
+| LINE | เหมือนเดิม (sync preflight) + copy §17.6/§18.4 | `message.type = file`: download → security → สร้าง `ExpenseCaptureGroup` (ช่อง LINE, ไฟล์เดียว, ผูก chatKeyHash/user) → ตอบ "เก็บไฟล์แล้วค่ะ กำลังอ่านเอกสาร" → job async → push ผล: เอกสารค่าใช้จ่ายเดียว = auto-handoff เป็น `ExpenseRecord` เดียว (สรุปแบบเดียวกับใบเสร็จวันนี้ + ลิงก์รายการ); หลายเอกสาร/ผสม = สรุป + ลิงก์หน้ากลุ่ม; NR01–NR09 ตาม §18.4; failed/partial = §17.6 + ปุ่ม **กรอกข้อมูลต่อ** | ไฟล์ที่ตามมาในแชตเดียวกัน (ภายในหน้าต่างงานเปิด) ถามว่า "ของงานเดิมหรือใบใหม่" เมื่อกำกวม ไม่รวมจากเวลาใกล้กันเอง |
+
+### 3.1 การแปลง expense เดี่ยวเป็นกลุ่ม ("มีของส่วนตัวด้วย" / "แยกเป็นกลุ่มหลักฐาน")
+
+`POST /v1/companies/{c}/expenses/{expenseId}/capture-group` (`expectedUpdatedAt`): อนุญาตเมื่อ expense ยังไม่ถูกใช้ (status DRAFT|NEEDS_REVIEW|READY_FOR_CONFIRMATION, ไม่มี payment/posting/claim line/certificate ≥ PREPARED) → สร้างกลุ่ม, ไฟล์ของ expense เข้า manifest (link `expense.capture.evidence`), facts ปัจจุบันของ expense เป็น observation `source: EXPENSE_FACTS` v1, expense ได้ `captureGroupId` และเป็น derived source ของ scope = ผู้ออกของมัน (`captureScopeKey`) ตั้งแต่ตอนนี้ (ยังไม่ปรับยอดจน allocation ACCEPTED) — deep link เดิมของ expense ยังใช้ได้
+
+### 3.2 Auto-handoff ของกลุ่ม LINE ไฟล์เดียว
+
+เงื่อนไข: อ่านครบ (`DONE`), พบเอกสารเดียว, ผู้ออกเดียว, `isExpenseExtractionEligible` ผ่าน, ไม่มี blocker (ยอดขัดกัน/ไม่ทราบยอด) → สร้าง derived source เดียวโดยไม่มี allocation (facts เต็มใบ ยังไม่แบ่งส่วน) สถานะ NEEDS_REVIEW เหมือนใบเสร็จ LINE ปัจจุบัน; กลุ่มเป็น `HANDED_OFF`; ผู้ใช้ประกาศของส่วนตัวได้ภายหลังจากหน้า expense (ข้อ 3.1 ใช้กลุ่มเดิม) กรณีอื่นกลุ่มคง `OPEN` และผู้ใช้ตรวจบนเว็บ
+
+## 4. D02 — ขนาด ขอบเขต และ pipeline การอ่าน
+
+### 4.1 ขอบไฟล์ต้นฉบับ (ทั้งสามทาง, หน่วย bytes)
+
+- ต้นฉบับ ≤ **10,485,760** (= `UPLOAD_MAX_BYTES` default; `validateAttachmentMeta` เดิม) ทั้งรูปและ PDF; UI/LINE อ่านค่านี้จาก capability (`GET /v1/companies/{c}/expenses/capture-capability` → `{ maxBytes, allowedMimeTypes, pdfAutomaticRead: true, pdfMaxPagesAutomatic }`) ไม่ hard-code
+- ยกเลิก gate PDF 4,000,000 ใน `expense-extraction.use-case.ts:20` และ 4,194,304 ใน `expense-upload.logic.ts:18` สำหรับเส้นทางที่ใช้ job; ข้อความ `expenses.upload_pdf_too_large` ถูกแทนด้วยสถานะ "เก็บไฟล์แล้ว กำลังอ่านเอกสาร"
+- ขอบภายในต่อ provider call (Bedrock Converse ตรวจ 2026-09-18: document ≤ 4.5 MB, ≤ 5 documents; image ≤ 3.75 MB, ≤ 8000 px, ≤ 20 images): **PDF chunk ≤ 4,000,000 bytes และ ≤ 3 หน้า**; **ภาพ/region ≤ 3,500,000 bytes, ≤ 8000 px ต่อด้าน**; วัด `Buffer.byteLength` ของ output จริง ไม่ประมาณจากหน้า
+- Serialized payload ต่อ call ≤ 16 MB ตาม `BASE64_MEDIA_ROUTES` (gateway `main.ts:53`) — ตรวจ `contentBase64.length` ก่อนส่ง
+- เพดานหน้าที่ประกาศรองรับอ่านอัตโนมัติ: **≤ 60 หน้าต่อไฟล์** (`pdfMaxPagesAutomatic`, config `EXPENSE_CAPTURE_PDF_MAX_PAGES` default 60); เกินนั้น = `PAUSED` เหตุ `page_limit` พร้อมผลที่อ่านแล้วและทางแนบ/กรอกต่อ (ไม่ตัดหน้าเงียบ) ตัวเลขนี้เป็น declared scope ของรอบนี้ ไม่ใช่ SLA
+
+### 4.2 Preprocessing (API เป็นผู้ทำ; reuse `pdf-lib`, `pdfjs-dist` + `@napi-rs/canvas` ที่ image production มีแล้ว, `sharp`)
+
+1. โหลด PDF ด้วย `pdf-lib` (`ignoreEncryption: false`): ติดรหัส → `FAILED/encrypted_pdf` (UXE-06), เปิดไม่ได้ → `FAILED/corrupt_pdf` (UXE-07); นับหน้า → manifest
+2. จัด chunk: copy หน้าต่อเนื่อง ≤ 3 หน้าเป็น PDF ใหม่ (`copyPages`), วัด bytes; เกิน 4,000,000 → ลดจำนวนหน้าจน 1 หน้า; หน้าเดียวยังเกิน หรือหน้าเดียวเป็นภาพสแกนใหญ่ → render หน้าเป็นภาพด้วย pdfjs (scale ให้ด้านยาว ≤ 4000 px, JPEG q85 ผ่าน sharp) ตรวจ ≤ 3,500,000 bytes; ยังเกินหรือความสูง/กว้าง > 8000 → แบ่ง tiles 2×N พร้อม overview (ลดขนาด) และ overlap 5% ส่งเป็น images หลายภาพใน call เดียว (≤ 20)
+3. Text layer (pdfjs `getTextContent`) เก็บเป็น evidence ต่อหน้าใน manifest (ไม่ส่งแทนภาพ; ใช้เทียบ/ค้นหา span เท่านั้น — ไม่เปลี่ยน vision policy)
+4. ต้นฉบับไม่ถูกเขียนทับ; derivative อยู่ในหน่วยความจำ/ชั่วคราวเท่านั้น (ไม่เก็บถาวร) และ manifest อ้าง `attachmentChecksum` + `objectVersionId` ของต้นฉบับ
+
+### 4.3 สัญญา gateway (ใหม่, versioned) — `packages/contracts/src/expense-capture.ts`
+
+`EXPENSE_CAPTURE_CONTRACT_VERSION = 1`
+
+- `POST /v1/internal/ai/capture-read` — stage 1 ต่อ chunk: request `{ requestId, companyId, userId, contractVersion: 1, chunk: { id, kind: 'pdf'|'image'|'tiles', mimeType, contentBase64?, images?: Array<{ contentBase64, mimeType, role: 'overview'|'tile', index }>, pageIndexes: number[], fileLabel: string }, modelPolicy?, budgetEnvelope? }`; response `{ status: 'ok'|'not_configured'|'failed', contractVersion, pages?: Array<{ pageIndex, text, truncated: boolean, blank: boolean }>, errorCode?, budgetScope?, usage?, modelLineage? }` — prompt = transcription เดียวกับ `bedrockOcrPrompt` เดิม + คั่นหน้า `=== PAGE <n> ===` + กติกาห้ามคำนวณ; `maxTokens 8192`; `max_tokens` → `truncated: true` ต่อหน้าท้ายสุด (API แบ่ง chunk ใหม่ ไม่ทิ้งหน้าที่สมบูรณ์)
+- `POST /v1/internal/ai/capture-extract` — stage 2 ต่อ window: request `{ requestId, companyId, userId, contractVersion: 1, window: { fileLabel, pageIndexes, pages: Array<{ pageIndex, text }>, priorDocuments?: Array<{ ref, issuerName?, documentNumber?, documentDate?, currency?, openTotals: boolean }> }, activeCategories?, modelPolicy?, budgetEnvelope? }` (รวม text ≤ 12,000 ตัวอักษรต่อ window; API แบ่ง window ตามหน้า); response `{ status, contractVersion, observations?: ExpenseCaptureObservations, errorCode?, budgetScope?, usage?, modelLineage? }`
+- ห้ามแตะ `receipt-ocr` เดิม (bank statement ใช้ร่วม); `MULTI_DOCUMENT` guard ของ contract เดิมคงอยู่
+
+`ExpenseCaptureObservations` (ค่าเงินเป็น string; ทุก `evidenceSpan` ต้องเป็น substring ของ text หน้าที่อ้าง มิฉะนั้น field นั้นถูกทิ้งเป็น unknown — ใช้แนวเดียวกับ `applyOcrValueCrossCheck`):
+- `documents[]`: `{ ref, pageIndexes, kind: BusinessDocumentKind, family, issuer: { name?, taxId?, branchCode?, storefront?, platform? }, buyer?: { name?, taxId? }, documentNumber?, documentDate?, currency?, printedPage?: { number?, of? }, continuationOfRef?, classification: BusinessDocumentClassification }`
+- `items[]`: `{ id: '<page>:<line>', documentRef, description, quantity?, unit?, packSize?, unitPrice?, amount?, listPrice?, taxMarker?, event: 'sale'|'void'|'discount'|'price_correction'|'zero_price_promo'|'reward'|'info'|'unknown', linkedItemId?, evidenceSpan }`
+- `components[]`: `{ id, documentRef, label, amount?, currency?, role: 'charge'|'applied_discount'|'tax_included'|'tax_additional'|'tax_unknown'|'tender'|'change'|'future_reward'|'refund'|'balance'|'summary'|'unclassified', scope: 'item'|'order'|'shipping'|'checkout'|'document', parentId?, appliedStatus: 'applied'|'pending'|'unknown', evidenceSpan }`
+- `totals[]`: `{ documentRef, kind: 'merchandise'|'shipping'|'tax'|'document_total'|'buyer_payable'|'reported_paid', amount, evidenceSpan }`
+- `payments[]`: `{ documentRef, method?, status: 'paid'|'pending'|'unknown', amount?, occurredAt?, reference?, evidenceSpan }`; `refunds[]`: `{ documentRef, state: 'requested'|'approved'|'processing'|'completed'|'unknown', amount?, destination?, evidenceSpan }`
+- `completeness`: `{ itemsTruncated: boolean, unreadableRows: number, pagesCovered: number[], notes: string[] }`
+- ขอบ: items ≤ 120 ต่อ window, components ≤ 40, documents ≤ 10; เกินขอบ → `itemsTruncated: true` (ไม่อ้างครบ)
+
+### 4.4 Manifest / assembly / reconciliation (deterministic, API `expenses/domain/logic/expense-capture-*.logic.ts`)
+
+- `manifestJson = { pageCount, pages: [{ index, printedNumber?, state: 'pending'|'read'|'partial'|'failed'|'blank', chunkId?, textLayerChars? }], chunks: [{ id, kind, pageIndexes, bytes, state: 'pending'|'done'|'failed', calls, errorCode? }], windows: [{ id, pageIndexes, state }], electronicVerification: { status: 'NOT_CHECKED'|'UNAVAILABLE' } }`
+- ประกอบ document graph: หน้าต่อเนื่องที่ `continuationOfRef`/เลขเอกสาร+ผู้ออกเดียวกันรวมเป็นเอกสารเดียว; header/footer ซ้ำ (issuer/docNumber/total ที่ปรากฏซ้ำต่างหน้า) นับครั้งเดียวโดยอ้าง span แรก; items ไม่ dedup ด้วยชื่อ; void ที่ `linkedItemId` หักล้าง; `printedPage.of > pageCount` → `suspectedMissingPages`
+- Reconciliation ด้วย `decimal.js`: ต่อเอกสาร `Σ sale − Σ void − Σ applied_discount(scope order/document) + Σ charge` เทียบ `document_total` (tolerance 0.05) → `reconciliation: 'reconciled'|'mismatch'|'insufficient'`; `buyer_payable`, `reported_paid`, `tender/change` (`68 = 500 − 432`) และ `future_reward` แยกค่า ไม่แตะกัน; ไม่สร้าง balancing component
+- ผลรวมเป็น `ExpenseCaptureObservation(source: AI)` version ใหม่; ผลที่กลับหลัง revision/ไฟล์เปลี่ยน → `stale: true` ไม่ทับค่า HUMAN
+
+### 4.5 Job runner (reuse pattern: OutboxEvent-style claim + BullMQ scan worker → internal route)
+
+- ใน repo ไม่มี NestJS cron; งานเป็นคาบทุกอย่างคือ BullMQ repeatable job ใน `apps/workers` ที่ POST route `internal/*` ของ API ด้วย `X-Worker-Token` ผ่าน `postInternal` (`apps/workers/src/common/internal-api.ts:51`, มี 404 gate สำหรับ rolling deploy) — ต้องใช้ pattern นี้ ไม่ใช้ `setInterval` ใน API
+- ตาราง `ExpenseCaptureReadJob` เป็น queue; claim หนึ่ง statement แบบ `prisma-outbox.repository.ts:92-105` (`UPDATE … WHERE id IN (SELECT id … WHERE status IN ('QUEUED','READING','PARTIAL') AND (leasedUntil IS NULL OR leasedUntil < now()) ORDER BY createdAt LIMIT n FOR UPDATE SKIP LOCKED) RETURNING *`) ตั้ง `leaseOwner`, `leasedUntil = now + 120 s`, `attempts + 1`; ต่ออายุ lease หลังทุก chunk; checkpoint หลังทุก chunk/window ก่อนรับงานถัดไป; ทุก write หลัง claim เป็น `updateMany` fenced ด้วย `leaseOwner` (คืน boolean)
+- ผู้รัน: `ExpenseCaptureReadRunnerService` ใน API: (1) kick ทันทีหลัง persist ใน process เดียวกัน (claim ตัวเองแล้วประมวลผลแบบ fire-and-forget) (2) `POST /v1/internal/expenses/capture-read/drain` (`assertWorkerToken`, DTO class `batchSize ≤ 5`) claim งานที่ lease หมด/ค้าง แล้วเริ่มประมวลผลใน process โดยไม่ await (ตอบ `{ claimed }` ทันที) — เรียกจาก scan worker ใหม่ `apps/workers/src/modules/expense-capture-read/expense-capture-read-worker.ts` (`startScanWorker`, interval 30,000 ms) ลงทะเบียนใน `apps/workers/src/main.ts` (ไฟล์ pinned → re-pin) + แถวใน `SHADOW_SURFACE_CATALOG` + `main.spec.ts`; concurrency ต่อ process ≤ 2 jobs, ต่อบริษัท ≤ 1 job (`EXPENSE_CAPTURE_READ_CONCURRENCY`)
+- อ่านต้นฉบับผ่าน `AttachmentStoragePort.getObject` (ไม่แตะไฟล์ pinned `create-upload-intent`/`create-download-url`/`s3-storage.adapter`)
+- งบต่อ job: `providerCallCount ≤ 40`, เวลา ≤ 15 นาที, pixels ต่อ render ≤ 32M (reuse `SUBSTITUTE_RECEIPT_PDF_LIMITS.maxRasterPixels`), memory: ประมวลผลทีละ chunk; เกิน → `PAUSED` พร้อม `pausedReason` (`call_budget|time_budget|page_limit|ai_credit`) และผลที่เก็บแล้ว
+- Cancel/stale: replace primary หรือ detach ไฟล์ → job `CANCELLED`; ผลที่กลับหลัง cancel ไม่ apply; ตรวจ actor/company/branch/revision ก่อน apply/notify ทุกครั้ง; ownerType EXPENSE ใช้ `expectedSourceUpdatedAt` กับ `receipt-ocr-apply` fence เดิม
+
+### 4.6 Quota/เงิน (reuse governance เดิม)
+
+- OCR count: `admitCompanyOcr` ครั้งเดียวต่อ job (`sourceRoute 'receipt-capture-web'|'receipt-capture-line'`, `requestId = job.ocrAdmissionRequestId`) — หนึ่งไฟล์ = หนึ่งครั้งอ่าน ไม่ว่ากี่ chunk; retry ของ job เดิมไม่นับเพิ่ม; job ที่ไม่ได้ผลใช้ได้เลย → release เหมือนเดิม (`SYSTEM_FAILURE_NO_USABLE_RESULT`)
+- เงิน: ทุก provider call เป็น step ของตัวเองผ่าน `runWithCompanyAiBudgetAdmission` (`stepKind 'receipt-capture-read'` bound `{ maxInputTokens 30,000, maxOutputTokens 8,192, maxCalls 1 }`, `'receipt-capture-extract'` `{ 30,000, 8,192, 1 }` ใน `ai-budget-bounds.ts`; `AI_BUDGET_DOCUMENT_MAX_PAGES` ใช้ 3 กับ chunk PDF); `attemptKey = capture:<jobId>:<chunkId|windowId>`; refusal → job `PAUSED/ai_credit` ข้อความ "เครดิตสำหรับการอ่านเอกสารไม่พอ" ตามคำศัพท์ wave 2 พร้อมผลที่อ่านแล้ว
+- Usage events ต่อ call (`ocr.capture.read`, `ocr.capture.extract`) ตามเดิม; ไม่มี call ใดไม่ผ่าน envelope เมื่อบริษัท SPLIT
+
+## 5. D06 — payer, lineage, consumer ที่ต้องรู้จัก sibling
+
+- `ExpenseRecord.payerUserId` ตั้งได้เฉพาะโดย server จาก `group.payerUserId` ตอน handoff หรือจาก review ของ expense เดี่ยว (ผู้ตั้งต้องมี `expense.review` เมื่อไม่ใช่ตัวเอง) และถูก audit; ห้าม client ส่งค่าใน DTO ทั่วไป
+- Resolver `readReimbursementSource` (`reimbursement-source.ts:26-35`): ลำดับ payer = certificate.payerUserId (กฎเดิม) → `expense.payerUserId` → `createdByUserId`; `ReimbursementEvidenceService.validate` (`:38-46`) และ picker (`prisma-reimbursement.repository.ts:319-323`) รับ `payerUserId = requester` เพิ่ม (OR)
+- Ambiguity (`reimbursement-source.ts:96-99`): เมื่อมี `linkedExpenseId` ชัดและ expense อื่นที่ใช้ไฟล์เดียวกันมี `captureGroupId` เดียวกัน → ไม่ ambiguous; ไม่มี `linkedExpenseId` และมี > 1 → ยัง ambiguous; ไฟล์ร่วมกับ expense นอกกลุ่ม → ยัง ambiguous (A09/A16)
+- Duplicate scoring (`expense-duplicate-detection.ts:41-58`, `findNearDuplicates :2745`): ข้าม candidate ที่ `captureGroupId` เดียวกัน; กลุ่มอื่นที่ใช้ไฟล์เดิม/เลขเอกสารเดิมยัง flag
+- `retireReplacedPrimaryReceipts` ไม่ retire ไฟล์ที่กลุ่มอ้าง (`expense.capture.evidence` link = shared)
+- Export/list: derived source เป็นเอกสารการเงินปกติ; `evidenceRef` เพิ่ม `captureGroupId`; งาน capture ไม่มีในรายการค่าใช้จ่าย/KPI/ledger (เป็น aggregate แยก มี list ของตัวเอง)
+
+## 6. D07 — สิทธิ, launch route, flag
+
+| การกระทำ | Permission (server) | หมายเหตุ |
+|---|---|---|
+| ดูกลุ่ม/ไฟล์/ผลอ่าน | `expense.read` หรือ (`expense.read_own` และเป็น creator) | ดาวน์โหลดไฟล์ผ่าน `attachment.read` + branch scope เดิม |
+| สร้างกลุ่ม/เพิ่มไฟล์/เริ่มอ่าน | `expense.receipt.upload` \| `expense.receipt.line_upload` \| `expense.create` + `assertExpenseRootOpen` (route `expenses/DEFAULT` เดิม) + flag ข้างล่าง | pending-bytes quota เดิม |
+| แก้ selection/businessUse/วันที่/ตัดไฟล์ | `expense.update` (creator) หรือ `expense.review` | ทุก mutation มี `expectedRevision` |
+| ตั้ง payer เป็นผู้อื่น, tax review, ยอมรับ allocation | `expense.review` | payer = ตัวเอง ใช้ `expense.update` ได้ |
+| handoff (สร้าง derived sources) / regenerate | `expense.create` \| `expense.receipt.upload` (creator) หรือ `expense.review` | ไม่มี financial finalization; expense ที่ได้ใช้ guard เดิมของมัน |
+| ใบรับรอง / claim / confirm / pay | สิทธิเดิมของ route นั้น | ไม่เปลี่ยน |
+
+Flag: `EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED` (`packages/config` api schema, default `true`; `deploy.sh` input default `true`, `maintenance_only` บังคับ `false`; `infra/kamal/config.json` `"true"` ทั้ง production/uat) ปิด = ปฏิเสธการสร้างกลุ่ม/ไฟล์ใหม่ (`FEATURE_TEMPORARILY_UNAVAILABLE`) แต่ read/handoff/recovery ของกลุ่มเดิมยังทำงาน; job ที่ค้างยังจบได้ (A47)
+
+## 7. D03/D04 — นโยบายเงินและใบรับรอง (ค่าเริ่มต้นที่เจ้าของต้องยืนยัน ข้อ 15)
+
+- `shared-discount-v1`: ส่วนลดที่ scope order/checkout แบ่งตามสัดส่วนยอดสินค้าหลังส่วนลดร้าน (net) ของสินค้าที่มีสิทธิในโปรโมชั่น รวมสินค้าส่วนตัวในฐาน แล้วจึงตัดส่วนตัวออก; ส่วนลดระดับ item ติดกับ item; largest remainder ถึงสตางค์ tie-break ตาม item id; Σ share = ส่วนลดต้นทาง
+- `shipping-by-eligible-item-v1`: ค่าส่งของพัสดุ/ร้านแบ่งตามสัดส่วน net ของสินค้าในพัสดุนั้น (บริษัท:ส่วนตัว); ค่าส่ง net (gross − ส่วนลดส่ง) นับครั้งเดียว
+- Coins ที่ใช้แล้วและมีหลักฐาน = `applied_discount`; coins/cashback ที่จะได้รับ = `future_reward` ไม่ลดยอด; wallet เป็น tender
+- Company-funded + มีของส่วนตัว (A05): allocation คำนวณและแสดงได้ แต่ handoff ถูก block ด้วยเหตุ "รอทางเรียกคืนส่วนตัวจากบริษัท (ยังไม่รองรับ)" — ไม่สร้าง expense ยอดบริษัทเพื่อซ่อนเงินบริษัทที่จ่ายส่วนตัว
+- Tax review: ค่าเริ่มต้นจาก facts (ใบกำกับภาษี/VAT ปรากฏ → `VAT_INCLUDED` + `NEEDS_REVIEW` ใน FULL mode; ไม่มี VAT → `NO_VAT` + `NON_CLAIMABLE`); employee route ต้องการ `NON_CLAIMABLE`/ไม่มี WHT — ผู้มี `expense.review` ตัดสินตาม facts; ไม่บังคับค่าเพื่อให้ผ่าน resolver; ยังไม่ตัดสิน = derived source `NEEDS_REVIEW` และ claim ยังไม่ได้ ("รอตรวจภาษี")
+- `expenseDate` ของ derived source = วันที่ชำระที่ตรวจแล้ว ถ้าไม่มีใช้วันที่เอกสาร; ผู้ review เลือกได้; วันอัปโหลดไม่ใช้
+- D04 ใบรับรอง: prefill จาก allocation; wording ในใบ/preview "ใบรับรองนี้รับรองส่วนของบริษัท {companyAmount} บาท จากยอดที่จ่ายจริง {paidTotal} บาท ตามการจัดส่วนที่ตรวจแล้ว (กลุ่มหลักฐาน {groupRef} ครั้งที่ {allocationRevision})"; eligibility/payment-once/PAPER/DIGITAL ตามกฎเดิมทุกข้อ
+
+## 8. D08/D09
+
+- D08: ไฟล์ของกลุ่มอยู่ใต้ processor/retention เดิมของ attachment (Postgres blob, ClamAV, AI provider เดิม); กลุ่มที่จบ `CLOSED_NO_HANDOFF`/`CANCELLED` หรือ `OPEN` ที่ไม่มีการเปลี่ยนแปลง ≥ `EXPENSE_CAPTURE_RETENTION_DAYS` (default 90 = `AI_DATA_RETENTION_DAYS`) → ไฟล์ที่ไม่มี expense/certificate อ้าง ถูก `markDeleted` โดย sweep เดียวกับ purge; บันทึกใน ROPA ว่าเป็น "เอกสารหลักฐานค่าใช้จ่าย" ฐานสัญญา/ประโยชน์อันชอบธรรม เจ้าของยืนยันข้อ 15
+- D09: ทุกไฟล์มี `electronicVerification.status ∈ {NOT_CHECKED, UNAVAILABLE}` เท่านั้นในรอบนี้; UI แสดง "ยังไม่ได้ตรวจสอบเอกสารอิเล็กทรอนิกส์"; ไม่มีคำว่า passed/verified จากการอ่านสำเร็จ
+
+## 9. API ของกลุ่ม (NestJS `expenses` module; ทุก endpoint ตรวจ company/branch/permission ที่ server)
+
+```
+GET    /v1/companies/{c}/expenses/capture-capability
+POST   /v1/companies/{c}/expenses/capture-groups                       { branchId?, note? }                         → { groupId, revision }
+GET    /v1/companies/{c}/expenses/capture-groups?status=&page=          รายการงานรับหลักฐาน (แยกจากรายการค่าใช้จ่าย)
+GET    /v1/companies/{c}/expenses/capture-groups/{g}                    facts ปัจจุบัน, ไฟล์+สถานะอ่าน, allocation preview/accepted, derived sources, blockers, allowedActions
+POST   /v1/companies/{c}/expenses/capture-groups/{g}/files             { originalFileName, mimeType, byteSize, expectedRevision } → { fileId, attachmentId, uploadUrl, uploadMethod, uploadHeaders }
+POST   /v1/companies/{c}/expenses/capture-groups/{g}/files/{f}/complete { byteSize, checksumSha256?, expectedRevision }   → job queued (idempotent เมื่อ STORED แล้ว)
+POST   /v1/companies/{c}/expenses/capture-groups/{g}/files/{f}/detach  { reason, expectedRevision }
+GET    /v1/companies/{c}/expenses/capture-groups/{g}/read-status       { files: [{ fileId, status, pagesRead, pageCount, pausedReason }] } (polling; ไม่เริ่มอ่าน)
+POST   /v1/companies/{c}/expenses/capture-groups/{g}/facts             { fileId, patch (HUMAN observation ใหม่: แก้ item/total/unknown), expectedRevision }
+POST   /v1/companies/{c}/expenses/capture-groups/{g}/review            { businessUse, selection, fundingRoute, payerUserId?, taxReview?, expenseDateChoice?, expectedRevision } → allocation PREVIEW
+POST   /v1/companies/{c}/expenses/capture-groups/{g}/allocations/{a}/accept { expectedRevision }
+POST   /v1/companies/{c}/expenses/capture-groups/{g}/handoff           { allocationId, expectedRevision, idempotencyKey } → { expenses: [{ expenseId, scopeKey }] }  (batch เดียว; retry คืนชุดเดิม)
+POST   /v1/companies/{c}/expenses/capture-groups/{g}/close             { reason: 'NO_COMPANY_PORTION'|'CANCELLED', expectedRevision }
+POST   /v1/companies/{c}/expenses/{expenseId}/capture-group            { expectedUpdatedAt } (ข้อ 3.1)
+POST   /v1/companies/{c}/expenses/{expenseId}/receipt-uploads/{attachmentId}/complete  (เดิม) + { expectedUpdatedAt, expectedPrimaryAttachmentId, intent: 'replace'|'append', operationId }
+GET    /v1/companies/{c}/expenses/{expenseId}/read-status              (job ของ expense เดี่ยว)
+```
+- ทุก 409/422 มี code snake_case + ข้อความไทยใน `api-error-message.ts` (spec ของ web บังคับ)
+- Handoff idempotency: `idempotencyKey` ผูก `(groupId, allocationId)`; DB unique `handoffBatchKey` + `(companyId, captureGroupId, captureScopeKey)` กันสองผู้ใช้/สองแท็บ (A10)
+- Regenerate: `POST …/handoff` ใหม่หลัง allocation ใหม่ อนุญาตเมื่อ derived sources เดิมทุกตัวยังไม่ถูกใช้ (status DRAFT|NEEDS_REVIEW|READY_FOR_CONFIRMATION, `paidAmount = 0`, `postingStatus not_required`, ไม่มี `ReimbursementLine` ที่ไม่ terminal, ไม่มี certificate ≥ PREPARED) — server ลบ (delete use-case เดิม) แล้วสร้างชุดใหม่ใน transaction เดียว; มิฉะนั้น 409 `expense_capture_handoff_consumed` พร้อมทางแก้ (correction ของรายการนั้น)
+
+## 10. §17 — reason → สถานะ → ปุ่ม (mapping ที่ implement)
+
+| กรณี | reason code (server) | persist-state | ข้อความ/ปุ่ม (§17.2) | ที่ใช้ |
+|---|---|---|---|---|
+| upload ไม่ถึง (web) | client `upload_transport_failed` | unsaved | UXE-01 ส่งไฟล์นี้อีกครั้ง | UploadPanel/กลุ่ม |
+| complete ไม่ทราบผล | client unknown response | unknown | UXE-02 ตรวจสอบสถานะ (GET group/read-status ด้วย operation เดิม) | web |
+| LINE download null | `LINE_MEDIA_DOWNLOAD_FAILED` (+ `oversize_declared`/`oversize_measured`/`download_http`/`download_timeout`/`credentials` ใน attempt) | REJECTED | UXE-03 "ยังรับไฟล์นี้จาก LINE ไม่สำเร็จ" (ไฟล์/รูป ตามชนิดจริง) | LINE |
+| mime/นามสกุล | `METADATA_REJECTED`/`EXTENSION_MIME_MISMATCH` | REJECTED | UXE-04 | ทั้งสามทาง |
+| เกินขนาด | `attachment_too_large` (bytes + limit) | REJECTED | UXE-05 (ตัวเลขจาก capability) | ทั้งสามทาง |
+| PDF ติดรหัส/เสีย | job `encrypted_pdf`/`corrupt_pdf` | STORED_READ_FAILED | UXE-06/07 + กรอกข้อมูลต่อ (ไฟล์ยังอยู่) | job |
+| security | `CONTENT_REJECTED`/`MALWARE_DETECTED`/`MALWARE_SCAN_FAILED` | REJECTED/QUARANTINED | UXE-08/09 | ทั้งสามทาง |
+| AI failed หลังเก็บ | job `FAILED` (`provider_*`, `OCR_*`) | STORED_READ_FAILED | UXE-10 "อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว กดกรอกข้อมูลต่อได้ที่นี่" + **กรอกข้อมูลต่อ** | LINE push/web notice |
+| บริษัทปิด AI/ไม่มี provider | `OCR_FEATURE_DISABLED`/`not_configured` | STORED | UXE-11 | |
+| เครดิต/โควตาหมด | `OCR_MONTHLY_LIMIT_EXCEEDED`/`AI_MONTHLY_BUDGET_EXCEEDED`/`AI_BUDGET_INSUFFICIENT` | STORED / PAUSED(ai_credit) | UXE-12 (คำว่า เครดิต) | |
+| อ่านบางส่วน | job `PARTIAL` | STORED_READ_PARTIAL | UXE-13 | |
+| หยุดเพราะขอบ | job `PAUSED` (`page_limit|call_budget|time_budget`) | STORED_READ_PARTIAL | UXE-14 | |
+| หน้าขาด | assembly `suspectedMissingPages` | DONE | UXE-15 แนบหลักฐานเพิ่ม | web group page |
+| ยอดขัดกัน | `reconciliation: mismatch`/ambiguous grouping | DONE | UXE-16 ตรวจจุดที่ไม่ตรง | |
+| electronic | `electronicVerification.NOT_CHECKED/UNAVAILABLE` | — | UXE-17 (ยังตรวจไม่ได้) | |
+| session/สิทธิ์ | 401/403 codes | — | UXE-18 (login?next= / กลับรายการที่มีสิทธิ์) | web |
+| replace fail (ไม่ bind) | `expense_receipt_replace_failed` | current เดิม | UXE-19 | |
+| replace bind แล้ว AI fail | job FAILED บน attachment ใหม่ | STORED_READ_FAILED | UXE-20 | |
+| revision conflict | `expense_capture_group_revision_conflict`/`expense_revision_conflict` | — | UXE-21 เปิดข้อมูลล่าสุด | |
+| locked state | `substitute_evidence_locks_expense`/`expense_receipt_removal_locked`/… | — | UXE-22 | |
+| duplicate | `POSSIBLE_DUPLICATE` | — | UXE-23 | |
+| handoff/certificate ผลหาย/บางร้าน | operation/handoffBatchKey เดิม | — | UXE-24 ตรวจสอบสถานะรายการ | |
+| LINE delivery fail | `LINE_DELIVERY_FAILED` (outcome เก็บ) | DONE | UXE-25 | |
+| หลักฐานไม่พอ | `missing_receipt`/eligibility | — | UXE-26 เพิ่มหลักฐาน (ใบรับรองเฉพาะ eligibility) | |
+| อื่น ๆ | unknown | unknown | UXE-27 ตรวจสอบสถานะ + รหัสอ้างอิง (requestId) | |
+
+ปุ่ม **กรอกข้อมูลต่อ**: expense มีอยู่ → `/companies/{c}/expenses/{expenseId}`; งานเป็นกลุ่ม → `/companies/{c}/expenses/capture/{groupId}`; URL สร้างจาก `absoluteWebLink(webBaseUrl, …)` เดิม; GET ไม่สร้าง/ไม่อ่านซ้ำ/ไม่ส่งเบิก; login-return ผ่าน `?next=` เดิม; LINE ใช้ `/l/{token}` handoff เดิมเมื่อผู้ใช้ยังไม่ login
+
+### 10.1 §17.5 LINE ถามย้อนหลัง (deterministic ก่อน AI)
+
+- ตัวจับคำถาม (regex ใน `line-receipt-status.logic.ts`): "ไฟล์/รูป เมื่อกี้|เมื่อสักครู่|ล่าสุด", "ส่งไม่ได้|รับไม่ได้|ทำไม", "ใหญ่ไป|ขนาด", "รองรับ PDF|ส่ง PDF ได้", "ต้องส่งใหม่", "บันทึกไปหรือยัง|เก็บไว้หรือยัง" → handler อ่าน `LineIntakeAttempt` (actor/company/chat, ≤ 24 ชม., ≤ 5 รายการ) และสถานะปัจจุบันของ target (job/expense/group): 1 รายการ → ตอบตามตาราง §17.5; หลายรายการ → "หมายถึงไฟล์ไหนคะ" + ตัวเลือก (ชื่อย่อ/เวลา/สถานะ) ผูกคำตอบถัดไป; ไม่พบ → "ตอนนี้ยังไม่พบไฟล์ที่จะอ่านค่ะ กด + → ไฟล์ …"; lookup ล่ม → "ตอนนี้ยังตรวจสอบสถานะไม่ได้ …"
+- Read tool สำหรับเส้นทาง LLM: `line.explain_file_attempt` (category read_detail, permissions capture เดิม) คืน `{ attempts: [{ ref, messageType, fileNameSanitized, stage, reasonCode, capability, outcome, currentStatus, recoveryAction: { kind, url? } }] }` — ข้อความยืนยันสาเหตุมาจาก template ของ API เท่านั้น; ไม่มี mutation/ไม่ OCR
+
+### 10.2 §18.4 NR01–NR09
+
+`formatBusinessDocumentReply` (`process-line-webhook.use-case.ts:617-647`) + reference branch (`:6093-6139`): จำแนก `DELIVERY_NOTE` ที่มี signal ใบปะหน้า/ใบนำฝาก (คำว่า "ใบปะหน้า|Shipping Label|AWB|Tracking" / "ใบนำฝาก|ใบรับฝาก|Drop-off") ผ่าน `classification.evidenceSignals` (gateway เพิ่ม reasonCode `PARCEL_LABEL_SIGNAL`/`DEPOSIT_SLIP_SIGNAL` โดยไม่เพิ่ม documentKind) → NR01/NR02; `QUOTATION|PURCHASE_ORDER|DELIVERY_NOTE` → NR03; `SUPPLIER_INVOICE_OR_BILL` ที่ผ่าน eligibility → NR04 (เข้า review เดิม); `TRANSFER_SLIP|MARKETPLACE_ORDER` → NR05; check-bill → NR06 (continuation เดิม); `NON_FINANCIAL_IMAGE` → NR07; `NEEDS_REVIEW|AMBIGUOUS` → NR08; failed/partial → NR09 (= §17.6). NR01–NR03/NR08 ที่มี expense intent + สิทธิ → เก็บ pending media/กลุ่ม (LINE file = กลุ่มอยู่แล้ว; รูป = `ensurePendingMedia` เดิม) ก่อนบอก "เก็บไฟล์ไว้แล้ว" และให้ลิงก์ **กรอกข้อมูลต่อ** ไปงานเดิม; NR07 ไม่เก็บ
+
+## 11. Web (Next.js) — surfaces
+
+- `UploadPanel`: `multiple` + drop หลายไฟล์; 1 รูป → path เดิม; อื่น → กลุ่ม; รายการไฟล์แสดงสถานะรายไฟล์ (กำลังอัปโหลด / เก็บไฟล์แล้ว กำลังอ่าน / อ่านแล้ว n/m หน้า / อ่านไม่สำเร็จ / ส่งไม่สำเร็จ → ส่งไฟล์นี้อีกครั้ง) และ resume จาก manifest server หลังปิดหน้า (ไฟล์ที่ bytes ยังไม่ถึงต้องเลือกใหม่)
+- หน้า `/companies/{c}/expenses/capture/{groupId}` (`ExpenseCaptureGroupPage`): สรุป "พบ N ร้าน • M รายการ (อ่านครบ/ยังไม่ครบ)", ยอดจ่ายรวมที่พบ, ส่วนของบริษัท, ผู้จ่าย, รายการที่ต้องตรวจ (blockers ก่อนปุ่ม), ตารางสินค้ารายร้านพร้อม stepper "ส่วนตัวกี่ชิ้น", คำถาม "ใช้สำหรับบริษัททั้งหมด / มีของส่วนตัวด้วย" และ "ใครเป็นคนจ่ายรายการนี้" (เฉพาะเมื่อยังไม่รู้; รับคำตอบบางส่วน), รายละเอียดส่วนลด/ค่าส่งเปิดเพิ่ม, ปุ่มหลักหนึ่งปุ่มตามสถานะ (สร้างรายการค่าใช้จ่าย / เตรียมใบเบิก / ตรวจภาษี), "เก็บไว้ก่อน" ทุก state, ไฟล์: ดู/แนบเพิ่ม/เปลี่ยนไฟล์นี้/ตัดออก, สถานะ electronic "ยังไม่ได้ตรวจ", derived sources พร้อมสถานะ/ใบรับรอง/ใบเบิกรายร้าน; mobile 390 ไม่มี horizontal scroll, ตัวอักษร 18 px, ปุ่ม ≥ 44 px
+- `ExpenseReviewPage`: สถานะอ่าน job (n/m หน้า), notice ตาม §17 (ไม่มี "ลองอ่านเอกสารอีกครั้ง" ใน terminal failed), "มีของส่วนตัวด้วย"/"แยกเป็นกลุ่มหลักฐาน" (ข้อ 3.1), ป้าย "จากกลุ่มหลักฐาน" + ลิงก์กลุ่ม
+- Dictionary: ทุกข้อความไทยใหม่อยู่ใน `workspace-dictionary.ts` (th + en) และ `api-error-message.ts`; guard spec ห้ามคำว่า "งบ AI/โควตา AI" ยังมีผล
+
+## 12. Consumer inventory ที่ต้องแก้/ยืนยัน (จากการอ่านโค้ด 2026-09-18)
+
+| จุด | ไฟล์ | ต้องทำ |
+|---|---|---|
+| ambiguity/review-required/payer | `reimbursements/infrastructure/reimbursement-source.ts:26-35, 96-99, 123-130` | ข้อ 5 |
+| picker/evidence payer | `prisma-reimbursement.repository.ts:316-338`, `reimbursement-evidence.service.ts:22-48` | รับ payerUserId |
+| duplicate | `expense-duplicate-detection.ts:10-70`, `prisma-expense.repository.ts:2745-2809` | sibling exclusion |
+| upload complete/retire | `expense-upload.use-case.ts:181-315` | expected target/intent/operation; shared-file retention |
+| extraction gate | `expense-extraction.use-case.ts:17-21, 104-109` | route PDF ไป job |
+| apply fences | `receipt-ocr-apply.service.ts:918-1218` | reuse (ownerType EXPENSE) |
+| remove receipt | `remove-expense-receipt.use-case.ts:21-62` | ไฟล์ที่กลุ่มอ้าง = ไม่ลบ object |
+| export/list | `expense-export.logic.ts:78-114`, `prisma-expense.repository.ts:773-788` | evidenceRef group; ไม่มี parent ให้กรอง |
+| LINE media | `process-line-webhook.use-case.ts:5511-6420, 6470-6530, 7218-7308, 7586-7687` | file lane, attempts, copy |
+| LINE status | `:3771-3812`, `erp-core-detail-tools.use-case.ts:237-344` | attempt Q&A + tool |
+| gateway | `line-ai-internal.controller.ts` (ใหม่ 2 routes), `ai-budget-bounds.ts`, `ai-budget-provider.ts:92-146` | capture contract, step kinds |
+| config/deploy | `packages/config/src/index.ts`, `infra/prod-ecs-express/deploy.sh` (pinned → re-pin; 8 จุดตามแบบ `AI_BUDGET_SPLIT_ACTIVATION_ENABLED` + `production-serving-mode.spec.sh`), `infra/kamal/config.json` | flag + limits |
+| workers | `apps/workers/src/main.ts` (pinned → re-pin), `apps/workers/src/modules/expense-capture-read/*`, `feature-launch/domain/shadow-surface.catalog.ts` | scan worker + internal drain |
+| audit | `audit/domain/models/audit-action.ts` (const object; อย่าแตะบรรทัด `PLATFORM_ACCESS_STATE_UPDATE`) | `expense.capture_group.*`, `expense.capture_handoff.*`, `expense.payer.set` |
+| web link | `common/http/web-link.ts` `absoluteWebLink(config.webBaseUrl, path)`; handoff wrapper `line-handoff-link.service.ts` surface ใหม่ `line_capture_result` | ลิงก์กรอกข้อมูลต่อ |
+| PG specs | `<AREA>_TEST_DATABASE_URL` + `<AREA>_REQUIRE_POSTGRES`, local-host guard (`company-ai-credit-holds.pg.spec.ts:112`), wire ใน `ci.yml` step P27 | `EXPENSE_CAPTURE_TEST_DATABASE_URL` |
+| web | `ExpensesPages.tsx` UploadPanel, `ExpenseReviewPage.tsx`, `expenses.api.ts`, `expense-upload.logic.ts`, dictionary, error map | ข้อ 11 |
+
+## 13. Fixture manifest (synthetic, ไม่มีข้อมูลบุคคลจริง; สร้างด้วยสคริปต์ใน repo)
+
+| ID | ไฟล์ | ใช้พิสูจน์ |
+|---|---|---|
+| FX-PDF-02/05/10/20 | PDF native text 2/5/10/20 หน้า ใบเดียว (header หน้าแรก, รายการต่อเนื่อง, total หน้าสุดท้าย, ยอดยกไป) | A81/A77/A75 |
+| FX-PDF-MULTI-03 | PDF 3 ใบเสร็จคนละร้านในไฟล์เดียว (หน้าละใบ) | A65/A82/A54 |
+| FX-PDF-SCAN-05 | PDF หน้าสแกน (ภาพ) 5 หน้า ~9.9 MB | A75/A76 |
+| FX-PDF-MIXED-06 | text + scan ผสม | A81 |
+| FX-PDF-BIG-01 | หน้าเดียวภาพใหญ่ (8500 px) ~10 MB | A76 tiles |
+| FX-PDF-ENC-01 / FX-PDF-CORRUPT-01 | ติดรหัส / bytes เสีย | UXE-06/07, A64/A80 |
+| FX-PDF-MISSING-01 | เลขหน้า 1/3 และ 3/3 ใน 2 หน้า | UXE-15/A82 |
+| FX-PDF-50/100 | 50/100 หน้า (บาง) | A79 page_limit/PAUSED |
+| FX-IMG-MP-A03 | ภาพ checkout: 1,500 − 100 − 140 + 100 − 70 = 1,290, สองร้าน | A03/A04/A05 allocation |
+| FX-IMG-RETAIL-R7-02 | cash 500 change 432 (68) | A49 |
+| FX-IMG-VOID | void 59/−59/53 | A52 |
+| FX-BOUNDARY | 4,000,000 / 4,000,001 / 4,194,304 / 4,194,305 / 10,485,760 / 10,485,761 bytes | A67 |
+| FX-LINE-FILE-* | raw webhook `message.type=file` (no contentBase64) ± caption, expired media, oversize declared | A68/A86–A88 |
+
+## 14. ลำดับงานและ verification ของรอบนี้
+
+W01 (schema/contracts/guards/pg) → W02-web (multi-file, replace intent, resume, notices) ∥ W02-LINE (file lane, attempts, §17.5/17.6/18.4) ∥ W03 (preprocess, job, gateway contract, assembly) → W04 (allocation + group page) → W05+W07 (handoff, resolver, export, LINE status) → W06 (certificate per source) → W08 (regression matrix, evidence bundle, docs) → gate → PRs ทุก wave ต้องผ่าน: contracts/config build, api/gateway/web full test + typecheck, whole-chain runner, harness, pg specs ที่ตนเพิ่ม, pins `--check`, `git diff --check`
+
+## 15. ข้อที่เจ้าของต้องยืนยัน (ใช้ค่าเริ่มต้นนี้จนกว่าจะแย้ง)
+
+1. D03: `shared-discount-v1` / `shipping-by-eligible-item-v1` เป็นค่าเริ่มต้นทั้งระบบในรุ่นแรก (ไม่มีหน้าตั้งค่ารายบริษัท; บันทึก policyVersion ใน snapshot เพื่อเปลี่ยนภายหลังได้)
+2. D07: `EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED = true` ทั้ง UAT และ Production ตั้งแต่ deploy ถัดไป (เหมือน `AI_BUDGET_SPLIT_ACTIVATION_ENABLED`)
+3. D08: กลุ่มที่ไม่มีเอกสารการเงิน — ลบไฟล์หลัง 90 วัน (`EXPENSE_CAPTURE_RETENTION_DAYS`)
+4. D04 wording ใบรับรองส่วนบริษัท (ข้อ 7)
+5. Bedrock replay ด้วย fixture สังเคราะห์เพื่อพิสูจน์ pipeline จริง (ประมาณ ≤ THB 100 ภายใต้ ledger เดิม `watchdog-bedrock`)
