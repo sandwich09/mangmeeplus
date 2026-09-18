@@ -863,6 +863,53 @@ describe('toAiTurnIntent (free-form model intent → AiTurn enum)', () => {
 });
 
 describe('ProcessLineWebhookUseCase', () => {
+  it('answers trial pricing for linked and unlinked users with durable delivery and zero model calls', async () => {
+    for (const identityUserId of ['user-1', null]) {
+      for (const messageText of ['หลังจากทดลองใข้ฟรีเสียกี่บาท', 'หลังจากทดลองใช้แอพฟรี', 'เสียค่าบริการไหม']) {
+        const { prisma, updates, turnOutcomeWrites, identityQueries } = makePrisma({ identityUserId });
+        const { useCase, replies, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma, {
+          config: { lineAiTerminalOutcomeReplayEnabled: true },
+        });
+        await useCase.execute({ ...BASE_EVENT, messageText });
+        assert.match(replies[0] ?? '', /เลือกซื้อแพ็กเกจและยืนยันการชำระเงิน/);
+        assert.equal(replies.length, 1);
+        assert.equal(turnOutcomeWrites.length, 1);
+        assert.equal(identityQueries.length, 0, 'public policy must not read private account facts');
+        assert.equal(intakeRequests.length, 0);
+        assert.equal(getAiGatewayCalled(), false);
+        assert.equal((updates.at(-1) as any).data.status, 'staff_menu_trial_pricing');
+        await useCase.execute({ ...BASE_EVENT, messageText });
+        assert.equal(replies.length, 1, 'duplicate event must not send again');
+      }
+    }
+  });
+
+  it('keeps trial pricing free text under an existing human-support pause', async () => {
+    const { prisma, updates } = makePrisma({
+      lineCompanyContext: { companyId: 'company-1', aiPausedUntil: new Date(Date.now() + 3_600_000) },
+    });
+    const { useCase, replies, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma);
+    await useCase.execute({ ...BASE_EVENT, messageText: 'เสียค่าบริการไหม' });
+    assert.doesNotMatch(replies[0] ?? '', /เลือกซื้อแพ็กเกจและยืนยันการชำระเงิน/);
+    assert.equal((updates.at(-1) as any).data.status, 'support_paused');
+    assert.equal(intakeRequests.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
+  });
+
+  it('does not send a trial reply when support state or durable delivery is unavailable', async () => {
+    for (const failure of ['support', 'delivery']) {
+      const { prisma } = makePrisma({ turnOutcomeUnavailable: failure === 'delivery' });
+      if (failure === 'support') prisma.client.lineCompanyContext.findUnique = async () => { throw new Error('store unavailable'); };
+      const { useCase, replies, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma, {
+        config: { lineAiTerminalOutcomeReplayEnabled: true },
+      });
+      await assert.rejects(() => useCase.execute({ ...BASE_EVENT, messageText: 'เสียค่าบริการไหม' }));
+      assert.equal(replies.length, 0);
+      assert.equal(intakeRequests.length, 0);
+      assert.equal(getAiGatewayCalled(), false);
+    }
+  });
+
   it('settles waiting feedback before sending the final LINE reply', async () => {
     const { prisma } = makePrisma({ identityUserId: null });
     const { useCase, replies } = makeUseCase(prisma);
