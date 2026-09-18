@@ -403,6 +403,11 @@ model Company {
   receiptExtractions                ReceiptExtraction[]
   receiptAiVerifications            ReceiptAiVerification[]
   expenseDuplicateCandidates        ExpenseDuplicateCandidate[]
+  expenseCaptureGroups              ExpenseCaptureGroup[]
+  expenseCaptureReadJobs            ExpenseCaptureReadJob[]
+  expenseCaptureObservations        ExpenseCaptureObservation[]
+  expenseCaptureAllocations         ExpenseCaptureAllocation[]
+  lineIntakeAttempts                LineIntakeAttempt[]
   signatureAssets                   CompanySignatureAsset[]
   signatureFillRecords              SignatureFillRecord[]
   substituteReceiptEvidences        ExpenseSubstituteReceiptEvidence[]
@@ -1148,6 +1153,9 @@ model AttachmentObject {
   updatedAt                          DateTime                          @updatedAt
   company                            Company                           @relation(fields: [companyId], references: [id], onDelete: Cascade)
   links                              AttachmentLink[]
+  // Array on purpose: `ExpenseCaptureFile.attachmentId @unique` already limits this to one row,
+  // and a one-to-one here would demand a third redundant unique on the composite relation.
+  captureFiles                       ExpenseCaptureFile[]
   blob                               AttachmentBlob?
   substituteReceiptCertifiedArtifact ExpenseSubstituteReceiptEvidence? @relation("SubstituteCertifiedArtifact")
   substituteReceiptIssuedArtifact    ExpenseSubstituteReceiptEvidence? @relation("SubstituteIssuedArtifact")
@@ -2520,6 +2528,17 @@ model ExpenseRecord {
   postingStatus                      ExpensePostingStatus               @default(not_required)
   journalEntryId                     String?
   postingError                       String?
+  // Capture lineage (appendix §2.3). All four are null on every legacy row and on every
+  // ordinary single-receipt expense; null means "not a capture-derived source", never a guess.
+  // Deliberately plain columns, not relations: a Restrict foreign key to a capture table that
+  // Company also cascades into fails a company delete depending on the order Postgres picks.
+  captureGroupId                     String?
+  captureAllocationId                String?
+  /// Issuer scope this expense is the derived source OF, inside its group.
+  captureScopeKey                    String?
+  /// Who actually paid. Server-set only (from the group at handoff, or an `expense.review`
+  /// decision) and audited; the reimbursement resolver reads it after the certificate (§5).
+  payerUserId                        String?
   note                               String?
   internalMemo                       String?
   createdByUserId                    String
@@ -2556,6 +2575,11 @@ model ExpenseRecord {
   @@unique([companyId, lineMessageId])
   @@unique([companyId, sourceReimbursementLineId])
   @@unique([companyId, sourceReimbursementRequestId, sourceReimbursementLineId])
+  // One derived source per issuer scope per capture group (appendix §2.3/§9): two tabs or two
+  // users cannot hand the same group off twice. Postgres treats NULL as distinct, so this is
+  // the partial `WHERE "captureGroupId" IS NOT NULL` index in effect — every legacy row and
+  // every ordinary expense keeps a NULL here and is never constrained.
+  @@unique([companyId, captureGroupId, captureScopeKey])
   @@index([companyId, status, expenseDate])
   @@index([companyId, branchId, expenseDate])
   @@index([companyId, vendorCounterpartyId])
@@ -2575,6 +2599,7 @@ model ExpenseRecord {
   @@index([companyId, confirmedByUserId])
   @@index([companyId, rejectedByUserId])
   @@index([companyId, voidedByUserId])
+  @@index([companyId, payerUserId])
   @@index([companyId, substituteReceiptGeneratedByUserId], map: "ExpenseRecord_company_substitute_generator_idx")
 }
 
@@ -2904,6 +2929,289 @@ model ExpenseSubstituteReceiptPolicy {
 
   @@index([companyId, updatedAt])
 }
+
+// ─── Buyer expense capture (marketplace/retail/courier) — contract appendix §2 ─
+//
+// D01 chose option B: a capture group is a SEPARATE aggregate and never an `ExpenseRecord`.
+// A capture-only parent row would reach list/report/confirm/claim through every consumer that
+// does not know the discriminator (appendix §2.1), and a binary that predates the column would
+// treat it as a real expense. Derived sources stay ordinary expenses carrying the lineage
+// columns on `ExpenseRecord` (§2.3), which is financially correct for any reader.
+//
+// Company relations are `Cascade` like every other company-scoped table here; the relations
+// BETWEEN capture rows and the evidence they point at are `Restrict`, because a group's file
+// manifest must not be able to lose the attachment it describes.
+
+enum ExpenseCaptureIntakeChannel {
+  WEB
+  LINE
+}
+
+enum ExpenseCaptureGroupStatus {
+  OPEN
+  HANDED_OFF
+  CLOSED_NO_HANDOFF
+  CANCELLED
+}
+
+enum ExpenseCaptureBusinessUse {
+  UNKNOWN
+  ALL_COMPANY
+  MIXED
+}
+
+enum ExpenseCaptureFundingRoute {
+  UNKNOWN
+  COMPANY
+  EMPLOYEE
+}
+
+enum ExpenseCaptureHandoffState {
+  NONE
+  ACTIVE
+  RELEASED
+}
+
+enum ExpenseCaptureFileState {
+  PENDING_UPLOAD
+  STORED
+  REJECTED
+  DETACHED
+}
+
+enum ExpenseCaptureReadOwner {
+  CAPTURE_GROUP
+  EXPENSE
+}
+
+enum ExpenseCaptureReadStatus {
+  QUEUED
+  PREPARING
+  READING
+  PARTIAL
+  PAUSED
+  FAILED
+  DONE
+  CANCELLED
+}
+
+enum ExpenseCaptureObservationSource {
+  AI
+  HUMAN
+  EXPENSE_FACTS
+}
+
+enum ExpenseCaptureAllocationStatus {
+  PREVIEW
+  ACCEPTED
+  SUPERSEDED
+  INVALIDATED
+}
+
+enum LineIntakeAttemptStage {
+  DOWNLOAD
+  SECURITY
+  PERSIST
+  READ
+  ROUTE
+}
+
+enum LineIntakeAttemptOutcome {
+  REJECTED
+  STORED
+  STORED_READING
+  STORED_READ_FAILED
+  STORED_READ_PARTIAL
+  STORED_READ_DONE
+  UNKNOWN
+}
+
+/// One evidence-collection job for one company/branch (appendix §2.2).
+model ExpenseCaptureGroup {
+  id                    String                      @id @default(cuid())
+  companyId             String
+  branchId              String?
+  createdByUserId       String
+  intakeChannel         ExpenseCaptureIntakeChannel
+  status                ExpenseCaptureGroupStatus   @default(OPEN)
+  /// Bumped by EVERY mutation. Every mutation carries `expectedRevision`, so a second tab
+  /// loses with `expense_capture_group_revision_conflict` instead of overwriting (A10).
+  revision              Int                         @default(1)
+  businessUse           ExpenseCaptureBusinessUse   @default(UNKNOWN)
+  fundingRoute          ExpenseCaptureFundingRoute  @default(UNKNOWN)
+  /// Server-set only, from an ACTIVE membership (§5). Never accepted from a public DTO.
+  payerUserId           String?
+  /// Per-scope tax decision by a reviewer: `{ [scopeKey]: { vatMode, inputVatClaimStatus, … } }`.
+  taxReviewJson         Json?
+  /// Reviewed order/payment/document/upload dates and which one each scope uses.
+  expenseDateSourceJson Json?
+  lineChatKeyHash       String?
+  acceptedAllocationId  String?
+  /// `<groupId>:<allocationRevision>` — the database fence that makes handoff idempotent (§9).
+  handoffBatchKey       String?                     @unique
+  handoffState          ExpenseCaptureHandoffState  @default(NONE)
+  /// Free-text note from the create body (§9). Not part of §2.2's column list.
+  note                  String?
+  closedReason          String?
+  closedAt              DateTime?
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+  company               Company                     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  files                 ExpenseCaptureFile[]
+
+  @@unique([companyId, id])
+  @@index([companyId, createdByUserId, status])
+  @@index([companyId, status, updatedAt])
+}
+
+/// Per-file identity/status so an interrupted upload resumes from what the server holds.
+model ExpenseCaptureFile {
+  id                         String                  @id @default(cuid())
+  companyId                  String
+  groupId                    String
+  attachmentId               String                  @unique
+  position                   Int
+  uploadState                ExpenseCaptureFileState @default(PENDING_UPLOAD)
+  originalFileName           String
+  mimeType                   String
+  byteSize                   Int
+  checksumSha256             String?
+  pageCount                  Int?
+  addedByUserId              String
+  lineMessageId              String?
+  detachedAt                 DateTime?
+  detachedReason             String?
+  /// D09 baseline: only `NOT_CHECKED` or `UNAVAILABLE` in this release. A successful read never
+  /// makes this "verified" — nothing here verifies an e-Tax signature or timestamp.
+  electronicVerificationJson Json                    @default("{\"status\":\"NOT_CHECKED\",\"method\":null,\"checkedAt\":null}")
+  createdAt                  DateTime                @default(now())
+  updatedAt                  DateTime                @updatedAt
+  group                      ExpenseCaptureGroup     @relation(fields: [companyId, groupId], references: [companyId, id], onDelete: Restrict)
+  attachment                 AttachmentObject        @relation(fields: [companyId, attachmentId], references: [companyId, id], onDelete: Restrict)
+
+  @@unique([companyId, groupId, attachmentId])
+  // Postgres treats NULL as distinct, so web files (no LINE identity) are unaffected while one
+  // LINE message can only ever land once — the same trick as `ExpenseRecord.lineMessageId`.
+  @@unique([companyId, lineMessageId])
+  @@index([companyId, groupId, position])
+}
+
+/// Durable per-file read job. W01 only creates it QUEUED; the runner arrives in W03.
+model ExpenseCaptureReadJob {
+  id                      String                   @id @default(cuid())
+  companyId               String
+  ownerType               ExpenseCaptureReadOwner
+  groupId                 String?
+  expenseId               String?
+  fileId                  String?
+  attachmentId            String
+  attachmentChecksum      String
+  objectVersionId         String?
+  preprocessVersion       Int                      @default(1)
+  contractVersion         Int                      @default(1)
+  status                  ExpenseCaptureReadStatus @default(QUEUED)
+  /// The OCR count admission fence: one admitted read per file, however many provider chunks.
+  ocrAdmissionRequestId   String
+  manifestJson            Json
+  checkpointJson          Json                     @default("{}")
+  attempts                Int                      @default(0)
+  leaseOwner              String?
+  leasedUntil             DateTime?
+  pausedReason            String?
+  lastErrorCode           String?
+  lastErrorAt             DateTime?
+  providerCallCount       Int                      @default(0)
+  /// `ownerType EXPENSE` fence, reused by the existing `receipt-ocr-apply` guard.
+  expectedSourceUpdatedAt DateTime?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  completedAt             DateTime?
+  company                 Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([status, leasedUntil])
+  @@index([companyId, groupId])
+  @@index([companyId, expenseId])
+}
+
+/// Assembled facts for one file, versioned. `AI` results never overwrite a `HUMAN` version.
+model ExpenseCaptureObservation {
+  id               String                          @id @default(cuid())
+  companyId        String
+  groupId          String?
+  expenseId        String?
+  fileId           String?
+  jobId            String?
+  version          Int
+  source           ExpenseCaptureObservationSource
+  basedOnVersion   Int?
+  payloadJson      Json
+  modelLineageJson Json?
+  stale            Boolean                         @default(false)
+  createdByUserId  String?
+  createdAt        DateTime                        @default(now())
+  company          Company                         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, fileId, version])
+  // The group detail read model loads every observation of a group; §2.2 lists only the unique.
+  @@index([companyId, groupId])
+}
+
+/// Reviewed business allocation snapshot. At most one ACCEPTED per group, enforced in the
+/// transaction under the group lock (W04 writes these; W01 only defines the shape).
+model ExpenseCaptureAllocation {
+  id                String                         @id @default(cuid())
+  companyId         String
+  groupId           String
+  groupRevision     Int
+  policyVersion     String
+  selectionJson     Json
+  inputJson         Json
+  resultJson        Json
+  fundingRoute      ExpenseCaptureFundingRoute
+  payerUserId       String?
+  computedByUserId  String
+  computedAt        DateTime                       @default(now())
+  status            ExpenseCaptureAllocationStatus @default(PREVIEW)
+  acceptedByUserId  String?
+  acceptedAt        DateTime?
+  invalidatedReason String?
+  company           Company                        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, groupId, status])
+}
+
+/// Safe pre-capture diagnostic for the LINE lane (§17.5): what the customer sent, why it was
+/// refused or where it landed. Never the raw payload, the raw file name or any secret.
+model LineIntakeAttempt {
+  id                String                   @id @default(cuid())
+  companyId         String?
+  lineUserIdHash    String
+  chatKeyHash       String?
+  webhookEventId    String?
+  lineMessageId     String?
+  /// 'image' | 'file' — the LINE message type, as sent.
+  messageType       String
+  /// Sanitised to ≤ 80 characters with no path separators.
+  fileNameSanitized String?
+  declaredFileSize  Int?
+  measuredByteSize  Int?
+  /// The capability shown to the customer at that moment, so a later answer quotes real limits.
+  capabilityJson    Json
+  stage             LineIntakeAttemptStage
+  reasonCode        String
+  outcome           LineIntakeAttemptOutcome @default(UNKNOWN)
+  /// 'capture_group' | 'pending_media' | 'expense'
+  targetType        String?
+  targetId          String?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  company           Company?                 @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, lineUserIdHash, createdAt])
+  // The retention sweep deletes across companies by age, so it needs a companyId-free index.
+  @@index([createdAt])
+}
+
 
 // ─── Item 10: Double-Entry Ledger ─────────────────────────────────────────────
 
