@@ -9,7 +9,7 @@ import { workspaceDictionary } from '../../../common/i18n/workspace-dictionary';
 import {
   captureAllocation, captureBlockerRows, captureClaimReady, captureDateChoicePayload, captureDateOption,
   captureCertificatePrefill, captureDerivedRows, captureHandoffConfirmParams, captureItemEventKey, capturePayer,
-  capturePersonalFromAllocation, capturePersonalMax, captureProvenanceRows, captureReadState,
+  capturePersonalFromAllocation, capturePersonalMax, captureProvenanceRows, captureQuantityText, captureReadState,
   captureReconciliationChip, captureComponentRoleKey, capturePaymentNoticeKey, captureSelectionPayload,
   captureStateChips, captureSummary, captureText,
 } from './expense-capture-review.logic';
@@ -312,6 +312,13 @@ test('the split shows where every satang came from, in the order it was applied'
     provenance: { ...line().provenance, shippingShare: undefined, discountShares: [] },
   }));
   assert.deepEqual(noShipping.map((row) => row.kind), ['base', 'quantity']);
+  // Decimal(18,4) quantities read as a person counts them: "4.0000" → "4", "2.5000" → "2.5".
+  const fourDp = captureProvenanceRows(line({
+    provenance: { ...line().provenance, companyQuantity: '2.0000', quantity: '4.0000' },
+  }));
+  assert.deepEqual(fourDp.at(-1), { kind: 'quantity', company: '2', quantity: '4', inferred: false });
+  assert.equal(captureQuantityText('2.5000'), '2.5');
+  assert.equal(captureQuantityText('ไม่ทราบ'), 'ไม่ทราบ');
 });
 
 test('the handoff confirm names how many records and which shops', () => {

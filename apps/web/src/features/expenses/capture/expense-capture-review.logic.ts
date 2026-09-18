@@ -375,11 +375,22 @@ export function captureProvenanceRows(line: CaptureAllocationLine): CaptureProve
   if (line.provenance.shippingShare) rows.push({ kind: 'shipping', amount: line.provenance.shippingShare });
   rows.push({
     kind: 'quantity',
-    company: line.provenance.companyQuantity,
-    quantity: line.provenance.quantity,
+    company: captureQuantityText(line.provenance.companyQuantity),
+    quantity: captureQuantityText(line.provenance.quantity),
     inferred: line.provenance.quantityInferred,
   });
   return rows;
+}
+
+/**
+ * Quantities travel as Decimal(18,4) strings ("4.0000"); a person reads "4", and "2.5" only when
+ * the document really printed a fraction. Non-numeric input is shown as given.
+ */
+export function captureQuantityText(value: string): string {
+  if (!/^-?\d+(\.\d+)?$/.test(value)) return value;
+  const [whole, fraction = ''] = value.split('.');
+  const trimmed = fraction.replace(/0+$/, '');
+  return trimmed.length ? `${whole}.${trimmed}` : whole;
 }
 
 export function captureScopeLabel(scope: CaptureAllocationScope): string {
