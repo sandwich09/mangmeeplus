@@ -1,0 +1,450 @@
+{
+  "status": "exploratory_survey_not_evaluation_ready",
+  "reviewed_at": "2026-09-17",
+  "count_definition": "11 distinct visible receipt/invoice documents in 10 images from 10 source pages; RB-02 and RB-03 are separate receipts in the same image. Not 15 per merchant, not a measured OCR benchmark.",
+  "limitations": [
+    "Public images from 2016–2025, not verified current layouts for every chain.",
+    "Not all documents are complete scans or original electronic files; authenticity and digital signatures were not verified.",
+    "No raw receipt images, buyer identities, membership IDs, card references or receipt identifiers are copied into this catalog.",
+    "Public visibility does not establish training/redistribution permission.",
+    "Makro has one directly inspected receipt in this first pass; CJ full invoice and all brands current end-to-end recovery examples remain gaps.",
+    "Five merchant electronic channels are guidance records, not additional receipt examples; zero original electronic files or cryptographic checks in this pass."
+  ],
+  "samples": [
+    {
+      "id": "R7-01",
+      "merchant": "7-Eleven",
+      "source_url": "https://pantip.com/topic/41888782",
+      "media_url": "https://f.ptcdn.info/934/079/000/rqo2so2c8c6FMVmy5dayZ-o.jpg",
+      "source_locator": "whole receipt; bottom extends beyond viewport",
+      "document_kind": "paper_abbreviated_receipt",
+      "printed_date": "2023-02-25",
+      "observed_facts": "199.00 gross; five reductions 1.00/5.00/20.25/5.00/9.75; net 158.00; savings summary 41.00; zero-price game/reward row",
+      "design_implication": "Do not subtract savings summary again or multiply discount amounts by the left-side count; reward counter is not merchandise quantity.",
+      "locale": "TH",
+      "verification": "visually_inspected_public_image_in_browser",
+      "authenticity": "not_independently_authenticated",
+      "reviewed_at": "2026-09-17"
+    },
+    {
+      "id": "R7-02",
+      "merchant": "7-Eleven",
+      "source_url": "https://www.kawa-sho.co.jp/blog_post_0000804.html",
+      "media_url": "https://www.kawa-sho.co.jp/post_image/%E3%83%AC%E3%82%B7%E3%83%BC%E3%83%88.jpg",
+      "source_locator": "whole receipt",
+      "document_kind": "paper_abbreviated_receipt",
+      "printed_date": "2023-08-30",
+      "observed_facts": "Two goods 54.00 + 14.00 = 68.00; cash tendered 500.00; change 432.00; VAT Included text",
+      "design_implication": "Cash tendered is not expense amount; VAT Included does not authorize a second VAT addition or input-tax claim.",
+      "locale": "TH",
+      "verification": "visually_inspected_public_image_in_browser",
+      "authenticity": "not_independently_authenticated",
+      "reviewed_at": "2026-09-17"
+    },
+    {
+      "id": "R7-03",
+      "merchant": "7-Eleven",
+      "source_url": "https://droidsans.com/how-to-get-receipt-from-7-11/",
+      "media_url": "https://images.droidsans.com/wp-content/uploads/2024/01/7-11-4-472x1024.jpeg",
+      "source_locator": "app screenshot of full-format document; fine print not fully transcribed",
+      "document_kind": "full_invoice_app_screenshot",
+      "printed_date": null,
+      "observed_facts": "Buyer block is redacted by publisher; item table, discount breakdown, VAT summary and document legend visible",
+      "design_implication": "A screenshot of an electronic invoice is not cryptographic validation of its original file; link to original purchase, do not create another expense.",
+      "locale": "TH",
+      "verification": "visually_inspected_public_image_in_browser",
+      "authenticity": "not_independently_authenticated",
+      "reviewed_at": "2026-09-17"
+    },
+    {
+      "id": "RL-01",
+      "merchant": "Lotus's",
+      "source_url": "https://pantip.com/topic/43056367/desktop",
+      "media_url": "https://f.ptcdn.info/976/085/000/m2vzwtiri9tIFdMJPTi-o.jpg",
+      "source_locator": "receipt at right; product labels at left",
+      "document_kind": "paper_abbreviated_receipt",
+      "printed_date": "2024-10-30",
+      "observed_facts": "16.00 + 58.75 + 58.75 = 133.50; cash 200.00/change 66.50; adjacent product labels show 58.50; footer advertises coupon up to 320",
+      "design_implication": "Segment receipt vs product label and future promotion; preserve conflicting sources rather than repair the bill from a shelf label.",
+      "locale": "TH",
+      "verification": "visually_inspected_public_image_in_browser",
+      "authenticity": "not_independently_authenticated",
+      "reviewed_at": "2026-09-17"
+    },
+    {
+      "id": "RL-02",
+      "merchant": "Lotus's",
+      "source_url": "https://www.wongnai.com/attractions/1926507mi-%E0%B9%82%E0%B8%A5%E0%B8%95%E0%B8%B1%E0%B8%AA-%E0%B8%8A%E0%B8%B0%E0%B8%AD%E0%B8%B3",
+      "media_url": "https://img.wongnai.com/p/1920x0/2025/12/28/c920e39b9c824cba899cfdcc6f6e4148.jpg",
+      "source_locator": "whole receipt",
+      "document_kind": "paper_abbreviated_receipt",
+      "printed_date": "2025-12-28",
+      "observed_facts": "227.00 before promotion; 5.00 promotion also repeated as savings summary; total 222.00; coins 44.00 + M/C 178.00; change 0.00; remaining coins 45.32",
+      "design_implication": "Keep document total, settlement components and remaining rewards separate; employee reimbursement policy for personal coins remains undecided.",
+      "locale": "TH",
+      "verification": "visually_inspected_public_image_in_browser",
+      "authenticity": "not_independently_authenticated",
+      "reviewed_at": "2026-09-17"
+    },
+    {
+      "id": "RB-01",
+      "merchant": "Big C",
+      "source_url": "https://pantip.com/topic/35750140",
+      "media_url": "https://f.ptcdn.info/895/046/000/oft26ltsn83ecvorakj-o.jpg",
+      "source_locator": "whole receipt",
+      "document_kind": "paper_abbreviated_receipt",
+      "printed_date": "2016-10-29",
+      "observed_facts": "59.00 sale, -59.00 VA row, 53.00 corrected sale; Total 53.00; cash 59.00/change 6.00; Vatable 53.00 and VAT 3.47 with VAT INCLUDED",
+      "design_implication": "Negative cancellation is not a generic coupon or later refund; printed Vatable here is not automatically net taxable base.",
+      "locale": "TH",
+      "verification": "visually_inspected_public_image_in_browser",
+      "authenticity": "not_independently_authenticated",
+      "reviewed_at": "2026-09-17"
+    },
+    {
+      "id": "RB-02",
+      "merchant": "Big C",
+      "source_url": "https://pantip.com/topic/38016701/desktop",
+      "media_url": "https://f.ptcdn.info/516/059/000/pee7558zf9hjP3C31wY-o.jpg",
+      "source_locator": "left receipt in two-receipt photo; footer partly cropped",
+      "document_kind": "paper_abbreviated_receipt",
+      "printed_date": "2018-09-01",
+      "observed_facts": "Long item list with quantity/unit continuation lines and several negative promotion rows; total and card amount 1198.50",
+      "design_implication": "Do not merge adjacent receipts or count quantity-detail rows as extra products; this is an old layout reference, not a current price or dispute finding.",
+      "locale": "TH",
+      "verification": "visually_inspected_public_image_in_browser",
+      "authenticity": "not_independently_authenticated",
+      "reviewed_at": "2026-09-17"
+    },
+    {
+      "id": "RB-03",
+      "merchant": "Big C",
+      "source_url": "https://pantip.com/topic/38016701/desktop",
+      "media_url": "https://f.ptcdn.info/516/059/000/pee7558zf9hjP3C31wY-o.jpg",
+      "source_locator": "right receipt in same photo; distinct document/time",
+      "document_kind": "paper_abbreviated_receipt",
+      "printed_date": "2018-09-01",
+      "observed_facts": "Total 839.00; CPN row 130.00; CASH 709.00; lower savings text repeats 130.00",
+      "design_implication": "839 = 130 + 709 is observable; coupon accounting/funding meaning needs evidence/policy, not an automatic extra deduction or cash-only reimbursement.",
+      "locale": "TH",
+      "verification": "visually_inspected_public_image_in_browser",
+      "authenticity": "not_independently_authenticated",
+      "reviewed_at": "2026-09-17"
+    },
+    {
+      "id": "RM-01",
+      "merchant": "Makro",
+      "source_url": "https://pantip.com/topic/35950630",
+      "media_url": "https://f.ptcdn.info/201/048/000/oiscqajk3Hj23PCxh4r-o.jpg",
+      "source_locator": "full document with publisher-redacted buyer block; highlighted weight rows and tax table",
+      "document_kind": "paper_full_tax_invoice",
+      "printed_date": "2016-12-24",
+      "observed_facts": "Quantity/weight, unit packs, pack price and VAT code columns; weights 0.244 and 0.118; tax table code 1 at 0.00 and code 2 at 7.00; base 32.25 + 3967.29, VAT 277.71, total 4277.25; cash 4500.00/change 222.75; references replacement of abbreviated receipt",
+      "design_implication": "Tax code is not tax rate; exempt and taxable goods coexist; pack size is not an extra multiplier. Full document replacing a short receipt is one purchase, not another expense.",
+      "locale": "TH",
+      "verification": "visually_inspected_public_image_in_browser",
+      "authenticity": "not_independently_authenticated",
+      "reviewed_at": "2026-09-17"
+    },
+    {
+      "id": "RC-01",
+      "merchant": "CJ MORE",
+      "source_url": "https://pantip.com/topic/42908631/desktop",
+      "media_url": "https://f.ptcdn.info/187/085/000/lzxl4usdiZDJHfvZRU8-o.jpg",
+      "source_locator": "whole receipt including cafe queue footer",
+      "document_kind": "paper_abbreviated_receipt",
+      "printed_date": "2024-08-17",
+      "observed_facts": "Item 45.00; zero-value AIS coupon row; applied AIS promotion -10.00; total 35.00; cash 40.00/change 5.00; cafe queue 21",
+      "design_implication": "Zero-value coupon row and applied discount are different; queue number is not receipt ID or item quantity; brand/sub-brand should not override legal issuer.",
+      "locale": "TH",
+      "verification": "visually_inspected_public_image_in_browser",
+      "authenticity": "not_independently_authenticated",
+      "reviewed_at": "2026-09-17"
+    },
+    {
+      "id": "RC-02",
+      "merchant": "CJ MORE",
+      "source_url": "https://www.lemon8-app.com/%40lumoomoneystory/7449232893437641223?region=th",
+      "media_url": "https://www.lemon8-app.com/seo/image?index=1&item_id=7449232893437641223&sign=e9cff0745bfc7df93ca77afc9212a852",
+      "source_locator": "receipt image 1; redirects to signed CDN image",
+      "document_kind": "paper_abbreviated_receipt",
+      "printed_date": "2024-12-16",
+      "observed_facts": "3 units total 30.00; promotion -2.00; total/card 28.00; current points 1, balance 296 and expiring 260",
+      "design_implication": "Points are counts, not current money; card reference does not identify actual employee payer.",
+      "locale": "TH",
+      "verification": "visually_inspected_public_image_in_browser",
+      "authenticity": "not_independently_authenticated",
+      "reviewed_at": "2026-09-17"
+    }
+  ],
+  "scope": {
+    "buyer_expense_and_reimbursement": true,
+    "paper_and_electronic": true,
+    "merchants": [
+      "7-Eleven",
+      "Lotus's",
+      "Big C",
+      "Makro",
+      "CJ MORE"
+    ]
+  },
+  "electronic_coverage": {
+    "original_electronic_receipt_files_inspected": 0,
+    "signature_or_timestamp_validations_performed": 0,
+    "app_invoice_screenshot_sample_ids": [
+      "R7-03"
+    ],
+    "official_guidance_merchants_reviewed": 5,
+    "guidance_is_not_receipt_sample": true,
+    "current_end_to_end_download_flows_tested": false
+  },
+  "electronic_channels": [
+    {
+      "merchant": "7-Eleven",
+      "channel": "ALL ONLINE",
+      "source_url": "https://allonline.7eleven.co.th/service/help/order-and-pay/receipt/",
+      "verification": "official_help_page_read_in_browser",
+      "source_period": "undated_currently_accessible_page",
+      "observed": "Account/order history/order details offers electronic full invoice PDF download, retrospective request and correction; page states seven-day request/correction window from payment and 24-hour processing.",
+      "limitation": "Channel-specific instructions; no authenticated download, original PDF or signature check. Do not apply timing to all 7-Eleven channels.",
+      "reviewed_at": "2026-09-17"
+    },
+    {
+      "merchant": "Lotus's",
+      "channel": "Specified marketplaces and historical store guidance",
+      "source_url": "https://fftiform.lotuss.com/",
+      "additional_source_urls": [
+        "https://www.cpaxtra.com/storage/newsroom/news/2025/01/20250116-112813-8.webp"
+      ],
+      "verification": "official_form_text_read_and_official_poster_visually_inspected",
+      "source_period": "Form accessible on review date; poster Jan-Feb 2025",
+      "observed": "Marketplace e-Tax form describes delivery by email; historical official poster directs missing-document recovery via Junk Mail and Tax box, with correction guidance.",
+      "limitation": "Form and campaign scopes differ; no current all-store flow or actual e-Tax file checked.",
+      "reviewed_at": "2026-09-17"
+    },
+    {
+      "merchant": "Big C",
+      "channel": "Physical stores and online",
+      "source_url": "https://corporate.bigc.co.th/campaign/20755/Easy-E-Receipt-2025?lang=th",
+      "additional_source_urls": [
+        "https://corporate.bigc.co.th/upload_file/blog/2023/774011b1d2.jpg",
+        "https://corporate.bigc.co.th/upload_file/blog/2023/774180269f.jpg"
+      ],
+      "verification": "official_page_and_two_guidance_images_visually_inspected",
+      "source_period": "Jan-Feb 2025 campaign, despite image directory named 2023",
+      "observed": "Store poster asks for abbreviated receipt and identity card, email or phone, then waiting for electronic invoice; separate online campaign conditions shown.",
+      "limitation": "Historical guidance, not current delivery SLA or original e-Tax specimen; merchant identity requirements do not authorize identity-card collection in Mangmee.",
+      "reviewed_at": "2026-09-17"
+    },
+    {
+      "merchant": "Makro",
+      "channel": "Makro stores / Makro PRO",
+      "source_url": "https://www.makro.pro/static/terms-conditions",
+      "additional_source_urls": [
+        "https://www.cpaxtra.com/storage/newsroom/news/2025/01/20250116-112813-9.webp"
+      ],
+      "verification": "official_terms_read_and_official_poster_visually_inspected",
+      "source_period": "Terms accessible on review date; poster Jan-Feb 2025",
+      "observed": "Terms clause 15.5 discusses seller-issued receipt/electronic invoice and document-format restrictions; historical poster covers stores and Makro PRO.",
+      "limitation": "Marketplace seller is not necessarily Makro; no actual original electronic receipt file or validation.",
+      "reviewed_at": "2026-09-17"
+    },
+    {
+      "merchant": "CJ MORE",
+      "channel": "Sabaicard / LINE OA",
+      "source_url": "https://www.cjmore.co.th/news/details/95",
+      "verification": "official_2024_guide_read_in_browser",
+      "source_period": "Jan-Feb 2024 campaign",
+      "observed": "Guide describes member-linked LINE OA form for e-Tax with campaign-specific abbreviated-receipt return requirements.",
+      "limitation": "Current 2026 delivery format, end-to-end flow and full electronic invoice specimen remain unverified.",
+      "reviewed_at": "2026-09-17"
+    }
+  ],
+  "additional_primary_reference": {
+    "source_url": "https://www.etax.teda.th/",
+    "verification": "official_page_read",
+    "observed": "e-Tax Invoice by Email uses time stamping and prescribes PDF/A-3; scanned paper is not the electronic issuance process; email evidence matters.",
+    "design_implication": "Separate extraction from method-specific verification and accounting eligibility; retain original evidence. Do not infer validation from file extension or AI confidence."
+  },
+  "proposed_acceptance_ids": [
+    "RC-A01",
+    "RC-A02",
+    "RC-A03",
+    "RC-A04",
+    "RC-A05",
+    "RC-A06",
+    "RC-A07",
+    "RC-A08",
+    "RC-A09",
+    "RC-A10",
+    "RC-A11",
+    "RC-A12",
+    "RC-A13",
+    "RC-A14",
+    "RC-A15",
+    "RC-A16",
+    "RC-A17",
+    "RC-A18",
+    "RC-A19"
+  ],
+  "spec_integration": {
+    "version": "0.11",
+    "integrated_at": "2026-09-17",
+    "spec": "../specs/marketplace-buyer-expense-capture-spec-th.md",
+    "plan": "../plans/marketplace-buyer-expense-capture-plan-th.md",
+    "entry_points": [
+      "LINE_AI",
+      "WEB_NEW_UPLOAD",
+      "WEB_REPLACE_RECEIPT"
+    ],
+    "research_to_normative_acceptance": {
+      "RC-A01": "A49",
+      "RC-A02": "A50",
+      "RC-A03": "A51",
+      "RC-A04": "A52",
+      "RC-A05": "A53",
+      "RC-A06": "A54",
+      "RC-A07": "A55",
+      "RC-A08": "A56",
+      "RC-A09": "A57",
+      "RC-A10": "A58",
+      "RC-A11": "A59",
+      "RC-A12": "A60",
+      "RC-A13": "A61",
+      "RC-A14": "A62",
+      "RC-A15": "A63",
+      "RC-A16": "A64",
+      "RC-A17": "A65",
+      "RC-A18": "A66",
+      "RC-A19": "A67"
+    },
+    "additional_integration_acceptance": [
+      "A68",
+      "A69",
+      "A70",
+      "A71",
+      "A72",
+      "A73",
+      "A74"
+    ],
+    "implementation_status": "planned_not_implemented",
+    "runtime_verification": "not_run",
+    "automatic_pdf_reading": {
+      "original_max_bytes": 10485760,
+      "acceptance_ids": [
+        "A75",
+        "A76",
+        "A77",
+        "A78",
+        "A79",
+        "A80",
+        "A81",
+        "A82"
+      ],
+      "strategy": "bounded_internal_pdf_chunks_and_large_page_regions_with_durable_resume",
+      "status": "planned_not_implemented",
+      "multi_page": {
+        "coverage": "all_physical_pages_with_separate_document_completeness",
+        "baseline_fixture_page_counts": [
+          2,
+          5,
+          10,
+          20
+        ],
+        "resource_fixture_page_counts": [
+          50,
+          100
+        ],
+        "production_page_limit_status": "D02_measurement_pending"
+      }
+    },
+    "error_recovery": {
+      "case_ids": [
+        "UXE-01",
+        "UXE-02",
+        "UXE-03",
+        "UXE-04",
+        "UXE-05",
+        "UXE-06",
+        "UXE-07",
+        "UXE-08",
+        "UXE-09",
+        "UXE-10",
+        "UXE-11",
+        "UXE-12",
+        "UXE-13",
+        "UXE-14",
+        "UXE-15",
+        "UXE-16",
+        "UXE-17",
+        "UXE-18",
+        "UXE-19",
+        "UXE-20",
+        "UXE-21",
+        "UXE-22",
+        "UXE-23",
+        "UXE-24",
+        "UXE-25",
+        "UXE-26",
+        "UXE-27"
+      ],
+      "acceptance_ids": [
+        "A83",
+        "A84",
+        "A85"
+      ],
+      "spec_section": "17",
+      "status": "planned_not_implemented",
+      "usability_verification": "not_run",
+      "failed_read_web_recovery": {
+        "spec_section": "17.6",
+        "message": "อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว กดกรอกข้อมูลต่อได้ที่นี่",
+        "link_label": "กรอกข้อมูลต่อ",
+        "destination": "same_authorized_web_review_or_pending_capture",
+        "same_work_required": true,
+        "requires_persisted_file": true,
+        "preserve_partial_facts": true,
+        "offer_ocr_retry": false,
+        "offer_manual_entry_in_line": false,
+        "status": "planned_not_implemented",
+        "existing_handler_audit": {
+          "date": "2026-09-17",
+          "spec_section": "17.8",
+          "status": "existing_components_verified_target_flow_incomplete",
+          "reuse": [
+            "executeReceiptUpload catch",
+            "savedReceiptReplies",
+            "formatPaypersReply",
+            "pending-media completion",
+            "UploadPanel",
+            "ExpenseReviewPage / ExpenseReviewEditSection",
+            "requestExpenseExtractionWithRecovery"
+          ],
+          "remaining_gaps": [
+            "pending before expense still asks document purpose in LINE; same-work Web handoff required",
+            "failed-state copy and CTA still offer reread",
+            "UploadPanel starts a new request after selected failed results; terminal semantics must align"
+          ],
+          "verification": {
+            "api_existing_tests_passed": 29,
+            "web_existing_logic_policy_source_tests_passed": 54,
+            "browser_e2e": "not_run",
+            "live_line": "not_run",
+            "application_code_changed": false
+          }
+        }
+      }
+    },
+    "line_error_followup": {
+      "acceptance_ids": [
+        "A86",
+        "A87",
+        "A88"
+      ],
+      "spec_section": "17.5",
+      "scope": "permission_checked_pre_capture_attempt_outcomes_and_current_status",
+      "status": "planned_not_implemented",
+      "runtime_verification": "not_run"
+    }
+  }
+}
