@@ -77,6 +77,8 @@ export const AuditAction = {
   EXPENSE_CAPTURE_GROUP_FACTS_EDIT: 'expense.capture_group.facts_edit',
   EXPENSE_CAPTURE_GROUP_REVIEW: 'expense.capture_group.review',
   EXPENSE_CAPTURE_GROUP_ALLOCATION_ACCEPT: 'expense.capture_group.allocation_accept',
+  /** D08 retention sweep: the group's own files, once nothing financial references them. */
+  EXPENSE_CAPTURE_GROUP_RETENTION_PURGE: 'expense.capture_group.retention_purge',
   EXPENSE_CAPTURE_HANDOFF_CREATE: 'expense.capture_handoff.create',
   EXPENSE_CAPTURE_HANDOFF_REGENERATE: 'expense.capture_handoff.regenerate',
   ACCESS_ROLE_CREATE: 'access.role.create',

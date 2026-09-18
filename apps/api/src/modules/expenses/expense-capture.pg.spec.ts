@@ -20,6 +20,8 @@ import type { PrismaService } from '../../common/database/prisma.service';
 import { PrismaExpenseCaptureRepository } from './infrastructure/prisma-expense-capture.repository';
 import { lockFundingEvidence } from './infrastructure/substitute-funding.guard';
 import { resolveReimbursementSourceLines } from '../reimbursements/infrastructure/reimbursement-source';
+import { PrismaAttachmentRepository } from '../data-model-core/infrastructure/repositories/prisma-attachment.repository';
+import { RecoverOrphanLineEventsUseCase } from '../line-ai/application/use-cases/recover-orphan-line-events.use-case';
 
 const databaseUrl = process.env.EXPENSE_CAPTURE_TEST_DATABASE_URL;
 const MONTH = '2026-09';
@@ -332,6 +334,64 @@ describe('expense capture foundation on PostgreSQL', { skip: !databaseUrl }, () 
     const outsider = await expense('resolver-c');
     await link(shared, 'expense.record', outsider, 'expense.receipt.primary');
     await assert.rejects(() => resolve(payerId, sibling), (error: any) => error.getResponse().code === 'reimbursement_source_ambiguous');
+  });
+
+  /**
+   * Capture appendix §8 / D08 (W08). A fake cannot prove this one: whether a file survives the
+   * sweep is decided by a real `AttachmentLink` row and by `markDeleted`'s own real transaction
+   * (funding-evidence lock → live-claim query → advisory lock → substitute retention hold).
+   */
+  it('deletes the orphan evidence of an aged-out group and keeps what an expense still uses (§8 retention)', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const groupId = await group('retention');
+    const orphan = await attachment('retention-orphan');
+    const shared = await attachment('retention-shared');
+    const orphanFile = await capture.createFile(client as never, {
+      companyId, groupId, attachmentId: orphan, position: 1, originalFileName: 'a.pdf',
+      mimeType: 'application/pdf', byteSize: 1_000, addedByUserId: userId, uploadState: 'STORED',
+    });
+    const sharedFile = await capture.createFile(client as never, {
+      companyId, groupId, attachmentId: shared, position: 2, originalFileName: 'b.pdf',
+      mimeType: 'application/pdf', byteSize: 1_000, addedByUserId: userId, uploadState: 'STORED',
+    });
+    // The derived expense this group handed off keeps its own receipt.
+    const derived = await expense('retention-derived', { captureGroupId: groupId, captureScopeKey: 'issuer:retention' });
+    await link(shared, 'expense.record', derived, 'expense.receipt.primary');
+    await capture.createReadJob(client as never, {
+      companyId, ownerType: 'CAPTURE_GROUP', groupId, fileId: orphanFile.id, attachmentId: orphan,
+      attachmentChecksum: 'sha-retention-orphan', ocrAdmissionRequestId: `${tag}-retention`, manifestJson: {},
+    });
+    // Age the group past the window without touching `updatedAt` through an ordinary mutation.
+    await client.$executeRaw`UPDATE "ExpenseCaptureGroup" SET "status" = 'CLOSED_NO_HANDOFF', "updatedAt" = now() - interval '200 days' WHERE "id" = ${groupId}`;
+
+    const audits: Array<Record<string, unknown>> = [];
+    const sweep = new RecoverOrphanLineEventsUseCase(
+      prisma, { aiDataRetentionDays: 90, expenseCaptureRetentionDays: 90, lineAiTerminalOutcomeReplayEnabled: false } as never,
+      { log: async (entry: Record<string, unknown>) => { audits.push(entry); } } as never,
+      { enqueue: async () => {} } as never, { sendPush: async () => 'ok' } as never,
+    );
+    (sweep as unknown as Record<string, unknown>).attachments = new PrismaAttachmentRepository(prisma);
+    (sweep as unknown as Record<string, unknown>).capture = capture;
+
+    const result = await sweep.execute();
+    assert.equal(result.captureFilesPurged, 1);
+
+    assert.equal((await client.attachmentObject.findUniqueOrThrow({ where: { id: orphan } })).status, 'DELETED');
+    assert.equal((await client.attachmentObject.findUniqueOrThrow({ where: { id: shared } })).status, 'ACTIVE',
+      'the file the derived expense uses as its receipt is not the group\'s to delete');
+
+    const orphanRow = await client.expenseCaptureFile.findUniqueOrThrow({ where: { id: orphanFile.id } });
+    assert.equal(orphanRow.uploadState, 'DETACHED');
+    assert.equal(orphanRow.detachedReason, 'retention');
+    assert.equal((await client.expenseCaptureFile.findUniqueOrThrow({ where: { id: sharedFile.id } })).uploadState, 'STORED');
+    assert.equal((await client.expenseCaptureReadJob.findFirstOrThrow({ where: { fileId: orphanFile.id } })).status, 'CANCELLED');
+
+    const purgeAudits = audits.filter((entry) => entry.action === 'expense.capture_group.retention_purge');
+    assert.equal(purgeAudits.length, 1, 'one audit row per group, not per file');
+    assert.deepEqual(purgeAudits[0]!.metadataJson, { fileIds: [orphanFile.id], fileCount: 1, retentionDays: 90 });
+
+    // A second tick finds nothing left to do: DETACHED rows are out of scope.
+    assert.equal((await sweep.execute()).captureFilesPurged, 0);
   });
 
   it('records and reads back a LINE intake attempt without keeping the raw file name', async (t) => {
