@@ -126,8 +126,9 @@ import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WIN
 import { LineAiLedgerService, ledgerKey, LINE_CLARIFICATION_SOURCE_MAX_BYTES, type LedgerEntry, type LedgerSubRequestInput } from '../line-ai-ledger.service';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
+import { isPublicPolicyFollowUp, isPublicPolicyTopic, resolvePublicPolicyAnswer, type PublicPolicyTopic } from '../../domain/logic/line-public-policy.logic';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { buildTrialPricingCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
@@ -1613,6 +1614,7 @@ export class ProcessLineWebhookUseCase {
   private readonly deliveryWaitingSources = new WeakMap<object, { context: RequestContext; items: Array<LineAiOpenClarification & { entry: LedgerEntry }> }>();
   private readonly clarificationRouteSources = new WeakMap<object, { candidates: string; draftRouting?: string }>();
   private readonly deliveryDenialCode = new WeakMap<object, string>();
+  private readonly publicPolicyTopics = new WeakMap<object, PublicPolicyTopic>();
   private readonly replayedOutcomes = new WeakMap<object, unknown>();
   private readonly intermediateDeliveries = new WeakSet<object>();
   @Inject(LineReadEvidenceService) private readonly readEvidence!: LineReadEvidenceService;
@@ -3272,7 +3274,11 @@ export class ProcessLineWebhookUseCase {
         return { messages, accepted: false };
       }
       const producerId = randomUUID(), access = this.deliveryAccess.get(event), sources = this.deliverySources.get(event);
+      const topic = this.publicPolicyTopics.get(event);
       const authorizationJson = { v: 1, producerId,
+        ...(topic ? { publicPolicy: { topic,
+          recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? ''),
+        } } : {}),
         ...(access && sources?.ids?.length && !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event) && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event) ? { read: {
           userId: access.userId, companyId: access.companyId, fingerprint: access.fingerprint,
           requestId: sources.requestId, ids: sources.ids, webhookEventId,
@@ -3356,6 +3362,26 @@ export class ProcessLineWebhookUseCase {
       : { status: 'continue', companyId: resolved.companyId };
   }
 
+  /** Reuse delivery evidence, not model history. An intervening event ends this public topic. */
+  private async lastDeliveredPublicPolicy(event: LineTextEvent): Promise<PublicPolicyTopic | undefined> {
+    if (!this.config.lineAiTerminalOutcomeReplayEnabled) return undefined;
+    const previous = await this.prisma.client.lineWebhookEventLog.findFirst({
+      where: { lineUserIdHash: hashMessagePreview(event.lineUserId), webhookEventId: { not: event.webhookEventId },
+        createdAt: { gte: new Date(Date.now() - LINE_AI_CONTEXT_WINDOW_MINUTES * 60_000) } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: { status: true, turnOutcome: { select: { deliveredAt: true, authorizationJson: true } } },
+    });
+    if (!previous || !['staff_menu_trial_pricing', 'staff_menu_promotion'].includes(previous.status)
+      || !previous.turnOutcome?.deliveredAt) return undefined;
+    const authorization = previous.turnOutcome.authorizationJson;
+    if (!authorization || typeof authorization !== 'object' || Array.isArray(authorization) || authorization.v !== 1) return undefined;
+    const policy = authorization.publicPolicy;
+    if (!policy || typeof policy !== 'object' || Array.isArray(policy)) return undefined;
+    return isPublicPolicyTopic(policy.topic)
+      && policy.recipientHash === lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? '')
+      ? policy.topic : undefined;
+  }
+
   async execute(event: LineTextEvent): Promise<void> {
     const requestId = randomUUID();
 
@@ -3408,15 +3434,18 @@ export class ProcessLineWebhookUseCase {
     // Rich menu v2 ver2 Promotion tile (Owner design 2026-08-27). Public like `contact`: a
     // prospect exploring packages may well be unlinked, and the card carries no tenant data.
     if (publicCommand === 'promotion') {
+      this.publicPolicyTopics.set(event, 'trial');
       await this.deliverRequiredMessages(event, [buildPromotionCard(this.config.webBaseUrl)]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_promotion');
       return;
     }
     // Public trial policy contains no account data and needs no AI. Ordinary support text still
     // belongs to the human handling the case; do not resume the assistant or swallow that reply.
-    const trialPricingReply = buildTrialPricingCardMessage(event.messageText);
-    if (trialPricingReply && !await this.assistantPaused(event.lineUserId)) {
-      await this.deliverRequiredMessages(event, [trialPricingReply]);
+    const previousPolicy = isPublicPolicyFollowUp(event.messageText) ? await this.lastDeliveredPublicPolicy(event) : undefined;
+    const policyAnswer = resolvePublicPolicyAnswer(event.messageText, previousPolicy);
+    if (policyAnswer && !await this.assistantPaused(event.lineUserId)) {
+      this.publicPolicyTopics.set(event, policyAnswer.topic);
+      await this.deliverRequiredMessages(event, [buildPublicPolicyCardMessage(policyAnswer)]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_trial_pricing');
       return;
     }
