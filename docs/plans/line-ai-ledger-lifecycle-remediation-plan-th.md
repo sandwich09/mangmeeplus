@@ -147,7 +147,7 @@ git diff --check
 ## 4. Migration, UAT และ Production
 
 - [ ] Schema expand ก่อน writers/readers ใหม่; metadata rows เก่า nullable/unknown และไม่มี usage cost rewrite
-- [ ] ทุก seam พร้อมก่อนอนุญาต SPLIT; บริษัท nonempty month ใช้ next-month activation และไม่มี auto allocation จากงบ 80 บาทในภาพ
+- [ ] ทุก seam พร้อมก่อนอนุญาต SPLIT; บริษัท nonempty month ใช้ next-month activation และไม่มี auto allocation จากงบ 80 บาทในภาพ — **decision เจ้าของ 2026-09-18:** flag `AI_BUDGET_SPLIT_ACTIVATION_ENABLED` เปิด (`true`) เป็น default ของ deploy ทั้ง UAT และ Production แล้ว (ADR 0013 §9) และรับ readiness ที่ยังค้าง (bound ที่ประกาศไว้ยังไม่ได้วัดกับ prompt จริง, ยังไม่มี SPLIT journey กับ provider จริงบน UAT, ยังไม่มี operator surface สำหรับ `UNRESOLVED`/`breach`, PDF แบบ compressed object stream ถูกปฏิเสธใต้ envelope, rollback ต้อง pin gateway กับ API คู่กัน) เป็นความเสี่ยงของเจ้าของ **ยังไม่ติ๊กข้อนี้**: flag เพียงทำให้ System Admin *บันทึก* นโยบาย SPLIT ได้ การเปิด SPLIT ต่อบริษัทยังเป็น admin action ที่ต้องทำเอง และ readiness ข้างต้นยังอยู่ใน checklist
 - [ ] ก่อน cloud read/deploy/retry/recovery อ่าน cloud operations runbook และ mandatory UAT/Production protocol ฉบับปัจจุบัน
 - [ ] UAT synthetic/admin-approved company: Redis lifecycle, LINE budget replies, pending image, web manual/upload, split UI/CAS และ concurrent cap/settlement รวมกัน
 - [ ] จัด test funds/caps เฉพาะ environment ที่อนุญาต; ไม่แก้งบบริษัทจริงเพื่อให้ test ผ่าน
@@ -156,7 +156,7 @@ git diff --check
 
 ## 5. Handoff และจุดเสร็จ
 
-**สถานะ 2026-09-18:** งาน implementation ช่วง A, B, C, D1, D2, E1a, E1b, E1c และ F (combined regression) merge เข้า `develop` และ `main` ครบแล้ว (PR #600–#609, #612–#619) โดยให้ Opus 5 เป็นผู้ implement และ Fable 5.1 เป็นผู้คุม/ตรวจทุกช่วง **ยังไม่ได้ deploy ที่ใด** และ SPLIT ยังปิดอยู่หลัง flag `AI_BUDGET_SPLIT_ACTIVATION_ENABLED` ที่ไม่ได้ต่อเข้ากับ deploy script ใด ข้อ §4 (Migration/UAT/Production) และ acceptance ที่ต้องใช้ UAT/LINE จริงยังเปิดอยู่ รายละเอียด หลักฐาน การตัดสินใจที่รอ owner และลำดับถัดไปอยู่ใน [Delivery summary and handoff](../agent-memory/line-intake-cost-and-budget-receipt-behavior-2026-09-17.md#delivery-summary-and-handoff--2026-09-18)
+**สถานะ 2026-09-18:** งาน implementation ช่วง A, B, C, D1, D2, E1a, E1b, E1c และ F (combined regression) merge เข้า `develop` และ `main` ครบแล้ว (PR #600–#609, #612–#619) โดยให้ Opus 5 เป็นผู้ implement และ Fable 5.1 เป็นผู้คุม/ตรวจทุกช่วง **ยังไม่ได้ deploy ที่ใด** และทุกบริษัทยังเป็น `SHARED` — flag `AI_BUDGET_SPLIT_ACTIVATION_ENABLED` ต่อเข้า deploy path และเปิด (`true`) ทั้งสอง environment ตาม decision เจ้าของ 2026-09-18 แล้ว (§4) แต่ flag เพียงทำให้ *บันทึก* นโยบาย SPLIT ได้ ข้อ §4 (Migration/UAT/Production) และ acceptance ที่ต้องใช้ UAT/LINE จริงยังเปิดอยู่ รายละเอียด หลักฐาน การตัดสินใจที่รอ owner และลำดับถัดไปอยู่ใน [Delivery summary and handoff](../agent-memory/line-intake-cost-and-budget-receipt-behavior-2026-09-17.md#delivery-summary-and-handoff--2026-09-18)
 
 เอกสารเสร็จเมื่อ A–E มี product behavior, architecture/contracts, data/permission/concurrency boundaries, verification และ rollout ชัด อ้างอิงกันได้ และบันทึก owner decision แล้ว Implementation จะเสร็จได้เมื่อ AC-01–16, B/C/D/E, X และ R-01–12 ใน spec มีหลักฐานครบ; partial release A–D ไม่ใช่การปิดงานทั้งหมด
 
