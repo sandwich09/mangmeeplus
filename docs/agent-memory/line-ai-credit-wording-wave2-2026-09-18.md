@@ -212,3 +212,7 @@ Defects caught before merge: api typecheck error in H2 (`SourceRef` literal type
 State: NOTHING IS DEPLOYED. The next deploy carries migrations `20260917140000`, `20260917150000`, `20260917160000` (wave 1) and `20260918100000_ai_credit_hold_reconciliation` (H3), all additive. After a runbook-governed UAT deploy: W-09 (credit wording seen on real LINE) and J-08 (clear a synthetic stranded hold through the real page) close the two open lines.
 
 Owner-facing items still open: the credit CONCEPT (units, top-up, verification, per-package defaults — the trial numbers chat 80 / documents 60 / total 140 THB are per-company admin settings until then); a read-only platform role (today every real login is `SYSTEM_ADMIN`, so `canManage:false` surfaces are unreachable); `tax.get_vat_summary` exposes no period input (last month cannot be asked on either path); the composer vocabulary guard is what blocks most advice wording (widening it is a product decision).
+
+## H4 — period resolution (owner decision 2026-09-18, after the wave-2 handoff)
+
+Spec: [line-ai-period-resolution-spec-th.md](../specs/line-ai-period-resolution-spec-th.md). Status: spec written, implementation starting on branch `codex/line-ai-wave2-h4-period-resolution-20260918`. Decisions: periods are resolved by CODE (`packages/contracts` value normalizer) and the model only selects from them (ADR 0011); default = current month (daily closing = today); week = Monday–Sunday Bangkok; calendar year, not fiscal; "วันก่อน" read as yesterday with an assumption marker; future periods produce no candidate.
