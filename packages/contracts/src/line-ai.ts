@@ -375,6 +375,14 @@ export const BUSINESS_DOCUMENT_EVIDENCE_ROLES = [
 ] as const;
 export type BusinessDocumentEvidenceRole = (typeof BUSINESS_DOCUMENT_EVIDENCE_ROLES)[number];
 
+/**
+ * Capture appendix §3: the outbox event a finished capture read emits, and the LINE push consumes.
+ * It lives in contracts because the producer (W03), the consumer (W02-LINE) and the generic
+ * workflow drain that must NOT claim it are three different modules — a string copied into each is
+ * how one of them ends up claiming a message nobody receives.
+ */
+export const EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE = 'expense.capture_read.finished';
+
 export const BUSINESS_DOCUMENT_REASON_CODES = [
   'NO_DOCUMENT_STRUCTURE', 'UNREADABLE_OR_CROPPED', 'MULTIPLE_DOCUMENTS',
   'LOW_CLASSIFICATION_CONFIDENCE', 'CONTRADICTORY_SIGNALS', 'QUANTITY_ONLY',
@@ -384,6 +392,10 @@ export const BUSINESS_DOCUMENT_REASON_CODES = [
   'MISSING_SCHEDULED_TIME', 'MISSING_PARTY_OR_PROVIDER', 'MISSING_BOOKING_REFERENCE',
   'AMBIGUOUS_BUSINESS_DIRECTION', 'CHANNEL_SCOPE_MISMATCH', 'TARGET_PERMISSION_MISSING',
   'TARGET_MODULE_DISABLED', 'OCR_UNAVAILABLE', 'HUMAN_REVIEW_REQUIRED',
+  // Capture appendix §10.2: the two courier shapes that both read as DELIVERY_NOTE but owe the
+  // customer DIFFERENT sentences (spec §18.4 NR01 vs NR02). Signals, not a new documentKind — a
+  // per-courier enum is exactly what §18.4 "ของเดิมและช่องว่าง" forbids.
+  'PARCEL_LABEL_SIGNAL', 'DEPOSIT_SLIP_SIGNAL',
 ] as const;
 export type BusinessDocumentReasonCode = (typeof BUSINESS_DOCUMENT_REASON_CODES)[number];
 

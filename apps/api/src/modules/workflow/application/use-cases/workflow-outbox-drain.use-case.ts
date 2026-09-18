@@ -13,6 +13,7 @@ import {
 import { SIGNUP_PENDING_REVIEW_EVENT_TYPE } from '../../../external-signup/application/signup-admin-notify.service';
 import { LINE_SIGNUP_PUSH_EVENT_TYPE, LINE_SUPPORT_NOTICE_EVENT_TYPE } from '../../../external-signup/application/line-signup-notify.service';
 import { SIGNUP_OPS_ALERT_EVENT_TYPE } from '../../../external-signup/application/signup-ops-alert.service';
+import { EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE } from '@watchdog-bms/contracts';
 
 import { POSTMARK_EVENT_TYPE } from '../../../auth/application/email-delivery.service';
 
@@ -100,6 +101,9 @@ export class DrainWorkflowOutboxUseCase {
         LINE_SIGNUP_PUSH_EVENT_TYPE,
         LINE_SUPPORT_NOTICE_EVENT_TYPE,
         SIGNUP_OPS_ALERT_EVENT_TYPE,
+        // Capture appendix §3: the LINE capture-result push owns this type. Claimed here it would be
+        // marked published without anyone being told their document had been read.
+        EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE,
       ],
     });
     const sweep = this.shadow.startSweep('outbox.drain');

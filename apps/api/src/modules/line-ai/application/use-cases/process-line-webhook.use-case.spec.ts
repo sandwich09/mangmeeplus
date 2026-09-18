@@ -716,8 +716,8 @@ describe('AP22 live actor delivery fence', () => {
       if (lane === 'text') {
         await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `fence-${lane}-${change}` });
       } else {
-        (h.useCase as any).downloadLineMedia = async () => ({ fileName: 'test.jpg', mimeType: 'image/jpeg',
-          byteSize: JPEG_BYTES.byteLength, checksumSha256: 'synthetic-fence-image', bytes: JPEG_BYTES, contentBase64: JPEG_BYTES.toString('base64') });
+        (h.useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({ fileName: 'test.jpg', mimeType: 'image/jpeg',
+          byteSize: JPEG_BYTES.byteLength, checksumSha256: 'synthetic-fence-image', bytes: JPEG_BYTES, contentBase64: JPEG_BYTES.toString('base64') }) });
         await h.useCase.executeReceiptUpload({ ...BASE_EVENT, webhookEventId: `fence-${lane}-${change}`, lineMessageId: `image-${change}`, messageType: 'image' });
       }
       assert.equal(h.intakeRequests.length, 1);
@@ -2105,9 +2105,9 @@ describe('ProcessLineWebhookUseCase', () => {
       if (lane === 'text') {
         await useCase.execute({ ...BASE_EVENT, webhookEventId: eventId, messageText: 'อันนั้นล่ะ' });
       } else {
-        (useCase as any).downloadLineMedia = async () => ({ fileName: 'receipt.jpg', mimeType: 'image/jpeg',
+        (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({ fileName: 'receipt.jpg', mimeType: 'image/jpeg',
           byteSize: JPEG_BYTES.byteLength, checksumSha256: 'AX01-image', bytes: JPEG_BYTES,
-          contentBase64: JPEG_BYTES.toString('base64') });
+          contentBase64: JPEG_BYTES.toString('base64') }) });
         await useCase.executeReceiptUpload({ webhookEventId: eventId, lineUserId: BASE_EVENT.lineUserId,
           replyToken: BASE_EVENT.replyToken, messagingChannelId: BASE_EVENT.messagingChannelId,
           lineMessageId: eventId, messageType: 'image' }, 'อันนั้นล่ะ');
@@ -2969,14 +2969,14 @@ describe('ProcessLineWebhookUseCase', () => {
       initReceiptUpload: { execute: async () => { uploadIntents += 1; } },
       completeReceiptUpload: { execute: async () => undefined },
     });
-    (useCase as any).downloadLineMedia = async () => ({
+    (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'receipt.jpg',
       mimeType: 'image/jpeg',
       byteSize: 12,
       checksumSha256: 'hash',
       contentBase64: Buffer.from('not-a-jpeg').toString('base64'),
       bytes: Buffer.from('not-a-jpeg'),
-    });
+    }) });
 
     await useCase.executeReceiptUpload({
       webhookEventId: 'evt-img-invalid',
@@ -3007,14 +3007,14 @@ describe('ProcessLineWebhookUseCase', () => {
       initReceiptUpload: { execute: async () => { uploadIntents += 1; } },
       completeReceiptUpload: { execute: async () => undefined },
     });
-    (useCase as any).downloadLineMedia = async () => ({
+    (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'receipt.jpg',
       mimeType: 'image/jpeg',
       byteSize: JPEG_BYTES.byteLength,
       checksumSha256: 'hash',
       contentBase64: JPEG_BYTES.toString('base64'),
       bytes: JPEG_BYTES,
-    });
+    }) });
 
     await useCase.executeReceiptUpload({
       webhookEventId: 'evt-img-malware',
@@ -3068,10 +3068,10 @@ describe('ProcessLineWebhookUseCase', () => {
       completeAttachmentUpload: { execute: async () => undefined },
       substituteReceiptContinuation: {},
     });
-    (useCase as any).downloadLineMedia = async () => ({
+    (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'check-bill.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
       checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
-    });
+    }) });
     (useCase as any).uploadLineMedia = async () => undefined;
 
     await useCase.executeReceiptUpload({
@@ -3109,10 +3109,10 @@ describe('ProcessLineWebhookUseCase', () => {
       initSignatureUpload: { execute: async () => ({ attachmentId: 'att-sig', uploadUrl: 'https://upload', uploadMethod: 'PUT', uploadHeaders: {} }) },
       createSignatureAsset: { execute: async (_ctx: any, cmd: any) => { created.push(cmd); return { id: 'sig-9', status: 'ACTIVE' }; } },
     });
-    (useCase as any).downloadLineMedia = async () => ({
+    (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'signature.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
       checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
-    });
+    }) });
     (useCase as any).uploadLineMedia = async () => undefined;
 
     await useCase.executeReceiptUpload({
@@ -3153,10 +3153,10 @@ describe('ProcessLineWebhookUseCase', () => {
           return { id: 'sig-denied', status: 'ACTIVE' };
         } },
       });
-      (useCase as any).downloadLineMedia = async () => ({
+      (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
         fileName: 'signature.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
         contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
-      });
+      }) });
       (useCase as any).uploadLineMedia = async () => undefined;
       await useCase.executeReceiptUpload({
         webhookEventId: `sig-storage-${routed}`, lineUserId: 'line-user-secret', replyToken: 'sig-reply',
@@ -3181,10 +3181,10 @@ describe('ProcessLineWebhookUseCase', () => {
         createSignatureAsset: { execute: async () => ({ id: 'sig-9', status: 'ACTIVE' }) },
         substituteReceiptContinuation: { hasPendingIssueDecision: async () => pendingIssueDecision },
       });
-      (useCase as any).downloadLineMedia = async () => ({
+      (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
         fileName: 'signature.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
         checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
-      });
+      }) });
       (useCase as any).uploadLineMedia = async () => undefined;
       await useCase.executeReceiptUpload({
         webhookEventId: `evt-sig-${pendingIssueDecision}`, lineUserId: 'line-user-secret',
@@ -3214,10 +3214,10 @@ describe('ProcessLineWebhookUseCase', () => {
       initSignatureUpload: { execute: async () => ({ attachmentId: 'att-sig', uploadUrl: 'https://upload', uploadMethod: 'PUT', uploadHeaders: {} }) },
       createSignatureAsset: { execute: async (_ctx: any, cmd: any) => { signatureCreated.push(cmd); return { id: 'sig-9', status: 'ACTIVE' }; } },
     });
-    (useCase as any).downloadLineMedia = async () => ({
+    (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
       checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
-    });
+    }) });
     (useCase as any).uploadLineMedia = async () => undefined;
 
     await useCase.executeReceiptUpload({
@@ -3253,10 +3253,10 @@ describe('ProcessLineWebhookUseCase', () => {
         completeReceiptUpload: { execute: async () => ({ id: 'exp-1', duplicateStatus: 'NONE' }) },
         ...over,
       });
-      (made.useCase as any).downloadLineMedia = async () => ({
+      (made.useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
         fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
         checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
-      });
+      }) });
       (made.useCase as any).uploadLineMedia = async () => undefined;
       return made;
     };
@@ -3522,10 +3522,10 @@ describe('ProcessLineWebhookUseCase', () => {
       createUploadIntent: { execute: async () => ({ attachmentId: 'att-parked' }) },
       completeAttachmentUpload: { execute: async () => undefined },
     });
-    (useCase as any).downloadLineMedia = async () => ({
+    (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'photo.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
       checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
-    });
+    }) });
     (useCase as any).uploadLineMedia = async () => undefined;
 
     await useCase.executeReceiptUpload({
@@ -3580,14 +3580,14 @@ describe('ProcessLineWebhookUseCase', () => {
       { execute: async () => undefined } as any,
     );
   (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
-    (useCase as any).downloadLineMedia = async () => ({
+    (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'receipt.jpg',
       mimeType: 'image/jpeg',
       byteSize: JPEG_BYTES.byteLength,
       checksumSha256: 'hash',
       contentBase64: JPEG_BYTES.toString('base64'),
       bytes: JPEG_BYTES,
-    });
+    }) });
 
     await useCase.executeReceiptUpload({
       webhookEventId: 'evt-img-1',
@@ -3643,14 +3643,14 @@ describe('ProcessLineWebhookUseCase', () => {
       { execute: async () => undefined } as any,
     );
   (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
-    (useCase as any).downloadLineMedia = async () => ({
+    (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'receipt.jpg',
       mimeType: 'image/jpeg',
       byteSize: JPEG_BYTES.byteLength,
       checksumSha256: 'hash',
       contentBase64: JPEG_BYTES.toString('base64'),
       bytes: JPEG_BYTES,
-    });
+    }) });
     // The clarify branch parks the media for a follow-up; that storage path is covered elsewhere.
     (useCase as any).ensurePendingMedia = async () => ({ created: true, pending: null });
 
@@ -3709,10 +3709,10 @@ describe('ProcessLineWebhookUseCase', () => {
       { execute: async () => undefined } as any,
     );
   (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
-    (useCase as any).downloadLineMedia = async () => ({
+    (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
       checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
-    });
+    }) });
     (useCase as any).ensurePendingMedia = async () => ({ created: true, pending: null });
 
     await useCase.executeReceiptUpload({
@@ -3777,14 +3777,14 @@ describe('ProcessLineWebhookUseCase', () => {
     );
     (useCase as any).expenseRepo = { findByIdWithRelations: async () => structuredClone(saved), listCategories: async () => [], findByLineMessageId: async () => null };
   (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
-    (useCase as any).downloadLineMedia = async () => ({
+    (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'receipt.jpg',
       mimeType: 'image/jpeg',
       byteSize: JPEG_BYTES.byteLength,
       checksumSha256: 'hash',
       contentBase64: JPEG_BYTES.toString('base64'),
       bytes: JPEG_BYTES,
-    });
+    }) });
     (useCase as any).uploadLineMedia = async () => undefined;
 
     await useCase.executeReceiptUpload({
@@ -3917,14 +3917,14 @@ describe('ProcessLineWebhookUseCase', () => {
       } as any,
     );
   (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
-    (useCase as any).downloadLineMedia = async () => ({
+    (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'receipt.jpg',
       mimeType: 'image/jpeg',
       byteSize: JPEG_BYTES.byteLength,
       checksumSha256: 'hash',
       contentBase64: JPEG_BYTES.toString('base64'),
       bytes: JPEG_BYTES,
-    });
+    }) });
     (useCase as any).uploadLineMedia = async () => undefined;
 
     await useCase.executeReceiptUpload({
@@ -4246,10 +4246,10 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
       createUploadIntent: { execute: async () => ({ attachmentId: 'att-budget', uploadUrl: 'https://upload', uploadMethod: 'PUT' }) },
       completeAttachmentUpload: { execute: async () => undefined },
     });
-    (h.useCase as any).downloadLineMedia = async () => ({
+    (h.useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
       checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
-    });
+    }) });
     (h.useCase as any).uploadLineMedia = async () => undefined;
     return { ...h, pendingRows, getOcrCalls: () => ocrCalls, getExpenseDrafts: () => expenseDrafts };
   }
@@ -4409,10 +4409,10 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
       createUploadIntent: { execute: async () => ({ attachmentId: 'att-late', uploadUrl: 'https://upload', uploadMethod: 'PUT' }) },
       completeAttachmentUpload: { execute: async () => undefined },
     });
-    (h.useCase as any).downloadLineMedia = async () => ({
+    (h.useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
       checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
-    });
+    }) });
     (h.useCase as any).uploadLineMedia = async () => undefined;
 
     await h.useCase.executeReceiptUpload({
@@ -6339,8 +6339,8 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     (run.useCase as any).logger = { log: (entry: unknown) => logs.push(entry), warn: (entry: unknown) => logs.push(entry), error: (entry: unknown) => logs.push(entry) };
     (run.useCase as any).downloadLineMedia = async () => {
       downloads += 1;
-      return { fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
-        checksumSha256: 'same-bytes', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES };
+      return { ok: true, media: { fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+        checksumSha256: 'same-bytes', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES } };
     };
     (run.useCase as any).uploadLineMedia = async () => { uploads += 1; };
     const event = (id = 'receipt-event', messageId = 'receipt-message') => ({
@@ -6404,8 +6404,8 @@ describe('receipt reliability: saved facts, notification and provider-input cont
         const result = await apply(...args); h.expense().expenseCategoryId = category.id;
         return { ...result, categoryId: category.id, categoryName: category.name };
       };
-      if (mediaType === 'file') useCase.downloadLineMedia = async () => ({ fileName: 'receipt.pdf', mimeType: 'application/pdf',
-        byteSize: 8, checksumSha256: 'pdf-bytes', bytes: Buffer.from('%PDF-1.4'), contentBase64: Buffer.from('%PDF-1.4').toString('base64') });
+      if (mediaType === 'file') useCase.downloadLineMedia = async () => ({ ok: true, media: ({ fileName: 'receipt.pdf', mimeType: 'application/pdf',
+        byteSize: 8, checksumSha256: 'pdf-bytes', bytes: Buffer.from('%PDF-1.4'), contentBase64: Buffer.from('%PDF-1.4').toString('base64') }) });
       useCase.handoffLinks = { wrapOutgoingLineContent: async (_recipient: unknown, messages: unknown) => {
         if (/120\.00/.test(JSON.stringify(messages))) {
           if (fault === 'revision') h.expense().updatedAt = new Date(h.expense().updatedAt.getTime() + 1);

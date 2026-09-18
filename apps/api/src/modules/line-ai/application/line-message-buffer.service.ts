@@ -832,7 +832,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       const result = await this.withWaitFeedback(
         state,
         lineWaitStages({
-          kind: 'media', messageText: caption, seed: media.webhookEventId,
+          kind: 'media', mediaType: media.messageType, messageText: caption, seed: media.webhookEventId,
           loadingEnabled: this.config.lineAiLoadingAnimationEnabled,
           latestAcceptedAt: media.acceptedAt, now: Date.now(),
         }),

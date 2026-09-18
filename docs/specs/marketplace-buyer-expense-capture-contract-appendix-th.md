@@ -382,3 +382,74 @@ W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAl
 6. **`sourceStale` ถูกล้างตอนคนกดบันทึกการตรวจ** ใน `UpdateExpenseDraftUseCase` (พร้อม `missingFields` เดิม) — W03 ยังต้องล้างตอน apply ผลอ่านใหม่; ตอนตั้ง flag จะถอด `extractionAttachmentId` ออกจาก summary ด้วย เพื่อไม่ให้ fence ของ `updateExpense` (ผล OCR ที่กลับช้า) ชี้ไปยังไฟล์ที่ถูกแทนแล้ว
 7. **หน้า `/expenses/capture/{groupId}` ส่งเฉพาะโครง** ตามลำดับงาน: header/สถานะ, รายการไฟล์ + สถานะอ่านต่อไฟล์ + polling 3 วินาที, แนบเพิ่ม/ตัดออก/เก็บไว้ก่อน/ไม่มีส่วนของบริษัท, preview เดิม และ slot ว่าง `CaptureFactsSection`/`CaptureAllocationSection` ให้ W04; ปุ่มทุกปุ่มมาจาก `allowedActions` ของ server
 8. **ยังไม่ได้ทำใน W02-web**: LINE lane ทั้งหมด (W02-LINE), การอ่านจริง/manifest ที่มีหน้า (W03), สรุปร้าน/สินค้า/ยอด/ผู้จ่ายบนหน้ากลุ่ม (W04) — ข้อความ "ทั้งสามทางรับ PDF 10 MiB แล้ว save→queue/read" ยังติ๊กไม่ได้จนกว่า W03 จะมี runner จริง
+## 17. Implementation notes (W02-LINE, 2026-09-19)
+
+### 17.1 ข้อความที่ส่งจริง (UXE แถว LINE + NR01–NR09 + wait texts)
+
+| กรณี | ข้อความที่ shipped | ที่มาในโค้ด |
+|---|---|---|
+| ได้รับไฟล์ (wait ladder) | `ได้รับไฟล์แล้วค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ` | `LINE_FILE_RECEIVED_TEXT` (ไม่มี slow-stage เพราะผลมาทาง push) |
+| ได้รับรูป (wait ladder) | เดิมทุกตัวอักษร | `LINE_MEDIA_RECEIVED_TEXT` + slow stage |
+| เก็บไฟล์แล้ว (file lane) | `📄 เก็บไฟล์แล้วค่ะ กำลังอ่านเอกสาร เสร็จแล้วน้องจะสรุปให้ทางแชตนี้ ระหว่างนี้เปิดดูได้ที่: <group link>` | `fileStoredReply` |
+| A45 ถามงานเดิม/ใบใหม่ | `📎 เก็บไฟล์แล้วค่ะ ไฟล์นี้เป็นเอกสารของงานเดิม (<ชื่อไฟล์แรก · เวลา>) หรือใบใหม่คะ` + `1) งานเดิม` `2) ใบใหม่` | `sameWorkQuestionText` + quick reply |
+| A45 ตอบ 1 | `📄 รวมไฟล์เข้างานเดิมให้แล้วค่ะ เปิดดูได้ที่: <link งานเดิม>` | `resolveSameWorkAnswer` |
+| A45 ตอบ 2 | `📄 รับทราบค่ะ เก็บเป็นงานใหม่ให้แล้ว เปิดดูได้ที่: <link งานใหม่>` | `resolveSameWorkAnswer` |
+| A45 merge ล้มเหลว | `ตอนนี้ยังรวมไฟล์เข้างานเดิมให้ไม่ได้ค่ะ ไฟล์ทั้งสองยังเก็บไว้ครบ เปิดตรวจในเว็บได้ที่: <link>` | `resolveSameWorkAnswer` (ไม่มีไบต์หาย) |
+| UXE-03 download (ไฟล์) | `📄 น้องยังรับไฟล์จาก LINE ไม่สำเร็จค่ะ ยังไม่ได้บันทึกรายการใด ๆ จากไฟล์นี้นะคะ รบกวนส่งไฟล์เดิมอีกครั้งค่ะ` | `mediaDownloadFailedReply('file')` |
+| UXE-03 download (รูป) | เดิมทุกตัวอักษร | `mediaDownloadFailedReply('image')` |
+| UXE-04/08/09 security | เดิมทุกตัวอักษร | `MEDIA_SECURITY_REJECTED_REPLY` |
+| UXE-10 / NR09 failed | `อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว กดกรอกข้อมูลต่อได้ที่นี่\n<link>` | `CAPTURE_READ_FAILED_REPLY` |
+| UXE-13 / NR09 partial | `อ่านข้อมูลได้บางส่วนค่ะ เก็บไฟล์ไว้แล้ว กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่\n<link>` | `CAPTURE_READ_PARTIAL_REPLY` |
+| UXE-14 paused | `เก็บไฟล์ไว้แล้วค่ะ แต่ยังอ่านข้อมูลไม่ครบ (<เหตุผลไทย>) กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่\n<link>` | `CAPTURE_READ_PAUSED_REPLY`; `ai_credit` = "เครดิตสำหรับการอ่านเอกสารไม่พอ" (คำศัพท์ wave 2) |
+| DONE เอกสารเดียว | `📄 อ่านเอกสารแล้วค่ะ พบ <ผู้ออก> ยอด <ยอด> — ตรวจและสร้างรายการค่าใช้จ่ายในเว็บ: <link>` | `formatCaptureReadFinishedReply` (มี `TODO(W05)` สำหรับ auto-handoff) |
+| DONE หลายฉบับ | `📄 อ่านเอกสารแล้วค่ะ พบ <n> ฉบับ กรุณาตรวจการจัดกลุ่มในเว็บ: <link>` | เดียวกัน |
+| NR01 ใบปะหน้า | `ใบนี้เป็นใบปะหน้าพัสดุค่ะ ยังไม่พบหลักฐานการจ่ายค่าส่ง จึงยังไม่ได้สร้างรายการค่าใช้จ่าย หากมีใบเสร็จค่าส่ง ส่งเพิ่มได้เลยค่ะ` (+ `กรอกข้อมูลต่อได้ที่นี่: <link>` เมื่อ persist สำเร็จ) | `nonReceiptReply('NR01')` |
+| NR02 ใบนำฝาก | `ใบนี้ยืนยันการรับฝากพัสดุค่ะ แต่ยังไม่พบข้อมูลการจ่ายค่าส่ง หากมีใบเสร็จค่าส่ง ส่งเพิ่มได้เลยค่ะ` (+ CTA) | `nonReceiptReply('NR02')` |
+| NR03 quote/PO/ใบส่งของ | `ใบนี้เป็น<ใบเสนอราคา\|ใบสั่งซื้อ\|ใบส่งของ>ค่ะ ยังมีข้อมูลไม่พอสำหรับบันทึกค่าใช้จ่าย ส่งใบแจ้งหนี้หรือใบเสร็จของรายการนี้เพิ่มได้เลยค่ะ` (+ CTA) | `nonReceiptReply('NR03')` |
+| NR04 ใบแจ้งหนี้ | `ใบนี้เป็นใบแจ้งหนี้ ยอด <ยอด> บาทค่ะ ยังไม่พบหลักฐานการชำระ กรุณาตรวจข้อมูลก่อนบันทึก` (ไม่มียอด = ตัดวลียอดออก) | `expensePathNonReceiptLead` นำหน้าสรุป expense เดิม |
+| NR05 สลิป / คำสั่งซื้อ | `พบสลิปโอนเงินค่ะ กรุณาตรวจว่าจ่ายค่าอะไรและให้ใคร` / `พบหลักฐานคำสั่งซื้อค่ะ กรุณาตรวจรายการและสถานะชำระเงิน` | เดียวกัน |
+| NR06 เช็กบิล | เดิมทุกตัวอักษร (`formatCheckBillDecisionReply` + 3 ตัวเลือก) | ไม่เปลี่ยน |
+| NR07 ภาพไม่เกี่ยวข้อง | `ภาพนี้ไม่ใช่เอกสารค่าใช้จ่ายค่ะ จึงไม่ได้สร้างรายการ ส่งเอกสารค่าใช้จ่ายที่ต้องการบันทึกได้เลยค่ะ` — ไม่มีลิงก์ ไม่ persist; ถ้ามาจากผล read กลุ่มถูกปิด `CANCELLED/NON_BUSINESS_IMAGE` | `nonReceiptReply('NR07')` |
+| NR08 ไม่แน่ใจชนิด | `ยังไม่แน่ใจว่าเป็นเอกสารประเภทใดค่ะ` (+ CTA) | `nonReceiptReply('NR08')` |
+
+### 17.2 §17.5 decision table (deterministic ก่อน AI)
+
+| ผู้ใช้ถาม | สิ่งที่ระบบอ่าน | คำตอบ |
+|---|---|---|
+| regex ใด ๆ ใน `FILE_ATTEMPT_PATTERNS` (ไฟล์/รูปเมื่อกี้, ส่งไม่ได้, ใหญ่ไป/ขนาด, รองรับ PDF, ต้องส่งใหม่, บันทึกยัง + English) | `LineIntakeAttempt` ของ (company, lineUserIdHash, chatKeyHash) ใน 24 ชม. ≤ 5 รายการ (ตัดแถว `ROUTE` ออก) | ตามแถวด้านล่าง |
+| ไม่พบแถวเลย | — | `ตอนนี้ยังไม่พบไฟล์ที่จะอ่านค่ะ กด + → ไฟล์ …` |
+| lookup โยน error | — | `ตอนนี้ยังตรวจสอบสถานะไม่ได้ จึงยังยืนยันไม่ได้ว่าไฟล์ถูกเก็บหรือยัง` |
+| 1 แถว: oversize | `capabilityJson.maxBytes` + declared/measured | `ไฟล์ <ชื่อ> ขนาด <x> MB เกินขนาดที่ระบบรับได้ <limit> MB จึงยังไม่ได้เก็บไฟล์นี้ — เลือกไฟล์ที่เล็กกว่าแล้วส่งอีกครั้งได้เลยค่ะ` |
+| 1 แถว: ชนิดไม่รองรับ | `capabilityJson.allowedMimeTypes` | `ไฟล์ชนิดนี้ยังไม่รองรับค่ะ … กรุณาเลือก PDF, PNG, JPG …` |
+| 1 แถว: security | — | `…ไม่ผ่านการตรวจความปลอดภัยค่ะ …` |
+| 1 แถว: download ไม่ทราบสาเหตุ | — | `ตอนนั้นระบบรับไฟล์จาก LINE ไม่สำเร็จ แต่ยังระบุสาเหตุแน่ชัดไม่ได้ค่ะ …` |
+| 1 แถว: เก็บแล้ว | สถานะ job ปัจจุบันของกลุ่ม (permission-checked) | reading / read-failed / partial / done — พร้อมลิงก์กลุ่ม |
+| หลายแถว | — | `หมายถึงไฟล์ไหนคะ` + รายการเลข (ชื่อ · เวลา · สถานะ) และเขียนแถว `ROUTE/file_attempt_select` ผูกคำตอบถัดไป |
+| ปัญหาถูกแก้แล้ว | แถวเก่า REJECTED + แถวใหม่ของ `lineMessageId` เดียวกัน | `ตอนแรก <เหตุ> ตอนนี้ <สถานะล่าสุด> แล้วค่ะ` |
+| ส่งผลไม่สำเร็จ (UXE-25) | `reasonCode = LINE_DELIVERY_FAILED` บน attempt | `อ่านเอกสารเสร็จแล้วค่ะ แต่ส่งผลให้ทางแชตนี้ไม่สำเร็จ …` |
+
+ทุกแถวเป็น read-only: ไม่เรียก OCR, ไม่สร้าง/แก้ expense, ไม่หัก quota และตอบได้แม้ AI ไม่พร้อม
+
+### 17.3 `LineIntakeAttempt` ที่เขียนจริง
+
+| จุด | stage | reasonCode | outcome | target |
+|---|---|---|---|---|
+| download ล้มเหลว | `DOWNLOAD` | `credentials_unavailable` \| `oversize_declared` \| `oversize_measured` \| `download_http` \| `download_timeout` \| `download_failed` | `REJECTED` | — |
+| security ปฏิเสธ | `SECURITY` | `METADATA_REJECTED` \| `EXTENSION_MIME_MISMATCH` \| `CONTENT_REJECTED` \| `MALWARE_DETECTED` \| `MALWARE_SCAN_FAILED` | `REJECTED` | — |
+| persist ล้มเหลว | `PERSIST` | `persist_failed` | `REJECTED` | — |
+| file lane เก็บสำเร็จ | `PERSIST` | `stored` | `STORED_READING` | `capture_group` |
+| image lane §17.6 (อ่านแล้วล้ม) | `READ` | `<OCR error code>` | `STORED_READ_FAILED` | `capture_group` |
+| A45 ถามงานเดิม | `ROUTE` | `same_work_question:<earlierGroupId>` → `same_work_answered` | `STORED_READING` | `capture_group` (กลุ่มใหม่) |
+| §17.5 ambiguity list | `ROUTE` | `file_attempt_select` | `UNKNOWN` | `attempt_list` (`targetId` = refs คั่นด้วย comma) |
+| ผลอ่านถูก push | `READ` | `result_delivered` \| `LINE_DELIVERY_FAILED` | `STORED_READ_DONE` \| `STORED_READ_PARTIAL` \| `STORED_READ_FAILED` | `capture_group` |
+
+`capabilityJson` = `{ maxBytes, allowedMimeTypes, pdfAutomaticRead: true }` ณ เวลานั้น; `lineUserIdHash` = `hashMessagePreview(lineUserId)` (ตัวเดียวกับ event log); `chatKeyHash` = `chatKeyHashOf(event)`; `fileNameSanitized` ผ่าน `sanitizeAttemptFileName` (basename, ≤ 80, ตัด control chars) ไม่มี raw payload / reply token / bytes; purge ใช้ `AI_DATA_RETENTION_DAYS` ใน sweep เดียวกับ `LineWebhookEventLog` (W01 ต่อไว้แล้ว — ตรวจแล้วว่ามีจริงใน `recover-orphan-line-events.use-case.ts`)
+
+### 17.4 ส่วนที่ต่างจากตัวอักษรของเอกสารนี้ (W02-LINE)
+
+1. **A45 / §17.5 ambiguity ผูกคำตอบด้วย `LineIntakeAttempt` ไม่ใช่ ledger `waiting_user`** — เอกสารข้อ 10.1 เสนอ ledger kind ใหม่ แต่คำตอบ "1" ย้ายไบต์ระหว่างกลุ่มจริง การผูกจึงต้องทนต่อ Redis ล่ม; `LineIntakeAttempt` เป็น Postgres, มี (company, userHash, chatHash) ครบ, และถูก purge ตาม retention เดียวกันอยู่แล้ว ผลข้างเคียง: ไม่ต้องขยาย `clarificationSourceCurrent` ซึ่งเป็นเส้นทางตรวจ source ที่ยาวที่สุดในไฟล์
+2. **push ผลอ่านไปได้เฉพาะแชต 1:1** — `lineChatKeyHash` เป็น hash จึงกู้ group id กลับไม่ได้ กรณีกลุ่มแชตจึงบันทึกเป็น undelivered (`LINE_DELIVERY_FAILED`) ให้ §17.5 ตอบ UXE-25 แทนการเดาปลายทาง
+3. **ไม่มี scan worker ใหม่** — drain ใหม่ขี่ tick เดิมของ `line-ai-ledger-worker.ts` (`callInternal` เส้นที่สาม) เพราะ `apps/workers/src/main.ts` เป็นไฟล์ pinned และ worker ใหม่ไม่ได้ให้พฤติกรรมเพิ่ม
+4. **`line.explain_file_attempt` ยังไม่อยู่ใน router catalog** — spec §17.5 บังคับให้มีคำตอบ deterministic เมื่อ AI ไม่พร้อม ซึ่งทำครบแล้วใน handler; แถวใน `LINE_AI_FEATURE_COVERAGE` จึงเป็น `feature_gated` พร้อมเหตุผล ไม่ใช่ `covered` และไม่ได้เพิ่มบรรทัด system prompt (ไฟล์ agents เป็นของ wave อื่น)
+5. **tool ฝั่ง LLM เห็นเฉพาะ attempt ที่ผูกกับผู้ใช้คนนั้น** — `ErpToolContext` มี `chatKeyHash` แต่ไม่มี LINE user id การอ่านทั้งแชตในกลุ่มจะเปิดชื่อไฟล์ของสมาชิกคนอื่น จึงระบุตัวผู้ใช้ทางอ้อมจากกลุ่มที่เขาสร้าง (`listChatIntakeAttempts`) ผู้ใช้ที่ยังไม่มี target ในหน้าต่างนั้นจะไม่เห็นอะไรเลย — handler deterministic (ซึ่งมี lineUserId) ยังตอบได้ตามปกติ
+6. **`file` ที่มาระหว่างงาน substitute receipt เปิดอยู่ ยังเข้า handler เดิม** — สแกน PDF ของใบรับรองที่เซ็นแล้วเป็นคำตอบของคำถามนั้น ไม่ใช่กลุ่มหลักฐานใหม่

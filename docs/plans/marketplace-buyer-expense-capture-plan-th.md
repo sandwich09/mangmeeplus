@@ -138,11 +138,12 @@ Depends on: W01 / D02 upload contract
 - [x] per-file identity/manifest/status และ resumable intent; complete/retryใช้identityเดิมเมื่อผลตอบกลับหาย — W02-web: state machine ใน `expense-capture-upload.logic.ts` (PENDING→UPLOADING→STORED/FAILED/UNKNOWN), retry ใช้ `fileId` เดิม, ผลหาย = UNKNOWN + ตรวจสอบสถานะ (12 เคสใน `expense-capture-upload.logic.spec.ts`)
 - [x] “เพิ่มหลักฐาน” append; “เปลี่ยนไฟล์นี้” replace เฉพาะเป้าหมาย; detach/cleanupไม่ลบไฟล์ที่ source/signature ยังอ้าง — W02-web: `intent` บน `…/receipt-uploads/{a}/complete` + matrix §16.4 ที่ server; append ไม่แตะ primary และไม่ retire (spec ใน `expense-upload.use-case.spec.ts`); detach guard เป็นของ W01
 - [x] กลับจากปิดหน้าแสดงส่วนที่ server เก็บแล้ว ขอเลือกใหม่เฉพาะไฟล์ที่ bytes ยังไม่ถึง ไม่สัญญาว่าเก็บไฟล์บนbrowserได้ทุกกรณี — W02-web: manifest ใน sessionStorage + `mergeCaptureManifest` ให้สถานะจาก server ชนะเสมอ และไฟล์ที่ bytes ไม่ถึง = “เลือกไฟล์นี้ใหม่”
-- [ ] LINEผูกgroup/source/actor/branchจากบริบทที่ยืนยันได้; หลายงานหรือภาพที่มาช้าให้เลือกงานเมื่อกำกวม
+- [x] LINEผูกgroup/source/actor/branchจากบริบทที่ยืนยันได้; หลายงานหรือภาพที่มาช้าให้เลือกงานเมื่อกำกวม
 - [x] (เว็บ) single-file/camera/drop/review เดิมยังทำงาน; failed-reading notice+ลิงก์Webงานเดิมตาม§17.6 แยกsaved/unknown; ไม่มีerror reread; A83–A85 — W02-web: กล้องยังไฟล์เดียว, ข้อความ `expenses.extract_failed`/`:704`/`:724` ไม่ชวนอ่านซ้ำแล้ว และปุ่มอ่านซ้ำถูกซ่อนทุก terminal failure; ฝั่งแชต LINE อยู่ที่ W02-LINE
 - [x] ต่อหน้าเปลี่ยนใบเสร็จด้วย expected target/revision, append-vs-replace intent และ state matrix §16.4; re-readใช้ไฟล์ที่commitจริง — W02-web: `expectedUpdatedAt` + `expectedPrimaryAttachmentId` + `operationId` (idempotent/conflict) และ READY → NEEDS_REVIEW แบบ atomic
+  - LINE ฝั่งเดียวเสร็จแล้ว (W02-LINE): provider failure บนรูปที่เก็บได้ → capture group + ลิงก์ §17.6 และไม่มี reread CTA; ฝั่ง Web ยังเป็นงานของ W02-web
 - [ ] PDF limits/capability/error messagesตรงกันทั้งสามทาง; รับไฟล์สำเร็จแยกจากอ่านสำเร็จ และไม่re-encodesigned PDFเพื่อผ่านgate
-- [ ] LINEcaptionlessPDF/หลายเอกสาร/latefileต้องมีdurable pending work/clarificationที่กลับงานเดิม ไม่resetหลักฐาน; เก็บsafe rejection reasonก่อนมีexpenseและตอบคำถามย้อนหลังตาม§17.5; แก้E15/IG20ที่file/PDFไม่มีcontentBase64จนOCRถูกข้าม โดยต่อoriginalเข้าboundedpipeline ไม่ส่ง10MBตรงให้provider
+- [x] LINEcaptionlessPDF/หลายเอกสาร/latefileต้องมีdurable pending work/clarificationที่กลับงานเดิม ไม่resetหลักฐาน; เก็บsafe rejection reasonก่อนมีexpenseและตอบคำถามย้อนหลังตาม§17.5; แก้E15/IG20ที่file/PDFไม่มีcontentBase64จนOCRถูกข้าม โดยต่อoriginalเข้าboundedpipeline ไม่ส่ง10MBตรงให้provider
 
 - [ ] ทั้งสามทางรับPDF10MiBแล้วsave→queue/readพร้อมstatus/progressที่serverยืนยัน; ปรับข้อความ4MBmanual-onlyออกสำหรับขนาดที่รองรับ; ไม่บังคับผู้ใช้split/compressเอง
 - [ ] status/reopen/retryเมื่อHTTPผลหายใช้jobเดิม; replacementหยุดapplyงานเก่าตามrevisionและpreserveoriginal; ไม่มีfinalLINEส่งจนrecipient/permission/versionตรงและdeliveryสำเร็จจริง — W02-web ทำฝั่ง status/reopen/retry (`GET …/read-status` + polling 3 วิ) และ provenance `sourceStale` ของไฟล์เก่าแล้ว; การหยุด apply ของ job เก่าเป็นงาน W03, LINE delivery เป็นงาน W02-LINE
@@ -643,6 +644,7 @@ Next v0.9: ใช้error matrixร่วมกับD02/D06ในW00ก่อ�
 - W00/D02/D06: ตัดสินsafe pre-capture diagnostic storage/retentionและpermission-checked queryจากevent/outcome/pendingเดิม; ระบุreason-stage/capability snapshot/currentstatus/actor+chat binding, target resolution และAPI/tool representationที่เล็กที่สุดก่อนcode
 - W01: ข้อมูลlookupอยู่ใต้actor/company/chat/permission; restart/payloadscrub/retention/lateeventและrevisionต้องไม่ทำให้ตอบผิดไฟล์หรือเผยงานอื่น ไม่สร้างexpenseเพื่อเก็บerror
 - W02: เปลี่ยนnull/coarse-errorจากdownload/validationเป็นtyped reasonที่persistได้ตามจริงทั้งก่อน/หลังเก็บไฟล์; reusependingcontextและper-attempt identity แยกnotfound/unavailable/expired-context/ambiguous
+  - ทำแล้ว (W02-LINE 2026-09-19): `downloadLineMedia` คืน typed reason 6 แบบ, `LineIntakeAttempt` ถูกเขียนทุก media turn (DOWNLOAD/SECURITY/PERSIST/READ/ROUTE) และ handler §17.5 แยก not-found / lookup-failed / ambiguous ออกจากกันจริง
 - W03/W04: reuseLINE status handlerและread-tool boundary; grounded human-language answerพร้อมsource/as-of, deterministic fallbackเมื่อAIไม่พร้อม และคำถามเลือกเป้าหมาย; คำถามเหตุผล/statusต้องไม่triggerOCR/retry/mutation
 - W06/W07: ต่อactual claim/certificate/source stateที่อ่านได้ผ่านtoolsเดิมเมื่อคำถามอ้างงานนั้น; ไม่ใช้captureerrorลัดไปfinancialactionและไม่replaycreationเมื่อแจ้งผลไม่สำเร็จ
 - W08: A86–A88ทดสอบrawrejectionก่อนexpense→ถามภาษาคน→scopedlookup→ตอบreasonและทางทำต่อ รวมfailure/noevent/unknown/ambiguous/providerdown/restart/cross-user; assertnoextraOCRcall/noexpensecreation/no financialmutationจากคำถามread-only
@@ -661,6 +663,7 @@ Next v0.10: ปิดD02/D06ส่วนdiagnosticตาม§17.5ร่วมก
 
 - W00/D02/D06: ระบุfailed/partial/persisted/unknownและsafe Web recovery targetสำหรับexpenseและpre-expense pending/capture; read-only GETไม่สร้าง/อ่าน/ส่งเบิก และปิดrouteของpendingก่อนเปิดใช้งาน
 - W01/W02: เก็บoriginalและผูกงานก่อนบอกsaved; สร้างลิงก์จากserverorigin/targetที่ตรวจสิทธิ์ได้ ใช้หน้ารายการเดิมเมื่อมีexpenseId ไม่ลิงก์ไปฟอร์มว่าง/หน้าupload/listหรือpublicobject; เปิดซ้ำได้งานเดียว
+  - ทำแล้วฝั่ง LINE (W02-LINE 2026-09-19): persist ก่อนตอบทุกกรณี; persist ล้มเหลว = ไม่อ้าง "เก็บไฟล์ไว้แล้ว"; ลิงก์เป็น `/companies/{c}/expenses/capture/{g}` จาก `absoluteWebLink` และผ่าน handoff wrapper (surface `line_capture_intake` / `line_capture_result`)
 - W03: เมื่อfailedแล้วไม่เริ่มOCRใหม่จากerror message/link/คำถาม; internal recoveryใช้เฉพาะงานเดิมที่ยังไม่terminalตามD02 รักษาpartialresults และไม่ใช้manual fallbackเลี่ยงการอ่านPDF10MiBปกติ
 - W04: หน้าWebเดิมแสดงcurrentfile+partialfactsและช่องที่ขาด กรอก/บันทึกด้วยpermission/validation/provenanceเดิม; loginแล้วกลับtarget, mobileใช้ง่าย, deep linkเก่าหลังreplaceหรือlockต้องไม่แก้ผิดsnapshot; lateOCRไม่ทับhumanfacts
 - W06/W07: รักษาclaim/certificate/funding locks; ไม่มีข้อมูลให้พัก/แนบเพิ่มในWeb ใบรับรองเฉพาะeligibility ไม่ใช่fallbackอัตโนมัติเมื่อOCRfail
@@ -725,6 +728,8 @@ Test trace ที่ต้องทำเมื่อ implement (ยังไม
 - NR04/NR05: invoice/slip/marketplace order ที่ผ่าน gate ยังไป review ได้; amount/party/payment ที่ไม่รู้ไม่เติมเอง ไม่เปลี่ยนชนิดเป็นใบเสร็จหรือให้ tax approval และไม่ใช้ COD principal เป็นค่าส่ง
 - NR06: รักษา 3 payment choices เดิมและ pending identity, paid/no receipt ต้องผ่านหลักฐาน/eligibility เดิม; duplicate click/old answer ไม่สร้างหรือออกใบรับรองซ้ำ
 - NR07/NR08/NR09: non-business, uncertain classification และ terminal failed/partial ให้คนละผล; saved/unsaved/unknown/running/cross-company/permission revoked มี copy/action ตามจริง. สำเร็จในการจำแนกเอกสารอื่นไม่ใช้ failed recovery; ไม่เริ่ม OCR ใหม่จาก error CTA
+
+ผลรัน test trace ของ §12.1 รอบ W02-LINE (2026-09-19): NR01–NR09 ครบทุกแถวใน `apps/api/src/modules/line-ai/domain/logic/line-non-receipt-reply.logic.spec.ts` (ข้อความตรงตัวอักษร + กติกา CTA เฉพาะ NR01–NR03/NR08), NR07 ไม่ persist และปิดกลุ่มใน `line-capture-result-notifier.use-case.spec.ts`, NR09 failed/partial/paused แยกกันในชุดเดียวกัน, ส่วน NR04/NR05 บนเส้นทาง expense พิสูจน์ผ่าน `expensePathNonReceiptLead`. ยังไม่ได้ตรวจกับ LINE จริงหรือผู้ใช้จริง
 - ทุกกรณีที่มีงาน: pending/expense target, login-return, append/replace/current revision, locked source, late OCR, หลายงานและ replay อยู่ใน W08 เดิม. ตรวจ Web/LINE parity และ persisted originals จริง ไม่ใช้ snapshot ของข้อความเป็นหลักฐานเพียงอย่างเดียว
 
 Reuse/impact: ขยาย `formatBusinessDocumentReply`, `formatCheckBillDecisionReply`, reference/clarify branches, `ensurePendingMedia`, expense eligibility และ Web review เดิม; Gateway ให้ผลอ่าน/จำแนก ส่วน API ตรวจสิทธิ์และตัดสิน mutation. ใช้ชุด `process-line-webhook.use-case.spec.ts` และ `expense-document.logic.spec.ts` เดิม รวม continuation/UI/E2E ที่เกี่ยวข้องเมื่อ behavior เปลี่ยน. ไม่ต้องสร้าง global error framework หรือ formatter แยกรายขนส่ง; ช่องว่างจริงคือ copy ที่ตรงเอกสารและ persisted reference→Web ซึ่งต้องพิสูจน์ก่อนเปิดใช้

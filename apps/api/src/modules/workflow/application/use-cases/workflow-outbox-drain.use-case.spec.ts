@@ -100,6 +100,9 @@ describe('DrainWorkflowOutboxUseCase', () => {
       // §15.6 ops alerts ride the same drain. Claimed here, the operators would simply never be
       // told the day the machine stopped approving or a customer's push failed.
       'notify.signup_ops_alert.requested',
+      // Capture appendix §3: the LINE capture-result push owns this one. Claimed here it would be
+      // marked published without anyone being told their document had been read.
+      'expense.capture_read.finished',
     ]);
   });
 
