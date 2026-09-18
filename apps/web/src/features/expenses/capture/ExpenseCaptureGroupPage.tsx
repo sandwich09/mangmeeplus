@@ -73,7 +73,6 @@ export function ExpenseCaptureGroupPage({ companyId, groupId }: { companyId: str
   const [readStatus, setReadStatus] = useState<Record<string, ExpenseReadStatusFile>>({});
   const [preview, setPreview] = useState<DocumentPreviewSource | null>(null);
   const previewUrlRef = useRef<string | null>(null);
-  const addInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -150,7 +149,7 @@ export function ExpenseCaptureGroupPage({ companyId, groupId }: { companyId: str
       const prepared: Array<{ entry: CaptureUploadEntry; file: File }> = [];
       for (const file of picked) {
         if (captureFileRejection(file, group.capability)) {
-          setActionError(apiErrorMessage(new Error(t('expenses.upload_unsupported_file', locale))));
+          setActionError(t('expenses.upload_unsupported_file', locale));
           return;
         }
         const ready = await prepareReceiptFile(file);
@@ -322,7 +321,6 @@ export function ExpenseCaptureGroupPage({ companyId, groupId }: { companyId: str
             <label className={cx(btnClass, 'mt-4 flex min-h-11 w-full cursor-pointer items-center justify-center sm:w-auto')}>
               {t('expenses.capture.add_files', locale)}
               <input
-                ref={addInputRef}
                 type="file"
                 accept={RECEIPT_UPLOAD_ACCEPT}
                 multiple
