@@ -132,15 +132,25 @@ concept/หน่วย/การเติมเครดิต, การตร
 
 ## 9. Acceptance
 
-- [ ] W-01 ไม่มีข้อความที่ผู้ใช้/แอดมินอ่านเห็นคำว่า "งบ AI" หรือ "โควตา AI" เหลืออยู่ใน apps/packages/scripts (ยกเว้น code/enum/telemetry) และคำใหม่ตรง §3 ทุกจุด; web dictionary/error map/Flex/drain notice/admin/billing/timeline/ops alert ครบ
-- [ ] W-02 เส้นทางรูป: ทุกสาเหตุใน §4 แถวแรกตอบ "เครดิตสำหรับการอ่านเอกสารไม่พอ" พร้อมสถานะไฟล์จริงและ "ยังไม่ได้บันทึกรายการ"; unavailable/busy/disabled คงแยก; ไม่มีตัวเลขเงิน; code/scope/terminal class/การคืนจำนวนใบ ไม่เปลี่ยน (whole-chain + combined regression ผ่านโดยแก้เฉพาะ expected text)
-- [ ] W-03 เส้นทางแชตและ drain notice ตรง §5.1; integrity check ของ stored delivery ตรง exact string ใหม่
-- [ ] W-04 Billing: warning `AI_CREDIT_HOLDS_PENDING` และ field `aiReservedSatang`/`aiUnresolvedHolds` แสดงเมื่อมี hold; บริษัทที่ไม่มี hold ผลเดิม; ไม่มีเงินรั่วไปหน้า owner
+- [x] W-01 ไม่มีข้อความที่ผู้ใช้/แอดมินอ่านเห็นคำว่า "งบ AI" หรือ "โควตา AI" เหลืออยู่ใน apps/packages/scripts (ยกเว้น code/enum/telemetry) และคำใหม่ตรง §3 ทุกจุด; web dictionary/error map/Flex/drain notice/admin/billing/timeline/ops alert ครบ
+- [x] W-02 เส้นทางรูป: ทุกสาเหตุใน §4 แถวแรกตอบ "เครดิตสำหรับการอ่านเอกสารไม่พอ" พร้อมสถานะไฟล์จริงและ "ยังไม่ได้บันทึกรายการ"; unavailable/busy/disabled คงแยก; ไม่มีตัวเลขเงิน; code/scope/terminal class/การคืนจำนวนใบ ไม่เปลี่ยน (whole-chain + combined regression ผ่านโดยแก้เฉพาะ expected text)
+- [x] W-03 เส้นทางแชตและ drain notice ตรง §5.1; integrity check ของ stored delivery ตรง exact string ใหม่
+- [x] W-04 Billing: warning `AI_CREDIT_HOLDS_PENDING` และ field `aiReservedSatang`/`aiUnresolvedHolds` แสดงเมื่อมี hold; บริษัทที่ไม่มี hold ผลเดิม; ไม่มีเงินรั่วไปหน้า owner
 - [ ] W-05 Deterministic: family ใหม่ตาม §6.2 มี formatter + tests; งาน daily-closing ที่เคยพลาดเลนตอบผ่านเลน; security spec เดิมผ่าน; allowlist default ใน deploy.sh มี family ใหม่ทั้ง UAT/Production
 - [ ] W-06 Grounded breakdown: test พิสูจน์ว่าตัวเลขที่โมเดลคำนวณเองถูกปฏิเสธและ fallback เป็น grounded text; คำแนะนำ (ไม่มีตัวเลขใหม่) ผ่านได้
 - [ ] W-07 Corpus replay ก่อน/หลัง (เมื่อ owner อนุญาตงบ): hit ≥ 16/24, routing ≥ เดิม, THB/successful task ลด, calls/turn ลด, ไม่มี task success→fail
-- [ ] W-08 Browser evidence: หน้าแอดมิน AI และโควตา + billing ใบเสร็จ/แพ็กเกจ ที่ 1440/390 px ด้วยคำใหม่ และ smoke script ผ่าน
+- [x] W-08 Browser evidence: หน้าแอดมิน AI และโควตา + billing ใบเสร็จ/แพ็กเกจ ที่ 1440/390 px ด้วยคำใหม่ ([bundle 2026-09-18](../qa/evidence/line-ai-credit-wording-2026-09-18/README.md), 7 subject × 2 viewport) — ส่วน smoke script: `admin-ai-adjustments-smoke.ts` อัปเดต selector ตามคำใหม่แล้ว แต่ **ยังไม่ได้รันในเครื่อง** (ต้องใช้ billing-http-smoke harness + Stripe fixture + browser ตัวที่สอง) จึงรอผล CI
 - [ ] W-09 UAT: ส่งรูปเมื่อเครดิตอ่านเอกสารหมด และพิมพ์เมื่อเครดิตแชตหมด เห็นข้อความตาม §4/§5 จริงบน LINE (เปิดหลัง deploy)
+
+### 9.1 หลักฐาน H1 (2026-09-18)
+
+| เกณฑ์ | หลักฐาน |
+| --- | --- |
+| W-01 | guard test `apps/web/src/common/api/api-error-coverage.spec.ts` — grep "งบ AI"/"โควตา AI" ทั้ง apps/packages/scripts/e2e (allowlist มีแค่ไฟล์ guard เอง เพราะต้องเขียนคำที่ห้าม); final grep = 0; FULL api + web + gateway + contracts suites เขียว |
+| W-02 | `aiBudgetReasonTh` รวม `AI_MONTHLY_BUDGET_EXCEEDED`/`AI_BUDGET_INSUFFICIENT`/`OCR_MONTHLY_LIMIT_EXCEEDED` เป็น "เครดิตสำหรับการอ่านเอกสารไม่พอ"; `AI_BUDGET_UNAVAILABLE`/`OCR_QUOTA_UNAVAILABLE` → "ตอนนี้ยังตรวจสอบเครดิต AI ของร้านไม่ได้"; busy/disabled คงเดิม; แก้เฉพาะ expected text ใน `process-line-webhook.use-case.spec.ts` + `line-ai-combined-regression.spec.ts`; whole-chain runner เขียว |
+| W-03 | `buildAiBudgetExceededMessage` + `formatAiBudgetRefusalNotice` ตาม §5.1; integrity check ของ drain ใช้ `staticRefusalText` → `formatAiBudgetRefusalNotice` จุดเดียว จึงตรง exact string ใหม่โดยไม่ต้องแก้สองที่ (`drain-line-ledger.use-case.spec.ts` ยืนยัน) |
+| W-04 | `AI_CREDIT_HOLDS_PENDING` + `aiReservedSatang`/`aiUnresolvedHolds` (additive, ใส่เมื่อ > 0 เท่านั้น) จาก `readAiBudgetReadiness().reserved`; `billing-financial.spec.ts` พิสูจน์ว่าไม่มี hold ⇒ ผลเดิมทุกตัวอักษร, มี hold ⇒ warning + field, warning ไม่มีตัวเลข; ทุก consumer ของ union เป็น System Admin only |
+| W-08 | [docs/qa/evidence/line-ai-credit-wording-2026-09-18](../qa/evidence/line-ai-credit-wording-2026-09-18/README.md) — 7 subject × 1440/390 px จาก stack ทิ้งในเครื่อง; `admin-ai-adjustments-smoke.ts` แก้ selector แล้วแต่ยังไม่รัน (ต้องใช้ billing-http-smoke harness) |
 
 ## 10. ส่งมอบ
 
