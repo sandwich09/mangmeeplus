@@ -370,7 +370,7 @@ W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAl
 13. **หน่วยของตัวเลขใน snapshot**: `totals`/`lines`/`charges` เป็น 4 ตำแหน่งตาม `calcDocumentTotals` (คอลัมน์เงินของ repo) ส่วน `companyAmount`/`personalAmount`/`paidTotal`/`summary`/provenance share เป็น 2 ตำแหน่ง (ตัวเลขที่คนอ่านและใบรับรองอ้าง)
 14. **`accept` ของ creator**: อนุญาตเฉพาะ `outcome = READY` + route `EMPLOYEE` + `payerUserId = ผู้กด` (self-claim) และบันทึก `rule` ใน audit; กรณีอื่นต้อง `expense.review`
 15. **`review` ซ้ำเมื่อมี ACCEPTED อยู่** (และ `handoffState = NONE`) จะ `INVALIDATED` ตัวเก่าด้วยเหตุ `review_recomputed` และล้าง `acceptedAllocationId` (A11); ถ้า `handoffState = ACTIVE` ทั้ง `facts`/`review`/`accept` ตอบ 409 `expense_capture_handoff_active` (แก้ที่รายการค่าใช้จ่ายแทน)
-## 17. Implementation notes (W02-web, 2026-09-19)
+## 18. Implementation notes (W02-web, 2026-09-19)
 
 สิ่งที่ implement ต่างจากตัวอักษรของเอกสารนี้ พร้อมเหตุผล (ไม่เปลี่ยนกติกาเงิน/สิทธิ):
 
@@ -382,9 +382,9 @@ W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAl
 6. **`sourceStale` ถูกล้างตอนคนกดบันทึกการตรวจ** ใน `UpdateExpenseDraftUseCase` (พร้อม `missingFields` เดิม) — W03 ยังต้องล้างตอน apply ผลอ่านใหม่; ตอนตั้ง flag จะถอด `extractionAttachmentId` ออกจาก summary ด้วย เพื่อไม่ให้ fence ของ `updateExpense` (ผล OCR ที่กลับช้า) ชี้ไปยังไฟล์ที่ถูกแทนแล้ว
 7. **หน้า `/expenses/capture/{groupId}` ส่งเฉพาะโครง** ตามลำดับงาน: header/สถานะ, รายการไฟล์ + สถานะอ่านต่อไฟล์ + polling 3 วินาที, แนบเพิ่ม/ตัดออก/เก็บไว้ก่อน/ไม่มีส่วนของบริษัท, preview เดิม และ slot ว่าง `CaptureFactsSection`/`CaptureAllocationSection` ให้ W04; ปุ่มทุกปุ่มมาจาก `allowedActions` ของ server
 8. **ยังไม่ได้ทำใน W02-web**: LINE lane ทั้งหมด (W02-LINE), การอ่านจริง/manifest ที่มีหน้า (W03), สรุปร้าน/สินค้า/ยอด/ผู้จ่ายบนหน้ากลุ่ม (W04) — ข้อความ "ทั้งสามทางรับ PDF 10 MiB แล้ว save→queue/read" ยังติ๊กไม่ได้จนกว่า W03 จะมี runner จริง
-## 17. Implementation notes (W02-LINE, 2026-09-19)
+## 19. Implementation notes (W02-LINE, 2026-09-19)
 
-### 17.1 ข้อความที่ส่งจริง (UXE แถว LINE + NR01–NR09 + wait texts)
+### 19.1 ข้อความที่ส่งจริง (UXE แถว LINE + NR01–NR09 + wait texts)
 
 | กรณี | ข้อความที่ shipped | ที่มาในโค้ด |
 |---|---|---|
@@ -412,7 +412,7 @@ W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAl
 | NR07 ภาพไม่เกี่ยวข้อง | `ภาพนี้ไม่ใช่เอกสารค่าใช้จ่ายค่ะ จึงไม่ได้สร้างรายการ ส่งเอกสารค่าใช้จ่ายที่ต้องการบันทึกได้เลยค่ะ` — ไม่มีลิงก์ ไม่ persist; ถ้ามาจากผล read กลุ่มถูกปิด `CANCELLED/NON_BUSINESS_IMAGE` | `nonReceiptReply('NR07')` |
 | NR08 ไม่แน่ใจชนิด | `ยังไม่แน่ใจว่าเป็นเอกสารประเภทใดค่ะ` (+ CTA) | `nonReceiptReply('NR08')` |
 
-### 17.2 §17.5 decision table (deterministic ก่อน AI)
+### 19.2 §17.5 decision table (deterministic ก่อน AI)
 
 | ผู้ใช้ถาม | สิ่งที่ระบบอ่าน | คำตอบ |
 |---|---|---|
@@ -430,7 +430,7 @@ W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAl
 
 ทุกแถวเป็น read-only: ไม่เรียก OCR, ไม่สร้าง/แก้ expense, ไม่หัก quota และตอบได้แม้ AI ไม่พร้อม
 
-### 17.3 `LineIntakeAttempt` ที่เขียนจริง
+### 19.3 `LineIntakeAttempt` ที่เขียนจริง
 
 | จุด | stage | reasonCode | outcome | target |
 |---|---|---|---|---|
@@ -445,7 +445,7 @@ W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAl
 
 `capabilityJson` = `{ maxBytes, allowedMimeTypes, pdfAutomaticRead: true }` ณ เวลานั้น; `lineUserIdHash` = `hashMessagePreview(lineUserId)` (ตัวเดียวกับ event log); `chatKeyHash` = `chatKeyHashOf(event)`; `fileNameSanitized` ผ่าน `sanitizeAttemptFileName` (basename, ≤ 80, ตัด control chars) ไม่มี raw payload / reply token / bytes; purge ใช้ `AI_DATA_RETENTION_DAYS` ใน sweep เดียวกับ `LineWebhookEventLog` (W01 ต่อไว้แล้ว — ตรวจแล้วว่ามีจริงใน `recover-orphan-line-events.use-case.ts`)
 
-### 17.4 ส่วนที่ต่างจากตัวอักษรของเอกสารนี้ (W02-LINE)
+### 19.4 ส่วนที่ต่างจากตัวอักษรของเอกสารนี้ (W02-LINE)
 
 1. **A45 / §17.5 ambiguity ผูกคำตอบด้วย `LineIntakeAttempt` ไม่ใช่ ledger `waiting_user`** — เอกสารข้อ 10.1 เสนอ ledger kind ใหม่ แต่คำตอบ "1" ย้ายไบต์ระหว่างกลุ่มจริง การผูกจึงต้องทนต่อ Redis ล่ม; `LineIntakeAttempt` เป็น Postgres, มี (company, userHash, chatHash) ครบ, และถูก purge ตาม retention เดียวกันอยู่แล้ว ผลข้างเคียง: ไม่ต้องขยาย `clarificationSourceCurrent` ซึ่งเป็นเส้นทางตรวจ source ที่ยาวที่สุดในไฟล์
 2. **push ผลอ่านไปได้เฉพาะแชต 1:1** — `lineChatKeyHash` เป็น hash จึงกู้ group id กลับไม่ได้ กรณีกลุ่มแชตจึงบันทึกเป็น undelivered (`LINE_DELIVERY_FAILED`) ให้ §17.5 ตอบ UXE-25 แทนการเดาปลายทาง
@@ -453,7 +453,7 @@ W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAl
 4. **`line.explain_file_attempt` ยังไม่อยู่ใน router catalog** — spec §17.5 บังคับให้มีคำตอบ deterministic เมื่อ AI ไม่พร้อม ซึ่งทำครบแล้วใน handler; แถวใน `LINE_AI_FEATURE_COVERAGE` จึงเป็น `feature_gated` พร้อมเหตุผล ไม่ใช่ `covered` และไม่ได้เพิ่มบรรทัด system prompt (ไฟล์ agents เป็นของ wave อื่น)
 5. **tool ฝั่ง LLM เห็นเฉพาะ attempt ที่ผูกกับผู้ใช้คนนั้น** — `ErpToolContext` มี `chatKeyHash` แต่ไม่มี LINE user id การอ่านทั้งแชตในกลุ่มจะเปิดชื่อไฟล์ของสมาชิกคนอื่น จึงระบุตัวผู้ใช้ทางอ้อมจากกลุ่มที่เขาสร้าง (`listChatIntakeAttempts`) ผู้ใช้ที่ยังไม่มี target ในหน้าต่างนั้นจะไม่เห็นอะไรเลย — handler deterministic (ซึ่งมี lineUserId) ยังตอบได้ตามปกติ
 6. **`file` ที่มาระหว่างงาน substitute receipt เปิดอยู่ ยังเข้า handler เดิม** — สแกน PDF ของใบรับรองที่เซ็นแล้วเป็นคำตอบของคำถามนั้น ไม่ใช่กลุ่มหลักฐานใหม่
-## 17. Implementation notes (W03, 2026-09-18)
+## 20. Implementation notes (W03, 2026-09-18)
 
 สิ่งที่ implement ต่างจากตัวอักษรของเอกสารนี้ พร้อมเหตุผล (ทุกข้อไม่เปลี่ยนกติกาเงิน/สิทธิ):
 
@@ -470,3 +470,35 @@ W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAl
 11. **`GET .../capture-groups/{g}/read-status` ยังไม่ทำเป็น route แยก** — สถานะรายไฟล์อยู่ใน `GET capture-groups/{g}` (W01) ครบแล้ว และ W04 เป็นผู้ใช้; route ของ expense เดี่ยว (`GET .../expenses/{e}/read-status`) ทำแล้วเพราะ W02-web poll
 12. **งบจริงที่ตั้งไว้**: `providerCallCount ≤ 40`, เวลา ≤ 15 นาทีต่อการรันหนึ่งครั้ง, lease 120 s ต่ออายุหลังทุก chunk, `attempts ≥ 5` → `FAILED/attempts_exhausted`, window ≤ 12,000 ตัวอักษร, ข้อความต่อหน้าที่เก็บใน checkpoint ≤ 20,000 ตัวอักษร
 13. **ยังไม่ทำใน W03**: LINE auto-handoff (ข้อ 3.2 = W05/W07), allocation (W04), การบริโภค outbox event `expense.capture_read.finished` (LINE wave), และ Bedrock replay จริงด้วย fixture สังเคราะห์ (controller session ตามข้อ 15.5)
+
+## 21. Implementation notes (W04b — หน้ากลุ่ม/รายการงานรับหลักฐาน, 2026-09-19)
+
+W04b ส่งเฉพาะ `apps/web/**`: หน้า `/companies/{c}/expenses/capture/{groupId}` เต็มรูป (สรุป §13.4, facts ราย
+เอกสาร + แก้ข้อมูล, คำถามสองข้อ + ส่วนของบริษัท, ยอมรับการจัดส่วน, ปุ่มสร้างรายการค่าใช้จ่าย, derived sources)
+และหน้ารายการ `/companies/{c}/expenses/capture` ไม่มีการแก้ API/contract/gateway ในรอบนี้
+
+สิ่งที่ต่างจากตัวอักษรของเอกสารนี้ พร้อมเหตุผล (ไม่เปลี่ยนกติกาเงิน/สิทธิ):
+
+1. **ปุ่ม handoff ยิง `POST …/handoff` ที่ W05 ยังไม่ส่ง** — 404 = "ยังสร้างรายการค่าใช้จ่ายจากงานนี้ไม่ได้ในตอนนี้"
+   (ไม่ใช่ข้อความว่าสร้างไม่สำเร็จ), 5xx/หลุดเน็ต = UXE-24 "กำลังตรวจสอบผลรายการก่อนทำต่อ" แล้ว re-GET กลุ่มเพื่อดู
+   `derivedSources` จริง ชนิดผลลัพธ์ประกาศไว้ใน `expenses.api.ts` ตามข้อ 9 (W05 ย้ายเข้า contract เมื่อถึงคิว)
+2. **`claimReady` ของ derived source อ่านจาก scope ของ allocation ที่ยอมรับแล้ว** เพราะ `ExpenseCaptureDerivedSourceDto`
+   (ข้อ 9/W01) ไม่มีฟิลด์นี้ — จับคู่ด้วย `captureScopeKey`; ปุ่ม "เตรียมใบเบิก" จึงขึ้นเฉพาะ route `EMPLOYEE` +
+   `claimReady` มิฉะนั้นเป็นข้อความ "รอตรวจภาษีก่อนเตรียมใบเบิก" (ไม่พาไปหน้าที่ resolver จะปฏิเสธ)
+3. **จำนวน "ส่วนตัว" ตอนเปิดหน้าใหม่สร้างกลับจาก `result.scopes[].lines[].provenance`** เพราะ
+   `ExpenseCaptureAllocationDto` ไม่ได้ส่ง `selectionJson` — แถวที่ไม่มีบรรทัดในผล = ส่วนบริษัท 0 (ส่วนตัวทั้งแถว)
+   ยกเว้นแถวที่ "อ่านยอดไม่ได้" ซึ่งคงไว้ที่ส่วนตัว 0 เพื่อไม่พลิกคำตอบของผู้ตรวจเอง (A28/A41) — ทางแก้ถาวรคือเพิ่ม
+   `selection` ลง dto (มี `ponytail:` note ไว้ในโค้ด)
+4. **ป้าย "แก้โดยผู้ใช้" เป็นระดับไฟล์ ไม่ใช่ระดับฟิลด์** เพราะ `CaptureFactsView` (ข้อ 17.12) ไม่ได้พา
+   `provenance` ของ observation `source: HUMAN` ออกมา — ใช้ `facts.files[].source === 'HUMAN'`
+5. **ตัวเลือกผู้จ่ายคนอื่นใช้ `GET …/settings/employees`** (ไม่มี endpoint รายชื่อสมาชิกแบบเบาในข้อ 9) โหลดเฉพาะเมื่อ
+   ผู้ใช้มี `expense.review` และเลือก "พนักงานสำรองจ่าย"; ถ้า 403 รายการจะเหลือ "ฉัน" อย่างเดียวและ server ยังตรวจ
+   สมาชิก/สาขาเองทุกครั้ง (ข้อ 6)
+6. **"ดูหน้าที่อ้างอิง" ใช้ fragment `#page=n` ของตัวอ่าน PDF ในเบราว์เซอร์** (เอกสารเก็บ `pageIndexes` ไว้ที่ระดับ
+   เอกสาร ไม่ใช่ระดับแถว) ไม่เพิ่ม prop ให้ `DocumentPreviewModal`
+7. **`taxReview` ถูกส่งเฉพาะเมื่อผู้มี `expense.review` แตะค่าจริง** และ `expenseDateChoice` ส่งเฉพาะ scope ที่เลือก —
+   ค่าเริ่มต้นบนจอคือค่าที่ server คืนมา (`scope.vatMode/…/expenseDateSource`) จึงไม่มีการ "ประทับ" การตัดสินที่ไม่มี
+   คนตัดสิน (ข้อ 7 / §17.3 ข้อ 5)
+8. **ยังไม่ทำใน W04b**: LINE summary (W02-LINE), หน้าจอ regenerate หลัง handoff (server คืน `allowedActions: []`
+   เมื่อกลุ่มไม่ `OPEN` แล้ว จึงยังไม่มีปุ่มให้กด — W05 ตัดสินว่าจะเปิดทางไหน), ใบรับรองต่อ source (W06 เติมบรรทัด
+   "ใบรับรอง: —"), `?expenseId=` บนหน้าใบเบิกใหม่ยังไม่ถูกอ่านโดย `ReimbursementCreatePage` (ลิงก์พาไปหน้าร่างเปล่า)

@@ -2246,6 +2246,8 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
       <div className="flex flex-wrap gap-2">
         {caps.canUploadReceipts && <Link className={btnClass} href={`/companies/${companyId}/expenses/upload`}>อัปโหลดใบเสร็จ</Link>}
         {caps.canCreate && <Link className={ghostClass} href={`/companies/${companyId}/expenses/manual`}>บันทึกเอง</Link>}
+        {/* Evidence jobs are not expenses (appendix §5), so they get their own list beside these. */}
+        <Link className={ghostClass} href={`/companies/${companyId}/expenses/capture`}>{t('expenses.capture.list_title', locale)}</Link>
       </div>
       {sourceView && <div role="status" className="rounded-xl bg-brand-25 p-3 text-sm text-brand-800">
         {sourceView === 'confirmed' ? `รายการยืนยันแล้ว · วันที่เอกสาร ${dateShort(fromDate)} – ${dateShort(toDate)}`
@@ -2354,6 +2356,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                             <LateDocumentBadge expense={e} locale={locale} />
                             <DocumentDateBadge expense={e} />
                             <MangmeeBadge tone="slate">{expenseValueLabel(CAPTURE_SOURCE_LABELS, e.captureSource, 'ช่องทางอื่น')}</MangmeeBadge>
+                            {e.captureGroupId && <MangmeeBadge tone="teal">{t('expenses.capture.from_group_badge', locale)}</MangmeeBadge>}
                           </div>
                         </div>
                         <div className="tabular-nums text-right text-[15px] font-bold text-gray-900">{baht(e.grandTotalAmount)}</div>
@@ -2392,6 +2395,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                     <StatusBadge status={e.status} />
                     <LateDocumentBadge expense={e} locale={locale} />
                     <DocumentDateBadge expense={e} />
+                    {e.captureGroupId && <MangmeeBadge tone="teal">{t('expenses.capture.from_group_badge', locale)}</MangmeeBadge>}
                   </div>
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{baht(e.grandTotalAmount)}</div>
                 </button>

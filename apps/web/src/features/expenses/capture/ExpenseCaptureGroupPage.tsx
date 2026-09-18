@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import type {
-  ExpenseCaptureFileDto, ExpenseCaptureGroupDetailDto, ExpenseCaptureGroupStatus,
+  ExpenseCaptureAction, ExpenseCaptureFileDto, ExpenseCaptureGroupDetailDto, ExpenseCaptureGroupStatus,
 } from '@watchdog-bms/contracts';
 import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/components/document-preview';
 import { MangmeeBadge, MangmeeCard, MangmeePage, cx, type MangmeeTone } from '@/common/components/mangmee';
@@ -12,16 +12,16 @@ import { useConfirm } from '@/common/components/modal/use-confirm';
 import { useInputPrompt } from '@/common/components/modal/use-input-prompt';
 import { ErrorState, ForbiddenState, LoadingState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
-import { apiErrorMessage, apiErrorCode } from '@/common/api/api-error-message';
+import { apiErrorMessage, apiErrorCode, translateApiError } from '@/common/api/api-error-message';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import {
   addExpenseCaptureFile, closeExpenseCaptureGroup, completeExpenseCaptureFile,
   detachExpenseCaptureFile, fetchAttachmentPreviewBlob, getExpenseCaptureGroup,
-  getExpenseCaptureGroupReadStatus, uploadReceiptFile,
+  getExpenseCaptureGroupReadStatus, handoffCaptureGroup, uploadReceiptFile,
 } from '../expenses.api';
-import { btnClass, ghostClass, ErrorBanner, InfoBanner } from '../ExpensesUi';
+import { baht, btnClass, ghostClass, ErrorBanner, InfoBanner, StatusBadge } from '../ExpensesUi';
 import {
   captureFileRejection, captureMegabytes, runCaptureUpload,
   type CaptureUploadApi, type CaptureUploadEntry,
@@ -31,14 +31,20 @@ import {
   type ExpenseReadStatusFile,
 } from '../expense-capture-status.logic';
 import { HeicDecodeError, prepareReceiptFile, RECEIPT_UPLOAD_ACCEPT } from '../expense-upload.logic';
+import { CaptureAllocationSection } from './CaptureAllocationSection';
+import { CaptureFactsSection } from './CaptureFactsSection';
+import {
+  captureAllocation, captureBlockerRows, captureDerivedRows, captureHandoffConfirmParams,
+  captureStateChips, captureSummary, captureText,
+} from './expense-capture-review.logic';
 
 /**
  * งานรับหลักฐาน — the page a multi-file intake lands on (appendix §11).
  *
- * This wave owns the shell: the files, what the reader has done with each of them, and the three
- * things a person can do right now (add more, cut one out, keep the job for later). The facts and
- * the company/personal split arrive in W04 through the two slots below, which render nothing until
- * then — deliberately, so the page shape does not move under the user when they do.
+ * The page holds the group and the three things that act on the whole of it: the summary a person
+ * reads first, the blockers that must be visible BEFORE the one primary action (spec §13.4), and
+ * the handoff that turns an accepted allocation into ordinary expense records. The facts and the
+ * company/personal split live in their own sections below.
  *
  * Every affordance here comes from the server's `allowedActions`. A hidden button is not a guard,
  * and a shown one that 403s is a worse answer than no button at all.
@@ -55,11 +61,12 @@ const STATUS_TONES: Record<ExpenseCaptureGroupStatus, MangmeeTone> = {
   OPEN: 'brand', HANDED_OFF: 'teal', CLOSED_NO_HANDOFF: 'slate', CANCELLED: 'amber',
 };
 
-/** W04 fills these; today they render nothing so the layout is already in its final order. */
-export function CaptureFactsSection(_props: { group: ExpenseCaptureGroupDetailDto }) { return null; }
-export function CaptureAllocationSection(_props: { group: ExpenseCaptureGroupDetailDto }) { return null; }
+/** What the last handoff attempt told us. `unknown` is its own answer, never a silent failure. */
+type HandoffState = { kind: 'done' | 'unknown' | 'unavailable' } | null;
 
-export function ExpenseCaptureGroupPage({ companyId, groupId }: { companyId: string; groupId: string }) {
+export function ExpenseCaptureGroupPage({ companyId, groupId, userId, permissions }: {
+  companyId: string; groupId: string; userId: string; permissions: string[];
+}) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const toast = useToast();
@@ -72,7 +79,10 @@ export function ExpenseCaptureGroupPage({ companyId, groupId }: { companyId: str
   const [busy, setBusy] = useState(false);
   const [readStatus, setReadStatus] = useState<Record<string, ExpenseReadStatusFile>>({});
   const [preview, setPreview] = useState<DocumentPreviewSource | null>(null);
+  const [handoff, setHandoff] = useState<HandoffState>(null);
   const previewUrlRef = useRef<string | null>(null);
+  // One key per attempt, kept so a retry of the SAME allocation is the same batch (§9/A10).
+  const idempotencyRef = useRef<{ allocationId: string; key: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -209,20 +219,58 @@ export function ExpenseCaptureGroupPage({ companyId, groupId }: { companyId: str
     finally { setBusy(false); }
   };
 
+  /**
+   * "สร้างรายการค่าใช้จ่าย" — the one primary action (spec §13.4), and the only place this feature
+   * creates anything. The confirm says exactly what will exist afterwards and in which state; an
+   * unknown outcome re-reads the group instead of offering the button again (UXE-24).
+   */
+  const runHandoff = async () => {
+    const allocation = group ? captureAllocation(group) : null;
+    const allocationId = group?.allocation?.allocationId;
+    if (!group || !allocation || !allocationId) return;
+    const accepted = await confirm({
+      title: t('expenses.capture.handoff_confirm_title', locale),
+      message: captureText(t('expenses.capture.handoff_confirm_message', locale), captureHandoffConfirmParams(allocation)),
+      confirmLabel: t('expenses.capture.handoff', locale),
+    });
+    if (!accepted) return;
+    if (idempotencyRef.current?.allocationId !== allocationId) {
+      idempotencyRef.current = { allocationId, key: crypto.randomUUID() };
+    }
+    setBusy(true); setActionError(null); setHandoff(null);
+    try {
+      await handoffCaptureGroup(companyId, groupId, {
+        allocationId, expectedRevision: group.revision, idempotencyKey: idempotencyRef.current.key,
+      });
+      idempotencyRef.current = null;
+      setHandoff({ kind: 'done' });
+      toast.success(t('expenses.capture.handoff_done', locale));
+      await load();
+    } catch (cause) {
+      const status = (cause as { status?: number } | null)?.status;
+      // W05 owns the route: until it is deployed this is "not available", not a failed creation.
+      if (status === 404) setHandoff({ kind: 'unavailable' });
+      else if (status === undefined || status >= 500) { setHandoff({ kind: 'unknown' }); await load(); }
+      else setActionError(apiErrorMessage(cause));
+    } finally { setBusy(false); }
+  };
+
   /** "เก็บไว้ก่อน" is exactly that: navigation and a truthful toast, never a mutation. */
   const keepForLater = () => {
     toast.success(t('expenses.capture.kept_toast', locale));
     router.push(`/companies/${companyId}/expenses`);
   };
 
-  const openPreview = async (file: ExpenseCaptureFileDto) => {
+  const openPreview = async (file: ExpenseCaptureFileDto, pageIndex: number | null = null) => {
     setActionError(null);
     try {
       const blob = await fetchAttachmentPreviewBlob(companyId, file.attachmentId, file.mimeType);
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
       const url = URL.createObjectURL(blob);
       previewUrlRef.current = url;
-      setPreview({ name: file.originalFileName, mimeType: file.mimeType, url });
+      // "ดูหน้าที่อ้างอิง": the PDF viewer's own page fragment, so the cited page opens first.
+      const at = pageIndex !== null && file.mimeType === 'application/pdf' ? `#page=${pageIndex + 1}` : '';
+      setPreview({ name: file.originalFileName, mimeType: file.mimeType, url: `${url}${at}` });
     } catch (cause) { setActionError(apiErrorMessage(cause)); }
   };
 
@@ -249,7 +297,18 @@ export function ExpenseCaptureGroupPage({ companyId, groupId }: { companyId: str
     );
   }
 
-  const may = (action: 'add_file' | 'detach_file' | 'close') => group.allowedActions.includes(action);
+  const may = (action: ExpenseCaptureAction) => group.allowedActions.includes(action);
+  const summary = captureSummary(group, userId);
+  const blockers = captureBlockerRows(group.blockers, (code) => translateApiError(code) ?? code);
+  const derived = captureDerivedRows(group, companyId);
+  const unknownAmount = t('expenses.capture.summary_paid_unknown', locale);
+  const payerText = summary.payer.kind === 'company'
+    ? t('expenses.capture.funding_company', locale)
+    : summary.payer.kind === 'self'
+      ? t('expenses.capture.payer_option_self', locale)
+      : summary.payer.kind === 'member'
+        ? summary.payer.userId
+        : t('expenses.capture.summary_payer_unknown', locale);
 
   return (
     <MangmeePage
@@ -261,18 +320,68 @@ export function ExpenseCaptureGroupPage({ companyId, groupId }: { companyId: str
       <div className="flex flex-col gap-4 text-lg leading-8 text-gray-800">
         <div className="flex flex-wrap items-center gap-2">
           <MangmeeBadge tone={STATUS_TONES[group.status]}>{t(STATUS_LABELS[group.status], locale)}</MangmeeBadge>
-          {!may('add_file') && !may('detach_file') && !may('close') && (
+          {group.allowedActions.length === 0 && (
             <span className="text-sm text-gray-500">{t('expenses.capture.read_only', locale)}</span>
           )}
         </div>
 
         {actionError && <ErrorBanner message={actionError} />}
 
-        {group.blockers.length > 0 && (
+        {/* The summary a person reads first (spec §13.4). Six axes, never one green tick (§13.2). */}
+        <MangmeeCard className="p-4">
+          <h2 className="text-lg font-semibold text-gray-800">{t('expenses.capture.summary_title', locale)}</h2>
+          <p className="mt-2 text-base leading-7 text-gray-800">
+            {summary.headline
+              ? captureText(t(summary.headline.key, locale), summary.headline.params)
+              : t('expenses.capture.summary_no_facts', locale)}
+          </p>
+          {summary.incomplete && (
+            <p className="text-base leading-7 text-warning-700">
+              {captureText(t(summary.incomplete.key, locale), summary.incomplete.params)}
+            </p>
+          )}
+          <dl className="mt-2 space-y-1 text-base leading-7">
+            <div>
+              <dt className="inline font-semibold text-gray-700">{t('expenses.capture.summary_paid_total', locale)}: </dt>
+              <dd className="inline text-gray-800">{summary.paidTotal ? baht(summary.paidTotal) : unknownAmount}</dd>
+            </div>
+            <div>
+              <dt className="inline font-semibold text-gray-700">{t('expenses.capture.summary_company_amount', locale)}: </dt>
+              <dd className="inline text-gray-800">
+                {summary.companyAmount ? baht(summary.companyAmount) : t('expenses.capture.summary_company_unknown', locale)}
+              </dd>
+            </div>
+            {summary.personalAmount && (
+              <div>
+                <dt className="inline font-semibold text-gray-700">{t('expenses.capture.summary_personal_amount', locale)}: </dt>
+                <dd className="inline text-gray-800">{baht(summary.personalAmount)}</dd>
+              </div>
+            )}
+            <div>
+              <dt className="inline font-semibold text-gray-700">{t('expenses.capture.summary_payer', locale)}: </dt>
+              <dd className="inline text-gray-800">{payerText}</dd>
+            </div>
+          </dl>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {captureStateChips(group).map((chip) => (
+              <MangmeeBadge key={chip.axis} tone={chip.tone}>{t(chip.key, locale)}</MangmeeBadge>
+            ))}
+          </div>
+        </MangmeeCard>
+
+        {/* Before the primary action, always: what is wrong and what to do about it (§13.4/§17.1). */}
+        {blockers.length > 0 && (
           <MangmeeCard className="p-4">
             <h2 className="text-lg font-semibold text-gray-800">{t('expenses.capture.blockers_title', locale)}</h2>
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-base leading-7 text-gray-700">
-              {group.blockers.map((blocker) => <li key={blocker.code}>{blocker.messageTh}</li>)}
+            <ul className="mt-2 list-disc space-y-2 pl-5 text-base leading-7 text-gray-700">
+              {blockers.map((blocker) => (
+                <li key={blocker.code}>
+                  {blocker.message}
+                  <span className="block text-gray-600">
+                    {t('expenses.capture.blocker_way_out_label', locale)}: {t(blocker.wayOutKey, locale)}
+                  </span>
+                </li>
+              ))}
             </ul>
           </MangmeeCard>
         )}
@@ -293,10 +402,7 @@ export function ExpenseCaptureGroupPage({ companyId, groupId }: { companyId: str
                       <p className="text-sm text-gray-500">{captureMegabytes(file.byteSize)}</p>
                       {notice && (
                         <p className={cx('mt-2 text-base leading-7', notice.tone === 'error' ? 'text-error-700' : 'text-gray-700')}>
-                          {Object.entries(notice.params ?? {}).reduce(
-                            (message, [key, value]) => message.replace(`{${key}}`, value),
-                            t(notice.messageKey, locale),
-                          )}
+                          {captureText(t(notice.messageKey, locale), notice.params ?? {})}
                           {pausedKey ? ` (${t(pausedKey, locale)})` : ''}
                         </p>
                       )}
@@ -332,25 +438,63 @@ export function ExpenseCaptureGroupPage({ companyId, groupId }: { companyId: str
           )}
         </MangmeeCard>
 
-        {/* W04 slots. Present and empty on purpose. */}
-        <CaptureFactsSection group={group} />
-        <CaptureAllocationSection group={group} />
+        <CaptureFactsSection
+          companyId={companyId}
+          group={group}
+          canEdit={may('review')}
+          onChanged={load}
+          onOpenPage={(fileId, pageIndex) => {
+            const file = files.find((candidate) => candidate.fileId === fileId);
+            if (file) void openPreview(file, pageIndex);
+          }}
+        />
+        <CaptureAllocationSection
+          companyId={companyId}
+          group={group}
+          viewerUserId={userId}
+          canReview={permissions.includes('expense.review')}
+          onChanged={load}
+        />
 
-        {group.derivedSources.length > 0 && (
+        {handoff?.kind === 'unknown' && <InfoBanner message={t('expenses.capture.handoff_unknown', locale)} />}
+        {handoff?.kind === 'unavailable' && <InfoBanner message={t('expenses.capture.handoff_unavailable', locale)} />}
+        {handoff?.kind === 'done' && <InfoBanner message={t('expenses.capture.handoff_done', locale)} />}
+
+        {derived.length > 0 && (
           <MangmeeCard className="p-4">
-            <ul className="space-y-2 text-base">
-              {group.derivedSources.map((source) => (
-                <li key={source.expenseId}>
-                  <Link className="font-semibold text-brand-600 underline" href={`/companies/${companyId}/expenses/${source.expenseId}`}>
-                    {source.scopeKey || source.expenseId}
-                  </Link>
+            <h2 className="text-lg font-semibold text-gray-800">{t('expenses.capture.derived_title', locale)}</h2>
+            <ul className="mt-3 space-y-3">
+              {derived.map((source) => (
+                <li key={source.expenseId} className="rounded-xl border border-gray-200 bg-white p-3.5">
+                  <p className="text-base font-semibold text-gray-800">{source.label} · {baht(source.grandTotalAmount)}</p>
+                  <p className="mt-1"><StatusBadge status={source.status} /></p>
+                  {/* W06 fills the certificate line; until then it says nothing it cannot know. */}
+                  <p className="mt-1 text-sm text-gray-500">{t('expenses.capture.derived_certificate', locale)}</p>
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                    <Link className={cx(ghostClass, 'inline-flex min-h-11 items-center justify-center')} href={`/companies/${companyId}/expenses/${source.expenseId}`}>
+                      {t('expenses.capture.derived_open', locale)}
+                    </Link>
+                    {source.claimHref
+                      ? (
+                        <Link className={cx(ghostClass, 'inline-flex min-h-11 items-center justify-center')} href={source.claimHref}>
+                          {t('expenses.capture.derived_prepare_claim', locale)}
+                        </Link>
+                      )
+                      : <span className="text-sm text-gray-500">{t('expenses.capture.derived_claim_waiting_tax', locale)}</span>}
+                  </div>
                 </li>
               ))}
             </ul>
+            <p className="mt-3 text-sm text-gray-500">{t('expenses.capture.after_handoff_note', locale)}</p>
           </MangmeeCard>
         )}
 
         <div className="flex flex-col gap-2 sm:flex-row">
+          {may('handoff') && (
+            <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void runHandoff()}>
+              {t('expenses.capture.handoff', locale)}
+            </button>
+          )}
           <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} onClick={keepForLater}>
             {t('expenses.capture.keep_for_later', locale)}
           </button>
