@@ -42,6 +42,7 @@ const PAUSED_REASON_KEYS: Record<ExpenseCapturePausedReason, DictionaryKey> = {
   page_limit: 'expenses.capture.paused_page_limit',
   call_budget: 'expenses.capture.paused_call_budget',
   time_budget: 'expenses.capture.paused_time_budget',
+  memory_budget: 'expenses.capture.paused_memory_budget',
 };
 
 export const captureReadIsRunning = (status: ExpenseCaptureReadStatus | null | undefined): boolean =>

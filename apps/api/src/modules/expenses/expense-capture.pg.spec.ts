@@ -171,6 +171,41 @@ describe('expense capture foundation on PostgreSQL', { skip: !databaseUrl }, () 
     });
   });
 
+  it('answers with the ACCEPTED allocation even when a newer PREVIEW exists (W07-int)', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const groupId = await group('alloc-order');
+    const allocation = async (status: 'ACCEPTED' | 'PREVIEW') => {
+      const row = await capture.createAllocation(client as never, {
+        companyId, groupId, groupRevision: 2, policyVersion: 'shared-discount-v1',
+        selectionJson: {}, inputJson: {}, resultJson: { outcome: 'READY', scopes: [], blockers: [] },
+        fundingRoute: 'EMPLOYEE', payerUserId: payerId, computedByUserId: userId,
+      });
+      if (status === 'ACCEPTED') {
+        await client.expenseCaptureAllocation.update({
+          where: { id: row.id }, data: { status: 'ACCEPTED', acceptedByUserId: userId, acceptedAt: new Date() },
+        });
+      }
+      return row.id;
+    };
+
+    const accepted = await allocation('ACCEPTED');
+    // A reopened handoff (§18.2) computes a new PREVIEW while the acceptance the derived sources
+    // were built from is still the decision. A Postgres enum sorts by DECLARATION order — and this
+    // one declares PREVIEW first — so `orderBy: { status: 'asc' }` answered with the proposal.
+    const preview = await allocation('PREVIEW');
+    assert.notEqual(accepted, preview);
+    assert.equal((await capture.findGroupAllocation(client as never, companyId, groupId))!.id, accepted);
+
+    // With nothing accepted, the newest proposal is the answer.
+    const other = await group('alloc-preview-only');
+    const only = await capture.createAllocation(client as never, {
+      companyId, groupId: other, groupRevision: 2, policyVersion: 'shared-discount-v1',
+      selectionJson: {}, inputJson: {}, resultJson: { outcome: 'READY', scopes: [], blockers: [] },
+      fundingRoute: 'EMPLOYEE', payerUserId: payerId, computedByUserId: userId,
+    });
+    assert.equal((await capture.findGroupAllocation(client as never, companyId, other))!.id, only.id);
+  });
+
   it('keeps `handoffBatchKey` unique across the whole company (§9 idempotency)', async (t) => {
     if (unreachable) return t.skip(unreachable);
     const first = await group('handoff-1');

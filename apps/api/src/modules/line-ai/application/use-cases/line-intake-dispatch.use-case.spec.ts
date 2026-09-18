@@ -5120,11 +5120,27 @@ describe('LINE file lane (capture appendix §3)', () => {
   it('a caption riding with the file becomes the group note, not a manual-entry chat', async () => {
     const net = stubFetch();
     const h = captureHarness();
+    let outcome: { outcome: string } | undefined;
     try {
-      await h.useCase.executeReceiptUpload(FILE_EVENT, 'ค่าส่งของเดือนสิงหาคม');
+      outcome = await h.useCase.executeReceiptUpload(FILE_EVENT, 'ค่าส่งของเดือนสิงหาคม');
     } finally { net.restore(); }
     assert.equal(h.captureState.groups[0].note, 'ค่าส่งของเดือนสิงหาคม');
     assert.equal(h.ocrRequests.length, 0);
+    assert.equal(outcome?.outcome, 'done', 'a note is not a question');
+  });
+
+  it('a caption that is a QUESTION is answered as its own turn, not filed as the note (W07-int)', async () => {
+    const net = stubFetch();
+    const h = captureHarness();
+    let outcome: { outcome: string } | undefined;
+    try {
+      outcome = await h.useCase.executeReceiptUpload(FILE_EVENT, 'ไฟล์นี้ลงค่าใช้จ่ายบริษัทได้ไหม');
+    } finally { net.restore(); }
+    // The file turn still says the bytes are kept…
+    assert.match(h.replies[0] ?? '', /เก็บไฟล์แล้วค่ะ กำลังอ่านเอกสาร/);
+    // …and the buffer runs the question as a text turn afterwards (the image lane's `defer_text`).
+    assert.equal(outcome?.outcome, 'defer_text');
+    assert.equal(h.captureState.groups[0].note, undefined, 'a question is never stored as the note');
   });
 
   it('a redelivered file reuses the group it already produced instead of storing the bytes twice', async () => {

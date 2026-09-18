@@ -13,6 +13,7 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import type { BusinessDocumentClassification, ExpenseCaptureObservations } from '@watchdog-bms/contracts';
 import {
   EXPENSE_CAPTURE_MAX_PROVIDER_CALLS,
+  EXPENSE_CAPTURE_MAX_RUN_MS,
   ExpenseCaptureReadRunnerService,
   planWindows,
   priorDocuments,
@@ -65,6 +66,7 @@ async function build(options: {
   applyResult?: Record<string, unknown>;
   expense?: Record<string, unknown> | null;
   maxPages?: number;
+  derivativeMaxBytes?: number;
   corruptBytes?: boolean;
   jobOver?: Record<string, unknown>;
 } = {}) {
@@ -201,6 +203,7 @@ async function build(options: {
   const config = {
     expenseCaptureReadConcurrency: 2,
     expenseCapturePdfMaxPages: options.maxPages ?? 60,
+    expenseCaptureDerivativeMaxBytes: options.derivativeMaxBytes ?? 67_108_864,
     receiptQuotaEnforced: false,
   } as any;
 
@@ -374,6 +377,44 @@ describe('capture read runner — boundaries', () => {
       assert.equal(state.status, 'PAUSED');
       assert.equal(state.pausedReason, 'call_budget');
       assert.equal(harness.readCalls.length, 0);
+    } finally { harness.restore(); }
+  });
+
+  it('pauses with memory_budget instead of building derivatives without a ceiling', async () => {
+    harness = await build({ pages: 6, derivativeMaxBytes: 1 });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      const state = terminal(harness);
+      assert.equal(state.status, 'PAUSED');
+      assert.equal(state.pausedReason, 'memory_budget');
+      assert.equal(harness.readCalls.length, 0, 'the chunk that would pass the ceiling is never sent');
+      assert.equal(harness.outbox[0]![3].pausedReason, 'memory_budget');
+    } finally { harness.restore(); }
+  });
+
+  it('spends the JOB\'s time budget, not a fresh one per resume', async () => {
+    harness = await build({
+      pages: 6,
+      jobOver: { checkpointJson: { version: 1, pages: {}, chunks: {}, windows: {}, runMillis: EXPENSE_CAPTURE_MAX_RUN_MS + 1 } },
+    });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      const state = terminal(harness);
+      assert.equal(state.status, 'PAUSED');
+      assert.equal(state.pausedReason, 'time_budget');
+      assert.equal(harness.readCalls.length, 0, 'a job that already spent 15 minutes gets no more');
+    } finally { harness.restore(); }
+  });
+
+  it('banks the time this run spent, so the next claim starts from it', async () => {
+    harness = await build({ pages: 1 });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      const state = terminal(harness);
+      assert.equal(state.status, 'DONE');
+      assert.equal(typeof state.checkpointJson.runMillis, 'number');
+      assert.ok(state.checkpointJson.runMillis >= 0);
+      assert.ok(state.checkpointJson.derivativeBytes > 0, 'and what it already built');
     } finally { harness.restore(); }
   });
 

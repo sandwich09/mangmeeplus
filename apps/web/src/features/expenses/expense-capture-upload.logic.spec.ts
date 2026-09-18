@@ -4,6 +4,7 @@ import {
   allCaptureFilesStored,
   captureFileRejection,
   captureMegabytes,
+  hasUnfinishedCapture,
   mergeCaptureManifest,
   readCaptureManifest,
   reconcileCaptureUpload,
@@ -174,6 +175,20 @@ describe('capture upload state machine', () => {
     assert.equal(readCaptureManifest(broken, 'co-1'), null);
     assert.doesNotThrow(() => writeCaptureManifest(broken, null, 'co-1'));
     assert.equal(readCaptureManifest(undefined, 'co-1'), null);
+  });
+
+  it('an unfinished group is a question, not something a new selection may discard (W07-int)', () => {
+    const manifest = (files: CaptureUploadEntry[]) => ({ companyId: 'co-1', groupId: 'g-1', revision: 2, files });
+    assert.equal(hasUnfinishedCapture(null), false, 'nothing stored, nothing to ask about');
+    assert.equal(hasUnfinishedCapture(manifest([])), false);
+    assert.equal(
+      hasUnfinishedCapture(manifest([entry('a.jpg', 'STORED', 'file-1'), entry('b.jpg', 'FAILED', 'file-2')])),
+      true,
+      'bytes are on the server and only this manifest says which group they are in',
+    );
+    // A fully stored group never reaches storage (`settleCaptureUpload` clears it), but if it did
+    // there is nothing left to continue.
+    assert.equal(hasUnfinishedCapture(manifest([entry('a.jpg', 'STORED', 'file-1')])), false);
   });
 
   it('an empty selection is not "all stored"', () => {

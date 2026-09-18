@@ -153,6 +153,7 @@ export class AppConfigService {
   get expenseCapturePdfMaxPages(): number { return this.config.EXPENSE_CAPTURE_PDF_MAX_PAGES; }
   get expenseCaptureReadConcurrency(): number { return this.config.EXPENSE_CAPTURE_READ_CONCURRENCY; }
   get expenseCaptureRetentionDays(): number { return this.config.EXPENSE_CAPTURE_RETENTION_DAYS; }
+  get expenseCaptureDerivativeMaxBytes(): number { return this.config.EXPENSE_CAPTURE_DERIVATIVE_MAX_BYTES; }
   get crmAutoReplyEnabled(): boolean { return this.config.CRM_AUTO_REPLY_ENABLED; }
   get crmAiMinConfidence(): number { return this.config.CRM_AI_MIN_CONFIDENCE; }
   get crmAiOutboundAllowedDomains(): string[] {

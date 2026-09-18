@@ -129,6 +129,7 @@ export function capturePausedReasonTh(reason: string | null | undefined): string
     case 'page_limit': return 'เอกสารมีจำนวนหน้ามากกว่าที่ระบบอ่านอัตโนมัติได้';
     case 'call_budget': return 'ใช้รอบการอ่านของงานนี้ครบแล้ว';
     case 'time_budget': return 'ใช้เวลาอ่านนานเกินกว่าที่กำหนดไว้';
+    case 'memory_budget': return 'ไฟล์ใหญ่เกินที่อ่านอัตโนมัติได้ในรอบเดียว';
     default: return 'ยังอ่านไม่ครบทุกหน้า';
   }
 }

@@ -6861,7 +6861,7 @@ export class ProcessLineWebhookUseCase {
     ctx: RequestContext,
     event: LineReceiptUploadEvent,
     input: { media: DownloadedLineMedia; caption: string; branchId?: string },
-  ): Promise<{ groupId: string; fileId: string; attachmentId: string; readJobId: string; link: string }> {
+  ): Promise<{ groupId: string; fileId: string; attachmentId: string; readJobId: string | null; link: string }> {
     const created = await this.createCaptureGroup!.execute(ctx, {
       intakeChannel: 'LINE',
       lineChatKeyHash: chatKeyHashOf(event),
@@ -6919,8 +6919,15 @@ export class ProcessLineWebhookUseCase {
     media: DownloadedLineMedia;
     caption: string;
   }): Promise<LineMediaTurnOutcome> {
-    const { event, ctx, access, companyId, media, caption } = input;
+    const { event, ctx, access, companyId, media } = input;
     event.handoffSurface = 'line_capture_intake';
+    // A caption riding with a file can be a QUESTION rather than a note about the work ("ไฟล์นี้
+    // ลงค่าใช้จ่ายได้ไหม"). Storing it as the group note answers nobody, so the file turn keeps its
+    // own reply and the caption runs as its own text turn afterwards — the `defer_text` seam the
+    // buffer already honours for the image lane (spec §8).
+    const captionIsQuestion = Boolean(input.caption) && isInterveningQuestionText(input.caption);
+    const caption = captionIsQuestion ? '' : input.caption;
+    const finished = (): LineMediaTurnOutcome => ({ outcome: captionIsQuestion ? 'defer_text' : 'done' });
 
     // Redelivery (new webhookEventId, same lineMessageId): W01's unique index means this message
     // already produced a group, so answer with THAT one instead of storing the bytes twice.
@@ -6930,7 +6937,7 @@ export class ProcessLineWebhookUseCase {
         event, this.fileStoredReply(this.captureGroupLink(companyId, existing.groupId)), companyId, access,
       );
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId, { mediaState: 'redelivered' });
-      return { outcome: 'done' };
+      return finished();
     }
 
     const sameWork = await this.captureLine!.listOpenSameWorkGroups({
@@ -6983,6 +6990,8 @@ export class ProcessLineWebhookUseCase {
         replyText: question, intent: 'CLARIFY',
       });
       await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId, { mediaState: 'retained' });
+      // Never `defer_text` here: A45 has just asked "งานเดิม หรือ ใบใหม่", and a second turn would
+      // land on top of the question whose answer the next message is supposed to be.
       return { outcome: 'done' };
     }
 
@@ -6993,7 +7002,7 @@ export class ProcessLineWebhookUseCase {
       replyText: this.fileStoredReply(persisted.link), intent: 'EVIDENCE_CAPTURE',
     });
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId, { mediaState: 'retained' });
-    return { outcome: 'done' };
+    return finished();
   }
 
   /**
@@ -7025,7 +7034,7 @@ export class ProcessLineWebhookUseCase {
       });
       throw error;
     }
-    if (input.readFailedCode) {
+    if (input.readFailedCode && persisted.readJobId) {
       await this.captureLine.markReadFailed(ctx.companyId, persisted.readJobId, input.readFailedCode).catch(() => false);
     }
     await this.recordIntakeAttempt(event, {
@@ -7117,8 +7126,14 @@ ${link}`, ctx.companyId, access);
    *  re-send the clarify question or persist a second turn (Fix #7). The unique pending row is
    *  CLAIMED before any media bytes are uploaded: a concurrent racer that loses the (companyId,
    *  lineMessageId) unique race skips the byte upload entirely, so it can never leave an orphaned
-   *  attachment (Fix #8). ponytail: the loser's reserved (never-completed) upload intent is left
-   *  for storage GC — same convention as the capture path's incomplete intents. */
+   *  attachment (Fix #8).
+   *
+   *  The loser's reserved upload intent is deliberately NOT handed to
+   *  `ObjectVersionCleanupService`: that service deletes one stored object VERSION, and the loser
+   *  skipped `uploadLineMedia` entirely, so no version was ever written — enqueuing one would ask
+   *  the worker to delete an object that does not exist, under a producer prefix it does not allow.
+   *  What is left is a `PENDING_UPLOAD` `AttachmentObject` row holding no bytes, and it ages out of
+   *  the only thing that counts it (`sumPendingBytes`, a rolling `createdAfter` window). Accepted. */
   private async ensurePendingMedia(
     ctx: RequestContext,
     event: LineReceiptUploadEvent,

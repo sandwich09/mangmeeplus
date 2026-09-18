@@ -352,6 +352,11 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // them (§8, D08 default = AI_DATA_RETENTION_DAYS). Files an expense or certificate references
   // are never swept, whatever this says.
   EXPENSE_CAPTURE_RETENTION_DAYS: z.coerce.number().int().min(7).max(3650).default(90),
+  // Bytes of DERIVATIVES (copied chunks, rendered pages, tiles) one read job may produce in total
+  // before it pauses with `memory_budget` (§4.5 "ประมวลผลทีละ chunk"). The per-call ceilings bound
+  // one payload; this bounds the whole job, so a 60-page scan cannot walk a process out of memory
+  // one legal chunk at a time.
+  EXPENSE_CAPTURE_DERIVATIVE_MAX_BYTES: z.coerce.number().int().min(4_000_000).max(1_073_741_824).default(67_108_864),
   // L-08: the ERP executor is authoritative for AI mutation classification, so the API reads
   // the same switch the gateway does. Default off; production refuses true.
   AI_FINAL_MUTATION_ENABLED: envBoolean.default(false),

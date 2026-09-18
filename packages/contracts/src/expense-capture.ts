@@ -40,7 +40,7 @@ export type ExpenseCaptureElectronicVerification = {
 };
 
 /** Why a read stopped at a declared boundary rather than failing (§4.6/§10). */
-export type ExpenseCapturePausedReason = 'page_limit' | 'call_budget' | 'time_budget' | 'ai_credit';
+export type ExpenseCapturePausedReason = 'page_limit' | 'call_budget' | 'time_budget' | 'ai_credit' | 'memory_budget';
 
 /** The two reasons a group may be closed without a handoff (§9). */
 export const EXPENSE_CAPTURE_CLOSE_REASONS = ['NO_COMPANY_PORTION', 'CANCELLED'] as const;

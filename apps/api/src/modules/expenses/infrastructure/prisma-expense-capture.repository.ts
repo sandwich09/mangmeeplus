@@ -443,10 +443,23 @@ export class PrismaExpenseCaptureRepository {
     });
   }
 
-  findGroupAllocation(db: CaptureDb, companyId: string, groupId: string) {
-    return db.expenseCaptureAllocation.findFirst({
-      where: { companyId, groupId, status: { in: ['ACCEPTED', 'PREVIEW'] } },
-      orderBy: [{ status: 'asc' }, { computedAt: 'desc' }],
+  /**
+   * The allocation a reader should see: the DECISION if there is one, otherwise the newest
+   * proposal.
+   *
+   * Asked as two statements on purpose. `orderBy: { status: 'asc' }` does not mean "ACCEPTED
+   * first": a Postgres enum sorts by DECLARATION order and this one declares `PREVIEW` before
+   * `ACCEPTED`, so a group holding both — every reopened handoff (§18.2) — answered with the
+   * proposal instead of the acceptance the derived sources were built from.
+   */
+  async findGroupAllocation(db: CaptureDb, companyId: string, groupId: string) {
+    const accepted = await db.expenseCaptureAllocation.findFirst({
+      where: { companyId, groupId, status: 'ACCEPTED' },
+      orderBy: { computedAt: 'desc' },
+    });
+    return accepted ?? db.expenseCaptureAllocation.findFirst({
+      where: { companyId, groupId, status: 'PREVIEW' },
+      orderBy: { computedAt: 'desc' },
     });
   }
 
