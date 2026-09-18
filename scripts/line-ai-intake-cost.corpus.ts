@@ -22,11 +22,19 @@ import { createHash } from 'node:crypto';
  *  payload bytes (and therefore the cache prefix) identical between the baseline and any later run. */
 export const INTAKE_COST_CORPUS_TODAY_ISO = '2026-09-17';
 
+/**
+ * Corpus version. v2 (2026-09-18) APPENDS the period task set of the period-resolution spec (P-06);
+ * every v1 task is byte-identical, so an R5 baseline still compares task-by-task against a v2 run —
+ * only the manifest hash changes, and the spec pins the new one.
+ */
+export const INTAKE_COST_CORPUS_VERSION = 2;
+
 /** Coverage buckets spec §10.1 requires the corpus to contain. The spec file asserts each one is present. */
 export const INTAKE_COST_COVERAGE = [
   'greeting',
   'casual',
   'business_read',
+  'business_read_period',
   'capture_text',
   'capture_incomplete',
   'correction',
@@ -814,6 +822,55 @@ export const LINE_AI_INTAKE_COST_CORPUS: readonly IntakeCostTask[] = [
       alternativesWhy: 'A chat screenshot carries no amount and no document; UNSUPPORTED, CLARIFY and a non-expense reference are all legal, and none may create an expense.',
       permissionGate: 'none', permissionOutcome: 'allowed', forbidCapture: true,
     },
+  },
+
+  // ── v2: business reads that NAME a period (period-resolution spec P-06) ─────
+  // Every one of these is answerable only if the deterministic resolver read the period and the tool
+  // received exactly those boundaries; `INTAKE_COST_CORPUS_TODAY_ISO` fixes what each one resolves to.
+  {
+    id: 'text-period-sales-yesterday', kind: 'text', coverage: 'business_read_period',
+    messageText: 'ยอดขายเมื่อวานเท่าไหร่คะ', permissions: [...FULL_PERMISSIONS], activeCategories: [...CATEGORIES],
+    expect: { intents: ['BUSINESS_READ_QUESTION'], permissionGate: 'query', permissionOutcome: 'allowed' },
+  },
+  {
+    id: 'text-period-expense-last-month', kind: 'text', coverage: 'business_read_period',
+    messageText: 'ค่าใช้จ่ายเดือนที่แล้วรวมเท่าไหร่คะ', permissions: [...FULL_PERMISSIONS], activeCategories: [...CATEGORIES],
+    expect: { intents: ['BUSINESS_READ_QUESTION'], permissionGate: 'query', permissionOutcome: 'allowed' },
+  },
+  {
+    id: 'text-period-tax-vat-last-month', kind: 'text', coverage: 'business_read_period',
+    messageText: 'VAT เดือนที่แล้วยอดเท่าไหร่คะ', permissions: [...FULL_PERMISSIONS], activeCategories: [...CATEGORIES],
+    expect: { intents: ['BUSINESS_READ_QUESTION'], permissionGate: 'query', permissionOutcome: 'allowed' },
+  },
+  {
+    id: 'text-period-crm-last-week', kind: 'text', coverage: 'business_read_period',
+    messageText: 'สัปดาห์ที่แล้วมีลูกค้าใหม่กี่รายคะ', permissions: [...FULL_PERMISSIONS], activeCategories: [...CATEGORIES],
+    expect: { intents: ['BUSINESS_READ_QUESTION'], permissionGate: 'query', permissionOutcome: 'allowed' },
+  },
+  {
+    id: 'text-period-sales-named-month', kind: 'text', coverage: 'business_read_period',
+    messageText: 'ยอดขาย ส.ค. 68 เท่าไหร่คะ', permissions: [...FULL_PERMISSIONS], activeCategories: [...CATEGORIES],
+    expect: { intents: ['BUSINESS_READ_QUESTION'], permissionGate: 'query', permissionOutcome: 'allowed' },
+  },
+  {
+    id: 'text-period-expense-explicit-range', kind: 'text', coverage: 'business_read_period',
+    messageText: 'ค่าใช้จ่าย 1-15 ก.ย. รวมเท่าไหร่คะ', permissions: [...FULL_PERMISSIONS], activeCategories: [...CATEGORIES],
+    expect: { intents: ['BUSINESS_READ_QUESTION'], permissionGate: 'query', permissionOutcome: 'allowed' },
+  },
+  {
+    id: 'text-period-daily-closing-day-before', kind: 'text', coverage: 'business_read_period',
+    messageText: 'ปิดยอดเมื่อวานซืนเป็นยังไงบ้างคะ', permissions: [...FULL_PERMISSIONS], activeCategories: [...CATEGORIES],
+    expect: { intents: ['BUSINESS_READ_QUESTION'], permissionGate: 'query', permissionOutcome: 'allowed' },
+  },
+  {
+    id: 'text-period-sales-last-year', kind: 'text', coverage: 'business_read_period',
+    messageText: 'ยอดขายปีที่แล้วเท่าไหร่คะ', permissions: [...FULL_PERMISSIONS], activeCategories: [...CATEGORIES],
+    expect: { intents: ['BUSINESS_READ_QUESTION'], permissionGate: 'query', permissionOutcome: 'allowed' },
+  },
+  {
+    id: 'text-period-sales-last-month-en', kind: 'text', coverage: 'business_read_period',
+    messageText: 'how much did we sell last month?', permissions: [...FULL_PERMISSIONS], activeCategories: [...CATEGORIES],
+    expect: { intents: ['BUSINESS_READ_QUESTION'], permissionGate: 'query', permissionOutcome: 'allowed' },
   },
 ] as const;
 

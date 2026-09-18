@@ -11,8 +11,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { asIntakeRouteIntent } from '@watchdog-bms/contracts';
+import { extractValueCandidates } from '@watchdog-bms/contracts';
 import {
   INTAKE_COST_CAPTURE_INTENTS,
+  INTAKE_COST_CORPUS_TODAY_ISO,
+  INTAKE_COST_CORPUS_VERSION,
   INTAKE_COST_COVERAGE,
   LINE_AI_INTAKE_COST_CORPUS,
   intakeCostCorpusHash,
@@ -22,7 +25,9 @@ import {
 
 /** The frozen hash. Changing the corpus REQUIRES updating this line in the same commit, which is
  *  exactly the review signal we want: a silent drift between baseline and after-run is impossible. */
-const FROZEN_CORPUS_SHA256: string = 'cf9bce443b3012ef39a081670614b8651fa55483aa34043376978d4b13becce2';
+// v2 (2026-09-18): the period task set of the period-resolution spec (P-06) appended. Every v1 task
+// is byte-identical — only the manifest hash moved, so an R5 baseline still compares task-by-task.
+const FROZEN_CORPUS_SHA256: string = 'ae237f275d85a1d8e1be5a44f4325822d6f35d148ef2bac1415a0874f581ab83';
 
 /** Thai 13-digit national/tax id check digit: weights 13..2, remainder from 11, last digit (11-r)%10. */
 function passesThaiIdChecksum(digits: string): boolean {
@@ -53,7 +58,8 @@ describe('LINE intake cost corpus — manifest integrity', () => {
   it('has unique ids and the sizes spec §10.1 asks for', () => {
     const ids = LINE_AI_INTAKE_COST_CORPUS.map((t) => t.id);
     assert.equal(new Set(ids).size, ids.length, 'duplicate task id');
-    assert.ok(TEXT_TASKS.length >= 24 && TEXT_TASKS.length <= 32, `text tasks out of range: ${TEXT_TASKS.length}`);
+    // v2 widened the upper bound by the nine appended period tasks (P-06); the §10.1 floor is unchanged.
+    assert.ok(TEXT_TASKS.length >= 24 && TEXT_TASKS.length <= 41, `text tasks out of range: ${TEXT_TASKS.length}`);
     assert.ok(IMAGE_TASKS.length >= 8 && IMAGE_TASKS.length <= 10, `image tasks out of range: ${IMAGE_TASKS.length}`);
   });
 
@@ -145,6 +151,21 @@ describe('LINE intake cost corpus — manifest integrity', () => {
         assert.ok(!/@[a-z0-9.-]+\.[a-z]{2,}/i.test(text), `${task.id}: looks like an email address`);
       }
     }
+  });
+
+  it('v2 period tasks each carry a period the deterministic resolver can read (P-06)', () => {
+    const periodTasks = LINE_AI_INTAKE_COST_CORPUS.filter((task) => task.coverage === 'business_read_period');
+    assert.ok(periodTasks.length >= 8, `expected at least 8 period tasks, found ${periodTasks.length}`);
+    assert.ok(periodTasks.some((task) => /^[\x00-\x7F]+$/.test(task.messageText)), 'one period task must be English');
+    for (const task of periodTasks) {
+      const periods = extractValueCandidates(task.messageText, INTAKE_COST_CORPUS_TODAY_ISO).periods ?? [];
+      assert.ok(periods.length > 0, `${task.id}: the resolver read no period from this message`);
+      for (const period of periods) {
+        assert.ok(period.fromDate <= period.toDate, `${task.id}: inverted period`);
+        assert.ok(period.toDate <= INTAKE_COST_CORPUS_TODAY_ISO, `${task.id}: period reaches into the future`);
+      }
+    }
+    assert.equal(INTAKE_COST_CORPUS_VERSION, 2);
   });
 
   it('is frozen: the content hash still matches the pinned value', () => {

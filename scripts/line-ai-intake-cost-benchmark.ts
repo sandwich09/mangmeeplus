@@ -349,8 +349,24 @@ const STUB_DATA: Record<string, unknown> = {
   'workflow.list_assigned_tasks': { count: 1, items: [{ id: 'wf-1', title: 'ตรวจบิล' }] },
 };
 
+/** What each tool was actually asked for, per task (period-resolution spec P-06). Ids, dates and
+ *  enums only — the values a read tool takes are already bounded to those by the sanitizer, and a
+ *  bounded copy is what makes "the tool got the period the resolver produced" checkable after a run. */
+type ToolInputRecord = { tool: string; input: Record<string, string | number | boolean> };
+let TOOL_INPUTS: ToolInputRecord[] = [];
+
+function boundedToolInput(input: Record<string, unknown>): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (typeof value === 'string') out[key] = value.slice(0, 40);
+    else if (typeof value === 'number' || typeof value === 'boolean') out[key] = value;
+  }
+  return out;
+}
+
 const erpTools = {
-  async invoke(tool: ToolMeta, _ctx: unknown, _input: Record<string, unknown> = {}): Promise<ToolResult> {
+  async invoke(tool: ToolMeta, _ctx: unknown, input: Record<string, unknown> = {}): Promise<ToolResult> {
+    TOOL_INPUTS.push({ tool: tool.name, input: boundedToolInput(input) });
     return {
       toolName: tool.name,
       status: 'ok',
@@ -437,6 +453,11 @@ type TaskRecord = {
   costSatang: number;
   usage: AiUsageEntry[];
   callShapes: CallShape[];
+  /** Every ERP tool call this task made, with the input it received (P-06). */
+  toolInputs: ToolInputRecord[];
+  /** The periods the deterministic resolver read from this task's message (P-06), so a run can be
+   *  scored without re-deriving them. Empty when the message names no period. */
+  resolvedPeriods: Array<{ kind: string; fromDate: string; toDate: string; monthKey?: string; source: string }>;
 };
 
 const ROUTE_REFUSAL_INTENTS = new Set(['MUTATION_REQUEST_REFUSAL', 'UNSUPPORTED', 'CLARIFY']);
@@ -527,6 +548,7 @@ async function runTask(
   runId: string,
 ): Promise<TaskRecord> {
   CALL_SHAPES = [];
+  TOOL_INPUTS = [];
   const startedAt = Date.now();
   const requestId = `${runId}-p${pass}-${task.id}`;
   const rendered = task.image ? await renderImage(task.image) : undefined;
@@ -677,6 +699,16 @@ function finishRecord(input: {
     costSatang,
     usage,
     callShapes: [...CALL_SHAPES],
+    toolInputs: [...TOOL_INPUTS],
+    resolvedPeriods: (task.messageText
+      ? extractValueCandidates(task.messageText, INTAKE_COST_CORPUS_TODAY_ISO).periods ?? []
+      : []).map((period) => ({
+        kind: period.kind,
+        fromDate: period.fromDate,
+        toDate: period.toDate,
+        ...(period.monthKey ? { monthKey: period.monthKey } : {}),
+        source: period.source,
+      })),
   };
 }
 
@@ -690,6 +722,18 @@ function percentile(values: number[], p: number): number {
   const sorted = [...values].sort((a, b) => a - b);
   const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
   return sorted[index]!;
+}
+
+/** True when SOME call of this task was handed exactly a period the resolver read from its message
+ *  (either boundary pair, the CRM window, the single day, or the month key). */
+function periodInputMatches(record: TaskRecord): boolean {
+  return record.toolInputs.some((call) => record.resolvedPeriods.some((period) => {
+    const got = call.input;
+    if (typeof got['periodKey'] === 'string') return got['periodKey'] === period.monthKey;
+    if (typeof got['date'] === 'string') return got['date'] === period.fromDate && period.fromDate === period.toDate;
+    if (typeof got['newSince'] === 'string') return got['newSince'] === period.fromDate && got['newUntil'] === period.toDate;
+    return got['fromDate'] === period.fromDate && got['toDate'] === period.toDate;
+  }));
 }
 
 function summarize(records: TaskRecord[]) {
@@ -876,6 +920,25 @@ function markdown(records: TaskRecord[], summary: ReturnType<typeof summarize>, 
   for (const [key, value] of Object.entries(accounting.sections)) lines.push(`| ${key} | ${value} |`);
   lines.push('');
   lines.push(`Measured cacheable-prefix chars per cache-write token: ${accounting.measuredCharsPerCacheWriteToken?.toFixed(2) ?? 'n/a'} (${accounting.coldSampleCount} cold samples).`, '');
+  // Period resolution (spec P-06): for every task whose message NAMES a period, what the resolver
+  // produced against what the tool was actually handed. Nothing here is judged by a model.
+  const periodRows = records.filter((record) => record.resolvedPeriods.length > 0);
+  if (periodRows.length > 0) {
+    const matched = periodRows.filter(periodInputMatches);
+    lines.push('## Period resolution (resolver vs. the input the tool received)', '');
+    lines.push(`Matched **${matched.length} of ${periodRows.length}** (${pct(matched.length, periodRows.length)}).`, '');
+    lines.push('| task | pass | resolved period | tool | input the tool received | match | lane | success |');
+    lines.push('| --- | ---: | --- | --- | --- | --- | --- | --- |');
+    for (const record of periodRows) {
+      const period = record.resolvedPeriods[0]!;
+      const call = record.toolInputs[0];
+      lines.push(`| ${record.taskId} | ${record.pass} | ${period.kind} ${period.fromDate}..${period.toDate}`
+        + `${period.monthKey ? ` (${period.monthKey})` : ''} | ${call?.tool ?? '—'} | `
+        + `\`${call ? JSON.stringify(call.input) : '—'}\` | ${periodInputMatches(record) ? 'yes' : 'NO'} | `
+        + `${record.toolInputs.length === 1 ? 'one call' : `${record.toolInputs.length} calls`} | ${record.success ? 'ok' : 'BAD'} |`);
+    }
+    lines.push('');
+  }
   lines.push('## Failures', '');
   const failures = records.filter((r) => !r.success);
   if (failures.length === 0) lines.push('None.');
@@ -1026,6 +1089,7 @@ function budgetStoppedRecord(task: IntakeCostTask, pass: number, runId: string):
     expectedIntents: [...task.expect.intents], routingCorrect: false,
     permissionOutcome: task.expect.permissionOutcome, followOn: 'none',
     latencyMs: 0, wallClockMs: 0, calls: 0, costSatang: 0, usage: [], callShapes: [],
+    toolInputs: [], resolvedPeriods: [],
   };
 }
 
