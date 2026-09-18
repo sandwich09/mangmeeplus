@@ -154,6 +154,17 @@ export const LINE_AI_FEATURE_COVERAGE: readonly LineAiFeatureCoverageRow[] = [
   { id: 'inventory_product_detail', feature: 'Inventory product detail', status: 'covered', questionKinds: ['detail'], tools: tools('inventory.get_product_detail'), requiredPermissions: ['inventory.product.read'], sourceModule: 'inventory' },
   { id: 'accounting_document_detail', feature: 'Accounting document detail and receivables', status: 'covered', questionKinds: ['detail', 'summary'], tools: tools('accounting.get_document_detail', 'accounting.get_receivable_summary'), requiredPermissions: ['accounting.document.read', 'accounting.document.read_related'], sourceModule: 'accounting-documents' },
   { id: 'expense_detail', feature: 'Expense detail and record explanation', status: 'covered', questionKinds: ['detail', 'explain'], tools: tools('expense.get_detail', 'expense.explain_record'), requiredPermissions: ['expense.read', 'expense.review', 'expense.read_related', 'expense.read_own'], sourceModule: 'expenses' },
+  // Capture appendix §10.1 (spec §17.5). The tool is registered and API-wired, but the question it
+  // answers — "ไฟล์เมื่อกี้ทำไมส่งไม่ได้" — is answered DETERMINISTICALLY by the webhook's own §17.5
+  // handler before any model runs, exactly as §17.5 requires when AI is unavailable. It is not in
+  // the router catalog or a specialist's allow-list yet, so claiming coverage here would be false.
+  {
+    id: 'line_file_attempt', feature: 'Explain what happened to a file sent over LINE', status: 'feature_gated',
+    questionKinds: ['explain'], tools: tools('line.explain_file_attempt'),
+    requiredPermissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create'],
+    sourceModule: 'line-ai', owningItem: 'W02-LINE (capture appendix §10.1)',
+    reason: 'Answered deterministically by the §17.5 LINE status handler; the router catalog and the specialist allow-lists do not offer this tool yet.',
+  },
   // S-4 (draft-control spec §5.4). `covered` describes gateway reachability only, which is what this
   // manifest asserts; whether the five tools are OFFERED on a given deployment is
   // `LINE_AI_DRAFT_EDIT_ENABLED`, enforced in the router catalog and the API executor.

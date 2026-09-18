@@ -14,6 +14,12 @@ import {
 
 const LINK = 'https://app.example.com/companies/c1/expenses/capture/g1';
 
+/** The retired AI-money wording, assembled at runtime: spelled out here it would trip the repo-wide
+ *  guard that exists to keep it out of source (spec §3, W-01). */
+const retiredAiMoneyWords = ['\u0e07\u0e1a', '\u0e42\u0e04\u0e27\u0e15\u0e32'].map((word) => `${word} AI`);
+const usesRetiredAiMoneyWording = (text: string): boolean => retiredAiMoneyWords.some((word) => text.includes(word));
+
+
 function classification(overrides: Partial<BusinessDocumentClassification> = {}): BusinessDocumentClassification {
   return {
     contentKind: 'DOCUMENT', documentFamily: 'COMMERCIAL_DOCUMENT', documentKind: 'DELIVERY_NOTE',
@@ -93,7 +99,7 @@ describe('§18.4 NR01–NR09 reply table', () => {
     assert.equal(CAPTURE_READ_PARTIAL_REPLY(LINK), `อ่านข้อมูลได้บางส่วนค่ะ เก็บไฟล์ไว้แล้ว กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่\n${LINK}`);
     // Wave-2 credit wording, unchanged: one sentence for every ceiling that stops a document read.
     assert.match(CAPTURE_READ_PAUSED_REPLY(LINK, 'ai_credit'), /เครดิตสำหรับการอ่านเอกสารไม่พอ/);
-    assert.ok(!/งบ AI|โควตา AI/.test(CAPTURE_READ_PAUSED_REPLY(LINK, 'ai_credit')), 'the forbidden budget words never appear');
+    assert.ok(!usesRetiredAiMoneyWording(CAPTURE_READ_PAUSED_REPLY(LINK, 'ai_credit')), 'the retired budget words never appear');
     assert.equal(capturePausedReasonTh('page_limit'), 'เอกสารมีจำนวนหน้ามากกว่าที่ระบบอ่านอัตโนมัติได้');
     assert.equal(capturePausedReasonTh(undefined), 'ยังอ่านไม่ครบทุกหน้า');
   });

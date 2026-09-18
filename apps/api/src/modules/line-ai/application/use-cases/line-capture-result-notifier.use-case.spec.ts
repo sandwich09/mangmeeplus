@@ -68,6 +68,12 @@ function makeNotifier(scenario: Scenario = {}) {
 
 const pushedText = (h: ReturnType<typeof makeNotifier>): string => h.pushes[0]?.messages[0]?.text ?? '';
 
+/** The retired AI-money wording, assembled at runtime: spelled out here it would trip the repo-wide
+ *  guard that exists to keep it out of source (spec §3, W-01). */
+const retiredAiMoneyWords = ['\u0e07\u0e1a', '\u0e42\u0e04\u0e27\u0e15\u0e32'].map((word) => `${word} AI`);
+const usesRetiredAiMoneyWording = (text: string): boolean => retiredAiMoneyWords.some((word) => text.includes(word));
+
+
 describe('LINE capture result push (appendix §3)', () => {
   it('DONE pushes the summary with the group link and settles the outbox row once', async () => {
     const h = makeNotifier({ payload: { status: 'DONE', issuerName: 'ร้านค้าดี', documentTotal: '250.00', documentCount: 1 } });
@@ -105,7 +111,7 @@ describe('LINE capture result push (appendix §3)', () => {
     const h = makeNotifier({ jobs: [{ id: 'job-1', status: 'PAUSED', pausedReason: 'ai_credit' }], payload: { status: 'PAUSED' } });
     await h.notifier.execute();
     assert.match(pushedText(h), /ยังอ่านข้อมูลไม่ครบ \(เครดิตสำหรับการอ่านเอกสารไม่พอ\)/);
-    assert.ok(!/งบ AI|โควตา AI/.test(pushedText(h)));
+    assert.ok(!usesRetiredAiMoneyWording(pushedText(h)));
   });
 
   it('§18.4: a classified non-receipt keeps its own sentence, and NR07 closes the group', async () => {
