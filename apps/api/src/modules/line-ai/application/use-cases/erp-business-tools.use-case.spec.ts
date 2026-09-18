@@ -9,7 +9,7 @@ import {
   ExpenseGetBreakdownTool,
   ProcurementApOutstandingTool,
 } from './erp-business-tools.use-case';
-import { resolvePeriodInput, currentMonthRange, SalesGetSalesSummaryTool } from './erp-tools.use-case';
+import { resolvePeriodInput, currentMonthRange, ExpenseListRecentTool, SalesGetSalesSummaryTool } from './erp-tools.use-case';
 import { InventoryGetStockBalanceTool, InventoryListLowStockTool, InventorySearchProductsTool } from './erp-tools.use-case';
 import { NotificationsListOpenAlertsTool } from './erp-dashboard-tools.use-case';
 import { WorkflowListAssignedTasksTool, WorkflowListRecentFailuresTool, WorkflowSummarizeRuleHealthTool } from './erp-workflow-tools.use-case';
@@ -33,6 +33,69 @@ describe('resolvePeriodInput (owner decision: default = now)', () => {
   it('drops malformed dates and falls back to the current month', () => {
     const period = resolvePeriodInput({ fromDate: 'DROP TABLE', toDate: 'x' });
     assert.equal(period.defaulted, true);
+  });
+});
+
+// Period-resolution spec §3.3 (P-04): with NO period stated, every period-scoped read tool answers
+// for the CURRENT MONTH — daily closing for TODAY, because closing is a per-day question. One test
+// per tool, driving the real adapter and reading the window it actually queried or echoed.
+describe('§3.3 default period: current month (daily closing: today)', () => {
+  const month = () => currentMonthRange();
+  const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+  const bangkok = (day: string, end = false) => new Date(`${day}T${end ? '23:59:59.999' : '00:00:00'}+07:00`).toISOString();
+
+  it('sales.get_sales_summary reads the current month', async () => {
+    const captured: { where?: any } = {};
+    const prisma = {
+      client: {
+        accountingPayment: { groupBy: async (args: any) => { captured.where = args.where; return []; } },
+        company: { findUnique: async () => ({ baseCurrency: 'THB' }) },
+      },
+    } as any;
+    const result = await new SalesGetSalesSummaryTool(prisma).execute({ ...baseCtx, permissions: ['crm.report.read'] });
+    assert.deepEqual((result.data as any).period, { ...month(), defaultedToCurrentMonth: true });
+    assert.equal(captured.where.paidAt.gte.toISOString(), bangkok(month().fromDate));
+    assert.equal(captured.where.paidAt.lte.toISOString(), bangkok(month().toDate, true));
+  });
+
+  it('expense.list_recent reads the current month', async () => {
+    const captured: { filter?: any } = {};
+    const listExpenses = {
+      execute: async (_ctx: any, filter: any) => { captured.filter = filter; return { data: [], total: 0, page: 1, pageSize: 100 }; },
+    } as any;
+    const result = await new ExpenseListRecentTool(listExpenses, { client: {} } as any)
+      .execute({ ...baseCtx, permissions: ['expense.read'] });
+    assert.deepEqual((result.data as any).period, { ...month(), defaultedToCurrentMonth: true });
+    assert.equal(captured.filter.fromDate, month().fromDate);
+    assert.equal(captured.filter.toDate, month().toDate);
+  });
+
+  it('accounting.get_summary reads the current month', async () => {
+    const captured: { filter?: any } = {};
+    const source = { aggregateByType: async (_ctx: any, filter: any) => { captured.filter = filter; return { total: 0, byType: {} }; } } as any;
+    const result = await new AccountingGetSummaryTool(source).execute({ ...baseCtx, permissions: ['accounting.document.read'] });
+    assert.deepEqual((result.data as any).period, { ...month(), defaultedToCurrentMonth: true });
+    assert.equal(captured.filter.fromDate, month().fromDate);
+  });
+
+  it('expense.get_breakdown reads the current month', async () => {
+    const captured: { where?: any } = {};
+    const prisma = {
+      client: {
+        expenseRecord: { groupBy: async (args: any) => { captured.where = args.where; return []; } },
+        expenseCategory: { findMany: async () => [] },
+        branch: { findMany: async () => [] },
+      },
+    } as any;
+    const result = await new ExpenseGetBreakdownTool(prisma).execute({ ...baseCtx, permissions: ['expense.read'] });
+    assert.deepEqual((result.data as any).period, { ...month(), defaultedToCurrentMonth: true });
+  });
+
+  it('expense.get_daily_closing reads TODAY — the documented per-day exception', async () => {
+    const { prisma } = makeDailyClosingPrisma();
+    const result = await new ExpenseGetDailyClosingTool(prisma).execute(dailyClosingCtx);
+    assert.equal(result.status, 'ok');
+    assert.equal((result.data as any).date, today());
   });
 });
 

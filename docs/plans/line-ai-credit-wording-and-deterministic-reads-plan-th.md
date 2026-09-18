@@ -9,13 +9,16 @@
 
 ### H1. คำว่า "เครดิต AI" + ข้อความปฏิเสธการอ่านเอกสาร + billing hold warnings — spec §3, §4, §5
 
-- [ ] ทำ mapping ครบทุกจุดที่ผู้ใช้/แอดมินอ่าน (LINE reply, Flex card, drain notice + integrity check, web dictionary, banking/CRM/expenses notices, partner console + adjustment history, timeline, ops alert, billing pages, browser smoke scripts) ตาม spec §3; ไม่แตะ code/enum/telemetry/ชื่อ field
-- [ ] เส้นทางรูป: `aiBudgetReasonTh` + governance notice รวมเหตุฝั่งเงิน/จำนวนใบเป็น "เครดิตสำหรับการอ่านเอกสารไม่พอ"; unavailable/busy/disabled คงแยก; tail สถานะไฟล์เดิม; code/scope/class/count-refund เดิม (พิสูจน์ด้วย whole-chain + combined regression ที่แก้เฉพาะ expected text)
-- [ ] เส้นทางแชต: การ์ด TOTAL/CHAT/insufficient และ drain notice ตาม §5.1
-- [ ] Billing: `AI_CREDIT_HOLDS_PENDING` (additive) + `aiReservedSatang`/`aiUnresolvedHolds` (additive) + label; บริษัทไม่มี hold ผลเดิม; ไม่มีเงินไปหน้า owner
-- [ ] Web: Thai error map/dictionary coverage spec ผ่าน; ไม่มี "งบ AI"/"โควตา AI" เหลือ (guard test แบบ grep ใน spec ที่ลงทะเบียนแล้ว)
-- [ ] Browser evidence 1440/390: หน้าแอดมิน AI และโควตา, billing ใบเสร็จ/แพ็กเกจ (มี hold และไม่มี hold) → `docs/qa/evidence/line-ai-credit-wording-2026-09-18/`
-- [ ] Docs: spec W-01…W-04, W-08 tick ตามหลักฐาน; task memory
+สถานะ: **ทำแล้ว** บนสาขา `codex/line-ai-wave2-h1-credit-wording-20260918` (ยัง local, ยังไม่ merge/deploy); หลักฐานใน spec §9.1 และ task memory
+
+- [x] ทำ mapping ครบทุกจุดที่ผู้ใช้/แอดมินอ่าน (LINE reply, Flex card, drain notice + integrity check, web dictionary, banking/CRM/expenses notices, partner console + adjustment history, timeline, ops alert, billing pages, browser smoke scripts, sidebar "เครดิตการใช้ AI") ตาม spec §3; ไม่แตะ code/enum/telemetry/ชื่อ field
+- [x] เส้นทางรูป: `aiBudgetReasonTh` + governance notice รวมเหตุฝั่งเงิน/จำนวนใบเป็น "เครดิตสำหรับการอ่านเอกสารไม่พอ"; unavailable/busy/disabled คงแยก; tail สถานะไฟล์เดิม; code/scope/class/count-refund เดิม (พิสูจน์ด้วย whole-chain + combined regression ที่แก้เฉพาะ expected text)
+- [x] เส้นทางแชต: การ์ด TOTAL/CHAT/insufficient และ drain notice ตาม §5.1
+- [x] Billing: `AI_CREDIT_HOLDS_PENDING` (additive) + `aiReservedSatang`/`aiUnresolvedHolds` (additive, ใส่เมื่อ > 0) + label; บริษัทไม่มี hold ผลเดิม; ไม่มีเงินไปหน้า owner (ทุก consumer ของ union เป็น System Admin only)
+- [x] Web: Thai error map/dictionary coverage spec ผ่าน; ไม่มี "งบ AI"/"โควตา AI" เหลือ (guard test แบบ grep ใน `api-error-coverage.spec.ts` ที่ลงทะเบียนแล้ว)
+- [x] Browser evidence 1440/390: หน้าแอดมิน AI และโควตา, billing ใบเสร็จ/แพ็กเกจ (มี hold และไม่มี hold) → `docs/qa/evidence/line-ai-credit-wording-2026-09-18/`
+- [x] Docs: spec W-01…W-04, W-08 tick ตามหลักฐาน (+ §9.1); task memory
+- [ ] ค้าง: `admin-ai-adjustments-smoke.ts` แก้ selector แล้วแต่รันในเครื่องไม่ได้ (billing-http-smoke harness) → รอ CI; W-09 UAT รอ deploy
 
 ### H2. Deterministic business reads (R5) — spec §6
 
@@ -28,15 +31,25 @@
 
 ### H3. เคลียร์เครดิตที่กันไว้ค้าง — [spec แยก](../specs/line-ai-credit-hold-reconciliation-spec-th.md) (owner อนุมัติ 2026-09-18)
 
-เริ่มหลัง H1 merge (ใช้คำว่า "เครดิต AI" และแตะไฟล์หน้าแอดมินชุดเดียวกัน)
+เริ่มหลัง H1 merge (ใช้คำว่า "เครดิต AI" และแตะไฟล์หน้าแอดมินชุดเดียวกัน) — **IMPLEMENTED + verified ในเครื่อง 2026-09-18**, ยังไม่ deploy
 
-- [ ] ชั้น 1 gateway: durable settle retry นอกเส้นทางคำขอ + graceful drain บน SIGTERM (J-01, J-02) — SHARED byte-identical
-- [ ] ชั้น 2 API: `GET …/ai-credit-holds` (sweep แล้วอ่าน), actions release / charge_at_bound / acknowledge_breach พร้อม reason + audit + history; migration additive (`breachAcknowledgedAt/By`), `AiUsageBasis` + `OPERATOR_CHARGED_AT_BOUND`, Thai error texts; pg spec (J-03, J-04, J-07)
-- [ ] ชั้น 2 web: section "เครดิตที่กันไว้ค้าง" ในหน้า AI และโควตา + ประวัติ; browser evidence (J-05)
-- [ ] ชั้น 3: sweep `ai_credit_holds_unresolved` + config `AI_CREDIT_HOLD_ALERT_AFTER_HOURS` (J-06)
-- [ ] Docs: spec J-01…J-07 tick ตามหลักฐาน; J-08 หลัง UAT; task memory
+- [x] ชั้น 1 gateway: durable settle retry นอกเส้นทางคำขอ + graceful drain บน SIGTERM (J-01, J-02) — SHARED byte-identical: `ai-budget-durability.ts` (คิว + in-flight gauge ระดับโปรเซส), `ai-budget-shutdown.service.ts`, `main.ts` `enableShutdownHooks()`; ไม่มี envelope ⇒ ไม่แตะทั้งคิวและ gauge
+- [x] ชั้น 2 API: `GET …/ai-credit-holds` (sweep แล้วอ่าน), actions release / charge_at_bound / acknowledge_breach พร้อม reason + audit + history; migration additive `20260918100000_ai_credit_hold_reconciliation` (`breachAcknowledgedAt/By` + ขยาย `usageBasis` CHECK), `AiUsageBasis` + `OPERATOR_CHARGED_AT_BOUND`, Thai error texts; pg spec `company-ai-credit-holds.pg.spec.ts` (J-03, J-04, J-07)
+- [x] ชั้น 2 web: section "เครดิตที่กันไว้ค้าง" ในหน้า AI และโควตา + ประวัติ; [browser evidence](../qa/evidence/line-ai-credit-holds-2026-09-18/README.md) 12 subject × 1440/390 (J-05)
+- [x] ชั้น 3: sweep `ai_credit_holds_unresolved` + config `AI_CREDIT_HOLD_ALERT_AFTER_HOURS` (default 24) บน reminder-sweep ตัวเดิม (J-06)
+- [x] Docs: spec J-01…J-07 tick แล้ว; J-08 ยังเปิดรอ UAT; [ADR 0013 §14](../adr/0013-ai-budget-split-reservations.md#14-implementation-notes-h3); task memory
+- [ ] ค้าง: ยังไม่มี platform role แบบ read-only จริง (shell gate เป็น role-based) — owner decision, บันทึกไว้ใน evidence README และ ADR §14
 
-### H4. รอ owner (ไม่ทำใน wave นี้)
+### H4. การตีความช่วงเวลา — [spec แยก](../specs/line-ai-period-resolution-spec-th.md) (owner decision 2026-09-18: default เดือนปัจจุบัน; ระบุช่วงเมื่อไหร่ต้องตามนั้น)
+
+- [x] ตัวแปลช่วงเวลาใน `packages/contracts` (`periods` บน `LineAiValueCandidates`, ตาราง test ≥ 40 กรณี) (P-01)
+- [x] Gateway: prompt เลือกจาก `periods` เท่านั้น; allowed dates/sanitizer รวม candidate; `periodKey`/`newUntil` whitelisted แบบมีหลักฐาน; เลน deterministic รับช่วงสัมพัทธ์ (P-02, P-03)
+- [x] API tools: `tax.get_vat_summary` รับ `periodKey`; `crm.get_customer_summary` รับ `newUntil`; default เดือนปัจจุบันยืนยันทุก tool (P-04)
+- [x] คำตอบระบุช่วง (คำ + วันที่) + telemetry `periodSource` (P-05)
+- [x] Corpus ชุดช่วงเวลา (v2, 9 งาน) + Bedrock replay ในวงเงินที่เหลือ (P-06); P-07 หลัง UAT
+- [x] Docs: spec P-01…P-06 tick ตามหลักฐาน; task memory
+
+### H5. รอ owner (ไม่ทำใน wave นี้)
 
 - concept เครดิต (หน่วย/เติม/ตรวจ/ค่า default ต่อแพ็กเกจ) — owner decision 3
 - ตั้งเครดิตจริงให้บริษัท (spec §7: แชต 80 / อ่านเอกสาร 60 / รวม 140 บาท สำหรับร้านทดลอง) — การกระทำของแอดมินหลัง deploy
@@ -48,6 +61,7 @@
 | H1 | focused specs ของทุกไฟล์ที่แก้ + FULL api suite + FULL web suite + contracts + whole-chain runner + harness + typechecks + smoke script ที่แก้ (รันจริงถ้ารันได้ในเครื่อง) + browser evidence + `git diff --check`; guard: grep "งบ AI\|โควตา AI" ใน apps/packages/scripts = 0 (ยกเว้น allowlist ที่ระบุเหตุผล) |
 | H2 | gateway FULL suite + security spec + whole-chain (gateway-behavior) + deploy.sh spec + pins + corpus replay (owner อนุญาตงบ ≈ THB 60–100 แล้ว 2026-09-18) |
 | H3 | gateway FULL suite (retry/drain specs) + api FULL suite + pg spec ใหม่ใน ci.yml step P27/OCR + web FULL suite + whole-chain + harness + browser evidence |
+| H4 | contracts FULL suite (resolver table) + gateway FULL suite + api FULL suite + whole-chain + harness + corpus replay (วงเงินที่เหลือจาก R5) |
 | ทั้งสอง | merge develop ก่อน PR; CI เขียวทุก run ของ head; admin-merge develop + main |
 
 Focused starting commands (ตรวจ path จริงตอน implement; ไม่เพิ่ม package script):
@@ -73,5 +87,7 @@ git diff --check
 ```
 
 ## 3. Handoff
+
+**สถานะ 2026-09-18:** G0/H1/H2/H3 merge เข้า `develop` และ `main` ครบแล้ว (PR #622–#631 ยกเว้น #625/#629) W-01…W-08 และ J-01…J-07 มีหลักฐานแล้ว เหลือ W-09/J-08 ที่ต้อง UAT **ยังไม่ได้ deploy** รายละเอียดใน [Wave 2 delivery summary](../agent-memory/line-ai-credit-wording-wave2-2026-09-18.md#wave-2-delivery-summary-and-handoff--2026-09-18)
 
 เสร็จเมื่อ W-01…W-08 และ J-01…J-07 มีหลักฐานและ merge แล้ว; W-09 หลัง deploy UAT ตาม runbook ทุกช่วงบันทึก commands/counts/SHA/ข้อจำกัดใน task memory

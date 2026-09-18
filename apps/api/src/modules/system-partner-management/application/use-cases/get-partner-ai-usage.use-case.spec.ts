@@ -229,8 +229,10 @@ describe('GetPartnerAiUsageUseCase', () => {
       [['TEXT', 200, 2], ['IMAGE', 900, 3], ['OTHER', 0, 0], ['UNKNOWN', 400, 5]]);
     assert.deepEqual(breakdown.byBudgetBucket.map((row) => [row.budgetBucket, row.costSatang, row.calls]),
       [['CHAT', 200, 2], ['OCR', 900, 3], ['UNKNOWN', 400, 5]]);
+    // `OPERATOR_CHARGED_AT_BOUND` (hold spec §4.2) is always emitted like every other key, so the
+    // slice still reconciles with `total` when a month happens to carry no operator decision.
     assert.deepEqual(breakdown.byUsageBasis.map((row) => [row.usageBasis, row.costSatang, row.calls]),
-      [['PROVIDER_REPORTED', 900, 3], ['CONSERVATIVE_ESTIMATE', 200, 2], ['UNKNOWN', 400, 5]]);
+      [['PROVIDER_REPORTED', 900, 3], ['CONSERVATIVE_ESTIMATE', 200, 2], ['OPERATOR_CHARGED_AT_BOUND', 0, 0], ['UNKNOWN', 400, 5]]);
 
     for (const slice of [breakdown.byRequestKind, breakdown.byBudgetBucket, breakdown.byUsageBasis]) {
       assert.equal(slice.reduce((sum, row) => sum + row.costSatang, 0), breakdown.total.costSatang);
@@ -279,6 +281,32 @@ describe('GetPartnerAiUsageUseCase', () => {
     assert.deepEqual(result.breakdown.adjustments, { costSatang: -250, rows: 1 });
     assert.equal(result.breakdown.coverage.calls, 4);
     assert.equal(result.topTags[0]!.calls, 4, 'topTags counts model calls, not _count._all');
+  });
+
+  // J-07: an operator's "charge at the bound" is money, and it is NOT a model call. It rides the
+  // COST_ADJUSTMENT eventKind for exactly that reason, so every existing rule already holds.
+  it('shows an operator charge-at-bound under its own basis and never as a model call', async () => {
+    const prisma = makePrisma({
+      events: [
+        eventGroup({ usageTag: 'line_turn', requestKind: 'TEXT', budgetBucket: 'CHAT', usageBasis: 'PROVIDER_REPORTED', rows: 2, costSatang: 500, inputTokens: 400 }),
+        eventGroup({ usageTag: 'ai.credit_hold.charged_at_bound', requestKind: 'IMAGE', budgetBucket: 'OCR',
+          usageBasis: 'OPERATOR_CHARGED_AT_BOUND', eventKind: 'COST_ADJUSTMENT', rows: 1, costSatang: 47, inputTokens: 0 }),
+      ],
+    });
+    const { breakdown, topTags } = await new GetPartnerAiUsageUseCase(prisma, makeConfig()).execute('co-1');
+
+    const operator = breakdown.byUsageBasis.find((row) => row.usageBasis === 'OPERATOR_CHARGED_AT_BOUND')!;
+    assert.equal(operator.costSatang, 47, 'the money is in the breakdown under its own basis');
+    assert.equal(operator.calls, 0, 'and it is not a model call');
+    assert.equal(breakdown.total.costSatang, 547, 'the slices still reconcile with the total');
+    assert.equal(breakdown.total.calls, 2);
+    // It is NOT folded into UNKNOWN, which is what an unregistered key would have done.
+    assert.equal(breakdown.byUsageBasis.find((row) => row.usageBasis === 'UNKNOWN')!.costSatang, 0);
+    // The bucket it was held against still gets the money, so "available" moves for that scope.
+    assert.equal(breakdown.byBudgetBucket.find((row) => row.budgetBucket === 'OCR')!.costSatang, 47);
+    assert.equal(breakdown.coverage.calls, 2, 'coverage is about measured calls only');
+    assert.deepEqual(breakdown.adjustments, { costSatang: 47, rows: 1 });
+    assert.equal(topTags.find((tag) => tag.tag === 'ai.credit_hold.charged_at_bound')!.calls, 0);
   });
 
   it('returns an empty, zero-call month without inventing rows', async () => {

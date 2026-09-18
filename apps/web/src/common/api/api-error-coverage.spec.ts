@@ -93,6 +93,70 @@ describe('Thai coverage for launch-feature error codes', () => {
   });
 });
 
+/**
+ * Credit-wording spec §3 / W-01 (owner decision 2026-09-18): every surface a customer, a shop owner,
+ * a support operator or a System Admin reads calls it "เครดิต AI" — never "งบ AI" and never
+ * "โควตา AI". Codes, enum members, DTO fields, telemetry keys and test ids keep their names; only
+ * human-readable text moved, so this guard looks for the retired PHRASES anywhere in the product
+ * source rather than trying to tell a string literal from an identifier.
+ *
+ * It lives in the web package because this is the spec that already walks sibling packages from
+ * here; the phrases themselves are shared by the API, the gateway, the web app, the contracts and the
+ * browser smoke scripts, so a single sweep is cheaper than one guard per package.
+ *
+ * `docs/` is deliberately out of scope: specs, plans and memory quote the old wording as history.
+ */
+const RETIRED_AI_CREDIT_PHRASES = ['งบ AI', 'โควตา AI'];
+
+/**
+ * Paths that may still contain a retired phrase, each with the reason. One entry today — this file,
+ * which cannot state what it forbids without writing it down. Everything else in the product source
+ * is clean, comments included. A new entry needs a reason a reviewer can check, and a code comment
+ * recording history ("used to say …") is one; a string a user reads is never one.
+ */
+const RETIRED_AI_CREDIT_ALLOWLIST = new Map<string, string>([
+  ['apps/web/src/common/api/api-error-coverage.spec.ts', 'this guard has to spell the phrases it forbids'],
+]);
+
+const REPO_ROOT = join(__dirname, '../../../../..');
+
+function productSourceFiles(): string[] {
+  const roots = [
+    join(REPO_ROOT, 'apps/api/src'), join(REPO_ROOT, 'apps/web/src'), join(REPO_ROOT, 'apps/ai-gateway/src'),
+    join(REPO_ROOT, 'scripts'), join(REPO_ROOT, 'e2e'),
+    ...readdirSync(join(REPO_ROOT, 'packages'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory()).map((entry) => join(REPO_ROOT, 'packages', entry.name, 'src')),
+  ];
+  const walk = (dir: string): string[] => (existsSync(dir)
+    ? readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) return ['node_modules', 'dist', '.next', 'generated'].includes(entry.name) ? [] : walk(full);
+      return entry.isFile() && /\.(ts|tsx|mjs)$/.test(entry.name) ? [full] : [];
+    })
+    : []);
+  return roots.flatMap(walk);
+}
+
+describe('"เครดิต AI" is the only wording for the AI money (spec §3, W-01)', () => {
+  it('finds the product source at all, so a moved spec fails loudly instead of passing empty', () => {
+    assert.ok(existsSync(join(REPO_ROOT, 'pnpm-workspace.yaml')), `REPO_ROOT does not resolve: ${REPO_ROOT}`);
+    assert.ok(productSourceFiles().length > 1000, 'too few source files — check the roots above');
+  });
+
+  it('has no "งบ AI" or "โควตา AI" left outside the allowlist', () => {
+    const offenders = productSourceFiles().flatMap((file) => {
+      const relative = file.slice(REPO_ROOT.length + 1);
+      if (RETIRED_AI_CREDIT_ALLOWLIST.has(relative)) return [];
+      const lines = readFileSync(file, 'utf8').split('\n');
+      return lines.flatMap((line, index) => (RETIRED_AI_CREDIT_PHRASES.some((phrase) => line.includes(phrase))
+        ? [`${relative}:${index + 1}: ${line.trim()}`]
+        : []));
+    });
+
+    assert.deepEqual(offenders, [], `retired AI-money wording (use "เครดิต AI"):\n  ${offenders.join('\n  ')}`);
+  });
+});
+
 describe('status fallbacks', () => {
   // These arrive from a proxy or the rate limiter with no body, so there is no code or message to
   // translate — without a status fallback the user saw the client's own "API error 429".

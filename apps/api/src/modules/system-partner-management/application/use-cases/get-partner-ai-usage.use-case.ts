@@ -36,7 +36,11 @@ const RECEIPT_UPLOAD_PURPOSES = ['expense.receipt.primary', 'expense.receipt.sup
 
 const REQUEST_KINDS: PartnerAiRequestKind[] = ['TEXT', 'IMAGE', 'OTHER', 'UNKNOWN'];
 const BUDGET_BUCKETS: PartnerAiBudgetBucket[] = ['CHAT', 'OCR', 'UNKNOWN'];
-const USAGE_BASES: PartnerAiUsageBasis[] = ['PROVIDER_REPORTED', 'CONSERVATIVE_ESTIMATE', 'UNKNOWN'];
+// `OPERATOR_CHARGED_AT_BOUND` (hold spec §4.2) rides the SAME fold as the two provider bases, and
+// its rows are `COST_ADJUSTMENT`, so `addRow` already keeps them out of `calls` and `coverage`
+// while their cost still reconciles with `total` (J-07). UNKNOWN stays LAST: `foldBy` folds an
+// unrecognised stored value into the final key.
+const USAGE_BASES: PartnerAiUsageBasis[] = ['PROVIDER_REPORTED', 'CONSERVATIVE_ESTIMATE', 'OPERATOR_CHARGED_AT_BOUND', 'UNKNOWN'];
 const TOP_TAG_LIMIT = 10;
 
 /**

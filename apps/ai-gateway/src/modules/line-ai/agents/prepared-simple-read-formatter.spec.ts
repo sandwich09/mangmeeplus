@@ -760,7 +760,10 @@ const crmOutput = (data: Record<string, unknown>): SpecialistOutput =>
   ({ ...readOutput('crm.get_customer_summary', data, CRM_SOURCE), agent: 'crm' });
 const crmData = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   total: 42, active: 40, inactive: 0, archived: 2, newCustomers: 3,
-  newCustomersSince: '2026-08-01', totalIncludesArchived: true, totalExcludesMerged: true,
+  // The tool closes the new-customer window since the period resolver (spec §3.3), so the real shape
+  // carries both ends. `newCustomersUntil: undefined` in an override reproduces the older open one.
+  newCustomersSince: '2026-08-01', newCustomersUntil: '2026-08-31',
+  totalIncludesArchived: true, totalExcludesMerged: true,
   ...over,
 });
 
@@ -769,7 +772,7 @@ describe('F7 crm.get_customer_summary — ลูกค้าใหม่', () =>
     const r = formatPreparedSimpleRead(CRM, crmOutput(crmData()), TH);
     assert.equal(r.kind, 'answer');
     if (r.kind !== 'answer') return;
-    assert.match(r.replyText, /^ลูกค้าใหม่ตั้งแต่ 2026-08-01: 3 ราย/);
+    assert.match(r.replyText, /^ลูกค้าใหม่ 2026-08-01 – 2026-08-31: 3 ราย/);
     assert.match(r.replyText, /\nลูกค้าทั้งหมด 42 ราย \(ใช้งานอยู่ 40 ราย\)/);
     assert.match(r.replyText, /\n\(ยอดรวม: นับรวมลูกค้าที่เก็บเข้าคลัง · ไม่รวมรายการที่ถูกรวมบัญชี\)/);
     assert.match(r.replyText, /\nที่มา: ลูกค้า/);
@@ -788,15 +791,15 @@ describe('F7 crm.get_customer_summary — ลูกค้าใหม่', () =>
   it('answers in English and renders a month with no new customer as an honest zero', () => {
     const en = formatPreparedSimpleRead(CRM, crmOutput(crmData()), EN);
     if (en.kind === 'answer') {
-      assert.match(en.replyText, /^New customers since 2026-08-01: 3 customers/);
+      assert.match(en.replyText, /^New customers 2026-08-01 – 2026-08-31: 3 customers/);
       assert.match(en.replyText, /\nTotal 42 customers \(40 active\)/);
       assert.match(en.replyText, /\n\(Total: includes archived · excludes merged records\)/);
     }
     const zero = formatPreparedSimpleRead(CRM, crmOutput(crmData({ newCustomers: 0 })), TH);
     assert.equal(zero.kind, 'answer');
-    if (zero.kind === 'answer') assert.match(zero.replyText, /^ลูกค้าใหม่ตั้งแต่ 2026-08-01: 0 ราย/);
+    if (zero.kind === 'answer') assert.match(zero.replyText, /^ลูกค้าใหม่ 2026-08-01 – 2026-08-31: 0 ราย/);
     const one = formatPreparedSimpleRead(CRM, crmOutput(crmData({ newCustomers: 1 })), EN);
-    if (one.kind === 'answer') assert.match(one.replyText, /^New customers since 2026-08-01: 1 customer\n/);
+    if (one.kind === 'answer') assert.match(one.replyText, /^New customers 2026-08-01 – 2026-08-31: 1 customer\n/);
   });
 
   it('states the basis the tool actually reported, and omits the line when it reports none', () => {
@@ -808,6 +811,23 @@ describe('F7 crm.get_customer_summary — ลูกค้าใหม่', () =>
     const r = formatPreparedSimpleRead(CRM, crmOutput(silent), TH);
     assert.equal(r.kind, 'answer');
     if (r.kind === 'answer') assert.doesNotMatch(r.replyText, /ยอดรวม:/);
+  });
+
+  it('keeps the open "since" phrasing when the tool reports no window end (spec §3.3 rollout)', () => {
+    const open = formatPreparedSimpleRead(CRM, crmOutput(crmData({ newCustomersUntil: undefined })), TH);
+    assert.equal(open.kind, 'answer');
+    if (open.kind === 'answer') assert.match(open.replyText, /^ลูกค้าใหม่ตั้งแต่ 2026-08-01: 3 ราย/);
+  });
+
+  it('names the period the user asked for, in their words and its dates (spec §3.4)', () => {
+    const labelled = formatPreparedSimpleRead(CRM, crmOutput(crmData()),
+      { ...TH, periodLabel: 'เดือนที่แล้ว (1–31 ส.ค. 2569)' });
+    assert.equal(labelled.kind, 'answer');
+    if (labelled.kind === 'answer') assert.match(labelled.replyText, /\nช่วง: เดือนที่แล้ว \(1–31 ส\.ค\. 2569\)/);
+    // An English answer keeps the ISO dates it has always printed rather than a Thai phrase.
+    const en = formatPreparedSimpleRead(CRM, crmOutput(crmData()),
+      { ...EN, periodLabel: 'เดือนที่แล้ว (1–31 ส.ค. 2569)' });
+    if (en.kind === 'answer') assert.doesNotMatch(en.replyText, /เดือนที่แล้ว/);
   });
 
   it('returns unverified for a missing window day or any non-count figure, and never names a customer', () => {

@@ -688,7 +688,7 @@ describe('drain: a permanent money refusal is an answer, not a retry (§9.4)', (
 
       assert.equal(result.refused, 1);
       assert.equal(h.pushes.length, 1, 'exactly one notice, not one per reclaim');
-      assert.match(h.pushes[0].text, code === 'AI_BUDGET_INSUFFICIENT' ? /งบ AI ที่เหลือของเดือนนี้ไม่พอ/ : /โควตา AI ของแพ็กเกจเดือนนี้ครบแล้ว/);
+      assert.match(h.pushes[0].text, code === 'AI_BUDGET_INSUFFICIENT' ? /เครดิต AI ที่เหลือของเดือนนี้ไม่พอ/ : /เครดิต AI ของเดือนนี้หมดแล้ว/);
       assert.deepEqual(h.acks, [{ id: '1-0', outcome: 'refused' }]);
       assert.deepEqual(h.ackReasons, [code]);
       // The durable event row keeps the money reason, not the delivery-cap story.

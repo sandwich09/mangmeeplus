@@ -54,12 +54,16 @@ import {
   endPartnerPlanTermWarmup,
   getPartnerTimeline,
   sendPartnerLineMessage,
+  getPartnerAiCreditHolds,
+  actOnPartnerAiCreditHold,
 } from './system-partners.api';
 import type {
   PartnerCompanyDetailDto,
   LineContextHealth,
   PartnerAiUsageDto,
   PartnerAiUsageMeasuresDto,
+  PartnerAiCreditHoldDto,
+  PartnerAiCreditHoldsDto,
   PartnerMemberDto,
   EmployeeLineLinkPackage,
   PartnerTimelineEntryDto,
@@ -70,6 +74,9 @@ import {
   AI_BUDGET_RESERVED_NOTE,
   AI_BUDGET_SPLIT_DISABLED_NOTE,
   AI_BUDGET_STALE_MESSAGE,
+  AI_CREDIT_HOLD_ACTION_LABELS,
+  AI_CREDIT_HOLD_EMPTY_NOTE,
+  AI_CREDIT_HOLD_HELP_NOTE,
   AI_REQUEST_KIND_LABELS,
   AI_USAGE_BASIS_LABELS,
   aiAverageCostLabel,
@@ -84,6 +91,12 @@ import {
   aiBudgetScopeRows,
   aiCacheCostLabel,
   aiCoverageNotice,
+  aiCreditHoldAgeLabel,
+  aiCreditHoldConsequence,
+  aiCreditHoldKindLabel,
+  aiCreditHoldStepLabel,
+  isAiCreditHoldConflict,
+  type AiCreditHoldAction,
   aiUsageBasisNote,
   canManageAiBudget,
   hasAiBudgetPolicy,
@@ -1376,7 +1389,7 @@ function AiUsageBreakdown({ usage }: { usage: PartnerAiUsageDto }) {
       )}
 
       <div>
-        <p className="text-xs font-medium text-gray-500">งบตามส่วน</p>
+        <p className="text-xs font-medium text-gray-500">เครดิตตามส่วน</p>
         <ul className="mt-1">
           {breakdown.byBudgetBucket.map((row) => (
             <AiMeasureRow key={row.budgetBucket} label={AI_BUDGET_BUCKET_LABELS[row.budgetBucket] ?? row.budgetBucket} measures={row} />
@@ -1443,7 +1456,7 @@ function AiBudgetPolicyPanel({
   return (
     <section className="space-y-4 border-t-2 border-gray-100 pt-5" aria-labelledby="ai-budget-policy-title">
       <div>
-        <h3 id="ai-budget-policy-title" className="text-base font-bold text-gray-900">แยกเพดานงบ AI ของบริษัทนี้</h3>
+        <h3 id="ai-budget-policy-title" className="text-base font-bold text-gray-900">แยกเพดานเครดิต AI ของบริษัทนี้</h3>
         <p className="mt-1 text-sm leading-6 text-gray-600">
           ใช้อยู่: <strong className="font-bold text-gray-900">{AI_BUDGET_MODE_LABELS[policy.mode] ?? policy.mode}</strong>
           {policy.source === 'PENDING_ACTIVATED' && ' · เริ่มมีผลแล้วตามที่ตั้งไว้ล่วงหน้า'}
@@ -1493,25 +1506,25 @@ function AiBudgetPolicyPanel({
         </table>
       </div>
       <p className="text-xs leading-5 text-gray-500">
-        “{AI_BUDGET_RESERVED_NOTE}” คือเงินที่ระบบกันไว้ให้งานที่กำลังเรียก AI อยู่ ยังไม่ใช่ค่าใช้จ่ายจริง
+        “{AI_BUDGET_RESERVED_NOTE}” คือเครดิตที่ระบบกันไว้ให้งานที่กำลังเรียก AI อยู่ ยังไม่ใช่ค่าใช้จ่ายจริง
         และยังไม่นับเป็นจำนวนครั้งที่เรียกโมเดล · เพดานที่ยังไม่ตั้งหมายถึงยังไม่กำหนด ไม่ใช่ไม่จำกัด
       </p>
       {position.unresolvedHolds > 0 && (
         <p data-testid="ai-budget-unresolved" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
-          กำลังตรวจสอบยอดที่จอง {position.unresolvedHolds.toLocaleString('th-TH')} รายการ — ยังนับเป็นเงินที่กันไว้จนกว่าจะได้ผลจริงจากผู้ให้บริการ
+          มี {position.unresolvedHolds.toLocaleString('th-TH')} รายการที่ยังไม่ทราบผลจากผู้ให้บริการ AI — เครดิตส่วนนั้นยังถูกกันไว้จนกว่าจะได้ผลจริง
         </p>
       )}
       {position.breach && (
         <p role="alert" data-testid="ai-budget-breach" className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-900">
-          มีรายการที่ใช้เงินเกินยอดที่จองไว้ ระบบหยุดรับงานใหม่ของส่วนนั้นไว้แล้ว และบันทึกค่าใช้จ่ายจริงไว้ครบ กรุณาตรวจสอบก่อนปรับเพดาน
+          มีรายการที่ใช้เครดิตเกินที่กันไว้ ระบบหยุดรับงานใหม่ของส่วนนั้นไว้แล้ว และบันทึกค่าใช้จ่ายจริงไว้ครบ กรุณาตรวจสอบก่อนปรับเพดาน
         </p>
       )}
 
       {!canEdit ? (
         <p data-testid="ai-budget-read-only" className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm leading-6 text-gray-600">
           {canManage
-            ? 'บริษัทนี้อ่านได้อย่างเดียวตามสถานะบริษัท จึงแก้โหมดหรือเพดานงบ AI ไม่ได้ เปลี่ยนสถานะได้ในหมวดภาพรวม'
-            : 'บัญชีของคุณดูข้อมูลได้ แต่ยังไม่มีสิทธิ์แก้โหมดหรือเพดานงบ AI'}
+            ? 'บริษัทนี้อ่านได้อย่างเดียวตามสถานะบริษัท จึงแก้โหมดหรือเพดานเครดิต AI ไม่ได้ เปลี่ยนสถานะได้ในหมวดภาพรวม'
+            : 'บัญชีของคุณดูข้อมูลได้ แต่ยังไม่มีสิทธิ์แก้โหมดหรือเพดานเครดิต AI'}
         </p>
       ) : (
         <>
@@ -1521,7 +1534,7 @@ function AiBudgetPolicyPanel({
             </p>
           )}
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block text-sm font-bold text-gray-700" htmlFor="ai-budget-mode">โหมดงบ AI
+            <label className="block text-sm font-bold text-gray-700" htmlFor="ai-budget-mode">โหมดเครดิต AI
               <select id="ai-budget-mode" className={`${inputClass} mt-1 min-h-12 text-base`} value={draft.mode}
                 disabled={saving || busy} onChange={(e) => onDraft({ ...draft, mode: e.target.value as AiBudgetDraft['mode'] })}>
                 <option value="SHARED">{AI_BUDGET_MODE_LABELS.SHARED}</option>
@@ -1551,20 +1564,141 @@ function AiBudgetPolicyPanel({
             </label>
           </div>
           <p className="text-xs leading-5 text-gray-500">
-            ผลรวมเพดานต้องไม่เกินงบรวมที่บันทึกไว้ {satangToBaht(usage.budget.effectiveSatang)} · ใส่ 0 เพื่อปิดส่วนนั้น
-            {' · '}งบรวมด้านบนต้องบันทึกก่อน ระบบตรวจกับค่าที่บันทึกแล้วเท่านั้น
+            ผลรวมเพดานต้องไม่เกินเครดิตรวมที่บันทึกไว้ {satangToBaht(usage.budget.effectiveSatang)} · ใส่ 0 เพื่อปิดส่วนนั้น
+            {' · '}เครดิตรวมด้านบนต้องบันทึกก่อน ระบบตรวจกับค่าที่บันทึกแล้วเท่านั้น
           </p>
-          <label className="block text-base">เหตุผลที่ปรับเพดานงบ AI
-            <textarea aria-label="เหตุผลที่ปรับเพดานงบ AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500}
+          <label className="block text-base">เหตุผลที่ปรับเพดานเครดิต AI
+            <textarea aria-label="เหตุผลที่ปรับเพดานเครดิต AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500}
               value={reason} disabled={saving || busy} onChange={(e) => onReason(e.target.value)} />
           </label>
           <button type="button" className={`${btnPrimary} min-h-12 min-w-32 text-base`}
             data-testid="ai-budget-policy-save"
             disabled={saving || busy || !changed} aria-busy={saving} onClick={onSave}>
-            {saving ? 'กำลังบันทึก…' : 'บันทึกเพดานงบ AI'}
+            {saving ? 'กำลังบันทึก…' : 'บันทึกเพดานเครดิต AI'}
           </button>
         </>
       )}
+    </section>
+  );
+}
+
+/**
+ * Held credit that nothing will ever release by itself (hold-reconciliation spec §4.1–4.2).
+ *
+ * Presentational: the fetch, the reason, the confirm dialog and the reload all live in
+ * `AiUsageBudgetSection` under its `generation` token, and every derivation (labels, age, the
+ * money consequence text) is in `ai-budget.logic.ts` with unit tests. Nothing here computes money.
+ */
+function AiCreditHoldsPanel({
+  holds, reason, onReason, busyId, canEdit, disabled, onAct,
+}: {
+  holds: PartnerAiCreditHoldsDto;
+  reason: string;
+  onReason: (next: string) => void;
+  /** The reservation whose action is in flight, so only its own buttons show the busy state. */
+  busyId: string | null;
+  /** Caller holds `system.partner_ai_model.manage` AND the company is not locked. */
+  canEdit: boolean;
+  /** Another control on this card is mid-save. */
+  disabled: boolean;
+  onAct: (hold: PartnerAiCreditHoldDto, action: AiCreditHoldAction) => void;
+}) {
+  return (
+    <section className="space-y-4 border-t-2 border-gray-100 pt-5" aria-labelledby="ai-credit-holds-title">
+      <div>
+        <h3 id="ai-credit-holds-title" className="text-base font-bold text-gray-900">เครดิตที่กันไว้ค้าง</h3>
+        <p className="mt-1 text-sm leading-6 text-gray-600">
+          เครดิตที่ระบบกันไว้แล้วยังไม่ทราบผลจากผู้ให้บริการ AI และรายการที่ใช้เกินที่กันไว้ — ระบบไม่ปล่อยคืนเองตามเวลา
+          {' '}ดูเดือนนี้และเดือนก่อน ({holds.monthKeys.map((monthKey) => formatThaiMonth(monthKey)).join(' · ')})
+        </p>
+      </div>
+
+      {holds.items.length === 0 ? (
+        <p data-testid="ai-credit-holds-empty" className="text-sm leading-6 text-gray-600">{AI_CREDIT_HOLD_EMPTY_NOTE}</p>
+      ) : (
+        <>
+          {/* Six columns cannot be read at 390px; scroll inside this container, never the page. */}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm" data-testid="ai-credit-holds-table">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
+                  <th className="py-2 pr-4 font-medium">ประเภทงาน</th>
+                  <th className="py-2 pr-4 font-medium">ส่วน</th>
+                  <th className="py-2 pr-4 font-medium">เครดิตที่กันไว้</th>
+                  <th className="py-2 pr-4 font-medium">เรียกเมื่อ</th>
+                  <th className="py-2 pr-4 font-medium">อายุ</th>
+                  <th className="py-2 font-medium">สถานะ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {holds.items.map((hold) => (
+                  <tr key={hold.id} className="border-b border-gray-100 align-top" data-testid={`ai-credit-hold-${hold.id}`}>
+                    <td className="py-2.5 pr-4 text-gray-700">
+                      {aiCreditHoldStepLabel(hold.stepKind)}
+                      <span className="block font-mono text-xs text-gray-400">{hold.invocationKeyShort}</span>
+                    </td>
+                    <td className="py-2.5 pr-4 text-gray-700">{AI_BUDGET_BUCKET_LABELS[hold.bucket] ?? hold.bucket}</td>
+                    <td className="py-2.5 pr-4 tabular-nums text-gray-900">
+                      {satangToBaht(hold.upperBoundSatang)}
+                      {hold.settledCostSatang !== null && (
+                        <span className="block text-xs text-red-800">ใช้จริง {satangToBaht(hold.settledCostSatang)}</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-4 text-gray-600">{formatThaiDateTime(hold.createdAt)}</td>
+                    <td className="py-2.5 pr-4 tabular-nums text-gray-700">{aiCreditHoldAgeLabel(hold.createdAt)}</td>
+                    <td className="py-2.5 text-gray-700">
+                      {aiCreditHoldKindLabel(hold.kind)}
+                      {canEdit && (
+                        <span className="mt-2 flex flex-wrap gap-2">
+                          {hold.kind === 'BREACH' ? (
+                            <button type="button" className="mangmee-btn mangmee-btn-secondary min-h-11 text-base"
+                              data-testid={`ai-credit-hold-acknowledge-${hold.id}`}
+                              disabled={disabled || busyId !== null} aria-busy={busyId === hold.id}
+                              onClick={() => onAct(hold, 'acknowledge_breach')}>
+                              {AI_CREDIT_HOLD_ACTION_LABELS.acknowledge_breach}
+                            </button>
+                          ) : (
+                            <>
+                              <button type="button" className="mangmee-btn mangmee-btn-secondary min-h-11 text-base"
+                                data-testid={`ai-credit-hold-release-${hold.id}`}
+                                disabled={disabled || busyId !== null} aria-busy={busyId === hold.id}
+                                onClick={() => onAct(hold, 'release')}>
+                                {AI_CREDIT_HOLD_ACTION_LABELS.release}
+                              </button>
+                              <button type="button" className="mangmee-btn mangmee-btn-secondary min-h-11 text-base"
+                                data-testid={`ai-credit-hold-charge-${hold.id}`}
+                                disabled={disabled || busyId !== null} aria-busy={busyId === hold.id}
+                                onClick={() => onAct(hold, 'charge_at_bound')}>
+                                {AI_CREDIT_HOLD_ACTION_LABELS.charge_at_bound}
+                              </button>
+                            </>
+                          )}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {canEdit && (
+            <label className="block text-base">เหตุผลที่จัดการเครดิตที่กันไว้
+              <textarea aria-label="เหตุผลที่จัดการเครดิตที่กันไว้" data-testid="ai-credit-holds-reason"
+                className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500}
+                value={reason} disabled={disabled || busyId !== null} onChange={(e) => onReason(e.target.value)} />
+            </label>
+          )}
+          {!canEdit && (
+            <p data-testid="ai-credit-holds-read-only" className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm leading-6 text-gray-600">
+              {holds.canManage
+                ? 'บริษัทนี้อ่านได้อย่างเดียวตามสถานะบริษัท จึงจัดการเครดิตที่กันไว้ไม่ได้ เปลี่ยนสถานะได้ในหมวดภาพรวม'
+                : 'บัญชีของคุณดูรายการได้ แต่ยังไม่มีสิทธิ์ปล่อยหรือคิดเครดิตที่กันไว้'}
+            </p>
+          )}
+        </>
+      )}
+      <p className="text-xs leading-5 text-gray-500">{AI_CREDIT_HOLD_HELP_NOTE}</p>
     </section>
   );
 }
@@ -1597,8 +1731,25 @@ function AiUsageBudgetSection({
   const [policyDraft,setPolicyDraft]=useState<AiBudgetDraft|null>(null);
   const [policyReason,setPolicyReason]=useState('');
   const [policyLoading,setPolicyLoading]=useState(false);
+  // Held credit (hold spec §4). `null` = not loaded, or an API that predates the route: the panel
+  // then simply does not render, the same tolerance the D1 breakdown and the split panel have.
+  const [holds,setHolds]=useState<PartnerAiCreditHoldsDto|null>(null);
+  const [holdReason,setHoldReason]=useState('');
+  const [holdBusyId,setHoldBusyId]=useState<string|null>(null);
   const generation=useRef(0);
   const { confirm, confirmDialog } = useConfirm();
+
+  /** The holds read runs the sweep server-side, so it is always a fresh read, never patched. */
+  const loadHolds = async (token: number) => {
+    try {
+      const result = await getPartnerAiCreditHolds(companyId);
+      if(token===generation.current)setHolds(result);
+    } catch {
+      // A 403/404 here must not take the whole AI card down: a read-only operator without the
+      // dashboard-read permission never got this far, and a pre-H3 API has no such route.
+      if(token===generation.current)setHolds(null);
+    }
+  };
 
   const loadUsage = async () => {
     const token=++generation.current;
@@ -1618,6 +1769,9 @@ function AiUsageBudgetSection({
       setReceiptQuotaMode(result.ocr.config.receiptQuotaEnforced == null ? 'inherit' : result.ocr.config.receiptQuotaEnforced ? 'enforce' : 'observe');
       setOcrLimitInput(result.ocr.config.monthlyLimit === null ? '' : String(result.ocr.config.monthlyLimit));
       setUsageError(null);
+      // Sequential and last: it is the only read on this card that takes a database lock (the
+      // sweep), and it must never delay the numbers above it.
+      await loadHolds(token);
     } catch (err) {
       if(token!==generation.current)return;
       const e = err as Error & { status?: number };
@@ -1633,11 +1787,11 @@ function AiUsageBudgetSection({
   const handleBudgetSave = async () => {
     if(!usage||locked||budgetLoading||ocrLoading||policyLoading)return;
     const reason=partnerAdjustmentReason(budgetReason);
-    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับงบ AI','error');return;}
+    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับเครดิต AI','error');return;}
     const parsed=parseBudgetBahtInput(budgetInput);
     if(!parsed.ok){showToast(parsed.message, 'error');return;}
     const token=generation.current,desired=parsed.monthlyBudgetSatang??usage.budget.defaultSatang;
-    const accepted=await confirm({title:'ตรวจงบ AI ก่อนบันทึก',message:`งบต่อเดือน ${satangToBaht(usage.budget.effectiveSatang)} → ${satangToBaht(desired)} ใช้แล้ว ${satangToBaht(usage.current?.costSatang??0)}${desired<=(usage.current?.costSatang??0)?' หลังบันทึกจะใช้ AI เพิ่มไม่ได้จนกว่าจะเพิ่มงบหรือขึ้นเดือนใหม่':''}\nงบใหม่ใช้กับงานที่เริ่มหลังบันทึก งานที่เริ่มแล้วจะทำจนจบและนับค่าใช้จ่ายตามจริง\nเหตุผล: ${reason}`,confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
+    const accepted=await confirm({title:'ตรวจเครดิต AI ก่อนบันทึก',message:`เครดิตต่อเดือน ${satangToBaht(usage.budget.effectiveSatang)} → ${satangToBaht(desired)} ใช้แล้ว ${satangToBaht(usage.current?.costSatang??0)}${desired<=(usage.current?.costSatang??0)?' หลังบันทึกจะใช้ AI เพิ่มไม่ได้จนกว่าจะเพิ่มเครดิตหรือขึ้นเดือนใหม่':''}\nเครดิตใหม่ใช้กับงานที่เริ่มหลังบันทึก งานที่เริ่มแล้วจะทำจนจบและนับค่าใช้จ่ายตามจริง\nเหตุผล: ${reason}`,confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
     if(!accepted||token!==generation.current)return;
     setBudgetLoading(true);
     try {
@@ -1645,7 +1799,7 @@ function AiUsageBudgetSection({
       if(token!==generation.current)return;
       setUsage(prev=>prev?{...prev,budget:{...prev.budget,overrideSatang:result.monthlyBudgetSatang,effectiveSatang:result.monthlyBudgetSatang??prev.budget.defaultSatang}}:prev);
       setBudgetReason('');onChanged();
-      showToast(result.monthlyBudgetSatang===null?'บันทึกแล้ว บริษัทนี้ใช้งบ AI ตามค่าเริ่มต้นของระบบ':`บันทึกงบ AI ต่อเดือน ${satangToBaht(result.monthlyBudgetSatang)} แล้ว`,'success');
+      showToast(result.monthlyBudgetSatang===null?'บันทึกแล้ว บริษัทนี้ใช้เครดิต AI ตามค่าเริ่มต้นของระบบ':`บันทึกเครดิต AI ต่อเดือน ${satangToBaht(result.monthlyBudgetSatang)} แล้ว`,'success');
     }catch(err){
       if(token!==generation.current)return;
       showToast(apiErrorMessage(err),'error');
@@ -1670,7 +1824,7 @@ function AiUsageBudgetSection({
   ) => {
     if(!usage||locked||policyLoading||budgetLoading||ocrLoading)return;
     const reason=partnerAdjustmentReason(policyReason);
-    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับเพดานงบ AI','error');return;}
+    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับเพดานเครดิต AI','error');return;}
     const token=generation.current;
     setPolicyLoading(true);
     try {
@@ -1695,7 +1849,7 @@ function AiUsageBudgetSection({
     if(!usage||!policyDraft)return;
     // Before the dialog: a confirm that prints "เหตุผล: —" and then refuses after the operator
     // pressed Confirm is a wasted decision.
-    if(!partnerAdjustmentReason(policyReason)){showToast('กรุณาระบุเหตุผลที่ปรับเพดานงบ AI','error');return;}
+    if(!partnerAdjustmentReason(policyReason)){showToast('กรุณาระบุเหตุผลที่ปรับเพดานเครดิต AI','error');return;}
     const token=generation.current,monthKey=aiBudgetCurrentMonthKey(usage);
     const validated=validateAiBudgetDraft(policyDraft,{
       // The SAVED total, never the unsaved override draft above: it is the number the server compares.
@@ -1704,21 +1858,55 @@ function AiUsageBudgetSection({
     });
     if(!validated.ok){showToast(validated.notice,'error');return;}
     const scheduled=validated.policy.effectiveMonthKey!==monthKey;
-    const accepted=await confirm({title:'ตรวจเพดานงบ AI ก่อนบันทึก',
+    const accepted=await confirm({title:'ตรวจเพดานเครดิต AI ก่อนบันทึก',
       message:`${AI_BUDGET_MODE_LABELS[validated.policy.mode]}${validated.policy.mode==='SPLIT'?` — แชต ${aiBudgetCapLabel(validated.policy.chatMonthlyBudgetSatang)} · อ่านเอกสาร ${aiBudgetCapLabel(validated.policy.ocrMonthlyBudgetSatang)}`:''}\n${scheduled?`เริ่มเดือน ${formatThaiMonth(validated.policy.effectiveMonthKey)} ค่าที่ใช้อยู่เดือนนี้ไม่เปลี่ยน`:'มีผลกับงานที่เริ่มหลังบันทึก งานที่เริ่มแล้วจะทำจนจบและนับค่าใช้จ่ายตามจริง'}\nเหตุผล: ${partnerAdjustmentReason(policyReason)??'—'}`,
       confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
     if(!accepted||token!==generation.current)return;
-    await savePolicy({budgetPolicy:validated.policy},scheduled?'ตั้งเพดานงบ AI ให้เริ่มเดือนถัดไปแล้ว':'บันทึกเพดานงบ AI แล้ว');
+    await savePolicy({budgetPolicy:validated.policy},scheduled?'ตั้งเพดานเครดิต AI ให้เริ่มเดือนถัดไปแล้ว':'บันทึกเพดานเครดิต AI แล้ว');
   };
 
   const handleCancelPending = async () => {
-    if(!partnerAdjustmentReason(policyReason)){showToast('กรุณาระบุเหตุผลที่ปรับเพดานงบ AI','error');return;}
+    if(!partnerAdjustmentReason(policyReason)){showToast('กรุณาระบุเหตุผลที่ปรับเพดานเครดิต AI','error');return;}
     const token=generation.current;
     const accepted=await confirm({title:'ยกเลิกค่าที่ตั้งให้เริ่มเดือนถัดไป',
       message:'หลังยกเลิก เดือนถัดไปจะใช้โหมดและเพดานที่ใช้อยู่ตอนนี้ต่อไป ค่าที่ใช้อยู่เดือนนี้ไม่เปลี่ยน',
       confirmLabel:'ยกเลิกค่าที่ตั้งไว้',cancelLabel:'เก็บไว้ก่อน'});
     if(!accepted||token!==generation.current)return;
     await savePolicy({budgetPolicy:null},'ยกเลิกค่าที่ตั้งให้เริ่มเดือนถัดไปแล้ว');
+  };
+
+  /**
+   * One writer for the three held-credit decisions (hold spec §4.2). Money moves, so: the reason is
+   * required BEFORE the dialog (a confirm that prints "เหตุผล: —" and then refuses is a wasted
+   * decision), the dialog spells out the consequence in baht, and any 404/409 reloads the list
+   * first and then says what changed — the row the operator clicked will simply not be there.
+   */
+  const handleHoldAction = async (hold: PartnerAiCreditHoldDto, action: AiCreditHoldAction) => {
+    if(locked||holdBusyId||budgetLoading||ocrLoading||policyLoading)return;
+    const reason=partnerAdjustmentReason(holdReason);
+    if(!reason){showToast('กรุณาระบุเหตุผลที่จัดการเครดิตที่กันไว้','error');return;}
+    const token=generation.current;
+    const accepted=await confirm({...aiCreditHoldConsequence(action,hold,reason),cancelLabel:'กลับไปตรวจก่อน'});
+    if(!accepted||token!==generation.current)return;
+    setHoldBusyId(hold.id);
+    try {
+      const path=action==='release'?'release':action==='charge_at_bound'?'charge-at-bound':'acknowledge-breach';
+      const result=await actOnPartnerAiCreditHold(companyId,hold.id,path,reason);
+      if(token!==generation.current)return;
+      setHoldReason('');onChanged();
+      showToast(result.action==='release'?`ปล่อยเครดิตที่กันไว้ ${satangToBaht(hold.upperBoundSatang)} แล้ว`
+        :result.action==='charge_at_bound'?`บันทึกค่าใช้จ่าย ${satangToBaht(result.chargedSatang)} แล้ว`
+        :'รับทราบรายการใช้เกินที่กันไว้แล้ว เปิดรับงาน AI ของส่วนนี้อีกครั้ง','success');
+      setHoldBusyId(null);
+      // A fresh read of the WHOLE card: released credit changes the money position too.
+      await loadUsage();
+    } catch (err) {
+      if(token!==generation.current)return;
+      setHoldBusyId(null);
+      const code=apiErrorCode(err);
+      showToast(apiErrorMessage(err),'error');
+      if(isAiCreditHoldConflict(code))await loadUsage();
+    } finally { if(token===generation.current)setHoldBusyId(null); }
   };
 
   const handleOcrSave = async () => {
@@ -1785,7 +1973,7 @@ function AiUsageBudgetSection({
   };
 
   return (
-    <SectionCard title="การใช้งานและงบ AI">
+    <SectionCard title="การใช้งานและเครดิต AI">
       {usageLoading && <p role="status" aria-busy="true" className="mb-3 flex items-center gap-2 text-sm text-gray-500"><span aria-hidden="true" className="action-loading-spinner h-4 w-4 rounded-full border-2 border-current border-t-transparent" />กำลังโหลดข้อมูล AI...</p>}
       {usageError ? (
         <div className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4">
@@ -1804,7 +1992,7 @@ function AiUsageBudgetSection({
       ) : (
         <>
           <p className="text-xs text-gray-500">
-            งบ AI ต่อเดือนของบริษัทนี้ — ใช้ครบเมื่อไร ระบบจะปฏิเสธการเรียก AI ทุกช่องทางจนถึงเดือนถัดไป
+            เครดิต AI ต่อเดือนของบริษัทนี้ — ใช้หมดเมื่อไร ระบบจะปฏิเสธการเรียก AI ทุกช่องทางจนถึงเดือนถัดไป
             เว้นว่างไว้ = ใช้ค่าเริ่มต้นของแพลตฟอร์ม
           </p>
 
@@ -1813,7 +2001,7 @@ function AiUsageBudgetSection({
               <p className="text-sm text-gray-700">
                 ใช้เดือนนี้{' '}
                 <span className="font-semibold tabular-nums text-gray-900">{satangToBaht(spendSatang)}</span>
-                {' จากงบ '}
+                {' จากเครดิต '}
                 <span className="tabular-nums">{satangToBaht(usage.budget.effectiveSatang)}</span>
                 {usage.budget.overrideSatang === null ? ' (ค่าเริ่มต้นของระบบ)' : ' (Admin ปรับให้)' }
               </p>
@@ -1881,12 +2069,12 @@ function AiUsageBudgetSection({
             </div>
           )}
 
-          <label className="block text-base">เหตุผลที่ปรับงบ AI
-            <textarea aria-label="เหตุผลที่ปรับงบ AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={budgetReason} disabled={budgetLoading||ocrLoading||policyLoading||locked} onChange={e=>setBudgetReason(e.target.value)} />
+          <label className="block text-base">เหตุผลที่ปรับเครดิต AI
+            <textarea aria-label="เหตุผลที่ปรับเครดิต AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={budgetReason} disabled={budgetLoading||ocrLoading||policyLoading||locked} onChange={e=>setBudgetReason(e.target.value)} />
           </label>
           <div className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3">
             <div className="flex-1">
-              <label className="block text-xs text-gray-500 mb-1" htmlFor="ai-monthly-budget">งบ AI ต่อเดือน (บาท)</label>
+              <label className="block text-xs text-gray-500 mb-1" htmlFor="ai-monthly-budget">เครดิต AI ต่อเดือน (บาท)</label>
               <input
                 id="ai-monthly-budget"
                 className={`${inputClass} min-h-11 text-base`}
@@ -1904,12 +2092,12 @@ function AiUsageBudgetSection({
               disabled={budgetLoading || ocrLoading || policyLoading || locked} aria-busy={Boolean(budgetLoading)}
               onClick={() => void handleBudgetSave()}
             >
-              {budgetLoading ? 'กำลังบันทึก…' : 'ตรวจงบก่อนบันทึก'}
+              {budgetLoading ? 'กำลังบันทึก…' : 'ตรวจเครดิตก่อนบันทึก'}
             </button>
           </div>
-          <p className="break-words text-sm text-gray-600">งบ AI: {usage.budget.overrideSatang === null ? 'ค่าเริ่มต้นแพลตฟอร์ม' : satangToBaht(usage.budget.overrideSatang)} → {budgetInput.trim() ? `฿${budgetInput}` : 'ค่าเริ่มต้นแพลตฟอร์ม'}</p>
+          <p className="break-words text-sm text-gray-600">เครดิต AI: {usage.budget.overrideSatang === null ? 'ค่าเริ่มต้นแพลตฟอร์ม' : satangToBaht(usage.budget.overrideSatang)} → {budgetInput.trim() ? `฿${budgetInput}` : 'ค่าเริ่มต้นแพลตฟอร์ม'}</p>
           <p className="text-xs text-gray-400">
-            เว้นว่างเพื่อใช้งบเริ่มต้น {satangToBaht(usage.budget.defaultSatang)} ตั้งได้ไม่เกิน {satangToBaht(usage.budget.ceilingSatang)}
+            เว้นว่างเพื่อใช้เครดิตเริ่มต้น {satangToBaht(usage.budget.defaultSatang)} ตั้งได้ไม่เกิน {satangToBaht(usage.budget.ceilingSatang)}
           </p>
 
           {policyDraft && (
@@ -1927,6 +2115,18 @@ function AiUsageBudgetSection({
               companyLocked={fieldsLocked}
               onSave={() => void handlePolicySave()}
               onCancelPending={() => void handleCancelPending()}
+            />
+          )}
+
+          {holds && (
+            <AiCreditHoldsPanel
+              holds={holds}
+              reason={holdReason}
+              onReason={setHoldReason}
+              busyId={holdBusyId}
+              canEdit={holds.canManage && !holds.companyLocked && !fieldsLocked}
+              disabled={budgetLoading || ocrLoading || policyLoading || usageLoading}
+              onAct={(hold, action) => void handleHoldAction(hold, action)}
             />
           )}
 
@@ -2879,7 +3079,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
       </section>}
       {opened('members')&&<section hidden={view!=='members'} aria-label="สมาชิกบริษัท" className="space-y-5"><p className="text-gray-600">ตรวจสมาชิกและการผูก LINE เลือกดำเนินการเฉพาะคนที่ต้องการดูแล</p><MembersSection companyId={companyId} showToast={showToast}/></section>}
       {opened('package')&&<section hidden={view!=='package'} aria-label="แพ็กเกจและฟีเจอร์บริษัท" className="space-y-5"><PlanTermSection key={`term-${companyId}`} companyId={companyId} companyStatus={currentStatus} fieldsLocked={fieldsLocked} showToast={showToast}/><PackageMenuSection companyId={companyId} entitlements={detail.featureEntitlements} setVersion={detail.setVersion} fieldsLocked={fieldsLocked} normalizationPending={isNormalizationPending(detail.entitlementNormalizationPending)} showToast={showToast} onSaved={load}/></section>}
-      {opened('ai')&&<section hidden={view!=='ai'} aria-label="AI และโควตาบริษัท" className="space-y-5"><p className="text-gray-600">ดูการใช้งานและปรับงบ AI หรือจำนวนเอกสาร ระบบให้ตรวจผลกระทบก่อนบันทึก</p>
+      {opened('ai')&&<section hidden={view!=='ai'} aria-label="AI และโควตาบริษัท" className="space-y-5"><p className="text-gray-600">ดูการใช้งานและปรับเครดิต AI หรือจำนวนเอกสาร ระบบให้ตรวจผลกระทบก่อนบันทึก</p>
         <AiUsageBudgetSection key={`ai-budget-${companyId}`} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} onChanged={()=>setAiHistoryRefresh(n=>n+1)} />
         <details className="rounded-xl border border-gray-200 bg-white p-4"><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">เปลี่ยนรุ่น AI ของบริษัท</summary>
         {/* AI model */}

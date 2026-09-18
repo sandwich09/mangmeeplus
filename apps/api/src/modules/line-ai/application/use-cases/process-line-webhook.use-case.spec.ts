@@ -3,7 +3,7 @@ import { lineMessagingCredentialsFixture } from '../../../../common/config/line-
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
-import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages } from './process-line-webhook.use-case';
+import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatBudgetMediaNotStoredReply, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages } from './process-line-webhook.use-case';
 import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
@@ -126,11 +126,14 @@ describe('receipt owner summary and fallback', () => {
 
 describe('OCR governance LINE reply UX', () => {
   it('explains disabled and monthly-limit refusals without losing the numbered manual path', () => {
-    for (const code of ['OCR_FEATURE_DISABLED', 'OCR_MONTHLY_LIMIT_EXCEEDED'] as const) {
+    // The read-COUNT ceiling moved onto the shared document-reading credit sentence (credit-wording
+    // spec §4), so the two now state the kept file differently — both still state it.
+    for (const [code, kept] of [['OCR_FEATURE_DISABLED', /ยังเก็บไฟล์นี้ไว้ได้/],
+      ['OCR_MONTHLY_LIMIT_EXCEEDED', /^💚 รับรูปไว้แล้วค่ะ แต่เครดิตสำหรับการอ่านเอกสารไม่พอ/]] as const) {
       const reply = formatOcrGovernanceClarifyReply(code);
-      assert.match(reply, /ยังเก็บไฟล์นี้ไว้ได้/);
-      assert.match(reply, /1\) ใบเสร็จ/);
-      assert.doesNotMatch(reply, /OCR_|receipt-ocr|quota/i);
+      assert.match(reply, kept, code);
+      assert.match(reply, /1\) ใบเสร็จ/, code);
+      assert.doesNotMatch(reply, /OCR_|receipt-ocr|quota/i, code);
     }
   });
 
@@ -4149,7 +4152,7 @@ describe('ProcessLineWebhookUseCase – the monthly AI budget is not congestion 
     await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-budget', messageText: 'ยอดขายวันนี้' });
 
     const rendered = JSON.stringify(h.sentMessages);
-    assert.match(rendered, /โควตา AI ของแพ็กเกจเดือนนี้ครบแล้วค่ะ/);
+    assert.match(rendered, /เครดิต AI ของเดือนนี้หมดแล้วค่ะ/);
     assert.match(rendered, /ขอเปลี่ยนแพ็กเกจ/, 'and the one action that fixes it');
     assert.equal(rendered.includes('กำลังประมวลผลข้อความก่อนหน้า'), false, 'the congestion copy must not appear');
     assert.equal(rendered.includes('น้องมั่งมีกำลังตอบข้อความก่อนหน้าอยู่'), false);
@@ -4253,7 +4256,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
 
     assert.equal(h.getAiGatewayCalled(), false, 'B-02: no second provider/gate call after a money refusal');
     const rendered = JSON.stringify(h.sentMessages);
-    assert.match(rendered, /โควตา AI ของแพ็กเกจเดือนนี้ครบแล้วค่ะ/);
+    assert.match(rendered, /เครดิต AI ของเดือนนี้หมดแล้วค่ะ/);
     assert.equal(rendered.includes('ขัดข้องชั่วคราว'), false, 'a policy refusal is not a temporary outage');
     const final = (updates.at(-1) as any).data;
     assert.equal(final.status, 'ai_budget_exceeded');
@@ -4270,7 +4273,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
 
     assert.deepEqual(h.ledgerCalls.turns, [], 'a refusal that cannot change this month must not be queued for retry');
     assert.deepEqual(h.ledgerCalls.acks, []);
-    assert.match(JSON.stringify(h.sentMessages), /โควตา AI ของแพ็กเกจเดือนนี้ครบแล้วค่ะ/);
+    assert.match(JSON.stringify(h.sentMessages), /เครดิต AI ของเดือนนี้หมดแล้วค่ะ/);
     assert.equal((updates.at(-1) as any).data.status, 'ai_budget_exceeded');
   });
 
@@ -4285,7 +4288,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
 
     assert.equal(h.getAiGatewayCalled(), false);
     const rendered = JSON.stringify(h.sentMessages);
-    assert.match(rendered, /ยังตรวจสอบงบ AI ของร้านไม่ได้/);
+    assert.match(rendered, /ยังตรวจสอบเครดิต AI ของร้านไม่ได้/);
     assert.equal(/ครบแล้ว|เต็มแล้ว|โควตา/.test(rendered), false, 'an unreadable meter is not exhaustion');
     assert.equal((updates.at(-1) as any).data.errorCode, 'AI_BUDGET_UNAVAILABLE');
   });
@@ -4319,7 +4322,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     assert.equal(h.pendingRows.length, 1, 'the bytes are parked so the numbered question can be answered');
     const rendered = h.replies.join('\n');
     assert.match(rendered, /รับรูปไว้แล้วค่ะ/);
-    assert.match(rendered, /งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว/);
+    assert.match(rendered, /เครดิตสำหรับการอ่านเอกสารไม่พอ/);
     assert.match(rendered, /ยังไม่ได้บันทึกรายการค่าใช้จ่าย/);
     assert.match(rendered, /1\) ใบเสร็จ/, 'the existing numbered clarify still follows');
     assert.equal(rendered.includes('ระบบอ่านเอกสารขัดข้องชั่วคราว'), false, 'the false outage story is gone');
@@ -4340,7 +4343,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     });
 
     const rendered = h.replies.join('\n');
-    assert.match(rendered, /งบ AI ที่เหลือไม่พอเริ่มอ่านรูปนี้/);
+    assert.match(rendered, /เครดิตสำหรับการอ่านเอกสารไม่พอ/);
     assert.equal(/เต็มแล้ว|ครบแล้ว/.test(rendered), false);
   });
 
@@ -4408,7 +4411,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     });
 
     assert.equal(expenseDrafts, 0);
-    assert.match(h.replies.join('\n'), /งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว/);
+    assert.match(h.replies.join('\n'), /เครดิตสำหรับการอ่านเอกสารไม่พอ/);
     assert.equal((updates.at(-1) as any).data.errorCode, 'AI_MONTHLY_BUDGET_EXCEEDED');
   });
 
@@ -4428,7 +4431,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     assert.equal(h.getExpenseDrafts(), 0);
     const rendered = h.replies.join('\n');
     assert.equal(h.replies.length, 1, 'one honest answer, not silence');
-    assert.match(rendered, /งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว/);
+    assert.match(rendered, /เครดิตสำหรับการอ่านเอกสารไม่พอ/);
     assert.match(rendered, /ยังมีรูปก่อนหน้าที่รอคำตอบอยู่/);
     assert.match(rendered, /รูปนี้จึงยังไม่ได้เก็บไว้/);
     assert.equal(rendered.includes('รับรูปไว้แล้ว'), false, 'no retention claim for bytes that were dropped');
@@ -4456,24 +4459,36 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
 
     assert.equal(h.pendingRows.length, 0, 'no file is parked for someone who may not capture');
     const rendered = h.replies.join('\n');
-    assert.match(rendered, /งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว/);
+    assert.match(rendered, /เครดิตสำหรับการอ่านเอกสารไม่พอ/);
     assert.match(rendered, /ยังไม่ได้เก็บหรือบันทึกรายการใด ๆ/);
     assert.equal(/1\) ใบเสร็จ/.test(rendered), false, 'never offer a capture workflow this user cannot finish');
     assert.equal((updates.at(-1) as any).data.status, 'ai_budget_exceeded');
   });
 
-  it('keeps every non-money OCR governance reason exactly as it was (B-01)', () => {
-    // A fix, not a re-classification: the stable OCR reasons must not drift into the money wording.
-    assert.match(formatOcrGovernanceClarifyReply('OCR_FEATURE_DISABLED'), /บริษัทปิดการอ่านเอกสารด้วย AI/);
-    assert.match(formatOcrGovernanceClarifyReply('OCR_MONTHLY_LIMIT_EXCEEDED'), /ใช้สิทธิ์อ่านเอกสารด้วย AI ครบเดือนนี้แล้ว/);
-    assert.match(formatOcrGovernanceClarifyReply(undefined, true), /ระบบอ่านเอกสารขัดข้องชั่วคราว/);
-    for (const code of ['OCR_FEATURE_DISABLED', 'OCR_MONTHLY_LIMIT_EXCEEDED', 'OCR_QUOTA_UNAVAILABLE', undefined]) {
-      assert.equal(formatOcrGovernanceClarifyReply(code, true).includes('งบ AI'), false, `${code} must not mention the money budget`);
+  it('says "no document-reading credit" for every ceiling, and keeps wait/check/disabled apart (B-01, W-02)', () => {
+    // Credit-wording spec §4: one customer sentence for every ceiling that stops a document read —
+    // the OCR money share, TOTAL money on this lane, a shortfall, and the monthly read COUNT.
+    for (const code of ['AI_MONTHLY_BUDGET_EXCEEDED', 'AI_BUDGET_INSUFFICIENT', 'OCR_MONTHLY_LIMIT_EXCEEDED']) {
+      const reply = formatOcrGovernanceClarifyReply(code, true);
+      assert.match(reply, /^💚 รับรูปไว้แล้วค่ะ แต่เครดิตสำหรับการอ่านเอกสารไม่พอ /, code);
+      // The two facts beside the reason never move: the file is kept, nothing was recorded.
+      assert.match(reply, /จึงยังไม่ได้อ่านและยังไม่ได้บันทึกรายการค่าใช้จ่ายนะคะ/, code);
+      assert.match(reply, /1\) ใบเสร็จ/, `${code} keeps the numbered manual path`);
     }
-    // …and the money reasons never borrow the OCR-count wording.
-    assert.equal(formatOcrGovernanceClarifyReply('AI_MONTHLY_BUDGET_EXCEEDED', true).includes('สิทธิ์อ่านเอกสาร'), false);
-    assert.match(formatOcrGovernanceClarifyReply('AI_BUDGET_UNAVAILABLE', true), /ยังตรวจสอบงบ AI ของร้านไม่ได้/);
-    assert.match(formatOcrGovernanceClarifyReply('AI_BUDGET_BUSY', true), /กำลังประมวลผลงานก่อนหน้าอยู่/);
+    // Retryable and administrative reasons stay their own sentence — the shop acts differently.
+    assert.match(formatOcrGovernanceClarifyReply('AI_BUDGET_UNAVAILABLE', true), /^⏳ .*ยังตรวจสอบเครดิต AI ของร้านไม่ได้/);
+    assert.match(formatOcrGovernanceClarifyReply('OCR_QUOTA_UNAVAILABLE', true), /^⏳ .*ยังตรวจสอบเครดิต AI ของร้านไม่ได้/);
+    assert.match(formatOcrGovernanceClarifyReply('AI_BUDGET_BUSY', true), /^⏳ .*กำลังประมวลผลงานก่อนหน้าอยู่/);
+    assert.match(formatOcrGovernanceClarifyReply('OCR_FEATURE_DISABLED'), /บริษัทปิดการอ่านเอกสารด้วย AI/);
+    assert.match(formatOcrGovernanceClarifyReply(undefined, true), /ระบบอ่านเอกสารขัดข้องชั่วคราว/);
+    // §4: never a money figure, and `insufficient` never reads as exhaustion.
+    for (const code of ['AI_MONTHLY_BUDGET_EXCEEDED', 'AI_BUDGET_INSUFFICIENT', 'AI_BUDGET_UNAVAILABLE', 'AI_BUDGET_BUSY',
+      'OCR_MONTHLY_LIMIT_EXCEEDED', 'OCR_QUOTA_UNAVAILABLE', 'OCR_FEATURE_DISABLED', undefined]) {
+      assert.doesNotMatch(formatOcrGovernanceClarifyReply(code, true), /บาท|สตางค์|satang/, `${code} must not name money`);
+    }
+    for (const kind of ['save_failed', 'open_question', 'no_permission'] as const) {
+      assert.doesNotMatch(formatBudgetMediaNotStoredReply('AI_BUDGET_INSUFFICIENT', kind), /เต็ม|ครบ|หมด/, kind);
+    }
   });
 });
 

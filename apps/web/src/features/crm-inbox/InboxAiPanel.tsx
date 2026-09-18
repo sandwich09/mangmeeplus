@@ -66,7 +66,7 @@ function statusMessage(status: CrmAiStatus, error?: ProviderError): string {
   if (status === 'unavailable') {
     // Spec §9.4: the company's monthly AI money, not an outage. "ชั่วคราว … ลองใหม่" would be false
     // for the rest of this month, and each press spends another admission attempt.
-    if (error?.code === 'PROVIDER_BUDGET_EXHAUSTED') return 'งบ AI ของเดือนนี้ใช้ครบแล้ว — ตอบลูกค้าเองได้ตามปกติ หรือติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ';
+    if (error?.code === 'PROVIDER_BUDGET_EXHAUSTED') return 'เครดิต AI ของเดือนนี้หมดแล้ว — ตอบลูกค้าเองได้ตามปกติ หรือติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ';
     return error?.retryable ? 'AI ไม่พร้อมใช้งานชั่วคราว ลองใหม่ได้อีกครั้ง' : 'AI ไม่พร้อมใช้งานชั่วคราว';
   }
   if (status === 'refused') return 'AI ไม่สามารถสร้างคำตอบนี้ได้';

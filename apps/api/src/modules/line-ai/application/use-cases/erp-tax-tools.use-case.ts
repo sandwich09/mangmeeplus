@@ -20,6 +20,8 @@ import {
 import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 
 function now(): string { return new Date().toISOString(); }
+/** A monthly tax period key, `YYYY-MM`. */
+const MONTH_PERIOD_KEY = /^\d{4}-\d{2}$/;
 function addMoney(values: string[]): string {
   const scale = 10000n;
   const total = values.reduce((acc, value) => acc + parseMoney(value, scale), 0n);
@@ -191,7 +193,12 @@ export class TaxGetVatSummaryTool implements ErpReadToolPort {
     if (!ctx.permissions.includes('tax.period.read') || !ctx.permissions.includes('tax.event.read')) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
-    const periodKey = input.periodKey ?? civilPeriodKey(todayCivilDate());
+    // Period-resolution spec §3.3: a monthly key the caller states, else the CURRENT period. The
+    // shape is checked HERE as well as at the gateway sanitizer — this executor is authoritative,
+    // and a malformed key must default rather than reach the repository as a wildcard.
+    const periodKey = MONTH_PERIOD_KEY.test(String(input.periodKey ?? ''))
+      ? input.periodKey!
+      : civilPeriodKey(todayCivilDate());
     const period = await this.taxRepo.findPeriod(ctx.companyId, 'PP30', periodKey);
     if (!period) {
       return { toolName: this.toolName, status: 'ok', asOf, sourceRefs: [taxAggregateRef(ctx.companyId, 'vat_period_query', `VAT ${periodKey}`, asOf)], data: { periodKey, message: 'ยังไม่มีข้อมูล VAT งวดนี้', disclaimer: 'ซิงค์ข้อมูลก่อนหรือตรวจสอบกับนักบัญชี' } };

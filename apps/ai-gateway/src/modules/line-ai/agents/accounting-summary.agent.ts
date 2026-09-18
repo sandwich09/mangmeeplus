@@ -3,6 +3,7 @@
  * Allowlisted tools: read-only business summary tools.
  */
 import type { AgentContext } from './agent-types';
+import { periodFact } from './agent-types';
 import type { AgentIntentItem, SpecialistOutput, AgentFact, AgentToolCall } from '@watchdog-bms/contracts';
 import { LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY } from '@watchdog-bms/contracts';
 import type { ErpToolClient } from '../infrastructure/erp-tool.client';
@@ -220,7 +221,15 @@ Output language must follow the user's input language.
 export class AccountingSummaryAgent {
   constructor(private readonly erpTools: ErpToolClient) {}
 
-  async run(ctx: AgentContext, intentItem: AgentIntentItem, toolBudget: number, toolInput: Record<string, unknown> = {}): Promise<SpecialistOutput> {
+  async run(
+    ctx: AgentContext,
+    intentItem: AgentIntentItem,
+    toolBudget: number,
+    toolInput: Record<string, unknown> = {},
+    /** Period-resolution spec §3.4: the period the turn asked for, in the user's own words plus its
+     *  dates (`เดือนที่แล้ว (1–31 ส.ค. 2569)`). Display only — it never selects or widens a read. */
+    periodLabel?: string,
+  ): Promise<SpecialistOutput> {
     const requested = new Set(intentItem.requiredTools);
     const tools = LINE_TOOL_REGISTRY
       .filter((t) => ALLOWED_TOOLS.has(t.name))
@@ -233,6 +242,9 @@ export class AccountingSummaryAgent {
 
     const toolCalls: AgentToolCall[] = [];
     const facts: AgentFact[] = [];
+    // Spec §3.4: one period line per tool that echoed a window, appended AFTER the numbers it covers
+    // and only for a tool whose read actually landed in `toolData`.
+    const periodFacts: Array<{ tool: string; fact: AgentFact }> = [];
     const toolData: Array<{ tool: string; data: unknown }> = [];
     let asOf: string | undefined;
     let permissionDenied = false;
@@ -263,6 +275,8 @@ export class AccountingSummaryAgent {
 
       const data = result.data as Record<string, unknown>;
       if (data['reviewRequired'] === true) requiresHumanReview = true;
+      const period = periodFact(data, periodLabel);
+      if (period) periodFacts.push({ tool: tool.name, fact: period });
       const sourceRef = result.sourceRefs[0];
       let sourceAttached = false;
       const pushFacts = (...items: Array<{ label: string; value: string }>) => {
@@ -421,6 +435,10 @@ export class AccountingSummaryAgent {
             : explicitMessage ?? (summaryBits.length > 0 ? summaryBits.join(', ') : 'ข้อมูลพร้อมแล้ว (ดูรายละเอียดในเว็บแอป)'),
         });
       }
+    }
+
+    for (const entry of periodFacts) {
+      if (toolData.some((item) => item.tool === entry.tool)) facts.push(entry.fact);
     }
 
     if (permissionDenied && facts.length === 0) {

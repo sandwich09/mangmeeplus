@@ -39,7 +39,11 @@ export class BillingReceiptAdjustmentsService {
       ...configuration?.ocrMonthlyLimit!=null&&(reads?.usedCount??0)>=configuration.ocrMonthlyLimit?['OCR_LIMIT_REACHED' as const]:[],
       ...money.total!=='OK'?['AI_BUDGET_REACHED' as const]:[],
       // Under SHARED `ocr` IS `total`, so this can never double up with the line above.
-      ...money.total==='OK'&&money.ocr!=='OK'?['AI_OCR_BUDGET_REACHED' as const]:[]];
+      ...money.total==='OK'&&money.ocr!=='OK'?['AI_OCR_BUDGET_REACHED' as const]:[],
+      // Credit-wording spec §5.3: held credit is not spend yet, so the three lines above can all be
+      // silent while the usable balance is already lower than this console shows. Appended last so a
+      // company without holds keeps today's exact list. `reserved.TOTAL` is CHAT + OCR.
+      ...money.reserved.TOTAL>0||money.unresolvedHolds>0?['AI_CREDIT_HOLDS_PENDING' as const]:[]];
   }
   private async scope(context:RequestContext,companyId:string,tx:Prisma.TransactionClient=this.prisma.client){
     const result=await this.admin.scopedCompany(context,companyId,tx);

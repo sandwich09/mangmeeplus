@@ -305,10 +305,29 @@ const STUB_DATA: Record<string, unknown> = {
       { key: 'cat-office-03', label: 'ค่าอุปกรณ์สำนักงาน', amount: '12000.00' },
     ],
   },
+  // Real `ExpenseGetDailyClosingTool` shape (apps/api .../erp-expense-daily-closing.use-case.ts): the
+  // civil day, the tool's timezone, the branch scope, and the five per-currency buckets with their own
+  // item envelopes. The old `businessDate`/`totals` keys are not what that tool returns, so the
+  // specialist refused every daily-closing result and the compiled F3 family could never verify one
+  // (seen in the H4 replay: `ปิดยอดเมื่อวานซืน` reached the tool with the right day and still answered
+  // with the honest terminal). Same magnitudes as the old keys.
   'expense.get_daily_closing': {
-    businessDate: '2026-09-17',
-    totals: { paidAmount: '3120.00', unpaidAmount: '890.00', overdueAmount: '0.00' },
-    reviewItems: [{ id: 'exp-2', reason: 'NEEDS_REVIEW', amount: '890.00' }],
+    date: '2026-09-17',
+    timezone: 'Asia/Bangkok',
+    scope: { kind: 'all_branches' },
+    occurredToday: {
+      items: { total: 4, items: [], remaining: 0 },
+      totals: [{ currency: 'THB', total: '4010.0000', count: 4 }],
+      paid: [{ currency: 'THB', total: '3120.0000', count: 3 }],
+      outstanding: [{ currency: 'THB', total: '890.0000', count: 1 }],
+    },
+    dueEndOfDay: { items: { total: 0, items: [], remaining: 0 }, totals: [] },
+    overdue: { items: { total: 0, items: [], remaining: 0 }, totals: [] },
+    unscheduledOutstanding: { items: { total: 1, items: [], remaining: 0 }, totals: [{ currency: 'THB', total: '890.0000', count: 1 }] },
+    submittedToday: { count: 4 },
+    pendingReview: { count: 1 },
+    evidenceBlockers: { count: 1 },
+    duplicateRisks: { count: 0 },
   },
   'expense.get_detail': { id: 'exp-9001', expenseDate: '2026-09-17', vendorName: 'ร้านทดสอบ', amount: '1284.00', lines: [{ description: 'อาหาร', amount: '1200.00' }, { description: 'ค่าบริการ', amount: '84.00' }] },
   'expense.explain_record': {
@@ -349,8 +368,24 @@ const STUB_DATA: Record<string, unknown> = {
   'workflow.list_assigned_tasks': { count: 1, items: [{ id: 'wf-1', title: 'ตรวจบิล' }] },
 };
 
+/** What each tool was actually asked for, per task (period-resolution spec P-06). Ids, dates and
+ *  enums only — the values a read tool takes are already bounded to those by the sanitizer, and a
+ *  bounded copy is what makes "the tool got the period the resolver produced" checkable after a run. */
+type ToolInputRecord = { tool: string; input: Record<string, string | number | boolean> };
+let TOOL_INPUTS: ToolInputRecord[] = [];
+
+function boundedToolInput(input: Record<string, unknown>): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (typeof value === 'string') out[key] = value.slice(0, 40);
+    else if (typeof value === 'number' || typeof value === 'boolean') out[key] = value;
+  }
+  return out;
+}
+
 const erpTools = {
-  async invoke(tool: ToolMeta, _ctx: unknown, _input: Record<string, unknown> = {}): Promise<ToolResult> {
+  async invoke(tool: ToolMeta, _ctx: unknown, input: Record<string, unknown> = {}): Promise<ToolResult> {
+    TOOL_INPUTS.push({ tool: tool.name, input: boundedToolInput(input) });
     return {
       toolName: tool.name,
       status: 'ok',
@@ -437,6 +472,11 @@ type TaskRecord = {
   costSatang: number;
   usage: AiUsageEntry[];
   callShapes: CallShape[];
+  /** Every ERP tool call this task made, with the input it received (P-06). */
+  toolInputs: ToolInputRecord[];
+  /** The periods the deterministic resolver read from this task's message (P-06), so a run can be
+   *  scored without re-deriving them. Empty when the message names no period. */
+  resolvedPeriods: Array<{ kind: string; fromDate: string; toDate: string; monthKey?: string; source: string }>;
 };
 
 const ROUTE_REFUSAL_INTENTS = new Set(['MUTATION_REQUEST_REFUSAL', 'UNSUPPORTED', 'CLARIFY']);
@@ -448,11 +488,18 @@ const normalizeMoney = (value: string | undefined): string | null => {
   return `${whole}.${fraction.padEnd(2, '0')}`;
 };
 
+/** EXACTLY the rule `computeValueCandidates` applies in `process-line-webhook.use-case.ts`: a turn
+ *  whose only value is a PERIOD ("ยอดขายเมื่อวาน" — no amount, no written date) must still carry the
+ *  payload, or the gateway has nothing to select from and the answer falls back to the tool default. */
+function hasValueCandidates(candidates: { amounts: unknown[]; dates: unknown[]; periods?: unknown[] }): boolean {
+  return candidates.amounts.length > 0 || candidates.dates.length > 0 || (candidates.periods?.length ?? 0) > 0;
+}
+
 function buildIntakeRequest(task: IntakeCostTask, requestId: string, image?: { mimeType: 'image/jpeg' | 'image/png'; contentBase64: string }): LineIntakeRouteRequest {
   const candidates = task.messageText
     ? extractValueCandidates(task.messageText, INTAKE_COST_CORPUS_TODAY_ISO)
     : { amounts: [], dates: [] };
-  const hasCandidates = candidates.amounts.length > 0 || candidates.dates.length > 0;
+  const hasCandidates = hasValueCandidates(candidates);
   return {
     requestId,
     companyId: 'company-benchmark',
@@ -493,7 +540,7 @@ function mintActorDelegations(permissions: readonly string[], requestId: string)
 
 function buildTurnRequest(task: IntakeCostTask, plan: LineIntakeRoutePlan, requestId: string): LineAiTurnRequest {
   const candidates = task.messageText ? extractValueCandidates(task.messageText, INTAKE_COST_CORPUS_TODAY_ISO) : { amounts: [], dates: [] };
-  const hasCandidates = candidates.amounts.length > 0 || candidates.dates.length > 0;
+  const hasCandidates = hasValueCandidates(candidates);
   const intakeIntent = plan.status === 'ROUTED' ? plan.intent : undefined;
   return {
     requestId,
@@ -527,6 +574,7 @@ async function runTask(
   runId: string,
 ): Promise<TaskRecord> {
   CALL_SHAPES = [];
+  TOOL_INPUTS = [];
   const startedAt = Date.now();
   const requestId = `${runId}-p${pass}-${task.id}`;
   const rendered = task.image ? await renderImage(task.image) : undefined;
@@ -677,6 +725,16 @@ function finishRecord(input: {
     costSatang,
     usage,
     callShapes: [...CALL_SHAPES],
+    toolInputs: [...TOOL_INPUTS],
+    resolvedPeriods: (task.messageText
+      ? extractValueCandidates(task.messageText, INTAKE_COST_CORPUS_TODAY_ISO).periods ?? []
+      : []).map((period) => ({
+        kind: period.kind,
+        fromDate: period.fromDate,
+        toDate: period.toDate,
+        ...(period.monthKey ? { monthKey: period.monthKey } : {}),
+        source: period.source,
+      })),
   };
 }
 
@@ -690,6 +748,18 @@ function percentile(values: number[], p: number): number {
   const sorted = [...values].sort((a, b) => a - b);
   const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
   return sorted[index]!;
+}
+
+/** True when SOME call of this task was handed exactly a period the resolver read from its message
+ *  (either boundary pair, the CRM window, the single day, or the month key). */
+function periodInputMatches(record: TaskRecord): boolean {
+  return record.toolInputs.some((call) => record.resolvedPeriods.some((period) => {
+    const got = call.input;
+    if (typeof got['periodKey'] === 'string') return got['periodKey'] === period.monthKey;
+    if (typeof got['date'] === 'string') return got['date'] === period.fromDate && period.fromDate === period.toDate;
+    if (typeof got['newSince'] === 'string') return got['newSince'] === period.fromDate && got['newUntil'] === period.toDate;
+    return got['fromDate'] === period.fromDate && got['toDate'] === period.toDate;
+  }));
 }
 
 function summarize(records: TaskRecord[]) {
@@ -876,6 +946,25 @@ function markdown(records: TaskRecord[], summary: ReturnType<typeof summarize>, 
   for (const [key, value] of Object.entries(accounting.sections)) lines.push(`| ${key} | ${value} |`);
   lines.push('');
   lines.push(`Measured cacheable-prefix chars per cache-write token: ${accounting.measuredCharsPerCacheWriteToken?.toFixed(2) ?? 'n/a'} (${accounting.coldSampleCount} cold samples).`, '');
+  // Period resolution (spec P-06): for every task whose message NAMES a period, what the resolver
+  // produced against what the tool was actually handed. Nothing here is judged by a model.
+  const periodRows = records.filter((record) => record.resolvedPeriods.length > 0);
+  if (periodRows.length > 0) {
+    const matched = periodRows.filter(periodInputMatches);
+    lines.push('## Period resolution (resolver vs. the input the tool received)', '');
+    lines.push(`Matched **${matched.length} of ${periodRows.length}** (${pct(matched.length, periodRows.length)}).`, '');
+    lines.push('| task | pass | resolved period | tool | input the tool received | match | lane | success |');
+    lines.push('| --- | ---: | --- | --- | --- | --- | --- | --- |');
+    for (const record of periodRows) {
+      const period = record.resolvedPeriods[0]!;
+      const call = record.toolInputs[0];
+      lines.push(`| ${record.taskId} | ${record.pass} | ${period.kind} ${period.fromDate}..${period.toDate}`
+        + `${period.monthKey ? ` (${period.monthKey})` : ''} | ${call?.tool ?? '—'} | `
+        + `\`${call ? JSON.stringify(call.input) : '—'}\` | ${periodInputMatches(record) ? 'yes' : 'NO'} | `
+        + `${record.toolInputs.length === 1 ? 'one call' : `${record.toolInputs.length} calls`} | ${record.success ? 'ok' : 'BAD'} |`);
+    }
+    lines.push('');
+  }
   lines.push('## Failures', '');
   const failures = records.filter((r) => !r.success);
   if (failures.length === 0) lines.push('None.');
@@ -1026,6 +1115,7 @@ function budgetStoppedRecord(task: IntakeCostTask, pass: number, runId: string):
     expectedIntents: [...task.expect.intents], routingCorrect: false,
     permissionOutcome: task.expect.permissionOutcome, followOn: 'none',
     latencyMs: 0, wallClockMs: 0, calls: 0, costSatang: 0, usage: [], callShapes: [],
+    toolInputs: [], resolvedPeriods: [],
   };
 }
 

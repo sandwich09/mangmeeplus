@@ -567,7 +567,7 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
       assert.equal(h.redis.streams.get(CHAT_LEDGER_KEY)?.length ?? 0, 0, 'no turn entry for a closed gate');
       assert.equal(h.replies.length, 1);                                      // (5)
       const card = customerReplies(h.replies)[0];
-      assert.match(card, /งบ AI ส่วนแชตของเดือนนี้ครบแล้วค่ะ/);
+      assert.match(card, /เครดิต AI ส่วนแชตของเดือนนี้หมดแล้วค่ะ/);
       assert.match(card, /ขอเปลี่ยนแพ็กเกจ/);
       assertNoMoneyFigure(card);
 
@@ -664,7 +664,7 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
     const parked = customerReplies(h.replies)[0];                              // (5)
     assert.equal(h.replies.length, 1);
     assert.match(parked, /รับรูปไว้แล้วค่ะ/);
-    assert.match(parked, /งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว/);
+    assert.match(parked, /เครดิตสำหรับการอ่านเอกสารไม่พอ/);
     assert.match(parked, /ยังไม่ได้บันทึกรายการค่าใช้จ่าย/);
     assertNoMoneyFigure(parked);
     // The turn itself is durable, marked refused, so the next message has the same context.
@@ -702,8 +702,8 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
 
     const rendered = customerReplies(h.replies);                               // (5)
     assert.equal(rendered.length, 2, 'one reply per turn');
-    assert.match(rendered[0], /โควตา AI ของแพ็กเกจเดือนนี้ครบแล้วค่ะ/);
-    assert.match(rendered[1], /งบ AI สำหรับอ่านเอกสารเดือนนี้เต็มแล้ว/);
+    assert.match(rendered[0], /เครดิต AI ของเดือนนี้หมดแล้วค่ะ/);
+    assert.match(rendered[1], /เครดิตสำหรับการอ่านเอกสารไม่พอ/);
     rendered.forEach(assertNoMoneyFigure);
   });
 
@@ -763,7 +763,7 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
 
     const rendered = customerReplies(h.replies);                               // (5)
     assert.equal(rendered.length, 1);
-    assert.match(rendered[0], /งบ AI ที่เหลือไม่พอเริ่มอ่านรูปนี้/);
+    assert.match(rendered[0], /เครดิตสำหรับการอ่านเอกสารไม่พอ/);
     assert.equal(/เต็มแล้ว|ครบแล้ว/.test(rendered[0]), false, 'insufficient must never read as "full"');
     assert.match(rendered[0], /ยังไม่ได้บันทึกรายการค่าใช้จ่าย/);
     assertNoMoneyFigure(rendered[0]);
@@ -817,7 +817,7 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
     assert.equal(moneyDown.redis.streams.get(CHAT_LEDGER_KEY)?.length ?? 0, 0, 'and no turn entry is appended');
     assert.equal(moneyDown.replies.length, 1);                                // (5)
     const copy = customerReplies(moneyDown.replies)[0];
-    assert.match(copy, /ยังตรวจสอบงบ AI ของร้านไม่ได้/);
+    assert.match(copy, /ยังตรวจสอบเครดิต AI ของร้านไม่ได้/);
     assert.equal(/ครบแล้ว|เต็มแล้ว/.test(copy), false, 'an unreadable meter is not a full budget');
     assertNoMoneyFigure(copy);
 
@@ -840,7 +840,7 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
     assert.deepEqual(holdsDown.holds(), []);
     assert.deepEqual(holdsDown.usage(), []);
     assert.equal(holdsDown.redis.streams.get(CHAT_LEDGER_KEY)?.length ?? 0, 0, 'and no turn entry is appended');
-    assert.match(customerReplies(holdsDown.replies)[0], /ยังตรวจสอบงบ AI ของร้านไม่ได้/);
+    assert.match(customerReplies(holdsDown.replies)[0], /ยังตรวจสอบเครดิต AI ของร้านไม่ได้/);
   });
 
   it('7. a redelivered image and a retry after a lost response buy exactly one expense', async () => {

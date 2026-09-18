@@ -43,16 +43,16 @@ const CODE_LABELS: Record<string, string> = {
   // Split CHAT/OCR budget policy (remediation spec §12.4). System-Admin surface only
   // (`system.partner_ai_model.manage`), so each line names the field to change rather than
   // restating the rule; the refused amounts travel as separate response fields, never in the text.
-  partner_ai_budget_split_not_enabled: 'ระบบยังไม่เปิดให้แยกเพดานแชตกับอ่านเอกสาร ให้ใช้งบรวมก้อนเดียวไปก่อน',
+  partner_ai_budget_split_not_enabled: 'ระบบยังไม่เปิดให้แยกเพดานแชตกับอ่านเอกสาร ให้ใช้เครดิตรวมก้อนเดียวไปก่อน',
   partner_ai_budget_policy_invalid: 'ตรวจโหมดงบ เพดานแชต เพดานอ่านเอกสาร และเดือนที่เริ่มใช้ให้ถูกต้อง เพดานต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป',
   partner_ai_budget_split_caps_required: 'โหมดแยกเพดานต้องกรอกทั้งเพดานแชตและเพดานอ่านเอกสาร ใส่ 0 หากต้องการปิดส่วนนั้น',
   partner_ai_budget_effective_month_invalid: 'เลือกเดือนที่เริ่มใช้เป็นเดือนนี้หรือเดือนถัดไปเท่านั้น',
-  partner_ai_budget_split_exceeds_total: 'ผลรวมเพดานแชตและอ่านเอกสารต้องไม่เกินงบรวมของเดือน กรุณาลดเพดานหรือเพิ่มงบรวมก่อนบันทึก',
-  partner_ai_budget_total_below_split_allocation: 'งบรวมใหม่ต่ำกว่าผลรวมเพดานที่ตั้งไว้ กรุณาลดเพดานทั้งที่ใช้อยู่และที่ตั้งให้เริ่มเดือนถัดไปก่อน แล้วจึงลดงบรวม',
-  partner_ai_budget_revision_required: 'โหลดข้อมูลงบ AI ล่าสุดก่อนตรวจสอบและบันทึกเพดานอีกครั้ง',
-  partner_ai_budget_revision_conflict: 'ข้อมูลงบ AI ถูกแก้ไขจากที่อื่นหรือขึ้นเดือนใหม่แล้ว กรุณาโหลดใหม่และตรวจสอบก่อนบันทึก',
+  partner_ai_budget_split_exceeds_total: 'ผลรวมเพดานแชตและอ่านเอกสารต้องไม่เกินเครดิตรวมของเดือน กรุณาลดเพดานหรือเพิ่มเครดิตรวมก่อนบันทึก',
+  partner_ai_budget_total_below_split_allocation: 'เครดิตรวมใหม่ต่ำกว่าผลรวมเพดานที่ตั้งไว้ กรุณาลดเพดานทั้งที่ใช้อยู่และที่ตั้งให้เริ่มเดือนถัดไปก่อน แล้วจึงลดเครดิตรวม',
+  partner_ai_budget_revision_required: 'โหลดข้อมูลเครดิต AI ล่าสุดก่อนตรวจสอบและบันทึกเพดานอีกครั้ง',
+  partner_ai_budget_revision_conflict: 'ข้อมูลเครดิต AI ถูกแก้ไขจากที่อื่นหรือขึ้นเดือนใหม่แล้ว กรุณาโหลดใหม่และตรวจสอบก่อนบันทึก',
   partner_ai_budget_split_requires_next_month: 'บริษัทนี้มีค่าใช้จ่าย AI ในเดือนนี้แล้ว ให้ตั้งแยกเพดานให้มีผลเดือนถัดไป',
-  partner_ai_budget_mode_change_next_month_only: 'การกลับไปใช้งบรวมก้อนเดียวทำได้เฉพาะเดือนถัดไป กรุณาเลือกเดือนที่เริ่มใช้เป็นเดือนถัดไป',
+  partner_ai_budget_mode_change_next_month_only: 'การกลับไปใช้เครดิตรวมก้อนเดียวทำได้เฉพาะเดือนถัดไป กรุณาเลือกเดือนที่เริ่มใช้เป็นเดือนถัดไป',
   partner_ai_budget_cap_below_bucket_spend: 'เพดานใหม่ต่ำกว่ายอดที่ส่วนนั้นใช้ไปแล้วในเดือนนี้ ให้ตั้งเพดานที่ลดลงให้มีผลเดือนถัดไป',
   // Phase E1b: a split hold is priced from the company's own model, so SPLIT is unusable without
   // one. Refused at SAVE time rather than letting the shop go quiet afterwards.
@@ -60,8 +60,14 @@ const CODE_LABELS: Record<string, string> = {
   // Phase E1b sibling of the line above: the new TOTAL is below what this company has already
   // spent PLUS what is currently reserved for AI calls in flight this month. Nothing is clamped —
   // the operator raises the total, or waits for the reserved amount to settle.
-  partner_ai_budget_total_below_committed: 'งบรวมใหม่ต่ำกว่ายอดที่ใช้ไปแล้วบวกยอดที่จองไว้ของเดือนนี้ กรุณาตั้งงบรวมให้ไม่น้อยกว่ายอดใช้บวกยอดจอง หรือรอให้รายการที่จองไว้เสร็จก่อน',
-  platform_ai_budget_default_below_split_allocation: 'งบเริ่มต้นใหม่ต่ำกว่าผลรวมเพดานของบริษัทที่ใช้งบเริ่มต้น กรุณาแก้เพดานของบริษัทเหล่านั้น หรือตั้งงบเฉพาะบริษัทก่อนลดงบเริ่มต้น',
+  partner_ai_budget_total_below_committed: 'เครดิตรวมใหม่ต่ำกว่ายอดที่ใช้ไปแล้วบวกยอดที่กันไว้ของเดือนนี้ กรุณาตั้งเครดิตรวมให้ไม่น้อยกว่ายอดใช้บวกยอดที่กันไว้ หรือรอให้รายการที่กันไว้เสร็จก่อน',
+  // Hold reconciliation (hold spec §4.2). Each one tells the operator what to do next, because the
+  // list is refreshed automatically after any of these three — the row simply will not be there.
+  partner_ai_credit_hold_not_found: 'ไม่พบรายการเครดิตที่กันไว้นี้ในบริษัทนี้ กรุณาโหลดรายการล่าสุดแล้วตรวจสอบอีกครั้ง',
+  partner_ai_credit_hold_already_resolved: 'รายการนี้ถูกปิดไปแล้ว อาจมีผลการใช้จริงเข้ามาหรือมีผู้ดูแลอีกคนจัดการก่อน กรุณาโหลดรายการล่าสุดก่อนทำรายการใหม่',
+  partner_ai_credit_breach_already_acknowledged: 'รายการใช้เกินที่กันไว้นี้ถูกรับทราบไปแล้ว กรุณาโหลดรายการล่าสุดเพื่อดูสถานะปัจจุบัน',
+  partner_ai_credit_hold_action_failed: 'ทำรายการกับเครดิตที่กันไว้ไม่สำเร็จ ยังไม่มีการเปลี่ยนแปลงใด กรุณาโหลดรายการล่าสุดและลองอีกครั้ง',
+  platform_ai_budget_default_below_split_allocation: 'เครดิตเริ่มต้นใหม่ต่ำกว่าผลรวมเพดานของบริษัทที่ใช้เครดิตเริ่มต้น กรุณาแก้เพดานของบริษัทเหล่านั้น หรือตั้งเครดิตเฉพาะบริษัทก่อนลดเครดิตเริ่มต้น',
   CONTROL_OFFER_RECEIPTS_INVALID: 'ตรวจจำนวนใบเสร็จของแพ็กเกจ กรอกจำนวนเต็มตั้งแต่ 1 ถึง 178,956,970 ใบต่อรอบเดือน รายปีคูณ 12 ให้อัตโนมัติ',
   CONTROL_OFFER_PRICE_INVALID: 'ตรวจราคาของแพ็กเกจ ยอดรวมภาษีต้องอยู่ระหว่าง 10 ถึง 999,999.99 บาท และทศนิยมไม่เกิน 2 ตำแหน่ง',
   CONTROL_OFFER_CAPACITY_INVALID: 'กรอกเพดานสาขาและผู้ใช้ให้ครบทั้งสองช่อง เป็นจำนวนเต็มตั้งแต่ 1 ถึง 1,000 ผู้ใช้นับรวมเจ้าของ',
