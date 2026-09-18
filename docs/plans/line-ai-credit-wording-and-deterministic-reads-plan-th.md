@@ -26,18 +26,28 @@
 - [x] Corpus replay ก่อน/หลัง (owner อนุญาต 2026-09-18, Bedrock จริงผ่าน profile `watchdog-bedrock`, corpus `cf9bce44…`, `--max-thb 60`, ใช้จริง THB 16.52): hit 8 → 16/22, routing/success เท่าเดิม, THB/successful −20.4%, calls/turn −41% → research doc §14 "R5 after-run"
 - [x] Docs: spec W-05, W-06, W-07 tick ตามหลักฐาน; task memory
 
-### H3. รอ owner (ไม่ทำใน wave นี้)
+### H3. เคลียร์เครดิตที่กันไว้ค้าง — [spec แยก](../specs/line-ai-credit-hold-reconciliation-spec-th.md) (owner อนุมัติ 2026-09-18)
+
+เริ่มหลัง H1 merge (ใช้คำว่า "เครดิต AI" และแตะไฟล์หน้าแอดมินชุดเดียวกัน)
+
+- [ ] ชั้น 1 gateway: durable settle retry นอกเส้นทางคำขอ + graceful drain บน SIGTERM (J-01, J-02) — SHARED byte-identical
+- [ ] ชั้น 2 API: `GET …/ai-credit-holds` (sweep แล้วอ่าน), actions release / charge_at_bound / acknowledge_breach พร้อม reason + audit + history; migration additive (`breachAcknowledgedAt/By`), `AiUsageBasis` + `OPERATOR_CHARGED_AT_BOUND`, Thai error texts; pg spec (J-03, J-04, J-07)
+- [ ] ชั้น 2 web: section "เครดิตที่กันไว้ค้าง" ในหน้า AI และโควตา + ประวัติ; browser evidence (J-05)
+- [ ] ชั้น 3: sweep `ai_credit_holds_unresolved` + config `AI_CREDIT_HOLD_ALERT_AFTER_HOURS` (J-06)
+- [ ] Docs: spec J-01…J-07 tick ตามหลักฐาน; J-08 หลัง UAT; task memory
+
+### H4. รอ owner (ไม่ทำใน wave นี้)
 
 - concept เครดิต (หน่วย/เติม/ตรวจ/ค่า default ต่อแพ็กเกจ) — owner decision 3
-- หน้าจัดการเงินที่กันไว้ค้าง (`UNRESOLVED`/breach) — รอ owner ยืนยันข้อเสนอ 3 ชั้น (auto-recover จาก gateway log → admin console → alert)
-- ตั้งเครดิตจริงให้บริษัท (§7: แชต 80 / อ่านเอกสาร 60 / รวม 140 บาท สำหรับร้านทดลอง) — การกระทำของแอดมินหลัง deploy
+- ตั้งเครดิตจริงให้บริษัท (spec §7: แชต 80 / อ่านเอกสาร 60 / รวม 140 บาท สำหรับร้านทดลอง) — การกระทำของแอดมินหลัง deploy
 
 ## 2. Verification matrix
 
 | ช่วง | หลักฐานที่ต้องผ่าน |
 | --- | --- |
 | H1 | focused specs ของทุกไฟล์ที่แก้ + FULL api suite + FULL web suite + contracts + whole-chain runner + harness + typechecks + smoke script ที่แก้ (รันจริงถ้ารันได้ในเครื่อง) + browser evidence + `git diff --check`; guard: grep "งบ AI\|โควตา AI" ใน apps/packages/scripts = 0 (ยกเว้น allowlist ที่ระบุเหตุผล) |
-| H2 | gateway FULL suite + security spec + whole-chain (gateway-behavior) + deploy.sh spec + pins + corpus replay (เมื่ออนุญาต) |
+| H2 | gateway FULL suite + security spec + whole-chain (gateway-behavior) + deploy.sh spec + pins + corpus replay (owner อนุญาตงบ ≈ THB 60–100 แล้ว 2026-09-18) |
+| H3 | gateway FULL suite (retry/drain specs) + api FULL suite + pg spec ใหม่ใน ci.yml step P27/OCR + web FULL suite + whole-chain + harness + browser evidence |
 | ทั้งสอง | merge develop ก่อน PR; CI เขียวทุก run ของ head; admin-merge develop + main |
 
 Focused starting commands (ตรวจ path จริงตอน implement; ไม่เพิ่ม package script):
@@ -64,4 +74,4 @@ git diff --check
 
 ## 3. Handoff
 
-เสร็จเมื่อ W-01…W-06, W-08 มีหลักฐานและ merge แล้ว; W-07 เมื่อ corpus replay ได้รับอนุญาตและรัน; W-09 หลัง deploy UAT ตาม runbook ทุกช่วงบันทึก commands/counts/SHA/ข้อจำกัดใน task memory
+เสร็จเมื่อ W-01…W-08 และ J-01…J-07 มีหลักฐานและ merge แล้ว; W-09 หลัง deploy UAT ตาม runbook ทุกช่วงบันทึก commands/counts/SHA/ข้อจำกัดใน task memory

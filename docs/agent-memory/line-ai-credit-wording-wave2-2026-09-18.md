@@ -10,7 +10,7 @@ Decisions:
 - Trial numbers (spec §7): chat 80 THB, receipts 15 (count), OCR money guard 60 THB, total 140 THB — applied per company by an admin after deploy; per-package defaults belong to the coming credit concept.
 Open questions:
 - ~~Owner authorisation for the R5 corpus replay Bedrock spend~~ — granted 2026-09-18; run done, THB 16.52 of the THB 100 phase guard (see H2 Verification).
-- Owner confirmation of the hold-reconciliation proposal (auto-recover from gateway `ai.usage` logs → admin console release/charge-at-bound → alert) before a spec is written.
+- (closed 2026-09-18) Owner approved the hold-reconciliation proposal → [spec](../specs/line-ai-credit-hold-reconciliation-spec-th.md); CloudWatch recovery replaced by in-process durable retry + graceful drain (reason in that spec §2).
 - H2 residual for the owner: `tax.get_vat_summary` has no whitelisted input field, so neither the lane nor the loop can ask for a period other than the current one — `ภาษีเดือนที่แล้ว` is answered for the period the tool defaults to, labelled with that period. Whitelisting `periodKey` changes the intake catalog, so it needs its own round.
 - H2 residual: letting the model give real advice needs `SAFE_REPLY_WORDS` widened (and its compound entries fixed — `ตรวจสอบ` never matches because `Intl.Segmenter` splits it). That widens what the model may say, so it is an owner decision, not a side effect of this wave.
 
