@@ -79,6 +79,11 @@ export type ExpenseRecord = {
   pendingPostingSourceType: 'expense.record' | 'expense.payment' | null;
   pendingPostingSourceId: string | null;
   postingError: string | null;
+  // Capture lineage (appendix §2.3). Null on every ordinary expense; never set from a client DTO.
+  captureGroupId?: string | null;
+  captureAllocationId?: string | null;
+  captureScopeKey?: string | null;
+  payerUserId?: string | null;
   note: string | null;
   internalMemo: string | null;
   createdByUserId: string;
@@ -129,6 +134,8 @@ export type ExpenseRecordWithRelations = ExpenseRecord & {
   duplicateCandidates: DuplicateCandidateSummary[];
   substituteReceiptEvidence: SubstituteReceiptEvidenceSummary | null;
   payments: ExpensePaymentRecord[];
+  /** Appendix §5: the capture group this is a derived source of; null on every other expense. */
+  captureGroup?: import('@watchdog-bms/contracts').ExpenseCaptureLineage | null;
   /**
    * The suggested input Tax Code of the category this expense is filed under, as its external
    * code. A hint for the line picker, not a stored property of the expense.
@@ -238,6 +245,19 @@ export type CreateExpenseRecordInput = {
   vendorNameSnapshot?: string;
   vatCaptureSnapshotJson?: import('@watchdog-bms/contracts').ExpenseVatCaptureSnapshotV1;
   whtInputJson?: import('@watchdog-bms/contracts').ExpenseWhtCapture;
+  // Capture handoff (appendix §5, W05). A derived source is written complete — issuer, status and
+  // lineage in the same INSERT as its totals — because it is created under the group lock inside
+  // the handoff transaction, where a second write to "finish" it has nothing to fence against.
+  // Every field here is server-derived from a reviewed allocation; none is ever taken from a DTO.
+  status?: ExpenseStatus;
+  aiVerificationStatus?: AiVerificationStatus;
+  vendorTaxIdSnapshot?: string;
+  vendorBranchCodeSnapshot?: string;
+  vendorDocumentNumber?: string;
+  captureGroupId?: string;
+  captureAllocationId?: string | null;
+  captureScopeKey?: string;
+  payerUserId?: string | null;
   // computed totals
   subtotalAmount: string;
   discountAmount: string;
@@ -249,7 +269,10 @@ export type CreateExpenseRecordInput = {
   outstandingAmount: string;
 };
 
-export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'companyId' | 'captureSource' | 'createdByUserId' | 'missingReceiptReason' | 'expenseCategoryId' | 'draftIdempotencyKey' | 'draftPayloadHash' | 'draftReplayScopes'>> & {
+// The capture lineage and the payer are INSERT-only through this type: `updateExpense` does not
+// carry them, so accepting them here would be a field that type-checks and silently does nothing.
+// A handoff writes them in its own transaction, under the group lock (appendix §5).
+export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'companyId' | 'captureSource' | 'createdByUserId' | 'missingReceiptReason' | 'expenseCategoryId' | 'draftIdempotencyKey' | 'draftPayloadHash' | 'draftReplayScopes' | 'captureGroupId' | 'captureAllocationId' | 'captureScopeKey' | 'payerUserId'>> & {
   id: string;
   companyId: string;
   updatedByUserId: string;

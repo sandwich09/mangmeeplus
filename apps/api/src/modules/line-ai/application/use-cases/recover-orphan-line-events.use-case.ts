@@ -18,6 +18,9 @@ import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditService } from '../../../audit/application/audit.service';
+import { AuditAction } from '../../../audit/domain/models/audit-action';
+import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
+import { PrismaExpenseCaptureRepository } from '../../../expenses/infrastructure/prisma-expense-capture.repository';
 import { LineMessageBufferService, type LineBufferEnvelope } from '../line-message-buffer.service';
 import { LINE_RECEIPT_RETRY_LEASE_CODE, LINE_RECEIPT_RETRY_LEASE_MS, LINE_RECEIPT_RETRY_WAIT_CODE } from '../company-ocr-governance';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
@@ -30,6 +33,11 @@ import { LineReplyAdapter, parseOutcomeMessages, repairLegacyOutcomePreview, saf
 export const ORPHAN_REPLAY_MAX_AGE_MS = 60 * 60 * 1000;
 const MAX_SWEEP_BATCH = 50;
 const MAX_PURGE_BATCH = 500;
+/** Capture appendix §8: one tick walks at most this many groups, each of which costs a handful of
+ *  small queries plus one `markDeleted` transaction per file. */
+const MAX_CAPTURE_RETENTION_GROUPS = 100;
+/** Written into `ExpenseCaptureFile.detachedReason`, the same column a human detach uses. */
+export const CAPTURE_RETENTION_DETACH_REASON = 'retention';
 
 /** Claim stamp for an outcome replay. Deliberately `RETRYABLE_`-prefixed so it lands back in the
  *  SECOND arm of the sweep query below: a pod that dies between the claim and the push leaves a row
@@ -43,6 +51,8 @@ export type OrphanSweepResult = {
   expired: number;
   skipped: number;
   purged: number;
+  /** Capture appendix §8 / D08: files of no-handoff groups deleted in this tick. */
+  captureFilesPurged: number;
 };
 
 /** Own data, but a hand-edited or truncated row must not take the sweep down. */
@@ -63,6 +73,10 @@ export function parseBufferEnvelope(value: unknown): LineBufferEnvelope | null {
 export class RecoverOrphanLineEventsUseCase {
   private readonly logger = new Logger(RecoverOrphanLineEventsUseCase.name);
   @Inject(LineReadEvidenceService) private readonly readEvidence!: LineReadEvidenceService;
+  // Property injection, like `readEvidence` above: the five constructor arguments are what every
+  // existing caller and spec already passes.
+  @Inject(PrismaAttachmentRepository) private readonly attachments!: PrismaAttachmentRepository;
+  @Inject(PrismaExpenseCaptureRepository) private readonly capture!: PrismaExpenseCaptureRepository;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -118,7 +132,7 @@ export class RecoverOrphanLineEventsUseCase {
       })).map((outcome) => [outcome.webhookEventId, outcome]))
       : new Map<string, { messagesJson: unknown; authorizationJson: unknown; deliveredAt: Date | null }>();
 
-    const result: OrphanSweepResult = { replayed: 0, expired: 0, skipped: 0, purged: 0 };
+    const result: OrphanSweepResult = { replayed: 0, expired: 0, skipped: 0, purged: 0, captureFilesPurged: 0 };
     const replayBefore = new Date(now - ORPHAN_REPLAY_MAX_AGE_MS);
     for (const row of rows) {
       if (row.deliveryOwnerId?.startsWith('ledger:')) { result.skipped += 1; continue; }
@@ -181,6 +195,7 @@ export class RecoverOrphanLineEventsUseCase {
     }
 
     result.purged = await this.purgeExpiredEvents(now);
+    result.captureFilesPurged = await this.purgeExpiredCaptureData(now);
     if (result.replayed + result.expired + result.skipped > 0) {
       this.logger.log({ msg: 'line_orphan_sweep', ...result });
     }
@@ -329,6 +344,11 @@ export class RecoverOrphanLineEventsUseCase {
     if (proofs.length) await this.prisma.client.lineReadEvidence.deleteMany({ where: { id: { in: proofs.map(row => row.id) } } });
     const deliveries = await this.prisma.client.lineLedgerDelivery.findMany({ where: { createdAt: { lt: before } }, select: { id: true }, orderBy: { createdAt: 'asc' }, take: MAX_PURGE_BATCH });
     if (deliveries.length) await this.prisma.client.lineLedgerDelivery.deleteMany({ where: { id: { in: deliveries.map(row => row.id) } } });
+    // Capture appendix §2.2: the pre-capture intake diagnostic ages out in the SAME sweep and the
+    // same window as the webhook log it explains. It holds no payload, but it is still a record of
+    // what a customer sent, so it must not outlive the event.
+    const attempts = await this.prisma.client.lineIntakeAttempt.findMany({ where: { createdAt: { lt: before } }, select: { id: true }, orderBy: { createdAt: 'asc' }, take: MAX_PURGE_BATCH });
+    if (attempts.length) await this.prisma.client.lineIntakeAttempt.deleteMany({ where: { id: { in: attempts.map(row => row.id) } } });
     const expired = await this.prisma.client.lineWebhookEventLog.findMany({
       where: { createdAt: { lt: before } },
       select: { id: true },
@@ -340,5 +360,88 @@ export class RecoverOrphanLineEventsUseCase {
       where: { id: { in: expired.map((row) => row.id) } },
     });
     return deleted.count;
+  }
+
+  /**
+   * Capture appendix §8 / D08 — the retention half of the capture group.
+   *
+   * Two things age out on the same window (`EXPENSE_CAPTURE_RETENTION_DAYS`, default 90):
+   *
+   * 1. `linePushTargetId`, the raw chat id the group's read result is pushed into. Clearing it only
+   *    makes the push fall back to the sender's own 1:1 chat; nothing else on the group changes.
+   * 2. The evidence itself, for a group that never became a financial document. A group is eligible
+   *    when it is `CLOSED_NO_HANDOFF`, `CANCELLED`, or still `OPEN` and untouched for the window —
+   *    a `HANDED_OFF` group is excluded by that list, so its derived sources' receipts are never in
+   *    scope here. Within an eligible group only a file that NOTHING financial points at is deleted:
+   *    an `expense.receipt.*` link means a derived expense (or a converted single expense) owns
+   *    those bytes, and `markDeleted` itself refuses a certified substitute-receipt retention hold
+   *    or a live reimbursement claim (A35/A60 — "หลักฐานที่ source/certificate อ้างยังดูได้"). Those
+   *    refusals are expected traffic, not errors, so the file is simply left for a later tick.
+   *
+   * The file row then becomes `DETACHED` with reason `retention` and its read jobs are cancelled,
+   * exactly as a human detach does, so a late worker result cannot apply to bytes that are gone.
+   */
+  private async purgeExpiredCaptureData(now: number): Promise<number> {
+    const before = new Date(now - this.config.expenseCaptureRetentionDays * 24 * 60 * 60 * 1000);
+    const staleTargets = await this.prisma.client.expenseCaptureGroup.findMany({
+      where: { linePushTargetId: { not: null }, updatedAt: { lt: before } },
+      select: { id: true }, orderBy: { updatedAt: 'asc' }, take: MAX_PURGE_BATCH,
+    });
+    if (staleTargets.length) {
+      await this.prisma.client.expenseCaptureGroup.updateMany({
+        where: { id: { in: staleTargets.map((row) => row.id) } }, data: { linePushTargetId: null },
+      });
+    }
+
+    const groups = await this.prisma.client.expenseCaptureGroup.findMany({
+      where: { status: { in: ['CLOSED_NO_HANDOFF', 'CANCELLED', 'OPEN'] }, updatedAt: { lt: before } },
+      select: { id: true, companyId: true },
+      orderBy: { updatedAt: 'asc' }, take: MAX_CAPTURE_RETENTION_GROUPS,
+    });
+    let purged = 0;
+    for (const group of groups) {
+      const files = await this.prisma.client.expenseCaptureFile.findMany({
+        where: { companyId: group.companyId, groupId: group.id, uploadState: { not: 'DETACHED' } },
+        select: { id: true, attachmentId: true }, orderBy: { position: 'asc' },
+      });
+      const deleted: string[] = [];
+      for (const file of files) {
+        const financial = await this.prisma.client.attachmentLink.findFirst({
+          where: {
+            companyId: group.companyId, attachmentId: file.attachmentId,
+            targetType: 'expense.record', purpose: { startsWith: 'expense.receipt.' },
+          },
+          select: { id: true },
+        });
+        if (financial) continue;
+        try {
+          await this.attachments.markDeleted({ id: file.attachmentId, companyId: group.companyId });
+        } catch {
+          continue; // a retention hold, a live claim, or bytes already gone — leave the row alone
+        }
+        await this.capture.markFileDetached(this.prisma.client, {
+          companyId: group.companyId, fileId: file.id, reason: CAPTURE_RETENTION_DETACH_REASON,
+        });
+        await this.capture.cancelJobsForFile(this.prisma.client, group.companyId, file.id);
+        deleted.push(file.id);
+      }
+      if (deleted.length === 0) continue;
+      purged += deleted.length;
+      // Ids and counts only — never a file name or anything read off the customer's document.
+      await this.audit.log({
+        companyId: group.companyId,
+        actorType: 'SYSTEM',
+        actorRefId: 'line-orphan-sweep',
+        action: AuditAction.EXPENSE_CAPTURE_GROUP_RETENTION_PURGE,
+        targetType: 'expense_capture_group',
+        targetId: group.id,
+        requestId: randomUUID(),
+        result: 'SUCCESS',
+        riskLevel: 'MEDIUM',
+        metadataJson: { fileIds: deleted, fileCount: deleted.length, retentionDays: this.config.expenseCaptureRetentionDays },
+      }).catch(() => {});
+    }
+    if (purged > 0) this.logger.log({ msg: 'expense_capture_retention_purge', groups: groups.length, files: purged });
+    return purged;
   }
 }

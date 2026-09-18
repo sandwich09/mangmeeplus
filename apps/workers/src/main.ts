@@ -13,6 +13,7 @@ import { startCrmTrustWorker } from './modules/crm-inbox/crm-trust-worker.js';
 import { startLineAiLedgerWorker } from './modules/line-ai-ledger/line-ai-ledger-worker.js';
 import { startCrmCampaignWorker } from './modules/crm-inbox/crm-campaign-worker.js';
 import { startExpenseAutoPostWorker } from './modules/expense-auto-post/expense-auto-post-worker.js';
+import { startExpenseCaptureReadWorker } from './modules/expense-capture-read/expense-capture-read-worker.js';
 import { startPlanTermSweepWorker } from './modules/plan-term-sweep/plan-term-sweep-worker.js';
 import { startSignupClaimEmailWorker, startSignupClaimReminderWorker } from './modules/signup-claim-email/signup-claim-email-worker.js';
 
@@ -88,8 +89,10 @@ if (config.QUEUE_ENABLED) {
   workers.push(startLineAiLedgerWorker(config.REDIS_URL, config.LINE_AI_LEDGER_RECLAIM_INTERVAL_MS));
   workers.push(startCrmCampaignWorker(config.REDIS_URL));
   workers.push(startExpenseAutoPostWorker(config.REDIS_URL));
+  workers.push(startExpenseCaptureReadWorker(config.REDIS_URL));
   workerLog('info', { event: 'line_ai_ledger_worker_started' });
   workerLog('info', { event: 'expense_auto_post_worker_started' });
+  workerLog('info', { event: 'expense_capture_read_worker_started' });
 }
 const heartbeat = setInterval(logHeartbeat, 30_000);
 

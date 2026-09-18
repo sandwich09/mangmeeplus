@@ -116,6 +116,10 @@ describe('priceAiStepUpperBound', () => {
       'line-turn': { sonnet: 546, haiku: 44 },
       'receipt-ocr': { sonnet: 777, haiku: 64 },
       'bank-statement': { sonnet: 575, haiku: 47 },
+      // Same declared bounds as `receipt-ocr` (30,000 / 8,192), so the same price per call; the
+      // capture job differs only in metering one call at a time (appendix §4.6).
+      'receipt-capture-read': { sonnet: 777, haiku: 64 },
+      'receipt-capture-extract': { sonnet: 777, haiku: 64 },
       'crm-summary': { sonnet: 327, haiku: 27 },
       'crm-reply-draft': { sonnet: 273, haiku: 22 },
       'crm-intake': { sonnet: 258, haiku: 21 },

@@ -62,8 +62,36 @@ import {
   CreateAccountantPackageUseCase,
 } from './application/use-cases/expense-evidence.use-case';
 import { CompanySubstituteReceiptController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController } from './presentation/http/expense.controller';
+import { ExpenseCaptureController } from './presentation/http/expense-capture.controller';
+import { ExpenseCaptureReadInternalController } from './presentation/http/expense-capture-read-internal.controller';
+import { ExpenseCaptureReadClient } from './infrastructure/expense-capture-read.client';
+import { ExpenseCaptureReadRunnerService } from './application/services/expense-capture-read-runner.service';
+import { PrismaExpenseCaptureRepository } from './infrastructure/prisma-expense-capture.repository';
+import {
+  AddExpenseCaptureFileUseCase,
+  CloseExpenseCaptureGroupUseCase,
+  CompleteExpenseCaptureFileUseCase,
+  ConvertExpenseToCaptureGroupUseCase,
+  CreateExpenseCaptureGroupUseCase,
+  DetachExpenseCaptureFileUseCase,
+  ExpenseCaptureAccessService,
+  GetExpenseCaptureCapabilityUseCase,
+  GetExpenseCaptureGroupUseCase,
+  ListExpenseCaptureGroupsUseCase,
+} from './application/use-cases/expense-capture-group.use-case';
+import {
+  AcceptExpenseCaptureAllocationUseCase,
+  PatchExpenseCaptureFactsUseCase,
+  ReviewExpenseCaptureGroupUseCase,
+} from './application/use-cases/expense-capture-review.use-case';
+import {
+  AutoHandoffSingleDocumentCaptureUseCase,
+  HandoffExpenseCaptureGroupUseCase,
+} from './application/use-cases/expense-capture-handoff.use-case';
+import { GetExpenseReadStatusUseCase } from './application/use-cases/expense-capture-read-status.use-case';
 import { ReceiptOcrApplyService } from './application/services/receipt-ocr-apply.service';
 import { GetExpenseCapturePolicyUseCase } from './application/use-cases/expense-capture-policy.use-case';
+import { ExpenseCaptureLineUseCase } from './application/use-cases/expense-capture-line.use-case';
 import { RequestReceiptExtractionUseCase } from './application/use-cases/expense-extraction.use-case';
 import { ReceiptOcrClient } from './infrastructure/receipt-ocr.client';
 import { TaxModule } from '../tax/tax.module';
@@ -81,9 +109,32 @@ import { LineDraftPreviewStore } from './application/services/line-draft-preview
   // FeatureLaunchModule supplies the guard that fences the two roots of the expenses journey
   // (manual draft, receipt upload) on `expenses/DEFAULT`.
   imports: [AuditModule, DashboardNotificationsModule, DataModelCoreModule, TaxModule, FeatureLaunchModule],
-  controllers: [ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController, CompanySubstituteReceiptController],
+  // ExpenseCaptureController FIRST: `ExpenseController` owns `@Get(':expenseId')` on the same
+  // path, and Express matches in registration order — a later `capture-groups` literal would be
+  // read as an expense id.
+  controllers: [ExpenseCaptureController, ExpenseCaptureReadInternalController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController, CompanySubstituteReceiptController],
   providers: [
     PrismaExpenseRepository,
+    PrismaExpenseCaptureRepository,
+    ExpenseCaptureAccessService,
+    GetExpenseCaptureCapabilityUseCase,
+    CreateExpenseCaptureGroupUseCase,
+    ListExpenseCaptureGroupsUseCase,
+    GetExpenseCaptureGroupUseCase,
+    AddExpenseCaptureFileUseCase,
+    CompleteExpenseCaptureFileUseCase,
+    DetachExpenseCaptureFileUseCase,
+    CloseExpenseCaptureGroupUseCase,
+    ExpenseCaptureLineUseCase,
+    ConvertExpenseToCaptureGroupUseCase,
+    PatchExpenseCaptureFactsUseCase,
+    ReviewExpenseCaptureGroupUseCase,
+    AcceptExpenseCaptureAllocationUseCase,
+    HandoffExpenseCaptureGroupUseCase,
+    AutoHandoffSingleDocumentCaptureUseCase,
+    GetExpenseReadStatusUseCase,
+    ExpenseCaptureReadClient,
+    ExpenseCaptureReadRunnerService,
     ReceiptOcrClient,
     ReceiptOcrApplyService,
     ExpenseTransactionTaxService,
@@ -143,6 +194,15 @@ import { LineDraftPreviewStore } from './application/services/line-draft-preview
   ],
   exports: [
     PrismaExpenseRepository,
+    // W02-LINE needs the attempt log and the group intake from the LINE webhook lane.
+    PrismaExpenseCaptureRepository,
+    CreateExpenseCaptureGroupUseCase,
+    AddExpenseCaptureFileUseCase,
+    CompleteExpenseCaptureFileUseCase,
+    ExpenseCaptureLineUseCase,
+    ExpenseCaptureReadRunnerService,
+    // W05 §3.2: the LINE lane calls this when a single-document read finishes. No HTTP route.
+    AutoHandoffSingleDocumentCaptureUseCase,
     GetExpenseUseCase,
     ReceiptOcrApplyService,
     CreateExpenseDraftUseCase,

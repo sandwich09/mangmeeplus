@@ -55,7 +55,16 @@ async function processJob(payload: LineAiLedgerJobPayload): Promise<void> {
   // Independent on purpose: a message the employee never got an answer to must still be replayed
   // when the ledger drain fails, and vice versa. BullMQ retries the job on either failure; both
   // endpoints are idempotent (row-level CAS), so a repeat costs a no-op sweep.
-  const outcomes = await Promise.allSettled([callInternal('sweep-orphan-events'), callInternal('drain')]);
+  //
+  // The capture-result push (capture appendix §3) rides the SAME tick rather than a worker of its
+  // own: it is the third thing this timer owes a LINE chat, it is idempotent by outbox claim token,
+  // and `apps/workers/src/main.ts` is pinned — a new `startScanWorker` there would be a re-pin for
+  // no behavioural gain.
+  const outcomes = await Promise.allSettled([
+    callInternal('sweep-orphan-events'),
+    callInternal('drain'),
+    callCaptureResultDrain(),
+  ]);
   const failure = outcomes.find((outcome) => outcome.status === 'rejected');
   if (failure?.status === 'rejected') throw failure.reason;
 }
@@ -69,4 +78,13 @@ async function callInternal(route: 'drain' | 'sweep-orphan-events'): Promise<voi
     timeoutMs: INTERNAL_API_TIMEOUT_MS,
   });
   if (res) await throwIfNotOk(res, `LINE AI ${route} endpoint`);
+}
+
+/** Capture appendix §3: push the result of a finished capture read back into the LINE chat. */
+async function callCaptureResultDrain(): Promise<void> {
+  const res = await postInternal('/internal/ai/line-capture-results/drain', {
+    body: { batchSize: 25 },
+    timeoutMs: INTERNAL_API_TIMEOUT_MS,
+  });
+  if (res) await throwIfNotOk(res, 'LINE capture result drain endpoint');
 }

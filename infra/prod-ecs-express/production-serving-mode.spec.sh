@@ -166,7 +166,8 @@ fi
 # production fail-closed block; only the debounce EXPERIMENT keeps its production rejection above.
 for aligned in LINE_WEB_HANDOFF_ENABLED LINE_AI_EXACT_GREETING_ENABLED \
     LINE_AI_LOADING_ON_ACCEPT_ENABLED LINE_AI_FUSED_PLAN_SHADOW_ENABLED \
-    LINE_AI_PREPARED_SIMPLE_READ_ENABLED AI_BUDGET_SPLIT_ACTIVATION_ENABLED; do
+    LINE_AI_PREPARED_SIMPLE_READ_ENABLED AI_BUDGET_SPLIT_ACTIVATION_ENABLED \
+    EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED; do
   grep -Fq "${aligned}_INPUT=true" "$deploy"
   if grep -Fq "${aligned}=true is not activated" "$deploy"; then
     echo "FAIL: production still fails closed on ${aligned}=true" >&2; exit 1
@@ -217,6 +218,15 @@ grep -Fq 'AI_BUDGET_SPLIT_ACTIVATION_ENABLED_INPUT="${AI_BUDGET_SPLIT_ACTIVATION
 grep -Fq 'SERVING_AI_BUDGET_SPLIT_ACTIVATION_ENABLED=false' "$deploy"
 test "$(grep -Fc -- '--arg aiBudgetSplitActivationEnabled "$SERVING_AI_BUDGET_SPLIT_ACTIVATION_ENABLED"' "$deploy")" -eq 1
 test "$(grep -Fc '{name:"AI_BUDGET_SPLIT_ACTIVATION_ENABLED", value:$aiBudgetSplitActivationEnabled}' "$deploy")" -eq 1
+assert_rejected deploy-invalid-expense-capture-intake-boolean \
+  'EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED must be exactly true or false' \
+  env -i PATH="$PATH" DEPLOY_ENV=uat EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED=yes bash "$deploy" all
+# Capture appendix §6: the api container is the only consumer (the key lives in apiConfigSchema
+# alone), and a quiesced runtime must not accept new evidence — so `maintenance_only` forces false.
+grep -Fq 'EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED_INPUT="${EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED:-}"' "$deploy"
+grep -Fq 'SERVING_EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED=false' "$deploy"
+test "$(grep -Fc -- '--arg expenseCaptureGroupIntakeEnabled "$SERVING_EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED"' "$deploy")" -eq 1
+test "$(grep -Fc '{name:"EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED", value:$expenseCaptureGroupIntakeEnabled}' "$deploy")" -eq 1
 assert_rejected deploy-invalid-deterministic-families-charset \
   'LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES must be a comma-separated allowlist of' \
   env -i PATH="$PATH" DEPLOY_ENV=uat \

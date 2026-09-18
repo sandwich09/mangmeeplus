@@ -151,6 +151,9 @@ export class CreateAccountantPackageUseCase {
       expenseNumber: r.expenseNumber,
       status: r.status,
       captureSource: r.captureSource,
+      // Appendix §5: a derived source's evidence ref names its capture group, so two receipts
+      // split out of one payment can be recognised as one job in the folder.
+      captureGroupId: r.captureGroupId ?? null,
       sourceDocumentType: r.sourceDocumentType,
       taxEvidenceStatus: r.taxEvidenceStatus,
       taxEvidenceReasonCode: r.taxEvidenceReasonCode,
@@ -215,6 +218,7 @@ export class CreateAccountantPackageUseCase {
           evidenceManifest.push(buildManifestEntry({
             expenseId: r.id,
             expenseNumber: r.expenseNumber,
+            captureGroupId: r.captureGroupId ?? null,
             attachment: toAttachmentRef(attachment),
             isWetSignedScan: (wetSignedScansByExpense.get(r.id) ?? []).includes(attachment.id),
             sourceDocumentType: r.sourceDocumentType,

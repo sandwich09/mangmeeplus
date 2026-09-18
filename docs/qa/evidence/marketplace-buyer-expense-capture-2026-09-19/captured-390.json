@@ -1,0 +1,179 @@
+{
+  "viewport": {
+    "width": 390,
+    "height": 900
+  },
+  "capturedAt": "2026-09-18T21:25:19.441Z",
+  "clientErrors": [],
+  "images": [
+    {
+      "name": "capture-list",
+      "file": "capture-list-390.png",
+      "bytes": 58317,
+      "clip": {
+        "x": 0,
+        "y": 100,
+        "width": 414,
+        "height": 844
+      },
+      "note": "The evidence-intake list: three synthetic jobs with their own status, separate from the expense list (A39).",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "group-open-summary",
+      "file": "group-open-summary-390.png",
+      "bytes": 28850,
+      "clip": {
+        "x": 4,
+        "y": 294,
+        "width": 382,
+        "height": 310
+      },
+      "note": "Summary + the four state chips (§13.2): shops/items, paid total, company share not yet allocated, payer unknown.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "group-open-blockers",
+      "file": "group-open-blockers-390.png",
+      "bytes": 25114,
+      "clip": {
+        "x": 4,
+        "y": 596,
+        "width": 382,
+        "height": 270
+      },
+      "note": "Every blocker carries its own \"ทางทำต่อ\", and the card sits ABOVE the one primary action (§13.4).",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "group-open-files",
+      "file": "group-open-files-390.png",
+      "bytes": 67140,
+      "clip": {
+        "x": 4,
+        "y": 858,
+        "width": 382,
+        "height": 1006
+      },
+      "note": "Per-file read state: one file read, one still \"กำลังอ่านเอกสาร\" with its page progress.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "group-open-facts",
+      "file": "group-open-facts-390.png",
+      "bytes": 84001,
+      "clip": {
+        "x": 4,
+        "y": 1856,
+        "width": 382,
+        "height": 1196
+      },
+      "note": "Facts per document: the mismatch chip \"ยอดไม่ตรง\", and a row whose amount is \"ไม่ทราบ\" — never 0 (A28).",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "group-open-questions",
+      "file": "group-open-questions-390.png",
+      "bytes": 40743,
+      "clip": {
+        "x": 4,
+        "y": 3044,
+        "width": 382,
+        "height": 504
+      },
+      "note": "The two questions of spec §3 with NO default selected, the personal steppers and the payer select.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "group-accepted-allocation",
+      "file": "group-accepted-allocation-390.png",
+      "bytes": 263351,
+      "clip": {
+        "x": 4,
+        "y": 2472,
+        "width": 382,
+        "height": 3424
+      },
+      "note": "The accepted split with \"ดูที่มาการแบ่ง\" open: base amount, shared discount, shipping share and the satang adjustment.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "group-handed-derived",
+      "file": "group-handed-derived-390.png",
+      "bytes": 39820,
+      "clip": {
+        "x": 4,
+        "y": 4141,
+        "width": 382,
+        "height": 650
+      },
+      "note": "Two derived expenses: one claim-ready with \"เตรียมใบเบิก\", one \"รอตรวจภาษีก่อนเตรียมใบเบิก\", and the certificate row.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "expense-from-capture-group",
+      "file": "expense-from-capture-group-390.png",
+      "bytes": 198968,
+      "clip": {
+        "x": 0,
+        "y": 100,
+        "width": 414,
+        "height": 3217
+      },
+      "note": "An ordinary expense review page that carries the \"จากกลุ่มหลักฐาน\" badge and a link back to the job.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "expense-list-legacy",
+      "file": "expense-list-legacy-390.png",
+      "bytes": 196276,
+      "clip": {
+        "x": 0,
+        "y": 100,
+        "width": 414,
+        "height": 2805
+      },
+      "note": "The ordinary expense list: the legacy expense carries no capture badge and no extra column (A01).",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "expense-legacy-review",
+      "file": "expense-legacy-review-390.png",
+      "bytes": 175469,
+      "clip": {
+        "x": 0,
+        "y": 100,
+        "width": 414,
+        "height": 2905
+      },
+      "note": "A legacy expense review page: no group badge, no capture notice, the same page it always was (A01).",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "reimbursement-source-derived",
+      "file": "reimbursement-source-derived-390.png",
+      "bytes": 119315,
+      "clip": {
+        "x": 0,
+        "y": 100,
+        "width": 414,
+        "height": 1984
+      },
+      "note": "The reimbursement draft opened on a derived source: the server answers whether this requester may claim it (W07-int §23.2.14).",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "substitute-from-derived",
+      "file": "substitute-from-derived-390.png",
+      "bytes": 146912,
+      "clip": {
+        "x": 0,
+        "y": 100,
+        "width": 414,
+        "height": 1840
+      },
+      "note": "The certificate wizard prefilled from the reviewed facts of the capture group (W06 §22.2).",
+      "pageOverflowPx": 0
+    }
+  ]
+}

@@ -43,9 +43,28 @@ export type SubstituteReceiptEvidenceRef = {
   checksumSha256: string | null;
 };
 
+/**
+ * W06/D04 — the reviewed allocation this certificate's amount is a share of. Recorded in the
+ * snapshot (so it is inside the certified checksum) and printed under the amount, because the bank
+ * slip shows the WHOLE purchase and this document certifies only the company's part (§12.2).
+ */
+export type SubstituteReceiptCaptureAllocation = {
+  groupId: string;
+  /** What the accountant already sees in `evidenceRef`: `g` + the last 8 of the group id. */
+  groupRef: string;
+  allocationId: string;
+  allocationRevision: number;
+  scopeKey: string;
+  paidTotal: string;
+  companyAmount: string;
+  personalAmount: string;
+  policyVersion: string;
+};
+
 export type SubstituteReceiptSnapshot = {
   schemaVersion?: 2;
   correction?: { evidenceId: string; reason: string };
+  captureAllocation?: SubstituteReceiptCaptureAllocation;
   fundingSource?: 'COMPANY' | 'PERSONAL_ADVANCE' | null;
   paymentStatement?: string;
   paperReview?: { uploadedByUserId: string; uploadedByName?: string; uploadedAt: string; reviewerUserId: string; reviewerName: string; samePerson: boolean };
@@ -83,6 +102,18 @@ export type SubstituteReceiptApprover = {
   position: string;
   approvedAt: string;
 };
+
+/**
+ * D04 wording, verbatim. `null` when the company paid the whole purchase — there is no share to
+ * explain, and a sentence saying "810 of 810" would invent a division nobody made. Never states
+ * that the payment evidence shows the company amount (§12.2, A17).
+ */
+export function captureAllocationStatement(snapshot: Pick<SubstituteReceiptSnapshot, 'captureAllocation'>): string | null {
+  const capture = snapshot.captureAllocation;
+  if (!capture || money(capture.companyAmount) === money(capture.paidTotal)) return null;
+  return `ใบรับรองนี้รับรองส่วนของบริษัท ${money(capture.companyAmount)} บาท จากยอดที่จ่ายจริง ${money(capture.paidTotal)} บาท`
+    + ` ตามการจัดส่วนที่ตรวจแล้ว (กลุ่มหลักฐาน ${capture.groupRef} ครั้งที่ ${capture.allocationRevision})`;
+}
 
 export function buildSubstituteCertificationText(name: string, position: string, literal = false): string {
   return `ข้าพเจ้า ${name}${position.trim() ? ` ตำแหน่ง ${literal ? position : positionLabel(position)}` : ''} ขอรับรองว่ารายจ่ายข้างต้นนี้ไม่อาจเรียกเก็บใบเสร็จรับเงินจากผู้รับได้ และได้จ่ายไปในงานของบริษัทโดยแท้`;
@@ -177,12 +208,16 @@ export function renderSubstituteReceiptSvg(
     return markup;
   }).join('');
   const totalY = rowY + 24;
+  // D04: the share statement belongs with the amount it qualifies — directly under the total block.
+  const captureStatement = captureAllocationStatement(snapshot);
+  const captureLines = captureStatement ? wrapText(captureStatement, 735) : [];
   const tableBottom = rowY + 68;
   const reasonLines = wrapText(`เหตุผลที่ไม่สามารถเรียกใบเสร็จ: ${snapshot.missingReceiptReason}`, 735);
   const purposeLines = wrapText(`วัตถุประสงค์ทางธุรกิจ: ${snapshot.expense.businessPurpose}`, 735);
   const fundingNote = snapshot.fundingSource ? `${snapshot.paymentStatement ?? `แหล่งเงิน: ${snapshot.fundingSource === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : 'พนักงานสำรองจ่ายเต็มจำนวน (ยังไม่ใช่การจ่ายคืนจากบริษัท)'}`} · สุทธิจ่าย ${money(snapshot.expense.netPayableAmount ?? snapshot.expense.grandTotalAmount)} บาท · หัก ณ ที่จ่าย ${money(snapshot.expense.whtAmount ?? '0')} บาท` : '';
   const noteLines = [...wrapText(fundingNote, 735), ...(snapshot.correction ? wrapText(`แก้เฉพาะชื่อ/ตำแหน่งจาก ${snapshot.correction.evidenceId}: ${snapshot.correction.reason}`, 735) : []), ...(snapshot.note ? wrapText(`หมายเหตุ: ${snapshot.note}`, 735) : [])];
-  const reasonY = tableBottom + 38;
+  const captureY = tableBottom + 30;
+  const reasonY = tableBottom + 38 + (captureLines.length ? captureLines.length * 22 + 8 : 0);
   const purposeY = reasonY + reasonLines.length * 22 + 12;
   const noteY = purposeY + purposeLines.length * 22 + 12;
   const certificationTop = noteY + noteLines.length * 22 + 10;
@@ -272,6 +307,7 @@ export function renderSubstituteReceiptSvg(
     ${rows}
     <text x="620" y="${totalY}" text-anchor="end" font-weight="700">รวมทั้งสิ้น</text><text x="720" y="${totalY}" text-anchor="end" font-weight="700">${xml(money(snapshot.expense.grandTotalAmount))}</text>
     <text x="54" y="${totalY + 34}"${fitToWidth(`รวมเป็นตัวอักษร: ${thaiBahtText(snapshot.expense.grandTotalAmount)}`, BAHT_TEXT_WIDTH)}>รวมเป็นตัวอักษร: ${xml(thaiBahtText(snapshot.expense.grandTotalAmount))}</text>
+    ${captureLines.length ? multilineText(50, captureY, captureLines, 22, 735) : ''}
     ${multilineText(50, reasonY, reasonLines, 22)}
     ${multilineText(50, purposeY, purposeLines, 22)}
     ${noteLines.length ? multilineText(50, noteY, noteLines, 22) : ''}
@@ -322,6 +358,9 @@ export function renderSubstituteReceiptAttestationSvg(
     ['ผู้รับเงิน', snapshot.payee?.name ?? '-'],
     ['จำนวนเงิน', `${money(snapshot.expense.grandTotalAmount)} ${snapshot.expense.currency}`],
     ['จำนวนเงิน (ตัวอักษร)', thaiBahtText(snapshot.expense.grandTotalAmount)],
+    // D04: the same sentence the online sheet prints under the amount — the paper route certifies
+    // the same share, so it states the same relationship to the purchase that was actually paid.
+    ...(captureAllocationStatement(snapshot) ? [['ส่วนของบริษัทตามการจัดส่วน', captureAllocationStatement(snapshot)!] as [string, string]] : []),
     ['วัตถุประสงค์ทางธุรกิจ', snapshot.expense.businessPurpose],
     ['เหตุผลที่ไม่มีใบเสร็จ', snapshot.missingReceiptReason],
     [snapshot.payer.roleLabel ?? 'ผู้จ่ายเงิน/ผู้รับรอง', signerNameWithPosition(snapshot.payer, snapshot.schemaVersion)],

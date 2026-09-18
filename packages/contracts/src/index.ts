@@ -252,6 +252,8 @@ export type CoreOutboxPayload = {
 
 export * from './accounting-documents.js';
 export * from './expenses.js';
+export * from './expense-capture.js';
+export * from './expense-capture-allocation.js';
 export * from './ledger.js';
 export * from './partner-management.js';
 export * from './external-signup.js';

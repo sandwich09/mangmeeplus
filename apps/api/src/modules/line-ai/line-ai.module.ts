@@ -131,6 +131,9 @@ import { RecoverOrphanLineEventsUseCase } from './application/use-cases/recover-
 import { InternalToolsController } from './presentation/http/internal-tools.controller';
 import { InternalAiBudgetController } from './presentation/http/internal-ai-budget.controller';
 import { LineAiLedgerInternalController } from './presentation/http/line-ai-ledger-internal.controller';
+import { LineCaptureResultsInternalController } from './presentation/http/line-capture-results-internal.controller';
+import { LineCaptureResultNotifierUseCase } from './application/use-cases/line-capture-result-notifier.use-case';
+import { LineExplainFileAttemptTool } from './application/use-cases/line-file-attempt.tool';
 import { LineWebhookController } from '../auth/presentation/line-webhook.controller';
 
 const erpTools = [
@@ -219,7 +222,7 @@ const erpTools = [
     FeatureLaunchModule,
     ExternalSignupModule,
   ],
-  controllers: [InternalToolsController, InternalAiBudgetController, LineAiLedgerInternalController, LineWebhookController],
+  controllers: [InternalToolsController, InternalAiBudgetController, LineAiLedgerInternalController, LineCaptureResultsInternalController, LineWebhookController],
   providers: [
     LineReplyAdapter,
     ActorDelegationService,
@@ -231,6 +234,8 @@ const erpTools = [
     LineIntakeStateRepository,
     DrainLineLedgerUseCase,
     RecoverOrphanLineEventsUseCase,
+    LineCaptureResultNotifierUseCase,
+    LineExplainFileAttemptTool,
     ...erpTools,
     { provide: ERP_READ_TOOL_REGISTRY, inject: erpTools,
       useFactory: (...tools: ErpReadToolPort[]) => new Map(tools.map(tool => [tool.toolName, tool])) },
