@@ -14,6 +14,7 @@ import {
   ListExpenseCaptureGroupsUseCase,
 } from '../../application/use-cases/expense-capture-group.use-case';
 import { GetExpenseReadStatusUseCase } from '../../application/use-cases/expense-capture-read-status.use-case';
+import { HandoffExpenseCaptureGroupUseCase } from '../../application/use-cases/expense-capture-handoff.use-case';
 import {
   AcceptExpenseCaptureAllocationUseCase,
   PatchExpenseCaptureFactsUseCase,
@@ -27,6 +28,7 @@ import {
   CreateExpenseCaptureGroupDto,
   DetachExpenseCaptureFileDto,
   ExpenseCaptureFactsDto,
+  ExpenseCaptureHandoffDto,
   ExpenseCaptureRevisionDto,
   ExpenseCaptureReviewDto,
 } from './expense-capture.dtos';
@@ -58,6 +60,7 @@ export class ExpenseCaptureController {
     private readonly patchFacts: PatchExpenseCaptureFactsUseCase,
     private readonly review: ReviewExpenseCaptureGroupUseCase,
     private readonly acceptAllocation: AcceptExpenseCaptureAllocationUseCase,
+    private readonly handoff: HandoffExpenseCaptureGroupUseCase,
     private readonly readStatus: GetExpenseReadStatusUseCase,
   ) {}
 
@@ -155,6 +158,17 @@ export class ExpenseCaptureController {
     @Body() body: ExpenseCaptureRevisionDto,
   ) {
     return this.acceptAllocation.execute(ctx, groupId, allocationId, body);
+  }
+
+  /**
+   * W05 §9 — the accepted allocation becomes ordinary expenses. The same call is the regenerate:
+   * a NEW accepted allocation on a group that already handed off rebuilds the batch, and refuses
+   * outright when any derived source has been used.
+   */
+  @Post('capture-groups/:groupId/handoff')
+  @RequireAnyPermission('expense.create', 'expense.receipt.upload', 'expense.review')
+  handoffGroup(@ReqCtx() ctx: RequestContext, @Param('groupId') groupId: string, @Body() body: ExpenseCaptureHandoffDto) {
+    return this.handoff.execute(ctx, groupId, body);
   }
 
   @Post('capture-groups/:groupId/close')

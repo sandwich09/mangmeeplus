@@ -71,3 +71,14 @@ export class ExpenseCaptureReviewDto extends ExpenseCaptureRevisionDto {
   @IsOptional() @IsObject() taxReview?: Record<string, unknown>;
   @IsOptional() @IsObject() expenseDateChoice?: Record<string, unknown>;
 }
+
+/**
+ * W05 §9. `idempotencyKey` is required by the contract and validated here, but the server's fence
+ * is `handoffBatchKey = <groupId>:<allocationId>` — the same accepted allocation is the same
+ * handoff whatever key a retry carries, so the key is a client-side correlation id, not a second
+ * identity to store (appendix §18).
+ */
+export class ExpenseCaptureHandoffDto extends ExpenseCaptureRevisionDto {
+  @IsString() @IsNotEmpty() @MaxLength(64) allocationId!: string;
+  @IsOptional() @IsString() @MaxLength(128) idempotencyKey?: string;
+}

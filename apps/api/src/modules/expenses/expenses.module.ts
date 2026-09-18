@@ -81,6 +81,10 @@ import {
   PatchExpenseCaptureFactsUseCase,
   ReviewExpenseCaptureGroupUseCase,
 } from './application/use-cases/expense-capture-review.use-case';
+import {
+  AutoHandoffSingleDocumentCaptureUseCase,
+  HandoffExpenseCaptureGroupUseCase,
+} from './application/use-cases/expense-capture-handoff.use-case';
 import { GetExpenseReadStatusUseCase } from './application/use-cases/expense-capture-read-status.use-case';
 import { ReceiptOcrApplyService } from './application/services/receipt-ocr-apply.service';
 import { GetExpenseCapturePolicyUseCase } from './application/use-cases/expense-capture-policy.use-case';
@@ -121,6 +125,8 @@ import { LineDraftPreviewStore } from './application/services/line-draft-preview
     PatchExpenseCaptureFactsUseCase,
     ReviewExpenseCaptureGroupUseCase,
     AcceptExpenseCaptureAllocationUseCase,
+    HandoffExpenseCaptureGroupUseCase,
+    AutoHandoffSingleDocumentCaptureUseCase,
     GetExpenseReadStatusUseCase,
     ReceiptOcrClient,
     ReceiptOcrApplyService,
@@ -186,6 +192,8 @@ import { LineDraftPreviewStore } from './application/services/line-draft-preview
     CreateExpenseCaptureGroupUseCase,
     AddExpenseCaptureFileUseCase,
     CompleteExpenseCaptureFileUseCase,
+    // W05 §3.2: the LINE lane calls this when a single-document read finishes. No HTTP route.
+    AutoHandoffSingleDocumentCaptureUseCase,
     GetExpenseUseCase,
     ReceiptOcrApplyService,
     CreateExpenseDraftUseCase,
