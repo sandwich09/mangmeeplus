@@ -567,3 +567,70 @@ W05 ส่ง `POST …/handoff` (ข้อ 9), กติกาการสร�
 9. **`ExpenseSummary.captureGroupId` / `ExpenseDetail.captureGroup` เป็นการเพิ่มฟิลด์ล้วน ๆ** และ `captureGroup` อ่านยอดจาก `aiVerificationSummaryJson` ที่ handoff เขียนไว้ จึงไม่ต้อง query ตาราง capture ในหน้ารายละเอียด
 10. **`allowedActions` ของกลุ่มที่ `HANDED_OFF`** คืน `review` (+`accept_allocation`/`handoff` ตามสถานะ allocation) เมื่อ reopen ได้ และคืน `[]` พร้อม blocker `expense_capture_handoff_consumed` เมื่อใช้ไปแล้ว — W01 คืน `[]` เสมอสำหรับสถานะที่ไม่ใช่ `OPEN`
 11. **ยังไม่ได้ทำใน W05**: หน้าเว็บของ derived sources บนหน้ากลุ่ม (W04b), ใบรับรองรายร้าน (W06), การต่อ claim/projection/ledger ทั้งหมดของ W07, และผู้เรียก auto-handoff จริงจาก lane LINE (W02-LINE)
+
+## 22. Implementation notes (W06 — ใบรับรองต่อ derived source, 2026-09-19)
+
+W06 ส่ง: กติกาเพิ่มของ eligibility บน derived source (ข้อ 7 D04 / spec §12.1–§12.2), ประโยคส่วนบริษัทในใบรับรอง
+(D04 wording), ความคืบหน้ารายร้านใน `derivedSources[]` (§14.3 / A40) และทางกลับกลุ่มหลักฐานจาก wizard (§12.3)
+ไม่มี migration และไม่แตะกติกาเงิน/สิทธิ/PAPER/DIGITAL/`assertFullSubstitutePayment` เดิมแม้แต่ข้อเดียว
+
+### 22.1 Eligibility matrix ที่ implement (เพิ่มจากกฎเดิม ไม่ได้แทน)
+
+`captureCertificateGate` (`expenses/domain/logic/expense-capture-certificate.logic.ts`) ทำงาน **หลัง**
+`collectSubstituteReceiptEligibilityIssues` เดิมทุกครั้ง และเฉพาะกับ expense ที่มี `captureAllocationId`:
+
+| เงื่อนไข (ตามลำดับที่ตรวจ) | ผล | code / HTTP |
+|---|---|---|
+| ไม่มี allocation ทั้งสองฝั่ง (§3.1 แปลงจาก expense, §3.2 auto-handoff) | ปล่อยให้กฎเดิมตัดสิน | — |
+| `handoffState ≠ ACTIVE` หรือ `captureAllocationId ≠ group.acceptedAllocationId` | ปฏิเสธ | `substitute_capture_allocation_superseded` / 409 |
+| scope ไม่มีเอกสารใน facts ปัจจุบัน | ปฏิเสธ | `substitute_capture_unpaid_evidence` / 422 |
+| scope มีเอกสาร `RECEIPT|TAX_INVOICE|ABBREVIATED_TAX_INVOICE` ที่มียอดพิมพ์ | ไม่เสนอใบรับรอง (A18/A19) | `nextAction = receipt_present`; prepare ยังตอบด้วยกฎเดิม `valid_receipt_normal_path` |
+| ไม่มีเอกสารใดใน scope ที่ `paymentStatus = paid` (A23) | ปฏิเสธ | `substitute_capture_unpaid_evidence` / 422 |
+| มีเอกสารใน scope ที่ `reconciliation = mismatch` (A34) | ปฏิเสธ | `substitute_capture_document_mismatch` / 422 |
+| `fundingSource` ไม่ตรง `group.fundingRoute` (EMPLOYEE↔PERSONAL_ADVANCE, COMPANY↔COMPANY) | ปฏิเสธ | `substitute_capture_funding_route_mismatch` / 422 |
+| อื่น ๆ | ทำใบรับรองได้ | `nextAction = certificate_available` |
+
+กลุ่มไม่มีใบรับรองของตัวเองโดยโครงสร้าง: route ของใบรับรองรับ `expenseId` และกลุ่มไม่ใช่ `ExpenseRecord`
+(ทาง B ของข้อ 2.1) การส่ง groupId จึงได้ 404 จาก `findByIdWithRelations` — มีเทสต์ยืนยัน
+
+### 22.2 Prefill และประโยคที่พิมพ์
+
+- Prefill อยู่ฝั่งเว็บ (`captureCertificatePrefill`): ผู้จ่าย/แหล่งเงินจาก `fundingRoute` + `derivedSources[].payerUserId`,
+  วันที่/วิธีจ่ายจาก `facts.payments` ของ scope นั้น (`status = paid`), ผู้รับเงินและเลขภาษีมาจาก
+  `vendorNameSnapshot`/`vendorTaxIdSnapshot` ที่ handoff คัดลอกจาก issuer อยู่แล้ว, ยอด = ยอดของ derived source เอง
+- **เหตุผลที่ไม่มีใบเสร็จเป็น "ข้อเสนอ" ไม่ใช่ค่าเริ่มต้น**: ช่องนี้เป็นข้อความที่พิมพ์ลงเอกสารตามกฎหมาย โค้ดเดิม
+  (`payerWrittenMissingReason`) ห้ามใส่ข้อความของระบบลงไป W06 จึงแสดงข้อเสนอใต้ช่องพร้อมปุ่ม "ใช้ข้อความนี้" — ผู้จ่ายกดเอง
+- `snapshotJson.captureAllocation = { groupId, groupRef, allocationId, allocationRevision, scopeKey, paidTotal,
+  companyAmount, personalAmount, policyVersion }` อยู่ในค่า checksum ที่ผู้จ่ายรับรอง
+- ประโยคที่พิมพ์ใต้ยอด (และเป็นแถวหนึ่งในหน้ารับรองของ PAPER):
+  `ใบรับรองนี้รับรองส่วนของบริษัท 810.00 บาท จากยอดที่จ่ายจริง 1,290.00 บาท ตามการจัดส่วนที่ตรวจแล้ว (กลุ่มหลักฐาน g11112222 ครั้งที่ 4)`
+  — ตัวเลขผ่าน `money()` (มีลูกน้ำ 2 ตำแหน่ง) และ **ไม่พิมพ์เลยเมื่อ `companyAmount = paidTotal`**
+
+### 22.3 สิ่งที่ต่างจากตัวอักษรของเอกสารนี้ พร้อมเหตุผล (ไม่มีข้อใดเปลี่ยนกติกาเงิน/สิทธิ)
+
+1. **`captureAllocation` มี `allocationRevision` และ `groupRef` เพิ่มจากที่ brief ระบุ** — wording D04 อ้างสองค่านี้
+   ถ้าไม่เก็บใน snapshot เอกสารที่ลงนามแล้วจะพิมพ์ค่าที่อ่านใหม่ทุกครั้ง; `groupRef = g<8 ตัวท้ายของ groupId>`
+   ใช้ตัวเดียวกับ `evidenceRef` ของ export (ข้อ 18.6) ผู้ทำบัญชีจึงเห็น token เดียวกันทั้งสองที่;
+   `allocationRevision = allocation.groupRevision` (ค่าที่มีอยู่จริงบนแถว allocation ไม่ได้นับ allocation ใหม่)
+2. **ประโยคพิมพ์ "ใต้บล็อกยอด" ไม่ใช่ "ในกล่องยอด"** — เส้นคอลัมน์ของตาราง (x=630, x=730) ลากถึงขอบล่างของกล่อง
+   การวางข้อความในกล่องจะถูกเส้นผ่ากลาง จึงวางถัดจากกล่องและเลื่อนบล็อกเหตุผล/วัตถุประสงค์ลงตามจำนวนบรรทัด
+3. **gate ผูกกับ `captureAllocationId` ไม่ใช่ `captureGroupId`** — §3.1 (แปลง expense เป็นกลุ่ม) และ §3.2
+   (auto-handoff ของ LINE ไฟล์เดียว) สร้าง source ที่ไม่มี allocation การบังคับ "ต้องมี allocation ที่ยอมรับแล้ว"
+   กับสองกรณีนั้นจะปิดเส้นทางใบรับรองของใบเสร็จ LINE ที่ใช้งานอยู่วันนี้
+4. **`substitute_capture_funding_route_mismatch` เป็น code ที่ brief ไม่ได้ขอ** — §12.4 บังคับให้ใช้ funding route
+   เดียวกับ source ทั้งสาย ถ้าไม่ตรวจ ใบรับรอง COMPANY บนของที่พนักงานจ่ายจะบันทึก `ExpensePayment` ของบริษัทที่ไม่เคยเกิดขึ้น
+   (guard เดิมไม่จับ เพราะ `paidAmount = 0` ผ่าน `assertFullSubstitutePayment` ได้)
+5. **"มีใบเสร็จใช้ได้" ไม่ได้ถูกทำเป็น 422 ใหม่** — กฎเดิม `valid_receipt_normal_path` ตรวจจาก `sourceDocumentType`
+   ของ derived source (ซึ่ง handoff คัดลอกจากชนิดเอกสารของ scope) และเปิดทางไว้ให้ระบุ `RECEIPT_UNAVAILABLE` /
+   `RECEIPT_MATERIALLY_INCOMPLETE` ตาม §12.1 W06 จึงใช้ `receipt_present` เพื่อ **ไม่เสนอ** ปุ่มบนหน้ากลุ่มเท่านั้น
+6. **`nextAction` ของ derived source ที่ไม่มี allocation คือ `certificate_available`** (ไม่ใช่ `blocked`) —
+   หน้ากลุ่มเป็นการเสนอ ไม่ใช่การรับประกัน; wizard เป็นที่ที่กฎ eligibility เต็มรูปตอบพร้อมเหตุผล
+7. **prefill ทำฝั่งเว็บ ไม่ได้ทำ default ฝั่ง API** — ถ้า API เติมวันที่จ่ายเองเมื่อ client ไม่ส่ง ค่าที่ผู้ใช้เห็นบนจอ
+   (วันนี้) กับค่าที่บันทึกจะต่างกัน; API จึงยังตอบ 400 เหมือนเดิมเมื่อไม่มีวันที่จ่าย และเว็บเป็นผู้เสนอค่าที่ตรวจแล้ว
+8. **`payee` ของใบรับรองไม่มีช่องสาขาผู้ขาย** — `vendorBranchCodeSnapshot` จึงไม่ถูกพิมพ์ (เอกสารนี้เขียนว่า prefill
+   "issuer name/taxId/branch") การเพิ่มช่องใหม่ในเอกสารที่ลงนามแล้วเป็นการเปลี่ยนแบบฟอร์ม ซึ่งเกินขอบเขต W06
+9. **ยอดที่พิมพ์กับยอดใน `captureAllocation` แยกกัน**: ถ้าผู้ตรวจแก้ยอดของ derived source หลัง handoff ใบรับรองจะพิมพ์
+   ยอดใหม่ของตัวเอง แต่ประโยค D04 ยังอ้างการจัดส่วนที่ตรวจแล้วตามที่บันทึกไว้ (เป็นข้อความเกี่ยวกับ allocation ไม่ใช่
+   เกี่ยวกับยอดในใบ) — การแก้ยอดบังคับให้ลงนามใหม่อยู่แล้ว ผู้ลงนามจึงเห็นทั้งสองค่าก่อนเซ็น
+10. **ยังไม่ได้ทำใน W06**: ทางขอเอกสารจากร้าน (spec §16.5), หลักฐาน UX 40+ และ PDF ที่เรนเดอร์จริงบนเบราว์เซอร์ (W08),
+    การต่อ claim/projection ของ W07 และการ deploy ใด ๆ

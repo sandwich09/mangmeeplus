@@ -250,23 +250,34 @@ IG: IG03/IG04/IG07/IG11
 ### W06 — ใบรับรองแทนใบเสร็จและสถานะรายร้าน
 
 Owner: Expense/certificate API + Web/LINE handoff; บัญชีสำหรับ D04
-Status: Planned — required for full feature
+Status: Delivered 2026-09-19 (local evidence; ยังไม่ deploy) — ดู appendix ข้อ 22
 Depends on: W05 / D04
 
 จุดแก้หลัก: [certificate use case](../../apps/api/src/modules/expenses/application/use-cases/substitute-receipt.use-case.ts), [funding rules](../../apps/api/src/modules/expenses/domain/logic/substitute-funding.logic.ts), [certificate repository](../../apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts), [edit sync](../../apps/api/src/modules/expenses/infrastructure/substitute-expense-edit.ts), [wizard model](../../apps/web/src/features/expenses/substitute-receipt-wizard.model.ts), [LINE continuation](../../apps/api/src/modules/expenses/application/use-cases/line-substitute-receipt-continuation.use-case.ts)
 
-- [ ] eligibilityต่อeligible source: paid business evidence + ไม่มีใบเสร็จ/ขาดสาระสำคัญตามกฎเดิม; ไม่มีVATinvoiceอย่างเดียวหรือunpaid orderไม่auto-issue
-- [ ] prefillเฉพาะfactsที่ตรวจแล้ว เหตุผล/คำรับรองให้ผู้มีสิทธิระบุ; ไม่ถามข้อมูลเดิมซ้ำ
-- [ ] original payment1,290กับcertified company portion810แสดงความสัมพันธ์จริง; ไม่เปลี่ยนสลิปเป็น810หรือรับรองส่วนตัว
+- [x] eligibilityต่อeligible source: paid business evidence + ไม่มีใบเสร็จ/ขาดสาระสำคัญตามกฎเดิม; ไม่มีVATinvoiceอย่างเดียวหรือunpaid orderไม่auto-issue
+- [x] prefillเฉพาะfactsที่ตรวจแล้ว เหตุผล/คำรับรองให้ผู้มีสิทธิระบุ; ไม่ถามข้อมูลเดิมซ้ำ
+- [x] original payment1,290กับcertified company portion810แสดงความสัมพันธ์จริง; ไม่เปลี่ยนสลิปเป็น810หรือรับรองส่วนตัว
 - [ ] DIGITALใช้บัญชีผู้รับรองจริง; PAPERใช้แบบ/อัปโหลดฉบับลงนาม/ตรวจรับตามกฎเดิม; unlinked payerไม่กลายเป็นผู้รับเงินเบิก
-- [ ] reserve group/scopeก่อนconsequential steps; per-source/version idempotencyและprogress แยกatomic draft generationจากรอคนเซ็น
-- [ ] COMPANY issueอาจบันทึกpaymentครั้งเดียวตาม guard เดิม; กรณีจ่ายบางส่วนมาก่อน [assertFullSubstitutePayment](../../apps/api/src/modules/expenses/domain/logic/substitute-funding.logic.ts:6) บล็อกการออกใบทั้งใบ (`substitute_full_payment_required`) คงทางพัก/ตรวจ facts และแก้ผ่าน correction/reversal ที่มีสิทธิเมื่อประวัติผิดจริง ห้าม rewrite/เติมจ่ายเพื่อผ่าน guard; PERSONAL_ADVANCE issueไม่คืนเงินบริษัท
-- [ ] ร้านAออกแล้วBค้าง ให้ทำต่อBโดยไม่reissue/pay A; แก้factsที่เซ็นแล้วใช้correctionไม่ย้ายลายเซ็น
-- [ ] กลับsource/งานเดิมพร้อมสถานะจริงและnext actionตามสิทธิ; ไม่สร้างหรือส่งใบเบิกเองจากissuance
+- [x] reserve group/scopeก่อนconsequential steps; per-source/version idempotencyและprogress แยกatomic draft generationจากรอคนเซ็น
+- [x] COMPANY issueอาจบันทึกpaymentครั้งเดียวตาม guard เดิม; กรณีจ่ายบางส่วนมาก่อน [assertFullSubstitutePayment](../../apps/api/src/modules/expenses/domain/logic/substitute-funding.logic.ts:6) บล็อกการออกใบทั้งใบ (`substitute_full_payment_required`) คงทางพัก/ตรวจ facts และแก้ผ่าน correction/reversal ที่มีสิทธิเมื่อประวัติผิดจริง ห้าม rewrite/เติมจ่ายเพื่อผ่าน guard; PERSONAL_ADVANCE issueไม่คืนเงินบริษัท
+- [x] ร้านAออกแล้วBค้าง ให้ทำต่อBโดยไม่reissue/pay A; แก้factsที่เซ็นแล้วใช้correctionไม่ย้ายลายเซ็น
+- [x] กลับsource/งานเดิมพร้อมสถานะจริงและnext actionตามสิทธิ; ไม่สร้างหรือส่งใบเบิกเองจากissuance
 
 - [ ] ทางขอไฟล์/ใบเต็มรูป/ใบแทนจากร้านแยกจากใบรับรองมั่งมี; electronicverification unavailableไม่เปิดcertificateเอง
-- [ ] เปลี่ยน/ลบ/แนบหลังPREPARED/PAYER_CERTIFIED/ISSUEDต้องใช้revision/retention/correctionเดิม; LINE final-receipt routeไม่ข้ามprimarymateriallockหรือย้ายลายเซ็น
+- [x] เปลี่ยน/ลบ/แนบหลังPREPARED/PAYER_CERTIFIED/ISSUEDต้องใช้revision/retention/correctionเดิม; LINE final-receipt routeไม่ข้ามprimarymateriallockหรือย้ายลายเซ็น
 - [ ] เอกสารตามมาหลังissue/paymentคงoriginalandfinancialhistoryและกลับsourceเดิม; DIGITAL/PAPERและpartialsourcecompletionยังบังคับ
+
+หลักฐานของข้อที่ติ๊ก (2026-09-19): `substitute-receipt-capture.use-case.spec.ts` (eligibility matrix, D04 wording,
+next action), `expense-capture-group.use-case.spec.ts` (ความคืบหน้ารายร้าน), `expense-capture-certificate.pg.spec.ts`
+(จ่ายครั้งเดียวใต้การแข่งขันจริง, A ออกแล้ว B retry, partial ถูกบล็อกทั้งใบ, certificate ≥ PREPARED กันการสร้างใหม่,
+edit sync ของ derived source), `expense-capture-review.logic.spec.ts` + QA specs ฝั่งเว็บ
+
+ยังไม่ติ๊กและเหตุผล: **UX 40+ กับผู้ใช้จริงและการ inspect PDF ที่เรนเดอร์จริงบนเบราว์เซอร์เป็นงาน W08** (ไม่อ้างผ่านในรอบนี้);
+ข้อ DIGITAL/PAPER/unlinked payer เป็นกฎเดิมที่ W06 ไม่แก้ — หน้ารับรองของ PAPER พิมพ์ประโยค D04 เพิ่มเท่านั้น จึงรอหลักฐาน
+เอกสารจริงของ W08 ก่อนติ๊ก;
+ทางขอไฟล์/ใบเต็มรูปจากร้าน (ข้อ 9 ของรายการนี้) เป็น UX ที่ยังไม่ได้ทำ — W06 ทำเฉพาะส่วนที่ว่า electronic verification
+ที่ยังตรวจไม่ได้ **ไม่** เปิดใบรับรองให้เอง; เอกสารที่ตามมาหลัง issue ยังใช้เส้นทาง correction เดิมที่ไม่ได้แก้ในรอบนี้
 
 Exit: ทั้งเส้นทางมีใบเสร็จ/บางร้านไม่มี/DIGITAL/PAPER/ทำค้างแล้วต่อ ผ่านreviewและกลับงานเดิมถูกใบ
 Checks: API/DB issue raceและpartial progress, source-edit/signature races, COMPANY0/full/partial และ PERSONAL no-payment, render/inspectเอกสารจริง และmobile/desktop wizard return
