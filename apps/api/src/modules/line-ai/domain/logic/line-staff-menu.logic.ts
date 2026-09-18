@@ -311,6 +311,26 @@ export function buildPromotionCard(_assetBaseUrl: string | undefined): LineReply
   };
 }
 
+/** ponytail: bounded standalone FAQ only; mixed business/renewal questions keep their existing route. */
+export function buildTrialPricingReply(messageText: string): LineReplyMessage | null {
+  if (messageText.length > 160) return null;
+  const text = messageText.normalize('NFC').replace(/\s+/gu, '').replace(/[?？!！]+$/u, '')
+    .replace(/(?:นะ)?(?:ครับ|ค่ะ|คะ|คับ|จ้า|จ๊ะ)$/u, '').replace(/[?？!！]+$/u, '');
+  const trial = /^(?:หลังจาก|หลัง|เมื่อ|พอ)?(?:หมด)?(?:ช่วง)?(?:ทดลอง(?:ใช้|ใข้)?(?:แอป|แอพ|ระบบ)?ฟรี|ใช้ฟรี)(?:แล้ว)?(?:ต้อง)?(?:(?:เสีย|จ่าย|มี|คิด|เก็บ)(?:เงิน|ค่าบริการ|ค่าใช้จ่าย)?)?(?:กี่บาท|เท่าไหร่|เท่าไร|ไหม|มั้ย|หรือเปล่า|หรือไม่)?$/u;
+  const charge = /^(?:(?:แอป|แอพ|ระบบ)นี้|มั่งมี(?:พลัส|Plus)?)?(?:ต้อง)?(?:เสีย|มี|คิด|เก็บ)(?:ค่าบริการ|ค่าใช้จ่าย|เงิน)(?:ไหม|มั้ย|หรือเปล่า|หรือไม่)$/iu;
+  const noPurchase = /^(?:ถ้า)?(?:ยัง)?ไม่ซื้อแพ(?:็ก|็ค)เกจ(?:เพิ่ม)?(?:จะ)?(?:ต้องจ่ายเงิน|เสียเงิน|เสียค่าบริการ|โดนหักเงิน|ถูกเก็บเงิน)(?:ไหม|มั้ย|หรือเปล่า|หรือไม่)$/u;
+  if (!trial.test(text) && !charge.test(text) && !noPurchase.test(text)) return null;
+  return {
+    type: 'text',
+    text: 'ช่วงทดลองใช้ฟรีไม่มีค่าใช้จ่ายค่ะ 😊\n'
+      + 'จะมีค่าใช้จ่ายเมื่อคุณเลือกซื้อแพ็กเกจและยืนยันการชำระเงินเท่านั้น หากยังไม่ได้ซื้อ เมื่อหมดช่วงทดลองใช้ฟรี ระบบจะไม่เรียกเก็บเงินอัตโนมัติค่ะ\n'
+      + 'สิทธิ์ทดลองใช้ฟรีมีระยะเวลาจำกัด หากต้องการใช้งานต่อหลังหมดช่วงทดลอง ดูราคาและรายละเอียดแพ็กเกจได้ที่ https://official.mangmeeplus.com/ ค่ะ',
+    quickReply: { items: [
+      { type: 'action', action: { type: 'message', label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND } },
+    ] },
+  };
+}
+
 /**
  * Owner 2026-08-27: a "ทำอะไรได้บ้าง" question answered by the model advertised features that do
  * not exist. A capability question now gets the curated card below — deterministic, zero model

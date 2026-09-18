@@ -103,7 +103,7 @@ import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WIN
 import { LineAiLedgerService, ledgerKey, LINE_CLARIFICATION_SOURCE_MAX_BYTES, type LedgerEntry, type LedgerSubRequestInput } from '../line-ai-ledger.service';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
-import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildTrialPricingReply, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
@@ -3291,6 +3291,14 @@ export class ProcessLineWebhookUseCase {
     if (publicCommand === 'promotion') {
       await this.deliverRequiredMessages(event, [buildPromotionCard(this.config.webBaseUrl)]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_promotion');
+      return;
+    }
+    // Public trial policy contains no account data and needs no AI. Ordinary support text still
+    // belongs to the human handling the case; do not resume the assistant or swallow that reply.
+    const trialPricingReply = buildTrialPricingReply(event.messageText);
+    if (trialPricingReply && !await this.assistantPaused(event.lineUserId)) {
+      await this.deliverRequiredMessages(event, [trialPricingReply]);
+      await this.updateEventLog(event.webhookEventId, 'staff_menu_trial_pricing');
       return;
     }
     // 3. Resolve LINE user → internal user via ExternalIdentity, scoped to the webhook's channel.
