@@ -822,6 +822,26 @@ describe('apiConfigSchema LINE AI latency/autonomy Phase-1 flags', () => {
     assert.equal(apiConfigSchema.parse({ ...base, AI_BUDGET_SPLIT_ACTIVATION_ENABLED: 'false' }).AI_BUDGET_SPLIT_ACTIVATION_ENABLED, false);
   });
 
+  it('buyer expense capture: intake ON by default, bounded page/concurrency/retention numbers', () => {
+    // Appendix §6/§15 item 2: the intake gate ships ON in both environments, like the rest of the
+    // receipt lane. The three numbers are bounded so a mistyped deploy input cannot ask the reader
+    // for 5,000 pages or 64 parallel jobs — it fails the parse instead.
+    const parsed = apiConfigSchema.parse(base);
+    assert.equal(parsed.EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED, true);
+    assert.equal(parsed.EXPENSE_CAPTURE_PDF_MAX_PAGES, 60);
+    assert.equal(parsed.EXPENSE_CAPTURE_READ_CONCURRENCY, 2);
+    assert.equal(parsed.EXPENSE_CAPTURE_RETENTION_DAYS, 90);
+    assert.equal(apiConfigSchema.parse({ ...base, EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED: 'false' }).EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED, false);
+    assert.equal(apiConfigSchema.parse({ ...base, EXPENSE_CAPTURE_PDF_MAX_PAGES: '200' }).EXPENSE_CAPTURE_PDF_MAX_PAGES, 200);
+    for (const invalid of [
+      { EXPENSE_CAPTURE_PDF_MAX_PAGES: '0' }, { EXPENSE_CAPTURE_PDF_MAX_PAGES: '201' },
+      { EXPENSE_CAPTURE_READ_CONCURRENCY: '0' }, { EXPENSE_CAPTURE_READ_CONCURRENCY: '5' },
+      { EXPENSE_CAPTURE_RETENTION_DAYS: '6' }, { EXPENSE_CAPTURE_RETENTION_DAYS: '3651' },
+    ]) {
+      assert.equal(apiConfigSchema.safeParse({ ...base, ...invalid }).success, false, JSON.stringify(invalid));
+    }
+  });
+
   it('Flex→text delivery fallback defaults off and opts in only on an explicit boolean', () => {
     assert.equal(apiConfigSchema.parse(base).LINE_AI_FLEX_TEXT_FALLBACK_ENABLED, false);
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_FLEX_TEXT_FALLBACK_ENABLED: 'true' }).LINE_AI_FLEX_TEXT_FALLBACK_ENABLED, true);
