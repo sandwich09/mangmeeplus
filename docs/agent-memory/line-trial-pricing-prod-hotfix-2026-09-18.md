@@ -1,6 +1,6 @@
 # Agent Memory: LINE trial pricing hotfix — 2026-09-18
 
-Status: Scoped Production-base patch implemented and verified. Owner reconfirmed “งั้น hotfix ได้เลย”. Production deployment remains blocked by the existing release authority contract. A separate integration branch is prepared for review; no shared branch merge, release dispatch or deployment-gate change has occurred.
+Status: Integration candidate prepared locally on develop e1f81a7c; hold shared-branch merge until isolated Production hotfix acceptance. Historical initial release blockers below were superseded by the owner-authorized Kamal migration; the active Production ledger is production-kamal-two-release-paths-2026-09-18.md in the migration checkout.
 Owner: thawatchai + Codex
 Scope: Answer short Thai questions about free trial charges with the owner-approved policy; preserve receipt/business routes and support pauses. No billing, schema, dependency or release-controller changes. The integration branch is not the isolated Production candidate.
 
@@ -47,3 +47,28 @@ Next:
 - If a dedicated prod-first hotfix channel is requested, specify/review that release-controller change separately; retain CI, immutable image, signed readiness/result, rollback and final OPEN acceptance. Do not silently widen this application hotfix or deploy latest main's unrelated changes.
 - Integration focused tests: **394 passed, 0 failed**, 3.721s; integration API typecheck also passed on the develop-based branch. Production-base evidence remains the earlier 310 tests; these are different source trees.
 - No UAT_RUN_ID, READY_RUN_ID or PROD_RUN_ID exists for this hotfix yet.
+
+
+## Integration preparation after the combined hotfix approval
+
+- Owner added cancelled-substitute confirmation0b0058ad to pricing8f5b508a on exact Production
+  baselinefc2838c4. This integration branch is never a Production hotfix candidate.
+- Merged origin/develop e1f81a7c9d0dc8479b257df190d230684ff8927a locally without conflicts, preserving
+  published PR629 history. No main/develop shared merge or UAT deployment from this preparation.
+- Newer v2 evidence review already permits a reviewed original receipt despite the retained historical
+  missing-receipt reason. Both API preflight and locked final transaction use the shared contract; the UI
+  evaluates that same current review. Do not copy the older Prod fallback guards over this contract.
+- Extended the existing final-transaction certificate-history regression to include and retain the old
+  missing-receipt reason. It confirms with the current original receipt and cancelled certificate history.
+  Existing tests still reject removed/stale reviews and invalid substitute evidence.
+- Verification after develop merge: contracts build PASS; atomic confirmation28tests PASS; pricing394
+  tests PASS; contracts evidence10tests PASS; web evidence37tests PASS; API typecheck PASS.
+  The first combined root-cwd invocation could not resolve the web @/ alias before web test execution;
+  reran the web command from its existing package context successfully. No code workaround.
+- Commands: pnpm --filter @watchdog-bms/contracts build; pnpm --filter @watchdog-bms/api exec tsx
+  --test src/modules/expenses/infrastructure/prisma-expense.repository.atomic-confirm.spec.ts; pricing
+  process-line-webhook/line-staff-menu specs; packages/contracts/src/expense-evidence.spec.ts;
+  pnpm --filter @watchdog-bms/web exec tsx --test src/features/expenses/expense-review-steps.logic.spec.ts;
+  pnpm --filter @watchdog-bms/api typecheck.
+- Next: retain locally until Prod signed/OPEN acceptance; then update PR629 with both scopes and run
+  exact-head CI before develop/main integration and UAT. No remote uat branch exists; use UAT environment.

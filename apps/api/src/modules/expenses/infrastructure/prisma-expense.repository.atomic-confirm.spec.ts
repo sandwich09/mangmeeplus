@@ -392,8 +392,9 @@ describe('evidence review at final transaction', () => {
 });
 
 
-it('uses the same generated certificate history in preflight and final confirmation checksums', async () => {
+it('confirms a reviewed original receipt after certificate cancellation while retaining its history and missing-receipt reason', async () => {
   const h = harness();
+  h.row.missingReceiptReason = 'ไม่ได้รับใบเสร็จในวันที่สร้างใบทดแทน';
   h.client.expenseSubstituteReceiptEvidence.findMany = async ({ where }: any) => where.status === 'ISSUED' ? [] : [{
     id: 'cancelled-cert', expenseId: 'expense-1', version: 1, status: 'SUPERSEDED', artifactAttachmentId: 'cancelled-file', wetSignedScanAttachmentId: null,
   }];
@@ -405,4 +406,5 @@ it('uses the same generated certificate history in preflight and final confirmat
   const result = await h.repo.finalizeAndConfirmExpenseCas(input, finalize);
   assert.equal(result.expense.status, 'CONFIRMED');
   assert.equal(h.writes.outbox, 1);
+  assert.equal(h.row.missingReceiptReason, 'ไม่ได้รับใบเสร็จในวันที่สร้างใบทดแทน');
 });
