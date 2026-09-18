@@ -1,6 +1,6 @@
 # Agent Memory: thai-retail-buyer-receipt-survey
 
-Status: v0.11 reuse audit complete: existing saved-receipt recovery, Web detail/edit and replacement handlers verified; focused existing API tests 29/29 and Web logic/policy/source QA 54/54 passed. Pending-before-expense Web handoff and failed-state copy/retry behavior remain scoped gaps. Docs updated; no application code, commit, merge or release.
+Status: v0.11 retail/electronic documentation finalized for delivery through develop PR #643 and main PR #644; authoritative merge state is in the linked PR records. Existing-handler audit passed API29/Web54 locally; pending-before-expense Web handoff and failed-state behavior remain implementation gaps. No application implementation or deployment in this delivery.
 Owner: Codex
 Scope: Buyer receipts from 7-Eleven, Lotus’s, Big C, Makro and CJ including electronic, UX40+ and substitute certificates. User now explicitly requested integration into spec + plan and impact/bug/gap review; specifically added the replace-receipt page alongside LINE AI and new-upload AI.
 Decisions:
@@ -29,6 +29,7 @@ Open questions:
 - Company policy for personal coins/vouchers, actual funding and refund/correction remains open. No new accounting or tax eligibility approval was inferred.
 - Need authorized unaltered electronic fixtures for verification, separately from redacted/synthetic extraction fixtures; redacting a signed original can invalidate it. Decide automatic verifier scope versus explicit not-checked status before implementation.
 Artifacts:
+- v0.11 documentation delivery: [develop PR #643](https://github.com/MangmeeDev/mangmeeplus/pull/643) and [main PR #644](https://github.com/MangmeeDev/mangmeeplus/pull/644) contain the same nine scoped documentation files. GitHub records retain the exact final reviewed heads, merge outcomes and merge commits. The user explicitly authorized admin merge without waiting for CI on 2026-09-18; no deployment is dispatched.
 - [Research and proposed acceptance](../research/thai-retail-buyer-receipt-survey-2026-09-17-th.md)
 - [Reference catalog](../research/thai-retail-buyer-receipt-survey-2026-09-17.json)
 - [Existing spec](../specs/marketplace-buyer-expense-capture-spec-th.md)

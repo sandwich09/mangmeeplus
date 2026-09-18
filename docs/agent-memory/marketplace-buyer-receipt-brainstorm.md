@@ -1,6 +1,6 @@
 # Agent Memory: marketplace-buyer-receipt-brainstorm
 
-Status: v0.11 reuse audit complete: existing saved-receipt recovery, Web detail/edit and replacement handlers verified; focused existing API tests 29/29 and Web logic/policy/source QA 54/54 passed. Pending-before-expense Web handoff and failed-state copy/retry behavior remain scoped gaps. Docs updated; no application code, commit, merge or release.
+Status: v0.11 documentation finalized for delivery through develop PR #643 and main PR #644; authoritative merge state is in the linked PR records. Existing-handler audit passed API29/Web54 locally; pending-before-expense Web handoff and failed-state behavior remain implementation gaps. Documentation delivery does not implement or release the feature.
 Owner: Codex / root
 Scope: Buyer-side Shopee, Lazada and TikTok Shop plus 7-Eleven, Lotus’s, Big C, Makro, CJ MORE and Thai courier services; paper/electronic receipts through LINE AI, new upload and replace receipt, with expense/reimbursement and substitute-certificate continuity.
 
@@ -71,7 +71,8 @@ Open questions:
 - Close the exact endpoint/background-consumer inventory, per-file upload/group ownership representation, partial completion/correction lifecycle, read-model/export roles and version/capability rollout for the chosen slice. Targeted static review did not enumerate or exercise every runtime caller or race.
 
 Artifacts:
-- Repository integration: [develop PR #580](https://github.com/MangmeeDev/mangmeeplus/pull/580) and [main PR #581](https://github.com/MangmeeDev/mangmeeplus/pull/581) carry the same six documents. Their GitHub records retain the exact reviewed heads, CI outcomes and resulting merge commits.
+- v0.11 documentation delivery: [develop PR #643](https://github.com/MangmeeDev/mangmeeplus/pull/643) and [main PR #644](https://github.com/MangmeeDev/mangmeeplus/pull/644) contain the same nine scoped documentation files. GitHub records retain the exact final reviewed heads, merge outcomes and merge commits. The user explicitly authorized admin merge without waiting for CI on 2026-09-18; no deployment is dispatched.
+- Historical v0.6 repository integration: [develop PR #580](https://github.com/MangmeeDev/mangmeeplus/pull/580) and [main PR #581](https://github.com/MangmeeDev/mangmeeplus/pull/581) carry the same six documents. Their GitHub records retain the exact reviewed heads, CI outcomes and resulting merge commits.
 - docs/research/marketplace-buyer-receipt-brainstorm-2026-09-14-th.md
 - docs/specs/marketplace-buyer-expense-capture-spec-th.md
 - docs/plans/marketplace-buyer-expense-capture-plan-th.md
@@ -110,5 +111,5 @@ Verification:
 - Merge scope uses isolated worktrees and six explicit documentation paths. Existing billing/CI/other dirty workspace changes are excluded. UAT/Production workflows are workflow_dispatch only; no deployment dispatch is authorized by or performed for this merge.
 
 Next:
-- Current baseline is v0.11, including retail/electronic and replacement; D09 must keep OCR/extraction distinct from method-specific document verification. Historical v0.6 PRs above are not a merge of this update.
+- Current baseline is v0.11, including retail/electronic, courier and non-receipt replies; D09 must keep OCR/extraction distinct from method-specific document verification. Delivery of this update is tracked by PRs #643/#644; historical PRs #580/#581 cover v0.6 only.
 - W00 closes D01/D06/D07 and the foundation part of D02, then W01 guards precede W02 intake. D03 blocks dependent allocation/financial actions; D04 blocks W06; D08 applies before real personal data/AI pilot; D05/W08 remain readiness gates. Keep decisions/gaps open until real implementation and evidence exist. Admin merge of the documents does not approve accounting policy or enable the feature.
