@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, COMPANY_PICKER_OPEN_WEB_HINT, COMPANY_PICKER_OPEN_WEB_LABEL, COMPANY_PICKER_SELECT_LABEL, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
-import { buildTrialPricingReply } from './line-staff-menu.logic';
+import { isPublicPolicyFollowUp, resolvePublicPolicyAnswer } from './line-public-policy.logic';
+import { buildPublicPolicyCardMessage } from './line-business-card.logic';
 
 // entitledFeatureKeys null is the legacy fail-open company, so these cases keep asserting the
 // permission dimension on its own. Feature gating has its own cases at the end of the suite.
@@ -677,7 +678,9 @@ describe('standalone trial pricing FAQ', () => {
       'ทดลองใช้ฟรีหมดแล้วใช้งานต่อยังไง', 'ถ้าหมดโปรฟรีแล้วจะต้องจ่ายเงินไหม',
       'หลังจากใช้ฟรีแล้วใช้ต่อได้ไหม', 'หมดโปรฟรีทำไงต่อ',
     ]) {
-      const reply = buildTrialPricingReply(text);
+      const answer = resolvePublicPolicyAnswer(text);
+      assert.equal(answer?.topic, 'trial', text);
+      const reply = { type: 'text', text: answer!.text, quickReply: buildPublicPolicyCardMessage(answer!).quickReply };
       assert.equal(reply?.type, 'text', text);
       if (reply?.type !== 'text') throw new Error(text);
       assert.match(reply.text, /เลือกซื้อแพ็กเกจและยืนยันการชำระเงิน/);
@@ -691,17 +694,82 @@ describe('standalone trial pricing FAQ', () => {
     }
   });
 
-  it('leaves business charges, existing subscriptions, mixed requests and quoted text untouched', () => {
+  it('leaves business charges, mixed requests and quoted text untouched', () => {
     for (const text of [
       'เพิ่มค่าบริการ 10% ในบิลนี้', 'เสียค่าบริการในบิลนี้เท่าไหร่', 'ค่าบริการเดือนนี้เท่าไหร่',
       'บันทึกค่าบริการ 249 บาท', 'เสียค่าบริการไหม แล้วสรุปค่าใช้จ่ายเดือนนี้',
       'หลังจากทดลองใช้ฟรี ช่วยลบข้อมูลทั้งหมด', 'ฉันอยากตาย เสียค่าบริการไหม',
-      'ซื้อแพ็กเกจแล้วจะหักเงินอีกไหม', 'ต่ออายุแพ็กเกจเสียเงินไหม', 'ยกเลิกแพ็กเกจให้หน่อย',
+      'ยกเลิกแพ็กเกจให้หน่อย',
       '“เสียค่าบริการไหม”', 'ลูกค้าบอกว่าเสียค่าบริการไหม', 'ใบเสร็จ: เสียค่าบริการไหม',
       'ลูกค้าคนนี้เสียค่าบริการไหม', 'ทำอะไรได้บ้าง', '', ' '.repeat(161) + 'เสียค่าบริการไหม',
       'หลังหมดโปรฟรีแล้วเป็นยังไงต่อ แล้วลบบิลนี้ให้หน่อย', 'โปรฟรีร้านกาแฟหมดแล้วทำยังไงต่อ',
       'ลูกค้าถามว่าหลังหมดโปรฟรีแล้วเป็นยังไงต่อ', 'หลังแพ็กเกจรายปีหมดแล้วทำยังไงต่อ',
-    ]) assert.equal(buildTrialPricingReply(text), null, text);
+    ]) assert.equal(resolvePublicPolicyAnswer(text), null, text);
+  });
+});
+
+describe('public policy conversation', () => {
+  it('keeps the reported trial conversation in cards and repairs the wrong package destination', () => {
+    let topic: Parameters<typeof resolvePublicPolicyAnswer>[1];
+    for (const text of ['หลังหมดโปรฟรีแล้วเป็นยังไงต่อ', 'ต้องสมัครต่อไหม',
+      'แบบหมดอายุฟรีแล้วบังคับสมัครต่อไหม', 'ถามว่าบังคับไหม', 'แน่นะ']) {
+      const answer = resolvePublicPolicyAnswer(text, topic);
+      assert.equal(answer?.topic, 'trial', text);
+      assert.match(answer!.text, /ไม่บังคับสมัครต่อ/);
+      const card = buildPublicPolicyCardMessage(answer!);
+      assert.equal(card.type, 'flex');
+      assert.doesNotMatch(JSON.stringify(card), /expenses|เปิดดูรายการ|ทำผ่านLINEไม่ได้/);
+      topic = answer!.topic;
+    }
+    const wrongLink = resolvePublicPolicyAnswer('เข้าแล้วมาหน้าค่าใช้จ่าย', topic)!;
+    assert.match(wrongLink.text, /ขอโทษ.*หน้าค่าใช้จ่ายไม่ใช่หน้าข้อมูลแพ็กเกจ/);
+    assert.doesNotMatch(wrongLink.text, /ดีเลย|เข้าได้แล้ว/);
+    const card = buildPublicPolicyCardMessage(wrongLink);
+    assert.equal(card.type, 'flex');
+    if (card.type === 'flex') {
+      assert.equal((card.contents as any).footer.contents[0].action.uri, 'https://official.mangmeeplus.com/');
+      assert.match(card.canonicalText!, /https:\/\/official\.mangmeeplus\.com\//);
+    }
+  });
+
+  it('answers documented public policies without claiming an account action succeeded', () => {
+    const cases = [
+      ['ทดลองฟรีกี่วัน', 'trial_limits', /30 วัน.*15 รายการ.*1 สาขา.*2 คน/],
+      ['ทดลองใช้ฟรีต้องผูกบัตรไหม', 'card', /ไม่ต้องผูกบัตร/],
+      ['หมดโปรฟรีแล้วข้อมูลหายไหม', 'data', /ไม่ได้ถูกลบทันที/],
+      ['ขอลบข้อมูลต้องทำยังไง', 'data', /ยังไม่ได้ลบข้อมูล/],
+      ['ซื้อแพ็กเกจแล้วจะหักเงินอีกไหม', 'paid_renewal', /ตามเงื่อนไขที่คุณยอมรับ/],
+      ['ซื้อแพ็กเกจก่อนหมดโปรฟรีได้ไหม', 'buy_early', /วันทดลองที่เหลือไม่ทบ/],
+      ['อ่านใบเสร็จไม่สำเร็จเสียสิทธิ์ไหม', 'quota', /คืนสิทธิ์ที่กันไว้/],
+      ['แพ็กเกจรายปีเติมสิทธิ์ทุกเดือนไหม', 'quota', /ไม่ได้เติมใหม่ทุกเดือน/],
+      ['ซื้อแพ็กเกจเดิมซ้ำได้อะไร', 'plan_change', /ต่อเวลาจากวันหมดอายุเดิม/],
+      ['ยกเลิกแพ็กเกจได้เงินคืนไหม', 'cancellation', /ไม่ได้หมายถึงได้รับเงินคืนอัตโนมัติ/],
+      ['ชำระต่ออายุแพ็กเกจไม่สำเร็จทำยังไง', 'payment_failure', /ไม่ใช่วันทดลองใช้ฟรีเพิ่ม/],
+    ] as const;
+    for (const [text, topic, expected] of cases) {
+      const answer = resolvePublicPolicyAnswer(text);
+      assert.equal(answer?.topic, topic, text);
+      assert.match(answer!.text, expected);
+      assert.equal(buildPublicPolicyCardMessage(answer!).type, 'flex');
+    }
+    for (const text of ['จะโดนหักเงินไหม', 'เสียค่าบริการไหม', 'ไม่ซื้อแพ็กเกจจะเสียเงินไหม']) {
+      assert.equal(resolvePublicPolicyAnswer(text, 'paid_renewal')?.topic, 'paid_renewal');
+    }
+    assert.equal(resolvePublicPolicyAnswer('ต้องสมัครต่อไหม', 'data')?.topic, 'paid_renewal');
+    assert.equal(resolvePublicPolicyAnswer('แน่นะ', 'cancellation')?.topic, 'cancellation');
+  });
+
+  it('requires delivered context for ambiguous follow-ups and leaves quotes, mixed requests and mutations alone', () => {
+    for (const text of ['ต้องสมัครต่อไหม', 'ถามว่าบังคับไหม', 'แน่นะ', 'เข้าแล้วมาหน้าค่าใช้จ่าย']) {
+      assert.equal(isPublicPolicyFollowUp(text), true);
+      assert.equal(resolvePublicPolicyAnswer(text), null);
+    }
+    for (const text of ['บันทึกค่าแพ็กเกจ 249 บาท', 'ยกเลิกแพ็กเกจให้หน่อย', 'ลบข้อมูลทั้งหมดให้ที',
+      'จ่ายเงินแพ็กเกจให้เลย', '“ถามว่าบังคับไหม”', 'ลูกค้าบอกว่าต้องสมัครต่อไหม',
+      'ต้องสมัครต่อไหม แล้วลบบิลนี้', 'ใบเสร็จบังคับไหม', 'ถามว่าบังคับไหม ฉันอยากตาย',
+      'เข้าแล้วมาหน้าค่าใช้จ่าย สรุปยอดให้ที', ' '.repeat(161) + 'แน่นะ']) {
+      assert.equal(resolvePublicPolicyAnswer(text, 'trial'), null, text);
+    }
   });
 });
 
@@ -710,6 +778,7 @@ describe('capability question (Owner 2026-08-27: only real features)', () => {
     assert.equal(isCapabilityQuestion('ทำอะไรได้บ้าง'), true);
     assert.equal(isCapabilityQuestion('น้องมั่งมีช่วยอะไรได้บ้าง'), true);
     assert.equal(isCapabilityQuestion('ระบบนี้ใช้ยังไง'), true);
+    for (const text of ['เพิ่งใช้ครั้งแรกต้องทำยังไง', 'เพิ่งสมัครเริ่มตรงไหนครับ', 'ใช้ครั้งแรกใช้งานยังไง']) assert.equal(isCapabilityQuestion(text), true, text);
     assert.equal(isCapabilityQuestion('มีฟีเจอร์อะไรบ้าง'), true);
   });
 
