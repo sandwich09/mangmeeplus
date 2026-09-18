@@ -353,3 +353,32 @@ export type ExpenseCaptureReviewResultDto = {
   status: 'PREVIEW' | 'ACCEPTED';
   result: CaptureAllocationResult;
 };
+
+// ─── Handoff (§9 `POST …/handoff`, W05) ───────────────────────────────────────
+
+/** One derived expense source, as the caller of a handoff sees it. */
+export type CaptureHandoffExpenseDto = {
+  expenseId: string;
+  scopeKey: string;
+  grandTotalAmount: string;
+  netPayableAmount: string;
+  /** Employee route with the tax review already decided: a claim may cite it today (§7, A04/A08). */
+  claimReady: boolean;
+  webPath: string;
+};
+
+/**
+ * `<groupId>:<allocationId>` is the batch, and the batch IS the idempotency key: the same accepted
+ * allocation handed off twice is the same intent, so a replay answers the first batch instead of
+ * writing a second one (§9, A10).
+ */
+export type CaptureHandoffResultDto = {
+  handoffBatchKey: string;
+  groupStatus: 'HANDED_OFF';
+  revision: number;
+  /** A previous batch was released and rebuilt from a newer allocation (§9 regenerate, A11). */
+  regenerated: boolean;
+  /** The same batch already existed; nothing was written (A10/A84). */
+  replayed: boolean;
+  expenses: CaptureHandoffExpenseDto[];
+};
