@@ -447,21 +447,21 @@ export function buildAiBudgetExceededMessage(
   // still work — that needs the saved split policy AND current OCR eligibility, which no caller can
   // prove until §12 ships. Until then the card says less rather than something it cannot stand by.
   const chatOnly = refusal?.budgetScope === 'CHAT';
-  const what = chatOnly ? 'งบ AI ส่วนแชตของเดือนนี้' : 'โควตา AI ของแพ็กเกจเดือนนี้';
+  const what = chatOnly ? 'เครดิต AI ส่วนแชตของเดือนนี้' : 'เครดิต AI ของเดือนนี้';
   const text = insufficient
-    ? `${chatOnly ? 'งบ AI ส่วนแชตที่เหลือ' : 'งบ AI ที่เหลือ'}ของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ `
-      + `${trialTier ? 'ช่วงทดลองมีงบให้ AI ช่วยตอบจำกัดต่อเดือน ' : ''}เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ`
+    ? `${chatOnly ? 'เครดิต AI ส่วนแชตที่เหลือ' : 'เครดิต AI ที่เหลือ'}ของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ `
+      + `${trialTier ? 'ช่วงทดลองมีเครดิต AI จำกัดต่อเดือน ' : ''}เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ`
     : trialTier
-      ? `${what}ครบแล้วค่ะ ช่วงทดลองมีงบให้ AI ช่วยตอบจำกัดต่อเดือน เดือนหน้าเริ่มใหม่ `
+      ? `${what}หมดแล้วค่ะ ช่วงทดลองมีเครดิต AI จำกัดต่อเดือน เดือนหน้าเริ่มใหม่ `
         + 'หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ'
-      : `${what}ครบแล้วค่ะ เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ`;
+      : `${what}หมดแล้วค่ะ เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ`;
   return {
     type: 'flex',
     altText: preview(text, 400),
     contents: bubble(
       insufficient
-        ? { title: 'งบ AI เดือนนี้เหลือไม่พอ', badge: '💚 งบเหลือไม่พอเริ่มงาน', text }
-        : { title: chatOnly ? 'งบ AI ส่วนแชตเดือนนี้ครบแล้ว' : 'โควตา AI เดือนนี้ครบแล้ว', badge: '💚 ครบโควตาเดือนนี้', text },
+        ? { title: 'เครดิต AI เดือนนี้เหลือไม่พอ', badge: '💚 เครดิต AI เหลือไม่พอเริ่มงาน', text }
+        : { title: chatOnly ? 'เครดิต AI ส่วนแชตเดือนนี้หมดแล้ว' : 'เครดิต AI เดือนนี้หมดแล้ว', badge: '💚 เครดิต AI หมดเดือนนี้', text },
       undefined,
       '',
       [
