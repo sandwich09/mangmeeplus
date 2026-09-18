@@ -126,6 +126,11 @@ function makePrisma(opts: {
 
 type Harness = {
   useCase: ProcessLineWebhookUseCase;
+  /** W02-LINE: every group, file, read job, intake attempt and merge the capture lane wrote. */
+  captureState: {
+    groups: any[]; files: any[]; jobs: any[]; attempts: any[];
+    moves: any[]; closes: any[]; readFailures: any[];
+  };
   candidateQueries: any[];
   correctionCalls: any[];
   replies: string[];

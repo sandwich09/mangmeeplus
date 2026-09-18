@@ -109,13 +109,13 @@ describe('LINE ERP core detail tools', () => {
     assert.equal((result.data as any).approvalSteps[0].approverUserId, undefined);
   });
 
-  it('wires all seven adapters into the internal tool map', () => {
+  it('wires all eight adapters into the internal tool map', () => {
     const dependenciesBeforeCoreDetailAdapters = Array.from({ length: 44 }, () => ({}));
     const adapters = [
       { execute: async () => ({}) }, { execute: async () => ({}) },
       { execute: async () => ({}) }, { execute: async () => ({}) },
       { execute: async () => ({}) }, { execute: async () => ({}) },
-      { execute: async () => ({}) },
+      { execute: async () => ({}) }, { execute: async () => ({}) },
     ];
     const controller = new (InternalToolsController as any)(
       {}, {}, {}, {}, {}, ...dependenciesBeforeCoreDetailAdapters, ...adapters,
@@ -124,9 +124,11 @@ describe('LINE ERP core detail tools', () => {
     assert.equal(map.get('inventory.get_product_detail'), adapters[0]);
     assert.equal(map.get('expense.get_detail'), adapters[1]);
     assert.equal(map.get('expense.explain_record'), adapters[2]);
-    assert.equal(map.get('reimbursement.get_summary'), adapters[3]);
-    assert.equal(map.get('reimbursement.get_detail'), adapters[4]);
-    assert.equal(map.get('accounting.get_document_detail'), adapters[5]);
-    assert.equal(map.get('accounting.get_receivable_summary'), adapters[6]);
+    // §17.5: the file-attempt read sits beside the record explainer it cannot answer for.
+    assert.equal(map.get('line.explain_file_attempt'), adapters[3]);
+    assert.equal(map.get('reimbursement.get_summary'), adapters[4]);
+    assert.equal(map.get('reimbursement.get_detail'), adapters[5]);
+    assert.equal(map.get('accounting.get_document_detail'), adapters[6]);
+    assert.equal(map.get('accounting.get_receivable_summary'), adapters[7]);
   });
 });
