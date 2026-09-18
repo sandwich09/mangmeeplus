@@ -154,11 +154,12 @@ test('the picker and the dropzone take several files; the camera still takes one
 
 test('a read that became a durable job says the file is saved, not that it was read', () => {
   const notice = source.slice(source.indexOf('export function extractionNotice('), source.indexOf('// ── Upload Panel'));
-  assert.match(notice, /if \(result\.readStatus && result\.readStatus !== 'DONE'\) \{/);
-  assert.match(notice, /expenses\.capture\.read_failed/);
-  assert.match(notice, /expenses\.capture\.read_stored_reading/);
+  // W07-int: the JOB's existence decides this branch, not how far it has got — the PDF lane
+  // answers `{ status: 'ok', readJobId, readStatus: 'QUEUED' }` and a replay of the same file
+  // answers the same shape with `readStatus: 'DONE'` and no fields at all.
+  assert.match(notice, /const jobNotice = captureReadJobNotice\(result\);/);
   // It has to answer before the success branch, or a pending read reads as "AI อ่านเอกสารแล้ว".
-  assert.ok(notice.indexOf('result.readStatus') < notice.indexOf("result.status === 'ok'"));
+  assert.ok(notice.indexOf('captureReadJobNotice') < notice.indexOf("result.status === 'ok'"));
 });
 
 test('the client no longer carries a PDF ceiling of its own', () => {

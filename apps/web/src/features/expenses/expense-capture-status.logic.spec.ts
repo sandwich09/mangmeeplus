@@ -6,6 +6,7 @@ import {
   captureReadAgainAllowed,
   captureReadFailed,
   captureReadIsRunning,
+  captureReadJobNotice,
   captureReadNotice,
   captureReadProgressParams,
   type ExpenseReadStatusFile,
@@ -92,5 +93,38 @@ describe('the reread CTA is an intent, never an error recovery (§17.6)', () => 
 
   it('never appears without the authority to ask for a read', () => {
     assert.equal(captureReadAgainAllowed({ canExtract: false, readStatus: null }), false);
+  });
+});
+
+describe('an extraction response that became a durable job (§3, W07-int)', () => {
+  it('reads the QUEUED answer the PDF lane actually sends, field for field', () => {
+    // Verbatim from `expense-extraction.use-case.ts` `queueCaptureRead`.
+    const queued = { status: 'ok' as const, readJobId: 'job-1', readStatus: 'QUEUED' as const };
+    assert.deepEqual(captureReadJobNotice(queued), { tone: 'info', messageKey: 'expenses.capture.read_stored_reading' });
+  });
+
+  it('answers a replay of the same file without claiming a read this response never did', () => {
+    // The lane is idempotent on (expense, attachment, bytes), so pressing again returns the SAME
+    // job — terminal, and with no `fields` of its own.
+    assert.deepEqual(
+      captureReadJobNotice({ readJobId: 'job-1', readStatus: 'DONE' }),
+      { tone: 'info', messageKey: 'expenses.capture.read_done' },
+    );
+    assert.deepEqual(
+      captureReadJobNotice({ readJobId: 'job-1', readStatus: 'FAILED' }),
+      { tone: 'error', messageKey: 'expenses.capture.read_failed' },
+    );
+  });
+
+  it('stays out of the way of the synchronous lane, which has no job at all', () => {
+    assert.equal(captureReadJobNotice({ status: 'ok', fields: { vendorName: 'ร้าน' } } as never), null);
+    assert.equal(captureReadJobNotice({ readStatus: 'DONE' }), null, 'a status with no job id is not this branch');
+  });
+
+  it('every sentence it can choose exists in both locales', () => {
+    for (const key of ['expenses.capture.read_stored_reading', 'expenses.capture.read_done', 'expenses.capture.read_failed'] as const) {
+      assert.ok(workspaceDictionary.th[key], key);
+      assert.ok(workspaceDictionary.en[key], key);
+    }
   });
 });

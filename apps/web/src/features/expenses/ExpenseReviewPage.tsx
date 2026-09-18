@@ -303,8 +303,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           if (cancelled) return;
           const file = result.files[0] ?? null;
           setReadState(file);
-          // DONE is the only state that changed the record's own facts.
-          if (file?.status === 'DONE') void load();
+          // Reload only when the read really landed on this record: `applied === false` is a DONE
+          // whose facts were stored but deliberately not written (multi-document, stale fence), and
+          // re-reading the draft then shows the same fields with a spinner that never explains why.
+          if (file?.status === 'DONE' && file.applied !== false) void load();
         })
         .catch(() => undefined);
     }, 3_000);
@@ -713,7 +715,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     ) + (readPausedKey ? ` (${t(readPausedKey, locale)})` : '')
     : '';
   // §3.1: the reader found more than one document in this one file.
-  const multiDocumentDetected = (aiMap?.['classification'] as { contentKind?: string } | undefined)?.contentKind === 'MULTI_DOCUMENT';
+  //
+  // The READ JOB is the authority whenever there is one: the API derives `multiDocument` from the
+  // assembled observation, which is also what decided NOT to apply the read to this draft — so the
+  // notice and the reason the fields are still empty come from the same fact. A record with no job
+  // (the synchronous single-image lane) keeps its OCR classification, which is all it has.
+  const multiDocumentDetected = readState
+    ? readState.multiDocument === true
+    : (aiMap?.['classification'] as { contentKind?: string } | undefined)?.contentKind === 'MULTI_DOCUMENT';
   /**
    * "อ่านเอกสารอีกครั้ง" is a deliberate intent on a file that has NOT just failed to be read
    * (§17.6). After a terminal failure — or under an error notice — the way forward is this form,

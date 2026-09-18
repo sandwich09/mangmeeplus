@@ -21,6 +21,10 @@ export type ExpenseReadStatusFile = {
   pageCount: number | null;
   pausedReason: ExpenseCapturePausedReason | null;
   lastErrorCode: string | null;
+  /** Expense lane: the assembly found more than one document, so the read was NOT applied (§3.1). */
+  multiDocument?: boolean;
+  /** Expense lane: the read really was written onto the draft the page is showing. */
+  applied?: boolean;
 };
 
 export type CaptureReadNotice = {
@@ -44,6 +48,23 @@ const PAUSED_REASON_KEYS: Record<ExpenseCapturePausedReason, DictionaryKey> = {
   time_budget: 'expenses.capture.paused_time_budget',
   memory_budget: 'expenses.capture.paused_memory_budget',
 };
+
+/**
+ * Appendix §3: did this extraction response hand the read to a durable JOB?
+ *
+ * `readJobId` is the fact — the PDF lane answers `{ status: 'ok', readJobId, readStatus: 'QUEUED' }`
+ * and a replay of the same file and bytes answers the same shape with `readStatus: 'DONE'`. Both
+ * carry NO fields, so the synchronous success copy ("AI อ่านเอกสารแล้ว: …") would be a claim about
+ * a read this response never performed. The status only decides which sentence.
+ */
+export function captureReadJobNotice(
+  result: { readJobId?: string | null; readStatus?: ExpenseCaptureReadStatus | null },
+): { tone: 'info' | 'error'; messageKey: DictionaryKey } | null {
+  if (!result.readJobId) return null;
+  if (result.readStatus === 'FAILED') return { tone: 'error', messageKey: 'expenses.capture.read_failed' };
+  if (result.readStatus === 'DONE') return { tone: 'info', messageKey: 'expenses.capture.read_done' };
+  return { tone: 'info', messageKey: 'expenses.capture.read_stored_reading' };
+}
 
 export const captureReadIsRunning = (status: ExpenseCaptureReadStatus | null | undefined): boolean =>
   Boolean(status) && !TERMINAL_READ_STATUSES.has(status!);

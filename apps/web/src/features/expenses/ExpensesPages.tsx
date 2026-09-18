@@ -66,6 +66,7 @@ import {
   hasUnfinishedCapture, readCaptureManifest, reconcileCaptureUpload, runCaptureUpload, writeCaptureManifest,
   type CaptureUploadApi, type CaptureUploadEntry, type CaptureUploadState,
 } from './expense-capture-upload.logic';
+import { captureReadJobNotice } from './expense-capture-status.logic';
 import {
   bangkokMonthKey, classifyUploadFile, HeicDecodeError, isReceiptQuotaBlocked,
   availableExpenseSessionStorage,
@@ -216,13 +217,13 @@ export function nonExpenseNotice(classification: Pick<BusinessDocumentClassifica
 }
 
 export function extractionNotice(result: ExpenseExtractionResult, locale: SupportedLocale): ExtractionNotice {
-  // Appendix §3: the read could not finish inside the request, so it is a durable job now. The file
-  // is stored either way — the review page follows the job from here and fills in the rest.
-  if (result.readStatus && result.readStatus !== 'DONE') {
-    return result.readStatus === 'FAILED'
-      ? { tone: 'error', message: t('expenses.capture.read_failed', locale) }
-      : { tone: 'info', message: t('expenses.capture.read_stored_reading', locale) };
-  }
+  // Appendix §3: the read did not happen inside the request — it is a durable JOB now, and
+  // `readJobId` is the fact that says so. The status is only how far that job has got, so keying
+  // on it alone answered a replayed DONE job (same file, same bytes) with the success copy of a
+  // synchronous read, over a response that carries no fields at all. The file is stored either
+  // way, and the review page follows the job from here.
+  const jobNotice = captureReadJobNotice(result);
+  if (jobNotice) return { tone: jobNotice.tone, message: t(jobNotice.messageKey, locale) };
   if (result.status === 'ok') {
     const fields = result.fields;
     const summary = [

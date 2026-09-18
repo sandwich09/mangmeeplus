@@ -9,6 +9,7 @@ import {
   type ExpenseCaptureManifestPageState,
   type ExpenseCaptureObservations,
   type ExpenseCaptureReadChunk,
+  type ExpenseCapturePausedReason,
   type ExpenseCaptureReadManifest,
   type ReceiptOcrFieldResult,
   EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE,
@@ -71,7 +72,7 @@ const NOOP_SHADOW = {
 
 type RunOutcome = {
   status: 'DONE' | 'PARTIAL' | 'PAUSED' | 'FAILED' | 'CANCELLED';
-  pausedReason?: 'page_limit' | 'call_budget' | 'time_budget' | 'ai_credit';
+  pausedReason?: ExpenseCapturePausedReason;
   errorCode?: string;
   applied?: boolean;
   multiDocument?: boolean;
@@ -465,7 +466,12 @@ export class ExpenseCaptureReadRunnerService {
       { companyId: job.companyId, userId: 'system' },
       job.expenseId,
       mapped.fields,
-      { ...(job.expectedSourceUpdatedAt ? { expectedUpdatedAt: job.expectedSourceUpdatedAt } : {}) },
+      {
+        ...(job.expectedSourceUpdatedAt ? { expectedUpdatedAt: job.expectedSourceUpdatedAt } : {}),
+        // §16.4: the file this read is OF, so the apply can retire a `sourceStale` warning that
+        // was raised about the file this one replaced.
+        sourceAttachmentId: job.attachmentId,
+      },
     );
     if (isStaleOcrApply(outcome) || !outcome.committedUpdatedAt) {
       await this.audit.log({

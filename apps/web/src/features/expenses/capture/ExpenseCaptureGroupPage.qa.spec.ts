@@ -109,6 +109,15 @@ test('polling follows the job and stops when it ends — it never asks for anoth
   assert.match(source, /}, 3_000\);/);
   assert.match(source, /getExpenseCaptureGroupReadStatus\(companyId, groupId\)/);
   assert.doesNotMatch(source, /requestExpenseExtraction/, 'a status page never starts a read');
+  // W07-int: ONE polling source. The group route answers every tick; the detail's own file states
+  // are the value shown before the first tick and nothing else, so the page can never show two
+  // read states for one file depending on which request landed last.
+  assert.equal((source.match(/window\.setInterval/g) ?? []).length, 1, 'exactly one poller');
+  assert.doesNotMatch(
+    source.slice(source.indexOf('if (!reading) return;'), source.indexOf('const captureApi')),
+    /getExpenseCaptureGroup\(/,
+    'the poll never re-reads the detail for status; it loads once, when the job ends',
+  );
 });
 
 // The retired AI-money phrases are swept across the whole product source by
