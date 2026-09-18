@@ -418,8 +418,17 @@ function makePrisma(opts: {
         // Only the §8.3 outcome write reads this with a `select`; every other caller wants the whole
         // row and must keep seeing "no previous event".
         findUnique: async (args: any) => (args?.select?.companyId ? { companyId: 'company-1' } : null),
-        findFirst: async () => previousEventLog,
-        create: async (args: unknown) => { createdLogs.push(args); return args; },
+        findFirst: async (args: any) => {
+          if (!args?.select?.turnOutcome) return previousEventLog;
+          const logs = (createdLogs as any[]).filter(({ data }) => data.lineUserIdHash === args.where.lineUserIdHash
+            && data.webhookEventId !== args.where.webhookEventId.not && data.createdAt >= args.where.createdAt.gte);
+          const row = logs.at(-1)?.data;
+          if (!row) return null;
+          const updatesForRow = (updates as any[]).filter(update => update.where.webhookEventId === row.webhookEventId);
+          return { ...row, ...Object.assign({}, ...updatesForRow.map(update => update.data)),
+            turnOutcome: outcomeStore.get(row.webhookEventId) ?? null };
+        },
+        create: async (args: any) => { args.data.createdAt ??= new Date(); createdLogs.push(args); return args; },
         updateMany: async (args: unknown) => { updates.push(args); return { count: 1 }; },
       },
       lineTurnOutcome: {
@@ -895,6 +904,72 @@ describe('ProcessLineWebhookUseCase', () => {
         assert.equal(replies.length, 1, 'duplicate event must not send again');
       }
     }
+  });
+
+  it('remembers only the delivered public topic across instances for the reported multi-turn conversation', async () => {
+    const { prisma, turnOutcomeWrites, identityQueries } = makePrisma({ identityUserId: null });
+    let i = 0;
+    for (const messageText of ['โปรโมชั่น', 'ต้องสมัครต่อไหม', 'หลังหมดโปรฟรีแล้วเป็นยังไงต่อ', 'ต้องสมัครต่อไหม',
+      'แบบหมดอายุฟรีแล้วบังคับสมัครต่อไหม', 'ถามว่าบังคับไหม', 'เข้าแล้วมาหน้าค่าใช้จ่าย']) {
+      // A fresh instance on each turn proves this is delivery-backed, not process-local memory.
+      const h = makeUseCase(prisma, { config: { lineAiTerminalOutcomeReplayEnabled: true } });
+      await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `policy-${++i}`, messageText });
+      assert.equal(h.sentMessages[0].type, 'flex');
+      if (i > 1) assert.match(h.sentMessages[0].canonicalText, i === 7 ? /ขอโทษ.*หน้าค่าใช้จ่ายไม่ใช่/ : /ไม่บังคับสมัครต่อ/);
+      assert.equal(h.getAiGatewayCalled(), false);
+      assert.equal(h.intakeRequests.length, 0);
+    }
+    assert.equal(turnOutcomeWrites.length, 7);
+    assert.equal(identityQueries.length, 0);
+    assert.deepEqual(Object.keys(turnOutcomeWrites[0].create.authorizationJson.publicPolicy).sort(), ['recipientHash', 'topic']);
+  });
+
+  it('does not reuse public context across recipients, interrupted conversations, stale or unaccepted delivery', async () => {
+    for (const boundary of ['actor', 'chat', 'channel', 'intervening', 'expired', 'undelivered', 'unknown-topic', 'store-failure', 'disabled']) {
+      const { prisma, createdLogs, turnOutcomeWrites } = makePrisma({ identityUserId: null });
+      const config = { lineAiTerminalOutcomeReplayEnabled: true };
+      const first = makeUseCase(prisma, { config });
+      await first.useCase.execute({ ...BASE_EVENT, webhookEventId: 'policy-first', messageText: 'ทดลองใช้ฟรีกี่วัน' });
+      const next: Parameters<ProcessLineWebhookUseCase['execute']>[0] = { ...BASE_EVENT, webhookEventId: 'policy-next', messageText: 'ถามว่าบังคับไหม' };
+      if (boundary === 'actor') next.lineUserId = 'other-user';
+      if (boundary === 'chat') next.pushTargetId = 'other-group';
+      if (boundary === 'channel') next.messagingChannelId = 'other-channel';
+      if (boundary === 'expired') (createdLogs[0] as any).data.createdAt = new Date(Date.now() - 16 * 60_000);
+      if (boundary === 'undelivered') await prisma.client.lineTurnOutcome.updateMany({ where: { webhookEventId: 'policy-first' }, data: { deliveredAt: null } });
+      if (boundary === 'unknown-topic') (turnOutcomeWrites[0] as any).create.authorizationJson.publicPolicy.topic = 'untrusted';
+      if (boundary === 'intervening') await first.useCase.execute({ ...BASE_EVENT, webhookEventId: 'other-event', messageText: 'ใบเสร็จ 845 บาท' });
+      if (boundary === 'disabled') config.lineAiTerminalOutcomeReplayEnabled = false;
+      if (boundary === 'store-failure') prisma.client.lineWebhookEventLog.findFirst = async () => { throw new Error('store unavailable'); };
+      const h = makeUseCase(prisma, { config });
+      if (boundary === 'store-failure') {
+        await assert.rejects(() => h.useCase.execute(next));
+        assert.equal(h.sentMessages.length, 0);
+      } else {
+        await h.useCase.execute(next);
+        assert.doesNotMatch(JSON.stringify(h.sentMessages), /ไม่บังคับสมัครต่อ|ทดลองใช้ฟรีและการใช้งานต่อ/);
+      }
+    }
+  });
+
+  it('preserves paid-renewal context, support pause and canonical Flex fallback', async () => {
+    const { prisma, updates } = makePrisma();
+    const config = { lineAiTerminalOutcomeReplayEnabled: true, lineAiFlexTextFallbackEnabled: true };
+    const h = makeUseCase(prisma, { config });
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'paid-1', messageText: 'ซื้อแพ็กเกจแล้วจะหักเงินอีกไหม' });
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'paid-2', messageText: 'ต้องสมัครต่อไหม' });
+    assert.match(h.sentMessages[1].canonicalText, /ตามเงื่อนไขที่คุณยอมรับตอนซื้อ/);
+    assert.doesNotMatch(h.sentMessages[1].canonicalText, /ไม่บังคับสมัครต่อ/);
+    const sends: any[][] = [];
+    const fallback = makeUseCase(prisma, { config, sendReplyFn: async (_token, messages) => {
+      sends.push(messages); return sends.length === 1 ? 'failed_flex' : 'ok';
+    } });
+    await fallback.useCase.execute({ ...BASE_EVENT, webhookEventId: 'paid-3', messageText: 'แน่นะ' });
+    assert.equal(sends[1][0].type, 'text');
+    assert.match(sends[1][0].text, /ตามเงื่อนไขที่คุณยอมรับตอนซื้อ/);
+    assert.match(sends[1][0].text, /https:\/\/official\.mangmeeplus\.com\//);
+    prisma.client.lineCompanyContext.findUnique = async () => ({ companyId: 'company-1', aiPausedUntil: new Date(Date.now() + 60_000) });
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'paid-4', messageText: 'แน่นะ' });
+    assert.equal((updates.at(-1) as any).data.status, 'support_paused');
   });
 
   it('keeps trial pricing free text under an existing human-support pause', async () => {

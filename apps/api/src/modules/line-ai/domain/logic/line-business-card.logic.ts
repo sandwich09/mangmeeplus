@@ -2,7 +2,6 @@ import { AI_BUDGET_REFUSAL_CODES, type AiBudgetScope, type LineAiAnswerCard, typ
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { lineMessagePreview as preview } from './line-message-preview.logic';
 import {
-  buildTrialPricingReply,
   EMPLOYEE_DOOR_COMMAND,
   PACKAGE_CHANGE_COMMAND,
   STAFF_CONTACT_COMMAND,
@@ -10,6 +9,8 @@ import {
   PROFILE_GUARD_LATER_COMMAND,
   VIEW_PACKAGES_COMMAND,
 } from './line-staff-menu.logic';
+
+import { PUBLIC_PACKAGE_URL, type PublicPolicyAnswer } from './line-public-policy.logic';
 
 const THEME = {
   brand: '#22C55E',
@@ -124,19 +125,18 @@ function bubble(
 }
 
 /** Public policy uses the same card as assistant answers, without a tenant or model lookup. */
-export function buildTrialPricingCardMessage(messageText: string): LineReplyMessage | null {
-  const reply = buildTrialPricingReply(messageText);
-  if (!reply || reply.type !== 'text') return null;
-  const packageUrl = 'https://official.mangmeeplus.com/';
+export function buildPublicPolicyCardMessage(answer: PublicPolicyAnswer): LineReplyMessage {
   return {
     type: 'flex',
-    altText: preview(reply.text, 400),
-    canonicalText: reply.text,
-    quickReply: reply.quickReply,
+    altText: preview(answer.text, 400),
+    canonicalText: answer.text,
+    quickReply: { items: [
+      { type: 'action', action: { type: 'message', label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND } },
+    ] },
     contents: bubble({
-      title: 'ทดลองใช้ฟรีและการใช้งานต่อ',
-      text: reply.text.replace(packageUrl, 'ปุ่มดูแพ็กเกจด้านล่าง'),
-    }, undefined, '', [{ label: 'ดูแพ็กเกจ', uri: packageUrl }]),
+      title: answer.title,
+      text: answer.text.replace(`\nดูรายละเอียดแพ็กเกจ: ${PUBLIC_PACKAGE_URL}`, ''),
+    }, undefined, '', [{ label: 'ดูแพ็กเกจ', uri: PUBLIC_PACKAGE_URL }]),
   };
 }
 
