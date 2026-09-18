@@ -87,7 +87,7 @@ export class InventoryListLowStockTool implements ErpReadToolPort {
         label: 'สินค้าใกล้หมด', module: 'inventory', entityType: 'low_stock_report', asOf,
         permissionChecked: true, webPath: `/companies/${ctx.companyId}/inventory`,
       },
-      ...items.map((b) => ({
+      ...items.map((b): SourceRef => ({
         label: `สินค้า ${b.productId}`,
         module: 'inventory',
         entityType: 'stock_balance',
