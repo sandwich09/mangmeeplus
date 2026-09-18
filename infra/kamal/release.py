@@ -33,6 +33,8 @@ ROOT = Path(__file__).resolve().parents[2]
 HELPERS = ROOT / 'infra/dev-kamal'
 sys.path.insert(0, str(HELPERS))
 from release_inventory import SERVICES, digest, inspect_container, require
+from release_source import full_sha, hotfix_source, promotion_bundle, accepted_uat_bundle
+from first_migration import FirstMigration
 
 KAMAL = 'ghcr.io/basecamp/kamal:v2.12.0'
 ORDER = ('ai-gateway', 'api-web', 'workers')
@@ -40,6 +42,8 @@ ACCOUNT = '311414082667'
 REGION = 'ap-southeast-1'
 CONTROLLER_FILES = tuple('infra/kamal/'+p for p in ('release.py','config.json','retire-builds.cjs','deploy-uat','deploy-prod')) + tuple('infra/dev-kamal/'+p for p in ('build-complete.py','capture-config.py','release_inventory.py','verify-config.mjs','Dockerfile.tools'))
 CONTROLLER_FILES += ('infra/postmark/config.py', 'infra/postmark/config.json')
+CONTROLLER_FILES += ('infra/kamal/release_source.py', 'infra/kamal/deploy-prod-hotfix', 'infra/kamal/promote-prod')
+CONTROLLER_FILES += ('infra/kamal/first_migration.py',)
 
 def controller_manifest():
     return {p:hashlib.sha256((ROOT/p).read_bytes()).hexdigest() for p in CONTROLLER_FILES}
@@ -66,7 +70,7 @@ def write(path, value):
     os.replace(temp, path)
 
 
-def validate_target(t, environment):
+def validate_target(t, environment, first_migration=False):
     require(t.get('schemaVersion') == 1, 'Unsupported target schema')
     require(t.get('environment') == environment, 'Target environment mismatch')
     require(t.get('account') == ACCOUNT and t.get('region') == REGION, 'Wrong AWS account/region')
@@ -97,8 +101,17 @@ def validate_target(t, environment):
         if environment == 'production':
             require('uat' not in url.hostname.lower() and 'dev' not in url.hostname.lower(), 'Foreign Production URL')
     if environment == 'production':
-        require(t.get('cutoverComplete') is True, 'Production Kamal traffic migration has not been enrolled as complete')
+        if first_migration:
+            require(t.get('cutoverComplete') is False and t.get('migration', {}).get('state') == 'INFRASTRUCTURE_STAGED_NO_APPLICATION',
+                    'First migration requires the explicitly staged, incomplete target')
+            require(t['migration'].get('stackArn', '').startswith(f'arn:aws:cloudformation:{REGION}:{ACCOUNT}:stack/mangmee-kamal-production/'),
+                    'First migration stack is not enrolled')
+            full_sha(t['migration'].get('baselineSourceCommit'))
+        else:
+            require(t.get('cutoverComplete') is True, 'Production Kamal traffic migration has not been enrolled as complete')
         require(len(t['hosts']['api-web']) >= 2, 'Production requires at least two API hosts')
+    else:
+        require(not first_migration, 'First migration is Production-only')
     if t['kind'] != 'dev':
         api_ids = {h['instanceId'] for h in t['hosts']['api-web']}
         require(not api_ids & {h['instanceId'] for s in ('ai-gateway', 'workers') for h in t['hosts'][s]},
@@ -131,6 +144,9 @@ def native_config(target, service, env, source, directory):
         'registry': {'server': f'{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com', 'username': 'AWS', 'password': ['KAMAL_REGISTRY_PASSWORD']},
         'builder': {'arch': 'amd64'}, 'deploy_timeout': 90, 'drain_timeout': 180, 'stop_timeout': 180,
         'retain_containers': 3, 'env': {'secret': sorted(env)}}
+    if target['kind'] == 'production':
+        config['logging'] = {'driver':'awslogs','options':{'awslogs-region':REGION,
+            'awslogs-group':'/ecs/'+target['servicePrefix']+'-'+service,'awslogs-create-group':'false'}}
     if service == 'api-web':
         config.update(asset_path='/app/web-runtime/apps/web/.next/static',
             proxy={'app_port': 3000, 'response_timeout': 180, 'forward_headers': True,
@@ -170,13 +186,34 @@ def make_overrides(target, source, artifact, configured):
 class Release:
     def __init__(self, args):
         self.args = args
+        self.release_path = getattr(args, 'release_path', 'main')
+        self.first_migration = bool(getattr(args, 'first_migration', False))
+        require(not self.first_migration or (args.environment == 'production' and self.release_path == 'hotfix'
+                and getattr(args, 'production_browser_acceptance', False)),
+                'First migration requires the explicit Production hotfix and administrator browser acceptance')
+        require(self.release_path == 'main' or args.environment == 'production', 'Explicit Production paths cannot target UAT')
+        if self.release_path == 'hotfix':
+            require(args.mode == 'hotfix' and (not args.rollback or self.first_migration), 'Isolated hotfix requires migration-free forward mode')
+            require(not args.uat_release, 'Hotfix cannot also select a UAT release')
+            full_sha(args.source_sha); full_sha(args.production_baseline)
+            require(args.hotfix_path and args.regression_test, 'Hotfix requires the complete path set and regression tests')
+        elif self.release_path == 'uat':
+            require(args.uat_release and not args.rollback, 'UAT promotion requires an accepted release directory')
+            require(not args.source_sha and not args.production_baseline and not args.hotfix_path
+                    and not args.regression_test, 'UAT promotion cannot also select an independent hotfix source')
+        if args.environment == 'production' and args.apply and not args.rollback:
+            require(self.release_path != 'main', 'Choose deploy-prod-hotfix or promote-prod; Production cannot implicitly deploy latest main')
         self.clock = time.monotonic()
         self.id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8]
         self.state = ROOT / '.env.kamal' / args.environment
         target_path = args.target or self.state / 'target.json'
         require(target_path.exists(), 'Target is not enrolled: ' + str(target_path) + '; see infra/kamal/README.md')
-        self.target = validate_target(read(target_path), args.environment)
-        self.manual_browser = bool(args.uat_browser_acceptance)
+        self.target = validate_target(read(target_path), args.environment, self.first_migration)
+        if self.first_migration:
+            require(self.target['migration']['baselineSourceCommit'] == args.production_baseline, 'Enrolled ECS baseline differs from the selected source')
+        self.production_browser = bool(getattr(args, 'production_browser_acceptance', False))
+        require(not (args.uat_browser_acceptance and self.production_browser), 'Choose one environment browser acceptance mode')
+        self.manual_browser = bool(args.uat_browser_acceptance or self.production_browser)
         self.smoke_acceptance = bool(getattr(args, 'uat_smoke_acceptance', False))
         self.validate_acceptance_target()
         self.work = self.state / 'runs' / self.id
@@ -186,6 +223,8 @@ class Release:
             'status': 'RUNNING', 'phases': [], 'lineAcceptance': 'DEFERRED_BY_OWNER', 'productionMutated': False}
         self.receipt['controllerManifest'] = controller_manifest()
         self.receipt['controllerSha256'] = digest(self.receipt['controllerManifest'])
+        self.receipt['releasePath'] = self.release_path
+        if args.environment == 'production': self.receipt['lineAcceptance'] = 'NOT_EXERCISED'
         if getattr(args, 'prepare', False):
             self.receipt['controllerScope'] = 'local preparation only; application/config from pinned main; no deployment'
         self.local_uat_test = local_uat_controller(self.target, args.uat_controller_sha256, self.receipt['controllerSha256'])
@@ -197,6 +236,8 @@ class Release:
         self.hosts = {h['instanceId']: h for rows in self.target['hosts'].values() for h in rows}
         self.changed = []
         self.remote_lock_owned = False
+        if self.first_migration:
+            self.migration = FirstMigration(self)
         self.save()
 
     def save(self):
@@ -257,6 +298,8 @@ class Release:
         return result['stdout']
 
     def preflight(self):
+        require(not (self.target.get('ecsRollbackBaseline') and self.args.apply and not getattr(self,'first_migration',False)),
+                'Preserved ECS rollback window is still enrolled; close it explicitly before an ordinary Kamal release')
         who = self.aws(['sts','get-caller-identity'])
         require(who['Account'] == ACCOUNT and not who['Arn'].endswith(':root'), 'Expected account-scoped non-root principal')
         self.receipt['principalArn'] = who['Arn']
@@ -300,31 +343,185 @@ class Release:
         require(ep['status']=='READY','Enrolled AgentCore endpoint is not READY')
         runtime=self.aws(['bedrock-agentcore-control','get-agent-runtime','--agent-runtime-id',arn.rsplit('/',1)[1],
                   '--agent-runtime-version',ep['liveVersion']])
-        if (self.args.apply or getattr(self.args, 'prepare', False)) and not self.args.rollback:
+        if (self.args.apply or getattr(self.args, 'prepare', False)) and (not self.args.rollback or getattr(self,'first_migration',False)):
             self.command(['git','fetch','origin','main'],cwd=ROOT,log='fetch-main')
-            self.pinned_sha=self.command(['git','rev-parse','origin/main'],cwd=ROOT).strip()
+            self.controller_sha=self.command(['git','rev-parse','origin/main'],cwd=ROOT).strip()
+            self.pinned_sha=self.controller_sha
             require(re.fullmatch(r'[0-9a-f]{40}',self.pinned_sha),'Invalid main source')
             if self.args.apply and self.target['kind']!='dev' and not self.local_uat_test:
                 for path in CONTROLLER_FILES:
-                    committed=self.command(['git','show',self.pinned_sha+':'+path],cwd=ROOT)
+                    committed=self.command(['git','show',self.controller_sha+':'+path],cwd=ROOT)
                     require(committed==(ROOT/path).read_text(),'Controller differs from pinned main: '+path)
+            if getattr(self, 'release_path', 'main') == 'hotfix' and not self.args.rollback:
+                self.receipt['sourceSelection'] = hotfix_source(ROOT, self.args.production_baseline,
+                    self.args.source_sha, self.args.hotfix_path)
+                self.pinned_sha = self.args.source_sha
+                self.verify_hotfix_baseline()
+            elif getattr(self, 'release_path', 'main') == 'uat':
+                self.load_uat_release()
+                self.pinned_sha = self.uat_bundle['sourceCommit']
+                self.command(['git','merge-base','--is-ancestor',self.pinned_sha,self.controller_sha],cwd=ROOT)
             expected={'GIT_SHA':self.pinned_sha,'ERP_CORE_INTERNAL_URL':self.provider_callback()}
             if any(runtime['environmentVariables'].get(k)!=v for k,v in expected.items()):
                 require(self.target.get('agentcoreCandidateQualifier'), 'A new source requires an enrolled spare AgentCore endpoint before build')
         # No implicit authority to migrate existing ECS traffic. Production target enrollment is separate.
+        if getattr(self, 'first_migration', False) and not self.args.rollback:
+            require(not (self.state/'target.json').exists(), 'A Production target already exists; reconcile its enrollment')
+            expiry = datetime.fromisoformat(self.target['migration']['authorityExpiresAt'])
+            require((expiry-datetime.now(timezone.utc)).total_seconds() > 1800, 'Migration authority has less than thirty minutes remaining')
+            self.migration.observe_ecs()
+            for service, hosts in self.target['hosts'].items():
+                label = self.target['servicePrefix'] + ('' if service == 'api-web' else '-'+service)
+                for host in hosts:
+                    require(not self.remote(host,['docker','ps','--filter','label=service='+label,'--format','{{.ID}}']).strip(),
+                            'Staged hosts already run applications; reconcile before a first migration')
+            self.migration.routes(public=False)
+            self.migration.old_routes()
+            self.migration.verify_ecs_provider()
         self.receipt['targetVerified'] = True
+
+    def verify_hotfix_baseline(self):
+        if getattr(self, 'first_migration', False):
+            self.migration.observe_ecs()
+            return
+        observed = set()
+        configurations = {}
+        for service in SERVICES:
+            service_values = []
+            label = self.target['servicePrefix'] + ('' if service == 'api-web' else '-' + service)
+            for host in self.target['hosts'][service]:
+                ids = self.remote(host, ['docker','ps','--filter','label=service='+label,'--format','{{.ID}}']).split()
+                require(len(ids) == 1, 'Hotfix requires one serving container per enrolled service/host')
+                rows = json.loads(self.remote(host, ['docker','inspect',ids[0]]))
+                require(len(rows) == 1 and rows[0]['State']['Running'], 'Hotfix baseline container is not running')
+                values = dict(row.split('=',1) for row in rows[0]['Config']['Env'])
+                require(values.get('DEPLOY_ENVIRONMENT') == 'production', 'Foreign hotfix baseline environment')
+                self.verify_proxy(service, host, rows[0])
+                observed.add(values.get('GIT_SHA'))
+                image = json.loads(self.remote(host, ['docker','image','inspect',rows[0]['Image']]))[0]
+                require(image['Config']['Labels'].get('org.opencontainers.image.revision') == self.args.production_baseline,
+                        'Serving image label differs from the hotfix baseline')
+                values = {k:v for k,v in values.items() if k not in ('KAMAL_CONTAINER_NAME','KAMAL_VERSION','KAMAL_HOST')}
+                service_values.append(values)
+                self.secrets.update(v for k,v in values.items() if len(v)>=8 and any(
+                    token in k for token in ('SECRET','TOKEN','PASSWORD','KEY','DATABASE_URL','REDIS_URL')))
+            require(all(values == service_values[0] for values in service_values), 'Production host configurations differ: '+service)
+            configurations[service] = service_values[0]
+        require(observed == {self.args.production_baseline}, 'Production source changed or is mixed; stop this hotfix')
+        if hasattr(self, 'hotfix_configurations'):
+            require(configurations == self.hotfix_configurations, 'Serving Production configuration changed during this hotfix')
+        else:
+            self.hotfix_configurations = configurations
+            self.receipt['hotfixBaselineConfigSha256'] = digest(configurations)
+
+    def load_uat_release(self):
+        directory = self.args.uat_release.resolve()
+        key = self.target.get('trustedUatSigningKeyArn', '')
+        require(re.fullmatch(rf'arn:aws:kms:{REGION}:{ACCOUNT}:key/[A-Za-z0-9-]+', key), 'Trusted UAT signer is not enrolled')
+        raw = (directory/'accepted.json').read_bytes()
+        require(len(raw) <= 10 * 1024 * 1024, 'UAT receipt is too large')
+        signature = (directory/'accepted.sig').read_bytes()
+        require(0 < len(signature) <= 16384, 'Invalid UAT signature size')
+        (self.work/'uat-accepted.sha256').write_bytes(hashlib.sha256(raw).digest())
+        (self.work/'uat-accepted.sig').write_bytes(signature)
+        metadata = self.aws(['kms','describe-key','--key-id',key])['KeyMetadata']
+        require(metadata.get('Arn') == key and metadata.get('KeyUsage') == 'SIGN_VERIFY'
+                and metadata.get('KeyState') == 'Enabled', 'Trusted UAT signing key is not ready')
+        algorithm = next((a for a in ('RSASSA_PSS_SHA_256','ECDSA_SHA_256') if a in metadata.get('SigningAlgorithms',[])), None)
+        require(algorithm, 'Unsupported UAT signing algorithm')
+        verified = self.aws(['kms','verify','--key-id',key,'--message-type','DIGEST',
+            '--message','fileb://'+str(self.work/'uat-accepted.sha256'),
+            '--signature','fileb://'+str(self.work/'uat-accepted.sig'),'--signing-algorithm',algorithm])
+        require(verified.get('SignatureValid') is True, 'UAT signature did not verify')
+        accepted = json.loads(raw)
+        self.uat_bundle = accepted_uat_bundle(accepted)
+        artifact = directory/'build'/'agentcore'/self.uat_bundle['agentcore']['artifact']
+        require(hashlib.sha256(artifact.read_bytes()).hexdigest() == self.uat_bundle['agentcore']['sha256'], 'UAT AgentCore archive mismatch')
+        self.uat_archive = artifact
+        self.receipt['sourceSelection'] = {'kind':'signed_uat_promotion','sourceCommit':accepted['sourceCommit'],
+            'uatOperationId':accepted['operationId'],'acceptedSha256':hashlib.sha256(raw).hexdigest(),
+            'signingKeyArn':key,'signatureVerified':True}
 
     def source_and_build(self):
         sha = self.pinned_sha
         require(re.fullmatch(r'[0-9a-f]{40}',sha), 'Invalid main source')
         source = self.work/'source'
-        self.command(['git','worktree','add','--detach',str(source),sha],cwd=ROOT,log='checkout-main')
         self.receipt['sourceCommit'] = sha
-        self.source = source
         self.build_dir = self.work/'build'
-        self.command([sys.executable,str(HELPERS/'build-complete.py'),str(source),str(self.build_dir)], timeout=1800,log='build')
+        prepared = getattr(self.args, 'prepared_build', None) if hasattr(self, 'args') else None
+        if prepared:
+            require(self.release_path == 'hotfix', 'Prepared local builds are only for isolated hotfixes')
+            self.source = prepared.resolve().parent/'source'
+            self.load_prepared_build(prepared.resolve())
+        else:
+            self.command(['git','worktree','add','--detach',str(source),sha],cwd=ROOT,log='checkout-main')
+            self.source = source
+        if getattr(self, 'release_path', 'main') == 'uat':
+            self.load_promoted_images()
+            return
+        if not prepared:
+            self.command([sys.executable,str(HELPERS/'build-complete.py'),str(source),str(self.build_dir)], timeout=1800,log='build')
         self.build = read(self.build_dir/'build-result.json')
         require(self.build['status']=='passed', 'Build/TypeScript failed')
+        if getattr(self, 'release_path', 'main') == 'hotfix':
+            groups = {}
+            for path in self.args.regression_test:
+                match = re.fullmatch(r'((?:apps/(?:api|ai-gateway|workers|web)|packages/contracts))/(src/.+\.spec\.(?:ts|tsx))', path)
+                require(match and (self.source/path).is_file(), 'Invalid hotfix regression test')
+                groups.setdefault(match[1], []).append(match[2])
+            changed_tests = {p for p in self.args.hotfix_path if not p.startswith('e2e/') and re.search(r'\.spec\.(?:ts|tsx)$', p)}
+            require(changed_tests <= set(self.args.regression_test), 'Every changed regression test must run')
+            for app, paths in groups.items():
+                self.command(['pnpm','exec','tsx','--test',*paths],cwd=self.source/app,
+                             timeout=1800,log='hotfix-regression-'+app.replace('/', '-'))
+            self.receipt['hotfixValidation'] = {'typecheck':'PASSED','regressionTests':self.args.regression_test}
+
+    def load_prepared_build(self, directory):
+        build = read(directory/'build-result.json')
+        require(build.get('status') == 'passed' and build.get('sourceCommit') == self.pinned_sha,
+                'Prepared build is not the selected successful candidate')
+        require(self.command(['git','rev-parse','HEAD'],cwd=self.source).strip() == self.pinned_sha
+                and not self.command(['git','status','--porcelain','--untracked-files=normal'],cwd=self.source).strip(),
+                'Prepared source changed after the build')
+        tree = self.command(['git','ls-tree','-rz','--full-tree',self.pinned_sha],cwd=self.source).encode()
+        require(tree == (directory/'source-tree.bin').read_bytes()
+                and hashlib.sha256(tree).hexdigest() == build.get('sourceTreeSha256'), 'Prepared source tree mismatch')
+        phases = {'install','contracts','prisma','typescript','di','agentcore','build-api-web',
+                  'build-ai-gateway','build-workers','export-tools-base','build-tools'}
+        require(set(build.get('phases',{})) == phases and all(build['phases'][p].get('exitCode') == 0
+                and (directory/(p+'.log')).is_file() for p in phases), 'Prepared validation evidence is incomplete')
+        require(set(build.get('images',{})) == {*SERVICES,'tools'}, 'Prepared image set is incomplete')
+        for service, row in build['images'].items():
+            info = json.loads(self.command(['docker','image','inspect',row['tag']]))[0]
+            require(info['Id'] == row['imageId'] and info['Architecture'] == row['architecture'] == 'amd64'
+                    and info['Config']['Labels'].get('org.opencontainers.image.revision') == self.pinned_sha,
+                    'Prepared image identity changed: '+service)
+        archive = directory/'agentcore/agentcore.zip'
+        require(build['agentcore']['sourceCommit'] == self.pinned_sha and
+                hashlib.sha256(archive.read_bytes()).hexdigest() == build['agentcore']['sha256'], 'Prepared AgentCore archive changed')
+        shutil.copytree(directory,self.build_dir)
+        self.receipt['preparedBuild'] = {'resultSha256':hashlib.sha256((directory/'build-result.json').read_bytes()).hexdigest(),
+            'originalBuildSeconds':build['elapsedSeconds'],'identitiesRevalidated':True}
+
+    def load_promoted_images(self):
+        self.build_dir.mkdir()
+        tree = self.command(['git','ls-tree','-rz','--full-tree',self.pinned_sha],cwd=self.source)
+        require(hashlib.sha256(tree.encode()).hexdigest() == self.uat_bundle['sourceTreeSha256'], 'UAT source tree mismatch')
+        images = {}
+        with self.registry_login() as login_env:
+            for service, artifact in self.uat_bundle['images'].items():
+                self.command(['docker','pull',artifact['uri']],env=login_env,timeout=240,log='pull-uat-'+service)
+                info = json.loads(self.command(['docker','image','inspect',artifact['uri']]))[0]
+                require(info['Id'] == artifact['imageId'] and info['Architecture'] == 'amd64'
+                        and info['Config']['Labels'].get('org.opencontainers.image.revision') == self.pinned_sha,
+                        'Promoted image/source identity mismatch: '+service)
+                images[service] = {'tag':artifact['uri'],'imageId':info['Id'],'architecture':'amd64'}
+        archive_dir = self.build_dir/'agentcore'; archive_dir.mkdir()
+        shutil.copyfile(self.uat_archive, archive_dir/self.uat_bundle['agentcore']['artifact'])
+        self.build = {'status':'passed','scope':'Verified signed UAT artifacts; no rebuild',
+            'sourceCommit':self.pinned_sha,'sourceTreeSha256':self.uat_bundle['sourceTreeSha256'],
+            'images':images,'agentcore':self.uat_bundle['agentcore']}
+        write(self.build_dir/'build-result.json',self.build)
 
     def configuration(self):
         capture = self.work/'capture'
@@ -341,11 +538,29 @@ class Release:
         if (self.target['kind'] == 'dev' or self.local_uat_test) and not config_path.exists():
             config_path = ROOT/'infra/kamal/config.json'
             self.receipt['controllerConfigScope'] = 'unmerged controller rehearsal; application source remains exact main'
-        require(config_path.exists(), 'Release command/config must be committed to main before an environment deployment')
-        self.receipt['controllerConfigSha256'] = hashlib.sha256(config_path.read_bytes()).hexdigest()
-        configured = read(config_path)[self.args.environment]
+        if getattr(self, 'release_path', 'main') == 'hotfix':
+            if getattr(self, 'first_migration', False):
+                self.hotfix_configurations = {s:read(capture/(s+'.resolved.json')) for s in SERVICES}
+                for service in SERVICES:
+                    from first_migration import service_body
+                    require(service_body(service, read(capture/(service+'.configuration.json'))) ==
+                            self.migration.state['ecsBaseline'][service]['body'], 'Captured ECS config differs from the running baseline')
+            for service, values in self.hotfix_configurations.items():
+                captured = read(capture/(service+'.resolved.json'))
+                references = read(capture/(service+'.configuration.json'))['primaryContainer'].get('secrets',[])
+                require(all(values.get(row['name']) == captured.get(row['name']) for row in references),
+                        'Current secret differs from the serving hotfix baseline: '+service)
+                write(capture/(service+'.resolved.json'),values)
+            configured = {s:{} for s in SERVICES}
+            self.receipt['controllerConfigScope'] = 'preserve serving Production config; topology/build identity only'
+            self.receipt['controllerConfigSha256'] = digest(configured)
+        else:
+            require(config_path.exists(), 'Release command/config must be committed to main before an environment deployment')
+            self.receipt['controllerConfigSha256'] = hashlib.sha256(config_path.read_bytes()).hexdigest()
+            configured = read(config_path)[self.args.environment]
         overrides = make_overrides(self.target,self.build['sourceCommit'],self.build['agentcore']['sha256'],configured)
-        overrides['api-web'].update(self.postmark_configuration(capture))
+        if getattr(self, 'release_path', 'main') != 'hotfix':
+            overrides['api-web'].update(self.postmark_configuration(capture))
         self.secrets.update(v for values in overrides.values() for v in values.values() if isinstance(v,str) and len(v)>=8)
         write(self.work/'overrides.json',overrides)
         self.envdir = self.work/'environments'
@@ -406,6 +621,8 @@ class Release:
         require({s:v['configurationSha256'] for s,v in before['services'].items()}==
                 {s:v['configurationSha256'] for s,v in after['services'].items()}, 'Configuration changed after capture')
         self.receipt['configFreshnessVerifiedAt']=after['readAt']
+        if getattr(self, 'release_path', 'main') == 'hotfix':
+            self.verify_hotfix_baseline()
 
     def render(self):
         for service in SERVICES:
@@ -439,29 +656,42 @@ class Release:
             return self.restoring[service][0]['version']
         return self.build['sourceCommit']+'-'+self.id+'-'+service
 
-    def publish(self):
+    @contextmanager
+    def registry_login(self):
         registry=f'{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com'
         self.token=self.command(self.aws_prefix+['ecr','get-login-password']).strip(); self.secrets.add(self.token)
         login_env=dict(os.environ,DOCKER_CONFIG=str(self.work/'registry-login'))
-        self.command(['docker','login','--username','AWS','--password-stdin',registry],input=self.token,env=login_env)
-        self.images={}
         try:
+            self.command(['docker','login','--username','AWS','--password-stdin',registry],input=self.token,env=login_env)
+            yield login_env
+        finally:
+            shutil.rmtree(self.work/'registry-login',ignore_errors=True)
+
+    def publish(self):
+        registry=f'{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com'
+        self.images={}
+        with self.registry_login() as login_env:
             for s,a in self.manifest['artifacts'].items():
                 # Native service labels are target-specific; wrapper changes metadata only.
                 tag=registry+'/'+self.target['repository']+':'+self.version(s)
                 label=self.target['servicePrefix']+('' if s=='api-web' else '-'+s)
-                self.command(['docker','build','--platform','linux/amd64','--build-arg','BASE='+a['tag'],
-                    '--label','service='+label,'-t',tag,'-f','-','.'],input='ARG BASE\nFROM ${BASE}\n',cwd=self.source,timeout=180)
+                if getattr(self, 'release_path', 'main') == 'uat':
+                    self.command(['docker','tag',a['tag'],tag])
+                else:
+                    self.command(['docker','build','--platform','linux/amd64','--build-arg','BASE='+a['tag'],
+                        '--label','service='+label,'-t',tag,'-f','-','.'],input='ARG BASE\nFROM ${BASE}\n',cwd=self.source,timeout=180)
                 info=json.loads(self.command(['docker','image','inspect',tag]))[0]
                 original=json.loads(self.command(['docker','image','inspect',a['tag']]))[0]
                 require(info['RootFS']==original['RootFS'], 'Publication wrapper changed runtime files')
                 self.command(['docker','push',tag],env=login_env,timeout=240,log='publish-'+s)
                 data=self.aws(['ecr','describe-images','--repository-name',self.target['repository'],'--image-ids','imageTag='+self.version(s)])['imageDetails']
                 require(len(data)==1, 'Published digest missing')
+                if getattr(self, 'release_path', 'main') == 'uat':
+                    expected = self.uat_bundle['images'][s]
+                    require(info['Id'] == expected['imageId'] and data[0]['imageDigest'] == expected['uri'].rsplit('@',1)[1],
+                            'Promotion changed the signed UAT image digest: '+s)
                 self.images[s]={'tag':tag,'imageId':info['Id'],'digest':data[0]['imageDigest']}
             write(self.work/'publication.json',self.images)
-        finally:
-            shutil.rmtree(self.work/'registry-login',ignore_errors=True)
         for h in self.hosts.values():
             self.remote(h,['docker','login','--username','AWS','--password-stdin',registry],stdin=self.token)
         for s in SERVICES:
@@ -476,6 +706,7 @@ class Release:
         return self.remote(self.target['hosts']['api-web'][0],args,environment=env,stdin=stdin,timeout=timeout)
 
     def migrations(self):
+        if getattr(self,'first_migration',False): self.assert_no_legacy_operation()
         # The hotfix lane refuses schema deltas; the normal lane applies them explicitly.
         if self.args.mode=='hotfix':
             self.tool(['./node_modules/.bin/tsx','prisma/verify-applied-migration-catalog.ts'])
@@ -490,6 +721,18 @@ class Release:
         self.tool(['./node_modules/.bin/tsx','prisma/verify-feature-launch-build-authority.ts'],extra={'AWS_EC2_METADATA_DISABLED':'true'})
         self.receipt['migrationAndAuthorityVerified']=True
 
+    def assert_no_legacy_operation(self):
+        script="""const {PrismaPg}=require('@prisma/adapter-pg');
+const {PrismaClient}=require('./src/generated/prisma/client');
+const client=new PrismaClient({adapter:new PrismaPg({connectionString:process.env.DATABASE_URL})});
+(async()=>{try{const count=await client.$transaction(async tx=>{
+await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
+return tx.remoteReleaseOperation.count({where:{targetEnvironment:'production',status:{in:['RUNNING','UNKNOWN']}}});
+});if(count!==0)throw Error('legacy_release_active');console.log(JSON.stringify({passed:true}));}
+finally{await client.$disconnect();}})().catch(()=>process.exit(1));"""
+        result=json.loads(self.tool(['./node_modules/.bin/tsx','--eval',script]))
+        require(result.get('passed') is True, 'Legacy durable release operation is not reconciled')
+
     def run(self):
         lock=self.state/'deployment.lock'
         with lock.open('a+') as handle:
@@ -498,7 +741,8 @@ class Release:
             # A failed/unknown previous mutation cannot be hidden by a fresh run directory.
             active=self.state/'active.json'
             if self.args.rollback:
-                self.rollback(active)
+                if getattr(self, 'first_migration', False): self.rollback_first_migration(active)
+                else: self.rollback(active)
                 return
             require(not active.exists(), 'Previous deployment needs explicit reconciliation: '+str(active))
             with self.phase('target-preflight'): self.preflight()
@@ -514,6 +758,8 @@ class Release:
             try:
                 with self.phase('main-typescript-build'): self.source_and_build()
                 with self.phase('fresh-config-and-image-validation'): self.configuration(); self.render()
+                if getattr(self, 'first_migration', False):
+                    with self.phase('legacy-ecs-release-fence'): self.migration.workflow_fence(disable=True)
                 with self.phase('publish-and-pull'): self.publish()
                 with self.phase('config-freshness-before-mutation'): self.config_freshness()
                 with self.phase('provider-preparation'): self.agentcore()
@@ -524,6 +770,8 @@ class Release:
                 with self.phase('customer-acceptance'): self.acceptance()
                 with self.phase('retire-observed-builds'): self.retire()
                 with self.phase('receipt-signature'): self.sign()
+                if getattr(self, 'first_migration', False):
+                    self.enroll_first_migration()
                 self.receipt['status']='ACCEPTED_LINE_DEFERRED'
                 self.release_remote_lock()
                 active.unlink()
@@ -533,6 +781,78 @@ class Release:
                     self.release_remote_lock()
                     active.unlink()
                 raise
+
+    def enroll_first_migration(self):
+        require(self.receipt.get('signature',{}).get('verified') is True
+                and self.receipt['customerAcceptance']['passed'] is True
+                and self.migration.state.get('publicTraffic') is True, 'Migration acceptance is incomplete')
+        target = json.loads(json.dumps(self.target))
+        target.update(cutoverComplete=True, ecsRollbackBaseline=self.args.production_baseline)
+        target['migration'].update(state='ACCEPTED_WITH_ECS_ROLLBACK', operationId=self.id,
+            acceptedSha256=hashlib.sha256((self.work/'accepted.json').read_bytes()).hexdigest())
+        require(not (self.state/'target.json').exists(), 'Production enrollment appeared during cutover')
+        write(self.state/'target.json',target)
+        self.receipt['enrollment'] = {'cutoverComplete':True,'ecsRollbackBaseline':self.args.production_baseline}
+
+    def rollback_first_migration(self, active):
+        require(self.args.apply and re.fullmatch(r'[0-9TZ-]+-[0-9a-f]{8}',self.args.rollback), 'Explicit migration rollback operation is required')
+        old = self.state/'runs'/self.args.rollback
+        result = read(old/'result.json')
+        require(result.get('environment') == result.get('kind') == 'production'
+                and result.get('sourceCommit') == self.args.source_sha
+                and result.get('status') in ('ACCEPTED_LINE_DEFERRED','FAILED_RECONCILIATION_REQUIRED'), 'Wrong or nonterminal migration operation')
+        self.migration.state = read(old/'migration.private.json')
+        require(self.migration.state['baselineSourceCommit'] == self.args.production_baseline, 'Rollback baseline mismatch')
+        database_started = self.load_migration_rollback(old, result)
+        with self.phase('migration-rollback-preflight'): self.preflight()
+        self.remote_lock='/home/ubuntu/.kamal/'+self.target['servicePrefix']+'-release-lock'
+        if active.exists():
+            require(read(active)['operationId'] == self.args.rollback, 'Another operation owns the migration lock')
+            script="import pathlib,sys;p=pathlib.Path(sys.argv[1]);assert (p/'owner').read_text()==sys.argv[2];(p/'owner').write_text(sys.argv[3])"
+            self.remote(self.target['hosts']['api-web'][0],['python3','-c',script,self.remote_lock,self.args.rollback,self.id])
+            self.remote_lock_owned=True
+        else: self.acquire_remote_lock()
+        write(active,{'operationId':self.id,'result':str(self.work/'result.json'),'rollbackOf':self.args.rollback})
+        self.changed.append('migration-rollback-started'); self.receipt['rollbackOf']=self.args.rollback
+        with self.phase('restore-ecs-traffic-and-consumers'):
+            self.migration.rollback()
+            for service in ('api-web','ai-gateway'): self.stop_candidate_service(service)
+            self.receipt['agentcore']=self.migration.verify_ecs_provider()
+            if database_started: self.verify_ecs_build_authority()
+        self.ecs_restored=True
+        self.build={'sourceCommit':self.args.production_baseline}
+        self.manifest={'schemaVersion':1,'sourceCommit':self.args.production_baseline,'rollbackOf':self.args.rollback,
+            'ecsBaselineSha256':digest(self.migration.state['ecsBaseline'])}
+        self.manifest['releaseId']=digest(self.manifest)
+        self.receipt.update(sourceCommit=self.args.production_baseline,releaseId=self.manifest['releaseId'])
+        self.receipt['runtimeReadback']=self.migration.runtime_summary()
+        self.receipt['launchRetirement']={'passed':True,'mode':'PRESERVE_ECS_ROLLBACK','retiredCount':0,
+            'retainedSourceCommit':self.args.production_baseline,
+            'authorityCheck':'VERIFIED' if database_started else 'UNCHANGED_NO_DATABASE_PHASE'}
+        with self.phase('ecs-rollback-customer-acceptance'): self.acceptance()
+        with self.phase('restore-legacy-ecs-workflows'): self.migration.restore_workflows()
+        with self.phase('ecs-rollback-signature'): self.sign(state='ROLLED_BACK_TO_ECS')
+        enrollment=self.state/'target.json'
+        if enrollment.exists():
+            value=read(enrollment)
+            require(value.get('migration',{}).get('operationId') == self.args.rollback, 'Enrollment belongs to another release')
+            value['cutoverComplete']=False; value['migration']['state']='ROLLED_BACK_TO_ECS'
+            write(enrollment,value)
+        self.receipt['status']='ROLLED_BACK_TO_ECS'
+        self.release_remote_lock(); active.unlink()
+
+    def load_migration_rollback(self, old, result):
+        # Publication may have failed after fencing workflows but before writing its manifest.
+        # Load all required recovery inputs before taking ownership of the old remote lock.
+        self.build=read(old/'build/build-result.json')
+        require(self.build['sourceCommit'] == self.args.source_sha, 'Recovery build source mismatch')
+        database_started=any(p['name']=='database-and-feature-authority' for p in result.get('phases',[]))
+        self.images=read(old/'publication.json') if (old/'publication.json').exists() else {}
+        require(not database_started or set(self.images) == set(SERVICES) | {'tools'},
+                'Database phase requires the retained complete publication for recovery')
+        self.envs={s:read(old/'environments'/(s+'.environment.json')) for s in SERVICES}
+        for env in self.envs.values(): self.secrets.update(v for v in env.values() if len(v)>=8)
+        return database_started
 
     def rollback(self, active):
         require(self.args.apply, 'Rollback requires --apply')
@@ -784,6 +1104,10 @@ if(p.worker&&process.env.QUEUE_ENABLED!=='false'){
             self.receipt.setdefault('readiness',{}).setdefault(service,{})[h['instanceId']]=proof
 
     def deploy(self):
+        if getattr(self, 'first_migration', False):
+            self.receipt['runtimeReadback'] = {}
+            self.migration.handover()
+            return
         self.previous={}
         for service in SERVICES:
             label=self.target['servicePrefix']+('' if service=='api-web' else '-'+service)
@@ -800,17 +1124,67 @@ if(p.worker&&process.env.QUEUE_ENABLED!=='false'){
                         'sourceCommit':env.get('GIT_SHA'),'environment':env,'containerName':info['Name'].lstrip('/')})
         write(self.work/'previous.private.json',self.previous)
         self.receipt['previousVersions']={s:[{'instanceId':r['host']['instanceId'],'version':r['version'],'sourceCommit':r['sourceCommit']} for r in rows] for s,rows in self.previous.items()}
-        observed={}
+        self.receipt['runtimeReadback'] = {}
         for service in ORDER:
-            self.changed.append(service+'-rollout-started')
-            if self.args.environment=='production': self.receipt['productionMutated']=True
-            self.save()
+            self.deploy_service(service)
+
+    def deploy_service(self, service):
+        self.changed.append(service+'-rollout-started')
+        if self.args.environment=='production': self.receipt['productionMutated']=True
+        self.save()
+        if getattr(self, 'release_path', 'main') == 'uat':
+            # Native app boot preserves the signed image, including its existing service label.
+            for host in self.target['hosts'][service]:
+                info = json.loads(self.remote(host,['docker','image','inspect',self.images[service]['tag']]))[0]
+                require(info['Id'] == self.images[service]['imageId'], 'Pulled promotion tag moved before boot')
+            self.kamal(service,['app','boot'])
+        else:
             self.kamal(service,['deploy','--skip-push'])
-            observed[service]=self.inspect_service(service)
-            self.deep_health(service)
-        self.receipt['runtimeReadback']=observed
+        self.receipt['runtimeReadback'][service] = self.inspect_service(service)
+        self.deep_health(service)
+
+    def candidate_services(self, service):
+        rows = []
+        label = self.target['servicePrefix']+('' if service == 'api-web' else '-'+service)
+        for host in self.target['hosts'][service]:
+            ids = self.remote(host, ['docker','ps','--filter','label=service='+label,'--format','{{.ID}}']).split()
+            for cid in ids:
+                info = json.loads(self.remote(host, ['docker','inspect',cid]))[0]
+                values = dict(v.split('=',1) for v in info['Config']['Env'])
+                require(values.get('GIT_SHA') == self.build['sourceCommit'], 'Unexpected application source; do not stop another release')
+                rows.append((host, info))
+        return rows
+
+    def assert_candidate_workers_stopped(self):
+        require(not self.candidate_services('workers'), 'Candidate workers must be stopped before restoring ECS consumers')
+
+    def stop_candidate_workers(self):
+        self.stop_candidate_service('workers')
+        self.assert_candidate_workers_stopped()
+
+    def stop_candidate_service(self, service):
+        for host, info in self.candidate_services(service):
+            self.migration.intent('stop-candidate-'+service+'-'+host['instanceId'], {'containerId':info['Id']})
+            self.remote(host, ['docker','update','--restart=no',info['Id']])
+            self.remote(host, ['docker','stop','--time','180',info['Id']], timeout=240)
+            stopped = json.loads(self.remote(host, ['docker','inspect',info['Id']]))[0]
+            require(stopped['State']['Status'] == 'exited' and not stopped['State']['Running']
+                    and stopped['HostConfig']['RestartPolicy']['Name'] == 'no', 'Candidate application did not remain stopped')
+        require(not self.candidate_services(service), 'Candidate application remains running')
+
+    def verify_ecs_build_authority(self):
+        self.tool(['./node_modules/.bin/tsx','prisma/verify-feature-launch-build-authority.ts'],
+                  extra={'GIT_SHA':self.args.production_baseline, 'SERVICE_VERSION':self.args.production_baseline,
+                         'AWS_EC2_METADATA_DISABLED':'true'})
 
     def retire(self):
+        if getattr(self, 'first_migration', False):
+            self.migration.observe_ecs(parked=True)
+            self.verify_ecs_build_authority()
+            self.receipt['launchRetirement'] = {'passed':True,'mode':'PRESERVE_ECS_ROLLBACK',
+                'retiredCount':0,'retainedSourceCommit':self.args.production_baseline,
+                'reason':'ECS rollback source must remain accepted until its rollback window is explicitly closed'}
+            return
         # Fresh observations after acceptance, not the earlier rollout snapshot.
         observed={s:self.inspect_service(s) for s in SERVICES}
         proof={'operationId':self.id,'environment':self.args.environment,'sourceCommit':self.build['sourceCommit'],'services':observed}
@@ -825,26 +1199,33 @@ if(p.worker&&process.env.QUEUE_ENABLED!=='false'){
                     'Smoke acceptance is an explicit real-UAT-only mode; cannot combine with browser acceptance')
             return
         if self.manual_browser:
-            require(self.args.environment=='uat' and self.target['kind']=='uat',
-                    'Browser acceptance is only supported for a real UAT deployment or rollback')
-            require(self.target.get('browserAcceptanceUserId'), 'Enroll the expected UAT browser account userId')
+            if getattr(self, 'production_browser', False):
+                require(self.args.environment == self.target['kind'] == 'production', 'Production browser acceptance cannot target UAT/dev')
+                require(self.target.get('browserAcceptanceUserId') == 'cmt8k20fs00000q319isxwkc5',
+                        'Production browser acceptance requires the current prodmangmeeplus administrator')
+            else:
+                require(self.args.environment=='uat' and self.target['kind']=='uat',
+                        'Browser acceptance is only supported for a real UAT deployment or rollback; Production needs its explicit flag')
+                require(self.target.get('browserAcceptanceUserId'), 'Enroll the expected UAT browser account userId')
         else:
             require(Path(self.target.get('acceptanceCredentials','')).expanduser().is_file(), 'Acceptance credentials file is missing')
 
     def browser_acceptance(self):
         # ponytail: keep this operation alive; a stopped process needs explicit reconciliation, not another deploy.
         binding={'schemaVersion':1,'operationId':self.id,'sourceCommit':self.build['sourceCommit'],
-            'releaseId':self.manifest['releaseId'],'environment':'uat','origin':self.target['publicUrl'].rstrip('/'),
+            'releaseId':self.manifest['releaseId'],'environment':self.args.environment,'origin':self.target['publicUrl'].rstrip('/'),
             'userId':self.target['browserAcceptanceUserId']}
         if self.args.rollback: binding['rollbackOf']=self.args.rollback
         required=('ownerLogin','systemAdminPermission','customerOpen','authenticatedRead','logout','sessionRejectedAfterLogout')
+        if self.args.environment == 'production':
+            required += ('identityVerified', 'noPasswordOrLegalAction', 'servingLive', 'canOpen')
         write(self.work/'browser-acceptance-request.json',{**binding,'checks':{k:False for k in required},
             'observer':'','evidenceFiles':[]})
         self.receipt.update(status='AWAITING_BROWSER_ACCEPTANCE',websiteReadyAt=datetime.now(timezone.utc).isoformat(),
             secondsToWebsiteReady=round(time.monotonic()-self.clock,3))
         self.save()
         proof_path=self.work/'browser-acceptance.json'
-        print('UAT website ready for owner login: '+binding['origin']+'/login\n'
+        print(self.args.environment+' website ready for owner login: '+binding['origin']+'/login\n'
               'Awaiting operator browser evidence for this operation: '+str(proof_path),flush=True)
         start=time.monotonic()
         try:
@@ -872,6 +1253,9 @@ if(p.worker&&process.env.QUEUE_ENABLED!=='false'){
             self.receipt['browserAcceptanceStageSeconds']=round(time.monotonic()-start,3)
             self.save()
         # Human wait can be long: inspect the same release again without redeploying it.
+        if getattr(self, 'ecs_restored', False):
+            self.receipt.update(status='RUNNING',runtimeReadback=self.migration.runtime_summary())
+            return result
         observed={}
         for service in SERVICES:
             observed[service]=self.inspect_service(service)
@@ -916,7 +1300,8 @@ if(p.worker&&process.env.QUEUE_ENABLED!=='false'){
                 public=call('/api/v1/auth/platform-access')
                 require(public.get('effectiveState',public.get('state'))=='OPEN','Customer platform access changed during browser acceptance')
                 require(b'data-platform-access="open"' in call('/login',json_response=False),'Customer login is no longer open')
-                self.receipt['customerAcceptance']={'passed':True,'checks':checks,'browser':browser,'line':'DEFERRED_BY_OWNER'}
+                self.receipt['customerAcceptance']={'passed':True,'checks':checks,'browser':browser,
+                    'line':'NOT_EXERCISED' if self.args.environment == 'production' else 'DEFERRED_BY_OWNER'}
                 return
             credentials=read(Path(self.target['acceptanceCredentials']).expanduser())
             require(credentials.get('environment')==self.args.environment and credentials.get('kind')==self.target['kind'], 'Acceptance account environment mismatch')
@@ -952,6 +1337,19 @@ if(p.worker&&process.env.QUEUE_ENABLED!=='false'){
             'runtimeReadback':self.receipt['runtimeReadback'],'readiness':self.receipt.get('readiness',{}),'agentcore':self.receipt['agentcore'],
             'launchRetirement':self.receipt['launchRetirement'],
             'customerAcceptance':self.receipt['customerAcceptance'],'elapsedThroughAcceptanceSeconds':round(time.monotonic()-self.clock,3)}
+        if self.target['kind'] == 'uat' and state == 'ACCEPTED_LINE_DEFERRED' and not self.receipt.get('rollbackOf'):
+            accepted['promotionBundle'] = promotion_bundle(self.build, self.images)
+        if self.target['kind'] == 'production' and not self.receipt.get('rollbackOf'):
+            accepted['artifactBundle'] = promotion_bundle(self.build, self.images)
+        if self.receipt.get('sourceSelection'):
+            accepted['sourceSelection'] = self.receipt['sourceSelection']
+            accepted['hotfixValidation'] = self.receipt.get('hotfixValidation')
+        if getattr(self, 'first_migration', False):
+            snapshot=self.work/'migration-acceptance.private.json'; write(snapshot,self.migration.state)
+            accepted['migration'] = {'stackArn':self.migration.stack,'baselineSourceCommit':self.args.production_baseline,
+                'journalSha256':hashlib.sha256(snapshot.read_bytes()).hexdigest(),
+                'publicTraffic':self.migration.state.get('publicTraffic',False),
+                'ecsRestored':getattr(self,'ecs_restored',False)}
         if self.manual_browser:
             accepted.update(secondsToWebsiteReady=self.receipt['secondsToWebsiteReady'],
                 browserAcceptanceStageSeconds=self.receipt['browserAcceptanceStageSeconds'])
@@ -981,11 +1379,20 @@ def main():
     p.add_argument('--target',type=Path)
     p.add_argument('--profile',default=os.environ.get('AWS_PROFILE',''))
     p.add_argument('--mode',choices=['hotfix','normal'],default='hotfix')
+    p.add_argument('--release-path',choices=['main','hotfix','uat'],default='main')
+    p.add_argument('--source-sha',help='Exact isolated hotfix candidate SHA')
+    p.add_argument('--production-baseline',help='Exact currently serving Production source SHA')
+    p.add_argument('--hotfix-path',action='append',default=[],help='Every changed path in the isolated hotfix; repeat this option')
+    p.add_argument('--regression-test',action='append',default=[],help='Tracked application regression test path; repeat this option')
+    p.add_argument('--uat-release',type=Path,help='Exact signed accepted UAT run directory')
+    p.add_argument('--prepared-build',type=Path,help='Reuse one locally validated isolated hotfix build after source/image/archive identity checks')
+    p.add_argument('--first-migration',action='store_true',help='Explicit staged ECS-to-Kamal handover; never substitutes ordinary rollback')
     action=p.add_mutually_exclusive_group()
     action.add_argument('--apply',action='store_true',help='Deploy to the enrolled target; default only checks prerequisites')
     action.add_argument('--prepare',action='store_true',help='Build pinned main and validate complete config locally; only reads the enrolled cloud target, never deploys')
     p.add_argument('--uat-controller-sha256', help='Explicit hash-bound test of the new local controller on real UAT only')
     p.add_argument('--uat-browser-acceptance', action='store_true', help='Wait for owner login and retained operator browser evidence on real UAT; no stored login password')
+    p.add_argument('--production-browser-acceptance', action='store_true', help='Retained current-administrator browser evidence with live/OPEN/logout checks; no stored password')
     p.add_argument('--uat-smoke-acceptance', action='store_true', help='Owner-authorized real UAT config/readiness and public OPEN smoke, without login/logout')
     p.add_argument('--rollback',help='Restore the complete previous deployment captured by this terminal hotfix operation ID')
     args=p.parse_args()

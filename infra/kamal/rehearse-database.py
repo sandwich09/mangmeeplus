@@ -143,7 +143,12 @@ def main():
                 query = "const {PrismaPg}=require('@prisma/adapter-pg');const {PrismaClient}=require('./src/generated/prisma/client');const db=new PrismaClient({adapter:new PrismaPg({connectionString:process.env.DATABASE_URL})});(async()=>{try{const rows=await db.$queryRawUnsafe('SELECT ssl, version FROM pg_stat_ssl WHERE pid=pg_backend_pid()');if(rows.length!==1||!rows[0].ssl)throw Error('TLS absent');console.log(JSON.stringify(rows[0]));}finally{await db.$disconnect();}})().catch(()=>process.exit(1));"
                 result['databaseTls'] = json.loads(r.tool(['./node_modules/.bin/tsx','--eval',query]))
             phase('actual-client-verified-database-tls', verified_tls)
-        phase('hotfix-refuses-pending-source-migrations', r.migrations, expected_rejection=True)
+        catalog_diff = subprocess.run(['git','diff','--quiet',args.baseline_ref,manifest['sourceCommit'],
+            '--','apps/api/prisma/migrations'],cwd=release.ROOT)
+        release.require(catalog_diff.returncode in (0,1), 'Cannot compare baseline migration catalog')
+        result['migrationCatalogUnchanged'] = catalog_diff.returncode == 0
+        phase('actual-hotfix-without-schema-change' if catalog_diff.returncode == 0 else
+              'hotfix-refuses-pending-source-migrations', r.migrations, expected_rejection=catalog_diff.returncode == 1)
         r.args.mode = 'normal'
         phase('actual-normal-release-database-and-authority', r.migrations)
         r.args.mode = 'hotfix'
