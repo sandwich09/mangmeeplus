@@ -949,7 +949,12 @@ function computeValueCandidates(normalizedText: string): LineAiValueCandidates |
   if (!normalizedText) return undefined;
   const todayIso = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
   const candidates = extractValueCandidates(normalizedText, todayIso);
-  return candidates.amounts.length > 0 || candidates.dates.length > 0 ? candidates : undefined;
+  // `periods` counts too (period-resolution spec §3.1): "ยอดขายเดือนที่แล้ว" carries no amount and no
+  // explicit date, so dropping the payload here would leave the gateway with nothing to select from and
+  // the answer back on the tool default. A turn with none of the three still sends nothing.
+  return candidates.amounts.length > 0 || candidates.dates.length > 0 || (candidates.periods?.length ?? 0) > 0
+    ? candidates
+    : undefined;
 }
 
 const SOURCE_DOC_TYPE_REPLY_LABELS: Record<string, string> = {
