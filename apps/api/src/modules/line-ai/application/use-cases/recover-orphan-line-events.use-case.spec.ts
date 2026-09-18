@@ -32,6 +32,8 @@ function makeHarness(rows: Row[], opts: {
   casWins?: boolean;
   enqueueThrows?: boolean;
   retentionDays?: number;
+  /** W07-int: capture groups whose `linePushTargetId` the sweep should find past retention. */
+  captureGroupsWithPushTarget?: Array<{ id: string }>;
   /** §8.3 durable terminal-outcome replay (LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED). Default off. */
   replayEnabled?: boolean;
   outcomes?: Outcome[];
@@ -48,12 +50,20 @@ function makeHarness(rows: Row[], opts: {
   const audits: any[] = [];
   const pushes: Array<{ to: string; messages: any[]; operationId?: string }> = [];
 
+  const capturePushTargetSweeps: any[] = [];
+  const capturePushTargetClears: any[] = [];
+  const captureGroupsWithPushTarget: Array<{ id: string }> = opts.captureGroupsWithPushTarget ?? [];
   const prisma = {
     client: {
       lineReadEvidence: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
       lineLedgerDelivery: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
-    // The pre-capture LINE intake diagnostic ages out in this same sweep (capture appendix §2.2).
+    // The pre-capture LINE intake diagnostic ages out in this same sweep (capture appendix §2.2),
+    // and so does the raw chat id a capture group keeps to push its result back (§8, W07-int).
     lineIntakeAttempt: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
+      expenseCaptureGroup: {
+        findMany: async (args: any) => { capturePushTargetSweeps.push(args); return captureGroupsWithPushTarget; },
+        updateMany: async (args: any) => { capturePushTargetClears.push(args); return { count: 1 }; },
+      },
       lineTurnOutcome: {
         findMany: async ({ where }: any) => [...outcomeStore.values()].filter((outcome) => (
           (where.webhookEventId?.in as string[] | undefined)?.includes(outcome.webhookEventId) !== false
@@ -109,6 +119,7 @@ function makeHarness(rows: Row[], opts: {
 
   const config = {
     aiDataRetentionDays: opts.retentionDays ?? 90,
+    expenseCaptureRetentionDays: opts.retentionDays ?? 90,
     lineAiTerminalOutcomeReplayEnabled: opts.replayEnabled ?? false,
   } as any;
   const audit = { log: async (entry: any) => { audits.push(entry); } } as any;
@@ -138,6 +149,7 @@ function makeHarness(rows: Row[], opts: {
   return {
     useCase, verified,
     store, outcomeStore, enqueued, audits, pushes,
+    capturePushTargetSweeps, capturePushTargetClears,
   };
 }
 
@@ -503,5 +515,31 @@ describe('RecoverOrphanLineEventsUseCase', () => {
     assert.equal(result.purged, 1);
     assert.equal(store.has('old'), false);
     assert.equal(store.has('recent'), true);
+  });
+
+  /**
+   * Capture appendix §8 (W07-int): a capture group keeps the raw chat id its result is pushed
+   * into. That is customer data of the same kind as the webhook payload beside it, so it ages out
+   * in the same sweep — and the push then falls back to the sender's own 1:1 chat.
+   */
+  it('clears the chat id a stale capture group was keeping to push into', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const { useCase, capturePushTargetSweeps, capturePushTargetClears } = makeHarness([], {
+      captureGroupsWithPushTarget: [{ id: 'group-old' }],
+    });
+    await useCase.execute();
+
+    assert.equal(capturePushTargetSweeps.length, 1);
+    const where = capturePushTargetSweeps[0].where;
+    assert.deepEqual(where.linePushTargetId, { not: null }, 'only rows that still hold one');
+    assert.ok(Date.now() - where.updatedAt.lt.getTime() >= 90 * day, 'and only past the window');
+    assert.deepEqual(capturePushTargetClears[0].data, { linePushTargetId: null });
+    assert.deepEqual(capturePushTargetClears[0].where, { id: { in: ['group-old'] } });
+  });
+
+  it('touches no capture group when none is holding a chat id', async () => {
+    const { useCase, capturePushTargetClears } = makeHarness([]);
+    await useCase.execute();
+    assert.equal(capturePushTargetClears.length, 0);
   });
 });

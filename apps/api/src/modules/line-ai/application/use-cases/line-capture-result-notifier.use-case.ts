@@ -1,9 +1,10 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import { EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE } from '@watchdog-bms/contracts';
+import { EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE, SOURCE_DOCUMENT_TYPE_LABELS, type RequestContext } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
 import { PrismaOutboxRepository } from '../../../data-model-core/infrastructure/repositories/prisma-outbox.repository';
+import { AutoHandoffSingleDocumentCaptureUseCase } from '../../../expenses/application/use-cases/expense-capture-handoff.use-case';
 import { ExpenseCaptureLineUseCase } from '../../../expenses/application/use-cases/expense-capture-line.use-case';
 import { PrismaExpenseCaptureRepository } from '../../../expenses/infrastructure/prisma-expense-capture.repository';
 import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
@@ -15,6 +16,7 @@ import {
   CAPTURE_READ_PARTIAL_REPLY,
   CAPTURE_READ_PAUSED_REPLY,
   classifyNonReceiptCase,
+  formatCaptureAutoHandoffReply,
   formatCaptureReadFinishedReply,
   NON_RECEIPT_PERSISTING_CASES,
   nonReceiptReply,
@@ -58,6 +60,7 @@ export class LineCaptureResultNotifierUseCase {
     private readonly captureRepo: PrismaExpenseCaptureRepository,
     private readonly lineReply: LineReplyAdapter,
     private readonly outbox: PrismaOutboxRepository,
+    private readonly autoHandoff: AutoHandoffSingleDocumentCaptureUseCase,
     @Optional() private readonly handoffLinks?: LineHandoffLinkService,
   ) {}
 
@@ -99,28 +102,34 @@ export class LineCaptureResultNotifierUseCase {
     // LINE-only: a WEB group's result belongs to the page the customer is already looking at.
     if (!snapshot || snapshot.group.intakeChannel !== 'LINE') return 'skipped';
 
-    const access = await this.resolveRecipient(companyId, snapshot.group.createdByUserId, snapshot.group.lineChatKeyHash);
+    const access = await this.resolveRecipient(companyId, snapshot.group);
     if (!access) {
       // Park as undelivered rather than push: the person this result belongs to no longer has the
       // access it was produced under (appendix §3 "access re-checked").
-      await this.recordDelivery(companyId, snapshot.group.createdByUserId, groupId, snapshot, false);
+      await this.recordDelivery(companyId, snapshot.group.createdByUserId, groupId, snapshot, false, null);
       return 'skipped';
     }
 
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/capture/${groupId}`);
     const composed = this.composeReply(snapshot, payload, link);
     if (!composed) return 'skipped';
-    const { text } = composed;
+    let { text } = composed;
     // §18.4 NR07: a confirmed non-business image is not evidence of anything, so the work it opened
     // is closed. The bytes are NOT deleted — retention (§8) owns that, not a reply.
     if (composed.nr === 'NR07') {
       await this.captureLine.closeMergedGroup(
-        { requestId: `capture-result:${groupId}`, authSubject: snapshot.group.createdByUserId,
-          userId: snapshot.group.createdByUserId, companyId, membershipId: '', roles: [], permissions: [],
-          scopes: {}, authProvider: 'line' },
-        groupId, 'NON_BUSINESS_IMAGE',
+        systemContext(companyId, groupId, snapshot.group.createdByUserId), groupId, 'NON_BUSINESS_IMAGE',
       ).catch(() => false);
     }
+
+    // §3.2: one file, one expense-eligible document, nothing to divide — the group becomes the same
+    // NEEDS_REVIEW draft a LINE photo produces today, and the chat gets THAT summary. A classified
+    // non-receipt (NR01–NR08) keeps its own sentence and never becomes an expense; everything the
+    // use case refuses — multi-document, mismatch, unknown amounts — keeps the group link.
+    const handed = composed.done && !composed.nr && (readNumber(payload, 'documentCount') ?? 1) <= 1
+      ? await this.autoHandoffReply(companyId, groupId, snapshot.group.createdByUserId)
+      : null;
+    if (handed) text = handed.text;
 
     const message = {
       ...this.lineReply.buildTextMessage(text),
@@ -136,9 +145,11 @@ export class LineCaptureResultNotifierUseCase {
         [message],
       )
       : [message];
-    const delivery = await this.lineReply.sendPush(access.lineUserId, outgoing, `capture:${groupId}`)
+    const delivery = await this.lineReply.sendPush(access.pushTargetId, outgoing, `capture:${groupId}`)
       .catch(() => 'failed_other' as const);
-    await this.recordDelivery(companyId, snapshot.group.createdByUserId, groupId, snapshot, delivery === 'ok');
+    await this.recordDelivery(
+      companyId, snapshot.group.createdByUserId, groupId, snapshot, delivery === 'ok', handed?.expenseId ?? null,
+    );
     if (delivery !== 'ok') return 'skipped';
     return 'pushed';
   }
@@ -146,16 +157,18 @@ export class LineCaptureResultNotifierUseCase {
   /**
    * The chat this result may be pushed into.
    *
-   * Only the customer's own 1:1 chat is addressable: `lineChatKeyHash` is a hash, so a GROUP chat's
-   * id cannot be recovered from it, and pushing a shop's expense summary into the wrong chat is not
-   * a mistake worth risking. A group-chat capture therefore records an undelivered result, which
-   * §17.5 answers with UXE-25 when the customer asks — honest, and no data leaves the company.
+   * `lineChatKeyHash` is a hash, so it can only ever CONFIRM a destination, never produce one. The
+   * destination is `linePushTargetId`, the chat id the file arrived in — the same value the ledger
+   * uses as `chatKey` — which makes a group-chat capture answerable in the group chat it came from.
+   * A group with no stored target (everything captured before this column existed) falls back to
+   * the sender's own 1:1 chat, and both are checked against the recorded hash before anything is
+   * pushed: pushing a shop's expense summary into the wrong chat is not a mistake worth risking.
    */
   private async resolveRecipient(
     companyId: string,
-    userId: string,
-    lineChatKeyHash: string | null,
-  ): Promise<{ lineUserId: string; permissions: string[]; roles: string[]; entitledFeatureKeys: ReadonlySet<string> | null } | null> {
+    group: { createdByUserId: string; lineChatKeyHash: string | null; linePushTargetId: string | null },
+  ): Promise<{ pushTargetId: string; lineUserId: string; permissions: string[]; roles: string[]; entitledFeatureKeys: ReadonlySet<string> | null } | null> {
+    const userId = group.createdByUserId;
     const user = await this.prisma.client.user.findUnique({
       where: { id: userId }, select: { status: true, aiAssistantOptOutAt: true },
     });
@@ -165,7 +178,8 @@ export class LineCaptureResultNotifierUseCase {
       select: { providerUserId: true },
     });
     if (!identity?.providerUserId) return null;
-    if (lineChatKeyHash && hashMessagePreview(identity.providerUserId) !== lineChatKeyHash) return null;
+    const pushTargetId = group.linePushTargetId ?? identity.providerUserId;
+    if (group.lineChatKeyHash && hashMessagePreview(pushTargetId) !== group.lineChatKeyHash) return null;
     let access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>;
     try {
       access = await this.permissionResolver.resolveAccess(userId, companyId);
@@ -178,20 +192,59 @@ export class LineCaptureResultNotifierUseCase {
     const entitled = await loadEntitledFeatureKeys(this.prisma, companyId).catch(() => null);
     if (entitled && !entitled.has('expenses')) return null;
     return {
-      lineUserId: identity.providerUserId, permissions: access.permissions,
+      pushTargetId, lineUserId: identity.providerUserId, permissions: access.permissions,
       roles: access.roles, entitledFeatureKeys: entitled,
     };
   }
 
   /**
-   * §3 / §17.6 / §18.4, in one function so W05's auto-handoff replaces one composition rather than
+   * §3.2. Idempotent by construction: a second delivery of the same event finds the group already
+   * `HANDED_OFF` and the use case answers `skipped: 'handoff_exists'`, so no replay can produce a
+   * second expense. A throw is treated as "not handed off" — the transaction rolled back, and a
+   * diagnostic must never cost the customer their result.
+   */
+  private async autoHandoffReply(
+    companyId: string,
+    groupId: string,
+    createdByUserId: string,
+  ): Promise<{ text: string; expenseId: string } | null> {
+    const result = await this.autoHandoff
+      .execute(systemContext(companyId, groupId, createdByUserId), groupId)
+      .catch((error: unknown) => {
+        this.logger.warn({
+          msg: 'line.capture_result.auto_handoff_failed', groupId,
+          errorCode: (error as Error)?.message?.slice(0, 120),
+        });
+        return { skipped: 'error' as const };
+      });
+    if (!('expenseId' in result)) return null;
+    const expense = await this.prisma.client.expenseRecord.findFirst({
+      where: { companyId, id: result.expenseId },
+      select: { vendorNameSnapshot: true, grandTotalAmount: true, currency: true, sourceDocumentType: true, expenseDate: true },
+    }).catch(() => null);
+    return {
+      expenseId: result.expenseId,
+      text: formatCaptureAutoHandoffReply({
+        link: absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${result.expenseId}`),
+        vendorName: expense?.vendorNameSnapshot ?? null,
+        amount: expense?.grandTotalAmount === undefined || expense?.grandTotalAmount === null ? null : String(expense.grandTotalAmount),
+        currency: expense?.currency ?? null,
+        documentTypeLabel: expense?.sourceDocumentType
+          ? SOURCE_DOCUMENT_TYPE_LABELS[expense.sourceDocumentType] ?? null : null,
+        expenseDate: expense?.expenseDate ?? null,
+      }),
+    };
+  }
+
+  /**
+   * §3 / §17.6 / §18.4, in one function so §3.2's auto-handoff replaces one composition rather than
    * four. `observations` decides DONE's shape; everything else reads the job's own terminal state.
    */
   private composeReply(
     snapshot: NonNullable<Awaited<ReturnType<ExpenseCaptureLineUseCase['readFinishedSnapshot']>>>,
     payload: Record<string, unknown>,
     link: string,
-  ): { text: string; nr: LineNonReceiptCase | null } | null {
+  ): { text: string; nr: LineNonReceiptCase | null; done: boolean } | null {
     const statuses = snapshot.jobs.map((job) => job.status);
     const status = readString(payload, 'status')
       ?? (statuses.includes('FAILED') ? 'FAILED'
@@ -199,12 +252,12 @@ export class LineCaptureResultNotifierUseCase {
         : statuses.includes('PARTIAL') ? 'PARTIAL'
         : statuses.every((value) => value === 'DONE') && statuses.length > 0 ? 'DONE' : null);
     if (!status) return null;
-    if (status === 'FAILED') return { text: CAPTURE_READ_FAILED_REPLY(link), nr: null };
-    if (status === 'PARTIAL') return { text: CAPTURE_READ_PARTIAL_REPLY(link), nr: null };
+    if (status === 'FAILED') return { text: CAPTURE_READ_FAILED_REPLY(link), nr: null, done: false };
+    if (status === 'PARTIAL') return { text: CAPTURE_READ_PARTIAL_REPLY(link), nr: null, done: false };
     if (status === 'PAUSED') {
       const paused = snapshot.jobs.find((job) => job.status === 'PAUSED')?.pausedReason
         ?? readString(payload, 'pausedReason') ?? null;
-      return { text: CAPTURE_READ_PAUSED_REPLY(link, paused), nr: null };
+      return { text: CAPTURE_READ_PAUSED_REPLY(link, paused), nr: null, done: false };
     }
     if (status !== 'DONE') return null;
 
@@ -214,7 +267,7 @@ export class LineCaptureResultNotifierUseCase {
     const nr = classification ? classifyNonReceiptCase(classification) : null;
     if (nr && nr !== 'NR06') {
       return {
-        nr,
+        nr, done: true,
         text: nonReceiptReply(nr, {
           classification,
           ...(readString(payload, 'documentTotal') ? { amountLabel: readString(payload, 'documentTotal')! } : {}),
@@ -223,7 +276,7 @@ export class LineCaptureResultNotifierUseCase {
       };
     }
     return {
-      nr: null,
+      nr: null, done: true,
       text: formatCaptureReadFinishedReply({
         link,
         documentCount: readNumber(payload, 'documentCount') ?? Math.max(snapshot.observations, 1),
@@ -243,6 +296,8 @@ export class LineCaptureResultNotifierUseCase {
     groupId: string,
     snapshot: NonNullable<Awaited<ReturnType<ExpenseCaptureLineUseCase['readFinishedSnapshot']>>>,
     delivered: boolean,
+    /** §3.2: the group became one expense, so "ไฟล์เมื่อกี้…" must point at the record, not the work. */
+    expenseId: string | null,
   ): Promise<void> {
     const statuses = snapshot.jobs.map((job) => job.status);
     const outcome = statuses.includes('FAILED') ? 'STORED_READ_FAILED' as const
@@ -258,12 +313,25 @@ export class LineCaptureResultNotifierUseCase {
         await this.captureRepo.updateLineIntakeAttemptOutcome({
           id: row.id, outcome, stage: 'READ',
           reasonCode: delivered ? 'result_delivered' : 'LINE_DELIVERY_FAILED',
+          ...(expenseId ? { targetType: 'expense', targetId: expenseId } : {}),
         });
       }
     } catch (error) {
       this.logger.warn({ msg: 'line.capture_result.attempt_not_updated', userId, groupId, errorCode: (error as Error)?.message?.slice(0, 120) });
     }
   }
+}
+
+/**
+ * The actor a background push acts as: the person whose work this is (§18.1 `createdByUserId`),
+ * with no permissions of their own — every use case reached from here re-reads what it needs and
+ * none of them is a permission-checked route.
+ */
+function systemContext(companyId: string, groupId: string, userId: string): RequestContext {
+  return {
+    requestId: `capture-result:${groupId}`, authSubject: userId, userId, companyId,
+    membershipId: '', roles: [], permissions: [], scopes: {}, authProvider: 'line',
+  };
 }
 
 function readString(payload: Record<string, unknown>, key: string): string | undefined {

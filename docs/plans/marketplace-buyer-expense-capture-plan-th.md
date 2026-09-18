@@ -142,11 +142,11 @@ Depends on: W01 / D02 upload contract
 - [x] (เว็บ) single-file/camera/drop/review เดิมยังทำงาน; failed-reading notice+ลิงก์Webงานเดิมตาม§17.6 แยกsaved/unknown; ไม่มีerror reread; A83–A85 — W02-web: กล้องยังไฟล์เดียว, ข้อความ `expenses.extract_failed`/`:704`/`:724` ไม่ชวนอ่านซ้ำแล้ว และปุ่มอ่านซ้ำถูกซ่อนทุก terminal failure; ฝั่งแชต LINE อยู่ที่ W02-LINE
 - [x] ต่อหน้าเปลี่ยนใบเสร็จด้วย expected target/revision, append-vs-replace intent และ state matrix §16.4; re-readใช้ไฟล์ที่commitจริง — W02-web: `expectedUpdatedAt` + `expectedPrimaryAttachmentId` + `operationId` (idempotent/conflict) และ READY → NEEDS_REVIEW แบบ atomic
   - LINE ฝั่งเดียวเสร็จแล้ว (W02-LINE): provider failure บนรูปที่เก็บได้ → capture group + ลิงก์ §17.6 และไม่มี reread CTA; ฝั่ง Web ยังเป็นงานของ W02-web
-- [ ] PDF limits/capability/error messagesตรงกันทั้งสามทาง; รับไฟล์สำเร็จแยกจากอ่านสำเร็จ และไม่re-encodesigned PDFเพื่อผ่านgate
+- [x] PDF limits/capability/error messagesตรงกันทั้งสามทาง; รับไฟล์สำเร็จแยกจากอ่านสำเร็จ และไม่re-encodesigned PDFเพื่อผ่านgate — W07-int: `expense-capture-lane-parity.spec.ts` (10,485,760 ผ่าน / 10,485,761 ถูกปฏิเสธด้วย gate เดียวกันทั้งสามทาง, ประโยค `{size} MB … {limit} MB` ทศนิยมหนึ่งตำแหน่งเท่ากัน หลังแก้ `megabytes` ของ LINE) + ฝั่งเว็บใน `expense-capture-upload.logic.spec.ts`; ต้นฉบับไม่ถูกเขียนทับ (§4.2 ข้อ 4)
 - [x] LINEcaptionlessPDF/หลายเอกสาร/latefileต้องมีdurable pending work/clarificationที่กลับงานเดิม ไม่resetหลักฐาน; เก็บsafe rejection reasonก่อนมีexpenseและตอบคำถามย้อนหลังตาม§17.5; แก้E15/IG20ที่file/PDFไม่มีcontentBase64จนOCRถูกข้าม โดยต่อoriginalเข้าboundedpipeline ไม่ส่ง10MBตรงให้provider
 
-- [ ] ทั้งสามทางรับPDF10MiBแล้วsave→queue/readพร้อมstatus/progressที่serverยืนยัน; ปรับข้อความ4MBmanual-onlyออกสำหรับขนาดที่รองรับ; ไม่บังคับผู้ใช้split/compressเอง
-- [ ] status/reopen/retryเมื่อHTTPผลหายใช้jobเดิม; replacementหยุดapplyงานเก่าตามrevisionและpreserveoriginal; ไม่มีfinalLINEส่งจนrecipient/permission/versionตรงและdeliveryสำเร็จจริง — W02-web ทำฝั่ง status/reopen/retry (`GET …/read-status` + polling 3 วิ) และ provenance `sourceStale` ของไฟล์เก่าแล้ว; การหยุด apply ของ job เก่าเป็นงาน W03, LINE delivery เป็นงาน W02-LINE
+- [x] ทั้งสามทางรับPDF10MiBแล้วsave→queue/readพร้อมstatus/progressที่serverยืนยัน; ปรับข้อความ4MBmanual-onlyออกสำหรับขนาดที่รองรับ; ไม่บังคับผู้ใช้split/compressเอง — W03 ส่ง runner จริง; W07-int พิสูจน์ขอบ 10 MiB เท่ากันทั้งสามทาง และหนึ่ง `ExpenseCaptureReadJob` ต่อ attachment+checksum (เว็บสองทางใน `expense-extraction.use-case.spec.ts`, ทาง LINE/กลุ่มใน `expense-capture.pg.spec.ts`); `expenses.upload_pdf_too_large` ถูกถอดแล้ว (W02-web)
+- [x] status/reopen/retryเมื่อHTTPผลหายใช้jobเดิม; replacementหยุดapplyงานเก่าตามrevisionและpreserveoriginal; ไม่มีfinalLINEส่งจนrecipient/permission/versionตรงและdeliveryสำเร็จจริง — W02-web ทำฝั่ง status/reopen/retry (`GET …/read-status` + polling 3 วิ) และ provenance `sourceStale`; W03 ทำ fence `expectedSourceUpdatedAt`/`attachmentChecksum`; W02-LINE ตรวจสิทธิ์ใหม่ตอน push และบันทึก `LINE_DELIVERY_FAILED` เมื่อส่งไม่สำเร็จ; W07-int: retry ใช้ job เดิม (`readJobId` เดิม) และ `receipt-ocr-apply` ล้าง `sourceStale` เมื่ออ่านไฟล์ปัจจุบันสำเร็จ
 
 Exit: ส่ง4ไฟล์ สำเร็จ2แล้วตัดเน็ต กลับมาทำต่อโดยไม่สูญงาน/สร้างdraftซ้ำ และเพิ่มหน้า2ไม่ retire หน้า1
 Checks: upload/retention/API permission tests, local browser บนmobile+desktop และ LINE payload/retry tests โดยไม่ส่งข้อความจริงถึงลูกค้า
@@ -290,20 +290,20 @@ IG: IG01/IG05/IG06/IG10/IG11
 ### W07 — Expense/ใบเบิกเดิม และยอดในหน้ารายการ/รายงาน
 
 Owner: Expense/reimbursement/ledger integration + Web/API
-Status: Planned
+Status: W07-int ส่งแล้ว (2026-09-19) — เย็บตะเข็บระหว่าง wave: ผู้เรียก auto-handoff ของ LINE, ปลายทาง push ของแชตกลุ่ม, read-status บนหน้า review, ความเท่ากันสามทาง, deep link ใบเบิก, gate ใบรับรองหลัง prepare; ส่วน claim revalidate/finance projection/ledger ยังเปิดอยู่
 Depends on: W05 และ W06 สำหรับ certificate branch
 
 จุดแก้หลัก: [source resolver](../../apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts), [reimbursement repository](../../apps/api/src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.ts), [claim materializer](../../apps/api/src/modules/reimbursements/application/services/materialize-claim-expenses.service.ts), [expense draft/confirmation](../../apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts), [expense export](../../apps/api/src/modules/expenses/domain/logic/expense-export.logic.ts), [reimbursement client](../../apps/web/src/features/reimbursements/reimbursements.api.ts)
 
 - [ ] employee-funded eligible sourcesเข้าใบเบิกเดิมเต็มsourceพร้อมsnapshot; ordinary company expense sourceไม่ถูกconfirm/payขนานกัน
 - [ ] company-fundedเข้าexpense pathตามfacts; ของส่วนตัว/unsupportedtaxต้องมีrepresentationหรือเก็บรอ ไม่ซ่อนเงินออกจริง
-- [ ] submit/approve/finance projection/confirm/payment revalidategroup/source/payer/policy revisionและlocks; ไม่มีfinal mutationจากAI
+- [ ] submit/approve/finance projection/confirm/payment revalidategroup/source/payer/policy revisionและlocks; ไม่มีfinal mutationจากAI — W07-int ทำเฉพาะสายใบรับรอง: capture gate ทำงานซ้ำที่ preview/certify/approve และปฏิเสธ `substitute_capture_allocation_superseded` (`substitute-receipt-capture.use-case.spec.ts`); submit/approve ของใบเบิกและ finance projection ยังเปิดอยู่
 - [x] list/count/export/evidence/LINEไม่บวกparent+source+projectionซ้ำ (ส่วน source-picker/projection ยังเป็นงาน W07) — W05: `ExpenseSummary.captureGroupId`, `ExpenseDetail.captureGroup`, `evidenceRef` เพิ่ม group, `source_channel` fallback `OTHER`; pg spec เดินจริงผ่าน `listExpenses`/dashboard pending/`listRecentLineCaptures` ว่ามีครั้งเดียวและกลุ่มไม่โผล่ (A39)
-- [ ] ทุกdownload/deep link/exportตรวจสิทธิoriginal evidence; child accessไม่ขยายสิทธิparentและไม่เท่ากับredactส่วนตัว
+- [x] ทุกdownload/deep link/exportตรวจสิทธิoriginal evidence; child accessไม่ขยายสิทธิparentและไม่เท่ากับredactส่วนตัว — W07-int: `?expenseId=` ของหน้าใบเบิกใหม่ไม่ให้สิทธิ์อะไรเลย ต้องผ่าน `getReimbursementSourceOptions` ที่ server ตรวจ branch/ผู้ขอ/eligibility ก่อน (`ReimbursementCreatePage.qa.spec.ts`); ลิงก์ "กรอกข้อมูลต่อ" ของ LINE ยังผ่าน `/l/{token}` เดิม และ dto ของกลุ่มไม่ส่ง `linePushTargetId` ออกไป (`expense-capture-group.use-case.spec.ts`)
 - [ ] invoice/refundตามมาเชื่อมpurchaseเดิม; signed/paid/postedใช้correct/reverseตามระบบ ไม่silent overwrite
 - [ ] retryจากresponseหายและpartial downstream workกลับdestinationเดิมพร้อมสถานะจริง
 
-- [ ] export/list/detail/LINEstatus/evidencedownloadสะท้อนcurrent-source reviewและelectronic statusแยกกัน; ไม่ยกผลตรวจไฟล์เก่าให้ไฟล์ใหม่ และoriginal/derivativeaccessตรวจต่อrequest
+- [x] export/list/detail/LINEstatus/evidencedownloadสะท้อนcurrent-source reviewและelectronic statusแยกกัน; ไม่ยกผลตรวจไฟล์เก่าให้ไฟล์ใหม่ และoriginal/derivativeaccessตรวจต่อrequest — W05 ทำ list/export/detail; W07-int: LINE status ตอบ derived source (กติกา provenance เดียวกับ `expense.explain_record`) และตอบกลุ่มที่ยังไม่มี expense ได้, `receipt-ocr-apply` ล้าง `sourceStale` เฉพาะเมื่ออ่านไฟล์ปัจจุบัน (ไม่ยกผลไฟล์เก่าให้ไฟล์ใหม่), electronic ยังเป็น `NOT_CHECKED`/`UNAVAILABLE` แยกจากผลอ่าน
 - [ ] claimDRAFTที่sourceเปลี่ยนต้องrevalidateก่อนsubmit; submitted/paid/postedใช้correctionrouteตามสิทธิ ไม่แก้projectionหรือสร้างpaymentจากlateinvoice
 - [ ] ตรวจstock/asset/third-party payment intentเฉพาะdestinationที่มีจริง; unsupportedไม่กลายเป็นexpense/claimอัตโนมัติจากชื่อร้าน
 

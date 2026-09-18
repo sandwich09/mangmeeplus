@@ -343,6 +343,23 @@ describe('capture group creation and reading', () => {
     assert.equal(group.branchId, 'branch-1');
   });
 
+  it('stores the LINE chat a result may be pushed into, and never returns it (W07-int)', async () => {
+    const app = build();
+    const lineCtx = ctx({ authProvider: 'line' });
+    const { groupId } = await app.create.execute(lineCtx, {
+      intakeChannel: 'LINE', lineChatKeyHash: 'chat-hash-1', linePushTargetId: 'Cgroup-chat-id',
+    } as any);
+    assert.equal(app.capture.groups.get(groupId).linePushTargetId, 'Cgroup-chat-id');
+
+    const detail = await app.get.execute(ctx({ permissions: ['expense.read'] }), groupId);
+    assert.ok(!('linePushTargetId' in (detail as Record<string, unknown>)));
+    assert.ok(!JSON.stringify(detail).includes('Cgroup-chat-id'), 'a raw chat id never leaves the API');
+
+    // A web caller cannot smuggle one in: without the hash the column stays null.
+    const web = await app.create.execute(ctx(), { linePushTargetId: 'Cgroup-chat-id' } as any);
+    assert.equal(app.capture.groups.get(web.groupId).linePushTargetId, null);
+  });
+
   it('refuses a caller with no upload or create authority', async () => {
     const app = build();
     await assert.rejects(

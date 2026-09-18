@@ -67,7 +67,7 @@ test('the read state is shown beside the file, not only as a toast', () => {
 test('polling follows the durable job and never starts a read of its own', () => {
   assert.match(source, /if \(!detail\?\.primaryAttachmentId\) return;/);
   assert.match(source, /getExpenseReadStatus\(companyId, expenseId\)/);
-  assert.match(source, /if \(file\?\.status === 'DONE'\) void load\(\);/);
+  assert.match(source, /if \(file\?\.status === 'DONE' && file\.applied !== false\) void load\(\);/);
   assert.match(source, /}, 3_000\);/);
 });
 
@@ -95,7 +95,13 @@ test('a conflict offers the latest data instead of a silent retry', () => {
 });
 
 test('more than one document in a file offers the split, not another read', () => {
+  // W07-int: the READ JOB decides it whenever there is one — the API derives `multiDocument` from
+  // the assembled observation, which is the same fact that stopped the apply. The OCR
+  // classification stays only for the synchronous single-image lane, which has no job at all.
+  assert.match(source, /readState\s*\?\s*readState\.multiDocument === true/);
   assert.match(source, /contentKind === 'MULTI_DOCUMENT'/);
+  // …and a DONE the API says was NOT applied does not send the page to re-read an unchanged draft.
+  assert.match(source, /file\?\.status === 'DONE' && file\.applied !== false/);
   assert.match(source, /convertExpenseToCaptureGroup\(companyId, expenseId, \{ expectedUpdatedAt: detail\.updatedAt \}\)/);
   assert.match(source, /expenses\.capture\.split_to_group/);
   assert.match(workspaceDictionary.th['expenses.capture.multi_document'], /มากกว่า 1 ฉบับ/);

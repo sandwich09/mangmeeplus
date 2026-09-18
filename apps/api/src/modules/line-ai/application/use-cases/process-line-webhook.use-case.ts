@@ -28,7 +28,7 @@ import {
   CompleteReceiptUploadUseCase,
 } from '../../../expenses/application/use-cases/expense-upload.use-case';
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
-import { listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
+import { LINE_RECENT_CAPTURE_WINDOW_MS, listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
 import { receiptProgressLabel, receiptStatusQuestion } from '../../domain/logic/line-receipt-status.logic';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import type { ExpenseRecord } from '../../../expenses/domain/models/expense.model';
@@ -97,6 +97,7 @@ import {
 import { ExpenseCaptureLineUseCase, LINE_CAPTURE_NOTE_MAX_CHARS, LINE_CAPTURE_SAME_WORK_WINDOW_MS } from '../../../expenses/application/use-cases/expense-capture-line.use-case';
 import {
   CAPTURE_READ_FAILED_REPLY,
+  captureGroupStatusReply,
   classifyNonReceiptCase,
   NON_RECEIPT_PERSISTING_CASES,
   nonReceiptReply,
@@ -3931,9 +3932,22 @@ export class ProcessLineWebhookUseCase {
             : `${amountValue.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${expense.currency && expense.currency !== 'THB' ? expense.currency : 'บาท'}`;
           lines.push(`${lines.length + 1}) ${number ? `บิล ${number} · ` : ''}${amount}\n${receiptProgressLabel(expense.status, verification)}\nเปิดรายการที่ ${lines.length + 1}: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expense.id}`)}`);
         }
+        // §17.5 / appendix §3: a LINE file that has not (yet) become an expense is still real work.
+        // It lives in the capture aggregate, which the expense list above cannot see — so the same
+        // question is answered from the group's own read state rather than with "ยังไม่พบรายการ".
+        const openGroups = lines.length === 0 && this.captureLine
+          ? await this.captureLine.listOpenChatGroupProgress({
+            companyId, userId: identity.userId, lineChatKeyHash: chatKeyHashOf(event),
+            windowMs: LINE_RECENT_CAPTURE_WINDOW_MS,
+          }).catch(() => [])
+          : [];
         reply = lines.length
           ? `ตรวจพบรายการล่าสุดจากแชทนี้ ${lines.length} ใบค่ะ\n\n${lines.join('\n\n')}\n\nถ้ายังมีรูปที่ไม่ปรากฏในรายการนี้ ระบบยังยืนยันผลของรูปนั้นไม่ได้ค่ะ\nดูรายการทั้งหมด: ${listLink}`
-          : `ยังไม่พบรายการจากแชทนี้ในช่วง 24 ชั่วโมงล่าสุด จึงยังยืนยันว่าอ่านเสร็จไม่ได้ค่ะ\nดูรายการในเว็บ: ${listLink}`;
+          : openGroups.length
+            ? openGroups.map((group) => captureGroupStatusReply(
+              absoluteWebLink(this.config.webBaseUrl, group.webPath), group.reading,
+            )).join('\n\n')
+            : `ยังไม่พบรายการจากแชทนี้ในช่วง 24 ชั่วโมงล่าสุด จึงยังยืนยันว่าอ่านเสร็จไม่ได้ค่ะ\nดูรายการในเว็บ: ${listLink}`;
       } catch (error) {
         this.logger.warn({ msg: 'line_receipt_status_unavailable', ...safeLineErrorDetails(error) });
       }
@@ -6847,10 +6861,13 @@ export class ProcessLineWebhookUseCase {
     ctx: RequestContext,
     event: LineReceiptUploadEvent,
     input: { media: DownloadedLineMedia; caption: string; branchId?: string },
-  ): Promise<{ groupId: string; fileId: string; attachmentId: string; readJobId: string; link: string }> {
+  ): Promise<{ groupId: string; fileId: string; attachmentId: string; readJobId: string | null; link: string }> {
     const created = await this.createCaptureGroup!.execute(ctx, {
       intakeChannel: 'LINE',
       lineChatKeyHash: chatKeyHashOf(event),
+      // The chat this file arrived in, so the result can be pushed back INTO it — a group chat
+      // cannot be recovered from the hash above (appendix §3, W02-LINE deviation 2).
+      linePushTargetId: event.pushTargetId ?? event.lineUserId,
       ...(input.branchId ? { branchId: input.branchId } : {}),
       // A caption riding with the file is the customer's own note about this work — never a
       // manual-entry conversation (§17.6 forbids one as error recovery).
@@ -6902,8 +6919,15 @@ export class ProcessLineWebhookUseCase {
     media: DownloadedLineMedia;
     caption: string;
   }): Promise<LineMediaTurnOutcome> {
-    const { event, ctx, access, companyId, media, caption } = input;
+    const { event, ctx, access, companyId, media } = input;
     event.handoffSurface = 'line_capture_intake';
+    // A caption riding with a file can be a QUESTION rather than a note about the work ("ไฟล์นี้
+    // ลงค่าใช้จ่ายได้ไหม"). Storing it as the group note answers nobody, so the file turn keeps its
+    // own reply and the caption runs as its own text turn afterwards — the `defer_text` seam the
+    // buffer already honours for the image lane (spec §8).
+    const captionIsQuestion = Boolean(input.caption) && isInterveningQuestionText(input.caption);
+    const caption = captionIsQuestion ? '' : input.caption;
+    const finished = (): LineMediaTurnOutcome => ({ outcome: captionIsQuestion ? 'defer_text' : 'done' });
 
     // Redelivery (new webhookEventId, same lineMessageId): W01's unique index means this message
     // already produced a group, so answer with THAT one instead of storing the bytes twice.
@@ -6913,7 +6937,7 @@ export class ProcessLineWebhookUseCase {
         event, this.fileStoredReply(this.captureGroupLink(companyId, existing.groupId)), companyId, access,
       );
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId, { mediaState: 'redelivered' });
-      return { outcome: 'done' };
+      return finished();
     }
 
     const sameWork = await this.captureLine!.listOpenSameWorkGroups({
@@ -6966,6 +6990,8 @@ export class ProcessLineWebhookUseCase {
         replyText: question, intent: 'CLARIFY',
       });
       await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId, { mediaState: 'retained' });
+      // Never `defer_text` here: A45 has just asked "งานเดิม หรือ ใบใหม่", and a second turn would
+      // land on top of the question whose answer the next message is supposed to be.
       return { outcome: 'done' };
     }
 
@@ -6976,7 +7002,7 @@ export class ProcessLineWebhookUseCase {
       replyText: this.fileStoredReply(persisted.link), intent: 'EVIDENCE_CAPTURE',
     });
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId, { mediaState: 'retained' });
-    return { outcome: 'done' };
+    return finished();
   }
 
   /**
@@ -7008,7 +7034,7 @@ export class ProcessLineWebhookUseCase {
       });
       throw error;
     }
-    if (input.readFailedCode) {
+    if (input.readFailedCode && persisted.readJobId) {
       await this.captureLine.markReadFailed(ctx.companyId, persisted.readJobId, input.readFailedCode).catch(() => false);
     }
     await this.recordIntakeAttempt(event, {
@@ -7100,8 +7126,14 @@ ${link}`, ctx.companyId, access);
    *  re-send the clarify question or persist a second turn (Fix #7). The unique pending row is
    *  CLAIMED before any media bytes are uploaded: a concurrent racer that loses the (companyId,
    *  lineMessageId) unique race skips the byte upload entirely, so it can never leave an orphaned
-   *  attachment (Fix #8). ponytail: the loser's reserved (never-completed) upload intent is left
-   *  for storage GC — same convention as the capture path's incomplete intents. */
+   *  attachment (Fix #8).
+   *
+   *  The loser's reserved upload intent is deliberately NOT handed to
+   *  `ObjectVersionCleanupService`: that service deletes one stored object VERSION, and the loser
+   *  skipped `uploadLineMedia` entirely, so no version was ever written — enqueuing one would ask
+   *  the worker to delete an object that does not exist, under a producer prefix it does not allow.
+   *  What is left is a `PENDING_UPLOAD` `AttachmentObject` row holding no bytes, and it ages out of
+   *  the only thing that counts it (`sumPendingBytes`, a rolling `createdAfter` window). Accepted. */
   private async ensurePendingMedia(
     ctx: RequestContext,
     event: LineReceiptUploadEvent,

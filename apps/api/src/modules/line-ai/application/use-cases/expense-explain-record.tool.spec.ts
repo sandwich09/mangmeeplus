@@ -134,6 +134,25 @@ describe('expense.explain_record', () => {
       'a record that does not add up says so, verbatim from the detail mapper');
   });
 
+  it('explains a derived source from a capture group exactly like any other record (W07-int)', async () => {
+    // W05 stamps `captureSource: 'LINE_UPLOAD'` + `sourceChannelMetadataJson.chatKeyHash` on every
+    // source it hands off from a LINE group, which is precisely what the shared provenance rule
+    // selects on — so "บิลเมื่อกี้" reaches the expense the group became, with no second rule.
+    const { repo, queries } = makeRepo([{
+      id: 'exp-derived', expenseDate: new Date('2026-09-18T00:00:00Z'), grandTotalAmount: '810.00',
+      vendorDocumentNumber: 'G-77', sourceDocumentType: 'RECEIPT', createdAt: new Date(),
+    }]);
+    const derived = {
+      ...BHC, id: 'exp-derived', vendorNameSnapshot: 'ร้านเอ', vendorDocumentNumber: 'G-77',
+      aiVerificationSummaryJson: { dateStatus: 'verified', captureGroupId: 'grp-1', scopeKey: 'issuer:a' },
+    };
+    const result = await new ExpenseExplainRecordTool(getExpense(derived), repo).execute(ctx as any, {});
+    assert.equal((result.data as any).found, true);
+    assert.equal((result.data as any).header.vendorName, 'ร้านเอ');
+    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses/exp-derived');
+    assert.equal(queries[0].chatKeyHash, 'chat-a', 'the same chat-provenance window, unchanged');
+  });
+
   it('names the values the reader assumed, and stays silent for a hand-typed record', () => {
     assert.deepEqual(explainAssumptions({ aiVerifiedFieldsJson: null, aiVerificationSummaryJson: null }), []);
     assert.deepEqual(

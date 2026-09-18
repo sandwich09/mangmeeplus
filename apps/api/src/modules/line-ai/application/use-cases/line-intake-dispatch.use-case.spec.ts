@@ -181,6 +181,8 @@ function makeHarness(opts: {
   realMediaDownload?: boolean;
   /** A45: the OPEN LINE groups this chat already has inside the same-work window. */
   openSameWorkGroups?: Array<{ groupId: string; firstFileName: string | null; updatedAt: Date; status: string; note: string | null; createdAt: Date; webPath: string }>;
+  /** §17.5: the OPEN groups of this chat and whether their reader is still running. */
+  openChatGroups?: Array<{ groupId: string; webPath: string; reading: boolean }>;
   captureGroupCreateThrows?: Error;
   receiptOcrResult?: any;
   governReceiptAdmission?: boolean;
@@ -638,6 +640,7 @@ function makeHarness(opts: {
           createdAt: new Date(), updatedAt: new Date(), status: 'OPEN', note: group.note ?? null } : null;
       },
       listOpenSameWorkGroups: async () => opts.openSameWorkGroups ?? [],
+      listOpenChatGroupProgress: async () => opts.openChatGroups ?? [],
       moveFileToGroup: async (_ctx: any, input: any) => { captureState.moves.push(input); return { ...input, requeuedJob: false }; },
       closeMergedGroup: async (_ctx: any, groupId: string, reason: string) => { captureState.closes.push({ groupId, reason }); return true; },
       markReadFailed: async (_companyId: string, jobId: string, errorCode: string) => {
@@ -4605,6 +4608,29 @@ describe('receipt progress grounded in persisted records', () => {
     assert.equal(h.routeRequests.length, 0);
   });
 
+  for (const [name, reading, pattern] of [
+    ['a finished read waiting on the web', false, /ไฟล์เมื่อกี้อ่านแล้ว รอตรวจและสร้างรายการในเว็บ/],
+    ['a read still running', true, /ไฟล์เมื่อกี้กำลังอ่านอยู่ค่ะ/],
+  ] as const) {
+    it(`answers for an OPEN capture group with no expense yet — ${name} (§17.5)`, async () => {
+      const h = makeHarness({
+        permissions: ['expense.receipt.line_upload'], recentCaptures: [],
+        openChatGroups: [{ groupId: 'group-7', webPath: '/companies/company-1/expenses/capture/group-7', reading }],
+      } as any);
+      await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ใบเสร็จเสร็จหรือยัง' });
+      assert.match(h.replies[0] ?? '', pattern);
+      assert.match(h.replies[0] ?? '', /expenses\/capture\/group-7/);
+      // The old answer claimed nothing had been received at all; the file exists and was read.
+      assert.doesNotMatch(h.replies[0] ?? '', /ยังไม่พบรายการจากแชทนี้/);
+    });
+  }
+
+  it('still says so when the chat has neither an expense nor an open capture group', async () => {
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload'], recentCaptures: [] });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ใบเสร็จเสร็จหรือยัง' });
+    assert.match(h.replies[0] ?? '', /ยังไม่พบรายการจากแชทนี้/);
+  });
+
   it('reports lookup failure honestly and does not ask the model to invent progress', async () => {
     const h = makeHarness({ permissions: ['expense.receipt.line_upload'], recentCaptures: [recent('a')],
       expenseDetail: () => { throw new Error('internal database problem'); } });
@@ -5076,14 +5102,47 @@ describe('LINE file lane (capture appendix §3)', () => {
     assert.equal(stored.capabilityJson.pdfAutomaticRead, true);
   });
 
+  for (const [name, event, expected] of [
+    ['a 1:1 chat', FILE_EVENT, 'line-user-secret'],
+    ['a group chat', { ...FILE_EVENT, pushTargetId: 'Cgroup-chat-id' }, 'Cgroup-chat-id'],
+  ] as const) {
+    it(`records the chat the result may be pushed back into — ${name} (W07-int)`, async () => {
+      const net = stubFetch();
+      const h = captureHarness();
+      try {
+        await h.useCase.executeReceiptUpload(event as typeof FILE_EVENT);
+      } finally { net.restore(); }
+      const group = h.captureState.groups[0];
+      assert.equal(group.linePushTargetId, expected);
+      // It matches the hash the group already records, which is what the push checks it against.
+      assert.equal(group.lineChatKeyHash, chatKeyHashOf(event as { lineUserId: string; pushTargetId?: string }));
+    });
+  }
+
   it('a caption riding with the file becomes the group note, not a manual-entry chat', async () => {
     const net = stubFetch();
     const h = captureHarness();
+    let outcome: { outcome: string } | undefined;
     try {
-      await h.useCase.executeReceiptUpload(FILE_EVENT, 'ค่าส่งของเดือนสิงหาคม');
+      outcome = await h.useCase.executeReceiptUpload(FILE_EVENT, 'ค่าส่งของเดือนสิงหาคม');
     } finally { net.restore(); }
     assert.equal(h.captureState.groups[0].note, 'ค่าส่งของเดือนสิงหาคม');
     assert.equal(h.ocrRequests.length, 0);
+    assert.equal(outcome?.outcome, 'done', 'a note is not a question');
+  });
+
+  it('a caption that is a QUESTION is answered as its own turn, not filed as the note (W07-int)', async () => {
+    const net = stubFetch();
+    const h = captureHarness();
+    let outcome: { outcome: string } | undefined;
+    try {
+      outcome = await h.useCase.executeReceiptUpload(FILE_EVENT, 'ไฟล์นี้ลงค่าใช้จ่ายบริษัทได้ไหม');
+    } finally { net.restore(); }
+    // The file turn still says the bytes are kept…
+    assert.match(h.replies[0] ?? '', /เก็บไฟล์แล้วค่ะ กำลังอ่านเอกสาร/);
+    // …and the buffer runs the question as a text turn afterwards (the image lane's `defer_text`).
+    assert.equal(outcome?.outcome, 'defer_text');
+    assert.equal(h.captureState.groups[0].note, undefined, 'a question is never stored as the note');
   });
 
   it('a redelivered file reuses the group it already produced instead of storing the bytes twice', async () => {
@@ -5282,7 +5341,7 @@ describe('LINE capture answers and §17.5 status questions', () => {
       await h.useCase.executeReceiptUpload({ ...FILE_EVENT, fileSize: 12 * 1024 * 1024 });
     } finally { restore(); }
     await h.useCase.execute({ ...answer('ไฟล์ใหญ่ไปหรือเปล่า'), webhookEventId: 'evt-status-oversize' });
-    assert.match(h.replies.at(-1) ?? '', /ขนาด 12 MB เกินขนาดที่ระบบรับได้ 10 MB/);
+    assert.match(h.replies.at(-1) ?? '', /ขนาด 12\.0 MB เกินขนาดที่ระบบรับได้ 10\.0 MB/);
     assert.match(h.replies.at(-1) ?? '', /เลือกไฟล์ที่เล็กกว่าแล้วส่งอีกครั้งได้เลยค่ะ/);
     assert.equal(h.turnRequests.length, 0);
   });

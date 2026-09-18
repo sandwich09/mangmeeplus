@@ -253,7 +253,9 @@ async function assertCaptureSourceEligible(
   repo: PrismaExpenseRepository,
   companyId: string,
   expense: ExpenseRecordWithRelations,
-  fundingSource: 'COMPANY' | 'PERSONAL_ADVANCE',
+  /** Null only for an evidence row written before the column existed: the route check is skipped,
+   *  the gate itself still runs. */
+  fundingSource: 'COMPANY' | 'PERSONAL_ADVANCE' | null,
 ): Promise<void> {
   if (!expense.captureGroupId || !expense.captureAllocationId) return;
   const context = await repo.findCaptureCertificateContext(companyId, expense);
@@ -268,7 +270,9 @@ async function assertCaptureSourceEligible(
   });
   if (gate.outcome === 'refused') throw captureRefusal(gate);
   // The route that DERIVED this source, not whatever the group is being re-reviewed as right now.
-  const routeRefusal = captureFundingRouteRefusal(context.allocation?.fundingRoute ?? context.group.fundingRoute, fundingSource);
+  const routeRefusal = fundingSource
+    ? captureFundingRouteRefusal(context.allocation?.fundingRoute ?? context.group.fundingRoute, fundingSource)
+    : null;
   if (routeRefusal) throw captureRefusal(routeRefusal);
 }
 
@@ -724,7 +728,15 @@ export class PreviewSubstituteReceiptUseCase {
     if (!expense) throw new NotFoundException(`Expense ${expenseId} not found.`);
     assertBranch(ctx, expense.branchId);
     assertPreparedExpenseUnchanged(expense, evidence);
-    if (!evidence.correctionOfEvidenceId) validateEligibility(expense, evidence.reasonCode);
+    if (!evidence.correctionOfEvidenceId) {
+      validateEligibility(expense, evidence.reasonCode);
+      // W07-int: the capture gate runs HERE too, not only at prepare. The allocation a certificate
+      // states is the one the group accepted, and that is a fact about the group, not about this
+      // expense — `assertPreparedExpenseUnchanged` cannot see it move. A correction keeps the
+      // ordinary path, for the same reason `validateEligibility` does: it re-issues a document
+      // that already exists and must not be stranded by a later decision about the group.
+      await assertCaptureSourceEligible(this.repo, ctx.companyId, expense, evidence.fundingSource ?? null);
+    }
     const snapshot = await buildSnapshot(this.repo, ctx.companyId, expense, evidence, payerPosition, PREVIEW_CERTIFIED_AT);
     const previewChecksumSha256 = canonicalSnapshotHash(snapshot);
     const svg = renderSubstituteReceiptSvg(snapshot);
@@ -1028,7 +1040,10 @@ export class CertifySubstituteReceiptUseCase {
     if (!expense) throw new NotFoundException(`Expense ${expenseId} not found.`);
     assertBranch(ctx, expense.branchId);
     assertPreparedExpenseUnchanged(expense, evidence);
-    if (!evidence.correctionOfEvidenceId) validateEligibility(expense, evidence.reasonCode);
+    if (!evidence.correctionOfEvidenceId) {
+      validateEligibility(expense, evidence.reasonCode);
+      await assertCaptureSourceEligible(this.repo, ctx.companyId, expense, evidence.fundingSource ?? null);
+    }
     const expectedEvidenceUpdatedAt = parseExpectedDate(input.expectedEvidenceUpdatedAt, 'expectedEvidenceUpdatedAt');
     const previewSnapshot = await buildSnapshot(this.repo, ctx.companyId, expense, evidence, payerPosition, PREVIEW_CERTIFIED_AT);
     if (canonicalSnapshotHash(previewSnapshot) !== input.previewChecksumSha256) {
@@ -1147,6 +1162,11 @@ export class ApproveSubstituteReceiptUseCase {
     if (evidence.correctionOfEvidenceId) {
       const original = await this.repo.findSubstituteEvidence(ctx.companyId, expenseId, evidence.correctionOfEvidenceId);
       if (original?.approverUserId !== ctx.userId) throw new ForbiddenException('การแก้เฉพาะเอกสารต้องให้ผู้อนุมัติเดิมลงนาม');
+    } else {
+      // The last gate before the document becomes real (W07-int): an allocation superseded between
+      // prepare and approval refuses here rather than issuing a certificate that states a division
+      // the group no longer records.
+      await assertCaptureSourceEligible(this.repo, ctx.companyId, expense, evidence.fundingSource ?? null);
     }
     const policy = await this.repo.getSubstituteReceiptPolicy(ctx.companyId);
     const approvalMode = policy?.approvalMode ?? 'OWNER_SELF';

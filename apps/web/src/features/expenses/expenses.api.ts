@@ -287,7 +287,7 @@ export async function completeExpenseCaptureFile(
   groupId: string,
   fileId: string,
   body: { byteSize?: number; checksumSha256?: string; expectedRevision: number },
-): Promise<{ fileId: string; attachmentId: string; revision: number; readJobId: string; uploadState: string; replayed: boolean }> {
+): Promise<{ fileId: string; attachmentId: string; revision: number; readJobId: string | null; uploadState: string; replayed: boolean }> {
   return apiFetch(`/v1/companies/${companyId}/expenses/capture-groups/${groupId}/files/${fileId}/complete`, {
     method: 'POST', body: JSON.stringify(body),
   });

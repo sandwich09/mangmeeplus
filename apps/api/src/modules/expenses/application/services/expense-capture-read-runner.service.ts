@@ -9,6 +9,7 @@ import {
   type ExpenseCaptureManifestPageState,
   type ExpenseCaptureObservations,
   type ExpenseCaptureReadChunk,
+  type ExpenseCapturePausedReason,
   type ExpenseCaptureReadManifest,
   type ReceiptOcrFieldResult,
   EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE,
@@ -36,6 +37,7 @@ import { isStaleOcrApply, ReceiptOcrApplyService } from './receipt-ocr-apply.ser
 export const EXPENSE_CAPTURE_LEASE_MS = 120_000;
 /** Per-job ceilings of §4.6. Reaching one PAUSEs with the reason, keeping everything read so far. */
 export const EXPENSE_CAPTURE_MAX_PROVIDER_CALLS = 40;
+/** §4.6 "เวลา ≤ 15 นาที" — of the JOB, summed over every resume, not of one lucky attempt. */
 export const EXPENSE_CAPTURE_MAX_RUN_MS = 15 * 60_000;
 /** A job that keeps dying takes its file out of the queue instead of looping on it forever. */
 export const EXPENSE_CAPTURE_MAX_ATTEMPTS = 5;
@@ -52,6 +54,11 @@ type CaptureCheckpoint = {
   windows: Record<string, ExpenseCaptureObservations>;
   /** The OCR read this job counted, so a resumed job releases the SAME event it admitted. */
   ocrEventId?: string;
+  /** Milliseconds every PREVIOUS run of this job spent. The budget is per job, not per attempt:
+   *  without this a file that dies at 14 minutes gets a fresh 15 every time it is re-claimed. */
+  runMillis?: number;
+  /** Derivative bytes this job has already produced, for the same reason. */
+  derivativeBytes?: number;
   resplitChunks?: string[];
   lineage?: AiModelLineage[];
 };
@@ -65,7 +72,7 @@ const NOOP_SHADOW = {
 
 type RunOutcome = {
   status: 'DONE' | 'PARTIAL' | 'PAUSED' | 'FAILED' | 'CANCELLED';
-  pausedReason?: 'page_limit' | 'call_budget' | 'time_budget' | 'ai_credit';
+  pausedReason?: ExpenseCapturePausedReason;
   errorCode?: string;
   applied?: boolean;
   multiDocument?: boolean;
@@ -167,6 +174,9 @@ export class ExpenseCaptureReadRunnerService {
       this.logger.error({ msg: 'capture.read.unhandled', jobId: job.id, ...safeLineErrorDetails(error) });
       outcome = { status: 'FAILED', errorCode: 'CAPTURE_READ_UNHANDLED' };
     }
+    // The job's own clock, banked before the terminal write: a PAUSED job that is re-claimed must
+    // resume with the time it has already spent, not with a fresh 15 minutes (§4.6).
+    checkpoint = { ...checkpoint, runMillis: (checkpoint.runMillis ?? 0) + (Date.now() - startedAt) };
     await this.finish(job, owner, outcome, checkpoint);
   }
 
@@ -224,6 +234,11 @@ export class ExpenseCaptureReadRunnerService {
     }
 
     let calls = job.providerCallCount;
+    // Both ceilings count what the JOB has spent, not what this run has: the earlier runs' totals
+    // come off the checkpoint and this run adds to them.
+    const spentMs = () => (checkpoint.runMillis ?? 0) + (Date.now() - startedAt);
+    let derivativeBytes = checkpoint.derivativeBytes ?? 0;
+    const derivativeCeiling = this.config.expenseCaptureDerivativeMaxBytes;
     let pausedReason: RunOutcome['pausedReason'];
     const queue: CaptureChunkPlan[] = [...plan.chunks];
     const lineage: AiModelLineage[] = [...(checkpoint.lineage ?? [])];
@@ -232,7 +247,11 @@ export class ExpenseCaptureReadRunnerService {
       const chunk = queue[index]!;
       if (checkpoint.chunks[chunk.id] === 'done') continue;
       if (calls >= EXPENSE_CAPTURE_MAX_PROVIDER_CALLS) { pausedReason = 'call_budget'; break; }
-      if (Date.now() - startedAt > EXPENSE_CAPTURE_MAX_RUN_MS) { pausedReason = 'time_budget'; break; }
+      if (spentMs() > EXPENSE_CAPTURE_MAX_RUN_MS) { pausedReason = 'time_budget'; break; }
+      // Measured BEFORE the call: the chunk is already in memory, and the point of the ceiling is
+      // to stop the NEXT one from being built, keeping everything read so far.
+      derivativeBytes += chunk.byteLength;
+      if (derivativeBytes > derivativeCeiling) { pausedReason = 'memory_budget'; break; }
       if (!await this.capture.renewJobLease({ jobId: job.id, leaseOwner: owner, leaseMs: EXPENSE_CAPTURE_LEASE_MS })) {
         return { status: 'CANCELLED' };
       }
@@ -247,7 +266,7 @@ export class ExpenseCaptureReadRunnerService {
       }
       if (result.status !== 'ok') {
         if (isBudgetRefusal(result.errorCode)) { pausedReason = 'ai_credit'; break; }
-        checkpoint = { ...checkpoint, chunks: { ...checkpoint.chunks, [chunk.id]: 'failed' } };
+        checkpoint = { ...checkpoint, chunks: { ...checkpoint.chunks, [chunk.id]: 'failed' }, derivativeBytes };
         manifest = markChunk(manifest, chunk.id, 'failed', result.errorCode);
         await this.persist(job, owner, { checkpoint, manifest, calls });
         save(checkpoint);
@@ -261,7 +280,7 @@ export class ExpenseCaptureReadRunnerService {
           ...(page.blank ? { blank: true } : {}),
         };
       }
-      checkpoint = { ...checkpoint, pages, chunks: { ...checkpoint.chunks, [chunk.id]: 'done' } };
+      checkpoint = { ...checkpoint, pages, chunks: { ...checkpoint.chunks, [chunk.id]: 'done' }, derivativeBytes };
       if (result.modelLineage) lineage.push(result.modelLineage);
       checkpoint = { ...checkpoint, lineage: lineage.slice(0, 8) };
       manifest = markChunk(manifest, chunk.id, 'done');
@@ -291,7 +310,7 @@ export class ExpenseCaptureReadRunnerService {
       for (const window of windows) {
         if (checkpoint.windows[window.id]) continue;
         if (calls >= EXPENSE_CAPTURE_MAX_PROVIDER_CALLS) { pausedReason = 'call_budget'; break; }
-        if (Date.now() - startedAt > EXPENSE_CAPTURE_MAX_RUN_MS) { pausedReason = 'time_budget'; break; }
+        if (spentMs() > EXPENSE_CAPTURE_MAX_RUN_MS) { pausedReason = 'time_budget'; break; }
         if (!await this.capture.renewJobLease({ jobId: job.id, leaseOwner: owner, leaseMs: EXPENSE_CAPTURE_LEASE_MS })) {
           return { status: 'CANCELLED' };
         }
@@ -447,7 +466,12 @@ export class ExpenseCaptureReadRunnerService {
       { companyId: job.companyId, userId: 'system' },
       job.expenseId,
       mapped.fields,
-      { ...(job.expectedSourceUpdatedAt ? { expectedUpdatedAt: job.expectedSourceUpdatedAt } : {}) },
+      {
+        ...(job.expectedSourceUpdatedAt ? { expectedUpdatedAt: job.expectedSourceUpdatedAt } : {}),
+        // §16.4: the file this read is OF, so the apply can retire a `sourceStale` warning that
+        // was raised about the file this one replaced.
+        sourceAttachmentId: job.attachmentId,
+      },
     );
     if (isStaleOcrApply(outcome) || !outcome.committedUpdatedAt) {
       await this.audit.log({
@@ -522,6 +546,7 @@ export class ExpenseCaptureReadRunnerService {
     const written = await this.capture.updateJobFenced({
       jobId: job.id, leaseOwner: owner,
       data: {
+        checkpointJson: checkpoint as never,
         status: outcome.status,
         pausedReason: outcome.pausedReason ?? null,
         lastErrorCode: outcome.errorCode ?? null,
@@ -590,6 +615,10 @@ function readCheckpoint(value: unknown): CaptureCheckpoint {
     chunks: raw.chunks && typeof raw.chunks === 'object' ? raw.chunks : {},
     windows: raw.windows && typeof raw.windows === 'object' ? raw.windows : {},
     ...(raw.ocrEventId ? { ocrEventId: raw.ocrEventId } : {}),
+    // The two per-JOB meters. A stored value that is not a finite number is treated as no value
+    // rather than as zero of a budget — a corrupted checkpoint must not hand out a fresh run.
+    ...(Number.isFinite(raw.runMillis) ? { runMillis: Math.max(0, raw.runMillis!) } : {}),
+    ...(Number.isFinite(raw.derivativeBytes) ? { derivativeBytes: Math.max(0, raw.derivativeBytes!) } : {}),
     ...(Array.isArray(raw.resplitChunks) ? { resplitChunks: raw.resplitChunks } : {}),
     ...(Array.isArray(raw.lineage) ? { lineage: raw.lineage } : {}),
   };

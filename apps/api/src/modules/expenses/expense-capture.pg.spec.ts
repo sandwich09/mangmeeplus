@@ -137,6 +137,75 @@ describe('expense capture foundation on PostgreSQL', { skip: !databaseUrl }, () 
     await expense('plain-b');
   });
 
+  it('holds one facts version per CONVERTED expense, where the file-keyed unique cannot (W07-int)', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const groupId = await group('converted');
+    const expenseId = await expense('converted');
+    const write = (version: number) => capture.createObservation(client as never, {
+      companyId, groupId, expenseId, fileId: null, version, source: 'HUMAN',
+      payloadJson: { documents: [], items: [], components: [], totals: [], payments: [], refunds: [] },
+      createdByUserId: userId,
+    });
+
+    await write(1);
+    // `@@unique([companyId, fileId, version])` counts every NULL as distinct, so it allows this;
+    // the partial index added with `linePushTargetId` is what refuses it.
+    await assert.rejects(() => write(1), (error: { code?: string }) => error.code === 'P2002',
+      'two corrections cannot both become version 1 of the same expense');
+
+    // A different version of the same expense, and the same version of another expense, are fine.
+    await write(2);
+    await capture.createObservation(client as never, {
+      companyId, groupId, expenseId: await expense('converted-2'), fileId: null, version: 1, source: 'HUMAN',
+      payloadJson: { documents: [], items: [], components: [], totals: [], payments: [], refunds: [] },
+      createdByUserId: userId,
+    });
+    // And a file-keyed observation is untouched by it (the index only covers `fileId IS NULL`).
+    const fileRow = await capture.createFile(client as never, {
+      companyId, groupId, attachmentId: await attachment('converted-file'), position: 9,
+      originalFileName: 'bill.pdf', mimeType: 'application/pdf', byteSize: 1_000, addedByUserId: userId,
+    });
+    await capture.createObservation(client as never, {
+      companyId, groupId, fileId: fileRow.id, version: 1, source: 'AI',
+      payloadJson: { documents: [], items: [], components: [], totals: [], payments: [], refunds: [] },
+    });
+  });
+
+  it('answers with the ACCEPTED allocation even when a newer PREVIEW exists (W07-int)', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const groupId = await group('alloc-order');
+    const allocation = async (status: 'ACCEPTED' | 'PREVIEW') => {
+      const row = await capture.createAllocation(client as never, {
+        companyId, groupId, groupRevision: 2, policyVersion: 'shared-discount-v1',
+        selectionJson: {}, inputJson: {}, resultJson: { outcome: 'READY', scopes: [], blockers: [] },
+        fundingRoute: 'EMPLOYEE', payerUserId: payerId, computedByUserId: userId,
+      });
+      if (status === 'ACCEPTED') {
+        await client.expenseCaptureAllocation.update({
+          where: { id: row.id }, data: { status: 'ACCEPTED', acceptedByUserId: userId, acceptedAt: new Date() },
+        });
+      }
+      return row.id;
+    };
+
+    const accepted = await allocation('ACCEPTED');
+    // A reopened handoff (§18.2) computes a new PREVIEW while the acceptance the derived sources
+    // were built from is still the decision. A Postgres enum sorts by DECLARATION order — and this
+    // one declares PREVIEW first — so `orderBy: { status: 'asc' }` answered with the proposal.
+    const preview = await allocation('PREVIEW');
+    assert.notEqual(accepted, preview);
+    assert.equal((await capture.findGroupAllocation(client as never, companyId, groupId))!.id, accepted);
+
+    // With nothing accepted, the newest proposal is the answer.
+    const other = await group('alloc-preview-only');
+    const only = await capture.createAllocation(client as never, {
+      companyId, groupId: other, groupRevision: 2, policyVersion: 'shared-discount-v1',
+      selectionJson: {}, inputJson: {}, resultJson: { outcome: 'READY', scopes: [], blockers: [] },
+      fundingRoute: 'EMPLOYEE', payerUserId: payerId, computedByUserId: userId,
+    });
+    assert.equal((await capture.findGroupAllocation(client as never, companyId, other))!.id, only.id);
+  });
+
   it('keeps `handoffBatchKey` unique across the whole company (§9 idempotency)', async (t) => {
     if (unreachable) return t.skip(unreachable);
     const first = await group('handoff-1');

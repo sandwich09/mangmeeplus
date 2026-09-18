@@ -77,8 +77,10 @@ export class ExpenseCaptureLineUseCase {
    */
   async listOpenSameWorkGroups(input: {
     companyId: string; userId: string; lineChatKeyHash: string; now?: Date; take?: number;
+    /** §17.5 asks over a longer window than A45's merge question; A45 omits it. */
+    windowMs?: number;
   }): Promise<LineCaptureGroupSummary[]> {
-    const since = new Date((input.now?.getTime() ?? Date.now()) - LINE_CAPTURE_SAME_WORK_WINDOW_MS);
+    const since = new Date((input.now?.getTime() ?? Date.now()) - (input.windowMs ?? LINE_CAPTURE_SAME_WORK_WINDOW_MS));
     const groups = await this.prisma.client.expenseCaptureGroup.findMany({
       where: {
         companyId: input.companyId, createdByUserId: input.userId, intakeChannel: 'LINE',
@@ -99,6 +101,30 @@ export class ExpenseCaptureLineUseCase {
       createdAt: group.createdAt, updatedAt: group.updatedAt,
       webPath: expenseCaptureWebPath(input.companyId, group.id),
       firstFileName: firstName.get(group.id) ?? null,
+    }));
+  }
+
+  /**
+   * §17.5 "ไฟล์เมื่อกี้…" for work that is still work: the OPEN groups of THIS chat, newest first,
+   * with the one thing the answer needs — whether the reader is still running.
+   *
+   * A group that already became an expense is `HANDED_OFF` and therefore absent: the expense list
+   * answers for it, and answering twice is how a customer is told a record does not exist.
+   */
+  async listOpenChatGroupProgress(input: {
+    companyId: string; userId: string; lineChatKeyHash: string; windowMs: number; take?: number;
+  }): Promise<Array<{ groupId: string; webPath: string; reading: boolean }>> {
+    const groups = await this.listOpenSameWorkGroups({ ...input, take: input.take ?? 2 });
+    if (groups.length === 0) return [];
+    const jobs = await this.prisma.client.expenseCaptureReadJob.findMany({
+      where: { companyId: input.companyId, groupId: { in: groups.map((group) => group.groupId) } },
+      select: { groupId: true, status: true },
+    });
+    return groups.map((group) => ({
+      groupId: group.groupId,
+      webPath: group.webPath,
+      reading: jobs.some((job) => job.groupId === group.groupId
+        && !['DONE', 'FAILED', 'CANCELLED', 'PAUSED'].includes(job.status)),
     }));
   }
 
@@ -249,7 +275,7 @@ export class ExpenseCaptureLineUseCase {
    * The CALLER re-checks access before it speaks — this only reports what the group holds.
    */
   async readFinishedSnapshot(companyId: string, groupId: string): Promise<{
-    group: { id: string; status: string; intakeChannel: string; createdByUserId: string; lineChatKeyHash: string | null; branchId: string | null };
+    group: { id: string; status: string; intakeChannel: string; createdByUserId: string; lineChatKeyHash: string | null; linePushTargetId: string | null; branchId: string | null };
     jobs: Array<{ id: string; status: string; pausedReason: string | null; lastErrorCode: string | null }>;
     observations: number;
     webPath: string;
@@ -263,7 +289,8 @@ export class ExpenseCaptureLineUseCase {
     return {
       group: {
         id: group.id, status: group.status, intakeChannel: group.intakeChannel,
-        createdByUserId: group.createdByUserId, lineChatKeyHash: group.lineChatKeyHash, branchId: group.branchId,
+        createdByUserId: group.createdByUserId, lineChatKeyHash: group.lineChatKeyHash,
+        linePushTargetId: group.linePushTargetId, branchId: group.branchId,
       },
       jobs: jobs.map((job) => ({
         id: job.id, status: job.status, pausedReason: job.pausedReason, lastErrorCode: job.lastErrorCode,

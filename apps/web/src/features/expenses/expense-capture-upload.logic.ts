@@ -120,6 +120,17 @@ export function mergeCaptureManifest(
 export const allCaptureFilesStored = (files: CaptureUploadEntry[]): boolean =>
   files.length > 0 && files.every((file) => file.state === 'STORED');
 
+/**
+ * Is there work a new selection would throw away?
+ *
+ * A manifest only survives while a group is unfinished (`settleCaptureUpload` clears it the moment
+ * every file is stored), and the bytes it points at are on the SERVER — so clearing it because the
+ * customer picked another file abandons a group only this browser knew how to find. The panel asks
+ * instead: "ทำงานเดิมต่อ" or "เริ่มงานใหม่".
+ */
+export const hasUnfinishedCapture = (stored: CaptureUploadManifest | null): boolean =>
+  Boolean(stored && stored.files.length > 0 && !allCaptureFilesStored(stored.files));
+
 /** bytes → "9.8 MB". One decimal, because the limits users meet are whole-ish megabytes. */
 export const captureMegabytes = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 

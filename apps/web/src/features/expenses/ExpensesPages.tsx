@@ -63,9 +63,10 @@ import { TransactionTaxLineSelector } from '@/features/tax/TransactionTaxLineSel
 import { taxDefinitionRateForSource } from '@/features/tax/transaction-tax.model';
 import {
   allCaptureFilesStored, captureFileRejection, captureMegabytes,
-  readCaptureManifest, reconcileCaptureUpload, runCaptureUpload, writeCaptureManifest,
+  hasUnfinishedCapture, readCaptureManifest, reconcileCaptureUpload, runCaptureUpload, writeCaptureManifest,
   type CaptureUploadApi, type CaptureUploadEntry, type CaptureUploadState,
 } from './expense-capture-upload.logic';
+import { captureReadJobNotice } from './expense-capture-status.logic';
 import {
   bangkokMonthKey, classifyUploadFile, HeicDecodeError, isReceiptQuotaBlocked,
   availableExpenseSessionStorage,
@@ -216,13 +217,13 @@ export function nonExpenseNotice(classification: Pick<BusinessDocumentClassifica
 }
 
 export function extractionNotice(result: ExpenseExtractionResult, locale: SupportedLocale): ExtractionNotice {
-  // Appendix §3: the read could not finish inside the request, so it is a durable job now. The file
-  // is stored either way — the review page follows the job from here and fills in the rest.
-  if (result.readStatus && result.readStatus !== 'DONE') {
-    return result.readStatus === 'FAILED'
-      ? { tone: 'error', message: t('expenses.capture.read_failed', locale) }
-      : { tone: 'info', message: t('expenses.capture.read_stored_reading', locale) };
-  }
+  // Appendix §3: the read did not happen inside the request — it is a durable JOB now, and
+  // `readJobId` is the fact that says so. The status is only how far that job has got, so keying
+  // on it alone answered a replayed DONE job (same file, same bytes) with the success copy of a
+  // synchronous read, over a response that carries no fields at all. The file is stored either
+  // way, and the review page follows the job from here.
+  const jobNotice = captureReadJobNotice(result);
+  if (jobNotice) return { tone: jobNotice.tone, message: t(jobNotice.messageKey, locale) };
   if (result.status === 'ok') {
     const fields = result.fields;
     const summary = [
@@ -302,6 +303,8 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
   const [capability, setCapability] = useState<ExpenseCaptureCapabilityDto | null>(null);
   const [captureGroup, setCaptureGroup] = useState<{ groupId: string; revision: number } | null>(null);
   const [captureFiles, setCaptureFiles] = useState<CaptureUploadEntry[]>([]);
+  /** Files picked while an unfinished group is still stored — held until the customer chooses. */
+  const [pendingSelection, setPendingSelection] = useState<File[] | null>(null);
   const reselectIndexRef = useRef<number | null>(null);
   const reselectInputRef = useRef<HTMLInputElement>(null);
 
@@ -464,10 +467,25 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
     return null;
   };
 
-  const selectFiles = async (picked: File[]) => {
+  const selectFiles = async (picked: File[], resume?: 'continue' | 'restart') => {
+    const stored = readCaptureManifest(availableExpenseSessionStorage(window), companyId);
+    // A new selection used to clear the manifest outright. The bytes it points at are on the
+    // SERVER, and only this manifest knows which group they are in — so an unfinished group is a
+    // question, not something to discard on the customer's behalf (spec §14.3).
+    if (!resume && picked.length > 0 && hasUnfinishedCapture(stored)) {
+      setPendingSelection(picked);
+      return;
+    }
+    setPendingSelection(null);
     setSelectedFiles([]); setFileName(''); setFileNotice(null); setError(null);
-    setCaptureFiles([]); setCaptureGroup(null);
-    writeCaptureManifest(availableExpenseSessionStorage(window), null, companyId);
+    setCaptureFiles([]);
+    if (resume === 'continue' && stored) {
+      // Same group, same manifest: the new files are added to the work already there.
+      setCaptureGroup({ groupId: stored.groupId, revision: stored.revision });
+    } else {
+      setCaptureGroup(null);
+      writeCaptureManifest(availableExpenseSessionStorage(window), null, companyId);
+    }
     if (picked.length === 0) return;
     setPreparing(true);
     try {
@@ -608,6 +626,21 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
           </div>
         )}
         {error && <div className="mb-4"><ErrorBanner message={error} focus /></div>}
+        {pendingSelection && (
+          <div role="alert" className="mb-4 rounded-xl border border-warning-200 bg-warning-50 px-4 py-3 text-base text-warning-800">
+            <p>{t('expenses.capture.resume_question', locale)}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" className={cx(btnClass, 'h-11 px-4')}
+                onClick={() => { void selectFiles(pendingSelection, 'continue'); }}>
+                {t('expenses.capture.resume_continue', locale)}
+              </button>
+              <button type="button" className={cx(ghostClass, 'h-11 px-4')}
+                onClick={() => { void selectFiles(pendingSelection, 'restart'); }}>
+                {t('expenses.capture.resume_restart', locale)}
+              </button>
+            </div>
+          </div>
+        )}
         {/* Phones get the camera, not a dropzone. A phone has no drag, no file manager and no
             click, so the desktop copy below ("ลากไฟล์มาวาง หรือคลิกเพื่อเลือก") is an instruction the
             user cannot follow on the device they are holding — while photographing the receipt

@@ -184,7 +184,11 @@ export class CreateExpenseCaptureGroupUseCase {
 
   async execute(
     ctx: RequestContext,
-    cmd: { branchId?: string; note?: string; intakeChannel?: 'WEB' | 'LINE'; lineChatKeyHash?: string },
+    cmd: {
+      branchId?: string; note?: string; intakeChannel?: 'WEB' | 'LINE'; lineChatKeyHash?: string;
+      /** The chat id the LINE lane may push this group's result back into (§3, W07-int). */
+      linePushTargetId?: string;
+    },
   ): Promise<{ groupId: string; revision: number; webPath: string }> {
     if (!CREATE_PERMISSIONS.some((key) => ctx.permissions.includes(key))) {
       throw new ForbiddenException('Missing permission: expense.receipt.upload');
@@ -207,6 +211,8 @@ export class CreateExpenseCaptureGroupUseCase {
         companyId: ctx.companyId, branchId: branchId ?? null, createdByUserId: ctx.userId,
         intakeChannel, note: cmd.note?.trim() ? cmd.note.trim() : null,
         lineChatKeyHash: cmd.lineChatKeyHash ?? null,
+        // Only ever from the LINE lane's own event, and only alongside the hash it must match.
+        linePushTargetId: cmd.lineChatKeyHash ? cmd.linePushTargetId ?? null : null,
       });
       await this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId,
@@ -477,10 +483,14 @@ export class CompleteExpenseCaptureFileUseCase {
    * completed a second time (which `CompleteAttachmentUploadUseCase` refuses outright, stranding
    * the file forever). For the same reason the revision is bumped unconditionally below — once
    * the bytes exist, the group must record them; `expectedRevision` is the gate BEFORE storage.
+   *
+   * `readJobId` is null, never '', when a replay finds no job: an empty string is a value a caller
+   * can pass on as if it identified something (`markReadFailed('')` matches no row and answers
+   * false, which reads like "already terminal"). Absent is absent.
    */
   async execute(ctx: RequestContext, groupId: string, fileId: string, cmd: {
     byteSize?: number; checksumSha256?: string; expectedRevision: number; lineMessageId?: string;
-  }): Promise<{ fileId: string; attachmentId: string; revision: number; readJobId: string; uploadState: string; replayed: boolean }> {
+  }): Promise<{ fileId: string; attachmentId: string; revision: number; readJobId: string | null; uploadState: string; replayed: boolean }> {
     assertRevision(cmd.expectedRevision);
     const group = await this.access.load(ctx, groupId);
     if (!this.access.canAddFiles(ctx, group)) throw new ForbiddenException('Missing permission: expense.receipt.upload');
@@ -491,7 +501,7 @@ export class CompleteExpenseCaptureFileUseCase {
       const job = await this.capture.findJobByFile(this.capture.client, ctx.companyId, fileId);
       return {
         fileId, attachmentId: existing.attachmentId, revision: group.revision,
-        readJobId: job?.id ?? '', uploadState: existing.uploadState, replayed: true,
+        readJobId: job?.id ?? null, uploadState: existing.uploadState, replayed: true,
       };
     }
     if (existing.uploadState !== 'PENDING_UPLOAD') {
@@ -538,7 +548,7 @@ export class CompleteExpenseCaptureFileUseCase {
         const current = await this.capture.findGroup(tx, ctx.companyId, groupId);
         return {
           fileId, attachmentId: existing.attachmentId, revision: current?.revision ?? group.revision,
-          readJobId: job?.id ?? '', uploadState: 'STORED', replayed: true,
+          readJobId: job?.id ?? null, uploadState: 'STORED', replayed: true,
         };
       }
 

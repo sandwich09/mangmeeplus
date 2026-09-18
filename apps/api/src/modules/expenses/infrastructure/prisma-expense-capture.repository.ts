@@ -58,6 +58,8 @@ export type CaptureGroupRow = {
   handoffBatchKey: string | null;
   acceptedAllocationId: string | null;
   lineChatKeyHash: string | null;
+  /** The raw chat id a LINE result may be pushed into. Server-set; never leaves the API in a dto. */
+  linePushTargetId: string | null;
   note: string | null;
   closedReason: string | null;
   closedAt: Date | null;
@@ -119,12 +121,14 @@ export class PrismaExpenseCaptureRepository {
   createGroup(db: CaptureDb, input: {
     companyId: string; branchId: string | null; createdByUserId: string;
     intakeChannel: 'WEB' | 'LINE'; note?: string | null; lineChatKeyHash?: string | null;
+    linePushTargetId?: string | null;
   }): Promise<CaptureGroupRow> {
     return db.expenseCaptureGroup.create({
       data: {
         companyId: input.companyId, branchId: input.branchId, createdByUserId: input.createdByUserId,
         intakeChannel: input.intakeChannel, note: input.note ?? null,
         lineChatKeyHash: input.lineChatKeyHash ?? null,
+        linePushTargetId: input.linePushTargetId ?? null,
       },
     }) as Promise<CaptureGroupRow>;
   }
@@ -439,10 +443,23 @@ export class PrismaExpenseCaptureRepository {
     });
   }
 
-  findGroupAllocation(db: CaptureDb, companyId: string, groupId: string) {
-    return db.expenseCaptureAllocation.findFirst({
-      where: { companyId, groupId, status: { in: ['ACCEPTED', 'PREVIEW'] } },
-      orderBy: [{ status: 'asc' }, { computedAt: 'desc' }],
+  /**
+   * The allocation a reader should see: the DECISION if there is one, otherwise the newest
+   * proposal.
+   *
+   * Asked as two statements on purpose. `orderBy: { status: 'asc' }` does not mean "ACCEPTED
+   * first": a Postgres enum sorts by DECLARATION order and this one declares `PREVIEW` before
+   * `ACCEPTED`, so a group holding both — every reopened handoff (§18.2) — answered with the
+   * proposal instead of the acceptance the derived sources were built from.
+   */
+  async findGroupAllocation(db: CaptureDb, companyId: string, groupId: string) {
+    const accepted = await db.expenseCaptureAllocation.findFirst({
+      where: { companyId, groupId, status: 'ACCEPTED' },
+      orderBy: { computedAt: 'desc' },
+    });
+    return accepted ?? db.expenseCaptureAllocation.findFirst({
+      where: { companyId, groupId, status: 'PREVIEW' },
+      orderBy: { computedAt: 'desc' },
     });
   }
 
