@@ -1,6 +1,6 @@
 # Agent Memory: LINE AI wave 2 — เครดิต AI wording, receipt refusal copy, deterministic reads
 
-Status: spec + plan written 2026-09-18 from owner decisions (message 2026-09-18). H1 (wording / receipt copy / billing holds) and H2 (deterministic reads, R5, incl. the owner-authorised corpus replay) IMPLEMENTED and verified locally; H2 in CI (PRs #624 / #626), H1 merged with H2 and going through the controller gate; H3 (hold reconciliation) next. Nothing deployed.
+Status: spec + plan written 2026-09-18 from owner decisions (message 2026-09-18). H1 (wording / receipt copy / billing holds), H2 (deterministic reads, R5, incl. the owner-authorised corpus replay) and **H3 (hold reconciliation — all three layers)** IMPLEMENTED and verified locally; H2 in CI (PRs #624 / #626), H1 merged with H2 and going through the controller gate; H3 awaiting the controller gate. Nothing deployed; hold-spec J-08 (UAT) is the only acceptance item still open.
 Owner: thawatchai + Fable 5.1 (controller) + Opus 5 (implementer)
 Scope: [spec](../specs/line-ai-credit-wording-and-deterministic-reads-spec-th.md), [plan](../plans/line-ai-credit-wording-and-deterministic-reads-plan-th.md). Continues the A–F remediation ([handoff](line-intake-cost-and-budget-receipt-behavior-2026-09-17.md#delivery-summary-and-handoff--2026-09-18)).
 Decisions:
@@ -10,7 +10,8 @@ Decisions:
 - Trial numbers (spec §7): chat 80 THB, receipts 15 (count), OCR money guard 60 THB, total 140 THB — applied per company by an admin after deploy; per-package defaults belong to the coming credit concept.
 Open questions:
 - ~~Owner authorisation for the R5 corpus replay Bedrock spend~~ — granted 2026-09-18; run done, THB 16.52 of the THB 100 phase guard (see H2 Verification).
-- (closed 2026-09-18) Owner approved the hold-reconciliation proposal → [spec](../specs/line-ai-credit-hold-reconciliation-spec-th.md); CloudWatch recovery replaced by in-process durable retry + graceful drain (reason in that spec §2).
+- (closed 2026-09-18) Owner approved the hold-reconciliation proposal → [spec](../specs/line-ai-credit-hold-reconciliation-spec-th.md); CloudWatch recovery replaced by in-process durable retry + graceful drain (reason in that spec §2). Implemented in H3 below.
+- H3 residual for the owner: there is **no read-only platform role**. `canManage: false` has been an API fact since D2 and the page handles it, but `apps/web/app/system/layout.tsx` admits only a membership carrying the `SYSTEM_ADMIN` role key, and that role holds every `system.*` permission — so no real login can open the partner console read-only. Creating such a role changes who may see every other system page too, so it is an owner decision, not a side effect of H3.
 - H2 residual for the owner: `tax.get_vat_summary` has no whitelisted input field, so neither the lane nor the loop can ask for a period other than the current one — `ภาษีเดือนที่แล้ว` is answered for the period the tool defaults to, labelled with that period. Whitelisting `periodKey` changes the intake catalog, so it needs its own round.
 - H2 residual: letting the model give real advice needs `SAFE_REPLY_WORDS` widened (and its compound entries fixed — `ตรวจสอบ` never matches because `Intl.Segmenter` splits it). That widens what the model may say, so it is an owner decision, not a side effect of this wave.
 
@@ -100,12 +101,97 @@ Verification (H1, 2026-09-18, all local, each heavy job behind `/tmp/mangmee-hea
 - Throwaway evidence stack: Postgres 15484 / Redis 16384 containers, API 3084, web 3085, `BILLING_MODE=test` with no Stripe secret, no provider, no LINE, no cloud; torn down, `apps/web/next-env.d.ts` restored, generated `apps/web/{AGENTS,CLAUDE}.md` removed
 Next:
 1. Controller (Fable) reviews the H1 diff for bugs/gaps/impact.
-2. H2 (deterministic reads, spec §6 / W-05–W-07) — not started.
+2. ~~H2 (deterministic reads, spec §6 / W-05–W-07)~~ — done, see above.
 3. Merge develop into the H1 branch, then PR pairs + strict CI chain; the two browser smokes get their first real run there.
 4. W-09 (real LINE transcript) after a UAT deploy, per the deployment runbook.
+5. H3 is implemented and locally verified (see below). Controller review, then it rides the same PR
+   chain; hold-spec J-08 (synthetic hold cleared through the real UAT page) after that deploy.
 
 H1 findings worth carrying:
 - The retired wording also hid behind collocations `grep "งบ AI"` cannot see: the sidebar item `งบการใช้ AI` (`SystemHeader.tsx`) and `platform_ai_budget_default_below_split_allocation` (`งบเริ่มต้น…`). Naive `sed` on `งบ` is unsafe — `ของบริษัท` and `ลงบัญชี` both contain it.
 - `workspace-i18n.spec.ts` asserts the five `expenses.extract_ai_budget_*` reasons each read DIFFERENTLY, so §4's one-sentence collapse was applied to the LINE picture lane only (which is what W-02 asks for); the web keys took the §3 vocabulary and kept their distinct reasons.
 - `isAiBudgetPermanentRefusal` answers for the four money codes only. Routing `OCR_MONTHLY_LIMIT_EXCEEDED` onto the shared sentence needed its own predicate, or a count ceiling would have been rendered with the transient ⏳.
 - `readAiBudgetReadiness`'s truth table is asserted with `deepStrictEqual`, so the additive `reserved` field required three expectation updates in `company-ai-usage-meter.spec.ts` — behaviour unchanged.
+
+## H3 — reconciling held AI credit (unresolved holds and breach), 2026-09-18
+
+[Spec](../specs/line-ai-credit-hold-reconciliation-spec-th.md) (J-01…J-07 ticked, J-08 open),
+[plan H3](../plans/line-ai-credit-wording-and-deterministic-reads-plan-th.md#h3-เคลียร์เครดิตที่กันไว้ค้าง--spec-แยก-owner-อนุมัติ-2026-09-18),
+[ADR 0013 §14](../adr/0013-ai-budget-split-reservations.md#14-implementation-notes-h3).
+
+Artifacts (worktree `/private/tmp/mangmee-line-ai-wave2-h3-20260918`, branch
+`codex/line-ai-wave2-h3-hold-reconciliation-20260918`, off the merged H1+H2 commit `ef8bd608`;
+four local commits `a53015ec` gateway, `c618e605` api, `4aedd5c3` web, `cb69c910` evidence):
+
+| file | why |
+| --- | --- |
+| `apps/ai-gateway/.../usage/ai-budget-durability.ts` | NEW. Process-wide settle-evidence queue (1s/5s/30s/60s, ~10 min, 1,000 cap, ids-only drop log) plus the in-flight gauge the drain waits on, plus `drainAiBudgetDurability` |
+| `apps/ai-gateway/.../usage/ai-budget-shutdown.service.ts` | NEW. 12 lines: `OnApplicationShutdown` → the drain, with the configured budget. Explicit `@Inject` token (the tsx boot spec emits no ctor metadata) |
+| `apps/ai-gateway/.../usage/ai-budget-seam.ts` | the two inline attempts factored into `attemptOnce`, which the queue re-posts verbatim; `companyId` added to the settle input for the log lines |
+| `apps/ai-gateway/.../usage/ai-budget-provider.ts` | `begin/endGuardedProviderCall` around the guarded call (inside the envelope branch only) and `companyId` passed to settle |
+| `apps/ai-gateway/src/main.ts` | `app.enableShutdownHooks()` — without it Nest ignores SIGTERM entirely |
+| `apps/ai-gateway/.../usage/ai-usage.interceptor.spec.ts` | +13 tests. Same file as the envelope machinery, for the reason already recorded there: the gateway's `package.json` test list is a fixed list this change may not edit |
+| `apps/api/prisma/{schema.prisma,migrations/20260918100000_ai_credit_hold_reconciliation}` | `breachAcknowledgedAt/By` (nullable, no FK) + the `AiUsageEvent_usageBasis_check` widened for the new basis |
+| `apps/api/.../line-ai/application/company-ai-budget-reservation.ts` | `operator_released` proof, the three operator primitives, `sweepAiBudgetCompanyMonth`, `listAiBudgetCreditHolds`, `shortenInvocationKey`, the `UNACKNOWLEDGED_BREACH` predicate, and the `operator` block on `settleAiBudgetStep` |
+| `apps/api/.../use-cases/partner-ai-credit-holds.use-case.ts` | NEW. Reason, company lock, sweep-before-read, DTO mapping and the four typed refusals |
+| `apps/api/.../http/partner.controller.ts` | `GET …/ai-credit-holds` (dashboard read) + three POST actions (`system.partner_ai_model.manage`) + the one-field body DTO |
+| `apps/api/.../partner-ai-adjustment-history.ts`, `.../audit-action.ts` | the three new actions read into the SAME history list; two new before/after fields |
+| `apps/api/.../get-partner-ai-usage.use-case.ts` | `OPERATOR_CHARGED_AT_BOUND` in `USAGE_BASES`, before UNKNOWN |
+| `apps/api/.../signup-ops-alert.service.ts` + `signup-claim-email-internal.controller.ts` | `ai_credit_holds_unresolved` on the existing 15-minute sweep, counting companies |
+| `apps/api/src/common/config/app-config.service.ts`, `packages/config/src/index.ts` | `AI_CREDIT_HOLD_ALERT_AFTER_HOURS` (24) and `AI_GATEWAY_SHUTDOWN_DRAIN_MS` (20,000) |
+| `packages/contracts/src/{ai-lineage,partner-management}.ts` | the new basis member, `PartnerAiCreditHold*` DTOs, two history fields |
+| `apps/web/.../ai-budget.logic.ts` (+spec) | step-kind labels, kind labels, age text, the three consequence texts, the conflict predicate, the new basis label |
+| `apps/web/.../PartnerDetailPage.tsx` | `AiCreditHoldsPanel` + the state/handler under the existing `generation` token |
+| `apps/web/.../PartnerAiAdjustmentHistory.tsx`, `system-partners.api.ts`, `api-error-message.ts` | Thai for the two new fields, the read + one action writer, four new Thai error texts |
+| `.github/workflows/ci.yml`, `scripts/line-ai-whole-chain-acceptance.catalog.mjs` | the pg spec's two env vars + run line; the new api unit spec registered (spec-suite-coverage guard) |
+| `docs/qa/evidence/line-ai-credit-holds-2026-09-18/` | 24 element screenshots (1.1 MB) + README + 4 manifests |
+
+Decisions worth carrying:
+
+- **`eventKind = COST_ADJUSTMENT` for an operator charge**, not a third event kind. The D1 breakdown
+  already means "money, not a provider call" by it, and the web already prints
+  "ซึ่งไม่นับเป็นจำนวนครั้งที่เรียกโมเดล" for it — so J-07 fell out of existing logic with no new
+  branch and no widened `eventKind` CHECK.
+- **`normalizeUsageBasis` stays at two values.** The new basis is in the contract but the
+  untrusted-wire guard does not accept it, or a gateway could label a real call an operator decision
+  and (through the event kind above) hide it from the call count.
+- **`breach` is never cleared**; the acknowledgement is two new columns and one shared predicate.
+- **The operator cancel proof has no owner token** — a stranded hold has no live owner. Fenced on
+  `status='UNRESOLVED'` + reservation id + the route's company id instead.
+- **The drain budget is 20s** because `deploy.sh` sets no `stopTimeout` on the ECS Express
+  `primaryContainer` (the shape has no such field) → ECS's own 30s. Kamal's 180s is the native path.
+- The gateway tests live in `ai-usage.interceptor.spec.ts` because `package.json` is off-limits;
+  the new API unit spec went into the whole-chain catalog for the same reason.
+
+Verification (all local, 2026-09-18, heavy ones behind `/tmp/mangmee-heavy.lock`):
+
+| command | result |
+| --- | --- |
+| FULL `pnpm --filter @watchdog-bms/api test` | exit 0, 9,174 dot-tests, 0 failures |
+| FULL `pnpm --filter @watchdog-bms/ai-gateway test` | 1,198/1,198 pass (143 suites), 0 fail |
+| FULL `pnpm --filter @watchdog-bms/web test` | 1,780/1,780 pass, 0 fail |
+| `pnpm --filter @watchdog-bms/contracts test` | 253/253 |
+| `pnpm --filter @watchdog-bms/config test` | 143/143 |
+| `company-ai-credit-holds.pg.spec.ts` (throwaway PG 15487) | 10/10 |
+| `company-ai-budget-reservation.pg.spec.ts` (same DB) | 16/16, no regression |
+| focused: reservation 62, hold use case 21, partner controller 25, ops alert 26, web logic 48, gateway interceptor 46, api meter/usage/history/coverage 232 (+5 PG-only skips) | all pass |
+| `node scripts/run-line-ai-whole-chain-acceptance.mjs` | PASS, 8 suites |
+| `pnpm test:harness` | 17/17 |
+| typechecks api (`--max-old-space-size=8192`) / web (`next typegen && tsc`) / gateway / contracts | all clean |
+| `pnpm --filter @watchdog-bms/api test:boot` | Nest resolved every provider in 133 ms |
+| `prisma migrate diff` (migrated throwaway DB → schema) | no H3 delta; the 12 residual items (6 renamed indexes, 4 `updatedAt` defaults, 1 FK move) are identical against the pre-H3 committed schema, so they are pre-existing repo drift |
+| `git diff --check` | clean |
+
+Findings worth carrying:
+
+- `app.boot.spec.ts` caught a real defect: a gateway provider without an explicit `@Inject(...)`
+  token resolves to `undefined` under the tsx local-dev loader, and the shutdown hook then throws on
+  the way out. Every gateway provider needs the explicit token.
+- `get-partner-ai-usage.use-case.spec.ts` asserts `byUsageBasis` with `deepEqual`, so adding a basis
+  key required updating that expectation — behaviour unchanged, the slice still reconciles.
+- The evidence stack needs `CORS_ALLOWED_ORIGINS` to list the SAME host the browser uses
+  (`127.0.0.1`, not `localhost`): the GETs pass through the Next proxy either way, but the three
+  POSTs answer **500 "Origin is not allowed by CORS"**. Cost one wasted capture run.
+- `prisma migrate diff` in Prisma 7 takes `--from-config-datasource` / `--to-schema`;
+  `--from-schema-datasource` and `--shadow-database-url` print the help text and exit 0, which reads
+  like a pass. Always check the output, never the exit code alone.

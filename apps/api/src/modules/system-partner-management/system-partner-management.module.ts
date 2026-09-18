@@ -38,6 +38,7 @@ import {
 import { PlanTermSweepUseCase } from './application/use-cases/plan-term-sweep.use-case';
 import { GetPartnerTimelineUseCase } from './application/use-cases/get-partner-timeline.use-case';
 import { SendPartnerLineMessageUseCase } from './application/use-cases/send-partner-line-message.use-case';
+import { PartnerAiCreditHoldsUseCase } from './application/use-cases/partner-ai-credit-holds.use-case';
 import { PackageChangeDecisionUseCase } from './application/use-cases/package-change-decision.use-case';
 import { SystemPackageChangeController } from './presentation/http/system-package-change.controller';
 
@@ -84,6 +85,7 @@ import { SystemPackageChangeController } from './presentation/http/system-packag
     PlanTermSweepUseCase,
     GetPartnerTimelineUseCase,
     SendPartnerLineMessageUseCase,
+    PartnerAiCreditHoldsUseCase,
     PackageChangeDecisionUseCase,
   ],
   // Verified billing recovery uses the same lifecycle writer and its audit/notification effects.

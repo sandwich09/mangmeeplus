@@ -18,6 +18,9 @@ import type {
   PartnerFeatureEntitlementDto,
   PartnerAiConfigurationDto,
   PartnerAiUsageDto,
+  PartnerAiCreditHoldActionResultDto,
+  PartnerAiCreditHoldDto,
+  PartnerAiCreditHoldsDto,
   PartnerAiUsageMeasuresDto,
   PartnerAiUsageMonthDto,
   PlatformAiBudgetDto,
@@ -62,6 +65,9 @@ export type {
   PartnerFeatureEntitlementDto,
   PartnerAiConfigurationDto,
   PartnerAiUsageDto,
+  PartnerAiCreditHoldActionResultDto,
+  PartnerAiCreditHoldDto,
+  PartnerAiCreditHoldsDto,
   PartnerAiUsageMeasuresDto,
   PartnerAiUsageMonthDto,
   PlatformAiBudgetDto,
@@ -188,6 +194,27 @@ export async function setPartnerAiModel(
 
 export async function getPartnerAiUsage(companyId: string): Promise<PartnerAiUsageDto> {
   return apiFetch<PartnerAiUsageDto>(`/v1/system/partners/${companyId}/ai-usage`);
+}
+
+/** Held credit that needs an operator decision (hold spec §4.1). The API sweeps before it lists. */
+export async function getPartnerAiCreditHolds(companyId: string): Promise<PartnerAiCreditHoldsDto> {
+  return apiFetch<PartnerAiCreditHoldsDto>(`/v1/system/partners/${encodeURIComponent(companyId)}/ai-credit-holds`);
+}
+
+/**
+ * One writer for the three decisions (hold spec §4.2): the path segment is the only difference, and
+ * `suppressErrorToast` keeps the typed 404/409 for the page's own reload-and-explain handling.
+ */
+export async function actOnPartnerAiCreditHold(
+  companyId: string,
+  reservationId: string,
+  action: 'release' | 'charge-at-bound' | 'acknowledge-breach',
+  reason: string,
+): Promise<PartnerAiCreditHoldActionResultDto> {
+  return apiFetch<PartnerAiCreditHoldActionResultDto>(
+    `/v1/system/partners/${encodeURIComponent(companyId)}/ai-credit-holds/${encodeURIComponent(reservationId)}/${action}`,
+    { method: 'POST', body: JSON.stringify({ reason }), suppressErrorToast: true },
+  );
 }
 
 export function getPartnerAiAdjustments(companyId:string, cursor?:string):Promise<PartnerAiAdjustmentHistory> {

@@ -56,6 +56,8 @@ export class AiGatewayConfigService {
   get aiPromptLoggingEnabled(): boolean { return this.config.AI_PROMPT_LOGGING_ENABLED; }
   get aiMaxToolCalls(): number { return this.config.AI_MAX_TOOL_CALLS; }
   get aiToolTimeoutMs(): number { return this.config.AI_TOOL_TIMEOUT_MS; }
+  /** Hold spec §3: SIGTERM budget for finishing guarded provider calls and flushing evidence. */
+  get shutdownDrainMs(): number { return this.config.AI_GATEWAY_SHUTDOWN_DRAIN_MS; }
   // Item 10B local agent orchestration
   get lineAiAgentOrchestrationEnabled(): boolean { return this.config.LINE_AI_AGENT_ORCHESTRATION_ENABLED; }
   get lineAiAgentRuntime(): string { return this.config.LINE_AI_AGENT_RUNTIME; }

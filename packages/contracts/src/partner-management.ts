@@ -245,6 +245,59 @@ export type PartnerAiBudgetPositionDto = {
   breach: boolean;
 };
 
+/**
+ * One row of the operator's hold-reconciliation list (hold spec §4.1).
+ *
+ * Money and ids only. There is deliberately NO customer message text, prompt or LINE identifier
+ * here: the only reason an operator opens this list is to decide what to do with held credit, and
+ * the attempt key is already a truncated hash.
+ */
+export type PartnerAiCreditHoldDto = {
+  /** `AiBudgetReservation.id` — what the three action routes take. */
+  id: string;
+  /** `UNRESOLVED` for a hold nobody could close; `SETTLED` for an unacknowledged breach row. */
+  status: 'UNRESOLVED' | 'SETTLED';
+  /** Why this row is on the list: a stranded hold, or an actual above its bound closing a scope. */
+  kind: 'UNRESOLVED_HOLD' | 'BREACH';
+  /** Declared step kind (`line-turn`, `receipt-ocr`, …). The web owns the Thai label. */
+  stepKind: string;
+  bucket: PartnerAiBudgetBucket;
+  sourceRoute: string;
+  requestKind: PartnerAiRequestKind;
+  /** The hold. `charge_at_bound` records exactly this as the actual. */
+  upperBoundSatang: number;
+  /** Only a breach row has settled money; an `UNRESOLVED` hold has none yet. */
+  settledCostSatang: number | null;
+  /** 'YYYY-MM', Asia/Bangkok — the PINNED month this hold settles into. */
+  monthKey: string;
+  createdAt: string;
+  dispatchedAt: string | null;
+  /** Shortened for display; never the full execution identity. */
+  invocationKeyShort: string;
+};
+
+export type PartnerAiCreditHoldsDto = {
+  /** Whether the CALLER may act. Reading is `system.partner_dashboard.read`; every button is
+   *  `system.partner_ai_model.manage`, so a read-only operator sees the table and no buttons. */
+  canManage: boolean;
+  /** The company is DISABLED/ARCHIVED, so nothing on this card may be written. */
+  companyLocked: boolean;
+  /** Current and previous Bangkok month, newest hold first. */
+  items: PartnerAiCreditHoldDto[];
+  /** The two months the list covers, for the "nothing outside these" sentence. */
+  monthKeys: string[];
+};
+
+/** What `POST …/ai-credit-holds/:id/<action>` answers. */
+export type PartnerAiCreditHoldActionResultDto = {
+  id: string;
+  action: 'release' | 'charge_at_bound' | 'acknowledge_breach';
+  /** Terminal status of the hold after the decision. */
+  status: 'CANCELLED' | 'SETTLED';
+  /** Satang this decision recorded as real spend; 0 for release and acknowledge. */
+  chargedSatang: number;
+};
+
 export const PARTNER_ADJUSTMENT_REASON_MAX_LENGTH = 500;
 export function partnerAdjustmentReason(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= PARTNER_ADJUSTMENT_REASON_MAX_LENGTH
@@ -254,7 +307,10 @@ export type PartnerAiAdjustmentField = 'modelId' | 'monthlyBudgetSatang' | 'enab
   // Split-policy history (spec §12.4). Scalars only, like every field above: `pendingBudgetPolicy`
   // is rendered as the compact string `<mode>:<chat>:<ocr>:<YYYY-MM>` so a scheduled change, an
   // edit of one and a cancellation each show up as a plain before/after pair.
-  | 'budgetMode' | 'chatMonthlyBudgetSatang' | 'ocrMonthlyBudgetSatang' | 'budgetConfigVersion' | 'pendingBudgetPolicy';
+  | 'budgetMode' | 'chatMonthlyBudgetSatang' | 'ocrMonthlyBudgetSatang' | 'budgetConfigVersion' | 'pendingBudgetPolicy'
+  // Hold reconciliation (hold spec §4.2). One field per operator decision, each a before/after pair
+  // of the hold's own status or breach state, so the history row reads as a plain transition.
+  | 'creditHoldStatus' | 'creditBreachAcknowledged';
 export type PartnerAiAdjustmentHistory = {
   items: Array<{ id:string; recordedAt:string; actorId:string|null; actorName:string|null; source:'ADMIN_ADJUSTMENT'|'LEGACY_ADMIN'; reason:string|null;
     changes:Array<{field:PartnerAiAdjustmentField;before:string|number|boolean|null;after:string|number|boolean|null}> }>;
@@ -296,7 +352,8 @@ export type PartnerAiUsageMonthDto = {
 
 export type PartnerAiRequestKind = 'TEXT' | 'IMAGE' | 'OTHER' | 'UNKNOWN';
 export type PartnerAiBudgetBucket = 'CHAT' | 'OCR' | 'UNKNOWN';
-export type PartnerAiUsageBasis = 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE' | 'UNKNOWN';
+/** `UNKNOWN` stays LAST: the breakdown folds an unrecognised stored value into the final key. */
+export type PartnerAiUsageBasis = 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE' | 'OPERATOR_CHARGED_AT_BOUND' | 'UNKNOWN';
 
 /**
  * One slice of a month's AI spend, derived from `AiUsageEvent` rows (remediation spec §11.1).

@@ -3482,7 +3482,10 @@ model AiUsageEvent {
   // REPLAY into a LOST usage write rather than a deduplicated one.
   requestKind           String? // 'TEXT' | 'IMAGE' | 'OTHER'; null = legacy/unknown
   budgetBucket          String? // 'CHAT' | 'OCR'; null = legacy/unknown
-  usageBasis            String? // 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE'; null = legacy/unknown
+  // 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE' | 'OPERATOR_CHARGED_AT_BOUND'; null = legacy/unknown.
+  // The third is written ONLY by the operator hold-reconciliation path (hold spec §4.2); the
+  // gateway's wire guard still accepts the two provider values only.
+  usageBasis            String?
   eventKind             String   @default("MODEL_CALL") // 'MODEL_CALL' | 'COST_ADJUSTMENT'
   /** Unit rates/FX this row was priced at plus per-component satang incl. a `rounding` term, so
    *  the components sum EXACTLY to costSatang. Null on legacy rows: component cost is then
@@ -3594,6 +3597,11 @@ model AiBudgetReservation {
   evidenceJson      Json?
   /** Actual settled above the reserved bound: admission for the scope closes until an operator clears it. */
   breach            Boolean   @default(false)
+  /** The operator's acknowledgement of that breach (hold spec §4.2). `breach` keeps the historical
+   *  fact; these two are what reopens admission, and the AuditLog row is the authority on who. No
+   *  FK to User on purpose: nothing about an account may cascade into money history. */
+  breachAcknowledgedAt       DateTime?
+  breachAcknowledgedByUserId String?
   createdAt         DateTime  @default(now())
   dispatchedAt      DateTime?
   settledAt         DateTime?

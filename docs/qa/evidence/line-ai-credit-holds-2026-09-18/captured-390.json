@@ -1,0 +1,153 @@
+{
+  "viewport": {
+    "width": 390,
+    "height": 900
+  },
+  "capturedAt": "2026-09-18T06:51:15.442Z",
+  "clientErrors": [],
+  "images": [
+    {
+      "name": "holds-empty",
+      "file": "holds-empty-390.png",
+      "bytes": 20697,
+      "clip": {
+        "x": 25,
+        "y": 2814,
+        "width": 340,
+        "height": 242
+      },
+      "note": "No hold at all: one line \"ไม่มีรายการค้าง\", no table, and the help line still shown.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "holds-with-rows",
+      "file": "holds-with-rows-390.png",
+      "bytes": 41171,
+      "clip": {
+        "x": 25,
+        "y": 2904,
+        "width": 340,
+        "height": 673
+      },
+      "note": "Two UNRESOLVED holds with the six columns, the two per-row buttons, and the reason box.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "holds-breach-row",
+      "file": "holds-breach-row-390.png",
+      "bytes": 18297,
+      "clip": {
+        "x": 25,
+        "y": 3156,
+        "width": 664,
+        "height": 311
+      },
+      "note": "A breach row: the settled actual above the bound, \"ใช้เกินที่กันไว้\" and only the รับทราบ button.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "holds-locked-company",
+      "file": "holds-locked-company-390.png",
+      "bytes": 36369,
+      "clip": {
+        "x": 25,
+        "y": 2572,
+        "width": 340,
+        "height": 458
+      },
+      "note": "ARCHIVED company: the hold is visible and every button is gone, with the reason named.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "holds-release-confirm",
+      "file": "holds-release-confirm-390.png",
+      "bytes": 33858,
+      "clip": {
+        "x": 0,
+        "y": 3841,
+        "width": 414,
+        "height": 286
+      },
+      "note": "The confirm dialog for a release: the amount, that the credit returns immediately, that no cost is recorded, and the late-evidence promise.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "holds-after-release",
+      "file": "holds-after-release-390.png",
+      "bytes": 41900,
+      "clip": {
+        "x": 25,
+        "y": 3018,
+        "width": 340,
+        "height": 621
+      },
+      "note": "After the release: that row is gone from the list, and the money position above it moved.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "holds-charge-confirm",
+      "file": "holds-charge-confirm-390.png",
+      "bytes": 32519,
+      "clip": {
+        "x": 0,
+        "y": 3821,
+        "width": 414,
+        "height": 306
+      },
+      "note": "The confirm dialog for charge-at-bound: the amount becomes real spend, and it is not a model call.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "holds-after-charge",
+      "file": "holds-after-charge-390.png",
+      "bytes": 79291,
+      "clip": {
+        "x": 25,
+        "y": 2046,
+        "width": 340,
+        "height": 1036
+      },
+      "note": "After charge-at-bound: the OCR row of the position table shows the bound as SPENT, not held.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "holds-acknowledge-confirm",
+      "file": "holds-acknowledge-confirm-390.png",
+      "bytes": 31390,
+      "clip": {
+        "x": 0,
+        "y": 3061,
+        "width": 414,
+        "height": 286
+      },
+      "note": "The confirm dialog for an acknowledgement: no money moves, the scope reopens, check the cap first.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "holds-after-acknowledge",
+      "file": "holds-after-acknowledge-390.png",
+      "bytes": 21673,
+      "clip": {
+        "x": 25,
+        "y": 2956,
+        "width": 340,
+        "height": 242
+      },
+      "note": "After the acknowledgement: the list is empty, so nothing on this company is closing a scope any more.",
+      "pageOverflowPx": 0
+    },
+    {
+      "name": "holds-history",
+      "file": "holds-history-390.png",
+      "bytes": 83071,
+      "clip": {
+        "x": 21,
+        "y": 4738,
+        "width": 348,
+        "height": 1124
+      },
+      "note": "The adjustment history: the three decisions in Thai, each with its actor and its reason.",
+      "pageOverflowPx": 0
+    }
+  ]
+}
