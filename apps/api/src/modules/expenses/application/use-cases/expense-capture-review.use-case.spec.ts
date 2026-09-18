@@ -8,7 +8,14 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import type { ExpenseCaptureObservations } from '@watchdog-bms/contracts';
+import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
+import {
+  ExpenseCaptureFactsDto,
+  ExpenseCaptureRevisionDto,
+  ExpenseCaptureReviewDto,
+} from '../../presentation/http/expense-capture.dtos';
 import { ExpenseCaptureAccessService } from './expense-capture-group.use-case';
 import {
   AcceptExpenseCaptureAllocationUseCase,
@@ -503,5 +510,68 @@ describe('facts edit', () => {
       }),
       (error: unknown) => status(error) === 404,
     );
+  });
+});
+
+// ─── DTO boundary ─────────────────────────────────────────────────────────────
+
+/**
+ * The real global pipe, not a copy: `whitelist` + `forbidNonWhitelisted` refuse a top-level field
+ * nobody declared, and — because the three payload maps are keyed by server-assigned ids and carry
+ * no nested class — their CONTENTS pass straight through to the use case, which is exactly why the
+ * use case re-checks every one of them.
+ */
+describe('W04a HTTP DTOs', () => {
+  const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+  const body = (metatype: unknown, value: Record<string, unknown>) =>
+    pipe.transform(value, { type: 'body', metatype: metatype as never });
+  const rejects = (metatype: unknown, value: Record<string, unknown>) =>
+    assert.rejects(() => body(metatype, value), BadRequestException, JSON.stringify(value));
+
+  it('accepts the three payloads and leaves the id-keyed maps intact', async () => {
+    const facts = await body(ExpenseCaptureFactsDto, {
+      fileId: 'f1', patch: { items: [{ id: '1:1', amount: '10.00' }] }, expectedRevision: 3,
+    }) as ExpenseCaptureFactsDto;
+    assert.equal(facts.patch.items![0]!.amount, '10.00');
+
+    const review = await body(ExpenseCaptureReviewDto, {
+      businessUse: 'MIXED', fundingRoute: 'EMPLOYEE', payerUserId: 'user-1', expectedRevision: '2',
+      selection: { 'f1:1:1': { companyQuantity: '2' } },
+      taxReview: { 'issuer:x': { vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE', taxEvidenceStatus: 'SUPPORTING_ONLY' } },
+      expenseDateChoice: { 'issuer:x': 'payment' },
+    }) as ExpenseCaptureReviewDto;
+    // `transform` turns the query-style string into the integer the CAS compares.
+    assert.equal(review.expectedRevision, 2);
+    assert.deepEqual(review.selection, { 'f1:1:1': { companyQuantity: '2' } });
+    assert.equal((review.expenseDateChoice as Record<string, unknown>)['issuer:x'], 'payment');
+
+    assert.equal((await body(ExpenseCaptureRevisionDto, { expectedRevision: 4 }) as ExpenseCaptureRevisionDto).expectedRevision, 4);
+  });
+
+  it('refuses a payload without the revision the caller last read', async () => {
+    await rejects(ExpenseCaptureFactsDto, { fileId: 'f1', patch: {} });
+    await rejects(ExpenseCaptureReviewDto, { businessUse: 'MIXED', fundingRoute: 'COMPANY' });
+    await rejects(ExpenseCaptureRevisionDto, { expectedRevision: 0 });
+  });
+
+  it('refuses a business use or funding route outside the enum', async () => {
+    await rejects(ExpenseCaptureReviewDto, { businessUse: 'MAYBE', fundingRoute: 'COMPANY', expectedRevision: 1 });
+    await rejects(ExpenseCaptureReviewDto, { businessUse: 'MIXED', fundingRoute: 'PETTY_CASH', expectedRevision: 1 });
+  });
+
+  it('refuses a patch or a selection that is not an object at all', async () => {
+    await rejects(ExpenseCaptureFactsDto, { fileId: 'f1', patch: 'ทั้งหมด', expectedRevision: 1 });
+    await rejects(ExpenseCaptureFactsDto, { patch: {}, expectedRevision: 1 });
+    await rejects(ExpenseCaptureReviewDto, { businessUse: 'MIXED', fundingRoute: 'COMPANY', expectedRevision: 1, selection: 'ทุกชิ้น' });
+  });
+
+  it('refuses a server-owned field a client tried to set', async () => {
+    await rejects(ExpenseCaptureReviewDto, {
+      businessUse: 'MIXED', fundingRoute: 'EMPLOYEE', expectedRevision: 1, status: 'HANDED_OFF',
+    });
+    await rejects(ExpenseCaptureReviewDto, {
+      businessUse: 'MIXED', fundingRoute: 'EMPLOYEE', expectedRevision: 1, acceptedAllocationId: 'alloc-1',
+    });
+    await rejects(ExpenseCaptureRevisionDto, { expectedRevision: 1, allocationId: 'alloc-1' });
   });
 });
