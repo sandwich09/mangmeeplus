@@ -15,9 +15,8 @@ import {
   EXPENSE_CAPTURE_MAX_PROVIDER_CALLS,
   EXPENSE_CAPTURE_MAX_RUN_MS,
   ExpenseCaptureReadRunnerService,
-  planWindows,
-  priorDocuments,
 } from './expense-capture-read-runner.service';
+import { planWindows, priorDocuments } from '../../domain/logic/expense-capture-assembly.logic';
 
 const classification: BusinessDocumentClassification = {
   contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
