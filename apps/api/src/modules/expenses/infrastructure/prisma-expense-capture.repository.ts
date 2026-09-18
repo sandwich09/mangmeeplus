@@ -16,6 +16,10 @@ export type CaptureGroupRow = {
   businessUse: 'UNKNOWN' | 'ALL_COMPANY' | 'MIXED';
   fundingRoute: 'UNKNOWN' | 'COMPANY' | 'EMPLOYEE';
   payerUserId: string | null;
+  /** `{ [scopeKey]: { vatMode, inputVatClaimStatus, taxEvidenceStatus, reviewedByUserId, reviewedAt } }`. */
+  taxReviewJson: unknown;
+  /** `{ [scopeKey]: 'payment' | 'document' | 'order' | { date } }` — the reviewed date per scope. */
+  expenseDateSourceJson: unknown;
   handoffState: 'NONE' | 'ACTIVE' | 'RELEASED';
   acceptedAllocationId: string | null;
   note: string | null;
@@ -275,6 +279,101 @@ export class PrismaExpenseCaptureRepository {
       where: { companyId, groupId, status: { in: ['ACCEPTED', 'PREVIEW'] } },
       orderBy: [{ status: 'asc' }, { computedAt: 'desc' }],
     });
+  }
+
+  // ─── W04a: human facts, allocations, payer (appendix §9) ────────────────────
+
+  /**
+   * The next version for one file's facts. `@@unique([companyId, fileId, version])` is the real
+   * fence — this only picks the number, and a loser retries against a conflict rather than
+   * overwriting the version somebody else just wrote.
+   */
+  async nextObservationVersion(db: CaptureDb, companyId: string, key: { fileId?: string | null; expenseId?: string | null }): Promise<number> {
+    const last = await db.expenseCaptureObservation.findFirst({
+      where: {
+        companyId,
+        ...(key.fileId ? { fileId: key.fileId } : { fileId: null, ...(key.expenseId ? { expenseId: key.expenseId } : {}) }),
+      },
+      orderBy: { version: 'desc' },
+      select: { version: true },
+    });
+    return (last?.version ?? 0) + 1;
+  }
+
+  createAllocation(db: CaptureDb, input: {
+    companyId: string; groupId: string; groupRevision: number; policyVersion: string;
+    selectionJson: unknown; inputJson: unknown; resultJson: unknown;
+    fundingRoute: CaptureGroupRow['fundingRoute']; payerUserId: string | null; computedByUserId: string;
+  }) {
+    return db.expenseCaptureAllocation.create({
+      data: {
+        companyId: input.companyId, groupId: input.groupId, groupRevision: input.groupRevision,
+        policyVersion: input.policyVersion,
+        selectionJson: input.selectionJson as Prisma.InputJsonValue,
+        inputJson: input.inputJson as Prisma.InputJsonValue,
+        resultJson: input.resultJson as Prisma.InputJsonValue,
+        fundingRoute: input.fundingRoute, payerUserId: input.payerUserId,
+        computedByUserId: input.computedByUserId,
+      },
+    });
+  }
+
+  findAllocation(db: CaptureDb, companyId: string, groupId: string, allocationId: string) {
+    return db.expenseCaptureAllocation.findFirst({ where: { companyId, groupId, id: allocationId } });
+  }
+
+  /**
+   * Retire the allocations a change has overtaken. `INVALIDATED` says the facts moved under it,
+   * `SUPERSEDED` that a newer snapshot replaced it — both keep the row, because the snapshot is
+   * the evidence of what somebody approved (spec §5).
+   */
+  async retireAllocations(db: CaptureDb, input: {
+    companyId: string; groupId: string; from: ReadonlyArray<'PREVIEW' | 'ACCEPTED'>;
+    to: 'SUPERSEDED' | 'INVALIDATED'; reason?: string; exceptId?: string;
+  }): Promise<number> {
+    const changed = await db.expenseCaptureAllocation.updateMany({
+      where: {
+        companyId: input.companyId, groupId: input.groupId, status: { in: [...input.from] },
+        ...(input.exceptId ? { id: { not: input.exceptId } } : {}),
+      },
+      data: { status: input.to, ...(input.reason ? { invalidatedReason: input.reason } : {}) },
+    });
+    return changed.count;
+  }
+
+  /** Fenced on PREVIEW: two reviewers accepting at once produce one ACCEPTED, not two. */
+  async acceptAllocation(db: CaptureDb, input: {
+    companyId: string; allocationId: string; acceptedByUserId: string;
+  }): Promise<boolean> {
+    const changed = await db.expenseCaptureAllocation.updateMany({
+      where: { companyId: input.companyId, id: input.allocationId, status: 'PREVIEW' },
+      data: { status: 'ACCEPTED', acceptedByUserId: input.acceptedByUserId, acceptedAt: new Date() },
+    });
+    return changed.count === 1;
+  }
+
+  /**
+   * Is this person a payer the company can actually repay? The same membership/branch-scope test
+   * the reimbursement picker uses (`listReimbursementRequesters`), so a payer the group records
+   * is one the claim will still recognise (§5, A32).
+   */
+  async isActiveCompanyMember(db: CaptureDb, input: { companyId: string; userId: string; branchId: string | null }): Promise<boolean> {
+    const member = await db.companyMembership.findFirst({
+      where: {
+        companyId: input.companyId, userId: input.userId, status: 'ACTIVE', user: { status: 'ACTIVE' },
+        ...(input.branchId
+          ? {
+            OR: [
+              { branchScopeMode: 'ALL_BRANCHES' as const },
+              { branchScopeMode: 'DEFAULT_BRANCH_ONLY' as const, defaultBranchId: input.branchId },
+              { branchScopeMode: 'SELECTED_BRANCHES' as const, branchScopes: { some: { branchId: input.branchId } } },
+            ],
+          }
+          : {}),
+      },
+      select: { id: true },
+    });
+    return member !== null;
   }
 
   /** Derived sources are ordinary expenses; the group only ever reports their lineage. */

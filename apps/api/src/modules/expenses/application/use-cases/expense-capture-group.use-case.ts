@@ -12,8 +12,8 @@ import {
   type ExpenseCaptureFileDto,
   type ExpenseCaptureGroupDetailDto,
   type ExpenseCaptureGroupDto,
+  type CaptureAllocationResult,
   type ExpenseCaptureGroupListItemDto,
-  type ExpenseCaptureObservations,
   type ExpenseCaptureReadManifest,
   type RequestContext,
 } from '@watchdog-bms/contracts';
@@ -32,6 +32,7 @@ import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.lo
 import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { FEATURE_TEMPORARILY_UNAVAILABLE } from '../../../employee-access/application/entitlement.helper';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
+import { assembleCaptureFacts } from '../../domain/logic/expense-capture-facts.logic';
 import {
   buildExpenseFactsObservation,
   type ExpenseFactsInput,
@@ -329,14 +330,19 @@ export class GetExpenseCaptureGroupUseCase {
       hasFacts: observations.length > 0,
       intakeEnabled: this.config.expenseCaptureGroupIntakeEnabled,
       canMutate: this.access.canMutate(ctx, group),
+      // W04a: what the current allocation says decides the rest of the blockers and the actions.
+      allocation: allocation ? {
+        status: allocation.status,
+        outcome: (allocation.resultJson as CaptureAllocationResult | null)?.outcome ?? 'BLOCKED',
+        blockers: (allocation.resultJson as CaptureAllocationResult | null)?.blockers ?? [],
+      } : null,
     };
 
     return {
       ...groupDto(group),
-      // W01 stores observations but assembles nothing across files: the group page shows the
-      // newest per-group facts it has and no invented money. W03 replaces this with the
-      // deterministic assembly of §4.4.
-      facts: (observations.at(-1)?.payloadJson ?? null) as ExpenseCaptureObservations | null,
+      // W04a §4.4: one assembled view across every file, HUMAN over AI, nothing invented. It is
+      // structurally an `ExpenseCaptureObservations` plus the per-document state and the summary.
+      facts: observations.length > 0 ? assembleCaptureFacts(observations) : null,
       files: fileDtos,
       allocation: allocation ? {
         allocationId: allocation.id,

@@ -1,7 +1,10 @@
 import {
   BUSINESS_DOCUMENT_KINDS,
+  EXPENSE_CAPTURE_BLOCKERS,
   type BusinessDocumentKind,
+  type CaptureAllocationOutcome,
   type ExpenseCaptureAction,
+  type ExpenseCaptureAllocationStatus,
   type ExpenseCaptureBlocker,
   type ExpenseCaptureObservations,
 } from '@watchdog-bms/contracts';
@@ -156,6 +159,12 @@ export type CaptureGroupStateForActions = {
   hasFacts: boolean;
   intakeEnabled: boolean;
   canMutate: boolean;
+  /** W04a: the group's current allocation, when a review has produced one. */
+  allocation?: {
+    status: ExpenseCaptureAllocationStatus;
+    outcome: CaptureAllocationOutcome;
+    blockers: readonly ExpenseCaptureBlocker[];
+  } | null;
 };
 
 /**
@@ -185,6 +194,18 @@ export function captureGroupBlockers(state: CaptureGroupStateForActions): Expens
       messageTh: 'ยังไม่มีข้อมูลจากไฟล์นี้ กรอกข้อมูลต่อได้เลย',
     });
   }
+  // W04a: the allocation decides the rest. Facts with no review at all is its own answer —
+  // nobody has said what is the company's and who paid, so there is nothing to accept yet.
+  if (state.hasFacts && !state.allocation) {
+    blockers.push({
+      code: EXPENSE_CAPTURE_BLOCKERS.REVIEW_REQUIRED,
+      messageTh: 'ตรวจส่วนของบริษัทและผู้จ่ายก่อน จึงจะสร้างรายการค่าใช้จ่ายได้',
+      action: 'review',
+    });
+  }
+  for (const allocationBlocker of state.allocation?.blockers ?? []) {
+    if (!blockers.some((existing) => existing.code === allocationBlocker.code)) blockers.push(allocationBlocker);
+  }
   return blockers;
 }
 
@@ -195,7 +216,17 @@ export function captureGroupAllowedActions(state: CaptureGroupStateForActions): 
   // reviewable, detachable and closable while it is off.
   if (state.intakeEnabled && state.canMutate) actions.push('add_file');
   if (state.canMutate && state.storedFiles > 0) actions.push('detach_file');
+  // `review` also gates `POST …/facts`: both are the "change this group's data" authority of §6,
+  // and `edit_facts` is not one of the six actions the W01 contract declares.
   if (state.canMutate && state.hasFacts) actions.push('review');
+  const allocation = state.allocation;
+  if (state.canMutate && allocation?.status === 'PREVIEW' && allocation.outcome !== 'BLOCKED') {
+    actions.push('accept_allocation');
+  }
+  // Only an accepted allocation with company money to hand over can become derived sources (W05).
+  if (state.canMutate && allocation?.status === 'ACCEPTED' && allocation.outcome === 'READY' && state.handoffState === 'NONE') {
+    actions.push('handoff');
+  }
   if (state.canMutate && state.handoffState !== 'ACTIVE') actions.push('close');
   return actions;
 }
