@@ -40,10 +40,14 @@ export const FILE_ATTEMPT_AMBIGUOUS_LEAD = 'หมายถึงไฟล์ไ
 /** The word the customer used. §17.1: "คำว่ารูป/ไฟล์/เอกสารตรงกับสิ่งที่ส่ง". */
 export const mediaWordTh = (messageType: 'image' | 'file'): string => (messageType === 'file' ? 'ไฟล์' : 'รูป');
 
-const megabytes = (bytes: number): string => {
-  const mb = bytes / 1_048_576;
-  return (mb >= 10 ? mb.toFixed(0) : mb.toFixed(1)).replace(/\.0$/, '');
-};
+/**
+ * One decimal, always — the SAME shape `captureMegabytes` prints on the web (§4.1 parity).
+ *
+ * It used to drop the decimal above 10 MB and strip a trailing `.0`, so the one number a customer
+ * compares across the two lanes came out as "10 MB" here and "10.0 MB" there, on the same file
+ * against the same limit.
+ */
+const megabytes = (bytes: number): string => (bytes / 1_048_576).toFixed(1);
 
 const named = (attempt: LineFileAttemptFacts): string =>
   attempt.fileNameSanitized ? `${mediaWordTh(attempt.messageType)} ${attempt.fileNameSanitized}` : `${mediaWordTh(attempt.messageType)}ที่ส่งมา`;

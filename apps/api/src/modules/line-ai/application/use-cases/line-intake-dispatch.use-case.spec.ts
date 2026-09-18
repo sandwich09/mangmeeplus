@@ -5339,7 +5339,7 @@ describe('LINE capture answers and §17.5 status questions', () => {
       await h.useCase.executeReceiptUpload({ ...FILE_EVENT, fileSize: 12 * 1024 * 1024 });
     } finally { restore(); }
     await h.useCase.execute({ ...answer('ไฟล์ใหญ่ไปหรือเปล่า'), webhookEventId: 'evt-status-oversize' });
-    assert.match(h.replies.at(-1) ?? '', /ขนาด 12 MB เกินขนาดที่ระบบรับได้ 10 MB/);
+    assert.match(h.replies.at(-1) ?? '', /ขนาด 12\.0 MB เกินขนาดที่ระบบรับได้ 10\.0 MB/);
     assert.match(h.replies.at(-1) ?? '', /เลือกไฟล์ที่เล็กกว่าแล้วส่งอีกครั้งได้เลยค่ะ/);
     assert.equal(h.turnRequests.length, 0);
   });

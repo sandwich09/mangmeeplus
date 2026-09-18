@@ -60,7 +60,7 @@ describe('§17.5 question detection', () => {
 describe('§17.5 answer table', () => {
   it('oversize quotes the real size and the real limit, and never widens into another cause', () => {
     const text = fileAttemptAnswer(attempt({ reasonCode: 'oversize_declared', declaredFileSize: 12 * 1024 * 1024 }));
-    assert.equal(text, 'ไฟล์ invoice.pdf ขนาด 12 MB เกินขนาดที่ระบบรับได้ 10 MB จึงยังไม่ได้เก็บไฟล์นี้ — เลือกไฟล์ที่เล็กกว่าแล้วส่งอีกครั้งได้เลยค่ะ');
+    assert.equal(text, 'ไฟล์ invoice.pdf ขนาด 12.0 MB เกินขนาดที่ระบบรับได้ 10.0 MB จึงยังไม่ได้เก็บไฟล์นี้ — เลือกไฟล์ที่เล็กกว่าแล้วส่งอีกครั้งได้เลยค่ะ');
   });
 
   it('an unsupported type names the kinds the capability really listed', () => {

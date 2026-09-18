@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { workspaceDictionary } from '../../common/i18n/workspace-dictionary';
 import {
   allCaptureFilesStored,
   captureFileRejection,
@@ -211,5 +212,30 @@ describe('capture size and type gate', () => {
   it('prints megabytes the way the message does, to one decimal', () => {
     assert.equal(captureMegabytes(10_485_760), '10.0 MB');
     assert.equal(captureMegabytes(9_800_000), '9.3 MB');
+  });
+
+  /**
+   * Plan W02 "PDF limits/capability/error messages ตรงกันทั้งสามทาง": web NEW upload, web REPLACE
+   * and LINE file share one limit, one boundary and one pair of numbers in the sentence. The API
+   * half of this claim is `apps/api/src/modules/expenses/expense-capture-lane-parity.spec.ts`,
+   * which asserts the SAME two strings for the LINE reply.
+   */
+  it('is the same boundary and the same two numbers the other two lanes print', () => {
+    const limit = 10_485_760;
+    for (const [name, type] of [['bill.pdf', 'application/pdf'], ['bill.jpg', 'image/jpeg']] as const) {
+      assert.equal(captureFileRejection({ name, type, size: limit }, { maxBytes: limit, allowedMimeTypes: [type] }), null);
+      assert.equal(captureFileRejection({ name, type, size: limit + 1 }, { maxBytes: limit, allowedMimeTypes: [type] }), 'too_large');
+    }
+    // `{size} MB … {limit} MB`, the sentence the panel builds — LINE says "ขนาด 10.0 MB … 10.0 MB".
+    const sentence = workspaceDictionary.th['expenses.capture.upload_too_large']
+      .replace('{size}', captureMegabytes(limit + 1))
+      .replace('{limit}', captureMegabytes(limit));
+    assert.match(sentence, /10\.0 MB/);
+    assert.equal(sentence.includes('{size}') || sentence.includes('{limit}'), false);
+  });
+
+  it('uses the wave-2 credit wording when a read stops for money, as LINE does', () => {
+    // `capturePausedReasonTh('ai_credit')` answers this exact sentence on the LINE side.
+    assert.equal(workspaceDictionary.th['expenses.capture.paused_ai_credit'], 'เครดิตสำหรับการอ่านเอกสารไม่พอ');
   });
 });
