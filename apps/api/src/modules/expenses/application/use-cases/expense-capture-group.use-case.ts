@@ -438,6 +438,7 @@ export class CompleteExpenseCaptureFileUseCase {
     private readonly expenses: PrismaExpenseRepository,
     private readonly access: ExpenseCaptureAccessService,
     private readonly completeUpload: CompleteAttachmentUploadUseCase,
+    private readonly attachments: PrismaAttachmentRepository,
     private readonly audit: AuditService,
   ) {}
 
@@ -445,6 +446,13 @@ export class CompleteExpenseCaptureFileUseCase {
    * Finishing an upload that was already reserved is RECOVERY, not new intake: it stays available
    * with the flag off (A47), and calling it twice answers the same file and the same job instead
    * of a second read (the client that lost the response of the first call is the normal case).
+   *
+   * The shared completion verifies and re-keys the bytes OUTSIDE this transaction, and that is
+   * irreversible. So the retry path reads the attachment first: an already-ACTIVE object means a
+   * previous attempt stored the bytes and lost its answer, and it is adopted instead of being
+   * completed a second time (which `CompleteAttachmentUploadUseCase` refuses outright, stranding
+   * the file forever). For the same reason the revision is bumped unconditionally below — once
+   * the bytes exist, the group must record them; `expectedRevision` is the gate BEFORE storage.
    */
   async execute(ctx: RequestContext, groupId: string, fileId: string, cmd: {
     byteSize?: number; checksumSha256?: string; expectedRevision: number; lineMessageId?: string;
@@ -467,9 +475,22 @@ export class CompleteExpenseCaptureFileUseCase {
     }
     if (group.revision !== cmd.expectedRevision) throw revisionConflict();
 
+    const reserved = await this.attachments.findById({ id: existing.attachmentId, companyId: ctx.companyId });
+    if (!reserved) throw new NotFoundException('Attachment not found.');
+    if (reserved.status === 'QUARANTINED' || reserved.status === 'DELETED') {
+      // The bytes are gone or refused: nothing can complete this slot, so say so once and let the
+      // customer send the file again rather than leaving a PENDING_UPLOAD row to retry forever.
+      await this.capture.markFileRejected(this.capture.client, { companyId: ctx.companyId, fileId });
+      throw conflict('expense_capture_file_state_invalid', 'ไฟล์นี้ถูกปฏิเสธจากการตรวจความปลอดภัย กรุณาแนบไฟล์ใหม่');
+    }
+    const resumed = reserved.status === 'ACTIVE';
+    if (resumed && cmd.checksumSha256 && reserved.checksumSha256 !== cmd.checksumSha256) {
+      throw new BadRequestException('Capture file checksum changed.');
+    }
+
     // Storage verification, checksum, malware scan and the immutable re-key all belong to the
     // shared completion use case; this one only records what the group now holds.
-    const attachment = await this.completeUpload.execute(ctx, {
+    const attachment = resumed ? reserved : await this.completeUpload.execute(ctx, {
       attachmentId: existing.attachmentId,
       ...(cmd.checksumSha256 ? { checksumSha256: cmd.checksumSha256 } : {}),
       ...(cmd.byteSize !== undefined ? { byteSize: cmd.byteSize } : {}),
@@ -513,17 +534,16 @@ export class CompleteExpenseCaptureFileUseCase {
         manifestJson: emptyExpenseCaptureReadManifest(),
       });
 
-      const revision = await this.capture.bumpRevision(tx, {
-        companyId: ctx.companyId, groupId, expectedRevision: cmd.expectedRevision,
-      });
-      if (revision === null) throw revisionConflict();
+      // Unconditional: the bytes are already stored and the file row is already STORED, so a
+      // conflict answer here would strand exactly what the retry cannot repeat.
+      const revision = await this.capture.bumpRevisionForCommittedEffect(tx, { companyId: ctx.companyId, groupId });
 
       await this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId,
         action: AuditAction.EXPENSE_CAPTURE_GROUP_FILE_ADD,
         targetType: 'expense_capture_group', targetId: groupId,
         requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
-        metadataJson: { fileId, attachmentId: existing.attachmentId, readJobId: job.id, uploadState: 'STORED', revision },
+        metadataJson: { fileId, attachmentId: existing.attachmentId, readJobId: job.id, uploadState: 'STORED', revision, resumed },
       }, tx);
 
       return { fileId, attachmentId: existing.attachmentId, revision, readJobId: job.id, uploadState: 'STORED', replayed: false };

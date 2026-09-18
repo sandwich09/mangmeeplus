@@ -106,6 +106,32 @@ export class PrismaExpenseCaptureRepository {
   }
 
   /** One query for a page of groups: the list must not fan out into two reads per row. */
+  /**
+   * The bump for an effect that ALREADY happened. Completing an upload puts verified bytes in
+   * storage, which no rollback here can undo, so the group has to record the file it now holds
+   * even if another mutation moved the revision in between; `expectedRevision` is checked before
+   * that storage call and is not a second gate afterwards. Runs under the group lock.
+   */
+  async bumpRevisionForCommittedEffect(db: CaptureDb, input: {
+    companyId: string; groupId: string; data?: Record<string, unknown>;
+  }): Promise<number> {
+    const row = await db.expenseCaptureGroup.update({
+      where: { companyId_id: { companyId: input.companyId, id: input.groupId } },
+      data: { ...(input.data ?? {}), revision: { increment: 1 } },
+      select: { revision: true },
+    });
+    return row.revision;
+  }
+
+  /** Quarantined or deleted bytes: the slot is spent, and the customer must send the file again. */
+  async markFileRejected(db: CaptureDb, input: { companyId: string; fileId: string }): Promise<boolean> {
+    const changed = await db.expenseCaptureFile.updateMany({
+      where: { companyId: input.companyId, id: input.fileId, uploadState: 'PENDING_UPLOAD' },
+      data: { uploadState: 'REJECTED' },
+    });
+    return changed.count === 1;
+  }
+
   listFileStatesForGroups(db: CaptureDb, companyId: string, groupIds: readonly string[]) {
     if (groupIds.length === 0) return Promise.resolve([] as Array<{ groupId: string; uploadState: string }>);
     return db.expenseCaptureFile.findMany({

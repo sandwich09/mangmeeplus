@@ -27,6 +27,8 @@ class FakeCaptureRepo {
   observations: any[] = [];
   links: any[] = [];
   expenses = new Map<string, any>();
+  /** Attachment rows, so a second wiring of the use cases over the same repo sees the same bytes. */
+  objects = new Map<string, any>();
   locks: string[] = [];
   private seq = 0;
 
@@ -63,7 +65,16 @@ class FakeCaptureRepo {
     };
   }
 
-  transaction<T>(run: (tx: any) => Promise<T>): Promise<T> { return run(this.tx()); }
+  /** Set to make the NEXT transaction blow up, the way a lost connection or a constraint would. */
+  failNextTransaction = false;
+
+  transaction<T>(run: (tx: any) => Promise<T>): Promise<T> {
+    if (this.failNextTransaction) {
+      this.failNextTransaction = false;
+      return Promise.reject(new Error('simulated transaction failure'));
+    }
+    return run(this.tx());
+  }
 
   async lockGroup(_db: any, companyId: string, groupId: string) { this.locks.push(`${companyId}:expense-capture:${groupId}`); }
 
@@ -94,6 +105,19 @@ class FakeCaptureRepo {
     if (!group || group.companyId !== input.companyId || group.revision !== input.expectedRevision) return null;
     Object.assign(group, input.data ?? {}, { revision: input.expectedRevision + 1 });
     return group.revision;
+  }
+
+  async bumpRevisionForCommittedEffect(_db: any, input: any) {
+    const group = this.groups.get(input.groupId);
+    Object.assign(group, input.data ?? {}, { revision: group.revision + 1 });
+    return group.revision;
+  }
+
+  async markFileRejected(_db: any, input: any) {
+    const file = this.files.get(input.fileId);
+    if (!file || file.uploadState !== 'PENDING_UPLOAD') return false;
+    file.uploadState = 'REJECTED';
+    return true;
   }
 
   async listFileStatesForGroups(_db: any, companyId: string, groupIds: string[]) {
@@ -239,32 +263,51 @@ function build(options: { intakeEnabled?: boolean; repo?: FakeCaptureRepo } = {}
     },
   } as any;
   const intents: any[] = [];
+  // The attachment row has a lifecycle here, because the fix under test turns on reading it back:
+  // PENDING_UPLOAD after the intent, ACTIVE once the shared completion has verified the bytes.
+  const objects = capture.objects;
   const createIntent = {
     execute: async (_ctx: any, cmd: any) => {
       intents.push(cmd);
+      const attachmentId = `att-${intents.length}`;
+      objects.set(attachmentId, { id: attachmentId, companyId: 'co-1', status: 'PENDING_UPLOAD', byteSize: cmd.byteSize });
       return {
-        attachmentId: `att-${intents.length}`, uploadUrl: '/upload', uploadMethod: 'PUT',
+        attachmentId, uploadUrl: '/upload', uploadMethod: 'PUT',
         uploadHeaders: {}, expiresAt: new Date('2026-09-18T00:00:00.000Z'),
       };
     },
   } as any;
   const completed: any[] = [];
+  let onCompleteUpload: (() => void) | undefined;
   const completeUpload = {
     execute: async (_ctx: any, cmd: any) => {
       completed.push(cmd);
-      return { id: cmd.attachmentId, checksumSha256: 'sha-1', byteSize: 1_000, objectVersionId: 'v1' };
+      const object = objects.get(cmd.attachmentId);
+      // The real one refuses anything that is not PENDING_UPLOAD; a fake that forgives that would
+      // hide the exact stranding this fix exists for.
+      if (!object || object.status !== 'PENDING_UPLOAD') throw new Error('Attachment is not in PENDING_UPLOAD state.');
+      Object.assign(object, { status: 'ACTIVE', checksumSha256: 'sha-1', byteSize: 1_000, objectVersionId: 'v1' });
+      onCompleteUpload?.();
+      return { ...object };
     },
   } as any;
-  const attachments = { findSubstituteEvidenceRetentionHold: async () => null } as any;
+  const attachments = {
+    findSubstituteEvidenceRetentionHold: async () => null,
+    findById: async ({ id, companyId }: any) => {
+      const object = objects.get(id);
+      return object && object.companyId === companyId ? { ...object } : null;
+    },
+  } as any;
 
   return {
-    capture, access, intents, completed,
+    capture, access, intents, completed, objects,
+    duringCompleteUpload: (hook: () => void) => { onCompleteUpload = hook; },
     capability: new GetExpenseCaptureCapabilityUseCase(access),
     create: new CreateExpenseCaptureGroupUseCase(capture as any, expenses, access, audit, openLaunchGate),
     list: new ListExpenseCaptureGroupsUseCase(capture as any),
     get: new GetExpenseCaptureGroupUseCase(capture as any, access, appConfig),
     addFile: new AddExpenseCaptureFileUseCase(capture as any, access, createIntent, audit, openLaunchGate),
-    completeFile: new CompleteExpenseCaptureFileUseCase(capture as any, expenses, access, completeUpload, audit),
+    completeFile: new CompleteExpenseCaptureFileUseCase(capture as any, expenses, access, completeUpload, attachments, audit),
     detachFile: new DetachExpenseCaptureFileUseCase(capture as any, access, attachments, audit),
     closeGroup: new CloseExpenseCaptureGroupUseCase(capture as any, access, audit),
     convert: new ConvertExpenseToCaptureGroupUseCase(capture as any, expenses, access, audit, openLaunchGate, capture as any),
@@ -442,6 +485,70 @@ describe('capture group files', () => {
     assert.equal(second.readJobId, first.readJobId);
     assert.equal(app.capture.jobs.length, 1);
     assert.equal(app.completed.length, 1, 'storage completion runs once');
+  });
+
+  it('finishes a retry after the recording transaction failed, without storing the bytes twice', async () => {
+    const { app, groupId, revision } = await withGroup();
+    const added = await app.addFile.execute(ctx(), groupId, {
+      originalFileName: 'bill.pdf', mimeType: 'application/pdf', byteSize: 2_000, expectedRevision: revision,
+    });
+
+    // The storage side effect lands, then the recording transaction dies (lost connection, CAS
+    // loss, anything). Before the fix the attachment was ACTIVE while the file stayed
+    // PENDING_UPLOAD, and every retry was refused by the shared completion — stranded forever.
+    app.capture.failNextTransaction = true;
+    await assert.rejects(() => app.completeFile.execute(ctx(), groupId, added.fileId, { expectedRevision: added.revision }),
+      /simulated transaction failure/);
+    assert.equal(app.objects.get(added.attachmentId).status, 'ACTIVE', 'the bytes are already verified and stored');
+    assert.equal(app.capture.files.get(added.fileId).uploadState, 'PENDING_UPLOAD');
+
+    const retried = await app.completeFile.execute(ctx(), groupId, added.fileId, { expectedRevision: added.revision });
+    assert.equal(retried.uploadState, 'STORED');
+    assert.equal(retried.replayed, false);
+    assert.equal(app.completed.length, 1, 'the shared completion is never asked to verify the same object twice');
+    assert.equal(app.capture.jobs.length, 1, 'and the retry does not queue a second read');
+  });
+
+  it('records a completion whose revision moved while the bytes were being stored', async () => {
+    const { app, groupId, revision } = await withGroup();
+    const added = await app.addFile.execute(ctx(), groupId, {
+      originalFileName: 'bill.pdf', mimeType: 'application/pdf', byteSize: 2_000, expectedRevision: revision,
+    });
+    // Somebody else mutates the group while storage is running — an irreversible effect must not
+    // be answered with a conflict, or the file is lost with its bytes already paid for.
+    app.duringCompleteUpload(() => { app.capture.groups.get(groupId).revision += 1; });
+
+    const result = await app.completeFile.execute(ctx(), groupId, added.fileId, { expectedRevision: added.revision });
+    assert.equal(result.uploadState, 'STORED');
+    assert.equal(result.revision, added.revision + 2, 'the bump is unconditional once the bytes exist');
+    assert.equal(app.capture.jobs.length, 1);
+  });
+
+  it('rejects the file slot when the object was quarantined, instead of retrying forever', async () => {
+    const { app, groupId, revision } = await withGroup();
+    const added = await app.addFile.execute(ctx(), groupId, {
+      originalFileName: 'bill.pdf', mimeType: 'application/pdf', byteSize: 2_000, expectedRevision: revision,
+    });
+    app.objects.get(added.attachmentId).status = 'QUARANTINED';
+
+    await assert.rejects(() => app.completeFile.execute(ctx(), groupId, added.fileId, { expectedRevision: added.revision }),
+      (error: any) => error.getStatus() === 409 && code(error) === 'expense_capture_file_state_invalid');
+    assert.equal(app.capture.files.get(added.fileId).uploadState, 'REJECTED');
+    assert.deepEqual(app.completed, [], 'nothing tries to complete bytes the scanner refused');
+  });
+
+  it('refuses a resumed completion whose checksum no longer matches the stored bytes', async () => {
+    const { app, groupId, revision } = await withGroup();
+    const added = await app.addFile.execute(ctx(), groupId, {
+      originalFileName: 'bill.pdf', mimeType: 'application/pdf', byteSize: 2_000, expectedRevision: revision,
+    });
+    app.capture.failNextTransaction = true;
+    await assert.rejects(() => app.completeFile.execute(ctx(), groupId, added.fileId, { expectedRevision: added.revision }), /simulated/);
+
+    await assert.rejects(() => app.completeFile.execute(ctx(), groupId, added.fileId, {
+      expectedRevision: added.revision, checksumSha256: 'sha-different',
+    }), (error: any) => error.getStatus() === 400);
+    assert.equal(app.capture.files.get(added.fileId).uploadState, 'PENDING_UPLOAD');
   });
 
   it('refuses to detach a file a derived expense already uses as its receipt', async () => {
