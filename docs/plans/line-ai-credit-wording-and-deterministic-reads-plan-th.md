@@ -78,4 +78,6 @@ git diff --check
 
 ## 3. Handoff
 
+**สถานะ 2026-09-18:** G0/H1/H2/H3 merge เข้า `develop` และ `main` ครบแล้ว (PR #622–#631 ยกเว้น #625/#629) W-01…W-08 และ J-01…J-07 มีหลักฐานแล้ว เหลือ W-09/J-08 ที่ต้อง UAT **ยังไม่ได้ deploy** รายละเอียดใน [Wave 2 delivery summary](../agent-memory/line-ai-credit-wording-wave2-2026-09-18.md#wave-2-delivery-summary-and-handoff--2026-09-18)
+
 เสร็จเมื่อ W-01…W-08 และ J-01…J-07 มีหลักฐานและ merge แล้ว; W-09 หลัง deploy UAT ตาม runbook ทุกช่วงบันทึก commands/counts/SHA/ข้อจำกัดใน task memory
