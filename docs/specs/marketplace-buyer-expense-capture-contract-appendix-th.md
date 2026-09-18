@@ -302,3 +302,16 @@ W01 (schema/contracts/guards/pg) → W02-web (multi-file, replace intent, resume
 3. D08: กลุ่มที่ไม่มีเอกสารการเงิน — ลบไฟล์หลัง 90 วัน (`EXPENSE_CAPTURE_RETENTION_DAYS`)
 4. D04 wording ใบรับรองส่วนบริษัท (ข้อ 7)
 5. Bedrock replay ด้วย fixture สังเคราะห์เพื่อพิสูจน์ pipeline จริง (ประมาณ ≤ THB 100 ภายใต้ ledger เดิม `watchdog-bedrock`)
+
+## 16. Implementation notes (W01, 2026-09-18)
+
+สิ่งที่ implement ต่างจากตัวอักษรของเอกสารนี้ พร้อมเหตุผล (ทุกข้อไม่เปลี่ยนกติกาเงิน/สิทธิ):
+
+1. **Partial unique index ข้อ 2.3 ใช้ unique index ธรรมดา** `@@unique([companyId, captureGroupId, captureScopeKey])` แทน raw SQL `… WHERE "captureGroupId" IS NOT NULL` — Postgres นับ NULL เป็นค่าต่างกัน ผลบังคับจึงเท่ากันทุกกรณี (แถวเดิม/ค่าใช้จ่ายธรรมดา `captureGroupId` เป็น null จึงไม่ถูกบังคับ) แต่เขียนใน `schema.prisma` ได้ ทำให้ `prisma migrate diff` ไม่มองว่า index นี้เป็น drift ที่ต้อง drop; pg spec พิสูจน์ว่า derived source ที่สองของ scope เดิมถูกปฏิเสธด้วย P2002 จริง
+2. **`ExpenseCaptureGroup.note`** เป็นคอลัมน์เพิ่ม (ข้อ 2.2 ไม่ได้ระบุ) เพราะ body ของ `POST capture-groups` ในข้อ 9 รับ `note?`
+3. **`ExpenseCaptureObservation` มี `@@index([companyId, groupId])`** เพิ่มจากข้อ 2.2 เพราะหน้ารายละเอียดกลุ่มอ่าน observation ทั้งกลุ่มเป็น query หลัก; **`LineIntakeAttempt` มี `@@index([createdAt])`** เพราะ purge กวาดข้ามบริษัทตามอายุ
+4. **ความสัมพันธ์**: relation ไป `Company` เป็น `Cascade` เหมือนทุกตารางในสคีมานี้; relation ของ `ExpenseCaptureFile` ไป group/`AttachmentObject` เป็น `Restrict`; ส่วนคอลัมน์ lineage บน `ExpenseRecord` (`captureGroupId`, `captureAllocationId`) เป็นคอลัมน์เปล่าไม่มี FK ตามที่ข้อ 2.3 เขียนไว้ — FK แบบ Restrict ที่ Company cascade ลงไปทั้งสองฝั่งจะทำให้ลบบริษัทล้มเหลวตามลำดับที่ Postgres เลือก
+5. **`checkpointJson`** มี default `{}` (ข้อ 2.2 ระบุว่าไม่ nullable แต่ไม่ได้ให้ค่าเริ่มต้น)
+6. **flag ปิด = ปฏิเสธเฉพาะการรับหลักฐานใหม่** (สร้างกลุ่ม / เพิ่มไฟล์ / แปลง expense เป็นกลุ่ม) ส่วน `POST …/files/{f}/complete` ยังทำงานได้ เพราะเป็นการปิดงานอัปโหลดที่จองไว้แล้ว (recovery) ตามเจตนา A47 ที่ให้ job ค้างจบได้ — มี unit test ยืนยันทั้งสองฝั่ง
+7. **payer ใน snapshot ของ resolver**: ใส่ `payerUserId` เฉพาะเมื่อมีค่า (ไม่ใส่ `null`) เพราะ `assertReimbursementSources` เทียบ snapshot ที่ปักไว้กับที่อ่านใหม่แบบ deep-equal — การใส่ `null` จะทำให้ใบเบิกทุกใบที่ร่างไว้ก่อน deploy กลายเป็น `reimbursement_source_changed`
+8. **ค่าที่ยังไม่ทำใน W01** (ตามลำดับงานข้อ 14): runner/lease/checkpoint ของ job, preprocessing, gateway routes สองเส้น, allocation math, handoff, web/LINE surface — W01 วางเฉพาะ schema, contract, config/flag, API ของกลุ่ม, guard ของ lineage และ pg proof

@@ -99,25 +99,25 @@ Verification: ตรวจ contract กับ code owner/consumer และท�
 ### W01 — Foundation และ guard ก่อนรับข้อมูลกลุ่ม
 
 Owner: API/contracts/database
-Status: Planned
+Status: Done (2026-09-18) — schema/contracts/config/API/guards/pg; runner + web + LINE อยู่ใน W02/W03
 Depends on: W00 / D01 / D06 / D07 และขอบเขต intake D02
 
 จุดแก้หลัก: [Prisma schema](../../apps/api/prisma/schema.prisma), [expense contracts](../../packages/contracts/src/expenses.ts), [funding guard](../../apps/api/src/modules/expenses/infrastructure/substitute-funding.guard.ts), [expense repository](../../apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts), [reimbursement source](../../apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts)
 
-- [ ] เพิ่ม bounded/versioned contracts และ relational identities ตาม D01 โดย reuse Expense module; ไม่สร้าง marketplace service แยก
-- [ ] เพิ่ม source-role/capability guards ในทุก financial entry point จาก inventory รวม raw API/background callers; where-clause ของ ambiguous-source ฝั่ง reimbursements ต้องเห็น discriminator ด้วย ไม่ใช่เฉพาะโมดูล expenses
-- [ ] เพิ่ม/ผูก permission key ตาม D07 และบังคับที่ server ทุก endpoint ของ feature; UI ซ่อนปุ่มไม่ใช่ guard
-- [ ] วาง canonical ownership/retention/access และ lock traversal ที่ group/child/attachment aliases เข้าขอบเขตเดียวกัน
-- [ ] reuse [launch gate เดิม](../../apps/api/src/modules/expenses/application/expense-launch-gate.ts:36) ตาม D07 โดยรู้ว่า `assertExpenseRootOpen` ผูก expenses/DEFAULT ตายตัว; route แยกต้องเชื่อม registry/seed/guard/runoff/deployment admission เดิมครบ ไม่เปิด route จริงในงานเอกสาร
-- [ ] deploy compatibility guards ให้ทุก consumer ก่อนเริ่มสร้าง group; พิสูจน์ว่าไม่มี server/worker ที่ไม่รู้ source role เข้าถึงข้อมูลใหม่ ถ้าคุมไม่ได้คง intake ปิด; additive schema หรือปิด intake อย่างเดียวไม่อนุญาต rollback ไป binary เก่าหลังมีข้อมูล (spec §14.3)
-- [ ] ทำ additive migration ตามแบบที่ตัดสินแล้ว; legacy records คง semantics เดิม ไม่เดาว่าเป็นcapture-onlyจากชื่อร้านหรือ OCR
-- [ ] ให้ list/read แสดงงาน capture ได้โดยไม่สื่อว่าเป็นยอดบริษัทที่รับรู้แล้ว; versions ที่ไม่เข้าใจ source role ปฏิเสธ final mutation
+- [x] เพิ่ม bounded/versioned contracts และ relational identities ตาม D01 โดย reuse Expense module; ไม่สร้าง marketplace service แยก — W01: `packages/contracts/src/expense-capture.ts` (`EXPENSE_CAPTURE_CONTRACT_VERSION = 1`) + 6 ตาราง/12 enum ใน migration `20260918120000_expense_capture_foundation`
+- [x] เพิ่ม source-role/capability guards ในทุก financial entry point จาก inventory รวม raw API/background callers; where-clause ของ ambiguous-source ฝั่ง reimbursements ต้องเห็น discriminator ด้วย ไม่ใช่เฉพาะโมดูล expenses — W01: resolver ambiguity + payer, picker, evidence service, duplicate scoring (unit + pg spec); export/`evidenceRef` ยังเป็นงาน W05/W07 ตาม §12
+- [x] เพิ่ม/ผูก permission key ตาม D07 และบังคับที่ server ทุก endpoint ของ feature; UI ซ่อนปุ่มไม่ใช่ guard — W01: ใช้ key เดิมทั้งหมด (ไม่เพิ่ม key ใหม่), `allowedActions`/`blockers` ตัดสินที่ server
+- [x] วาง canonical ownership/retention/access และ lock traversal ที่ group/child/attachment aliases เข้าขอบเขตเดียวกัน — W01: `<company>:expense-capture:<group>` อยู่หลัง `reimbursement-evidence:*` และก่อน `ai-budget:*` พิสูจน์ใน pg spec 20 รอบ; `EXPENSE_CAPTURE_RETENTION_DAYS` + purge ของ `LineIntakeAttempt`
+- [x] reuse [launch gate เดิม](../../apps/api/src/modules/expenses/application/expense-launch-gate.ts:36) ตาม D07 โดยรู้ว่า `assertExpenseRootOpen` ผูก expenses/DEFAULT ตายตัว; route แยกต้องเชื่อม registry/seed/guard/runoff/deployment admission เดิมครบ ไม่เปิด route จริงในงานเอกสาร — W01: create/add-file/convert เรียก `assertExpenseRootOpen` ตัวเดิม ไม่มี route ใหม่ใน registry
+- [x] deploy compatibility guards ให้ทุก consumer ก่อนเริ่มสร้าง group; พิสูจน์ว่าไม่มี server/worker ที่ไม่รู้ source role เข้าถึงข้อมูลใหม่ ถ้าคุมไม่ได้คง intake ปิด; additive schema หรือปิด intake อย่างเดียวไม่อนุญาต rollback ไป binary เก่าหลังมีข้อมูล (spec §14.3) — W01: D01 ทาง B ทำให้ binary เก่าไม่เห็นตารางใหม่และเห็น derived source เป็นค่าใช้จ่ายปกติ; `EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED` wired ครบ (deploy.sh/kamal/pins) และ maintenance_only บังคับ false
+- [x] ทำ additive migration ตามแบบที่ตัดสินแล้ว; legacy records คง semantics เดิม ไม่เดาว่าเป็นcapture-onlyจากชื่อร้านหรือ OCR — W01: additive ล้วน ไม่มี backfill; คอลัมน์ lineage เป็น null ทุกแถวเดิม (pg spec ยืนยัน unique index ไม่แตะแถว null)
+- [x] ให้ list/read แสดงงาน capture ได้โดยไม่สื่อว่าเป็นยอดบริษัทที่รับรู้แล้ว; versions ที่ไม่เข้าใจ source role ปฏิเสธ final mutation — W01: `GET capture-groups` เป็นรายการแยก ไม่มียอดเงิน; `facts` ว่างจนกว่าจะมี observation จริง
 
-- [ ] ขยายsource/document/representation lineageและสถานะextractionแยกelectronicverificationตามD09 โดยreuseattachment/hash/objectversionเดิม; query/lock keysต้องครอบcross-channelduplicates
+- [x] (ครึ่ง schema) ขยายsource/document/representation lineageและสถานะextractionแยกelectronicverificationตามD09 โดยreuseattachment/hash/objectversionเดิม; query/lock keysต้องครอบcross-channelduplicates — W01 วางคอลัมน์ `electronicVerificationJson`/`attachmentChecksum`/`objectVersionId`/`preprocessVersion` และ duplicate keys แล้ว; สถานะ extraction จริงมากับ W03
 - [ ] ออกcontractของreplaceพร้อมexpected old attachment/version + expected expense/group revision + operation identityและtyped conflicts; completeต้องinvalidateผลตรวจที่ผูกsourceเก่าแบบatomicโดยไม่ลบค่าที่คนยืนยัน
 - [ ] servermutationmatrix§16.4ครอบclaimDRAFT/submitted, PREPARED/PAYER_CERTIFIED/ISSUED, paid/posted/voidedและpermissionchange; ไม่ใช้UIเป็นguard
 
-- [ ] durablejob/manifestผูกcompany/actor/attachmenthash+objectversion/preprocessversion/attempt; perpage/regioncheckpoint, boundedlease/cancel/stale/paused states และserverstatusทำต่อหลังUIปิดได้
+- [ ] durablejob/manifestผูกcompany/actor/attachmenthash+objectversion/preprocessversion/attempt; perpage/regioncheckpoint, boundedlease/cancel/stale/paused states และserverstatusทำต่อหลังUIปิดได้ — W01 วางตาราง `ExpenseCaptureReadJob` + manifest ว่าง + cancel ตอน detach ไว้แล้ว; runner/lease/checkpoint เป็นงาน W03 จึงยังไม่ติ๊ก
 - [ ] existinguploadconfig/transport/security/retentionต้องรับ10MiBตามcapabilityที่เปิด; originalbytesไม่ผ่านAIเป็นก้อนใหญ่ก่อนpreprocess; internalAIcallsผ่านpermission-checkedAPI ไม่มีGatewayDBaccess
 
 Exit: สร้าง capture-only fixture ได้และพิสูจน์ว่า confirm/pay/claim/certificate-finalization ที่ยังไม่ eligible ถูกปฏิเสธโดย server; ordinary receipt ยังผ่าน path เดิม
