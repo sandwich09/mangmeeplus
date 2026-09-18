@@ -9,8 +9,7 @@ Decisions:
 - R5: deterministic families widened (tax/VAT, low stock, AP outstanding, CRM new customers + the daily-closing miss); breakdown/explain questions stay on the grounded agentic path where the composer's numeric guard forbids model-computed numbers; Production keeps the lane enabled (parity default).
 - Trial numbers (spec §7): chat 80 THB, receipts 15 (count), OCR money guard 60 THB, total 140 THB — applied per company by an admin after deploy; per-package defaults belong to the coming credit concept.
 Open questions:
-- Owner authorisation for the R5 corpus replay Bedrock spend (≈ THB 60–100) — W-07 waits for it.
-- Owner confirmation of the hold-reconciliation proposal (auto-recover from gateway `ai.usage` logs → admin console release/charge-at-bound → alert) before a spec is written.
+- (closed 2026-09-18) Owner authorised the R5 corpus replay Bedrock spend (≈ THB 60–100) and approved the hold-reconciliation proposal → [spec](../specs/line-ai-credit-hold-reconciliation-spec-th.md); CloudWatch recovery replaced by in-process durable retry + graceful drain (reason in that spec §2).
 Artifacts: (filled per phase)
 Verification: (filled per phase)
 Next: H1 and H2 implementation in parallel worktrees, controller review, full local gate, PR pairs, strict CI chain.
