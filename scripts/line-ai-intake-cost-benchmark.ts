@@ -469,11 +469,18 @@ const normalizeMoney = (value: string | undefined): string | null => {
   return `${whole}.${fraction.padEnd(2, '0')}`;
 };
 
+/** EXACTLY the rule `computeValueCandidates` applies in `process-line-webhook.use-case.ts`: a turn
+ *  whose only value is a PERIOD ("ยอดขายเมื่อวาน" — no amount, no written date) must still carry the
+ *  payload, or the gateway has nothing to select from and the answer falls back to the tool default. */
+function hasValueCandidates(candidates: { amounts: unknown[]; dates: unknown[]; periods?: unknown[] }): boolean {
+  return candidates.amounts.length > 0 || candidates.dates.length > 0 || (candidates.periods?.length ?? 0) > 0;
+}
+
 function buildIntakeRequest(task: IntakeCostTask, requestId: string, image?: { mimeType: 'image/jpeg' | 'image/png'; contentBase64: string }): LineIntakeRouteRequest {
   const candidates = task.messageText
     ? extractValueCandidates(task.messageText, INTAKE_COST_CORPUS_TODAY_ISO)
     : { amounts: [], dates: [] };
-  const hasCandidates = candidates.amounts.length > 0 || candidates.dates.length > 0;
+  const hasCandidates = hasValueCandidates(candidates);
   return {
     requestId,
     companyId: 'company-benchmark',
@@ -514,7 +521,7 @@ function mintActorDelegations(permissions: readonly string[], requestId: string)
 
 function buildTurnRequest(task: IntakeCostTask, plan: LineIntakeRoutePlan, requestId: string): LineAiTurnRequest {
   const candidates = task.messageText ? extractValueCandidates(task.messageText, INTAKE_COST_CORPUS_TODAY_ISO) : { amounts: [], dates: [] };
-  const hasCandidates = candidates.amounts.length > 0 || candidates.dates.length > 0;
+  const hasCandidates = hasValueCandidates(candidates);
   const intakeIntent = plan.status === 'ROUTED' ? plan.intent : undefined;
   return {
     requestId,
