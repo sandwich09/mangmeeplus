@@ -31,6 +31,12 @@ Each deployable app has its own Dockerfile:
 - `apps/ai-gateway/Dockerfile`
 - `apps/workers/Dockerfile`
 
+All six Dockerfiles (the four above plus `apps/web/Dockerfile.lambda` and
+`infra/api-web/Dockerfile.api-web`) share one digest-pinned base: `node:22-trixie-slim`
+(Debian 13). Debian 12 left regular security support on 2026-06-11; see
+`docs/runbooks/cloud-environment-operations.md` ("ECR scan gate") for the CVE rationale and the
+package-name rules that come with it.
+
 Dockerfiles build required workspace dependencies inside the image through Turbo, so local builds do not require host `dist/` outputs. Their final stages contain only compiled/standalone artifacts and production dependencies; the API Compose service explicitly selects the tooling-bearing `local` target for local migration/seed setup.
 
 Build examples:

@@ -118,6 +118,20 @@ was changed. Support session `root-l5tdyxu2594req3e72dhhl6lze` is verified **Ter
 PostgreSQL18.3/TLS rehearsal passed the actual normal upgrade and subsequent hotfix, but does not
 establish AWS deployment timing, managed Redis parity, multi-AZ readiness or customer acceptance.
 
+## UAT Kamal update — 2026-09-19 11:44 UTC
+
+Hosts stopped 2026-09-18 16:00Z, started by the owner 2026-09-19 10:48Z. Both public IPs changed: API
+`i-0eb581c5ac3b3d7ba` to 13.212.206.250, AI/workers `i-011918b0d49534d1c` to 47.129.64.91; private
+10.92.0.10 / 10.92.0.42 unchanged. Strict SSH verified host keys unchanged before the enrollment
+addresses were rewritten. The owner added TCP-22 rules for operator IP 27.130.73.105/32
+(`sgr-0ce574158b952a153` on `sg-021fe21a46c0fcb88`, `sgr-06108438c7157474d` on
+`sg-089ddbf86bd4251a1`) — authorized drift not yet in the CloudFormation OperatorCidr parameter.
+Read-only preflight `20260919T110007Z-8ced8a31` PREFLIGHT_PASSED_NO_DEPLOYMENT. Main `a923b7e9`
+(Node 22.23.2 digest, still bookworm) then deployed as Kamal operation `20260919T113219Z-7f1b8b98`,
+mode normal, `--uat-smoke-acceptance`, ACCEPTED_LINE_DEFERRED in 718.444 s: all 11 phases passed, KMS
+signature verified, customer OPEN, 8 pending migrations applied (catalog now 228). UAT/READY/PROD
+workflow IDs NOT_DISPATCHED. The trixie image is NOT on UAT yet.
+
 ## UAT read-only inventory — 2026-09-16
 
 All three serving Kamal containers were read back running source
@@ -650,6 +664,56 @@ version ของ bookworm (อ่าน security-tracker 2026-09-19) เป็�
 path Kamal ไม่มีเกตนี้: `infra/kamal/release.py` ไม่เรียก `verify-ecr-scan.sh`, `mangmee-kamal-uat/releases`
 ตั้ง `scanOnPush=false`, image production ที่ push 2026-09-18 ไม่มีผล scan — **เจ้าของตัดสิน 2026-09-19:
 ยังไม่เพิ่ม scan gate ใน Kamal path (ต้องการความเร็วในการ deploy ช่วงแรก) จะสั่งสแกนเองเป็นรอบ ๆ**
+
+**ย้ายฐานเป็น `node:22-trixie-slim` แล้ว (2026-09-19)** ทั้ง 6 Dockerfile ใช้
+`node:22-trixie-slim@sha256:c5849ff9…` (Debian 13.7 / Node v22.23.2) เหตุผล: Debian 12 หมด regular
+security support ไปแล้ว 2026-06-11 (เหลือ LTS ถึง 2028) ส่วน Debian 13 มี regular support ถึง
+2028-08-09 CVE openssl 4 ตัวที่ waive อยู่ (CVE-2026-54874, CVE-2026-63072, CVE-2026-63076,
+CVE-2026-75803) fix แล้วใน trixie `openssl 3.5.7-1~deb13u2` และ image ที่ build จริงก็ขึ้น
+`libssl3t64 3.5.7` แล้ว — แถว waiver ผูกกับ `package_version 3.0.20-1~deb12u2` จึงหยุดแมตช์เอง
+**ปลดแถวทิ้งได้เมื่อ ECR/Inspector ยืนยันว่า finding หายจริงบน image ที่ build แล้ว** (คอมมิตนี้ยังไม่ปลด)
+ส่วน CVE-2026-85091 (zlib) ยังไม่มี fix ใน suite ไหน ต้องคงแถวไว้ — แต่ `zlib1g` ขยับจาก
+`1.2.13.dfsg-1` เป็น `1.3.dfsg+really1.3.1` แล้ว จึงต้องเช็คด้วยว่า finding ยังรายงานเวอร์ชันเดิมอยู่ไหม
+(ถ้าเวอร์ชันขยับ แถว waiver จะหยุดแมตช์และกลับไปบล็อกทันที)
+
+Trivy `--scanners vuln --severity CRITICAL,HIGH` บน image ที่ build จาก `Dockerfile.api-web`
+(bookworm = tag ที่ build ไว้ก่อนหน้า `1406d382`, trixie ก่อนปิด login = `25591949`,
+trixie หลังปิด login + ClamAV 1.5.4 = `a5a090e1`):
+
+| Class | bookworm | trixie (ก่อน) | trixie (หลังปิด login) |
+| --- | --- | --- | --- |
+| `os-pkgs` (debian) | 1 CRITICAL / 19 HIGH | 0 CRITICAL / 26 HIGH | **0 CRITICAL / 18 HIGH** |
+| `lang-pkgs` (node-pkg ใน base npm) | 1 CRITICAL / 10 HIGH | 1 CRITICAL / 10 HIGH | 1 CRITICAL / 10 HIGH |
+
+ที่หายไป: `zlib1g` CVE-2023-45853 (CRITICAL ตัวเดียวของ image) และ `gzip` CVE-2026-41992
+
+**trixie แยก `login` กับ `liblastlog2-2` ออกจาก `util-linux` — ต้อง purge เพิ่มสองชื่อ** รอบแรก
+(`25591949`) โดน CVE-2026-76642 / 78408 / 78409 / 78410 เพิ่มมา 8 HIGH (4 CVE × 2 แพ็กเกจ) เพราะ
+bookworm นับ CVE ชุดนี้เป็นของ `util-linux` ที่ purge ออกไปแล้ว แต่ trixie ย้ายมาอยู่คนละแพ็กเกจที่ list
+เดิมไม่ครอบ เกต ECR fail-closed ทุก HIGH ที่ไม่มี waiver จึงจะบล็อก **ตัดสินใจ 2026-09-19: purge
+เพิ่มเพื่อให้เท่ากับ runtime image เดิมของ bookworm** (ไม่ออก waiver ใหม่) — `login` บน trixie build
+มาจาก source `util-linux` (`1:4.16.0-2+really2.41.5-0+deb13u1`) ไม่ใช่ Essential มีแค่
+`/usr/bin/login`, `newgrp`, `sg`, `/usr/sbin/nologin` และ `liblastlog2-2` มี `util-linux` เป็น reverse
+dependency เดียว runtime ไม่ได้ใช้เลย (ทุก process รันเป็น user `node` ไม่มี interactive login / su)
+เติมชื่อไว้ท้ายบรรทัด purge เดิมทุก stage โดยคง `e2fsprogs` และลำดับเดิม assertion สองจุดใน
+`infra/docker/production-image-security.spec.sh` (≈ บรรทัด 244/255) จึงยังผ่าน
+
+**ClamAV 1.5.3 → 1.5.4 (2026-08-07) แล้ว** (pin sha256 `28d6efc5…`) ปิด CVE-2026-20339 (PESpin
+integer overflow) กับ CVE-2026-20337/20338/20345/20346/20347/20348 และ CVE-2025-8088 ตาม upstream
+**แต่ Trivy ยังรายงาน 12 HIGH เดิมครบทุกตัวบน `clamav 1.5.4-1`** เพราะ .deb ของ Cisco-Talos ลงทะเบียน
+ตัวเองเป็นแพ็กเกจ Debian ชื่อ `clamav` แล้ว Trivy จับคู่กับ **Debian Security Tracker** ที่ไม่มี fixed
+version ของ trixie เลย ทุก finding จึงเป็น `status: affected` / `FixedVersion: null` — bump เวอร์ชัน
+upstream ไม่ทำให้ตัวเลขลด (18 HIGH เท่ากันทั้งก่อนและหลัง) เป็นรูปแบบเดียวกับ "bump ไม่ช่วยเมื่อ Debian
+ยังไม่มี fix" ข้างบน ส่วน CVE-2026-20213…20217/20243/20244 นั้น upstream ปิดไปแล้วใน 1.5.3
+ถือเป็น over-attribution ของ tracker เลข 12 HIGH นี้เท่ากันทั้ง bookworm และ trixie
+(ของเดิม ไม่ได้เกิดจากการย้ายฐาน)
+
+**t64 transition** Debian 13 เปลี่ยนชื่อ `libssl3` เป็น `libssl3t64` guard
+`dpkg-query -W libssl3` ใน `apps/api/Dockerfile` กับ `infra/api-web/Dockerfile.api-web` จึงเปลี่ยนตาม
+(ชื่อเดิมยัง exit 0 แบบ virtual package เลยไม่ fail ให้เห็น แต่ไม่ได้ยืนยันอะไรอีก) และ stage ที่ purge
+ตระกูล util-linux ต้อง `apt-get update -y` ก่อน เพราะฐาน trixie ไม่ได้ติดตั้ง `e2fsprogs` มาด้วย
+apt จึง resolve ชื่อไม่ได้เมื่อ list ว่าง (`E: Unable to locate package e2fsprogs`) ชื่อแพ็กเกจอื่นทั้งหมด
+และ ClamAV 1.5.3 .deb ใช้ได้เหมือนเดิม
 
 **กติกา waiver** (ดูตัวอย่างจริงในไฟล์ `.jq`): ทุกแถวต้องมี CVE ตรงตัว + `severity` + `package_name` +
 `package_version` + anchor ที่คัดลอกจาก description ของ provider แบบคำต่อคำ + epoch หมดอายุ +
