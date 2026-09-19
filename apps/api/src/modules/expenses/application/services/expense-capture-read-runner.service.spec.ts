@@ -163,6 +163,9 @@ async function build(options: {
   };
   const createdExpenses: any[] = [];
   const evidenceLinks: any[] = [];
+  // What the sibling's own INSERT transaction writes after the row exists (its primary receipt).
+  const siblingWrites: any[] = [];
+  const siblingTx = { expenseRecord: { updateMany: async (input: any) => { siblingWrites.push(input); return { count: 1 }; } } };
   const expenses = {
     findById: async () => options.expense === undefined
       ? {
@@ -172,9 +175,11 @@ async function build(options: {
         updatedAt: new Date('2026-09-15T00:00:00.000Z'),
       }
       : options.expense,
-    createExpense: async (input: any) => {
+    createExpense: async (input: any, withinTx?: (tx: unknown, expense: any) => Promise<void>) => {
       createdExpenses.push(input);
-      return { id: `split-${createdExpenses.length}`, ...input };
+      const expense = { id: `split-${createdExpenses.length}`, ...input };
+      await withinTx?.(siblingTx, expense);
+      return expense;
     },
     linkAttachmentToTarget: async (...args: any[]) => { evidenceLinks.push(args); },
   };
@@ -268,7 +273,7 @@ async function build(options: {
 
   return {
     runner, job, writes, outbox, released, admissions, observationsStored, fileWrites,
-    readCalls, extractCalls, applyCalls, createdExpenses, evidenceLinks,
+    readCalls, extractCalls, applyCalls, createdExpenses, evidenceLinks, siblingWrites,
     groupsCreated, groupWrites, groupMemberships,
     loseLease: () => { leaseOwner = 'someone-else'; },
     restore: () => undefined,
@@ -297,6 +302,9 @@ describe('capture read runner — the happy path', () => {
       assert.equal(harness.outbox[0]![0], 'expense.capture_read.finished');
       assert.equal(harness.outbox[0]![3].status, 'DONE');
       assert.equal(harness.outbox[0]![3].applied, true);
+      // The LINE push reads the §18.4 sentence and the confirmed amount off the event itself.
+      assert.equal(harness.outbox[0]![3].classification.documentKind, 'RECEIPT');
+      assert.equal(harness.outbox[0]![3].documentTotal, '100.00');
     } finally { harness.restore(); }
   });
 
@@ -550,8 +558,11 @@ describe('capture read runner — what it refuses to apply', () => {
       assert.equal(harness.createdExpenses[0]!.createdByUserId, 'user-1', 'the original creator owns it');
       assert.equal(harness.createdExpenses[0]!.status, 'NEEDS_REVIEW');
       assert.equal(harness.createdExpenses[0]!.captureAllocationId, undefined, 'no allocation');
-      // The same bytes, claimed as supporting evidence on the sibling.
-      assert.deepEqual(harness.evidenceLinks[0]!.slice(0, 4), ['att-1', 'expense.record', 'split-1', 'expense.receipt.supporting']);
+      // The same bytes are the sibling's PRIMARY receipt — link and `primaryAttachmentId`, inside its
+      // own INSERT transaction — because `validateConfirm` refuses a draft with no primary receipt.
+      assert.deepEqual(harness.evidenceLinks[0]!.slice(0, 4), ['att-1', 'expense.record', 'split-1', 'expense.receipt.primary']);
+      assert.ok(harness.evidenceLinks[0]![6], 'the link is written inside the sibling INSERT transaction');
+      assert.deepEqual(harness.siblingWrites, [{ where: { companyId: 'co-1', id: 'split-1' }, data: { primaryAttachmentId: 'att-1' } }]);
 
       assert.equal(harness.observationsStored.length, 1, 'the observation stays stored, unsplit');
       assert.equal(harness.outbox[0]![3].multiDocument, true);

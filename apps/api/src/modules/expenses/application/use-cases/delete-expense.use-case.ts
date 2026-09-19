@@ -259,7 +259,13 @@ export class DeleteExpenseUseCase {
           }
         }
         await tx.attachmentLink.deleteMany({ where: linkWhere });
+        // Appendix §25: an auto-split sibling shares its bytes with the draft the file was uploaded
+        // to. A file another record still links is theirs — only an unshared file is retired, the
+        // rule `RemoveExpenseReceiptUseCase` and the replace path already apply.
+        const sharedAttachmentIds: string[] = [];
         for (const attachmentId of attachmentIds) {
+          const remaining = await tx.attachmentLink.count({ where: { companyId: ctx.companyId, attachmentId } });
+          if (remaining > 0) { sharedAttachmentIds.push(attachmentId); continue; }
           await this.attachments.markDeleted({ id: attachmentId, companyId: ctx.companyId }, tx);
         }
         const recheckedExpenseIds = await recheckExpensesReferencing(
@@ -286,6 +292,7 @@ export class DeleteExpenseUseCase {
             captureSource: expense.captureSource,
             createdByUserId: expense.createdByUserId,
             attachmentIds,
+            ...(sharedAttachmentIds.length > 0 ? { sharedAttachmentIds } : {}),
             lineCount: expense._count.lines,
             duplicateRecheckedExpenseIds: recheckedExpenseIds,
           },

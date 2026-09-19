@@ -5,18 +5,8 @@ import type {
 } from './expenses.model';
 import type { ExpenseReadStatusFile } from './expense-capture-status.logic';
 import type {
-  CaptureAllocationSelection,
-  CaptureExpenseDateChoice,
-  CaptureFactsPatch,
-  CaptureTaxReviewEntry,
   CompleteExpenseReceiptUploadInput,
-  ExpenseCaptureBusinessUse,
   ExpenseCaptureCapabilityDto,
-  ExpenseCaptureCloseReason,
-  ExpenseCaptureFundingRoute,
-  ExpenseCaptureGroupDetailDto,
-  ExpenseCaptureGroupListItemDto,
-  ExpenseCaptureReviewResultDto,
   ApproveSubstituteReceiptInput,
   CertifySubstituteReceiptInput,
   CreateExpenseDraftInput,

@@ -109,3 +109,40 @@ the authorised 100.
 
 Next: (owner) UAT deploy per runbook → D03/D07/D08 confirmations → UX 40+ → authorised bundles.
 No further code work is queued for this feature.
+
+## W09 closure — 2026-09-19 (owner pivot: no new screens)
+
+Status: **W09 delivered locally on `codex/mkt-w09-simplify-20260919` (from origin/develop eef691be = #646), controller-reviewed and fixed; NOT pushed, NOT in CI, NOT deployed — the owner asked to approve the finished fix first ("ci ยังไม่ต้องรัน รอแก้เสร็จฉันอนุมัติทั้งหมดก่อน").**
+Owner: controller session (Fable 5.1) reviewed and fixed; Opus 5 implemented W09 in `/private/tmp/mangmee-mkt-w09-20260918`.
+Scope: appendix §25 — delete every capture-group screen (group page, งานรับหลักฐาน list, review-page split button/badge, business-use/payer questions, upload manifest prompt, certificate prefill/back-links, 200 dictionary keys); web multi-file = N ordinary single-file uploads; LINE file = ordinary draft at intake + `ownerType EXPENSE` read + push with expense links; engine auto-splits a multi-document file into ordinary drafts; allocation/group API dormant.
+Decisions:
+- Owner 2026-09-19: "จอดูใช้ยาก … จอไม่ควรเปลี่ยนหรือเพิ่ม เพราะจุดประสงค์มีแค่รับบิลใบเสร็จ ใบกำกับ จาก shoppee lazada tictok ขนส่ง" → appendix §25; A45 withdrawn; §15 items 1–4 confirmed by the owner the same morning (record in §15 after the merge).
+- Controller review fixes (appendix §25.6): (1) image lane queues NO second read (`persistLineFileExpense({ read: 'none' })`), attempt = `STORED_READ_FAILED`/`STORED_READ_DONE`; (2) finished-read event carries `classification` + `documentTotal`; (3) DONE-but-not-applied push = §17.6 PARTIAL sentence, never a zero receipt card; (4) NR07 cleanup = links + unshared file + audit, in one transaction, else truthful PARTIAL copy; (5) auto-split siblings own the file as PRIMARY receipt (`validateConfirm`); (6) `DeleteExpenseUseCase` never retires a file another record still links.
+- Throwaway-stack gotcha: `prisma/seed.ts` does NOT open launch gates; without `prisma/sync-feature-launch-gates.ts` every `POST …/receipt-uploads` is 403 `feature_temporarily_unavailable` (the implementer's browser runs failed on this, not on code).
+Open questions: none for W09; owner approval of the whole branch before push/PR/CI.
+Artifacts: commit b2128f73 (W09) + the controller fix commit; `e2e/expense-capture-intake.spec.ts` (new lanes, @p1), `e2e/expense-capture-intake.evidence.spec.ts` + `e2e/harness/expense-capture.ts`, `apps/web/src/features/expenses/capture-screens-withdrawn.spec.ts` (guard), `docs/qa/evidence/marketplace-buyer-expense-capture-2026-09-19/w09/`, appendix §25 (+ §25.6), plan W04b status, matrix W09 rows.
+Verification: see the "W09 verification" block appended below once the runs finish.
+Next: owner approval → push branch → ONE develop PR + ONE main PR (main-based branch) → ci-merge chains → record §15 confirmation (docs-only) → owner UAT deploy per runbook.
+
+### W09 verification — 2026-09-19 (controller, throwaway stack: pg 15477 / redis 16377 / MinIO 19077, API 3077, web 3078; launch gates synced, bucket versioned)
+
+- New lanes, browser (`e2e/expense-capture-intake.spec.ts`, chromium, 1280 + 390): 7/7 — one image → one draft on the detail page; three files → three ordinary drafts, list `?highlight=` on the newest; PDF draft follows its read job and prints the §17.6 line with no re-read, ordinary PATCH still saves; multi-document → "พบเอกสาร 2 ใบ…" with a working link and `read-status` carrying the ids; withdrawn routes 404 / no nav entry.
+- Evidence (`e2e/expense-capture-intake.evidence.spec.ts`, desktop-1440 + iphone13-chromium 390): 6 subjects × 2 widths in `docs/qa/evidence/marketplace-buyer-expense-capture-2026-09-19/w09/`, 0 px horizontal overflow at 390 on all six, no console/page error on any.
+- LINE lanes: unit-level fake webhook drive (`line-intake-dispatch.use-case.spec.ts`: A68 file → one draft + one EXPENSE job, redelivery reuses the draft, second file = its own draft, §17.5 answers, §17.6 image persist with NO second read, NR persists as draft with truthful CTA; `line-capture-result-notifier.use-case.spec.ts`: DONE card / split list / FAILED-PARTIAL-PAUSED sentences / NR cases / NR07 cleanup / not-applied partial / WEB never pushed).
+- Old flows, unchanged suites, same stack, W09 vs pre-W09 baseline (feature worktree 6c87f867 on API 3079 / web 3080, same DB) — IDENTICAL suite by suite:
+
+| suite | W09 | baseline |
+|---|---|---|
+| expenses.spec.ts | 22 passed, 7 failed (EXP-01/02/04/06/07/09/26) | 22 passed, 7 failed (same ids) |
+| receipt-draft-continuity | 11 skipped (needs its own DB env) | 11 skipped |
+| reimbursement-receipt | 1 failed (REIMBRCPT-01) | 1 failed (same) |
+| substitute-editable-navigation | 2 skipped | 2 skipped |
+| expense-number-save | 2 skipped | 2 skipped |
+| expense-running-number | 1 skipped | 1 skipped |
+| income-expense-ledger | 2 passed, 4 failed (LED-01/02/04/06) | 2 passed, 4 failed (same) |
+| line-recovery | 2 failed, 2 skipped | 2 failed, 2 skipped |
+| @smoke | 37 passed, 10 failed, 1 skipped | 37 passed, 10 failed, 1 skipped (same ids: SMOKE-02, roles sidebar ×3, ACCT-06, EXP-01, LED-01/02/04/06) |
+
+  Every failure is fresh-seed drift, not code: a freshly seeded company is multi-branch and the seeded OWNER has no default branch, so API calls that omit `branchId` (EXP-06/07/26, LED-01/02/04/06, ACCT-06) answer 422 `TRANSACTION_BRANCH_REQUIRED`; `getByRole('button', { name: /ยืนยันแล้ว/ })` (EXP-01/09) now also matches the "ส่งออกเอกสารยืนยันแล้ว" export button; the launch-gate sync opens `sales_documents`, which the roles sidebar matrix expects CLOSED; EXP-02/04, REIMBRCPT-01, line-recovery and SMOKE-02 time out on 10 s waits the same way on both stacks. The standard local DB (native 5432) these suites were written against carries state a fresh seed does not.
+- Local gate on the final tree (2026-09-19 14:21–14:24 +07, worktree `/private/tmp/mangmee-mkt-w09-20260918`): contracts build+test rc 0; config build+test rc 0; api `tsc --noEmit` clean; api fixed-list suite rc 0 (dot reporter: 9,757 test markers, 0 failure markers); capture pg specs on the throwaway DB 10 + 5 + 9 + 5 = 29 pass (incl. the new auto-split case) + `line-ai/receipt-reliability.pg.spec.ts` 6 pass; web `lint` (typegen + tsc) clean; web suite 1,823 pass / 0 fail (incl. the new `capture-screens-withdrawn.spec.ts` guard); ai-gateway 1,237 pass / 0 fail + tsc clean; workers 43 pass / 0 fail + tsc clean; whole-chain acceptance rc 0 (4 + 4 + 1,566 + 387 tests, 0 fail, 8 suites); `pnpm test:harness` 27 pass / 0 fail; maintenance pins `status=current`; `git diff --check` clean.
+- New-lane browser proof after the review fixes: `e2e/expense-capture-intake.spec.ts` 7/7 (chromium); `e2e/expense-capture-intake.evidence.spec.ts` 2/2 (desktop-1440 + iphone13-chromium), 6 subjects × 2 widths + the notice crop, 0 px overflow at 390, 0 console/page errors.

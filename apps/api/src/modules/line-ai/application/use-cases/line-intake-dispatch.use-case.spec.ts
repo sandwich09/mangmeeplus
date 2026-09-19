@@ -2381,13 +2381,14 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(recordUpdates.length, 0);
     // §17.6 (v0.11) + appendix §25: a PROVIDER failure on an image we can keep is no longer the
     // "รูปนี้เป็นอะไรคะ" question, and no longer a capture group either. The picture becomes an
-    // ORDINARY expense draft, its read is closed FAILED so nothing re-reads it, and the customer is
-    // sent to that record — with no re-read CTA anywhere.
+    // ORDINARY expense draft with NO read job at all — the OCR route already read it once, and a
+    // queued second read would be exactly the re-read §17.6 forbids — and the customer is sent to
+    // that record with no re-read CTA anywhere. The attempt carries the outcome the first read had.
     assert.equal(pendingMediaRows.length, 0, 'no pending-media question for a failed read');
     assert.equal(h.captureState.groups.length, 0, 'no capture group');
     assert.equal(h.initCalls.length, 1, 'the image is persisted as an ordinary draft');
-    assert.equal(h.captureState.readFailures.length, 1, 'its read job is closed FAILED');
-    assert.equal(h.captureState.jobs[0].status, 'FAILED');
+    assert.equal(h.captureState.jobs.length, 0, 'an image the OCR route already read is never queued for a second read');
+    assert.equal(h.captureState.readFailures.length, 0, 'nothing to close: no job was created');
     assert.equal(h.captureState.attempts.at(-1).outcome, 'STORED_READ_FAILED');
     assert.equal(h.captureState.attempts.at(-1).targetType, 'expense');
     assert.match(h.replies[0] ?? '', /อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว กดกรอกข้อมูลต่อได้ที่นี่/);
@@ -2546,6 +2547,11 @@ describe('LINE intake dispatch – media path', () => {
         // "ยังไม่ได้สร้างรายการ" beside a link to the record it created.
         assert.match(h.replies[0] ?? "", /เก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน กดกรอกข้อมูลต่อได้ที่นี่/);
         assert.match(h.replies[0] ?? '', /expenses\/expense-1/);
+        // The OCR route already classified this picture: no second read is queued for the draft,
+        // and the attempt says the read is DONE (a non-receipt), not "still reading".
+        assert.equal(h.captureState.jobs.length, 0, 'no second read of an image already classified');
+        assert.equal(h.captureState.attempts.at(-1).outcome, 'STORED_READ_DONE');
+        assert.equal(h.captureState.attempts.at(-1).targetType, 'expense');
       }
     });
   }

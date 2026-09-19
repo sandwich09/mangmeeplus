@@ -726,7 +726,7 @@ export const workspaceDictionary = {
     // งานรับหลักฐาน (buyer expense capture, appendix §3/§10/§11). Every line here is about ONE file:
     // where its bytes are, what the reader did with it, and the single thing the user can do next.
     'expenses.capture.files_title': 'ไฟล์ที่เลือก',
-    'expenses.capture.multi_hint': 'เลือกได้หลายไฟล์ ระบบจะเก็บทุกไฟล์ไว้ในงานรับหลักฐานเดียวกัน',
+    'expenses.capture.multi_hint': 'เลือกได้หลายไฟล์ ระบบจะส่งทีละไฟล์ และสร้างเป็นรายการค่าใช้จ่ายแยกใบละรายการ',
     'expenses.capture.file_state_pending': 'รอส่ง',
     'expenses.capture.file_state_uploading': 'กำลังอัปโหลด',
     'expenses.capture.file_state_stored': 'เก็บไฟล์แล้ว',
@@ -2239,7 +2239,7 @@ export const workspaceDictionary = {
     'expenses.upload_extract_failed_prefix': 'Upload succeeded but AI failed to read the document',
     'expenses.upload_extract_failed_suffix': 'the file is saved; carry on filling in the details on this page',
     'expenses.capture.files_title': 'Selected files',
-    'expenses.capture.multi_hint': 'You can pick several files; they are kept together in one evidence job',
+    'expenses.capture.multi_hint': 'You can pick several files; they are sent one at a time and each becomes its own expense record',
     'expenses.capture.file_state_pending': 'Waiting to send',
     'expenses.capture.file_state_uploading': 'Uploading',
     'expenses.capture.file_state_stored': 'File saved',

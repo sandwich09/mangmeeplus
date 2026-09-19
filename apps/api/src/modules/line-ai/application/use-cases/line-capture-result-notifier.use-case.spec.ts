@@ -24,6 +24,8 @@ type Scenario = {
   /** Appendix §25 expense lane: `null` models a record the push may not read. */
   expenseSnapshot?: null;
   captureSource?: string;
+  /** NR07 cleanup: how many rows the guarded delete matches (0 = the draft is no longer empty). */
+  draftDeleteCount?: number;
 };
 
 function makeNotifier(scenario: Scenario = {}) {
@@ -51,15 +53,31 @@ function makeNotifier(scenario: Scenario = {}) {
       companyFeatureEntitlement: { findMany: async () => [] },
       lineIntakeAttempt: { findMany: async () => [{ id: 'attempt-1' }] },
       expenseRecord: {
-        deleteMany: async (input: any) => { draftDeletes.push(input.where); return { count: 1 }; },
+        // `draftDeleteCount: 0` models a draft someone already filled in — the guarded delete matches nothing.
+        deleteMany: async (input: any) => { draftDeletes.push(input.where); return { count: scenario.draftDeleteCount ?? 1 }; },
         findFirst: async () => ({
           vendorNameSnapshot: 'ร้านค้าดี', grandTotalAmount: '250.0000', currency: 'THB',
           sourceDocumentType: 'RECEIPT', expenseDate: new Date('2026-07-25T00:00:00.000Z'),
         }),
       },
+      // The NR07 cleanup runs in one transaction over the same client.
+      $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma.client),
+      attachmentLink: {
+        findMany: async () => [{ attachmentId: 'att-1' }, { attachmentId: 'att-shared' }],
+        deleteMany: async (input: any) => { linkDeletes.push(input.where); return { count: 2 }; },
+        // `att-shared` is still linked by another record (an auto-split sibling); `att-1` is not.
+        count: async (input: any) => (input.where.attachmentId === 'att-shared' ? 1 : 0),
+      },
+      reimbursementLine: { findFirst: async () => null },
+      attachmentObject: {
+        updateMany: async (input: any) => { attachmentDeletes.push(input.where.id); return { count: 1 }; },
+      },
     },
   } as any;
 
+  const linkDeletes: any[] = [];
+  const attachmentDeletes: string[] = [];
+  const auditEntries: any[] = [];
   const notifier = new LineCaptureResultNotifierUseCase(
     prisma,
     { webBaseUrl: 'https://app.example.com' } as any,
@@ -111,8 +129,10 @@ function makeNotifier(scenario: Scenario = {}) {
         return { expenseId: 'expense-9' };
       },
     } as any,
+    undefined,
+    { log: async (entry: any) => { auditEntries.push(entry); } } as any,
   );
-  return { notifier, published, failed, pushes, attemptUpdates, closes, handoffCalls, expenses, draftDeletes };
+  return { notifier, published, failed, pushes, attemptUpdates, closes, handoffCalls, expenses, draftDeletes, linkDeletes, attachmentDeletes, auditEntries };
 }
 
 const pushedText = (h: ReturnType<typeof makeNotifier>): string => h.pushes[0]?.messages[0]?.text ?? '';
@@ -375,9 +395,9 @@ describe('LINE capture result push — the expense lane (appendix §25)', () => 
     assert.equal(h.draftDeletes.length, 0, 'an NR that keeps the bytes keeps the draft');
   });
 
-  it('NR07 removes the empty draft and says no record was created', async () => {
+  it('NR07 removes the empty draft the way a delete does, and says no record was created', async () => {
     const h = makeNotifier({
-      payload: expensePayload({ classification: { contentKind: 'DOCUMENT', documentKind: 'NON_FINANCIAL_IMAGE' } }),
+      payload: expensePayload({ jobId: 'job-1', classification: { contentKind: 'DOCUMENT', documentKind: 'NON_FINANCIAL_IMAGE' } }),
     });
     await h.notifier.execute();
     assert.match(pushedText(h), /ภาพนี้ไม่ใช่เอกสารค่าใช้จ่ายค่ะ จึงไม่ได้สร้างรายการ/);
@@ -388,6 +408,36 @@ describe('LINE capture result push — the expense lane (appendix §25)', () => 
       companyId: 'company-1', id: 'expense-1', status: { in: ['DRAFT', 'NEEDS_REVIEW'] },
       grandTotalAmount: 0, paidAmount: 0, postingStatus: 'not_required', sourceReimbursementRequestId: null,
     });
+    // Its file links go with it; a file nothing else links is retired, a shared one stays.
+    assert.deepEqual(h.linkDeletes, [{ companyId: 'company-1', targetType: 'expense.record', targetId: 'expense-1' }]);
+    assert.deepEqual(h.attachmentDeletes, ['att-1']);
+    // And the removal is on the record, as a SYSTEM rule — never a silent row disappearing.
+    assert.equal(h.auditEntries.length, 1);
+    assert.equal(h.auditEntries[0].action, 'expense.delete');
+    assert.equal(h.auditEntries[0].actorType, 'SYSTEM');
+    assert.deepEqual(h.auditEntries[0].metadataJson, { rule: 'nr07_non_business_document', jobId: 'job-1', attachmentIds: ['att-1'] });
+  });
+
+  it('NR07 on a draft someone already filled in keeps it, and never claims no record exists', async () => {
+    const h = makeNotifier({
+      draftDeleteCount: 0,
+      payload: expensePayload({ classification: { contentKind: 'DOCUMENT', documentKind: 'NON_FINANCIAL_IMAGE' } }),
+    });
+    await h.notifier.execute();
+    assert.equal(h.linkDeletes.length, 0, 'nothing is unlinked from a record that stays');
+    assert.equal(h.attachmentDeletes.length, 0);
+    assert.ok(!/จึงไม่ได้สร้างรายการ/.test(pushedText(h)), 'the record exists, so that sentence would be false');
+    assert.match(pushedText(h), /เก็บไฟล์ไว้แล้ว/);
+    assert.match(pushedText(h), /\/companies\/company-1\/expenses\/expense-1/);
+  });
+
+  it('a DONE read that was not written onto the draft sends the partial sentence, never a zero receipt card', async () => {
+    const h = makeNotifier({ payload: expensePayload({ documentCount: 1, applied: false }) });
+    await h.notifier.execute();
+    assert.match(pushedText(h), /อ่านข้อมูลได้บางส่วนค่ะ เก็บไฟล์ไว้แล้ว/);
+    assert.ok(!/ยอดในใบเสร็จ/.test(pushedText(h)), 'no receipt card for facts that never reached the draft');
+    assert.ok(!/อ่านเอกสารอีกครั้ง/.test(pushedText(h)), '§17.6: no re-read offered');
+    assert.match(pushedText(h), /\/companies\/company-1\/expenses\/expense-1/);
   });
 
   it("a WEB upload's result is not pushed: the page the customer is on already has it", async () => {

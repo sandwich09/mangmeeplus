@@ -1,6 +1,7 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE, SOURCE_DOCUMENT_TYPE_LABELS, type RequestContext } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import { AuditService } from '../../../audit/application/audit.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
 import { PrismaOutboxRepository } from '../../../data-model-core/infrastructure/repositories/prisma-outbox.repository';
@@ -63,6 +64,7 @@ export class LineCaptureResultNotifierUseCase {
     private readonly outbox: PrismaOutboxRepository,
     private readonly autoHandoff: AutoHandoffSingleDocumentCaptureUseCase,
     @Optional() private readonly handoffLinks?: LineHandoffLinkService,
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   async execute(batchSize = MAX_BATCH): Promise<LineCaptureResultDrainResult> {
@@ -190,12 +192,16 @@ export class LineCaptureResultNotifierUseCase {
       return 'skipped';
     }
 
-    const composed = this.composeExpenseReply(companyId, snapshot, payload, link);
+    let composed = this.composeExpenseReply(companyId, snapshot, payload, link);
     if (!composed) return 'skipped';
     // §18.4 NR07: a confirmed non-business image is evidence of nothing, and the draft this lane
     // created at intake carries no money yet — so it is removed rather than left as a phantom row.
     if (composed.nr === 'NR07') {
-      await this.deleteEmptyDraft(companyId, expenseId).catch(() => undefined);
+      const removed = await this.deleteEmptyDraft(companyId, expenseId, readString(payload, 'jobId') ?? null)
+        .catch(() => false);
+      // Not removed = no longer empty: someone already filled the draft in, so it is their record
+      // now and "จึงไม่ได้สร้างรายการ" would be false. Say what is true, and link it.
+      if (!removed) composed = { text: CAPTURE_READ_PARTIAL_REPLY(link), nr: null };
     }
 
     const message = {
@@ -254,6 +260,12 @@ export class LineCaptureResultNotifierUseCase {
     // §25: several documents in one file are already several drafts. Name the count and link them
     // all — the first is the record this push is about, the rest are what the split created.
     const splitIds = readStringArray(payload, 'splitExpenseIds');
+    if (splitIds.length === 0 && readBoolean(payload, 'applied') === false) {
+      // DONE, but NOT written onto the draft (a stale fence, or facts the eligibility gate refused):
+      // the record is exactly as it was, so today's receipt card would print a zero total the
+      // document never showed. §17.6's partial sentence is the truthful one — file kept, fill in.
+      return { text: CAPTURE_READ_PARTIAL_REPLY(link), nr: null };
+    }
     if (splitIds.length > 0) {
       return {
         nr: null,
@@ -279,17 +291,44 @@ export class LineCaptureResultNotifierUseCase {
   }
 
   /**
-   * §18.4 NR07: remove the draft this lane created at intake. Guarded on everything that would make
-   * it more than an empty draft — a zero-total DRAFT/NEEDS_REVIEW row with no payment and no
-   * posting. Anything else is left alone and the customer keeps the record.
+   * §18.4 NR07: remove the draft this lane created at intake, the way `DeleteExpenseUseCase` would —
+   * its file links go, a file nothing else links is retired, the record goes, and an audit row says
+   * a SYSTEM rule did it. Guarded on everything that would make it more than an empty draft: a
+   * zero-total DRAFT/NEEDS_REVIEW row with no payment, no posting and no reimbursement behind it.
+   * Anything else is left alone (`false`) and the customer keeps the record.
    */
-  private async deleteEmptyDraft(companyId: string, expenseId: string): Promise<void> {
-    await this.prisma.client.expenseRecord.deleteMany({
-      where: {
-        companyId, id: expenseId, status: { in: ['DRAFT', 'NEEDS_REVIEW'] },
-        grandTotalAmount: 0, paidAmount: 0, postingStatus: 'not_required',
-        sourceReimbursementRequestId: null,
-      },
+  private async deleteEmptyDraft(companyId: string, expenseId: string, jobId: string | null): Promise<boolean> {
+    return this.prisma.client.$transaction(async (tx) => {
+      const deleted = await tx.expenseRecord.deleteMany({
+        where: {
+          companyId, id: expenseId, status: { in: ['DRAFT', 'NEEDS_REVIEW'] },
+          grandTotalAmount: 0, paidAmount: 0, postingStatus: 'not_required',
+          sourceReimbursementRequestId: null,
+        },
+      });
+      if (deleted.count !== 1) return false;
+      const linkWhere = { companyId, targetType: 'expense.record', targetId: expenseId };
+      const links = await tx.attachmentLink.findMany({ where: linkWhere, select: { attachmentId: true } });
+      await tx.attachmentLink.deleteMany({ where: linkWhere });
+      const retired: string[] = [];
+      for (const attachmentId of [...new Set(links.map((link) => link.attachmentId))]) {
+        // Shared bytes (an auto-split sibling, a reimbursement line) stay with whoever still holds them.
+        const remaining = await tx.attachmentLink.count({ where: { companyId, attachmentId } });
+        const claim = await tx.reimbursementLine.findFirst({ where: { companyId, attachmentId }, select: { id: true } });
+        if (remaining > 0 || claim) continue;
+        await tx.attachmentObject.updateMany({
+          where: { id: attachmentId, companyId, status: { not: 'DELETED' } },
+          data: { status: 'DELETED', deletedAt: new Date() },
+        });
+        retired.push(attachmentId);
+      }
+      await this.audit?.log({
+        companyId, actorType: 'SYSTEM', actorRefId: 'line-capture-result-notifier',
+        action: 'expense.delete', targetType: 'expense_record', targetId: expenseId,
+        requestId: jobId ?? `capture:${expenseId}`, result: 'SUCCESS', riskLevel: 'CRITICAL',
+        metadataJson: { rule: 'nr07_non_business_document', jobId, attachmentIds: retired },
+      }, tx).catch(() => undefined);
+      return true;
     });
   }
 
@@ -515,6 +554,11 @@ function readString(payload: Record<string, unknown>, key: string): string | und
 function readStringArray(payload: Record<string, unknown>, key: string): string[] {
   const direct = payload[key] ?? (payload['data'] as Record<string, unknown> | undefined)?.[key];
   return Array.isArray(direct) ? direct.filter((value): value is string => typeof value === 'string' && value.length > 0) : [];
+}
+
+function readBoolean(payload: Record<string, unknown>, key: string): boolean | undefined {
+  const direct = payload[key] ?? (payload['data'] as Record<string, unknown> | undefined)?.[key];
+  return typeof direct === 'boolean' ? direct : undefined;
 }
 
 function readNumber(payload: Record<string, unknown>, key: string): number | undefined {

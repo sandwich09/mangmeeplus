@@ -6809,7 +6809,15 @@ export class ProcessLineWebhookUseCase {
   private async persistLineFileExpense(
     ctx: RequestContext,
     event: LineReceiptUploadEvent,
-    input: { media: DownloadedLineMedia; caption: string; branchId?: string },
+    input: {
+      media: DownloadedLineMedia; caption: string; branchId?: string;
+      /**
+       * `'none'` for the image lane: its picture was ALREADY read once by the OCR route, and §17.6
+       * forbids buying a second read of it — the outcome is known before the persist. The file
+       * lane (default) queues the durable read the reply promises.
+       */
+      read?: 'queue' | 'none';
+    },
   ): Promise<{ expenseId: string; attachmentId: string; readJobId: string | null; link: string }> {
     const intent = await this.initReceiptUpload!.execute(ctx, {
       ...(input.branchId ? { branchId: input.branchId } : {}),
@@ -6834,7 +6842,7 @@ export class ProcessLineWebhookUseCase {
       ...(input.media.checksumSha256 ? { checksumSha256: input.media.checksumSha256 } : {}),
       byteSize: input.media.byteSize,
     });
-    const readJobId = await this.captureLine!.queueExpenseRead({
+    const readJobId = input.read === 'none' ? null : await this.captureLine!.queueExpenseRead({
       companyId: ctx.companyId, expenseId: intent.expenseId, attachmentId: intent.attachmentId,
       attachmentChecksum: input.media.checksumSha256 ?? null,
       expectedSourceUpdatedAt: completed.updatedAt ?? null,
@@ -6922,8 +6930,10 @@ export class ProcessLineWebhookUseCase {
 
   /**
    * The image lane's persist (§17.6 and §18.4 NR01–NR03/NR08): the same ORDINARY draft the file
-   * lane builds, minus the read. `readFailedCode` closes the job immediately — this image has
-   * ALREADY been read once and failed, and §17.6 forbids offering a re-read as error recovery.
+   * lane builds, minus the read. The picture has ALREADY been read once by the OCR route — it
+   * failed (`readFailedCode`) or it was classified as something other than a receipt — so no read
+   * job is queued for it (§17.6 forbids a second read as error recovery) and the intake attempt
+   * records the outcome that first read produced.
    *
    * Returns the link only when the persist confirmed; `undefined` means the caller must NOT say the
    * file was kept.
@@ -6940,7 +6950,7 @@ export class ProcessLineWebhookUseCase {
     let persisted: Awaited<ReturnType<ProcessLineWebhookUseCase['persistLineFileExpense']>>;
     try {
       persisted = await this.persistLineFileExpense(ctx, event, {
-        media: input.media, caption: input.caption, ...(branchId ? { branchId } : {}),
+        media: input.media, caption: input.caption, read: 'none', ...(branchId ? { branchId } : {}),
       });
     } catch (error) {
       await this.recordIntakeAttempt(event, {
@@ -6949,13 +6959,10 @@ export class ProcessLineWebhookUseCase {
       });
       throw error;
     }
-    if (input.readFailedCode && persisted.readJobId) {
-      await this.captureLine.markReadFailed(ctx.companyId, persisted.readJobId, input.readFailedCode).catch(() => false);
-    }
     await this.recordIntakeAttempt(event, {
-      companyId: ctx.companyId, stage: input.readFailedCode ? 'READ' : 'PERSIST',
-      reasonCode: input.readFailedCode ?? 'stored',
-      outcome: input.readFailedCode ? 'STORED_READ_FAILED' : 'STORED_READING',
+      companyId: ctx.companyId, stage: 'READ',
+      reasonCode: input.readFailedCode ?? 'read_done_non_receipt',
+      outcome: input.readFailedCode ? 'STORED_READ_FAILED' : 'STORED_READ_DONE',
       measuredByteSize: input.media.byteSize, fileName: input.media.fileName,
       targetType: 'expense', targetId: persisted.expenseId,
     });

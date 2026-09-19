@@ -20,7 +20,7 @@
  *     questions, exactly like a LINE receipt today. The observation stays stored either way.
  */
 import { Injectable, Logger } from '@nestjs/common';
-import type { ExpenseCaptureAssembledObservations, ExpenseCaptureDocumentObservation } from '@watchdog-bms/contracts';
+import type { ExpenseCaptureAssembledObservations, ExpenseCaptureDocumentObservation, ExpenseCaptureSource } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { safeLineErrorDetails } from '../../../line-ai/infrastructure/line-reply.adapter';
@@ -196,17 +196,27 @@ export class ExpenseCaptureAutoSplitService {
     });
   }
 
-  /** An ordinary NEEDS_REVIEW draft that shares the file and the group with the original. */
+  /**
+   * An ordinary NEEDS_REVIEW draft that shares the file and the group with the original.
+   *
+   * The SAME bytes are this draft's receipt — `expense.receipt.primary` link AND `primaryAttachmentId`,
+   * exactly as W05's handoff wrote its derived expenses — because `validateConfirm` refuses an expense
+   * with no primary receipt and no missing-receipt reason: a sibling holding the file only as
+   * "supporting" evidence could never be confirmed. The shared claim is also what the resolver's
+   * sibling rule reads (§5), and every delete/remove/replace path retires a file only when nothing
+   * else links it.
+   */
   private async createSibling(
     job: AutoSplitJob,
     owner: { branchId?: string | null; createdByUserId: string; captureSource?: string | null; expenseDate: Date; note?: string | null },
     groupId: string,
     position: number,
   ): Promise<string> {
+    const captureSource: ExpenseCaptureSource = owner.captureSource === 'LINE_UPLOAD' ? 'LINE_UPLOAD' : 'WEB_UPLOAD';
     const expense = await this.expenses.createExpense({
       companyId: job.companyId,
-      branchId: owner.branchId ?? undefined,
-      captureSource: (owner.captureSource as 'WEB_UPLOAD' | 'LINE_UPLOAD') ?? 'WEB_UPLOAD',
+      ...(owner.branchId ? { branchId: owner.branchId } : {}),
+      captureSource,
       expenseDate: owner.expenseDate,
       currency: 'THB',
       vatMode: 'NO_VAT',
@@ -219,13 +229,16 @@ export class ExpenseCaptureAutoSplitService {
       aiVerificationSummaryJson: { dateStatus: 'unverified', missingFields: ['expenseDate'] },
       subtotalAmount: '0', discountAmount: '0', taxableAmount: '0', vatAmount: '0',
       whtAmount: '0', grandTotalAmount: '0', netPayableAmount: '0', outstandingAmount: '0',
-    } as never);
-    // The SAME bytes, claimed as supporting evidence: the primary stays with the expense the file
-    // was uploaded to, and the shared claim is what the resolver's sibling rule reads (§5).
-    await this.expenses.linkAttachmentToTarget(
-      job.attachmentId, 'expense.record', expense.id, 'expense.receipt.supporting',
-      job.companyId, owner.createdByUserId,
-    );
+    }, async (tx, created) => {
+      await this.expenses.linkAttachmentToTarget(
+        job.attachmentId, 'expense.record', created.id, 'expense.receipt.primary',
+        job.companyId, owner.createdByUserId, tx,
+      );
+      await tx.expenseRecord.updateMany({
+        where: { companyId: job.companyId, id: created.id },
+        data: { primaryAttachmentId: job.attachmentId },
+      });
+    });
     return expense.id;
   }
 }

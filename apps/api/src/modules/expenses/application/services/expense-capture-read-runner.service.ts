@@ -86,6 +86,13 @@ type RunOutcome = {
   documentCount?: number;
   /** Appendix §25: the drafts the auto-split created, in document order from the second on. */
   splitExpenseIds?: string[];
+  /**
+   * The FIRST document's classification and printed total, so the LINE push can print the §18.4
+   * sentence for a non-receipt and the amount it confirmed — read off the assembled observation,
+   * never re-derived by a consumer.
+   */
+  classification?: ExpenseCaptureAssembledObservations['documents'][number]['classification'] | null;
+  documentTotal?: string | null;
 };
 
 /**
@@ -621,6 +628,8 @@ export class ExpenseCaptureReadRunnerService {
         documentCount: outcome.documentCount ?? 0,
         // Appendix §25: both lanes link to what the split created, so no consumer has to re-derive it.
         splitExpenseIds: outcome.splitExpenseIds ?? [],
+        classification: outcome.classification ?? null,
+        documentTotal: outcome.documentTotal ?? null,
       } as never,
       'HIGH',
     );
@@ -637,12 +646,19 @@ function captureSourceRoute(job: Pick<CaptureReadJobRow, 'ownerType' | 'groupId'
   return job.ownerType === 'EXPENSE' ? 'receipt-capture-web' : 'receipt-capture-line';
 }
 
-const common = (assembled: ExpenseCaptureAssembledObservations, applied: boolean, splitExpenseIds: string[]) => ({
-  applied,
-  multiDocument: assembled.multiDocument,
-  documentCount: assembled.documents.length,
-  splitExpenseIds,
-});
+const common = (assembled: ExpenseCaptureAssembledObservations, applied: boolean, splitExpenseIds: string[]) => {
+  const first = assembled.documents[0];
+  return {
+    applied,
+    multiDocument: assembled.multiDocument,
+    documentCount: assembled.documents.length,
+    splitExpenseIds,
+    classification: first?.classification ?? null,
+    documentTotal: first
+      ? assembled.totals.find((total) => total.documentRef === first.ref && total.kind === 'document_total')?.amount ?? null
+      : null,
+  };
+};
 
 /** Keep a page's stored transcription inside the same ceiling the gateway applies to it. */
 export const EXPENSE_CAPTURE_PAGE_TEXT_CHARS = 20_000;
