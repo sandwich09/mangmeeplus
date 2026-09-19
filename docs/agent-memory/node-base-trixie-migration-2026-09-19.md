@@ -1,6 +1,6 @@
 # Agent Memory: node base image bookworm → trixie (2026-09-19)
 
-Status: implemented + verified locally on `codex/node-22-trixie-slim-20260919` in `/private/tmp/mangmee-trixie-20260919`; committed, NOT pushed, no PR, nothing deployed
+Status: merged — #652 (develop `84547c1f`) / #653 (main `9d4a80bc`) — and A/B-verified with no regression
 Owner: controller session (Fable 5.1) directs; Opus 5 implements
 Scope: the six Dockerfiles move from `node:22-bookworm-slim@sha256:6c74791e…` to `node:22-trixie-slim@sha256:c5849ff9…` (Debian 13.7 / Node v22.23.2); maintenance pins re-synced; runbook + `infra/docker/README.md` + this memory
 
@@ -13,6 +13,8 @@ Decisions:
 - The `--check` pin failure is expected and was resolved with `sync-production-maintenance-release-pins.mjs` (no `--check`) per the controller's amendment; it rewrote `expected_api_dockerfile`, `expected_ai_dockerfile`, `expected_workers_dockerfile` and the validator SHA in `.github/workflows/deploy-production.yml`.
 
 - **Second commit (controller decision 2026-09-19)**: `login` and `liblastlog2-2` are appended to the purge line in all 7 stages that have it, for parity with the bookworm runtime image. The first trixie build added CVE-2026-76642 / 78408 / 78409 / 78410 (8 HIGH) because Debian 13 splits `/usr/bin/login` and liblastlog2 out of `util-linux`, which the purge already removed on bookworm; waivers were rejected in favour of purging. Neither package is Essential (`login` is built from the util-linux source, `1:4.16.0-2+really2.41.5-0+deb13u1`, and ships only /usr/bin/login, newgrp, sg, /usr/sbin/nologin; `liblastlog2-2` has util-linux as its only reverse dependency), and the runtime never logs in — every process runs as the existing `node` user. Appending at the end of the line keeps both assertions in `infra/docker/production-image-security.spec.sh` (≈ 244/255) satisfied.
+
+- Reusable findings from the A/B verification: `.dockerignore` strips `**/*.spec.ts` (suites cannot run inside `mangmee-complete-build`; use an OS-matched test image instead), the api-web image needs `PRODUCTION_SERVING_MODE=live` + `GLOBAL_MAINTENANCE_MODE=false` to run locally, and compose e2e needs `TZ=Asia/Bangkok` on the app services.
 
 Open questions: none blocking.
 
@@ -40,5 +42,6 @@ Verification (purge parity + ClamAV, commits `8e0598a6` / `a5a090e1`):
 - run4 api-web still runs unprivileged after the purge: `uid=1000(node) gid=1000(node)`, `v22.23.2`, `/usr/sbin/nologin` and `/usr/bin/login` both absent; `clamd --version` `ClamAV 1.5.4/28128`, `clamscan --version` `ClamAV 1.5.4`.
 - Trivy api-web os-pkgs: 26 HIGH (pre-purge `25591949`) → **18 HIGH** (run3 and run4), 0 CRITICAL throughout; CVE-2026-76642/78408/78409/78410 confirmed GONE. lang-pkgs unchanged 1 CRITICAL / 10 HIGH.
 - **ClamAV 1.5.4 does NOT clear its Trivy findings**: all 12 `clamav` HIGHs persist on `clamav 1.5.4-1` with `status: affected` / `FixedVersion: null`, because the Cisco-Talos .deb registers itself as a Debian package named `clamav` and Trivy matches it against the Debian Security Tracker, which records no fixed version for trixie. The bump is still correct on the merits (upstream fixed CVE-2026-20339 + 20337/20338/20345/20346/20347/20348 + CVE-2025-8088 in 1.5.4; 20213–20217/20243/20244 were already fixed in 1.5.3, so the tracker over-attributes those). Pinned sha256 `28d6efc5b4423e7830c3559339552eb53870a9eac51ac4efb37d60530d329886`, computed from the 105,819,396-byte release asset, matching the size GitHub reports; the release publishes only GPG `.sig` files, no checksum file, and the signature was NOT verified (no trusted Talos key in the repo).
+- Full A/B verification (trixie `9d4a80bc` vs bookworm baseline `a923b7e9`) recorded in `docs/qa/evidence/base-image-trixie-ab-verification-2026-09-19.md`: 13,689 / 13,689 unit+integration tests pass on both OS images (0 fail); chromium 428 + mobile 132 e2e with zero trixie-only failures after re-run; production web image 16/16 page loads via real Owner login.
 
-Next: merged `origin/develop` (#650 Node 22.23.2 digest bump) as `f79ca8ff` — the six FROM lines keep trixie → decide the `login`/`liblastlog2-2` question → PR/CI/UAT per `docs/runbooks/uat-production-v2-deployment.md`; retire the four openssl waiver rows once ECR confirms them gone.
+Next: second UAT deploy of the trixie build when the owner orders it; retire the four openssl waiver rows once ECR confirms; ClamAV scanner blind spot documented.
