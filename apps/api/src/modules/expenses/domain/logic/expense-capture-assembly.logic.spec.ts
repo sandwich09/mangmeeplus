@@ -328,3 +328,159 @@ describe('capture assembly — pages and documents', () => {
     assert.equal(result.multiDocument, true);
   });
 });
+
+/**
+ * W10 D1 — the per-line discount that the summary repeats.
+ *
+ * Every shape below is copied from the real 2026-09-19 reads of the two public FlowAccount templates
+ * (`docs/research/expense-capture-read-benchmark-2026-09-19.md` §6): the row's money column is
+ * already net of its printed 5 % line discount, and the summary prints the same 625.00 again.
+ */
+describe('capture assembly — W10 D1: a line discount repeated in the summary', () => {
+  const flowAccountSummary = (): ExpenseCaptureComponentObservation[] => [
+    component({ id: 'c1', role: 'summary', scope: 'document', label: 'รวมเป็นเงิน', amount: '12,500.00', evidenceSpan: 'รวมเป็นเงิน: 12,500.00 บาท' }),
+    component({ id: 'c2', role: 'applied_discount', scope: 'document', label: 'ส่วนลด', amount: '625.00', evidenceSpan: 'ส่วนลด: 625.00 บาท' }),
+    component({ id: 'c3', role: 'summary', scope: 'document', label: 'จำนวนเงินหลังหักส่วนลด', amount: '11,875.00', evidenceSpan: 'จำนวนเงินหลังหักส่วนลด: 11,875.00 บาท' }),
+    component({ id: 'c4', role: 'tax_included', scope: 'document', label: 'ภาษีมูลค่าเพิ่ม 7%', amount: '776.87', evidenceSpan: 'ภาษีมูลค่าเพิ่ม 7%: 776.87 บาท' }),
+    component({ id: 'c5', role: 'summary', scope: 'document', label: 'ราคาไม่รวมภาษีมูลค่าเพิ่ม', amount: '11,098.13', evidenceSpan: 'ราคาไม่รวมภาษีมูลค่าเพิ่ม: 11,098.13 บาท' }),
+  ];
+
+  it('FlowAccount ใบกำกับภาษีเต็มรูป: the printed 625 is subtracted ONCE, not twice', () => {
+    const result = assemble([observations({
+      documents: [document({ kind: 'TAX_INVOICE', issuer: { name: 'บริษัท โฟลว์แอคเคาท์ ทดสอบ จำกัด', taxId: '0105558096348' }, documentNumber: 'INV2025020003' })],
+      items: [item({ id: '1:1', description: 'เมล็ดกาแฟดำเข้ม 500 ถุง', quantity: '50', unitPrice: '250.00', amount: '11,875.00',
+        evidenceSpan: '| 1 | เมล็ดกาแฟดำเข้ม 500 ถุง | 50 | 250.00 | 5 % | 11,875.00 |' })],
+      components: flowAccountSummary(),
+      totals: [total('merchandise', '12,500.00'), total('document_total', '11,875.00')],
+    })]);
+    assert.equal(result.reconciliation[0]!.computedTotal, '11875', 'was 11250 — the 625 came off twice');
+    assert.equal(result.reconciliation[0]!.difference, '0');
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+    assert.equal(result.reconciliation[0]!.discountAlreadyInRows, true, 'and the row says why');
+  });
+
+  it('FlowAccount อย่างย่อ: the printed "รวมเป็นเงิน" carries the proof when no merchandise total is read', () => {
+    const result = assemble([observations({
+      documents: [document({ kind: 'ABBREVIATED_TAX_INVOICE', documentNumber: 'CA2025020012' })],
+      items: [item({ id: '0:1', description: 'เมล็ดกาแฟคั่วเข้ม', quantity: '50', amount: '11,875.00', evidenceSpan: 'เมล็ดกาแฟคั่วเข้ม | 50 | 11,875.00' })],
+      components: flowAccountSummary(),
+      totals: [total('document_total', '11,875.00')],
+    })]);
+    assert.equal(result.reconciliation[0]!.computedTotal, '11875');
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+    assert.equal(result.reconciliation[0]!.discountAlreadyInRows, true);
+  });
+
+  it('two rows of the same layout reconcile the same way', () => {
+    const result = assemble([observations({
+      items: [
+        item({ id: '0:1', description: 'เมล็ดกาแฟคั่วเข้ม', quantity: '30', unitPrice: '250.00', amount: '7,125.00' }),
+        item({ id: '0:2', description: 'เมล็ดกาแฟคั่วอ่อน', quantity: '20', unitPrice: '250.00', amount: '4,750.00' }),
+      ],
+      components: flowAccountSummary(),
+      totals: [total('merchandise', '12,500.00'), total('document_total', '11,875.00')],
+    })]);
+    assert.equal(result.reconciliation[0]!.computedTotal, '11875');
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+  });
+
+  it('GROSS rows still have the document discount subtracted (the Royal Pizza layout)', () => {
+    const result = assemble([observations({
+      items: [item({ id: '0:1', amount: '524.00' }), item({ id: '0:2', amount: '298.00' })],
+      components: [component({ id: 'c1', role: 'applied_discount', scope: 'document', label: 'ส่วนลดพนักงาน', amount: '25.00', evidenceSpan: 'ส่วนลดพนักงาน 25.00' })],
+      totals: [total('merchandise', '822.00'), total('document_total', '797.00')],
+    })]);
+    assert.equal(result.reconciliation[0]!.computedTotal, '797');
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+    assert.equal(result.reconciliation[0]!.discountAlreadyInRows, undefined, 'the rows were not net of it');
+  });
+
+  it('infers nothing: net rows with NO printed pre-discount figure stay a reported mismatch', () => {
+    const result = assemble([observations({
+      items: [item({ id: '0:1', amount: '11,875.00' })],
+      components: [component({ id: 'c2', role: 'applied_discount', scope: 'document', label: 'ส่วนลด', amount: '625.00', evidenceSpan: 'ส่วนลด 625.00' })],
+      totals: [total('document_total', '11,875.00')],
+    })]);
+    assert.equal(result.reconciliation[0]!.status, 'mismatch');
+    assert.equal(result.reconciliation[0]!.discountAlreadyInRows, undefined);
+  });
+});
+
+/**
+ * W10 D2 — the retail N/V summary block, copied from the real 2026-09-19 read of the CP ALL
+ * 7-Eleven full-form ใบเสร็จรับเงิน/ใบกำกับภาษี (§6 of the research note). The reader filed
+ * "สินค้าไม่เสียภาษีมูลค่าเพิ่ม" as a discount (`mismatch −9`) and the VAT amount as a summary, so the
+ * reviewer's VAT field stayed empty. Lotus's, Big C and Makro print the same split.
+ */
+describe('capture assembly — W10 D2: non-VAT goods are not a discount', () => {
+  const sevenElevenItems = (): ExpenseCaptureItemObservation[] => [
+    item({ id: '0:1', description: 'กล้วยหอมทอง', quantity: '1', amount: '20.00' }),
+    item({ id: '0:2', description: 'ไข่ไก่ต้มสุกตรา ซีพี', quantity: '1', amount: '9.00', taxMarker: 'N' }),
+    item({ id: '0:3', description: 'ถั่วรวม 5 ชนิดพร้อมทาน', quantity: '1', amount: '18.00' }),
+    item({ id: '0:4', description: 'แก้วน้ำ-L 22 Oz', quantity: '1', amount: '25.00' }),
+    item({ id: '0:5', description: '7Game สะสมบาท 30 วัน', quantity: '1', amount: '8.00' }),
+  ];
+  /** The printed block, with the roles the real read chose for it. */
+  const sevenElevenSummary = (discount = '0.00'): ExpenseCaptureComponentObservation[] => [
+    component({ id: 'c1', role: 'summary', scope: 'document', label: 'มูลค่าสินค้ารวม', amount: '80.00', evidenceSpan: 'มูลค่าสินค้ารวม: 80.00' }),
+    component({ id: 'c2', role: 'applied_discount', scope: 'document', label: 'หักส่วนลด', amount: discount, evidenceSpan: `หักส่วนลด: ${discount}` }),
+    component({ id: 'c3', role: 'applied_discount', scope: 'document', label: 'ส่วนลดที่ได้ทั้งหมด', amount: '0.00', evidenceSpan: 'ส่วนลดที่ได้ทั้งหมด: 0.00' }),
+    component({ id: 'c4', role: 'applied_discount', scope: 'document', label: 'สินค้าไม่เสียภาษีมูลค่าเพิ่ม', amount: '9.00', evidenceSpan: 'สินค้าไม่เสียภาษีมูลค่าเพิ่ม: 9.00' }),
+    component({ id: 'c5', role: 'summary', scope: 'document', label: 'มูลค่าสินค้าก่อนภาษีมูลค่าเพิ่ม', amount: '66.36', evidenceSpan: 'มูลค่าสินค้าก่อนภาษีมูลค่าเพิ่ม: 66.36' }),
+    component({ id: 'c6', role: 'summary', scope: 'document', label: 'ภาษีมูลค่าเพิ่ม', amount: '4.64', evidenceSpan: 'ภาษีมูลค่าเพิ่ม: 4.64' }),
+    component({ id: 'c7', role: 'tax_included', scope: 'document', label: 'มูลค่าสินค้ารวมภาษีมูลค่าเพิ่ม', amount: '71.00', evidenceSpan: 'มูลค่าสินค้ารวมภาษีมูลค่าเพิ่ม: 71.00' }),
+  ];
+
+  it('the N-flagged goods line stops taking 9.00 off a basket that balances', () => {
+    const result = assemble([observations({
+      documents: [document({ kind: 'TAX_INVOICE', issuer: { name: 'บมจ. ซีพี ออลล์', taxId: '0107542000011', branchCode: '15888' }, documentNumber: 'H158886612200001' })],
+      items: sevenElevenItems(),
+      components: sevenElevenSummary(),
+      totals: [total('merchandise', '80.00'), total('document_total', '80.00')],
+    })]);
+    assert.equal(result.components.find((row) => row.id === 'c4')!.role, 'summary', 'never a discount');
+    assert.equal(result.components.find((row) => row.id === 'c7')!.role, 'summary', 'and never the VAT amount');
+    assert.equal(result.reconciliation[0]!.computedTotal, '80', 'was 71 — the non-VAT goods were subtracted');
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+  });
+
+  it('the printed VAT amount becomes the document tax total the reviewer sees', () => {
+    const result = assemble([observations({
+      items: sevenElevenItems(), components: sevenElevenSummary(),
+      totals: [total('merchandise', '80.00'), total('document_total', '80.00')],
+    })]);
+    const tax = result.totals.filter((row) => row.kind === 'tax');
+    assert.equal(tax.length, 1);
+    assert.equal(tax[0]!.amount, '4.64');
+    assert.equal(tax[0]!.evidenceSpan, 'ภาษีมูลค่าเพิ่ม: 4.64', 'with the span it was read from');
+  });
+
+  it('a real ส่วนลด row on the same layout is still subtracted', () => {
+    const result = assemble([observations({
+      items: sevenElevenItems(), components: sevenElevenSummary('5.00'),
+      totals: [total('merchandise', '80.00'), total('document_total', '75.00')],
+    })]);
+    assert.equal(result.components.find((row) => row.id === 'c2')!.role, 'applied_discount');
+    assert.equal(result.reconciliation[0]!.computedTotal, '75');
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+  });
+
+  it('a read that already found its own tax total keeps it', () => {
+    const result = assemble([observations({
+      items: sevenElevenItems(),
+      components: sevenElevenSummary(),
+      totals: [total('merchandise', '80.00'), total('tax', '4.64'), total('document_total', '80.00')],
+    })]);
+    assert.equal(result.totals.filter((row) => row.kind === 'tax').length, 1);
+  });
+
+  it('a charge whose printed label mentions VAT is still a charge', () => {
+    const result = assemble([observations({
+      items: [item({ id: '0:1', amount: '100.00' })],
+      components: [component({ id: 'c1', role: 'charge', scope: 'shipping', label: 'ค่าจัดส่ง (รวมภาษีมูลค่าเพิ่ม)', amount: '50.00', evidenceSpan: 'ค่าจัดส่ง (รวมภาษีมูลค่าเพิ่ม) 50.00' })],
+      totals: [total('document_total', '150.00')],
+    })]);
+    assert.equal(result.components[0]!.role, 'charge');
+    assert.equal(result.reconciliation[0]!.computedTotal, '150');
+  });
+});

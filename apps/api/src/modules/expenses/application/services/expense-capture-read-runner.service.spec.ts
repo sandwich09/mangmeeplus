@@ -378,6 +378,27 @@ describe('capture read runner — fences and resume', () => {
     } finally { harness.restore(); }
   });
 
+  /**
+   * W10 D3. The 896-px Leceipt screenshot came back with its item row and no totals block, and the
+   * job ended DONE on a draft with a line and no total. A page the reader could not finish — the
+   * model hit `max_tokens`, or it declared the printing too small to transcribe — is a PARTIAL read,
+   * which is the state §17.6 already has copy for. Nothing is re-read: a one-page chunk cannot be
+   * split any further, and asking the provider for the same pixels again is spending twice for the
+   * same answer.
+   */
+  it('ends PARTIAL when the only page was read partially, and never re-reads it', async () => {
+    harness = await build({ pages: 1, readResults: [{ status: 'ok', truncated: true }] });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      assert.equal(harness.readCalls.length, 1, 'no second read of the same page');
+      const state = terminal(harness);
+      assert.equal(state.status, 'PARTIAL', 'was DONE: an item with no total looked like a finished read');
+      const manifest = harness.writes.filter((write) => write.accepted && 'manifestJson' in write.data).at(-1)!.data as any;
+      assert.equal(manifest.manifestJson.pages[0]!.state, 'partial', 'the reviewer sees WHICH page fell short');
+      assert.equal(harness.outbox[0]![3].status, 'PARTIAL', 'and both lanes are told the same');
+    } finally { harness.restore(); }
+  });
+
   it('retries a provider error once, then marks the chunk failed and keeps going', async () => {
     harness = await build({
       pages: 6,

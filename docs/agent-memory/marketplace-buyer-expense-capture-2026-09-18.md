@@ -153,3 +153,36 @@ Next: owner approval → push branch → ONE develop PR + ONE main PR (main-base
 - Six documents (Leceipt Lazada receipt/tax invoice 2021, Leceipt e-Tax-by-Email sample 2019, FlowAccount full + abbreviated tax invoice Oct 2025, CP ALL 7-Eleven full-form tax invoice 20/12/2566, Lotus's e-Tax lower half 2023): issuer, tax id, document number, date and grand total right on every legible one; results + sources in `docs/research/expense-capture-read-benchmark-2026-09-19.md` §6.
 - Three reader defects found (none blocking, all fixable with synthetic fixtures): (1) per-line % discount repeated in the summary is subtracted twice by the §4.4 reconciliation (`mismatch −625` on both FlowAccount templates); (2) 7-Eleven "สินค้าไม่เสียภาษีมูลค่าเพิ่ม" row labelled `applied_discount`, VAT row labelled `summary` (VAT field left empty); (3) small text (≈ 8 px, 896-px screenshot) dropped silently — totals block missing, page not marked truncated.
 - Not found in public: Shopee/Lazada/TikTok-specific layouts beyond seller templates (the platforms only forward buyer details; sellers issue), Big C, Makro, CJ, every courier (only chat screenshots). Those need the owner's own documents on UAT.
+
+
+## W10 — three reader defects the real public bills exposed (2026-09-19)
+
+Status: implemented on `codex/mkt-w09-simplify-20260919` in `/private/tmp/mangmee-mkt-w09-20260918` (worktree, no push, no PR, no CI); every defect has a unit spec that FAILS on the pre-W10 tree; no Bedrock/AWS call was made by the implementer.
+Owner: owner order 2026-09-19 "ให้ opus แก้ 3 จุดนี้เลย"; Opus 5 implements, controller (Fable) reviews the diff and runs the paid replay.
+Scope: D1 discount double-subtraction (assembly + draft), D2 retail N/V summary vocabulary (gateway prompt + API normalisation), D3 small text dropped silently (preprocess upscale + declared partial + PARTIAL job), three synthetic fixtures, docs.
+
+Decisions:
+- D1 is proven from PRINTED figures only: rows + printed document discounts must equal a printed pre-discount figure (`merchandise` total or a `summary` component). With no such figure the old `mismatch` stands — nothing is inferred to make a document balance.
+- The decision is a contract field, not a log line: `ExpenseCaptureDocumentReconciliation.discountAlreadyInRows?: boolean`.
+- On the draft the fix is the row's PRINTED unit price (the gross one), so the printed discount keeps a base to come off and the reviewer still sees subtotal 12,500 / discount 625 / VAT 776.87 / total 11,875 with both item rows.
+- D2 is two layers on purpose: the prompt names every Thai summary row, and the assembly re-files a goods subtotal whatever the model called it. A `charge` is never re-filed, and a derived `tax` total is added only when the read found none AND exactly one bare VAT amount is printed.
+- D3 threshold `minImageEdgePx = 1,600` — the provider normalises to ~1,568 px on the long edge, so this is the largest upscale that buys pixels rather than tokens. Byte ceiling and the downscale path unchanged; the original is kept when no quality fits.
+- No web/LINE copy change: PARTIAL already routes to the existing §17.6 sentence with no re-read (`line-capture-result-notifier.use-case.spec.ts`, `expense-capture-status.logic.spec.ts`), both suites pass unchanged.
+
+Artifacts (commit `__COMMIT__`):
+- `packages/contracts/src/expense-capture.ts` (+`discountAlreadyInRows`)
+- `apps/api/src/modules/expenses/domain/logic/expense-capture-assembly.logic.ts` (+ spec: 6 new subtests over 2 describes)
+- `apps/api/src/modules/expenses/domain/logic/expense-capture-fields.logic.ts` (+ NEW `expense-capture-fields.logic.spec.ts`, registered in `apps/api/package.json` `test`)
+- `apps/api/src/modules/expenses/application/services/receipt-ocr-apply.service.ts` (+ spec case)
+- `apps/api/src/modules/expenses/domain/logic/expense-capture-preprocess.logic.ts` (+ 3 new spec cases, 1 rewritten)
+- `apps/api/src/modules/expenses/application/services/expense-capture-read-runner.service.ts` (+ spec case)
+- `apps/ai-gateway/src/modules/line-ai/domain/logic/expense-capture-read.logic.ts` + `presentation/http/line-ai-internal.controller.ts` (+ 9 new subtests in `expense-capture-routes.spec.ts`)
+- `scripts/expense-capture-read.fixtures.ts` + `.spec.ts` + `expense-capture-read-benchmark.ts` (3 fixtures, 3 new score fields)
+- docs: research §6.3 (fixes per defect with paths), appendix §25.7 + §13 rows + the §4.4 exception marker
+
+Verification (local, worktree tree, 2026-09-19 15:39–16:0x +07, all under `/tmp/mangmee-heavy.lock`):
+- contracts build rc 0 + test 324 pass / 0 fail; config build rc 0 + test 144 pass / 0 fail; api `typecheck` (tsc --noEmit, 8 GB heap) clean; api fixed-list suite rc 0 (dot reporter: 11,229 pass markers, 0 failure markers, incl. the new `expense-capture-fields.logic.spec.ts` and `spec-suite-coverage.spec.ts`); ai-gateway test 1,246 pass / 0 fail + `tsc --noEmit` clean; workers test 43 pass / 0 fail + lint clean; web `lint` (next typegen + tsc) clean + web test 1,823 pass / 0 fail (unchanged, run anyway); whole-chain acceptance rc 0 (4 + 4 + 1,567 + 387 tests, 0 fail, 8 suites, 21 repository scenarios); `pnpm test:harness` 33 pass / 0 fail (was 27 — the three new fixtures); benchmark `--dry-run` renders all 11 fixtures with `failure: null` (FX-IMG-SMALL-01: 31,140 input bytes → a 66,211-byte image chunk, i.e. the D3 upscale really fires); maintenance pins `status=current` (exactFiles=48); `git diff --check` clean. Failing-then-passing evidence (each fix reverted to `HEAD` and the same spec re-run): assembly 6 subtests fail, apply-service 1 (`ITEMS_DID_NOT_RECONCILE` instead of `RECONCILED_ITEM_LINES`), preprocess 2, runner 1, gateway routes 9.
+- NOT run (nothing needed them and the brief forbids the network): any Bedrock/AWS call, the pg specs (no throwaway Postgres in this session), browser/e2e. The api `tsc --noEmit` invoked WITHOUT the workspace's own `typecheck` script OOMs at the default heap — use `pnpm --filter @watchdog-bms/api typecheck`.
+- Local stack untouched throughout: API 3077 (`apps/api/dist/e2e-3077`, pid 10595) answered `/v1/health` 200 and `next dev` 3078 answered 200 after the whole gate run.
+
+Next: controller review of the diff → Bedrock replay of the three new fixtures + the six real files under the spend guard (task ledger THB 67.92 of 100 before this) → then the owner's normal push/PR path for the branch.

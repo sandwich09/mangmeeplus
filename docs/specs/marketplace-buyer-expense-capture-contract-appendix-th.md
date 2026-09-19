@@ -124,7 +124,7 @@ Scope: ไม่เปลี่ยนกติกาเงิน/สิทธิ
 
 - `manifestJson = { pageCount, pages: [{ index, printedNumber?, state: 'pending'|'read'|'partial'|'failed'|'blank', chunkId?, textLayerChars? }], chunks: [{ id, kind, pageIndexes, bytes, state: 'pending'|'done'|'failed', calls, errorCode? }], windows: [{ id, pageIndexes, state }], electronicVerification: { status: 'NOT_CHECKED'|'UNAVAILABLE' } }`
 - ประกอบ document graph: หน้าต่อเนื่องที่ `continuationOfRef`/เลขเอกสาร+ผู้ออกเดียวกันรวมเป็นเอกสารเดียว; header/footer ซ้ำ (issuer/docNumber/total ที่ปรากฏซ้ำต่างหน้า) นับครั้งเดียวโดยอ้าง span แรก; items ไม่ dedup ด้วยชื่อ; void ที่ `linkedItemId` หักล้าง; `printedPage.of > pageCount` → `suspectedMissingPages`
-- Reconciliation ด้วย `decimal.js`: ต่อเอกสาร `Σ sale − Σ void − Σ applied_discount(scope order/document) + Σ charge` เทียบ `document_total` (tolerance 0.05) → `reconciliation: 'reconciled'|'mismatch'|'insufficient'`; `buyer_payable`, `reported_paid`, `tender/change` (`68 = 500 − 432`) และ `future_reward` แยกค่า ไม่แตะกัน; ไม่สร้าง balancing component
+- Reconciliation ด้วย `decimal.js`: ต่อเอกสาร `Σ sale − Σ void − Σ applied_discount(scope order/document) + Σ charge` เทียบ `document_total` (tolerance 0.05) — **ข้อยกเว้นเดียวเพิ่มโดย W10 D1 (ข้อ 25.7): ส่วนลดที่แถวหักไปแล้วไม่ถูกหักซ้ำ และแถว reconciliation บอกไว้ด้วย `discountAlreadyInRows`** → `reconciliation: 'reconciled'|'mismatch'|'insufficient'`; `buyer_payable`, `reported_paid`, `tender/change` (`68 = 500 − 432`) และ `future_reward` แยกค่า ไม่แตะกัน; ไม่สร้าง balancing component
 - ผลรวมเป็น `ExpenseCaptureObservation(source: AI)` version ใหม่; ผลที่กลับหลัง revision/ไฟล์เปลี่ยน → `stale: true` ไม่ทับค่า HUMAN
 
 ### 4.5 Job runner (reuse pattern: OutboxEvent-style claim + BullMQ scan worker → internal route)
@@ -301,6 +301,9 @@ GET    /v1/companies/{c}/expenses/{expenseId}/read-status              (job ข�
 | FX-IMG-VOID | void 59/−59/53 | A52 |
 | FX-BOUNDARY | 4,000,000 / 4,000,001 / 4,194,304 / 4,194,305 / 10,485,760 / 10,485,761 bytes | A67 |
 | FX-LINE-FILE-* | raw webhook `message.type=file` (no contentBase64) ± caption, expired media, oversize declared | A68/A86–A88 |
+| FX-PDF-DISCOUNT-NET-01 | ใบกำกับเต็มรูปแบบ FlowAccount: แถวสุทธิจากส่วนลด 5 % + สรุปพิมพ์ส่วนลดเดิมซ้ำ (W10 D1) | A50/A77 |
+| FX-PDF-RETAIL-NV-01 | บล็อกสรุป N/V แบบ 7-Eleven (สินค้าไม่เสียภาษี/ก่อนภาษี/VAT/รวมทั้งสิ้น) (W10 D2) | A53/A50 |
+| FX-IMG-SMALL-01 | JPEG 896×533 ตัวอักษร ~11 px — บล็อกยอดรวมเล็กเกินอ่าน (W10 D3) | A76/A75 |
 
 ## 14. ลำดับงานและ verification ของรอบนี้
 
@@ -788,3 +791,17 @@ deep link ใบเบิก และ gate ใบรับรองหลัง
 | 6 | `DeleteExpenseUseCase` retire ไฟล์ทุกไฟล์ที่รายการนั้นลิงก์ โดยไม่ดูว่าใบอื่นยังอ้างอยู่ | ลบ sibling ที่ไม่ต้องการ → ใบต้นฉบับเสียใบเสร็จไปด้วย | guard "ยังมีลิงก์อื่น → ไม่ retire" แบบเดียวกับ remove-receipt/replace + `sharedAttachmentIds` ใน audit metadata (`delete-expense.use-case.spec.ts`) |
 
 สภาพแวดล้อมทดสอบ (ไม่ใช่ข้อบกพร่องของโค้ด แต่ต้องอยู่ในสูตร — ดู README ของ evidence `w09/`): (ก) throwaway stack ต้องรัน `prisma/sync-feature-launch-gates.ts` หลัง `prisma/seed.ts` ไม่งั้น `FeatureLaunchGate` ว่าง → ทุก `POST …/receipt-uploads` ตอบ 403 `feature_temporarily_unavailable`; (ข) bucket ของ MinIO ต้องเปิด versioning ไม่งั้น `…/receipt-uploads/{a}/complete` ตอบ 500 `S3 bucket versioning is required for immutable evidence`
+
+### 25.7 Implementation notes (W10 — สามจุดที่บิลจริงเปิดเผย, 2026-09-19)
+
+เจ้าของสั่ง 2026-09-19 หลังรันบิลสาธารณะจริงหกใบ ("ให้ opus แก้ 3 จุดนี้เลย") — รายละเอียดผลอ่านจริงและไฟล์ต้นทางอยู่ใน `docs/research/expense-capture-read-benchmark-2026-09-19.md` §6, สิ่งที่แก้ต่อจุดอยู่ใน §6.3 ของเอกสารเดียวกัน. ไม่มีหน้าจอใหม่ ไม่มี API ใหม่ ไม่มีข้อความลูกค้าใหม่.
+
+| # | จุดที่พบบนบิลจริง | ผลถ้าไม่แก้ | สิ่งที่แก้ |
+|---|---|---|---|
+| D1 | FlowAccount/PEAK/Leceipt พิมพ์ส่วนลดต่อบรรทัด (ยอดในแถวเป็นยอดสุทธิแล้ว) และพิมพ์ยอดส่วนลดเดิมซ้ำในสรุป | §4.4 หักส่วนลดซ้ำ → `mismatch −625` บนใบที่ยอดตรง และร่างสองแถวขึ้นไปตกเป็น `ITEMS_DID_NOT_RECONCILE` เหลือบรรทัดสรุปเดียว | `reconcileDocument` ไม่หักซ้ำเมื่อ "แถว + ส่วนลดที่พิมพ์ = ยอดก่อนหักส่วนลดที่พิมพ์" (ต้องมีตัวเลขที่พิมพ์จริง ไม่อนุมาน) และบันทึกเหตุผลไว้บนแถว reconciliation เป็น `discountAlreadyInRows` (contract ใหม่ optional ใน `ExpenseCaptureDocumentReconciliation`); `receipt-ocr-apply.service.ts` ใช้ราคาต่อหน่วยที่พิมพ์ (ยอดขั้นต้น) เป็นฐานของแถว ส่วนลดจึงหักครั้งเดียว → `RECONCILED_ITEM_LINES` subtotal 12,500 / discount 625 / VAT 776.87 / total 11,875 |
+| D2 | 7-Eleven (และ Lotus's/Big C/Makro) พิมพ์บล็อกสรุป N/V: "สินค้าไม่เสียภาษีมูลค่าเพิ่ม" ถูกอ่านเป็น `applied_discount`, แถว VAT ถูกอ่านเป็น `summary` | `mismatch −9` และช่อง VAT ของผู้ตรวจว่างเปล่าทุกใบ | สองชั้น: (ก) `CAPTURE_EXTRACT_PROMPT` ระบุ kind ของทุกแถวสรุปภาษาไทยทีละแถว + สั่งอ่านยอดที่พิมพ์ "บนบรรทัดของตัวเอง" (บิลจริงเลื่อนทั้งบล็อกไปหนึ่งแถว) พร้อม spec ตรึงข้อความ; (ข) assembly ไม่เชื่อป้ายของโมเดลอย่างเดียว — component ที่ป้าย/span บอกว่าเป็นยอดสินค้า (ไม่เสียภาษี/ยกเว้นภาษี/ก่อนภาษี/รวมภาษี) ถูกเปลี่ยนเป็น `summary` เมื่อโมเดลให้ role ที่ขยับเงินหรืออ้างเป็นภาษี, และสร้าง totals kind `tax` จากแถว VAT ที่พิมพ์เมื่อผลอ่านไม่มี `tax` (ยอดเดียวเท่านั้น). `charge` ไม่ถูกเปลี่ยน. เพิ่ม: ส่วนลดที่พิมพ์ 0.00 ไม่นับเป็นส่วนลดใน `expense-capture-fields.logic.ts` (ฟอร์ม 7-Eleven พิมพ์สองแถวเป็น 0.00 ทุกใบ → เดิมรายงาน `discountAmount` ขาด) |
+| D3 | ภาพ/สกรีนช็อตต่ำกว่า ~1,000 px: ตัวอักษร ~8 px ทำให้บล็อกยอดรวมหายทั้งบล็อก โดย `truncated: false` → งานจบ DONE พร้อมรายการที่ไม่มียอด | ร่างมีสินค้าแต่ไม่มียอดรวม และไม่มีใครรู้ว่าอ่านไม่ครบ | สามชั้น: (ก) `EXPENSE_CAPTURE_PREPROCESS_LIMITS.minImageEdgePx = 1,600` — ขยายภาพด้วย sharp `lanczos3` ก่อนอ่าน (เลือก 1,600 เพราะ provider ย่อภาพเองที่ ~1,568 px ด้านยาว) โดยเพดาน byte/edge เดิมชนะเสมอและกฎย่อภาพไม่เปลี่ยน; (ข) `captureReadPrompt` บังคับให้ถอดความทุกบรรทัดรวมบล็อกยอดรวม และให้คีย์ `partial` ไว้บอกว่าอ่านไม่ครบ → API แปลงเป็น `truncated: true` เหมือน `max_tokens`; (ค) runner นับหน้าสถานะ `partial` เป็นหน้าที่ยังไม่ได้อ่าน → งานจบ PARTIAL ตาม §17.6 (ไม่มีปุ่มอ่านซ้ำ ข้อความเดิมใช้ได้ ไม่ต้องแก้เว็บ/LINE) |
+
+Fixture ใหม่ใน `scripts/expense-capture-read.fixtures.ts` (สังเคราะห์ทั้งหมด, รันใน `pnpm test:harness`, ให้ controller replay บน Bedrock): `FX-PDF-DISCOUNT-NET-01` (แถวสุทธิ + ส่วนลดซ้ำในสรุป — render เป็นภาพเพราะ pdf-lib standard font เขียนภาษาไทยไม่ได้ และป้ายไทยคือสิ่งที่ทดสอบ), `FX-PDF-RETAIL-NV-01` (บล็อก N/V เต็มรูป), `FX-IMG-SMALL-01` (JPEG 896×533 ตัวอักษร ~11 px — ช่องทางภาพล้วน ไม่มี text layer). Scorer เพิ่ม `discountsMatched` / `vatMatched` / `reconciledDocuments` เพราะของเดิมวัดได้แค่ documents/items/totals. ตาราง §13 เพิ่มสามแถวนี้ไว้แล้ว.
+
+ข้อความใน §4.4 ("`Σ sale − Σ void − Σ applied_discount(scope order/document) + Σ charge`") ยังเป็นสูตรหลัก — W10 เพิ่มข้อยกเว้นเดียวที่อธิบายข้างบน (D1) ไม่ได้เปลี่ยนสูตร และไม่ได้เพิ่ม balancing component ใด ๆ.

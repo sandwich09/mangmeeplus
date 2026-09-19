@@ -438,16 +438,21 @@ export class LineAiInternalController {
       usageTag: 'ocr.capture.read',
     });
     if (!read.ok) return { status: 'failed', contractVersion, ...providerErrorEnvelope(read.error) };
-    const text = parseCaptureNaturalText(read.text, MAX_CAPTURE_PAGE_TEXT_CHARS * chunk.pageIndexes.length);
-    if (!text) return { status: 'failed', contractVersion, errorCode: 'OCR_EMPTY_OUTPUT' };
+    const transcription = parseCaptureNaturalText(read.text, MAX_CAPTURE_PAGE_TEXT_CHARS * chunk.pageIndexes.length);
+    if (!transcription) return { status: 'failed', contractVersion, errorCode: 'OCR_EMPTY_OUTPUT' };
     // `max_tokens` does NOT lose the chunk: the pages that completed keep their text and only the
     // last one is reported truncated, so the API re-splits that page instead of re-reading all.
-    const pages = parseCaptureReadPages(text, chunk.pageIndexes, read.stopReason === 'max_tokens');
+    // W10 D3: a transcription the model itself declared incomplete (a totals block too small to
+    // read) is reported the same way — the API's answer to both is identical, and a page nobody
+    // could fully read must not end the job DONE with an item and no total (§17.6).
+    const pages = parseCaptureReadPages(transcription.text, chunk.pageIndexes,
+      read.stopReason === 'max_tokens' || transcription.partialReason !== undefined);
     if (pages.length === 0) return { status: 'failed', contractVersion, errorCode: 'OCR_EMPTY_OUTPUT' };
     this.logger.log({
       msg: 'capture chunk read', requestId: body.requestId, chunkId: chunk.id, kind: chunk.kind,
       pages: pages.length, expectedPages: chunk.pageIndexes.length,
       truncated: pages.some((page) => page.truncated), blank: pages.filter((page) => page.blank).length,
+      ...(transcription.partialReason ? { partialReason: transcription.partialReason } : {}),
     });
     return {
       status: 'ok', contractVersion, pages,

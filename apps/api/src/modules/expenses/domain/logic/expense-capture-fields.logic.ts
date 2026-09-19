@@ -77,8 +77,14 @@ export function captureFieldsFromObservations(
 
   // ONE printed order-level discount maps; two do not, because the legacy draft has one slot and
   // adding them would record a figure the document never shows (§6 rule 9).
-  const discounts = components.filter((component) =>
-    component.role === 'applied_discount' && component.scope !== 'item' && component.appliedStatus !== 'pending' && component.amount);
+  const discounts = components.filter((component) => {
+    if (component.role !== 'applied_discount' || component.scope === 'item' || component.appliedStatus === 'pending') return false;
+    // W10 D2: a printed 0.00 is not a discount. The 7-Eleven full form prints both "หักส่วนลด 0.00"
+    // and "ส่วนลดที่ได้ทั้งหมด 0.00" on every bill, and counting them as two conflicting figures
+    // reported the slot MISSING — sending the reviewer to check a discount the bill says is none.
+    const amount = Number.parseFloat((component.amount ?? '').replace(/,/g, ''));
+    return Number.isFinite(amount) && amount !== 0;
+  });
   if (discounts.length === 1) fields.discountAmount = stripSign(discounts[0]!.amount!);
   else if (discounts.length > 1) missing.add('discountAmount');
 

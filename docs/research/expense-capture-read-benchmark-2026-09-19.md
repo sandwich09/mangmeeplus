@@ -211,3 +211,78 @@ Shopee-, Lazada- and TikTok-specific layouts beyond the seller templates above; 
 e-receipts; every courier. Those need the owner's own documents on UAT (D05/D09 bundles) — the
 reader is generic, and these six say it reads issuer, number, date and the grand total correctly on
 every legible document, and that the breakdown rules above are where it still stumbles.
+
+### 6.3 Fixes — W10 (2026-09-19, branch `codex/mkt-w09-simplify-20260919`)
+
+All three defects of §6.1 are fixed and covered by unit specs that FAIL on the pre-W10 tree. Nothing
+below was verified against Bedrock by the implementer: the three new synthetic fixtures render under
+`--dry-run` and the controller replays them (and the six real files) under the spend guard.
+
+**D1 — a per-line discount repeated in the summary was subtracted twice.**
+
+- `apps/api/src/modules/expenses/domain/logic/expense-capture-assembly.logic.ts`: `reconcileDocument`
+  no longer subtracts a document-level discount the rows have already had taken off. The proof is the
+  document's own PRINTED pre-discount figure (a `merchandise` total, or a `summary` component such as
+  "รวมเป็นเงิน"): rows that already net the discount come to `subtotal − discount`, gross rows come to
+  `subtotal` itself, so the two layouts cannot be confused and nothing is inferred — with no printed
+  pre-discount figure the old `mismatch` still stands. The decision is recorded on the reconciliation
+  row as `discountAlreadyInRows: true`
+  (`packages/contracts/src/expense-capture.ts`, `ExpenseCaptureDocumentReconciliation`).
+- Following the money to the draft: `apps/api/src/modules/expenses/application/services/receipt-ocr-apply.service.ts`
+  keeps the row's PRINTED unit price when the rows are net of the printed discount, so the discount
+  has the gross base it was taken from. Before this the two-row form of the FlowAccount layout
+  reached the reviewer as `ITEMS_DID_NOT_RECONCILE` with one summary line — the draft told them the
+  document contradicted itself. It is now `RECONCILED_ITEM_LINES`: two rows, subtotal 12,500.00,
+  discount 625.00, VAT 776.87, total 11,875.00.
+- Specs: `expense-capture-assembly.logic.spec.ts` (both FlowAccount templates, a two-row variant, and
+  two controls — gross rows still subtract, net rows with no printed pre-discount figure stay a
+  reported mismatch), `expense-capture-fields.logic.spec.ts` (new file: observations → draft fields),
+  `receipt-ocr-apply.service.spec.ts` ("keeps the item rows when a line discount is repeated…").
+
+**D2 — 7-Eleven / retail: non-VAT goods read as a discount, VAT read as a summary.**
+
+- Prompt (`apps/ai-gateway/src/modules/line-ai/domain/logic/expense-capture-read.logic.ts`,
+  `CAPTURE_EXTRACT_PROMPT`): the Thai summary rows are now named one by one — `merchandise` for
+  "มูลค่าสินค้ารวม"/"รวมเป็นเงิน", `applied_discount` ONLY for a หักส่วนลด/ส่วนลด row, `summary` for
+  "สินค้าไม่เสียภาษีมูลค่าเพิ่ม"/"ยกเว้นภาษี" and for the ก่อนภาษี/รวมภาษี goods subtotals, totals kind
+  `tax` for a bare "ภาษีมูลค่าเพิ่ม <amount>", `document_total` for "รวมเงินทั้งสิ้น" — plus an explicit
+  instruction to read each row with the amount printed on its own line (the real read shifted the
+  whole block by one row). Pinned by `expense-capture-routes.spec.ts`.
+- The API never trusts that alone. `assembleCaptureObservations` re-files any component whose printed
+  label/span says ไม่เสียภาษี / ยกเว้นภาษี / ก่อนภาษี / รวมภาษี / non-VAT as `summary` when the model
+  gave it a role that moves money or claims to be the tax, and derives the document's `tax` total from
+  a bare printed VAT row when the read found none (one distinct amount only, or nothing). A `charge`
+  is never re-filed, so a shipping line whose label mentions VAT stays a charge.
+- `expense-capture-fields.logic.ts` also stops treating a printed 0.00 discount as a discount: the
+  7-Eleven form prints two of them on every bill, and counting them as two conflicting figures
+  reported `discountAmount` MISSING on a bill that has none.
+- Result on the CP ALL shapes: reconciliation `reconciled` (was `mismatch −9`), `vatAmount = 4.64`
+  (was empty), `grandTotalAmount = 80.00`, the N rows still rows, a real ส่วนลด row still a discount.
+
+**D3 — small text dropped silently.**
+
+- `expense-capture-preprocess.logic.ts`: a new declared limit `minImageEdgePx = 1,600`. An image
+  attachment whose longer side is under it is enlarged with sharp `lanczos3` before the read. 1,600 px
+  is chosen because the provider itself normalises an image to ~1,568 px on its long edge: upscaling
+  to that roughly doubles the height of 8-px printing at no extra image cost, and anything beyond it
+  would only be scaled back down. The byte ceiling (`maxImageBytes`) still wins — quality steps down
+  90/80/70 and the ORIGINAL is kept if none fits — and the downscale path is untouched.
+- `captureReadPrompt` now demands every printed line "including the summary and total block at the
+  bottom … even when it is printed much smaller than the item rows", and gives the model a `partial`
+  key to say what it could not read. `parseCaptureNaturalText` returns that reason; the route maps it
+  to `truncated: true` exactly like `max_tokens`.
+- `expense-capture-read-runner.service.ts`: a page left in the manifest state `partial` now counts as
+  unread, so the job ends PARTIAL (§17.6 copy) instead of DONE with an item and no total. A re-read
+  page that comes back whole is `read` again, so this does not strand a recovered page.
+- No web or LINE copy change was needed: PARTIAL already routes to the existing §17.6 sentence with no
+  re-read offered — `line-capture-result-notifier.use-case.spec.ts` (PARTIAL/FAILED/PAUSED sentences)
+  and `expense-capture-status.logic.spec.ts` / `capture-screens-withdrawn.spec.ts` cover it, and both
+  suites pass unchanged.
+
+**Fixtures** (`scripts/expense-capture-read.fixtures.ts`, run by `pnpm test:harness` and replayed by
+the controller): `FX-PDF-DISCOUNT-NET-01` (rows net of a 5 % line discount + the summary repeating it;
+rendered, because pdf-lib's standard fonts cannot encode the Thai labels that ARE the layout),
+`FX-PDF-RETAIL-NV-01` (the N/V split and the full retail summary block), `FX-IMG-SMALL-01` (an 896×533
+JPEG — the size of the real Leceipt screenshot — whose totals block is ~11 px). The scorer gained the
+three numbers those fixtures turn on: `discountsMatched`, `vatMatched` and `reconciledDocuments`,
+matched by value like the totals and never graded when the expectation is zero.

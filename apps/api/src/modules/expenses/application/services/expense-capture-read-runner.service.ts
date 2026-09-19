@@ -370,7 +370,12 @@ export class ExpenseCaptureReadRunnerService {
     }
 
     const failedChunks = Object.values(checkpoint.chunks).filter((state) => state === 'failed').length;
-    const unreadPages = manifest.pages.filter((page) => page.state === 'pending' || page.state === 'failed').length;
+    // W10 D3: `partial` counts as unread. A page whose transcription stopped short — the model hit
+    // `max_tokens`, or it declared it could not read part of the page — has facts nobody has seen, so
+    // the job ends PARTIAL (§17.6) instead of DONE. A re-split page that came back whole is `read`
+    // again by then, so re-reading a truncated page still clears it.
+    const unreadPages = manifest.pages
+      .filter((page) => page.state === 'pending' || page.state === 'failed' || page.state === 'partial').length;
     // Appendix §25: one document lands on the owning expense; several are SPLIT into ordinary
     // drafts here, before the terminal write, so `read-status` and the LINE push never have to show
     // a "split pending" state. The split ids are checkpointed so a retry finds the work done.
