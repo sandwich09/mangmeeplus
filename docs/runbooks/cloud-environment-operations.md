@@ -738,6 +738,15 @@ CVE ที่เจอส่วนใหญ่เป็นแพ็กเกจ 
 เช็คก่อนเสมอที่ `https://security-tracker.debian.org/tracker/<CVE>` ดูช่อง bookworm ว่าเป็น
 `vulnerable` หรือมีเลขเวอร์ชันที่ fix แล้ว
 
+**bump digest 2026-09-19 — Node 22.23.2** เปลี่ยน pin ทั้ง 6 Dockerfile จาก `6c74791e…` เป็น `48e4b67d…`
+รับ Node 22.23.1 → 22.23.2 (security release ก.ค. 2026 ปิด 3 HIGH: HTTP/2 สองตัว + Permission Model)
+ชั้น Debian ไม่ขยับ — ยัง bookworm 12.15, 0 upgradable packages และ 5 CVE ที่ waive ไว้ยังไม่มี fixed
+version ของ bookworm (อ่าน security-tracker 2026-09-19) เป็น bump ตามข้อ 2 ข้างล่าง ไม่ใช่ปลด waiver
+(มี task แยกกำลังย้ายฐานไป `node:22-trixie-slim`/Debian 13 เพื่อปิด openssl 4 CVE นั้น) ระหว่างทางเจอว่า
+path Kamal ไม่มีเกตนี้: `infra/kamal/release.py` ไม่เรียก `verify-ecr-scan.sh`, `mangmee-kamal-uat/releases`
+ตั้ง `scanOnPush=false`, image production ที่ push 2026-09-18 ไม่มีผล scan — **เจ้าของตัดสิน 2026-09-19:
+ยังไม่เพิ่ม scan gate ใน Kamal path (ต้องการความเร็วในการ deploy ช่วงแรก) จะสั่งสแกนเองเป็นรอบ ๆ**
+
 **กติกา waiver** (ดูตัวอย่างจริงในไฟล์ `.jq`): ทุกแถวต้องมี CVE ตรงตัว + `severity` + `package_name` +
 `package_version` + anchor ที่คัดลอกจาก description ของ provider แบบคำต่อคำ + epoch หมดอายุ +
 approval id ของ Owner ทั้งหมดต้องแมตช์พร้อมกัน — drift ตัวใดตัวหนึ่ง (เวอร์ชันขยับ, severity เปลี่ยน,
