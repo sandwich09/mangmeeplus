@@ -331,3 +331,20 @@ VAT ceiling in `expense-capture-assembly.logic.ts` (`derivedTaxTotal`) and in
 `expense-capture-read-runner.service.ts`; and the harness's summary line now names each
 document's reconciliation status. §4.4's principle stands: nothing is inferred from rows that happen to
 meet the printed total — a shifted block is REPORTED as a mismatch, never balanced away.
+
+### 6.6 Second search round — the remaining brands (2026-09-19, later the same day)
+
+Owner: "แล้วบิลอื่นละ". A second, brand-by-brand round through forum threads and provider blogs (Thailand
+Post, Kerry, Flash, J&T, Shopee and TikTok fee invoices, Makro, Big C, CJ, PEAK):
+
+| Brand | Found | Read |
+|---|---|---|
+| **Flash Express** | a digitally signed ใบเสร็จรับเงิน/ใบกำกับภาษี of 18/01/2024 posted on [Pantip](https://pantip.com/topic/42496513) (customer block and tracking numbers blurred locally before upload) | issuer + tax id 0105560159254, doc no. `FIC20240…`, date, **7 fee lines** (ค่าขนส่ง 70.00, ค่าบริการ COD 20.00 + VAT 1.40 …), merchandise 90.00, `tax` 1.40, **ทั้งสิ้น 91.40**, `reported_paid` 91.40 cash — `reconciled`. THB 2.08 (task cumulative THB 77.86) |
+| Thailand Post | one 2017 EMS sticker photo, illegible | not sent |
+| Kerry, J&T | threads without a document | — |
+| Shopee, TikTok fee invoices (issued to sellers) | guides and video thumbnails only; the seller-centre download pages are behind login | — |
+| Makro, Big C, CJ | threads without a document; the Big C thread holds chat screenshots only | — |
+
+Seven real documents in total now, all reading issuer, number, date and grand total correctly on the
+fixed reader; the two low-resolution screenshots end PARTIAL (§6.5). What remains untested is exactly
+what only the owner holds: their own Shopee/TikTok/Makro/Big C/CJ/Kerry documents on UAT.
