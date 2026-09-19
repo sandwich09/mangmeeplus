@@ -201,7 +201,7 @@ describe('receipt reliability on PostgreSQL', { skip: !databaseUrl }, () => {
         status: 'delivery_pending', errorCode: 'LINE_DELIVERY_FAILED_OTHER', createdAt: new Date(Date.now() - LINE_BUFFER_ORPHAN_REPROCESS_MS - 1000),
         payloadJson: { chatId: 'U-synthetic', lineUserId: 'U-synthetic', messagingChannelId: 'synthetic', item: { kind: 'media', webhookEventId: eventId, replyToken: 'expired', lineMessageId: `${tag}-image` } } } });
       await client.lineTurnOutcome.create({ data: { webhookEventId: eventId, companyId, messagesJson: messages, presentationKind: 'flex' } });
-      const worker = new RecoverOrphanLineEventsUseCase({ client } as any, { lineAiTerminalOutcomeReplayEnabled: true, aiDataRetentionDays: 90 } as any,
+      const worker = new RecoverOrphanLineEventsUseCase({ client } as any, { lineAiTerminalOutcomeReplayEnabled: true, aiDataRetentionDays: 90, expenseCaptureRetentionDays: 90 } as any,
         noAudit, { enqueue: async () => { throw new Error('business work must not be replayed'); } } as any, adapter);
       // This transport/JSONB test isolates authorization; real current-source replay is covered by line-read-evidence.pg.spec.ts.
       (worker as any).readEvidence = { verifyDelivery: async () => true };

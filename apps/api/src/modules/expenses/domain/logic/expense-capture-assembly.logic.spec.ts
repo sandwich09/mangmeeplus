@@ -1,0 +1,330 @@
+/**
+ * The arithmetic and the merging of appendix §4.4, against the acceptance cases of spec §10.
+ *
+ * Every row here is a real shape the corpus shows: a checkout that already includes shipping in
+ * its subtotal (A25), the same order panel photographed twice (A26), a void that cancels a row
+ * (A52), cash 500 with 432 change (A49), a coupon for next time (A29), two receipts in one file
+ * (A54) and a document that says it is page 1 of 3 in a two-page file (A82).
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import type {
+  BusinessDocumentClassification,
+  ExpenseCaptureComponentObservation,
+  ExpenseCaptureDocumentObservation,
+  ExpenseCaptureItemObservation,
+  ExpenseCaptureObservations,
+  ExpenseCaptureTotalObservation,
+} from '@watchdog-bms/contracts';
+import { assembleCaptureObservations } from './expense-capture-assembly.logic';
+
+const classification: BusinessDocumentClassification = {
+  contentKind: 'DOCUMENT',
+  documentFamily: 'EXPENSE_EVIDENCE',
+  documentKind: 'RECEIPT',
+  businessDirection: 'PURCHASE_EXPENSE',
+  transactionState: 'PAID',
+  evidenceRoles: ['EXPENSE_SUPPORT'],
+  confidence: 0.9,
+  evidenceSignals: [],
+  amountSignals: [],
+  settlementSignals: [],
+  missingRequiredSignals: [],
+  contradictionSignals: [],
+  requiresClarification: false,
+};
+
+function document(over: Partial<ExpenseCaptureDocumentObservation> = {}): ExpenseCaptureDocumentObservation {
+  return {
+    ref: 'd1', pageIndexes: [0], kind: 'RECEIPT', family: 'EXPENSE_EVIDENCE',
+    issuer: { name: 'ร้านตัวอย่าง' }, documentNumber: 'INV-1', classification, ...over,
+  };
+}
+
+const item = (over: Partial<ExpenseCaptureItemObservation> & Pick<ExpenseCaptureItemObservation, 'id'>): ExpenseCaptureItemObservation => ({
+  documentRef: 'd1', description: 'สินค้า', event: 'sale', evidenceSpan: 'span', ...over,
+});
+
+const component = (over: Partial<ExpenseCaptureComponentObservation> & Pick<ExpenseCaptureComponentObservation, 'id' | 'role' | 'scope'>): ExpenseCaptureComponentObservation => ({
+  documentRef: 'd1', label: 'ส่วนประกอบ', appliedStatus: 'applied', evidenceSpan: 'span', ...over,
+});
+
+const total = (kind: ExpenseCaptureTotalObservation['kind'], amount: string, documentRef = 'd1'): ExpenseCaptureTotalObservation =>
+  ({ documentRef, kind, amount, evidenceSpan: `${kind} ${amount}` });
+
+function observations(over: Partial<ExpenseCaptureObservations> = {}): ExpenseCaptureObservations {
+  return {
+    documents: [document()], items: [], components: [], totals: [], payments: [], refunds: [],
+    completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [0], notes: [] },
+    ...over,
+  };
+}
+
+const assemble = (windows: ExpenseCaptureObservations[], pageCount = 1) =>
+  assembleCaptureObservations(windows.map((value, index) => ({ id: `w${index + 1}`, observations: value })), { pageCount });
+
+describe('capture assembly — money', () => {
+  it('A25: a subtotal that already includes shipping is not added to the shipping charge again', () => {
+    const result = assemble([observations({
+      items: [item({ id: '0:1', amount: '600.00' }), item({ id: '0:2', amount: '400.00' })],
+      components: [component({ id: 'c1', role: 'charge', scope: 'shipping', label: 'ค่าจัดส่ง', amount: '50.00' })],
+      // The printed "merchandise" line on this panel INCLUDES shipping; the item rows do not.
+      totals: [total('merchandise', '1050.00'), total('document_total', '1050.00')],
+    })]);
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+    assert.equal(result.reconciliation[0]!.computedTotal, '1050');
+  });
+
+  it('A26: the same order panel read twice yields one document and one set of totals', () => {
+    const panel = observations({
+      items: [item({ id: '0:1', amount: '100.00' })],
+      components: [component({ id: 'c1', role: 'applied_discount', scope: 'order', label: 'ส่วนลด', amount: '10.00' })],
+      totals: [total('document_total', '90.00')],
+    });
+    const result = assemble([panel, JSON.parse(JSON.stringify(panel)) as ExpenseCaptureObservations]);
+    assert.equal(result.documents.length, 1);
+    assert.equal(result.totals.length, 1);
+    assert.equal(result.components.length, 1, 'a footer discount printed on both pages is one discount');
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+  });
+
+  it('A26: two different orders in one checkout stay two documents', () => {
+    const result = assemble([observations({
+      documents: [
+        document({ ref: 'd1', documentNumber: 'ORD-1', issuer: { name: 'ร้าน ก' } }),
+        document({ ref: 'd2', documentNumber: 'ORD-2', issuer: { name: 'ร้าน ข' } }),
+      ],
+      items: [item({ id: '0:1', amount: '10.00' }), item({ id: '0:2', documentRef: 'd2', amount: '20.00' })],
+      totals: [total('document_total', '10.00'), total('document_total', '20.00', 'd2')],
+    })]);
+    assert.equal(result.documents.length, 2);
+    assert.equal(result.multiDocument, true);
+    assert.deepEqual(result.reconciliation.map((row) => row.status), ['reconciled', 'reconciled']);
+  });
+
+  it('A27: same-name rows are two purchases and a zero-price gift changes no total', () => {
+    const result = assemble([observations({
+      items: [
+        item({ id: '0:1', description: 'น้ำดื่ม', amount: '12.00' }),
+        item({ id: '0:2', description: 'น้ำดื่ม', amount: '12.00' }),
+        item({ id: '0:3', description: 'ของแถม', amount: '0.00', event: 'zero_price_promo' }),
+      ],
+      totals: [total('document_total', '24.00')],
+    })]);
+    assert.equal(result.items.length, 3, 'never dedupe by description');
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+  });
+
+  it('A28: one row the page never priced leaves the document unprovable, not 0', () => {
+    const result = assemble([observations({
+      items: [item({ id: '0:1', amount: '10.00' }), item({ id: '0:2' })],
+      totals: [total('document_total', '10.00')],
+    })]);
+    assert.equal(result.reconciliation[0]!.status, 'insufficient');
+    assert.equal(result.reconciliation[0]!.computedTotal, undefined);
+    assert.equal(result.reconciliation[0]!.documentTotal, '10');
+  });
+
+  it('A29: a coupon for next time reduces nothing', () => {
+    const result = assemble([observations({
+      items: [item({ id: '0:1', amount: '100.00' })],
+      components: [component({ id: 'c1', role: 'future_reward', scope: 'document', label: 'คูปองครั้งหน้า 50', amount: '50.00' })],
+      totals: [total('document_total', '100.00')],
+    })]);
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+  });
+
+  it('A49: cash 500 with 432 change is a purchase of 68', () => {
+    const result = assemble([observations({
+      items: [item({ id: '0:1', amount: '68.00' })],
+      components: [
+        component({ id: 'c1', role: 'tender', scope: 'document', label: 'เงินสด', amount: '500.00' }),
+        component({ id: 'c2', role: 'change', scope: 'document', label: 'เงินทอน', amount: '432.00' }),
+      ],
+      totals: [total('document_total', '68.00')],
+    })]);
+    assert.equal(result.reconciliation[0]!.computedTotal, '68');
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+  });
+
+  it('A50: an order discount printed on two pages is subtracted once', () => {
+    const first = observations({
+      items: [item({ id: '0:1', amount: '100.00' })],
+      components: [component({ id: 'c1', role: 'applied_discount', scope: 'order', label: 'ส่วนลดท้ายบิล', amount: '10.00' })],
+    });
+    const second = observations({
+      documents: [document({ pageIndexes: [1] })],
+      components: [component({ id: 'c9', role: 'applied_discount', scope: 'order', label: 'ส่วนลดท้ายบิล', amount: '10.00' })],
+      totals: [total('document_total', '90.00')],
+    });
+    const result = assemble([first, second], 2);
+    assert.equal(result.components.length, 1);
+    assert.equal(result.reconciliation[0]!.computedTotal, '90');
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+  });
+
+  it('A52: a linked void cancels its row, an unlinked negative row does not', () => {
+    const linked = assemble([observations({
+      items: [
+        item({ id: '0:1', amount: '59.00' }),
+        item({ id: '0:2', amount: '-59.00', event: 'void', linkedItemId: '0:1' }),
+        item({ id: '0:3', amount: '53.00' }),
+      ],
+      totals: [total('document_total', '53.00')],
+    })]);
+    assert.equal(linked.reconciliation[0]!.computedTotal, '53');
+    assert.equal(linked.reconciliation[0]!.status, 'reconciled');
+
+    const unlinked = assemble([observations({
+      items: [
+        item({ id: '0:1', amount: '59.00' }),
+        item({ id: '0:2', amount: '-59.00', event: 'void' }),
+        item({ id: '0:3', amount: '53.00' }),
+      ],
+      totals: [total('document_total', '53.00')],
+    })]);
+    assert.equal(unlinked.reconciliation[0]!.computedTotal, '112', 'evidence, not inference');
+    assert.equal(unlinked.reconciliation[0]!.status, 'mismatch');
+  });
+
+  it('A53: a printed pack size and tax code survive and never become a rate', () => {
+    const result = assemble([observations({
+      items: [item({ id: '0:1', amount: '120.00', packSize: '6', taxMarker: '1', quantity: '2' })],
+      totals: [total('document_total', '120.00')],
+    })]);
+    assert.equal(result.items[0]!.taxMarker, '1');
+    assert.equal(result.items[0]!.packSize, '6');
+    assert.equal(result.items[0]!.quantity, '2');
+  });
+
+  it('A54: two receipts of different shops in one file stay two documents', () => {
+    const result = assemble([
+      observations({
+        documents: [document({ ref: 'd1', issuer: { name: 'ร้าน ก' }, documentNumber: 'A-1' })],
+        items: [item({ id: '0:1', amount: '10.00' })],
+        totals: [total('document_total', '10.00')],
+      }),
+      observations({
+        documents: [document({ ref: 'd1', issuer: { name: 'ร้าน ข' }, documentNumber: 'B-1', pageIndexes: [1] })],
+        items: [item({ id: '1:1', amount: '20.00' })],
+        totals: [total('document_total', '20.00')],
+      }),
+    ], 2);
+    assert.equal(result.documents.length, 2);
+    assert.equal(result.multiDocument, true);
+    assert.notEqual(result.documents[0]!.ref, result.documents[1]!.ref, 'refs stay unique across windows');
+  });
+
+  it('a mismatch is reported, never balanced away with an invented rounding', () => {
+    const result = assemble([observations({
+      items: [item({ id: '0:1', amount: '100.00' })],
+      totals: [total('document_total', '103.00')],
+    })]);
+    assert.equal(result.reconciliation[0]!.status, 'mismatch');
+    assert.equal(result.reconciliation[0]!.difference, '-3');
+    assert.equal(result.components.length, 0, 'no balancing component is created');
+  });
+
+  it('stays reconciled inside the 0.05 satang tolerance and fails outside it', () => {
+    const inside = assemble([observations({
+      items: [item({ id: '0:1', amount: '100.04' })], totals: [total('document_total', '100.00')],
+    })]);
+    const outside = assemble([observations({
+      items: [item({ id: '0:1', amount: '100.06' })], totals: [total('document_total', '100.00')],
+    })]);
+    assert.equal(inside.reconciliation[0]!.status, 'reconciled');
+    assert.equal(outside.reconciliation[0]!.status, 'mismatch');
+  });
+});
+
+describe('capture assembly — pages and documents', () => {
+  it('A77: a header page, item pages and a final total assemble into one document', () => {
+    const result = assemble([
+      observations({
+        documents: [document({ ref: 'd1', pageIndexes: [0], printedPage: { number: 1, of: 3 } })],
+        items: [item({ id: '0:1', amount: '40.00' })],
+      }),
+      observations({
+        documents: [document({ ref: 'dX', pageIndexes: [1], continuationOfRef: 'd1', printedPage: { number: 2, of: 3 } })],
+        items: [item({ id: '1:1', documentRef: 'dX', amount: '60.00' })],
+      }),
+      observations({
+        documents: [document({ ref: 'dY', pageIndexes: [2], continuationOfRef: 'd1', printedPage: { number: 3, of: 3 } })],
+        totals: [total('document_total', '100.00', 'dY')],
+      }),
+    ], 3);
+    assert.equal(result.documents.length, 1);
+    assert.deepEqual(result.documents[0]!.pageIndexes, [0, 1, 2]);
+    assert.equal(result.items.length, 2);
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+    assert.equal(result.reconciliation[0]!.suspectedMissingPages, false);
+  });
+
+  it('A81: page coverage is the union of what the windows reported', () => {
+    const result = assemble([
+      observations({ completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [0, 1], notes: ['page 1 read'] } }),
+      observations({
+        documents: [document({ pageIndexes: [2] })],
+        completeness: { itemsTruncated: true, unreadableRows: 2, pagesCovered: [2], notes: ['page 1 read', 'row unreadable'] },
+      }),
+    ], 3);
+    assert.deepEqual(result.completeness.pagesCovered, [0, 1, 2]);
+    assert.equal(result.completeness.itemsTruncated, true);
+    assert.equal(result.completeness.unreadableRows, 2);
+    assert.deepEqual(result.completeness.notes, ['page 1 read', 'row unreadable']);
+  });
+
+  it('A82: 1 of 3 and 3 of 3 in a two-page file is a suspected missing page', () => {
+    const result = assemble([
+      observations({ documents: [document({ printedPage: { number: 1, of: 3 } })] }),
+      observations({ documents: [document({ pageIndexes: [1], printedPage: { number: 3, of: 3 } })] }),
+    ], 2);
+    assert.equal(result.documents.length, 1, 'same issuer and number: one document over two pages');
+    assert.equal(result.reconciliation[0]!.suspectedMissingPages, true);
+  });
+
+  it('A82: a printed 2 of 2 covered by both pages is not missing anything', () => {
+    const result = assemble([
+      observations({ documents: [document({ printedPage: { number: 1, of: 2 } })] }),
+      observations({ documents: [document({ pageIndexes: [1], printedPage: { number: 2, of: 2 } })] }),
+    ], 2);
+    assert.equal(result.reconciliation[0]!.suspectedMissingPages, false);
+  });
+
+  /**
+   * W08 benchmark defect, 2026-09-19. ONE window that covers the whole document is the normal case,
+   * and it carries ONE `printedPage`. Until `printedPages` was actually produced, a complete
+   * 20-page receipt read in one window claimed page 1 of 20 and nineteen holes — UXE-15 telling a
+   * customer to find pages that are all there.
+   */
+  it('A82: one window that saw every printed page of a complete document reports nothing missing', () => {
+    const complete = assemble([observations({
+      documents: [document({ pageIndexes: [0, 1], printedPage: { number: 1, of: 2 }, printedPages: [1, 2] })],
+    })], 2);
+    assert.equal(complete.reconciliation[0]!.suspectedMissingPages, false);
+
+    const holed = assemble([observations({
+      documents: [document({ pageIndexes: [0, 1], printedPage: { number: 1, of: 3 }, printedPages: [1, 3] })],
+    })], 2);
+    assert.equal(holed.reconciliation[0]!.suspectedMissingPages, true, 'and a real gap is still a gap');
+  });
+
+  it('a blank page contributes nothing and does not make the file multi-document', () => {
+    const result = assemble([observations({
+      items: [item({ id: '0:1', amount: '10.00' })],
+      totals: [total('document_total', '10.00')],
+      completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [0, 1], notes: ['page 2 blank'] },
+    })], 2);
+    assert.equal(result.multiDocument, false);
+    assert.equal(result.documents.length, 1);
+  });
+
+  it('two documents of the SAME shop without numbers are never merged on the name alone', () => {
+    const result = assemble([
+      observations({ documents: [document({ ref: 'd1', documentNumber: undefined })], items: [item({ id: '0:1', amount: '10.00' })] }),
+      observations({ documents: [document({ ref: 'd1', documentNumber: undefined, pageIndexes: [1] })], items: [item({ id: '1:1', amount: '20.00' })] }),
+    ], 2);
+    assert.equal(result.documents.length, 2);
+    assert.equal(result.multiDocument, true);
+  });
+});

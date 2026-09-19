@@ -40,6 +40,28 @@ function classification(documentKind = 'RECEIPT', overrides: Record<string, unkn
   };
 }
 
+/** The capture repository the PDF lane writes its job row through. */
+function makeCaptureStub() {
+  const jobs: any[] = [];
+  return {
+    jobs,
+    client: {},
+    findLiveJobForAttachment: async (_db: unknown, input: any) => jobs.find((job) =>
+      job.expenseId === input.expenseId && job.attachmentId === input.attachmentId
+      && job.attachmentChecksum === input.attachmentChecksum) ?? null,
+    createReadJob: async (_db: unknown, input: any) => {
+      const job = { id: `job-${jobs.length + 1}`, status: 'QUEUED', ...input };
+      jobs.push(job);
+      return job;
+    },
+  };
+}
+
+function makeRunnerStub() {
+  const kicked: string[] = [];
+  return { kicked, kick: (jobId: string) => { kicked.push(jobId); } };
+}
+
 function ctx(permissions: string[], userId = 'user-1'): RequestContext {
   return {
     requestId: 'request-1',
@@ -116,8 +138,10 @@ function makeUseCase(options: {
       },
     },
   } as any;
-  const useCase = new RequestReceiptExtractionUseCase(repo as any, storage as any, client as any, applyService as any, audit as any, prisma);
-  return { useCase, repo, storage, client, applyService, audit, updates, applyCalls, audits };
+  const capture = makeCaptureStub();
+  const runner = makeRunnerStub();
+  const useCase = new RequestReceiptExtractionUseCase(repo as any, storage as any, client as any, applyService as any, audit as any, prisma, capture as any, runner as any);
+  return { useCase, repo, storage, client, applyService, audit, updates, applyCalls, audits, capture, runner };
 }
 
 describe('RequestReceiptExtractionUseCase', () => {
@@ -138,21 +162,62 @@ describe('RequestReceiptExtractionUseCase', () => {
     );
   });
 
-  it('sends PDF receipts to the gateway (the web upload accepts PDF)', async () => {
-    const { useCase, storage, client } = makeUseCase({
-      attachment: { ...baseAttachment, mimeType: 'application/pdf', objectKey: 'company-1/receipt.pdf' },
+  // Appendix §3/§4.1: a PDF is no longer one synchronous provider call. The request queues a
+  // durable read job and answers immediately, and the 4,000,000-byte gate is gone — a 9 MB scan
+  // is exactly the document the customer was promised would be read (spec §16.7).
+  it('queues a capture read job for a PDF primary instead of calling the gateway', async () => {
+    const { useCase, storage, client, capture, runner } = makeUseCase({
+      attachment: { ...baseAttachment, mimeType: 'application/pdf', objectKey: 'company-1/receipt.pdf', byteSize: 9_900_000, checksumSha256: 'sha-pdf' },
     });
 
-    await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
-    assert.equal(storage.getObject.mock.callCount(), 1);
-    assert.equal(client.extract.mock.callCount(), 1);
-    assert.equal((client.extract.mock.calls[0]!.arguments[0] as any).attachment.mimeType, 'application/pdf');
+    const result = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    assert.equal(result.status, 'ok');
+    assert.ok(result.readJobId, 'the review page needs the job id to poll');
+    assert.equal(result.readStatus, 'QUEUED');
+    assert.equal(storage.getObject.mock.callCount(), 0, 'the request must not read 10 MB of bytes');
+    assert.equal(client.extract.mock.callCount(), 0, 'no synchronous provider call');
+    assert.equal(capture.jobs.length, 1);
+    assert.equal(capture.jobs[0].ownerType, 'EXPENSE');
+    assert.equal(capture.jobs[0].attachmentChecksum, 'sha-pdf');
+    assert.deepEqual(runner.kicked, [result.readJobId]);
   });
 
-  it('returns unsupported for a PDF past the Bedrock document ceiling, and for other media types', async () => {
+  /**
+   * A01 / IG13 (W08). The capture wave routed PDFs to a durable job. An IMAGE — the shape every
+   * existing receipt in production has — must stay on the synchronous path it has always used:
+   * one provider call, applied in the same request, and no capture row of any kind.
+   */
+  it('leaves the image lane on the synchronous path, with no capture job (A01)', async () => {
+    const { useCase, storage, client, capture, runner, applyCalls } = makeUseCase({
+      gatewayResult: { status: 'ok', fields: { vendorName: 'ร้านทดสอบ', grandTotalAmount: '321.00', missingFields: [], confidence: 0.9 }, classification: classification() },
+    });
+
+    const result = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+
+    assert.equal(result.status, 'ok');
+    assert.equal(result.readJobId, undefined, 'nothing to poll: the answer is in this response');
+    assert.equal(storage.getObject.mock.callCount(), 1, 'the bytes are read here, as before');
+    assert.equal(client.extract.mock.callCount(), 1, 'one synchronous provider call, as before');
+    assert.equal(applyCalls.length, 1, 'and it is applied to the draft in the same request');
+    assert.deepEqual(capture.jobs, [], 'no read job');
+    assert.deepEqual(runner.kicked, [], 'and the capture runner is never started');
+  });
+
+  it('reuses the live job for the same PDF instead of buying a second OCR read', async () => {
+    const { useCase, capture, runner } = makeUseCase({
+      attachment: { ...baseAttachment, mimeType: 'application/pdf', checksumSha256: 'sha-pdf' },
+    });
+    const first = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    const second = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    assert.equal(second.readJobId, first.readJobId);
+    assert.equal(capture.jobs.length, 1, 'one file, one job, one admitted read');
+    assert.equal(runner.kicked.length, 2, 'a retry still nudges the runner');
+  });
+
+  it('returns unsupported for media types the reader does not handle', async () => {
     for (const attachment of [
-      { ...baseAttachment, mimeType: 'application/pdf', byteSize: 4_000_001 },
       { ...baseAttachment, mimeType: 'image/gif' },
+      { ...baseAttachment, mimeType: 'image/jpeg', byteSize: 10_000_001 },
     ]) {
       const { useCase, storage, client } = makeUseCase({ attachment });
 
@@ -614,7 +679,7 @@ describe('ReceiptOcrClient failure boundary', () => {
         if (scenario === 'summary_failure') fixture.repo.updateExpense.mock.mockImplementation(async () => { throw new Error('synthetic persist failure'); });
         if (scenario === 'notification_failure') fixture.audit.log.mock.mockImplementation(async (entry: any) => { if (entry.action === 'expense.ocr.request') throw new Error('synthetic post-save audit failure'); });
         const client = new ReceiptOcrClient({ aiGatewayInternalSecret: 'synthetic', aiGatewayInternalUrl: 'http://ai.invalid', aiMonthlyBudgetSatang: 1_000_000, aiThbPerUsd: 35, isProduction: false } as any, undefined, state.prisma);
-        const useCase = new RequestReceiptExtractionUseCase(fixture.repo as any, fixture.storage as any, client, fixture.applyService as any, fixture.audit as any, state.prisma);
+        const useCase = new RequestReceiptExtractionUseCase(fixture.repo as any, fixture.storage as any, client, fixture.applyService as any, fixture.audit as any, state.prisma, fixture.capture as any, fixture.runner as any);
         await useCase.execute(ctx(['expense.ocr.request']), 'expense-1').catch(() => undefined);
         const retained = ['success', 'summary_failure', 'notification_failure', 'generic_image'].includes(scenario);
         assert.equal(state.usedCount(), retained ? 1 : 0, scenario);

@@ -216,6 +216,12 @@ export type ReimbursementSourceSnapshot = {
   expenseId: string;
   expenseUpdatedAt: string;
   requesterUserId: string;
+  /**
+   * Who the server has established as the payer of the source expense (capture appendix §5).
+   * Additive on schemaVersion 1 and ABSENT when unknown, so a snapshot pinned before this
+   * field existed still deep-compares equal to a fresh read of the same facts.
+   */
+  payerUserId?: string;
   expenseDate: string;
   paymentDate: string | null;
   paymentMethod: string | null;

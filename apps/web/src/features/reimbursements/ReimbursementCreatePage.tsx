@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { reimbursementIncurredDateError, todayCivilDate, type ReimbursementSourceOptions, type ReimbursementSourceSnapshot } from '@watchdog-bms/contracts';
+import { reimbursementIncurredDateError, todayCivilDate, type ReimbursementSourceOption, type ReimbursementSourceOptions, type ReimbursementSourceSnapshot } from '@watchdog-bms/contracts';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
@@ -51,13 +51,15 @@ function lineSummary(line: FormLine): string {
   return parts.length > 0 ? parts.join(' · ') : 'ยังไม่ได้กรอกข้อมูล';
 }
 
-export function ReimbursementCreatePage({ companyId, userId = '', canCreate, requestId, canUpdate = false, canPrepareForOthers = false }: {
+export function ReimbursementCreatePage({ companyId, userId = '', canCreate, requestId, canUpdate = false, canPrepareForOthers = false, sourceExpenseId }: {
   companyId: string;
   userId?: string;
   canCreate: boolean;
   requestId?: string;
   canUpdate?: boolean;
   canPrepareForOthers?: boolean;
+  /** `?expenseId=` — the source "เตรียมใบเบิก" was pressed on (capture appendix §13.4/§12.3). */
+  sourceExpenseId?: string;
 }) {
   const router = useRouter();
   const branchId = useTransactionCreateBranchId();
@@ -72,6 +74,9 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   const [sourceReload, setSourceReload] = useState(0);
   const [sourcesError, setSourcesError] = useState<string | null>(null);
   const previousBranchRef = useRef(branchId);
+  /** The `?expenseId=` answer: null while nothing is owed, a Thai reason when it cannot be used. */
+  const [sourceLinkNotice, setSourceLinkNotice] = useState<string | null>(null);
+  const preselectedRef = useRef(false);
   // Collapsed line indices. Lines stay mounted when collapsed; this only hides them.
   const [collapsedLines, setCollapsedLines] = useState<Record<number, boolean>>({});
   const [busy, setBusy] = useState(false);
@@ -142,15 +147,54 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
     return () => { active = false; clearTimeout(timer); };
   }, [branchId, sourceBranchId, companyId, requesterUserId, sourceSearch, editing, editLoaded, sourceReload]);
 
+  /** What a chosen source becomes, in ONE place, so the picker and the `?expenseId=` link agree. */
+  const lineFromSource = (source: ReimbursementSourceOption): Partial<FormLine> => ({
+    incurredDate: source.incurredDate, description: source.description, purpose: source.purpose, categoryKey: source.categoryKey,
+    categoryLabel: source.categoryLabel, amount: source.amount, file: null, attachmentId: null, attachmentFileName: undefined,
+    linkedExpenseId: source.expenseId, sourceExpenseUpdatedAt: source.updatedAt, sourceExpenseSnapshot: source.snapshot,
+  });
+
   const selectSource = (index: number, expenseId: string) => {
     if (!expenseId) { setLine(index, emptyLine()); return; }
     const source = sourceOptions.items.find(item => item.expenseId === expenseId && item.eligible);
     if (!source) return;
     if (source.currency !== form.currency) { setError('สกุลเงินของรายการต้องตรงกับใบเบิก'); return; }
-    setLine(index, { incurredDate: source.incurredDate, description: source.description, purpose: source.purpose, categoryKey: source.categoryKey,
-      categoryLabel: source.categoryLabel, amount: source.amount, file: null, attachmentId: null, attachmentFileName: undefined,
-      linkedExpenseId: expenseId, sourceExpenseUpdatedAt: source.updatedAt, sourceExpenseSnapshot: source.snapshot });
+    setLine(index, lineFromSource(source));
   };
+
+  /**
+   * "เตรียมใบเบิก" on the group page / the expense page sends the reviewer here WITH the source it
+   * wants claimed. Until now the id was ignored and they landed on an empty draft, then had to find
+   * the same expense again in a search-paged picker that may not list it at all.
+   *
+   * The SERVER decides whether it may be claimed: `getReimbursementSourceOptions(…, { expenseId })`
+   * answers `eligible` plus the reason, and an ineligible one says that reason here rather than
+   * leaving a blank form with no explanation. Once only — a person who then clears the line meant
+   * to clear it.
+   */
+  useEffect(() => {
+    const selectedBranch = editing ? sourceBranchId : branchId;
+    if (!sourceExpenseId || editing || preselectedRef.current || !selectedBranch || !requesterUserId) return;
+    preselectedRef.current = true;
+    let active = true;
+    void getReimbursementSourceOptions(companyId, { branchId: selectedBranch, requesterUserId, expenseId: sourceExpenseId })
+      .then(options => {
+        if (!active) return;
+        const source = options.items.find(item => item.expenseId === sourceExpenseId);
+        if (!source) { setSourceLinkNotice(errorMessage('reimbursement_source_unavailable')); return; }
+        // Keep it in the picker too, so the row shows what it is bound to and can be changed.
+        setSourceOptions(current => ({
+          requesters: current.requesters.length > 0 ? current.requesters : options.requesters,
+          items: current.items.some(item => item.expenseId === source.expenseId) ? current.items : [source, ...current.items],
+        }));
+        if (!source.eligible) { setSourceLinkNotice(errorMessage(source.reason ?? 'reimbursement_source_unavailable')); return; }
+        if (source.currency !== form.currency) { setSourceLinkNotice('สกุลเงินของรายการต้องตรงกับใบเบิก'); return; }
+        setLine(0, lineFromSource(source));
+      })
+      .catch(error => { if (active) setSourceLinkNotice(errorText(error)); });
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branchId, sourceBranchId, companyId, editing, requesterUserId, sourceExpenseId]);
 
   const refreshSource = async (index: number, expenseId: string) => {
     const selectedBranch = editing ? sourceBranchId : branchId;
@@ -300,6 +344,8 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
         <div className="space-y-4">
           {!editing && <TransactionBranchField value={branchId} />}
           {correctionNote && <ErrorBanner message={`ฝ่ายการเงินขอให้แก้ไข: ${correctionNote}`} />}
+          {/* `?expenseId=`: why the source the link named is not on line 1 — never a blank draft. */}
+          {sourceLinkNotice && <ErrorBanner message={`รายการต้นทางที่เลือกมายังเบิกไม่ได้: ${sourceLinkNotice}`} />}
           <MangmeeCard className="p-4">
             <h3 className="text-sm font-bold text-gray-900">ข้อมูลคำขอ</h3>
             <label className="mt-3 block text-xs font-semibold text-gray-600">ผู้สำรองจ่ายและรับเงินคืน

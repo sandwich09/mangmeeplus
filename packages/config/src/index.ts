@@ -337,6 +337,26 @@ export const apiConfigSchema = baseConfigSchema.extend({
   LINE_AI_LEDGER_CLAIM_MIN_IDLE_MS: z.coerce.number().int().positive().default(120000),
   LINE_AI_LEDGER_DELIVERY_CAP: z.coerce.number().int().positive().default(3),
   AI_DATA_RETENTION_DAYS: z.coerce.number().int().positive().max(3650).default(90),
+  // Buyer expense capture (contract appendix §6). The intake gate is the only one of the four
+  // wired into deploy.sh: closing it refuses NEW groups and files while every existing group
+  // stays readable and every queued read still finishes (A47). ON by default, like the rest of
+  // the receipt lane — a shop that can upload a receipt today can upload two tomorrow.
+  EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED: envBoolean.default(true),
+  // Pages one file is read automatically up to (§4.1). Past it the job PAUSES with `page_limit`
+  // and keeps what it read; it never truncates a document silently. Declared scope, not an SLA.
+  EXPENSE_CAPTURE_PDF_MAX_PAGES: z.coerce.number().int().min(1).max(200).default(60),
+  // Read jobs one API process runs at once (§4.5). Small on purpose: each job holds a whole
+  // PDF and its rendered pages in memory.
+  EXPENSE_CAPTURE_READ_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(2),
+  // Days a group with no financial document keeps its files before the retention sweep deletes
+  // them (§8, D08 default = AI_DATA_RETENTION_DAYS). Files an expense or certificate references
+  // are never swept, whatever this says.
+  EXPENSE_CAPTURE_RETENTION_DAYS: z.coerce.number().int().min(7).max(3650).default(90),
+  // Bytes of DERIVATIVES (copied chunks, rendered pages, tiles) one read job may produce in total
+  // before it pauses with `memory_budget` (§4.5 "ประมวลผลทีละ chunk"). The per-call ceilings bound
+  // one payload; this bounds the whole job, so a 60-page scan cannot walk a process out of memory
+  // one legal chunk at a time.
+  EXPENSE_CAPTURE_DERIVATIVE_MAX_BYTES: z.coerce.number().int().min(4_000_000).max(1_073_741_824).default(67_108_864),
   // L-08: the ERP executor is authoritative for AI mutation classification, so the API reads
   // the same switch the gateway does. Default off; production refuses true.
   AI_FINAL_MUTATION_ENABLED: envBoolean.default(false),

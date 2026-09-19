@@ -37,9 +37,13 @@ export class ReimbursementEvidenceService {
 
       if (ref.linkedExpenseId !== undefined && ref.linkedExpenseId !== null) {
         const expense = await this.expenses.findById(ctx.companyId, ref.linkedExpenseId);
-        const certificate = expense && expense.createdByUserId !== requesterUserId
+        // `payerUserId` is the server's own record of who paid (capture appendix §5), so it needs
+        // no certificate lookup — and the certificate remains the authority when it disagrees.
+        const isPayer = expense?.payerUserId === requesterUserId;
+        const certificate = expense && !isPayer && expense.createdByUserId !== requesterUserId
           ? await this.expenses.findSubstituteEvidence(ctx.companyId, expense.id) : null;
-        if (!expense || expense.companyId !== ctx.companyId || (expense.createdByUserId !== requesterUserId && certificate?.payerUserId !== requesterUserId)) {
+        if (!expense || expense.companyId !== ctx.companyId
+          || (expense.createdByUserId !== requesterUserId && !isPayer && certificate?.payerUserId !== requesterUserId)) {
           throw new UnprocessableEntityException('invalid_linked_expense');
         }
         this.assertEvidenceBranch(expense.branchId, sourceBranchId);

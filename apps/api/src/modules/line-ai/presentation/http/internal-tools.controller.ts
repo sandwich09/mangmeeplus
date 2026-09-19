@@ -60,6 +60,7 @@ import {
   ReimbursementGetSummaryTool,
   ReimbursementGetDetailTool,
 } from '../../application/use-cases/erp-core-detail-tools.use-case';
+import { LineExplainFileAttemptTool } from '../../application/use-cases/line-file-attempt.tool';
 import {
   ExpenseDraftSetHeaderTool,
   ExpenseDraftSetLineTool,
@@ -209,6 +210,7 @@ export class InternalToolsController {
     private readonly invProductDetail: InventoryGetProductDetailTool,
     private readonly expenseDetail: ExpenseGetDetailTool,
     private readonly expenseExplain: ExpenseExplainRecordTool,
+    private readonly lineFileAttempt: LineExplainFileAttemptTool,
     private readonly reimbursementSummary: ReimbursementGetSummaryTool,
     private readonly reimbursementDetail: ReimbursementGetDetailTool,
     private readonly accountingDocumentDetail: AccountingGetDocumentDetailTool,
@@ -238,6 +240,8 @@ export class InternalToolsController {
     this.toolMap.set('expense.list_recent', this.expenseListRecent);
     this.toolMap.set('expense.get_detail', this.expenseDetail);
     this.toolMap.set('expense.explain_record', this.expenseExplain);
+    // §17.5: the ONE read that can answer for a file which never became an expense.
+    this.toolMap.set('line.explain_file_attempt', this.lineFileAttempt);
     this.toolMap.set('sales.get_sales_summary', this.salesSummary);
     this.toolMap.set('tax.get_upcoming_tax_obligations', this.taxUpcomingObligations);
     this.toolMap.set('tax.get_vat_summary', this.taxVatSummary);

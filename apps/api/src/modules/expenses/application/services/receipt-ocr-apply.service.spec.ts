@@ -306,6 +306,54 @@ describe('ReceiptOcrApplyService.apply staleness guard', () => {
   });
 });
 
+describe('ReceiptOcrApplyService.apply — the replaced-file warning (§16.4, W07-int)', () => {
+  function harness(summary: Record<string, unknown> | null, primaryAttachmentId: string | null) {
+    const writes: any[] = [];
+    const tx = {
+      expenseRecord: {
+        findFirst: async () => ({
+          expenseCategoryId: null, expenseCategory: null, lines: [],
+          aiVerificationSummaryJson: summary, primaryAttachmentId,
+        }),
+        update: async (args: any) => { writes.push(args); },
+      },
+      expenseCategory: { findFirst: async () => null },
+      expenseLine: { deleteMany: async () => undefined, create: async () => undefined },
+    };
+    return {
+      service: new ReceiptOcrApplyService(makeApplyPrisma(tx) as any, makeDuplicateRepo() as any),
+      writes,
+    };
+  }
+  const stale = { status: 'OCR_EXTRACTED_NEEDS_REVIEW', sourceStale: true, sourceAttachmentId: 'att-old' };
+
+  it('retires it when the read is of the file the record carries NOW', async () => {
+    const { service, writes } = harness(stale, 'att-new');
+    await service.apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1',
+      { grandTotalAmount: '580.00' }, { sourceAttachmentId: 'att-new' });
+    const summary = writes.find((write) => write.data?.aiVerificationSummaryJson)?.data.aiVerificationSummaryJson;
+    assert.ok(summary, 'the summary is rewritten');
+    assert.equal('sourceStale' in summary, false);
+    assert.equal('sourceAttachmentId' in summary, false);
+    assert.equal(summary.status, 'OCR_EXTRACTED_NEEDS_REVIEW', 'and nothing else about it is touched');
+  });
+
+  it('leaves it alone when the read is of some other file, or nobody said which', async () => {
+    for (const options of [{ sourceAttachmentId: 'att-other' }, {}]) {
+      const { service, writes } = harness(stale, 'att-new');
+      await service.apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1', { grandTotalAmount: '580.00' }, options);
+      assert.equal(writes.some((write) => write.data?.aiVerificationSummaryJson), false, JSON.stringify(options));
+    }
+  });
+
+  it('writes no summary at all when there was no warning to retire', async () => {
+    const { service, writes } = harness({ status: 'OCR_EXTRACTED_NEEDS_REVIEW' }, 'att-new');
+    await service.apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1',
+      { grandTotalAmount: '580.00' }, { sourceAttachmentId: 'att-new' });
+    assert.equal(writes.some((write) => write.data?.aiVerificationSummaryJson), false);
+  });
+});
+
 describe('ReceiptOcrApplyService.apply', () => {
   it('does not overwrite reviewer VAT source when re-extracted arithmetic disagrees', async () => {
     const prior = {

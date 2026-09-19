@@ -60,7 +60,34 @@ async function main() {
   const signature = await normalizeSignatureImage(scan, 'image/jpeg', { removeBackground: true });
   assert.equal(signature?.mimeType, 'image/png');
   assert.ok((await sharp(signature.bytes).metadata()).hasAlpha);
-  console.log('[api-runtime] dependencies, Prisma, Thai PDF, 1/3/2-page preview, bank PDF and signature PASS');
+
+  // The capture reader (contract appendix §4.2) chunks and RASTERISES inside this image: it needs
+  // pdf-lib, pdfjs' native canvas and sharp all working together, which is exactly the combination
+  // a production-only dependency graph can lose. A three-page copy plus one rendered page proves it.
+  const capture = api('./dist/apps/api/src/modules/expenses/domain/logic/expense-capture-preprocess.logic.js');
+  const pages = await PDFDocument.create();
+  for (let n = 0; n < 3; n++) pages.addPage((await pages.copyPages(single, [0]))[0]);
+  const planned = await capture.planCapturePreprocessing(Buffer.from(await pages.save()), 'application/pdf', { maxPages: 60 });
+  assert.equal(planned.failure, undefined);
+  assert.equal(planned.pageCount, 3);
+  assert.deepEqual(planned.chunks.flatMap(chunk => chunk.pageIndexes), [0, 1, 2]);
+  assert.ok(planned.chunks.every(chunk => chunk.byteLength > 0 && chunk.byteLength <= 4_000_000));
+  const scanned = await PDFDocument.create();
+  const embedded = await scanned.embedJpg(scan);
+  scanned.addPage([595, 842]).drawImage(embedded, { x: 0, y: 0, width: 595, height: 842 });
+  const rendered = await capture.planCapturePreprocessing(
+    Buffer.from(await scanned.save()), 'application/pdf',
+    // A one-byte document ceiling forces the raster path, which is the half that needs the canvas.
+    { maxPages: 60, limits: { ...capture.EXPENSE_CAPTURE_PREPROCESS_LIMITS, maxPdfChunkBytes: 1 } },
+  );
+  assert.equal(rendered.chunks.length, 1);
+  assert.notEqual(rendered.chunks[0].kind, 'pdf');
+  const rasterised = rendered.chunks[0].bytes ?? rendered.chunks[0].images[0].bytes;
+  const rasterMeta = await sharp(rasterised).metadata();
+  assert.ok(rasterMeta.width > 0 && rasterMeta.height > 0, 'the rendered page must be a real image');
+  assert.ok((await sharp(rasterised).stats()).channels.some(channel => channel.min < 200), 'the render must contain ink');
+
+  console.log('[api-runtime] dependencies, Prisma, Thai PDF, 1/3/2-page preview, bank PDF, capture chunk/raster and signature PASS');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

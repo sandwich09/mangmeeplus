@@ -319,6 +319,8 @@ export type ExpenseSummary = {
   /** Claim projection marker — settled by the reimbursement payout, no manual payment. */
   sourceReimbursementRequestId?: string | null;
   captureSource: ExpenseCaptureSource;
+  /** Set once this expense belongs to a capture group (appendix §2.3); null on every other record. */
+  captureGroupId?: string | null;
   vendorNameSnapshot: string | null;
   vendorDocumentNumber: string | null;
   expenseDate: string;
@@ -380,6 +382,8 @@ export type ExpenseDetail = ExpenseSummary & {
   taxEvidenceReasonCode: TaxEvidenceReasonCode | null;
   substituteReceiptGeneratedAt: string | null;
   substituteReceiptEvidence: SubstituteReceiptEvidenceSummary | null;
+  /** Appendix §5: set only on a derived source of a capture group; absent on everything else. */
+  captureGroup?: import('@watchdog-bms/contracts').ExpenseCaptureLineage | null;
   aiVerifiedFieldsJson: Record<string, unknown> | null;
   aiVerificationSummaryJson: Record<string, unknown> | null;
   vatCaptureSnapshotJson: ExpenseVatCaptureSnapshotV1 | null;

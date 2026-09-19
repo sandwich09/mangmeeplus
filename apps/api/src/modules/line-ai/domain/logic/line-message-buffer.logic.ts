@@ -66,6 +66,12 @@ export const LINE_LOADING_RESTART_DELAY_MS = 300;
 /** A second best-effort keepalive covers slow device delivery clearing the first restart. */
 export const LINE_LOADING_KEEPALIVE_DELAY_MS = 1_300;
 export const LINE_MEDIA_RECEIVED_TEXT = 'ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ปกติไม่เกิน 1 นาที เสร็จแล้วน้องจะสรุปให้เลยนะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ';
+/**
+ * §17.1 / capture appendix §3: a `file` message is a DOCUMENT, and its read is async — so the
+ * acknowledgement may neither call it a รูป nor promise the one-minute turnaround the photo lane
+ * measures. The result arrives as its own push when the read job finishes.
+ */
+export const LINE_FILE_RECEIVED_TEXT = 'ได้รับไฟล์แล้วค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ';
 export const LINE_MEDIA_SLOW_STATUS_TEXT = 'น้องมั่งมียังอ่านเอกสารอยู่นะคะ รูปนี้ใช้เวลานานกว่าปกติ ขออีกสักครู่ค่ะ 🙏';
 export const LINE_SLOW_TURN_STATUS_TEXT = 'น้องมั่งมียังหาคำตอบอยู่นะคะ คำถามนี้ใช้เวลานานกว่าปกติ ขออีกสักครู่ค่ะ 🙏';
 
@@ -114,6 +120,8 @@ export type LineWaitStage = { delayMs: number; text: string };
  */
 export function lineWaitStages(input: {
   kind: 'text' | 'media';
+  /** What the customer actually sent, so the ack says ไฟล์ for a file and รูป for a photo. */
+  mediaType?: 'image' | 'file';
   messageText: string;
   seed: string;
   loadingEnabled: boolean;
@@ -121,10 +129,14 @@ export function lineWaitStages(input: {
   now: number;
 }): LineWaitStage[] {
   if (input.kind === 'media') {
-    return [
-      { delayMs: 0, text: LINE_MEDIA_RECEIVED_TEXT },
-      { delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_MEDIA_SLOW_STATUS_TEXT },
-    ];
+    // A file's read is async and finishes with its own push, so the slow-turn nudge — written for a
+    // photo the customer is watching for — would be a second promise nobody is waiting on.
+    return input.mediaType === 'file'
+      ? [{ delayMs: 0, text: LINE_FILE_RECEIVED_TEXT }]
+      : [
+        { delayMs: 0, text: LINE_MEDIA_RECEIVED_TEXT },
+        { delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_MEDIA_SLOW_STATUS_TEXT },
+      ];
   }
   const anchored = (delayMs: number) => Math.max(0, input.latestAcceptedAt + delayMs - input.now);
   const slowStage = { delayMs: anchored(LINE_WAIT_STATUS_SLOW_DELAY_MS), text: LINE_SLOW_TURN_STATUS_TEXT };

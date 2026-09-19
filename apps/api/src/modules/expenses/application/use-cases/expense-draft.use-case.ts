@@ -751,6 +751,14 @@ export class UpdateExpenseDraftUseCase {
       nextSummaryJson = { ...(nextSummaryJson ?? r.aiVerificationSummaryJson), missingFields: nextMissingFields };
     }
 
+    // Spec §16.4: `sourceStale` says "these values were read from the file that was replaced —
+    // check them against the new one". A review save IS that check, by the person the flag was
+    // addressed to, so it is dropped here rather than warning forever over confirmed values.
+    if (r.aiVerificationSummaryJson?.['sourceStale'] === true) {
+      const { sourceStale: _stale, ...checked } = (nextSummaryJson ?? r.aiVerificationSummaryJson) as Record<string, unknown>;
+      nextSummaryJson = checked;
+    }
+
     if (input.evidenceAssessment) {
       nextSummaryJson = { ...(nextSummaryJson ?? r.aiVerificationSummaryJson), documentEvidenceDraft: input.evidenceAssessment };
     }

@@ -178,7 +178,7 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
               messagingChannelId: race === 'replay-channel' ? 'other-channel' : 'synthetic-channel',
               item: { kind: 'text', webhookEventId, replyToken: 'synthetic-reply', text: 'ค่าใช้จ่ายเลขนี้เท่าไร', timestamp: Date.now() } },
           } });
-          const recovery = new RecoverOrphanLineEventsUseCase(prisma, { aiDataRetentionDays: 90, lineAiTerminalOutcomeReplayEnabled: true } as any, audit,
+          const recovery = new RecoverOrphanLineEventsUseCase(prisma, { aiDataRetentionDays: 90, expenseCaptureRetentionDays: 90, lineAiTerminalOutcomeReplayEnabled: true } as any, audit,
             { enqueue: async () => assert.fail('must not reroute the original ERP operation') } as any,
             { buildTextMessage: (text: string) => ({ type: 'text', text }), sendPush: async (_to: string, messages: unknown) => { accepted.push(messages); return 'ok'; } } as any);
           (recovery as any).readEvidence = service; (recovery as any).logger = quiet;
