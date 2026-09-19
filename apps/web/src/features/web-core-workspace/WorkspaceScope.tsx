@@ -157,6 +157,9 @@ export function BranchSelector() {
 
   // WEB-04: a failed lookup is not "no branches". Say so and offer the retry, before spec R3's
   // silence — which only covers a resolved context with nothing to name.
+  // `min-h-11`, not `h-11`: the header stacks the scope controls in a column below `sm`, and
+  // `flex-1` there sets `flex-basis: 0%` on the block axis, which outranks a fixed `height` and
+  // collapsed this button to its 20px line box. A minimum survives the flex base size.
   if (filter?.scopeFailed) {
     return (
       <button
@@ -164,7 +167,7 @@ export function BranchSelector() {
         onClick={filter.reloadScope}
         aria-label={t('shell.scope.load_failed', locale)}
         title={t('shell.scope.load_failed', locale)}
-        className="flex h-11 min-w-11 flex-1 items-center gap-2 rounded-lg border border-warning-100 bg-warning-50 px-3 text-sm font-semibold text-warning-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:flex-none"
+        className="flex min-h-11 min-w-11 flex-1 items-center gap-2 rounded-lg border border-warning-100 bg-warning-50 px-3 text-sm font-semibold text-warning-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:flex-none"
       >
         <span className="shrink-0"><BranchIcon /></span>
         <span className="sm:hidden">{t('client_notice.retry', locale)}</span>
@@ -256,6 +259,8 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
 
   // WEB-04: the lookup is over and the name is still unknown — failed request or a list that does
   // not contain this company. Offer the retry instead of leaving the loading label up forever.
+  // `min-h-11` for the same reason as BranchSelector's retry: `flex-1` in the mobile column
+  // makes a fixed `height` inert.
   if (settled && !current) {
     return (
       <button
@@ -263,7 +268,7 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
         onClick={() => setReloadToken((n) => n + 1)}
         aria-label={t('shell.scope.load_failed', locale)}
         title={t('shell.scope.load_failed', locale)}
-        className="block h-11 min-w-11 max-w-[44vw] flex-1 truncate rounded-lg px-1 text-sm font-semibold text-warning-700 underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:max-w-[240px] sm:flex-none"
+        className="block min-h-11 min-w-11 max-w-[44vw] flex-1 truncate rounded-lg px-1 text-sm font-semibold text-warning-700 underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:max-w-[240px] sm:flex-none"
       >
         <span className="sm:hidden">{t('client_notice.retry', locale)}</span>
         <span className="hidden sm:inline">{t('shell.scope.load_failed', locale)}</span>
