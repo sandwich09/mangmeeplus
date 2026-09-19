@@ -771,6 +771,7 @@ CVE-2026-75803) fix แล้วใน trixie `openssl 3.5.7-1~deb13u2` แล�
 ส่วน CVE-2026-85091 (zlib) ยังไม่มี fix ใน suite ไหน ต้องคงแถวไว้ — แต่ `zlib1g` ขยับจาก
 `1.2.13.dfsg-1` เป็น `1.3.dfsg+really1.3.1` แล้ว จึงต้องเช็คด้วยว่า finding ยังรายงานเวอร์ชันเดิมอยู่ไหม
 (ถ้าเวอร์ชันขยับ แถว waiver จะหยุดแมตช์และกลับไปบล็อกทันที)
+ผล A/B เต็ม (unit/integration 13,689 เท่ากันทั้งสอง OS, e2e ทั้งชุด, web image ผ่าน login จริง) อยู่ใน `docs/qa/evidence/base-image-trixie-ab-verification-2026-09-19.md` และผลรอบเปิด flag ทุกตัวอยู่ใน `docs/qa/evidence/base-image-trixie-ab-flags-on-2026-09-19.md`
 
 Trivy `--scanners vuln --severity CRITICAL,HIGH` บน image ที่ build จาก `Dockerfile.api-web`
 (bookworm = tag ที่ build ไว้ก่อนหน้า `1406d382`, trixie ก่อนปิด login = `25591949`,
@@ -861,6 +862,11 @@ provider แก้ข้อความ) กลับไปบล็อกทั
 และสูงกว่า เหตุผลที่ pin สองทางไม่ใช่ทางเดียว: `ensure_log_group()` เขียนค่าลง log group ทุกกลุ่ม
 ที่มันแตะในทุก deploy ถ้าปล่อยไม่ pin ค่าที่ใครก็ตามใส่มาจะกลายเป็นนโยบายใหม่ในรอบถัดไป
 โดยไม่มีใครตัดสินใจ — ซึ่งเป็นสาเหตุที่ทำให้ค่าจริงกับเอกสารหลุดจากกันตั้งแต่แรก
+
+- **Production Stripe live enablement (2026-09-20)** — ดู
+  [production-stripe-live-enablement.md](production-stripe-live-enablement.md); `BILLING_MODE`/`STRIPE_ACCOUNT_ID`
+  อยู่ใน tracked `infra/kamal/config.json` (production) แล้ว แต่ service configuration ของ ECS Express Mode
+  (`watchdog-bms-api-web-pub`) ต้อง enroll secret `watchdog-bms/production/stripe/*` (API round-trip) ก่อน deploy ถึงจะใช้ live ได้จริง
 
 ## 8. Delivery links ของใบรับรองแทนใบเสร็จ (`/d/{token}`) — ❌ ยกเลิกแล้ว (D15, 2026-08-20) ไม่ต้องทำ
 
