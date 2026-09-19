@@ -767,6 +767,11 @@ provider แก้ข้อความ) กลับไปบล็อกทั
 ที่มันแตะในทุก deploy ถ้าปล่อยไม่ pin ค่าที่ใครก็ตามใส่มาจะกลายเป็นนโยบายใหม่ในรอบถัดไป
 โดยไม่มีใครตัดสินใจ — ซึ่งเป็นสาเหตุที่ทำให้ค่าจริงกับเอกสารหลุดจากกันตั้งแต่แรก
 
+- **Production Stripe live enablement (2026-09-20)** — ดู
+  [production-stripe-live-enablement.md](production-stripe-live-enablement.md); `BILLING_MODE`/`STRIPE_ACCOUNT_ID`
+  อยู่ใน tracked `infra/kamal/config.json` (production) แล้ว แต่ service configuration ของ ECS Express Mode
+  (`watchdog-bms-api-web-pub`) ต้อง enroll secret `watchdog-bms/production/stripe/*` (API round-trip) ก่อน deploy ถึงจะใช้ live ได้จริง
+
 ## 8. Delivery links ของใบรับรองแทนใบเสร็จ (`/d/{token}`) — ❌ ยกเลิกแล้ว (D15, 2026-08-20) ไม่ต้องทำ
 
 > **ฟีเจอร์นี้ถูกถอดออกทั้งชุด** ตามมติ owner D15: เอกสารไม่ถูกส่งกลับ LINE เป็นลิงก์อีกต่อไป ผู้ใช้ไป
