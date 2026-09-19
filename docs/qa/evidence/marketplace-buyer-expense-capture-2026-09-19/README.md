@@ -1,3 +1,9 @@
+> **Historical, 2026-09-19.** The owner withdrew the capture-group screens later the same day
+> (contract appendix §25). Every `group-*.png`, `capture-list-*.png` and
+> `expense-from-capture-group-*.png` below photographs a page that **no longer exists in the
+> product**; they are kept because the acceptance matrix cites them. The current screens are in
+> [`w09/`](w09/README.md).
+
 # Buyer expense capture — browser evidence, 2026-09-19
 
 W08 of the [capture plan](../../../plans/marketplace-buyer-expense-capture-plan-th.md) §5. Real HTTP,

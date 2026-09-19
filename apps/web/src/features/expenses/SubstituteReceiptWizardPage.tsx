@@ -28,7 +28,6 @@ import { LoadingState } from '@/common/components/state';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
-import { captureCertificatePrefill } from './capture/expense-capture-review.logic';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
 import {
@@ -44,7 +43,6 @@ import {
   generateSubstituteReceipt,
   amendSubstituteReceipt,
   getExpense,
-  getExpenseCaptureGroup,
   getSubstituteReceiptRuntimePolicy,
   initPersonalSignatureUpload,
   listCompanySubstituteReceipts,
@@ -853,23 +851,6 @@ export function SubstituteReceiptWizardPage({
             return;
           }
           initializeDraft(nextDetail, previousHistory[0]);
-          // W06 §12.2: what the group already reviewed — who paid, when, how, and why there is no
-          // receipt. Values, not decisions: every one of them stays editable below. A group the
-          // reader may not open simply leaves the form as it was.
-          const capturePrefill = nextDetail.captureGroup
-            ? await getExpenseCaptureGroup(companyId, nextDetail.captureGroup.groupId)
-              .then((group) => captureCertificatePrefill(group, nextDetail.id))
-              .catch(() => null)
-            : null;
-          if (capturePrefill && !cancelled) {
-            if (capturePrefill.fundingSource) setFundingSource(capturePrefill.fundingSource);
-            if (capturePrefill.payerUserId) setPayerId(capturePrefill.payerUserId);
-            // Never today and never the upload day (A42): the reviewed payment date, else the
-            // reviewed expense date the group already settled on.
-            setPaymentDate(coerceCivilDate(capturePrefill.paymentDate ?? nextDetail.expenseDate));
-            if (capturePrefill.paymentMethod) setPaymentMethod(capturePrefill.paymentMethod as ExpensePaymentMethod);
-            if (capturePrefill.missingReasonSuggestionKey) setMissingReasonSuggestion(t(capturePrefill.missingReasonSuggestionKey, locale));
-          }
           if (nextLinePrefill) {
             const values = nextLinePrefill.acceptedValues;
             if (values.reasonCode) setReasonCode(values.reasonCode);
@@ -2680,7 +2661,6 @@ export function SubstituteReceiptWizardPage({
             )}
             <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>{t(receiptEvidence.status === 'ISSUED' && receiptEvidence.fundingSource !== 'PERSONAL_ADVANCE' ? 'expenses.substitute_wizard.back_to_expense' : 'expenses.substitute_wizard.view_expense', locale)}</Link>
             {/* §12.3/A40: back to the job, where the shop that is still waiting is listed. */}
-            {detail.captureGroup && <Link className={ghostClass} href={detail.captureGroup.webPath}>{t('expenses.substitute_wizard.back_capture_group', locale)}</Link>}
           </div>
           {/* The issued file is offered only once it exists; when it does not, say so rather than
               leaving the row of actions one button short with no explanation. */}
@@ -2831,8 +2811,6 @@ export function SubstituteReceiptWizardPage({
         eyebrow={(
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <Link href={`/companies/${companyId}/expenses/substitute-receipts`}>{t('expenses.substitute_wizard.back_hub', locale)}</Link>
-            {/* §12.3: a certificate opened from a capture group has two ways back, not one. */}
-            {detail?.captureGroup && <Link href={detail.captureGroup.webPath}>{t('expenses.substitute_wizard.back_capture_group', locale)}</Link>}
           </span>
         )}
         title={t('expenses.substitute_wizard.title', locale)}

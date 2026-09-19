@@ -86,23 +86,32 @@ describe('read status (appendix §9)', () => {
     assert.equal(queries[0].take, 1);
   });
 
-  it('reports the multi-document verdict and whether the read was applied to the draft', async () => {
+  /**
+   * Appendix §25: `multiDocument` no longer means "go and review a group" — it means the engine
+   * already split the file, and the ids it created come off the JOB's own checkpoint. The FIRST
+   * document is applied either way, so `applied` says what it says.
+   */
+  it('reports the document count and the drafts the auto-split created', async () => {
     const multi = harness({
       expense: { id: 'expense-1', branchId: null, createdByUserId: 'user-2', aiVerifiedAt: new Date() },
-      jobs: [job({ status: 'DONE' })],
-      observation: { payloadJson: { multiDocument: true } },
+      jobs: [job({ status: 'DONE', checkpointJson: { splitExpenseIds: { d2: 'exp-2', d3: 'exp-3' } } })],
+      observation: { payloadJson: { multiDocument: true, documents: [{ ref: 'd1' }, { ref: 'd2' }, { ref: 'd3' }] } },
     });
     const split = await multi.uc.expense(ctx, 'expense-1');
     assert.equal(split.files[0]?.multiDocument, true);
-    assert.equal(split.files[0]?.applied, false);
+    assert.equal(split.files[0]?.documentCount, 3);
+    assert.deepEqual(split.files[0]?.splitExpenseIds, ['exp-2', 'exp-3']);
+    assert.equal(split.files[0]?.applied, true, 'the first document landed on this draft');
 
     const applied = harness({
       expense: { id: 'expense-1', branchId: null, createdByUserId: 'user-2', aiVerifiedAt: new Date() },
       jobs: [job({ status: 'DONE' })],
-      observation: { payloadJson: { multiDocument: false } },
+      observation: { payloadJson: { multiDocument: false, documents: [{ ref: 'd1' }] } },
     });
     const done = await applied.uc.expense(ctx, 'expense-1');
     assert.equal(done.files[0]?.multiDocument, false);
+    assert.equal(done.files[0]?.documentCount, 1);
+    assert.deepEqual(done.files[0]?.splitExpenseIds, []);
     assert.equal(done.files[0]?.applied, true);
   });
 

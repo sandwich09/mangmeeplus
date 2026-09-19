@@ -156,3 +156,195 @@ THB 0.5 per page of native text; the 20-page file cost THB 10.32 and 94 seconds 
 8 provider calls, which is well inside the job's own ceilings (`providerCallCount ≤ 40`,
 15 minutes per job). The five-page 10 MB scan cost THB 2.77 — **less** than the 10-page text file,
 because a scanned page transcribes to far less text than a dense printed one.
+
+## 6. Real public samples — 2026-09-19 (owner request: "ไปหาบิลจริงในอินเตอร์เน็ตมาลอง")
+
+The same reader (`capture-read` → `capture-extract` → assembly), the same profile and region, run
+through `scripts/expense-capture-read-benchmark.ts --files …` (added for this: real files on disk go
+through the same preprocessing, routes, spend guard and ledger; no expectation, so no score — the
+record carries the assembled facts and, for real files, the per-page transcription so a missed total
+can be traced). Every file is a **publicly published** document; none is committed to this repo.
+
+**What is public, and what is not.** Marketplaces do not issue the buyer's tax invoice: Shopee, Lazada
+and TikTok Shop only forward the buyer's details, and the **seller** issues it — with whatever
+e-tax tool it uses (Leceipt, FlowAccount, PEAK, the RD's e-Tax by Email). So "a Lazada bill" is one of
+those templates. Retail chains (7-Eleven, Lotus's, Big C, Makro, CJ) issue their own e-Tax/e-receipt,
+but only to the buyer's account/e-mail; the only public specimens are the samples in help articles
+and the few crops people post on forums. Couriers (Flash, Kerry, ไปรษณีย์) were not found in public
+at all — only chat screenshots. The owner's own documents, on UAT, remain the real test (§5).
+
+| File (source, year) | What it is | Read | Right | Wrong / missing | THB |
+|---|---|---|---|---|---|
+| Leceipt "Lazada" receipt/tax invoice ([docs](https://www.leceipt.com/docs/etax/สร้าง-e-tax-จาก-lazada), 2021, 896×533 screenshot) | seller-issued ใบเสร็จรับเงิน/ใบกำกับภาษี for a Lazada order, demo data | TAX_INVOICE, PAID | issuer + tax id, doc no. `TIV20210500001`, date, the one item 7,000.00 | the totals block (รวมก่อน VAT 6,542.06 / VAT 457.94 / ทั้งสิ้น 7,000.00) was **not transcribed at all** by `capture-read` (text ≈ 8 px high) → no `document_total`, reconciliation `insufficient`; the draft would carry the line but no grand total | 0.99 + 0.77 |
+| Leceipt e-Tax by Email sample ([blog](https://www.leceipt.com/blog/ตัวอย่างใบกำกับภาษี-e-tax-invoice-by-email), 2019, 913×497 screenshot) | RD-format e-Tax invoice, ETDA demo data | TAX_INVOICE | issuer, tax id, doc no. | no items, no totals (screenshot too small) → `insufficient` | 0.70 |
+| FlowAccount ใบกำกับภาษีเต็มรูป ([blog](https://flowaccount.com/blog/tax-invoice-example/), Oct 2025, 1200×1636) | the current full-form template most marketplace sellers use, demo data | TAX_INVOICE, DUE | issuer, doc no. `INV2025020003`, 27/02/2025, item 50 × 250.00 with 5 % line discount = 11,875.00, รวม 12,500, ส่วนลด 625, VAT 776.87, ex-VAT 11,098.13, **ทั้งสิ้น 11,875.00** | reconciliation `mismatch −625`: the line amount is already net of its 5 % discount and the summary prints the same 625 as a document-level discount, so §4.4's `Σ sale − Σ discount` subtracts it twice. Money on the draft stays right (summary line: 12,500 − 625 = 11,875); with ≥ 2 such lines the draft would fall back to a summary line instead of the item breakdown | 1.50 |
+| FlowAccount ใบกำกับภาษีอย่างย่อ (same blog, 2025, 1200×1503) | abbreviated tax invoice (cash sale), demo data | ABBREVIATED_TAX_INVOICE, PAID | doc no. `CA2025020012`, date, item, all totals | same `−625` double count | 1.10 |
+| 7-Eleven ใบเสร็จรับเงิน/ใบกำกับภาษี full form ([CP ALL campaign photo via DroidSans](https://droidsans.com/how-to-get-receipt-from-7-11/), 20/12/2566, photographed at an angle; buyer name/address blurred locally before upload) | a real store-printed full tax invoice | TAX_INVOICE, PAID | บมจ. ซีพี ออลล์, tax id 0107542000011, branch 15888, doc no. `H158886612200001`, date, 5 of 6 items, merchandise 80.00, **ทั้งสิ้น 80.00** | the first item row was under the blur; "สินค้าไม่เสียภาษีมูลค่าเพิ่ม 9.00" (the N-flagged goods) was labelled `applied_discount` → `mismatch −9`; VAT 4.64 came back as `summary`, not `tax`, so the draft's VAT field stays empty for the reviewer | 1.91 |
+| Lotus's e-Tax invoice, lower half ([Pantip crop](https://pantip.com/topic/42497883), 2023, 781×624) | a real e-Tax invoice's item + VAT/non-VAT block, no header | RECEIPT, PAID | 3 items, VAT 9.87, **รวม 178.00**, `reconciled` | no issuer (cropped away) | 0.94 |
+
+Spend: two runs, THB 4.54 + 3.37 = **THB 7.91** (task cumulative THB 67.92 of the THB 100 ceiling,
+ledger rows `capture-read-2026-09-19T07-54-35-232Z`, `…T07-57-05-635Z`).
+
+### 6.1 What this says about the reader (three defects worth fixing, none blocking)
+
+1. **Discount printed twice, subtracted twice.** Thai invoice templates (FlowAccount, PEAK, Leceipt)
+   print a per-line discount column *and* repeat the total discount in the summary. The assembly's
+   §4.4 sum subtracts the summary discount from line amounts that are already net → a spurious
+   `mismatch` of exactly the discount. Fix: when every sale row carries a printed discount (or the
+   summary discount equals Σ line discounts), treat the summary discount as already applied, or
+   reconcile against the gross (`merchandise`) total instead. Add a synthetic fixture with this
+   layout to `expense-capture-read.fixtures.ts`.
+2. **Non-VAT goods mistaken for a discount on the 7-Eleven layout.** The CP ALL full-form invoice
+   lists "สินค้าไม่เสียภาษีมูลค่าเพิ่ม" (N-flagged items) in the summary; the extract prompt returned
+   it as `applied_discount`, and the VAT line as `summary`. Fix: teach `capture-extract` the
+   ก่อนภาษี / ไม่เสียภาษี / ภาษีมูลค่าเพิ่ม / รวมภาษี rows as `tax`/`summary` kinds (7-Eleven, Lotus's,
+   Big C and Makro all print this N/V split), with a fixture.
+3. **Small text is dropped, not flagged.** On the 896-px Lazada screenshot the transcription omitted
+   the whole totals block without marking the page `truncated`. Real PDFs carry a text layer and
+   are unaffected; photos and screenshots below ≈ 1,000 px are. Fix: have `capture-read` report low
+   confidence / partial transcription so the job ends PARTIAL (§17.6 copy) instead of a draft with
+   an item and no total; and the web/LINE guidance should ask for the PDF or a full-size photo.
+
+### 6.2 Not proven here
+
+Shopee-, Lazada- and TikTok-specific layouts beyond the seller templates above; Big C, Makro and CJ
+e-receipts; every courier. Those need the owner's own documents on UAT (D05/D09 bundles) — the
+reader is generic, and these six say it reads issuer, number, date and the grand total correctly on
+every legible document, and that the breakdown rules above are where it still stumbles.
+
+### 6.3 Fixes — W10 (2026-09-19, branch `codex/mkt-w09-simplify-20260919`)
+
+All three defects of §6.1 are fixed and covered by unit specs that FAIL on the pre-W10 tree. Nothing
+below was verified against Bedrock by the implementer: the three new synthetic fixtures render under
+`--dry-run` and the controller replays them (and the six real files) under the spend guard.
+
+**D1 — a per-line discount repeated in the summary was subtracted twice.**
+
+- `apps/api/src/modules/expenses/domain/logic/expense-capture-assembly.logic.ts`: `reconcileDocument`
+  no longer subtracts a document-level discount the rows have already had taken off. The proof is the
+  document's own PRINTED pre-discount figure (a `merchandise` total, or a `summary` component such as
+  "รวมเป็นเงิน"): rows that already net the discount come to `subtotal − discount`, gross rows come to
+  `subtotal` itself, so the two layouts cannot be confused and nothing is inferred — with no printed
+  pre-discount figure the old `mismatch` still stands. The decision is recorded on the reconciliation
+  row as `discountAlreadyInRows: true`
+  (`packages/contracts/src/expense-capture.ts`, `ExpenseCaptureDocumentReconciliation`).
+- Following the money to the draft: `apps/api/src/modules/expenses/application/services/receipt-ocr-apply.service.ts`
+  keeps the row's PRINTED unit price when the rows are net of the printed discount, so the discount
+  has the gross base it was taken from. Before this the two-row form of the FlowAccount layout
+  reached the reviewer as `ITEMS_DID_NOT_RECONCILE` with one summary line — the draft told them the
+  document contradicted itself. It is now `RECONCILED_ITEM_LINES`: two rows, subtotal 12,500.00,
+  discount 625.00, VAT 776.87, total 11,875.00.
+- Specs: `expense-capture-assembly.logic.spec.ts` (both FlowAccount templates, a two-row variant, and
+  two controls — gross rows still subtract, net rows with no printed pre-discount figure stay a
+  reported mismatch), `expense-capture-fields.logic.spec.ts` (new file: observations → draft fields),
+  `receipt-ocr-apply.service.spec.ts` ("keeps the item rows when a line discount is repeated…").
+
+**D2 — 7-Eleven / retail: non-VAT goods read as a discount, VAT read as a summary.**
+
+- Prompt (`apps/ai-gateway/src/modules/line-ai/domain/logic/expense-capture-read.logic.ts`,
+  `CAPTURE_EXTRACT_PROMPT`): the Thai summary rows are now named one by one — `merchandise` for
+  "มูลค่าสินค้ารวม"/"รวมเป็นเงิน", `applied_discount` ONLY for a หักส่วนลด/ส่วนลด row, `summary` for
+  "สินค้าไม่เสียภาษีมูลค่าเพิ่ม"/"ยกเว้นภาษี" and for the ก่อนภาษี/รวมภาษี goods subtotals, totals kind
+  `tax` for a bare "ภาษีมูลค่าเพิ่ม <amount>", `document_total` for "รวมเงินทั้งสิ้น" — plus an explicit
+  instruction to read each row with the amount printed on its own line (the real read shifted the
+  whole block by one row). Pinned by `expense-capture-routes.spec.ts`.
+- The API never trusts that alone. `assembleCaptureObservations` re-files any component whose printed
+  label/span says ไม่เสียภาษี / ยกเว้นภาษี / ก่อนภาษี / รวมภาษี / non-VAT as `summary` when the model
+  gave it a role that moves money or claims to be the tax, and derives the document's `tax` total from
+  a bare printed VAT row when the read found none (one distinct amount only, or nothing). A `charge`
+  is never re-filed, so a shipping line whose label mentions VAT stays a charge.
+- `expense-capture-fields.logic.ts` also stops treating a printed 0.00 discount as a discount: the
+  7-Eleven form prints two of them on every bill, and counting them as two conflicting figures
+  reported `discountAmount` MISSING on a bill that has none.
+- Result on the CP ALL shapes: reconciliation `reconciled` (was `mismatch −9`), `vatAmount = 4.64`
+  (was empty), `grandTotalAmount = 80.00`, the N rows still rows, a real ส่วนลด row still a discount.
+
+**D3 — small text dropped silently.**
+
+- `expense-capture-preprocess.logic.ts`: a new declared limit `minImageEdgePx = 1,600`. An image
+  attachment whose longer side is under it is enlarged with sharp `lanczos3` before the read. 1,600 px
+  is chosen because the provider itself normalises an image to ~1,568 px on its long edge: upscaling
+  to that roughly doubles the height of 8-px printing at no extra image cost, and anything beyond it
+  would only be scaled back down. The byte ceiling (`maxImageBytes`) still wins — quality steps down
+  90/80/70 and the ORIGINAL is kept if none fits — and the downscale path is untouched.
+- `captureReadPrompt` now demands every printed line "including the summary and total block at the
+  bottom … even when it is printed much smaller than the item rows", and gives the model a `partial`
+  key to say what it could not read. `parseCaptureNaturalText` returns that reason; the route maps it
+  to `truncated: true` exactly like `max_tokens`.
+- `expense-capture-read-runner.service.ts`: a page left in the manifest state `partial` now counts as
+  unread, so the job ends PARTIAL (§17.6 copy) instead of DONE with an item and no total. A re-read
+  page that comes back whole is `read` again, so this does not strand a recovered page.
+- No web or LINE copy change was needed: PARTIAL already routes to the existing §17.6 sentence with no
+  re-read offered — `line-capture-result-notifier.use-case.spec.ts` (PARTIAL/FAILED/PAUSED sentences)
+  and `expense-capture-status.logic.spec.ts` / `capture-screens-withdrawn.spec.ts` cover it, and both
+  suites pass unchanged.
+
+**Fixtures** (`scripts/expense-capture-read.fixtures.ts`, run by `pnpm test:harness` and replayed by
+the controller): `FX-PDF-DISCOUNT-NET-01` (rows net of a 5 % line discount + the summary repeating it;
+rendered, because pdf-lib's standard fonts cannot encode the Thai labels that ARE the layout),
+`FX-PDF-RETAIL-NV-01` (the N/V split and the full retail summary block), `FX-IMG-SMALL-01` (an 896×533
+JPEG — the size of the real Leceipt screenshot — whose totals block is ~11 px). The scorer gained the
+three numbers those fixtures turn on: `discountsMatched`, `vatMatched` and `reconciledDocuments`,
+matched by value like the totals and never graded when the expectation is zero.
+
+### 6.4 Controller review of W10 (2026-09-19)
+
+- **One guard added on top of D2.** The re-filing rule for goods-subtotal labels (ไม่เสียภาษี / ยกเว้นภาษี /
+  ก่อนภาษี / รวมภาษี …) would also have re-filed a real discount whose label carries a tax phrase —
+  "ส่วนลดก่อนภาษี", "ส่วนลด VAT 7 %" — into a `summary`, dropping the money from the reconciliation and
+  the draft. A row whose label says ส่วนลด / discount / คูปอง / coupon / voucher / โค้ด / promo is now
+  never re-filed and never taken as the derived VAT total (`expense-capture-assembly.logic.ts`; two
+  cases in its spec, both red without the guard).
+- **Postgres specs W10 could not run** (throwaway DB, W09 stack): `expense-capture` 10, `expense-capture-read`
+  5, `expense-capture-handoff` 9, `expense-capture-certificate` 5, `line-ai/receipt-reliability` 6 — all
+  green. One intermittent red in the read-queue spec's concurrency case on the first pass was traced to
+  the leftover e2e read jobs in that shared database (the claim query picks the oldest eligible row of
+  ANY company); three clean re-runs followed. Not a W10 regression.
+- **Two residuals, pre-existing, recorded not fixed.** (1) A PARTIAL job is re-claimed by every drain
+  (`status IN ('QUEUED','READING','PARTIAL')`); with all chunks `done` the re-claim reads nothing and
+  spends nothing, but `attempts` still climbs, and after `EXPENSE_CAPTURE_MAX_ATTEMPTS` (5) the job flips
+  to FAILED `attempts_exhausted` — the review page's §17.6 sentence then changes from "บางส่วน" to
+  "ไม่สำเร็จ" five drains later. D3 makes PARTIAL more common, so this deserves its own fix (a job with no
+  `pending`/`failed` page and no `failed` chunk should not be re-claimed). (2) The finished-read outbox
+  key is `…:${job.id}` (`payload.requestId`), so a job that ends PARTIAL and later DONE publishes ONE
+  event: no duplicate LINE push (good), but the DONE result is never pushed either — the web page,
+  which polls `read-status`, is unaffected.
+
+### 6.5 Replay of the six real files on the fixed reader, and what the controller added (2026-09-19)
+
+Same six files, same harness, after W10: THB 7.86 (task cumulative THB 75.78 of 100; ledger row
+`capture-read-2026-09-19T08-51-29-574Z`). Small images now go up to a 1,600 px long edge before the
+read (the 896-px screenshot: 50,906 → 116,478 bytes).
+
+| File | Before W10 | After W10 | After the controller's additions |
+|---|---|---|---|
+| FlowAccount full 2025 | `mismatch −625`, VAT 776.87 only as a component | **`reconciled`**, `discountAlreadyInRows: true`, `tax` 776.87 | unchanged |
+| FlowAccount abbreviated 2025 | `mismatch −625` | **`reconciled`**, `discountAlreadyInRows: true`, `tax` 776.87 | unchanged |
+| Lotus's e-Tax lower half 2023 | `reconciled`, no `tax` total | `reconciled`, **`tax` 9.87** | unchanged |
+| 7-Eleven full-form photo 2023 | `mismatch −9`, VAT empty on the draft | still `mismatch −9`, and the summary block came back **shifted by one row** (ส่วนลดที่ได้ทั้งหมด → 9.00, ภาษีมูลค่าเพิ่ม → 71.00): D2's label rule cannot see a mis-paired amount, so the new derivation would have written **71.00 as the VAT** of an 80-baht basket | no VAT is invented: a VAT above `total × 7 / 107` is dropped both from the derived total and from the draft's `vatAmount` (mode stays NEEDS_REVIEW); the mismatch is reported as before and the apply path's own arithmetic keeps the 9.00 off the draft — grand total 80.00, no discount, VAT for the reviewer |
+| Leceipt "Lazada" screenshot 2021 | item, no totals, DONE | upscaled, prompt now demands the totals block and offers `partial` — the model **still** stopped after the item row and declared nothing | the runner now ends a ONE-page file PARTIAL when its transcription has an item table and no total-like line after or on the last money row (`transcriptionStopsBeforeTotals`), so the §17.6 sentence shows instead of a draft with an item and no total; checked against all six transcriptions: fires only here |
+| Leceipt e-Tax-by-Email screenshot 2019 | header only, DONE | header only (no items at all) | unchanged — nothing to reconcile, nothing to flag; a document with no item table is left to the reviewer |
+
+The controller's additions (all with red-then-green specs): the discount-label guard (§6.4); the
+VAT ceiling in `expense-capture-assembly.logic.ts` (`derivedTaxTotal`) and in
+`expense-capture-fields.logic.ts` (`taxFacts`); the single-page completeness check in
+`expense-capture-read-runner.service.ts`; and the harness's summary line now names each
+document's reconciliation status. §4.4's principle stands: nothing is inferred from rows that happen to
+meet the printed total — a shifted block is REPORTED as a mismatch, never balanced away.
+
+### 6.6 Second search round — the remaining brands (2026-09-19, later the same day)
+
+Owner: "แล้วบิลอื่นละ". A second, brand-by-brand round through forum threads and provider blogs (Thailand
+Post, Kerry, Flash, J&T, Shopee and TikTok fee invoices, Makro, Big C, CJ, PEAK):
+
+| Brand | Found | Read |
+|---|---|---|
+| **Flash Express** | a digitally signed ใบเสร็จรับเงิน/ใบกำกับภาษี of 18/01/2024 posted on [Pantip](https://pantip.com/topic/42496513) (customer block and tracking numbers blurred locally before upload) | issuer + tax id 0105560159254, doc no. `FIC20240…`, date, **7 fee lines** (ค่าขนส่ง 70.00, ค่าบริการ COD 20.00 + VAT 1.40 …), merchandise 90.00, `tax` 1.40, **ทั้งสิ้น 91.40**, `reported_paid` 91.40 cash — `reconciled`. THB 2.08 (task cumulative THB 77.86) |
+| Thailand Post | one 2017 EMS sticker photo, illegible | not sent |
+| Kerry, J&T | threads without a document | — |
+| Shopee, TikTok fee invoices (issued to sellers) | guides and video thumbnails only; the seller-centre download pages are behind login | — |
+| Makro, Big C, CJ | threads without a document; the Big C thread holds chat screenshots only | — |
+
+Seven real documents in total now, all reading issuer, number, date and grand total correctly on the
+fixed reader; the two low-resolution screenshots end PARTIAL (§6.5). What remains untested is exactly
+what only the owner holds: their own Shopee/TikTok/Makro/Big C/CJ/Kerry documents on UAT.

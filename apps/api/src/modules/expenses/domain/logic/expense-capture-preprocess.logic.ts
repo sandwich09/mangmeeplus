@@ -31,6 +31,17 @@ export const EXPENSE_CAPTURE_PREPROCESS_LIMITS = Object.freeze({
   /** Bedrock image block is ~3.75 MB / 8000 px per side. */
   maxImageBytes: 3_500_000,
   maxImageEdgePx: 8_000,
+  /**
+   * W10 D3: a photo or screenshot whose LONGER side is under this is upscaled before it is read.
+   *
+   * The 896x533 screenshot of a Leceipt invoice (research note §6) prints its totals block at ~8 px
+   * high: `capture-read` transcribed the item row and skipped the whole block. 1,600 px is chosen
+   * because the provider itself normalises an image to ~1,568 px on the long edge — upscaling to it
+   * roughly doubles the height of that printing at no extra image cost, while going further would
+   * only be scaled back down. Nothing larger is ever touched, and the downscale rules below are
+   * unchanged: this only ever ENLARGES, and never past `maxImageBytes`/`maxImageEdgePx`.
+   */
+  minImageEdgePx: 1_600,
   /** Long edge a whole-page render targets before legibility, not bytes, decides tiling. */
   renderLongEdgePx: 4_000,
   /** Shared with the certificate renderer: the decoded raster of ONE page, never of a document. */
@@ -279,12 +290,53 @@ async function planImageChunk(
   const withinBounds = bytes.byteLength <= limits.maxImageBytes
     && width > 0 && width <= limits.maxImageEdgePx && height > 0 && height <= limits.maxImageEdgePx;
   if (withinBounds) {
-    return { id: 'c1', kind: 'image', pageIndexes: [0], mimeType, bytes, byteLength: bytes.byteLength };
+    // W10 D3: small printing is the one case where re-encoding EARNS its cost — a totals block the
+    // reader cannot see is a draft with no total. An image already big enough passes through as is.
+    const enlarged = Math.max(width, height) < limits.minImageEdgePx
+      ? await enlargeToLegibleEdge(bytes, width, height, limits)
+      : null;
+    return enlarged
+      ? { id: 'c1', kind: 'image', pageIndexes: [0], mimeType: 'image/jpeg', bytes: enlarged, byteLength: enlarged.byteLength }
+      : { id: 'c1', kind: 'image', pageIndexes: [0], mimeType, bytes, byteLength: bytes.byteLength };
   }
   const shrunk = await shrinkToImageBound(bytes, limits);
   return shrunk
     ? { id: 'c1', kind: 'image', pageIndexes: [0], mimeType: 'image/jpeg', bytes: shrunk, byteLength: shrunk.byteLength }
     : null;
+}
+
+/**
+ * Enlarge a small image to the legibility floor with `lanczos3`, or return null and keep the original.
+ *
+ * `lanczos3` is sharp's sharpest kernel for printed text; JPEG rather than PNG because an enlarged
+ * screenshot re-encodes to a few hundred KB either way and PNG would not. Quality steps down rather
+ * than the size, exactly like `renderPageChunk`: the point is more pixels per printed character, so
+ * shrinking the result would undo the change. Returns null when nothing fits the byte bound — the
+ * original image is still a read, just the one the reader already struggles with.
+ */
+async function enlargeToLegibleEdge(
+  bytes: Buffer,
+  width: number,
+  height: number,
+  limits: ExpenseCapturePreprocessLimits,
+): Promise<Buffer | null> {
+  const longEdge = Math.max(width, height);
+  const target = Math.min(limits.minImageEdgePx, limits.maxImageEdgePx);
+  // Never past the decoded-raster budget either: the guard is sharp's own `limitInputPixels`.
+  const scale = Math.min(target / longEdge, Math.sqrt(limits.maxRasterPixels / Math.max(1, width * height)));
+  if (!Number.isFinite(scale) || scale <= 1) return null;
+  for (const quality of [90, 80, 70]) {
+    try {
+      const out = await sharp(bytes, { limitInputPixels: limits.maxRasterPixels })
+        .resize({ width: Math.round(width * scale), height: Math.round(height * scale), kernel: 'lanczos3' })
+        .jpeg({ quality })
+        .toBuffer();
+      if (out.byteLength <= limits.maxImageBytes) return out;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 /** JPEG q85 inside the edge bound, then progressively smaller until the byte bound holds. */

@@ -90,7 +90,9 @@ export class LineExplainFileAttemptTool implements ErpReadToolPort<{ attemptRef?
   ): { kind: string; url?: string } {
     if (outcome === 'REJECTED') return { kind: 'resend' };
     if (targetType === 'capture_group' && targetId) {
-      return { kind: 'open_web', url: absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/capture/${targetId}`) };
+      // Appendix §25: a group captured before 2026-09-19 has no page of its own any more, so the
+      // recovery is the expense list — which is where its records are.
+      return { kind: 'open_web', url: absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`) };
     }
     if (targetType === 'expense' && targetId) {
       return { kind: 'open_web', url: absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${targetId}`) };

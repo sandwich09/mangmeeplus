@@ -25,7 +25,10 @@ import {
 } from '@watchdog-bms/contracts';
 import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
 import { BASE64_MEDIA_ROUTES, LineAiInternalController } from './line-ai-internal.controller';
-import { CAPTURE_BLANK_PAGE_MARKER, CAPTURE_EXTRACT_PROMPT, parseCaptureObservationsJson, parseCaptureReadPages } from '../../domain/logic/expense-capture-read.logic';
+import {
+  CAPTURE_BLANK_PAGE_MARKER, CAPTURE_EXTRACT_PROMPT, CAPTURE_PARTIAL_KEY, captureReadPrompt,
+  parseCaptureNaturalText, parseCaptureObservationsJson, parseCaptureReadPages,
+} from '../../domain/logic/expense-capture-read.logic';
 
 const config = {
   aiGatewayInternalSecret: 'secret',
@@ -70,6 +73,8 @@ const extractRequest = (over: Partial<ExpenseCaptureExtractRequest> = {}): Expen
  */
 function stubBedrock(answers: {
   read?: string;
+  /** W10 D3: what the model puts in the stage-1 `partial` key when it could not read part of a page. */
+  readPartial?: string | true;
   readStopReason?: string;
   extract?: string[];
   extractStopReason?: string;
@@ -86,7 +91,10 @@ function stubBedrock(answers: {
     if (kind === 'read') {
       return {
         usage: { inputTokens: 1_000, outputTokens: 200, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
-        output: { message: { content: [{ text: JSON.stringify({ natural_text: answers.read ?? '' }) }] } },
+        output: { message: { content: [{ text: JSON.stringify({
+          natural_text: answers.read ?? '',
+          ...(answers.readPartial !== undefined ? { [CAPTURE_PARTIAL_KEY]: answers.readPartial } : {}),
+        }) }] } },
         stopReason: answers.readStopReason ?? 'end_turn',
       };
     }
@@ -158,6 +166,35 @@ describe('capture-read', () => {
         'a page that finished must not be thrown away with the one that did not');
       assert.equal(result.pages?.[0]!.text, 'COMPLETE');
     } finally { bedrock.restore(); }
+  });
+
+  /**
+   * W10 D3. The 896-px Leceipt screenshot transcribed its item row and silently dropped the whole
+   * totals block (~8 px printing), answering `truncated: false` — so the job ended DONE with a line
+   * and no total. The contract now lets the reader SAY it skipped something, and the API treats that
+   * exactly like `max_tokens`.
+   */
+  it('reports a transcription the model declared incomplete as a truncated page', async () => {
+    const bedrock = stubBedrock({
+      read: '=== PAGE 1 ===\nITEM 7,000.00',
+      readPartial: 'the totals block at the bottom is too small to read',
+    });
+    try {
+      const result = await controller().captureRead('secret', readRequest({
+        chunk: { id: 'c1', kind: 'image', mimeType: 'image/jpeg', pageIndexes: [0], fileLabel: 'f', contentBase64: 'aW1n' },
+      }));
+      assert.equal(result.status, 'ok');
+      assert.deepEqual(result.pages?.map((page) => page.truncated), [true]);
+      assert.equal(result.pages?.[0]!.text, 'ITEM 7,000.00', 'what WAS read is still kept');
+    } finally { bedrock.restore(); }
+  });
+
+  it('asks stage 1 for every printed line and offers the way to admit a partial read', () => {
+    const prompt = captureReadPrompt('BASE', 1, 'image');
+    assert.ok(prompt.includes('including the summary and total block at the bottom'),
+      'the totals block is the thing that went missing');
+    assert.ok(prompt.includes('even when it is printed much smaller than the item rows'));
+    assert.ok(prompt.includes(`\`${CAPTURE_PARTIAL_KEY}\``), 'and the model is told how to say it could not');
   });
 
   it('reports a blank page as blank rather than as a failed read', async () => {
@@ -380,6 +417,58 @@ describe('capture observation parser', () => {
       }],
     }), WINDOW_TEXT);
     assert.equal(invented, null, 'which is why the prompt has to name the values');
+  });
+});
+
+/** W10 D2: the prompt is the first of the two layers; the API assembly never trusts it alone. */
+describe('capture-extract prompt — the retail N/V summary vocabulary', () => {
+  it('names every Thai summary row of the 7-Eleven / Lotus\'s / Big C / Makro layout', () => {
+    for (const row of [
+      'มูลค่าสินค้ารวม', 'หักส่วนลด', 'สินค้าไม่เสียภาษีมูลค่าเพิ่ม',
+      'มูลค่าสินค้าก่อนภาษีมูลค่าเพิ่ม', 'มูลค่าสินค้ารวมภาษีมูลค่าเพิ่ม', 'รวมเงินทั้งสิ้น',
+    ]) {
+      assert.ok(CAPTURE_EXTRACT_PROMPT.includes(row), `the prompt never mentions ${row}`);
+    }
+  });
+
+  it('says which kind each of them is, so a goods subtotal is never a discount or the tax', () => {
+    assert.match(CAPTURE_EXTRACT_PROMPT, /ONLY a row that says หักส่วนลด \/ ส่วนลด \/ Discount is "applied_discount"/);
+    assert.match(CAPTURE_EXTRACT_PROMPT, /สินค้าไม่เสียภาษีมูลค่าเพิ่ม[\s\S]{0,220}is "summary"/);
+    assert.match(CAPTURE_EXTRACT_PROMPT, /สินค้าไม่เสียภาษีมูลค่าเพิ่ม[\s\S]{0,260}never a discount and never a tax/);
+    assert.match(CAPTURE_EXTRACT_PROMPT, /bare "ภาษีมูลค่าเพิ่ม <amount>"[\s\S]{0,160}kind "tax"/);
+    assert.match(CAPTURE_EXTRACT_PROMPT, /รวมเงินทั้งสิ้น[\s\S]{0,120}"document_total"/);
+    assert.match(CAPTURE_EXTRACT_PROMPT, /มูลค่าสินค้ารวม[\s\S]{0,140}"merchandise"/);
+  });
+
+  it('tells the model to read each row with its OWN amount, which is how the block shifted by one', () => {
+    assert.ok(CAPTURE_EXTRACT_PROMPT.includes('ON ITS OWN LINE'));
+    assert.ok(CAPTURE_EXTRACT_PROMPT.includes('shifts the whole block by one'));
+  });
+});
+
+/** W10 D3: the stage-1 unwrapper, which is where a declared partial enters the pipeline. */
+describe('capture natural-text parser', () => {
+  const parse = (text: string) => parseCaptureNaturalText(text, 100);
+
+  it('unwraps the JSON contract and reports no partial when the model declared none', () => {
+    assert.deepEqual(parse(JSON.stringify({ natural_text: 'ROWS' })), { text: 'ROWS' });
+    assert.deepEqual(parse(JSON.stringify({ natural_text: 'ROWS', partial: false })), { text: 'ROWS' });
+    assert.deepEqual(parse('ROWS without a wrapper'), { text: 'ROWS without a wrapper' });
+  });
+
+  it('carries the model\'s reason for a partial transcription', () => {
+    assert.deepEqual(parse(JSON.stringify({ natural_text: 'ROWS', partial: 'totals too small' })),
+      { text: 'ROWS', partialReason: 'totals too small' });
+  });
+
+  it('accepts a bare admission with no reason', () => {
+    assert.deepEqual(parse(JSON.stringify({ natural_text: 'ROWS', partial: true })),
+      { text: 'ROWS', partialReason: 'declared' });
+  });
+
+  it('still refuses an empty answer and still applies the caller\'s ceiling', () => {
+    assert.equal(parse(JSON.stringify({ natural_text: '   ' })), null);
+    assert.equal(parseCaptureNaturalText(JSON.stringify({ natural_text: 'x'.repeat(50) }), 10)!.text.length, 10);
   });
 });
 

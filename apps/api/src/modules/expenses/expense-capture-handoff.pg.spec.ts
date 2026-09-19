@@ -17,6 +17,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../generated/prisma/client';
 import { pgSpecUnreachableReason } from '../../common/database/pg-spec-guard';
 import type { PrismaService } from '../../common/database/prisma.service';
+import { ExpenseCaptureAutoSplitService } from './application/services/expense-capture-auto-split.service';
 import { PrismaExpenseCaptureRepository } from './infrastructure/prisma-expense-capture.repository';
 import { PrismaExpenseRepository } from './infrastructure/prisma-expense.repository';
 import { lockFundingEvidence } from './infrastructure/substitute-funding.guard';
@@ -422,10 +423,111 @@ describe('expense capture handoff on PostgreSQL', { skip: !databaseUrl }, () => 
     assert.equal(await client.expenseRecord.count({ where: { companyId, id: groupId } }), 0);
     assert.equal(await client.expenseCaptureGroup.count({ where: { companyId, id: groupId } }), 1);
 
-    // And the detail read model carries the lineage the expense page renders (§5).
+    // And the detail read model carries the lineage (§5). Appendix §25 withdrew the group page, so
+    // the path it carries is the expense list — nothing in the web renders it any more.
     const detail = await expenses.findByIdWithRelations(companyId, source);
     assert.equal(detail!.captureGroup!.groupId, groupId);
-    assert.equal(detail!.captureGroup!.webPath, `/companies/${companyId}/expenses/capture/${groupId}`);
+    assert.equal(detail!.captureGroup!.webPath, `/companies/${companyId}/expenses`);
     assert.equal((await expenses.findByIdWithRelations(companyId, await derivedSource('listing-plain')))!.captureGroup, null);
   });
+
+  /**
+   * Appendix §25 auto-split, against real rows: two documents in one file become two ordinary
+   * drafts that share one HANDED_OFF group and one file, are keyed by document ref so a retried
+   * drain creates nothing, and — because they share `captureGroupId` — are siblings the W01 rules
+   * exempt from each other. The unique `(companyId, captureGroupId, captureScopeKey)` index is the
+   * reason the scope keys must be the document refs; only Postgres can prove that.
+   */
+  it('auto-split writes one sibling draft per further document, exactly once', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const owner = await derivedSource('split-owner', { status: 'DRAFT', grandTotalAmount: '0', netPayableAmount: '0', outstandingAmount: '0', subtotalAmount: '0', taxableAmount: '0' });
+    const attachmentId = await attachment('split-file');
+    await link(attachmentId, 'expense.record', owner, 'expense.receipt.primary');
+    await client.expenseRecord.update({ where: { id: owner }, data: { primaryAttachmentId: attachmentId } });
+
+    const applied: Array<{ expenseId: string; vendor?: string }> = [];
+    const service = new ExpenseCaptureAutoSplitService(
+      capture, expenses,
+      { apply: async (_ctx: unknown, expenseId: string, fields: { vendorName?: string }) => {
+        applied.push({ expenseId, ...(fields.vendorName ? { vendor: fields.vendorName } : {}) });
+        return { candidatesCreated: 0, committedUpdatedAt: new Date() };
+      } } as never,
+      { log: async () => undefined } as never,
+    );
+    const job = { id: `${tag}-split-job`, companyId, ownerType: 'EXPENSE', expenseId: owner, attachmentId };
+    const assembled = twoDocumentObservation();
+
+    const first = await service.split({ job, assembled });
+    assert.equal(first.applied, true, 'the first document lands on the expense that owns the file');
+    assert.equal(Object.keys(first.splitByRef).length, 1, 'one further document, one further draft');
+    const siblingId = first.splitByRef['d2']!;
+    assert.deepEqual(applied.map((row) => row.vendor), ['ร้าน ก', 'ร้าน ข']);
+
+    const rows = await client.expenseRecord.findMany({
+      where: { companyId, id: { in: [owner, siblingId] } },
+      select: { id: true, captureGroupId: true, captureScopeKey: true, status: true, createdByUserId: true, captureAllocationId: true },
+      orderBy: { captureScopeKey: 'asc' },
+    });
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]!.captureGroupId, rows[1]!.captureGroupId, 'siblings share one group');
+    assert.deepEqual(rows.map((row) => row.captureScopeKey), ['doc-1', 'doc-2']);
+    assert.equal(rows.find((row) => row.id === siblingId)!.status, 'NEEDS_REVIEW');
+    assert.equal(rows.find((row) => row.id === siblingId)!.createdByUserId, userId, 'the original creator owns it');
+    assert.equal(rows.find((row) => row.id === siblingId)!.captureAllocationId, null, 'no allocation');
+
+    // The group is HANDED_OFF from the start, so the retention sweep cannot purge a group that live
+    // expenses point at, and its batch key is the job — no second batch for one file.
+    const created = await client.expenseCaptureGroup.findFirstOrThrow({ where: { companyId, id: rows[0]!.captureGroupId! } });
+    assert.equal(created.status, 'HANDED_OFF');
+    assert.equal(created.handoffState, 'ACTIVE');
+    assert.equal(created.handoffBatchKey, `auto-split:${job.id}`);
+
+    // The SAME bytes are the sibling's receipt too — primary link AND `primaryAttachmentId` —
+    // because `validateConfirm` refuses an expense with no primary receipt: a sibling holding the
+    // file only as "supporting" evidence could never be confirmed.
+    const links = await client.attachmentLink.findMany({
+      where: { companyId, attachmentId, targetType: 'expense.record' },
+      select: { targetId: true, purpose: true },
+    });
+    assert.deepEqual(
+      links.map((row) => [row.targetId, row.purpose]).sort(),
+      [[owner, 'expense.receipt.primary'], [siblingId, 'expense.receipt.primary']].sort(),
+    );
+    const siblingRow = await client.expenseRecord.findUniqueOrThrow({ where: { id: siblingId }, select: { primaryAttachmentId: true } });
+    assert.equal(siblingRow.primaryAttachmentId, attachmentId, 'the sibling owns the file as its primary receipt');
+
+    // A retried drain carries the record it wrote, and creates nothing.
+    const replay = await service.split({ job, assembled, alreadySplit: first.splitByRef });
+    assert.deepEqual(replay.splitByRef, first.splitByRef);
+    assert.equal(await client.expenseRecord.count({ where: { companyId, captureGroupId: created.id } }), 2, 'still two records');
+  });
 });
+
+/** One file, two shops — each quoting its own printed amount so the eligibility gate lets it past. */
+function twoDocumentObservation() {
+  const classification = (amount: string) => ({
+    contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
+    businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', evidenceRoles: ['EXPENSE_SUPPORT'],
+    confidence: 0.9, evidenceSignals: ['ร้าน'], amountSignals: [amount], settlementSignals: [`รวม ${amount}`],
+    missingRequiredSignals: [], contradictionSignals: [], requiresClarification: false,
+  });
+  return {
+    documents: [
+      { ref: 'd1', pageIndexes: [0], kind: 'RECEIPT', family: 'EXPENSE_EVIDENCE', issuer: { name: 'ร้าน ก' }, documentNumber: 'A-1', classification: classification('60.00') },
+      { ref: 'd2', pageIndexes: [1], kind: 'RECEIPT', family: 'EXPENSE_EVIDENCE', issuer: { name: 'ร้าน ข' }, documentNumber: 'B-1', classification: classification('40.00') },
+    ],
+    items: [
+      { id: '0:1', documentRef: 'd1', description: 'ปูน', quantity: '1', amount: '60.00', event: 'sale', evidenceSpan: 'ปูน 60.00' },
+      { id: '1:1', documentRef: 'd2', description: 'ทราย', quantity: '1', amount: '40.00', event: 'sale', evidenceSpan: 'ทราย 40.00' },
+    ],
+    components: [],
+    totals: [
+      { documentRef: 'd1', kind: 'document_total', amount: '60.00', evidenceSpan: 'รวม 60.00' },
+      { documentRef: 'd2', kind: 'document_total', amount: '40.00', evidenceSpan: 'รวม 40.00' },
+    ],
+    payments: [], refunds: [],
+    completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [0, 1], notes: [] },
+    reconciliation: [],
+    multiDocument: true,
+  } as never;
+}

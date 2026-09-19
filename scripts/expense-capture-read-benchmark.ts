@@ -41,7 +41,7 @@ import {
   type ExpenseCaptureObservations,
 } from '@watchdog-bms/contracts';
 import {
-  documentPageLines, expectationOf, fixtureSpecs, scoreFixture,
+  documentPageLines, expectationOf, fixtureMimeType, fixtureSpecs, scoreFixture,
   type FixtureScore, type FixtureSpec, type PlannedDocument,
 } from './expense-capture-read.fixtures';
 import { LineAiInternalController } from '../apps/ai-gateway/src/modules/line-ai/presentation/http/line-ai-internal.controller';
@@ -64,6 +64,12 @@ const has = (name: string): boolean => process.argv.includes(`--${name}`);
 
 const OPTS = {
   only: (flag('only') ?? '').split(',').map((value) => value.trim()).filter(Boolean),
+  /**
+   * Real files instead of the synthetic fixtures: `--files a.pdf,b.jpg`. No expectation, so no score —
+   * the record carries what the reader assembled (documents, issuers, totals) for a person to judge.
+   * Same preprocessing, same gateway routes, same spend guard and ledger as a fixture run.
+   */
+  files: (flag('files') ?? '').split(',').map((value) => value.trim()).filter(Boolean),
   maxThb: Number(flag('max-thb') ?? '100'),
   thbPerUsd: Number(flag('thb-per-usd') ?? '33'),
   out: resolve(flag('out') ?? '.capture-read-out'),
@@ -96,14 +102,20 @@ async function buildTextPdf(spec: FixtureSpec): Promise<Buffer> {
 async function scanPageJpeg(
   document: PlannedDocument,
   lines: string[],
-  { width, height, quality, grainAmplitude }: { width: number; height: number; quality: number; grainAmplitude: number },
+  { width, height, quality, grainAmplitude, type }: {
+    width: number; height: number; quality: number; grainAmplitude: number;
+    /** W10 D3: the printed type GEOMETRY, so a low-resolution fixture really is hard to read.
+     *  The default is the original page: 34 px rows from y=170, a 44 px shop name at y=100. */
+    type?: { x: number; headerY: number; headerSize: number; firstLineY: number; body: number; step: number };
+  },
 ): Promise<Buffer> {
   const escape = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const size = type ?? { x: 90, headerY: 100, headerSize: 44, firstLineY: 170, body: 34, step: 62 };
   const body = lines.map((line, index) =>
-    `<text x="90" y="${170 + index * 62}" font-size="34" font-family="monospace" fill="#101010" xml:space="preserve">${escape(line)}</text>`).join('');
+    `<text x="${size.x}" y="${size.firstLineY + index * size.step}" font-size="${size.body}" font-family="monospace" fill="#101010" xml:space="preserve">${escape(line)}</text>`).join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">`
     + `<rect width="${width}" height="${height}" fill="#fbfaf6"/>`
-    + `<text x="90" y="100" font-size="44" font-family="sans-serif" fill="#101010">${escape(document.issuer)}</text>`
+    + `<text x="${size.x}" y="${size.headerY}" font-size="${size.headerSize}" font-family="sans-serif" fill="#101010">${escape(document.issuer)}</text>`
     + `${body}</svg>`;
   const page = await sharp(Buffer.from(svg)).png().toBuffer();
   // Grain: without it a flat synthetic page compresses to a few hundred KB and the fixture would
@@ -145,9 +157,23 @@ async function buildBigPagePdf(spec: FixtureSpec): Promise<Buffer> {
   return Buffer.from(await pdf.save());
 }
 
+/**
+ * W10 D3: the 896x533 screenshot lane — the size of the real Leceipt sample whose whole totals block
+ * came back untranscribed. The type is deliberately ~8-11 px, so this fixture is only legible once
+ * `planCapturePreprocessing` has enlarged it to the declared legibility floor.
+ */
+async function buildLowResScan(spec: FixtureSpec): Promise<Buffer> {
+  const lines = documentPageLines(spec.documents[0]!, 1)[0]!;
+  return scanPageJpeg(spec.documents[0]!, lines, {
+    width: 896, height: 533, quality: 88, grainAmplitude: 12,
+    type: { x: 24, headerY: 22, headerSize: 15, firstLineY: 46, body: 11, step: 24 },
+  });
+}
+
 async function buildFixture(spec: FixtureSpec): Promise<Buffer> {
   if (spec.kind === 'scan-pdf') return buildScanPdf(spec);
   if (spec.kind === 'big-page-pdf') return buildBigPagePdf(spec);
+  if (spec.kind === 'low-res-scan') return buildLowResScan(spec);
   return buildTextPdf(spec);
 }
 
@@ -213,15 +239,47 @@ type FixtureRecord = {
   /** The assembled facts themselves. Synthetic input, so this is auditable without any privacy
    *  question — and a score with no facts behind it is not evidence. */
   assembled: ExpenseCaptureAssembledObservations;
+  /** `--files` only: what the read route transcribed per page, so a missed total can be traced to
+   *  the transcription or to the extraction. Never persisted for a synthetic fixture (no need). */
+  pageText?: Record<string, string>;
 };
 
 const thb = (value: number): string => (value / 100).toFixed(2);
 
-async function runFixture(controller: LineAiInternalController, spec: FixtureSpec, runId: string): Promise<FixtureRecord> {
+/** A real file on disk (`--files`): its bytes and mime are what a customer would have sent. */
+type ExternalSpec = { id: string; proves: string; external: { path: string; mimeType: string } };
+type RunSpec = FixtureSpec | ExternalSpec;
+const isExternal = (spec: RunSpec): spec is ExternalSpec => 'external' in spec;
+
+function externalSpecs(paths: string[]): ExternalSpec[] {
+  const mimeByExtension: Record<string, string> = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' };
+  return paths.map((path) => {
+    const extension = path.toLowerCase().split('.').pop() ?? '';
+    const mimeType = mimeByExtension[extension];
+    if (!mimeType) throw new Error(`--files: unsupported extension on ${path} (pdf, jpg, jpeg, png)`);
+    if (!existsSync(path)) throw new Error(`--files: ${path} does not exist`);
+    const id = path.split('/').pop()!.replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9_-]+/g, '-').slice(0, 40);
+    return { id, proves: `external: ${path.split('/').pop()}`, external: { path: resolve(path), mimeType } };
+  });
+}
+
+/** What a real file yielded, for the console and the report: no score, only the assembled facts. */
+function factsLine(assembled: ExpenseCaptureAssembledObservations): string {
+  const docs = assembled.documents.map((document) => {
+    const total = assembled.totals.find((row) => row.documentRef === document.ref && row.kind === 'document_total')?.amount ?? '?';
+    const items = assembled.items.filter((row) => row.documentRef === document.ref).length;
+    return `${document.kind}${document.issuer?.name ? ` «${document.issuer.name}»` : ''}${document.documentNumber ? ` #${document.documentNumber}` : ''}${document.documentDate ? ` ${document.documentDate}` : ''} total=${total} items=${items}`;
+  });
+  const diffs = assembled.reconciliation.filter((row) => row.status !== 'reconciled').map((row) => `${row.documentRef}:${row.status}${row.difference ? ` ${row.difference}` : ''}`);
+  return `docs=${assembled.documents.length}${assembled.multiDocument ? ' (multi)' : ''} [${docs.join(' | ')}] reconciliation=${diffs.length ? diffs.join(',') : 'reconciled'}`;
+}
+
+async function runFixture(controller: LineAiInternalController, spec: RunSpec, runId: string): Promise<FixtureRecord> {
   const startedAt = Date.now();
   const errors: string[] = [];
-  const bytes = await buildFixture(spec);
-  const plan = await planCapturePreprocessing(bytes, 'application/pdf', { maxPages: MAX_PAGES });
+  const bytes = isExternal(spec) ? readFileSync(spec.external.path) : await buildFixture(spec);
+  const mimeType = isExternal(spec) ? spec.external.mimeType : fixtureMimeType(spec);
+  const plan = await planCapturePreprocessing(bytes, mimeType, { maxPages: MAX_PAGES });
   if (plan.failure) errors.push(`preprocess:${plan.failure}`);
 
   const pages: Record<string, { text: string; truncated?: boolean; blank?: boolean }> = {};
@@ -281,9 +339,10 @@ async function runFixture(controller: LineAiInternalController, spec: FixtureSpe
     costSatang, costThb: thb(costSatang),
     wallMs: Date.now() - startedAt,
     blankPages, failedChunks,
-    score: Object.keys(windowObservations).length > 0 ? scoreFixture(expectationOf(spec), assembled) : null,
+    score: !isExternal(spec) && Object.keys(windowObservations).length > 0 ? scoreFixture(expectationOf(spec), assembled) : null,
     errors,
     assembled,
+    ...(isExternal(spec) ? { pageText: Object.fromEntries(Object.entries(pages).map(([index, page]) => [index, page.text])) } : {}),
   };
 }
 
@@ -310,7 +369,7 @@ function gitRevision(): string {
 }
 
 function markdown(records: FixtureRecord[]): string {
-  const header = '| Fixture | Proves | Bytes | Pages | Chunks (kind) | Windows | Calls | In/Out tokens | THB | Docs | Items | Totals | Missing-pages | Wall |';
+  const header = '| Fixture | Proves | Bytes | Pages | Chunks (kind) | Windows | Calls | In/Out tokens | THB | Docs | Items | Totals | Discount/VAT/Reconciled | Missing-pages | Wall |';
   const rows = records.map((record) => {
     const score = record.score;
     return `| ${record.fixtureId} | ${record.proves} | ${record.fileBytes.toLocaleString()} | ${record.pageCount} `
@@ -319,15 +378,17 @@ function markdown(records: FixtureRecord[]): string {
       + `| ${score ? `${score.documentsFound}/${score.documentsExpected}` : '-'} `
       + `| ${score ? `${score.itemsFound}/${score.itemsExpected}` : '-'} `
       + `| ${score ? `${score.totalsMatched}/${score.totalsExpected}` : '-'} `
+      + `| ${score ? `${score.discountsMatched}/${score.discountsExpected} · ${score.vatMatched}/${score.vatExpected} · ${score.reconciledDocuments}/${score.reconciledDocumentsExpected}` : '-'} `
       + `| ${score ? `${score.suspectedMissingPages} (want ${score.suspectedMissingPagesExpected})` : '-'} `
-      + `| ${(record.wallMs / 1000).toFixed(1)}s |`;
+      + `| ${(record.wallMs / 1000).toFixed(1)}s |`
+      + (record.proves.startsWith('external:') ? `\n| | ${factsLine(record.assembled).replace(/\|/g, '/')} | | | | | | | | | | | | | |` : '');
   });
-  return `${[header, '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|', ...rows].join('\n')}\n`;
+  return `${[header, '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|', ...rows].join('\n')}\n`;
 }
 
 async function main(): Promise<void> {
   mkdirSync(OPTS.out, { recursive: true });
-  const specs = fixtureSpecs().filter((spec) => {
+  const specs: RunSpec[] = OPTS.files.length > 0 ? externalSpecs(OPTS.files) : fixtureSpecs().filter((spec) => {
     if (OPTS.smoke) return spec.id === 'FX-PDF-02';
     return OPTS.only.length === 0 || OPTS.only.includes(spec.id);
   });
@@ -335,13 +396,14 @@ async function main(): Promise<void> {
 
   if (OPTS.dryRun) {
     for (const spec of specs) {
-      const bytes = await buildFixture(spec);
-      const plan = await planCapturePreprocessing(bytes, 'application/pdf', { maxPages: MAX_PAGES });
-      writeFileSync(join(OPTS.out, `${spec.id}.pdf`), bytes);
+      const bytes = isExternal(spec) ? readFileSync(spec.external.path) : await buildFixture(spec);
+      const mimeType = isExternal(spec) ? spec.external.mimeType : fixtureMimeType(spec);
+      const plan = await planCapturePreprocessing(bytes, mimeType, { maxPages: MAX_PAGES });
+      if (!isExternal(spec)) writeFileSync(join(OPTS.out, `${spec.id}.${mimeType === 'image/jpeg' ? 'jpg' : 'pdf'}`), bytes);
       console.log(JSON.stringify({
-        id: spec.id, bytes: bytes.byteLength, pageCount: plan.pageCount, failure: plan.failure ?? null,
+        id: spec.id, mimeType, bytes: bytes.byteLength, pageCount: plan.pageCount, failure: plan.failure ?? null,
         chunks: plan.chunks.map((chunk) => ({ id: chunk.id, kind: chunk.kind, pages: chunk.pageIndexes, bytes: chunk.byteLength })),
-        expect: expectationOf(spec),
+        expect: isExternal(spec) ? null : expectationOf(spec),
       }));
     }
     return;
@@ -385,8 +447,12 @@ async function main(): Promise<void> {
       + `docs=${score ? `${score.documentsFound}/${score.documentsExpected}` : '-'} `
       + `items=${score ? `${score.itemsFound}/${score.itemsExpected}` : '-'} `
       + `totals=${score ? `${score.totalsMatched}/${score.totalsExpected}` : '-'} `
+      + `disc=${score ? `${score.discountsMatched}/${score.discountsExpected}` : '-'} `
+      + `vat=${score ? `${score.vatMatched}/${score.vatExpected}` : '-'} `
+      + `rec=${score ? `${score.reconciledDocuments}/${score.reconciledDocumentsExpected}` : '-'} `
       + `${(record.wallMs / 1000).toFixed(1)}s cumulative=THB ${thb(priorSatang + spentSatang)}`
       + (record.errors.length ? ` errors=${record.errors.join(',')}` : ''));
+    if (isExternal(spec)) console.log(`  ${factsLine(record.assembled)}`);
   }
 
   appendLedger(runId, spentSatang, records.reduce((sum, record) => sum + record.providerCalls, 0));
