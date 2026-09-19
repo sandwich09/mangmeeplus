@@ -541,6 +541,39 @@ describe('ReceiptOcrApplyService.apply', () => {
     assert.equal(applied.record.grandTotalAmount, '797.0000', 'the recorded total must not move');
   });
 
+  // W10 D1, from the real 2026-09-19 read of the public FlowAccount ใบกำกับภาษีเต็มรูป template
+  // (research note §6): the rows print `250.00` a unit with a 5 % line discount, so the row AMOUNT is
+  // already net, and the summary repeats the same 625.00. Applying that discount to a net row
+  // under-totalled the draft by 625, so the whole breakdown collapsed into one summary line carrying
+  // ITEMS_DID_NOT_RECONCILE — the draft told the reviewer the document contradicted itself.
+  it('keeps the item rows when a line discount is repeated in the summary (W10 D1)', async () => {
+    const applied = await applyFields({
+      vendorName: 'บริษัท โฟลว์แอคเคาท์ ทดสอบ จำกัด',
+      vendorTaxId: '0105558096348',
+      expenseDate: '2025-02-27',
+      subtotalAmount: '12500.00',
+      discountAmount: '625.00',
+      vatAmount: '776.87',
+      grandTotalAmount: '11875.00',
+      vatMode: 'VAT_INCLUDED',
+      lines: [
+        { description: 'เมล็ดกาแฟคั่วเข้ม', quantity: '30', unitPrice: '250.00', amount: '7125.00', evidenceSignal: '30 | 250.00 | 5 % | 7,125.00' },
+        { description: 'เมล็ดกาแฟคั่วอ่อน', quantity: '20', unitPrice: '250.00', amount: '4750.00', evidenceSignal: '20 | 250.00 | 5 % | 4,750.00' },
+      ],
+    });
+
+    assert.equal(applied.result.chargeReconciliationStatus, 'RECONCILED_ITEM_LINES', 'was ITEMS_DID_NOT_RECONCILE');
+    assert.equal(applied.lines.length, 2);
+    // The printed unit price is kept and the printed discount comes off it ONCE.
+    assert.deepEqual(applied.lines.map((line: any) => line.unitPrice), ['250.0000', '250.0000']);
+    assert.deepEqual(applied.lines.map((line: any) => line.discountAmount), ['625.0000', '0.0000']);
+    assert.deepEqual(applied.lines.map((line: any) => line.lineTotalAmount), ['6875.0000', '5000.0000']);
+    assert.equal(applied.record.subtotalAmount, '12500.0000');
+    assert.equal(applied.record.discountAmount, '625.0000');
+    assert.equal(applied.record.vatAmount, '776.8700');
+    assert.equal(applied.record.grandTotalAmount, '11875.0000');
+  });
+
   it('persists a printed zero-priced item through the shared LINE/web OCR apply without NaN', async () => {
     for (const freeAmount of ['0', '0.00', '0.01']) {
       const total = (300 + Number(freeAmount)).toFixed(2);

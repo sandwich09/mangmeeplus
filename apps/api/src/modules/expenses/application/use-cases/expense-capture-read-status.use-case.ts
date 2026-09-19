@@ -30,10 +30,19 @@ export type ExpenseReadStatusFile = {
   lastErrorCode: string | null;
   updatedAt: string;
   /**
-   * Expense lane only (W03 runner): the assembly found more than one document or issuer, so the
-   * result was stored but NOT applied to the draft — the page offers "แยกเป็นกลุ่มหลักฐาน".
+   * Expense lane only (W03 runner): the assembly found more than one document or issuer in the file.
+   * Appendix §25: it no longer means "go and review a group" — the engine already split it, and
+   * `splitExpenseIds` is what it created.
    */
   multiDocument?: boolean;
+  /** How many documents the assembly found, so the page can say "พบเอกสาร N ใบ". */
+  documentCount?: number;
+  /**
+   * Appendix §25: the drafts the auto-split created, in document order from the SECOND document on.
+   * The split runs inside the job before its terminal write, so a DONE `multiDocument` job always
+   * carries the ids — there is no "split pending" state to show.
+   */
+  splitExpenseIds?: string[];
   /** Expense lane only: `receipt-ocr-apply` committed the read onto the draft (§4.5). */
   applied?: boolean;
 };
@@ -108,24 +117,32 @@ export class GetExpenseReadStatusUseCase {
       take: 1,
       select: {
         id: true, fileId: true, attachmentId: true, status: true, pausedReason: true,
-        lastErrorCode: true, manifestJson: true, updatedAt: true,
+        lastErrorCode: true, manifestJson: true, checkpointJson: true, updatedAt: true,
       },
     });
     const files = await Promise.all(jobs.map(async (job) => {
       const file = statusFile(job as ReadJobRow);
-      // The assembled observation carries the multi-document verdict; the draft carries the read
-      // only when the apply committed it (a stale fence or a multi-document file leaves the facts
-      // stored and the draft untouched).
+      // The assembled observation carries the verdict and the document count; the split ids are on
+      // the JOB, because the split is what the job did, not what the reader saw.
       const observation = await this.prisma.client.expenseCaptureObservation.findFirst({
         where: { companyId: ctx.companyId, jobId: job.id },
         orderBy: { version: 'desc' },
         select: { payloadJson: true },
       });
-      const multiDocument = (observation?.payloadJson as { multiDocument?: boolean } | null)?.multiDocument === true;
+      const payload = (observation?.payloadJson ?? null) as { multiDocument?: boolean; documents?: unknown[] } | null;
+      const documentCount = Array.isArray(payload?.documents) ? payload!.documents!.length : 0;
+      const multiDocument = payload?.multiDocument === true || documentCount > 1;
+      const splitExpenseIds = Object.values(
+        ((job.checkpointJson ?? null) as { splitExpenseIds?: Record<string, string> } | null)?.splitExpenseIds ?? {},
+      ).filter((id): id is string => typeof id === 'string');
       return {
         ...file,
         multiDocument,
-        applied: file.status === 'DONE' && !multiDocument && !!expense.aiVerifiedAt,
+        documentCount,
+        splitExpenseIds,
+        // The FIRST document is applied even when a file held several (appendix §25), so "applied"
+        // now means what it says: the draft on screen carries a read.
+        applied: file.status === 'DONE' && !!expense.aiVerifiedAt,
       };
     }));
     return { files };

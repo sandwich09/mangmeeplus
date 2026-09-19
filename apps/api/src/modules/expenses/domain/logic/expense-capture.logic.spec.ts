@@ -186,7 +186,10 @@ describe('LINE intake attempt file label', () => {
 });
 
 describe('capture deep link', () => {
-  it('is the path W04 renders and the §10 recovery button opens', () => {
-    assert.equal(expenseCaptureWebPath('c1', 'g1'), '/companies/c1/expenses/capture/g1');
+  // Appendix §25: the group page is withdrawn, so the §10 recovery target is the expense list —
+  // the only place a group's records can actually be opened now.
+  it('sends a person to the expense list, never to a group page that no longer exists', () => {
+    assert.equal(expenseCaptureWebPath('c1', 'g1'), '/companies/c1/expenses');
+    assert.equal(expenseCaptureWebPath('c1'), '/companies/c1/expenses');
   });
 });

@@ -18,7 +18,15 @@ export type LineNonReceiptCase =
 /** The §18.4 CTA. Only for a case whose file is really persisted — never as a bare URL. */
 export const CONTINUE_IN_WEB_LABEL = 'กรอกข้อมูลต่อ';
 
-const continueTail = (link?: string): string => (link ? `\n${CONTINUE_IN_WEB_LABEL}ได้ที่นี่: ${link}` : '');
+const continueTail = (link?: string, capturedDraft?: boolean): string => {
+  if (!link) return '';
+  // Appendix §25: on the LINE document lane the file is already an expense DRAFT, so the reply says
+  // what exists. Claiming "ยังไม่ได้สร้างรายการ" over a draft the customer can open is the one thing
+  // §18.4 forbids here.
+  return capturedDraft
+    ? `\nเก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน กด${CONTINUE_IN_WEB_LABEL}ได้ที่นี่: ${link}`
+    : `\n${CONTINUE_IN_WEB_LABEL}ได้ที่นี่: ${link}`;
+};
 
 /** §10.2: the courier signals that split one `DELIVERY_NOTE` into NR01 vs NR02. */
 export const PARCEL_LABEL_SIGNAL = 'PARCEL_LABEL_SIGNAL';
@@ -84,19 +92,26 @@ export function nonReceiptReply(
     amountLabel?: string;
     /** Present only when the bytes really are persisted for this user's own work. */
     captureLink?: string;
+    /** Appendix §25: that link is an expense DRAFT, not a group waiting to be reviewed. */
+    capturedDraft?: boolean;
   } = {},
 ): string {
+  const tail = continueTail(input.captureLink, input.capturedDraft);
   switch (nr) {
     case 'NR01':
-      return 'ใบนี้เป็นใบปะหน้าพัสดุค่ะ ยังไม่พบหลักฐานการจ่ายค่าส่ง จึงยังไม่ได้สร้างรายการค่าใช้จ่าย '
-        + `หากมีใบเสร็จค่าส่ง ส่งเพิ่มได้เลยค่ะ${continueTail(input.captureLink)}`;
+      // The "จึงยังไม่ได้สร้างรายการค่าใช้จ่าย" clause is TRUE only where nothing was created; with a
+      // draft on the file it would contradict the link printed two words later.
+      return (input.capturedDraft
+        ? 'ใบนี้เป็นใบปะหน้าพัสดุค่ะ ยังไม่พบหลักฐานการจ่ายค่าส่ง '
+        : 'ใบนี้เป็นใบปะหน้าพัสดุค่ะ ยังไม่พบหลักฐานการจ่ายค่าส่ง จึงยังไม่ได้สร้างรายการค่าใช้จ่าย ')
+        + `หากมีใบเสร็จค่าส่ง ส่งเพิ่มได้เลยค่ะ${tail}`;
     case 'NR02':
       return 'ใบนี้ยืนยันการรับฝากพัสดุค่ะ แต่ยังไม่พบข้อมูลการจ่ายค่าส่ง '
-        + `หากมีใบเสร็จค่าส่ง ส่งเพิ่มได้เลยค่ะ${continueTail(input.captureLink)}`;
+        + `หากมีใบเสร็จค่าส่ง ส่งเพิ่มได้เลยค่ะ${tail}`;
     case 'NR03': {
       const label = COMMERCIAL_DOCUMENT_LABEL_TH[input.classification?.documentKind ?? ''] ?? 'เอกสารการค้า';
       return `ใบนี้เป็น${label}ค่ะ ยังมีข้อมูลไม่พอสำหรับบันทึกค่าใช้จ่าย `
-        + `ส่งใบแจ้งหนี้หรือใบเสร็จของรายการนี้เพิ่มได้เลยค่ะ${continueTail(input.captureLink)}`;
+        + `ส่งใบแจ้งหนี้หรือใบเสร็จของรายการนี้เพิ่มได้เลยค่ะ${tail}`;
     }
     case 'NR04':
       // The amount is the only interpolation, and only when it was read: "ยอดที่ยืนยันได้".
@@ -115,7 +130,7 @@ export function nonReceiptReply(
       // No link and no persist: §18.4 forbids an expense pending for a non-business image.
       return 'ภาพนี้ไม่ใช่เอกสารค่าใช้จ่ายค่ะ จึงไม่ได้สร้างรายการ ส่งเอกสารค่าใช้จ่ายที่ต้องการบันทึกได้เลยค่ะ';
     case 'NR08':
-      return `ยังไม่แน่ใจว่าเป็นเอกสารประเภทใดค่ะ${continueTail(input.captureLink)}`;
+      return `ยังไม่แน่ใจว่าเป็นเอกสารประเภทใดค่ะ${tail}`;
   }
 }
 
@@ -168,6 +183,22 @@ export function formatCaptureReadFinishedReply(input: {
   const found = [issuer ? `พบ ${issuer}` : 'พบเอกสาร 1 ฉบับ', total ? `ยอด ${total}` : '']
     .filter(Boolean).join(' ');
   return `📄 อ่านเอกสารแล้วค่ะ ${found} — ตรวจและสร้างรายการค่าใช้จ่ายในเว็บ: ${input.link}`;
+}
+
+/**
+ * Appendix §25: one file held several documents, and the engine already made each of them its own
+ * draft. The push names the count and links every record, because there is no group screen left to
+ * send the customer to.
+ */
+export function formatCaptureSplitReply(input: {
+  documentCount: number;
+  links: readonly string[];
+}): string {
+  return [
+    `📄 อ่านเอกสารแล้วค่ะ พบเอกสาร ${input.documentCount} ใบ สร้างรายการให้แล้ว`,
+    ...input.links.map((link, index) => `${index + 1}) ${link}`),
+    'ยังไม่ยืนยันรายการ กรุณาตรวจในเว็บแอปค่ะ',
+  ].join('\n');
 }
 
 /**

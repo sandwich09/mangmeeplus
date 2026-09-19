@@ -199,9 +199,9 @@ Depends on: W03; D03 เฉพาะกฎที่ใช้กับยอด
 หมายเหตุชื่อ: `expense-source-draft.logic.ts` และ `expense-source-draft.model.ts` ที่มีอยู่เดิมคือร่างบทสนทนา LINE ไม่ใช่งานจัดสรรของ W04 อย่านำมาใช้เป็น seam และอย่าเรียกของใหม่ว่า source draft (ดู spec §4)
 
 สถานะ 2026-09-18: **W04a (API) ส่งแล้ว** — engine + `facts`/`review`/`accept` (รายละเอียดและ deviation ใน appendix ข้อ 17) ช่องที่ยังว่างคือหน้ากลุ่ม/LINE summary = **W04b**
-สถานะ 2026-09-19: **W04b (เว็บ) ส่งแล้ว** — หน้ากลุ่ม `/expenses/capture/{groupId}` สรุป/facts/แก้ข้อมูล/ส่วนบริษัท/ยอมรับ/สร้างรายการ + หน้ารายการงานรับหลักฐาน (appendix ข้อ 18) ที่ยังเหลือคือ LINE summary (W02-LINE) และ usability 40+ (D05, เจ้าของ)
+สถานะ 2026-09-19: **W04b (เว็บ) ถอนตามคำสั่งเจ้าของ 2026-09-19 (W09)** — หน้ากลุ่มและหน้ารายการงานรับหลักฐานถูกลบทั้งหมด งานที่หน้าจอเคยถามย้ายไปให้เครื่องตัดสิน (auto-split) และผู้ใช้เห็นผลในรายการ/หน้าตรวจเดิมเท่านั้น รายละเอียดใน appendix ข้อ 25; API/engine/ตาราง ยังอยู่เป็นกลไก dormant. เดิม: หน้ากลุ่ม `/expenses/capture/{groupId}` สรุป/facts/แก้ข้อมูล/ส่วนบริษัท/ยอมรับ/สร้างรายการ + หน้ารายการ (appendix ข้อ 21)
 
-- [x] สรุปยอด/ร้าน/สินค้า/ผู้จ่ายในหน้าตรวจเดิม เปิดdetailเพิ่มได้ และแสดงblockerที่กระทบactionก่อนกด *(W04b; สรุป §13.4 + ป้ายสถานะ 4 แกนแยกกัน + blocker พร้อม "ทางทำต่อ" อยู่เหนือปุ่มหลัก — spec ใน `ExpenseCaptureGroupPage.qa.spec.ts` / `expense-capture-review.logic.spec.ts`)*
+- [~] สรุปยอด/ร้าน/สินค้า/ผู้จ่ายในหน้าตรวจเดิม เปิดdetailเพิ่มได้ และแสดงblockerที่กระทบactionก่อนกด — **withdrawn by owner decision 2026-09-19** (appendix ข้อ 25: ไม่มีหน้าจอใหม่; หน้าตรวจเดิมแสดงเฉพาะสถานะอ่าน + notice §17.6 + notice auto-split) *(เดิม W04b; สรุป §13.4 + ป้ายสถานะ 4 แกนแยกกัน + blocker พร้อม "ทางทำต่อ" อยู่เหนือปุ่มหลัก — spec ใน `ExpenseCaptureGroupPage.qa.spec.ts` / `expense-capture-review.logic.spec.ts`)*
 - [x] รับ business/personal selectionระดับจำนวนโดยไม่เลือก“บริษัททั้งหมด”ให้เอง; purposeทั่วไปยังoptional — `businessUse UNKNOWN` = blocker ไม่ใช่ค่าเริ่มต้น; `selection` เป็นจำนวนต่อแถว, แถวที่ไม่มี quantity แบ่งไม่ได้
 - [x] ผูก actual payerตามสิทธิ ไม่ใช้uploader/ชื่อผู้รับสินค้าแทนผู้รับเงินคืน — payer ต้องเป็นสมาชิก ACTIVE ในสาขา, payer ≠ ตัวเองต้อง `expense.review`
 - [x] source breakdownก่อนunique inferenceก่อนpolicy allocation; largest remainderถึงสตางค์พร้อมstable ties/eligible caps/provenance — `shareByBasis` + provenance ต่อบรรทัด (componentId/share/remainderAdjust/shippingShare)
@@ -210,9 +210,9 @@ Depends on: W03; D03 เฉพาะกฎที่ใช้กับยอด
 - [x] unknown/unsupportedคงทางพัก; business amount0ที่ยืนยันแล้วจบเป็นหลักฐานไม่มีเงินส่งต่อ — `NO_COMPANY_PORTION` ที่ accept แล้วปิดกลุ่มเป็น `CLOSED_NO_HANDOFF`; unknown ไม่ถูกนับเป็น 0
 - [x] เลือก expenseDateจากfactsที่reviewตามปลายทาง ไม่ใช้upload dateทับpayment/invoice/order date — `expenseDateChoice` per scope, ไม่มีวันที่ = blocker (ไม่ใช้วันนี้)
 
-- [ ] หน้าตรวจ/LINE summaryใช้document total, settlement, expense allocationและclaim amountแยก; coins/CPN/points/void/taxlegendไม่รู้ต้องมีเหตุผลและmanual review *(เว็บ: W04b ส่งแล้ว — ยอดเอกสาร/ยอดที่ต้องจ่าย/ยอดที่ระบุว่าจ่ายแล้ว แยกช่อง, `future_reward` = "ไม่ลดยอด", void/ของแถมเป็นป้ายของแถว, unknown = "ไม่ทราบ" ไม่ใช่ 0; LINE summary = W02-LINE)*
+- [ ] หน้าตรวจ/LINE summaryใช้document total, settlement, expense allocationและclaim amountแยก; coins/CPN/points/void/taxlegendไม่รู้ต้องมีเหตุผลและmanual review *(เว็บ: **withdrawn by owner decision 2026-09-19** — หน้ากลุ่มที่แสดงสามยอดแยกช่องถูกลบ; เดิม W04b ส่งแล้ว — ยอดเอกสาร/ยอดที่ต้องจ่าย/ยอดที่ระบุว่าจ่ายแล้ว แยกช่อง, `future_reward` = "ไม่ลดยอด", void/ของแถมเป็นป้ายของแถว, unknown = "ไม่ทราบ" ไม่ใช่ 0; LINE summary = W02-LINE)*
 - [ ] เปลี่ยนใบเสร็จแสดงdiff/provenanceของfactsใหม่กับค่าที่คนตรวจ; ไม่mixidentity/rows/paymentจากคนละซื้อ; READYกลับNEEDS_REVIEWเมื่อprimaryเปลี่ยนและfinalactionรอreview
-- [ ] แสดงfile saved/reading/partial/read failed/not-checkedตามจริงบนทั้งสามทาง; เก็บร่าง/แนบเพิ่ม/อ่านใหม่และsupplier recoveryมีทางทำต่อสำหรับ40+ *(เว็บ: W02-web + W04b ส่งแล้ว; LINE = W02-LINE; การทดสอบกับผู้ใช้ 40+ จริงยังเปิดอยู่ตาม D05)*
+- [ ] แสดงfile saved/reading/partial/read failed/not-checkedตามจริงบนทั้งสามทาง; เก็บร่าง/แนบเพิ่ม/อ่านใหม่และsupplier recoveryมีทางทำต่อสำหรับ40+ *(เว็บ: W02-web ส่งแล้ว (หน้าตรวจเดิม); W04b **withdrawn 2026-09-19**; LINE = W02-LINE; การทดสอบกับผู้ใช้ 40+ จริงยังเปิดอยู่ตาม D05)*
 
 Exit: original1,290/บริษัท810/ส่วนตัว480และที่มาการแบ่งยังอยู่ครบ; คนกลับมาแก้ต่อได้และไม่ต้องคำนวณคูปองเอง
 Checks: Decimal property/invariant tests รวม totals identity ของบรรทัดที่สร้าง, stale revision/permission checks, review save/reload และ usability discovery40+ ของsummary/recovery

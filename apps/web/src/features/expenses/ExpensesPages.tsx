@@ -12,8 +12,7 @@ import { InfoTip } from '@/common/components/field/InfoTip';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { CoverLoader, LoadingState } from '@/common/components/state';
 import {
-  addExpenseCaptureFile, completeExpenseCaptureFile, createExpenseCaptureGroup,
-  getExpenseCaptureCapability, getExpenseCaptureGroup,
+  getExpenseCaptureCapability,
   listExpenses, getExpense, initReceiptUpload, completeReceiptUpload,
   confirmExpense, rejectExpense, voidExpense, markExpenseReady, markExpenseReadyAsReviewer, recordExpensePayment, runDuplicateCheck, dismissDuplicate,
   uploadReceiptFile, updateExpenseDraft, listExpenseCategories,
@@ -62,9 +61,8 @@ import {
 import { TransactionTaxLineSelector } from '@/features/tax/TransactionTaxLineSelector';
 import { taxDefinitionRateForSource } from '@/features/tax/transaction-tax.model';
 import {
-  allCaptureFilesStored, captureFileRejection, captureMegabytes,
-  hasUnfinishedCapture, readCaptureManifest, reconcileCaptureUpload, runCaptureUpload, writeCaptureManifest,
-  type CaptureUploadApi, type CaptureUploadEntry, type CaptureUploadState,
+  captureFileRejection, captureMegabytes, entryForFile, runSingleFileUploads,
+  type CaptureUploadEntry, type CaptureUploadState,
 } from './expense-capture-upload.logic';
 import { captureReadJobNotice } from './expense-capture-status.logic';
 import {
@@ -265,15 +263,14 @@ const CAPTURE_STATE_LABELS: Record<CaptureUploadState, DictionaryKey> = {
   UPLOADING: 'expenses.capture.file_state_uploading',
   STORED: 'expenses.capture.file_state_stored',
   FAILED: 'expenses.capture.file_state_failed',
-  UNKNOWN: 'expenses.capture.file_state_unknown',
 };
 
 // ── Upload Panel (info strip + dropzone + LINE gradient card) ─────────────────
-function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { companyId: string; branchId?: string; onSuccess: (expenseId: string, notice: ExtractionNotice) => void; onNoDocument?: () => void }) {
+function UploadPanel({ companyId, branchId, onSuccess, onBatchSuccess, onNoDocument }: { companyId: string; branchId?: string; onSuccess: (expenseId: string, notice: ExtractionNotice) => void; onBatchSuccess?: (created: Array<{ expenseId: string; notice: ExtractionNotice }>) => void; onNoDocument?: () => void }) {
   const locale = useWorkspaceLocale();
-  const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
-  // One file is still one expense (A01). Two or more become one capture group (appendix §3).
+  // One file is one expense (A01), and so is each of several: picking three receipts runs today's
+  // single-file path three times (appendix §25, owner decision 2026-09-19).
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileName, setFileName] = useState('');
   const [dragActive, setDragActive] = useState(false);
@@ -299,14 +296,9 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
     return () => window.clearTimeout(timer);
   }, [extracting]);
 
-  // ── capture group (appendix §3/§11): several files, one job, one row of state each ──────────
+  // ── several files (appendix §25): one ROW of state each, N ordinary single uploads ──────────
   const [capability, setCapability] = useState<ExpenseCaptureCapabilityDto | null>(null);
-  const [captureGroup, setCaptureGroup] = useState<{ groupId: string; revision: number } | null>(null);
   const [captureFiles, setCaptureFiles] = useState<CaptureUploadEntry[]>([]);
-  /** Files picked while an unfinished group is still stored — held until the customer chooses. */
-  const [pendingSelection, setPendingSelection] = useState<File[] | null>(null);
-  const reselectIndexRef = useRef<number | null>(null);
-  const reselectInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -315,138 +307,6 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
       .catch(() => undefined);
     return () => { cancelled = true; };
   }, [companyId]);
-
-  const captureApi: CaptureUploadApi = useMemo(() => ({
-    addFile: async (groupId, body) => {
-      try { return await addExpenseCaptureFile(companyId, groupId, body); }
-      // The pending-bytes quota and every other refusal answer in the server's own words (UXE-05).
-      catch (cause) { if (!expenseExtractionResponseIsUnknown(cause)) setError(err(cause, locale)); throw cause; }
-    },
-    putBytes: (intent, file) => uploadReceiptFile(intent.uploadUrl, intent.uploadMethod, file, intent.uploadHeaders),
-    completeFile: async (groupId, fileId, body) => {
-      try { return await completeExpenseCaptureFile(companyId, groupId, fileId, body); }
-      catch (cause) { if (!expenseExtractionResponseIsUnknown(cause)) setError(err(cause, locale)); throw cause; }
-    },
-    readGroup: async (groupId) => {
-      const group = await getExpenseCaptureGroup(companyId, groupId);
-      return {
-        revision: group.revision,
-        files: group.files.map((file) => ({
-          fileId: file.fileId, uploadState: file.uploadState,
-          originalFileName: file.originalFileName, byteSize: file.byteSize,
-        })),
-      };
-    },
-  }), [companyId, locale]);
-
-  // Reopening the tab shows what the SERVER holds; files whose bytes never arrived are asked for
-  // again rather than claimed as saved (spec §14.3).
-  useEffect(() => {
-    const stored = readCaptureManifest(availableExpenseSessionStorage(window), companyId);
-    if (!stored) return;
-    setCaptureGroup({ groupId: stored.groupId, revision: stored.revision });
-    setCaptureFiles(stored.files.map((entry) => ({ ...entry, needsReselect: entry.state !== 'STORED' })));
-    let cancelled = false;
-    void reconcileCaptureUpload({ groupId: stored.groupId, files: stored.files, api: captureApi })
-      .then((result) => {
-        if (cancelled) return;
-        setCaptureGroup({ groupId: stored.groupId, revision: result.revision });
-        setCaptureFiles(result.files);
-      })
-      .catch(() => undefined);
-    return () => { cancelled = true; };
-  }, [captureApi, companyId]);
-
-  /** Persist what the server confirmed, and leave for the group page once every file is stored. */
-  const settleCaptureUpload = (groupId: string, revision: number, files: CaptureUploadEntry[]) => {
-    setCaptureGroup({ groupId, revision });
-    setCaptureFiles(files);
-    const storage = availableExpenseSessionStorage(window);
-    if (allCaptureFilesStored(files)) {
-      writeCaptureManifest(storage, null, companyId);
-      router.push(`/companies/${companyId}/expenses/capture/${encodeURIComponent(groupId)}`);
-      return;
-    }
-    writeCaptureManifest(storage, { companyId, groupId, revision, files }, companyId);
-  };
-
-  const handleGroupUpload = async () => {
-    const forbidden = findForbiddenChars(note);
-    if (forbidden.length > 0) { setError(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' '))); return; }
-    setLoading(true); setError(null);
-    try {
-      const group = captureGroup ?? await createExpenseCaptureGroup(companyId, {
-        ...(branchId ? { branchId } : {}), ...(note.trim() ? { note: note.trim() } : {}),
-      });
-      const entries: CaptureUploadEntry[] = captureFiles.length > 0
-        ? captureFiles
-        : selectedFiles.map((file) => ({ fileId: null, name: file.name, size: file.size, state: 'PENDING' as const }));
-      setCaptureGroup(group);
-      setCaptureFiles(entries);
-      const result = await runCaptureUpload({
-        groupId: group.groupId, revision: group.revision, api: captureApi, onChange: setCaptureFiles,
-        entries: entries.map((entry, index) => ({ entry, file: selectedFiles[index] ?? null })),
-      });
-      settleCaptureUpload(group.groupId, result.revision, result.files);
-    } catch (e) { setError(err(e)); }
-    finally { setLoading(false); }
-  };
-
-  /** "ส่งไฟล์นี้อีกครั้ง": the same fileId, so the group never grows a duplicate slot. */
-  const retryCaptureFile = async (index: number) => {
-    const group = captureGroup;
-    const entry = captureFiles[index];
-    if (!group || !entry) return;
-    setLoading(true); setError(null);
-    try {
-      const result = await runCaptureUpload({
-        groupId: group.groupId, revision: group.revision, api: captureApi,
-        entries: [{ entry, file: selectedFiles[index] ?? null }],
-        onChange: (files) => setCaptureFiles((current) => current.map((row, position) => (position === index ? files[0]! : row))),
-      });
-      settleCaptureUpload(group.groupId, result.revision,
-        captureFiles.map((row, position) => (position === index ? result.files[0]! : row)));
-    } catch (e) { setError(err(e)); }
-    finally { setLoading(false); }
-  };
-
-  /** "ตรวจสอบสถานะ" (UXE-02): the group answers, and its answer replaces every guess. */
-  const checkCaptureStatus = async () => {
-    const group = captureGroup;
-    if (!group) return;
-    setLoading(true); setError(null);
-    try {
-      const result = await reconcileCaptureUpload({ groupId: group.groupId, files: captureFiles, api: captureApi });
-      settleCaptureUpload(group.groupId, result.revision, result.files);
-    } catch (e) { setError(err(e)); }
-    finally { setLoading(false); }
-  };
-
-  const reselectCaptureFile = (event: ChangeEvent<HTMLInputElement>) => {
-    const index = reselectIndexRef.current;
-    const picked = event.target.files?.[0] ?? null;
-    event.target.value = '';
-    reselectIndexRef.current = null;
-    if (index === null || !picked) return;
-    const rejection = rejectFile(picked);
-    if (rejection) { setError(rejection); return; }
-    void (async () => {
-      setPreparing(true);
-      try {
-        const ready = await prepareReceiptFile(picked);
-        setSelectedFiles((current) => {
-          const next = [...current];
-          next[index] = ready.file;
-          return next;
-        });
-        setCaptureFiles((current) => current.map((row, position) => (position === index
-          ? { ...row, name: ready.file.name, size: ready.file.size, needsReselect: false, state: 'PENDING' as const }
-          : row)));
-      } catch (cause) {
-        setError(cause instanceof HeicDecodeError ? t('expenses.upload_heic_unsupported', locale) : uploadErrorMessage(cause));
-      } finally { setPreparing(false); }
-    })();
-  };
 
   /**
    * The size and type gate comes from the server's own capability (§4.1) — the client no longer
@@ -467,25 +327,9 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
     return null;
   };
 
-  const selectFiles = async (picked: File[], resume?: 'continue' | 'restart') => {
-    const stored = readCaptureManifest(availableExpenseSessionStorage(window), companyId);
-    // A new selection used to clear the manifest outright. The bytes it points at are on the
-    // SERVER, and only this manifest knows which group they are in — so an unfinished group is a
-    // question, not something to discard on the customer's behalf (spec §14.3).
-    if (!resume && picked.length > 0 && hasUnfinishedCapture(stored)) {
-      setPendingSelection(picked);
-      return;
-    }
-    setPendingSelection(null);
+  const selectFiles = async (picked: File[]) => {
     setSelectedFiles([]); setFileName(''); setFileNotice(null); setError(null);
     setCaptureFiles([]);
-    if (resume === 'continue' && stored) {
-      // Same group, same manifest: the new files are added to the work already there.
-      setCaptureGroup({ groupId: stored.groupId, revision: stored.revision });
-    } else {
-      setCaptureGroup(null);
-      writeCaptureManifest(availableExpenseSessionStorage(window), null, companyId);
-    }
     if (picked.length === 0) return;
     setPreparing(true);
     try {
@@ -528,70 +372,111 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
     if (dropped.length > 0) void selectFiles(dropped);
   };
 
-  const handleUpload = async () => {
-    if (!branchId) { setError(t('transaction.source_branch_required', locale)); return; }
-    if (selectedFiles.length > 1 || captureGroup) { await handleGroupUpload(); return; }
-    const file = selectedFiles[0] ?? null;
-    if (!file) { setError(t('expenses.upload_select_file_error', locale)); return; }
-    const forbidden = findForbiddenChars(note);
-    if (forbidden.length > 0) { setError(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' '))); return; }
-    setLoading(true); setError(null);
+  /**
+   * ONE receipt, through the path it has always taken: init → PUT → complete → extraction request.
+   *
+   * Resolves once the file is STORED; `notice` is what the read had to say about it. A refused READ
+   * is a notice, not a failure — the receipt is saved either way (§17.6). `notice: null` means the
+   * monthly read ceiling refused it, which latches the banner and keeps the user on this panel.
+   */
+  const uploadOneFile = async (file: File): Promise<{ expenseId: string; notice: ExtractionNotice | null }> => {
+    const intent = await initReceiptUpload(companyId, { originalFileName: file.name, mimeType: file.type, byteSize: file.size, ...(branchId ? { branchId } : {}), note: note.trim() });
+    await uploadReceiptFile(intent.uploadUrl, intent.uploadMethod, file, intent.uploadHeaders);
+    await completeReceiptUpload(companyId, intent.expenseId, intent.attachmentId, { byteSize: file.size });
+    setExtracting(true);
     try {
-      const intent = await initReceiptUpload(companyId, { originalFileName: file.name, mimeType: file.type, byteSize: file.size, ...(branchId ? { branchId } : {}), note: note.trim() });
-      await uploadReceiptFile(intent.uploadUrl, intent.uploadMethod, file, intent.uploadHeaders);
-      await completeReceiptUpload(companyId, intent.expenseId, intent.attachmentId, { byteSize: file.size });
-      setExtracting(true);
-      let notice: ExtractionNotice;
-      try {
-        const runAttempt = (requestId: string) => {
-          const attempt = { requestId, attachmentId: intent.attachmentId };
-          writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, attempt);
-          return requestExpenseExtractionWithRecovery({
-            attempt,
-            request: (stableRequestId) => requestExpenseExtraction(companyId, intent.expenseId, stableRequestId),
-            read: () => getExpense(companyId, intent.expenseId),
-            wait: () => new Promise((resolve) => setTimeout(resolve, 1500)),
-          });
-        };
-        const ocrRequestId = globalThis.crypto.randomUUID();
-        let outcome = await runAttempt(ocrRequestId);
-        const retryMode = outcome.pending ? 'none' : expenseExtractionRetryMode(outcome.result);
-        if (retryMode === 'new_request') {
-          const retryRequestId = expenseExtractionRetryRequestId(
-            retryMode,
-            ocrRequestId,
-            globalThis.crypto.randomUUID(),
-          );
-          outcome = await runAttempt(retryRequestId);
-        }
-        if (!outcome.pending) writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, null);
-        notice = extractionNotice(outcome.result, locale);
-      } catch (e) {
-        // The receipt IS saved; only the AI read was refused. Staying on the upload tab is the
-        // point: `onSuccess` routes to the review screen, which would unmount this panel and take
-        // the banner and the disabled button with it — the shop would land on an empty draft with
-        // no idea why nothing was read, and could walk straight back and upload again.
-        if (apiErrorCode(e) === RECEIPT_QUOTA_ERROR_CODE) {
-          writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, null);
-          setQuotaLatch({ monthKey: bangkokMonthKey(todayCivilDate()), message: err(e, locale) });
-          setBlockedExpenseId(intent.expenseId);
-          return;
-        }
-        if (!expenseExtractionResponseIsUnknown(e)) {
-          writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, null);
-        }
-        notice = { tone: 'error', message: `${t('expenses.upload_extract_failed_prefix', locale)} — ${err(e)} ${t('expenses.upload_extract_failed_suffix', locale)}` };
+      const runAttempt = (requestId: string) => {
+        const attempt = { requestId, attachmentId: intent.attachmentId };
+        writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, attempt);
+        return requestExpenseExtractionWithRecovery({
+          attempt,
+          request: (stableRequestId) => requestExpenseExtraction(companyId, intent.expenseId, stableRequestId),
+          read: () => getExpense(companyId, intent.expenseId),
+          wait: () => new Promise((resolve) => setTimeout(resolve, 1500)),
+        });
+      };
+      const ocrRequestId = globalThis.crypto.randomUUID();
+      let outcome = await runAttempt(ocrRequestId);
+      const retryMode = outcome.pending ? 'none' : expenseExtractionRetryMode(outcome.result);
+      if (retryMode === 'new_request') {
+        const retryRequestId = expenseExtractionRetryRequestId(
+          retryMode,
+          ocrRequestId,
+          globalThis.crypto.randomUUID(),
+        );
+        outcome = await runAttempt(retryRequestId);
       }
-      onSuccess(intent.expenseId, notice);
-    } catch (e) { setError(err(e)); }
-    finally { setLoading(false); setExtracting(false); }
+      if (!outcome.pending) writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, null);
+      return { expenseId: intent.expenseId, notice: extractionNotice(outcome.result, locale) };
+    } catch (e) {
+      // The receipt IS saved; only the AI read was refused. Staying on the upload tab is the
+      // point: `onSuccess` routes to the review screen, which would unmount this panel and take
+      // the banner and the disabled button with it — the shop would land on an empty draft with
+      // no idea why nothing was read, and could walk straight back and upload again.
+      if (apiErrorCode(e) === RECEIPT_QUOTA_ERROR_CODE) {
+        writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, null);
+        setQuotaLatch({ monthKey: bangkokMonthKey(todayCivilDate()), message: err(e, locale) });
+        setBlockedExpenseId(intent.expenseId);
+        return { expenseId: intent.expenseId, notice: null };
+      }
+      if (!expenseExtractionResponseIsUnknown(e)) {
+        writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, null);
+      }
+      return {
+        expenseId: intent.expenseId,
+        notice: { tone: 'error', message: `${t('expenses.upload_extract_failed_prefix', locale)} — ${err(e)} ${t('expenses.upload_extract_failed_suffix', locale)}` },
+      };
+    } finally { setExtracting(false); }
   };
 
-  // Rows come from the machine once a group exists; before that, from what the user just picked.
+  /**
+   * Several files, one at a time (appendix §25). No group, no second screen: each file is its own
+   * draft, and the landing is the one a single receipt has today — the detail page for one file,
+   * the list with the newest highlighted for several.
+   */
+  const handleBatchUpload = async () => {
+    setLoading(true); setError(null);
+    const entries = captureFiles.length > 0 ? captureFiles : selectedFiles.map(entryForFile);
+    setCaptureFiles(entries);
+    try {
+      const run = await runSingleFileUploads<ExtractionNotice | null>({
+        entries: entries.map((entry, index) => ({ entry, file: selectedFiles[index] ?? null })),
+        onChange: setCaptureFiles,
+        upload: async (file) => {
+          try {
+            const done = await uploadOneFile(file);
+            return { expenseId: done.expenseId, result: done.notice };
+          } catch (cause) { setError(err(cause)); throw cause; }
+        },
+      });
+      const created = run.created.filter((row): row is { expenseId: string; result: ExtractionNotice } => Boolean(row.result));
+      // Nothing to land on, or the read ceiling latched: the banner and the rows stay on screen.
+      if (created.length !== run.created.length || created.length === 0) return;
+      onBatchSuccess?.(created.map((row) => ({ expenseId: row.expenseId, notice: row.result })));
+    } catch (e) { setError(err(e)); }
+    finally { setLoading(false); }
+  };
+
+  const handleUpload = async () => {
+    if (!branchId) { setError(t('transaction.source_branch_required', locale)); return; }
+    const forbidden = findForbiddenChars(note);
+    if (forbidden.length > 0) { setError(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' '))); return; }
+    if (selectedFiles.length > 1 || captureFiles.length > 1) { await handleBatchUpload(); return; }
+    const file = selectedFiles[0] ?? null;
+    if (!file) { setError(t('expenses.upload_select_file_error', locale)); return; }
+    setLoading(true); setError(null);
+    try {
+      const done = await uploadOneFile(file);
+      if (done.notice) onSuccess(done.expenseId, done.notice);
+    } catch (e) { setError(err(e)); }
+    finally { setLoading(false); }
+  };
+
+  /** Rows come from the machine once sending started; before that, from what the user just picked. */
   const captureRows: CaptureUploadEntry[] = captureFiles.length > 0
     ? captureFiles
     : selectedFiles.length > 1
-      ? selectedFiles.map((file) => ({ fileId: null, name: file.name, size: file.size, state: 'PENDING' as const }))
+      ? selectedFiles.map(entryForFile)
       : [];
   const flow = [t('expenses.flow_upload', locale), t('expenses.flow_ai_read', locale), t('expenses.flow_confirm', locale)];
   const uploadPhase = preparing
@@ -626,21 +511,6 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
           </div>
         )}
         {error && <div className="mb-4"><ErrorBanner message={error} focus /></div>}
-        {pendingSelection && (
-          <div role="alert" className="mb-4 rounded-xl border border-warning-200 bg-warning-50 px-4 py-3 text-base text-warning-800">
-            <p>{t('expenses.capture.resume_question', locale)}</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" className={cx(btnClass, 'h-11 px-4')}
-                onClick={() => { void selectFiles(pendingSelection, 'continue'); }}>
-                {t('expenses.capture.resume_continue', locale)}
-              </button>
-              <button type="button" className={cx(ghostClass, 'h-11 px-4')}
-                onClick={() => { void selectFiles(pendingSelection, 'restart'); }}>
-                {t('expenses.capture.resume_restart', locale)}
-              </button>
-            </div>
-          </div>
-        )}
         {/* Phones get the camera, not a dropzone. A phone has no drag, no file manager and no
             click, so the desktop copy below ("ลากไฟล์มาวาง หรือคลิกเพื่อเลือก") is an instruction the
             user cannot follow on the device they are holding — while photographing the receipt
@@ -690,27 +560,14 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
                       {captureMegabytes(row.size)} · {t(CAPTURE_STATE_LABELS[row.state], locale)}
                     </p>
                   </div>
-                  {row.needsReselect ? (
-                    <button
-                      type="button"
-                      className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')}
-                      onClick={() => { reselectIndexRef.current = index; reselectInputRef.current?.click(); }}
-                    >
-                      {t('expenses.capture.reselect_file', locale)}
-                    </button>
-                  ) : row.state === 'FAILED' ? (
-                    <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={loading} aria-busy={Boolean(loading)} onClick={() => void retryCaptureFile(index)}>
+                  {row.state === 'FAILED' && (
+                    <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={loading} aria-busy={Boolean(loading)} onClick={() => void handleBatchUpload()}>
                       {t('expenses.capture.retry_file', locale)}
                     </button>
-                  ) : row.state === 'UNKNOWN' ? (
-                    <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={loading} aria-busy={Boolean(loading)} onClick={() => void checkCaptureStatus()}>
-                      {t('expenses.capture.check_status', locale)}
-                    </button>
-                  ) : null}
+                  )}
                 </li>
               ))}
             </ul>
-            <input ref={reselectInputRef} type="file" accept={RECEIPT_UPLOAD_ACCEPT} className="hidden" onChange={reselectCaptureFile} />
           </div>
         )}
         <div className="mt-4">
@@ -2279,8 +2136,6 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
       <div className="flex flex-wrap gap-2">
         {caps.canUploadReceipts && <Link className={btnClass} href={`/companies/${companyId}/expenses/upload`}>อัปโหลดใบเสร็จ</Link>}
         {caps.canCreate && <Link className={ghostClass} href={`/companies/${companyId}/expenses/manual`}>บันทึกเอง</Link>}
-        {/* Evidence jobs are not expenses (appendix §5), so they get their own list beside these. */}
-        <Link className={ghostClass} href={`/companies/${companyId}/expenses/capture`}>{t('expenses.capture.list_title', locale)}</Link>
       </div>
       {sourceView && <div role="status" className="rounded-xl bg-brand-25 p-3 text-sm text-brand-800">
         {sourceView === 'confirmed' ? `รายการยืนยันแล้ว · วันที่เอกสาร ${dateShort(fromDate)} – ${dateShort(toDate)}`
@@ -2389,7 +2244,6 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                             <LateDocumentBadge expense={e} locale={locale} />
                             <DocumentDateBadge expense={e} />
                             <MangmeeBadge tone="slate">{expenseValueLabel(CAPTURE_SOURCE_LABELS, e.captureSource, 'ช่องทางอื่น')}</MangmeeBadge>
-                            {e.captureGroupId && <MangmeeBadge tone="teal">{t('expenses.capture.from_group_badge', locale)}</MangmeeBadge>}
                           </div>
                         </div>
                         <div className="tabular-nums text-right text-[15px] font-bold text-gray-900">{baht(e.grandTotalAmount)}</div>
@@ -2428,7 +2282,6 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                     <StatusBadge status={e.status} />
                     <LateDocumentBadge expense={e} locale={locale} />
                     <DocumentDateBadge expense={e} />
-                    {e.captureGroupId && <MangmeeBadge tone="teal">{t('expenses.capture.from_group_badge', locale)}</MangmeeBadge>}
                   </div>
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{baht(e.grandTotalAmount)}</div>
                 </button>
@@ -2786,7 +2639,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
               field?.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }}>
             <fieldset disabled={!createBranchId} className="min-w-0">
-              {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} {...(caps.canCreate ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} />}
+              {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} {...(caps.canCreate ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} onBatchSuccess={(created) => { for (const row of created) storeExtractionNotice(row.expenseId, row.notice); router.push(`/companies/${companyId}/expenses?highlight=${encodeURIComponent(created.at(-1)!.expenseId)}`); }} />}
               {tab === 'manual' && <ManualExpensePanel companyId={companyId} branchId={createBranchId} canAttachReceipt={caps.canUploadReceipts && permissions.includes('attachment.create')} onSuccess={openListExpense} />}
             </fieldset>
             </div>

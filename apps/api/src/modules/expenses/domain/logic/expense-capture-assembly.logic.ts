@@ -28,6 +28,33 @@ export const EXPENSE_CAPTURE_RECONCILIATION_TOLERANCE = '0.05';
 /** Order-level discounts reduce the document; an item-scope one is already inside its row. */
 const ORDER_DISCOUNT_SCOPES = new Set(['order', 'checkout', 'document']);
 
+/**
+ * W10 D2: the retail N/V summary block (7-Eleven, Lotus's, Big C, Makro) prints GOODS subtotals
+ * whose labels contain the word ภาษี — "สินค้าไม่เสียภาษีมูลค่าเพิ่ม 9.00" is the non-taxed part of
+ * the basket, "มูลค่าสินค้าก่อนภาษีมูลค่าเพิ่ม 66.36" and "มูลค่าสินค้ารวมภาษีมูลค่าเพิ่ม 71.00" are
+ * the taxed part before and after its VAT. On the real CP ALL invoice the reader labelled the first
+ * of them `applied_discount`, which took 9.00 off a document that added up. None of these rows is
+ * money added or taken off, and none of them is the VAT AMOUNT: they are `summary`, always.
+ */
+const GOODS_SUBTOTAL_LABEL = /ไม่เสียภาษี|ยกเว้นภาษี|ไม่รวมภาษี|ก่อนภาษี|ก่อน\s*vat|รวมภาษีมูลค่าเพิ่ม|รวม\s*vat|non[\s-]?vat|before\s*vat|includ\w*\s*vat|exclud\w*\s*vat/i;
+/** Roles a goods subtotal must never keep: each of them would move money or claim to be the tax. */
+const GOODS_SUBTOTAL_WRONG_ROLES = new Set(['applied_discount', 'tax_included', 'tax_additional', 'tax_unknown']);
+/** The VAT row itself: "ภาษีมูลค่าเพิ่ม 4.64" / "VAT 7% 776.87", never one of the rows above. */
+const VAT_AMOUNT_LABEL = /ภาษีมูลค่าเพิ่ม|\bvat\b/i;
+/**
+ * A row whose label says it is a discount stays a discount whatever else the label mentions:
+ * "ส่วนลดก่อนภาษี" and "ส่วนลดรวม VAT" are discounts qualified by a tax phrase, not goods subtotals,
+ * and re-filing them would drop real money from the reconciliation and from the draft.
+ */
+const DISCOUNT_LABEL = /ส่วนลด|discount|คูปอง|coupon|voucher|โค้ด|promo/i;
+/**
+ * Thailand's standard VAT rate. A derived tax total may never exceed what 7 % of the document could
+ * be (`total × 7 / 107`, the VAT inside a fully taxable inclusive total): a photographed summary
+ * block whose labels came back shifted by one row otherwise turns "มูลค่าสินค้ารวมภาษี 71.00" into a
+ * VAT of 71.00 on an 80-baht basket — worse than the empty VAT field it replaces.
+ */
+const THAI_VAT_RATE = new Decimal('0.07');
+
 export type CaptureAssemblyWindow = {
   /** Window id, only used to keep document refs unique across windows. */
   id: string;
@@ -109,9 +136,12 @@ export function assembleCaptureObservations(
       seenItems.add(key);
       items.push({ ...item, documentRef });
     }
-    for (const component of observations.components ?? []) {
-      const documentRef = resolve(window.id, component.documentRef);
+    for (const raw of observations.components ?? []) {
+      const documentRef = resolve(window.id, raw.documentRef);
       if (!documentRef) continue;
+      // W10 D2: the model's own role is a suggestion. A goods subtotal of the retail N/V block is
+      // filed by what it SAYS, before it can take 9 baht off a basket that balances.
+      const component = goodsSubtotalRole(raw);
       // A footer discount reprinted on every page is ONE discount (§4.4): identity is what it is,
       // where it applies and how much — the first span wins, which is the one the reviewer opens.
       const key = `${documentRef}|${component.role}|${component.scope}|${component.label}|${component.amount ?? ''}`;
@@ -150,6 +180,13 @@ export function assembleCaptureObservations(
     for (const note of completeness?.notes ?? []) if (!notes.includes(note)) notes.push(note);
   }
 
+  // W10 D2: a printed VAT amount the model filed as a component and not as a total is still this
+  // document's tax — without it the reviewer's VAT field stays empty on every 7-Eleven full form.
+  for (const document of documents) {
+    const derived = derivedTaxTotal(document.ref, components, totals);
+    if (derived) totals.push(derived);
+  }
+
   const reconciliation = documents.map((document) =>
     reconcileDocument(document, items, components, totals, context.pageCount));
   const issuers = new Set(documents.map((document) => (document.issuer?.name ?? '').trim()).filter(Boolean));
@@ -170,6 +207,51 @@ export function assembleCaptureObservations(
     reconciliation,
     multiDocument: documents.length > 1 || issuers.size > 1,
   };
+}
+
+/**
+ * W10 D2: a component that the page itself calls a goods subtotal is `summary`, whatever role the
+ * model chose. Only the roles that would move money or claim to be the VAT are rewritten — a
+ * `charge` whose printed label happens to mention VAT is still a charge the buyer paid.
+ */
+function goodsSubtotalRole(
+  component: ExpenseCaptureComponentObservation,
+): ExpenseCaptureComponentObservation {
+  if (!GOODS_SUBTOTAL_WRONG_ROLES.has(component.role)) return component;
+  if (DISCOUNT_LABEL.test(`${component.label} ${component.evidenceSpan}`)) return component;
+  return GOODS_SUBTOTAL_LABEL.test(`${component.label} ${component.evidenceSpan}`)
+    ? { ...component, role: 'summary' }
+    : component;
+}
+
+/**
+ * W10 D2: the `tax` total of a document whose printed VAT row came back as a component.
+ *
+ * Returns nothing when the document already has a `tax` total (the read's own answer wins), when no
+ * component prints a bare VAT amount, or when two of them print DIFFERENT amounts — a document that
+ * states its VAT twice over is a question for the reviewer, not a value to pick from.
+ */
+function derivedTaxTotal(
+  documentRef: string,
+  components: readonly ExpenseCaptureComponentObservation[],
+  totals: readonly ExpenseCaptureTotalObservation[],
+): ExpenseCaptureTotalObservation | null {
+  if (totals.some((total) => total.documentRef === documentRef && total.kind === 'tax')) return null;
+  const documentTotal = money(totals.find((total) => total.documentRef === documentRef && total.kind === 'document_total')?.amount);
+  if (!documentTotal) return null;
+  const vatCeiling = documentTotal.times(THAI_VAT_RATE).dividedBy(THAI_VAT_RATE.plus(1)).plus(EXPENSE_CAPTURE_RECONCILIATION_TOLERANCE);
+  const candidates = components.filter((component) => component.documentRef === documentRef
+    && component.amount !== undefined
+    && money(component.amount) !== null
+    && !GOODS_SUBTOTAL_LABEL.test(`${component.label} ${component.evidenceSpan}`)
+    && !DISCOUNT_LABEL.test(`${component.label} ${component.evidenceSpan}`)
+    && VAT_AMOUNT_LABEL.test(`${component.label} ${component.evidenceSpan}`));
+  const amounts = new Set(candidates.map((component) => money(component.amount)!.toString()));
+  const first = candidates[0];
+  if (amounts.size !== 1 || !first) return null;
+  // Plausibility, not arithmetic proof: an amount above the 7 % ceiling is some other row's money.
+  if (money(first.amount)!.greaterThan(vatCeiling)) return null;
+  return { documentRef, kind: 'tax', amount: first.amount!, evidenceSpan: first.evidenceSpan };
 }
 
 /** Same issuer AND same printed number. Either one missing means "cannot prove they are one". */
@@ -220,6 +302,9 @@ function uniqueRef(documents: readonly ExpenseCaptureDocumentObservation[], ref:
  * rather than a total computed from the rows that happen to be readable; a void cancels only when
  * it names the row it cancels; `tender`, `change`, `future_reward`, `summary` and `balance` never
  * enter the sum (500 handed over and 68 back is a purchase of 68, not of 500).
+ *
+ * The one addition (W10 D1) is also a refusal: a discount the printed rows have already had taken
+ * off is NOT subtracted a second time, and the row says so (`discountAlreadyInRows`).
  */
 function reconcileDocument(
   document: ExpenseCaptureDocumentObservation,
@@ -269,11 +354,15 @@ function reconcileDocument(
     if (!amount) return base;
     sum = sum.minus(amount.abs());
   }
+  // W10 D1: a per-line discount that the summary repeats has already been taken off every row.
+  const alreadyNet = saleRows.length > 0 && discountAlreadyInRows(sum, ownComponents, ownTotals);
   for (const component of ownComponents) {
     const amount = money(component.amount);
     if (component.role === 'applied_discount' && ORDER_DISCOUNT_SCOPES.has(component.scope)) {
       if (component.appliedStatus === 'pending') continue;
+      // An unreadable discount still makes the arithmetic unprovable, net rows or not.
       if (!amount) return base;
+      if (alreadyNet) continue;
       sum = sum.minus(amount.abs());
       continue;
     }
@@ -283,14 +372,52 @@ function reconcileDocument(
     }
   }
 
-  if (!documentTotal) return { ...base, computedTotal: sum.toString() };
+  const decision = { ...base, ...(alreadyNet ? { discountAlreadyInRows: true } : {}) };
+  if (!documentTotal) return { ...decision, computedTotal: sum.toString() };
   const difference = sum.minus(documentTotal);
   return {
-    ...base,
+    ...decision,
     computedTotal: sum.toString(),
     difference: difference.toString(),
     status: difference.abs().lessThanOrEqualTo(EXPENSE_CAPTURE_RECONCILIATION_TOLERANCE) ? 'reconciled' : 'mismatch',
   };
+}
+
+/**
+ * W10 D1: true when the printed rows have ALREADY had the document's discount taken off them.
+ *
+ * FlowAccount, PEAK and Leceipt print a per-line discount column (`50 × 250.00, ส่วนลด 5 %,
+ * มูลค่า 11,875.00`) and then repeat the SAME 625.00 as a document-level discount in the summary.
+ * §4.4's `Σ sale − Σ discount` therefore subtracted it twice and reported `mismatch −625` on an
+ * invoice that adds up — the layout every marketplace seller's e-tax tool produces.
+ *
+ * The proof is the document's own PRINTED pre-discount subtotal, never an inferred one: rows that
+ * already net the discount come to `subtotal − discount`, gross rows come to `subtotal` itself, so
+ * the two layouts cannot be confused. (When the rows print a unit price this is the same identity as
+ * `Σ quantity × unitPrice = subtotal`; the abbreviated form prints no unit price, only the subtotal.)
+ */
+function discountAlreadyInRows(
+  rowSum: Decimal,
+  components: readonly ExpenseCaptureComponentObservation[],
+  totals: readonly ExpenseCaptureTotalObservation[],
+): boolean {
+  let discount = new Decimal(0);
+  for (const component of components) {
+    if (component.role !== 'applied_discount' || !ORDER_DISCOUNT_SCOPES.has(component.scope)) continue;
+    if (component.appliedStatus === 'pending') continue;
+    const amount = money(component.amount);
+    if (!amount) return false;
+    discount = discount.plus(amount.abs());
+  }
+  if (!discount.greaterThan(EXPENSE_CAPTURE_RECONCILIATION_TOLERANCE)) return false;
+  const gross = rowSum.plus(discount);
+  const printed = [
+    ...totals.filter((total) => total.kind === 'merchandise').map((total) => money(total.amount)),
+    // อย่างย่อ prints no merchandise total — only the "รวมเป็นเงิน" line above the discount.
+    ...components.filter((component) => component.role === 'summary').map((component) => money(component.amount)),
+  ];
+  return printed.some((value) => value !== null
+    && value.minus(gross).abs().lessThanOrEqualTo(EXPENSE_CAPTURE_RECONCILIATION_TOLERANCE));
 }
 
 /**

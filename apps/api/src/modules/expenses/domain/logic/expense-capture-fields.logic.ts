@@ -77,12 +77,18 @@ export function captureFieldsFromObservations(
 
   // ONE printed order-level discount maps; two do not, because the legacy draft has one slot and
   // adding them would record a figure the document never shows (§6 rule 9).
-  const discounts = components.filter((component) =>
-    component.role === 'applied_discount' && component.scope !== 'item' && component.appliedStatus !== 'pending' && component.amount);
+  const discounts = components.filter((component) => {
+    if (component.role !== 'applied_discount' || component.scope === 'item' || component.appliedStatus === 'pending') return false;
+    // W10 D2: a printed 0.00 is not a discount. The 7-Eleven full form prints both "หักส่วนลด 0.00"
+    // and "ส่วนลดที่ได้ทั้งหมด 0.00" on every bill, and counting them as two conflicting figures
+    // reported the slot MISSING — sending the reviewer to check a discount the bill says is none.
+    const amount = Number.parseFloat((component.amount ?? '').replace(/,/g, ''));
+    return Number.isFinite(amount) && amount !== 0;
+  });
   if (discounts.length === 1) fields.discountAmount = stripSign(discounts[0]!.amount!);
   else if (discounts.length > 1) missing.add('discountAmount');
 
-  const tax = taxFacts(components, totalOf('tax'), document.kind);
+  const tax = taxFacts(components, totalOf('tax'), document.kind, grandTotal);
   if (tax.vatAmount) fields.vatAmount = tax.vatAmount; else missing.add('vatAmount');
   fields.vatMode = tax.vatMode;
 
@@ -109,9 +115,17 @@ function taxFacts(
   components: readonly ExpenseCaptureComponentObservation[],
   taxTotal: string | undefined,
   documentKind: string,
+  grandTotal?: string,
 ): { vatAmount?: string; vatMode: NonNullable<ReceiptOcrFieldResult['vatMode']> } {
-  const included = components.filter((component) => component.role === 'tax_included' && component.amount);
-  const additional = components.filter((component) => component.role === 'tax_additional' && component.amount);
+  // Controller review of W10 D2: a VAT figure above 7 % of the document (`total × 7 / 107`, the VAT
+  // inside a fully taxable inclusive total) is some other row's money — a photographed summary block
+  // whose labels came back shifted by one row pairs "ภาษีมูลค่าเพิ่ม" with the VAT-inclusive subtotal.
+  // Such a figure is dropped, never written as the draft's VAT; the mode still says a tax document.
+  const ceiling = plausibleVatCeiling(grandTotal);
+  const plausible = (component: ExpenseCaptureComponentObservation): boolean =>
+    ceiling === null || !component.amount || parseMoney(component.amount) <= ceiling;
+  const included = components.filter((component) => component.role === 'tax_included' && component.amount && plausible(component));
+  const additional = components.filter((component) => component.role === 'tax_additional' && component.amount && plausible(component));
   const unknown = components.filter((component) => component.role === 'tax_unknown');
   const amount = included.length === 1 ? included[0]!.amount
     : additional.length === 1 ? additional[0]!.amount
@@ -167,4 +181,15 @@ function legacyCharges(
     });
   }
   return out;
+}
+
+/** `total × 7 / 107` plus a satang of tolerance, or null when no total was printed. */
+function plausibleVatCeiling(grandTotal: string | undefined): number | null {
+  if (!grandTotal) return null;
+  const total = parseMoney(grandTotal);
+  return Number.isFinite(total) && total > 0 ? (total * 7) / 107 + 0.05 : null;
+}
+
+function parseMoney(value: string): number {
+  return Number.parseFloat(value.replace(/,/g, '').replace(/[^0-9.-]/g, ''));
 }

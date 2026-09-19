@@ -70,6 +70,9 @@ describe('capture preprocessing — declared bounds', () => {
     assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxPdfChunkPages, 3);
     assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxImageBytes, 3_500_000);
     assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxImageEdgePx, 8_000);
+    // W10 D3: the legibility FLOOR, documented beside the ceilings it must never cross.
+    assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.minImageEdgePx, 1_600);
+    assert.ok(EXPENSE_CAPTURE_PREPROCESS_LIMITS.minImageEdgePx < EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxImageEdgePx);
     assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.renderLongEdgePx, 4_000);
     assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxRasterPixels, 32_000_000);
     assert.equal(EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxTextLayerCharsPerPage, 20_000);
@@ -220,8 +223,14 @@ describe('capture preprocessing — the tile grid', () => {
 });
 
 describe('capture preprocessing — image attachments', () => {
-  it('passes a small photo through untouched', async () => {
-    const jpeg = await sharp({ create: { width: 800, height: 1_200, channels: 3, background: '#ffffff' } })
+  /** The edge of the image sharp reports back, so an upscale is measured and not assumed. */
+  const edgeOf = async (bytes: Buffer): Promise<number> => {
+    const meta = await sharp(bytes).metadata();
+    return Math.max(meta.width ?? 0, meta.height ?? 0);
+  };
+
+  it('passes a photo that is already legible through untouched', async () => {
+    const jpeg = await sharp({ create: { width: 1_600, height: 2_400, channels: 3, background: '#ffffff' } })
       .jpeg({ quality: 80 }).toBuffer();
     const result = await plan(jpeg, 'image/jpeg');
     assert.equal(result.pageCount, 1);
@@ -237,5 +246,38 @@ describe('capture preprocessing — image attachments', () => {
     assert.equal(result.chunks[0]!.kind, 'image');
     assert.ok(result.chunks[0]!.byteLength <= EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxImageBytes);
     assert.ok(result.chunks[0]!.byteLength < jpeg.byteLength);
+  });
+
+  /**
+   * W10 D3. The real 896x533 screenshot of a Leceipt invoice (research note §6) came back with its
+   * item row and no totals block at all: ~8 px printing, and `truncated: false`. The fix is upstream
+   * of the model — give it pixels to read.
+   */
+  it('upscales a screenshot below the legibility floor to that floor', async () => {
+    const jpeg = await sharp({ create: { width: 896, height: 533, channels: 3, background: '#ffffff' } })
+      .jpeg({ quality: 85 }).toBuffer();
+    const result = await plan(jpeg, 'image/jpeg');
+    assert.equal(result.chunks[0]!.kind, 'image');
+    assert.equal(result.chunks[0]!.mimeType, 'image/jpeg');
+    assert.ok(await edgeOf(result.chunks[0]!.bytes!) >= EXPENSE_CAPTURE_PREPROCESS_LIMITS.minImageEdgePx,
+      'the long edge must reach the floor the reader needs');
+    assert.ok(result.chunks[0]!.byteLength <= EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxImageBytes,
+      'and it still fits the provider image bound');
+  });
+
+  it('never enlarges past the byte ceiling: a dense small scan keeps whatever fits', async () => {
+    // Noise at 900 px enlarges to ~1,600 px of noise, which is the worst case for JPEG.
+    const jpeg = await noiseJpeg(900, 600);
+    const result = await plan(jpeg, 'image/jpeg');
+    assert.equal(result.chunks[0]!.kind, 'image');
+    assert.ok(result.chunks[0]!.byteLength <= EXPENSE_CAPTURE_PREPROCESS_LIMITS.maxImageBytes);
+  });
+
+  it('leaves a large photo alone — only the downscale path may touch it', async () => {
+    const jpeg = await sharp({ create: { width: 2_400, height: 1_400, channels: 3, background: '#fbfaf6' } })
+      .jpeg({ quality: 85 }).toBuffer();
+    const result = await plan(jpeg, 'image/jpeg');
+    assert.equal(result.chunks[0]!.byteLength, jpeg.byteLength);
+    assert.equal(await edgeOf(result.chunks[0]!.bytes!), 2_400, 'unchanged, not normalised to the floor');
   });
 });
