@@ -382,7 +382,11 @@ export class RecoverOrphanLineEventsUseCase {
    * exactly as a human detach does, so a late worker result cannot apply to bytes that are gone.
    */
   private async purgeExpiredCaptureData(now: number): Promise<number> {
-    const before = new Date(now - this.config.expenseCaptureRetentionDays * 24 * 60 * 60 * 1000);
+    const retentionDays = Number(this.config.expenseCaptureRetentionDays);
+    // A missing or malformed window must never turn into `updatedAt < Invalid Date`, which Prisma
+    // rejects and which would take the whole orphan sweep down with it. No window, no purge.
+    if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0;
+    const before = new Date(now - retentionDays * 24 * 60 * 60 * 1000);
     const staleTargets = await this.prisma.client.expenseCaptureGroup.findMany({
       where: { linePushTargetId: { not: null }, updatedAt: { lt: before } },
       select: { id: true }, orderBy: { updatedAt: 'asc' }, take: MAX_PURGE_BATCH,
