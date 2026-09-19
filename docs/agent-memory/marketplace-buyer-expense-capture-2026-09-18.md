@@ -6,9 +6,9 @@ Scope: implement spec v0.11 / plan v0.11 W01–W08 (machine-verifiable parts) on
 Decisions:
 - D01 = capture group as separate aggregate, no capture-only `ExpenseRecord`; derived sources are ordinary expenses with lineage columns + server-set `payerUserId` (appendix §2)
 - D02 = original ≤ 10,485,760 bytes all lanes; API preprocessing (pdf-lib/pdfjs+canvas/sharp) into chunks ≤ 4,000,000 bytes/≤ 3 pages, oversize pages rasterised/tiled; gateway `capture-read`/`capture-extract` v1; durable `ExpenseCaptureReadJob` claimed by a BullMQ scan worker → internal drain; OCR count once per file, money per provider call (appendix §4)
-- D06/D07/D09 per appendix §5/§6/§8; D03/D04/D08 defaults proposed, owner confirmation pending (§15)
+- D06/D07/D09 per appendix §5/§6/§8; D03/D04/D08 defaults confirmed by the owner 2026-09-19 (§15)
 - Lanes: web single image unchanged; web single PDF = expense at init + async job; multi-file/append/personal-items = group; LINE image unchanged + §17.6/§18.4 copy; LINE file = group + async + auto-handoff for single expense document (appendix §3)
-Open questions: appendix §15 items 1–5 (discount/shipping policy default, flag ON both envs, 90-day retention for no-handoff groups, certificate wording, Bedrock replay budget)
+Open questions: none — appendix §15 items 1–4 confirmed by the owner 2026-09-19 ("โอเคทั้ง 4 ข้อ ใช้ค่านี้ได้เลย"), item 5 done (W08 fixtures + W10 real bills)
 Artifacts:
 - docs base commit e6e41700 (owner working copy of spec/plan/research)
 - `docs/specs/marketplace-buyer-expense-capture-contract-appendix-th.md` (+ §16 implementation notes W01, §17 W02-web)
@@ -112,17 +112,17 @@ No further code work is queued for this feature.
 
 ## W09 closure — 2026-09-19 (owner pivot: no new screens)
 
-Status: **W09 delivered locally on `codex/mkt-w09-simplify-20260919` (from origin/develop eef691be = #646), controller-reviewed and fixed; NOT pushed, NOT in CI, NOT deployed — the owner asked to approve the finished fix first ("ci ยังไม่ต้องรัน รอแก้เสร็จฉันอนุมัติทั้งหมดก่อน").**
+Status: **W09 + W10 delivered on `codex/mkt-w09-simplify-20260919` (from origin/develop eef691be = #646), controller-reviewed and fixed, replayed on real public bills; the owner approved the whole branch 2026-09-19 afternoon ("อนุมัติ push แล้วเปิด 2 pr develop+main เลย") → pushed, ONE develop PR + ONE main PR (main-based branch) opened by the controller with ci-merge chains armed (PR numbers on GitHub / controller session memory); NOT deployed.**
 Owner: controller session (Fable 5.1) reviewed and fixed; Opus 5 implemented W09 in `/private/tmp/mangmee-mkt-w09-20260918`.
 Scope: appendix §25 — delete every capture-group screen (group page, งานรับหลักฐาน list, review-page split button/badge, business-use/payer questions, upload manifest prompt, certificate prefill/back-links, 200 dictionary keys); web multi-file = N ordinary single-file uploads; LINE file = ordinary draft at intake + `ownerType EXPENSE` read + push with expense links; engine auto-splits a multi-document file into ordinary drafts; allocation/group API dormant.
 Decisions:
-- Owner 2026-09-19: "จอดูใช้ยาก … จอไม่ควรเปลี่ยนหรือเพิ่ม เพราะจุดประสงค์มีแค่รับบิลใบเสร็จ ใบกำกับ จาก shoppee lazada tictok ขนส่ง" → appendix §25; A45 withdrawn; §15 items 1–4 confirmed by the owner the same morning (record in §15 after the merge).
+- Owner 2026-09-19: "จอดูใช้ยาก … จอไม่ควรเปลี่ยนหรือเพิ่ม เพราะจุดประสงค์มีแค่รับบิลใบเสร็จ ใบกำกับ จาก shoppee lazada tictok ขนส่ง" → appendix §25; A45 withdrawn; §15 items 1–4 confirmed by the owner the same morning (recorded in §15 on this branch in the docs-only commit before the push).
 - Controller review fixes (appendix §25.6): (1) image lane queues NO second read (`persistLineFileExpense({ read: 'none' })`), attempt = `STORED_READ_FAILED`/`STORED_READ_DONE`; (2) finished-read event carries `classification` + `documentTotal`; (3) DONE-but-not-applied push = §17.6 PARTIAL sentence, never a zero receipt card; (4) NR07 cleanup = links + unshared file + audit, in one transaction, else truthful PARTIAL copy; (5) auto-split siblings own the file as PRIMARY receipt (`validateConfirm`); (6) `DeleteExpenseUseCase` never retires a file another record still links.
 - Throwaway-stack gotcha: `prisma/seed.ts` does NOT open launch gates; without `prisma/sync-feature-launch-gates.ts` every `POST …/receipt-uploads` is 403 `feature_temporarily_unavailable` (the implementer's browser runs failed on this, not on code).
 Open questions: none for W09; owner approval of the whole branch before push/PR/CI.
 Artifacts: commit b2128f73 (W09) + the controller fix commit; `e2e/expense-capture-intake.spec.ts` (new lanes, @p1), `e2e/expense-capture-intake.evidence.spec.ts` + `e2e/harness/expense-capture.ts`, `apps/web/src/features/expenses/capture-screens-withdrawn.spec.ts` (guard), `docs/qa/evidence/marketplace-buyer-expense-capture-2026-09-19/w09/`, appendix §25 (+ §25.6), plan W04b status, matrix W09 rows.
 Verification: see the "W09 verification" block appended below once the runs finish.
-Next: owner approval → push branch → ONE develop PR + ONE main PR (main-based branch) → ci-merge chains → record §15 confirmation (docs-only) → owner UAT deploy per runbook.
+Next: CI green → admin-merge develop PR + main PR (chains armed) → owner UAT deploy per runbook → the owner's own Shopee/TikTok/Makro/Big C/CJ/Kerry/J&T documents through the reader on UAT (research §6.6) → follow-up for the PARTIAL re-claim residual (research §6.5).
 
 ### W09 verification — 2026-09-19 (controller, throwaway stack: pg 15477 / redis 16377 / MinIO 19077, API 3077, web 3078; launch gates synced, bucket versioned)
 
@@ -185,7 +185,7 @@ Verification (local, worktree tree, 2026-09-19 15:39–16:0x +07, all under `/tm
 - NOT run (nothing needed them and the brief forbids the network): any Bedrock/AWS call, the pg specs (no throwaway Postgres in this session), browser/e2e. The api `tsc --noEmit` invoked WITHOUT the workspace's own `typecheck` script OOMs at the default heap — use `pnpm --filter @watchdog-bms/api typecheck`.
 - Local stack untouched throughout: API 3077 (`apps/api/dist/e2e-3077`, pid 10595) answered `/v1/health` 200 and `next dev` 3078 answered 200 after the whole gate run.
 
-Next: controller review of the diff → Bedrock replay of the three new fixtures + the six real files under the spend guard (task ledger THB 67.92 of 100 before this) → then the owner's normal push/PR path for the branch.
+Next: done — controller review 48d39990, replay recorded in research §6.5 (task cumulative THB 77.86 of 100), second search round §6.6 (afd36f8b); the branch follows the W09 closure's Next line above.
 
 - Controller review of W10 (2026-09-19): one guard added (discount-labelled rows are never re-filed as goods subtotals nor taken as the VAT total; 2 red-then-green cases in the assembly spec); pg specs on the throwaway DB 10+5+9+5+6 green (one intermittent read-queue concurrency red traced to leftover e2e jobs in the shared DB, 3 clean re-runs); residuals recorded in research §6.4 (PARTIAL re-claims climb `attempts` and flip to FAILED after 5 drains; one finished-read event per job so PARTIAL→DONE is not re-pushed). Bedrock replay of the six real files on the fixed reader: see the line below.
 - Controller additions after the Bedrock replay (2026-09-19, THB 7.86, ledger cumulative THB 75.78): VAT ceiling `total × 7/107` in `derivedTaxTotal` and in `taxFacts` (the 7-Eleven photo's shifted block would otherwise have written 71.00 as VAT); single-page completeness check `transcriptionStopsBeforeTotals` in the runner (the 896-px Lazada screenshot still lost its totals block after the upscale and declared nothing → now PARTIAL, §17.6 copy); harness summary line names each document's reconciliation status. Replay: both FlowAccount templates and Lotus's now `reconciled` with a `tax` total; 7-Eleven photo still reported `mismatch −9` (shifted block, by design not balanced away) with the draft right (80.00, no discount, VAT for the reviewer). Research §6.5.

@@ -1,6 +1,6 @@
 # Contract appendix: capture group, bounded PDF reading, derived expense sources (W00)
 
-Status: W00 decisions v1, 2026-09-18 — implementation contract for W01–W08 of [spec v0.11](marketplace-buyer-expense-capture-spec-th.md) / [plan v0.11](../plans/marketplace-buyer-expense-capture-plan-th.md). เอกสารนี้ปิด D01/D02/D06/D07/D09 ในระดับที่โค้ดใช้ได้ และเสนอค่าเริ่มต้นของ D03/D04/D08 ที่เจ้าของต้องยืนยัน (ข้อ 15) ทุกข้อในเอกสารนี้อ้างโค้ดจริงบน `origin/develop` `70d1359d` (2026-09-18) ตัวเลขบรรทัดอาจเลื่อนเมื่อโค้ดเปลี่ยน
+Status: W00 decisions v1, 2026-09-18 — implementation contract for W01–W08 of [spec v0.11](marketplace-buyer-expense-capture-spec-th.md) / [plan v0.11](../plans/marketplace-buyer-expense-capture-plan-th.md). เอกสารนี้ปิด D01/D02/D06/D07/D09 ในระดับที่โค้ดใช้ได้ และเสนอค่าเริ่มต้นของ D03/D04/D08 ที่เจ้าของต้องยืนยัน (ข้อ 15 — ยืนยันแล้ว 2026-09-19) ทุกข้อในเอกสารนี้อ้างโค้ดจริงบน `origin/develop` `70d1359d` (2026-09-18) ตัวเลขบรรทัดอาจเลื่อนเมื่อโค้ดเปลี่ยน
 Owner: Product owner (นโยบาย) / controller session (contract)
 Scope: ไม่เปลี่ยนกติกาเงิน/สิทธิ/ใบรับรองของ spec; ถ้าข้อใดขัดกับ spec ให้ถือ spec และแก้เอกสารนี้ในงานเดียวกัน
 
@@ -164,7 +164,7 @@ Scope: ไม่เปลี่ยนกติกาเงิน/สิทธิ
 
 Flag: `EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED` (`packages/config` api schema, default `true`; `deploy.sh` input default `true`, `maintenance_only` บังคับ `false`; `infra/kamal/config.json` `"true"` ทั้ง production/uat) ปิด = ปฏิเสธการสร้างกลุ่ม/ไฟล์ใหม่ (`FEATURE_TEMPORARILY_UNAVAILABLE`) แต่ read/handoff/recovery ของกลุ่มเดิมยังทำงาน; job ที่ค้างยังจบได้ (A47)
 
-## 7. D03/D04 — นโยบายเงินและใบรับรอง (ค่าเริ่มต้นที่เจ้าของต้องยืนยัน ข้อ 15)
+## 7. D03/D04 — นโยบายเงินและใบรับรอง (ค่าเริ่มต้นที่เจ้าของยืนยันแล้ว 2026-09-19, ข้อ 15)
 
 - `shared-discount-v1`: ส่วนลดที่ scope order/checkout แบ่งตามสัดส่วนยอดสินค้าหลังส่วนลดร้าน (net) ของสินค้าที่มีสิทธิในโปรโมชั่น รวมสินค้าส่วนตัวในฐาน แล้วจึงตัดส่วนตัวออก; ส่วนลดระดับ item ติดกับ item; largest remainder ถึงสตางค์ tie-break ตาม item id; Σ share = ส่วนลดต้นทาง
 - `shipping-by-eligible-item-v1`: ค่าส่งของพัสดุ/ร้านแบ่งตามสัดส่วน net ของสินค้าในพัสดุนั้น (บริษัท:ส่วนตัว); ค่าส่ง net (gross − ส่วนลดส่ง) นับครั้งเดียว
@@ -309,7 +309,9 @@ GET    /v1/companies/{c}/expenses/{expenseId}/read-status              (job ข�
 
 W01 (schema/contracts/guards/pg) → W02-web (multi-file, replace intent, resume, notices) ∥ W02-LINE (file lane, attempts, §17.5/17.6/18.4) ∥ W03 (preprocess, job, gateway contract, assembly) → W04 (allocation + group page) → W05+W07 (handoff, resolver, export, LINE status) → W06 (certificate per source) → W08 (regression matrix, evidence bundle, docs) → gate → PRs ทุก wave ต้องผ่าน: contracts/config build, api/gateway/web full test + typecheck, whole-chain runner, harness, pg specs ที่ตนเพิ่ม, pins `--check`, `git diff --check`
 
-## 15. ข้อที่เจ้าของต้องยืนยัน (ใช้ค่าเริ่มต้นนี้จนกว่าจะแย้ง)
+## 15. ข้อที่เจ้าของต้องยืนยัน — ยืนยันแล้ว 2026-09-19 (ข้อ 1–4) / ทำแล้ว (ข้อ 5)
+
+**เจ้าของยืนยันข้อ 1–4 แล้ว 2026-09-19** ("โอเคทั้ง 4 ข้อ ใช้ค่านี้ได้เลย") — ค่าที่โค้ดใช้อยู่ตรงกับที่เสนอทุกข้อ จึงไม่มีการแก้โค้ดจากการยืนยันนี้ สถานะของแต่ละข้อหลัง W09 (ข้อ 25): ข้อ 1 นโยบายทั้งสองยังเป็นค่าเริ่มต้นของ allocation engine ซึ่งตอนนี้เป็นกลไก dormant (ไม่มีหน้าจอถามส่วนตัว/บริษัทแล้ว; `policyVersion` ยังถูกบันทึกใน snapshot ของ allocation ที่เกิดผ่าน API); ข้อ 2 `infra/kamal/config.json` ประกาศ `true` ทั้ง UAT และ Production และ `infra/prod-ecs-express/deploy.sh` ใช้ `true` เมื่อไม่ส่งค่า; ข้อ 3 sweep ของข้อ 8 ใช้ `EXPENSE_CAPTURE_RETENTION_DAYS` (ค่าเริ่มต้น 90 วัน); ข้อ 4 ประโยค D04 ตามข้อ 22 ยังใช้กับใบรับรองของรายการที่มี lineage กลุ่ม (ณ ตอนนี้เกิดได้ผ่าน API dormant เท่านั้น) — ทั้งสี่ข้อยังต้องถูกตรวจรับบน UAT ตาม runbook ก่อนถือว่าผ่านจริง
 
 1. D03: `shared-discount-v1` / `shipping-by-eligible-item-v1` เป็นค่าเริ่มต้นทั้งระบบในรุ่นแรก (ไม่มีหน้าตั้งค่ารายบริษัท; บันทึก policyVersion ใน snapshot เพื่อเปลี่ยนภายหลังได้)
 2. D07: `EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED = true` ทั้ง UAT และ Production ตั้งแต่ deploy ถัดไป (เหมือน `AI_BUDGET_SPLIT_ACTIVATION_ENABLED`)
@@ -321,6 +323,7 @@ W01 (schema/contracts/guards/pg) → W02-web (multi-file, replace intent, resume
    `docs/research/expense-capture-read-benchmark-2026-09-19.md` และมันเจอบั๊กจริงสองข้อของ W03
    (prompt ไม่ได้บอกค่า enum ของ classification → ทุก window ตอบ `OCR_SCHEMA_INVALID`;
    `printedPages` ไม่มีใครผลิต → ใบหลายหน้าที่ครบถูกแจ้งว่าหน้าขาด) แก้แล้วทั้งคู่
+   — **รอบบิลจริง 2026-09-19 (W10, ข้อ 25.7 / research §6–§6.6)**: เอกสารสาธารณะจริง 7 ใบ + fixture ใหม่ 3 ชุด ใช้เพิ่มจนรวมทั้งงานนี้ THB 77.86 จาก 100 (ledger เดิม)
 
 ## 16. Implementation notes (W01, 2026-09-18)
 

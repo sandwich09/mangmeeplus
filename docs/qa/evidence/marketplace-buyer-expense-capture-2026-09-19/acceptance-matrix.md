@@ -181,7 +181,7 @@ individually, and it is always one of the same four reasons.
 | IG08 | CLOSED | per-attempt checkpoint, one admitted OCR read per file, `ai_credit` pause (`expense-capture-read-runner.service.spec.ts`, `expense-capture-read.pg.spec.ts`) | — |
 | IG09 | OPEN | authorisation per surface is tested; retention now sweeps | Original-evidence authorisation on **download/export/LINE** from a child link is not separately proven (A46) |
 | IG10 | OPEN | `line-capture-result-notifier.use-case.spec.ts` target/push rules, `line-capture-branch-default.spec.ts` | The multi-job ambiguity prompt needs **real LINE** |
-| IG11 (P0) | CLOSED | tax decisions never forced (`expense-capture-allocation.logic.spec.ts` tax block), unsupported routes pause instead of finalising | D03/D04/D08 remain owner confirmations (appendix §15) |
+| IG11 (P0) | CLOSED | tax decisions never forced (`expense-capture-allocation.logic.spec.ts` tax block), unsupported routes pause instead of finalising | D03/D04/D08 confirmed by the owner 2026-09-19 (appendix §15) |
 | IG12 | CLOSED | `expense-capture-allocation.logic.spec.ts` "A41 — everything personal…", "A28/A41 — a selected row with no amount blocks", multiple event dates | — |
 | IG13 | CLOSED | `expense-capture-compatibility.spec.ts` + the three flag-off cases beside their harnesses + the rollback note in this bundle's README | — |
 | IG14 | OPEN | the Bedrock benchmark measured the pipeline on synthetic fixtures | **authorised bundle** + **UX 40+**; the research note says explicitly that no accuracy rate may be quoted |
