@@ -1,5 +1,5 @@
 {
   "schemaVersion": 1,
-  "production": {"api-web": {"EXPENSE_DRAFT_NUMBERING_ENABLED": "true", "AI_BUDGET_SPLIT_ACTIVATION_ENABLED": "true", "EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED": "true"}, "ai-gateway": {}, "workers": {}},
+  "production": {"api-web": {"EXPENSE_DRAFT_NUMBERING_ENABLED": "true", "AI_BUDGET_SPLIT_ACTIVATION_ENABLED": "true", "EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED": "true", "BILLING_MODE": "live", "STRIPE_ACCOUNT_ID": "acct_1UEk51Rs6uvhhTkv"}, "ai-gateway": {}, "workers": {}},
   "uat": {"api-web": {"EXPENSE_DRAFT_NUMBERING_ENABLED": "true", "AI_BUDGET_SPLIT_ACTIVATION_ENABLED": "true", "EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED": "true"}, "ai-gateway": {}, "workers": {}}
 }
