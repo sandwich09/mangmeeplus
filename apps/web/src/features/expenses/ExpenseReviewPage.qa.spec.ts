@@ -82,7 +82,7 @@ test('replace carries the revision, the expected primary and a reused operation 
 });
 
 test('append adds supporting evidence and never names a primary to swap', () => {
-  const append = source.slice(source.indexOf('const appendSupportingReceipt'), source.indexOf('const splitIntoCaptureGroup'));
+  const append = source.slice(source.indexOf('const appendSupportingReceipt'), source.indexOf('const checkDuplicates'));
   assert.match(append, /'expense\.receipt\.supporting'/);
   assert.match(append, /intent: 'append', expectedUpdatedAt: detail\.updatedAt, operationId/);
   assert.doesNotMatch(append, /expectedPrimaryAttachmentId/);
@@ -94,17 +94,23 @@ test('a conflict offers the latest data instead of a silent retry', () => {
   assert.match(source, /expenses\.capture\.reload_latest/);
 });
 
-test('more than one document in a file offers the split, not another read', () => {
-  // W07-int: the READ JOB decides it whenever there is one — the API derives `multiDocument` from
-  // the assembled observation, which is the same fact that stopped the apply. The OCR
-  // classification stays only for the synchronous single-image lane, which has no job at all.
+test('more than one document in a file says what was created, not where to go (appendix §25)', () => {
+  // The READ JOB decides it whenever there is one — the API derives `multiDocument` from the
+  // assembled observation, which is the same fact the split ran on. The OCR classification stays
+  // only for the synchronous single-image lane, which has no job at all.
   assert.match(source, /readState\s*\?\s*readState\.multiDocument === true/);
   assert.match(source, /contentKind === 'MULTI_DOCUMENT'/);
   // …and a DONE the API says was NOT applied does not send the page to re-read an unchanged draft.
   assert.match(source, /file\?\.status === 'DONE' && file\.applied !== false/);
-  assert.match(source, /convertExpenseToCaptureGroup\(companyId, expenseId, \{ expectedUpdatedAt: detail\.updatedAt \}\)/);
-  assert.match(source, /expenses\.capture\.split_to_group/);
-  assert.match(workspaceDictionary.th['expenses.capture.multi_document'], /มากกว่า 1 ฉบับ/);
+  // The ids come off the job, so the notice can never promise records the engine did not create.
+  assert.match(source, /const splitExpenseIds = readState\?\.splitExpenseIds \?\? \[\];/);
+  assert.match(source, /t\('expenses\.capture\.auto_split', locale\)\.replace\('\{count\}'/);
+  assert.match(source, /href=\{`\/companies\/\$\{companyId\}\/expenses\/\$\{encodeURIComponent\(id\)\}`\}/);
+  assert.match(workspaceDictionary.th['expenses.capture.auto_split'], /สร้างรายการเพิ่มให้แล้ว/);
+  // No button, no second screen, and nothing that navigates to a capture group.
+  assert.equal(source.includes('expenses.capture.split_to_group'), false);
+  assert.equal(source.includes('convertExpenseToCaptureGroup'), false);
+  assert.equal(source.includes('/expenses/capture/'), false);
 });
 
 /**

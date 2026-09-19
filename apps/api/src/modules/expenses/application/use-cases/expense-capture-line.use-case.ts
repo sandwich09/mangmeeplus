@@ -1,5 +1,6 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import type { RequestContext } from '@watchdog-bms/contracts';
+import { randomUUID } from 'node:crypto';
+import { ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { emptyExpenseCaptureReadManifest, type RequestContext } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
@@ -10,6 +11,7 @@ import {
 import { expenseCaptureWebPath } from '../../domain/logic/expense-capture.logic';
 import { PrismaExpenseCaptureRepository } from '../../infrastructure/prisma-expense-capture.repository';
 import { lockFundingEvidence } from '../../infrastructure/substitute-funding.guard';
+import { ExpenseCaptureReadRunnerService } from '../services/expense-capture-read-runner.service';
 
 /** How far back a second LINE file may still be asking about the SAME work (appendix §3, A45). */
 export const LINE_CAPTURE_SAME_WORK_WINDOW_MS = 30 * 60 * 1000;
@@ -46,7 +48,85 @@ export class ExpenseCaptureLineUseCase {
     private readonly capture: PrismaExpenseCaptureRepository,
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    @Optional() private readonly runner?: ExpenseCaptureReadRunnerService,
   ) {}
+
+  /**
+   * Appendix §25: the LINE `file` lane owns an ORDINARY expense now, so its read is an
+   * `ownerType EXPENSE` job — the same job the web PDF lane queues, which is what makes the
+   * auto-split and the §17.6 copy identical on both lanes.
+   *
+   * Idempotent on (expense, attachment, bytes), like `queueCaptureRead` on the web side: a
+   * redelivered LINE message must never buy a second read of the same document.
+   */
+  async queueExpenseRead(input: {
+    companyId: string;
+    expenseId: string;
+    attachmentId: string;
+    attachmentChecksum?: string | null;
+    objectVersionId?: string | null;
+    expectedSourceUpdatedAt?: Date | null;
+  }): Promise<string> {
+    const existing = await this.capture.findLiveJobForAttachment(this.capture.client, {
+      companyId: input.companyId, expenseId: input.expenseId,
+      attachmentId: input.attachmentId, attachmentChecksum: input.attachmentChecksum ?? '',
+    });
+    const job = existing ?? await this.capture.createReadJob(this.capture.client, {
+      companyId: input.companyId, ownerType: 'EXPENSE', expenseId: input.expenseId,
+      attachmentId: input.attachmentId, attachmentChecksum: input.attachmentChecksum ?? '',
+      objectVersionId: input.objectVersionId ?? null,
+      ocrAdmissionRequestId: randomUUID(),
+      manifestJson: emptyExpenseCaptureReadManifest(),
+      ...(input.expectedSourceUpdatedAt ? { expectedSourceUpdatedAt: input.expectedSourceUpdatedAt } : {}),
+    });
+    // Fire-and-forget: the reply already says "เก็บไฟล์แล้ว กำลังอ่านเอกสาร", and the scan worker
+    // picks the job up anyway if this process never gets to it.
+    this.runner?.kick(job.id);
+    return job.id;
+  }
+
+  /**
+   * What the LINE result push needs about a finished EXPENSE-owned read (appendix §25). The CALLER
+   * re-checks access before it speaks; this only reports what the record holds.
+   */
+  async readFinishedExpenseSnapshot(companyId: string, expenseId: string): Promise<{
+    expense: {
+      id: string; status: string; captureSource: string; createdByUserId: string;
+      lineChatKeyHash: string | null; linePushTargetId: string | null;
+      vendorNameSnapshot: string | null; grandTotalAmount: string | null; currency: string | null;
+      sourceDocumentType: string | null; expenseDate: Date | null; primaryAttachmentId: string | null;
+    };
+    jobs: Array<{ id: string; status: string; pausedReason: string | null; lastErrorCode: string | null }>;
+  } | null> {
+    const expense = await this.prisma.client.expenseRecord.findFirst({
+      where: { companyId, id: expenseId },
+      select: {
+        id: true, status: true, captureSource: true, createdByUserId: true,
+        sourceChannelMetadataJson: true, vendorNameSnapshot: true, grandTotalAmount: true,
+        currency: true, sourceDocumentType: true, expenseDate: true, primaryAttachmentId: true,
+      },
+    });
+    if (!expense) return null;
+    const channel = (expense.sourceChannelMetadataJson ?? null) as { chatKeyHash?: string; pushTargetId?: string } | null;
+    const jobs = await this.prisma.client.expenseCaptureReadJob.findMany({
+      where: { companyId, expenseId },
+      orderBy: { createdAt: 'desc' }, take: 3,
+      select: { id: true, status: true, pausedReason: true, lastErrorCode: true },
+    });
+    return {
+      expense: {
+        id: expense.id, status: expense.status, captureSource: expense.captureSource,
+        createdByUserId: expense.createdByUserId,
+        lineChatKeyHash: channel?.chatKeyHash ?? null,
+        linePushTargetId: channel?.pushTargetId ?? null,
+        vendorNameSnapshot: expense.vendorNameSnapshot,
+        grandTotalAmount: expense.grandTotalAmount === null ? null : String(expense.grandTotalAmount),
+        currency: expense.currency, sourceDocumentType: expense.sourceDocumentType,
+        expenseDate: expense.expenseDate, primaryAttachmentId: expense.primaryAttachmentId,
+      },
+      jobs,
+    };
+  }
 
   /**
    * The redelivery answer. `(companyId, lineMessageId)` is unique on `ExpenseCaptureFile` (W01), so

@@ -31,6 +31,7 @@ import { planCaptureSinglePageChunk, planCapturePreprocessing, type CaptureChunk
 import { PrismaExpenseCaptureRepository, type CaptureReadJobRow } from '../../infrastructure/prisma-expense-capture.repository';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { ExpenseCaptureReadClient } from '../../infrastructure/expense-capture-read.client';
+import { ExpenseCaptureAutoSplitService } from './expense-capture-auto-split.service';
 import { isStaleOcrApply, ReceiptOcrApplyService } from './receipt-ocr-apply.service';
 
 /** Appendix §4.5: the lease one chunk must comfortably fit inside, renewed after every chunk. */
@@ -61,6 +62,12 @@ type CaptureCheckpoint = {
   derivativeBytes?: number;
   resplitChunks?: string[];
   lineage?: AiModelLineage[];
+  /**
+   * Appendix §25 auto-split: document ref → the expense draft that document produced, from the
+   * SECOND document on. This is the idempotency record — a retried drain or a re-claimed job skips
+   * every ref that is already here, so one document can never produce two expenses.
+   */
+  splitExpenseIds?: Record<string, string>;
 };
 
 const emptyCheckpoint = (): CaptureCheckpoint => ({ version: 1, pages: {}, chunks: {}, windows: {} });
@@ -77,6 +84,8 @@ type RunOutcome = {
   applied?: boolean;
   multiDocument?: boolean;
   documentCount?: number;
+  /** Appendix §25: the drafts the auto-split created, in document order from the second on. */
+  splitExpenseIds?: string[];
 };
 
 /**
@@ -105,6 +114,7 @@ export class ExpenseCaptureReadRunnerService {
     private readonly audit: AuditService,
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
+    private readonly autoSplit: ExpenseCaptureAutoSplitService,
     private readonly shadow: LaunchShadowProbe = NOOP_SHADOW,
   ) {}
 
@@ -354,19 +364,27 @@ export class ExpenseCaptureReadRunnerService {
 
     const failedChunks = Object.values(checkpoint.chunks).filter((state) => state === 'failed').length;
     const unreadPages = manifest.pages.filter((page) => page.state === 'pending' || page.state === 'failed').length;
-    const applied = await this.applyToExpense(job, assembled);
+    // Appendix §25: one document lands on the owning expense; several are SPLIT into ordinary
+    // drafts here, before the terminal write, so `read-status` and the LINE push never have to show
+    // a "split pending" state. The split ids are checkpointed so a retry finds the work done.
+    const write = await this.applyOrSplit(job, assembled, checkpoint);
+    if (write.splitByRef) {
+      checkpoint = { ...checkpoint, splitExpenseIds: write.splitByRef };
+      save(checkpoint);
+    }
+    const splitIds = Object.values(write.splitByRef ?? checkpoint.splitExpenseIds ?? {});
 
     if (pausedReason) {
-      return { status: 'PAUSED', pausedReason, ...common(assembled, applied) };
+      return { status: 'PAUSED', pausedReason, ...common(assembled, write.applied, splitIds) };
     }
     if (plan.pagesBeyondLimit.length > 0) {
       // Never a silent cut: the declared page scope was read, the rest stay `pending` (§4.1).
-      return { status: 'PAUSED', pausedReason: 'page_limit', ...common(assembled, applied) };
+      return { status: 'PAUSED', pausedReason: 'page_limit', ...common(assembled, write.applied, splitIds) };
     }
     if (failedChunks > 0 || unreadPages > 0 || !hasFacts) {
-      return { status: 'PARTIAL', ...common(assembled, applied) };
+      return { status: 'PARTIAL', ...common(assembled, write.applied, splitIds) };
     }
-    return { status: 'DONE', ...common(assembled, applied) };
+    return { status: 'DONE', ...common(assembled, write.applied, splitIds) };
   }
 
   private async readChunk(job: CaptureReadJobRow, chunk: CaptureChunkPlan) {
@@ -451,10 +469,34 @@ export class ExpenseCaptureReadRunnerService {
   }
 
   /**
-   * `ownerType EXPENSE` with EXACTLY ONE document and ONE issuer applies through the existing
-   * receipt path, fence and all. Anything else is stored and shown — a file holding two shops'
-   * receipts must never be collapsed into one expense (§3, appendix §2.2 A38).
+   * What a finished read WRITES (appendix §25).
+   *
+   * One document from one issuer applies through the existing receipt path, fence and all. Several
+   * documents no longer stop at "stored and shown": the first applies the same way and each further
+   * one becomes its own ordinary draft, because the owner withdrew the screen that used to ask.
    */
+  private async applyOrSplit(
+    job: CaptureReadJobRow,
+    assembled: ExpenseCaptureAssembledObservations,
+    checkpoint: CaptureCheckpoint,
+  ): Promise<{ applied: boolean; splitByRef?: Record<string, string> }> {
+    if (job.ownerType !== 'EXPENSE' || !job.expenseId) return { applied: false };
+    if (assembled.documents.length > 1) {
+      const split = await this.autoSplit.split({
+        job: {
+          id: job.id, companyId: job.companyId, ownerType: job.ownerType,
+          expenseId: job.expenseId, attachmentId: job.attachmentId,
+          expectedSourceUpdatedAt: job.expectedSourceUpdatedAt ?? null,
+        },
+        assembled,
+        ...(checkpoint.splitExpenseIds ? { alreadySplit: checkpoint.splitExpenseIds } : {}),
+      });
+      return { applied: split.applied, splitByRef: split.splitByRef };
+    }
+    return { applied: await this.applyToExpense(job, assembled) };
+  }
+
+  /** The single-document apply: `receipt-ocr-apply`, its fence, its duplicate check, unchanged. */
   private async applyToExpense(job: CaptureReadJobRow, assembled: ExpenseCaptureAssembledObservations): Promise<boolean> {
     if (job.ownerType !== 'EXPENSE' || !job.expenseId) return false;
     if (assembled.multiDocument || assembled.documents.length !== 1) return false;
@@ -577,6 +619,8 @@ export class ExpenseCaptureReadRunnerService {
         applied: outcome.applied ?? false,
         multiDocument: outcome.multiDocument ?? false,
         documentCount: outcome.documentCount ?? 0,
+        // Appendix §25: both lanes link to what the split created, so no consumer has to re-derive it.
+        splitExpenseIds: outcome.splitExpenseIds ?? [],
       } as never,
       'HIGH',
     );
@@ -593,10 +637,11 @@ function captureSourceRoute(job: Pick<CaptureReadJobRow, 'ownerType' | 'groupId'
   return job.ownerType === 'EXPENSE' ? 'receipt-capture-web' : 'receipt-capture-line';
 }
 
-const common = (assembled: ExpenseCaptureAssembledObservations, applied: boolean) => ({
+const common = (assembled: ExpenseCaptureAssembledObservations, applied: boolean, splitExpenseIds: string[]) => ({
   applied,
   multiDocument: assembled.multiDocument,
   documentCount: assembled.documents.length,
+  splitExpenseIds,
 });
 
 /** Keep a page's stored transcription inside the same ceiling the gateway applies to it. */
@@ -621,6 +666,8 @@ function readCheckpoint(value: unknown): CaptureCheckpoint {
     ...(Number.isFinite(raw.derivativeBytes) ? { derivativeBytes: Math.max(0, raw.derivativeBytes!) } : {}),
     ...(Array.isArray(raw.resplitChunks) ? { resplitChunks: raw.resplitChunks } : {}),
     ...(Array.isArray(raw.lineage) ? { lineage: raw.lineage } : {}),
+    ...(raw.splitExpenseIds && typeof raw.splitExpenseIds === 'object' && !Array.isArray(raw.splitExpenseIds)
+      ? { splitExpenseIds: raw.splitExpenseIds } : {}),
   };
 }
 

@@ -184,6 +184,8 @@ function makeHarness(opts: {
   /** §17.5: the OPEN groups of this chat and whether their reader is still running. */
   openChatGroups?: Array<{ groupId: string; webPath: string; reading: boolean }>;
   captureGroupCreateThrows?: Error;
+  /** Appendix §25: the document lane persists through `InitReceiptUploadUseCase`. */
+  initReceiptUploadThrows?: Error;
   receiptOcrResult?: any;
   governReceiptAdmission?: boolean;
   receiptApplyError?: Error;
@@ -231,6 +233,8 @@ function makeHarness(opts: {
   const uploads: any[] = [];
   const initCalls: any[] = [];
   const completeCalls: any[] = [];
+  /** lineMessageId → the expense it produced, so the redelivery index behaves as production does. */
+  const lineMessageExpenses = new Map<string, string>();
   const createUploadIntentCalls: any[] = [];
   const completeAttachmentCalls: any[] = [];
   const createExpenseCalls: any[] = [];
@@ -297,7 +301,13 @@ function makeHarness(opts: {
     listRecentLineCaptures: async (input: any) => { candidateQueries.push(input); return (opts.recentCaptures ?? []).filter(row => !input.expenseIds || input.expenseIds.includes(row.id)); },
     listLineSubstituteContinuationRows: async () => opts.substituteContinuationRows ?? [],
     recordDeliveredLineReceiptContinuation: async (input: any) => { receiptContinuationCalls.push(input); },
+    // §17.5 reads the CURRENT state of an `expense` attempt target through this.
+    findById: async (_companyId: string, id: string) => (capturedRows.has(id) ? structuredClone(capturedRows.get(id)) : null),
     findByLineMessageId: async (companyId: string, lineMessageId: string) => {
+      // Appendix §25: the LINE document lane creates an ORDINARY expense, so redelivery is answered
+      // by this index — the same one the production `@@unique([companyId, lineMessageId])` enforces.
+      const owned = lineMessageExpenses.get(lineMessageId);
+      if (owned && capturedRows.has(owned)) return structuredClone(capturedRows.get(owned));
       const found = await opts.findExpenseByLineMessageId?.(companyId, lineMessageId);
       if (!found) return null;
       if (!capturedRows.has(found.id)) capturedRows.set(found.id, emptyMedia(found.id, {
@@ -462,9 +472,17 @@ function makeHarness(opts: {
     // survived every spec in the repo.
     {
       execute: async (ctx: any, cmd: any) => {
+        if (opts.initReceiptUploadThrows) throw opts.initReceiptUploadThrows;
         const branchId = await expenseRepo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, cmd.branchId);
         capturedRows.set('expense-1', emptyMedia('expense-1', { companyId: ctx.companyId, createdByUserId: ctx.userId, branchId,
-          sourceChannelMetadataJson: { chatKeyHash: cmd.lineCapture.chatKeyHash } }));
+          lineMessageId: cmd.lineCapture.lineMessageId, note: cmd.note,
+          sourceChannelMetadataJson: {
+            chatKeyHash: cmd.lineCapture.chatKeyHash,
+            ...(cmd.lineCapture.pushTargetId ? { pushTargetId: cmd.lineCapture.pushTargetId } : {}),
+          } }));
+        // Only the document lane (appendix §25) models the `@@unique([companyId, lineMessageId])`
+        // redelivery index here; the image lane's own resume path is covered by its own cases.
+        if (cmd.note !== 'LINE receipt upload') lineMessageExpenses.set(cmd.lineCapture.lineMessageId, 'expense-1');
         initCalls.push(cmd);
         return { expenseId: 'expense-1', attachmentId: 'att-1', uploadUrl: '/u', uploadMethod: 'PUT', expiresAt: new Date() };
       },
@@ -650,6 +668,28 @@ function makeHarness(opts: {
         return true;
       },
       listChatIntakeAttempts: async () => [...captureState.attempts].reverse(),
+      // Appendix §25: the document lane's read is an `ownerType EXPENSE` job.
+      queueExpenseRead: async (input: any) => {
+        const jobId = `job-${captureState.jobs.length + 1}`;
+        captureState.jobs.push({ jobId, status: 'QUEUED', ownerType: 'EXPENSE', ...input });
+        return jobId;
+      },
+      readFinishedExpenseSnapshot: async (_companyId: string, expenseId: string) => {
+        const row = capturedRows.get(expenseId);
+        if (!row) return null;
+        return {
+          expense: {
+            id: expenseId, status: row.status ?? 'NEEDS_REVIEW', captureSource: 'LINE_UPLOAD',
+            createdByUserId: row.createdByUserId, lineChatKeyHash: row.sourceChannelMetadataJson?.chatKeyHash ?? null,
+            linePushTargetId: row.sourceChannelMetadataJson?.pushTargetId ?? null,
+            vendorNameSnapshot: row.vendorNameSnapshot ?? null, grandTotalAmount: row.grandTotalAmount ?? null,
+            currency: row.currency ?? 'THB', sourceDocumentType: row.sourceDocumentType ?? null,
+            expenseDate: row.expenseDate ?? null, primaryAttachmentId: row.primaryAttachmentId ?? null,
+          },
+          jobs: captureState.jobs.filter((job: any) => job.expenseId === expenseId)
+            .map((job: any) => ({ id: job.jobId, status: job.status, pausedReason: null, lastErrorCode: null })),
+        };
+      },
       readFinishedSnapshot: async (_companyId: string, groupId: string) => {
         const group = captureState.groups.find((row: any) => row.groupId === groupId);
         if (!group) return null;
@@ -2338,19 +2378,21 @@ describe('LINE intake dispatch – media path', () => {
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
 
     assert.equal(h.ocrRequests.length, 1);
-    assert.equal(h.initCalls.length, 0);
-    assert.equal(h.completeCalls.length, 0);
     assert.equal(recordUpdates.length, 0);
-    // §17.6 (v0.11): a PROVIDER failure on an image we can keep is no longer the "รูปนี้เป็นอะไรคะ"
-    // question. The picture becomes its own capture group, its read is closed FAILED so nothing
-    // re-reads it, and the customer is sent to the web form — with no re-read CTA anywhere.
+    // §17.6 (v0.11) + appendix §25: a PROVIDER failure on an image we can keep is no longer the
+    // "รูปนี้เป็นอะไรคะ" question, and no longer a capture group either. The picture becomes an
+    // ORDINARY expense draft, its read is closed FAILED so nothing re-reads it, and the customer is
+    // sent to that record — with no re-read CTA anywhere.
     assert.equal(pendingMediaRows.length, 0, 'no pending-media question for a failed read');
-    assert.equal(h.captureState.groups.length, 1, 'the image is persisted as a capture group');
+    assert.equal(h.captureState.groups.length, 0, 'no capture group');
+    assert.equal(h.initCalls.length, 1, 'the image is persisted as an ordinary draft');
     assert.equal(h.captureState.readFailures.length, 1, 'its read job is closed FAILED');
     assert.equal(h.captureState.jobs[0].status, 'FAILED');
     assert.equal(h.captureState.attempts.at(-1).outcome, 'STORED_READ_FAILED');
+    assert.equal(h.captureState.attempts.at(-1).targetType, 'expense');
     assert.match(h.replies[0] ?? '', /อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว กดกรอกข้อมูลต่อได้ที่นี่/);
-    assert.match(h.replies[0] ?? '', /expenses\/capture\/group-1/);
+    assert.match(h.replies[0] ?? '', /expenses\/expense-1/);
+    assert.ok(!/expenses\/capture/.test(h.replies[0] ?? ''));
     assert.ok(!/1\).*ใบเสร็จ/.test(h.replies[0] ?? ''), 'no numbered clarify for a failed read');
   });
 
@@ -2489,18 +2531,22 @@ describe('LINE intake dispatch – media path', () => {
       await h.useCase.executeReceiptUpload({ ...MEDIA_EVENT, webhookEventId: `evt-${scenario.name}` });
 
       assert.equal(h.ocrRequests.length, 1);
-      assert.equal(h.initCalls.length, 0);
-      assert.equal(h.completeCalls.length, 0);
       assert.equal(recordUpdates.length, 0);
       const preservesMultiple = scenario.classification.contentKind === 'MULTI_DOCUMENT';
       // §18.4 "การเก็บและผูกงาน": NR01–NR03 and NR08 keep the bytes before offering the Web CTA, so
-      // a quotation now stores a capture group where it used to answer and discard (§18.4 gap).
-      const persistsAsCapture = scenario.name === 'quotation';
-      assert.equal(h.uploads.length, preservesMultiple || persistsAsCapture ? 1 : 0);
+      // a quotation stores them — as an ORDINARY draft since appendix §25, not a capture group.
+      const persistsAsDraft = scenario.name === 'quotation';
+      assert.equal(h.initCalls.length, persistsAsDraft ? 1 : 0);
+      assert.equal(h.uploads.length, preservesMultiple || persistsAsDraft ? 1 : 0);
       assert.equal(pendingMediaRows.length, preservesMultiple ? 1 : 0);
-      assert.equal(h.captureState.groups.length, persistsAsCapture ? 1 : 0);
+      assert.equal(h.captureState.groups.length, 0, 'the group lane is withdrawn');
       assert.match(h.replies[0] ?? '', scenario.expected);
-      if (persistsAsCapture) assert.match(h.replies[0] ?? '', /กรอกข้อมูลต่อได้ที่นี่: /);
+      if (persistsAsDraft) {
+        // Truthful copy (appendix §25): a draft exists, so the reply says so rather than claiming
+        // "ยังไม่ได้สร้างรายการ" beside a link to the record it created.
+        assert.match(h.replies[0] ?? "", /เก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน กดกรอกข้อมูลต่อได้ที่นี่/);
+        assert.match(h.replies[0] ?? '', /expenses\/expense-1/);
+      }
     });
   }
 
@@ -5028,7 +5074,7 @@ describe('Stored question facts survive the composer and reply fallback boundary
  * carries `contentBase64`, and a fixture that stubs the download away would prove nothing about the
  * defect this lane exists to fix (IG20/E15). `fetch` is stubbed at the transport instead.
  */
-describe('LINE file lane (capture appendix §3)', () => {
+describe('LINE file lane (capture appendix §3/§25)', () => {
   const PDF_BYTES = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(64, 0x20), Buffer.from('\n%%EOF\n')]);
 
   const FILE_EVENT = {
@@ -5072,32 +5118,40 @@ describe('LINE file lane (capture appendix §3)', () => {
     ...extra,
   } as any);
 
-  it('A68: a raw file event becomes ONE capture group, one file, one job — and never reaches OCR', async () => {
+  /**
+   * Appendix §25 (owner decision 2026-09-19): a raw `file` event becomes ONE ORDINARY expense draft
+   * with the file on it and an `ownerType EXPENSE` read job — no capture group, and still no OCR
+   * call and no intake route, which is what gave this lane its own existence (A68).
+   */
+  it('A68: a raw file event becomes ONE ordinary expense draft and one read job — never OCR', async () => {
     const net = stubFetch();
     const h = captureHarness();
     try {
       await h.useCase.executeReceiptUpload(FILE_EVENT);
     } finally { net.restore(); }
 
-    assert.equal(h.captureState.groups.length, 1, 'one group');
-    assert.equal(h.captureState.files.length, 1, 'one file');
+    assert.equal(h.captureState.groups.length, 0, 'no capture group is created any more');
+    assert.equal(h.initCalls.length, 1, 'one expense draft');
+    assert.equal(h.completeCalls.length, 1, 'the bytes are bound to it');
+    assert.equal(h.initCalls[0].captureSource, 'LINE_UPLOAD');
+    assert.equal(h.initCalls[0].mimeType, 'application/pdf');
+    assert.equal(h.initCalls[0].lineCapture.lineMessageId, 'msg-file-1');
     assert.equal(h.captureState.jobs.length, 1, 'one read job');
-    assert.equal(h.captureState.groups[0].intakeChannel, 'LINE');
-    assert.equal(h.captureState.files[0].lineMessageId, 'msg-file-1');
-    assert.equal(h.captureState.files[0].mimeType, 'application/pdf');
-    // The whole point of the lane: no intake route, no OCR, no expense.
+    assert.equal(h.captureState.jobs[0].ownerType, 'EXPENSE');
+    assert.equal(h.captureState.jobs[0].expenseId, 'expense-1');
+    // The whole point of the lane: no intake route and no OCR.
     assert.equal(h.ocrRequests.length, 0, 'no OCR call');
     assert.equal(h.routeRequests.length, 0, 'no intake route call');
-    assert.equal(h.initCalls.length, 0, 'no expense created');
-    // §16.7 UX: persisted, being read, with the group link.
+    // §16.7 UX: persisted, being read, with the EXPENSE link.
     assert.match(h.replies[0] ?? '', /เก็บไฟล์แล้วค่ะ กำลังอ่านเอกสาร/);
-    assert.match(h.replies[0] ?? '', /expenses\/capture\/group-1/);
-    // The attempt says STORED_READING against the group it created.
+    assert.match(h.replies[0] ?? '', /expenses\/expense-1/);
+    assert.ok(!/expenses\/capture/.test(h.replies[0] ?? ''), 'never a group link');
+    // The attempt says STORED_READING against the expense it created.
     const stored = h.captureState.attempts.find((row: any) => row.outcome === 'STORED_READING');
     assert.ok(stored, 'an attempt records the stored file');
     assert.equal(stored.stage, 'PERSIST');
-    assert.equal(stored.targetType, 'capture_group');
-    assert.equal(stored.targetId, 'group-1');
+    assert.equal(stored.targetType, 'expense');
+    assert.equal(stored.targetId, 'expense-1');
     assert.equal(stored.fileNameSanitized, 'invoice-aug.pdf');
     assert.equal(stored.capabilityJson.pdfAutomaticRead, true);
   });
@@ -5112,21 +5166,22 @@ describe('LINE file lane (capture appendix §3)', () => {
       try {
         await h.useCase.executeReceiptUpload(event as typeof FILE_EVENT);
       } finally { net.restore(); }
-      const group = h.captureState.groups[0];
-      assert.equal(group.linePushTargetId, expected);
-      // It matches the hash the group already records, which is what the push checks it against.
-      assert.equal(group.lineChatKeyHash, chatKeyHashOf(event as { lineUserId: string; pushTargetId?: string }));
+      // Appendix §25: it rides on the expense's own channel metadata now, not on a group column.
+      const identity = h.initCalls[0].lineCapture;
+      assert.equal(identity.pushTargetId, expected);
+      // It matches the hash the record already keeps, which is what the push checks it against.
+      assert.equal(identity.chatKeyHash, chatKeyHashOf(event as { lineUserId: string; pushTargetId?: string }));
     });
   }
 
-  it('a caption riding with the file becomes the group note, not a manual-entry chat', async () => {
+  it("a caption riding with the file becomes the draft's note, not a manual-entry chat", async () => {
     const net = stubFetch();
     const h = captureHarness();
     let outcome: { outcome: string } | undefined;
     try {
       outcome = await h.useCase.executeReceiptUpload(FILE_EVENT, 'ค่าส่งของเดือนสิงหาคม');
     } finally { net.restore(); }
-    assert.equal(h.captureState.groups[0].note, 'ค่าส่งของเดือนสิงหาคม');
+    assert.equal(h.initCalls[0].note, 'ค่าส่งของเดือนสิงหาคม');
     assert.equal(h.ocrRequests.length, 0);
     assert.equal(outcome?.outcome, 'done', 'a note is not a question');
   });
@@ -5142,20 +5197,20 @@ describe('LINE file lane (capture appendix §3)', () => {
     assert.match(h.replies[0] ?? '', /เก็บไฟล์แล้วค่ะ กำลังอ่านเอกสาร/);
     // …and the buffer runs the question as a text turn afterwards (the image lane's `defer_text`).
     assert.equal(outcome?.outcome, 'defer_text');
-    assert.equal(h.captureState.groups[0].note, undefined, 'a question is never stored as the note');
+    assert.equal(h.initCalls[0].note, 'LINE document upload', 'a question is never stored as the note');
   });
 
-  it('a redelivered file reuses the group it already produced instead of storing the bytes twice', async () => {
+  it('a redelivered file reuses the draft it already produced instead of storing the bytes twice', async () => {
     const net = stubFetch();
     const h = captureHarness();
     try {
       await h.useCase.executeReceiptUpload(FILE_EVENT);
       await h.useCase.executeReceiptUpload({ ...FILE_EVENT, webhookEventId: 'evt-file-1-redelivered', replyToken: 'reply-file-1b' });
     } finally { net.restore(); }
-    assert.equal(h.captureState.groups.length, 1, 'still one group');
-    assert.equal(h.captureState.files.length, 1, 'still one file');
-    assert.equal(h.captureState.jobs.length, 1, 'still one job');
-    assert.match(h.replies.at(-1) ?? '', /expenses\/capture\/group-1/);
+    assert.equal(h.initCalls.length, 1, 'still one draft');
+    assert.equal(h.completeCalls.length, 1, 'the bytes were bound once');
+    assert.equal(h.captureState.jobs.length, 1, 'still one read job');
+    assert.match(h.replies.at(-1) ?? '', /expenses\/expense-1/);
   });
 
   it('IG20: an oversize file declared by the webhook is rejected with its own reason, before any fetch', async () => {
@@ -5216,43 +5271,42 @@ describe('LINE file lane (capture appendix §3)', () => {
     assert.match(h.replies[0] ?? '', /ไม่สามารถรับไฟล์นี้ได้/);
   });
 
-  it('A45: a second file inside the window is still persisted, and THEN asked about', async () => {
+  /**
+   * Appendix §25: A45 ("งานเดิม หรือ ใบใหม่") is withdrawn with the groups it moved files between.
+   * A second file is simply a second draft, exactly as a second photo is — no question is asked,
+   * and nothing merges on timing.
+   */
+  it('a second file in the same chat is just its own draft — no grouping question is asked', async () => {
     const net = stubFetch();
-    const h = captureHarness({
-      openSameWorkGroups: [{ groupId: 'group-earlier', firstFileName: 'invoice-jul.pdf', updatedAt: new Date('2026-09-18T03:00:00Z'),
-        status: 'OPEN', note: null, createdAt: new Date('2026-09-18T03:00:00Z'), webPath: '/companies/company-1/expenses/capture/group-earlier' }],
-    });
+    const h = captureHarness();
     try {
       await h.useCase.executeReceiptUpload(FILE_EVENT);
+      await h.useCase.executeReceiptUpload({ ...FILE_EVENT, webhookEventId: 'evt-file-2', lineMessageId: 'msg-file-2', fileName: 'invoice-sep.pdf', replyToken: 'reply-file-2' });
     } finally { net.restore(); }
-    // Bytes first, question second — never the other way round.
-    assert.equal(h.captureState.groups.length, 1, 'the second file has its OWN group');
-    assert.equal(h.captureState.files.length, 1);
-    assert.match(h.replies[0] ?? '', /เอกสารของงานเดิม/);
-    assert.match(h.replies[0] ?? '', /invoice-jul\.pdf/);
-    assert.match(h.replies[0] ?? '', /1\) งานเดิม/);
-    assert.match(h.replies[0] ?? '', /2\) ใบใหม่/);
-    const question = h.captureState.attempts.at(-1);
-    assert.equal(question.stage, 'ROUTE');
-    assert.match(question.reasonCode, /^same_work_question:group-earlier$/);
-    assert.equal(question.targetId, 'group-1');
+    assert.equal(h.initCalls.length, 2, 'two drafts');
+    assert.equal(h.captureState.groups.length, 0);
+    for (const reply of h.replies) {
+      assert.ok(!/งานเดิม|ใบใหม่/.test(reply), `no grouping question: ${reply}`);
+      assert.match(reply, /เก็บไฟล์แล้วค่ะ กำลังอ่านเอกสาร/);
+    }
+    assert.equal(h.captureState.attempts.filter((row: any) => row.stage === 'ROUTE').length, 0);
   });
 
-  it('A45: the persist refusing never claims the file was kept', async () => {
+  it('the persist refusing never claims the file was kept', async () => {
     const net = stubFetch();
-    const h = captureHarness({ captureGroupCreateThrows: new ConflictException('nope') });
+    const h = captureHarness({ initReceiptUploadThrows: new ConflictException('nope') });
     let threw = false;
     try {
       await h.useCase.executeReceiptUpload(FILE_EVENT);
     } catch { threw = true; } finally { net.restore(); }
-    assert.equal(h.captureState.groups.length, 0);
+    assert.equal(h.initCalls.length, 0);
     assert.equal(h.captureState.attempts.at(-1).reasonCode, 'persist_failed');
     assert.ok(!threw || true);
     assert.ok(!/เก็บไฟล์แล้ว/.test(h.replies.join('\n')), 'no retention claim without a persisted identity');
   });
 });
 
-/** A45's answer and the §17.5 question, both on the TEXT lane and both before any model call. */
+/** The §17.5 status question on the TEXT lane, deterministic and before any model call. */
 describe('LINE capture answers and §17.5 status questions', () => {
   const PDF_BYTES = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(64, 0x20), Buffer.from('\n%%EOF\n')]);
   const FILE_EVENT = {
@@ -5277,52 +5331,14 @@ describe('LINE capture answers and §17.5 status questions', () => {
   }
 
   /** Persist a second file so the chat really has an open "งานเดิม หรือ ใบใหม่" question. */
-  async function withOpenSameWorkQuestion(prisma: any) {
-    const h = makeHarness({
-      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
-      realMediaDownload: true,
-      prisma,
-      openSameWorkGroups: [{ groupId: 'group-earlier', firstFileName: 'invoice-jul.pdf', updatedAt: new Date(),
-        status: 'OPEN', note: null, createdAt: new Date(), webPath: '/companies/company-1/expenses/capture/group-earlier' }],
-    } as any);
-    const restore = stubLineContent();
-    try { await h.useCase.executeReceiptUpload(FILE_EVENT); } finally { restore(); }
-    return h;
-  }
 
   const answer = (text: string) => ({
     webhookEventId: 'evt-a45-answer', lineUserId: 'line-user-secret', replyToken: 'reply-a45-answer',
     messageText: text, messagingChannelId: 'ch-1', lineMessageId: 'msg-a45-answer',
   });
 
-  it('A45 "1" moves the file into the earlier group and closes the emptied one CANCELLED', async () => {
-    const { prisma } = makePrisma();
-    const h = await withOpenSameWorkQuestion(prisma);
-    await h.useCase.execute(answer('1'));
-    assert.deepEqual(h.captureState.moves, [{ fileId: 'file-1', fromGroupId: 'group-1', toGroupId: 'group-earlier' }]);
-    assert.deepEqual(h.captureState.closes, [{ groupId: 'group-1', reason: 'MERGED_INTO_EARLIER_LINE_GROUP' }]);
-    assert.match(h.replies.at(-1) ?? '', /รวมไฟล์เข้างานเดิมให้แล้ว/);
-    assert.match(h.replies.at(-1) ?? '', /capture\/group-earlier/);
-    // The question is consumed: a second "1" must not merge anything again.
-    assert.equal(h.captureState.attempts.find((row: any) => row.stage === 'ROUTE').reasonCode, 'same_work_answered');
-  });
 
-  it('A45 "2" keeps both groups and moves nothing', async () => {
-    const { prisma } = makePrisma();
-    const h = await withOpenSameWorkQuestion(prisma);
-    await h.useCase.execute(answer('2'));
-    assert.equal(h.captureState.moves.length, 0);
-    assert.equal(h.captureState.closes.length, 0);
-    assert.match(h.replies.at(-1) ?? '', /เก็บเป็นงานใหม่ให้แล้ว/);
-  });
 
-  it('A45: no answer merges nothing — time alone never joins two groups', async () => {
-    const { prisma } = makePrisma();
-    const h = await withOpenSameWorkQuestion(prisma);
-    await h.useCase.execute(answer('ขอบคุณค่ะ'));
-    assert.equal(h.captureState.moves.length, 0);
-    assert.equal(h.captureState.closes.length, 0);
-  });
 
   it('§17.5: with no attempt at all, the answer names the way back in — never a cause', async () => {
     const { prisma } = makePrisma();
@@ -5353,7 +5369,9 @@ describe('LINE capture answers and §17.5 status questions', () => {
     try { await h.useCase.executeReceiptUpload(FILE_EVENT); } finally { restore(); }
     await h.useCase.execute({ ...answer('บันทึกไปหรือยัง'), webhookEventId: 'evt-status-stored' });
     assert.match(h.replies.at(-1) ?? '', /เก็บไฟล์ invoice-aug\.pdf ไว้แล้วค่ะ/);
-    assert.match(h.replies.at(-1) ?? '', /capture\/group-1/);
+    // Appendix §25: the recovery is the EXPENSE the file became, never a group page.
+    assert.match(h.replies.at(-1) ?? '', /expenses\/expense-1/);
+    assert.ok(!/expenses\/capture/.test(h.replies.at(-1) ?? ''));
   });
 
   it('§17.5: several candidates ask which file, numbered, instead of guessing the latest', async () => {

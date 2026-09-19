@@ -52,7 +52,16 @@ export class InitReceiptUploadUseCase {
       note?: string;
       captureSource?: 'WEB_UPLOAD' | 'LINE_UPLOAD';
       /** Internal LINE identity; never populated from the public upload DTO. */
-      lineCapture?: { lineMessageId: string; lineEventId: string; chatKeyHash: string };
+      lineCapture?: {
+        lineMessageId: string; lineEventId: string; chatKeyHash: string;
+        /**
+         * Appendix §25: the chat this file arrived in, so a finished read can be pushed back INTO
+         * it. `chatKeyHash` is a hash and can only ever CONFIRM a destination, never produce one —
+         * the group table used to carry this in `linePushTargetId` and the expense lane needs the
+         * same guarantee for a group chat.
+         */
+        pushTargetId?: string;
+      };
     },
   ): Promise<InitReceiptUploadResult> {
     if (!ctx.permissions.includes('expense.receipt.upload') && !ctx.permissions.includes('expense.receipt.line_upload') && !ctx.permissions.includes('expense.create')) {
@@ -91,6 +100,7 @@ export class InitReceiptUploadUseCase {
       ...(cmd.lineCapture ? {
         lineMessageId: cmd.lineCapture.lineMessageId, lineEventId: cmd.lineCapture.lineEventId,
         sourceChannelMetadataJson: { channel: 'LINE', kind: 'media', chatKeyHash: cmd.lineCapture.chatKeyHash, receiptCapturePending: true,
+          ...(cmd.lineCapture.pushTargetId ? { pushTargetId: cmd.lineCapture.pushTargetId } : {}),
           receiptUpload: { originalFileName: cmd.originalFileName, mimeType: cmd.mimeType, byteSize: cmd.byteSize } },
       } : {}),
       // Date-only after shared validation/coercion. An instant from the LINE path must never put a

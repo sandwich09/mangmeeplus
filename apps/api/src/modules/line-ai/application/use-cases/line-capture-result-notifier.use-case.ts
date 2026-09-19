@@ -18,6 +18,7 @@ import {
   classifyNonReceiptCase,
   formatCaptureAutoHandoffReply,
   formatCaptureReadFinishedReply,
+  formatCaptureSplitReply,
   NON_RECEIPT_PERSISTING_CASES,
   nonReceiptReply,
   type LineNonReceiptCase,
@@ -96,8 +97,12 @@ export class LineCaptureResultNotifierUseCase {
     companyId: string | undefined,
     payload: Record<string, unknown>,
   ): Promise<'pushed' | 'skipped'> {
+    if (!companyId) return 'skipped';
+    // Appendix §25: both lanes queue `ownerType EXPENSE` jobs now, so this is the live path. The
+    // group path below still serves rows that were queued before 2026-09-19.
+    if (readString(payload, 'ownerType') === 'EXPENSE') return this.notifyExpense(companyId, payload);
     const groupId = readString(payload, 'groupId');
-    if (!companyId || !groupId) return 'skipped';
+    if (!groupId) return 'skipped';
     const snapshot = await this.captureLine.readFinishedSnapshot(companyId, groupId);
     // LINE-only: a WEB group's result belongs to the page the customer is already looking at.
     if (!snapshot || snapshot.group.intakeChannel !== 'LINE') return 'skipped';
@@ -110,7 +115,9 @@ export class LineCaptureResultNotifierUseCase {
       return 'skipped';
     }
 
-    const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/capture/${groupId}`);
+    // Appendix §25: the group page is withdrawn, so a legacy group's result points at the expense
+    // list. New rows never reach here — both lanes queue `ownerType EXPENSE` jobs.
+    const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`);
     const composed = this.composeReply(snapshot, payload, link);
     if (!composed) return 'skipped';
     let { text } = composed;
@@ -152,6 +159,166 @@ export class LineCaptureResultNotifierUseCase {
     );
     if (delivery !== 'ok') return 'skipped';
     return 'pushed';
+  }
+
+  /**
+   * The LINE document lane (appendix §25): the file is already an expense draft, so the push is
+   * about a RECORD — today's receipt summary when one document was read, the split list when the
+   * file held several, and the §17.6 sentences with the expense link when the read did not finish.
+   *
+   * It creates nothing and mutates nothing except an NR07 draft, which it deletes because a
+   * confirmed non-business image may not leave a record behind (§18.4).
+   */
+  private async notifyExpense(
+    companyId: string,
+    payload: Record<string, unknown>,
+  ): Promise<'pushed' | 'skipped'> {
+    const expenseId = readString(payload, 'expenseId');
+    if (!expenseId) return 'skipped';
+    const snapshot = await this.captureLine.readFinishedExpenseSnapshot(companyId, expenseId);
+    // LINE-only: a WEB upload's result belongs to the page the customer is already looking at.
+    if (!snapshot || snapshot.expense.captureSource !== 'LINE_UPLOAD') return 'skipped';
+
+    const access = await this.resolveRecipient(companyId, {
+      createdByUserId: snapshot.expense.createdByUserId,
+      lineChatKeyHash: snapshot.expense.lineChatKeyHash,
+      linePushTargetId: snapshot.expense.linePushTargetId,
+    });
+    const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
+    if (!access) {
+      await this.recordExpenseDelivery(companyId, expenseId, snapshot.jobs, false);
+      return 'skipped';
+    }
+
+    const composed = this.composeExpenseReply(companyId, snapshot, payload, link);
+    if (!composed) return 'skipped';
+    // §18.4 NR07: a confirmed non-business image is evidence of nothing, and the draft this lane
+    // created at intake carries no money yet — so it is removed rather than left as a phantom row.
+    if (composed.nr === 'NR07') {
+      await this.deleteEmptyDraft(companyId, expenseId).catch(() => undefined);
+    }
+
+    const message = {
+      ...this.lineReply.buildTextMessage(composed.text),
+      quickReply: buildStaffCompletionQuickReply({
+        permissions: access.permissions,
+        entitledFeatureKeys: access.entitledFeatureKeys,
+        isOwner: access.roles.includes('OWNER'),
+      }),
+    };
+    const outgoing = this.handoffLinks
+      ? await this.handoffLinks.wrapOutgoingLineContent(
+        { userId: snapshot.expense.createdByUserId, companyId, lineUserId: access.lineUserId, surface: 'line_capture_result' },
+        [message],
+      )
+      : [message];
+    const delivery = await this.lineReply.sendPush(access.pushTargetId, outgoing, `capture:${expenseId}`)
+      .catch(() => 'failed_other' as const);
+    await this.recordExpenseDelivery(companyId, expenseId, snapshot.jobs, delivery === 'ok');
+    return delivery === 'ok' ? 'pushed' : 'skipped';
+  }
+
+  /** §3 / §17.6 / §18.4 / §25, for the expense lane. */
+  private composeExpenseReply(
+    companyId: string,
+    snapshot: NonNullable<Awaited<ReturnType<ExpenseCaptureLineUseCase['readFinishedExpenseSnapshot']>>>,
+    payload: Record<string, unknown>,
+    link: string,
+  ): { text: string; nr: LineNonReceiptCase | null } | null {
+    const status = readString(payload, 'status') ?? snapshot.jobs[0]?.status ?? null;
+    if (!status) return null;
+    if (status === 'FAILED') return { text: CAPTURE_READ_FAILED_REPLY(link), nr: null };
+    if (status === 'PARTIAL') return { text: CAPTURE_READ_PARTIAL_REPLY(link), nr: null };
+    if (status === 'PAUSED') {
+      const paused = snapshot.jobs.find((job) => job.status === 'PAUSED')?.pausedReason
+        ?? readString(payload, 'pausedReason') ?? null;
+      return { text: CAPTURE_READ_PAUSED_REPLY(link, paused), nr: null };
+    }
+    if (status !== 'DONE') return null;
+
+    // §18.4: a classification the reader is SURE about gets its own sentence — the read succeeded,
+    // so NR09's failure copy would be a lie. The draft exists, so the copy says so (`capturedDraft`).
+    const classification = readClassification(payload);
+    const nr = classification ? classifyNonReceiptCase(classification) : null;
+    if (nr && nr !== 'NR06') {
+      return {
+        nr,
+        text: nonReceiptReply(nr, {
+          classification,
+          ...(readString(payload, 'documentTotal') ? { amountLabel: readString(payload, 'documentTotal')! } : {}),
+          ...(NON_RECEIPT_PERSISTING_CASES.includes(nr) ? { captureLink: link, capturedDraft: true } : {}),
+        }),
+      };
+    }
+
+    // §25: several documents in one file are already several drafts. Name the count and link them
+    // all — the first is the record this push is about, the rest are what the split created.
+    const splitIds = readStringArray(payload, 'splitExpenseIds');
+    if (splitIds.length > 0) {
+      return {
+        nr: null,
+        text: formatCaptureSplitReply({
+          documentCount: readNumber(payload, 'documentCount') ?? splitIds.length + 1,
+          links: [link, ...splitIds.map((id) => absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${id}`))],
+        }),
+      };
+    }
+    // One document: the receipt card a LINE photo prints today, read off the draft itself.
+    return {
+      nr: null,
+      text: formatCaptureAutoHandoffReply({
+        link,
+        vendorName: snapshot.expense.vendorNameSnapshot,
+        amount: snapshot.expense.grandTotalAmount,
+        currency: snapshot.expense.currency,
+        documentTypeLabel: snapshot.expense.sourceDocumentType
+          ? SOURCE_DOCUMENT_TYPE_LABELS[snapshot.expense.sourceDocumentType as keyof typeof SOURCE_DOCUMENT_TYPE_LABELS] ?? null : null,
+        expenseDate: snapshot.expense.expenseDate,
+      }),
+    };
+  }
+
+  /**
+   * §18.4 NR07: remove the draft this lane created at intake. Guarded on everything that would make
+   * it more than an empty draft — a zero-total DRAFT/NEEDS_REVIEW row with no payment and no
+   * posting. Anything else is left alone and the customer keeps the record.
+   */
+  private async deleteEmptyDraft(companyId: string, expenseId: string): Promise<void> {
+    await this.prisma.client.expenseRecord.deleteMany({
+      where: {
+        companyId, id: expenseId, status: { in: ['DRAFT', 'NEEDS_REVIEW'] },
+        grandTotalAmount: 0, paidAmount: 0, postingStatus: 'not_required',
+        sourceReimbursementRequestId: null,
+      },
+    });
+  }
+
+  /** §17.5 needs the DELIVERY outcome separately from the read outcome (UXE-25). */
+  private async recordExpenseDelivery(
+    companyId: string,
+    expenseId: string,
+    jobs: ReadonlyArray<{ status: string }>,
+    delivered: boolean,
+  ): Promise<void> {
+    const statuses = jobs.map((job) => job.status);
+    const outcome = statuses.includes('FAILED') ? 'STORED_READ_FAILED' as const
+      : statuses.includes('PARTIAL') || statuses.includes('PAUSED') ? 'STORED_READ_PARTIAL' as const
+      : statuses.length > 0 && statuses.every((value) => value === 'DONE') ? 'STORED_READ_DONE' as const
+      : 'STORED' as const;
+    try {
+      const rows = await this.prisma.client.lineIntakeAttempt.findMany({
+        where: { companyId, targetType: 'expense', targetId: expenseId },
+        orderBy: { createdAt: 'desc' }, take: 3, select: { id: true },
+      });
+      for (const row of rows) {
+        await this.captureRepo.updateLineIntakeAttemptOutcome({
+          id: row.id, outcome, stage: 'READ',
+          reasonCode: delivered ? 'result_delivered' : 'LINE_DELIVERY_FAILED',
+        });
+      }
+    } catch (error) {
+      this.logger.warn({ msg: 'line.capture_result.attempt_not_updated', expenseId, errorCode: (error as Error)?.message?.slice(0, 120) });
+    }
   }
 
   /**
@@ -343,6 +510,11 @@ function readString(payload: Record<string, unknown>, key: string): string | und
     if (typeof nested === 'string' && nested.trim()) return nested.trim();
   }
   return undefined;
+}
+
+function readStringArray(payload: Record<string, unknown>, key: string): string[] {
+  const direct = payload[key] ?? (payload['data'] as Record<string, unknown> | undefined)?.[key];
+  return Array.isArray(direct) ? direct.filter((value): value is string => typeof value === 'string' && value.length > 0) : [];
 }
 
 function readNumber(payload: Record<string, unknown>, key: string): number | undefined {

@@ -336,7 +336,7 @@ describe('capture group creation and reading', () => {
     const app = build();
     const result = await app.create.execute(ctx(), { note: '  ซื้อของร้านค้า  ' });
     assert.equal(result.revision, 1);
-    assert.equal(result.webPath, `/companies/co-1/expenses/capture/${result.groupId}`);
+    assert.equal(result.webPath, `/companies/co-1/expenses`, "appendix §25: the group page is withdrawn");
     const group = app.capture.groups.get(result.groupId);
     assert.equal(group.status, 'OPEN');
     assert.equal(group.note, 'ซื้อของร้านค้า');

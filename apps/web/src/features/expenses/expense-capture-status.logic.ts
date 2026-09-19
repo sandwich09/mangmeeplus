@@ -21,8 +21,17 @@ export type ExpenseReadStatusFile = {
   pageCount: number | null;
   pausedReason: ExpenseCapturePausedReason | null;
   lastErrorCode: string | null;
-  /** Expense lane: the assembly found more than one document, so the read was NOT applied (§3.1). */
+  /** Expense lane: the assembly found more than one document in this one file (appendix §25). */
   multiDocument?: boolean;
+  /** How many documents the assembly found, so the notice can say "พบเอกสาร N ใบ". */
+  documentCount?: number;
+  /**
+   * Appendix §25: the engine already split the extra documents into their OWN ordinary drafts, and
+   * these are their ids, in document order from the SECOND document on. Present whenever a DONE job
+   * reports `multiDocument` — the split runs inside the job, before its terminal write, so the page
+   * never has to show a "split pending" state.
+   */
+  splitExpenseIds?: string[];
   /** Expense lane: the read really was written onto the draft the page is showing. */
   applied?: boolean;
 };
