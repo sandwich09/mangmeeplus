@@ -64,6 +64,12 @@ const has = (name: string): boolean => process.argv.includes(`--${name}`);
 
 const OPTS = {
   only: (flag('only') ?? '').split(',').map((value) => value.trim()).filter(Boolean),
+  /**
+   * Real files instead of the synthetic fixtures: `--files a.pdf,b.jpg`. No expectation, so no score —
+   * the record carries what the reader assembled (documents, issuers, totals) for a person to judge.
+   * Same preprocessing, same gateway routes, same spend guard and ledger as a fixture run.
+   */
+  files: (flag('files') ?? '').split(',').map((value) => value.trim()).filter(Boolean),
   maxThb: Number(flag('max-thb') ?? '100'),
   thbPerUsd: Number(flag('thb-per-usd') ?? '33'),
   out: resolve(flag('out') ?? '.capture-read-out'),
@@ -213,15 +219,47 @@ type FixtureRecord = {
   /** The assembled facts themselves. Synthetic input, so this is auditable without any privacy
    *  question — and a score with no facts behind it is not evidence. */
   assembled: ExpenseCaptureAssembledObservations;
+  /** `--files` only: what the read route transcribed per page, so a missed total can be traced to
+   *  the transcription or to the extraction. Never persisted for a synthetic fixture (no need). */
+  pageText?: Record<string, string>;
 };
 
 const thb = (value: number): string => (value / 100).toFixed(2);
 
-async function runFixture(controller: LineAiInternalController, spec: FixtureSpec, runId: string): Promise<FixtureRecord> {
+/** A real file on disk (`--files`): its bytes and mime are what a customer would have sent. */
+type ExternalSpec = { id: string; proves: string; external: { path: string; mimeType: string } };
+type RunSpec = FixtureSpec | ExternalSpec;
+const isExternal = (spec: RunSpec): spec is ExternalSpec => 'external' in spec;
+
+function externalSpecs(paths: string[]): ExternalSpec[] {
+  const mimeByExtension: Record<string, string> = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' };
+  return paths.map((path) => {
+    const extension = path.toLowerCase().split('.').pop() ?? '';
+    const mimeType = mimeByExtension[extension];
+    if (!mimeType) throw new Error(`--files: unsupported extension on ${path} (pdf, jpg, jpeg, png)`);
+    if (!existsSync(path)) throw new Error(`--files: ${path} does not exist`);
+    const id = path.split('/').pop()!.replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9_-]+/g, '-').slice(0, 40);
+    return { id, proves: `external: ${path.split('/').pop()}`, external: { path: resolve(path), mimeType } };
+  });
+}
+
+/** What a real file yielded, for the console and the report: no score, only the assembled facts. */
+function factsLine(assembled: ExpenseCaptureAssembledObservations): string {
+  const docs = assembled.documents.map((document) => {
+    const total = assembled.totals.find((row) => row.documentRef === document.ref && row.kind === 'document_total')?.amount ?? '?';
+    const items = assembled.items.filter((row) => row.documentRef === document.ref).length;
+    return `${document.kind}${document.issuer?.name ? ` «${document.issuer.name}»` : ''}${document.documentNumber ? ` #${document.documentNumber}` : ''}${document.documentDate ? ` ${document.documentDate}` : ''} total=${total} items=${items}`;
+  });
+  const diffs = assembled.reconciliation.filter((row) => row.status !== 'ok').length;
+  return `docs=${assembled.documents.length}${assembled.multiDocument ? ' (multi)' : ''} [${docs.join(' | ')}] reconciliationIssues=${diffs}`;
+}
+
+async function runFixture(controller: LineAiInternalController, spec: RunSpec, runId: string): Promise<FixtureRecord> {
   const startedAt = Date.now();
   const errors: string[] = [];
-  const bytes = await buildFixture(spec);
-  const plan = await planCapturePreprocessing(bytes, 'application/pdf', { maxPages: MAX_PAGES });
+  const bytes = isExternal(spec) ? readFileSync(spec.external.path) : await buildFixture(spec);
+  const mimeType = isExternal(spec) ? spec.external.mimeType : 'application/pdf';
+  const plan = await planCapturePreprocessing(bytes, mimeType, { maxPages: MAX_PAGES });
   if (plan.failure) errors.push(`preprocess:${plan.failure}`);
 
   const pages: Record<string, { text: string; truncated?: boolean; blank?: boolean }> = {};
@@ -281,9 +319,10 @@ async function runFixture(controller: LineAiInternalController, spec: FixtureSpe
     costSatang, costThb: thb(costSatang),
     wallMs: Date.now() - startedAt,
     blankPages, failedChunks,
-    score: Object.keys(windowObservations).length > 0 ? scoreFixture(expectationOf(spec), assembled) : null,
+    score: !isExternal(spec) && Object.keys(windowObservations).length > 0 ? scoreFixture(expectationOf(spec), assembled) : null,
     errors,
     assembled,
+    ...(isExternal(spec) ? { pageText: Object.fromEntries(Object.entries(pages).map(([index, page]) => [index, page.text])) } : {}),
   };
 }
 
@@ -320,14 +359,15 @@ function markdown(records: FixtureRecord[]): string {
       + `| ${score ? `${score.itemsFound}/${score.itemsExpected}` : '-'} `
       + `| ${score ? `${score.totalsMatched}/${score.totalsExpected}` : '-'} `
       + `| ${score ? `${score.suspectedMissingPages} (want ${score.suspectedMissingPagesExpected})` : '-'} `
-      + `| ${(record.wallMs / 1000).toFixed(1)}s |`;
+      + `| ${(record.wallMs / 1000).toFixed(1)}s |`
+      + (record.proves.startsWith('external:') ? `\n| | ${factsLine(record.assembled).replace(/\|/g, '/')} | | | | | | | | | | | | |` : '');
   });
   return `${[header, '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|', ...rows].join('\n')}\n`;
 }
 
 async function main(): Promise<void> {
   mkdirSync(OPTS.out, { recursive: true });
-  const specs = fixtureSpecs().filter((spec) => {
+  const specs: RunSpec[] = OPTS.files.length > 0 ? externalSpecs(OPTS.files) : fixtureSpecs().filter((spec) => {
     if (OPTS.smoke) return spec.id === 'FX-PDF-02';
     return OPTS.only.length === 0 || OPTS.only.includes(spec.id);
   });
@@ -335,13 +375,13 @@ async function main(): Promise<void> {
 
   if (OPTS.dryRun) {
     for (const spec of specs) {
-      const bytes = await buildFixture(spec);
-      const plan = await planCapturePreprocessing(bytes, 'application/pdf', { maxPages: MAX_PAGES });
-      writeFileSync(join(OPTS.out, `${spec.id}.pdf`), bytes);
+      const bytes = isExternal(spec) ? readFileSync(spec.external.path) : await buildFixture(spec);
+      const plan = await planCapturePreprocessing(bytes, isExternal(spec) ? spec.external.mimeType : 'application/pdf', { maxPages: MAX_PAGES });
+      if (!isExternal(spec)) writeFileSync(join(OPTS.out, `${spec.id}.pdf`), bytes);
       console.log(JSON.stringify({
         id: spec.id, bytes: bytes.byteLength, pageCount: plan.pageCount, failure: plan.failure ?? null,
         chunks: plan.chunks.map((chunk) => ({ id: chunk.id, kind: chunk.kind, pages: chunk.pageIndexes, bytes: chunk.byteLength })),
-        expect: expectationOf(spec),
+        expect: isExternal(spec) ? null : expectationOf(spec),
       }));
     }
     return;
@@ -387,6 +427,7 @@ async function main(): Promise<void> {
       + `totals=${score ? `${score.totalsMatched}/${score.totalsExpected}` : '-'} `
       + `${(record.wallMs / 1000).toFixed(1)}s cumulative=THB ${thb(priorSatang + spentSatang)}`
       + (record.errors.length ? ` errors=${record.errors.join(',')}` : ''));
+    if (isExternal(spec)) console.log(`  ${factsLine(record.assembled)}`);
   }
 
   appendLedger(runId, spentSatang, records.reduce((sum, record) => sum + record.providerCalls, 0));

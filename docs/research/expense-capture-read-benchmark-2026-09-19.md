@@ -156,3 +156,58 @@ THB 0.5 per page of native text; the 20-page file cost THB 10.32 and 94 seconds 
 8 provider calls, which is well inside the job's own ceilings (`providerCallCount ≤ 40`,
 15 minutes per job). The five-page 10 MB scan cost THB 2.77 — **less** than the 10-page text file,
 because a scanned page transcribes to far less text than a dense printed one.
+
+## 6. Real public samples — 2026-09-19 (owner request: "ไปหาบิลจริงในอินเตอร์เน็ตมาลอง")
+
+The same reader (`capture-read` → `capture-extract` → assembly), the same profile and region, run
+through `scripts/expense-capture-read-benchmark.ts --files …` (added for this: real files on disk go
+through the same preprocessing, routes, spend guard and ledger; no expectation, so no score — the
+record carries the assembled facts and, for real files, the per-page transcription so a missed total
+can be traced). Every file is a **publicly published** document; none is committed to this repo.
+
+**What is public, and what is not.** Marketplaces do not issue the buyer's tax invoice: Shopee, Lazada
+and TikTok Shop only forward the buyer's details, and the **seller** issues it — with whatever
+e-tax tool it uses (Leceipt, FlowAccount, PEAK, the RD's e-Tax by Email). So "a Lazada bill" is one of
+those templates. Retail chains (7-Eleven, Lotus's, Big C, Makro, CJ) issue their own e-Tax/e-receipt,
+but only to the buyer's account/e-mail; the only public specimens are the samples in help articles
+and the few crops people post on forums. Couriers (Flash, Kerry, ไปรษณีย์) were not found in public
+at all — only chat screenshots. The owner's own documents, on UAT, remain the real test (§5).
+
+| File (source, year) | What it is | Read | Right | Wrong / missing | THB |
+|---|---|---|---|---|---|
+| Leceipt "Lazada" receipt/tax invoice ([docs](https://www.leceipt.com/docs/etax/สร้าง-e-tax-จาก-lazada), 2021, 896×533 screenshot) | seller-issued ใบเสร็จรับเงิน/ใบกำกับภาษี for a Lazada order, demo data | TAX_INVOICE, PAID | issuer + tax id, doc no. `TIV20210500001`, date, the one item 7,000.00 | the totals block (รวมก่อน VAT 6,542.06 / VAT 457.94 / ทั้งสิ้น 7,000.00) was **not transcribed at all** by `capture-read` (text ≈ 8 px high) → no `document_total`, reconciliation `insufficient`; the draft would carry the line but no grand total | 0.99 + 0.77 |
+| Leceipt e-Tax by Email sample ([blog](https://www.leceipt.com/blog/ตัวอย่างใบกำกับภาษี-e-tax-invoice-by-email), 2019, 913×497 screenshot) | RD-format e-Tax invoice, ETDA demo data | TAX_INVOICE | issuer, tax id, doc no. | no items, no totals (screenshot too small) → `insufficient` | 0.70 |
+| FlowAccount ใบกำกับภาษีเต็มรูป ([blog](https://flowaccount.com/blog/tax-invoice-example/), Oct 2025, 1200×1636) | the current full-form template most marketplace sellers use, demo data | TAX_INVOICE, DUE | issuer, doc no. `INV2025020003`, 27/02/2025, item 50 × 250.00 with 5 % line discount = 11,875.00, รวม 12,500, ส่วนลด 625, VAT 776.87, ex-VAT 11,098.13, **ทั้งสิ้น 11,875.00** | reconciliation `mismatch −625`: the line amount is already net of its 5 % discount and the summary prints the same 625 as a document-level discount, so §4.4's `Σ sale − Σ discount` subtracts it twice. Money on the draft stays right (summary line: 12,500 − 625 = 11,875); with ≥ 2 such lines the draft would fall back to a summary line instead of the item breakdown | 1.50 |
+| FlowAccount ใบกำกับภาษีอย่างย่อ (same blog, 2025, 1200×1503) | abbreviated tax invoice (cash sale), demo data | ABBREVIATED_TAX_INVOICE, PAID | doc no. `CA2025020012`, date, item, all totals | same `−625` double count | 1.10 |
+| 7-Eleven ใบเสร็จรับเงิน/ใบกำกับภาษี full form ([CP ALL campaign photo via DroidSans](https://droidsans.com/how-to-get-receipt-from-7-11/), 20/12/2566, photographed at an angle; buyer name/address blurred locally before upload) | a real store-printed full tax invoice | TAX_INVOICE, PAID | บมจ. ซีพี ออลล์, tax id 0107542000011, branch 15888, doc no. `H158886612200001`, date, 5 of 6 items, merchandise 80.00, **ทั้งสิ้น 80.00** | the first item row was under the blur; "สินค้าไม่เสียภาษีมูลค่าเพิ่ม 9.00" (the N-flagged goods) was labelled `applied_discount` → `mismatch −9`; VAT 4.64 came back as `summary`, not `tax`, so the draft's VAT field stays empty for the reviewer | 1.91 |
+| Lotus's e-Tax invoice, lower half ([Pantip crop](https://pantip.com/topic/42497883), 2023, 781×624) | a real e-Tax invoice's item + VAT/non-VAT block, no header | RECEIPT, PAID | 3 items, VAT 9.87, **รวม 178.00**, `reconciled` | no issuer (cropped away) | 0.94 |
+
+Spend: two runs, THB 4.54 + 3.37 = **THB 7.91** (task cumulative THB 67.92 of the THB 100 ceiling,
+ledger rows `capture-read-2026-09-19T07-54-35-232Z`, `…T07-57-05-635Z`).
+
+### 6.1 What this says about the reader (three defects worth fixing, none blocking)
+
+1. **Discount printed twice, subtracted twice.** Thai invoice templates (FlowAccount, PEAK, Leceipt)
+   print a per-line discount column *and* repeat the total discount in the summary. The assembly's
+   §4.4 sum subtracts the summary discount from line amounts that are already net → a spurious
+   `mismatch` of exactly the discount. Fix: when every sale row carries a printed discount (or the
+   summary discount equals Σ line discounts), treat the summary discount as already applied, or
+   reconcile against the gross (`merchandise`) total instead. Add a synthetic fixture with this
+   layout to `expense-capture-read.fixtures.ts`.
+2. **Non-VAT goods mistaken for a discount on the 7-Eleven layout.** The CP ALL full-form invoice
+   lists "สินค้าไม่เสียภาษีมูลค่าเพิ่ม" (N-flagged items) in the summary; the extract prompt returned
+   it as `applied_discount`, and the VAT line as `summary`. Fix: teach `capture-extract` the
+   ก่อนภาษี / ไม่เสียภาษี / ภาษีมูลค่าเพิ่ม / รวมภาษี rows as `tax`/`summary` kinds (7-Eleven, Lotus's,
+   Big C and Makro all print this N/V split), with a fixture.
+3. **Small text is dropped, not flagged.** On the 896-px Lazada screenshot the transcription omitted
+   the whole totals block without marking the page `truncated`. Real PDFs carry a text layer and
+   are unaffected; photos and screenshots below ≈ 1,000 px are. Fix: have `capture-read` report low
+   confidence / partial transcription so the job ends PARTIAL (§17.6 copy) instead of a draft with
+   an item and no total; and the web/LINE guidance should ask for the PDF or a full-size photo.
+
+### 6.2 Not proven here
+
+Shopee-, Lazada- and TikTok-specific layouts beyond the seller templates above; Big C, Makro and CJ
+e-receipts; every courier. Those need the owner's own documents on UAT (D05/D09 bundles) — the
+reader is generic, and these six say it reads issuer, number, date and the grand total correctly on
+every legible document, and that the breakdown rules above are where it still stumbles.
