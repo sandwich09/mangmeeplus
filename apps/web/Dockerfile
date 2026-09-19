@@ -55,7 +55,7 @@ FROM system AS runner
 # dpkg status database nor the package lists the system stage deleted: take the lists again.
 RUN apt-get update -y \
   && apt-get purge -y --allow-remove-essential \
-  util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs \
+  util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs login liblastlog2-2 \
   && apt-get purge -y --allow-remove-essential perl-base \
   && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
