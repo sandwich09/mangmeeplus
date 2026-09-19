@@ -169,7 +169,7 @@ Decisions:
 - D3 threshold `minImageEdgePx = 1,600` — the provider normalises to ~1,568 px on the long edge, so this is the largest upscale that buys pixels rather than tokens. Byte ceiling and the downscale path unchanged; the original is kept when no quality fits.
 - No web/LINE copy change: PARTIAL already routes to the existing §17.6 sentence with no re-read (`line-capture-result-notifier.use-case.spec.ts`, `expense-capture-status.logic.spec.ts`), both suites pass unchanged.
 
-Artifacts (commit `__COMMIT__`):
+Artifacts (commit `8be0592e`):
 - `packages/contracts/src/expense-capture.ts` (+`discountAlreadyInRows`)
 - `apps/api/src/modules/expenses/domain/logic/expense-capture-assembly.logic.ts` (+ spec: 6 new subtests over 2 describes)
 - `apps/api/src/modules/expenses/domain/logic/expense-capture-fields.logic.ts` (+ NEW `expense-capture-fields.logic.spec.ts`, registered in `apps/api/package.json` `test`)
