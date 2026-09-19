@@ -36,6 +36,13 @@ and label-in-name containment using existing translations.
   This is persisted UI reload, not independent API readback. Existing local company
   NOT_REGISTERED/NO_VAT does not decide the separate P27 VAT-unknown policy.
   Original eight images and earlier draft `cmtazlakn001sq6k1ladnx7yz` remain untouched.
+- 2026-09-19 regression fix on `codex/retry-tap-targets-20260919`: both scope retries
+  (`BranchSelector` + `CompanySwitcher` in `WorkspaceScope.tsx`) again meet the 44px touch
+  target. The `flex-1` this slice added set `flex-basis: 0%` on the block axis once the header
+  stacked the scope controls in a column below `sm`, which outranks `h-11` and collapsed each
+  button to its 20px line box. Swapped to `min-h-11`, the pattern the option rows already use.
+  Proven by `e2e/responsive.spec.ts` P24-2b (the mocked-503, forced-colors and mocked-403
+  retry cases at 360/390px on `chromium` + `mobile-chromium`).
 
 ## Decisions
 
