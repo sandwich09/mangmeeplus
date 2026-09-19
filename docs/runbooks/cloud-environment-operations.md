@@ -675,6 +675,7 @@ CVE-2026-75803) fix แล้วใน trixie `openssl 3.5.7-1~deb13u2` แล�
 ส่วน CVE-2026-85091 (zlib) ยังไม่มี fix ใน suite ไหน ต้องคงแถวไว้ — แต่ `zlib1g` ขยับจาก
 `1.2.13.dfsg-1` เป็น `1.3.dfsg+really1.3.1` แล้ว จึงต้องเช็คด้วยว่า finding ยังรายงานเวอร์ชันเดิมอยู่ไหม
 (ถ้าเวอร์ชันขยับ แถว waiver จะหยุดแมตช์และกลับไปบล็อกทันที)
+ผล A/B เต็ม (unit/integration 13,689 เท่ากันทั้งสอง OS, e2e ทั้งชุด, web image ผ่าน login จริง) อยู่ใน `docs/qa/evidence/base-image-trixie-ab-verification-2026-09-19.md` และผลรอบเปิด flag ทุกตัวอยู่ใน `docs/qa/evidence/base-image-trixie-ab-flags-on-2026-09-19.md`
 
 Trivy `--scanners vuln --severity CRITICAL,HIGH` บน image ที่ build จาก `Dockerfile.api-web`
 (bookworm = tag ที่ build ไว้ก่อนหน้า `1406d382`, trixie ก่อนปิด login = `25591949`,
