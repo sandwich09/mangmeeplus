@@ -317,7 +317,9 @@ export class PrismaReimbursementRepository {
     const tx = this.prisma.client as any;
     const certificates = await tx.expenseSubstituteReceiptEvidence.findMany({ where: { companyId, branchId, payerUserId: requesterUserId }, select: { expenseId: true } });
     const rows = await tx.expenseRecord.findMany({
-      where: { companyId, branchId, sourceReimbursementRequestId: null, ...(expenseId ? { id: expenseId } : {}), OR: [{ createdByUserId: requesterUserId }, { id: { in: certificates.map((row: any) => row.expenseId) } }],
+      // `payerUserId` joins the picker's OR (capture appendix §5): an expense somebody else
+      // uploaded but the server knows THIS requester paid is claimable by them.
+      where: { companyId, branchId, sourceReimbursementRequestId: null, ...(expenseId ? { id: expenseId } : {}), OR: [{ createdByUserId: requesterUserId }, { payerUserId: requesterUserId }, { id: { in: certificates.map((row: any) => row.expenseId) } }],
         ...(search ? { AND: [{ OR: [{ vendorNameSnapshot: { contains: search, mode: 'insensitive' } }, { vendorDocumentNumber: { contains: search, mode: 'insensitive' } }, { note: { contains: search, mode: 'insensitive' } }] }] } : {}),
       }, include: { lines: { orderBy: { lineNumber: 'asc' } }, expenseCategory: true }, orderBy: [{ expenseDate: 'desc' }, { id: 'desc' }], take: 50,
     });

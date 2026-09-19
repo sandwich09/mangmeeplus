@@ -20,6 +20,8 @@ import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/a
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import { expenseTotalsIdentity } from '../domain/logic/expense-totals.logic';
+import { expenseCaptureWebPath } from '../domain/logic/expense-capture.logic';
+import { captureGroupRef } from '../domain/logic/expense-export.logic';
 import type {
   ExpenseRecord, ExpenseRecordWithRelations, ExpensePaymentRecord, CreateExpenseRecordInput,
   UpdateExpenseRecordInput, ExpenseLineInput, PaginatedExpenses, SignatureAssetRecord, SubstituteReceiptEvidenceRecord,
@@ -148,6 +150,48 @@ function mapExpense(r: any): ExpenseRecord {
     dateStatus: expenseDocumentDateStatus(r.aiVerificationSummaryJson),
     vatCaptureSnapshotJson: r.vatCaptureSnapshotJson ?? null,
     whtInputJson: r.whtInputJson ?? null,
+  };
+}
+
+/**
+ * Appendix §5/A39: where a derived source came from. The amounts are the reviewed allocation's,
+ * copied into `aiVerificationSummaryJson` at handoff, so the detail page can say "810 บาท จากยอดที่
+ * จ่ายจริง 1,290 บาท" without reading the capture aggregate — and null on every other expense.
+ */
+function captureLineage(expense: ExpenseRecord): import('@watchdog-bms/contracts').ExpenseCaptureLineage | null {
+  if (!expense.captureGroupId) return null;
+  const summary = (expense.aiVerificationSummaryJson ?? {}) as Record<string, unknown>;
+  const money = (key: string): string | null => (typeof summary[key] === 'string' ? summary[key] as string : null);
+  return {
+    groupId: expense.captureGroupId,
+    scopeKey: expense.captureScopeKey ?? null,
+    allocationId: expense.captureAllocationId ?? null,
+    webPath: expenseCaptureWebPath(expense.companyId, expense.captureGroupId),
+    paidTotal: money('paidTotal'),
+    companyAmount: money('companyAmount'),
+    personalAmount: money('personalAmount'),
+  };
+}
+
+/** W06/D04: the allocation block the certificate snapshot prints, or null when there is nothing to
+ *  state — an ordinary expense, an auto-handoff source (§3.2, no allocation) or a pre-W05 row. */
+export function captureAllocationSnapshot(
+  expense: ExpenseRecord,
+  allocation: { groupRevision: number; policyVersion: string } | null,
+): import('../domain/logic/substitute-receipt.logic').SubstituteReceiptCaptureAllocation | null {
+  const lineage = captureLineage(expense);
+  if (!lineage?.allocationId || !expense.captureScopeKey || !allocation) return null;
+  if (lineage.paidTotal === null || lineage.companyAmount === null) return null;
+  return {
+    groupId: lineage.groupId,
+    groupRef: captureGroupRef(lineage.groupId),
+    allocationId: lineage.allocationId,
+    allocationRevision: allocation.groupRevision,
+    scopeKey: expense.captureScopeKey,
+    paidTotal: lineage.paidTotal,
+    companyAmount: lineage.companyAmount,
+    personalAmount: lineage.personalAmount ?? '0.00',
+    policyVersion: allocation.policyVersion,
   };
 }
 
@@ -495,7 +539,13 @@ export class PrismaExpenseRepository {
     return resolveTransactionBranchId(this.prisma.client, companyId, scopes, selectedBranchId);
   }
 
-  async createExpense(input: CreateExpenseRecordInput, withinTx?: (tx: Prisma.TransactionClient, expense: ExpenseRecord) => Promise<void>): Promise<ExpenseRecord> {
+  /**
+   * `db` lets a caller that already holds a transaction — and the locks that go with it — create
+   * the record inside it. The capture handoff needs that: its derived sources, their receipt links
+   * and the group's own state are one atomic batch under the §2.4 lock order, and a nested
+   * `$transaction` here would put the INSERT outside it.
+   */
+  async createExpense(input: CreateExpenseRecordInput, withinTx?: (tx: Prisma.TransactionClient, expense: ExpenseRecord) => Promise<void>, db?: Prisma.TransactionClient): Promise<ExpenseRecord> {
     const create = async (tx: Prisma.TransactionClient): Promise<ExpenseRecord> => {
       if (input.draftIdempotencyKey) {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.draftIdempotencyKey}:expense-create`}))`;
@@ -520,6 +570,17 @@ export class PrismaExpenseRepository {
           draftIdempotencyKey: input.draftIdempotencyKey,
           draftPayloadHash: input.draftPayloadHash,
           captureSource: input.captureSource as any,
+          // Capture handoff (§5): every one of these is derived by the server from a reviewed
+          // allocation, and each is left to its column default on every other create path.
+          ...(input.status ? { status: input.status as any } : {}),
+          ...(input.aiVerificationStatus ? { aiVerificationStatus: input.aiVerificationStatus as any } : {}),
+          ...(input.vendorTaxIdSnapshot ? { vendorTaxIdSnapshot: input.vendorTaxIdSnapshot } : {}),
+          ...(input.vendorBranchCodeSnapshot ? { vendorBranchCodeSnapshot: input.vendorBranchCodeSnapshot } : {}),
+          ...(input.vendorDocumentNumber ? { vendorDocumentNumber: input.vendorDocumentNumber } : {}),
+          ...(input.captureGroupId ? { captureGroupId: input.captureGroupId } : {}),
+          ...(input.captureAllocationId ? { captureAllocationId: input.captureAllocationId } : {}),
+          ...(input.captureScopeKey ? { captureScopeKey: input.captureScopeKey } : {}),
+          ...(input.payerUserId ? { payerUserId: input.payerUserId } : {}),
           expenseDate: new Date(input.expenseDate),
           currency: input.currency ?? 'THB',
           vatMode: input.vatMode as any,
@@ -558,6 +619,7 @@ export class PrismaExpenseRepository {
       }
       return mapExpense(r);
     };
+    if (db) return create(db);
     return input.draftIdempotencyKey || withinTx || input.assignExpenseNumber ? this.prisma.client.$transaction(create) : create(this.prisma.client);
   }
 
@@ -580,6 +642,8 @@ export class PrismaExpenseRepository {
     checksumSha256: string,
     db: ExpenseDb = this.prisma.client,
     scopes: { branchIds?: string[] } = {},
+    /** Derived sources of THIS capture group share the file by design (§5) — never a duplicate. */
+    excludeCaptureGroupId?: string | null,
   ): Promise<string[]> {
     const attachments = await db.attachmentObject.findMany({
       where: { companyId, checksumSha256, status: 'ACTIVE' as any },
@@ -602,6 +666,7 @@ export class PrismaExpenseRepository {
         companyId,
         id: { in: links.map((link) => link.targetId) },
         status: { not: 'VOIDED' as any },
+        ...(excludeCaptureGroupId ? { NOT: { captureGroupId: excludeCaptureGroupId } } : {}),
         ...branchScopeWhere(scopes),
       },
       select: { id: true },
@@ -613,7 +678,7 @@ export class PrismaExpenseRepository {
     companyId: string,
     expenseId: string,
     primaryAttachmentId: string | null,
-  ): Promise<{ id: string; bucket: string; objectKey: string; objectVersionId?: string; mimeType: string; byteSize: number } | null> {
+  ): Promise<{ id: string; bucket: string; objectKey: string; objectVersionId?: string; mimeType: string; byteSize: number; checksumSha256?: string } | null> {
     const links = await this.prisma.client.attachmentLink.findMany({
       where: {
         companyId,
@@ -634,6 +699,9 @@ export class PrismaExpenseRepository {
       objectVersionId: attachment.objectVersionId ?? undefined,
       mimeType: attachment.mimeType,
       byteSize: Number(attachment.byteSize),
+      // The capture read job fences on the ORIGINAL bytes; without the checksum a replaced file
+      // would be read under the old job's identity.
+      ...(attachment.checksumSha256 ? { checksumSha256: attachment.checksumSha256 } : {}),
     };
   }
 
@@ -744,6 +812,7 @@ export class PrismaExpenseRepository {
       duplicateCandidates,
       substituteReceiptEvidence: substituteRow ? toSubstituteEvidenceSummary(mapSubstituteEvidence(substituteRow)) : null,
       payments,
+      captureGroup: captureLineage(base),
     };
   }
 
@@ -1188,6 +1257,48 @@ export class PrismaExpenseRepository {
       ? await this.prisma.client.branch.findFirst({ where: { id: branchId, companyId }, select: { name: true } })
       : null;
     return { name: company.registeredName?.trim() || company.name, nameSource: company.registeredName?.trim() ? 'REGISTERED' : 'DISPLAY_NAME', taxId: company.taxId, branchName: branch?.name ?? null };
+  }
+
+  /**
+   * W06 §12/§14.3: the two capture reads a certificate needs, and nothing else. `allocation` is
+   * what the printed share statement is revision-stamped with; `group`/`observations` are what the
+   * gate judges (reserved allocation, paid document, no mismatch). Both are null-safe for the
+   * ordinary expenses that make up almost every certificate.
+   */
+  async findCaptureCertificateContext(companyId: string, expense: ExpenseRecord): Promise<{
+    group: { handoffState: string; acceptedAllocationId: string | null; fundingRoute: string };
+    allocation: { groupRevision: number; policyVersion: string; fundingRoute: string } | null;
+    observations: import('../domain/logic/expense-capture-facts.logic').CaptureObservationRow[];
+  } | null> {
+    if (!expense.captureGroupId) return null;
+    const [group, allocation, observations] = await Promise.all([
+      this.prisma.client.expenseCaptureGroup.findFirst({
+        where: { companyId, id: expense.captureGroupId },
+        select: { handoffState: true, acceptedAllocationId: true, fundingRoute: true },
+      }),
+      expense.captureAllocationId
+        ? this.prisma.client.expenseCaptureAllocation.findFirst({
+          where: { companyId, id: expense.captureAllocationId },
+          select: { groupRevision: true, policyVersion: true, fundingRoute: true },
+        })
+        : Promise.resolve(null),
+      this.prisma.client.expenseCaptureObservation.findMany({
+        where: { companyId, groupId: expense.captureGroupId, stale: false },
+        orderBy: [{ createdAt: 'asc' }],
+        select: { id: true, fileId: true, expenseId: true, version: true, source: true, payloadJson: true },
+      }),
+    ]);
+    return group ? { group, allocation, observations } : null;
+  }
+
+  /** The snapshot block alone: preview, certify and approve rebuild the same document (§12.2). */
+  async findSubstituteCaptureAllocation(companyId: string, expense: ExpenseRecord) {
+    if (!expense.captureAllocationId) return null;
+    const allocation = await this.prisma.client.expenseCaptureAllocation.findFirst({
+      where: { companyId, id: expense.captureAllocationId },
+      select: { groupRevision: true, policyVersion: true },
+    });
+    return captureAllocationSnapshot(expense, allocation);
   }
 
   async findSubstituteEvidenceAttachments(
@@ -2748,7 +2859,7 @@ export class PrismaExpenseRepository {
     since: Date,
     db: ExpenseDb = this.prisma.client,
     scopes: { branchIds?: string[] } = {},
-  ): Promise<Array<{ id: string; checksumSha256: string | null; perceptualHash: string | null; vendorDocumentNumber: string | null; vendorTaxId: string | null; expenseDate: string | null; grandTotalAmount: string; vendorCounterpartyId: string | null; vendorName: string | null }>> {
+  ): Promise<Array<{ id: string; checksumSha256: string | null; perceptualHash: string | null; vendorDocumentNumber: string | null; vendorTaxId: string | null; expenseDate: string | null; grandTotalAmount: string; vendorCounterpartyId: string | null; vendorName: string | null; captureGroupId: string | null }>> {
     const rows = await db.expenseRecord.findMany({
       where: {
         companyId,
@@ -2757,7 +2868,9 @@ export class PrismaExpenseRepository {
         createdAt: { gte: since },
         ...branchScopeWhere(scopes),
       },
-      select: { id: true, primaryAttachmentId: true, vendorDocumentNumber: true, vendorTaxIdSnapshot: true, vendorNameSnapshot: true, expenseDate: true, grandTotalAmount: true, vendorCounterpartyId: true },
+      // `captureGroupId` travels with the fingerprint so the caller can drop a SIBLING of the same
+      // capture group: those expenses share one file on purpose (appendix §5) and are not copies.
+      select: { id: true, primaryAttachmentId: true, vendorDocumentNumber: true, vendorTaxIdSnapshot: true, vendorNameSnapshot: true, expenseDate: true, grandTotalAmount: true, vendorCounterpartyId: true, captureGroupId: true },
       orderBy: { createdAt: 'desc' },
       take: 200,
     });
@@ -2779,6 +2892,7 @@ export class PrismaExpenseRepository {
       grandTotalAmount: r.grandTotalAmount?.toString() ?? '0',
       vendorCounterpartyId: r.vendorCounterpartyId,
       vendorName: r.vendorNameSnapshot,
+      captureGroupId: r.captureGroupId ?? null,
     }));
   }
 

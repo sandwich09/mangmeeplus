@@ -926,7 +926,11 @@ export class ReceiptOcrApplyService {
     ctx: { companyId: string; userId: string; scopes?: { branchIds?: string[] } },
     expenseId: string,
     fields: ReceiptOcrFieldResult,
-    options: { fallbackCategorySuggestion?: ReceiptCategoryFallback; expectedUpdatedAt?: Date; todayIso?: string } = {},
+    options: {
+      fallbackCategorySuggestion?: ReceiptCategoryFallback; expectedUpdatedAt?: Date; todayIso?: string;
+      /** The attachment these fields were read FROM (§16.4); see the `sourceStale` clear below. */
+      sourceAttachmentId?: string;
+    } = {},
   ): Promise<ReceiptOcrApplyOutcome> {
     const completed = completeVatFields(verifyDiscountAmount(fields));
     const lineTotal = receiptFallbackLineTotal(completed);
@@ -975,6 +979,7 @@ export class ReceiptOcrApplyService {
           expenseCategoryId: true,
           reviewedAt: true,
           expenseDate: true, aiVerificationSummaryJson: true,
+          primaryAttachmentId: true,
           vendorEntityKindSnapshot: true,
           grandTotalAmount: true, vatAmount: true, whtAmount: true, netPayableAmount: true, vatMode: true,
           discountAmount: true,
@@ -1001,6 +1006,16 @@ export class ReceiptOcrApplyService {
       }
       if (!currentExpense) throw new NotFoundException(`Expense ${expenseId} not found`);
       const summary = currentExpense.aiVerificationSummaryJson as Record<string, unknown> | null;
+      // §16.4: `sourceStale` means "these values were read from the file that was REPLACED". This
+      // read is of the file the record carries NOW, so the warning it raised has been answered and
+      // must go with the values it was about. The synchronous lane composes a fresh summary and
+      // drops it for free; the durable job lane writes no summary of its own, which is how a
+      // re-read of the new file left the page still saying the numbers came from the old one.
+      if (options.sourceAttachmentId && currentExpense.primaryAttachmentId === options.sourceAttachmentId
+        && summary && ('sourceStale' in summary || 'sourceAttachmentId' in summary)) {
+        const { sourceStale: _stale, sourceAttachmentId: _replaced, ...kept } = summary;
+        data['aiVerificationSummaryJson'] = kept;
+      }
       const resolvedDate = summary?.['dateResolution'] as { expenseDate?: string; resolvedByUserId?: string } | undefined;
       if (resolvedDate?.resolvedByUserId && resolvedDate.expenseDate
         && resolvedDate.expenseDate === currentExpense.expenseDate?.toISOString().slice(0, 10)) {

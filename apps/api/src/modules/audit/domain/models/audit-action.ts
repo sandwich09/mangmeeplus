@@ -67,6 +67,20 @@ export const AuditAction = {
   ACCESS_CRM_CUSTOMER_SELF_ERASURE_REQUEST: 'access.crm_customer.self_erasure.request',
   /** L-11: append-only correction event describing a PDPA field-level redaction of prior audit rows. */
   PDPA_AUDIT_REDACTED: 'pdpa.audit.redacted',
+  // Buyer expense capture (contract appendix §2/§9). Ids and enum values only in metadata —
+  // never a file name, a caption or anything transcribed off a customer's document.
+  EXPENSE_CAPTURE_GROUP_CREATE: 'expense.capture_group.create',
+  EXPENSE_CAPTURE_GROUP_FILE_ADD: 'expense.capture_group.file_add',
+  EXPENSE_CAPTURE_GROUP_FILE_DETACH: 'expense.capture_group.file_detach',
+  EXPENSE_CAPTURE_GROUP_CLOSE: 'expense.capture_group.close',
+  EXPENSE_CAPTURE_GROUP_CONVERT: 'expense.capture_group.convert',
+  EXPENSE_CAPTURE_GROUP_FACTS_EDIT: 'expense.capture_group.facts_edit',
+  EXPENSE_CAPTURE_GROUP_REVIEW: 'expense.capture_group.review',
+  EXPENSE_CAPTURE_GROUP_ALLOCATION_ACCEPT: 'expense.capture_group.allocation_accept',
+  /** D08 retention sweep: the group's own files, once nothing financial references them. */
+  EXPENSE_CAPTURE_GROUP_RETENTION_PURGE: 'expense.capture_group.retention_purge',
+  EXPENSE_CAPTURE_HANDOFF_CREATE: 'expense.capture_handoff.create',
+  EXPENSE_CAPTURE_HANDOFF_REGENERATE: 'expense.capture_handoff.regenerate',
   ACCESS_ROLE_CREATE: 'access.role.create',
   ACCESS_ROLE_UPDATE: 'access.role.update',
   ACCESS_ROLE_DISABLE: 'access.role.disable',

@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ACCOUNTANT_INDEX_COLUMNS, ACCOUNTANT_INDEX_SUMMARY_COLUMNS } from '@watchdog-bms/contracts';
 import type { ExpenseAttachmentPurpose } from '@watchdog-bms/contracts';
-import { buildAccountantIndexCsv, buildAccountantIndexRow, buildManifestEntry, evidenceRef, WET_SIGNED_SCAN_EVIDENCE_ROLE } from './expense-export.logic';
+import { buildAccountantIndexCsv, buildAccountantIndexRow, buildManifestEntry, evidenceRef, exportSourceChannel, WET_SIGNED_SCAN_EVIDENCE_ROLE } from './expense-export.logic';
 
 // The accountant export must NOT follow the expense capture mode.
 //
@@ -118,5 +118,54 @@ describe('R11 — the hand-signed scan is part of the certificate, not supportin
 
     assert.equal(buildManifestEntry({ ...base, isWetSignedScan: true }).evidence_role, WET_SIGNED_SCAN_EVIDENCE_ROLE);
     assert.equal(buildManifestEntry(base).evidence_role, 'expense.review.evidence');
+  });
+});
+
+/**
+ * Capture appendix §5/A39: a derived source is an ordinary financial document in the export — no
+ * new column, no parent row, and the only thing that changes is its evidence ref, which now names
+ * the job two receipts were split out of. An ordinary expense's ref must not move by one byte, or
+ * every package already delivered stops reconciling.
+ */
+describe('capture lineage in the accountant export', () => {
+  it('leaves an ordinary expense ref exactly as it was', () => {
+    assert.equal(evidenceRef('EXP-202608-00001', 'exp-1', 'attachment-01234567'), 'EXP-202608-00001-01234567');
+    assert.equal(evidenceRef(null, 'exp-1', 'attachment-01234567'), 'exp-1-01234567');
+    assert.equal(evidenceRef('EXP-1', 'exp-1', 'attachment-01234567', null), 'EXP-1-01234567');
+  });
+
+  it('names the capture group in a derived source ref, in both the index and the manifest', () => {
+    const source = {
+      ...nonVatExpense,
+      captureGroupId: 'group-abcdefgh',
+      primaryAttachmentId: 'att-primary-1',
+      attachments: [
+        { id: 'att-primary-1', purpose: 'expense.receipt.primary' as ExpenseAttachmentPurpose, originalFileName: 'a.pdf', mimeType: 'application/pdf', byteSize: 1, checksumSha256: null, status: 'ACTIVE', createdAt: '2026-08-05T03:00:00.000Z' },
+        { id: 'att-support-2', purpose: 'expense.receipt.supporting' as ExpenseAttachmentPurpose, originalFileName: 'b.pdf', mimeType: 'application/pdf', byteSize: 1, checksumSha256: null, status: 'ACTIVE', createdAt: '2026-08-05T03:00:00.000Z' },
+      ],
+    };
+    const row = buildAccountantIndexRow(source);
+
+    assert.equal(row.primary_evidence_ref, 'EXP-202608-00001-rimary-1-gabcdefgh');
+    assert.equal(row.supporting_evidence_refs, 'EXP-202608-00001-upport-2-gabcdefgh');
+    // No new column: the group rides inside the ref the folder is keyed by (§5).
+    assert.equal(Object.keys(row).some((key) => key.includes('capture_group')), false);
+
+    const manifest = buildManifestEntry({
+      expenseId: source.expenseId, expenseNumber: source.expenseNumber, captureGroupId: 'group-abcdefgh',
+      attachment: source.attachments[0]!,
+      sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'NOT_TAX_EVIDENCE',
+      downloadUrl: 'https://example/d', downloadUrlExpiresAt: '2026-08-05T04:00:00.000Z',
+      webUrl: '/companies/co-1/expenses/exp-1',
+    });
+    assert.equal(manifest.evidence_ref, row.primary_evidence_ref, 'the index row and the file must agree on the key');
+  });
+
+  it('never leaks a raw capture-source enum into the export channel column', () => {
+    assert.equal(exportSourceChannel('LINE_UPLOAD'), 'LINE');
+    assert.equal(exportSourceChannel('WEB_UPLOAD'), 'WEB');
+    // A capture source added later is a storage enum, not an accountant-facing channel name.
+    assert.equal(exportSourceChannel('SOME_FUTURE_LANE'), 'OTHER');
+    assert.equal(buildAccountantIndexRow({ ...nonVatExpense, captureSource: 'SOME_FUTURE_LANE' }).source_channel, 'OTHER');
   });
 });

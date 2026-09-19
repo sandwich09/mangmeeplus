@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseBusinessDocumentClassification } from './business-document-classification.logic';
+import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from './business-document-classification.logic';
 
 /** UAT 2026-08-27: Sonnet 4.6 labelled a clear receipt's evidenceRoles with document-kind
  *  synonyms ("RECEIPT", "TAX_INVOICE"); the all-or-nothing enum check voided the whole
@@ -75,5 +75,37 @@ describe('reason-code tolerance', () => {
 
   it('a non-array reason field is still invalid SHAPE and still voids the classification', () => {
     assert.equal(parseBusinessDocumentClassification({ ...base, missingRequiredSignals: 'PAYMENT_EVIDENCE_ONLY' }, ''), null);
+  });
+});
+
+/**
+ * Capture appendix §10.2: a courier parcel label and a drop-off slip both read as `DELIVERY_NOTE`,
+ * and the API needs to tell them apart to pick §18.4's NR01 vs NR02 sentence. They are SIGNALS on
+ * purpose — a new documentKind per courier is what §18.4 "ของเดิมและช่องว่าง" forbids.
+ */
+describe('courier label / deposit-slip signals (§10.2)', () => {
+  const base = {
+    contentKind: 'DOCUMENT', documentFamily: 'COMMERCIAL_DOCUMENT', documentKind: 'DELIVERY_NOTE',
+    businessDirection: 'PURCHASE_EXPENSE', transactionState: 'ORDERED', confidence: 0.9,
+    evidenceSignals: [], amountSignals: [], settlementSignals: [], evidenceRoles: [],
+    missingRequiredSignals: [], contradictionSignals: [], requiresClarification: false,
+  };
+
+  for (const code of ['PARCEL_LABEL_SIGNAL', 'DEPOSIT_SLIP_SIGNAL']) {
+    it(`${code} is a known reason code, so it survives the parser without escalating`, () => {
+      const parsed = parseBusinessDocumentClassification({ ...base, missingRequiredSignals: [code] }, '');
+      assert.ok(parsed, 'the classification survives');
+      assert.deepEqual(parsed?.missingRequiredSignals, [code]);
+      // Before this code existed the parser dropped it as unknown, added HUMAN_REVIEW_REQUIRED and
+      // forced `requiresClarification` — which is how a parcel label became "ไม่แน่ใจ" instead of NR01.
+      assert.equal(parsed?.requiresClarification, false);
+      assert.equal(parsed?.documentKind, 'DELIVERY_NOTE', 'the kind stays; only the signal is new');
+    });
+  }
+
+  it('the signal does not disturb the receipt-only downgrade gate', () => {
+    const parsed = parseBusinessDocumentClassification({ ...base, missingRequiredSignals: ['PARCEL_LABEL_SIGNAL'] }, '');
+    assert.ok(parsed);
+    assert.deepEqual(gateBusinessDocumentClassification(parsed!, undefined, ''), parsed, 'a DELIVERY_NOTE passes the gate untouched');
   });
 });

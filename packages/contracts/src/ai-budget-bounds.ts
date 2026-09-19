@@ -28,6 +28,10 @@ export type AiBudgetStepKind =
   | 'receipt-ocr'
   /** `/internal/ai/bank-statement-extract`: read, then the extraction call. */
   | 'bank-statement'
+  /** `/internal/ai/capture-read`: ONE transcription call for one PDF chunk / image / tile set. */
+  | 'receipt-capture-read'
+  /** `/internal/ai/capture-extract`: ONE extraction call for one page window of read text. */
+  | 'receipt-capture-extract'
   | 'crm-summary'
   | 'crm-reply-draft'
   | 'crm-intake'
@@ -85,6 +89,12 @@ export const AI_BUDGET_STEP_BOUNDS: Readonly<Record<AiBudgetStepKind, AiBudgetSt
   // 4,096 = the shared document read (`line-ai-internal.controller.ts:294`); stage 2 passes 4,000.
   // maxCalls = AI_BANK_STATEMENT_MAX_PROVIDER_CALLS.
   'bank-statement': { maxInputTokens: 30_000, maxOutputTokens: 4_096, maxCalls: 2 },
+  // Capture reading is metered PER PROVIDER CALL, not per file: the API chunks a PDF into
+  // ≤ 3-page / ≤ 4,000,000-byte pieces and holds money for each one separately (appendix §4.6),
+  // so both chains declare `maxCalls: 1` and the job's own `providerCallCount` bounds the file.
+  // 8,192 = the same transcription ceiling as `receipt-ocr`, which shares the prompt.
+  'receipt-capture-read': { maxInputTokens: 30_000, maxOutputTokens: 8_192, maxCalls: 1 },
+  'receipt-capture-extract': { maxInputTokens: 30_000, maxOutputTokens: 8_192, maxCalls: 1 },
   'crm-summary': { maxInputTokens: 20_000, maxOutputTokens: 1_600, maxCalls: 1 },
   'crm-reply-draft': { maxInputTokens: 20_000, maxOutputTokens: 500, maxCalls: 1 },
   'crm-intake': { maxInputTokens: 20_000, maxOutputTokens: 200, maxCalls: 1 },

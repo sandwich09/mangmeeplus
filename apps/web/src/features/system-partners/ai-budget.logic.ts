@@ -474,6 +474,8 @@ export const AI_BUDGET_STEP_KIND_LABELS: Record<string, string> = {
   'line-turn': 'แชตกับผู้ช่วย AI',
   'receipt-ocr': 'อ่านใบเสร็จ',
   'bank-statement': 'อ่านรายการเดินบัญชี',
+  'receipt-capture-read': 'อ่านไฟล์หลักฐาน',
+  'receipt-capture-extract': 'ดึงข้อมูลจากไฟล์หลักฐาน',
   'crm-summary': 'ลูกค้าสัมพันธ์ — สรุป',
   'crm-reply-draft': 'ลูกค้าสัมพันธ์ — ร่างข้อความตอบ',
   'crm-intake': 'ลูกค้าสัมพันธ์ — อ่านข้อความเข้า',

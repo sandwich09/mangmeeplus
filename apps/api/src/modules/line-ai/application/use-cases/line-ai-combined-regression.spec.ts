@@ -437,10 +437,10 @@ function makeHarness(opts: {
     { execute: async (_ctx: any, cmd: any) => { attachmentCompletions.push(cmd); return { id: cmd.attachmentId }; } } as any,
   );
   (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
-  (useCase as any).downloadLineMedia = async () => ({
+  (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
     fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG.byteLength,
     checksumSha256: 'receipt-checksum', contentBase64: JPEG.toString('base64'), bytes: JPEG,
-  });
+  }) });
   (useCase as any).uploadLineMedia = async (intent: any) => { byteUploads.push(intent); };
   // `budgetScope` and `mediaState` are TELEMETRY, not columns: the only place they are observable
   // is the `line.ai.terminal` log line (`emitLineAiTerminalOutcome`).

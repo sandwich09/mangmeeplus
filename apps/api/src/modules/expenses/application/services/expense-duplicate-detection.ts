@@ -19,7 +19,16 @@ export async function createExpenseDuplicateCandidates(
   if (!expense) return [];
 
   const since = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000);
-  const candidates = await repo.findNearDuplicates(companyId, expenseId, since, db, scopes);
+  /**
+   * Appendix §5: the derived sources of ONE capture group deliberately cite the same file — one
+   * receipt, several issuers — so a sibling is never a duplicate of its own group. A group that
+   * reuses ANOTHER group's file, or repeats a document number, still scores as one.
+   */
+  const captureGroupId = expense.captureGroupId ?? null;
+  const isSibling = (candidateGroupId: string | null | undefined) =>
+    captureGroupId !== null && candidateGroupId === captureGroupId;
+  const candidates = (await repo.findNearDuplicates(companyId, expenseId, since, db, scopes))
+    .filter((candidate) => !isSibling(candidate.captureGroupId));
   const primaryAttachment = (
     expense.attachments.find((attachment) => attachment.id === expense.primaryAttachmentId)
       ?? expense.attachments.find((attachment) => attachment.purpose === 'expense.receipt.primary')
@@ -45,6 +54,7 @@ export async function createExpenseDuplicateCandidates(
       primaryAttachment.checksumSha256,
       db,
       scopes,
+      captureGroupId,
     );
     for (const exactId of exactIds) {
       const existing = matchesByExpenseId.get(exactId);

@@ -43,6 +43,71 @@ test('confirmed duplicate copy distinguishes the final decision from an unresolv
 });
 
 /**
+ * Spec §17.6 (W02-web). A read that ENDED without reading the document offers no way to read it
+ * again: the file is saved and the way on is this form. Both reread buttons therefore hang off
+ * `readAgainAllowed`, which is the tested rule in expense-capture-status.logic.spec.ts.
+ */
+test('neither reread button survives a terminal read failure or an error notice', () => {
+  assert.equal((source.match(/readAgainAllowed/g) ?? []).length, 3, 'one rule, both buttons, one definition');
+  assert.doesNotMatch(source, /\{canExtract && \(\s*<button/);
+  assert.match(source, /captureReadAgainAllowed\(\{\s*canExtract, readStatus: readState\?\.status \?\? null, noticeTone: notice\?\.tone \?\? null,/);
+  for (const key of ['expenses.extract_failed', 'expenses.upload_extract_failed_suffix', 'expenses.extract_no_attachment'] as const) {
+    assert.doesNotMatch(workspaceDictionary.th[key], /อ่านเอกสารอีกครั้ง|ลองอ่าน/, key);
+  }
+  assert.match(workspaceDictionary.th['expenses.extract_failed'], /เก็บไฟล์ไว้แล้ว/);
+});
+
+test('the read state is shown beside the file, not only as a toast', () => {
+  const notices = source.slice(source.indexOf('const noticesBlock = ('), source.indexOf('const postingCard'));
+  assert.match(notices, /readNotice && \(readNotice\.tone === 'error'/);
+  assert.match(notices, /aiMap\?\.\['sourceStale'\] === true && <InfoBanner message=\{t\('expenses\.capture\.source_stale'/);
+  assert.doesNotMatch(notices, /toast\./, 'a persisted notice, not a toast that scrolls away');
+});
+
+test('polling follows the durable job and never starts a read of its own', () => {
+  assert.match(source, /if \(!detail\?\.primaryAttachmentId\) return;/);
+  assert.match(source, /getExpenseReadStatus\(companyId, expenseId\)/);
+  assert.match(source, /if \(file\?\.status === 'DONE' && file\.applied !== false\) void load\(\);/);
+  assert.match(source, /}, 3_000\);/);
+});
+
+/** Spec §16.4: the two file intents, each with the identity the server checks. */
+test('replace carries the revision, the expected primary and a reused operation id', () => {
+  const replace = source.slice(source.indexOf('const attachPrimaryReceipt'), source.indexOf('const appendSupportingReceipt'));
+  assert.match(replace, /intent: 'replace'/);
+  assert.match(replace, /expectedUpdatedAt: detail\.updatedAt/);
+  assert.match(replace, /expectedPrimaryAttachmentId: detail\.primaryAttachmentId/);
+  assert.match(replace, /operationId,/);
+  assert.match(source, /const key = `\$\{intent\}:\$\{revision\}:\$\{file\.name\}:\$\{file\.size\}`/);
+});
+
+test('append adds supporting evidence and never names a primary to swap', () => {
+  const append = source.slice(source.indexOf('const appendSupportingReceipt'), source.indexOf('const splitIntoCaptureGroup'));
+  assert.match(append, /'expense\.receipt\.supporting'/);
+  assert.match(append, /intent: 'append', expectedUpdatedAt: detail\.updatedAt, operationId/);
+  assert.doesNotMatch(append, /expectedPrimaryAttachmentId/);
+});
+
+test('a conflict offers the latest data instead of a silent retry', () => {
+  assert.match(source, /code === 'expense_revision_conflict' \|\| code === 'expense_receipt_replace_conflict'/);
+  assert.match(source, /\{error && conflictReload && \(/);
+  assert.match(source, /expenses\.capture\.reload_latest/);
+});
+
+test('more than one document in a file offers the split, not another read', () => {
+  // W07-int: the READ JOB decides it whenever there is one — the API derives `multiDocument` from
+  // the assembled observation, which is the same fact that stopped the apply. The OCR
+  // classification stays only for the synchronous single-image lane, which has no job at all.
+  assert.match(source, /readState\s*\?\s*readState\.multiDocument === true/);
+  assert.match(source, /contentKind === 'MULTI_DOCUMENT'/);
+  // …and a DONE the API says was NOT applied does not send the page to re-read an unchanged draft.
+  assert.match(source, /file\?\.status === 'DONE' && file\.applied !== false/);
+  assert.match(source, /convertExpenseToCaptureGroup\(companyId, expenseId, \{ expectedUpdatedAt: detail\.updatedAt \}\)/);
+  assert.match(source, /expenses\.capture\.split_to_group/);
+  assert.match(workspaceDictionary.th['expenses.capture.multi_document'], /มากกว่า 1 ฉบับ/);
+});
+
+/**
  * Spec §5.1: the goods subtotal stops including the additional charges, so the money card only adds
  * up if it shows them — between the discount and the tax base, in the order the arithmetic runs.
  * Dropping the row would leave a card whose numbers silently disagree with themselves.

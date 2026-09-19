@@ -6,9 +6,9 @@
  "repoHead": "42be72995bf21afbaa4bd5397b305b585c9b629d",
  "method": "assembled from f0 lane JSONs by deterministic join + conservative §6.3 overlay",
  "counts": {
-  "total": 742,
+  "total": 744,
   "api": 542,
-  "async": 63,
+  "async": 65,
   "aiTool": 59,
   "aiOrchestratorRouter": 25,
   "webRouteGroups": 53,
@@ -8169,6 +8169,28 @@
    "missingEvidence": "system drain owned by expense_auto_post (dependency: double_entry_ledger); spec 6.3 has no automatic-execution runoff row for this family"
   },
   {
+   "featureKey": "expenses",
+   "featureKeyRaw": "expenses",
+   "requiredFeatures": [
+    "expenses"
+   ],
+   "surfaceKind": "ASYNC",
+   "surfaceSubKind": "SCANNER",
+   "surfaceId": "POST /v1/internal/expenses/capture-read/drain",
+   "mutationClass": "SYSTEM",
+   "permissionKeys": [],
+   "currentEnforcement": "NONE",
+   "twoStep": false,
+   "evidence": "apps/api/src/modules/expenses/presentation/http/expense-capture-read-internal.controller.ts:27-42",
+   "runoffPolicy": "BLOCKED",
+   "friendlyFallback": "\u0e22\u0e31\u0e07\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e40\u0e1b\u0e34\u0e14\u0e1f\u0e35\u0e40\u0e08\u0e2d\u0e23\u0e4c\u0e19\u0e35\u0e49",
+   "compensationOwner": "FIN",
+   "resumePath": "BLOCKED",
+   "status": "RESOLVED",
+   "evidenceOwner": "FIN",
+   "policyBasis": "capture read drain of the expenses journey (contract appendix \u00a74.5)"
+  },
+  {
    "featureKey": "double_entry_ledger",
    "featureKeyRaw": "double_entry_ledger",
    "requiredFeatures": [
@@ -13413,6 +13435,28 @@
    "status": "BLOCKED",
    "evidenceOwner": "FIN",
    "missingEvidence": "spec 6.3 has no async/outbox row for expense_auto_post; owner must decide whether emission is suppressed or continues for snapshotted roots"
+  },
+  {
+   "featureKey": "expenses",
+   "featureKeyRaw": "expenses",
+   "requiredFeatures": [
+    "expenses"
+   ],
+   "surfaceKind": "ASYNC",
+   "surfaceSubKind": "WORKER",
+   "surfaceId": "startExpenseCaptureReadWorker (queue 'expense-capture-read')",
+   "mutationClass": "SYSTEM",
+   "permissionKeys": [],
+   "currentEnforcement": "NONE",
+   "twoStep": false,
+   "evidence": "apps/workers/src/modules/expense-capture-read/expense-capture-read-worker.ts:11-21",
+   "runoffPolicy": "BLOCKED",
+   "friendlyFallback": "ยังไม่ได้เปิดฟีเจอร์นี้",
+   "compensationOwner": "FIN",
+   "resumePath": "BLOCKED",
+   "status": "RESOLVED",
+   "evidenceOwner": "FIN",
+   "policyBasis": "capture read timer of the expenses journey (contract appendix \u00a74.5); reads evidence for an expense, never a separate sellable feature"
   },
   {
    "featureKey": "ai_line_assistant",

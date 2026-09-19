@@ -198,6 +198,28 @@ describe('expense body DTOs (audit H-23)', () => {
     it('refuses a negative uploaded size', async () => {
       await assert.rejects(() => run(ReceiptUploadCompletionDto, { byteSize: -5 }), BadRequestException);
     });
+
+    // Spec §16.4. The four new fields are optional together: the legacy call must keep working, and
+    // a malformed intent, revision or operation id must never reach the state matrix.
+    it('accepts a full replace intent and refuses every malformed shape of it', async () => {
+      const body = {
+        byteSize: 10, purpose: 'expense.receipt.primary', intent: 'replace',
+        expectedUpdatedAt: '2026-09-18T10:00:00.000Z', expectedPrimaryAttachmentId: 'att-old',
+        operationId: '11111111-2222-4333-8444-555555555555',
+      };
+      assert.deepEqual(JSON.parse(JSON.stringify(await run(ReceiptUploadCompletionDto, body))), body);
+      assert.equal((await run(ReceiptUploadCompletionDto, { intent: 'append' })).intent, 'append');
+      for (const patch of [
+        { intent: 'REPLACE' }, { intent: 'delete' }, { intent: 123 },
+        // A date-only value passes `IsISO8601` here as it does on every sibling revision field;
+        // it simply cannot equal a stored instant, so the use case answers a revision conflict.
+        { expectedUpdatedAt: '' }, { expectedUpdatedAt: 5 }, { expectedUpdatedAt: 'yesterday' },
+        { expectedPrimaryAttachmentId: 42 }, { expectedPrimaryAttachmentId: 'a'.repeat(65) },
+        { operationId: 'not-a-uuid' }, { operationId: '' },
+      ]) {
+        await assert.rejects(() => run(ReceiptUploadCompletionDto, { ...body, ...patch }), BadRequestException, JSON.stringify(patch));
+      }
+    });
   });
 
   describe('RecordExpensePaymentDto', () => {

@@ -67,7 +67,7 @@ export const RUNOFF_MATRIX_FEATURES: readonly RunoffMatrixFeatureRow[] = [
   { featureKey: 'double_entry_ledger', totalRows: 33, blockedRows: 4, runoffRootRows: 2 },
   { featureKey: 'employee_access', totalRows: 24, blockedRows: 2, runoffRootRows: 0 },
   { featureKey: 'expense_auto_post', totalRows: 3, blockedRows: 3, runoffRootRows: 0 },
-  { featureKey: 'expenses', totalRows: 51, blockedRows: 4, runoffRootRows: 5 },
+  { featureKey: 'expenses', totalRows: 53, blockedRows: 6, runoffRootRows: 5 },
   { featureKey: 'inventory', totalRows: 25, blockedRows: 5, runoffRootRows: 0 },
   { featureKey: 'line_oa', totalRows: 11, blockedRows: 2, runoffRootRows: 0 },
   { featureKey: 'NONE', totalRows: 55, blockedRows: 22, runoffRootRows: 0 },

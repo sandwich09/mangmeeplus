@@ -16,6 +16,13 @@ type Row = {
 
 type Outcome = { webhookEventId: string; messagesJson: unknown; authorizationJson?: unknown; attempts: number; deliveredAt: Date | null };
 
+/** Capture appendix §8 / D08: a group past the retention window and the files it still holds. */
+type RetentionGroup = {
+  id: string;
+  companyId: string;
+  files: Array<{ id: string; attachmentId: string; uploadState?: string; linkedToExpense?: boolean; heldByCertificate?: boolean }>;
+};
+
 /** The exact rendered payload a turn would have delivered — a Flex card, not a text preview. */
 const STORED_MESSAGES = [
   { type: 'flex', altText: 'ยอดขายเดือนนี้ 125,000 บาท', contents: { type: 'bubble' } },
@@ -32,6 +39,10 @@ function makeHarness(rows: Row[], opts: {
   casWins?: boolean;
   enqueueThrows?: boolean;
   retentionDays?: number;
+  /** W07-int: capture groups whose `linePushTargetId` the sweep should find past retention. */
+  captureGroupsWithPushTarget?: Array<{ id: string }>;
+  /** W08 / §8: groups past the window whose files the sweep may delete. */
+  retentionGroups?: RetentionGroup[];
   /** §8.3 durable terminal-outcome replay (LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED). Default off. */
   replayEnabled?: boolean;
   outcomes?: Outcome[];
@@ -48,10 +59,39 @@ function makeHarness(rows: Row[], opts: {
   const audits: any[] = [];
   const pushes: Array<{ to: string; messages: any[]; operationId?: string }> = [];
 
+  const capturePushTargetSweeps: any[] = [];
+  const capturePushTargetClears: any[] = [];
+  const captureRetentionSweeps: any[] = [];
+  const captureGroupsWithPushTarget: Array<{ id: string }> = opts.captureGroupsWithPushTarget ?? [];
+  const retentionGroups: RetentionGroup[] = opts.retentionGroups ?? [];
+  const markedDeleted: string[] = [];
+  const detached: any[] = [];
+  const cancelledJobs: any[] = [];
   const prisma = {
     client: {
       lineReadEvidence: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
       lineLedgerDelivery: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
+    // The pre-capture LINE intake diagnostic ages out in this same sweep (capture appendix §2.2),
+    // and so does the raw chat id a capture group keeps to push its result back (§8, W07-int).
+    lineIntakeAttempt: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
+      expenseCaptureGroup: {
+        findMany: async (args: any) => {
+          if (args.where.linePushTargetId) { capturePushTargetSweeps.push(args); return captureGroupsWithPushTarget; }
+          captureRetentionSweeps.push(args);
+          return retentionGroups.map((group) => ({ id: group.id, companyId: group.companyId }));
+        },
+        updateMany: async (args: any) => { capturePushTargetClears.push(args); return { count: 1 }; },
+      },
+      expenseCaptureFile: {
+        findMany: async ({ where }: any) => (retentionGroups.find((group) => group.id === where.groupId)?.files ?? [])
+          .filter((file) => file.uploadState !== 'DETACHED'),
+      },
+      attachmentLink: {
+        findFirst: async ({ where }: any) => {
+          const file = retentionGroups.flatMap((group) => group.files).find((row) => row.attachmentId === where.attachmentId);
+          return file?.linkedToExpense ? { id: 'link-1' } : null;
+        },
+      },
       lineTurnOutcome: {
         findMany: async ({ where }: any) => [...outcomeStore.values()].filter((outcome) => (
           (where.webhookEventId?.in as string[] | undefined)?.includes(outcome.webhookEventId) !== false
@@ -107,6 +147,7 @@ function makeHarness(rows: Row[], opts: {
 
   const config = {
     aiDataRetentionDays: opts.retentionDays ?? 90,
+    expenseCaptureRetentionDays: opts.retentionDays ?? 90,
     lineAiTerminalOutcomeReplayEnabled: opts.replayEnabled ?? false,
   } as any;
   const audit = { log: async (entry: any) => { audits.push(entry); } } as any;
@@ -133,9 +174,25 @@ function makeHarness(rows: Row[], opts: {
     if (opts.verifyThrows) throw new Error('source unavailable');
     return proof?.synthetic === 'original-read-proof' && opts.sourceCurrent !== false;
   } };
+  // The real repository refuses a certified substitute-receipt hold or a live claim by throwing
+  // (`prisma-attachment.repository.ts` markDeleted); the sweep must treat that as "leave it".
+  (useCase as any).attachments = {
+    markDeleted: async ({ id }: { id: string }) => {
+      const file = retentionGroups.flatMap((group) => group.files).find((row) => row.attachmentId === id);
+      if (file?.heldByCertificate) throw new Error('SUBSTITUTE_EVIDENCE_RETENTION_LOCKED');
+      markedDeleted.push(id);
+      return { id };
+    },
+  };
+  (useCase as any).capture = {
+    markFileDetached: async (_db: unknown, input: unknown) => { detached.push(input); return true; },
+    cancelJobsForFile: async (_db: unknown, companyId: string, fileId: string) => { cancelledJobs.push({ companyId, fileId }); return 1; },
+  };
   return {
     useCase, verified,
     store, outcomeStore, enqueued, audits, pushes,
+    capturePushTargetSweeps, capturePushTargetClears,
+    captureRetentionSweeps, markedDeleted, detached, cancelledJobs,
   };
 }
 
@@ -501,5 +558,84 @@ describe('RecoverOrphanLineEventsUseCase', () => {
     assert.equal(result.purged, 1);
     assert.equal(store.has('old'), false);
     assert.equal(store.has('recent'), true);
+  });
+
+  /**
+   * Capture appendix §8 (W07-int): a capture group keeps the raw chat id its result is pushed
+   * into. That is customer data of the same kind as the webhook payload beside it, so it ages out
+   * in the same sweep — and the push then falls back to the sender's own 1:1 chat.
+   */
+  it('clears the chat id a stale capture group was keeping to push into', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const { useCase, capturePushTargetSweeps, capturePushTargetClears } = makeHarness([], {
+      captureGroupsWithPushTarget: [{ id: 'group-old' }],
+    });
+    await useCase.execute();
+
+    assert.equal(capturePushTargetSweeps.length, 1);
+    const where = capturePushTargetSweeps[0].where;
+    assert.deepEqual(where.linePushTargetId, { not: null }, 'only rows that still hold one');
+    assert.ok(Date.now() - where.updatedAt.lt.getTime() >= 90 * day, 'and only past the window');
+    assert.deepEqual(capturePushTargetClears[0].data, { linePushTargetId: null });
+    assert.deepEqual(capturePushTargetClears[0].where, { id: { in: ['group-old'] } });
+  });
+
+  it('touches no capture group when none is holding a chat id', async () => {
+    const { useCase, capturePushTargetClears } = makeHarness([]);
+    await useCase.execute();
+    assert.equal(capturePushTargetClears.length, 0);
+  });
+
+  /**
+   * Capture appendix §8 / D08 (W08): the evidence half of the same window. A group that never
+   * produced a financial document loses the files nothing points at; a file a derived expense or a
+   * certified substitute receipt still owns is left exactly where it is.
+   */
+  it('deletes only the orphan files of a group past the retention window', async () => {
+    const h = makeHarness([], {
+      retentionGroups: [{
+        id: 'group-closed', companyId: 'company-1', files: [
+          { id: 'file-orphan', attachmentId: 'att-orphan' },
+          { id: 'file-used', attachmentId: 'att-used', linkedToExpense: true },
+          { id: 'file-held', attachmentId: 'att-held', heldByCertificate: true },
+          { id: 'file-gone', attachmentId: 'att-gone', uploadState: 'DETACHED' },
+        ],
+      }],
+    });
+    const result = await h.useCase.execute();
+
+    assert.equal(result.captureFilesPurged, 1);
+    assert.deepEqual(h.markedDeleted, ['att-orphan'], 'a derived expense and a certificate hold keep their bytes');
+    assert.deepEqual(h.detached, [{ companyId: 'company-1', fileId: 'file-orphan', reason: 'retention' }]);
+    assert.deepEqual(h.cancelledJobs, [{ companyId: 'company-1', fileId: 'file-orphan' }], 'a late read must not apply to bytes that are gone');
+  });
+
+  it('selects groups by age and never a handed-off one, 100 per tick', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const { useCase, captureRetentionSweeps } = makeHarness([]);
+    await useCase.execute();
+
+    assert.equal(captureRetentionSweeps.length, 1);
+    const sweep = captureRetentionSweeps[0];
+    assert.deepEqual(sweep.where.status, { in: ['CLOSED_NO_HANDOFF', 'CANCELLED', 'OPEN'] }, 'HANDED_OFF is not in scope');
+    assert.ok(Date.now() - sweep.where.updatedAt.lt.getTime() >= 90 * day, 'only past the window');
+    assert.equal(sweep.take, 100);
+  });
+
+  it('audits one row per purged group with ids and counts only', async () => {
+    const h = makeHarness([], {
+      retentionGroups: [
+        { id: 'group-a', companyId: 'company-1', files: [{ id: 'file-a1', attachmentId: 'att-a1' }, { id: 'file-a2', attachmentId: 'att-a2' }] },
+        { id: 'group-b', companyId: 'company-2', files: [{ id: 'file-b1', attachmentId: 'att-b1', linkedToExpense: true }] },
+      ],
+    });
+    const result = await h.useCase.execute();
+
+    assert.equal(result.captureFilesPurged, 2);
+    const purgeAudits = h.audits.filter((entry) => entry.action === 'expense.capture_group.retention_purge');
+    assert.equal(purgeAudits.length, 1, 'group-b lost nothing, so it is not audited');
+    assert.equal(purgeAudits[0].targetId, 'group-a');
+    assert.equal(purgeAudits[0].companyId, 'company-1');
+    assert.deepEqual(purgeAudits[0].metadataJson, { fileIds: ['file-a1', 'file-a2'], fileCount: 2, retentionDays: 90 });
   });
 });

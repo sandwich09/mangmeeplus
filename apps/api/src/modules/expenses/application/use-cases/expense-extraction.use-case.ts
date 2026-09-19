@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../../../audit/application/audit.service';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
@@ -6,7 +7,9 @@ import { ReceiptOcrClient } from '../../infrastructure/receipt-ocr.client';
 import { isStaleOcrApply, ocrLineVatRateUnknown, ReceiptOcrApplyService } from '../services/receipt-ocr-apply.service';
 import { deriveTaxEvidence, isExpenseExtractionEligible, isSuccessfulNonReceiptClassification, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import type { AiModelLineage, BusinessDocumentClassification, ExpenseExtractionResult, RequestContext } from '@watchdog-bms/contracts';
-import { isAiBudgetRefusalCode } from '@watchdog-bms/contracts';
+import { emptyExpenseCaptureReadManifest, isAiBudgetRefusalCode } from '@watchdog-bms/contracts';
+import { PrismaExpenseCaptureRepository } from '../../infrastructure/prisma-expense-capture.repository';
+import { ExpenseCaptureReadRunnerService } from '../services/expense-capture-read-runner.service';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { bangkokMonthKey } from '../../../line-ai/application/company-ai-usage-meter';
@@ -16,9 +19,10 @@ import { displayReceiptQuotaLimit, receiptQuotaExceededTextTh } from '../../../s
 
 const SUPPORTED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'application/pdf']);
 const MAX_EXTRACTION_BYTES = 10_000_000;
-// PDFs are read by a Bedrock Converse document block, which rejects payloads over ~4.5MB.
-// Cap here so an oversized scan returns 'unsupported' instead of an opaque provider error.
-const MAX_PDF_EXTRACTION_BYTES = 4_000_000;
+// The PDF gate of 4,000,000 bytes is GONE (appendix §4.1): a PDF is no longer sent whole to a
+// Bedrock document block, it is split by `expense-capture-preprocess.logic.ts` into chunks that
+// already fit, so the customer's own upload limit is the only one that applies. Images keep
+// `MAX_EXTRACTION_BYTES`, which is still a single synchronous provider call.
 const DEFAULT_MISSING_FIELDS = ['vendor', 'expenseDate', 'documentNumber', 'grandTotalAmount', 'vatAmount', 'category'];
 
 function withEffectiveMissingFields(
@@ -66,6 +70,8 @@ export class RequestReceiptExtractionUseCase {
     private readonly applyService: ReceiptOcrApplyService,
     private readonly audit: AuditService,
     private readonly prisma: PrismaService,
+    private readonly capture: PrismaExpenseCaptureRepository,
+    private readonly runner: ExpenseCaptureReadRunnerService,
   ) {}
 
   async execute(ctx: RequestContext, expenseId: string): Promise<ExpenseExtractionResult> {
@@ -103,10 +109,14 @@ export class RequestReceiptExtractionUseCase {
 
     const attachment = await this.repo.findReceiptExtractionAttachment(ctx.companyId, expenseId, expense.primaryAttachmentId);
     if (!attachment) return this.finish(ctx, expenseId, 'no_attachment');
-    const maxBytes = attachment.mimeType === 'application/pdf' ? MAX_PDF_EXTRACTION_BYTES : MAX_EXTRACTION_BYTES;
-    if (!SUPPORTED_MIME_TYPES.has(attachment.mimeType) || attachment.byteSize > maxBytes) {
+    const isPdf = attachment.mimeType === 'application/pdf';
+    if (!SUPPORTED_MIME_TYPES.has(attachment.mimeType) || (!isPdf && attachment.byteSize > MAX_EXTRACTION_BYTES)) {
       return this.finish(ctx, expenseId, 'unsupported', attachment.id);
     }
+    // Appendix §3: a PDF is read by a durable job, page by page, and the HTTP request returns as
+    // soon as that job exists. The image path below is untouched — it is one provider call and
+    // the reviewer is already waiting for it.
+    if (isPdf) return this.queueCaptureRead(ctx, expense, attachment);
 
     let admission: CompanyOcrAdmissionIdentity | undefined;
     let usablePersisted = false;
@@ -289,6 +299,38 @@ export class RequestReceiptExtractionUseCase {
         eventId: admission.eventId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
       });
     }
+  }
+
+  /**
+   * Create (or re-answer) the read job for a PDF primary (§3, §4.5).
+   *
+   * Idempotent on (expense, attachment, bytes): the upload screen retrying a lost response, or a
+   * reviewer pressing "อ่านใหม่", must not buy a second OCR read for the same file. A job whose
+   * attachment or checksum changed is a DIFFERENT document and does get its own job.
+   *
+   * The kick is fire-and-forget: the request answers "เก็บไฟล์แล้ว กำลังอ่านเอกสาร" and the scan
+   * worker picks the job up anyway if this process never gets to it.
+   */
+  private async queueCaptureRead(
+    ctx: RequestContext,
+    expense: { id: string; updatedAt?: Date | null },
+    attachment: { id: string; objectVersionId?: string; checksumSha256?: string },
+  ): Promise<ExpenseExtractionResult> {
+    const existing = await this.capture.findLiveJobForAttachment(this.capture.client, {
+      companyId: ctx.companyId, expenseId: expense.id,
+      attachmentId: attachment.id, attachmentChecksum: attachment.checksumSha256 ?? '',
+    });
+    const job = existing ?? await this.capture.createReadJob(this.capture.client, {
+      companyId: ctx.companyId, ownerType: 'EXPENSE', expenseId: expense.id,
+      attachmentId: attachment.id, attachmentChecksum: attachment.checksumSha256 ?? '',
+      objectVersionId: attachment.objectVersionId ?? null,
+      ocrAdmissionRequestId: randomUUID(),
+      manifestJson: emptyExpenseCaptureReadManifest(),
+      ...(expense.updatedAt ? { expectedSourceUpdatedAt: expense.updatedAt } : {}),
+    });
+    this.runner.kick(job.id);
+    await this.auditOutcome(ctx, expense.id, 'read_job_queued', attachment.id);
+    return { status: 'ok', readJobId: job.id, readStatus: job.status as ExpenseExtractionResult['readStatus'] };
   }
 
   /**

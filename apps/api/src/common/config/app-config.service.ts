@@ -148,6 +148,12 @@ export class AppConfigService {
   get lineAiLedgerClaimMinIdleMs(): number { return this.config.LINE_AI_LEDGER_CLAIM_MIN_IDLE_MS; }
   get lineAiLedgerDeliveryCap(): number { return this.config.LINE_AI_LEDGER_DELIVERY_CAP; }
   get aiDataRetentionDays(): number { return this.config.AI_DATA_RETENTION_DAYS; }
+  /** Appendix §6: OFF refuses new capture groups and files; reads and recovery keep working. */
+  get expenseCaptureGroupIntakeEnabled(): boolean { return this.config.EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED; }
+  get expenseCapturePdfMaxPages(): number { return this.config.EXPENSE_CAPTURE_PDF_MAX_PAGES; }
+  get expenseCaptureReadConcurrency(): number { return this.config.EXPENSE_CAPTURE_READ_CONCURRENCY; }
+  get expenseCaptureRetentionDays(): number { return this.config.EXPENSE_CAPTURE_RETENTION_DAYS; }
+  get expenseCaptureDerivativeMaxBytes(): number { return this.config.EXPENSE_CAPTURE_DERIVATIVE_MAX_BYTES; }
   get crmAutoReplyEnabled(): boolean { return this.config.CRM_AUTO_REPLY_ENABLED; }
   get crmAiMinConfidence(): number { return this.config.CRM_AI_MIN_CONFIDENCE; }
   get crmAiOutboundAllowedDomains(): string[] {

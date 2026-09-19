@@ -11,7 +11,7 @@ import { reconcileExpenseDuplicateCandidates } from '../services/expense-duplica
 import { GetExpenseCapturePolicyUseCase } from './expense-capture-policy.use-case';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
 import { assertExpenseRootOpen } from '../expense-launch-gate';
-import type { RequestContext } from '@watchdog-bms/contracts';
+import type { ExpenseReceiptUploadIntent, RequestContext } from '@watchdog-bms/contracts';
 import type { ExpenseRecord } from '../../domain/models/expense.model';
 import { civilDateToUtcDate, coerceCivilDate, todayCivilDate } from '@watchdog-bms/contracts';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
@@ -166,6 +166,66 @@ export class InitReceiptUploadUseCase {
 
 }
 
+/** Spec §16.4: the three statuses either file intent may touch at all. */
+const FILE_INTENT_OPEN_STATUSES = new Set(['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION']);
+const EXPENSE_ATTACHMENT_PURPOSES = ['expense.receipt.primary', 'expense.receipt.supporting', 'expense.payment.evidence'];
+/** A claim in one of these is over; anything else still owns the evidence it points at. */
+const TERMINAL_CLAIM_STATUSES = ['REJECTED', 'CANCELLED', 'VOIDED'] as const;
+/** Enough history to answer a retry, not an audit log — the audit trail is the audit log. */
+const MAX_RECEIPT_FILE_OPERATIONS = 10;
+
+export type CompleteReceiptUploadCommand = {
+  expenseId: string;
+  attachmentId: string;
+  checksumSha256?: string;
+  byteSize?: number;
+  purpose?: string;
+  /** §16.4. Absent = the legacy completion, behaviour unchanged. */
+  intent?: ExpenseReceiptUploadIntent;
+  expectedUpdatedAt?: string;
+  expectedPrimaryAttachmentId?: string;
+  operationId?: string;
+};
+
+/** What one completed `intent` call did, kept so its retry answers the same thing (§16.4). */
+export type ExpenseReceiptFileOperation = {
+  operationId: string;
+  intent: ExpenseReceiptUploadIntent;
+  attachmentId: string;
+  checksumSha256: string | null;
+  at: string;
+};
+
+export function readReceiptFileOperations(metadata: Record<string, unknown> | null): ExpenseReceiptFileOperation[] {
+  const stored = metadata?.['replaceOperations'];
+  return Array.isArray(stored)
+    ? stored.filter((entry): entry is ExpenseReceiptFileOperation =>
+      Boolean(entry) && typeof entry === 'object' && typeof (entry as ExpenseReceiptFileOperation).operationId === 'string')
+    : [];
+}
+
+export function recordReceiptFileOperation(
+  metadata: Record<string, unknown> | null,
+  operation: ExpenseReceiptFileOperation,
+): Record<string, unknown> {
+  const kept = readReceiptFileOperations(metadata).filter((entry) => entry.operationId !== operation.operationId);
+  return { ...(metadata ?? {}), replaceOperations: [...kept, operation].slice(-MAX_RECEIPT_FILE_OPERATIONS) };
+}
+
+/**
+ * Whether a completion carrying `operationId` is the SAME operation (its answer was lost) or a
+ * different one wearing the same id. `null` means this operation has not run yet.
+ */
+export function receiptFileOperationReplay(
+  operations: ExpenseReceiptFileOperation[],
+  cmd: { operationId?: string; attachmentId: string; checksumSha256?: string; intent: ExpenseReceiptUploadIntent },
+): 'replay' | 'conflict' | null {
+  const previous = cmd.operationId ? operations.find((entry) => entry.operationId === cmd.operationId) : undefined;
+  if (!previous) return null;
+  const sameBytes = !cmd.checksumSha256 || !previous.checksumSha256 || previous.checksumSha256 === cmd.checksumSha256;
+  return previous.attachmentId === cmd.attachmentId && previous.intent === cmd.intent && sameBytes ? 'replay' : 'conflict';
+}
+
 @Injectable()
 export class CompleteReceiptUploadUseCase {
   constructor(
@@ -180,7 +240,7 @@ export class CompleteReceiptUploadUseCase {
 
   async execute(
     ctx: RequestContext,
-    cmd: { expenseId: string; attachmentId: string; checksumSha256?: string; byteSize?: number; purpose?: string },
+    cmd: CompleteReceiptUploadCommand,
     options?: { beforeCommit: () => Promise<void> },
   ): Promise<ExpenseRecord> {
     return observeCustomerJourney(
@@ -196,7 +256,7 @@ export class CompleteReceiptUploadUseCase {
 
   private async complete(
     ctx: RequestContext,
-    cmd: { expenseId: string; attachmentId: string; checksumSha256?: string; byteSize?: number; purpose?: string },
+    cmd: CompleteReceiptUploadCommand,
     options?: { beforeCommit: () => Promise<void> },
   ): Promise<ExpenseRecord> {
     const expense = await this.repo.findById(ctx.companyId, cmd.expenseId);
@@ -208,6 +268,24 @@ export class CompleteReceiptUploadUseCase {
     const canReview = ctx.permissions.includes('expense.review');
     if (!canUpload && !canReview) throw new ForbiddenException('Missing permission: expense.receipt.upload');
 
+    // §16.4 runs BEFORE the bytes are verified and re-keyed: a refused replace must leave the
+    // current primary and the current facts exactly as they were, and the uploaded object stays a
+    // pending orphan for the existing cleanup rather than becoming evidence of anything.
+    const purpose = cmd.purpose ?? (cmd.intent === 'append' ? 'expense.receipt.supporting' : 'expense.receipt.primary');
+    if (!EXPENSE_ATTACHMENT_PURPOSES.includes(purpose)) {
+      throw new BadRequestException('Unsupported expense attachment purpose.');
+    }
+    if (cmd.intent === 'append' && purpose === 'expense.receipt.primary') {
+      throw new BadRequestException('"append" adds supporting evidence; use "replace" to change the receipt.');
+    }
+    if (cmd.intent === 'replace' && purpose !== 'expense.receipt.primary') {
+      throw new BadRequestException('"replace" targets the primary receipt.');
+    }
+    if (cmd.intent) {
+      const replayed = await this.assertFileIntentAllowed(ctx, expense, cmd, cmd.intent);
+      if (replayed) return replayed;
+    }
+
     const reserved = expense.captureSource === 'LINE_UPLOAD' && expense.lineMessageId
       ? await this.attachments.findById({ id: cmd.attachmentId, companyId: ctx.companyId }) : null;
     const resumed = reserved?.status === 'ACTIVE' && reserved.uploadedByUserId === ctx.userId
@@ -217,10 +295,6 @@ export class CompleteReceiptUploadUseCase {
       attachmentId: cmd.attachmentId, checksumSha256: cmd.checksumSha256, byteSize: cmd.byteSize,
     });
 
-    const purpose = cmd.purpose ?? 'expense.receipt.primary';
-    if (!['expense.receipt.primary', 'expense.receipt.supporting', 'expense.payment.evidence'].includes(purpose)) {
-      throw new BadRequestException('Unsupported expense attachment purpose.');
-    }
     const current = await this.permissionResolver.resolveAccess(ctx.userId, ctx.companyId);
     const activeUser = await this.prisma.client.user.findFirst({ where: { id: ctx.userId, status: 'ACTIVE' }, select: { id: true } });
     const mayUpload = (current.permissions.includes('expense.receipt.upload') || current.permissions.includes('expense.receipt.line_upload')) && expense.createdByUserId === ctx.userId;
@@ -229,6 +303,32 @@ export class CompleteReceiptUploadUseCase {
       throw new ForbiddenException('Receipt access changed. Reload and check your permissions.');
     }
     await options?.beforeCommit();
+    const replacedPrimaryId = purpose === 'expense.receipt.primary' && expense.primaryAttachmentId
+      && expense.primaryAttachmentId !== cmd.attachmentId ? expense.primaryAttachmentId : null;
+    // §16.4: a replace on a record already sent for confirmation returns it to review in the same
+    // write. Nothing stays READY on the strength of a file it no longer holds.
+    const nextStatus = expense.status === 'DRAFT'
+      || (cmd.intent === 'replace' && expense.status === 'READY_FOR_CONFIRMATION')
+      ? 'NEEDS_REVIEW' as const
+      : expense.status;
+    // §16.4 again: the values on screen were read from the file that just left. They are KEPT — a
+    // person may have checked them — but they now carry the file they came from, and the AI status
+    // drops to NOT_VERIFIED so nothing reads as verified against a file no reader has seen.
+    const staleProvenance = replacedPrimaryId && cmd.intent === 'replace' ? {
+      aiVerificationStatus: 'NOT_VERIFIED' as const,
+      aiVerificationSummaryJson: {
+        ...Object.fromEntries(Object.entries(expense.aiVerificationSummaryJson ?? {})
+          .filter(([key]) => key !== 'extractionAttachmentId')),
+        sourceAttachmentId: replacedPrimaryId,
+        sourceStale: true,
+      },
+    } : {};
+    const operationRecord = cmd.operationId && cmd.intent ? {
+      sourceChannelMetadataJson: recordReceiptFileOperation(expense.sourceChannelMetadataJson, {
+        operationId: cmd.operationId, intent: cmd.intent, attachmentId: cmd.attachmentId,
+        checksumSha256: cmd.checksumSha256 ?? null, at: new Date().toISOString(),
+      }),
+    } : {};
     // Storage is complete. Bind every database effect to the revision the upload began with.
     // A late upload must not roll back human review or partially retire the previous receipt.
     let retiredAttachmentIds: string[] = [];
@@ -240,8 +340,10 @@ export class CompleteReceiptUploadUseCase {
         expectedUpdatedAt: expense.updatedAt,
         ...(purpose === 'expense.receipt.primary' ? {
           primaryAttachmentId: cmd.attachmentId,
-          status: expense.status === 'DRAFT' ? 'NEEDS_REVIEW' as const : expense.status,
+          status: nextStatus,
         } : {}),
+        ...staleProvenance,
+        ...operationRecord,
       }, async db => {
         await this.repo.linkAttachment(cmd.expenseId, cmd.attachmentId, purpose, ctx.companyId, ctx.userId, db);
         if (purpose === 'expense.receipt.primary') {
@@ -258,7 +360,13 @@ export class CompleteReceiptUploadUseCase {
       companyId: ctx.companyId, actorUserId: ctx.userId,
       action: 'expense.upload.complete', targetType: 'expense_record', targetId: cmd.expenseId,
       requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
-      metadataJson: { attachmentId: cmd.attachmentId, purpose, ...(retiredAttachmentIds.length > 0 && { replacedAttachmentIds: retiredAttachmentIds }) },
+      metadataJson: {
+        attachmentId: cmd.attachmentId, purpose,
+        ...(cmd.intent && { intent: cmd.intent, statusFrom: expense.status, statusTo: nextStatus }),
+        ...(cmd.operationId && { operationId: cmd.operationId }),
+        ...(replacedPrimaryId && cmd.intent === 'replace' && { sourceAttachmentId: replacedPrimaryId, sourceStale: true }),
+        ...(retiredAttachmentIds.length > 0 && { replacedAttachmentIds: retiredAttachmentIds }),
+      },
     });
     void this.outbox.append('expense.receipt_uploaded', 'expense_record', cmd.expenseId, {
       companyId: ctx.companyId, aggregateType: 'expense_record', aggregateId: cmd.expenseId, requestId: ctx.requestId,
@@ -266,6 +374,94 @@ export class CompleteReceiptUploadUseCase {
     });
 
     return updated;
+  }
+
+  /**
+   * The server half of the §16.4 matrix. Runs before any storage effect, answers one typed code per
+   * reason, and never depends on the client having hidden a button.
+   *
+   * Returns the untouched expense when this exact operation already ran — the retry of a lost
+   * response must not create a second winner — and `null` when the completion may proceed.
+   */
+  private async assertFileIntentAllowed(
+    ctx: RequestContext,
+    expense: ExpenseRecord,
+    cmd: CompleteReceiptUploadCommand,
+    intent: ExpenseReceiptUploadIntent,
+  ): Promise<ExpenseRecord | null> {
+    const conflict = (code: string, message: string) => new ConflictException({ code, message });
+    const locked = (message: string) => conflict('expense_receipt_replace_locked', message);
+
+    // Identity first: a retry carries the revision the user saw BEFORE the first attempt landed, so
+    // checking the revision before the operation would turn every recovered response into a conflict.
+    const replay = receiptFileOperationReplay(readReceiptFileOperations(expense.sourceChannelMetadataJson), {
+      ...(cmd.operationId ? { operationId: cmd.operationId } : {}),
+      attachmentId: cmd.attachmentId,
+      ...(cmd.checksumSha256 ? { checksumSha256: cmd.checksumSha256 } : {}),
+      intent,
+    });
+    if (replay === 'conflict') {
+      throw conflict(
+        'expense_receipt_replace_operation_conflict',
+        'รายการนี้มีการเปลี่ยนไฟล์ด้วยรหัสเดียวกันไปแล้วด้วยไฟล์อื่น กรุณาเปิดข้อมูลล่าสุดก่อนทำต่อ',
+      );
+    }
+    if (replay === 'replay') return expense;
+
+    if (cmd.expectedUpdatedAt === undefined
+      || new Date(cmd.expectedUpdatedAt).getTime() !== expense.updatedAt!.getTime()) {
+      throw conflict('expense_revision_conflict', 'รายการนี้มีการเปลี่ยนแปลง กรุณาเปิดข้อมูลล่าสุดก่อนทำต่อ');
+    }
+    if (intent === 'replace' && (cmd.expectedPrimaryAttachmentId ?? null) !== (expense.primaryAttachmentId ?? null)) {
+      throw conflict(
+        'expense_receipt_replace_conflict',
+        'ไฟล์ใบเสร็จของรายการนี้ถูกเปลี่ยนไปแล้ว กรุณาเปิดข้อมูลล่าสุดก่อนเปลี่ยนไฟล์อีกครั้ง',
+      );
+    }
+
+    if (!FILE_INTENT_OPEN_STATUSES.has(expense.status)) {
+      throw locked(`รายการนี้อยู่ในสถานะ ${expense.status} จึงเปลี่ยนหรือแนบไฟล์ตรงนี้ไม่ได้ กรุณาเปิดรายการเดิมเพื่อดำเนินการตามขั้นตอนที่รองรับ`);
+    }
+    if (intent === 'replace' && expense.status === 'READY_FOR_CONFIRMATION' && !ctx.permissions.includes('expense.review')) {
+      throw locked('รายการนี้ส่งตรวจสอบแล้ว การเปลี่ยนไฟล์ใบเสร็จต้องให้ผู้มีสิทธิ์ตรวจสอบเป็นผู้ดำเนินการ');
+    }
+    if (expense.paymentStatus !== 'UNPAID' || Number(expense.paidAmount ?? 0) > 0) {
+      throw locked('รายการนี้บันทึกการจ่ายเงินแล้ว จึงเปลี่ยนหรือแนบไฟล์ตรงนี้ไม่ได้ กรุณาแก้ไขผ่านรายการจ่ายเงินเดิม');
+    }
+    if (expense.postingStatus !== 'not_required') {
+      throw locked('รายการนี้บันทึกบัญชีแล้ว จึงเปลี่ยนหรือแนบไฟล์ตรงนี้ไม่ได้ กรุณาใช้ขั้นตอนแก้ไขรายการเดิม');
+    }
+
+    const db = this.prisma.client;
+    // A PREPARED certificate still accepts supporting evidence that changes no fact (§16.4 row 3);
+    // a signed one accepts nothing here at all.
+    const certificate = await db.expenseSubstituteReceiptEvidence.findFirst({
+      where: {
+        companyId: ctx.companyId, expenseId: cmd.expenseId,
+        status: { in: intent === 'append' ? ['PAYER_CERTIFIED', 'ISSUED'] : ['PREPARED', 'PAYER_CERTIFIED', 'ISSUED'] },
+      },
+      select: { id: true },
+    });
+    if (certificate) {
+      throw conflict(
+        'substitute_evidence_locks_expense',
+        'รายการนี้มีใบรับรองแทนใบเสร็จแล้ว การเปลี่ยนหลักฐานต้องทำผ่านการแก้ไขใบรับรองเดิม',
+      );
+    }
+    const claim = await db.reimbursementLine.findFirst({
+      where: {
+        companyId: ctx.companyId, linkedExpenseId: cmd.expenseId,
+        request: { status: { notIn: [...TERMINAL_CLAIM_STATUSES] } },
+      },
+      select: { id: true },
+    });
+    if (claim) {
+      throw conflict(
+        'substitute_source_has_live_claim',
+        'หลักฐานนี้อยู่ในคำขอเบิกที่ยังดำเนินการอยู่ กรุณาดำเนินการผ่านคำขอเบิกเดิม',
+      );
+    }
+    return null;
   }
 
   /**

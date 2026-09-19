@@ -25,6 +25,13 @@ describe('workers startup wiring', () => {
     assert.deepEqual(unregistered, [], `these close on SIGKILL instead of draining: ${unregistered.join(', ')}`);
   });
 
+  it('starts the capture read scan so a stranded PDF job is resumed, not stranded', () => {
+    // The API kicks a job in its own process; this timer is the ONLY thing that picks one up
+    // again after the task that owned it died mid-file (appendix §4.5).
+    assert.match(main, /startExpenseCaptureReadWorker\(config\.REDIS_URL\)/);
+    assert.match(main, /workers\.push\(startExpenseCaptureReadWorker/);
+  });
+
   it('handles both SIGTERM and SIGINT', () => {
     // ECS sends SIGTERM; SIGINT is the local Ctrl-C equivalent. Handling only one leaves the other
     // path killing jobs exactly as before.

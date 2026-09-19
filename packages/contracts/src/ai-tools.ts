@@ -436,6 +436,29 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     // Every field is optional: with none, the tool explains the newest record of THIS chat.
     optionalInputFields: ['recordType', 'recordRefKind', 'recordRefValue'],
   },
+  {
+    // Capture appendix §10.1 (spec §17.5): "ไฟล์เมื่อกี้ทำไมส่งไม่ได้" about a file that may never
+    // have become an expense at all. `expense.explain_record` cannot answer it — a rejection
+    // BEFORE capture has no expense to explain. Read-only, no OCR, no mutation: it returns the
+    // recorded attempts and the API composes every sentence from its own templates.
+    name: 'line.explain_file_attempt',
+    description: 'Explain what happened to a file or photo this user sent in THIS LINE chat — whether it was received, rejected before it could be stored (too large, unsupported type, security, download failure), stored and being read, or read and finished. Use for "ไฟล์เมื่อกี้ส่งไม่ได้เพราะอะไร", "ใหญ่ไปหรือเปล่า", "รองรับ PDF ไหม", "ต้องส่งใหม่ไหม", "บันทึกไปหรือยัง". Never use it for a period total, a list of expenses, or a document that was never sent over LINE.',
+    businessSubjects: ['expense'],
+    questionKinds: ['detail', 'explain'],
+    category: 'read_detail',
+    requiredPermissions: [],
+    anyOfPermissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create'],
+    sourceModule: 'line-ai',
+    // `line-ai` has no module default, and an ungated tool is not what this reads: every attempt it
+    // explains is evidence for an expense, so the expenses feature is the honest gate.
+    featureKeys: ['expenses'],
+    supportedAgents: ['accounting', 'cfo', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+    // Flat primitives, like `expense.explain_record`: with none, it answers for this chat's
+    // most recent attempts. `attemptRef` picks one out of an ambiguity list already shown.
+    optionalInputFields: ['attemptRef'],
+  },
   // ── S-4 draft edit over LINE (spec §5.4) ────────────────────────────────────
   // Five tools, one shape. Each one PREVIEWS a change to the record THIS chat captured and returns
   // a `LineDraftUpdatePreview`; none of them writes. The write is the confirm postback, which no

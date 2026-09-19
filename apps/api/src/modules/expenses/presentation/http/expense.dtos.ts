@@ -32,6 +32,7 @@ import {
   Matches,
   MaxLength,
   Min,
+  IsUUID,
   ValidateNested,
   ValidateIf,
 } from 'class-validator';
@@ -101,8 +102,17 @@ export class UploadCompletionDto {
   @Type(() => Number) @IsInt() @Min(0) @IsOptional() byteSize?: number;
 }
 
+/**
+ * Spec §16.4. All four fields are optional: a completion that names no `intent` is the legacy call
+ * and keeps its exact behaviour, so the LINE lane and older web builds are untouched.
+ */
 export class ReceiptUploadCompletionDto extends UploadCompletionDto {
   @IsString() @IsOptional() @MaxLength(64) purpose?: string;
+  @IsOptional() @IsIn(['replace', 'append']) intent?: 'replace' | 'append';
+  @IsOptional() @IsISO8601({ strict: true }) expectedUpdatedAt?: string;
+  @IsString() @IsOptional() @MaxLength(64) expectedPrimaryAttachmentId?: string;
+  // A uuid, because the client generates it once per attempt and reuses it verbatim on retry.
+  @IsOptional() @IsUUID() operationId?: string;
 }
 
 /** Reject / void / signature-reject: the handlers trim this, so it has to be a string. */
