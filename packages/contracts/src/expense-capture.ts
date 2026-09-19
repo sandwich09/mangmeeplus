@@ -402,6 +402,12 @@ export type ExpenseCaptureDocumentReconciliation = {
   difference?: string;
   /** A printed `page n of m` says the file is missing pages the reader never saw (§16.8). */
   suspectedMissingPages: boolean;
+  /**
+   * W10 D1: the printed rows were ALREADY net of the document-level discount (FlowAccount, PEAK and
+   * Leceipt print a per-line discount column and repeat the same total in the summary), so that
+   * discount was NOT subtracted a second time. Absent means the ordinary `Σ − discount` was used.
+   */
+  discountAlreadyInRows?: boolean;
 };
 
 /** The assembled observation a job stores: the merged facts plus what they reconcile to. */

@@ -6,9 +6,9 @@ Scope: implement spec v0.11 / plan v0.11 W01–W08 (machine-verifiable parts) on
 Decisions:
 - D01 = capture group as separate aggregate, no capture-only `ExpenseRecord`; derived sources are ordinary expenses with lineage columns + server-set `payerUserId` (appendix §2)
 - D02 = original ≤ 10,485,760 bytes all lanes; API preprocessing (pdf-lib/pdfjs+canvas/sharp) into chunks ≤ 4,000,000 bytes/≤ 3 pages, oversize pages rasterised/tiled; gateway `capture-read`/`capture-extract` v1; durable `ExpenseCaptureReadJob` claimed by a BullMQ scan worker → internal drain; OCR count once per file, money per provider call (appendix §4)
-- D06/D07/D09 per appendix §5/§6/§8; D03/D04/D08 defaults proposed, owner confirmation pending (§15)
+- D06/D07/D09 per appendix §5/§6/§8; D03/D04/D08 defaults confirmed by the owner 2026-09-19 (§15)
 - Lanes: web single image unchanged; web single PDF = expense at init + async job; multi-file/append/personal-items = group; LINE image unchanged + §17.6/§18.4 copy; LINE file = group + async + auto-handoff for single expense document (appendix §3)
-Open questions: appendix §15 items 1–5 (discount/shipping policy default, flag ON both envs, 90-day retention for no-handoff groups, certificate wording, Bedrock replay budget)
+Open questions: none — appendix §15 items 1–4 confirmed by the owner 2026-09-19 ("โอเคทั้ง 4 ข้อ ใช้ค่านี้ได้เลย"), item 5 done (W08 fixtures + W10 real bills)
 Artifacts:
 - docs base commit e6e41700 (owner working copy of spec/plan/research)
 - `docs/specs/marketplace-buyer-expense-capture-contract-appendix-th.md` (+ §16 implementation notes W01, §17 W02-web)
@@ -109,3 +109,84 @@ the authorised 100.
 
 Next: (owner) UAT deploy per runbook → D03/D07/D08 confirmations → UX 40+ → authorised bundles.
 No further code work is queued for this feature.
+
+## W09 closure — 2026-09-19 (owner pivot: no new screens)
+
+Status: **W09 + W10 delivered on `codex/mkt-w09-simplify-20260919` (from origin/develop eef691be = #646), controller-reviewed and fixed, replayed on real public bills; the owner approved the whole branch 2026-09-19 afternoon ("อนุมัติ push แล้วเปิด 2 pr develop+main เลย") → pushed, ONE develop PR + ONE main PR (main-based branch) opened by the controller with ci-merge chains armed (PR numbers on GitHub / controller session memory); NOT deployed.**
+Owner: controller session (Fable 5.1) reviewed and fixed; Opus 5 implemented W09 in `/private/tmp/mangmee-mkt-w09-20260918`.
+Scope: appendix §25 — delete every capture-group screen (group page, งานรับหลักฐาน list, review-page split button/badge, business-use/payer questions, upload manifest prompt, certificate prefill/back-links, 200 dictionary keys); web multi-file = N ordinary single-file uploads; LINE file = ordinary draft at intake + `ownerType EXPENSE` read + push with expense links; engine auto-splits a multi-document file into ordinary drafts; allocation/group API dormant.
+Decisions:
+- Owner 2026-09-19: "จอดูใช้ยาก … จอไม่ควรเปลี่ยนหรือเพิ่ม เพราะจุดประสงค์มีแค่รับบิลใบเสร็จ ใบกำกับ จาก shoppee lazada tictok ขนส่ง" → appendix §25; A45 withdrawn; §15 items 1–4 confirmed by the owner the same morning (recorded in §15 on this branch in the docs-only commit before the push).
+- Controller review fixes (appendix §25.6): (1) image lane queues NO second read (`persistLineFileExpense({ read: 'none' })`), attempt = `STORED_READ_FAILED`/`STORED_READ_DONE`; (2) finished-read event carries `classification` + `documentTotal`; (3) DONE-but-not-applied push = §17.6 PARTIAL sentence, never a zero receipt card; (4) NR07 cleanup = links + unshared file + audit, in one transaction, else truthful PARTIAL copy; (5) auto-split siblings own the file as PRIMARY receipt (`validateConfirm`); (6) `DeleteExpenseUseCase` never retires a file another record still links.
+- Throwaway-stack gotcha: `prisma/seed.ts` does NOT open launch gates; without `prisma/sync-feature-launch-gates.ts` every `POST …/receipt-uploads` is 403 `feature_temporarily_unavailable` (the implementer's browser runs failed on this, not on code).
+Open questions: none for W09; owner approval of the whole branch before push/PR/CI.
+Artifacts: commit b2128f73 (W09) + the controller fix commit; `e2e/expense-capture-intake.spec.ts` (new lanes, @p1), `e2e/expense-capture-intake.evidence.spec.ts` + `e2e/harness/expense-capture.ts`, `apps/web/src/features/expenses/capture-screens-withdrawn.spec.ts` (guard), `docs/qa/evidence/marketplace-buyer-expense-capture-2026-09-19/w09/`, appendix §25 (+ §25.6), plan W04b status, matrix W09 rows.
+Verification: see the "W09 verification" block appended below once the runs finish.
+Next: CI green → admin-merge develop PR + main PR (chains armed) → owner UAT deploy per runbook → the owner's own Shopee/TikTok/Makro/Big C/CJ/Kerry/J&T documents through the reader on UAT (research §6.6) → follow-up for the PARTIAL re-claim residual (research §6.5).
+
+### W09 verification — 2026-09-19 (controller, throwaway stack: pg 15477 / redis 16377 / MinIO 19077, API 3077, web 3078; launch gates synced, bucket versioned)
+
+- New lanes, browser (`e2e/expense-capture-intake.spec.ts`, chromium, 1280 + 390): 7/7 — one image → one draft on the detail page; three files → three ordinary drafts, list `?highlight=` on the newest; PDF draft follows its read job and prints the §17.6 line with no re-read, ordinary PATCH still saves; multi-document → "พบเอกสาร 2 ใบ…" with a working link and `read-status` carrying the ids; withdrawn routes 404 / no nav entry.
+- Evidence (`e2e/expense-capture-intake.evidence.spec.ts`, desktop-1440 + iphone13-chromium 390): 6 subjects × 2 widths in `docs/qa/evidence/marketplace-buyer-expense-capture-2026-09-19/w09/`, 0 px horizontal overflow at 390 on all six, no console/page error on any.
+- LINE lanes: unit-level fake webhook drive (`line-intake-dispatch.use-case.spec.ts`: A68 file → one draft + one EXPENSE job, redelivery reuses the draft, second file = its own draft, §17.5 answers, §17.6 image persist with NO second read, NR persists as draft with truthful CTA; `line-capture-result-notifier.use-case.spec.ts`: DONE card / split list / FAILED-PARTIAL-PAUSED sentences / NR cases / NR07 cleanup / not-applied partial / WEB never pushed).
+- Old flows, unchanged suites, same stack, W09 vs pre-W09 baseline (feature worktree 6c87f867 on API 3079 / web 3080, same DB) — IDENTICAL suite by suite:
+
+| suite | W09 | baseline |
+|---|---|---|
+| expenses.spec.ts | 22 passed, 7 failed (EXP-01/02/04/06/07/09/26) | 22 passed, 7 failed (same ids) |
+| receipt-draft-continuity | 11 skipped (needs its own DB env) | 11 skipped |
+| reimbursement-receipt | 1 failed (REIMBRCPT-01) | 1 failed (same) |
+| substitute-editable-navigation | 2 skipped | 2 skipped |
+| expense-number-save | 2 skipped | 2 skipped |
+| expense-running-number | 1 skipped | 1 skipped |
+| income-expense-ledger | 2 passed, 4 failed (LED-01/02/04/06) | 2 passed, 4 failed (same) |
+| line-recovery | 2 failed, 2 skipped | 2 failed, 2 skipped |
+| @smoke | 37 passed, 10 failed, 1 skipped | 37 passed, 10 failed, 1 skipped (same ids: SMOKE-02, roles sidebar ×3, ACCT-06, EXP-01, LED-01/02/04/06) |
+
+  Every failure is fresh-seed drift, not code: a freshly seeded company is multi-branch and the seeded OWNER has no default branch, so API calls that omit `branchId` (EXP-06/07/26, LED-01/02/04/06, ACCT-06) answer 422 `TRANSACTION_BRANCH_REQUIRED`; `getByRole('button', { name: /ยืนยันแล้ว/ })` (EXP-01/09) now also matches the "ส่งออกเอกสารยืนยันแล้ว" export button; the launch-gate sync opens `sales_documents`, which the roles sidebar matrix expects CLOSED; EXP-02/04, REIMBRCPT-01, line-recovery and SMOKE-02 time out on 10 s waits the same way on both stacks. The standard local DB (native 5432) these suites were written against carries state a fresh seed does not.
+- Local gate on the final tree (2026-09-19 14:21–14:24 +07, worktree `/private/tmp/mangmee-mkt-w09-20260918`): contracts build+test rc 0; config build+test rc 0; api `tsc --noEmit` clean; api fixed-list suite rc 0 (dot reporter: 9,757 test markers, 0 failure markers); capture pg specs on the throwaway DB 10 + 5 + 9 + 5 = 29 pass (incl. the new auto-split case) + `line-ai/receipt-reliability.pg.spec.ts` 6 pass; web `lint` (typegen + tsc) clean; web suite 1,823 pass / 0 fail (incl. the new `capture-screens-withdrawn.spec.ts` guard); ai-gateway 1,237 pass / 0 fail + tsc clean; workers 43 pass / 0 fail + tsc clean; whole-chain acceptance rc 0 (4 + 4 + 1,566 + 387 tests, 0 fail, 8 suites); `pnpm test:harness` 27 pass / 0 fail; maintenance pins `status=current`; `git diff --check` clean.
+- New-lane browser proof after the review fixes: `e2e/expense-capture-intake.spec.ts` 7/7 (chromium); `e2e/expense-capture-intake.evidence.spec.ts` 2/2 (desktop-1440 + iphone13-chromium), 6 subjects × 2 widths + the notice crop, 0 px overflow at 390, 0 console/page errors.
+
+### Real public samples through the reader — 2026-09-19 (owner: "ไปหาบิลจริงในอินเตอร์เน็ตมาลอง")
+
+- Method: `scripts/expense-capture-read-benchmark.ts --files …` (new option, same preprocessing/routes/guard/ledger as fixtures; `pageText` persisted for real files), profile `watchdog-bedrock`, `ap-southeast-1`, `global.anthropic.claude-sonnet-4-6`. Two runs, THB 7.91; task ledger cumulative THB 67.92 of 100. Files stay in the session scratchpad (`w09/bills/`), never in git; the 7-Eleven photo's buyer lines were blurred locally before upload.
+- Six documents (Leceipt Lazada receipt/tax invoice 2021, Leceipt e-Tax-by-Email sample 2019, FlowAccount full + abbreviated tax invoice Oct 2025, CP ALL 7-Eleven full-form tax invoice 20/12/2566, Lotus's e-Tax lower half 2023): issuer, tax id, document number, date and grand total right on every legible one; results + sources in `docs/research/expense-capture-read-benchmark-2026-09-19.md` §6.
+- Three reader defects found (none blocking, all fixable with synthetic fixtures): (1) per-line % discount repeated in the summary is subtracted twice by the §4.4 reconciliation (`mismatch −625` on both FlowAccount templates); (2) 7-Eleven "สินค้าไม่เสียภาษีมูลค่าเพิ่ม" row labelled `applied_discount`, VAT row labelled `summary` (VAT field left empty); (3) small text (≈ 8 px, 896-px screenshot) dropped silently — totals block missing, page not marked truncated.
+- Not found in public: Shopee/Lazada/TikTok-specific layouts beyond seller templates (the platforms only forward buyer details; sellers issue), Big C, Makro, CJ, every courier (only chat screenshots). Those need the owner's own documents on UAT.
+
+
+## W10 — three reader defects the real public bills exposed (2026-09-19)
+
+Status: implemented on `codex/mkt-w09-simplify-20260919` in `/private/tmp/mangmee-mkt-w09-20260918` (worktree, no push, no PR, no CI); every defect has a unit spec that FAILS on the pre-W10 tree; no Bedrock/AWS call was made by the implementer.
+Owner: owner order 2026-09-19 "ให้ opus แก้ 3 จุดนี้เลย"; Opus 5 implements, controller (Fable) reviews the diff and runs the paid replay.
+Scope: D1 discount double-subtraction (assembly + draft), D2 retail N/V summary vocabulary (gateway prompt + API normalisation), D3 small text dropped silently (preprocess upscale + declared partial + PARTIAL job), three synthetic fixtures, docs.
+
+Decisions:
+- D1 is proven from PRINTED figures only: rows + printed document discounts must equal a printed pre-discount figure (`merchandise` total or a `summary` component). With no such figure the old `mismatch` stands — nothing is inferred to make a document balance.
+- The decision is a contract field, not a log line: `ExpenseCaptureDocumentReconciliation.discountAlreadyInRows?: boolean`.
+- On the draft the fix is the row's PRINTED unit price (the gross one), so the printed discount keeps a base to come off and the reviewer still sees subtotal 12,500 / discount 625 / VAT 776.87 / total 11,875 with both item rows.
+- D2 is two layers on purpose: the prompt names every Thai summary row, and the assembly re-files a goods subtotal whatever the model called it. A `charge` is never re-filed, and a derived `tax` total is added only when the read found none AND exactly one bare VAT amount is printed.
+- D3 threshold `minImageEdgePx = 1,600` — the provider normalises to ~1,568 px on the long edge, so this is the largest upscale that buys pixels rather than tokens. Byte ceiling and the downscale path unchanged; the original is kept when no quality fits.
+- No web/LINE copy change: PARTIAL already routes to the existing §17.6 sentence with no re-read (`line-capture-result-notifier.use-case.spec.ts`, `expense-capture-status.logic.spec.ts`), both suites pass unchanged.
+
+Artifacts (commit `8be0592e`):
+- `packages/contracts/src/expense-capture.ts` (+`discountAlreadyInRows`)
+- `apps/api/src/modules/expenses/domain/logic/expense-capture-assembly.logic.ts` (+ spec: 6 new subtests over 2 describes)
+- `apps/api/src/modules/expenses/domain/logic/expense-capture-fields.logic.ts` (+ NEW `expense-capture-fields.logic.spec.ts`, registered in `apps/api/package.json` `test`)
+- `apps/api/src/modules/expenses/application/services/receipt-ocr-apply.service.ts` (+ spec case)
+- `apps/api/src/modules/expenses/domain/logic/expense-capture-preprocess.logic.ts` (+ 3 new spec cases, 1 rewritten)
+- `apps/api/src/modules/expenses/application/services/expense-capture-read-runner.service.ts` (+ spec case)
+- `apps/ai-gateway/src/modules/line-ai/domain/logic/expense-capture-read.logic.ts` + `presentation/http/line-ai-internal.controller.ts` (+ 9 new subtests in `expense-capture-routes.spec.ts`)
+- `scripts/expense-capture-read.fixtures.ts` + `.spec.ts` + `expense-capture-read-benchmark.ts` (3 fixtures, 3 new score fields)
+- docs: research §6.3 (fixes per defect with paths), appendix §25.7 + §13 rows + the §4.4 exception marker
+
+Verification (local, worktree tree, 2026-09-19 15:39–16:0x +07, all under `/tmp/mangmee-heavy.lock`):
+- contracts build rc 0 + test 324 pass / 0 fail; config build rc 0 + test 144 pass / 0 fail; api `typecheck` (tsc --noEmit, 8 GB heap) clean; api fixed-list suite rc 0 (dot reporter: 11,229 pass markers, 0 failure markers, incl. the new `expense-capture-fields.logic.spec.ts` and `spec-suite-coverage.spec.ts`); ai-gateway test 1,246 pass / 0 fail + `tsc --noEmit` clean; workers test 43 pass / 0 fail + lint clean; web `lint` (next typegen + tsc) clean + web test 1,823 pass / 0 fail (unchanged, run anyway); whole-chain acceptance rc 0 (4 + 4 + 1,567 + 387 tests, 0 fail, 8 suites, 21 repository scenarios); `pnpm test:harness` 33 pass / 0 fail (was 27 — the three new fixtures); benchmark `--dry-run` renders all 11 fixtures with `failure: null` (FX-IMG-SMALL-01: 31,140 input bytes → a 66,211-byte image chunk, i.e. the D3 upscale really fires); maintenance pins `status=current` (exactFiles=48); `git diff --check` clean. Failing-then-passing evidence (each fix reverted to `HEAD` and the same spec re-run): assembly 6 subtests fail, apply-service 1 (`ITEMS_DID_NOT_RECONCILE` instead of `RECONCILED_ITEM_LINES`), preprocess 2, runner 1, gateway routes 9.
+- NOT run (nothing needed them and the brief forbids the network): any Bedrock/AWS call, the pg specs (no throwaway Postgres in this session), browser/e2e. The api `tsc --noEmit` invoked WITHOUT the workspace's own `typecheck` script OOMs at the default heap — use `pnpm --filter @watchdog-bms/api typecheck`.
+- Local stack untouched throughout: API 3077 (`apps/api/dist/e2e-3077`, pid 10595) answered `/v1/health` 200 and `next dev` 3078 answered 200 after the whole gate run.
+
+Next: done — controller review 48d39990, replay recorded in research §6.5 (task cumulative THB 77.86 of 100), second search round §6.6 (afd36f8b); the branch follows the W09 closure's Next line above.
+
+- Controller review of W10 (2026-09-19): one guard added (discount-labelled rows are never re-filed as goods subtotals nor taken as the VAT total; 2 red-then-green cases in the assembly spec); pg specs on the throwaway DB 10+5+9+5+6 green (one intermittent read-queue concurrency red traced to leftover e2e jobs in the shared DB, 3 clean re-runs); residuals recorded in research §6.4 (PARTIAL re-claims climb `attempts` and flip to FAILED after 5 drains; one finished-read event per job so PARTIAL→DONE is not re-pushed). Bedrock replay of the six real files on the fixed reader: see the line below.
+- Controller additions after the Bedrock replay (2026-09-19, THB 7.86, ledger cumulative THB 75.78): VAT ceiling `total × 7/107` in `derivedTaxTotal` and in `taxFacts` (the 7-Eleven photo's shifted block would otherwise have written 71.00 as VAT); single-page completeness check `transcriptionStopsBeforeTotals` in the runner (the 896-px Lazada screenshot still lost its totals block after the upscale and declared nothing → now PARTIAL, §17.6 copy); harness summary line names each document's reconciliation status. Replay: both FlowAccount templates and Lotus's now `reconciled` with a `tax` total; 7-Eleven photo still reported `mismatch −9` (shifted block, by design not balanced away) with the draft right (80.00, no discount, VAT for the reviewer). Research §6.5.
+- Second real-bill round (owner: "แล้วบิลอื่นละ"): Flash Express e-receipt 18/01/2024 (Pantip, blurred) read perfectly — 7 lines, VAT 1.40, total 91.40, reconciled (THB 2.08, ledger cumulative 77.86). Thailand Post / Kerry / J&T / Shopee & TikTok fee invoices / Makro / Big C / CJ: no public document found (login-walled or chat screenshots). Research §6.6.

@@ -16,6 +16,31 @@ Every row of spec §10 (A01–A88), §14.2 (IG01–IG29), §17.2 (UXE-01–27), 
   fixtures under the owner's THB 100 authorisation
   ([research note](../../../research/expense-capture-read-benchmark-2026-09-19.md)).
 
+## W09 (owner decision 2026-09-19) — rows whose proof was a group screen
+
+The owner withdrew the capture-group screens on 2026-09-19 ([appendix
+§25](../../../specs/marketplace-buyer-expense-capture-contract-appendix-th.md)). Every row below was
+proved by a picture of, or an assertion about, a page that no longer exists. The row's verdict is
+therefore **downgraded here, not in place**, so the original evidence stays readable:
+
+| Row | Was | Now | Reason |
+|---|---|---|---|
+| A14 | PARTIAL | WITHDRAWN | the manifest and the "ทำงานเดิมต่อ/เริ่มงานใหม่" question are deleted; several files are N ordinary uploads |
+| A18 | PASSED | PARTIAL | the use-case assertion still runs; `group-handed-derived` photographs a deleted screen |
+| A28 | PASSED | PARTIAL | both logic assertions still run; `group-open-facts` photographs a deleted screen |
+| A39 | PASSED | PARTIAL | the pg and compatibility assertions still run (the pg one now asserts the expense-list path); `capture-list` photographs a deleted screen |
+| A40 | PASSED | PARTIAL | both assertions still run; `group-handed-derived` photographs a deleted screen |
+| UXE-16 | PASSED | PARTIAL | `expense-capture-facts.logic.spec.ts` still runs; the mismatch chip had only the group page to appear on |
+| UXE-17 | PASSED | PARTIAL | the runner assertion still runs; the "ยังไม่ได้ตรวจ" line had only the group page to appear on |
+| A45 | PASSED | WITHDRAWN | the "งานเดิม / ใบใหม่" question is removed with the groups it moved files between |
+| A55, A56, A57 (business-use / payer questions) | see rows below | WITHDRAWN | the two questions were only ever asked on the group page |
+
+W09's own evidence is in [`w09/`](w09/README.md): the upload panel with three files, the list right
+after, the review page while reading and after the engine's verdict, the auto-split notice, and the
+legacy single-image flow unchanged. The controller review on top of W09 (appendix §25.6) changed six
+engine/LINE behaviours without adding a screen; its proof is unit-level (runner, notifier, dispatch,
+delete, handoff pg spec) plus the intake spec above.
+
 ## How this was derived
 
 The verdicts come from the `it`/`test` titles of the capture surface area, read with:
@@ -156,7 +181,7 @@ individually, and it is always one of the same four reasons.
 | IG08 | CLOSED | per-attempt checkpoint, one admitted OCR read per file, `ai_credit` pause (`expense-capture-read-runner.service.spec.ts`, `expense-capture-read.pg.spec.ts`) | — |
 | IG09 | OPEN | authorisation per surface is tested; retention now sweeps | Original-evidence authorisation on **download/export/LINE** from a child link is not separately proven (A46) |
 | IG10 | OPEN | `line-capture-result-notifier.use-case.spec.ts` target/push rules, `line-capture-branch-default.spec.ts` | The multi-job ambiguity prompt needs **real LINE** |
-| IG11 (P0) | CLOSED | tax decisions never forced (`expense-capture-allocation.logic.spec.ts` tax block), unsupported routes pause instead of finalising | D03/D04/D08 remain owner confirmations (appendix §15) |
+| IG11 (P0) | CLOSED | tax decisions never forced (`expense-capture-allocation.logic.spec.ts` tax block), unsupported routes pause instead of finalising | D03/D04/D08 confirmed by the owner 2026-09-19 (appendix §15) |
 | IG12 | CLOSED | `expense-capture-allocation.logic.spec.ts` "A41 — everything personal…", "A28/A41 — a selected row with no amount blocks", multiple event dates | — |
 | IG13 | CLOSED | `expense-capture-compatibility.spec.ts` + the three flag-off cases beside their harnesses + the rollback note in this bundle's README | — |
 | IG14 | OPEN | the Bedrock benchmark measured the pipeline on synthetic fixtures | **authorised bundle** + **UX 40+**; the research note says explicitly that no accuracy rate may be quoted |

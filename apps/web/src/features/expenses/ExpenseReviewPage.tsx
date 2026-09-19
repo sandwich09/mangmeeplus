@@ -24,7 +24,7 @@ import { findForbiddenChars, REASON_MAX_LENGTH, sanitizeReasonInput } from '@/co
 import { downloadDocumentAsPdf } from '@/common/files/download-document-pdf';
 import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import {
-  acknowledgeOcrTotal, confirmDuplicate, confirmExpense, convertExpenseToCaptureGroup, deleteExpense, dismissDuplicate,
+  acknowledgeOcrTotal, confirmDuplicate, confirmExpense, deleteExpense, dismissDuplicate,
   fetchAttachmentPreviewBlob, getExpense, getExpenseReadStatus,
   markExpenseReady, markExpenseReadyAsReviewer, recordExpensePayment, rejectExpense,
   requestExpenseExtraction, removeExpenseReceipt, runDuplicateCheck, updateExpenseReviewFields, uploadExpenseEvidenceFile, voidExpense,
@@ -132,7 +132,6 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // §16.4 / §17.6: the file intents, the durable read job, and the two answers a conflict can give.
   const fileOperationRef = useRef<{ key: string; operationId: string } | null>(null);
   const [conflictReload, setConflictReload] = useState(false);
-  const [splitting, setSplitting] = useState(false);
   const [readState, setReadState] = useState<ExpenseReadStatusFile | null>(null);
   const [preview, setPreview] = useState<ExpensePreviewSource | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -532,17 +531,6 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     } catch (e) { setFileIntentError(e); } finally { setReceiptUploading(false); }
   };
 
-  /** §3.1: one file turned out to hold several documents — move the work into a capture group. */
-  const splitIntoCaptureGroup = async () => {
-    if (!detail || splitting) return;
-    setSplitting(true); setError(null);
-    try {
-      const group = await convertExpenseToCaptureGroup(companyId, expenseId, { expectedUpdatedAt: detail.updatedAt });
-      router.push(group.webPath || `/companies/${companyId}/expenses/capture/${encodeURIComponent(group.groupId)}`);
-    } catch (e) { setFileIntentError(e); }
-    finally { setSplitting(false); }
-  };
-
   const checkDuplicates = async () => {
     setActionLoading(true); setError(null);
     try {
@@ -714,15 +702,20 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       t(readNotice.messageKey, locale),
     ) + (readPausedKey ? ` (${t(readPausedKey, locale)})` : '')
     : '';
-  // §3.1: the reader found more than one document in this one file.
+  // Appendix §25: the reader found more than one document in this one file, and the ENGINE already
+  // split them — the first onto this draft, each further one onto its own ordinary draft. There is
+  // no group page and no button: the notice says what was created and links to it.
   //
-  // The READ JOB is the authority whenever there is one: the API derives `multiDocument` from the
-  // assembled observation, which is also what decided NOT to apply the read to this draft — so the
-  // notice and the reason the fields are still empty come from the same fact. A record with no job
-  // (the synchronous single-image lane) keeps its OCR classification, which is all it has.
+  // The READ JOB is the authority whenever there is one, because the split ids come off the job
+  // itself. A record with no job (the synchronous single-image lane) keeps its OCR classification,
+  // which is all it has.
   const multiDocumentDetected = readState
     ? readState.multiDocument === true
     : (aiMap?.['classification'] as { contentKind?: string } | undefined)?.contentKind === 'MULTI_DOCUMENT';
+  const splitExpenseIds = readState?.splitExpenseIds ?? [];
+  const autoSplitNotice = multiDocumentDetected && splitExpenseIds.length > 0
+    ? t('expenses.capture.auto_split', locale).replace('{count}', String(readState?.documentCount ?? splitExpenseIds.length + 1))
+    : null;
   /**
    * "อ่านเอกสารอีกครั้ง" is a deliberate intent on a file that has NOT just failed to be read
    * (§17.6). After a terminal failure — or under an error notice — the way forward is this form,
@@ -999,21 +992,22 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         : <InfoBanner message={readNoticeText} />)}
       {/* §16.4: values read from the file that was replaced, until a person confirms them here. */}
       {aiMap?.['sourceStale'] === true && <InfoBanner message={t('expenses.capture.source_stale', locale)} />}
-      {multiDocumentDetected && (
-        <div className="space-y-2">
-          <InfoBanner message={t('expenses.capture.multi_document', locale)} />
-          {canMutateDraft && (
-            <button type="button" className={cx(ghostClass, 'min-h-11')} disabled={splitting || receiptUploading} aria-busy={Boolean(splitting)} onClick={() => void splitIntoCaptureGroup()}>
-              {t('expenses.capture.split_to_group', locale)}
-            </button>
-          )}
-        </div>
-      )}
-      {detail.captureGroupId && (
-        <Link className="inline-flex min-h-11 items-center text-sm font-semibold text-brand-600 underline" href={`/companies/${companyId}/expenses/capture/${encodeURIComponent(detail.captureGroupId)}`}>
-          {t('expenses.capture.open_group', locale)}
-        </Link>
-      )}
+      {autoSplitNotice
+        ? (
+          <div className="space-y-2" data-capture-auto-split>
+            <InfoBanner message={autoSplitNotice} />
+            <ul className="flex flex-wrap gap-x-4 gap-y-1">
+              {splitExpenseIds.map((id, index) => (
+                <li key={id}>
+                  <Link className="inline-flex min-h-11 items-center text-sm font-semibold text-brand-600 underline" href={`/companies/${companyId}/expenses/${encodeURIComponent(id)}`}>
+                    {t('expenses.capture.auto_split_link', locale).replace('{index}', String(index + 2))}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+        : multiDocumentDetected && <InfoBanner message={t('expenses.capture.multi_document', locale)} />}
       {!notice && storedNonExpenseNotice && <InfoBanner message={storedNonExpenseNotice.message} />}
       {storedClassificationOverrideNotice && <InfoBanner message={storedClassificationOverrideNotice} />}
       <ForeignCurrencyNotice summary={aiMap} />

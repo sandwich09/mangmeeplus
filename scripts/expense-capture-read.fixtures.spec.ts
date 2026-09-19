@@ -9,7 +9,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ExpenseCaptureAssembledObservations } from '@watchdog-bms/contracts';
 import {
-  documentPageLines, expectationOf, fixtureSpecs, plannedItems, plannedTotal, scoreFixture,
+  documentPageLines, expectationOf, fixtureMimeType, fixtureSpecs, plannedDiscount, plannedItems,
+  plannedRowAmounts, plannedTotal, plannedVat, printedDocumentTotal, printedTotalLine, scoreFixture,
 } from './expense-capture-read.fixtures';
 
 const assembled = (over: Partial<ExpenseCaptureAssembledObservations> = {}): ExpenseCaptureAssembledObservations => ({
@@ -27,8 +28,9 @@ describe('capture-read fixtures', () => {
       const expectation = expectationOf(spec);
       spec.documents.forEach((document, index) => {
         const pages = documentPageLines(document, Math.max(1, Math.floor(spec.pages / spec.documents.length)));
-        const printed = pages.flat().find((line) => line.startsWith('TOTAL '));
-        assert.equal(printed, `TOTAL ${expectation.totals[index]} THB`, `${spec.id} document ${index + 1}`);
+        const printed = pages.flat().filter((line) => line === printedTotalLine(document));
+        assert.equal(printed.length, 1, `${spec.id} document ${index + 1}: one printed final total`);
+        assert.ok(printed[0]!.includes(expectation.totals[index]!), `${spec.id}: ${printed[0]}`);
       });
     }
   });
@@ -65,6 +67,75 @@ describe('capture-read fixtures', () => {
     assert.equal(plannedTotal([{ description: 'x', quantity: 3, unitPrice: '0.10' }]), '0.30');
     assert.equal(plannedTotal(plannedItems(3)), plannedTotal(plannedItems(3)), 'and it is deterministic');
     assert.notEqual(plannedTotal(plannedItems(3)), plannedTotal(plannedItems(3, 1)), 'the offset really shifts the ladder');
+  });
+
+  /**
+   * W10 D1. The fixture only proves anything if the two printed money columns really disagree the way
+   * the FlowAccount template's do: the rows NET of their 5 % discount, the summary repeating the same
+   * total once. If they ever agreed, the reader could pass §4.4 without the fix.
+   */
+  it('FX-PDF-DISCOUNT-NET-01 prints rows already net of a discount the summary repeats', () => {
+    const spec = fixtureSpecs().find((row) => row.id === 'FX-PDF-DISCOUNT-NET-01')!;
+    const document = spec.documents[0]!;
+    const gross = plannedTotal(document.items);
+    const discount = plannedDiscount(document);
+    const net = printedDocumentTotal(document);
+    assert.ok(Number(discount) > 0, 'a fixture with no discount proves nothing');
+    assert.equal(Number(net).toFixed(2), (Number(gross) - Number(discount)).toFixed(2),
+      'rows + summary discount = the printed pre-discount subtotal');
+    const lines = documentPageLines(document, 1)[0]!;
+    // Both columns are on the page, so a read that subtracts the discount twice lands 625 low.
+    assert.ok(lines.some((line) => line.includes(`รวมเป็นเงิน`) && line.includes(gross)));
+    assert.ok(lines.some((line) => line.includes('ส่วนลด 5 %') && line.includes(discount)));
+    assert.ok(lines.some((line) => line.includes('จำนวนเงินรวมทั้งสิ้น') && line.includes(net)));
+    // And every row prints its NET amount beside the gross unit price it was computed from.
+    plannedRowAmounts(document).forEach((amount, index) => {
+      const row = lines.find((line) => line.includes(document.items[index]!.description))!;
+      assert.ok(row.includes(amount), `row ${index + 1} must print its net amount: ${row}`);
+      assert.ok(row.includes(document.items[index]!.unitPrice), `and its printed unit price: ${row}`);
+    });
+  });
+
+  /** W10 D2: the summary block must add up the way a 7-Eleven full form's does, to the satang. */
+  it('FX-PDF-RETAIL-NV-01 prints an N/V split whose own summary block balances', () => {
+    const spec = fixtureSpecs().find((row) => row.id === 'FX-PDF-RETAIL-NV-01')!;
+    const document = spec.documents[0]!;
+    const total = printedDocumentTotal(document);
+    const vat = plannedVat(document);
+    const lines = documentPageLines(document, 1)[0]!;
+    const amountOf = (label: string) => {
+      const line = lines.find((row) => row.trimStart().startsWith(label))!;
+      assert.ok(line, `the block must print ${label}`);
+      return Number(line.replace(label, '').trim());
+    };
+    const nonVat = amountOf('สินค้าไม่เสียภาษีมูลค่าเพิ่ม');
+    assert.ok(nonVat > 0, 'the N rows are what the reader mistook for a discount');
+    assert.equal(amountOf('ภาษีมูลค่าเพิ่ม').toFixed(2), Number(vat).toFixed(2));
+    assert.equal(
+      (amountOf('มูลค่าสินค้าก่อนภาษีมูลค่าเพิ่ม') + Number(vat)).toFixed(2),
+      amountOf('มูลค่าสินค้ารวมภาษีมูลค่าเพิ่ม').toFixed(2),
+      'goods before VAT + VAT = goods with VAT',
+    );
+    assert.equal((amountOf('มูลค่าสินค้ารวมภาษีมูลค่าเพิ่ม') + nonVat).toFixed(2), Number(total).toFixed(2),
+      'and that plus the non-VAT goods is the printed total');
+    assert.equal(amountOf('หักส่วนลด'), 0, 'the layout prints a zero discount, which is not a discount');
+    // Every row carries its own printed flag, which is what the legend explains.
+    assert.equal(lines.filter((line) => / [NV]$/.test(line)).length, document.items.length);
+  });
+
+  /** W10 D3: the low-resolution lane is an IMAGE, which is the only lane with no text layer. */
+  it('FX-IMG-SMALL-01 is an image fixture, and every other fixture is still a PDF', () => {
+    const specs = fixtureSpecs();
+    assert.equal(fixtureMimeType(specs.find((row) => row.id === 'FX-IMG-SMALL-01')!), 'image/jpeg');
+    assert.deepEqual(
+      specs.filter((row) => fixtureMimeType(row) === 'image/jpeg').map((row) => row.id),
+      ['FX-IMG-SMALL-01'],
+    );
+    const document = specs.find((row) => row.id === 'FX-IMG-SMALL-01')!.documents[0]!;
+    const lines = documentPageLines(document, 1)[0]!;
+    assert.ok(lines.some((line) => line.includes(printedDocumentTotal(document))),
+      'the totals block that went missing on the real 896-px screenshot is on the page');
+    assert.ok(lines.some((line) => line.includes('ภาษีมูลค่าเพิ่ม')));
   });
 
   it('gives every fixture a unique id and a non-empty acceptance pointer', () => {
@@ -107,6 +178,47 @@ describe('capture-read scoring', () => {
     }));
     assert.equal(score.totalsMatched, 0);
     assert.deepEqual(score.totalsFound, []);
+  });
+
+  /** W10: the two figures the old scorer had no slot for, and the reconciliation count beside them. */
+  it('scores the printed discount and VAT the W10 layouts turn on', () => {
+    const want = { ...expectation, totals: ['11875.00'], discounts: ['625.00'], vats: ['776.87'], reconciledDocuments: 1 };
+    const right = scoreFixture(want, assembled({
+      components: [
+        { id: 'c1', documentRef: 'r1', label: 'ส่วนลด', amount: '625.00', role: 'applied_discount', scope: 'document', appliedStatus: 'applied', evidenceSpan: 'ส่วนลด 625.00' },
+        { id: 'c2', documentRef: 'r1', label: 'ภาษีมูลค่าเพิ่ม 7%', amount: '776.87', role: 'tax_included', scope: 'document', appliedStatus: 'applied', evidenceSpan: 'VAT 776.87' },
+      ],
+      totals: [total('r1', '11875.00')],
+      reconciliation: [{ documentRef: 'r1', status: 'reconciled', suspectedMissingPages: false }],
+    }));
+    assert.equal(right.discountsMatched, 1);
+    assert.equal(right.discountsExpected, 1);
+    assert.equal(right.vatMatched, 1);
+    assert.equal(right.reconciledDocuments, 1);
+    assert.equal(right.reconciledDocumentsExpected, 1);
+
+    // The D2 failure mode: the VAT came back as a summary, so nothing scores it.
+    const missed = scoreFixture(want, assembled({
+      components: [{ id: 'c1', documentRef: 'r1', label: 'ภาษีมูลค่าเพิ่ม', amount: '776.87', role: 'summary', scope: 'document', appliedStatus: 'applied', evidenceSpan: 'VAT' }],
+      reconciliation: [{ documentRef: 'r1', status: 'mismatch', difference: '-625', suspectedMissingPages: false }],
+    }));
+    assert.equal(missed.vatMatched, 0);
+    assert.equal(missed.discountsMatched, 0);
+    assert.equal(missed.reconciledDocuments, 0);
+  });
+
+  it('does not grade a zero discount or a document that prints no VAT', () => {
+    const want = { ...expectation, discounts: ['0.00', '0.00'], vats: ['0.00'] };
+    const score = scoreFixture(want, assembled());
+    assert.equal(score.discountsExpected, 0);
+    assert.equal(score.vatExpected, 0);
+    assert.equal(score.discountsMatched, 0);
+  });
+
+  it('accepts the tax TOTAL the assembly derives from a printed VAT row', () => {
+    const want = { ...expectation, vats: ['4.64'] };
+    const score = scoreFixture(want, assembled({ totals: [{ documentRef: 'r1', kind: 'tax', amount: '4.64', evidenceSpan: 'ภาษีมูลค่าเพิ่ม: 4.64' }] }));
+    assert.equal(score.vatMatched, 1);
   });
 
   it('reports the reconciliation and the missing-page verdict beside what was expected', () => {

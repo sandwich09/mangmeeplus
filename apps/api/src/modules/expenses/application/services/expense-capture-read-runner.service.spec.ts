@@ -4,8 +4,9 @@
  *
  * What is pinned here is what a review cannot see by reading the happy path: a runner that lost
  * its lease writes nothing, a resumed job pays only for what it has no answer for, a budget that
- * runs out PAUSES with the pages already read, a file holding two shops' receipts is never applied
- * to one expense, and every terminal transition appends exactly one notification.
+ * runs out PAUSES with the pages already read, a file holding two shops' receipts is SPLIT into one
+ * draft each exactly once (appendix §25), and every terminal transition appends exactly one
+ * notification.
  */
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,6 +17,7 @@ import {
   EXPENSE_CAPTURE_MAX_RUN_MS,
   ExpenseCaptureReadRunnerService,
 } from './expense-capture-read-runner.service';
+import { ExpenseCaptureAutoSplitService } from './expense-capture-auto-split.service';
 import { planWindows, priorDocuments } from '../../domain/logic/expense-capture-assembly.logic';
 
 const classification: BusinessDocumentClassification = {
@@ -45,6 +47,30 @@ function observations(over: Partial<ExpenseCaptureObservations> = {}): ExpenseCa
   };
 }
 
+/**
+ * One file, two shops — what appendix §25 splits. Each document quotes its OWN printed amount,
+ * because `isExpenseExtractionEligible` refuses a total the classification never saw.
+ */
+const shopClassification = (amount: string): BusinessDocumentClassification =>
+  ({ ...classification, amountSignals: [amount], settlementSignals: [`รวม ${amount}`] });
+
+function twoShops(): ExpenseCaptureObservations {
+  return observations({
+    documents: [
+      { ref: 'd1', pageIndexes: [0], kind: 'RECEIPT', family: 'EXPENSE_EVIDENCE', issuer: { name: 'ร้าน ก' }, documentNumber: 'A-1', classification: shopClassification('60.00') },
+      { ref: 'd2', pageIndexes: [0], kind: 'RECEIPT', family: 'EXPENSE_EVIDENCE', issuer: { name: 'ร้าน ข' }, documentNumber: 'B-1', classification: shopClassification('40.00') },
+    ],
+    items: [
+      { id: '0:1', documentRef: 'd1', description: 'น้ำดื่ม', quantity: '1', amount: '60.00', event: 'sale', evidenceSpan: 'น้ำดื่ม 60.00' },
+      { id: '0:2', documentRef: 'd2', description: 'ขนม', quantity: '1', amount: '40.00', event: 'sale', evidenceSpan: 'ขนม 40.00' },
+    ],
+    totals: [
+      { documentRef: 'd1', kind: 'document_total', amount: '60.00', evidenceSpan: 'รวม 60.00' },
+      { documentRef: 'd2', kind: 'document_total', amount: '40.00', evidenceSpan: 'รวม 40.00' },
+    ],
+  });
+}
+
 async function textPdf(pages: number): Promise<Buffer> {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -59,7 +85,7 @@ type Harness = Awaited<ReturnType<typeof build>>;
 async function build(options: {
   pages?: number;
   ownerType?: 'CAPTURE_GROUP' | 'EXPENSE';
-  readResults?: Array<{ status: 'ok' | 'failed'; errorCode?: string; truncated?: boolean }>;
+  readResults?: Array<{ status: 'ok' | 'failed'; errorCode?: string; truncated?: boolean; text?: string }>;
   extractResults?: Array<{ status: 'ok' | 'failed'; errorCode?: string; observations?: ExpenseCaptureObservations }>;
   ocrAdmission?: { allowed: boolean; reason?: string };
   applyResult?: Record<string, unknown>;
@@ -119,14 +145,43 @@ async function build(options: {
     findFile: async () => ({ id: 'file-1', uploadState: 'STORED' }),
     claimReadJob: async () => job,
     claimReadJobs: async () => [job],
+    // Appendix §25 auto-split: the sibling group and the membership write it needs.
+    transaction: async (fn: (db: unknown) => Promise<unknown>) => fn({
+      expenseRecord: { updateMany: async (input: any) => { groupMemberships.push(input); return { count: 1 }; } },
+    }),
+    createGroup: async (_db: unknown, input: any) => {
+      groupsCreated.push(input);
+      return { id: `group-auto-${groupsCreated.length}`, revision: 1 };
+    },
+    bumpRevision: async (_db: unknown, input: any) => { groupWrites.push(input.data); return 2; },
   };
+  const groupsCreated: any[] = [];
+  const groupWrites: any[] = [];
+  const groupMemberships: any[] = [];
   const attachments = {
     findById: async () => ({ id: 'att-1', companyId: 'co-1', bucket: 'b', objectKey: 'k', mimeType: 'application/pdf', status: 'ACTIVE', byteSize: bytes.byteLength }),
   };
+  const createdExpenses: any[] = [];
+  const evidenceLinks: any[] = [];
+  // What the sibling's own INSERT transaction writes after the row exists (its primary receipt).
+  const siblingWrites: any[] = [];
+  const siblingTx = { expenseRecord: { updateMany: async (input: any) => { siblingWrites.push(input); return { count: 1 }; } } };
   const expenses = {
     findById: async () => options.expense === undefined
-      ? { id: 'exp-1', companyId: 'co-1', status: 'DRAFT', primaryAttachmentId: 'att-1', updatedAt: new Date('2026-09-15T00:00:00.000Z') }
+      ? {
+        id: 'exp-1', companyId: 'co-1', status: 'DRAFT', primaryAttachmentId: 'att-1',
+        branchId: 'br-1', createdByUserId: 'user-1', captureSource: 'WEB_UPLOAD',
+        captureGroupId: null, expenseDate: new Date('2026-09-10T00:00:00.000Z'),
+        updatedAt: new Date('2026-09-15T00:00:00.000Z'),
+      }
       : options.expense,
+    createExpense: async (input: any, withinTx?: (tx: unknown, expense: any) => Promise<void>) => {
+      createdExpenses.push(input);
+      const expense = { id: `split-${createdExpenses.length}`, ...input };
+      await withinTx?.(siblingTx, expense);
+      return expense;
+    },
+    linkAttachmentToTarget: async (...args: any[]) => { evidenceLinks.push(args); },
   };
   const storage = { getObject: async () => ({ bytes, mimeType: 'application/pdf' }) };
 
@@ -144,7 +199,7 @@ async function build(options: {
         status: 'ok',
         pages: input.chunk.pageIndexes.map((pageIndex: number, position: number) => ({
           pageIndex,
-          text: `PAGE ${pageIndex + 1} TOTAL 100.00`,
+          text: answer.text ?? `PAGE ${pageIndex + 1} TOTAL 100.00`,
           truncated: answer.truncated === true && position === input.chunk.pageIndexes.length - 1,
           blank: false,
         })),
@@ -206,14 +261,20 @@ async function build(options: {
     receiptQuotaEnforced: false,
   } as any;
 
+  // The REAL auto-split service over the same fakes: a fake of it would prove nothing about the
+  // idempotency record or the sibling links, which are the whole point of appendix §25.
+  const autoSplit = new ExpenseCaptureAutoSplitService(
+    capture as any, expenses as any, applyService as any, audit as any,
+  );
   const runner = new ExpenseCaptureReadRunnerService(
     capture as any, attachments as any, expenses as any, storage as any, client as any,
-    applyService as any, outboxService as any, audit as any, prisma, config,
+    applyService as any, outboxService as any, audit as any, prisma, config, autoSplit,
   );
 
   return {
     runner, job, writes, outbox, released, admissions, observationsStored, fileWrites,
-    readCalls, extractCalls, applyCalls,
+    readCalls, extractCalls, applyCalls, createdExpenses, evidenceLinks, siblingWrites,
+    groupsCreated, groupWrites, groupMemberships,
     loseLease: () => { leaseOwner = 'someone-else'; },
     restore: () => undefined,
   };
@@ -241,6 +302,9 @@ describe('capture read runner — the happy path', () => {
       assert.equal(harness.outbox[0]![0], 'expense.capture_read.finished');
       assert.equal(harness.outbox[0]![3].status, 'DONE');
       assert.equal(harness.outbox[0]![3].applied, true);
+      // The LINE push reads the §18.4 sentence and the confirmed amount off the event itself.
+      assert.equal(harness.outbox[0]![3].classification.documentKind, 'RECEIPT');
+      assert.equal(harness.outbox[0]![3].documentTotal, '100.00');
     } finally { harness.restore(); }
   });
 
@@ -311,6 +375,58 @@ describe('capture read runner — fences and resume', () => {
       assert.equal(harness.readCalls.length, 2, 'the truncated page alone, not the whole chunk again');
       assert.deepEqual(harness.readCalls[1]!.chunk.pageIndexes, [2]);
       assert.equal(harness.readCalls[1]!.chunk.id, 'c1p2');
+    } finally { harness.restore(); }
+  });
+
+  /**
+   * W10 D3. The 896-px Leceipt screenshot came back with its item row and no totals block, and the
+   * job ended DONE on a draft with a line and no total. A page the reader could not finish — the
+   * model hit `max_tokens`, or it declared the printing too small to transcribe — is a PARTIAL read,
+   * which is the state §17.6 already has copy for. Nothing is re-read: a one-page chunk cannot be
+   * split any further, and asking the provider for the same pixels again is spending twice for the
+   * same answer.
+   */
+  it('ends PARTIAL when the only page was read partially, and never re-reads it', async () => {
+    harness = await build({ pages: 1, readResults: [{ status: 'ok', truncated: true }] });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      assert.equal(harness.readCalls.length, 1, 'no second read of the same page');
+      const state = terminal(harness);
+      assert.equal(state.status, 'PARTIAL', 'was DONE: an item with no total looked like a finished read');
+      const manifest = harness.writes.filter((write) => write.accepted && 'manifestJson' in write.data).at(-1)!.data as any;
+      assert.equal(manifest.manifestJson.pages[0]!.state, 'partial', 'the reviewer sees WHICH page fell short');
+      assert.equal(harness.outbox[0]![3].status, 'PARTIAL', 'and both lanes are told the same');
+    } finally { harness.restore(); }
+  });
+
+  it('controller review: a one-page transcription that stops at the item table ends PARTIAL, whatever the model declared', async () => {
+    // The 896-px Lazada screenshot: seller, buyer, number, date, the item row — and nothing after it.
+    const cutShort = ['[SELLER]\nบริษัท ผู้ขายทดสอบ จำกัด\n[/SELLER]', 'เลขที่ TIV20210500001', '| ลำดับ | รายการ | จำนวนเงิน |', '|---|---|---|', '| 1 | Test batch | 7,000.00 บาท |'].join('\n');
+    harness = await build({ pages: 1, readResults: [{ status: 'ok', text: cutShort }] });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      assert.equal(terminal(harness).status, 'PARTIAL', 'an item with no total block is not a finished read');
+      const manifest = harness.writes.filter((write) => write.accepted && 'manifestJson' in write.data).at(-1)!.data as any;
+      assert.equal(manifest.manifestJson.pages[0]!.state, 'partial');
+      assert.equal(harness.readCalls.length, 1, 'no re-read: the page was read, its small print was not');
+    } finally { harness.restore(); }
+  });
+
+  it('controller review: a summary printed as the last table row (the Lotus\'s e-Tax shape) stays DONE', async () => {
+    const tableTotal = ['| 1 | น้ำจิ้มสุกี้ | 109.00 V |', '| Total: | 0.00 | 178.00 | 9.87 | 168.13 |'].join('\n');
+    harness = await build({ pages: 1, readResults: [{ status: 'ok', text: tableTotal }] });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      assert.equal(terminal(harness).status, 'DONE');
+    } finally { harness.restore(); }
+  });
+
+  it('controller review: the same table followed by a total line stays DONE', async () => {
+    const whole = ['| 1 | Test batch | 7,000.00 บาท |', 'จำนวนเงินทั้งสิ้น 7,000.00 บาท'].join('\n');
+    harness = await build({ pages: 1, readResults: [{ status: 'ok', text: whole }] });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      assert.equal(terminal(harness).status, 'DONE');
     } finally { harness.restore(); }
   });
 
@@ -465,22 +581,85 @@ describe('capture read runner — boundaries', () => {
 describe('capture read runner — what it refuses to apply', () => {
   let harness: Harness;
 
-  it('never applies a file holding two shops to one expense draft', async () => {
-    const twoShops = observations({
-      documents: [
-        { ref: 'd1', pageIndexes: [0], kind: 'RECEIPT', family: 'EXPENSE_EVIDENCE', issuer: { name: 'ร้าน ก' }, documentNumber: 'A-1', classification },
-        { ref: 'd2', pageIndexes: [0], kind: 'RECEIPT', family: 'EXPENSE_EVIDENCE', issuer: { name: 'ร้าน ข' }, documentNumber: 'B-1', classification },
-      ],
-      items: [], totals: [],
-    });
-    harness = await build({ extractResults: [{ status: 'ok', observations: twoShops }] });
+  /**
+   * Appendix §25 (owner decision 2026-09-19): a file holding two shops used to stop at "stored and
+   * shown" and offer a group screen. There is no screen any more, so the ENGINE splits it: the
+   * first document onto the draft the file was uploaded to, the second onto its own ordinary draft,
+   * both in one sibling group so the duplicate rules do not flag them against each other.
+   */
+  it('splits a file holding two shops into one ordinary draft each', async () => {
+    harness = await build({ extractResults: [{ status: 'ok', observations: twoShops() }] });
     try {
       await harness.runner.runClaimed(harness.job as any);
-      assert.equal(harness.applyCalls.length, 0, 'the draft is left alone');
-      assert.equal(harness.observationsStored.length, 1, 'the facts are still stored for the group page');
+      assert.equal(harness.applyCalls.length, 2, 'both documents go through the ordinary apply path');
+      assert.deepEqual(harness.applyCalls.map((call) => call[1]), ['exp-1', 'split-1']);
+      // The first document applies under the job's fence; a brand-new draft has nothing to fence on.
+      assert.equal(harness.applyCalls[0]![3].expectedUpdatedAt?.toISOString(), '2026-09-15T00:00:00.000Z');
+      assert.equal(harness.applyCalls[1]![3].expectedUpdatedAt, undefined);
+      assert.equal(harness.applyCalls[0]![2].vendorName, 'ร้าน ก');
+      assert.equal(harness.applyCalls[1]![2].vendorName, 'ร้าน ข');
+
+      // One sibling group, HANDED_OFF from the start, keyed on the job so a re-claim cannot open a
+      // second batch; the owning expense joins it and the new draft is created into it.
+      assert.equal(harness.groupsCreated.length, 1);
+      assert.equal(harness.groupWrites[0]!.status, 'HANDED_OFF');
+      assert.equal(harness.groupWrites[0]!.handoffBatchKey, 'auto-split:job-1');
+      assert.equal(harness.groupMemberships[0]!.data.captureGroupId, 'group-auto-1');
+      assert.equal(harness.createdExpenses[0]!.captureGroupId, 'group-auto-1');
+      assert.equal(harness.createdExpenses[0]!.captureScopeKey, 'doc-2');
+      assert.equal(harness.createdExpenses[0]!.createdByUserId, 'user-1', 'the original creator owns it');
+      assert.equal(harness.createdExpenses[0]!.status, 'NEEDS_REVIEW');
+      assert.equal(harness.createdExpenses[0]!.captureAllocationId, undefined, 'no allocation');
+      // The same bytes are the sibling's PRIMARY receipt — link and `primaryAttachmentId`, inside its
+      // own INSERT transaction — because `validateConfirm` refuses a draft with no primary receipt.
+      assert.deepEqual(harness.evidenceLinks[0]!.slice(0, 4), ['att-1', 'expense.record', 'split-1', 'expense.receipt.primary']);
+      assert.ok(harness.evidenceLinks[0]![6], 'the link is written inside the sibling INSERT transaction');
+      assert.deepEqual(harness.siblingWrites, [{ where: { companyId: 'co-1', id: 'split-1' }, data: { primaryAttachmentId: 'att-1' } }]);
+
+      assert.equal(harness.observationsStored.length, 1, 'the observation stays stored, unsplit');
       assert.equal(harness.outbox[0]![3].multiDocument, true);
       assert.equal(harness.outbox[0]![3].documentCount, 2);
-      assert.equal(harness.outbox[0]![3].applied, false);
+      assert.equal(harness.outbox[0]![3].applied, true);
+      assert.deepEqual(harness.outbox[0]![3].splitExpenseIds, ['split-1'], 'both lanes link to what was created');
+    } finally { harness.restore(); }
+  });
+
+  it('is idempotent: a re-claimed job never creates a second draft for the same document', async () => {
+    harness = await build({
+      extractResults: [{ status: 'ok', observations: twoShops() }],
+      // What an earlier run of this job already recorded (appendix §25 idempotency record).
+      jobOver: { checkpointJson: { version: 1, pages: {}, chunks: {}, windows: {}, splitExpenseIds: { d2: 'split-earlier' } } },
+    });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      assert.equal(harness.createdExpenses.length, 0, 'the document already produced an expense');
+      assert.deepEqual(harness.applyCalls.map((call) => call[1]), ['exp-1'], 'only the owner is written again');
+      assert.deepEqual(harness.outbox[0]![3].splitExpenseIds, ['split-earlier']);
+      const terminalWrite = harness.writes.filter((write) => write.accepted && 'status' in write.data).at(-1)!;
+      assert.deepEqual((terminalWrite.data.checkpointJson as any).splitExpenseIds, { d2: 'split-earlier' });
+    } finally { harness.restore(); }
+  });
+
+  it('never invents a draft for a non-expense document riding in the same file', async () => {
+    const label: BusinessDocumentClassification = {
+      ...classification, documentKind: 'DELIVERY_NOTE', evidenceRoles: [], transactionState: 'DUE',
+      amountSignals: [], settlementSignals: [],
+    };
+    harness = await build({
+      extractResults: [{ status: 'ok', observations: observations({
+        documents: [
+          { ref: 'd1', pageIndexes: [0], kind: 'RECEIPT', family: 'EXPENSE_EVIDENCE', issuer: { name: 'ร้าน ก' }, documentNumber: 'A-1', classification },
+          { ref: 'd2', pageIndexes: [0], kind: 'DELIVERY_NOTE', family: 'COMMERCIAL_DOCUMENT', issuer: { name: 'ขนส่ง' }, documentNumber: 'AWB-1', classification: label },
+        ],
+        items: [{ id: '0:1', documentRef: 'd1', description: 'น้ำดื่ม', quantity: '1', amount: '100.00', event: 'sale', evidenceSpan: 'น้ำดื่ม 100.00' }],
+        totals: [{ documentRef: 'd1', kind: 'document_total', amount: '100.00', evidenceSpan: 'รวม 100.00' }],
+      }) }],
+    });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      assert.deepEqual(harness.applyCalls.map((call) => call[1]), ['exp-1']);
+      assert.equal(harness.createdExpenses.length, 0, 'a shipping label is not an expense (§18.4)');
+      assert.deepEqual(harness.outbox[0]![3].splitExpenseIds, []);
     } finally { harness.restore(); }
   });
 

@@ -97,6 +97,8 @@ function setup(input: {
   expense?: typeof baseExpense | null;
   evidence?: object | null;
   links?: Array<{ attachmentId: string }>;
+  /** Links OTHER records still hold on each file after this expense's own are gone (appendix §25). */
+  sharedLinkCount?: number;
   attachmentHold?: 'SUBSTITUTE_ARTIFACT' | 'SUBSTITUTE_SOURCE' | null;
   markDeletedError?: Error;
   auditFailure?: Error;
@@ -154,6 +156,7 @@ function setup(input: {
       order.push('links.delete');
       return { count: input.links?.length ?? 0 };
     }),
+    count: mock.fn(async () => input.sharedLinkCount ?? 0),
   };
   const expenseLine = {
     findFirst: mock.fn(async () => input.ownSubdata ? { id: 'line-1' } : null),
@@ -320,6 +323,26 @@ describe('DeleteExpenseUseCase', () => {
         updatedAt: new Date('2026-07-29T08:00:00.000Z'),
       },
     });
+  });
+
+  it('keeps a file another expense still links — an auto-split sibling shares its bytes (appendix §25)', async () => {
+    const harness = setup({
+      expense: { ...baseExpense, captureSource: 'WEB_UPLOAD' },
+      ownSubdata: true,
+      links: [{ attachmentId: 'attachment-shared' }],
+      sharedLinkCount: 1,
+    });
+
+    await harness.useCase.execute(requestContext(['expense.delete']), EXPENSE_ID);
+
+    assert.equal(harness.committed(), true);
+    // This expense's own claim on the file goes; the file itself stays with the record that still links it.
+    assert.equal(harness.attachmentLink.deleteMany.mock.callCount(), 1);
+    assert.equal(harness.attachments.markDeleted.mock.callCount(), 0, 'a shared file is never retired');
+    const success = harness.auditCalls.find(({ entry }) => entry.result === 'SUCCESS');
+    assert.ok(success);
+    assert.deepEqual(success.entry.metadataJson.attachmentIds, ['attachment-shared']);
+    assert.deepEqual(success.entry.metadataJson.sharedAttachmentIds, ['attachment-shared']);
   });
 
   it('denies deletion outside the actor branch scope before inspecting state or linked data', async () => {

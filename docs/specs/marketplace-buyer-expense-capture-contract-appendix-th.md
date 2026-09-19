@@ -1,6 +1,6 @@
 # Contract appendix: capture group, bounded PDF reading, derived expense sources (W00)
 
-Status: W00 decisions v1, 2026-09-18 — implementation contract for W01–W08 of [spec v0.11](marketplace-buyer-expense-capture-spec-th.md) / [plan v0.11](../plans/marketplace-buyer-expense-capture-plan-th.md). เอกสารนี้ปิด D01/D02/D06/D07/D09 ในระดับที่โค้ดใช้ได้ และเสนอค่าเริ่มต้นของ D03/D04/D08 ที่เจ้าของต้องยืนยัน (ข้อ 15) ทุกข้อในเอกสารนี้อ้างโค้ดจริงบน `origin/develop` `70d1359d` (2026-09-18) ตัวเลขบรรทัดอาจเลื่อนเมื่อโค้ดเปลี่ยน
+Status: W00 decisions v1, 2026-09-18 — implementation contract for W01–W08 of [spec v0.11](marketplace-buyer-expense-capture-spec-th.md) / [plan v0.11](../plans/marketplace-buyer-expense-capture-plan-th.md). เอกสารนี้ปิด D01/D02/D06/D07/D09 ในระดับที่โค้ดใช้ได้ และเสนอค่าเริ่มต้นของ D03/D04/D08 ที่เจ้าของต้องยืนยัน (ข้อ 15 — ยืนยันแล้ว 2026-09-19) ทุกข้อในเอกสารนี้อ้างโค้ดจริงบน `origin/develop` `70d1359d` (2026-09-18) ตัวเลขบรรทัดอาจเลื่อนเมื่อโค้ดเปลี่ยน
 Owner: Product owner (นโยบาย) / controller session (contract)
 Scope: ไม่เปลี่ยนกติกาเงิน/สิทธิ/ใบรับรองของ spec; ถ้าข้อใดขัดกับ spec ให้ถือ spec และแก้เอกสารนี้ในงานเดียวกัน
 
@@ -124,7 +124,7 @@ Scope: ไม่เปลี่ยนกติกาเงิน/สิทธิ
 
 - `manifestJson = { pageCount, pages: [{ index, printedNumber?, state: 'pending'|'read'|'partial'|'failed'|'blank', chunkId?, textLayerChars? }], chunks: [{ id, kind, pageIndexes, bytes, state: 'pending'|'done'|'failed', calls, errorCode? }], windows: [{ id, pageIndexes, state }], electronicVerification: { status: 'NOT_CHECKED'|'UNAVAILABLE' } }`
 - ประกอบ document graph: หน้าต่อเนื่องที่ `continuationOfRef`/เลขเอกสาร+ผู้ออกเดียวกันรวมเป็นเอกสารเดียว; header/footer ซ้ำ (issuer/docNumber/total ที่ปรากฏซ้ำต่างหน้า) นับครั้งเดียวโดยอ้าง span แรก; items ไม่ dedup ด้วยชื่อ; void ที่ `linkedItemId` หักล้าง; `printedPage.of > pageCount` → `suspectedMissingPages`
-- Reconciliation ด้วย `decimal.js`: ต่อเอกสาร `Σ sale − Σ void − Σ applied_discount(scope order/document) + Σ charge` เทียบ `document_total` (tolerance 0.05) → `reconciliation: 'reconciled'|'mismatch'|'insufficient'`; `buyer_payable`, `reported_paid`, `tender/change` (`68 = 500 − 432`) และ `future_reward` แยกค่า ไม่แตะกัน; ไม่สร้าง balancing component
+- Reconciliation ด้วย `decimal.js`: ต่อเอกสาร `Σ sale − Σ void − Σ applied_discount(scope order/document) + Σ charge` เทียบ `document_total` (tolerance 0.05) — **ข้อยกเว้นเดียวเพิ่มโดย W10 D1 (ข้อ 25.7): ส่วนลดที่แถวหักไปแล้วไม่ถูกหักซ้ำ และแถว reconciliation บอกไว้ด้วย `discountAlreadyInRows`** → `reconciliation: 'reconciled'|'mismatch'|'insufficient'`; `buyer_payable`, `reported_paid`, `tender/change` (`68 = 500 − 432`) และ `future_reward` แยกค่า ไม่แตะกัน; ไม่สร้าง balancing component
 - ผลรวมเป็น `ExpenseCaptureObservation(source: AI)` version ใหม่; ผลที่กลับหลัง revision/ไฟล์เปลี่ยน → `stale: true` ไม่ทับค่า HUMAN
 
 ### 4.5 Job runner (reuse pattern: OutboxEvent-style claim + BullMQ scan worker → internal route)
@@ -164,7 +164,7 @@ Scope: ไม่เปลี่ยนกติกาเงิน/สิทธิ
 
 Flag: `EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED` (`packages/config` api schema, default `true`; `deploy.sh` input default `true`, `maintenance_only` บังคับ `false`; `infra/kamal/config.json` `"true"` ทั้ง production/uat) ปิด = ปฏิเสธการสร้างกลุ่ม/ไฟล์ใหม่ (`FEATURE_TEMPORARILY_UNAVAILABLE`) แต่ read/handoff/recovery ของกลุ่มเดิมยังทำงาน; job ที่ค้างยังจบได้ (A47)
 
-## 7. D03/D04 — นโยบายเงินและใบรับรอง (ค่าเริ่มต้นที่เจ้าของต้องยืนยัน ข้อ 15)
+## 7. D03/D04 — นโยบายเงินและใบรับรอง (ค่าเริ่มต้นที่เจ้าของยืนยันแล้ว 2026-09-19, ข้อ 15)
 
 - `shared-discount-v1`: ส่วนลดที่ scope order/checkout แบ่งตามสัดส่วนยอดสินค้าหลังส่วนลดร้าน (net) ของสินค้าที่มีสิทธิในโปรโมชั่น รวมสินค้าส่วนตัวในฐาน แล้วจึงตัดส่วนตัวออก; ส่วนลดระดับ item ติดกับ item; largest remainder ถึงสตางค์ tie-break ตาม item id; Σ share = ส่วนลดต้นทาง
 - `shipping-by-eligible-item-v1`: ค่าส่งของพัสดุ/ร้านแบ่งตามสัดส่วน net ของสินค้าในพัสดุนั้น (บริษัท:ส่วนตัว); ค่าส่ง net (gross − ส่วนลดส่ง) นับครั้งเดียว
@@ -255,7 +255,7 @@ GET    /v1/companies/{c}/expenses/{expenseId}/read-status              (job ข�
 
 `formatBusinessDocumentReply` (`process-line-webhook.use-case.ts:617-647`) + reference branch (`:6093-6139`): จำแนก `DELIVERY_NOTE` ที่มี signal ใบปะหน้า/ใบนำฝาก (คำว่า "ใบปะหน้า|Shipping Label|AWB|Tracking" / "ใบนำฝาก|ใบรับฝาก|Drop-off") ผ่าน `classification.evidenceSignals` (gateway เพิ่ม reasonCode `PARCEL_LABEL_SIGNAL`/`DEPOSIT_SLIP_SIGNAL` โดยไม่เพิ่ม documentKind) → NR01/NR02; `QUOTATION|PURCHASE_ORDER|DELIVERY_NOTE` → NR03; `SUPPLIER_INVOICE_OR_BILL` ที่ผ่าน eligibility → NR04 (เข้า review เดิม); `TRANSFER_SLIP|MARKETPLACE_ORDER` → NR05; check-bill → NR06 (continuation เดิม); `NON_FINANCIAL_IMAGE` → NR07; `NEEDS_REVIEW|AMBIGUOUS` → NR08; failed/partial → NR09 (= §17.6). NR01–NR03/NR08 ที่มี expense intent + สิทธิ → เก็บ pending media/กลุ่ม (LINE file = กลุ่มอยู่แล้ว; รูป = `ensurePendingMedia` เดิม) ก่อนบอก "เก็บไฟล์ไว้แล้ว" และให้ลิงก์ **กรอกข้อมูลต่อ** ไปงานเดิม; NR07 ไม่เก็บ
 
-## 11. Web (Next.js) — surfaces
+## 11. Web (Next.js) — surfaces — **SUPERSEDED by ข้อ 25 (owner decision 2026-09-19)**
 
 - `UploadPanel`: `multiple` + drop หลายไฟล์; 1 รูป → path เดิม; อื่น → กลุ่ม; รายการไฟล์แสดงสถานะรายไฟล์ (กำลังอัปโหลด / เก็บไฟล์แล้ว กำลังอ่าน / อ่านแล้ว n/m หน้า / อ่านไม่สำเร็จ / ส่งไม่สำเร็จ → ส่งไฟล์นี้อีกครั้ง) และ resume จาก manifest server หลังปิดหน้า (ไฟล์ที่ bytes ยังไม่ถึงต้องเลือกใหม่)
 - หน้า `/companies/{c}/expenses/capture/{groupId}` (`ExpenseCaptureGroupPage`): สรุป "พบ N ร้าน • M รายการ (อ่านครบ/ยังไม่ครบ)", ยอดจ่ายรวมที่พบ, ส่วนของบริษัท, ผู้จ่าย, รายการที่ต้องตรวจ (blockers ก่อนปุ่ม), ตารางสินค้ารายร้านพร้อม stepper "ส่วนตัวกี่ชิ้น", คำถาม "ใช้สำหรับบริษัททั้งหมด / มีของส่วนตัวด้วย" และ "ใครเป็นคนจ่ายรายการนี้" (เฉพาะเมื่อยังไม่รู้; รับคำตอบบางส่วน), รายละเอียดส่วนลด/ค่าส่งเปิดเพิ่ม, ปุ่มหลักหนึ่งปุ่มตามสถานะ (สร้างรายการค่าใช้จ่าย / เตรียมใบเบิก / ตรวจภาษี), "เก็บไว้ก่อน" ทุก state, ไฟล์: ดู/แนบเพิ่ม/เปลี่ยนไฟล์นี้/ตัดออก, สถานะ electronic "ยังไม่ได้ตรวจ", derived sources พร้อมสถานะ/ใบรับรอง/ใบเบิกรายร้าน; mobile 390 ไม่มี horizontal scroll, ตัวอักษร 18 px, ปุ่ม ≥ 44 px
@@ -301,12 +301,17 @@ GET    /v1/companies/{c}/expenses/{expenseId}/read-status              (job ข�
 | FX-IMG-VOID | void 59/−59/53 | A52 |
 | FX-BOUNDARY | 4,000,000 / 4,000,001 / 4,194,304 / 4,194,305 / 10,485,760 / 10,485,761 bytes | A67 |
 | FX-LINE-FILE-* | raw webhook `message.type=file` (no contentBase64) ± caption, expired media, oversize declared | A68/A86–A88 |
+| FX-PDF-DISCOUNT-NET-01 | ใบกำกับเต็มรูปแบบ FlowAccount: แถวสุทธิจากส่วนลด 5 % + สรุปพิมพ์ส่วนลดเดิมซ้ำ (W10 D1) | A50/A77 |
+| FX-PDF-RETAIL-NV-01 | บล็อกสรุป N/V แบบ 7-Eleven (สินค้าไม่เสียภาษี/ก่อนภาษี/VAT/รวมทั้งสิ้น) (W10 D2) | A53/A50 |
+| FX-IMG-SMALL-01 | JPEG 896×533 ตัวอักษร ~11 px — บล็อกยอดรวมเล็กเกินอ่าน (W10 D3) | A76/A75 |
 
 ## 14. ลำดับงานและ verification ของรอบนี้
 
 W01 (schema/contracts/guards/pg) → W02-web (multi-file, replace intent, resume, notices) ∥ W02-LINE (file lane, attempts, §17.5/17.6/18.4) ∥ W03 (preprocess, job, gateway contract, assembly) → W04 (allocation + group page) → W05+W07 (handoff, resolver, export, LINE status) → W06 (certificate per source) → W08 (regression matrix, evidence bundle, docs) → gate → PRs ทุก wave ต้องผ่าน: contracts/config build, api/gateway/web full test + typecheck, whole-chain runner, harness, pg specs ที่ตนเพิ่ม, pins `--check`, `git diff --check`
 
-## 15. ข้อที่เจ้าของต้องยืนยัน (ใช้ค่าเริ่มต้นนี้จนกว่าจะแย้ง)
+## 15. ข้อที่เจ้าของต้องยืนยัน — ยืนยันแล้ว 2026-09-19 (ข้อ 1–4) / ทำแล้ว (ข้อ 5)
+
+**เจ้าของยืนยันข้อ 1–4 แล้ว 2026-09-19** ("โอเคทั้ง 4 ข้อ ใช้ค่านี้ได้เลย") — ค่าที่โค้ดใช้อยู่ตรงกับที่เสนอทุกข้อ จึงไม่มีการแก้โค้ดจากการยืนยันนี้ สถานะของแต่ละข้อหลัง W09 (ข้อ 25): ข้อ 1 นโยบายทั้งสองยังเป็นค่าเริ่มต้นของ allocation engine ซึ่งตอนนี้เป็นกลไก dormant (ไม่มีหน้าจอถามส่วนตัว/บริษัทแล้ว; `policyVersion` ยังถูกบันทึกใน snapshot ของ allocation ที่เกิดผ่าน API); ข้อ 2 `infra/kamal/config.json` ประกาศ `true` ทั้ง UAT และ Production และ `infra/prod-ecs-express/deploy.sh` ใช้ `true` เมื่อไม่ส่งค่า; ข้อ 3 sweep ของข้อ 8 ใช้ `EXPENSE_CAPTURE_RETENTION_DAYS` (ค่าเริ่มต้น 90 วัน); ข้อ 4 ประโยค D04 ตามข้อ 22 ยังใช้กับใบรับรองของรายการที่มี lineage กลุ่ม (ณ ตอนนี้เกิดได้ผ่าน API dormant เท่านั้น) — ทั้งสี่ข้อยังต้องถูกตรวจรับบน UAT ตาม runbook ก่อนถือว่าผ่านจริง
 
 1. D03: `shared-discount-v1` / `shipping-by-eligible-item-v1` เป็นค่าเริ่มต้นทั้งระบบในรุ่นแรก (ไม่มีหน้าตั้งค่ารายบริษัท; บันทึก policyVersion ใน snapshot เพื่อเปลี่ยนภายหลังได้)
 2. D07: `EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED = true` ทั้ง UAT และ Production ตั้งแต่ deploy ถัดไป (เหมือน `AI_BUDGET_SPLIT_ACTIVATION_ENABLED`)
@@ -318,6 +323,7 @@ W01 (schema/contracts/guards/pg) → W02-web (multi-file, replace intent, resume
    `docs/research/expense-capture-read-benchmark-2026-09-19.md` และมันเจอบั๊กจริงสองข้อของ W03
    (prompt ไม่ได้บอกค่า enum ของ classification → ทุก window ตอบ `OCR_SCHEMA_INVALID`;
    `printedPages` ไม่มีใครผลิต → ใบหลายหน้าที่ครบถูกแจ้งว่าหน้าขาด) แก้แล้วทั้งคู่
+   — **รอบบิลจริง 2026-09-19 (W10, ข้อ 25.7 / research §6–§6.6)**: เอกสารสาธารณะจริง 7 ใบ + fixture ใหม่ 3 ชุด ใช้เพิ่มจนรวมทั้งงานนี้ THB 77.86 จาก 100 (ledger เดิม)
 
 ## 16. Implementation notes (W01, 2026-09-18)
 
@@ -386,7 +392,7 @@ W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAl
 13. **หน่วยของตัวเลขใน snapshot**: `totals`/`lines`/`charges` เป็น 4 ตำแหน่งตาม `calcDocumentTotals` (คอลัมน์เงินของ repo) ส่วน `companyAmount`/`personalAmount`/`paidTotal`/`summary`/provenance share เป็น 2 ตำแหน่ง (ตัวเลขที่คนอ่านและใบรับรองอ้าง)
 14. **`accept` ของ creator**: อนุญาตเฉพาะ `outcome = READY` + route `EMPLOYEE` + `payerUserId = ผู้กด` (self-claim) และบันทึก `rule` ใน audit; กรณีอื่นต้อง `expense.review`
 15. **`review` ซ้ำเมื่อมี ACCEPTED อยู่** (และ `handoffState = NONE`) จะ `INVALIDATED` ตัวเก่าด้วยเหตุ `review_recomputed` และล้าง `acceptedAllocationId` (A11); ถ้า `handoffState = ACTIVE` ทั้ง `facts`/`review`/`accept` ตอบ 409 `expense_capture_handoff_active` (แก้ที่รายการค่าใช้จ่ายแทน)
-## 18. Implementation notes (W02-web, 2026-09-19)
+## 18. Implementation notes (W02-web, 2026-09-19) — group/manifest parts **SUPERSEDED by ข้อ 25**
 
 สิ่งที่ implement ต่างจากตัวอักษรของเอกสารนี้ พร้อมเหตุผล (ไม่เปลี่ยนกติกาเงิน/สิทธิ):
 
@@ -487,7 +493,7 @@ W04a ส่ง 3 ส่วน: `assembleCaptureFacts` (§4.4), `computeCaptureAl
 12. **งบจริงที่ตั้งไว้**: `providerCallCount ≤ 40`, เวลา ≤ 15 นาทีต่อการรันหนึ่งครั้ง, lease 120 s ต่ออายุหลังทุก chunk, `attempts ≥ 5` → `FAILED/attempts_exhausted`, window ≤ 12,000 ตัวอักษร, ข้อความต่อหน้าที่เก็บใน checkpoint ≤ 20,000 ตัวอักษร
 13. **ยังไม่ทำใน W03**: LINE auto-handoff (ข้อ 3.2 = W05/W07 — **ผู้เรียกจริงส่งใน W07-int ข้อ 23.2 ข้อ 2**), allocation (W04), การบริโภค outbox event `expense.capture_read.finished` (LINE wave — ส่งใน W02-LINE), และ Bedrock replay จริงด้วย fixture สังเคราะห์ (controller session ตามข้อ 15.5)
 
-## 21. Implementation notes (W04b — หน้ากลุ่ม/รายการงานรับหลักฐาน, 2026-09-19)
+## 21. Implementation notes (W04b — หน้ากลุ่ม/รายการงานรับหลักฐาน, 2026-09-19) — **SUPERSEDED by ข้อ 25**
 
 W04b ส่งเฉพาะ `apps/web/**`: หน้า `/companies/{c}/expenses/capture/{groupId}` เต็มรูป (สรุป §13.4, facts ราย
 เอกสาร + แก้ข้อมูล, คำถามสองข้อ + ส่วนของบริษัท, ยอมรับการจัดส่วน, ปุ่มสร้างรายการค่าใช้จ่าย, derived sources)
@@ -709,3 +715,96 @@ deep link ใบเบิก และ gate ใบรับรองหลัง
     expense ไม่เห็นกลุ่มยอมรับ allocation ใหม่; เอกสาร correction ยังใช้เส้นทางเดิมด้วยเหตุผลเดียวกับ `validateEligibility`
 16. **ยังไม่ได้ทำใน W07-int**: ส่วนที่เหลือของ W07 (claim revalidate ตอน submit/approve, finance projection, ledger),
     §16.5 ทางขอเอกสารจากร้าน, sweep ลบไฟล์ของ §8, W08 และการ deploy ใด ๆ
+
+## 25. Owner decision 2026-09-19 — ไม่มีหน้าจอใหม่ (W09)
+
+เจ้าของสั่ง: **"หน้าจอใช้ยาก ดูครั้งแรกก็ยังไม่เข้าใจ ห้ามเปลี่ยนหรือเพิ่มหน้าจอ จุดประสงค์คือรับบิล/ใบเสร็จ/ใบกำกับจาก Shopee Lazada TikTok และขนส่งเท่านั้น"** รอบนี้จึงถอนหน้าจอของกลุ่มหลักฐานออกทั้งหมด และย้ายงานที่หน้าจอเคยถามไปให้เครื่องตัดสินเอง เครื่องอ่าน/allocation engine/ตาราง/migration/API ยังอยู่ครบในฐานะกลไกภายใน (dormant) ข้อ 11 และ implementation notes ของ W02-web (ข้อ 18) กับ W04b (ข้อ 21) **ถือว่าถูกแทนที่ด้วยข้อนี้**
+
+### 25.1 สิ่งที่ถูกลบ (เว็บเท่านั้น)
+
+| ลบ | ที่อยู่เดิม |
+|---|---|
+| หน้ากลุ่มหลักฐาน + หน้ารายการ "งานรับหลักฐาน" | `app/(workspace)/companies/[companyId]/expenses/capture/page.tsx`, `.../capture/[groupId]/page.tsx` |
+| คอมโพเนนต์/ลอจิกของหน้ากลุ่ม | `features/expenses/capture/` ทั้งโฟลเดอร์ (`ExpenseCaptureGroupPage.tsx`, `ExpenseCaptureListPage.tsx`, `CaptureFactsSection.tsx`, `CaptureAllocationSection.tsx`, `expense-capture-review.logic.ts` + specs) |
+| ปุ่ม "แยกเป็นกลุ่มหลักฐาน", ป้าย/ลิงก์ "จากกลุ่มหลักฐาน", ลิงก์ "งานรับหลักฐาน" | `ExpenseReviewPage.tsx`, `ExpensesPages.tsx` |
+| คำถาม "ใช้สำหรับบริษัททั้งหมด/มีของส่วนตัวด้วย" และ "ใครเป็นคนจ่าย" | หน้ากลุ่ม (ลบพร้อมหน้า) |
+| manifest ใน sessionStorage + คำถาม "ทำงานเดิมต่อ / เริ่มงานใหม่" + "เลือกไฟล์ใหม่" + "ตรวจสอบสถานะ" | `expense-capture-upload.logic.ts` |
+| prefill ใบรับรองจากกลุ่ม + ลิงก์ "กลับไปกลุ่มหลักฐาน" ×2 (W06 ข้อ 22) | `SubstituteReceiptWizardPage.tsx` |
+| client ของ API กลุ่ม (create/get/add/complete/detach/close/convert/list/facts/review/accept/handoff/read-status ของกลุ่ม) | `expenses.api.ts` (route ยังอยู่ที่ server) |
+| 200 คีย์ `expenses.capture.*` + `expenses.substitute_wizard.back_capture_group` (th + en) | `workspace-dictionary.ts` (เหลือ 27 คีย์ที่ยังใช้จริง) |
+
+คำถาม A45 "งานเดิม หรือ ใบใหม่" ของ LINE ถูกถอนพร้อมกลุ่มที่มันย้ายไฟล์ระหว่างกัน (`resolveSameWorkAnswer`, `sameWorkQuestionText`, `parseSameWorkAnswer`, quick reply, ค่าคงที่ `SAME_WORK_*`) — ไฟล์ทุกไฟล์เป็นรายการของตัวเองเหมือนรูปทุกวันนี้ `moveFileToGroup`/`listOpenSameWorkGroups` ยังอยู่เป็นกลไก dormant
+
+### 25.2 สามทางหลังรอบนี้
+
+| ทางเข้า | สิ่งที่ผู้ใช้เห็น | โค้ด |
+|---|---|---|
+| **เว็บ อัปโหลดใหม่ (หน้าเดิม)** | เลือกได้หลายไฟล์ แต่ละไฟล์วิ่งเส้นทางใบเดียวของวันนี้ **ทีละไฟล์** (`initReceiptUpload` → PUT → `completeReceiptUpload` → ขออ่าน) แถวสถานะต่อไฟล์ในแผงเดิม (กำลังส่ง / เก็บไฟล์แล้ว / ส่งไม่สำเร็จ → ส่งไฟล์นี้อีกครั้ง) จบแล้วไปที่หน้ารายละเอียดเมื่อไฟล์เดียว และไปรายการพร้อม `?highlight=` ของใบล่าสุดเมื่อหลายไฟล์ ไม่มีกลุ่มเกิดขึ้นจากเว็บ | `runSingleFileUploads` + `uploadOneFile`/`handleBatchUpload` ใน `ExpensesPages.tsx` |
+| **เว็บ หน้าตรวจรายการ (หน้าเดิม)** | คงไว้เท่านี้: บรรทัดสถานะอ่านของ PDF (poll 3 วิ), notice §17.6 (failed/partial/paused ไม่มีปุ่มอ่านซ้ำ), replace/append ของ W02-web ตามป้าย/ตำแหน่งเดิม, notice source-stale หลัง replace เพิ่มอย่างเดียวคือ notice บรรทัดเดียว "พบเอกสาร N ใบในไฟล์นี้ — สร้างรายการเพิ่มให้แล้ว" พร้อมลิงก์ไปรายการที่สร้าง | `ExpenseReviewPage.tsx` + `expenses.capture.auto_split` |
+| **LINE ไฟล์ (PDF)** | สร้าง**รายการร่างธรรมดา**ตอนรับไฟล์ (เหมือนรูปหลัง OCR): `InitReceiptUploadUseCase` ด้วย LINE identity → `@@unique([companyId, lineMessageId])` กัน redelivery ให้ฟรี, `captureSource LINE_UPLOAD`, ไฟล์เป็น primary; ตอบ "📄 เก็บไฟล์แล้วค่ะ กำลังอ่านเอกสาร …" + ลิงก์รายการ; คิว job `ownerType EXPENSE`; ผลอ่านถูก push กลับเข้าแชตเดิม (`pushTargetId` เก็บใน `sourceChannelMetadataJson`) | `persistLineFileExpense` / `captureLineFile` / `ExpenseCaptureLineUseCase.queueExpenseRead` |
+
+เส้นทางรูปของ §17.6 (OCR ล้มหลังเก็บไฟล์แล้ว) และ CTA ของ NR01–NR03/NR08 ก็เก็บเป็น**รายการร่างธรรมดา**เช่นกัน และลิงก์ไปหน้ารายการนั้น `LineIntakeAttempt` ยังเขียนเหมือนเดิมแต่ `targetType = 'expense'`
+
+### 25.3 ข้อความ LINE หลังรอบนี้
+
+| กรณี | ข้อความ |
+|---|---|
+| เก็บไฟล์แล้ว (file lane) | `📄 เก็บไฟล์แล้วค่ะ กำลังอ่านเอกสาร เสร็จแล้วน้องจะสรุปให้ทางแชตนี้ ระหว่างนี้เปิดดูได้ที่: <expense link>` |
+| DONE เอกสารเดียว | การ์ดสรุปใบเสร็จของวันนี้ (`formatCaptureAutoHandoffReply`): 🧾 อ่านเอกสารแล้ว บันทึกเป็นร่างรายการให้แล้วค่ะ / ร้าน / ยอดในใบเสร็จ / ประเภทเอกสาร / วันที่ / ยังไม่ยืนยันรายการ / ✅ ตรวจสอบและยืนยันในเว็บแอป: `<expense link>` |
+| DONE หลายเอกสาร | `📄 อ่านเอกสารแล้วค่ะ พบเอกสาร N ใบ สร้างรายการให้แล้ว` + `1) <link>` … `N) <link>` + `ยังไม่ยืนยันรายการ กรุณาตรวจในเว็บแอปค่ะ` (`formatCaptureSplitReply`) |
+| FAILED (§17.6 / NR09) | `อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว กดกรอกข้อมูลต่อได้ที่นี่\n<expense link>` |
+| PARTIAL | `อ่านข้อมูลได้บางส่วนค่ะ เก็บไฟล์ไว้แล้ว กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่\n<expense link>` |
+| PAUSED | `เก็บไฟล์ไว้แล้วค่ะ แต่ยังอ่านข้อมูลไม่ครบ (<เหตุผลไทย>) กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่\n<expense link>` |
+| NR01 ใบปะหน้า | `ใบนี้เป็นใบปะหน้าพัสดุค่ะ ยังไม่พบหลักฐานการจ่ายค่าส่ง หากมีใบเสร็จค่าส่ง ส่งเพิ่มได้เลยค่ะ` + `\nเก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน กดกรอกข้อมูลต่อได้ที่นี่: <expense link>` — **วลี "จึงยังไม่ได้สร้างรายการค่าใช้จ่าย" ถูกตัดออกเมื่อมีร่างแล้ว** |
+| NR02 / NR03 / NR08 | ประโยคเดิมของแต่ละแถว + tail "เก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน กดกรอกข้อมูลต่อได้ที่นี่: `<expense link>`" |
+| NR04 / NR05 / NR06 | เดิมทุกตัวอักษร (เส้นทาง expense เดิม / check-bill เดิม) |
+| NR07 ภาพไม่เกี่ยวข้อง | `ภาพนี้ไม่ใช่เอกสารค่าใช้จ่ายค่ะ จึงไม่ได้สร้างรายการ ส่งเอกสารค่าใช้จ่ายที่ต้องการบันทึกได้เลยค่ะ` — ไม่มีลิงก์ และ**ลบร่างว่าง**ที่สร้างตอนรับไฟล์ (guard: DRAFT/NEEDS_REVIEW, ยอด 0, ไม่มีชำระ/ลงบัญชี/คำขอเบิก) |
+| §17.5 "ไฟล์เมื่อกี้…" | เดิมทุกแถว; recoveryAction ชี้ที่รายการค่าใช้จ่าย และแถวเก่าที่ target เป็น `capture_group` ชี้ที่รายการค่าใช้จ่ายรวม |
+| A45 งานเดิม/ใบใหม่ | **ถอนออก** (ข้อ 25.1) |
+
+### 25.4 Auto-split ในเครื่องอ่าน (ทั้งสองทาง)
+
+`ExpenseCaptureAutoSplitService` ทำงานภายใน job ก่อนเขียนสถานะ terminal เมื่อ job `ownerType EXPENSE` มีเอกสาร ≥ 2 ฉบับ:
+
+1. เอกสารฉบับแรก apply ลง expense ที่เป็นเจ้าของไฟล์ (เส้นทาง `receipt-ocr-apply` เดิม พร้อม fence `expectedSourceUpdatedAt`) — id/deep link เดิมไม่เปลี่ยน
+2. เอกสารฉบับต่อ ๆ ไป: ร่าง expense ธรรมดาใบละหนึ่ง (`NEEDS_REVIEW`, `captureSource` ของ lane, `createdByUserId` = ผู้สร้างต้นฉบับ, ไม่มี allocation/ผู้จ่าย/คำถาม) แล้ว apply ด้วย view เอกสารเดียวของ observation เดิม (map ตัวเดียวกัน)
+3. ไฟล์เดียวกันเป็น**ใบเสร็จหลัก**ของทุกใบที่สร้าง — ลิงก์ `expense.receipt.primary` + `primaryAttachmentId` เหมือน derived expense ของ W05 — เพราะ `validateConfirm` ไม่ให้ยืนยันรายการที่ไม่มีใบเสร็จหลักและไม่มีเหตุผลไม่มีใบเสร็จ ใบที่ถือไฟล์แค่ `supporting` จะยืนยันไม่ได้เลย (แก้ในรอบ controller review ข้อ 25.6); การลบ/ถอด/แทนที่ไฟล์จากใบใดใบหนึ่งจะไม่ลบไฟล์ที่ใบอื่นยังอ้างอยู่ (`DeleteExpenseUseCase` ได้ guard เดียวกับ remove-receipt/replace แล้ว)
+4. ทุกใบอยู่ใน `ExpenseCaptureGroup` เดียว สถานะ `HANDED_OFF` / `handoffState ACTIVE` / `handoffBatchKey = auto-split:<jobId>` — กลุ่มมีไว้เพื่อให้กฎ sibling ของ W01 ยกเว้นกันเองเรื่อง duplicate/resolver ambiguity เท่านั้น และสถานะ HANDED_OFF ทำให้ sweep retention ไม่ลบกลุ่มที่ยังมีรายการชี้อยู่
+5. `captureScopeKey` = `doc-1`, `doc-2`, … ตามลำดับเอกสาร เพราะ unique `(companyId, captureGroupId, captureScopeKey)` ต้องไม่ชนเมื่อสองเอกสารเป็นร้านเดียวกัน
+6. **Idempotent**: `checkpointJson.splitExpenseIds` = `{ documentRef: expenseId }` — drain ที่ retry, job ที่ถูก claim ใหม่ หรือ outbox ที่ส่งซ้ำ ข้าม ref ที่มีค่าแล้วทุกครั้ง หนึ่งเอกสารสร้าง expense ได้ครั้งเดียว
+7. เอกสารที่ไม่ผ่าน `isExpenseExtractionEligible` (ใบปะหน้า ใบเสนอราคาที่ปนมาในไฟล์เดียวกัน) **ไม่สร้างร่าง** — facts ยังเก็บไว้บน observation
+8. ids ถูกใส่ทั้งใน `checkpointJson.splitExpenseIds` และใน payload ของ `expense.capture_read.finished` (`splitExpenseIds`) ทั้งสอง lane จึงลิงก์ได้โดยไม่ต้อง derive ใหม่ และ `GET …/expenses/{e}/read-status` คืน `documentCount` + `splitExpenseIds` ให้หน้าเว็บ
+9. `multiDocument` บนหน้า review **ไม่ได้แปลว่า "ไปดูกลุ่ม" อีกแล้ว** แต่แปลว่า "แยกให้แล้ว นี่คือ ids" — ไม่มีสถานะ "split pending" เพราะ split เกิดภายใน job ก่อน terminal write
+
+### 25.5 API ที่ยังอยู่แต่ไม่มีใครเรียกจากเว็บ (dormant, ตรวจสิทธิ์ที่ server เหมือนเดิม)
+
+`POST/GET …/capture-groups`, `…/capture-groups/{g}`, `…/files`, `…/files/{f}/complete`, `…/files/{f}/detach`, `…/read-status` (ของกลุ่ม), `…/facts`, `…/review`, `…/allocations/{a}/accept`, `…/handoff`, `…/close`, `POST …/expenses/{e}/capture-group` — คงไว้ทั้ง route, permission, allocation engine, ใบรับรองต่อ derived source และ consumer ของ outbox; `ExpenseCaptureGroup` แถวใหม่เกิดจาก auto-split เท่านั้น `expenseCaptureWebPath()` คืน `/companies/{c}/expenses` เพราะหน้ากลุ่มไม่มีอยู่แล้ว
+
+### 25.6 Controller review 2026-09-19 (Fable) — สิ่งที่แก้เพิ่มจาก W09 ก่อนส่งเจ้าของ
+
+ตรวจ diff ของ W09 กับ seam ที่ทราบ (§16.4/§17.5/§17.6/§18.4, W01 sibling rules, `validateConfirm`, retention sweep) พบและแก้ 6 จุด:
+
+| # | จุดที่พบ | ผลถ้าไม่แก้ | สิ่งที่แก้ |
+|---|---|---|---|
+| 1 | `persistNonReceiptEvidence` (เส้นทางรูปของ §17.6 และ NR01–NR03/NR08) เรียก `persistLineFileExpense` ซึ่งคิว job อ่านใหม่ให้รูปที่ OCR อ่านไปแล้ว | อ่านซ้ำ = เสียเงินและขัด §17.6 และ push ผลอ่านรอบสองที่ขัดกับคำตอบแรก | `persistLineFileExpense({ read: 'none' })` สำหรับเส้นทางรูป ไม่มี job, attempt บันทึก `STORED_READ_FAILED` / `STORED_READ_DONE` ตามผลอ่านรอบแรก (`line-intake-dispatch.use-case.spec.ts`) |
+| 2 | payload ของ `expense.capture_read.finished` ไม่มี `classification`/`documentTotal` ที่ notifier อ่าน (`readClassification`) — NR01–NR08 ของ file lane ไม่เคยเกิดจริง | PDF ที่เป็นใบปะหน้า/ใบเสนอราคา ได้การ์ด "🧾 อ่านเอกสารแล้ว บันทึกเป็นร่าง… ยอด 0.00" | runner ใส่ `classification` + `documentTotal` ของเอกสารแรกใน `RunOutcome`/payload (`expense-capture-read-runner.service.spec.ts`) |
+| 3 | DONE แต่ `applied=false` (fence เก่า / ไม่ผ่าน eligibility) ยังส่งการ์ดใบเสร็จจากร่างที่ยังว่าง | บอกยอด 0.00 บาท ที่เอกสารไม่เคยบอก | notifier ส่งประโยค PARTIAL ของ §17.6 พร้อมลิงก์ (`line-capture-result-notifier.use-case.spec.ts`) |
+| 4 | NR07 ลบร่างด้วย `deleteMany` เปล่า ๆ: ลิงก์ไฟล์ค้าง, `AttachmentObject` ไม่ถูก retire, ไม่มี audit, และถ้าลบไม่สำเร็จ (ร่างไม่ว่างแล้ว) ยังบอกว่า "ไม่ได้สร้างรายการ" | แถวกำพร้า + ข้อความเท็จ | cleanup ใน transaction แบบเดียวกับ `DeleteExpenseUseCase` (ลบลิงก์, retire ไฟล์ที่ไม่มีใครอ้าง, audit `expense.delete` actor SYSTEM); ถ้าร่างไม่ว่างแล้ว → ประโยค PARTIAL พร้อมลิงก์ |
+| 5 | ร่าง sibling จาก auto-split ถือไฟล์เป็น `expense.receipt.supporting` และไม่มี `primaryAttachmentId` | `validateConfirm` ปฏิเสธ "ต้องมีใบเสร็จหรือเหตุผลไม่มีใบเสร็จ" — ยืนยันไม่ได้เลย | sibling ได้ลิงก์ `expense.receipt.primary` + `primaryAttachmentId` ใน INSERT transaction ของมันเอง (ข้อ 25.4 รายการ 3, pg spec + runner spec) |
+| 6 | `DeleteExpenseUseCase` retire ไฟล์ทุกไฟล์ที่รายการนั้นลิงก์ โดยไม่ดูว่าใบอื่นยังอ้างอยู่ | ลบ sibling ที่ไม่ต้องการ → ใบต้นฉบับเสียใบเสร็จไปด้วย | guard "ยังมีลิงก์อื่น → ไม่ retire" แบบเดียวกับ remove-receipt/replace + `sharedAttachmentIds` ใน audit metadata (`delete-expense.use-case.spec.ts`) |
+
+สภาพแวดล้อมทดสอบ (ไม่ใช่ข้อบกพร่องของโค้ด แต่ต้องอยู่ในสูตร — ดู README ของ evidence `w09/`): (ก) throwaway stack ต้องรัน `prisma/sync-feature-launch-gates.ts` หลัง `prisma/seed.ts` ไม่งั้น `FeatureLaunchGate` ว่าง → ทุก `POST …/receipt-uploads` ตอบ 403 `feature_temporarily_unavailable`; (ข) bucket ของ MinIO ต้องเปิด versioning ไม่งั้น `…/receipt-uploads/{a}/complete` ตอบ 500 `S3 bucket versioning is required for immutable evidence`
+
+### 25.7 Implementation notes (W10 — สามจุดที่บิลจริงเปิดเผย, 2026-09-19)
+
+เจ้าของสั่ง 2026-09-19 หลังรันบิลสาธารณะจริงหกใบ ("ให้ opus แก้ 3 จุดนี้เลย") — รายละเอียดผลอ่านจริงและไฟล์ต้นทางอยู่ใน `docs/research/expense-capture-read-benchmark-2026-09-19.md` §6, สิ่งที่แก้ต่อจุดอยู่ใน §6.3 ของเอกสารเดียวกัน. ไม่มีหน้าจอใหม่ ไม่มี API ใหม่ ไม่มีข้อความลูกค้าใหม่.
+
+| # | จุดที่พบบนบิลจริง | ผลถ้าไม่แก้ | สิ่งที่แก้ |
+|---|---|---|---|
+| D1 | FlowAccount/PEAK/Leceipt พิมพ์ส่วนลดต่อบรรทัด (ยอดในแถวเป็นยอดสุทธิแล้ว) และพิมพ์ยอดส่วนลดเดิมซ้ำในสรุป | §4.4 หักส่วนลดซ้ำ → `mismatch −625` บนใบที่ยอดตรง และร่างสองแถวขึ้นไปตกเป็น `ITEMS_DID_NOT_RECONCILE` เหลือบรรทัดสรุปเดียว | `reconcileDocument` ไม่หักซ้ำเมื่อ "แถว + ส่วนลดที่พิมพ์ = ยอดก่อนหักส่วนลดที่พิมพ์" (ต้องมีตัวเลขที่พิมพ์จริง ไม่อนุมาน) และบันทึกเหตุผลไว้บนแถว reconciliation เป็น `discountAlreadyInRows` (contract ใหม่ optional ใน `ExpenseCaptureDocumentReconciliation`); `receipt-ocr-apply.service.ts` ใช้ราคาต่อหน่วยที่พิมพ์ (ยอดขั้นต้น) เป็นฐานของแถว ส่วนลดจึงหักครั้งเดียว → `RECONCILED_ITEM_LINES` subtotal 12,500 / discount 625 / VAT 776.87 / total 11,875 |
+| D2 | 7-Eleven (และ Lotus's/Big C/Makro) พิมพ์บล็อกสรุป N/V: "สินค้าไม่เสียภาษีมูลค่าเพิ่ม" ถูกอ่านเป็น `applied_discount`, แถว VAT ถูกอ่านเป็น `summary` | `mismatch −9` และช่อง VAT ของผู้ตรวจว่างเปล่าทุกใบ | สองชั้น: (ก) `CAPTURE_EXTRACT_PROMPT` ระบุ kind ของทุกแถวสรุปภาษาไทยทีละแถว + สั่งอ่านยอดที่พิมพ์ "บนบรรทัดของตัวเอง" (บิลจริงเลื่อนทั้งบล็อกไปหนึ่งแถว) พร้อม spec ตรึงข้อความ; (ข) assembly ไม่เชื่อป้ายของโมเดลอย่างเดียว — component ที่ป้าย/span บอกว่าเป็นยอดสินค้า (ไม่เสียภาษี/ยกเว้นภาษี/ก่อนภาษี/รวมภาษี) ถูกเปลี่ยนเป็น `summary` เมื่อโมเดลให้ role ที่ขยับเงินหรืออ้างเป็นภาษี, และสร้าง totals kind `tax` จากแถว VAT ที่พิมพ์เมื่อผลอ่านไม่มี `tax` (ยอดเดียวเท่านั้น). `charge` ไม่ถูกเปลี่ยน. เพิ่ม: ส่วนลดที่พิมพ์ 0.00 ไม่นับเป็นส่วนลดใน `expense-capture-fields.logic.ts` (ฟอร์ม 7-Eleven พิมพ์สองแถวเป็น 0.00 ทุกใบ → เดิมรายงาน `discountAmount` ขาด) |
+| D3 | ภาพ/สกรีนช็อตต่ำกว่า ~1,000 px: ตัวอักษร ~8 px ทำให้บล็อกยอดรวมหายทั้งบล็อก โดย `truncated: false` → งานจบ DONE พร้อมรายการที่ไม่มียอด | ร่างมีสินค้าแต่ไม่มียอดรวม และไม่มีใครรู้ว่าอ่านไม่ครบ | สามชั้น: (ก) `EXPENSE_CAPTURE_PREPROCESS_LIMITS.minImageEdgePx = 1,600` — ขยายภาพด้วย sharp `lanczos3` ก่อนอ่าน (เลือก 1,600 เพราะ provider ย่อภาพเองที่ ~1,568 px ด้านยาว) โดยเพดาน byte/edge เดิมชนะเสมอและกฎย่อภาพไม่เปลี่ยน; (ข) `captureReadPrompt` บังคับให้ถอดความทุกบรรทัดรวมบล็อกยอดรวม และให้คีย์ `partial` ไว้บอกว่าอ่านไม่ครบ → API แปลงเป็น `truncated: true` เหมือน `max_tokens`; (ค) runner นับหน้าสถานะ `partial` เป็นหน้าที่ยังไม่ได้อ่าน → งานจบ PARTIAL ตาม §17.6 (ไม่มีปุ่มอ่านซ้ำ ข้อความเดิมใช้ได้ ไม่ต้องแก้เว็บ/LINE) |
+
+Fixture ใหม่ใน `scripts/expense-capture-read.fixtures.ts` (สังเคราะห์ทั้งหมด, รันใน `pnpm test:harness`, ให้ controller replay บน Bedrock): `FX-PDF-DISCOUNT-NET-01` (แถวสุทธิ + ส่วนลดซ้ำในสรุป — render เป็นภาพเพราะ pdf-lib standard font เขียนภาษาไทยไม่ได้ และป้ายไทยคือสิ่งที่ทดสอบ), `FX-PDF-RETAIL-NV-01` (บล็อก N/V เต็มรูป), `FX-IMG-SMALL-01` (JPEG 896×533 ตัวอักษร ~11 px — ช่องทางภาพล้วน ไม่มี text layer). Scorer เพิ่ม `discountsMatched` / `vatMatched` / `reconciledDocuments` เพราะของเดิมวัดได้แค่ documents/items/totals. ตาราง §13 เพิ่มสามแถวนี้ไว้แล้ว.
+
+ข้อความใน §4.4 ("`Σ sale − Σ void − Σ applied_discount(scope order/document) + Σ charge`") ยังเป็นสูตรหลัก — W10 เพิ่มข้อยกเว้นเดียวที่อธิบายข้างบน (D1) ไม่ได้เปลี่ยนสูตร และไม่ได้เพิ่ม balancing component ใด ๆ.

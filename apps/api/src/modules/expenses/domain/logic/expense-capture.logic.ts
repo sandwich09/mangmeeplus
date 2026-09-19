@@ -9,9 +9,17 @@ import {
   type ExpenseCaptureObservations,
 } from '@watchdog-bms/contracts';
 
-/** The group page (W04). Also the "กรอกข้อมูลต่อ" target for a group-shaped job (§10). */
-export const expenseCaptureWebPath = (companyId: string, groupId: string): string =>
-  `/companies/${companyId}/expenses/capture/${groupId}`;
+/**
+ * Where a group-shaped job sends a person (§10 "กรอกข้อมูลต่อ").
+ *
+ * Appendix §25 (owner decision 2026-09-19) withdrew the group page, so there is nothing group-shaped
+ * left to open: the records a group produced live in the expense list, and that is the honest target
+ * for the dormant dto field and for any row captured before the decision. The `groupId` is kept in
+ * the signature because every caller has it and a path that silently ignores its argument is easier
+ * to review than a dozen call sites changed to drop it.
+ */
+export const expenseCaptureWebPath = (companyId: string, _groupId?: string): string =>
+  `/companies/${companyId}/expenses`;
 
 /**
  * The issuer scope a derived source belongs to, and half of the handoff fence

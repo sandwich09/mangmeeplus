@@ -610,6 +610,38 @@ export function usableItemLines(fields: ReceiptOcrFieldResult): NonNullable<Rece
   return usable.length === lines.length ? usable : [];
 }
 
+/**
+ * W10 D1: true when every printed row amount is ALREADY net of the document-level discount.
+ *
+ * The FlowAccount/PEAK/Leceipt full form prints `50 × 250.00, ส่วนลด 5 %, มูลค่า 11,875.00` and then
+ * repeats the same 625.00 in the summary. Placing that discount on a row whose amount already has it
+ * taken off under-totals the draft by exactly the discount, and the whole item breakdown then falls
+ * back to one "AI สรุปยอดรวม" line — the reviewer loses the rows the document printed.
+ *
+ * Proven from printed figures only, and only when EVERY row prints a unit price: the rows' gross
+ * (quantity × unit price) must reach the printed pre-discount subtotal while their printed amounts
+ * reach that subtotal minus the printed discount. Gross rows reach the subtotal with their amounts,
+ * so the ordinary layout (a staff discount on a bill whose rows are gross) can never match.
+ */
+function itemRowsNetOfDocumentDiscount(
+  fields: ReceiptOcrFieldResult,
+  items: NonNullable<ReceiptOcrFieldResult['lines']>,
+): boolean {
+  const discount = nonNegativeMoney(fields.discountAmount) ?? 0;
+  const subtotal = positiveMoney(fields.subtotalAmount);
+  if (items.length < 2 || subtotal === undefined || discount <= VAT_TOLERANCE) return false;
+  let gross = 0;
+  let net = 0;
+  for (const item of items) {
+    const unitPrice = positiveMoney(item.unitPrice);
+    if (unitPrice === undefined) return false;
+    gross += unitPrice * (positiveMoney(item.quantity) ?? 1);
+    net += nonNegativeMoney(item.amount) ?? 0;
+  }
+  return Math.abs(gross - subtotal) <= VAT_TOLERANCE
+    && Math.abs(net - (subtotal - discount)) <= VAT_TOLERANCE;
+}
+
 function prepareOcrLines(
   fields: ReceiptOcrFieldResult,
   lineTotal: string,
@@ -700,6 +732,10 @@ function prepareOcrLines(
   // split, so a two-item bill stops collapsing into a single "AI สรุปยอดรวม" line. Tried before the
   // charge branch because an item breakdown supersedes it — the charge lines ride along either way.
   const items = usableItemLines(fields);
+  // W10 D1: FlowAccount/PEAK/Leceipt print the line discount INSIDE the row's money column and
+  // repeat the same total in the summary. The row's printed unit price is then the gross one, so the
+  // summary discount has a base to come off and both printed figures survive on the draft.
+  const rowsNetOfDiscount = itemRowsNetOfDocumentDiscount(fields, items);
   if (items.length >= 2) {
     const candidate = [
       ...items.map((item, index) => {
@@ -708,8 +744,9 @@ function prepareOcrLines(
         const amount = nonNegativeMoney(item.amount)!;
         const printedUnit = positiveMoney(item.unitPrice);
         // Thai bills print the row's extended amount far more often than its unit price, so the
-        // printed unit price is kept only when it explains that amount; otherwise it is derived.
-        const unitPrice = printedUnit && Math.abs(printedUnit * qty - amount) <= VAT_TOLERANCE
+        // printed unit price is kept only when it explains that amount — or, on the net-row layout
+        // above, when the rows plus the printed discount explain the printed subtotal.
+        const unitPrice = printedUnit && (rowsNetOfDiscount || Math.abs(printedUnit * qty - amount) <= VAT_TOLERANCE)
           ? printedUnit
           : amount / qty;
         return prepareLine({

@@ -1,0 +1,44 @@
+[
+  {
+    "subject": "upload-three-files-picked",
+    "url": "http://127.0.0.1:3078/companies/seed-local-company/expenses/upload",
+    "overflowPx": 0,
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "subject": "list-after-three-files",
+    "url": "http://127.0.0.1:3078/companies/seed-local-company/expenses?highlight=cmu829rxg02606bk137ec7y9q",
+    "overflowPx": 0,
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "subject": "review-pdf-reading",
+    "url": "http://127.0.0.1:3078/companies/seed-local-company/expenses/cmu829rxg02606bk137ec7y9q",
+    "overflowPx": 0,
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "subject": "review-pdf-read-ended",
+    "url": "http://127.0.0.1:3078/companies/seed-local-company/expenses/cmu829rxg02606bk137ec7y9q",
+    "overflowPx": 0,
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "subject": "review-auto-split-notice",
+    "url": "http://127.0.0.1:3078/companies/seed-local-company/expenses/cmu829vkv0003pvk1s4nsixwt",
+    "overflowPx": 0,
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "subject": "review-single-image",
+    "url": "http://127.0.0.1:3078/companies/seed-local-company/expenses/cmu829x1302716bk1yqi9pvj1",
+    "overflowPx": 0,
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

@@ -9,8 +9,8 @@ const source = readFileSync(new URL('./ExpensesPages.tsx', import.meta.url), 'ut
 function uploadCatchBlock(): string {
   const start = source.indexOf('if (apiErrorCode(e) === RECEIPT_QUOTA_ERROR_CODE) {');
   assert.notEqual(start, -1, 'the quota branch is gone — this guard needs rewriting, not deleting');
-  const end = source.indexOf('onSuccess(intent.expenseId, notice);', start);
-  assert.notEqual(end, -1, 'the non-quota path no longer ends in onSuccess');
+  const end = source.indexOf("t('expenses.upload_extract_failed_prefix', locale)", start);
+  assert.notEqual(end, -1, 'the non-quota path no longer ends in the generic read-failure notice');
   return source.slice(start, end);
 }
 
@@ -22,7 +22,8 @@ function uploadCatchBlock(): string {
  */
 test('the receipt-quota branch stays on the upload tab instead of navigating away', () => {
   const branch = uploadCatchBlock();
-  assert.match(branch, /\breturn;/, 'the quota branch must return before onSuccess');
+  // `notice: null` is the quota answer: nothing lands, so the caller never navigates.
+  assert.match(branch, /return \{ expenseId: intent\.expenseId, notice: null \};/, 'the quota branch must return before the caller lands');
   assert.doesNotMatch(branch, /onSuccess\s*\(/, 'onSuccess unmounts this panel — banner and button go with it');
   assert.doesNotMatch(branch, /router\.(push|replace)\s*\(/, 'no navigation out of the upload tab');
   assert.doesNotMatch(branch, /window\.location/, 'no navigation out of the upload tab');
@@ -114,36 +115,37 @@ test('the money-refusal notices are info, scope-aware, and never the generic fai
 });
 
 /**
- * Capture appendix §3/§11 (W02-web). One file is still one expense, byte for byte: the group lane
- * only opens at two files or more, and it never touches an expense's primary receipt.
+ * Appendix §25 (owner decision 2026-09-19). One file is one expense, and so is EACH of several:
+ * there is no group lane left, so the panel runs today's single-receipt path N times and no file
+ * ever reaches a capture-group route.
  */
 test('one file keeps the existing expense path, in the same three requests', () => {
-  const single = source.slice(source.indexOf('const handleUpload = async ()'), source.indexOf('const flow = ['));
-  assert.match(single, /if \(selectedFiles\.length > 1 \|\| captureGroup\) \{ await handleGroupUpload\(\); return; \}/);
-  assert.match(single, /const intent = await initReceiptUpload\(companyId, \{/);
-  assert.match(single, /await uploadReceiptFile\(intent\.uploadUrl/);
-  assert.match(single, /await completeReceiptUpload\(companyId, intent\.expenseId, intent\.attachmentId, \{ byteSize: file\.size \}\)/);
-  assert.match(single, /requestExpenseExtractionWithRecovery\(/);
+  const one = source.slice(source.indexOf('const uploadOneFile = async ('), source.indexOf('const handleBatchUpload = async ()'));
+  assert.match(one, /const intent = await initReceiptUpload\(companyId, \{/);
+  assert.match(one, /await uploadReceiptFile\(intent\.uploadUrl/);
+  assert.match(one, /await completeReceiptUpload\(companyId, intent\.expenseId, intent\.attachmentId, \{ byteSize: file\.size \}\)/);
+  assert.match(one, /requestExpenseExtractionWithRecovery\(/);
+  const single = source.slice(source.indexOf('const handleUpload = async ()'), source.indexOf('/** Rows come from the machine'));
+  assert.match(single, /if \(selectedFiles\.length > 1 \|\| captureFiles\.length > 1\) \{ await handleBatchUpload\(\); return; \}/);
+  assert.match(single, /const done = await uploadOneFile\(file\);/);
+  assert.match(single, /if \(done\.notice\) onSuccess\(done\.expenseId, done\.notice\);/);
 });
 
-test('the group lane reserves, uploads and completes per file — never the primary-replace path', () => {
-  const group = source.slice(source.indexOf('const handleGroupUpload = async ()'), source.indexOf('const retryCaptureFile'));
-  assert.match(group, /createExpenseCaptureGroup\(companyId, \{/);
-  assert.match(group, /runCaptureUpload\(\{/);
-  assert.doesNotMatch(group, /uploadExpenseEvidenceFile|completeReceiptUpload|initReceiptUpload/,
-    'a capture file is never completed through an expense receipt route');
+test('several files are N ordinary single uploads — no group, no second screen', () => {
+  const batch = source.slice(source.indexOf('const handleBatchUpload = async ()'), source.indexOf('const handleUpload = async ()'));
+  assert.match(batch, /runSingleFileUploads<ExtractionNotice \| null>\(\{/);
+  assert.match(batch, /const done = await uploadOneFile\(file\);/);
   // The machine itself is exercised in expense-capture-upload.logic.spec.ts; this is the wiring.
-  assert.match(source, /addFile: async \(groupId, body\) => \{/);
-  assert.match(source, /completeFile: async \(groupId, fileId, body\) => \{/);
+  assert.doesNotMatch(source, /createExpenseCaptureGroup|addExpenseCaptureFile|completeExpenseCaptureFile|runCaptureUpload|writeCaptureManifest/,
+    'the capture-group upload lane is withdrawn');
+  assert.equal(source.includes('/expenses/capture'), false, 'no web route points at a capture group');
 });
 
-test('every file stored leaves for the group page, and the manifest is dropped with it', () => {
-  const settle = source.slice(source.indexOf('const settleCaptureUpload'), source.indexOf('const handleGroupUpload'));
-  assert.match(settle, /if \(allCaptureFilesStored\(files\)\) \{/);
-  assert.match(settle, /writeCaptureManifest\(storage, null, companyId\);/);
-  assert.match(settle, /router\.push\(`\/companies\/\$\{companyId\}\/expenses\/capture\/\$\{encodeURIComponent\(groupId\)\}`\)/);
-  // Still unfinished: the manifest is what the reopened tab resumes from.
-  assert.match(settle, /writeCaptureManifest\(storage, \{ companyId, groupId, revision, files \}, companyId\)/);
+test('the batch lands where a single receipt lands: the list, with the newest highlighted', () => {
+  assert.match(source, /onBatchSuccess=\{\(created\) => \{ for \(const row of created\) storeExtractionNotice\(row\.expenseId, row\.notice\); router\.push\(`\/companies\/\$\{companyId\}\/expenses\?highlight=\$\{encodeURIComponent\(created\.at\(-1\)!\.expenseId\)\}`\); \}\}/);
+  // A refused read latches the banner instead of landing, so nothing claims work that did not happen.
+  const batch = source.slice(source.indexOf('const handleBatchUpload = async ()'), source.indexOf('const handleUpload = async ()'));
+  assert.match(batch, /if \(created\.length !== run\.created\.length \|\| created\.length === 0\) return;/);
 });
 
 test('the picker and the dropzone take several files; the camera still takes one photo', () => {
@@ -172,9 +174,10 @@ test('the client no longer carries a PDF ceiling of its own', () => {
 });
 
 test('a refused read still leaves the draft reachable and the spinner cleared', () => {
-  // `finally` owns both spinners, so no refusal path can leave one turning.
-  assert.match(source, /finally \{ setLoading\(false\); setExtracting\(false\); \}/);
-  // The notice path ends in onSuccess, which carries the draft id — the file and draft survive.
-  assert.match(source, /notice = extractionNotice\(outcome\.result, locale\);/);
-  assert.match(source, /onSuccess\(intent\.expenseId, notice\);/);
+  // A `finally` owns each spinner, so no refusal path can leave one turning.
+  assert.match(source, /\} finally \{ setExtracting\(false\); \}/);
+  assert.equal((source.match(/finally \{ setLoading\(false\); \}/g) ?? []).length >= 2, true);
+  // The notice path carries the draft id, so the file and the draft survive a refusal.
+  assert.match(source, /return \{ expenseId: intent\.expenseId, notice: extractionNotice\(outcome\.result, locale\) \};/);
+  assert.match(source, /if \(done\.notice\) onSuccess\(done\.expenseId, done\.notice\);/);
 });

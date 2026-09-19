@@ -21,6 +21,11 @@ type Scenario = {
   autoHandoff?: 'expense' | 'skipped' | 'throws';
   /** How many events the drain claims — two rows means the same result delivered twice. */
   events?: number;
+  /** Appendix §25 expense lane: `null` models a record the push may not read. */
+  expenseSnapshot?: null;
+  captureSource?: string;
+  /** NR07 cleanup: how many rows the guarded delete matches (0 = the draft is no longer empty). */
+  draftDeleteCount?: number;
 };
 
 function makeNotifier(scenario: Scenario = {}) {
@@ -31,10 +36,14 @@ function makeNotifier(scenario: Scenario = {}) {
   const closes: Array<{ groupId: string; reason: string }> = [];
   const handoffCalls: string[] = [];
   const expenses: string[] = [];
+  const draftDeletes: any[] = [];
   const events = Array.from({ length: scenario.events ?? 1 }, (_value, index) => ({
     id: `outbox-${index + 1}`, companyId: scenario.companyId ?? 'company-1',
     eventType: LINE_CAPTURE_READ_FINISHED_EVENT_TYPE,
-    claimToken: `token-${index + 1}`, payloadJson: { groupId: 'group-1', ...(scenario.payload ?? {}) },
+    claimToken: `token-${index + 1}`,
+    payloadJson: scenario.payload && 'ownerType' in scenario.payload
+      ? { ...scenario.payload }
+      : { groupId: 'group-1', ...(scenario.payload ?? {}) },
   }));
 
   const prisma = {
@@ -44,14 +53,31 @@ function makeNotifier(scenario: Scenario = {}) {
       companyFeatureEntitlement: { findMany: async () => [] },
       lineIntakeAttempt: { findMany: async () => [{ id: 'attempt-1' }] },
       expenseRecord: {
+        // `draftDeleteCount: 0` models a draft someone already filled in — the guarded delete matches nothing.
+        deleteMany: async (input: any) => { draftDeletes.push(input.where); return { count: scenario.draftDeleteCount ?? 1 }; },
         findFirst: async () => ({
           vendorNameSnapshot: 'ร้านค้าดี', grandTotalAmount: '250.0000', currency: 'THB',
           sourceDocumentType: 'RECEIPT', expenseDate: new Date('2026-07-25T00:00:00.000Z'),
         }),
       },
+      // The NR07 cleanup runs in one transaction over the same client.
+      $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma.client),
+      attachmentLink: {
+        findMany: async () => [{ attachmentId: 'att-1' }, { attachmentId: 'att-shared' }],
+        deleteMany: async (input: any) => { linkDeletes.push(input.where); return { count: 2 }; },
+        // `att-shared` is still linked by another record (an auto-split sibling); `att-1` is not.
+        count: async (input: any) => (input.where.attachmentId === 'att-shared' ? 1 : 0),
+      },
+      reimbursementLine: { findFirst: async () => null },
+      attachmentObject: {
+        updateMany: async (input: any) => { attachmentDeletes.push(input.where.id); return { count: 1 }; },
+      },
     },
   } as any;
 
+  const linkDeletes: any[] = [];
+  const attachmentDeletes: string[] = [];
+  const auditEntries: any[] = [];
   const notifier = new LineCaptureResultNotifierUseCase(
     prisma,
     { webBaseUrl: 'https://app.example.com' } as any,
@@ -66,6 +92,20 @@ function makeNotifier(scenario: Scenario = {}) {
         webPath: `/companies/company-1/expenses/capture/${groupId}`,
       }),
       closeMergedGroup: async (_ctx: any, groupId: string, reason: string) => { closes.push({ groupId, reason }); return true; },
+      // Appendix §25: the live lane. `expenseSnapshot: null` models a record this company cannot see.
+      readFinishedExpenseSnapshot: async (_companyId: string, expenseId: string) => (
+        scenario.expenseSnapshot === null ? null : {
+          expense: {
+            id: expenseId, status: 'NEEDS_REVIEW', captureSource: scenario.captureSource ?? 'LINE_UPLOAD',
+            createdByUserId: 'user-1',
+            lineChatKeyHash: scenario.lineChatKeyHash === undefined ? CHAT_HASH : scenario.lineChatKeyHash,
+            linePushTargetId: scenario.linePushTargetId ?? null,
+            vendorNameSnapshot: 'ร้านค้าดี', grandTotalAmount: '250.0000', currency: 'THB',
+            sourceDocumentType: 'RECEIPT', expenseDate: new Date('2026-07-25T00:00:00.000Z'),
+            primaryAttachmentId: 'att-1',
+          },
+          jobs: scenario.jobs ?? [{ id: 'job-1', status: 'DONE', pausedReason: null, lastErrorCode: null }],
+        }),
     } as any,
     { updateLineIntakeAttemptOutcome: async (input: any) => { attemptUpdates.push(input); return true; } } as any,
     {
@@ -89,8 +129,10 @@ function makeNotifier(scenario: Scenario = {}) {
         return { expenseId: 'expense-9' };
       },
     } as any,
+    undefined,
+    { log: async (entry: any) => { auditEntries.push(entry); } } as any,
   );
-  return { notifier, published, failed, pushes, attemptUpdates, closes, handoffCalls, expenses };
+  return { notifier, published, failed, pushes, attemptUpdates, closes, handoffCalls, expenses, draftDeletes, linkDeletes, attachmentDeletes, auditEntries };
 }
 
 const pushedText = (h: ReturnType<typeof makeNotifier>): string => h.pushes[0]?.messages[0]?.text ?? '';
@@ -102,14 +144,14 @@ const usesRetiredAiMoneyWording = (text: string): boolean => retiredAiMoneyWords
 
 
 describe('LINE capture result push (appendix §3)', () => {
-  it('DONE pushes the summary with the group link and settles the outbox row once', async () => {
+  it('DONE pushes the summary with the expense-list link and settles the outbox row once', async () => {
     const h = makeNotifier({ payload: { status: 'DONE', issuerName: 'ร้านค้าดี', documentTotal: '250.00', documentCount: 1 } });
     const result = await h.notifier.execute();
     assert.deepEqual(result, { claimed: 1, pushed: 1, skipped: 0, parked: 0 });
     assert.equal(h.pushes.length, 1);
     assert.equal(h.pushes[0].to, LINE_USER);
     assert.match(pushedText(h), /อ่านเอกสารแล้วค่ะ พบ ร้านค้าดี ยอด 250\.00/);
-    assert.match(pushedText(h), /expenses\/capture\/group-1/);
+    assert.match(pushedText(h), /companies\/company-1\/expenses$|companies\/company-1\/expenses[^/]/m, 'appendix §25: the withdrawn group page is replaced by the expense list');
     assert.ok(h.pushes[0].messages[0].quickReply, 'the completion menu rides the push');
     assert.deepEqual(h.published, ['outbox-1']);
     assert.equal(h.failed.length, 0);
@@ -129,7 +171,7 @@ describe('LINE capture result push (appendix §3)', () => {
       const h = makeNotifier({ jobs: [{ id: 'job-1', status }], payload: { status } });
       await h.notifier.execute();
       assert.match(pushedText(h), pattern);
-      assert.match(pushedText(h), /expenses\/capture\/group-1/);
+      assert.match(pushedText(h), /companies\/company-1\/expenses$|companies\/company-1\/expenses[^/]/m, 'appendix §25: the withdrawn group page is replaced by the expense list');
       assert.ok(!/อ่านซ้ำ|ลองอ่านใหม่/.test(pushedText(h)), '§17.6 offers no re-read');
     });
   }
@@ -209,7 +251,7 @@ describe('LINE capture result push (appendix §3)', () => {
     assert.match(pushedText(h), /ยังไม่ยืนยันรายการ/);
     assert.match(pushedText(h), /ตรวจสอบและยืนยันในเว็บแอป/);
     assert.match(pushedText(h), /\/companies\/company-1\/expenses\/expense-9/);
-    assert.ok(!/expenses\/capture\/group-1/.test(pushedText(h)), 'the expense replaces the group link');
+    assert.ok(!/expenses\/capture\//.test(pushedText(h)), 'the expense replaces the withdrawn group page');
     // §17.5 must point a later "ไฟล์เมื่อกี้…" at the record, not at the work it closed.
     assert.equal(h.attemptUpdates[0].targetType, 'expense');
     assert.equal(h.attemptUpdates[0].targetId, 'expense-9');
@@ -220,12 +262,12 @@ describe('LINE capture result push (appendix §3)', () => {
     ['the use case refuses it', { autoHandoff: 'skipped' }],
     ['the use case throws', { autoHandoff: 'throws' }],
   ] as const) {
-    it(`keeps the group link when ${name}`, async () => {
+    it(`keeps the list link when ${name}`, async () => {
       const h = makeNotifier({ ...(scenario as Scenario), payload: { status: 'DONE', issuerName: 'ร้านค้าดี', documentTotal: '250.00', documentCount: 1 } });
       const result = await h.notifier.execute();
       assert.equal(result.pushed, 1);
       assert.match(pushedText(h), /อ่านเอกสารแล้วค่ะ พบ ร้านค้าดี/);
-      assert.match(pushedText(h), /expenses\/capture\/group-1/);
+      assert.match(pushedText(h), /companies\/company-1\/expenses$|companies\/company-1\/expenses[^/]/m, 'appendix §25: the withdrawn group page is replaced by the expense list');
       assert.equal(h.expenses.length, 0);
       assert.equal(h.attemptUpdates[0].targetType, undefined, 'the attempt still points at the group');
     });
@@ -250,7 +292,7 @@ describe('LINE capture result push (appendix §3)', () => {
     assert.deepEqual(h.expenses, ['expense-9'], 'only the first one creates');
     assert.deepEqual(h.published, ['outbox-1', 'outbox-2']);
     assert.match(pushedText(h), /ตรวจสอบและยืนยันในเว็บแอป/);
-    assert.match(h.pushes[1]?.messages[0]?.text ?? '', /expenses\/capture\/group-1/);
+    assert.match(h.pushes[1]?.messages[0]?.text ?? '', /companies\/company-1\/expenses/, 'appendix §25: the withdrawn group page is replaced by the expense list');
   });
 
   it('a group chat is answered IN the group chat it arrived from', async () => {
@@ -274,5 +316,142 @@ describe('LINE capture result push (appendix §3)', () => {
     const result = await noGroup.notifier.execute();
     assert.equal(noGroup.pushes.length, 0);
     assert.equal(result.skipped, 1);
+  });
+});
+
+/**
+ * Appendix §25 (owner decision 2026-09-19): the LIVE lane. A LINE document is an ordinary expense
+ * draft from intake, so the push is about a RECORD — today's receipt card for one document, the
+ * split list for several, the §17.6 sentences with the EXPENSE link when the read did not finish,
+ * and truthful NR copy over a draft that exists.
+ */
+describe('LINE capture result push — the expense lane (appendix §25)', () => {
+  const expensePayload = (over: Record<string, unknown> = {}) => ({
+    ownerType: 'EXPENSE', expenseId: 'expense-1', status: 'DONE', ...over,
+  });
+
+  it('one document pushes the receipt card, read off the draft, with the expense link', async () => {
+    const h = makeNotifier({ payload: expensePayload({ documentCount: 1 }) });
+    const result = await h.notifier.execute();
+    assert.deepEqual(result, { claimed: 1, pushed: 1, skipped: 0, parked: 0 });
+    assert.match(pushedText(h), /ร้าน: ร้านค้าดี/);
+    assert.match(pushedText(h), /ยอดในใบเสร็จ: 250\.00 บาท/);
+    assert.match(pushedText(h), /ประเภทเอกสาร: ใบเสร็จรับเงิน/);
+    assert.match(pushedText(h), /ยังไม่ยืนยันรายการ/);
+    assert.match(pushedText(h), /\/companies\/company-1\/expenses\/expense-1/);
+    assert.ok(!/expenses\/capture\//.test(pushedText(h)), 'never a group link');
+    // No handoff use case is reached: the draft IS the expense.
+    assert.deepEqual(h.handoffCalls, []);
+    assert.equal(h.attemptUpdates[0].outcome, 'STORED_READ_DONE');
+    assert.equal(h.attemptUpdates[0].reasonCode, 'result_delivered');
+    assert.deepEqual(h.published, ['outbox-1']);
+  });
+
+  it('several documents name the count and link every draft the split created', async () => {
+    const h = makeNotifier({
+      payload: expensePayload({ documentCount: 3, splitExpenseIds: ['expense-2', 'expense-3'] }),
+    });
+    await h.notifier.execute();
+    assert.match(pushedText(h), /พบเอกสาร 3 ใบ สร้างรายการให้แล้ว/);
+    assert.match(pushedText(h), /1\) https:\/\/app\.example\.com\/companies\/company-1\/expenses\/expense-1/);
+    assert.match(pushedText(h), /2\) https:\/\/app\.example\.com\/companies\/company-1\/expenses\/expense-2/);
+    assert.match(pushedText(h), /3\) https:\/\/app\.example\.com\/companies\/company-1\/expenses\/expense-3/);
+    assert.ok(!/กรุณาตรวจการจัดกลุ่ม/.test(pushedText(h)), 'there is no grouping left to check');
+  });
+
+  for (const [status, pattern] of [
+    ['FAILED', /อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว/],
+    ['PARTIAL', /อ่านข้อมูลได้บางส่วนค่ะ เก็บไฟล์ไว้แล้ว/],
+  ] as const) {
+    it(`${status} sends §17.6's own sentence with the EXPENSE link and no re-read`, async () => {
+      const h = makeNotifier({ jobs: [{ id: 'job-1', status }], payload: expensePayload({ status }) });
+      await h.notifier.execute();
+      assert.match(pushedText(h), pattern);
+      assert.match(pushedText(h), /\/companies\/company-1\/expenses\/expense-1/);
+      assert.ok(!/อ่านซ้ำ|ลองอ่านใหม่/.test(pushedText(h)), '§17.6 offers no re-read');
+      assert.equal(h.attemptUpdates[0].outcome, status === 'FAILED' ? 'STORED_READ_FAILED' : 'STORED_READ_PARTIAL');
+    });
+  }
+
+  it('PAUSED names the Thai reason the wave-2 credit wording uses', async () => {
+    const h = makeNotifier({
+      jobs: [{ id: 'job-1', status: 'PAUSED', pausedReason: 'ai_credit' }],
+      payload: expensePayload({ status: 'PAUSED', pausedReason: 'ai_credit' }),
+    });
+    await h.notifier.execute();
+    assert.match(pushedText(h), /เก็บไฟล์ไว้แล้วค่ะ แต่ยังอ่านข้อมูลไม่ครบ \(เครดิตสำหรับการอ่านเอกสารไม่พอ\)/);
+    assert.equal(usesRetiredAiMoneyWording(pushedText(h)), false);
+  });
+
+  it('an NR case says the draft exists instead of claiming nothing was created', async () => {
+    const h = makeNotifier({
+      payload: expensePayload({ classification: { contentKind: 'DOCUMENT', documentKind: 'QUOTATION' } }),
+    });
+    await h.notifier.execute();
+    assert.match(pushedText(h), /ใบนี้เป็นใบเสนอราคาค่ะ/);
+    assert.match(pushedText(h), /เก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน/);
+    assert.match(pushedText(h), /\/companies\/company-1\/expenses\/expense-1/);
+    assert.ok(!/ยังไม่ได้สร้างรายการ/.test(pushedText(h)), 'a draft exists, so that sentence would be false');
+    assert.equal(h.draftDeletes.length, 0, 'an NR that keeps the bytes keeps the draft');
+  });
+
+  it('NR07 removes the empty draft the way a delete does, and says no record was created', async () => {
+    const h = makeNotifier({
+      payload: expensePayload({ jobId: 'job-1', classification: { contentKind: 'DOCUMENT', documentKind: 'NON_FINANCIAL_IMAGE' } }),
+    });
+    await h.notifier.execute();
+    assert.match(pushedText(h), /ภาพนี้ไม่ใช่เอกสารค่าใช้จ่ายค่ะ จึงไม่ได้สร้างรายการ/);
+    assert.ok(!/companies\/company-1\/expenses\/expense-1/.test(pushedText(h)), 'no link to a record that is gone');
+    assert.equal(h.draftDeletes.length, 1);
+    // Only an EMPTY draft is removed: anything with money, a payment or a posting is left alone.
+    assert.deepEqual(h.draftDeletes[0], {
+      companyId: 'company-1', id: 'expense-1', status: { in: ['DRAFT', 'NEEDS_REVIEW'] },
+      grandTotalAmount: 0, paidAmount: 0, postingStatus: 'not_required', sourceReimbursementRequestId: null,
+    });
+    // Its file links go with it; a file nothing else links is retired, a shared one stays.
+    assert.deepEqual(h.linkDeletes, [{ companyId: 'company-1', targetType: 'expense.record', targetId: 'expense-1' }]);
+    assert.deepEqual(h.attachmentDeletes, ['att-1']);
+    // And the removal is on the record, as a SYSTEM rule — never a silent row disappearing.
+    assert.equal(h.auditEntries.length, 1);
+    assert.equal(h.auditEntries[0].action, 'expense.delete');
+    assert.equal(h.auditEntries[0].actorType, 'SYSTEM');
+    assert.deepEqual(h.auditEntries[0].metadataJson, { rule: 'nr07_non_business_document', jobId: 'job-1', attachmentIds: ['att-1'] });
+  });
+
+  it('NR07 on a draft someone already filled in keeps it, and never claims no record exists', async () => {
+    const h = makeNotifier({
+      draftDeleteCount: 0,
+      payload: expensePayload({ classification: { contentKind: 'DOCUMENT', documentKind: 'NON_FINANCIAL_IMAGE' } }),
+    });
+    await h.notifier.execute();
+    assert.equal(h.linkDeletes.length, 0, 'nothing is unlinked from a record that stays');
+    assert.equal(h.attachmentDeletes.length, 0);
+    assert.ok(!/จึงไม่ได้สร้างรายการ/.test(pushedText(h)), 'the record exists, so that sentence would be false');
+    assert.match(pushedText(h), /เก็บไฟล์ไว้แล้ว/);
+    assert.match(pushedText(h), /\/companies\/company-1\/expenses\/expense-1/);
+  });
+
+  it('a DONE read that was not written onto the draft sends the partial sentence, never a zero receipt card', async () => {
+    const h = makeNotifier({ payload: expensePayload({ documentCount: 1, applied: false }) });
+    await h.notifier.execute();
+    assert.match(pushedText(h), /อ่านข้อมูลได้บางส่วนค่ะ เก็บไฟล์ไว้แล้ว/);
+    assert.ok(!/ยอดในใบเสร็จ/.test(pushedText(h)), 'no receipt card for facts that never reached the draft');
+    assert.ok(!/อ่านเอกสารอีกครั้ง/.test(pushedText(h)), '§17.6: no re-read offered');
+    assert.match(pushedText(h), /\/companies\/company-1\/expenses\/expense-1/);
+  });
+
+  it("a WEB upload's result is not pushed: the page the customer is on already has it", async () => {
+    const h = makeNotifier({ captureSource: 'WEB_UPLOAD', payload: expensePayload({ documentCount: 1 }) });
+    const result = await h.notifier.execute();
+    assert.deepEqual(result, { claimed: 1, pushed: 0, skipped: 1, parked: 0 });
+    assert.equal(h.pushes.length, 0);
+  });
+
+  it('a record the push may no longer read is parked as undelivered, never guessed at', async () => {
+    const h = makeNotifier({ linked: false, payload: expensePayload({ documentCount: 1 }) });
+    const result = await h.notifier.execute();
+    assert.deepEqual(result, { claimed: 1, pushed: 0, skipped: 1, parked: 0 });
+    assert.equal(h.pushes.length, 0);
+    assert.equal(h.attemptUpdates[0].reasonCode, 'LINE_DELIVERY_FAILED');
   });
 });

@@ -65,6 +65,7 @@ import { CompanySubstituteReceiptController, ExpenseController, ExpenseCategoryC
 import { ExpenseCaptureController } from './presentation/http/expense-capture.controller';
 import { ExpenseCaptureReadInternalController } from './presentation/http/expense-capture-read-internal.controller';
 import { ExpenseCaptureReadClient } from './infrastructure/expense-capture-read.client';
+import { ExpenseCaptureAutoSplitService } from './application/services/expense-capture-auto-split.service';
 import { ExpenseCaptureReadRunnerService } from './application/services/expense-capture-read-runner.service';
 import { PrismaExpenseCaptureRepository } from './infrastructure/prisma-expense-capture.repository';
 import {
@@ -134,6 +135,7 @@ import { LineDraftPreviewStore } from './application/services/line-draft-preview
     AutoHandoffSingleDocumentCaptureUseCase,
     GetExpenseReadStatusUseCase,
     ExpenseCaptureReadClient,
+    ExpenseCaptureAutoSplitService,
     ExpenseCaptureReadRunnerService,
     ReceiptOcrClient,
     ReceiptOcrApplyService,
