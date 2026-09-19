@@ -302,7 +302,14 @@ export class ExpenseCaptureReadRunnerService {
       checkpoint = { ...checkpoint, lineage: lineage.slice(0, 8) };
       manifest = markChunk(manifest, chunk.id, 'done');
       manifest = markPages(manifest, result.pages.map((page) => ({
-        index: page.pageIndex, state: page.blank ? 'blank' : page.truncated ? 'partial' : 'read',
+        index: page.pageIndex,
+        state: page.blank ? 'blank'
+          // Controller review of W10 D3: a one-page document whose transcription has an item table
+          // but stops before any total row was cut short whatever the model declared — the 896-px
+          // Lazada screenshot came back exactly so, with no `partial` admission. Only single-page
+          // files: a longer document legitimately prints its totals on a later page.
+          : page.truncated || (plan.pageCount === 1 && transcriptionStopsBeforeTotals(page.text)) ? 'partial'
+            : 'read',
       })));
 
       // A truncated page is re-read ALONE once (§4.5): the earlier pages of the chunk are complete
@@ -750,3 +757,21 @@ function markWindow(
 
 export type { CaptureCheckpoint, RunOutcome };
 export type CaptureFields = ReceiptOcrFieldResult;
+
+/**
+ * A transcription that ends at the item table. A markdown row carrying a money amount with no
+ * total-like line (รวม / ทั้งสิ้น / สุทธิ / total / VAT / ภาษี) anywhere after the last such row is a
+ * page whose summary block was not read — the shape a low-resolution screenshot produces when the
+ * model transcribes the large print and silently skips the small print (§17.6: PARTIAL, never DONE).
+ */
+export function transcriptionStopsBeforeTotals(text: string): boolean {
+  const lines = text.split('\n');
+  const moneyRow = /^\s*\|.*\d{1,3}(?:,\d{3})*\.\d{2}.*\|\s*$/;
+  const totalLine = /รวม|ทั้งสิ้น|สุทธิ|total|grand|vat|ภาษี|net\b|amount due/i;
+  let lastRow = -1;
+  for (const [index, line] of lines.entries()) if (moneyRow.test(line)) lastRow = index;
+  if (lastRow < 0) return false;
+  // Inclusive of the last money row: a receipt whose summary is itself a table ends on a row that
+  // says "Total" / "รวม" — that row IS the total block, not a sign it is missing.
+  return !lines.slice(lastRow).some((line) => totalLine.test(line));
+}

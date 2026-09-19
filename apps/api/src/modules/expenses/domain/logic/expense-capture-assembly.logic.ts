@@ -41,6 +41,19 @@ const GOODS_SUBTOTAL_LABEL = /ไม่เสียภาษี|ยกเว้�
 const GOODS_SUBTOTAL_WRONG_ROLES = new Set(['applied_discount', 'tax_included', 'tax_additional', 'tax_unknown']);
 /** The VAT row itself: "ภาษีมูลค่าเพิ่ม 4.64" / "VAT 7% 776.87", never one of the rows above. */
 const VAT_AMOUNT_LABEL = /ภาษีมูลค่าเพิ่ม|\bvat\b/i;
+/**
+ * A row whose label says it is a discount stays a discount whatever else the label mentions:
+ * "ส่วนลดก่อนภาษี" and "ส่วนลดรวม VAT" are discounts qualified by a tax phrase, not goods subtotals,
+ * and re-filing them would drop real money from the reconciliation and from the draft.
+ */
+const DISCOUNT_LABEL = /ส่วนลด|discount|คูปอง|coupon|voucher|โค้ด|promo/i;
+/**
+ * Thailand's standard VAT rate. A derived tax total may never exceed what 7 % of the document could
+ * be (`total × 7 / 107`, the VAT inside a fully taxable inclusive total): a photographed summary
+ * block whose labels came back shifted by one row otherwise turns "มูลค่าสินค้ารวมภาษี 71.00" into a
+ * VAT of 71.00 on an 80-baht basket — worse than the empty VAT field it replaces.
+ */
+const THAI_VAT_RATE = new Decimal('0.07');
 
 export type CaptureAssemblyWindow = {
   /** Window id, only used to keep document refs unique across windows. */
@@ -205,6 +218,7 @@ function goodsSubtotalRole(
   component: ExpenseCaptureComponentObservation,
 ): ExpenseCaptureComponentObservation {
   if (!GOODS_SUBTOTAL_WRONG_ROLES.has(component.role)) return component;
+  if (DISCOUNT_LABEL.test(`${component.label} ${component.evidenceSpan}`)) return component;
   return GOODS_SUBTOTAL_LABEL.test(`${component.label} ${component.evidenceSpan}`)
     ? { ...component, role: 'summary' }
     : component;
@@ -223,16 +237,21 @@ function derivedTaxTotal(
   totals: readonly ExpenseCaptureTotalObservation[],
 ): ExpenseCaptureTotalObservation | null {
   if (totals.some((total) => total.documentRef === documentRef && total.kind === 'tax')) return null;
+  const documentTotal = money(totals.find((total) => total.documentRef === documentRef && total.kind === 'document_total')?.amount);
+  if (!documentTotal) return null;
+  const vatCeiling = documentTotal.times(THAI_VAT_RATE).dividedBy(THAI_VAT_RATE.plus(1)).plus(EXPENSE_CAPTURE_RECONCILIATION_TOLERANCE);
   const candidates = components.filter((component) => component.documentRef === documentRef
     && component.amount !== undefined
     && money(component.amount) !== null
     && !GOODS_SUBTOTAL_LABEL.test(`${component.label} ${component.evidenceSpan}`)
+    && !DISCOUNT_LABEL.test(`${component.label} ${component.evidenceSpan}`)
     && VAT_AMOUNT_LABEL.test(`${component.label} ${component.evidenceSpan}`));
   const amounts = new Set(candidates.map((component) => money(component.amount)!.toString()));
   const first = candidates[0];
-  return amounts.size === 1 && first
-    ? { documentRef, kind: 'tax', amount: first.amount!, evidenceSpan: first.evidenceSpan }
-    : null;
+  if (amounts.size !== 1 || !first) return null;
+  // Plausibility, not arithmetic proof: an amount above the 7 % ceiling is some other row's money.
+  if (money(first.amount)!.greaterThan(vatCeiling)) return null;
+  return { documentRef, kind: 'tax', amount: first.amount!, evidenceSpan: first.evidenceSpan };
 }
 
 /** Same issuer AND same printed number. Either one missing means "cannot prove they are one". */

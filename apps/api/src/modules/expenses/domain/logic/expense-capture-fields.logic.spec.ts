@@ -172,3 +172,38 @@ describe('capture draft fields — W10 D2: the 7-Eleven N/V summary block', () =
     assert.equal(mapped.fields.discountAmount, '5.00', 'one printed discount, not two');
   });
 });
+
+describe('capture draft fields — controller review of W10: a photographed summary block shifted by one row', () => {
+  it('writes the grand total, invents no VAT, and the mislabelled discount never reaches the draft', async () => {
+    const { verifyDiscountAmount } = await import('../../application/services/receipt-ocr-apply.service');
+    const shifted: ExpenseCaptureComponentObservation[] = [
+      component({ id: 'c1', role: 'summary', label: 'มูลค่าสินค้ารวม', amount: '80', evidenceSpan: 'มูลค่าสินค้ารวม 80' }),
+      component({ id: 'c2', role: 'applied_discount', label: 'หักส่วนลด', amount: '0.00', evidenceSpan: 'หักส่วนลด 0.00' }),
+      component({ id: 'c3', role: 'applied_discount', label: 'ส่วนลดที่ได้ทั้งหมด', amount: '9.00', evidenceSpan: 'ส่วนลดที่ได้ทั้งหมด 9.00' }),
+      component({ id: 'c4', role: 'summary', label: 'สินค้าไม่เสียภาษีมูลค่าเพิ่ม', amount: '66.36', evidenceSpan: 'สินค้าไม่เสียภาษีมูลค่าเพิ่ม 66.36' }),
+      component({ id: 'c5', role: 'summary', label: 'มูลค่าสินค้าก่อนภาษีมูลค่าเพิ่ม', amount: '4.64', evidenceSpan: 'มูลค่าสินค้าก่อนภาษีมูลค่าเพิ่ม 4.64' }),
+      component({ id: 'c6', role: 'tax_included', label: 'ภาษีมูลค่าเพิ่ม', amount: '71.00', evidenceSpan: 'ภาษีมูลค่าเพิ่ม 71.00' }),
+      component({ id: 'c7', role: 'summary', label: 'มูลค่าสินค้ารวมภาษีมูลค่าเพิ่ม', amount: '80.00', evidenceSpan: 'มูลค่าสินค้ารวมภาษีมูลค่าเพิ่ม 80.00' }),
+    ];
+    const { mapped } = mapping({ issuer: { name: 'บมจ. ซีพี ออลล์', taxId: '0107542000011' }, documentNumber: 'H158886612200001' }, {
+      items: [
+        item({ id: '0:1', description: 'กล้วยหอมทอง', quantity: '1', amount: '20.00' }),
+        item({ id: '0:2', description: 'ไข่ไก่ต้มสุกตราซีพี', quantity: '1', amount: '9.00', taxMarker: 'N' }),
+        item({ id: '0:3', description: 'ถั่วรวม 5 ชนิด', quantity: '1', amount: '18.00' }),
+        item({ id: '0:4', description: 'แก้วน้ำแข็ง', quantity: '1', amount: '25.00' }),
+        item({ id: '0:5', description: '7Game สะสมบาท', quantity: '1', amount: '8.00' }),
+        item({ id: '0:6', description: 'น้ำเต้าหู้', quantity: '1', amount: '0.00', taxMarker: 'N' }),
+      ],
+      components: shifted,
+      totals: [total('merchandise', '80'), total('document_total', '80.00')],
+    });
+    assert.ok(mapped);
+    assert.equal(mapped.fields.grandTotalAmount, '80.00');
+    assert.equal(mapped.fields.vatAmount, undefined, '71.00 is the VAT-inclusive subtotal, not the VAT');
+    assert.equal(mapped.fields.vatMode, 'NEEDS_REVIEW');
+    // The apply path's own arithmetic drops the 9.00 the shifted block called a discount.
+    const verified = verifyDiscountAmount(mapped.fields);
+    assert.equal(verified.discountAmount, undefined);
+    assert.equal(verified.grandTotalAmount, '80.00');
+  });
+});

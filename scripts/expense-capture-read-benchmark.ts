@@ -270,8 +270,8 @@ function factsLine(assembled: ExpenseCaptureAssembledObservations): string {
     const items = assembled.items.filter((row) => row.documentRef === document.ref).length;
     return `${document.kind}${document.issuer?.name ? ` «${document.issuer.name}»` : ''}${document.documentNumber ? ` #${document.documentNumber}` : ''}${document.documentDate ? ` ${document.documentDate}` : ''} total=${total} items=${items}`;
   });
-  const diffs = assembled.reconciliation.filter((row) => row.status !== 'ok').length;
-  return `docs=${assembled.documents.length}${assembled.multiDocument ? ' (multi)' : ''} [${docs.join(' | ')}] reconciliationIssues=${diffs}`;
+  const diffs = assembled.reconciliation.filter((row) => row.status !== 'reconciled').map((row) => `${row.documentRef}:${row.status}${row.difference ? ` ${row.difference}` : ''}`);
+  return `docs=${assembled.documents.length}${assembled.multiDocument ? ' (multi)' : ''} [${docs.join(' | ')}] reconciliation=${diffs.length ? diffs.join(',') : 'reconciled'}`;
 }
 
 async function runFixture(controller: LineAiInternalController, spec: RunSpec, runId: string): Promise<FixtureRecord> {

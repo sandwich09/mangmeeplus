@@ -465,6 +465,62 @@ describe('capture assembly — W10 D2: non-VAT goods are not a discount', () => 
     assert.equal(result.reconciliation[0]!.status, 'reconciled');
   });
 
+  it('controller review: a discount whose label mentions a tax phrase stays a discount', () => {
+    // "ส่วนลดก่อนภาษี" is a discount qualified by ก่อนภาษี, not a goods subtotal: re-filing it as a
+    // summary would drop real money from the reconciliation and from the draft.
+    const summary = sevenElevenSummary('5.00').map((row) => (row.id === 'c2'
+      ? { ...row, label: 'ส่วนลดก่อนภาษี', evidenceSpan: 'ส่วนลดก่อนภาษี: 5.00' }
+      : row));
+    const result = assemble([observations({
+      items: sevenElevenItems(), components: summary,
+      totals: [total('merchandise', '80.00'), total('document_total', '75.00')],
+    })]);
+    assert.equal(result.components.find((row) => row.id === 'c2')!.role, 'applied_discount');
+    assert.equal(result.components.find((row) => row.id === 'c4')!.role, 'summary', 'the N goods line is still re-filed');
+    assert.equal(result.reconciliation[0]!.computedTotal, '75');
+    assert.equal(result.reconciliation[0]!.status, 'reconciled');
+  });
+
+  it('controller review: a discount row is never taken as the VAT total', () => {
+    const summary = [
+      ...sevenElevenSummary(),
+      component({ id: 'c8', role: 'applied_discount', scope: 'document', label: 'ส่วนลด VAT 7%', amount: '3.00', evidenceSpan: 'ส่วนลด VAT 7%: 3.00' }),
+    ];
+    const result = assemble([observations({
+      items: sevenElevenItems(), components: summary,
+      totals: [total('merchandise', '80.00'), total('document_total', '77.00')],
+    })]);
+    const tax = result.totals.filter((row) => row.kind === 'tax');
+    assert.deepEqual(tax.map((row) => row.amount), ['4.64'], 'the bare VAT row, not the discount, is the tax');
+    assert.equal(result.components.find((row) => row.id === 'c8')!.role, 'applied_discount');
+  });
+
+  it('controller review: a photographed block that came back shifted by one row is reported, and no VAT is invented', () => {
+    // What the Bedrock replay of the 7-Eleven photo returned: every summary label paired with the
+    // NEXT row's amount. The rows meet the printed total on their own, so the "discount" of 9.00 is
+    // not money still to come off; and 71.00 is above what 7 % of an 80-baht basket could be.
+    const shifted: ExpenseCaptureComponentObservation[] = [
+      component({ id: 'c1', role: 'summary', scope: 'document', label: 'มูลค่าสินค้ารวม', amount: '80', evidenceSpan: 'มูลค่าสินค้ารวม 80' }),
+      component({ id: 'c2', role: 'applied_discount', scope: 'document', label: 'หักส่วนลด', amount: '0.00', evidenceSpan: 'หักส่วนลด 0.00' }),
+      component({ id: 'c3', role: 'applied_discount', scope: 'document', label: 'ส่วนลดที่ได้ทั้งหมด', amount: '9.00', evidenceSpan: 'ส่วนลดที่ได้ทั้งหมด 9.00' }),
+      component({ id: 'c4', role: 'summary', scope: 'document', label: 'สินค้าไม่เสียภาษีมูลค่าเพิ่ม', amount: '66.36', evidenceSpan: 'สินค้าไม่เสียภาษีมูลค่าเพิ่ม 66.36' }),
+      component({ id: 'c5', role: 'summary', scope: 'document', label: 'มูลค่าสินค้าก่อนภาษีมูลค่าเพิ่ม', amount: '4.64', evidenceSpan: 'มูลค่าสินค้าก่อนภาษีมูลค่าเพิ่ม 4.64' }),
+      component({ id: 'c6', role: 'tax_included', scope: 'document', label: 'ภาษีมูลค่าเพิ่ม', amount: '71.00', evidenceSpan: 'ภาษีมูลค่าเพิ่ม 71.00' }),
+      component({ id: 'c7', role: 'summary', scope: 'document', label: 'มูลค่าสินค้ารวมภาษีมูลค่าเพิ่ม', amount: '80.00', evidenceSpan: 'มูลค่าสินค้ารวมภาษีมูลค่าเพิ่ม 80.00' }),
+    ];
+    const result = assemble([observations({
+      items: [...sevenElevenItems(), item({ id: '0:6', description: 'น้ำเต้าหู้', quantity: '1', amount: '0.00', taxMarker: 'N' })],
+      components: shifted,
+      totals: [total('merchandise', '80'), total('document_total', '80.00')],
+    })]);
+    // The shifted "discount" is REPORTED (§4.4 infers nothing from rows that happen to meet the
+    // total); the apply path's own discount normalisation keeps it off the draft. What must never
+    // happen is an invented VAT.
+    assert.equal(result.reconciliation[0]!.status, 'mismatch');
+    assert.equal(result.reconciliation[0]!.difference, '-9');
+    assert.deepEqual(result.totals.filter((row) => row.kind === 'tax'), [], '71.00 cannot be the VAT of an 80-baht basket');
+  });
+
   it('a read that already found its own tax total keeps it', () => {
     const result = assemble([observations({
       items: sevenElevenItems(),

@@ -85,7 +85,7 @@ type Harness = Awaited<ReturnType<typeof build>>;
 async function build(options: {
   pages?: number;
   ownerType?: 'CAPTURE_GROUP' | 'EXPENSE';
-  readResults?: Array<{ status: 'ok' | 'failed'; errorCode?: string; truncated?: boolean }>;
+  readResults?: Array<{ status: 'ok' | 'failed'; errorCode?: string; truncated?: boolean; text?: string }>;
   extractResults?: Array<{ status: 'ok' | 'failed'; errorCode?: string; observations?: ExpenseCaptureObservations }>;
   ocrAdmission?: { allowed: boolean; reason?: string };
   applyResult?: Record<string, unknown>;
@@ -199,7 +199,7 @@ async function build(options: {
         status: 'ok',
         pages: input.chunk.pageIndexes.map((pageIndex: number, position: number) => ({
           pageIndex,
-          text: `PAGE ${pageIndex + 1} TOTAL 100.00`,
+          text: answer.text ?? `PAGE ${pageIndex + 1} TOTAL 100.00`,
           truncated: answer.truncated === true && position === input.chunk.pageIndexes.length - 1,
           blank: false,
         })),
@@ -396,6 +396,37 @@ describe('capture read runner — fences and resume', () => {
       const manifest = harness.writes.filter((write) => write.accepted && 'manifestJson' in write.data).at(-1)!.data as any;
       assert.equal(manifest.manifestJson.pages[0]!.state, 'partial', 'the reviewer sees WHICH page fell short');
       assert.equal(harness.outbox[0]![3].status, 'PARTIAL', 'and both lanes are told the same');
+    } finally { harness.restore(); }
+  });
+
+  it('controller review: a one-page transcription that stops at the item table ends PARTIAL, whatever the model declared', async () => {
+    // The 896-px Lazada screenshot: seller, buyer, number, date, the item row — and nothing after it.
+    const cutShort = ['[SELLER]\nบริษัท ผู้ขายทดสอบ จำกัด\n[/SELLER]', 'เลขที่ TIV20210500001', '| ลำดับ | รายการ | จำนวนเงิน |', '|---|---|---|', '| 1 | Test batch | 7,000.00 บาท |'].join('\n');
+    harness = await build({ pages: 1, readResults: [{ status: 'ok', text: cutShort }] });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      assert.equal(terminal(harness).status, 'PARTIAL', 'an item with no total block is not a finished read');
+      const manifest = harness.writes.filter((write) => write.accepted && 'manifestJson' in write.data).at(-1)!.data as any;
+      assert.equal(manifest.manifestJson.pages[0]!.state, 'partial');
+      assert.equal(harness.readCalls.length, 1, 'no re-read: the page was read, its small print was not');
+    } finally { harness.restore(); }
+  });
+
+  it('controller review: a summary printed as the last table row (the Lotus\'s e-Tax shape) stays DONE', async () => {
+    const tableTotal = ['| 1 | น้ำจิ้มสุกี้ | 109.00 V |', '| Total: | 0.00 | 178.00 | 9.87 | 168.13 |'].join('\n');
+    harness = await build({ pages: 1, readResults: [{ status: 'ok', text: tableTotal }] });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      assert.equal(terminal(harness).status, 'DONE');
+    } finally { harness.restore(); }
+  });
+
+  it('controller review: the same table followed by a total line stays DONE', async () => {
+    const whole = ['| 1 | Test batch | 7,000.00 บาท |', 'จำนวนเงินทั้งสิ้น 7,000.00 บาท'].join('\n');
+    harness = await build({ pages: 1, readResults: [{ status: 'ok', text: whole }] });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      assert.equal(terminal(harness).status, 'DONE');
     } finally { harness.restore(); }
   });
 

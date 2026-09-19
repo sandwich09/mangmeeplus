@@ -286,3 +286,48 @@ rendered, because pdf-lib's standard fonts cannot encode the Thai labels that AR
 JPEG — the size of the real Leceipt screenshot — whose totals block is ~11 px). The scorer gained the
 three numbers those fixtures turn on: `discountsMatched`, `vatMatched` and `reconciledDocuments`,
 matched by value like the totals and never graded when the expectation is zero.
+
+### 6.4 Controller review of W10 (2026-09-19)
+
+- **One guard added on top of D2.** The re-filing rule for goods-subtotal labels (ไม่เสียภาษี / ยกเว้นภาษี /
+  ก่อนภาษี / รวมภาษี …) would also have re-filed a real discount whose label carries a tax phrase —
+  "ส่วนลดก่อนภาษี", "ส่วนลด VAT 7 %" — into a `summary`, dropping the money from the reconciliation and
+  the draft. A row whose label says ส่วนลด / discount / คูปอง / coupon / voucher / โค้ด / promo is now
+  never re-filed and never taken as the derived VAT total (`expense-capture-assembly.logic.ts`; two
+  cases in its spec, both red without the guard).
+- **Postgres specs W10 could not run** (throwaway DB, W09 stack): `expense-capture` 10, `expense-capture-read`
+  5, `expense-capture-handoff` 9, `expense-capture-certificate` 5, `line-ai/receipt-reliability` 6 — all
+  green. One intermittent red in the read-queue spec's concurrency case on the first pass was traced to
+  the leftover e2e read jobs in that shared database (the claim query picks the oldest eligible row of
+  ANY company); three clean re-runs followed. Not a W10 regression.
+- **Two residuals, pre-existing, recorded not fixed.** (1) A PARTIAL job is re-claimed by every drain
+  (`status IN ('QUEUED','READING','PARTIAL')`); with all chunks `done` the re-claim reads nothing and
+  spends nothing, but `attempts` still climbs, and after `EXPENSE_CAPTURE_MAX_ATTEMPTS` (5) the job flips
+  to FAILED `attempts_exhausted` — the review page's §17.6 sentence then changes from "บางส่วน" to
+  "ไม่สำเร็จ" five drains later. D3 makes PARTIAL more common, so this deserves its own fix (a job with no
+  `pending`/`failed` page and no `failed` chunk should not be re-claimed). (2) The finished-read outbox
+  key is `…:${job.id}` (`payload.requestId`), so a job that ends PARTIAL and later DONE publishes ONE
+  event: no duplicate LINE push (good), but the DONE result is never pushed either — the web page,
+  which polls `read-status`, is unaffected.
+
+### 6.5 Replay of the six real files on the fixed reader, and what the controller added (2026-09-19)
+
+Same six files, same harness, after W10: THB 7.86 (task cumulative THB 75.78 of 100; ledger row
+`capture-read-2026-09-19T08-51-29-574Z`). Small images now go up to a 1,600 px long edge before the
+read (the 896-px screenshot: 50,906 → 116,478 bytes).
+
+| File | Before W10 | After W10 | After the controller's additions |
+|---|---|---|---|
+| FlowAccount full 2025 | `mismatch −625`, VAT 776.87 only as a component | **`reconciled`**, `discountAlreadyInRows: true`, `tax` 776.87 | unchanged |
+| FlowAccount abbreviated 2025 | `mismatch −625` | **`reconciled`**, `discountAlreadyInRows: true`, `tax` 776.87 | unchanged |
+| Lotus's e-Tax lower half 2023 | `reconciled`, no `tax` total | `reconciled`, **`tax` 9.87** | unchanged |
+| 7-Eleven full-form photo 2023 | `mismatch −9`, VAT empty on the draft | still `mismatch −9`, and the summary block came back **shifted by one row** (ส่วนลดที่ได้ทั้งหมด → 9.00, ภาษีมูลค่าเพิ่ม → 71.00): D2's label rule cannot see a mis-paired amount, so the new derivation would have written **71.00 as the VAT** of an 80-baht basket | no VAT is invented: a VAT above `total × 7 / 107` is dropped both from the derived total and from the draft's `vatAmount` (mode stays NEEDS_REVIEW); the mismatch is reported as before and the apply path's own arithmetic keeps the 9.00 off the draft — grand total 80.00, no discount, VAT for the reviewer |
+| Leceipt "Lazada" screenshot 2021 | item, no totals, DONE | upscaled, prompt now demands the totals block and offers `partial` — the model **still** stopped after the item row and declared nothing | the runner now ends a ONE-page file PARTIAL when its transcription has an item table and no total-like line after or on the last money row (`transcriptionStopsBeforeTotals`), so the §17.6 sentence shows instead of a draft with an item and no total; checked against all six transcriptions: fires only here |
+| Leceipt e-Tax-by-Email screenshot 2019 | header only, DONE | header only (no items at all) | unchanged — nothing to reconcile, nothing to flag; a document with no item table is left to the reviewer |
+
+The controller's additions (all with red-then-green specs): the discount-label guard (§6.4); the
+VAT ceiling in `expense-capture-assembly.logic.ts` (`derivedTaxTotal`) and in
+`expense-capture-fields.logic.ts` (`taxFacts`); the single-page completeness check in
+`expense-capture-read-runner.service.ts`; and the harness's summary line now names each
+document's reconciliation status. §4.4's principle stands: nothing is inferred from rows that happen to
+meet the printed total — a shifted block is REPORTED as a mismatch, never balanced away.
