@@ -1,5 +1,5 @@
-FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS system
-# The pinned base digest ships fixed-but-unapplied Debian CVEs; take bookworm-security at build time.
+FROM node:22-trixie-slim@sha256:c5849ff9c9ebcd66615412f0b548ca5b8ecaef84003dc9ac2e077ebe46aaa3f6 AS system
+# The pinned base digest ships fixed-but-unapplied Debian CVEs; take trixie-security at build time.
 RUN apt-get update -y \
   && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends ca-certificates openssl fontconfig fonts-noto-core \
@@ -58,6 +58,7 @@ RUN find apps/api/dist packages/config/dist packages/contracts/dist -type f \
 FROM system AS migration-tool
 COPY --from=build --chown=node:node /app /app
 RUN cp /etc/ssl/certs/ca-certificates.crt /tmp/ca-certificates.crt \
+  && apt-get update -y \
   && apt-get purge -y --auto-remove fontconfig fonts-noto-core \
   && apt-get purge -y openssl ca-certificates \
   && apt-get purge -y --allow-remove-essential \
@@ -65,7 +66,7 @@ RUN cp /etc/ssl/certs/ca-certificates.crt /tmp/ca-certificates.crt \
   && apt-get purge -y --allow-remove-essential perl-base \
   && install -m 0644 /tmp/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt \
   && test -s /etc/ssl/certs/ca-certificates.crt \
-  && dpkg-query -W libssl3 \
+  && dpkg-query -W libssl3t64 \
   && ! dpkg-query -W openssl ca-certificates >/dev/null 2>&1 \
   && rm -rf /var/lib/apt/lists/* \
   && chmod 1777 /tmp
@@ -89,10 +90,12 @@ CMD ["sh", "-c", "echo 'release-task requires an explicit one-shot command' >&2;
 
 FROM system AS runner
 # sharp uses its bundled fontconfig; keep font files/config without distro disk-tool dependencies.
-RUN apt-get purge -y --auto-remove fontconfig fontconfig-config libfontconfig1 \
+RUN apt-get update -y \
+  && apt-get purge -y --auto-remove fontconfig fontconfig-config libfontconfig1 \
   && apt-get purge -y --allow-remove-essential \
     util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs \
   && apt-get purge -y --allow-remove-essential perl-base \
+  && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /etc/fonts \
   && printf '<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n<fontconfig><dir>/usr/share/fonts</dir><cachedir>/tmp/fontconfig</cachedir></fontconfig>\n' > /etc/fonts/fonts.conf \
   && test -s /usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf

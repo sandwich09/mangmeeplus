@@ -642,6 +642,40 @@ CVE ที่เจอส่วนใหญ่เป็นแพ็กเกจ 
 เช็คก่อนเสมอที่ `https://security-tracker.debian.org/tracker/<CVE>` ดูช่อง bookworm ว่าเป็น
 `vulnerable` หรือมีเลขเวอร์ชันที่ fix แล้ว
 
+**ย้ายฐานเป็น `node:22-trixie-slim` แล้ว (2026-09-19)** ทั้ง 6 Dockerfile ใช้
+`node:22-trixie-slim@sha256:c5849ff9…` (Debian 13.7 / Node v22.23.2) เหตุผล: Debian 12 หมด regular
+security support ไปแล้ว 2026-06-11 (เหลือ LTS ถึง 2028) ส่วน Debian 13 มี regular support ถึง
+2028-08-09 CVE openssl 4 ตัวที่ waive อยู่ (CVE-2026-54874, CVE-2026-63072, CVE-2026-63076,
+CVE-2026-75803) fix แล้วใน trixie `openssl 3.5.7-1~deb13u2` และ image ที่ build จริงก็ขึ้น
+`libssl3t64 3.5.7` แล้ว — แถว waiver ผูกกับ `package_version 3.0.20-1~deb12u2` จึงหยุดแมตช์เอง
+**ปลดแถวทิ้งได้เมื่อ ECR/Inspector ยืนยันว่า finding หายจริงบน image ที่ build แล้ว** (คอมมิตนี้ยังไม่ปลด)
+ส่วน CVE-2026-85091 (zlib) ยังไม่มี fix ใน suite ไหน ต้องคงแถวไว้ — แต่ `zlib1g` ขยับจาก
+`1.2.13.dfsg-1` เป็น `1.3.dfsg+really1.3.1` แล้ว จึงต้องเช็คด้วยว่า finding ยังรายงานเวอร์ชันเดิมอยู่ไหม
+(ถ้าเวอร์ชันขยับ แถว waiver จะหยุดแมตช์และกลับไปบล็อกทันที)
+
+Trivy `--scanners vuln --severity CRITICAL,HIGH` บน image ที่ build จาก `Dockerfile.api-web`
+(bookworm = tag ที่ build ไว้ก่อนหน้า `1406d382`, trixie = `25591949` คอมมิตนี้):
+
+| Class | bookworm | trixie |
+| --- | --- | --- |
+| `os-pkgs` (debian) | 1 CRITICAL / 19 HIGH | **0 CRITICAL / 26 HIGH** |
+| `lang-pkgs` (node-pkg ใน base npm) | 1 CRITICAL / 10 HIGH | 1 CRITICAL / 10 HIGH (เท่าเดิม) |
+
+ที่หายไป: `zlib1g` CVE-2023-45853 (CRITICAL ตัวเดียวของ image) และ `gzip` CVE-2026-41992
+**ที่เพิ่มมาและยังไม่มี waiver: `login` + `liblastlog2-2` โดน CVE-2026-76642 / 78408 / 78409 / 78410
+(4 CVE × 2 แพ็กเกจ = 8 HIGH)** — ใน bookworm CVE ชุดนี้ถูกนับเป็นของ `util-linux` ซึ่ง purge ออกไปแล้ว
+แต่ trixie แยก `login`/`liblastlog2-2` ออกมาเป็นแพ็กเกจของตัวเองที่ list purge เดิมไม่ครอบ
+**ก่อน deploy จริงต้องตัดสินใจ: เติมสองชื่อนี้ใน purge list หรือออก waiver ใหม่** ไม่งั้นเกต ECR
+(fail-closed ทุก HIGH ที่ไม่มี waiver) จะบล็อก ClamAV 1.5.3 เองมี 12 HIGH เท่ากันทั้งสองฐาน
+(ของเดิม ไม่ได้เกิดจากการย้ายฐาน)
+
+**t64 transition** Debian 13 เปลี่ยนชื่อ `libssl3` เป็น `libssl3t64` guard
+`dpkg-query -W libssl3` ใน `apps/api/Dockerfile` กับ `infra/api-web/Dockerfile.api-web` จึงเปลี่ยนตาม
+(ชื่อเดิมยัง exit 0 แบบ virtual package เลยไม่ fail ให้เห็น แต่ไม่ได้ยืนยันอะไรอีก) และ stage ที่ purge
+ตระกูล util-linux ต้อง `apt-get update -y` ก่อน เพราะฐาน trixie ไม่ได้ติดตั้ง `e2fsprogs` มาด้วย
+apt จึง resolve ชื่อไม่ได้เมื่อ list ว่าง (`E: Unable to locate package e2fsprogs`) ชื่อแพ็กเกจอื่นทั้งหมด
+และ ClamAV 1.5.3 .deb ใช้ได้เหมือนเดิม
+
 **กติกา waiver** (ดูตัวอย่างจริงในไฟล์ `.jq`): ทุกแถวต้องมี CVE ตรงตัว + `severity` + `package_name` +
 `package_version` + anchor ที่คัดลอกจาก description ของ provider แบบคำต่อคำ + epoch หมดอายุ +
 approval id ของ Owner ทั้งหมดต้องแมตช์พร้อมกัน — drift ตัวใดตัวหนึ่ง (เวอร์ชันขยับ, severity เปลี่ยน,

@@ -1,5 +1,5 @@
-FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS system
-# The pinned base digest ships fixed-but-unapplied Debian CVEs; take bookworm-security at build time.
+FROM node:22-trixie-slim@sha256:c5849ff9c9ebcd66615412f0b548ca5b8ecaef84003dc9ac2e077ebe46aaa3f6 AS system
+# The pinned base digest ships fixed-but-unapplied Debian CVEs; take trixie-security at build time.
 RUN apt-get update -y \
   && apt-get upgrade -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
@@ -38,9 +38,13 @@ RUN find apps/ai-gateway/dist packages/config/dist packages/contracts/dist -type
 
 FROM system AS runner
 # No disk/partition tooling in the runtime (util-linux / CVE-2026-53615).
-RUN apt-get purge -y --allow-remove-essential \
+# Debian 13's base ships no e2fsprogs, and apt cannot resolve a name that is in neither the
+# dpkg status database nor the package lists the system stage deleted: take the lists again.
+RUN apt-get update -y \
+  && apt-get purge -y --allow-remove-essential \
   util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs \
-  && apt-get purge -y --allow-remove-essential perl-base
+  && apt-get purge -y --allow-remove-essential perl-base \
+  && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
