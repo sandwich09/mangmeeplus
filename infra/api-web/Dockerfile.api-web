@@ -64,8 +64,8 @@ RUN find apps/api/dist packages/config/dist packages/contracts/dist -type f \
   && find apps/web/.next/standalone -type f -name '*.map' -delete
 
 FROM system AS runner
-ADD --checksum=sha256:0c69e033a976855cfecfa1b6c36563822f2cc618f0c7e40ce5bcc2703d0dc436 \
-  https://github.com/Cisco-Talos/clamav/releases/download/clamav-1.5.3/clamav-1.5.3.linux.x86_64.deb \
+ADD --checksum=sha256:28d6efc5b4423e7830c3559339552eb53870a9eac51ac4efb37d60530d329886 \
+  https://github.com/Cisco-Talos/clamav/releases/download/clamav-1.5.4/clamav-1.5.4.linux.x86_64.deb \
   /tmp/clamav.deb
 RUN apt-get update -y \
   && apt-get install -y --no-install-recommends /tmp/clamav.deb \
