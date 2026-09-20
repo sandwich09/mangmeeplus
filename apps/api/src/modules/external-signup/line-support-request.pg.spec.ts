@@ -80,6 +80,7 @@ function wire(client: PrismaClient, options: {
     lineSignupBusinessHours: '09:00-18:00',
     webBaseUrl: WEB_BASE,
     sesWebBaseUrl: WEB_BASE,
+    uploadMaxBytes: 5_000_000,
   } as any;
 
   const notify = new LineSignupNotifyService(lineMessagingCredentialsFixture(config),
@@ -123,6 +124,9 @@ function wire(client: PrismaClient, options: {
     { consumeLineSupportRequestSlot: async () => options.supportSlot ?? true } as any,
   );
   (webhook as any).logger = { error: () => {}, warn: () => {}, log: () => {} };
+  // สัญญา v3: the thread keeps a photo's bytes only after the receipt lane's checks; the scanner
+  // is the one collaborator those checks need that this harness does not otherwise wire.
+  (webhook as any).malwareScanner = { assertClean: async () => undefined };
 
   return {
     webhook, notify, unlink: new UnlinkLineIdentityUseCase(prisma),
@@ -134,6 +138,17 @@ function wire(client: PrismaClient, options: {
 
 /** The same 16-char sha256 prefix the audit rail and the request row carry. */
 const hashOf = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 16);
+
+/** A real 1×1 PNG, so `inspectAttachmentBytes` accepts it the way it would a customer's photo. */
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+
+/** LINE's content API, faked: the photo's bytes, or a refusal, and nothing for any other URL. */
+const lineContentFetch = (status: number) => (async (url: unknown) => {
+  if (!String(url).includes('api-data.line.me/v2/bot/message/')) return new Response('', { status: 404 });
+  return status === 200
+    ? new Response(PNG, { status: 200, headers: { 'content-type': 'image/png', 'content-length': String(PNG.length) } })
+    : new Response('', { status });
+}) as typeof fetch;
 
 const event = (lineUserId: string, text: string) => ({
   webhookEventId: `evt-${randomUUID()}`,
@@ -238,6 +253,14 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       );
       assert.equal(replied.deliveryStatus, 'SENT');
       assert.equal(pushedTo, lineUserId, 'the recipient came from the server-side request');
+      // สัญญา v3 ข้อ 9: the reply is a bubble on the thread, SENT once the row is.
+      const bubbles = await client.lineSupportMessage.findMany({ where: { requestId: request.id } });
+      assert.equal(bubbles.length, 1);
+      assert.equal(bubbles[0]!.direction, 'STAFF');
+      assert.equal(bubbles[0]!.text, 'กรุณาส่งอีเมลที่ต้องการใช้ค่ะ');
+      assert.equal(bubbles[0]!.operationId, operationId);
+      assert.equal(bubbles[0]!.deliveryStatus, 'SENT');
+      assert.equal(bubbles[0]!.senderName, `${tag} owner`);
       await h.admin.resolve(request.id, 'ได้รับอีเมลและดำเนินการให้แล้ว', userId, `${tag}-resolve`);
 
       const stored = await client.lineSupportRequest.findUniqueOrThrow({ where: { id: request.id } });
@@ -766,15 +789,39 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       assert.equal(nudged.lastMessageText, 'มีอัปเดตไหมคะ');
       assert.equal(nudged.lastMediaAt, null);
 
-      // A photo is a marker: §3 keeps the bytes out, and the words stay exactly as they were.
+      // A photo is a marker on the ROW (the words stay exactly as they were) — and, since สัญญา v3,
+      // its bytes are a bubble on the thread for the operator to open.
+      const lineMessageId = `msg-${randomUUID()}`;
+      globalThis.fetch = lineContentFetch(200);
       await h.webhook.executeReceiptUpload({
         webhookEventId: `evt-${randomUUID()}`, replyToken: 'reply-1', lineUserId,
-        lineMessageId: `msg-${randomUUID()}`, messageType: 'image', messagingChannelId: CHANNEL,
+        lineMessageId, messageType: 'image', messagingChannelId: CHANNEL,
       } as any);
       const withPhoto = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
       assert.ok(withPhoto.lastMediaAt, 'the operator learns a photo arrived');
       assert.equal(withPhoto.lastMessageText, 'มีอัปเดตไหมคะ', 'and it costs the thread no words');
       assert.equal(withPhoto.requestText, 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ');
+
+      const thread = await h.admin.thread(id, userId);
+      assert.equal(thread.request.id, id);
+      assert.deepEqual(thread.messages.map((m) => [m.direction, m.kind, m.hasContent, m.text]), [
+        ['CUSTOMER', 'TEXT', false, 'มีอัปเดตไหมคะ'],
+        ['CUSTOMER', 'IMAGE', true, undefined],
+      ], 'the nudge and the photo, oldest first; the tap wrote no words in this harness');
+      assert.equal(JSON.stringify(thread).includes(lineMessageId), false, 'no LINE message id crosses the contract');
+      const photo = thread.messages[1]!;
+      assert.equal(photo.mimeType, 'image/png');
+      assert.equal(photo.byteSize, PNG.length);
+      const content = await h.admin.messageContent(id, photo.id);
+      assert.ok(content.data.equals(PNG), 'the bytes the customer sent, byte for byte');
+      assert.equal(content.mimeType, 'image/png');
+
+      // The same LINE message delivered again stores nothing twice.
+      await h.webhook.executeReceiptUpload({
+        webhookEventId: `evt-${randomUUID()}`, replyToken: 'reply-1', lineUserId,
+        lineMessageId, messageType: 'image', messagingChannelId: CHANNEL,
+      } as any);
+      assert.equal(await client.lineSupportMessage.count({ where: { requestId: id, kind: 'IMAGE' } }), 1);
 
       // F7: answered, then TAPPED again. One request, reopened — not two rows for one conversation.
       await h.admin.claim(id, userId, `${tag}-claim`);
@@ -790,6 +837,7 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       assert.equal(h.notices.length, 1, 'and nobody is paged twice for one conversation');
       assert.match(h.replies.at(-1)!, /ยังอยู่ในคิว/);
     } finally {
+      globalThis.fetch = originalFetch;
       await cleanup(client, tag, lineUserId);
       await client.$disconnect();
     }
@@ -820,10 +868,16 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       await client.lineCompanyContext.update({ where: { lineUserId }, data: { aiPausedUntil: endsAt } });
       const answered = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
 
+      // LINE has already let go of the content (or refused us): the bubble says so.
+      globalThis.fetch = lineContentFetch(404);
       await h.webhook.executeReceiptUpload({
         webhookEventId: `evt-${randomUUID()}`, replyToken: 'reply-1', lineUserId,
         lineMessageId: `msg-${randomUUID()}`, messageType: 'image', messagingChannelId: CHANNEL,
       } as any);
+      const [bubble] = await client.lineSupportMessage.findMany({ where: { requestId: id }, include: { blob: true } });
+      assert.equal(bubble!.kind, 'IMAGE');
+      assert.equal(bubble!.mediaError, 'media_fetch_failed');
+      assert.equal(bubble!.blob, null);
 
       const row = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
       assert.equal(row.status, 'ANSWERED', 'a receipt is not the customer asking again');
@@ -836,6 +890,40 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       assert.deepEqual(context.aiPausedUntil, endsAt, 'and the mute still ends in an hour, not tomorrow');
       assert.equal((await h.admin.list(userId, { status: 'OPEN' })).items.some((entry) => entry.id === id), false,
         'a settled thread stays settled: the row is not back on รอตอบ');
+    } finally {
+      globalThis.fetch = originalFetch;
+      await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
+  /** สัญญา v3 ข้อ 12: the bytes live and die with the case — one cascade, no second sweep. */
+  it('purges the thread and its bytes with the request it belongs to', async () => {
+    const client = connect();
+    const tag = `linesupport-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    try {
+      const h = wire(client);
+      const request = await client.lineSupportRequest.create({
+        data: {
+          lineUserId, lineUserIdHash: hashOf(lineUserId), status: 'CLOSED', closedReason: 'resolved',
+          closedAt: new Date(Date.now() - 91 * 24 * 60 * 60 * 1000),
+          messages: { create: [
+            { direction: 'CUSTOMER', kind: 'TEXT', text: 'เลขบัญชี 1234567890 ค่ะ' },
+            { direction: 'CUSTOMER', kind: 'IMAGE', mediaMimeType: 'image/png', mediaByteSize: PNG.length,
+              blob: { create: { data: new Uint8Array(PNG) } } },
+          ] },
+        },
+        include: { messages: true },
+      });
+      const messageIds = request.messages.map((m) => m.id);
+      assert.equal(await client.lineSupportMessageBlob.count({ where: { messageId: { in: messageIds } } }), 1);
+
+      await h.notify.purgeSettledSupportRequests();
+
+      assert.equal(await client.lineSupportRequest.count({ where: { id: request.id } }), 0);
+      assert.equal(await client.lineSupportMessage.count({ where: { id: { in: messageIds } } }), 0, 'the words went with the case');
+      assert.equal(await client.lineSupportMessageBlob.count({ where: { messageId: { in: messageIds } } }), 0, 'and so did the bytes');
     } finally {
       await cleanup(client, tag, lineUserId);
       await client.$disconnect();

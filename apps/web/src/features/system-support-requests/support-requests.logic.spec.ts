@@ -14,6 +14,10 @@ import {
   waitedForTh,
   waitedLabelTh,
   type Chip,
+  supportComposerMode,
+  supportComposerHintTh,
+  supportMediaErrorTh,
+  supportPreviousReplyUncertain,
 } from './support-requests.logic';
 
 const item = (over: Record<string, unknown> = {}) => {
@@ -262,5 +266,53 @@ describe('support action labels', () => {
     const first = { replyFirstAttemptAt: '2026-09-05T02:00:00.000Z', lastReplyDeliveryStatus: 'FAILED' as const };
     assert.equal(supportReplyWithinRetryWindow(first, new Date('2026-09-06T01:59:59.000Z')), true);
     assert.equal(supportReplyWithinRetryWindow(first, new Date('2026-09-06T02:00:00.000Z')), false);
+  });
+});
+
+// ── สัญญา v3: the chat window's composer ──
+
+describe('supportComposerMode — who may type, and when only the retry is honest', () => {
+  const base = {
+    status: 'OPEN' as const, assignedAt: '2026-09-20T03:00:00.000Z', assignedToMe: true,
+    replyFirstAttemptAt: undefined, lastReplyDeliveryStatus: undefined,
+  };
+
+  it('lets the owner of a live case compose', () => {
+    assert.equal(supportComposerMode(base), 'compose');
+    assert.equal(supportComposerMode({ ...base, status: 'ANSWERED' }), 'compose');
+  });
+
+  it('asks an unclaimed case to be claimed first, and names the other owner otherwise', () => {
+    assert.equal(supportComposerMode({ ...base, assignedAt: undefined, assignedToMe: false }), 'claim');
+    assert.equal(supportComposerMode({ ...base, assignedToMe: false }), 'other');
+    assert.match(supportComposerHintTh('other', 'พี่แอดมิน')!, /พี่แอดมิน/);
+    assert.match(supportComposerHintTh('claim')!, /รับเคสก่อน/);
+  });
+
+  it('offers only the retry while a send is unresolved inside its 24h window', () => {
+    const now = new Date('2026-09-20T04:00:00.000Z');
+    const pending = { ...base, replyFirstAttemptAt: '2026-09-20T03:30:00.000Z', lastReplyDeliveryStatus: 'PENDING' as const };
+    assert.equal(supportComposerMode(pending, now), 'retry');
+    assert.equal(supportPreviousReplyUncertain({ ...pending, replyOperationId: 'op-1' }, now), false);
+    // Past the window the composer opens again, with a warning that the old text may have landed.
+    const later = new Date('2026-09-21T04:00:00.000Z');
+    assert.equal(supportComposerMode(pending, later), 'compose');
+    assert.equal(supportPreviousReplyUncertain({ ...pending, replyOperationId: 'op-1' }, later), true);
+  });
+
+  it('reads a closed case and says so', () => {
+    assert.equal(supportComposerMode({ ...base, status: 'CLOSED' }), 'closed');
+    assert.equal(supportComposerHintTh('compose'), null);
+    assert.match(supportComposerHintTh('closed')!, /ปิดแล้ว/);
+  });
+});
+
+describe('supportMediaErrorTh — a photo without bytes says why', () => {
+  it('maps each bounded code, and anything unknown to the generic fetch failure', () => {
+    assert.match(supportMediaErrorTh('media_security_rejected'), /ความปลอดภัย/);
+    assert.match(supportMediaErrorTh('media_scan_failed'), /ตรวจสอบ/);
+    assert.match(supportMediaErrorTh('media_limit_reached'), /สูงสุด/);
+    assert.match(supportMediaErrorTh('media_fetch_failed'), /LINE/);
+    assert.match(supportMediaErrorTh(undefined), /LINE/);
   });
 });

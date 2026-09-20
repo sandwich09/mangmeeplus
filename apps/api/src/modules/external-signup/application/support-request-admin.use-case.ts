@@ -9,14 +9,18 @@ import {
   type SupportRequestClosedReason,
   type SupportRequestCountDto,
   type SupportRequestItemDto,
+  type SupportRequestMediaError,
+  type SupportRequestMessageDto,
   type SupportRequestQueueDto,
   type SupportRequestReplyResultDto,
   type SupportRequestStatus,
+  type SupportRequestThreadDto,
 } from '@watchdog-bms/contracts';
-import { Prisma } from '../../../generated/prisma/client';
+import { Prisma, type LineSupportRequest } from '../../../generated/prisma/client';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { pushLineMessages } from '../../auth/infrastructure/system-line-push';
+import { canonicalAttachmentExtension } from '../../data-model-core/domain/logic/attachment.logic';
 import {
   checkShopMessage, shopMessageAllowedHosts, shopMessageBodyTh,
 } from '../../system-partner-management/domain/logic/partner-line-message.logic';
@@ -34,6 +38,27 @@ const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 200;
 const LINE_RETRY_KEY_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const SUPPORT_RESOLUTION_NOTE_MAX_LENGTH = 500;
+/**
+ * สัญญา v3 ข้อ 11. A support thread is a conversation, not a log: five hundred bubbles is more than
+ * any case has needed. ponytail: a hard cap, oldest first; add a cursor when a thread ever hits it.
+ */
+const THREAD_MAX_MESSAGES = 500;
+
+/** What the thread read selects: never `lineMessageId`, `operationId` or `senderUserId` (§3). */
+const SUPPORT_MESSAGE_SELECT = {
+  id: true, direction: true, kind: true, text: true, senderName: true,
+  mediaMimeType: true, mediaByteSize: true, mediaFileName: true, mediaError: true,
+  deliveryStatus: true, createdAt: true,
+  // Presence only — the bytes stay in their own table until the content route asks for them.
+  blob: { select: { messageId: true } },
+} as const;
+
+type SupportMessageRow = {
+  id: string; direction: string; kind: string; text: string | null; senderName: string | null;
+  mediaMimeType: string | null; mediaByteSize: number | null; mediaFileName: string | null;
+  mediaError: string | null; deliveryStatus: string | null; createdAt: Date;
+  blob: { messageId: string } | null;
+};
 
 export type SupportRequestListOptions = {
   status?: SupportRequestStatus;
@@ -72,6 +97,33 @@ function keysetAfter(after: { lastMessageAt: Date; id: string }) {
 
 function deliveryStatus(value: string | null): SupportReplyDeliveryStatus | undefined {
   return value === 'PENDING' || value === 'SENT' || value === 'FAILED' ? value : undefined;
+}
+
+/** Only the three bounded codes reach the UI; an unknown stored reason reads as the generic one. */
+function mediaError(value: string | null): SupportRequestMediaError | undefined {
+  if (!value) return undefined;
+  return value === 'media_security_rejected' || value === 'media_scan_failed' || value === 'media_limit_reached'
+    ? value : 'media_fetch_failed';
+}
+
+/** One bubble. Exported so a spec can check the §3 boundary on the exact shape the page renders. */
+export function toSupportMessageDto(row: SupportMessageRow): SupportRequestMessageDto {
+  const error = mediaError(row.mediaError);
+  const status = deliveryStatus(row.deliveryStatus);
+  return {
+    id: row.id,
+    direction: row.direction === 'STAFF' ? 'STAFF' : 'CUSTOMER',
+    kind: row.kind === 'IMAGE' || row.kind === 'FILE' ? row.kind : 'TEXT',
+    ...(row.text ? { text: row.text } : {}),
+    ...(row.senderName ? { senderName: row.senderName } : {}),
+    hasContent: Boolean(row.blob),
+    ...(row.mediaFileName ? { fileName: row.mediaFileName } : {}),
+    ...(row.mediaMimeType ? { mimeType: row.mediaMimeType } : {}),
+    ...(row.mediaByteSize ? { byteSize: row.mediaByteSize } : {}),
+    ...(error ? { mediaError: error } : {}),
+    ...(status ? { deliveryStatus: status } : {}),
+    createdAt: row.createdAt.toISOString(),
+  };
 }
 
 /** Only bounded provider codes reach storage/UI; response bodies, tokens and recipient ids never do. */
@@ -121,7 +173,47 @@ export class SupportRequestAdminUseCase {
       ? encodeSupportQueueCursor(last.lastMessageAt, last.id)
       : null;
     if (rows.length === 0) return { items: [], openCount, totalCount, nextCursor: null };
+    return { openCount, totalCount, nextCursor, items: await this.toItems(rows, adminUserId) };
+  }
 
+  /**
+   * สัญญา v3 ข้อ 11: the request AND everything said on it, in one read. The row rides along so the
+   * chat window can poll a single endpoint and never show a status the inbox has already moved past.
+   * CLOSED cases are readable until the 90-day purge takes them — that is what the ปิดแล้ว tab is for.
+   */
+  async thread(id: string, adminUserId: string): Promise<SupportRequestThreadDto> {
+    const [row, rows] = await Promise.all([
+      this.prisma.client.lineSupportRequest.findUnique({ where: { id } }),
+      this.prisma.client.lineSupportMessage.findMany({
+        where: { requestId: id },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        take: THREAD_MAX_MESSAGES,
+        select: SUPPORT_MESSAGE_SELECT,
+      }),
+    ]);
+    if (!row) throw new NotFoundException(`Support request "${id}" not found.`);
+    const [request] = await this.toItems([row], adminUserId);
+    return { request: request!, messages: rows.map(toSupportMessageDto) };
+  }
+
+  /** The stored bytes of one customer photo/file, scoped to its request so an id from another case 404s. */
+  async messageContent(id: string, messageId: string): Promise<{ data: Buffer; mimeType: string; fileName: string }> {
+    const stored = await this.prisma.client.lineSupportMessageBlob.findFirst({
+      where: { messageId, message: { requestId: id } },
+      include: { message: { select: { mediaMimeType: true, mediaFileName: true } } },
+    });
+    if (!stored) throw new NotFoundException('Support message content not found.');
+    const mimeType = stored.message.mediaMimeType ?? 'application/octet-stream';
+    return {
+      data: Buffer.from(stored.data),
+      mimeType,
+      // A photo arrives without a name; ours carries our own id and an extension the browser can use.
+      fileName: stored.message.mediaFileName ?? `support-${messageId}.${canonicalAttachmentExtension(mimeType) ?? 'bin'}`,
+    };
+  }
+
+  /** Row → DTO, with every name the rows point at looked up once per page. Shared by `list` and `thread`. */
+  private async toItems(rows: LineSupportRequest[], adminUserId: string): Promise<SupportRequestItemDto[]> {
     const companyIds = [...new Set(rows.map((row) => row.companyId).filter((id): id is string => !!id))];
     const signupIds = [...new Set(rows.map((row) => row.signupRequestId).filter((id): id is string => !!id))];
     const userIds = [...new Set(rows.flatMap((row) => [
@@ -149,11 +241,7 @@ export class SupportRequestAdminUseCase {
         : []));
     const userName = new Map(users.map((row) => [row.id, row.displayName]));
 
-    return {
-      openCount,
-      totalCount,
-      nextCursor,
-      items: rows.map((row): SupportRequestItemDto => ({
+    return rows.map((row): SupportRequestItemDto => ({
         id: row.id,
         status: row.status,
         askerLabel: supportAskerLabelTh(
@@ -199,8 +287,7 @@ export class SupportRequestAdminUseCase {
           ? { resolvedByDisplayName: userName.get(row.resolvedByUserId)! }
           : {}),
         ...(row.resolutionNote ? { resolutionNote: row.resolutionNote } : {}),
-      })),
-    };
+    }));
   }
 
   async claim(id: string, adminUserId: string, requestId: string): Promise<SupportRequestActionDto> {
@@ -380,6 +467,7 @@ export class SupportRequestAdminUseCase {
         }
         throw new ConflictException({ code: 'support_request_changed', message: 'Support request changed. Reload and retry.' });
       }
+      await this.recordStaffMessage(id, operationId, check.text, senderName, adminUserId);
     } else {
       const prepared = await this.prisma.client.lineSupportRequest.updateMany({
         where: {
@@ -403,6 +491,7 @@ export class SupportRequestAdminUseCase {
       if (prepared.count === 0) {
         throw new ConflictException({ code: 'support_request_changed', message: 'Support request changed. Reload and retry.' });
       }
+      await this.recordStaffMessage(id, operationId, check.text, senderName, adminUserId);
     }
 
     const outcome = await pushLineMessages({
@@ -427,6 +516,11 @@ export class SupportRequestAdminUseCase {
         if (current.replyOperationId === operationId && current.lastReplyDeliveryStatus === 'SENT') {
           return { status: current.status, sent: true };
         }
+        // The bubble follows the row: SENT is monotonic there too.
+        await tx.lineSupportMessage.updateMany({
+          where: { requestId: id, operationId, deliveryStatus: { not: 'SENT' } },
+          data: { deliveryStatus: 'FAILED' },
+        });
         await this.audit(SUPPORT_REQUEST_REPLY_ACTION, id, request.companyId, adminUserId, requestId, {
           deliveryStatus: 'FAILED', errorCode, operationId,
         }, 'FAILED', tx);
@@ -449,6 +543,10 @@ export class SupportRequestAdminUseCase {
           lastReplyDeliveryStatus: { in: ['PENDING', 'FAILED'] },
         },
         data: { lastReplyDeliveryStatus: 'SENT', lastReplyError: null },
+      });
+      await tx.lineSupportMessage.updateMany({
+        where: { requestId: id, operationId },
+        data: { deliveryStatus: 'SENT' },
       });
       // The customer may write while LINE accepts this push. Only the unchanged request becomes
       // ANSWERED; otherwise the newer customer message stays in the queue.
@@ -547,6 +645,24 @@ export class SupportRequestAdminUseCase {
       throw new ConflictException({ code: 'support_request_changed', message: 'Support request changed. Reload and retry.' });
     }
     return { id, status: 'CLOSED', assignedToMe: true };
+  }
+
+  /**
+   * สัญญา v3 ข้อ 9: the bubble for this reply, keyed by its operation so a same-key retry updates it
+   * instead of adding one. Written AFTER the row accepted the operation and BEFORE the push, so a
+   * PENDING bubble exists for exactly as long as the row says a send is in flight.
+   */
+  private async recordStaffMessage(
+    requestId: string, operationId: string, text: string, senderName: string, senderUserId: string,
+  ): Promise<void> {
+    await this.prisma.client.lineSupportMessage.upsert({
+      where: { requestId_operationId: { requestId, operationId } },
+      create: {
+        requestId, direction: 'STAFF', kind: 'TEXT', text, senderName, senderUserId, operationId,
+        deliveryStatus: 'PENDING',
+      },
+      update: { deliveryStatus: 'PENDING' },
+    });
   }
 
   private async require(id: string) {
