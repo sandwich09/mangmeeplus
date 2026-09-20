@@ -1,5 +1,5 @@
 import { test, expect } from './harness/fixtures';
-import { gotoCompany, json, unique } from './harness/e2e-utils';
+import { ensureVatRegistrationAnswered, firstActiveBranch, gotoCompany, json, unique } from './harness/e2e-utils';
 
 /**
  * The two withholding journeys from the spec's acceptance table, driven end to end against a real
@@ -56,7 +56,8 @@ test.describe('WHT at settlement time', () => {
     // 1,000 base + 70 VAT. The withholding applies to the base, never to the VAT.
     const bill = await json<VendorBill>(await api.post(`companies/${companyId}/accounts-payable/vendor-bills`, {
       data: {
-        supplierId: supplier.id, billDate: new Date().toISOString(), dueDate: new Date(Date.now() + 7 * 86400000).toISOString(),
+        supplierId: supplier.id, branchId: (await firstActiveBranch(api, companyId)).id,
+        billDate: new Date().toISOString(), dueDate: new Date(Date.now() + 7 * 86400000).toISOString(),
         currency: 'THB', vatMode: 'VAT_EXCLUDED', supplierDocumentNumber: unique('E2E-WHT-BILL'), matchingMode: 'NONE',
         subtotalAmount: '1000.00', discountAmount: '0.00', taxableAmount: '1000.00', vatAmount: '70.00',
         inputVatClaimStatus: 'NON_CLAIMABLE', whtAmount: '0.00', grandTotalAmount: '1070.00', netPayableAmount: '1070.00',
@@ -138,9 +139,11 @@ test.describe('WHT at settlement time', () => {
     // The invoice declares the rate the customer will withhold; the total it owes is unchanged.
     // A plain INVOICE is what carries the receivable here; VAT rides on a separate TAX_INVOICE, and
     // only INVOICE/BILLING_NOTE/DEBIT_NOTE accept a payment allocation. Withholding is orthogonal.
+    await ensureVatRegistrationAnswered(api, companyId);
     const doc = await json<Doc>(await api.post(`companies/${companyId}/accounting/documents`, {
       data: {
         documentType: 'INVOICE', documentDate: new Date().toISOString().slice(0, 10), vatMode: 'NO_VAT',
+        branchId: (await firstActiveBranch(api, companyId)).id,
         counterpartyId: counterparty.id,
         lines: [{ lineNumber: 1, description: unique('E2E WHT sale'), quantity: '1', unitPrice: '1000.00', whtRate: '3' }],
       },
@@ -153,6 +156,9 @@ test.describe('WHT at settlement time', () => {
 
     const payment = await json<Payment>(await api.post(`companies/${companyId}/accounting/payments`, {
       data: {
+        // An allocated payment needs a retry key (P27, commit 72a19f97) — the same
+        // `idempotencyKey` every other allocating fixture sends.
+        idempotencyKey: unique('wht-b1-payment'),
         direction: 'RECEIVED', method: 'BANK_TRANSFER', counterpartyId: counterparty.id,
         amount: '970.00', whtAmount: '30.00', paidAt: new Date().toISOString(),
         externalReference: unique('50TAWI'), allocateToDocumentId: doc.id,
@@ -170,6 +176,6 @@ test.describe('WHT at settlement time', () => {
     await expectPostingBlockedOnlyByMissingRule(api, companyId, 'accounting.payment', payment.id);
 
     await gotoCompany(authedPage, companyId, '/accounting');
-    await expect(authedPage.getByRole('heading', { name: /Accounting documents/i })).toBeVisible();
+    await expect(authedPage.getByRole('heading', { name: /เอกสารบัญชี|Accounting documents/i })).toBeVisible();
   });
 });
