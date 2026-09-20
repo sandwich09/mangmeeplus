@@ -2,6 +2,13 @@
 
 import type { PlanTermDerivedState } from '@watchdog-bms/contracts';
 
+/**
+ * Sales/locked-signup spec R2: WHY the shop is locked. A shop that never had a package must never
+ * read "ครบกำหนด" — it had nothing to run out. Declared here rather than imported so the web keeps
+ * compiling before and after the API ships the field; absent means `trial_ended` (P29 behaviour).
+ */
+export type PlanLockReason = 'trial_ended' | 'no_package';
+
 /** What `GET /v1/plan-term/notice` answers; `null` = this company has no term row (P29 §4). */
 export type PlanTermNotice = {
   derivedState: PlanTermDerivedState;
@@ -9,6 +16,8 @@ export type PlanTermNotice = {
   daysLeft: number;
   /** Only the OWNER sees term detail; staff get the neutral line instead (P29 §5). */
   isOwner: boolean;
+  /** Present only while EXPIRED. */
+  lockReason?: PlanLockReason;
 };
 
 export class PlanTermNoticeError extends Error {

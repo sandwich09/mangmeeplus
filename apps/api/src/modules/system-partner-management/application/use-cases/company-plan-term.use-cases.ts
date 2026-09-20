@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import type {
   CompanyPlanTermViewDto,
+  PlanTermLockReason,
   PlanTierKey,
   RenewCompanyPlanTermBody,
   SetCompanyPlanTermBody,
@@ -14,6 +15,7 @@ import {
   addDays,
   derivePlanTermState,
   isPlanTierKey,
+  planTermLockReason,
   toPlanTermDto,
   type PlanTermRow,
 } from '../../domain/logic/plan-term.logic';
@@ -390,6 +392,8 @@ export type PlanTermNoticeDto = {
   termEndsAt: string;
   daysLeft: number;
   isOwner: boolean;
+  /** R2: only ever present on an EXPIRED notice — a running term has nothing to explain. */
+  lockReason?: PlanTermLockReason;
 } | null;
 
 @Injectable()
@@ -399,7 +403,7 @@ export class GetPlanTermNoticeUseCase {
   async execute(companyId: string, roles: readonly string[]): Promise<PlanTermNoticeDto> {
     const row = await this.prisma.client.companyPlanTerm.findUnique({
       where: { companyId },
-      select: { termEndsAt: true, warningDays: true },
+      select: { termStartAt: true, termEndsAt: true, warningDays: true, renewCount: true },
     });
     if (!row) return null;
     const { derivedState, daysLeft } = derivePlanTermState(row.termEndsAt, row.warningDays, new Date());
@@ -407,6 +411,9 @@ export class GetPlanTermNoticeUseCase {
       derivedState,
       termEndsAt: row.termEndsAt.toISOString(),
       daysLeft,
+      // R2: the locked shell needs to know whether to invite a purchase or a renewal, and only the
+      // term row can tell it apart. Absent while the term still runs, so nothing else changes.
+      ...(derivedState === 'EXPIRED' ? { lockReason: planTermLockReason(row) } : {}),
       // The banner is OWNER-only (Owner 2026-08-30); staff still get the state so the expired
       // screen can route them to the neutral "ask the shop owner" copy.
       isOwner: roles.includes('OWNER'),

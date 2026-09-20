@@ -87,7 +87,7 @@ export async function checkBillingOfferTerms(input:Parameters<typeof checkBillin
     assert.deepEqual((await settings()).policy.offerTerms,policy.offerTerms);assert.deepEqual(await financial(),before);assert.equal(writes,0);
     const catalogResponse=await request('/v1/billing/catalog');assert.equal(catalogResponse.status,200,JSON.stringify(catalogResponse));const catalog=catalogResponse.body,offer=catalog.offers.find((o:any)=>o.offerKey==='PRO_999'&&o.interval==='year');
     assert.equal(offer.priceSatang,1099001);assert.equal(offer.receiptAllowance,1500);assert.equal(offer.branchLimit,7);assert.equal(offer.employeeLimit,25);
-    assert.equal(catalog.offers.filter((o:any)=>o.offerKey==='ENTERPRISE_1999').every((o:any)=>o.availability==='COMING_SOON'),true);assert.equal(catalog.trial.monthlySlipLimit,15);
+    assert.equal(catalog.offers.filter((o:any)=>o.offerKey==='ENTERPRISE_1999').every((o:any)=>o.availability==='COMING_SOON'),true);assert.equal(catalog.trial,undefined);
     cases.push('offer-terms-public-catalog-revision-shared-default-trial-and-enterprise-lock-without-financial-mutation');
 
     if(browser&&process.env.MANGMEE_MARKETING_DIR){const {checkBillingMarketing}=await import('./billing-marketing-smoke');cases.push(...(await checkBillingMarketing({page:browser.page,appOrigin:browser.origin,directory:process.env.MANGMEE_MARKETING_DIR,evidenceDir:browser.evidenceDir,expectedPro:{monthlySatang:109901,annualSatang:1099001,annualReceipts:1500,branches:7,members:25}})).map(name=>`offer-terms-${name}`));await browser.page.setViewportSize({width:390,height:844});}

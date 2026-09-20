@@ -269,7 +269,9 @@ function Welcome() {
     setHandoff(readClaimedCompany());
     let active = true;
     void fetchPlanTermNotice().then((notice) => {
-      if (active && notice) setTrialEndsAt(notice.termEndsAt);
+      // Owner 2026-09-20: a shop opened today has a term that is already over (no trial), so its
+      // date would read as "you have until today". Only a term still running is worth a date.
+      if (active && notice && notice.derivedState !== 'EXPIRED') setTrialEndsAt(notice.termEndsAt);
     });
     // The `line=linked` query is only ever present on the ONE navigation the callback makes. Coming
     // back from the sidebar, or reloading, the page could not tell a fresh visit from a finished
@@ -305,17 +307,12 @@ function Welcome() {
             <h1 className="mt-4 text-[24px] font-extrabold leading-9 text-gray-900">
               {handoff ? `${companyName} พร้อมใช้งานแล้ว` : 'เชื่อมบัญชี LINE'}
             </h1>
-            {/* Owner 2026-09-05: one free trial for everyone, so this no longer names a tier the
-                shop was never put on. Hidden entirely when the term is unknown: a made-up date is
-                worse than no date. */}
-            {trialEndsAt ? (
-              <p className="mt-2 text-[15px] leading-7 text-gray-600">
-                {/* F1: named a paid tier while provisioning writes the free trial. The
-                    wording table's "what happens after" rides the same line, so the date never
-                    stands alone implying a renewal. */}
-                ทดลองใช้ฟรี ถึง {formatThaiDate(trialEndsAt)} — {SIGNUP_TRIAL_AFTER}
-              </p>
-            ) : null}
+            {/* Owner 2026-09-20 (spec R1): no trial to date-stamp any more. A shop that still
+                carries a running term — one opened before the trial closed — keeps being told when
+                it ends; every new shop is simply told what to do next. */}
+            <p className="mt-2 text-[15px] leading-7 text-gray-600">
+              {trialEndsAt ? `ใช้งานได้ถึง ${formatThaiDate(trialEndsAt)} — ` : ''}{SIGNUP_TRIAL_AFTER}
+            </p>
 
             {lineOutcome === 'link-failed' ? (
               <div role="alert" className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[14.5px] leading-7 text-amber-900">

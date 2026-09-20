@@ -35,6 +35,7 @@ import { receiptQuotaSnapshot } from '../../line-ai/application/company-ocr-gove
 import { paidReceiptBalance } from './billing-receipt-grants';
 import { trialReceiptCarryover, type TrialCarryoverSource } from './billing-trial-carryover';
 import { billingState } from '../domain/billing-state';
+import { planTermLockReason } from '../../system-partner-management/domain/logic/plan-term.logic';
 import { BillingFreeDays } from './billing-free-days';
 import { detectBillingIssue } from './billing-issues';
 
@@ -118,7 +119,9 @@ export class BillingService {
     return { schemaVersion: 1, mode: this.stripe.enabled ? (this.stripe.livemode ? 'LIVE' : 'TEST') : 'DISABLED', policyRevision: state?.revision?.id ?? null,
       catalogRevision: hashBilling([state?.settings.version ?? 0, state?.revision?.id ?? null, offers, state?.policy?.taxTreatment ?? null]),
       generatedAt: generatedAt.toISOString(), validUntil: new Date(generatedAt.getTime() + 30_000).toISOString(), taxTreatment: state?.policy?.taxTreatment ?? null,
-      offers, trial: { tierKey: 'FREE_TRIAL_15', days: 30, monthlySlipLimit: 15, branchLimit: 1, employeeLimit: 2, menus: 7 } };
+      // R1: no `trial` block any more — a new shop gets no free days, so advertising them here
+      // would be the page promising what provisioning refuses to grant (Owner 2026-09-20).
+      offers };
   }
 
   async usage(companyId: string): Promise<BillingStatus['usage']> {
@@ -514,6 +517,10 @@ export class BillingService {
       collectionPause: account?.collectionPauseJson as BillingStatus['collectionPause'],
       purchaseEligibility: eligible ? 'ELIGIBLE' : 'COMPANY_SALES_CLOSED', refundReviewPending,
       policyRevision: settings?.revision?.id ?? null, ...state, subscriptionState: account?.subscriptionState ?? 'NONE',
+      // R2: same rule the plan-term notice uses, so the package page and the locked shell agree on
+      // whether this shop never had a package or ran one to its end. EXPIRED only; a HELD company
+      // is an admin hold, which is neither.
+      ...(state.accessState === 'EXPIRED' && term ? { lockReason: planTermLockReason(term) } : {}),
       attemptId: attempt?.id ?? null, reference: invoice?.id ?? attempt?.id ?? null, observedAt: account?.observedAt?.toISOString() ?? null,
       effectiveCapacity: term ? effectivePlanCapacity(term) : null, tierKey: term?.tierKey ?? null, interval: snapshot?.interval ?? null, termEndsAt: term?.termEndsAt.toISOString() ?? null, paidThrough: account?.paidThrough?.toISOString() ?? null,
       nextChargeAt: account?.collectionPauseJson ? null : account?.nextChargeAt?.toISOString() ?? null, cancelAtPeriodEnd: account?.cancelAtPeriodEnd ?? false,

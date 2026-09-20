@@ -766,36 +766,14 @@ export class SignupAdminQueueUseCase {
       if (contactEmailConflict && !sharedContactReviewed) {
         throw new ConflictException('line_signup_shared_contact_review_required');
       }
-      const newTrialNote = body.grantRepeatTrial
-        ? requiredNote(body.trialGrantNote, 'line_signup_trial_grant_note_required')
-        : null;
-      const repeatTrialGranted = current.repeatTrialGrantedAt !== null || newTrialNote !== null;
+      // Owner 2026-09-20 (R1): approving a repeat applicant used to park the row at PLAN_REVIEW
+      // until an admin ticked "อนุญาตทดลองใช้ฟรีเพิ่มอีกครั้ง" with a note. Nothing free is granted on
+      // approval now — the second shop opens LOCKED like the first — so there is nothing to
+      // authorize. `repeatTrial` is still computed, and still recorded on the approval audit, so
+      // the pattern stays visible to whoever reads the trail. `body.grantRepeatTrial` and
+      // `body.trialGrantNote` are accepted and ignored, for a console that has not shipped yet.
       const chosenCategory = (COMPANY_BUSINESS_CATEGORIES as readonly string[])
         .includes(body.businessCategory ?? '') ? body.businessCategory! : null;
-
-      if (repeatTrial && !repeatTrialGranted) {
-        const changed = await tx.companySignupRequest.update({
-          where: { id: current.id },
-          data: {
-            contactEmailConflict,
-            reviewResolution: 'PLAN_REVIEW',
-            resolutionNote: body.resolutionNote?.trim() || null,
-            resolvedAt: now,
-            resolvedByUserId: adminUserId,
-            ...(newSharedNote ? {
-              sharedContactReviewedAt: now,
-              sharedContactReviewedByUserId: adminUserId,
-              sharedContactReviewNote: newSharedNote,
-            } : {}),
-            version: { increment: 1 },
-          },
-        });
-        await this.audit(current.id, adminUserId, correlationRequestId, 'signup.line.plan_review_required', {
-          repeatTrial: true,
-          contactEmailConflict,
-        }, tx);
-        return { request: changed, provision: false };
-      }
 
       const changed = await tx.companySignupRequest.update({
         where: { id: current.id },
@@ -809,11 +787,6 @@ export class SignupAdminQueueUseCase {
           approvedAt: current.approvedAt ?? now,
           approvedByUserId: current.approvedByUserId ?? adminUserId,
           ...(chosenCategory ? { businessCategory: chosenCategory } : {}),
-          ...(repeatTrial && newTrialNote ? {
-            repeatTrialGrantedAt: now,
-            repeatTrialGrantedByUserId: adminUserId,
-            repeatTrialGrantNote: newTrialNote,
-          } : {}),
           ...(contactEmailConflict && newSharedNote ? {
             sharedContactReviewedAt: now,
             sharedContactReviewedByUserId: adminUserId,
@@ -826,7 +799,6 @@ export class SignupAdminQueueUseCase {
         source: current.source,
         resolution: 'NEW_SHOP',
         repeatTrial,
-        repeatTrialGranted,
         contactEmailConflict,
         sharedContactReviewed,
       }, tx);
@@ -1193,10 +1165,6 @@ function toQueueItem(
     ...(eligibleCompanies.get(request.id)?.length
       ? { eligibleExistingCompanies: eligibleCompanies.get(request.id) }
       : {}),
-    ...(request.source === SIGNUP_SOURCE_LINE_OA ? {
-      requiresRepeatTrialGrant: priorCompany !== undefined,
-      repeatTrialGranted: request.repeatTrialGrantedAt !== null,
-    } : {}),
     // Why the last provisioning stopped, so "เปิดร้านไม่สำเร็จ" can name a cause an admin can act on.
     ...(request.failureCode ? { failureCode: request.failureCode } : {}),
   };

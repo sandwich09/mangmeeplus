@@ -1,0 +1,11 @@
+# Agent Memory: สมัครแล้วล็อก + Sales console + ดีลพิเศษ (ฉบับรวม)
+
+Status: PHASE 1 IN PROGRESS 2026-09-20 — worktree /private/tmp/mangmee-sales-deals-p1-20260920 (branch codex/sales-deals-phase1-20260920 from develop 5b4a0666); two Opus implementers running (server / web); controller review pending; nothing committed.
+Owner: thawatchai (product) / Claude controller; implementation to be delegated per phase.
+Scope: no free trial (constant), new shops locked to settings+package until paid; Sales console (roles MANGMEE_SALES_LEAD / MANGMEE_SALES in the platform tenant, admin-created users with encrypted tax/bank data for external payroll/50ทวิ), sales deals with any price/months/limits/menus/AI budget → lead approval → offer card only on that shop's package page, valid 3 days → customer pays via Stripe one-time Checkout (card + PromptPay, auto-activate) or transfer+slip (admin verify); no access before payment; deal renewal by re-offer.
+Decisions (Owner 2026-09-20): no trial going forward; existing trials run to their end; pay within 3 days; no provisional access; commissions outside the system; leads see all teams; deals can set everything.
+Design: reuse PackageChangeRequest (kind SALES_DEAL) + special-invoice columns; one-time Checkout path (`billing-repeat.ts` shape) with a new DealSource for shops without subscriptions; `paid-checkout-invoice.ts` extended for promptpay; subscription evidence files untouched; shops with an active catalog subscription cannot take a deal (v1).
+Open questions: none — D1–D7 and Q1–Q6 all decided 2026-09-20 (Q2: not VAT-registered yet, deal price = amount paid, VAT split follows billing policy later).
+Artifacts: [spec](../specs/mangmee-sales-deals-and-locked-signup-spec-th.md) (register S01–S25), [plan](../plans/mangmee-sales-deals-and-locked-signup-plan-th.md); superseded: free-usage-close-toggle-plan-th.md, special-invoice-manual-payment-spec/plan, billing-special-price-spec/plan.
+Verification: read-only discovery only; no tests run.
+Next: Owner answers D1–D5 → Phase 1 (close trial + locked shell + LINE) first, then Phase 2 (sales console), Phase 3 (deal payments + package page), Phase 4 (renewal/reports); UAT needs PromptPay enabled on the Stripe account.

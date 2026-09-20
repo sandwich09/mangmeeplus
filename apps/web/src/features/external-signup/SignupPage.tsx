@@ -19,7 +19,6 @@ import {
   SIGNUP_SUPPORT_PHONE,
   SIGNUP_TRIAL_AFTER,
   SIGNUP_TRIAL_HEADLINE,
-  SIGNUP_TRIAL_WARMUP,
   signupFieldRejection,
   signupSubmitErrorMessage,
   validateSignupForm,
@@ -39,19 +38,15 @@ const EMPTY_FORM: SignupFormValues = {
 };
 
 /**
- * Owner 2026-09-05: there is no tier to choose any more — every applicant gets the same free trial
- * the LINE-first signup gives. The four priced cards described a purchase nobody was being asked
- * to make, and pairing a monthly price with a free-trial badge read as a subscription starting now.
- * (The price itself is deliberately not repeated here: `signup-pages.qa.spec.ts` scans this file's
- * raw source, comments included, and it is right to.)
+ * Owner 2026-09-20 (spec R1): no trial, so this says what signing up actually gets you — an open
+ * shop — and what starting it costs. The warm-up line went with the trial allowance it described.
+ * (The retired PRO price is deliberately not repeated here: `signup-pages.qa.spec.ts` scans this
+ * file's raw source, comments included, and it is right to.)
  */
 export function TrialNotice() {
   return (
     <section className="rounded-xl border border-[#B6E0C4] bg-[#F2F9F4] p-3.5">
       <h2 className="text-[15.5px] font-bold text-[#046B29]">{SIGNUP_TRIAL_HEADLINE}</h2>
-      {/* F17: the first week is capped harder than the month. Said here, next to the monthly
-          number it qualifies — finding it out on day one reads as a broken app. */}
-      <p className="mt-1 text-[13.5px] leading-6 text-gray-600">{SIGNUP_TRIAL_WARMUP}</p>
       <p className="mt-1 text-[13.5px] leading-6 text-gray-600">{SIGNUP_TRIAL_AFTER}</p>
     </section>
   );

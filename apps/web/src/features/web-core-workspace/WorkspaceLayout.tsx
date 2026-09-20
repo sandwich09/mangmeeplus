@@ -13,6 +13,7 @@ import type { WebSession } from '@/common/models/web-session.model';
 import { WORKSPACE_MODULES, NAV_GROUP_ORDER } from './web-core-workspace.constants';
 import {
   filterModulesByPermissions,
+  buildLockedNavItems,
   buildNavItems,
   collectMenuTargets,
   getActiveModuleKey,
@@ -22,7 +23,10 @@ import {
 } from './web-core-workspace.logic';
 import { BranchFilterProvider, BranchSelector, CompanySwitcher } from './WorkspaceScope';
 import { PlanTermBanner } from '@/features/plan-term/PlanTermBanner';
+import { LockedShellProvider } from '@/features/plan-term/LockedShellScope';
 import { PlanTermSidebarCard } from '@/features/plan-term/PlanTermSidebarCard';
+import { fetchPlanTermNotice, type PlanTermNotice } from '@/features/plan-term/plan-term.api';
+import { isLockedShellPath } from '@/features/plan-term/plan-term.logic';
 import { accessContextFingerprint, fetchMyContext, type MyContext } from './workspace-scope.api';
 import { MenuFilterProvider } from './MenuFilterScope';
 import { NotificationBell } from '@/features/dashboard-notifications/NotificationBell';
@@ -35,6 +39,14 @@ type Props = {
   companyId: string;
   session: WebSession;
 };
+
+// WEB-04: `session.companyId` used to stand in until /my-companies answered, so the header showed
+// a raw ULID to every user on every cold load. A neutral placeholder is the honest stand-in;
+// CompanySwitcher replaces it with the real name, or with a retry when the lookup fails.
+const COMPANY_NAME_PLACEHOLDER = 'กำลังโหลด…';
+
+/** The header user block: password, LINE link, logout. A locked shop keeps all three. */
+const ACCOUNT_SECURITY_PERMISSIONS = ['account.password.change', 'account.identity.link', 'account.identity.unlink'];
 
 // Only implemented entry points; permissions still decide which enabled features are visible.
 const DESIGN_HANDOFF_NAV_ORDER = [
@@ -60,10 +72,72 @@ const ACCESS_CONTEXT_POLL_MS = 60_000;
 
 export default function WorkspaceLayoutClient({ children, companyId, session }: Props) {
   const pathname = usePathname();
+  // The shell's single plan-term read (spec §12): the locked two-menu sidebar, its banner and the
+  // renewal redirect all answer from this one notice, so no page pays for a second call.
+  const [loaded, setLoaded] = useState<{ companyId: string; notice: PlanTermNotice | null } | null>(null);
+  const settled = loaded?.companyId === companyId;
+  const notice = settled ? loaded.notice : null;
+
+  useEffect(() => {
+    let active = true;
+    void fetchPlanTermNotice(companyId).then((result) => {
+      if (active) setLoaded({ companyId, notice: result });
+    });
+    return () => { active = false; };
+  }, [companyId]);
+
+  // Nothing business-shaped may mount before the term is known: the business shell's first render
+  // fires the nav, notification and access-context reads, which a locked shop answers with 403 —
+  // and `authedApiFetch` turns that into a bounce to /renew. One notice round trip, then the right
+  // shell. A failed read is already swallowed as `null` by fetchPlanTermNotice, so the workspace
+  // still fails open when the notice endpoint itself is down.
+  if (!settled) return <p role="status" className="p-8 text-gray-500">กำลังเปิดหน้า…</p>;
+
+  // Owner 2026-09-20: a shop with no usable package has no business shell at all, on any path.
+  if (notice?.derivedState === 'EXPIRED')
+    return <LockedWorkspaceLayout companyId={companyId} session={session} notice={notice}>{children}</LockedWorkspaceLayout>;
   // Layouts survive client navigation; resolve billing access on both entry paths.
   if (isBillingCustomerRecoveryPath(pathname, companyId) || pathname === `/companies/${encodeURIComponent(companyId)}/settings/profile`)
     return <BillingWorkspaceLayout companyId={companyId} session={session}>{children}</BillingWorkspaceLayout>;
-  return <BusinessWorkspaceLayout companyId={companyId} session={session}>{children}</BusinessWorkspaceLayout>;
+  return <BusinessWorkspaceLayout companyId={companyId} session={session} notice={notice}>{children}</BusinessWorkspaceLayout>;
+}
+
+/**
+ * The whole web for a shop that has not bought a package (spec §12 เว็บลูกค้า): ตั้งค่า and, for the
+ * OWNER, แพ็กเกจ. Deliberately without the bell, the setup checklist, the branch scope and the
+ * plan-term card — every one of them is a business read the term guard refuses — and without the
+ * page itself on a path this shop may not open, so a stale link cannot fire a screenful of 403s
+ * before `PlanTermBanner` redirects it.
+ */
+function LockedWorkspaceLayout({ children, companyId, session, notice }: Props & { notice: PlanTermNotice }) {
+  const pathname = usePathname() ?? '';
+  const navItems = useMemo(
+    () => buildLockedNavItems(companyId, ICON_MAP, session.roles),
+    [companyId, session.roles],
+  );
+
+  return (
+    <div className="[--app-header-h:112px] sm:[--app-header-h:68px]">
+      <WorkspaceShell
+        companyName={COMPANY_NAME_PLACEHOLDER}
+        companyArea={<CompanySwitcher companyId={companyId} fallbackName={COMPANY_NAME_PLACEHOLDER} />}
+        banner={<PlanTermBanner companyId={companyId} notice={notice} />}
+        userName={stripThaiTitlePrefix(session.displayName) || undefined}
+        userRoles={session.roles}
+        userRoleNames={session.roleNames}
+        showAccountSecurity={ACCOUNT_SECURITY_PERMISSIONS.some((permission) => session.permissions.includes(permission))}
+        locale="th"
+        navItems={navItems}
+        activeKey={resolveMenuKey(pathname, collectMenuTargets(navItems)) ?? undefined}
+      >
+        <LockedShellProvider value={true}>
+          {isLockedShellPath(pathname, companyId) ? children : (
+            <p role="status" aria-live="polite" className="p-8 text-gray-500">กำลังพาไปหน้าที่ใช้ได้…</p>
+          )}
+        </LockedShellProvider>
+      </WorkspaceShell>
+    </div>
+  );
 }
 
 function BillingWorkspaceLayout({ children, companyId, session }: Props) {
@@ -83,14 +157,11 @@ function BillingWorkspaceLayout({ children, companyId, session }: Props) {
   return <BillingWorkspaceContext.Provider value={true}><BusinessWorkspaceLayout companyId={companyId} session={session}>{children}</BusinessWorkspaceLayout></BillingWorkspaceContext.Provider>;
 }
 
-function BusinessWorkspaceLayout({ children, companyId, session }: Props) {
+function BusinessWorkspaceLayout({ children, companyId, session, notice = null }: Props & { notice?: PlanTermNotice | null }) {
   const locale: SupportedLocale = 'th';
   const pathname = usePathname();
   const router = useRouter();
-  // WEB-04: `session.companyId` used to stand in until /my-companies answered, so the header showed
-  // a raw ULID to every user on every cold load. A neutral placeholder is the honest stand-in;
-  // CompanySwitcher replaces it with the real name, or with a retry when the lookup fails.
-  const companyName = 'กำลังโหลด…';
+  const companyName = COMPANY_NAME_PLACEHOLDER;
   const currentAccessFingerprint = accessContextFingerprint(session);
   const accessCheckInFlight = useRef<Promise<void> | null>(null);
 
@@ -212,7 +283,7 @@ function BusinessWorkspaceLayout({ children, companyId, session }: Props) {
           </div>
         }
         headerExtras={session.permissions.includes('notification.read') ? <NotificationBell companyId={companyId} locale={locale} /> : undefined}
-        banner={<PlanTermBanner companyId={companyId} />}
+        banner={<PlanTermBanner companyId={companyId} notice={notice} />}
         sidebarFooter={<PlanTermSidebarCard companyId={companyId} />}
         // Owner decision 2026-08-15: the shell shows the person, not their คำนำหน้า. Stripped at the
         // shell boundary so the sidebar name and both avatar initials agree — the session name is
@@ -220,11 +291,7 @@ function BusinessWorkspaceLayout({ children, companyId, session }: Props) {
         userName={stripThaiTitlePrefix(session.displayName) || undefined}
         userRoles={session.roles}
         userRoleNames={session.roleNames}
-        showAccountSecurity={[
-          'account.password.change',
-          'account.identity.link',
-          'account.identity.unlink',
-        ].some((permission) => session.permissions.includes(permission))}
+        showAccountSecurity={ACCOUNT_SECURITY_PERMISSIONS.some((permission) => session.permissions.includes(permission))}
         locale={locale}
         navItems={navItems}
         activeKey={activeKey ?? undefined}

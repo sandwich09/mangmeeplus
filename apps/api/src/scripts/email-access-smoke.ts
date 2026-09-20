@@ -65,7 +65,7 @@ export async function checkEmailAccess(input: { app: INestApplication; prisma: P
     assert.ok(await page.getByRole('link', { name: 'ประกาศความเป็นส่วนตัว', exact: true }).isVisible());
     await page.screenshot({ path: `${browser.evidenceDir}/email-signup-390.png`, fullPage: true });
     const submitting = page.waitForResponse(r => r.url().endsWith('/email-access/signup'));
-    await page.getByRole('button', { name: 'เริ่มใช้ฟรี', exact: true }).click();
+    await page.getByRole('button', { name: 'เปิดร้าน', exact: true }).click();
     const submitted = await submitting; assert.equal(submitted.status(), 200);
     await page.waitForURL('**/legal-acceptance?**');
     const request = await db.companySignupRequest.findFirstOrThrow({ where: { source: 'email-otp', contactEmail: recipient } });
@@ -112,7 +112,7 @@ export async function checkEmailAccess(input: { app: INestApplication; prisma: P
     await page.getByLabel('ชื่อร้าน', { exact: true }).fill(`Manual ${tag}`);
     await page.getByLabel('ชื่อผู้ติดต่อ', { exact: true }).fill('ผู้สมัครรอตรวจ');
     await page.getByLabel('เบอร์มือถือ', { exact: true }).fill('089' + tag.split('').map(x => parseInt(x, 16) % 10).join('').slice(0, 7));
-    await page.getByRole('button', { name: 'เริ่มใช้ฟรี', exact: true }).click();
+    await page.getByRole('button', { name: 'เปิดร้าน', exact: true }).click();
     await page.getByRole('heading', { name: 'ทีมงานกำลังตรวจคำขอของคุณ', exact: true }).waitFor();
     const manual = await db.companySignupRequest.findFirstOrThrow({ where: { source: 'email-otp', contactEmail: recipient } });
     assert.equal(manual.state, 'PENDING_REVIEW'); assert.equal(manual.companyId, null);

@@ -45,10 +45,12 @@ export const PROFILE_GUARD_AFTER_READS = 5;
 /** §3 PDPA: a settled request is deleted 90 days after it settled, message text and all. */
 export const SUPPORT_REQUEST_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
-/** Owner copy (§7). No plus sign in customer text; write "และ". */
+/** Owner copy (§7). No plus sign in customer text; write "และ".
+ *  R1: the shop opens LOCKED, so the very first thing it is told is the one step that unlocks it.
+ *  Nothing here invites a receipt photo — the assistant would only refuse it. */
 export function approvedMessageTh(companyName: string): string {
-  return `🎉 ร้าน ${companyName} พร้อมใช้แล้วค่ะ ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง `
-    + 'ลองส่งรูปใบเสร็จมาในแชทนี้ได้เลย หรือกดเปิดหน้าเว็บนะคะ';
+  return `🎉 เปิดร้าน ${companyName} ให้แล้วค่ะ ขั้นต่อไปคือเลือกแพ็กเกจเพื่อเริ่มใช้งาน `
+    + 'กดเปิดหน้าเว็บเพื่อดูแพ็กเกจและชำระเงินได้เลยนะคะ';
 }
 
 export function attachedMessageTh(companyName: string): string {

@@ -30,6 +30,7 @@ import { resolveCompanyForLineUser } from '../line-ai/application/use-cases/proc
 import { CreateCompanyOnboardingUseCase } from '../system-onboarding/application/use-cases/create-company-onboarding.use-case';
 import { CompanySignupCoreService } from './application/company-signup-core.service';
 import { ProvisionSignupUseCase } from './application/provision-signup.use-case';
+import { PartnerLifecycleTransitionUseCase } from '../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 import { SignupAdminQueueUseCase } from './application/signup-admin-queue.use-case';
 import { SubmitLineSignupUseCase } from './application/submit-line-signup.use-case';
 
@@ -85,7 +86,8 @@ function wire(client: PrismaClient, options: { adminUserId: string; approvalMode
   const linePushes: Array<{ id: string; kind: string }> = [];
   const lineNotify = { enqueue: async (id: string, kind: string) => { linePushes.push({ id, kind }); } } as any;
   const opsAlerts = { raise: async () => undefined } as any;
-  const provision = new ProvisionSignupUseCase(prisma, core, onboarding, config, adminDirectory, lineNotify, opsAlerts);
+  const provision = new ProvisionSignupUseCase(prisma, core, onboarding, config, adminDirectory, lineNotify, opsAlerts,
+    new PartnerLifecycleTransitionUseCase(prisma));
   const rateLimit = {
     assertLineSignupAttemptAllowed: async () => undefined,
     assertLineSignupUserAllowed: async () => undefined,
@@ -129,6 +131,8 @@ const submitCmd = (correlationRequestId: string) => ({
 const createNewShopDecision = (version: number) => ({
   action: 'CREATE_NEW_SHOP' as const,
   version,
+  // R1 (Owner 2026-09-20): accepted and ignored now; kept so this fixture also proves an older
+  // console's payload is still taken rather than rejected.
   grantRepeatTrial: true,
   trialGrantNote: 'Regression fixture: explicit repeat-trial authorization',
   acknowledgeSharedContact: true,
@@ -460,12 +464,30 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
       );
       assert.deepEqual(await client.user.findUniqueOrThrow({ where: { id: seeded.oldUserId } }), oldUserBefore);
 
-      // And the chat lands on the new shop. Asserted through the resolver the webhook itself calls,
-      // not a copy of it: the stale context still pointed at the disabled company until this ran.
+      // And the chat points at the new shop. The stale context still pointed at the disabled
+      // company until this ran.
       const context = await client.lineCompanyContext.findUniqueOrThrow({ where: { lineUserId } });
       assert.equal(context.companyId, newCompanyId, 'the stale pointer is overwritten, not left');
       // Review N4: and the previous owner's "a human is handling this" hold does not come with it.
       assert.equal(context.aiPausedUntil, null, 'the new shop starts with its assistant switched on');
+
+      // J1 (Owner 2026-09-20): the new shop opens LOCKED — zero-day term, DISABLED, stamped — so
+      // the resolver the webhook itself calls refuses it, and the LINE turn takes the package card
+      // instead of an assistant answer.
+      const newTerm = await client.companyPlanTerm.findUniqueOrThrow({ where: { companyId: newCompanyId } });
+      assert.equal(newTerm.termEndsAt.getTime(), newTerm.termStartAt.getTime());
+      assert.ok(newTerm.termDisabledAt, 'stamped, so a purchase can re-enable it');
+      assert.ok(newTerm.expiredNotifiedAt, 'and the sweep never sends it the expiry notice');
+      assert.equal((await client.company.findUniqueOrThrow({ where: { id: newCompanyId } })).status, 'DISABLED');
+      assert.equal(await resolveCompanyForLineUser({ client } as any, identity.userId, lineUserId), null);
+
+      // The lock is the ONLY thing holding it: give the shop a running term and the very next
+      // message resolves onto it, with nothing to invalidate.
+      await client.company.update({ where: { id: newCompanyId }, data: { status: 'ACTIVE' } });
+      await client.companyPlanTerm.update({
+        where: { companyId: newCompanyId },
+        data: { termEndsAt: new Date(Date.now() + 30 * 24 * 3600_000), termDisabledAt: null },
+      });
       assert.deepEqual(
         await resolveCompanyForLineUser({ client } as any, identity.userId, lineUserId),
         { companyId: newCompanyId },
@@ -512,7 +534,7 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
     }
   });
 
-  it('keeps AUTO_FREE from opening a second free shop for a repeat applicant', async () => {
+  it('keeps AUTO_FREE from opening a second shop for a repeat applicant without a human', async () => {
     const client = connect();
     const tag = `linesignup-${randomUUID().slice(0, 8)}`;
     const lineUserId = `U${tag}`;
@@ -524,7 +546,8 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
 
       const accepted = await h.submit.execute(submitCmd(`${tag}-repeat`), NOW);
 
-      // Owner 2026-09-05: the machine may open a FIRST free trial, never a second one.
+      // Owner 2026-09-05, still true under R1: the machine opens a FIRST shop, never a second one.
+      // Nothing free is at stake any more, but a repeat applicant is a pattern a human should see.
       assert.equal(accepted.progress!.state, 'PENDING_REVIEW');
       const request = await client.companySignupRequest.findUniqueOrThrow({ where: { id: accepted.progress!.requestId } });
       assert.equal(request.autoApproved, false, 'no cap slot was burned on it either');

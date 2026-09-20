@@ -78,6 +78,9 @@ const PERMISSION_REFUSAL_STATUSES = new Set([
   // expired subscription answered correctly is not an AI outage on the alarm that watches
   // `failed_terminal`.
   'plan_term_expired',
+  // J1/R14: the shop has no usable package and was answered with the "เลือกแพ็กเกจ" card. Same
+  // class as the expiry above — a policy refusal the customer received, never an AI outage.
+  'package_required',
   'unlinked',
 ]);
 const DELIVERED_STATUSES = new Set([

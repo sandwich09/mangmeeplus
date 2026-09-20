@@ -171,7 +171,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const SIGNUP_STORAGE_KEY = 'mangmee_line_signup_submission_v1';
   const START_REASON_TH = {
     suspended: 'ร้านนี้ถูกระงับการใช้งานอยู่ค่ะ ติดต่อทีมงานเพื่อเปิดใช้อีกครั้งได้นะคะ',
-    expired: 'ช่วงทดลองใช้ของร้านนี้หมดอายุแล้วค่ะ พิมพ์ ขอเปลี่ยนแพ็กเกจ ในแชทได้เลย ทีมงานจะติดต่อกลับนะคะ',
+    expired: 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ค่ะ เข้าสู่ระบบบนเว็บแล้วเลือกแพ็กเกจเพื่อเริ่มใช้งานได้เลยนะคะ',
     no_membership: 'บัญชี LINE นี้ยังไม่ได้อยู่ในร้านไหนค่ะ ให้เจ้าของร้านส่งลิงก์เชิญให้อีกครั้งนะคะ'
   };
   const FAIL_TITLE_TH = {
@@ -691,7 +691,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     if (progress.state === 'COMPLETED') {
       const returned = progress.resolution === 'RETURN_EXISTING';
       setProgress('พร้อมเริ่มใช้งาน', returned
-        ? shop + ' ใช้ต่อได้เลยค่ะ ไม่มีการเปิดร้านหรือเริ่มทดลองใช้ฟรีใหม่'
+        ? shop + ' ใช้ต่อได้เลยค่ะ ไม่มีการเปิดร้านใหม่'
         : shop + ' เปิดสำเร็จแล้วค่ะ', progress);
       const entered = renderEligibleCompanies(companies, progress.entryCompanyId || '', true);
       if (!entered) {
@@ -779,8 +779,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     signupIntent = intent;
     signupReady = true;
     const addShop = intent === 'ADD_SHOP';
-    document.getElementById('form-title').textContent = addShop ? 'เปิดร้านเพิ่ม' : 'เปิดร้านใหม่ ทดลองใช้ฟรี';
-    actionBtn.textContent = addShop ? 'ยืนยันเปิดร้านเพิ่ม' : 'ยอมรับและเริ่มทดลองใช้ฟรี';
+    document.getElementById('form-title').textContent = addShop ? 'เปิดร้านเพิ่ม' : 'เปิดร้านใหม่';
+    actionBtn.textContent = addShop ? 'ยืนยันเปิดร้านเพิ่ม' : 'ยอมรับและเปิดร้าน';
     if (addShop) {
       clearSavedSubmission();
       document.getElementById('company-name').value = '';
@@ -991,7 +991,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     if (!res.ok) throw new Error(refusalCode(text) || ('เปิดหน้าเว็บไม่สำเร็จ: ' + res.status));
     const session = JSON.parse(text);
     if (session.needsSignup) {
-      setStatus('ยังไม่มีร้านที่ผูกกับ LINE นี้ค่ะ เปิดร้านใหม่ทดลองฟรีได้เลยนะคะ', '', 'info');
+      setStatus('ยังไม่มีร้านที่ผูกกับ LINE นี้ค่ะ เปิดร้านใหม่ได้เลยนะคะ', '', 'info');
       const signupEl = document.getElementById('go-signup');
       if (signupEl) signupEl.hidden = false;
       return;

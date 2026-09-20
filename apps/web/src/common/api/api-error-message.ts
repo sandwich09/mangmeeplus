@@ -551,9 +551,11 @@ const CODE_LABELS: Record<string, string> = {
   password_reuse: 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม',
   current_password_incorrect: 'รหัสผ่านปัจจุบันไม่ถูกต้อง',
   company_access_unavailable: 'คุณไม่มีสิทธิ์เข้าใช้บริษัทนี้แล้ว กรุณาติดต่อเจ้าของร้าน',
-  // P29: the term ended, so business routes are refused on access. Data is intact — the copy must
-  // not read as data loss, and the only move that helps is renewing, not retrying.
-  company_term_expired: 'ร้านนี้ครบกำหนดใช้งานแล้ว ข้อมูลทั้งหมดยังอยู่ครบ ติดต่อ 098-256-5628 เพื่อใช้งานต่อ',
+  // P29: business routes are refused on access because the shop has no usable package. Data is
+  // intact — the copy must not read as data loss, and the only move that helps is choosing a
+  // package, not retrying. Neutral between the two reasons (spec R2): the code alone cannot tell a
+  // term that ended from a shop that never had one, and "ครบกำหนด" is wrong for the second.
+  company_term_expired: 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ เลือกแพ็กเกจเพื่อเริ่มใช้งาน ข้อมูลทั้งหมดยังอยู่ครบ',
 
   // ---- P10-L §8 admin support tools (system console; the reader is an operator, not a shop) ----
   // SEC-05: each says what to change, because the operator has the message in front of them.

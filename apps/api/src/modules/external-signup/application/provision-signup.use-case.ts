@@ -4,14 +4,16 @@ import {
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
-import { Prisma } from '../../../generated/prisma/client';
 import { CreateCompanyOnboardingUseCase } from '../../system-onboarding/application/use-cases/create-company-onboarding.use-case';
+import { PartnerLifecycleTransitionUseCase } from '../../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
+import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
+import { planTermLockReason } from '../../system-partner-management/domain/logic/plan-term.logic';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { SignupAdminNotifyService } from './signup-admin-notify.service';
 import { LineSignupNotifyService } from './line-signup-notify.service';
 import { SignupOpsAlertService } from './signup-ops-alert.service';
 import { suggestedUsernameFromEmail } from '../domain/account-claim.logic';
-import { OWNED_COMPANY_MEMBERSHIP, SIGNUP_SOURCE_EMAIL_OTP, SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
+import { SIGNUP_SOURCE_EMAIL_OTP, SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
 
 export type ProvisionSignupCommand = {
   requestId: string;
@@ -57,6 +59,8 @@ export class ProvisionSignupUseCase {
     private readonly adminDirectory: SignupAdminNotifyService,
     private readonly lineNotify: LineSignupNotifyService,
     private readonly opsAlerts: SignupOpsAlertService,
+    /** J1: the one writer allowed to move a company's lifecycle status, audit included. */
+    private readonly lifecycle: PartnerLifecycleTransitionUseCase,
   ) {}
 
   async execute(cmd: ProvisionSignupCommand): Promise<ProvisionSignupResult> {
@@ -261,17 +265,11 @@ export class ProvisionSignupUseCase {
         throw new ConflictException('line_signup_existing_account_proof_changed');
       }
     }
-    if (!identity) return;
-    const priorCompanyCount = await this.prisma.client.companyMembership.count({
-      where: {
-        userId: identity.userId,
-        ...OWNED_COMPANY_MEMBERSHIP,
-        ...(request.companyId ? { companyId: { not: request.companyId } } : {}),
-      },
-    });
-    if (priorCompanyCount > 0 && !request.repeatTrialGrantedAt) {
-      throw new ConflictException('line_signup_repeat_trial_grant_required');
-    }
+    // Owner 2026-09-20 (R1): the repeat-trial fence used to stand here, refusing to provision an
+    // applicant who already owns a shop unless an admin had granted a second free trial. Nothing
+    // free is granted on approval any more — a second shop opens LOCKED like the first — so there
+    // is no grant to require. An AUTO_FREE repeat applicant still routes to MANUAL review, which
+    // is where a human looks at the pattern.
   }
 
   private createCompany(
@@ -297,14 +295,15 @@ export class ProvisionSignupUseCase {
       // Owner decision (UAT round 1): a self-signed-up trial shop starts on the "เริ่มต้น" menu
       // preset; the admin can widen it later from the partner console.
       modulePackage: 'starter',
-      // Trial clock starts at provision, not approval (spec §4D ⑤): 30 days.
       // Review B-01: named HERE rather than upserted afterwards — onboarding creates the term
       // row, and a second `applyPlanTermPreset` against an existing row is a no-op.
-      // Owner 2026-09-05 (review R02): ONE trial for both sources. The web form used to grant
+      // Owner 2026-09-05 (review R02): ONE tier for both sources. The web form used to grant
       // PRO_999 while its own page advertised a free trial, so a self-signed-up shop opened with
       // 5 branches and 100 slips nobody had decided to give away.
+      // Owner 2026-09-20 (R1): and ZERO days of it. The shop is opened locked and buys a package
+      // before it can be used; `applyPlanTermPreset` takes 0 and writes `termEndsAt = termStartAt`.
       planTier: SIGNUP_TRIAL_TIER,
-      planDays: TRIAL_DAYS,
+      planDays: SIGNUP_TERM_DAYS,
       requestingAdminUserId: operator.userId,
       // Closes the "company exists, nothing records which" window (review HIGH-A).
       linkSignupRequestId: request.id,
@@ -425,28 +424,22 @@ export class ProvisionSignupUseCase {
   }
 
   /**
-   * The things a free trial needs that a paid company does not (spec §6, §9; review G-06, B-06).
+   * What a freshly provisioned shop needs beyond the company itself (spec §6, J1; review B-06).
    * All idempotent, so a provisioning retry re-applies the same values.
    *
-   * Owner 2026-09-05: keyed on `SIGNUP_TRIAL_TIER`, not on the source. Every shop this flow opens
-   * is on the same trial, so it gets the same term receipt allowance and the same AI budget cap
-   * — a web-form shop used to get the tier and spend the PLATFORM default budget. The one guard
-   * that stays source-specific is `LineCompanyContext`, which points a LINE conversation at a shop:
-   * a web-form applicant has no LINE account yet, and its own `lineProviderUserId` says so.
+   * Owner 2026-09-20 (R1): there is no free trial to set up any more. What is left is the zero-day
+   * term, the lock that makes it real before anyone can use the shop, and `LineCompanyContext` —
+   * which points a LINE conversation at a shop and is the one step that stays source-specific: a
+   * web-form applicant has no LINE account yet, and its own `lineProviderUserId` says so.
    *
    * Every one of them runs AFTER the company transaction has committed, and each is guarded
    * separately: onboarding writes the plan term post-commit best-effort by its own design, so this
    * may legitimately arrive with no term row at all, and one write failing must neither roll back a
-   * finished shop nor skip the other two — the AI budget in particular is the money stop.
+   * finished shop nor skip the others — the lock in particular is the money stop.
    */
   private async applyTrialGuards(companyId: string, request: SignupRow, requestId: string): Promise<void> {
     const now = new Date();
     const preset = PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER];
-    const warmup = {
-      // Retain warmup metadata; FREE_TRIAL_15 uses its monthly allowance from the first day.
-      warmupUntil: new Date(now.getTime() + WARMUP_DAYS * DAY_MS),
-      warmupSlipLimit: this.config.lineSignupWarmupSlips,
-    };
 
     await this.bestEffort(companyId, requestId, 'plan_term_warmup', request.source, async () => {
       // Upsert, not update: the term row is written by onboarding after ITS transaction commits and
@@ -461,45 +454,23 @@ export class ProvisionSignupUseCase {
           employeeLimit: preset.employeeLimit,
           monthlySlipLimit: preset.monthlySlipLimit,
           termStartAt: now,
-          termEndsAt: new Date(now.getTime() + TRIAL_DAYS * DAY_MS),
-          ...warmup,
+          // R1: same zero-day term onboarding was asked for, so the repair path and the happy path
+          // open the same locked shop.
+          termEndsAt: now,
         },
-        // Review F9: writes NOTHING to a row that exists. Dates, tier and warm-up are all left as
-        // whoever wrote them left them, so this can neither shorten a term nor re-cap a shop.
+        // S23/review F9: writes NOTHING to a row that exists. Dates, tier and warm-up are all left
+        // as whoever wrote them left them, so this can neither shorten a term nor re-cap a shop —
+        // which is what keeps a shop already running the old 30-day trial untouched by a retry.
         update: {},
-      });
-      // The warm-up is stamped exactly once, on a term that has never had one — normally the row
-      // onboarding created moments ago. An admin retry weeks later matches nothing here, so a shop
-      // retains its original warmup metadata. FREE_TRIAL_15 always uses the term's allowance.
-      await this.prisma.client.companyPlanTerm.updateMany({
-        where: { companyId, warmupUntil: null },
-        data: warmup,
       });
     });
 
-    // Review G-06: without this a free trial shop spends the PLATFORM default AI budget. Same
-    // upsert shape `set-partner-ai-model` uses, so there is one way this row comes into being.
-    await this.bestEffort(companyId, requestId, 'ai_budget', request.source, async () => {
-      await this.prisma.client.companyAiConfiguration.upsert({
-        where: { companyId },
-        create: { companyId, monthlyBudgetSatang: this.config.lineFreeAiBudgetSatang },
-        update: {},
-      });
-      // `null` is the schema's "inherit the platform default", so this caps a shop that has never
-      // been given a budget and leaves an admin-set one — raised or lowered — exactly alone (F9).
-      // Review F-09: a SPLIT or scheduled-SPLIT company inherits the default too, and lowering its
-      // total here could put `C + O` above `T` — a policy the admin set, silently invalidated by a
-      // retry. Those rows are skipped and logged; the governed writer owns them.
-      const capped = await this.prisma.client.companyAiConfiguration.updateMany({
-        where: { companyId, monthlyBudgetSatang: null, budgetMode: 'SHARED', pendingBudgetPolicy: { equals: Prisma.DbNull } },
-        data: { monthlyBudgetSatang: this.config.lineFreeAiBudgetSatang },
-      });
-      if (capped.count === 0 && await this.prisma.client.companyAiConfiguration.count({
-        where: { companyId, monthlyBudgetSatang: null, NOT: { AND: [{ budgetMode: 'SHARED' }, { pendingBudgetPolicy: { equals: Prisma.DbNull } }] } },
-      }) > 0) {
-        new Logger(ProvisionSignupUseCase.name).warn({ msg: 'signup.ai_budget.split_policy_preserved', companyId, requestId });
-      }
-    });
+    await this.bestEffort(companyId, requestId, 'no_package_lock', request.source, () =>
+      this.lockUntilPackageBought(companyId, requestId, now));
+
+    // Owner 2026-09-20 (R1): the trial AI budget upsert used to sit here. A shop that cannot talk
+    // to the assistant until it has a package spends nothing, so there is no cap to pre-set; the
+    // governed writer (`set-partner-ai-model`) stays the one way a budget comes into being.
 
     // Review B-06: an owner with a second shop otherwise meets a company picker instead of the shop
     // they just opened. Same upsert the LINE link use-case does when it resolves a company.
@@ -517,6 +488,42 @@ export class ProvisionSignupUseCase {
         }),
       );
     }
+  }
+
+  /**
+   * J1/S02: a shop with no package is DISABLED the moment it opens, not in up to five minutes when
+   * the sweep next runs. That window is long enough for the LINE assistant to answer a shop that
+   * has never paid, and the sweep would then also send it the "ครบกำหนด" notice it never earned —
+   * which is why `expiredNotifiedAt` is stamped here with the disable rather than left for it.
+   *
+   * Everything is re-read inside the company lock rather than trusted from the upsert above: S23
+   * says a shop already running a term (the old 30-day trial, or a package it bought) must be left
+   * exactly alone, and `planTermLockReason` — the same rule the notice, billing status and the LINE
+   * card read — is what tells the two apart. Idempotent: a retry finds a DISABLED company and
+   * writes nothing.
+   */
+  private async lockUntilPackageBought(companyId: string, requestId: string, now: Date): Promise<void> {
+    await this.prisma.client.$transaction(async (tx) => {
+      await lockPlanTermCompany(tx, companyId);
+      const term = await tx.companyPlanTerm.findUnique({
+        where: { companyId },
+        select: { termStartAt: true, termEndsAt: true, renewCount: true, company: { select: { status: true } } },
+      });
+      if (!term || term.company.status !== 'ACTIVE' || planTermLockReason(term) !== 'no_package') return;
+      await this.lifecycle.execute({
+        companyId,
+        targetStatus: 'DISABLED',
+        reason: 'no_package',
+        // No human pulled this lever, same as the term-expiry sweep — and a null actor is also what
+        // keeps the lifecycle writer from clearing `termDisabledAt` as an admin disable would.
+        requestingAdminUserId: null,
+        requestId,
+      }, tx);
+      await tx.companyPlanTerm.update({
+        where: { companyId },
+        data: { termDisabledAt: now, expiredNotifiedAt: now },
+      });
+    });
   }
 
   /**
@@ -559,11 +566,12 @@ export class ProvisionSignupUseCase {
   }
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-/** Spec §9: the warm-up window is a week; only the slip ceiling inside it is configurable. */
-const WARMUP_DAYS = 7;
-/** Owner 2026-09-04: the LINE trial runs 30 days, the same length onboarding was told to write. */
-const TRIAL_DAYS = 30;
+/**
+ * Owner 2026-09-20 (spec R1/J1): there is no free trial for a new shop any more. A zero-day term
+ * is what `planTermLockReason` reads as `no_package`, and what `lockUntilPackageBought` below
+ * turns into a real DISABLED company before the first LINE message can arrive.
+ */
+const SIGNUP_TERM_DAYS = 0;
 /**
  * Owner 2026-09-05 (review R02): ONE trial preset for every shop this flow opens, whichever form
  * it came in through. The definition lives in contracts (review F1) so the page that advertises

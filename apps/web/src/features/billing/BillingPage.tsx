@@ -11,7 +11,8 @@ import { getAccountEmailOtp, type AccountEmailOtpState } from '@/features/auth/a
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BILLING_PAID_TIERS, PLAN_TIER_PRESETS, type PlanTierKey, type BillingCatalog, type BillingQuote, type BillingStatus, type BillingAttemptView } from '@watchdog-bms/contracts';
 import { apiErrorCode } from '@/common/api/api-error-message';
-import { PLAN_TERM_CONTACT_EMAIL, PLAN_TERM_RENEW_PHONE } from '@/features/plan-term/plan-term.logic';
+import { PLAN_LOCK_COPY, PLAN_TERM_CONTACT_EMAIL, PLAN_TERM_RENEW_PHONE, planLockReason } from '@/features/plan-term/plan-term.logic';
+import type { PlanLockReason } from '@/features/plan-term/plan-term.api';
 import { billingApi, type BillingHistory } from './billing.api';
 import BillingCollectionPanel from './BillingCollectionPanel';
 import BillingCapacityPicker from './BillingCapacityPicker';
@@ -239,6 +240,15 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     Date.parse(status.usage.resetsAt) < Date.parse(status.termEndsAt) ? status.usage.resetsAt : null;
   const quotaExpiry = status?.usage.expiresAt ?? status?.termEndsAt;
   const confirmed = status?.accessState === 'ACTIVE' && (returning ? returnComplete : status.paymentState === 'PAID' && status.applyState === 'APPLIED');
+  // S04/R10: a shop with nothing to run on was described by three fallbacks that added up to an
+  // unlimited plan — "ยังไม่มีข้อมูลแพ็กเกจ · ใช้งานได้ถึง ยังไม่ระบุ · ใบเสร็จคงเหลือ ไม่จำกัด" — to a shop
+  // that cannot open one screen. The cast keeps the page compiling before the API ships `lockReason`.
+  const lockReason: PlanLockReason = planLockReason(status as { lockReason?: PlanLockReason } | undefined);
+  // An active shop keeps its real numbers, whatever it was sold; a held one with a term still has a
+  // package under review to describe. Only a locked shop, and a shop with no term at all, has none.
+  const noPackage = !!status && status.accessState !== 'ACTIVE' && (status.accessState === 'EXPIRED' || !status.termEndsAt);
+  const packageHeading = status?.accessState === 'EXPIRED' ? PLAN_LOCK_COPY[lockReason].title
+    : noPackage ? PLAN_LOCK_COPY.no_package.title : 'แพ็กเกจปัจจุบัน';
   const returnFailed = returning && returnAttempt?.paymentState === 'FAILED';
   const hasPaymentToCheck = status && (!confirmed || ['past_due', 'unpaid'].includes(status.subscriptionState)) && (status.paymentState !== 'NONE' || status.attemptId || returnAttemptId || status.subscriptionState !== 'NONE');
   const canResumePayment = status?.attemptId && ['PENDING', 'FAILED'].includes(returnAttempt?.paymentState ?? status.paymentState) && !['APPLIED', 'HELD'].includes(status.applyState);
@@ -267,14 +277,19 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       </nav>
       {showOverview && <>
       <section aria-label="สถานะแพ็กเกจ" className="mangmee-card space-y-5 p-5 sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-bold">{returnFailed ? 'รายการชำระเงินนี้ไม่สำเร็จ' : confirmed ? returning ? 'ชำระแล้ว เปิดใช้งานแล้ว' : 'แพ็กเกจปัจจุบัน' : (returning ? returnAttempt?.paymentState === 'PAID' && returnAttempt.applyState !== 'APPLIED' : status.paymentState === 'PAID' && status.applyState !== 'APPLIED') ? 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์' : status.paymentState === 'FAILED' ? 'เรียกเก็บเงินไม่สำเร็จ' : status.attemptId ? 'กำลังตรวจสอบรายการชำระเงิน' : status.accessState === 'EXPIRED' ? 'ครบกำหนดใช้งานแล้ว' : 'แพ็กเกจปัจจุบัน'}</h2>
-          <MangmeeBadge tone={status.accessState === 'ACTIVE' ? 'brand' : 'amber'}>{status.accessState === 'ACTIVE' ? 'ใช้งานได้' : status.accessState === 'EXPIRED' ? 'ครบกำหนดใช้งาน' : 'อยู่ระหว่างตรวจสอบ'}</MangmeeBadge>
+        <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-bold">{returnFailed ? 'รายการชำระเงินนี้ไม่สำเร็จ' : confirmed ? returning ? 'ชำระแล้ว เปิดใช้งานแล้ว' : 'แพ็กเกจปัจจุบัน' : (returning ? returnAttempt?.paymentState === 'PAID' && returnAttempt.applyState !== 'APPLIED' : status.paymentState === 'PAID' && status.applyState !== 'APPLIED') ? 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์' : status.paymentState === 'FAILED' ? 'เรียกเก็บเงินไม่สำเร็จ' : status.attemptId ? 'กำลังตรวจสอบรายการชำระเงิน' : packageHeading}</h2>
+          <MangmeeBadge tone={status.accessState === 'ACTIVE' ? 'brand' : 'amber'}>{status.accessState === 'ACTIVE' ? 'ใช้งานได้' : status.accessState !== 'EXPIRED' ? 'อยู่ระหว่างตรวจสอบ' : lockReason === 'no_package' ? 'ยังไม่มีแพ็กเกจ' : 'ครบกำหนดใช้งาน'}</MangmeeBadge>
         </div>
-        <dl className="grid gap-5 rounded-xl bg-gray-50 p-4 sm:grid-cols-3">
+        {noPackage ? <dl className="grid gap-5 rounded-xl bg-gray-50 p-4">
+          <div><dt className="text-sm text-gray-500">แพ็กเกจ</dt><dd className="mt-2 text-lg font-bold text-gray-900">ยังไม่มีแพ็กเกจ</dd>
+            <p className="mt-1 text-sm text-gray-600">เลือกแพ็กเกจเพื่อเริ่มใช้งาน</p>
+            {/* Only when a term really ran out: a shop that never had one starts and ends today. */}
+            {lockReason === 'trial_ended' && status.termEndsAt && <p className="mt-1 text-sm text-gray-500">ครบกำหนดเมื่อ {date(status.termEndsAt)}</p>}</div>
+        </dl> : <dl className="grid gap-5 rounded-xl bg-gray-50 p-4 sm:grid-cols-3">
           <div><dt className="text-sm text-gray-500">แพ็กเกจ</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.tierKey && status.tierKey in PLAN_TIER_PRESETS ? PLAN_TIER_PRESETS[status.tierKey as PlanTierKey].labelTh : status.tierKey ? 'ต้องตรวจสอบข้อมูล' : 'ยังไม่มีข้อมูลแพ็กเกจ'}</dd></div>
           <div><dt className="text-sm text-gray-500">ใช้งานได้ถึง</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.termEndsAt ? date(status.termEndsAt) : 'ยังไม่ระบุ'}</dd></div>
           <div><dt className="text-sm text-gray-500">ใบเสร็จคงเหลือ</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.usage.remaining ?? 'ไม่จำกัด'} {status.usage.remaining !== null && 'ใบ'}</dd>{(quotaReset || (quotaExpiry && date(quotaExpiry) !== date(status.termEndsAt))) && <p className="mt-1 text-sm text-gray-500">{quotaReset ? `เริ่มรอบใหม่ ${date(quotaReset)}` : `ใบที่หมดอายุก่อนใช้ได้ถึง ${date(quotaExpiry)}`}</p>}</div>
-        </dl>
+        </dl>}
         {status.effectiveCapacity?.temporary&&<section className="space-y-2 rounded-xl border border-emerald-300 p-3" aria-label="สิทธิ์แพ็กเกจชั่วคราว"><p>ผู้ดูแลให้สิทธิ์ {PLAN_TIER_PRESETS[status.effectiveCapacity.tierKey].labelTh} ชั่วคราว</p><p>{status.effectiveCapacity.branchLimit} สาขา · {status.effectiveCapacity.employeeLimit} ผู้ใช้ ถึง {date(status.effectiveCapacity.temporary.expiresAt)}</p><p>เมื่อครบกำหนดจะใช้แพ็กเกจที่ซื้ออยู่ล่าสุด การซื้อเพิ่มด้านล่างคิดจากแพ็กเกจที่ชำระเงิน</p></section>}
 
         {status.usage.monthlyAllowance&&<p>{billingMonthlyAllowanceText(status.usage)}</p>}

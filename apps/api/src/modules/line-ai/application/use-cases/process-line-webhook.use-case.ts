@@ -121,14 +121,14 @@ import { FEATURE_TEMPORARILY_UNAVAILABLE, loadEntitledFeatureKeys } from '../../
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
-import type { AiBudgetScope, BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
+import type { AiBudgetScope, BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, PlanTermLockReason, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
 import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, LINE_CLARIFICATION_SOURCE_MAX_BYTES, type LedgerEntry, type LedgerSubRequestInput } from '../line-ai-ledger.service';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { isPublicPolicyFollowUp, isPublicPolicyTopic, resolvePublicPolicyAnswer, type PublicPolicyTopic } from '../../domain/logic/line-public-policy.logic';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
@@ -143,7 +143,7 @@ import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message
 import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { LegalAcceptanceService } from '../../../auth/application/legal-acceptance.service';
-import { expiredLineOwnerMessageTh } from '../../../system-partner-management/domain/logic/plan-term.logic';
+import { expiredLineOwnerMessageTh, planTermLockReason } from '../../../system-partner-management/domain/logic/plan-term.logic';
 import {
   displayReceiptQuotaLimit,
   receiptQuotaExceededShortTextTh,
@@ -376,6 +376,10 @@ const BUSY_FOLLOW_UP_REPLY = '⏳ น้องมั่งมีกำลัง�
  *  one of those gaps well inside this window; LINE's loading indicator covers the wait. */
 const LINE_AI_LIVE_BUSY_WAIT_MS = 25_000;
 const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนส่งบิลหรือใบเสร็จนะคะ';
+/** C3: what someone who is NOT the owner of a locked shop hears. No tier, no date, no price — the
+ *  same "ask the shop owner" rule the web banner follows — but it no longer tells a connected
+ *  employee to connect an account they already connected. */
+export const PACKAGE_REQUIRED_MEMBER_REPLY = 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ค่ะ ให้เจ้าของร้านเลือกแพ็กเกจก่อน แล้วน้องมั่งมีจะกลับมาช่วยได้เต็มที่นะคะ';
 const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
 const EXPENSE_FEATURE_DISABLED_REPLY = '📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\nหากต้องการใช้ ให้เจ้าของหรือผู้ดูแลเปิดฟีเจอร์ในเว็บแอปก่อนนะคะ';
 /**
@@ -1508,7 +1512,17 @@ export async function resolveCompanyForLineUser(
   lineUserId: string,
 ): Promise<{ companyId: string } | { needsSelection: true } | null> {
   const memberships = await prisma.client.companyMembership.findMany({
-    where: { userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
+    where: {
+      userId,
+      status: 'ACTIVE',
+      company: {
+        status: 'ACTIVE',
+        // S05: the sweep flips an ended term to DISABLED every ~5 minutes, and for those minutes a
+        // shop that has not paid used to get full assistant turns. A company with no term row at
+        // all is the grandfathered "unlimited" case and stays resolvable, exactly as before.
+        OR: [{ planTerm: null }, { planTerm: { termEndsAt: { gt: new Date() } } }],
+      },
+    },
     select: { companyId: true, roles: { select: { role: { select: { key: true } } } } },
     orderBy: { createdAt: 'asc' },
   });
@@ -1529,28 +1543,44 @@ export async function resolveCompanyForLineUser(
   return { companyId: ctx.companyId };
 }
 
-/** P29: a company disabled by the plan-term sweep drops out of `resolveCompanyForLineUser` above —
- *  that query takes ACTIVE companies only — so everyone in it currently lands on the generic
- *  unlinked reply. Owner locked a better answer for the one person who can act on it (spec §renew:
- *  "ตอบสุภาพ ชวนติดต่อ ยืนยัน แจ้งเฉพาะ OWNER"); staff keep the generic reply and see no package
- *  detail, exactly as the web banner rule works.
+/** P29 + J1: a locked company never resolves as chat context — it is either DISABLED, or ACTIVE
+ *  with an ended term the resolver above now filters out — so everyone in it lands on the generic
+ *  unlinked reply, which tells an owner to connect an account that is already connected.
  *
- *  Predicate is the same pair the company switcher uses (`auth.controller.ts`): company DISABLED
- *  AND `planTerm.termDisabledAt` set. The second half is what separates a term expiry from a
- *  disable an admin ordered by hand, which must keep the generic reply. Read live on every turn and
- *  never cached, so a renewed company — back to ACTIVE with `termDisabledAt` cleared — stops
- *  matching on the very next message with nothing to invalidate. */
-async function ownsTermExpiredCompany(prisma: PrismaService, userId: string): Promise<boolean> {
-  const owned = await prisma.client.companyMembership.findFirst({
+ *  Two shapes count as locked, and only these two: company DISABLED AND `planTerm.termDisabledAt`
+ *  set (the sweep, or provisioning's own no-package lock), or company still ACTIVE with a term that
+ *  has already ended (the ≤5-minute window before the sweep catches up). `termDisabledAt` is what
+ *  separates either from a disable an admin ordered by hand, which keeps the generic reply.
+ *
+ *  Read live on every turn and never cached, so a shop that buys a package — back to ACTIVE with a
+ *  running term — stops matching on the very next message with nothing to invalidate. */
+async function lockedCompanyFor(
+  prisma: PrismaService,
+  userId: string,
+  /** OWNER-only for the renewal card; any active member for the neutral staff reply (C3). */
+  ownerOnly: boolean,
+): Promise<{ companyId: string; lockReason: PlanTermLockReason } | null> {
+  const now = new Date();
+  const locked = await prisma.client.companyMembership.findFirst({
     where: {
       userId,
       status: 'ACTIVE',
-      company: { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } },
-      roles: { some: { role: { key: 'OWNER' } } },
+      company: {
+        OR: [
+          { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } },
+          { status: 'ACTIVE', planTerm: { termEndsAt: { lte: now } } },
+        ],
+      },
+      ...(ownerOnly ? { roles: { some: { role: { key: 'OWNER' } } } } : {}),
     },
-    select: { companyId: true },
+    select: { companyId: true, company: { select: { planTerm: {
+      select: { termStartAt: true, termEndsAt: true, renewCount: true } } } } },
   });
-  return owned !== null;
+  if (!locked) return null;
+  const term = locked.company?.planTerm;
+  // No term row cannot reach the predicate above, so this fallback is defensive only: a lock we
+  // cannot explain is described as an ended term, never as "you never bought anything".
+  return { companyId: locked.companyId, lockReason: term ? planTermLockReason(term) : 'trial_ended' };
 }
 
 /** ai_line_assistant entitlement gate — the partner-detail feature toggle. Companies with no
@@ -2003,23 +2033,45 @@ export class ProcessLineWebhookUseCase {
     if (result !== 'ok') throw new LineDeliveryError(result);
   }
 
-  /** P29: answer the OWNER of a term-expired company with the renewal invitation instead of the
-   *  generic "we cannot find your company" reply. Returns true when it has answered the turn.
+  /** P29 + J1: answer a locked company with the package invitation instead of the generic "we
+   *  cannot find your company" reply. Returns true when it has answered the turn.
    *
    *  Every caller sits on the `no company resolved` branch, which is reached before the permission
-   *  resolver, the entitlement read, the router and the model — so an expired company costs one
-   *  indexed membership lookup and not a single token. */
-  private async replyIfTermExpiredOwner(
+   *  resolver, the entitlement read, the router and the model — so a locked company costs one or
+   *  two indexed membership lookups and not a single token.
+   *
+   *  The OWNER is the only person who can act, so only the OWNER gets the package card. Everyone
+   *  else in the shop gets one neutral sentence with no package, date or price in it (C3, the same
+   *  rule the web banner follows), and someone with no membership at all still gets `UNLINKED_REPLY`
+   *  from the caller. */
+  private async replyIfCompanyLocked(
     event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     userId: string,
   ): Promise<boolean> {
-    if (!await ownsTermExpiredCompany(this.prisma, userId)) return false;
-    // §3.7: the expiry message gains the one button that leads somewhere. A quick reply rather than
-    // a card, so the existing text reply keeps its exact words and only gains an action.
-    await this.deliverReply(event, expiredLineOwnerMessageTh(), {
-      items: [{ type: 'action', action: { type: 'message', label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND } }],
-    });
-    await this.updateEventLog(event.webhookEventId, 'plan_term_expired', LINE_AI_ERROR_CODES.FORBIDDEN);
+    const owner = await lockedCompanyFor(this.prisma, userId, true);
+    if (owner) {
+      if (['test', 'live'].includes(this.config.billingMode) && this.config.webBaseUrl) {
+        // The same seam `handlePackageChangeRequest` uses: the handoff binds this link to this
+        // owner, so the card is one tap into their own package page rather than a login wall.
+        event.handoff = { userId, companyId: owner.companyId };
+        await this.deliverRequiredMessages(event, [buildPackageRequiredMessage({
+          lockReason: owner.lockReason, companyId: owner.companyId, webBaseUrl: this.config.webBaseUrl,
+        })]);
+      } else {
+        // Billing closed (or no web base): there is no package page to send anyone to, so the reply
+        // stays exactly the text and quick reply it has always been.
+        await this.deliverReply(event, expiredLineOwnerMessageTh(), {
+          items: [{ type: 'action', action: { type: 'message', label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND } }],
+        });
+      }
+      // A status, not an error code: we said no on purpose and the customer received the answer.
+      await this.updateEventLog(event.webhookEventId, 'package_required', undefined, owner.companyId);
+      return true;
+    }
+    const member = await lockedCompanyFor(this.prisma, userId, false);
+    if (!member) return false;
+    await this.deliverReply(event, PACKAGE_REQUIRED_MEMBER_REPLY);
+    await this.updateEventLog(event.webhookEventId, 'package_required', undefined, member.companyId);
     return true;
   }
 
@@ -3681,7 +3733,7 @@ export class ProcessLineWebhookUseCase {
     // 4. Resolve company from membership + LineCompanyContext (NOT channel binding)
     const resolved = await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId);
     if (!resolved) {
-      if (await this.replyIfTermExpiredOwner(event, identity.userId)) return;
+      if (await this.replyIfCompanyLocked(event, identity.userId)) return;
       await this.deliverReply(event, UNLINKED_REPLY);
       await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.UNLINKED_USER);
       return;
@@ -5866,9 +5918,9 @@ export class ProcessLineWebhookUseCase {
       : await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId);
     if (!resolved || 'needsSelection' in resolved) {
       if (!resolved) {
-        // A photo sent to an expired shop is still a message from its owner, and this branch is the
-        // same "no company resolved" dead end the text turn hits.
-        if (await this.replyIfTermExpiredOwner(event, identity.userId)) return;
+        // A photo sent to a locked shop is still a message from someone inside it, and this branch
+        // is the same "no company resolved" dead end the text turn hits.
+        if (await this.replyIfCompanyLocked(event, identity.userId)) return;
         await this.deliverReply(event, RECEIPT_LINK_REPLY);
       } else {
         const memberships = await this.listLineCompanies(identity.userId);

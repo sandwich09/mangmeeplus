@@ -322,9 +322,35 @@ describe('GetPlanTermNoticeUseCase', () => {
   it('carries state and deadline but never limits or tier', async () => {
     const prisma = makePrisma({ term: termRow({ termEndsAt: new Date(NOW_ISH().getTime() - DAY_MS) }) });
     const notice = await new GetPlanTermNoticeUseCase(prisma).execute(COMPANY, ['STAFF']);
-    assert.deepEqual(Object.keys(notice ?? {}).sort(), ['daysLeft', 'derivedState', 'isOwner', 'termEndsAt']);
+    assert.deepEqual(Object.keys(notice ?? {}).sort(),
+      ['daysLeft', 'derivedState', 'isOwner', 'lockReason', 'termEndsAt']);
     assert.equal(notice?.derivedState, 'EXPIRED');
     assert.equal(notice?.daysLeft, 0);
+  });
+
+  // R2: the locked shell has to know whether to invite a PURCHASE or a RENEWAL, and only the term
+  // row can tell the two apart.
+  it('says no_package for a shop provisioned with a zero-day term it never renewed', async () => {
+    const start = new Date(NOW_ISH().getTime() - DAY_MS);
+    const prisma = makePrisma({ term: termRow({ termStartAt: start, termEndsAt: start, renewCount: 0 }) });
+    assert.equal((await new GetPlanTermNoticeUseCase(prisma).execute(COMPANY, ['OWNER']))?.lockReason, 'no_package');
+  });
+
+  it('says trial_ended for a term that actually ran, and for one that was renewed', async () => {
+    const ended = makePrisma({ term: termRow({ termEndsAt: new Date(NOW_ISH().getTime() - DAY_MS) }) });
+    assert.equal((await new GetPlanTermNoticeUseCase(ended).execute(COMPANY, ['OWNER']))?.lockReason, 'trial_ended');
+    // A renewed shop can still end up with `termEndsAt === termStartAt` after an admin edit; the
+    // renew count is what says it was once a real customer.
+    const at = new Date(NOW_ISH().getTime() - DAY_MS);
+    const renewed = makePrisma({ term: termRow({ termStartAt: at, termEndsAt: at, renewCount: 1 }) });
+    assert.equal((await new GetPlanTermNoticeUseCase(renewed).execute(COMPANY, ['OWNER']))?.lockReason, 'trial_ended');
+  });
+
+  it('leaves lockReason off a term that is still running', async () => {
+    const prisma = makePrisma({ term: termRow({ termEndsAt: new Date(Date.now() + 3 * DAY_MS) }) });
+    const notice = await new GetPlanTermNoticeUseCase(prisma).execute(COMPANY, ['OWNER']);
+    assert.equal(notice?.derivedState, 'WARNING');
+    assert.equal('lockReason' in (notice ?? {}), false);
   });
 });
 

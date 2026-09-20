@@ -7,6 +7,7 @@ import { currentLegalRelease } from '../../auth/application/legal-acceptance.ser
 import { LINE_OPEN_APPLICATION_STATES, STALE_PROVISIONING_MS } from '../domain/company-signup.logic';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
+import { PartnerLifecycleTransitionUseCase } from '../../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 import { SubmitLineSignupUseCase } from './submit-line-signup.use-case';
 
 /**
@@ -20,6 +21,8 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
   const userRows = new Map<string, any>();
   const requests = new Map<string, any>();
   const planTerms = new Map<string, any>();
+  /** J1: the lifecycle status the no-package lock writes, so a spec can read the shop back. */
+  const companies = new Map<string, any>();
   const chartRows: any[] = [];
   const audits: any[] = [];
   const identities: any[] = [];
@@ -141,7 +144,20 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
       },
     }),
     role: auto('role', { findUnique: async () => ({ id: 'role-owner' }) }),
-    company: auto('company', { create: async () => ({ id: 'co-1' }) }),
+    company: auto('company', {
+      create: async () => {
+        willWrite(companies, 'co-1');
+        companies.set('co-1', { id: 'co-1', status: 'ACTIVE', activatedAt: null, disabledAt: null, archivedAt: null });
+        return { id: 'co-1' };
+      },
+      findUnique: async ({ where }: any) => companies.get(where.id) ?? null,
+      update: async ({ where, data }: any) => {
+        const row = companies.get(where.id);
+        if (!row) throw Object.assign(new Error('record not found'), { code: 'P2025' });
+        willWrite(companies, where.id);
+        return Object.assign(row, data);
+      },
+    }),
     companyMembership: auto('companyMembership', {
       create: async ({ data }: any) => {
         const row = trackedPush(memberships, { id: `mem-${(seq += 1)}`, ...data });
@@ -208,6 +224,11 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
       },
     }),
     companyPlanTerm: auto('companyPlanTerm', {
+      // The no-package lock reads the term back together with its company's status.
+      findUnique: async ({ where }: any) => {
+        const row = planTerms.get(where.companyId);
+        return row ? { renewCount: 0, ...row, company: { status: companies.get(where.companyId)?.status ?? 'ACTIVE' } } : null;
+      },
       upsert: async ({ where, create, update }: any) => {
         willWrite(planTerms, where.companyId);
         const existing = planTerms.get(where.companyId);
@@ -256,6 +277,8 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
       }
       if (prop === '$executeRaw') return async () => 0;
       if (prop === '$queryRaw') return async (strings: TemplateStringsArray, ...values: string[]) => {
+        // `lockPlanTermCompany`: a row lock, which this fake serialises by running inline anyway.
+        if (strings.join('').includes('FROM "Company"')) return [];
         if (strings.join('').includes('UNION ALL')) {
           const [email, , , requestId] = values;
           return [...userRows.values()].filter((row) => row.email?.trim().toLowerCase() === email || row.username?.trim().toLowerCase() === email)
@@ -273,7 +296,7 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
 
   return {
     prisma: { client } as any,
-    requests, planTerms, audits, identities, legalRows, aiConfigs, onboardingRuns, lineContexts, memberships,
+    requests, planTerms, companies, audits, identities, legalRows, aiConfigs, onboardingRuns, lineContexts, memberships,
   };
 }
 
@@ -320,7 +343,8 @@ function harness(options: { systemAdmins?: string[]; config?: Record<string, unk
   const alerts: string[] = [];
   const lineNotify = { enqueue: async (id: string, kind: string) => { linePushes.push({ id, kind }); } } as any;
   const opsAlerts = { raise: async (kind: string) => { alerts.push(kind); } } as any;
-  const provision = new ProvisionSignupUseCase(store.prisma, core, onboarding, config, adminNotify, lineNotify, opsAlerts);
+  const provision = new ProvisionSignupUseCase(store.prisma, core, onboarding, config, adminNotify, lineNotify, opsAlerts,
+    new PartnerLifecycleTransitionUseCase(store.prisma));
   const rateLimit = {
     assertLineSignupAttemptAllowed: async () => undefined,
     assertLineSignupUserAllowed: async () => undefined,
@@ -380,8 +404,19 @@ describe('AUTO_FREE end to end (review HIGH-1)', () => {
     assert.equal(h.store.identities[0].providerUserId, 'Uline-1');
     assert.equal(h.store.legalRows.length, 2, 'terms and privacy, or the in-app gate stays shut');
     assert.equal(h.store.legalRows[0].authProvider, 'LINE_LIFF_SIGNUP');
-    assert.equal(h.store.planTerms.get('co-1').tierKey, 'FREE_TRIAL_15');
-    assert.equal(h.store.aiConfigs.get('co-1').monthlyBudgetSatang, 8000);
+    const term = h.store.planTerms.get('co-1');
+    assert.equal(term.tierKey, 'FREE_TRIAL_15');
+    // J1: zero days, and the shop is already DISABLED when provisioning returns — no five-minute
+    // window in which the assistant would answer a shop that has never paid.
+    assert.equal(term.termEndsAt.getTime(), term.termStartAt.getTime());
+    assert.ok(term.termDisabledAt instanceof Date);
+    // Stamped with the disable, so the sweep never sends the "ครบกำหนด" notice.
+    assert.ok(term.expiredNotifiedAt instanceof Date);
+    assert.equal(h.store.companies.get('co-1').status, 'DISABLED');
+    const lock = h.store.audits.find((a) => a.action === 'system.partner_company.lifecycle.transition');
+    assert.equal(lock.metadataJson.reason, 'no_package');
+    // R1: no trial, so no trial AI budget row to pre-set.
+    assert.equal(h.store.aiConfigs.get('co-1'), undefined);
     assert.equal(h.store.lineContexts.get('Uline-1').companyId, 'co-1');
   });
 
@@ -754,23 +789,27 @@ describe('trial guards survive a missing plan term (review HIGH-3)', () => {
     const term = h.store.planTerms.get('co-1');
     assert.equal(term.tierKey, 'FREE_TRIAL_15', 'the guard creates the term it could not find');
     assert.equal(term.monthlySlipLimit, 15);
-    assert.equal(term.warmupSlipLimit, 10);
-    assert.equal(h.store.aiConfigs.get('co-1').monthlyBudgetSatang, 8000, 'the money stop still lands');
+    assert.equal(term.termEndsAt.getTime(), term.termStartAt.getTime());
+    // And the lock still lands on the term the guard had to create itself.
+    assert.equal(h.store.companies.get('co-1').status, 'DISABLED');
   });
 
   it('never turns a finished shop into a failure when a guard write dies', async () => {
     const h = harness();
-    h.store.prisma.client.companyAiConfiguration.upsert = async () => {
-      throw new Error('connection reset');
-    };
+    // The lock is the guard that can now fail: its term stamp dies after the status flip.
+    h.store.prisma.client.companyPlanTerm.update = async () => { throw new Error('connection reset'); };
 
     const result = await h.submit.execute(CMD, NOW);
 
     assert.equal(result.progress!.state, 'COMPLETED', 'the company exists; a guard failure must not undo it');
     assert.ok(
-      h.store.audits.some((a) => a.action === 'signup.line.trial_guards_failed' && a.metadataJson.step === 'ai_budget'),
+      h.store.audits.some((a) => a.action === 'signup.line.trial_guards_failed' && a.metadataJson.step === 'no_package_lock'),
       'and it is recorded as evidence an operator can act on',
     );
+    // All-or-nothing: the status flip and the stamps share one transaction, so a half-locked shop
+    // (DISABLED with no `termDisabledAt`, which reads as an ADMIN hold) can never be left behind.
+    assert.equal(h.store.companies.get('co-1').status, 'ACTIVE');
+    assert.equal(h.store.planTerms.get('co-1').termDisabledAt, undefined);
     // The other guards still ran: one failure must not skip the rest.
     assert.equal(h.store.lineContexts.get('Uline-1').companyId, 'co-1');
   });

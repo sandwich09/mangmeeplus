@@ -1,8 +1,5 @@
 import {
   CURRENT_LEGAL_DOCUMENTS,
-  PLAN_TIER_PRESETS,
-  SIGNUP_TRIAL_TIER_KEY,
-  SIGNUP_TRIAL_WARMUP_SLIPS,
   type PublicSignupStatusKey,
   type SignupOfferKey,
 } from '@watchdog-bms/contracts';
@@ -21,27 +18,16 @@ export const SIGNUP_SUPPORT_EMAIL = 'contact@mangmeeplus.com';
 // ── What signing up gets you ──
 
 /**
-/**
- * Owner 2026-09-05: self-signup stopped selling a tier. Every applicant gets the same free trial
- * the LINE-first signup gives, so the four priced cards — and the monthly price sitting next to a
- * free-trial badge — are gone. They described a purchase nobody was being asked to make.
- *
- * The numbers are quoted from the shared preset rather than restated, so a change to the trial
- * cannot leave this page promising the old one.
+ * Owner 2026-09-20 (spec R1): there is no free trial any more. Signing up opens the shop and
+ * nothing else — the shop works once a package is paid for — so these two lines say exactly that.
+ * The names keep their `SIGNUP_TRIAL_` prefix only because three pages import them; nothing here
+ * promises a trial, and the warm-up allowance line is gone with the allowance it described.
  */
-const TRIAL_PRESET = PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY];
+export const SIGNUP_TRIAL_HEADLINE = 'เปิดร้านแล้วเลือกแพ็กเกจเพื่อเริ่มใช้งาน';
 
-export const SIGNUP_TRIAL_DAYS = 30;
-
-export const SIGNUP_TRIAL_HEADLINE =
-  `ทดลองใช้ฟรี ${SIGNUP_TRIAL_DAYS} วัน ให้ AI อ่านรูปใบเสร็จได้ ${TRIAL_PRESET.monthlySlipLimit} ครั้ง`;
-
-/** The initial allowance equals the monthly trial limit from the shared preset. */
-export const SIGNUP_TRIAL_WARMUP = `อ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ครั้งต่อเดือนตั้งแต่วันแรก`;
-
-/** What happens at the end of it. Never implies a card, a renewal, or a charge. */
+/** What happens next. Never implies a card, a renewal, or a charge the applicant did not choose. */
 export const SIGNUP_TRIAL_AFTER =
-  'เมื่อครบกำหนด ติดต่อทีมงานเพื่อเลือกแพ็กเกจ ไม่มีการตัดเงินอัตโนมัติ';
+  'แพ็กเกจเริ่มต้น 249 บาทต่อเดือน ชำระผ่านบัตรออนไลน์ ไม่มีการตัดเงินอัตโนมัติจนกว่าคุณจะเลือก';
 
 /**
  * Still sent with the form: it is the key the server's allowlist accepts and what the admin queue

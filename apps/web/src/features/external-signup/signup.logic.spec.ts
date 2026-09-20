@@ -1,8 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  PLAN_TIER_PRESETS, PUBLIC_SIGNUP_STATUS_KEYS, SIGNUP_TRIAL_TIER_KEY, SIGNUP_TRIAL_WARMUP_SLIPS,
-} from '@watchdog-bms/contracts';
+import { PUBLIC_SIGNUP_STATUS_KEYS } from '@watchdog-bms/contracts';
 import {
   clampMobileInput,
   firstSignupErrorField,
@@ -13,7 +11,6 @@ import {
   SELECTABLE_OFFER_KEY,
   SIGNUP_CONSENT_VERSION,
   SIGNUP_TRIAL_AFTER,
-  SIGNUP_TRIAL_WARMUP,
   SIGNUP_TRIAL_HEADLINE,
   showsTrialNotice,
   signupFieldRejection,
@@ -103,21 +100,22 @@ describe('signup form validation', () => {
   });
 });
 
-// Owner 2026-09-05: self-signup stopped selling a tier. Every applicant gets the same free trial
-// the LINE-first signup gives, so the four priced cards and the "PRO ฿999 with a free-trial badge"
-// pairing are gone — they described a purchase nobody was being asked to make.
+// Owner 2026-09-20 (spec R1): there is no free trial. Signing up opens the shop and nothing else,
+// so the copy may not promise free days, a free allowance, or any usable capacity before payment.
 describe('what signing up gets you', () => {
-  it('quotes the free trial from the shared preset rather than restating numbers', () => {
-    assert.match(SIGNUP_TRIAL_HEADLINE, /ทดลองใช้ฟรี 30 วัน/);
-    assert.match(SIGNUP_TRIAL_HEADLINE, new RegExp(`${PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY].monthlySlipLimit} ครั้ง`));
+  it('promises an open shop and a package to choose, never free days', () => {
+    assert.equal(SIGNUP_TRIAL_HEADLINE, 'เปิดร้านแล้วเลือกแพ็กเกจเพื่อเริ่มใช้งาน');
+    for (const line of [SIGNUP_TRIAL_HEADLINE, SIGNUP_TRIAL_AFTER]) {
+      assert.doesNotMatch(line, /ฟรี|ทดลอง/);
+    }
   });
 
-  it('says what happens at the end without implying a charge', () => {
-    assert.match(SIGNUP_TRIAL_AFTER, /ติดต่อทีมงาน/);
+  it('says what it costs to start without implying an automatic charge', () => {
+    assert.match(SIGNUP_TRIAL_AFTER, /249 บาทต่อเดือน/);
     assert.match(SIGNUP_TRIAL_AFTER, /ไม่มีการตัดเงินอัตโนมัติ/);
   });
 
-  it('names no price and no tier in either line', () => {
+  it('names no retired tier in either line', () => {
     const copy = `${SIGNUP_TRIAL_HEADLINE} ${SIGNUP_TRIAL_AFTER}`;
     assert.doesNotMatch(copy, /999|฿/);
     assert.doesNotMatch(copy, /\bPRO\b/);
@@ -128,16 +126,6 @@ describe('what signing up gets you', () => {
     // The applicant is shown no choice, but the request still carries what the API expects and the
     // admin queue displays. R02 made that key name the trial that is actually provisioned.
     assert.equal(SELECTABLE_OFFER_KEY, 'FREE_TRIAL');
-  });
-
-  it('grants the shared monthly allowance from the first day', () => {
-    assert.match(SIGNUP_TRIAL_WARMUP, new RegExp(`อ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ครั้งต่อเดือนตั้งแต่วันแรก`));
-    // Owner copy rule: no plus sign anywhere in user-facing text.
-    assert.equal(SIGNUP_TRIAL_WARMUP.includes('+'), false);
-    // New provisioning and day-one copy use the same preset.
-    assert.equal(SIGNUP_TRIAL_WARMUP_SLIPS, PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY].monthlySlipLimit);
-    // And the headline it qualifies still quotes the MONTHLY number, so the two do not blur.
-    assert.match(SIGNUP_TRIAL_HEADLINE, new RegExp(`${PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY].monthlySlipLimit} ครั้ง`));
   });
 
   it('pins the consent version to the current legal artifacts', () => {

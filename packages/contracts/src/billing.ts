@@ -1,4 +1,4 @@
-import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity } from './plan-term.js';
+import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity, type PlanTermLockReason } from './plan-term.js';
 import type { BillingCompanyProfile } from './billing-company-profile.js';
 
 export const STRIPE_API_VERSION = '2026-08-26.dahlia' as const;
@@ -127,6 +127,9 @@ export type BillingStatus = {
   purchaseEligibility?: 'ELIGIBLE' | 'COMPANY_SALES_CLOSED';
   refundReviewPending?: boolean;
   accessState: 'ACTIVE' | 'EXPIRED' | 'HELD'; subscriptionState: string; documentState: 'NONE' | 'PENDING' | 'READY';
+  /** R2: present only while `accessState` is EXPIRED — why the shop is locked, so the package page
+   *  can say "ยังไม่มีแพ็กเกจ" to a never-started shop and "ครบกำหนด" to one whose term ran out. */
+  lockReason?: PlanTermLockReason;
   attemptId: string | null; reference: string | null; observedAt: string | null;
   tierKey: string | null; interval: BillingInterval | null; termEndsAt: string | null; paidThrough: string | null; nextChargeAt: string | null;
   cancelAtPeriodEnd: boolean; graceEndsAt: string | null; allowedActions: BillingAction[];
@@ -165,7 +168,9 @@ export type BillingAdjustments = { invoiceId: string; invoiceNumber: string | nu
   items: BillingAdjustmentItem[]; nextCursor: string | null; observedAt: string; canOpenDocuments: boolean };
 export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED'; policyRevision: string | null;
   catalogRevision: string; generatedAt: string; validUntil: string; taxTreatment: BillingTaxTreatment | null; offers: BillingOffer[];
-  trial: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 } };
+  /** R1: no longer emitted — new signups get no trial (Owner 2026-09-20). Optional rather than
+   *  removed so an older client that still reads it keeps compiling against this contract. */
+  trial?: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 } };
 
 export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_FREE_DAYS' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE' | 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS';
 export type BillingOperationState = 'DRAFT' | 'PREVIEW' | 'AWAITING_APPROVAL' | 'SCHEDULED' | 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'UNKNOWN' | 'BLOCKED' | 'FAILED' | 'CANCELLED';

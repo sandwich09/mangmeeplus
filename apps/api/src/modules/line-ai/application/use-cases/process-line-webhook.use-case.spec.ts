@@ -9,6 +9,7 @@ import { ReceiptOcrApplyService } from '../../../expenses/application/services/r
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { buildLineAssistantTextCardMessage } from '../../domain/logic/line-business-card.logic';
+import { STAFF_CONTACT_COMMAND } from '../../domain/logic/line-staff-menu.logic';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
@@ -358,10 +359,18 @@ function makePrisma(opts: {
 	  turnOutcomeUnavailable?: boolean;
 	  /** Allow the first N outcome upserts, fail the rest — the partial-failure seam §14.3 needs. */
 	  turnOutcomeFailAfter?: number;
-	  /** P29: memberships in companies the plan-term sweep disabled. Deliberately separate from
-	   *  `memberships`, because the real query drops non-ACTIVE companies — that is exactly why the
-	   *  people in them reach the "no company" branch where the term-expired probe lives. */
-	  termExpiredMemberships?: Array<{ companyId: string; roles?: Array<{ role: { key: string } }> }>;
+	  /** P29/J1: memberships in LOCKED companies — disabled by the sweep or by provisioning's own
+	   *  no-package lock, or still ACTIVE with a term that already ended (the ≤5-minute window).
+	   *  Deliberately separate from `memberships`, because the real query drops both — that is
+	   *  exactly why the people in them reach the "no company" branch where the lock probe lives. */
+	  termExpiredMemberships?: Array<{
+	    companyId: string;
+	    roles?: Array<{ role: { key: string } }>;
+	    /** Default = a 30-day term that ran out, i.e. `trial_ended`. */
+	    term?: { termStartAt: Date; termEndsAt: Date; renewCount: number };
+	    /** true = the company is still ACTIVE and only its term has ended. */
+	    activeExpired?: boolean;
+	  }>;
 	  /** P10-L §15.1: the plan the slip ceiling comes from. Absent = grandfathered unlimited, which is
 	   *  what every pre-existing test in this file is, so none of them change behaviour. */
 	  planTerm?: { tierKey: string; monthlySlipLimit: number; warmupUntil?: Date | null; warmupSlipLimit?: number | null; quotaNoticeSentMonthKey?: string | null } | null;
@@ -374,7 +383,12 @@ function makePrisma(opts: {
 	} = {}) {
 	  const { identityUserId = 'user-1', identityStatus = 'ACTIVE', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false, turnOutcomeFailAfter, termExpiredMemberships = [], planTerm = null, receiptsUsed = 0, openLineSignup = null } = opts;
   let quotaNoticeSentMonthKey = planTerm?.quotaNoticeSentMonthKey ?? null;
-  const termExpiredRows = termExpiredMemberships.map((row) => ({ roles: [{ role: { key: 'OWNER' } }], ...row }));
+  const endedAt = new Date(Date.now() - 60_000);
+  const termExpiredRows = termExpiredMemberships.map((row) => ({
+    roles: [{ role: { key: 'OWNER' } }],
+    term: { termStartAt: new Date(endedAt.getTime() - 30 * 86_400_000), termEndsAt: endedAt, renewCount: 0 },
+    ...row,
+  }));
   const turnOutcomeWrites: any[] = [];
   const turnOutcomeUpdates: any[] = [];
   const outcomeStore = new Map<string, any>();
@@ -462,16 +476,22 @@ function makePrisma(opts: {
       },
       companyMembership: {
         findMany: async () => membershipRows,
-        // P29 term-expired probe, reached only when no ACTIVE company resolved. Honours both halves
-        // of the real predicate: the company must be DISABLED-by-term, and the role filter must
-        // match — a staff-only expired company answers null exactly as Postgres would.
+        // P29/J1 lock probe, reached only when no company resolved. Honours both halves of the
+        // real predicate: the company must match one of the two LOCKED shapes, and the role filter
+        // must match — a staff-only locked company answers null to the OWNER probe, exactly as
+        // Postgres would, which is what sends it on to the member reply.
         findFirst: async (args: any) => {
           const where = args?.where ?? {};
-          if (where.company?.status !== 'DISABLED') return null;
+          const shapes = where.company?.OR;
+          if (!Array.isArray(shapes)) return null;
           const requiredRole = where.roles?.some?.role?.key;
           const row = termExpiredRows.find((candidate) =>
             !requiredRole || candidate.roles.some((assigned) => assigned.role.key === requiredRole));
-          return row ? { companyId: row.companyId } : null;
+          if (!row) return null;
+          // An ACTIVE-but-expired shop matches only the second shape, and a DISABLED one only the
+          // first, so dropping either half of the predicate has to make a test red.
+          if (!shapes.some((shape: any) => shape.status === (row.activeExpired ? 'ACTIVE' : 'DISABLED'))) return null;
+          return { companyId: row.companyId, company: { planTerm: row.term } };
         },
         // LINE default-branch lookup (Owner 2026-08-27): no assigned branch in this harness.
         findUnique: async () => null,
@@ -884,10 +904,10 @@ describe('ProcessLineWebhookUseCase', () => {
           config: { lineAiTerminalOutcomeReplayEnabled: true },
         });
         await useCase.execute({ ...BASE_EVENT, messageText });
-        assert.match(replies[0] ?? '', /เลือกซื้อแพ็กเกจและยืนยันการชำระเงิน/);
+        assert.match(replies[0] ?? '', /เลือกและชำระแพ็กเกจ/);
         const card = sentMessages[0];
         assert.equal(card.type, 'flex', 'trial policy must use the standard assistant card');
-        assert.equal(card.contents.header.contents[0].text, 'ทดลองใช้ฟรีและการใช้งานต่อ');
+        assert.equal(card.contents.header.contents[0].text, 'การเริ่มใช้งานและการต่ออายุ');
         assert.match(JSON.stringify(card.contents.body), /ไม่เรียกเก็บเงินอัตโนมัติ/);
         assert.deepEqual(card.contents.footer.contents[0].action, {
           type: 'uri', label: 'ดูแพ็กเกจ', uri: 'https://official.mangmeeplus.com/',
@@ -915,7 +935,7 @@ describe('ProcessLineWebhookUseCase', () => {
       const h = makeUseCase(prisma, { config: { lineAiTerminalOutcomeReplayEnabled: true } });
       await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `policy-${++i}`, messageText });
       assert.equal(h.sentMessages[0].type, 'flex');
-      if (i > 1) assert.match(h.sentMessages[0].canonicalText, i === 7 ? /ขอโทษ.*หน้าค่าใช้จ่ายไม่ใช่/ : /ไม่บังคับสมัครต่อ/);
+      if (i > 1) assert.match(h.sentMessages[0].canonicalText, i === 7 ? /ขอโทษ.*หน้าค่าใช้จ่ายไม่ใช่/ : /ไม่บังคับซื้อทันที/);
       assert.equal(h.getAiGatewayCalled(), false);
       assert.equal(h.intakeRequests.length, 0);
     }
@@ -946,7 +966,7 @@ describe('ProcessLineWebhookUseCase', () => {
         assert.equal(h.sentMessages.length, 0);
       } else {
         await h.useCase.execute(next);
-        assert.doesNotMatch(JSON.stringify(h.sentMessages), /ไม่บังคับสมัครต่อ|ทดลองใช้ฟรีและการใช้งานต่อ/);
+        assert.doesNotMatch(JSON.stringify(h.sentMessages), /ไม่บังคับซื้อทันที|การเริ่มใช้งานและการต่ออายุ/);
       }
     }
   });
@@ -958,7 +978,7 @@ describe('ProcessLineWebhookUseCase', () => {
     await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'paid-1', messageText: 'ซื้อแพ็กเกจแล้วจะหักเงินอีกไหม' });
     await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'paid-2', messageText: 'เสียค่าบริการไหม' });
     assert.match(h.sentMessages[1].canonicalText, /ตามเงื่อนไขที่คุณยอมรับตอนซื้อ/);
-    assert.doesNotMatch(h.sentMessages[1].canonicalText, /ไม่บังคับสมัครต่อ/);
+    assert.doesNotMatch(h.sentMessages[1].canonicalText, /ไม่บังคับซื้อทันที/);
     const sends: any[][] = [];
     const fallback = makeUseCase(prisma, { config, sendReplyFn: async (_token, messages) => {
       sends.push(messages); return sends.length === 1 ? 'failed_flex' : 'ok';
@@ -978,7 +998,7 @@ describe('ProcessLineWebhookUseCase', () => {
     });
     const { useCase, replies, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma);
     await useCase.execute({ ...BASE_EVENT, messageText: 'เสียค่าบริการไหม' });
-    assert.doesNotMatch(replies[0] ?? '', /เลือกซื้อแพ็กเกจและยืนยันการชำระเงิน/);
+    assert.doesNotMatch(replies[0] ?? '', /เลือกและชำระแพ็กเกจ/);
     assert.equal((updates.at(-1) as any).data.status, 'support_paused');
     assert.equal(intakeRequests.length, 0);
     assert.equal(getAiGatewayCalled(), false);
@@ -2240,11 +2260,82 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.match(replies[0] ?? '', /เชื่อมต่อ/);
   });
 
-  // P29 §renew. A term-expired company is DISABLED, so it never resolves as company context and
-  // everyone in it lands on the generic unlinked reply — which tells an owner to connect an account
-  // that is already connected. Owner locked the renewal invitation here, OWNER only.
-  describe('term-expired company', () => {
-    it('invites the OWNER to renew, naming both ways back and no AI call', async () => {
+  // P29 §renew + J1. A locked company never resolves as chat context — it is DISABLED, or ACTIVE
+  // with a term that ended — so everyone in it used to land on the generic unlinked reply, which
+  // tells an owner to connect an account that is already connected. The OWNER gets the package
+  // card; everyone else gets one neutral sentence with no package detail in it.
+  describe('locked company', () => {
+    const NO_PACKAGE = (() => {
+      const at = new Date(Date.now() - 60_000);
+      return { termStartAt: at, termEndsAt: at, renewCount: 0 };
+    })();
+
+    it('answers the OWNER of a no-package shop with ONE card, the billing link and no AI call', async () => {
+      const { prisma, updates } = makePrisma({
+        memberships: [],
+        termExpiredMemberships: [{ companyId: 'company-1', term: NO_PACKAGE }],
+      });
+      const { useCase, sentMessages, getAiGatewayCalled } = makeUseCase(prisma, { config: { billingMode: 'test' } });
+
+      await useCase.execute({ ...BASE_EVENT });
+
+      assert.equal(sentMessages.length, 1, 'one card, never a card plus a text');
+      const card = sentMessages[0];
+      assert.equal(card.type, 'flex');
+      assert.equal(card.contents.header.contents[0].text, 'ยังไม่ได้สมัครแพ็กเกจ');
+      assert.match(card.canonicalText, /น้องมั่งมียังตอบไม่ได้จนกว่าจะเลือกแพ็กเกจ/);
+      assert.match(card.canonicalText, /ข้อมูลทั้งหมดยังอยู่ครบ/);
+      const buttons = card.contents.footer.contents.map((b: any) => b.action);
+      assert.deepEqual(buttons.map((a: any) => a.label), ['เลือกแพ็กเกจ', STAFF_CONTACT_COMMAND]);
+      assert.equal(buttons[0].uri, 'https://app.example.com/companies/company-1/billing?channel=line');
+      assert.equal(buttons[1].type, 'message', 'the staff door is a command, never a link');
+      // No price anywhere on LINE (R14), and no model call for a shop that cannot be served.
+      assert.doesNotMatch(JSON.stringify(card), /249|บาท/);
+      assert.equal(getAiGatewayCalled(), false, 'a locked company must cost no model call');
+      const row = (updates.at(-1) as any).data;
+      assert.equal(row.status, 'package_required');
+      assert.equal(row.errorCode, null, 'a deliberate refusal, not an error');
+    });
+
+    it('answers the OWNER of a shop whose term ended BEFORE the sweep ran, with the same card', async () => {
+      // The ≤5-minute window: the company is still ACTIVE, only its term has ended. Without this
+      // the shop got full assistant turns it had not paid for until the sweep caught up.
+      const { prisma, updates } = makePrisma({
+        memberships: [],
+        termExpiredMemberships: [{ companyId: 'company-1', activeExpired: true }],
+      });
+      const { useCase, sentMessages, getAiGatewayCalled } = makeUseCase(prisma, { config: { billingMode: 'test' } });
+
+      await useCase.execute({ ...BASE_EVENT });
+
+      assert.equal(sentMessages[0].type, 'flex');
+      // A term that actually ran says so; only a zero-day term reads as "never subscribed".
+      assert.equal(sentMessages[0].contents.header.contents[0].text, 'ครบกำหนดใช้งานแล้ว');
+      assert.equal(getAiGatewayCalled(), false);
+      assert.equal((updates.at(-1) as any).data.status, 'package_required');
+    });
+
+    it('answers a PHOTO from the owner of a locked shop with the card, never an OCR read', async () => {
+      const { prisma, updates } = makePrisma({
+        memberships: [],
+        termExpiredMemberships: [{ companyId: 'company-1', term: NO_PACKAGE }],
+      });
+      let ocrCalls = 0;
+      const { useCase, sentMessages, getAiGatewayCalled } = makeUseCase(prisma, {
+        config: { billingMode: 'test' },
+        receiptOcrFn: () => { ocrCalls += 1; return {}; },
+      });
+
+      await useCase.executeReceiptUpload({ ...BASE_EVENT, lineMessageId: 'locked-image', messageType: 'image' });
+
+      assert.equal(sentMessages[0].type, 'flex');
+      assert.equal(sentMessages[0].contents.header.contents[0].text, 'ยังไม่ได้สมัครแพ็กเกจ');
+      assert.equal(ocrCalls, 0, 'a locked shop never costs a document read');
+      assert.equal(getAiGatewayCalled(), false);
+      assert.equal((updates.at(-1) as any).data.status, 'package_required');
+    });
+
+    it('keeps the plain text reply when billing is closed, so nobody is sent to a page that is not there', async () => {
       const { prisma, updates } = makePrisma({
         memberships: [],
         termExpiredMemberships: [{ companyId: 'company-1' }],
@@ -2255,51 +2346,70 @@ describe('ProcessLineWebhookUseCase', () => {
 
       assert.match(replies[0] ?? '', /ครบกำหนดใช้งานแล้ว/);
       assert.match(replies[0] ?? '', /ข้อมูลทั้งหมดยังอยู่ครบ/);
-      assert.match(replies[0] ?? '', /ต่ออายุได้เองที่เว็บแอป/);
       assert.match(replies[0] ?? '', /098-256-5628/);
-      assert.match(replies[0] ?? '', /contact@mangmeeplus\.com/);
-      assert.equal(getAiGatewayCalled(), false, 'an expired company must cost no model call');
-      assert.equal((updates.at(-1) as any).data.status, 'plan_term_expired');
+      assert.equal(getAiGatewayCalled(), false);
+      assert.equal((updates.at(-1) as any).data.status, 'package_required');
     });
 
-    it('leaves staff of the same expired company on the existing generic reply', async () => {
+    it('answers a non-owner member with the neutral package sentence, not the connect prompt', async () => {
       const { prisma, updates } = makePrisma({
         memberships: [],
-        termExpiredMemberships: [{ companyId: 'company-1', roles: [{ role: { key: 'SALES' } }] }],
+        termExpiredMemberships: [{ companyId: 'company-1', roles: [{ role: { key: 'SALES' } }], term: NO_PACKAGE }],
       });
-      const { useCase, replies } = makeUseCase(prisma);
+      const { useCase, replies } = makeUseCase(prisma, { config: { billingMode: 'test' } });
 
       await useCase.execute({ ...BASE_EVENT });
 
-      assert.match(replies[0] ?? '', /เชื่อมต่อ/, 'staff keep the generic reply');
-      assert.doesNotMatch(replies[0] ?? '', /098-256-5628/, 'and are shown no package or contact detail');
-      assert.equal((updates.at(-1) as any).data.status, 'no_membership');
+      assert.match(replies[0] ?? '', /ให้เจ้าของร้านเลือกแพ็กเกจก่อน/);
+      assert.doesNotMatch(replies[0] ?? '', /เชื่อมต่อบัญชี/, 'never ask a linked employee to link again');
+      // Same privacy rule as the web banner: staff see no package, date, price or contact detail.
+      assert.doesNotMatch(replies[0] ?? '', /098-256-5628|company-1|billing/);
+      assert.equal((updates.at(-1) as any).data.status, 'package_required');
     });
 
-    it('leaves an owner with no expired company on the existing generic reply', async () => {
+    it('leaves someone with no membership at all on the generic unlinked reply', async () => {
       // The probe must not answer for an ordinary unlinked user, nor for a company an admin
       // disabled by hand — that one carries no `termDisabledAt` and never reaches this row.
-      const { prisma } = makePrisma({ memberships: [], termExpiredMemberships: [] });
-      const { useCase, replies } = makeUseCase(prisma);
+      const { prisma, updates } = makePrisma({ memberships: [], termExpiredMemberships: [] });
+      const { useCase, replies } = makeUseCase(prisma, { config: { billingMode: 'test' } });
 
       await useCase.execute({ ...BASE_EVENT });
 
       assert.match(replies[0] ?? '', /เชื่อมต่อ/);
+      assert.equal((updates.at(-1) as any).data.status, 'no_membership');
     });
 
-    it('never runs the probe for a company that is still active', async () => {
-      // Renewal restores the company to ACTIVE, so it resolves as context again and the turn takes
-      // the normal path. Reading live state is what makes that work with nothing to invalidate.
+    it('never runs the probe for a company that is still usable', async () => {
+      // A shop that buys a package is ACTIVE with a running term again, so it resolves as context
+      // and the turn takes the normal path. Reading live state is what makes that work with
+      // nothing to invalidate — and a legacy company with no term row is unaffected throughout.
       const probes: unknown[] = [];
       const { prisma } = makePrisma({ memberships: [{ companyId: 'company-1' }] });
       const findFirst = prisma.client.companyMembership.findFirst;
       prisma.client.companyMembership.findFirst = async (args: any) => { probes.push(args); return findFirst(args); };
-      const { useCase, replies } = makeUseCase(prisma);
+      const { useCase, replies } = makeUseCase(prisma, { config: { billingMode: 'test' } });
 
       await useCase.execute({ ...BASE_EVENT });
 
-      assert.deepEqual(probes, [], 'an active company never reaches the term-expired branch');
-      assert.doesNotMatch(replies.join('\n'), /ครบกำหนดใช้งานแล้ว/);
+      assert.deepEqual(probes, [], 'a usable company never reaches the lock branch');
+      assert.doesNotMatch(replies.join('\n'), /ครบกำหนดใช้งานแล้ว|เลือกแพ็กเกจ/);
+    });
+
+    it('S05: the resolver itself refuses an ACTIVE company whose term has already ended', async () => {
+      // The fake cannot evaluate the filter, so the QUERY is what is asserted: a legacy company
+      // with no term row stays resolvable, and one whose term has passed does not.
+      const queries: any[] = [];
+      const { prisma } = makePrisma({ memberships: [{ companyId: 'company-1' }] });
+      const findMany = prisma.client.companyMembership.findMany;
+      prisma.client.companyMembership.findMany = async (args: any) => { queries.push(args); return findMany(args); };
+      const { useCase } = makeUseCase(prisma);
+
+      await useCase.execute({ ...BASE_EVENT });
+
+      const company = queries[0]?.where?.company;
+      assert.equal(company.status, 'ACTIVE');
+      assert.deepEqual(company.OR[0], { planTerm: null }, 'grandfathered companies stay resolvable');
+      assert.ok(company.OR[1].planTerm.termEndsAt.gt instanceof Date);
     });
   });
 

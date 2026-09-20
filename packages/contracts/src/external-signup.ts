@@ -201,7 +201,10 @@ export type AdminSignupQueueItemDto = {
   resolvedExistingCompanyId?: string;
   /** Current proven ACTIVE shops an operator may safely return this applicant to. */
   eligibleExistingCompanies?: LineSignupEligibleCompanyDto[];
+  /** @deprecated R1 (Owner 2026-09-20): no longer emitted. A second shop opens LOCKED like the
+   *  first, so there is no free trial to authorize. Kept so an older console still compiles. */
   requiresRepeatTrialGrant?: boolean;
+  /** @deprecated See `requiresRepeatTrialGrant`. */
   repeatTrialGranted?: boolean;
   /**
    * Why provisioning stopped, for the rows on the "มีปัญหา" tab. A bounded code the API already
@@ -245,8 +248,11 @@ export type AdminSignupDecisionBody = {
   version?: number;
   /** RETURN_EXISTING only; the server re-proves current LINE/user/membership access before commit. */
   targetCompanyId?: string;
-  /** CREATE_NEW_SHOP only; repeat trials require explicit true plus trialGrantNote. */
+  /** @deprecated R1 (Owner 2026-09-20): accepted and IGNORED. Approving a repeat applicant no
+   *  longer grants anything free, so it needs no authorization. Kept so an older console's
+   *  payload is not rejected. */
   grantRepeatTrial?: boolean;
+  /** @deprecated See `grantRepeatTrial`. */
   trialGrantNote?: string;
   /** CREATE_NEW_SHOP only; required when another person's contact data still conflicts. */
   acknowledgeSharedContact?: boolean;

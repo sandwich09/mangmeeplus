@@ -29,6 +29,7 @@ import { CompleteAttachmentUploadUseCase } from '../data-model-core/application/
 import { CreateUploadIntentUseCase } from '../data-model-core/application/use-cases/create-upload-intent.use-case';
 import { CompanySignupCoreService } from '../external-signup/application/company-signup-core.service';
 import { ProvisionSignupUseCase } from '../external-signup/application/provision-signup.use-case';
+import { PartnerLifecycleTransitionUseCase } from '../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 import { SignupAdminNotifyService } from '../external-signup/application/signup-admin-notify.service';
 import { SubmitLineSignupUseCase } from '../external-signup/application/submit-line-signup.use-case';
 import { GetExpenseCapturePolicyUseCase } from '../expenses/application/use-cases/expense-capture-policy.use-case';
@@ -95,7 +96,8 @@ describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => 
       assert.ok((await adminNotify.activeSystemAdmins()).some((admin) => admin.userId === operatorUserId && admin.companyId === operatorCompanyId));
       const lineNotify = { enqueue: async () => undefined } as never;
       const opsAlerts = { raise: async () => undefined } as never;
-      const provision = new ProvisionSignupUseCase(prisma, core, onboarding, config, adminNotify, lineNotify, opsAlerts);
+      const provision = new ProvisionSignupUseCase(prisma, core, onboarding, config, adminNotify, lineNotify, opsAlerts,
+        new PartnerLifecycleTransitionUseCase(prisma));
       const submit = new SubmitLineSignupUseCase(prisma, config, core, {
         verify: async () => ({ providerUserId: lineUserId, channelId: tag, displayName: 'ร้านแรก' }),
       } as never, new AuthRateLimitService(config, rateLimits), adminNotify, provision, opsAlerts);
@@ -111,7 +113,16 @@ describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => 
       const companyId = signup.companyId, userId = signup.ownerUserId;
       const company = await client.company.findUniqueOrThrow({ where: { id: companyId } });
       const user = await client.user.findUniqueOrThrow({ where: { id: userId }, include: { credential: true } });
-      assert.equal(company.status, 'ACTIVE');
+      // J1 (Owner 2026-09-20): a new shop opens LOCKED — zero-day term, DISABLED, stamped so the
+      // sweep never sends it an expiry notice it never earned.
+      assert.equal(company.status, 'DISABLED');
+      const openedTerm = await client.companyPlanTerm.findUniqueOrThrow({ where: { companyId } });
+      assert.equal(openedTerm.termEndsAt.getTime(), openedTerm.termStartAt.getTime());
+      assert.ok(openedTerm.termDisabledAt);
+      assert.ok(openedTerm.expiredNotifiedAt);
+      // R1: nothing a trial used to need is set up — no warm-up ceiling, no trial AI budget row.
+      assert.equal(openedTerm.warmupSlipLimit, null);
+      assert.equal(await client.companyAiConfiguration.count({ where: { companyId } }), 0);
       assert.equal(company.email, 'shop.contact@example.test');
       assert.equal(company.taxId, null);
       assert.equal(company.addressJson, null);
@@ -125,6 +136,16 @@ describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => 
       assert.equal(identity.status, 'ACTIVE');
       assert.equal((await client.lineCompanyContext.findUniqueOrThrow({ where: { lineUserId } })).companyId, companyId);
 
+      // Everything below is first-receipt readiness, which starts the moment the shop has a
+      // package. Applied here the way buying one does: the company re-enabled, the term running.
+      await client.company.update({ where: { id: companyId }, data: { status: 'ACTIVE' } });
+      await client.companyPlanTerm.update({ where: { companyId }, data: {
+        termEndsAt: new Date(Date.now() + 30 * 24 * 3600_000), termDisabledAt: null,
+      } });
+      await client.companyAiConfiguration.create({ data: {
+        companyId, ocrEnabled: true, monthlyBudgetSatang: config.lineFreeAiBudgetSatang,
+      } });
+
       const resolver = new PermissionResolverService(new PrismaPermissionResolverRepository(prisma));
       const access = await resolver.resolveAccess(userId, companyId);
       const membership = await client.companyMembership.findUniqueOrThrow({ where: { id: access.membershipId } });
@@ -137,7 +158,6 @@ describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => 
       const term = await client.companyPlanTerm.findUniqueOrThrow({ where: { companyId } });
       assert.equal(term.tierKey, 'FREE_TRIAL_15');
       assert.equal(term.monthlySlipLimit, 15);
-      assert.equal(term.warmupSlipLimit, 15);
       const ai = await client.companyAiConfiguration.findUniqueOrThrow({ where: { companyId } });
       assert.equal(ai.ocrEnabled, true);
       assert.equal(ai.monthlyBudgetSatang, config.lineFreeAiBudgetSatang);

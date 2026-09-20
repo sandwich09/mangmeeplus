@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { SIGNUP_TRIAL_WARMUP } from './signup.logic';
+import { SIGNUP_TRIAL_AFTER, SIGNUP_TRIAL_HEADLINE } from './signup.logic';
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 
@@ -56,15 +56,15 @@ describe('the public signup journey at 390px', () => {
   });
 });
 
-describe('the free-trial notice', () => {
+describe('the signup notice', () => {
   it('renders as flowing text with no fixed width', async () => {
     const { TrialNotice } = await import('./SignupPage');
     const html = renderToStaticMarkup(React.createElement(TrialNotice));
-    assert.match(html, /ทดลองใช้ฟรี 30 วัน/);
-    // Review F17: the first-week ceiling has to REACH the screen, not merely exist as a constant.
-    // It used to be rendered from the offer card; the card is gone and the promise is not.
-    assert.match(html, new RegExp(SIGNUP_TRIAL_WARMUP));
-    assert.match(html, /ไม่มีการตัดเงินอัตโนมัติ/);
+    // Owner 2026-09-20: both lines have to REACH the screen, not merely exist as constants — what
+    // signing up gets you, and what starting it costs.
+    assert.match(html, new RegExp(SIGNUP_TRIAL_HEADLINE));
+    assert.match(html, new RegExp(SIGNUP_TRIAL_AFTER));
+    assert.doesNotMatch(html, /ทดลองใช้ฟรี|ฟรี 30 วัน/);
     assert.doesNotMatch(html, /w-\[\d+px\]/);
     // Owner copy rule for this journey.
     assert.doesNotMatch(html, /\+/);

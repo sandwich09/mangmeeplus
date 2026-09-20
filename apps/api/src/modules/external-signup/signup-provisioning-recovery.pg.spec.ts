@@ -27,6 +27,7 @@ import { PrismaOutboxRepository } from '../data-model-core/infrastructure/reposi
 import { AccountClaimTokenService } from './application/account-claim-token.service';
 import { CompanySignupCoreService } from './application/company-signup-core.service';
 import { ProvisionSignupUseCase } from './application/provision-signup.use-case';
+import { PartnerLifecycleTransitionUseCase } from '../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 import { SignupAdminQueueUseCase } from './application/signup-admin-queue.use-case';
 import { SignupClaimEmailService, ACCOUNT_CLAIM_EMAIL_EVENT_TYPE } from './application/signup-claim-email.service';
 import { SignupClaimUseCase } from './application/signup-claim.use-case';
@@ -57,6 +58,7 @@ function wire(client: PrismaClient, adminUserId: string) {
     prisma, core, onboarding, CONFIG, adminDirectory,
     { enqueue: async () => undefined } as never,
     { raise: async () => undefined } as never,
+    new PartnerLifecycleTransitionUseCase(prisma),
   );
   const tokens = new AccountClaimTokenService(prisma);
   const outbox = new PrismaOutboxRepository(prisma);
@@ -163,6 +165,7 @@ describe('R04: a provisioning that dies after the company commits (real PostgreS
         { client } as never, breaking, w.onboarding, CONFIG,
         { activeSystemAdmins: async () => [{ companyId: 'sys', userId: adminUserId }] } as never,
         { enqueue: async () => undefined } as never, { raise: async () => undefined } as never,
+        new PartnerLifecycleTransitionUseCase({ client } as never),
       );
 
       await assert.rejects(() => failing.execute(provisionCmd(request.id, `${tag}user`)), /boom_after_commit/);
@@ -210,6 +213,7 @@ describe('R04: a provisioning that dies after the company commits (real PostgreS
         { client } as never, breaking, w.onboarding, CONFIG,
         { activeSystemAdmins: async () => [{ companyId: 'sys', userId: adminUserId }] } as never,
         { enqueue: async () => undefined } as never, { raise: async () => undefined } as never,
+        new PartnerLifecycleTransitionUseCase({ client } as never),
       );
       await assert.rejects(() => failing.execute(provisionCmd(request.id, `${tag}user`)), /boom_after_commit/);
 
@@ -243,6 +247,7 @@ describe('F2: a failed web provisioning is visible in the queue and retryable th
         { client } as never, breaking, w.onboarding, CONFIG,
         { activeSystemAdmins: async () => [{ companyId: 'sys', userId: adminUserId }] } as never,
         { enqueue: async () => undefined } as never, { raise: async () => undefined } as never,
+        new PartnerLifecycleTransitionUseCase({ client } as never),
       );
       await assert.rejects(() => failing.execute(provisionCmd(request.id, `${tag}user`)), /boom_after_commit/);
 

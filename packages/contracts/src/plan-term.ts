@@ -6,6 +6,13 @@ export type PlanTierKey = 'FREE_TRIAL_15' | 'STARTER_249' | 'BASIC_499' | 'PRO_9
 /** Derived, never stored: ACTIVE (green) / WARNING (yellow) / EXPIRED (red). */
 export type PlanTermDerivedState = 'ACTIVE' | 'WARNING' | 'EXPIRED';
 
+/**
+ * Sales/locked-signup spec R2. WHY a locked shop is locked, so the web and LINE can say the right
+ * sentence: `no_package` never had one (Owner 2026-09-20 closed the free trial for new signups),
+ * `trial_ended` ran a real term to its end. Derived from the term row, never stored.
+ */
+export type PlanTermLockReason = 'trial_ended' | 'no_package';
+
 export type CompanyPlanCapacity = { tierKey: PlanTierKey; branchLimit: number; employeeLimit: number;
   temporary?: { operationId: string; effectiveAt: string; expiresAt: string } };
 

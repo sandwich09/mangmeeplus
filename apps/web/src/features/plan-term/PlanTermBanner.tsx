@@ -1,37 +1,44 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
+import { useEffect } from 'react';
+import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { fetchPlanTermNotice, type PlanTermNotice } from './plan-term.api';
-import { isRenewalPath, planTermView } from './plan-term.logic';
+import type { PlanTermNotice } from './plan-term.api';
+import { PLAN_LOCK_COPY, PLAN_LOCK_CTA, isLockedShellPath, planLockReason, planTermView } from './plan-term.logic';
 
 /**
- * Invisible guard for the company-wide term state (P29). An ended term routes to the renewal page
- * — the only page an expired company can use. The visible warning moved into the sidebar
- * (`PlanTermSidebarCard`) per the Owner's 2026-08-31 decision, so this renders nothing.
+ * The company-wide term state (P29) at the top of the shell. An ended term routes to the renewal
+ * page from anywhere the locked shop may not go; on the pages it may (spec §12) it states why the
+ * shop is locked and offers the one move that fixes it. The WARNING copy lives in the sidebar
+ * (`PlanTermSidebarCard`) per the Owner's 2026-08-31 decision, so nothing renders for it here.
+ *
+ * The notice is a prop: the shell reads it once for the whole layout, and this component and the
+ * locked sidebar must never disagree about the same company.
  */
-export function PlanTermBanner({ companyId }: { companyId: string }) {
+export function PlanTermBanner({ companyId, notice }: { companyId: string; notice: PlanTermNotice | null }) {
   const router = useRouter();
-  const pathname = usePathname();
-  const [loaded, setLoaded] = useState<{ companyId: string; notice: PlanTermNotice | null } | null>(null);
-  const notice = loaded?.companyId === companyId ? loaded.notice : null;
+  const pathname = usePathname() ?? '';
 
-  useEffect(() => {
-    let active = true;
-    void fetchPlanTermNotice(companyId).then((result) => {
-      if (active) setLoaded({ companyId, notice: result });
-    });
-    return () => {
-      active = false;
-    };
-  }, [companyId]);
-
-  const view = planTermView(notice, isRenewalPath(pathname ?? '') || isBillingCustomerRecoveryPath(pathname??'',companyId));
+  const view = planTermView(notice, isLockedShellPath(pathname, companyId));
 
   useEffect(() => {
     if (view === 'renewal-page') router.replace(`/companies/${companyId}/renew`);
   }, [view, companyId, router]);
 
-  return null;
+  if (notice?.derivedState !== 'EXPIRED') return null;
+
+  const copy = PLAN_LOCK_COPY[planLockReason(notice)];
+
+  return (
+    <div role="status" className="border-b border-warning-100 bg-warning-50 px-4 py-3 sm:px-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-[14px] font-bold leading-6 text-warning-700">{copy.banner}</p>
+        {notice.isOwner && (
+          <Link className="mangmee-btn mangmee-btn-primary w-full sm:w-auto" href={`/companies/${companyId}/billing`}>
+            {PLAN_LOCK_CTA}
+          </Link>
+        )}
+      </div>
+    </div>
+  );
 }
