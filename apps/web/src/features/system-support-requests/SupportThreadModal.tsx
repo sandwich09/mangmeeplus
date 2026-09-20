@@ -241,7 +241,7 @@ export function SupportThreadModal({
         </p>
       </div>
 
-      <div ref={listRef} className="min-h-[40vh] flex-1 overflow-y-auto bg-gray-50 px-4 py-3 sm:px-5">
+      <div ref={listRef} className="min-h-40 flex-1 overflow-y-auto bg-gray-50 px-4 py-3 sm:min-h-[40vh] sm:px-5">
         {error && (
           <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
         )}

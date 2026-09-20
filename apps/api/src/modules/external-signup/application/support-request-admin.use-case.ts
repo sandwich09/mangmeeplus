@@ -99,7 +99,7 @@ function deliveryStatus(value: string | null): SupportReplyDeliveryStatus | unde
   return value === 'PENDING' || value === 'SENT' || value === 'FAILED' ? value : undefined;
 }
 
-/** Only the three bounded codes reach the UI; an unknown stored reason reads as the generic one. */
+/** Only the bounded codes reach the UI; an unknown stored reason reads as the generic one. */
 function mediaError(value: string | null): SupportRequestMediaError | undefined {
   if (!value) return undefined;
   return value === 'media_security_rejected' || value === 'media_scan_failed' || value === 'media_limit_reached'

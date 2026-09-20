@@ -268,7 +268,7 @@ function harness(options: {
         create: async (args: any) => { supportMessages.push({ op: 'create', ...args }); return { id: `bubble-${supportMessages.length}` }; },
         update: async (args: any) => { supportMessages.push({ op: 'update', ...args }); return {}; },
         // Rows (no `blob` filter) and stored files (with it) on this request — the two ceilings.
-        count: async (args: any) => (args?.where?.blob ? options.threadMediaCount : options.threadMessageCount) ?? 0,
+        count: async (args: any) => (args?.where?.kind ? options.threadMediaCount : options.threadMessageCount) ?? 0,
       },
       aiTurn: { findFirst: async () => options.lastTurn ?? null },
       externalIdentity: { findFirst: async () => options.identity ?? null },
@@ -1519,8 +1519,9 @@ describe('the chat behind a request (สัญญา v3)', () => {
   });
 
   it('keeps the row but not the bytes once a request holds its fifty files', async () => {
+    // 51 = fifty already claimed plus this one: the claim counts itself, so a burst cannot slip under.
     const h = harness({
-      identity: linked, memberships: [], threadMediaCount: 50,
+      identity: linked, memberships: [], threadMediaCount: 51,
       openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
     });
     globalThis.fetch = (async () => { throw new Error('the bytes must not be fetched'); }) as typeof fetch;

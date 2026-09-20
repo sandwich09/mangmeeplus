@@ -459,6 +459,13 @@ export default function SupportRequestsPage() {
 
   const handleThreadChanged = (request: SupportRequestItemDto) => {
     setThreadItem(request);
+    // A status that no longer matches this tab (the customer wrote back while the window was
+    // open) means the row and the badge both moved: reload rather than paint it under the wrong
+    // heading. Otherwise the fresh row replaces the stale one in place.
+    if (request.status !== tab) {
+      void load();
+      return;
+    }
     setItems((current) => current.map((row) => row.id === request.id ? request : row));
   };
 
@@ -532,6 +539,8 @@ export default function SupportRequestsPage() {
     } else {
       if (composed === undefined) {
         setThreadItem(item);
+        // After the window has mounted: the caret goes where the reply is typed.
+        setTimeout(() => composerRef.current?.focus(), 50);
         return false;
       }
       text = composed.trim();

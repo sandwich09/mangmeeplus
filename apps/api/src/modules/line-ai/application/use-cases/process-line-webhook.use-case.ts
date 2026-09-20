@@ -2473,11 +2473,13 @@ export class ProcessLineWebhookUseCase {
     if (!claimed) return;
     let outcome: { mediaError: string } | { media: DownloadedLineMedia };
     try {
-      // Counted AFTER the claim, so two concurrent photos cannot both squeeze under the ceiling.
-      const stored = await this.prisma.client.lineSupportMessage.count({
-        where: { requestId, blob: { isNot: null } },
+      // Counted AFTER the claim and INCLUDING it — every claimed photo/file that has not been
+      // refused — so a burst of concurrent photos cannot all squeeze under the ceiling: the ones
+      // past it see themselves in the count and stop before a byte moves.
+      const claimedMedia = await this.prisma.client.lineSupportMessage.count({
+        where: { requestId, kind: { in: ['IMAGE', 'FILE'] }, mediaError: null },
       });
-      if (stored >= SUPPORT_THREAD_MAX_MEDIA) {
+      if (claimedMedia > SUPPORT_THREAD_MAX_MEDIA) {
         await this.prisma.client.lineSupportMessage.update({ where: { id: claimed.id }, data: { mediaError: 'media_limit_reached' } });
         return;
       }
@@ -2517,6 +2519,8 @@ export class ProcessLineWebhookUseCase {
    * turn — a customer must never lose an answer because the thread table was unavailable — and
    * silent on P2002, which is a redelivered webhook re-sending a `lineMessageId` already recorded.
    */
+  // ponytail: count-then-insert, so a burst can overshoot the ceiling by the burst size; it bounds
+  // abuse, it is not an exact quota. A stored counter on the request would make it exact.
   private async appendSupportMessage(requestId: string, data: {
     direction: 'CUSTOMER' | 'STAFF'; kind: 'TEXT' | 'IMAGE' | 'FILE';
     text?: string; lineMessageId?: string; mediaFileName?: string;
