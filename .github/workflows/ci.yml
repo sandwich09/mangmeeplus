@@ -390,9 +390,7 @@ jobs:
         if: needs.resolve-source.outputs.release_controller_only != 'true'
       - name: Test Kamal release and rollback contracts without cloud access
         run: |
-          python3 infra/kamal/release_test.py
-          python3 infra/kamal/stability_test.py
-          python3 infra/kamal/shutdown_test.py
+          python3 -B -m unittest discover -s infra/kamal -p '*test.py'
           python3 infra/dev-kamal/release_inventory_test.py
           bash -n infra/kamal/bootstrap-host.sh
       - name: Test AgentCore release controller without application TypeScript
