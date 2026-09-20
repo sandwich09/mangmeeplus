@@ -1001,6 +1001,9 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   // Keyed by line index. `custom` is needed because "custom, nothing typed yet" and "unset" are the
   // same stored value (''), so the preset cannot be derived from the rate alone.
   const [vatEditors, setVatEditors] = useState<Record<number, { custom?: boolean }>>({});
+  // Same reason as `custom` above: a blank branch code means "สำนักงานใหญ่" AND "สาขา, nothing typed
+  // yet", so which of the two the reviewer picked cannot be read back off the value (A6/CON-8).
+  const [branchIsBranch, setBranchIsBranch] = useState(() => Boolean(detail.vendorBranchCodeSnapshot));
   const [vatSourceDirty, setVatSourceDirty] = useState(false);
   const [taxFactsDirty, setTaxFactsDirty] = useState(false);
   const addedLineKind = useRef<ExpenseLineChargeKind | null | undefined>(undefined);
@@ -1011,9 +1014,10 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const showsTax = showsTaxCapture(capture.mode, hasRecordedTax(detail.lines));
   const aiGrandTotal = aiGrandTotalValue(detail.aiVerifiedFieldsJson);
   const aiSuggestion = useMemo(() => expenseAiSuggestion(detail.aiVerificationSummaryJson), [detail.aiVerificationSummaryJson]);
-  const issues = useMemo(() => validateExpenseReview(values, { today: todayCivilDate(), aiGrandTotal, whtAmount: detail.whtAmount }), [values, aiGrandTotal, detail.whtAmount]);
+  const issues = useMemo(() => validateExpenseReview(values, { today: todayCivilDate(), aiGrandTotal, whtAmount: detail.whtAmount, sourceDocumentType: detail.sourceDocumentType }), [values, aiGrandTotal, detail.whtAmount, detail.sourceDocumentType]);
   const vendorNameIssue = fieldIssue(issues, 'vendorNameSnapshot');
   const vendorTaxIdIssue = fieldIssue(issues, 'vendorTaxIdSnapshot');
+  const vendorAddressIssue = fieldIssue(issues, 'vendorAddressSnapshot');
   const documentNumberIssue = fieldIssue(issues, 'vendorDocumentNumber');
   const expenseDateIssue = fieldIssue(issues, 'expenseDate');
   const linesIssue = fieldIssue(issues, 'lines');
@@ -1231,7 +1235,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       return false;
     }
     const forbidden = findForbiddenChars([
-      values.vendorNameSnapshot, values.vendorTaxIdSnapshot, values.vendorDocumentNumber,
+      values.vendorNameSnapshot, values.vendorTaxIdSnapshot, values.vendorAddressSnapshot, values.vendorDocumentNumber,
       ...values.lines.map((line) => line.description),
     ].join(''));
     if (forbidden.length > 0) {
@@ -1322,6 +1326,50 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
           <input id={`expense-vendor-tax-${detail.id}`} className={validationInputClass(vendorTaxIdIssue)} aria-invalid={vendorTaxIdIssue?.severity === 'error' || undefined} inputMode="numeric" placeholder="0-0000-00000-00-0" value={formatTaxId(values.vendorTaxIdSnapshot)} onChange={(e) => setValues((v) => ({ ...v, vendorTaxIdSnapshot: taxIdDigits(e.target.value) }))} disabled={!isMutable || busy} />
           <FieldIssueNote issue={vendorTaxIdIssue} />
           <AiFieldMissingHint field="vendorTaxIdSnapshot" summary={detail.aiVerificationSummaryJson} />
+        </div>
+        {/* Vendor address spec §11.2: under the tax id, a 3-row textarea, the same AI badge as every
+            other read field. No maxLength — §8 says an over-long address is refused with a way
+            forward, never silently truncated, and maxLength would eat the tail of a paste in
+            silence. The length rule lives in the validator, where the reviewer can see it. */}
+        <label className="sm:col-span-2">
+          <span className="mb-1 block text-xs font-medium text-gray-600"><AiFieldLabel label={t('expenses.vendor_address', locale)} field="vendorAddressSnapshot" summary={detail.aiVerificationSummaryJson} /></span>
+          <textarea aria-label={t('expenses.vendor_address', locale)} className={cx(validationInputClass(vendorAddressIssue), 'resize-y')} rows={3}
+            aria-invalid={vendorAddressIssue?.severity === 'error' || undefined} value={values.vendorAddressSnapshot}
+            onChange={(e) => setValues((v) => ({ ...v, vendorAddressSnapshot: stripDisallowed(e.target.value) }))} disabled={!isMutable || busy} />
+          <FieldIssueNote issue={vendorAddressIssue} />
+          {!vendorAddressIssue && <p className="mt-1 text-xs text-gray-500">{t('expenses.vendor_address_hint', locale)}</p>}
+          <AiFieldMissingHint field="vendorAddressSnapshot" summary={detail.aiVerificationSummaryJson} />
+        </label>
+        {/* A6: สำนักงานใหญ่/สาขา plus the code the document prints — never a dropdown of registry
+            branches, so there is no "no match" state to explain. `branchIsBranch` is local because
+            "สาขา picked, code not typed yet" and "สำนักงานใหญ่" are the same stored value (''),
+            exactly like the VAT editors' `custom` flag above. */}
+        <div className="sm:col-span-2">
+          <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.vendor_branch', locale)}</span>
+          <div className="flex flex-wrap items-start gap-2">
+            <div className="mangmee-segmented shrink-0" role="group" aria-label={t('expenses.vendor_branch', locale)}>
+              {([false, true] as const).map((isBranch) => (
+                <button key={String(isBranch)} type="button" aria-pressed={branchIsBranch === isBranch} disabled={!isMutable || busy}
+                  className={cx('mangmee-tab', branchIsBranch === isBranch && 'mangmee-tab-active', (!isMutable || busy) && 'cursor-not-allowed opacity-50')}
+                  onClick={() => {
+                    setBranchIsBranch(isBranch);
+                    if (!isBranch) setValues((v) => ({ ...v, vendorBranchCodeSnapshot: '' }));
+                  }}>
+                  {t(isBranch ? 'expenses.vendor_branch_branch' : 'expenses.vendor_branch_head_office', locale)}
+                </button>
+              ))}
+            </div>
+            {branchIsBranch && (
+              <label className="min-w-0 flex-1 basis-40">
+                <span className="sr-only">{t('expenses.vendor_branch_code', locale)}</span>
+                <input className={inputClass} inputMode="numeric" placeholder="00001" aria-label={t('expenses.vendor_branch_code', locale)}
+                  value={values.vendorBranchCodeSnapshot}
+                  onChange={(e) => setValues((v) => ({ ...v, vendorBranchCodeSnapshot: e.target.value.replace(/\D/g, '').slice(0, 5) }))}
+                  disabled={!isMutable || busy} />
+              </label>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-gray-500">{t('expenses.vendor_branch_code_hint', locale)}</p>
         </div>
         <label>
           <span className="mb-1 block text-xs font-medium text-gray-600"><AiFieldLabel label={t('expenses.document_number', locale)} field="vendorDocumentNumber" summary={detail.aiVerificationSummaryJson} /></span>
@@ -1931,7 +1979,9 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   const requestedFrom = searchParams.get('fromDate');
   const requestedTo = searchParams.get('toDate');
   const requestedBranchId = searchParams.get('branchId');
-  const sourceView = requestedView === 'pending' || requestedView === 'unpaid' ? requestedView
+  // GAP-11: `addressMissing` is a URL view like the others so the ภ.พ.30 workpaper checklist and the
+  // chip below can both link to exactly this list without duplicating the query.
+  const sourceView = requestedView === 'pending' || requestedView === 'unpaid' || requestedView === 'addressMissing' ? requestedView
     : requestedView === 'confirmed' && isCivilDate(requestedFrom) && isCivilDate(requestedTo) && requestedFrom <= requestedTo ? 'confirmed' : null;
   const toast = useToast();
   const [rows, setRows] = useState<ExpenseSummary[]>([]);
@@ -1993,6 +2043,8 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
           ...(branchId ? { branchId } : {}),
           ...(sourceView === 'confirmed' ? { status: 'CONFIRMED', fromDate, toDate }
             : sourceView === 'unpaid' ? { status: 'CONFIRMED' }
+            // Every period: §8 says the filter exists so old documents can be filled in over time.
+            : sourceView === 'addressMissing' ? { vendorAddressMissing: true }
             : { uploadedFromDate: fromDate, uploadedToDate: toDate }),
           page: nextPage, pageSize: 200,
         });
@@ -2139,7 +2191,9 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
       </div>
       {sourceView && <div role="status" className="rounded-xl bg-brand-25 p-3 text-sm text-brand-800">
         {sourceView === 'confirmed' ? `รายการยืนยันแล้ว · วันที่เอกสาร ${dateShort(fromDate)} – ${dateShort(toDate)}`
-          : sourceView === 'pending' ? 'ใบเสร็จรอตรวจ · ทุกช่วงเวลา รวมฉบับร่าง' : 'ค้างจ่ายที่ยืนยันแล้ว · ทุกช่วงเวลา'}
+          : sourceView === 'pending' ? 'ใบเสร็จรอตรวจ · ทุกช่วงเวลา รวมฉบับร่าง'
+            : sourceView === 'addressMissing' ? t('expenses.view_vendor_address_missing', locale)
+              : 'ค้างจ่ายที่ยืนยันแล้ว · ทุกช่วงเวลา'}
         <button className="ml-2 min-h-11 underline" onClick={() => router.replace(`/companies/${companyId}/expenses`)}>กลับไปดูรายการตามเดือน</button>
       </div>}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -2204,6 +2258,14 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                 <span className={cx('tabular-nums inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', chip === c.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{chipCounts[c.key]}</span>
               </button>
             ))}
+            {/* §11.4: the way into "ใบกำกับที่ยังไม่มีที่อยู่ผู้ขาย". It carries no count because the
+                server answers it across every period, not out of the rows already loaded here. */}
+            <button type="button" aria-pressed={sourceView === 'addressMissing'}
+              onClick={() => router.replace(`/companies/${companyId}/expenses${sourceView === 'addressMissing' ? '' : '?view=addressMissing'}`)}
+              className={cx('col-span-2 inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-center text-sm font-semibold leading-tight transition sm:col-span-1',
+                sourceView === 'addressMissing' ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
+              {t('expenses.chip_vendor_address_missing', locale)}
+            </button>
             <div className="relative order-first col-span-2 w-full sm:col-span-3 lg:col-span-5 lg:ml-auto lg:max-w-[19.2rem]">
               <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
                 placeholder={t('expenses.search_placeholder', locale)}
