@@ -10,7 +10,7 @@ export const previewScenarios = {
 export type PreviewScenario = keyof typeof previewScenarios;
 
 // In-memory only: every method is supplied here, with no fallback to a live billing API.
-export function createBillingPreview(companyId: string, scenario: PreviewScenario, selected: Pick<BillingQuote, 'offer' | 'totalSatang' | 'purchase'> | null, onCheckout: (quote: Pick<BillingQuote, 'offer' | 'totalSatang' | 'purchase'>) => void) {
+export function createBillingPreview(companyId: string, scenario: PreviewScenario, selected: Pick<BillingQuote, 'offer' | 'totalSatang' | 'purchase' | 'purchaseMode'> | null, onCheckout: (quote: Pick<BillingQuote, 'offer' | 'totalSatang' | 'purchase' | 'purchaseMode'>) => void) {
   const date = (days = 0) => new Date(Date.now() + days * 86_400_000).toISOString();
   const currentOffer = selected?.offer ?? billingOffer('BASIC_499', 'month');
   // Preview uses calendar periods, matching the live anniversary/clamping rule.
@@ -35,11 +35,12 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
     applyState: scenario === 'activating' ? 'PENDING' : scenario === 'held' ? 'HELD' : paid ? 'APPLIED' : 'NONE',
     accessState: scenario === 'expired' ? 'EXPIRED' : scenario === 'held' ? 'HELD' : 'ACTIVE',
     purchaseEligibility: 'ELIGIBLE', subscriptionState: paid ? 'active' : 'NONE', documentState: paid ? 'READY' : 'NONE',
-    attemptId: attempted ? 'preview-attempt' : null, reference: attempted ? 'PREVIEW-0001' : null, observedAt: date(),
+    renewalMode: paid ? selected?.purchaseMode ?? 'CARD_AUTO' : 'NONE', availablePurchaseModes: ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'],
+    attemptId: attempted ? 'preview-attempt' : null, reference: attempted ? 'PREVIEW-0001' : null, observedAt: date(), canCancelCheckout: attempted && !paid,
     tierKey: paid || scenario === 'expired' ? currentOffer.offerKey : 'FREE_TRIAL_15', interval: paid || scenario === 'expired' ? currentOffer.interval : null,
     termEndsAt: scenario === 'expired' ? date(-1) : paidThrough, paidThrough: paid ? paidThrough : scenario === 'expired' ? date(-1) : null,
-    nextChargeAt: paid ? paidThrough : null, cancelAtPeriodEnd: false, graceEndsAt: null,
-    allowedActions: attempted && !paid ? [] : paid ? ['new_sales', 'portal_cancel_subscription', 'plan_changes', 'portal_payment_method'] : ['new_sales'],
+    nextChargeAt: paid && selected?.purchaseMode !== 'CARD_ONCE' && selected?.purchaseMode !== 'PROMPTPAY_ONCE' ? paidThrough : null, cancelAtPeriodEnd: false, graceEndsAt: null,
+    allowedActions: attempted && !paid ? [] : paid ? selected?.purchaseMode === 'CARD_ONCE' || selected?.purchaseMode === 'PROMPTPAY_ONCE' ? ['new_sales'] : ['new_sales', 'portal_cancel_subscription', 'plan_changes', ...(selected?.purchaseMode === 'PROMPTPAY_RENEW' ? [] : ['portal_payment_method' as const])] : ['new_sales'],
     usage: { used: selected ? 0 : 6, limit: paid ? selected?.purchase?.projectedRemainingReceipts ?? currentOffer.receiptAllowance : 15, remaining: paid ? selected?.purchase?.projectedRemainingReceipts ?? currentOffer.receiptAllowance - 6 : 9,
       cadence: 'PAID_GRANTS', resetsAt: null, expiresAt: paidThrough }, issues: [],
   };
@@ -64,7 +65,7 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
       periodStart: date(), periodEnd: paidThrough, createdAt: date(), hasDocuments: true }] : [], nextCursor: null }),
     attempt: async () => ({ attemptId: 'preview-attempt', state: status.applyState, errorCode: null, observedAt: date(),
       paymentState: status.paymentState === 'PAID' ? 'PAID' : status.paymentState === 'FAILED' ? 'FAILED' : 'PENDING', applyState: status.applyState, invoiceReference: paid ? 'PREVIEW-0001' : null }),
-    quote: async (offerKey, interval, billingEmail, capacity) => {
+    quote: async (offerKey, interval, billingEmail, capacity, purchaseMode) => {
       if (quoteFailures-- > 0) throw Object.assign(new Error('ราคาเปลี่ยนแล้ว'), { code: 'BILLING_QUOTE_STALE' });
       if (['capacity', 'capacity-work'].includes(scenario) && !capacity) throw Object.assign(new Error('เลือกสิทธิ์ก่อน'), { code: 'BILLING_CAP_SELECTION_REQUIRED' });
       const offer = offers.find(item => item.offerKey === offerKey && item.interval === interval)!;
@@ -77,7 +78,7 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
       const added = isUpgrade ? offer.receiptAllowance - currentOffer.receiptAllowance : offer.receiptAllowance;
       const trialUnits = !paid && scenario !== 'expired' ? status.usage.remaining ?? 0 : 0;
       quote = { quoteId: 'preview-quote', companyId, companyName: status.companyName, billingProfile: status.billingProfile, policyRevision: 'preview-policy', expiresAt: date(1),
-        offer, subtotalSatang: total, taxSatang: 0, totalSatang: total, taxTreatment: 'NOT_VAT_REGISTERED', consentRevision: 'preview-consent',
+        offer, subtotalSatang: total, taxSatang: 0, totalSatang: total, taxTreatment: 'NOT_VAT_REGISTERED', consentRevision: 'preview-consent', purchaseMode: purchaseMode ?? 'CARD_AUTO',
         paidStart: 'IMMEDIATE', billingEmail, trialEndsAt: !paid && scenario !== 'expired' ? date(7) : null, usage: status.usage,
         purchase: { kind: isUpgrade ? 'UPGRADE' : isRepeat ? 'REPEAT' : scenario === 'expired' ? 'RESTART' : 'INITIAL', previousPaidThrough: status.paidThrough, ...(isRepeat && currentOffer.interval !== offer.interval ? { previousInterval: currentOffer.interval } : {}),
           projectedPaidThrough: isUpgrade ? paidThrough : extend(isRepeat ? paidThrough : date(), offer.interval), receiptUnitsAdded: added,
@@ -98,7 +99,8 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
         memberships: Array.from({ length: offer.employeeLimit + 1 }, (_, i) => ({ id: i ? `member-${i}` : 'owner', name: i ? `พนักงานตัวอย่าง ${i}` : 'เจ้าของร้าน', owner: !i, required: !i || (scenario === 'capacity-work' && i === 1), allBranches: true, branchIds: ['ho'], defaultBranchId: 'ho' })) };
     },
     checkout: async () => { onCheckout(requiredQuote()); return { attemptId: 'preview-attempt', state: 'PENDING', checkoutUrl: null }; },
-    resume: async () => { onCheckout(quote ?? { offer: currentOffer, totalSatang: currentOffer.priceSatang }); return { attemptId: 'preview-attempt', state: 'PENDING', checkoutUrl: null }; },
+    resume: async () => { onCheckout(quote ?? { offer: currentOffer, totalSatang: currentOffer.priceSatang, purchaseMode: 'CARD_AUTO' }); return { attemptId: 'preview-attempt', state: 'PENDING', checkoutUrl: null }; },
+    cancelCheckout: async () => { status.attemptId = null; status.canCancelCheckout = false; status.paymentState = 'FAILED'; status.allowedActions = ['new_sales']; return { state: 'EXPIRED' }; },
     refresh: async () => ({ queued: true }), portal: async () => ({ url: 'https://billing.stripe.com/preview' }),
     document: async (_, kind) => ({ url: `https://invoice.stripe.com/preview?kind=${kind}` }),
     repairCapacity: async () => ({ operationId: 'preview-capacity-repair', queued: true }),

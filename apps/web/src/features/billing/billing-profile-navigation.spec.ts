@@ -10,4 +10,8 @@ it('returns to the same company and selected paid package, never to an arbitrary
   assert.equal(billingProfileSelection('?offer=ENTERPRISE_1999&interval=year'), null);
   assert.equal(billingProfileSelection('?offer=PRO_999&interval=monthly'), null);
   assert.equal(billingProfileSelection('?offer=PRO_999&interval=year&channel=https://evil.test')?.channel, 'web');
+  const once = billingProfileHref('company/a', { offer: 'PRO_999', interval: 'month', channel: 'web', purchaseMode: 'CARD_ONCE' });
+  assert.equal(billingProfileReturnHref('company/a', new URL(once, 'https://local.test').search),
+    '/companies/company%2Fa/billing?offer=PRO_999&interval=month&channel=web&purchaseMode=CARD_ONCE&profile=updated');
+  assert.equal(billingProfileSelection('?offer=PRO_999&interval=month&purchaseMode=INVALID')?.purchaseMode, undefined);
 });

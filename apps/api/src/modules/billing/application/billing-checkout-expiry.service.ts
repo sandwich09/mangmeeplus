@@ -53,6 +53,36 @@ export class BillingCheckoutExpiryService{
     return {companyId,companyName:current.company.name,attemptId:id,mode:current.account.livemode?'LIVE':'TEST',sourceHash:observed.sourceHash,
       providerState:observed.providerState,paymentState:observed.paymentState,expiresAt:observed.expiresAt,canExpire:observed.canExpire&&current.access.capabilities.includes(MANAGE),blockedReason:!observed.canExpire?'CONTROL_CHECKOUT_ALREADY_CLOSED':!current.access.capabilities.includes(MANAGE)?'CONTROL_PERMISSION_CHANGED':null};
   }
+  async cancelOwn(context:RequestContext,id:string):Promise<{state:'EXPIRED'|'COMPLETED'|'PENDING'}>{
+    await this.billing.assertOwner(context);
+    const account=await this.billing.account(context.companyId),attempt=account?.activeAttemptId===id?await this.prisma.client.billingAttempt.findFirst({where:{id,billingAccountId:account.id}}):null;
+    if(!account||!attempt)throw new NotFoundException();
+    if(!attempt.checkoutSessionId)throw billingError('BILLING_CHECKOUT_PENDING','กำลังตรวจรายการเดิม กรุณาลองใหม่อีกครั้ง');
+    const source=await readCheckoutExpiry(this.billing.stripe,account,attempt),lease=randomUUID();
+    await this.prisma.client.$transaction(async tx=>{
+      await lockPlanTermCompany(tx,context.companyId);await this.billing.assertOwner(context,tx);
+      const current=await this.billing.account(context.companyId,tx),row=current?.activeAttemptId===id?await tx.billingAttempt.findFirst({where:{id,billingAccountId:current.id}}):null;
+      if(!current||!row||checkoutExpiryBinding(current,row)!==source.sourceHash)throw stale();
+      const claimed=await tx.billingAccount.updateMany({where:{id:current.id,activeAttemptId:id,OR:[{leaseUntil:null},{leaseUntil:{lte:new Date()}}]},
+        data:{leaseToken:lease,leaseUntil:new Date(Date.now()+120000),nextReconcileAt:new Date()}});
+      if(!claimed.count)throw billingError('BILLING_PURCHASE_PENDING','กำลังตรวจรายการเดิม กรุณาลองใหม่อีกครั้ง');
+      await tx.auditLog.create({data:{companyId:context.companyId,actorUserId:context.userId,action:'billing.checkout_expiry.owner_requested',
+        targetType:'BillingAttempt',targetId:id,requestId:context.requestId,result:'SUCCESS',riskLevel:'HIGH',metadataJson:{sessionId:source.sessionId,providerState:source.providerState}}});
+    });
+    let observed:Awaited<ReturnType<typeof readCheckoutExpiry>>;
+    try{
+      if(source.canExpire){
+        // A simultaneous payment can complete between GET and expire; the second GET decides the result.
+        try{await this.billing.stripe.request('POST',`/checkout/sessions/${source.sessionId}/expire`,{},`mm:${id}:owner-expire`);}
+        catch(error){if(!(error instanceof StripeRequestError))throw error;}
+      }
+      observed=await readCheckoutExpiry(this.billing.stripe,account,attempt);
+    }finally{await this.prisma.client.billingAccount.updateMany({where:{id:account.id,leaseToken:lease},data:{leaseToken:null,leaseUntil:null}});}
+    if(observed.providerState==='open'&&observed.paymentState==='unpaid')throw billingError('BILLING_CHECKOUT_PENDING','ยังยืนยันผลยุติรายการไม่ได้ กรุณาตรวจสถานะอีกครั้ง');
+    try{await this.reconciler.reconcileAccount(account.id);}catch{return {state:'PENDING'};}
+    const current=await this.billing.account(context.companyId);
+    return {state:current?.activeAttemptId===id?'PENDING':observed.providerState==='expired'?'EXPIRED':'COMPLETED'};
+  }
   async preview(context:RequestContext,companyId:string,id:string,input:{reason:string;sourceHash:string}){
     assertKeys(input,['reason','sourceHash']);if(typeof input.reason!=='string'||!input.reason.trim()||input.reason.length>500||typeof input.sourceHash!=='string')throw new BadRequestException();
     const {account}=await this.access(context,companyId,MANAGE),attempt=await this.attempt(account,id),observed=await readCheckoutExpiry(this.billing.stripe,account,attempt);

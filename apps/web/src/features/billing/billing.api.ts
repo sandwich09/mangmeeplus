@@ -1,5 +1,5 @@
 'use client';
-import type { BillingEmailRecipient, BillingEmailRecipientOperation, BillingCatalog, BillingQuote, BillingStatus, BillingCheckoutBody, BillingCheckoutResult, BillingInvoiceItem, BillingAttemptView, BillingCollectionAction, BillingCollectionOperation } from '@watchdog-bms/contracts';
+import type { BillingEmailRecipient, BillingEmailRecipientOperation, BillingCatalog, BillingQuote, BillingStatus, BillingCheckoutBody, BillingCheckoutResult, BillingInvoiceItem, BillingAttemptView, BillingCollectionAction, BillingCollectionOperation, BillingPurchaseMode } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog-bms/contracts';
 
@@ -19,11 +19,12 @@ export function billingApi(companyId: string) {
     status: () => get<BillingStatus>(base), catalog: () => get<BillingCatalog>('/billing/catalog'),
     attempt: (attemptId: string) => get<BillingAttemptView>(`${base}/attempts/${encodeURIComponent(attemptId)}`),
     history: (cursor?: string) => get<BillingHistory>(`${base}/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
-    quote: (offerKey: string, interval: string, billingEmail: string, capacity?: BillingCapacitySelection) => post<BillingQuote>('/quote', { offerKey, interval, billingEmail, capacity }),
+    quote: (offerKey: string, interval: string, billingEmail: string, capacity?: BillingCapacitySelection, purchaseMode: BillingPurchaseMode = 'CARD_AUTO') => post<BillingQuote>('/quote', { offerKey, interval, billingEmail, capacity, purchaseMode }),
     capacity: (offerKey: string, interval: string) => get<BillingCapacityOptions>(`${base}/capacity?offerKey=${encodeURIComponent(offerKey)}&interval=${encodeURIComponent(interval)}`),
     repairCapacity: (attemptId: string, expectedVersion: number, selection: BillingCapacitySelection, key: string) => post<{ operationId: string; queued: boolean }>(`/attempts/${encodeURIComponent(attemptId)}/capacity`, { expectedVersion, selection, accepted: true }, key),
     checkout: (body: BillingCheckoutBody, key: string) => post<BillingCheckoutResult>('/checkout', body, key),
     resume: (attemptId: string) => post<BillingCheckoutResult>(`/attempts/${encodeURIComponent(attemptId)}/resume`, {}),
+    cancelCheckout: (attemptId: string) => post<{state:'EXPIRED'|'COMPLETED'|'PENDING'}>(`/attempts/${encodeURIComponent(attemptId)}/cancel`, {}),
     refresh: () => post<{ queued: boolean }>('/refresh', {}),
     portal: () => post<{ url: string }>('/portal', { action: 'portal_payment_method' }),
     collection: (id: string) => get<BillingCollectionOperation>(`${base}/collection/${encodeURIComponent(id)}`),

@@ -96,6 +96,7 @@ export class BillingAdminService {
     return { accountId: account?.id ?? null, companyId: company.id, companyName: company.name,
       mode: this.billing.stripe.enabled ? (this.billing.stripe.livemode ? 'LIVE' : 'TEST') : 'DISABLED', version: account?.version ?? 0,
       ...billingState(company,account,invoice,activeAttempt), subscriptionState: account?.subscriptionState ?? 'NONE',
+      renewalMode: (account?.renewalMode !== 'NONE' ? account?.renewalMode : account?.baseSubscriptionId ? 'CARD_AUTO' : 'NONE') as BillingOperatorCompany['renewalMode'],
       paidThrough: account?.paidThrough?.toISOString() ?? null, nextChargeAt: account?.nextChargeAt?.toISOString() ?? null,
       observedAt: account?.observedAt?.toISOString() ?? null, effectiveCapacity: term ? effectivePlanCapacity(term) : null, tierKey: term?.tierKey ?? null, termEndsAt: term?.termEndsAt.toISOString() ?? null,
       companyStatus: company.status, pendingAttemptId: account?.activeAttemptId ?? null,

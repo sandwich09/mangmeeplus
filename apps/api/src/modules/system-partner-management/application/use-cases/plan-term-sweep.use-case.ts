@@ -73,6 +73,10 @@ export class PlanTermSweepUseCase {
             where: { companyId: candidate.companyId }, include: { company: { select: { status: true, name: true } } },
           });
           if (!row || row.company.status !== 'ACTIVE' || row.termEndsAt > now) return false;
+          const billing = row.billingReceiptAccountId ? await tx.billingAccount.findUnique({ where: { id: row.billingReceiptAccountId } }) : null;
+          const nextStep = ['CARD_ONCE', 'PROMPTPAY_ONCE'].includes(billing?.renewalMode ?? '')
+            ? ' หากต้องการใช้ต่อให้ซื้อแพ็กเกจใหม่ในหน้าการชำระเงิน' : billing?.renewalMode === 'PROMPTPAY_RENEW'
+              ? ' หากต้องการใช้ต่อให้เปิดบิลและสแกน QR ในหน้าการชำระเงิน' : '';
           await this.lifecycle.execute({
             companyId: row.companyId, targetStatus: 'DISABLED', reason: 'term_expired',
             requestingAdminUserId: null, requestId: `plan-term-expired-${row.companyId}-${row.termEndsAt.getTime()}`,
@@ -84,7 +88,7 @@ export class PlanTermSweepUseCase {
           // with the claim; the existing delivery worker owns all later network attempts.
           await this.notify(row.companyId, row.company.name, {
             trigger: PLAN_TERM_EXPIRED_TRIGGER, severity: 'critical', title: 'ร้านครบกำหนดใช้งาน',
-            body: (lineLinked) => expiredMessageTh(row.company.name, lineLinked),
+            body: (lineLinked) => expiredMessageTh(row.company.name, lineLinked) + nextStep,
             periodKey: `expired:${row.termEndsAt.toISOString()}`,
           }, tx);
           return true;
@@ -115,6 +119,10 @@ export class PlanTermSweepUseCase {
             where: { companyId: candidate.companyId }, include: { company: { select: { status: true, name: true } } },
           });
           if (!row || row.company.status !== 'ACTIVE' || row.termEndsAt <= now) return false;
+          const billing = row.billingReceiptAccountId ? await tx.billingAccount.findUnique({ where: { id: row.billingReceiptAccountId } }) : null;
+          const nextStep = ['CARD_ONCE', 'PROMPTPAY_ONCE'].includes(billing?.renewalMode ?? '')
+            ? ' หากต้องการใช้ต่อให้ซื้อแพ็กเกจใหม่ในหน้าการชำระเงิน' : billing?.renewalMode === 'PROMPTPAY_RENEW'
+              ? ' กรุณาเปิดบิลและสแกน QR ในหน้าการชำระเงิน' : '';
           const point = warningLadderPoint(row.termEndsAt, now);
           if (point === null) return false;
           const column = LADDER_SENT_COLUMN[point];
@@ -123,7 +131,7 @@ export class PlanTermSweepUseCase {
           const { daysLeft } = derivePlanTermState(row.termEndsAt, row.warningDays, now);
           await this.notify(row.companyId, row.company.name, {
             trigger: PLAN_TERM_EXPIRING_TRIGGER, severity: 'action', title: 'ใกล้ครบกำหนดใช้งาน',
-            body: (lineLinked) => warningMessageTh(row.company.name, row.termEndsAt, daysLeft, lineLinked),
+            body: (lineLinked) => warningMessageTh(row.company.name, row.termEndsAt, daysLeft, lineLinked) + nextStep,
             periodKey: `${row.termEndsAt.toISOString()}:${point}`,
           }, tx);
           return true;
