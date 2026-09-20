@@ -1,5 +1,5 @@
 import { test, expect } from './harness/fixtures';
-import { firstActiveBranch, gotoCompany, json, unique, useWorkspaceBranch } from './harness/e2e-utils';
+import { branchOptionName, chooseThemedOption, firstActiveBranch, gotoCompany, json, unique, useWorkspaceBranch } from './harness/e2e-utils';
 
 type Supplier = { id: string; displayNameSnapshot: string };
 type VendorBill = { id: string; status: string; dueDate: string; netPayableAmount: string; supplierId: string; supplierDocumentNumber?: string; taxInvoiceNumber?: string };
@@ -211,6 +211,39 @@ test.describe('AP — accounts payable', () => {
       expect(detail.taxInvoiceNumber).toBeUndefined();
     }
     expect(new Set(createdIds).size).toBe(2);
+  });
+
+  // Owner report 2026-09-20: on a multi-branch company with the header on 'ทุกสาขา (รวม)' the
+  // vendor-bill form posted that read filter's blank branch and came back 422
+  // TRANSACTION_BRANCH_REQUIRED with nowhere to answer it. The form now carries the shared
+  // 'สาขาของรายการ' field, exactly like the accounting draft form (ACCT-02). No branch is seeded
+  // into localStorage here on purpose — that IS the all-branches state.
+  test('AP-06 @p1 creates a vendor bill from the all-branches header by choosing the transaction branch', async ({ authedPage, api, companyId }, info) => {
+    const branch = await firstActiveBranch(api, companyId);
+    await authedPage.setViewportSize({ width: 390, height: 844 });
+    await gotoCompany(authedPage, companyId, '/accounts-payable');
+    await expect(authedPage.getByRole('button', { name: 'เลือกสาขา' })).toHaveText('ทุกสาขา (รวม)');
+    const form = authedPage.locator('form').filter({ has: authedPage.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }) });
+    const branchField = form.getByRole('combobox', { name: 'สาขาของรายการ', exact: true });
+    // The company's own branch, not the supplier's branch printed on the bill.
+    await expect(branchField).toHaveAccessibleDescription(/ไม่ใช่สาขาของผู้ขาย/);
+    await expect(branchField).toHaveAttribute('aria-invalid', 'true');
+    await form.getByLabel('รายละเอียดสินค้า/บริการ', { exact: true }).fill(unique('UI all-branches bill'));
+    await form.getByLabel('ราคาต่อหน่วย (บาท)', { exact: true }).fill('100.00');
+    await chooseThemedOption(authedPage, branchField, branchOptionName(branch));
+    await expect(branchField).not.toHaveAttribute('aria-invalid', 'true');
+    await authedPage.screenshot({ path: info.outputPath('ap-vendor-bill-branch-390.png'), fullPage: true });
+    expect(await authedPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+    const endpoint = `/companies/${companyId}/accounts-payable/vendor-bills`;
+    const [created] = await Promise.all([
+      authedPage.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith(endpoint)),
+      form.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click(),
+    ]);
+    expect(created.status(), await created.text()).toBe(201);
+    expect(created.request().postDataJSON().branchId).toBe(branch.id);
+    const detail = await json<VendorBill & { branchId?: string }>(await api.get(`${endpoint.slice(1)}/${(await created.json() as VendorBill).id}`));
+    expect(detail.branchId).toBe(branch.id);
   });
 
   test('AP-05 @p1 a background supplier-load failure does not steal focus or scroll', async ({ authedPage, companyId }) => {
