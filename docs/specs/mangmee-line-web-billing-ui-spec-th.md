@@ -1,5 +1,7 @@
 # จ่ายค่าสมาชิกจาก LINE และเว็บ — journey, routes และ UI
 
+> **ทางเลือกการชำระ 2026-09-20:** [สเปกบัตรจ่ายครั้งเดียวและ PromptPay QR](billing-promptpay-qr-spec-th.md) เพิ่ม consent/สถานะเฉพาะ mode. ข้อความเดิมในเอกสารนี้ที่บอกว่าทุกการซื้อจะต่ออายุอัตโนมัติใช้เฉพาะ `CARD_AUTO`; `CARD_ONCE` ไม่มี next charge และยัง pending implementation.
+
 > แก้ไข 2026-09-16: เรื่องอีเมลใช้ [spec สมัคร LINE แบบไม่บังคับอีเมลและยืนยัน OTP ก่อนจ่าย](signup-optional-email-otp-billing-spec-th.md) เป็นกฎปัจจุบัน: อีเมลติดต่อร้านใน LINE เป็นทางเลือก, web claim ยังต้องมีอีเมล, การอนุมัติชำระใหม่ต้องใช้อีเมลบัญชีที่ยืนยันแล้ว และเปลี่ยนผู้รับเอกสารเดิมของบริษัทด้วยการตรวจและยืนยันแยก ข้อความเดิมด้านล่างที่ขัดกันเป็นประวัติ ไม่ใช่กฎสำหรับ implementation รอบนี้
 > **Current delivery checkpoint — 2026-09-16:** โค้ดตามขอบเขตที่อนุมัติและ local acceptance ผ่านแล้ว ดู [ผลปัจจุบัน](../evidence/billing-integration-2026-09-13/final-integration-result.json), [CT/AP 57 กลุ่ม](../evidence/billing-integration-2026-09-13/final-acceptance-map.md) และ [สถานะส่งมอบ](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). กำลังรอ CI ก่อน Admin merge develop/main ทั้งสอง repo; ไม่ deploy. Native provider/device acceptance เป็นขั้นก่อนเปิดบริการจริง ข้อความ IN PROGRESS/BLOCKED/NOT RUN ตามวันที่เก่าด้านล่างเป็นประวัติและไม่ใช่งานโค้ดค้างปัจจุบัน. OTP/passwordless/auto-provision เป็นงานแยก ไม่รวมในขอบเขตส่งมอบของ branch billing นี้.
 

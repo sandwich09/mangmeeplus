@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import type {BillingAccount,BillingInvoice} from '../../../generated/prisma/client';
 import {configurationHash} from '../domain/billing-policy';
-import {refundNoteProjection,refundPreview,observedRefund} from './billing-refund-source';
+import {assertOriginalInvoiceCharge,refundNoteProjection,refundPreview,observedRefund} from './billing-refund-source';
 import type {StripeClient} from '../infrastructure/stripe.client';
 
 const account={id:'account',customerId:'cus_Test',livemode:false} as BillingAccount;
@@ -50,4 +50,16 @@ test('positive discovery binds original command, charge and one refund; a note a
   refund={...refund,charge:'ch_Foreign'};await assert.rejects(observe());refund={...refund,charge:'ch_Test'};
   source.notes.push(n);await assert.rejects(observe());source.notes.pop();n.metadata.billingSourceHash='changed';await assert.rejects(observe());n.metadata.billingSourceHash='source';
   (n.refunds[0] as any).payment_record_refund={payment_record:'pyr_Test'};await assert.rejects(observe());
+});
+test('refund source accepts only the payment method in the original paid contract', async () => {
+  const qrInvoice = { ...invoice, contractSnapshot: { quote: { purchaseMode: 'PROMPTPAY_ONCE' } } } as BillingInvoice;
+  const charge = { payment_intent: 'pi_Test', payment_method_details: { type: 'promptpay' } };
+  const stripe = { request: async (_method: string, path: string) => path === '/invoice_payments'
+    ? { object: 'list', has_more: false, data: [{ id: 'inpay_Test', object: 'invoice_payment', livemode: false, status: 'paid',
+        invoice: 'in_Test', payment: { type: 'payment_intent', payment_intent: 'pi_Test' }, amount_paid: 10700, currency: 'thb' }] }
+    : { id: 'pi_Test', object: 'payment_intent', livemode: false, currency: 'thb', status: 'succeeded',
+        customer: 'cus_Test', amount_received: 10700, latest_charge: 'ch_Test' } } as unknown as StripeClient;
+  await assert.doesNotReject(assertOriginalInvoiceCharge(stripe, account, qrInvoice, charge));
+  charge.payment_method_details.type = 'card';
+  await assert.rejects(assertOriginalInvoiceCharge(stripe, account, qrInvoice, charge));
 });

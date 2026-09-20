@@ -80,6 +80,10 @@ export class BillingCollection {
     const accepted = await collectionContract(this.prisma.client, account);
     let snapshot = accepted.future, change: PlanChangeSource | undefined;
     const { sub, schedule } = await this.provider(account), target = account.paidThrough.getTime() / 1000;
+    const promptPayRenew = account.renewalMode === 'PROMPTPAY_RENEW' && snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW';
+    if (promptPayRenew && (changing(action) || schedule || sub.collection_method !== 'send_invoice' ||
+        sub.payment_settings?.payment_method_types?.length !== 1 || sub.payment_settings.payment_method_types[0] !== 'promptpay'))
+      throw review();
     if (changing(action)) {
       if (account.paidThrough.getTime() <= Date.now()+600000 || account.cancelAtPeriodEnd || account.graceEndsAt || sub.status !== 'active' || sub.cancel_at || sub.cancel_at_period_end) throw review();
       const company = await this.prisma.client.company.findUniqueOrThrow({ where: { id: context.companyId }, include: { planTerm: true } });
@@ -111,11 +115,13 @@ export class BillingCollection {
         await this.billing.assertTaxSettings(snapshot.policy);
       }
     }
-    if (snapshot.policy.cancellation !== 'PERIOD_END' || sub.billing_mode?.type !== 'classic' || sub.collection_method !== 'charge_automatically' ||
-      sub.pause_collection || sub.pending_update || !simpleCollection(sub) || sub.items?.data?.length !== 1 || sub.items.has_more ||
+    if (snapshot.policy.cancellation !== 'PERIOD_END' || sub.billing_mode?.type !== 'classic' ||
+      sub.collection_method !== (promptPayRenew ? 'send_invoice' : 'charge_automatically') ||
+      sub.pause_collection || sub.pending_update || !simpleCollection(promptPayRenew ? { ...sub, collection_method: 'charge_automatically' } : sub) ||
+      sub.items?.data?.length !== 1 || sub.items.has_more ||
       sub.items.data[0].quantity !== 1 || (sub.items.data[0].discounts?.length ?? 0)) throw review();
-    if (action === 'RESUME_RENEWAL' && (account.paidThrough <= new Date() || sub.status !== 'active')) throw review();
-    if (!['active', 'past_due', 'unpaid'].includes(sub.status)) throw review();
+    if (action === 'RESUME_RENEWAL' && (account.paidThrough <= new Date() || !['active', ...(promptPayRenew ? ['trialing'] : [])].includes(sub.status))) throw review();
+    if (!['active', 'past_due', 'unpaid', ...(promptPayRenew ? ['trialing'] : [])].includes(sub.status)) throw review();
     let method: Proposed['method'] = 'POST', path = `/subscriptions/${sub.id}`, params: Record<string, unknown>;
     if (account.paidThrough <= new Date()) {
       if (schedule) throw review();
@@ -194,9 +200,13 @@ export class BillingCollection {
   }
   private observed(p: Proposed, sub: StripeObject, schedule: StripeObject | null, id: string) {
     const cancel = p.action === 'CANCEL_RENEWAL', target = Date.parse(p.paidThrough) / 1000;
+    const promptPayRenew = p.snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW';
     if (sub.status === 'canceled') return cancel && !changing(p.action);
     if (p.method === 'DELETE') return false;
-    if (sub.billing_mode?.type !== 'classic' || !(cancel ? ['active', 'past_due', 'unpaid'] : ['active']).includes(sub.status) || sub.pause_collection || sub.pending_update || !simpleCollection(sub) || sub.items?.has_more ||
+    if (sub.billing_mode?.type !== 'classic' || !(cancel ? ['active', 'past_due', 'unpaid', ...(promptPayRenew ? ['trialing'] : [])] :
+      ['active', ...(promptPayRenew ? ['trialing'] : [])]).includes(sub.status) || sub.pause_collection || sub.pending_update ||
+      sub.collection_method !== (promptPayRenew ? 'send_invoice' : 'charge_automatically') ||
+      !simpleCollection(promptPayRenew ? { ...sub, collection_method: 'charge_automatically' } : sub) || sub.items?.has_more ||
       sub.items?.data?.length !== 1 || sub.items.data[0].quantity !== 1 || (sub.items.data[0].discounts?.length ?? 0)) return false;
     if (!schedule) return !p.params.phases && stripeId(sub.items.data[0].price) === p.snapshot.priceId && sub.items.data[0].current_period_end === target &&
       sameTaxes(sub.items.data[0].tax_rates, p.snapshot.policy.taxRateId) && sub.metadata?.mangmeeCollectionOperation === id && sub.cancel_at_period_end === cancel && (cancel ? sub.cancel_at === target : !sub.cancel_at);

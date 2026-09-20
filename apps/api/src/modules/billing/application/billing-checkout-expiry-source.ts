@@ -17,7 +17,7 @@ export function checkoutExpirySession(account:BillingAccount,attempt:BillingAtte
     !quote||quote.quoteId!==attempt.quoteId||quote.companyId!==account.companyId||quote.policyRevision!==attempt.policyRevisionId||
     quote.consentRevision!==attempt.consentRevision||!integer(quote.totalSatang)||quote.totalSatang<1||
     !session||session.object!=='checkout.session'||session.id!==attempt.checkoutSessionId||session.livemode!==account.livemode||
-    session.mode!==(snapshot.repeat?'payment':'subscription')||stripeId(session.customer)!==account.customerId||session.client_reference_id!==attempt.id||
+    session.mode!==(snapshot.repeat||['CARD_ONCE','PROMPTPAY_ONCE','PROMPTPAY_RENEW'].includes(quote.purchaseMode??'')?'payment':'subscription')||stripeId(session.customer)!==account.customerId||session.client_reference_id!==attempt.id||
     session.metadata?.billingAccountId!==account.id||session.metadata?.billingAttemptId!==attempt.id||session.currency!=='thb'||session.amount_total!==quote.totalSatang||
     !['open','expired','complete'].includes(session.status)||!['paid','unpaid','no_payment_required'].includes(session.payment_status)||
     !instant(session.created)||!instant(session.expires_at)||session.created>=session.expires_at||session.recovered_from!=null||session.after_expiration?.recovery?.enabled===true)throw invalid();
