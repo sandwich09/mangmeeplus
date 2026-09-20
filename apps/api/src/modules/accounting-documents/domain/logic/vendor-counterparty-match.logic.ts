@@ -37,19 +37,22 @@ function toAsciiDigits(value: string | null | undefined): string {
     .replace(/\D/g, '');
 }
 
-// Thai สระอำ (SARA AM, U+0E33) has no Unicode canonical decomposition, so neither NFC nor NFKC
-// ever unifies it with the visually-identical two-character spelling นิคหิต+สระอา (U+0E4D U+0E32)
-// that legacy TIS-620 conversions, some fonts, and OCR output produce instead. Both a folded
-// abbreviation (ต. -> ตำบล, written here with the precomposed form) and a hand-typed or scanned
-// "ตำบล" must compare equal regardless of which spelling produced it, so this runs before any
-// other comparison fold.
+// NFKC already unifies Thai สระอำ: U+0E33 has a COMPATIBILITY decomposition to นิคหิต+สระอา
+// (U+0E4D U+0E32), so both spellings — the precomposed one and the two-character one produced by
+// legacy TIS-620 conversions, some fonts and OCR — come out of NFKC as the decomposed pair.
+// This fold then puts them back to the precomposed form, and that is load-bearing, not
+// decorative: the abbreviation table below substitutes literals such as 'ตำบล' that are written
+// precomposed in THIS source file and are therefore inserted AFTER the NFKC pass. Without the
+// fold, "ต.บางโฉลง" (expanded to a precomposed 'ตำบล') and a typed "ตำบลบางโฉลง" (decomposed by
+// NFKC) would compare unequal. Run it before the table, never after.
 function foldThaiSaraAm(value: string): string {
   return value.replace(/ํา/g, 'ำ');
 }
 
 // Same mirroring note as toAsciiDigits: expense-duplicate.logic.ts's normalizeVendorName is
 // module-private. Matching must fold names identically to duplicate-detection's fold, or the
-// same store could match under one code path and miss under the other.
+// same store could match under one code path and miss under the other. That file's NFKC pass
+// already handles สระอำ on its own (see above) — it has no such bug to fix.
 function normalizeVendorName(value: string | null | undefined): string {
   return foldThaiSaraAm(String(value ?? '').normalize('NFKC')).toLowerCase().replace(/[\p{P}\p{S}\s]+/gu, '');
 }
