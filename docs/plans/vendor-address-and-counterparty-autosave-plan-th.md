@@ -32,6 +32,36 @@
 
 นอกขอบเขต: ฝั่งรายได้, ตัวพิมพ์ 50 ทวิ, merge คู่ค้า, ข้อมูลธนาคารคู่ค้า, deploy
 
+## สัญญา Theme (บังคับทุกงานฝั่งเว็บของแผนนี้)
+
+หน้าคู่ค้าเป็นหน้าใหม่หน้าแรกของโมดูลนี้ จึงต้องถูกบังคับให้อยู่ในระบบดีไซน์เดิมตั้งแต่บรรทัดแรก ห้ามสร้างชุดสีหรือชุดปุ่มของตัวเอง
+
+**สี ตัวอักษร ระยะ** มาจาก `packages/design-tokens/generated/web/theme.css` เท่านั้น: `--color-brand-25..900` (brand-500 = #22c55e), `--color-gray-25..900`, `--color-success-*`, `--color-warning-*`, `--color-danger-*`, `--font-family-sans` ห้ามเขียนค่าสีดิบ (hex/rgb) ในไฟล์ใหม่ ยกเว้นกรณีที่ไฟล์ข้างเคียงทำอยู่แล้วและมีคอมเมนต์อธิบายเหตุผล
+
+**คลาสสำเร็จรูป** ใน `apps/web/app/globals.css` ใช้ตามชื่อ ไม่สร้างใหม่: `mangmee-page` `mangmee-card` `mangmee-card-header` `mangmee-card-body` `mangmee-card-muted` `mangmee-input` `mangmee-btn` + `mangmee-btn-primary|secondary|danger` `mangmee-badge` + โทน `brand|sky|amber|rose|teal|slate|purple|lime|cyan|indigo|line|danger` `mangmee-table` `mangmee-table-scroll` `mangmee-tab` `mangmee-tab-active` `mangmee-segmented` `mangmee-stat-card` `mangmee-icon-frame` + `mangmee-icon-tone-*` `mangmee-safe-bottom`
+
+**ตัวช่วยคลาส** นำเข้าจาก `@/features/expenses/ExpensesUi`: `inputClass` `btnClass` `ghostClass` `dangerClass` (ฝั่ง employee-access มีชุดชื่อเดียวกันแต่เป็น Tailwind ดิบ — ห้ามนำเข้าชุดนั้นมาใช้ในโมดูลนี้ เพราะจะได้ปุ่มคนละแบบ)
+
+**คอมโพเนนต์ที่ต้องใช้แทนการเขียนเอง**
+
+| ต้องการ | ใช้ |
+|---|---|
+| โครงหน้า หัวข้อ ปุ่มมุมขวา | `MangmeePage`, `MangmeeCard`, `MangmeeBadge`, `cx` จาก `@/common/components/mangmee` |
+| ช่องกรอก | `TextField` `TextareaField` `SelectField` `SwitchField` `FieldError` จาก `@/common/components/field` หรือ `inputClass` กับ `<label>` จริงเมื่อต้องการโครงเอง |
+| ดรอปดาวน์ / วันที่ / ไฟล์ | `ThemedSelect` `ThemedDate` `ThemedFile` (มี portal แก้ปัญหาแผงถูกตัดอยู่แล้ว ห้ามเขียน `<select>` ดิบในฟอร์มใหม่) |
+| สถานะหน้า | `LoadingState` `ErrorState` `EmptyState` `ForbiddenState` `CoverLoader` จาก `@/common/components/state` |
+| กล่องยืนยัน | `Modal` `AlertModal` `useConfirm` จาก `@/common/components/modal` |
+| แถบขั้นตอน | `ThemedSteps` จาก `@/common/components/steps` |
+| ไอคอน | ชุด `ICON` ใน `ExpensesUi.tsx` หรือ inline SVG stroke 1.9 แบบเดียวกัน ห้ามใช้อิโมจิ |
+
+**เมนูและเส้นทาง** เพิ่มรายการเมนูที่ `packages/contracts/src/menu-entitlements.ts` ด้วยรูปแบบเดียวกับ `reimbursements` (`navKey` `labelTh` `group: 'finance'` `iconKey` `parentFeatureKey` `entitlementKeys` `gatePermissions` `status`) แล้วใส่ `navKey` ลง `DESIGN_HANDOFF_NAV_ORDER` ใน `WorkspaceLayout.tsx` ให้อยู่ต่อจาก `expenses` ห้ามแก้ลำดับรายการอื่น
+
+**โครงไฟล์** ตาม `docs/guidelines/web-frontend-code-style.md`: `apps/web/src/features/counterparties/` แยก `*.api.ts` `*.model.ts` `*.logic.ts` และคอมโพเนนต์ ห้ามรวม markup กับ logic กับ API ในไฟล์เดียว
+
+**มือถือมาก่อน** ออกแบบที่ 390 px ก่อนเสมอ เป้าแตะสูงอย่างน้อย 44 px ใช้ `dvh` ไม่ใช่ `vh` ไม่มี scroll แนวนอน ป้ายและชิปต้องไม่ล้นขอบ
+
+**ตรวจก่อนส่งงาน** ผู้คุมงานจะ grep หาค่าสีดิบ `#` ในไฟล์ใหม่ และหา `<select` `<button class="bg-` ที่ไม่ผ่านคลาสกลาง งานที่ไม่ผ่านสองข้อนี้จะถูกตีกลับ
+
 ## Phase 0: Discovery และยืนยันสมมติฐาน
 
 - [x] เจ้าของดูตัวอย่างหน้าจอรอบแรก (20 ก.ย. 2569) ให้ความเห็น 4 ข้อ: รหัสสาขาไม่บังคับและจัดแนวใหม่, ตัดกล่องเปรียบเทียบที่อยู่บนหน้าตรวจ, ไม่ใช้ dropdown สาขา, ตัดตัวเลือกประเภท → สเปค A4–A6 และ mockup v2
