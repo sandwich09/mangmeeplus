@@ -15,6 +15,8 @@ import type {
   AccountingPaymentRecordStatus,
   AccountingCounterpartyType,
   AccountingCounterpartyStatus,
+  BuyerEntityKind,
+  BuyerVatStatus,
   AccountingTaxInvoiceType,
   AccountingQuotationApprovalStatus,
   AccountingAdjustmentReasonCode,
@@ -27,11 +29,16 @@ import type {
 export type CounterpartyRecord = {
   id: string;
   companyId: string;
+  /** A5/§12: server-owned. VENDOR when a purchase created it, BOTH once the sales side uses it. */
   type: AccountingCounterpartyType;
   displayName: string;
   legalName?: string;
   taxId?: string;
   branchCode?: string;
+  /** CON-7: same `BuyerEntityKind` as `ExpenseRecord.vendorEntityKindSnapshot`, so it passes both ways. */
+  entityKind?: BuyerEntityKind;
+  /** CON-13: sell-side data. Displayed as a label on the vendor side, never a purchase-VAT condition. */
+  vatStatus?: BuyerVatStatus;
   email?: string;
   phone?: string;
   billingAddressJson?: Record<string, unknown>;
@@ -41,6 +48,19 @@ export type CounterpartyRecord = {
   updatedByUserId?: string;
   createdAt: Date;
   updatedAt: Date;
+};
+
+/** §12 detail extras. Counted from documents, because `type` is no longer a usage label (A5). */
+export type CounterpartyUsage = {
+  usageCounts: { bought: number; sold: number };
+  recentExpenses: Array<{ id: string; expenseDate: string; vendorDocumentNumber?: string; grandTotalAmount: string }>;
+};
+
+export type ListCounterpartiesFilter = {
+  search?: string;
+  /** §12: derived from real documents, NOT from `type` — there is no type filter anywhere (A5). */
+  usage?: 'bought' | 'sold';
+  addressMissing?: boolean;
 };
 
 export type DocumentLineRecord = {
@@ -177,11 +197,13 @@ export type PaymentAllocationRecord = {
 // Input types for create/update operations
 export type CreateCounterpartyInput = {
   companyId: string;
+  /** Decided by the server, never by an HTTP body (A5). CRM/procurement set it directly. */
   type: AccountingCounterpartyType;
   displayName: string;
   legalName?: string;
   taxId?: string;
   branchCode?: string;
+  entityKind?: BuyerEntityKind;
   email?: string;
   phone?: string;
   billingAddressJson?: Record<string, unknown>;
@@ -196,12 +218,15 @@ export type UpdateCounterpartyInput = {
   legalName?: string;
   taxId?: string;
   branchCode?: string;
+  entityKind?: BuyerEntityKind;
   email?: string;
   phone?: string;
   billingAddressJson?: Record<string, unknown>;
   shippingAddressJson?: Record<string, unknown>;
   status?: AccountingCounterpartyStatus;
   updatedByUserId: string;
+  /** §11.1: optimistic concurrency for the counterparty screen; a mismatch is `counterparty_conflict`. */
+  expectedUpdatedAt?: Date;
 };
 
 export type CreateDocumentLineInput = {

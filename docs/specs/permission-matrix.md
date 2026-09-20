@@ -209,14 +209,32 @@ Default grants:
 ```text
 ALL company roles: accounting.document.read_related; this is view-only, sales_documents-entitlement-gated, and returns only tenant/branch-scoped related records
 OWNER: all accounting document permissions
-ADMIN: accounting.counterparty.read, accounting.document.read, accounting.quotation.read, accounting.invoice.read, accounting.billing_note.read, accounting.receipt.read, accounting.tax_invoice.read, accounting.credit_note.read, accounting.debit_note.read, accounting.payment.read
+ADMIN: accounting.counterparty.read, accounting.counterparty.manage, accounting.document.read, accounting.quotation.read, accounting.invoice.read, accounting.billing_note.read, accounting.receipt.read, accounting.credit_note.read, accounting.debit_note.read, accounting.tax_invoice.read, accounting.payment.read
 SALES: accounting.counterparty.read, accounting.quotation.read, accounting.quotation.create, accounting.quotation.update, accounting.quotation.submit_approval, accounting.quotation.issue after approval, accounting.invoice.read where own/assigned, accounting.billing_note.read where own/assigned, accounting.receipt.read where own/assigned, accounting.payment.read where own/assigned
 FINANCE: all accounting document permissions
 ACCOUNTANT: accounting.counterparty.read, accounting.document.read, accounting.quotation.read, accounting.invoice.read, accounting.billing_note.read, accounting.receipt.read, accounting.tax_invoice.read, accounting.credit_note.read, accounting.debit_note.read, accounting.payment.read, accounting.document.export
 AUDITOR_READONLY: accounting.counterparty.read, accounting.document.read, accounting.quotation.read, accounting.invoice.read, accounting.billing_note.read, accounting.receipt.read, accounting.tax_invoice.read, accounting.credit_note.read, accounting.debit_note.read, accounting.payment.read, accounting.document.export
 MANAGER: accounting.document.read where ABAC allows team/summary, accounting.quotation.approve where ABAC allows team
 INVENTORY, MARKETING, STAFF: no accounting document mutation permissions by default
+pack.expense.review: accounting.counterparty.read
 ```
+
+Counterparty grants, vendor-address spec §12.1 (CON-2), 20 September 2026 — no new keys, only
+existing ones handed out where the journey needs them:
+
+- `ADMIN` gains `accounting.counterparty.read` + `accounting.counterparty.manage`. An expense save
+  auto-creates and fills counterparties (spec D4), and the toast announcing it links to the
+  counterparty page; ADMIN previously held no counterparty key at all, so that link dead-ended for
+  the role that works expenses owner-equal (Item 09 decision, 2026-07-26).
+- The `pack.expense.review` capability pack gains `accounting.counterparty.read` — the reviewer is
+  who sees that toast. Read only: changing a primary address, promoting an address from history and
+  the "ล็อกที่อยู่หลัก" switch all still require `accounting.counterparty.manage`.
+- Creating and filling a counterparty automatically is NOT gated on
+  `accounting.counterparty.manage` (assumption A3, precedent `EnsureCustomerCounterpartyUseCase`):
+  it is a side effect of an expense write that already passed permission and entitlement checks, and
+  every one is audited with `metadataJson.source = 'expense_auto_link'`.
+- A user without `accounting.counterparty.read` still types addresses on the expense; the toast just
+  drops its "ดู" link.
 
 ## 5.3 Expense Permission Keys
 

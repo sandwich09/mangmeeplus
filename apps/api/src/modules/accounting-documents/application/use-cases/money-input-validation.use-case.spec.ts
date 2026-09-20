@@ -495,7 +495,8 @@ describe('P27 BLOCK_NEW_ROOT mutation coverage', () => {
       },
     } as any;
     await assert.rejects(() => new CreateCounterpartyUseCase(repo, audit, closedTransactionalGate)
-      .execute(mutationCtx, { type: 'CUSTOMER', displayName: 'Blocked customer' }));
+      // A5: the body no longer carries `type` — the server owns it.
+      .execute(mutationCtx, { displayName: 'Blocked customer' }));
     await assert.rejects(() => new UpdateCounterpartyUseCase(repo, audit, closedTransactionalGate)
       .execute(mutationCtx, 'cp-1', { displayName: 'Blocked update' }));
     assert.equal(writes, 0);

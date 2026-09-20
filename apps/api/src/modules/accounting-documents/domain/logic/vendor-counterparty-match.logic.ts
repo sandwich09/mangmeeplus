@@ -191,12 +191,23 @@ export function buildCounterpartyAddressV2(input: {
   const history = (appended
     ? [appended, ...existing.filter((entry) => normalizeThaiAddress(entry.addressText) !== normalizeThaiAddress(appended.addressText))]
     : existing
-  ).slice(0, MAX_SEEN_ON_DOCUMENTS);
+  )
+    // History means "the OTHER addresses seen on documents". Whatever is becoming the primary is no
+    // longer one of them — without this, promoting an address from the card leaves it listed twice,
+    // once as the primary and once under it, and the "ใช้อันนี้เป็นหลัก" button stays on the row
+    // that is already primary.
+    .filter((entry) => normalizeThaiAddress(entry.addressText) !== normalizeThaiAddress(input.addressText))
+    .slice(0, MAX_SEEN_ON_DOCUMENTS);
 
   return {
     addressText: input.addressText,
     postalCode: input.postalCode ?? null,
     ...(structured ? { structured } : {}),
+    // A4: the lock belongs to the counterparty, not to whichever write last rebuilt this JSON.
+    // Carried forward like `structured`, or every auto-save would quietly unlock a registry the
+    // owner locked on purpose — exactly the silent behaviour change D5 forbids. Only the
+    // counterparty screen's switch clears it.
+    ...(previous?.locked === true ? { locked: true } : {}),
     provenance: {
       source: input.source,
       ...(input.expenseId ? { expenseId: input.expenseId } : {}),
