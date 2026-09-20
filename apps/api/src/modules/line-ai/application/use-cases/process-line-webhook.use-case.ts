@@ -267,6 +267,16 @@ const SUPPORT_FOLLOW_UP_REPLIES = {
 type SupportFollowUpOutcome = keyof typeof SUPPORT_FOLLOW_UP_REPLIES;
 /** §3 PDPA: one line of context for the operator, never a transcript. */
 const SUPPORT_LAST_MESSAGE_MAX_LENGTH = 200;
+/** สัญญา v3 ข้อ 9: the thread keeps the customer's whole sentence, the row keeps its 200-char summary. */
+const SUPPORT_THREAD_TEXT_MAX_LENGTH = 2000;
+/**
+ * สัญญา v3 ข้อ 10/12: what one live request may accumulate. An UNLINKED stranger can open a request
+ * (three a day) and then write to it for as long as it stays live, so without a ceiling one LINE
+ * account could fill Postgres with photos. Fifty stored files and five hundred bubbles is more than
+ * any real conversation has needed; past that the row is kept and marked, never the bytes.
+ */
+const SUPPORT_THREAD_MAX_MESSAGES = 500;
+const SUPPORT_THREAD_MAX_MEDIA = 50;
 const PACKAGE_CHANGE_ACCEPTED_REPLY = '📦 รับคำขอแล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
 const PACKAGE_CHANGE_NOT_OWNER_REPLY = '📦 การเปลี่ยนแพ็กเกจต้องให้เจ้าของร้านเป็นคนขอนะคะ รบกวนแจ้งเจ้าของร้านให้พิมพ์ '
   + '"ขอเปลี่ยนแพ็กเกจ" ในแชทนี้ได้เลยค่ะ';
@@ -2175,6 +2185,11 @@ export class ProcessLineWebhookUseCase {
           ...(asker?.lastMessageText
             ? { requestText: asker.lastMessageText, lastMessageText: asker.lastMessageText }
             : {}),
+          // สัญญา v3 ข้อ 9: the same sentence opens the chat an operator reads, so the thread starts
+          // where the question does rather than at the first follow-up.
+          ...(asker?.lastMessageText
+            ? { messages: { create: { direction: 'CUSTOMER', kind: 'TEXT', text: asker.lastMessageText } } }
+            : {}),
         },
         select: { id: true },
       });
@@ -2344,7 +2359,7 @@ export class ProcessLineWebhookUseCase {
   private async recordSupportFollowUp(
     lineUserId: string,
     requestId: string,
-    message: { text?: string },
+    message: { text?: string; lineMessageId?: string },
   ): Promise<SupportFollowUpOutcome> {
     try {
       const live = await this.findLiveSupportRequest(lineUserId);
@@ -2366,6 +2381,16 @@ export class ProcessLineWebhookUseCase {
         },
       });
       if (moved.count === 0) return 'none';
+      // สัญญา v3 ข้อ 9: the WHOLE sentence goes on the thread; the row above keeps its summary.
+      // Best effort inside this best effort: the request is recorded already, and a thread hiccup
+      // must not turn "recorded" into "none" and tell the customer nobody got their message.
+      if (text) {
+        await this.appendSupportMessage(live.id, {
+          direction: 'CUSTOMER', kind: 'TEXT',
+          text: message.text!.trim().slice(0, SUPPORT_THREAD_TEXT_MAX_LENGTH),
+          ...(message.lineMessageId ? { lineMessageId: message.lineMessageId } : {}),
+        });
+      }
       // EXTEND ONLY, never create (review 2026-09-06 N2). `live.companyId` is whatever the row
       // recorded when it was filed, checked against nobody since — and §2.5 DELETES this row on
       // unlink, so an upsert here rebuilt an ex-member's context pointing at the shop they left.
@@ -2409,16 +2434,108 @@ export class ProcessLineWebhookUseCase {
    * and §3 keeps the bytes out. Best effort, like the follow-up beside it — a receipt must never be
    * lost because the support table could not be written.
    */
-  private async stampSupportMedia(lineUserId: string): Promise<void> {
+  private async stampSupportMedia(event: LineReceiptUploadEvent): Promise<void> {
+    const live = await this.findLiveSupportRequest(event.lineUserId).catch((error: unknown) => {
+      this.logger.warn({ msg: 'line_support_media_not_recorded', ...safeLineErrorDetails(error) });
+      return null;
+    });
+    if (!live) return;
     try {
-      const live = await this.findLiveSupportRequest(lineUserId);
-      if (!live) return;
       await this.prisma.client.lineSupportRequest.updateMany({
         where: { id: live.id, status: live.status },
         data: { lastMediaAt: new Date() },
       });
     } catch (error) {
       this.logger.warn({ msg: 'line_support_media_not_recorded', ...safeLineErrorDetails(error) });
+      return;
+    }
+    await this.storeSupportMedia(live.id, event);
+  }
+
+  /**
+   * สัญญา v3 ข้อ 10 (Owner 2026-09-20): the picture itself, for the operator's chat. The marker above
+   * already said "a photo arrived"; this keeps the bytes so they can see WHICH — through the same
+   * checks the receipt lane applies (type, size, signature, malware), and with the same honesty when
+   * they fail: a row carrying `mediaError` rather than a bubble that pretends.
+   *
+   * The row is CLAIMED before any byte moves (unique on `lineMessageId`, like `ensurePendingMedia`):
+   * a redelivered webhook loses that race and never downloads or stores a second copy. Still best
+   * effort, like the marker — a receipt must never be lost because a support table could not be
+   * written. ponytail: a live support thread plus a linked receipt downloads the bytes twice (once
+   * here, once for the draft); share the download when that ever shows up in a timing.
+   */
+  private async storeSupportMedia(requestId: string, event: LineReceiptUploadEvent): Promise<void> {
+    const claimed = await this.appendSupportMessage(requestId, {
+      direction: 'CUSTOMER', kind: event.messageType === 'image' ? 'IMAGE' : 'FILE',
+      lineMessageId: event.lineMessageId,
+      ...(event.fileName ? { mediaFileName: event.fileName } : {}),
+    });
+    if (!claimed) return;
+    let outcome: { mediaError: string } | { media: DownloadedLineMedia };
+    try {
+      // Counted AFTER the claim and INCLUDING it — every claimed photo/file that has not been
+      // refused — so a burst of concurrent photos cannot all squeeze under the ceiling: the ones
+      // past it see themselves in the count and stop before a byte moves.
+      const claimedMedia = await this.prisma.client.lineSupportMessage.count({
+        where: { requestId, kind: { in: ['IMAGE', 'FILE'] }, mediaError: null },
+      });
+      if (claimedMedia > SUPPORT_THREAD_MAX_MEDIA) {
+        await this.prisma.client.lineSupportMessage.update({ where: { id: claimed.id }, data: { mediaError: 'media_limit_reached' } });
+        return;
+      }
+      const downloaded = await this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize);
+      const rejection = downloaded.ok ? await this.lineMediaRejectionReason(downloaded.media) : null;
+      // Every download reason (no token, oversize, HTTP, timeout) is the same fact to an operator:
+      // the bytes are not here. The receipt lane keeps the typed reason on its own attempt row.
+      outcome = !downloaded.ok
+        ? { mediaError: 'media_fetch_failed' }
+        : rejection
+          ? { mediaError: rejection === 'MALWARE_SCAN_FAILED' ? 'media_scan_failed' : 'media_security_rejected' }
+          : { media: downloaded.media };
+    } catch (error) {
+      this.logger.warn({ msg: 'line_support_media_not_stored', ...safeLineErrorDetails(error) });
+      outcome = { mediaError: 'media_fetch_failed' };
+    }
+    try {
+      await this.prisma.client.lineSupportMessage.update({
+        where: { id: claimed.id },
+        data: 'media' in outcome
+          ? {
+            // Not `media.fileName`: the lane's default name carries the LINE message id, which §3
+            // keeps off the contract. A customer-supplied file name was recorded at the claim.
+            mediaMimeType: outcome.media.mimeType, mediaByteSize: outcome.media.byteSize,
+            // new Uint8Array(...) copies into a plain ArrayBuffer — Prisma's Bytes type.
+            blob: { create: { data: new Uint8Array(outcome.media.bytes) } },
+          }
+          : { mediaError: outcome.mediaError },
+      });
+    } catch (error) {
+      this.logger.warn({ msg: 'line_support_media_not_stored', ...safeLineErrorDetails(error) });
+    }
+  }
+
+  /**
+   * สัญญา v3 ข้อ 9: one bubble on the case's chat. Best effort like every support write beside a
+   * turn — a customer must never lose an answer because the thread table was unavailable — and
+   * silent on P2002, which is a redelivered webhook re-sending a `lineMessageId` already recorded.
+   */
+  // ponytail: count-then-insert, so a burst can overshoot the ceiling by the burst size; it bounds
+  // abuse, it is not an exact quota. A stored counter on the request would make it exact.
+  private async appendSupportMessage(requestId: string, data: {
+    direction: 'CUSTOMER' | 'STAFF'; kind: 'TEXT' | 'IMAGE' | 'FILE';
+    text?: string; lineMessageId?: string; mediaFileName?: string;
+  }): Promise<{ id: string } | null> {
+    try {
+      if (await this.prisma.client.lineSupportMessage.count({ where: { requestId } }) >= SUPPORT_THREAD_MAX_MESSAGES) {
+        this.logger.warn({ msg: 'line_support_thread_full', requestId });
+        return null;
+      }
+      return await this.prisma.client.lineSupportMessage.create({ data: { requestId, ...data }, select: { id: true } });
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'P2002') {
+        this.logger.warn({ msg: 'line_support_message_not_recorded', ...safeLineErrorDetails(error) });
+      }
+      return null;
     }
   }
 
@@ -3451,7 +3568,7 @@ export class ProcessLineWebhookUseCase {
       // conversation even though they have no account/company context to pause. Ordinary text is
       // their answer to that case; public menu/signup/resume commands keep their explicit routes.
       if (publicCommand === null) {
-        const recorded = await this.recordSupportFollowUp(event.lineUserId, requestId, { text: event.messageText });
+        const recorded = await this.recordSupportFollowUp(event.lineUserId, requestId, { text: event.messageText, lineMessageId: event.lineMessageId });
         if (recorded !== 'none') {
           await this.deliverReply(event, SUPPORT_FOLLOW_UP_REPLIES[recorded]);
           await this.updateEventLog(event.webhookEventId, 'support_follow_up');
@@ -3530,7 +3647,7 @@ export class ProcessLineWebhookUseCase {
       && !(await this.pendingCompanySelectionCommand(event))) {
       // Staying out of the thread is not the same as swallowing it (UAT 2026-09-06): what they just
       // wrote goes onto the request the operator answers from, and only then may the reply say so.
-      const recorded = await this.recordSupportFollowUp(event.lineUserId, requestId, { text: event.messageText });
+      const recorded = await this.recordSupportFollowUp(event.lineUserId, requestId, { text: event.messageText, lineMessageId: event.lineMessageId });
       await this.deliverReply(event, SUPPORT_FOLLOW_UP_REPLIES[recorded]);
       await this.updateEventLog(event.webhookEventId, 'support_paused');
       return;
@@ -5717,7 +5834,7 @@ export class ProcessLineWebhookUseCase {
     //
     // A MARKER only, and a marker is not a follow-up: it moves no clock, reopens nothing and
     // re-arms no mute (N1). See `stampSupportMedia`.
-    await this.stampSupportMedia(event.lineUserId);
+    await this.stampSupportMedia(event);
 
     const identity = await this.resolveLineIdentity(event);
     if (!identity || identity.user.status !== 'ACTIVE') {

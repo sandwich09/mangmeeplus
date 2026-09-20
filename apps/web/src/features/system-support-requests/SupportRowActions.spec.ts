@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { SupportRequestItemDto } from '@watchdog-bms/contracts';
+import type { SupportRequestItemDto, SupportRequestMessageDto } from '@watchdog-bms/contracts';
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 
 const { SupportRowActions, SupportInboxBody } =
   require('./SupportRequestsPage') as typeof import('./SupportRequestsPage');
+const { SupportThreadMessages } =
+  require('./SupportThreadModal') as typeof import('./SupportThreadModal');
 
 function item(overrides: Partial<SupportRequestItemDto> = {}): SupportRequestItemDto {
   return {
@@ -249,5 +251,71 @@ describe('SupportInboxBody — error, empty and the message cell, rendered', () 
     const markup = renderBody({ items: [item({ askerLabel: 'ผู้ที่ยังไม่ได้เปิดร้าน (มีคำขอสมัคร: ' + 'ร'.repeat(80) + ')' })] });
     assert.match(markup, /max-w-\[14rem\]/);
     assert.match(markup, /break-words font-medium/);
+  });
+});
+
+/**
+ * สัญญา v3 ข้อ 11: the chat behind a row, RENDERED — a stored photo must be a real image served by
+ * the content route, a staff reply must sit on the other side with its sender and delivery state,
+ * and a case raised before the thread existed must say so rather than invent a conversation.
+ */
+describe('SupportThreadMessages — the chat behind a row, rendered', () => {
+  const message = (overrides: Partial<SupportRequestMessageDto> = {}): SupportRequestMessageDto => ({
+    id: 'm-1', direction: 'CUSTOMER', kind: 'TEXT', hasContent: false,
+    createdAt: '2026-09-20T03:00:00.000Z', ...overrides,
+  });
+  const renderThread = (messages: SupportRequestMessageDto[], overrides: Partial<SupportRequestItemDto> = {}) =>
+    renderToStaticMarkup(React.createElement(SupportThreadMessages, { request: item(overrides), messages }));
+
+  it('shows a stored photo as a clickable image served by the content route', () => {
+    const markup = renderThread([message({ id: 'm-2', kind: 'IMAGE', hasContent: true, fileName: 'receipt.png' })]);
+    assert.match(markup, /<a href="\/api\/v1\/system\/support-requests\/sr-1\/messages\/m-2\/content" target="_blank"/);
+    assert.match(markup, /<img src="\/api\/v1\/system\/support-requests\/sr-1\/messages\/m-2\/content" alt="receipt.png"/);
+    assert.match(markup, /รูปภาพ · /);
+  });
+
+  it('puts the customer on the left and the staff reply on the right, with its sender and delivery state', () => {
+    const markup = renderThread([
+      message({ text: 'ช่วยด้วยค่ะ' }),
+      message({ id: 'm-3', direction: 'STAFF', text: 'ได้เลยค่ะ', senderName: 'พี่แอดมิน', deliveryStatus: 'FAILED' }),
+    ]);
+    assert.match(markup, /class="my-2 flex justify-start" data-direction="CUSTOMER"/);
+    assert.match(markup, /class="my-2 flex justify-end" data-direction="STAFF"/);
+    assert.match(markup, /ช่วยด้วยค่ะ/);
+    assert.match(markup, /ทีมงาน · พี่แอดมิน/);
+    assert.match(markup, /ส่งไม่สำเร็จ/);
+  });
+
+  it('says why a photo has no bytes rather than rendering nothing', () => {
+    const markup = renderThread([message({ id: 'm-4', kind: 'FILE', mediaError: 'media_security_rejected' })]);
+    assert.match(markup, /ไม่ผ่านการตรวจสอบความปลอดภัย/);
+    assert.doesNotMatch(markup, /<img/);
+  });
+
+  it('tells the truth about a case raised before the thread existed', () => {
+    const markup = renderThread([], { lastMessageText: 'ยังไม่ได้เลยค่ะ', lastReplyText: 'ลองใหม่ค่ะ', lastReplyByDisplayName: 'พี่แอดมิน' });
+    assert.match(markup, /ยังไม่มีข้อความในแชทนี้/);
+    assert.match(markup, /ยังไม่ได้เลยค่ะ/);
+    assert.match(markup, /พี่แอดมิน\) ตอบล่าสุด: “ลองใหม่ค่ะ”/);
+  });
+
+  it('offers the chat from every row, a closed one included, in place of the empty dash', () => {
+    const markup = renderToStaticMarkup(React.createElement(SupportRowActions, {
+      item: item({ status: 'CLOSED', companyId: undefined }), busy: false,
+      onClaim: () => {}, onRelease: () => {}, onTakeover: () => {}, onReply: () => {},
+      onResolve: () => {}, onResume: () => {}, onOpenThread: () => {},
+    }));
+    assert.match(markup, /เปิดแชท/);
+    assert.doesNotMatch(markup, />—</);
+  });
+
+  it('hides the row reply button inside the window while the composer is the way to answer', () => {
+    const props = {
+      item: item({ status: 'OPEN', assignedToMe: true, assignedAt: '2026-09-20T03:00:00.000Z' }), busy: false,
+      onClaim: () => {}, onRelease: () => {}, onTakeover: () => {}, onReply: () => {},
+      onResolve: () => {}, onResume: () => {},
+    };
+    assert.doesNotMatch(renderToStaticMarkup(React.createElement(SupportRowActions, { ...props, showReply: false })), /ตอบใน LINE/);
+    assert.match(renderToStaticMarkup(React.createElement(SupportRowActions, props)), /ตอบใน LINE/);
   });
 });
