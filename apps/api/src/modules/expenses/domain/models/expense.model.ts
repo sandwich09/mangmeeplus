@@ -11,6 +11,12 @@ import type {
 } from '@watchdog-bms/contracts';
 
 export type ExpenseRecord = {
+  /**
+   * Spec §7/§8: not a column — the outcome of this save's counterparty auto-save, so the review
+   * screen can show the toast (case a/b), the one-line notice (case c) or the "ยังไม่ได้บันทึกลง
+   * ทะเบียนคู่ค้า ลองใหม่ได้จากหน้าคู่ค้า" bar. Present only on a write response.
+   */
+  vendorCounterpartyAutoSave?: import('@watchdog-bms/contracts').VendorCounterpartyAutoSaveResult;
   costSourceExpenseId?: string;
   reimbursementProgress?: import('@watchdog-bms/contracts').ExpenseReimbursementProgress;
   id: string;

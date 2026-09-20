@@ -81,6 +81,12 @@ export type AccountingCounterpartySummary = {
 export type AccountingCounterpartyDetail = AccountingCounterpartySummary & {
   billingAddressJson?: Record<string, unknown>;
   shippingAddressJson?: Record<string, unknown>;
+  /**
+   * A5/§11.1: the screen shows "เคยซื้อ N ใบ / เคยขาย N ใบ" instead of a customer/vendor picker,
+   * and these are counted from real documents — `type` is a server-owned column now, not a label.
+   */
+  usageCounts?: { bought: number; sold: number };
+  recentExpenses?: Array<{ id: string; expenseDate: string; vendorDocumentNumber?: string; grandTotalAmount: string }>;
 };
 
 // Additive v2 shape for `AccountingCounterparty.billingAddressJson` (spec: vendor-address-and-
@@ -104,6 +110,28 @@ export type CounterpartyAddressV2 = {
   };
   /** Other addresses seen on documents for this counterparty, newest first, capped at 5. */
   seenOnDocuments?: Array<{ addressText: string; expenseId: string; at: string }>;
+  /**
+   * A4: off by default. On, a newer document address no longer becomes the primary — it is only
+   * remembered in `seenOnDocuments`. Lives on the address JSON rather than a column because it is
+   * a property of this address, and only `accounting.counterparty.manage` may set it (§12.1).
+   */
+  locked?: boolean;
+};
+
+/**
+ * What an expense write tells the client about the registry side effect (§7 cases a-d, §8).
+ * Returned on the expense response, never persisted — it drives one toast, one hint line, or the
+ * "ยังไม่ได้บันทึกลงทะเบียนคู่ค้า" bar. `failed` is the never-silent half of D5: the expense saved,
+ * the registry write did not, and the user is told so instead of finding out from a missing row.
+ */
+export type VendorCounterpartyAutoSaveResult = {
+  case: 'SKIPPED' | 'CREATE' | 'FILL' | 'HISTORY' | 'NOOP' | 'FAILED';
+  counterpartyId?: string;
+  /** For the toast text — "เพิ่ม [ร้าน] ลงทะเบียนคู่ค้าแล้ว". */
+  displayName?: string;
+  /** Case c only: the registry kept its own primary address because it is locked (A4). */
+  locked?: boolean;
+  failed?: true;
 };
 
 export type AccountingDocumentLineSummary = {
