@@ -309,6 +309,9 @@ class LineDeliveryError extends Error {
   constructor(result: LineDeliveryResult) { super(`LINE_DELIVERY_${result.toUpperCase()}`); }
 }
 const SAVED_LINE_RECEIPT = Symbol('saved-line-receipt');
+/** สัญญา v3: the bytes the support thread already fetched for this event, so the receipt lane does not fetch them again. */
+const SUPPORT_MEDIA_DOWNLOAD = Symbol('support-media-download');
+type SupportMediaDownloadCarrier = LineReceiptUploadEvent & { [SUPPORT_MEDIA_DOWNLOAD]?: LineMediaDownloadResult };
 type SavedLineReceipt = { expenseId: string; companyId: string; uploaded: boolean };
 type LineReceiptAdmissionAttempt = { identity?: CompanyOcrAdmissionIdentity; companyId?: string; receiptRequested: boolean; usablePersisted: boolean };
 
@@ -2484,6 +2487,10 @@ export class ProcessLineWebhookUseCase {
         return;
       }
       const downloaded = await this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize);
+      // Handed to the receipt lane on the event (the `SAVED_LINE_RECEIPT` pattern), so a photo on a
+      // live case costs LINE and the clock one download, not two. Only a success travels: a failed
+      // fetch here must not decide the receipt lane's own retry.
+      if (downloaded.ok) (event as SupportMediaDownloadCarrier)[SUPPORT_MEDIA_DOWNLOAD] = downloaded;
       const rejection = downloaded.ok ? await this.lineMediaRejectionReason(downloaded.media) : null;
       // Every download reason (no token, oversize, HTTP, timeout) is the same fact to an operator:
       // the bytes are not here. The receipt lane keeps the typed reason on its own attempt row.
@@ -2519,18 +2526,21 @@ export class ProcessLineWebhookUseCase {
    * turn — a customer must never lose an answer because the thread table was unavailable — and
    * silent on P2002, which is a redelivered webhook re-sending a `lineMessageId` already recorded.
    */
-  // ponytail: count-then-insert, so a burst can overshoot the ceiling by the burst size; it bounds
-  // abuse, it is not an exact quota. A stored counter on the request would make it exact.
   private async appendSupportMessage(requestId: string, data: {
     direction: 'CUSTOMER' | 'STAFF'; kind: 'TEXT' | 'IMAGE' | 'FILE';
     text?: string; lineMessageId?: string; mediaFileName?: string;
   }): Promise<{ id: string } | null> {
     try {
-      if (await this.prisma.client.lineSupportMessage.count({ where: { requestId } }) >= SUPPORT_THREAD_MAX_MESSAGES) {
-        this.logger.warn({ msg: 'line_support_thread_full', requestId });
-        return null;
-      }
-      return await this.prisma.client.lineSupportMessage.create({ data: { requestId, ...data }, select: { id: true } });
+      // One writer per request at a time — the tap's own advisory-lock pattern — so the ceiling is
+      // exact: the count and the insert commit together, and a concurrent burst queues behind them.
+      return await this.prisma.client.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`line-support-thread:${requestId}`}, 0))`;
+        if (await tx.lineSupportMessage.count({ where: { requestId } }) >= SUPPORT_THREAD_MAX_MESSAGES) {
+          this.logger.warn({ msg: 'line_support_thread_full', requestId });
+          return null;
+        }
+        return tx.lineSupportMessage.create({ data: { requestId, ...data }, select: { id: true } });
+      });
     } catch (error) {
       if ((error as { code?: string }).code !== 'P2002') {
         this.logger.warn({ msg: 'line_support_message_not_recorded', ...safeLineErrorDetails(error) });
@@ -5947,7 +5957,9 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    const downloaded = await this.timeStage(event.webhookEventId, 'receipt_download', () => this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize));
+    // สัญญา v3: a live support case has already fetched these bytes for its thread (`storeSupportMedia`).
+    const downloaded = (event as SupportMediaDownloadCarrier)[SUPPORT_MEDIA_DOWNLOAD]
+      ?? await this.timeStage(event.webhookEventId, 'receipt_download', () => this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize));
     if (!downloaded.ok) {
       // §17.5: the reason is recorded BEFORE the payload scrub, so "ไฟล์เมื่อกี้ทำไมส่งไม่ได้" is
       // answerable after a restart from a row that never held the payload in the first place.
