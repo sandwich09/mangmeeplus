@@ -207,6 +207,9 @@ function harness(options: {
   /** Absent means LINE_MESSAGING_CHANNEL_ID is unset (L-19). */
   channelId?: string;
   liffId?: string;
+  /** สัญญา v3 ceilings: how many bubbles / stored files the live request already holds. */
+  threadMessageCount?: number;
+  threadMediaCount?: number;
 } = {}) {
   const replies: any[] = [];
   const eventLog: any[] = [];
@@ -220,6 +223,7 @@ function harness(options: {
   const supportLookups: any[] = [];
   const supportUpdates: any[] = [];
   const supportSlots: string[] = [];
+  const supportMessages: any[] = [];
   const membershipQueries: any[] = [];
   const errors: any[] = [];
 
@@ -258,6 +262,13 @@ function harness(options: {
           supportClosures.push(args);
           return { count: 1 };
         },
+      },
+      // สัญญา v3: the chat behind the request. Recorded so a test can see what a bubble carries.
+      lineSupportMessage: {
+        create: async (args: any) => { supportMessages.push({ op: 'create', ...args }); return { id: `bubble-${supportMessages.length}` }; },
+        update: async (args: any) => { supportMessages.push({ op: 'update', ...args }); return {}; },
+        // Rows (no `blob` filter) and stored files (with it) on this request — the two ceilings.
+        count: async (args: any) => (args?.where?.kind ? options.threadMediaCount : options.threadMessageCount) ?? 0,
       },
       aiTurn: { findFirst: async () => options.lastTurn ?? null },
       externalIdentity: { findFirst: async () => options.identity ?? null },
@@ -344,7 +355,8 @@ function harness(options: {
   (useCase as any).logger = { error: (entry: any) => errors.push(entry), warn: () => {}, log: () => {} };
   return {
     useCase, replies, eventLog, audits, packageChanges, supportNotices, contextUpdates, contextUpserts,
-    supportRequests, supportClosures, supportLookups, supportUpdates, supportSlots, membershipQueries, errors,
+    supportRequests, supportClosures, supportLookups, supportUpdates, supportSlots, supportMessages,
+    membershipQueries, errors,
   };
 }
 
@@ -473,6 +485,9 @@ describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spe
     assert.equal(h.supportRequests[0].data.lastMessageText, 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ');
     assert.match(h.supportRequests[0].data.lineUserIdHash, /^[0-9a-f]{16}$/);
     assert.deepEqual(h.supportNotices, ['sr-1'], 'the notice names the request, not a shop and a day');
+    // สัญญา v3 ข้อ 9: the chat starts where the question does, in the same write.
+    assert.deepEqual(h.supportRequests[0].data.messages,
+      { create: { direction: 'CUSTOMER', kind: 'TEXT', text: 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ' } });
 
     const pausedUntil = h.contextUpserts[0].update.aiPausedUntil as Date;
     const hours = (pausedUntil.getTime() - Date.now()) / 3_600_000;
@@ -1379,5 +1394,171 @@ describe('GW10 LINE message context after expiry or membership revocation', () =
     const after = harness({ identity, ownerMemberships: rows, memberships: rows, context: { companyId: before.contextUpserts[0].update.companyId, aiPausedUntil: null } });
     await after.useCase.execute(event(PACKAGE_CHANGE_COMMAND));
     assert.equal(after.packageChanges.length, 1); assert.equal(after.packageChanges[0].companyId, 'co-b');
+  });
+});
+
+/**
+ * สัญญา v3 (Owner 2026-09-20): the inbox shows a case as a chat, and a photo is no longer only a
+ * marker — its bytes are kept for the operator to see. The marker rules from review 2026-09-06 N1
+ * are asserted UNCHANGED above; what is new is the thread row beside them.
+ */
+describe('the chat behind a request (สัญญา v3)', () => {
+  const linked = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+  const pausedContext = { companyId: 'co-1', aiPausedUntil: new Date(Date.now() + 3_600_000) };
+  const mediaEvent = () => ({
+    webhookEventId: 'evt-photo', replyToken: 'reply-1', lineUserId: 'Uline-1',
+    lineMessageId: 'msg-1', messageType: 'image', messagingChannelId: 'msg-channel-1',
+  }) as any;
+  const originalFetch = globalThis.fetch;
+  // A real 1×1 PNG: the thread keeps bytes only after the receipt lane's own signature check.
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+
+  it('puts the whole sentence on the thread, keyed by the LINE message id, while the row keeps its summary', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    const long = 'ก'.repeat(300);
+    await h.useCase.execute({ ...event(long), lineMessageId: 'line-msg-1' });
+
+    assert.equal(h.supportUpdates[0].data.lastMessageText.length, 200, 'the row summary is unchanged');
+    const [bubble] = h.supportMessages;
+    assert.equal(bubble.op, 'create');
+    assert.deepEqual(bubble.data, { requestId: 'sr-9', direction: 'CUSTOMER', kind: 'TEXT', text: long, lineMessageId: 'line-msg-1' });
+    assert.match(rendered(h), /ส่งข้อความถึงทีมงานแล้ว/);
+  });
+
+  it('records nothing on the thread for a tap, which carries no words', async () => {
+    const h = harness({
+      identity: linked, memberships: [{ companyId: 'co-1', roles: [] }], context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+    assert.deepEqual(h.supportMessages, []);
+    assert.equal(h.supportUpdates[0].data.status, 'OPEN', 'the reopen itself still happens');
+  });
+
+  it('never turns "recorded" into "none" because the thread table was unavailable', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    (h.useCase as any).prisma.client.lineSupportMessage.create = async () => { throw new Error('down'); };
+    await h.useCase.execute(event('มีอัปเดตไหมคะ'));
+
+    assert.equal(h.supportUpdates[0].data.lastMessageText, 'มีอัปเดตไหมคะ', 'the request still learned of it');
+    assert.match(rendered(h), /ส่งข้อความถึงทีมงานแล้ว/, 'and the customer is told the truth: it was recorded');
+    assert.equal(outcome(h), 'support_paused');
+  });
+
+  it('claims a bubble for the photo before any byte moves, and says so when the bytes cannot be fetched', async () => {
+    const h = harness({
+      identity: linked, memberships: [],
+      openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: 'co-1' },
+    });
+    await h.useCase.executeReceiptUpload(mediaEvent());
+
+    const [claim, stored] = h.supportMessages;
+    assert.equal(claim.op, 'create');
+    assert.deepEqual(claim.data, { requestId: 'sr-9', direction: 'CUSTOMER', kind: 'IMAGE', lineMessageId: 'msg-1' });
+    assert.equal(stored.op, 'update');
+    assert.deepEqual(stored.where, { id: 'bubble-1' });
+    assert.deepEqual(stored.data, { mediaError: 'media_fetch_failed' }, 'no channel token in this harness: the honest answer');
+    // The marker write beside it is exactly what it was before v3.
+    assert.deepEqual(Object.keys(h.supportUpdates[0].data), ['lastMediaAt']);
+    assert.equal(h.supportUpdates[0].where.status, 'ANSWERED');
+  });
+
+  it('stores the picture on the thread through the receipt lane\'s own checks', async () => {
+    const h = harness({
+      identity: linked, memberships: [],
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    (h.useCase as any).lineCredentials = lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'token-1' } as any);
+    (h.useCase as any).malwareScanner = { assertClean: async () => undefined };
+    (h.useCase as any).config.uploadMaxBytes = 5_000_000;
+    let fetched: string | undefined;
+    globalThis.fetch = (async (url: unknown) => {
+      fetched = String(url);
+      return new Response(png, { status: 200, headers: { 'content-type': 'image/png', 'content-length': String(png.length) } });
+    }) as typeof fetch;
+    try {
+      await h.useCase.executeReceiptUpload(mediaEvent());
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assert.match(fetched!, /api-data\.line\.me\/v2\/bot\/message\/msg-1\/content$/);
+    const stored = h.supportMessages.find((entry) => entry.op === 'update');
+    assert.equal(stored.data.mediaMimeType, 'image/png');
+    assert.equal(stored.data.mediaByteSize, png.length);
+    assert.equal(stored.data.mediaFileName, undefined, 'the lane\'s default name carries the LINE message id (§3)');
+    assert.ok(stored.data.blob.create.data instanceof Uint8Array);
+    assert.equal(stored.data.blob.create.data.length, png.length);
+    assert.equal(stored.data.mediaError, undefined);
+  });
+
+  it('refuses bytes the receipt lane would refuse, and keeps the row honest', async () => {
+    const h = harness({
+      identity: linked, memberships: [],
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    (h.useCase as any).lineCredentials = lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'token-1' } as any);
+    (h.useCase as any).malwareScanner = { assertClean: async () => undefined };
+    (h.useCase as any).config.uploadMaxBytes = 5_000_000;
+    globalThis.fetch = (async () => new Response(Buffer.from('<svg onload=alert(1)>'), {
+      status: 200, headers: { 'content-type': 'image/png' },
+    })) as typeof fetch;
+    try {
+      await h.useCase.executeReceiptUpload(mediaEvent());
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    const stored = h.supportMessages.find((entry) => entry.op === 'update');
+    assert.deepEqual(stored.data, { mediaError: 'media_security_rejected' });
+  });
+
+  it('keeps the row but not the bytes once a request holds its fifty files', async () => {
+    // 51 = fifty already claimed plus this one: the claim counts itself, so a burst cannot slip under.
+    const h = harness({
+      identity: linked, memberships: [], threadMediaCount: 51,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    globalThis.fetch = (async () => { throw new Error('the bytes must not be fetched'); }) as typeof fetch;
+    try {
+      await h.useCase.executeReceiptUpload(mediaEvent());
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    const [claim, stored] = h.supportMessages;
+    assert.equal(claim.op, 'create');
+    assert.deepEqual(stored.data, { mediaError: 'media_limit_reached' });
+  });
+
+  it('stops appending bubbles at five hundred, and still tells the customer the truth', async () => {
+    const h = harness({
+      identity: linked, context: pausedContext, threadMessageCount: 500,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    await h.useCase.execute(event('มีอัปเดตไหมคะ'));
+    assert.deepEqual(h.supportMessages, [], 'nothing appended past the ceiling');
+    assert.equal(h.supportUpdates[0].data.lastMessageText, 'มีอัปเดตไหมคะ', 'the row still learned of it');
+    assert.match(rendered(h), /ส่งข้อความถึงทีมงานแล้ว/);
+  });
+
+  it('never stores a second copy of a redelivered photo', async () => {
+    const h = harness({
+      identity: linked, memberships: [],
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: 'co-1' },
+    });
+    (h.useCase as any).prisma.client.lineSupportMessage.create = async () => { throw Object.assign(new Error('unique'), { code: 'P2002' }); };
+    globalThis.fetch = (async () => { throw new Error('the bytes must not be fetched again'); }) as typeof fetch;
+    try {
+      await h.useCase.executeReceiptUpload(mediaEvent());
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    assert.deepEqual(h.supportMessages, [], 'the first delivery owns the bytes');
+    assert.equal(h.errors.length, 0, 'and a lost unique race is not an error');
   });
 });

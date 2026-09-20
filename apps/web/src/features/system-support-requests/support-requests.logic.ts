@@ -1,4 +1,4 @@
-import type { SupportRequestItemDto, SupportRequestStatus } from '@watchdog-bms/contracts';
+import type { SupportRequestItemDto, SupportRequestMediaError, SupportRequestStatus } from '@watchdog-bms/contracts';
 
 export type ChipTone = 'neutral' | 'info' | 'warning' | 'danger' | 'success';
 export type Chip = { label: string; tone: ChipTone };
@@ -153,3 +153,53 @@ export function supportReplyWithinRetryWindow(
 
 /** Resume changes only the assistant pause; the managed case remains open until explicit resolve. */
 export const canResumeAi = (status: SupportRequestStatus) => status !== 'CLOSED';
+
+// ── สัญญา v3: the chat window ──
+
+/** Why a customer photo/file has no bytes to show. Codes are bounded server-side (§3). */
+export function supportMediaErrorTh(code: SupportRequestMediaError | undefined): string {
+  if (code === 'media_security_rejected') return 'ไฟล์ไม่ผ่านการตรวจสอบความปลอดภัย จึงไม่ได้เก็บไว้';
+  if (code === 'media_scan_failed') return 'ตรวจสอบความปลอดภัยของไฟล์ไม่สำเร็จ จึงไม่ได้เก็บไว้';
+  if (code === 'media_limit_reached') return 'เคสนี้เก็บไฟล์ครบจำนวนสูงสุดแล้ว จึงไม่ได้เก็บไฟล์นี้';
+  return 'ดึงไฟล์จาก LINE ไม่สำเร็จ (ไฟล์หมดอายุหรือใหญ่เกินกำหนด)';
+}
+
+export type SupportComposerMode = 'compose' | 'retry' | 'claim' | 'other' | 'closed';
+
+/**
+ * What the bottom of the chat window offers. The composer is for NEW words, and the rules are the
+ * row's own (สัญญา v2 ข้อ 3–4): only the owner of a live case may write, and while a send is still
+ * unresolved inside its 24 h retry window the only honest button is "ลองส่งข้อความเดิม".
+ */
+export function supportComposerMode(
+  item: Pick<SupportRequestItemDto, 'status' | 'assignedAt' | 'assignedToMe' | 'replyFirstAttemptAt' | 'lastReplyDeliveryStatus'>,
+  now = new Date(),
+): SupportComposerMode {
+  if (item.status === 'CLOSED') return 'closed';
+  if (!item.assignedAt) return 'claim';
+  if (!item.assignedToMe) return 'other';
+  return supportReplyWithinRetryWindow(item, now) ? 'retry' : 'compose';
+}
+
+export function supportComposerHintTh(mode: SupportComposerMode, assigneeDisplayName?: string): string | null {
+  if (mode === 'claim') return 'รับเคสก่อน จึงจะตอบลูกค้าจากหน้าต่างนี้ได้';
+  if (mode === 'other') return `เคสนี้อยู่กับ ${assigneeDisplayName ?? 'ทีมงานคนอื่น'} — รับช่วงต่อได้จากปุ่มด้านล่าง`;
+  if (mode === 'retry') return 'ยังไม่ทราบผลส่งข้อความล่าสุด กด "ลองส่งข้อความเดิม" ก่อน จึงจะพิมพ์ข้อความใหม่ได้';
+  if (mode === 'closed') return 'เคสปิดแล้ว อ่านประวัติได้ แต่ส่งข้อความไม่ได้';
+  return null;
+}
+
+/**
+ * The prompt used to warn about this case in its title; the composer says it above the box instead.
+ * True when the previous send never resolved and its safe-retry window has passed.
+ */
+export function supportPreviousReplyUncertain(
+  item: Pick<SupportRequestItemDto, 'replyOperationId' | 'replyFirstAttemptAt' | 'lastReplyDeliveryStatus'>,
+  now = new Date(),
+): boolean {
+  return Boolean(
+    item.replyOperationId
+    && ['PENDING', 'FAILED'].includes(item.lastReplyDeliveryStatus ?? '')
+    && !supportReplyWithinRetryWindow(item, now),
+  );
+}

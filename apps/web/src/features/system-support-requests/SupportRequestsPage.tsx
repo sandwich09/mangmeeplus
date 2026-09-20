@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { PARTNER_LINE_MESSAGE_MAX_LENGTH } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { useConfirm, useInputPrompt } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
@@ -16,6 +17,8 @@ import {
   resumeSupportRequestAi,
   type SupportRequestItemDto,
 } from './support-requests.api';
+import { ChipBadge } from './SupportChip';
+import { SupportThreadModal } from './SupportThreadModal';
 import {
   SUPPORT_QUEUE_TABS,
   canResumeAi,
@@ -23,32 +26,15 @@ import {
   supportAnswerHref,
   supportAnswerLabel,
   supportClosedReasonTh,
+  supportComposerMode,
   supportReopenedChip,
   supportReplyChip,
   supportReplyWithinRetryWindow,
   supportStatusChip,
   waitedLabelTh,
   waitedForTh,
-  type Chip,
-  type ChipTone,
   type SupportQueueTab,
 } from './support-requests.logic';
-
-const CHIP_CLASS: Record<ChipTone, string> = {
-  neutral: 'bg-gray-100 text-gray-600 border-gray-200',
-  info: 'bg-blue-50 text-blue-700 border-blue-200',
-  warning: 'bg-yellow-50 text-yellow-700 border-yellow-200',
-  danger: 'bg-red-50 text-red-700 border-red-200',
-  success: 'bg-green-50 text-green-700 border-green-200',
-};
-
-function ChipBadge({ chip }: { chip: Chip }) {
-  return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${CHIP_CLASS[chip.tone]}`}>
-      {chip.label}
-    </span>
-  );
-}
 
 function SkeletonRow() {
   return (
@@ -70,7 +56,9 @@ const rowActionClass =
  * source — the page reaches its rows behind `useEffect`, and "which requests may still be acted
  * on" is exactly the rule a source assertion can agree with while the markup does something else.
  */
-export function SupportRowActions({ item, busy, onClaim, onRelease, onTakeover, onReply, onResolve, onResume }: {
+export function SupportRowActions({
+  item, busy, onClaim, onRelease, onTakeover, onReply, onResolve, onResume, onOpenThread, showReply = true,
+}: {
   item: SupportRequestItemDto;
   busy: boolean;
   onClaim: () => void;
@@ -79,11 +67,25 @@ export function SupportRowActions({ item, busy, onClaim, onRelease, onTakeover, 
   onReply: () => void;
   onResolve: () => void;
   onResume: () => void;
+  /** สัญญา v3 ข้อ 11: the chat behind this row. Absent inside the chat window itself. */
+  onOpenThread?: () => void;
+  /** The window hides the row's reply button while its own composer is the way to answer. */
+  showReply?: boolean;
 }) {
   const href = supportAnswerHref(item);
   const live = item.status !== 'CLOSED';
   return (
     <div className="flex flex-wrap gap-2">
+      {/* Every row, CLOSED included: a settled case is still readable until the purge takes it. */}
+      {onOpenThread && (
+        <button
+          type="button"
+          onClick={onOpenThread}
+          className={`${rowActionClass} border-brand-300 bg-white text-brand-700 hover:bg-brand-50`}
+        >
+          💬 เปิดแชท
+        </button>
+      )}
       {href && (
         <a
           href={href}
@@ -112,7 +114,7 @@ export function SupportRowActions({ item, busy, onClaim, onRelease, onTakeover, 
           {busy ? 'กำลังทำรายการ...' : 'รับช่วงต่อ'}
         </button>
       )}
-      {live && item.assignedToMe && (
+      {live && item.assignedToMe && showReply && (
         <button
           type="button"
           disabled={busy} aria-busy={Boolean(busy)}
@@ -152,7 +154,7 @@ export function SupportRowActions({ item, busy, onClaim, onRelease, onTakeover, 
           {busy ? 'กำลังทำรายการ...' : 'ปล่อยเคส'}
         </button>
       )}
-      {!href && !live && (
+      {!href && !live && !onOpenThread && (
         <span className="text-xs text-gray-400">—</span>
       )}
     </div>
@@ -170,7 +172,7 @@ export function SupportRowActions({ item, busy, onClaim, onRelease, onTakeover, 
  */
 export function SupportInboxBody({
   error, loading, loadingMore, items, busyId, totalCount, nextCursor,
-  onRetry, onLoadMore, onClaim, onRelease, onTakeover, onReply, onResolve, onResume,
+  onRetry, onLoadMore, onClaim, onRelease, onTakeover, onReply, onResolve, onResume, onOpenThread,
 }: {
   error: string | null;
   loading: boolean;
@@ -187,6 +189,7 @@ export function SupportInboxBody({
   onReply: (item: SupportRequestItemDto) => void;
   onResolve: (item: SupportRequestItemDto) => void;
   onResume: (item: SupportRequestItemDto) => void;
+  onOpenThread?: (item: SupportRequestItemDto) => void;
 }) {
   if (error) {
     return (
@@ -335,6 +338,7 @@ export function SupportInboxBody({
                       onReply={() => onReply(item)}
                       onResolve={() => onResolve(item)}
                       onResume={() => onResume(item)}
+                      {...(onOpenThread ? { onOpenThread: () => onOpenThread(item) } : {})}
                     />
                   </td>
                 </tr>
@@ -383,6 +387,14 @@ export default function SupportRequestsPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /**
+   * สัญญา v3 ข้อ 11: the case whose chat is open. The window's every poll hands back the fresh row
+   * (`handleThreadChanged`), so this is never staler than the server; `threadRefreshKey` makes the
+   * window refetch the moment an action here succeeds.
+   */
+  const [threadItem, setThreadItem] = useState<SupportRequestItemDto | null>(null);
+  const [threadRefreshKey, setThreadRefreshKey] = useState(0);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   /**
    * Which read is allowed to write state. Tab switches and post-action reloads overlap, and without
    * this the slower of two in-flight reads wins — showing the previous tab's rows under the new
@@ -440,11 +452,29 @@ export default function SupportRequestsPage() {
     void load(next);
   };
 
+  const patchRow = (id: string, patch: Partial<SupportRequestItemDto>) => {
+    setItems((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
+    setThreadItem((current) => current && current.id === id ? { ...current, ...patch } : current);
+  };
+
+  const handleThreadChanged = (request: SupportRequestItemDto) => {
+    setThreadItem(request);
+    // A status that no longer matches this tab (the customer wrote back while the window was
+    // open) means the row and the badge both moved: reload rather than paint it under the wrong
+    // heading. Otherwise the fresh row replaces the stale one in place.
+    if (request.status !== tab) {
+      void load();
+      return;
+    }
+    setItems((current) => current.map((row) => row.id === request.id ? request : row));
+  };
+
   const mutate = async (item: SupportRequestItemDto, action: () => Promise<unknown>, success: string) => {
     setBusyId(item.id);
     try {
       await action();
       toast.success(success);
+      setThreadRefreshKey((key) => key + 1);
       await load();
     } catch (err) {
       toast.error(apiErrorMessage(err));
@@ -487,17 +517,17 @@ export default function SupportRequestsPage() {
     );
   };
 
-  const handleReply = async (item: SupportRequestItemDto) => {
+  /**
+   * A retry of an unresolved send is confirmed and resent as before. NEW words come from the chat
+   * window's composer (สัญญา v3 ข้อ 11): the row's "ตอบใน LINE" opens the window, and only the window
+   * hands a sentence back here. Resolves true when the reply was accepted, so the composer clears.
+   */
+  const handleReply = async (item: SupportRequestItemDto, composed?: string): Promise<boolean> => {
     const retrySame = Boolean(
       item.replyOperationId && item.lastReplyText && supportReplyWithinRetryWindow(item),
     );
-    let text: string | null = item.lastReplyText ?? null;
+    let text = item.lastReplyText ?? '';
     let operationId = item.replyOperationId ?? crypto.randomUUID();
-    const expiredUnknown = Boolean(
-      item.replyOperationId
-      && ['PENDING', 'FAILED'].includes(item.lastReplyDeliveryStatus ?? '')
-      && !supportReplyWithinRetryWindow(item),
-    );
     if (retrySame) {
       const retry = await confirm({
         title: 'ลองส่งข้อความเดิมอีกครั้ง',
@@ -505,39 +535,33 @@ export default function SupportRequestsPage() {
         confirmLabel: 'ลองส่งข้อความเดิม',
         variant: 'primary',
       });
-      if (!retry) return;
+      if (!retry) return false;
     } else {
-      text = await promptInput({
-        title: expiredUnknown
-          ? 'ส่งเป็นข้อความใหม่'
-          : `ตอบ ${item.askerLabel} ใน LINE`,
-        message: expiredUnknown
-          ? 'พ้นช่วงลองส่งเดิมอย่างปลอดภัยแล้ว ข้อความก่อนหน้าอาจถึงลูกค้า กรุณาตรวจและเขียนข้อความใหม่ให้ชัดเจน'
-          : 'ถ้าต้องขอข้อมูลเพิ่ม กรุณาระบุข้อมูลที่ขาดทั้งหมด วิธีส่ง และสิ่งที่จะเกิดขึ้นต่อให้ครบในข้อความเดียว',
-        label: 'ข้อความถึงลูกค้า',
-        placeholder: 'เช่น กรุณาส่งชื่อร้าน เบอร์โทร และอีเมลที่ต้องการใช้ในข้อความเดียว ทีมงานจะตรวจแล้วตอบกลับที่แชทนี้',
-        confirmLabel: 'ส่งใน LINE',
-        variant: 'primary',
-      });
-      if (!text) return;
-      if (text.length > 500) {
-        toast.error('ข้อความยาวเกิน 500 ตัวอักษร กรุณาย่อแล้วลองใหม่');
-        return;
+      if (composed === undefined) {
+        setThreadItem(item);
+        // After the window has mounted: the caret goes where the reply is typed.
+        setTimeout(() => composerRef.current?.focus(), 50);
+        return false;
+      }
+      text = composed.trim();
+      if (!text) return false;
+      if (text.length > PARTNER_LINE_MESSAGE_MAX_LENGTH) {
+        toast.error(`ข้อความยาวเกิน ${PARTNER_LINE_MESSAGE_MAX_LENGTH} ตัวอักษร กรุณาย่อแล้วลองใหม่`);
+        return false;
       }
       operationId = crypto.randomUUID();
     }
-    setItems((current) => current.map((row) => row.id === item.id ? {
-      ...row,
+    patchRow(item.id, {
       replyOperationId: operationId,
-      replyFirstAttemptAt: retrySame ? row.replyFirstAttemptAt : new Date().toISOString(),
-      lastReplyText: text!,
+      replyFirstAttemptAt: retrySame ? item.replyFirstAttemptAt : new Date().toISOString(),
+      lastReplyText: text,
       lastReplyDeliveryStatus: 'PENDING',
       lastReplyError: undefined,
-    } : row));
+    });
     setBusyId(item.id);
     try {
       const result = await replySupportRequest(item.id, {
-        text: text!,
+        text,
         operationId,
         previousReplyOperationId: item.replyOperationId ?? null,
       });
@@ -548,10 +572,14 @@ export default function SupportRequestsPage() {
       } else {
         toast.error('ยังยืนยันไม่ได้ว่าส่งข้อความถึงลูกค้า กรุณาลองส่งข้อความเดิมอีกครั้ง');
       }
+      setThreadRefreshKey((key) => key + 1);
       await load();
+      return true;
     } catch (err) {
       toast.error(apiErrorMessage(err));
+      setThreadRefreshKey((key) => key + 1);
       await load();
+      return false;
     } finally {
       setBusyId(null);
     }
@@ -584,6 +612,7 @@ export default function SupportRequestsPage() {
     try {
       const result = await resumeSupportRequestAi(item.id);
       toast.success(result.pauseCleared ? 'น้องมั่งมีกลับมาตอบแล้ว เคสยังไม่ถูกปิด' : 'AI ไม่ได้หยุดอยู่ และเคสยังไม่ถูกปิด');
+      setThreadRefreshKey((key) => key + 1);
       await load();
     } catch (err) {
       toast.error(apiErrorMessage(err));
@@ -596,13 +625,38 @@ export default function SupportRequestsPage() {
     <div className="min-h-dvh bg-gray-50 p-6">
       {confirmDialog}
       {inputPromptDialog}
+      {threadItem && (
+        <SupportThreadModal
+          item={threadItem}
+          refreshKey={threadRefreshKey}
+          composerRef={composerRef}
+          sending={busyId === threadItem.id}
+          onClose={() => setThreadItem(null)}
+          onSend={(text) => handleReply(threadItem, text)}
+          onThreadChanged={handleThreadChanged}
+          actions={(
+            <SupportRowActions
+              item={threadItem}
+              busy={busyId === threadItem.id}
+              // The composer is the way to answer; the row's button stays only as the retry.
+              showReply={supportComposerMode(threadItem) === 'retry'}
+              onClaim={() => void handleClaim(threadItem)}
+              onRelease={() => void handleRelease(threadItem)}
+              onTakeover={() => void handleTakeover(threadItem)}
+              onReply={() => void handleReply(threadItem)}
+              onResolve={() => void handleResolve(threadItem)}
+              onResume={() => void handleResume(threadItem)}
+            />
+          )}
+        />
+      )}
 
       <div className="mx-auto max-w-6xl space-y-4">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">คำขอคุยกับเจ้าหน้าที่</h1>
           <p className="mt-0.5 text-sm text-gray-500">
-            ลูกค้าที่กด ติดต่อเจ้าหน้าที่ ใน LINE จะขึ้นที่นี่ทันที รับเคสแล้วตอบกลับใน LINE ได้จากแถวนี้
-            รวมถึงผู้สมัครที่ยังไม่มีร้าน โดยไม่เปิดเผย LINE ID
+            ลูกค้าที่กด ติดต่อเจ้าหน้าที่ ใน LINE จะขึ้นที่นี่ทันที กด เปิดแชท เพื่อดูทุกข้อความและรูปที่ลูกค้าส่งมา
+            รับเคสแล้วตอบกลับใน LINE ได้จากแชทนั้น รวมถึงผู้สมัครที่ยังไม่มีร้าน โดยไม่เปิดเผย LINE ID
           </p>
         </div>
 
@@ -647,6 +701,7 @@ export default function SupportRequestsPage() {
           onReply={(item) => void handleReply(item)}
           onResolve={(item) => void handleResolve(item)}
           onResume={(item) => void handleResume(item)}
+          onOpenThread={(item) => setThreadItem(item)}
         />
       </div>
     </div>

@@ -4100,6 +4100,8 @@ model LineSupportRequest {
   resolutionNote     String?
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
+  /// v3 (Owner 2026-09-20): everything said on this case, in order — the chat the inbox shows.
+  messages           LineSupportMessage[]
 
   @@index([status, requestedAt])
   /// The inbox reads and the expiry sweep both moved to `lastMessageAt` (UAT 2026-09-06), so the
@@ -4107,6 +4109,59 @@ model LineSupportRequest {
   @@index([status, lastMessageAt])
   @@index([status, lastMessageAt, id])
   @@index([lineUserId, status])
+}
+
+/// v3 (Owner 2026-09-20, line-support-request-spec-th สัญญา v3 ข้อ 9). The conversation behind one
+/// support request, from the tap that opened it to the resolve that closed it. One row per thing
+/// somebody said — a customer sentence, a customer photo/document, or a staff reply — so the inbox
+/// can show the case as a chat instead of two 200-character summaries. Dropped WITH the request
+/// (cascade), so the 90-day purge of a CLOSED case still deletes everything the customer sent,
+/// bytes included, without a second sweep.
+model LineSupportMessage {
+  id             String                  @id @default(cuid())
+  requestId      String
+  /// `CUSTOMER` | `STAFF`. Strings, like `closedReason`: the request-status enum stays stable.
+  direction      String
+  /// `TEXT` | `IMAGE` | `FILE`
+  kind           String
+  /// ≤2000 chars. A customer's FULL sentence (the request row keeps its 200-char summary); for
+  /// staff, the bounded reply exactly as the LINE push carried it.
+  text           String?
+  /// STAFF only: the display name the push was signed with, snapshotted at send time.
+  senderName     String?
+  senderUserId   String?
+  /// The LINE message this row came from, so a redelivered webhook cannot append it twice. Never
+  /// crosses the web contract (§3).
+  lineMessageId  String?
+  /// STAFF only: the reply operation, so a same-key retry updates THIS row instead of adding one.
+  operationId    String?
+  /// STAFF only: `PENDING` | `SENT` | `FAILED`, mirrored from the request's reply operation.
+  deliveryStatus String?
+  mediaMimeType  String?
+  mediaByteSize  Int?
+  mediaFileName  String?
+  /// IMAGE/FILE whose bytes could not be kept: `media_fetch_failed` (LINE content gone, too large,
+  /// no token), `media_security_rejected`, `media_scan_failed`. The bubble says so instead of
+  /// showing nothing.
+  mediaError     String?
+  createdAt      DateTime                @default(now())
+  request        LineSupportRequest      @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  blob           LineSupportMessageBlob?
+
+  @@unique([requestId, lineMessageId])
+  @@unique([requestId, operationId])
+  @@index([requestId, createdAt])
+}
+
+/// The bytes of one customer photo/document, split off so a thread read never drags them along.
+/// Postgres rather than an object store for the same reason `AttachmentBlob` is: the only store
+/// that survives redeploys today. Writers cap rows at UPLOAD_MAX_BYTES through the media lane's
+/// existing download limit.
+model LineSupportMessageBlob {
+  messageId String             @id
+  data      Bytes
+  createdAt DateTime           @default(now())
+  message   LineSupportMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

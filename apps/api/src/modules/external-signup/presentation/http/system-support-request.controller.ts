@@ -1,9 +1,9 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Query, Req, Res, StreamableFile } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 import {
   IsIn, IsISO8601, IsNumberString, IsOptional, IsString, IsUUID, Matches, MaxLength, ValidateIf,
 } from 'class-validator';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import {
   PARTNER_LINE_MESSAGE_MAX_LENGTH,
   type SupportRequestActionDto,
@@ -14,6 +14,7 @@ import {
   type SupportRequestReplyResultDto,
   type SupportRequestResolveBody,
   type SupportRequestStatus,
+  type SupportRequestThreadDto,
 } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
@@ -80,6 +81,40 @@ export class SystemSupportRequestController {
   @ApiResponse({ status: 200 })
   count(): Promise<SupportRequestCountDto> {
     return this.requests.openCount();
+  }
+
+  @Get(':supportRequestId/thread')
+  @RequirePermissions('system.partner_company.update')
+  @ApiOperation({ summary: 'The request and everything said on it, oldest first (สัญญา v3)' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404 })
+  thread(
+    @Param('supportRequestId') id: string,
+    @Req() req: Request & { context: RequestContext },
+  ): Promise<SupportRequestThreadDto> {
+    return this.requests.thread(id, req.context.userId);
+  }
+
+  // Same-origin <img>/<a> tags hit this directly — the cookie session authenticates them, exactly as
+  // the CRM inbox's content route already relies on. `no-store`: a customer's photo must not outlive
+  // the page in a shared browser cache.
+  @Get(':supportRequestId/messages/:messageId/content')
+  @RequirePermissions('system.partner_company.update')
+  @ApiOperation({ summary: 'Stream the stored bytes of one customer photo/file on this request' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404 })
+  async content(
+    @Param('supportRequestId') id: string,
+    @Param('messageId') messageId: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { data, mimeType, fileName } = await this.requests.messageContent(id, messageId);
+    res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    const disposition = mimeType.startsWith('image/') ? 'inline' : 'attachment';
+    return new StreamableFile(data, {
+      type: mimeType,
+      disposition: `${disposition}; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    });
   }
 
   @Post(':supportRequestId/claim')

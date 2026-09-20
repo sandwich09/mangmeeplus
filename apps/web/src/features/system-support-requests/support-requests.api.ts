@@ -1,10 +1,29 @@
 import type {
   SupportRequestActionDto, SupportRequestCountDto, SupportRequestQueueDto,
-  SupportRequestReplyBody, SupportRequestReplyResultDto, SupportRequestStatus,
+  SupportRequestReplyBody, SupportRequestReplyResultDto, SupportRequestStatus, SupportRequestThreadDto,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 
-export type { SupportRequestItemDto, SupportRequestQueueDto, SupportRequestStatus } from '@watchdog-bms/contracts';
+export type {
+  SupportRequestItemDto, SupportRequestMessageDto, SupportRequestQueueDto, SupportRequestStatus,
+  SupportRequestThreadDto,
+} from '@watchdog-bms/contracts';
+
+/**
+ * สัญญา v3 ข้อ 11: the request and its messages in one read. `suppressErrorToast` because the chat
+ * window polls this every 10 seconds — a transient failure is shown inside the window, not toasted
+ * six times a minute.
+ */
+export function getSupportRequestThread(id: string, init?: { signal?: AbortSignal }): Promise<SupportRequestThreadDto> {
+  return apiFetch<SupportRequestThreadDto>(`/v1/system/support-requests/${encodeURIComponent(id)}/thread`, {
+    ...init, suppressErrorToast: true,
+  });
+}
+
+/** Same-origin URL for a stored customer photo/file — <img>/<a> use it directly (cookie session). */
+export function supportMessageContentUrl(id: string, messageId: string): string {
+  return `/api/v1/system/support-requests/${encodeURIComponent(id)}/messages/${encodeURIComponent(messageId)}/content`;
+}
 
 export function listSupportRequests(
   status?: SupportRequestStatus,

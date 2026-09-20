@@ -6,6 +6,9 @@ import { LineIdTokenService } from '../../auth/application/line-id-token.service
 import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
 import { LineSignupNotifyService } from './line-signup-notify.service';
 
+/** The browser form carries no free text, so the ask is filed under this fixed sentence. */
+const LIFF_SUPPORT_REQUEST_TEXT = 'ขอความช่วยเหลือเรื่องสมัครเปิดร้าน';
+
 /** LIFF launch context must not determine whether an applicant can reach the existing inbox. */
 @Injectable()
 export class RequestLineSignupSupportUseCase {
@@ -45,8 +48,10 @@ export class RequestLineSignupSupportUseCase {
       const created = await tx.lineSupportRequest.create({
         data: {
           lineUserId, lineUserIdHash, signupRequestId: signup?.id,
-          requestText: 'ขอความช่วยเหลือเรื่องสมัครเปิดร้าน',
-          lastMessageText: 'ขอความช่วยเหลือเรื่องสมัครเปิดร้าน',
+          requestText: LIFF_SUPPORT_REQUEST_TEXT,
+          lastMessageText: LIFF_SUPPORT_REQUEST_TEXT,
+          // สัญญา v3 ข้อ 9: the chat starts where the ask does.
+          messages: { create: { direction: 'CUSTOMER', kind: 'TEXT', text: LIFF_SUPPORT_REQUEST_TEXT } },
         },
       });
       await tx.auditLog.create({ data: {
