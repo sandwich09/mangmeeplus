@@ -1664,6 +1664,26 @@ export function expenseConfirmBlocker(input: {
 }
 
 /**
+ * Why "ถัดไป" on step 1 (ข้อมูลรายการ) is refused, as the sentence printed under it — or null when
+ * the user may go on. Same contract as `expenseEvidenceStepBlocker` below: one value drives the
+ * button's `disabled`, the text under it and its title, so a disabled ถัดไป always says why.
+ *
+ * Owner report 2026-09-20: the button read the error COUNT while the text read the MESSAGE, and the
+ * count is reported up from the data section's effect, one commit behind the edit. `null` — "the
+ * section has not reported yet" — counted as an error, so the primary action greyed out with
+ * nothing to read; and between an edit and its report the printed reason still named a line the
+ * reviewer had just filled. Unknown is not a blocker, and the count alone never disables.
+ */
+export function expenseDataStepBlocker(input: {
+  errorCount: number | null;
+  firstErrorMessage: string | null;
+  countMessage: string;
+}): string | null {
+  if (input.errorCount === null || input.errorCount <= 0) return null;
+  return input.firstErrorMessage ?? input.countMessage;
+}
+
+/**
  * Why "ถัดไป" on step 2 (ภาษีและเอกสาร) is refused, as a dictionary key — or null when the user may go on.
  *
  * Owner report 2026-08-29 (UAT, company "test sand"): the button's `disabled` read one flag
