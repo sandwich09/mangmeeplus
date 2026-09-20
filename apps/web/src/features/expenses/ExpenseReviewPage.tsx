@@ -37,7 +37,7 @@ import {
   AI_MISSING_FIELD_LABELS, AI_SUMMARY_STATUS_LABELS, ATTACHMENT_PURPOSE_LABELS, isWetSignedScanAttachment,
   CAPTURE_SOURCE_LABELS, EXPENSE_VAT_MODE_LABELS, PAYMENT_METHOD_LABELS, POSTING_STATUS_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, deriveExpenseAuditChecks,
-  deriveExpenseClassificationReviewState, deriveExpenseReviewSteps, expenseAiMissingFields, expenseCapabilities, expenseEvidenceStepBlocker, hasCurrentExpenseDocumentReview,
+  deriveExpenseClassificationReviewState, deriveExpenseReviewSteps, expenseAiMissingFields, expenseCapabilities, expenseDataStepBlocker, expenseEvidenceStepBlocker, hasCurrentExpenseDocumentReview,
   expenseNeedsReceiptOrSubstitute, expenseSourceDraftViewState, expenseSubstituteReceiptReady, expenseSubstituteReceiptAction, expenseValueLabel,
   canRunExpenseDuplicateCheck, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
   MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, shouldRereadReplacedReceipt, isBlockedCheckBillClassification,
@@ -829,9 +829,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const steps = guided ? deriveExpenseReviewSteps(detail, canReview) : [];
   const stepIndex = steps.findIndex((entry) => entry.key === step);
   const detailsStepDone = steps.some((entry) => entry.key === 'data' && entry.state === 'done');
-  const validationBlockMessage = dataErrorCount && dataErrorCount > 0
-    ? dataErrorMessage ?? t('expenses.v_blocking_count', locale).replace('{count}', String(dataErrorCount))
-    : undefined;
+  // One truth for step 1, the same rule step 2 already follows: what disables ถัดไป is what is
+  // printed under it. See expenseDataStepBlocker — an unreported count must not grey the button out.
+  const validationBlockMessage = expenseDataStepBlocker({
+    errorCount: dataErrorCount, firstErrorMessage: dataErrorMessage,
+    countMessage: t('expenses.v_blocking_count', locale).replace('{count}', String(dataErrorCount ?? 0)),
+  }) ?? undefined;
 
   const pageTitle = (
     <span className="min-w-0">
@@ -923,17 +926,24 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                 )}
               </>
             )}
-            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={aiReading || stepSaving || (step === 'data' && dataErrorCount !== 0) || (step === 'evidence' && evidenceStepBlocker !== null)} aria-busy={Boolean(stepSaving)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : step === 'evidence' && evidenceStepBlocker ? documentReviewSaveRequired ? `expense-document-review-hint-${detail.id}` : `expense-review-evidence-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
-            {/* Save-review guidance lives beside that form; do not repeat it in the footer. */}
+            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={aiReading || stepSaving || (step === 'data' && validationBlockMessage !== undefined) || (step === 'evidence' && evidenceStepBlocker !== null)} aria-busy={Boolean(stepSaving)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : step === 'evidence' && evidenceStepBlocker ? documentReviewSaveRequired ? `expense-document-review-hint-${detail.id}` : `expense-review-evidence-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
+            {/* Save-review guidance lives beside that form (`expense-document-review-hint-*`, which the
+                button's aria-describedby already names). On a phone that box can be scrolled away while
+                the disabled ถัดไป stays in this sticky bar, so below `lg` the short sentence is repeated
+                here as plain text — not a second live region — so a disabled button always says why. */}
             {aiReading ? (
               <p role="status" className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right">
                 {t('expenses.ai_reading', locale)}
               </p>
-            ) : step === 'evidence' && evidenceStepBlocker && !documentReviewSaveRequired && (
+            ) : step === 'evidence' && evidenceStepBlocker && (documentReviewSaveRequired ? (
+              <p className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right lg:hidden">
+                {t(evidenceStepBlocker, locale)}
+              </p>
+            ) : (
               <p id={`expense-review-evidence-block-${detail.id}`} role="status" className="max-w-lg rounded-xl border border-warning-100 bg-warning-50 p-3 text-sm font-medium text-warning-700 sm:w-full sm:text-right">
                 {t(evidenceStepBlocker, locale)}
               </p>
-            )}
+            ))}
           </>
         )}
         {approverOnlyActions && (

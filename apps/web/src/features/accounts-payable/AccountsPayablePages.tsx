@@ -15,6 +15,7 @@ import { listSuppliers } from '@/features/procurement/procurement.api';
 import { TransactionTaxLineSelector } from '@/features/tax/TransactionTaxLineSelector';
 import { listTradeTaxEvidence, uploadTradeTaxEvidenceAttachment } from '@/features/tax/transaction-tax.api';
 import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
+import { TransactionBranchField, useTransactionCreateBranchId } from '@/features/web-core-workspace/TransactionBranchField';
 import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
 import { canSubmitSupplierPayment, isSupplierPaymentWithholdingValid, isVendorBillTaxEvidenceBlocked, isVendorBillTaxEvidenceCompleteForReview } from './accounts-payable.model';
 import { parseAccountsPayableTab, visibleAccountsPayableTabs, whtLinkErrorOutcome, type AccountsPayableTab } from './accounts-payable.logic';
@@ -259,7 +260,10 @@ function VendorBillTaxEvidencePanel({ companyId, bill, canEdit, canUpload, canRe
 
 function CreateVendorBillForm({ companyId, canCreate, onCreated }: { companyId: string; canCreate: boolean; onCreated: (id: string) => void }) {
   const toast = useToast();
-  const branch = useBranchFilter();
+  // Owner report 2026-09-20: this posted `useBranchFilter()`'s branch, which is blank under the
+  // all-branches read filter by design, so a multi-branch company met 422 TRANSACTION_BRANCH_REQUIRED
+  // with no control to answer it. Same field and same client-side refusal as the accounting draft form.
+  const createBranchId = useTransactionCreateBranchId();
   const [suppliers, setSuppliers] = useState<SupplierSummary[]>([]);
   const [supplierId, setSupplierId] = useState('');
   const [supplierDocumentNumber, setSupplierDocumentNumber] = useState('');
@@ -302,8 +306,9 @@ function CreateVendorBillForm({ companyId, canCreate, onCreated }: { companyId: 
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError('');
     try {
+      if (!createBranchId) throw new Error('กรุณาเลือกสาขาของรายการ');
       const created = await createVendorBill(companyId, {
-        supplierId, branchId: branch?.branchId || undefined, billDate, dueDate, currency: 'THB', vatMode,
+        supplierId, branchId: createBranchId, billDate, dueDate, currency: 'THB', vatMode,
         supplierDocumentNumber: supplierDocumentNumber.trim() || undefined,
         matchingMode: 'NONE',
         pp36Candidate: context === 'IMPORT_SERVICE',
@@ -318,6 +323,9 @@ function CreateVendorBillForm({ companyId, canCreate, onCreated }: { companyId: 
     <summary className="cursor-pointer font-bold text-gray-900">บันทึกบิลผู้ขาย</summary>
     {error && <div ref={errorSummaryRef} role="alert" tabIndex={-1} className="mt-3 scroll-mt-[calc(var(--app-header-h)+1rem)] rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2">{error}</div>}
     <form className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={submit}>
+      <div className="sm:col-span-2">
+        <TransactionBranchField value={createBranchId} invalid={!createBranchId} hint="สาขาของกิจการเราที่รับบิลนี้ ไม่ใช่สาขาของผู้ขายที่พิมพ์อยู่บนบิล" />
+      </div>
       <div className="space-y-1">
         <label htmlFor="vendor-bill-supplier" className="block text-sm font-medium text-gray-700">ผู้ขาย</label>
         <ThemedSelect id="vendor-bill-supplier" aria-label="ผู้ขาย" value={supplierId} disabled={!canCreate || suppliersLoading} onChange={(event) => setSupplierId(event.target.value)}>{suppliersLoading ? <option value="">กำลังโหลด...</option> : suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.displayNameSnapshot}</option>)}</ThemedSelect>
@@ -351,7 +359,7 @@ function CreateVendorBillForm({ companyId, canCreate, onCreated }: { companyId: 
         <label htmlFor="vendor-bill-unit-price" className="block text-sm font-medium text-gray-700">ราคาต่อหน่วย (บาท)</label>
         <input id="vendor-bill-unit-price" className={inputClass} type="number" step="0.01" min="0" value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} required />
       </div>
-      <div className="sm:col-span-2"><TransactionTaxLineSelector companyId={companyId} branchId={branch?.branchId || undefined} sourceType="procurement.vendor_bill" sourceId="new-vendor-bill" sourceLineId="line-1" transactionContext={context} direction={context === 'IMPORT_SERVICE' ? 'SELF_ASSESSED' : 'INPUT'} documentDate={billDate} netAmount={amount} grossAmount={amount} value={definitionId} onChange={(id, definition) => { setDefinitionId(id); setExternalTaxCode(definition?.externalCode); setVatRate(definition?.rate ?? ''); setVatMode(context === 'IMPORT_SERVICE' || !definition || definition.calculationMethod === 'NONE' ? 'NO_VAT' : definition.treatment === 'EXEMPT' ? 'EXEMPT' : definition.calculationMethod === 'INCLUSIVE' ? 'VAT_INCLUDED' : 'VAT_EXCLUDED'); }} /></div>
+      <div className="sm:col-span-2"><TransactionTaxLineSelector companyId={companyId} branchId={createBranchId || undefined} sourceType="procurement.vendor_bill" sourceId="new-vendor-bill" sourceLineId="line-1" transactionContext={context} direction={context === 'IMPORT_SERVICE' ? 'SELF_ASSESSED' : 'INPUT'} documentDate={billDate} netAmount={amount} grossAmount={amount} value={definitionId} onChange={(id, definition) => { setDefinitionId(id); setExternalTaxCode(definition?.externalCode); setVatRate(definition?.rate ?? ''); setVatMode(context === 'IMPORT_SERVICE' || !definition || definition.calculationMethod === 'NONE' ? 'NO_VAT' : definition.treatment === 'EXEMPT' ? 'EXEMPT' : definition.calculationMethod === 'INCLUSIVE' ? 'VAT_INCLUDED' : 'VAT_EXCLUDED'); }} /></div>
       {['IMPORT_GOODS', 'IMPORT_SERVICE'].includes(context) && <p className="text-xs text-amber-700 sm:col-span-2">รายการนำเข้าจะอยู่สถานะ pending evidence จนแนบและยืนยันหลักฐานในหน้า Tax Evidence</p>}
       <button disabled={!canCreate || busy || !supplierId || !description} aria-busy={Boolean(busy)} className={`${btnClass} sm:col-span-2`}>{busy ? 'กำลังบันทึก...' : 'บันทึกฉบับร่าง'}</button>
     </form>

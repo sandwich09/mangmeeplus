@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import type { Page } from '@playwright/test';
 import { test, expect } from './harness/fixtures';
 import { ensureBrowserLegalAcceptance, expectNoClientError } from './harness/auth';
+import { chooseThemedOption } from './harness/e2e-utils';
 
 const apiRequire = createRequire(resolve('apps/api/package.json'));
 const databaseUrl = process.env.RECEIPT_CONTINUITY_TEST_DATABASE_URL;
@@ -118,7 +119,11 @@ for (const width of [390, 1280]) {
       await expect(quantity).toHaveValue('5');
       await expect(price).toHaveValue('');
       await expect(date).toContainText('เลือกวันที่');
+      // `ExpenseReviewPage` rule: what disables ถัดไป is printed under it. The count the data
+      // section reports arrives one commit after the edit and starts as "not reported yet", so the
+      // button must follow the message and never grey out in silence (`expenseDataStepBlocker`).
       await expect(page.getByRole('button', { name: 'ถัดไป', exact: true })).toBeDisabled();
+      await expect(page.getByRole('button', { name: 'ถัดไป', exact: true })).toHaveAccessibleDescription(/\S/);
       const categoryMenu = page.getByRole('combobox', { name: /^รายการที่ 1 / }).first();
       await categoryMenu.click();
       const categoryList = page.getByRole('listbox');
@@ -160,6 +165,13 @@ for (const width of [390, 1280]) {
       expect(completed.aiVerificationSummaryJson.reviewReasons).not.toContain('วันที่บนเอกสารยังอ่านไม่ได้ – ใช้วันที่ส่งไว้ก่อน');
       expect(completed.lines).toHaveLength(2);
       expect(Number(completed.grandTotalAmount)).toBe(520);
+      // Step 2 keeps its own gate (`expenseEvidenceStepBlocker`): a LINE upload arrives with the tax
+      // evidence status unanswered, so the reviewer answers it and saves the review before leaving.
+      // Like step 1, the refusal is readable — the button points at the hint beside that form.
+      await expect(next).toBeDisabled();
+      await expect(next).toHaveAccessibleDescription(/บันทึกการตรวจ/);
+      await chooseThemedOption(page, page.getByRole('combobox', { name: 'สถานะหลักฐานภาษี', exact: true }), 'ใช้เป็นหลักฐานภาษีได้');
+      await page.getByRole('button', { name: 'บันทึกการตรวจ', exact: true }).click();
       await expect(next).toBeEnabled();
       await next.click();
       await expect(page.getByText('ขั้นที่ 3:', { exact: true })).toBeVisible();

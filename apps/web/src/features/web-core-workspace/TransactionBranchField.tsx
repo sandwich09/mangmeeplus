@@ -28,7 +28,7 @@ export function useTransactionCreateBranchId(): string {
 }
 
 /** The all-branches read filter must never become a transaction's source branch. */
-export function TransactionBranchField({ value, invalid = false }: { value: string; invalid?: boolean }) {
+export function TransactionBranchField({ value, invalid = false, hint }: { value: string; invalid?: boolean; hint?: string }) {
   const id = useId();
   const locale = useWorkspaceLocale();
   const filter = useBranchFilter();
@@ -58,7 +58,10 @@ export function TransactionBranchField({ value, invalid = false }: { value: stri
           {filter?.branches.map((branch) => <option key={branch.id} value={branch.id}>{branchDisplayName(branch, locale)}</option>)}
         </ThemedSelect>
       </div>
-      <p id={`${id}-help`} className={invalid ? 'text-sm font-medium text-error-600' : 'text-sm text-gray-600'}>{t('transaction.source_branch_help', locale)}</p>
+      {/* `hint` stays inside the described-by paragraph so a form that can be misread — AP's vendor
+          bill, where the bill itself prints the SUPPLIER's branch — can say which branch is meant
+          without a second element for assistive tech to miss. */}
+      <p id={`${id}-help`} className={invalid ? 'text-sm font-medium text-error-600' : 'text-sm text-gray-600'}>{t('transaction.source_branch_help', locale)}{hint ? ` ${hint}` : ''}</p>
       {filter?.scopeFailed && <button type="button" onClick={filter.reloadScope} className="min-h-11 font-semibold text-brand-700">{t('shell.scope.load_failed', locale)}</button>}
     </div>
   );
