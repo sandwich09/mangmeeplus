@@ -10,32 +10,11 @@
  * into the module's `BadRequestException({ code, message })`.
  */
 
-/**
- * MERGE NOTE (Phase 2a): `vendor-counterparty-match.logic.ts` owns the canonical
- * `normalizeBranchCode`, and the vendor matcher must agree with storage on what a branch code is
- * or the same shop matches under one path and misses under the other. That file is on the Phase 2a
- * branch, so it cannot be imported from here yet: this is the same rule, behaviour for behaviour
- * (NFKC, Thai numerals folded, non-digits stripped, exactly five digits or null). On merge, delete
- * this function and import `normalizeBranchCode` instead — `expense.dtos.ts` already imports from
- * `accounting-documents/domain/logic`, so the direction is an existing one.
- */
-const THAI_DIGITS = '๐๑๒๓๔๕๖๗๘๙';
-const BRANCH_CODE_LENGTH = 5;
-
-function branchCodeDigits(value: string | null | undefined): string {
-  return String(value ?? '')
-    .normalize('NFKC')
-    .replace(/[๐-๙]/g, (digit) => String(THAI_DIGITS.indexOf(digit)))
-    .replace(/\D/g, '');
-}
-
-/** CON-8: five digits or nothing. `'00000'` (สำนักงานใหญ่) is a real value someone types, and the
- *  sell-side contract (`buyer-snapshot-v1.ts`) already reads it that way — it is never what blank
- *  means, so blank is stored as null and the matcher is what substitutes head office. */
-function normalizeBranchCode(value: string | null | undefined): string | null {
-  const digits = branchCodeDigits(value);
-  return digits.length === BRANCH_CODE_LENGTH ? digits : null;
-}
+// CON-8 lives in one place: `vendor-counterparty-match.logic.ts` owns `normalizeBranchCode`, and
+// storage must agree with the vendor matcher on what a branch code is, or the same shop matches
+// under one path and misses under the other. (Cross-module domain import, same direction the
+// expenses DTOs already take.)
+import { normalizeBranchCode } from '../../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
 
 /** Vendor address spec §6: the column is VARCHAR(500). §8 says an over-long address is refused with
  *  a way forward ("ตัดให้สั้นลง"), never silently truncated — the tail of an address is evidence. */
