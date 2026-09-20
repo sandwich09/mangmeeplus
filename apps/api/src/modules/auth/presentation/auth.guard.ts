@@ -83,7 +83,7 @@ export function isBillingRecoveryRoute(method: string, path: string): boolean {
   if ((method === 'GET' || method === 'POST') && /^\/v1\/companies\/[^/]+\/package-change-requests$/.test(clean)) return true;
   const prefix = '/v1/companies/[^/]+/billing';
   return method === 'GET' ? new RegExp(`^${prefix}(?:/history|/capacity|/recipient(?:/[^/]+)?|/attempts/[^/]+|/collection/[^/]+|/invoices/[^/]+/adjustments/(?:refunds|credit-notes))?$`).test(clean)
-    : method === 'POST' && new RegExp(`^${prefix}/(?:quote|checkout|portal|refresh|recipient/preview|recipient/[^/]+/(?:submit|cancel)|collection/preview|collection/[^/]+/(?:submit|withdraw|capacity)|attempts/[^/]+/(?:resume|capacity)|documents/[^/]+/open)$`).test(clean);
+    : method === 'POST' && new RegExp(`^${prefix}/(?:quote|checkout|portal|refresh|recipient/preview|recipient/[^/]+/(?:submit|cancel)|collection/preview|collection/[^/]+/(?:submit|withdraw|capacity)|attempts/[^/]+/(?:resume|cancel|capacity)|documents/[^/]+/open)$`).test(clean);
 }
 
 function isTermExpiryExempt(path: string): boolean {
