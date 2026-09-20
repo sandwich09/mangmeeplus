@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   deriveExpenseReviewSteps, expenseAiMissingFields, initialExpenseReviewStep,
-  expenseClassificationConfirmBlocker, expenseEvidenceStepBlocker, expenseSourceDraftViewState, shouldRereadReplacedReceipt,
+  expenseClassificationConfirmBlocker, expenseDataStepBlocker, expenseEvidenceStepBlocker, expenseSourceDraftViewState, shouldRereadReplacedReceipt,
 } from './expenses.model';
 
 type StepsInput = Parameters<typeof deriveExpenseReviewSteps>[0];
@@ -202,6 +202,43 @@ describe('initialExpenseReviewStep', () => {
 });
 
 // Owner report 2026-08-29 (UAT, company "test sand"): on step 2 the AI had classified the file as
+// Owner report 2026-09-20: step 1's ถัดไป read the error COUNT while the sentence under it read the
+// MESSAGE, and the count arrives from the data section's effect one commit after the edit. So an
+// unreported count (null) greyed the button out with nothing printed, and a line the reviewer had
+// just filled stayed named as missing. The blocker below is the only input to both.
+describe('step 1 (ข้อมูลรายการ) enablement truth table', () => {
+  const countMessage = 'พบข้อมูลที่ต้องแก้ 2 จุด';
+
+  it('does not block before the data section has reported — unknown is not an error', () => {
+    assert.equal(expenseDataStepBlocker({ errorCount: null, firstErrorMessage: null, countMessage }), null);
+  });
+
+  it('lets ถัดไป through once the section reports a clean form', () => {
+    assert.equal(expenseDataStepBlocker({ errorCount: 0, firstErrorMessage: null, countMessage }), null);
+  });
+
+  it('prints the first blocking field when there is one', () => {
+    assert.equal(
+      expenseDataStepBlocker({ errorCount: 2, firstErrorMessage: 'รายการที่ 2 หมวดหมู่ค่าใช้จ่าย: ยังขาดข้อมูลนี้', countMessage }),
+      'รายการที่ 2 หมวดหมู่ค่าใช้จ่าย: ยังขาดข้อมูลนี้',
+    );
+  });
+
+  it('falls back to the count so a blocked step is never mute', () => {
+    assert.equal(expenseDataStepBlocker({ errorCount: 2, firstErrorMessage: null, countMessage }), countMessage);
+  });
+
+  it('blocks exactly when it has something to print — the button and the text cannot disagree', () => {
+    for (const errorCount of [null, 0, 1, 3]) {
+      for (const firstErrorMessage of [null, 'หมวดหมู่ค่าใช้จ่าย: ยังขาดข้อมูลนี้']) {
+        const blocker = expenseDataStepBlocker({ errorCount, firstErrorMessage, countMessage });
+        assert.equal(blocker !== null, errorCount !== null && errorCount > 0,
+          `wrong gate for ${JSON.stringify({ errorCount, firstErrorMessage })}`);
+      }
+    }
+  });
+});
+
 // NOT an expense document. The reviewer changed ประเภทเอกสาร, pressed ยืนยันว่าเป็นหลักฐานค่าใช้จ่าย,
 // then pressed ถัดไป — which was enabled and did nothing. The cause was two different flags: the
 // button's `disabled` read `checkBillBlocked` only, while the navigation refused on an unsaved-edits
