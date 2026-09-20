@@ -34,7 +34,7 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
     paymentState: paid ? 'PAID' : scenario === 'failed' ? 'FAILED' : attempted ? 'PENDING' : 'NONE',
     applyState: scenario === 'activating' ? 'PENDING' : scenario === 'held' ? 'HELD' : paid ? 'APPLIED' : 'NONE',
     accessState: scenario === 'expired' ? 'EXPIRED' : scenario === 'held' ? 'HELD' : 'ACTIVE',
-    purchaseEligibility: 'ELIGIBLE', subscriptionState: paid ? 'active' : 'NONE', documentState: paid ? 'READY' : 'NONE',
+    purchaseEligibility: 'ELIGIBLE', subscriptionState: paid && selected?.purchaseMode !== 'CARD_ONCE' && selected?.purchaseMode !== 'PROMPTPAY_ONCE' ? 'active' : 'NONE', documentState: paid ? 'READY' : 'NONE',
     renewalMode: paid ? selected?.purchaseMode ?? 'CARD_AUTO' : 'NONE', availablePurchaseModes: ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'],
     attemptId: attempted ? 'preview-attempt' : null, reference: attempted ? 'PREVIEW-0001' : null, observedAt: date(), canCancelCheckout: attempted && !paid,
     tierKey: paid || scenario === 'expired' ? currentOffer.offerKey : 'FREE_TRIAL_15', interval: paid || scenario === 'expired' ? currentOffer.interval : null,
