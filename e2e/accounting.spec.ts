@@ -1,5 +1,5 @@
 import { test, expect } from './harness/fixtures';
-import { gotoCompany, json, unique } from './harness/e2e-utils';
+import { branchOptionName, chooseThemedOption, ensureVatRegistrationAnswered, firstActiveBranch, gotoCompany, json, unique } from './harness/e2e-utils';
 
 type AccountingDocument = {
   id: string;
@@ -25,11 +25,14 @@ type AccountingPayment = {
 type PaymentPage = { data: AccountingPayment[]; total: number };
 
 async function createDocument(api: any, companyId: string, description = unique('E2E accounting line'), counterpartyId?: string) {
+  await ensureVatRegistrationAnswered(api, companyId);
+  const branch = await firstActiveBranch(api, companyId);
   return json<AccountingDocument>(await api.post(`companies/${companyId}/accounting/documents`, {
     data: {
       documentType: 'INVOICE',
       documentDate: new Date().toISOString().slice(0, 10),
       vatMode: 'NO_VAT',
+      branchId: branch.id,
       ...(counterpartyId && { counterpartyId }),
       lines: [{ lineNumber: 1, description, quantity: '2', unitPrice: '125.00' }],
     },
@@ -43,9 +46,14 @@ test.describe('ACCT — accounting documents', () => {
     await expect(authedPage.getByRole('heading', { name: 'สร้างเอกสารใหม่', exact: true })).toBeVisible();
   });
 
-  test('ACCT-02 @p1 creates a document through the UI form', async ({ authedPage, companyId }) => {
+  test('ACCT-02 @p1 creates a document through the UI form', async ({ authedPage, api, companyId }) => {
     const line = unique('E2E UI accounting');
+    await ensureVatRegistrationAnswered(api, companyId);
+    const branch = await firstActiveBranch(api, companyId);
     await gotoCompany(authedPage, companyId, '/accounting');
+    // The draft form carries TransactionBranchField; with no branch chosen it refuses client-side
+    // ('กรุณาเลือกสาขาของรายการ') and never reaches the API.
+    await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'สาขาของรายการ', exact: true }), branchOptionName(branch));
     await authedPage.getByRole('textbox', { name: 'รายละเอียดรายการ', exact: true }).fill(line);
     await authedPage.getByRole('spinbutton', { name: 'จำนวน', exact: true }).fill('2');
     await authedPage.getByRole('spinbutton', { name: 'ราคาต่อหน่วย', exact: true }).fill('125');
@@ -77,8 +85,10 @@ test.describe('ACCT — accounting documents', () => {
   });
 
   test('ACCT-05 @p2 zero-line document is rejected by API validation', async ({ api, companyId }) => {
+    await ensureVatRegistrationAnswered(api, companyId);
+    const branch = await firstActiveBranch(api, companyId);
     const created = await json<AccountingDocument>(await api.post(`companies/${companyId}/accounting/documents`, {
-      data: { documentType: 'INVOICE', documentDate: new Date().toISOString().slice(0, 10), vatMode: 'NO_VAT', lines: [] },
+      data: { documentType: 'INVOICE', documentDate: new Date().toISOString().slice(0, 10), vatMode: 'NO_VAT', branchId: branch.id, lines: [] },
     }));
     const res = await api.post(`companies/${companyId}/accounting/documents/${created.id}/issue`, { data: {} });
     expect(res.ok()).toBe(false);

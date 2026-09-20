@@ -97,6 +97,33 @@ psql "$DATABASE_URL" -tAc "select id from \"Company\" where id='seed-local-compa
 corepack pnpm exec playwright test --grep @smoke
 ```
 
+### The billing browser specs only run locally — and only with these three values
+
+`billing-admin-menu-ux.spec.ts` (12 tests) and `billing-admin-directory.spec.ts` (5) skip
+themselves on a default run, so they are silent everywhere: **no GitHub workflow runs them.**
+`.github/workflows/ci.yml` invokes Playwright exactly once, for
+`e2e/line-signup-contact-email.spec.ts`, and it never sets `BILLING_MODE` or `STRIPE_ACCOUNT_ID`.
+Run them by hand when you touch `/system/billing/*`:
+
+```bash
+# A database of its own: the specs assert the NAME, not just the host.
+export DATABASE_URL='postgresql://watchdog:watchdog_local_password@127.0.0.1:5432/mangmee_ux?schema=public'
+export BILLING_MODE=test          # packages/config enum is disabled|test|live; `live` is used nowhere
+export STRIPE_ACCOUNT_ID=acct_TESTONLYLOCAL   # must match /^acct_[a-zA-Z0-9]+$/ — synthetic, no key exists
+corepack pnpm exec playwright test e2e/billing-admin-menu-ux.spec.ts e2e/billing-admin-directory.spec.ts \
+  --project=chromium --retries=0
+```
+
+- `mangmee_ux` is not optional: `billing-admin-menu-ux.spec.ts:29` and
+  `billing-admin-directory.spec.ts:206,395` assert `url.pathname === '/mangmee_ux'`, and a
+  `beforeAll` that trips that assert strands the other 11 tests in the file.
+- `BILLING_MODE=test` opens only the `billing-admin-directory` issue-queue suite
+  (`billing-admin-directory.spec.ts:119`); the others need just the DB and the account id.
+- Migrate and seed that database like any other (`prisma migrate deploy` → `prisma/seed.ts` →
+  `prisma/sync-feature-launch-gates.ts`); the specs create and delete their own companies.
+- No Stripe request can succeed here and none is made: `STRIPE_SECRET_KEY` stays unset and the
+  specs only need the id to match the `BillingAccount.stripeAccountId` rows they insert.
+
 ---
 
 ## 4. Fixtures, auth & seed data
