@@ -83,6 +83,29 @@ export type AccountingCounterpartyDetail = AccountingCounterpartySummary & {
   shippingAddressJson?: Record<string, unknown>;
 };
 
+// Additive v2 shape for `AccountingCounterparty.billingAddressJson` (spec: vendor-address-and-
+// counterparty-autosave §6). Every reader prefers `addressText` when present; existing writers
+// (procurement's free-form addressJson, CON-9) keep working because they simply never populate
+// these keys — the Prisma column stays untyped Json, this is a read/write contract on top of it,
+// not a migration.
+export const COUNTERPARTY_ADDRESS_SOURCES = ['MANUAL', 'EXPENSE_AUTO', 'RD_LOOKUP', 'OCR', 'PROCUREMENT'] as const;
+
+export type CounterpartyAddressV2 = {
+  /** What gets printed on a document. The only field every reader must check first. */
+  addressText: string;
+  postalCode?: string | null;
+  /** Only when fetched from RD or entered as a structured address; never required. */
+  structured?: import('./company-tax-identity.js').CompanyLegalAddress | null;
+  provenance: {
+    source: (typeof COUNTERPARTY_ADDRESS_SOURCES)[number];
+    expenseId?: string;
+    userId: string;
+    at: string;
+  };
+  /** Other addresses seen on documents for this counterparty, newest first, capped at 5. */
+  seenOnDocuments?: Array<{ addressText: string; expenseId: string; at: string }>;
+};
+
 export type AccountingDocumentLineSummary = {
   id: string;
   lineNumber: number;
