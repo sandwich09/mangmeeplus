@@ -402,6 +402,15 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: info.outputPath(`billing-preview-plans-${width}.png`), fullPage: true });
+  await scenario.selectOption('start');
+  await plans.getByRole('radio', { name: 'บัตร · จ่ายครั้งเดียว' }).check();
+  await plans.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).first().click();
+  await page.getByLabel('ฉันตรวจสอบข้อมูลและยืนยันเงื่อนไขจ่ายครั้งเดียว', { exact: true }).check();
+  await checkout.click();
+  await page.getByRole('button', { name: 'จำลองชำระสำเร็จ', exact: true }).click();
+  await expect(page.getByText(/จ่ายครั้งเดียว ใช้ได้ถึง.*ไม่มีการตัดเงินงวดถัดไป/)).toBeVisible();
+  await page.getByRole('button', { name: 'การต่ออายุและชำระเงิน', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'หยุดต่ออายุอัตโนมัติ', exact: true })).toHaveCount(0);
   expect(forbiddenRequests).toEqual([]);
   await page.getByRole('link', { name: 'ออกจากพรีวิว', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/companies/${companyId}/billing$`));
