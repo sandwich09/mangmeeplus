@@ -604,7 +604,7 @@ export class BillingService {
       ? (['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'] as const).filter(mode =>
           settings.gates[gateForMode(mode)] && (!account?.paidThrough || account.paidThrough <= new Date() ||
             (account.baseSubscriptionId ? renewalMode === 'CARD_AUTO' && mode === 'CARD_AUTO' : renewalMode === 'CARD_ONCE' || renewalMode === 'PROMPTPAY_ONCE'
-              ? mode !== 'CARD_AUTO' : true))) : [];
+              ? oneTimeMode(mode) : true))) : [];
     const refundReviewPending = !!(account && await pendingRefund(this.prisma.client, account));
     const issues = this.config.stripeAccountId ? await this.prisma.client.billingIssue.findMany({ where: { companyId: company.id, stripeAccountId: this.stripe.accountId,
       livemode: this.stripe.livemode, state: { not: 'RESOLVED' } }, take: 10, select: { id: true, kind: true } }) : [];

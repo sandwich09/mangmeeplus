@@ -69,7 +69,7 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
     {(!showReviewHeader || !changingPlan) && <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="space-y-2">
         {!showReviewHeader && panelHeading}
-        {!changingPlan && <p className="text-sm text-gray-500">{refreshingStatus ? 'กำลังตรวจสถานะล่าสุด' : status.cancelAtPeriodEnd ? 'ปิดการต่ออายุแล้ว ใช้แพ็กเกจได้จนครบระยะที่ชำระไว้' : status.collectionPause ? 'พักการเรียกเก็บเงินชั่วคราว' : status.renewalMode === 'PROMPTPAY_RENEW' ? 'ระบบออกบิล QR ทุกงวด ต้องสแกนจ่ายเอง' : 'ต่ออายุอัตโนมัติเปิดอยู่'}</p>}
+        {!changingPlan && <p className="text-sm text-gray-500">{refreshingStatus ? 'กำลังตรวจสถานะล่าสุด' : status.cancelAtPeriodEnd ? status.renewalMode === 'PROMPTPAY_RENEW' ? 'ปิดการออกบิล QR ทุกงวดแล้ว ใช้แพ็กเกจได้จนครบระยะที่ชำระไว้' : 'ปิดการต่ออายุอัตโนมัติแล้ว ใช้แพ็กเกจได้จนครบระยะที่ชำระไว้' : status.collectionPause ? 'พักการเรียกเก็บเงินชั่วคราว' : status.renewalMode === 'PROMPTPAY_RENEW' ? 'ระบบออกบิล QR ทุกงวด ต้องสแกนจ่ายเอง' : 'ต่ออายุอัตโนมัติเปิดอยู่'}</p>}
       </div>
       {!confirming && !selection && !operationId && !status.collection && status.allowedActions.includes('portal_cancel_subscription') && <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void act('preview')}>
         {status.cancelAtPeriodEnd ? status.renewalMode === 'PROMPTPAY_RENEW' ? 'เปิดการออกบิล QR ทุกงวด' : 'เปิดต่ออายุอัตโนมัติ' : status.renewalMode === 'PROMPTPAY_RENEW' ? 'หยุดการออกบิล QR ทุกงวด' : 'หยุดต่ออายุอัตโนมัติ'}</button>}
