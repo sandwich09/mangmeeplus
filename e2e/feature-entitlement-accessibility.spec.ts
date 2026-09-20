@@ -1,5 +1,5 @@
 import { test, expect } from './harness/fixtures';
-import { gotoCompany, json, unique } from './harness/e2e-utils';
+import { firstActiveBranch, gotoCompany, json, unique } from './harness/e2e-utils';
 
 type Supplier = { id: string; displayNameSnapshot: string };
 type VendorBill = { id: string; status: string };
@@ -16,11 +16,13 @@ async function createWhtHandoff(api: any, companyId: string) {
       defaultCurrency: 'THB',
     },
   }));
+  const branch = await firstActiveBranch(api, companyId);
   const today = new Date().toISOString();
   const due = new Date(Date.now() + 7 * 86_400_000).toISOString();
   const bill = await json<VendorBill>(await api.post(`companies/${companyId}/accounts-payable/vendor-bills`, {
     data: {
       supplierId: supplier.id,
+      branchId: branch.id,
       billDate: today,
       dueDate: due,
       currency: 'THB',

@@ -1,6 +1,6 @@
 import { test, expect } from './harness/fixtures';
 import { expectNoClientError } from './harness/auth';
-import { gotoCompany, json, unique } from './harness/e2e-utils';
+import { firstActiveBranch, gotoCompany, json, unique } from './harness/e2e-utils';
 import { ACCOUNTING_UI_HIDDEN } from '../apps/web/src/features/web-core-workspace/web-core-workspace.constants';
 
 test('JRNL-00 @smoke hidden ledger UI redirects while background posting stays enabled', async ({ authedPage, companyId }) => {
@@ -65,6 +65,7 @@ test('JRNL-20 @p1 close checks see a blocker dated the last day of the period', 
   const bill = await json<{ id: string }>(await api.post(`companies/${companyId}/accounts-payable/vendor-bills`, {
     data: {
       supplierId: supplier.id,
+      branchId: (await firstActiveBranch(api, companyId)).id,
       billDate: lastDayWithTime,
       dueDate: '2026-06-30T00:00:00.000Z',
       currency: 'THB', vatMode: 'NO_VAT',

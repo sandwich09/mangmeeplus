@@ -2,7 +2,7 @@ import { deflateSync, crc32 } from 'node:zlib';
 import { randomBytes } from 'node:crypto';
 import { addCivilDays, civilDate, type ExpenseDetail as FullExpenseDetail, type IncomeExpenseLedgerSummary } from '@watchdog-bms/contracts';
 import { test, expect } from './harness/fixtures';
-import { branchOptionName, chooseThemedOption, gotoCompany, json, unique } from './harness/e2e-utils';
+import { branchOptionName, chooseThemedOption, firstActiveBranch, gotoCompany, json, unique } from './harness/e2e-utils';
 
 type ExpenseSummary = { id: string; status: string; grandTotalAmount: string; updatedAt: string };
 type ExpenseList = { data: ExpenseSummary[] };
@@ -282,12 +282,14 @@ test.describe('EXP — expenses + receipts', () => {
       'EXP-06 requires compose MinIO on localhost:19000; start it and run with S3_E2E=1.',
     );
 
+    const branch = await firstActiveBranch(api, companyId);
     const receiptBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
     const intent = await json<ReceiptUploadIntent>(await api.post(`companies/${companyId}/expenses/receipt-uploads`, {
       data: {
         originalFileName: unique('e2e-receipt') + '.png',
         mimeType: 'image/png',
         byteSize: receiptBytes.length,
+        branchId: branch.id,
         expenseDate: civilDate(new Date()),
         note: unique('EXP-06 receipt upload'),
       },
@@ -321,12 +323,14 @@ test.describe('EXP — expenses + receipts', () => {
       'EXP-07 requires compose MinIO on localhost:19000; start it and run with S3_E2E=1.',
     );
 
+    const branch = await firstActiveBranch(api, companyId);
     const receiptBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
     const intent = await json<ReceiptUploadIntent>(await api.post(`companies/${companyId}/expenses/receipt-uploads`, {
       data: {
         originalFileName: unique('e2e-extraction-receipt') + '.png',
         mimeType: 'image/png',
         byteSize: receiptBytes.length,
+        branchId: branch.id,
         expenseDate: civilDate(new Date()),
         note: unique('EXP-07 receipt extraction'),
       },
@@ -423,10 +427,12 @@ test('EXP-25 @p1 stores expenseDate as a calendar date even when posted an insta
 test('EXP-26 @p1 keeps a backdated document in its intake month and labels both dates', async ({ authedPage, api, companyId }) => {
   const intakeDate = civilDate(new Date());
   const documentDate = addCivilDays(intakeDate, -51);
+  const branch = await firstActiveBranch(api, companyId);
   const vendor = unique('EXP-26 backdated vendor');
   const created = await json<ExpenseSummary>(await api.post(`companies/${companyId}/expenses`, {
     data: {
       captureSource: 'WEB_MANUAL',
+      branchId: branch.id,
       expenseDate: documentDate,
       vatMode: 'NO_VAT',
       inputVatClaimStatus: 'NON_CLAIMABLE',
@@ -441,6 +447,7 @@ test('EXP-26 @p1 keeps a backdated document in its intake month and labels both 
   const sameMonthCreated = await json<ExpenseSummary>(await api.post(`companies/${companyId}/expenses`, {
     data: {
       captureSource: 'WEB_MANUAL',
+      branchId: branch.id,
       expenseDate: intakeDate,
       vatMode: 'NO_VAT',
       inputVatClaimStatus: 'NON_CLAIMABLE',
@@ -480,7 +487,10 @@ test('EXP-26 @p1 keeps a backdated document in its intake month and labels both 
   await authedPage.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).click();
   await authedPage.getByRole('button', { name: 'ส่งออก Excel' }).click();
   const exportPayload = (await exportRequestPromise).postDataJSON();
-  expect(exportPayload.dateField).toBe('expenseDate');
+  // The export follows the axis the list is showing (ExpensesPages `exportExcel`): this page is on
+  // the intake month, and only the `view=confirmed` entry point exports by document date. Changed
+  // with the branch enforcement itself, in commit 88aef194.
+  expect(exportPayload.dateField).toBe('uploadedAt');
   expect(exportPayload.fromDate).toBe(`${intakeDate.slice(0, 7)}-01`);
   expect(exportPayload.toDate).toBe(`${intakeDate.slice(0, 7)}-${String(lastDay).padStart(2, '0')}`);
 

@@ -1,5 +1,5 @@
 import { test, expect } from './harness/fixtures';
-import { gotoCompany, json, unique } from './harness/e2e-utils';
+import { firstActiveBranch, gotoCompany, json, unique, useWorkspaceBranch } from './harness/e2e-utils';
 
 type Supplier = { id: string; displayNameSnapshot: string };
 type VendorBill = { id: string; status: string; dueDate: string; netPayableAmount: string; supplierId: string; supplierDocumentNumber?: string; taxInvoiceNumber?: string };
@@ -13,11 +13,13 @@ async function createSupplier(api: any, companyId: string) {
 
 async function createVendorBill(api: any, companyId: string) {
   const supplier = await createSupplier(api, companyId);
+  const branch = await firstActiveBranch(api, companyId);
   const today = new Date().toISOString();
   const due = new Date(Date.now() + 7 * 86400000).toISOString();
   const bill = await json<VendorBill>(await api.post(`companies/${companyId}/accounts-payable/vendor-bills`, {
     data: {
       supplierId: supplier.id,
+      branchId: branch.id,
       billDate: today,
       dueDate: due,
       currency: 'THB',
@@ -77,6 +79,8 @@ test.describe('AP — accounts payable', () => {
   });
 
   test('AP-03 @p1 enters a supplier source number in the form and explains duplicate rejection', async ({ authedPage, api, companyId }) => {
+    // The vendor-bill form has no branch field; it posts whatever the header selector holds.
+    await useWorkspaceBranch(authedPage, companyId, (await firstActiveBranch(api, companyId)).id);
     const suppliersResponsePromise = authedPage.waitForResponse((response) => response.request().method() === 'GET'
       && new URL(response.url()).pathname.endsWith(`/companies/${companyId}/procurement/suppliers`));
     await gotoCompany(authedPage, companyId, '/accounts-payable');
@@ -179,6 +183,7 @@ test.describe('AP — accounts payable', () => {
   });
 
   test('AP-04 @p1 leaves the source number optional for repeated blank-number form entries', async ({ authedPage, api, companyId }) => {
+    await useWorkspaceBranch(authedPage, companyId, (await firstActiveBranch(api, companyId)).id);
     await gotoCompany(authedPage, companyId, '/accounts-payable');
     const form = authedPage.locator('form').filter({ has: authedPage.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }) });
     const sourceNumber = form.getByLabel('เลขที่เอกสารผู้ขาย (ถ้ามี)', { exact: true });

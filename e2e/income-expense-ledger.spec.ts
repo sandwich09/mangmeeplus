@@ -1,5 +1,5 @@
 import { test, expect } from './harness/fixtures';
-import { gotoCompany, json, unique } from './harness/e2e-utils';
+import { ensureVatRegistrationAnswered, firstActiveBranch, gotoCompany, json, unique } from './harness/e2e-utils';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../apps/api/src/generated/prisma/client';
 
@@ -33,9 +33,11 @@ function bangkokToday(): string {
 }
 
 async function createInvoice(api: any, companyId: string, amount: string, label: string) {
+  await ensureVatRegistrationAnswered(api, companyId);
+  const branch = await firstActiveBranch(api, companyId);
   const draft = await json<DocumentRecord>(await api.post(`companies/${companyId}/accounting/documents`, {
     data: {
-      documentType: 'INVOICE', documentDate: bangkokToday(), vatMode: 'NO_VAT',
+      documentType: 'INVOICE', documentDate: bangkokToday(), vatMode: 'NO_VAT', branchId: branch.id,
       lines: [{ lineNumber: 1, description: label, quantity: '1', unitPrice: amount }],
     },
   }));
@@ -75,10 +77,12 @@ async function closeSalesGateForBrowserEvidence(): Promise<() => Promise<void>> 
 test.describe('P27 — income and expense ledger', () => {
   test('LED-01 @smoke received income creates invoice, payment and receipt and appears in the ledger', async ({ authedPage, api, companyId }) => {
     const label = unique('LED cash sale');
+    await ensureVatRegistrationAnswered(api, companyId);
+    const branch = await firstActiveBranch(api, companyId);
     const result = await json<SimpleIncomeResult>(await api.post(`companies/${companyId}/accounting/simple-income`, {
       data: {
         idempotencyKey: unique('led-income'), documentDate: bangkokToday(), vatMode: 'NO_VAT',
-        paymentMethod: 'BANK_TRANSFER',
+        paymentMethod: 'BANK_TRANSFER', branchId: branch.id,
         lines: [{ lineNumber: 1, description: label, quantity: '1', unitPrice: '246.80' }],
       },
     }));
@@ -170,9 +174,11 @@ test.describe('P27 — income and expense ledger', () => {
     financePage.on('console', (message) => {
       if (message.type() === 'error') errors.push(message.text());
     });
+    await ensureVatRegistrationAnswered(financeApi, companyId);
     const quotation = await json<DocumentRecord>(await financeApi.post(`companies/${companyId}/accounting/documents`, {
       data: {
         documentType: 'QUOTATION', documentDate: bangkokToday(), vatMode: 'NO_VAT',
+        branchId: (await firstActiveBranch(financeApi, companyId)).id,
         lines: [{ lineNumber: 1, description: unique('LED close quotation'), quantity: '1', unitPrice: '500.00' }],
       },
     }));

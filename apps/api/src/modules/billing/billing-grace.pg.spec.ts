@@ -174,7 +174,12 @@ test('renewal grace with real PostgreSQL and simulated Stripe (not native channe
         await client.billingInvoice.update({where:{id:invoice.id},data:{applyStatus:'APPLIED',providerStatus:'paid',refundedSatang:0,disputed:false}});
       }
       const grant=await client.billingReceiptGrant.findFirstOrThrow({where:{companyId:f.companyId,sourceKey:invoice.id}});
-      for(const data of [{kind:'ADMIN_ADJUSTMENT'},{expiresAt:new Date(Date.now()-1000),serviceEnd:new Date(Date.now()-1000)},{availableAt:new Date(Date.now()+86400000)},{revokedAt:new Date()}]){
+      // The expired window is anchored on the grant's own serviceStart (the renewal period opens a
+      // day before now), not on Date.now(): the apply stamps availableAt at ~now, and
+      // BillingReceiptGrant_valid_units_period_kind requires availableAt < expiresAt, so
+      // expiresAt=now-1s is rejected whenever the apply landed less than a second earlier.
+      const expiredWindow={availableAt:grant.serviceStart,expiresAt:new Date(grant.serviceStart.getTime()+1000),serviceEnd:new Date(grant.serviceStart.getTime()+1000)};
+      for(const data of [{kind:'ADMIN_ADJUSTMENT'},expiredWindow,{availableAt:new Date(Date.now()+86400000)},{revokedAt:new Date()}]){
         await client.billingReceiptGrant.update({where:{id:grant.id},data});await resolve();
         assert.equal((await client.packageChangeRequest.findUniqueOrThrow({where:{id:request.id}})).status,'OPEN');
         await client.billingReceiptGrant.update({where:{id:grant.id},data:{kind:grant.kind,serviceEnd:grant.serviceEnd,expiresAt:grant.expiresAt,availableAt:grant.availableAt,revokedAt:null}});
