@@ -7,6 +7,8 @@ import { applyChargeKindChange, buildExpenseDraftReviewPayload, insertExpenseRev
 const validValues = (): ExpenseDraftReviewValues => ({
   vendorNameSnapshot: 'บริษัท ตัวอย่าง จำกัด',
   vendorTaxIdSnapshot: '0100000000001',
+  vendorAddressSnapshot: '',
+  vendorBranchCodeSnapshot: '',
   vendorDocumentNumber: 'INV-1',
   expenseDate: '2026-07-31',
   vatMode: 'NO_VAT',
@@ -48,6 +50,31 @@ describe('validateExpenseReview', () => {
     assert.equal(validate(values).find((issue) => issue.field === 'vendorTaxIdSnapshot')?.messageKey, 'expenses.v_tax_id_13');
     values.vendorTaxIdSnapshot = '';
     assert.equal(validate(values).some((issue) => issue.field === 'vendorTaxIdSnapshot'), false);
+  });
+
+  // Vendor address spec §8 (D5): one field, two different answers, and only one of them may stop a
+  // save. AC04 turns on this split — a full tax invoice with no address stays confirmable.
+  it('refuses an over-long seller address but only nudges a tax invoice that has none', () => {
+    const tooLong = validValues(); tooLong.vendorAddressSnapshot = 'ก'.repeat(501);
+    assert.deepEqual(validate(tooLong).find((issue) => issue.field === 'vendorAddressSnapshot'), {
+      field: 'vendorAddressSnapshot', severity: 'error', messageKey: 'expenses.v_vendor_address_too_long',
+    });
+    const atLimit = validValues(); atLimit.vendorAddressSnapshot = `  ${'ก'.repeat(500)}  `;
+    assert.equal(validate(atLimit).some((issue) => issue.field === 'vendorAddressSnapshot'), false,
+      'exactly 500 after trimming is inside the limit');
+
+    const blankOnInvoice = validateExpenseReview(validValues(), { today: '2026-07-31', sourceDocumentType: 'TAX_INVOICE' });
+    assert.deepEqual(blankOnInvoice.find((issue) => issue.field === 'vendorAddressSnapshot'), {
+      field: 'vendorAddressSnapshot', severity: 'warn', messageKey: 'expenses.v_vendor_address_tax_invoice',
+    });
+    // The page disables บันทึก off the ERROR count, so a warning here must leave it untouched.
+    assert.deepEqual(blankOnInvoice.filter((issue) => issue.severity === 'error'), []);
+    assert.equal(
+      validateExpenseReview(validValues(), { today: '2026-07-31', sourceDocumentType: 'RECEIPT' })
+        .some((issue) => issue.field === 'vendorAddressSnapshot'),
+      false,
+      'only a full tax invoice is nudged; nothing else mentions the address',
+    );
   });
 
   it('limits document numbers to 50 characters', () => {
