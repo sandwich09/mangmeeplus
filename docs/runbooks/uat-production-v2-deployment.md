@@ -32,6 +32,41 @@ proof. Operator และ agent ทุกคนต้องใช้ runbook น
 Release ledger ขั้นต่ำต้องมี `candidate`, `controller`, `UAT_RUN_ID`, `READY_RUN_ID`, `PROD_RUN_ID`,
 Passport/READY/Result artifact digest, serving mode, legal evidence/owner reference และผล final acceptance.
 
+## Owner-authorized Production Kamal migration — 2026-09-18
+
+The owner explicitly selected ECS-to-Kamal migration and the isolated Hotfix path first, combining
+pricing8f5b508a with cancelled-certificate confirmation0b0058ad. This application candidate is based
+on servingfc2838c4 and does not include the UAT/main backlog. The separate signed-UAT promotion
+path continues to require exact tested image digests and no Production rebuild. This scoped choice
+does not waive controller review/CI, current-administrator acceptance, signature verification,
+configuration/authority checks, failure retention or customer OPEN requirements.
+
+Use [Kamal release and first-migration instructions](../../infra/kamal/README.md) and record local
+operation IDs separately from workflow IDs. UAT/READY/PROD workflow IDs are `NOT_DISPATCHED` for
+the isolated local operation, never borrowed from another release. Initial infrastructure staging
+and local build/preparation are not live release completion. Retain the original ECS source, routes,
+provider and build authority through the first rollback window. Both signed acceptance and actual
+§E administrator/live/OPEN/logout evidence must pass before `cutoverComplete:true` enrollment.
+The owner named Chrome developer for the existing `prodmangmeeplus` session, and Chrome Thawatchai
+company Snd Prd for the receipt/substitute/cancel/confirm business journey. Do not use seed accounts
+or reset credentials, and do not mark a mocked browser regression as this live journey.
+
+## Scoped owner browser waiver for September18 Production hotfixes
+
+After manually trying the first release, the owner explicitly stopped further browser checks and
+instructed continuing the isolated card fix and both branch integrations. This exception applies only
+to source`0b0058ad` / operation`20260918T113740Z-2b1e04fa` and source`1406d382` /
+operation`20260918T143800Z-e6c3b860`. The first is signed`OWNER_ACCEPTED_BROWSER_HTTP_WAIVED`;
+the second is signed`ACCEPTED_WITH_BROWSER_HTTP_WAIVER`. Neither claims standard §E identity,
+flags, logout204 or post-logout401 checks were completed. The second explicitly records that the
+owner did not manually test the future candidate. Owner decision/override hashes are signed.
+
+Exact source/config/readiness, public OPEN, KMS verification, failure retention and mutation guards
+remain in force. The original interrupted first acceptance is retained. No generic browser bypass
+was added to the controller, and this waiver is not authority for a future release. Do not resume
+browser testing of these releases against the owner's stop instruction.
+[Actual evidence, timing, rollback and branch integration](../evidence/production-two-hotfixes-2026-09-18.md).
+
 ## Owner-authorized UAT Kamal stability proof — 2026-09-11
 
 The owner explicitly requires consolidated rehearsal and fixes before the next live run, followed by
