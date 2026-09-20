@@ -4,7 +4,7 @@ import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { validate } from 'class-validator';
-import { SupportRequestAdminUseCase } from './support-request-admin.use-case';
+import { SupportRequestAdminUseCase, toSupportMessageDto } from './support-request-admin.use-case';
 import { SupportRequestReplyDto } from '../presentation/http/system-support-request.controller';
 import {
   SUPPORT_REQUEST_CLAIM_ACTION,
@@ -60,10 +60,13 @@ function matches(current: any, where: any): boolean {
 
 function harness(options: {
   one?: any | null; rows?: any[]; counts?: number[]; pauseCleared?: number; auditFails?: boolean;
+  /** สัญญา v3: thread rows the fake returns, and the blob (if any) the content route finds. */
+  messages?: any[]; blob?: any;
 } = {}) {
   let current = options.one === undefined ? row() : options.one;
   const rows = options.rows ?? (current ? [current] : []);
   const audits: any[] = [];
+  const messages: any[] = [];
   const updates: any[] = [];
   const listQueries: any[] = [];
   const transactions: number[] = [];
@@ -83,6 +86,12 @@ function harness(options: {
   };
   const client: any = {
     lineSupportRequest,
+    lineSupportMessage: {
+      upsert: async (args: any) => { messages.push({ op: 'upsert', ...args }); return {}; },
+      updateMany: async (args: any) => { messages.push({ op: 'updateMany', ...args }); return { count: 1 }; },
+      findMany: async () => options.messages ?? [],
+    },
+    lineSupportMessageBlob: { findFirst: async () => options.blob ?? null },
     lineCompanyContext: { updateMany: async () => ({ count: options.pauseCleared ?? 1 }) },
     company: { findMany: async () => [] },
     companySignupRequest: { findMany: async () => [{
@@ -116,7 +125,7 @@ function harness(options: {
   } as any;
   return {
     useCase: new SupportRequestAdminUseCase(lineMessagingCredentialsFixture(config), { client } as any, config),
-    audits, updates, listQueries, transactions,
+    audits, updates, listQueries, transactions, messages,
     current: () => current,
     allowAudit: () => { auditFails = false; },
   };
@@ -330,5 +339,107 @@ describe('request-bound support replies', () => {
       'sr-1', 'ตอบค่ะ', OP_A, null, ADMIN, REQUEST_ID,
     ), ConflictException);
     await assert.rejects(() => harness({ one: null }).useCase.claim('missing', ADMIN, REQUEST_ID), NotFoundException);
+  });
+});
+
+// ── สัญญา v3: the chat behind a request ──
+
+const threadRow = (over: Record<string, unknown> = {}) => ({
+  id: 'm-1', direction: 'CUSTOMER', kind: 'TEXT', text: 'ช่วยสมัครร้านค่ะ', senderName: null,
+  mediaMimeType: null, mediaByteSize: null, mediaFileName: null, mediaError: null, deliveryStatus: null,
+  createdAt: new Date('2026-09-05T02:00:00.000Z'), blob: null,
+  // Never selected by the real read; present here to prove the mapper would not leak it either.
+  lineMessageId: 'line-msg-secret', operationId: null, senderUserId: null,
+  ...over,
+});
+
+describe('support thread (สัญญา v3)', () => {
+  it('writes the reply as a staff bubble: PENDING before the push, SENT with the row', async () => {
+    const h = harness();
+    globalThis.fetch = (async () => new Response('', { status: 200 })) as typeof fetch;
+    const result = await h.useCase.reply('sr-1', 'กรุณาส่งอีเมลที่ต้องการใช้ค่ะ', OP_A, null, ADMIN, REQUEST_ID);
+    assert.equal(result.deliveryStatus, 'SENT');
+
+    const [pending, sent] = h.messages;
+    assert.equal(pending.op, 'upsert');
+    assert.deepEqual(pending.where, { requestId_operationId: { requestId: 'sr-1', operationId: OP_A } });
+    assert.equal(pending.create.direction, 'STAFF');
+    assert.equal(pending.create.kind, 'TEXT');
+    assert.equal(pending.create.text, 'กรุณาส่งอีเมลที่ต้องการใช้ค่ะ');
+    assert.equal(pending.create.senderName, 'พี่แอดมิน', 'signed the way the push was');
+    assert.equal(pending.create.deliveryStatus, 'PENDING');
+    assert.equal(sent.op, 'updateMany');
+    assert.deepEqual(sent.where, { requestId: 'sr-1', operationId: OP_A });
+    assert.deepEqual(sent.data, { deliveryStatus: 'SENT' });
+    assert.equal(h.messages.length, 2, 'one bubble per operation, never one per attempt');
+  });
+
+  it('marks the bubble FAILED beside a failed push, and never overwrites a SENT one', async () => {
+    const h = harness();
+    globalThis.fetch = (async () => new Response('', { status: 503 })) as typeof fetch;
+    const result = await h.useCase.reply('sr-1', 'ตอบค่ะ', OP_A, null, ADMIN, REQUEST_ID);
+    assert.equal(result.deliveryStatus, 'FAILED');
+    const failed = h.messages.find((entry) => entry.op === 'updateMany');
+    assert.deepEqual(failed.where, { requestId: 'sr-1', operationId: OP_A, deliveryStatus: { not: 'SENT' } });
+    assert.deepEqual(failed.data, { deliveryStatus: 'FAILED' });
+
+    // The same operation retried: the upsert touches the existing bubble rather than adding one.
+    globalThis.fetch = (async () => new Response('', { status: 200 })) as typeof fetch;
+    await h.useCase.reply('sr-1', 'ตอบค่ะ', OP_A, null, ADMIN, REQUEST_ID);
+    const upserts = h.messages.filter((entry) => entry.op === 'upsert');
+    assert.equal(upserts.length, 2);
+    assert.deepEqual(upserts[1].update, { deliveryStatus: 'PENDING' });
+    assert.deepEqual(h.messages.at(-1).data, { deliveryStatus: 'SENT' });
+  });
+
+  it('reads the thread beside the fresh row, and keeps every LINE identifier out of it (§3)', async () => {
+    const h = harness({ messages: [
+      threadRow(),
+      threadRow({ id: 'm-2', kind: 'IMAGE', text: null, mediaMimeType: 'image/png', mediaByteSize: 67,
+        mediaFileName: 'receipt.png', blob: { messageId: 'm-2' } }),
+      threadRow({ id: 'm-3', kind: 'FILE', text: null, mediaError: 'weird_new_reason' }),
+      threadRow({ id: 'm-4', direction: 'STAFF', text: 'กรุณาส่งอีเมลค่ะ', senderName: 'พี่แอดมิน', deliveryStatus: 'SENT' }),
+    ] });
+    const thread = await h.useCase.thread('sr-1', ADMIN);
+
+    assert.equal(thread.request.id, 'sr-1');
+    assert.equal(thread.request.assignedToMe, true, 'the same mapping the queue uses');
+    assert.deepEqual(
+      thread.messages.map((m) => [m.direction, m.kind, m.hasContent]),
+      [['CUSTOMER', 'TEXT', false], ['CUSTOMER', 'IMAGE', true], ['CUSTOMER', 'FILE', false], ['STAFF', 'TEXT', false]],
+    );
+    assert.equal(thread.messages[1]!.fileName, 'receipt.png');
+    assert.equal(thread.messages[2]!.mediaError, 'media_fetch_failed', 'an unknown stored reason reads as the generic one');
+    assert.equal(thread.messages[3]!.deliveryStatus, 'SENT');
+    assert.equal(thread.messages[3]!.senderName, 'พี่แอดมิน');
+    const written = JSON.stringify(thread);
+    assert.equal(written.includes('line-msg-secret'), false, 'no LINE message id');
+    assert.equal(written.includes('Uline-secret'), false, 'no LINE user id');
+    assert.equal(written.includes('operationId'), false);
+    assert.equal(written.includes('senderUserId'), false);
+  });
+
+  it('streams stored bytes only for a message on THIS request, and 404s otherwise', async () => {
+    const stored = harness({ blob: {
+      data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      message: { mediaMimeType: 'image/png', mediaFileName: 'receipt.png' },
+    } });
+    const content = await stored.useCase.messageContent('sr-1', 'm-2');
+    assert.ok(Buffer.isBuffer(content.data));
+    assert.equal(content.data.length, 4);
+    assert.equal(content.mimeType, 'image/png');
+    assert.equal(content.fileName, 'receipt.png');
+
+    // A photo arrives nameless: the download gets our id and the extension, never LINE's message id.
+    const nameless = harness({ blob: { data: new Uint8Array([1]), message: { mediaMimeType: 'image/jpeg', mediaFileName: null } } });
+    assert.equal((await nameless.useCase.messageContent('sr-1', 'm-2')).fileName, 'support-m-2.jpg');
+
+    await assert.rejects(() => harness().useCase.messageContent('sr-1', 'm-2'), NotFoundException);
+    await assert.rejects(() => harness({ one: null }).useCase.thread('sr-missing', ADMIN), NotFoundException);
+  });
+
+  it('maps a bubble without inventing fields it does not have', () => {
+    const dto = toSupportMessageDto(threadRow({ text: null, kind: 'IMAGE', blob: { messageId: 'm-1' } }) as any);
+    assert.deepEqual(dto, { id: 'm-1', direction: 'CUSTOMER', kind: 'IMAGE', hasContent: true, createdAt: '2026-09-05T02:00:00.000Z' });
   });
 });

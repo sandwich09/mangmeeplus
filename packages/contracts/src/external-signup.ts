@@ -612,6 +612,53 @@ export type SupportRequestReclaimBody = {
   reason: string;
 };
 
+// ── Support thread: the chat behind one request (line-support-request-spec-th สัญญา v3, 2026-09-20) ──
+
+export type SupportRequestMessageDirection = 'CUSTOMER' | 'STAFF';
+export type SupportRequestMessageKind = 'TEXT' | 'IMAGE' | 'FILE';
+
+/** Bounded codes only (§3): why a customer photo/file has no bytes to show. */
+export type SupportRequestMediaError =
+  | 'media_fetch_failed'
+  | 'media_security_rejected'
+  | 'media_scan_failed'
+  /** The request already holds as many stored files as one case may keep. */
+  | 'media_limit_reached';
+
+/**
+ * One thing said on a support request. §3 still holds: no LINE id, no LINE display name and no
+ * LINE message id cross here — a STAFF row names the operator who signed the push, nothing else.
+ */
+export type SupportRequestMessageDto = {
+  id: string;
+  direction: SupportRequestMessageDirection;
+  kind: SupportRequestMessageKind;
+  /** TEXT: the sentence. A customer's is the full text (≤2000), not the 200-char row summary. */
+  text?: string;
+  /** STAFF only: the display name the LINE push was signed with. */
+  senderName?: string;
+  /** IMAGE/FILE: the bytes are stored, and `…/messages/:id/content` streams them. */
+  hasContent: boolean;
+  fileName?: string;
+  mimeType?: string;
+  byteSize?: number;
+  /** IMAGE/FILE without bytes: why, so the bubble can say so instead of rendering nothing. */
+  mediaError?: SupportRequestMediaError;
+  /** STAFF only: mirrors the reply operation this row belongs to. */
+  deliveryStatus?: SupportReplyDeliveryStatus;
+  createdAt: string;
+};
+
+/**
+ * The request AND its messages in one read, so the chat window polls one endpoint and never shows a
+ * status the row has already left behind. A request raised before v3 has an empty `messages` and
+ * only the row's own summaries — the window says so rather than inventing history.
+ */
+export type SupportRequestThreadDto = {
+  request: SupportRequestItemDto;
+  messages: SupportRequestMessageDto[];
+};
+
 /** One event on a shop's timeline (§8). Assembled from rows that already exist — no new log table. */
 export type PartnerTimelineEntryDto = {
   /** Stable key the page maps to an icon/label; unknown values still render by `label`. */

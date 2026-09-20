@@ -60,6 +60,7 @@ function harness(options: Options = {}) {
   const audits: any[] = [];
   const planTermUpdates: any[] = [];
   const supportAnswered: any[] = [];
+  const supportBubbles: any[] = [];
   const supportLookups: any[] = [];
   let planTerm = options.planTerm === undefined ? null : options.planTerm;
 
@@ -125,6 +126,8 @@ function harness(options: Options = {}) {
         },
         updateMany: async (args: any) => { supportAnswered.push(args); return { count: 1 }; },
       },
+      // สัญญา v3: the answer also lands on the case's chat.
+      lineSupportMessage: { create: async (args: any) => { supportBubbles.push(args.data); return {}; } },
       $transaction: async (fn: any) => fn(prisma.client),
     },
   } as any;
@@ -144,7 +147,7 @@ function harness(options: Options = {}) {
   controller.lineMessage = new SendPartnerLineMessageUseCase(lineMessagingCredentialsFixture(config), prisma, config);
 
   return {
-    controller: controller as PartnerController, audits, planTermUpdates, supportAnswered, supportLookups,
+    controller: controller as PartnerController, audits, planTermUpdates, supportAnswered, supportLookups, supportBubbles,
     planTerm: () => planTerm,
   };
 }
@@ -473,6 +476,23 @@ describe('POST /system/partners/:id/line-message — SEC-05', () => {
     assert.equal(answered.targetId, 'sr-9');
     assert.equal(answered.riskLevel, 'HIGH');
     assert.equal(answered.metadataJson.previousStatus, 'OPEN');
+  });
+
+  it('lands the answer on the case\'s chat as a SENT staff bubble (สัญญา v3)', async () => {
+    const h = harness({ supportRequest: { lineUserId: 'Uemployee-1' } });
+    await h.controller.sendLineMessage(
+      'co-1', { text: 'ได้รับเรื่องแล้วนะคะ', supportRequestId: 'sr-9' }, REQ,
+    );
+    assert.deepEqual(h.supportBubbles, [{
+      requestId: 'sr-9', direction: 'STAFF', kind: 'TEXT', text: 'ได้รับเรื่องแล้วนะคะ',
+      senderName: 'พี่แอดมิน', senderUserId: 'admin-1', deliveryStatus: 'SENT',
+    }]);
+  });
+
+  it('writes no bubble for a shop notice that names no request, or one that reached nobody', async () => {
+    const notice = harness();
+    await notice.controller.sendLineMessage('co-1', { text: 'ประกาศค่ะ' }, REQ);
+    assert.deepEqual(notice.supportBubbles, []);
   });
 
   it('is idempotent on a request that was already answered', async () => {

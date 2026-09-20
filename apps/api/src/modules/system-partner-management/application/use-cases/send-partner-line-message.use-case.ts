@@ -124,6 +124,20 @@ export class SendPartnerLineMessageUseCase {
           });
         }
       });
+      // สัญญา v3 ข้อ 9: the same words land on the case's chat, so an operator who opens the thread
+      // sees this answer beside the customer's messages. After the transaction and best effort: the
+      // answer is delivered and audited already, and a thread hiccup must not roll that back.
+      try {
+        await this.prisma.client.lineSupportMessage.create({
+          data: {
+            requestId: target.id, direction: 'STAFF', kind: 'TEXT', text: check.text,
+            senderName: sender?.displayName ?? 'ทีมงาน', senderUserId: cmd.requestingAdminUserId,
+            deliveryStatus: 'SENT',
+          },
+        });
+      } catch {
+        // The audit row below still carries the text; only the chat view misses this bubble.
+      }
     }
 
     // The paragraph IS the evidence here (SEC-05): an operator speaking as the platform must leave
