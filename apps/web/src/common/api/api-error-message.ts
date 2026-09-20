@@ -305,6 +305,11 @@ const CODE_LABELS: Record<string, string> = {
   EXPENSE_SOURCE_DRAFT_RELOAD_REQUIRED: 'ข้อมูลใบเสร็จเปลี่ยนไปแล้ว กรุณาโหลดรายการใหม่ก่อนบันทึก',
   // Vendor address spec §8: a refusal on this field must name the fix, because the user is looking
   // at the paper and can act — "ตัดให้สั้นลง" / "5 หลัก" are the whole message.
+  // Counterparty registry. `accounting-documents` is outside the launch modules the coverage audit
+  // scans, so nothing would have caught these — and the counterparty screen shows all three.
+  counterparty_conflict: 'มีคนแก้ข้อมูลคู่ค้านี้ไปแล้ว โหลดหน้านี้ใหม่แล้วบันทึกอีกครั้ง',
+  counterparty_address_too_long: 'ที่อยู่ยาวเกิน 500 ตัวอักษร ตัดให้สั้นลงแล้วบันทึกอีกครั้ง',
+  counterparty_branch_code_invalid: 'รหัสสาขาต้องเป็นตัวเลข 5 หลัก เช่น 00000 สำหรับสำนักงานใหญ่ หรือเว้นว่างไว้ก็ได้',
   EXPENSE_VENDOR_BRANCH_CODE_INVALID: 'รหัสสาขาต้องเป็นตัวเลข 5 หลัก เช่น 00000 สำหรับสำนักงานใหญ่ หรือเว้นว่างไว้ก็ได้',
   EXPENSE_VENDOR_ADDRESS_TOO_LONG: 'ที่อยู่ผู้ขายยาวเกิน 500 ตัวอักษร ตัดให้สั้นลงแล้วบันทึกอีกครั้ง',
   EXPENSE_PURPOSE_TEXT_INVALID: 'กรุณาใช้ช่องว่างหรือจุลภาคแทนเครื่องหมาย · ในช่อง “ซื้อไปใช้ทำอะไร” หรือเว้นช่องนี้ไว้ได้',

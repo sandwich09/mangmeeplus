@@ -907,7 +907,7 @@ function CounterpartyListPage({ companyId, canCreateSalesRoot }: { companyId: st
         setBusy(true);
         try {
           const { createCounterparty } = await import('./accounting-documents.api');
-          await createCounterparty(companyId, { type: 'CUSTOMER', displayName, taxId });
+          await createCounterparty(companyId, { displayName, taxId });
           setDisplayName('');
           setTaxId('');
           await load();
