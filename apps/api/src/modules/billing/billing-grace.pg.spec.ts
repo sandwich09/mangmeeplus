@@ -23,13 +23,14 @@ test('renewal grace with real PostgreSQL and simulated Stripe (not native channe
   const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
   const prisma = { client } as PrismaService;
   const fixtures: { companyId: string; accountId: string }[] = [];
-  async function fixture(daysPastDue = 1, graceDays = 7) {
+  async function fixture(daysPastDue = 1, graceDays = 7, qrMode = false) {
     const run = randomUUID().replaceAll('-', ''), companyId = `grace-${run}`, stripeAccountId = `acct_${run}`;
     const customerId = `cus_${run}`, subscriptionId = `sub_${run}`, contractId = randomUUID(), quoteId = randomUUID();
     const end = Math.floor(Date.now() / 1000) - daysPastDue * 86400, start = end - 30 * 86400;
     const offer = billingOffer('BASIC_499', 'month');
     const account = await client.billingAccount.create({ data: { companyId, stripeAccountId, livemode: false, customerId,
-      baseSubscriptionId: subscriptionId, contractAttemptId: contractId, paidThrough: new Date(end * 1000) } });
+      baseSubscriptionId: subscriptionId, contractAttemptId: contractId, paidThrough: new Date(end * 1000),
+      renewalMode: qrMode ? 'PROMPTPAY_RENEW' : 'CARD_AUTO' } });
     fixtures.push({ companyId, accountId: account.id });
     await client.company.create({ data: { id: companyId, name: 'Synthetic grace company' } });
     await client.companyPlanTerm.create({ data: { companyId, tierKey: offer.offerKey, branchLimit: 2, employeeLimit: 5,
@@ -41,7 +42,8 @@ test('renewal grace with real PostgreSQL and simulated Stripe (not native channe
     await client.billingAccount.update({ where: { id: account.id }, data: { termProjectionHash: termProjectionHash(term) } });
     const snapshot: BillingSnapshot = { priceId: `price_${run}`, termVersion: term.updatedAt.toISOString(), termHash: termProjectionHash(term),
       policy: { ...BILLING_DRAFT_POLICY, graceDays }, quote: { quoteId, companyId, companyName: 'Synthetic grace company', policyRevision: 'test-grace-policy',
-        expiresAt: new Date().toISOString(), offer, subtotalSatang: 49900, totalSatang: 49900, taxSatang: 0, taxTreatment: 'NOT_VAT_REGISTERED',
+        expiresAt: new Date().toISOString(), offer, purchaseMode: qrMode ? 'PROMPTPAY_RENEW' : 'CARD_AUTO',
+        subtotalSatang: 49900, totalSatang: 49900, taxSatang: 0, taxTreatment: 'NOT_VAT_REGISTERED',
         consentRevision: 'test', paidStart: 'IMMEDIATE', billingEmail: 'synthetic@example.test', trialEndsAt: null,
         usage: { used: 0, limit: 50, remaining: 50, cadence: 'PAID_GRANTS', resetsAt: null, expiresAt: term.termEndsAt.toISOString() } } };
     await client.billingQuote.create({ data: { id: quoteId, companyId, initiatingUserId: 'synthetic', policyRevisionId: 'test-grace-policy',
@@ -51,19 +53,23 @@ test('renewal grace with real PostgreSQL and simulated Stripe (not native channe
       policyRevisionId: 'test-grace-policy', consentRevision: 'test', consentAt: new Date(), status: 'COMPLETED', subscriptionId } });
     const subscription: StripeObject = { id: subscriptionId, object: 'subscription', customer: customerId, livemode: false,
       metadata: { billingAccountId: account.id, billingAttemptId: contractId }, status: 'past_due', latest_invoice: `in_renew${run}`,
+      collection_method: qrMode ? 'send_invoice' : 'charge_automatically',
+      payment_settings: qrMode ? { payment_method_types: ['promptpay'] } : undefined,
       items: { data: [{ id: `si_${run}`, price: snapshot.priceId, current_period_end: end + 30 * 86400 }] } };
     const line = (s: number, e: number): StripeObject => ({ parent: { type: 'subscription_item_details', subscription_item_details: {
       subscription: subscriptionId, subscription_item: `si_${run}`, proration: false } }, pricing: { price_details: { price: snapshot.priceId } },
       currency: 'thb', quantity: 1, livemode: false, period: { start: s, end: e } });
     const invoice = (id: string, paid: boolean, initial: boolean): StripeObject => ({ id, object: 'invoice', livemode: false, customer: customerId,
-      parent: { subscription_details: { subscription: subscriptionId } }, status: paid ? 'paid' : 'open', collection_method: 'charge_automatically',
+      parent: { subscription_details: { subscription: subscriptionId } }, status: paid ? 'paid' : 'open',
+      collection_method: qrMode ? 'send_invoice' : 'charge_automatically',
       currency: 'thb', billing_reason: initial ? 'subscription_create' : 'subscription_cycle', amount_remaining: paid ? 0 : 49900,
       total: 49900, amount_paid: paid ? 49900 : 0, starting_balance: 0, created: initial ? start : end });
     const initialInvoice = invoice(`in_${run}`, true, true), renewal = invoice(subscription.latest_invoice, false, false);
     const invoices = [initialInvoice, renewal];
     const lines = new Map([[initialInvoice.id, line(start, end)], [renewal.id, line(end, end + 30 * 86400)]]);
     const charge = (id: string): StripeObject => ({ id: `ch_${id}`, customer: customerId, payment_intent: `pi_${id}`, livemode: false,
-      status: 'succeeded', paid: true, captured: true, currency: 'thb', amount: 49900, amount_refunded: 0, disputed: false, payment_method_details: { type: 'card' } });
+      status: 'succeeded', paid: true, captured: true, currency: 'thb', amount: 49900, amount_refunded: 0, disputed: false,
+      payment_method_details: { type: qrMode ? 'promptpay' : 'card' } });
     const intent = (id: string): StripeObject => ({ id: `pi_${id}`, customer: customerId, livemode: false, status: 'succeeded',
       currency: 'thb', amount_received: 49900, latest_charge: charge(id) });
     const payment = (id: string): StripeObject => ({ id: `inpay_${id}`, object: 'invoice_payment', livemode: false, status: 'paid', invoice: id,
@@ -316,6 +322,15 @@ test('renewal grace with real PostgreSQL and simulated Stripe (not native channe
       assert.equal(await client.billingReceiptGrant.count({ where: { companyId: f.companyId } }), 1);
       assert.equal((await client.billingOperation.findFirstOrThrow({ where: { companyId: f.companyId } })).state, 'SUCCEEDED');
       assert.equal((await admitCompanyOcr(prisma, { companyId: f.companyId, sourceRoute: 'receipt-ocr-web', requestId: 'expired', monthKey: '2026-09' })).allowed, false);
+    });
+    await t.test('overdue QR renewal stops future invoices while keeping the unpaid invoice open', async () => {
+      const f = await fixture(8, 7, true); f.subscription.status = 'active';
+      await f.run(); await f.run();
+      assert.equal(f.deletes(), 1);
+      assert.equal(f.subscription.status, 'canceled');
+      assert.equal(f.renewal.status, 'open');
+      assert.equal(await client.billingReceiptGrant.count({ where: { companyId: f.companyId } }), 1);
+      assert.equal((await client.billingAccount.findUniqueOrThrow({ where: { id: f.accountId } })).nextChargeAt, null);
     });
     await t.test('a lost cancellation response remains UNKNOWN then resolves by rereading, without another DELETE', async () => {
       const f = await fixture(8); f.loseResponse();

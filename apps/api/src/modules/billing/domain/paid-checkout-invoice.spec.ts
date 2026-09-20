@@ -62,3 +62,14 @@ test('upgrade verifies the paid difference while retaining the full recurring of
   assert.equal(input.snapshot.quote.offer.priceSatang, 999000);
   delete input.snapshot.upgrade; assert.throws(() => paidPackageCheckoutEvidence(input));
 });
+
+test('PromptPay proof is bound to a QR charge and rejects a card charge', () => {
+  const input = fixture();
+  input.paymentMethod = 'promptpay';
+  input.snapshot.quote.purchaseMode = 'PROMPTPAY_ONCE';
+  assert.throws(() => paidPackageCheckoutEvidence(input));
+  input.charge.payment_method_details.type = 'promptpay';
+  assert.equal(paidPackageCheckoutEvidence(input).invoiceId, 'in_test');
+  input.session.payment_status = 'unpaid';
+  assert.throws(() => paidPackageCheckoutEvidence(input));
+});

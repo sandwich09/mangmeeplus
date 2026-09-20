@@ -69,10 +69,10 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
     {(!showReviewHeader || !changingPlan) && <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="space-y-2">
         {!showReviewHeader && panelHeading}
-        {!changingPlan && <p className="text-sm text-gray-500">{refreshingStatus ? 'กำลังตรวจสถานะล่าสุด' : status.cancelAtPeriodEnd ? 'ปิดการต่ออายุอัตโนมัติแล้ว ใช้แพ็กเกจได้จนครบระยะที่ชำระไว้' : status.collectionPause ? 'พักการเรียกเก็บเงินชั่วคราว' : 'ต่ออายุอัตโนมัติเปิดอยู่'}</p>}
+        {!changingPlan && <p className="text-sm text-gray-500">{refreshingStatus ? 'กำลังตรวจสถานะล่าสุด' : status.cancelAtPeriodEnd ? 'ปิดการต่ออายุแล้ว ใช้แพ็กเกจได้จนครบระยะที่ชำระไว้' : status.collectionPause ? 'พักการเรียกเก็บเงินชั่วคราว' : status.renewalMode === 'PROMPTPAY_RENEW' ? 'ระบบออกบิล QR ทุกงวด ต้องสแกนจ่ายเอง' : 'ต่ออายุอัตโนมัติเปิดอยู่'}</p>}
       </div>
       {!confirming && !selection && !operationId && !status.collection && status.allowedActions.includes('portal_cancel_subscription') && <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void act('preview')}>
-        {status.cancelAtPeriodEnd ? 'เปิดต่ออายุอัตโนมัติ' : 'หยุดต่ออายุอัตโนมัติ'}</button>}
+        {status.cancelAtPeriodEnd ? status.renewalMode === 'PROMPTPAY_RENEW' ? 'เปิดการออกบิล QR ทุกงวด' : 'เปิดต่ออายุอัตโนมัติ' : status.renewalMode === 'PROMPTPAY_RENEW' ? 'หยุดการออกบิล QR ทุกงวด' : 'หยุดต่ออายุอัตโนมัติ'}</button>}
     </div>}
     {status.collectionPause && <div className="rounded-xl bg-amber-50 p-4"><p>พักเก็บเงินอยู่ตามสถานะที่ตรวจล่าสุด</p><p>{status.collectionPause.resumesAt?`กำหนดกลับมาเก็บเงิน ${new Date(status.collectionPause.resumesAt).toLocaleString('th-TH')}`:'ยังไม่กำหนดวันกลับมาเก็บเงิน'}</p><p>วันใช้งานและใบเสร็จคงเดิม บิลที่ออกไว้ก่อนพักอาจยังถูกเรียกเก็บ ติดต่อทีมงานหากต้องการปรับการต่ออายุ</p></div>}
     {notice && <p role="status">{notice}</p>}
@@ -92,8 +92,7 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
         {apiOverride ? <button className={button} disabled={busy} onClick={() => setOperation(status.pendingPlanChange!)}>ดูรายการเปลี่ยนแพ็กเกจ</button> : <Link className={button} href={`/companies/${encodeURIComponent(companyId)}/billing?collection=${status.pendingPlanChange.id}`}>ดูรายการเปลี่ยนแพ็กเกจ</Link>}
         {status.allowedActions.includes('plan_changes') && <button className={`${button} !border-transparent !bg-transparent !text-gray-500 hover:!bg-gray-100`} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void act('cancel-downgrade')}>ยกเลิกการเปลี่ยนแพ็กเกจ</button>}
       </div>}
-    </section>}
-    {status.planCapacityRepair && <div className="space-y-2 rounded-xl bg-amber-50 p-4"><p>รับชำระรอบใหม่แล้ว กรุณาตรวจเลือกสาขาและผู้ใช้ก่อนเปิดสิทธิ์แพ็กเกจใหม่</p>
+    </section>}    {status.planCapacityRepair && <div className="space-y-2 rounded-xl bg-amber-50 p-4"><p>รับชำระรอบใหม่แล้ว กรุณาตรวจเลือกสาขาและผู้ใช้ก่อนเปิดสิทธิ์แพ็กเกจใหม่</p>
       <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => { setBusy(true); const repair = status.planCapacityRepair!;
         void api.capacity(repair.offerKey, repair.interval).then(options => setSelection({ options, repair, key: crypto.randomUUID() })).catch(e => setError(apiErrorMessage(e))).finally(() => setBusy(false)); }}>เลือกสิทธิ์สำหรับรอบที่จ่ายแล้ว</button></div>}
     {selection && <BillingCapacityPicker key={selection.options.sourceHash+selection.key} options={selection.options} repair currentTierKey={status.tierKey} onCancel={() => setSelection(null)}

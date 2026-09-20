@@ -13,7 +13,7 @@ import { authedApiFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 const button = billingControl;
 const field = billingField;
-const gateNames: Record<BillingAction, string> = { new_sales: 'รับรายการซื้อใหม่', plan_changes: 'ซื้อซ้ำและเปลี่ยนแพ็กเกจ',
+const gateNames: Record<BillingAction, string> = { new_sales: 'รับรายการซื้อใหม่', card_once: 'บัตรจ่ายครั้งเดียว', promptpay_once: 'PromptPay จ่ายครั้งเดียว', promptpay_renew: 'PromptPay จ่ายบิลทุกงวด', plan_changes: 'ซื้อซ้ำและเปลี่ยนแพ็กเกจ',
   portal_payment_method: 'เปิดหน้าแก้บัตร', portal_change_plan: 'เปลี่ยนแพ็กเกจผ่าน Portal', portal_cancel_subscription: 'ยกเลิกหรือกลับมาต่ออายุ', notification_delivery: 'ส่งข้อความแจ้งสถานะ', refunds:'รับคำขอคืนเงินที่ต้องอนุมัติ' };
 const stateNames: Record<string, string> = { DRAFT: 'ฉบับร่างที่บันทึกไว้', PREVIEW: '2. ตรวจผลก่อนยืนยัน', AWAITING_APPROVAL: '3. ยืนยันใช้การตั้งค่า', SCHEDULED:'อนุมัติแล้ว รอถึงกำหนด',RUNNING:'กำลังตรวจและใช้ค่าตามกำหนด',BLOCKED:'ต้องตรวจคำขอตามกำหนดใหม่', SUCCEEDED: 'การตั้งค่านี้มีผลแล้ว', CANCELLED: 'ยกเลิกคำขอนี้แล้ว' };
 const money = (value: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(value / 100);

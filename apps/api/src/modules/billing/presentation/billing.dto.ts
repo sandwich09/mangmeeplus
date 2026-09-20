@@ -91,6 +91,7 @@ export class BillingQuoteDto {
   @IsString() @MinLength(1) @MaxLength(10) interval!: string;
   @IsString() @MinLength(1) @MaxLength(320) billingEmail!: string;
   @Allow() capacity?: unknown;
+  @IsOptional() @IsIn(['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW']) purchaseMode?: string;
 }
 export class BillingCheckoutDto {
   @IsUUID() quoteId!: string;

@@ -12,7 +12,7 @@ export type PaidCheckoutEvidence = {
 export function paidPackageCheckoutEvidence(input: {
   session: StripeObject; invoice: StripeObject; checkoutLines: StripeObject[]; invoiceLines: StripeObject[];
   payments: StripeObject[]; intent: StripeObject; charge: StripeObject; snapshot: BillingSnapshot;
-  attemptId: string; billingAccountId: string; customerId: string; productId: string; livemode: boolean;
+  attemptId: string; billingAccountId: string; customerId: string; productId: string; livemode: boolean; paymentMethod?: 'card' | 'promptpay';
 }): PaidCheckoutEvidence {
   const { session, invoice, checkoutLines, invoiceLines, payments, intent, charge, snapshot,
     attemptId, billingAccountId, customerId, productId, livemode } = input;
@@ -54,7 +54,7 @@ export function paidPackageCheckoutEvidence(input: {
       stripeId(intent.customer) !== customerId || stripeId(intent.latest_charge) !== charge.id ||
       charge.livemode !== livemode || charge.status !== 'succeeded' || charge.paid !== true || charge.captured !== true ||
       charge.currency !== 'thb' || charge.amount !== total || stripeId(charge.customer) !== customerId || stripeId(charge.payment_intent) !== intent.id ||
-      charge.payment_method_details?.type !== 'card' || !Number.isSafeInteger(charge.amount_refunded) || charge.amount_refunded < 0 || charge.amount_refunded > total ||
+      charge.payment_method_details?.type !== (input.paymentMethod ?? 'card') || !Number.isSafeInteger(charge.amount_refunded) || charge.amount_refunded < 0 || charge.amount_refunded > total ||
       typeof charge.disputed !== 'boolean') reject();
   const invoiceTax = Array.isArray(invoice.total_taxes) ? invoice.total_taxes.reduce((sum: number, entry: StripeObject) => sum + entry.amount, 0) : 0;
   if (invoiceTax !== tax) reject();

@@ -4,6 +4,7 @@ import { billingError, configurationHash } from '../domain/billing-policy';
 import { stripeId, type StripeClient, type StripeObject } from '../infrastructure/stripe.client';
 import { originalInvoice, adjustment } from './billing-invoice-details';
 import { assertMappedCharge } from './billing-financial';
+import type { BillingSnapshot } from './billing.service';
 
 export const refundReviewRequired=()=>billingError('CONTROL_REFUND_SOURCE_CHANGED','หลักฐานการคืนเงินเปลี่ยนหรือยังไม่ครบ กรุณาตรวจรายการเดิมอีกครั้ง');
 const integer=(v:unknown)=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=0;
@@ -40,9 +41,11 @@ export async function assertOriginalInvoiceCharge(stripe:StripeClient,account:Bi
   if(payment.object!=='invoice_payment'||payment.livemode!==account.livemode||payment.status!=='paid'||stripeId(payment.invoice)!==row.providerInvoiceId||
     payment.payment?.type!=='payment_intent'||!nativeId(intentId,'pi')||payment.amount_paid!==row.paidSatang||payment.currency!=='thb')throw refundReviewRequired();
   const intent=await stripe.request('GET',`/payment_intents/${intentId}`);
+  const purchaseMode=(row.contractSnapshot as unknown as BillingSnapshot|null)?.quote.purchaseMode;
+  const paymentMethod=purchaseMode?.startsWith('PROMPTPAY')?'promptpay':'card';
   if(intent.id!==intentId||intent.object!=='payment_intent'||intent.livemode!==account.livemode||intent.currency!=='thb'||intent.status!=='succeeded'||
     stripeId(intent.customer)!==account.customerId||intent.amount_received!==row.paidSatang||stripeId(intent.latest_charge)!==row.providerChargeId||
-    stripeId(charge.payment_intent)!==intent.id||charge.payment_method_details?.type!=='card')throw refundReviewRequired();
+    stripeId(charge.payment_intent)!==intent.id||charge.payment_method_details?.type!==paymentMethod)throw refundReviewRequired();
 }
 
 export async function refundSource(stripe:StripeClient,account:BillingAccount,row:BillingInvoice) {
