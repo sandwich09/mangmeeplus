@@ -1,11 +1,23 @@
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
+import type { Page } from '@playwright/test';
 import { test, expect } from './harness/fixtures';
 import { ensureBrowserLegalAcceptance, expectNoClientError } from './harness/auth';
 
 const apiRequire = createRequire(resolve('apps/api/package.json'));
 const databaseUrl = process.env.RECEIPT_CONTINUITY_TEST_DATABASE_URL;
+
+/**
+ * The source-facts card's own draft save.
+ *
+ * Since commit `0283a3d0` the document-review panel renders a second button with the very same
+ * name (`ExpensesPages.tsx`, the `isMutable && canReview` row), so a page-wide locator stopped
+ * meaning "the source draft save" — which is what every assertion below is actually about.
+ */
+const sourceDraftSave = (page: Page) => page.locator('section')
+  .filter({ has: page.getByRole('heading', { name: 'ข้อมูลผู้ขายและรายการ', exact: true }) })
+  .getByRole('button', { name: 'บันทึกแบบร่าง', exact: true });
 
 /** Seed only synthetic records in an explicitly selected local DB; requests and UI stay real. */
 async function fixture(companyId: string, ownerId = 'seed-local-owner', ocrItems = [{ description: 'กระดาษ A4' }, { description: 'ปากกา' }]) {
@@ -77,7 +89,7 @@ for (const width of [390, 1280]) {
       await expect(page.getByRole('heading', { name: 'ข้อมูลผู้ขายและรายการ', exact: true })).toBeVisible();
       await expect(page.getByText('ขั้นที่ 1:', { exact: true })).toBeVisible();
       await expect(page.getByLabel('รายละเอียด', { exact: true })).toHaveCount(2);
-      const date = page.getByRole('combobox', { name: /^วันที่ค่าใช้จ่าย/ });
+      const date = page.getByRole('combobox', { name: /^วันที่เอกสาร/ });
       // Unknown date is blank in the existing date field, never the upload-day fallback.
       await expect(date).toContainText('เลือกวันที่');
       const quantity = page.getByRole('spinbutton', { name: /^จำนวน/ }).first();
@@ -87,7 +99,7 @@ for (const width of [390, 1280]) {
       await page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ }).fill('ร้านทดสอบที่กรอกเอง');
       await quantity.fill('5');
       const savedResponse = page.waitForResponse((response) => response.request().method() === 'PATCH' && response.url().includes(f.expense.id));
-      await page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true }).click();
+      await sourceDraftSave(page).click();
       const saveResult = await savedResponse;
       expect(saveResult.ok(), await saveResult.text()).toBe(true);
       await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว กลับมาแก้ไขต่อได้');
@@ -152,7 +164,7 @@ for (const width of [390, 1280]) {
       await next.click();
       await expect(page.getByText('ขั้นที่ 3:', { exact: true })).toBeVisible();
       await expect(page.getByText('ยังไม่ระบุวันที่เอกสาร', { exact: true })).toHaveCount(0);
-      await expect(page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true })).toHaveCount(0);
+      await expect(sourceDraftSave(page)).toHaveCount(0);
       const readyResponse = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().includes(`${f.expense.id}/reviewer-mark-ready`));
       await page.getByRole('button', { name: 'ส่งตรวจสอบ', exact: true }).click();
       const readyResult = await readyResponse;
@@ -173,7 +185,7 @@ test('incomplete ordinary draft rejects stale save without replacing a newer ven
     await page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ }).fill('ข้อมูลจากหน้าเก่า');
     await f.client.expenseRecord.update({ where: { id: f.expense.id }, data: { vendorNameSnapshot: 'ข้อมูลล่าสุดจากอีกหน้า' } });
     const failed = page.waitForResponse((response) => response.request().method() === 'PATCH' && response.url().includes(f.expense.id));
-    await page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true }).click();
+    await sourceDraftSave(page).click();
     expect((await failed).status()).toBe(409);
     await expect(page.locator('.toast-enter[role="alert"]')).toContainText('รายการถูกแก้ไข');
     await expect(page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ })).toHaveValue('ข้อมูลจากหน้าเก่า');
@@ -194,7 +206,7 @@ test('reviewer reopens legacy READY in the ordinary form without inventing finan
     await expect(reopenButton).toHaveCount(0);
     await expect(page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ })).toBeEnabled();
     await page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ }).fill('เติมต่อโดยไม่เดายอด');
-    await expect(page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true })).toHaveCount(0);
+    await expect(sourceDraftSave(page)).toHaveCount(0);
     await page.getByRole('button', { name: 'เก็บร่างไว้ก่อน', exact: true }).click();
     await expect(page.locator('.toast-enter[role="status"]')).toContainText('เก็บร่างแล้ว');
     const saved = await f.client.expenseRecord.findUniqueOrThrow({ where: { id: f.expense.id }, include: { lines: true } });
@@ -246,14 +258,14 @@ for (const width of [390, 1280]) {
       expect(Number(await page.getByRole('spinbutton', { name: /^ราคาต่อหน่วย/ }).inputValue())).toBe(51.4);
       const categoryMenu = page.getByRole('combobox', { name: /^รายการที่ 1 / }).first();
       await expect(categoryMenu).toContainText(category.name);
-      const date = page.getByRole('combobox', { name: /^วันที่ค่าใช้จ่าย/ });
+      const date = page.getByRole('combobox', { name: /^วันที่เอกสาร/ });
       await expect(date).toContainText('เลือกวันที่');
       await page.getByLabel('ซื้อไปใช้ทำอะไร', { exact: true }).fill('ทดสอบเก็บค่าเครื่องดื่มไว้ตรวจต่อ');
       // A financial header edit and an unknown source fact must persist together in one PATCH.
       await page.getByRole('textbox', { name: /^เลขที่เอกสาร/ }).fill('67-ทดสอบ');
       const saves: string[] = [];
       page.on('request', (request) => { if (request.method() === 'PATCH' && request.url().includes(f.expense.id)) saves.push(request.url()); });
-      await page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true }).click();
+      await sourceDraftSave(page).click();
       await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว');
       expect(saves).toHaveLength(1);
       const saved = await (await api.get(`companies/${companyId}/expenses/${f.expense.id}`)).json();
@@ -278,7 +290,7 @@ for (const width of [390, 1280]) {
       await page.getByRole('button', { name: 'วันนี้', exact: true }).click();
       await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
       await expect(page.getByText('ขั้นที่ 2:', { exact: true })).toBeVisible();
-      await expect(page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true })).toHaveCount(0);
+      await expect(sourceDraftSave(page)).toHaveCount(0);
       await expectNoClientError(page);
     } finally { await f.cleanup(); }
   });
@@ -306,7 +318,7 @@ test('reviewer retains the accepted financial row while original OCR quantity st
     await expect(quantity).toHaveValue('1');
     await expect(price).toHaveValue('55');
     await page.getByLabel('ซื้อไปใช้ทำอะไร', { exact: true }).fill('ทดสอบยืนยันจำนวนที่อ่านไม่ได้');
-    await page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true }).click();
+    await sourceDraftSave(page).click();
     await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว');
     await page.reload();
     await expect(quantity).toHaveValue('1');
@@ -317,7 +329,7 @@ test('reviewer retains the accepted financial row while original OCR quantity st
     expect(partial.aiVerificationSummaryJson.recognizedFields.lines[0].quantity).toBeUndefined();
     await quantity.fill('1');
     await price.fill('55');
-    await page.getByRole('combobox', { name: /^วันที่ค่าใช้จ่าย/ }).click();
+    await page.getByRole('combobox', { name: /^วันที่เอกสาร/ }).click();
     await page.getByRole('button', { name: 'วันนี้', exact: true }).click();
     await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     await expect(page.getByText('ขั้นที่ 2:', { exact: true })).toBeVisible();
@@ -413,7 +425,7 @@ for (const width of [390, 1280]) {
       expect(setup.ok(), await setup.text()).toBe(true);
       await page.setViewportSize({ width, height: 844 });
       await page.goto(`/companies/${companyId}/expenses/${f.expense.id}`);
-      const saveDraft = page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true });
+      const saveDraft = sourceDraftSave(page);
       await expect(page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ })).toBeVisible();
       await expect(saveDraft).toHaveCount(0); // NEEDS_REVIEW still saves via ถัดไป.
       // This synthetic row now exercises the exact DRAFT-only action without a production mutation.
@@ -512,7 +524,9 @@ for (const width of [390, 1280]) {
         await expect(withholding).toHaveValue('3');
         await whtBase.fill('100000');
         await expect(next).toBeDisabled();
-        await expect(page.getByRole('status').filter({ hasText: 'ยอดหัก ณ ที่จ่ายต้องไม่เกินฐานหักหรือยอดรวมเอกสาร' })).toBeVisible();
+        // The review blocker line itself. The live totals panel echoes the same sentence since commit
+        // 4361ed0b ('ยังแสดงยอดล่าสุดไม่ได้: …'), so match the blocker exactly rather than by substring.
+        await expect(page.getByRole('status').filter({ hasText: /^ยอดหัก ณ ที่จ่ายต้องไม่เกินฐานหักหรือยอดรวมเอกสาร$/ })).toBeVisible();
         await whtBase.fill('');
         await withholding.fill('0');
         await expect(payeeKind).toHaveCount(0);

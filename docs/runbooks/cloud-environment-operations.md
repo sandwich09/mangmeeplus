@@ -228,6 +228,9 @@ mode normal, `--uat-smoke-acceptance`, ACCEPTED_LINE_DEFERRED in 718.444 s: all 
 signature verified, customer OPEN, 8 pending migrations applied (catalog now 228). UAT/READY/PROD
 workflow IDs NOT_DISPATCHED. The trixie image is NOT on UAT yet.
 
+
+Round 2 (2026-09-19 18:02Z): main `d6a290c4` (trixie base + login purge + ClamAV 1.5.4, retry tap-target fix, production Stripe config) deployed as Kamal operation `20260919T180242Z-52148508`, ACCEPTED_LINE_DEFERRED in 496.042 s, 11 phases, KMS verified, customer OPEN, no new migration; in-container readback Debian 13.7 / Node v22.23.2 / ClamAV 1.5.4 / `login` purged; AgentCore kamal_uat_a v13. The owner then had the two UAT hosts stopped at 18:12:58Z (public IPs will change on the next start — re-enroll before deploying); this signed bundle is the candidate for a later `promote-prod`.
+
 ## UAT read-only inventory — 2026-09-16
 
 All three serving Kamal containers were read back running source

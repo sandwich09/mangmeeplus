@@ -19,8 +19,14 @@ for (const signatureMode of ['DIGITAL', 'PAPER']) {
       vendorNameSnapshot: 'ร้านทดสอบฟอร์ม', vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE',
       lines: [{ lineNumber: 1, description: tag, quantity: '1', unitPrice: '100', discountAmount: '0', vatRate: '0', expenseCategoryId: categories.find((c: {status: string}) => c.status === 'ACTIVE').id }],
     } }));
+    // Same payload the review panel sends (ExpensesPages.tsx `saveDocumentReview`): the assessment
+    // plus the acknowledgement. Without them the PATCH stores no `documentReview`, and
+    // substitute-receipt refuses with EXPENSE_EVIDENCE_REVIEW_REQUIRED because
+    // `hasCurrentExpenseEvidenceReview` is false and the route is not SUBSTITUTE_RECEIPT.
     await json(await api.patch(`${base}/expenses/${draft.id}/review-fields`, { data: {
       expectedUpdatedAt: draft.updatedAt, vendorNameSnapshot: 'ร้านทดสอบฟอร์ม', sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE',
+      documentReviewAcknowledged: true,
+      evidenceAssessment: { route: 'SUBSTITUTE_RECEIPT', receiptProblem: 'NOT_AVAILABLE', attachmentIds: [], reason: 'ร้านค้าไม่ออกเอกสาร' },
     } }));
     let detail = await json(await api.get(`${base}/expenses/${draft.id}`));
     let evidence = await json(await api.post(`${base}/expenses/${draft.id}/substitute-receipt`, { data: {

@@ -1,5 +1,5 @@
 import { test, expect } from './harness/fixtures';
-import { gotoCompany, json, unique } from './harness/e2e-utils';
+import { firstActiveBranch, gotoCompany, json, unique } from './harness/e2e-utils';
 
 type Supplier = { id: string; displayNameSnapshot: string };
 type PurchaseOrderLine = { id: string; lineNumber: number; receivedQuantity: string };
@@ -39,6 +39,7 @@ async function createPurchaseOrder(api: any, companyId: string, lines: unknown[]
   const po = await json<PurchaseOrder>(await api.post(`companies/${companyId}/procurement/purchase-orders`, {
     data: {
       supplierId: supplier.id,
+      branchId: (await firstActiveBranch(api, companyId)).id,
       orderDate: today,
       currency: 'THB',
       matchingMode: 'NONE',
