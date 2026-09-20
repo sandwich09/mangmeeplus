@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { AuditService } from '../../../audit/application/audit.service';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
-import type { CreateWhtCertificateDto, RequestContext } from '@watchdog-bms/contracts';
+import { formatCompanyLegalAddress, type CompanyLegalAddress, type CreateWhtCertificateDto, type RequestContext } from '@watchdog-bms/contracts';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
 import { validateCertificateTotals } from '../../domain/logic/wht-report.logic';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
@@ -69,7 +69,10 @@ export class CreateWhtCertificateUseCase {
       companyName: company?.registeredName ?? company?.name ?? 'Unknown company',
       taxId: profile?.taxId ?? company?.taxId ?? null,
       branchCode: null,
-      address: company?.addressJson ? JSON.stringify(company.addressJson) : null,
+      // BUG-1: this used to be `JSON.stringify(company.addressJson)`, so the payer address on a
+      // 50 ทวิ prefill read `{"line1":"…"}`. The formatter prints one line and answers null for a
+      // row whose JSON is not the §4.1 shape — an address nobody can print must not block issuing.
+      address: formatCompanyLegalAddress(company?.addressJson as CompanyLegalAddress | null),
     };
     if (!systemIssuanceOpen) {
       // The facts are valid and the tax really was withheld — only the SYSTEM artifact is

@@ -54,6 +54,7 @@ export class ExpenseSourceAdapter {
       vendorName: r.vendorNameSnapshot ?? null,
       vendorTaxId: r.vendorTaxIdSnapshot ?? null,
       vendorBranchCode: r.vendorBranchCodeSnapshot ?? null,
+      vendorAddress: r.vendorAddressSnapshot ?? null,
       currency: r.currency ?? 'THB',
       updatedAt: r.updatedAt,
     }));
@@ -79,6 +80,7 @@ export class ExpenseSourceAdapter {
       vendorName: r.vendorNameSnapshot ?? null,
       vendorTaxId: r.vendorTaxIdSnapshot ?? null,
       vendorBranchCode: r.vendorBranchCodeSnapshot ?? null,
+      vendorAddress: r.vendorAddressSnapshot ?? null,
       payeeEntityKind: r.vendorEntityKindSnapshot ?? null,
       incomeCategoryCode: r.taxCategory ?? null,
       ...whtLineFacts(r.lines, String(r.taxableAmount ?? '0'), r.whtInputJson as ExpenseWhtCapture | null),

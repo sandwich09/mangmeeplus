@@ -26,6 +26,7 @@ export type ExpenseRecord = {
   vendorNameSnapshot: string | null;
   vendorTaxIdSnapshot: string | null;
   vendorBranchCodeSnapshot: string | null;
+  vendorAddressSnapshot: string | null;
   vendorEntityKindSnapshot: BuyerEntityKind | null;
   vendorDocumentNumber: string | null;
   expenseDate: Date;
@@ -253,6 +254,7 @@ export type CreateExpenseRecordInput = {
   aiVerificationStatus?: AiVerificationStatus;
   vendorTaxIdSnapshot?: string;
   vendorBranchCodeSnapshot?: string;
+  vendorAddressSnapshot?: string;
   vendorDocumentNumber?: string;
   captureGroupId?: string;
   captureAllocationId?: string | null;
@@ -272,7 +274,7 @@ export type CreateExpenseRecordInput = {
 // The capture lineage and the payer are INSERT-only through this type: `updateExpense` does not
 // carry them, so accepting them here would be a field that type-checks and silently does nothing.
 // A handoff writes them in its own transaction, under the group lock (appendix §5).
-export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'companyId' | 'captureSource' | 'createdByUserId' | 'missingReceiptReason' | 'expenseCategoryId' | 'draftIdempotencyKey' | 'draftPayloadHash' | 'draftReplayScopes' | 'captureGroupId' | 'captureAllocationId' | 'captureScopeKey' | 'payerUserId'>> & {
+export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'companyId' | 'captureSource' | 'createdByUserId' | 'missingReceiptReason' | 'expenseCategoryId' | 'draftIdempotencyKey' | 'draftPayloadHash' | 'draftReplayScopes' | 'captureGroupId' | 'captureAllocationId' | 'captureScopeKey' | 'payerUserId' | 'vendorBranchCodeSnapshot' | 'vendorAddressSnapshot'>> & {
   id: string;
   companyId: string;
   updatedByUserId: string;
@@ -285,7 +287,10 @@ export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'c
   updatedAt?: Date;
   vendorNameSnapshot?: string;
   vendorTaxIdSnapshot?: string;
-  vendorBranchCodeSnapshot?: string;
+  // Nullable on update only, per CON-8/§6: a cleared branch code or address is stored as NULL, never
+  // as `''` or `'00000'`.
+  vendorBranchCodeSnapshot?: string | null;
+  vendorAddressSnapshot?: string | null;
   vendorEntityKindSnapshot?: BuyerEntityKind;
   vendorDocumentNumber?: string;
   receivedAt?: Date | null;

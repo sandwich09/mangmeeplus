@@ -2474,6 +2474,10 @@ model ExpenseRecord {
   vendorNameSnapshot                 String?
   vendorTaxIdSnapshot                String?
   vendorBranchCodeSnapshot           String?
+  /// The seller address exactly as printed on the document we received (vendor-address spec §6).
+  /// One free-text block, postcode included — the RD compares it with the paper, so it is never
+  /// split into fields here. Empty never blocks anything (§8): it is a review hint, not a gate.
+  vendorAddressSnapshot              String?                            @db.VarChar(500)
   // RA-18: the payee's taxpayer class decides ภ.ง.ด.3 (INDIVIDUAL) vs ภ.ง.ด.53 (JURISTIC) when
   // this expense withholds tax. Captured at review; null means not yet classified, never "juristic".
   vendorEntityKindSnapshot           BuyerEntityKind?

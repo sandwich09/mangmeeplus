@@ -1908,6 +1908,9 @@ describe('receipt tax integrity regressions', () => {
     assert.equal(reviewed.record.vendorEntityKindSnapshot, undefined);
     assert.equal(reviewed.record.vendorNameSnapshot, undefined);
     assert.equal(reviewed.record.vendorTaxIdSnapshot, undefined);
+    // CON-5: the address a reviewer typed is in the same protected set, so when OCR starts reading
+    // addresses (Phase 4) a re-read of the receipt cannot silently replace it.
+    assert.equal(reviewed.record.vendorAddressSnapshot, undefined);
     assert.deepEqual(reviewed.lines, [], 'rereading cannot replace reviewed financial rows');
     assert.equal(reviewed.record.grandTotalAmount, undefined);
     const vatReviewed = await applyFields(fields, { version: 1, source: { origin: 'REVIEWER' } }, {

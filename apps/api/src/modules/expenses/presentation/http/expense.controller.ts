@@ -156,6 +156,7 @@ export class ExpenseController {
     @Query('duplicateStatus') duplicateStatus?: string,
     @Query('vendorCounterpartyId') vendorCounterpartyId?: string,
     @Query('sourceDocumentType') sourceDocumentType?: string,
+    @Query('vendorAddressMissing') vendorAddressMissing?: string,
     @Query('taxEvidenceStatus') taxEvidenceStatus?: string,
     @Query('expenseCategoryId') expenseCategoryId?: string,
     @Query('captureSource') captureSource?: string,
@@ -174,6 +175,9 @@ export class ExpenseController {
       ...(duplicateStatus && { duplicateStatus: duplicateStatus as any }),
       ...(vendorCounterpartyId && { vendorCounterpartyId }),
       ...(sourceDocumentType && { sourceDocumentType: sourceDocumentType as any }),
+      // GAP-11: only the literal string turns it on, so `?vendorAddressMissing=false` means off
+      // rather than "any non-empty value is truthy".
+      ...(vendorAddressMissing === 'true' && { vendorAddressMissing: true }),
       ...(taxEvidenceStatus && { taxEvidenceStatus: taxEvidenceStatus as any }),
       ...(expenseCategoryId && { expenseCategoryId }),
       ...(captureSource && { captureSource: captureSource as any }),

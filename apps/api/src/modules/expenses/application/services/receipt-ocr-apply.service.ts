@@ -1064,7 +1064,9 @@ export class ReceiptOcrApplyService {
       }
       // Re-reading a receipt must not replace a reviewer's chosen identity.
       if (currentExpense.reviewedAt) {
-        for (const key of ['vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorDocumentNumber', 'expenseDate']) delete data[key];
+        // CON-5: `vendorAddressSnapshot` belongs in this set from the day the column exists — a
+        // re-read must not delete an address a reviewer typed once OCR starts reading one (Phase 4).
+        for (const key of ['vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorAddressSnapshot', 'vendorDocumentNumber', 'expenseDate']) delete data[key];
       } else if (!currentExpense.vendorEntityKindSnapshot) {
         const kind = receiptPayeeEntityKind(completed.vendorName, completed.vendorIdentityEvidence);
         if (kind && kind === completed.vendorEntityKind) data['vendorEntityKindSnapshot'] = kind;

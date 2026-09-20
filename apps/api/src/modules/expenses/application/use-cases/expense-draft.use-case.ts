@@ -18,6 +18,7 @@ import {
   vatSourceFromSnapshot,
 } from '../../domain/logic/expense-vat-reconciliation.logic';
 import { validateExpenseDraftAmounts, validateExpenseLineVatTreatments } from '../../domain/logic/expense-draft-amount-validation.logic';
+import { expenseVendorIdentityFields } from '../../domain/logic/expense-vendor-identity.logic';
 import { normalizeExpensePrecisionAdjustment } from '../../domain/logic/expense-precision-adjustment.logic';
 import { expenseTotalsIdentityError } from '../../domain/logic/expense-totals.logic';
 import { applyExpenseWhtInput, expenseWhtLineRate } from '../../domain/logic/expense-wht-input.logic';
@@ -387,6 +388,10 @@ export class UpdateExpenseDraftUseCase {
     if (!['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(r.status)) {
       throw new BadRequestException(`Cannot update expense in status ${r.status}`);
     }
+    // CON-11 puts the address under exactly this status gate and, in the repository, the same
+    // material-field funding lock as the other vendor columns — no rule of its own.
+    const vendorIdentity = expenseVendorIdentityFields(input);
+    if (vendorIdentity.error) throw new BadRequestException(vendorIdentity.error);
     if (options.requireExpectedUpdatedAt && !input.expectedUpdatedAt) {
       throw new BadRequestException({
         code: 'EXPENSE_UPDATE_VERSION_REQUIRED',
@@ -801,7 +806,9 @@ export class UpdateExpenseDraftUseCase {
       ...(input.vendorCounterpartyId !== undefined && { vendorCounterpartyId: input.vendorCounterpartyId }),
       ...(input.vendorNameSnapshot !== undefined && { vendorNameSnapshot: input.vendorNameSnapshot }),
       ...(input.vendorTaxIdSnapshot !== undefined && { vendorTaxIdSnapshot: input.vendorTaxIdSnapshot }),
-      ...(input.vendorBranchCodeSnapshot !== undefined && { vendorBranchCodeSnapshot: input.vendorBranchCodeSnapshot }),
+      // CON-8/§6: these two normalize before they persist — blank is NULL, a branch code is five
+      // digits. Everything else on this list is stored exactly as it arrived.
+      ...vendorIdentity.fields,
       ...(input.vendorEntityKindSnapshot !== undefined && { vendorEntityKindSnapshot: input.vendorEntityKindSnapshot }),
       ...(input.vendorDocumentNumber !== undefined && { vendorDocumentNumber: input.vendorDocumentNumber }),
       ...(input.note !== undefined && { note: input.note }),
@@ -1199,7 +1206,9 @@ export class ConfirmExpenseUseCase {
     }
 
     const postingStatus = derivePostingStatus('CONFIRMED', r.duplicateStatus);
-    const vendorSnapshotJson = r.vendorCounterpartyId ? { id: r.vendorCounterpartyId, name: r.vendorNameSnapshot, taxId: r.vendorTaxIdSnapshot } : null;
+    // §6: the frozen snapshot now carries the branch and the printed address too, so a confirmed
+    // expense still says which shop and which address it was, whatever the registry does later.
+    const vendorSnapshotJson = r.vendorCounterpartyId ? { id: r.vendorCounterpartyId, name: r.vendorNameSnapshot, taxId: r.vendorTaxIdSnapshot, branchCode: r.vendorBranchCodeSnapshot, addressText: r.vendorAddressSnapshot } : null;
     const occurredAt = new Date().toISOString();
     const eventRequestId = authority
       ? `reimbursement:${authority.reimbursementRequestId}:${authority.reimbursementLineId}`

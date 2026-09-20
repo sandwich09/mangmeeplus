@@ -32,6 +32,9 @@ export type AccountingDocumentSourceRow = {
   taxInvoiceId: string | null;
   counterpartyName: string | null;
   counterpartyTaxId: string | null;
+  /** GAP-2: `addressText` off the document's own frozen buyer snapshot, so `payeeSnapshot.address`
+   *  is the address that was printed, not whatever the registry says today. */
+  counterpartyAddress: string | null;
   branchCode: string | null;
   currency: string;
   updatedAt: Date;
@@ -51,6 +54,8 @@ export type ExpenseSourceRow = {
   vendorName: string | null;
   vendorTaxId: string | null;
   vendorBranchCode: string | null;
+  /** GAP-2 / spec §10: the seller address as printed on the expense's own document. */
+  vendorAddress: string | null;
   currency: string;
   updatedAt: Date;
 };
@@ -65,6 +70,8 @@ export type ExpenseWhtSourceRow = {
   vendorName: string | null;
   vendorTaxId: string | null;
   vendorBranchCode: string | null;
+  /** GAP-2 / spec §10: the payee address 50 ทวิ needs, as printed on the expense's own document. */
+  vendorAddress: string | null;
   // Decides ภ.ง.ด.3 vs ภ.ง.ด.53. Null means the payee is not classified yet, not "juristic".
   payeeEntityKind: BuyerEntityKind | null;
   incomeCategoryCode: string | null;

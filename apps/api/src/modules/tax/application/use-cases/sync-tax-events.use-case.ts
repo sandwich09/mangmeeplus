@@ -183,7 +183,7 @@ export class SyncTaxEventsUseCase {
         periodKey, eventDate: doc.documentDate,
         taxableBase, taxAmount, currency: doc.currency,
         vatMode: doc.vatMode, outputTaxCode: doc.outputTaxCode, whtFormType: null,
-        payeeSnapshot: doc.counterpartyName ? { name: doc.counterpartyName, taxId: doc.counterpartyTaxId ?? null, address: null, branchCode: doc.branchCode } : null,
+        payeeSnapshot: doc.counterpartyName ? { name: doc.counterpartyName, taxId: doc.counterpartyTaxId ?? null, address: doc.counterpartyAddress ?? null, branchCode: doc.branchCode } : null,
         incomeCategoryCode: null, whtRate: null, grossAmount: null, withheldAmount: null, netPaidAmount: null,
         taxInvoiceNumber: doc.documentNumber ?? doc.taxInvoiceId ?? null, reviewNote: null,
       });
@@ -235,8 +235,9 @@ export class SyncTaxEventsUseCase {
         vatMode: exp.vatMode, outputTaxCode: null, whtFormType: null,
         // `payeeSnapshot` is the counterparty of the event's own direction: the buyer on sell-side
         // events, the vendor here on the purchase side — name and taxId already worked that way, so
-        // branchCode follows them. `TaxEvent.sellerBranchCode` stays for the sell side (RA-17).
-        payeeSnapshot: exp.vendorName ? { name: exp.vendorName, taxId: exp.vendorTaxId ?? null, address: null, branchCode: exp.vendorBranchCode ?? null } : null,
+        // branchCode and address follow them. `TaxEvent.sellerBranchCode` stays for the sell side
+        // (RA-17). GAP-2/§10: the address is the one printed on the document this event came from.
+        payeeSnapshot: exp.vendorName ? { name: exp.vendorName, taxId: exp.vendorTaxId ?? null, address: exp.vendorAddress ?? null, branchCode: exp.vendorBranchCode ?? null } : null,
         incomeCategoryCode: null, whtRate: null, grossAmount: null, withheldAmount: null, netPaidAmount: null,
         taxInvoiceNumber: null, reviewNote: null,
       });
@@ -287,7 +288,9 @@ export class SyncTaxEventsUseCase {
         periodKey, eventDate: exp.expenseDate,
         taxableBase: exp.grossAmount, taxAmount: exp.whtAmount, currency: exp.currency,
         vatMode: null, outputTaxCode: null, whtFormType: formType,
-        payeeSnapshot: { name: exp.vendorName ?? '', taxId: exp.vendorTaxId, address: null, branchCode: exp.vendorBranchCode ?? null },
+        // §10: 50 ทวิ must print the payee's address. Empty stays empty — the handoff review page is
+        // where it gets typed in; a missing address never stops the event being written.
+        payeeSnapshot: { name: exp.vendorName ?? '', taxId: exp.vendorTaxId, address: exp.vendorAddress ?? null, branchCode: exp.vendorBranchCode ?? null },
         incomeCategoryCode: exp.incomeCategoryCode ?? null, whtRate: exp.whtRate ?? null,
         grossAmount: exp.grossAmount, withheldAmount: exp.whtAmount, netPaidAmount: null,
         taxInvoiceNumber: null, reviewNote: null,
@@ -342,6 +345,10 @@ export class SyncTaxEventsUseCase {
         // never a VAT-inclusive settlement figure passed off as income.
         taxableBase: pay.grossAmount ?? pay.whtAmount, taxAmount: pay.whtAmount, currency: pay.currency,
         vatMode: null, outputTaxCode: null, whtFormType: formType,
+        // GAP-2 stops here: a supplier payment has no printed document of ours to take an address
+        // from, and `SupplierProfile.addressJson` is free-form procurement data (CON-9) — piping it
+        // in raw would re-create BUG-1. It is filled from the counterparty registry when Phase 2
+        // makes that a single typed read, not by a per-event query here.
         payeeSnapshot: { name: pay.payeeName ?? '', taxId: pay.payeeTaxId, address: null, branchCode: pay.payeeBranchCode ?? null },
         incomeCategoryCode: pay.incomeCategoryCode ?? null, whtRate: pay.whtRate ?? null,
         grossAmount: pay.grossAmount ?? pay.whtAmount, withheldAmount: pay.whtAmount, netPaidAmount: null,
