@@ -2,14 +2,21 @@ import type { BillingPurchaseSource } from '@watchdog-bms/contracts';
 import type { BillingAccount, CompanyPlanTerm } from '../../../generated/prisma/client';
 import { termProjectionHash } from '../domain/paid-invoice';
 
-type SourceAccount = Pick<BillingAccount, 'id' | 'baseSubscriptionId' | 'paidThrough' | 'termProjectionHash'>;
+type SourceAccount = Pick<BillingAccount, 'id' | 'baseSubscriptionId' | 'activeAttemptId' | 'contractAttemptId' | 'renewalMode' | 'paidThrough' | 'termProjectionHash'>;
 
 /** An account row or customer ID is not payment evidence. A mapped, verified paid term is. */
 export function billingPurchaseSource(term: CompanyPlanTerm | null, account: SourceAccount | null, hasPaidInvoice: boolean, now = new Date()): BillingPurchaseSource {
   if (term?.billingReceiptAccountId && term.billingReceiptAccountId !== account?.id) return 'PAID_OTHER_MODE';
-  const paidShape = !!(term?.billingReceiptAccountId || account?.baseSubscriptionId || account?.paidThrough || hasPaidInvoice);
+  const paidShape = !!(term?.billingReceiptAccountId || account?.baseSubscriptionId || account?.contractAttemptId ||
+    account?.paidThrough || (account && account.renewalMode !== 'NONE') || hasPaidInvoice);
   if (paidShape) {
-    if (!term || !account || term.billingReceiptAccountId !== account.id || !account.baseSubscriptionId || !account.paidThrough ||
+    const oneTime = account?.renewalMode === 'CARD_ONCE' || account?.renewalMode === 'PROMPTPAY_ONCE';
+    const promptPayBinding = account?.renewalMode === 'PROMPTPAY_RENEW' && !account.baseSubscriptionId &&
+      account.activeAttemptId === account.contractAttemptId;
+    const paidContract = oneTime ? !account?.baseSubscriptionId && !!account?.contractAttemptId && hasPaidInvoice
+      : promptPayBinding ? !!account?.contractAttemptId && hasPaidInvoice
+      : !!account?.baseSubscriptionId && (account.renewalMode === 'NONE' || account.renewalMode === 'CARD_AUTO' || account.renewalMode === 'PROMPTPAY_RENEW');
+    if (!term || !account || term.billingReceiptAccountId !== account.id || !paidContract || !account.paidThrough ||
       !account.termProjectionHash || termProjectionHash(term) !== account.termProjectionHash)
       return 'SOURCE_INCONSISTENT';
     return account.paidThrough > now ? 'PAID_CURRENT_MODE' : 'PAID_EXPIRED_CURRENT_MODE';

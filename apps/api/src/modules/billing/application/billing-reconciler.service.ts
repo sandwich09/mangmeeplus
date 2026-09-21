@@ -28,6 +28,8 @@ import { applyCapacity, attemptCapacity, capacityOptions, capacityValid } from '
 import { applyBillingFeaturePlan, billingFeaturePlan } from './billing-feature-entitlements';
 import { exclusiveEntitlementLock } from '../../feature-launch/application/execution-attempt.service';
 import { completeRunoffIfDrained } from '../../feature-launch/application/runoff-lifecycle';
+import { upgradeHistory } from './billing-upgrade';
+import { pendingChange } from './billing-schedule';
 
 export const BILLING_STRIPE_EVENTS = new Set(['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded',
   'checkout.session.async_payment_failed', 'invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required', 'invoice.finalization_failed',
@@ -198,6 +200,8 @@ export class BillingReconcilerService {
       }
       if (!account.customerId) return;
       if (attempt && await this.settleProfileSync(account, attempt, leaseToken)) return;
+      if (await this.applyDueOneTimePlanChange(account, leaseToken))
+        account = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
       if (account.activeEmailOperationId) {
         await this.billing.emailRecipient.advance(account, leaseToken);
         account = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
@@ -450,6 +454,8 @@ export class BillingReconcilerService {
     const mode = snapshot.quote.purchaseMode;
     if (!['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(mode ?? '') || !account.customerId || !snapshot.productId || snapshot.repeat)
       throw new Error('billing.one_time_contract_missing');
+    if ((snapshot.upgrade && !snapshot.oneTime) || (snapshot.oneTimeChange && (!snapshot.oneTime || snapshot.upgrade || mode === 'PROMPTPAY_RENEW')))
+      throw new Error('billing.one_time_change_contract');
     const sessions = originalSession ? [originalSession] : attempt.checkoutSessionId
       ? [await this.stripe.request('GET', `/checkout/sessions/${attempt.checkoutSessionId}`)]
       : (await this.stripe.list('/checkout/sessions', { customer: account.customerId })).filter(s => s.metadata?.billingAttemptId === attempt.id);
@@ -487,10 +493,11 @@ export class BillingReconcilerService {
       paymentMethod: mode?.startsWith('PROMPTPAY') ? 'promptpay' : 'card',
       checkoutLines: await this.stripe.list(`/checkout/sessions/${session.id}/line_items`, {}),
       invoiceLines: await this.stripe.list(`/invoices/${invoice.id}/lines`, {}) });
-    const impact = fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval,
-      offer: snapshot.quote.offer, verifiedPaidAt: evidence.paidAt,
-      paidThrough: snapshot.oneTime ? new Date(snapshot.oneTime.paidThrough) : null, remainingPaidReceipts: 0,
-      anchorDay: snapshot.oneTime?.anchorDay });
+    const impact = snapshot.upgrade ? { serviceStartsAt: new Date(snapshot.upgrade.prorationAt), paidThrough: new Date(snapshot.oneTime!.paidThrough) } :
+      fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval,
+        offer: snapshot.quote.offer, verifiedPaidAt: evidence.paidAt,
+        paidThrough: snapshot.oneTime ? new Date(snapshot.oneTime.paidThrough) : null, remainingPaidReceipts: 0,
+        anchorDay: snapshot.oneTime?.anchorDay });
     const siblings = await this.stripe.list('/subscriptions', { customer: account.customerId, status: 'all' });
     const collectible = siblings.some(sub => !['canceled', 'incomplete_expired'].includes(sub.status));
     await this.prisma.client.$transaction(async tx => {
@@ -514,10 +521,12 @@ export class BillingReconcilerService {
       if (row.appliedAt) { await resolveAppliedInvoiceIssues(tx, account, row.id); return; }
       const company = await tx.company.findUniqueOrThrow({ where: { id: account.companyId }, include: { planTerm: true } });
       const source = snapshot.oneTime ? await tx.billingInvoice.findFirst({ where: { id: snapshot.oneTime.invoiceId,
-        billingAccountId: account.id, applyStatus: 'APPLIED', appliedAt: { not: null } } }) : null;
+        billingAccountId: account.id, providerStatus: 'paid', applyStatus: 'APPLIED', appliedAt: { not: null } } }) : null;
       const capacity = await attemptCapacity(tx, account.id, attempt);
       const capacityReady = capacity ? capacityValid(await capacityOptions(tx, company.id, snapshot.quote.offer), capacity)
         : await restartFits(tx, company.id, snapshot.quote.offer);
+      const upgradeReady = !snapshot.upgrade || (await upgradeHistory(tx, current, snapshot.quote.offer, snapshot.policy,
+        snapshot.upgrade.prorationAt)).sourceHash === snapshot.upgrade.sourceHash;
       const sourceReady = !collectible && current.activeAttemptId === attempt.id &&
         termProjectionHash(company.planTerm) === snapshot.termHash &&
         (!snapshot.oneTime || (source?.periodEnd.toISOString() === snapshot.oneTime.paidThrough &&
@@ -527,7 +536,7 @@ export class BillingReconcilerService {
         (!current.baseSubscriptionId || (snapshot.restart?.subscriptionId === current.baseSubscriptionId &&
           current.paidThrough && current.paidThrough <= evidence.paidAt)) &&
         (company.status === 'ACTIVE' || (company.status === 'DISABLED' && !!company.planTerm?.termDisabledAt));
-      if (recordOnly || !sourceReady || !capacityReady || evidence.refundedSatang || evidence.disputed ||
+      if (recordOnly || !sourceReady || !capacityReady || !upgradeReady || evidence.refundedSatang || evidence.disputed ||
           impact.paidThrough <= new Date() || evidence.paidAt > new Date()) {
         await tx.billingInvoice.update({ where: { id: row.id }, data: { applyStatus: 'HELD',
           errorCode: !capacityReady ? 'BILLING_CAP_SELECTION_REQUIRED' : 'access_review_required' } });
@@ -536,39 +545,54 @@ export class BillingReconcilerService {
         return;
       }
       const balance = await paidReceiptBalance(tx, company.id, account.id, evidence.paidAt);
-      fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval,
+      if (snapshot.upgrade) {
+        if (balance.remaining + snapshot.upgrade.receiptUnitsAdded > 2_147_483_647) throw new Error('billing.receipt_balance_corrupt');
+      } else fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval,
         offer: snapshot.quote.offer, verifiedPaidAt: evidence.paidAt,
         paidThrough: snapshot.oneTime ? new Date(snapshot.oneTime.paidThrough) : null,
-        remainingPaidReceipts: balance.remaining, anchorDay: snapshot.oneTime?.anchorDay });
+        remainingPaidReceipts: snapshot.oneTimeChange ? 0 : balance.remaining, anchorDay: snapshot.oneTime?.anchorDay });
       if (!snapshot.oneTime && !snapshot.restart) await grantTrialReceiptCarryover(tx, {
         companyId: company.id, billingAccountId: account.id, invoiceId: row.id,
         policyRevisionId: attempt.policyRevisionId, source: snapshot.trialCarryover,
         paidAt: evidence.paidAt, periodEnd: impact.paidThrough });
-      if (capacity) await applyCapacity(tx, company.id, snapshot.quote.offer, capacity, attempt.initiatingUserId, row.id);
+      if (capacity && !snapshot.oneTimeChange) await applyCapacity(tx, company.id, snapshot.quote.offer, capacity, attempt.initiatingUserId, row.id);
       await tx.companyPlanTerm.upsert({ where: { companyId: company.id }, create: {
         companyId: company.id, tierKey: snapshot.quote.offer.offerKey, branchLimit: snapshot.quote.offer.branchLimit,
         employeeLimit: snapshot.quote.offer.employeeLimit, monthlySlipLimit: snapshot.quote.offer.monthlySlipLimit,
         termStartAt: impact.serviceStartsAt, termEndsAt: impact.paidThrough, lastRenewedAt: new Date(),
-      }, update: { tierKey: snapshot.quote.offer.offerKey, branchLimit: snapshot.quote.offer.branchLimit,
-        employeeLimit: snapshot.quote.offer.employeeLimit, monthlySlipLimit: snapshot.quote.offer.monthlySlipLimit,
+      }, update: { ...(!snapshot.oneTimeChange ? { tierKey: snapshot.quote.offer.offerKey, branchLimit: snapshot.quote.offer.branchLimit,
+        employeeLimit: snapshot.quote.offer.employeeLimit, monthlySlipLimit: snapshot.quote.offer.monthlySlipLimit } : {}),
         ...(!snapshot.oneTime || impact.serviceStartsAt.getTime() === evidence.paidAt.getTime() ? { termStartAt: impact.serviceStartsAt } : {}),
         termEndsAt: impact.paidThrough, termDisabledAt: null, warmupUntil: null, warmupSlipLimit: null,
         warn7SentAt: null, warn3SentAt: null, warn1SentAt: null, expiredNotifiedAt: null,
-        lastRenewedAt: new Date(), renewCount: { increment: 1 } } });
+        ...(!snapshot.upgrade ? { lastRenewedAt: new Date(), renewCount: { increment: 1 } } : {}) } });
       if (company.status === 'DISABLED' && company.planTerm?.termDisabledAt) await this.lifecycle.execute({ companyId: company.id,
         targetStatus: 'ACTIVE', requestingAdminUserId: null, requestId: row.id, reason: 'stripe_verified_one_time_paid' }, tx);
       await grantPaidPackageReceipts(tx, { companyId: company.id, billingAccountId: account.id, sourceKey: row.id,
-        policyRevisionId: attempt.policyRevisionId, kind: snapshot.oneTime ? 'REPEAT' : 'INITIAL',
-        units: snapshot.quote.offer.receiptAllowance, serviceStart: impact.serviceStartsAt, serviceEnd: impact.paidThrough,
-        availableAt: evidence.paidAt, expiresAt: impact.paidThrough });
+        policyRevisionId: attempt.policyRevisionId, kind: snapshot.upgrade ? 'UPGRADE' : snapshot.oneTime ? 'REPEAT' : 'INITIAL',
+        units: snapshot.upgrade?.receiptUnitsAdded ?? snapshot.quote.offer.receiptAllowance,
+        serviceStart: impact.serviceStartsAt, serviceEnd: impact.paidThrough,
+        availableAt: snapshot.oneTimeChange ? impact.serviceStartsAt : evidence.paidAt, expiresAt: impact.paidThrough });
       const term = await tx.companyPlanTerm.findUniqueOrThrow({ where: { companyId: company.id } });
       await tx.billingInvoice.update({ where: { id: row.id }, data: { applyStatus: 'APPLIED', appliedAt: new Date(), errorCode: null } });
       await tx.billingAttempt.update({ where: { id: attempt.id }, data: { status: 'COMPLETED', errorCode: null, checkoutSessionId: session.id } });
+      const scheduled = snapshot.oneTimeChange ? await tx.billingOperation.create({ data: {
+        companyId: company.id, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
+        type: 'CUSTOMER_PREPAID_PLAN_CHANGE', state: 'SUCCEEDED', referenceId: attempt.id, sourceVersion: current.version,
+        proposedJson: { accountId: account.id, action: 'PREPAID_PLAN_CHANGE', subscriptionId: null,
+          paidThrough: impact.paidThrough.toISOString(), effectiveAt: impact.serviceStartsAt.toISOString(), prepaidInvoiceId: row.id,
+          sourceHash: hashBilling([attempt.id, row.id, snapshot.oneTimeChange, snapshot.capacity ?? null]), sourceTermHash: termProjectionHash(term),
+          snapshot, change: { previousId: null, currentSnapshot: source!.contractSnapshot,
+            ...(capacity ? { selection: capacity } : {}) }, method: 'POST', path: '', params: {} },
+        reason: 'paid_one_time_plan_change', initiatorUserId: attempt.initiatingUserId,
+        requestHash: hashBilling([attempt.id, row.id, impact.serviceStartsAt, impact.paidThrough, snapshot.quote.offer, snapshot.capacity ?? null]),
+        expiresAt: impact.paidThrough, scheduledFor: impact.serviceStartsAt, observedAt: new Date(),
+        resultJson: { prepaidInvoiceId: row.id } } }) : null;
       await tx.billingAccount.update({ where: { id: account.id }, data: { paidThrough: impact.paidThrough, baseSubscriptionId: null,
         contractAttemptId: attempt.id, activeAttemptId: mode === 'PROMPTPAY_RENEW' ? attempt.id : null,
         subscriptionState: 'NONE', renewalMode: mode!,
         billingAnchorDay: snapshot.oneTime?.anchorDay ?? evidence.paidAt.getUTCDate(), nextChargeAt: null,
-        cancelAtPeriodEnd: false, graceEndsAt: null, termProjectionHash: termProjectionHash(term),
+        cancelAtPeriodEnd: false, graceEndsAt: null, termProjectionHash: termProjectionHash(term), pendingPlanChangeId: scheduled?.id ?? null,
         observedAt: new Date(), version: { increment: 1 } } });
       await fulfillPaidPackageRequest(tx, company.id, account.id, row.id);
       await resolveAppliedInvoiceIssues(tx, account, row.id);
@@ -581,6 +605,63 @@ export class BillingReconcilerService {
           data: { invoiceId: row.id, companyId: company.id } } } });
     });
     if (mode === 'PROMPTPAY_RENEW' && !recordOnly) await this.bindPromptPayRenewal(account, attempt, snapshot, lease, impact.paidThrough);
+  }
+
+  private async applyDueOneTimePlanChange(account: BillingAccount, lease: string): Promise<boolean> {
+    if (account.baseSubscriptionId || !account.pendingPlanChangeId || !account.paidThrough ||
+        !['CARD_ONCE', 'PROMPTPAY_ONCE'].includes(account.renewalMode)) return false;
+    return this.prisma.client.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${account.companyId}`}))`;
+      await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+      const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+      const pending = await pendingChange(tx, current), proposed = pending?.proposed;
+      if (!pending || !proposed?.effectiveAt || !proposed.prepaidInvoiceId || new Date(proposed.effectiveAt) > new Date()) return false;
+      const invoice = await tx.billingInvoice.findFirst({ where: { id: proposed.prepaidInvoiceId, billingAccountId: current.id,
+        sourceAttemptId: current.contractAttemptId, providerStatus: 'paid', applyStatus: 'APPLIED', appliedAt: { not: null },
+        refundedSatang: 0, disputed: false, periodStart: new Date(proposed.effectiveAt), periodEnd: current.paidThrough! } });
+      const grant = invoice ? await tx.billingReceiptGrant.findUnique({ where: { billingAccountId_sourceKey: {
+        billingAccountId: current.id, sourceKey: invoice.id } } }) : null;
+      const company = await tx.company.findUniqueOrThrow({ where: { id: current.companyId }, include: { planTerm: true } });
+      const oldOffer = proposed.change.currentSnapshot.quote.offer;
+      const selection = await attemptCapacity(tx, current.id, { id: pending.row.id,
+        quoteSnapshot: { ...proposed.snapshot, capacity: proposed.change.selection } as unknown as Prisma.JsonValue });
+      const capacityReady = selection ? capacityValid(await capacityOptions(tx, current.companyId, proposed.snapshot.quote.offer), selection) :
+        await restartFits(tx, current.companyId, proposed.snapshot.quote.offer);
+      if (!invoice || !grant || grant.kind !== 'REPEAT' || grant.units !== proposed.snapshot.quote.offer.receiptAllowance ||
+          grant.serviceStart.toISOString() !== proposed.effectiveAt || grant.availableAt.toISOString() !== proposed.effectiveAt ||
+          grant.serviceEnd.getTime() !== current.paidThrough!.getTime() || grant.expiresAt.getTime() !== current.paidThrough!.getTime() ||
+          hashBilling(invoice.contractSnapshot) !== hashBilling(proposed.snapshot) || current.activeAttemptId || !company.planTerm || company.planTerm.tierKey !== oldOffer.offerKey ||
+          termProjectionHash(company.planTerm) !== current.termProjectionHash || proposed.sourceTermHash !== current.termProjectionHash)
+        throw new Error('billing.prepaid_plan_change_changed');
+      if (!capacityReady) {
+        if (pending.row.state !== 'BLOCKED' || pending.row.errorCode !== 'BILLING_CAP_SELECTION_REQUIRED')
+          await tx.billingOperation.update({ where: { id: pending.row.id }, data: { state: 'BLOCKED',
+            errorCode: 'BILLING_CAP_SELECTION_REQUIRED', observedAt: new Date(), version: { increment: 1 } } });
+        await detectBillingIssue(tx, { companyId: current.companyId, stripeAccountId: current.stripeAccountId,
+          livemode: current.livemode, kind: 'PAID_HELD', referenceId: invoice.id });
+        return false;
+      }
+      if (selection) await applyCapacity(tx, current.companyId, proposed.snapshot.quote.offer, selection, pending.row.initiatorUserId, invoice.id);
+      const target = proposed.snapshot.quote.offer;
+      const term = await tx.companyPlanTerm.update({ where: { companyId: current.companyId }, data: {
+        tierKey: target.offerKey, branchLimit: target.branchLimit, employeeLimit: target.employeeLimit,
+        monthlySlipLimit: target.monthlySlipLimit, termStartAt: new Date(proposed.effectiveAt), termEndsAt: current.paidThrough!,
+        warn7SentAt: null, warn3SentAt: null, warn1SentAt: null, expiredNotifiedAt: null } });
+      await tx.billingOperation.update({ where: { id: pending.row.id }, data: { state: 'APPLIED', errorCode: null,
+        observedAt: new Date(), version: { increment: 1 } } });
+      await tx.billingAccount.update({ where: { id: current.id }, data: { pendingPlanChangeId: null,
+        termProjectionHash: termProjectionHash(term), observedAt: new Date(), version: { increment: 1 } } });
+      await tx.auditLog.create({ data: { companyId: current.companyId, actorUserId: pending.row.initiatorUserId,
+        action: 'billing.prepaid_plan_change.applied', targetType: 'BillingOperation', targetId: pending.row.id,
+        requestId: pending.row.id, result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { invoiceId: invoice.id,
+          effectiveAt: proposed.effectiveAt, tierKey: target.offerKey, interval: target.interval } } });
+      await tx.outboxEvent.upsert({ where: { eventKey: `billing:prepaid-plan-change:${pending.row.id}` }, update: {}, create: {
+        companyId: current.companyId, eventType: 'billing.prepaid_plan_change.applied', aggregateType: 'BillingOperation',
+        aggregateId: pending.row.id, eventKey: `billing:prepaid-plan-change:${pending.row.id}`,
+        payloadJson: { schemaVersion: 1, occurredAt: new Date().toISOString(), data: { operationId: pending.row.id, invoiceId: invoice.id } } } });
+      await resolveAppliedInvoiceIssues(tx, current, invoice.id);
+      return true;
+    });
   }
 
   private async bindPromptPayRenewal(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot,
