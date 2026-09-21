@@ -22,7 +22,7 @@ import {
   parseCaptureObservationsJson,
   parseCaptureReadPages,
 } from '../../domain/logic/expense-capture-read.logic';
-import { AI_DOCUMENT_OCR_TIMEOUT_MS, EXPENSE_CAPTURE_CONTRACT_VERSION, EXPENSE_CAPTURE_OBSERVATION_LIMITS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, VALUE_ASSUMPTIONS, type AiBudgetScope, type AiModelLineage, type ExpenseCaptureExtractRequest, type ExpenseCaptureExtractResponse, type ExpenseCaptureObservations, type ExpenseCaptureReadChunk, type ExpenseCaptureReadRequest, type ExpenseCaptureReadResponse, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeOnePassReceipt, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrFallbackReason, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
+import { AI_DOCUMENT_OCR_TIMEOUT_MS, EXPENSE_CAPTURE_CONTRACT_VERSION, EXPENSE_CAPTURE_OBSERVATION_LIMITS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, VALUE_ASSUMPTIONS, type AiBudgetScope, type AiModelLineage, type BusinessDocumentClassification, type ExpenseCaptureExtractRequest, type ExpenseCaptureExtractResponse, type ExpenseCaptureObservations, type ExpenseCaptureReadChunk, type ExpenseCaptureReadRequest, type ExpenseCaptureReadResponse, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeOnePassReceipt, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrFallbackReason, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
 
 // JSON bodies on these routes carry base64 media and need main.ts's 16mb parser
 // (UPLOAD_MAX_BYTES 10MB inflates to ~13.7MB in base64); every other route stays at
@@ -56,6 +56,39 @@ const ONE_PASS_VAT_SIGNAL = /(?:\bVAT\b|ภาษีมูลค่าเพิ�
 const ONE_PASS_WHT_SIGNAL = /(?:\bWHT\b|withholding|หัก\s*ณ\s*ที่จ่าย)/i;
 const ONE_PASS_CHARGE_SIGNAL = /(?:service\s*charge|delivery\s*(?:fee)?|packaging|platform\s*fee|rounding|ค่าบริการ|ค่าจัดส่ง|ค่าบรรจุ|ค่าธรรมเนียมแพลตฟอร์ม|ปัดเศษ|ทิป|\btip\b)/i;
 const ONE_PASS_DISCOUNT_SIGNAL = /(?:discount|coupon|voucher|promotion|ส่วนลด|คูปอง|โปรโมชั่น)/i;
+const ONE_PASS_SETTLEMENT_SIGNAL = /ใบเสร็จรับเงิน|ใบรับเงิน|ใบเสร็จ|บิลเงินสด|รับเงินแล้ว|ชำระแล้ว|ชำระโดย|\bRECEIPT\b|\bCASH SALE\b|\bPAID\b/i;
+const ONE_PASS_NON_TAX_RECEIPT_OPTIONAL_REASONS = new Set(['MISSING_VENDOR_TAX_ID', 'MISSING_DOCUMENT_NUMBER']);
+const ONE_PASS_NON_TAX_RECEIPT_OPTIONAL_FIELDS = new Set(['vendorTaxId', 'documentNumber']);
+const ONE_PASS_LOGGABLE_MISSING_FIELDS = new Set([
+  'vendorName', 'vendorTaxId', 'vendorBranchCode', 'vendorAddress', 'documentNumber', 'expenseDate',
+  'description', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtAmount',
+  'whtBaseAmount', 'grandTotalAmount', 'currency', 'lines', 'additionalCharges', 'category',
+]);
+
+type OnePassReceiptDecision = {
+  receipt?: LineIntakeOnePassReceipt;
+  missingFields?: string[];
+  reason:
+    | 'ACCEPTED'
+    | 'CANDIDATE_ABSENT'
+    | 'ROUTE_INELIGIBLE'
+    | 'CLASSIFICATION_INELIGIBLE'
+    | 'JSON_INCOMPLETE_OR_INVALID'
+    | 'FIELDS_CONFIDENCE_LOW'
+    | 'VENDOR_MISSING'
+    | 'DATE_MISSING'
+    | 'DESCRIPTION_MISSING'
+    | 'FIELDS_INCOMPLETE'
+    | 'TOTAL_MISSING'
+    | 'VAT_MISSING'
+    | 'WHT_MISSING'
+    | 'ITEMS_MISSING_OR_OVERLONG'
+    | 'ITEMS_EVIDENCE_INVALID'
+    | 'ITEMS_RECONCILIATION_FAILED'
+    | 'CURRENCY_MISMATCH'
+    | 'CHARGES_MISSING'
+    | 'DISCOUNT_MISSING';
+};
 
 function onePassPrintedCurrencies(text: string): Set<string> {
   const currencies = new Set<string>();
@@ -70,6 +103,79 @@ function onePassPrintedCurrencies(text: string): Set<string> {
   if (/[฿]|บาท/i.test(text)) currencies.add('THB');
   return currencies;
 }
+
+/** Receipt titles are payment evidence in the canonical OCR prompt. Recover only an exact span
+ * already present in the same transcription; this adds no model trust and cannot promote a bill. */
+function withOnePassSettlementEvidence(
+  classification: BusinessDocumentClassification,
+  documentText: string,
+): BusinessDocumentClassification {
+  if (classification.settlementSignals.length > 0) return classification;
+  const settlement = ONE_PASS_SETTLEMENT_SIGNAL.exec(documentText)?.[0];
+  return settlement
+    ? {
+        ...classification,
+        settlementSignals: [settlement],
+        missingRequiredSignals: classification.missingRequiredSignals.filter((reason) => reason !== 'MISSING_PAYMENT_EVIDENCE'),
+      }
+    : classification;
+}
+
+/** The field cross-check has already proved that the total number exists in this transcription.
+ * Reuse the exact printed token when the router omitted its advisory amountSignals array. */
+function withOnePassAmountEvidence(
+  classification: BusinessDocumentClassification,
+  fields: NonNullable<ReceiptOcrResponse['fields']>,
+  documentText: string,
+): BusinessDocumentClassification {
+  if (classification.amountSignals.length > 0 || !fields.grandTotalAmount) return classification;
+  const expected = Number(fields.grandTotalAmount.replace(/,/g, ''));
+  const exact = [...documentText.matchAll(/\d[\d,]*(?:\.\d+)?/g)]
+    .find((match) => Number(match[0].replace(/,/g, '')) === expected)?.[0];
+  return exact ? { ...classification, amountSignals: [exact] } : classification;
+}
+
+function hasBlockingOnePassClassificationGap(classification: BusinessDocumentClassification): boolean {
+  const optional = classification.documentKind === 'RECEIPT' || classification.documentKind === 'HANDWRITTEN_CASH_BILL'
+    ? ONE_PASS_NON_TAX_RECEIPT_OPTIONAL_REASONS
+    : new Set<string>();
+  return classification.missingRequiredSignals.some((reason) => !optional.has(reason));
+}
+
+function onePassVendorIsIssuer(vendorName: string, documentText: string): boolean {
+  const normalize = (value: string) => value.normalize('NFKC').replace(/\s+/g, ' ').trim().toUpperCase();
+  return normalize(receiptIssuerText(documentText)).includes(normalize(vendorName));
+}
+
+/** Markdown transcription often adds table pipes around a row while the same model quotes the row
+ * without them. Bind the candidate back to the one exact source line containing both its printed
+ * description and amount; ambiguity or a split row remains rejected by the normal parser. */
+function withOnePassLineEvidence(candidate: Record<string, unknown>, documentText: string): Record<string, unknown> {
+  if (!Array.isArray(candidate['lines'])) return candidate;
+  const sourceLines = documentText.split('\n').map((line) => line.trim()).filter(Boolean);
+  return {
+    ...candidate,
+    lines: candidate['lines'].map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+      const row = item as Record<string, unknown>;
+      const current = typeof row['evidenceSignal'] === 'string' ? row['evidenceSignal'].trim() : '';
+      const description = typeof row['description'] === 'string' ? row['description'].trim() : '';
+      const amount = typeof row['amount'] === 'string' ? row['amount'].trim() : '';
+      const matches = description && amount
+        ? sourceLines.filter((line) => line.length <= 120 && line.includes(description) && line.includes(amount))
+        : [];
+      const normalized: Record<string, unknown> = current && documentText.includes(current)
+        ? { ...row }
+        : matches.length === 1 ? { ...row, evidenceSignal: matches[0] } : { ...row };
+      const unitPrice = typeof normalized['unitPrice'] === 'string' ? normalized['unitPrice'].trim() : '';
+      // A per-unit value computed from quantity × row amount is not printed evidence. It is optional,
+      // so discard only that value instead of throwing away the two source-grounded rows with it.
+      if (unitPrice && !documentText.includes(unitPrice)) delete normalized['unitPrice'];
+      return normalized;
+    }),
+  };
+}
+
 /** Bedrock's own ceiling. The API sends far fewer — its budget bound is the tighter one (§4.1). */
 const MAX_CAPTURE_CHUNK_IMAGES = 20;
 /** `=== PAGE n ===` headers the API's own 12,000-char window budget does not count. */
@@ -155,16 +261,30 @@ export function validateIntakeOnePassReceipt(
   candidate: unknown,
   activeCategories: Array<{ id: string; name: string }>,
 ): LineIntakeOnePassReceipt | undefined {
-  const sourceClassification = plan.documentClassification;
+  return assessIntakeOnePassReceipt(plan, candidate, activeCategories).receipt;
+}
+
+function assessIntakeOnePassReceipt(
+  plan: LineIntakeRoutePlan,
+  candidate: unknown,
+  activeCategories: Array<{ id: string; name: string }>,
+): OnePassReceiptDecision {
   const documentText = plan.documentText?.trim() ?? '';
+  const sourceClassification = plan.documentClassification
+    ? withOnePassSettlementEvidence(plan.documentClassification, documentText)
+    : undefined;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return { reason: 'CANDIDATE_ABSENT' };
+  }
   if (
     plan.status !== 'ROUTED'
     || plan.intent !== 'EXPENSE_DOCUMENT_CAPTURE'
     || plan.confidence < ONE_PASS_MIN_CONFIDENCE
     || documentText.length < MIN_FORWARDED_DOCUMENT_TEXT_CHARS
     || documentText.length > MAX_FORWARDED_DOCUMENT_TEXT_CHARS
-    || !candidate || typeof candidate !== 'object' || Array.isArray(candidate)
-    || !sourceClassification
+  ) return { reason: 'ROUTE_INELIGIBLE' };
+  if (
+    !sourceClassification
     || sourceClassification.confidence < ONE_PASS_MIN_CONFIDENCE
     || sourceClassification.contentKind !== 'DOCUMENT'
     || sourceClassification.documentFamily !== 'EXPENSE_EVIDENCE'
@@ -172,25 +292,34 @@ export function validateIntakeOnePassReceipt(
     || sourceClassification.transactionState !== 'PAID'
     || !ONE_PASS_DOCUMENT_KINDS.has(sourceClassification.documentKind)
     || sourceClassification.requiresClarification
-    || sourceClassification.missingRequiredSignals.length > 0
+    || hasBlockingOnePassClassificationGap(sourceClassification)
     || sourceClassification.contradictionSignals.length > 0
     || sourceClassification.settlementSignals.length === 0
-  ) return undefined;
+  ) return { reason: 'CLASSIFICATION_INELIGIBLE' };
 
-  const raw = candidate as Record<string, unknown>;
-  if (!Array.isArray(raw['lines']) || raw['lines'].length === 0 || raw['lines'].length > ONE_PASS_MAX_LINES) return undefined;
+  const raw = withOnePassLineEvidence(candidate as Record<string, unknown>, documentText);
+  if (!Array.isArray(raw['lines']) || raw['lines'].length === 0 || raw['lines'].length > ONE_PASS_MAX_LINES) {
+    return { reason: 'ITEMS_MISSING_OR_OVERLONG' };
+  }
 
   const parsed = parseReceiptOcrJson(
-    JSON.stringify({ fields: candidate, classification: sourceClassification }),
+    JSON.stringify({ fields: raw, classification: sourceClassification }),
     documentText,
     new Set(activeCategories.map((category) => category.id)),
     1,
   );
-  if (!parsed?.fields || !parsed.classification) return undefined;
+  if (!parsed?.fields || !parsed.classification) return { reason: 'JSON_INCOMPLETE_OR_INVALID' };
   const fields = applyOcrValueCrossCheck(parsed.fields, documentText, todayCivilDate(), parsed.classification.documentKind);
-  const classification = gateBusinessDocumentClassification(parsed.classification, fields, documentText);
+  const classification = gateBusinessDocumentClassification(
+    withOnePassAmountEvidence(parsed.classification, fields, documentText),
+    fields,
+    documentText,
+  );
   const understanding: ReceiptUnderstanding = { ok: true, fields, classification };
   const missing = new Set(fields.missingFields ?? []);
+  if (classification.documentKind === 'RECEIPT' || classification.documentKind === 'HANDWRITTEN_CASH_BILL') {
+    for (const field of ONE_PASS_NON_TAX_RECEIPT_OPTIONAL_FIELDS) missing.delete(field);
+  }
   const printedCurrencies = onePassPrintedCurrencies(documentText);
   if (
     classification.contentKind !== 'DOCUMENT'
@@ -200,24 +329,34 @@ export function validateIntakeOnePassReceipt(
     || !ONE_PASS_DOCUMENT_KINDS.has(classification.documentKind)
     || classification.confidence < ONE_PASS_MIN_CONFIDENCE
     || classification.requiresClarification
-    || classification.missingRequiredSignals.length > 0
+    || hasBlockingOnePassClassificationGap(classification)
     || classification.contradictionSignals.length > 0
-    || (fields.confidence ?? 0) < ONE_PASS_MIN_CONFIDENCE
-    || !fields.vendorName || !fields.expenseDate || !fields.description
-    || fields.lines?.length !== raw['lines'].length
-    || missing.size > 0
-    || !hasUsableTotal(understanding)
-    || needsPrintedVatReread(understanding)
-    || receiptItemsMismatch(fields, 1)
+  ) return { reason: 'CLASSIFICATION_INELIGIBLE' };
+  if ((fields.confidence ?? 0) < ONE_PASS_MIN_CONFIDENCE) return { reason: 'FIELDS_CONFIDENCE_LOW' };
+  if (!fields.vendorName || !onePassVendorIsIssuer(fields.vendorName, documentText)) return { reason: 'VENDOR_MISSING' };
+  if (!fields.expenseDate) return { reason: 'DATE_MISSING' };
+  if (!fields.description) return { reason: 'DESCRIPTION_MISSING' };
+  if (fields.lines?.length !== raw['lines'].length) return { reason: 'ITEMS_EVIDENCE_INVALID' };
+  if (missing.size > 0) {
+    return {
+      reason: 'FIELDS_INCOMPLETE',
+      missingFields: [...missing].filter((field) => ONE_PASS_LOGGABLE_MISSING_FIELDS.has(field)),
+    };
+  }
+  if (!hasUsableTotal(understanding)) return { reason: 'TOTAL_MISSING' };
+  if (needsPrintedVatReread(understanding)
     || (ONE_PASS_VAT_SIGNAL.test(documentText) && !fields.vatAmount)
-    || (ONE_PASS_WHT_SIGNAL.test(documentText) && !fields.whtAmount)
-    || printedCurrencies.size > 1
-    || (printedCurrencies.size === 1 && !printedCurrencies.has(fields.currency ?? ''))
-    || (ONE_PASS_CHARGE_SIGNAL.test(documentText) && !fields.additionalCharges?.length)
-    || (ONE_PASS_DISCOUNT_SIGNAL.test(documentText) && !fields.discountAmount)
-    || ((classification.documentKind === 'TAX_INVOICE' || classification.documentKind === 'ABBREVIATED_TAX_INVOICE') && !fields.vatAmount)
-  ) return undefined;
-  return { fields, classification };
+    || ((classification.documentKind === 'TAX_INVOICE' || classification.documentKind === 'ABBREVIATED_TAX_INVOICE') && !fields.vatAmount)) {
+    return { reason: 'VAT_MISSING' };
+  }
+  if (ONE_PASS_WHT_SIGNAL.test(documentText) && !fields.whtAmount) return { reason: 'WHT_MISSING' };
+  if (receiptItemsMismatch(fields, 1)) return { reason: 'ITEMS_RECONCILIATION_FAILED' };
+  if (printedCurrencies.size > 1 || (printedCurrencies.size === 1 && !printedCurrencies.has(fields.currency ?? ''))) {
+    return { reason: 'CURRENCY_MISMATCH' };
+  }
+  if (ONE_PASS_CHARGE_SIGNAL.test(documentText) && !fields.additionalCharges?.length) return { reason: 'CHARGES_MISSING' };
+  if (ONE_PASS_DISCOUNT_SIGNAL.test(documentText) && !fields.discountAmount) return { reason: 'DISCOUNT_MISSING' };
+  return { receipt: { fields, classification }, reason: 'ACCEPTED' };
 }
 
 @ApiTags('internal')
@@ -281,17 +420,34 @@ export class LineAiInternalController {
     );
     const routed = await router.routeIntake(body);
     const { receiptCandidate, ...plan } = routed;
-    const onePassReceipt = validateIntakeOnePassReceipt(
+    const onePassDecision = assessIntakeOnePassReceipt(
       plan,
       receiptCandidate,
       boundedReceiptCategories(body.activeCategories),
     );
+    const onePassReceipt = onePassDecision.receipt;
     // errorCode was always computed and never logged, so every failure shape — truncated output, a
     // provider error, an unparseable answer — reached the operator as the same UNAVAILABLE/UNSUPPORTED line.
     this.logger.log({
       msg: 'LINE intake routed', requestId: body.requestId, status: plan.status, intent: plan.intent,
       confidence: plan.confidence,
       onePassReceipt: onePassReceipt ? 'accepted' : receiptCandidate === undefined ? 'absent' : 'rejected',
+      ...(receiptCandidate === undefined || onePassReceipt ? {} : { onePassRejectReason: onePassDecision.reason }),
+      ...(onePassDecision.missingFields?.length ? { onePassRejectMissingFields: onePassDecision.missingFields } : {}),
+      ...(receiptCandidate === undefined || onePassReceipt || !plan.documentClassification ? {} : {
+        onePassRejectClassification: {
+          confidence: plan.documentClassification.confidence,
+          contentKind: plan.documentClassification.contentKind,
+          documentFamily: plan.documentClassification.documentFamily,
+          documentKind: plan.documentClassification.documentKind,
+          businessDirection: plan.documentClassification.businessDirection,
+          transactionState: plan.documentClassification.transactionState,
+          requiresClarification: plan.documentClassification.requiresClarification,
+          missingRequiredSignals: plan.documentClassification.missingRequiredSignals,
+          contradictionSignalCount: plan.documentClassification.contradictionSignals.length,
+          settlementSignalCount: plan.documentClassification.settlementSignals.length,
+        },
+      }),
       ...(plan.errorCode ? { errorCode: plan.errorCode } : {}),
     });
     return { ...plan, ...(onePassReceipt ? { onePassReceipt } : {}) };

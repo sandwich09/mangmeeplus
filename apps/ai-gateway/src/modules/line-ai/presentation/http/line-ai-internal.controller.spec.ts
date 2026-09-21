@@ -1065,6 +1065,37 @@ describe('validated one-pass receipt', () => {
     assert.equal(result?.classification.documentKind, 'RECEIPT');
   });
 
+  it('recovers exact table/settlement/total evidence and drops an unprinted computed unit price', () => {
+    const tableText = [
+      'ร้านกาแฟ', 'ใบเสร็จรับเงิน', 'วันที่ 16/09/2026',
+      '| ลาเต้ | 2 | 130.00 |', '| เค้ก | 1 | 55.00 |', 'ยอดรวม 185.00',
+    ].join('\n');
+    const result = validateIntakeOnePassReceipt(plan({
+      documentText: tableText,
+      documentClassification: classification({
+        amountSignals: [], settlementSignals: [], missingRequiredSignals: ['MISSING_VENDOR_TAX_ID'],
+      }),
+    }), candidate({
+      expenseDate: '2026-09-16', grandTotalAmount: '185.00', missingFields: ['vendorTaxId'],
+      lines: [
+        { description: 'ลาเต้', quantity: '2', unitPrice: '65.00', amount: '130.00', evidenceSignal: 'ลาเต้ 2 130.00', confidence: 0.96 },
+        { description: 'เค้ก', quantity: '1', amount: '55.00', evidenceSignal: 'เค้ก 1 55.00', confidence: 0.96 },
+      ],
+    }), []);
+    assert.equal(result?.fields.lines?.length, 2);
+    assert.equal(result?.fields.lines?.[0]?.unitPrice, undefined);
+    assert.deepEqual(result?.classification.settlementSignals, ['ใบเสร็จรับเงิน']);
+    assert.deepEqual(result?.classification.amountSignals, ['185.00']);
+  });
+
+  it('rejects a buyer name presented as the vendor even when it is printed elsewhere on the page', () => {
+    const sellerBuyerText = [
+      '[SELLER]บริษัท ผู้ขาย จำกัด[/SELLER]', '[BUYER]ร้านกาแฟ[/BUYER]',
+      'ใบเสร็จ', 'วันที่ 21/09/2026', 'ลาเต้ 1 40.00', 'เค้ก 1 25.00', 'ยอดรวม 65.00', 'ชำระแล้ว',
+    ].join('\n');
+    assert.equal(validateIntakeOnePassReceipt(plan({ documentText: sellerBuyerText }), candidate(), []), undefined);
+  });
+
   it('rejects check bills and non-document images even when a model supplied receipt-looking fields', () => {
     assert.equal(validateIntakeOnePassReceipt(plan({ documentClassification: classification({
       documentFamily: 'COMMERCIAL_DOCUMENT', documentKind: 'ORDER_OR_CHECK_BILL', transactionState: 'DUE',
