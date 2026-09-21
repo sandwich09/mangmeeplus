@@ -408,7 +408,7 @@ export function SubstituteReceiptHubPage({
                         </div>
                       </td>
                       <td>
-                        <div className="flex items-center justify-end gap-2">{actions(item)}</div>
+                        <div className="flex flex-wrap items-center justify-end gap-2">{actions(item)}</div>
                       </td>
                     </tr>
                   ))}
@@ -435,7 +435,7 @@ export function SubstituteReceiptHubPage({
                       </div>
                       <div className="mt-2 text-xs text-gray-500">{dateShort(item.paymentDate ?? item.expenseDate)}</div>
                     </div>
-                    <div className="flex items-center justify-end gap-2 border-t border-gray-100 p-3">{actions(item)}</div>
+                    <div className="flex flex-wrap items-center justify-end gap-2 border-t border-gray-100 p-3">{actions(item)}</div>
                   </MangmeeCard>
                 );
               })}
