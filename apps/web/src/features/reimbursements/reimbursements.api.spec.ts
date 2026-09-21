@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { submitReimbursement, uploadReceiptFile } from './reimbursements.api';
+import { submitReimbursement, uploadReceiptFile, uploadSignedClaimFormCopy } from './reimbursements.api';
 import { errorText } from './reimbursements.logic';
 import { subscribeToastBus, type ToastEvent } from '@/common/feedback/toast-bus';
 
@@ -96,6 +96,27 @@ describe('reimbursement receipt upload', () => {
     assert.equal(uploaded.type, 'image/jpeg');
     assert.equal(uploaded.name, 'dime-slip.jpg');
     assert.deepEqual(JSON.parse(String(requests[2]?.init?.body)), { byteSize: 4 });
+  });
+
+  it('sends the paper-signed declaration only when the attacher confirmed the claim number (A4)', async () => {
+    const links: unknown[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/attachments/upload-intent')) {
+        return Response.json({ attachmentId: 'att-scan', uploadUrl: 'https://storage.example.test/scan', uploadMethod: 'PUT', uploadHeaders: {} });
+      }
+      if (url.endsWith('/claim-form/signed-copies')) { links.push(JSON.parse(String(init?.body))); return Response.json([]); }
+      return new Response(null, { status: url.startsWith('https://') ? 200 : 204 });
+    }) as typeof fetch;
+    const scan = () => new File([new TextEncoder().encode('%PDF-1.7')], 'signed.pdf', { type: 'application/pdf' });
+
+    await uploadSignedClaimFormCopy('co-1', 'rb-1', scan(), 'br-1', 'RB-202609-00001');
+    await uploadSignedClaimFormCopy('co-1', 'rb-1', scan(), 'br-1');
+
+    assert.deepEqual(links, [
+      { attachmentId: 'att-scan', acknowledgedComplete: true, confirmedRequestNo: 'RB-202609-00001' },
+      { attachmentId: 'att-scan' },
+    ]);
   });
 
   it('does not upload receipt bytes without the saved claim branch', async () => {

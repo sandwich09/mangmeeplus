@@ -539,3 +539,23 @@ it('offers the existing cancellation route for paid incomplete expenses without 
   assert.equal(canVoidExpenseFinancialState({ ...draft, sourceReimbursementRequestId: 'claim' }), false);
   assert.equal(canVoidExpenseFinancialState({ ...draft, paidAmount: '0', journalEntryId: 'posted' }), true);
 });
+
+import { canClaimReimbursementFromSubstituteReceipt } from './substitute-receipt-wizard.model';
+it('shows the reimbursement-claim entry point only for an issued personal-advance receipt with a linked payer and create permission (spec §10/AC08/AC09)', () => {
+  const issued = { status: 'ISSUED', fundingSource: 'PERSONAL_ADVANCE', payerUserId: 'user-1' } as const;
+  assert.equal(canClaimReimbursementFromSubstituteReceipt(issued, true), true);
+  // AC09: paper-signed with no linked payer account — no button.
+  assert.equal(canClaimReimbursementFromSubstituteReceipt({ ...issued, payerUserId: null }, true), false);
+  // AC09: company-paid receipt — no button.
+  assert.equal(canClaimReimbursementFromSubstituteReceipt({ ...issued, fundingSource: 'COMPANY' }, true), false);
+  assert.equal(canClaimReimbursementFromSubstituteReceipt({ ...issued, fundingSource: undefined }, true), false);
+  // Not yet issued — no button at any earlier status.
+  for (const status of ['PREPARED', 'PAYER_CERTIFIED', 'SUPERSEDED'] as const) {
+    assert.equal(canClaimReimbursementFromSubstituteReceipt({ ...issued, status }, true), false);
+  }
+  // Viewer without reimbursement.create — no button even though the receipt itself qualifies.
+  assert.equal(canClaimReimbursementFromSubstituteReceipt(issued, false), false);
+  // Not yet loaded (wizard) — no button.
+  assert.equal(canClaimReimbursementFromSubstituteReceipt(null, true), false);
+  assert.equal(canClaimReimbursementFromSubstituteReceipt(undefined, true), false);
+});

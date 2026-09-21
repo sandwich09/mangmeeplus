@@ -107,6 +107,8 @@ export type ReimbursementPolicySnapshotV1 = {
     roleKey: string;
     effectiveTaskRole: string;
     ownerFallbackUsedAtSubmission: boolean;
+    /** Nobody but the requester could approve at submit, so they approve their own claim (owner order 2026-09-21). */
+    soloSelfApprovalAtSubmission?: boolean;
   };
   allowSelfApproval: boolean;
   requireReceipt: boolean;
@@ -333,6 +335,12 @@ export type ReimbursementRequestSummary = {
 
 export type ReimbursementClaimSignatureRole = 'REQUESTER' | 'APPROVER' | 'FINANCE_REVIEW' | 'PAYER';
 
+/** Two blocks (ผู้เบิก, ผู้อนุมัติ) for every claim, except one already signed in the old accounting/payer blocks. */
+export type ReimbursementClaimFormLayout = 'TWO_SIGNERS' | 'LEGACY_FOUR_SIGNERS';
+
+/** How the document step was done: every block signed in the system, an acknowledged paper scan, both, or neither. */
+export type ReimbursementDocumentSignedVia = 'DIGITAL' | 'PAPER' | 'BOTH' | null;
+
 export type ReimbursementClaimSignatureSummary = {
   role: ReimbursementClaimSignatureRole;
   signedByUserId: string;
@@ -344,6 +352,10 @@ export type ReimbursementSignedCopySummary = {
   attachmentId: string;
   fileName: string;
   uploadedAt: string;
+  /** A4: present on a scan attached with the completeness declaration — when it was declared. */
+  acknowledgedAt?: string;
+  /** Who made that declaration, on the detail read when the name resolves (never a user id). */
+  acknowledgedByName?: string;
 };
 
 export type SignReimbursementClaimFormInput = {
@@ -356,6 +368,10 @@ export type SignReimbursementClaimFormInput = {
 
 export type LinkReimbursementSignedCopyInput = {
   attachmentId: string;
+  /** The attacher declares the scan carries every signature. Omitted: the scan is archived only, as before. */
+  acknowledgedComplete?: true;
+  /** Required with `acknowledgedComplete`; must equal the claim's requestNo. */
+  confirmedRequestNo?: string;
 };
 
 export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
@@ -379,17 +395,26 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   approvalActions?: {
     canApprove: boolean;
     canReject: boolean;
+    /** The requester holds the approval this claim waits on; only the self-approval switch refuses them. */
+    selfApprovalBlocked?: boolean;
   };
   /**
    * Hash of the claim as it stands NOW, acknowledged when signing the form.
    * Distinct from `approvalSnapshotHash`, which is frozen at submit time.
    */
   claimSignatureAckHash?: string;
+  /** Which blocks the printed form carries, so the screen shows the same slots. */
+  claimFormLayout?: ReimbursementClaimFormLayout;
+  documentSignedVia?: ReimbursementDocumentSignedVia;
+  /** Whether this claim has the finance review step: its frozen policy once submitted, the current policy while a draft. Detail only. */
+  financeReviewRequired?: boolean;
   missingReceiptReason?: string;
   lines: ReimbursementLineSummary[];
   approvalSteps: ReimbursementApprovalStepSummary[];
   payments: ReimbursementPaymentSummary[];
   duplicateCandidates: ReimbursementDuplicateCandidateSummary[];
+  /** An open duplicate candidate under this claim's BLOCK_PAYMENT policy: payment is refused until it is cleared. */
+  duplicateBlocksPayment?: boolean;
   signatures: ReimbursementClaimSignatureSummary[];
   /** Uploaded scans/photos of the wet-ink signed form, newest first. */
   signedCopies: ReimbursementSignedCopySummary[];
@@ -435,7 +460,11 @@ export type RejectReimbursementInput = {
 };
 
 export type FinanceReviewReimbursementInput = {
-  decision: 'APPROVED_FOR_PAYMENT' | 'NEEDS_INFO' | 'BLOCKED';
+  /**
+   * Omitted only on a resolve-only call (`resolveDuplicate` + reason) at the payment step, where
+   * no finance decision is left to make: it clears a duplicate block without finance review.
+   */
+  decision?: 'APPROVED_FOR_PAYMENT' | 'NEEDS_INFO' | 'BLOCKED';
   note?: string;
   resolveDuplicate?: boolean;
   duplicateResolutionReason?: string;

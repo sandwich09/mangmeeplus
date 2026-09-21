@@ -660,10 +660,14 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'procurement.purchase_request.read', 'procurement.purchase_order.read', 'procurement.purchase_order.manage',
     'procurement.goods_receipt.read', 'procurement.vendor_bill.read', 'procurement.supplier_payment.read', 'procurement.ap.report',
     'procurement.approval_policy.read',
-    // Item 14 reimbursement – Admin reads, owns policy, and approves (team decision
-    // 2026-07-28: reimbursement approvers are OWNER / ADMIN / MANAGER; paying stays FINANCE-only)
+    // Item 14 reimbursement – Admin reads, owns policy, and approves (team decision 2026-07-28:
+    // reimbursement approvers are OWNER / ADMIN / MANAGER). Owner decision 2026-09-19 supersedes
+    // that decision's "paying stays FINANCE-only" half (D1/A2): an approver can record payment
+    // directly, so Admin also gets payment.record/payment.void. finance_review and
+    // duplicate.resolve are NOT widened — those stay FINANCE/OWNER only.
     'reimbursement.read', 'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft',
     'reimbursement.submit', 'reimbursement.cancel_own', 'reimbursement.approve', 'reimbursement.reject',
+    'reimbursement.payment.record', 'reimbursement.payment.void',
     'reimbursement.policy.read', 'reimbursement.policy.manage', 'reimbursement.export',
     // Item 15 CRM – Admin manages all CRM records and settings
     'crm.customer.read', 'crm.customer.create', 'crm.customer.update', 'crm.customer.archive', 'crm.customer.assign', 'crm.customer.merge', 'crm.customer.export', 'crm.customer.erase',
@@ -722,9 +726,12 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     // Item 12 procurement – Manager/Owner approves purchase requests and purchase orders
     'procurement.supplier.read', 'procurement.purchase_request.read', 'procurement.purchase_request.approve',
     'procurement.purchase_order.read', 'procurement.purchase_order.approve',
-    // Item 14 reimbursement – Manager approves/rejects team requests
+    // Item 14 reimbursement – Manager approves/rejects team requests. Owner decision 2026-09-19
+    // (D1/A2, supersedes team decision 2026-07-28 "paying stays FINANCE-only"): an approver can
+    // record payment directly, so Manager also gets payment.record/payment.void.
     'reimbursement.read', 'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft',
     'reimbursement.submit', 'reimbursement.cancel_own', 'reimbursement.approve', 'reimbursement.reject',
+    'reimbursement.payment.record', 'reimbursement.payment.void',
     // Item 15 CRM – Manager manages team pipeline (scope enforced server-side)
     'crm.customer.read', 'crm.customer.assign',
     'crm.contact.read',

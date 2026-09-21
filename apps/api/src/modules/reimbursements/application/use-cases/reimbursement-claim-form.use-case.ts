@@ -7,6 +7,7 @@ import type { ReimbursementClaimSignatureRecord, ReimbursementRequestRecord } fr
 import { isLineEvidenced, byLineNo } from '../../domain/logic/reimbursement.logic';
 import { parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 import {
+  claimFormLayout,
   renderReimbursementClaimFormSvg,
   renderReimbursementClaimFormPages,
   type ClaimFormSigner,
@@ -105,6 +106,16 @@ export class PreviewReimbursementClaimFormUseCase {
       hasReceiptEvidence: lines.some(isLineEvidenced),
       missingReceiptReason: req.missingReceiptReason ?? null,
       approvalDecisionNote: policySnapshot?.requiresApproval === false ? 'ไม่ต้องอนุมัติตามนโยบาย' : null,
+      layout: claimFormLayout(req.claimSignatures),
+      repayment: payment
+        ? {
+            paidAt: payment.paidAt.toISOString(),
+            method: payment.paymentMethod,
+            reference: payment.paymentReference ?? null,
+            recordedByName: names[payment.paidByUserId] ?? payment.paidByUserId,
+          }
+        : null,
+      selfApproved: approvedStep?.decisionByUserId === req.requesterUserId,
       ...(req.status === 'CANCELLED' ? { cancellation: { reason: req.rejectionReason ?? null } } : {}),
       signers: {
         requester: req.submittedAt

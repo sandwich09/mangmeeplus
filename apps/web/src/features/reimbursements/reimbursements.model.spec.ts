@@ -6,6 +6,9 @@ import {
   currentDeskText,
   canVoidRecordedPayment,
   canUploadSignedCopy,
+  claimSelfApproved,
+  claimSignAction,
+  claimSignatureSlots,
   reimbursementOwnActions,
   reimbursementSubmitReadiness,
   DUPLICATE_STATUS_LABELS,
@@ -34,13 +37,26 @@ const detail = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe('eligibleSignatureRoles', () => {
-  it('offers each role to the actor that performed that step', () => {
-    assert.deepEqual(eligibleSignatureRoles(detail(), 'staff-1'), ['REQUESTER']);
-    assert.deepEqual(eligibleSignatureRoles(detail(), 'mgr-1'), ['APPROVER']);
-    assert.deepEqual(eligibleSignatureRoles(detail(), 'acct-1'), ['FINANCE_REVIEW']);
-    assert.deepEqual(eligibleSignatureRoles(detail(), 'fin-1'), ['PAYER']);
-    assert.deepEqual(eligibleSignatureRoles(detail(), 'ghost-1'), [], 'a voided payment is not a payment');
-    assert.deepEqual(eligibleSignatureRoles(detail(), 'stranger'), []);
+  it('offers only ผู้เบิก and ผู้อนุมัติ on the two-signer form, or when the layout is not stated (D3)', () => {
+    for (const claim of [detail(), detail({ claimFormLayout: 'TWO_SIGNERS' })]) {
+      assert.deepEqual(eligibleSignatureRoles(claim, 'staff-1'), ['REQUESTER']);
+      assert.deepEqual(eligibleSignatureRoles(claim, 'mgr-1'), ['APPROVER']);
+      // They did their steps, but the form has no accounting or payer block — the API refuses those roles.
+      assert.deepEqual(eligibleSignatureRoles(claim, 'acct-1'), []);
+      assert.deepEqual(eligibleSignatureRoles(claim, 'fin-1'), []);
+      assert.deepEqual(claimSignatureSlots(claim), ['REQUESTER', 'APPROVER']);
+    }
+  });
+
+  it('offers each role to the actor that performed that step on a legacy four-block claim', () => {
+    const legacy = detail({ claimFormLayout: 'LEGACY_FOUR_SIGNERS' });
+    assert.deepEqual(eligibleSignatureRoles(legacy, 'staff-1'), ['REQUESTER']);
+    assert.deepEqual(eligibleSignatureRoles(legacy, 'mgr-1'), ['APPROVER']);
+    assert.deepEqual(eligibleSignatureRoles(legacy, 'acct-1'), ['FINANCE_REVIEW']);
+    assert.deepEqual(eligibleSignatureRoles(legacy, 'fin-1'), ['PAYER']);
+    assert.deepEqual(eligibleSignatureRoles(legacy, 'ghost-1'), [], 'a voided payment is not a payment');
+    assert.deepEqual(eligibleSignatureRoles(legacy, 'stranger'), []);
+    assert.deepEqual(claimSignatureSlots(legacy), ['REQUESTER', 'APPROVER', 'FINANCE_REVIEW', 'PAYER']);
   });
 
   it('offers nothing on a draft or without a session user', () => {
@@ -79,6 +95,34 @@ describe('eligibleSignatureRoles', () => {
     });
     assert.deepEqual(eligibleSignatureRoles(blocked, 'mgr-1'), []);
     assert.deepEqual(eligibleSignatureRoles(blocked, 'acct-1'), []);
+  });
+});
+
+describe('claimSignAction (one ลงนาม button)', () => {
+  const solo = detail({
+    requesterUserId: 'owner-1', financeReviewedByUserId: 'owner-1',
+    approvalSteps: [{ status: 'APPROVED', decisionByUserId: 'owner-1', decidedAt: '2026-07-21T00:00:00.000Z' }],
+    payments: [{ status: 'RECORDED', paidByUserId: 'owner-1', paidAt: '2026-07-23T00:00:00.000Z' }],
+  });
+
+  it('signs both blocks from one tap when the requester approved their own claim (AC06)', () => {
+    assert.deepEqual(claimSignAction(solo, 'owner-1'), { roles: ['REQUESTER', 'APPROVER'], label: 'ลงนาม' });
+    assert.equal(claimSelfApproved(solo), true);
+    assert.equal(claimSelfApproved(detail()), false);
+    // A legacy claim keeps every block that person really signed for.
+    assert.deepEqual(claimSignAction({ ...solo, claimFormLayout: 'LEGACY_FOUR_SIGNERS' }, 'owner-1')?.roles, ['REQUESTER', 'APPROVER', 'FINANCE_REVIEW', 'PAYER']);
+  });
+
+  it('offers ลงนามใหม่ to a requester who signed before approving, now filling the approver block too (§15)', () => {
+    const signedEarly = { ...solo, signatures: [{ role: 'REQUESTER', signedByUserId: 'owner-1' }] };
+    assert.deepEqual(claimSignAction(signedEarly, 'owner-1'), { roles: ['REQUESTER', 'APPROVER'], label: 'ลงนามใหม่' });
+    // Before the approval existed, only the requester block was open to them.
+    assert.deepEqual(claimSignAction({ ...signedEarly, approvalSteps: [{ status: 'PENDING' }] }, 'owner-1'), { roles: ['REQUESTER'], label: 'ลงนามใหม่' });
+  });
+
+  it('offers no button to someone who signs no block', () => {
+    assert.equal(claimSignAction(detail(), 'fin-1'), null);
+    assert.equal(claimSignAction(detail({ status: 'DRAFT' }), 'staff-1'), null);
   });
 });
 

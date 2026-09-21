@@ -1,12 +1,16 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ApproveReimbursementUseCase, ListApprovalQueueUseCase, RejectReimbursementUseCase } from './reimbursement-approval.use-case';
+import { ApproveReimbursementUseCase, ListApprovalQueueUseCase, RejectReimbursementUseCase, approvalDecisionActions } from './reimbursement-approval.use-case';
 import {
   CreateReimbursementDraftUseCase,
   SubmitReimbursementUseCase,
   UpdateReimbursementDraftUseCase,
 } from './reimbursement-request.use-case';
+import { RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
+import { ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.use-case';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
+import { REIMBURSEMENT_POLICY_DEFAULTS } from '../../domain/reimbursement.constants';
+import { compileRole } from '../../../employee-access/domain/logic/capability.logic';
 
 // Evidence fake for detailWithFileNames — decision endpoints now return the same hydrated
 // detail as a GET (names + file names), so their specs feed the assembler harmless lookups.
@@ -62,7 +66,11 @@ function fakeTx(events: any[]) {
   return { outboxEvent: { createMany: async ({ data }: any) => { events.push(...data); } } } as any;
 }
 
-function fakeRepo(req: any, policy: any = null, events: any[] = [], activeApprovers?: string[]) {
+// Finance review is OFF by default since the 2026-09-21 step-journey change. These tests were written
+// for the finance path, so their companies turn it on explicitly; the OFF path has its own tests.
+const FINANCE_REVIEW_ON = { ...REIMBURSEMENT_POLICY_DEFAULTS, financeReviewRequired: true } as any;
+
+function fakeRepo(req: any, policy: any = FINANCE_REVIEW_ON, events: any[] = [], activeApprovers?: string[]) {
   return {
     findRequestById: async () => ({ ...req, payments: [], duplicateCandidates: [], signatures: [], signedCopies: [] }),
     // Audit H-20: named approvers who can still act. Defaults to "all of them", so every existing
@@ -139,7 +147,7 @@ describe('ApproveReimbursementUseCase', () => {
     const req = baseRequest();
     const uc = approveUC(fakeRepo(req));
     const result = await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1');
-    // Default policy requires finance review, so a successful decision parks there.
+    // This company requires finance review, so a successful decision parks there.
     assert.equal(result.status, 'FINANCE_REVIEW');
   });
 
@@ -163,7 +171,7 @@ describe('ApproveReimbursementUseCase', () => {
       approvalSteps: [{ ...baseRequest().approvalSteps[0], approverUserId: 'departed-approver' }],
     });
     // Nobody active: the assignment no longer binds and the step falls back to its recorded role.
-    const uc = approveUC(fakeRepo(req, null, [], []));
+    const uc = approveUC(fakeRepo(req, FINANCE_REVIEW_ON, [], []));
 
     const result = await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1');
 
@@ -175,7 +183,7 @@ describe('ApproveReimbursementUseCase', () => {
     const req = baseRequest({
       approvalSteps: [{ ...baseRequest().approvalSteps[0], approverUserId: 'departed-approver' }],
     });
-    const uc = approveUC(fakeRepo(req, null, [], []));
+    const uc = approveUC(fakeRepo(req, FINANCE_REVIEW_ON, [], []));
     await assert.rejects(() => uc.execute(ctx({ roles: ['ACCOUNTANT'] }), 'rb-1'), /not_eligible_approver/);
   });
 
@@ -183,7 +191,7 @@ describe('ApproveReimbursementUseCase', () => {
     const req = baseRequest({
       approvalSteps: [{ ...baseRequest().approvalSteps[0], approverUserId: 'other-approver' }],
     });
-    const uc = approveUC(fakeRepo(req, null, [], ['other-approver']));
+    const uc = approveUC(fakeRepo(req, FINANCE_REVIEW_ON, [], ['other-approver']));
     await assert.rejects(() => uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1'), /not_eligible_approver/);
   });
 
@@ -194,11 +202,11 @@ describe('ApproveReimbursementUseCase', () => {
     await assert.rejects(() => uc.execute(ctx(), 'rb-1'), /stale_approval_snapshot/);
   });
 
-  it('approves and routes to FINANCE_REVIEW when finance review required (default)', async () => {
+  it('approves and routes to FINANCE_REVIEW when the company requires finance review', async () => {
     const req = baseRequest();
     const events: any[] = [];
     const projections = { execute: async () => { throw new Error('finance approval must not project'); } };
-    const uc = approveUC(fakeRepo(req, null, events), projections);
+    const uc = approveUC(fakeRepo(req, FINANCE_REVIEW_ON, events), projections);
     const detail = await uc.execute(ctx(), 'rb-1');
     assert.equal(detail.status, 'FINANCE_REVIEW');
     assert.equal(req.financeReviewStatus, 'PENDING');
@@ -671,5 +679,124 @@ describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
     const items = await new ListApprovalQueueUseCase(repo).execute(ctx({ roles: ['OWNER'] }));
 
     assert.equal(items.length, 1);
+  });
+});
+
+// Spec §15 row 1: a solo requester on a custom role is left off their own route while self-approval
+// is off. The journey page can only explain that if the detail says so.
+describe('approvalDecisionActions self-approval signal (spec §15)', () => {
+  const plain = { canApprove: false, canReject: false };
+  const mine = (step: Record<string, unknown> = {}, overrides: Record<string, unknown> = {}) => baseRequest({
+    requesterUserId: 'approver-1',
+    approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: 'ACCOUNTANT', assignedApproverUserIds: ['owner-1'], ...step }],
+    ...overrides,
+  });
+  const accountant = ctx({ roles: ['ACCOUNTANT'] });
+
+  it('flags the requester who holds the routed role and is held back only by the switch', async () => {
+    const blocked = { ...plain, selfApprovalBlocked: true };
+    // Routing left them off the frozen assignment…
+    assert.deepEqual(await approvalDecisionActions(accountant, mine(), fakeRepo(null)), blocked);
+    // …or an unassigned role-routed step would take them, but for the rule.
+    assert.deepEqual(await approvalDecisionActions(accountant, mine({ assignedApproverUserIds: undefined }), fakeRepo(null)), blocked);
+  });
+
+  it('says nothing when the switch is not what stands in the way', async () => {
+    const repo = fakeRepo(null);
+    assert.deepEqual(await approvalDecisionActions(ctx({ roles: ['STAFF'] }), mine(), repo), plain, 'not the routed role');
+    assert.deepEqual(await approvalDecisionActions(ctx({ roles: ['ACCOUNTANT'], permissions: ['reimbursement.reject'] }), mine(), repo), plain, 'no approve');
+    assert.deepEqual(await approvalDecisionActions(accountant, mine({}, { requesterUserId: 'staff-1' }), repo), plain, 'not their claim');
+    assert.deepEqual(await approvalDecisionActions(accountant, mine(), fakeRepo(null, { allowSelfApproval: true })), plain, 'switch already on');
+    assert.deepEqual(await approvalDecisionActions(accountant, mine({ status: 'APPROVED' }), repo), plain, 'already decided');
+  });
+});
+
+// Owner order 2026-09-21 ("ผู้ใช้คนเดียวที่กำหนดบทบาทเอง ต้องทำได้นะ"): submit found nobody but the
+// requester, so the step froze them as its approver and the snapshot froze the reason.
+describe('solo requester on a custom role (owner order 2026-09-21)', () => {
+  const soloSnapshot = {
+    schemaVersion: 1, policyId: 'policy-1', policyVersion: '2026-01-01T00:00:00.000Z', approvalRequiredFromAmount: '1.00', requiresApproval: true,
+    route: { mode: 'CUSTOM_ROLE', roleKey: 'CUSTOM_SOLO', effectiveTaskRole: 'CUSTOM_SOLO', ownerFallbackUsedAtSubmission: false, soloSelfApprovalAtSubmission: true },
+    allowSelfApproval: false, requireReceipt: false, allowMissingReceiptWithReason: false, duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: false,
+  };
+  const soloClaim = () => baseRequest({
+    requesterUserId: 'solo-1', approvalPolicySnapshotJson: soloSnapshot, lines: [lineRecord()],
+    approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: 'CUSTOM_SOLO', assignedApproverUserIds: ['solo-1'] }],
+  });
+  const soloPermissions = compileRole({ capabilityPackKeys: ['pack.reimbursement.approve'], entitledFeatureKeys: null }).permissionKeys;
+  const solo = ctx({ userId: 'solo-1', roles: ['CUSTOM_SOLO'], permissions: soloPermissions });
+
+  it('offers the decision to the requester, with no self-approval hint', async () => {
+    assert.deepEqual(await approvalDecisionActions(solo, soloClaim(), fakeRepo(null)), { canApprove: true, canReject: true });
+  });
+
+  it('lets the requester approve with self-approval off and records why in the approval audit', async () => {
+    const entries: any[] = [];
+    const detail = await approveUC(fakeRepo(soloClaim()), undefined, { log: async (entry: any) => { entries.push(entry); } }).execute(solo, 'rb-1');
+    assert.equal(detail.status, 'READY_FOR_PAYMENT');
+    assert.deepEqual(entries.find((entry) => entry.action === 'reimbursement.approval.decision_durable')?.metadataJson.selfApproval, {
+      approvedOwnRequest: true,
+      via: 'no_other_approver',
+      // No exempt role stood in, so the roles the requester acted under are recorded.
+      actorRoles: ['CUSTOM_SOLO'],
+    });
+  });
+
+  it('takes a solo user built from the approve pack from submit through approve to payment', async () => {
+    assert.ok(['reimbursement.submit', 'reimbursement.approve', 'reimbursement.payment.record'].every((key) => soloPermissions.includes(key)));
+    // The company picked the user's own role as the approver; nobody else holds it and nobody holds OWNER.
+    const holder = (roleKey: string) => ({ membership: {
+      userId: 'solo-1', branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null, branchScopes: [], roles: [{ role: { key: roleKey, status: 'ACTIVE' } }],
+    } });
+    const approverRoutes = new ListReimbursementApproverOptionsUseCase({ client: {
+      role: { findMany: async () => [
+        { key: 'CUSTOM_SOLO', name: 'เจ้าของร้าน', scopeKey: 'co-1', status: 'ACTIVE', permissions: soloPermissions.map((key) => ({ permission: { key } })), memberships: [holder('CUSTOM_SOLO')] },
+        { key: 'OWNER', name: 'Owner', scopeKey: 'system', status: 'ACTIVE', permissions: soloPermissions.map((key) => ({ permission: { key } })), memberships: [] },
+      ] },
+      branch: { findMany: async () => [] },
+      companyFeatureEntitlement: { findMany: async () => [] },
+    } } as any);
+    const policy = {
+      id: 'policy-1', updatedAt: new Date('2026-01-01T00:00:00.000Z'), currency: 'THB', approvalRequiredFromAmount: '1.00',
+      approverMode: 'CUSTOM_ROLE', defaultApproverRole: 'CUSTOM_SOLO', allowSelfApproval: false, requireReceipt: false,
+      allowMissingReceiptWithReason: false, duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: false, status: 'ACTIVE',
+    } as any;
+    const state = requestRepo();
+    state.repo.findPolicy = async () => policy;
+    let frozenStep: any;
+    const submitAtomic = state.repo.submitDraftAtomic;
+    state.repo.submitDraftAtomic = async (data: any) => { frozenStep = data.approvalStep; return submitAtomic(data); };
+    const evidence = evidenceService();
+    const created = await new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence)
+      .execute(solo, { ...requestInput, missingReceiptReason: 'ใบเสร็จหาย' });
+    await new SubmitReimbursementUseCase(state.repo, noopAudit, noopOutbox, evidence, approverRoutes, noopSubmitProjections).execute(solo, created.id);
+    assert.deepEqual(frozenStep.assignedApproverUserIdsJson, ['solo-1']);
+    assert.equal(state.request.approvalPolicySnapshotJson.route.soloSelfApprovalAtSubmission, true);
+
+    const req = { ...state.request, approvalSteps: [{
+      id: 'step-1', companyId: 'co-1', reimbursementRequestId: created.id, status: 'PENDING', assignedAt: new Date('2026-01-02T00:00:00.000Z'),
+      ...frozenStep, assignedApproverUserIds: frozenStep.assignedApproverUserIdsJson,
+    }] };
+    let paidByUserId: string | undefined;
+    const repo = {
+      ...fakeRepo(req, policy),
+      assertClaimPaymentReady: async () => undefined,
+      listOpenDuplicateCandidates: async () => [],
+      recordPaymentAtomic: async (data: any) => {
+        paidByUserId = data.paidByUserId;
+        const payment = { id: 'pay-1', ...data, status: 'RECORDED', postingStatus: 'pending', createdAt: new Date(), updatedAt: new Date() };
+        Object.assign(req, { status: 'PAID', paymentStatus: 'PAID', paymentTotalAmount: data.paidAmount, outstandingAmount: '0.0000' });
+        return { request: { ...req, payments: [payment], duplicateCandidates: [] }, payment, created: true };
+      },
+    } as any;
+    assert.equal((await approveUC(repo).execute(solo, created.id)).status, 'READY_FOR_PAYMENT');
+    const paid = await new RecordReimbursementPaymentUseCase(
+      repo, noopAudit, noopOutbox,
+      { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202601-000001' }) } as any,
+      { execute: async () => undefined } as any,
+      fakeDetailEvidence as any,
+    ).execute(solo, created.id, { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
+    assert.equal(paid.status, 'PAID');
+    assert.equal(paidByUserId, 'solo-1');
   });
 });
