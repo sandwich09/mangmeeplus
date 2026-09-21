@@ -203,7 +203,7 @@
 
 ### ยังไม่ทำ
 
-- เปลี่ยนแพ็กเกจกลางคัน (upgrade / SCHEDULE_DOWNGRADE / CUSTOMER_PREPAID_PLAN_CHANGE) ยังไม่ย้ายชุดเมนูที่ขอบรอบ — เหตุผลและทางแก้ที่เสนออยู่ใน §20.5
+- ~~เปลี่ยนแพ็กเกจกลางคันยังไม่ย้ายชุดเมนูที่ขอบรอบ~~ → ทำใน Phase 7 (มติ Owner 2026-09-21)
 - ยังไม่ deploy; Owner ต้องรันสคริปต์ราคาและผูกรหัสในหน้าตั้งค่า (test mode ก่อน แล้ว live)
 
 ### Tests
@@ -216,3 +216,47 @@
 
 - contracts build, prisma validate/generate, api typecheck, `test:boot`, pins `--check` เขียว
 - Owner ผูก Stripe Price ของ ENTERPRISE บน UAT แล้วการ์ดขึ้น "เลือกแพ็กเกจ" (ไม่ใช่ "เร็ว ๆ นี้")
+
+## Phase 7: เปลี่ยนแพ็กเกจกลางคันย้ายชุดเมนู (มติ Owner 2026-09-21)
+
+สเปก: [§20.5](../specs/mangmee-sales-deals-and-locked-signup-spec-th.md) · ตาราง tier → เมนูอยู่ที่ §20.1
+
+**มติ**: เปลี่ยนแพ็กเกจกลางคัน (ขึ้นหรือลง, ต่ออายุอัตโนมัติหรือชำระครั้งเดียว) → ชุดเมนูย้ายเป็นของ tier ใหม่
+อัตโนมัติ ณ เวลาที่การเปลี่ยนมีผล; ลดแพ็กเกจถอดเมนูส่วนเกิน (ข้อมูลเดิมอยู่ครบ, runoff เดียวกับดีลจบ);
+ลูกค้าเห็นรายการเมนูที่เปิด/ปิดก่อนกดยืนยัน.
+
+### Tasks (API/contracts)
+
+- [x] `billing-plan-menus.ts` ใหม่: op `APPLY_PLAN_MENUS` + `queuePlanMenuMove` (เขียนแถวสมุดในธุรกรรมที่ย้าย term)
+      + `movePlanMenus` (สร้าง plan สดใต้ entitlement lock แล้ว `applyBillingFeaturePlan`), `planMenuTarget`
+      (ตัวตัดสินว่า tier ไหน/ไม่ย้ายเมื่อไร), `planMenuRetryable` + `retryPlanMenuMoves`, `planMenuImpact`
+      (สำหรับหน้าจอยืนยัน)
+- [x] ทั้ง 4 จุดที่ tier เปลี่ยนจริง: queue แถวในธุรกรรมเดียวกัน แล้วย้ายเมนูหลัง commit — `applyInvoice`
+      (`applyingChange`), `reconcileOneTime` (`snapshot.upgrade`), `applyDueOneTimePlanChange` (คืน move ให้ caller),
+      `billing-repeat.ts` `apply()` (`snapshot.upgrade`)
+- [x] `scan()` ของ billing worker ลองใหม่ทุกรอบ: แถว `BLOCKED` และแถว `QUEUED` ที่ค้างเกิน 2 นาที
+- [x] `quote()`: คิด `featureImpact` ของ tier เป้าหมายเมื่อเป็น `upgrade`/`oneTimeChange` ด้วย แต่ **ไม่ pin**
+      `featurePlan` (pin เฉพาะซื้อครั้งแรก/ดีลเหมือนเดิม)
+- [x] `BillingCollectionOperation.featureImpact` + controller เติมให้ `collection/preview` และ `collection/:id`
+      (ไม่แตะ `billing-collection.ts` ซึ่งเป็นหลักฐานที่ review แล้ว)
+- [x] contracts: `BillingOperationType` += `APPLY_PLAN_MENUS`, label ไทยของ op และ issue `PLAN_MENU_MOVE_REVIEW`
+
+### Tasks (web)
+
+- [x] `BillingPage.tsx` — การ์ดสิทธิ์เมนูเปลี่ยนคำเป็น "ตั้งแต่ <วันเริ่มแพ็กเกจรอบถัดไป>" เมื่อเป็น `SCHEDULED_CHANGE`
+- [x] `BillingCollectionPanel.tsx` — การ์ดเดียวกันบนหน้ายืนยันลดแพ็กเกจของสมาชิก (เตือนสีเหลืองเฉพาะตอนมีเมนูถูกปิด)
+
+### Tests
+
+- [x] `apps/api/src/modules/billing/application/billing-plan-menus.spec.ts` — tier → ชุดเมนู, STARTER/BASIC/PRO
+      เท่ากัน (จึงเป็น no-op), ดีลที่ยังไม่จบไม่ถูกแตะ, term ที่ไม่มี tier ขายได้ไม่ย้าย, กติกา retry
+      (`BLOCKED` เสมอ / `QUEUED` เมื่อค้างเกิน 2 นาที) (ลงทะเบียนใน `scripts/line-ai-whole-chain-acceptance.catalog.mjs`)
+- ยังไม่รัน (คำสั่ง Owner 2026-09-21 minimal testing): `billing-plan-change-smoke`, PG spec, e2e, browser
+
+### Exit Criteria
+
+- contracts build, api + web typecheck, `test:boot`, spec-suite-coverage, pins `--check` เขียว
+- ไฟล์หลักฐานที่ review แล้ว (`paid-invoice`, `paid-checkout-invoice`, `billing-collection`, `billing-schedule`,
+  `billing-upgrade`, `billing-refund-source`) diff ว่างเทียบ `origin/develop`
+- UAT: ร้าน PRO อัปเป็น ENTERPRISE แล้วเมนูภาษีไทย/จัดซื้อเปิดทันที; ลดกลับแล้วเมนูปิดที่วันเริ่มรอบถัดไป
+  โดยข้อมูลเดิมยังเปิดดูได้

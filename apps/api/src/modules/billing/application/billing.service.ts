@@ -43,6 +43,7 @@ import { detectBillingIssue } from './billing-issues';
 import { billingPurchaseSource, initialPurchaseSource } from './billing-purchase-source';
 import type { BillingPurchaseSource } from '@watchdog-bms/contracts';
 import { billingFeaturePlan, type BillingFeaturePlan } from './billing-feature-entitlements';
+import { planMenuImpact } from './billing-plan-menus';
 import { assertDealOfferUnchanged, assertDealSnapshot, dealOffer, dealPurchaseModes, dealSnapshot, dealSnapshotHash, type DealSource } from '../domain/deal-offer';
 import { autoRenewOf, DEAL_KIND } from '../../sales-console/domain/sales-deal.logic';
 
@@ -75,6 +76,11 @@ export class BillingService {
   get repeater() { return new BillingRepeat(this.prisma, this.stripe, this, this.lifecycle); }
   get collection() { return new BillingCollection(this.prisma, this.stripe, this); }
   get priceReturn() { return new BillingPriceReturn(this.prisma, this.stripe, this); }
+  /** Phase 7: what a customer confirming a plan change sees — the menus the target package opens
+   *  and closes once the change takes effect. */
+  withPlanMenuImpact<T extends { targetOffer?: BillingOffer }>(companyId: string, operation: T): Promise<T> {
+    return planMenuImpact(this.prisma.client, companyId, operation);
+  }
 
   async assertTaxSettings(policy: BillingPolicy) {
     if (policy.taxTreatment === 'NOT_VAT_REGISTERED') return;
@@ -307,10 +313,6 @@ export class BillingService {
     const purchaseSource = await this.purchaseSource(company, existing);
     if (purchaseSource === 'PAID_OTHER_MODE' || purchaseSource === 'SOURCE_INCONSISTENT')
       throw billingError('BILLING_SOURCE_REVIEW_REQUIRED', 'ข้อมูลการชำระเงินเดิมไม่ตรงกัน กรุณาติดต่อทีมงานก่อนเริ่มรายการใหม่');
-    // Phase 6: a catalog purchase grants the purchased tier's menus, not the starter preset every
-    // tier used to get. A deal still carries its own set.
-    const featurePreview = deal ? await billingFeaturePlan(this.prisma.client, company.id, deal.featureKeys)
-      : initialPurchaseSource(purchaseSource) ? await billingFeaturePlan(this.prisma.client, company.id, TIER_FEATURE_PRESETS[tier]) : null;
     if (existing?.customerId) {
       const customer = await this.stripe.request('GET', `/customers/${existing.customerId}`);
       if (customer.id !== existing.customerId || customer.metadata?.billingAccountId !== existing.id || customer.email !== emailProof.email)
@@ -405,6 +407,16 @@ export class BillingService {
         repeat = { ...repeat, productId, zeroPriceId: targetZero };
       } else repeat = await this.repeater.source(existing, offer, state.policy, price);
     }
+    // Phase 6: a catalog purchase grants the purchased tier's menus, not the starter preset every
+    // tier used to get, and the plan is pinned so the apply cannot drift from it. A deal still
+    // carries its own set. Phase 7 adds the mid-term change: the menus move when the change takes
+    // effect, not when it is paid, so the plan is NOT pinned there — the quote shows the two lists
+    // and `movePlanMenus` rebuilds the plan at the boundary. Display only, so a shop whose menu
+    // rows still need a team review can still buy.
+    const featurePinned = !!deal || initialPurchaseSource(purchaseSource);
+    const featurePreview = featurePinned
+      ? await billingFeaturePlan(this.prisma.client, company.id, deal ? deal.featureKeys : TIER_FEATURE_PRESETS[tier])
+      : upgrade || oneTimeChange ? await billingFeaturePlan(this.prisma.client, company.id, TIER_FEATURE_PRESETS[tier]).catch(() => null) : null;
     const quoteId = randomUUID();
     const quote: BillingQuote = { quoteId, companyId: company.id, companyName: company.name, policyRevision: state.revision.id,
       purchaseMode,
@@ -447,7 +459,7 @@ export class BillingService {
     const dealSource: DealSource | undefined = deal ? { requestId: dealRow!.id, snapshotHash: dealSnapshotHash(dealRow!.offerSnapshotJson),
       months: deal.months, salesUserId: dealRow!.salesUserId!, aiMonthlyBudgetSatang: deal.aiMonthlyBudgetSatang,
       ...(auto.autoRenew ? { cadence: auto.cadence, cycles: auto.cycles } : {}) } : undefined;
-    const snapshot: BillingSnapshot = { ...(trialCarryover ? { trialCarryover } : {}), emailProof, ...(dealSource ? { deal: dealSource } : {}), ...(pending ? { pendingChange: { id: pending.row.id, version: pending.row.version, proposed: pending.proposed } } : {}), quote, priceId: snapshotPriceId, productId, policy: state.policy, settingsVersion: state.settings.version, termVersion: term?.updatedAt.toISOString() ?? null, termHash: termProjectionHash(term), ...(featurePreview ? { featurePlan: featurePreview.plan } : {}), ...(repeat ? { repeat } : {}), ...(oneTime ? { oneTime } : {}), ...(oneTimeChange ? { oneTimeChange } : {}), ...(restart ? { restart } : {}), ...(upgrade ? { upgrade } : {}), ...(capacity ? { capacity } : {}) };
+    const snapshot: BillingSnapshot = { ...(trialCarryover ? { trialCarryover } : {}), emailProof, ...(dealSource ? { deal: dealSource } : {}), ...(pending ? { pendingChange: { id: pending.row.id, version: pending.row.version, proposed: pending.proposed } } : {}), quote, priceId: snapshotPriceId, productId, policy: state.policy, settingsVersion: state.settings.version, termVersion: term?.updatedAt.toISOString() ?? null, termHash: termProjectionHash(term), ...(featurePinned && featurePreview ? { featurePlan: featurePreview.plan } : {}), ...(repeat ? { repeat } : {}), ...(oneTime ? { oneTime } : {}), ...(oneTimeChange ? { oneTimeChange } : {}), ...(restart ? { restart } : {}), ...(upgrade ? { upgrade } : {}), ...(capacity ? { capacity } : {}) };
     await this.prisma.client.billingQuote.create({ data: { id: quoteId, companyId: company.id, initiatingUserId: context.userId,
       policyRevisionId: state.revision.id, snapshotJson: snapshot as unknown as Prisma.InputJsonValue, expiresAt: new Date(quote.expiresAt) } });
     return quote;
