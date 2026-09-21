@@ -20,6 +20,7 @@ import {
   GetExpenseSourcePostingInputUseCase,
   DuplicateCheckUseCase,
   ResolveDuplicateUseCase,
+  ConfirmBuyerMatchUseCase,
   ListExpenseCategoriesUseCase,
 } from './application/use-cases/expense-upload.use-case';
 import {
@@ -162,6 +163,7 @@ import { AccountingDocumentsModule } from '../accounting-documents/accounting-do
     GetExpenseSourcePostingInputUseCase,
     DuplicateCheckUseCase,
     ResolveDuplicateUseCase,
+    ConfirmBuyerMatchUseCase,
     ListExpenseCategoriesUseCase,
     CaptureLineExpenseNoteUseCase,
     CorrectLineCapturedExpenseUseCase,

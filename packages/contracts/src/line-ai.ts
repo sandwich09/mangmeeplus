@@ -282,10 +282,11 @@ export type ReceiptOcrFieldResult = {
    */
   vendorAddress?: string;
   /**
-   * The buyer block a full tax invoice prints — our own shop, as the seller typed it. Read-only
-   * provenance: it is kept in `aiVerifiedFieldsJson` and nothing compares or stores it yet (Slice 2
-   * owns that). It exists so the reader has somewhere honest to put a buyer identity instead of
-   * mistaking it for the seller's.
+   * The buyer block a full tax invoice prints — our own shop, as the seller typed it. Never copied
+   * into a seller field: Slice 2 compares it with the company registry and keeps the printed values
+   * plus the outcome in `ExpenseRecord.buyerAsPrintedJson` (warn-only, `ExpenseBuyerAsPrinted`). It
+   * exists so the reader has somewhere honest to put a buyer identity instead of mistaking it for
+   * the seller's.
    */
   buyerAsPrinted?: { name?: string; taxId?: string; branchCode?: string; addressText?: string };
   documentNumber?: string;

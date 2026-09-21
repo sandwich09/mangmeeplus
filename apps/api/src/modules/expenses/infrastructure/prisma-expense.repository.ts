@@ -8,6 +8,7 @@ import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.r
 import { lockExpenseFunding, assertFundingMutation } from './substitute-funding.guard';
 import { assertFullSubstitutePayment, assertSubstitutePaymentDetails, assertSubstituteFactsComplete } from '../domain/logic/substitute-funding.logic';
 import { assertExpenseSourceDraftComplete } from '../domain/logic/expense-source-draft.logic';
+import { confirmBuyerMismatch, readBuyerAsPrinted } from '../domain/logic/buyer-as-printed.logic';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { expenseEvidenceConfirmationError, expenseEvidenceAssessment, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
@@ -814,6 +815,7 @@ export class PrismaExpenseRepository {
       substituteReceiptEvidence: substituteRow ? toSubstituteEvidenceSummary(mapSubstituteEvidence(substituteRow)) : null,
       payments,
       captureGroup: captureLineage(base),
+      buyerAsPrinted: readBuyerAsPrinted(base.buyerAsPrintedJson),
     };
   }
 
@@ -975,7 +977,7 @@ export class PrismaExpenseRepository {
       throw new UnprocessableEntityException('Use voidExpenseTrueReversal for voids');
     }
     const data: any = {};
-    const fields: Array<keyof typeof rest> = ['branchId', 'status', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorAddressSnapshot', 'vendorEntityKindSnapshot', 'vendorDocumentNumber', 'expenseDate', 'receivedAt', 'dueDate', 'currency', 'vatMode', 'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'duplicateStatus', 'duplicateOfExpenseId', 'duplicateOverrideReason', 'primaryAttachmentId', 'extractionId', 'aiVerificationStatus', 'aiVerifiedFieldsJson', 'aiVerificationSummaryJson', 'vatCaptureSnapshotJson', 'aiVerificationConfidence', 'aiVerifiedAt', 'lineMessageId', 'lineEventId', 'missingReceiptReason', 'postingStatus', 'postingError', 'note', 'internalMemo', 'updatedByUserId', 'updatedAt', 'reviewedByUserId', 'reviewedAt', 'confirmedByUserId', 'confirmedAt', 'rejectedByUserId', 'rejectedAt', 'rejectReason', 'voidedByUserId', 'voidedAt', 'voidReason', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount', 'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'expenseNumber', 'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode', 'substituteReceiptGeneratedAt', 'substituteReceiptGeneratedByUserId', 'sourceChannelMetadataJson'];
+    const fields: Array<keyof typeof rest> = ['branchId', 'status', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorAddressSnapshot', 'buyerAsPrintedJson', 'vendorEntityKindSnapshot', 'vendorDocumentNumber', 'expenseDate', 'receivedAt', 'dueDate', 'currency', 'vatMode', 'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'duplicateStatus', 'duplicateOfExpenseId', 'duplicateOverrideReason', 'primaryAttachmentId', 'extractionId', 'aiVerificationStatus', 'aiVerifiedFieldsJson', 'aiVerificationSummaryJson', 'vatCaptureSnapshotJson', 'aiVerificationConfidence', 'aiVerifiedAt', 'lineMessageId', 'lineEventId', 'missingReceiptReason', 'postingStatus', 'postingError', 'note', 'internalMemo', 'updatedByUserId', 'updatedAt', 'reviewedByUserId', 'reviewedAt', 'confirmedByUserId', 'confirmedAt', 'rejectedByUserId', 'rejectedAt', 'rejectReason', 'voidedByUserId', 'voidedAt', 'voidReason', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount', 'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'expenseNumber', 'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode', 'substituteReceiptGeneratedAt', 'substituteReceiptGeneratedByUserId', 'sourceChannelMetadataJson'];
     fields.push('whtInputJson');
     for (const f of fields) {
       if (rest[f] !== undefined) data[f] = rest[f];
@@ -1256,13 +1258,19 @@ export class PrismaExpenseRepository {
     return profile?.jobTitle?.trim() || null;
   }
 
-  async getSubstituteCompanyContext(companyId: string, branchId: string | null): Promise<{ name: string; nameSource: 'REGISTERED' | 'DISPLAY_NAME'; taxId: string | null; branchName: string | null }> {
-    const company = await this.prisma.client.company.findFirst({ where: { id: companyId }, select: { registeredName: true, name: true, taxId: true } });
+  /** Also the registry the Slice 2 buyer check compares a printed buyer block with (vendor-address §5
+   *  row 2): the raw names, the legal address and the expense branch's tax code come along for it. */
+  async getSubstituteCompanyContext(companyId: string, branchId: string | null): Promise<{
+    name: string; nameSource: 'REGISTERED' | 'DISPLAY_NAME'; taxId: string | null; branchName: string | null;
+    registeredName: string | null; displayName: string; brandName: string | null; addressJson: unknown; branchTaxCode: string | null;
+  }> {
+    const company = await this.prisma.client.company.findFirst({ where: { id: companyId }, select: { registeredName: true, name: true, brandName: true, taxId: true, addressJson: true } });
     if (!company) throw new Error(`Company ${companyId} not found`);
     const branch = branchId
-      ? await this.prisma.client.branch.findFirst({ where: { id: branchId, companyId }, select: { name: true } })
+      ? await this.prisma.client.branch.findFirst({ where: { id: branchId, companyId }, select: { name: true, taxBranchCode: true } })
       : null;
-    return { name: company.registeredName?.trim() || company.name, nameSource: company.registeredName?.trim() ? 'REGISTERED' : 'DISPLAY_NAME', taxId: company.taxId, branchName: branch?.name ?? null };
+    return { name: company.registeredName?.trim() || company.name, nameSource: company.registeredName?.trim() ? 'REGISTERED' : 'DISPLAY_NAME', taxId: company.taxId, branchName: branch?.name ?? null,
+      registeredName: company.registeredName, displayName: company.name, brandName: company.brandName, addressJson: company.addressJson, branchTaxCode: branch?.taxBranchCode ?? null };
   }
 
   /**
@@ -3353,6 +3361,38 @@ export class PrismaExpenseRepository {
       });
       if (expense.count !== 1) throw new NotFoundException(`Expense ${input.expenseId} not found`);
       await auditWithinTx(tx);
+    });
+  }
+
+  /**
+   * Slice 2 "ยืนยันว่าใช้ได้ พร้อมเหตุผล" (§8). An annotation, not a material field, so it is allowed in
+   * every status a person can still act on — only a voided or reversed expense refuses it. The write
+   * is a CAS on `updatedAt`: a review save or a re-read that re-checked the buyer block in between
+   * turns into a reload, never into an override attached to a comparison nobody saw.
+   */
+  async confirmBuyerMatch(
+    input: { companyId: string; expenseId: string; actorUserId: string; reason: string; scopes: { branchIds?: string[] } },
+    auditWithinTx: (tx: Prisma.TransactionClient, confirmed: import('@watchdog-bms/contracts').ExpenseBuyerAsPrinted) => Promise<void>,
+  ): Promise<void> {
+    const client = this.prisma.client as any;
+    await client.$transaction(async (tx: Prisma.TransactionClient) => {
+      const expense = await tx.expenseRecord.findFirst({
+        where: { id: input.expenseId, companyId: input.companyId },
+        select: { branchId: true, status: true, postingStatus: true, buyerAsPrintedJson: true, updatedAt: true },
+      });
+      if (!expense) throw new NotFoundException(`Expense ${input.expenseId} not found`);
+      if (!isBranchInScope(input.scopes, expense.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+      if (expense.status === 'VOIDED' || expense.postingStatus === 'reversed') {
+        throw new BadRequestException(`Cannot confirm the buyer match on an expense in status ${expense.status}/${expense.postingStatus}`);
+      }
+      const confirmed = confirmBuyerMismatch(expense.buyerAsPrintedJson, { reason: input.reason, userId: input.actorUserId, at: new Date().toISOString() });
+      if (!confirmed) throw new BadRequestException({ code: 'expense_buyer_match_not_mismatch', message: 'Only a buyer block that does not match the company registry can be confirmed.' });
+      const written = await tx.expenseRecord.updateMany({
+        where: { id: input.expenseId, companyId: input.companyId, updatedAt: expense.updatedAt },
+        data: { buyerAsPrintedJson: confirmed, updatedByUserId: input.actorUserId },
+      });
+      if (written.count !== 1) throw new ConflictException({ code: 'EXPENSE_UPDATE_CONFLICT', message: 'Expense changed while the buyer match was being confirmed. Reload and try again.' });
+      await auditWithinTx(tx, confirmed);
     });
   }
 

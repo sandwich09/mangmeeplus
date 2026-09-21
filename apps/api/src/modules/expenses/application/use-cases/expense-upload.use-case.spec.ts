@@ -1,13 +1,18 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import 'reflect-metadata';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import {
   InitReceiptUploadUseCase,
   CompleteReceiptUploadUseCase,
+  ConfirmBuyerMatchUseCase,
   DuplicateCheckUseCase,
   GetExpenseSourcePostingInputUseCase,
   ResolveDuplicateUseCase,
 } from './expense-upload.use-case';
 import { PrismaExpenseRepository, requireExpenseBranchId } from '../../infrastructure/prisma-expense.repository';
+import { ExpenseController } from '../../presentation/http/expense.controller';
+import { REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
 import { EXPENSE_LAUNCH_ROUTE_CLOSED_MESSAGE } from '../expense-launch-gate';
 import { FEATURE_TEMPORARILY_UNAVAILABLE, featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 
@@ -1040,5 +1045,112 @@ describe('receipt document date at intake', () => {
       assert.deepEqual(summary.missingFields, ['expenseDate']);
       assert.equal(summary.dateResolution, undefined);
     }
+  });
+});
+
+/**
+ * Vendor-address §8 Slice 2: "ยืนยันว่าใช้ได้ พร้อมเหตุผล". A person's judgement on a live MISMATCH,
+ * audited, and nothing else — no claim or tax-evidence column moves (E11).
+ */
+describe('buyer-match confirm with reason', () => {
+  const confirmCtx = { ...ctx, permissions: ['expense.confirm'], authProvider: 'watchdog', scopes: { branchIds: ['branch-a'] } } as any;
+  const MISMATCH = {
+    name: 'บริษัท ร้านอื่น จำกัด', addressText: '99 ถนนสีลม 10500', matchStatus: 'MISMATCH', reasons: ['NAME', 'POSTAL_CODE'],
+    differences: [{ reason: 'NAME', printed: 'บริษัท ร้านอื่น จำกัด', registered: 'บริษัท มั่งมีพลัส จำกัด' }], checkedAt: '2026-09-21T00:00:00.000Z',
+  };
+
+  it('is guarded by expense.confirm on the route and in the use case', async () => {
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, ExpenseController.prototype.confirmBuyerMatch), ['expense.confirm']);
+    let writes = 0;
+    const uc = new ConfirmBuyerMatchUseCase({ confirmBuyerMatch: async () => { writes += 1; } } as any, { log: async () => undefined } as any);
+    await assert.rejects(() => uc.execute({ ...confirmCtx, permissions: ['expense.review'] }, 'expense-1', 'เหตุผล'), ForbiddenException);
+    assert.equal(writes, 0);
+  });
+
+  it('refuses a missing, blank or over-long reason with a code the web puts into words', async () => {
+    let writes = 0;
+    const uc = new ConfirmBuyerMatchUseCase({ confirmBuyerMatch: async () => { writes += 1; } } as any, { log: async () => undefined } as any);
+    for (const reason of [undefined, '', '   ', 'ก'.repeat(501)]) {
+      await assert.rejects(() => uc.execute(confirmCtx, 'expense-1', reason), (error: unknown) => {
+        assert.ok(error instanceof BadRequestException);
+        assert.equal((error.getResponse() as { code: string }).code, 'expense_buyer_match_reason_required');
+        return true;
+      });
+    }
+    assert.equal(writes, 0);
+  });
+
+  it('passes the trimmed reason and branch scope to the locked write, and audits the mismatch without printed values', async () => {
+    const inputs: any[] = [];
+    const audits: any[] = [];
+    const tx = { marker: 'tx' };
+    const uc = new ConfirmBuyerMatchUseCase(
+      { confirmBuyerMatch: async (input: any, auditWithinTx: (tx: any, confirmed: any) => Promise<void>) => {
+        inputs.push(input);
+        await auditWithinTx(tx, { ...MISMATCH, overrideReason: input.reason });
+      } } as any,
+      { log: async (entry: any, passedTx: any) => { audits.push({ entry, passedTx }); } } as any,
+    );
+
+    await uc.execute(confirmCtx, 'expense-1', '  ผู้ขายยืนยันทางอีเมลว่าออกให้บริษัทเรา  ');
+
+    assert.equal(inputs[0].reason, 'ผู้ขายยืนยันทางอีเมลว่าออกให้บริษัทเรา');
+    assert.deepEqual(inputs[0].scopes, { branchIds: ['branch-a'] });
+    assert.equal(audits[0].passedTx, tx, 'the audit row commits with the override or not at all');
+    assert.equal(audits[0].entry.action, 'expense.buyer_match.confirm');
+    assert.deepEqual(audits[0].entry.metadataJson, { matchStatus: 'MISMATCH', reasons: ['NAME', 'POSTAL_CODE'] });
+    assert.doesNotMatch(JSON.stringify(audits[0].entry), /ร้านอื่น|ถนนสีลม|10500/, 'no printed name or address in the audit');
+  });
+
+  function repoWith(row: Record<string, unknown> | null, updatedCount = 1) {
+    const writes: any[] = [];
+    const tx = {
+      expenseRecord: {
+        findFirst: async () => row,
+        updateMany: async (args: any) => { writes.push(args); return { count: updatedCount }; },
+      },
+    };
+    const client = { $transaction: async (work: (db: typeof tx) => Promise<unknown>) => work(tx) };
+    return { repo: new PrismaExpenseRepository({ client } as any), writes };
+  }
+  const input = { companyId: 'co-1', expenseId: 'expense-1', actorUserId: 'user-1', reason: 'เหตุผล', scopes: { branchIds: ['branch-a'] } };
+  const row = { branchId: 'branch-a', status: 'CONFIRMED', postingStatus: 'posted', buyerAsPrintedJson: MISMATCH, updatedAt: new Date('2026-09-21T03:00:00.000Z') };
+
+  it('writes the override on a live MISMATCH in any status a person can still act on, CAS-fenced on updatedAt', async () => {
+    const { repo, writes } = repoWith(row);
+    let audited: any;
+    await repo.confirmBuyerMatch(input, async (_tx, confirmed) => { audited = confirmed; });
+    assert.equal(writes.length, 1);
+    assert.deepEqual(writes[0].where, { id: 'expense-1', companyId: 'co-1', updatedAt: row.updatedAt });
+    assert.equal(writes[0].data.buyerAsPrintedJson.overrideReason, 'เหตุผล');
+    assert.equal(writes[0].data.buyerAsPrintedJson.overriddenByUserId, 'user-1');
+    assert.equal(writes[0].data.buyerAsPrintedJson.matchStatus, 'MISMATCH');
+    assert.deepEqual(Object.keys(writes[0].data).sort(), ['buyerAsPrintedJson', 'updatedByUserId'], 'E11: nothing but the annotation');
+    assert.equal(audited.overrideReason, 'เหตุผล');
+  });
+
+  it('refuses anything that is not a live MISMATCH with expense_buyer_match_not_mismatch', async () => {
+    for (const buyerAsPrintedJson of [null, { ...MISMATCH, matchStatus: 'MATCH' }, { ...MISMATCH, matchStatus: 'UNCHECKED' }]) {
+      const { repo, writes } = repoWith({ ...row, buyerAsPrintedJson });
+      await assert.rejects(() => repo.confirmBuyerMatch(input, async () => undefined), (error: unknown) => {
+        assert.ok(error instanceof BadRequestException);
+        assert.equal((error.getResponse() as { code: string }).code, 'expense_buyer_match_not_mismatch');
+        return true;
+      });
+      assert.equal(writes.length, 0);
+    }
+  });
+
+  it('refuses a voided or reversed expense, a branch outside scope, and a record that moved', async () => {
+    for (const moved of [{ status: 'VOIDED' }, { postingStatus: 'reversed' }]) {
+      const { repo } = repoWith({ ...row, ...moved });
+      await assert.rejects(() => repo.confirmBuyerMatch(input, async () => undefined), BadRequestException);
+    }
+    const outside = repoWith({ ...row, branchId: 'branch-b' });
+    await assert.rejects(() => outside.repo.confirmBuyerMatch(input, async () => undefined), ForbiddenException);
+    const stale = repoWith(row, 0);
+    let audits = 0;
+    await assert.rejects(() => stale.repo.confirmBuyerMatch(input, async () => { audits += 1; }), ConflictException);
+    assert.equal(audits, 0, 'no audit for an override that never landed');
   });
 });

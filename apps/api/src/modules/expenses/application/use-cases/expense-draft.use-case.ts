@@ -19,6 +19,7 @@ import {
 } from '../../domain/logic/expense-vat-reconciliation.logic';
 import { validateExpenseDraftAmounts, validateExpenseLineVatTreatments } from '../../domain/logic/expense-draft-amount-validation.logic';
 import { expenseVendorIdentityFields } from '../../domain/logic/expense-vendor-identity.logic';
+import { recheckBuyerAsPrinted } from '../../domain/logic/buyer-as-printed.logic';
 import { EnsureVendorCounterpartyFromExpenseUseCase } from '../../../accounting-documents/application/use-cases/ensure-vendor-counterparty-from-expense.use-case';
 import { normalizeExpensePrecisionAdjustment } from '../../domain/logic/expense-precision-adjustment.logic';
 import { expenseTotalsIdentityError } from '../../domain/logic/expense-totals.logic';
@@ -822,6 +823,19 @@ export class UpdateExpenseDraftUseCase {
           ? vendorIdentity.fields.vendorAddressSnapshot : r.vendorAddressSnapshot,
         vendorEntityKind: input.vendorEntityKindSnapshot ?? r.vendorEntityKindSnapshot,
       });
+    /**
+     * Slice 2 (§5 row 2): re-check the printed buyer block against the company registry and the
+     * expense branch AS THEY ARE NOW, on every save that has a block to check. A draft read before the
+     * column existed still carries the block in `aiVerifiedFieldsJson`, which is how it gets checked
+     * without a backfill script. Never touches claimability (E11) — the column is all this writes.
+     */
+    const buyerSource = r.buyerAsPrintedJson ?? r.aiVerifiedFieldsJson?.['buyerAsPrinted'];
+    const buyerAsPrintedJson = buyerSource ? await recheckBuyerAsPrinted({
+      printed: buyerSource,
+      previous: r.buyerAsPrintedJson,
+      readRegistry: () => this.repo.getSubstituteCompanyContext(ctx.companyId, input.branchId !== undefined ? input.branchId : r.branchId),
+      checkedAt: new Date().toISOString(),
+    }) : undefined;
 
     const updated = await this.repo.updateExpense({
       id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId,
@@ -846,6 +860,7 @@ export class UpdateExpenseDraftUseCase {
       // expense be confirmed at all (`expense-status.logic.ts` refuses without it).
       ...(autoSave?.linkCounterpartyId && { vendorCounterpartyId: autoSave.linkCounterpartyId }),
       ...(autoSave?.fillEntityKind && input.vendorEntityKindSnapshot === undefined && { vendorEntityKindSnapshot: autoSave.fillEntityKind }),
+      ...(buyerAsPrintedJson && { buyerAsPrintedJson }),
       ...(input.vendorDocumentNumber !== undefined && { vendorDocumentNumber: input.vendorDocumentNumber }),
       ...(input.note !== undefined && { note: input.note }),
       // The substitute-receipt panel saves its in-progress reason here so leaving the review page no

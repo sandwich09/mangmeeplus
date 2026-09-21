@@ -97,7 +97,7 @@
 
 `vendorBranchCodeSnapshot` (คอลัมน์เดิม) ได้กฎที่ยังไม่เคยมี: รับเฉพาะตัวเลข 5 หลัก เก็บ `null` เมื่อว่าง ห้ามเขียนสตริง `'00000'` ลงฐานข้อมูล และตัวจับคู่คู่ค้าถือ `null` เท่ากับ `'00000'` (สำนักงานใหญ่) ตามสัญญาเดิมของฝั่งขาย (CON-8)
 
-`vendorEntityKindSnapshot` (คอลัมน์เดิม) ใช้ enum เดียวกับ `AccountingCounterparty.entityKind` จึงส่งค่ากันได้ตรงๆ ทั้งสองทาง (CON-7) Slice 2 เพิ่ม `buyerAsPrintedJson Json?` โครง `{name, taxId, branchCode, addressText, matchStatus: 'MATCH'|'MISMATCH'|'UNCHECKED'|'NOT_PRINTED', checkedAt, overrideReason?}`
+`vendorEntityKindSnapshot` (คอลัมน์เดิม) ใช้ enum เดียวกับ `AccountingCounterparty.entityKind` จึงส่งค่ากันได้ตรงๆ ทั้งสองทาง (CON-7) Slice 2 เพิ่ม `buyerAsPrintedJson Json?` โครง `{name, taxId, branchCode, addressText, matchStatus: 'MATCH'|'MISMATCH'|'UNCHECKED'|'NOT_PRINTED', checkedAt, overrideReason?}` (implement 21 ก.ย. 2569 เพิ่มแบบ additive: `reasons` = TAX_ID/BRANCH/NAME/POSTAL_CODE, `differences` = ค่าบนใบกับค่าทะเบียนที่ใช้เทียบต่อเหตุผล ณ `checkedAt`, `overriddenByUserId`, `overriddenAt`; contract `ExpenseBuyerAsPrinted`, detail DTO ส่งเป็น `buyerAsPrinted`)
 
 **AccountingCounterparty.billingAddressJson** กำหนดโครง v2 แบบ additive ทุกผู้อ่านเลือก `addressText` ก่อนเมื่อมี คีย์เดิมคงไว้:
 

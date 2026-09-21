@@ -133,10 +133,10 @@
 
 ## Phase 5: Slice 2 ผู้ซื้อตามที่พิมพ์ (ไม่บล็อก)
 
-- [ ] `ExpenseRecord.buyerAsPrintedJson Json?` + migration
-- [ ] pure `compareBuyerAsPrinted(printed, company, branch)` → MATCH/MISMATCH/UNCHECKED ด้วย normalize เดียวกับ Phase 2
-- [ ] ตั้งค่าตอน OCR apply และตอนบันทึกการตรวจ; ไม่แตะ claimability
-- [ ] เว็บ: แถบผลเทียบ + ปุ่ม [ยืนยันว่าใช้ได้ พร้อมเหตุผล] (audit) + [ทำเครื่องหมายใช้ภาษีซื้อไม่ได้] (ใช้ path เดิมของ inputVatClaimStatus โดยคน) + ลิงก์ตั้งค่าที่อยู่บริษัทเมื่อ UNCHECKED
+- [x] `ExpenseRecord.buyerAsPrintedJson Json?` + migration `20260921150000_expense_buyer_as_printed` (ไม่ backfill)
+- [x] pure `compareBuyerAsPrinted(printed, company, expectedBranchCode)` → MATCH/MISMATCH/UNCHECKED/NOT_PRINTED ใน `expenses/domain/logic/buyer-as-printed.logic.ts` ใช้ `normalizeVendorName`/`normalizeBranchCode` ของ Phase 2
+- [x] ตั้งค่าตอน OCR apply และตอนบันทึกร่าง/การตรวจ (ใบที่อ่านก่อนมีคอลัมน์ใช้ `aiVerifiedFieldsJson.buyerAsPrinted`); ไม่แตะ claimability
+- [x] เว็บ: แถบผลเทียบ + ปุ่ม [ยืนยันว่าใช้ได้ พร้อมเหตุผล] (`POST …/buyer-match/confirm`, `expense.confirm`, audit) + [ทำเครื่องหมายใช้ภาษีซื้อไม่ได้] (PATCH review-fields เดิม ผ่าน useConfirm) + ลิงก์ตั้งค่าที่อยู่บริษัทเมื่อ UNCHECKED (2026-09-21, branch `codex/vendor-address-residuals-20260921`)
 
 เกณฑ์ออก: AC13
 

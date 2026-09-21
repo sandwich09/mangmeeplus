@@ -779,7 +779,33 @@ export function hasCurrentExpenseDocumentReview(source: import('./expense-eviden
   return review.version === 2 && hasCurrentExpenseEvidenceReview(source);
 }
 
+/**
+ * Vendor-address spec §5 row 2 / §6 (Slice 2): the buyer block a full tax invoice printed — our own
+ * company, as the seller typed it — and how it compared with the company registry at `checkedAt`.
+ * Warn-only: nothing reads it to decide claimability (§8, E11). `differences` holds, per MISMATCH
+ * reason, the printed value and the registry value it was compared against, so the review page
+ * shows exactly what was judged instead of re-deriving it from a registry that may have moved since.
+ */
+export type ExpenseBuyerMatchStatus = 'MATCH' | 'MISMATCH' | 'UNCHECKED' | 'NOT_PRINTED';
+export type ExpenseBuyerMismatchReason = 'TAX_ID' | 'BRANCH' | 'NAME' | 'POSTAL_CODE';
+export type ExpenseBuyerAsPrinted = {
+  name?: string;
+  taxId?: string;
+  branchCode?: string;
+  addressText?: string;
+  matchStatus: ExpenseBuyerMatchStatus;
+  reasons?: ExpenseBuyerMismatchReason[];
+  differences?: Array<{ reason: ExpenseBuyerMismatchReason; printed: string; registered: string }>;
+  checkedAt: string;
+  /** "ยืนยันว่าใช้ได้ พร้อมเหตุผล" (§8): kept only while the same mismatch of the same printed values stands. */
+  overrideReason?: string;
+  overriddenByUserId?: string;
+  overriddenAt?: string;
+};
+
 export type ExpenseDetail = ExpenseSummary & {
+  /** Slice 2; absent until a document with a buyer block has been read or re-checked. */
+  buyerAsPrinted?: ExpenseBuyerAsPrinted | null;
   primaryAttachmentId?: string | null;
   extractionId?: string | null;
   sourceDraft?: ExpenseSourceDraft | null;

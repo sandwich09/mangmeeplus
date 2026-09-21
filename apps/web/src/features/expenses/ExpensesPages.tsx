@@ -18,7 +18,7 @@ import {
   uploadReceiptFile, updateExpenseDraft, listExpenseCategories,
   updateExpenseReviewFields, uploadExpenseEvidenceFile,
   createAccountantPackage, downloadIndexXlsx, requestExpenseExtraction, overrideNonExpenseClassification,
-  createExpenseDraft, deleteExpense,
+  createExpenseDraft, deleteExpense, confirmExpenseBuyerMatch,
 } from './expenses.api';
 import {
   EXPENSE_VAT_MODE_LABELS, CAPTURE_SOURCE_LABELS,
@@ -54,7 +54,9 @@ import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { SupportedLocale, DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
-import { Modal } from '@/common/components/modal';
+import { Modal, useConfirm } from '@/common/components/modal';
+import { TextareaField } from '@/common/components/field';
+import { buyerMatchBannerState } from './expense-buyer-match.logic';
 import { findForbiddenChars, normalizeDecimalInput, REASON_MAX_LENGTH, sanitizeReasonInput, stripDisallowed } from '@/common/forms/sanitize';
 import {
   ATTACHMENT_UPLOAD_ACCEPT,
@@ -698,6 +700,135 @@ function CheckBillGuidanceCard({ companyId, expenseId, canReview, canStartSubsti
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Vendor-address §8 Slice 2 (AC13): the buyer a full tax invoice printed, against the company
+ * registry. Warn-only — both ways forward are a person's choice and nothing here disables any other
+ * control on the page. The state is decided in `expense-buyer-match.logic.ts`.
+ */
+export function BuyerMatchBanner({ companyId, detail, editable, claimed, permissions, onSaved }: {
+  companyId: string;
+  detail: ExpenseDetail;
+  /** The page's own "review form is editable" rule — the mark button follows it exactly. */
+  editable: boolean;
+  claimed: boolean;
+  permissions: readonly string[];
+  onSaved: () => Promise<void>;
+}) {
+  const locale = useWorkspaceLocale();
+  const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const banner = buyerMatchBannerState({ companyId, detail, permissions, editable, claimed });
+  if (banner.kind === 'none') return null;
+  if (banner.kind === 'confirmed') {
+    return <p className="text-xs text-gray-500">{t('expenses.buyer_match_confirmed', locale).replace('{reason}', banner.reason)}</p>;
+  }
+  if (banner.kind === 'unchecked') {
+    return (
+      <p role="status" className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+        {t('expenses.buyer_match_unchecked', locale)}{' '}
+        {banner.settingsHref
+          ? <Link className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline" href={banner.settingsHref}>{t('expenses.buyer_match_open_settings', locale)}</Link>
+          : t('expenses.buyer_match_ask_owner', locale)}
+      </p>
+    );
+  }
+  // The write and the readback fail differently: a refused write says why, a failed readback says
+  // the change is saved and only the screen is stale.
+  const run = async (write: () => Promise<unknown>, doneKey: DictionaryKey): Promise<boolean> => {
+    setBusy(true); setError(null);
+    try {
+      try { await write(); } catch (e) { setError(err(e, locale)); return false; }
+      try { await onSaved(); } catch {
+        const message = t('expenses.review_saved_refresh_failed', locale);
+        setError(message); toast.warning(message);
+        return true;
+      }
+      toast.success(t(doneKey, locale));
+      return true;
+    } finally { setBusy(false); }
+  };
+  // §8: marking is a person's act through the existing review save — the same PATCH that already
+  // carries `inputVatClaimStatus` — never an automatic change and never a new mutation.
+  const markNonClaimable = async () => {
+    if (!(await confirm({ title: t('expenses.buyer_match_mark_title', locale), message: t('expenses.buyer_match_mark_message', locale),
+      confirmLabel: t('expenses.buyer_match_mark_non_claimable', locale), cancelLabel: t('expenses.cancel', locale) }))) return;
+    await run(() => updateExpenseReviewFields(companyId, detail.id, { expectedUpdatedAt: detail.updatedAt, inputVatClaimStatus: 'NON_CLAIMABLE' }),
+      'expenses.buyer_match_marked_toast');
+  };
+  const submitReason = async () => {
+    if (await run(() => confirmExpenseBuyerMatch(companyId, detail.id, reason.trim()), 'expenses.buyer_match_confirmed_toast')) setReasonOpen(false);
+  };
+
+  return (
+    <MangmeeCard className="space-y-3 border-warning-100 bg-warning-50 p-4 text-sm">
+      {confirmDialog}
+      <h3 className="font-semibold text-warning-700">{t('expenses.buyer_match_title', locale)}</h3>
+      <p className="text-xs text-warning-700">{t('expenses.buyer_match_hint', locale)}</p>
+      {banner.differences.length > 0 && (
+        <dl className="space-y-2">
+          {banner.differences.map((difference) => (
+            <div key={difference.reason} className="rounded-lg bg-white px-3 py-2 text-xs">
+              <dt className="font-semibold text-gray-700">{t(difference.labelKey, locale)}</dt>
+              <dd className="mt-1 break-words text-gray-600">{t('expenses.buyer_match_printed', locale)}: <span className="font-medium text-gray-900">{difference.printed}</span></dd>
+              <dd className="break-words text-gray-600">{t('expenses.buyer_match_registered', locale)}: <span className="font-medium text-gray-900">{difference.registered}</span></dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {error && !reasonOpen && <ErrorBanner message={error} />}
+      {(banner.canConfirm || banner.canMarkNonClaimable) && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          {banner.canConfirm && (
+            <button type="button" className={ghostClass} disabled={busy} onClick={() => { setReason(''); setError(null); setReasonOpen(true); }}>
+              {t('expenses.buyer_match_confirm', locale)}
+            </button>
+          )}
+          {banner.canMarkNonClaimable && (
+            <button type="button" className={ghostClass} disabled={busy} aria-busy={busy} onClick={() => void markNonClaimable()}>
+              {t('expenses.buyer_match_mark_non_claimable', locale)}
+            </button>
+          )}
+        </div>
+      )}
+      {banner.markHintKey && <p className="text-xs text-warning-700">{t(banner.markHintKey, locale)}</p>}
+      <Modal
+        open={reasonOpen}
+        size="sm"
+        title={t('expenses.buyer_match_confirm_title', locale)}
+        closeLabel={t('expenses.close', locale)}
+        onClose={() => { if (!busy) setReasonOpen(false); }}
+        footer={(
+          <>
+            <button type="button" className={ghostClass} disabled={busy} onClick={() => setReasonOpen(false)}>{t('expenses.cancel', locale)}</button>
+            {/* Never disabled for an empty reason: the refusal names what to type (D5), a greyed-out
+                button on a phone explains nothing. */}
+            <button type="button" className={btnClass} disabled={busy} aria-busy={busy} onClick={() => void submitReason()}>
+              {t(busy ? 'expenses.saving' : 'expenses.buyer_match_confirm_submit', locale)}
+            </button>
+          </>
+        )}
+      >
+        <div className="space-y-3">
+          {error && <ErrorBanner message={error} />}
+          <TextareaField
+            label={t('expenses.buyer_match_confirm_reason', locale)}
+            hint={t('expenses.buyer_match_confirm_reason_hint', locale)}
+            rows={3}
+            maxLength={REASON_MAX_LENGTH}
+            value={reason}
+            disabled={busy}
+            onChange={(event) => setReason(sanitizeReasonInput(event.target.value))}
+          />
+        </div>
+      </Modal>
+    </MangmeeCard>
   );
 }
 

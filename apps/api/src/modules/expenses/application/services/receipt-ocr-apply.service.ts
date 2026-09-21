@@ -29,6 +29,7 @@ import { calcDocumentTotals, calcLineTotals } from '../../domain/logic/expense-t
 import { reconcileExpenseVat, vatSourceFromSnapshot } from '../../domain/logic/expense-vat-reconciliation.logic';
 import { applyExpenseWhtInput, expenseWhtLineRate } from '../../domain/logic/expense-wht-input.logic';
 import { EnsureVendorCounterpartyFromExpenseUseCase } from '../../../accounting-documents/application/use-cases/ensure-vendor-counterparty-from-expense.use-case';
+import { recheckBuyerAsPrinted } from '../../domain/logic/buyer-as-printed.logic';
 
 export function toMoney4(value: string | undefined | null): string {
   const n = Number(String(value ?? '').replace(/,/g, ''));
@@ -1033,6 +1034,9 @@ export class ReceiptOcrApplyService {
           // that writes nothing new still matches against the right shop.
           captureSource: true, sourceReimbursementRequestId: true, vendorCounterpartyId: true,
           vendorNameSnapshot: true, vendorTaxIdSnapshot: true, vendorBranchCodeSnapshot: true, vendorAddressSnapshot: true,
+          // Slice 2: the branch whose tax code the printed buyer branch is compared with, and the
+          // previous check, whose confirmed override may survive this read.
+          branchId: true, buyerAsPrintedJson: true,
           grandTotalAmount: true, vatAmount: true, whtAmount: true, netPayableAmount: true, vatMode: true,
           discountAmount: true,
           updatedAt: true,
@@ -1081,8 +1085,8 @@ export class ReceiptOcrApplyService {
        * Vendor-address §7 (Phase 4): the reader's address fills the field only while it is still
        * empty. The `reviewedAt` filter just below protects a record somebody already reviewed; a
        * draft is not reviewed yet, so without this a re-read would overwrite the address the payer
-       * typed into the LINE question or the review form. `buyerAsPrinted` is deliberately NOT
-       * written anywhere: it rides `aiVerifiedFieldsJson` as provenance and Slice 2 owns comparing it.
+       * typed into the LINE question or the review form. `buyerAsPrinted` never reaches a seller
+       * column; Slice 2 compares it with the company registry further down.
        */
       if (completed.vendorAddress && !currentExpense.vendorAddressSnapshot) {
         data['vendorAddressSnapshot'] = completed.vendorAddress;
@@ -1120,6 +1124,17 @@ export class ReceiptOcrApplyService {
       });
       if (autoSave?.linkCounterpartyId) data['vendorCounterpartyId'] = autoSave.linkCounterpartyId;
       if (autoSave?.fillEntityKind && !data['vendorEntityKindSnapshot']) data['vendorEntityKindSnapshot'] = autoSave.fillEntityKind;
+      // Slice 2 (§5 row 2): compare the buyer block this read printed with the company registry.
+      // Written whenever there is a block to judge — this read's, or an earlier one a re-read of a
+      // page without it has to replace. Warn-only: no tax or claim column moves because of it (E11).
+      if (completed.buyerAsPrinted || currentExpense.buyerAsPrintedJson) {
+        data['buyerAsPrintedJson'] = await recheckBuyerAsPrinted({
+          printed: completed.buyerAsPrinted,
+          previous: currentExpense.buyerAsPrintedJson,
+          readRegistry: () => this.expenses.getSubstituteCompanyContext(ctx.companyId, currentExpense.branchId ?? null),
+          checkedAt: new Date().toISOString(),
+        });
+      }
       const priorWht = currentExpense.whtInputJson as ExpenseWhtCapture | null;
       // A rerun may change line order/count. Never attach reviewed tax meaning to a new OCR row
       // by index, or erase a saved whole-bill amount/mixed historical rates with provider output.
