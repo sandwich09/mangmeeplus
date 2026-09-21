@@ -310,6 +310,12 @@ export function substituteReceiptPreparationHref(companyId: string, expenseId: s
 }
 
 export type ExpenseSummary = {
+  /**
+   * Vendor-address spec §7: not a column — the outcome of THIS write's counterparty auto-save, so
+   * the review page can show the create/fill toast, the one-line "address differs" notice or the
+   * "ยังไม่ได้บันทึกลงทะเบียนคู่ค้า" bar. Present on a write response only, never on a read.
+   */
+  vendorCounterpartyAutoSave?: import('@watchdog-bms/contracts').VendorCounterpartyAutoSaveResult;
   costSourceExpenseId?: string;
   reimbursementProgress?: import('@watchdog-bms/contracts').ExpenseReimbursementProgress;
   id: string;

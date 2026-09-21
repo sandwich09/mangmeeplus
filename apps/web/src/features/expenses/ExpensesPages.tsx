@@ -44,6 +44,8 @@ import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail,
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseCaptureCapabilityDto, ExpenseExtractionResult, ExpenseLineVatTreatment, ExpenseVatSourceOverrideInput, ExpenseWhtInput } from '@watchdog-bms/contracts';
 import { useExpenseReviewTotals, type ExpenseReviewTotalsState } from './useExpenseReviewTotals';
 import { AI_BUDGET_REFUSAL_CODES, isCalculatedExpenseRounding, expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, isCheckBillClassification } from '@watchdog-bms/contracts';
+import { counterpartyAutoSaveNotice, counterpartyHref } from '../counterparties/counterparties.logic';
+import { COUNTERPARTY_READ_PERMISSION, type CounterpartyAutoSaveNotice } from '../counterparties/counterparties.model';
 import { CategoryManagePanel, SignaturePanel, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
@@ -136,6 +138,20 @@ function messageWithParams(message: string, params?: Record<string, string>): st
 
 function fieldIssue(issues: ExpenseFieldIssue[], field: string): ExpenseFieldIssue | undefined {
   return issues.find((issue) => issue.field === field);
+}
+
+/** §8: the way forward of a registry notice, dropped entirely when the reader may not open it. */
+function RegistryNoticeLink({ companyId, notice }: { companyId: string; notice: CounterpartyAutoSaveNotice }) {
+  const locale = useWorkspaceLocale();
+  if (!notice.counterpartyId) return null;
+  return (
+    <>
+      {' '}
+      <Link href={counterpartyHref(companyId, notice.counterpartyId)} className="font-semibold underline underline-offset-2">
+        {t('counterparties.open_registry', locale)}
+      </Link>
+    </>
+  );
 }
 
 function validationInputClass(issue?: ExpenseFieldIssue): string {
@@ -961,11 +977,13 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
 
 type EditableReviewLineField = 'description' | 'quantity' | 'unitPrice' | 'discountAmount' | 'vatRate';
 
-export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, showSaveDraft = false, onSaved, saveRef, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0, skipUnchangedSave = false }: {
+export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, showSaveDraft = false, onSaved, saveRef, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0, skipUnchangedSave = false, permissions = [] }: {
   companyId: string;
   detail: ExpenseDetail;
   isMutable: boolean;
   canReview: boolean;
+  /** Vendor-address §8: decides only whether the registry notices may carry their "ดู" link. */
+  permissions?: readonly string[];
   onTotalsChange?: (state: ExpenseReviewTotalsState | null) => void;
   totalsRetry?: number;
   /** Owner decision 2026-08-28: accepting the document VAT total rides on confirm, not on review, so
@@ -998,6 +1016,9 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  // §7 cases a-d: what the LAST save did to the counterparty registry. It lives here and not on
+  // `detail` because the API returns it on the write response only — a refetch would lose it.
+  const [registryNotice, setRegistryNotice] = useState<CounterpartyAutoSaveNotice | null>(null);
   // Keyed by line index. `custom` is needed because "custom, nothing typed yet" and "unset" are the
   // same stored value (''), so the preset cannot be derived from the rate alone.
   const [vatEditors, setVatEditors] = useState<Record<number, { custom?: boolean }>>({});
@@ -1208,7 +1229,9 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const save = async (explicitDraftSave = false): Promise<boolean> => {
     if (busy || !isMutable) return false;
     if (skipUnchangedSave && JSON.stringify(values) === JSON.stringify(reviewValues(detail))) return true;
-    setError(null); setInfo(null);
+    // The registry notice belongs to the save that produced it; a refused save must not leave the
+    // previous one on screen as if it described this attempt.
+    setError(null); setInfo(null); setRegistryNotice(null);
     const partialSourceSave = explicitDraftSave && Boolean(detail.sourceDraft);
     const partialHasFinancialLines = values.lines.some((line) => line.id
       || !incompleteSourceReviewLine(line, values.vatMode));
@@ -1248,7 +1271,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
     try {
       const update = canReview ? updateExpenseReviewFields : updateExpenseDraft;
       const disallowsTaxCode = !allowsDomesticInputTaxCode(detail.sourceDocumentType, detail.taxEvidenceStatus);
-      await update(companyId, detail.id, {
+      const savedExpense = await update(companyId, detail.id, {
         expectedUpdatedAt: detail.updatedAt,
         ...buildExpenseDraftReviewPayload(disallowsTaxCode
           ? { ...values, lines: clearExpenseTaxSelections(values.lines) }
@@ -1259,6 +1282,20 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
           } : undefined),
         ...(disallowsTaxCode && { inputVatClaimStatus: 'NON_CLAIMABLE' as const }),
       });
+      // §7/§8: set before the readback, so a failed refresh still cannot swallow the news that the
+      // registry row was created, filled, or missed. NOOP/SKIPPED clear it back to silence.
+      const notice = counterpartyAutoSaveNotice(savedExpense?.vendorCounterpartyAutoSave, {
+        canReadCounterparty: permissions.includes(COUNTERPARTY_READ_PERMISSION),
+      });
+      setRegistryNotice(notice);
+      if (notice?.kind === 'toast') {
+        toast.success(
+          messageWithParams(t(notice.messageKey, locale), notice.params),
+          notice.counterpartyId
+            ? { href: counterpartyHref(companyId, notice.counterpartyId), label: t('counterparties.view', locale) }
+            : undefined,
+        );
+      }
       try { await onSaved(); } catch {
         // The PATCH succeeded. A failed readback must not claim the draft was lost or replay the write.
         const message = t('expenses.review_saved_refresh_failed', locale);
@@ -1290,6 +1327,15 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       </button>}
       {error && <ErrorBanner message={error} />}
       {info && <InfoBanner message={info} />}
+      {/* §8: the expense saved, the registry write did not. A warning bar, never an error one —
+          nothing here may read as "the expense failed" — and it names the counterparty page as
+          the place to try again. */}
+      {registryNotice?.kind === 'bar' && (
+        <p role="status" className="rounded-xl border border-warning-100 bg-warning-50 p-3 text-xs font-semibold text-warning-700">
+          {t(registryNotice.messageKey, locale)}
+          <RegistryNoticeLink companyId={companyId} notice={registryNotice} />
+        </p>
+      )}
       {aiSuggestion && isMutable && (
         <div className="space-y-2 rounded-xl border border-warning-100 bg-warning-50 p-3">
           <p className="text-xs font-semibold text-warning-700">{t('expenses.ai_suggestion_title', locale)}</p>
@@ -1339,6 +1385,15 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
           <FieldIssueNote issue={vendorAddressIssue} />
           {!vendorAddressIssue && <p className="mt-1 text-xs text-gray-500">{t('expenses.vendor_address_hint', locale)}</p>}
           <AiFieldMissingHint field="vendorAddressSnapshot" summary={detail.aiVerificationSummaryJson} />
+          {/* §7 case c / A4: ONE quiet line, no button and nothing to choose. The owner rejected the
+              compare-and-choose panel in round 1; the registry already kept the newest address (or
+              kept its own when locked), and the history lives on the counterparty page. */}
+          {registryNotice?.kind === 'hint' && (
+            <p className="mt-1 text-xs text-gray-500">
+              {t(registryNotice.messageKey, locale)}
+              <RegistryNoticeLink companyId={companyId} notice={registryNotice} />
+            </p>
+          )}
         </label>
         {/* A6: สำนักงานใหญ่/สาขา plus the code the document prints — never a dropdown of registry
             branches, so there is no "no match" state to explain. `branchIsBranch` is local because
