@@ -1,12 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { digestBodyTh, RENEWAL_LEAD_DAYS, RENEWAL_REMINDER_DAYS } from '../application/sales-renewal.service';
-import { dealSlipState } from './sales-deal.logic';
 import { workKind } from '../application/sales-deals.service';
 
 /**
  * The Phase 4 pure rules that are NOT part of the counting formula: the renewal windows, the
- * digest text (which must never carry PII) and the two derived states the console renders.
+ * digest text (which must never carry PII) and the my-work kind the console renders.
  */
 
 describe('renewal windows (D3)', () => {
@@ -19,7 +18,7 @@ describe('renewal windows (D3)', () => {
 
 describe('daily digest text (§17.2 — counts only, console only)', () => {
   const body = digestBodyTh({ deals: 2, referrals: 3, amountSatang: 1_234_500, flagged: 1,
-    renewalsPending: 4, renewalsOverdue: 2, slipsPending: 5 });
+    renewalsPending: 4, renewalsOverdue: 2 });
 
   it('reports both channels, the total and every queue', () => {
     assert.match(body, /ดีล 2/);
@@ -28,7 +27,6 @@ describe('daily digest text (§17.2 — counts only, console only)', () => {
     assert.match(body, /ต้องตรวจ 1/);
     assert.match(body, /รออนุมัติ 4/);
     assert.match(body, /เตือน 2/);
-    assert.match(body, /สลิปรอตรวจ 5/);
   });
 
   it('carries no shop name, agent name, email, phone or id', () => {
@@ -38,33 +36,15 @@ describe('daily digest text (§17.2 — counts only, console only)', () => {
 
   it('reads sensibly on an empty day', () => {
     const empty = digestBodyTh({ deals: 0, referrals: 0, amountSatang: 0, flagged: 0,
-      renewalsPending: 0, renewalsOverdue: 0, slipsPending: 0 });
+      renewalsPending: 0, renewalsOverdue: 0 });
     assert.match(empty, /ร้านเปิดใหม่เมื่อวาน 0 ร้าน/);
     assert.match(empty, /0 บาท/);
   });
 });
 
-describe('slip state (Q9)', () => {
-  it('derives every state from paymentState plus the submission stamp', () => {
-    assert.equal(dealSlipState('NONE', null), 'NONE');
-    assert.equal(dealSlipState('SLIP_PENDING', new Date()), 'PENDING');
-    assert.equal(dealSlipState('SLIP_VERIFIED', new Date()), 'VERIFIED');
-    assert.equal(dealSlipState('SLIP_REJECTED', new Date()), 'REJECTED');
-  });
-
-  it('reports a Stripe-paid deal as NONE, never as a rejected slip', () => {
-    assert.equal(dealSlipState('STRIPE_ONE_TIME', null), 'NONE');
-  });
-});
-
-describe('my-work kind (Q6 + D3 + Q9)', () => {
+describe('my-work kind (Q6 + D3)', () => {
   const deal = (over: { status?: string; renewalOfRequestId?: string | null } = {}) =>
     ({ status: 'PENDING_APPROVAL', renewalOfRequestId: null, ...over } as Parameters<typeof workKind>[0]);
-
-  it('puts a pending slip above everything, because the customer already paid', () => {
-    assert.equal(workKind(deal({ status: 'APPROVED' }), { own: false, lead: false, paymentState: 'SLIP_PENDING' }),
-      'DEAL_SLIP_PENDING');
-  });
 
   it('shows an agent their own renewal as DEAL_RENEWAL_PENDING', () => {
     assert.equal(workKind(deal({ renewalOfRequestId: 'deal-1' }), { own: true, lead: false, paymentState: 'NONE' }),

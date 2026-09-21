@@ -32,8 +32,8 @@ export function SalesDealStatusBadge({ status }: { status: SalesDealView['status
 
 /**
  * Phase 4: what else is true about a deal besides its status — it came from the renewal sweep (D3),
- * paying it replaces a live subscription (Q7), or its bank slip is still being checked (Q9). Each
- * one changes what the เซลล์ tells the shop, so they sit beside the status, not inside a detail row.
+ * or paying it replaces a live subscription (Q7). Each one changes what the เซลล์ tells the shop,
+ * so they sit beside the status, not inside a detail row.
  */
 export function SalesDealBadges({ deal }: { deal: SalesDealView }) {
   return <>{dealBadges(deal).map((badge) => <MangmeeBadge key={badge.label} tone={badge.tone}>{badge.label}</MangmeeBadge>)}</>;

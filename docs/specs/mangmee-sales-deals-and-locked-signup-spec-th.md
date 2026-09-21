@@ -29,6 +29,7 @@
 - ไม่คำนวณคอมมิชชัน/ไม่ออกใบค่าจ้าง/50 ทวิ จากระบบ (เก็บข้อมูลให้ทำนอกระบบ)
 - ไม่มีการเปิดสิทธิ์ล่วงหน้าก่อนชำระ (ทุกช่องทาง); ไม่มี LIFF/หน้าแอปแยกสำหรับเซลล์ (ใช้เว็บเดิม)
 - ไม่ตรวจสลิปอัตโนมัติ (EasySlip) รอบแรก
+- ไม่มีการโอนเงิน/แนบสลิป (มติ Owner 2026-09-21: ลูกค้าชำระผ่าน Stripe บัตร/PromptPay เท่านั้น — กันทุจริต)
 
 ## 5. User Roles
 
@@ -62,7 +63,7 @@
 - R4 **สถานะดีล**: DRAFT → PENDING_APPROVAL → APPROVED (การ์ดโชว์; `offerExpiresAt = approvedAt + 3 วัน`) → PAID (Stripe ยืนยัน/แอดมินตรวจสลิป) → APPLIED (เปิดสิทธิ์แล้ว) | EXPIRED (เลย 3 วัน; derive + scan รายวันปิดแถว) | REJECTED (หัวหน้า) | CANCELLED (เซลล์/หัวหน้า ก่อนจ่าย); แก้ไขได้เฉพาะ DRAFT/REJECTED; APPROVED แก้ไม่ได้ (ยกเลิกแล้วออกใหม่)
 - R5 **อนุมัติ**: `MANGMEE_SALES_LEAD` หรือ SYSTEM_ADMIN; ผู้สร้างอนุมัติดีลของตัวเองไม่ได้ ยกเว้น SYSTEM_ADMIN (single-admin); ทุกการเปลี่ยนสถานะมีเหตุผล + audit CRITICAL (`sales.deal.*`) · *(Phase 2, 2026-09-21: D2 ให้ lead อนุมัติดีลของตัวเองได้ (audit `selfApproved`); เหตุผลบังคับเฉพาะ ปฏิเสธ/ยกเลิก — อนุมัติไม่บังคับ เพื่อความเร็ว; audit เก็บผู้อนุมัติเสมอ)*
 - R6 **ชำระดีลด้วย Stripe แบบครั้งเดียว** *(แก้ไขโดย §19.2 — ใช้เส้นทางครั้งเดียวของ PR #667)*: quote จาก snapshot ดีล (ยอด = `priceSatang`, VAT ตามนโยบาย `quoteTotals`), Checkout `mode: 'payment'` `price_data { product: product ของ tier ฐาน (อ่านจาก Price catalog), unit_amount: priceSatang }`, `payment_method_types: ['card','promptpay']`; หลักฐานผ่าน `paidPackageCheckoutEvidence` (ขยายให้รับ `promptpay`), async events ที่มีอยู่; apply = term `termEndsAt = appendPackageInterval × months` จาก now, ลิมิต/เมนู/งบ AI ตาม snapshot, ใบเสร็จ = ~~โควตาต่อเดือน (LEGACY_MONTH)~~ *(แทนโดย D-P3-4: PAID_GRANTS เหมือนแพ็กเกจจ่ายเงินทุกแบบ — `receiptAllowance = monthlySlipLimit × months` ผ่าน `grantPaidPackageReceipts` หมดอายุพร้อมดีล)*, `billingReceiptAccountId` ~~**ไม่ตั้ง**~~ *(แทนโดย D-P3-4: `grantPaidPackageReceipts` ตั้งให้เสมอ ซึ่งเป็นสิ่งที่ `billingPurchaseSource` ใช้จำแนกสัญญาที่จ่ายแล้ว)* → source แสดงเป็น `DEAL` (D-P3-6: อ่านจาก `quoteSnapshot.deal` ของ attempt ที่เป็นสัญญาปัจจุบัน) ; re-enable บริษัทถ้า `termDisabledAt`
-- R7 **ชำระด้วยโอน+สลิป** *(เลื่อนไป Phase 4 — §19.2/Q9)*: ตาม special-invoice spec (endpoint สลิปใต้ `package-change-requests`, ตรวจไวรัส, แอดมิน verify ด้วยรหัสผ่าน → apply เดียวกับ R6); ไม่มีสิทธิ์ก่อน verify
+- R7 *(ยกเลิกโดย Owner 2026-09-21: ลูกค้าชำระผ่าน Stripe (บัตร/PromptPay) เท่านั้น ไม่มีโอน+สลิป)* **ชำระด้วยโอน+สลิป** *(เลื่อนไป Phase 4 — §19.2/Q9)*: ตาม special-invoice spec (endpoint สลิปใต้ `package-change-requests`, ตรวจไวรัส, แอดมิน verify ด้วยรหัสผ่าน → apply เดียวกับ R6); ไม่มีสิทธิ์ก่อน verify
 - R8 **ไม่มีสิทธิ์ก่อนจ่าย** ทุกช่องทาง; การ์ดข้อเสนอเป็นแค่ข้อมูล; ร้านยังล็อกจน APPLIED
 - R9 **Checkout ของดีลไม่ผูก BillingAccount/subscription เดิม** *(แก้ไขโดย §19.3)*: สร้าง BillingAccount ถ้ายังไม่มี (customer Stripe เดิม/ใหม่), ไม่แตะ `baseSubscriptionId`; ร้านที่มี subscription catalog อยู่แล้วรับดีลไม่ได้ (`CONTROL_DEAL_SUBSCRIPTION_ACTIVE`) ต้องยกเลิกต่ออายุก่อน (เตือนเซลล์ตอนสร้าง)
 - R10 **หน้าแพ็กเกจ**: การ์ดข้อเสนอเป็นการ์ดแรกก่อน catalog; catalog ยังเลือกได้; "แพ็กเกจปัจจุบัน" ของร้านล็อกแสดง "ยังไม่มีแพ็กเกจ · เลือกแพ็กเกจเพื่อเริ่มใช้งาน" ไม่ใช่ "ไม่จำกัด"; public catalog/BFF/marketing ไม่เปลี่ยน
@@ -330,7 +331,7 @@ unit (สถานะดีล, snapshot, quoteTotals, ladder-less validation, l
 |---|---|---|---|
 | Q7 | ร้านที่มี subscription บัตรอัตโนมัติรับดีล: ระบบคิดส่วนต่างให้ (D5 เดิม) หรือไม่คิดในระบบ | **ไม่มี proration ในระบบ**: ยกเลิก subscription ทันทีเมื่อจ่ายดีล, ฟอร์มดีลโชว์มูลค่าคงเหลือให้เซลล์หักเอง (ราคาดีลเป็นราคาใดก็ได้อยู่แล้ว) — งานอยู่ Phase 4 | D5 เดิม: ระบบคำนวณส่วนต่างและเก็บเฉพาะส่วนต่าง (โค้ด proration + quote 3 ตัวเลข + ความเสี่ยงเถียงยอด) |
 | Q8 | ดีลต่ออายุอัตโนมัติ (Phase 5) รองรับ QR ออกบิลทุกงวดด้วยไหม | **รองรับ** (กลไกเดียวกับบัตร: Price ของดีล + `bindPromptPayRenewal`) | บัตรเท่านั้น (ตามคำเดิมของ D7) |
-| Q9 | โอน+สลิป | **เลื่อนไป Phase 4** เป็นทางสำรอง (เมื่อ gate ปิด/ยอดเกินเพดาน) | คงใน Phase 3 / ตัดทิ้ง |
+| Q9 | โอน+สลิป | **ยกเลิก — ถอดออกแล้ว** (มติ Owner 2026-09-21: ชำระผ่าน Stripe บัตร/PromptPay เท่านั้น เพื่อกันทุจริต) | ~~เลื่อนไป Phase 4 เป็นทางสำรอง~~ |
 
 ### 19.6 มติก่อนเริ่ม Phase 3 (controller, 2026-09-21 — จากการอ่านโค้ดเส้นทางครั้งเดียวของ #667)
 
@@ -367,7 +368,7 @@ unit (สถานะดีล, snapshot, quoteTotals, ladder-less validation, l
 | R-P4-1 | ตัวกันโกง "IP ซ้ำ" (§17.1) ยังไม่ทำ — ระบบไม่เก็บ IP ตอนสมัคร (ใช้แค่ rate limit ใน Redis); ใช้ LINE userId / เบอร์ / อีเมล ของเจ้าของร้านเทียบกับบัญชีเซลและร้านที่นับแล้ว | `CompanySignupRequest` ไม่มีคอลัมน์ IP; `trustedClientIp` ใช้เฉพาะ rate limit |
 | R-P4-2 | แถวยอด (`SalesAttribution`) ที่ถูกธง (self_referral / repeat_owner / referral_anomaly) ไม่นับในยอดจนกว่า Owner จะตรวจใน admin console ("คงไว้"/"ตัดออก" พร้อมเหตุผล, audit) | ป้องกันเถียงยอด (มติ D6) |
 | R-P4-3 | sweep ของดีล (หมดอายุ/ต่ออายุ) และสรุปรายวันของทีมขายรันจาก worker ใหม่ (ทุก 15 นาที / 07:00 กรุงเทพ) — Phase 2 เปิด endpoint ไว้แต่ยังไม่มี worker เรียก | ไม่มี job ใน `apps/workers` สำหรับ sales |
-| R-P4-4 | สลิป: ตรวจไวรัสผ่านทางอัปโหลดไฟล์เดิม, ยืนยันโดย SYSTEM_ADMIN ด้วยรหัสผ่านซ้ำ (proof ของหน้า billing) แล้ว apply สิทธิ์ดีลด้วยตัวเดียวกับเส้นทาง Stripe (ไม่มี invoice → `sourceInvoiceId` ว่าง, `paymentState SLIP_VERIFIED`); ระหว่างรอตรวจ ดีลไม่หมดอายุ; ปฏิเสธ = กลับเป็นอนุมัติแล้วและยืดวันหมดอายุเท่าเวลาที่รอ | ต่อยอด special-invoice spec เดิมบนโค้ดปัจจุบัน |
+| R-P4-4 | **ยกเลิก — ถอดออกแล้ว** (มติ Owner 2026-09-21) ~~สลิป: ตรวจไวรัสผ่านทางอัปโหลดไฟล์เดิม, ยืนยันโดย SYSTEM_ADMIN ด้วยรหัสผ่านซ้ำ (proof ของหน้า billing) แล้ว apply สิทธิ์ดีลด้วยตัวเดียวกับเส้นทาง Stripe (ไม่มี invoice → `sourceInvoiceId` ว่าง, `paymentState SLIP_VERIFIED`); ระหว่างรอตรวจ ดีลไม่หมดอายุ; ปฏิเสธ = กลับเป็นอนุมัติแล้วและยืดวันหมดอายุเท่าเวลาที่รอ~~ | ต่อยอด special-invoice spec เดิมบนโค้ดปัจจุบัน |
 | R-P4-5 | แปลง subscription (Q7 ค่าเริ่มต้น): ยกเลิก subscription เดิมทันทีก่อน apply ดีล (journal/observed, ไม่มี proration), บิล QR ค้างถูก void, เหตุการณ์ของ subscription ที่ยกเลิกแล้วถูกรับรู้เป็น no-op ไม่ hold บัญชี; ยกเลิกไม่สำเร็จ → invoice HELD + issue `DEAL_SUBSCRIPTION_CANCEL_PENDING` แล้ว retry | `reconcileOneTime` hold ทุกรายการที่มี subscription ใช้งานอยู่ (S34) |
 
 ### 19.9 มติก่อนเริ่ม Phase 5 (controller, 2026-09-21 — ดีลต่ออายุอัตโนมัติ)

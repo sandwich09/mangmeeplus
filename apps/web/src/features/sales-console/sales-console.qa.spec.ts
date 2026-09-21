@@ -13,7 +13,7 @@ import { join } from 'node:path';
 
 const PAGES = [
   'SalesCompaniesPage.tsx', 'SalesConsoleParts.tsx', 'SalesDealFormPage.tsx', 'SalesDealsPage.tsx',
-  'SalesMyWorkPage.tsx', 'SalesReportsPage.tsx', 'SalesSlipsPage.tsx', 'SalesTeamPage.tsx',
+  'SalesMyWorkPage.tsx', 'SalesReportsPage.tsx', 'SalesTeamPage.tsx',
 ];
 
 const SHELL = join(__dirname, '../../common/components/app-shell/SalesHeader.tsx');
@@ -126,14 +126,6 @@ describe('sales console theme and copy', () => {
         page,
       );
     }
-  });
-
-  it('confirming a bank transfer takes the password proof in the same box as the action (Q9)', () => {
-    const text = source('SalesSlipsPage.tsx');
-    // Opening a paid term off a photo of a slip is a reviewed operation. Proving first and acting
-    // second is the whole guard: a refused password must never leave a half-verified deal.
-    assert.match(text, /if \(decision\.action === 'verify'\) await reauthenticateBillingAdmin\(password\)/);
-    assert.match(text, /disabled=\{busy \|\| !reason\.trim\(\) \|\| \(decision\?\.action === 'verify' && !password\)\}/);
   });
 
   it('the report never links to a financial document (§B)', () => {

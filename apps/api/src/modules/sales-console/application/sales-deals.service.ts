@@ -44,7 +44,6 @@ import {
   DEAL_KIND,
   derivedDealStatus,
   EDITABLE_DEAL_STATUSES,
-  dealSlipState,
   offerExpiryFrom,
   overLimitCounts,
   requireReason,
@@ -52,7 +51,7 @@ import {
   SalesSnapshotError,
 } from '../domain/sales-deal.logic';
 import { SalesCompanySearchService } from './sales-company-search.service';
-import { canSeeAllDeals, isSystemAdmin, salesBadRequest, salesError, salesForbidden, salesNotFound } from './sales-context';
+import { canSeeAllDeals, salesBadRequest, salesError, salesForbidden, salesNotFound } from './sales-context';
 
 /**
  * Either partial index on PackageChangeRequest is keyed on `companyId` alone, so a unique
@@ -73,7 +72,7 @@ type DealRow = {
   verifiedAt: Date | null; decidedAt: Date | null;
   approvedByUserId: string | null; approvedAt: Date | null; selfApproved: boolean;
   offerExpiresAt: Date | null; rejectedReason: string | null; createdAt: Date; updatedAt: Date;
-  renewalOfRequestId: string | null; slipSubmittedAt: Date | null;
+  renewalOfRequestId: string | null;
   priceState: string | null; returnAt: Date | null;
 };
 
@@ -83,7 +82,7 @@ const DEAL_SELECT = {
   verifiedAt: true, decidedAt: true,
   approvedByUserId: true, approvedAt: true, selfApproved: true,
   offerExpiresAt: true, rejectedReason: true, createdAt: true, updatedAt: true,
-  renewalOfRequestId: true, slipSubmittedAt: true,
+  renewalOfRequestId: true,
   priceState: true, returnAt: true,
 } as const;
 
@@ -139,7 +138,6 @@ export class SalesDealsService {
    */
   async myWork(ctx: RequestContext): Promise<SalesMyWorkDto> {
     const lead = canSeeAllDeals(ctx);
-    const admin = isSystemAdmin(ctx);
     const rows = await this.prisma.client.packageChangeRequest.findMany({
       where: {
         kind: DEAL_KIND,
@@ -147,8 +145,6 @@ export class SalesDealsService {
           ...(lead ? [{ status: 'PENDING_APPROVAL' },
             // D-P5-6: every deal about to go back to the catalog price is the lead's queue too.
             { status: 'APPLIED', returnAt: { not: null } }] : []),
-          // Q9: only the Owner can confirm a transfer, so only the Owner is shown the queue.
-          ...(admin ? [{ paymentState: 'SLIP_PENDING' }] : []),
           { salesUserId: ctx.userId, status: { in: ['REJECTED', 'APPROVED', 'APPLIED'] } },
           { salesUserId: ctx.userId, status: 'CANCELLED', paymentState: 'CATALOG_SUPERSEDED' },
         ],
@@ -166,12 +162,10 @@ export class SalesDealsService {
     }));
     // The lead's queue comes first, then their own deals (spec Q6).
     items.sort((a, b) => Number(b.kind === 'APPROVAL_PENDING') - Number(a.kind === 'APPROVAL_PENDING'));
-    const badge = items.filter((item) => item.kind === 'DEAL_SLIP_PENDING'
-      ? admin
-      : lead
-        ? item.kind === 'APPROVAL_PENDING'
-        // D3: a renewal sitting with the lead is the agent's own work item, not something to act on.
-        : item.kind === 'DEAL_REJECTED' || item.kind === 'DEAL_EXPIRED' || item.kind === 'DEAL_ENDING').length;
+    const badge = items.filter((item) => lead
+      ? item.kind === 'APPROVAL_PENDING'
+      // D3: a renewal sitting with the lead is the agent's own work item, not something to act on.
+      : item.kind === 'DEAL_REJECTED' || item.kind === 'DEAL_EXPIRED' || item.kind === 'DEAL_ENDING').length;
     return { items, badge };
   }
 
@@ -318,9 +312,7 @@ export class SalesDealsService {
    */
   async expireSweep(now = new Date()): Promise<{ expired: number }> {
     const due = await this.prisma.client.packageChangeRequest.findMany({
-      // Q9: a customer who has attached a slip has answered the offer. The window is frozen until
-      // the Owner verifies or rejects it — a reject extends `offerExpiresAt` by the review time.
-      where: { kind: DEAL_KIND, status: 'APPROVED', offerExpiresAt: { lt: now }, paymentState: { not: 'SLIP_PENDING' } },
+      where: { kind: DEAL_KIND, status: 'APPROVED', offerExpiresAt: { lt: now } },
       select: { id: true, companyId: true, version: true, salesUserId: true },
       take: 500,
     });
@@ -587,7 +579,6 @@ export class SalesDealsService {
         offerExpiresAt: row.offerExpiresAt?.toISOString() ?? null,
         rejectedReason: row.rejectedReason,
         renewalOfRequestId: row.renewalOfRequestId,
-        slipState: dealSlipState(row.paymentState, row.slipSubmittedAt),
         conversionOf: conversionMode(subscriptionByCompany.get(row.companyId)),
         // D-P5-1: read through `autoRenewOf`, so a Phase 3 (v2) row answers `false` rather than
         // handing the console three `undefined`s to guess at.
@@ -626,8 +617,6 @@ function catalogPriceFor(snapshot: SalesDealSnapshot | null): number {
 export function workKind(deal: Pick<SalesDealView, 'status' | 'renewalOfRequestId' | 'returnAt'>,
   viewer: { own: boolean; lead: boolean; paymentState: string; now?: Date }): SalesMyWorkKind {
   const { own, lead, paymentState } = viewer;
-  // A slip waiting for the Owner outranks everything: the customer has already paid.
-  if (paymentState === 'SLIP_PENDING') return 'DEAL_SLIP_PENDING';
   // D-P5-6: an auto deal inside its last 14 days is the team's cue to write the next offer — it
   // outranks "APPLIED", which is the same row simply still running.
   if (deal.status === 'APPLIED' && deal.returnAt &&

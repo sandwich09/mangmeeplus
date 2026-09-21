@@ -3684,10 +3684,6 @@ model PackageChangeRequest {
   renewalOfRequestId String?
   /// Phase 4: when the 7-days-left reminder went out, so it goes out exactly once.
   renewalRemindedAt DateTime?
-  /// Q9 slip fallback: when the customer attached the transfer slip (paymentState 'SLIP_PENDING').
-  slipSubmittedAt   DateTime?
-  /// Q9 slip fallback: the SYSTEM_ADMIN who confirmed or rejected the slip.
-  verifiedByUserId  String?
   /// D-P5-3 (auto-renewing deals only): this shop's own recurring Stripe Price, created at
   /// approval and archived when the deal is cancelled, expires or returns to the catalog price.
   stripePriceId     String?
@@ -3763,11 +3759,7 @@ model SalesAttribution {
   paidAt          DateTime
   refundedSatang  Int      @default(0)
   /// BillingInvoice.id of the paid one-time invoice that created this row.
-  /// NULL when the money arrived as a bank transfer the Owner verified from a slip (Q9): there is
-  /// no Stripe invoice at all, and `sourceKind` says which of the two paid for the shop.
-  sourceInvoiceId String?
-  /// 'STRIPE' (default, an invoice exists) | 'SLIP' (verified bank transfer, Q9).
-  sourceKind      String   @default("STRIPE")
+  sourceInvoiceId String
   /// PackageChangeRequest.id of the deal, when `source` is 'DEAL'.
   dealRequestId   String?
   /// §17.1 anti-gaming: 'self_referral' | 'repeat_owner' | 'referral_anomaly'. A flagged row counts

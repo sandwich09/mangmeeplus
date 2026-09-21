@@ -16,8 +16,6 @@ import type {
   SalesDealView,
   SalesAttributionFlagListDto,
   SalesAttributionFlagReviewBody,
-  SalesDealSlipDecisionBody,
-  SalesDealSlipListDto,
   SalesMyWorkDto,
   SalesReferralUpdateBody,
   SalesReportSummary,
@@ -133,7 +131,7 @@ export function setCompanyReferral(companyId: string, body: SalesReferralUpdateB
   });
 }
 
-// ── Phase 4: report, anti-gaming flags, slip review ──
+// ── Phase 4: report and anti-gaming flags ──
 
 export function getSalesReportSummary(
   params: { from: string; to: string; teamLeadUserId?: string; salesUserId?: string },
@@ -157,31 +155,3 @@ export function reviewSalesAttributionFlag(companyId: string, body: SalesAttribu
   });
 }
 
-export function listSalesDealSlips(init?: { signal?: AbortSignal }): Promise<SalesDealSlipListDto> {
-  return apiFetch<SalesDealSlipListDto>('/v1/system/sales-deals/slips', { ...init, suppressErrorToast: true });
-}
-
-/** Short-lived inline URL for one slip. Every read is audited MEDIUM, so it is only ever a tap. */
-export function getSalesDealSlipUrl(dealId: string): Promise<{ downloadUrl: string; expiresAt: string }> {
-  return apiFetch<{ downloadUrl: string; expiresAt: string }>(`/v1/system/sales-deals/${encodeURIComponent(dealId)}/slip-url`, { suppressErrorToast: true });
-}
-
-/** Both decisions answer with the refreshed queue, so the page never needs a second read. */
-export function decideSalesDealSlip(
-  dealId: string, action: 'verify' | 'reject', body: SalesDealSlipDecisionBody,
-): Promise<SalesDealSlipListDto> {
-  return apiFetch<SalesDealSlipListDto>(`/v1/system/sales-deals/${encodeURIComponent(dealId)}/${action}`, {
-    method: 'POST', body: JSON.stringify(body), suppressErrorToast: true,
-  });
-}
-
-/**
- * The billing admin's password proof, reused verbatim: `verify` applies a paid term, and its
- * transaction calls `requireProof` — a proof no older than five minutes, taken here first so a
- * refused password never leaves a half-verified deal.
- */
-export function reauthenticateBillingAdmin(password: string): Promise<{ reauthenticatedUntil: string }> {
-  return apiFetch<{ reauthenticatedUntil: string }>('/v1/system/billing/reauthenticate', {
-    method: 'POST', body: JSON.stringify({ password }), suppressErrorToast: true,
-  });
-}

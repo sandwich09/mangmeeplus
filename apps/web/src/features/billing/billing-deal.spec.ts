@@ -1,6 +1,6 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
-import { billingDeal, billingQuoteDeal, dealAiCreditText, dealConfirmText, dealMenuLabels, dealRenewalText, dealSlip, slipBankAccount } from './billing-deal';
+import { billingDeal, billingQuoteDeal, dealAiCreditText, dealConfirmText, dealMenuLabels, dealRenewalText } from './billing-deal';
 
 const offer = (over: Record<string, unknown> = {}) => ({
   deal: {
@@ -59,43 +59,6 @@ it('names the menus and the AI credit the customer is buying', () => {
 });
 
 
-it('holds the deal card while a bank slip is being checked, and re-opens it on a refusal (Q9)', () => {
-  // Nothing sent yet: the shop may pay online or transfer, and neither is blocked.
-  const fresh = dealSlip({});
-  assert.equal(fresh.state, null);
-  assert.equal(fresh.blocksPayment, false);
-  assert.equal(fresh.canUpload, true);
-
-  // Sent: one deal must not be paid twice, so every pay control goes away until a person answers.
-  const pending = dealSlip({ slipState: 'PENDING' });
-  assert.equal(pending.blocksPayment, true);
-  assert.equal(pending.canUpload, false);
-  assert.match(pending.message!, /รอทีมงานตรวจ/);
-  assert.equal(dealSlip({ slipState: 'VERIFIED' }).blocksPayment, true);
-
-  // Refused: the reviewer's words are the only way the shop learns what to fix, and it may retry.
-  const rejected = dealSlip({ slipState: 'REJECTED', slipRejectedReason: 'ยอดไม่ตรง' });
-  assert.equal(rejected.canUpload, true);
-  assert.equal(rejected.blocksPayment, false);
-  assert.equal(rejected.reason, 'ยอดไม่ตรง');
-  // A reason only ever belongs to a refusal — never carried over onto a pending slip.
-  assert.equal(dealSlip({ slipState: 'PENDING', slipRejectedReason: 'เก่า' }).reason, null);
-  assert.equal(dealSlip({ slipState: 'SOMETHING_NEW' }).state, null);
-});
-
-it('shows bank details only once the Owner has replaced the masked placeholder', () => {
-  const real = { bankName: 'กสิกรไทย', accountName: 'บจก. มั่งมี', accountNumber: '123-4-56789-0', note: 'โอนแล้วแนบสลิป' };
-  assert.deepEqual(slipBankAccount(real), real);
-  // The contract ships `xxx-x-xxxxx-x` until the Owner fills it in. Showing that to somebody about
-  // to transfer money is a support call, so it reads as "no account" and the panel says to call.
-  assert.equal(slipBankAccount({ ...real, accountNumber: 'xxx-x-xxxxx-x' }), null);
-  assert.equal(slipBankAccount({ ...real, accountNumber: '' }), null);
-  // The shipped constant is the default argument, so this asserts what production renders today:
-  // the Owner has now filled the account in, so the transfer route is offered rather than a phone
-  // number. Put a mask back into the contract and the assertions above take over again.
-  assert.notEqual(slipBankAccount(), null);
-  assert.match(slipBankAccount()!.accountNumber, /^[\d\s-]+$/);
-});
 
 it('sells an auto-renewing deal with the renewing modes only, and a one-time deal with neither (D-P5-4)', () => {
   const auto = offer({ autoRenew: true, cadence: 'month', cycles: 12, purchaseModes: ['CARD_AUTO', 'PROMPTPAY_RENEW', 'CARD_ONCE'] });

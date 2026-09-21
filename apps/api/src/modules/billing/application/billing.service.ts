@@ -43,7 +43,7 @@ import { billingPurchaseSource, initialPurchaseSource } from './billing-purchase
 import type { BillingPurchaseSource } from '@watchdog-bms/contracts';
 import { billingFeaturePlan, type BillingFeaturePlan } from './billing-feature-entitlements';
 import { assertDealOfferUnchanged, assertDealSnapshot, dealOffer, dealPurchaseModes, dealSnapshot, dealSnapshotHash, type DealSource } from '../domain/deal-offer';
-import { autoRenewOf, DEAL_KIND, dealSlipState } from '../../sales-console/domain/sales-deal.logic';
+import { autoRenewOf, DEAL_KIND } from '../../sales-console/domain/sales-deal.logic';
 
 /** D-P5-6: the future contract a `SCHEDULE_PRICE_RETURN` writes. The invoice that applies it puts
  *  the shop back on the tier's default menus, AI credit and limits (Q1) even though it is a RENEWAL. */
@@ -726,16 +726,12 @@ export class BillingService {
       // A stored offer that no longer parses must not break the status page; the card stays away.
       try {
         const offer = dealSnapshot(dealRow.offerSnapshotJson), auto = autoRenewOf(offer);
-        // Q9: a slip the Owner is still looking at has already answered the offer. Showing pay
-        // buttons next to "รอทีมงานตรวจสลิป" is how a shop pays twice for one deal.
-        const slipState = dealSlipState(dealRow.paymentState, dealRow.slipSubmittedAt);
         deal = { dealId: dealRow.id, base: offer.base, baseLabel: billingOffer(offer.base, auto.cadence ?? 'month').label,
           priceSatang: offer.priceSatang, months: offer.months, offerExpiresAt: dealRow.offerExpiresAt.toISOString(),
-          autoRenew: auto.autoRenew, cadence: auto.cadence, cycles: auto.cycles, slipState,
-          slipRejectedReason: slipState === 'REJECTED' ? dealRow.rejectedReason : null,
+          autoRenew: auto.autoRenew, cadence: auto.cadence, cycles: auto.cycles,
           // D-P5-3: an auto deal whose Stripe Price is not READY cannot open a Checkout, so the
           // card offers nothing rather than a button whose quote answers SALES_DEAL_PRICE_PENDING.
-          purchaseModes: finalActions.includes('new_sales') && slipState !== 'PENDING' &&
+          purchaseModes: finalActions.includes('new_sales') &&
             (!auto.autoRenew || dealRow.priceState === 'READY') &&
             !(account?.baseSubscriptionId && account.paidThrough && account.paidThrough > new Date())
             ? dealPurchaseModes(settings?.gates ?? {}, offer) : [],

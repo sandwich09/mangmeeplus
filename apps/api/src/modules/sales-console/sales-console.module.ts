@@ -11,12 +11,9 @@ import { SalesDealsService } from './application/sales-deals.service';
 import { SalesReferralService } from './application/sales-referral.service';
 import { SalesReportsService } from './application/sales-reports.service';
 import { SalesRenewalService } from './application/sales-renewal.service';
-import { SalesSlipService } from './application/sales-slip.service';
 import { SalesController } from './presentation/http/sales.controller';
 import { SalesInternalController } from './presentation/http/sales-internal.controller';
-import { CompanyDealSlipController } from './presentation/http/company-deal-slip.controller';
 import { SystemSalesAgentsController, SystemSalesAttributionController, SystemSalesReferralController } from './presentation/http/system-sales-agents.controller';
-import { SystemSalesSlipsController } from './presentation/http/system-sales-slips.controller';
 
 /**
  * Sales console (spec §8 "module ใหม่ sales-console").
@@ -35,12 +32,10 @@ import { SystemSalesSlipsController } from './presentation/http/system-sales-sli
     SystemSalesAgentsController,
     SystemSalesAttributionController,
     SystemSalesReferralController,
-    SystemSalesSlipsController,
-    CompanyDealSlipController,
     SalesInternalController,
   ],
   providers: [SalesAgentsService, SalesCompanySearchService, SalesDealsService, SalesReferralService,
-    SalesReportsService, SalesRenewalService, SalesSlipService],
+    SalesReportsService, SalesRenewalService],
   exports: [SalesReferralService, SalesDealsService],
 })
 export class SalesConsoleModule {}

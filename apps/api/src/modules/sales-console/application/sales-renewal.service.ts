@@ -22,7 +22,6 @@ import { PLATFORM_TENANT_ID, SALES_LEAD_ROLE } from './sales-context';
 /** Trigger keys — must also be listed in IMPLEMENTED_TRIGGER_KEYS or LINE delivery is suppressed. */
 export const SALES_RENEWAL_PENDING_TRIGGER = 'sales_deal_renewal_pending';
 export const SALES_RENEWAL_OVERDUE_TRIGGER = 'sales_deal_renewal_overdue';
-export const SALES_SLIP_PENDING_TRIGGER = 'sales_deal_slip_pending';
 export const SALES_DAILY_DIGEST_TRIGGER = 'sales_daily_digest';
 /** D-P5-6: the shop OWNER and the sales team, 14 days before the catalog price comes back. */
 export const SALES_DEAL_ENDING_TRIGGER = 'sales_deal_ending';
@@ -251,25 +250,6 @@ export class SalesRenewalService {
     }, tx);
   }
 
-  /** Q9: a customer transfer is waiting. Only the Owner can confirm one, so only they are told. */
-  async notifySlipPending(dealId: string): Promise<void> {
-    await this.prisma.client.$transaction(async (tx) => {
-      const admins = await tx.companyMembership.findMany({
-        where: { companyId: PLATFORM_TENANT_ID, status: 'ACTIVE', roles: { some: { role: { key: 'SYSTEM_ADMIN' } } } },
-        select: { userId: true },
-      });
-      if (admins.length === 0) return;
-      await this.notifications.executeInTransaction({
-        companyId: PLATFORM_TENANT_ID, triggerKey: SALES_SLIP_PENDING_TRIGGER, sourceModule: 'sales_console',
-        sourceType: 'package_change_request', sourceId: dealId, severity: 'warning',
-        title: 'มีสลิปโอนเงินรอตรวจสอบ',
-        body: 'ลูกค้าแจ้งโอนเงินตามข้อเสนอพิเศษ ตรวจสลิปและยืนยันเพื่อเปิดใช้งานให้ร้าน',
-        deepLinkHref: '/system/sales-slips',
-        recipientUserIds: admins.map((admin) => admin.userId), periodKey: dealId,
-      }, tx);
-    });
-  }
-
   // ── §17.2 daily digest (console only — no LINE, no email) ────────────────────────────
 
   /**
@@ -280,14 +260,13 @@ export class SalesRenewalService {
     const periodKey = bangkokDateKey(new Date(now.getTime() - DAY_MS));
     const dayStart = new Date(`${periodKey}T00:00:00+07:00`);
     const dayEnd = new Date(dayStart.getTime() + DAY_MS);
-    const [attributions, flagged, renewalsPending, renewalsOverdue, slipsPending, admins] = await Promise.all([
+    const [attributions, flagged, renewalsPending, renewalsOverdue, admins] = await Promise.all([
       this.prisma.client.salesAttribution.findMany({ where: { createdAt: { gte: dayStart, lt: dayEnd } },
         select: { source: true, amountSatang: true } }),
       this.prisma.client.salesAttribution.count({ where: { flaggedAt: { gte: dayStart, lt: dayEnd } } }),
       this.prisma.client.packageChangeRequest.count({ where: { kind: DEAL_KIND, status: 'PENDING_APPROVAL', renewalOfRequestId: { not: null } } }),
       this.prisma.client.packageChangeRequest.count({ where: { kind: DEAL_KIND, status: 'PENDING_APPROVAL',
         renewalOfRequestId: { not: null }, renewalRemindedAt: { not: null } } }),
-      this.prisma.client.packageChangeRequest.count({ where: { kind: DEAL_KIND, paymentState: 'SLIP_PENDING' } }),
       this.prisma.client.companyMembership.findMany({ where: { status: 'ACTIVE', roles: { some: { role: { key: 'SYSTEM_ADMIN' } } } },
         select: { companyId: true, userId: true } }),
     ]);
@@ -295,7 +274,7 @@ export class SalesRenewalService {
       deals: attributions.filter((row) => row.source === 'DEAL').length,
       referrals: attributions.filter((row) => row.source === 'REFERRAL').length,
       amountSatang: attributions.reduce((sum, row) => sum + row.amountSatang, 0),
-      flagged, renewalsPending, renewalsOverdue, slipsPending,
+      flagged, renewalsPending, renewalsOverdue,
     });
     const byCompany = new Map<string, string[]>();
     for (const admin of admins) byCompany.set(admin.companyId, [...(byCompany.get(admin.companyId) ?? []), admin.userId]);
@@ -320,13 +299,12 @@ export class SalesRenewalService {
  * agent, because this text reaches a dashboard and a notification list (S24).
  */
 export function digestBodyTh(counts: { deals: number; referrals: number; amountSatang: number; flagged: number;
-  renewalsPending: number; renewalsOverdue: number; slipsPending: number }): string {
+  renewalsPending: number; renewalsOverdue: number }): string {
   const baht = (counts.amountSatang / 100).toLocaleString('th-TH', { maximumFractionDigits: 2 });
   return [
     `ร้านเปิดใหม่เมื่อวาน ${counts.deals + counts.referrals} ร้าน (ดีล ${counts.deals} · แนะนำ ${counts.referrals}) รวม ${baht} บาท`,
     `รายการที่ต้องตรวจ ${counts.flagged} รายการ`,
     `ข้อเสนอต่ออายุรออนุมัติ ${counts.renewalsPending} รายการ (เลยกำหนดเตือน ${counts.renewalsOverdue})`,
-    `สลิปรอตรวจ ${counts.slipsPending} รายการ`,
   ].join(' · ');
 }
 

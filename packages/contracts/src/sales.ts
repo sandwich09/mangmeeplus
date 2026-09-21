@@ -102,13 +102,6 @@ export type SalesCompanySearchDto = { items: SalesCompanySearchItem[] };
 export const SALES_COMPANY_SEARCH_MIN_CHARS = 2;
 export const SALES_COMPANY_SEARCH_LIMIT = 20;
 
-/**
- * Q9 — where a deal stands on the bank-transfer fallback. `NONE` is every deal that was never
- * paid by slip, including one paid through Stripe.
- */
-export const SALES_DEAL_SLIP_STATES = ['NONE', 'PENDING', 'VERIFIED', 'REJECTED'] as const;
-export type SalesDealSlipState = typeof SALES_DEAL_SLIP_STATES[number];
-
 export type SalesDealView = {
   id: string; status: SalesDealStatus; version: number;
   company: SalesCompanySearchItem;
@@ -124,8 +117,6 @@ export type SalesDealView = {
   offerExpiresAt: string | null; rejectedReason: string | null;
   /** D3: the APPLIED deal this renewal offer was cloned from, so the console can say "ต่ออายุจาก". */
   renewalOfRequestId: string | null;
-  /** Q9 bank-transfer fallback. */
-  slipState: SalesDealSlipState;
   /** Q7: the renewal mode of the live subscription this deal will cancel when it is paid, if any. */
   conversionOf: 'CARD_AUTO' | 'PROMPTPAY_RENEW' | null;
   /**
@@ -174,8 +165,6 @@ export type SalesAgentCreateResult = { agent: SalesAgentView; credential: SalesA
 export type SalesMyWorkKind = 'APPROVAL_PENDING' | 'DEAL_REJECTED' | 'DEAL_EXPIRED' | 'DEAL_APPROVED_WAITING' | 'DEAL_APPLIED' | 'DEAL_SUPERSEDED'
   /** D3: the agent's own renewal offer is sitting with the lead. */
   | 'DEAL_RENEWAL_PENDING'
-  /** Q9: a customer's transfer slip is waiting for the Owner to confirm it (SYSTEM_ADMIN only). */
-  | 'DEAL_SLIP_PENDING'
   /** D-P5-6: this auto-renewing deal goes back to the catalog price within 14 days. */
   | 'DEAL_ENDING';
 export type SalesMyWorkItem = { kind: SalesMyWorkKind; deal: SalesDealView; at: string };
@@ -189,14 +178,10 @@ export type PackageChangeDealOffer = {
   aiMonthlyBudgetSatang: number | null; description: string; offerExpiresAt: string;
   /** D-P5-1: "ตัดบัตร/ออกบิลทุกเดือน(ปี) ที่ราคานี้" instead of "จ่ายครั้งเดียว". */
   autoRenew?: boolean; cadence?: SalesDealCadence | null; cycles?: number | null;
-  /** Q9: `PENDING` replaces the pay buttons with "รอทีมงานตรวจสลิป"; `REJECTED` lets them retry. */
-  slipState: SalesDealSlipState;
-  /** Why the team turned the slip down — the only slip text a customer ever reads. */
-  slipRejectedReason?: string;
 };
 export type PackageChangeRequestKind = 'CUSTOMER_REQUEST' | 'SALES_DEAL' | 'SPECIAL_INVOICE';
 
-// ── Phase 4: reports, anti-gaming flags, bank-transfer fallback ─────────────────────────────
+// ── Phase 4: reports and anti-gaming flags ──────────────────────────────────────────────────
 
 /** §17.2: a shop is counted once, the first time it is paid for. `DEAL` beats `REFERRAL`. */
 export type SalesAttributionSource = 'DEAL' | 'REFERRAL';
@@ -239,40 +224,6 @@ export type SalesAttributionFlagListDto = { items: SalesAttributionFlagRow[] };
 /** `keep: true` = "ตัดออก" (the flag stands, the row keeps counting 0); false = "ยืนยันว่าไม่ผิดปกติ". */
 export type SalesAttributionFlagReviewBody = { keep: boolean; reason: string };
 
-/**
- * Q9 bank-transfer fallback — the account a customer is shown when they choose to transfer.
- *
- * ponytail: a constant, not a BillingPolicy column. There is no policy field for a bank account
- * today and one shop-independent account serves every deal; add the column when a second account
- * exists.
- */
-export const SALES_SLIP_BANK_ACCOUNT_TH = {
-  bankName: 'ธนาคารกสิกรไทย',
-  accountName: 'บจก. มั่งมียั่งยืน',
-  accountNumber: '237-2-48525-9',
-  note: 'โอนแล้วแนบสลิปในหน้านี้ ทีมงานตรวจและเปิดใช้งานให้ภายในวันทำการ',
-} as const;
-/** What the customer may attach as a transfer slip. Scanned by the normal attachment pipeline. */
-export const SALES_SLIP_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const;
-export const SALES_SLIP_TARGET_TYPE = 'package_change_request';
-export const SALES_SLIP_PURPOSE = 'payment_slip';
-
-export type SalesDealSlipUploadIntentBody = { originalFileName: string; mimeType: string; byteSize: number };
-export type SalesDealSlipUploadIntent = {
-  attachmentId: string; uploadUrl: string; uploadMethod: string;
-  uploadHeaders: Record<string, string>; expiresAt: string;
-};
-export type SalesDealSlipCompleteBody = { attachmentId: string; checksumSha256?: string };
-/** `GET /v1/system/sales-deals/slips` — deals whose customer says they transferred. */
-export type SalesDealSlipRow = {
-  dealId: string; companyId: string; companyName: string;
-  salesUserId: string; salesDisplayName: string;
-  amountSatang: number; months: number; baseLabel: string;
-  slipAttachmentId: string | null; submittedAt: string | null;
-};
-export type SalesDealSlipListDto = { items: SalesDealSlipRow[] };
-export type SalesDealSlipDecisionBody = { reason: string };
-
 export type SalesReferralSource = 'SIGNUP_CODE' | 'SIGNUP_LINK' | 'ADMIN';
 export const SALES_REFERRAL_ADMIN_WINDOW_DAYS = 30;
 /** SYSTEM_ADMIN referral repair, within the window and always with a reason (D6 anti-gaming). */
@@ -283,7 +234,7 @@ export const SALES_ERROR_CODES = ['SALES_DEAL_STATE_CONFLICT', 'SALES_DEAL_SELF_
   'SALES_AGENT_SUSPENDED', 'SALES_AGENT_NOT_FOUND', 'SALES_TEAM_LEAD_INVALID',
   'SALES_AGENT_USERNAME_TAKEN', 'SALES_REFERRAL_WINDOW_CLOSED',
   // Phase 4
-  'SALES_SLIP_STATE_CONFLICT', 'SALES_SLIP_REQUIRED', 'SALES_REPORT_RANGE_INVALID', 'SALES_FLAG_REVIEW_INVALID',
+  'SALES_REPORT_RANGE_INVALID', 'SALES_FLAG_REVIEW_INVALID',
   // Phase 5 (D-P5-3 / D-P5-6)
   'SALES_DEAL_PRICE_PENDING', 'SALES_DEAL_END_INVALID'] as const;
 export type SalesErrorCode = typeof SALES_ERROR_CODES[number];

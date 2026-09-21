@@ -17,8 +17,7 @@ import { billingApi, type BillingHistory } from './billing.api';
 import BillingCollectionPanel from './BillingCollectionPanel';
 import BillingCapacityPicker from './BillingCapacityPicker';
 import {billingMonthlyAllowanceText, billingBackControl, billingControl, billingPrimaryControl, billingPurchaseModeLabel, billingSupportReference} from './billing-display';
-import { billingDeal, billingQuoteDeal, dealAiCreditText, dealConfirmText, dealMenuLabels, dealRenewalText, dealSlip } from './billing-deal';
-import BillingDealSlipPanel from './BillingDealSlipPanel';
+import { billingDeal, billingQuoteDeal, dealAiCreditText, dealConfirmText, dealMenuLabels, dealRenewalText } from './billing-deal';
 import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog-bms/contracts';
 
 const money = (satang: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(satang / 100);
@@ -264,8 +263,6 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const deal = billingDeal(status);
   const dealModes = deal?.purchaseModes ?? [];
   const chosenDealMode = dealMode && dealModes.includes(dealMode) ? dealMode : dealModes[0];
-  // Q9: a slip in review holds the whole offer, so the card reads as "รอทีมงานตรวจ" and pays nothing.
-  const slipHoldsOffer = dealSlip(deal).blocksPayment;
   const dealQuote = billingQuoteDeal(quote);
   // D-P5-1: the quote's own ride-along carries no cadence, and the offer being confirmed is the one
   // still on the status — so the auto-renew wording comes from there, matched by id.
@@ -427,10 +424,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           <p>เครดิต AI: {dealAiCreditText(deal.aiMonthlyBudgetSatang)}</p>
           {deal.description && <p className="text-sm text-gray-600">{deal.description}</p>}
           <p className="text-sm text-gray-600">ใช้ได้ถึง {date(deal.offerExpiresAt)}</p>
-          {/* S37: both one-time gates closed means nobody can pay this offer online — Q9's transfer
-              fallback below is then the only way, so it is the primary button there. A slip already
-              under review hides every pay control, because one deal must not be paid twice. */}
-          {!slipHoldsOffer && chosenDealMode && <>
+          {/* S37: both one-time gates closed means nobody can pay this offer on the web today. */}
+          {!chosenDealMode ? <p role="status" className="rounded-xl bg-amber-50 p-4">ติดต่อทีมงานเพื่อชำระข้อเสนอนี้ โทร {PLAN_TERM_RENEW_PHONE}</p> : <>
             <fieldset className="space-y-2"><legend className="font-semibold">วิธีชำระข้อเสนอนี้</legend>
               {dealModes.map(mode => <label key={mode} className="flex min-h-11 items-center gap-3"><input type="radio" name="dealPurchaseMode" checked={chosenDealMode === mode}
                 onChange={() => { setDealMode(mode); setQuote(null); setCapacity(null); }} />{billingPurchaseModeLabel(mode)}</label>)}
@@ -441,8 +436,6 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
             <button className="mangmee-btn mangmee-btn-primary w-full" disabled={busy || !emailReady || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)} aria-busy={Boolean(busy)}
               onClick={() => action(async () => { await requestQuote(deal.base, deal.autoRenew && deal.cadence === 'year' ? 'year' : 'month', email, undefined, chosenDealMode, deal.dealId); })}>เลือกข้อเสนอนี้</button>
           </>}
-          <BillingDealSlipPanel companyId={companyId} deal={deal} amountLabel={money(deal.priceSatang)}
-            onSubmitted={() => { setQuote(null); setCapacity(null); setReload(value => value + 1); }} />
         </section>}
         {deal && <h3 className="text-lg font-bold">หรือเลือกแพ็กเกจปกติ</h3>}
         <fieldset className="space-y-2"><legend className="font-semibold">วิธีชำระและต่ออายุ</legend>

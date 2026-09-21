@@ -1,5 +1,5 @@
 import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity, type PlanTermLockReason } from './plan-term.js';
-import type { SalesDealBaseTier, SalesDealCadence, SalesDealSlipState } from './sales.js';
+import type { SalesDealBaseTier, SalesDealCadence } from './sales.js';
 import type { BillingCompanyProfile } from './billing-company-profile.js';
 
 export const STRIPE_API_VERSION = '2026-08-26.dahlia' as const;
@@ -156,10 +156,7 @@ export type BillingStatus = {
     featureKeys: string[]; aiMonthlyBudgetSatang: number | null; description: string;
     /** D-P5-1: the card says "ตัดบัตร/ออกบิลทุกเดือน(ปี) ที่ราคานี้" and `priceSatang` is per cycle.
      *  `cycles` is "N รอบ แล้วกลับราคาปกติ"; `null` on an until-revoked deal. */
-    autoRenew: boolean; cadence: SalesDealCadence | null; cycles: number | null;
-    /** Q9: `PENDING` empties `purchaseModes` and the card shows "รอทีมงานตรวจสลิป"; `REJECTED`
-     *  shows the reason and lets the shop pay again. */
-    slipState: SalesDealSlipState; slipRejectedReason: string | null };
+    autoRenew: boolean; cadence: SalesDealCadence | null; cycles: number | null };
   refundReviewPending?: boolean;
   accessState: 'ACTIVE' | 'EXPIRED' | 'HELD'; subscriptionState: string; documentState: 'NONE' | 'PENDING' | 'READY';
   /** R2: present only while `accessState` is EXPIRED — why the shop is locked, so the package page

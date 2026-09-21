@@ -19,7 +19,6 @@ import {
   type SalesDealBaseTier,
   type SalesDealCadence,
   type SalesDealSnapshot,
-  type SalesDealSlipState,
   type SalesDealStatus,
 } from '@watchdog-bms/contracts';
 
@@ -235,15 +234,4 @@ export function overLimitCounts(
     branches: Math.max(0, usage.branchCount - snapshot.branchLimit),
     employees: Math.max(0, usage.employeeCount - snapshot.employeeLimit),
   };
-}
-
-/**
- * Q9. `paymentState` is the single source: SLIP_PENDING while the Owner looks at it, SLIP_VERIFIED
- * once the deal is applied from it, SLIP_REJECTED after the team turns one down — which is what
- * tells the customer's card to offer a retry.
- */
-export function dealSlipState(paymentState: string, slipSubmittedAt: Date | null): SalesDealSlipState {
-  if (paymentState === 'SLIP_PENDING') return 'PENDING';
-  if (paymentState === 'SLIP_VERIFIED') return 'VERIFIED';
-  return slipSubmittedAt ? 'REJECTED' : 'NONE';
 }

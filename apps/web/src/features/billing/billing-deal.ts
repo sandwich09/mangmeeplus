@@ -1,4 +1,4 @@
-import { MENU_ENTITLEMENT_BINDINGS, SALES_SLIP_BANK_ACCOUNT_TH, type BillingPurchaseMode, type BillingStatus, type SalesDealSlipState } from '@watchdog-bms/contracts';
+import { MENU_ENTITLEMENT_BINDINGS, type BillingPurchaseMode, type BillingStatus } from '@watchdog-bms/contracts';
 
 /**
  * The sales team's ข้อเสนอพิเศษ on the customer's package page (spec §19.2 R10, §12 "หน้าแพ็กเกจ").
@@ -95,50 +95,3 @@ export function dealAiCreditText(satang: number | null | undefined): string {
   return `${(satang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท / เดือน`;
 }
 
-// ── Q9: transfer the money and attach the slip ──
-//
-// The fallback for a shop that cannot pay online — the card/PromptPay gates are closed, or the
-// amount is over what its banking app allows. A person at มั่งมี checks the slip by hand; nothing
-// here reads it, and none of it exists in LINE.
-//
-// The two slip fields are read structurally — the same narrow-read idiom the rest of this module
-// uses — so a status written before they existed simply shows the normal card.
-
-export type BillingDealSlipView = {
-  state: Exclude<SalesDealSlipState, 'NONE'> | null;
-  /** What the shop reads about its own transfer; null while it has sent nothing. */
-  message: string | null;
-  /** The reviewer's own words on a refusal — the only place the shop learns what to fix. */
-  reason: string | null;
-  /** A slip under review holds the offer: paying twice for one deal is the failure to prevent. */
-  blocksPayment: boolean;
-  canUpload: boolean;
-};
-
-const SLIP_COPY: Record<Exclude<SalesDealSlipState, 'NONE'>, Omit<BillingDealSlipView, 'state' | 'reason'>> = {
-  PENDING: { message: 'ส่งสลิปแล้ว รอทีมงานตรวจภายใน 1 วันทำการ', blocksPayment: true, canUpload: false },
-  VERIFIED: { message: 'ทีมงานตรวจสลิปแล้ว กำลังเปิดแพ็กเกจให้ร้านคุณ', blocksPayment: true, canUpload: false },
-  REJECTED: { message: 'ทีมงานตรวจแล้วยังยืนยันการโอนนี้ไม่ได้ แนบสลิปใหม่ได้เลย', blocksPayment: false, canUpload: true },
-};
-
-export function dealSlip(deal: unknown): BillingDealSlipView {
-  const row = (deal ?? {}) as { slipState?: unknown; slipRejectedReason?: unknown };
-  const state = row.slipState === 'PENDING' || row.slipState === 'VERIFIED' || row.slipState === 'REJECTED'
-    ? row.slipState : null;
-  const reason = typeof row.slipRejectedReason === 'string' && row.slipRejectedReason ? row.slipRejectedReason : null;
-  return state
-    ? { state, reason: state === 'REJECTED' ? reason : null, ...SLIP_COPY[state] }
-    : { state: null, message: null, reason: null, blocksPayment: false, canUpload: true };
-}
-
-export type SlipBankAccount = { bankName: string; accountName: string; accountNumber: string; note: string };
-
-/**
- * The account the shop transfers to, or null while the Owner has not filled one in. The contract
- * ships a masked placeholder on purpose, and showing `xxx-x-xxxxx-x` to somebody about to transfer
- * money is a support call — so an account number that still carries the mask is treated as absent
- * and the panel tells the shop to call instead.
- */
-export function slipBankAccount(account: SlipBankAccount = SALES_SLIP_BANK_ACCOUNT_TH): SlipBankAccount | null {
-  return /^[\d\s-]+$/.test(account.accountNumber) ? account : null;
-}

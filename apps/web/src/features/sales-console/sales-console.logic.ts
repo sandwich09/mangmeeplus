@@ -22,7 +22,6 @@ import {
   type SalesDealInput,
   type SalesDealPriceState,
   type SalesDealSnapshot,
-  type SalesDealSlipState,
   type SalesDealStatus,
   type SalesDealView,
   type SalesMyWorkItem,
@@ -444,7 +443,6 @@ const MY_WORK_META: Record<SalesMyWorkKind, { label: string; tone: MangmeeTone; 
   // D3/A: the sweep wrote the next term's offer 14 days out. The เซลล์ checks it before the
   // หัวหน้า approves, because the price and the limits are copied from a deal sold months ago.
   DEAL_RENEWAL_PENDING: { label: 'ข้อเสนอต่ออายุรออนุมัติ', tone: 'amber', note: 'ระบบสร้างข้อเสนอรอบถัดไปจากดีลเดิมให้แล้ว ตรวจราคาและสิทธิ์ก่อนหัวหน้าอนุมัติ', needsAction: true },
-  DEAL_SLIP_PENDING: { label: 'สลิปรอตรวจ', tone: 'amber', note: 'ลูกค้าแนบสลิปโอนเงินแล้ว รอผู้ดูแลระบบตรวจการโอน', needsAction: true },
   // D-P5-6: 14 days before the shop goes back to the catalog price. The เซลล์ is the one who calls
   // the shop, so it needs doing — เจ้าของร้าน gets the same notice in their own console and on LINE.
   DEAL_ENDING: { label: 'ดีลใกล้สิ้นสุด', tone: 'amber', note: 'ดีลจะสิ้นสุดใน 14 วัน แล้วร้านกลับไปใช้ราคาปกติและเมนู/เครดิต AI ค่าเริ่มต้นของแพ็กเกจ ติดต่อลูกค้าก่อนถึงวันนั้น', needsAction: true },
@@ -590,25 +588,18 @@ export function referralWindowOpen(createdAt: string | null | undefined, now: Da
   return elapsedDays >= 0 && elapsedDays <= SALES_REFERRAL_ADMIN_WINDOW_DAYS;
 }
 
-// ── Phase 4: renewal / conversion / slip, reports, anti-gaming flags ──
-
-const SLIP_BADGE: Record<Exclude<SalesDealSlipState, 'NONE'>, { label: string; tone: MangmeeTone }> = {
-  PENDING: { label: 'สลิปรอตรวจ', tone: 'amber' },
-  VERIFIED: { label: 'ตรวจสลิปแล้ว', tone: 'teal' },
-  REJECTED: { label: 'สลิปไม่ผ่าน', tone: 'danger' },
-};
+// ── Phase 4: renewal / conversion, reports, anti-gaming flags ──
 
 /**
  * What else is true about a deal besides its status: it charges every cycle (D-P5-1) and when that
  * stops (D-P5-6), whether its per-shop price is ready to be paid (D-P5-3), that it was written by
- * the renewal sweep (D3), that paying it cancels a live subscription (Q7/S34), or that its bank
- * slip is still being checked (Q9). Each one changes what the เซลล์ says to the shop, so they sit
- * beside the status badge.
+ * the renewal sweep (D3), or that paying it cancels a live subscription (Q7/S34). Each one changes
+ * what the เซลล์ says to the shop, so they sit beside the status badge.
  *
  * The Phase 5 three are optional so a partial row — a list item, a test double — still reads: a
  * deal written before Phase 5 carries none of them.
  */
-export type DealBadgeInput = Pick<SalesDealView, 'renewalOfRequestId' | 'conversionOf' | 'slipState'>
+export type DealBadgeInput = Pick<SalesDealView, 'renewalOfRequestId' | 'conversionOf'>
   & Partial<Pick<SalesDealView, 'snapshot' | 'returnAt' | 'priceState'>>;
 
 export function dealBadges(deal: DealBadgeInput): { label: string; tone: MangmeeTone }[] {
@@ -622,7 +613,6 @@ export function dealBadges(deal: DealBadgeInput): { label: string; tone: Mangmee
   if (deal.returnAt) badges.push({ label: `จบดีล ${formatThaiDate(deal.returnAt)}`, tone: 'amber' });
   if (deal.renewalOfRequestId) badges.push({ label: 'ต่ออายุจากดีลเดิม', tone: 'teal' });
   if (deal.conversionOf) badges.push({ label: 'แทนที่สมาชิกเดิม', tone: 'amber' });
-  if (deal.slipState && deal.slipState !== 'NONE') badges.push(SLIP_BADGE[deal.slipState]);
   return badges;
 }
 

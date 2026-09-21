@@ -25,9 +25,7 @@ export type SalesAttributionInput = {
   months: number | null;
   interval: string | null;
   paidAt: Date;
-  /** Null only for a verified bank-transfer slip (Q9), which has no Stripe invoice. */
-  sourceInvoiceId: string | null;
-  sourceKind?: 'STRIPE' | 'SLIP';
+  sourceInvoiceId: string;
   dealRequestId?: string | null;
 };
 
@@ -44,8 +42,7 @@ export async function writeSalesAttribution(tx: Prisma.TransactionClient, input:
     data: [{
       companyId: input.companyId, salesUserId: input.salesUserId, source: input.source,
       amountSatang: input.amountSatang, months: input.months, interval: input.interval, paidAt: input.paidAt,
-      sourceInvoiceId: input.sourceInvoiceId, sourceKind: input.sourceKind ?? 'STRIPE',
-      dealRequestId: input.dealRequestId ?? null,
+      sourceInvoiceId: input.sourceInvoiceId, dealRequestId: input.dealRequestId ?? null,
       flags, ...(flags.length > 0 ? { flaggedAt: new Date() } : {}),
     }],
     skipDuplicates: true,

@@ -1,10 +1,7 @@
 'use client';
 import type { BillingEmailRecipient, BillingEmailRecipientOperation, BillingCatalog, BillingQuote, BillingStatus, BillingCheckoutBody, BillingCheckoutResult, BillingInvoiceItem, BillingAttemptView, BillingCollectionAction, BillingCollectionOperation, BillingPurchaseMode } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
-import { SALES_SLIP_MIME_TYPES } from '@watchdog-bms/contracts';
-import type { BillingCapacityOptions, BillingCapacitySelection, SalesDealSlipCompleteBody, SalesDealSlipUploadIntent, SalesDealSlipUploadIntentBody } from '@watchdog-bms/contracts';
-import { prepareAttachmentUpload, withGenericUploadError } from '@/common/files/upload-file.logic';
-import { uploadReceiptFile as uploadFileToStorage } from '@/features/expenses/expenses.api';
+import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog-bms/contracts';
 
 export type BillingHistory = { items: BillingInvoiceItem[]; nextCursor: string | null };
 export function billingApi(companyId: string) {
@@ -43,38 +40,3 @@ export function billingApi(companyId: string) {
   };
 }
 
-// ── Q9 slip fallback: the customer's own upload of a bank-transfer slip ──
-
-/** What the shop may attach, straight from the contract the API validates against. */
-export const DEAL_SLIP_ACCEPT = `.pdf,.png,.jpg,.jpeg,.webp,${SALES_SLIP_MIME_TYPES.join(',')}`;
-export const DEAL_SLIP_MAX_BYTES = 10_000_000;
-
-const slipBase = (companyId: string, dealId: string) =>
-  `/v1/companies/${encodeURIComponent(companyId)}/package-change-requests/${encodeURIComponent(dealId)}/slip`;
-
-/**
- * Three steps, exactly like every other attachment in the product: intent → storage → complete.
- * The checksum travels with the completion because this file is the evidence behind a paid term —
- * bytes that changed between the two calls must not pass as the slip the shop sent.
- */
-export async function uploadDealSlipFile(companyId: string, dealId: string, file: File): Promise<void> {
-  return withGenericUploadError(async () => {
-    const prepared = await prepareAttachmentUpload(file);
-    if (!(SALES_SLIP_MIME_TYPES as readonly string[]).includes(prepared.type) || prepared.size > DEAL_SLIP_MAX_BYTES) {
-      throw new Error('ใช้ไฟล์ PDF, PNG หรือ JPG ขนาดไม่เกิน 10 MB');
-    }
-    const base = slipBase(companyId, dealId);
-    const headers = { 'Content-Type': 'application/json', 'X-Company-Id': companyId };
-    const body: SalesDealSlipUploadIntentBody = { originalFileName: prepared.name, mimeType: prepared.type, byteSize: prepared.size };
-    const intent = await authedApiFetch<SalesDealSlipUploadIntent>(`${base}/upload-intent`, {
-      method: 'POST', headers, suppressErrorToast: true, body: JSON.stringify(body),
-    });
-    await uploadFileToStorage(intent.uploadUrl, intent.uploadMethod, prepared, intent.uploadHeaders);
-    const digest = await crypto.subtle.digest('SHA-256', await prepared.arrayBuffer());
-    const complete: SalesDealSlipCompleteBody = {
-      attachmentId: intent.attachmentId,
-      checksumSha256: Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(''),
-    };
-    await authedApiFetch(`${base}/complete`, { method: 'POST', headers, suppressErrorToast: true, body: JSON.stringify(complete) });
-  });
-}

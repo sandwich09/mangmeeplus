@@ -316,24 +316,20 @@ describe('Thai copy for every sales error code', () => {
   });
 });
 
-describe('Phase 4: renewal, conversion and slip on a deal row', () => {
-  const deal = (over: Partial<Pick<SalesDealView, 'renewalOfRequestId' | 'conversionOf' | 'slipState'>> = {}) =>
-    ({ renewalOfRequestId: null, conversionOf: null, slipState: 'NONE' as const, ...over });
+describe('Phase 4: renewal and conversion on a deal row', () => {
+  const deal = (over: Partial<Pick<SalesDealView, 'renewalOfRequestId' | 'conversionOf'>> = {}) =>
+    ({ renewalOfRequestId: null, conversionOf: null, ...over });
 
   it('names the two things a status badge cannot say, and says nothing when neither is true', () => {
     assert.deepEqual(dealBadges(deal()), []);
     assert.deepEqual(
-      dealBadges(deal({ renewalOfRequestId: 'deal-0', conversionOf: 'CARD_AUTO', slipState: 'PENDING' })).map((badge) => badge.label),
-      ['ต่ออายุจากดีลเดิม', 'แทนที่สมาชิกเดิม', 'สลิปรอตรวจ'],
+      dealBadges(deal({ renewalOfRequestId: 'deal-0', conversionOf: 'CARD_AUTO' })).map((badge) => badge.label),
+      ['ต่ออายุจากดีลเดิม', 'แทนที่สมาชิกเดิม'],
     );
-    // 'NONE' is every deal that was never paid by transfer, including a Stripe one — no badge.
-    assert.deepEqual(dealBadges(deal({ slipState: 'NONE' })), []);
-    assert.equal(dealBadges(deal({ slipState: 'REJECTED' }))[0]!.tone, 'danger');
   });
 
-  it('gives the two new งานของฉัน kinds their own Thai line, and never crashes on an unknown one', () => {
+  it('gives the new งานของฉัน kind its own Thai line, and never crashes on an unknown one', () => {
     assert.equal(myWorkMeta('DEAL_RENEWAL_PENDING').label, 'ข้อเสนอต่ออายุรออนุมัติ');
-    assert.equal(myWorkMeta('DEAL_SLIP_PENDING').label, 'สลิปรอตรวจ');
     // A kind from a newer API must read as work, not take the whole queue down on a phone.
     const unknown = myWorkMeta('SOMETHING_NEW' as unknown as SalesMyWorkKind);
     assert.equal(unknown.needsAction, false);
@@ -479,7 +475,7 @@ describe('Phase 5: auto-renewing deals (§17.3 / D-P5-1…6)', () => {
   });
 
   it('badges what the status cannot say: the cycle, the readiness of the price, and the end date', () => {
-    const base = { renewalOfRequestId: null, conversionOf: null, slipState: 'NONE' as const };
+    const base = { renewalOfRequestId: null, conversionOf: null };
     assert.deepEqual(dealBadges(base), []);
     const labels = dealBadges({ ...base, snapshot: snapshot({ autoRenew: true, cadence: 'year' }),
       priceState: 'PENDING', returnAt: '2027-03-01T00:00:00.000Z' }).map((badge) => badge.label);

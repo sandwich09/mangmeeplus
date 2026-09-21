@@ -673,10 +673,7 @@ const CODE_LABELS: Record<string, string> = {
   SALES_TEAM_LEAD_INVALID: 'หัวหน้าทีมที่เลือกใช้ไม่ได้ กรุณาเลือกหัวหน้าทีมจากรายการอีกครั้ง',
   SALES_AGENT_USERNAME_TAKEN: 'ชื่อผู้ใช้นี้มีคนใช้แล้ว กรุณาตั้งชื่อผู้ใช้อื่น',
   SALES_REFERRAL_WINDOW_CLOSED: 'ร้านนี้เปิดมาเกิน 30 วันแล้ว จึงแก้ผู้แนะนำไม่ได้',
-  // Phase 4 (Q9 slip, §17.1 flags, §17.2 report). Two readers, one sentence each: the shop owner
-  // on the package page and the ผู้ดูแลระบบ on the slip queue both only need the next move.
-  SALES_SLIP_STATE_CONFLICT: 'สลิปนี้ถูกตรวจไปแล้ว กรุณาโหลดหน้านี้ใหม่เพื่อดูสถานะล่าสุด',
-  SALES_SLIP_REQUIRED: 'กรุณาแนบสลิปการโอนเงินก่อนส่ง',
+  // Phase 4 (§17.1 flags, §17.2 report). The ผู้ดูแลระบบ reading these only needs the next move.
   SALES_REPORT_RANGE_INVALID: 'ช่วงเดือนไม่ถูกต้อง กรุณาเลือกเดือนเริ่มต้นและเดือนสิ้นสุดใหม่',
   SALES_FLAG_REVIEW_INVALID: 'ตรวจรายการนี้ไม่ได้แล้ว กรุณาโหลดรายการที่ถูกธงใหม่',
 

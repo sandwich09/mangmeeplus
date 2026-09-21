@@ -54,7 +54,7 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
     featureKeys: ['dashboard_notifications', 'expenses', 'reimbursement', 'reports'],
     aiMonthlyBudgetSatang: 80_000, description: 'ราคาพิเศษสำหรับร้านที่เปิดใหม่ ทีมขายดูแลตลอดสัญญา',
     offerExpiresAt: date(3), purchaseModes: ['CARD_ONCE', 'PROMPTPAY_ONCE'] as BillingPurchaseMode[],
-    autoRenew: false, cadence: null as SalesDealCadence | null, slipState: 'NONE' as const, slipRejectedReason: null,
+    autoRenew: false, cadence: null as SalesDealCadence | null, cycles: null as number | null,
   };
   if (scenario === 'deal') status.deal = previewDeal;
   // D-P5-1/D-P5-4: the same offer sold per cycle instead of once — the card's modes, price line and
