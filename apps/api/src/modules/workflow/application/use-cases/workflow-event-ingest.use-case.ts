@@ -67,7 +67,10 @@ export class IngestWorkflowEventUseCase {
         sourceType: event.sourceType,
         sourceId: event.sourceId,
         dedupKey: buildRunDedupKey({ triggerType: 'EVENT', eventDedupKey: event.dedupKey }),
-        payload: { ...event.payload, eventType: event.eventType },
+        // actorUserId rides the envelope, not `payload` (spec §10: payload holds only stable
+        // condition/source-ref fields) — but an action's excludeRecipientPayloadKeys reads it off
+        // the run payload like any other field, so it is folded in here for that one purpose.
+        payload: { ...event.payload, eventType: event.eventType, actorUserId: event.actorUserId },
         now,
       }));
     }
