@@ -274,6 +274,20 @@ export type ReceiptOcrFieldResult = {
   vendorEntityKind?: 'INDIVIDUAL' | 'JURISTIC';
   vendorTaxId?: string;
   vendorBranchCode?: string;
+  /**
+   * The SELLER's own printed address, at most `EXPENSE_VENDOR_ADDRESS_MAX_LENGTH` characters
+   * (vendor-address spec §7). A full tax invoice prints both parties' addresses; only the issuer's
+   * may arrive here, because this value auto-saves into the counterparty registry and a buyer
+   * address filed against a vendor is wrong on every later document that reuses it.
+   */
+  vendorAddress?: string;
+  /**
+   * The buyer block a full tax invoice prints — our own shop, as the seller typed it. Read-only
+   * provenance: it is kept in `aiVerifiedFieldsJson` and nothing compares or stores it yet (Slice 2
+   * owns that). It exists so the reader has somewhere honest to put a buyer identity instead of
+   * mistaking it for the seller's.
+   */
+  buyerAsPrinted?: { name?: string; taxId?: string; branchCode?: string; addressText?: string };
   documentNumber?: string;
   expenseDate?: string;
   /**
@@ -321,6 +335,11 @@ export type ReceiptOcrFieldResult = {
     evidenceSignals: string[];
   };
   confidence?: number;
+  /**
+   * Names of fields the page did not yield. `vendorAddress` may appear here ONLY for a full tax
+   * invoice: an abbreviated tax invoice, a receipt and a cash bill legally need no address, so a
+   * missing one there is not a gap and must produce no reason code (vendor-address spec §8).
+   */
   missingFields?: string[];
 };
 

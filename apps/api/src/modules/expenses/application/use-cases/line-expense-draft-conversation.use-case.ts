@@ -204,6 +204,12 @@ export class LineExpenseDraftConversationUseCase {
     state = refreshExpenseSourceDraft(bindSourceDraftLines(state, expense), expense, categories);
     // The caption is the user's current instruction; only OCR-derived facts yield to saved data.
     if (input.businessPurpose) state.header.businessPurpose = input.businessPurpose;
+    // Vendor-address §11.3/§8: the FULL tax invoice is the only kind that must print the seller's
+    // address, so it is the only kind that may ask for one — and only when neither the reader nor a
+    // human has produced it. `applyLineExpenseDraftAnswer` clears the marker on the next turn.
+    if (expense.sourceDocumentType === 'TAX_INVOICE' && !ocr?.vendorAddress && !expense.vendorAddressSnapshot) {
+      state.header.vendorAddressAsk = true;
+    }
     // Capturing an image preserves editable facts; only the user can start the conversation.
     state.status = 'PAUSED';
     state.unresolvedQuestions = collectLineExpenseDraftQuestions(state, categories);
@@ -255,7 +261,10 @@ export class LineExpenseDraftConversationUseCase {
     const control = lineExpenseDraftControl(input.messageText);
     // A model-supplied target is not consent to restart a passive receipt draft.
     const explicitEdit = /แก้|เปลี่ยน|เติม|กรอก|ปรับ|ใช้เพื่อ|ใช้สำหรับ|^วันที่\s*[0-9๐-๙]|^(?:ผู้ขาย|ยอดรวม)\s*[:=]/u.test(input.messageText);
-    if (selected.state.status.startsWith('PAUSED') && !control && selectedIndex === null && !explicitEdit) {
+    // A paused receipt draft that asked the one address question is waiting for a plain sentence —
+    // the spec's wording invites an address, not a keyword — so that single turn is let through.
+    const addressAsked = selected.state.header.vendorAddressAsk === true;
+    if (selected.state.status.startsWith('PAUSED') && !control && selectedIndex === null && !explicitEdit && !addressAsked) {
       return { handled: false, status: 'NOT_FOUND', replyTexts: [], acceptedFields: [] };
     }
     selected.state = control === 'resume' || selectedIndex !== null
@@ -285,7 +294,17 @@ export class LineExpenseDraftConversationUseCase {
 
     changed.state = bindSourceDraftLines(changed.state, expense);
     changed.state.unresolvedQuestions = collectLineExpenseDraftQuestions(changed.state, categories);
+    // §11.3: answering the one address question — or ignoring it — is not "resume the
+    // questionnaire". A paused receipt draft stays paused, and the retired ask is persisted even
+    // when the turn belonged to something else, so the card can never ask a second time.
+    const addressTurnOnly = addressAsked && !control && selectedIndex === null
+      && changed.acceptedFields.every((field) => field === 'D-ADDRESS');
+    if (addressTurnOnly) changed.state.status = selected.state.status;
     if (!control && selectedIndex === null && changed.acceptedFields.length === 0 && changed.rejectedCandidates.length === 0) {
+      if (addressAsked) {
+        try { await this.persist(ctx, expense, changed.state, categories, [], [], false, selected.state.targetRevision); }
+        catch (error) { if (!(error instanceof ConflictException)) throw error; }
+      }
       return { handled: false, status: 'NOT_FOUND', replyTexts: [], acceptedFields: [] };
     }
     try {
@@ -393,7 +412,10 @@ export class LineExpenseDraftConversationUseCase {
       ? expense!.aiVerificationSummaryJson!['missingFields'].filter((field): field is string => typeof field === 'string')
       : [];
     const missingFields = [...new Set([
-      ...existingMissing.filter((field) => !collectionFields.has(field)),
+      // An answered address is no longer a gap: the OCR reading put `vendorAddress` here (§8's
+      // warning), and leaving it would make the review form keep saying nobody read one.
+      ...existingMissing.filter((field) => !collectionFields.has(field)
+        && !(field === 'vendorAddress' && acceptedFields.includes('D-ADDRESS'))),
       ...state.unresolvedQuestions.map((question) => question.field),
     ])];
     const lines = materialize ? sourceDraftFinancialLines(state, expense, acceptedFields, categories) : undefined;
@@ -401,6 +423,9 @@ export class LineExpenseDraftConversationUseCase {
       expectedUpdatedAt: expectedRevision,
       ...(acceptedFields.includes('D-DATE') && state.header.expenseDate ? { expenseDate: state.header.expenseDate } : {}),
       ...(acceptedFields.includes('D-VENDOR') && state.header.vendorName ? { vendorNameSnapshot: state.header.vendorName } : {}),
+      // Vendor-address §11.3: the LINE answer goes to the SAME column the review form writes, so
+      // the counterparty auto-save and the 50 ทวิ prefill see it exactly as if it had been typed there.
+      ...(acceptedFields.includes('D-ADDRESS') && state.header.vendorAddress ? { vendorAddressSnapshot: state.header.vendorAddress } : {}),
       // Spec §5.3: the purpose gets its OWN segment and replaces the previous one, so refining the
       // answer never stacks and never takes the provenance note ("LINE receipt upload") with it.
       ...(acceptedFields.includes('D-PURPOSE') && state.header.businessPurpose ? { note: withPurposeNote(expense!.note, state.header.businessPurpose) } : {}),

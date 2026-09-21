@@ -1077,6 +1077,16 @@ export class ReceiptOcrApplyService {
         reviewReasons = reviewReasons.filter(reason => reason !== RECEIPT_REVIEW_REASONS.dateUnverified && reason !== RECEIPT_REVIEW_REASONS.dateImplausible);
         data['aiVerificationStatus'] = reviewReasons.length > 0 ? 'NEEDS_REVIEW' : 'PARTIAL';
       }
+      /**
+       * Vendor-address §7 (Phase 4): the reader's address fills the field only while it is still
+       * empty. The `reviewedAt` filter just below protects a record somebody already reviewed; a
+       * draft is not reviewed yet, so without this a re-read would overwrite the address the payer
+       * typed into the LINE question or the review form. `buyerAsPrinted` is deliberately NOT
+       * written anywhere: it rides `aiVerifiedFieldsJson` as provenance and Slice 2 owns comparing it.
+       */
+      if (completed.vendorAddress && !currentExpense.vendorAddressSnapshot) {
+        data['vendorAddressSnapshot'] = completed.vendorAddress;
+      }
       // Re-reading a receipt must not replace a reviewer's chosen identity.
       if (currentExpense.reviewedAt) {
         // CON-5: `vendorAddressSnapshot` belongs in this set from the day the column exists — a
