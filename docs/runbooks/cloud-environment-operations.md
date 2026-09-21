@@ -37,7 +37,10 @@ tag-bound sessions, and all public TCP/22 rules were removed from both UAT secur
 operation `20260921T112636Z-1b2d1eff` passed in 11.197 seconds with no public SSH, terminated both
 controller-owned sessions, and left zero active sessions. Do not add a workstation CIDR as a
 shortcut; use the enrolled Session Manager path and treat any unproved session cleanup as a failed
-operation requiring reconciliation.
+operation requiring reconciliation. After the controller was merged to both long-lived branches,
+main-tree read-only operation `20260921T115422Z-608cb7e4` passed in 11.761 seconds, terminated 2/2
+owned sessions, and a privileged readback again found zero active sessions and zero public TCP/22
+rules.
 
 ---
 
