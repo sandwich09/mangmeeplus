@@ -253,8 +253,8 @@ OCR (D3 ก้าวที่สอง): เพิ่มช่อง `vendorAddr
 - OCR: `ReceiptOcrFieldResult` เพิ่ม `vendorAddress?`, `buyerAsPrinted?`; `missingFields` เพิ่มค่า `vendorAddress` เฉพาะใบกำกับเต็มรูป
 - คู่ค้า: `AccountingCounterpartyDetail.billingAddressJson` ตามโครง v2 บวก `locked?: boolean`; list รับ `usage` (bought/sold), `addressMissing`, `search` และไม่กรองตาม `type`; detail มี `recentExpenses[]`, `usageCounts`; PATCH ใช้ `expectedUpdatedAt`; endpoint `POST /counterparties/:id/promote-seen-address` (สิทธิ์ manage) ใช้จากหน้าคู่ค้าเท่านั้น; `type` ถูกตั้งโดยระบบ (VENDOR เมื่อสร้างจากใบซื้อ, เลื่อนเป็น BOTH เมื่อถูกใช้ฝั่งขาย) ไม่รับจาก client อีกต่อไป
 - ใช้ use case ใหม่ `EnsureVendorCounterpartyFromExpenseUseCase` ที่ทั้ง expense draft/review/confirm และ receipt-ocr-apply เรียก ไม่เรียก `CreateCounterpartyUseCase` ตรง (สิทธิ์ต่างกันตาม A3)
-- tax: `payeeSnapshot.address` และ `payerSnapshot.address` มีค่าตาม §10; handoff prefill รับ `payeeAddressOverride` จากหน้าตรวจ
-- ไม่มี error code ใหม่ นอกจาก `counterparty_address_too_long`, `counterparty_branch_code_invalid` และ `counterparty_conflict`
+- tax: `payeeSnapshot.address` และ `payerSnapshot.address` มีค่าตาม §10; ที่อยู่ผู้ถูกหักที่พิมพ์บนหน้า handoff เก็บในคอลัมน์ `WhtCertificateHandoff.payeeAddress` (พร้อม `payeeAddressByUserId`, `payeeAddressAt`) ข้าง snapshot ไม่เขียนลง `prefillSnapshotJson` ที่ถูกล็อกด้วย hash; `POST /companies/:companyId/wht/payment-handoffs/:handoffId/payee-address` แก้ได้เฉพาะสถานะ `REQUIRED`
+- error code ใหม่มีเพียง `counterparty_address_too_long`, `counterparty_branch_code_invalid`, `counterparty_conflict`, `EXPENSE_VENDOR_BRANCH_CODE_INVALID`, `EXPENSE_VENDOR_ADDRESS_TOO_LONG`, `wht_handoff_payee_address_required` และ `wht_handoff_address_not_editable` ทุกตัวมีข้อความไทย
 
 ### 12.1 สิทธิ์
 
