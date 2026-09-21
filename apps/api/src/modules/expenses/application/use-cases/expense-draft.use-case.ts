@@ -19,7 +19,7 @@ import {
 } from '../../domain/logic/expense-vat-reconciliation.logic';
 import { validateExpenseDraftAmounts, validateExpenseLineVatTreatments } from '../../domain/logic/expense-draft-amount-validation.logic';
 import { expenseVendorIdentityFields } from '../../domain/logic/expense-vendor-identity.logic';
-import { recheckBuyerAsPrinted } from '../../domain/logic/buyer-as-printed.logic';
+import { readBuyerAsPrinted, recheckBuyerAsPrinted, stampClaimStatusBeforeMark } from '../../domain/logic/buyer-as-printed.logic';
 import { EnsureVendorCounterpartyFromExpenseUseCase } from '../../../accounting-documents/application/use-cases/ensure-vendor-counterparty-from-expense.use-case';
 import { normalizeExpensePrecisionAdjustment } from '../../domain/logic/expense-precision-adjustment.logic';
 import { expenseTotalsIdentityError } from '../../domain/logic/expense-totals.logic';
@@ -829,12 +829,21 @@ export class UpdateExpenseDraftUseCase {
      * column existed still carries the block in `aiVerifiedFieldsJson`, which is how it gets checked
      * without a backfill script. Never touches claimability (E11) — the column is all this writes.
      */
+    const claimStatusWrite = !options.lineDraftCollection && (disallowsTaxCode || input.inputVatClaimStatus)
+      ? (disallowsTaxCode ? 'NON_CLAIMABLE' as const : input.inputVatClaimStatus) : undefined;
     const buyerSource = r.buyerAsPrintedJson ?? r.aiVerifiedFieldsJson?.['buyerAsPrinted'];
-    const buyerAsPrintedJson = buyerSource ? await recheckBuyerAsPrinted({
+    const buyerAsPrintedJson = buyerSource ? stampClaimStatusBeforeMark(await recheckBuyerAsPrinted({
       printed: buyerSource,
       previous: r.buyerAsPrintedJson,
       readRegistry: () => this.repo.getSubstituteCompanyContext(ctx.companyId, input.branchId !== undefined ? input.branchId : r.branchId),
       checkedAt: new Date().toISOString(),
+    }), {
+      // Review fix 2: the mark is the person's explicit NON_CLAIMABLE on a claim-capable document;
+      // the status it replaces rides the same write so the banner can offer it back.
+      previous: readBuyerAsPrinted(r.buyerAsPrintedJson),
+      previousClaimStatus: r.inputVatClaimStatus,
+      nextClaimStatus: claimStatusWrite ?? r.inputVatClaimStatus,
+      marked: input.inputVatClaimStatus === 'NON_CLAIMABLE' && !disallowsTaxCode,
     }) : undefined;
 
     const updated = await this.repo.updateExpense({
@@ -847,7 +856,7 @@ export class UpdateExpenseDraftUseCase {
       ...(input.branchId !== undefined && { branchId: input.branchId }),
       ...(input.expenseDate && { expenseDate: civilDateToUtcDate(coerceCivilDate(input.expenseDate)) }),
       ...(input.vatMode && { vatMode: input.vatMode }),
-      ...((!options.lineDraftCollection && (disallowsTaxCode || input.inputVatClaimStatus)) && { inputVatClaimStatus: disallowsTaxCode ? 'NON_CLAIMABLE' : input.inputVatClaimStatus }),
+      ...(claimStatusWrite && { inputVatClaimStatus: claimStatusWrite }),
       ...(input.vendorCounterpartyId !== undefined && { vendorCounterpartyId: input.vendorCounterpartyId }),
       ...(input.vendorNameSnapshot !== undefined && { vendorNameSnapshot: input.vendorNameSnapshot }),
       ...(input.vendorTaxIdSnapshot !== undefined && { vendorTaxIdSnapshot: input.vendorTaxIdSnapshot }),

@@ -15,6 +15,7 @@ import {
   type CompanyLegalAddress,
   type ExpenseBuyerAsPrinted,
   type ExpenseBuyerMatchStatus,
+  type InputVatClaimStatus,
 } from '@watchdog-bms/contracts';
 import { normalizeBranchCode, normalizeVendorName } from '../../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
 
@@ -27,6 +28,8 @@ export type BuyerRegistryIdentity = {
   displayName: string;
   brandName: string | null;
   addressJson: unknown;
+  /** The expense branch's own address: an invoice addressed to that branch prints ITS postcode. */
+  branchAddressJson?: unknown;
 };
 
 export type BuyerComparison = {
@@ -144,11 +147,14 @@ export function compareBuyerAsPrinted(
     differences.push({ reason: 'NAME', printed: printed.name!, registered: registeredNames[0]!.trim() });
   }
   // Only two postcodes are evidence. The rest of an address is never judged: a road spelt ถ. on one
-  // side and ถนน on the other is the same place.
+  // side and ถนน on the other is the same place. The company's registered postcode and the expense
+  // branch's own are both the buyer: matching either one is not a mismatch.
   const printedPostalCode = postalCode(printed.addressText);
-  const registeredPostalCode = postalCode(isRecord(company.addressJson) ? company.addressJson.postalCode : null);
-  if (printedPostalCode && registeredPostalCode && printedPostalCode !== registeredPostalCode) {
-    differences.push({ reason: 'POSTAL_CODE', printed: printedPostalCode, registered: registeredPostalCode });
+  const registeredPostalCodes = [...new Set([company.addressJson, company.branchAddressJson]
+    .map((address) => postalCode(isRecord(address) ? address.postalCode : null))
+    .filter((code): code is string => Boolean(code)))];
+  if (printedPostalCode && registeredPostalCodes.length > 0 && !registeredPostalCodes.includes(printedPostalCode)) {
+    differences.push({ reason: 'POSTAL_CODE', printed: printedPostalCode, registered: registeredPostalCodes.join(' / ') });
   }
   return differences.length > 0 ? { matchStatus: 'MISMATCH', differences } : { matchStatus: 'MATCH', differences: [] };
 }
@@ -177,7 +183,29 @@ export function nextBuyerAsPrinted(
     ...(keepOverride ? { overrideReason: previous!.overrideReason! } : {}),
     ...(keepOverride && previous!.overriddenByUserId ? { overriddenByUserId: previous!.overriddenByUserId } : {}),
     ...(keepOverride && previous!.overriddenAt ? { overriddenAt: previous!.overriddenAt } : {}),
+    // About the claim status, not the comparison: a re-check or a re-read never moves the claim, so the
+    // way back from a mark rides along. `stampClaimStatusBeforeMark` is what sets and clears it.
+    ...(previous?.claimStatusBeforeMark ? { claimStatusBeforeMark: previous.claimStatusBeforeMark } : {}),
   };
+}
+
+/**
+ * Review fix 2: one misclick must not strand an invoice's input VAT. The save that turns a MISMATCH
+ * invoice NON_CLAIMABLE through the buyer mark stamps the status it replaced into the same JSON, in
+ * the same write; any save that leaves the expense claimable again (the undo, or anything else) drops
+ * the stamp, because there is nothing left to take back. A NON_CLAIMABLE forced by the document type
+ * is not a mark and is never stamped — the review save refuses to claim on such a document anyway.
+ */
+export function stampClaimStatusBeforeMark(
+  next: ExpenseBuyerAsPrinted,
+  input: { previous: ExpenseBuyerAsPrinted | null; previousClaimStatus: InputVatClaimStatus; nextClaimStatus: InputVatClaimStatus; marked: boolean },
+): ExpenseBuyerAsPrinted {
+  const { claimStatusBeforeMark: _stale, ...rest } = next;
+  if (input.nextClaimStatus !== 'NON_CLAIMABLE') return rest;
+  if (input.marked && input.previousClaimStatus !== 'NON_CLAIMABLE' && input.previous?.matchStatus === 'MISMATCH') {
+    return { ...rest, claimStatusBeforeMark: input.previousClaimStatus };
+  }
+  return next;
 }
 
 /**

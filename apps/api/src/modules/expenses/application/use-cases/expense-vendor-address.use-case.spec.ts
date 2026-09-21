@@ -213,3 +213,102 @@ describe('review save re-checks the printed buyer block', () => {
     assert.equal('buyerAsPrintedJson' in updates[0], false);
   });
 });
+
+/**
+ * Controller review of d0cceba7, fix 1: what "ทำเครื่องหมายใบนี้ใช้ภาษีซื้อไม่ได้" did to an expense whose
+ * lines carry a Tax Code. The review-fields save writes the HEADER claim status and nothing else — it
+ * never resolves or rewrites a line, so the line's claimable Tax Code survives the mark untouched. The
+ * tax half (sync-tax-events-components spec) shows ภ.พ.30 is built from exactly that line.
+ */
+describe('the header mark on an expense whose lines carry a Tax Code', () => {
+  it('writes only the header claim status and leaves the line Tax Code alone', async () => {
+    const updates: any[] = [];
+    let resolveCalls = 0;
+    let upsertCalls = 0;
+    const repo = {
+      findById: async () => ({
+        id: 'exp-1', companyId: 'company-1', branchId: null, createdByUserId: 'user-1', status: 'NEEDS_REVIEW',
+        sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'USABLE_FOR_TAX', vatMode: 'VAT_EXCLUDED', inputVatClaimStatus: 'CLAIMABLE',
+        currency: 'THB', expenseDate: new Date('2026-09-04T00:00:00.000Z'), vendorNameSnapshot: 'ร้านวัสดุ',
+        aiVerificationSummaryJson: null, aiVerifiedFieldsJson: null, buyerAsPrintedJson: null,
+        lines: [{ id: 'line-1', taxCodeDefinitionId: 'def-v7', externalTaxCode: 'V7', claimability: 'CLAIMABLE' }],
+      }),
+      findByIdWithRelations: async () => ({ lines: [] }),
+      updateExpense: async (input: any) => { updates.push(input); return input; },
+      listLineChargeKinds: async () => new Map(),
+      upsertLines: async () => { upsertCalls += 1; },
+    } as any;
+    const tax = { resolveLines: async (_ctx: unknown, _header: unknown, lines: unknown[]) => { resolveCalls += 1; return lines; } } as any;
+
+    await new UpdateExpenseDraftUseCase(repo, audit, tax).execute(ctx, 'exp-1',
+      { expectedUpdatedAt: '2026-09-04T00:00:00.000Z', inputVatClaimStatus: 'NON_CLAIMABLE' } as any);
+
+    assert.equal(updates[0].inputVatClaimStatus, 'NON_CLAIMABLE');
+    assert.equal(resolveCalls, 0, 'no line is re-resolved: the V7 snapshot stays CLAIMABLE');
+    assert.equal(upsertCalls, 0, 'no line is rewritten');
+    assert.equal('lines' in updates[0], false);
+  });
+});
+
+/**
+ * Review fix 2: one misclick on "ทำเครื่องหมายใบนี้ใช้ภาษีซื้อไม่ได้" must not strand an invoice's input
+ * VAT. The mark stamps the status it replaced in the same write; the undo sends that value back through
+ * the same review save, which restores it and drops the stamp.
+ */
+describe('buyer mark → undo restores the original claim status', () => {
+  const REGISTRY = {
+    taxId: '0994000163011', registeredName: 'บริษัท มั่งมีพลัส จำกัด', displayName: 'มั่งมีพลัส', brandName: null, addressJson: null,
+    branchTaxCode: null, branchAddressJson: null,
+  };
+  const MISMATCH = {
+    taxId: '0105512345678', matchStatus: 'MISMATCH', reasons: ['TAX_ID'],
+    differences: [{ reason: 'TAX_ID', printed: '0105512345678', registered: '0994000163011' }], checkedAt: '2026-09-20T00:00:00.000Z',
+  };
+
+  function statefulUseCase(initial: Record<string, unknown>) {
+    const row: Record<string, any> = {
+      id: 'exp-1', companyId: 'company-1', branchId: null, createdByUserId: 'user-1', status: 'NEEDS_REVIEW',
+      sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'USABLE_FOR_TAX', vatMode: 'VAT_EXCLUDED',
+      currency: 'THB', expenseDate: new Date('2026-09-04T00:00:00.000Z'), vendorNameSnapshot: 'ร้านวัสดุ',
+      aiVerificationSummaryJson: null, aiVerifiedFieldsJson: null, buyerAsPrintedJson: MISMATCH, ...initial,
+    };
+    const repo = {
+      findById: async () => ({ ...row }),
+      findByIdWithRelations: async () => ({ lines: [] }),
+      updateExpense: async (input: any) => { Object.assign(row, input); return { ...row }; },
+      listLineChargeKinds: async () => new Map(),
+      upsertLines: async () => undefined,
+      getSubstituteCompanyContext: async () => REGISTRY,
+    } as any;
+    const useCase = new UpdateExpenseDraftUseCase(repo, audit, transactionTax);
+    const save = (input: Record<string, unknown>) => useCase.execute(ctx, 'exp-1', { expectedUpdatedAt: '2026-09-04T00:00:00.000Z', ...input } as any);
+    return { row, save };
+  }
+
+  for (const original of ['CLAIMABLE', 'NEEDS_REVIEW'] as const) {
+    it(`restores ${original} after mark, an unrelated save, and undo`, async () => {
+      const { row, save } = statefulUseCase({ inputVatClaimStatus: original });
+
+      await save({ inputVatClaimStatus: 'NON_CLAIMABLE' });
+      assert.equal(row.inputVatClaimStatus, 'NON_CLAIMABLE');
+      assert.equal(row.buyerAsPrintedJson.claimStatusBeforeMark, original, 'stamped in the same write as the mark');
+
+      await save({ vendorAddressSnapshot: ADDRESS });
+      assert.equal(row.buyerAsPrintedJson.claimStatusBeforeMark, original, 'an ordinary save re-checks without losing the way back');
+
+      await save({ inputVatClaimStatus: row.buyerAsPrintedJson.claimStatusBeforeMark });
+      assert.equal(row.inputVatClaimStatus, original);
+      assert.equal(row.buyerAsPrintedJson.claimStatusBeforeMark, undefined, 'nothing left to take back');
+      assert.equal(row.buyerAsPrintedJson.matchStatus, 'MISMATCH', 'the warning itself is untouched');
+    });
+  }
+
+  it('does not stamp a NON_CLAIMABLE the document type forces', async () => {
+    const { row, save } = statefulUseCase({ inputVatClaimStatus: 'CLAIMABLE' });
+
+    await save({ sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE' });
+
+    assert.equal(row.inputVatClaimStatus, 'NON_CLAIMABLE');
+    assert.equal(row.buyerAsPrintedJson.claimStatusBeforeMark, undefined);
+  });
+});

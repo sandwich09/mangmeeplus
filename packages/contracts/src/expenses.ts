@@ -801,6 +801,11 @@ export type ExpenseBuyerAsPrinted = {
   overrideReason?: string;
   overriddenByUserId?: string;
   overriddenAt?: string;
+  /**
+   * The header claim status the "ทำเครื่องหมายใบนี้ใช้ภาษีซื้อไม่ได้" mark replaced, stamped in the same
+   * save, so the mark can be taken back on screen. Present only while the expense stays NON_CLAIMABLE.
+   */
+  claimStatusBeforeMark?: Exclude<InputVatClaimStatus, 'NON_CLAIMABLE'>;
 };
 
 export type ExpenseDetail = ExpenseSummary & {

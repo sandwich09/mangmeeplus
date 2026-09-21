@@ -56,7 +56,7 @@ import type { SupportedLocale, DictionaryKey } from '@/common/i18n/workspace-dic
 import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { Modal, useConfirm } from '@/common/components/modal';
 import { TextareaField } from '@/common/components/field';
-import { buyerMatchBannerState } from './expense-buyer-match.logic';
+import { buyerMatchBannerState, type RestorableClaimStatus } from './expense-buyer-match.logic';
 import { findForbiddenChars, normalizeDecimalInput, REASON_MAX_LENGTH, sanitizeReasonInput, stripDisallowed } from '@/common/forms/sanitize';
 import {
   ATTACHMENT_UPLOAD_ACCEPT,
@@ -708,7 +708,7 @@ function CheckBillGuidanceCard({ companyId, expenseId, canReview, canStartSubsti
  * registry. Warn-only — both ways forward are a person's choice and nothing here disables any other
  * control on the page. The state is decided in `expense-buyer-match.logic.ts`.
  */
-export function BuyerMatchBanner({ companyId, detail, editable, claimed, permissions, onSaved }: {
+export function BuyerMatchBanner({ companyId, detail, editable, claimed, permissions, onSaved, onOpenLines }: {
   companyId: string;
   detail: ExpenseDetail;
   /** The page's own "review form is editable" rule — the mark button follows it exactly. */
@@ -716,6 +716,8 @@ export function BuyerMatchBanner({ companyId, detail, editable, claimed, permiss
   claimed: boolean;
   permissions: readonly string[];
   onSaved: () => Promise<void>;
+  /** Takes the reviewer to the line Tax Codes; without it the guidance is words only. */
+  onOpenLines?: () => void;
 }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
@@ -726,19 +728,6 @@ export function BuyerMatchBanner({ companyId, detail, editable, claimed, permiss
   const [error, setError] = useState<string | null>(null);
   const banner = buyerMatchBannerState({ companyId, detail, permissions, editable, claimed });
   if (banner.kind === 'none') return null;
-  if (banner.kind === 'confirmed') {
-    return <p className="text-xs text-gray-500">{t('expenses.buyer_match_confirmed', locale).replace('{reason}', banner.reason)}</p>;
-  }
-  if (banner.kind === 'unchecked') {
-    return (
-      <p role="status" className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
-        {t('expenses.buyer_match_unchecked', locale)}{' '}
-        {banner.settingsHref
-          ? <Link className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline" href={banner.settingsHref}>{t('expenses.buyer_match_open_settings', locale)}</Link>
-          : t('expenses.buyer_match_ask_owner', locale)}
-      </p>
-    );
-  }
   // The write and the readback fail differently: a refused write says why, a failed readback says
   // the change is saved and only the screen is stale.
   const run = async (write: () => Promise<unknown>, doneKey: DictionaryKey): Promise<boolean> => {
@@ -754,17 +743,45 @@ export function BuyerMatchBanner({ companyId, detail, editable, claimed, permiss
       return true;
     } finally { setBusy(false); }
   };
-  // §8: marking is a person's act through the existing review save — the same PATCH that already
-  // carries `inputVatClaimStatus` — never an automatic change and never a new mutation.
+  // Mark and undo are a person's act through the existing review save — the same PATCH that already
+  // carries `inputVatClaimStatus` — never an automatic change and never a new mutation. The API stamps
+  // the replaced status on the mark, which is what the undo sends back.
+  const setClaimStatus = (inputVatClaimStatus: 'NON_CLAIMABLE' | RestorableClaimStatus, doneKey: DictionaryKey) =>
+    run(() => updateExpenseReviewFields(companyId, detail.id, { expectedUpdatedAt: detail.updatedAt, inputVatClaimStatus }), doneKey);
   const markNonClaimable = async () => {
     if (!(await confirm({ title: t('expenses.buyer_match_mark_title', locale), message: t('expenses.buyer_match_mark_message', locale),
       confirmLabel: t('expenses.buyer_match_mark_non_claimable', locale), cancelLabel: t('expenses.cancel', locale) }))) return;
-    await run(() => updateExpenseReviewFields(companyId, detail.id, { expectedUpdatedAt: detail.updatedAt, inputVatClaimStatus: 'NON_CLAIMABLE' }),
-      'expenses.buyer_match_marked_toast');
+    await setClaimStatus('NON_CLAIMABLE', 'expenses.buyer_match_marked_toast');
   };
   const submitReason = async () => {
     if (await run(() => confirmExpenseBuyerMatch(companyId, detail.id, reason.trim()), 'expenses.buyer_match_confirmed_toast')) setReasonOpen(false);
   };
+  const restore = banner.restoreClaimStatus;
+  const undoButton = restore && (
+    <button type="button" className={ghostClass} disabled={busy} aria-busy={busy} onClick={() => void setClaimStatus(restore, 'expenses.buyer_match_unmarked_toast')}>
+      {t('expenses.buyer_match_undo', locale)}
+    </button>
+  );
+  if (banner.kind !== 'mismatch') {
+    return (
+      <div className="space-y-2">
+        {banner.kind === 'unchecked' ? (
+          <p role="status" className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+            {t('expenses.buyer_match_unchecked', locale)}{' '}
+            {banner.settingsHref
+              ? <Link className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline" href={banner.settingsHref}>{t('expenses.buyer_match_open_settings', locale)}</Link>
+              : t('expenses.buyer_match_ask_owner', locale)}
+          </p>
+        ) : (
+          <p className="text-xs text-gray-500">{banner.kind === 'confirmed'
+            ? t('expenses.buyer_match_confirmed', locale).replace('{reason}', banner.reason)
+            : t('expenses.buyer_match_marked_non_claimable', locale)}</p>
+        )}
+        {error && <ErrorBanner message={error} />}
+        {undoButton}
+      </div>
+    );
+  }
 
   return (
     <MangmeeCard className="space-y-3 border-warning-100 bg-warning-50 p-4 text-sm">
@@ -783,8 +800,13 @@ export function BuyerMatchBanner({ companyId, detail, editable, claimed, permiss
         </dl>
       )}
       {error && !reasonOpen && <ErrorBanner message={error} />}
-      {(banner.canConfirm || banner.canMarkNonClaimable) && (
+      {banner.markHintKey && <p className="text-xs text-warning-700">{t(banner.markHintKey, locale)}</p>}
+      {(banner.canConfirm || banner.canMarkNonClaimable || undoButton || (banner.openLines && onOpenLines)) && (
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          {banner.openLines && onOpenLines && (
+            // Navigation only — no write, so nothing to wait for and no reason to lock it while busy.
+            <button type="button" className={ghostClass} onClick={onOpenLines}>{t('expenses.buyer_match_open_lines', locale)}</button>
+          )}
           {banner.canConfirm && (
             <button type="button" className={ghostClass} disabled={busy} onClick={() => { setReason(''); setError(null); setReasonOpen(true); }}>
               {t('expenses.buyer_match_confirm', locale)}
@@ -795,9 +817,9 @@ export function BuyerMatchBanner({ companyId, detail, editable, claimed, permiss
               {t('expenses.buyer_match_mark_non_claimable', locale)}
             </button>
           )}
+          {undoButton}
         </div>
       )}
-      {banner.markHintKey && <p className="text-xs text-warning-700">{t(banner.markHintKey, locale)}</p>}
       <Modal
         open={reasonOpen}
         size="sm"

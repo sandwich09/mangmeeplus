@@ -1259,18 +1259,20 @@ export class PrismaExpenseRepository {
   }
 
   /** Also the registry the Slice 2 buyer check compares a printed buyer block with (vendor-address §5
-   *  row 2): the raw names, the legal address and the expense branch's tax code come along for it. */
+   *  row 2): the raw names, the legal address and the expense branch's tax code and address come along. */
   async getSubstituteCompanyContext(companyId: string, branchId: string | null): Promise<{
     name: string; nameSource: 'REGISTERED' | 'DISPLAY_NAME'; taxId: string | null; branchName: string | null;
-    registeredName: string | null; displayName: string; brandName: string | null; addressJson: unknown; branchTaxCode: string | null;
+    registeredName: string | null; displayName: string; brandName: string | null; addressJson: unknown;
+    branchTaxCode: string | null; branchAddressJson: unknown;
   }> {
     const company = await this.prisma.client.company.findFirst({ where: { id: companyId }, select: { registeredName: true, name: true, brandName: true, taxId: true, addressJson: true } });
     if (!company) throw new Error(`Company ${companyId} not found`);
     const branch = branchId
-      ? await this.prisma.client.branch.findFirst({ where: { id: branchId, companyId }, select: { name: true, taxBranchCode: true } })
+      ? await this.prisma.client.branch.findFirst({ where: { id: branchId, companyId }, select: { name: true, taxBranchCode: true, addressJson: true } })
       : null;
     return { name: company.registeredName?.trim() || company.name, nameSource: company.registeredName?.trim() ? 'REGISTERED' : 'DISPLAY_NAME', taxId: company.taxId, branchName: branch?.name ?? null,
-      registeredName: company.registeredName, displayName: company.name, brandName: company.brandName, addressJson: company.addressJson, branchTaxCode: branch?.taxBranchCode ?? null };
+      registeredName: company.registeredName, displayName: company.name, brandName: company.brandName, addressJson: company.addressJson,
+      branchTaxCode: branch?.taxBranchCode ?? null, branchAddressJson: branch?.addressJson ?? null };
   }
 
   /**

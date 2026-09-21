@@ -10,6 +10,7 @@ import {
   nextBuyerAsPrinted,
   readBuyerAsPrinted,
   recheckBuyerAsPrinted,
+  stampClaimStatusBeforeMark,
   type BuyerRegistryIdentity,
 } from './buyer-as-printed.logic';
 
@@ -111,6 +112,17 @@ describe('compareBuyerAsPrinted', () => {
       'a registry without a postcode has nothing to compare');
   });
 
+  it('accepts the expense branch\'s own postcode as the buyer\'s: a match with company OR branch is not a mismatch', () => {
+    const atBranch = { ...COMPANY, branchAddressJson: { line1: '9 ถนนสุขุมวิท', postalCode: '10110', countryCode: 'TH' } };
+    assert.equal(compareBuyerAsPrinted({ addressText: 'สาขาอโศก 9 ถนนสุขุมวิท กรุงเทพฯ 10110' }, atBranch, '00001').matchStatus, 'MATCH');
+    assert.equal(compareBuyerAsPrinted({ addressText: '55/3 ลาดพร้าว 10900' }, atBranch, '00001').matchStatus, 'MATCH');
+    assert.deepEqual(compareBuyerAsPrinted({ addressText: '99 ถนนสีลม 10500' }, atBranch, '00001').differences, [
+      { reason: 'POSTAL_CODE', printed: '10500', registered: '10900 / 10110' },
+    ]);
+    // The branch alone is enough to compare against when the company has no postcode of its own.
+    assert.equal(compareBuyerAsPrinted({ addressText: '99 ถนนสีลม 10500' }, { ...atBranch, addressJson: null }, '00001').matchStatus, 'MISMATCH');
+  });
+
   it('lists every hard difference in a fixed order when no tax id was printed', () => {
     const printed = { name: 'ร้านอื่น', addressText: 'ถนนสีลม 10500' };
     assert.deepEqual(compareBuyerAsPrinted(printed, COMPANY, null).differences.map((d) => d.reason), ['NAME', 'POSTAL_CODE']);
@@ -181,5 +193,37 @@ describe('recheckBuyerAsPrinted', () => {
     assert.equal(result.matchStatus, 'MATCH');
     assert.equal('stray' in result, false);
     assert.deepEqual(buyerPrintedFields({ name: '  ร้าน  ', taxId: 13, addressText: '' }), { name: 'ร้าน' });
+  });
+});
+
+describe('stampClaimStatusBeforeMark (review fix 2: the mark can be taken back)', () => {
+  const mismatch = nextBuyerAsPrinted({ taxId: '0105512345678' }, compareBuyerAsPrinted({ taxId: '0105512345678' }, COMPANY, null), null, 'now');
+
+  it('stamps the replaced status when the mark turns a MISMATCH invoice NON_CLAIMABLE', () => {
+    for (const previousClaimStatus of ['CLAIMABLE', 'NEEDS_REVIEW'] as const) {
+      const stamped = stampClaimStatusBeforeMark(mismatch, { previous: mismatch, previousClaimStatus, nextClaimStatus: 'NON_CLAIMABLE', marked: true });
+      assert.equal(stamped.claimStatusBeforeMark, previousClaimStatus);
+    }
+  });
+
+  it('carries the stamp through a re-check while the invoice stays NON_CLAIMABLE, and drops it once it is claimable again', () => {
+    const stamped = { ...mismatch, claimStatusBeforeMark: 'CLAIMABLE' as const };
+    const rechecked = nextBuyerAsPrinted({ taxId: '0105512345678' }, { matchStatus: 'MATCH', differences: [] }, stamped, 'later');
+    assert.equal(rechecked.claimStatusBeforeMark, 'CLAIMABLE', 'a registry fix must not strand the mark');
+    assert.equal(stampClaimStatusBeforeMark(rechecked, { previous: stamped, previousClaimStatus: 'NON_CLAIMABLE', nextClaimStatus: 'NON_CLAIMABLE', marked: false })
+      .claimStatusBeforeMark, 'CLAIMABLE');
+    assert.equal(stampClaimStatusBeforeMark(rechecked, { previous: stamped, previousClaimStatus: 'NON_CLAIMABLE', nextClaimStatus: 'CLAIMABLE', marked: false })
+      .claimStatusBeforeMark, undefined);
+  });
+
+  it('never stamps a NON_CLAIMABLE that was not the buyer mark', () => {
+    const cases = [
+      { previous: mismatch, previousClaimStatus: 'CLAIMABLE', nextClaimStatus: 'NON_CLAIMABLE', marked: false }, // forced by document type
+      { previous: { ...mismatch, matchStatus: 'MATCH' }, previousClaimStatus: 'CLAIMABLE', nextClaimStatus: 'NON_CLAIMABLE', marked: true },
+      { previous: mismatch, previousClaimStatus: 'NON_CLAIMABLE', nextClaimStatus: 'NON_CLAIMABLE', marked: true }, // nothing replaced
+    ] as const;
+    for (const input of cases) {
+      assert.equal(stampClaimStatusBeforeMark(mismatch, input as never).claimStatusBeforeMark, undefined, JSON.stringify(input));
+    }
   });
 });
