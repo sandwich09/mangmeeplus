@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { BillingAccount, CompanyPlanTerm } from '../../../generated/prisma/client';
 import { termProjectionHash } from '../domain/paid-invoice';
-import { billingPurchaseSource } from './billing-purchase-source';
+import { billingPurchaseSource, initialPurchaseSource, packageMenuPurchaseSource } from './billing-purchase-source';
 
 const now = new Date('2026-09-21T00:00:00.000Z');
 const manual = { companyId: 'company', tierKey: 'BASIC_499', billingReceiptAccountId: null,
@@ -41,4 +41,21 @@ test('purchase source separates unbilled legacy rows from verified paid and inco
   assert.equal(billingPurchaseSource(paid, { ...promptPayBinding, activeAttemptId: null }, true, now), 'SOURCE_INCONSISTENT');
   assert.equal(billingPurchaseSource(null, { ...empty, contractAttemptId: 'orphan' }, false, now), 'SOURCE_INCONSISTENT');
   assert.equal(billingPurchaseSource(paid, { ...account, renewalMode: 'CARD_ONCE' }, true, now), 'SOURCE_INCONSISTENT');
+});
+
+test('a restart decides the menu set the same way a first purchase does (Owner 2026-09-21)', () => {
+  // The whole difference between the two predicates: an expired paid term. Its shop is locked and
+  // the package it buys now — same tier or another — is the only thing that may decide its menus,
+  // so the quote pins the plan, Checkout re-checks it and the package page warns first.
+  assert.equal(initialPurchaseSource('PAID_EXPIRED_CURRENT_MODE'), false);
+  assert.equal(packageMenuPurchaseSource('PAID_EXPIRED_CURRENT_MODE'), true);
+  for (const source of ['NO_TERM', 'TRIAL', 'ADMIN_MANUAL'] as const) {
+    assert.equal(packageMenuPurchaseSource(source), true);
+  }
+  // A shop whose term is still running is buying INTO a package it already has: menus move at the
+  // boundary (or on upgrade) through APPLY_PLAN_MENUS, never by pinning a plan at quote time.
+  assert.equal(packageMenuPurchaseSource('PAID_CURRENT_MODE'), false);
+  // Nothing about a broken mapping is a purchase; those are refused before any menu question.
+  assert.equal(packageMenuPurchaseSource('PAID_OTHER_MODE'), false);
+  assert.equal(packageMenuPurchaseSource('SOURCE_INCONSISTENT'), false);
 });
