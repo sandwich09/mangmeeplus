@@ -147,6 +147,28 @@ function onePassVendorIsIssuer(vendorName: string, documentText: string): boolea
   return normalize(receiptIssuerText(documentText)).includes(normalize(vendorName));
 }
 
+function withOnePassUniquePrintedDate(
+  fields: NonNullable<ReceiptOcrResponse['fields']>,
+  documentText: string,
+): NonNullable<ReceiptOcrResponse['fields']> {
+  if (fields.expenseDate) return fields;
+  const candidates = extractValueCandidates(documentText, todayCivilDate(), { documentContext: 'receipt' }).dates
+    .filter((candidate) => !isAmbiguousDateCandidate(candidate)
+      && !candidate.assumptions.includes(VALUE_ASSUMPTIONS.monthPeriodBoundary));
+  const dates = new Set(candidates.map((candidate) => candidate.isoDate));
+  if (dates.size !== 1) return fields;
+  const expenseDate = [...dates][0]!;
+  const assumptions = [...new Set(candidates.filter((candidate) => candidate.isoDate === expenseDate)
+    .flatMap((candidate) => candidate.assumptions))];
+  const missingFields = fields.missingFields?.filter((field) => field !== 'expenseDate');
+  return {
+    ...fields,
+    expenseDate,
+    ...(assumptions.length ? { expenseDateAssumptions: assumptions } : {}),
+    ...(missingFields?.length ? { missingFields } : { missingFields: [] }),
+  };
+}
+
 /** Markdown transcription often adds table pipes around a row while the same model quotes the row
  * without them. Bind the candidate back to the one exact source line containing both its printed
  * description and amount; ambiguity or a split row remains rejected by the normal parser. */
@@ -309,7 +331,10 @@ function assessIntakeOnePassReceipt(
     1,
   );
   if (!parsed?.fields || !parsed.classification) return { reason: 'JSON_INCOMPLETE_OR_INVALID' };
-  const fields = applyOcrValueCrossCheck(parsed.fields, documentText, todayCivilDate(), parsed.classification.documentKind);
+  const fields = withOnePassUniquePrintedDate(
+    applyOcrValueCrossCheck(parsed.fields, documentText, todayCivilDate(), parsed.classification.documentKind),
+    documentText,
+  );
   const classification = gateBusinessDocumentClassification(
     withOnePassAmountEvidence(parsed.classification, fields, documentText),
     fields,

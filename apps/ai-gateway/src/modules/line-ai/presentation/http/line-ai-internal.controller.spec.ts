@@ -1088,6 +1088,17 @@ describe('validated one-pass receipt', () => {
     assert.deepEqual(result?.classification.amountSignals, ['185.00']);
   });
 
+  it('recovers only one unambiguous printed receipt date when the candidate omitted it', () => {
+    const unlabeledDateText = documentText.replace('วันที่ 21/09/2026', '21/09/2026');
+    const result = validateIntakeOnePassReceipt(
+      plan({ documentText: unlabeledDateText }),
+      candidate({ expenseDate: undefined, missingFields: ['expenseDate'] }),
+      [],
+    );
+    assert.equal(result?.fields.expenseDate, '2026-09-21');
+    assert.deepEqual(result?.fields.missingFields, []);
+  });
+
   it('rejects a buyer name presented as the vendor even when it is printed elsewhere on the page', () => {
     const sellerBuyerText = [
       '[SELLER]บริษัท ผู้ขาย จำกัด[/SELLER]', '[BUYER]ร้านกาแฟ[/BUYER]',
