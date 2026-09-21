@@ -95,14 +95,23 @@ describe('P10-L webhook intake (G-03/G-04)', () => {
 
 // ── Cards ──
 
+/** Every footer button as `[label, the URI it opens or the text it sends]`, in the order shown. */
+const doorButtons = (card: any) => card.contents.footer.contents
+  .map((button: any) => [button.action.label, button.action.uri ?? button.action.text]);
+
 describe('P10-L door and status cards (§3.1/§7)', () => {
-  it('offers four ways on, including one that reaches a person', () => {
-    const card = JSON.stringify(buildSignupDoorCard('1234567890-abcdef', WEB_BASE));
-    assert.match(card, /เปิดร้านใหม่/);
-    assert.match(card, /https:\/\/liff\.line\.me\/1234567890-abcdef\/signup/);
-    assert.match(card, /ฉันเป็นพนักงาน/);
-    assert.match(card, /ติดต่อเจ้าหน้าที่/, 'the keyword must be tappable, not only typeable');
-    assert.match(card, /บัญชีทางการที่ยืนยันแล้ว/, 'the verified shield guards against a fake OA (§9)');
+  it('offers five ways on, in the Owner\'s order, including one that reaches a person', () => {
+    const card = buildSignupDoorCard('1234567890-abcdef', WEB_BASE);
+    // Owner 2026-09-21: the price question comes second, right behind the shop door — and it is
+    // answered by the โปรโมชั่น card the rich menu already sends, never a second copy of the words.
+    assert.deepEqual(doorButtons(card), [
+      ['เปิดร้านใหม่', 'https://liff.line.me/1234567890-abcdef/signup'],
+      ['ดูแพ็กเกจและราคา', 'โปรโมชั่น'],
+      ['ฉันเป็นพนักงาน', 'ฉันเป็นพนักงาน'],
+      ['มีบัญชีอยู่แล้ว เชื่อม LINE', `${WEB_BASE}/login?line=link-required&next=%2F&openExternalBrowser=1`],
+      ['ติดต่อเจ้าหน้าที่', 'ติดต่อเจ้าหน้าที่'],
+    ]);
+    assert.match(JSON.stringify(card), /บัญชีทางการที่ยืนยันแล้ว/, 'the verified shield guards against a fake OA (§9)');
   });
 
   // The old door pointed at the LIFF account link-page, whose client reads a `watchdog_access_token`
@@ -384,6 +393,11 @@ describe('P10-L webhook doors', () => {
 
     assert.match(rendered(h), /เปิดร้านใหม่/);
     assert.equal(outcome(h), 'line_follow');
+    // Owner 2026-09-21: two messages in the one reply — the hello, then the card it points at.
+    // Order matters: step 1 of the greeting names a button the reader must already be looking at.
+    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['text', 'flex']);
+    assert.match(spoken(h), /^สวัสดีค่ะ 🙏 ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อนนะคะ\n/);
+    assert.match(spoken(h), /กด "เปิดร้านใหม่" ในการ์ดด้านล่าง/);
     // L-B follow-up (c): adding the OA is the INVITED first step of this flow. Recording it DENIED
     // put every prospect into a security signal whose whole value is that it is rare.
     const denied = h.audits.filter((entry: any) => entry.result === 'DENIED');
@@ -402,6 +416,9 @@ describe('P10-L webhook doors', () => {
     assert.equal(outcome(h), 'unlinked');
     const entry = h.audits.find((row: any) => row.action === 'ai.line.unlinked_access');
     assert.equal(entry.result, 'DENIED', 'reaching for the assistant without an account still is');
+    // The hello belongs to the friend-add, not to every sentence a stranger types: the card alone.
+    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['flex']);
+    assert.equal(spoken(h).includes('ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อน'), false);
   });
 
   it('answers a follow with the status card while an application is travelling', async () => {
@@ -411,6 +428,9 @@ describe('P10-L webhook doors', () => {
     assert.match(rendered(h), /ได้รับคำขอแล้ว/, 'the bubble title');
     assert.match(rendered(h), /คำขอเปิดร้าน ร้านนิด เข้าระบบแล้วค่ะ/, 'the body names the shop without repeating the title');
     assert.equal(rendered(h).includes('เปิดร้านใหม่'), false, 'never invite a second application');
+    // …which is also why the greeting does not ride with this one: its step 1 says to press a
+    // button the status card does not carry.
+    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['flex']);
   });
 
   // L-17: a customer who already has a shop and re-adds the OA is not a prospect. The three doors
@@ -425,6 +445,10 @@ describe('P10-L webhook doors', () => {
     assert.equal(rendered(h).includes('เปิดร้านใหม่'), false, 'never invite a second shop');
     assert.match(rendered(h), /ติดต่อเจ้าหน้าที่/, 'the way to a person still travels with it');
     assert.equal(outcome(h), 'line_follow_known');
+    // Owner 2026-09-21: the long hello is for a first friend-add. A customer who re-adds the OA
+    // keeps the short line and nothing else — one message, no greeting, no card.
+    assert.equal(h.replies.flat().length, 1);
+    assert.equal(spoken(h).includes('ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อน'), false);
   });
 
   // L-19. A LINE user id only means anything WITHIN one messaging channel. An absent Prisma filter
