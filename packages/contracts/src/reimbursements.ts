@@ -350,6 +350,10 @@ export type ReimbursementSignedCopySummary = {
   attachmentId: string;
   fileName: string;
   uploadedAt: string;
+  /** A4: present on a scan attached with the completeness declaration — when it was declared. */
+  acknowledgedAt?: string;
+  /** Who made that declaration, on the detail read when the name resolves (never a user id). */
+  acknowledgedByName?: string;
 };
 
 export type SignReimbursementClaimFormInput = {

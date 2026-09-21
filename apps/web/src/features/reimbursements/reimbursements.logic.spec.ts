@@ -506,6 +506,42 @@ describe('buildJourneySteps', () => {
     assert.equal(buildJourneySteps(claim({ financeReviewStatus: 'NEEDS_INFO' }), [], 'x').length, 5);
   });
 
+  it('counts the finance step from the claim\'s own policy before approval', () => {
+    const pending = claim({ ...submitted, status: 'PENDING_APPROVAL' });
+    assert.deepEqual(shape({ ...pending, financeReviewRequired: true }),
+      ['items:done', 'approval:current', 'finance:upcoming', 'payment:upcoming', 'document:upcoming']);
+    assert.equal(buildJourneySteps({ ...pending, financeReviewRequired: false }, [], 'x').length, 4);
+    assert.equal(buildJourneySteps(claim({ financeReviewRequired: true }), [], 'x').length, 5, 'a draft follows the current policy');
+    // Once approved, the finance state the claim shows decides.
+    assert.equal(buildJourneySteps(claim({ ...approved, status: 'READY_FOR_PAYMENT', financeReviewRequired: true }), [], 'x').length, 4);
+  });
+
+  it('finishes the document step once the paid claim is signed in the system or on paper (A4, AC17)', () => {
+    const paid = claim({ ...approved, requesterUserId: 'owner', status: 'PAID', approvalSteps: [{ ...approved.approvalSteps[0], decisionByUserId: 'owner' }],
+      payments: [{ id: 'p1', status: 'RECORDED', paidByUserId: 'owner', paidAt: '2026-09-20T06:00:00.000Z' }] });
+    // Paid, not signed: the document step is where the claim stands, with sign, print and attach.
+    const unsigned = active(paid, OWNER, 'owner');
+    assert.deepEqual([unsigned.key, unsigned.state, unsigned.actions], ['document', 'current', ['sign', 'print', 'attach-signed-copy', 'void-payment']]);
+
+    const paper = { ...paid, documentSignedVia: 'PAPER', signedCopies: [
+      { attachmentId: 'a2', fileName: 'scan.jpg', uploadedAt: '2026-09-21T05:00:00.000Z' },
+      { attachmentId: 'a1', fileName: 'signed.pdf', uploadedAt: '2026-09-21T04:00:00.000Z', acknowledgedAt: '2026-09-21T04:00:00.000Z', acknowledgedByName: 'คุณสมชาย' },
+    ] };
+    assert.deepEqual(shape(paper, OWNER, 'owner'), ['items:done', 'approval:done', 'payment:done', 'document:done']);
+    // Every step done: the card stays on the document for a reprint, a newer copy or a void.
+    const done = active(paper, OWNER, 'owner');
+    assert.deepEqual([done.key, done.state, done.actions], ['document', 'done', ['print', 'attach-signed-copy', 'void-payment']]);
+    assert.equal(done.note, 'ลงนามบนกระดาษ · แนบเมื่อ 21 ก.ย. 2569 โดย คุณสมชาย');
+    assert.equal(active({ ...paper, documentSignedVia: 'BOTH', signedCopies: [] }, OWNER, 'owner').note, 'ลงนามบนกระดาษ');
+    assert.equal(active({ ...paid, documentSignedVia: 'DIGITAL' }, OWNER, 'owner').note, 'ลงนามในระบบครบแล้ว');
+  });
+
+  it('leaves a document signed before payment upcoming while the claim waits at payment (§15)', () => {
+    const ready = claim({ ...approved, status: 'READY_FOR_PAYMENT', documentSignedVia: 'PAPER' });
+    assert.deepEqual(shape(ready, OWNER, 'owner'), ['items:done', 'approval:done', 'payment:current', 'document:upcoming']);
+    assert.equal(active(ready, OWNER, 'owner').key, 'payment');
+  });
+
   it('puts the current step where the claim stands for every live status', () => {
     const cases: Array<[Record<string, unknown>, string]> = [
       [{ status: 'DRAFT' }, 'items:current'],

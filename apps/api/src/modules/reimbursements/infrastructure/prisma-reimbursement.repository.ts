@@ -2718,8 +2718,13 @@ export class PrismaReimbursementRepository {
     return row ?? null;
   }
 
-  /** Uploaded scans of the wet-ink signed form, newest first; `acknowledged` = attached with the A4 declaration. */
-  async listSignedClaimFormCopies(companyId: string, requestId: string): Promise<{ attachmentId: string; fileName: string; uploadedAt: Date; acknowledged: boolean }[]> {
+  /**
+   * Uploaded scans of the wet-ink signed form, newest first; `acknowledged` = attached with the A4 declaration,
+   * whose maker and time ride along for the "ลงนามบนกระดาษ · แนบเมื่อ … โดย …" line.
+   */
+  async listSignedClaimFormCopies(companyId: string, requestId: string): Promise<{
+    attachmentId: string; fileName: string; uploadedAt: Date; acknowledged: boolean; acknowledgedByUserId?: string; acknowledgedAt?: string;
+  }[]> {
     const rows = await this.prisma.client.attachmentLink.findMany({
       where: {
         companyId,
@@ -2732,13 +2737,19 @@ export class PrismaReimbursementRepository {
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
-    return rows.map((row) => ({
-      attachmentId: row.attachmentId,
-      fileName: row.attachment.originalFileName,
-      uploadedAt: row.createdAt,
-      acknowledged: (row.attachment.metadataJson as Record<string, { linkId?: unknown } | undefined> | null)
-        ?.[REIMBURSEMENT_SIGNED_COPY_ACK_KEY]?.linkId === row.id,
-    }));
+    return rows.map((row) => {
+      const ack = (row.attachment.metadataJson as Record<string, (Partial<ReimbursementSignedCopyAck> & { linkId?: unknown }) | undefined> | null)
+        ?.[REIMBURSEMENT_SIGNED_COPY_ACK_KEY];
+      const acknowledged = ack?.linkId === row.id;
+      return {
+        attachmentId: row.attachmentId,
+        fileName: row.attachment.originalFileName,
+        uploadedAt: row.createdAt,
+        acknowledged,
+        // Only the declaration bound to this link: a pre-filled or stale one names nobody.
+        ...(acknowledged && { acknowledgedByUserId: ack?.acknowledgedByUserId, acknowledgedAt: ack?.acknowledgedAt }),
+      };
+    });
   }
 
   /**
