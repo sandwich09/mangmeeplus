@@ -225,6 +225,23 @@ const EMPLOYEE_DOOR_REPLY = '👋 ยินดีต้อนรับค่ะ 
 /** L-17: the greeting for someone the system already knows. Short on purpose — they came back. */
 const WELCOME_BACK_REPLY = '👋 ยินดีต้อนรับกลับมานะคะ ส่งรูปใบเสร็จ หรือถามยอดขายในแชทนี้ได้เลยค่ะ '
   + 'ถ้าต้องการคุยกับทีมงาน พิมพ์ ติดต่อเจ้าหน้าที่ ได้เลยนะคะ';
+/**
+ * Owner copy 2026-09-21: the first hello, sent IN FRONT of the door card to someone who has just
+ * added the OA. The card alone answered "which door" without ever answering "what is this and what
+ * does it cost", so a follower had to guess both. Verbatim Owner wording — edit only on their word.
+ */
+const FOLLOW_WELCOME_REPLY = 'สวัสดีค่ะ 🙏 ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อนนะคะ\n'
+  + 'น้องมั่งมีเป็นผู้ช่วยบัญชี AI สำหรับร้านค้าและ SME ค่ะ\n'
+  + '📸 ถ่ายใบเสร็จส่งในแชทนี้ ระบบอ่านและบันทึกค่าใช้จ่ายให้เอง\n'
+  + '📊 ถามยอดขาย ค่าใช้จ่าย สรุปบัญชี ได้ทุกเมื่อ\n'
+  + '🧾 แพ็กเกจธุรกิจออกเอกสารและภาษีได้ครบ รวม ภ.ง.ด.53 และ 50 ทวิ\n'
+  + '\n'
+  + 'เริ่มใช้งานง่าย ๆ 3 ขั้นค่ะ 👇\n'
+  + '1. กด "เปิดร้านใหม่" ในการ์ดด้านล่าง กรอกข้อมูลร้านไม่ถึง 2 นาที\n'
+  + '2. เลือกแพ็กเกจในแอป เริ่มต้น 249 บาท/เดือน แล้วชำระ\n'
+  + '3. ใช้งานได้ทันที ทั้งในแอปและในแชทนี้\n'
+  + '\n'
+  + 'อยากดูราคาก่อน กดช่อง "แพ็กเกจและราคา" ที่เมนูด้านล่างแชทได้เลยค่ะ';
 /** The way out of a support pause, as every reply that offers one prints it: the tile's own words,
  *  tapped or typed (Owner 2026-09-06). Built from the command so the hint and the matcher cannot
  *  drift — and never "AI": the customer knows her as น้องมั่งมี. */
@@ -2091,14 +2108,20 @@ export class ProcessLineWebhookUseCase {
    *
    * Read from the application table directly, like every other state this turn reads: the row is
    * keyed by the same (channel, LINE user) pair the identity lookup above uses.
+   *
+   * `welcome` (Owner 2026-09-21) puts the first hello in front of the DOOR card, and only there: a
+   * stranger who merely typed is answered by the card alone, and an application already travelling
+   * gets its status card — whose footer has no "เปิดร้านใหม่" for the greeting's step 1 to name.
    */
-  private async entryDoorMessage(lineUserId: string): Promise<LineReplyMessage> {
+  private async entryDoorMessages(lineUserId: string, welcome = false): Promise<LineReplyMessage[]> {
     const pending = await this.findOpenLineSignup(lineUserId);
-    if (!pending) return this.doorCard();
-    return buildSignupStatusCard(pending.companyName, isBusinessHours(new Date(), {
+    if (!pending) {
+      return welcome ? [{ type: 'text', text: FOLLOW_WELCOME_REPLY }, this.doorCard()] : [this.doorCard()];
+    }
+    return [buildSignupStatusCard(pending.companyName, isBusinessHours(new Date(), {
       days: this.config.lineSignupBusinessDays,
       hours: this.config.lineSignupBusinessHours,
-    }));
+    }))];
   }
 
   /**
@@ -2646,9 +2669,9 @@ export class ProcessLineWebhookUseCase {
       data: { aiPausedUntil: null },
     });
     const available = Boolean(identity && identity.user.status === 'ACTIVE');
-    await this.deliverRequiredMessages(event, [
-      available ? { type: 'text', text: ASSISTANT_RESUMED_REPLY } : await this.entryDoorMessage(event.lineUserId),
-    ]);
+    await this.deliverRequiredMessages(event, available
+      ? [{ type: 'text', text: ASSISTANT_RESUMED_REPLY }]
+      : await this.entryDoorMessages(event.lineUserId));
     await this.audit.log({
       action: 'signup.line.support_resumed',
       targetType: 'line_user',
@@ -3678,14 +3701,16 @@ export class ProcessLineWebhookUseCase {
       }
       // P10-L §3.1: the plain "link your account first" line was a dead end for the one person who
       // has no account to link. The same card the door sends, so both entrances agree — and a
-      // `follow` from a stranger lands here too, which is what makes G-03 an answer.
-      await this.deliverRequiredMessages(event, [await this.entryDoorMessage(event.lineUserId)]);
+      // `follow` from a stranger lands here too, which is what makes G-03 an answer. A follow ALSO
+      // gets the greeting in front of it (Owner 2026-09-21); a typed message gets the card alone,
+      // because the hello belongs to the moment the friend was added.
+      const invitedEntry = publicCommand === 'follow';
+      await this.deliverRequiredMessages(event, await this.entryDoorMessages(event.lineUserId, invitedEntry));
       // L-B follow-up (c): adding the OA as a friend is the INVITED first step of this flow, not an
       // attempt to reach anything. Recording it DENIED puts every prospect into a security signal
       // whose whole value is that it is rare — the door card is the correct, successful answer to
       // them. A message or a postback from an unlinked stranger is still a real access attempt and
       // keeps its DENIED row.
-      const invitedEntry = publicCommand === 'follow';
       await this.audit.log({
         action: 'ai.line.unlinked_access', targetType: 'line_user', requestId,
         result: invitedEntry ? 'SUCCESS' : 'DENIED', riskLevel: 'LOW',
