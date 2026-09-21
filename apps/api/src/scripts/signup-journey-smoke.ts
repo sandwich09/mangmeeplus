@@ -133,25 +133,32 @@ export async function checkSignupJourney(input:{app:INestApplication;prisma:Pris
     await page.getByRole('button',{name:/ยืนยันและเริ่มใช้งาน|Confirm and start/i}).click();
     await page.waitForURL(url=>url.pathname==='/signup/welcome'||url.pathname.startsWith(`/companies/${createdCompany}/`));
     if(new URL(page.url()).pathname==='/signup/welcome'){
-      await page.getByRole('heading',{name:`${companyName} พร้อมใช้งานแล้ว`,exact:true}).waitFor();
-      await page.getByRole('link',{name:'ไว้ทีหลัง — เข้าใช้งานเลย',exact:true}).click();
+      await page.getByRole('heading',{name:`เปิดร้าน ${companyName} แล้ว`,exact:true}).waitFor();
+      await page.screenshot({path:`${browser.evidenceDir}/signup-welcome-locked-mobile.png`,fullPage:true});
+      await page.getByRole('link',{name:'ไว้ทีหลัง — ไปเลือกแพ็กเกจ',exact:true}).click();
     }
     await page.waitForURL(`**/companies/${createdCompany}/**`);
-    // Spec §12: the whole web of a shop with no package — ตั้งค่า and, for the owner, แพ็กเกจ —
-    // and every other path bounced to /renew before a business page can mount. Strings are copied
-    // from `PLAN_LOCK_COPY` in apps/web; the API cannot import the web package.
-    await page.waitForURL(`**/companies/${createdCompany}/renew`);
+    // The welcome skip link now takes a locked shop straight to the package page (spec §19) — one
+    // of the few paths spec §12 leaves open (ตั้งค่า and, for the owner, แพ็กเกจ) — so no bounce
+    // through /renew fires here. Strings are copied from `PLAN_LOCK_COPY` in apps/web; the API
+    // cannot import the web package. `/expenses/upload` below is not on that list and still bounces.
+    await page.waitForURL(`**/companies/${createdCompany}/billing`);
     await page.getByText('ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ · เลือกแพ็กเกจเพื่อเริ่มใช้งาน',{exact:true}).waitFor();
+    await page.screenshot({path:`${browser.evidenceDir}/signup-renew-locked-mobile.png`,fullPage:true});
     await page.getByRole('button',{name:'สลับเมนู',exact:true}).click();
     assert.deepEqual(await page.locator('aside nav a').allInnerTexts(),['ตั้งค่า','แพ็กเกจ']);
+    await page.screenshot({path:`${browser.evidenceDir}/signup-locked-menu-mobile.png`});
+    await page.keyboard.press('Escape');
     await page.goto(`${browser.origin}/companies/${createdCompany}/expenses/upload`,{waitUntil:'domcontentloaded'});
     await page.waitForURL(`**/companies/${createdCompany}/renew`);
     assert.equal(await page.locator('input[type="file"]').count(),0);
     // Same refusal from outside the shell: the lock is the API's, not the router's. A no-package
-    // shop is DISABLED, so context resolution turns it away before the term check can name
-    // `company_term_expired` — that code is left for an ACTIVE shop whose term just ran out.
+    // shop is DISABLED, and the permission resolver now names `company_term_expired` for that too —
+    // the same code an ACTIVE shop's own expired term returns — so a stale tab or deep link bounces
+    // to /renew instead of reading a dead-end 403.
     const blocked=await customer.request.get(`${browser.origin}/api/v1/companies/${createdCompany}/expenses`,{headers:{Origin:browser.origin}});
-    assert.equal(blocked.status(),403);assert.equal((await blocked.json()).message,'Company is not active.');
+    const blockedBody=await blocked.json();
+    assert.equal(blocked.status(),403);assert.equal(blockedBody.message,'Company is not active.');assert.equal(blockedBody.code,'company_term_expired');
     const catalogRead=page.waitForResponse(r=>r.url().endsWith('/billing/catalog'));
     await page.goto(`${browser.origin}/companies/${createdCompany}/billing`,{waitUntil:'domcontentloaded'});
     await page.getByRole('heading',{name:'ยังไม่มีแพ็กเกจ',exact:true}).waitFor();
