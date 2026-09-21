@@ -1,6 +1,6 @@
 # การจ่ายแพ็กเกจครั้งเดียวด้วยบัตร/PromptPay และต่ออายุด้วย QR
 
-Status: implementation ใน branch `codex/billing-payment-modes` และ Stripe Sandbox primitive ผ่าน 2026-09-20; UAT application journey, CI, release และ Production ยังไม่ผ่าน. Owner ต้องการซื้อครั้งเดียวด้วยบัตรหรือ QR และสมาชิก QR ที่สแกนใหม่ทุกงวด. ตาราง audit ด้านล่างบันทึก gap ที่พบก่อน implementation เพื่อใช้ตรวจผลแก้ ไม่ใช่หลักฐานว่าเกิด charge จริงใน Production.
+Status: implementation/CI และ signed UAT release ผ่าน; UAT gate บัตรครั้งเดียวและ PromptPay ทั้งสองแบบเปิดแล้ว 2026-09-21 และ OWNER เห็นตัวเลือกจริง. App-level paid journey และ Production ยังไม่ผ่าน. Owner ต้องการซื้อครั้งเดียวด้วยบัตรหรือ QR และสมาชิก QR ที่สแกนใหม่ทุกงวด; เมื่อ Production deploy ต้องเปิด gate ทั้งสามและยืนยันหน้า OWNER หลัง release acceptance. ตาราง audit ด้านล่างบันทึก gap ที่พบก่อน implementation เพื่อใช้ตรวจผลแก้ ไม่ใช่หลักฐานว่าเกิด charge จริงใน Production.
 
 ## เป้าหมายและผู้ใช้
 
