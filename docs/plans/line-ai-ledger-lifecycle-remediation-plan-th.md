@@ -79,6 +79,7 @@ Implementation ครบและมี focused automated evidence (contracts/ap
 - [x] เก็บ bounded fallback reasons สำหรับ `extract-repair`/`image-reread` (`JSON_INCOMPLETE_OR_INVALID`, `TOTAL_MISSING`, `VAT_MISSING`, `ITEMS_INCOMPLETE`) โดยไม่เก็บเนื้อหาเอกสารและไม่ปิด fallback; LINE audit เก็บ path/reasons เดียวกัน
 - [x] เพิ่ม focused tests สำหรับ accepted one-pass, check bill/non-document rejection, evidence/total/VAT/item/currency rejection และ fallback reason mapping; gateway 211 + API 376 + corpus integrity 10 ผ่าน, gateway/API typecheck ผ่าน
 - [ ] รัน frozen corpus ก่อน/หลังและยืนยันค่าเฉลี่ยต่ำกว่า 1.50 บาทต่อรูปโดย accuracy/retry/parse/truncation ไม่ถดถอย; ถ้ายังไม่ถึงเป้าให้รายงานจริง ไม่ลด gate หรือซ่อน cost tag
+  - 2026-09-21: initial 9 รูป × 2 ไม่ผ่าน (`฿1.56/successful`, one-pass 0); หลังแก้ warm 9 รูปผ่าน `฿1.27/successful`, 2 one-pass, calls `30 → 26` แต่พบ tax vendor OCR typo จึงปิด tax one-pass; exact final handwritten ผ่าน 2/2 ที่ `฿0.63–0.64`; ใช้งบรวม `฿85.49` แล้วหยุด — checklist ยังเปิดจนรัน exact final 9 รูป × 2 ครบ ดู [รายงาน](../research/receipt-one-pass-cost-benchmark-2026-09-21.md)
 
 ราคาแพ็กเกจ/ENTERPRISE ยังไม่เปลี่ยนใน C2 ตาม owner decision 2026-09-21
 
