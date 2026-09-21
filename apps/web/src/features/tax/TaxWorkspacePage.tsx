@@ -102,30 +102,33 @@ function EmptyRow({ cols, text }: { cols: number; text: string }) {
  * invoices that stay CLAIMABLE (§8 never touches taxEvidenceStatus/inputVatClaimStatus for a
  * missing address) but still have none, so whoever files this period gets to decide first.
  *
- * N must equal what `/expenses?view=addressMissing` shows after clicking, so this queries the
- * exact filter that view applies (see the comment on `vendorAddressMissing` in expenses.api.ts:
- * "the API pins the document type itself, so this is the whole filter") plus the same branch scope
- * — the view does not date-scope that filter (GAP-11: old documents surface every period until
- * fixed, by design), so this count does not either. fromDate/toDate still ride on the link itself,
- * exactly as the view's own URL contract expects.
+ * N must equal what `/expenses?view=addressMissing&fromDate=...&toDate=...` shows after clicking,
+ * so this sends the SAME period range into the count query — the list view now date-scopes that
+ * filter whenever the URL carries a valid range (`addressMissingListFilter` in
+ * expense-address-missing-view.logic.ts), which this link always does. That is what makes "ในงวดนี้"
+ * true; the list's own "ยังไม่มีที่อยู่" chip still links here WITHOUT dates, on purpose, to keep
+ * browsing every period's backlog — a different entry point, not this one.
  */
 function AddressMissingChecklistLine({ companyId, period, canOpenExpenses }: { companyId: string; period: TaxPeriod; canOpenExpenses: boolean }) {
   const branchFilter = useBranchFilter();
   const branchId = branchFilter?.branchId ?? '';
   const [count, setCount] = useState<number | null>(null);
+  const range = monthlyPeriodDateRange(period.periodKey);
 
   useEffect(() => {
     setCount(null);
-    if (!canOpenExpenses) return;
+    if (!canOpenExpenses || !range) return;
     let cancelled = false;
-    listExpenses(companyId, { vendorAddressMissing: true, ...(branchId ? { branchId } : {}), pageSize: 1 })
+    listExpenses(companyId, { vendorAddressMissing: true, fromDate: range.fromDate, toDate: range.toDate, ...(branchId ? { branchId } : {}), pageSize: 1 })
       .then((res) => { if (!cancelled) setCount(res.total); })
       // Informational only (§8): a failed count never blocks or errors the rest of the page.
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [companyId, period.id, branchId, canOpenExpenses]);
+    // `range` is left out on purpose: it is a fresh object every render (derived purely from
+    // `period.periodKey`, which IS a dependency below), and including it would re-fetch on every
+    // unrelated re-render of this page instead of only when the period actually changes.
+  }, [companyId, period.id, period.periodKey, branchId, canOpenExpenses]);
 
-  const range = monthlyPeriodDateRange(period.periodKey);
   if (!canOpenExpenses || !range || !count) return null;
 
   return (

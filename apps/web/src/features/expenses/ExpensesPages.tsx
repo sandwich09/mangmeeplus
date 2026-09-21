@@ -67,6 +67,7 @@ import {
   type CaptureUploadEntry, type CaptureUploadState,
 } from './expense-capture-upload.logic';
 import { captureReadJobNotice } from './expense-capture-status.logic';
+import { addressMissingListFilter } from './expense-address-missing-view.logic';
 import {
   bangkokMonthKey, classifyUploadFile, HeicDecodeError, isReceiptQuotaBlocked,
   availableExpenseSessionStorage,
@@ -2038,6 +2039,9 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   // chip below can both link to exactly this list without duplicating the query.
   const sourceView = requestedView === 'pending' || requestedView === 'unpaid' || requestedView === 'addressMissing' ? requestedView
     : requestedView === 'confirmed' && isCivilDate(requestedFrom) && isCivilDate(requestedTo) && requestedFrom <= requestedTo ? 'confirmed' : null;
+  // §11.4: the checklist link carries a valid range, so this view is period-scoped like `confirmed`
+  // is; the chip's own link carries none, so this stays the every-period filter it always was.
+  const addressMissingRange = sourceView === 'addressMissing' ? addressMissingListFilter(requestedFrom, requestedTo) : null;
   const toast = useToast();
   const [rows, setRows] = useState<ExpenseSummary[]>([]);
   const [catNames, setCatNames] = useState<Record<string, string>>({});
@@ -2098,8 +2102,9 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
           ...(branchId ? { branchId } : {}),
           ...(sourceView === 'confirmed' ? { status: 'CONFIRMED', fromDate, toDate }
             : sourceView === 'unpaid' ? { status: 'CONFIRMED' }
-            // Every period: §8 says the filter exists so old documents can be filled in over time.
-            : sourceView === 'addressMissing' ? { vendorAddressMissing: true }
+            // §11.4: scoped to the checklist's range when the URL carries a valid one, every period
+            // otherwise (§8 - the chip's own link, so old documents can be filled in any time).
+            : sourceView === 'addressMissing' ? addressMissingListFilter(requestedFrom, requestedTo)
             : { uploadedFromDate: fromDate, uploadedToDate: toDate }),
           page: nextPage, pageSize: 200,
         });
@@ -2116,7 +2121,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
     }
     finally { if (version === loadVersion.current) setLoading(false); }
     // `branchFilter` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
-  }, [companyId, branchId, fromDate, toDate, sourceView]);
+  }, [companyId, branchId, fromDate, toDate, sourceView, requestedFrom, requestedTo]);
   useEffect(() => { void load(); return () => { loadVersion.current += 1; }; }, [load]);
   useEffect(() => {
     setCategoryNamesLoading(true);
@@ -2247,7 +2252,9 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
       {sourceView && <div role="status" className="rounded-xl bg-brand-25 p-3 text-sm text-brand-800">
         {sourceView === 'confirmed' ? `รายการยืนยันแล้ว · วันที่เอกสาร ${dateShort(fromDate)} – ${dateShort(toDate)}`
           : sourceView === 'pending' ? 'ใบเสร็จรอตรวจ · ทุกช่วงเวลา รวมฉบับร่าง'
-            : sourceView === 'addressMissing' ? t('expenses.view_vendor_address_missing', locale)
+            : sourceView === 'addressMissing' ? (addressMissingRange?.fromDate && addressMissingRange?.toDate
+                ? `${t('expenses.view_vendor_address_missing', locale)} · วันที่เอกสาร ${dateShort(addressMissingRange.fromDate)} – ${dateShort(addressMissingRange.toDate)}`
+                : t('expenses.view_vendor_address_missing', locale))
               : 'ค้างจ่ายที่ยืนยันแล้ว · ทุกช่วงเวลา'}
         <button className="ml-2 min-h-11 underline" onClick={() => router.replace(`/companies/${companyId}/expenses`)}>กลับไปดูรายการตามเดือน</button>
       </div>}
@@ -2314,7 +2321,9 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
               </button>
             ))}
             {/* §11.4: the way into "ใบกำกับที่ยังไม่มีที่อยู่ผู้ขาย". It carries no count because the
-                server answers it across every period, not out of the rows already loaded here. */}
+                server answers it across every period, not out of the rows already loaded here.
+                No fromDate/toDate on purpose - unlike the ภ.พ.30 checklist's own link, this chip
+                stays the browse-the-whole-backlog entry point (see addressMissingListFilter). */}
             <button type="button" aria-pressed={sourceView === 'addressMissing'}
               onClick={() => router.replace(`/companies/${companyId}/expenses${sourceView === 'addressMissing' ? '' : '?view=addressMissing'}`)}
               className={cx('col-span-2 inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-center text-sm font-semibold leading-tight transition sm:col-span-1',
