@@ -8,7 +8,7 @@ import { effectivePlanCapacity } from '../../system-partner-management/domain/lo
 import { assertNoPendingRefund, pendingRefund } from './billing-refund-source';
 import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
 import type { BillingAdjustmentKind } from '@watchdog-bms/contracts';
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, billingOffer, type BillingCatalog, type BillingPolicy, type BillingQuote,
   type BillingCheckoutBody, type BillingCheckoutResult, type BillingStatus, type BillingAction, type BillingInvoiceItem, type BillingAttemptView, type BillingPurchaseMode } from '@watchdog-bms/contracts';
@@ -37,8 +37,11 @@ import { trialReceiptCarryover, type TrialCarryoverSource } from './billing-tria
 import { billingState } from '../domain/billing-state';
 import { BillingFreeDays } from './billing-free-days';
 import { detectBillingIssue } from './billing-issues';
+import { billingPurchaseSource, initialPurchaseSource } from './billing-purchase-source';
+import type { BillingPurchaseSource } from '@watchdog-bms/contracts';
+import { billingFeaturePlan, type BillingFeaturePlan } from './billing-feature-entitlements';
 
-export type BillingSnapshot = { trialCarryover?: TrialCarryoverSource; emailProof?: EmailProof; quote: BillingQuote; priceId: string; productId?: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; oneTime?: { invoiceId: string; paidThrough: string; anchorDay: number; offerKey: string; interval: string }; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange } };
+export type BillingSnapshot = { trialCarryover?: TrialCarryoverSource; emailProof?: EmailProof; quote: BillingQuote; priceId: string; productId?: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; featurePlan?: BillingFeaturePlan; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; oneTime?: { invoiceId: string; paidThrough: string; anchorDay: number; offerKey: string; interval: string }; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange } };
 const oneTimeMode = (mode: BillingPurchaseMode | undefined) => mode === 'CARD_ONCE' || mode === 'PROMPTPAY_ONCE';
 const paymentCheckoutMode = (mode: BillingPurchaseMode | undefined) => oneTimeMode(mode) || mode === 'PROMPTPAY_RENEW';
 const gateForMode = (mode: BillingPurchaseMode): BillingAction => mode === 'CARD_ONCE' ? 'card_once' : mode === 'PROMPTPAY_ONCE' ? 'promptpay_once' : mode === 'PROMPTPAY_RENEW' ? 'promptpay_renew' : 'new_sales';
@@ -108,6 +111,12 @@ export class BillingService {
     return tx.billingAccount.findUnique({ where: { companyId_stripeAccountId_livemode: {
       companyId, stripeAccountId: this.stripe.accountId, livemode: this.stripe.livemode,
     } } });
+  }
+
+  async purchaseSource(company: { planTerm: Parameters<typeof billingPurchaseSource>[0] }, account: BillingAccount | null,
+    tx: Prisma.TransactionClient = this.prisma.client): Promise<BillingPurchaseSource> {
+    const paid = account ? await tx.billingInvoice.findFirst({ where: { billingAccountId: account.id, providerStatus: 'paid' }, select: { id: true } }) : null;
+    return billingPurchaseSource(company.planTerm, account, !!paid);
   }
 
   async catalog(): Promise<BillingCatalog> {
@@ -239,9 +248,6 @@ export class BillingService {
     const term = company.planTerm;
     const billingProfile = requireBillingProfile(company);
     if (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && term?.termDisabledAt)) throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมงาน');
-    if (!term || (!['FREE_TRIAL_15'].includes(term.tierKey) && !await this.account(company.id))) {
-      throw billingError('BILLING_LEGACY_REVIEW_REQUIRED', 'แพ็กเกจเดิมต้องให้ทีมงานตรวจสอบก่อนซื้อ');
-    }
     const existing = await this.account(company.id);
     if (existing?.renewalMode === 'PROMPTPAY_RENEW' && existing.paidThrough && existing.paidThrough > new Date())
       throw billingError('BILLING_PLAN_CHANGE_REQUIRED', 'สมาชิก QR ที่กำลังใช้งานต้องจัดการบิลหรือรอสิ้นรอบก่อนซื้อแพ็กเกจใหม่');
@@ -250,6 +256,10 @@ export class BillingService {
     if (existing?.paidThrough && existing.paidThrough > new Date() && existing.renewalMode !== 'NONE' &&
         (oneTimeMode(purchaseMode) !== oneTimeMode(existing.renewalMode as BillingPurchaseMode)))
       throw billingError('BILLING_MODE_CHANGE_PENDING', 'กรุณารอให้แพ็กเกจปัจจุบันสิ้นสุดก่อนเปลี่ยนวิธีต่ออายุ');
+    const purchaseSource = await this.purchaseSource(company, existing);
+    if (purchaseSource === 'PAID_OTHER_MODE' || purchaseSource === 'SOURCE_INCONSISTENT')
+      throw billingError('BILLING_SOURCE_REVIEW_REQUIRED', 'ข้อมูลการชำระเงินเดิมไม่ตรงกัน กรุณาติดต่อทีมงานก่อนเริ่มรายการใหม่');
+    const featurePreview = initialPurchaseSource(purchaseSource) ? await billingFeaturePlan(this.prisma.client, company.id) : null;
     if (existing?.customerId) {
       const customer = await this.stripe.request('GET', `/customers/${existing.customerId}`);
       if (customer.id !== existing.customerId || customer.metadata?.billingAccountId !== existing.id || customer.email !== emailProof.email)
@@ -305,7 +315,7 @@ export class BillingService {
         const productId = stripeId(price.product);
         if (!productId || stripeId(zero.product) !== productId) throw billingError('BILLING_PRICE_MISMATCH', 'ข้อมูลราคาไม่ตรงกัน กรุณาติดต่อทีมงาน');
         const history = await upgradeHistory(this.prisma.client, existing, offer, state.policy, new Date(Math.floor(Date.now()/1000)*1000).toISOString());
-        if (history.segments[0]!.oldOffer.offerKey !== term.tierKey || Date.parse(history.segments[0]!.end) <= Date.now()+2401000)
+        if (history.segments[0]!.oldOffer.offerKey !== term?.tierKey || Date.parse(history.segments[0]!.end) <= Date.now()+2401000)
           throw billingError('BILLING_UPGRADE_BOUNDARY', 'ใกล้วันเปลี่ยนรอบแล้ว กรุณาตรวจสถานะใหม่หลังเปลี่ยนรอบหรือติดต่อทีมงาน');
         const preview = await upgradePreview(this.stripe, history.amountSatang, state.policy);
         upgrade = { ...history, previewId: preview.previewId, previewHash: preview.previewHash };
@@ -319,6 +329,8 @@ export class BillingService {
       ...quoteTotals(upgrade?.amountSatang ?? offer.priceSatang, state.policy.taxTreatment), taxTreatment: state.policy.taxTreatment!, consentRevision: state.policy.consentRevision,
       paidStart: state.policy.paidStart!, billingEmail: emailProof.email, billingProfile,
       trialEndsAt: term?.tierKey === 'FREE_TRIAL_15' && term.termEndsAt > new Date() ? term.termEndsAt.toISOString() : null,
+      previousSource: purchaseSource, previousTermEndsAt: term?.termEndsAt.toISOString() ?? null,
+      ...(featurePreview ? { featureImpact: featurePreview.impact } : {}),
       usage: await this.usage(company.id) };
     if (capacityPreview) quote.capacity = capacityPreview;
     const impact = fullPackagePurchaseImpact({ tier, interval, offer, verifiedPaidAt: new Date(Math.floor(Date.now() / 1000) * 1000),
@@ -347,7 +359,7 @@ export class BillingService {
       quote.purchase.trialCarryover = { receiptUnits: trialCarryover.units, expiresAt: quote.purchase.projectedPaidThrough };
       quote.purchase.projectedRemainingReceipts += trialCarryover.units;
     }
-    const snapshot: BillingSnapshot = { ...(trialCarryover ? { trialCarryover } : {}), emailProof, ...(pending ? { pendingChange: { id: pending.row.id, version: pending.row.version, proposed: pending.proposed } } : {}), quote, priceId, productId, policy: state.policy, settingsVersion: state.settings.version, termVersion: term?.updatedAt.toISOString() ?? null, termHash: termProjectionHash(term), ...(repeat ? { repeat } : {}), ...(oneTime ? { oneTime } : {}), ...(restart ? { restart } : {}), ...(upgrade ? { upgrade } : {}), ...(capacity ? { capacity } : {}) };
+    const snapshot: BillingSnapshot = { ...(trialCarryover ? { trialCarryover } : {}), emailProof, ...(pending ? { pendingChange: { id: pending.row.id, version: pending.row.version, proposed: pending.proposed } } : {}), quote, priceId, productId, policy: state.policy, settingsVersion: state.settings.version, termVersion: term?.updatedAt.toISOString() ?? null, termHash: termProjectionHash(term), ...(featurePreview ? { featurePlan: featurePreview.plan } : {}), ...(repeat ? { repeat } : {}), ...(oneTime ? { oneTime } : {}), ...(restart ? { restart } : {}), ...(upgrade ? { upgrade } : {}), ...(capacity ? { capacity } : {}) };
     await this.prisma.client.billingQuote.create({ data: { id: quoteId, companyId: company.id, initiatingUserId: context.userId,
       policyRevisionId: state.revision.id, snapshotJson: snapshot as unknown as Prisma.InputJsonValue, expiresAt: new Date(quote.expiresAt) } });
     return quote;
@@ -389,6 +401,11 @@ export class BillingService {
       const company = await tx.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
       if (!company || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))) throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ');
       assertBillingProfileUnchanged(company, snapshot.quote);
+      const source = await this.purchaseSource(company, account, tx);
+      if (source === 'PAID_OTHER_MODE' || source === 'SOURCE_INCONSISTENT') throw billingError('BILLING_SOURCE_REVIEW_REQUIRED', 'ข้อมูลการชำระเงินเดิมไม่ตรงกัน กรุณาติดต่อทีมงาน');
+      if (snapshot.quote.previousSource && source !== snapshot.quote.previousSource) throw billingError('BILLING_QUOTE_STALE', 'แพ็กเกจเดิมเปลี่ยน กรุณาตรวจสอบใหม่');
+      if (initialPurchaseSource(source) && (!snapshot.featurePlan || (await billingFeaturePlan(tx, context.companyId)).plan.sourceHash !== snapshot.featurePlan.sourceHash))
+        throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์เมนูเปลี่ยน กรุณาตรวจสอบใหม่');
       if ((company.planTerm?.updatedAt.toISOString() ?? null) !== snapshot.termVersion) throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์บริษัทเปลี่ยน กรุณาตรวจสอบใหม่');
       if (account?.activeAttemptId || (account?.baseSubscriptionId && !snapshot.repeat && !snapshot.restart)) throw billingError('BILLING_PURCHASE_PENDING', 'มีรายการชำระเงินอยู่แล้ว กรุณาตรวจสถานะเดิม');
       if (snapshot.restart && (!account || account.baseSubscriptionId !== snapshot.restart.subscriptionId || account.contractAttemptId !== snapshot.restart.contractAttemptId ||
@@ -473,6 +490,11 @@ export class BillingService {
         const company = await tx.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
         if (!company || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))) throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ');
         assertBillingProfileUnchanged(company, snapshot.quote);
+        const source = await this.purchaseSource(company, await this.account(context.companyId, tx), tx);
+        if (source === 'PAID_OTHER_MODE' || source === 'SOURCE_INCONSISTENT' || (snapshot.quote.previousSource && source !== snapshot.quote.previousSource))
+          throw billingError('BILLING_QUOTE_STALE', 'แพ็กเกจเดิมเปลี่ยน กรุณาตรวจสอบใหม่');
+        if (initialPurchaseSource(source) && (!snapshot.featurePlan || (await billingFeaturePlan(tx, context.companyId)).plan.sourceHash !== snapshot.featurePlan.sourceHash))
+          throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์เมนูเปลี่ยน กรุณาตรวจสอบใหม่');
         if ((company.planTerm?.updatedAt.toISOString() ?? null) !== snapshot.termVersion || company.name !== snapshot.quote.companyName) throw billingError('BILLING_QUOTE_STALE', 'ข้อมูลบริษัทหรือสิทธิ์เปลี่ยน กรุณาตรวจสอบใหม่');
         await lockAccountEmail(tx, context.userId);
         await assertAccountEmailProof(tx, context.userId, snapshot.emailProof);
@@ -553,6 +575,15 @@ export class BillingService {
     const company = await this.prisma.client.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
     if (!company) throw new NotFoundException();
     const term = company.planTerm, account = await this.account(company.id);
+    const purchaseSource = await this.purchaseSource(company, account);
+    let featureReady = true;
+    if (initialPurchaseSource(purchaseSource)) {
+      try { await billingFeaturePlan(this.prisma.client, company.id); }
+      catch (error) {
+        if (!(error instanceof ConflictException) || (error.getResponse() as { code?: string }).code !== 'BILLING_ENTITLEMENT_REVIEW_REQUIRED') throw error;
+        featureReady = false;
+      }
+    }
     const invoice = account ? await this.prisma.client.billingInvoice.findFirst({ where: { billingAccountId: account.id }, orderBy: [{ periodEnd: 'desc' }, { createdAt: 'desc' }] }) : null;
     const attempt = account?.activeAttemptId ? await this.prisma.client.billingAttempt.findUnique({ where: { id: account.activeAttemptId } }) : null;
     const settings = this.stripe.enabled ? await this.settings() : null;
@@ -562,7 +593,7 @@ export class BillingService {
     const eligible = companyCanBuy(settings?.policy ?? null, company.id);
     let policyReady = false;
     if (settings?.policy) { try { assertPolicyReady(settings.policy); policyReady = true; } catch { /* Keep incomplete policies closed. */ } }
-    if (settings?.policy && policyReady && !held) {
+    if (settings?.policy && policyReady && !held && featureReady && purchaseSource !== 'PAID_OTHER_MODE' && purchaseSource !== 'SOURCE_INCONSISTENT') {
       if (!account?.baseSubscriptionId && !account?.activeAttemptId && !account?.activeCollectionOperationId && settings.gates.new_sales && eligible) allowedActions.push('new_sales');
       if (account?.baseSubscriptionId && !account.activeAttemptId && !account.activeCollectionOperationId &&
         ['canceled', 'incomplete_expired'].includes(account.subscriptionState) && account.paidThrough && account.paidThrough <= new Date() &&
@@ -611,9 +642,11 @@ export class BillingService {
       livemode: this.stripe.livemode, state: { not: 'RESOLVED' } }, take: 10, select: { id: true, kind: true } }) : [];
     return { companyId: company.id, companyName: company.name, billingProfile: companyBillingProfile(company), mode: this.stripe.enabled ? (this.stripe.livemode ? 'LIVE' : 'TEST') : 'DISABLED',
       collectionPause: account?.collectionPauseJson as BillingStatus['collectionPause'],
-      purchaseEligibility: eligible ? 'ELIGIBLE' : 'COMPANY_SALES_CLOSED', refundReviewPending,
       renewalMode, enabledPurchaseModes, availablePurchaseModes,
       renewalInvoiceUrl, renewalInvoiceDueAt,
+      purchaseSource,
+      purchaseEligibility: !eligible ? 'COMPANY_SALES_CLOSED' : purchaseSource === 'PAID_OTHER_MODE' || purchaseSource === 'SOURCE_INCONSISTENT'
+        ? 'SOURCE_REVIEW_REQUIRED' : !featureReady ? 'ENTITLEMENT_REVIEW_REQUIRED' : 'ELIGIBLE', refundReviewPending,
       policyRevision: settings?.revision?.id ?? null, ...state, subscriptionState: account?.subscriptionState ?? 'NONE',
       attemptId: attempt?.id ?? null, reference: invoice?.id ?? attempt?.id ?? null, observedAt: account?.observedAt?.toISOString() ?? null,
       canCancelCheckout: !!attempt?.checkoutSessionId && !['COMPLETED','EXPIRED','FAILED'].includes(attempt.status) &&

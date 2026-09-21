@@ -3,7 +3,7 @@ import type { billingApi } from './billing.api';
 import { companyBillingProfile } from '@watchdog-bms/contracts';
 
 export const previewScenarios = {
-  start: 'ทดลองใช้ → ซื้อแพ็กเกจแรก', capacity: 'เลือกสาขาและผู้ใช้', 'capacity-work': 'งานค้างเกินแพ็กเกจที่เลือก', upgrade: 'มีแพ็กเกจ BASIC → ซื้อเพิ่มหรือเปลี่ยน', 'scheduled-change': 'มีคำสั่งเปลี่ยนแพ็กเกจสิ้นรอบ', expired: 'แพ็กเกจหมดอายุ → ซื้อใหม่',
+  start: 'ทดลองใช้ → ซื้อแพ็กเกจแรก', manual: 'บริษัทเดิม / วันและเมนูที่จะเปลี่ยน', capacity: 'เลือกสาขาและผู้ใช้', 'capacity-work': 'งานค้างเกินแพ็กเกจที่เลือก', upgrade: 'มีแพ็กเกจ BASIC → ซื้อเพิ่มหรือเปลี่ยน', 'scheduled-change': 'มีคำสั่งเปลี่ยนแพ็กเกจสิ้นรอบ', expired: 'แพ็กเกจหมดอายุ → ซื้อใหม่',
   pending: 'รอผลชำระเงิน', activating: 'จ่ายแล้ว รอเปิดสิทธิ์', success: 'สำเร็จ / ประวัติ', failed: 'ชำระไม่สำเร็จ',
   held: 'รอตรวจสอบ', 'quote-error': 'ราคาเปลี่ยน / ลองใหม่',
 } as const;
@@ -38,7 +38,8 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
     renewalMode: paid ? selected?.purchaseMode ?? 'CARD_AUTO' : 'NONE', enabledPurchaseModes: ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'],
     availablePurchaseModes: scenario === 'upgrade' ? ['CARD_AUTO'] : ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'],
     attemptId: attempted ? 'preview-attempt' : null, reference: attempted ? 'PREVIEW-0001' : null, observedAt: date(), canCancelCheckout: attempted && !paid,
-    tierKey: paid || scenario === 'expired' ? currentOffer.offerKey : 'FREE_TRIAL_15', interval: paid || scenario === 'expired' ? currentOffer.interval : null,
+    tierKey: paid || scenario === 'expired' ? currentOffer.offerKey : scenario === 'manual' ? 'PRO_999' : 'FREE_TRIAL_15', interval: paid || scenario === 'expired' ? currentOffer.interval : null,
+    purchaseSource: scenario === 'manual' ? 'ADMIN_MANUAL' : 'TRIAL',
     termEndsAt: scenario === 'expired' ? date(-1) : paidThrough, paidThrough: paid ? paidThrough : scenario === 'expired' ? date(-1) : null,
     nextChargeAt: paid && selected?.purchaseMode !== 'CARD_ONCE' && selected?.purchaseMode !== 'PROMPTPAY_ONCE' ? paidThrough : null, cancelAtPeriodEnd: false, graceEndsAt: null,
     allowedActions: attempted && !paid ? [] : paid ? selected?.purchaseMode === 'CARD_ONCE' || selected?.purchaseMode === 'PROMPTPAY_ONCE' ? ['new_sales'] : ['new_sales', 'portal_cancel_subscription', 'plan_changes', ...(selected?.purchaseMode === 'PROMPTPAY_RENEW' ? [] : ['portal_payment_method' as const])] : ['new_sales'],
@@ -77,10 +78,12 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
       if (isRepeat && currentOffer.interval !== offer.interval && status.pendingPlanChange) throw Object.assign(new Error('ตรวจรายการเปลี่ยนแพ็กเกจก่อน'), { code: 'BILLING_CADENCE_PENDING_CHANGE' });
       const total = isUpgrade ? offer.priceSatang - currentOffer.priceSatang : offer.priceSatang;
       const added = isUpgrade ? offer.receiptAllowance - currentOffer.receiptAllowance : offer.receiptAllowance;
-      const trialUnits = !paid && scenario !== 'expired' ? status.usage.remaining ?? 0 : 0;
+      const trialUnits = !paid && scenario !== 'expired' && scenario !== 'manual' ? status.usage.remaining ?? 0 : 0;
       quote = { quoteId: 'preview-quote', companyId, companyName: status.companyName, billingProfile: status.billingProfile, policyRevision: 'preview-policy', expiresAt: date(1),
         offer, subtotalSatang: total, taxSatang: 0, totalSatang: total, taxTreatment: 'NOT_VAT_REGISTERED', consentRevision: 'preview-consent', purchaseMode: purchaseMode ?? 'CARD_AUTO',
-        paidStart: 'IMMEDIATE', billingEmail, trialEndsAt: !paid && scenario !== 'expired' ? date(7) : null, usage: status.usage,
+        paidStart: 'IMMEDIATE', billingEmail, trialEndsAt: !paid && scenario !== 'expired' && scenario !== 'manual' ? date(7) : null, usage: status.usage,
+        ...(scenario === 'manual' ? { previousSource: 'ADMIN_MANUAL' as const, previousTermEndsAt: status.termEndsAt,
+          featureImpact: { removed: [{ featureKey: 'reports', labelTh: 'รายงาน' }], added: [], preservedAdmin: 1 } } : {}),
         purchase: { kind: isUpgrade ? 'UPGRADE' : isRepeat ? 'REPEAT' : scenario === 'expired' ? 'RESTART' : 'INITIAL', previousPaidThrough: status.paidThrough, ...(isRepeat && currentOffer.interval !== offer.interval ? { previousInterval: currentOffer.interval } : {}),
           projectedPaidThrough: isUpgrade ? paidThrough : extend(isRepeat ? paidThrough : date(), offer.interval), receiptUnitsAdded: added,
           projectedRemainingReceipts: (paid ? status.usage.remaining ?? 0 : trialUnits) + added,

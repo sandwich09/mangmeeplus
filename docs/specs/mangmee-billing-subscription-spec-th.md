@@ -75,7 +75,7 @@
 1. **มิเตอร์นับใบ (document-work-unit)** — ไม่มี model/โค้ดใด ๆ; unique `(companyId, attachmentId, operationKind)` ตาม §13.8 ข้อ 3 ยังเป็นเพียงข้อความในแผน; ตาราง guard ของแผนระบุ "ยังไม่มี canonical meter"
 2. **Package/Plan/Subscription/Pricing model** — ไม่มีทั้ง schema/constants (ที่ชื่อคล้าย `TaxFilingPackage` เป็นเรื่องแบบภาษี ไม่เกี่ยว)
 3. **Payment provider** — ไม่มี SDK/integration ใด ๆ ในทั้ง repo (ตรวจ stripe/omise/gbprime/2c2p/promptpay แล้ว)
-4. **PLATFORM-01 delta 2026-09-11**: self-signup ส่ง `modulePackage='starter'` และ onboarding seed `FEATURE_PACKAGE_PRESETS.starter` จริงแล้ว (7 ความสามารถ/17 keys); ไม่ใช่ display-only หรือ DEFAULT_ENABLED ทุกกรณี. ส่วน paid package version→provenance/entitlement apply ผ่าน Stripe ยังไม่ implemented; ใช้ [package amendment](mangmee-package-entitlements-spec-th.md) ไม่ยก legacy admin default มาเป็น trial.
+4. **PLATFORM-01 delta 2026-09-11; local paid conversion 2026-09-21**: self-signup ส่ง `modulePackage='starter'` และ onboarding seed `FEATURE_PACKAGE_PRESETS.starter` จริงแล้ว (7 ความสามารถ/17 keys); ไม่ใช่ display-only หรือ DEFAULT_ENABLED ทุกกรณี. Initial paid package apply ของ [บริษัทเดิม](mangmee-existing-company-self-purchase-spec-th.md) เขียน provenance/entitlement ผ่าน verified Stripe invoice ใน local code แล้ว แต่ยังไม่ผ่าน native UAT/release; ใช้ [package amendment](mangmee-package-entitlements-spec-th.md) ไม่ยก legacy admin default มาเป็น trial.
 5. Quota UI ฝั่งลูกค้า/Owner + product events `quota_warning/quota_exhausted/subscribe_*` — ไม่มี (metering spec จงใจ defer)
 6. Gap ข้างเคียงที่พบระหว่างตรวจ (บันทึกไว้ ไม่ใช่งาน P26): seam ที่ 5 `ai-gateway-draft.provider.ts` ยังไม่ผ่าน budget admission ทั้งที่ spec แม่ §7.5 สั่งไว้ (BILL-GAP-A)
 

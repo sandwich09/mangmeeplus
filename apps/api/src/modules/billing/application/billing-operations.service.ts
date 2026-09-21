@@ -39,7 +39,7 @@ export class BillingOperationsService {
   private invoiceView(row:BillingInvoice,account:BillingAccount,canRun:boolean,reviewApplied=false):BillingApplyInvoiceView {
     const paymentVerified=row.providerStatus==='paid'&&row.paidSatang>0&&row.paidSatang===row.totalSatang;
     return {id:row.id,companyId:account.companyId,mode:account.livemode?'LIVE':'TEST',version:row.version,accountVersion:account.version,
-      applyState:row.applyStatus,paymentVerified,periodStart:row.periodStart.toISOString(),periodEnd:row.periodEnd.toISOString(),
+      applyState:row.applyStatus,errorCode:row.errorCode,paymentVerified,periodStart:row.periodStart.toISOString(),periodEnd:row.periodEnd.toISOString(),
       appliedAt:row.appliedAt?.toISOString()??null,observedAt:row.financialObservedAt?.toISOString()??null,sourceHash:this.invoiceHash(row),
       // Already-applied invoices use the worker's read-only proof branch to resolve stale application issues.
       canRetry:this.billing.stripe.enabled&&canRun&&paymentVerified&&Boolean(row.evidenceHash)&&(row.applyStatus!=='APPLIED'||reviewApplied)};
