@@ -40,7 +40,7 @@ import { billingState } from '../domain/billing-state';
 import { planTermLockReason } from '../../system-partner-management/domain/logic/plan-term.logic';
 import { BillingFreeDays } from './billing-free-days';
 import { detectBillingIssue } from './billing-issues';
-import { billingPurchaseSource, initialPurchaseSource } from './billing-purchase-source';
+import { billingPurchaseSource, packageMenuPurchaseSource } from './billing-purchase-source';
 import type { BillingPurchaseSource } from '@watchdog-bms/contracts';
 import { billingFeaturePlan, type BillingFeaturePlan } from './billing-feature-entitlements';
 import { planMenuImpact } from './billing-plan-menus';
@@ -412,8 +412,9 @@ export class BillingService {
     // carries its own set. Phase 7 adds the mid-term change: the menus move when the change takes
     // effect, not when it is paid, so the plan is NOT pinned there — the quote shows the two lists
     // and `movePlanMenus` rebuilds the plan at the boundary. Display only, so a shop whose menu
-    // rows still need a team review can still buy.
-    const featurePinned = !!deal || initialPurchaseSource(purchaseSource);
+    // rows still need a team review can still buy. A RESTART pins like a first purchase: the term
+    // already ended, so the package being bought now is the only thing deciding the menus.
+    const featurePinned = !!deal || packageMenuPurchaseSource(purchaseSource);
     const featurePreview = featurePinned
       ? await billingFeaturePlan(this.prisma.client, company.id, deal ? deal.featureKeys : TIER_FEATURE_PRESETS[tier])
       : upgrade || oneTimeChange ? await billingFeaturePlan(this.prisma.client, company.id, TIER_FEATURE_PRESETS[tier]).catch(() => null) : null;
@@ -509,7 +510,7 @@ export class BillingService {
       const source = await this.purchaseSource(company, account, tx);
       if (source === 'PAID_OTHER_MODE' || source === 'SOURCE_INCONSISTENT') throw billingError('BILLING_SOURCE_REVIEW_REQUIRED', 'ข้อมูลการชำระเงินเดิมไม่ตรงกัน กรุณาติดต่อทีมงาน');
       if (snapshot.quote.previousSource && source !== snapshot.quote.previousSource) throw billingError('BILLING_QUOTE_STALE', 'แพ็กเกจเดิมเปลี่ยน กรุณาตรวจสอบใหม่');
-      if ((initialPurchaseSource(source) || snapshot.deal) && (!snapshot.featurePlan || (await billingFeaturePlan(tx, context.companyId)).plan.sourceHash !== snapshot.featurePlan.sourceHash))
+      if ((packageMenuPurchaseSource(source) || snapshot.deal) && (!snapshot.featurePlan || (await billingFeaturePlan(tx, context.companyId)).plan.sourceHash !== snapshot.featurePlan.sourceHash))
         throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์เมนูเปลี่ยน กรุณาตรวจสอบใหม่');
       if ((company.planTerm?.updatedAt.toISOString() ?? null) !== snapshot.termVersion) throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์บริษัทเปลี่ยน กรุณาตรวจสอบใหม่');
       if (account?.activeAttemptId || (account?.baseSubscriptionId && !snapshot.repeat && !snapshot.restart)) throw billingError('BILLING_PURCHASE_PENDING', 'มีรายการชำระเงินอยู่แล้ว กรุณาตรวจสถานะเดิม');
@@ -603,7 +604,7 @@ export class BillingService {
         const source = await this.purchaseSource(company, await this.account(context.companyId, tx), tx);
         if (source === 'PAID_OTHER_MODE' || source === 'SOURCE_INCONSISTENT' || (snapshot.quote.previousSource && source !== snapshot.quote.previousSource))
           throw billingError('BILLING_QUOTE_STALE', 'แพ็กเกจเดิมเปลี่ยน กรุณาตรวจสอบใหม่');
-        if ((initialPurchaseSource(source) || snapshot.deal) && (!snapshot.featurePlan || (await billingFeaturePlan(tx, context.companyId)).plan.sourceHash !== snapshot.featurePlan.sourceHash))
+        if ((packageMenuPurchaseSource(source) || snapshot.deal) && (!snapshot.featurePlan || (await billingFeaturePlan(tx, context.companyId)).plan.sourceHash !== snapshot.featurePlan.sourceHash))
           throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์เมนูเปลี่ยน กรุณาตรวจสอบใหม่');
         if ((company.planTerm?.updatedAt.toISOString() ?? null) !== snapshot.termVersion || company.name !== snapshot.quote.companyName) throw billingError('BILLING_QUOTE_STALE', 'ข้อมูลบริษัทหรือสิทธิ์เปลี่ยน กรุณาตรวจสอบใหม่');
         await lockAccountEmail(tx, context.userId);
@@ -698,7 +699,9 @@ export class BillingService {
     const term = company.planTerm, account = await this.account(company.id);
     const purchaseSource = await this.purchaseSource(company, account);
     let featureReady = true;
-    if (initialPurchaseSource(purchaseSource)) {
+    // The same predicate the quote pins with: a shop that would be refused at Checkout must be
+    // told on the package page, not by an error after it picks a package.
+    if (packageMenuPurchaseSource(purchaseSource)) {
       try { await billingFeaturePlan(this.prisma.client, company.id); }
       catch (error) {
         if (!(error instanceof ConflictException) || (error.getResponse() as { code?: string }).code !== 'BILLING_ENTITLEMENT_REVIEW_REQUIRED') throw error;

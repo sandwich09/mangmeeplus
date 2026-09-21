@@ -478,6 +478,16 @@ HELD ด้วย `BILLING_ENTITLEMENT_REVIEW_REQUIRED`). การสร้า�
   ของสมาชิกรายเดือน/รายปีใช้หน้า `collection/preview` ไม่ใช่ quote จึงส่ง `featureImpact` มาบน
   `BillingCollectionOperation` แทน และการ์ดยืนยันแสดงรายการเดียวกัน.
 
-**ยังไม่ทำ (รู้ตัว)**: ร้านที่ term หมดแล้วซื้อใหม่ข้าม tier (`RESTART`) ยังไม่ย้ายเมนู เพราะไม่ใช่การเปลี่ยน
-"กลางคัน" — `quote()` ไม่ pin `featurePlan` ให้ `PAID_EXPIRED_CURRENT_MODE` มาตั้งแต่ Phase 6 และการแก้ต้อง
-ตัดสินใจเรื่อง term ที่ขาดช่วงก่อน.
+**ร้านที่ term หมดแล้วซื้อใหม่ (`RESTART`) — ปิดช่องว่างแล้ว (มติ Owner 2026-09-21)**: ร้านที่ถูกล็อกเพราะ
+term หมด แล้วซื้อแพ็กเกจใหม่ (tier เดิมหรือ tier อื่น, ครั้งเดียวหรือต่ออายุอัตโนมัติ) ต้องได้ชุดเมนูของ
+แพ็กเกจที่เพิ่งจ่ายเหมือนซื้อครั้งแรกทุกประการ. ทำด้วยการ pin `featurePlan` ที่ quote เหมือน
+`initialPurchaseSource` ไม่ใช่ op ที่ขอบรอบ เพราะการเปลี่ยนมีผล "ตอนจ่าย" อยู่แล้วและช่วง `sourceHash`
+เท่ากับหน้าชำระเงิน (ไม่กี่นาที) — และเพราะ seam ปลายทางรองรับอยู่แล้วทั้งสองทาง: ใบแจ้งหนี้ของสมาชิกที่
+เริ่มใหม่มี `billing_reason = subscription_create` จึงเป็น `INITIAL` (`rewritesFeatures` เดิมทำงาน) ส่วนเส้นทาง
+ครั้งเดียวและงวดแรกของ QR ผ่าน `reconcileOneTime` ซึ่งเขียน `featurePlan` ที่ pin ไว้อยู่แล้ว.
+
+ตัวตัดสินใหม่คือ `packageMenuPurchaseSource` = `initialPurchaseSource` + `PAID_EXPIRED_CURRENT_MODE`
+([billing-purchase-source.ts](../../apps/api/src/modules/billing/application/billing-purchase-source.ts)) และ
+ใช้ทั้งสี่จุดพร้อมกัน: pin ที่ `quote()`, ตรวจซ้ำสองจุดใน `checkout()`, และ `status()` (ร้านที่จะถูกปฏิเสธ
+ตอนชำระต้องเห็นตั้งแต่หน้าแพ็กเกจ). ตัวอย่างที่ต้องผ่าน: ENTERPRISE หมดอายุ → ซื้อ PRO แล้วเมนูเฉพาะ
+ENTERPRISE ปิด (ข้อมูลเดิมยังอยู่); PRO หมดอายุ → ซื้อ ENTERPRISE แล้วเมนูครบชุดเปิด.
