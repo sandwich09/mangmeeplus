@@ -31,6 +31,7 @@ import { exclusiveEntitlementLock } from '../../feature-launch/application/execu
 import { completeRunoffIfDrained } from '../../feature-launch/application/runoff-lifecycle';
 import { upgradeHistory } from './billing-upgrade';
 import { pendingChange } from './billing-schedule';
+import { movePlanMenus, queuePlanMenuMove, retryPlanMenuMoves, type PlanMenuMove } from './billing-plan-menus';
 
 export const BILLING_STRIPE_EVENTS = new Set(['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded',
   'checkout.session.async_payment_failed', 'invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required', 'invoice.finalization_failed',
@@ -201,8 +202,11 @@ export class BillingReconcilerService {
       }
       if (!account.customerId) return;
       if (attempt && await this.settleProfileSync(account, attempt, leaseToken)) return;
-      if (await this.applyDueOneTimePlanChange(account, leaseToken))
+      const dueMenuMove = await this.applyDueOneTimePlanChange(account, leaseToken);
+      if (dueMenuMove) {
+        await movePlanMenus(this.prisma, dueMenuMove);
         account = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+      }
       if (account.activeEmailOperationId) {
         await this.billing.emailRecipient.advance(account, leaseToken);
         account = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
@@ -503,7 +507,7 @@ export class BillingReconcilerService {
         anchorDay: snapshot.oneTime?.anchorDay });
     const siblings = await this.stripe.list('/subscriptions', { customer: account.customerId, status: 'all' });
     const collectible = siblings.some(sub => !['canceled', 'incomplete_expired'].includes(sub.status));
-    let disabledFeatures: string[] = [];
+    let disabledFeatures: string[] = [], planMenus: PlanMenuMove | null = null;
     await this.prisma.client.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${account.companyId}`}))`;
       // Same lock order as `applyInvoice`: OCR config, entitlements, then the plan term.
@@ -607,6 +611,13 @@ export class BillingReconcilerService {
         requestHash: hashBilling([attempt.id, row.id, impact.serviceStartsAt, impact.paidThrough, snapshot.quote.offer, snapshot.capacity ?? null]),
         expiresAt: impact.paidThrough, scheduledFor: impact.serviceStartsAt, observedAt: new Date(),
         resultJson: { prepaidInvoiceId: row.id } } }) : null;
+      // Phase 7: a one-time UPGRADE starts the new package the moment it is paid, so its menus
+      // move now. A prepaid change starts at its own boundary — `applyDueOneTimePlanChange` owns it.
+      if (snapshot.upgrade) {
+        planMenus = { companyId: company.id, invoiceId: row.id, actorUserId: attempt.initiatingUserId,
+          stripeAccountId: account.stripeAccountId, livemode: account.livemode, accountVersion: current.version };
+        await queuePlanMenuMove(tx, planMenus);
+      }
       await tx.billingAccount.update({ where: { id: account.id }, data: { paidThrough: impact.paidThrough, baseSubscriptionId: null,
         contractAttemptId: attempt.id, activeAttemptId: mode === 'PROMPTPAY_RENEW' ? attempt.id : null,
         subscriptionState: 'NONE', renewalMode: mode!,
@@ -639,18 +650,20 @@ export class BillingReconcilerService {
       try { await completeRunoffIfDrained(this.prisma, account.companyId, featureKey); }
       catch { /* The durable runoff sweep completes missed post-commit transitions. */ }
     }
+    if (planMenus) await movePlanMenus(this.prisma, planMenus);
     if (mode === 'PROMPTPAY_RENEW' && !recordOnly) await this.bindPromptPayRenewal(account, attempt, snapshot, lease, impact.paidThrough);
   }
 
-  private async applyDueOneTimePlanChange(account: BillingAccount, lease: string): Promise<boolean> {
+  /** Phase 7: returns the menu move the boundary now owes, so the caller can run it after commit. */
+  private async applyDueOneTimePlanChange(account: BillingAccount, lease: string): Promise<PlanMenuMove | null> {
     if (account.baseSubscriptionId || !account.pendingPlanChangeId || !account.paidThrough ||
-        !['CARD_ONCE', 'PROMPTPAY_ONCE'].includes(account.renewalMode)) return false;
+        !['CARD_ONCE', 'PROMPTPAY_ONCE'].includes(account.renewalMode)) return null;
     return this.prisma.client.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${account.companyId}`}))`;
       await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
       const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
       const pending = await pendingChange(tx, current), proposed = pending?.proposed;
-      if (!pending || !proposed?.effectiveAt || !proposed.prepaidInvoiceId || new Date(proposed.effectiveAt) > new Date()) return false;
+      if (!pending || !proposed?.effectiveAt || !proposed.prepaidInvoiceId || new Date(proposed.effectiveAt) > new Date()) return null;
       const invoice = await tx.billingInvoice.findFirst({ where: { id: proposed.prepaidInvoiceId, billingAccountId: current.id,
         sourceAttemptId: current.contractAttemptId, providerStatus: 'paid', applyStatus: 'APPLIED', appliedAt: { not: null },
         refundedSatang: 0, disputed: false, periodStart: new Date(proposed.effectiveAt), periodEnd: current.paidThrough! } });
@@ -674,7 +687,7 @@ export class BillingReconcilerService {
             errorCode: 'BILLING_CAP_SELECTION_REQUIRED', observedAt: new Date(), version: { increment: 1 } } });
         await detectBillingIssue(tx, { companyId: current.companyId, stripeAccountId: current.stripeAccountId,
           livemode: current.livemode, kind: 'PAID_HELD', referenceId: invoice.id });
-        return false;
+        return null;
       }
       if (selection) await applyCapacity(tx, current.companyId, proposed.snapshot.quote.offer, selection, pending.row.initiatorUserId, invoice.id);
       const target = proposed.snapshot.quote.offer;
@@ -695,7 +708,10 @@ export class BillingReconcilerService {
         aggregateId: pending.row.id, eventKey: `billing:prepaid-plan-change:${pending.row.id}`,
         payloadJson: { schemaVersion: 1, occurredAt: new Date().toISOString(), data: { operationId: pending.row.id, invoiceId: invoice.id } } } });
       await resolveAppliedInvoiceIssues(tx, current, invoice.id);
-      return true;
+      const move: PlanMenuMove = { companyId: current.companyId, invoiceId: invoice.id, actorUserId: pending.row.initiatorUserId,
+        stripeAccountId: current.stripeAccountId, livemode: current.livemode, accountVersion: current.version };
+      await queuePlanMenuMove(tx, move);
+      return move;
     });
   }
 
@@ -874,7 +890,7 @@ export class BillingReconcilerService {
   }
 
   private async applyInvoice(account: BillingAccount, contract: BillingAttempt, evidence: PaidInvoiceEvidence, snapshot: BillingSnapshot, leaseToken: string, recordOnly?:(tx:Prisma.TransactionClient)=>Promise<void>): Promise<void> {
-    let disabledFeatures: string[] = [];
+    let disabledFeatures: string[] = [], planMenus: PlanMenuMove | null = null;
     // Q1/D-P5-6: the cycle that puts a shop back on the catalog price rewrites its menus, AI
     // credit and limits in the same commit — even though it is an ordinary RENEWAL invoice.
     const returning = !!snapshot.dealReturn;
@@ -970,6 +986,14 @@ export class BillingReconcilerService {
           serviceStart: evidence.periodStart, serviceEnd: evidence.periodEnd, availableAt: evidence.periodStart, expiresAt: evidence.periodEnd });
         if ((applyingChange || restarting) && current.pendingPlanChangeId) await tx.billingOperation.update({ where: { id: current.pendingPlanChangeId },
           data: { state: applyingChange ? 'APPLIED' : 'SUPERSEDED', observedAt: new Date(), version: { increment: 1 } } });
+        // Phase 7: this is the RENEWAL that starts the package the customer asked for, so it is
+        // also the moment the shop's menus become that package's. The ledger row is written HERE,
+        // in the same commit, so a crash before the post-commit run still leaves something to retry.
+        if (applyingChange) {
+          planMenus = { companyId: company.id, invoiceId: invoice.id, actorUserId: planChange!.initiatorUserId,
+            stripeAccountId: account.stripeAccountId, livemode: account.livemode, accountVersion: current.version };
+          await queuePlanMenuMove(tx, planMenus);
+        }
         await tx.billingAccount.update({ where: { id: account.id }, data: { paidThrough: evidence.periodEnd, graceEndsAt: null,
           renewalMode: snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' ? 'PROMPTPAY_RENEW' : 'CARD_AUTO', billingAnchorDay: null,
           ...(applyingChange || restarting ? { pendingPlanChangeId: null } : {}),
@@ -1014,11 +1038,14 @@ export class BillingReconcilerService {
       try { await completeRunoffIfDrained(this.prisma, account.companyId, featureKey); }
       catch { /* The durable runoff sweep completes missed post-commit transitions. */ }
     }
+    if (planMenus) await movePlanMenus(this.prisma, planMenus);
   }
 
   async scan(): Promise<{ scanned: number; failed: number }> {
     if (!this.stripe.enabled) return { scanned: 0, failed: 0 };
     const now = new Date();
+    // Phase 7: a menu move that failed at the boundary is retried here, never by the customer.
+    await retryPlanMenuMoves(this.prisma, now);
     const accounts = await this.prisma.client.billingAccount.findMany({ where: { stripeAccountId: this.stripe.accountId, livemode: this.stripe.livemode,
       nextReconcileAt: { lte: now }, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] },
       orderBy: [{ nextReconcileAt: 'asc' }, { id: 'asc' }], take: 20 });

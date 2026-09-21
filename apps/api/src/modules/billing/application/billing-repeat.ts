@@ -18,6 +18,7 @@ import { assertMappedCharge, recordBillingFinancials } from './billing-financial
 import { collectionContract, ownedSchedule, simpleCollection } from './billing-schedule';
 import { capacityOptions, capacityValid } from './billing-capacity';
 import { upgradeHistory } from './billing-upgrade';
+import { movePlanMenus, queuePlanMenuMove, type PlanMenuMove } from './billing-plan-menus';
 import type { BillingService, BillingSnapshot } from './billing.service';
 import { assertBillingProfileUnchanged, stripeBillingProfile, stripeBillingProfileMatches } from './billing-company-profile';
 
@@ -468,6 +469,7 @@ export class BillingRepeat {
     });
   }
   private async apply(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot, evidence: PaidCheckoutEvidence, journal: Journal, lease: string) {
+    let planMenus: PlanMenuMove | null = null;
     await this.prisma.client.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${account.companyId}`}))`;
       await this.fence(tx, account, attempt, lease); const company = await this.sourceFence(tx, account, attempt, snapshot);
@@ -527,7 +529,16 @@ export class BillingRepeat {
         payloadJson: { schemaVersion: 1, occurredAt: new Date().toISOString(), data: { invoiceId: invoice.id, companyId: account.companyId } } } });
       await tx.billingIssue.updateMany({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
         referenceId: attempt.id, kind: 'REPEAT_RECOVERY' }, data: { state: 'RESOLVED', resolvedAt: new Date() } });
+      // Phase 7: an UPGRADE is the one repeat that changes the tier, and it starts the moment it is
+      // paid — so the shop's menus move now. A plain repeat buys more of the same package. The
+      // ledger row shares this commit so a crash before the move still leaves something to retry.
+      if (snapshot.upgrade) {
+        planMenus = { companyId: account.companyId, invoiceId: invoice.id, actorUserId: attempt.initiatingUserId,
+          stripeAccountId: account.stripeAccountId, livemode: account.livemode, accountVersion: account.version };
+        await queuePlanMenuMove(tx, planMenus);
+      }
     });
+    if (planMenus) await movePlanMenus(this.prisma, planMenus);
   }
   private async finish(account: BillingAccount, attempt: BillingAttempt, lease: string, journal: Journal, status: string) {
     await this.prisma.client.$transaction(async tx => {

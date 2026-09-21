@@ -256,6 +256,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       setQuote(null); setCapacity({ options: await api.capacity(offerKey, selectedInterval), billingEmail, key: crypto.randomUUID(), initialSelection: capacityDraft.current?.initialSelection });    }
   }
   const annualConversion = quote?.purchase?.kind === 'REPEAT' && quote.purchase.previousInterval === 'month' && quote.offer.interval === 'year';
+  // Phase 7: a package bought for the NEXT round moves the menus on the day it starts, not today.
+  const menusMoveLater = quote?.purchase?.kind === 'SCHEDULED_CHANGE' ? date(quote.purchase.previousPaidThrough) : null;
   const status = data?.status;
   const availableModes = status?.availablePurchaseModes ?? ['CARD_AUTO'];
   const displayedModes = status?.enabledPurchaseModes ?? availableModes;
@@ -515,10 +517,10 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         </div>}
         {/* Per-tier menu sets make this list long in both directions, so what is gained is read the
             same way as what is lost, and only a package that really takes a menu away warns. */}
-        {quote.featureImpact && (quote.featureImpact.removed.length > 0 || quote.featureImpact.added.length > 0 || quote.featureImpact.preservedAdmin > 0) && <section className={`space-y-2 rounded-xl border p-4 ${quote.featureImpact.removed.length > 0 ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-gray-50'}`} aria-label="การเปลี่ยนสิทธิ์เมนูหลังชำระ">
-          <p className="font-semibold">สิทธิ์เมนูเมื่อชำระสำเร็จ</p>
-          {quote.featureImpact.removed.length > 0 && <><p>เมนูต่อไปนี้จะหยุดใช้หลังชำระ โดยข้อมูลเดิมยังเก็บไว้:</p><ul className="list-disc space-y-1 break-words pl-6">{quote.featureImpact.removed.map(item => <li key={item.featureKey}>{item.labelTh}</li>)}</ul></>}
-          {quote.featureImpact.added.length > 0 && <><p>เมนูที่จะเปิดใช้เพิ่มหลังชำระ:</p><ul className="list-disc space-y-1 break-words pl-6">{quote.featureImpact.added.map(item => <li key={item.featureKey}>{item.labelTh}</li>)}</ul></>}
+        {quote.featureImpact && (quote.featureImpact.removed.length > 0 || quote.featureImpact.added.length > 0 || quote.featureImpact.preservedAdmin > 0) && <section className={`space-y-2 rounded-xl border p-4 ${quote.featureImpact.removed.length > 0 ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-gray-50'}`} aria-label={menusMoveLater ? 'การเปลี่ยนสิทธิ์เมนูเมื่อเริ่มแพ็กเกจรอบถัดไป' : 'การเปลี่ยนสิทธิ์เมนูหลังชำระ'}>
+          <p className="font-semibold">{menusMoveLater ? `สิทธิ์เมนูตั้งแต่ ${menusMoveLater}` : 'สิทธิ์เมนูเมื่อชำระสำเร็จ'}</p>
+          {quote.featureImpact.removed.length > 0 && <><p>{menusMoveLater ? `เมนูต่อไปนี้จะหยุดใช้ตั้งแต่ ${menusMoveLater} โดยข้อมูลเดิมยังเก็บไว้:` : 'เมนูต่อไปนี้จะหยุดใช้หลังชำระ โดยข้อมูลเดิมยังเก็บไว้:'}</p><ul className="list-disc space-y-1 break-words pl-6">{quote.featureImpact.removed.map(item => <li key={item.featureKey}>{item.labelTh}</li>)}</ul></>}
+          {quote.featureImpact.added.length > 0 && <><p>{menusMoveLater ? `เมนูที่จะเปิดใช้เพิ่มตั้งแต่ ${menusMoveLater}:` : 'เมนูที่จะเปิดใช้เพิ่มหลังชำระ:'}</p><ul className="list-disc space-y-1 break-words pl-6">{quote.featureImpact.added.map(item => <li key={item.featureKey}>{item.labelTh}</li>)}</ul></>}
           {quote.featureImpact.preservedAdmin > 0 && <p>สิทธิ์พิเศษที่ผู้ดูแลกำหนดให้เฉพาะบริษัทยังคงอยู่</p>}
         </section>}
         {quote.pendingPlanChange && <div className="space-y-1 rounded-xl bg-amber-50 p-3"><p>รายการเปลี่ยนเป็น {quote.pendingPlanChange.offer.label} ({quote.pendingPlanChange.offer.interval === 'year' ? 'รายปี' : 'รายเดือน'}) จะมีผลจาก {date(quote.pendingPlanChange.oldEffectiveAt)} เป็น {date(quote.pendingPlanChange.newEffectiveAt)}</p><p>ยอดต่ออายุหลังวันนั้น {money(quote.pendingPlanChange.totalSatang)} · คงสาขา {quote.pendingPlanChange.capacity.retainedBranches.join(', ')} · คงผู้ใช้ {quote.pendingPlanChange.capacity.retainedMembers.join(', ')}</p><p>ซื้อสำเร็จจึงยืนยันวันเปลี่ยนใหม่ หากชำระไม่สำเร็จคำสั่งเดิมคงอยู่</p></div>}

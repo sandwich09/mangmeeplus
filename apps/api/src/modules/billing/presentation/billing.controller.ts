@@ -491,13 +491,16 @@ export class BillingController {
 
   @Get() status(@Req() req: AuthedRequest) { return this.billing.status(req.context); }
   @Get('collection/:id')
-  collectionGet(@Req() req: AuthedRequest, @Param('id') id: string) { return this.billing.collection.get(req.context, uuid(id)); }
+  async collectionGet(@Req() req: AuthedRequest, @Param('id') id: string) {
+    return this.billing.withPlanMenuImpact(req.context.companyId, await this.billing.collection.get(req.context, uuid(id)));
+  }
   @Post('collection/preview') @HttpCode(200)
   async collectionPreview(@Req() req: AuthedRequest, @Body() body: BillingCollectionPreviewDto) {
     const fields = bodyFields(body, ['action', 'offerKey', 'interval', 'capacity']);
     if (!['CANCEL_RENEWAL', 'RESUME_RENEWAL', 'SCHEDULE_DOWNGRADE', 'CANCEL_DOWNGRADE'].includes(fields.action as string)) invalid();
-    await this.limit(req); return this.billing.collection.preview(req.context, fields.action as import('@watchdog-bms/contracts').BillingCollectionAction,
-      fields.action === 'SCHEDULE_DOWNGRADE' ? { offerKey: textField(fields.offerKey), interval: textField(fields.interval), capacity: fields.capacity } : undefined);
+    await this.limit(req);
+    return this.billing.withPlanMenuImpact(req.context.companyId, await this.billing.collection.preview(req.context, fields.action as import('@watchdog-bms/contracts').BillingCollectionAction,
+      fields.action === 'SCHEDULE_DOWNGRADE' ? { offerKey: textField(fields.offerKey), interval: textField(fields.interval), capacity: fields.capacity } : undefined));
   }
   @Post('collection/:id/capacity') @HttpCode(200)
   async planCapacityRepair(@Req() req: AuthedRequest, @Param('id') id: string, @Body() body: BillingCapacityRepairDto, @Headers('idempotency-key') key?: string) {
