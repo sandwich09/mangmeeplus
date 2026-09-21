@@ -91,8 +91,13 @@ Kamal UAT releases, use SSM-enrolled targets and no public TCP/22 operator rule.
 main build separately and pass its `build/` directory with `--prepared-build` when cache or a retry
 would otherwise rebuild. The apply controller caps an unprepared build at 240 seconds, stops before
 mutation after 360 seconds of pre-mutation work, and records the 600-second target in signed UAT
-acceptance. These limits never authorize skipping reconciliation, exact-source/config validation,
-migrations, deep readiness, customer OPEN, retirement, or KMS signing.
+acceptance. Before publication it verifies that each host has twice the exact assigned candidate
+image size plus 2 GiB available on the Docker filesystem. Postmark transport/5xx/429 preflight errors
+use only the bounded read-only retry contract below; identity, JSON, credential, and stream-contract
+errors fail immediately. After the signed release and remote lock are complete, every
+controller-owned SSM session must terminate before the command can report success; unproved cleanup
+returns `FAILED_TRANSPORT_CLEANUP_REQUIRED`. These limits never authorize skipping reconciliation,
+exact-source/config validation, migrations, deep readiness, customer OPEN, retirement, or KMS signing.
 
 ## เส้นทางปกติ ฉบับคน deploy
 

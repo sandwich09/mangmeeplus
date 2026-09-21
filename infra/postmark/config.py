@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import time
+import urllib.error
 import urllib.request
 
 ENV_KEYS = {'POSTMARK_SERVER_ID', 'POSTMARK_MESSAGE_STREAM', 'POSTMARK_FROM_ADDRESS', 'POSTMARK_FROM_NAME', 'EMAIL_OTP_HMAC_KEY_VERSION'}
@@ -66,18 +68,31 @@ def resolve_secrets(configuration, read_secret):
 
 def native_preflight(configuration, secret_values, request=None):
     """Read-only provider checks; never return /server (it contains API tokens)."""
+    attempts = 0
     def get(path):
+        nonlocal attempts
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
                 return None
         req = urllib.request.Request('https://api.postmarkapp.com' + path, headers={
             'X-Postmark-Server-Token': secret_values['POSTMARK_SERVER_TOKEN'], 'Accept': 'application/json'})
-        try:
-            with urllib.request.build_opener(NoRedirect).open(req, timeout=10) as response:
-                require(response.status == 200, 'Postmark native preflight unavailable')
-                return json.loads(response.read(1_048_576))
-        except Exception:
-            raise ValueError('Postmark native preflight unavailable') from None
+        while attempts < 3:
+            attempts += 1
+            try:
+                with urllib.request.build_opener(NoRedirect).open(req, timeout=20) as response:
+                    require(response.status == 200, 'Postmark native preflight unavailable')
+                    return json.loads(response.read(1_048_576))
+            except urllib.error.HTTPError as error:
+                transient = error.code in (408, 425, 429) or 500 <= error.code < 600
+                if not transient or attempts == 3:
+                    raise ValueError('Postmark native preflight unavailable') from None
+            except (TimeoutError, urllib.error.URLError):
+                if attempts == 3:
+                    raise ValueError('Postmark native preflight unavailable') from None
+            except ValueError:
+                raise ValueError('Postmark native preflight unavailable') from None
+            time.sleep(attempts)
+        raise ValueError('Postmark native preflight unavailable')
     fetch = request or get
     values = configuration['environment']
     server_id, stream = int(values['POSTMARK_SERVER_ID']), values['POSTMARK_MESSAGE_STREAM']
