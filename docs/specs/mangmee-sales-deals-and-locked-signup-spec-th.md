@@ -435,23 +435,49 @@ ENTERPRISE = preset `full` (ทุกเมนูที่ขายได้ ย
 ค่าเริ่มต้นของฟอร์มดีลอ่านจาก `TIER_FEATURE_PRESETS[base]` และ offer ของดีล (`dealOffer`) พก
 `featureKeys` ของ snapshot ตัวเอง.
 
-### 20.5 จุดที่ยังไม่ทำ (ต้องมีมติก่อน)
+### 20.5 เปลี่ยนแพ็กเกจกลางคันย้ายชุดเมนู (มติ Owner 2026-09-21)
 
-**เปลี่ยนแพ็กเกจกลางคัน (upgrade / SCHEDULE_DOWNGRADE / CUSTOMER_PREPAID_PLAN_CHANGE) ยังไม่ย้ายชุดเมนู.**
-`applyInvoice` เขียนสิทธิ์เมนูเฉพาะ `evidence.kind === 'INITIAL'` หรือรอบที่มี `dealReturn`
-(`rewritesFeatures`, billing-reconciler.service.ts) และ `quote()` pin `featurePlan` เฉพาะ
-`initialPurchaseSource` หรือดีล. เหตุผลที่ยังไม่ต่อ seam นี้:
-1. invoice ของ plan change เป็น `RENEWAL` (เฉพาะ `subscription_create` เท่านั้นที่เป็น INITIAL) จึงต้องเพิ่มธง
-   ทำนองเดียวกับ `dealReturn`;
-2. `featurePlan` ที่ pin ตอนขอเปลี่ยนจะถูกตรวจ `sourceHash` ตอน apply ที่สิ้นรอบ (อาจห่างเป็นปีสำหรับรายปี)
-   — แอดมินแก้สิทธิ์ระหว่างนั้นครั้งเดียวก็ทำให้ invoice ที่ลูกค้าจ่ายแล้ว HELD ด้วย
-   `BILLING_ENTITLEMENT_REVIEW_REQUIRED`;
-3. เส้นทางครั้งเดียว (`SCHEDULED_CHANGE` / `CUSTOMER_PREPAID_PLAN_CHANGE`) **ไม่มี invoice ที่ขอบรอบเลย**
-   (เก็บเงินล่วงหน้าไปแล้ว) จึงไม่มี hook ให้ apply ที่วันเปลี่ยน;
-4. downgrade = ถอดเมนู → เขียน runoff + `DISABLE_REQUESTED` โดยลูกค้าไม่เห็น `featureImpact` ล่วงหน้า
-   (quote แสดงเฉพาะ INITIAL) ซึ่งเป็นการตัดสินใจเชิงสินค้า.
+**มติ**: ร้านที่จ่ายเงินแล้วเปลี่ยนแพ็กเกจกลางคัน — ขึ้นหรือลง เส้นทางต่ออายุอัตโนมัติหรือชำระครั้งเดียว —
+ชุดเมนูต้องย้ายไปเป็นของ tier ใหม่ **อัตโนมัติ ณ เวลาที่การเปลี่ยนมีผล** และลูกค้าต้องเห็นว่าเมนูอะไรเปิด
+อะไรปิด **ก่อนกดยืนยัน**. ลดแพ็กเกจ = ถอดเมนูส่วนเกิน โดยข้อมูลเดิมยังอยู่ (runoff ชุดเดียวกับตอนดีลจบ).
 
-ผลตอนนี้: ตราบใดที่ STARTER/BASIC/PRO ใช้ชุดเมนูเดียวกัน การเปลี่ยนระหว่างสามตัวนั้น **ไม่มีผลต่อเมนู**
-ช่องว่างจึงกระทบเฉพาะเส้นทาง "อัปเกรดขึ้น ENTERPRISE หรือลงจาก ENTERPRISE กลางรอบ" ซึ่งต้องให้ทีมงานปรับ
-สิทธิ์ให้จากหน้าพาร์ตเนอร์ไปก่อน. ทางแก้ที่เสนอ: สร้าง op ที่ขอบรอบเหมือน `SCHEDULE_PRICE_RETURN` (สร้าง
-snapshot สด ๆ ก่อนถึงวัน) แทนการ pin ล่วงหน้า.
+**จุดที่การเปลี่ยนมีผลจริงมี 4 จุด** และทั้งสี่จบด้วยการเขียน `companyPlanTerm.tierKey` เป็น tier ใหม่:
+
+| เส้นทาง | ทิศ | มีผลเมื่อ | ที่เขียน tier ใหม่ |
+|---|---|---|---|
+| ต่ออายุอัตโนมัติ | ขึ้น | จ่ายส่วนต่างสำเร็จ (ทันที) | `billing-repeat.ts` `apply()` (`snapshot.upgrade`) |
+| ต่ออายุอัตโนมัติ | ลง (`SCHEDULE_DOWNGRADE`) | ใบแจ้งหนี้ `RENEWAL` ของรอบถัดไป | `applyInvoice` (`applyingChange`) |
+| ชำระครั้งเดียว | ขึ้น | จ่ายส่วนต่างสำเร็จ (ทันที) | `reconcileOneTime` (`snapshot.upgrade`) |
+| ชำระครั้งเดียว | ลง / เปลี่ยนรอบ (`CUSTOMER_PREPAID_PLAN_CHANGE`) | วันเริ่มแพ็กเกจรอบถัดไป | `applyDueOneTimePlanChange` |
+
+**ทางแก้ที่ใช้** — operation ที่ขอบรอบชื่อ `APPLY_PLAN_MENUS` ([billing-plan-menus.ts](../../apps/api/src/modules/billing/application/billing-plan-menus.ts))
+รูปทรงเดียวกับ `SCHEDULE_PRICE_RETURN` (Phase 5) แต่ไม่มีการคุยกับ Stripe จึงไม่ต้อง fence ด้วย lease:
+ทั้งสี่จุดข้างบนเรียก `movePlanMenus` **ทันทีหลัง commit** ที่ย้าย term แล้ว op นั้นจะอ่าน tier ที่ร้าน
+จ่ายอยู่จริง สร้าง `billingFeaturePlan(..., TIER_FEATURE_PRESETS[tier])` **ใหม่สด ๆ ในธุรกรรมที่กำลัง apply**
+ใต้ entitlement lock เดิม แล้วเขียนด้วย `applyBillingFeaturePlan` ตัวเดิม. `BillingOperation` แถวเดียว
+(`idempotencyKey = plan-menus:<invoiceId>`) ทำหน้าที่เป็นทั้งกันซ้ำและสมุดสำหรับ retry — และแถวนั้นถูกเขียน
+**ในธุรกรรมเดียวกับที่ย้าย term** (`queuePlanMenuMove`) เพื่อให้ deploy restart หรือ worker ตายคั่นระหว่าง
+commit กับการย้ายเมนู ยังเหลือแถวให้ตามต่อเสมอ.
+
+ทำไมไม่ใช้ seam ของใบแจ้งหนี้ (`rewritesFeatures`) ตามที่เคยเสนอ: เพราะสามในสี่ข้อติดอยู่ที่ seam นั้นเอง —
+invoice ของ plan change เป็น `RENEWAL`, เส้นทางครั้งเดียวไม่มี invoice ที่ขอบรอบ, และ `featurePlan` ที่ pin
+ล่วงหน้าจะถูกตรวจ `sourceHash` อีกทีตอน apply (แอดมินแก้สิทธิ์คั่นครั้งเดียว = invoice ที่จ่ายแล้วกลายเป็น
+HELD ด้วย `BILLING_ENTITLEMENT_REVIEW_REQUIRED`). การสร้าง plan สดในธุรกรรมที่ apply ทำให้ช่วง `sourceHash`
+เหลือระดับวินาที จึงไม่เหลือช่องให้ drift เลย และไม่ต้องมีกลไกที่สองไว้ freeze snapshot ล่วงหน้า.
+
+- **ไม่ย้ายเมื่อ**: ร้านอยู่ระหว่างดีลที่ยังไม่ถึง `returnAt` (ดีลถือ snapshot ของตัวเองตาม §20.4 — การย้ายกลับ
+  เป็นหน้าที่ของ `SCHEDULE_PRICE_RETURN`), term ไม่มี tier ที่ขายได้ (เช่นช่วงทดลอง), หรือชุดเมนูเป้าหมาย
+  เท่าเดิมอยู่แล้ว — STARTER/BASIC/PRO ใช้ชุดเดียวกัน (§20.1) จึงเป็น no-op ทั้งคู่.
+- **ล้มเหลวแล้วยังไง**: term ลิมิต และเงินเปลี่ยนไปแล้วก่อนหน้า op นี้ การย้ายเมนูที่ล้มจึงกลายเป็นแถว
+  `BLOCKED` + issue `PLAN_MENU_MOVE_REVIEW` เท่านั้น ไม่ย้อนเงินและไม่ค้างสิทธิ์ที่ลูกค้าจ่ายแล้ว;
+  `scan()` ของ billing worker ลองใหม่ทุกรอบจนสำเร็จหรือหมดอายุ op (30 วัน) — ทั้งแถว `BLOCKED` และแถว
+  `QUEUED` ที่ค้างเกิน 2 นาที (ซึ่งแปลว่าการย้ายหลัง commit ไม่เคยได้รัน).
+- **ลูกค้าเห็นก่อนยืนยัน**: `quote.featureImpact` คิดจาก preset ของ tier เป้าหมายทุกครั้งที่เป็นการเปลี่ยน
+  กลางคัน (ทั้งขึ้นและลง) — แต่ **ไม่ pin** `featurePlan` ลง snapshot เพราะการเปลี่ยนแบบรอขอบรอบต้องไม่ย้าย
+  เมนูตอนจ่าย; หน้าจอยืนยันแบบรอขอบรอบเปลี่ยนคำเป็น "ตั้งแต่ <วันเริ่มแพ็กเกจรอบถัดไป>". เส้นทางลดแพ็กเกจ
+  ของสมาชิกรายเดือน/รายปีใช้หน้า `collection/preview` ไม่ใช่ quote จึงส่ง `featureImpact` มาบน
+  `BillingCollectionOperation` แทน และการ์ดยืนยันแสดงรายการเดียวกัน.
+
+**ยังไม่ทำ (รู้ตัว)**: ร้านที่ term หมดแล้วซื้อใหม่ข้าม tier (`RESTART`) ยังไม่ย้ายเมนู เพราะไม่ใช่การเปลี่ยน
+"กลางคัน" — `quote()` ไม่ pin `featurePlan` ให้ `PAID_EXPIRED_CURRENT_MODE` มาตั้งแต่ Phase 6 และการแก้ต้อง
+ตัดสินใจเรื่อง term ที่ขาดช่วงก่อน.
