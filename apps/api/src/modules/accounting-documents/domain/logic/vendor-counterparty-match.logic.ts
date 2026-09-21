@@ -52,8 +52,9 @@ function foldThaiSaraAm(value: string): string {
 // Same mirroring note as toAsciiDigits: expense-duplicate.logic.ts's normalizeVendorName is
 // module-private. Matching must fold names identically to duplicate-detection's fold, or the
 // same store could match under one code path and miss under the other. That file's NFKC pass
-// already handles สระอำ on its own (see above) — it has no such bug to fix.
-function normalizeVendorName(value: string | null | undefined): string {
+// already handles สระอำ on its own (see above) — it has no such bug to fix. Exported for the
+// Slice 2 buyer-name check (`buyer-as-printed.logic.ts`), which must fold a name the same way.
+export function normalizeVendorName(value: string | null | undefined): string {
   return foldThaiSaraAm(String(value ?? '').normalize('NFKC')).toLowerCase().replace(/[\p{P}\p{S}\s]+/gu, '');
 }
 

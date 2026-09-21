@@ -56,6 +56,9 @@ export type CounterpartyUsage = {
   recentExpenses: Array<{ id: string; expenseDate: string; vendorDocumentNumber?: string; grandTotalAmount: string }>;
 };
 
+/** §11.1: what a list row needs for its usage badges — the same counts as `CounterpartyUsage`, minus the detail page's `recentExpenses`. */
+export type CounterpartyListItem = CounterpartyRecord & Pick<CounterpartyUsage, 'usageCounts'>;
+
 export type ListCounterpartiesFilter = {
   search?: string;
   /** §12: derived from real documents, NOT from `type` — there is no type filter anywhere (A5). */

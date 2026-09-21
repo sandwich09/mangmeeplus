@@ -78,7 +78,7 @@ export const billingIssueLabel = (value:string) => Object.hasOwn(issueKinds,valu
 const operationKinds: Record<string,string> = {
   EXPIRE_CHECKOUT:'ตรวจและยุติหน้าชำระเดิม', RECONCILE:'ตรวจสถานะล่าสุด', IMPORT_INVOICE:'บันทึกใบแจ้งหนี้เดิม', RETRY_APPLY:'ตรวจการเปิดสิทธิ์จากยอดชำระเดิม', RETRY_NOTIFICATION:'นำข้อความเดิมกลับเข้าคิว',
   RECONCILE_NOTIFICATION:'ตรวจผลส่งข้อความเดิม', RETRY_PROVIDER_EVENT:'ตรวจเหตุการณ์ Stripe เดิม', CHANGE_COLLECTION:'พักหรือกลับมาเก็บเงิน', GRANT_FREE_DAYS:'แถมวันใช้งาน',
-  SCHEDULE_DOWNGRADE:'ตั้งเวลาลดแพ็กเกจ', CANCEL_DOWNGRADE:'ยกเลิกการลดแพ็กเกจ', CANCEL_COLLECTION:'หยุดต่ออายุ', RESUME_COLLECTION:'เปิดต่ออายุอีกครั้ง',
+  SCHEDULE_DOWNGRADE:'ตั้งเวลาลดแพ็กเกจ', PREPAID_PLAN_CHANGE:'ซื้อแพ็กเกจรอบถัดไป', CANCEL_DOWNGRADE:'ยกเลิกการลดแพ็กเกจ', CANCEL_COLLECTION:'หยุดต่ออายุ', RESUME_COLLECTION:'เปิดต่ออายุอีกครั้ง',
   SCAN_PROVIDER_INVOICES:'ตรวจประวัติใบแจ้งหนี้ Stripe', RECORD_SUPPORT_OUTCOME:'บันทึกผลติดต่อ', PUBLISH_POLICY:'เปลี่ยนนโยบายการชำระเงิน',
   SET_ACTION_GATE:'เปลี่ยนการเปิดบริการ', CHECK_PROVIDER_CONFIGURATION:'ตรวจการเชื่อมต่อ Stripe', REFUND:'คืนเงิน', GRANT_RECEIPTS:'เพิ่มใบเสร็จโดยผู้ดูแล', REVOKE_RECEIPTS:'ถอนใบเสร็จที่ผู้ดูแลเพิ่ม', GRANT_OVERRIDE:'ให้สิทธิ์ชั่วคราว', REVOKE_OVERRIDE:'ถอนสิทธิ์ชั่วคราว', SCHEDULE_PRICE_RETURN:'ตั้งเวลากลับไปราคาปกติ',
 };

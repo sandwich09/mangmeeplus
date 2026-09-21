@@ -317,6 +317,10 @@ const CODE_LABELS: Record<string, string> = {
   counterparty_branch_code_invalid: 'รหัสสาขาต้องเป็นตัวเลข 5 หลัก เช่น 00000 สำหรับสำนักงานใหญ่ หรือเว้นว่างไว้ก็ได้',
   EXPENSE_VENDOR_BRANCH_CODE_INVALID: 'รหัสสาขาต้องเป็นตัวเลข 5 หลัก เช่น 00000 สำหรับสำนักงานใหญ่ หรือเว้นว่างไว้ก็ได้',
   EXPENSE_VENDOR_ADDRESS_TOO_LONG: 'ที่อยู่ผู้ขายยาวเกิน 500 ตัวอักษร ตัดให้สั้นลงแล้วบันทึกอีกครั้ง',
+  // Vendor-address §8 Slice 2: the confirm-with-reason on a tax invoice whose printed buyer does not
+  // match the company registry. Both name the next step — reload for the first, a reason for the second.
+  expense_buyer_match_not_mismatch: 'ผู้ซื้อบนใบนี้ไม่ได้ขึ้นว่าไม่ตรงทะเบียนแล้ว โหลดหน้านี้ใหม่เพื่อดูผลล่าสุด',
+  expense_buyer_match_reason_required: 'กรุณาพิมพ์เหตุผลที่ใบนี้ใช้ได้ ไม่เกิน 500 ตัวอักษร แล้วกดบันทึกอีกครั้ง',
   EXPENSE_PURPOSE_TEXT_INVALID: 'กรุณาใช้ช่องว่างหรือจุลภาคแทนเครื่องหมาย · ในช่อง “ซื้อไปใช้ทำอะไร” หรือเว้นช่องนี้ไว้ได้',
   EXPENSE_SOURCE_DRAFT_INVALID: 'ข้อมูลร่างบางช่องไม่ถูกต้อง กรุณาตรวจวันที่ จำนวน ราคา และหมวดค่าใช้จ่ายแล้วลองอีกครั้ง',
   expense_source_line_identity_changed: 'รายการในบิลถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่ ตรวจสอบ แล้วจึงเก็บร่างอีกครั้ง',

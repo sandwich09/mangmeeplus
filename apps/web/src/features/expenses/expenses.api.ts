@@ -387,6 +387,11 @@ export async function confirmDuplicate(companyId: string, expenseId: string, can
   await apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/duplicates/${candidateId}/confirm`, { method: 'POST', body: JSON.stringify({ reason }) });
 }
 
+/** Vendor-address §8 Slice 2: "ยืนยันว่าใช้ได้ พร้อมเหตุผล" on a printed buyer that does not match the registry. */
+export async function confirmExpenseBuyerMatch(companyId: string, expenseId: string, reason: string): Promise<void> {
+  await apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/buyer-match/confirm`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
 export async function listExpenseCategories(companyId: string): Promise<ExpenseCategorySummary[]> {
   return apiFetch(`/v1/companies/${companyId}/expense-categories`);
 }

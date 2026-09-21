@@ -166,7 +166,8 @@ export class AcceptSubstituteReceiptPaperDto implements AcceptSubstituteReceiptP
   @IsIn([true]) originalRetainedAcknowledged!: true;
 }
 
-/** Duplicate dismiss / confirm: the note is genuinely optional here. */
+/** Duplicate dismiss / confirm: the note is genuinely optional here. The buyer-match confirm reuses it
+ *  and refuses a blank reason in its use case, with a code the web can put into words. */
 export class ReasonOptionalDto {
   @IsString() @IsOptional() @MaxLength(500) reason?: string;
 }
