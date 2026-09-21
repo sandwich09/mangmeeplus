@@ -389,6 +389,8 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   approvalActions?: {
     canApprove: boolean;
     canReject: boolean;
+    /** The requester holds the approval this claim waits on; only the self-approval switch refuses them. */
+    selfApprovalBlocked?: boolean;
   };
   /**
    * Hash of the claim as it stands NOW, acknowledged when signing the form.
@@ -405,6 +407,8 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   approvalSteps: ReimbursementApprovalStepSummary[];
   payments: ReimbursementPaymentSummary[];
   duplicateCandidates: ReimbursementDuplicateCandidateSummary[];
+  /** An open duplicate candidate under this claim's BLOCK_PAYMENT policy: payment is refused until it is cleared. */
+  duplicateBlocksPayment?: boolean;
   signatures: ReimbursementClaimSignatureSummary[];
   /** Uploaded scans/photos of the wet-ink signed form, newest first. */
   signedCopies: ReimbursementSignedCopySummary[];
@@ -450,7 +454,11 @@ export type RejectReimbursementInput = {
 };
 
 export type FinanceReviewReimbursementInput = {
-  decision: 'APPROVED_FOR_PAYMENT' | 'NEEDS_INFO' | 'BLOCKED';
+  /**
+   * Omitted only on a resolve-only call (`resolveDuplicate` + reason) at the payment step, where
+   * no finance decision is left to make: it clears a duplicate block without finance review.
+   */
+  decision?: 'APPROVED_FOR_PAYMENT' | 'NEEDS_INFO' | 'BLOCKED';
   note?: string;
   resolveDuplicate?: boolean;
   duplicateResolutionReason?: string;

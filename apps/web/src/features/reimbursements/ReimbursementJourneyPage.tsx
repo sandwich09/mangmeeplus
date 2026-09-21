@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { ThemedSteps, type ThemedStepState } from '@/common/components/steps/ThemedSteps';
 import { EmptyState, ErrorState, ForbiddenState, LoadingState } from '@/common/components/state';
+import { useConfirm } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
 import { ErrorBanner, btnClass, ghostClass } from '../expenses/ExpensesUi';
 import {
@@ -31,13 +32,13 @@ const STEPPER_STATE: Record<JourneyStepState, ThemedStepState> = {
 
 const ACTION_LABELS: Record<JourneyAction, string> = {
   submit: 'ส่งอนุมัติ', edit: 'แก้ไขคำขอ', cancel: 'ยกเลิกคำขอ', reopen: 'แก้ไขและส่งใหม่',
-  approve: 'อนุมัติ', reject: 'ปฏิเสธ',
+  approve: 'อนุมัติ', reject: 'ปฏิเสธ', 'policy-settings': 'ไปที่ตั้งค่าเบิกจ่าย',
   'finance-approve': 'อนุมัติจ่าย', 'finance-return': 'ส่งกลับให้แก้ไข', 'finance-block': 'ระงับการจ่าย',
-  pay: 'บันทึกจ่าย', sign: 'ลงนามในใบเบิก', print: 'พิมพ์ใบเบิก',
+  'resolve-duplicate': 'ปลดรายการซ้ำ', pay: 'บันทึกจ่าย', sign: 'ลงนามในใบเบิก', print: 'พิมพ์ใบเบิก',
   'attach-signed-copy': 'แนบสำเนาที่เซ็นแล้ว', 'void-payment': 'ยกเลิกการจ่าย',
 };
 
-type ReasonAction = 'cancel' | 'finance-return' | 'finance-block';
+type ReasonAction = 'cancel' | 'finance-return' | 'finance-block' | 'resolve-duplicate';
 const REASON_DIALOGS: Record<ReasonAction, { title: string; description: string; confirmLabel: string; success: string; danger?: boolean }> = {
   cancel: {
     title: 'ยกเลิกคำขอ', confirmLabel: 'ยืนยันยกเลิกคำขอ', success: 'ยกเลิกคำขอเรียบร้อยแล้ว', danger: true,
@@ -51,6 +52,10 @@ const REASON_DIALOGS: Record<ReasonAction, { title: string; description: string;
     title: 'ระงับการจ่าย', confirmLabel: 'ระงับการจ่าย', success: 'ระงับการจ่ายแล้ว', danger: true,
     description: 'ระบุเหตุผล ใบเบิกจะค้างที่ขั้นตรวจการเงินจนกว่าฝ่ายการเงินจะอนุมัติจ่ายหรือส่งกลับให้แก้ไข',
   },
+  'resolve-duplicate': {
+    title: 'ปลดรายการซ้ำ', confirmLabel: 'ยืนยันว่าไม่ซ้ำ', success: 'ปลดรายการซ้ำแล้ว',
+    description: 'ตรวจแล้วว่าใบนี้ไม่ได้เบิกซ้ำกับคำขออื่น ระบุเหตุผลที่ยืนยันว่าไม่ซ้ำ ระบบจะบันทึกชื่อคุณและเหตุผลนี้ไว้ แล้วจึงบันทึกจ่ายได้',
+  },
 };
 
 export function ReimbursementJourneyPage({ companyId, requestId, userId, permissions }: {
@@ -60,6 +65,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   permissions: readonly string[];
 }) {
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const hubHref = `/companies/${companyId}/reimbursements`;
   const back = <Link href={hubHref}>← กลับไปการเบิกจ่าย</Link>;
   const [detail, setDetail] = useState<any | null>(null);
@@ -183,7 +189,17 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const handlers: Partial<Record<JourneyAction, () => void>> = {
     submit: () => void act('submit', () => submitReimbursement(companyId, requestId), 'ส่งขออนุมัติเรียบร้อยแล้ว'),
     cancel: () => { setActionError(null); setReasonAction('cancel'); },
-    reopen: () => void act('reopen', () => reopenReimbursement(companyId, requestId), 'เปิดคำขอกลับเป็นร่างแล้ว แก้ไขและส่งอนุมัติได้อีกครั้ง'),
+    reopen: () => void (async () => {
+      // Withdrawing takes the claim off the approver's desk, so it asks first; reopening a refusal does not.
+      if (detail.status === 'PENDING_APPROVAL' && !(await confirm({
+        title: 'เปิดคำขอกลับเป็นร่าง',
+        message: 'ผู้อนุมัติจะไม่เห็นคำขอนี้จนกว่าคุณจะส่งอนุมัติอีกครั้ง เลขที่ใบเบิกยังเป็นเลขเดิม ถ้าลงนามหรือแนบสำเนาใบเบิกไว้แล้ว ต้องทำใหม่หลังส่ง',
+        confirmLabel: 'เปิดกลับเป็นร่าง',
+        cancelLabel: 'กลับ',
+        variant: 'primary',
+      }))) return;
+      await act('reopen', () => reopenReimbursement(companyId, requestId), 'เปิดคำขอกลับเป็นร่างแล้ว แก้ไขและส่งอนุมัติได้อีกครั้ง');
+    })(),
     approve: () => void approve(),
     reject: () => { setActionError(null); setRejecting(true); },
     'finance-approve': () => void act('finance-approve', () => financeReviewReimbursement(companyId, requestId, {
@@ -193,6 +209,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     }), detail.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'),
     'finance-return': () => { setActionError(null); setReasonAction('finance-return'); },
     'finance-block': () => { setActionError(null); setReasonAction('finance-block'); },
+    'resolve-duplicate': () => { setActionError(null); setReasonAction('resolve-duplicate'); },
     pay: () => setPayOpen(true),
     print: () => void openClaimForm(detail),
     'void-payment': () => { setActionError(null); setVoidingPayment(recordedPayment); },
@@ -201,9 +218,11 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const actionButton = (action: JourneyAction, index: number) => {
     const className = cx(index === 0 ? btnClass : ghostClass, 'w-full sm:w-auto');
     const label = action === 'edit' && detail.financeReviewStatus === 'NEEDS_INFO' ? 'แก้ไขตามคำขอ'
-      : action === 'finance-approve' ? financeActionLabel(detail)
-        : ACTION_LABELS[action];
+      : action === 'reopen' && detail.status === 'PENDING_APPROVAL' ? 'แก้ไข (เปิดกลับเป็นร่าง)'
+        : action === 'finance-approve' ? financeActionLabel(detail)
+          : ACTION_LABELS[action];
     if (action === 'edit') return <Link key={action} className={className} href={`${hubHref}/${detail.id}/edit`}>{label}</Link>;
+    if (action === 'policy-settings') return <Link key={action} className={className} href={`${hubHref}?tab=policy`}>{label}</Link>;
     // Signing and the signed copy live in their sections below; the card points there.
     if (action === 'sign') return <a key={action} className={className} href="#reimbursement-signatures">{label}</a>;
     if (action === 'attach-signed-copy') return <a key={action} className={className} href="#reimbursement-signed-copies">{label}</a>;
@@ -301,10 +320,14 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
         onConfirm={async (reason) => {
           const request = reasonAction === 'cancel'
             ? () => cancelReimbursement(companyId, requestId, reason)
-            : () => financeReviewReimbursement(companyId, requestId, { decision: reasonAction === 'finance-return' ? 'NEEDS_INFO' : 'BLOCKED', note: reason });
+            // No decision: the payment-step duplicate clear on the finance-review endpoint.
+            : reasonAction === 'resolve-duplicate'
+              ? () => financeReviewReimbursement(companyId, requestId, { resolveDuplicate: true, duplicateResolutionReason: reason })
+              : () => financeReviewReimbursement(companyId, requestId, { decision: reasonAction === 'finance-return' ? 'NEEDS_INFO' : 'BLOCKED', note: reason });
           if ((await act(reasonAction, request, reasonDialog.success)).ok) setReasonAction(null);
         }}
       />}
+      {confirmDialog}
       {voidingPayment && <VoidPaymentDialog
         payment={voidingPayment}
         busy={busyAction === 'void-payment'}

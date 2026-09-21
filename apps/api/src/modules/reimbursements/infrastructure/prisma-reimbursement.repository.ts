@@ -860,6 +860,10 @@ export class PrismaReimbursementRepository {
     });
   }
 
+  private requestChanged(): ConflictException {
+    return new ConflictException({ code: 'reimbursement_changed', message: 'Reimbursement changed. Reload and retry.' });
+  }
+
   private nextVersion(observed: Date): Date {
     return new Date(Math.max(Date.now(), observed.getTime() + 1));
   }
@@ -1087,15 +1091,7 @@ export class PrismaReimbursementRepository {
         throw new ConflictException('stale_finance_review_snapshot');
       }
       if (data.resolveRequestDuplicates) {
-        await tx.reimbursementDuplicateCandidate.updateMany({
-          where: { companyId: data.companyId, reimbursementRequestId: data.requestId, status: 'OPEN' },
-          data: {
-            status: 'OVERRIDDEN',
-            resolvedByUserId: data.actorUserId,
-            resolvedAt: data.reviewedAt,
-            reason: data.duplicateResolutionReason,
-          },
-        });
+        await this.overrideOpenDuplicates(tx, data.companyId, data.requestId, data.actorUserId, data.reviewedAt, data.duplicateResolutionReason);
       }
       const changed = await tx.reimbursementRequest.updateMany({
         where: {
@@ -1122,6 +1118,54 @@ export class PrismaReimbursementRepository {
         include: { lines: { orderBy: { lineNo: 'asc' } } },
       });
       return { request: this.toRequest(updated), resumed: false };
+    });
+  }
+
+  /**
+   * A duplicate block at the payment step, where no finance decision is left to carry the override
+   * (finance review off, or approved without it). Same lock, CAS, branch check and candidate write
+   * as the finance approval above. `duplicateStatus` is left alone: after projection it holds the
+   * expense-level result, and the payment gate reads the open candidates, not that field.
+   */
+  async resolvePaymentDuplicatesAtomic(data: {
+    companyId: string;
+    requestId: string;
+    expectedUpdatedAt: Date;
+    actorUserId: string;
+    scopes: { branchIds?: string[] };
+    resolvedAt: Date;
+    reason: string;
+    onResolvedPersisted: (tx: any) => Promise<void>;
+  }): Promise<ReimbursementRequestRecord> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      await this.lockRequest(tx, data.companyId, data.requestId);
+      const row = await tx.reimbursementRequest.findFirst({ where: { id: data.requestId, companyId: data.companyId } });
+      if (!row) throw new NotFoundException('Reimbursement request not found');
+      if (!['APPROVED', 'READY_FOR_PAYMENT'].includes(row.status)) {
+        throw new UnprocessableEntityException(`Cannot resolve duplicates from status ${row.status}`);
+      }
+      if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) throw this.requestChanged();
+      this.assertDecisionBranch(row.branchId, data.scopes);
+      await this.overrideOpenDuplicates(tx, data.companyId, data.requestId, data.actorUserId, data.resolvedAt, data.reason);
+      const changed = await tx.reimbursementRequest.updateMany({
+        where: { id: data.requestId, companyId: data.companyId, status: row.status, updatedAt: data.expectedUpdatedAt },
+        data: { updatedByUserId: data.actorUserId, updatedAt: this.nextVersion(data.expectedUpdatedAt) },
+      });
+      if (changed.count !== 1) throw this.requestChanged();
+      await data.onResolvedPersisted(tx);
+      const updated = await tx.reimbursementRequest.findFirstOrThrow({
+        where: { id: data.requestId, companyId: data.companyId },
+        include: { lines: { orderBy: { lineNo: 'asc' } } },
+      });
+      return this.toRequest(updated);
+    });
+  }
+
+  private async overrideOpenDuplicates(tx: any, companyId: string, requestId: string, actorUserId: string, resolvedAt: Date, reason?: string): Promise<void> {
+    await tx.reimbursementDuplicateCandidate.updateMany({
+      where: { companyId, reimbursementRequestId: requestId, status: 'OPEN' },
+      data: { status: 'OVERRIDDEN', resolvedByUserId: actorUserId, resolvedAt, reason },
     });
   }
 
@@ -1861,15 +1905,35 @@ export class PrismaReimbursementRepository {
   }
 
   /**
-   * REJECTED -> DRAFT with CAS so the requester can correct and resubmit. The requestNo is
+   * REJECTED -> DRAFT, or PENDING_APPROVAL -> DRAFT while nobody has decided (the requester
+   * withdraws it), with CAS so the requester can correct and resubmit. The requestNo is
    * kept on purpose: submit reserves numbers under `reimb-submit:{id}`, so resubmission
    * reuses the same document number instead of burning a new one.
    */
-  async reopenRejectedRequest(companyId: string, id: string, expectedUpdatedAt: Date, actorUserId: string): Promise<ReimbursementRequestRecord> {
+  async reopenRejectedRequest(
+    companyId: string,
+    id: string,
+    expectedUpdatedAt: Date,
+    actorUserId: string,
+    expectedStatus: 'REJECTED' | 'PENDING_APPROVAL' = 'REJECTED',
+  ): Promise<ReimbursementRequestRecord> {
     return (this.prisma.client as any).$transaction(async (tx: any) => {
       await this.lockRequest(tx, companyId, id);
+      if (expectedStatus === 'PENDING_APPROVAL') {
+        // An approval's projection phase keeps the claim PENDING_APPROVAL after its step is decided,
+        // so only an undecided current step may be withdrawn. It is cancelled the way a cancellation
+        // cancels it: the resubmission then has no live step to inherit and builds a fresh route.
+        const row = await tx.reimbursementRequest.findFirst({ where: { id, companyId }, select: { currentApprovalStepId: true } });
+        const withdrawn = row?.currentApprovalStepId
+          ? await tx.reimbursementApprovalStep.updateMany({
+            where: { id: row.currentApprovalStepId, companyId, reimbursementRequestId: id, status: 'PENDING' },
+            data: { status: 'CANCELLED', invalidatedAt: new Date(), invalidatedReason: 'withdrawn_by_requester' },
+          })
+          : { count: 0 };
+        if (withdrawn.count !== 1) throw this.requestChanged();
+      }
       const changed = await tx.reimbursementRequest.updateMany({
-        where: { id, companyId, status: 'REJECTED', updatedAt: expectedUpdatedAt },
+        where: { id, companyId, status: expectedStatus, updatedAt: expectedUpdatedAt, cancellationPendingAt: null },
         data: {
           status: 'DRAFT',
           submittedAt: null,
@@ -1892,9 +1956,7 @@ export class PrismaReimbursementRepository {
           updatedAt: this.nextVersion(expectedUpdatedAt),
         },
       });
-      if (changed.count !== 1) {
-        throw new ConflictException({ code: 'reimbursement_changed', message: 'Reimbursement changed. Reload and retry.' });
-      }
+      if (changed.count !== 1) throw this.requestChanged();
       await Promise.all([
         tx.reimbursementClaimSignature.deleteMany({ where: { companyId, reimbursementRequestId: id } }),
         tx.attachmentLink.deleteMany({

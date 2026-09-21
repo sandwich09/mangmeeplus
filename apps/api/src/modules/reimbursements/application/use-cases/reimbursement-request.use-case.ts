@@ -228,7 +228,8 @@ export class UpdateReimbursementDraftUseCase {
 /**
  * REJECTED is not a dead end: the requester reopens the claim as a DRAFT, fixes it with the
  * normal draft edit, and resubmits under the same request number (the in-app guide promises
- * exactly this journey). Rejection history stays on the approval step.
+ * exactly this journey). Rejection history stays on the approval step. The same reopen withdraws
+ * a claim still waiting for approval (spec §6 step 2), while no approver has decided it.
  */
 @Injectable()
 export class ReopenRejectedReimbursementUseCase {
@@ -242,18 +243,23 @@ export class ReopenRejectedReimbursementUseCase {
     if (!req) throw new NotFoundException('Reimbursement request not found');
 
     const isOwner = req.requesterUserId === ctx.userId;
-    const canReopen = (isOwner && ctx.permissions.includes('reimbursement.update_own_draft')) || ctx.permissions.includes('reimbursement.finance_review');
+    const withdraw = req.status === 'PENDING_APPROVAL';
+    // Withdrawing is the requester's own act; finance's wider reach covers reopening a refusal only.
+    const canReopen = (isOwner && ctx.permissions.includes('reimbursement.update_own_draft'))
+      || (!withdraw && ctx.permissions.includes('reimbursement.finance_review'));
     if (!canReopen) throw new ForbiddenException('Cannot reopen this reimbursement');
     assertReimbursementBranchInScope(ctx, req.branchId);
-    if (req.status !== 'REJECTED' || !canTransition(req.status, 'DRAFT')) {
+    if ((req.status !== 'REJECTED' && !withdraw) || !canTransition(req.status, 'DRAFT')) {
       throw new UnprocessableEntityException(`Cannot reopen from status ${req.status}`);
     }
 
-    const updated = await this.repo.reopenRejectedRequest(ctx.companyId, id, req.updatedAt, ctx.userId);
+    const updated = await this.repo.reopenRejectedRequest(ctx.companyId, id, req.updatedAt, ctx.userId, withdraw ? 'PENDING_APPROVAL' : 'REJECTED');
     void this.audit.log({
-      companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.reopen',
+      companyId: ctx.companyId, actorUserId: ctx.userId, action: withdraw ? 'reimbursement.request.withdraw' : 'reimbursement.request.reopen',
       targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
-      metadataJson: { requestNo: req.requestNo, previousRejectionReason: req.rejectionReason },
+      metadataJson: withdraw
+        ? { requestNo: req.requestNo, previousStatus: 'PENDING_APPROVAL' }
+        : { requestNo: req.requestNo, previousRejectionReason: req.rejectionReason },
     });
     return toRequestSummary(updated);
   }

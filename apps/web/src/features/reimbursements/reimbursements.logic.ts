@@ -304,9 +304,9 @@ export type JourneyStepKey = 'items' | 'approval' | 'finance' | 'payment' | 'doc
 export type JourneyStepState = 'done' | 'current' | 'upcoming' | 'needs-fix' | 'ended';
 export type JourneyAction =
   | 'submit' | 'edit' | 'cancel' | 'reopen'
-  | 'approve' | 'reject'
+  | 'approve' | 'reject' | 'policy-settings'
   | 'finance-approve' | 'finance-return' | 'finance-block'
-  | 'pay' | 'sign' | 'print' | 'attach-signed-copy' | 'void-payment';
+  | 'resolve-duplicate' | 'pay' | 'sign' | 'print' | 'attach-signed-copy' | 'void-payment';
 export type JourneyStep = {
   key: JourneyStepKey;
   label: string;
@@ -320,6 +320,22 @@ export type JourneyStep = {
 export const JOURNEY_STEP_LABELS: Record<JourneyStepKey, string> = {
   items: 'รายการที่จ่ายไป', approval: 'อนุมัติ', finance: 'ตรวจการเงิน', payment: 'จ่ายเงินคืน', document: 'เอกสาร',
 };
+
+/** Why an open duplicate candidate was raised, in words (submit only records these two matches). */
+const DUPLICATE_MATCH_TEXT: Record<string, string> = {
+  ATTACHMENT_CHECKSUM: 'ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น',
+  EXPENSE_LINK: 'ใช้รายการค่าใช้จ่ายเดียวกับคำขอเบิกอื่น',
+};
+
+function openDuplicateText(detail: any): string {
+  const texts = new Set<string>((detail?.duplicateCandidates ?? [])
+    .filter((candidate: any) => candidate.status === 'OPEN')
+    .map((candidate: any) => DUPLICATE_MATCH_TEXT[candidate.candidateType] ?? 'อาจซ้ำกับคำขอเบิกอื่น'));
+  return [...texts].join(' และ ') || 'อาจซ้ำกับคำขอเบิกอื่น';
+}
+
+/** The policy switch, quoted as the settings page labels it so it can be found there. */
+const SELF_APPROVAL_SWITCH = '"ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้"';
 
 /**
  * Whether THIS claim passes through finance review (spec §5: per claim, from its frozen policy).
@@ -391,9 +407,20 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
     } else if (key === 'approval') {
       if (detail?.approvalActions?.canApprove === true) actions.push('approve');
       if (detail?.approvalActions?.canReject === true) actions.push('reject');
-      note = actions.length > 0
-        ? 'รอคุณตัดสิน ตรวจรายการและใบเสร็จด้านล่างก่อนอนุมัติ'
-        : `รอ ${currentDeskText(detail?.currentDesk) ?? CURRENT_DESK_LABELS.APPROVER} อนุมัติ`;
+      const waiting = `รอ ${currentDeskText(detail?.currentDesk) ?? CURRENT_DESK_LABELS.APPROVER} อนุมัติ`;
+      note = actions.length > 0 ? 'รอคุณตัดสิน ตรวจรายการและใบเสร็จด้านล่างก่อนอนุมัติ' : waiting;
+      // spec §15: the requester would decide this claim but for the self-approval switch. The claim
+      // froze the switch at submit, so turning it on helps only once the claim is sent again.
+      if (detail?.approvalActions?.selfApprovalBlocked === true) {
+        const canManagePolicy = permissions.includes('reimbursement.policy.manage');
+        note = `${waiting} · ใบนี้เป็นของคุณเอง และบริษัทยังไม่เปิด ${SELF_APPROVAL_SWITCH} คุณจึงอนุมัติเองไม่ได้ ถ้าต้องการอนุมัติเอง ${
+          canManagePolicy ? 'เปิดได้ที่ตั้งค่าเบิกจ่าย' : 'ขอให้เจ้าของกิจการเปิดในตั้งค่าเบิกจ่าย'} แล้วเปิดคำขอกลับเป็นร่างและส่งอนุมัติใหม่`;
+        if (canManagePolicy) actions.push('policy-settings');
+      }
+      // spec §6: the requester takes back a claim nobody has decided yet — the same reopen as a refusal.
+      if (!humanApproved && detail?.requesterUserId === userId && permissions.includes('reimbursement.update_own_draft')) {
+        actions.push('reopen');
+      }
     } else if (key === 'finance') {
       // The finance endpoint only accepts FINANCE_REVIEW; an APPROVED claim is still being routed.
       if (status === 'FINANCE_REVIEW' && permissions.includes('reimbursement.finance_review')) {
@@ -406,9 +433,19 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
         : actions.length > 0 ? 'ตรวจใบเสร็จและรายการซ้ำ แล้วอนุมัติจ่ายหรือส่งกลับให้แก้ไข' : 'รอฝ่ายการเงินตรวจ';
     } else if (key === 'payment') {
       // APPROVED here is the no-finance claim waiting for its projection; the API accepts payment then.
-      if (['READY_FOR_PAYMENT', 'APPROVED'].includes(status) && permissions.includes('reimbursement.payment.record')) actions.push('pay');
-      note = [actions.length > 0 ? 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง' : 'รอผู้มีสิทธิ์บันทึกจ่าย', duplicate]
-        .filter(Boolean).join(' · ');
+      const payable = ['READY_FOR_PAYMENT', 'APPROVED'].includes(status);
+      if (payable && detail?.duplicateBlocksPayment === true) {
+        // The API refuses payment until a duplicate.resolve holder clears the block (spec §6).
+        const canResolve = permissions.includes('reimbursement.duplicate.resolve');
+        if (canResolve) actions.push('resolve-duplicate');
+        note = `ติดรายการซ้ำ: ${openDuplicateText(detail)} ${canResolve
+          ? 'ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล จึงจะบันทึกจ่ายได้'
+          : 'รอผู้มีสิทธิ์ตรวจรายการซ้ำ (เช่น เจ้าของกิจการหรือฝ่ายการเงิน) ปลดก่อน จึงจะบันทึกจ่ายได้'}`;
+      } else {
+        if (payable && permissions.includes('reimbursement.payment.record')) actions.push('pay');
+        note = [actions.length > 0 ? 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง' : 'รอผู้มีสิทธิ์บันทึกจ่าย', duplicate]
+          .filter(Boolean).join(' · ');
+      }
     } else if (key === 'document') {
       if (eligibleSignatureRoles(detail, userId).some((role) => !signed.has(role))) actions.push('sign');
       note = actions.length > 0 || canUploadSignedCopy(detail, userId, permissions)

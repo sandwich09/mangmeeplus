@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ApproveReimbursementUseCase, ListApprovalQueueUseCase, RejectReimbursementUseCase } from './reimbursement-approval.use-case';
+import { ApproveReimbursementUseCase, ListApprovalQueueUseCase, RejectReimbursementUseCase, approvalDecisionActions } from './reimbursement-approval.use-case';
 import {
   CreateReimbursementDraftUseCase,
   SubmitReimbursementUseCase,
@@ -671,5 +671,34 @@ describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
     const items = await new ListApprovalQueueUseCase(repo).execute(ctx({ roles: ['OWNER'] }));
 
     assert.equal(items.length, 1);
+  });
+});
+
+// Spec §15 row 1: a solo requester on a custom role is left off their own route while self-approval
+// is off. The journey page can only explain that if the detail says so.
+describe('approvalDecisionActions self-approval signal (spec §15)', () => {
+  const plain = { canApprove: false, canReject: false };
+  const mine = (step: Record<string, unknown> = {}, overrides: Record<string, unknown> = {}) => baseRequest({
+    requesterUserId: 'approver-1',
+    approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: 'ACCOUNTANT', assignedApproverUserIds: ['owner-1'], ...step }],
+    ...overrides,
+  });
+  const accountant = ctx({ roles: ['ACCOUNTANT'] });
+
+  it('flags the requester who holds the routed role and is held back only by the switch', async () => {
+    const blocked = { ...plain, selfApprovalBlocked: true };
+    // Routing left them off the frozen assignment…
+    assert.deepEqual(await approvalDecisionActions(accountant, mine(), fakeRepo(null)), blocked);
+    // …or an unassigned role-routed step would take them, but for the rule.
+    assert.deepEqual(await approvalDecisionActions(accountant, mine({ assignedApproverUserIds: undefined }), fakeRepo(null)), blocked);
+  });
+
+  it('says nothing when the switch is not what stands in the way', async () => {
+    const repo = fakeRepo(null);
+    assert.deepEqual(await approvalDecisionActions(ctx({ roles: ['STAFF'] }), mine(), repo), plain, 'not the routed role');
+    assert.deepEqual(await approvalDecisionActions(ctx({ roles: ['ACCOUNTANT'], permissions: ['reimbursement.reject'] }), mine(), repo), plain, 'no approve');
+    assert.deepEqual(await approvalDecisionActions(accountant, mine({}, { requesterUserId: 'staff-1' }), repo), plain, 'not their claim');
+    assert.deepEqual(await approvalDecisionActions(accountant, mine(), fakeRepo(null, { allowSelfApproval: true })), plain, 'switch already on');
+    assert.deepEqual(await approvalDecisionActions(accountant, mine({ status: 'APPROVED' }), repo), plain, 'already decided');
   });
 });

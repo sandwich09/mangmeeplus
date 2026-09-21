@@ -53,6 +53,7 @@ function fakeRepo(req: any, opts: {
   const outboxRows = opts.outboxRows ?? [];
   const repo = {
     lastPayment: undefined as any,
+    lastResolve: undefined as any,
     findRequestById: async (_c: string, _id: string, withRel?: boolean) => (withRel ? { ...req, approvalSteps: [], payments, duplicateCandidates: [] } : req),
     findPolicy: async () => null,
     getUserDisplayNames: async () => ({}),
@@ -134,6 +135,15 @@ function fakeRepo(req: any, opts: {
     },
     updateRequest: async (_c: string, _id: string, data: any) => { Object.assign(req, data); return req; },
     resolveDuplicateCandidates: async () => undefined,
+    // The payment-step duplicate clear; mirrors the repository's status and version guards.
+    resolvePaymentDuplicatesAtomic: async (data: any) => {
+      repo.lastResolve = data;
+      if (!['APPROVED', 'READY_FOR_PAYMENT'].includes(req.status)) throw new Error(`Cannot resolve duplicates from status ${req.status}`);
+      if (req.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) throw new Error('reimbursement_changed');
+      Object.assign(req, { updatedAt: new Date(req.updatedAt.getTime() + 1) });
+      await data.onResolvedPersisted(fakeTx(outboxRows));
+      return req;
+    },
   };
   return repo as any;
 }
@@ -370,6 +380,58 @@ describe('FinanceReviewReimbursementUseCase', () => {
     assert.equal(correction?.payloadJson.data.requesterUserId, 'staff-1');
     assert.equal(correction?.payloadJson.data.status, 'DRAFT');
   });
+
+  // Finance review off (the default): no finance decision ever comes to carry the override, so a
+  // BLOCK_PAYMENT duplicate would strand the claim at the payment step.
+  it('clears a payment-step duplicate block for a duplicate.resolve holder, without finance review', async () => {
+    for (const status of ['READY_FOR_PAYMENT', 'APPROVED']) {
+      const req = financeReviewedRequest({ status, financeReviewStatus: 'NOT_REQUIRED' });
+      const repo = fakeRepo(req);
+      const audits: any[] = [];
+      const projectionCalls: any[] = [];
+      const uc = new FinanceReviewReimbursementUseCase(repo, { log: async (entry: any) => { audits.push(entry); } } as any,
+        { execute: async (...args: any[]) => { projectionCalls.push(args); } } as any, fakeDetailEvidence as any);
+
+      await uc.execute(ctx(['reimbursement.duplicate.resolve']), 'rb-1', { resolveDuplicate: true, duplicateResolutionReason: ' ใบเสร็จคนละใบกัน ' });
+
+      assert.equal(repo.lastResolve.reason, 'ใบเสร็จคนละใบกัน');
+      assert.equal(repo.lastResolve.expectedUpdatedAt.toISOString(), '2026-01-01T00:00:00.000Z', 'CAS on the version read');
+      assert.equal(req.status, status, 'no transition: the claim stays at the payment step');
+      assert.equal(req.financeReviewStatus, 'NOT_REQUIRED', 'no finance decision is recorded');
+      assert.equal(projectionCalls.length, 0);
+      const entry = audits.find((row) => row.action === 'reimbursement.duplicate.resolve');
+      assert.equal(entry?.riskLevel, 'HIGH');
+      assert.deepEqual(entry?.metadataJson, { requestDuplicateOverride: true, duplicateResolutionReason: 'ใบเสร็จคนละใบกัน', status });
+    }
+  });
+
+  it('keeps the clear on duplicate.resolve with a reason, and every decision on finance_review', async () => {
+    const req = financeReviewedRequest({ status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED' });
+    const repo = fakeRepo(req);
+    await assert.rejects(
+      () => financeUC(repo).execute(ctx(['reimbursement.finance_review']), 'rb-1', { resolveDuplicate: true, duplicateResolutionReason: 'ไม่ซ้ำ' }),
+      /Missing permission: reimbursement\.duplicate\.resolve/,
+    );
+    await assert.rejects(
+      () => financeUC(repo).execute(ctx(['reimbursement.duplicate.resolve']), 'rb-1', { resolveDuplicate: true, duplicateResolutionReason: '   ' }),
+      /duplicate_resolution_reason_required/,
+    );
+    await assert.rejects(
+      () => financeUC(repo).execute(ctx(['reimbursement.duplicate.resolve']), 'rb-1', { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: true, duplicateResolutionReason: 'ไม่ซ้ำ' }),
+      /Missing permission: reimbursement\.finance_review/,
+    );
+    await assert.rejects(
+      () => financeUC(repo).execute({ ...ctx(['reimbursement.duplicate.resolve']), scopes: { branchIds: ['branch-9'] } }, 'rb-1', { resolveDuplicate: true, duplicateResolutionReason: 'ไม่ซ้ำ' }),
+      /outside your assigned branch scope/,
+    );
+    assert.equal(repo.lastResolve, undefined, 'no refused call reaches the write');
+    // Before the payment step the clear is refused; finance review keeps its own path.
+    const review = financeReviewedRequest({ status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING' });
+    await assert.rejects(
+      () => financeUC(fakeRepo(review)).execute(ctx(['reimbursement.duplicate.resolve']), 'rb-1', { resolveDuplicate: true, duplicateResolutionReason: 'ไม่ซ้ำ' }),
+      /Cannot resolve duplicates from status FINANCE_REVIEW/,
+    );
+  });
 });
 
 describe('reimbursement.payment_recorded event payload', () => {
@@ -458,7 +520,9 @@ describe('ExportReimbursementEvidenceUseCase (multi-line)', () => {
   });
 });
 
-function correctionRepositoryHarness(input: { status?: string; recordedPayments?: number; liveProjections?: number } = {}) {
+function correctionRepositoryHarness(input: {
+  status?: string; recordedPayments?: number; liveProjections?: number; stepStatus?: string; candidates?: any[];
+} = {}) {
   const expectedUpdatedAt = new Date('2026-01-03T00:00:00.000Z');
   const request = financeReviewedRequest({
     status: input.status ?? 'FINANCE_REVIEW',
@@ -474,8 +538,17 @@ function correctionRepositoryHarness(input: { status?: string; recordedPayments?
     lines: [],
   });
   const deleted = { signatures: 0, signedCopies: 0 };
+  const steps: any[] = [{ id: 'step-1', companyId: 'co-1', reimbursementRequestId: 'rb-1', status: input.stepStatus ?? 'PENDING' }];
+  const candidates: any[] = input.candidates ?? [];
+  const updateWhere = (rows: any[]) => async ({ where, data }: any) => {
+    const hits = rows.filter((row) => Object.entries(where).every(([key, value]) => row[key] === value));
+    hits.forEach((row) => Object.assign(row, data));
+    return { count: hits.length };
+  };
   const tx: any = {
     $executeRaw: async () => 1,
+    reimbursementApprovalStep: { updateMany: updateWhere(steps) },
+    reimbursementDuplicateCandidate: { updateMany: updateWhere(candidates) },
     reimbursementPayment: { count: async () => input.recordedPayments ?? 0 },
     expenseRecord: { count: async () => input.liveProjections ?? 0 },
     reimbursementClaimSignature: { deleteMany: async () => { deleted.signatures += 1; return { count: 1 }; } },
@@ -497,6 +570,8 @@ function correctionRepositoryHarness(input: { status?: string; recordedPayments?
     request,
     expectedUpdatedAt,
     deleted,
+    steps,
+    candidates,
   };
 }
 
@@ -548,6 +623,73 @@ describe('PrismaReimbursementRepository correction transitions', () => {
     assert.equal(h.request.financeReviewStatus, 'NOT_REQUIRED');
     assert.equal(h.request.approvalSnapshotHash, null);
     assert.deepEqual(h.deleted, { signatures: 1, signedCopies: 1 });
+    assert.equal(h.steps[0].status, 'PENDING', 'reopening a refusal runs no approval-step write');
+  });
+
+  it('withdraws an undecided claim to a draft under the same number and cancels its pending step', async () => {
+    const h = correctionRepositoryHarness({ status: 'PENDING_APPROVAL' });
+    const requestNo = h.request.requestNo;
+    await h.repo.reopenRejectedRequest('co-1', 'rb-1', h.expectedUpdatedAt, 'staff-1', 'PENDING_APPROVAL');
+
+    assert.equal(h.request.status, 'DRAFT');
+    assert.equal(h.request.requestNo, requestNo);
+    assert.equal(h.request.submittedAt, null);
+    assert.equal(h.request.currentApprovalStepId, null);
+    assert.equal(h.request.approvalSnapshotHash, null);
+    assert.equal(h.request.approvalPolicySnapshotJson, null, 'the resubmission freezes the policy of its own day');
+    // Invalidated like a cancellation does it: no live step is left for a resubmission to inherit.
+    assert.equal(h.steps[0].status, 'CANCELLED');
+    assert.equal(h.steps[0].invalidatedReason, 'withdrawn_by_requester');
+    assert.ok(h.steps[0].invalidatedAt instanceof Date);
+    assert.deepEqual(h.deleted, { signatures: 1, signedCopies: 1 });
+  });
+
+  it('refuses to withdraw once an approver has decided, and leaves the claim as it was', async () => {
+    const h = correctionRepositoryHarness({ status: 'PENDING_APPROVAL', stepStatus: 'APPROVED' });
+    await assert.rejects(
+      () => h.repo.reopenRejectedRequest('co-1', 'rb-1', h.expectedUpdatedAt, 'staff-1', 'PENDING_APPROVAL'),
+      (error: any) => error.getResponse().code === 'reimbursement_changed',
+    );
+    assert.equal(h.request.status, 'PENDING_APPROVAL');
+    assert.equal(h.steps[0].status, 'APPROVED');
+    assert.deepEqual(h.deleted, { signatures: 0, signedCopies: 0 });
+  });
+
+  it('clears open duplicate candidates at the payment step under the request lock and version check', async () => {
+    const h = correctionRepositoryHarness({ status: 'READY_FOR_PAYMENT', candidates: [
+      { id: 'd1', companyId: 'co-1', reimbursementRequestId: 'rb-1', status: 'OPEN', reason: 'line 1 shares a receipt with RB-9' },
+      { id: 'd2', companyId: 'co-1', reimbursementRequestId: 'rb-1', status: 'DISMISSED' },
+    ] });
+    let auditTx: unknown;
+    await h.repo.resolvePaymentDuplicatesAtomic({
+      companyId: 'co-1', requestId: 'rb-1', expectedUpdatedAt: h.expectedUpdatedAt, actorUserId: 'owner-1', scopes: {},
+      resolvedAt: new Date('2026-01-04T00:00:00.000Z'), reason: 'ใบเสร็จคนละใบกัน', onResolvedPersisted: async (tx) => { auditTx = tx; },
+    });
+
+    assert.deepEqual(h.candidates.map((row) => [row.id, row.status, row.resolvedByUserId, row.reason]), [
+      ['d1', 'OVERRIDDEN', 'owner-1', 'ใบเสร็จคนละใบกัน'],
+      ['d2', 'DISMISSED', undefined, undefined],
+    ]);
+    assert.equal(h.request.status, 'READY_FOR_PAYMENT');
+    assert.equal(h.request.duplicateStatus, 'NO_MATCH', 'the expense-level status set at projection is left alone');
+    assert.ok(h.request.updatedAt.getTime() > h.expectedUpdatedAt.getTime(), 'a new version, so a racing clear or payment conflicts');
+    assert.ok(auditTx, 'the audit row is written in the same transaction');
+  });
+
+  it('refuses the payment-step clear at another status, on a stale version, or outside branch scope', async () => {
+    const open = () => [{ id: 'd1', companyId: 'co-1', reimbursementRequestId: 'rb-1', status: 'OPEN' }];
+    const attempt = (h: ReturnType<typeof correctionRepositoryHarness>, overrides: Record<string, unknown> = {}) => h.repo.resolvePaymentDuplicatesAtomic({
+      companyId: 'co-1', requestId: 'rb-1', expectedUpdatedAt: h.expectedUpdatedAt, actorUserId: 'owner-1', scopes: {},
+      resolvedAt: new Date(), reason: 'ไม่ซ้ำ', onResolvedPersisted: async () => undefined, ...overrides,
+    });
+    const review = correctionRepositoryHarness({ status: 'FINANCE_REVIEW', candidates: open() });
+    await assert.rejects(() => attempt(review), /Cannot resolve duplicates from status FINANCE_REVIEW/);
+    const stale = correctionRepositoryHarness({ status: 'READY_FOR_PAYMENT', candidates: open() });
+    await assert.rejects(() => attempt(stale, { expectedUpdatedAt: new Date('2026-01-02T00:00:00.000Z') }),
+      (error: any) => error.getResponse().code === 'reimbursement_changed');
+    const scoped = correctionRepositoryHarness({ status: 'READY_FOR_PAYMENT', candidates: open() });
+    await assert.rejects(() => attempt(scoped, { scopes: { branchIds: ['branch-9'] } }), /outside your assigned branch scope/);
+    for (const h of [review, stale, scoped]) assert.equal(h.candidates[0].status, 'OPEN');
   });
 });
 
