@@ -501,6 +501,15 @@ describe('LINE staff menu', () => {
     ]);
   });
 
+  // Step-journey spec §11: this queue card is explicitly UNCHANGED by the journey-page work — it
+  // still opens the approval queue (a list), never a specific claim, so it never adopts the new
+  // per-claim /reimbursements/:requestId path the notification templates and AI answers now use.
+  it('reimbursement-step-journey Phase 4: the pending-approval queue card still opens the tab, not a per-claim journey path', () => {
+    assert.deepEqual(approvalButtons(['reimbursement.approve']), [
+      ['คำขอเบิกเงิน', 'https://app.example.com/companies/c%201/reimbursements?tab=approvals'],
+    ]);
+  });
+
   it('sends a purchase-request approver to procurement only', () => {
     assert.deepEqual(approvalButtons(['procurement.purchase_request.approve']), [
       ['ใบขอซื้อ/ใบสั่งซื้อ', 'https://app.example.com/companies/c%201/procurement'],
