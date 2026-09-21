@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { deriveWhtIncomeBase } from '../../domain/logic/wht-report.logic';
+import { counterpartyAddressText } from '../../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
 import type { SupplierPaymentWhtSourceRow } from '../../domain/ports/source-reader.port';
 
 /**
@@ -25,7 +26,18 @@ export class SupplierPaymentSourceAdapter {
         whtAmount: { gt: 0 },
         ...(since ? { updatedAt: { gte: since } } : {}),
       },
-      include: { supplier: { select: { legalNameSnapshot: true, displayNameSnapshot: true, taxId: true, branchCode: true, supplierType: true } } },
+      include: {
+        supplier: {
+          select: {
+            legalNameSnapshot: true, displayNameSnapshot: true, taxId: true, branchCode: true, supplierType: true,
+            // GAP-2 / §10: the counterparty registry row every supplier profile points at
+            // (`counterpartyId` is a required unique relation) — the typed read the payment side
+            // was waiting on. Never `supplier.addressJson`: that is free-form procurement data
+            // (CON-9), and printing it raw would re-create BUG-1.
+            counterparty: { select: { billingAddressJson: true } },
+          },
+        },
+      },
       orderBy: { paymentDate: 'asc' },
     });
 
@@ -45,6 +57,7 @@ export class SupplierPaymentSourceAdapter {
         payeeName: row.supplier?.legalNameSnapshot ?? row.supplier?.displayNameSnapshot ?? null,
         payeeTaxId: row.supplier?.taxId ?? null,
         payeeBranchCode: row.supplier?.branchCode ?? null,
+        payeeAddress: counterpartyAddressText(row.supplier?.counterparty?.billingAddressJson ?? null),
         supplierType: row.supplier?.supplierType ?? null,
         incomeCategoryCode: row.whtCategoryCode ?? null,
         whtRate,

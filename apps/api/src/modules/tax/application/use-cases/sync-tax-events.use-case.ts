@@ -345,11 +345,12 @@ export class SyncTaxEventsUseCase {
         // never a VAT-inclusive settlement figure passed off as income.
         taxableBase: pay.grossAmount ?? pay.whtAmount, taxAmount: pay.whtAmount, currency: pay.currency,
         vatMode: null, outputTaxCode: null, whtFormType: formType,
-        // GAP-2 stops here: a supplier payment has no printed document of ours to take an address
-        // from, and `SupplierProfile.addressJson` is free-form procurement data (CON-9) — piping it
-        // in raw would re-create BUG-1. It is filled from the counterparty registry when Phase 2
-        // makes that a single typed read, not by a per-event query here.
-        payeeSnapshot: { name: pay.payeeName ?? '', taxId: pay.payeeTaxId, address: null, branchCode: pay.payeeBranchCode ?? null },
+        // GAP-2 / §10: a supplier payment has no printed document of ours to take an address from,
+        // so this is the counterparty registry read via `SupplierProfile.counterparty` (adapter does
+        // the query; this just takes what it found). Not part of `computeSourceHash` above — an
+        // existing event keeps its frozen snapshot and there is no backfill (owner decision: new
+        // amounts only), so a registry edit alone never re-syncs old events.
+        payeeSnapshot: { name: pay.payeeName ?? '', taxId: pay.payeeTaxId, address: pay.payeeAddress ?? null, branchCode: pay.payeeBranchCode ?? null },
         incomeCategoryCode: pay.incomeCategoryCode ?? null, whtRate: pay.whtRate ?? null,
         grossAmount: pay.grossAmount ?? pay.whtAmount, withheldAmount: pay.whtAmount, netPaidAmount: null,
         taxInvoiceNumber: null, reviewNote: null,

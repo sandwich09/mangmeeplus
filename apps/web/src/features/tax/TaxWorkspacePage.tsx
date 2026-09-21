@@ -27,8 +27,11 @@ import {
   type TaxExportFormat,
   type TaxExportArtifact,
 } from './tax.api';
+import { monthlyPeriodDateRange } from './tax.logic';
 import { useToast } from '@/common/components/toast';
 import { canSeeRoute } from '@/features/web-core-workspace/route-permissions';
+import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
+import { listExpenses } from '@/features/expenses/expenses.api';
 
 const inputClass = 'mangmee-input';
 const btnClass = 'mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed disabled:opacity-50';
@@ -94,10 +97,52 @@ function EmptyRow({ cols, text }: { cols: number; text: string }) {
   return <tr><td colSpan={cols} className="px-4 py-6 text-center text-sm text-gray-400">{text}</td></tr>;
 }
 
+/**
+ * §11.4 / §8 (D2): non-blocking checklist line for a selected ภ.พ.30 (VAT/PP30) period — full tax
+ * invoices that stay CLAIMABLE (§8 never touches taxEvidenceStatus/inputVatClaimStatus for a
+ * missing address) but still have none, so whoever files this period gets to decide first.
+ *
+ * N must equal what `/expenses?view=addressMissing` shows after clicking, so this queries the
+ * exact filter that view applies (see the comment on `vendorAddressMissing` in expenses.api.ts:
+ * "the API pins the document type itself, so this is the whole filter") plus the same branch scope
+ * — the view does not date-scope that filter (GAP-11: old documents surface every period until
+ * fixed, by design), so this count does not either. fromDate/toDate still ride on the link itself,
+ * exactly as the view's own URL contract expects.
+ */
+function AddressMissingChecklistLine({ companyId, period, canOpenExpenses }: { companyId: string; period: TaxPeriod; canOpenExpenses: boolean }) {
+  const branchFilter = useBranchFilter();
+  const branchId = branchFilter?.branchId ?? '';
+  const [count, setCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    setCount(null);
+    if (!canOpenExpenses) return;
+    let cancelled = false;
+    listExpenses(companyId, { vendorAddressMissing: true, ...(branchId ? { branchId } : {}), pageSize: 1 })
+      .then((res) => { if (!cancelled) setCount(res.total); })
+      // Informational only (§8): a failed count never blocks or errors the rest of the page.
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [companyId, period.id, branchId, canOpenExpenses]);
+
+  const range = monthlyPeriodDateRange(period.periodKey);
+  if (!canOpenExpenses || !range || !count) return null;
+
+  return (
+    <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-warning-100 bg-warning-50 p-3 text-xs font-semibold text-warning-700">
+      <span>ใบกำกับเต็มรูปในงวดนี้ที่ยังไม่มีที่อยู่ผู้ขาย {count} ใบ</span>
+      <Link href={`/companies/${companyId}/expenses?view=addressMissing&fromDate=${range.fromDate}&toDate=${range.toDate}`} className={ghostClass}>
+        ดูรายการ
+      </Link>
+    </div>
+  );
+}
+
 export function TaxWorkspacePage({ companyId, permissions }: { companyId: string; permissions: string[] }) {
   const toast = useToast();
   const can = (permission: string) => permissions.includes(permission);
   const canSeeWorkspace = canSeeRoute('/tax', permissions);
+  const canOpenExpenses = canSeeRoute('/expenses', permissions);
   const [tab, setTab] = useState<'VAT' | 'WHT' | 'CIT'>('VAT');
   const [periods, setPeriods] = useState<TaxPeriod[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<TaxPeriod | null>(null);
@@ -330,6 +375,12 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
                     ))}
                   </div>
                 </MangmeeCard>
+
+                {/* §11.4 / §8 (D2): ภ.พ.30 workpaper checklist — full tax invoices in this period
+                    still missing a vendor address. VAT/PP30 only; informational, never blocking. */}
+                {selectedPeriod.taxType === 'VAT' && selectedPeriod.formType === 'PP30' && (
+                  <AddressMissingChecklistLine companyId={companyId} period={selectedPeriod} canOpenExpenses={canOpenExpenses} />
+                )}
 
                 {/* Review issues */}
                 {issues.length > 0 && (

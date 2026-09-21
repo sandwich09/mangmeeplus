@@ -93,6 +93,10 @@ export type SupplierPaymentWhtSourceRow = {
   payeeName: string | null;
   payeeTaxId: string | null;
   payeeBranchCode: string | null;
+  /** GAP-2 / spec §10: a payment has no printed document of its own, so this comes from the
+   *  counterparty registry (`SupplierProfile.counterparty.billingAddressJson`) — never
+   *  `SupplierProfile.addressJson`, which is free-form procurement data (CON-9). */
+  payeeAddress: string | null;
   /** Decides ภ.ง.ด.3 vs ภ.ง.ด.53. Null or an unmapped class means unclassified, not "juristic". */
   supplierType: string | null;
   incomeCategoryCode: string | null;
