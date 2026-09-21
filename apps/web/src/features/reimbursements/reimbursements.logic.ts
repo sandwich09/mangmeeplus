@@ -2,7 +2,11 @@
 
 import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
-import { CURRENT_DESK_LABELS, currentDeskText, ERROR_CODE_LABELS } from './reimbursements.model';
+import { formatThaiDate } from '@/common/i18n/thai-date';
+import {
+  CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
+  canUploadSignedCopy, canVoidRecordedPayment, eligibleSignatureRoles, reimbursementOwnActions,
+} from './reimbursements.model';
 
 /**
  * The API answers with stable error codes, sometimes several joined by commas
@@ -37,6 +41,28 @@ export const STALE_APPROVAL_CODE = 'stale_approval_snapshot';
 /** True when the API rejected an approval because the claim changed after submit (HTTP 409). */
 export function isStaleApprovalError(e: unknown): boolean {
   return e instanceof Error && e.message.includes(STALE_APPROVAL_CODE);
+}
+
+/** Signing refused because the signer has no ready saved signature — answered with a link, not a banner. */
+export function isMissingSavedSignatureError(e: unknown): boolean {
+  return (e as { code?: unknown } | null)?.code === 'claim_saved_signature_required'
+    || (e instanceof Error && e.message.includes('claim_saved_signature_required'));
+}
+
+/**
+ * Owner 2026-09-21: submit found nobody who may approve the claim. Instead of a bare refusal, say
+ * who can fix it where it failed: a policy manager picks an approver in ตั้งค่าเบิกจ่าย (the page
+ * offers the link), anyone else asks the owner. Null for every other error.
+ */
+export function approverNotReadyHelp(e: unknown, permissions: readonly string[]): { text: string; policyLink: boolean } | null {
+  if (!(e instanceof Error && e.message.includes('reimbursement_approver_not_ready'))) return null;
+  const policyLink = permissions.includes('reimbursement.policy.manage');
+  return {
+    policyLink,
+    text: policyLink
+      ? 'ยังไม่มีผู้อนุมัติใบเบิกนี้ เลือกบทบาทผู้อนุมัติในตั้งค่าเบิกจ่าย (บทบาทนั้นต้องมีสิทธิ์อนุมัติการเบิก) แล้วกลับมากดส่งอนุมัติอีกครั้ง'
+      : 'ยังไม่มีผู้อนุมัติใบเบิกนี้ ขอให้เจ้าของกิจการเลือกผู้อนุมัติในตั้งค่าเบิกจ่าย หรือเพิ่มสิทธิ์อนุมัติการเบิกให้บทบาทของคุณ แล้วกดส่งอนุมัติอีกครั้ง',
+  };
 }
 
 export type ApprovalFieldDiff = { key: string; label: string; before: string; after: string; changed: boolean };
@@ -249,16 +275,17 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
 
   // The waiting row names the same people the queue line does — one resolved list, never two.
   const waitingFor = currentDeskText(detail?.currentDesk) ?? CURRENT_DESK_LABELS.APPROVER;
-  let refused = status === 'REJECTED';
   for (const step of [...(detail?.approvalSteps ?? [])].sort((a: any, b: any) => a.sequenceNo - b.sequenceNo)) {
     if (step.invalidatedAt) continue;
     const key = `step-${step.id ?? step.sequenceNo}`;
     const decidedBy = step.decidedByName ?? step.approverName ?? CURRENT_DESK_LABELS.APPROVER;
     if (step.status === 'APPROVED') rows.push({ key, state: 'done', label: `อนุมัติโดย ${decidedBy}`, date: step.decidedAt });
-    else if (step.status === 'REJECTED') { rows.push({ key, state: 'done', label: `ปฏิเสธโดย ${decidedBy}`, date: step.decidedAt }); refused = true; }
+    else if (step.status === 'REJECTED') rows.push({ key, state: 'done', label: `ปฏิเสธโดย ${decidedBy}`, date: step.decidedAt });
     else if (step.status === 'PENDING') rows.push({ key, state: 'current', label: `กำลังรอ ${waitingFor} อนุมัติ` });
   }
-  if (refused) return rows;
+  // Only a claim that IS rejected ends here. Reopen keeps the refused step, so a claim fixed and
+  // resubmitted still carries it as history and its journey goes on.
+  if (status === 'REJECTED') return rows;
   if (status === 'CANCELLED' || status === 'VOIDED') {
     return [...rows, { key: 'terminal', state: 'done', label: status === 'CANCELLED' ? 'ยกเลิกคำขอ' : 'เพิกถอนรายการ' }];
   }
@@ -285,6 +312,226 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
     ? { key: 'payment', state: 'done', label: paid.paidByName ? `จ่ายแล้ว โดย ${paid.paidByName}` : 'จ่ายแล้ว', date: paid.paidAt }
     : { key: 'payment', state: waitingPayment ? 'current' : 'future', label: waitingPayment ? 'กำลังรอฝ่ายการเงินบันทึกจ่าย' : 'รอบันทึกจ่าย' });
   return rows;
+}
+
+// ---- Journey steps (หน้า journey ต่อคำขอเบิกหนึ่งใบ — spec §5, §6) ----
+
+export type JourneyStepKey = 'items' | 'approval' | 'finance' | 'payment' | 'document';
+/** needs-fix = refused, waiting for the requester; ended = cancelled/voided here, nothing follows. */
+export type JourneyStepState = 'done' | 'current' | 'upcoming' | 'needs-fix' | 'ended';
+export type JourneyAction =
+  | 'submit' | 'edit' | 'cancel' | 'reopen'
+  | 'approve' | 'reject' | 'policy-settings'
+  | 'finance-approve' | 'finance-return' | 'finance-block'
+  | 'resolve-duplicate' | 'pay' | 'sign' | 'print' | 'attach-signed-copy' | 'void-payment';
+export type JourneyStep = {
+  key: JourneyStepKey;
+  label: string;
+  state: JourneyStepState;
+  /** What the viewer should know on the active step; on a done step only the auto-approval or signed-document line. */
+  note?: string;
+  /** Open to THIS viewer, primary first. Only the active step carries any. */
+  actions: JourneyAction[];
+};
+
+export const JOURNEY_STEP_LABELS: Record<JourneyStepKey, string> = {
+  items: 'รายการที่จ่ายไป', approval: 'อนุมัติ', finance: 'ตรวจการเงิน', payment: 'จ่ายเงินคืน', document: 'เอกสาร',
+};
+
+/** Why an open duplicate candidate was raised, in words (submit only records these two matches). */
+const DUPLICATE_MATCH_TEXT: Record<string, string> = {
+  ATTACHMENT_CHECKSUM: 'ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น',
+  EXPENSE_LINK: 'ใช้รายการค่าใช้จ่ายเดียวกับคำขอเบิกอื่น',
+};
+
+function openDuplicateText(detail: any): string {
+  const texts = new Set<string>((detail?.duplicateCandidates ?? [])
+    .filter((candidate: any) => candidate.status === 'OPEN')
+    .map((candidate: any) => DUPLICATE_MATCH_TEXT[candidate.candidateType] ?? 'อาจซ้ำกับคำขอเบิกอื่น'));
+  return [...texts].join(' และ ') || 'อาจซ้ำกับคำขอเบิกอื่น';
+}
+
+/** The policy switch, quoted as the settings page labels it so it can be found there. */
+const SELF_APPROVAL_SWITCH = '"ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้"';
+
+/**
+ * Whether THIS claim passes through finance review (spec §5: per claim, from its frozen policy).
+ * Before approval the finance state is still NOT_REQUIRED, so the detail's `financeReviewRequired`
+ * (frozen policy once submitted, current policy for a draft) decides. After approval the finance state
+ * the claim shows is the truth: any finance decision means the step exists, NOT_REQUIRED means skipped.
+ */
+export function claimHasFinanceStep(detail: any): boolean {
+  if (!detail?.approvedAt && typeof detail?.financeReviewRequired === 'boolean') return detail.financeReviewRequired;
+  return !!detail?.financeReviewStatus && detail.financeReviewStatus !== 'NOT_REQUIRED';
+}
+
+/** The step the claim stands on (what `currentDesk` points at), or where a cancelled/voided claim stopped. */
+function journeyStepAt(detail: any, withFinance: boolean): JourneyStepKey {
+  switch (detail?.status) {
+    case 'DRAFT': return 'items';
+    case 'PENDING_APPROVAL': case 'REJECTED': return 'approval';
+    case 'FINANCE_REVIEW': return 'finance';
+    // Transient: approved, waiting for the projection to route it on (currentDesk FINANCE or PAYMENT).
+    case 'APPROVED': return detail.financeReviewStatus === 'PENDING' ? 'finance' : 'payment';
+    case 'READY_FOR_PAYMENT': case 'PARTIALLY_PAID': return 'payment';
+    case 'PAID': return 'document';
+  }
+  // Reopen and a finance correction clear submittedAt/approvedAt, so they mark the round's progress.
+  if (!detail?.submittedAt) return 'items';
+  if (!detail.approvedAt) return 'approval';
+  return withFinance && detail.financeReviewStatus !== 'APPROVED_FOR_PAYMENT' ? 'finance' : 'payment';
+}
+
+/**
+ * The claim as 4 or 5 steps with the actions open to this viewer. A projection of the existing
+ * statuses: nothing is stored, every action still goes through its own endpoint, and the buttons
+ * follow real permissions and server-resolved task authority — never role names (spec §6).
+ */
+export function buildJourneySteps(detail: any, permissions: readonly string[], userId: string): JourneyStep[] {
+  const status = String(detail?.status ?? '');
+  const review = String(detail?.financeReviewStatus ?? '');
+  const withFinance = claimHasFinanceStep(detail);
+  const keys: JourneyStepKey[] = ['items', 'approval', ...(withFinance ? ['finance' as const] : []), 'payment', 'document'];
+  const ended = status === 'CANCELLED' || status === 'VOIDED';
+  const atIndex = keys.indexOf(journeyStepAt(detail, withFinance));
+  const own = reimbursementOwnActions(detail, userId, permissions);
+  // A step approved in an earlier round (before a finance correction) is history, not this round's approval.
+  const humanApproved = (detail?.approvalSteps ?? []).some((step: any) => step.status === 'APPROVED' && !step.invalidatedAt
+    && String(step.decidedAt ?? '') >= String(detail?.submittedAt ?? ''));
+  const signed = new Set((detail?.signatures ?? []).map((row: any) => row.role));
+  const payment = (detail?.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
+  const duplicate = ['POSSIBLE_DUPLICATE', 'CONFIRMED_DUPLICATE'].includes(detail?.duplicateStatus)
+    ? DUPLICATE_STATUS_LABELS[detail.duplicateStatus] : undefined;
+
+  const activeStep = (key: JourneyStepKey): Pick<JourneyStep, 'note' | 'actions'> => {
+    const actions: JourneyAction[] = [];
+    let note: string | undefined;
+    if (ended) {
+      note = status === 'CANCELLED' ? `ยกเลิกคำขอแล้ว${detail?.rejectionReason ? `: ${detail.rejectionReason}` : ''}` : 'เพิกถอนรายการแล้ว';
+    } else if (key === 'items') {
+      if (review === 'NEEDS_INFO') {
+        note = detail?.financeReviewNote ? `ฝ่ายการเงินขอให้แก้ไข: ${detail.financeReviewNote}` : 'ฝ่ายการเงินขอให้แก้ไข';
+        if (own.canEditDraft) actions.push('edit');
+        if (own.canSubmit) actions.push('submit');
+      } else {
+        note = own.canSubmit || own.canEditDraft ? 'ตรวจรายการและหลักฐานให้ครบ แล้วกดส่งอนุมัติ' : 'รอผู้ยื่นส่งคำขอ';
+        if (own.canSubmit) actions.push('submit');
+        if (own.canEditDraft) actions.push('edit');
+      }
+    } else if (key === 'approval' && status === 'REJECTED') {
+      note = `ปฏิเสธ${detail?.rejectionReason ? `: ${detail.rejectionReason}` : ''}`;
+      if (own.canReopen) actions.push('reopen');
+    } else if (key === 'approval') {
+      if (detail?.approvalActions?.canApprove === true) actions.push('approve');
+      if (detail?.approvalActions?.canReject === true) actions.push('reject');
+      const waiting = `รอ ${currentDeskText(detail?.currentDesk) ?? CURRENT_DESK_LABELS.APPROVER} อนุมัติ`;
+      note = actions.length > 0 ? 'รอคุณตัดสิน ตรวจรายการและใบเสร็จด้านล่างก่อนอนุมัติ' : waiting;
+      // spec §15: the requester would decide this claim but for the self-approval switch. The claim
+      // froze the switch at submit, so turning it on helps only once the claim is sent again.
+      if (detail?.approvalActions?.selfApprovalBlocked === true) {
+        const canManagePolicy = permissions.includes('reimbursement.policy.manage');
+        note = `${waiting} · ใบนี้เป็นของคุณเอง และบริษัทยังไม่เปิด ${SELF_APPROVAL_SWITCH} คุณจึงอนุมัติเองไม่ได้ ถ้าต้องการอนุมัติเอง ${
+          canManagePolicy ? 'เปิดได้ที่ตั้งค่าเบิกจ่าย' : 'ขอให้เจ้าของกิจการเปิดในตั้งค่าเบิกจ่าย'} แล้วเปิดคำขอกลับเป็นร่างและส่งอนุมัติใหม่`;
+        if (canManagePolicy) actions.push('policy-settings');
+      }
+      // spec §6: the requester takes back a claim nobody has decided yet — the same reopen as a refusal.
+      if (!humanApproved && detail?.requesterUserId === userId && permissions.includes('reimbursement.update_own_draft')) {
+        actions.push('reopen');
+      }
+    } else if (key === 'finance') {
+      // The finance endpoint only accepts FINANCE_REVIEW; an APPROVED claim is still being routed.
+      if (status === 'FINANCE_REVIEW' && permissions.includes('reimbursement.finance_review')) {
+        actions.push('finance-approve');
+        if (review !== 'APPROVED_FOR_PAYMENT') actions.push('finance-return');
+        if (review === 'PENDING') actions.push('finance-block');
+      }
+      note = review === 'BLOCKED'
+        ? `ฝ่ายการเงินระงับการจ่าย${detail?.financeReviewNote ? `: ${detail.financeReviewNote}` : ''}`
+        : actions.length > 0 ? 'ตรวจใบเสร็จและรายการซ้ำ แล้วอนุมัติจ่ายหรือส่งกลับให้แก้ไข' : 'รอฝ่ายการเงินตรวจ';
+    } else if (key === 'payment') {
+      // APPROVED here is the no-finance claim waiting for its projection; the API accepts payment then.
+      const payable = ['READY_FOR_PAYMENT', 'APPROVED'].includes(status);
+      if (payable && detail?.duplicateBlocksPayment === true) {
+        // The API refuses payment until the block is cleared with a reason.
+        // Owner 2026-09-21: a claim has only a requester and an approver, so whoever records the
+        // payment clears the duplicate block with a reason; duplicate.resolve holders still can too.
+        const canResolve = permissions.includes('reimbursement.payment.record') || permissions.includes('reimbursement.duplicate.resolve');
+        if (canResolve) actions.push('resolve-duplicate');
+        note = `ติดรายการซ้ำ: ${openDuplicateText(detail)} ${canResolve
+          ? 'ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล จึงจะบันทึกจ่ายได้'
+          : 'รอผู้บันทึกจ่ายตรวจรายการซ้ำและปลดก่อน จึงจะบันทึกจ่ายได้'}`;
+      } else {
+        if (payable && permissions.includes('reimbursement.payment.record')) actions.push('pay');
+        note = [actions.length > 0 ? 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง' : 'รอผู้มีสิทธิ์บันทึกจ่าย', duplicate]
+          .filter(Boolean).join(' · ');
+      }
+    } else if (key === 'document' && detail?.documentSignedVia) {
+      // Done in the system or on paper (A4); the latest declared scan names who attached it and when.
+      note = detail.documentSignedVia === 'DIGITAL' ? 'ลงนามในระบบครบแล้ว'
+        : paperSignedLine((detail.signedCopies ?? []).find((copy: any) => copy.acknowledgedAt));
+    } else if (key === 'document') {
+      if (eligibleSignatureRoles(detail, userId).some((role) => !signed.has(role))) actions.push('sign');
+      note = actions.length > 0 || canUploadSignedCopy(detail, userId, permissions)
+        ? 'จ่ายเงินคืนแล้ว ลงนามในใบเบิก พิมพ์เก็บไว้ หรือแนบสำเนาที่เซ็นแล้ว'
+        : 'จ่ายเงินคืนแล้ว พิมพ์ใบเบิกเก็บไว้ได้';
+    }
+    if (!ended && own.canCancel) actions.push('cancel');
+    // No requestNo, no document: drafts and claims cancelled out of DRAFT never got one.
+    if (detail?.requestNo && status !== 'DRAFT') actions.push('print');
+    if (!ended && key === 'document') {
+      if (canUploadSignedCopy(detail, userId, permissions)) actions.push('attach-signed-copy');
+      if (canVoidRecordedPayment(payment, permissions)) actions.push('void-payment');
+    }
+    return { note, actions };
+  };
+
+  return keys.slice(0, ended ? atIndex + 1 : keys.length).map((key, index): JourneyStep => {
+    const base = { key, label: JOURNEY_STEP_LABELS[key] };
+    if (index < atIndex) {
+      return key === 'approval' && !!detail?.approvedAt && !humanApproved
+        ? { ...base, state: 'done', note: 'ไม่ต้องอนุมัติตามนโยบาย', actions: [] }
+        : { ...base, state: 'done', actions: [] };
+    }
+    // A document signed before payment stays upcoming (§15): the journey still waits at จ่ายเงินคืน.
+    if (index > atIndex) return { ...base, state: 'upcoming', actions: [] };
+    const signedDocument = key === 'document' && !!detail?.documentSignedVia;
+    return { ...base, state: ended ? 'ended' : status === 'REJECTED' ? 'needs-fix' : signedDocument ? 'done' : 'current', ...activeStep(key) };
+  });
+}
+
+/**
+ * The step the journey card is about: where the claim stands, was refused, or stopped — or, once a paid
+ * claim's document is signed and every step is done, that last step (reprint, attach again, void).
+ */
+export function activeJourneyStep(steps: readonly JourneyStep[]): JourneyStep | undefined {
+  return steps.find((step) => step.state !== 'done' && step.state !== 'upcoming') ?? steps.at(-1);
+}
+
+/** "ลงนามบนกระดาษ · แนบเมื่อ … โดย …" for a scan attached with the A4 declaration; parts the detail lacks are left out. */
+export function paperSignedLine(copy?: { acknowledgedAt?: string; acknowledgedByName?: string }): string {
+  return `ลงนามบนกระดาษ${copy?.acknowledgedAt ? ` · แนบเมื่อ ${formatThaiDate(copy.acknowledgedAt)}` : ''}${copy?.acknowledgedByName ? ` โดย ${copy.acknowledgedByName}` : ''}`;
+}
+
+// ---- Policy decision preview (ตั้งค่านโยบาย — spec §7) ----
+
+/**
+ * What happens to a claim at/above and below the approval threshold, in the page's words.
+ * With no holder of the chosen role the route falls back to the owner (routing policy D8), so the
+ * line says so — except for the owner route itself.
+ */
+export function policyDecisionPreview(input: {
+  approvalRequiredFromAmount: unknown;
+  approverLabel: string;
+  ownerRoute: boolean;
+  financeReviewRequired: boolean;
+}): Array<{ title: string; path: string }> {
+  const amount = formatMoney(input.approvalRequiredFromAmount);
+  const payout = input.financeReviewRequired ? 'ฝ่ายการเงินตรวจ → จ่ายเงินคืน' : 'จ่ายเงินคืน';
+  const approver = input.approverLabel || 'บทบาทที่เลือก';
+  return [
+    { title: `ยอดตั้งแต่ ${amount} บาท`, path: `${input.ownerRoute ? approver : `${approver} (ถ้าไม่มี เจ้าของกิจการ)`} → ${payout}` },
+    { title: `ยอดต่ำกว่า ${amount} บาท`, path: `ไม่ต้องรอผู้อนุมัติ → ${payout}` },
+  ];
 }
 
 export function formatMoney(v: unknown, currency?: string): string {

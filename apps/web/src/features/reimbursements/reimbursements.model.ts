@@ -119,6 +119,23 @@ export const CLAIM_SIGNATURE_ROLE_LABELS: Record<ClaimSignatureRole, string> = {
   PAYER: 'ฝ่ายการเงิน',
 };
 
+/** D3: ผู้เบิก and ผู้อนุมัติ on every claim; a claim already signed in the old accounting/payer blocks keeps four. */
+export function claimSignatureSlots(detail: any): ClaimSignatureRole[] {
+  return detail?.claimFormLayout === 'LEGACY_FOUR_SIGNERS' ? CLAIM_SIGNATURE_ROLES : ['REQUESTER', 'APPROVER'];
+}
+
+/** The approval the form prints: the latest APPROVED decision (a corrected claim can carry older ones). */
+function latestApprovedStep(detail: any): any {
+  return [...(detail?.approvalSteps ?? [])]
+    .filter((step: any) => step.status === 'APPROVED' && !!step.decidedAt)
+    .sort((a: any, b: any) => String(b.decidedAt).localeCompare(String(a.decidedAt)))[0];
+}
+
+/** Same test as the printed note: the requester approved their own claim, so both blocks are one person. */
+export function claimSelfApproved(detail: any): boolean {
+  return !!detail?.requesterUserId && latestApprovedStep(detail)?.decisionByUserId === detail.requesterUserId;
+}
+
 /**
  * Which blocks this session user may sign, mirroring the server rule: the real
  * actor of each step, never a permission. Used only to decide whether to offer
@@ -128,11 +145,9 @@ export function eligibleSignatureRoles(detail: any, userId: string): ClaimSignat
   const roles: ClaimSignatureRole[] = [];
   if (!detail?.requestNo || !userId || ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'].includes(detail.status)) return roles;
   if (detail.requesterUserId === userId) roles.push('REQUESTER');
-
-  const approved = [...(detail.approvalSteps ?? [])]
-    .filter((step: any) => step.status === 'APPROVED' && !!step.decidedAt)
-    .sort((a: any, b: any) => String(b.decidedAt).localeCompare(String(a.decidedAt)))[0];
-  if (approved?.decisionByUserId === userId) roles.push('APPROVER');
+  if (latestApprovedStep(detail)?.decisionByUserId === userId) roles.push('APPROVER');
+  // The two-signer form has no accounting or payer block; the API refuses those roles on it.
+  if (detail.claimFormLayout !== 'LEGACY_FOUR_SIGNERS') return roles;
 
   if (detail.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && detail.financeReviewedByUserId === userId) roles.push('FINANCE_REVIEW');
 
@@ -142,6 +157,18 @@ export function eligibleSignatureRoles(detail: any, userId: string): ClaimSignat
     .at(-1);
   if (payment?.paidByUserId === userId) roles.push('PAYER');
   return roles;
+}
+
+/**
+ * The one ลงนาม button (spec §9): a tap signs every block this viewer may sign with the same saved
+ * signature, so a requester who approved their own claim fills both. "ลงนามใหม่" once one of them is
+ * signed — including a requester who signed before approving and now also fills ผู้อนุมัติ (§15).
+ */
+export function claimSignAction(detail: any, userId: string): { roles: ClaimSignatureRole[]; label: string } | null {
+  const roles = eligibleSignatureRoles(detail, userId);
+  if (roles.length === 0) return null;
+  const signed = new Set((detail?.signatures ?? []).map((row: any) => row.role));
+  return { roles, label: roles.some((role) => signed.has(role)) ? 'ลงนามใหม่' : 'ลงนาม' };
 }
 
 /** The requester plus finance/payment holders may attach the signed scan. */

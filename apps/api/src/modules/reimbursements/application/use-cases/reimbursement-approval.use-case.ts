@@ -7,7 +7,7 @@ import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.lo
 import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
 import { toRequestSummary, detailWithFileNames } from '../dto/reimbursement.mapper';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
-import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
+import { effectivePolicy, effectivePolicyForRequest, parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 import {
   isSelfApproval,
   SELF_APPROVAL_EXEMPT_ROLES,
@@ -112,14 +112,17 @@ export async function approvalDecisionActions(
   ctx: RequestContext,
   request: ReimbursementRequestRecord,
   repo: PrismaReimbursementRepository,
-): Promise<{ canApprove: boolean; canReject: boolean }> {
+): Promise<{ canApprove: boolean; canReject: boolean; selfApprovalBlocked?: boolean }> {
   if (request.status !== 'PENDING_APPROVAL' || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) {
     return { canApprove: false, canReject: false };
   }
   const step = currentApprovalStep(request);
   const activeApprovers = await activeStepApprovers(repo, ctx.companyId, step, request.branchId);
   const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
-  if (!isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers)) {
+  const eligible = isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers);
+  // The requester is read on past eligibility: routing leaves them off their own step when
+  // self-approval is off, which is exactly the case the journey page has to explain (spec §15).
+  if (!eligible && request.requesterUserId !== ctx.userId) {
     return { canApprove: false, canReject: false };
   }
   const policy = effectivePolicyForRequest(
@@ -128,8 +131,13 @@ export async function approvalDecisionActions(
   );
   if (!assignedBySnapshot
     && isSelfApproval(request.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
-    return { canApprove: false, canReject: false };
+    // They hold the approval this step waits on, so only the switch stands in the way.
+    const blockedOnlyBySwitch = step?.status === 'PENDING'
+      && ctx.permissions.includes('reimbursement.approve')
+      && (eligible || matchesApproverRole(step.approverRoleSnapshot, ctx.roles));
+    return { canApprove: false, canReject: false, ...(blockedOnlyBySwitch && { selfApprovalBlocked: true }) };
   }
+  if (!eligible) return { canApprove: false, canReject: false };
   return {
     canApprove: assignedBySnapshot || ctx.permissions.includes('reimbursement.approve'),
     canReject: assignedBySnapshot || ctx.permissions.includes('reimbursement.reject'),
@@ -211,6 +219,10 @@ export class ApproveReimbursementUseCase {
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot approve from status ${req.status}`);
 
     const policy = effectivePolicyForRequest(req, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
+    // Owner order 2026-09-21: submit found nobody but the requester and assigned the step to them.
+    // That frozen assignment is what lets them decide below (assignedBySnapshot skips the
+    // self-approval rule, here and in the repository transaction); this flag is the frozen reason.
+    const soloAtSubmission = parseReimbursementPolicySnapshot(req.approvalPolicySnapshotJson)?.route?.soloSelfApprovalAtSubmission === true;
     const step = currentApprovalStep(req);
     const activeApprovers = await activeStepApprovers(this.repo, ctx.companyId, step, req.branchId);
     const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
@@ -273,12 +285,14 @@ export class ApproveReimbursementUseCase {
             // the trail — a post-commit audit write can be lost exactly when it matters most.
             // `via` distinguishes the company having opened the policy from a role standing in for
             // it, which is the question support has to answer when a customer disputes a claim.
+            // `no_other_approver`: nobody else could approve at submit (owner order 2026-09-21); no
+            // exempt role stood in, so the roles the requester acted under are recorded instead.
             ...(req.requesterUserId === ctx.userId
               ? {
                 selfApproval: {
                   approvedOwnRequest: true,
-                  via: policy.allowSelfApproval ? 'company_policy' : 'role_exemption',
-                  actorRoles: ctx.roles.filter((role) => SELF_APPROVAL_EXEMPT_ROLES.includes(role)),
+                  via: soloAtSubmission ? 'no_other_approver' : policy.allowSelfApproval ? 'company_policy' : 'role_exemption',
+                  actorRoles: soloAtSubmission ? ctx.roles : ctx.roles.filter((role) => SELF_APPROVAL_EXEMPT_ROLES.includes(role)),
                 },
               }
               : {}),

@@ -2,7 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
-import { CreateReimbursementRequestDto, RecordReimbursementPaymentDto, UpdateReimbursementDraftDto } from './reimbursement.dtos';
+import {
+  CreateReimbursementRequestDto, LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto, UpdateReimbursementDraftDto,
+} from './reimbursement.dtos';
 
 // The exact global-pipe configuration main.ts registers: this is the runtime gate
 // that stops a client from posting its own claim total (lane C rollup rule) and
@@ -128,5 +130,25 @@ describe('RecordReimbursementPaymentDto', () => {
     await rejects(RecordReimbursementPaymentDto, { ...validPayment, paidAt: 'yesterday' });
     await rejects(RecordReimbursementPaymentDto, { ...validPayment, paidByUserId: 'someone-else' });
     await rejects(RecordReimbursementPaymentDto, { ...validPayment, status: 'VOIDED' });
+  });
+});
+
+describe('LinkReimbursementSignedCopyDto', () => {
+  it('accepts the archive-only body and the A4 declaration', async () => {
+    const archived = await pipe.transform({ attachmentId: 'att-1' }, { type: 'body', metatype: LinkReimbursementSignedCopyDto });
+    assert.equal(archived.acknowledgedComplete, undefined);
+    const declared = await pipe.transform(
+      { attachmentId: 'att-1', acknowledgedComplete: true, confirmedRequestNo: 'RB-202609-00001' },
+      { type: 'body', metatype: LinkReimbursementSignedCopyDto },
+    );
+    assert.equal(declared.acknowledgedComplete, true);
+    assert.equal(declared.confirmedRequestNo, 'RB-202609-00001');
+  });
+
+  it('rejects a declaration without its claim number or with a non-true flag', async () => {
+    await rejects(LinkReimbursementSignedCopyDto, { attachmentId: 'att-1', acknowledgedComplete: true });
+    await rejects(LinkReimbursementSignedCopyDto, { attachmentId: 'att-1', acknowledgedComplete: true, confirmedRequestNo: '' });
+    await rejects(LinkReimbursementSignedCopyDto, { attachmentId: 'att-1', acknowledgedComplete: false, confirmedRequestNo: 'RB-1' });
+    await rejects(LinkReimbursementSignedCopyDto, { attachmentId: 'att-1', acknowledgedComplete: 'yes', confirmedRequestNo: 'RB-1' });
   });
 });

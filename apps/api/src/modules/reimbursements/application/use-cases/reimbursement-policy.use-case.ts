@@ -34,6 +34,8 @@ export type ReimbursementSubmissionRoute = {
   recipientUserIds: string[];
   ownerRecipientUserIds: string[];
   ownerFallbackUsed: boolean;
+  /** The requester is the only person who could approve, so the step is theirs (owner order 2026-09-21). */
+  soloSelfApproval?: true;
 };
 
 export type ReimbursementSubmissionRouteInput = {
@@ -135,11 +137,12 @@ export class ListReimbursementApproverOptionsUseCase {
     return buildReimbursementApproverRoleOptions(roles, branches);
   }
 
+  /** Submit only: the solo exemption is decided here and frozen on the claim, never by a later re-read. */
   async resolveSubmissionRoute(input: {
     companyId: string;
   } & ReimbursementSubmissionRouteInput): Promise<ReimbursementSubmissionRoute> {
     const { roles } = await this.loadCandidates(input.companyId);
-    return this.resolveFromCandidates(roles, input);
+    return this.resolveFromCandidates(roles, input, true);
   }
 
   async resolveSubmissionRoutes(
@@ -187,6 +190,7 @@ export class ListReimbursementApproverOptionsUseCase {
   private resolveFromCandidates(
     roles: ApproverRoleCandidate[],
     input: ReimbursementSubmissionRouteInput,
+    soloExemption = false,
   ): ReimbursementSubmissionRoute {
     const selected = roles.find((role) => role.key === input.roleKey);
     if (!hasApproverCapability(selected) || ['SYSTEM_ADMIN', 'COMPANY_VIEW'].includes(input.roleKey)) {
@@ -216,7 +220,14 @@ export class ListReimbursementApproverOptionsUseCase {
     }
     // Stable ordering keeps the exact helper-task assignee deterministic across retries even if
     // the database returns membership joins in a different physical order.
-    const recipientUserIds = [...new Set(holders.map((holder) => holder.userId!).filter(Boolean))].sort();
+    let recipientUserIds = [...new Set(holders.map((holder) => holder.userId!).filter(Boolean))].sort();
+    // Owner order 2026-09-21 ("ผู้ใช้คนเดียวที่กำหนดบทบาทเอง ต้องทำได้นะ"): nobody is left only because
+    // the requester was dropped above as a self-approver, so the step goes back to them instead of
+    // dead-ending. Anyone else eligible — another holder or the OWNER fallback — still decides first.
+    // An OWNER holder is exempt and never dropped, so the routed role is the only place to look.
+    const soloSelfApproval = soloExemption && recipientUserIds.length === 0
+      && selected!.holders.some((holder) => holder.userId === input.requesterUserId && holderCoversRequest(holder, input.branchId));
+    if (soloSelfApproval) recipientUserIds = [input.requesterUserId];
     if (recipientUserIds.length === 0) throw new BadRequestException('reimbursement_approver_not_ready');
     return {
       responsibilityRole: selected!.key,
@@ -224,6 +235,7 @@ export class ListReimbursementApproverOptionsUseCase {
       recipientUserIds,
       ownerRecipientUserIds: [...new Set(ownerHolders.map((holder) => holder.userId!).filter(Boolean))].sort(),
       ownerFallbackUsed,
+      ...(soloSelfApproval && { soloSelfApproval }),
     };
   }
 
@@ -261,9 +273,20 @@ export class ListReimbursementApproverOptionsUseCase {
       branchIds: membership.branchScopes.map((scope) => scope.branchId),
     };
     if (!REQUIRED_APPROVER_PERMISSIONS.every((permission) => permissions.includes(permission))
-      || !holderCoversRequest(holder, input.branchId)
-      || isSelfApproval(input.requesterUserId, input.userId, input.allowSelfApproval, holder.roleKeys)) {
+      || !holderCoversRequest(holder, input.branchId)) {
       return null;
+    }
+    const soloSelfApproval = isSelfApproval(input.requesterUserId, input.userId, input.allowSelfApproval, holder.roleKeys);
+    if (soloSelfApproval) {
+      // Owner order 2026-09-21: the named approver filed this claim. Whoever the role route still
+      // finds decides it (the caller falls through to that route); only when it finds nobody does
+      // the named approver approve their own claim instead of the claim dead-ending.
+      try {
+        this.resolveFromCandidates((await this.loadCandidates(input.companyId)).roles, { ...input, roleKey: input.fallbackRole });
+        return null;
+      } catch (error) {
+        if (!(error instanceof BadRequestException) || error.message !== 'reimbursement_approver_not_ready') throw error;
+      }
     }
     return {
       responsibilityRole: input.fallbackRole,
@@ -271,6 +294,7 @@ export class ListReimbursementApproverOptionsUseCase {
       recipientUserIds: [input.userId],
       ownerRecipientUserIds: [],
       ownerFallbackUsed: false,
+      ...(soloSelfApproval && { soloSelfApproval }),
     };
   }
 

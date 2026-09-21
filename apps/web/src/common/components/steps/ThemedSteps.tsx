@@ -68,20 +68,20 @@ export function ThemedSteps({ steps, className, 'aria-label': ariaLabel }: {
           const body = (
             <>
               <StepNode state={step.state} number={index + 1} />
-              <span className="flex flex-col items-center gap-0.5 px-1 text-center">
+              <span className="flex w-full min-w-0 flex-col items-center gap-0.5 px-1 text-center">
                 <span className={cx(
-                  'text-[11px] font-bold leading-tight sm:text-xs',
+                  'max-w-full text-[11px] font-bold leading-tight [overflow-wrap:anywhere] sm:text-xs',
                   step.state === 'upcoming' ? 'text-gray-400'
                     : step.state === 'attention' ? 'text-warning-700'
                       : 'text-gray-900',
                 )}>
                   {step.label}
                 </span>
-                {step.description && <span className="text-[10px] leading-tight text-gray-400 sm:text-[11px]">{step.description}</span>}
+                {step.description && <span className="max-w-full text-[10px] leading-tight text-gray-400 [overflow-wrap:anywhere] sm:text-[11px]">{step.description}</span>}
               </span>
             </>
           );
-          const interactiveClass = 'relative z-10 flex flex-col items-center gap-2 disabled:cursor-not-allowed';
+          const interactiveClass = 'relative z-10 flex w-full min-w-0 flex-col items-center gap-2 disabled:cursor-not-allowed';
           const ariaCurrent = step.state === 'current' ? ('step' as const) : undefined;
           return (
             <li key={step.key} className="relative flex min-w-0 flex-1 flex-col items-center">
@@ -96,7 +96,7 @@ export function ThemedSteps({ steps, className, 'aria-label': ariaLabel }: {
               ) : step.onSelect ? (
                 <button type="button" disabled={step.disabled} onClick={step.onSelect} aria-current={ariaCurrent} className={interactiveClass}>{body}</button>
               ) : (
-                <span aria-current={ariaCurrent} className="relative z-10 flex flex-col items-center gap-2">{body}</span>
+                <span aria-current={ariaCurrent} className="relative z-10 flex w-full min-w-0 flex-col items-center gap-2">{body}</span>
               )}
             </li>
           );

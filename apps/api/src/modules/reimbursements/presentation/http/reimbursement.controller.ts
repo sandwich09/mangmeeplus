@@ -188,7 +188,7 @@ export class ReimbursementController {
   @Post(':requestId/reopen')
   @RequirePermissions('reimbursement.update_own_draft')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Reopen a rejected reimbursement as a draft for correction and resubmission' })
+  @ApiOperation({ summary: 'Reopen a rejected reimbursement, or withdraw one nobody has decided yet, as a draft for correction and resubmission' })
   reopenRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
     return this.reopenRejected.execute(ctx, requestId);
   }
@@ -222,9 +222,11 @@ export class ReimbursementController {
   // ---- Finance and payment ----
 
   @Post(':requestId/finance-review')
-  @RequirePermissions('reimbursement.finance_review')
+  // A resolve-only call (no decision) is the payment-step duplicate clear, gated in the use case on
+  // payment.record or duplicate.resolve; every decision still requires finance_review there.
+  @RequireAnyPermission('reimbursement.finance_review', 'reimbursement.duplicate.resolve', 'reimbursement.payment.record')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Finance review reimbursement request' })
+  @ApiOperation({ summary: 'Finance review reimbursement request, or clear its duplicate block at the payment step' })
   reviewRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: FinanceReviewReimbursementInput) {
     return this.withAttachmentFileName(ctx, this.financeReview.execute(ctx, requestId, body));
   }

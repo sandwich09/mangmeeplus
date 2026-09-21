@@ -6504,7 +6504,7 @@ model ReimbursementPolicy {
   requireReceipt                Boolean                      @default(true)
   allowMissingReceiptWithReason Boolean                      @default(false)
   duplicatePolicy               ReimbursementDuplicatePolicy @default(BLOCK_PAYMENT)
-  financeReviewRequired         Boolean                      @default(true)
+  financeReviewRequired         Boolean                      @default(false)
   slaHours                      Int?
   status                        ReimbursementPolicyStatus    @default(ACTIVE)
   createdByUserId               String

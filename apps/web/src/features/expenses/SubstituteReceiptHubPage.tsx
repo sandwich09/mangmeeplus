@@ -43,6 +43,7 @@ import {
   StatusBadge,
 } from './ExpensesUi';
 import { buildSubstituteReceiptHubModel } from './substitute-receipt-hub.model';
+import { canClaimReimbursementFromSubstituteReceipt } from './substitute-receipt-wizard.model';
 
 const STATUS_LABEL_KEYS: Record<SubstituteReceiptEvidenceStatus, DictionaryKey> = {
   PREPARED: 'expenses.substitute_hub.status_prepared',
@@ -176,6 +177,7 @@ export function SubstituteReceiptHubPage({
   const router = useRouter();
   const canReview = permissions.includes('expense.review');
   const canApprove = permissions.includes('expense.confirm');
+  const canCreateReimbursement = permissions.includes('reimbursement.create');
   const [status, setStatus] = useState<SubstituteReceiptEvidenceStatus | ''>('');
   const [yearMonth, setYearMonth] = useState('');
   const [result, setResult] = useState<SubstituteReceiptListResult | null>(null);
@@ -264,10 +266,19 @@ export function SubstituteReceiptHubPage({
     }
   }
 
-  const actions = (item: SubstituteReceiptListItem) => <ReceiptActions item={item} canReview={canReview}
-    canContinue={canReview || model.waitingForSignature.some((task) => task.evidenceId === item.evidenceId) || model.waitingForApproval.some((task) => task.evidenceId === item.evidenceId)} busy={cancelling || previewLoadingId !== null}
-    onEdit={() => router.push(wizardHref(item.evidenceId))} onOpen={() => void openDocument(item)}
-    onCancel={() => { cancelTriggerRef.current = document.activeElement as HTMLElement; setCancelReason(''); setCancelTarget(item); }} />;
+  const actions = (item: SubstituteReceiptListItem) => <>
+    {/* Spec §10/AC08: same eligibility helper as the wizard's done step — already-claimed sources
+        still get the button, the create page's `?expenseId=` flow states the reason instead. */}
+    {canClaimReimbursementFromSubstituteReceipt(item, canCreateReimbursement) && (
+      <Link className={btnClass} href={`/companies/${companyId}/reimbursements/new?expenseId=${encodeURIComponent(item.expenseId)}`}>
+        สร้างคำขอเบิกจากใบนี้
+      </Link>
+    )}
+    <ReceiptActions item={item} canReview={canReview}
+      canContinue={canReview || model.waitingForSignature.some((task) => task.evidenceId === item.evidenceId) || model.waitingForApproval.some((task) => task.evidenceId === item.evidenceId)} busy={cancelling || previewLoadingId !== null}
+      onEdit={() => router.push(wizardHref(item.evidenceId))} onOpen={() => void openDocument(item)}
+      onCancel={() => { cancelTriggerRef.current = document.activeElement as HTMLElement; setCancelReason(''); setCancelTarget(item); }} />
+  </>;
 
   const hasWaitingWork = model.waitingForSignature.length > 0 || model.waitingForApproval.length > 0;
 
@@ -397,7 +408,7 @@ export function SubstituteReceiptHubPage({
                         </div>
                       </td>
                       <td>
-                        <div className="flex justify-end">{actions(item)}</div>
+                        <div className="flex flex-wrap items-center justify-end gap-2">{actions(item)}</div>
                       </td>
                     </tr>
                   ))}
@@ -424,7 +435,7 @@ export function SubstituteReceiptHubPage({
                       </div>
                       <div className="mt-2 text-xs text-gray-500">{dateShort(item.paymentDate ?? item.expenseDate)}</div>
                     </div>
-                    <div className="flex justify-end border-t border-gray-100 p-3">{actions(item)}</div>
+                    <div className="flex flex-wrap items-center justify-end gap-2 border-t border-gray-100 p-3">{actions(item)}</div>
                   </MangmeeCard>
                 );
               })}

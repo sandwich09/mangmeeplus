@@ -142,6 +142,29 @@ test.describe('REIMB — reimbursements', () => {
       expect(list.items.some((item) => item.id === draft.id && item.status === 'PAID')).toBe(true);
     });
   });
+
+  // AC02: the solo owner walks ส่งอนุมัติ → อนุมัติ → บันทึกจ่าย on the one journey page, never leaving it.
+  test('REIMB-07 @p1 owner submits, approves, and pays a claim on the journey page without leaving it', async ({ authedPage, api, companyId }) => {
+    await withPolicy(api, companyId, { requireReceipt: false, allowMissingReceiptWithReason: true, financeReviewRequired: false }, async () => {
+      const draft = await createReimbursement(api, companyId, ['77.00']);
+      await gotoCompany(authedPage, companyId, `/reimbursements/${draft.id}`);
+      const url = new RegExp(`/reimbursements/${draft.id}$`);
+      await expect(authedPage).toHaveURL(url);
+
+      await authedPage.getByRole('button', { name: 'ส่งอนุมัติ', exact: true }).click();
+      await expect(authedPage.getByRole('button', { name: 'อนุมัติ', exact: true })).toBeVisible();
+
+      // authedPage is the seeded OWNER, exempt from the self-approval switch; approving own
+      // request opens the inline payment form automatically (AC03) with the outstanding
+      // amount, cash, and today's date already filled in — nothing to type before submitting.
+      await authedPage.getByRole('button', { name: 'อนุมัติ', exact: true }).click();
+      await expect(authedPage.getByText('จ่ายเต็มจำนวนคงค้าง')).toBeVisible();
+      await authedPage.getByRole('button', { name: 'บันทึกจ่าย', exact: true }).click();
+
+      await expect(authedPage.getByText('จ่ายแล้ว').first()).toBeVisible();
+      await expect(authedPage).toHaveURL(url);
+    });
+  });
 });
 
 for (const width of [1280, 390]) {

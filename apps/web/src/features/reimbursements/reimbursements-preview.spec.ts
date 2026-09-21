@@ -4,7 +4,10 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ReimbursementsPages.tsx'), 'utf8');
+// The drawer's sections and the preview lifecycle live in ReimbursementDetailSections, shared with the journey page.
+const source = ['ReimbursementsPages.tsx', 'ReimbursementDetailSections.tsx']
+  .map((file) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), file), 'utf8'))
+  .join('\n');
 
 describe('reimbursement self-service entry', () => {
   it('uses the effective create permission on every screen width, with matching unavailable-create guidance', () => {
@@ -26,16 +29,12 @@ describe('reimbursement document preview lifecycle', () => {
     assert.match(source, /previewUrlRef\.current = url/);
   });
 
-  it('invalidates requests on close, unmount, company change, and drawer changes', () => {
+  it('invalidates requests on close and unmount', () => {
     assert.match(source, /previewRequestRef\.current \+= 1/);
     assert.match(source, /URL\.revokeObjectURL\(url\)/);
-    assert.match(source, /const openDetail = useCallback[\s\S]*?closeDocumentPreview\(\)/);
-    assert.match(source, /onClose=\{\(\) => \{\s*closeDocumentPreview\(\); setDetail\(null\)/);
-    assert.match(source, /\[companyId, detail\?\.id, closeDocumentPreview\]/);
   });
 
-  it('keeps retries target-specific and exposes preview loading to the drawer', () => {
-    assert.match(source, /busy=\{drawerBusy \|\| previewLoadingKey !== null\}/);
+  it('keeps retries target-specific', () => {
     assert.match(source, /onRetry=\{previewTarget\?\.kind === 'claim-form' \? \(\) => loadDocumentPreview\(previewTarget\) : undefined\}/);
     assert.match(source, /onRetry=\{previewTarget\?\.kind === 'attachment' \? \(\) => loadDocumentPreview\(previewTarget\) : undefined\}/);
     assert.match(source, /if \(requestId === claimFormSaveRequestRef\.current\) setClaimFormSaving\(false\)/);
@@ -46,7 +45,7 @@ describe('reimbursement policy role-picker contract', () => {
   it('uses a constrained role select with human outcome copy and no holder-count helper', () => {
     assert.match(source, /<ThemedSelect[\s\S]*?id="reimbursement-approver-role"/);
     assert.match(source, /ส่งใบเบิกให้ใครอนุมัติ\?/);
-    assert.match(source, /ยอดต่ำกว่า \{formatMoney\(form\.approvalRequiredFromAmount\)\} บาท:/);
+    assert.match(source, /policyDecisionPreview\(\{\s*approvalRequiredFromAmount: form\.approvalRequiredFromAmount/);
     assert.doesNotMatch(source, /บทบาทผู้อนุมัติเริ่มต้น/);
     assert.doesNotMatch(source, /บทบาทนี้มีผู้รับผิดชอบ/);
     assert.doesNotMatch(source, /eligibleApproverCount/);
@@ -61,12 +60,9 @@ describe('reimbursement policy role-picker contract', () => {
 });
 
 describe('frozen approval actions', () => {
-  it('renders only server-resolved task actions instead of inferring them from the tab', () => {
-    assert.match(source, /detail\.approvalActions\?\.canApprove === true/);
-    assert.match(source, /detail\.approvalActions\?\.canReject === true/);
-    assert.doesNotMatch(source, /const canApprove = context === 'approvals'/);
-  });
-
+  // The hub itself no longer renders an approve/reject control (the drawer that did was retired
+  // in Phase 6); the same server-resolved-action invariant is covered where approve/reject now
+  // live, in reimbursements.logic.spec.ts's buildJourneySteps coverage.
   it('reveals the approval tab only after an exact server assignment and binds it to the company', () => {
     assert.match(source, /listApprovalQueue\(companyId\)/);
     assert.match(source, /assignedApprovalCompanyId === companyId/);
