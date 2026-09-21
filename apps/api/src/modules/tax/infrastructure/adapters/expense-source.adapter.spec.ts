@@ -101,3 +101,103 @@ describe('ExpenseSourceAdapter WHT source facts', () => {
     assert.equal(rows[0]?.grossAmount, '1500');
   });
 });
+
+// §10 fallback (Phase 1 gap): `ExpenseRecord` has no Prisma relation to the counterparty, only the
+// scalar `vendorCounterpartyId`, so a missing snapshot is filled from ONE batched registry read.
+describe('ExpenseSourceAdapter vendor address registry fallback', () => {
+  function harness(rows: unknown[], counterpartyRows: Array<{ id: string; billingAddressJson: unknown }> = []) {
+    const counterpartyQueries: any[] = [];
+    const prisma = {
+      client: {
+        expenseRecord: { findMany: async () => rows },
+        accountingCounterparty: {
+          findMany: async (args: any) => { counterpartyQueries.push(args); return counterpartyRows; },
+        },
+      },
+    } as any;
+    return { adapter: new ExpenseSourceAdapter(prisma), counterpartyQueries };
+  }
+
+  const vatRow = (overrides: Record<string, unknown> = {}) => ({
+    id: 'expense-1', companyId: 'company-1', expenseDate: new Date('2026-07-13T00:00:00.000Z'),
+    vatAmount: '7', whtAmount: '0', taxableAmount: '100', grandTotalAmount: '107',
+    inputVatClaimStatus: 'CLAIMABLE', taxEvidenceStatus: 'USABLE_FOR_TAX', vatMode: 'VAT_INCLUDED',
+    vendorNameSnapshot: 'Vendor', vendorTaxIdSnapshot: '0100000000000', vendorBranchCodeSnapshot: '00003',
+    vendorAddressSnapshot: null, vendorCounterpartyId: null,
+    currency: 'THB', updatedAt: new Date(),
+    ...overrides,
+  });
+
+  it('keeps the document\'s own snapshot and never queries the registry when one exists', async () => {
+    const { adapter: subject, counterpartyQueries } = harness(
+      [vatRow({ vendorAddressSnapshot: 'ที่อยู่บนใบ', vendorCounterpartyId: 'cp-1' })],
+      [{ id: 'cp-1', billingAddressJson: { addressText: 'ที่อยู่ทะเบียน' } }],
+    );
+    const [result] = await subject.findConfirmedWithVatByCompany('company-1');
+    assert.equal(result?.vendorAddress, 'ที่อยู่บนใบ');
+    assert.equal(counterpartyQueries.length, 0, 'a row with its own snapshot never needs the registry');
+  });
+
+  it('falls back to the registry address when the expense snapshot is empty', async () => {
+    const { adapter: subject, counterpartyQueries } = harness(
+      [vatRow({ vendorAddressSnapshot: null, vendorCounterpartyId: 'cp-1' })],
+      [{ id: 'cp-1', billingAddressJson: { addressText: 'ที่อยู่ทะเบียน' } }],
+    );
+    const [result] = await subject.findConfirmedWithVatByCompany('company-1');
+    assert.equal(result?.vendorAddress, 'ที่อยู่ทะเบียน');
+    assert.equal(counterpartyQueries[0]?.where.companyId, 'company-1');
+    assert.deepEqual(counterpartyQueries[0]?.where.id, { in: ['cp-1'] });
+    assert.deepEqual(counterpartyQueries[0]?.select, { id: true, billingAddressJson: true });
+  });
+
+  it('returns null when neither the expense nor a linked counterparty has an address', async () => {
+    const { adapter: subject, counterpartyQueries } = harness([vatRow({ vendorAddressSnapshot: null, vendorCounterpartyId: null })]);
+    const [result] = await subject.findConfirmedWithVatByCompany('company-1');
+    assert.equal(result?.vendorAddress, null);
+    assert.equal(counterpartyQueries.length, 0, 'no linked counterparty means nothing to batch');
+  });
+
+  it('returns null when the linked counterparty is missing or its address is unusable', async () => {
+    const missing = harness([vatRow({ vendorAddressSnapshot: null, vendorCounterpartyId: 'cp-deleted' })], []);
+    assert.equal((await missing.adapter.findConfirmedWithVatByCompany('company-1'))[0]?.vendorAddress, null);
+
+    const unusable = harness(
+      [vatRow({ vendorAddressSnapshot: null, vendorCounterpartyId: 'cp-1' })],
+      [{ id: 'cp-1', billingAddressJson: { locked: true } }],
+    );
+    assert.equal((await unusable.adapter.findConfirmedWithVatByCompany('company-1'))[0]?.vendorAddress, null);
+  });
+
+  it('batches every row needing a fallback into one registry query, never one per row', async () => {
+    const { adapter: subject, counterpartyQueries } = harness(
+      [
+        vatRow({ id: 'expense-1', vendorAddressSnapshot: null, vendorCounterpartyId: 'cp-1' }),
+        vatRow({ id: 'expense-2', vendorAddressSnapshot: null, vendorCounterpartyId: 'cp-2' }),
+      ],
+      [
+        { id: 'cp-1', billingAddressJson: { addressText: 'ที่อยู่ 1' } },
+        { id: 'cp-2', billingAddressJson: { addressText: 'ที่อยู่ 2' } },
+      ],
+    );
+    const rows = await subject.findConfirmedWithVatByCompany('company-1');
+    assert.equal(counterpartyQueries.length, 1);
+    assert.deepEqual([...counterpartyQueries[0]?.where.id.in].sort(), ['cp-1', 'cp-2']);
+    assert.equal(rows[0]?.vendorAddress, 'ที่อยู่ 1');
+    assert.equal(rows[1]?.vendorAddress, 'ที่อยู่ 2');
+  });
+
+  it('falls back to the registry on the WHT source too (same helper, second call site)', async () => {
+    const { adapter: subject } = harness(
+      [{
+        id: 'expense-2', companyId: 'company-1', expenseDate: new Date('2026-07-13T00:00:00.000Z'),
+        whtAmount: '30', taxableAmount: '1500', taxCategory: 'SERVICE_FEE',
+        vendorNameSnapshot: 'ผู้รับเงิน', vendorTaxIdSnapshot: '0100000000000', vendorBranchCodeSnapshot: '00003',
+        vendorEntityKindSnapshot: 'JURISTIC', currency: 'THB', updatedAt: new Date(), lines: [],
+        vendorAddressSnapshot: null, vendorCounterpartyId: 'cp-1',
+      }],
+      [{ id: 'cp-1', billingAddressJson: { addressText: 'ที่อยู่ทะเบียน' } }],
+    );
+    const [result] = await subject.findConfirmedWithWhtByCompany('company-1');
+    assert.equal(result?.vendorAddress, 'ที่อยู่ทะเบียน');
+  });
+});

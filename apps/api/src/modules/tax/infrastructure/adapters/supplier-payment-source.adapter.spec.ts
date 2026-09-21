@@ -20,7 +20,10 @@ const row = (overrides: Record<string, unknown> = {}) => ({
   // Settles 1,070 of debt (1,000 base + 70 VAT) with 30 withheld at 3%.
   grossAmount: '1070.0000', whtAmount: '30.0000', whtRate: '3.0000', whtCategoryCode: 'WHT_SERVICE_5',
   currency: 'THB', updatedAt: new Date('2026-08-05T10:00:00.000Z'),
-  supplier: { legalNameSnapshot: 'บริษัท ผู้รับเงิน จำกัด', displayNameSnapshot: 'ผู้รับเงิน', taxId: '0100000000000', branchCode: '00003', supplierType: 'JURISTIC_PERSON' },
+  supplier: {
+    legalNameSnapshot: 'บริษัท ผู้รับเงิน จำกัด', displayNameSnapshot: 'ผู้รับเงิน', taxId: '0100000000000', branchCode: '00003', supplierType: 'JURISTIC_PERSON',
+    counterparty: { billingAddressJson: { addressText: '123/4 ถนนสุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพมหานคร 10110' } },
+  },
   ...overrides,
 });
 
@@ -64,5 +67,34 @@ describe('SupplierPaymentSourceAdapter', () => {
 
     await subject.findRecordedWithWhtByCompany('company-1');
     assert.equal(queries[1].where.updatedAt, undefined);
+  });
+});
+
+// GAP-2 / §10: a supplier payment has no printed document of its own, so the payee address comes
+// from the counterparty registry the supplier profile points at — never `supplier.addressJson`.
+describe('SupplierPaymentSourceAdapter payee address', () => {
+  it('reads the address off the counterparty registry the supplier points at', async () => {
+    const { adapter: subject } = adapter([row()]);
+    const [result] = await subject.findRecordedWithWhtByCompany('company-1');
+    assert.equal(result!.payeeAddress, '123/4 ถนนสุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพมหานคร 10110');
+  });
+
+  it('leaves the address null when the registry has none set', async () => {
+    const { adapter: subject } = adapter([row({ supplier: { ...row().supplier, counterparty: { billingAddressJson: null } } })]);
+    const [result] = await subject.findRecordedWithWhtByCompany('company-1');
+    assert.equal(result!.payeeAddress, null);
+  });
+
+  it('leaves the address null when the registry JSON has no usable text', async () => {
+    const { adapter: subject } = adapter([row({ supplier: { ...row().supplier, counterparty: { billingAddressJson: { locked: true } } } })]);
+    const [result] = await subject.findRecordedWithWhtByCompany('company-1');
+    assert.equal(result!.payeeAddress, null);
+  });
+
+  it('selects the registry address through the supplier relation, not supplier.addressJson', async () => {
+    const { adapter: subject, queries } = adapter([row()]);
+    await subject.findRecordedWithWhtByCompany('company-1');
+    assert.deepEqual(queries[0].include.supplier.select.counterparty, { select: { billingAddressJson: true } });
+    assert.equal(queries[0].include.supplier.select.addressJson, undefined);
   });
 });
