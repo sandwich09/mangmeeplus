@@ -300,6 +300,9 @@ function Welcome() {
   // neither state promises use of a shop that cannot yet be vouched for (spec §19).
   const ready = Boolean(handoff) && locked === false;
   const showLocked = Boolean(handoff) && locked === true;
+  // While the notice is still in flight the links stay neutral: neither "เข้าใช้งาน" (false for a
+  // locked shop) nor "ไปเลือกแพ็กเกจ" (wrong for a shop whose old trial still runs).
+  const settling = Boolean(handoff) && locked === null;
 
   return (
     <div className="min-h-dvh bg-gray-50">
@@ -349,7 +352,7 @@ function Welcome() {
                   href={showLocked ? packagePath : '/'}
                   className="mt-4 flex h-12 w-full items-center justify-center rounded-xl bg-[#046B29] text-[15.5px] font-semibold text-white"
                 >
-                  {showLocked ? 'ไปเลือกแพ็กเกจ' : 'เข้าใช้งาน'}
+                  {showLocked ? 'ไปเลือกแพ็กเกจ' : settling ? 'ไปต่อ' : 'เข้าใช้งาน'}
                 </a>
               </section>
             ) : (
@@ -376,7 +379,7 @@ function Welcome() {
                 </section>
 
                 <a href={showLocked ? packagePath : homePath} className="mt-5 block text-center text-[14.5px] font-semibold text-gray-600 underline hover:text-gray-900">
-                  {showLocked ? 'ไว้ทีหลัง — ไปเลือกแพ็กเกจ' : 'ไว้ทีหลัง — เข้าใช้งานเลย'}
+                  {showLocked ? 'ไว้ทีหลัง — ไปเลือกแพ็กเกจ' : settling ? 'ไว้ทีหลัง — ไปต่อ' : 'ไว้ทีหลัง — เข้าใช้งานเลย'}
                 </a>
               </>
             )}
