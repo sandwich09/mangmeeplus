@@ -45,6 +45,8 @@ function errorText(error: unknown): string {
   if (code === 'BILLING_PORTAL_CONFIG_MISMATCH') return 'ทีมงานต้องตรวจการตั้งค่าหน้าแก้บัตรก่อน กรุณาติดต่อทีมมั่งมี';
   if (code === 'BILLING_COMPANY_HELD') return 'บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมมั่งมี';
   if (code === 'BILLING_LEGACY_REVIEW_REQUIRED') return 'ทีมงานต้องตรวจแพ็กเกจเดิมก่อนซื้อ กรุณาติดต่อทีมมั่งมี คุณยังกลับไปใช้งานหรือเลือกบริษัทอื่นได้';
+  if (code === 'BILLING_SOURCE_REVIEW_REQUIRED') return 'ข้อมูลการชำระเงินเดิมของบริษัทนี้ยังไม่ตรงกัน กรุณาติดต่อทีมมั่งมีก่อนเริ่มรายการใหม่';
+  if (code === 'BILLING_ENTITLEMENT_REVIEW_REQUIRED') return 'ข้อมูลสิทธิ์เมนูเดิมยังไม่พร้อม กรุณาติดต่อทีมมั่งมีก่อนชำระเงิน';
   if (code === 'BILLING_REFUND_PENDING') return 'กำลังตรวจสอบคำขอคืนเงิน จึงยังซื้อหรือเปลี่ยนแพ็กเกจไม่ได้ กรุณาโหลดสถานะล่าสุดหรือติดต่อทีมมั่งมี';
   if (code === 'BILLING_SALES_CLOSED' || code === 'BILLING_NOT_READY') return 'ยังไม่เปิดรับชำระเงินใหม่ กรุณาติดต่อทีมงาน';
   return 'ยังยืนยันผลรายการไม่ได้ กรุณาตรวจสอบสถานะหรือติดต่อทีมงานพร้อมเลขอ้างอิง';
@@ -277,7 +279,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         <dl className="grid gap-5 rounded-xl bg-gray-50 p-4 sm:grid-cols-3">
           <div><dt className="text-sm text-gray-500">แพ็กเกจ</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.tierKey && status.tierKey in PLAN_TIER_PRESETS ? PLAN_TIER_PRESETS[status.tierKey as PlanTierKey].labelTh : status.tierKey ? 'ต้องตรวจสอบข้อมูล' : 'ยังไม่มีข้อมูลแพ็กเกจ'}</dd></div>
           <div><dt className="text-sm text-gray-500">ใช้งานได้ถึง</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.termEndsAt ? date(status.termEndsAt) : 'ยังไม่ระบุ'}</dd></div>
-          <div><dt className="text-sm text-gray-500">ใบเสร็จคงเหลือ</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.usage.remaining ?? 'ไม่จำกัด'} {status.usage.remaining !== null && 'ใบ'}</dd>{(quotaReset || (quotaExpiry && date(quotaExpiry) !== date(status.termEndsAt))) && <p className="mt-1 text-sm text-gray-500">{quotaReset ? `เริ่มรอบใหม่ ${date(quotaReset)}` : `ใบที่หมดอายุก่อนใช้ได้ถึง ${date(quotaExpiry)}`}</p>}</div>
+          <div><dt className="text-sm text-gray-500">ใบเสร็จคงเหลือ</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.purchaseSource === 'NO_TERM' && status.usage.remaining === null ? 'ยังไม่ได้กำหนดโควตาแพ็กเกจ' : status.usage.remaining ?? 'ไม่จำกัด'} {status.usage.remaining !== null && 'ใบ'}</dd>{(quotaReset || (quotaExpiry && date(quotaExpiry) !== date(status.termEndsAt))) && <p className="mt-1 text-sm text-gray-500">{quotaReset ? `เริ่มรอบใหม่ ${date(quotaReset)}` : `ใบที่หมดอายุก่อนใช้ได้ถึง ${date(quotaExpiry)}`}</p>}</div>
         </dl>
         {status.effectiveCapacity?.temporary&&<section className="space-y-2 rounded-xl border border-emerald-300 p-3" aria-label="สิทธิ์แพ็กเกจชั่วคราว"><p>ผู้ดูแลให้สิทธิ์ {PLAN_TIER_PRESETS[status.effectiveCapacity.tierKey].labelTh} ชั่วคราว</p><p>{status.effectiveCapacity.branchLimit} สาขา · {status.effectiveCapacity.employeeLimit} ผู้ใช้ ถึง {date(status.effectiveCapacity.temporary.expiresAt)}</p><p>เมื่อครบกำหนดจะใช้แพ็กเกจที่ซื้ออยู่ล่าสุด การซื้อเพิ่มด้านล่างคิดจากแพ็กเกจที่ชำระเงิน</p></section>}
 
@@ -288,6 +290,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {status.renewalMode === 'PROMPTPAY_RENEW' && status.renewalInvoiceUrl && <div className="space-y-2 rounded-xl border border-brand-200 p-4"><p>บิลต่ออายุรอชำระ{status.renewalInvoiceDueAt ? ` · ครบกำหนด ${date(status.renewalInvoiceDueAt)}` : ''}</p><button className={button} disabled={busy} aria-busy={busy} onClick={() => action(async navigate => navigate(status.renewalInvoiceUrl!, 'document'))}>เปิดบิลและสแกน QR</button></div>}
         {status.graceEndsAt && <p>ระยะผ่อนผันถึง {date(status.graceEndsAt)} · ใช้ยอดใบเสร็จเดิมที่เหลือได้ ไม่มีการเติมโควตาจนกว่าจะชำระสำเร็จ</p>}
         {status.purchaseEligibility === 'COMPANY_SALES_CLOSED' && <p role="status" className="text-sm leading-7 text-gray-600">บริษัทนี้ยังซื้อหรือเปลี่ยนแพ็กเกจผ่านเว็บไม่ได้ กรุณาติดต่อทีมมั่งมี</p>}
+        {status.purchaseEligibility === 'SOURCE_REVIEW_REQUIRED' && <p role="status" className="text-sm leading-7 text-gray-600">ข้อมูลการชำระเงินเดิมของบริษัทนี้ยังไม่ตรงกัน กรุณาติดต่อทีมมั่งมีก่อนเริ่มรายการใหม่</p>}
+        {status.purchaseEligibility === 'ENTITLEMENT_REVIEW_REQUIRED' && <p role="status" className="text-sm leading-7 text-gray-600">ข้อมูลสิทธิ์เมนูเดิมยังไม่พร้อม กรุณาติดต่อทีมมั่งมีก่อนชำระเงิน</p>}
         {status.refundReviewPending && <p role="status" className="rounded-xl bg-amber-50 p-3">กำลังตรวจสอบคำขอคืนเงิน จึงยังซื้อหรือเปลี่ยนแพ็กเกจไม่ได้ คำขอนี้ไม่เปลี่ยนสิทธิ์แพ็กเกจเดิม คุณตรวจรายการเดิมด้านล่าง หรือ <a className="underline" href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>ติดต่อทีมมั่งมี</a> ได้</p>}
         {status.accessState === 'HELD' && <p>บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมงาน ข้อมูลยังอยู่ครบ</p>}
         {(status.reference || returnAttemptId) && !confirmed && <details className="text-sm text-gray-500"><summary className="min-h-11 cursor-pointer py-2">เลขอ้างอิงสำหรับแจ้งทีมงาน</summary><p className="break-all">{returning ? returnAttemptId : status.reference}</p></details>}
@@ -408,9 +412,17 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
             <div className="flex justify-between gap-3 font-semibold"><dt>รวมหลังชำระสำเร็จโดยประมาณ</dt><dd>{quote.purchase.projectedRemainingReceipts.toLocaleString('th-TH')} ใบ</dd></div>
             <div className="text-gray-600">ยอดจากทดลองใช้หมดอายุวันที่ {date(quote.purchase.trialCarryover.expiresAt)} · ยอดจริงขึ้นกับการใช้งานระหว่างชำระ</div>
           </dl>}
-          <p>ชำระสำเร็จแล้ว ใช้งานได้ {quote.offer.interval === 'year' ? '12 เดือน' : '1 เดือน'} {!quote.purchase?.trialCarryover && <>พร้อมโควตา {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ</>}</p>
+          {quote.previousSource === 'ADMIN_MANUAL' ? <p>เริ่มแพ็กเกจใหม่เมื่อชำระสำเร็จ แพ็กเกจเดิมที่ผู้ดูแลให้ไว้ถึง {date(quote.previousTermEndsAt)} จะถูกแทนที่ วันคงเหลือ (ถ้ามี) ไม่ทบและไม่ลดราคา รับโควตาใหม่ {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ</p>
+            : quote.previousSource === 'NO_TERM' ? <p>เริ่มแพ็กเกจใหม่เมื่อชำระสำเร็จ รับโควตา {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ ไม่มีวันแพ็กเกจเดิมให้ทบ</p>
+            : <p>ชำระสำเร็จแล้ว ใช้งานได้ {quote.offer.interval === 'year' ? '12 เดือน' : '1 เดือน'} {!quote.purchase?.trialCarryover && <>พร้อมโควตา {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ</>}</p>}
           {quote.purchase?.kind === 'INITIAL' && quote.trialEndsAt && <p className="text-sm text-gray-600">การทดลองใช้จะสิ้นสุดเมื่อชำระสำเร็จ วันทดลองที่เหลือจะไม่บวกเพิ่มในแพ็กเกจนี้</p>}
         </div>}
+        {quote.featureImpact && (quote.featureImpact.removed.length > 0 || quote.featureImpact.added.length > 0 || quote.featureImpact.preservedAdmin > 0) && <section className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4" aria-label="การเปลี่ยนสิทธิ์เมนูหลังชำระ">
+          <p className="font-semibold">สิทธิ์เมนูเมื่อชำระสำเร็จ</p>
+          {quote.featureImpact.removed.length > 0 && <><p>เมนูต่อไปนี้จะหยุดใช้หลังชำระ โดยข้อมูลเดิมยังเก็บไว้:</p><ul className="list-disc space-y-1 pl-6">{quote.featureImpact.removed.map(item => <li key={item.featureKey}>{item.labelTh}</li>)}</ul></>}
+          {quote.featureImpact.added.length > 0 && <p>จะได้สิทธิ์เพิ่ม: {quote.featureImpact.added.map(item => item.labelTh).join(', ')}</p>}
+          {quote.featureImpact.preservedAdmin > 0 && <p>สิทธิ์พิเศษที่ผู้ดูแลกำหนดให้เฉพาะบริษัทยังคงอยู่</p>}
+        </section>}
         {quote.pendingPlanChange && <div className="space-y-1 rounded-xl bg-amber-50 p-3"><p>รายการเปลี่ยนเป็น {quote.pendingPlanChange.offer.label} ({quote.pendingPlanChange.offer.interval === 'year' ? 'รายปี' : 'รายเดือน'}) จะมีผลจาก {date(quote.pendingPlanChange.oldEffectiveAt)} เป็น {date(quote.pendingPlanChange.newEffectiveAt)}</p><p>ยอดต่ออายุหลังวันนั้น {money(quote.pendingPlanChange.totalSatang)} · คงสาขา {quote.pendingPlanChange.capacity.retainedBranches.join(', ')} · คงผู้ใช้ {quote.pendingPlanChange.capacity.retainedMembers.join(', ')}</p><p>ซื้อสำเร็จจึงยืนยันวันเปลี่ยนใหม่ หากชำระไม่สำเร็จคำสั่งเดิมคงอยู่</p></div>}
         {quote.purchaseMode === 'PROMPTPAY_RENEW' ? <p>สแกน QR เพื่อจ่ายครั้งแรก จากนั้นระบบออกบิลใหม่ทุกงวด ต้องเปิดบิลและสแกน QR เอง ไม่มีการหักเงินอัตโนมัติ</p>
           : quote.purchaseMode === 'CARD_ONCE' || quote.purchaseMode === 'PROMPTPAY_ONCE' ? <p>จ่ายครั้งเดียว ไม่มีการตัดเงินงวดถัดไป ต้องซื้อใหม่เมื่ออยากใช้ต่อ</p>

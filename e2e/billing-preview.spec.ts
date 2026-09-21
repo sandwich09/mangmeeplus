@@ -189,6 +189,12 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(page.getByRole('link', { name: 'จัดการรายการเบิกค้าง', exact: true })).toHaveCount(0);
   await page.getByLabel('ฉันตรวจสอบรายการที่คงไว้และรายการที่จะพักแล้ว', { exact: true }).check();
   await expect(page.getByRole('button', { name: 'ใช้การเลือกนี้และตรวจสอบราคา', exact: true })).toBeEnabled();
+  await scenario.selectOption('manual');
+  await plans.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: /^ยืนยันซื้อ/ })).toBeVisible();
+  await expect(page.getByText(/วันคงเหลือ \(ถ้ามี\) ไม่ทบและไม่ลดราคา/)).toBeVisible();
+  await expect(page.getByRole('region', { name: 'การเปลี่ยนสิทธิ์เมนูหลังชำระ' })).toContainText('รายงาน');
+  await expect(page.getByRole('region', { name: 'การเปลี่ยนสิทธิ์เมนูหลังชำระ' })).toContainText('สิทธิ์พิเศษที่ผู้ดูแล');
   await scenario.selectOption('quote-error');
   await plans.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).first().click();
   await expect(page.getByRole('alert').filter({ hasText: 'รายการหมดอายุหรือข้อมูลเปลี่ยน' })).toBeVisible();

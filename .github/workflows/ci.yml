@@ -544,7 +544,7 @@ jobs:
           pnpm --filter @watchdog-bms/api exec tsx --test src/modules/data-model-core/presentation/http/company-business-type.controller.spec.ts src/modules/system-partner-management/application/use-cases/get-partner-detail.use-case.spec.ts src/modules/billing/application/billing-company-profile.spec.ts src/modules/billing/application/billing-profile-recovery.spec.ts
           pnpm --filter @watchdog-bms/web exec tsx --test src/features/billing/billing-profile-navigation.spec.ts
       - name: Test billing and partner pagination
-        run: pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/application/billing-overview-pagination.spec.ts src/modules/system-partner-management/application/use-cases/list-partners.use-case.spec.ts
+        run: pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/application/billing-overview-pagination.spec.ts src/modules/billing/application/billing-purchase-source.spec.ts src/modules/billing/application/billing-feature-entitlements.spec.ts src/modules/system-partner-management/application/use-cases/list-partners.use-case.spec.ts
       - name: Harness manifests (protected corpus + golden stores)
         run: pnpm test:harness
       # The LINE AI whole-chain feature specs (substitute-receipt continuation + siblings) are named
