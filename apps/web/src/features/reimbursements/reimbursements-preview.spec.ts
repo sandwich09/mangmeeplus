@@ -29,16 +29,12 @@ describe('reimbursement document preview lifecycle', () => {
     assert.match(source, /previewUrlRef\.current = url/);
   });
 
-  it('invalidates requests on close, unmount, company change, and drawer changes', () => {
+  it('invalidates requests on close and unmount', () => {
     assert.match(source, /previewRequestRef\.current \+= 1/);
     assert.match(source, /URL\.revokeObjectURL\(url\)/);
-    assert.match(source, /const openDetail = useCallback[\s\S]*?closeDocumentPreview\(\)/);
-    assert.match(source, /onClose=\{\(\) => \{\s*closeDocumentPreview\(\); setDetail\(null\)/);
-    assert.match(source, /\[companyId, detail\?\.id, closeDocumentPreview\]/);
   });
 
-  it('keeps retries target-specific and exposes preview loading to the drawer', () => {
-    assert.match(source, /busy=\{drawerBusy \|\| previewLoadingKey !== null\}/);
+  it('keeps retries target-specific', () => {
     assert.match(source, /onRetry=\{previewTarget\?\.kind === 'claim-form' \? \(\) => loadDocumentPreview\(previewTarget\) : undefined\}/);
     assert.match(source, /onRetry=\{previewTarget\?\.kind === 'attachment' \? \(\) => loadDocumentPreview\(previewTarget\) : undefined\}/);
     assert.match(source, /if \(requestId === claimFormSaveRequestRef\.current\) setClaimFormSaving\(false\)/);
@@ -64,12 +60,9 @@ describe('reimbursement policy role-picker contract', () => {
 });
 
 describe('frozen approval actions', () => {
-  it('renders only server-resolved task actions instead of inferring them from the tab', () => {
-    assert.match(source, /detail\.approvalActions\?\.canApprove === true/);
-    assert.match(source, /detail\.approvalActions\?\.canReject === true/);
-    assert.doesNotMatch(source, /const canApprove = context === 'approvals'/);
-  });
-
+  // The hub itself no longer renders an approve/reject control (the drawer that did was retired
+  // in Phase 6); the same server-resolved-action invariant is covered where approve/reject now
+  // live, in reimbursements.logic.spec.ts's buildJourneySteps coverage.
   it('reveals the approval tab only after an exact server assignment and binds it to the company', () => {
     assert.match(source, /listApprovalQueue\(companyId\)/);
     assert.match(source, /assignedApprovalCompanyId === companyId/);
