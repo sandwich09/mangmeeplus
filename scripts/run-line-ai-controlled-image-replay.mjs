@@ -16,6 +16,10 @@ const ALLOWED_EXPECTATION_PATHS = new Set([
   'classification.transactionState',
   'classification.requiresClarification',
   'fields.grandTotalAmountAbsent',
+  // Vendor-address §7: the seller's printed address, so a real-image replay can prove the reader
+  // took it off the ISSUER block. A buyer address landing here is the failure worth binding by
+  // source SHA — `fields.missingFieldsIncludes` covers the gap a full tax invoice must report.
+  'fields.vendorAddress',
 ]);
 const MONEY_EXPECTATION_PATHS = new Set(['fields.grandTotalAmount', 'fields.vatAmount']);
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;

@@ -1908,6 +1908,9 @@ describe('receipt tax integrity regressions', () => {
     assert.equal(reviewed.record.vendorEntityKindSnapshot, undefined);
     assert.equal(reviewed.record.vendorNameSnapshot, undefined);
     assert.equal(reviewed.record.vendorTaxIdSnapshot, undefined);
+    // CON-5: the address a reviewer typed is in the same protected set, so when OCR starts reading
+    // addresses (Phase 4) a re-read of the receipt cannot silently replace it.
+    assert.equal(reviewed.record.vendorAddressSnapshot, undefined);
     assert.deepEqual(reviewed.lines, [], 'rereading cannot replace reviewed financial rows');
     assert.equal(reviewed.record.grandTotalAmount, undefined);
     const vatReviewed = await applyFields(fields, { version: 1, source: { origin: 'REVIEWER' } }, {
@@ -1917,6 +1920,31 @@ describe('receipt tax integrity regressions', () => {
     assert.equal(vatReviewed.record.vatCaptureSnapshotJson, undefined);
     const unknown = await applyFields({ ...fields, vendorIdentityEvidence: 'ชื่อลูกค้าไม่ใช่ผู้ขาย' });
     assert.equal(unknown.record.vendorEntityKindSnapshot, undefined);
+  });
+
+  it('writes the printed seller address and keeps the buyer block as provenance only', async () => {
+    const fields = {
+      grandTotalAmount: '1498.00',
+      vendorName: 'บริษัท สยามวัสดุก่อสร้าง จำกัด',
+      vendorAddress: '199/8 ถนนพระราม 3 แขวงบางโพงพาง เขตยานนาวา กรุงเทพฯ 10120',
+      buyerAsPrinted: { name: 'บริษัท มั่งมีพลัส จำกัด', taxId: '0994000163011', branchCode: '00000',
+        addressText: '55/3 ซอยลาดพร้าว 15 แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900' },
+    };
+    const result = await applyFields(fields);
+    assert.equal(result.record.vendorAddressSnapshot, '199/8 ถนนพระราม 3 แขวงบางโพงพาง เขตยานนาวา กรุงเทพฯ 10120');
+    // Slice 2 owns comparing the buyer block; this phase only has to keep it, and keep it OUT of
+    // every seller column — a buyer address stored as the vendor's is wrong on every later document.
+    assert.deepEqual(result.record.aiVerifiedFieldsJson.buyerAsPrinted, fields.buyerAsPrinted);
+    assert.equal('buyerAsPrintedJson' in result.record, false, 'no new column in this phase');
+    assert.notEqual(result.record.vendorAddressSnapshot, fields.buyerAsPrinted.addressText);
+  });
+
+  it('never replaces an address already on the record (CON-5 and §7 typed-value precedence)', async () => {
+    const fields = { grandTotalAmount: '1498.00', vendorAddress: '199/8 ถนนพระราม 3 กรุงเทพฯ 10120' };
+    const typedInDraft = await applyFields(fields, null, { vendorAddressSnapshot: '1 ที่อยู่ที่ผู้ตรวจพิมพ์เอง' });
+    assert.equal('vendorAddressSnapshot' in typedInDraft.record, false, 'a re-read must not overwrite a human value');
+    const reviewed = await applyFields(fields, null, { reviewedAt: new Date('2026-09-01') });
+    assert.equal(reviewed.record.vendorAddressSnapshot, undefined, 'and never writes one after review');
   });
 
   it('does not persist rejected withholding through legacy prepared rates', async () => {

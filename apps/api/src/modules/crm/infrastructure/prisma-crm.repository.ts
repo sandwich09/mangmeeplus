@@ -16,6 +16,7 @@ import { DEFAULT_PIPELINE_STAGES } from '../domain/crm.constants';
 import type { CrmBookingSource, CrmCustomerMergeImpact } from '@watchdog-bms/contracts';
 import Decimal from 'decimal.js';
 import { normalizeName, normalizePhone } from '../domain/logic/crm.logic';
+import { promoteCounterpartyToBoth } from '../../accounting-documents/infrastructure/prisma-accounting.repository';
 
 type BookingWindow = {
   companyId: string;
@@ -1407,6 +1408,10 @@ export class PrismaCrmRepository {
         });
       }
 
+      // CON-1: `counterpartyId` here may be an existing row that procurement or an expense created
+      // as VENDOR. Left alone, the first receipt against this quotation drops out of the AI revenue
+      // summary. Same transaction as the document, per the spec.
+      await promoteCounterpartyToBoth(tx, input.companyId, counterpartyId);
       const document = await tx.accountingDocument.create({
         data: {
           companyId: input.companyId,
@@ -1605,6 +1610,8 @@ export class PrismaCrmRepository {
         });
       }
 
+      // CON-1, same reason as the opportunity bundle above.
+      await promoteCounterpartyToBoth(tx, input.companyId, counterpartyId);
       const document = await tx.accountingDocument.create({
         data: {
           companyId: input.companyId,

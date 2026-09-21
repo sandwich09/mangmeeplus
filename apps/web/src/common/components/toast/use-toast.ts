@@ -2,10 +2,11 @@
 
 import { createContext, useContext } from 'react';
 import { apiErrorMessage } from '@/common/api/api-error-message';
+import type { ToastAction } from './toast.model';
 
 export type ToastContextValue = {
-  success: (message: string) => void;
-  warning: (message: string) => void;
+  success: (message: string, action?: ToastAction) => void;
+  warning: (message: string, action?: ToastAction) => void;
   error: (input: unknown) => void;
 };
 

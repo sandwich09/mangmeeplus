@@ -46,6 +46,7 @@ const DESIGN_HANDOFF_NAV_ORDER = [
   'crmsettings',
   'salesdoc',
   'expenses',
+  'counterparties',
   'reimbursements',
   'journal',
   'tax',

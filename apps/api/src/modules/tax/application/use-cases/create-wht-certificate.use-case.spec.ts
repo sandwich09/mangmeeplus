@@ -20,7 +20,7 @@ const input = {
 } as any;
 
 /** Every write seam of the use case, plus every repository read, counted. */
-function makeSpy() {
+function makeSpy(addressJson: unknown = null) {
   const calls: string[] = [];
   const record = (name: string) => calls.push(name);
   const taxRepo = {
@@ -29,7 +29,7 @@ function makeSpy() {
       { id: 'event-1', eventType: 'WHT_PND3', grossAmount: '1000.0000', withheldAmount: '30.0000', taxAmount: '30.0000' },
     ]),
     prisma: { client: {
-      company: { findUnique: async () => (record('read:company'), { id: 'company-1', name: 'บริษัท', taxId: '9999999999999', addressJson: null }) },
+      company: { findUnique: async () => (record('read:company'), { id: 'company-1', name: 'บริษัท', taxId: '9999999999999', addressJson }) },
       companyTaxProfile: { findUnique: async () => (record('read:profile'), null) },
       whtIncomeCategory: { findUnique: async () => (record('read:category'), { code: '3', nameTh: 'ค่าบริการ' }) },
       whtCertificate: { create: async ({ data }: any) => (record('write:certificate'), {
@@ -127,6 +127,28 @@ describe('CreateWhtCertificateUseCase — cap.wht50bis/SYSTEM_INITIAL_ISSUE fenc
     assert.equal(prefill.incomeCategoryName, 'ค่าบริการ');
     assert.equal(taxPeriodId, 'period-1');
     assert.deepEqual(taxEventIds, ['event-1']);
+  });
+
+  /**
+   * BUG-1. The handoff prefill is what a person copies onto the external 50 ทวิ, and the payer
+   * address arrived as `{"line1":"123/4",...}` — unusable, and it had to be re-keyed by hand from
+   * somewhere else. A company that has not set its address yet still hands off, with null.
+   */
+  it('CLOSED route: the payer address is a printable line, not the stored JSON (BUG-1)', async () => {
+    const address = { line1: '123/4 ถนนสุขุมวิท', subdistrict: 'คลองเตย', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' };
+    const withAddress = useCase(guard({ state: 'CLOSED' }), makeSpy(address));
+    await assert.rejects(() => withAddress.value.execute(ctx, input));
+    assert.equal(withAddress.handoffs.created[0].prefill.payerSnapshot.address,
+      '123/4 ถนนสุขุมวิท คลองเตย คลองเตย กรุงเทพมหานคร 10110');
+
+    const unset = useCase(guard({ state: 'CLOSED' }), makeSpy(null));
+    await assert.rejects(() => unset.value.execute(ctx, input));
+    assert.equal(unset.handoffs.created[0].prefill.payerSnapshot.address, null);
+
+    // A row written before §4.1 fixed the shape must degrade, not brick the handoff (GAP-13).
+    const legacy = useCase(guard({ state: 'CLOSED' }), makeSpy('123/4 ถนนสุขุมวิท กรุงเทพ'));
+    await assert.rejects(() => legacy.value.execute(ctx, input));
+    assert.equal(legacy.handoffs.created[0].prefill.payerSnapshot.address, null);
   });
 
   it('CLOSED route: a retry replays one handoff instead of creating a second', async () => {

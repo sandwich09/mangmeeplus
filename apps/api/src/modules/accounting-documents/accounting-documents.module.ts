@@ -7,8 +7,10 @@ import {
   UpdateCounterpartyUseCase,
   GetCounterpartyUseCase,
   ListCounterpartiesUseCase,
+  PromoteSeenAddressUseCase,
 } from './application/use-cases/counterparty.use-case';
 import { EnsureCustomerCounterpartyUseCase } from './application/use-cases/ensure-customer-counterparty.use-case';
+import { EnsureVendorCounterpartyFromExpenseUseCase } from './application/use-cases/ensure-vendor-counterparty-from-expense.use-case';
 import {
   CreateDocumentUseCase,
   UpdateDocumentUseCase,
@@ -64,7 +66,9 @@ import { GetSalesDocumentRootAvailabilityUseCase } from './application/sales-doc
     UpdateCounterpartyUseCase,
     GetCounterpartyUseCase,
     ListCounterpartiesUseCase,
+    PromoteSeenAddressUseCase,
     EnsureCustomerCounterpartyUseCase,
+    EnsureVendorCounterpartyFromExpenseUseCase,
     // Document
     CreateDocumentUseCase,
     UpdateDocumentUseCase,
@@ -101,6 +105,9 @@ import { GetSalesDocumentRootAvailabilityUseCase } from './application/sales-doc
     GetDocumentUseCase,
     // CRM sale seam auto-links customers to accounting counterparties after quotation authorization.
     EnsureCustomerCounterpartyUseCase,
+    // The expense module grows the vendor registry through this one (spec §12, D4). No launch gate
+    // and no counterparty.manage requirement — it rides the expense write's own authorization.
+    EnsureVendorCounterpartyFromExpenseUseCase,
     // LINE AI accounting tools read through this permission-checked use case.
     ListDocumentsUseCase,
     // CRM reports consume aggregate revenue under crm.report.read, not raw documents.

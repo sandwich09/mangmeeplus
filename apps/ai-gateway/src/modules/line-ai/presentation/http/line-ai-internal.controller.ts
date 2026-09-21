@@ -378,7 +378,9 @@ export class LineAiInternalController {
       catch { return { ok: false, errorCode: 'OCR_JSON_PARSE_FAILED' }; }
       return { ok: false, errorCode: 'OCR_SCHEMA_INVALID' };
     }
-    const fields = parsed.fields ? applyOcrValueCrossCheck(parsed.fields, documentText) : undefined;
+    const fields = parsed.fields
+      ? applyOcrValueCrossCheck(parsed.fields, documentText, todayCivilDate(), parsed.classification?.documentKind)
+      : undefined;
     const classification = parsed.classification
       ? gateBusinessDocumentClassification(parsed.classification, fields, documentText)
       : undefined;
@@ -771,12 +773,15 @@ documentFamily: settled purchase evidence — receipts, tax invoices (full or ab
 Never report MISSING_TRANSACTION_TOTAL or MISSING_MONETARY_AMOUNT when you filled grandTotalAmount — a reason code must not contradict your own extracted fields.
 Whenever grandTotalAmount is filled, amountSignals MUST include the total NUMBER itself as one span, copied verbatim from the OCR text (e.g. "11,875.00" — the bare number, not a combined phrase; validation drops any span that does not appear character-for-character in the OCR text, and a total with no surviving amount signal is rejected).
 businessDirection is judged from the perspective of the business UPLOADING this document, never from the document's own voice — a receipt always speaks as the seller. The issuer/header block identifies the seller; the buyer appears only in a customer field (ลูกค้า, นาม, ผู้ซื้อ, ได้รับเงินจาก, Bill to, Customer). Supplier-issued settled evidence submitted for expense capture is PURCHASE_EXPENSE even when the buyer field is blank or absent (abbreviated tax invoices legally omit the buyer). Use SALES_RECEIVABLE only when the document is evidently issued BY the uploading business itself. If genuinely unresolvable, use UNKNOWN with AMBIGUOUS_BUSINESS_DIRECTION — never default to SALES_RECEIVABLE.
-Fields (omit irrelevant or unknown fields): vendorName, vendorIdentityEvidence, vendorEntityKind, vendorTaxId, vendorBranchCode, documentNumber, expenseDate YYYY-MM-DD, description, quantity, unitPrice, vatRate, subtotalAmount, discountAmount, taxableAmount, vatAmount, whtRate, whtAmount, whtBaseAmount, grandTotalAmount, currency, vatMode, lines, additionalCharges, categorySuggestion, confidence, missingFields.
+Fields (omit irrelevant or unknown fields): vendorName, vendorIdentityEvidence, vendorEntityKind, vendorTaxId, vendorBranchCode, vendorAddress, buyerAsPrinted, documentNumber, expenseDate YYYY-MM-DD, description, quantity, unitPrice, vatRate, subtotalAmount, discountAmount, taxableAmount, vatAmount, whtRate, whtAmount, whtBaseAmount, grandTotalAmount, currency, vatMode, lines, additionalCharges, categorySuggestion, confidence, missingFields.
 description, quantity, and unitPrice describe the document AS A WHOLE — they are the one-line summary used when the item block cannot be split. lines is where each printed item row goes.
 vendorName is the exact legal issuer/payee name from the SELLER block; do not append a branch description or a patient name. Never expand a brand into a legal company name from memory, including when the header is cropped. vendorIdentityEvidence is one exact issuer-name span (up to 320 characters). vendorEntityKind is JURISTIC only for explicit issuer company/registered partnership wording, INDIVIDUAL only for an explicit personal issuer/payee name, otherwise omit it. A buyer/patient/cashier/contact is never the payee. Use an ordinary transaction description without personal patient identifiers.
 vendorTaxId is the SELLER's Thai 13-digit เลขประจำตัวผู้เสียภาษี (labels: เลขประจำตัวผู้เสียภาษี / เลขประจำตัวผู้เสียภาษีอากร / เลขผู้เสียภาษี / TAX ID / TIN / เลขทะเบียนนิติบุคคล / ทะเบียนเลขที่). It may be printed with dashes or spaces (0-9940-0016-30-11) — return digits only. Look in the header AND the footer: hospitals and POS slips often print it in small type at the bottom. A full tax invoice prints seller AND buyer tax ids — return the seller's (issuer header side), never the buyer's. Never use a phone number.
 documentNumber is the document's own printed running number (labels: เลขที่ / เลขที่ใบเสร็จ / เลขที่เอกสาร / เลขที่ใบกำกับภาษี / No. / Receipt No. / Invoice No. / Bill No.). When the document uses a carbon-book pair, combine เล่มที่ X เลขที่ Y as "X/Y". documentNumber is NEVER the date, and never HN/AN/VN (hospital patient/visit numbers), queue or table numbers, POS terminal/merchant ids (TID/MID), card approval codes, the tax id, or a phone number. If only a date appears where the number should be, omit documentNumber.
 vendorBranchCode is the seller's issuing-branch designation printed next to the tax id: สำนักงานใหญ่ / สนญ / HO / HQ / Head Office → "00000"; สาขาที่ N / Branch N → the branch number as printed.
+vendorAddress is the SELLER's own printed street address, copied as one exact span from the issuer/header block (labels: ที่อยู่ / ที่ตั้ง / สำนักงาน / Address, or the unlabelled lines printed directly under the issuer name). Join the printed lines with single spaces and copy them verbatim; omit vendorAddress entirely when the page prints no seller address, and omit it when the span would exceed 500 characters. A full tax invoice prints BOTH parties' addresses, exactly as it prints both tax ids — return the SELLER's (issuer header side) and NEVER the buyer's. The buyer block (ลูกค้า / ชื่อลูกค้า / นาม / ผู้ซื้อ / ได้รับเงินจาก / Bill to / Ship to / Customer) is the business that sent you this document; its address filed as the seller's is saved against that shop and reused on every later document, so when you cannot tell which party an address belongs to, omit vendorAddress and add "vendorAddress" to missingFields. Never reconstruct an address from memory of the brand or chain, and never complete a cropped one.
+buyerAsPrinted is that buyer block itself, returned separately, and ONLY when the document identifies a buyer (full tax invoices do; abbreviated tax invoices, receipts and cash bills legally need not, and there you omit buyerAsPrinted). It has exactly this shape: {"name":"printed buyer name","taxId":"the buyer's 13-digit tax id, digits only","branchCode":"00000 for สำนักงานใหญ่, otherwise the printed branch number of สาขาที่ N","addressText":"the printed buyer address as one exact span"}. Every property is optional and each value is copied verbatim from the buyer block. These values are evidence for a human reviewer only: none of them may ever also appear in vendorName, vendorTaxId, vendorBranchCode or vendorAddress.
+Report "vendorAddress" in missingFields ONLY when documentKind is TAX_INVOICE, the full form that must carry the seller's address. On an ABBREVIATED_TAX_INVOICE, a RECEIPT, a HANDWRITTEN_CASH_BILL or any other kind, an absent seller address is not a gap: omit the field and report nothing about it.
 lines is optional and contains at most 40 printed item rows in document order. Each entry is {"description":"printed item name","quantity":"printed quantity, \"1\" when the row prints none","amount":"the row's own printed money amount","unitPrice":"the printed per-unit price, only when the row prints one","vatRate":"this row's own VAT rate as a decimal, ONLY when the page marks tax per row","vatTreatment":"ZERO_RATED|EXEMPT|NON_VAT, only together with vatRate \"0\"","evidenceSignal":"one short exact OCR span","confidence":0.0}.
 Per-row VAT (vatRate/vatTreatment) exists ONLY when the page itself marks individual rows, and Thai receipts do this with a one-letter code printed against the row amount: V (or a VAT column tick) means that row is taxed, while N, P, or an explicit ยกเว้นภาษี/ไม่คิด VAT note means it is not. Give vatRate for a row ONLY when such a marker is printed on that row, and quote the marker inside that row's evidenceSignal. A row marked untaxed takes vatRate "0" plus vatTreatment (EXEMPT for ยกเว้น items such as fresh food, ZERO_RATED for 0% supplies, NON_VAT for a non-registered supply). OMIT both fields on every row when the page states VAT once for the whole bill (a header "VAT Included", a single VAT TTL line, or a tax summary at the bottom) — that is the normal case and the document-level rate already covers it. Never infer from the item name that something is exempt: no printed marker means no per-row field. Return EVERY item row the item block prints: a bill listing two products must return two entries, never one merged entry and never only the first row. amount is the row's money column as printed, which on Thai bills is the extended amount for the whole row, not the per-unit price — พิซซ่า 1 524.00 is quantity "1" and amount "524.00", ปีกไก่ 2 298.00 is quantity "2" and amount "298.00" with unitPrice omitted because 149.00 is nowhere on the bill. Give unitPrice only when that per-unit number is itself printed. The row amounts must add up to the printed subtotal (or the printed total when no subtotal is printed); re-read the item block when they do not. Never put a service charge, delivery fee, VAT, discount, payment, change, or the total row into lines — those belong to additionalCharges, discountAmount, vatAmount, and grandTotalAmount. Omit lines entirely when the item block is unreadable or its rows cannot be told apart.
 additionalCharges is optional and contains at most 10 printed charges (only ROUNDING may be negative). Each entry is {"kind":"SERVICE_CHARGE"|"DELIVERY"|"PACKAGING"|"PLATFORM_FEE"|"TIP"|"ROUNDING"|"OTHER","description":"printed label","amount":"signed printed amount for ROUNDING; positive otherwise","vatRate":"optional decimal fraction including 0","evidenceSignal":"one short exact OCR span","confidence":0.0}. Put discounts, coupons and promotions only in discountAmount. Put signed settlement rounding only in additionalCharges with kind ROUNDING and vatRate "0"; it has no VAT/WHT of its own and is never also a discount. subtotalAmount is the merchandise/service subtotal BEFORE additionalCharges. For VAT_EXCLUDED documents, charge amount is its pre-VAT amount; for VAT_INCLUDED documents, it is its printed VAT-inclusive amount. Include vatRate only when the document explicitly prints or its complete VAT arithmetic proves the rate applies to that charge; use "0" only when the charge is explicitly/provably outside VAT. If charge tax treatment is unclear, omit its vatRate and let ERP reconciliation require review.
@@ -861,6 +866,13 @@ const RECEIPT_DATE_LABEL_RE = /(?:^|\|)\s*(?:[#*_]+\s*)?(?:TRANSACTION\s+DATE|TR
 const RECEIPT_TRANSACTION_DATE_LABEL_RE = /(?:^|\|)\s*(?:[#*_]+\s*)?(?:TRANSACTION\s+DATE|TRANS\s+DATE|TXN\s+DATE|SALE\s+DATE|วันที่ขาย|เวลาขาย)\s*(?:[*_]+\s*)?(?:[:=\-]|\|)?\s*(?:[*_]+\s*)?$/i;
 // Mirrors the review-form bound so a gate-surviving value is storable as entered.
 const MAX_DOCUMENT_NUMBER_CHARS = 50;
+/** Mirrors `ExpenseRecord.vendorAddressSnapshot` (VARCHAR 500) and the review form's own bound. */
+const MAX_VENDOR_ADDRESS_CHARS = 500;
+
+/** One-line view of a span the page printed across several lines — addresses always wrap. */
+function flattenSpan(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
 
 /** §19k: recover only one decimal money amount adjacent to an explicit VAT/tax label.
  *  Rates, unlabeled figures, multiple tax components, and computed values stay review-only. */
@@ -948,6 +960,9 @@ export function applyOcrValueCrossCheck(
   documentText: string,
   /** Injected in tests; the receipt-mode era rule needs a clock and this module owns no other one. */
   todayIso: string = todayCivilDate(),
+  /** This reading's own `classification.documentKind`. Only the FULL tax invoice must carry the
+   *  seller's address, so only there is a missing one a gap worth reporting (vendor-address §8). */
+  documentKind?: string,
 ): NonNullable<ReceiptOcrResponse['fields']> {
   // `receipt`, not chat (spec §5.2): this text is PRINTED, so DD/MM is the Thai convention and the
   // date is necessarily past. Chat's 2026-08-28 rule left 03/09/69 with no usable reading at all,
@@ -1138,6 +1153,21 @@ export function applyOcrValueCrossCheck(
       missing.add('vendorBranchCode');
     }
   }
+  // The seller/buyer separation, decided here rather than trusted from the model. `receiptIssuerText`
+  // has already dropped every buyer/customer/patient block, so an address the ISSUER side does not
+  // print cannot survive — and a buyer address in `vendorAddress` is the one failure this slice may
+  // not have, because that value auto-saves as the shop's address in the counterparty registry.
+  if (out.vendorAddress) {
+    const address = flattenSpan(mapThaiDigits(out.vendorAddress));
+    if (address && address.length <= MAX_VENDOR_ADDRESS_CHARS
+      && flattenSpan(issuerText).toUpperCase().includes(address.toUpperCase())) out.vendorAddress = address;
+    else delete out.vendorAddress;
+  }
+  // Vendor-address §8: the full form is the only kind that must carry a seller address. Reporting a
+  // gap on an abbreviated invoice or a cash bill would put a reason code on a document that is
+  // legally complete without one, so the name is reported there and removed everywhere else.
+  if (documentKind === 'TAX_INVOICE' && !out.vendorAddress) missing.add('vendorAddress');
+  else missing.delete('vendorAddress');
 
   if (missing.size > 0) out.missingFields = [...missing].slice(0, 20);
   // Recovery can empty a non-empty model report; [] must survive as [] (a reported empty
@@ -1158,8 +1188,42 @@ export function parseReceiptOcrJson(
       ? raw['fields'] as Record<string, unknown>
       : raw; // legacy root-level receipt field response
     const out: NonNullable<ReceiptOcrResponse['fields']> = {};
-    for (const key of ['vendorName', 'vendorIdentityEvidence', 'vendorEntityKind', 'vendorTaxId', 'vendorBranchCode', 'documentNumber', 'expenseDate', 'description', 'quantity', 'unitPrice', 'vatRate', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtRate', 'whtAmount', 'whtBaseAmount', 'grandTotalAmount', 'currency', 'vatMode'] as const) {
+    for (const key of ['vendorName', 'vendorIdentityEvidence', 'vendorEntityKind', 'vendorTaxId', 'vendorBranchCode', 'vendorAddress', 'documentNumber', 'expenseDate', 'description', 'quantity', 'unitPrice', 'vatRate', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtRate', 'whtAmount', 'whtBaseAmount', 'grandTotalAmount', 'currency', 'vatMode'] as const) {
       if (typeof rawFields[key] === 'string' && rawFields[key].trim()) out[key] = rawFields[key].trim() as never;
+    }
+    // A printed address wraps over several lines, so the model returns it with newlines it chose.
+    // Flatten to the one-line form the column stores; an over-long span is DROPPED rather than cut,
+    // because the API refuses a too-long address with a message instead of silently losing its tail.
+    if (out.vendorAddress) {
+      const address = flattenSpan(out.vendorAddress);
+      if (address.length > MAX_VENDOR_ADDRESS_CHARS) delete out.vendorAddress;
+      else out.vendorAddress = address;
+    }
+    // Slice 2 evidence only: the buyer block this page printed, kept apart from every seller field.
+    // Each value must be one the document provably prints (§19j), so a buyer identity invented here
+    // cannot later be mistaken for something the page said about us.
+    const rawBuyer = rawFields['buyerAsPrinted'];
+    if (rawBuyer && typeof rawBuyer === 'object' && !Array.isArray(rawBuyer)) {
+      const flatText = flattenSpan(mapThaiDigits(documentText));
+      const printed = (value: unknown, max: number): string | undefined => {
+        const span = typeof value === 'string' ? flattenSpan(value) : '';
+        return span && span.length <= max && flatText.toUpperCase().includes(span.toUpperCase()) ? span : undefined;
+      };
+      const buyer = rawBuyer as Record<string, unknown>;
+      const buyerAsPrinted: NonNullable<typeof out.buyerAsPrinted> = {};
+      const name = printed(buyer['name'], 200);
+      if (name) buyerAsPrinted.name = name;
+      const addressText = printed(buyer['addressText'], MAX_VENDOR_ADDRESS_CHARS);
+      if (addressText) buyerAsPrinted.addressText = addressText;
+      const taxId = typeof buyer['taxId'] === 'string'
+        ? collapseDigitSeparators(mapThaiDigits(buyer['taxId'])).replace(/\D/g, '') : '';
+      if (/^\d{13}$/.test(taxId) && collapseDigitSeparators(flatText).includes(taxId)) buyerAsPrinted.taxId = taxId;
+      // The branch code is a designation the prompt asks the reader to normalize ("00000" for
+      // สำนักงานใหญ่), not a span copied off the page, so it is shape-checked instead.
+      const branchDigits = typeof buyer['branchCode'] === 'string'
+        ? mapThaiDigits(buyer['branchCode']).replace(/\D/g, '') : '';
+      if (branchDigits.length >= 1 && branchDigits.length <= 5) buyerAsPrinted.branchCode = branchDigits.padStart(5, '0');
+      if (Object.keys(buyerAsPrinted).length > 0) out.buyerAsPrinted = buyerAsPrinted;
     }
     // Only an ISO-4217-shaped code survives. A symbol-only page prints no "USD" anywhere, so this
     // field is deliberately outside the §13 text cross-check below — the model maps $/€/¥ itself.

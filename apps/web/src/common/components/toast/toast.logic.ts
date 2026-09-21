@@ -1,6 +1,6 @@
 import { DEDUP_MS, MAX_VISIBLE, TOAST_DURATION_MS, type ToastItem, type ToastTone } from './toast.model';
 
-export type ToastInput = Pick<ToastItem, 'tone' | 'message'>;
+export type ToastInput = Pick<ToastItem, 'tone' | 'message' | 'action'>;
 
 export function visibleToasts(items: ToastItem[]): ToastItem[] {
   return [...items].reverse();

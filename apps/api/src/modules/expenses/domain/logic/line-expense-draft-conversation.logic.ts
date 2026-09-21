@@ -9,10 +9,22 @@ import {
   type LineIntakeCaptureHints,
   type LineIntakeExpenseItemHint,
 } from '@watchdog-bms/contracts';
+import { EXPENSE_VENDOR_ADDRESS_MAX_LENGTH } from './expense-vendor-identity.logic';
 
 export const MAX_LINE_EXPENSE_DRAFT_ITEMS = 40;
 const MAX_ITEMS = MAX_LINE_EXPENSE_DRAFT_ITEMS;
 const MAX_TEXT = 200;
+/** Vendor-address §11.3: the ONE question a receipt capture may ask, worded by the spec. */
+export const LINE_VENDOR_ADDRESS_PROMPT = 'อ่านที่อยู่ร้านจากใบไม่ได้ พิมพ์ที่อยู่ตามใบได้เลย หรือพิมพ์ ข้าม';
+/** "ข้าม" and the two ways people actually decline it. Declining is an answer, not a failure. */
+const VENDOR_ADDRESS_DECLINED_RE = /^(?:ข้าม|ไม่มี|ไม่ทราบ)$/u;
+/**
+ * The reply counts as the address only when it READS like one — a house number, one of the address
+ * words §7's own normalizer knows, or a postal code. The question invites a plain sentence, so a
+ * turn that is really about something else ("ยอดรวมเท่าไรนะ") must move on instead of being filed
+ * as the shop's address: this value auto-saves into the counterparty registry.
+ */
+const VENDOR_ADDRESS_ANSWER_RE = /^\d+[\d/\-]*\s|ถนน|ถ\.|ซอย|ซ\.|หมู่|ตำบล|ต\.|แขวง|อำเภอ|อ\.|เขต|จังหวัด|จ\.|\d{5}/u;
 const DECIMAL_PATTERN = /^(?:0|[1-9]\d{0,13})(?:\.\d{1,4})?$/u;
 
 export type LineExpenseDraftStatus =
@@ -69,6 +81,15 @@ export type LineExpenseDraftContinuation = {
     provisionalExpenseDate: string;
     vendorName?: string;
     businessPurpose?: string;
+    /** The seller address this draft collected over LINE; `persist` writes it to the record. */
+    vendorAddress?: string;
+    /**
+     * Vendor-address §11.3: set once, on a full tax invoice whose seller address could not be read.
+     * It is what makes the capture card ask, and the next answering turn clears it — so the question
+     * is asked exactly once, an answer, a "ข้าม" and silence all end it, and it never blocks (§8).
+     * Deliberately NOT a `collectLineExpenseDraftQuestions` entry: those are completeness gates.
+     */
+    vendorAddressAsk?: true;
   };
   items: LineExpenseDraftItem[];
   provenance: Record<string, {
@@ -568,6 +589,20 @@ export function applyLineExpenseDraftAnswer(input: {
     }
   }
 
+  // Vendor-address §11.3, asked once by the capture card. This turn ends it whatever it says, so
+  // the draft moves on after "ข้าม", after silence, and after a change of subject — and the answer
+  // lands in the same field the review form and the counterparty auto-save read.
+  if (input.state.header.vendorAddressAsk) {
+    delete next.header.vendorAddressAsk;
+    const answer = bounded(input.messageText, EXPENSE_VENDOR_ADDRESS_MAX_LENGTH);
+    if (accepted.size === 0 && answer && answer.length >= 6
+      && !VENDOR_ADDRESS_DECLINED_RE.test(answer) && VENDOR_ADDRESS_ANSWER_RE.test(answer)
+      && !lineExpenseDraftControl(input.messageText)) {
+      next.header.vendorAddress = answer;
+      record('D-ADDRESS');
+    }
+  }
+
   next.unresolvedQuestions = collectLineExpenseDraftQuestions(next, input.categories);
   return {
     state: next,
@@ -630,6 +665,7 @@ function acceptedFieldText(
 ): string {
   if (field === 'D-DATE') return `วันที่ ${state.header.expenseDate}`;
   if (field === 'D-VENDOR') return `ผู้ขาย ${state.header.vendorName}`;
+  if (field === 'D-ADDRESS') return `ที่อยู่ร้าน ${state.header.vendorAddress}`;
   if (field === 'D-PURPOSE') return `วัตถุประสงค์ ${state.header.businessPurpose}`;
   const item = state.items.find((candidate) => field.startsWith(`${candidate.itemRef}-`));
   if (!item) return 'ข้อมูลรายการ';

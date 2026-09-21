@@ -181,6 +181,16 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
     deepLinkTargets: ['expense'],
   },
   {
+    key: 'counterparties',
+    labelKey: 'module.counterparties',
+    buildHref: (companyId) => `/companies/${companyId}/counterparties`,
+    iconKey: 'GroupIcon',
+    navGroup: 'finance',
+    requiredAnyPermissions: ['accounting.counterparty.read', 'accounting.counterparty.manage'],
+    status: 'ready',
+    deepLinkTargets: ['counterparty'],
+  },
+  {
     key: 'journal',
     labelKey: 'module.journal',
     buildHref: (companyId) => `/companies/${companyId}/journal`,

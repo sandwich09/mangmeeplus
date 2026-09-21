@@ -13,6 +13,8 @@ type ValidationMessageKey =
   | 'expenses.v_vendor_required'
   | 'expenses.v_too_long'
   | 'expenses.v_tax_id_13'
+  | 'expenses.v_vendor_address_too_long'
+  | 'expenses.v_vendor_address_tax_invoice'
   | 'expenses.v_date_required'
   | 'expenses.v_date_future'
   | 'expenses.v_date_very_old'
@@ -133,7 +135,11 @@ function sourceSuppliesVatRate(values: ExpenseDraftReviewValues, index: number):
 
 export function validateExpenseReview(
   values: ExpenseDraftReviewValues,
-  opts: { today: string; aiGrandTotal?: string | null; whtAmount?: string | null },
+  opts: {
+    today: string; aiGrandTotal?: string | null; whtAmount?: string | null;
+    /** Vendor address spec §8: only a full tax invoice is nudged about a missing seller address. */
+    sourceDocumentType?: string;
+  },
 ): ExpenseFieldIssue[] {
   const issues: ExpenseFieldIssue[] = [];
 
@@ -155,6 +161,16 @@ export function validateExpenseReview(
   }
   if (values.vendorDocumentNumber.trim().length > 50) {
     addIssue(issues, 'vendorDocumentNumber', 'error', 'expenses.v_too_long', { max: '50' });
+  }
+
+  // Vendor address spec §8 (D5). Two different answers, and only one of them stops a save: too long
+  // is the reviewer's to fix and says how, while a full tax invoice with no address is a nudge —
+  // `warn`, so it never reaches the error count that disables บันทึก (AC04).
+  const vendorAddress = values.vendorAddressSnapshot.trim();
+  if (vendorAddress.length > 500) {
+    addIssue(issues, 'vendorAddressSnapshot', 'error', 'expenses.v_vendor_address_too_long');
+  } else if (!vendorAddress && opts.sourceDocumentType === 'TAX_INVOICE') {
+    addIssue(issues, 'vendorAddressSnapshot', 'warn', 'expenses.v_vendor_address_tax_invoice');
   }
 
   const expenseDate = isoDate(values.expenseDate);

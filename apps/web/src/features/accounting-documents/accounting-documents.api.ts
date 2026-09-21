@@ -43,7 +43,10 @@ export async function listCounterparties(companyId: string, params?: { page?: nu
   return apiFetch(`/v1/companies/${companyId}/accounting/counterparties${qs(params)}`);
 }
 
-export async function createCounterparty(companyId: string, body: { type: string; displayName: string; taxId?: string; email?: string; phone?: string }): Promise<CounterpartySummary> {
+// `type` is server-owned now (spec A5): a row created from a purchase is a vendor, and it is
+// promoted to both the moment it is used on the sales side. The API rejects unknown body keys, so
+// sending it here is a 400, not a no-op.
+export async function createCounterparty(companyId: string, body: { displayName: string; taxId?: string; email?: string; phone?: string }): Promise<CounterpartySummary> {
   return apiFetch(`/v1/companies/${companyId}/accounting/counterparties`, { method: 'POST', body: JSON.stringify(body) });
 }
 

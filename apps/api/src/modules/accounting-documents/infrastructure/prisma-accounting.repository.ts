@@ -1,8 +1,11 @@
 import { Injectable, ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
+import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type {
   CounterpartyRecord,
+  CounterpartyUsage,
+  ListCounterpartiesFilter,
   DocumentRecord,
   DocumentLineRecord,
   PaymentRecord,
@@ -26,6 +29,7 @@ import {
   calculateUnappliedCredit,
 } from '../domain/logic/accounting-totals.logic';
 import { initialPostingStatus, validateCumulativeCreditNote, validateOutputTaxDocument } from '../domain/logic/accounting-status.logic';
+import { normalizeBranchCode, vendorMatchKey } from '../domain/logic/vendor-counterparty-match.logic';
 import { validateAccountingPaymentAllocation } from '../domain/logic/accounting-money-validation.logic';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import type { AccountingDocumentType, AccountingDocumentStatus, AccountingQuotationApprovalStatus, ResolveTransactionTaxPreviewDto, RevenueCategorySummary, CreateRevenueCategoryInput, UpdateRevenueCategoryInput } from '@watchdog-bms/contracts';
@@ -56,6 +60,25 @@ export type ConvertQuotationResult = { document: DocumentRecord; didConvert: boo
 export type CreatePaymentResult = { payment: PaymentRecord; replayed: boolean };
 type BeforeAccountingMutation = (db: any) => Promise<void>;
 
+/**
+ * CON-1. `AccountingCounterparty.type` has exactly one real reader: the AI revenue tool filters
+ * received payments on `type in ['CUSTOMER','BOTH']` (`erp-tools.use-case.ts:375`). A counterparty
+ * born from a purchase is VENDOR, so the first time the sales side uses it its revenue would vanish
+ * from the LINE summary — silently, which is the one failure mode this feature may not ship (D5).
+ * The promotion therefore rides `db`, the same transaction as the sales write that caused it, and
+ * is never a background job: a crash between the two would leave exactly that silent gap.
+ *
+ * Conditional `updateMany` rather than read-then-write: idempotent, one statement, and a CUSTOMER
+ * row can never be dragged backwards by a concurrent purchase.
+ */
+export async function promoteCounterpartyToBoth(db: any, companyId: string, counterpartyId?: string | null): Promise<void> {
+  if (!counterpartyId) return;
+  await db.accountingCounterparty.updateMany({
+    where: { id: counterpartyId, companyId, type: 'VENDOR' as any },
+    data: { type: 'BOTH' as any },
+  });
+}
+
 @Injectable()
 export class PrismaAccountingRepository {
   async resolveCreateBranchId(companyId: string, scopes: BranchScopes, selectedBranchId?: string | null): Promise<string> {
@@ -81,6 +104,7 @@ export class PrismaAccountingRepository {
         legalName: input.legalName,
         taxId: input.taxId,
         branchCode: input.branchCode,
+        entityKind: input.entityKind as any,
         email: input.email,
         phone: input.phone,
         billingAddressJson: input.billingAddressJson as any,
@@ -94,23 +118,36 @@ export class PrismaAccountingRepository {
   }
 
   async updateCounterparty(input: UpdateCounterpartyInput, beforeMutation?: BeforeAccountingMutation): Promise<CounterpartyRecord> {
+    const data = {
+      displayName: input.displayName,
+      legalName: input.legalName,
+      taxId: input.taxId,
+      branchCode: input.branchCode,
+      entityKind: input.entityKind as any,
+      email: input.email,
+      phone: input.phone,
+      billingAddressJson: input.billingAddressJson as any,
+      shippingAddressJson: input.shippingAddressJson as any,
+      status: input.status as any,
+      updatedByUserId: input.updatedByUserId,
+    };
     const update = async (db: any) => {
       await beforeMutation?.(db);
-      const row = await db.accountingCounterparty.update({
-      where: { id: input.counterpartyId },
-      data: {
-        displayName: input.displayName,
-        legalName: input.legalName,
-        taxId: input.taxId,
-        branchCode: input.branchCode,
-        email: input.email,
-        phone: input.phone,
-        billingAddressJson: input.billingAddressJson as any,
-        shippingAddressJson: input.shippingAddressJson as any,
-        status: input.status as any,
-        updatedByUserId: input.updatedByUserId,
-      },
-      });
+      // §11.1: two people on the counterparty screen at once. `updateMany` with the loaded
+      // `updatedAt` in the WHERE makes the check-and-write one statement, so the loser is told to
+      // reload instead of quietly flattening the other edit.
+      if (input.expectedUpdatedAt) {
+        const changed = await db.accountingCounterparty.updateMany({
+          where: { id: input.counterpartyId, companyId: input.companyId, updatedAt: input.expectedUpdatedAt },
+          data,
+        });
+        if (changed.count === 0) {
+          throw new ConflictException({ code: 'counterparty_conflict', message: 'Counterparty changed; reload before saving.' });
+        }
+        const reread = await db.accountingCounterparty.findFirst({ where: { id: input.counterpartyId, companyId: input.companyId } });
+        return this.toCounterpartyRecord(reread);
+      }
+      const row = await db.accountingCounterparty.update({ where: { id: input.counterpartyId }, data });
       return this.toCounterpartyRecord(row);
     };
     return beforeMutation ? this.prisma.client.$transaction(update) : update(this.prisma.client);
@@ -121,13 +158,133 @@ export class PrismaAccountingRepository {
     return row ? this.toCounterpartyRecord(row) : null;
   }
 
-  async listCounterparties(companyId: string, page = 1, pageSize = 20): Promise<{ data: CounterpartyRecord[]; total: number }> {
+  /**
+   * A2/CON-12: finds the row this vendor already has, **without filtering on `type`** — CRM and
+   * procurement both create counterparties for the same company and a type filter would create a
+   * duplicate beside every one of them. Oldest ACTIVE row wins (GAP-8: the column has no unique
+   * index, so duplicates exist and the answer must at least be stable between two saves).
+   */
+  async findCounterpartyByVendorKey(
+    companyId: string,
+    key: { kind: 'TAX_ID'; taxId: string; branchCode: string } | { kind: 'NAME'; name: string },
+  ): Promise<CounterpartyRecord | null> {
+    if (key.kind === 'TAX_ID') {
+      const rows = await this.prisma.client.accountingCounterparty.findMany({
+        where: { companyId, status: 'ACTIVE' as any, taxId: key.taxId },
+        orderBy: { createdAt: 'asc' },
+      });
+      // Branch code is compared in memory because storage keeps `null` for head office while the
+      // key says `'00000'` (CON-8) — SQL cannot express that equality without writing the
+      // placeholder into the column, which §6 forbids.
+      const match = rows.find((row) => (normalizeBranchCode(row.branchCode) ?? '00000') === key.branchCode);
+      return match ? this.toCounterpartyRecord(match) : null;
+    }
+    // Name fallback: normalization strips case, punctuation and spacing (and folds Thai สระอำ), so
+    // it cannot be a SQL predicate.
+    // ponytail: reads one company's counterparties and matches in memory — an SME list, not a
+    // table scan. If a tenant's registry ever gets big enough to feel this, store the normalized
+    // name in its own indexed column and make it a `findFirst`; matching stays in the domain logic.
+    const rows = await this.prisma.client.accountingCounterparty.findMany({
+      where: { companyId, status: 'ACTIVE' as any },
+      orderBy: { createdAt: 'asc' },
+    });
+    const match = rows.find((row) => {
+      const rowKey = vendorMatchKey({ taxId: row.taxId, branchCode: row.branchCode, name: row.displayName });
+      return rowKey?.kind === 'NAME' && rowKey.name === key.name;
+    });
+    return match ? this.toCounterpartyRecord(match) : null;
+  }
+
+  /**
+   * The auto-save write (§7 cases b/c) and the counterparty screen's "use this as primary" share
+   * this one statement: address JSON, optionally `entityKind` (CON-7), and the CUSTOMER -> BOTH
+   * promotion a matched sales-side row needs when a purchase starts using it (§7).
+   */
+  async saveCounterpartyVendorFields(input: {
+    companyId: string;
+    counterpartyId: string;
+    billingAddressJson?: Record<string, unknown>;
+    entityKind?: string;
+    promoteToBoth?: boolean;
+    updatedByUserId: string;
+  }): Promise<void> {
+    await this.prisma.client.accountingCounterparty.updateMany({
+      where: { id: input.counterpartyId, companyId: input.companyId },
+      data: {
+        ...(input.billingAddressJson !== undefined && { billingAddressJson: input.billingAddressJson as any }),
+        ...(input.entityKind !== undefined && { entityKind: input.entityKind as any }),
+        ...(input.promoteToBoth && { type: 'BOTH' as any }),
+        updatedByUserId: input.updatedByUserId,
+      },
+    });
+  }
+
+  async listCounterparties(
+    companyId: string,
+    page = 1,
+    pageSize = 20,
+    filter: ListCounterpartiesFilter = {},
+  ): Promise<{ data: CounterpartyRecord[]; total: number }> {
     const skip = (page - 1) * pageSize;
+    const where: any = { companyId };
+    if (filter.search) {
+      const search = filter.search.trim();
+      if (search) {
+        where.OR = [
+          { displayName: { contains: search, mode: 'insensitive' } },
+          { legalName: { contains: search, mode: 'insensitive' } },
+          { taxId: { contains: search } },
+        ];
+      }
+    }
+    // A5: "เคยซื้อ / เคยขาย" is what the documents say, not what `type` says — a row procurement
+    // created as VENDOR that has never been bought from is not "bought".
+    if (filter.usage === 'sold') {
+      where.AND = [...(where.AND ?? []), { OR: [{ documents: { some: {} } }, { payments: { some: { direction: 'RECEIVED' as any } } }] }];
+    } else if (filter.usage === 'bought') {
+      const bought = await this.prisma.client.expenseRecord.findMany({
+        where: { companyId, vendorCounterpartyId: { not: null } },
+        select: { vendorCounterpartyId: true },
+        distinct: ['vendorCounterpartyId'],
+      });
+      // `vendorCounterpartyId` is a bare column, not a Prisma relation, so there is no `some` filter
+      // to write here. One company's distinct vendor ids is a short list.
+      where.id = { in: bought.map((row) => row.vendorCounterpartyId!) };
+    }
+    if (filter.addressMissing) {
+      // GAP-11's sibling for the registry. Only the two shapes that mean "nothing to print":
+      // no JSON at all, or the v2 shape with an empty `addressText`. A legacy free-form object is
+      // left out rather than guessed at — `counterpartyAddressText` may still find text in it.
+      where.AND = [...(where.AND ?? []), { OR: [{ billingAddressJson: { equals: Prisma.DbNull } }, { billingAddressJson: { path: ['addressText'], equals: '' } }] }];
+    }
     const [data, total] = await Promise.all([
-      this.prisma.client.accountingCounterparty.findMany({ where: { companyId }, skip, take: pageSize, orderBy: { displayName: 'asc' } }),
-      this.prisma.client.accountingCounterparty.count({ where: { companyId } }),
+      this.prisma.client.accountingCounterparty.findMany({ where, skip, take: pageSize, orderBy: { displayName: 'asc' } }),
+      this.prisma.client.accountingCounterparty.count({ where }),
     ]);
     return { data: data.map(this.toCounterpartyRecord), total };
+  }
+
+  /** §12 detail extras: the usage badges and the last five purchases from this counterparty. */
+  async counterpartyUsage(companyId: string, counterpartyId: string): Promise<CounterpartyUsage> {
+    const [bought, sold, recent] = await Promise.all([
+      this.prisma.client.expenseRecord.count({ where: { companyId, vendorCounterpartyId: counterpartyId } }),
+      this.prisma.client.accountingDocument.count({ where: { companyId, counterpartyId } }),
+      this.prisma.client.expenseRecord.findMany({
+        where: { companyId, vendorCounterpartyId: counterpartyId },
+        orderBy: { expenseDate: 'desc' },
+        take: 5,
+        select: { id: true, expenseDate: true, vendorDocumentNumber: true, grandTotalAmount: true },
+      }),
+    ]);
+    return {
+      usageCounts: { bought, sold },
+      recentExpenses: recent.map((row) => ({
+        id: row.id,
+        expenseDate: civilDate(row.expenseDate),
+        ...(row.vendorDocumentNumber ? { vendorDocumentNumber: row.vendorDocumentNumber } : {}),
+        grandTotalAmount: row.grandTotalAmount.toString(),
+      })),
+    };
   }
 
   // ---- Document ----
@@ -164,6 +321,10 @@ export class PrismaAccountingRepository {
 
   private async createDocumentWithClient(db: any, input: CreateDocumentInput): Promise<DocumentRecord> {
     requireTransactionBranchId(input.branchId);
+    // CON-1, on `db` so it commits or rolls back with the document itself. This is the single
+    // physical `accountingDocument.create` in the module, so it also covers quotation conversion
+    // and both legs of record-simple-income without repeating the call.
+    await promoteCounterpartyToBoth(db, input.companyId, input.counterpartyId);
     const computedLines = input.lines.map((l) => calculateLine({ ...l, vatMode: input.vatMode, discountAmount: l.discountAmount ?? '0' }));
     const totals = calculateDocumentTotals(input.lines.map((l, i) => ({
       lineSubtotalAmount: computedLines[i].lineSubtotalAmount,
@@ -349,6 +510,8 @@ export class PrismaAccountingRepository {
 
     return (this.prisma.client as any).$transaction(async (tx: any) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${documentId}:accounting-document-lifecycle`}))`;
+      // CON-1: a draft update can point the document at a different counterparty than the create did.
+      await promoteCounterpartyToBoth(tx, input.companyId, input.counterpartyId);
       const changed = await tx.accountingDocument.updateMany({
         where: {
           id: documentId,
@@ -1012,6 +1175,10 @@ export class PrismaAccountingRepository {
         : null;
       const counterpartySnapshot = allocationTarget?.counterpartySnapshotJson
         ?? (liveCounterparty ? { id: liveCounterparty.id, displayName: liveCounterparty.displayName, taxId: liveCounterparty.taxId } : undefined);
+      // CON-1: a RECEIVED payment is exactly what the AI revenue tool counts, and it drops any
+      // counterparty still typed VENDOR. Promote inside this transaction, so the money and the
+      // type that makes it visible commit together.
+      if (input.direction === 'RECEIVED') await promoteCounterpartyToBoth(tx, input.companyId, input.counterpartyId);
       const payment = await tx.accountingPayment.create({
         data: {
           companyId: input.companyId,
@@ -1806,7 +1973,8 @@ export class PrismaAccountingRepository {
     return {
       id: row.id, companyId: row.companyId, type: row.type, displayName: row.displayName,
       legalName: row.legalName ?? undefined, taxId: row.taxId ?? undefined,
-      branchCode: row.branchCode ?? undefined, email: row.email ?? undefined, phone: row.phone ?? undefined,
+      branchCode: row.branchCode ?? undefined, entityKind: row.entityKind ?? undefined, vatStatus: row.vatStatus ?? undefined,
+      email: row.email ?? undefined, phone: row.phone ?? undefined,
       billingAddressJson: row.billingAddressJson ?? undefined, shippingAddressJson: row.shippingAddressJson ?? undefined,
       status: row.status, createdByUserId: row.createdByUserId, updatedByUserId: row.updatedByUserId ?? undefined,
       createdAt: row.createdAt, updatedAt: row.updatedAt,
