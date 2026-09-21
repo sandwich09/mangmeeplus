@@ -58,7 +58,8 @@ const CARD_VIEW_CASES = [
     tableTestId: 'reimbursements-mine-table',
     cardListTestId: 'reimbursements-mine-card-list',
     cardTestId: 'reimbursements-mine-card',
-    url: /\/reimbursements\?tab=mine&focus=[^&]+$/,
+    // A card opens the claim's journey page (reimbursement step journey, Phase 2).
+    url: /\/reimbursements\/[^/?#]+$/,
     // 9, not 8. The header has carried nine columns since before this branch — the region is
     // byte-identical to origin/develop — so the constant had simply gone stale and the desktop
     // parity test was failing on develop too. Corrected rather than left red, since a test

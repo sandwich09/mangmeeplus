@@ -3,48 +3,40 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ThemedDate } from '@/common/components/field/ThemedDate';
-import { ThemedFile } from '@/common/components/field/ThemedFile';
-import { ReimbursementSourceFacts } from './ReimbursementSourceFacts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { Modal } from '@/common/components/modal';
-import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/components/document-preview';
-import { downloadDocumentAsPdf } from '@/common/files/download-document-pdf';
 import { EmptyState } from '@/common/components/state/EmptyState';
 import { LoadingState } from '@/common/components/state/LoadingState';
-import { REASON_MAX_LENGTH, sanitizeReasonInput } from '@/common/forms/sanitize';
-import {
-  ATTACHMENT_UPLOAD_ACCEPT,
-} from '@/common/files/upload-file.logic';
-import { RECEIPT_UPLOAD_ACCEPT } from '../expenses/expense-upload.logic';
 import {
   listReimbursements, submitReimbursement, cancelReimbursement,
   reopenReimbursement, getReimbursement,
-  setLineReceipt, previewReimbursementClaimForm,
+  setLineReceipt,
   listApprovalQueue, approveReimbursement, rejectReimbursement,
-  listFinanceQueue, financeReviewReimbursement, recordReimbursementPayment,
+  listFinanceQueue, financeReviewReimbursement,
   voidReimbursementPayment,
   getReimbursementPolicy, listReimbursementApproverOptions, updateReimbursementPolicy,
-  signReimbursementClaimForm, uploadSignedClaimFormCopy, fetchAttachmentPreviewBlob,
+  signReimbursementClaimForm, uploadSignedClaimFormCopy,
 } from './reimbursements.api';
 import {
-  REQUEST_STATUS_LABELS, REQUEST_STATUS_TONES, PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
-  FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
-  APPROVAL_STEP_STATUS_LABELS, REIMBURSEMENT_CREATE_UNAVAILABLE,
-  CLAIM_SIGNATURE_ROLES, CLAIM_SIGNATURE_ROLE_LABELS, canUploadSignedCopy, eligibleSignatureRoles,
-  canVoidRecordedPayment, currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness, type ClaimSignatureRole,
+  REQUEST_STATUS_LABELS, PAYMENT_STATUS_LABELS,
+  FINANCE_REVIEW_LABELS, REIMBURSEMENT_CREATE_UNAVAILABLE,
+  currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness, type ClaimSignatureRole,
 } from './reimbursements.model';
 import {
-  baht0, dateShort, ICON, KPI, StatCard, ErrorBanner, InfoBanner,
+  baht0, dateShort, ICON, KPI, StatCard, ErrorBanner,
   inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
 } from '../expenses/ExpensesUi';
 import {
-  validatePaymentForm, sumLineAmounts, summariseQueue, matchesSearch, pageBounds, buildClaimTimeline,
+  summariseQueue, matchesSearch, pageBounds,
   formatMoney, parseHubTab, visibleHubTabs, withAssignedApprovalTab, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
-  type ApprovalFieldDiff, type HubTab,
+  isMissingSavedSignatureError, policyDecisionPreview, type HubTab,
 } from './reimbursements.logic';
-import { todayCivilDate, type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
+import {
+  ClaimDetailSections, ClaimSummaryCard, MissingSavedSignatureModal, PaymentBadge, PaymentForm, ReasonDialog, RejectDialog,
+  StaleApprovalDialog, StatusBadge, VoidPaymentDialog, financeActionLabel, useClaimDocumentPreview,
+} from './ReimbursementDetailSections';
+import { type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
 /** Every banner in this feature goes through here, so API error codes never reach the user raw. */
@@ -74,218 +66,10 @@ const approverRoleName = (option?: Pick<ReimbursementApproverRoleOption, 'key' |
   return option.name === STANDARD_ROLE_NAMES[option.key] ? (APPROVER_ROLE_LABELS[option.key] ?? option.name) : option.name;
 };
 const shortDate = (iso?: string) => dateShort(iso);
-const attachmentPreviewMimeType = (fileName: string): 'application/pdf' | 'image/png' | 'image/jpeg' => (
-  /\.pdf$/i.test(fileName) ? 'application/pdf' : /\.png$/i.test(fileName) ? 'image/png' : 'image/jpeg'
-);
-type ReimbursementDocumentPreviewTarget =
-  | { kind: 'claim-form'; reimbursementId: string; name: string }
-  | { kind: 'attachment'; reimbursementId: string; attachmentId: string; fileName: string; mimeType: 'application/pdf' | 'image/png' | 'image/jpeg' };
-
-/**
- * FINANCE_REVIEW + อนุมัติจ่าย means the decision is already durable and only the expense
- * projections are missing (the saga threw between its two phases). The same finance-decision
- * endpoint resumes it, so the button offers to continue rather than to approve twice.
- */
-const financeActionLabel = (row: { financeReviewStatus?: string }) =>
-  (row.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการต่อ' : 'อนุมัติจ่าย');
-
-function StatusBadge({ status }: { status: string }) {
-  return <MangmeeBadge tone={REQUEST_STATUS_TONES[status] ?? 'slate'}>{REQUEST_STATUS_LABELS[status] ?? status}</MangmeeBadge>;
-}
-function PaymentBadge({ status }: { status: string }) {
-  return <MangmeeBadge tone={PAYMENT_STATUS_TONES[status] ?? 'slate'}>{PAYMENT_STATUS_LABELS[status] ?? status}</MangmeeBadge>;
-}
 /** A claim never said whose desk it sits on. Terminal claims have none, and render nothing. */
 function CurrentDeskLine({ row }: { row: { currentDesk?: { kind?: string; names?: string[] } } }) {
   const desk = currentDeskText(row.currentDesk);
   return desk ? <div className="mt-1 truncate text-xs text-gray-500" data-testid="reimbursement-current-desk">อยู่ที่ {desk}</div> : null;
-}
-function RejectDialog({ requestNo, busy, error, onClose, onConfirm }: {
-  requestNo?: string;
-  busy?: boolean;
-  error?: string | null;
-  onClose: () => void;
-  onConfirm: (reason: string) => void;
-}) {
-  const [reason, setReason] = useState('');
-  const reasonRef = useRef<HTMLTextAreaElement>(null);
-  const trimmed = reason.trim();
-  // `autoFocus` loses to Modal's own mount effect, which focuses the dialog container.
-  // Modal is the child component, so its effect runs first and this one wins.
-  useEffect(() => { reasonRef.current?.focus(); }, []);
-  return (
-    <Modal open title={`ปฏิเสธคำขอ ${requestNo ?? ''}`.trim()} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
-      <div className="space-y-3">
-        <p className="text-sm text-gray-500">ระบุเหตุผลที่ปฏิเสธ ผู้ขอจะเห็นข้อความนี้</p>
-        {error && <ErrorBanner message={error} />}
-        <textarea ref={reasonRef} className={cx(inputClass, 'min-h-24 resize-y')} value={reason}
-          onChange={e => setReason(sanitizeReasonInput(e.target.value))} maxLength={REASON_MAX_LENGTH}
-          placeholder="เช่น ยอดไม่ตรงกับใบเสร็จ" />
-        <div className="text-right text-xs text-gray-400 tabular-nums">{reason.length}/500</div>
-        <div className="flex justify-end gap-2">
-          <button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button>
-          <button type="button" className={dangerClass} disabled={busy || !trimmed} aria-busy={Boolean(busy)}
-            onClick={() => onConfirm(trimmed)}>ปฏิเสธคำขอ</button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-function ReasonDialog({ title, description, confirmLabel, busy, error, danger = false, onClose, onConfirm }: {
-  title: string;
-  description: string;
-  confirmLabel: string;
-  busy?: boolean;
-  error?: string | null;
-  danger?: boolean;
-  onClose: () => void;
-  onConfirm: (reason: string) => void;
-}) {
-  const [reason, setReason] = useState('');
-  const reasonRef = useRef<HTMLTextAreaElement>(null);
-  const trimmed = reason.trim();
-  useEffect(() => { reasonRef.current?.focus(); }, []);
-  return (
-    <Modal open title={title} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
-      <div className="space-y-3">
-        <p className="text-sm text-gray-500">{description}</p>
-        {error && <ErrorBanner message={error} />}
-        <textarea ref={reasonRef} className={cx(inputClass, 'min-h-24 resize-y')} value={reason}
-          onChange={e => setReason(sanitizeReasonInput(e.target.value))} maxLength={REASON_MAX_LENGTH}
-          placeholder="ระบุเหตุผลให้ชัดเจน" />
-        <div className="text-right text-xs text-gray-400 tabular-nums">{reason.length}/500</div>
-        <div className="flex justify-end gap-2">
-          <button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button>
-          <button type="button" className={danger ? dangerClass : btnClass} disabled={busy || !trimmed} aria-busy={Boolean(busy)}
-            onClick={() => onConfirm(trimmed)}>{confirmLabel}</button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-function VoidPaymentDialog({ payment, busy, error, onClose, onConfirm }: {
-  payment: any;
-  busy?: boolean;
-  error?: string | null;
-  onClose: () => void;
-  onConfirm: (reason: string) => void;
-}) {
-  const [reason, setReason] = useState('');
-  const [acknowledged, setAcknowledged] = useState(false);
-  const trimmed = reason.trim();
-  return (
-    <Modal open title={`ยกเลิกการจ่าย ${payment.paymentNo ?? ''}`.trim()} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
-      <div className="space-y-4">
-        <ErrorBanner message="ระบบจะกลับรายการจ่ายและรายการบัญชีที่เกี่ยวข้อง ใบเบิกจะกลับไปสถานะรอจ่าย" />
-        {error && <ErrorBanner message={error} />}
-        <div>
-          <label className="mb-1.5 block text-xs font-semibold text-gray-600">เหตุผล *</label>
-          <textarea className={cx(inputClass, 'min-h-24 resize-y')} value={reason}
-            onChange={e => setReason(sanitizeReasonInput(e.target.value))} maxLength={REASON_MAX_LENGTH}
-            placeholder="เช่น บันทึกเลขอ้างอิงผิด หรือยกเลิกรายการโอนแล้ว" />
-          <div className="mt-1 text-right text-xs text-gray-400 tabular-nums">{reason.length}/500</div>
-        </div>
-        <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-600">
-          <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)} />
-          <span>ยืนยันว่าได้ตรวจสอบและจัดการรายการเงินจริงกับธนาคาร/ผู้รับเงินแล้ว</span>
-        </label>
-        <div className="flex justify-end gap-2">
-          <button type="button" className={ghostClass} onClick={onClose}>กลับ</button>
-          <button type="button" className={dangerClass} disabled={busy || !trimmed || !acknowledged} aria-busy={Boolean(busy)}
-            onClick={() => onConfirm(trimmed)}>ยืนยันยกเลิกการจ่าย</button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, error, onClose, onConfirm }: {
-  requestNo?: string;
-  diff: ApprovalFieldDiff[];
-  lines: any[];
-  currency: string;
-  busy: boolean;
-  error: string | null;
-  onClose: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <Modal
-      open
-      title={`ตรวจสอบข้อมูลล่าสุด ${requestNo ?? ''}`.trim()}
-      size="lg"
-      closeLabel="ปิด"
-      onClose={onClose}
-      footer={(
-        <>
-          <button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button>
-          <button type="button" className={successBtn} style={successBtnStyle} disabled={busy} aria-busy={Boolean(busy)} onClick={onConfirm}>
-            อนุมัติด้วยข้อมูลล่าสุด
-          </button>
-        </>
-      )}
-    >
-      <div className="space-y-4">
-        <ErrorBanner message="คำขอนี้ถูกแก้ไขหลังจากส่งอนุมัติ กรุณาตรวจสอบข้อมูลล่าสุดก่อนตัดสินใจ" />
-        <div className="overflow-x-auto">
-          <table className="mangmee-table">
-            <thead>
-              <tr><th>ข้อมูล</th><th>ก่อนหน้า</th><th>ปัจจุบัน</th></tr>
-            </thead>
-            <tbody>
-              {diff.map(row => (
-                <tr key={row.key} className={row.changed ? 'bg-warning-50' : 'text-gray-500'}>
-                  <td>{row.label}</td>
-                  <td className={row.changed ? 'text-gray-400 line-through' : 'text-gray-500'}>{row.before}</td>
-                  <td className={row.changed ? 'font-bold text-gray-900' : 'text-gray-500'}>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span>{row.after}</span>
-                      {row.changed && <MangmeeBadge tone="amber">แก้ไขแล้ว</MangmeeBadge>}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {diff.every(row => !row.changed) && (
-          <InfoBanner message="ระบบตรวจพบว่าคำขอถูกแก้ไข แต่ระบุจุดที่เปลี่ยนจากข้อมูลในคิวไม่ได้ (เช่น แก้ไขรายละเอียดรายการหรือวันที่) กรุณาตรวจรายการทั้งหมดด้านล่าง" />
-        )}
-        <div>
-          <h4 className="mb-2 text-sm font-bold text-gray-900">รายการปัจจุบัน</h4>
-          <div className="overflow-x-auto">
-            <table className="mangmee-table">
-              <thead>
-                <tr><th>#</th><th>วันที่</th><th>รายการ</th><th>หมวด</th><th className="text-right">จำนวนเงิน</th></tr>
-              </thead>
-              <tbody>
-                {lines.length === 0 ? (
-                  <tr><td colSpan={5} className="text-center text-gray-400">ไม่มีรายการ</td></tr>
-                ) : lines.map((line: any) => (
-                  <tr key={line.id ?? line.lineNo}>
-                    <td className="text-gray-500">{line.lineNo}</td>
-                    <td>{shortDate(line.incurredDate)}</td>
-                    <td>{line.description}</td>
-                    <td className="text-gray-500">{line.categoryLabelSnapshot ?? line.categoryKey}</td>
-                    <td className="text-right tabular-nums">{formatMoney(line.amount, currency)}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="bg-gray-50 font-medium">
-                  <td colSpan={4}>รวมเป็นเงิน</td>
-                  <td className="text-right tabular-nums">{formatMoney(sumLineAmounts(lines), currency)}</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
-        {error && <ErrorBanner message={error} />}
-      </div>
-    </Modal>
-  );
 }
 
 function TablePager({ from, to, total, page, totalPages, onPage }: {
@@ -335,26 +119,16 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   const requestedTab = searchParams.get('tab');
   // Deep-link changes also select the queue when this hub is already mounted.
   const [tab, setTab] = useState<HubTab>(() => parseHubTab(requestedTab, tabs));
-  // ?focus=<requestId> from a notification/LINE deep link: opens that claim's drawer.
-  const focusId = searchParams.get('focus') ?? undefined;
-  // The drawer lives at hub level so every queue can open the same claim detail
-  // with the actions its own audience is allowed to take.
+  // Rows open the claim's journey page; old `?focus=` links are redirected there by the route.
+  const openJourney = useCallback((id: string) => router.push(`/companies/${companyId}/reimbursements/${id}`), [companyId, router]);
+  // The drawer lives at hub level so a list row can still cancel in place (retired in Phase 6).
   const [detail, setDetail] = useState<any | null>(null);
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [drawerBusy, setDrawerBusy] = useState(false);
   const detailOpenPendingRef = useRef(false);
   const [payFor, setPayFor] = useState<any | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  // ใบเบิกค่าใช้จ่าย: rendered server-side as SVG, shown in the viewer, saved as PDF from there.
-  const [claimForm, setClaimForm] = useState<{ name: string; url: string; pages: string[] } | null>(null);
-  const [claimFormSaving, setClaimFormSaving] = useState(false);
-  const [claimFormError, setClaimFormError] = useState<string | null>(null);
-  const [attachmentPreview, setAttachmentPreview] = useState<DocumentPreviewSource | null>(null);
-  const [previewTarget, setPreviewTarget] = useState<ReimbursementDocumentPreviewTarget | null>(null);
-  const [previewLoadingKey, setPreviewLoadingKey] = useState<string | null>(null);
-  const previewRequestRef = useRef(0);
-  const previewUrlRef = useRef<string | null>(null);
-  const claimFormSaveRequestRef = useRef(0);
+  const { previewLoadingKey, closeDocumentPreview, openClaimForm, openAttachment, previewModals } = useClaimDocumentPreview(companyId, setDrawerError);
   const [missingSignatureFor, setMissingSignatureFor] = useState<ClaimSignatureRole | null>(null);
   const [rejecting, setRejecting] = useState(false);
   const [requestingCorrection, setRequestingCorrection] = useState(false);
@@ -378,31 +152,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
 
   useEffect(() => {
     setTab(parseHubTab(requestedTab, tabs));
-  }, [companyId, requestedTab, focusId, tabs]);
-
-  const releaseAttachmentPreviewUrl = useCallback(() => {
-    const url = previewUrlRef.current;
-    previewUrlRef.current = null;
-    if (url) URL.revokeObjectURL(url);
-  }, []);
-
-  const closeDocumentPreview = useCallback(() => {
-    previewRequestRef.current += 1;
-    claimFormSaveRequestRef.current += 1;
-    releaseAttachmentPreviewUrl();
-    setClaimForm(null);
-    setClaimFormError(null);
-    setClaimFormSaving(false);
-    setAttachmentPreview(null);
-    setPreviewTarget(null);
-    setPreviewLoadingKey(null);
-  }, [releaseAttachmentPreviewUrl]);
-
-  useEffect(() => () => {
-    previewRequestRef.current += 1;
-    claimFormSaveRequestRef.current += 1;
-    releaseAttachmentPreviewUrl();
-  }, [releaseAttachmentPreviewUrl]);
+  }, [companyId, requestedTab, tabs]);
 
   useEffect(() => {
     closeDocumentPreview();
@@ -420,90 +170,6 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
     catch (e) { setDrawerError(err(e)); }
     finally { detailOpenPendingRef.current = false; setDrawerBusy(false); }
   }, [closeDocumentPreview, companyId]);
-
-  useEffect(() => { if (focusId) void openDetail(focusId); }, [focusId, requestedTab, openDetail]);
-
-  const loadDocumentPreview = async (target: ReimbursementDocumentPreviewTarget) => {
-    const requestId = ++previewRequestRef.current;
-    claimFormSaveRequestRef.current += 1;
-    const loadingKey = target.kind === 'claim-form' ? `claim-form:${target.reimbursementId}` : `attachment:${target.attachmentId}`;
-    setPreviewLoadingKey(loadingKey);
-    setDrawerError(null);
-    try {
-      if (target.kind === 'claim-form') {
-        const nextPreview = await previewReimbursementClaimForm(companyId, target.reimbursementId);
-        if (requestId !== previewRequestRef.current) return;
-        releaseAttachmentPreviewUrl();
-        setAttachmentPreview(null);
-        setClaimFormError(null);
-        setClaimFormSaving(false);
-        const pages = nextPreview.pageSvgDataUrls?.length ? nextPreview.pageSvgDataUrls : [nextPreview.svgDataUrl];
-        setClaimForm({ name: target.name, url: pages[0]!, pages });
-      } else {
-        const blob = await fetchAttachmentPreviewBlob(companyId, target.attachmentId, target.mimeType);
-        if (requestId !== previewRequestRef.current) return;
-        const url = URL.createObjectURL(blob);
-        releaseAttachmentPreviewUrl();
-        previewUrlRef.current = url;
-        setClaimForm(null);
-        setClaimFormError(null);
-        setAttachmentPreview({ name: target.fileName, mimeType: blob.type, url });
-      }
-      setPreviewTarget(target);
-    } catch (e) {
-      if (requestId !== previewRequestRef.current) return;
-      setDrawerError(err(e));
-      throw e;
-    } finally {
-      if (requestId === previewRequestRef.current) {
-        setPreviewLoadingKey((current) => current === loadingKey ? null : current);
-      }
-    }
-  };
-
-  const openClaimForm = async () => {
-    if (!detail) return;
-    try {
-      await loadDocumentPreview({
-        kind: 'claim-form',
-        reimbursementId: detail.id,
-        name: `ใบเบิกค่าใช้จ่าย ${detail.requestNo ?? ''}`.trim(),
-      });
-    } catch {
-      // The active request already reports its localized failure in the drawer.
-    }
-  };
-
-  /** Fetch first so storage 404/MIME errors are visible before opening the document viewer. */
-  const openAttachment = async (attachmentId: string, fileName: string) => {
-    if (!detail) return;
-    try {
-      await loadDocumentPreview({
-        kind: 'attachment',
-        reimbursementId: detail.id,
-        attachmentId,
-        fileName,
-        mimeType: attachmentPreviewMimeType(fileName),
-      });
-    } catch {
-      // The active request already reports its localized failure in the drawer.
-    }
-  };
-
-  const downloadClaimForm = async () => {
-    if (!claimForm) return;
-    const requestId = ++claimFormSaveRequestRef.current;
-    const target = claimForm;
-    setClaimFormSaving(true);
-    setClaimFormError(null);
-    try {
-      await downloadDocumentAsPdf(target.pages, target.name, { vector: true });
-    } catch (e) {
-      if (requestId === claimFormSaveRequestRef.current) setClaimFormError(err(e));
-    } finally {
-      if (requestId === claimFormSaveRequestRef.current) setClaimFormSaving(false);
-    }
-  };
 
   /**
    * Runs a drawer action, then refreshes both the drawer and the queue behind it —
@@ -545,8 +211,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
       setRefreshKey(k => k + 1);
       toast.success('ลงนามใบเบิกเรียบร้อยแล้ว');
     } catch (e) {
-      if ((e as { code?: unknown } | null)?.code === 'claim_saved_signature_required'
-        || (e instanceof Error && e.message.includes('claim_saved_signature_required'))) {
+      if (isMissingSavedSignatureError(e)) {
         setMissingSignatureFor(role);
       } else {
         setDrawerError(err(e));
@@ -591,7 +256,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
     );
   }
 
-  const queueProps = { companyId, refreshKey, onOpenDetail: openDetail, permissions };
+  const queueProps = { companyId, refreshKey, onOpenDetail: openJourney, permissions };
   return (
     <MangmeePage
       eyebrow="การเบิกจ่าย"
@@ -633,18 +298,11 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         permissions={permissions}
         busy={drawerBusy || previewLoadingKey !== null}
         error={drawerError}
-        onClose={() => {
-          closeDocumentPreview(); setDetail(null); setDrawerError(null);
-          if (focusId) {
-            const next = new URLSearchParams(searchParams.toString());
-            next.delete('focus'); next.set('tab', tab);
-            router.replace(`/companies/${companyId}/reimbursements?${next}`, { scroll: false });
-          }
-        }}
-        onPrintClaimForm={openClaimForm}
+        onClose={() => { closeDocumentPreview(); setDetail(null); setDrawerError(null); }}
+        onPrintClaimForm={() => void openClaimForm(detail)}
         onSign={role => void signWithSavedSignature(role)}
         onUploadSignedCopy={(file) => drawerAction(() => uploadSignedClaimFormCopy(companyId, detail.id, file, detail.branchId), 'แนบสำเนาใบเบิกที่ลงนามเรียบร้อยแล้ว')}
-        onOpenAttachment={openAttachment}
+        onOpenAttachment={(attachmentId, fileName) => void openAttachment(detail.id, attachmentId, fileName)}
         onLineReceipt={(lineNo, file) => drawerAction(() => setLineReceipt(companyId, detail.id, detail.lines ?? [], lineNo, file, detail.branchId), 'แนบใบเสร็จเรียบร้อยแล้ว')}
         onSubmit={() => drawerAction(() => submitReimbursement(companyId, detail.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}
         onRequestCancel={() => { setDrawerError(null); setCancelling(true); }}
@@ -661,42 +319,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         onRequestVoidPayment={payment => { setDrawerError(null); setVoidingPayment(payment); }}
       />}
       {/* Sibling of the drawer so closing the preview does not close the claim behind it. */}
-      {claimForm && <DocumentPreviewModal
-        source={{ name: claimForm.name, mimeType: 'image/svg+xml', url: claimForm.url }}
-        imagePageUrls={claimForm.pages}
-        printSurface
-        hideOpenNewTab
-        closeLabel="ปิด"
-        loadingLabel="กำลังเปิดเอกสาร..."
-        errorLabel="แสดงเอกสารนี้ไม่สำเร็จ กรุณาลองสร้างตัวอย่างใหม่"
-        retryLabel="ลองอีกครั้ง"
-        openNewTabLabel="เปิดในแท็บใหม่"
-        onClose={closeDocumentPreview}
-        onRetry={previewTarget?.kind === 'claim-form' ? () => loadDocumentPreview(previewTarget) : undefined}
-        footer={(
-          <>
-            {claimFormError && <p className="mr-auto text-xs font-semibold text-error-700">{claimFormError}</p>}
-            <button
-              className={successBtn}
-              style={successBtnStyle}
-              disabled={claimFormSaving} aria-busy={Boolean(claimFormSaving)}
-              onClick={() => void downloadClaimForm()}
-            >
-              {claimFormSaving ? 'กำลังสร้างไฟล์...' : 'ดาวน์โหลด PDF'}
-            </button>
-          </>
-        )}
-      />}
-      {attachmentPreview && <DocumentPreviewModal
-        source={attachmentPreview}
-        closeLabel="ปิด"
-        loadingLabel="กำลังเปิดเอกสาร..."
-        errorLabel="แสดงเอกสารนี้ไม่สำเร็จ กรุณาลองใหม่"
-        retryLabel="ลองอีกครั้ง"
-        openNewTabLabel="เปิดในแท็บใหม่"
-        onClose={closeDocumentPreview}
-        onRetry={previewTarget?.kind === 'attachment' ? () => loadDocumentPreview(previewTarget) : undefined}
-      />}
+      {previewModals}
       {missingSignatureFor && <MissingSavedSignatureModal
         companyId={companyId}
         onClose={() => setMissingSignatureFor(null)}
@@ -985,7 +608,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
               {pagedData.map((r: any) => (
                 <MangmeeCard key={r.id} className="relative p-4">
                   <Link
-                    href={`?tab=mine&focus=${encodeURIComponent(r.id)}`}
+                    href={`/companies/${companyId}/reimbursements/${r.id}`}
                     aria-label={`ดูรายละเอียด ${r.requestNo ?? '—'}`}
                     className="absolute inset-0 z-10 rounded-2xl focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand-500"
                     data-testid="reimbursements-mine-card"
@@ -1053,8 +676,6 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
   onRecordPayment: () => void;
   onRequestVoidPayment: (payment: any) => void;
 }) {
-  const lines: any[] = detail.lines ?? [];
-  const timeline = buildClaimTimeline(detail);
   const { canEditDraft, canSubmit, canCancel, canReopen } = reimbursementOwnActions(detail, userId, permissions);
   // Task authority is resolved server-side from the frozen step assignment. Never infer it from
   // the selected tab: a forged deep link must not offer actions, while an assignee whose role was
@@ -1067,10 +688,6 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
   const canFinanceApprove = canFinanceReview && !duplicateResolutionBlocked;
   const canRequestCorrection = canFinanceReview && detail.financeReviewStatus !== 'APPROVED_FOR_PAYMENT';
   const canPay = context === 'finance' && permissions.includes('reimbursement.payment.record') && detail.status === 'READY_FOR_PAYMENT';
-  const signatures: any[] = detail.signatures ?? [];
-  const signedCopies: any[] = detail.signedCopies ?? [];
-  const signableRoles = eligibleSignatureRoles(detail, userId);
-  const canAttachSignedCopy = canUploadSignedCopy(detail, userId, permissions);
   const submitReadiness = reimbursementSubmitReadiness(detail);
   const showActions = canEditDraft || canSubmit || canCancel || canReopen || canApprove || canReject || canFinanceReview || canPay;
   const footerButtons = detail.requestNo || showActions ? (
@@ -1108,215 +725,22 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
             <ErrorBanner message={`ฝ่ายการเงินขอให้แก้ไข: ${detail.financeReviewNote}`} />
           )}
           {submitReadiness.blocked && submitReadiness.message && <ErrorBanner message={submitReadiness.message} />}
-          <MangmeeCard className="p-4">
-            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
-              <div className="min-w-0">
-                <div className="text-xs font-semibold text-gray-500">ผู้เบิก / ผู้รับเงินคืน</div>
-                <div className="mt-1 font-semibold text-gray-900">{detail.requesterDisplayNameSnapshot ?? '—'}</div>
-                {detail.createdByName && <div className="mt-2 text-xs text-gray-500">ผู้จัดทำ: {detail.createdByName}</div>}
-                <div className="mt-3 text-xs font-semibold text-gray-500">เหตุผล</div>
-                <div className="mt-1 text-sm text-gray-700">{detail.reason ?? '—'}</div>
-              </div>
-              <div className="sm:text-right">
-                <div className="text-xs font-semibold text-gray-500">ยอดรวม</div>
-                <div className="mt-1 text-[28px] font-extrabold tabular-nums text-gray-900">{formatMoney(detail.amount, detail.currency)}</div>
-                <div className="mt-1 text-sm text-gray-500">คงค้าง {formatMoney(detail.outstandingAmount, detail.currency)}</div>
-              </div>
-            </div>
-          </MangmeeCard>
-
-          {/* Where the claim is on its journey — the question the status chip alone never answered. */}
-          <MangmeeCard className="p-4">
-            <h4 className="mb-2 text-sm font-bold text-gray-900">เส้นทางของใบเบิก</h4>
-            <ol className="space-y-2" data-testid="reimbursement-timeline">
-              {timeline.map(step => (
-                <li key={step.key} className="flex items-start gap-2 text-sm">
-                  <span aria-hidden className={cx('shrink-0', step.state === 'done' ? 'text-brand-600' : step.state === 'current' ? 'text-amber-600' : 'text-gray-300')}>
-                    {step.state === 'done' ? '✓' : step.state === 'current' ? '●' : '○'}
-                  </span>
-                  <span className={cx('min-w-0 flex-1', step.state === 'current' ? 'font-semibold text-gray-900' : step.state === 'done' ? 'text-gray-700' : 'text-gray-400')}>
-                    {step.label}
-                  </span>
-                  {step.date && <span className="shrink-0 text-xs tabular-nums text-gray-400">{shortDate(step.date)}</span>}
-                </li>
-              ))}
-            </ol>
-          </MangmeeCard>
-
-          <MangmeeCard className="p-4">
-            <h4 className="text-sm font-bold text-gray-900">ข้อมูลคำขอ</h4>
-            <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
-              <Row k="หมวดหมู่" v={detail.categoryLabelSnapshot ?? detail.categoryKey} />
-              <Row k="สถานะ" v={<StatusBadge status={detail.status} />} />
-              <Row k="ตรวจสอบการเงิน" v={FINANCE_REVIEW_LABELS[detail.financeReviewStatus] ?? detail.financeReviewStatus} />
-              {detail.financeReviewedByName && <Row k="ผู้ตรวจการเงิน" v={detail.financeReviewedByName} />}
-              <Row k="การจ่าย" v={<PaymentBadge status={detail.paymentStatus} />} />
-              <Row k="ใบเสร็จ" v={RECEIPT_REQUIREMENT_LABELS[detail.receiptRequirementStatus] ?? detail.receiptRequirementStatus} />
-              <Row k="เหตุผลที่ไม่มีใบเสร็จ" v={detail.missingReceiptReason} />
-              <Row k="ตรวจรายการซ้ำ" v={DUPLICATE_STATUS_LABELS[detail.duplicateStatus] ?? detail.duplicateStatus} />
-            </dl>
-          </MangmeeCard>
-
-          <MangmeeCard className="p-4">
-            <h4 className="mb-2 text-sm font-bold text-gray-900">รายการเบิก ({lines.length})</h4>
-            <div className="overflow-x-auto">
-              <table className="mangmee-table">
-                <thead>
-                <tr>
-                  <th>#</th><th>วันที่</th><th>รายการ</th><th>วัตถุประสงค์</th><th>หมวด</th>
-                  <th className="text-right">จำนวนเงิน</th><th>ใบเสร็จ</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.length === 0 ? <tr><td colSpan={7} className="text-center text-gray-400">ไม่มีรายการ</td></tr> : lines.map((l: any) => (
-                  <tr key={l.id ?? l.lineNo}>
-                    <td className="text-gray-500">{l.lineNo}</td>
-                    <td>{shortDate(l.incurredDate)}</td>
-                    <td>{l.description}{l.sourceExpenseSnapshot && <ReimbursementSourceFacts source={l.sourceExpenseSnapshot} />}</td>
-                    <td className="text-gray-500">{l.purpose ?? '—'}</td>
-                    <td className="text-gray-500">{l.categoryLabelSnapshot ?? l.categoryKey}</td>
-                    <td className="text-right tabular-nums">{formatMoney(l.amount)}</td>
-                    <td className="text-xs">
-                      {l.sourceExpenseSnapshot ? l.sourceExpenseSnapshot.attachments.map((file: { id: string; fileName: string }) => (
-                        <button key={file.id} className="block max-w-48 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(file.id, file.fileName)}>📎 {file.fileName}</button>
-                      )) : l.attachmentId ? (
-                        <button className="max-w-40 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(l.attachmentId, l.attachmentFileName ?? 'receipt.jpg')}>
-                          📎 {l.attachmentFileName ?? 'เปิดไฟล์แนบ'}
-                        </button>
-                      ) : <div className="text-gray-600">{l.linkedExpenseId ? '🔗 ค่าใช้จ่ายที่บันทึกไว้' : '—'}</div>}
-                      {canEditDraft && !l.sourceExpenseSnapshot && (
-                        <div className="mt-1 space-y-1">
-                          <ThemedFile file={null} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) onLineReceipt(l.lineNo, file); }} />
-                          <p className="leading-5 text-gray-400">PDF, JPG/JPEG, PNG, HEIC/HEIF หรือ GIF</p>
-                          {l.attachmentId && <button className="text-red-600 hover:underline" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onLineReceipt(l.lineNo, null)}>นำไฟล์ออก</button>}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="bg-gray-50 font-medium">
-                  <td colSpan={5}>รวมเป็นเงิน</td>
-                  <td className="text-right tabular-nums">{formatMoney(detail.amount, detail.currency)}</td>
-                  <td></td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-          </MangmeeCard>
-
-          {/* Signatures live on the document, so they only exist once the claim has one. */}
-          {detail.requestNo && detail.status !== 'DRAFT' && (
-            <MangmeeCard className="p-4">
-              <h4 className="mb-2 text-sm font-bold text-gray-900">ลายเซ็นในใบเบิก</h4>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {CLAIM_SIGNATURE_ROLES.map(role => {
-                  const signed = signatures.find((s: any) => s.role === role);
-                  return (
-                    // min-w-0 + break-words: a long value must wrap inside its own cell — on a
-                    // narrow grid an unbroken string overflowed the card and sat on top of the
-                    // neighbouring slot's ลงนาม button, swallowing its taps.
-                    <div key={role} className="min-w-0 rounded-xl border border-gray-200 p-3 text-xs">
-                      <div className="font-semibold text-gray-700">{CLAIM_SIGNATURE_ROLE_LABELS[role]}</div>
-                      <div className="mt-2">
-                        {signed ? (
-                          <>
-                            <MangmeeBadge tone="brand">ลงนามแล้ว</MangmeeBadge>
-                            {/* Never a cuid: a missing name renders a dash, not the user id. */}
-                            <div className="mt-2 break-words text-gray-600">{signed.signedByName ?? '—'}</div>
-                            <div className="text-gray-400">{shortDate(signed.signedAt)}</div>
-                          </>
-                        ) : <MangmeeBadge tone="slate">ยังไม่ลงนาม</MangmeeBadge>}
-                      </div>
-                      {/* Only the real actor of that step is offered the button; the server re-checks. */}
-                      {signableRoles.includes(role) && (
-                        <button className="mt-2 text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onSign(role)}>
-                          {signed ? 'ลงนามใหม่' : 'ลงนาม'}
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </MangmeeCard>
-          )}
-
-          {detail.requestNo && detail.status !== 'DRAFT' && (
-            <MangmeeCard className="p-4">
-              <h4 className="mb-2 text-sm font-bold text-gray-900">ใบเบิกที่เซ็นแล้ว ({signedCopies.length})</h4>
-              {signedCopies.length === 0
-                ? <p className="text-xs text-gray-400">ยังไม่มีไฟล์ที่แนบกลับ</p>
-                : (
-                  <ul className="space-y-2 text-xs">
-                    {signedCopies.map((copy: any) => (
-                      <li key={copy.attachmentId} className="flex items-center justify-between gap-2 rounded-xl border border-gray-200 px-3 py-2">
-                        <button className="truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(copy.attachmentId, copy.fileName)}>📄 {copy.fileName}</button>
-                        <span className="shrink-0 text-gray-400">{shortDate(copy.uploadedAt)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              {canAttachSignedCopy && (
-                <div className="mt-3 block text-xs font-semibold text-gray-600">
-                  แนบใบเบิกที่เซ็นแล้ว (PDF/JPG/PNG)
-                  <ThemedFile className="mt-1.5" file={null} accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) onUploadSignedCopy(file); }} />
-                </div>
-              )}
-            </MangmeeCard>
-          )}
-
-          {detail.approvalSteps?.length > 0 && (
-            <MangmeeCard className="p-4">
-              <h4 className="mb-2 text-sm font-bold text-gray-900">ขั้นตอนอนุมัติ</h4>
-              <ul className="space-y-2">
-                {detail.approvalSteps.map((s: any) => (
-                  <li key={s.id} className="rounded-xl border border-gray-200 px-3 py-2.5 text-xs text-gray-600">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-semibold text-gray-700">ขั้นที่ {s.sequenceNo}</span>
-                      <MangmeeBadge tone={s.status === 'APPROVED' ? 'brand' : s.status === 'REJECTED' ? 'danger' : 'slate'}>
-                        {APPROVAL_STEP_STATUS_LABELS[s.status] ?? s.status}
-                      </MangmeeBadge>
-                    </div>
-                    <div className="mt-1">{s.decidedByName ? `โดย ${s.decidedByName}` : s.approverName ? `ผู้อนุมัติ: ${s.approverName}` : '—'}</div>
-                    {s.comment && <div className="mt-1 text-gray-500">{s.comment}</div>}
-                    {s.rejectionReason && <div className="mt-1 text-error-700">{s.rejectionReason}</div>}
-                  </li>
-                ))}
-              </ul>
-            </MangmeeCard>
-          )}
-          {detail.payments?.length > 0 && (
-            <MangmeeCard className="p-4">
-              <h4 className="mb-2 text-sm font-bold text-gray-900">การจ่ายเงิน</h4>
-              <ul className="space-y-2">
-                {detail.payments.map((p: any) => (
-                  <li key={p.id} className="rounded-xl border border-gray-200 px-3 py-2.5 text-xs text-gray-600">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-mono font-semibold text-gray-700">{p.paymentNo}</span>
-                      <span className="font-semibold tabular-nums text-gray-900">{formatMoney(p.paidAmount, p.currency)}</span>
-                    </div>
-                    <div className="mt-1">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? p.paymentMethod} · {p.status === 'RECORDED' ? 'บันทึกแล้ว' : PAYMENT_STATUS_LABELS[p.status] ?? 'สถานะการจ่าย'}</div>
-                    {p.paidByName && <div className="mt-1 text-gray-500">จ่ายโดย {p.paidByName}</div>}
-                    {p.status === 'VOIDED' && p.voidReason && <div className="mt-1 text-error-700">เหตุผลที่ยกเลิก: {p.voidReason}</div>}
-                    {canVoidRecordedPayment(p, permissions) && (
-                      <button type="button" className="mt-2 text-error-700 underline underline-offset-4 disabled:opacity-50" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onRequestVoidPayment(p)}>
-                        ยกเลิกการจ่าย
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </MangmeeCard>
-          )}
-
+          <ClaimSummaryCard detail={detail} />
+          <ClaimDetailSections
+            detail={detail}
+            userId={userId}
+            permissions={permissions}
+            busy={busy}
+            onOpenAttachment={onOpenAttachment}
+            onLineReceipt={onLineReceipt}
+            onSign={onSign}
+            onUploadSignedCopy={onUploadSignedCopy}
+            onRequestVoidPayment={onRequestVoidPayment}
+          />
           {error && <ErrorBanner message={error} />}
       </div>
     </Modal>
   );
-}
-function Row({ k, v }: { k: string; v: any }) {
-  return <div><dt className="text-xs font-semibold text-gray-500">{k}</dt><dd className="mt-1 text-sm text-gray-900">{v ?? '—'}</dd></div>;
 }
 
 // ── Approval Queue ────────────────────────────────────────────────────────────
@@ -1469,7 +893,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                   </div>
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount, r.currency)}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
-                    <Link href={`?tab=approvals&focus=${encodeURIComponent(r.id)}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-approvals-card">ดูรายละเอียด</Link>
+                    <Link href={`/companies/${companyId}/reimbursements/${r.id}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-approvals-card">ดูรายละเอียด</Link>
                     <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => approveRow(r)}>อนุมัติ</button>
                     <button className={cx(dangerClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => setRejectFor(r)}>ปฏิเสธ</button>
                   </div>
@@ -1672,7 +1096,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                   </div>
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
-                    <Link href={`?tab=finance&focus=${encodeURIComponent(r.id)}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-finance-card">ดูรายละเอียด</Link>
+                    <Link href={`/companies/${companyId}/reimbursements/${r.id}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-finance-card">ดูรายละเอียด</Link>
                     {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={() => action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว')}>{financeActionLabel(r)}</button>}
                     {r.status === 'READY_FOR_PAYMENT' && permissions.includes('reimbursement.payment.record') && <button className={cx(btnClass, 'min-h-11 w-full')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => onRecordPayment(r)}>บันทึกจ่าย</button>}
                   </div>
@@ -1690,58 +1114,10 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
   );
 }
 
-function MissingSavedSignatureModal({ companyId, onClose }: {
-  companyId: string;
-  onClose: () => void;
-}) {
-  return (
-    <Modal open title="ยังไม่มีลายเซ็นที่พร้อมใช้งาน" size="sm" closeLabel="ไว้ภายหลัง" onClose={onClose}>
-      <div className="space-y-4">
-        <p className="text-sm text-gray-600">
-          กรุณาบันทึกลายเซ็นในฟีเจอร์ลายเซ็นและรอให้ลายเซ็นมีสถานะพร้อมใช้งาน แล้วกลับมาลงนามอีกครั้ง
-        </p>
-        <div className="flex justify-end gap-2">
-          <button type="button" className={ghostClass} onClick={onClose}>ไว้ภายหลัง</button>
-          <Link href={`/companies/${companyId}/expenses/signatures`} className={btnClass}>ไปหน้าลายเซ็น</Link>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
 function PaymentModal({ companyId, request, onClose, onDone }: { companyId: string; request: any; onClose: () => void; onDone: () => void }) {
-  const toast = useToast();
-  const [form, setForm] = useState({ paidAmount: String(request.outstandingAmount), paymentMethod: 'CASH', paidAt: todayCivilDate(), paymentReference: '' });
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const v = validatePaymentForm({ ...form, outstandingAmount: String(request.outstandingAmount) });
-    if (v) { setError(v); return; }
-    setBusy(true); setError(null);
-    try {
-      await recordReimbursementPayment(companyId, request.id, { ...form, paidAt: new Date(form.paidAt).toISOString(), paymentReference: form.paymentReference || undefined });
-      onDone();
-      toast.success('บันทึกจ่ายเรียบร้อยแล้ว');
-    } catch (e2) { setError(err(e2)); } finally { setBusy(false); }
-  };
-
   return (
     <Modal open title={`บันทึกการจ่ายเงิน — ${request.requestNo}`} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
-      <form className="space-y-3" onSubmit={submit}>
-        <p className="text-xs text-gray-500">จ่ายเต็มจำนวนคงค้าง {formatMoney(request.outstandingAmount, request.currency)}</p>
-        <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">จำนวนเงิน *</label><input className={inputClass} type="number" step="0.01" required value={form.paidAmount} onChange={e => setForm(f => ({ ...f, paidAmount: e.target.value }))} /></div>
-        <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วิธีจ่าย</label>
-          <ThemedSelect className={inputClass} value={form.paymentMethod} onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value }))}>
-            {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </ThemedSelect>
-        </div>
-        <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่จ่าย *</label><ThemedDate className={inputClass} required value={form.paidAt} onChange={e => setForm(f => ({ ...f, paidAt: e.target.value }))} /></div>
-        <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">เลขอ้างอิง {(form.paymentMethod === 'BANK_TRANSFER' || form.paymentMethod === 'CHEQUE') && '*'}</label><input className={inputClass} value={form.paymentReference} onChange={e => setForm(f => ({ ...f, paymentReference: e.target.value }))} /></div>
-        {error && <ErrorBanner message={error} />}
-        <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button><button type="submit" className={btnClass} disabled={busy} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึกจ่าย'}</button></div>
-      </form>
+      <PaymentForm companyId={companyId} request={request} onCancel={onClose} onDone={onDone} />
     </Modal>
   );
 }
@@ -1804,7 +1180,7 @@ function PolicySettings({ companyId }: { companyId: string }) {
     ? Boolean(selectedOption?.selectable)
     : !roleBasedRoute || Boolean(selectedOption?.selectable));
   const roleLabel = approverRoleName(selectedOption);
-  const afterApproval = form.financeReviewRequired ? 'ส่งให้ฝ่ายการเงินตรวจสอบก่อนจ่าย' : 'พร้อมบันทึกจ่าย';
+  const ownerRoute = selectedOption?.key === 'OWNER';
 
   return (
     <form onSubmit={save} className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -1856,6 +1232,7 @@ function PolicySettings({ companyId }: { companyId: string }) {
               ) : !selectedOption?.selectable ? (
                 <p className="mt-1 text-xs text-gray-500">เลือกบทบาทของผู้รับผิดชอบ ไม่ต้องพิมพ์ชื่อหรือตัวแปรระบบ</p>
               ) : null}
+              {!ownerRoute && <p className="mt-1 text-xs text-gray-500">ถ้ายังไม่มีคนในบทบาทนี้ เจ้าของกิจการเป็นผู้อนุมัติ</p>}
             </div>
             <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200 sm:col-span-2">
               <span className="min-w-0">
@@ -1864,9 +1241,15 @@ function PolicySettings({ companyId }: { companyId: string }) {
               </span>
               <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={!!form.allowSelfApproval} onChange={e => setForm((f: any) => ({ ...f, allowSelfApproval: e.target.checked }))} />
             </label>
-            <div className="rounded-xl bg-sky-50 px-3 py-3 text-xs text-sky-900 sm:col-span-2">
-              <p><span className="font-semibold">ยอดต่ำกว่า {formatMoney(form.approvalRequiredFromAmount)} บาท:</span> ไม่ต้องรอผู้อนุมัติ → {afterApproval}</p>
-              <p className="mt-1"><span className="font-semibold">ยอดตั้งแต่ {formatMoney(form.approvalRequiredFromAmount)} บาท:</span> ส่งให้ {roleLabel || 'บทบาทที่เลือก'} อนุมัติ → {afterApproval}</p>
+            <div className="space-y-2 rounded-xl bg-sky-50 px-3 py-3 text-xs text-sky-900 sm:col-span-2">
+              {policyDecisionPreview({
+                approvalRequiredFromAmount: form.approvalRequiredFromAmount,
+                approverLabel: roleLabel,
+                ownerRoute,
+                financeReviewRequired: !!form.financeReviewRequired,
+              }).map(line => (
+                <p key={line.title}><span className="block font-semibold">{line.title}</span>{line.path}</p>
+              ))}
             </div>
           </div>
         </MangmeeCard>
@@ -1916,8 +1299,8 @@ function PolicySettings({ companyId }: { companyId: string }) {
           <div className="mt-3 space-y-3">
             <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200">
               <span className="min-w-0">
-                <span className="block text-sm font-semibold text-gray-800">ต้องผ่านการตรวจสอบการเงินก่อนจ่าย</span>
-                <span className="mt-0.5 block text-xs text-gray-500">คำขอที่อนุมัติแล้วต้องให้ฝ่ายการเงินตรวจก่อนบันทึกจ่าย</span>
+                <span className="block text-sm font-semibold text-gray-800">ตรวจการเงินก่อนจ่าย</span>
+                <span className="mt-0.5 block text-xs text-gray-500">เปิดเมื่อมีฝ่ายการเงินแยกจากผู้อนุมัติ ผู้อนุมัติจึงส่งต่อให้การเงินตรวจก่อนจ่าย</span>
               </span>
               <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={!!form.financeReviewRequired} onChange={e => setForm((f: any) => ({ ...f, financeReviewRequired: e.target.checked }))} />
             </label>

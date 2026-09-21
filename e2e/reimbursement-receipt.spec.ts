@@ -27,13 +27,11 @@ test.describe('REIMBRCPT — reimbursement receipt attachment', () => {
     await form.getByLabel('จำนวนเงิน', { exact: true }).fill('123.45');
     await form.getByRole('button', { name: 'บันทึกร่าง' }).click();
 
-    const row = authedPage.getByRole('row').filter({ hasText: reason });
-    await expect(row).toBeVisible();
-    await row.getByRole('button', { name: 'ดู' }).click();
-    // The drawer is lifted to hub level and shows the line table; the receipt now
+    // The saved draft opens on its journey page, which shows the line table; the receipt
     // hangs off the LINE, not the claim header.
-    const drawer = authedPage.getByRole('dialog', { name: /รายละเอียดคำขอ/ });
-    const lineRow = drawer.getByRole('row').filter({ hasText: lineDescription });
+    await expect(authedPage).toHaveURL(/\/reimbursements\/[^/?#]+$/);
+    await expect(authedPage.getByText(reason).first()).toBeVisible();
+    const lineRow = authedPage.getByRole('row').filter({ hasText: lineDescription });
     await expect(lineRow).toBeVisible();
     await expect(lineRow).not.toContainText('📎');
 

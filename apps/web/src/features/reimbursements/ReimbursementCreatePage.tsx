@@ -269,7 +269,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
             ...mergeDraftLineEvidence(form.lines[i], attachmentIds[i]),
           })),
         });
-        router.push(`${hubHref}?focus=${encodeURIComponent(requestId)}`);
+        router.push(`${hubHref}/${requestId}`);
         return;
       }
       const created = await createReimbursement(companyId, {
@@ -296,8 +296,8 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
           throw new Error('receipt_upload_failed');
         }
       }
-      // Same outcome the inline form had: back to the list, where the new draft is now visible.
-      router.push(hubHref);
+      // The draft opens on its journey page at step 1, where it is checked and sent for approval.
+      router.push(`${hubHref}/${created.id}`);
     } catch (e) {
       setError(createdId
         ? `บันทึกร่างคำขอเบิกแล้ว แต่แนบไฟล์ไม่ครบ: ${receiptFailureMessage ?? errorText(e)}${linkedReceiptCount > 0 ? ` ระบบเก็บไฟล์ที่แนบสำเร็จ ${linkedReceiptCount} รายการไว้แล้ว` : ''} กรุณาเปิดร่างและเลือกไฟล์รายการที่ยังขาดใหม่`
@@ -486,7 +486,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
           {error && <ErrorBanner message={error} />}
           <div className="mt-4 space-y-2">
             {strandedDraftId
-              ? <Link href={`${hubHref}?focus=${encodeURIComponent(strandedDraftId)}`} className={cx(btnClass, 'w-full')}>เปิดร่างเพื่อแก้ไขไฟล์</Link>
+              ? <Link href={`${hubHref}/${strandedDraftId}`} className={cx(btnClass, 'w-full')}>เปิดร่างเพื่อแก้ไขไฟล์</Link>
               : <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy || refreshingSource !== null} aria-busy={Boolean(busy)}>{busy ? 'กำลังเตรียมไฟล์และบันทึก...' : editing ? 'บันทึกการแก้ไข' : 'บันทึกร่างคำขอเบิก'}</button>}
             <Link href={hubHref} className={cx(ghostClass, 'w-full')}>ยกเลิก</Link>
           </div>
