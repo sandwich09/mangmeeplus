@@ -242,6 +242,17 @@ Baseline Production ใน §8.2 เป็นหลักฐานก่อน�
 5. รักษาการ reuse `documentText` และ prepared plan ที่ validate แล้ว; ถ้ามีเส้นทางอ่านรูป/วางแผนซ้ำที่ไม่จำเป็นจริง ให้กำจัดพร้อม regression test ไม่อ้างว่า reuse ที่มีอยู่แล้วเป็น optimization ใหม่
 6. คง model policy ที่ admin เลือก ไม่มี auto-switch ไปโมเดลถูกกว่า ไม่เปลี่ยนคุณภาพ/ราคาแฝง และไม่เพิ่ม provider call เพื่อจำแนก budget bucket
 
+### 10.3 Receipt one-pass และ fallback telemetry (owner decision 2026-09-21)
+
+- เป้าหมายรอบนี้คือลดค่าเฉลี่ย UAT จาก 2.03 บาทต่อรูปให้ต่ำกว่า 1.50 บาทต่อรูปบน corpus เดิม โดยยังรายงาน attempted/successful task, accuracy, retries และต้นทุนแยก tag ตาม §10.1; เป้าหมายยังไม่ถือว่าผ่านจนมี benchmark หลัง implementation
+- image intake อาจคืน `onePassReceipt` พร้อม `documentText` และ classification ได้เฉพาะเอกสารค่าใช้จ่ายที่มั่นใจสูง ผลนี้เป็น model advice และต้องผ่าน parser, evidence cross-check, business-document gate, total/VAT/item reconciliation ชุดเดียวกับ receipt OCR ก่อนส่งข้าม service boundary
+- one-pass ต้อง fail closed เมื่อรายการสินค้าไม่ reconcile, เกิน 20 แถว, candidate เกิน 12,000 chars, currency ไม่ตรงข้อความ, หรือเอกสารพิมพ์ discount/additional charge/WHT/VAT แต่ field ที่เกี่ยวข้องหาย; รายการเดียวผ่านได้เฉพาะโหมดนี้เมื่อ evidence และยอดรวม reconcile ส่วนเอกสารยาวใช้ OCR เดิมเพื่อไม่เสี่ยง truncation/อ้างว่ารายการครบ
+- API ข้าม `receipt-ocr` ทั้งขั้นได้เฉพาะ `onePassReceipt` ที่ gateway validate แล้วจากรูปเดียวกัน การข้ามต้องไม่เปิด reservation/provider call/read-count ใหม่; ถ้าผลขาด/ไม่ผ่าน gate ให้ใช้ receipt OCR เดิมโดยไม่ลด validation
+- `ORDER_OR_CHECK_BILL`, ภาพประกอบ/non-document, unreadable, multi-document, classification ที่ต้อง clarify, ยอด/VAT/items ที่ไม่ครบหรือไม่ reconcile ต้องไม่ผ่าน one-pass และต้องคง route/fallback เดิม
+- ทุกครั้งที่เรียก `ocr.receipt.extract-repair` หรือ `ocr.receipt.image-reread` ต้องเก็บเหตุแบบ bounded อย่างน้อย `JSON_INCOMPLETE_OR_INVALID`, `TOTAL_MISSING`, `VAT_MISSING`, `ITEMS_INCOMPLETE` พร้อม request id/tag โดยไม่เก็บ OCR text หรือข้อมูลเอกสารใน log ห้ามปิด fallback เพื่อทำให้ต้นทุนดูต่ำลง
+- LINE audit เก็บ `processingPath=one_pass|receipt_ocr` และ bounded fallback reasons เดียวกัน; benchmark ต้องจำลอง short-circuit นี้จริงและรายงานจำนวน one-pass ห้ามเรียก OCR ต่อใน harness แล้วนับเป็นต้นทุนหลังแก้
+- ราคาแพ็กเกจและจำนวนใบใน ENTERPRISE อยู่นอก scope รอบนี้; งานนี้เปลี่ยนเฉพาะต้นทุน/ความถูกต้องของ receipt pipeline
+
 ผ่านงาน C เมื่อ total cost ต่อ successful task ลดลงบน corpus เดียวกัน, ทั้ง text/image ไม่แพงขึ้นโดยไม่มีเหตุที่ยอมรับ, critical routing/permission/correction tests ผ่านครบ และ OCR field accuracy ไม่ถดถอย ต้องแนบตัวเลขจริงก่อน/หลัง; ยังไม่รับประกันเปอร์เซ็นต์ประหยัดจากการตรวจ 48 rows นี้
 
 ## 11. หน้า AI Budget และ usage contract

@@ -3418,6 +3418,42 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(receiptIntents, 1, 'the expense capture the router asked for must still happen');
   });
 
+  it('uses a gateway-validated one-pass receipt without calling or reserving the receipt OCR step', async () => {
+    const { prisma } = makePrisma();
+    let receiptOcrCalls = 0;
+    let receiptIntents = 0;
+    const classification = receiptClassification('65.00');
+    const { useCase, auditEvents } = makeUseCase(prisma, {
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create', 'expense.create'],
+      intakeRouteFn: () => ({
+        ...ROUTED_EXPENSE_DOCUMENT,
+        ocrAdmission: 'admitted',
+        onePassReceipt: {
+          classification,
+          fields: { vendorName: 'ร้านกาแฟ', expenseDate: '2026-09-21', description: 'ลาเต้', grandTotalAmount: '65.00', confidence: 0.96 },
+        },
+      }),
+      receiptOcrFn: () => { receiptOcrCalls += 1; throw new Error('one-pass must short-circuit before receipt OCR'); },
+      initReceiptUpload: { execute: async () => { receiptIntents += 1; return { expenseId: 'exp-one-pass', attachmentId: 'att-one-pass' }; } },
+      completeReceiptUpload: { execute: async () => ({ id: 'exp-one-pass', duplicateStatus: 'NONE' }) },
+    });
+    (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
+      fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+      checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
+    }) });
+    (useCase as any).uploadLineMedia = async () => undefined;
+
+    await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-one-pass', lineUserId: 'line-user-secret', replyToken: 'reply-one-pass',
+      lineMessageId: 'line-msg-one-pass', messageType: 'image', messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.equal(receiptOcrCalls, 0, 'no second gateway step means no second money reservation or provider call');
+    assert.equal(receiptIntents, 1, 'the validated fields still enter the existing reviewed receipt workflow');
+    const ocrAudit = auditEvents.find((row: any) => row.action === 'expense.ocr.request');
+    assert.equal(ocrAudit?.metadataJson?.processingPath, 'one_pass');
+  });
+
   // P10-L §15.1 / review G-01. The ceiling itself lives in `admitCompanyOcr` (one seam, one number);
   // the LINE lane's whole job is to ANSWER its refusal — the shop needs a bigger package, and the
   // generic "อ่านรูปนี้ไม่สำเร็จ" clarify would send it looking for a better photo instead.

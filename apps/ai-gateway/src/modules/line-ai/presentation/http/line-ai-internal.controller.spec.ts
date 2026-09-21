@@ -5,7 +5,7 @@ import type { CallHandler, ExecutionContext } from '@nestjs/common';
 import { defer, firstValueFrom } from 'rxjs';
 import { AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey } from '@watchdog-bms/contracts';
 import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
-import { BASE64_MEDIA_ROUTES, LineAiInternalController, parseReceiptOcrJson, receiptRereadImage, receiptItemsMismatch } from './line-ai-internal.controller';
+import { BASE64_MEDIA_ROUTES, LineAiInternalController, parseReceiptOcrJson, receiptRereadImage, receiptItemsMismatch, validateIntakeOnePassReceipt } from './line-ai-internal.controller';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import type { BusinessDocumentClassification, LineAiTurnRequest } from '@watchdog-bms/contracts';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
@@ -1035,6 +1035,76 @@ function classification(overrides: Partial<BusinessDocumentClassification> = {})
   };
 }
 
+describe('validated one-pass receipt', () => {
+  const documentText = [
+    'ใบเสร็จ', 'ร้านกาแฟ', 'วันที่ 21/09/2026', 'ลาเต้ 1 40.00', 'เค้ก 1 25.00', 'ยอดรวม 65.00', 'ชำระแล้ว',
+  ].join('\n');
+  const plan = (overrides: Record<string, unknown> = {}) => ({
+    status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.96,
+    documentText,
+    documentClassification: classification({
+      evidenceSignals: ['ใบเสร็จ', 'ร้านกาแฟ'], amountSignals: ['65.00'], settlementSignals: ['ชำระแล้ว'],
+    }),
+    ...overrides,
+  } as any);
+  const candidate = (overrides: Record<string, unknown> = {}) => ({
+    vendorName: 'ร้านกาแฟ', vendorIdentityEvidence: 'ร้านกาแฟ', expenseDate: '2026-09-21',
+    description: 'ลาเต้', grandTotalAmount: '65.00', vatMode: 'NO_VAT', confidence: 0.96,
+    missingFields: [],
+    lines: [
+      { description: 'ลาเต้', quantity: '1', amount: '40.00', evidenceSignal: 'ลาเต้ 1 40.00', confidence: 0.96 },
+      { description: 'เค้ก', quantity: '1', amount: '25.00', evidenceSignal: 'เค้ก 1 25.00', confidence: 0.96 },
+    ],
+    ...overrides,
+  });
+
+  it('accepts a high-confidence settled receipt only after the existing evidence gates pass', () => {
+    const result = validateIntakeOnePassReceipt(plan(), candidate(), []);
+    assert.equal(result?.fields.grandTotalAmount, '65.00');
+    assert.equal(result?.fields.lines?.length, 2);
+    assert.equal(result?.classification.documentKind, 'RECEIPT');
+  });
+
+  it('rejects check bills and non-document images even when a model supplied receipt-looking fields', () => {
+    assert.equal(validateIntakeOnePassReceipt(plan({ documentClassification: classification({
+      documentFamily: 'COMMERCIAL_DOCUMENT', documentKind: 'ORDER_OR_CHECK_BILL', transactionState: 'DUE',
+      settlementSignals: [], missingRequiredSignals: ['ORDER_ONLY'],
+    }) }), candidate(), []), undefined);
+    assert.equal(validateIntakeOnePassReceipt(plan({ documentClassification: classification({
+      contentKind: 'NON_DOCUMENT_IMAGE', documentFamily: 'NON_BUSINESS', documentKind: 'NON_FINANCIAL_IMAGE',
+      transactionState: 'UNKNOWN', businessDirection: 'UNKNOWN', settlementSignals: [],
+    }) }), candidate(), []), undefined);
+  });
+
+  it('accepts one reconciled item but rejects incomplete/overlong item detail and missing tax VAT', () => {
+    assert.equal(validateIntakeOnePassReceipt(plan(), candidate({ lines: [] }), []), undefined);
+    const oneItemText = ['ใบเสร็จ', 'ร้านกาแฟ', 'วันที่ 21/09/2026', 'ชุดอาหาร 1 65.00', 'ยอดรวม 65.00', 'ชำระแล้ว'].join('\n');
+    const oneItem = candidate({
+      description: 'ชุดอาหาร',
+      lines: [{ description: 'ชุดอาหาร', quantity: '1', amount: '65.00', evidenceSignal: 'ชุดอาหาร 1 65.00', confidence: 0.96 }],
+    });
+    assert.equal(validateIntakeOnePassReceipt(plan({ documentText: oneItemText }), oneItem, [])?.fields.lines?.length, 1);
+    assert.equal(validateIntakeOnePassReceipt(plan(), candidate({ lines: [candidate().lines[0]] }), []), undefined,
+      'a one-row candidate whose item amount does not reconcile must fall back');
+    assert.equal(validateIntakeOnePassReceipt(plan(), candidate({ lines: Array.from({ length: 21 }, () => candidate().lines[0]) }), []), undefined,
+      'long receipts stay on the bounded OCR path instead of risking route truncation');
+    const taxText = `${documentText}\nVAT 7%`;
+    assert.equal(validateIntakeOnePassReceipt(plan({
+      documentText: taxText,
+      documentClassification: classification({ documentKind: 'ABBREVIATED_TAX_INVOICE' }),
+    }), candidate({ vatMode: 'VAT_INCLUDED', vatRate: '0.07' }), []), undefined);
+  });
+
+  it('falls back when printed discount, charge, WHT or currency was omitted', () => {
+    for (const signal of ['ส่วนลด 5.00', 'Service charge 10.00', 'หัก ณ ที่จ่าย 1.50', 'USD 65.00']) {
+      assert.equal(validateIntakeOnePassReceipt(plan({ documentText: `${documentText}\n${signal}` }), candidate(), []), undefined, signal);
+    }
+    const usdText = `${documentText}\nUSD 65.00`;
+    assert.equal(validateIntakeOnePassReceipt(plan({ documentText: usdText }), candidate({ currency: 'THB' }), []), undefined);
+    assert.equal(validateIntakeOnePassReceipt(plan({ documentText: usdText }), candidate({ currency: 'USD' }), [])?.fields.currency, 'USD');
+  });
+});
+
 describe('business document classification gate', () => {
   it('retains only exact bounded OCR spans, clamps confidence, and rejects unknown enums', () => {
     const parsed = parseBusinessDocumentClassification({
@@ -1201,6 +1271,9 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     rereadVatAmount?: string;
     firstRequiresClarification?: boolean;
     contentKind?: string;
+    firstLines?: Array<Record<string, unknown>>;
+    secondLines?: Array<Record<string, unknown>>;
+    rereadMarker?: string;
   } = {}) {
     const firstReadText = options.firstReadText ?? TYPHOON_TEXT_WITHOUT_TOTAL;
     const rereadText = options.rereadText ?? BEDROCK_REREAD_TEXT;
@@ -1218,12 +1291,15 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
         const text = readCount === 1 ? firstReadText : rereadText;
         return { output: { message: { content: [{ text: JSON.stringify({ natural_text: text }) }] } } };
       }
-      const rereadMarker = options.rereadVatAmount ?? 'Total Amount 180.00';
+      const rereadMarker = options.rereadMarker ?? options.rereadVatAmount ?? 'Total Amount 180.00';
       const sawRereadText = JSON.stringify(content).includes(rereadMarker);
       const total = sawRereadText ? secondTotal : firstTotal;
       const fields = {
         vendorName: 'Starbucks Coffee',
         grandTotalAmount: total,
+        ...((sawRereadText ? options.secondLines : options.firstLines)
+          ? { lines: sawRereadText ? options.secondLines : options.firstLines }
+          : {}),
         ...(options.rereadVatAmount ? {
           vatMode: 'VAT_INCLUDED', vatRate: '0.07',
           ...(sawRereadText ? { vatAmount: options.rereadVatAmount } : { missingFields: ['vatAmount'] }),
@@ -1269,6 +1345,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       assert.equal(result.status, 'ok');
       assert.equal(result.fields?.grandTotalAmount, '180.00');
       assert.equal(result.classification?.requiresClarification, false);
+      assert.deepEqual(result.fallbackReasons, ['TOTAL_MISSING']);
       assert.deepEqual(bedrock.calls, ['read', 'extract', 'read', 'extract'], 'one vision read, then exactly one re-read');
     } finally {
       bedrock.restore();
@@ -1302,7 +1379,44 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       assert.equal(result.fields?.grandTotalAmount, '2890.00', 'retain the first cross-checked display value');
       assert.equal(result.fields?.vatAmount, '189.07');
       assert.ok(!result.fields?.missingFields?.includes('vatAmount'));
+      assert.deepEqual(result.fallbackReasons, ['VAT_MISSING']);
       assert.deepEqual(bedrock.calls, ['read', 'extract', 'read', 'extract'], 'one bounded re-read after the stage-1 read');
+    } finally {
+      bedrock.restore();
+      restoreFetch();
+    }
+  });
+
+  it('records item mismatch before the bounded image re-read', async () => {
+    const text = '# Starbucks Coffee\nLatte 1 40.00\nCake 1 25.00\nTotal 65.00\nPayment 65.00';
+    const rereadText = `${text}\nImage re-read`;
+    const firstLines = [
+      { description: 'Latte', quantity: '1', amount: '40.00', evidenceSignal: 'Latte 1 40.00' },
+      { description: 'Cake', quantity: '1', amount: '20.00', evidenceSignal: 'Cake 1 25.00' },
+    ];
+    const secondLines = [
+      firstLines[0]!,
+      { description: 'Cake', quantity: '1', amount: '25.00', evidenceSignal: 'Cake 1 25.00' },
+    ];
+    const restoreFetch = stubTyphoon();
+    const bedrock = stubBedrock({
+      firstReadText: text, rereadText, rereadMarker: 'Image re-read', firstTotal: '65.00', secondTotal: '65.00',
+      firstRequiresClarification: false, firstLines, secondLines,
+    });
+    try {
+      const controller = new LineAiInternalController(
+        {
+          aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000,
+          modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', documentAiModelId: 'test-model',
+        } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+
+      const result = await controller.receiptOcr('secret', request);
+
+      assert.equal(result.fields?.lines?.[1]?.amount, '25.00');
+      assert.deepEqual(result.fallbackReasons, ['ITEMS_INCOMPLETE']);
+      assert.deepEqual(bedrock.calls, ['read', 'extract', 'read', 'extract']);
     } finally {
       bedrock.restore();
       restoreFetch();
@@ -1631,6 +1745,7 @@ describe('receipt OCR reuses the intake read', () => {
   it('still cross-checks extraction against the forwarded page, not against itself', async () => {
     const original = BedrockRuntimeClient.prototype.send;
     (BedrockRuntimeClient.prototype as any).send = async () => ({ output: { message: { content: [{ text: JSON.stringify({
+      classification: classification(),
       fields: { vendorName: 'ร้านกาแฟ', grandTotalAmount: '9999.00' },
     }) }] } } });
     try {
@@ -1697,6 +1812,7 @@ describe('receipt tax integrity evidence and recovery', () => {
           attachment: { mimeType: 'image/jpeg', contentBase64: 'ZmFrZQ==' } } as any);
         assert.equal(count, 2);
         assert.equal(result.status, failure === 'exhausted' ? 'failed' : 'ok');
+        assert.deepEqual(result.fallbackReasons, ['JSON_INCOMPLETE_OR_INVALID']);
         if (failure === 'exhausted') assert.equal(result.errorCode, 'OCR_JSON_PARSE_FAILED');
       }
     } finally { (BedrockRuntimeClient.prototype as any).send = original; }

@@ -266,12 +266,11 @@ Preserve EVERY item the user names, even when quantity or price is missing. Neve
  *  `routePlan.captureHints` reachable from there consumes exactly five fields:
  *  `sourceDocumentType` (5994, itself only a fallback behind the OCR classification),
  *  `sourceDocumentLanguage` (5996), `confidence` (6003/6009/6032/6112), `expenseCategoryId` (6006)
- *  and `businessPurpose` (6133, and only when the caption literally contains it). Everything else —
- *  vendor, description, amount, expenseDate, vatMode and the whole `items[]` array — is discarded,
- *  because `ocr.receipt.extract` re-derives those from `documentText` and `decideLineBusinessDocument`
- *  takes `ocr.classification ?? routePlan.documentClassification`: OCR wins whenever it ran. The model
- *  was therefore being paid to itemise the same receipt twice, and image intake output (mean 1,189
- *  tokens, max 4,792 on a 22-line bill) is ~76% of a warm image intake's cost.
+ *  and `businessPurpose` (6133, and only when the caption literally contains it). Ordinary captureHints
+ *  therefore stay trimmed. A separate optional `receiptFields` candidate is now requested only for a
+ *  high-confidence settled receipt; the controller validates it against documentText with the same
+ *  receipt gates before the API can skip `ocr.receipt.extract`. Rejected/absent candidates keep the
+ *  existing OCR path, so this never trades validation for a shorter answer.
  *
  *  `targetExpenseId` is kept deliberately: it is one short string, and it is the one field whose
  *  absence could silently detach an answer from the draft it belongs to.
@@ -288,7 +287,23 @@ const IMAGE_CAPTURE_HINTS_SECTION = `captureHints (EXPENSE_DOCUMENT_CAPTURE or E
   "expenseCategoryId": "id chosen ONLY from activeCategories in the payload; omit if none clearly fits",
   "confidence": number 0..1
 }
-Do NOT return vendorName, description, amount, expenseDate, vatMode, items or missingFields for a document turn — they are read from documentText, so repeating them here only makes the answer longer. documentText itself is UNCHANGED: transcribe the page exactly as its own field description above requires, no more and no less.`;
+Do NOT return vendorName, description, amount, expenseDate, vatMode, items or missingFields inside captureHints for a document turn.
+
+For a HIGH-CONFIDENCE settled expense document only, you MAY also return a top-level receiptFields object so the server can validate the same image in one pass:
+{
+  "vendorName": string, "vendorIdentityEvidence": "exact span", "vendorTaxId": string, "vendorBranchCode": string, "vendorAddress": string,
+  "buyerAsPrinted": {"name": string, "taxId": string, "branchCode": string, "addressText": string},
+  "documentNumber": string, "expenseDate": "YYYY-MM-DD", "description": string,
+  "subtotalAmount": "plain decimal", "discountAmount": "plain decimal", "taxableAmount": "plain decimal",
+  "vatRate": "decimal fraction such as 0.07", "vatAmount": "plain decimal", "grandTotalAmount": "plain decimal",
+  "whtRate": "decimal fraction", "whtAmount": "plain decimal", "whtBaseAmount": "plain decimal", "currency": "ISO 4217 code",
+  "vatMode": "NO_VAT"|"VAT_INCLUDED"|"VAT_EXCLUDED"|"EXEMPT"|"NEEDS_REVIEW",
+  "lines": [{"description": string, "quantity": "positive decimal", "unitPrice": "plain decimal", "amount": "plain decimal", "evidenceSignal": "one exact documentText span", "confidence": 0.0}],
+  "additionalCharges": [{"kind":"SERVICE_CHARGE"|"DELIVERY"|"PACKAGING"|"PLATFORM_FEE"|"TIP"|"ROUNDING"|"OTHER", "description": "printed label", "amount": "plain decimal; signed only for ROUNDING", "evidenceSignal": "one exact documentText span", "confidence": 0.0}],
+  "confidence": 0.0, "missingFields": []
+}
+Return receiptFields ONLY when intent is EXPENSE_DOCUMENT_CAPTURE; route confidence, document classification confidence, and receiptFields confidence are all at least 0.90; contentKind is DOCUMENT; transactionState is PAID; documentKind is RECEIPT, TAX_INVOICE, ABBREVIATED_TAX_INVOICE, or HANDWRITTEN_CASH_BILL; there are no missingRequiredSignals, contradictionSignals, or missing receipt fields; and every value is copied from documentText. Include EVERY printed item row, VAT/WHT/currency, discount, and extra charge. Omit receiptFields entirely for more than 20 printed item rows, a transfer slip, order/check bill, unpaid bill/invoice, quotation, illustration/non-document image, unreadable/cropped page, multiple documents, uncertain total/VAT/items, any document requiring clarification, or whenever including it could truncate the response. Omitting it is always safe: the existing receipt OCR path will run.
+documentText itself is UNCHANGED: transcribe the page exactly as its own field description above requires, no more and no less.`;
 
 /** Trusted, bounded capabilities the API turns on per request. Default (all false) MUST reproduce the
  *  exact legacy prompt byte-for-byte — no fused/substitute/advisor sections, no cost/routing change. */
@@ -351,7 +366,7 @@ For EXPENSE_DOCUMENT_CAPTURE or BUSINESS_DOCUMENT_REFERENCE images, include docu
 {
   "contentKind": "DOCUMENT"|"MULTI_DOCUMENT"|"NON_DOCUMENT_IMAGE"|"UNREADABLE"|"AMBIGUOUS",
   "documentFamily": "EXPENSE_EVIDENCE"|"COMMERCIAL_DOCUMENT"|"PAYMENT_EVIDENCE"|"SCHEDULING_DOCUMENT"|"SIGNATURE_ASSET"|"OTHER_BUSINESS_DOCUMENT"|"NON_BUSINESS",
-  "documentKind": "RECEIPT"|"TAX_INVOICE"|"SUPPLIER_INVOICE_OR_BILL"|"ORDER_OR_CHECK_BILL"|"QUOTATION"|"PURCHASE_ORDER"|"DELIVERY_NOTE"|"TRANSFER_SLIP"|"MARKETPLACE_ORDER"|"HANDWRITTEN_CASH_BILL"|"APPOINTMENT_CARD"|"BOOKING_CONFIRMATION"|"RESERVATION_CONFIRMATION"|"SIGNATURE_IMAGE"|"OTHER_BUSINESS_DOCUMENT"|"NON_FINANCIAL_IMAGE"|"NEEDS_REVIEW",
+  "documentKind": "RECEIPT"|"TAX_INVOICE"|"ABBREVIATED_TAX_INVOICE"|"SUPPLIER_INVOICE_OR_BILL"|"ORDER_OR_CHECK_BILL"|"QUOTATION"|"PURCHASE_ORDER"|"DELIVERY_NOTE"|"TRANSFER_SLIP"|"MARKETPLACE_ORDER"|"HANDWRITTEN_CASH_BILL"|"APPOINTMENT_CARD"|"BOOKING_CONFIRMATION"|"RESERVATION_CONFIRMATION"|"SIGNATURE_IMAGE"|"OTHER_BUSINESS_DOCUMENT"|"NON_FINANCIAL_IMAGE"|"NEEDS_REVIEW",
   "businessDirection": "PURCHASE_EXPENSE"|"SALES_RECEIVABLE"|"CUSTOMER_INBOUND"|"UNKNOWN",
   "transactionState": "PROPOSED"|"ORDERED"|"DUE"|"PAID"|"SCHEDULED"|"CONFIRMED"|"CANCELLED"|"UNKNOWN",
   "evidenceRoles": ["EXPENSE_SUPPORT"|"TAX_EVIDENCE_CANDIDATE"|"PAYMENT_PROOF"|"COMMERCIAL_PROPOSAL"|"SCHEDULING_PROOF"|"CONVERSATION_ATTACHMENT"], "confidence": 0.0, "evidenceSignals": [], "amountSignals": [], "settlementSignals": [],
@@ -413,7 +428,7 @@ export class IntentRouterAgent {
   }
 
   /** LINE Intake Router contract: one semantic route per message, fail closed to typed UNAVAILABLE. */
-  async routeIntake(request: LineIntakeRouteRequest): Promise<LineIntakeRoutePlan> {
+  async routeIntake(request: LineIntakeRouteRequest): Promise<LineIntakeRoutePlan & { receiptCandidate?: unknown }> {
     const images = (request.attachments ?? [])
       .filter((a) => a.contentBase64 && (a.mimeType === 'image/jpeg' || a.mimeType === 'image/png'))
       .map((a) => ({ mimeType: a.mimeType as 'image/jpeg' | 'image/png', contentBase64: a.contentBase64 as string }));
@@ -587,11 +602,17 @@ export class IntentRouterAgent {
     const advisorAnswer = caps.advisor && parsed.intent === 'ADVISOR_CONVERSATION'
       ? extractAdvisorAnswer(result.text)
       : undefined;
-    if (!prepared && !advisorAnswer) return parsed;
+    // Raw model candidate stays inside the gateway process. The HTTP controller removes it and
+    // emits `onePassReceipt` only after the receipt parser and every evidence/business gate pass.
+    const receiptCandidate = hasAttachment && parsed.intent === 'EXPENSE_DOCUMENT_CAPTURE'
+      ? extractReceiptCandidate(result.text)
+      : undefined;
+    if (!prepared && !advisorAnswer && receiptCandidate === undefined) return parsed;
     return {
       ...parsed,
       ...(prepared ? { preparedPlan: prepared } : {}),
       ...(advisorAnswer ? { advisorAnswer } : {}),
+      ...(receiptCandidate !== undefined ? { receiptCandidate } : {}),
     };
   }
 
@@ -634,6 +655,19 @@ export class IntentRouterAgent {
     return null;
   }
 
+}
+
+/** Bound the raw one-pass candidate before it reaches the controller. It is still untrusted and
+ * is never put on the wire directly; the receipt parser is the authority for every field. */
+function extractReceiptCandidate(rawText: string): unknown {
+  try {
+    const parsed = JSON.parse(extractJson(rawText)) as Record<string, unknown> | null;
+    const candidate = parsed?.['receiptFields'];
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
+    return JSON.stringify(candidate).length <= 12_000 ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function isPlan(value: unknown): value is AgentIntentPlan {
