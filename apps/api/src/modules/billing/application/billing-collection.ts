@@ -17,10 +17,10 @@ import { capacityOptions, capacityValid, capacityImpact, capacityReview, parseCa
 import { isUpgrade } from './billing-upgrade';
 import { termProjectionHash } from '../domain/paid-invoice';
 
-type Proposed = { emailProof?: EmailProof; accountId: string; action: BillingCollectionAction; subscriptionId: string; paidThrough: string; sourceHash: string;
-  snapshot: BillingSnapshot; method: 'POST' | 'DELETE'; path: string; params: Record<string, unknown>; sourceTermHash: string | null; change?: PlanChangeSource; originalScheduleId?: string | null };
+type Proposed = { emailProof?: EmailProof; accountId: string; action: BillingCollectionAction; subscriptionId: string | null; paidThrough: string; sourceHash: string;
+  effectiveAt?: string; snapshot: BillingSnapshot; method: 'POST' | 'DELETE'; path: string; params: Record<string, unknown>; sourceTermHash: string | null; change?: PlanChangeSource; originalScheduleId?: string | null };
 type Journal = { startedAt?: string; observed?: boolean; createStartedAt?: string; scheduleId?: string; updateStartedAt?: string; updateHash?: string; createdScheduleHash?: string };
-const TYPES = ['GRANT_FREE_DAYS', 'CHANGE_COLLECTION', 'CUSTOMER_CANCEL_RENEWAL', 'CUSTOMER_RESUME_RENEWAL', 'CUSTOMER_SCHEDULE_DOWNGRADE', 'CUSTOMER_CANCEL_DOWNGRADE'];
+const TYPES = ['GRANT_FREE_DAYS', 'CHANGE_COLLECTION', 'CUSTOMER_CANCEL_RENEWAL', 'CUSTOMER_RESUME_RENEWAL', 'CUSTOMER_SCHEDULE_DOWNGRADE', 'CUSTOMER_CANCEL_DOWNGRADE', 'CUSTOMER_PREPAID_PLAN_CHANGE'];
 const needsEmail = (action: BillingCollectionAction) => action === 'RESUME_RENEWAL' || action === 'CANCEL_DOWNGRADE';
 const changing = (action: BillingCollectionAction) => action === 'SCHEDULE_DOWNGRADE' || action === 'CANCEL_DOWNGRADE';
 const review = () => billingError('BILLING_COLLECTION_REVIEW', 'ข้อมูลการต่ออายุเปลี่ยน กรุณาตรวจสถานะเดิมหรือติดต่อทีมงานพร้อมเลขอ้างอิง');
@@ -53,11 +53,12 @@ export class BillingCollection {
     }
     const p = row.proposedJson as unknown as Proposed, journal = row.resultJson as Journal | null;
     return { id: row.id, companyId: row.companyId!, action: p.action, state: row.state, version: row.version, previewHash: row.requestHash,
-      effectiveAt: p.paidThrough, nextRenewalTotalSatang: p.snapshot.quote.totalSatang, expiresAt: row.expiresAt.toISOString(),
+      effectiveAt: p.action === 'PREPAID_PLAN_CHANGE' && p.effectiveAt ? p.effectiveAt : p.paidThrough,
+      nextRenewalTotalSatang: p.snapshot.quote.totalSatang, expiresAt: row.expiresAt.toISOString(),
       observedAt: row.observedAt?.toISOString() ?? null, errorCode: row.errorCode,
-      ...(p.change ? { targetOffer: p.snapshot.quote.offer, capacity: p.snapshot.quote.capacity } : {}),
+      ...(p.change ? { targetOffer: p.snapshot.quote.offer, currentOffer: p.change.currentSnapshot.quote.offer, capacity: p.snapshot.quote.capacity } : {}),
       allowedActions: [...(row.state === 'PREVIEW' && row.expiresAt > new Date() && row.initiatorUserId === userId ? ['submit' as const] : []),
-        ...(['PREVIEW', 'QUEUED', 'BLOCKED'].includes(row.state) && !journal?.startedAt ? ['withdraw' as const] : [])] };
+        ...(['PREVIEW', 'QUEUED', 'BLOCKED'].includes(row.state) && p.action !== 'PREPAID_PLAN_CHANGE' && !journal?.startedAt ? ['withdraw' as const] : [])] };
   }
   async get(context: RequestContext, id: string) {
     await this.billing.assertOwner(context);
@@ -179,7 +180,7 @@ export class BillingCollection {
     const row = await this.prisma.client.$transaction(async tx => {
       await lockPlanTermCompany(tx, context.companyId); await this.billing.assertOwner(context, tx);
       const current = await tx.billingOperation.findUniqueOrThrow({ where: { id } }), account = await this.billing.account(context.companyId, tx);
-      if (['GRANT_FREE_DAYS','CHANGE_COLLECTION'].includes(current.type)) throw new BadRequestException();
+      if (['GRANT_FREE_DAYS','CHANGE_COLLECTION','CUSTOMER_PREPAID_PLAN_CHANGE'].includes(current.type)) throw new BadRequestException();
       if (current.version !== expectedVersion || !['PREVIEW', 'QUEUED', 'BLOCKED'].includes(current.state) || (current.resultJson as Journal | null)?.startedAt ||
         (account?.leaseUntil && account.leaseUntil > new Date())) throw review();
       const changed = await tx.billingOperation.updateMany({ where: { id, state: current.state, version: expectedVersion }, data: { state: 'CANCELLED', version: { increment: 1 } } });
