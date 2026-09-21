@@ -110,6 +110,21 @@ export function scoreAndFindDuplicates(
       score += 30;
     }
 
+    /**
+     * The only piece of NEGATIVE evidence this scorer has, and the reason the shop/amount rules
+     * below can be trusted at all. Photographing one receipt twice reproduces its printed number;
+     * a shop issuing two receipts prints two different numbers. So when both sides carry a number
+     * and the numbers differ, these are two purchases — proven, not guessed.
+     *
+     * Without this, "same shop + same day + same amount" fires on the ordinary case of buying the
+     * same thing twice in one day (ice, coffee, a fixed delivery fee), which for a retail shop is
+     * not an edge case but the daily pattern. The image signals above are deliberately NOT
+     * cancelled: one photo uploaded twice is a duplicate whatever the OCR made of the number.
+     */
+    const differentDocumentNumber = Boolean(
+      subjectDocumentNumber && candidateDocumentNumber && subjectDocumentNumber !== candidateDocumentNumber,
+    );
+
     // Same vendor + date + amount
     const subjectVendorName = normalizeVendorName(subject.vendorName);
     const sameVendor = Boolean(
@@ -124,7 +139,7 @@ export function scoreAndFindDuplicates(
     const candidateAmount = moneyInSatang(candidate.grandTotalAmount);
     const sameAmount = subjectAmount !== null && candidateAmount !== null && subjectAmount === candidateAmount;
 
-    if (sameVendor && sameDate && sameAmount) {
+    if (sameVendor && sameDate && sameAmount && !differentDocumentNumber) {
       reasonCodes.push('same_vendor_date_amount');
       score += 25;
     }
@@ -134,7 +149,8 @@ export function scoreAndFindDuplicates(
       normalizeDigits(subject.vendorTaxId) &&
       normalizeDigits(subject.vendorTaxId) === normalizeDigits(candidate.vendorTaxId) &&
       sameAmount &&
-      dateDistanceDays(subject.expenseDate, candidate.expenseDate) <= 3
+      dateDistanceDays(subject.expenseDate, candidate.expenseDate) <= 3 &&
+      !differentDocumentNumber
     ) {
       reasonCodes.push('same_vendor_tax_id_amount_near_date');
       score += 20;
@@ -148,6 +164,10 @@ export function scoreAndFindDuplicates(
   return results.sort((a, b) => b.score - a.score);
 }
 
-export function isDuplicateRisk(score: number, threshold = 20): boolean {
-  return score >= threshold;
-}
+/**
+ * Every match with a score above zero becomes an OPEN candidate, so the score ranks the warnings
+ * rather than gating them. A `isDuplicateRisk(score, threshold = 20)` helper used to live here and
+ * was called from nowhere — it read like a gate that existed, which is how "score 25 > threshold
+ * 20" got mistaken for the reason an expense was flagged. Removed rather than wired up: the
+ * decision to block belongs to a person now (see `validateConfirm`), not to a number.
+ */

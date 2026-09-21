@@ -284,8 +284,14 @@ export function validateConfirm(input: ConfirmValidationInput): string | null {
   if (!canTransition(input.status, 'CONFIRMED')) {
     return `Cannot confirm expense in status ${input.status}.`;
   }
-  if (input.duplicateStatus === 'POSSIBLE_DUPLICATE' || input.duplicateStatus === 'CONFIRMED_DUPLICATE') {
-    return 'Expense has unresolved duplicate warning. Dismiss or override before confirming.';
+  // A guess warns; only a person blocks. `POSSIBLE_DUPLICATE` is this system's suspicion, and it
+  // fires on the ordinary retail pattern of buying the same thing twice from the same shop on the
+  // same day — refusing the confirm there taught people to click past the warning, which is worse
+  // than showing it. The candidate rows stay OPEN and visible, so the suspicion is on the record
+  // either way. `CONFIRMED_DUPLICATE` is a human having said this IS a duplicate, and confirming
+  // what you just called a duplicate is the one combination that stays refused.
+  if (input.duplicateStatus === 'CONFIRMED_DUPLICATE') {
+    return 'Expense is marked as a duplicate. Clear the duplicate mark before confirming.';
   }
   if (!input.primaryAttachmentId && !input.missingReceiptReason && !input.hasLinkedClaimEvidence && !input.hasReviewedEvidence) {
     return 'Expense requires a receipt attachment or a missing receipt reason.';
