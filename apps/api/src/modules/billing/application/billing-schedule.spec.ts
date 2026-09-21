@@ -45,7 +45,7 @@ test('lost scheduling response can be observed after the future phase starts, wi
   const f=fixture(), now=Math.floor(Date.now()/1000), end=now-5, futureEnd=now+86400;
   const desired=[schedulePhase(now-86400,end,'price_basic',null),schedulePhase(end,futureEnd,'price_starter',null,true)];
   const p:any={action:'SCHEDULE_DOWNGRADE',paidThrough:new Date(end*1000).toISOString(),method:'POST',params:{phases:desired},snapshot:f.future};
-  const sub:any={status:'active',billing_mode:{type:'classic'},billing_cycle_anchor:end,cancel_at:null,items:{data:[{price:'price_starter',quantity:1,current_period_start:end,current_period_end:futureEnd,tax_rates:[]}]}};
+  const sub:any={status:'active',billing_mode:{type:'classic'},collection_method:'charge_automatically',billing_cycle_anchor:end,cancel_at:null,items:{data:[{price:'price_starter',quantity:1,current_period_start:end,current_period_end:futureEnd,tax_rates:[]}]}};
   const phase={...desired[1],default_tax_rates:[],discounts:[],items:[{price:'price_starter',quantity:1,tax_rates:[]}]};
   const schedule:any={status:'active',end_behavior:'release',current_phase:{start_date:end},metadata:{mangmeeCollectionOperation:'op'},phases:[phase]};
   const service=new BillingCollection({} as any,{} as any,{} as any);

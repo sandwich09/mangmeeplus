@@ -49,6 +49,7 @@ export default function BillingCompanyOverview({ company: c, overview, loading, 
       <section aria-label="รายละเอียดแพ็กเกจปัจจุบัน" className="space-y-5 rounded-xl border border-gray-200 bg-white p-4 sm:p-6"><h2 className="text-lg font-semibold text-gray-900">แพ็กเกจและการต่ออายุ</h2>
         <dl className="grid gap-x-8 gap-y-5 sm:grid-cols-2">{[
           ['ได้รับแพ็กเกจจาก', sources[c.source]], ['สถานะชำระเงิน', billingLabel('payment', c.paymentState)],
+          ['วิธีต่ออายุ', c.renewalMode === 'CARD_ONCE' ? 'บัตรจ่ายครั้งเดียว · ซื้อใหม่เอง' : c.renewalMode === 'PROMPTPAY_ONCE' ? 'PromptPay QR จ่ายครั้งเดียว · ซื้อใหม่เอง' : c.renewalMode === 'PROMPTPAY_RENEW' ? 'PromptPay QR · จ่ายบิลใหม่ทุกงวด' : c.renewalMode === 'CARD_AUTO' ? 'บัตร · ต่ออายุอัตโนมัติ' : 'ยังไม่มี'],
           ['จำนวนสาขาที่ใช้ได้', c.branchLimit === null ? 'ยังไม่มีข้อมูล' : `${c.branchLimit} สาขา`], ['จำนวนผู้ใช้ที่ใช้ได้', c.employeeLimit === null ? 'ยังไม่มีข้อมูล' : `${c.employeeLimit} คน`],
           ['ชำระไว้ถึง', formatThaiDateTime(c.paidThrough, 'ยังไม่มีข้อมูล')], ['เก็บเงินครั้งถัดไป', formatThaiDateTime(c.nextChargeAt, 'ยังไม่มีกำหนด')],
           ...(c.graceEndsAt ? [['ผ่อนผันให้ใช้ได้ถึง', formatThaiDateTime(c.graceEndsAt)]] : []), ...(c.cancelEffectiveAt ? [['ยกเลิกมีผลเมื่อ', formatThaiDateTime(c.cancelEffectiveAt)]] : []),

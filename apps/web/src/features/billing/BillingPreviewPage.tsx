@@ -9,7 +9,7 @@ import { createBillingPreview, previewScenarios, type PreviewScenario } from './
 
 const button = 'mangmee-btn mangmee-btn-secondary';
 const money = (value: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(value / 100);
-type CheckoutPreview = Pick<BillingQuote, 'offer' | 'totalSatang' | 'purchase'>;
+type CheckoutPreview = Pick<BillingQuote, 'offer' | 'totalSatang' | 'purchase' | 'purchaseMode'>;
 
 export default function BillingPreviewPage({ companyId }: { companyId: string }) {
   const [scenario, setScenario] = useState<PreviewScenario>('start'), [revision, setRevision] = useState(0);
