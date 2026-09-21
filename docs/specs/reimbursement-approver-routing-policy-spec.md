@@ -389,6 +389,7 @@ type ReimbursementPolicySnapshotV1 = {
     roleKey: string;
     effectiveTaskRole: string;
     ownerFallbackUsedAtSubmission: boolean;
+    soloSelfApprovalAtSubmission?: boolean; // owner decision 2026-09-21, see §11
   };
   allowSelfApproval: boolean;
   requireReceipt: boolean;
@@ -522,6 +523,7 @@ fallback for legacy events that have no assignment snapshot.
 
 - Options reads never reserve readiness; save/submit revalidate.
 - Submit readiness is request-specific: it applies branch scope and the real self-approval predicate. A sole non-exempt holder submitting their own claim is not counted; OWNER recovery must be actionable for that request or submit fails before mutation.
+  - Exception (owner decision 2026-09-21, "ผู้ใช้คนเดียวที่กำหนดบทบาทเอง ต้องทำได้นะ"): when the route is empty only because the requester was removed as a self-approver — they hold the routed role (or are the named approver) and cover the branch, and no other holder or OWNER covers it — the step is assigned to the requester, `route.soloSelfApprovalAtSubmission: true` is frozen in the snapshot, and the approval audit records `selfApproval.via = 'no_other_approver'`. Decided at submit only; background re-reads never apply it.
 - Policy update uses `UPDATE ... WHERE id=? AND updatedAt=?`.
 - Company-default create is fenced by a partial unique index and conflict mapping.
 - Submit writes policy snapshot, status, optional step, document number, request version, and outbox facts atomically.

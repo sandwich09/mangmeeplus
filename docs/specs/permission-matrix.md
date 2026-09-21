@@ -535,13 +535,21 @@ Default grants:
 ALL company roles: reimbursement.read_related; view-only and reimbursement-entitlement-gated
 INTERNAL EMPLOYEE BASELINE (OWNER, ADMIN, MANAGER, SALES, INVENTORY, FINANCE, ACCOUNTANT, MARKETING, STAFF): reimbursement.read_own, reimbursement.create, reimbursement.update_own_draft, reimbursement.submit, reimbursement.cancel_own
 OWNER: all reimbursement permissions
-ADMIN: employee baseline plus reimbursement.read, reimbursement.approve, reimbursement.reject, reimbursement.policy.read, reimbursement.policy.manage, reimbursement.export (team decision 2026-07-28: approvers are OWNER/ADMIN/MANAGER; paying stays FINANCE-only)
-MANAGER: employee baseline plus reimbursement.read where ABAC allows team/summary, reimbursement.approve where assigned/team policy allows, reimbursement.reject where assigned/team policy allows
+ADMIN: employee baseline plus reimbursement.read, reimbursement.approve, reimbursement.reject, reimbursement.payment.record, reimbursement.payment.void, reimbursement.policy.read, reimbursement.policy.manage, reimbursement.export (approvers are OWNER/ADMIN/MANAGER per team decision 2026-07-28; owner decision 2026-09-19 supersedes that decision's "paying stays FINANCE-only" half — see note below)
+MANAGER: employee baseline plus reimbursement.read where ABAC allows team/summary, reimbursement.approve where assigned/team policy allows, reimbursement.reject where assigned/team policy allows, reimbursement.payment.record, reimbursement.payment.void (owner decision 2026-09-19, see note below)
 FINANCE: employee baseline plus reimbursement.read, reimbursement.finance_review, reimbursement.payment.record, reimbursement.payment.void, reimbursement.duplicate.resolve, reimbursement.policy.read, reimbursement.export
 ACCOUNTANT: employee baseline plus reimbursement.read, reimbursement.finance_review where accounting policy grants, reimbursement.export
 AUDITOR_READONLY: reimbursement.read, reimbursement.export
 SALES, INVENTORY, MARKETING, STAFF: employee baseline
 ```
+
+Owner decision 2026-09-19 supersedes the team decision of 2026-07-28 ("paying stays FINANCE-only"):
+an approver can record a reimbursement payment directly instead of handing it to finance, so ADMIN
+and MANAGER now hold `reimbursement.payment.record` and `reimbursement.payment.void` alongside
+`reimbursement.approve`/`reimbursement.reject` (`pack.reimbursement.approve` grants the same two keys
+to a custom role built from it). `reimbursement.finance_review`, `reimbursement.duplicate.resolve`,
+and `reimbursement.policy.manage` are not widened — those stay FINANCE/OWNER-only, unchanged. FINANCE
+keeps its existing grants.
 
 The employee baseline is active only while the `reimbursement` entitlement is ON. Safe-OFF continues to strip create, draft update, submit and cancel while retaining the existing runoff permissions for claims already in flight. Company custom roles opt in through `pack.reimbursement.self`; they are never widened solely because the feature is enabled.
 

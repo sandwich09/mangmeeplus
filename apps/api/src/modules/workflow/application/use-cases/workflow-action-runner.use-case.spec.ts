@@ -108,14 +108,14 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
 
     await make().execute({ ...actionRun(notifyAction!.configJson), actionKey: notifyAction!.actionKey }, reimbursementContext);
     const sent = (notify.execute.mock.calls[0] as any).arguments[0];
-    assert.equal(sent.deepLinkHref, '/companies/co_1/reimbursements?tab=approvals&focus=rb_1');
+    assert.equal(sent.deepLinkHref, '/companies/co_1/reimbursements/rb_1');
     assert.equal(sent.sourceRefs[0].webPath, sent.deepLinkHref);
 
     // The approval-review task carries no path of its own: it inherits the sibling's, so LINE
     // and the task list open the exact same screen.
     await make().execute({ ...actionRun(taskAction!.configJson), actionKey: taskAction!.actionKey, actionType: 'CREATE_APPROVAL_REVIEW_REQUEST' }, reimbursementContext);
     const created = (repo.createTask.mock.calls[0] as any).arguments[0];
-    assert.equal(created.webDeepLink, '/companies/co_1/reimbursements?tab=approvals&focus=rb_1');
+    assert.equal(created.webDeepLink, '/companies/co_1/reimbursements/rb_1');
     assert.equal(created.assigneeUserId, 'u_manager');
     assert.equal(created.assigneeRole, undefined, 'a later ACCOUNTANT must not inherit this frozen task');
   });
@@ -132,13 +132,15 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       } as any);
     };
 
-    it('does not re-evaluate the requester after submission resolved an exact self-approval route', async () => {
+    // AC11: the submitter is this event's actor and never gets told their own claim is pending
+    // approval, but a genuinely different approver (the manager) still does.
+    it('excludes the submitter/actor from the alert but still notifies the other approver', async () => {
       repo.findUserIdsByPermissions = mock.fn(async () => []);
       repo.findUserIdsByRoles = mock.fn(async () => []);
 
-      await runNotify({ requesterUserId: 'u_owner', approverRecipientUserIds: ['u_manager', 'u_owner'] });
+      await runNotify({ requesterUserId: 'u_owner', actorUserId: 'u_owner', approverRecipientUserIds: ['u_manager', 'u_owner'] });
 
-      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_manager', 'u_owner']);
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_manager']);
     });
 
     // Nothing resolving AT ALL still means the roles name people who do not exist — a later
@@ -153,13 +155,59 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       assert.equal(finalUpdate.status, 'FAILED_RETRYABLE');
     });
 
-    it('notifies a sole frozen self-approver because that decision was already validated at submit', async () => {
+    // AC11 + H-18: a solo owner submitting and self-approving excludes the only resolved
+    // recipient (themselves). That is expected for an owner-only company, not a failure, so it
+    // is a graceful skip (skipWhenAllRecipientsExcluded) rather than a dead-lettered retry.
+    it('skips gracefully — never notifies, never retries — when the sole frozen approver is also the actor', async () => {
       repo.findUserIdsByPermissions = mock.fn(async () => []);
       repo.findUserIdsByRoles = mock.fn(async () => []);
 
-      await runNotify({ requesterUserId: 'u_owner', approverRecipientUserIds: ['u_owner'] });
+      await runNotify({ requesterUserId: 'u_owner', actorUserId: 'u_owner', approverRecipientUserIds: ['u_owner'] });
 
-      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_owner']);
+      assert.equal(notify.execute.mock.callCount(), 0);
+      const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
+      assert.equal(finalUpdate.status, 'SUCCEEDED');
+      assert.equal(finalUpdate.resultJson.skipped, true);
+      assert.equal(finalUpdate.resultJson.reason, 'all_recipients_excluded');
+    });
+  });
+
+  // AC11: the same actor-exclusion rule for the other two named self-notification cases — the
+  // approver who just approved does not hear "ready for payment" about their own approval, and the
+  // payer who just recorded a payment does not hear "paid" about their own payment. Both templates
+  // resolve recipients differently (permission-based vs payload-based), so each gets its own check.
+  describe('reimbursement notification actor exclusion for payment events (spec §11 / AC11)', () => {
+    it('ready_for_payment: excludes the approver/actor but still notifies another payment.record holder', async () => {
+      const ready = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_ready_for_payment')!;
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_finance']);
+      await make().execute(actionRun(ready.defaultActionJson[0]!.configJson), {
+        companyId: 'co_1', ruleName: 'Reimbursement ready for payment', sourceModule: 'reimbursements',
+        sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB', actorUserId: 'u_owner' },
+        siblingActions: [],
+      } as any);
+
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_finance']);
+    });
+
+    it('payment_recorded: a solo owner paying their own claim skips gracefully instead of notifying themselves', async () => {
+      const paid = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_recorded')!;
+      repo.findUserIdsByPermissions = mock.fn(async () => []);
+      repo.findUserIdsByRoles = mock.fn(async () => []);
+      await make().execute(actionRun(paid.defaultActionJson[0]!.configJson), {
+        companyId: 'co_1', ruleName: 'Reimbursement payment recorded', sourceModule: 'reimbursements',
+        sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: {
+          requestId: 'rb_1', requestNo: 'RB-1', paidAmount: '250', currency: 'THB', paymentNo: 'RP-1',
+          requesterUserId: 'u_owner', actorUserId: 'u_owner',
+        },
+        siblingActions: [],
+      } as any);
+
+      assert.equal(notify.execute.mock.callCount(), 0);
+      const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
+      assert.equal(finalUpdate.resultJson.skipped, true);
+      assert.equal(finalUpdate.resultJson.reason, 'all_recipients_excluded');
     });
   });
 
@@ -206,14 +254,14 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     assert.equal(sent.body, 'ยอด 250 THB · รออนุมัติจากคุณ');
   });
 
-  it('falls back to the reimbursement hub (never /reimbursements/reimbursement_request/:id) when no path template is set', async () => {
+  it('falls back to the reimbursement journey page (never /reimbursements/reimbursement_request/:id) when no path template is set', async () => {
     repo.findUserIdsByRoles = mock.fn(async () => ['u_manager']);
     await make().execute(actionRun({ triggerKey: 'workflow.test', severity: 'info', recipientRoles: ['MANAGER'] }), {
       companyId: 'co_1', ruleName: 'r', sourceModule: 'reimbursements', sourceType: 'reimbursement_request',
       sourceId: 'rb_9', payload: {}, siblingActions: [],
     } as any);
     const sent = (notify.execute.mock.calls[0] as any).arguments[0];
-    assert.equal(sent.deepLinkHref, '/companies/co_1/reimbursements?focus=rb_9');
+    assert.equal(sent.deepLinkHref, '/companies/co_1/reimbursements/rb_9');
   });
 
   it('ignores an off-site deepLinkPathTemplate and uses the source path instead', async () => {
@@ -226,7 +274,7 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       sourceId: 'rb_9', payload: { requestId: 'rb_9' }, siblingActions: [],
     } as any);
     const sent = (notify.execute.mock.calls[0] as any).arguments[0];
-    assert.equal(sent.deepLinkHref, '/companies/co_1/reimbursements?focus=rb_9');
+    assert.equal(sent.deepLinkHref, '/companies/co_1/reimbursements/rb_9');
   });
 
   it('still unions role recipients and payload-key recipients with permission recipients', async () => {

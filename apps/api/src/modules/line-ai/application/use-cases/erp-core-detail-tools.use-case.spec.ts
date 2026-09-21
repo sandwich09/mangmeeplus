@@ -105,6 +105,9 @@ describe('LINE ERP core detail tools', () => {
       payments: [], duplicateCandidates: [],
     }) } as any);
     const result = await detail.execute(ctx, { reimbursementId: 'rr1' });
+    // Step-journey spec §11/§13 (AC10): the AI's answer about a claim's status links straight to
+    // that claim's journey page, the same path every notification template and the LINE handoff use.
+    assert.equal(result.sourceRefs?.[0]?.webPath, '/companies/c1/reimbursements/rr1');
     assert.equal((result.data as any).primaryAttachmentId, undefined);
     assert.equal((result.data as any).approvalSteps[0].approverUserId, undefined);
   });

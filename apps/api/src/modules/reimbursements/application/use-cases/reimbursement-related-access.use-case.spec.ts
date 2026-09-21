@@ -60,6 +60,10 @@ describe('reimbursement related-view ABAC', () => {
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.approveRequest), ['account.session.read']);
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.rejectRequest), ['account.session.read']);
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.createPayment), ['reimbursement.payment.record']);
+    // The payment-step duplicate clear rides this endpoint; the use case splits the two keys per call.
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, prototype.reviewRequest), [
+      'reimbursement.finance_review', 'reimbursement.duplicate.resolve', 'reimbursement.payment.record',
+    ]);
     assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, prototype.cancelRequest), [
       'reimbursement.cancel_own', 'reimbursement.finance_review',
     ]);

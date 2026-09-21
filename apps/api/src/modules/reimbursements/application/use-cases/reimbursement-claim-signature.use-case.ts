@@ -17,10 +17,11 @@ import { CreateUploadIntentUseCase } from '../../../data-model-core/application/
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
 import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
-import type { ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
+import type { ReimbursementRequestRecord, ReimbursementSignedCopyAck } from '../../domain/models/reimbursement.model';
 import { toSignedCopySummaries } from '../dto/reimbursement.mapper';
 import { assertCanReadRequest } from './reimbursement-request.use-case';
 import { claimSignatureAckHash } from '../../domain/logic/reimbursement.logic';
+import { claimFormLayout } from '../../domain/logic/claim-form.logic';
 
 const SIGNATURE_METADATA_TAG = 'reimbursement_claim_signature';
 const SIGNATURE_MAX_BYTES = 2_000_000;
@@ -44,6 +45,8 @@ export function eligibleClaimSignatureRoles(req: ReimbursementRequestRecord, use
     .filter((step) => step.status === 'APPROVED' && !!step.decidedAt)
     .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime())[0];
   if (approvedStep?.decisionByUserId === userId) roles.push('APPROVER');
+  // D3: the two-signer form has no accounting or payer block; a legacy form keeps all four.
+  if (claimFormLayout(req.claimSignatures) === 'TWO_SIGNERS') return roles;
 
   // Same gate the printed form uses: BLOCKED/NEEDS_INFO are decisions, not sign-off.
   if (req.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && req.financeReviewedByUserId === userId) roles.push('FINANCE_REVIEW');
@@ -234,13 +237,27 @@ export class LinkSignedClaimFormCopyUseCase {
     if (!SIGNED_COPY_MIME_TYPES.includes(attachment.mimeType)) {
       throw new BadRequestException('claim_form_signed_copy_must_be_pdf_or_image');
     }
+    // A4: with the declaration the scan is the paper-signed record; without it, an archive copy as before.
+    // Neither path touches the claim's status.
+    let ack: ReimbursementSignedCopyAck | undefined;
+    if (input.acknowledgedComplete) {
+      // The declaration names this claim's number, as a signature acknowledges its hash.
+      if (input.confirmedRequestNo !== req.requestNo) throw new ConflictException('stale_claim_snapshot');
+      // A system-tagged file (a signature image, another document's form) is never this scan,
+      // and stamping its metadata would break the exact-match lookups that load it.
+      if (attachment.metadataJson?.generatedFor) throw new BadRequestException('claim_form_signed_copy_attachment_invalid');
+      ack = {
+        requestId, requestNo: req.requestNo, acknowledgedByUserId: ctx.userId,
+        acknowledgedAt: new Date().toISOString(), checksumSha256: attachment.checksumSha256 ?? null,
+      };
+    }
 
-    await this.repo.linkSignedClaimFormCopy(ctx.companyId, requestId, input.attachmentId, ctx.userId);
+    await this.repo.linkSignedClaimFormCopy(ctx.companyId, requestId, input.attachmentId, ctx.userId, ack);
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.claim_form.signed_copy.link',
       targetType: 'reimbursement_request', targetId: requestId, requestId: ctx.requestId,
       result: 'SUCCESS', riskLevel: 'MEDIUM',
-      metadataJson: { attachmentId: input.attachmentId },
+      metadataJson: { attachmentId: input.attachmentId, ...(ack && { acknowledgedComplete: true, ...ack }) },
     });
     return toSignedCopySummaries(await this.repo.listSignedClaimFormCopies(ctx.companyId, requestId));
   }

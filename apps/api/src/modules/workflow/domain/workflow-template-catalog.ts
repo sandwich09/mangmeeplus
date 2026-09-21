@@ -57,10 +57,11 @@ export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> 
   reimbursement_payment_recorded: 0,
 };
 
-// Reimbursement notifications must land on the hub tab that can actually act on the claim.
-// Rendered by the action runner with the event payload + companyId (same renderer as titles);
-// the plain sourceWebPath is the fallback when an action has no deepLinkPathTemplate.
-const reimbursementHubLink = (tab: string) => `/companies/{{companyId}}/reimbursements?tab=${tab}&focus={{requestId}}`;
+// Step-journey spec §11/§13: every reimbursement notification links straight to that claim's
+// journey page (one page per request — no more tab/drawer routing). Rendered by the action runner
+// with the event payload + companyId (same renderer as titles); the plain sourceWebPath is the
+// fallback when an action has no deepLinkPathTemplate (see workflow-action-runner.use-case.ts).
+export const REIMBURSEMENT_REQUEST_LINK = '/companies/{{companyId}}/reimbursements/{{requestId}}';
 
 // First-pass template catalog (spec section 18). Availability reflects the ACTUAL
 // current repo state as of item 16 implementation: a template is AVAILABLE only when
@@ -137,7 +138,13 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           // Title comes from the sibling task template; the body must carry the numbers instead of
           // repeating it (the live notification showed the same line twice).
           bodyTemplate: 'ยอด {{amount}} {{currency}} · รออนุมัติจากคุณ',
-          deepLinkPathTemplate: reimbursementHubLink('approvals'),
+          deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+          // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
+          // own action — a solo owner submitting/approving/paying their own claim gets none of
+          // these pushes. An owner-only company excluding the sole recipient is expected, not a
+          // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
+          excludeRecipientPayloadKeys: ['actorUserId'],
+          skipWhenAllRecipientsExcluded: true,
         },
       },
       { actionKey: 'create_approval_task', actionType: 'CREATE_APPROVAL_REVIEW_REQUEST', configJson: { titleTemplate: 'อนุมัติเบิกจ่าย: {{requestNo}}', priority: 'HIGH', assigneeUserPayloadKey: 'approverTaskUserId', assigneeRolePayloadKey: 'approverTaskRole' } },
@@ -186,7 +193,13 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           // the rule name and acceptance criterion B ("rendered {{requestNo}}") cannot hold.
           titleTemplate: 'ผลอนุมัติเบิกจ่าย: {{requestNo}}',
           bodyTemplate: 'ผลการพิจารณา: {{decision}} · ยอด {{amount}} {{currency}}',
-          deepLinkPathTemplate: reimbursementHubLink('mine'),
+          deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+          // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
+          // own action — a solo owner submitting/approving/paying their own claim gets none of
+          // these pushes. An owner-only company excluding the sole recipient is expected, not a
+          // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
+          excludeRecipientPayloadKeys: ['actorUserId'],
+          skipWhenAllRecipientsExcluded: true,
         },
       },
     ],
@@ -214,7 +227,13 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           severity: 'action',
           titleTemplate: 'ใบเบิกต้องแก้ไข: {{requestNo}}',
           bodyTemplate: '{{note}} · ยอด {{amount}} {{currency}}',
-          deepLinkPathTemplate: reimbursementHubLink('mine'),
+          deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+          // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
+          // own action — a solo owner submitting/approving/paying their own claim gets none of
+          // these pushes. An owner-only company excluding the sole recipient is expected, not a
+          // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
+          excludeRecipientPayloadKeys: ['actorUserId'],
+          skipWhenAllRecipientsExcluded: true,
         },
       },
     ],
@@ -244,7 +263,13 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           severity: 'action',
           titleTemplate: 'ตรวจสอบการเงินเบิกจ่าย: {{requestNo}}',
           bodyTemplate: 'ผลตรวจสอบ: {{decision}} · ยอด {{amount}} {{currency}}',
-          deepLinkPathTemplate: reimbursementHubLink('finance'),
+          deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+          // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
+          // own action — a solo owner submitting/approving/paying their own claim gets none of
+          // these pushes. An owner-only company excluding the sole recipient is expected, not a
+          // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
+          excludeRecipientPayloadKeys: ['actorUserId'],
+          skipWhenAllRecipientsExcluded: true,
         },
       },
     ],
@@ -277,7 +302,13 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           severity: 'action',
           titleTemplate: 'ใบเบิกรอตรวจสอบการเงิน: {{requestNo}}',
           bodyTemplate: 'ยอด {{amount}} {{currency}} · รอตรวจสอบการเงิน',
-          deepLinkPathTemplate: reimbursementHubLink('finance'),
+          deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+          // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
+          // own action — a solo owner submitting/approving/paying their own claim gets none of
+          // these pushes. An owner-only company excluding the sole recipient is expected, not a
+          // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
+          excludeRecipientPayloadKeys: ['actorUserId'],
+          skipWhenAllRecipientsExcluded: true,
         },
       },
     ],
@@ -305,7 +336,13 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           severity: 'action',
           titleTemplate: 'พร้อมจ่ายเบิกจ่าย: {{requestNo}}',
           bodyTemplate: 'ยอด {{amount}} {{currency}} · รอบันทึกการจ่ายเงิน',
-          deepLinkPathTemplate: reimbursementHubLink('finance'),
+          deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+          // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
+          // own action — a solo owner submitting/approving/paying their own claim gets none of
+          // these pushes. An owner-only company excluding the sole recipient is expected, not a
+          // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
+          excludeRecipientPayloadKeys: ['actorUserId'],
+          skipWhenAllRecipientsExcluded: true,
         },
       },
     ],
@@ -334,7 +371,13 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           titleTemplate: 'จ่ายเงินเบิกแล้ว: {{requestNo}}',
           // paidAmount, not amount: this event carries the payment's own figures.
           bodyTemplate: 'จ่ายแล้ว {{paidAmount}} {{currency}} · เลขที่จ่าย {{paymentNo}}',
-          deepLinkPathTemplate: reimbursementHubLink('mine'),
+          deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+          // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
+          // own action — a solo owner submitting/approving/paying their own claim gets none of
+          // these pushes. An owner-only company excluding the sole recipient is expected, not a
+          // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
+          excludeRecipientPayloadKeys: ['actorUserId'],
+          skipWhenAllRecipientsExcluded: true,
         },
       },
     ],

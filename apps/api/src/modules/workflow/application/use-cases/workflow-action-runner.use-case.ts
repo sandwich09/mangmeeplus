@@ -59,9 +59,9 @@ function findDeepLinkPathTemplate(actionKey: string, configJson: Record<string, 
 
 function sourceWebPath(sourceModule?: string, sourceType?: string, sourceId?: string, companyId?: string): string | undefined {
   if (!sourceModule || !sourceId || !companyId) return undefined;
-  // Reimbursement requests have no per-id page: the hub honours ?focus=. The generic
-  // /module/type/id shape 404s for them.
-  if (sourceType === 'reimbursement_request') return `/companies/${companyId}/reimbursements?focus=${sourceId}`;
+  // Reimbursement step-journey spec §11/§13: one journey page per request, not the generic
+  // /module/type/id shape (which 404s for them).
+  if (sourceType === 'reimbursement_request') return `/companies/${companyId}/reimbursements/${sourceId}`;
   return `/companies/${companyId}/${sourceModule}/${sourceType ?? ''}/${sourceId}`.replace(/\/$/, '');
 }
 

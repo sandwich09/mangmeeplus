@@ -9,6 +9,12 @@ import type { ReimbursementPolicyRecord, ReimbursementRequestRecord } from './mo
 /** AttachmentLink coordinates of the wet-ink signed claim form uploaded back into the system. */
 export const REIMBURSEMENT_ATTACHMENT_TARGET_TYPE = 'reimbursement_request';
 export const REIMBURSEMENT_SIGNED_COPY_PURPOSE = 'reimbursement.claim_form.signed';
+/**
+ * Scan attachment metadata key holding the A4 declaration (no new column, spec §14). The value
+ * carries the link row id: a client can pre-fill metadata at upload but cannot know that id, and a
+ * link recreated after a reopen gets a new one, so neither a forged nor a stale entry counts.
+ */
+export const REIMBURSEMENT_SIGNED_COPY_ACK_KEY = 'reimbursementSignedCopyAck';
 
 /** Decision-relevant policy fields, resolved from a DB policy or company defaults. */
 export type EffectivePolicy = {
@@ -35,7 +41,9 @@ export const REIMBURSEMENT_POLICY_DEFAULTS: EffectivePolicy = {
   requireReceipt: true,
   allowMissingReceiptWithReason: false,
   duplicatePolicy: 'BLOCK_PAYMENT',
-  financeReviewRequired: true,
+  // Step-journey spec §7 / owner decision D2 + A1 (2026-09-19): default OFF so a solo owner can
+  // finish a claim in one sitting. Companies that want finance review back can switch it on.
+  financeReviewRequired: false,
   status: 'ACTIVE',
 };
 
@@ -62,7 +70,7 @@ const POLICY_SNAPSHOT_KEYS = new Set([
   'route', 'allowSelfApproval', 'requireReceipt', 'allowMissingReceiptWithReason',
   'duplicatePolicy', 'financeReviewRequired', 'slaHours',
 ]);
-const ROUTE_KEYS = new Set(['mode', 'roleKey', 'effectiveTaskRole', 'ownerFallbackUsedAtSubmission']);
+const ROUTE_KEYS = new Set(['mode', 'roleKey', 'effectiveTaskRole', 'ownerFallbackUsedAtSubmission', 'soloSelfApprovalAtSubmission']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -80,7 +88,8 @@ export function parseReimbursementPolicySnapshot(value: unknown): ReimbursementP
     && ['MANAGER_ROLE', 'OWNER_ROLE', 'CUSTOM_ROLE'].includes(String(route['mode']))
     && typeof route['roleKey'] === 'string' && route['roleKey'].length > 0
     && typeof route['effectiveTaskRole'] === 'string' && route['effectiveTaskRole'].length > 0
-    && typeof route['ownerFallbackUsedAtSubmission'] === 'boolean');
+    && typeof route['ownerFallbackUsedAtSubmission'] === 'boolean'
+    && (route['soloSelfApprovalAtSubmission'] === undefined || typeof route['soloSelfApprovalAtSubmission'] === 'boolean'));
   const threshold = value['approvalRequiredFromAmount'];
   const requiresHumanApproval = value['requiresApproval'];
   const valid = value['schemaVersion'] === 1

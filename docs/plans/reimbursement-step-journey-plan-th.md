@@ -39,8 +39,8 @@
 
 - [x] เจ้าของดูตัวอย่าง artboard 9 หน้า และตอบ A1/A2 (ยืนยันทั้งสองข้อ 19 ก.ย. 2569)
 - [x] เจ้าของยืนยัน A4 สำเนากระดาษที่เซ็นครบนับว่าขั้นเอกสารเสร็จ (ยืนยัน 19 ก.ย. 2569 หลังถามว่า "อัปโหลดแบบกระดาษที่มีลายเซ็นแล้ว ระบบยอมรับว่าผ่านไหม")
-- [ ] อ่านโค้ดจุดที่จะแก้อีกครั้งก่อนเริ่ม (drawer section, catalog, runner, renderer)
-- [ ] บันทึกคำตอบลง memory
+- [x] อ่านโค้ดจุดที่จะแก้อีกครั้งก่อนเริ่ม (drawer section, catalog, runner, renderer)
+- [x] บันทึกคำตอบลง memory
 
 เกณฑ์ออก: ผ่านแล้ว A1, A2, A4 ยืนยันครบ เหลือเพียงอ่านโค้ดจุดที่จะแก้อีกครั้งตอนเริ่ม Phase 1
 
@@ -50,12 +50,12 @@
 
 งาน:
 
-- [ ] `schema.prisma`: `financeReviewRequired @default(false)` และ migration idempotent ที่ตั้งแถวเดิมเป็น false (A1)
-- [ ] `reimbursement.constants.ts`: `REIMBURSEMENT_POLICY_DEFAULTS.financeReviewRequired = false`
-- [ ] `permission-registry.ts`: ADMIN และ MANAGER เพิ่ม `reimbursement.payment.record`, `reimbursement.payment.void`
-- [ ] `capability-pack.registry.ts`: `pack.reimbursement.approve` เพิ่มสองคีย์เดียวกัน
-- [ ] `docs/specs/permission-matrix.md`: บรรทัด ADMIN/MANAGER และหมายเหตุคำตัดสิน 19 ก.ย. 2569
-- [ ] หน้าตั้งค่านโยบาย: ข้อความสวิตช์ตรวจการเงิน บรรทัดใต้ตัวเลือกผู้อนุมัติ และ decision preview ตามสเปค §7
+- [x] `schema.prisma`: `financeReviewRequired @default(false)` และ migration idempotent ที่ตั้งแถวเดิมเป็น false (A1)
+- [x] `reimbursement.constants.ts`: `REIMBURSEMENT_POLICY_DEFAULTS.financeReviewRequired = false`
+- [x] `permission-registry.ts`: ADMIN และ MANAGER เพิ่ม `reimbursement.payment.record`, `reimbursement.payment.void`
+- [x] `capability-pack.registry.ts`: `pack.reimbursement.approve` เพิ่มสองคีย์เดียวกัน
+- [x] `docs/specs/permission-matrix.md`: บรรทัด ADMIN/MANAGER และหมายเหตุคำตัดสิน 19 ก.ย. 2569
+- [x] หน้าตั้งค่านโยบาย: ข้อความสวิตช์ตรวจการเงิน บรรทัดใต้ตัวเลือกผู้อนุมัติ และ decision preview ตามสเปค §7
 
 ทดสอบ:
 
@@ -70,13 +70,13 @@
 
 งาน:
 
-- [ ] เพิ่ม pure function `buildJourneySteps(detail, viewerPermissions, viewerUserId)` ใน `reimbursements.logic.ts` คืนรายการขั้น (key, label, state, ปุ่มที่เปิด) โดยอ่าน `currentDesk`, snapshot นโยบาย, สถานะ และ step อนุมัติ
-- [ ] ถอด section ของ drawer (ตารางรายการ, timeline, ลายเซ็น/สำเนา, ประวัติการจ่าย, ฟอร์มบันทึกจ่าย, dialog ปฏิเสธ/ยกเลิก) ออกเป็น component ในไฟล์ใหม่ที่ทั้ง drawer และหน้า journey ใช้ร่วมกันชั่วคราว
-- [ ] สร้าง `ReimbursementJourneyPage.tsx` ประกอบจาก ThemedSteps + การ์ดขั้นปัจจุบัน + section ข้างต้น
-- [ ] route `[requestId]/page.tsx` เปลี่ยนจาก redirect เป็นหน้า journey โดยส่ง permissions/userId แบบเดียวกับหน้า hub
-- [ ] hub: `?focus=` และ `?tab=…&focus=` redirect ไปหน้า journey แถวรายการเป็นลิงก์ไปหน้า journey
-- [ ] หน้าสร้าง/แก้ไข: รับ `?expenseId=` เลือกต้นทางล่วงหน้า และหลังบันทึกร่างพาไปหน้า journey
-- [ ] หลังอนุมัติ: โหลดรายละเอียดใหม่ ถ้าผู้ดูถือ payment.record และใบอยู่ขั้นจ่ายเงินคืน ให้เปิดฟอร์มบันทึกจ่ายในการ์ดทันที
+- [x] เพิ่ม pure function `buildJourneySteps(detail, viewerPermissions, viewerUserId)` ใน `reimbursements.logic.ts` คืนรายการขั้น (key, label, state, ปุ่มที่เปิด) โดยอ่าน `currentDesk`, snapshot นโยบาย, สถานะ และ step อนุมัติ
+- [x] ถอด section ของ drawer (ตารางรายการ, timeline, ลายเซ็น/สำเนา, ประวัติการจ่าย, ฟอร์มบันทึกจ่าย, dialog ปฏิเสธ/ยกเลิก) ออกเป็น component ในไฟล์ใหม่ที่ทั้ง drawer และหน้า journey ใช้ร่วมกันชั่วคราว
+- [x] สร้าง `ReimbursementJourneyPage.tsx` ประกอบจาก ThemedSteps + การ์ดขั้นปัจจุบัน + section ข้างต้น
+- [x] route `[requestId]/page.tsx` เปลี่ยนจาก redirect เป็นหน้า journey โดยส่ง permissions/userId แบบเดียวกับหน้า hub
+- [x] hub: `?focus=` และ `?tab=…&focus=` redirect ไปหน้า journey แถวรายการเป็นลิงก์ไปหน้า journey
+- [x] หน้าสร้าง/แก้ไข: รับ `?expenseId=` เลือกต้นทางล่วงหน้า และหลังบันทึกร่างพาไปหน้า journey
+- [x] หลังอนุมัติ: โหลดรายละเอียดใหม่ ถ้าผู้ดูถือ payment.record และใบอยู่ขั้นจ่ายเงินคืน ให้เปิดฟอร์มบันทึกจ่ายในการ์ดทันที
 
 ทดสอบ:
 
@@ -91,11 +91,11 @@
 
 งาน:
 
-- [ ] `claim-form.logic.ts`: ผัง 2 ช่อง + บรรทัดการจ่ายเงินคืน + ข้อความคนเดียวกัน + คง "ไม่ต้องอนุมัติตามนโยบาย"; เลือกผัง legacy 4 ช่องเมื่อมีแถวลายเซ็น FINANCE_REVIEW/PAYER
-- [ ] `reimbursement-claim-signature.use-case.ts`: `eligibleClaimSignatureRoles` คืนเฉพาะ REQUESTER/APPROVER เมื่อผัง 2 ช่อง
-- [ ] รายละเอียดใบเพิ่ม `claimFormLayout` (contract เสริม ไม่บังคับ)
-- [ ] เว็บ: ส่วนลายเซ็นแสดง 2 ช่อง ปุ่ม "ลงนาม" เรียกอัปโหลด+ลงนามหนึ่งครั้งต่อบทบาทที่มีสิทธิ์ (คนเดียวกันได้สองแถวจากการกดครั้งเดียว)
-- [ ] เส้นทางเซ็นกระดาษ (A4): `LinkSignedClaimFormCopyUseCase` รับ `acknowledgedComplete: true` และเลขที่ใบที่ผู้แนบยืนยัน บันทึก checksum ของ attachment ลง audit metadata; รายละเอียดใบเพิ่ม `documentSignedVia`; เว็บ: dialog คำรับรองก่อนแนบ, ช่องลงนามแสดง "ลงนามบนกระดาษ (ดูสำเนา)", timeline แถวเอกสารผ่านเมื่อมีสำเนา; renderer ไม่เปลี่ยน (ไม่วาดลายเซ็นจำลอง)
+- [x] `claim-form.logic.ts`: ผัง 2 ช่อง + บรรทัดการจ่ายเงินคืน + ข้อความคนเดียวกัน + คง "ไม่ต้องอนุมัติตามนโยบาย"; เลือกผัง legacy 4 ช่องเมื่อมีแถวลายเซ็น FINANCE_REVIEW/PAYER
+- [x] `reimbursement-claim-signature.use-case.ts`: `eligibleClaimSignatureRoles` คืนเฉพาะ REQUESTER/APPROVER เมื่อผัง 2 ช่อง
+- [x] รายละเอียดใบเพิ่ม `claimFormLayout` (contract เสริม ไม่บังคับ)
+- [x] เว็บ: ส่วนลายเซ็นแสดง 2 ช่อง ปุ่ม "ลงนาม" เรียกอัปโหลด+ลงนามหนึ่งครั้งต่อบทบาทที่มีสิทธิ์ (คนเดียวกันได้สองแถวจากการกดครั้งเดียว)
+- [x] เส้นทางเซ็นกระดาษ (A4): `LinkSignedClaimFormCopyUseCase` รับ `acknowledgedComplete: true` และเลขที่ใบที่ผู้แนบยืนยัน บันทึก checksum ของ attachment ลง audit metadata; รายละเอียดใบเพิ่ม `documentSignedVia`; เว็บ: dialog คำรับรองก่อนแนบ, ช่องลงนามแสดง "ลงนามบนกระดาษ (ดูสำเนา)", timeline แถวเอกสารผ่านเมื่อมีสำเนา; renderer ไม่เปลี่ยน (ไม่วาดลายเซ็นจำลอง)
 
 ทดสอบ:
 
@@ -110,10 +110,10 @@
 
 งาน:
 
-- [ ] `workflow-template-catalog.ts`: `reimbursementHubLink` เปลี่ยนเป็น `/companies/{{companyId}}/reimbursements/{{requestId}}`
-- [ ] `workflow-action-runner.use-case.ts`: `sourceWebPath` ของ reimbursement_request ชี้หน้า journey; ตัดผู้กระทำเหตุการณ์ (`actorUserId` ใน payload) ออกจากผู้รับทุกแม่แบบเบิกจ่าย; ถ้า payload ยังไม่มี actor ให้ use case ที่ publish เหตุการณ์ใส่เพิ่ม
-- [ ] `line-staff-menu.logic.ts`: การ์ดคงเปิดแท็บคิวอนุมัติ ไม่แก้ นอกจากทดสอบยืนยัน
-- [ ] คำตอบ AI สถานะใบเบิก: path ลิงก์ใหม่ (`erp-reimbursement-tools.use-case.ts` หรือ composer ที่ประกอบลิงก์)
+- [x] `workflow-template-catalog.ts`: `reimbursementHubLink` เปลี่ยนเป็น `/companies/{{companyId}}/reimbursements/{{requestId}}`
+- [x] `workflow-action-runner.use-case.ts`: `sourceWebPath` ของ reimbursement_request ชี้หน้า journey; ตัดผู้กระทำเหตุการณ์ (`actorUserId` ใน payload) ออกจากผู้รับทุกแม่แบบเบิกจ่าย; ถ้า payload ยังไม่มี actor ให้ use case ที่ publish เหตุการณ์ใส่เพิ่ม
+- [x] `line-staff-menu.logic.ts`: การ์ดคงเปิดแท็บคิวอนุมัติ ไม่แก้ นอกจากทดสอบยืนยัน
+- [x] คำตอบ AI สถานะใบเบิก: path ลิงก์ใหม่ (`erp-reimbursement-tools.use-case.ts` หรือ composer ที่ประกอบลิงก์)
 
 ทดสอบ:
 
@@ -128,9 +128,9 @@
 
 งาน:
 
-- [ ] `SubstituteReceiptWizardPage.tsx` ขั้นรับเอกสาร: ปุ่มหลัก "สร้างคำขอเบิกจากใบนี้" และข้อความใหม่ตามสเปค §10 เงื่อนไขแสดงตาม status/fundingSource/payerUserId/สิทธิ์
-- [ ] `SubstituteReceiptHubPage.tsx`: การกระทำเดียวกันบนแถวที่เข้าเงื่อนไข
-- [ ] หน้าสร้างคำขอ: ถ้าต้นทางจาก `?expenseId=` ไม่เข้าเงื่อนไข แสดงเหตุผลจากรหัสเดิมของตัวเลือกต้นทาง
+- [x] `SubstituteReceiptWizardPage.tsx` ขั้นรับเอกสาร: ปุ่มหลัก "สร้างคำขอเบิกจากใบนี้" และข้อความใหม่ตามสเปค §10 เงื่อนไขแสดงตาม status/fundingSource/payerUserId/สิทธิ์
+- [x] `SubstituteReceiptHubPage.tsx`: การกระทำเดียวกันบนแถวที่เข้าเงื่อนไข
+- [x] หน้าสร้างคำขอ: ถ้าต้นทางจาก `?expenseId=` ไม่เข้าเงื่อนไข แสดงเหตุผลจากรหัสเดิมของตัวเลือกต้นทาง
 
 ทดสอบ:
 
@@ -146,10 +146,10 @@
 
 งาน:
 
-- [ ] checklist parity: ส่งอนุมัติ, อนุมัติ, ปฏิเสธ, ยกเลิกคำขอ, เปิดกลับเป็นร่าง, อนุมัติจ่าย/ขอข้อมูล/บล็อก, บันทึกจ่าย, ยกเลิกการจ่าย, ลงนาม, พิมพ์, แนบสำเนา, ดูไฟล์หลักฐาน, ปลดรายการซ้ำ, ส่งออกหลักฐาน ทุกข้อทำได้จากหน้า journey
-- [ ] ลบ drawer และ state ที่ใช้เฉพาะ drawer ออกจาก `ReimbursementsPages.tsx`
-- [ ] `reimbursement-guide.content.ts`: เส้นทาง 4 ขั้น + ขั้นตรวจการเงินแบบมีเงื่อนไข, ผู้อนุมัติบันทึกจ่ายได้, ใบเบิก 2 ช่อง
-- [ ] `e2e/reimbursements.spec.ts`, `e2e/reimbursement-receipt.spec.ts`: เดินบนหน้า journey
+- [x] checklist parity: ส่งอนุมัติ, อนุมัติ, ปฏิเสธ, ยกเลิกคำขอ, เปิดกลับเป็นร่าง, อนุมัติจ่าย/ขอข้อมูล/บล็อก, บันทึกจ่าย, ยกเลิกการจ่าย, ลงนาม, พิมพ์, แนบสำเนา, ดูไฟล์หลักฐาน, ปลดรายการซ้ำ, ส่งออกหลักฐาน ทุกข้อทำได้จากหน้า journey
+- [x] ลบ drawer และ state ที่ใช้เฉพาะ drawer ออกจาก `ReimbursementsPages.tsx`
+- [x] `reimbursement-guide.content.ts`: เส้นทาง 4 ขั้น + ขั้นตรวจการเงินแบบมีเงื่อนไข, ผู้อนุมัติบันทึกจ่ายได้, ใบเบิก 2 ช่อง
+- [x] `e2e/reimbursements.spec.ts`, `e2e/reimbursement-receipt.spec.ts`: เดินบนหน้า journey
 
 ทดสอบ:
 
@@ -187,3 +187,8 @@ node scripts/run-line-ai-whole-chain-acceptance.mjs
 ## คำถามเปิด
 
 - ไม่มี ทุกคำตัดสินและสมมติฐานยืนยันแล้ว 19 ก.ย. 2569
+
+## สถานะ implement (21 ก.ย. 2569)
+
+- Phase 0–6 implement ครบบน branch เดียว พร้อมแก้ช่องว่างที่รีวิวเจอ: ปลดรายการซ้ำในขั้นจ่ายเงินเมื่อปิดตรวจการเงิน (ผู้บันทึกจ่ายปลดได้ ตามคำตัดสินเจ้าของ 21 ก.ย.), ผู้เบิกดึงใบกลับจากรออนุมัติ, คำแนะนำเมื่ออนุมัติใบตัวเองไม่ได้, จำนวนขั้นก่อนอนุมัติ
+- ข้ามตามคำสั่งเจ้าของ (บันทึกเป็นหนี้ตรวจ): browser 390 px, รัน e2e, รัน migration บนฐานข้อมูลจริง, integration Postgres; e2e เขียนแล้วแต่ไม่ได้รัน

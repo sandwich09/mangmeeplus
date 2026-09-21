@@ -6,7 +6,13 @@
  * substitute-receipt renderer on purpose — the two documents live in different
  * modules and must not import each other's domain logic.
  */
+import type {
+  ReimbursementClaimFormLayout,
+  ReimbursementClaimSignatureRole,
+  ReimbursementDocumentSignedVia,
+} from '@watchdog-bms/contracts';
 import { cancelledDocumentReasonBox, cancelledDocumentReasonBoxes, cancelledDocumentWatermark } from '../../../../common/documents/cancelled-document';
+import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
 
 export const REIMBURSEMENT_CLAIM_FORM_TITLE_EN = 'REIMBURSEMENT CLAIM FORM';
 export const REIMBURSEMENT_CLAIM_FORM_TITLE_TH = 'ใบเบิกค่าใช้จ่าย';
@@ -14,6 +20,9 @@ export const REIMBURSEMENT_CLAIM_FORM_TITLE_TH = 'ใบเบิกค่าใ
 const THAI_DIGITS = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'];
 const THAI_POSITIONS = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน'];
 const THAI_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+/** Same words as the web payment form. */
+const PAYMENT_METHOD_LABELS: Record<string, string> = { CASH: 'เงินสด', BANK_TRANSFER: 'โอนเงิน', CHEQUE: 'เช็ค', OTHER: 'อื่น ๆ' };
+const SAME_PERSON_NOTE = 'ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน อนุมัติรายการของตนเองตามนโยบายบริษัท';
 const WORD_SEGMENTER = new Intl.Segmenter('th', { granularity: 'word' });
 const GRAPHEME_SEGMENTER = new Intl.Segmenter('th', { granularity: 'grapheme' });
 
@@ -61,6 +70,12 @@ export type ReimbursementClaimFormSnapshot = {
   /** Printed when policy legitimately skipped the human approval step. */
   approvalDecisionNote?: string | null;
   cancellation?: { reason: string | null };
+  /** LEGACY_FOUR_SIGNERS reprints the old four blocks byte for byte; `repayment` and `selfApproved` only print on TWO_SIGNERS. */
+  layout: ReimbursementClaimFormLayout;
+  /** Latest recorded payment, stated as text under the table; null prints ยังไม่จ่าย. */
+  repayment: { paidAt: string; method: string; reference: string | null; recordedByName: string } | null;
+  /** The requester decided their own approval. */
+  selfApproved?: boolean;
   /**
    * null = the step has not happened, so the form prints a blank ruled line for
    * wet ink instead of inventing a signer.
@@ -72,6 +87,40 @@ export type ReimbursementClaimFormSnapshot = {
     finance: ClaimFormSigner | null;
   };
 };
+
+/**
+ * Spec §9: a claim already signed in the accounting or payer block keeps the four-block form it was
+ * signed on; every other claim prints two. The ack hash folds only the claim's facts, never the
+ * layout, so moving a claim to two blocks leaves its ผู้เบิก/ผู้อนุมัติ signatures valid.
+ */
+export function claimFormLayout(signatures: readonly { role: ReimbursementClaimSignatureRole }[] = []): ReimbursementClaimFormLayout {
+  return signatures.some(({ role }) => role === 'FINANCE_REVIEW' || role === 'PAYER') ? 'LEGACY_FOUR_SIGNERS' : 'TWO_SIGNERS';
+}
+
+/**
+ * A4, derived at read time. An acknowledged scan means signed on paper (BOTH beside any digital
+ * row); otherwise DIGITAL needs every block the form expects: ผู้เบิก, ผู้อนุมัติ unless policy skipped
+ * approval, and on the legacy form the payer block plus the accounting block when finance reviewed.
+ */
+export function documentSignedVia(
+  claim: {
+    claimSignatures?: readonly { role: ReimbursementClaimSignatureRole }[];
+    approvalPolicySnapshotJson?: unknown;
+    financeReviewStatus: string;
+  },
+  hasAcknowledgedPaperCopy: boolean,
+): ReimbursementDocumentSignedVia {
+  const signed = new Set((claim.claimSignatures ?? []).map(({ role }) => role));
+  if (hasAcknowledgedPaperCopy) return signed.size ? 'BOTH' : 'PAPER';
+  if (!signed.size) return null;
+  const required: ReimbursementClaimSignatureRole[] = ['REQUESTER'];
+  if (parseReimbursementPolicySnapshot(claim.approvalPolicySnapshotJson)?.requiresApproval !== false) required.push('APPROVER');
+  if (claimFormLayout(claim.claimSignatures) === 'LEGACY_FOUR_SIGNERS') {
+    required.push('PAYER');
+    if (claim.financeReviewStatus !== 'NOT_REQUIRED') required.push('FINANCE_REVIEW');
+  }
+  return required.every((role) => signed.has(role)) ? 'DIGITAL' : null;
+}
 
 export function thaiBahtText(value: string): string {
   const normalized = value.replace(/,/g, '').trim();
@@ -134,7 +183,8 @@ export function renderReimbursementClaimFormSvg(snapshot: ReimbursementClaimForm
   const totalY = rowY + 24;
   const tableBottom = rowY + 36;
   const bahtTextY = tableBottom + 30;
-  const checklistTitleY = tableBottom + 76;
+  const repaymentLines = snapshot.layout === 'TWO_SIGNERS' ? wrapText(repaymentText(snapshot.repayment), SHEET_WIDTH) : [];
+  const checklistTitleY = tableBottom + 76 + (repaymentLines.length ? repaymentLines.length * 22 + 8 : 0);
   const checklistY = checklistTitleY + 28;
   // An unevidenced claim must say WHY on paper, or the empty checklist reads as an omission.
   const waiverLines = !snapshot.hasReceiptEvidence && snapshot.missingReceiptReason?.trim()
@@ -151,12 +201,6 @@ export function renderReimbursementClaimFormSvg(snapshot: ReimbursementClaimForm
   const height = Math.max(MIN_PAGE_HEIGHT, contentEnd + SIGNATURE_BLOCK_HEIGHT + cancellationHeight);
   // Signature row sits at the foot of the sheet like the paper form, whatever the body length.
   const signaturesTop = height - SIGNATURE_BLOCK_HEIGHT - cancellationHeight;
-  const signatures = [
-    ['ผู้เบิก', snapshot.signers.requester],
-    ['ผู้อนุมัติ', snapshot.signers.approver],
-    ['ฝ่ายบัญชี', snapshot.signers.accounting],
-    ['ฝ่ายการเงิน', snapshot.signers.finance],
-  ].map(([label, signer], index) => signatureBlock(45 + index * 190, signaturesTop, label as string, signer as ClaimFormSigner | null)).join('');
 
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${PAGE_WIDTH}" height="${height}" viewBox="0 0 ${PAGE_WIDTH} ${height}" role="img" aria-label="${xml(REIMBURSEMENT_CLAIM_FORM_TITLE_TH)}">
@@ -180,7 +224,7 @@ export function renderReimbursementClaimFormSvg(snapshot: ReimbursementClaimForm
     ${rows}
     <text x="645" y="${totalY}" text-anchor="end" font-weight="700">รวมเป็นเงิน</text>
     <text x="795" y="${totalY}" text-anchor="end" font-weight="700">${money(snapshot.totalAmount)}</text>
-    <text x="45" y="${bahtTextY}"${fitToWidth(`จำนวนเงินรวม (ตัวอักษร): ${thaiBahtText(snapshot.totalAmount)}`, SHEET_WIDTH)}>จำนวนเงินรวม (ตัวอักษร): ${xml(thaiBahtText(snapshot.totalAmount))}</text>
+    <text x="45" y="${bahtTextY}"${fitToWidth(`จำนวนเงินรวม (ตัวอักษร): ${thaiBahtText(snapshot.totalAmount)}`, SHEET_WIDTH)}>จำนวนเงินรวม (ตัวอักษร): ${xml(thaiBahtText(snapshot.totalAmount))}</text>${repaymentLines.length ? multilineText(45, bahtTextY + 30, repaymentLines, 22, SHEET_WIDTH) : ''}
     <text x="45" y="${checklistTitleY}" font-weight="700">เอกสารแนบ</text>
     ${checkbox(52, checklistY, snapshot.hasReceiptEvidence, 'ใบเสร็จรับเงิน')}
     ${checkbox(232, checklistY, false, 'ใบกำกับภาษี')}
@@ -189,8 +233,7 @@ export function renderReimbursementClaimFormSvg(snapshot: ReimbursementClaimForm
     ${waiverLines.length ? multilineText(52, waiverY, waiverLines, 20) : ''}
     <text x="45" y="${reasonTitleY}" font-weight="700">เหตุผลในการเบิก</text>
     ${multilineText(52, reasonY, reasonLines, 22)}
-    <text x="45" y="${signaturesTop - 30}" font-weight="700">การอนุมัติ${snapshot.approvalDecisionNote ? ` — ${xml(snapshot.approvalDecisionNote)}` : ''}</text>
-    ${signatures}
+    ${signatureSection(snapshot, signaturesTop)}
   </g>
   ${cancellationBox ? cancellationBox.svg.replace('<svg ', `<svg x="45" y="${height - cancellationHeight}" `) : ''}
   ${snapshot.cancellation ? cancelledDocumentWatermark(PAGE_WIDTH, height) : ''}
@@ -259,6 +302,12 @@ export function renderReimbursementClaimFormPages(snapshot: ReimbursementClaimFo
     <text x="795" y="${y + 24}" text-anchor="end" font-weight="700">${money(snapshot.totalAmount)}</text>
     <text x="45" y="${y + 66}"${fitToWidth(`จำนวนเงินรวม (ตัวอักษร): ${thaiBahtText(snapshot.totalAmount)}`, SHEET_WIDTH)}>จำนวนเงินรวม (ตัวอักษร): ${xml(thaiBahtText(snapshot.totalAmount))}</text></g>`);
   y += 100;
+  if (snapshot.layout === 'TWO_SIGNERS') {
+    const lines = wrapText(repaymentText(snapshot.repayment), SHEET_WIDTH);
+    ensure(lines.length * 22 + 12);
+    page.push(multilineText(45, y, lines, 22, SHEET_WIDTH));
+    y += lines.length * 22 + 12;
+  }
   ensure(64);
   page.push(`<text x="45" y="${y}" font-weight="700">เอกสารแนบ</text>
     ${checkbox(52, y + 28, snapshot.hasReceiptEvidence, 'ใบเสร็จรับเงิน')}
@@ -285,8 +334,7 @@ export function renderReimbursementClaimFormPages(snapshot: ReimbursementClaimFo
   const boxSpace = boxes.length === 1 ? boxes[0]!.height + 24 : 0;
   ensure(200);
   const signaturesTop = y + 200 + boxSpace <= bottom ? bottom - 150 - boxSpace : bottom - 150;
-  page.push(`<g data-claim-signatures="true"><text x="45" y="${signaturesTop - 30}" font-weight="700">การอนุมัติ${snapshot.approvalDecisionNote ? ` — ${xml(snapshot.approvalDecisionNote)}` : ''}</text>
-    ${[['ผู้เบิก', snapshot.signers.requester], ['ผู้อนุมัติ', snapshot.signers.approver], ['ฝ่ายบัญชี', snapshot.signers.accounting], ['ฝ่ายการเงิน', snapshot.signers.finance]].map(([label, signer], index) => signatureBlock(45 + index * 190, signaturesTop, label as string, signer as ClaimFormSigner | null)).join('')}</g>`);
+  page.push(`<g data-claim-signatures="true">${signatureSection(snapshot, signaturesTop)}</g>`);
   y = signaturesTop + 150;
   for (const box of boxes) {
     ensure(box.height);
@@ -303,9 +351,33 @@ export function renderReimbursementClaimFormPages(snapshot: ReimbursementClaimFo
   </svg>`, 'utf8'));
 }
 
+/** Heading and signature row, shared by both renderings. The legacy branch is the old markup verbatim. */
+function signatureSection(snapshot: ReimbursementClaimFormSnapshot, top: number): string {
+  const { signers, approvalDecisionNote: note } = snapshot;
+  if (snapshot.layout === 'LEGACY_FOUR_SIGNERS') {
+    return `<text x="45" y="${top - 30}" font-weight="700">การอนุมัติ${note ? ` — ${xml(note)}` : ''}</text>
+    ${[['ผู้เบิก', signers.requester], ['ผู้อนุมัติ', signers.approver], ['ฝ่ายบัญชี', signers.accounting], ['ฝ่ายการเงิน', signers.finance]].map(([label, signer], index) => signatureBlock(45 + index * 190, top, label as string, signer as ClaimFormSigner | null)).join('')}`;
+  }
+  // D3: two half-sheet blocks. No payer/accounting block: the repayment facts print as text instead.
+  return `<text x="45" y="${top - 30}" font-weight="700">การอนุมัติ</text>
+    ${signatureBlock(45, top, 'ผู้เบิก', signers.requester, 380)}${signatureBlock(425, top, 'ผู้อนุมัติ', signers.approver, 380, note)}${snapshot.selfApproved ? `
+    <text x="425" y="${top + 140}" text-anchor="middle" font-size="13">${SAME_PERSON_NOTE}</text>` : ''}`;
+}
+
+function repaymentText(repayment: ReimbursementClaimFormSnapshot['repayment']): string {
+  return repayment
+    ? `การจ่ายเงินคืน: จ่ายเมื่อ ${formatDate(repayment.paidAt)} วิธี ${PAYMENT_METHOD_LABELS[repayment.method] ?? repayment.method} เลขอ้างอิง ${repayment.reference || '-'} บันทึกโดย ${repayment.recordedByName}`
+    : 'การจ่ายเงินคืน: ยังไม่จ่าย';
+}
+
 /** Role label, wet-ink space, ลงชื่อ ruled line, name line, date line — filled only when the step happened. */
-function signatureBlock(x: number, top: number, label: string, signer: ClaimFormSigner | null): string {
-  const center = x + 95;
+function signatureBlock(x: number, top: number, label: string, signer: ClaimFormSigner | null, width = 190, note?: string | null): string {
+  const center = x + width / 2;
+  // Nobody signs a step policy skipped, so its note replaces the ruled lines.
+  if (!signer && note) {
+    return `<text x="${center}" y="${top}" text-anchor="middle" font-weight="600">${xml(label)}</text>
+    <text x="${center}" y="${top + 66}" text-anchor="middle" font-size="13">${xml(note)}</text>`;
+  }
   // A digitally signed role prints its image in the wet-ink space; an unsigned
   // one keeps the empty ruled line so it can still be signed on paper.
   const image = signer?.signatureDataUrl
@@ -315,7 +387,7 @@ function signatureBlock(x: number, top: number, label: string, signer: ClaimForm
     ${image}
     <text x="${center - 82}" y="${top + 66}" font-size="13">ลงชื่อ</text>
     <line x1="${center - 36}" y1="${top + 66}" x2="${center + 82}" y2="${top + 66}" stroke="#222"/>
-    <text x="${center}" y="${top + 90}" text-anchor="middle" font-size="13"${fitToWidth(`( ${signer?.name ?? ''} )`, 176, 13)}>(${xml(signer ? ` ${signer.name} ` : '  ....................  ')})</text>
+    <text x="${center}" y="${top + 90}" text-anchor="middle" font-size="13"${fitToWidth(`( ${signer?.name ?? ''} )`, width - 14, 13)}>(${xml(signer ? ` ${signer.name} ` : '  ....................  ')})</text>
     <text x="${center}" y="${top + 114}" text-anchor="middle" font-size="13">วันที่ ${xml(signer ? formatDate(signer.at) : '..................')}</text>`;
 }
 

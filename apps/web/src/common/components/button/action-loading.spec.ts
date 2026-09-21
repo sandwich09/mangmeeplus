@@ -200,19 +200,6 @@ test('bill opening shares loading across row/deep-link/create paths and ignores 
   assert.equal(selected, 'current'); assert.equal(loading, false); assert.equal(pending.current, false);
 });
 
-test('first claim opening shows pending, refuses duplicate activation, and unlocks after a failed read', async () => {
-  let busy = false, calls = 0;
-  const pending = { current: false }, wait = deferred<unknown>();
-  const { openDetail } = handlers('reimbursements/ReimbursementsPages.tsx', ['openDetail'], {
-    useCallback: (fn: unknown) => fn, companyId: 'company', detailOpenPendingRef: pending,
-    closeDocumentPreview: () => {}, setDrawerBusy: (value: boolean) => { busy = value; }, setDrawerError: () => {}, err: String,
-    setDetail: () => {}, setCancelling: () => {}, getReimbursement: () => { calls++; return wait.promise; },
-  });
-  const first = openDetail('claim'); assert.equal(busy, true);
-  await openDetail('claim'); assert.equal(calls, 1);
-  wait.reject(new Error('failed')); await first;
-  assert.equal(busy, false); assert.equal(pending.current, false);
-  const source = readFileSync(new URL('../../../features/reimbursements/ReimbursementsPages.tsx', import.meta.url), 'utf8');
-  assert.match(source, /drawerBusy && !detail && <LoadingState/);
-  assert.match(source, /!detail && drawerError && <ErrorBanner/);
-});
+// The hub's claim-opening pending state (openDetail/drawerBusy) was retired with the detail
+// drawer in Phase 6: every queue row now navigates straight to the journey page, which owns its
+// own loading state (see ReimbursementJourneyPage.tsx's LoadingState while `detail` is null).

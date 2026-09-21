@@ -6,6 +6,7 @@ import {
   WORKFLOW_TEMPLATE_CATALOG,
   WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS,
   WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG,
+  REIMBURSEMENT_REQUEST_LINK,
 } from '../../domain/workflow-template-catalog';
 import { ruleMatchesEventType } from '../../domain/logic/workflow-event-match.logic';
 import { evaluateCondition } from '../../domain/logic/workflow-condition.logic';
@@ -92,7 +93,7 @@ describe('IngestWorkflowEventUseCase', () => {
     const correction = WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'reimbursement_correction_requester');
     const cfg = correction?.defaultActionJson[0]?.configJson ?? {};
     assert.deepEqual(cfg['recipientPayloadKeys'], ['requesterUserId']);
-    assert.match(String(cfg['deepLinkPathTemplate']), /tab=mine/);
+    assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK);
     assert.equal(
       ruleMatchesEventType(WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG['reimbursement_correction_requester'] ?? {}, 'reimbursement.correction_requested'),
       true,
@@ -104,14 +105,19 @@ describe('IngestWorkflowEventUseCase', () => {
     const [notifyAction, taskAction] = template?.defaultActionJson ?? [];
 
     assert.deepEqual(notifyAction?.configJson['recipientPayloadKeys'], ['approverRecipientUserIds']);
-    assert.equal(notifyAction?.configJson['excludeRecipientPayloadKeys'], undefined);
+    // AC11: the submitter (this event's actor) never gets told their own claim is pending approval.
+    assert.deepEqual(notifyAction?.configJson['excludeRecipientPayloadKeys'], ['actorUserId']);
     assert.equal(taskAction?.actionType, 'CREATE_APPROVAL_REVIEW_REQUEST');
     assert.equal(taskAction?.configJson['assigneeUserPayloadKey'], 'approverTaskUserId');
     assert.equal(taskAction?.configJson['assigneeRolePayloadKey'], 'approverTaskRole');
   });
 
   // F16: every reimbursement alert used to send `body: title`, so LINE printed the same line twice.
-  it('gives every reimbursement notification a body distinct from its title', () => {
+  // Step-journey spec §11/§13 (AC10/AC11): every one of these also links straight to the claim's
+  // journey page and excludes the event's own actor from its recipients, with a graceful skip
+  // (never a dead-lettered retry) when that exclusion empties the recipient list — the exact
+  // shape of an owner-only company acting on its own claim.
+  it('gives every reimbursement notification a body distinct from its title, the journey-page link, and actor exclusion', () => {
     const notifications = WORKFLOW_TEMPLATE_CATALOG
       .filter((entry) => entry.sourceModule === 'reimbursements' && entry.triggerType === 'EVENT')
       .map((entry) => ({ key: entry.key, cfg: entry.defaultActionJson.find((a) => a.actionType === 'SEND_NOTIFICATION')?.configJson ?? {} }));
@@ -122,7 +128,15 @@ describe('IngestWorkflowEventUseCase', () => {
       assert.notEqual(cfg['bodyTemplate'], cfg['titleTemplate'], key);
       // A body worth pushing carries the figures the title does not.
       assert.match(String(cfg['bodyTemplate']), /\{\{(amount|paidAmount)\}\}/, key);
+      assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK, key);
+      assert.deepEqual(cfg['excludeRecipientPayloadKeys'], ['actorUserId'], key);
+      assert.equal(cfg['skipWhenAllRecipientsExcluded'], true, key);
     }
+    // The SLA scan is a system reminder, not an actor's own event — it must stay unaffected.
+    const sla = WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'approval_sla_breach');
+    const slaCfg = sla?.defaultActionJson.find((a) => a.actionType === 'SEND_NOTIFICATION')?.configJson ?? {};
+    assert.equal(slaCfg['excludeRecipientPayloadKeys'], undefined);
+    assert.equal(slaCfg['deepLinkPathTemplate'], undefined);
   });
 
   // Live UAT 2026-08-29: approver and requester were notified, the finance desk was not — nothing
@@ -140,7 +154,7 @@ describe('IngestWorkflowEventUseCase', () => {
     );
     assert.deepEqual(cfg['recipientPermissions'], ['reimbursement.finance_review']);
     assert.equal(cfg['triggerKey'], 'workflow.reimbursement_finance_review');
-    assert.match(String(cfg['deepLinkPathTemplate']), /tab=finance/);
+    assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK);
   });
 
   it('routes the finance-review template to finance-review permission holders and stays out of the approve path', () => {
@@ -152,7 +166,7 @@ describe('IngestWorkflowEventUseCase', () => {
     assert.deepEqual(cfg['recipientPermissions'], ['reimbursement.finance_review']);
     assert.equal(cfg['triggerKey'], 'workflow.reimbursement_finance_review');
     assert.equal(cfg['severity'], 'action');
-    assert.match(String(cfg['deepLinkPathTemplate']), /tab=finance/);
+    assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK);
     assert.equal(
       ruleMatchesEventType(WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG['reimbursement_finance_review'] ?? {}, 'reimbursement.finance_review_updated'),
       true,
