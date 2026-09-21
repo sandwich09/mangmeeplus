@@ -333,6 +333,12 @@ export type ReimbursementRequestSummary = {
 
 export type ReimbursementClaimSignatureRole = 'REQUESTER' | 'APPROVER' | 'FINANCE_REVIEW' | 'PAYER';
 
+/** Two blocks (ผู้เบิก, ผู้อนุมัติ) for every claim, except one already signed in the old accounting/payer blocks. */
+export type ReimbursementClaimFormLayout = 'TWO_SIGNERS' | 'LEGACY_FOUR_SIGNERS';
+
+/** How the document step was done: every block signed in the system, an acknowledged paper scan, both, or neither. */
+export type ReimbursementDocumentSignedVia = 'DIGITAL' | 'PAPER' | 'BOTH' | null;
+
 export type ReimbursementClaimSignatureSummary = {
   role: ReimbursementClaimSignatureRole;
   signedByUserId: string;
@@ -356,6 +362,10 @@ export type SignReimbursementClaimFormInput = {
 
 export type LinkReimbursementSignedCopyInput = {
   attachmentId: string;
+  /** The attacher declares the scan carries every signature. Omitted: the scan is archived only, as before. */
+  acknowledgedComplete?: true;
+  /** Required with `acknowledgedComplete`; must equal the claim's requestNo. */
+  confirmedRequestNo?: string;
 };
 
 export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
@@ -385,6 +395,11 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
    * Distinct from `approvalSnapshotHash`, which is frozen at submit time.
    */
   claimSignatureAckHash?: string;
+  /** Which blocks the printed form carries, so the screen shows the same slots. */
+  claimFormLayout?: ReimbursementClaimFormLayout;
+  documentSignedVia?: ReimbursementDocumentSignedVia;
+  /** Whether this claim has the finance review step: its frozen policy once submitted, the current policy while a draft. Detail only. */
+  financeReviewRequired?: boolean;
   missingReceiptReason?: string;
   lines: ReimbursementLineSummary[];
   approvalSteps: ReimbursementApprovalStepSummary[];

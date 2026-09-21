@@ -102,6 +102,9 @@ export class SignReimbursementClaimFormDto implements SignReimbursementClaimForm
 
 export class LinkReimbursementSignedCopyDto implements LinkReimbursementSignedCopyInput {
   @IsString() @IsNotEmpty() @MaxLength(64) attachmentId!: string;
+  @IsIn([true]) @IsOptional() acknowledgedComplete?: true;
+  @ValidateIf((body: LinkReimbursementSignedCopyDto) => body.acknowledgedComplete === true)
+  @IsString() @IsNotEmpty() @MaxLength(64) confirmedRequestNo?: string;
 }
 
 export class RecordReimbursementPaymentDto implements RecordReimbursementPaymentInput {
