@@ -331,3 +331,19 @@ unit (สถานะดีล, snapshot, quoteTotals, ladder-less validation, l
 | Q7 | ร้านที่มี subscription บัตรอัตโนมัติรับดีล: ระบบคิดส่วนต่างให้ (D5 เดิม) หรือไม่คิดในระบบ | **ไม่มี proration ในระบบ**: ยกเลิก subscription ทันทีเมื่อจ่ายดีล, ฟอร์มดีลโชว์มูลค่าคงเหลือให้เซลล์หักเอง (ราคาดีลเป็นราคาใดก็ได้อยู่แล้ว) — งานอยู่ Phase 4 | D5 เดิม: ระบบคำนวณส่วนต่างและเก็บเฉพาะส่วนต่าง (โค้ด proration + quote 3 ตัวเลข + ความเสี่ยงเถียงยอด) |
 | Q8 | ดีลต่ออายุอัตโนมัติ (Phase 5) รองรับ QR ออกบิลทุกงวดด้วยไหม | **รองรับ** (กลไกเดียวกับบัตร: Price ของดีล + `bindPromptPayRenewal`) | บัตรเท่านั้น (ตามคำเดิมของ D7) |
 | Q9 | โอน+สลิป | **เลื่อนไป Phase 4** เป็นทางสำรอง (เมื่อ gate ปิด/ยอดเกินเพดาน) | คงใน Phase 3 / ตัดทิ้ง |
+
+### 19.6 มติก่อนเริ่ม Phase 3 (controller, 2026-09-21 — จากการอ่านโค้ดเส้นทางครั้งเดียวของ #667)
+
+| ID | มติ | เหตุผลจากโค้ด |
+|---|---|---|
+| D-P3-1 | tier ฐานของดีล = STARTER_249 / BASIC_499 / PRO_999 เท่านั้น (ตัด ENTERPRISE_1999 ออกจาก `SALES_DEAL_BASE_TIERS`) | `paidVariant` (billing-policy.ts) และ `paid-checkout-invoice.ts:20` (ห้ามแตะ) รู้จักแค่ 3 tier; ENTERPRISE ไม่มี Price ใน Stripe; ลิมิตของดีลกำหนดเองได้อยู่แล้ว |
+| D-P3-2 | เครดิต AI ของดีล = ว่าง (ค่าเริ่มต้น) หรือ ≥ 1 บาท; ห้าม 0 — ปิด AI = เอาเมนู AI (`ai_line_assistant`) ออก | ตัวเขียนงบ AI ตัวเดียวในระบบปฏิเสธ 0 โดยตั้งใจ (`set-partner-ai-model.use-case.ts`) |
+| D-P3-3 | Phase 3 รองรับร้าน: ไม่มีบัญชี/ล็อก/หมดอายุ/ทดลอง (เริ่มทันที) และร้านซื้อครั้งเดียวที่ยังไม่หมด (ต่อท้าย); ร้านที่มี subscription `CARD_AUTO` หรือ `PROMPTPAY_RENEW` ที่ยังใช้งาน → `CONTROL_DEAL_SUBSCRIPTION_REVIEW` (แปลงใน Phase 4 ตาม Q7/S34) | กติกาโหมดเดียวต่อบัญชีของ #667 + การยกเลิก subscription เป็น provider write ที่ต้อง journal/observed — ไม่ใส่ใน Phase 3 |
+| D-P3-4 | ใบเสร็จของดีล = PAID_GRANTS เหมือนแพ็กเกจจ่ายเงินทุกแบบ: หน่วย = ใบต่อเดือน × เดือน หมดอายุพร้อมดีล (แทนคำว่า LEGACY_MONTH ใน R6) | เส้นทางครั้งเดียวเรียก `grantPaidPackageReceipts` และตั้ง `billingReceiptAccountId` เสมอ |
+| D-P3-5 | เมนูของดีลเขียนผ่าน helper ธุรกรรมที่แยกออกจาก `set-partner-features.use-case.ts` (epoch/lastSeq/transition เดิม); ร้านที่ normalization ของ entitlement ยังค้าง → `CONTROL_DEAL_ENTITLEMENT_REVIEW` ตอน quote | ตัวเขียน entitlement ที่ถูกต้องมีที่เดียวและปฏิเสธเมื่อ normalization ค้าง |
+| D-P3-6 | admin overview แสดง source `DEAL` เมื่อ attempt ที่เป็นสัญญาปัจจุบันมี `quoteSnapshot.deal` | วันนี้ source คิดจาก `billingReceiptAccountId` จึงอ่านเป็น STRIPE |
+| D-P3-7 | เพดาน PromptPay: ตรวจเอกสาร Stripe; ถ้า Stripe กำหนดเพดานต่อรายการ → ค่าคงที่ใน contracts + ซ่อน PromptPay เมื่อเกิน; ถ้ามีแต่เพดานฝั่งธนาคารผู้จ่าย → ไม่กำหนดในระบบ (S38) | — |
+| D-P3-8 | ขั้นกรอกที่อยู่/อีเมล (D4) ของดีลใช้ `billingProfileHref` เดิมพร้อม `deal=<id>` (offer = tier ฐาน, interval = month) | `billingProfileSelection` ตรวจ tier ที่จ่ายได้เท่านั้น |
+| D-P3-9 | scan ปิด EXPIRED ข้ามดีลที่มี BillingAttempt ยังเปิดอยู่; session ที่จ่ายหลังหมดอายุยัง apply (S46) | `expireSweep` ของ Phase 2 ยังไม่รู้จัก attempt |
+| D-P3-10 | ตาราง `SalesAttribution` สร้างใน Phase 3 (แถวแรกเมื่อดีล APPLIED, source DEAL); Phase 4 เพิ่ม REFERRAL และรายงาน | ยังไม่มีตารางนี้ในโค้ด |
+| D-P3-11 | ไม่มี smoke ของโหมดครั้งเดียว (#667) ในระบบเลย → `billing-deal-smoke.ts` ต้องสร้าง fixture โหมด payment เอง (ต้นแบบ `billing-repeat-smoke.ts`) และครอบคลุมเส้นทางครั้งเดียวของ catalog ไปด้วย | `billing-http-smoke.ts` ยืนยัน `mode === 'subscription'` เท่านั้น |

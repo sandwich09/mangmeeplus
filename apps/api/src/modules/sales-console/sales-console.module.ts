@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { LoggerModule } from '../../common/logger/logger.module';
+import { AuditModule } from '../audit/audit.module';
 import { SalesAgentsService } from './application/sales-agents.service';
 import { SalesCompanySearchService } from './application/sales-company-search.service';
 import { SalesDealsService } from './application/sales-deals.service';
@@ -14,11 +15,12 @@ import { SystemSalesAgentsController, SystemSalesReferralController } from './pr
  * Owns roles/agents/deals/company-search for มั่งมี's own sales team. It reads Company and
  * CompanyPlanTerm through its own limited projection and never touches a shop's business tables.
  *
- * LoggerModule: LOGGER_TOKEN for the best-effort LINE notice an approval sends.
+ * LoggerModule: LOGGER_TOKEN for the best-effort LINE notice an approval sends. AuditModule: every
+ * mutation here writes an audit row (spec Â§10), and AuditService is not global.
  * SalesReferralService is exported because both signup paths resolve sales codes through it.
  */
 @Module({
-  imports: [LoggerModule],
+  imports: [LoggerModule, AuditModule],
   controllers: [
     SalesController,
     SystemSalesAgentsController,
