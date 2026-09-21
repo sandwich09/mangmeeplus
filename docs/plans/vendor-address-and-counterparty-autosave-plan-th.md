@@ -115,7 +115,7 @@
 - [ ] `expenses.model.ts`: `AI_REVIEW_FIELD_KEYS.vendorAddressSnapshot = ['vendorAddress']`
 - [ ] หน้ารายการรายจ่าย: ตัวกรอง "ใบกำกับที่ยังไม่มีที่อยู่ผู้ขาย"
 - [ ] ใบทดแทน: prefill `payeeAddress` จาก `vendorAddressSnapshot` เมื่อชื่อผู้รับเงินตรงผู้ขาย
-- [ ] workpaper ภ.พ.30: บรรทัด checklist จำนวนใบที่ยังไม่มีที่อยู่ (อ่านจาก list filter เดิม)
+- [x] workpaper ภ.พ.30: บรรทัด checklist จำนวนใบที่ยังไม่มีที่อยู่ (อ่านจาก list filter เดิม ส่งช่วงวันที่ของงวด และหน้ารายจ่ายกรองตามช่วงที่ลิงก์ส่งมา) (2026-09-21)
 
 ทดสอบ: web logic/model specs; browser 390 px ทุกสถานะใน §11.1; e2e ตรวจใบ → toast → หน้าคู่ค้า
 
@@ -136,7 +136,7 @@
 - [x] `ExpenseRecord.buyerAsPrintedJson Json?` + migration `20260921150000_expense_buyer_as_printed` (ไม่ backfill)
 - [x] pure `compareBuyerAsPrinted(printed, company, expectedBranchCode)` → MATCH/MISMATCH/UNCHECKED/NOT_PRINTED ใน `expenses/domain/logic/buyer-as-printed.logic.ts` ใช้ `normalizeVendorName`/`normalizeBranchCode` ของ Phase 2
 - [x] ตั้งค่าตอน OCR apply และตอนบันทึกร่าง/การตรวจ (ใบที่อ่านก่อนมีคอลัมน์ใช้ `aiVerifiedFieldsJson.buyerAsPrinted`); ไม่แตะ claimability
-- [x] เว็บ: แถบผลเทียบ + ปุ่ม [ยืนยันว่าใช้ได้ พร้อมเหตุผล] (`POST …/buyer-match/confirm`, `expense.confirm`, audit) + [ทำเครื่องหมายใช้ภาษีซื้อไม่ได้] (PATCH review-fields เดิม ผ่าน useConfirm) + ลิงก์ตั้งค่าที่อยู่บริษัทเมื่อ UNCHECKED (2026-09-21, branch `codex/vendor-address-residuals-20260921`)
+- [x] เว็บ: แถบผลเทียบ + ปุ่ม [ยืนยันว่าใช้ได้ พร้อมเหตุผล] (`POST …/buyer-match/confirm`, `expense.confirm`, audit) + [ทำเครื่องหมายใช้ภาษีซื้อไม่ได้] (PATCH review-fields เดิม ผ่าน useConfirm เฉพาะใบที่ไม่มีรหัสภาษีรายบรรทัด พร้อม [ยกเลิกเครื่องหมาย]; ใบที่มีรหัสภาษีรายบรรทัดได้คำแนะนำให้เปลี่ยนประเภทภาษีของรายการแทน) + ลิงก์ตั้งค่าที่อยู่บริษัทเมื่อ UNCHECKED (2026-09-21, branch `codex/vendor-address-residuals-20260921`)
 
 เกณฑ์ออก: AC13
 
