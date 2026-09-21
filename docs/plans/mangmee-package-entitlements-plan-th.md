@@ -1,4 +1,6 @@
-# แผนสิทธิ์แพ็กเกจ 7 ความสามารถ / รายเดือนและรายปี / Enterprise lock
+# แผนสิทธิ์แพ็กเกจ 7 ความสามารถ / รายเดือนและรายปี / Enterprise
+
+> **Owner amendment 2026-09-22:** PE26–PE29 เปลี่ยนจาก Enterprise lock เป็นการเปิดซื้อ month/year แบบ fail-closed ที่ exact provider Price binding; โควตา 500/เดือนและ 6,000/ปี, การ์ดแสดง 6 เมนูพื้นฐานเหมือนกันทุก tierโดย Enterprise ยัง grant ชุด `full`, และซ่อนเครดิต AI บนการ์ดแคตตาล็อก. มตินี้แทน acceptance ของ Enterprise lock ด้านล่างที่เป็นประวัติ.
 
 > **Current delivery checkpoint — 2026-09-16:** โค้ดตามขอบเขตที่อนุมัติและ local acceptance ผ่านแล้ว ดู [ผลปัจจุบัน](../evidence/billing-integration-2026-09-13/final-integration-result.json), [CT/AP 57 กลุ่ม](../evidence/billing-integration-2026-09-13/final-acceptance-map.md) และ [สถานะส่งมอบ](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). กำลังรอ CI ก่อน Admin merge develop/main ทั้งสอง repo; ไม่ deploy. Native provider/device acceptance เป็นขั้นก่อนเปิดบริการจริง ข้อความ IN PROGRESS/BLOCKED/NOT RUN ตามวันที่เก่าด้านล่างเป็นประวัติและไม่ใช่งานโค้ดค้างปัจจุบัน. OTP/passwordless/auto-provision เป็นงานแยก ไม่รวมในขอบเขตส่งมอบของ branch billing นี้.
 
@@ -21,12 +23,12 @@
 | PE-S1 Schema/config | extend S1 DTO/catalog/quote/attempt/invoice/policy with interval+snapshot; composite uniqueness; 6 available-in-future paid Price mappings, 2 locked Enterprise previews; no trial Price | PostgreSQL migration/rollback/duplicate variant check, mode/account isolation, missing mapping fail closed |
 | PE-S2 Apply/limits | S3 shared transaction; paid-through provider period; exact package grant provenance; branch/seat concurrency; paid receipt grant ledger linked to existing admission/compensation; preserve legacy monthly behavior | protected actions/roles/usage/other company assertions; no reset or blanket overwrite |
 | PE-S3 UX/entries | S2/S4 U01–U12, 2-repo month/year review, trial7/15, LINE rich-menu/webhook/LIFF, coming-soon tax states | mobile/desktop journey and all denied paths have authorized exit; no direct payment bypass |
-| PE-S4 Control/provider | C05/C06 revisioned variant readiness, Portal allowlist, stale sessions/legacy mapping drift/repair; B01/B05/B06 behavior-specific approval | supported web config changes observed without restart; Enterprise remains locked under generic enable |
+| PE-S4 Control/provider | C05/C06 revisioned variant readiness, Portal allowlist, stale sessions/legacy mapping drift/repair; B01/B05/B06 behavior-specific approval | supported web config changes observed without restart; Enterprise requires exact approved Price binding |
 | PE-S5 Acceptance | local simulated adapter → real API/PG/browser; Stripe sandbox + native LINE acceptance; PE01–PE36 plus original applicable suites | exact evidence per case/mode, 0 unexplained skipped/flaky; no LIVE claim from local proof |
 
 Do not rename plan tier keys or map paid tiers to `standard/full` feature preset. No backfill of existing entitlement/usage/term based on marketing labels. No package.json or production runtime/config changes are required to deliver this documentation amendment.
 
-Business deltas 2026-09-13: B01 no-card signup and immediate paid conversion/no trial carry approved. B02 annual allowance ×12 upfront, no paid monthly reset, repeat purchase is a full package only; same-package repurchase grants full units now and appends the full interval to the existing paid expiry. B05 upgrade prorated immediately, downgrade at paid period end; mid-period interval switch remains closed. B06 VAT OFF, future inclusive/exclusive configured via approved Admin revision. B09 **Enterprise sale locked**; legacy/custom exceptions need separate decision and cannot bypass lock. B03/B04/B07/B08/B10 unaffected. Feature locks cannot be removed by a generic price/policy enable.
+Business deltas 2026-09-13: B01 no-card signup and immediate paid conversion/no trial carry approved. B02 annual allowance ×12 upfront, no paid monthly reset, repeat purchase is a full package only; same-package repurchase grants full units now and appends the full interval to the existing paid expiry. B05 upgrade prorated immediately, downgrade at paid period end; mid-period interval switch remains closed. B06 VAT OFF, future inclusive/exclusive configured via approved Admin revision. B09 ถูกแทนด้วยมติ 2026-09-22: Enterprise เปิดแบบ exact-binding fail-closed; legacy/custom ราคาไม่ข้าม policy validation. B03/B04/B07/B08/B10 unaffected. Feature locks cannot be removed by a generic price/policy enable.
 
 ## 2. Acceptance matrix PE01–PE36
 
@@ -61,14 +63,14 @@ Parameterization: all applicable paid rows run `STARTER_249/BASIC_499/PRO_999 ×
 | PE23 | Downgrade over limits / cancel pending change (F15/F16) | no deletion/regrant, clear effective date/overage/manage path, pending change version fence, no unintended midyear refund |
 | PE24 | Renewal fail/grace/old debt/rejoin (F14/F15) | annual/monthly policy correct at paid-through; retry same invoice; missing business policy blocks enabling flow, not fake paid grant |
 | PE25 | Cancel/undo/refund/dispute (F15/F17) | financial/access axes separate, full/partial/failure transitions audited, annual remaining value uses approved policy, no automatic resubscribe |
-| PE26 | Enterprise pricing both intervals (F01/F08) | Coming soon, disabled semantic button/no href; tab/Enter/touch cannot pay; prices only preview; PRO999 unaffected; return/trial/other offer available |
-| PE27 | Enterprise forged quote/API/handoff/old LINE card (F08/F09) | ENTERPRISE_COMING_SOON; no provider call or collectible attempt; support request cannot convert to payment; interval tampering cannot bypass |
-| PE28 | Portal/Payment Link/config bypass (F16/F21/F23) | explicit Portal product-price allowlist excludes Enterprise; inventory legacy links; generic sales-enable cannot unlock either variant; report drift |
-| PE29 | Enterprise old session expiry/paid race (F11/F20) | expire open through durable command; reconcile completed; paid+held issue handled, financial record retained, no unsupported tax grant |
+| PE26 | Enterprise pricing both intervals (F01/F08) | month 1,999 / 500 ใบและ year 19,990 / 6,000 ใบ; exact bound variants selectable; missing binding remains Coming soon; PRO999 unaffected |
+| PE27 | Enterprise forged quote/API/handoff/old LINE card (F08/F09) | exact current variant revalidated; interval/price/company tampering denied before provider; valid month/year reaches the same guarded purchase flow as other paid tiers |
+| PE28 | Portal/Payment Link/config bypass (F16/F21/F23) | only approved native Enterprise bindings accepted; arbitrary/legacy links cannot bypass account, mode, revision or price validation; report drift |
+| PE29 | Enterprise old session expiry/paid race (F11/F20) | stale session follows normal paid reconciliation; completed payment applies once with 500/6,000 quota and full entitlement snapshot; paid+held remains recoverable |
 | PE30 | ภ.ง.ด.53/50ทวิ feature lock (F07/F13) | SYSTEM issuance/official filing paths disabled regardless of tier/limit override; existing3 cap.wht50bis routes stayCLOSED; no whole-tax shutdown; source payment/external handoff/manual review/ordinary expense documents still work per spec§6.1 |
 | PE31 | Invoice/Receipt and Postmark/LINE outbox (F18/F19) | actual authorized Stripe documents show annual/monthly totals; no fake full-Thai-tax-invoice label, no duplicate receipt via Postmark; delivery failure not access failure |
 | PE32 | Company switch/employee/revoked/forwarded group link (F05/F07) | no privilege escalation, no staleA response inB, no bearer/payment docs in group, pending intent retained only for authorized company |
-| PE33 | Operator price/policy publish/rollback via web (F20/F21) | same API/worker PIDs, desired=observed revision across app/marketing/LINE within control target; historical accepted snapshots intact; Enterprise still locked |
+| PE33 | Operator price/policy publish/rollback via web (F20/F21) | same API/worker PIDs, desired=observed revision across app/marketing/LINE within control target; historical accepted snapshots intact; Enterprise follows exact variant readiness |
 | PE34 | Provider/catalog outage/429/offline/stale caches (F10/F23) | fail-closed new purchase, bounded retry/status/support; paid ingest/apply/recovery continues; no client price fallback |
 | PE35 | Restore/legacy/custom feature override (F22/F24) | dedupe/provenance survives recovery; signup retry no reset; no auto-migrate manual terms to Stripe; tax lock does not erase existing data |
 | PE36 | Full navigation desktop390/nativeLINE (F01–F24) | marketing→signup→trial→review→payment→business→history→Portal→return and all negative exits; auth/legal/reload work, screen reader/keyboard usable, no horizontal overflow |
@@ -77,7 +79,7 @@ Parameterization: all applicable paid rows run `STARTER_249/BASIC_499/PRO_999 ×
 
 1. Build/start initial local API/web/worker once, loopback PostgreSQL/Redis only. Record PID/source revision. Use isolated fixture companies and real production use cases/HTTP/BFF/browser; stub only external identity/mail/OCR/Stripe seams. Block external messages and live account access.
 2. Create web and LINE users through the appropriate signup path; simulate LINE ID proof at verifier seam, not by writing a paid term mid-flow. Assert stored starter entitlements, active membership, FREE_TRIAL_15 and first permitted receipt result. Keep separate known legacy/admin fixtures for recovery tests.
-3. Publish TEST_ONLY monthly/yearly catalog and permitted variant config through authorized operator UI once controls exist. Enterprise remains locked. For unresolved business rules use conspicuously TEST_ONLY values rejected by LIVE activation. Record before/after observed revisions and same PIDs; newly coded schema/provider adapter still needs initial build.
+3. Publish TEST_ONLY monthly/yearly catalog and permitted variant config through authorized operator UI once controls exist. Enterprise uses the same exact-variant readiness rule. For unresolved business rules use conspicuously TEST_ONLY values rejected by LIVE activation. Record before/after observed revisions and same PIDs; newly coded schema/provider adapter still needs initial build.
 4. Run actual quote/Checkout endpoint → simulated provider response → **raw signed webhook** → inbox/worker/apply → browser refresh/LINE action. Inspect durable invoice/applied marker/ledger, usage and protected APIs. Fault injection at network/commit/delivery seams must not call admin renew as a substitute for invoice apply.
 5. Advance provider and app clocks independently for monthly/annual renewal, paid grant expiry and legacy Bangkok quota rollover. Assert annual paid balances do not reset on calendar boundaries; test full-package repurchase expiry/next charge against the confirmed policy. Test helper inaccessible from production/public runtime; don't wait a year, alter host clock, or pass client-controlled quota dates. In real Stripe sandbox use supported Test Clocks and exact current API version, wait for advance completion and inspect provider invoice lines.
 6. Run PE26–PE30 negative enterprise/tax matrix even when sales closed. Capture denied HTTP codes, **zero provider calls**, no new collectible attempt/invoice/grant and visible alternative path. Include stale-session race independently from “creating a new session is blocked”.
@@ -112,7 +114,7 @@ Source: package spec§9 and [audit](../research/package-access-admin-web-line-au
 | AP13 | Company settings | foundation routes usable, branchlimit count/concurrentreactivation, scopedcompanyselection, securityforms permissionchecked |
 | AP14 | Notifications | company/recipient/unread counts + target deeplink access; stale notification does not bypass newly closedfeature |
 | AP15 | User transitions | expired/held/paid-applying/overlimit and 401/403/429/offline have truthful action; replayquery/cookie cannot unlock |
-| AP16 | Feature variants | trial/paid3tiers×month/year share7menus pluslimits; overrides/provenance/legacy explicit; Enterprise and SYSTEMtax output locked |
+| AP16 | Feature variants | trial/paid tiers × month/year keep explicit feature snapshots and limits; Enterprise grants `full`; specialist SYSTEM tax output retains its separate launch gate |
 | AP17 | AI help and follow-up | TH/EN whatcanIdo/how/nextstep advertiseonlyusablecapabilities; servicesoverview distinguishedfromemployeeauthority; disabled/modeloffselfhelp no LLM |
 | AP18 | Social/knowledge/companyQ&A | greetings/generaldiscussion not companyfacts; dataquestion usescheckedsource andown/branchscope; AIbudgetdistinctfromreceiptquota |
 | AP19 | Tool execution | forgedroles/company/tool/delegation and unsupportedtool/module refused before data; local/AgentCore parity and currentDBreauthorization |
@@ -147,7 +149,7 @@ Full HTTP/browser/provider rows remain NOT RUN until linked evidence exists; foc
 
 | ID | Required evidence |
 |---|---|
-| Q01 | All3 tiers ×month/year catalog/quote show exact cycle units, price, expiry and consent; Enterprise locked |
+| Q01 | All4 tiers ×month/year catalog/quote show exact cycle units, price, expiry and consent; Enterprise month/year selectable only with exact bindings |
 | Q02 | Annual Pro consumes101+ in first month and1,200 before anniversary, receipt1,201 refused in both web/LINE; calendar change never grants |
 | Q03 | Full-package repurchase→Checkout→signed webhook→apply once→receipt succeeds; full catalog price and confirmed expiry/next charge, no receipt-only SKU |
 | Q04 | Decline/3DS/UNKNOWN/duplicate/reordered/repurchase policy change mid-quote; no duplicate payment/grant and actionable return |

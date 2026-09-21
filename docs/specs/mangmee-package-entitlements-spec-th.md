@@ -1,5 +1,7 @@
 # สิทธิ์แพ็กเกจ สมัครเริ่มต้น และราคารายเดือน/รายปี
 
+> **Owner amendment 2026-09-22 (current):** เปิดซื้อ `ENTERPRISE_1999` ราคา 1,999 บาท/เดือนและ 19,990 บาท/ปีผ่าน flow เดียวกับ paid tier อื่น; โควตาอ่านใบเสร็จ = **500 ใบต่อเดือน / 6,000 ใบเมื่อซื้อรายปี**. การ์ดแคตตาล็อกทุก tier แสดงรายละเอียด 6 เมนูพื้นฐานรูปแบบเดียวกันและยังไม่แสดงเครดิต AI; Enterprise ยังได้รับชุดสิทธิ์ `full` และต้องบอกเมนูเพิ่มแยกจากรายการ 6 เมนู ไม่ลด entitlement ตามตัวนับบนการ์ด. ข้อความ Coming soon/2,000 ใบ/แสดงเครดิต AI ในประวัติด้านล่างถูกแทนที่ด้วยมตินี้.
+
 > **Current delivery checkpoint — 2026-09-16:** โค้ดตามขอบเขตที่อนุมัติและ local acceptance ผ่านแล้ว ดู [ผลปัจจุบัน](../evidence/billing-integration-2026-09-13/final-integration-result.json), [CT/AP 57 กลุ่ม](../evidence/billing-integration-2026-09-13/final-acceptance-map.md) และ [สถานะส่งมอบ](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). กำลังรอ CI ก่อน Admin merge develop/main ทั้งสอง repo; ไม่ deploy. Native provider/device acceptance เป็นขั้นก่อนเปิดบริการจริง ข้อความ IN PROGRESS/BLOCKED/NOT RUN ตามวันที่เก่าด้านล่างเป็นประวัติและไม่ใช่งานโค้ดค้างปัจจุบัน. OTP/passwordless/auto-provision เป็นงานแยก ไม่รวมในขอบเขตส่งมอบของ branch billing นี้.
 
 > **Current follow-up:** ข้อกำหนดหลักฐานแพ็กเกจ: ต้องซื้อเริ่มต้นครบ STARTER/BASIC/PRO × month/year × web/line รวม 12 แบบผ่าน API/DB และหน้าเว็บจริง ตรวจยอดที่ยืนยัน จำนวนใบ สาขา/สมาชิก วันหมดอายุ ไม่มี grant ขณะยังไม่จ่าย จ่ายแล้วเปิดสิทธิ์ครั้งเดียวแม้ replay และเปิด Invoice/PDF/Receipt ตามสิทธิ์ ใช้ provider จำลองได้ โดยแยก channel=line ในเว็บออกจากการกด native LINE/LIFF.
@@ -26,11 +28,11 @@
 | `STARTER_249` | 249 | 2,490 | 1 | 2 | 30 | AFTER_READINESS |
 | `BASIC_499` | 499 | 4,990 | 2 | 5 | 50 | AFTER_READINESS |
 | `PRO_999` | 999 | 9,990 | 5 | 10 | 100 | AFTER_READINESS |
-| `ENTERPRISE_1999` | 1,999 | 19,990 | 10 | 30 | 2,000 | COMING_SOON_LOCKED |
+| `ENTERPRISE_1999` | 1,999 | 19,990 | 10 | 30 | 500 | AFTER_READINESS |
 <!-- package-catalog:end -->
 
 - ราคาสตางค์รายเดือน = 24,900 / 49,900 / 99,900 / 199,900; รายปี = 249,000 / 499,000 / 999,000 / 1,999,000. ห้ามคำนวณยอดจากข้อความแสดงผลหรือใช้ annual/12 เป็นยอดเรียกเก็บ.
-- รายปีชำระก้อนรายปีและต่ออายุรายปีตาม consent; เทียบซื้อรายเดือน 12 ครั้งประหยัด 498 / 998 / 1,998 / 3,998 บาทตามลำดับ. เปรียบเทียบบนฐานภาษีเดียวกัน ไม่อ้างส่วนลดผิดเมื่อ tax policy เปลี่ยน. Enterprise เป็นราคา preview เท่านั้น.
+- รายปีชำระก้อนรายปีและต่ออายุรายปีตาม consent; เทียบซื้อรายเดือน 12 ครั้งประหยัด 498 / 998 / 1,998 / 3,998 บาทตามลำดับ. เปรียบเทียบบนฐานภาษีเดียวกัน ไม่อ้างส่วนลดผิดเมื่อ tax policy เปลี่ยน. Enterprise ซื้อได้เมื่อ Price ของ variant ผูกครบและ `new_sales` เปิด.
 - `AFTER_READINESS` หมายถึงเป้าหมายเปิดขายหลัง implementation/การทดสอบ/config/นโยบายที่เกี่ยวข้องผ่าน; **ขณะนี้ paid ทุก tier ยัง disabled**. Trial ไม่มีการบังคับบัตร ไม่มี Checkout/Subscription/การตัดเงินจากการสมัครเฉย ๆ; การเปลี่ยนเป็น paid ต้อง opt-in แยก.
 - VAT ปัจจุบัน OFF ตามมติ 2026-09-13; การเปิดภายหลังต้องเลือก inclusive/exclusive และยืนยัน fiscal identity ใน Admin; invoice แสดงยอดตาม approved policy. Stripe Receipt ไม่ถูกแปลงเป็นใบกำกับภาษีไทยเต็มรูปแบบเพียงเพราะมี PDF.
 
@@ -63,11 +65,11 @@
 - `PAID/APPLYING` แสดง “รับชำระแล้ว กำลังปรับสิทธิ์”; `APPLIED` + protected action ผ่านจึงแสดง “ใช้งานแพ็กเกจแล้ว”. Reload/refresh projection ในเว็บและการใช้ LINE ครั้งถัดไปต้องเห็น revision เดียวกัน. ความล่าช้ามีตรวจสถานะ/กลับบริษัท/ติดต่อพร้อม reference; ห้ามชวนจ่ายซ้ำเมื่อผลยัง UNKNOWN.
 - Admin/security hold, disabled feature readiness, role restriction และ budget/abuse brake ไม่ถูกปลดด้วยการจ่ายเงิน. เมื่อ downgrade เกินเพดานเก็บข้อมูลเดิม บล็อกเพิ่ม และมีจัดการสาขา/ผู้ใช้/upgrade ที่อนุญาต. ไม่ลบข้อมูลเพื่อให้ดูผ่าน limit.
 
-## 4. โควตา 15/30/50/100/2,000 หมายถึงอะไร
+## 4. โควตา 15/30/50/100/500 หมายถึงอะไร
 
 คง [onboarding/trial policy](onboarding-trial-receipt-fixes-spec.md) และ indexed receipt ledger เดิม: commercial quota นับ receipt OCR ของ `receipt-ocr-web` และ `receipt-ocr-line` ที่ได้ผลใช้ได้และบันทึกสำเร็จ; admission ระหว่างทำงานเป็น reservation. **15 ใบไม่ใช่เพดาน 15 ไฟล์รวมทุกประเภท**. Upload รูปสำเร็จแต่ OCR ล้มเหลว/ผลใช้ไม่ได้/apply ล้มต้อง release attempt เดิมครั้งเดียว; duplicate/replay/lost response ไม่กินซ้ำ. Deliberate re-read หลังผลสำเร็จเป็น attempt ใหม่ตาม policy เดิม; แก้ข้อมูลเอง/ส่ง notification ใหม่ไม่คิด OCR อีก.
 
-- Trial/manual/legacy ที่ไม่มี billing provenance คงเดือนปฏิทิน `Asia/Bangkok` เดิม. Paid ใช้ grant ตามช่วงบริการที่จ่าย; monthly/annual ให้ 30/50/100 หรือ 360/600/1,200 ใบ ณ เริ่มรอบ. ไม่ลบประวัติหรือเปลี่ยน legacy term อัตโนมัติ.
+- Trial/manual/legacy ที่ไม่มี billing provenance คงเดือนปฏิทิน `Asia/Bangkok` เดิม. Paid ใช้ grant ตามช่วงบริการที่จ่าย; monthly ให้ 30/50/100/500 ใบ และ annual ให้ 360/600/1,200/6,000 ใบ ณ เริ่มรอบ. ไม่ลบประวัติหรือเปลี่ยน legacy term อัตโนมัติ.
 - รายปีให้ 12 เท่าทั้งก้อนทันทีและใช้หมดก่อนสิ้นปีได้. ไม่มี monthly reset/เติมซ้ำ; เมื่อหมดซื้อแพ็กเกจเต็มเพิ่มได้; ซื้อแพ็กเกจเดิมซ้ำเพิ่มโควตาทันทีและต่ออายุจากวันหมดอายุเดิม พร้อมเลื่อนวันตัดเงินให้ตรงอายุที่จ่ายแล้ว. ซื้อเฉพาะใบเป็น HIDDEN ไม่แสดงและไม่เปิดขาย. Renewal ที่จ่ายแล้วสร้างก้อนใหม่ครั้งเดียว; upgrade เพิ่มเฉพาะส่วนต่าง ไม่คืนยอดที่ใช้ไป. รวมก้อนที่ยังไม่หมดอายุและหักจากก้อนหมดอายุก่อน.
 - Counter แสดง `used`, `limit`, `remaining`, `cadence`, วันหมดอายุและรายละเอียด grant/pending reservation. `resetsAt` ใช้เฉพาะ legacy monthly; paid แสดง `expiresAt` และวันต่ออายุแยกกัน. ยอดใช้รวมจากก้อนที่ยังมีสิทธิ์; operational OCR/AI budget refusal ต้องบอกเหตุผลคนละแบบ ไม่หลอกว่า package หมด.
 - Trial เดือนใหม่ไม่ขยายวันหมดอายุ 30 วัน; trial หมดก่อน reset ก็ยังหมด. `warmupSlipLimit=10` ของ trial เก่าไม่ลด default15; custom limit ของ admin ต้องแสดงอย่างซื่อสัตย์.
@@ -85,13 +87,13 @@ Target shared DTO ใช้ `billingInterval: 'month' | 'year'` และ `inter
 
 อ้างอิงตรวจ 2026-09-11: [Stripe recurring Price](https://docs.stripe.com/api/prices/create), [change price และ interval](https://docs.stripe.com/billing/subscriptions/change-price), [Test Clocks](https://docs.stripe.com/billing/testing/test-clocks). Test Clock ของ Stripe ไม่เลื่อนนาฬิกา quota ของแอปเอง; จำลอง app clock แยกเฉพาะ local fixture.
 
-## 6. Enterprise 1,999: Coming soon และห้ามจ่าย
+## 6. Enterprise 1,999: เปิดซื้อแบบ fail-closed
 
-**ล็อกทั้งแพ็กเกจ `ENTERPRISE_1999` ทั้ง month/year และล็อก ภ.ง.ด.53 + หนังสือรับรอง 50 ทวิ**. ชื่อแพ็กเกจคือ Enterprise ตามรูป; “โปร 1999” ในคำขอไม่เปลี่ยน `PRO_999` ให้ถูกล็อกไปด้วย. แสดง “เร็ว ๆ นี้ / Coming soon — ยังไม่เปิดรับชำระเงิน”; ปุ่มซื้อ semantic disabled ไม่มี href/provider URL. แสดงราคา/limits เป็น preview ได้ และมีดูแพ็กเกจอื่น/กลับ trial/ติดต่อสอบถามที่ไม่สร้าง charge. ห้ามรับมัดจำ/custom checkout เพื่อเลี่ยง lock นี้.
+`ENTERPRISE_1999` เปิดซื้อทั้ง month/year เมื่อ provider Price ของ variant ตรงนโยบายและ gate `new_sales` เปิด; หาก Price ขาดยังคง `COMING_SOON` แบบ fail-closed. ชื่อแพ็กเกจคือ Enterprise; “โปร 1999” ไม่เปลี่ยน `PRO_999`. Quote/Checkout ต้องตรวจ provider identity, ราคา, interval, company, OWNER, consent และ policy revision เหมือน paid tier อื่น ห้าม client หรือ custom checkout ข้ามการตรวจ.
 
-- Catalog `availability=COMING_SOON`, `reasonCode=ENTERPRISE_COMING_SOON` ทั้งสอง variants; server quote/checkout/change-plan reject ด้วย code เดียวกันและไม่มี provider call/collectible attempt. ป้องกัน client tampering, old bookmarks, forwarded LINE cards, postback, direct API และ quote/session ที่ค้าง.
-- Generic new-sales enable, changing price, feature override หรือ admin manual-term ไม่ถือเป็นอนุมัติเปิด Enterprise. ต้องมี offer-specific approved release readiness และมติเปิดขายใหม่แยกก่อนถอน lock. Admin preview/repair ยังใช้ได้; ไม่เปลี่ยน approval เป็น payment.
-- Portal config ต้องไม่ offer Enterprise เป็น upgrade และไม่ให้ monthly/yearly swap เข้าราคา Enterprise; provider Payment Links/legacy offer routes ที่อยู่ใน inventory ต้องไม่เป็น bypass. Publish lock เป็น revision เดียวกับ app/marketing/LINE; มี drift issue หาก provider config ไม่ตรง.
+- Catalog `availability=AVAILABLE` ได้เฉพาะ variant ที่ผูก Price และ gate เปิด; variant ที่ขาด Price เป็น `COMING_SOON`. Server quote/checkout/change-plan ตรวจซ้ำและไม่มี provider call/collectible attempt เมื่อยังไม่พร้อม. ป้องกัน client tampering, old bookmarks, forwarded LINE cards, postback, direct API และ quote/session ที่ค้าง.
+- Generic new-sales enable, changing price, feature override หรือ admin manual-termอย่างเดียวไม่พอเปิด Enterprise; ต้องมี exact Price binding และ approved active policy. Admin preview/repair ยังใช้ได้; ไม่เปลี่ยน approval เป็น payment.
+- Portal/Checkout ต้องใช้ native binding ของ Enterprise ที่ตรวจแล้ว และไม่รับ arbitrary Price/Payment Link จาก client. Publish availability เป็น revision เดียวกับ app/marketing/LINE; มี drift issue หาก provider config ไม่ตรง.
 - หลังมี provider integration ให้ expire open Checkout ที่เกี่ยวข้องผ่าน durable command และ reconcile session ที่ปิด/paid ไปแล้ว; gate ในแอปไม่เพิกถอน hosted session ที่ออกไปแล้วโดยอัตโนมัติ. ถ้า race รับเงินจริงไว้แล้ว ต้อง durable paid+HELD/issue และดำเนิน refund/review ตามสิทธิ์ ไม่ทิ้ง event/แสร้งว่าจ่ายไม่สำเร็จหรือปลดฟีเจอร์ที่ยังไม่พร้อม.
 - แยก existing verified legacy Enterprise subscription ออกจาก new-sales lock; ไม่หยุด collection/ลบ term/ยึดข้อมูลเดิมจากชื่อแพ็กเกจโดยอัตโนมัติ. ตรวจสัญญาเดิมตาม B09; financial recovery/history ยังเข้าถึงตามสิทธิ์. ไม่มีการอนุญาต legacy import โดยไม่ตรวจหลักฐาน.
 - ภ.ง.ด.53/50 ทวิเป็น feature readiness lock แยกจาก billing tier; การซื้อแพ็กเกจอื่น/override limit ไม่เปิดให้. ห้าม blanket ปิด `thai_tax` ให้ลูกค้าเก่า: ใช้ inventory §6.1 ผูก exact readiness guard; preserve งานภาษี/ข้อมูลอื่น. UI disabled/coming soon และ backend deny SYSTEM issuance/official filing output ของ feature ที่ยังไม่ released. การปิดนี้ไม่ใช่การปิดเอกสารเบิก/จ่ายเดิม, external certificate handoff, manual review export เดิม หรือ Stripe subscription receipt.
@@ -114,7 +116,7 @@ PE30 ต้องทดสอบทั้ง blocked SYSTEM output **และ**
 - Summary: บริษัทที่เลือก, trial/paid tier, interval, สิทธิ์7ความสามารถ, used/remaining/reset, paid-through/วันต่ออายุ และ pending change แสดงแยก. เลือกปีต้องเห็น “เรียกเก็บ 2,490 บาทต่อปี” ไม่ใช้249บาท/เดือนเป็นยอดสัญญา.
 - Review → Checkout → checking → applied → protected expense/upload/branch/member action → กลับ summary. Back/cancel/refresh/login/legal/password/403/429/5xx/UNKNOWN มี safe return/reference ตาม U01–U12; ไม่เกิด purchase จาก GET, LINE message หรือ success query.
 - LINE rich menu promotion และ webhook handler อ่าน approved catalog เดียวกัน; 6 native menu actions เดิมคงรูปแบบ. การ์ดเก่าหรือ “เปลี่ยนแพ็กเกจ” ต้อง revalidate ปัจจุบันและเลือกบริษัทก่อน; support request ไม่ใช่การซื้อ. Generic entry รักษา offer+interval เป็น untrusted hint ผ่าน safe login/LIFF; ชำระจริงต้อง OWNER ของบริษัทที่ตรวจแล้ว.
-- Feature denial มีเหตุผลถูกประเภท (coming soon / ไม่อยู่ในแพ็กเกจ / ไม่มี permission / quota / expired / hold), พร้อม action ที่อนุญาต เช่นกลับหน้าหลัก/รอรอบใหม่/ดูแพ็กเกจที่เปิด/ติดต่อ. ห้ามปุ่ม “ซื้อเพื่อใช้” พาเข้าการจ่าย Enterprise ที่ล็อก.
+- Feature denial มีเหตุผลถูกประเภท (ยังไม่พร้อม / ไม่อยู่ในแพ็กเกจ / ไม่มี permission / quota / expired / hold), พร้อม action ที่อนุญาต เช่นกลับหน้าหลัก/รอรอบใหม่/ดูแพ็กเกจที่เปิด/ติดต่อ. ปุ่มซื้อ Enterprise ใช้ได้เฉพาะเมื่อ exact variant พร้อมตามกติกา §6.
 
 ## 8. ขอบเขตพิสูจน์
 

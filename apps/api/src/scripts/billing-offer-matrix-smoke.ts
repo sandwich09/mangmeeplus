@@ -12,7 +12,7 @@ export async function checkBillingOfferMatrix(input:Parameters<typeof checkBilli
   const before=await db.billingSettings.findUniqueOrThrow({where:{id:`${input.stripeAccountId}:test`}});
   const prices=new Map<string,{amount:number;interval:'month'|'year';product:string}>(),priceIds:Record<string,string>={},zeroPriceIds:Record<string,string>={};
   // Phase 6 (Owner 2026-09-21): ENTERPRISE is a purchasable tier, so the matrix covers it too.
-  const terms={STARTER_249:{label:'เริ่มต้น (STARTER)',month:24900,year:249000,units:30,branches:1,members:2},BASIC_499:{label:'เติบโต (BASIC)',month:49900,year:499000,units:50,branches:2,members:5},PRO_999:{label:'มืออาชีพ (PRO)',month:99900,year:999000,units:100,branches:5,members:10},ENTERPRISE_1999:{label:'ธุรกิจ (ENTERPRISE)',month:199900,year:1999000,units:2000,branches:10,members:30}};
+  const terms={STARTER_249:{label:'เริ่มต้น (STARTER)',month:24900,year:249000,units:30,branches:1,members:2},BASIC_499:{label:'เติบโต (BASIC)',month:49900,year:499000,units:50,branches:2,members:5},PRO_999:{label:'มืออาชีพ (PRO)',month:99900,year:999000,units:100,branches:5,members:10},ENTERPRISE_1999:{label:'ธุรกิจ (ENTERPRISE)',month:199900,year:1999000,units:500,branches:10,members:30}};
   for(const tier of BILLING_PAID_TIERS)for(const interval of ['month','year'] as const)for(const zero of [false,true]) {
     const id=`price_Matrix${tier.replaceAll('_','')}${interval}${zero?'Zero':''}${tag}`;
     (zero?zeroPriceIds:priceIds)[`${tier}:${interval}`]=id;
