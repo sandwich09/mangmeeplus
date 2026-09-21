@@ -14,6 +14,7 @@ import { Public } from '../../../common/security/public.decorator';
 import { RequirePermissions } from '../../../common/security/permissions.decorator';
 import { assertWorkerToken } from '../../../common/security/worker-token';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
+import { billingRateLimitWindowSeconds } from '../billing-rate-limit-window';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { BillingService } from '../application/billing.service';
 import { BillingReconcilerService } from '../application/billing-reconciler.service';
@@ -284,7 +285,7 @@ export class BillingAdminController {
   private async reauthentication(req:AuthedRequest,body:BillingReauthenticateDto,companyId?:string) {
     const fields = bodyFields(body, ['password']);
     await this.admin.access(req.context, 'system.billing.read');
-    const limit = await this.limits.consume('billing-reauthenticate', req.context.userId, 5, 300);
+    const limit = await this.limits.consume('billing-reauthenticate', req.context.userId, 5, billingRateLimitWindowSeconds(300));
     if (!limit.allowed) throw new HttpException({ code: 'BILLING_RATE_LIMIT', retryAfterSeconds: limit.retryAfterSeconds }, 429);
     return this.configuration.reauthenticate(req.context, textField(fields.password, 1024),companyId);
   }
@@ -347,7 +348,7 @@ export class BillingAdminController {
   }
   private async operationLimit(req: AuthedRequest) {
     await this.admin.access(req.context, 'system.billing.read');
-    const result = await this.limits.consume('billing-operator-commands', req.context.userId, 30, 60);
+    const result = await this.limits.consume('billing-operator-commands', req.context.userId, 30, billingRateLimitWindowSeconds(60));
     if (!result.allowed) throw new HttpException({ code: 'BILLING_RATE_LIMIT', retryAfterSeconds: result.retryAfterSeconds }, 429);
   }
   @Get('operations') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
@@ -453,7 +454,7 @@ export class BillingAdminController {
     const fields = bodyFields(body, ['expectedVersion', 'state', 'note', 'assigneeUserId','backupUserId','priority','followUpAt']);
     if (!Number.isInteger(fields.expectedVersion) || (fields.assigneeUserId !== null && typeof fields.assigneeUserId !== 'string')) invalid();
     await this.admin.access(req.context, 'system.billing.issue.manage');
-    const limit = await this.limits.consume('billing-issue-update', req.context.userId, 30, 60);
+    const limit = await this.limits.consume('billing-issue-update', req.context.userId, 30, billingRateLimitWindowSeconds(60));
     if (!limit.allowed) throw new HttpException({ code: 'BILLING_RATE_LIMIT', retryAfterSeconds: limit.retryAfterSeconds }, 429);
     return this.admin.updateIssue(req.context, uuid(id), { expectedVersion: fields.expectedVersion as number,
       state: textField(fields.state, 40), note: textField(fields.note, 1000), assigneeUserId: fields.assigneeUserId as string | null,
@@ -469,7 +470,7 @@ export class BillingController {
 
   private async limit(req: AuthedRequest): Promise<void> {
     await this.billing.assertOwner(req.context);
-    const result = await this.limits.consume('billing-command', `${req.context.companyId}:${req.context.userId}`, 30, 60);
+    const result = await this.limits.consume('billing-command', `${req.context.companyId}:${req.context.userId}`, 30, billingRateLimitWindowSeconds(60));
     if (!result.allowed) throw new HttpException({ code: 'BILLING_RATE_LIMIT', message: 'กรุณารอสักครู่แล้วลองใหม่', retryAfterSeconds: result.retryAfterSeconds }, 429);
   }
 

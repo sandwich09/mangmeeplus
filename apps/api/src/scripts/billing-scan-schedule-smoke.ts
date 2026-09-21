@@ -1,3 +1,4 @@
+import { billingRateLimitWindowSeconds } from '../modules/billing/billing-rate-limit-window';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {expect} from '@playwright/test';
@@ -156,8 +157,8 @@ export async function checkBillingScanSchedule(input:ProviderScansSmokeInput&{ro
     cases.push('scheduled-discovery-history-25-plus-one-timestamp-ties-and-stable-cursor');
 
     if(input.browser){
-      // Let the preceding HTTP security cases leave the real 30/minute operator bucket naturally.
-      await new Promise(resolve=>setTimeout(resolve,60000));
+      // Let the preceding HTTP security cases leave the real 30-command operator bucket naturally.
+      await new Promise(resolve=>setTimeout(resolve,(billingRateLimitWindowSeconds(60)+1)*1000));
       const {page,origin,evidenceDir}=input.browser;await page.setViewportSize({width:390,height:844});await page.goto(`${origin}/system/billing/provider-scans?schedule=${expired.id}`,{waitUntil:'domcontentloaded'});
       const panel=page.getByRole('region',{name:'การตรวจ Stripe ตามรอบ',exact:true}),article=panel.getByRole('article',{name:'ฉบับตั้งค่าที่เลือก',exact:true});
       await panel.getByRole('button',{name:'นำค่ามาตรวจใหม่',exact:true}).click();await expect(panel.getByLabel('เหตุผลปรับรอบตรวจ',{exact:true})).toHaveValue(expired.reason);
