@@ -245,6 +245,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
 
   return (
     <MangmeePage
+      // A display name with no spaces (an email used as a name) must wrap at 390 px, not push the page wide.
+      className="[overflow-wrap:anywhere]"
       eyebrow={back}
       title={detail.requestNo ?? 'คำขอเบิกฉบับร่าง'}
       description={desk ? `อยู่ที่ ${desk}` : undefined}
