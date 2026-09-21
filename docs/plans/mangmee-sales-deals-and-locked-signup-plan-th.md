@@ -184,3 +184,35 @@
 - แต่ละ phase: implementer subagent (Opus/Sonnet) + controller review (bug/gap/impact/theme) + evidence ใน memory ก่อนขึ้น phase ถัดไป; commit ต่อ phase ชัดเจน (`feat(sales): phase N …`)
 - ตอนจบ: admin-merge #666 เข้า develop แล้วเปิด PR sync ไป main จาก main-based branch (โปรโตคอลเดิม); deploy ตาม runbook เป็นขั้นแยก (production ยังติด Postmark secrets และ gate ของ #667)
 - ลำดับต่อไป: Phase 2 (Sales console) → Phase 3 → Phase 4 → Phase 5
+
+## Phase 6: แพ็กเกจแสดงรายละเอียดครบ + เปิดขาย ENTERPRISE (มติ Owner 2026-09-21)
+
+สเปก: [§20](../specs/mangmee-sales-deals-and-locked-signup-spec-th.md) · ตาราง tier → เมนูอยู่ที่ §20.1
+
+### Tasks (API/contracts)
+
+- [x] `TIER_FEATURE_PRESETS` ใน `menu-entitlements.ts` (STARTER/BASIC/PRO = preset `starter`, ENTERPRISE = preset `full`)
+- [x] `BillingOffer.featureKeys` (catalog = ชุดของ tier, ดีล = ชุดของ snapshot) + `BillingCatalog.aiMonthlyBudgetSatang`
+- [x] `BILLING_PAID_TIERS` เพิ่ม `ENTERPRISE_1999`; `billingOffer` อ่าน `offerTerms` ของ ENTERPRISE เหมือน tier อื่น และตอบ `COMING_SOON` เฉพาะตอนยังไม่ผูก Price
+- [x] `catalog()` ไม่กัน ENTERPRISE อีกต่อไป (gate เดียวคือ Price ที่ผูกแล้ว + `new_sales`)
+- [x] `quote()` pin `billingFeaturePlan(..., TIER_FEATURE_PRESETS[tier])`; `dealReturn` (Phase 5) คืนชุดของ tier ฐาน
+- [x] `SalesDealBaseTier`/`SALES_DEAL_BASE_TIERS` รวม ENTERPRISE (ยกเลิก D-P3-1)
+- [x] เก็บ union 3 tier ที่ฮาร์ดโค้ดทั้งหมดเข้า `BILLING_PAID_TIERS`/`PaidTier` (plan adjustments, plan capacity, repeat, package request, DTO, หน้าแอดมิน)
+- [x] `apps/api/src/scripts/create-catalog-prices.ts` — สร้าง Product/Price ของแคตตาล็อกใน Stripe แบบ idempotent (`--dry-run`, `--environment uat|production`) แล้วอ่านกลับมาตรวจด้วย `assertStripePrice`
+- [x] runbook: [production-stripe-live-enablement.md](../runbooks/production-stripe-live-enablement.md) §"แคตตาล็อก Stripe"
+
+### ยังไม่ทำ
+
+- เปลี่ยนแพ็กเกจกลางคัน (upgrade / SCHEDULE_DOWNGRADE / CUSTOMER_PREPAID_PLAN_CHANGE) ยังไม่ย้ายชุดเมนูที่ขอบรอบ — เหตุผลและทางแก้ที่เสนออยู่ใน §20.5
+- ยังไม่ deploy; Owner ต้องรันสคริปต์ราคาและผูกรหัสในหน้าตั้งค่า (test mode ก่อน แล้ว live)
+
+### Tests
+
+- `apps/api/src/modules/billing/domain/billing-package.spec.ts` — catalog 8 offer, ENTERPRISE ล็อกจนกว่าจะผูก Price, ราคา ×10, `featureKeys` ต่อ tier, `aiMonthlyBudgetSatang`, `offerTerms` ของ ENTERPRISE
+- `sales-deal.logic.spec.ts` (ENTERPRISE เป็นฐานดีลได้), `paid-checkout-invoice.spec.ts`, `plan-capacity.spec.ts` (pin เดิมย้ายไปใช้ `FREE_TRIAL_15` แทน)
+- smoke ที่ต้องรันเอง (ไม่ได้รันรอบนี้ตามคำสั่ง Owner): `billing-offer-matrix-smoke` (เพิ่มแถว ENTERPRISE), `billing-offer-terms-smoke`, `billing-http-smoke`, `billing-plan-change-smoke`
+
+### Exit Criteria
+
+- contracts build, prisma validate/generate, api typecheck, `test:boot`, pins `--check` เขียว
+- Owner ผูก Stripe Price ของ ENTERPRISE บน UAT แล้วการ์ดขึ้น "เลือกแพ็กเกจ" (ไม่ใช่ "เร็ว ๆ นี้")

@@ -52,6 +52,15 @@ it('names the menus and the AI credit the customer is buying', () => {
   assert.deepEqual(dealMenuLabels([]), []);
   assert.deepEqual(dealMenuLabels(null), []);
 
+  // The headline feature has no menu of its own, so it is named first rather than left unsaid —
+  // its only binding is the contextual AI แนะนำ, which must stay out of the list.
+  assert.deepEqual(dealMenuLabels(['ai_line_assistant', 'expenses']), ['ผู้ช่วย AI ทาง LINE', 'ค่าใช้จ่ายและใบเสร็จ']);
+  assert.deepEqual(dealMenuLabels(['ai_line_assistant']), ['ผู้ช่วย AI ทาง LINE']);
+  assert.equal(dealMenuLabels(['ai_line_assistant']).includes('AI แนะนำ'), false);
+  // ภ.ง.ด.53 and 50 ทวิ are why ENTERPRISE opened; the card says so where the sidebar says "ภาษี".
+  assert.deepEqual(dealMenuLabels(['thai_tax']), ['ภาษี (ภ.ง.ด.53 และ 50 ทวิ)']);
+  assert.equal(dealMenuLabels(['thai_tax']).includes('ภาษี'), false);
+
   assert.equal(dealAiCreditText(null), 'ใช้ค่าเริ่มต้นของแพ็กเกจ');
   assert.equal(dealAiCreditText(undefined), 'ใช้ค่าเริ่มต้นของแพ็กเกจ');
   assert.equal(dealAiCreditText(0), 'ปิดการใช้งาน AI');

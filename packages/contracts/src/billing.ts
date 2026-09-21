@@ -1,9 +1,11 @@
 import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity, type PlanTermLockReason } from './plan-term.js';
+import { TIER_FEATURE_PRESETS } from './menu-entitlements.js';
 import type { SalesDealBaseTier, SalesDealCadence } from './sales.js';
 import type { BillingCompanyProfile } from './billing-company-profile.js';
 
 export const STRIPE_API_VERSION = '2026-08-26.dahlia' as const;
-export const BILLING_PAID_TIERS = ['STARTER_249', 'BASIC_499', 'PRO_999'] as const;
+/** Owner 2026-09-21: ENTERPRISE opened for purchase once WHT/50 ทวิ shipped; it is a tier like any other. */
+export const BILLING_PAID_TIERS = ['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999'] as const;
 export type PaidTier = typeof BILLING_PAID_TIERS[number];
 export type BillingMode = 'TEST' | 'LIVE';
 export type BillingPurchaseSource = 'NO_TERM' | 'TRIAL' | 'ADMIN_MANUAL' | 'PAID_CURRENT_MODE' |
@@ -48,21 +50,33 @@ export type BillingOffer = {
   label: string; priceSatang: number; currency: 'THB'; branchLimit: number; employeeLimit: number; monthlySlipLimit: number;
   /** Granted at once for the paid period; monthlySlipLimit is only the tier's monthly equivalent. */
   receiptAllowance: number; receiptAllowanceCadence: 'PAID_PERIOD';
+  /**
+   * Owner 2026-09-21: the menus this offer unlocks, so a card can list them and the purchase can
+   * grant exactly them. A catalog offer carries `TIER_FEATURE_PRESETS[tier]`; a sales deal carries
+   * its own snapshot's set. Thai labels are derived from the keys by the reader.
+   */
+  featureKeys: string[];
   availability: 'AVAILABLE' | 'UNAVAILABLE' | 'COMING_SOON'; reason: string | null;
 };
 export type BillingOfferTerms = { monthlyPriceSatang:number; annualPriceSatang:number; monthlyReceiptAllowance:number;
   /** Paired optional capacities; older policies keep catalog defaults. */
   branchLimit?:number; employeeLimit?:number };
-export function billingOffer(tier: Exclude<PlanTierKey, 'FREE_TRIAL_15'>, interval: BillingInterval, policy?: Pick<BillingPolicy,'offerTerms'> | null): BillingOffer {
+export function billingOffer(tier: Exclude<PlanTierKey, 'FREE_TRIAL_15'>, interval: BillingInterval,
+  policy?: Partial<Pick<BillingPolicy,'offerTerms'|'priceIds'>> | null): BillingOffer {
   const preset = PLAN_TIER_PRESETS[tier];
-  const terms=tier==='ENTERPRISE_1999'?undefined:policy?.offerTerms?.[tier];
+  const terms=policy?.offerTerms?.[tier];
   const monthlyReceipts=terms?.monthlyReceiptAllowance??preset.monthlySlipLimit;
+  // ENTERPRISE is the one tier whose Stripe Prices the Owner has not bound yet; until it has them
+  // the honest answer is "เร็ว ๆ นี้", not "ยังไม่เปิดรับชำระเงิน". Every other tier, and ENTERPRISE
+  // once bound, falls back to the ordinary closed-sales reason and `catalog()` opens it.
+  const comingSoon = tier === 'ENTERPRISE_1999' && !policy?.priceIds?.[`${tier}:${interval}`];
   return { offerKey: tier, interval, intervalCount: 1, label: preset.labelTh,
     priceSatang: terms ? (interval==='year'?terms.annualPriceSatang:terms.monthlyPriceSatang) : MONTHLY[tier] * (interval === 'year' ? 10 : 1), currency: 'THB',
     branchLimit: terms?.branchLimit??preset.branchLimit, employeeLimit: terms?.employeeLimit??preset.employeeLimit, monthlySlipLimit: monthlyReceipts,
     receiptAllowance: monthlyReceipts * (interval === 'year' ? 12 : 1), receiptAllowanceCadence: 'PAID_PERIOD',
-    availability: tier === 'ENTERPRISE_1999' ? 'COMING_SOON' : 'UNAVAILABLE',
-    reason: tier === 'ENTERPRISE_1999' ? 'COMING_SOON' : 'BILLING_NOT_READY' };
+    featureKeys: [...TIER_FEATURE_PRESETS[tier]],
+    availability: comingSoon ? 'COMING_SOON' : 'UNAVAILABLE',
+    reason: comingSoon ? 'COMING_SOON' : 'BILLING_NOT_READY' };
 }
 
 export type BillingPolicy = {
@@ -203,6 +217,12 @@ export type BillingAdjustments = { invoiceId: string; invoiceNumber: string | nu
   items: BillingAdjustmentItem[]; nextCursor: string | null; observedAt: string; canOpenDocuments: boolean };
 export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED'; policyRevision: string | null;
   catalogRevision: string; generatedAt: string; validUntil: string; taxTreatment: BillingTaxTreatment | null; offers: BillingOffer[];
+  /**
+   * The platform default AI credit every package carries, in satang per month (`AI_MONTHLY_BUDGET_SATANG`).
+   * There is no per-tier AI credit — only a sales deal ever overrides it — so the cards all read
+   * this one number (Owner 2026-09-21).
+   */
+  aiMonthlyBudgetSatang: number;
   /** R1: no longer emitted — new signups get no trial (Owner 2026-09-20). Optional rather than
    *  removed so an older client that still reads it keeps compiling against this contract. */
   trial?: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 } };
@@ -353,7 +373,7 @@ export type BillingReceiptAdjustments = {companyId:string;companyName:string;sou
  *  only when non-zero, so a company with no hold keeps today's panel byte for byte. This surface
  *  already shows AI money to a System Admin; no owner-facing view reads this type. */
 export type BillingPlanAdjustmentUnchanged = {remainingReceipts:number;termEndsAt:string;nextChargeAt:string|null;ocrEnabled:boolean;ocrMonthlyLimit:number|null;aiBudgetSatang:number;aiUsedSatang:number;aiOcrBudgetReached?:boolean;aiReservedSatang?:number;aiUnresolvedHolds?:number};
-export type BillingPlanAdjustmentInput = {type:'GRANT_OVERRIDE'|'REVOKE_OVERRIDE'|'GRANT_FREE_DAYS'|'CHANGE_COLLECTION';collectionAction?:'PAUSE'|'RESUME';resumesAt?:string;days?:number;tierKey?:'STARTER_249'|'BASIC_499'|'PRO_999';
+export type BillingPlanAdjustmentInput = {type:'GRANT_OVERRIDE'|'REVOKE_OVERRIDE'|'GRANT_FREE_DAYS'|'CHANGE_COLLECTION';collectionAction?:'PAUSE'|'RESUME';resumesAt?:string;days?:number;tierKey?:PaidTier;
   branchLimit?:number;employeeLimit?:number;expiresAt?:string;overrideId?:string;sourceHash:string;reason:string};
 export type BillingPlanAdjustmentOperation = BillingOperationView & {companyName:string;previewHash:string;before:CompanyPlanCapacity;after:CompanyPlanCapacity;
   collectionChange?:{action:'PAUSE'|'RESUME';before:BillingCollectionPause|null;after:BillingCollectionPause|null;openInvoices:number;draftInvoices:number;outstandingSatang:number;paidThrough:string|null;graceEndsAt:string|null;cancelAtPeriodEnd:boolean};

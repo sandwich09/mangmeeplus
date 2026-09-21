@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { billingOffer, BILLING_DRAFT_POLICY } from '@watchdog-bms/contracts';
+import { billingOffer, BILLING_DRAFT_POLICY, type BillingOffer } from '@watchdog-bms/contracts';
 import { paidPackageCheckoutEvidence } from './paid-checkout-invoice';
 
 type Input = Parameters<typeof paidPackageCheckoutEvidence>[0];
@@ -45,7 +45,9 @@ test('reject unrelated/manual invoices, alternate customer/account/attempt/price
     i => { i.payments[0]!.payment.payment_intent = 'pi_other'; }, i => { i.payments.push(i.payments[0]!); },
     i => { i.intent.status = 'requires_action'; }, i => { i.charge.customer = 'cus_other'; }, i => { i.charge.livemode = true; },
     i => { i.charge.captured = false; }, i => { delete i.charge.amount_refunded; }, i => { delete i.charge.disputed; },
-    i => { i.snapshot.quote.offer = { ...i.snapshot.quote.offer, offerKey: 'ENTERPRISE_1999' }; },
+    // Phase 6 opened ENTERPRISE_1999 for sale, so the unsellable key here is the trial tier. The
+    // cast is the point: a stored snapshot is untrusted input and may hold a key no longer sold.
+    i => { i.snapshot.quote.offer = { ...i.snapshot.quote.offer, offerKey: 'FREE_TRIAL_15' as BillingOffer['offerKey'] }; },
   ];
   for (const mutate of mutations) { const input = fixture(); mutate(input); assert.throws(() => paidPackageCheckoutEvidence(input)); }
 });

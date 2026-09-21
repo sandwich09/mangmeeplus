@@ -52,6 +52,9 @@ export function dealOffer(snapshot: SalesDealSnapshot): BillingOffer {
     label: `${preset.labelTh} · ข้อเสนอพิเศษ`, priceSatang: snapshot.priceSatang, currency: 'THB',
     branchLimit: snapshot.branchLimit, employeeLimit: snapshot.employeeLimit, monthlySlipLimit: snapshot.monthlySlipLimit,
     receiptAllowance: snapshot.monthlySlipLimit * (interval === 'year' ? 12 : 1) * cycles, receiptAllowanceCadence: 'PAID_PERIOD',
+    // Phase 6: a deal sells its own menu set, not the base tier's. The same field the catalog
+    // offer carries, so one reader answers both cards.
+    featureKeys: [...snapshot.featureKeys],
     availability: 'AVAILABLE', reason: null,
   };
 }

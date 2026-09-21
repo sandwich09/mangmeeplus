@@ -1,5 +1,6 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
+import { BILLING_PAID_TIERS } from '@watchdog-bms/contracts';
 import { billingProfileHref, billingProfileReturnHref, billingProfileSelection } from './billing-profile-navigation';
 
 it('returns to the same company and selected paid package, never to an arbitrary URL or automatic checkout', () => {
@@ -7,7 +8,10 @@ it('returns to the same company and selected paid package, never to an arbitrary
   const search = new URL(href, 'https://local.test').search;
   assert.equal(billingProfileReturnHref('company/a', search), '/companies/company%2Fa/billing?offer=PRO_999&interval=year&channel=line&profile=updated');
   assert.equal(billingProfileReturnHref('a', '?returnTo=https://evil.test&offer=PRO_999&interval=year'), null);
-  assert.equal(billingProfileSelection('?offer=ENTERPRISE_1999&interval=year'), null);
+  // The detour carries exactly the paid tiers the catalog sells — ENTERPRISE joined them in Phase 6
+  // — and nothing else, so this follows the contract rather than a snapshot of it.
+  for (const tier of BILLING_PAID_TIERS) assert.equal(billingProfileSelection(`?offer=${tier}&interval=year`)?.offer, tier);
+  assert.equal(billingProfileSelection('?offer=NOT_A_TIER&interval=year'), null);
   assert.equal(billingProfileSelection('?offer=PRO_999&interval=monthly'), null);
   assert.equal(billingProfileSelection('?offer=PRO_999&interval=year&channel=https://evil.test')?.channel, 'web');
   const once = billingProfileHref('company/a', { offer: 'PRO_999', interval: 'month', channel: 'web', purchaseMode: 'CARD_ONCE' });

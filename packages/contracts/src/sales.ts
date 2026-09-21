@@ -19,15 +19,16 @@ export const SALES_DEAL_MONTHS_MAX = 36;
 export const SALES_DEAL_DESCRIPTION_MAX = 200;
 export const SALES_DEAL_REASON_MAX = 500;
 /**
- * D-P3-1: ENTERPRISE_1999 is NOT a deal base. The one-time Stripe path reads the base tier's
- * catalog Price for its product id, and ENTERPRISE has no Price — `paidVariant` and
- * `paid-checkout-invoice.ts` know only these three. A deal expresses any size through its own
- * branch/employee/slip limits, so nothing is lost.
+ * Every paid tier, the free trial excepted (R3). D-P3-1 used to exclude ENTERPRISE_1999 because
+ * the one-time Stripe path reads the base tier's catalog Price for its product id and ENTERPRISE
+ * had none; Phase 6 (Owner 2026-09-21) opened ENTERPRISE for purchase and gave it its own Product
+ * and Prices, so it is a deal base like the rest. A deal on a base whose Price the Owner has not
+ * bound yet still fails cleanly at quote with `BILLING_OFFER_UNAVAILABLE`.
  */
-export type SalesDealBaseTier = Exclude<PlanTierKey, 'FREE_TRIAL_15' | 'ENTERPRISE_1999'>;
+export type SalesDealBaseTier = Exclude<PlanTierKey, 'FREE_TRIAL_15'>;
 /** Runtime companion of `SalesDealBaseTier` — the paid tiers a deal may be built on (R3). */
 export const SALES_DEAL_BASE_TIERS: readonly SalesDealBaseTier[] =
-  ['STARTER_249', 'BASIC_499', 'PRO_999'];
+  ['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999'];
 
 /** D-P5-1: an auto-renewing deal bills every month or every year — the only two Stripe recurring
  *  intervals `assertStripePrice` and `paidInvoiceEvidence` accept. */

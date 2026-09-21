@@ -21,7 +21,7 @@
  * deal has to change price mid-cycle rather than at the boundary, this becomes a real schedule and
  * `pendingChange()` has to learn this type.
  */
-import { billingOffer } from '@watchdog-bms/contracts';
+import { billingOffer, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
 import type { BillingAccount, BillingOperation, Prisma } from '../../../generated/prisma/client';
 import type { PrismaService } from '../../../common/database/prisma.service';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
@@ -187,7 +187,9 @@ export class BillingPriceReturn {
     const { future } = await collectionContract(this.prisma.client, account);
     const company = await this.prisma.client.company.findUniqueOrThrow({
       where: { id: account.companyId }, include: { planTerm: true } });
-    const plan = await billingFeaturePlan(this.prisma.client, account.companyId);
+    // Q1/Phase 6: back to the BASE TIER's menus, not the starter preset. An ENTERPRISE deal that
+    // ends must leave the shop on the ENTERPRISE package it is now paying the catalog price for.
+    const plan = await billingFeaturePlan(this.prisma.client, account.companyId, TIER_FEATURE_PRESETS[base]);
     return {
       ...future, deal: undefined, repeat: undefined, restart: undefined, upgrade: undefined,
       oneTime: undefined, capacity: undefined, planChangeId: undefined, pendingChange: undefined,

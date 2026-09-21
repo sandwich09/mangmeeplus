@@ -1,4 +1,5 @@
 import { Allow, ArrayMinSize, ArrayMaxSize, IsArray, IsIn, IsBoolean, IsInt, IsISO8601, IsObject, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { BILLING_PAID_TIERS } from '@watchdog-bms/contracts';
 
 // Concrete runtime DTOs for the global whitelist. Existing command parsers still own
 // conditional fields, policy/capacity semantics, versions, consent and provider invariants.
@@ -114,7 +115,7 @@ export class BillingPlanAdjustmentDto extends BillingEventPreviewDto {
   @IsOptional() @IsIn(['PAUSE','RESUME']) collectionAction?: string;
   @IsOptional() @IsISO8601({strict:true,strictSeparator:true}) resumesAt?: string;
   @IsOptional() @IsInt() @Min(1) days?: number;
-  @IsOptional() @IsIn(['STARTER_249','BASIC_499','PRO_999']) tierKey?: string;
+  @IsOptional() @IsIn([...BILLING_PAID_TIERS]) tierKey?: string;
   @IsOptional() @IsInt() @Min(1) branchLimit?: number;
   @IsOptional() @IsInt() @Min(1) employeeLimit?: number;
   @IsOptional() @IsISO8601({strict:true,strictSeparator:true}) expiresAt?: string;

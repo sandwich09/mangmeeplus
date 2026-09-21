@@ -13,6 +13,7 @@ import {
   SALES_REFERRAL_ADMIN_WINDOW_DAYS,
   SALES_REPORT_MAX_MONTHS,
   SALES_REPORT_MONTH_PATTERN,
+  TIER_FEATURE_PRESETS,
   type SalesAgentView,
   type SalesAttributionFlag,
   type SalesAttributionSource,
@@ -204,6 +205,12 @@ export function baseTierDefaults(base: SalesDealBaseTier): Pick<SalesDealFormVal
   };
 }
 
+/** Phase 6: the menus the picked tier sells, so a deal starts from the package the เซลล์ named
+ *  instead of an empty picker they have to rebuild by hand. Same source the catalog card reads. */
+export function baseTierFeatureKeys(base: SalesDealBaseTier): string[] {
+  return [...TIER_FEATURE_PRESETS[base]];
+}
+
 export function emptyDealForm(): SalesDealFormValues {
   return {
     companyId: '',
@@ -214,7 +221,7 @@ export function emptyDealForm(): SalesDealFormValues {
     cadence: 'month',
     cycles: '',
     ...baseTierDefaults('STARTER_249'),
-    featureKeys: [],
+    featureKeys: baseTierFeatureKeys('STARTER_249'),
     aiBudgetBaht: '',
     description: '',
     internalReason: '',

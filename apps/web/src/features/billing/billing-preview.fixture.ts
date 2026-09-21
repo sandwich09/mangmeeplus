@@ -28,8 +28,10 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
   const attempted = ['success', 'pending', 'activating', 'failed', 'held'].includes(scenario);
   const currentMode = scenario === 'one-time' || prepaidChange ? 'CARD_ONCE' : selected?.purchaseMode ?? 'CARD_AUTO';
   const currentOneTime = currentMode === 'CARD_ONCE' || currentMode === 'PROMPTPAY_ONCE';
+  // Phase 6: ENTERPRISE is a normal card here — live, the API opens it as soon as its Stripe prices
+  // are bound and keeps it COMING_SOON until then. `featureKeys` rides along from the tier presets.
   const offers: BillingOffer[] = (['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999'] as const).flatMap(tier => (['month', 'year'] as const).map(interval => ({
-    ...billingOffer(tier, interval), availability: tier === 'ENTERPRISE_1999' ? 'COMING_SOON' : 'AVAILABLE', reason: null,
+    ...billingOffer(tier, interval), availability: 'AVAILABLE', reason: null,
   })));
   const status: BillingStatus = {
     billingProfile: companyBillingProfile({ name: 'บริษัทตัวอย่าง · ข้อมูลพรีวิว', addressJson: {
@@ -84,9 +86,9 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
   }
   let quote: BillingQuote | null = null, collection: BillingCollectionOperation | null = null, recipient: BillingEmailRecipientOperation | null = null;
   let quoteFailures = scenario === 'quote-error' ? 1 : 0;
+  // R1: no trial block — new signups get none (Owner 2026-09-20), so the preview no longer emits one.
   const catalog = (): BillingCatalog => ({ schemaVersion: 1, mode: 'TEST', policyRevision: 'preview-policy', catalogRevision: 'preview-catalog',
-    generatedAt: date(), validUntil: new Date(Date.now() + 60_000).toISOString(), taxTreatment: 'NOT_VAT_REGISTERED', offers,
-    trial: { tierKey: 'FREE_TRIAL_15', days: 30, monthlySlipLimit: 15, branchLimit: 1, employeeLimit: 2, menus: 7 } });
+    generatedAt: date(), validUntil: new Date(Date.now() + 60_000).toISOString(), taxTreatment: 'NOT_VAT_REGISTERED', offers, aiMonthlyBudgetSatang: 200_000 });
   const requiredQuote = () => {
     if (!quote) throw new Error('กรุณาเลือกแพ็กเกจและตรวจยอดก่อน');
     return quote;

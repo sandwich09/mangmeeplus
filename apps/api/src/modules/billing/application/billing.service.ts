@@ -10,7 +10,7 @@ import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from '
 import type { BillingAdjustmentKind } from '@watchdog-bms/contracts';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, BILLING_PAID_TIERS, billingOffer, type BillingCatalog, type BillingPolicy, type BillingQuote,
+import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, BILLING_PAID_TIERS, TIER_FEATURE_PRESETS, billingOffer, type BillingCatalog, type BillingPolicy, type BillingQuote,
   type BillingCheckoutBody, type BillingCheckoutResult, type BillingStatus, type BillingAction, type BillingInvoiceItem, type BillingAttemptView,
   type BillingPurchaseMode, type BillingOffer } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -140,10 +140,12 @@ export class BillingService {
 
   async catalog(): Promise<BillingCatalog> {
     const state = this.stripe.enabled ? await this.settings() : null;
-    const offers = (['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999'] as const)
+    const offers = BILLING_PAID_TIERS
       .flatMap((tier) => (['month', 'year'] as const).map((interval) => {
         const offer = billingOffer(tier, interval, state?.policy);
-        if (tier !== 'ENTERPRISE_1999' && state?.policy && state.policy.salesCompanyIds?.length !== 0 && state.gates.new_sales &&
+        // Phase 6: ENTERPRISE is no longer excluded here. The price binding below is the gate —
+        // an unbound tier stays COMING_SOON, a bound one is sold like every other package.
+        if (state?.policy && state.policy.salesCompanyIds?.length !== 0 && state.gates.new_sales &&
             state.policy.priceIds[`${tier}:${interval}`]) {
           try { assertPolicyReady(state.policy); offer.availability = 'AVAILABLE'; offer.reason = null; } catch { /* Draft remains unavailable. */ }
         }
@@ -155,7 +157,7 @@ export class BillingService {
       generatedAt: generatedAt.toISOString(), validUntil: new Date(generatedAt.getTime() + 30_000).toISOString(), taxTreatment: state?.policy?.taxTreatment ?? null,
       // R1: no `trial` block any more — a new shop gets no free days, so advertising them here
       // would be the page promising what provisioning refuses to grant (Owner 2026-09-20).
-      offers };
+      offers, aiMonthlyBudgetSatang: this.config.aiMonthlyBudgetSatang };
   }
 
   async usage(companyId: string): Promise<BillingStatus['usage']> {
@@ -305,8 +307,10 @@ export class BillingService {
     const purchaseSource = await this.purchaseSource(company, existing);
     if (purchaseSource === 'PAID_OTHER_MODE' || purchaseSource === 'SOURCE_INCONSISTENT')
       throw billingError('BILLING_SOURCE_REVIEW_REQUIRED', 'ข้อมูลการชำระเงินเดิมไม่ตรงกัน กรุณาติดต่อทีมงานก่อนเริ่มรายการใหม่');
+    // Phase 6: a catalog purchase grants the purchased tier's menus, not the starter preset every
+    // tier used to get. A deal still carries its own set.
     const featurePreview = deal ? await billingFeaturePlan(this.prisma.client, company.id, deal.featureKeys)
-      : initialPurchaseSource(purchaseSource) ? await billingFeaturePlan(this.prisma.client, company.id) : null;
+      : initialPurchaseSource(purchaseSource) ? await billingFeaturePlan(this.prisma.client, company.id, TIER_FEATURE_PRESETS[tier]) : null;
     if (existing?.customerId) {
       const customer = await this.stripe.request('GET', `/customers/${existing.customerId}`);
       if (customer.id !== existing.customerId || customer.metadata?.billingAccountId !== existing.id || customer.email !== emailProof.email)

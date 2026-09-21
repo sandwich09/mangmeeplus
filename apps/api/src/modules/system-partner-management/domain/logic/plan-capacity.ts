@@ -1,6 +1,6 @@
-import type { CompanyPlanCapacity, PlanTierKey } from '@watchdog-bms/contracts';
+import { BILLING_PAID_TIERS, type CompanyPlanCapacity, type PaidTier, type PlanTierKey } from '@watchdog-bms/contracts';
 
-export type TemporaryPlanCapacity = { operationId: string; accountId: string; tierKey: 'STARTER_249'|'BASIC_499'|'PRO_999';
+export type TemporaryPlanCapacity = { operationId: string; accountId: string; tierKey: PaidTier;
   branchLimit: number; employeeLimit: number; effectiveAt: string; expiresAt: string };
 type Source = { capacityOverride?: unknown; billingReceiptAccountId?: string|null; termEndsAt?: Date; termDisabledAt?: Date|null };
 const integer = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) > 0 && (n as number) <= 2147483647;
@@ -13,7 +13,7 @@ export function currentCapacityOverride(row: Source, now = new Date()): Temporar
   const p = raw as Record<string, unknown>;
   if (Object.keys(p).length !== 7 || !['operationId','accountId','tierKey','branchLimit','employeeLimit','effectiveAt','expiresAt'].every(k => k in p)) return null;
   if (typeof p.operationId !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(p.operationId) || !row.billingReceiptAccountId || p.accountId !== row.billingReceiptAccountId ||
-    !['STARTER_249','BASIC_499','PRO_999'].includes(p.tierKey as string) || !integer(p.branchLimit) || !integer(p.employeeLimit) ||
+    !BILLING_PAID_TIERS.includes(p.tierKey as PaidTier) || !integer(p.branchLimit) || !integer(p.employeeLimit) ||
     !iso(p.effectiveAt) || !iso(p.expiresAt) || p.effectiveAt >= p.expiresAt || new Date(p.effectiveAt) > now || new Date(p.expiresAt) <= now) return null;
   return { operationId: p.operationId, accountId: p.accountId as string, tierKey: p.tierKey as TemporaryPlanCapacity['tierKey'],
     branchLimit: p.branchLimit, employeeLimit: p.employeeLimit, effectiveAt: p.effectiveAt, expiresAt: p.expiresAt };

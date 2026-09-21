@@ -19,7 +19,7 @@ test('expiry and revocation expose the latest paid baseline; repurchase never ex
   assert.equal(effectivePlanCapacity({...upgraded,capacityOverride:null},now).branchLimit,5);
 });
 test('foreign, malformed, future, held and expired sources never activate temporary limits',()=>{
-  for(const capacityOverride of [[],true,{...override,extra:1},{...override,accountId:'foreign'},{...override,tierKey:'ENTERPRISE_1999'},
+  for(const capacityOverride of [[],true,{...override,extra:1},{...override,accountId:'foreign'},{...override,tierKey:'FREE_TRIAL_15'},
     {...override,branchLimit:2147483648},{...override,employeeLimit:0},{...override,operationId:'not-an-operation'},
     {...override,effectiveAt:'2026-09-16T00:00:00.000Z'},{...override,expiresAt:'invalid'}])assert.equal(currentCapacityOverride({...baseline,capacityOverride},now),null);
   assert.equal(currentCapacityOverride({...baseline,capacityOverride:override,termDisabledAt:now},now),null);

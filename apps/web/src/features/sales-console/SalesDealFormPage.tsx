@@ -15,7 +15,7 @@ import { Modal } from '@/common/components/modal';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { actSalesDeal, createSalesDeal, getSalesDeal, saveSalesDeal, searchSalesCompanies, type SalesDealAction } from './sales.api';
 import {
-  baseTierDefaults, baseTierLabel, dealAutoRenew, dealFormFromView, dealInputFromForm, dealPaymentNote, dealPriceState,
+  baseTierDefaults, baseTierFeatureKeys, baseTierLabel, dealAutoRenew, dealFormFromView, dealInputFromForm, dealPaymentNote, dealPriceState,
   dealWarnings, emptyDealForm, firstDealErrorField, isDealCancellable, isDealEditable, isMenuSelected, parseBahtInput,
   SALES_DEAL_BASE_TIERS, SALES_DEAL_MENU_BINDINGS, SALES_DEAL_MENU_GROUPS, toggleMenuSelection, validateDealForm,
   type SalesDealFormErrors, type SalesDealFormValues,
@@ -352,8 +352,10 @@ export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: str
               name="base"
               value={values.base}
               onChange={(event) => {
+                // Phase 6: the picked package hands over its menus as well as its limits, so a deal
+                // starts from what the customer's card promises instead of an empty picker.
                 const base = event.target.value as SalesDealBaseTier;
-                setValues((previous) => ({ ...previous, base, ...baseTierDefaults(base) }));
+                setValues((previous) => ({ ...previous, base, ...baseTierDefaults(base), featureKeys: baseTierFeatureKeys(base) }));
               }}
             >
               {SALES_DEAL_BASE_TIERS.map((tier) => <option key={tier} value={tier}>{baseTierLabel(tier)}</option>)}

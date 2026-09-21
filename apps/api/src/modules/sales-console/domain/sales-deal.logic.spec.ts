@@ -122,12 +122,11 @@ describe('deal snapshot validation', () => {
   });
 
   it('accepts only the three tiers that have a Stripe catalog Price (D-P3-1)', () => {
-    for (const base of ['STARTER_249', 'BASIC_499', 'PRO_999']) {
+    // Phase 6: ENTERPRISE has its own Product and Prices now, so it is a deal base like the rest.
+    for (const base of ['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999']) {
       assert.equal(buildDealSnapshot({ ...draft, base }).base, base);
     }
     assert.throws(() => buildDealSnapshot({ ...draft, base: 'FREE_TRIAL_15' }), SalesSnapshotError);
-    // ENTERPRISE has no Price, so the one-time Checkout could never bill it.
-    assert.throws(() => buildDealSnapshot({ ...draft, base: 'ENTERPRISE_1999' }), SalesSnapshotError);
     assert.throws(() => buildDealSnapshot({ ...draft, base: 'NOT_A_TIER' }), SalesSnapshotError);
   });
 

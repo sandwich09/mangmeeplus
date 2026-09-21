@@ -383,3 +383,75 @@ unit (สถานะดีล, snapshot, quoteTotals, ladder-less validation, l
 | D-P5-6 | จบดีล (บัตรอัตโนมัติ) = op `SCHEDULE_PRICE_RETURN` ไฟล์ใหม่ตามแบบ collection op (ไม่แก้ `billing-collection.ts`; แก้ `billing-schedule.ts` เพียงบรรทัดรายชื่อ type ของ `ownedSchedule`): schedule 2 เฟส (ราคาดีล → ราคา catalog), เขียน contract อนาคตที่มี `dealReturn` → apply รอบนั้นคืนเมนู/เครดิต AI/ลิมิตเป็นค่าเริ่มต้นของ tier (Q1); N รอบ = สร้าง op หลังจ่ายครั้งแรก; จนกว่าจะเพิกถอน = หัวหน้ากด "จบดีล"; แจ้ง OWNER + เซล 14 วันก่อน | `currentSchedulePhase` ตรวจเฟสถัดไปจาก contract ล่าสุด; `applyInvoice` ใช้ feature plan เฉพาะ INITIAL จึงต้องมีธง `dealReturn` |
 | D-P5-7 | ดีล QR ทุกงวด (Q8): ซื้อ/ต่ออายุได้ (`bindPromptPayRenewal` ใช้ `snapshot.priceId` อยู่แล้ว); จบดีล = ยกเลิกสิ้นรอบ (ไม่มี schedule บน subscription QR) แล้วร้านซื้อ catalog | `billing-collection.ts` ปฏิเสธ schedule บน PROMPTPAY_RENEW |
 | D-P5-8 | ยังไม่ทำ drift scan ของ Price เฉพาะร้าน (G17) — op จบดีลตรวจราคาเมื่อรัน | ลดเวลา (Owner) |
+
+## 20. แพ็กเกจแสดงรายละเอียดครบ + เปิด ENTERPRISE (Phase 6, มติ Owner 2026-09-21)
+
+**ปัญหาเดิม**: การ์ดแพ็กเกจบอกแค่ราคา และ *ทุก* tier ที่จ่ายเงินได้เปิดเมนูชุดเดียวกัน เพราะ
+`billingFeaturePlan` ใช้ preset `starter` เป็นค่าเริ่มต้นตายตัว (billing-feature-entitlements.ts) — ซื้อ PRO
+ก็ได้เมนูเท่า STARTER. และ ENTERPRISE_1999 ถูกล็อกเป็น "เร็ว ๆ นี้" ตายตัวใน `billingOffer`.
+
+**มติ**: ทุกแพ็กเกจในแคตตาล็อกต้องบอกรายละเอียดครบ — เมนูที่ปลดล็อก, เพดานสาขา/ผู้ใช้, ใบเสร็จต่อเดือน,
+เครดิต AI — และการซื้อต้องเปิดเมนูตามนั้นเป๊ะ ๆ ; เปิดขาย ENTERPRISE เพราะ WHT/50 ทวิ ส่งมอบแล้ว.
+
+### 20.1 ตาราง tier → เมนู (ชุดจริงที่ implement)
+
+`TIER_FEATURE_PRESETS` ([menu-entitlements.ts](../../packages/contracts/src/menu-entitlements.ts)) คือคำตอบเดียว
+ว่าแต่ละ tier เปิดเมนูอะไร. STARTER/BASIC/PRO **คงชุดเมนูเดิม** ตาม
+[package-entitlements spec §3](mangmee-package-entitlements-spec-th.md) (ต่างกันที่เพดาน ไม่ใช่เมนู);
+ENTERPRISE = preset `full` (ทุกเมนูที่ขายได้ ยกเว้น `expense_auto_post` ซึ่งเป็นสวิตช์ของแอดมิน ไม่ใช่เมนูที่ขาย).
+
+| tier | ราคา/เดือน · /ปี | สาขา · ผู้ใช้ · ใบเสร็จ/เดือน | เมนูที่เปิด |
+|---|---|---|---|
+| STARTER_249 | 249 · 2,490 | 1 · 2 · 30 | แดชบอร์ด/แจ้งเตือน · ค่าใช้จ่าย+ใบเสร็จ (รายการ/อัปโหลด/บันทึกด้วยมือ/หมวดหมู่/หลักฐานทางบัญชี/ลายเซ็น) · การเบิกจ่าย · ผู้ช่วย AI ทาง LINE · พนักงานและสิทธิ์ · ตั้งค่าบริษัท |
+| BASIC_499 | 499 · 4,990 | 2 · 5 · 50 | เท่า STARTER |
+| PRO_999 | 999 · 9,990 | 5 · 10 · 100 | เท่า STARTER |
+| ENTERPRISE_1999 | 1,999 · 19,990 | 10 · 30 · 2,000 | ทุกเมนูข้างบน **บวก** สินค้า/สต๊อก · สินค้าและบริการ · เอกสารขาย · ลูกค้าและ CRM (ครบทุกเมนูย่อย) · เชื่อมต่อ LINE OA · บัญชีแยกประเภท · **ภาษีไทย (ภ.ง.ด. / หัก ณ ที่จ่าย 50 ทวิ)** · จัดซื้อ/เจ้าหนี้ (ใบวางบิล/การชำระเงิน/AP Aging) · ธนาคารและกระทบยอด · รายงาน/BI · ระบบอัตโนมัติ |
+
+- **เครดิต AI**: ไม่มีค่าต่อ tier — ทุกแพ็กเกจใช้ค่ากลางของแพลตฟอร์ม (`AI_MONTHLY_BUDGET_SATANG`) ซึ่ง
+  catalog ส่งออกมาเป็น `BillingCatalog.aiMonthlyBudgetSatang` ให้การ์ดแสดง. มีแต่ "ดีล" เท่านั้นที่ตั้งทับได้.
+- ทั้งสองชุดเป็น preset เดิม จึงปิด (closed) ภายใต้ `requiredFeatureKeys` และมี
+  `PLATFORM_INVARIANT_FEATURE_KEYS` ครบอยู่แล้ว.
+
+### 20.2 กติการาคา
+
+ราคารายปี = **ราคารายเดือน × 10** ทุก tier (เหมือนเดิม) → ENTERPRISE = 199,900 สตางค์/เดือน,
+1,999,000 สตางค์/ปี (19,990 บาท). `offerTerms` ของนโยบายตั้งทับได้ทุก tier รวม ENTERPRISE.
+
+### 20.3 เปิดขาย ENTERPRISE
+
+- `BILLING_PAID_TIERS` มี 4 tier → `paidVariant`, `parseBillingPolicy` (`priceIds`/`zeroPriceIds`/`offerTerms`),
+  `validateProvider`, `impact()`, `isUpgrade` และฟอร์มตั้งค่าได้แถว ENTERPRISE มาเอง.
+- **fail-closed**: `billingOffer` ตอบ `COMING_SOON` เฉพาะ ENTERPRISE ที่ยัง *ไม่ผูก* Stripe Price ในนโยบายที่ใช้อยู่;
+  `catalog()` เปลี่ยนเป็น `AVAILABLE` เมื่อ Price ของ variant นั้นถูกผูกแล้วและ gate `new_sales` เปิด. ก่อนผูก
+  quote ตอบ `BILLING_OFFER_UNAVAILABLE` (409) เหมือนเดิม — ไม่มีอะไรพังก่อน Owner ผูกราคา.
+- Stripe Product/Price ของ ENTERPRISE สร้างด้วย `apps/api/src/scripts/create-catalog-prices.ts`
+  แล้ว Owner ผูกรหัสในหน้าตั้งค่า (ดู [runbook](../runbooks/production-stripe-live-enablement.md)).
+
+### 20.4 ดีลใช้ ENTERPRISE เป็นฐานได้
+
+`SalesDealBaseTier` = ทุก tier ที่จ่ายเงินได้ (ยกเลิก D-P3-1 ที่ตัด ENTERPRISE ออกเพราะไม่มี Price).
+ฐานที่ยังไม่ผูก Price ล้มที่ quote ด้วย `BILLING_OFFER_UNAVAILABLE` และ Price ของดีลอัตโนมัติจะค้างที่
+`priceState=FAILED` (`catalog_price_missing`) จนกว่าจะผูก — ไม่มีทางเปิด Checkout ที่จ่ายไม่ได้.
+ค่าเริ่มต้นของฟอร์มดีลอ่านจาก `TIER_FEATURE_PRESETS[base]` และ offer ของดีล (`dealOffer`) พก
+`featureKeys` ของ snapshot ตัวเอง.
+
+### 20.5 จุดที่ยังไม่ทำ (ต้องมีมติก่อน)
+
+**เปลี่ยนแพ็กเกจกลางคัน (upgrade / SCHEDULE_DOWNGRADE / CUSTOMER_PREPAID_PLAN_CHANGE) ยังไม่ย้ายชุดเมนู.**
+`applyInvoice` เขียนสิทธิ์เมนูเฉพาะ `evidence.kind === 'INITIAL'` หรือรอบที่มี `dealReturn`
+(`rewritesFeatures`, billing-reconciler.service.ts) และ `quote()` pin `featurePlan` เฉพาะ
+`initialPurchaseSource` หรือดีล. เหตุผลที่ยังไม่ต่อ seam นี้:
+1. invoice ของ plan change เป็น `RENEWAL` (เฉพาะ `subscription_create` เท่านั้นที่เป็น INITIAL) จึงต้องเพิ่มธง
+   ทำนองเดียวกับ `dealReturn`;
+2. `featurePlan` ที่ pin ตอนขอเปลี่ยนจะถูกตรวจ `sourceHash` ตอน apply ที่สิ้นรอบ (อาจห่างเป็นปีสำหรับรายปี)
+   — แอดมินแก้สิทธิ์ระหว่างนั้นครั้งเดียวก็ทำให้ invoice ที่ลูกค้าจ่ายแล้ว HELD ด้วย
+   `BILLING_ENTITLEMENT_REVIEW_REQUIRED`;
+3. เส้นทางครั้งเดียว (`SCHEDULED_CHANGE` / `CUSTOMER_PREPAID_PLAN_CHANGE`) **ไม่มี invoice ที่ขอบรอบเลย**
+   (เก็บเงินล่วงหน้าไปแล้ว) จึงไม่มี hook ให้ apply ที่วันเปลี่ยน;
+4. downgrade = ถอดเมนู → เขียน runoff + `DISABLE_REQUESTED` โดยลูกค้าไม่เห็น `featureImpact` ล่วงหน้า
+   (quote แสดงเฉพาะ INITIAL) ซึ่งเป็นการตัดสินใจเชิงสินค้า.
+
+ผลตอนนี้: ตราบใดที่ STARTER/BASIC/PRO ใช้ชุดเมนูเดียวกัน การเปลี่ยนระหว่างสามตัวนั้น **ไม่มีผลต่อเมนู**
+ช่องว่างจึงกระทบเฉพาะเส้นทาง "อัปเกรดขึ้น ENTERPRISE หรือลงจาก ENTERPRISE กลางรอบ" ซึ่งต้องให้ทีมงานปรับ
+สิทธิ์ให้จากหน้าพาร์ตเนอร์ไปก่อน. ทางแก้ที่เสนอ: สร้าง op ที่ขอบรอบเหมือน `SCHEDULE_PRICE_RETURN` (สร้าง
+snapshot สด ๆ ก่อนถึงวัน) แทนการ pin ล่วงหน้า.

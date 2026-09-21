@@ -1,5 +1,5 @@
 import type { Prisma } from '../../../generated/prisma/client';
-import { SALES_DEAL_OPEN_STATUSES, type BillingOffer, type SalesDealStatus } from '@watchdog-bms/contracts';
+import { BILLING_PAID_TIERS, SALES_DEAL_OPEN_STATUSES, type BillingOffer, type PaidTier, type SalesDealStatus } from '@watchdog-bms/contracts';
 import { termProjectionHash } from '../domain/paid-invoice';
 import { dealReturnAt, type DealSource } from '../domain/deal-offer';
 import { writeSalesAttribution } from '../../sales-console/application/sales-attribution.write';
@@ -11,7 +11,7 @@ export async function fulfillPaidPackageRequest(tx:Prisma.TransactionClient,comp
   const offer=invoice?.offerSnapshot as Partial<BillingOffer>|null;
   if(!invoice||invoice.billingAccountId!==accountId||invoice.providerStatus!=='paid'||invoice.applyStatus!=='APPLIED'||!invoice.appliedAt||
     invoice.paidSatang<=0||invoice.paidSatang!==invoice.totalSatang||invoice.refundedSatang!==0||invoice.disputed||
-    !['STARTER_249','BASIC_499','PRO_999'].includes(offer?.offerKey??''))return;
+    !BILLING_PAID_TIERS.includes(offer?.offerKey as PaidTier))return;
   const request=await tx.packageChangeRequest.findFirst({where:{companyId,status:'OPEN',requestedTierKey:offer!.offerKey,
     createdAt:{lte:invoice.appliedAt},paymentState:'NONE',paymentRef:null,slipAttachmentId:null}});
   if(!request)return;
