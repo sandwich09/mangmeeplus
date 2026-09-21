@@ -361,6 +361,9 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       // Phase 5 auto-renewing deals: the return operation's provider write and its definition of
       // done, which nothing else in the suite exercises.
       'src/modules/billing/application/billing-price-return.spec.ts',
+      // Phase 7 mid-term package change: which menu set the new tier is entitled to, and the two
+      // shops whose menus a package change must not touch.
+      'src/modules/billing/application/billing-plan-menus.spec.ts',
       'src/modules/billing/domain/billing-package.spec.ts',
       'src/modules/billing/domain/paid-checkout-invoice.spec.ts',
       'src/modules/billing/infrastructure/stripe.client.spec.ts',
