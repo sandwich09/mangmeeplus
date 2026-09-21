@@ -1,6 +1,6 @@
 # Agent Memory: billing-smoke-rate-limit-window
 
-Status: Implemented on branch `ci/billing-smoke-short-rate-windows` (from origin/develop 69f41b60); measuring.
+Status: PR #678, admin-merged by owner request after its three Billing Integration suites passed in CI.
 Owner: repo owner (follow-up to ci-fast-pr-gate, 2026-09-21).
 Scope: `apps/api/src/modules/billing/billing-rate-limit-window.ts` (new), `billing.controller.ts` (four billing
 buckets), `scripts/billing-http-smoke.ts` (harness env), four smokes with fixed 60 s sleeps.
@@ -28,5 +28,10 @@ Open questions:
 Verification:
 - Helper cases (13 env combinations × 60 s and 300 s windows): production/unset/invalid → production window.
 - `tsc --noEmit` (TypeScript 5.9) on apps/api: clean.
+- Local default `billing-http-smoke.js` (Postgres 18.3 + Redis 7 containers): 1229 s → 228 s, 259 cases both.
+- CI run 35561991716 (old ci.yml, all suites): Billing Integration backend 23.7 → 7.1 min, operations
+  17.0 → 10.2, customer 12.1 → 10.9. The run's only failure was `production-release-prepare-wait.spec.sh`
+  (wall-clock waits) inside production-image-security; no infra file changed here and the same spec passed on
+  PR #677's run, so it is treated as a timing flake.
 
-Next: record before/after timing, open PR to develop.
+Next: customer and operations suites are now bound by browser work, not waits.
