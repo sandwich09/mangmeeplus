@@ -85,6 +85,36 @@ class Contracts(unittest.TestCase):
                     opener.assert_not_called()
                 self.assertEqual(calls,[])
 
+    def test_postmark_read_only_preflight_retries_only_transient_transport_failures(self):
+        mail_path=m.ROOT/'infra/postmark/config.py'
+        spec=importlib.util.spec_from_file_location('postmark_retry_contract',mail_path)
+        mail=importlib.util.module_from_spec(spec);spec.loader.exec_module(mail)
+        settings=mail.deployment_config(m.read(mail_path.with_name('config.json')),'uat')
+        values={'POSTMARK_SERVER_TOKEN':'synthetic-live-token','POSTMARK_UAT_ALLOWED_RECIPIENTS':'qa@example.test'}
+        server=int(settings['environment']['POSTMARK_SERVER_ID']);stream=settings['environment']['POSTMARK_MESSAGE_STREAM']
+        class Response:
+            status=200
+            def __init__(self,value):self.value=value
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def read(self,limit):return json.dumps(self.value).encode()
+        responses=[m.urllib.error.URLError('temporary'),Response({'ID':server,'DeliveryType':'Live'}),
+            Response({'ServerID':server,'ID':stream,'MessageStreamType':'Transactional','ArchivedAt':None})]
+        class Opener:
+            def open(self,*args,**kwargs):
+                value=responses.pop(0)
+                if isinstance(value,Exception):raise value
+                return value
+        with patch.object(mail.urllib.request,'build_opener',return_value=Opener()),patch.object(mail.time,'sleep') as sleep:
+            evidence=mail.native_preflight(settings,values)
+        self.assertEqual(evidence['outbound'],'native-identity-checked');sleep.assert_called_once_with(1)
+        denied=m.urllib.error.HTTPError('https://api.postmarkapp.com/server',401,'denied',None,None)
+        with patch.object(mail.urllib.request,'build_opener') as opener,patch.object(mail.time,'sleep') as sleep:
+            opener.return_value.open.side_effect=denied
+            with self.assertRaisesRegex(ValueError,'unavailable'):mail.native_preflight(settings,values)
+            self.assertEqual(opener.return_value.open.call_count,1);sleep.assert_not_called()
+        denied.close()
+
     def test_targets_and_wrong_environment_rejected(self):
         for kind in ['dev','uat','production']:
             t=target(kind);m.validate_target(t,t['environment'])
@@ -140,11 +170,24 @@ class Contracts(unittest.TestCase):
             r=m.Release.__new__(m.Release);r.aws_prefix=['aws','--profile','uat'];r.receipt={}
             r.ssm_sessions={'i-1':{'port':41000,'process':Process(),'log':log,'path':path}}
             completed=subprocess.CompletedProcess([],0,'{}','')
-            with patch.object(m.subprocess,'run',return_value=completed) as run:r.close_transport()
+            with patch.object(m.subprocess,'run',return_value=completed) as run:self.assertTrue(r.close_transport())
             self.assertEqual(run.call_args.args[0],
                 ['aws','--profile','uat','ssm','terminate-session','--session-id','owned-session'])
             self.assertEqual(r.receipt['ssmSessionCleanup'],{'passed':True,'terminatedCount':1,'failedCount':0})
             self.assertEqual(r.ssm_sessions,{})
+        for failure in ('missing-id','timeout'):
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as tmp:
+                path=Path(tmp)/'ssm.private.log'
+                path.write_text('Waiting for connections...\n' if failure=='missing-id' else 'Starting session with SessionId: owned-session\n')
+                log=path.open('a')
+                r=m.Release.__new__(m.Release);r.aws_prefix=['aws'];r.receipt={}
+                r.ssm_sessions={'i-1':{'port':41000,'process':Process(),'log':log,'path':path}}
+                side_effect=subprocess.TimeoutExpired('aws',30) if failure=='timeout' else None
+                with patch.object(m.subprocess,'run',side_effect=side_effect) as run:
+                    self.assertFalse(r.close_transport())
+                    if failure=='missing-id':run.assert_not_called()
+                self.assertEqual(r.receipt['ssmSessionCleanup'],{'passed':False,'terminatedCount':0,'failedCount':1})
+                self.assertEqual(r.ssm_sessions,{})
 
     def test_exact_main_can_reuse_a_validated_prepared_build(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -160,6 +203,77 @@ class Contracts(unittest.TestCase):
             self.assertEqual(loaded,[prepared.resolve()])
             self.assertEqual(r.source,prepared.resolve().parent/'source')
             self.assertEqual(r.build,{'status':'passed'})
+
+    def test_prepared_build_revalidates_every_identity_and_archive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);prepared=root/'prepared'/'build';source=prepared.parent/'source';prepared.mkdir(parents=True);source.mkdir()
+            sha='a'*40;tree='synthetic-tree';phases={'install','contracts','prisma','typescript','di','agentcore',
+                'build-api-web','build-ai-gateway','build-workers','export-tools-base','build-tools'}
+            images={service:{'tag':'local/'+service,'imageId':'sha256:'+str(index)*64,'architecture':'amd64'}
+                for index,service in enumerate((*m.SERVICES,'tools'),1)}
+            archive=b'synthetic-agentcore'
+            build={'status':'passed','sourceCommit':sha,'sourceTreeSha256':hashlib.sha256(tree.encode()).hexdigest(),
+                'elapsedSeconds':120,'phases':{phase:{'exitCode':0} for phase in phases},'images':images,
+                'agentcore':{'sourceCommit':sha,'sha256':hashlib.sha256(archive).hexdigest()}}
+            m.write(prepared/'build-result.json',build);(prepared/'source-tree.bin').write_bytes(tree.encode())
+            for phase in phases:(prepared/(phase+'.log')).write_text('passed')
+            (prepared/'agentcore').mkdir();(prepared/'agentcore/agentcore.zip').write_bytes(archive)
+            r=m.Release.__new__(m.Release);r.pinned_sha=sha;r.source=source;r.build_dir=root/'copied';r.receipt={}
+            def command(args,**kwargs):
+                if args[:3]==['git','rev-parse','HEAD']:return sha+'\n'
+                if args[:3]==['git','status','--porcelain']:return ''
+                if args[:3]==['git','ls-tree','-rz']:return tree
+                if args[:3]==['docker','image','inspect']:
+                    row=next(value for value in images.values() if value['tag']==args[3])
+                    return json.dumps([{'Id':row['imageId'],'Architecture':'amd64',
+                        'Config':{'Labels':{'org.opencontainers.image.revision':sha}}}])
+                raise AssertionError(args)
+            r.command=command;r.load_prepared_build(prepared)
+            self.assertTrue(r.receipt['preparedBuild']['identitiesRevalidated'])
+            (prepared/'source-tree.bin').write_bytes(b'tampered')
+            r.build_dir=root/'rejected'
+            with self.assertRaisesRegex(ValueError,'source tree mismatch'):r.load_prepared_build(prepared)
+
+    def test_exact_candidate_storage_capacity_fails_before_publication(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r,_=self.runner(tmp);del r.storage_capacity
+            r.target=target('uat');r.target['hosts']['workers']=r.target['hosts']['ai-gateway']
+            r.hosts={host['instanceId']:host for rows in r.target['hosts'].values() for host in rows}
+            gib=1024**3
+            r.manifest={'artifacts':{service:{'tag':'local/'+service,'imageId':'sha256:'+str(index)*64}
+                for index,service in enumerate((*m.SERVICES,'tools'),1)}}
+            def command(args,**kwargs):
+                service=args[-1].rsplit('/',1)[-1];row=r.manifest['artifacts'][service]
+                return json.dumps([{'Id':row['imageId'],'Size':gib}])
+            available={iid:10*gib for iid in r.hosts}
+            def remote(host,args,**kwargs):
+                if args[:2]==['docker','info']:return '/var/lib/docker\n'
+                if args[:2]==['df','-Pk']:return 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/x 1 1 '+str(available[host['instanceId']]//1024)+' 1% /\n'
+                raise AssertionError(args)
+            r.command=command;r.remote=remote;r.storage_capacity()
+            api=r.target['hosts']['api-web'][0]['instanceId'];ai=r.target['hosts']['ai-gateway'][0]['instanceId']
+            self.assertEqual(r.receipt['hostStorageCapacity'][api]['services'],['api-web','tools'])
+            self.assertEqual(r.receipt['hostStorageCapacity'][ai]['services'],['ai-gateway','workers'])
+            available[ai]=5*gib
+            with self.assertRaisesRegex(ValueError,'Insufficient Docker filesystem'):r.storage_capacity()
+
+    def test_uat_duration_boundaries_stop_before_mutation_and_record_ten_minutes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r,_=self.runner(tmp)
+            r.clock=100
+            with patch.object(m.time,'monotonic',return_value=100+m.UAT_PRE_MUTATION_SECONDS):r.uat_pre_mutation_budget()
+            self.assertEqual(r.receipt['durationBudget']['preMutationElapsedSeconds'],m.UAT_PRE_MUTATION_SECONDS)
+            with patch.object(m.time,'monotonic',return_value=100+m.UAT_PRE_MUTATION_SECONDS+0.001), \
+                    self.assertRaisesRegex(ValueError,'pre-mutation budget exceeded'):
+                r.uat_pre_mutation_budget()
+        for elapsed,met in ((m.UAT_DEPLOY_TARGET_SECONDS,True),(m.UAT_DEPLOY_TARGET_SECONDS+0.001,False)):
+            with self.subTest(elapsed=elapsed),tempfile.TemporaryDirectory() as tmp:
+                r=m.Release.__new__(m.Release);r.work=Path(tmp);r.clock=100;r.id='simulation';r.args=argparse.Namespace(environment='uat')
+                r.target=target('dev');r.build={'sourceCommit':'a'*40};r.manifest={'releaseId':'b'*64};r.receipt={
+                    'runtimeReadback':{},'agentcore':{},'launchRetirement':{},'customerAcceptance':{'passed':True}}
+                r.manual_browser=False
+                with patch.object(m.time,'monotonic',return_value=100+elapsed):r.sign()
+                self.assertIs(m.read(r.work/'accepted.json')['durationTargetMet'],met)
 
     def test_complete_config_replacement_and_stable_internal_routes(self):
         settings={s:{} for s in m.SERVICES};settings['api-web']['NEW_RUNTIME_SETTING']='new'
@@ -188,7 +302,7 @@ class Contracts(unittest.TestCase):
         r.id='20260911T000000Z-abcdef01';r.clock=time.monotonic();r.secrets=set();r.changed=[];r.remote_lock_owned=False
         r.target=target();r.args=argparse.Namespace(apply=True,environment='uat',rollback=None);r.receipt={'status':'RUNNING','phases':[]};r.manual_browser=False
         calls=[]
-        for name in ('preflight','source_and_build','configuration','render','publish','config_freshness','agentcore','migrations','deploy','acceptance','retire','sign','acquire_remote_lock','release_remote_lock'):
+        for name in ('preflight','source_and_build','configuration','render','storage_capacity','publish','config_freshness','agentcore','migrations','deploy','acceptance','retire','sign','acquire_remote_lock','release_remote_lock'):
             def invoke(n=name):
                 calls.append(n)
                 if n==fail:raise RuntimeError('injected '+n)
@@ -205,7 +319,7 @@ class Contracts(unittest.TestCase):
             self.assertLess(calls.index('acceptance'),calls.index('retire'))
             self.assertFalse((r.state/'active.json').exists())
             self.assertGreaterEqual(r.receipt['elapsedSeconds'],sum(x['elapsedSeconds'] for x in r.receipt['phases'])-0.02)
-        for fail in ('source_and_build','configuration','publish','config_freshness','agentcore','migrations','deploy','acceptance','retire','sign'):
+        for fail in ('source_and_build','configuration','storage_capacity','publish','config_freshness','agentcore','migrations','deploy','acceptance','retire','sign'):
             with self.subTest(fail=fail),tempfile.TemporaryDirectory() as tmp:
                 r,calls=self.runner(tmp,fail)
                 with self.assertRaises(RuntimeError):r.run()
@@ -296,7 +410,7 @@ class Contracts(unittest.TestCase):
             self.assertEqual(calls,['preflight']);self.assertEqual(r.receipt['status'],'PREFLIGHT_PASSED_NO_DEPLOYMENT')
 
     def test_prepare_runs_all_local_validation_without_cloud_writes(self):
-        expected=['preflight','source_and_build','configuration','render','config_freshness']
+        expected=['preflight','source_and_build','configuration','render','storage_capacity','config_freshness']
         for environment in ('production','uat'):
             with self.subTest(environment=environment),tempfile.TemporaryDirectory() as tmp:
                 r,calls=self.runner(tmp);r.args.apply=False;r.args.prepare=True;r.args.environment=environment
@@ -365,6 +479,27 @@ class Contracts(unittest.TestCase):
             self.assertEqual(saved['status'],'FAILED')
             self.assertIn('finishedAt',saved)
             self.assertEqual(saved['error'],'injected [REDACTED]')
+
+    def test_main_returns_failure_when_transport_cleanup_is_not_proven(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r,_=self.runner(tmp);r.run=lambda:r.receipt.update(status='ACCEPTED_LINE_DEFERRED')
+            r.close_transport=lambda:False
+            with patch.object(sys,'argv',['release.py','--environment','uat']),patch.object(m,'Release',return_value=r):
+                self.assertEqual(m.main(),1)
+            self.assertTrue(r.receipt['transportCleanupRequired'])
+            self.assertEqual(r.receipt['status'],'FAILED_TRANSPORT_CLEANUP_REQUIRED')
+            self.assertEqual(r.receipt['statusBeforeTransportCleanup'],'ACCEPTED_LINE_DEFERRED')
+            self.assertIn('session cleanup failed',r.receipt['error'])
+
+    def test_main_cleans_transport_after_remote_lock_on_success_and_after_failure(self):
+        for failure in (None,'configuration'):
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as tmp:
+                r,calls=self.runner(tmp,failure);r.close_transport=lambda:calls.append('close_transport') or True
+                with patch.object(sys,'argv',['release.py','--environment','uat']),patch.object(m,'Release',return_value=r):
+                    self.assertEqual(m.main(),0 if failure is None else 1)
+                self.assertEqual(calls.count('close_transport'),1)
+                if failure is None:self.assertLess(calls.index('release_remote_lock'),calls.index('close_transport'))
+                else:self.assertEqual(r.receipt['status'],'FAILED')
 
     def test_production_preflight_pins_main_for_prepare_and_still_checks_apply_controller(self):
         for prepare in (True,False):

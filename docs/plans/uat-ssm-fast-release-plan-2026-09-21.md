@@ -1,6 +1,6 @@
 # UAT SSM transport and sub-10-minute release plan
 
-Status: IMPLEMENTING
+Status: IMPLEMENTED; FULL CONTROLLER REHEARSAL PASSED
 
 ## Goal
 
@@ -19,6 +19,9 @@ migration, readiness, customer-OPEN, retirement, or KMS-signature gates.
    architecture, label, phase-log, and AgentCore archive verification. Cap an unprepared UAT build
    at 240 seconds and stop before mutation when the first 360 seconds are exhausted.
 5. Record the 600-second target in the signed UAT acceptance artifact.
+6. Fail before publication when the exact candidate cannot fit with bounded Docker headroom, retry
+   only transient read-only provider checks, and fail the command unless SSM cleanup is proved after
+   the final remote-lock operation.
 
 ## Acceptance
 
@@ -28,4 +31,7 @@ migration, readiness, customer-OPEN, retirement, or KMS-signature gates.
 - The change set has no EC2 replacement and changes only the two runtime roles, deploy role, and two
   security groups.
 - Focused controller tests and repository CI pass.
+- The success path, every phase failure, rollback, exact prepared-build identity, low-disk refusal,
+  provider retry boundary, SSM cleanup failures, and 360/600-second boundaries pass in the isolated
+  controller rehearsal without customer data or cloud mutation.
 - A later deploy receipt records whether the 600-second target was met; no safety gate is skipped.
