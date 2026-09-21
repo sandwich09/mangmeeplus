@@ -2,6 +2,7 @@
 
 import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
+import { formatThaiDate } from '@/common/i18n/thai-date';
 import {
   CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
   canUploadSignedCopy, canVoidRecordedPayment, eligibleSignatureRoles, reimbursementOwnActions,
@@ -311,7 +312,7 @@ export type JourneyStep = {
   key: JourneyStepKey;
   label: string;
   state: JourneyStepState;
-  /** What the viewer should know on the active step; on a done step only the auto-approval line. */
+  /** What the viewer should know on the active step; on a done step only the auto-approval or signed-document line. */
   note?: string;
   /** Open to THIS viewer, primary first. Only the active step carries any. */
   actions: JourneyAction[];
@@ -323,12 +324,12 @@ export const JOURNEY_STEP_LABELS: Record<JourneyStepKey, string> = {
 
 /**
  * Whether THIS claim passes through finance review (spec §5: per claim, from its frozen policy).
- * ponytail: the detail carries no policy snapshot, so this reads the finance state the claim shows —
- * any finance decision means the step exists, NOT_REQUIRED after approval means the path skipped it.
- * Before approval the payload cannot tell, so the D2 default (off) applies and a finance-on claim
- * shows 4 steps until it is approved. Upgrade: expose the snapshot's flag on the detail, read it here.
+ * Before approval the finance state is still NOT_REQUIRED, so the detail's `financeReviewRequired`
+ * (frozen policy once submitted, current policy for a draft) decides. After approval the finance state
+ * the claim shows is the truth: any finance decision means the step exists, NOT_REQUIRED means skipped.
  */
 export function claimHasFinanceStep(detail: any): boolean {
+  if (!detail?.approvedAt && typeof detail?.financeReviewRequired === 'boolean') return detail.financeReviewRequired;
   return !!detail?.financeReviewStatus && detail.financeReviewStatus !== 'NOT_REQUIRED';
 }
 
@@ -409,6 +410,10 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       if (['READY_FOR_PAYMENT', 'APPROVED'].includes(status) && permissions.includes('reimbursement.payment.record')) actions.push('pay');
       note = [actions.length > 0 ? 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง' : 'รอผู้มีสิทธิ์บันทึกจ่าย', duplicate]
         .filter(Boolean).join(' · ');
+    } else if (key === 'document' && detail?.documentSignedVia) {
+      // Done in the system or on paper (A4); the latest declared scan names who attached it and when.
+      note = detail.documentSignedVia === 'DIGITAL' ? 'ลงนามในระบบครบแล้ว'
+        : paperSignedLine((detail.signedCopies ?? []).find((copy: any) => copy.acknowledgedAt));
     } else if (key === 'document') {
       if (eligibleSignatureRoles(detail, userId).some((role) => !signed.has(role))) actions.push('sign');
       note = actions.length > 0 || canUploadSignedCopy(detail, userId, permissions)
@@ -432,14 +437,24 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
         ? { ...base, state: 'done', note: 'ไม่ต้องอนุมัติตามนโยบาย', actions: [] }
         : { ...base, state: 'done', actions: [] };
     }
+    // A document signed before payment stays upcoming (§15): the journey still waits at จ่ายเงินคืน.
     if (index > atIndex) return { ...base, state: 'upcoming', actions: [] };
-    return { ...base, state: ended ? 'ended' : status === 'REJECTED' ? 'needs-fix' : 'current', ...activeStep(key) };
+    const signedDocument = key === 'document' && !!detail?.documentSignedVia;
+    return { ...base, state: ended ? 'ended' : status === 'REJECTED' ? 'needs-fix' : signedDocument ? 'done' : 'current', ...activeStep(key) };
   });
 }
 
-/** The step the journey card is about: where the claim stands, was refused, or stopped. */
+/**
+ * The step the journey card is about: where the claim stands, was refused, or stopped — or, once a paid
+ * claim's document is signed and every step is done, that last step (reprint, attach again, void).
+ */
 export function activeJourneyStep(steps: readonly JourneyStep[]): JourneyStep | undefined {
-  return steps.find((step) => step.state !== 'done' && step.state !== 'upcoming');
+  return steps.find((step) => step.state !== 'done' && step.state !== 'upcoming') ?? steps.at(-1);
+}
+
+/** "ลงนามบนกระดาษ · แนบเมื่อ … โดย …" for a scan attached with the A4 declaration; parts the detail lacks are left out. */
+export function paperSignedLine(copy?: { acknowledgedAt?: string; acknowledgedByName?: string }): string {
+  return `ลงนามบนกระดาษ${copy?.acknowledgedAt ? ` · แนบเมื่อ ${formatThaiDate(copy.acknowledgedAt)}` : ''}${copy?.acknowledgedByName ? ` โดย ${copy.acknowledgedByName}` : ''}`;
 }
 
 // ---- Policy decision preview (ตั้งค่านโยบาย — spec §7) ----

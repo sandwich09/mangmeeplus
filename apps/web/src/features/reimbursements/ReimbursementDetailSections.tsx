@@ -25,11 +25,11 @@ import { fetchAttachmentPreviewBlob, previewReimbursementClaimForm, recordReimbu
 import {
   REQUEST_STATUS_LABELS, REQUEST_STATUS_TONES, PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
   FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
-  APPROVAL_STEP_STATUS_LABELS, CLAIM_SIGNATURE_ROLES, CLAIM_SIGNATURE_ROLE_LABELS,
-  canUploadSignedCopy, canVoidRecordedPayment, eligibleSignatureRoles, reimbursementOwnActions,
+  APPROVAL_STEP_STATUS_LABELS, CLAIM_SIGNATURE_ROLE_LABELS,
+  canUploadSignedCopy, canVoidRecordedPayment, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
   type ClaimSignatureRole,
 } from './reimbursements.model';
-import { buildClaimTimeline, errorText, formatMoney, sumLineAmounts, validatePaymentForm, type ApprovalFieldDiff } from './reimbursements.logic';
+import { buildClaimTimeline, errorText, formatMoney, paperSignedLine, sumLineAmounts, validatePaymentForm, type ApprovalFieldDiff } from './reimbursements.logic';
 
 export function StatusBadge({ status }: { status: string }) {
   return <MangmeeBadge tone={REQUEST_STATUS_TONES[status] ?? 'slate'}>{REQUEST_STATUS_LABELS[status] ?? status}</MangmeeBadge>;
@@ -247,6 +247,35 @@ export function MissingSavedSignatureModal({ companyId, onClose }: {
         <div className="flex justify-end gap-2">
           <button type="button" className={ghostClass} onClick={onClose}>ไว้ภายหลัง</button>
           <Link href={`/companies/${companyId}/expenses/signatures`} className={btnClass}>ไปหน้าลายเซ็น</Link>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * A4: a scan counts as the signed record only after the attacher declares both signatures are on it for
+ * THIS claim number. Without the declaration it is kept as an ordinary attachment that signs nothing.
+ */
+function SignedCopyDialog({ requestNo, fileName, onClose, onSend }: {
+  requestNo: string;
+  fileName: string;
+  onClose: () => void;
+  onSend: (declared: boolean) => void;
+}) {
+  const [declared, setDeclared] = useState(false);
+  return (
+    <Modal open title="แนบใบเบิกที่เซ็นแล้ว" size="sm" closeLabel="ยกเลิก" onClose={onClose}>
+      <div className="space-y-4">
+        <p className="break-words text-sm text-gray-600">{fileName}</p>
+        <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-700">
+          <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={declared} onChange={e => setDeclared(e.target.checked)} />
+          <span>สำเนานี้มีลายเซ็นผู้เบิกและผู้อนุมัติครบ และตรงกับใบเบิกเลขที่ {requestNo}</span>
+        </label>
+        <p className="text-xs text-gray-500">ถ้ายังเซ็นไม่ครบ แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว</p>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button type="button" className={ghostClass} onClick={() => onSend(false)}>แนบเป็นไฟล์แนบทั่วไป</button>
+          <button type="button" className={btnClass} disabled={!declared} onClick={() => onSend(true)}>แนบสำเนาที่ลงนามครบ</button>
         </div>
       </div>
     </Modal>
@@ -487,16 +516,23 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
   busy: boolean;
   onOpenAttachment: (attachmentId: string, fileName: string) => void;
   onLineReceipt: (lineNo: number, file: File | null) => void;
-  onSign: (role: ClaimSignatureRole) => void;
-  onUploadSignedCopy: (file: File) => void;
+  /** Every block this viewer may sign, from one tap (spec §9). */
+  onSign: (roles: ClaimSignatureRole[]) => void;
+  /** `confirmedRequestNo` = the A4 declaration was made; without it the scan is an ordinary attachment. */
+  onUploadSignedCopy: (file: File, confirmedRequestNo?: string) => void;
   onRequestVoidPayment: (payment: any) => void;
 }) {
+  const [pendingCopy, setPendingCopy] = useState<File | null>(null);
   const lines: any[] = detail.lines ?? [];
   const timeline = buildClaimTimeline(detail);
   const { canEditDraft } = reimbursementOwnActions(detail, userId, permissions);
   const signatures: any[] = detail.signatures ?? [];
   const signedCopies: any[] = detail.signedCopies ?? [];
-  const signableRoles = eligibleSignatureRoles(detail, userId);
+  const slots = claimSignatureSlots(detail);
+  const signAction = claimSignAction(detail, userId);
+  // A4: a declared paper scan signs the ผู้เบิก/ผู้อนุมัติ blocks. Newest first, so this is the copy that counts.
+  const paperSigned = detail.documentSignedVia === 'PAPER' || detail.documentSignedVia === 'BOTH';
+  const paperCopy = signedCopies.find((copy: any) => copy.acknowledgedAt);
   const canAttachSignedCopy = canUploadSignedCopy(detail, userId, permissions);
   return (
     <>
@@ -586,13 +622,13 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <div id="reimbursement-signatures" className="scroll-mt-24">
           <MangmeeCard className="p-4">
             <h4 className="mb-2 text-sm font-bold text-gray-900">ลายเซ็นในใบเบิก</h4>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {CLAIM_SIGNATURE_ROLES.map(role => {
+            <div className={cx('grid grid-cols-2 gap-2', slots.length > 2 && 'sm:grid-cols-4')}>
+              {slots.map(role => {
                 const signed = signatures.find((s: any) => s.role === role);
                 return (
                   // min-w-0 + break-words: a long value must wrap inside its own cell — on a
                   // narrow grid an unbroken string overflowed the card and sat on top of the
-                  // neighbouring slot's ลงนาม button, swallowing its taps.
+                  // neighbouring slot, swallowing its taps.
                   <div key={role} className="min-w-0 rounded-xl border border-gray-200 p-3 text-xs">
                     <div className="font-semibold text-gray-700">{CLAIM_SIGNATURE_ROLE_LABELS[role]}</div>
                     <div className="mt-2">
@@ -603,18 +639,32 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                           <div className="mt-2 break-words text-gray-600">{signed.signedByName ?? '—'}</div>
                           <div className="text-gray-400">{dateShort(signed.signedAt)}</div>
                         </>
+                      ) : paperSigned && (role === 'REQUESTER' || role === 'APPROVER') ? (
+                        <>
+                          <MangmeeBadge tone="brand">ลงนามบนกระดาษ</MangmeeBadge>
+                          {paperCopy && (
+                            <button type="button" className="mt-1 block min-h-11 text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2"
+                              onClick={() => onOpenAttachment(paperCopy.attachmentId, paperCopy.fileName)}>
+                              ดูสำเนา
+                            </button>
+                          )}
+                        </>
                       ) : <MangmeeBadge tone="slate">ยังไม่ลงนาม</MangmeeBadge>}
                     </div>
-                    {/* Only the real actor of that step is offered the button; the server re-checks. */}
-                    {signableRoles.includes(role) && (
-                      <button className="mt-2 min-h-11 text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onSign(role)}>
-                        {signed ? 'ลงนามใหม่' : 'ลงนาม'}
-                      </button>
-                    )}
                   </div>
                 );
               })}
             </div>
+            {slots.length === 2 && claimSelfApproved(detail) && (
+              <p className="mt-3 text-xs text-gray-600">ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน อนุมัติรายการของตนเองตามนโยบายบริษัท</p>
+            )}
+            {/* One tap signs every block this viewer really acted on; the server re-checks each role. */}
+            {signAction && (
+              <button type="button" className={cx(ghostClass, 'mt-3 w-full sm:w-auto')} disabled={busy} aria-busy={Boolean(busy)}
+                onClick={() => onSign(signAction.roles)}>
+                {signAction.label}
+              </button>
+            )}
           </MangmeeCard>
         </div>
       )}
@@ -627,10 +677,13 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
               ? <p className="text-xs text-gray-400">ยังไม่มีไฟล์ที่แนบกลับ</p>
               : (
                 <ul className="space-y-2 text-xs">
+                  {/* Attaching again never deletes: the newest declared scan counts, older ones stay viewable. */}
                   {signedCopies.map((copy: any) => (
-                    <li key={copy.attachmentId} className="flex items-center justify-between gap-2 rounded-xl border border-gray-200 px-3 py-2">
-                      <button className="min-h-11 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(copy.attachmentId, copy.fileName)}>📄 {copy.fileName}</button>
-                      <span className="shrink-0 text-gray-400">{dateShort(copy.uploadedAt)}</span>
+                    <li key={copy.attachmentId} className="min-w-0 rounded-xl border border-gray-200 px-3 py-2">
+                      <button className="block min-h-11 max-w-full truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(copy.attachmentId, copy.fileName)}>📄 {copy.fileName}</button>
+                      <div className="break-words text-gray-500">
+                        {copy.acknowledgedAt ? paperSignedLine(copy) : `ไฟล์แนบทั่วไป · แนบเมื่อ ${dateShort(copy.uploadedAt)}`}
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -638,10 +691,18 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
             {canAttachSignedCopy && (
               <div className="mt-3 block text-xs font-semibold text-gray-600">
                 แนบใบเบิกที่เซ็นแล้ว (PDF/JPG/PNG)
-                <ThemedFile className="mt-1.5" file={null} accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) onUploadSignedCopy(file); }} />
+                <ThemedFile className="mt-1.5" file={null} accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) setPendingCopy(file); }} />
               </div>
             )}
           </MangmeeCard>
+          {pendingCopy && (
+            <SignedCopyDialog
+              requestNo={detail.requestNo}
+              fileName={pendingCopy.name}
+              onClose={() => setPendingCopy(null)}
+              onSend={(declared) => { onUploadSignedCopy(pendingCopy, declared ? detail.requestNo : undefined); setPendingCopy(null); }}
+            />
+          )}
         </div>
       )}
 

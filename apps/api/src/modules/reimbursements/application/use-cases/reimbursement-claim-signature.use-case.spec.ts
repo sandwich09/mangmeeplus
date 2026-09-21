@@ -587,14 +587,21 @@ describe('PrismaReimbursementRepository signed-copy acknowledgement (A4)', () =>
     };
     const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
     const rows = await repo.listSignedClaimFormCopies('co-1', 'rb-1');
-    assert.deepEqual(rows.map((row) => [row.attachmentId, row.acknowledged]), [['att-declared', true], ['att-forged', false], ['att-archive', false]]);
+    // Only the declaration bound to its own link names who made it and when.
+    assert.deepEqual(rows.map((row) => [row.attachmentId, row.acknowledged, row.acknowledgedByUserId, row.acknowledgedAt]), [
+      ['att-declared', true, 'staff-1', '2026-07-26T10:00:00.000Z'],
+      ['att-forged', false, undefined, undefined],
+      ['att-archive', false, undefined, undefined],
+    ]);
   });
 });
 
 describe('claim detail: form layout and documentSignedVia', () => {
   const uploadedAt = new Date('2026-07-26T10:00:00.000Z');
-  async function detailOf(req: any, copies: any[] = [], storedPolicy: any = null) {
-    const repo = { getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => copies, findPolicy: async () => storedPolicy } as any;
+  async function detailOf(req: any, copies: any[] = [], storedPolicy: any = null, names: Record<string, string> = {}) {
+    // Resolves only the ids it is asked for, so a name on screen proves the id was in the batch.
+    const getUserDisplayNames = async (_companyId: string, ids: string[]) => Object.fromEntries(ids.filter((id) => names[id]).map((id) => [id, names[id]]));
+    const repo = { getUserDisplayNames, listSignedClaimFormCopies: async () => copies, findPolicy: async () => storedPolicy } as any;
     const evidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any;
     // The detail maps every step, so the steps need the assignment time the shared fixture leaves out.
     const approvalSteps = req.approvalSteps.map((step: any) => ({ ...step, assignedAt: new Date('2026-07-20T00:00:00.000Z') }));
@@ -639,10 +646,25 @@ describe('claim detail: form layout and documentSignedVia', () => {
     assert.equal((await detailOf(draft, [], stored(false))).financeReviewRequired, false);
   });
 
-  it('keeps the signed-copy contract unchanged and omits both fields when signature rows were not loaded', async () => {
+  it('omits layout and signed-via when signature rows were not loaded', async () => {
     const detail = await detailOf(request({ claimSignatures: undefined }), [declared]);
     assert.equal(detail.claimFormLayout, undefined);
     assert.equal(detail.documentSignedVia, undefined);
     assert.deepEqual(detail.signedCopies, [{ attachmentId: 'att-paper', fileName: 'signed.pdf', uploadedAt: uploadedAt.toISOString() }]);
+  });
+
+  it('marks the declared scan with when and by whom, for the ลงนามบนกระดาษ line (A4)', async () => {
+    const paper = { ...declared, acknowledgedByUserId: 'fin-9', acknowledgedAt: '2026-07-26T10:05:00.000Z' };
+    const detail = await detailOf(request({ claimSignatures: [] }), [archived, paper], null, { 'fin-9': 'คุณการเงิน' });
+    assert.equal(detail.documentSignedVia, 'PAPER');
+    assert.deepEqual(detail.signedCopies, [
+      { attachmentId: 'att-archive', fileName: 'scan.jpg', uploadedAt: uploadedAt.toISOString() },
+      { attachmentId: 'att-paper', fileName: 'signed.pdf', uploadedAt: uploadedAt.toISOString(), acknowledgedAt: '2026-07-26T10:05:00.000Z', acknowledgedByName: 'คุณการเงิน' },
+    ]);
+    // A name that does not resolve is left out — never replaced by the user id.
+    const nameless = await detailOf(request({ claimSignatures: [] }), [paper]);
+    assert.deepEqual(nameless.signedCopies, [
+      { attachmentId: 'att-paper', fileName: 'signed.pdf', uploadedAt: uploadedAt.toISOString(), acknowledgedAt: '2026-07-26T10:05:00.000Z' },
+    ]);
   });
 });

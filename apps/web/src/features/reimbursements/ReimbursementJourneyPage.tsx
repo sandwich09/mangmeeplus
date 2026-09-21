@@ -141,11 +141,13 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     if (activeJourneyStep(buildJourneySteps(latest, permissions, userId))?.actions.includes('pay')) setPayOpen(true);
   };
 
-  const sign = (role: ClaimSignatureRole) => {
-    if (!detail?.claimSignatureAckHash) { setActionError('ไม่พบข้อมูลคำขอล่าสุด กรุณาเปิดคำขอใหม่'); return; }
-    void act('sign', () => signReimbursementClaimForm(companyId, requestId, { role, snapshotHash: detail.claimSignatureAckHash }),
+  /** One tap, one call per block with the same saved signature (spec §9); a refusal stops the rest. */
+  const sign = (roles: ClaimSignatureRole[]) => {
+    const snapshotHash = detail?.claimSignatureAckHash;
+    if (!snapshotHash) { setActionError('ไม่พบข้อมูลคำขอล่าสุด กรุณาเปิดคำขอใหม่'); return; }
+    void act('sign', async () => { for (const role of roles) await signReimbursementClaimForm(companyId, requestId, { role, snapshotHash }); },
       'ลงนามใบเบิกเรียบร้อยแล้ว',
-      (e) => { if (!isMissingSavedSignatureError(e)) return false; setMissingSignatureFor(role); return true; });
+      (e) => { if (!isMissingSavedSignatureError(e)) return false; setMissingSignatureFor(roles[0] ?? null); return true; });
   };
 
   const afterPayment = async () => {
@@ -275,7 +277,9 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
         onOpenAttachment={(attachmentId, fileName) => void openAttachment(detail.id, attachmentId, fileName)}
         onLineReceipt={(lineNo, file) => void act('receipt', () => setLineReceipt(companyId, requestId, detail.lines ?? [], lineNo, file, detail.branchId), 'แนบใบเสร็จเรียบร้อยแล้ว')}
         onSign={sign}
-        onUploadSignedCopy={(file) => void act('signed-copy', () => uploadSignedClaimFormCopy(companyId, requestId, file, detail.branchId), 'แนบสำเนาใบเบิกที่ลงนามเรียบร้อยแล้ว')}
+        onUploadSignedCopy={(file, confirmedRequestNo) => void act('signed-copy',
+          () => uploadSignedClaimFormCopy(companyId, requestId, file, detail.branchId, confirmedRequestNo),
+          confirmedRequestNo ? 'แนบสำเนาใบเบิกที่ลงนามครบเรียบร้อยแล้ว' : 'แนบไฟล์เรียบร้อยแล้ว')}
         onRequestVoidPayment={(payment) => { setActionError(null); setVoidingPayment(payment); }}
       />
 

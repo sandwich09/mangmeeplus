@@ -189,9 +189,17 @@ export function toClaimSignatureSummary(
 }
 
 export function toSignedCopySummaries(
-  rows: { attachmentId: string; fileName: string; uploadedAt: Date }[],
+  rows: { attachmentId: string; fileName: string; uploadedAt: Date; acknowledgedAt?: string; acknowledgedByUserId?: string }[],
+  names: Record<string, string> = {},
 ): ReimbursementSignedCopySummary[] {
-  return rows.map((row) => ({ attachmentId: row.attachmentId, fileName: row.fileName, uploadedAt: row.uploadedAt.toISOString() }));
+  return rows.map((row) => {
+    const acknowledgedByName = row.acknowledgedAt && row.acknowledgedByUserId ? names[row.acknowledgedByUserId] : undefined;
+    return {
+      attachmentId: row.attachmentId, fileName: row.fileName, uploadedAt: row.uploadedAt.toISOString(),
+      ...(row.acknowledgedAt && { acknowledgedAt: row.acknowledgedAt }),
+      ...(acknowledgedByName && { acknowledgedByName }),
+    };
+  });
 }
 
 export function toRequestDetail(
@@ -255,11 +263,15 @@ export async function detailWithFileNames(
   companyId: string,
   req: ReimbursementRequestRecord,
 ): Promise<ReimbursementRequestDetail> {
+  const signedCopiesRead = repo.listSignedClaimFormCopies(companyId, req.id);
   const [primaryFileName, lineFileNames, displayNames, signedCopies, policy] = await Promise.all([
     evidence.getAttachmentFileName(companyId, req.primaryAttachmentId),
     evidence.getAttachmentFileNames(companyId, (req.lines ?? []).map((line) => line.attachmentId ?? '')),
-    repo.getUserDisplayNames(companyId, detailUserIds(req)),
-    repo.listSignedClaimFormCopies(companyId, req.id),
+    // Whoever declared a paper-signed scan is named in the same batch, so the lookup follows the copies.
+    signedCopiesRead.then((copies) => repo.getUserDisplayNames(companyId, [
+      ...detailUserIds(req), ...copies.map((copy) => copy.acknowledgedByUserId ?? ''),
+    ])),
+    signedCopiesRead,
     repo.findPolicy(companyId, null).then(effectivePolicy),
   ]);
   const requestPolicy = req.status === 'DRAFT' ? policy : effectivePolicyForRequest(req, policy);
@@ -274,7 +286,7 @@ export async function detailWithFileNames(
   // The ack hash is the LIVE claim, not the submit-frozen approval hash: a signer
   // acknowledges what the form prints right now.
   return toRequestDetail({ ...req, receiptRequirementStatus }, primaryFileName, lineFileNames, displayNames, {
-    signedCopies: toSignedCopySummaries(signedCopies),
+    signedCopies: toSignedCopySummaries(signedCopies, displayNames),
     claimSignatureAckHash: claimSignatureAckHash(req),
     documentSignedVia: req.claimSignatures && documentSignedVia(req, signedCopies.some((copy) => copy.acknowledged)),
     // The same value the approval and payment paths act on.

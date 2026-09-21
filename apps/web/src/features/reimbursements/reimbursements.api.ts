@@ -158,11 +158,17 @@ export function signReimbursementClaimForm(companyId: string, requestId: string,
   return apiFetch<any>(`${base(companyId)}/${requestId}/claim-form/signatures`, { method: 'POST', body: JSON.stringify(body) });
 }
 
-/** Uploads a scan/photo of the wet-ink signed form and links it to the claim. */
-export async function uploadSignedClaimFormCopy(companyId: string, requestId: string, file: File, branchId: string | null | undefined) {
+/**
+ * Uploads a scan/photo of the wet-ink signed form and links it to the claim. `confirmedRequestNo` is the A4
+ * declaration (both signatures, this claim number): the scan then counts as signed on paper. Without it, archive only.
+ */
+export async function uploadSignedClaimFormCopy(companyId: string, requestId: string, file: File, branchId: string | null | undefined, confirmedRequestNo?: string) {
   return withGenericUploadError(async () => {
     const attachmentId = await uploadReceiptFile(companyId, file, branchId);
-    return apiFetch<any>(`${base(companyId)}/${requestId}/claim-form/signed-copies`, { method: 'POST', body: JSON.stringify({ attachmentId }) });
+    return apiFetch<any>(`${base(companyId)}/${requestId}/claim-form/signed-copies`, {
+      method: 'POST',
+      body: JSON.stringify({ attachmentId, ...(confirmedRequestNo && { acknowledgedComplete: true, confirmedRequestNo }) }),
+    });
   });
 }
 
