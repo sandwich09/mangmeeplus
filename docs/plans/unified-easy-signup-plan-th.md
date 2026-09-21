@@ -1,6 +1,6 @@
 # แผน implement สมัครและเข้าสู่ระบบด้วย email OTP
 
-สถานะ 2026-09-16: SOURCE MERGED DEVELOP + MAIN / REQUIRED CI PASS; no deployment. Spec: [unified-easy-signup-spec-th.md](../specs/unified-easy-signup-spec-th.md). Owner อนุมัติ review แล้วเริ่ม implementation. Baseline `7ef09d8e` รวม optional-email OTP + completed billing; branch `codex/email-passwordless-signup-20260916` แยกจากงานอื่น.
+สถานะ 2026-09-21: งานเดิม merged แล้ว; เพิ่ม urgent UAT hotfix E6 ตาม owner directive ให้ existing account ที่พิสูจน์ exact account email ด้วย public OTP เปิดใช้และ login แบบ atomic. ยังไม่ deploy. Spec: [unified-easy-signup-spec-th.md](../specs/unified-easy-signup-spec-th.md).
 
 ## ลำดับงานและเกณฑ์จบ
 
@@ -10,6 +10,7 @@
 - [x] E3 BFF HttpOnly browser binding, email/login/signup/status UI, opt-in/backup/LINE return และ marketing consistency; loading/error/retry/390px/keyboard.
 - [x] E4 isolated PG + HTTP/browser Postmark simulated journey; legacy and cross-channel regressions/typechecks. Fix found gaps before claiming passed.
 - [x] E5 exact-source evidence/memory; stage only own changes; paid CI only after local candidate passes. Integrate with latest dependency, wait required CI before approved admin merge develop/main; never deploy.
+- [x] E6 แก้ existing-account OTP loop ที่ root: exact unique User.email + current guards → verify/enable/session transactionเดียว; rollback ทั้งหมดเมื่อ audit/session ล้ม; focused PostgreSQL 16/16 + API/Web typecheck ผ่าน; บันทึก UAT diagnosis โดยไม่เก็บอีเมล/OTP. ยังไม่ deploy.
 
 ## การตรวจผล
 
@@ -19,7 +20,7 @@ Run focused OTP/domain tests then API/web typechecks and integration tests of ch
 
 ## สถานะ dependency / impact
 
-Optional-email/postmark task มี CI/release work แยก;ไม่แก้ใน worktree นั้น. Shared source changes ต้องตรวจ E01–E18 และ compatibility กับ verified-email-before-payment. UI ไม่กล่าวว่า verified email ของบัญชีเก่าทำ passwordless ได้จน opt-in สำเร็จ. Existing official-site rows ไม่ถูก auto-approve.
+Optional-email/postmark task มี CI/release work แยก;ไม่แก้ใน worktree นั้น. Shared source changes ต้องตรวจ E01–E18 และ compatibility กับ verified-email-before-payment. Public OTP ที่ผู้ใช้ขอและกรอกถูกต้องนับเป็น explicit opt-in เฉพาะ exact eligible account email; ไม่ attach contact email, ไม่ auto-approve official-site rows และไม่เปิด SYSTEM_ADMIN.
 
 ## Evidence
 

@@ -58,10 +58,11 @@ describe('email access transaction integration', { skip: !url }, () => {
     const session = await prisma.client.authSession.findFirstOrThrow({ where: { userId: f.user!.id } });
     assert.ok(session.emailReauthenticatedAt && session.emailReauthBindingHash);
   });
-  test('verified legacy email does not silently enable passwordless', async () => {
+  test('valid mailbox proof explicitly activates email login for a verified legacy account', async () => {
     const f = await fixture(true, false);
-    assert.equal((await f.service.confirm(f.proof)).kind, 'EXISTING_LOGIN_REQUIRED');
-    assert.equal(await prisma.client.authSession.count({ where: { userId: f.user!.id } }), 0);
+    assert.equal((await f.service.confirm(f.proof)).kind, 'LOGIN');
+    assert.equal(await prisma.client.authSession.count({ where: { userId: f.user!.id } }), 1);
+    assert.ok((await prisma.client.user.findUniqueOrThrow({ where: { id: f.user!.id } })).emailLoginEnabledAt);
   });
   test('incorrect attempts commit, fifth attempt revokes, even the right code cannot revive it', async () => {
     const f = await fixture();
@@ -90,17 +91,18 @@ describe('email access transaction integration', { skip: !url }, () => {
     assert.equal((await f.service.request(f.input)).challengeId, f.issued.challengeId); assert.equal(f.mail.length, 1);
     await assert.rejects(f.service.request({ ...f.input, requestKey: randomUUID() }), (e: any) => e.getStatus() === 429);
   });
-  test('audit failure rolls back code consumption AND session creation', async () => {
-    const f = await fixture();
+  test('audit failure rolls back activation, code consumption AND session creation', async () => {
+    const f = await fixture(true, false);
     const audit = (f.service as any).audit;
     (f.service as any).audit = async (...args: any[]) => { if (args[1] === 'auth.email_access.login') throw new Error('synthetic audit failure'); return audit.apply(f.service, args); };
     await assert.rejects(f.service.confirm(f.proof), /synthetic audit/);
     assert.equal(await prisma.client.authSession.count({ where: { userId: f.user!.id } }), 0);
     assert.equal((await prisma.client.emailAccessChallenge.findUniqueOrThrow({ where: { id: f.issued.challengeId } })).status, 'PENDING');
+    assert.equal((await prisma.client.user.findUniqueOrThrow({ where: { id: f.user!.id } })).emailLoginEnabledAt, null);
     (f.service as any).audit = audit;
     assert.equal((await f.service.confirm(f.proof)).kind, 'LOGIN');
   });
-  test('existing account must explicitly opt in with fresh proof; old challenge is revoked', async () => {
+  test('account-settings opt-in with fresh proof still revokes an older public challenge', async () => {
     const f = await fixture(true, false), password = 'Synthetic-opt-in-123!';
     await prisma.client.userCredential.create({ data: { userId: f.user!.id, passwordHash: hashPassword(password) } });
     const session = await prisma.client.authSession.create({ data: { userId: f.user!.id, tokenId: randomUUID(), expiresAt: new Date(Date.now() + 60_000) } });
@@ -122,15 +124,16 @@ describe('email access transaction integration', { skip: !url }, () => {
       (e: any) => e.getResponse().code === 'LAST_LOGIN_REQUIRED');
     assert.ok((await prisma.client.user.findUniqueOrThrow({ where: { id: f.user!.id } })).emailLoginEnabledAt);
   });
-  test('unverified account contact cannot authorize a session and gets the existing-login recovery path', async () => {
+  test('valid mailbox proof verifies, activates and logs in an exact unverified account email atomically', async () => {
     const f = await fixture(true, false);
     await prisma.client.user.update({ where: { id: f.user!.id }, data: { emailVerifiedAt: null } });
     await prisma.client.emailAccessChallenge.update({ where: { id: f.issued.challengeId }, data: { createdAt: new Date(Date.now() - 61_000) } });
     const next = await f.service.request({ ...f.input, requestKey: randomUUID() });
     const code = f.mail.at(-1)!.match(/\b\d{6}\b/)![0]!;
-    assert.equal((await f.service.confirm({ ...f.proof, challengeId: next.challengeId, code })).kind, 'EXISTING_LOGIN_REQUIRED');
-    assert.equal(await prisma.client.authSession.count({ where: { userId: f.user!.id } }), 0);
-    assert.equal((await prisma.client.user.findUniqueOrThrow({ where: { id: f.user!.id } })).emailVerifiedAt, null);
+    assert.equal((await f.service.confirm({ ...f.proof, challengeId: next.challengeId, code })).kind, 'LOGIN');
+    assert.equal(await prisma.client.authSession.count({ where: { userId: f.user!.id } }), 1);
+    const user = await prisma.client.user.findUniqueOrThrow({ where: { id: f.user!.id } });
+    assert.ok(user.emailVerifiedAt); assert.ok(user.emailLoginEnabledAt); assert.equal(user.emailRevision, 1);
   });
 
   test('post-proof security changes cannot resume an unfinished signup', async () => {
