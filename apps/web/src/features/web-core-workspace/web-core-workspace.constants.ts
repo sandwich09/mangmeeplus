@@ -188,6 +188,7 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
     navGroup: 'finance',
     requiredAnyPermissions: ['accounting.counterparty.read', 'accounting.counterparty.manage'],
     status: 'ready',
+    deepLinkTargets: ['counterparty'],
   },
   {
     key: 'journal',
