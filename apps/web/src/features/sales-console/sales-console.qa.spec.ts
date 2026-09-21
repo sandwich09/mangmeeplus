@@ -13,7 +13,7 @@ import { join } from 'node:path';
 
 const PAGES = [
   'SalesCompaniesPage.tsx', 'SalesConsoleParts.tsx', 'SalesDealFormPage.tsx', 'SalesDealsPage.tsx',
-  'SalesMyWorkPage.tsx', 'SalesTeamPage.tsx',
+  'SalesMyWorkPage.tsx', 'SalesReportsPage.tsx', 'SalesSlipsPage.tsx', 'SalesTeamPage.tsx',
 ];
 
 const SHELL = join(__dirname, '../../common/components/app-shell/SalesHeader.tsx');
@@ -126,6 +126,26 @@ describe('sales console theme and copy', () => {
         page,
       );
     }
+  });
+
+  it('confirming a bank transfer takes the password proof in the same box as the action (Q9)', () => {
+    const text = source('SalesSlipsPage.tsx');
+    // Opening a paid term off a photo of a slip is a reviewed operation. Proving first and acting
+    // second is the whole guard: a refused password must never leave a half-verified deal.
+    assert.match(text, /if \(decision\.action === 'verify'\) await reauthenticateBillingAdmin\(password\)/);
+    assert.match(text, /disabled=\{busy \|\| !reason\.trim\(\) \|\| \(decision\?\.action === 'verify' && !password\)\}/);
+  });
+
+  it('the report never links to a financial document (§B)', () => {
+    // A เซลล์ may see what a shop opened with, never its invoices or receipts — so the guard is on
+    // the link, not the word, which the module's own comment about the rule would also match.
+    assert.doesNotMatch(source('SalesReportsPage.tsx'), /(?:href|<Link)[^\n]*(?:billing|invoice|receipt|document)/i);
+  });
+
+  it('a flagged attribution is only cleared or kept with a reason the Owner typed (D6)', () => {
+    const text = source('SalesTeamPage.tsx');
+    assert.match(text, /disabled=\{busy \|\| !flagReason\.trim\(\)\}/);
+    assert.match(text, /reviewSalesAttributionFlag\(flagDecision\.row\.companyId, \{ keep: flagDecision\.keep/);
   });
 
   it('44px touch targets come from the shared button primitive, not a per-page height', () => {

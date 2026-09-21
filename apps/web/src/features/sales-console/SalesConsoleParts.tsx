@@ -4,7 +4,7 @@ import { billingPlanLabel, type SalesAgentCredentialHandoff, type SalesCompanySe
 import { MangmeeBadge, MangmeeCard } from '@/common/components/mangmee';
 import { formatThaiDate, formatThaiDateTime } from '@/common/i18n/thai-date';
 import {
-  baseTierLabel, formatBaht, SALES_ACCESS_STATE_META, SALES_DEAL_STATUS_META,
+  baseTierLabel, dealBadges, formatBaht, SALES_ACCESS_STATE_META, SALES_DEAL_STATUS_META,
 } from './sales-console.logic';
 
 /** One banner shape for the whole console, so an error and a warning never look like two apps. */
@@ -28,6 +28,15 @@ export function SalesEmpty({ children }: { children: ReactNode }) {
 export function SalesDealStatusBadge({ status }: { status: SalesDealView['status'] }) {
   const meta = SALES_DEAL_STATUS_META[status];
   return <MangmeeBadge tone={meta.tone}>{meta.label}</MangmeeBadge>;
+}
+
+/**
+ * Phase 4: what else is true about a deal besides its status — it came from the renewal sweep (D3),
+ * paying it replaces a live subscription (Q7), or its bank slip is still being checked (Q9). Each
+ * one changes what the เซลล์ tells the shop, so they sit beside the status, not inside a detail row.
+ */
+export function SalesDealBadges({ deal }: { deal: SalesDealView }) {
+  return <>{dealBadges(deal).map((badge) => <MangmeeBadge key={badge.label} tone={badge.tone}>{badge.label}</MangmeeBadge>)}</>;
 }
 
 export function SalesAccessStateBadge({ state }: { state: SalesCompanySearchItem['accessState'] }) {

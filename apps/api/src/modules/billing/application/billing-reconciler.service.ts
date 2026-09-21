@@ -23,7 +23,7 @@ import { grantTrialReceiptCarryover } from './billing-trial-carryover';
 import { fullPackagePurchaseImpact } from '../domain/billing-package';
 import { paidPackageCheckoutEvidence } from '../domain/paid-checkout-invoice';
 import { paidReceiptBalance } from './billing-receipt-grants';
-import { applyDealRequest, fulfillPaidPackageRequest, supersedeUnpaidDeal, supersedeUnpaidPackageRequest } from './billing-package-request';
+import { applyDealRequest, fulfillPaidPackageRequest, recordReferralAttribution, supersedeUnpaidDeal, supersedeUnpaidPackageRequest } from './billing-package-request';
 import { applyCapacity, attemptCapacity, capacityOptions, capacityValid } from './billing-capacity';
 import { applyBillingFeaturePlan, billingFeaturePlan } from './billing-feature-entitlements';
 import { exclusiveEntitlementLock } from '../../feature-launch/application/execution-attempt.service';
@@ -592,7 +592,13 @@ export class BillingReconcilerService {
       // attribution can never disagree with the term the same commit wrote.
       if (snapshot.deal) await applyDealRequest(tx, { companyId: company.id, invoiceId: row.id, deal: snapshot.deal,
         priceSatang: snapshot.quote.offer.priceSatang, paidAt: evidence.paidAt });
-      else await supersedeUnpaidDeal(tx, company.id, row.id);
+      else {
+        await supersedeUnpaidDeal(tx, company.id, row.id);
+        // §17.2 counts first activations only: a top-up (`snapshot.oneTime`) appends to a term the
+        // shop already paid for, so it is not the purchase that opened the shop.
+        if (!snapshot.oneTime) await recordReferralAttribution(tx, { companyId: company.id, invoiceId: row.id,
+          offer: snapshot.quote.offer, paidAt: evidence.paidAt });
+      }
       await resolveAppliedInvoiceIssues(tx, account, row.id);
       await tx.auditLog.create({ data: { companyId: company.id, actorUserId: attempt.initiatingUserId,
         action: 'billing.invoice.applied', targetType: 'BillingInvoice', targetId: row.id, requestId: attempt.id,
@@ -882,7 +888,14 @@ export class BillingReconcilerService {
       await tx.billingInvoice.update({ where: { id: invoice.id }, data: { applyStatus: 'APPLIED', appliedAt: new Date(), errorCode: null, version: { increment: 1 } } });
       await fulfillPaidPackageRequest(tx,company.id,account.id,invoice.id);
       if (evidence.kind === 'INITIAL' && snapshot.featurePlan) await supersedeUnpaidPackageRequest(tx, company.id, invoice.id);
-      if (evidence.kind === 'INITIAL') await supersedeUnpaidDeal(tx, company.id, invoice.id);
+      if (evidence.kind === 'INITIAL') {
+        await supersedeUnpaidDeal(tx, company.id, invoice.id);
+        // D6: the subscription half of the referral formula. RENEWAL/UPGRADE invoices never count.
+        // `paidAt` is only carried by a trial-converting invoice; the period start is the paid
+        // instant for every other subscription INITIAL, and both sit inside the 14-day window.
+        await recordReferralAttribution(tx, { companyId: company.id, invoiceId: invoice.id,
+          offer: snapshot.quote.offer, paidAt: evidence.paidAt ?? evidence.periodStart });
+      }
       await resolveAppliedInvoiceIssues(tx,account,invoice.id);
       await tx.auditLog.create({ data: { companyId: company.id, action: 'billing.invoice.applied', targetType: 'BillingInvoice', targetId: invoice.id,
         requestId: invoice.id, result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { periodStart: evidence.periodStart.toISOString(), periodEnd: evidence.periodEnd.toISOString(),

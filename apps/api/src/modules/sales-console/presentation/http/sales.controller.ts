@@ -22,12 +22,14 @@ import {
   type SalesDealListDto,
   type SalesDealView,
   type SalesMyWorkDto,
+  type SalesReportSummary,
 } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { SalesAgentsService } from '../../application/sales-agents.service';
 import { SalesCompanySearchService } from '../../application/sales-company-search.service';
 import { SalesDealsService } from '../../application/sales-deals.service';
+import { SalesReportsService } from '../../application/sales-reports.service';
 import { assertPlatformTenant } from '../../application/sales-context';
 
 export class SalesDealSaveDto {
@@ -80,6 +82,7 @@ export class SalesController {
     private readonly deals: SalesDealsService,
     private readonly companies: SalesCompanySearchService,
     private readonly agents: SalesAgentsService,
+    private readonly reports: SalesReportsService,
   ) {}
 
   @Get('companies')
@@ -108,6 +111,25 @@ export class SalesController {
   myWork(@Req() req: Request & { context: RequestContext }): Promise<SalesMyWorkDto> {
     assertPlatformTenant(req.context);
     return this.deals.myWork(req.context);
+  }
+
+  /**
+   * R13/§17.2 — how many shops this agent opened, per Bangkok month, net of refunds. An agent is
+   * forced onto their own rows inside the service; the query parameters only narrow a lead's view.
+   */
+  @Get('reports/summary')
+  @RequirePermissions('sales.report.read')
+  @ApiOperation({ summary: 'Per-agent per-month activations and amount (no financial documents, S21)' })
+  @ApiResponse({ status: 400, description: 'SALES_REPORT_RANGE_INVALID' })
+  reportSummary(
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+    @Query('teamLeadUserId') teamLeadUserId: string | undefined,
+    @Query('salesUserId') salesUserId: string | undefined,
+    @Req() req: Request & { context: RequestContext },
+  ): Promise<SalesReportSummary> {
+    assertPlatformTenant(req.context);
+    return this.reports.summary(req.context, { from, to, teamLeadUserId, salesUserId });
   }
 
   @Get('deals/:dealId')

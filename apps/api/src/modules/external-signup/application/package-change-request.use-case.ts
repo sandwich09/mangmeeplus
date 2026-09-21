@@ -2,12 +2,14 @@ import { ForbiddenException, Injectable, UnprocessableEntityException } from '@n
 import {
   PLAN_TIER_PRESETS,
   type PackageChangeDealOffer,
+  type SalesDealSlipState,
   type PackageChangeRequestDto,
   type PackageChangeRequestKind,
   type PlanTierKey,
   type SalesDealSnapshot,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
+import { dealSlipState } from '../../sales-console/domain/sales-deal.logic';
 
 export type CreatePackageChangeRequestCommand = {
   companyId: string;
@@ -114,6 +116,9 @@ export class PackageChangeRequestUseCase {
         OR: [
           { kind: { not: 'SALES_DEAL' } },
           { kind: 'SALES_DEAL', status: 'APPROVED', offerExpiresAt: { gt: now } },
+          // Q9: a slip under review freezes the window, so the card must keep showing
+          // "รอทีมงานตรวจสลิป" even if the original 3 days ran out while the Owner looked at it.
+          { kind: 'SALES_DEAL', status: 'APPROVED', paymentState: 'SLIP_PENDING' },
         ],
       },
       orderBy: { createdAt: 'desc' },
@@ -135,6 +140,8 @@ function toDto(row: {
   kind?: string;
   offerSnapshotJson?: unknown;
   offerExpiresAt?: Date | null;
+  slipSubmittedAt?: Date | null;
+  rejectedReason?: string | null;
 }): PackageChangeRequestDto {
   const kind = (row.kind ?? 'CUSTOMER_REQUEST') as PackageChangeRequestKind;
   return {
@@ -143,7 +150,8 @@ function toDto(row: {
     requestedTierKey: row.requestedTierKey,
     status: row.status as PackageChangeRequestDto['status'],
     kind,
-    ...(kind === 'SALES_DEAL' ? dealOffer(row.id, row.offerSnapshotJson, row.offerExpiresAt ?? null) : {}),
+    ...(kind === 'SALES_DEAL' ? dealOffer(row.id, row.offerSnapshotJson, row.offerExpiresAt ?? null,
+      dealSlipState(row.paymentState ?? 'NONE', row.slipSubmittedAt ?? null), row.rejectedReason ?? null) : {}),
     ...(row.status==='APPROVED'&&row.paymentState==='STRIPE_APPLIED'?{resolutionSource:'PAID_PURCHASE' as const}:{}),
     ...(row.status==='CANCELLED'&&row.paymentState==='CATALOG_SUPERSEDED'?{resolutionSource:'CATALOG_PURCHASE_SUPERSEDED' as const}:{}),
     ...(row.note ? { note: row.note } : {}),
@@ -158,6 +166,7 @@ function toDto(row: {
  */
 function dealOffer(
   dealId: string, snapshotJson: unknown, offerExpiresAt: Date | null,
+  slipState: SalesDealSlipState, rejectedReason: string | null,
 ): { deal: PackageChangeDealOffer } | Record<string, never> {
   const snapshot = snapshotJson as SalesDealSnapshot | null;
   if (!snapshot || !offerExpiresAt) return {};
@@ -175,6 +184,10 @@ function dealOffer(
       aiMonthlyBudgetSatang: snapshot.aiMonthlyBudgetSatang,
       description: snapshot.description,
       offerExpiresAt: offerExpiresAt.toISOString(),
+      slipState,
+      // The only slip text a customer reads. A REJECTED slip carries the team's reason; every
+      // other state has nothing to explain.
+      ...(slipState === 'REJECTED' && rejectedReason ? { slipRejectedReason: rejectedReason } : {}),
     },
   };
 }

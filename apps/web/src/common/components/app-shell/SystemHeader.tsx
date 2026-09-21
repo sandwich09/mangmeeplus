@@ -45,6 +45,7 @@ const SECTIONS = [
   { href: '/system/billing', label: 'การชำระเงิน', group: 'ลูกค้า' },
   { href: SUPPORT_REQUESTS_HREF, label: 'ขอความช่วยเหลือ', group: 'คำขอและการติดต่อ' },
   { href: '/system/signup-requests', label: 'คำขอสมัครใช้งาน', group: 'คำขอและการติดต่อ' },
+  { href: '/system/sales-slips', label: 'สลิปดีลพิเศษ', group: 'คำขอและการติดต่อ' },
   { href: '/system/data-rights', label: 'คำขอเกี่ยวกับข้อมูล', group: 'คำขอและการติดต่อ' },
   { href: '/system/email-delivery', label: 'สถานะอีเมล', group: 'คำขอและการติดต่อ' },
   { href: '/system/sales-team', label: 'ทีมขาย', group: 'ตั้งค่าระบบ' },

@@ -71,6 +71,13 @@ export type SalesCompanySearchDto = { items: SalesCompanySearchItem[] };
 export const SALES_COMPANY_SEARCH_MIN_CHARS = 2;
 export const SALES_COMPANY_SEARCH_LIMIT = 20;
 
+/**
+ * Q9 — where a deal stands on the bank-transfer fallback. `NONE` is every deal that was never
+ * paid by slip, including one paid through Stripe.
+ */
+export const SALES_DEAL_SLIP_STATES = ['NONE', 'PENDING', 'VERIFIED', 'REJECTED'] as const;
+export type SalesDealSlipState = typeof SALES_DEAL_SLIP_STATES[number];
+
 export type SalesDealView = {
   id: string; status: SalesDealStatus; version: number;
   company: SalesCompanySearchItem;
@@ -84,6 +91,12 @@ export type SalesDealView = {
   /** Stripe's verified payment instant, and when the shop's term was actually opened (Phase 3). */
   paidAt: string | null; appliedAt: string | null;
   offerExpiresAt: string | null; rejectedReason: string | null;
+  /** D3: the APPLIED deal this renewal offer was cloned from, so the console can say "ต่ออายุจาก". */
+  renewalOfRequestId: string | null;
+  /** Q9 bank-transfer fallback. */
+  slipState: SalesDealSlipState;
+  /** Q7: the renewal mode of the live subscription this deal will cancel when it is paid, if any. */
+  conversionOf: 'CARD_AUTO' | 'PROMPTPAY_RENEW' | null;
   createdAt: string; updatedAt: string;
 };
 export type SalesDealListDto = { items: SalesDealView[] };
@@ -118,7 +131,11 @@ export type SalesAgentUpdateBody = {
 export type SalesAgentCredentialHandoff = { userId: string; username: string; temporaryPassword: string; expiresAt: string | null; lineNotified: boolean };
 export type SalesAgentCreateResult = { agent: SalesAgentView; credential: SalesAgentCredentialHandoff };
 
-export type SalesMyWorkKind = 'APPROVAL_PENDING' | 'DEAL_REJECTED' | 'DEAL_EXPIRED' | 'DEAL_APPROVED_WAITING' | 'DEAL_APPLIED' | 'DEAL_SUPERSEDED';
+export type SalesMyWorkKind = 'APPROVAL_PENDING' | 'DEAL_REJECTED' | 'DEAL_EXPIRED' | 'DEAL_APPROVED_WAITING' | 'DEAL_APPLIED' | 'DEAL_SUPERSEDED'
+  /** D3: the agent's own renewal offer is sitting with the lead. */
+  | 'DEAL_RENEWAL_PENDING'
+  /** Q9: a customer's transfer slip is waiting for the Owner to confirm it (SYSTEM_ADMIN only). */
+  | 'DEAL_SLIP_PENDING';
 export type SalesMyWorkItem = { kind: SalesMyWorkKind; deal: SalesDealView; at: string };
 /** `badge` = items that need the caller's action (lead: pending approvals; sales: rejected + expired). */
 export type SalesMyWorkDto = { items: SalesMyWorkItem[]; badge: number };
@@ -128,8 +145,88 @@ export type PackageChangeDealOffer = {
   dealId: string; base: SalesDealBaseTier; baseLabel: string; priceSatang: number; months: number;
   branchLimit: number; employeeLimit: number; monthlySlipLimit: number; featureKeys: string[];
   aiMonthlyBudgetSatang: number | null; description: string; offerExpiresAt: string;
+  /** Q9: `PENDING` replaces the pay buttons with "รอทีมงานตรวจสลิป"; `REJECTED` lets them retry. */
+  slipState: SalesDealSlipState;
+  /** Why the team turned the slip down — the only slip text a customer ever reads. */
+  slipRejectedReason?: string;
 };
 export type PackageChangeRequestKind = 'CUSTOMER_REQUEST' | 'SALES_DEAL' | 'SPECIAL_INVOICE';
+
+// ── Phase 4: reports, anti-gaming flags, bank-transfer fallback ─────────────────────────────
+
+/** §17.2: a shop is counted once, the first time it is paid for. `DEAL` beats `REFERRAL`. */
+export type SalesAttributionSource = 'DEAL' | 'REFERRAL';
+/** §17.1 anti-gaming. A row carrying any of these counts ZERO until a SYSTEM_ADMIN reviews it. */
+export const SALES_ATTRIBUTION_FLAGS = ['self_referral', 'repeat_owner', 'referral_anomaly'] as const;
+export type SalesAttributionFlag = typeof SALES_ATTRIBUTION_FLAGS[number];
+/** The referral window (§17.1, Owner round 3): paid within 14 days of the shop opening, or nobody. */
+export const SALES_REFERRAL_WINDOW_DAYS = 14;
+/** Refund/dispute deducted from the agent's total when it lands inside this window (§17.1). */
+export const SALES_ATTRIBUTION_REFUND_WINDOW_DAYS = 60;
+/** One sales code attributing more than this many shops in a Bangkok day is an anomaly (§17.1). */
+export const SALES_REFERRAL_DAILY_ANOMALY_LIMIT = 20;
+
+/** `GET /v1/sales/reports/summary` — one row per agent per Bangkok month. No financial documents (S21). */
+export type SalesReportRow = {
+  salesUserId: string; displayName: string; teamLeadUserId: string | null;
+  /** Shops opened by a deal this agent wrote, and by a signup that named their code. */
+  dealActivations: number; referralActivations: number;
+  /** Net of refunds; flagged rows contribute 0 until reviewed. */
+  amountSatang: number;
+  flaggedCount: number;
+};
+export type SalesReportMonth = { monthKey: string; rows: SalesReportRow[] };
+export type SalesReportSummary = { months: SalesReportMonth[]; from: string; to: string };
+/** How many months one report request may span — a lead asking for "everything" is a mistake, not a need. */
+export const SALES_REPORT_MAX_MONTHS = 24;
+export const SALES_REPORT_MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/** `GET /v1/system/sales-attribution/flags` — the Owner's review queue (SYSTEM_ADMIN). */
+export type SalesAttributionFlagRow = {
+  companyId: string; companyName: string;
+  salesUserId: string; salesDisplayName: string;
+  source: SalesAttributionSource; amountSatang: number; refundedSatang: number; paidAt: string;
+  flags: SalesAttributionFlag[]; flaggedAt: string | null;
+  reviewedAt: string | null; reviewNote: string | null;
+};
+export type SalesAttributionFlagListDto = { items: SalesAttributionFlagRow[] };
+/** `keep: true` = "ตัดออก" (the flag stands, the row keeps counting 0); false = "ยืนยันว่าไม่ผิดปกติ". */
+export type SalesAttributionFlagReviewBody = { keep: boolean; reason: string };
+
+/**
+ * Q9 bank-transfer fallback. The Owner fills these in before rollout — they are shown to a paying
+ * customer, so a placeholder reaching production is a support call, not a silent bug.
+ *
+ * ponytail: a constant, not a BillingPolicy column. There is no policy field for a bank account
+ * today and one shop-independent account serves every deal; add the column when a second account
+ * exists.
+ */
+export const SALES_SLIP_BANK_ACCOUNT_TH = {
+  bankName: 'ธนาคารกสิกรไทย',
+  accountName: 'บริษัท มั่งมี พลัส จำกัด',
+  accountNumber: 'xxx-x-xxxxx-x',
+  note: 'โอนแล้วแนบสลิปในหน้านี้ ทีมงานตรวจและเปิดใช้งานให้ภายในวันทำการ',
+} as const;
+/** What the customer may attach as a transfer slip. Scanned by the normal attachment pipeline. */
+export const SALES_SLIP_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const;
+export const SALES_SLIP_TARGET_TYPE = 'package_change_request';
+export const SALES_SLIP_PURPOSE = 'payment_slip';
+
+export type SalesDealSlipUploadIntentBody = { originalFileName: string; mimeType: string; byteSize: number };
+export type SalesDealSlipUploadIntent = {
+  attachmentId: string; uploadUrl: string; uploadMethod: string;
+  uploadHeaders: Record<string, string>; expiresAt: string;
+};
+export type SalesDealSlipCompleteBody = { attachmentId: string; checksumSha256?: string };
+/** `GET /v1/system/sales-deals/slips` — deals whose customer says they transferred. */
+export type SalesDealSlipRow = {
+  dealId: string; companyId: string; companyName: string;
+  salesUserId: string; salesDisplayName: string;
+  amountSatang: number; months: number; baseLabel: string;
+  slipAttachmentId: string | null; submittedAt: string | null;
+};
+export type SalesDealSlipListDto = { items: SalesDealSlipRow[] };
+export type SalesDealSlipDecisionBody = { reason: string };
 
 export type SalesReferralSource = 'SIGNUP_CODE' | 'SIGNUP_LINK' | 'ADMIN';
 export const SALES_REFERRAL_ADMIN_WINDOW_DAYS = 30;
@@ -139,5 +236,7 @@ export type SalesReferralUpdateBody = { salesCode: string | null; reason: string
 export const SALES_ERROR_CODES = ['SALES_DEAL_STATE_CONFLICT', 'SALES_DEAL_SELF_APPROVAL', 'SALES_DEAL_EXPIRED', 'SALES_DEAL_ALREADY_OPEN',
   'SALES_COMPANY_NOT_FOUND', 'SALES_COMPANY_HAS_OPEN_REQUEST', 'SALES_CODE_UNKNOWN', 'SALES_CODE_TAKEN', 'SALES_CODE_INVALID',
   'SALES_AGENT_SUSPENDED', 'SALES_AGENT_NOT_FOUND', 'SALES_TEAM_LEAD_INVALID',
-  'SALES_AGENT_USERNAME_TAKEN', 'SALES_REFERRAL_WINDOW_CLOSED'] as const;
+  'SALES_AGENT_USERNAME_TAKEN', 'SALES_REFERRAL_WINDOW_CLOSED',
+  // Phase 4
+  'SALES_SLIP_STATE_CONFLICT', 'SALES_SLIP_REQUIRED', 'SALES_REPORT_RANGE_INVALID', 'SALES_FLAG_REVIEW_INVALID'] as const;
 export type SalesErrorCode = typeof SALES_ERROR_CODES[number];

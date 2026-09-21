@@ -1,12 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { PLAN_TIER_PRESETS, SALES_ERROR_CODES, type SalesDealStatus, type SalesMyWorkItem } from '@watchdog-bms/contracts';
+import { PLAN_TIER_PRESETS, SALES_ERROR_CODES, type SalesDealStatus, type SalesDealView, type SalesMyWorkItem, type SalesMyWorkKind, type SalesReportMonth } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import {
-  agentStatusMeta, baseTierDefaults, companyReferral, dealInputFromForm, dealOverLimit, dealPaymentNote, dealWarnings,
-  emptyAgentForm, emptyDealForm, firstDealErrorField, formatBaht, isDealCancellable, isDealEditable,
-  isMenuSelected, myWorkBadgeLabel, normalizeSalesCodeInput, parseBahtInput, referralLabel,
-  referralWindowOpen, SALES_DEAL_MENU_BINDINGS, SALES_DEAL_STATUS_META, salesCodeError, sortMyWork,
+  agentStatusMeta, baseTierDefaults, companyReferral, dealBadges, dealInputFromForm, dealOverLimit, dealPaymentNote,
+  dealWarnings, defaultSalesReportRange, emptyAgentForm, emptyDealForm, firstDealErrorField, formatBaht,
+  isDealCancellable, isDealEditable, isMenuSelected, myWorkBadgeLabel, myWorkMeta,
+  normalizeSalesCodeInput, parseBahtInput, referralLabel, referralWindowOpen, SALES_DEAL_MENU_BINDINGS,
+  SALES_DEAL_STATUS_META, salesCodeError, salesFlagLabel, salesReportLeads, salesReportRangeError,
+  salesReportRowsOf, salesReportTotals, sortMyWork, sortSalesReportMonths,
   toggleMenuSelection, validateAgentForm, validateDealForm, type SalesDealFormValues,
 } from './sales-console.logic';
 
@@ -310,5 +312,111 @@ describe('Thai copy for every sales error code', () => {
     ] as const) {
       assert.match(translateApiError(code)!, expected, code);
     }
+  });
+});
+
+describe('Phase 4: renewal, conversion and slip on a deal row', () => {
+  const deal = (over: Partial<Pick<SalesDealView, 'renewalOfRequestId' | 'conversionOf' | 'slipState'>> = {}) =>
+    ({ renewalOfRequestId: null, conversionOf: null, slipState: 'NONE' as const, ...over });
+
+  it('names the two things a status badge cannot say, and says nothing when neither is true', () => {
+    assert.deepEqual(dealBadges(deal()), []);
+    assert.deepEqual(
+      dealBadges(deal({ renewalOfRequestId: 'deal-0', conversionOf: 'CARD_AUTO', slipState: 'PENDING' })).map((badge) => badge.label),
+      ['ต่ออายุจากดีลเดิม', 'แทนที่สมาชิกเดิม', 'สลิปรอตรวจ'],
+    );
+    // 'NONE' is every deal that was never paid by transfer, including a Stripe one — no badge.
+    assert.deepEqual(dealBadges(deal({ slipState: 'NONE' })), []);
+    assert.equal(dealBadges(deal({ slipState: 'REJECTED' }))[0]!.tone, 'danger');
+  });
+
+  it('gives the two new งานของฉัน kinds their own Thai line, and never crashes on an unknown one', () => {
+    assert.equal(myWorkMeta('DEAL_RENEWAL_PENDING').label, 'ข้อเสนอต่ออายุรออนุมัติ');
+    assert.equal(myWorkMeta('DEAL_SLIP_PENDING').label, 'สลิปรอตรวจ');
+    // A kind from a newer API must read as work, not take the whole queue down on a phone.
+    const unknown = myWorkMeta('SOMETHING_NEW' as unknown as SalesMyWorkKind);
+    assert.equal(unknown.needsAction, false);
+    assert.doesNotMatch(unknown.label, /[A-Z_]{4,}/);
+  });
+
+  it('sorts the new action kinds above the informational ones', () => {
+    const item = (kind: string, at: string) => ({ kind, at, deal: {} } as unknown as SalesMyWorkItem);
+    const sorted = sortMyWork([
+      item('DEAL_APPLIED', '2026-09-20T00:00:00.000Z'),
+      item('DEAL_RENEWAL_PENDING', '2026-09-01T00:00:00.000Z'),
+    ]);
+    assert.equal(sorted[0]!.kind, 'DEAL_RENEWAL_PENDING');
+  });
+});
+
+describe('anti-gaming flags (§17.1 / D6)', () => {
+  it('says why a row was held back, and never leaks a flag key to the Owner', () => {
+    assert.equal(salesFlagLabel('self_referral'), 'ผู้แนะนำและเจ้าของร้านเป็นคนเดียวกัน');
+    assert.equal(salesFlagLabel('repeat_owner'), 'เจ้าของเดิมเปิดร้านเพิ่ม');
+    assert.equal(salesFlagLabel('referral_anomaly'), 'รูปแบบผิดปกติ (จำนวน/ข้อมูลซ้ำ)');
+    // The fallback is the point: a flag added later on the API side must not reach a person raw.
+    assert.doesNotMatch(salesFlagLabel('referral_anomaly_v2'), /referral|anomaly|_/);
+  });
+});
+
+describe('sales report (§17.2 — one row per shop, so the report is a plain sum)', () => {
+  const row = (over: Partial<SalesReportMonth['rows'][number]> = {}) => ({
+    salesUserId: 'u1', displayName: 'สมชาย', teamLeadUserId: 'l1',
+    dealActivations: 2, referralActivations: 1, amountSatang: 300_000, flaggedCount: 0, ...over,
+  });
+
+  it('totals net amounts and counts, flagged rows carried as a count only', () => {
+    const totals = salesReportTotals([row(), row({ salesUserId: 'u2', flaggedCount: 3 })]);
+    assert.equal(totals.amountSatang, 600_000);
+    assert.equal(totals.dealActivations, 4);
+    assert.equal(totals.referralActivations, 2);
+    assert.equal(totals.flaggedCount, 3);
+    assert.deepEqual(salesReportTotals([]), { dealActivations: 0, referralActivations: 0, amountSatang: 0, flaggedCount: 0 });
+  });
+
+  it('groups newest month first, biggest seller first inside it', () => {
+    const sorted = sortSalesReportMonths([
+      { monthKey: '2026-08', rows: [row()] },
+      { monthKey: '2026-09', rows: [row(), row({ salesUserId: 'u2', displayName: 'สมหญิง', amountSatang: 900_000 })] },
+    ]);
+    assert.deepEqual(sorted.map((month) => month.monthKey), ['2026-09', '2026-08']);
+    assert.equal(sorted[0]!.rows[0]!.displayName, 'สมหญิง');
+    assert.equal(sorted[0]!.totals.amountSatang, 1_200_000);
+    assert.equal(salesReportRowsOf([{ monthKey: '2026-09', rows: [row(), row()] }]).length, 2);
+  });
+
+  it('offers only the teams it can put a name to — an internal id is not something a person reads', () => {
+    const months: SalesReportMonth[] = [{
+      monthKey: '2026-09',
+      rows: [
+        row({ salesUserId: 'l1', displayName: 'หัวหน้าเอ' }),
+        row({ salesUserId: 'u2' }),
+        // A lead with no row of their own cannot be named, so their team is not offered.
+        row({ salesUserId: 'u3', teamLeadUserId: 'l9' }),
+      ],
+    }];
+    assert.deepEqual(salesReportLeads(months), [{ userId: 'l1', displayName: 'หัวหน้าเอ' }]);
+    assert.deepEqual(salesReportLeads([]), []);
+  });
+});
+
+describe('report month range', () => {
+  it('defaults to last month and this one, in Bangkok', () => {
+    assert.deepEqual(defaultSalesReportRange(new Date('2026-09-21T00:00:00.000Z')), { from: '2026-08', to: '2026-09' });
+    // Across a year boundary the previous month is December of the year before, not month 0.
+    assert.deepEqual(defaultSalesReportRange(new Date('2026-01-05T00:00:00.000Z')), { from: '2025-12', to: '2026-01' });
+    // 01:00 Bangkok on the 1st is still the previous month in UTC — the report buckets Bangkok.
+    assert.deepEqual(defaultSalesReportRange(new Date('2026-09-30T18:00:00.000Z')), { from: '2026-09', to: '2026-10' });
+  });
+
+  it('refuses in Thai exactly what the endpoint refuses as SALES_REPORT_RANGE_INVALID', () => {
+    assert.equal(salesReportRangeError({ from: '2026-08', to: '2026-09' }), null);
+    assert.equal(salesReportRangeError({ from: '2026-09', to: '2026-09' }), null);
+    assert.ok(salesReportRangeError({ from: '2026-10', to: '2026-09' }));
+    assert.ok(salesReportRangeError({ from: '', to: '2026-09' }));
+    assert.ok(salesReportRangeError({ from: '2026-13', to: '2026-09' }));
+    // 24 months is the server's cap, so 25 is refused here rather than at the round trip.
+    assert.equal(salesReportRangeError({ from: '2025-01', to: '2026-12' }), null);
+    assert.ok(salesReportRangeError({ from: '2024-12', to: '2026-12' }));
   });
 });

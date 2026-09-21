@@ -81,6 +81,10 @@ export function isCompanyProfileRecoveryRoute(method: string, path: string): boo
 export function isBillingRecoveryRoute(method: string, path: string): boolean {
   const clean = cleanRequestPath(path).toLowerCase();
   if ((method === 'GET' || method === 'POST') && /^\/v1\/companies\/[^/]+\/package-change-requests$/.test(clean)) return true;
+  // Q9: a locked shop paying a deal by bank transfer attaches the slip from the same page.
+  if (/^\/v1\/companies\/[^/]+\/package-change-requests\/[^/]+\/slip\/(?:upload-intent|complete|url)$/.test(clean)) {
+    return method === 'POST' ? !clean.endsWith('/url') : method === 'GET' && clean.endsWith('/url');
+  }
   const prefix = '/v1/companies/[^/]+/billing';
   return method === 'GET' ? new RegExp(`^${prefix}(?:/history|/capacity|/recipient(?:/[^/]+)?|/attempts/[^/]+|/collection/[^/]+|/invoices/[^/]+/adjustments/(?:refunds|credit-notes))?$`).test(clean)
     : method === 'POST' && new RegExp(`^${prefix}/(?:quote|checkout|portal|refresh|recipient/preview|recipient/[^/]+/(?:submit|cancel)|collection/preview|collection/[^/]+/(?:submit|withdraw|capacity)|attempts/[^/]+/(?:resume|cancel|capacity)|documents/[^/]+/open)$`).test(clean);

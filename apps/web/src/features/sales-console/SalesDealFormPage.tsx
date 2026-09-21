@@ -20,7 +20,7 @@ import {
   SALES_DEAL_BASE_TIERS, SALES_DEAL_MENU_BINDINGS, SALES_DEAL_MENU_GROUPS, toggleMenuSelection, validateDealForm,
   type SalesDealFormErrors, type SalesDealFormValues,
 } from './sales-console.logic';
-import { SalesCompanyLine, SalesDealStatusBadge, SalesDealSummary, SalesNotice } from './SalesConsoleParts';
+import { SalesCompanyLine, SalesDealBadges, SalesDealStatusBadge, SalesDealSummary, SalesNotice } from './SalesConsoleParts';
 
 const STATE_CONFLICT_MESSAGE = 'ดีลนี้ถูกแก้ไขจากที่อื่นแล้ว กรุณาโหลดข้อมูลล่าสุดก่อนทำรายการอีกครั้ง';
 
@@ -279,7 +279,7 @@ export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: str
       eyebrow={<Link href="/sales/deals" className="underline underline-offset-2">ดีล</Link>}
       title={deal ? deal.company.name : 'สร้างดีลใหม่'}
       description={deal ? `เซลล์ผู้ดูแล ${deal.salesDisplayName}` : 'ข้อเสนอพิเศษสำหรับร้านเดียว ราคาและสิทธิ์กำหนดเองได้'}
-      meta={deal ? <SalesDealStatusBadge status={deal.status} /> : undefined}
+      meta={deal ? <><SalesDealStatusBadge status={deal.status} /><SalesDealBadges deal={deal} /></> : undefined}
     >
       {formError && <SalesNotice tone="error">{formError}</SalesNotice>}
       {formError === STATE_CONFLICT_MESSAGE && dealId && (

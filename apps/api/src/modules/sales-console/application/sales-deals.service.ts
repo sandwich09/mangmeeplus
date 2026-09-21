@@ -39,6 +39,7 @@ import {
   DEAL_KIND,
   derivedDealStatus,
   EDITABLE_DEAL_STATUSES,
+  dealSlipState,
   offerExpiryFrom,
   overLimitCounts,
   requireReason,
@@ -46,7 +47,7 @@ import {
   SalesSnapshotError,
 } from '../domain/sales-deal.logic';
 import { SalesCompanySearchService } from './sales-company-search.service';
-import { canSeeAllDeals, salesBadRequest, salesError, salesForbidden, salesNotFound } from './sales-context';
+import { canSeeAllDeals, isSystemAdmin, salesBadRequest, salesError, salesForbidden, salesNotFound } from './sales-context';
 
 /**
  * Either partial index on PackageChangeRequest is keyed on `companyId` alone, so a unique
@@ -67,6 +68,7 @@ type DealRow = {
   verifiedAt: Date | null; decidedAt: Date | null;
   approvedByUserId: string | null; approvedAt: Date | null; selfApproved: boolean;
   offerExpiresAt: Date | null; rejectedReason: string | null; createdAt: Date; updatedAt: Date;
+  renewalOfRequestId: string | null; slipSubmittedAt: Date | null;
 };
 
 const DEAL_SELECT = {
@@ -75,6 +77,7 @@ const DEAL_SELECT = {
   verifiedAt: true, decidedAt: true,
   approvedByUserId: true, approvedAt: true, selfApproved: true,
   offerExpiresAt: true, rejectedReason: true, createdAt: true, updatedAt: true,
+  renewalOfRequestId: true, slipSubmittedAt: true,
 } as const;
 
 @Injectable()
@@ -112,11 +115,14 @@ export class SalesDealsService {
    */
   async myWork(ctx: RequestContext): Promise<SalesMyWorkDto> {
     const lead = canSeeAllDeals(ctx);
+    const admin = isSystemAdmin(ctx);
     const rows = await this.prisma.client.packageChangeRequest.findMany({
       where: {
         kind: DEAL_KIND,
         OR: [
           ...(lead ? [{ status: 'PENDING_APPROVAL' }] : []),
+          // Q9: only the Owner can confirm a transfer, so only the Owner is shown the queue.
+          ...(admin ? [{ paymentState: 'SLIP_PENDING' }] : []),
           { salesUserId: ctx.userId, status: { in: ['REJECTED', 'APPROVED', 'APPLIED'] } },
           { salesUserId: ctx.userId, status: 'CANCELLED', paymentState: 'CATALOG_SUPERSEDED' },
         ],
@@ -128,15 +134,18 @@ export class SalesDealsService {
     const views = await this.toViews(rows);
 
     const items: SalesMyWorkItem[] = views.map((deal, index) => ({
-      kind: workKind(deal, deal.salesUserId === ctx.userId, rows[index]!.paymentState === 'CATALOG_SUPERSEDED'),
+      kind: workKind(deal, { own: deal.salesUserId === ctx.userId, lead, paymentState: rows[index]!.paymentState }),
       deal,
       at: deal.updatedAt,
     }));
     // The lead's queue comes first, then their own deals (spec Q6).
     items.sort((a, b) => Number(b.kind === 'APPROVAL_PENDING') - Number(a.kind === 'APPROVAL_PENDING'));
-    const badge = items.filter((item) => lead
-      ? item.kind === 'APPROVAL_PENDING'
-      : item.kind === 'DEAL_REJECTED' || item.kind === 'DEAL_EXPIRED').length;
+    const badge = items.filter((item) => item.kind === 'DEAL_SLIP_PENDING'
+      ? admin
+      : lead
+        ? item.kind === 'APPROVAL_PENDING'
+        // D3: a renewal sitting with the lead is the agent's own work item, not something to act on.
+        : item.kind === 'DEAL_REJECTED' || item.kind === 'DEAL_EXPIRED').length;
     return { items, badge };
   }
 
@@ -228,7 +237,9 @@ export class SalesDealsService {
    */
   async expireSweep(now = new Date()): Promise<{ expired: number }> {
     const due = await this.prisma.client.packageChangeRequest.findMany({
-      where: { kind: DEAL_KIND, status: 'APPROVED', offerExpiresAt: { lt: now } },
+      // Q9: a customer who has attached a slip has answered the offer. The window is frozen until
+      // the Owner verifies or rejects it — a reject extends `offerExpiresAt` by the review time.
+      where: { kind: DEAL_KIND, status: 'APPROVED', offerExpiresAt: { lt: now }, paymentState: { not: 'SLIP_PENDING' } },
       select: { id: true, companyId: true, version: true, salesUserId: true },
       take: 500,
     });
@@ -445,18 +456,26 @@ export class SalesDealsService {
     if (rows.length === 0) return [];
     const now = new Date();
     const userIds = [...new Set(rows.flatMap((row) => [row.salesUserId, row.approvedByUserId]).filter((id): id is string => Boolean(id)))];
-    const [users, companies] = await Promise.all([
+    const companyIds = [...new Set(rows.map((row) => row.companyId))];
+    const [users, companies, subscriptions] = await Promise.all([
       userIds.length
         ? this.prisma.client.user.findMany({ where: { id: { in: userIds } }, select: { id: true, displayName: true } })
         : Promise.resolve([]),
-      Promise.all([...new Set(rows.map((row) => row.companyId))].map(async (companyId) => ({
+      Promise.all(companyIds.map(async (companyId) => ({
         companyId,
         item: await this.companies.one(companyId),
         usage: await this.companies.usage(companyId),
       }))),
+      // Q7/§19.3: paying this deal cancels a live auto-renewing subscription. The form shows it so
+      // the agent can net the remaining value off the price themselves — the system prorates nothing.
+      this.prisma.client.billingAccount.findMany({
+        where: { companyId: { in: companyIds }, baseSubscriptionId: { not: null }, paidThrough: { gt: now } },
+        select: { companyId: true, renewalMode: true },
+      }),
     ]);
     const nameByUserId = new Map(users.map((user) => [user.id, user.displayName]));
     const companyById = new Map(companies.map((entry) => [entry.companyId, entry]));
+    const subscriptionByCompany = new Map(subscriptions.map((account) => [account.companyId, account.renewalMode]));
 
     return rows.map((row): SalesDealView => {
       const snapshot = row.offerSnapshotJson as SalesDealSnapshot;
@@ -483,6 +502,9 @@ export class SalesDealsService {
         appliedAt: row.status === 'APPLIED' ? row.decidedAt?.toISOString() ?? null : null,
         offerExpiresAt: row.offerExpiresAt?.toISOString() ?? null,
         rejectedReason: row.rejectedReason,
+        renewalOfRequestId: row.renewalOfRequestId,
+        slipState: dealSlipState(row.paymentState, row.slipSubmittedAt),
+        conversionOf: conversionMode(subscriptionByCompany.get(row.companyId)),
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt.toISOString(),
       };
@@ -505,13 +527,23 @@ function catalogPriceFor(snapshot: SalesDealSnapshot | null): number {
   return billingOffer(snapshot.base as SalesDealBaseTier, 'month').priceSatang * snapshot.months;
 }
 
-function workKind(deal: SalesDealView, own: boolean, superseded: boolean): SalesMyWorkKind {
-  if (deal.status === 'PENDING_APPROVAL') return 'APPROVAL_PENDING';
-  if (deal.status === 'CANCELLED' && superseded) return 'DEAL_SUPERSEDED';
+export function workKind(deal: Pick<SalesDealView, 'status' | 'renewalOfRequestId'>,
+  viewer: { own: boolean; lead: boolean; paymentState: string }): SalesMyWorkKind {
+  const { own, lead, paymentState } = viewer;
+  // A slip waiting for the Owner outranks everything: the customer has already paid.
+  if (paymentState === 'SLIP_PENDING') return 'DEAL_SLIP_PENDING';
+  // D3: an agent sees their own renewal as "รออนุมัติ"; a lead sees the same row as their queue,
+  // because a lead may approve it (D2) and the badge counts what the viewer can act on.
+  if (deal.status === 'PENDING_APPROVAL') return deal.renewalOfRequestId && own && !lead ? 'DEAL_RENEWAL_PENDING' : 'APPROVAL_PENDING';
+  if (deal.status === 'CANCELLED' && paymentState === 'CATALOG_SUPERSEDED') return 'DEAL_SUPERSEDED';
   if (deal.status === 'REJECTED' && own) return 'DEAL_REJECTED';
   if (deal.status === 'EXPIRED' && own) return 'DEAL_EXPIRED';
   if (deal.status === 'APPLIED') return 'DEAL_APPLIED';
   return 'DEAL_APPROVED_WAITING';
+}
+
+function conversionMode(renewalMode: string | undefined): 'CARD_AUTO' | 'PROMPTPAY_RENEW' | null {
+  return renewalMode === 'CARD_AUTO' || renewalMode === 'PROMPTPAY_RENEW' ? renewalMode : null;
 }
 
 function dealFieldMessageTh(field: string): string {

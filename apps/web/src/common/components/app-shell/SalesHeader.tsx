@@ -28,14 +28,17 @@ function useMyWorkBadge(pathname: string): number | null {
   return badge;
 }
 
+const REPORTS_HREF = '/sales/reports';
+
 const SECTIONS = [
   { href: '/sales/deals', label: 'ดีล', group: 'งานขาย' },
   { href: '/sales/companies', label: 'ร้านค้า', group: 'งานขาย' },
   { href: MY_WORK_HREF, label: 'งานของฉัน', group: 'งานขาย' },
+  { href: REPORTS_HREF, label: 'รายงาน', group: 'งานขาย' },
   { href: '/sales/team', label: 'ทีม', group: 'จัดการทีม' },
 ];
 
-const SalesHeader: React.FC<{ canManageTeam?: boolean; environment?: string }> = ({ canManageTeam = false, environment }) => {
+const SalesHeader: React.FC<{ canManageTeam?: boolean; canReadReports?: boolean; environment?: string }> = ({ canManageTeam = false, canReadReports = false, environment }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
@@ -44,7 +47,8 @@ const SalesHeader: React.FC<{ canManageTeam?: boolean; environment?: string }> =
   useEffect(() => setMenuOpen(false), [pathname]);
   const badge = useMyWorkBadge(pathname);
   const badgeLabel = badge === null ? null : myWorkBadgeLabel(badge);
-  const sections = SECTIONS.filter((section) => section.href !== '/sales/team' || canManageTeam);
+  const sections = SECTIONS.filter((section) => (section.href !== '/sales/team' || canManageTeam)
+    && (section.href !== REPORTS_HREF || canReadReports));
   const groups = [...new Set(sections.map((section) => section.group))];
 
   const handleSignOut = async () => {

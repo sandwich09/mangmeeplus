@@ -359,3 +359,26 @@ unit (สถานะดีล, snapshot, quoteTotals, ladder-less validation, l
 | R-676-5 (Q10) | ดีลที่จ่ายแล้ว → ซื้อ catalog ทีหลัง = ต่อท้ายหลังวันหมดของดีล (กติกา one-time continuation เดิม, ไม่มีการคิดเครดิต); ค่าเริ่มต้นจนกว่า Owner จะสั่งต่างออกไป | #676 ปิดกรณีนี้รอมติ; การต่อท้ายไม่ทำให้มูลค่าดีลหาย |
 | R-676-6 | S15 ปิด: `BILLING_LEGACY_REVIEW_REQUIRED` ไม่มีในโค้ดแล้ว (จำแนก source แทน) | #676 ถอด guard เดิมออก |
 | R-676-7 | CI: PR gate รันเฉพาะ unit/PG spec ใน "Migrations and Boot"; billing HTTP smoke อยู่ใน extended-tests (สั่งรันเอง) → `billing-deal-smoke` ต้องรันในเครื่องก่อน push ทุกครั้ง และผูกใน extended-tests; `billing-feature-entitlements.pg.spec.ts` ของ #676 ที่ยังไม่ถูกรันใน CI ถูกผูกเข้า Migrations and Boot ด้วย | #677 ปรับโครง CI |
+
+### 19.8 มติก่อนเริ่ม Phase 4 (controller, 2026-09-21)
+
+| ID | มติ | เหตุผลจากโค้ด |
+|---|---|---|
+| R-P4-1 | ตัวกันโกง "IP ซ้ำ" (§17.1) ยังไม่ทำ — ระบบไม่เก็บ IP ตอนสมัคร (ใช้แค่ rate limit ใน Redis); ใช้ LINE userId / เบอร์ / อีเมล ของเจ้าของร้านเทียบกับบัญชีเซลและร้านที่นับแล้ว | `CompanySignupRequest` ไม่มีคอลัมน์ IP; `trustedClientIp` ใช้เฉพาะ rate limit |
+| R-P4-2 | แถวยอด (`SalesAttribution`) ที่ถูกธง (self_referral / repeat_owner / referral_anomaly) ไม่นับในยอดจนกว่า Owner จะตรวจใน admin console ("คงไว้"/"ตัดออก" พร้อมเหตุผล, audit) | ป้องกันเถียงยอด (มติ D6) |
+| R-P4-3 | sweep ของดีล (หมดอายุ/ต่ออายุ) และสรุปรายวันของทีมขายรันจาก worker ใหม่ (ทุก 15 นาที / 07:00 กรุงเทพ) — Phase 2 เปิด endpoint ไว้แต่ยังไม่มี worker เรียก | ไม่มี job ใน `apps/workers` สำหรับ sales |
+| R-P4-4 | สลิป: ตรวจไวรัสผ่านทางอัปโหลดไฟล์เดิม, ยืนยันโดย SYSTEM_ADMIN ด้วยรหัสผ่านซ้ำ (proof ของหน้า billing) แล้ว apply สิทธิ์ดีลด้วยตัวเดียวกับเส้นทาง Stripe (ไม่มี invoice → `sourceInvoiceId` ว่าง, `paymentState SLIP_VERIFIED`); ระหว่างรอตรวจ ดีลไม่หมดอายุ; ปฏิเสธ = กลับเป็นอนุมัติแล้วและยืดวันหมดอายุเท่าเวลาที่รอ | ต่อยอด special-invoice spec เดิมบนโค้ดปัจจุบัน |
+| R-P4-5 | แปลง subscription (Q7 ค่าเริ่มต้น): ยกเลิก subscription เดิมทันทีก่อน apply ดีล (journal/observed, ไม่มี proration), บิล QR ค้างถูก void, เหตุการณ์ของ subscription ที่ยกเลิกแล้วถูกรับรู้เป็น no-op ไม่ hold บัญชี; ยกเลิกไม่สำเร็จ → invoice HELD + issue `DEAL_SUBSCRIPTION_CANCEL_PENDING` แล้ว retry | `reconcileOneTime` hold ทุกรายการที่มี subscription ใช้งานอยู่ (S34) |
+
+### 19.9 มติก่อนเริ่ม Phase 5 (controller, 2026-09-21 — ดีลต่ออายุอัตโนมัติ)
+
+| ID | มติ | เหตุผลจากโค้ด |
+|---|---|---|
+| D-P5-1 | snapshot ดีล v3: `autoRenew`, `cadence` (เดือน/ปี), `cycles` (N รอบ หรือ ว่าง = จนกว่าจะเพิกถอน); ดีลครั้งเดียวยังใช้ `months` | — |
+| D-P5-2 | offer ของดีลอัตโนมัติ = ราคาต่อรอบ, `interval` = cadence, `intervalCount` 1, โควตาใบเสร็จต่อรอบ | `assertStripePrice` บังคับ `interval_count` 1 และ `paidInvoiceEvidence` (ห้ามแตะ) รับเฉพาะ month/year |
+| D-P5-3 | Stripe Price เฉพาะร้านสร้างตอนอนุมัติ (journal/observed, idempotent, ตรวจด้วย `assertStripePrice`, เก็บบน deal row, archive เมื่อยกเลิก/หมดอายุ/จบดีล); สร้างไม่สำเร็จ = ดีลยังรออนุมัติและ sweep ลองใหม่ | ระบบไม่เคยสร้าง Price มาก่อน (มีแต่ GET); `policy.priceIds` รับเฉพาะ key ของ catalog |
+| D-P5-4 | ดีลอัตโนมัติจ่ายได้ด้วย `CARD_AUTO` หรือ `PROMPTPAY_RENEW` (ตาม gate); Checkout แบบ subscription ใช้ Price ของดีล; เพิ่มการตรวจ Price ก่อนสร้าง session ในสาขา subscription (เดิมไม่มี) | สาขา subscription ของ `checkout()` ไม่เคยอ่าน Price |
+| D-P5-5 | apply ครั้งแรกของ subscription เรียก `applyDealRequest` เหมือนเส้นทางครั้งเดียว; renewal ใช้ snapshot ดีลจึงตรวจที่ราคาดีลเอง; ไม่มี attribution ซ้ำ | `contractSnapshot` เลือก snapshot ตามช่วงบริการ |
+| D-P5-6 | จบดีล (บัตรอัตโนมัติ) = op `SCHEDULE_PRICE_RETURN` ไฟล์ใหม่ตามแบบ collection op (ไม่แก้ `billing-collection.ts`; แก้ `billing-schedule.ts` เพียงบรรทัดรายชื่อ type ของ `ownedSchedule`): schedule 2 เฟส (ราคาดีล → ราคา catalog), เขียน contract อนาคตที่มี `dealReturn` → apply รอบนั้นคืนเมนู/เครดิต AI/ลิมิตเป็นค่าเริ่มต้นของ tier (Q1); N รอบ = สร้าง op หลังจ่ายครั้งแรก; จนกว่าจะเพิกถอน = หัวหน้ากด "จบดีล"; แจ้ง OWNER + เซล 14 วันก่อน | `currentSchedulePhase` ตรวจเฟสถัดไปจาก contract ล่าสุด; `applyInvoice` ใช้ feature plan เฉพาะ INITIAL จึงต้องมีธง `dealReturn` |
+| D-P5-7 | ดีล QR ทุกงวด (Q8): ซื้อ/ต่ออายุได้ (`bindPromptPayRenewal` ใช้ `snapshot.priceId` อยู่แล้ว); จบดีล = ยกเลิกสิ้นรอบ (ไม่มี schedule บน subscription QR) แล้วร้านซื้อ catalog | `billing-collection.ts` ปฏิเสธ schedule บน PROMPTPAY_RENEW |
+| D-P5-8 | ยังไม่ทำ drift scan ของ Price เฉพาะร้าน (G17) — op จบดีลตรวจราคาเมื่อรัน | ลดเวลา (Owner) |

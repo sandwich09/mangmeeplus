@@ -27,5 +27,8 @@ import { BillingAdminController, BillingCatalogController, BillingController, Bi
   controllers: [BillingAdminController, BillingCatalogController, BillingController, BillingInternalController, StripeEventsController],
   providers: [BillingPlanAdjustmentsService, BillingReceiptAdjustmentsService, BillingBatchesService, BillingCheckoutExpiryService, BillingSettlementService, BillingRefundsService, BillingReadinessService, BillingProviderScansService, BillingScopesService, BillingNotificationsService, BillingConfigurationService, BillingOperationsService, BillingAdminService, BillingService, BillingReconcilerService, StripeClient, RedisRateLimitService,
     { provide: STRIPE_FETCH, useFactory: () => globalThis.fetch.bind(globalThis) }],
+  // Q9: the sales console's slip verification reuses the billing password proof rather than
+  // growing a second five-minute re-auth window with its own rules.
+  exports: [BillingConfigurationService],
 })
 export class BillingModule {}

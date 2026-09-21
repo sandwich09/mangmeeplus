@@ -1,13 +1,22 @@
 import { Module } from '@nestjs/common';
 import { LoggerModule } from '../../common/logger/logger.module';
 import { AuditModule } from '../audit/audit.module';
+import { BillingModule } from '../billing/billing.module';
+import { DashboardNotificationsModule } from '../dashboard-notifications/dashboard-notifications.module';
+import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
+import { SystemPartnerManagementModule } from '../system-partner-management/system-partner-management.module';
 import { SalesAgentsService } from './application/sales-agents.service';
 import { SalesCompanySearchService } from './application/sales-company-search.service';
 import { SalesDealsService } from './application/sales-deals.service';
 import { SalesReferralService } from './application/sales-referral.service';
+import { SalesReportsService } from './application/sales-reports.service';
+import { SalesRenewalService } from './application/sales-renewal.service';
+import { SalesSlipService } from './application/sales-slip.service';
 import { SalesController } from './presentation/http/sales.controller';
 import { SalesInternalController } from './presentation/http/sales-internal.controller';
-import { SystemSalesAgentsController, SystemSalesReferralController } from './presentation/http/system-sales-agents.controller';
+import { CompanyDealSlipController } from './presentation/http/company-deal-slip.controller';
+import { SystemSalesAgentsController, SystemSalesAttributionController, SystemSalesReferralController } from './presentation/http/system-sales-agents.controller';
+import { SystemSalesSlipsController } from './presentation/http/system-sales-slips.controller';
 
 /**
  * Sales console (spec §8 "module ใหม่ sales-console").
@@ -20,14 +29,18 @@ import { SystemSalesAgentsController, SystemSalesReferralController } from './pr
  * SalesReferralService is exported because both signup paths resolve sales codes through it.
  */
 @Module({
-  imports: [LoggerModule, AuditModule],
+  imports: [LoggerModule, AuditModule, BillingModule, DashboardNotificationsModule, DataModelCoreModule, SystemPartnerManagementModule],
   controllers: [
     SalesController,
     SystemSalesAgentsController,
+    SystemSalesAttributionController,
     SystemSalesReferralController,
+    SystemSalesSlipsController,
+    CompanyDealSlipController,
     SalesInternalController,
   ],
-  providers: [SalesAgentsService, SalesCompanySearchService, SalesDealsService, SalesReferralService],
+  providers: [SalesAgentsService, SalesCompanySearchService, SalesDealsService, SalesReferralService,
+    SalesReportsService, SalesRenewalService, SalesSlipService],
   exports: [SalesReferralService, SalesDealsService],
 })
 export class SalesConsoleModule {}

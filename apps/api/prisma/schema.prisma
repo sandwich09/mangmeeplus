@@ -3679,6 +3679,15 @@ model PackageChangeRequest {
   version           Int       @default(1)
   /// D2: a lead or SYSTEM_ADMIN approving their OWN deal. Recorded, not refused.
   selfApproved      Boolean   @default(false)
+  /// D3/Phase 4: the APPLIED deal this renewal offer was cloned from. A renewal never writes
+  /// attribution (§17.2 counts first activations only) and is what makes the sweep idempotent.
+  renewalOfRequestId String?
+  /// Phase 4: when the 7-days-left reminder went out, so it goes out exactly once.
+  renewalRemindedAt DateTime?
+  /// Q9 slip fallback: when the customer attached the transfer slip (paymentState 'SLIP_PENDING').
+  slipSubmittedAt   DateTime?
+  /// Q9 slip fallback: the SYSTEM_ADMIN who confirmed or rejected the slip.
+  verifiedByUserId  String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
   company           Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -3686,6 +3695,7 @@ model PackageChangeRequest {
   @@index([companyId, status])
   @@index([kind, status])
   @@index([salesUserId])
+  @@index([renewalOfRequestId])
   // One OPEN request per company, enforced by a PARTIAL unique index in the migration SQL:
   // "PackageChangeRequest_company_open_key" ON ("companyId") WHERE "status" = 'OPEN'.
   // Deal rows never take status 'OPEN', so they cannot consume that slot (S18). Their own
@@ -3741,12 +3751,24 @@ model SalesAttribution {
   paidAt          DateTime
   refundedSatang  Int      @default(0)
   /// BillingInvoice.id of the paid one-time invoice that created this row.
-  sourceInvoiceId String
+  /// NULL when the money arrived as a bank transfer the Owner verified from a slip (Q9): there is
+  /// no Stripe invoice at all, and `sourceKind` says which of the two paid for the shop.
+  sourceInvoiceId String?
+  /// 'STRIPE' (default, an invoice exists) | 'SLIP' (verified bank transfer, Q9).
+  sourceKind      String   @default("STRIPE")
   /// PackageChangeRequest.id of the deal, when `source` is 'DEAL'.
   dealRequestId   String?
+  /// §17.1 anti-gaming: 'self_referral' | 'repeat_owner' | 'referral_anomaly'. A flagged row counts
+  /// ZERO in every total until a SYSTEM_ADMIN reviews it; the row itself is never deleted.
+  flags                String[] @default([])
+  flaggedAt            DateTime?
+  flagReviewedAt       DateTime?
+  flagReviewedByUserId String?
+  flagReviewNote       String?
   createdAt       DateTime @default(now())
 
   @@index([salesUserId, paidAt])
+  @@index([flaggedAt])
 }
 
 model AccountClaimToken {

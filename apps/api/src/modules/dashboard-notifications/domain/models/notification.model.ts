@@ -142,6 +142,12 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   // and the expiry notice are the only warning an owner gets before the shop is suspended.
   'plan_term_expiring',
   'plan_term_expired',
+  // Sales console Phase 4 (spec §17.1/§17.2, D3). All four are console notices to มั่งมี staff on
+  // the platform tenant, never to a shop: prices and shop names stay out of every body (R14/S24).
+  'sales_deal_renewal_pending',
+  'sales_deal_renewal_overdue',
+  'sales_deal_slip_pending',
+  'sales_daily_digest',
 ];
 
 // Future triggers — disabled until source module exists

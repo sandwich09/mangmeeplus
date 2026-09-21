@@ -42,7 +42,8 @@ export default async function SalesLayout({ children }: { children: ReactNode })
 
   return (
     <div className="min-h-dvh bg-gray-50">
-      <SalesHeader environment={environment} canManageTeam={result.session.permissions.includes('sales.team.manage')} />
+      <SalesHeader environment={environment} canManageTeam={result.session.permissions.includes('sales.team.manage')}
+        canReadReports={result.session.permissions.includes('sales.report.read')} />
       <div className="min-w-0 lg:pl-64">
         <main className="px-4 py-5 lg:px-6">{children}</main>
       </div>

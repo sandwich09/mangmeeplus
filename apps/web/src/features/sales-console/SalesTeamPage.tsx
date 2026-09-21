@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   SALES_CODE_DEFAULT_LENGTH, SALES_DEAL_REASON_MAX,
   type SalesAgentCreateBody, type SalesAgentCredentialHandoff, type SalesAgentProfileDto,
-  type SalesAgentView, type SalesRoleKey,
+  type SalesAgentView, type SalesAttributionFlagRow, type SalesRoleKey,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mangmee';
@@ -12,11 +12,12 @@ import { LoadingState } from '@/common/components/state';
 import { Modal } from '@/common/components/modal';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import {
-  createSalesAgent, createSalesTeamMember, getSalesAgentProfile, listSalesAgents, listSalesTeam,
-  resetSalesAgentCredential, resetSalesTeamCredential, SALES_AGENT_CSV_URL, updateSalesAgent,
+  createSalesAgent, createSalesTeamMember, getSalesAgentProfile, listSalesAgents, listSalesAttributionFlags, listSalesTeam,
+  resetSalesAgentCredential, resetSalesTeamCredential, reviewSalesAttributionFlag, SALES_AGENT_CSV_URL, updateSalesAgent,
 } from './sales.api';
 import {
-  agentStatusMeta, emptyAgentForm, normalizeSalesCodeInput, SALES_ROLE_LABELS, validateAgentForm,
+  agentStatusMeta, emptyAgentForm, formatBaht, normalizeSalesCodeInput, SALES_ATTRIBUTION_SOURCE_LABELS,
+  SALES_ROLE_LABELS, salesFlagLabel, validateAgentForm,
   type SalesAgentFormErrors, type SalesAgentFormValues,
 } from './sales-console.logic';
 import { SalesCredentialPanel, SalesEmpty, SalesNotice } from './SalesConsoleParts';
@@ -53,6 +54,11 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
   const [profile, setProfile] = useState<{ agent: SalesAgentView; data: SalesAgentProfileDto } | null>(null);
   const [statusChange, setStatusChange] = useState<SalesAgentView | null>(null);
   const [statusReason, setStatusReason] = useState('');
+  // D6 anti-gaming (§17.1). Admin console only: these rows decide whose numbers count, and the
+  // decision is the Owner's, never a หัวหน้า's.
+  const [flags, setFlags] = useState<SalesAttributionFlagRow[] | null>(null);
+  const [flagDecision, setFlagDecision] = useState<{ row: SalesAttributionFlagRow; keep: boolean } | null>(null);
+  const [flagReason, setFlagReason] = useState('');
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setError(null);
@@ -64,11 +70,23 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
     }
   }, [admin]);
 
+  const loadFlags = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const result = await listSalesAttributionFlags({ signal });
+      if (!signal?.aborted) setFlags(result.items);
+    } catch {
+      // Quiet on purpose: the team list is this page's job, and a flags outage must not replace it
+      // with an error. An empty list simply renders nothing.
+      if (!signal?.aborted) setFlags([]);
+    }
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
     void load(controller.signal);
+    if (admin) void loadFlags(controller.signal);
     return () => controller.abort();
-  }, [load]);
+  }, [admin, load, loadFlags]);
 
   const set = <K extends keyof SalesAgentFormValues>(key: K, value: SalesAgentFormValues[K]) => {
     setValues((previous) => ({ ...previous, [key]: value }));
@@ -150,6 +168,25 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
     }
   };
 
+  const applyFlagReview = async () => {
+    if (!flagDecision || !flagReason.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // The review answers with the refreshed queue, so the row leaves without a second read.
+      const remaining = await reviewSalesAttributionFlag(flagDecision.row.companyId, { keep: flagDecision.keep, reason: flagReason.trim() });
+      setFlags(remaining.items);
+      setFlagDecision(null);
+      setFlagReason('');
+      setNotice(flagDecision.keep ? 'ตัดร้านนี้ออกจากยอดแล้ว' : 'ยืนยันว่าไม่ผิดปกติ นับรวมในยอดแล้ว');
+    } catch (cause) {
+      setFlagDecision(null);
+      setError(apiErrorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const openProfile = async (agent: SalesAgentView) => {
     setBusy(true);
     setError(null);
@@ -220,6 +257,58 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
               })}
             </MangmeeCard>
           )}
+
+      {admin && flags !== null && flags.length > 0 && (
+        <section aria-label="รายการที่ถูกธง" className="grid gap-3">
+          <div>
+            <h2 className="text-[15px] font-extrabold text-gray-900">รายการที่ถูกธง</h2>
+            <p className="mt-0.5 text-sm leading-6 text-gray-600">
+              ร้านที่ระบบสงสัยว่าผิดปกติ ยังไม่นับรวมในยอดของเซลล์จนกว่าคุณจะตรวจ
+            </p>
+          </div>
+          <MangmeeCard>
+            {flags.map((row) => (
+              <div key={row.companyId} className="border-t border-gray-100 px-4 py-3 first:border-t-0">
+                <p className="truncate text-[15px] font-bold text-gray-900">{row.companyName}</p>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  {SALES_ATTRIBUTION_SOURCE_LABELS[row.source]} · {row.salesDisplayName} · {formatBaht(row.amountSatang)}
+                  {row.paidAt ? ` · ชำระ ${formatThaiDate(row.paidAt)}` : ''}
+                </p>
+                <ul className="mt-1.5 grid gap-1">
+                  {row.flags.map((flag) => (
+                    <li key={flag} className="text-sm leading-6 text-warning-700">{salesFlagLabel(flag)}</li>
+                  ))}
+                </ul>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button type="button" disabled={busy} className="mangmee-btn mangmee-btn-secondary"
+                    onClick={() => { setFlagReason(''); setFlagDecision({ row, keep: false }); }}>ยืนยันว่าไม่ผิดปกติ</button>
+                  <button type="button" disabled={busy} className="mangmee-btn mangmee-btn-danger"
+                    onClick={() => { setFlagReason(''); setFlagDecision({ row, keep: true }); }}>ตัดออกจากยอด</button>
+                </div>
+              </div>
+            ))}
+          </MangmeeCard>
+        </section>
+      )}
+
+      <Modal open={flagDecision !== null} onClose={() => setFlagDecision(null)}
+        title={flagDecision?.keep ? 'ตัดร้านนี้ออกจากยอด' : 'ยืนยันว่าร้านนี้ไม่ผิดปกติ'}>
+        <div className="grid gap-3">
+          <p className="text-sm leading-6 text-gray-600">
+            {flagDecision?.keep
+              ? 'ยอดของร้านนี้จะไม่ถูกนับให้เซลล์ และรายการจะยังอยู่ให้ตรวจย้อนหลังได้'
+              : 'ยอดของร้านนี้จะถูกนับให้เซลล์ตามปกติ ระบบบันทึกเหตุผลของคุณไว้'}
+          </p>
+          <p className="text-sm font-semibold text-gray-800">{flagDecision?.row.companyName} · {flagDecision?.row.salesDisplayName}</p>
+          <TextareaField label="เหตุผล (จำเป็น)" name="flagReason" maxLength={SALES_DEAL_REASON_MAX}
+            value={flagReason} onChange={(event) => setFlagReason(event.target.value)} />
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button type="button" className="mangmee-btn mangmee-btn-secondary" onClick={() => setFlagDecision(null)}>ปิด</button>
+            <button type="button" className={`mangmee-btn ${flagDecision?.keep ? 'mangmee-btn-danger' : 'mangmee-btn-primary'}`}
+              disabled={busy || !flagReason.trim()} aria-busy={busy} onClick={() => void applyFlagReview()}>ยืนยัน</button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={creating} onClose={() => setCreating(false)} title="เพิ่มบัญชีทีมขาย" size="lg">
         <div className="grid gap-4">

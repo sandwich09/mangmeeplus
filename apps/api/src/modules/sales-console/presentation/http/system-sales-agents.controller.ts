@@ -8,7 +8,7 @@
 import { Body, Controller, Get, Header, HttpCode, Param, Patch, Post, Req } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 import {
-  IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Max, MaxLength, Min, ValidateNested,
+  IsBoolean, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Max, MaxLength, Min, ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import type { Request } from 'express';
@@ -19,12 +19,15 @@ import {
   type SalesAgentListDto,
   type SalesAgentProfileDto,
   type SalesAgentView,
+  type SalesAttributionFlagListDto,
+  type SalesAttributionFlagReviewBody,
   type SalesReferralUpdateBody,
 } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { SalesAgentsService } from '../../application/sales-agents.service';
 import { SalesReferralService } from '../../application/sales-referral.service';
+import { SalesReportsService } from '../../application/sales-reports.service';
 import { assertPlatformTenant } from '../../application/sales-context';
 
 export class SalesAgentProfileDtoIn {
@@ -157,5 +160,43 @@ export class SystemSalesReferralController {
     assertPlatformTenant(req.context);
     const body: SalesReferralUpdateBody = { salesCode: dto.salesCode ?? null, reason: dto.reason };
     return this.referral.setCompanyReferral(req.context, companyId, body.salesCode, body.reason);
+  }
+}
+
+export class SalesAttributionFlagReviewDto {
+  // true = "ตัดออก" (the flag stands); false = "ยืนยันว่าไม่ผิดปกติ" (clear it and start counting).
+  @IsBoolean() keep!: boolean;
+  @IsString() @IsNotEmpty() @MaxLength(500) reason!: string;
+}
+
+/**
+ * §17.1 anti-gaming — the Owner's review queue. SYSTEM_ADMIN only (`sales.agent_profile.manage`):
+ * a lead must never be able to clear a flag raised against their own team.
+ */
+@Controller('system/sales-attribution')
+export class SystemSalesAttributionController {
+  constructor(private readonly reports: SalesReportsService) {}
+
+  @Get('flags')
+  @RequirePermissions('sales.agent_profile.manage')
+  @ApiOperation({ summary: 'Attribution rows carrying an anti-gaming flag, unreviewed first' })
+  flags(@Req() req: Request & { context: RequestContext }): Promise<SalesAttributionFlagListDto> {
+    assertPlatformTenant(req.context);
+    return this.reports.flagged();
+  }
+
+  @Post(':companyId/review')
+  @HttpCode(200)
+  @RequirePermissions('sales.agent_profile.manage')
+  @ApiOperation({ summary: 'Keep or clear a flag, with a reason; audited HIGH' })
+  @ApiResponse({ status: 400, description: 'SALES_FLAG_REVIEW_INVALID' })
+  review(
+    @Param('companyId') companyId: string,
+    @Body() dto: SalesAttributionFlagReviewDto,
+    @Req() req: Request & { context: RequestContext },
+  ): Promise<SalesAttributionFlagListDto> {
+    assertPlatformTenant(req.context);
+    const body: SalesAttributionFlagReviewBody = { keep: dto.keep, reason: dto.reason };
+    return this.reports.reviewFlag(req.context, companyId, body.keep, body.reason);
   }
 }

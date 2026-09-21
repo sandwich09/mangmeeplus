@@ -10,15 +10,22 @@ import {
   SALES_DEAL_MONTHS_MAX,
   SALES_DEAL_REASON_MAX,
   SALES_REFERRAL_ADMIN_WINDOW_DAYS,
+  SALES_REPORT_MAX_MONTHS,
+  SALES_REPORT_MONTH_PATTERN,
   type SalesAgentView,
+  type SalesAttributionFlag,
+  type SalesAttributionSource,
   type SalesCompanyAccessState,
   type SalesDealBaseTier,
   type SalesDealInput,
+  type SalesDealSlipState,
   type SalesDealStatus,
   type SalesDealView,
   type SalesMyWorkItem,
   type SalesMyWorkKind,
   type SalesReferralSource,
+  type SalesReportMonth,
+  type SalesReportRow,
   type SalesRoleKey,
   type MenuEntitlementBinding,
 } from '@watchdog-bms/contracts';
@@ -352,10 +359,17 @@ const MY_WORK_META: Record<SalesMyWorkKind, { label: string; tone: MangmeeTone; 
   DEAL_APPLIED: { label: 'เปิดใช้งานแล้ว', tone: 'teal', note: 'ลูกค้าชำระเงินและเปิดใช้งานแพ็กเกจแล้ว', needsAction: false },
   // R-676-4: the customer bought a catalog package before paying the deal, so the offer was closed.
   DEAL_SUPERSEDED: { label: 'ลูกค้าซื้อแพ็กเกจเอง', tone: 'slate', note: 'ลูกค้าซื้อแพ็กเกจปกติแล้ว ข้อเสนอนี้จึงถูกปิด สร้างข้อเสนอใหม่ได้', needsAction: false },
+  // D3/A: the sweep wrote the next term's offer 14 days out. The เซลล์ checks it before the
+  // หัวหน้า approves, because the price and the limits are copied from a deal sold months ago.
+  DEAL_RENEWAL_PENDING: { label: 'ข้อเสนอต่ออายุรออนุมัติ', tone: 'amber', note: 'ระบบสร้างข้อเสนอรอบถัดไปจากดีลเดิมให้แล้ว ตรวจราคาและสิทธิ์ก่อนหัวหน้าอนุมัติ', needsAction: true },
+  DEAL_SLIP_PENDING: { label: 'สลิปรอตรวจ', tone: 'amber', note: 'ลูกค้าแนบสลิปโอนเงินแล้ว รอผู้ดูแลระบบตรวจการโอน', needsAction: true },
 };
 
+/** An unknown kind from a newer API must read as work, not crash the whole queue on a phone. */
+const MY_WORK_FALLBACK = { label: 'มีรายการใหม่', tone: 'slate' as MangmeeTone, note: 'เปิดดีลนี้เพื่อดูรายละเอียด', needsAction: false };
+
 export function myWorkMeta(kind: SalesMyWorkKind) {
-  return MY_WORK_META[kind];
+  return MY_WORK_META[kind] ?? MY_WORK_FALLBACK;
 }
 
 /** The เซลล์'s own reading of the badge: the queue only counts what somebody has to do. */
@@ -367,7 +381,7 @@ export function myWorkBadgeLabel(badge: number): string | null {
 /** Items first, sorted so the ones that need action sit above the informational ones. */
 export function sortMyWork(items: readonly SalesMyWorkItem[]): SalesMyWorkItem[] {
   return [...items].sort((a, b) => {
-    const rank = Number(MY_WORK_META[b.kind].needsAction) - Number(MY_WORK_META[a.kind].needsAction);
+    const rank = Number(myWorkMeta(b.kind).needsAction) - Number(myWorkMeta(a.kind).needsAction);
     return rank !== 0 ? rank : b.at.localeCompare(a.at);
   });
 }
@@ -489,4 +503,125 @@ export function referralWindowOpen(createdAt: string | null | undefined, now: Da
   if (!Number.isFinite(created)) return false;
   const elapsedDays = (now.getTime() - created) / 86_400_000;
   return elapsedDays >= 0 && elapsedDays <= SALES_REFERRAL_ADMIN_WINDOW_DAYS;
+}
+
+// ── Phase 4: renewal / conversion / slip, reports, anti-gaming flags ──
+
+const SLIP_BADGE: Record<Exclude<SalesDealSlipState, 'NONE'>, { label: string; tone: MangmeeTone }> = {
+  PENDING: { label: 'สลิปรอตรวจ', tone: 'amber' },
+  VERIFIED: { label: 'ตรวจสลิปแล้ว', tone: 'teal' },
+  REJECTED: { label: 'สลิปไม่ผ่าน', tone: 'danger' },
+};
+
+/**
+ * What else is true about a deal besides its status: it was written by the renewal sweep (D3),
+ * paying it cancels a live subscription (Q7/S34), or its bank slip is still being checked (Q9).
+ * Each one changes what the เซลล์ says to the shop, so they sit beside the status badge.
+ */
+export function dealBadges(deal: Pick<SalesDealView, 'renewalOfRequestId' | 'conversionOf' | 'slipState'>): { label: string; tone: MangmeeTone }[] {
+  const badges: { label: string; tone: MangmeeTone }[] = [];
+  if (deal.renewalOfRequestId) badges.push({ label: 'ต่ออายุจากดีลเดิม', tone: 'teal' });
+  if (deal.conversionOf) badges.push({ label: 'แทนที่สมาชิกเดิม', tone: 'amber' });
+  if (deal.slipState && deal.slipState !== 'NONE') badges.push(SLIP_BADGE[deal.slipState]);
+  return badges;
+}
+
+// ── anti-gaming flags (§17.1, D6) ──
+
+/**
+ * Why a row was held back from the totals, in the Owner's words. The fallback matters as much as
+ * the three known keys: a flag added later on the API side must never reach a person as
+ * `referral_anomaly_v2`, which is why this takes a plain string rather than the union.
+ */
+const SALES_FLAG_LABELS: Record<SalesAttributionFlag, string> = {
+  self_referral: 'ผู้แนะนำและเจ้าของร้านเป็นคนเดียวกัน',
+  repeat_owner: 'เจ้าของเดิมเปิดร้านเพิ่ม',
+  referral_anomaly: 'รูปแบบผิดปกติ (จำนวน/ข้อมูลซ้ำ)',
+};
+
+export function salesFlagLabel(flag: string): string {
+  return SALES_FLAG_LABELS[flag as SalesAttributionFlag] ?? 'พบความผิดปกติ กรุณาตรวจสอบ';
+}
+
+export const SALES_ATTRIBUTION_SOURCE_LABELS: Record<SalesAttributionSource, string> = {
+  DEAL: 'ดีลพิเศษ',
+  REFERRAL: 'แนะนำร้าน',
+};
+
+// ── report (§17.2 — one row per shop, counted once, so the report is a plain sum) ──
+
+export type SalesReportTotals = Pick<SalesReportRow, 'dealActivations' | 'referralActivations' | 'amountSatang' | 'flaggedCount'>;
+
+export function salesReportTotals(rows: readonly SalesReportRow[]): SalesReportTotals {
+  return rows.reduce<SalesReportTotals>((sum, row) => ({
+    dealActivations: sum.dealActivations + row.dealActivations,
+    referralActivations: sum.referralActivations + row.referralActivations,
+    amountSatang: sum.amountSatang + row.amountSatang,
+    flaggedCount: sum.flaggedCount + row.flaggedCount,
+  }), { dealActivations: 0, referralActivations: 0, amountSatang: 0, flaggedCount: 0 });
+}
+
+/** Newest month first, biggest seller first inside it — the reading order of "who sold what". */
+export function sortSalesReportMonths(months: readonly SalesReportMonth[]): { monthKey: string; rows: SalesReportRow[]; totals: SalesReportTotals }[] {
+  return [...months]
+    .sort((a, b) => b.monthKey.localeCompare(a.monthKey))
+    .map((month) => {
+      const rows = [...month.rows].sort((a, b) => b.amountSatang - a.amountSatang || a.displayName.localeCompare(b.displayName, 'th'));
+      return { monthKey: month.monthKey, rows, totals: salesReportTotals(rows) };
+    });
+}
+
+export function salesReportRowsOf(months: readonly SalesReportMonth[]): SalesReportRow[] {
+  return months.flatMap((month) => month.rows);
+}
+
+/**
+ * The teams the filter may offer. A lead is named by their own row in the answer — the summary
+ * carries `teamLeadUserId` but no lead name, and an internal id is not something a person reads,
+ * so a lead with no row of their own is left out rather than shown as a raw id.
+ */
+export function salesReportLeads(months: readonly SalesReportMonth[]): { userId: string; displayName: string }[] {
+  const rows = salesReportRowsOf(months);
+  const names = new Map(rows.map((row) => [row.salesUserId, row.displayName]));
+  const leadIds = [...new Set(rows.flatMap((row) => (row.teamLeadUserId ? [row.teamLeadUserId] : [])))];
+  return leadIds.flatMap((userId) => {
+    const displayName = names.get(userId);
+    return displayName ? [{ userId, displayName }] : [];
+  });
+}
+
+// ── month range ──
+
+export type SalesReportRange = { from: string; to: string };
+
+const monthKeyOf = (date: Date): string => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+
+/**
+ * Default: last month and this one — long enough to show a trend, short enough to read. Shifted to
+ * Bangkok first, because the API buckets by Bangkok months: between midnight and 07:00 local, a
+ * UTC reading of "this month" is still the previous one for the first seven hours of every month.
+ */
+export function defaultSalesReportRange(now: Date = new Date()): SalesReportRange {
+  const bangkok = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  const to = new Date(Date.UTC(bangkok.getUTCFullYear(), bangkok.getUTCMonth(), 1));
+  const from = new Date(Date.UTC(bangkok.getUTCFullYear(), bangkok.getUTCMonth() - 1, 1));
+  return { from: monthKeyOf(from), to: monthKeyOf(to) };
+}
+
+const monthsBetween = (from: string, to: string): number => {
+  const [fromYear, fromMonth] = from.split('-').map(Number) as [number, number];
+  const [toYear, toMonth] = to.split('-').map(Number) as [number, number];
+  return (toYear - fromYear) * 12 + (toMonth - fromMonth) + 1;
+};
+
+/** Said in Thai before any call: the endpoint answers `SALES_REPORT_RANGE_INVALID` for all three. */
+export function salesReportRangeError(range: SalesReportRange): string | null {
+  if (!SALES_REPORT_MONTH_PATTERN.test(range.from) || !SALES_REPORT_MONTH_PATTERN.test(range.to)) {
+    return 'กรุณาเลือกเดือนเริ่มต้นและเดือนสิ้นสุด';
+  }
+  if (range.from > range.to) return 'เดือนเริ่มต้นต้องไม่อยู่หลังเดือนสิ้นสุด';
+  if (monthsBetween(range.from, range.to) > SALES_REPORT_MAX_MONTHS) {
+    return `เลือกช่วงได้ครั้งละไม่เกิน ${SALES_REPORT_MAX_MONTHS} เดือน`;
+  }
+  return null;
 }

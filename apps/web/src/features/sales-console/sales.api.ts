@@ -14,8 +14,13 @@ import type {
   SalesDealStatus,
   SalesDealSubmitBody,
   SalesDealView,
+  SalesAttributionFlagListDto,
+  SalesAttributionFlagReviewBody,
+  SalesDealSlipDecisionBody,
+  SalesDealSlipListDto,
   SalesMyWorkDto,
   SalesReferralUpdateBody,
+  SalesReportSummary,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 
@@ -123,5 +128,58 @@ export const SALES_AGENT_CSV_URL = '/api/v1/system/sales-agents/export.csv';
 export function setCompanyReferral(companyId: string, body: SalesReferralUpdateBody): Promise<unknown> {
   return apiFetch<unknown>(`/v1/system/partners/${encodeURIComponent(companyId)}/referral`, {
     method: 'PATCH', body: JSON.stringify(body), suppressErrorToast: true,
+  });
+}
+
+// ── Phase 4: report, anti-gaming flags, slip review ──
+
+export function getSalesReportSummary(
+  params: { from: string; to: string; teamLeadUserId?: string; salesUserId?: string },
+  init?: { signal?: AbortSignal },
+): Promise<SalesReportSummary> {
+  // `from`/`to` are Bangkok month keys ('2026-09'), exactly what `reportRange` parses server-side.
+  const query = new URLSearchParams({ from: params.from, to: params.to });
+  if (params.teamLeadUserId) query.set('teamLeadUserId', params.teamLeadUserId);
+  if (params.salesUserId) query.set('salesUserId', params.salesUserId);
+  return apiFetch<SalesReportSummary>(`/v1/sales/reports/summary?${query.toString()}`, { ...init, suppressErrorToast: true });
+}
+
+export function listSalesAttributionFlags(init?: { signal?: AbortSignal }): Promise<SalesAttributionFlagListDto> {
+  return apiFetch<SalesAttributionFlagListDto>('/v1/system/sales-attribution/flags', { ...init, suppressErrorToast: true });
+}
+
+/** `keep: true` = "ตัดออกจากยอด" (the flag stands); `false` = "ยืนยันว่าไม่ผิดปกติ". */
+export function reviewSalesAttributionFlag(companyId: string, body: SalesAttributionFlagReviewBody): Promise<SalesAttributionFlagListDto> {
+  return apiFetch<SalesAttributionFlagListDto>(`/v1/system/sales-attribution/${encodeURIComponent(companyId)}/review`, {
+    method: 'POST', body: JSON.stringify(body), suppressErrorToast: true,
+  });
+}
+
+export function listSalesDealSlips(init?: { signal?: AbortSignal }): Promise<SalesDealSlipListDto> {
+  return apiFetch<SalesDealSlipListDto>('/v1/system/sales-deals/slips', { ...init, suppressErrorToast: true });
+}
+
+/** Short-lived inline URL for one slip. Every read is audited MEDIUM, so it is only ever a tap. */
+export function getSalesDealSlipUrl(dealId: string): Promise<{ downloadUrl: string; expiresAt: string }> {
+  return apiFetch<{ downloadUrl: string; expiresAt: string }>(`/v1/system/sales-deals/${encodeURIComponent(dealId)}/slip-url`, { suppressErrorToast: true });
+}
+
+/** Both decisions answer with the refreshed queue, so the page never needs a second read. */
+export function decideSalesDealSlip(
+  dealId: string, action: 'verify' | 'reject', body: SalesDealSlipDecisionBody,
+): Promise<SalesDealSlipListDto> {
+  return apiFetch<SalesDealSlipListDto>(`/v1/system/sales-deals/${encodeURIComponent(dealId)}/${action}`, {
+    method: 'POST', body: JSON.stringify(body), suppressErrorToast: true,
+  });
+}
+
+/**
+ * The billing admin's password proof, reused verbatim: `verify` applies a paid term, and its
+ * transaction calls `requireProof` — a proof no older than five minutes, taken here first so a
+ * refused password never leaves a half-verified deal.
+ */
+export function reauthenticateBillingAdmin(password: string): Promise<{ reauthenticatedUntil: string }> {
+  return apiFetch<{ reauthenticatedUntil: string }>('/v1/system/billing/reauthenticate', {
+    method: 'POST', body: JSON.stringify({ password }), suppressErrorToast: true,
   });
 }
