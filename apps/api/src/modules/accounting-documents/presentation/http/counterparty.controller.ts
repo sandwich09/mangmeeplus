@@ -63,6 +63,8 @@ class UpdateCounterpartyDto {
 
 class PromoteSeenAddressDto {
   @IsString() @IsNotEmpty() @MaxLength(500) addressText!: string;
+  /** §11.1/§15: the version the screen loaded. A mismatch answers `counterparty_conflict`. */
+  @IsISO8601() @IsOptional() expectedUpdatedAt?: string;
 }
 
 @ApiTags('accounting')
@@ -134,6 +136,6 @@ export class CounterpartyController {
     @Param('counterpartyId') counterpartyId: string,
     @Body() body: PromoteSeenAddressDto,
   ) {
-    return this.promoteSeenAddress.execute(ctx, counterpartyId, body.addressText);
+    return this.promoteSeenAddress.execute(ctx, counterpartyId, body.addressText, body.expectedUpdatedAt);
   }
 }

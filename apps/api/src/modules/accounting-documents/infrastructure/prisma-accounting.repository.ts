@@ -5,6 +5,7 @@ import { PrismaService } from '../../../common/database/prisma.service';
 import type {
   CounterpartyRecord,
   CounterpartyUsage,
+  CounterpartyListItem,
   ListCounterpartiesFilter,
   DocumentRecord,
   DocumentLineRecord,
@@ -199,6 +200,11 @@ export class PrismaAccountingRepository {
    * The auto-save write (§7 cases b/c) and the counterparty screen's "use this as primary" share
    * this one statement: address JSON, optionally `entityKind` (CON-7), and the CUSTOMER -> BOTH
    * promotion a matched sales-side row needs when a purchase starts using it (§7).
+   *
+   * §11.1/§15: both callers were a blind read-modify-write — a second writer's change between their
+   * read and this write vanished silently. Same `updateMany`-with-`updatedAt`-in-the-WHERE CAS as
+   * `updateCounterparty`; the boolean return tells the caller whether it won the race so it can
+   * retry or refuse instead of assuming the write landed.
    */
   async saveCounterpartyVendorFields(input: {
     companyId: string;
@@ -207,9 +213,14 @@ export class PrismaAccountingRepository {
     entityKind?: string;
     promoteToBoth?: boolean;
     updatedByUserId: string;
-  }): Promise<void> {
-    await this.prisma.client.accountingCounterparty.updateMany({
-      where: { id: input.counterpartyId, companyId: input.companyId },
+    expectedUpdatedAt?: Date;
+  }): Promise<boolean> {
+    const changed = await this.prisma.client.accountingCounterparty.updateMany({
+      where: {
+        id: input.counterpartyId,
+        companyId: input.companyId,
+        ...(input.expectedUpdatedAt ? { updatedAt: input.expectedUpdatedAt } : {}),
+      },
       data: {
         ...(input.billingAddressJson !== undefined && { billingAddressJson: input.billingAddressJson as any }),
         ...(input.entityKind !== undefined && { entityKind: input.entityKind as any }),
@@ -217,6 +228,7 @@ export class PrismaAccountingRepository {
         updatedByUserId: input.updatedByUserId,
       },
     });
+    return changed.count > 0;
   }
 
   async listCounterparties(
@@ -224,7 +236,7 @@ export class PrismaAccountingRepository {
     page = 1,
     pageSize = 20,
     filter: ListCounterpartiesFilter = {},
-  ): Promise<{ data: CounterpartyRecord[]; total: number }> {
+  ): Promise<{ data: CounterpartyListItem[]; total: number }> {
     const skip = (page - 1) * pageSize;
     const where: any = { companyId };
     if (filter.search) {
@@ -261,7 +273,44 @@ export class PrismaAccountingRepository {
       this.prisma.client.accountingCounterparty.findMany({ where, skip, take: pageSize, orderBy: { displayName: 'asc' } }),
       this.prisma.client.accountingCounterparty.count({ where }),
     ]);
-    return { data: data.map(this.toCounterpartyRecord), total };
+    const usageById = await this.batchCounterpartyUsageCounts(companyId, data.map((row) => row.id));
+    return {
+      data: data.map((row) => ({
+        ...this.toCounterpartyRecord(row),
+        usageCounts: usageById.get(row.id) ?? { bought: 0, sold: 0 },
+      })),
+      total,
+    };
+  }
+
+  /**
+   * §11.1 list-row badges: the same "เคยซื้อ / เคยขาย" definition as `counterpartyUsage()` below
+   * (expenseRecord by `vendorCounterpartyId`, accountingDocument by `counterpartyId`), but for a
+   * whole page of ids in two `groupBy` calls instead of the detail page's per-row `count`. A page of
+   * rows querying one at a time is the N+1 this exists to avoid.
+   */
+  private async batchCounterpartyUsageCounts(companyId: string, ids: string[]): Promise<Map<string, { bought: number; sold: number }>> {
+    if (ids.length === 0) return new Map();
+    const [bought, sold] = await Promise.all([
+      this.prisma.client.expenseRecord.groupBy({
+        by: ['vendorCounterpartyId'],
+        where: { companyId, vendorCounterpartyId: { in: ids } },
+        _count: { _all: true },
+      }),
+      this.prisma.client.accountingDocument.groupBy({
+        by: ['counterpartyId'],
+        where: { companyId, counterpartyId: { in: ids } },
+        _count: { _all: true },
+      }),
+    ]);
+    const usageById = new Map(ids.map((id) => [id, { bought: 0, sold: 0 }]));
+    for (const group of bought as Array<{ vendorCounterpartyId: string | null; _count: { _all: number } }>) {
+      if (group.vendorCounterpartyId) usageById.get(group.vendorCounterpartyId)!.bought = group._count._all;
+    }
+    for (const group of sold as Array<{ counterpartyId: string | null; _count: { _all: number } }>) {
+      if (group.counterpartyId) usageById.get(group.counterpartyId)!.sold = group._count._all;
+    }
+    return usageById;
   }
 
   /** §12 detail extras: the usage badges and the last five purchases from this counterparty. */

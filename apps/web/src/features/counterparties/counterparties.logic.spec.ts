@@ -11,6 +11,7 @@ import {
   counterpartyFormValues,
   counterpartyHref,
   counterpartyPayload,
+  counterpartyUsageBadges,
 } from './counterparties.logic';
 import type { CounterpartyDetail } from './counterparties.model';
 
@@ -161,5 +162,22 @@ describe('counterpartyAutoSaveNotice', () => {
 describe('counterpartyHref', () => {
   it('encodes both ids', () => {
     assert.equal(counterpartyHref('co 1', 'c/1'), '/companies/co%201/counterparties/c%2F1');
+  });
+});
+
+describe('counterpartyUsageBadges', () => {
+  it('hides a badge at 0 and shows the count once it is not (§11.1)', () => {
+    assert.deepEqual(counterpartyUsageBadges({ usageCounts: { bought: 0, sold: 0 } }), []);
+    assert.deepEqual(counterpartyUsageBadges({ usageCounts: undefined }), [], 'a list row with no usage data yet is not an error');
+    assert.deepEqual(counterpartyUsageBadges({ usageCounts: { bought: 3, sold: 0 } }), [
+      { tone: 'sky', messageKey: 'counterparties.badge_bought', params: { count: '3' } },
+    ]);
+  });
+
+  it('shows both badges in bought-then-sold order, same shape the list row and the detail page both render', () => {
+    assert.deepEqual(counterpartyUsageBadges({ usageCounts: { bought: 2, sold: 5 } }), [
+      { tone: 'sky', messageKey: 'counterparties.badge_bought', params: { count: '2' } },
+      { tone: 'brand', messageKey: 'counterparties.badge_sold', params: { count: '5' } },
+    ]);
   });
 });

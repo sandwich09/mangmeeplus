@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { BuyerEntityKind, VendorCounterpartyAutoSaveResult } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
 import { PrismaAccountingRepository } from '../../infrastructure/prisma-accounting.repository';
+import type { CounterpartyRecord } from '../../domain/models/accounting.model';
 import {
   buildCounterpartyAddressV2,
   counterpartyAddressText,
@@ -92,17 +93,6 @@ export class EnsureVendorCounterpartyFromExpenseUseCase {
     // the same company, and a filtered search would create a duplicate next to each of them.
     const matched = await this.repo.findCounterpartyByVendorKey(ctx.companyId, key);
     const documentAddressText = input.vendorAddressText?.trim() || null;
-    const registryAddress = matched?.billingAddressJson;
-    const registryAddressText = counterpartyAddressText(registryAddress ?? null);
-    const locked = Boolean((registryAddress as { locked?: unknown } | undefined)?.locked);
-
-    const decision = decideVendorAutoSave({
-      matched: Boolean(matched),
-      registryAddressText,
-      documentAddressText,
-      locked,
-    });
-    const at = new Date().toISOString();
 
     if (!matched) {
       const branchCode = normalizeBranchCode(input.vendorBranchCode);
@@ -122,7 +112,7 @@ export class EnsureVendorCounterpartyFromExpenseUseCase {
               source: 'EXPENSE_AUTO',
               expenseId: input.expenseId,
               userId: ctx.userId,
-              at,
+              at: new Date().toISOString(),
             }),
           }
           : {}),
@@ -135,27 +125,67 @@ export class EnsureVendorCounterpartyFromExpenseUseCase {
       };
     }
 
-    // CON-7 runs in both directions: the registry fills an empty expense field (which removes an
-    // existing hard block — `expense-status.logic.ts` refuses to confirm a WHT expense without one),
-    // and a reviewer's own choice flows back under the same never-overwrite-a-lock rule as the address.
-    const fillEntityKind = !input.vendorEntityKind && matched.entityKind ? matched.entityKind : undefined;
-    const writeEntityKind = input.vendorEntityKind && input.vendorEntityKind !== matched.entityKind
-      && (!matched.entityKind || !locked)
-      ? input.vendorEntityKind
-      : undefined;
+    return this.saveToMatched(ctx, input, matched, documentAddressText);
+  }
 
-    const addressChanged = decision.promoteToPrimary || decision.appendToHistory;
-    // Case d and a locked no-op still promote a matched CUSTOMER row: a purchase happened against
-    // it, so it is genuinely both from now on.
-    const promoteToBoth = matched.type === 'CUSTOMER';
+  /**
+   * §11.1/§15: another expense save can race this same row between the `findCounterpartyByVendorKey`
+   * read in `save()` and the write below — two receipts for the same shop landing at once is the
+   * ordinary case this exists for, not an edge case. `saveCounterpartyVendorFields` now CASes on
+   * `updatedAt`; a lost race re-reads the row and recomputes the decision AND the address JSON
+   * against the fresh data, up to twice, rather than overwriting the other write blind. §8 still
+   * holds when every attempt loses: this returns the ordinary non-throwing FAILED outcome, exactly
+   * like any other registry failure, never a throw.
+   */
+  private async saveToMatched(
+    ctx: VendorAutoSaveContext,
+    input: EnsureVendorCounterpartyInput,
+    initialMatched: CounterpartyRecord,
+    documentAddressText: string | null,
+  ): Promise<EnsureVendorCounterpartyOutcome> {
+    let matched = initialMatched;
 
-    if (addressChanged || writeEntityKind || promoteToBoth) {
+    // 3 attempts total = 1 initial + up to 2 retries (§15). Every retry re-reads `matched` first, so
+    // each loop body recomputes the decision and the address JSON fresh — never reuses a stale one.
+    for (let attempt = 0; attempt <= 2; attempt += 1) {
+      const registryAddress = matched.billingAddressJson;
+      const registryAddressText = counterpartyAddressText(registryAddress ?? null);
+      const locked = Boolean((registryAddress as { locked?: unknown } | undefined)?.locked);
+      const decision = decideVendorAutoSave({ matched: true, registryAddressText, documentAddressText, locked });
+
+      // CON-7 runs in both directions: the registry fills an empty expense field (which removes an
+      // existing hard block — `expense-status.logic.ts` refuses to confirm a WHT expense without one),
+      // and a reviewer's own choice flows back under the same never-overwrite-a-lock rule as the address.
+      const fillEntityKind = !input.vendorEntityKind && matched.entityKind ? matched.entityKind : undefined;
+      const writeEntityKind = input.vendorEntityKind && input.vendorEntityKind !== matched.entityKind
+        && (!matched.entityKind || !locked)
+        ? input.vendorEntityKind
+        : undefined;
+      const addressChanged = decision.promoteToPrimary || decision.appendToHistory;
+      // Case d and a locked no-op still promote a matched CUSTOMER row: a purchase happened against
+      // it, so it is genuinely both from now on.
+      const promoteToBoth = matched.type === 'CUSTOMER';
+
+      const outcome: EnsureVendorCounterpartyOutcome = {
+        result: {
+          case: decision.case,
+          counterpartyId: matched.id,
+          displayName: matched.displayName,
+          ...(decision.case === 'HISTORY' && locked ? { locked: true } : {}),
+        },
+        ...(input.vendorCounterpartyId ? {} : { linkCounterpartyId: matched.id }),
+        ...(fillEntityKind ? { fillEntityKind } : {}),
+      };
+
+      if (!(addressChanged || writeEntityKind || promoteToBoth)) return outcome;
+
       // A4 decides which of the two addresses stays primary; the other is the one remembered. When
       // the registry is locked the primary is rebuilt unchanged, provenance included — the write
       // exists only to push the document's address into the history.
       const previous = (registryAddress ?? undefined) as
         { postalCode?: string | null; provenance?: { source?: string; expenseId?: string; userId?: string; at?: string } } | undefined;
       const keepPrimary = !decision.promoteToPrimary;
+      const at = new Date().toISOString();
       const billingAddressJson = addressChanged && documentAddressText
         ? buildCounterpartyAddressV2({
           addressText: keepPrimary ? registryAddressText! : documentAddressText,
@@ -173,27 +203,27 @@ export class EnsureVendorCounterpartyFromExpenseUseCase {
         })
         : undefined;
 
-      await this.repo.saveCounterpartyVendorFields({
+      const wrote = await this.repo.saveCounterpartyVendorFields({
         companyId: ctx.companyId,
         counterpartyId: matched.id,
         ...(billingAddressJson ? { billingAddressJson } : {}),
         ...(writeEntityKind ? { entityKind: writeEntityKind } : {}),
         ...(promoteToBoth ? { promoteToBoth: true } : {}),
         updatedByUserId: ctx.userId,
+        ...(matched.updatedAt ? { expectedUpdatedAt: matched.updatedAt } : {}),
       });
-      this.log(ctx, 'update', matched.id, input.expenseId, Boolean(billingAddressJson));
+      if (wrote) {
+        this.log(ctx, 'update', matched.id, input.expenseId, Boolean(billingAddressJson));
+        return outcome;
+      }
+
+      if (attempt === 2) break;
+      const fresh = await this.repo.findCounterpartyById(ctx.companyId, matched.id);
+      if (!fresh) break;
+      matched = fresh;
     }
 
-    return {
-      result: {
-        case: decision.case,
-        counterpartyId: matched.id,
-        displayName: matched.displayName,
-        ...(decision.case === 'HISTORY' && locked ? { locked: true } : {}),
-      },
-      ...(input.vendorCounterpartyId ? {} : { linkCounterpartyId: matched.id }),
-      ...(fillEntityKind ? { fillEntityKind } : {}),
-    };
+    return { result: { case: 'FAILED', failed: true } };
   }
 
   /**
