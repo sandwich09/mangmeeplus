@@ -72,6 +72,16 @@ Implementation ครบและมี focused automated evidence (contracts/ap
 - [x] รักษา valid documentText/preparedPlan reuse; ตัด duplicate calls เฉพาะที่พบจริง — `documentText` และคำสั่ง transcription ไม่เปลี่ยน (ความยาว 152–1,276 chars ไม่หด), reuse ยังทำงาน (thermal/low-contrast จบใน 2 calls); ไม่มี duplicate call ใดถูกตัดเพิ่มในรอบนี้ — R4 (`line.plan-route`) เลื่อนออกเพราะ `intentMatch:false`
 - [x] เก็บผลก่อน/หลังทั้ง user task แยก text/image และ cache state; ไม่ถือว่าผ่านจาก tag intake ลดอย่างเดียว — [§10](../research/line-ai-intake-cost-benchmark-2026-09-17.md): THB/attempted 0.86 → 0.75, THB/successful 0.93 → 0.79, image −26%, text flat, calls/task 2.59 เท่าเดิม และตาราง per-tag แสดงว่าไม่มี tag อื่นเพิ่มเกิน THB 0.25
 
+#### C2. Receipt one-pass และ recovery cost — spec §10.3
+
+- [x] เพิ่ม optional `onePassReceipt` จาก image intake โดยใช้ output call เดิม ไม่เพิ่ม model/dependency และ validate ด้วย receipt parser + evidence/business/total/VAT/item gates เดิมก่อนข้าม OCR
+- [x] API ใช้ one-pass ก่อนจองขั้น `receipt-ocr`; check bill, non-document, unreadable, multi-document และ candidate ที่ไม่ครบต้องตกกลับ flow เดิม
+- [x] เก็บ bounded fallback reasons สำหรับ `extract-repair`/`image-reread` (`JSON_INCOMPLETE_OR_INVALID`, `TOTAL_MISSING`, `VAT_MISSING`, `ITEMS_INCOMPLETE`) โดยไม่เก็บเนื้อหาเอกสารและไม่ปิด fallback; LINE audit เก็บ path/reasons เดียวกัน
+- [x] เพิ่ม focused tests สำหรับ accepted one-pass, check bill/non-document rejection, evidence/total/VAT/item/currency rejection และ fallback reason mapping; gateway 211 + API 376 + corpus integrity 10 ผ่าน, gateway/API typecheck ผ่าน
+- [ ] รัน frozen corpus ก่อน/หลังและยืนยันค่าเฉลี่ยต่ำกว่า 1.50 บาทต่อรูปโดย accuracy/retry/parse/truncation ไม่ถดถอย; ถ้ายังไม่ถึงเป้าให้รายงานจริง ไม่ลด gate หรือซ่อน cost tag
+
+ราคาแพ็กเกจ/ENTERPRISE ยังไม่เปลี่ยนใน C2 ตาม owner decision 2026-09-21
+
 ไฟล์หลัก: `apps/ai-gateway/src/modules/line-ai/agents/intent-router.agent.ts`, prompt/catalog builders, `line-intake-router.agent.spec.ts`, receipt controller/provider paths เฉพาะที่ผลวัดชี้ว่าจำเป็น ไม่เปลี่ยน per-company model policy
 
 ### E1. Split config และ financial admission — spec §12

@@ -452,6 +452,8 @@ type TaskRecord = {
    *  draft. Read off the parsed plan AFTER the call — it changes nothing that is sent to the model. */
   preparedPlanPresent: boolean;
   advisorAnswerPresent: boolean;
+  /** True when production would skip the separate receipt-OCR call. */
+  onePassReceiptPresent: boolean;
   expectedIntents: string[];
   routingCorrect: boolean;
   permissionOutcome: 'allowed' | 'denied';
@@ -614,15 +616,19 @@ async function runTask(
       if (next === 'turn') {
         await orchestrator.run(buildTurnRequest(task, routePlan, requestId));
       } else if (next === 'receipt_ocr' && rendered) {
-        receiptResult = await controller.receiptOcr(INTERNAL_SECRET, {
-          requestId,
-          companyId: 'company-benchmark',
-          userId: 'user-benchmark',
-          activeCategories: task.activeCategories ?? [],
-          attachment: { id: 'att-benchmark', mimeType: rendered.mimeType, purpose: 'receipt', contentBase64: rendered.contentBase64 },
-          // The production media path forwards the router's own read so OCR skips a second image read.
-          ...(routePlan.documentText ? { documentText: routePlan.documentText } : {}),
-        } as never);
+        // Mirror `tryExtractReceiptFields`: a server-validated one-pass envelope skips the whole
+        // receipt-OCR request; an absent/rejected candidate follows the unchanged OCR path.
+        receiptResult = routePlan.onePassReceipt
+          ? { status: 'ok', ...routePlan.onePassReceipt }
+          : await controller.receiptOcr(INTERNAL_SECRET, {
+            requestId,
+            companyId: 'company-benchmark',
+            userId: 'user-benchmark',
+            activeCategories: task.activeCategories ?? [],
+            attachment: { id: 'att-benchmark', mimeType: rendered.mimeType, purpose: 'receipt', contentBase64: rendered.contentBase64 },
+            // The production media path forwards the router's own read so OCR skips a second image read.
+            ...(routePlan.documentText ? { documentText: routePlan.documentText } : {}),
+          } as never);
       }
     } catch (error) {
       chainOutcome = 'provider_error';
@@ -700,6 +706,7 @@ function finishRecord(input: {
     ...(plan.status === 'ROUTED' ? { routedIntent: plan.intent } : {}),
     preparedPlanPresent: !!plan.preparedPlan,
     advisorAnswerPresent: !!plan.advisorAnswer,
+    onePassReceiptPresent: !!plan.onePassReceipt,
     expectedIntents: [...task.expect.intents],
     routingCorrect,
     permissionOutcome: task.expect.permissionOutcome,
@@ -788,6 +795,7 @@ function summarize(records: TaskRecord[]) {
       /** Provider calls that came back !ok (throttle, timeout, access) — still metered, still paid. */
       failedCalls: rows.flatMap((r) => r.usage).filter((u) => !u.ok).length,
       callsPerTask: attempted ? calls / attempted : 0,
+      onePassReceipts: rows.filter((r) => r.onePassReceiptPresent).length,
       tokens,
       costSatang: cost,
       costPerAttemptedSatang: attempted ? cost / attempted : 0,
@@ -888,7 +896,7 @@ function promptAccounting(records: TaskRecord[]) {
 function markdown(records: TaskRecord[], summary: ReturnType<typeof summarize>, accounting: ReturnType<typeof promptAccounting>, meta: Record<string, unknown>): string {
   const groupRow = (name: string, g: ReturnType<typeof summarize>['overall']) =>
     `| ${name} | ${g.attempted} | ${g.completed} | ${g.successful} | ${pct(g.refused, g.attempted)} | ${pct(g.parseFailed, g.attempted)} | `
-    + `${pct(g.truncated, g.attempted)} | ${g.callsPerTask.toFixed(2)} | ${g.failedCalls} | ${thb(g.costPerAttemptedSatang)} | `
+    + `${pct(g.truncated, g.attempted)} | ${g.callsPerTask.toFixed(2)} | ${g.onePassReceipts} | ${g.failedCalls} | ${thb(g.costPerAttemptedSatang)} | `
     + `${g.successful ? thb(g.costPerSuccessfulSatang) : '—'} | ${pct(g.routingCorrect, g.attempted)} | ${g.latencyP50} | ${g.latencyP90} |`;
 
   const lines: string[] = [];
@@ -897,8 +905,8 @@ function markdown(records: TaskRecord[], summary: ReturnType<typeof summarize>, 
   for (const [key, value] of Object.entries(meta)) lines.push(`| ${key} | ${String(value)} |`);
   lines.push('');
   lines.push('## Per kind', '');
-  lines.push('| group | attempted | completed | successful | refusal | parse fail | truncation | calls/task | failed calls | THB/attempted | THB/successful | routing acc. | p50 ms | p90 ms |');
-  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+  lines.push('| group | attempted | completed | successful | refusal | parse fail | truncation | calls/task | one-pass receipts | failed calls | THB/attempted | THB/successful | routing acc. | p50 ms | p90 ms |');
+  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
   lines.push(groupRow('overall', summary.overall));
   lines.push(groupRow('text', summary.text));
   lines.push(groupRow('image', summary.image));
@@ -1111,7 +1119,7 @@ function budgetStoppedRecord(task: IntakeCostTask, pass: number, runId: string):
   return {
     runId, label: OPTS.label, pass, taskId: task.id, kind: task.kind, coverage: task.coverage,
     outcome: 'budget_stopped', success: false, successReasons: ['run stopped on the spend guard'],
-    preparedPlanPresent: false, advisorAnswerPresent: false,
+    preparedPlanPresent: false, advisorAnswerPresent: false, onePassReceiptPresent: false,
     expectedIntents: [...task.expect.intents], routingCorrect: false,
     permissionOutcome: task.expect.permissionOutcome, followOn: 'none',
     latencyMs: 0, wallClockMs: 0, calls: 0, costSatang: 0, usage: [], callShapes: [],

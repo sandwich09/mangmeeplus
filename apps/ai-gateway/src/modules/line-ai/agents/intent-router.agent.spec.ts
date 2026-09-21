@@ -901,6 +901,34 @@ describe('LINE intake router – a transcribed page needs its own output budget'
     const c = capture();
     await c.router.routeIntake(withImage());
     assert.ok(c.seen()!.maxTokens! >= 8000, 'legacy-shaped plans still carry the transcription');
+    assert.match(c.seen()!.systemPrompt!, /top-level receiptFields object/);
+    assert.match(c.seen()!.systemPrompt!, /Omit receiptFields entirely for more than 20 printed item rows/);
+    assert.match(c.seen()!.systemPrompt!, /a transfer slip, order\/check bill/);
+  });
+
+  it('keeps a bounded raw receipt candidate inside the gateway for controller validation', async () => {
+    const receiptFields = { vendorName: 'ร้านกาแฟ', grandTotalAmount: '65.00', confidence: 0.95 };
+    const answer = {
+      intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95, reason: 'receipt',
+      documentText: 'ใบเสร็จ\nร้านกาแฟ\nยอดรวม 65.00\nชำระแล้ว',
+      documentClassification: {
+        contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
+        businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', evidenceRoles: ['EXPENSE_SUPPORT'],
+        confidence: 0.95, evidenceSignals: ['ใบเสร็จ'], amountSignals: ['65.00'], settlementSignals: ['ชำระแล้ว'],
+        missingRequiredSignals: [], contradictionSignals: [], requiresClarification: false,
+      },
+      receiptFields,
+    };
+    const router = new IntentRouterAgent({
+      generateText: async () => ({ ok: true as const, text: JSON.stringify(answer) }),
+    } as any);
+    const imagePlan = await router.routeIntake(withImage());
+    assert.deepEqual(imagePlan.receiptCandidate, receiptFields);
+
+    const textPlan = await router.routeIntake({
+      requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: 'ค่ากาแฟ 65 บาท', permissions: [],
+    } as any);
+    assert.equal(textPlan.receiptCandidate, undefined, 'text turns never expose the image-only candidate');
   });
 
   it('text-only intake keeps the legacy budgets, so ordinary chat cost is untouched', async () => {

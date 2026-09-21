@@ -122,7 +122,7 @@ import { FEATURE_TEMPORARILY_UNAVAILABLE, loadEntitledFeatureKeys } from '../../
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
-import type { AiBudgetScope, BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, PlanTermLockReason, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
+import type { AiBudgetScope, BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, PlanTermLockReason, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFallbackReason, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
 import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, LINE_CLARIFICATION_SOURCE_MAX_BYTES, type LedgerEntry, type LedgerSubRequestInput } from '../line-ai-ledger.service';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
@@ -605,6 +605,9 @@ type ReceiptOcrPreflight = {
   errorCode?: string;
   /** Present only alongside a money `errorCode`, and only when the gate reported it. */
   budgetScope?: AiBudgetScope;
+  /** Bounded recovery causes; safe to persist because they contain no document text. */
+  fallbackReasons?: ReceiptOcrFallbackReason[];
+  processingPath?: 'one_pass' | 'receipt_ocr';
 };
 
 type DownloadedLineMedia = {
@@ -6334,6 +6337,7 @@ export class ProcessLineWebhookUseCase {
       // The router already read this exact photo; forwarding that read keeps OCR from reading it
       // a second time (UAT 2026-08-28: a 16.6s duplicate read on every receipt).
       routePlan.documentText,
+      routePlan.onePassReceipt,
       admissionAttempt,
     );
 
@@ -6452,6 +6456,8 @@ export class ProcessLineWebhookUseCase {
         channel: 'line',
         status: ocr.status,
         ...(ocr.errorCode ? { errorCode: ocr.errorCode } : {}),
+        ...(ocr.fallbackReasons?.length ? { fallbackReasons: ocr.fallbackReasons } : {}),
+        ...(ocr.processingPath ? { processingPath: ocr.processingPath } : {}),
         documentKind: decision.classification?.documentKind ?? null,
         recognizedFieldCount: ocr.fields ? Object.keys(ocr.fields).length : 0,
         mimeType: media.mimeType,
@@ -8366,6 +8372,7 @@ ${link}`, ctx.companyId, access);
     ocrAlreadyAdmitted = false,
     routeOcrErrorCode?: string,
     intakeDocumentText?: string,
+    onePassReceipt?: LineIntakeRoutePlan['onePassReceipt'],
     admissionAttempt?: LineReceiptAdmissionAttempt,
   ): Promise<ReceiptOcrPreflight> {
     if (!media.contentBase64 || (media.mimeType !== 'image/jpeg' && media.mimeType !== 'image/png' && media.mimeType !== 'application/pdf')) {
@@ -8373,6 +8380,18 @@ ${link}`, ctx.companyId, access);
     }
     if (routeOcrErrorCode) {
       return { status: 'OCR_FAILED', fields: null, classification: null, errorCode: routeOcrErrorCode };
+    }
+    // The gateway already ran the receipt parser and evidence/business gates inside the image
+    // intake call. Short-circuit BEFORE listing categories and BEFORE requestReceiptOcr, so this
+    // path creates no second reservation, provider call or OCR admission.
+    if (onePassReceipt?.fields && onePassReceipt.classification) {
+      this.logger.log({ msg: 'receipt.ocr.one_pass', requestId: ctx.requestId, attachmentId });
+      return {
+        status: 'OCR_EXTRACTED_NEEDS_REVIEW',
+        fields: onePassReceipt.fields,
+        classification: onePassReceipt.classification,
+        processingPath: 'one_pass',
+      };
     }
     try {
       const activeCategories = this.expenseRepo
@@ -8390,7 +8409,14 @@ ${link}`, ctx.companyId, access);
       }, { ocrAlreadyAdmitted, admissionIdentity: admissionAttempt?.identity,
         onAdmitted: (identity) => { if (admissionAttempt) { admissionAttempt.identity = identity; admissionAttempt.companyId = ctx.companyId; } },
         busyWaitDeadlineMs: Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS });
-      if (result.status === 'not_configured') return { status: 'NOT_CONFIGURED', fields: null, classification: null };
+      if (result.fallbackReasons?.length) {
+        this.logger.warn({
+          msg: 'receipt.ocr.fallback_used', requestId: ctx.requestId, attachmentId,
+          reasons: result.fallbackReasons,
+        });
+      }
+      if (result.status === 'not_configured') return { status: 'NOT_CONFIGURED', fields: null, classification: null,
+        processingPath: 'receipt_ocr', ...(result.fallbackReasons?.length ? { fallbackReasons: result.fallbackReasons } : {}) };
       if (result.status !== 'ok') {
         // The SCOPE travels with the code (spec §9.1 / B-01). `ReceiptOcrResponse.budgetScope` is
         // set whenever `errorCode` is one of ours — which is how a chain the GATEWAY refused
@@ -8400,12 +8426,16 @@ ${link}`, ctx.companyId, access);
         // indistinguishable.
         return { status: 'OCR_FAILED', fields: null, classification: null,
           ...(result.errorCode ? { errorCode: result.errorCode } : {}),
-          ...(result.budgetScope ? { budgetScope: result.budgetScope } : {}) };
+          ...(result.budgetScope ? { budgetScope: result.budgetScope } : {}),
+          ...(result.fallbackReasons?.length ? { fallbackReasons: result.fallbackReasons } : {}),
+          processingPath: 'receipt_ocr' };
       }
       return {
         status: 'OCR_EXTRACTED_NEEDS_REVIEW',
         fields: result.fields ?? null,
         classification: result.classification ?? null,
+        ...(result.fallbackReasons?.length ? { fallbackReasons: result.fallbackReasons } : {}),
+        processingPath: 'receipt_ocr',
       };
     } catch (err) {
       // §9.1: `requestReceiptOcr` throws OUR 429 when the money gate closes mid-turn (the intake
