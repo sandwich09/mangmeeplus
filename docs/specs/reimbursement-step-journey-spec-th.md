@@ -122,7 +122,7 @@ A4 เพิ่มจากคำถามของเจ้าของเร�
 
 กรณีผู้อนุมัติไม่มีสิทธิ์บันทึกจ่าย (บทบาทกำหนดเองที่ให้เฉพาะ approve) ขั้น 4 แสดง "รอผู้มีสิทธิ์บันทึกจ่าย" และแจ้งเตือน `reimbursement_ready_for_payment` ไปหาผู้ถือสิทธิ์ตามเดิม
 
-กรณีติดรายการซ้ำภายใต้นโยบาย BLOCK_PAYMENT ขั้น 4 แสดงสถานะติดพร้อมเหตุ และการปลดยังเป็นของผู้ถือ `reimbursement.duplicate.resolve` (OWNER, FINANCE) ไม่ขยายสิทธิ์นี้ให้ผู้อนุมัติ
+กรณีติดรายการซ้ำภายใต้นโยบาย BLOCK_PAYMENT ขั้น 4 แสดงสถานะติดพร้อมเหตุ ผู้บันทึกจ่าย (ซึ่งหลังงานนี้คือผู้อนุมัติ) ปลดได้เองพร้อมเหตุผลและมี audit ผู้ถือ `reimbursement.duplicate.resolve` ยังปลดได้เหมือนเดิม (คำตัดสินเจ้าของ 21 ก.ย. 2569: ใบเบิกมีแค่ผู้เบิกกับผู้อนุมัติ จึงไม่ต้องให้คนที่สามมาปลด) การปลดใช้ endpoint ตรวจการเงินเดิมแบบไม่มีคำตัดสิน ไม่เปลี่ยนสถานะ ส่วนในขั้นตรวจการเงิน (เมื่อบริษัทเปิด) การปลดยังเป็นของผู้ถือ duplicate.resolve ตามเดิม
 
 ## 7. นโยบายและค่าเริ่มต้น
 
@@ -151,7 +151,7 @@ A4 เพิ่มจากคำถามของเจ้าของเร�
 
 - ADMIN และ MANAGER ได้ `reimbursement.payment.record` และ `reimbursement.payment.void` เพิ่ม (D1, A2) OWNER มีครบอยู่แล้ว
 - `pack.reimbursement.approve` ได้สองคีย์เดียวกันเพิ่ม เพื่อให้บทบาทกำหนดเองที่ประกอบจาก pack นี้จ่ายได้เหมือนบทบาทระบบ
-- `reimbursement.finance_review`, `reimbursement.duplicate.resolve`, `reimbursement.policy.manage` ไม่ขยาย
+- `reimbursement.finance_review`, `reimbursement.duplicate.resolve`, `reimbursement.policy.manage` ไม่ขยาย (ไม่เพิ่มคีย์ให้บทบาทใด แต่การปลดรายการซ้ำในขั้นจ่ายเงินรับผู้ถือ `reimbursement.payment.record` ด้วย ตาม §6)
 - ไม่มี permission key ใหม่ ตารางสิทธิ์อัปเดตบรรทัด ADMIN/MANAGER และบันทึกว่าคำตัดสินเจ้าของ 19 ก.ย. 2569 แทนที่มติทีม 28 ก.ค. 2569 เรื่อง "จ่ายอยู่กับ FINANCE เท่านั้น"
 - การยกเว้น self-approval ของ OWNER/ADMIN/MANAGER และ audit "อนุมัติรายการของตนเอง" คงเดิม ไม่เพิ่มการยกเว้นให้บทบาทอื่น
 - หน้า journey เข้าถึงด้วยสิทธิ์อ่านเดิม (`reimbursement.read_related` หรือกว้างกว่า) และเส้นทาง exact-assignment probe ของ D13 ยังใช้กับหน้านี้
@@ -231,6 +231,9 @@ hub (`/reimbursements`):
 - แม่แบบแจ้งเตือนและ runner: path ลิงก์ใหม่ และการตัดผู้กระทำออกจากผู้รับ (§11)
 - คำตอบ AI เรื่องสถานะใบเบิก: ลิงก์ใหม่ เนื้อหาอื่นคงเดิม
 - error code เดิมทั้งหมดคงความหมาย ไม่เพิ่ม code ใหม่ นอกจากไม่จำเป็นจริง
+- ที่เพิ่มระหว่าง implement (21 ก.ย. 2569) ทุกตัวเป็น field เสริม: รายละเอียดใบมี `claimFormLayout`, `documentSignedVia`, `financeReviewRequired` (จาก snapshot ของใบ หรือนโยบายปัจจุบันเมื่อยังเป็นร่าง), `duplicateBlocksPayment`; `approvalActions.selfApprovalBlocked`; สำเนาที่ลงนามมี `acknowledgedAt`, `acknowledgedByName`
+- endpoint ตรวจการเงินเดิมรับการเรียกแบบไม่มีคำตัดสินเพื่อปลดรายการซ้ำในขั้นจ่ายเงิน; endpoint เปิดกลับเป็นร่างเดิมรับการดึงกลับของผู้เบิกเมื่อใบรออนุมัติและยังไม่มีใครตัดสิน (state machine อนุญาต PENDING_APPROVAL → DRAFT อยู่แล้ว) ไม่มี endpoint ใหม่
+- คำรับรองสำเนากระดาษเก็บใน metadata ของไฟล์แนบที่มีอยู่แล้ว ไม่มีคอลัมน์ใหม่; hash ที่ลงนามรับทราบคำนวณจากข้อเท็จจริงของใบ ไม่รวมผัง การเปลี่ยนเป็นผัง 2 ช่องจึงไม่ทำให้ลายเซ็นเดิมหลุด
 
 ## 14. ข้อมูล
 
