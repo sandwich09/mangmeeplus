@@ -7,7 +7,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import {
   CreateCounterpartyUseCase,
   UpdateCounterpartyUseCase,
@@ -34,7 +34,16 @@ function repoWith(existing?: Record<string, any>) {
       findCounterpartyById: async () => existing ?? null,
       createCounterparty: async (input: any) => { calls.created.push(input); return { ...input, id: 'cp-new' }; },
       updateCounterparty: async (input: any) => { calls.updated.push(input); return { ...existing, ...input, id: 'cp-1' }; },
-      saveCounterpartyVendorFields: async (input: any) => { calls.saved.push(input); },
+      // §11.1/§15: when the fixture carries an `updatedAt`, this mirrors the real CAS — a token that
+      // does not match the row is a lost race (false), same as a PATCH conflict. Fixtures that don't
+      // set `updatedAt` (most of this file) never hit the mismatch branch, so they keep succeeding.
+      saveCounterpartyVendorFields: async (input: any) => {
+        calls.saved.push(input);
+        if (existing?.updatedAt && input.expectedUpdatedAt) {
+          return new Date(input.expectedUpdatedAt).getTime() === new Date(existing.updatedAt).getTime();
+        }
+        return true;
+      },
       listCounterparties: async (companyId: string, page: number, pageSize: number, filter: any) => {
         calls.listed.push({ companyId, page, pageSize, filter });
         return { data: [], total: 0 };
@@ -200,6 +209,37 @@ describe('promote-seen-address (§7, §12.1)', () => {
       .execute(ctx(), 'cp-1', OLD_ADDRESS);
 
     assert.deepEqual(audits[0].metadataJson, { source: 'promote_seen_address', addressChanged: true });
+  });
+
+  it('compares-and-sets even with no token: falls back to the row it just read (§11.1/§15)', async () => {
+    const { repo, calls } = repoWith({ ...withHistory, updatedAt: new Date('2026-09-20T10:00:00.000Z') });
+
+    await new PromoteSeenAddressUseCase(repo, audit).execute(ctx(), 'cp-1', OLD_ADDRESS);
+
+    assert.equal(calls.saved[0].expectedUpdatedAt.toISOString(), '2026-09-20T10:00:00.000Z');
+  });
+
+  it('promotes when the client sends the token the row still has', async () => {
+    const { repo, calls } = repoWith({ ...withHistory, updatedAt: new Date('2026-09-20T10:00:00.000Z') });
+
+    const result = await new PromoteSeenAddressUseCase(repo, audit)
+      .execute(ctx(), 'cp-1', OLD_ADDRESS, '2026-09-20T10:00:00.000Z');
+
+    assert.equal(calls.saved[0].expectedUpdatedAt.toISOString(), '2026-09-20T10:00:00.000Z');
+    assert.ok(result);
+  });
+
+  it('answers a stale token with 409 counterparty_conflict — the same code the PATCH path uses', async () => {
+    const { repo } = repoWith({ ...withHistory, updatedAt: new Date('2026-09-20T10:00:00.000Z') });
+
+    await assert.rejects(
+      () => new PromoteSeenAddressUseCase(repo, audit).execute(ctx(), 'cp-1', OLD_ADDRESS, '2026-09-20T09:00:00.000Z'),
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictException);
+        assert.equal((error.getResponse() as { code: string }).code, 'counterparty_conflict');
+        return true;
+      },
+    );
   });
 });
 

@@ -76,16 +76,17 @@ export type AccountingCounterpartySummary = {
   status: AccountingCounterpartyStatus;
   createdAt: string;
   updatedAt: string;
+  /**
+   * A5/§11.1: the list row AND the detail page show "เคยซื้อ N ใบ / เคยขาย N ใบ" instead of a
+   * customer/vendor picker, and these are counted from real documents — `type` is a server-owned
+   * column now, not a label.
+   */
+  usageCounts?: { bought: number; sold: number };
 };
 
 export type AccountingCounterpartyDetail = AccountingCounterpartySummary & {
   billingAddressJson?: Record<string, unknown>;
   shippingAddressJson?: Record<string, unknown>;
-  /**
-   * A5/§11.1: the screen shows "เคยซื้อ N ใบ / เคยขาย N ใบ" instead of a customer/vendor picker,
-   * and these are counted from real documents — `type` is a server-owned column now, not a label.
-   */
-  usageCounts?: { bought: number; sold: number };
   recentExpenses?: Array<{ id: string; expenseDate: string; vendorDocumentNumber?: string; grandTotalAmount: string }>;
 };
 
