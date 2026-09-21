@@ -7,6 +7,7 @@ import type {
   ReimbursementDuplicateCandidateSummary,
   ReimbursementLineSummary,
   ReimbursementClaimSignatureSummary,
+  ReimbursementDocumentSignedVia,
   ReimbursementSignedCopySummary,
 } from '@watchdog-bms/contracts';
 import type {
@@ -19,6 +20,7 @@ import type {
   ReimbursementClaimSignatureRecord,
 } from '../../domain/models/reimbursement.model';
 import { claimSignatureAckHash, computeReceiptRequirement, currentDesk } from '../../domain/logic/reimbursement.logic';
+import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-form.logic';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import type { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
@@ -202,6 +204,8 @@ export function toRequestDetail(
   extras: {
     signedCopies?: ReimbursementSignedCopySummary[];
     claimSignatureAckHash?: string;
+    documentSignedVia?: ReimbursementDocumentSignedVia;
+    financeReviewRequired?: boolean;
     allowMissingReceiptWithReason?: boolean;
   } = {},
 ): ReimbursementRequestDetail {
@@ -224,6 +228,10 @@ export function toRequestDetail(
     primaryAttachmentFileName,
     approvalSnapshotHash: r.approvalSnapshotHash,
     claimSignatureAckHash: extras.claimSignatureAckHash,
+    // Only when the signature rows were loaded: an action response without them must not guess.
+    claimFormLayout: r.claimSignatures && claimFormLayout(r.claimSignatures),
+    documentSignedVia: extras.documentSignedVia,
+    financeReviewRequired: extras.financeReviewRequired,
     missingReceiptReason: r.missingReceiptReason,
     approvalSteps: (r.approvalSteps ?? []).map((s) => toStepSummary(s, displayNames)),
     payments: (r.payments ?? []).map((p) => toPaymentSummary(p, displayNames)),
@@ -268,6 +276,9 @@ export async function detailWithFileNames(
   return toRequestDetail({ ...req, receiptRequirementStatus }, primaryFileName, lineFileNames, displayNames, {
     signedCopies: toSignedCopySummaries(signedCopies),
     claimSignatureAckHash: claimSignatureAckHash(req),
+    documentSignedVia: req.claimSignatures && documentSignedVia(req, signedCopies.some((copy) => copy.acknowledged)),
+    // The same value the approval and payment paths act on.
+    financeReviewRequired: requestPolicy.financeReviewRequired,
     allowMissingReceiptWithReason: requestPolicy.allowMissingReceiptWithReason,
   });
 }

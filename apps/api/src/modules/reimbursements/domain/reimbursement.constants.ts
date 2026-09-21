@@ -9,6 +9,12 @@ import type { ReimbursementPolicyRecord, ReimbursementRequestRecord } from './mo
 /** AttachmentLink coordinates of the wet-ink signed claim form uploaded back into the system. */
 export const REIMBURSEMENT_ATTACHMENT_TARGET_TYPE = 'reimbursement_request';
 export const REIMBURSEMENT_SIGNED_COPY_PURPOSE = 'reimbursement.claim_form.signed';
+/**
+ * Scan attachment metadata key holding the A4 declaration (no new column, spec §14). The value
+ * carries the link row id: a client can pre-fill metadata at upload but cannot know that id, and a
+ * link recreated after a reopen gets a new one, so neither a forged nor a stale entry counts.
+ */
+export const REIMBURSEMENT_SIGNED_COPY_ACK_KEY = 'reimbursementSignedCopyAck';
 
 /** Decision-relevant policy fields, resolved from a DB policy or company defaults. */
 export type EffectivePolicy = {

@@ -137,6 +137,15 @@ export type ReimbursementClaimSignatureRecord = {
   updatedAt: Date;
 };
 
+/** A4 declaration made when attaching a paper-signed scan; stored with the scan, bound to its link row. */
+export type ReimbursementSignedCopyAck = {
+  requestId: string;
+  requestNo: string;
+  acknowledgedByUserId: string;
+  acknowledgedAt: string;
+  checksumSha256: string | null;
+};
+
 export type ReimbursementRequestRecord = {
   id: string;
   companyId: string;

@@ -29,9 +29,11 @@ import type {
   ReimbursementClaimSignatureRecord,
   CreateReimbursementRequestData,
   MaterializeClaimExpenseItem,
+  ReimbursementSignedCopyAck,
 } from '../domain/models/reimbursement.model';
 import {
   REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
+  REIMBURSEMENT_SIGNED_COPY_ACK_KEY,
   REIMBURSEMENT_SIGNED_COPY_PURPOSE,
   parseReimbursementPolicySnapshot,
 } from '../domain/reimbursement.constants';
@@ -2654,8 +2656,8 @@ export class PrismaReimbursementRepository {
     return row ?? null;
   }
 
-  /** Uploaded scans of the wet-ink signed form, newest first. */
-  async listSignedClaimFormCopies(companyId: string, requestId: string): Promise<{ attachmentId: string; fileName: string; uploadedAt: Date }[]> {
+  /** Uploaded scans of the wet-ink signed form, newest first; `acknowledged` = attached with the A4 declaration. */
+  async listSignedClaimFormCopies(companyId: string, requestId: string): Promise<{ attachmentId: string; fileName: string; uploadedAt: Date; acknowledged: boolean }[]> {
     const rows = await this.prisma.client.attachmentLink.findMany({
       where: {
         companyId,
@@ -2664,37 +2666,65 @@ export class PrismaReimbursementRepository {
         purpose: REIMBURSEMENT_SIGNED_COPY_PURPOSE,
         attachment: { status: 'ACTIVE' },
       },
-      select: { attachmentId: true, createdAt: true, attachment: { select: { originalFileName: true } } },
+      select: { id: true, attachmentId: true, createdAt: true, attachment: { select: { originalFileName: true, metadataJson: true } } },
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
-    return rows.map((row) => ({ attachmentId: row.attachmentId, fileName: row.attachment.originalFileName, uploadedAt: row.createdAt }));
+    return rows.map((row) => ({
+      attachmentId: row.attachmentId,
+      fileName: row.attachment.originalFileName,
+      uploadedAt: row.createdAt,
+      acknowledged: (row.attachment.metadataJson as Record<string, { linkId?: unknown } | undefined> | null)
+        ?.[REIMBURSEMENT_SIGNED_COPY_ACK_KEY]?.linkId === row.id,
+    }));
   }
 
-  /** Link write mirroring LinkAttachmentUseCase semantics; the caller asserts the attachment is ACTIVE and audits. */
-  async linkSignedClaimFormCopy(companyId: string, requestId: string, attachmentId: string, linkedByUserId: string): Promise<void> {
+  /**
+   * Link write mirroring LinkAttachmentUseCase semantics; the caller asserts the attachment is ACTIVE and audits.
+   * An A4 acknowledgement is merged into the scan's metadata under its link id, in the same transaction.
+   */
+  async linkSignedClaimFormCopy(
+    companyId: string,
+    requestId: string,
+    attachmentId: string,
+    linkedByUserId: string,
+    ack?: ReimbursementSignedCopyAck,
+  ): Promise<void> {
     const conflict = await findAttachmentLinkConflict(this.prisma.client, {
       companyId, attachmentId, targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
     });
     if (conflict) throw new UnprocessableEntityException(conflict);
-    await this.prisma.client.attachmentLink.upsert({
-      where: {
-        attachmentId_targetType_targetId_purpose: {
+    const client = this.prisma.client as any;
+    await client.$transaction(async (tx: any) => {
+      const link = await tx.attachmentLink.upsert({
+        where: {
+          attachmentId_targetType_targetId_purpose: {
+            attachmentId,
+            targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
+            targetId: requestId,
+            purpose: REIMBURSEMENT_SIGNED_COPY_PURPOSE,
+          },
+        },
+        create: {
+          companyId,
           attachmentId,
           targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
           targetId: requestId,
           purpose: REIMBURSEMENT_SIGNED_COPY_PURPOSE,
+          linkedByUserId,
         },
-      },
-      create: {
-        companyId,
-        attachmentId,
-        targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
-        targetId: requestId,
-        purpose: REIMBURSEMENT_SIGNED_COPY_PURPOSE,
-        linkedByUserId,
-      },
-      update: {},
+        update: {},
+        select: { id: true },
+      });
+      if (!ack) return;
+      const { metadataJson } = await tx.attachmentObject.findFirstOrThrow({
+        where: { id: attachmentId, companyId },
+        select: { metadataJson: true },
+      });
+      await tx.attachmentObject.update({
+        where: { id: attachmentId },
+        data: { metadataJson: { ...metadataJson, [REIMBURSEMENT_SIGNED_COPY_ACK_KEY]: { ...ack, linkId: link.id } } },
+      });
     });
   }
 

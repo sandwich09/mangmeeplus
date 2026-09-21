@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { PreviewReimbursementClaimFormUseCase } from './reimbursement-claim-form.use-case';
 
 // Lane D: snapshot building + guards. The rendered bytes are asserted in
@@ -34,11 +35,15 @@ function request(overrides: Partial<any> = {}) {
     ],
     payments: [
       { id: 'pay-void', status: 'VOIDED', paidByUserId: 'ghost-1', paidAt: new Date('2026-07-24T00:00:00.000Z') },
-      { id: 'pay-1', status: 'RECORDED', paidByUserId: 'fin-1', paidAt: new Date('2026-07-23T00:00:00.000Z') },
+      { id: 'pay-1', status: 'RECORDED', paidByUserId: 'fin-1', paidAt: new Date('2026-07-23T00:00:00.000Z'), paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-9' },
     ],
     ...overrides,
   } as any;
 }
+
+const signatureRow = (role: string, userId: string, id = `sig-${role}`) => ({
+  id, role, signatureAttachmentId: `att-${id}`, signedByUserId: userId, signedAt: new Date('2026-07-24T01:00:00.000Z'),
+});
 
 /** Smallest bytes that pass the PNG magic-byte check. */
 const PNG_BYTES = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.from('signature')]);
@@ -101,8 +106,9 @@ describe('PreviewReimbursementClaimFormUseCase', () => {
     assert.match(svg, /สาขา: สาขาลาดพร้าว/);
     assert.match(svg, /\( สมชาย ใจดี \)/);
     assert.match(svg, /\( มานี ผู้จัดการ \)/);
-    assert.match(svg, /\( ปรีชา บัญชี \)/);
-    assert.match(svg, /\( สุดา การเงิน \)/);
+    // Two-signer form: the payer is named on the repayment line, finance review has no block.
+    assert.match(svg, /การจ่ายเงินคืน: จ่ายเมื่อ 23 ก\.ค\. 2569 วิธี โอนเงิน เลขอ้างอิง TXN-9 บันทึกโดย สุดา การเงิน/);
+    assert.doesNotMatch(svg, /ปรีชา บัญชี|ฝ่ายบัญชี|ฝ่ายการเงิน/);
     // Lines print in lineNo order, not repository order.
     assert.ok(svg.indexOf('ค่าแท็กซี่') < svg.indexOf('ค่าอาหาร'));
     // One line carries a receipt → the ใบเสร็จรับเงิน box is ticked.
@@ -160,7 +166,7 @@ describe('PreviewReimbursementClaimFormUseCase', () => {
     assert.ok(wide.svgDataUrl.length > 0);
   });
 
-  it('leaves the approver/accounting/finance blocks blank until those steps happen', async () => {
+  it('leaves the approver block blank and says ยังไม่จ่าย until those steps happen', async () => {
     const { repo, calls } = fakeRepo(request({
       status: 'PENDING_APPROVAL',
       financeReviewStatus: 'PENDING', financeReviewedByUserId: undefined, financeReviewedAt: undefined,
@@ -171,14 +177,16 @@ describe('PreviewReimbursementClaimFormUseCase', () => {
     const svg = svgOf(await previewUseCase(repo).execute(ctx(), 'rb-1'));
 
     assert.match(svg, /\( สมชาย ใจดี \)/);
-    assert.equal((svg.match(/\(\s+\.{20}\s+\)/g) ?? []).length, 3);
+    assert.equal((svg.match(/\(\s+\.{20}\s+\)/g) ?? []).length, 1);
+    assert.match(svg, /การจ่ายเงินคืน: ยังไม่จ่าย/);
     // No evidence on any line → the receipt box stays unticked.
     assert.equal((svg.match(/<path d="M/g) ?? []).length, 0);
     assert.deepEqual(calls.nameLookups[0], []);
   });
 
-  it('does not print an accounting signature for a blocked finance review', async () => {
-    const { repo } = fakeRepo(request({ financeReviewStatus: 'BLOCKED', payments: [] }));
+  it('does not print an accounting signature for a blocked finance review on a legacy form', async () => {
+    // A payer signature row keeps the four-block form even after that payment was voided.
+    const { repo } = fakeRepo(request({ financeReviewStatus: 'BLOCKED', payments: [], claimSignatures: [signatureRow('PAYER', 'fin-1')] }));
     const svg = svgOf(await previewUseCase(repo).execute(ctx(), 'rb-1'));
     assert.doesNotMatch(svg, /ปรีชา บัญชี/);
     assert.equal((svg.match(/\(\s+\.{20}\s+\)/g) ?? []).length, 2, 'accounting and finance stay blank');
@@ -193,7 +201,7 @@ describe('PreviewReimbursementClaimFormUseCase', () => {
     }));
     const svg = svgOf(await previewUseCase(repo).execute(ctx(), 'rb-1'));
     assert.doesNotMatch(svg, /มานี ผู้จัดการ/, 'a rejection is not an approval signature');
-    assert.equal((svg.match(/\(\s+\.{20}\s+\)/g) ?? []).length, 3);
+    assert.equal((svg.match(/\(\s+\.{20}\s+\)/g) ?? []).length, 1);
   });
 
   // ---- Lane F: stored signatures ----
@@ -209,9 +217,9 @@ describe('PreviewReimbursementClaimFormUseCase', () => {
 
     const images = svg.match(/<image href="data:image\/png;base64,[^"]+" x="(\d+)"/g) ?? [];
     assert.equal(images.length, 2, 'only signed roles get an image');
-    // Block 0 (ผู้เบิก) starts at x=45, block 1 (ผู้อนุมัติ) at x=235; image x = block + 55.
-    assert.match(svg, /<image href="data:image\/png;base64,[^"]+" x="100"/);
-    assert.match(svg, /<image href="data:image\/png;base64,[^"]+" x="290"/);
+    // Two half-page blocks centred at 235 and 615; image x = centre - 40.
+    assert.match(svg, /<image href="data:image\/png;base64,[^"]+" x="195"/);
+    assert.match(svg, /<image href="data:image\/png;base64,[^"]+" x="575"/);
     // Names and ruled lines stay — the image sits above the ลงชื่อ line.
     assert.match(svg, /\( สมชาย ใจดี \)/);
     assert.match(svg, /\( มานี ผู้จัดการ \)/);
@@ -238,6 +246,68 @@ describe('PreviewReimbursementClaimFormUseCase', () => {
       role: 'REQUESTER',
       reason: 'claim_signature_bytes_mismatch',
     });
+  });
+
+  // ---- Step journey (D3, AC06, AC07, A4) ----
+
+  it('reprints a claim signed in the payer block on the legacy four-block form, verifying each checksum as before (AC07)', async () => {
+    const claimSignatures = [signatureRow('REQUESTER', 'staff-1'), signatureRow('PAYER', 'fin-1')];
+    const goodChecksum = createHash('sha256').update(PNG_BYTES).digest('hex');
+    const { repo } = fakeRepo(request({ claimSignatures }));
+    repo.findClaimSignatureAttachment = async (_c: string, attachmentId: string) => ({
+      id: attachmentId, bucket: 'b', objectKey: `k/${attachmentId}`, mimeType: 'image/png', byteSize: PNG_BYTES.length, checksumSha256: goodChecksum,
+    });
+    const svg = svgOf(await previewUseCase(repo).execute(ctx(), 'rb-1'));
+    assert.equal((svg.match(/<line x1="\d+" y1="\d+" x2="\d+" y2="\d+" stroke="#222"/g) ?? []).length, 4);
+    for (const name of ['สมชาย ใจดี', 'มานี ผู้จัดการ', 'ปรีชา บัญชี', 'สุดา การเงิน']) assert.match(svg, new RegExp(`\\( ${name} \\)`));
+    // Block 0 (ผู้เบิก) and block 3 (ฝ่ายการเงิน) carry their images; image x = block + 55.
+    assert.match(svg, /<image href="data:image\/png;base64,[^"]+" x="100"/);
+    assert.match(svg, /<image href="data:image\/png;base64,[^"]+" x="670"/);
+    assert.doesNotMatch(svg, /การจ่ายเงินคืน/, 'the legacy form states payment through its payer block, as it did when signed');
+
+    repo.findClaimSignatureAttachment = async (_c: string, attachmentId: string) => ({
+      id: attachmentId, bucket: 'b', objectKey: `k/${attachmentId}`, mimeType: 'image/png', byteSize: PNG_BYTES.length, checksumSha256: 'f'.repeat(64),
+    });
+    const error: any = await previewUseCase(repo).execute(ctx(), 'rb-1').then(() => null, (e: unknown) => e);
+    assert.equal(error.getStatus(), 422);
+    assert.equal(error.getResponse().reason, 'claim_signature_checksum_mismatch');
+  });
+
+  it('prints the self-approval line under the two blocks for a one-person claim (AC06)', async () => {
+    const { repo } = fakeRepo(request({
+      requesterUserId: 'mgr-1', requesterDisplayNameSnapshot: 'มานี ผู้จัดการ',
+      financeReviewStatus: 'NOT_REQUIRED', financeReviewedByUserId: undefined, financeReviewedAt: undefined,
+      payments: [{ id: 'pay-1', status: 'RECORDED', paidByUserId: 'mgr-1', paidAt: new Date('2026-07-23T00:00:00.000Z'), paymentMethod: 'CASH' }],
+      claimSignatures: [signatureRow('REQUESTER', 'mgr-1'), signatureRow('APPROVER', 'mgr-1')],
+    }));
+    const svg = svgOf(await previewUseCase(repo).execute(ctx({ userId: 'mgr-1', permissions: ['reimbursement.read'] }), 'rb-1'));
+    assert.match(svg, /ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน อนุมัติรายการของตนเองตามนโยบายบริษัท/);
+    assert.equal((svg.match(/<image href=/g) ?? []).length, 2);
+    assert.match(svg, /วิธี เงินสด เลขอ้างอิง - บันทึกโดย มานี ผู้จัดการ/);
+  });
+
+  it('prints the policy note in the approver block of an auto-approved claim', async () => {
+    const { repo } = fakeRepo(request({
+      approvalSteps: [],
+      approvalPolicySnapshotJson: {
+        schemaVersion: 1, policyId: 'p-1', policyVersion: 'v1', approvalRequiredFromAmount: '1000.00', requiresApproval: false,
+        route: null, allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: false,
+        duplicatePolicy: 'WARN', financeReviewRequired: false,
+      },
+    }));
+    const svg = svgOf(await previewUseCase(repo).execute(ctx(), 'rb-1'));
+    assert.match(svg, /ผู้อนุมัติ<\/text>\s*<text x="615" y="\d+" text-anchor="middle" font-size="13">ไม่ต้องอนุมัติตามนโยบาย<\/text>/);
+    assert.equal((svg.match(/\(\s+\.{20}\s+\)/g) ?? []).length, 0);
+  });
+
+  it('never draws a signature from a paper copy: only signature rows reach the form (A4)', async () => {
+    const { repo } = fakeRepo(request({ claimSignatures: [] }));
+    repo.listSignedClaimFormCopies = async () => { throw new Error('the renderer must not read signed copies'); };
+    const result = await previewUseCase(repo).execute(ctx(), 'rb-1');
+    assert.ok(result.pageSvgDataUrls?.length);
+    for (const svg of [svgOf(result), ...result.pageSvgDataUrls.map((url) => svgOf({ svgDataUrl: url }))]) {
+      assert.doesNotMatch(svg, /<image /);
+    }
   });
 
   it('turns a storage outage into a 422 naming the block, not a 500', async () => {
