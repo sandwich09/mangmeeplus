@@ -8,15 +8,15 @@
 
 ## Purpose
 
-ปิด trial, ล็อกร้านใหม่จนจ่าย, ให้ทีมขายทำดีลราคาอิสระผ่าน console ของตัวเองพร้อมอนุมัติ และให้ลูกค้าจ่ายเองผ่าน Stripe (บัตร/PromptPay) หรือโอน+สลิป โดยเปิดสิทธิ์อัตโนมัติหลังจ่าย ภายในกรอบ 3 วัน
+ปิด trial, ล็อกร้านใหม่จนจ่าย, ให้ทีมขายทำดีลราคาอิสระผ่าน console ของตัวเองพร้อมอนุมัติ และให้ลูกค้าจ่ายเองผ่านโหมดชำระครั้งเดียวของ PR #667 (บัตร/PromptPay) โดยเปิดสิทธิ์อัตโนมัติหลังจ่าย ภายในกรอบ 3 วัน (โอน+สลิปเป็นทางสำรอง Phase 4)
 
 ## Current Repository Context
 
 - ล็อก/term/sweep/LINE: ตาม free-usage plan §2 (ของเดิมมีครบ ยกเว้น gap S02–S05)
-- Billing: one-time Checkout + evidence (`billing-repeat.ts`, `paid-checkout-invoice.ts`), async events, reconciler apply, `quoteTotals`, BillingAccount/customer
+- Billing (develop bb87c556, PR #667): `BillingPurchaseMode` + gate ต่อโหมด, quote `purchaseMode`, Checkout `mode: 'payment'`, `paidPackageCheckoutEvidence({ paymentMethod })`, reconciler apply ครั้งเดียว + `bindPromptPayRenewal`, `BillingAccount.renewalMode/billingAnchorDay/contractAttemptId`, OWNER ยกเลิก Checkout; async events, `quoteTotals`
 - ผู้ใช้/รหัสผ่านชั่วคราว: employee-access (`create-employee`, `regenerate-employee-credential`); platform tenant `seed-watchdog-system-company`; registry roles/permissions (`permission-registry.ts`)
 - web: `/system` layout + `SystemHeader`; workspace nav/locked shell; `BillingPage.tsx`; `SignupQueuePage` (คำขอเปลี่ยนแพ็กเกจ)
-- ห้ามแตะ (พิสูจน์ด้วย diff ว่าง): `paid-invoice.ts`, `billing-collection.ts`, `billing-schedule.ts`, `billing-upgrade.ts`, `billing-refund-source.ts`
+- ห้ามแตะเพิ่มจาก origin/develop (พิสูจน์ด้วย diff ว่างเทียบ develop): `paid-invoice.ts`, `paid-checkout-invoice.ts`, `billing-collection.ts`, `billing-schedule.ts`, `billing-upgrade.ts`, `billing-refund-source.ts`
 
 ## Implementation Rules
 
@@ -27,10 +27,10 @@
 ## Scope
 
 ### In Scope
-- P1 ปิด trial + locked shell + LINE · P2 Sales console (roles/users/deals/approve/reports) · P3 ชำระดีลผ่าน Stripe (บัตร+PromptPay) + สลิป + หน้าแพ็กเกจ · P4 ต่ออายุดีล/รายงาน/คู่มือ
+- P1 ปิด trial + locked shell + LINE · P2 Sales console (roles/users/deals/approve/reports) · P3 ชำระดีลผ่านโหมดครั้งเดียวของ PR #667 (บัตร/PromptPay) + หน้าแพ็กเกจ · P4 ต่ออายุดีล/รายงาน/คู่มือ + สลิปสำรอง (Q9) + แปลง subscription บัตรอัตโนมัติ (Q7) · P5 ดีลต่ออายุอัตโนมัติ (บัตร/QR ทุกงวด)
 
 ### Out of Scope
-- สวิตช์ trial, coupon/Price เฉพาะร้าน, ตัดบัตรอัตโนมัติสำหรับดีล, คอมมิชชันในระบบ, EasySlip
+- สวิตช์ trial, coupon บน subscription, proration ในระบบ (Q7 ค่าเริ่มต้น), คอมมิชชันในระบบ, EasySlip
 
 ## Phase 0: Discovery and Alignment (เสร็จ 2026-09-20)
 
@@ -66,23 +66,33 @@
 ### Exit Criteria
 - ดีล APPROVED ปรากฏใน DTO ของร้านนั้นเท่านั้น; ทุกบทบาทถูกกั้นตาม spec
 
-## Phase 3: ชำระดีล (Stripe บัตร+PromptPay, สลิป) + หน้าแพ็กเกจ — PR แยก: API / web
+## Phase 3: ชำระดีลผ่านโหมดครั้งเดียวของ PR #667 (บัตร / PromptPay) + หน้าแพ็กเกจ
+
+ปรับ 2026-09-21 ตาม spec §19: ไม่มี `DealSource`/Checkout แยก; ดีลวิ่งบนเส้นทาง `CARD_ONCE` / `PROMPTPAY_ONCE` ที่ develop มีแล้ว
 
 ### Tasks
-1. billing: `DealSource` (product จาก Price catalog ของ tier ฐาน, amount = ดีล), quote จากดีล (`{ dealId }`, `quoteTotals`, R6/R9, legacy guard ผ่อน S15), Checkout `mode: 'payment'` `['card','promptpay']`, evidence ครั้งเดียวรับ `promptpay`, apply ดีล (term เดือน + ลิมิต + เมนู/งบ AI follow-up + โควตารายเดือน + re-enable + ดีล APPLIED + audit), label source `DEAL`, `BillingStatus.deal`
-2. สลิป: ยก endpoint/verify จาก special-invoice plan Phase 1 (apply เดียวกัน)
-3. web `BillingPage.tsx`: การ์ดข้อเสนอแรกสุด, ขั้นกรอกอีเมล/ที่อยู่ที่ขาด (D4), แก้ copy "ไม่จำกัด" (S04), ทางเลือกโอน; error labels; snapshot test catalog; marketing regex
-4. Stripe account: เปิด PromptPay (Owner ทำใน dashboard) + บันทึกใน runbook
+1. contracts: `BillingOffer.intervalCount: number` (catalog ยังส่ง 1; snapshot/marketing smoke byte-identical), `BillingQuote.deal?: { requestId; months; description }`, `BillingStatus.deal?` (สรุปดีล APPROVED: ราคา/เดือน/สิทธิ์/หมดอายุ/`purchaseModes` ที่ใช้ได้), DTO `package-change-requests` `deal` (จาก Phase 2) ใช้ค่าเดียวกัน
+2. billing domain: `appendPackageInterval(start, interval, anchorDay, count = 1)`; `dealOffer(snapshot)` → `BillingOffer` ของดีล (S35); `assertDealSnapshot` (S36); `dealPurchaseModes(gates, priceSatang, account)` (S38/S39, เพดาน PromptPay เป็นค่าคงที่ + test)
+3. `billing.service` `quote({ dealId, purchaseMode })`: โหลดดีล APPROVED ของร้าน (lock), D4 (อีเมลยืนยัน + ที่อยู่), gate ตามโหมด (`BILLING_MODE_NOT_READY`), ข้าม `assertStripePrice`/`restartFits` เมื่อมี `deal` (S36/S45), เตือนร้านทดลอง (Q5), snapshot `{ deal, quote.offer = dealOffer, purchaseMode }`; `checkout` เดิม (`unit_amount` จาก snapshot เท่านั้น); ดีลหมดอายุ = quote/checkout ใหม่ปฏิเสธ (S46)
+4. reconciler apply ครั้งเดียว (เดิม) + follow-up ดีล **ในธุรกรรมเดียว**: `companyPlanTerm` (tier ฐาน, ลิมิตดีล, term N เดือน), feature entitlements ตาม snapshot, งบ AI, `PackageChangeRequest → APPLIED` (`paymentState STRIPE_ONE_TIME`, `paymentRef` = invoice id), แถว `SalesAttribution` ครั้งแรก, re-enable บริษัท (เดิม), audit CRITICAL `sales.deal.applied`, trigger `billing.package_updated` ข้อความดีล (S41); replay idempotent ด้วย `evidenceHash` เดิม; session ที่สร้างก่อนหมดอายุแล้วจ่ายทีหลังยัง apply; scan EXPIRED ข้ามดีลที่มี attempt เปิด (S46)
+5. ร้านที่มีสิทธิ์อยู่ (spec §19.3 แถว 1–3): ล็อก/หมดอายุ/ทดลอง = เริ่มทันที; ครั้งเดียวยังไม่หมด = `snapshot.oneTime` ต่อท้าย + สิทธิ์ทันที (S40); `PROMPTPAY_RENEW` = ยกเลิก subscription QR (system-initiated, journal/observed) + void บิลค้าง + ต่อท้าย — แถว `CARD_AUTO` (Q7) อยู่ Phase 4
+6. web `BillingPage.tsx`: การ์ดข้อเสนอเป็นการ์ดแรก (ชื่อ tier ฐาน + "ข้อเสนอพิเศษสำหรับร้านคุณ", ราคา/รวม N เดือน, สาขา·ผู้ใช้·ใบต่อเดือน, เมนู, ใช้ได้ถึง, ตัวเลือกโหมด reuse ของ #667 จำกัดตาม `deal.purchaseModes`, ปุ่ม "เลือกข้อเสนอนี้"; ปิดทั้งสอง gate → "ติดต่อทีมงาน"), ขั้น D4 ผ่าน `billingProfileHref(..., { deal })` กลับมาการ์ดเดิม, copy S04, error labels สอง map, `billing-preview.fixture.ts` เพิ่ม fixture ดีลแยก (S44); theme Mangmee เดิม, 390px
+7. admin: `BillingCompanyOverview` source `DEAL` คู่ `renewalMode` (S43); label ใน `billing-admin.service.ts`
+8. rollout (Owner): เปิด PromptPay บนบัญชี Stripe live; เปิด gate `card_once`/`promptpay_once` หลัง UAT ของ #667 ผ่าน (S37); เปลี่ยน copy "บัตรออนไลน์" → "บัตรหรือ PromptPay" (S42); บันทึกใน runbook billing
+9. ห้ามแตะเพิ่มจาก origin/develop: `paid-invoice.ts`, `paid-checkout-invoice.ts`, `billing-collection.ts`, `billing-schedule.ts`, `billing-upgrade.ts`, `billing-refund-source.ts` (พิสูจน์ด้วย diff ว่างเทียบ develop)
 
 ### Tests
-- `billing-deal-smoke.ts` (HTTP/PG/simulated Stripe: card sync, promptpay async success/fail, replay, expired deal, ร้านมี subscription ถูกปฏิเสธ, apply ครบ, re-enable); regression smokes เดิม; E2E ลูกค้า 390; UAT Stripe test mode จริง บัตร + PromptPay
+- unit: `dealOffer`, `appendPackageInterval(count)` (กุมภาพันธ์/เดือนสั้น/12 เดือน = 1 ปี), `assertDealSnapshot`, `dealPurchaseModes` (เพดาน, gate ปิด, ตระกูลโหมด)
+- PG/HTTP smoke ใหม่ `billing-deal-smoke.ts` ต่อจาก journeys ครั้งเดียวของ #667 ใน `billing-http-smoke.ts` (simulated Stripe): card sync, promptpay async สำเร็จ/ล้มเหลว, OWNER ยกเลิก QR ค้างแล้วเลือกดีล, replay evidence, ดีลหมดอายุ (quote ปฏิเสธ / session เก่าจ่ายทีหลังยัง apply / scan ข้าม attempt เปิด), ต่อท้ายรอบครั้งเดียว, แปลง `PROMPTPAY_RENEW`, gate ปิด, ร้านทดลอง (Q5), ลิมิตต่ำกว่าที่ใช้ (S45), refund ก่อนหน้า (S40), apply ครบทุกสิทธิ์ + LINE/เว็บใช้ได้
+- regression: journeys ครั้งเดียว/ catalog ของ #667 ไม่เปลี่ยน (byte-identical), `billing-marketing-smoke`, `billing-offer-terms-smoke`, e2e `billing-preview.spec.ts` เดิม + spec ใหม่การ์ดดีล 390; whole-chain acceptance
+- UAT (Stripe test mode): ร้านล็อก → ดีล → บัตร และ PromptPay จริง → APPLIED; วัดเวลา approve→APPLIED ใน evidence
 
 ### Exit Criteria
-- ร้านล็อก → ดีล → จ่าย → ใช้งานได้ภายในนาที (วัดเวลา approve→APPLIED ใน evidence)
+- ร้านล็อก → ดีล → จ่าย (บัตร/QR) → ใช้งานได้ภายในนาที; เส้นทางซื้อ catalog ของ #667 ไม่เปลี่ยน (diff ว่างในไฟล์หลักฐาน + smoke เดิมผ่าน)
 
 ## Phase 4: ต่ออายุดีล, รายงานหัวหน้า, คู่มือ
 
-- scan 14 วันก่อนหมด: สร้างดีลรอบถัดไป APPROVED (D3) + push; รายงาน `/v1/sales/reports/summary` + หน้า; runbook เซลล์/Owner; ตัวชี้วัด time-to-active
+- scan 14 วันก่อนหมด: สร้างดีลรอบถัดไป APPROVED (D3) + push; รายงาน `/v1/sales/reports/summary` + หน้า; runbook เซลล์/Owner; ตัวชี้วัด time-to-active; สลิปสำรอง (Q9): ยก endpoint/verify จาก special-invoice plan (apply เดียวกับดีล); แปลง subscription บัตรอัตโนมัติเป็นดีล (Q7 ค่าเริ่มต้น: ยกเลิกทันทีเมื่อจ่าย ไม่มี proration; ฟอร์มดีลโชว์มูลค่าคงเหลือ; issue `DEAL_SUBSCRIPTION_CANCEL_PENDING` + retry; S34)
 
 ## Integration Verification
 
@@ -93,7 +103,7 @@
 
 ## Risks
 
-- PromptPay/บัตรบน Stripe TH ต้องเปิดจริงและมีเพดาน (S12) → ทดสอบ test mode + fallback โอน
+- gate `card_once`/`promptpay_once` ปิดจน UAT ของ PR #667 ผ่าน (S37) + PromptPay live + เพดานยอด (S38) → dev/UAT test mode; production รอ Owner เปิด gate; fallback โอน (Phase 4, Q9)
 - ดีลราคาอิสระไม่มีบันได → ความเสี่ยงราคาผิดพลาด → เตือนสูงกว่า catalog + audit + รายงานหัวหน้า
 - PII เซลล์ (S10) → เข้ารหัส + สิทธิ์เฉพาะ + export log
 - ร้านที่มี subscription แล้ว (S14) → block ชัด + ข้อความบอกทางแก้
@@ -106,7 +116,7 @@
 ## มติรอบ 2 (2026-09-20) — งานที่เพิ่ม/เปลี่ยน
 
 - Phase 2: อนุมัติเองได้สำหรับ lead/SYSTEM_ADMIN (D2) → ลด branch self-approval; audit `selfApproved`
-- Phase 3 (เพิ่ม, H): **แปลง subscription เป็นดีลโดยจ่ายส่วนต่าง** (D5): `DealSource` รองรับร้านที่มี `baseSubscriptionId` — คำนวณส่วนต่างด้วย `proratedPackagePrice` จาก contract snapshot เดิม, quote แสดง 3 ตัวเลข, Checkout ครั้งเดียว, apply ดีล, สั่ง `CANCEL_RENEWAL` ระบบ (reuse collection op, ไม่ต้องลูกค้ากด), ปิด resume ใน status/Portal ขณะดีล ACTIVE; tests: ส่วนต่าง 0/บวก, subscription ค้างชำระ/grace ถูกปฏิเสธ, cancel observed, ไม่มี invoice ซ้ำจาก Stripe หลังแปลง
+- ~~Phase 3~~ → Phase 4, ทบทวนโดย Q7 (spec §19.3/19.5; ค่าเริ่มต้น = ไม่มี proration): **แปลง subscription เป็นดีลโดยจ่ายส่วนต่าง** (D5): `DealSource` รองรับร้านที่มี `baseSubscriptionId` — คำนวณส่วนต่างด้วย `proratedPackagePrice` จาก contract snapshot เดิม, quote แสดง 3 ตัวเลข, Checkout ครั้งเดียว, apply ดีล, สั่ง `CANCEL_RENEWAL` ระบบ (reuse collection op, ไม่ต้องลูกค้ากด), ปิด resume ใน status/Portal ขณะดีล ACTIVE; tests: ส่วนต่าง 0/บวก, subscription ค้างชำระ/grace ถูกปฏิเสธ, cancel observed, ไม่มี invoice ซ้ำจาก Stripe หลังแปลง
 - Phase 4 (เปลี่ยน): ต่ออายุดีล = สร้าง PENDING_APPROVAL อัตโนมัติ 14 วันก่อนหมด + แจ้งเตือนเซลล์/หัวหน้า (เว็บ+LINE+สรุปรายวัน) + เตือนซ้ำ 7 วัน + แจ้ง Owner (D3); รายงาน: นับเฉพาะยอดผ่านดีล ผูก `salesUserId`, เซลล์เห็นของตัวเองรายเดือน, หัวหน้าเห็นทุกทีม, ไม่มีเอกสารการเงิน; โอนดีลข้ามเซลล์ (Owner, audit)
 - Phase 5 (optional, D6): ลิงก์แนะนำของเซลล์ตอนสมัคร + นับยอดร้านที่แนะนำ N เดือน
 
@@ -131,6 +141,7 @@
 - ยกงานจาก [billing-special-price-plan-th.md](billing-special-price-plan-th.md) Phase 1–3 มาเป็น Phase 5 ของแผนนี้: `BillingSpecialPrice` ผูกกับดีล (`dealId`), สร้าง Stripe Price ตอนอนุมัติดีลที่ `autoRenew=true` (journal/observed/drain แบบ refunds), quote path ใช้ offer/priceId ของดีล, `capacity()` ใช้ offer ของดีล, legacy guard ผ่อน, `SCHEDULE_PRICE_RETURN` + issue `SPECIAL_PRICE_ENDING` + drift check, UI: สวิตช์ในฟอร์มดีล + การ์ดลูกค้าแสดง "ตัดบัตรอัตโนมัติทุกเดือน/ปี ยกเลิกได้จากหน้าแพ็กเกจ"
 - ข้อจำกัดที่ต้องบอกเซลล์ในฟอร์ม: รอบเดือน/ปีเท่านั้น, ลูกค้าต้องจ่ายด้วยบัตร, การจบดีลต้องสั่งกลับราคาปกติ
 - Tests: ตาม spec billing-special-price §15 + regression smokes เดิมด้วย fixture ราคาดีล; UAT Stripe test mode: สมัคร→ดีลอัตโนมัติ→ตัดบัตรรอบถัดไป (จำลอง invoice.paid) → กลับราคาปกติ
+- 2026-09-21 (Q8 ค่าเริ่มต้น): รองรับ `PROMPTPAY_RENEW` ด้วย — Price ของดีล + `bindPromptPayRenewal` ของ PR #667; การ์ดใช้ตัวเลือกโหมด `CARD_AUTO`/`PROMPTPAY_RENEW`
 
 ## มติ Q1–Q6 (2026-09-20) — งานที่เพิ่ม
 - Phase 2: หน้า "งานของฉัน" + badge ใน `/sales` (trigger keys ลงทะเบียน); temp password โชว์ครั้งเดียว + LINE ถ้าผูก; ค้นหาร้านทุกร้าน (ฟิลด์น้อย) + audit LOW; role ใหม่ไม่มี permission ธุรกิจ + landing `/sales`
@@ -148,3 +159,20 @@
 - Follow-ups delegated to Sonnet: (F1) sweep expiry branch skips the "ครบกำหนด" notification and uses reason `no_package` for 0-day terms (fallback if the provisioning lock step ever fails); (F2) LINE public-policy FAQ answers rewritten without the free trial (copy for Owner tweak in PR)
 - Final gate (controller, final tree): copy fix "บัตรหรือ PromptPay" → "บัตรออนไลน์" (PromptPay arrives in Phase 3); web tsc 0 + 1,851 pass; api targeted specs 496 pass; contracts 324 pass; api typecheck 0; Sonnet follow-ups F1 (sweep no_package: 15/15) and F2 (public-policy FAQ: 404/404) merged in; whole-chain acceptance rerun before push
 - PR opened: https://github.com/MangmeeDev/mangmeeplus/pull/666 (develop ← codex/sales-deals-phase1-20260920, commit 02b7a15b); whole-chain acceptance on the final tree 4+1571+387 pass / 0 fail; CI pending; main sync PR after develop merge per repo protocol
+
+## ปรับตาม PR #667 (2026-09-21) — โหมดชำระครั้งเดียว บัตร/PromptPay และ QR ต่ออายุ
+
+- develop bb87c556 มี `BillingPurchaseMode` (`CARD_AUTO`/`CARD_ONCE`/`PROMPTPAY_ONCE`/`PROMPTPAY_RENEW`), gate ต่อโหมด (ปิดจน UAT ของ #667 ผ่าน), Checkout `mode: 'payment'` + หลักฐาน promptpay + apply ครั้งเดียว + `bindPromptPayRenewal` + OWNER ยกเลิก Checkout — spec §19.1
+- Phase 3 เขียนใหม่ทั้งส่วน (ข้างบน): ดีล = snapshot `deal` บนเส้นทางครั้งเดียวของ #667; งานที่หายไป: `DealSource`, Checkout/evidence แยก, `payment_method_types` ของเรา, สลิปใน Phase 3; งานที่เพิ่ม: S35 (`intervalCount`/append N เดือน), S36 (`assertDealSnapshot`), S38/S39 (`dealPurchaseModes`), S45 (ข้าม `restartFits`), S46 (หมดอายุระหว่างจ่าย)
+- Phase 4 เพิ่ม: สลิปสำรอง (Q9 ค่าเริ่มต้น = เลื่อนมาที่นี่) ยก endpoint/verify จาก special-invoice plan; แปลง subscription บัตรอัตโนมัติเป็นดีล (Q7 ค่าเริ่มต้น = ยกเลิกทันทีเมื่อจ่าย ไม่มี proration ในระบบ; ฟอร์มดีลโชว์มูลค่าคงเหลือให้เซลล์หักเอง; issue `DEAL_SUBSCRIPTION_CANCEL_PENDING` + retry; เหตุการณ์ subscription เก่าไม่ hold บัญชี — S34)
+- Phase 5 เพิ่ม: ดีลต่ออายุอัตโนมัติรองรับ `PROMPTPAY_RENEW` ด้วย (Q8 ค่าเริ่มต้น) ผ่าน Price ของดีล + `bindPromptPayRenewal`; การ์ดใช้ตัวเลือกโหมดของ #667 (`CARD_AUTO`/`PROMPTPAY_RENEW`)
+- การนับยอดทีมขาย (§17.2) ไม่เปลี่ยน: ครั้งแรกครั้งเดียวทุกโหมด; `PROMPTPAY_RENEW` นับเฉพาะ QR ครั้งแรก
+- Phase 1 ไม่ต้องแก้โค้ดเพิ่ม: merge develop เข้า branch แล้ว (sweep เก็บทั้ง `lockReason` และ `nextStep` ของ #667; BillingPage เก็บทั้งตัวเลือกโหมดและหัวข้อตาม `lockReason`); copy "บัตรออนไลน์" คงไว้จน Owner เปิด gate PromptPay บน production (S42)
+- รอมติ Owner: Q7 / Q8 / Q9 (spec §19.5) — ถ้าไม่ตอบ ใช้ค่าเริ่มต้น
+
+## Delivery mode (Owner 2026-09-21): ไม่ merge จนกว่าจะเสร็จทั้งหมด
+
+- branch เดียว `codex/sales-deals-phase1-20260920` (worktree `/private/tmp/mangmee-sales-deals-p1-20260920`) / PR #666 ขยายทีละ phase (เปลี่ยนชื่อ PR ตอนจบ); ไม่มี PR ต่อ phase; merge `origin/develop` เข้ามาเป็นระยะแบบ plain merge (ห้าม rebase); CI รันทุก push — ต้องเขียวก่อนเริ่ม phase ถัดไป
+- แต่ละ phase: implementer subagent (Opus/Sonnet) + controller review (bug/gap/impact/theme) + evidence ใน memory ก่อนขึ้น phase ถัดไป; commit ต่อ phase ชัดเจน (`feat(sales): phase N …`)
+- ตอนจบ: admin-merge #666 เข้า develop แล้วเปิด PR sync ไป main จาก main-based branch (โปรโตคอลเดิม); deploy ตาม runbook เป็นขั้นแยก (production ยังติด Postmark secrets และ gate ของ #667)
+- ลำดับต่อไป: Phase 2 (Sales console) → Phase 3 → Phase 4 → Phase 5
