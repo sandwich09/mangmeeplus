@@ -7,7 +7,7 @@ import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.lo
 import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
 import { toRequestSummary, detailWithFileNames } from '../dto/reimbursement.mapper';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
-import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
+import { effectivePolicy, effectivePolicyForRequest, parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 import {
   isSelfApproval,
   SELF_APPROVAL_EXEMPT_ROLES,
@@ -219,6 +219,10 @@ export class ApproveReimbursementUseCase {
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot approve from status ${req.status}`);
 
     const policy = effectivePolicyForRequest(req, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
+    // Owner order 2026-09-21: submit found nobody but the requester and assigned the step to them.
+    // That frozen assignment is what lets them decide below (assignedBySnapshot skips the
+    // self-approval rule, here and in the repository transaction); this flag is the frozen reason.
+    const soloAtSubmission = parseReimbursementPolicySnapshot(req.approvalPolicySnapshotJson)?.route?.soloSelfApprovalAtSubmission === true;
     const step = currentApprovalStep(req);
     const activeApprovers = await activeStepApprovers(this.repo, ctx.companyId, step, req.branchId);
     const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
@@ -281,12 +285,14 @@ export class ApproveReimbursementUseCase {
             // the trail — a post-commit audit write can be lost exactly when it matters most.
             // `via` distinguishes the company having opened the policy from a role standing in for
             // it, which is the question support has to answer when a customer disputes a claim.
+            // `no_other_approver`: nobody else could approve at submit (owner order 2026-09-21); no
+            // exempt role stood in, so the roles the requester acted under are recorded instead.
             ...(req.requesterUserId === ctx.userId
               ? {
                 selfApproval: {
                   approvedOwnRequest: true,
-                  via: policy.allowSelfApproval ? 'company_policy' : 'role_exemption',
-                  actorRoles: ctx.roles.filter((role) => SELF_APPROVAL_EXEMPT_ROLES.includes(role)),
+                  via: soloAtSubmission ? 'no_other_approver' : policy.allowSelfApproval ? 'company_policy' : 'role_exemption',
+                  actorRoles: soloAtSubmission ? ctx.roles : ctx.roles.filter((role) => SELF_APPROVAL_EXEMPT_ROLES.includes(role)),
                 },
               }
               : {}),

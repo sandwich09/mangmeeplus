@@ -16,9 +16,11 @@ import {
   approverModeForRole,
   buildReimbursementApproverRoleOptions,
   GetReimbursementPolicyUseCase,
+  ListReimbursementApproverOptionsUseCase,
   UpdateReimbursementPolicyUseCase,
   type ApproverRoleCandidate,
 } from './reimbursement-policy.use-case';
+import { parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 
 // Lane C: one claim, many lines. The header total, category and date are a
 // server-side rollup of the lines — a client never sends them.
@@ -616,6 +618,29 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
 
     assert.equal(state.request.status, 'PENDING_APPROVAL');
     assert.deepEqual(state.calls.approvalSteps[0]?.assignedApproverUserIdsJson, ['approver-1']);
+    // An ordinary route adds no solo flag, so its snapshot keeps the shape it always had.
+    assert.equal('soloSelfApprovalAtSubmission' in state.request.approvalPolicySnapshotJson.route, false);
+  });
+
+  it('freezes a solo route on the step, the policy snapshot and the submit audit (owner order 2026-09-21)', async () => {
+    const state = fakeRepo({ policy: noReceiptNeeded });
+    const soloRoutes = {
+      resolveNamedSubmissionRoute: async () => null,
+      resolveSubmissionRoute: async ({ roleKey, requesterUserId }: any) => ({
+        responsibilityRole: roleKey, effectiveTaskRole: roleKey, recipientUserIds: [requesterUserId],
+        ownerRecipientUserIds: [], ownerFallbackUsed: false, soloSelfApproval: true,
+      }),
+    } as any;
+    const audit = { log: async (entry: any) => { state.calls.audits.push(entry); } } as any;
+    await draftWith(state, [inputLine()], withReason);
+    await new SubmitReimbursementUseCase(state.repo, audit, noopOutbox, evidenceService(), soloRoutes, noopProjections).execute(ctx(), 'rb-1');
+
+    assert.equal(state.request.status, 'PENDING_APPROVAL');
+    assert.deepEqual(state.calls.approvalSteps[0]?.assignedApproverUserIdsJson, ['staff-1']);
+    // Frozen with the route, so every later reader parses the same reason.
+    assert.equal(parseReimbursementPolicySnapshot(state.request.approvalPolicySnapshotJson)?.route?.soloSelfApprovalAtSubmission, true);
+    const submitAudit = state.calls.audits.find((entry: any) => entry.action === 'reimbursement.request.submit');
+    assert.equal(submitAudit.metadataJson.soloSelfApproval, true);
   });
 
   it('skips human approval below threshold and enters finance review when configured', async () => {
@@ -866,6 +891,73 @@ describe('reimbursement approver role options', () => {
     assert.equal(approverModeForRole('MANAGER'), 'MANAGER_ROLE');
     assert.equal(approverModeForRole('OWNER'), 'OWNER_ROLE');
     assert.equal(approverModeForRole('ACCOUNTANT'), 'CUSTOM_ROLE');
+  });
+});
+
+// Owner order 2026-09-21 ("ผู้ใช้คนเดียวที่กำหนดบทบาทเอง ต้องทำได้นะ"): a requester dropped from the
+// route only as a self-approver gets the step back when nobody else could take it.
+describe('submission route when the requester is the only approver', () => {
+  const APPROVE = ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'];
+  type Holder = { userId: string; branchScopeMode?: string; branchIds?: string[] };
+  /** Just enough Prisma for routing: approve-capable roles with their holders, no entitlement rows (all on). */
+  function resolver(roles: Record<string, Holder[]>, named: unknown = null) {
+    return new ListReimbursementApproverOptionsUseCase({ client: {
+      role: { findMany: async () => Object.entries(roles).map(([key, holders]) => ({
+        key, name: key, scopeKey: 'system', status: 'ACTIVE',
+        permissions: APPROVE.map((permission) => ({ permission: { key: permission } })),
+        memberships: holders.map((holder) => ({ membership: {
+          userId: holder.userId, branchScopeMode: holder.branchScopeMode ?? 'ALL_BRANCHES', defaultBranchId: null,
+          branchScopes: (holder.branchIds ?? []).map((branchId) => ({ branchId })), roles: [{ role: { key, status: 'ACTIVE' } }],
+        } })),
+      })) },
+      branch: { findMany: async () => [] },
+      companyFeatureEntitlement: { findMany: async () => [] },
+      companyMembership: { findFirst: async () => named },
+    } } as any);
+  }
+  const input = { companyId: 'co-1', roleKey: 'CUSTOM_SOLO', branchId: 'branch-1', requesterUserId: 'solo-1', allowSelfApproval: false };
+  const otherBranch = { branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['branch-2'] };
+
+  it('gives the step back to a solo holder of the routed role instead of refusing the claim', async () => {
+    assert.deepEqual(await resolver({ CUSTOM_SOLO: [{ userId: 'solo-1' }], OWNER: [] }).resolveSubmissionRoute(input), {
+      responsibilityRole: 'CUSTOM_SOLO', effectiveTaskRole: 'CUSTOM_SOLO', recipientUserIds: ['solo-1'],
+      ownerRecipientUserIds: [], ownerFallbackUsed: false, soloSelfApproval: true,
+    });
+    // "Anyone else eligible" covers this claim's branch: an owner elsewhere does not count.
+    const ownerElsewhere = await resolver({ CUSTOM_SOLO: [{ userId: 'solo-1' }], OWNER: [{ userId: 'owner-1', ...otherBranch }] }).resolveSubmissionRoute(input);
+    assert.deepEqual([ownerElsewhere.recipientUserIds, ownerElsewhere.soloSelfApproval], [['solo-1'], true]);
+  });
+
+  it('keeps the normal rule whenever someone else can approve', async () => {
+    const peer = await resolver({ CUSTOM_SOLO: [{ userId: 'solo-1' }, { userId: 'peer-1' }], OWNER: [] }).resolveSubmissionRoute(input);
+    assert.deepEqual([peer.recipientUserIds, peer.soloSelfApproval], [['peer-1'], undefined]);
+    // The OWNER fallback is still preferred when the owner is someone else and covers the branch.
+    const owner = await resolver({ CUSTOM_SOLO: [{ userId: 'solo-1' }], OWNER: [{ userId: 'owner-1' }] }).resolveSubmissionRoute(input);
+    assert.deepEqual([owner.recipientUserIds, owner.effectiveTaskRole, owner.ownerFallbackUsed, owner.soloSelfApproval], [['owner-1'], 'OWNER', true, undefined]);
+  });
+
+  it('still refuses when the requester could not approve it either', async () => {
+    // Not a holder of the routed role (the default MANAGER route, their own role elsewhere)…
+    await assert.rejects(() => resolver({ MANAGER: [], OWNER: [] }).resolveSubmissionRoute({ ...input, roleKey: 'MANAGER' }), /reimbursement_approver_not_ready/);
+    // …or a holder who does not cover the claim's branch.
+    await assert.rejects(() => resolver({ CUSTOM_SOLO: [{ userId: 'solo-1', ...otherBranch }], OWNER: [] }).resolveSubmissionRoute(input), /reimbursement_approver_not_ready/);
+  });
+
+  it('is decided at submit only: a background re-read never routes a claim to its requester', async () => {
+    const { companyId, ...routeInput } = input;
+    assert.deepEqual(await resolver({ CUSTOM_SOLO: [{ userId: 'solo-1' }], OWNER: [] }).resolveSubmissionRoutesBestEffort(companyId, [routeInput]), [null]);
+  });
+
+  it('gives a named approver who filed the claim the step only when nobody else could take it', async () => {
+    const named = { userId: 'solo-1', branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null, branchScopes: [],
+      roles: [{ role: { key: 'CUSTOM_SOLO', permissions: APPROVE.map((key) => ({ permission: { key } })) } }] };
+    const namedInput = { companyId: 'co-1', userId: 'solo-1', branchId: 'branch-1', requesterUserId: 'solo-1', allowSelfApproval: false, fallbackRole: 'MANAGER' };
+    assert.deepEqual(await resolver({ MANAGER: [], OWNER: [] }, named).resolveNamedSubmissionRoute(namedInput), {
+      responsibilityRole: 'MANAGER', effectiveTaskRole: 'MANAGER', recipientUserIds: ['solo-1'],
+      ownerRecipientUserIds: [], ownerFallbackUsed: false, soloSelfApproval: true,
+    });
+    // An owner can take it: the named route steps aside and the caller's role route picks the owner.
+    assert.equal(await resolver({ MANAGER: [], OWNER: [{ userId: 'owner-1' }] }, named).resolveNamedSubmissionRoute(namedInput), null);
   });
 });
 

@@ -49,6 +49,22 @@ export function isMissingSavedSignatureError(e: unknown): boolean {
     || (e instanceof Error && e.message.includes('claim_saved_signature_required'));
 }
 
+/**
+ * Owner 2026-09-21: submit found nobody who may approve the claim. Instead of a bare refusal, say
+ * who can fix it where it failed: a policy manager picks an approver in ตั้งค่าเบิกจ่าย (the page
+ * offers the link), anyone else asks the owner. Null for every other error.
+ */
+export function approverNotReadyHelp(e: unknown, permissions: readonly string[]): { text: string; policyLink: boolean } | null {
+  if (!(e instanceof Error && e.message.includes('reimbursement_approver_not_ready'))) return null;
+  const policyLink = permissions.includes('reimbursement.policy.manage');
+  return {
+    policyLink,
+    text: policyLink
+      ? 'ยังไม่มีผู้อนุมัติใบเบิกนี้ เลือกบทบาทผู้อนุมัติในตั้งค่าเบิกจ่าย (บทบาทนั้นต้องมีสิทธิ์อนุมัติการเบิก) แล้วกลับมากดส่งอนุมัติอีกครั้ง'
+      : 'ยังไม่มีผู้อนุมัติใบเบิกนี้ ขอให้เจ้าของกิจการเลือกผู้อนุมัติในตั้งค่าเบิกจ่าย หรือเพิ่มสิทธิ์อนุมัติการเบิกให้บทบาทของคุณ แล้วกดส่งอนุมัติอีกครั้ง',
+  };
+}
+
 export type ApprovalFieldDiff = { key: string; label: string; before: string; after: string; changed: boolean };
 
 /** Values the approval-queue row and the fresh detail can both provide. */

@@ -70,7 +70,7 @@ const POLICY_SNAPSHOT_KEYS = new Set([
   'route', 'allowSelfApproval', 'requireReceipt', 'allowMissingReceiptWithReason',
   'duplicatePolicy', 'financeReviewRequired', 'slaHours',
 ]);
-const ROUTE_KEYS = new Set(['mode', 'roleKey', 'effectiveTaskRole', 'ownerFallbackUsedAtSubmission']);
+const ROUTE_KEYS = new Set(['mode', 'roleKey', 'effectiveTaskRole', 'ownerFallbackUsedAtSubmission', 'soloSelfApprovalAtSubmission']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -88,7 +88,8 @@ export function parseReimbursementPolicySnapshot(value: unknown): ReimbursementP
     && ['MANAGER_ROLE', 'OWNER_ROLE', 'CUSTOM_ROLE'].includes(String(route['mode']))
     && typeof route['roleKey'] === 'string' && route['roleKey'].length > 0
     && typeof route['effectiveTaskRole'] === 'string' && route['effectiveTaskRole'].length > 0
-    && typeof route['ownerFallbackUsedAtSubmission'] === 'boolean');
+    && typeof route['ownerFallbackUsedAtSubmission'] === 'boolean'
+    && (route['soloSelfApprovalAtSubmission'] === undefined || typeof route['soloSelfApprovalAtSubmission'] === 'boolean'));
   const threshold = value['approvalRequiredFromAmount'];
   const requiresHumanApproval = value['requiresApproval'];
   const valid = value['schemaVersion'] === 1
