@@ -27,3 +27,14 @@ export function billingPurchaseSource(term: CompanyPlanTerm | null, account: Sou
 
 export const initialPurchaseSource = (source: BillingPurchaseSource) =>
   source === 'NO_TERM' || source === 'TRIAL' || source === 'ADMIN_MANUAL';
+
+/**
+ * Phase 7 follow-up (มติ Owner 2026-09-21) — a purchase that decides the shop's menu set from
+ * scratch: a first purchase, or a RESTART after the paid term ended. Both hand the buyer the
+ * package they just paid for, so both pin `billingFeaturePlan` into the quote and both are
+ * re-checked at Checkout. The difference from `initialPurchaseSource` is only the expired shop:
+ * it already has a paid history, but nothing about the package it used to own may survive a
+ * purchase of a different one.
+ */
+export const packageMenuPurchaseSource = (source: BillingPurchaseSource) =>
+  initialPurchaseSource(source) || source === 'PAID_EXPIRED_CURRENT_MODE';

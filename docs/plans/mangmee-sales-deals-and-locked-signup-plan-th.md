@@ -240,6 +240,10 @@
 - [x] `BillingCollectionOperation.featureImpact` + controller เติมให้ `collection/preview` และ `collection/:id`
       (ไม่แตะ `billing-collection.ts` ซึ่งเป็นหลักฐานที่ review แล้ว)
 - [x] contracts: `BillingOperationType` += `APPLY_PLAN_MENUS`, label ไทยของ op และ issue `PLAN_MENU_MOVE_REVIEW`
+- [x] ร้านที่ term หมดแล้วซื้อใหม่ (`RESTART`, มติ Owner 2026-09-21): `packageMenuPurchaseSource`
+      (= `initialPurchaseSource` + `PAID_EXPIRED_CURRENT_MODE`) ใช้ที่ pin ของ `quote()`, ตรวจซ้ำสองจุดใน
+      `checkout()` และ `status()` — ปลายทางใช้ seam เดิมทั้งสองทาง (`INITIAL` จาก `subscription_create`
+      และ `reconcileOneTime`) ไม่ต้องมี op ใหม่
 
 ### Tasks (web)
 
@@ -248,6 +252,8 @@
 
 ### Tests
 
+- [x] `apps/api/src/modules/billing/application/billing-purchase-source.spec.ts` — `packageMenuPurchaseSource`
+      รับ `PAID_EXPIRED_CURRENT_MODE` (ซึ่ง `initialPurchaseSource` ไม่รับ) และไม่รับ `PAID_CURRENT_MODE`
 - [x] `apps/api/src/modules/billing/application/billing-plan-menus.spec.ts` — tier → ชุดเมนู, STARTER/BASIC/PRO
       เท่ากัน (จึงเป็น no-op), ดีลที่ยังไม่จบไม่ถูกแตะ, term ที่ไม่มี tier ขายได้ไม่ย้าย, กติกา retry
       (`BLOCKED` เสมอ / `QUEUED` เมื่อค้างเกิน 2 นาที) (ลงทะเบียนใน `scripts/line-ai-whole-chain-acceptance.catalog.mjs`)
