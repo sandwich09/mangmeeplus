@@ -3,7 +3,8 @@ import type { billingApi } from './billing.api';
 import { companyBillingProfile } from '@watchdog-bms/contracts';
 
 export const previewScenarios = {
-  start: 'ทดลองใช้ → ซื้อแพ็กเกจแรก', manual: 'บริษัทเดิม / วันและเมนูที่จะเปลี่ยน', capacity: 'เลือกสาขาและผู้ใช้', 'capacity-work': 'งานค้างเกินแพ็กเกจที่เลือก', upgrade: 'มีแพ็กเกจ BASIC → ซื้อเพิ่มหรือเปลี่ยน', 'scheduled-change': 'มีคำสั่งเปลี่ยนแพ็กเกจสิ้นรอบ', expired: 'แพ็กเกจหมดอายุ → ซื้อใหม่',
+  start: 'ทดลองใช้ → ซื้อแพ็กเกจแรก', manual: 'บริษัทเดิม / วันและเมนูที่จะเปลี่ยน', capacity: 'เลือกสาขาและผู้ใช้', 'capacity-work': 'งานค้างเกินแพ็กเกจที่เลือก', upgrade: 'มีแพ็กเกจ BASIC → ซื้อเพิ่มหรือเปลี่ยน', 'one-time': 'มีแพ็กเกจ BASIC แบบจ่ายครั้งเดียว',
+  'one-time-pending': 'จ่ายแพ็กเกจรอบถัดไปแล้ว', 'one-time-capacity': 'จ่ายแล้ว · ต้องเลือกสิทธิ์ใหม่', 'scheduled-change': 'มีคำสั่งเปลี่ยนแพ็กเกจสิ้นรอบ', expired: 'แพ็กเกจหมดอายุ → ซื้อใหม่',
   pending: 'รอผลชำระเงิน', activating: 'จ่ายแล้ว รอเปิดสิทธิ์', success: 'สำเร็จ / ประวัติ', failed: 'ชำระไม่สำเร็จ',
   held: 'รอตรวจสอบ', 'quote-error': 'ราคาเปลี่ยน / ลองใหม่',
 } as const;
@@ -20,9 +21,13 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
     end.setUTCDate(Math.min(day, new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() + 1, 0)).getUTCDate()));
     return end.toISOString();
   };
-  const paidThrough = selected?.purchase?.projectedPaidThrough ?? extend(date(), currentOffer.interval);
-  const paid = ['success', 'upgrade', 'activating', 'scheduled-change'].includes(scenario);
+  const prepaidChange = scenario === 'one-time-pending' || scenario === 'one-time-capacity';
+  const currentPaidThrough = extend(date(), currentOffer.interval);
+  const paidThrough = prepaidChange ? extend(currentPaidThrough, 'month') : selected?.purchase?.projectedPaidThrough ?? currentPaidThrough;
+  const paid = ['success', 'upgrade', 'one-time', 'one-time-pending', 'one-time-capacity', 'activating', 'scheduled-change'].includes(scenario);
   const attempted = ['success', 'pending', 'activating', 'failed', 'held'].includes(scenario);
+  const currentMode = scenario === 'one-time' || prepaidChange ? 'CARD_ONCE' : selected?.purchaseMode ?? 'CARD_AUTO';
+  const currentOneTime = currentMode === 'CARD_ONCE' || currentMode === 'PROMPTPAY_ONCE';
   const offers: BillingOffer[] = (['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999'] as const).flatMap(tier => (['month', 'year'] as const).map(interval => ({
     ...billingOffer(tier, interval), availability: tier === 'ENTERPRISE_1999' ? 'COMING_SOON' : 'AVAILABLE', reason: null,
   })));
@@ -34,22 +39,31 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
     paymentState: paid ? 'PAID' : scenario === 'failed' ? 'FAILED' : attempted ? 'PENDING' : 'NONE',
     applyState: scenario === 'activating' ? 'PENDING' : scenario === 'held' ? 'HELD' : paid ? 'APPLIED' : 'NONE',
     accessState: scenario === 'expired' ? 'EXPIRED' : scenario === 'held' ? 'HELD' : 'ACTIVE',
-    purchaseEligibility: 'ELIGIBLE', subscriptionState: paid && selected?.purchaseMode !== 'CARD_ONCE' && selected?.purchaseMode !== 'PROMPTPAY_ONCE' ? 'active' : 'NONE', documentState: paid ? 'READY' : 'NONE',
-    renewalMode: paid ? selected?.purchaseMode ?? 'CARD_AUTO' : 'NONE', enabledPurchaseModes: ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'],
-    availablePurchaseModes: scenario === 'upgrade' ? ['CARD_AUTO'] : ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'],
+    purchaseEligibility: 'ELIGIBLE', subscriptionState: paid && !currentOneTime ? 'active' : 'NONE', documentState: paid ? 'READY' : 'NONE',
+    renewalMode: paid ? currentMode : 'NONE', enabledPurchaseModes: ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'],
+    availablePurchaseModes: prepaidChange ? [] : scenario === 'upgrade' ? ['CARD_AUTO'] : scenario === 'one-time' ? ['CARD_ONCE', 'PROMPTPAY_ONCE'] : ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'],
     attemptId: attempted ? 'preview-attempt' : null, reference: attempted ? 'PREVIEW-0001' : null, observedAt: date(), canCancelCheckout: attempted && !paid,
     tierKey: paid || scenario === 'expired' ? currentOffer.offerKey : scenario === 'manual' ? 'PRO_999' : 'FREE_TRIAL_15', interval: paid || scenario === 'expired' ? currentOffer.interval : null,
-    purchaseSource: scenario === 'manual' ? 'ADMIN_MANUAL' : 'TRIAL',
+    purchaseSource: scenario === 'manual' ? 'ADMIN_MANUAL' : paid ? 'PAID_CURRENT_MODE' : 'TRIAL',
     termEndsAt: scenario === 'expired' ? date(-1) : paidThrough, paidThrough: paid ? paidThrough : scenario === 'expired' ? date(-1) : null,
-    nextChargeAt: paid && selected?.purchaseMode !== 'CARD_ONCE' && selected?.purchaseMode !== 'PROMPTPAY_ONCE' ? paidThrough : null, cancelAtPeriodEnd: false, graceEndsAt: null,
-    allowedActions: attempted && !paid ? [] : paid ? selected?.purchaseMode === 'CARD_ONCE' || selected?.purchaseMode === 'PROMPTPAY_ONCE' ? ['new_sales'] : ['new_sales', 'portal_cancel_subscription', 'plan_changes', ...(selected?.purchaseMode === 'PROMPTPAY_RENEW' ? [] : ['portal_payment_method' as const])] : ['new_sales'],
+    nextChargeAt: paid && !currentOneTime ? paidThrough : null, cancelAtPeriodEnd: false, graceEndsAt: null,
+    allowedActions: prepaidChange || attempted && !paid ? [] : paid ? currentOneTime ? ['new_sales'] : ['new_sales', 'portal_cancel_subscription', 'plan_changes', ...(currentMode === 'PROMPTPAY_RENEW' ? [] : ['portal_payment_method' as const])] : ['new_sales'],
     usage: { used: selected ? 0 : 6, limit: paid ? selected?.purchase?.projectedRemainingReceipts ?? currentOffer.receiptAllowance : 15, remaining: paid ? selected?.purchase?.projectedRemainingReceipts ?? currentOffer.receiptAllowance - 6 : 9,
-      cadence: 'PAID_GRANTS', resetsAt: null, expiresAt: paidThrough }, issues: [],
+      cadence: 'PAID_GRANTS', resetsAt: null, expiresAt: prepaidChange ? currentPaidThrough : paidThrough }, issues: [],
   };
   if (scenario === 'scheduled-change') {
     status.pendingPlanChange = { id: 'preview-scheduled-change', companyId, action: 'SCHEDULE_DOWNGRADE', state: 'SUCCEEDED', version: 2,
       previewHash: 'preview-hash', effectiveAt: paidThrough, nextRenewalTotalSatang: 24900, expiresAt: date(1), observedAt: date(),
       errorCode: null, allowedActions: [], targetOffer: offers.find(offer => offer.offerKey === 'STARTER_249' && offer.interval === 'month')! };
+  }
+  if (prepaidChange) {
+    status.pendingPlanChange = { id: 'preview-prepaid-change', companyId, action: 'PREPAID_PLAN_CHANGE',
+      state: scenario === 'one-time-capacity' ? 'BLOCKED' : 'SUCCEEDED', version: 3, previewHash: 'preview-prepaid-hash',
+      effectiveAt: currentPaidThrough, nextRenewalTotalSatang: 24900, expiresAt: paidThrough, observedAt: date(),
+      errorCode: scenario === 'one-time-capacity' ? 'BILLING_CAP_SELECTION_REQUIRED' : null, allowedActions: [],
+      currentOffer, targetOffer: offers.find(offer => offer.offerKey === 'STARTER_249' && offer.interval === 'month')! };
+    if (scenario === 'one-time-capacity') status.planCapacityRepair = { operationId: status.pendingPlanChange.id,
+      version: status.pendingPlanChange.version, offerKey: 'STARTER_249', interval: 'month' };
   }
   let quote: BillingQuote | null = null, collection: BillingCollectionOperation | null = null, recipient: BillingEmailRecipientOperation | null = null;
   let quoteFailures = scenario === 'quote-error' ? 1 : 0;
@@ -71,10 +85,11 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
       if (quoteFailures-- > 0) throw Object.assign(new Error('ราคาเปลี่ยนแล้ว'), { code: 'BILLING_QUOTE_STALE' });
       if (['capacity', 'capacity-work'].includes(scenario) && !capacity) throw Object.assign(new Error('เลือกสิทธิ์ก่อน'), { code: 'BILLING_CAP_SELECTION_REQUIRED' });
       const offer = offers.find(item => item.offerKey === offerKey && item.interval === interval)!;
-      const isRepeat = paid && offer.offerKey === currentOffer.offerKey && (offer.interval === currentOffer.interval || (currentOffer.interval === 'month' && offer.interval === 'year'));
+      const isRepeat = paid && offer.offerKey === currentOffer.offerKey && (offer.interval === currentOffer.interval || (!currentOneTime && currentOffer.interval === 'month' && offer.interval === 'year'));
       const isUpgrade = paid && offer.interval === currentOffer.interval
         && BILLING_PAID_TIERS.findIndex(tier => tier === offer.offerKey) > BILLING_PAID_TIERS.findIndex(tier => tier === currentOffer.offerKey);
-      if (paid && !isRepeat && !isUpgrade) throw Object.assign(new Error('กรุณาติดต่อทีมงานเพื่อเปลี่ยนแพ็กเกจหรือรอบชำระ'), { code: 'BILLING_PLAN_CHANGE_REQUIRED' });
+      const isScheduled = paid && currentOneTime && !isRepeat && !isUpgrade;
+      if (paid && !isRepeat && !isUpgrade && !isScheduled) throw Object.assign(new Error('กรุณาติดต่อทีมงานเพื่อเปลี่ยนแพ็กเกจหรือรอบชำระ'), { code: 'BILLING_PLAN_CHANGE_REQUIRED' });
       if (isRepeat && currentOffer.interval !== offer.interval && status.pendingPlanChange) throw Object.assign(new Error('ตรวจรายการเปลี่ยนแพ็กเกจก่อน'), { code: 'BILLING_CADENCE_PENDING_CHANGE' });
       const total = isUpgrade ? offer.priceSatang - currentOffer.priceSatang : offer.priceSatang;
       const added = isUpgrade ? offer.receiptAllowance - currentOffer.receiptAllowance : offer.receiptAllowance;
@@ -84,9 +99,9 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
         paidStart: 'IMMEDIATE', billingEmail, trialEndsAt: !paid && scenario !== 'expired' && scenario !== 'manual' ? date(7) : null, usage: status.usage,
         ...(scenario === 'manual' ? { previousSource: 'ADMIN_MANUAL' as const, previousTermEndsAt: status.termEndsAt,
           featureImpact: { removed: [{ featureKey: 'reports', labelTh: 'รายงาน' }], added: [], preservedAdmin: 1 } } : {}),
-        purchase: { kind: isUpgrade ? 'UPGRADE' : isRepeat ? 'REPEAT' : scenario === 'expired' ? 'RESTART' : 'INITIAL', previousPaidThrough: status.paidThrough, ...(isRepeat && currentOffer.interval !== offer.interval ? { previousInterval: currentOffer.interval } : {}),
-          projectedPaidThrough: isUpgrade ? paidThrough : extend(isRepeat ? paidThrough : date(), offer.interval), receiptUnitsAdded: added,
-          projectedRemainingReceipts: (paid ? status.usage.remaining ?? 0 : trialUnits) + added,
+        purchase: { kind: isUpgrade ? 'UPGRADE' : isRepeat ? 'REPEAT' : isScheduled ? 'SCHEDULED_CHANGE' : scenario === 'expired' ? 'RESTART' : 'INITIAL', previousPaidThrough: status.paidThrough, ...(isRepeat && currentOffer.interval !== offer.interval ? { previousInterval: currentOffer.interval } : {}),
+          projectedPaidThrough: isUpgrade ? paidThrough : extend(isRepeat || isScheduled ? paidThrough : date(), offer.interval), receiptUnitsAdded: added,
+          projectedRemainingReceipts: (isScheduled ? 0 : paid ? status.usage.remaining ?? 0 : trialUnits) + added,
           ...(trialUnits > 0 ? { trialCarryover: { receiptUnits: trialUnits, expiresAt: extend(date(), offer.interval) } } : {}) },
         // This fixture's current paid period starts now; a live quote prorates over its actual paid segments.
         ...(isUpgrade ? { upgrade: { prorationAt: date(), nextRenewalTotalSatang: offer.priceSatang,

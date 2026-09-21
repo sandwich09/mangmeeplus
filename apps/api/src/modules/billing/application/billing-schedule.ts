@@ -6,7 +6,8 @@ import { stripeId, type StripeClient, type StripeObject } from '../infrastructur
 import type { BillingSnapshot } from './billing.service';
 
 export type PlanChangeSource = { previousId: string | null; currentSnapshot: BillingSnapshot; selection?: BillingCapacitySelection };
-export type ScheduledChange = { accountId: string; subscriptionId: string; paidThrough: string; snapshot: BillingSnapshot; change: PlanChangeSource };
+export type ScheduledChange = { accountId: string; subscriptionId: string | null; paidThrough: string; snapshot: BillingSnapshot; change: PlanChangeSource;
+  effectiveAt?: string; prepaidInvoiceId?: string; sourceTermHash?: string | null };
 export const scheduleReview = () => billingError('BILLING_COLLECTION_REVIEW', 'ข้อมูลการต่ออายุเปลี่ยน กรุณาตรวจรายการเดิมหรือติดต่อทีมงานพร้อมเลขอ้างอิง');
 export const scheduleTaxes = (values: unknown): (string | null)[] => Array.isArray(values) ? values.map(stripeId).sort() : [];
 export const sameScheduleTaxes = (actual: unknown, expected: string | null) => hashBilling(scheduleTaxes(actual)) === hashBilling(expected ? [expected] : []);
@@ -21,7 +22,8 @@ export async function pendingChange(tx: Prisma.TransactionClient, account: Billi
   if (!account.pendingPlanChangeId) return null;
   const row = await tx.billingOperation.findUnique({ where: { id: account.pendingPlanChangeId } });
   const proposed = row?.proposedJson as unknown as ScheduledChange | undefined;
-  if (!row || row.type !== 'CUSTOMER_SCHEDULE_DOWNGRADE' || row.state !== 'SUCCEEDED' || row.companyId !== account.companyId ||
+  const activeState = row?.type === 'CUSTOMER_PREPAID_PLAN_CHANGE' ? ['SUCCEEDED', 'BLOCKED'].includes(row.state) : row?.state === 'SUCCEEDED';
+  if (!row || !['CUSTOMER_SCHEDULE_DOWNGRADE', 'CUSTOMER_PREPAID_PLAN_CHANGE'].includes(row.type) || !activeState || row.companyId !== account.companyId ||
     row.stripeAccountId !== account.stripeAccountId || row.livemode !== account.livemode || !proposed?.change ||
     proposed.accountId !== account.id || proposed.subscriptionId !== account.baseSubscriptionId || proposed.paidThrough !== account.paidThrough?.toISOString()) throw scheduleReview();
   return { row, proposed };
