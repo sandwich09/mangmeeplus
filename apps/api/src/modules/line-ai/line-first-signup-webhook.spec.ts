@@ -210,6 +210,8 @@ function harness(options: {
   /** สัญญา v3 ceilings: how many bubbles / stored files the live request already holds. */
   threadMessageCount?: number;
   threadMediaCount?: number;
+  /** P12-3b handoff seam. Absent = LINE_WEB_HANDOFF_ENABLED off, so every link stays a plain URL. */
+  handoffLinks?: any;
 } = {}) {
   const replies: any[] = [];
   const eventLog: any[] = [];
@@ -325,6 +327,7 @@ function harness(options: {
       lineSignupBusinessHours: '09:00-18:00',
       webBaseUrl: 'https://app.example.test',
       sesWebBaseUrl: 'https://app.example.test',
+      externalSignupEnabled: true,
     } as any,
     {} as any,
     { log: async (entry: any) => { audits.push(entry); } } as any,
@@ -339,7 +342,7 @@ function harness(options: {
     {} as any,
     // Everything from here is @Optional(). Seventeen slots (initReceiptUpload … handoffLinks) come
     // before the two P10-L collaborators, which the constructor deliberately keeps last.
-    ...Array.from({ length: 17 }, () => undefined),
+    ...Array.from({ length: 17 }, (_, slot) => (slot === 16 ? options.handoffLinks : undefined)),
     { create: async (cmd: any) => { packageChanges.push(cmd); return { id: 'pcr-1' }; } } as any,
     { enqueueSupportRequest: async (supportRequestId: string) => { supportNotices.push(supportRequestId); } } as any,
     (options.rateLimit ?? {
@@ -1360,12 +1363,61 @@ describe('GW09 committed rich menu → signed webhook → deterministic reply', 
       assert.equal(h.packageChanges.length, 0, 'no payment or subscription mutation from a menu tap');
       if (action.text === 'โปรโมชั่น') {
         // R1: the card sells a package now; it no longer offers free days to anyone.
-        assert.match(rendered(h), /249 บาท/);
+        assert.match(rendered(h), /249 \/ 499 \/ 999 บาท/);
         assert.equal(rendered(h).includes('ทดลอง'), false);
         assert.ok(!rendered(h).includes('PRO'));
       }
     });
   }
+});
+
+// Owner 2026-09-21: the tile still sends "โปรโมชั่น"; what comes back now depends on who tapped it.
+describe('โปรโมชั่น card leads into the app, per audience', () => {
+  const identity = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+  const shop = (key: string, companyId = 'co-1') => [{ companyId, roles: [{ role: { key } }], company: { name: 'ร้านนิด' } }];
+  const actions = (h: Harness) => (h.replies.flat()[0] as any).contents.footer.contents.map((button: any) => button.action);
+  const seam = (minted: any[]) => ({
+    linkFor: async (ctx: unknown, targetPath: string) => { minted.push({ ctx, targetPath }); return `${WEB_BASE}/l/handoff-1`; },
+    wrapOutgoingLineContent: async (_ctx: unknown, messages: unknown) => messages,
+  });
+
+  it('opens the owner\'s own package page with a handoff link bound to them', async () => {
+    const minted: any[] = [];
+    const h = harness({ identity, memberships: shop('OWNER'), context: { companyId: 'co-1', aiPausedUntil: null }, handoffLinks: seam(minted) });
+    await h.useCase.execute(event('โปรโมชั่น'));
+
+    assert.deepEqual(minted[0].ctx, { userId: 'user-1', companyId: 'co-1', lineUserId: 'Uline-1', surface: 'promotion_card_packages' });
+    assert.equal(minted[0].targetPath, '/companies/co-1/billing?channel=line');
+    assert.deepEqual(actions(h)[0], { type: 'uri', label: 'เลือกแพ็กเกจ', uri: `${WEB_BASE}/l/handoff-1` });
+    assert.equal(actions(h)[1].uri, 'https://official.mangmeeplus.com/', 'the web still informs');
+    assert.equal(outcome(h), 'staff_menu_promotion');
+  });
+
+  it('keeps the owner\'s button on the plain package page when no token can be minted', async () => {
+    const h = harness({ identity, memberships: shop('OWNER'), context: { companyId: 'co-1', aiPausedUntil: null } });
+    await h.useCase.execute(event('โปรโมชั่น'));
+
+    assert.deepEqual(actions(h)[0], { type: 'uri', label: 'เลือกแพ็กเกจ', uri: `${WEB_BASE}/companies/co-1/billing?channel=line` });
+  });
+
+  it('withholds the package page from an employee and says who chooses instead', async () => {
+    const h = harness({ identity, memberships: shop('STAFF'), context: { companyId: 'co-1', aiPausedUntil: null } });
+    await h.useCase.execute(event('โปรโมชั่น'));
+
+    assert.equal(rendered(h).includes('/companies/co-1/billing'), false, 'the package page is owner-only');
+    assert.match(rendered(h), /เจ้าของร้านเป็นคนเลือกแพ็กเกจ/);
+    assert.deepEqual(actions(h).map((action: any) => action.label), ['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานช่วยเลือก', 'คุยกับทีมงาน']);
+    assert.equal(outcome(h), 'staff_menu_promotion');
+  });
+
+  it('sends a stranger to the same signup door the entry card offers', async () => {
+    const h = harness({ identity: null });
+    await h.useCase.execute(event('โปรโมชั่น'));
+
+    assert.deepEqual(actions(h)[0], { type: 'uri', label: 'เปิดร้านใหม่', uri: 'https://liff.line.me/1234567890-abcdef/signup' });
+    assert.equal(rendered(h).includes('/billing'), false, 'nobody without an account is sent to a tenant page');
+    assert.equal(outcome(h), 'staff_menu_promotion');
+  });
 });
 
 

@@ -2154,6 +2154,33 @@ export class ProcessLineWebhookUseCase {
     return `https://liff.line.me/${liffId}/signup`;
   }
 
+  /**
+   * The โปรโมชั่น card for whoever tapped the tile (Owner 2026-09-21). A stranger is sent to the
+   * same LIFF form the door card offers; an owner is sent to their own package page, one tap, bound
+   * to them by the same mint the บริษัทของฉัน buttons use — and with the seam absent or a mint
+   * refused, to the plain package page, which is what that link degraded to before it existed.
+   * Anyone else in a shop cannot choose the package, so they get the card without that button.
+   */
+  private async promotionCard(event: LineTextEvent): Promise<LineReplyMessage> {
+    const identity = await this.resolveLineIdentity(event);
+    if (!identity || identity.user.status !== 'ACTIVE') return buildPromotionCard('stranger', this.newShopSignupUrl());
+    const owners = (await this.listLineCompanies(identity.userId)).filter(isCompanyOwner);
+    if (owners.length === 0) return buildPromotionCard('employee');
+    // Which shop: the one this chat is already on, else the oldest owned. ponytail: a picker in
+    // front of a card whose whole point is one tap costs more than it saves, and an owner who
+    // meant the other shop switches with บริษัทของฉัน exactly as they do for every other link.
+    const context = await this.prisma.client.lineCompanyContext.findUnique({
+      where: { lineUserId: event.lineUserId }, select: { companyId: true },
+    });
+    const companyId = (owners.find((row) => row.companyId === context?.companyId) ?? owners[0]!).companyId;
+    if (!this.config.webBaseUrl) return buildPromotionCard('owner');
+    const targetPath = `/companies/${encodeURIComponent(companyId)}/billing?channel=line`;
+    return buildPromotionCard('owner', await this.handoffLinks?.linkFor(
+      { userId: identity.userId, companyId, lineUserId: event.lineUserId, surface: 'promotion_card_packages' },
+      targetPath,
+    ) ?? new URL(targetPath, this.config.webBaseUrl).toString());
+  }
+
   /** §15.1: "ช่วงทดลอง" is only true of the trial tier; every other shop hears about its package. */
   private async isTrialTier(companyId: string): Promise<boolean> {
     const term = await this.prisma.client.companyPlanTerm.findUnique({
@@ -3597,11 +3624,13 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'staff_menu_talk');
       return;
     }
-    // Rich menu v2 ver2 Promotion tile (Owner design 2026-08-27). Public like `contact`: a
-    // prospect exploring packages may well be unlinked, and the card carries no tenant data.
+    // Rich menu Promotion tile (Owner design 2026-08-27). Still public — a prospect exploring
+    // packages may well be unlinked — but since 2026-09-21 the card leads into the app, so it reads
+    // who tapped it (identity + owned shops only) to decide its main button. No other gate runs:
+    // the card names no company and no plan, and nothing on it changes anything.
     if (publicCommand === 'promotion') {
       this.publicPolicyTopics.set(event, 'trial');
-      await this.deliverRequiredMessages(event, [buildPromotionCard(this.config.webBaseUrl)]);
+      await this.deliverRequiredMessages(event, [await this.promotionCard(event)]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_promotion');
       return;
     }

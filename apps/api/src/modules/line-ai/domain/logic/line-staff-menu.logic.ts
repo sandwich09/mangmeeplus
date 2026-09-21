@@ -289,8 +289,17 @@ export function buildServiceEntitlementMessage(entitled: ReadonlySet<string> | n
   };
 }
 
-/** Public pre-sales card. Keep the obsolete PRO-free poster out of the live reply. */
-export function buildPromotionCard(_assetBaseUrl: string | undefined): LineReplyMessage {
+/**
+ * Public pre-sales card. Keep the obsolete PRO-free poster out of the live reply.
+ *
+ * Owner 2026-09-21: the tile leads INTO the app now, so the main button follows whoever tapped it.
+ * `url` is the owner's own package page (the one-tap handoff link, or the plain tenant page when no
+ * token could be minted) or the stranger's LIFF signup form; an employee is given neither, because
+ * choosing the package belongs to the shop owner — the same rule the package-change reply states.
+ * An absent `url` simply drops that button, the fail-open every card here uses for an unusable URL.
+ */
+export function buildPromotionCard(audience: 'owner' | 'employee' | 'stranger', url?: string): LineReplyMessage {
+  const stranger = audience === 'stranger';
   return {
     type: 'flex',
     altText: 'แพ็กเกจมั่งมี Plus',
@@ -298,13 +307,18 @@ export function buildPromotionCard(_assetBaseUrl: string | undefined): LineReply
       type: 'bubble', size: 'mega',
       body: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', contents: [
         { type: 'text', text: '🎁 Package ที่เหมาะกับร้านคุณ', weight: 'bold', size: 'md', color: '#101828', wrap: true },
-        { type: 'text', text: 'แพ็กเกจรายเดือนเริ่มต้น 249 บาท เลือกแพ็กเกจแล้วเริ่มใช้งานได้เลยค่ะ', size: 'sm', color: '#475467', wrap: true },
+        { type: 'text', text: 'รายเดือน 249 / 499 / 999 บาท และแพ็กเกจธุรกิจ 1,999 บาท ครบทุกเมนูรวมภาษี เลือกและชำระในแอปได้เองค่ะ', size: 'sm', color: '#475467', wrap: true },
+        ...(audience === 'employee'
+          ? [{ type: 'text', text: 'เจ้าของร้านเป็นคนเลือกแพ็กเกจให้ร้านนะคะ', size: 'sm', color: '#667085', wrap: true }]
+          : []),
       ] },
       footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
-        { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'ดูแพ็กเกจ', uri: 'https://official.mangmeeplus.com/' } },
+        ...(url ? [{ type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: stranger ? 'เปิดร้านใหม่' : 'เลือกแพ็กเกจ', uri: url } }] : []),
+        { type: 'button', style: 'secondary', action: { type: 'uri', label: stranger ? 'ดูแพ็กเกจบนเว็บ' : 'ดูรายละเอียดบนเว็บ', uri: 'https://official.mangmeeplus.com/' } },
         // Spec §3.7: the promotion card is a PULL, so the one thing it must let the reader do is
-        // ask — the request lands in the admin queue rather than changing anything by itself.
-        { type: 'button', style: 'secondary', action: { type: 'message', label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND } },
+        // ask — the request lands in the admin queue rather than changing anything by itself. A
+        // stranger has no shop yet, so that ask only exists once they have one.
+        ...(stranger ? [] : [{ type: 'button', style: 'secondary', action: { type: 'message', label: 'ให้ทีมงานช่วยเลือก', text: PACKAGE_CHANGE_COMMAND } }]),
         { type: 'button', style: 'secondary', action: { type: 'message', label: 'คุยกับทีมงาน', text: 'ติดต่อเรา' } },
       ] },
     },

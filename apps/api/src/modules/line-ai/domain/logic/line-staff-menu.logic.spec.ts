@@ -663,15 +663,38 @@ describe('promotion menu (rich menu v2 ver2)', () => {
   });
 
   it('sells the package without the obsolete PRO-free poster, and promises no free days', () => {
-    for (const base of ['https://app.example.com/', undefined]) {
-      const card = JSON.stringify(buildPromotionCard(base));
+    for (const audience of ['owner', 'employee', 'stranger'] as const) {
+      const card = JSON.stringify(buildPromotionCard(audience, 'https://app.example.com/l/token-1'));
       assert.ok(!card.includes('"hero"'));
       assert.ok(!card.includes('PRO'));
       // R1 (Owner 2026-09-20): a card that still said "ทดลองฟรี 30 วัน" would be advertising
       // something provisioning refuses to grant.
       assert.ok(!card.includes('ทดลอง'));
-      for (const text of ['249', 'ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ']) assert.ok(card.includes(text));
+      // Owner 2026-09-21: all four prices, and the promise that buying happens in the app.
+      for (const text of ['249 / 499 / 999', '1,999', 'เลือกและชำระในแอป', 'คุยกับทีมงาน']) assert.ok(card.includes(text), `${audience}: ${text}`);
     }
+  });
+
+  // Owner 2026-09-21: who tapped the tile decides the one button that leads somewhere.
+  it('gives the package button to an owner, the signup door to a stranger, and neither to an employee', () => {
+    const actions = (audience: 'owner' | 'employee' | 'stranger', url?: string) =>
+      (buildPromotionCard(audience, url) as any).contents.footer.contents.map((button: any) => button.action);
+
+    assert.deepEqual(actions('owner', 'https://app.example.com/l/token-1')[0],
+      { type: 'uri', label: 'เลือกแพ็กเกจ', uri: 'https://app.example.com/l/token-1' });
+    assert.deepEqual(actions('stranger', 'https://liff.line.me/1234567890-abcdef/signup')[0],
+      { type: 'uri', label: 'เปิดร้านใหม่', uri: 'https://liff.line.me/1234567890-abcdef/signup' });
+
+    const employee = actions('employee');
+    assert.equal(employee.filter((action: any) => action.type === 'uri' && !action.uri.includes('official.')).length, 0,
+      'the package page is the owner\'s to open');
+    assert.match(JSON.stringify(buildPromotionCard('employee')), /เจ้าของร้านเป็นคนเลือกแพ็กเกจ/);
+    assert.deepEqual(employee.map((action: any) => action.label),
+      ['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานช่วยเลือก', 'คุยกับทีมงาน']);
+    assert.equal(employee[1].text, PACKAGE_CHANGE_COMMAND, 'same request payload, new label');
+    // An unusable URL drops its button rather than sending a broken link, like every card here.
+    assert.deepEqual(actions('stranger').map((action: any) => action.label), ['ดูแพ็กเกจบนเว็บ', 'คุยกับทีมงาน']);
+    assert.deepEqual(actions('owner').map((action: any) => action.label), ['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานช่วยเลือก', 'คุยกับทีมงาน']);
   });
 });
 
@@ -747,7 +770,11 @@ describe('public policy conversation', () => {
 
   it('answers documented public policies without claiming an account action succeeded', () => {
     const cases = [
-      ['ทดลองฟรีกี่วัน', 'trial_limits', /ตั้งค่าข้อมูลร้านและบัญชี[\s\S]*7 เมนูตามแพ็กเกจ/],
+      ['ทดลองฟรีกี่วัน', 'trial_limits', /ตั้งค่าข้อมูลร้านและบัญชี[\s\S]*249 \/ 499 \/ 999[\s\S]*แพ็กเกจธุรกิจ 1,999 เปิดครบทุกเมนู/],
+      // Owner 2026-09-21: the menu question asked without the word "ทดลอง" reaches the same answer.
+      ['แพ็กเกจไหนได้เมนูอะไรบ้าง', 'trial_limits', /ผู้ช่วย AI ทาง LINE[\s\S]*ต่างกันที่จำนวนสาขา ผู้ใช้ และใบเสร็จ/],
+      ['แพ็กเกจธุรกิจได้อะไรบ้าง', 'trial_limits', /ภ\.ง\.ด\.53 และ 50 ทวิ[\s\S]*คลังสินค้า CRM บัญชีธนาคาร/],
+      ['แพ็คเกจธุรกิจมีอะไรบ้างคะ', 'trial_limits', /เปิดครบทุกเมนู/],
       ['ทดลองใช้ฟรีต้องผูกบัตรไหม', 'card', /ไม่ต้องผูกบัตร/],
       ['หมดโปรฟรีแล้วข้อมูลหายไหม', 'data', /ไม่ได้ถูกลบทันที/],
       ['ขอลบข้อมูลต้องทำยังไง', 'data', /ยังไม่ได้ลบข้อมูล/],
