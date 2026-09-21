@@ -9,7 +9,7 @@ import BillingCustomerFrame from './BillingCustomerFrame';
 import { BillingEmailRecipientPanel } from './BillingEmailRecipientPanel';
 import { getAccountEmailOtp, type AccountEmailOtpState } from '@/features/auth/account-email-otp.api';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BILLING_PAID_TIERS, PLAN_TIER_PRESETS, type PlanTierKey, type BillingCatalog, type BillingQuote, type BillingStatus, type BillingAttemptView, type BillingPurchaseMode } from '@watchdog-bms/contracts';
+import { BILLING_PAID_TIERS, PLAN_TIER_PRESETS, TIER_FEATURE_PRESETS, type PlanTierKey, type BillingCatalog, type BillingQuote, type BillingStatus, type BillingAttemptView, type BillingPurchaseMode } from '@watchdog-bms/contracts';
 import { apiErrorCode } from '@/common/api/api-error-message';
 import { PLAN_LOCK_COPY, PLAN_TERM_CONTACT_EMAIL, PLAN_TERM_RENEW_PHONE, planLockReason } from '@/features/plan-term/plan-term.logic';
 import type { PlanLockReason } from '@/features/plan-term/plan-term.api';
@@ -23,6 +23,8 @@ import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog
 const money = (satang: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(satang / 100);
 const date = (value: string | null | undefined) => value ? new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
 const button = billingControl;
+const catalogCardMenus = dealMenuLabels(TIER_FEATURE_PRESETS.STARTER_249);
+const enterpriseMenuSummary = 'ครบทุกเมนู: ภาษี · สมุดรายวัน · จัดซื้อและเจ้าหนี้ · บัญชีธนาคาร · รายงานการเงิน · CRM · คลังสินค้า · ผู้ช่วย AI ทาง LINE';
 function errorStatus(error: unknown): number | undefined {
   if (!error || typeof error !== 'object') return undefined;
   const value = error as { status?: unknown; statusCode?: unknown };
@@ -464,15 +466,15 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           const monthly = data.catalog.offers.find(item => item.offerKey === offer.offerKey && item.interval === 'month');
           const saving = interval === 'year' && monthly ? monthly.priceSatang * 12 - offer.priceSatang : 0;
           const current = status.accessState === 'ACTIVE' && status.tierKey === offer.offerKey && status.interval === offer.interval;
-          // Phase 6: every card carries the whole package. Limits, receipts and AI credit stay on
-          // screen; only the menu list — 20 rows on the largest tier — folds away on a phone.
-          const menus = dealMenuLabels(offer.featureKeys);
+          // Every card compares the same six baseline entrances; Enterprise names its additional
+          // full-package coverage separately without reducing the entitlement snapshot it grants.
+          const menus = catalogCardMenus;
           return <article key={offer.offerKey} className={`mangmee-card relative flex flex-col gap-4 p-5${current ? ' !border-brand-500' : ''}`}>
           {current && <MangmeeBadge className="absolute -top-3 right-4 border">แพ็กเกจปัจจุบัน</MangmeeBadge>}
           <h3 className="font-bold">{offer.label}</h3><p className="text-xl font-bold">{money(offer.priceSatang)} / {interval === 'month' ? 'เดือน' : 'ปี'}</p>
           <p className="text-sm text-brand-700">{interval === 'year' ? `ใช้งาน 12 เดือน${saving > 0 ? ` · ประหยัด ${money(saving)}` : ''}` : 'ชำระรายเดือน'}</p><p>{offer.branchLimit} สาขา · {offer.employeeLimit} ผู้ใช้</p>
           <p>{offer.receiptAllowance.toLocaleString('th-TH')} ใบ ได้ทันทีเมื่อชำระสำเร็จ</p>
-          <p>เครดิต AI: {dealAiCreditText(data.catalog.aiMonthlyBudgetSatang)}</p>
+          {offer.offerKey === 'ENTERPRISE_1999' && <p className="text-sm text-gray-600">{enterpriseMenuSummary}</p>}
           {menus.length > 0 && <details className="text-sm text-gray-600"><summary className="min-h-11 cursor-pointer py-2 font-semibold text-brand-700">ดูรายละเอียดทั้งหมด · {menus.length} เมนู</summary>
             <ul className="space-y-1 break-words">{menus.map(label => <li key={label}><span aria-hidden="true">✓ </span>{label}</li>)}</ul></details>}
           {offer.availability === 'COMING_SOON' && <p className="text-sm text-gray-600">แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน</p>}

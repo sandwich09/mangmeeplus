@@ -26,20 +26,22 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(plans).toBeVisible();
   await expectTopBack('กลับไปแพ็กเกจปัจจุบัน', plans);
   await expect(plans.getByText('แพ็กเกจปัจจุบัน', { exact: true })).toHaveCount(0);
+  await expect(enterprise.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true })).toBeEnabled();
+  await expect(enterprise).toContainText('500 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
   await plans.getByRole('button', { name: 'รายปี', exact: true }).click();
   await expect(plans).toContainText('ใช้งาน 12 เดือน · ประหยัด ฿498.00');
-  // Phase 6: ENTERPRISE is an ordinary card once its prices are bound, and every card carries the
-  // whole package — limits, receipts and AI credit on screen, the menu list one tap away.
+  // Enterprise is an ordinary month/year card once its prices are bound. Every tier compares the
+  // same six baseline menus; Enterprise names the additional full package separately.
   await expect(plans.getByText('เร็ว ๆ นี้', { exact: true })).toHaveCount(0);
   await expect(enterprise.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true })).toBeEnabled();
   await expect(enterprise).toContainText('10 สาขา · 30 ผู้ใช้');
-  await expect(enterprise).toContainText('24,000 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
-  await expect(enterprise).toContainText('เครดิต AI: 2,000.00 บาท / เดือน');
-  await enterprise.getByText('ดูรายละเอียดทั้งหมด · 21 เมนู', { exact: true }).click();
-  await expect(enterprise.getByRole('listitem')).toHaveCount(21);
-  // The headline feature leads; ภาษี names what opened ENTERPRISE rather than just "ภาษี".
+  await expect(enterprise).toContainText('6,000 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
+  await expect(plans).not.toContainText('เครดิต AI:');
+  await expect(enterprise).toContainText('ครบทุกเมนู: ภาษี · สมุดรายวัน · จัดซื้อและเจ้าหนี้ · บัญชีธนาคาร · รายงานการเงิน · CRM · คลังสินค้า · ผู้ช่วย AI ทาง LINE');
+  await enterprise.getByText('ดูรายละเอียดทั้งหมด · 6 เมนู', { exact: true }).click();
+  await expect(enterprise.getByRole('listitem')).toHaveCount(6);
+  // The shared baseline starts with the LINE assistant for every tier.
   await expect(enterprise.getByRole('listitem').first()).toHaveText('✓ ผู้ช่วย AI ทาง LINE');
-  await expect(enterprise.getByRole('listitem').filter({ hasText: 'ภ.ง.ด.53' })).toHaveText('✓ ภาษี (ภ.ง.ด.53 และ 50 ทวิ)');
   // The three smaller tiers share one menu set (TIER_FEATURE_PRESETS); only their limits differ.
   await expect(starter).toContainText('1 สาขา · 2 ผู้ใช้');
   await expect(starter).toContainText('360 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
@@ -474,7 +476,7 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ' })).toContainText('ต้องเปิดบิลและสแกน QR เอง');
   await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
   // Open the largest package's menu list so the reviewed screenshot shows a card in full.
-  await enterprise.getByText('ดูรายละเอียดทั้งหมด · 21 เมนู', { exact: true }).click();
+  await enterprise.getByText('ดูรายละเอียดทั้งหมด · 6 เมนู', { exact: true }).click();
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: info.outputPath(`billing-preview-plans-${width}.png`), fullPage: true });
   await scenario.selectOption('start');

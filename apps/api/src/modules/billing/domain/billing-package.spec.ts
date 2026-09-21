@@ -26,7 +26,7 @@ test('provider Portal configuration requires explicit safe flags and exact nativ
 });
 
 test('HIDDEN receipt-only offers stay absent from the catalog and direct requests fail before Stripe', async () => {
-  const tiers = ['STARTER_249', 'BASIC_499', 'PRO_999'] as const;
+  const tiers = ['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999'] as const;
   const variants = tiers.flatMap((tier) => ['month', 'year'].map((interval) => `${tier}:${interval}`));
   let salesEnabled = false, providerCalls = 0, quoteWrites = 0;
   const policy = { ...BILLING_DRAFT_POLICY, portalConfigurationId: 'bpc_test',
@@ -44,12 +44,9 @@ test('HIDDEN receipt-only offers stay absent from the catalog and direct request
     salesEnabled = open;
     const catalog = await service.catalog();
     assert.equal(catalog.offers.length, 8, 'four paid packages, each month/year');
-    assert.deepEqual([...new Set(catalog.offers.map((offer) => offer.offerKey))], [...tiers, 'ENTERPRISE_1999']);
-    // Phase 6: ENTERPRISE sells only once its Prices are bound. This policy binds the other three,
-    // so an open catalog still offers six and Enterprise stays COMING_SOON on its own.
-    assert.equal(catalog.offers.filter((offer) => offer.availability === 'AVAILABLE').length, open ? 6 : 0);
-    assert.equal(catalog.offers.filter((offer) => offer.offerKey === 'ENTERPRISE_1999')
-      .every((offer) => offer.availability === 'COMING_SOON'), true);
+    assert.deepEqual([...new Set(catalog.offers.map((offer) => offer.offerKey))], [...tiers]);
+    // All four paid tiers share the same open/closed gate once both exact Price variants are bound.
+    assert.equal(catalog.offers.filter((offer) => offer.availability === 'AVAILABLE').length, open ? 8 : 0);
     assert.equal(catalog.aiMonthlyBudgetSatang, 120000);
     assert.deepEqual(catalog.offers.find((offer) => offer.offerKey === 'ENTERPRISE_1999')!.featureKeys,
       [...FEATURE_PACKAGE_PRESETS.full.featureKeys]);
@@ -68,7 +65,7 @@ test('full-package catalog grants annual units upfront, sells Enterprise at ten 
   for (const [tier, monthly, annualPrice] of [
     ['STARTER_249', 30, 249000], ['BASIC_499', 50, 499000], ['PRO_999', 100, 999000],
     // Phase 6 (Owner 2026-09-21): the same ×10 annual rule as every other tier — 1,999 ×10 = 19,990.
-    ['ENTERPRISE_1999', 2000, 1999000],
+    ['ENTERPRISE_1999', 500, 1999000],
   ] as const) {
     assert.equal(billingOffer(tier, 'month').receiptAllowance, monthly);
     const annual = billingOffer(tier, 'year');
@@ -84,7 +81,7 @@ test('full-package catalog grants annual units upfront, sells Enterprise at ten 
     priceIds: { 'ENTERPRISE_1999:year': 'price_EnterpriseYear' } }).availability, 'UNAVAILABLE');
   // Enterprise is a purchasable package now; only hidden receipt tiers and the trial are refused.
   assert.equal(fullPackagePurchaseImpact({ tier: 'ENTERPRISE_1999', interval: 'year',
-    verifiedPaidAt: new Date('2026-09-21T00:00:00Z'), paidThrough: null, remainingPaidReceipts: 0 }).receiptUnitsAdded, 24000);
+    verifiedPaidAt: new Date('2026-09-21T00:00:00Z'), paidThrough: null, remainingPaidReceipts: 0 }).receiptUnitsAdded, 6000);
   for (const tier of ['RECEIPT_TOPUP', 'FREE_TRIAL_15']) {
     assert.throws(() => fullPackagePurchaseImpact({ tier, interval: 'year', verifiedPaidAt: new Date(), paidThrough: null, remainingPaidReceipts: 0 }));
   }
