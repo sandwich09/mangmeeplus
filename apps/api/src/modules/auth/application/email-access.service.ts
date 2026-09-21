@@ -7,6 +7,7 @@ import { requireLineContactEmail } from '../../external-signup/domain/line-signu
 import { hashToken } from '../domain/logic/secure-token.logic';
 import { emailAccessDigest, matchesEmailAccessCode, matchesEmailBrowserSecret } from '../domain/logic/email-access.logic';
 import { emailReauthBinding, emailSecurityBinding, newEmailOtp, EMAIL_OTP_TTL_MS, EMAIL_OTP_COOLDOWN_MS } from '../domain/logic/email-otp.logic';
+import { revokeActiveSessions } from '../domain/logic/session-revocation.logic';
 import { databaseNow, emailError, emailUserInclude, lockAccountEmail } from './account-email-state';
 import { EmailDeliveryService } from './email-delivery.service';
 import { PostmarkSendError } from '../infrastructure/postmark.client';
@@ -171,11 +172,27 @@ export class EmailAccessService {
         await tx.emailAccessChallenge.update({ where: { id: token.id }, data: { status: 'VERIFIED', verifiedAt: now, signupRequestId: unfinished.id, expiresAt: new Date(now.getTime() + EMAIL_OTP_TTL_MS) } });
         return { kind: 'SIGNUP' as const };
       }
-      if (!user.emailLoginEnabledAt || !user.emailVerifiedAt || user.email?.trim().toLowerCase() !== token.email || !membership || privileged || user.credential?.status === 'DISABLED') {
+      if (user.email?.trim().toLowerCase() !== token.email || !membership || privileged || user.credential?.status === 'DISABLED') {
         await tx.emailAccessChallenge.update({ where: { id: token.id }, data: { status: 'USED', usedAt: now } });
         return { kind: 'EXISTING_LOGIN_REQUIRED' as const };
       }
-      return this.login(tx, token, user, membership, now, input.requestId);
+      let loginUser = user;
+      if (!user.emailLoginEnabledAt || !user.emailVerifiedAt) {
+        const newlyVerified = !user.emailVerifiedAt;
+        loginUser = await tx.user.update({ where: { id: user.id }, data: {
+          emailVerifiedAt: user.emailVerifiedAt ?? now,
+          emailLoginEnabledAt: user.emailLoginEnabledAt ?? now,
+          ...(newlyVerified ? { emailRevision: { increment: 1 } } : {}),
+        }, include: emailUserInclude });
+        await tx.emailAccessChallenge.updateMany({ where: { userId: user.id, id: { not: token.id }, status: { in: ['PENDING', 'VERIFIED'] } }, data: { status: 'REVOKED' } });
+        if (newlyVerified) {
+          await revokeActiveSessions(tx.authSession, { userId: user.id, now });
+          await tx.emailVerificationToken.updateMany({ where: { userId: user.id, status: 'PENDING' }, data: { status: 'REVOKED' } });
+          await tx.passwordResetToken.updateMany({ where: { userId: user.id, status: 'PENDING' }, data: { status: 'REVOKED' } });
+        }
+        await this.audit(tx, 'auth.email_access.activated', token.id, input.requestId, user.id);
+      }
+      return this.login(tx, token, loginUser, membership, now, input.requestId);
     });
     if ('error' in result) {
       if ('attemptsRemaining' in result && typeof result.attemptsRemaining === 'number' && result.attemptsRemaining > 0) throw emailError('EMAIL_OTP_INVALID', 'รหัสไม่ถูกต้อง กรุณาตรวจรหัสจากอีเมลล่าสุด', 400, { attemptsRemaining: result.attemptsRemaining });
