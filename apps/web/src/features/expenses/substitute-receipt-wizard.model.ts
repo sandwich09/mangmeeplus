@@ -6,6 +6,7 @@ import {
   type SourceDocumentType,
   type SubstituteReceiptApprovalMode,
   type SubstituteReceiptEvidenceStatus,
+  type SubstituteReceiptFundingSource,
   type SubstituteReceiptReasonCode,
 } from '@watchdog-bms/contracts';
 
@@ -581,4 +582,16 @@ export function canEditSubstituteReceipt(expense: { status: string; paidAmount: 
 
 export function paymentMonthChanged(before: string, after: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(before) && /^\d{4}-\d{2}-\d{2}$/.test(after) && before.slice(0, 7) !== after.slice(0, 7);
+}
+
+/**
+ * Spec §10/AC08/AC09: the "สร้างคำขอเบิกจากใบนี้" entry point on the wizard's done step and the
+ * hub's rows. An already-claimed source still passes (AC08's edge-case row) — the create page's
+ * `?expenseId=` flow states `expense_already_claimed` rather than this helper hiding the button.
+ */
+export function canClaimReimbursementFromSubstituteReceipt(
+  evidence: { status: SubstituteReceiptEvidenceStatus; fundingSource?: SubstituteReceiptFundingSource | null; payerUserId: string | null } | null | undefined,
+  canCreateReimbursement: boolean,
+): boolean {
+  return Boolean(evidence && evidence.status === 'ISSUED' && evidence.fundingSource === 'PERSONAL_ADVANCE' && evidence.payerUserId && canCreateReimbursement);
 }

@@ -83,6 +83,7 @@ import {
 import { ATTACHMENT_UPLOAD_ACCEPT, IMAGE_UPLOAD_ACCEPT, assertAllowedUploadFile, prepareAttachmentUpload } from '@/common/files/upload-file.logic';
 import { findForbiddenChars, normalizeDecimalInput, stripDisallowed } from '@/common/forms/sanitize';
 import {
+  canClaimReimbursementFromSubstituteReceipt,
   canEditSubstituteReceipt,
   paymentMonthChanged,
   clearSubstituteWizardDraft,
@@ -539,6 +540,9 @@ export function SubstituteReceiptWizardPage({
   const [receiptEvidence, setReceiptEvidence] = useState<SubstituteReceiptEvidenceSummary | null>(null);
   const [editingPrepared, setEditingPrepared] = useState(false);
   const isCancelled = receiptEvidence?.status === 'SUPERSEDED';
+  // Spec §10/AC08: the done step's "สร้างคำขอเบิกจากใบนี้" entry point — a navigational link, not
+  // an edit of this wizard, so it is not gated behind viewOnly like canReview/canConfirm/canCreate.
+  const canClaimReimbursement = canClaimReimbursementFromSubstituteReceipt(receiptEvidence, permissions.includes('reimbursement.create'));
   const [history, setHistory] = useState<SubstituteReceiptEvidenceSummary[]>([]);
   const [policy, setPolicy] = useState<SubstituteReceiptRuntimePolicy | null>(null);
   const [activeStep, setActiveStep] = useState<WizardStep>('expense');
@@ -2668,7 +2672,16 @@ export function SubstituteReceiptWizardPage({
             <p className="mt-4 text-sm font-semibold leading-6 text-warning-700">{t('expenses.substitute_wizard.document_not_ready', locale)}</p>
           )}
         </div>
-        {receiptEvidence.status === 'ISSUED' && receiptEvidence.fundingSource === 'PERSONAL_ADVANCE' && <div className="border-t border-gray-100 p-5"><p className="text-sm">ใบรับรองระบุว่าพนักงานจ่ายร้านเต็มจำนวนแล้ว การออกใบรับรองยังไม่ถือว่าบริษัทจ่ายคืนให้พนักงาน</p></div>}
+        {receiptEvidence.status === 'ISSUED' && receiptEvidence.fundingSource === 'PERSONAL_ADVANCE' && <div className="border-t border-gray-100 p-5">
+          <p className="text-sm">{canClaimReimbursement
+            ? 'ใบรับรองระบุว่าคุณจ่ายร้านเต็มจำนวนด้วยเงินส่วนตัว ทำคำขอเบิกต่อได้เลย ยอดและใบรับรองจะติดไปด้วย'
+            : 'ใบรับรองระบุว่าพนักงานจ่ายร้านเต็มจำนวนแล้ว การออกใบรับรองยังไม่ถือว่าบริษัทจ่ายคืนให้พนักงาน'}</p>
+          {canClaimReimbursement && (
+            <Link className={cx(btnClass, 'mt-3 inline-flex')} href={`/companies/${companyId}/reimbursements/new?expenseId=${encodeURIComponent(detail.id)}`}>
+              สร้างคำขอเบิกจากใบนี้
+            </Link>
+          )}
+        </div>}
         {receiptEvidence.status === 'ISSUED' && receiptEvidence.fundingSource !== 'PERSONAL_ADVANCE' && <div className="grid gap-px border-t border-gray-100 bg-gray-100 text-left sm:grid-cols-3">
           {([
             ['1', 'expenses.substitute_wizard.done_next_store'],
