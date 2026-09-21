@@ -18,7 +18,7 @@ import {
   uploadReceiptFile, updateExpenseDraft, listExpenseCategories,
   updateExpenseReviewFields, uploadExpenseEvidenceFile,
   createAccountantPackage, downloadIndexXlsx, requestExpenseExtraction, overrideNonExpenseClassification,
-  createExpenseDraft, deleteExpense,
+  createExpenseDraft, deleteExpense, confirmExpenseBuyerMatch,
 } from './expenses.api';
 import {
   EXPENSE_VAT_MODE_LABELS, CAPTURE_SOURCE_LABELS,
@@ -54,7 +54,9 @@ import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { SupportedLocale, DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
-import { Modal } from '@/common/components/modal';
+import { Modal, useConfirm } from '@/common/components/modal';
+import { TextareaField } from '@/common/components/field';
+import { buyerMatchBannerState, type RestorableClaimStatus } from './expense-buyer-match.logic';
 import { findForbiddenChars, normalizeDecimalInput, REASON_MAX_LENGTH, sanitizeReasonInput, stripDisallowed } from '@/common/forms/sanitize';
 import {
   ATTACHMENT_UPLOAD_ACCEPT,
@@ -67,6 +69,7 @@ import {
   type CaptureUploadEntry, type CaptureUploadState,
 } from './expense-capture-upload.logic';
 import { captureReadJobNotice } from './expense-capture-status.logic';
+import { addressMissingListFilter } from './expense-address-missing-view.logic';
 import {
   bangkokMonthKey, classifyUploadFile, HeicDecodeError, isReceiptQuotaBlocked,
   availableExpenseSessionStorage,
@@ -698,6 +701,157 @@ function CheckBillGuidanceCard({ companyId, expenseId, canReview, canStartSubsti
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Vendor-address §8 Slice 2 (AC13): the buyer a full tax invoice printed, against the company
+ * registry. Warn-only — both ways forward are a person's choice and nothing here disables any other
+ * control on the page. The state is decided in `expense-buyer-match.logic.ts`.
+ */
+export function BuyerMatchBanner({ companyId, detail, editable, claimed, permissions, onSaved, onOpenLines }: {
+  companyId: string;
+  detail: ExpenseDetail;
+  /** The page's own "review form is editable" rule — the mark button follows it exactly. */
+  editable: boolean;
+  claimed: boolean;
+  permissions: readonly string[];
+  onSaved: () => Promise<void>;
+  /** Takes the reviewer to the line Tax Codes; without it the guidance is words only. */
+  onOpenLines?: () => void;
+}) {
+  const locale = useWorkspaceLocale();
+  const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const banner = buyerMatchBannerState({ companyId, detail, permissions, editable, claimed });
+  if (banner.kind === 'none') return null;
+  // The write and the readback fail differently: a refused write says why, a failed readback says
+  // the change is saved and only the screen is stale.
+  const run = async (write: () => Promise<unknown>, doneKey: DictionaryKey): Promise<boolean> => {
+    setBusy(true); setError(null);
+    try {
+      try { await write(); } catch (e) { setError(err(e, locale)); return false; }
+      try { await onSaved(); } catch {
+        const message = t('expenses.review_saved_refresh_failed', locale);
+        setError(message); toast.warning(message);
+        return true;
+      }
+      toast.success(t(doneKey, locale));
+      return true;
+    } finally { setBusy(false); }
+  };
+  // Mark and undo are a person's act through the existing review save — the same PATCH that already
+  // carries `inputVatClaimStatus` — never an automatic change and never a new mutation. The API stamps
+  // the replaced status on the mark, which is what the undo sends back.
+  const setClaimStatus = (inputVatClaimStatus: 'NON_CLAIMABLE' | RestorableClaimStatus, doneKey: DictionaryKey) =>
+    run(() => updateExpenseReviewFields(companyId, detail.id, { expectedUpdatedAt: detail.updatedAt, inputVatClaimStatus }), doneKey);
+  const markNonClaimable = async () => {
+    if (!(await confirm({ title: t('expenses.buyer_match_mark_title', locale), message: t('expenses.buyer_match_mark_message', locale),
+      confirmLabel: t('expenses.buyer_match_mark_non_claimable', locale), cancelLabel: t('expenses.cancel', locale) }))) return;
+    await setClaimStatus('NON_CLAIMABLE', 'expenses.buyer_match_marked_toast');
+  };
+  const submitReason = async () => {
+    if (await run(() => confirmExpenseBuyerMatch(companyId, detail.id, reason.trim()), 'expenses.buyer_match_confirmed_toast')) setReasonOpen(false);
+  };
+  const restore = banner.restoreClaimStatus;
+  const undoButton = restore && (
+    <button type="button" className={ghostClass} disabled={busy} aria-busy={busy} onClick={() => void setClaimStatus(restore, 'expenses.buyer_match_unmarked_toast')}>
+      {t('expenses.buyer_match_undo', locale)}
+    </button>
+  );
+  if (banner.kind !== 'mismatch') {
+    return (
+      <div className="space-y-2">
+        {banner.kind === 'unchecked' ? (
+          <p role="status" className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+            {t('expenses.buyer_match_unchecked', locale)}{' '}
+            {banner.settingsHref
+              ? <Link className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline" href={banner.settingsHref}>{t('expenses.buyer_match_open_settings', locale)}</Link>
+              : t('expenses.buyer_match_ask_owner', locale)}
+          </p>
+        ) : (
+          <p className="text-xs text-gray-500">{banner.kind === 'confirmed'
+            ? t('expenses.buyer_match_confirmed', locale).replace('{reason}', banner.reason)
+            : t('expenses.buyer_match_marked_non_claimable', locale)}</p>
+        )}
+        {error && <ErrorBanner message={error} />}
+        {undoButton}
+      </div>
+    );
+  }
+
+  return (
+    <MangmeeCard className="space-y-3 border-warning-100 bg-warning-50 p-4 text-sm">
+      {confirmDialog}
+      <h3 className="font-semibold text-warning-700">{t('expenses.buyer_match_title', locale)}</h3>
+      <p className="text-xs text-warning-700">{t('expenses.buyer_match_hint', locale)}</p>
+      {banner.differences.length > 0 && (
+        <dl className="space-y-2">
+          {banner.differences.map((difference) => (
+            <div key={difference.reason} className="rounded-lg bg-white px-3 py-2 text-xs">
+              <dt className="font-semibold text-gray-700">{t(difference.labelKey, locale)}</dt>
+              <dd className="mt-1 break-words text-gray-600">{t('expenses.buyer_match_printed', locale)}: <span className="font-medium text-gray-900">{difference.printed}</span></dd>
+              <dd className="break-words text-gray-600">{t('expenses.buyer_match_registered', locale)}: <span className="font-medium text-gray-900">{difference.registered}</span></dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {error && !reasonOpen && <ErrorBanner message={error} />}
+      {banner.markHintKey && <p className="text-xs text-warning-700">{t(banner.markHintKey, locale)}</p>}
+      {(banner.canConfirm || banner.canMarkNonClaimable || undoButton || (banner.openLines && onOpenLines)) && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          {banner.openLines && onOpenLines && (
+            // Navigation only — no write, so nothing to wait for and no reason to lock it while busy.
+            <button type="button" className={ghostClass} onClick={onOpenLines}>{t('expenses.buyer_match_open_lines', locale)}</button>
+          )}
+          {banner.canConfirm && (
+            <button type="button" className={ghostClass} disabled={busy} onClick={() => { setReason(''); setError(null); setReasonOpen(true); }}>
+              {t('expenses.buyer_match_confirm', locale)}
+            </button>
+          )}
+          {banner.canMarkNonClaimable && (
+            <button type="button" className={ghostClass} disabled={busy} aria-busy={busy} onClick={() => void markNonClaimable()}>
+              {t('expenses.buyer_match_mark_non_claimable', locale)}
+            </button>
+          )}
+          {undoButton}
+        </div>
+      )}
+      <Modal
+        open={reasonOpen}
+        size="sm"
+        title={t('expenses.buyer_match_confirm_title', locale)}
+        closeLabel={t('expenses.close', locale)}
+        onClose={() => { if (!busy) setReasonOpen(false); }}
+        footer={(
+          <>
+            <button type="button" className={ghostClass} disabled={busy} onClick={() => setReasonOpen(false)}>{t('expenses.cancel', locale)}</button>
+            {/* Never disabled for an empty reason: the refusal names what to type (D5), a greyed-out
+                button on a phone explains nothing. */}
+            <button type="button" className={btnClass} disabled={busy} aria-busy={busy} onClick={() => void submitReason()}>
+              {t(busy ? 'expenses.saving' : 'expenses.buyer_match_confirm_submit', locale)}
+            </button>
+          </>
+        )}
+      >
+        <div className="space-y-3">
+          {error && <ErrorBanner message={error} />}
+          <TextareaField
+            label={t('expenses.buyer_match_confirm_reason', locale)}
+            hint={t('expenses.buyer_match_confirm_reason_hint', locale)}
+            rows={3}
+            maxLength={REASON_MAX_LENGTH}
+            value={reason}
+            disabled={busy}
+            onChange={(event) => setReason(sanitizeReasonInput(event.target.value))}
+          />
+        </div>
+      </Modal>
+    </MangmeeCard>
   );
 }
 
@@ -2038,6 +2192,9 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   // chip below can both link to exactly this list without duplicating the query.
   const sourceView = requestedView === 'pending' || requestedView === 'unpaid' || requestedView === 'addressMissing' ? requestedView
     : requestedView === 'confirmed' && isCivilDate(requestedFrom) && isCivilDate(requestedTo) && requestedFrom <= requestedTo ? 'confirmed' : null;
+  // §11.4: the checklist link carries a valid range, so this view is period-scoped like `confirmed`
+  // is; the chip's own link carries none, so this stays the every-period filter it always was.
+  const addressMissingRange = sourceView === 'addressMissing' ? addressMissingListFilter(requestedFrom, requestedTo) : null;
   const toast = useToast();
   const [rows, setRows] = useState<ExpenseSummary[]>([]);
   const [catNames, setCatNames] = useState<Record<string, string>>({});
@@ -2098,8 +2255,9 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
           ...(branchId ? { branchId } : {}),
           ...(sourceView === 'confirmed' ? { status: 'CONFIRMED', fromDate, toDate }
             : sourceView === 'unpaid' ? { status: 'CONFIRMED' }
-            // Every period: §8 says the filter exists so old documents can be filled in over time.
-            : sourceView === 'addressMissing' ? { vendorAddressMissing: true }
+            // §11.4: scoped to the checklist's range when the URL carries a valid one, every period
+            // otherwise (§8 - the chip's own link, so old documents can be filled in any time).
+            : sourceView === 'addressMissing' ? addressMissingListFilter(requestedFrom, requestedTo)
             : { uploadedFromDate: fromDate, uploadedToDate: toDate }),
           page: nextPage, pageSize: 200,
         });
@@ -2116,7 +2274,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
     }
     finally { if (version === loadVersion.current) setLoading(false); }
     // `branchFilter` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
-  }, [companyId, branchId, fromDate, toDate, sourceView]);
+  }, [companyId, branchId, fromDate, toDate, sourceView, requestedFrom, requestedTo]);
   useEffect(() => { void load(); return () => { loadVersion.current += 1; }; }, [load]);
   useEffect(() => {
     setCategoryNamesLoading(true);
@@ -2247,7 +2405,9 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
       {sourceView && <div role="status" className="rounded-xl bg-brand-25 p-3 text-sm text-brand-800">
         {sourceView === 'confirmed' ? `รายการยืนยันแล้ว · วันที่เอกสาร ${dateShort(fromDate)} – ${dateShort(toDate)}`
           : sourceView === 'pending' ? 'ใบเสร็จรอตรวจ · ทุกช่วงเวลา รวมฉบับร่าง'
-            : sourceView === 'addressMissing' ? t('expenses.view_vendor_address_missing', locale)
+            : sourceView === 'addressMissing' ? (addressMissingRange?.fromDate && addressMissingRange?.toDate
+                ? `${t('expenses.view_vendor_address_missing', locale)} · วันที่เอกสาร ${dateShort(addressMissingRange.fromDate)} – ${dateShort(addressMissingRange.toDate)}`
+                : t('expenses.view_vendor_address_missing', locale))
               : 'ค้างจ่ายที่ยืนยันแล้ว · ทุกช่วงเวลา'}
         <button className="ml-2 min-h-11 underline" onClick={() => router.replace(`/companies/${companyId}/expenses`)}>กลับไปดูรายการตามเดือน</button>
       </div>}
@@ -2314,7 +2474,9 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
               </button>
             ))}
             {/* §11.4: the way into "ใบกำกับที่ยังไม่มีที่อยู่ผู้ขาย". It carries no count because the
-                server answers it across every period, not out of the rows already loaded here. */}
+                server answers it across every period, not out of the rows already loaded here.
+                No fromDate/toDate on purpose - unlike the ภ.พ.30 checklist's own link, this chip
+                stays the browse-the-whole-backlog entry point (see addressMissingListFilter). */}
             <button type="button" aria-pressed={sourceView === 'addressMissing'}
               onClick={() => router.replace(`/companies/${companyId}/expenses${sourceView === 'addressMissing' ? '' : '?view=addressMissing'}`)}
               className={cx('col-span-2 inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-center text-sm font-semibold leading-tight transition sm:col-span-1',

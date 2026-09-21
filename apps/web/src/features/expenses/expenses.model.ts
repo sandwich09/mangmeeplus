@@ -364,6 +364,8 @@ export function lateDocumentDays(expense: Pick<ExpenseSummary, 'expenseDate' | '
 }
 
 export type ExpenseDetail = ExpenseSummary & {
+  /** Vendor-address Slice 2: the printed buyer block and its registry comparison (warn-only). */
+  buyerAsPrinted?: import('@watchdog-bms/contracts').ExpenseBuyerAsPrinted | null;
   primaryAttachmentId?: string | null;
   extractionId?: string | null;
   sourceDraft?: ExpenseSourceDraft | null;

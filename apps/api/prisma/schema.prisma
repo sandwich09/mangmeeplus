@@ -2478,6 +2478,10 @@ model ExpenseRecord {
   /// One free-text block, postcode included — the RD compares it with the paper, so it is never
   /// split into fields here. Empty never blocks anything (§8): it is a review hint, not a gate.
   vendorAddressSnapshot              String?                            @db.VarChar(500)
+  /// Slice 2 (vendor-address spec §5 row 2, §6): the buyer block a full tax invoice printed — our own
+  /// company as the seller typed it — plus how it compared with the company registry
+  /// (`ExpenseBuyerAsPrinted`). Warn-only: never changes taxEvidenceStatus or inputVatClaimStatus.
+  buyerAsPrintedJson                 Json?
   // RA-18: the payee's taxpayer class decides ภ.ง.ด.3 (INDIVIDUAL) vs ภ.ง.ด.53 (JURISTIC) when
   // this expense withholds tax. Captured at review; null means not yet classified, never "juristic".
   vendorEntityKindSnapshot           BuyerEntityKind?

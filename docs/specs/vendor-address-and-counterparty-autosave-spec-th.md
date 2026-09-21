@@ -97,7 +97,7 @@
 
 `vendorBranchCodeSnapshot` (คอลัมน์เดิม) ได้กฎที่ยังไม่เคยมี: รับเฉพาะตัวเลข 5 หลัก เก็บ `null` เมื่อว่าง ห้ามเขียนสตริง `'00000'` ลงฐานข้อมูล และตัวจับคู่คู่ค้าถือ `null` เท่ากับ `'00000'` (สำนักงานใหญ่) ตามสัญญาเดิมของฝั่งขาย (CON-8)
 
-`vendorEntityKindSnapshot` (คอลัมน์เดิม) ใช้ enum เดียวกับ `AccountingCounterparty.entityKind` จึงส่งค่ากันได้ตรงๆ ทั้งสองทาง (CON-7) Slice 2 เพิ่ม `buyerAsPrintedJson Json?` โครง `{name, taxId, branchCode, addressText, matchStatus: 'MATCH'|'MISMATCH'|'UNCHECKED'|'NOT_PRINTED', checkedAt, overrideReason?}`
+`vendorEntityKindSnapshot` (คอลัมน์เดิม) ใช้ enum เดียวกับ `AccountingCounterparty.entityKind` จึงส่งค่ากันได้ตรงๆ ทั้งสองทาง (CON-7) Slice 2 เพิ่ม `buyerAsPrintedJson Json?` โครง `{name, taxId, branchCode, addressText, matchStatus: 'MATCH'|'MISMATCH'|'UNCHECKED'|'NOT_PRINTED', checkedAt, overrideReason?}` (implement 21 ก.ย. 2569 เพิ่มแบบ additive: `reasons` = TAX_ID/BRANCH/NAME/POSTAL_CODE, `differences` = ค่าบนใบกับค่าทะเบียนที่ใช้เทียบต่อเหตุผล ณ `checkedAt`, `overriddenByUserId`, `overriddenAt`, `claimStatusBeforeMark` (สถานะสิทธิ์ภาษีซื้อก่อนคนกดทำเครื่องหมาย ใช้คืนค่าเมื่อกดยกเลิก); contract `ExpenseBuyerAsPrinted`, detail DTO ส่งเป็น `buyerAsPrinted`)
 
 **AccountingCounterparty.billingAddressJson** กำหนดโครง v2 แบบ additive ทุกผู้อ่านเลือก `addressText` ก่อนเมื่อมี คีย์เดิมคงไว้:
 
@@ -161,11 +161,11 @@ OCR (D3 ก้าวที่สอง): เพิ่มช่อง `vendorAddr
 | ที่อยู่บนใบต่างจากทะเบียน (กรณี c) | ล่าสุดเป็นหลักโดยอัตโนมัติ (หรือเก็บเฉพาะใบเมื่อล็อก) | บรรทัดข้อมูลเดียว ไม่มีปุ่ม ไม่มีอะไรต้องตัดสินใจ |
 | รหัสสาขาว่าง หรือใบระบุรหัสที่ทะเบียนไม่มี | ว่าง = 00000 · รหัสใหม่ = สร้างแถว "(สาขา NNNNN)" | ไม่บล็อก toast บอกว่าสร้างสาขาใหม่ให้แล้ว |
 | ผู้ใช้ไม่มีสิทธิ์อ่านทะเบียนคู่ค้า | ยังพิมพ์ที่อยู่บนใบได้ ระบบยังออโต้บันทึกตาม A3 | ลิงก์ "ดู" ของ toast ไม่แสดง เหลือข้อความอย่างเดียว |
-| Slice 2 ผู้ซื้อบนใบไม่ตรงทะเบียนเรา | บันทึก `matchStatus = MISMATCH` ไม่เปลี่ยน claimability อัตโนมัติ | แถบ "ชื่อ/ที่อยู่ผู้ซื้อบนใบไม่ตรงทะเบียนบริษัท" ปุ่ม [ยืนยันว่าใช้ได้ พร้อมเหตุผล] (audit, สิทธิ์ `expense.confirm`) และ [ทำเครื่องหมายใบนี้ใช้ภาษีซื้อไม่ได้] ซึ่งเป็นการกระทำของคนเท่านั้น |
+| Slice 2 ผู้ซื้อบนใบไม่ตรงทะเบียนเรา | บันทึก `matchStatus = MISMATCH` ไม่เปลี่ยน claimability อัตโนมัติ | แถบ "ชื่อ/ที่อยู่ผู้ซื้อบนใบไม่ตรงทะเบียนบริษัท" ปุ่ม [ยืนยันว่าใช้ได้ พร้อมเหตุผล] (audit, สิทธิ์ `expense.confirm`) และ [ทำเครื่องหมายใบนี้ใช้ภาษีซื้อไม่ได้] ซึ่งเป็นการกระทำของคนเท่านั้น ปุ่มนี้มีเฉพาะใบที่ไม่มีรหัสภาษีรายบรรทัด เพราะ ภ.พ.30 อ่านสถานะหัวเอกสารเฉพาะใบแบบนั้น และมีปุ่ม [ยกเลิกเครื่องหมาย ใช้ภาษีซื้อได้ตามเดิม] คืนสถานะก่อนกด (เก็บไว้ใน `claimStatusBeforeMark`); ใบที่มีรหัสภาษีรายบรรทัด ภ.พ.30 อ่านจากรหัสภาษีของบรรทัด แถบจึงบอกให้เปลี่ยนประเภทภาษีของรายการเป็นแบบขอคืนไม่ได้ พร้อมปุ่ม [ไปที่รายการ] แทนปุ่มที่ไม่มีผล |
 | Slice 2 แต่บริษัทยังไม่ตั้งค่าที่อยู่ตัวเอง | `matchStatus = UNCHECKED` | ข้อความ "ยังเทียบไม่ได้ เพราะยังไม่ตั้งค่าที่อยู่บริษัท" + ลิงก์ตั้งค่า ไม่บล็อกอะไร |
 | 50 ทวิ ต้องการที่อยู่ผู้ถูกหักแต่ไม่มีทั้งใบและทะเบียน | prefill ว่างตามจริง | หน้าตรวจก่อนส่งต่อมีช่องพิมพ์ที่อยู่ในที่ และค่าที่พิมพ์บันทึกกลับทะเบียนตาม D4 |
 | ใบทดแทนที่ผู้รับเงินไม่มีที่อยู่ | ช่อง `payeeAddress` ยัง optional ตามเดิม | prefill จากใบ/ทะเบียนเมื่อมี |
-| LINE ส่งใบกำกับเต็มรูปแต่อ่านที่อยู่ไม่ได้ | ถามหนึ่งครั้ง "พิมพ์ที่อยู่ร้านตามใบได้เลย หรือพิมพ์ ข้าม" | ข้ามได้ เงียบได้ ร่างเดินต่อ ไม่ถามซ้ำ |
+| LINE ส่งใบกำกับเต็มรูปแต่อ่านที่อยู่ไม่ได้ | ถามหนึ่งครั้ง "พิมพ์ที่อยู่ร้านตามใบได้เลย หรือพิมพ์ ข้าม" | ข้ามได้ เงียบได้ ร่างเดินต่อ ไม่ถามซ้ำ ใบที่ข้ามยังอยู่ในตัวกรองและบรรทัด ภ.พ.30 โดยตั้งใจ เพราะทั้งสองนับทุกใบที่ยังไม่มีที่อยู่ให้คนตัดสินก่อนยื่น |
 | ใบเก่าก่อนงานนี้ | ไม่ backfill ไม่มีคำเตือนจนกว่าจะเปิดแก้ | ตัวกรอง "ยังไม่มีที่อยู่ผู้ขาย" ใช้ได้กับใบเก่าเพื่อทยอยเติม |
 | ลบคู่ค้าที่มีรายจ่ายผูกอยู่ | ไม่มีลบถาวร มีเฉพาะสถานะ INACTIVE | ใบเดิมยังมี snapshot ครบ |
 
@@ -242,7 +242,7 @@ OCR (D3 ก้าวที่สอง): เพิ่มช่อง `vendorAddr
 ### 11.4 จุดอื่นที่แตะ
 
 - หน้ารายการรายจ่าย: ตัวกรอง "ใบกำกับที่ยังไม่มีที่อยู่ผู้ขาย"
-- workpaper ภ.พ.30: บรรทัด checklist "ใบกำกับเต็มรูปที่ใช้ภาษีซื้อแต่ยังไม่มีที่อยู่ผู้ขาย N ใบ" พร้อมลิงก์ตัวกรอง ไม่ตัดยอด
+- workpaper ภ.พ.30: บรรทัด "ใบกำกับเต็มรูปในงวดนี้ที่ยังไม่มีที่อยู่ผู้ขาย N ใบ" พร้อมลิงก์ "ดูรายการ" ไปตัวกรองรายจ่ายที่ส่ง `fromDate`/`toDate` ของงวด (ตามวันที่เอกสาร) หน้ารายจ่ายกรองตามช่วงนั้นและแสดงช่วงวันที่ N นับจากตัวกรองเดียวกัน จึงตรงกับรายการที่เปิดเห็น แสดงเมื่อ N > 0 ไม่ตัดยอด ชิป "ยังไม่มีที่อยู่" ในหน้ารายจ่ายยังแสดงทุกงวด
 - ใบทดแทน: prefill `payeeAddress`
 - ส่งออก CSV: คอลัมน์ `vendor_address`
 - ส่วน "ลูกค้าและคู่ค้า" เดิมในหน้าบัญชี: เหลือรายการล่าสุดและลิงก์ "จัดการคู่ค้า"
@@ -251,10 +251,11 @@ OCR (D3 ก้าวที่สอง): เพิ่มช่อง `vendorAddr
 
 - รายจ่าย: `vendorAddressSnapshot` ใน detail/summary/list, create/update input, และ review-fields input; list รับ `vendorAddressMissing`
 - OCR: `ReceiptOcrFieldResult` เพิ่ม `vendorAddress?`, `buyerAsPrinted?`; `missingFields` เพิ่มค่า `vendorAddress` เฉพาะใบกำกับเต็มรูป
-- คู่ค้า: `AccountingCounterpartyDetail.billingAddressJson` ตามโครง v2 บวก `locked?: boolean`; list รับ `usage` (bought/sold), `addressMissing`, `search` และไม่กรองตาม `type`; detail มี `recentExpenses[]`, `usageCounts`; PATCH ใช้ `expectedUpdatedAt`; endpoint `POST /counterparties/:id/promote-seen-address` (สิทธิ์ manage) ใช้จากหน้าคู่ค้าเท่านั้น; `type` ถูกตั้งโดยระบบ (VENDOR เมื่อสร้างจากใบซื้อ, เลื่อนเป็น BOTH เมื่อถูกใช้ฝั่งขาย) ไม่รับจาก client อีกต่อไป
+- คู่ค้า: `AccountingCounterpartyDetail.billingAddressJson` ตามโครง v2 บวก `locked?: boolean`; list รับ `usage` (bought/sold), `addressMissing`, `search` และไม่กรองตาม `type`; detail มี `recentExpenses[]`, `usageCounts`; PATCH ใช้ `expectedUpdatedAt`; endpoint `POST /counterparties/:id/promote-seen-address` (สิทธิ์ manage) ใช้จากหน้าคู่ค้าเท่านั้น รับ `expectedUpdatedAt` และตอบ `counterparty_conflict` เมื่อแถวถูกแก้ไปแล้ว (การบันทึกอัตโนมัติจากรายจ่ายก็ compare-and-set และลองใหม่สูงสุดสองครั้งโดยไม่ทำให้รายจ่ายล้มเหลว); ทุกแถวของ list มี `usageCounts`; `type` ถูกตั้งโดยระบบ (VENDOR เมื่อสร้างจากใบซื้อ, เลื่อนเป็น BOTH เมื่อถูกใช้ฝั่งขาย) ไม่รับจาก client อีกต่อไป
 - ใช้ use case ใหม่ `EnsureVendorCounterpartyFromExpenseUseCase` ที่ทั้ง expense draft/review/confirm และ receipt-ocr-apply เรียก ไม่เรียก `CreateCounterpartyUseCase` ตรง (สิทธิ์ต่างกันตาม A3)
 - tax: `payeeSnapshot.address` และ `payerSnapshot.address` มีค่าตาม §10; ที่อยู่ผู้ถูกหักที่พิมพ์บนหน้า handoff เก็บในคอลัมน์ `WhtCertificateHandoff.payeeAddress` (พร้อม `payeeAddressByUserId`, `payeeAddressAt`) ข้าง snapshot ไม่เขียนลง `prefillSnapshotJson` ที่ถูกล็อกด้วย hash; `POST /companies/:companyId/wht/payment-handoffs/:handoffId/payee-address` แก้ได้เฉพาะสถานะ `REQUIRED`
-- error code ใหม่มีเพียง `counterparty_address_too_long`, `counterparty_branch_code_invalid`, `counterparty_conflict`, `EXPENSE_VENDOR_BRANCH_CODE_INVALID`, `EXPENSE_VENDOR_ADDRESS_TOO_LONG`, `wht_handoff_payee_address_required` และ `wht_handoff_address_not_editable` ทุกตัวมีข้อความไทย
+- error code ใหม่มีเพียง `counterparty_address_too_long`, `counterparty_branch_code_invalid`, `counterparty_conflict`, `EXPENSE_VENDOR_BRANCH_CODE_INVALID`, `EXPENSE_VENDOR_ADDRESS_TOO_LONG`, `wht_handoff_payee_address_required`, `wht_handoff_address_not_editable`, `expense_buyer_match_not_mismatch` และ `expense_buyer_match_reason_required` ทุกตัวมีข้อความไทย
+- Slice 2: `POST /companies/:companyId/expenses/:expenseId/buyer-match/confirm` `{ reason }` (สิทธิ์ `expense.confirm`, เหตุผล 1–500 ตัวอักษร, ใช้ได้เฉพาะเมื่อผลเทียบเป็น MISMATCH, audit ไม่เก็บค่าที่พิมพ์บนใบ); detail ส่ง `buyerAsPrinted`
 
 ### 12.1 สิทธิ์
 

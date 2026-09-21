@@ -1,7 +1,9 @@
 // GAP-2 / spec §10: `payeeSnapshot.address` was hard-coded null at all four upsert sites, so every
 // WHT event reached the 50 ทวิ handoff without the payee address the certificate has to print, and
-// the person issuing it re-keyed it from the paper. The address each event carries is the one
-// frozen on the document that event came from — not whatever a registry says today.
+// the person issuing it re-keyed it from the paper. Three of the four sites carry the address
+// frozen on the document that event came from, not whatever a registry says today; the fourth
+// (supplier payment) has no document of its own, so it is the one site backed by the registry —
+// resolved by the adapter, not re-derived here.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { SyncTaxEventsUseCase } from './sync-tax-events.use-case.js';
@@ -125,16 +127,24 @@ describe('SyncTaxEventsUseCase payee address', () => {
   });
 
   /**
-   * The fourth site stays null on purpose: a supplier payment has no document of ours to take an
-   * address from, and `SupplierProfile.addressJson` is free-form procurement data (CON-9) that
-   * would arrive as a blob. It is filled from the counterparty registry in Phase 2.
+   * The fourth site has no document of its own to take an address from, so it is the counterparty
+   * registry `SupplierPaymentSourceAdapter` now reads (§10 Phase 2) — this use case just takes
+   * whatever the source row hands it, same as the other three sites.
    */
-  it('leaves the supplier-payment WHT address null until the registry read exists', async () => {
-    const h = harness({ payments: [whtPayment()] });
+  it('carries the registry address the adapter resolved onto the supplier-payment WHT event', async () => {
+    const h = harness({ payments: [whtPayment({ payeeAddress: VENDOR_ADDRESS })] });
 
     await h.run();
 
     assert.equal(h.events[0].payeeSnapshot.name, 'ผู้รับเงิน');
+    assert.equal(h.events[0].payeeSnapshot.address, VENDOR_ADDRESS);
+  });
+
+  it('writes a null address when the payment has no counterparty match rather than refusing the event', async () => {
+    const h = harness({ payments: [whtPayment({ payeeAddress: null })] });
+
+    await h.run();
+
     assert.equal(h.events[0].payeeSnapshot.address, null);
   });
 });

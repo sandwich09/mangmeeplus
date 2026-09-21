@@ -33,6 +33,8 @@ export type ExpenseRecord = {
   vendorTaxIdSnapshot: string | null;
   vendorBranchCodeSnapshot: string | null;
   vendorAddressSnapshot: string | null;
+  /** Slice 2 raw column; read it through `readBuyerAsPrinted`. Optional so bare fixtures stay valid. */
+  buyerAsPrintedJson?: unknown;
   vendorEntityKindSnapshot: BuyerEntityKind | null;
   vendorDocumentNumber: string | null;
   expenseDate: Date;
@@ -143,6 +145,8 @@ export type ExpenseRecordWithRelations = ExpenseRecord & {
   payments: ExpensePaymentRecord[];
   /** Appendix §5: the capture group this is a derived source of; null on every other expense. */
   captureGroup?: import('@watchdog-bms/contracts').ExpenseCaptureLineage | null;
+  /** Slice 2: the parsed `buyerAsPrintedJson`, the only form the detail DTO exposes. */
+  buyerAsPrinted?: import('@watchdog-bms/contracts').ExpenseBuyerAsPrinted | null;
   /**
    * The suggested input Tax Code of the category this expense is filed under, as its external
    * code. A hint for the line picker, not a stored property of the expense.
@@ -297,6 +301,8 @@ export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'c
   // as `''` or `'00000'`.
   vendorBranchCodeSnapshot?: string | null;
   vendorAddressSnapshot?: string | null;
+  /** Server-derived only (Slice 2 re-check); never taken from a request body. */
+  buyerAsPrintedJson?: import('@watchdog-bms/contracts').ExpenseBuyerAsPrinted;
   vendorEntityKindSnapshot?: BuyerEntityKind;
   vendorDocumentNumber?: string;
   receivedAt?: Date | null;

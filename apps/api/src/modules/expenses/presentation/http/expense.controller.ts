@@ -38,6 +38,7 @@ import {
   GetExpenseSourcePostingInputUseCase,
   DuplicateCheckUseCase,
   ResolveDuplicateUseCase,
+  ConfirmBuyerMatchUseCase,
   ListExpenseCategoriesUseCase,
 } from '../../application/use-cases/expense-upload.use-case';
 import {
@@ -135,6 +136,7 @@ export class ExpenseController {
     private readonly deleteExpense: DeleteExpenseUseCase,
     private readonly removeReceipt: RemoveExpenseReceiptUseCase,
     private readonly capturePolicy: GetExpenseCapturePolicyUseCase,
+    private readonly buyerMatch: ConfirmBuyerMatchUseCase,
   ) {}
 
   // Any authority that puts a user on an expense screen may read it: the answer is only whether
@@ -247,7 +249,8 @@ export class ExpenseController {
   async getExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
     const expense = await this.get.execute(ctx, expenseId);
     const sourceDraft = await this.get.sourceDraft(ctx, expense);
-    const { sourceChannelMetadataJson: _metadata, lineMessageId: _message, lineEventId: _event, ...detail } = expense;
+    // `buyerAsPrinted` is the parsed form of `buyerAsPrintedJson`; the detail carries only that one.
+    const { sourceChannelMetadataJson: _metadata, lineMessageId: _message, lineEventId: _event, buyerAsPrintedJson: _buyer, ...detail } = expense;
     return { ...detail, sourceDraft };
   }
 
@@ -584,6 +587,14 @@ export class ExpenseController {
   @RequirePermissions('expense.duplicate.resolve')
   confirmDuplicate(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('candidateId') candidateId: string, @Body() body: ReasonOptionalDto) {
     return this.dupResolve.execute(ctx, expenseId, candidateId, 'confirm', body.reason);
+  }
+
+  // Vendor-address §8 Slice 2: the reason is required, but the use case refuses a blank one with its
+  // own code (`expense_buyer_match_reason_required`), so the DTO only checks type and length.
+  @Post(':expenseId/buyer-match/confirm')
+  @RequirePermissions('expense.confirm')
+  confirmBuyerMatch(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: ReasonOptionalDto) {
+    return this.buyerMatch.execute(ctx, expenseId, body.reason);
   }
 
   @Get(':expenseId/source-posting-input')

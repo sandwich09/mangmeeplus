@@ -73,3 +73,6 @@ export type CounterpartyAutoSaveNotice = {
   params?: Record<string, string>;
   counterpartyId: string | null;
 };
+
+/** §11.1: the "เคยซื้อ/เคยขาย" badges, built once so the list row and the detail page cannot drift. */
+export type CounterpartyUsageBadge = { tone: 'sky' | 'brand'; messageKey: DictionaryKey; params: Record<string, string> };

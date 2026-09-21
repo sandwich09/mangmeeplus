@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaAccountingRepository } from '../../infrastructure/prisma-accounting.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import type { RequestContext } from '@watchdog-bms/contracts';
@@ -7,6 +7,7 @@ import type {
   UpdateCounterpartyInput,
   CounterpartyRecord,
   CounterpartyUsage,
+  CounterpartyListItem,
   ListCounterpartiesFilter,
 } from '../../domain/models/accounting.model';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
@@ -177,7 +178,7 @@ export class UpdateCounterpartyUseCase {
 export class PromoteSeenAddressUseCase {
   constructor(private readonly repo: PrismaAccountingRepository, private readonly audit: AuditService) {}
 
-  async execute(ctx: RequestContext, counterpartyId: string, addressText: string): Promise<CounterpartyRecord> {
+  async execute(ctx: RequestContext, counterpartyId: string, addressText: string, expectedUpdatedAt?: string): Promise<CounterpartyRecord> {
     if (!ctx.permissions.includes('accounting.counterparty.manage')) throw new ForbiddenException('Missing permission: accounting.counterparty.manage');
 
     const existing = await this.repo.findCounterpartyById(ctx.companyId, counterpartyId);
@@ -192,7 +193,7 @@ export class PromoteSeenAddressUseCase {
 
     const current = counterpartyAddressText(existing.billingAddressJson ?? null);
     const at = new Date().toISOString();
-    await this.repo.saveCounterpartyVendorFields({
+    const changed = await this.repo.saveCounterpartyVendorFields({
       companyId: ctx.companyId,
       counterpartyId,
       billingAddressJson: buildCounterpartyAddressV2({
@@ -208,7 +209,13 @@ export class PromoteSeenAddressUseCase {
           : {}),
       }),
       updatedByUserId: ctx.userId,
+      // §11.1/§15: this was a blind read-modify-write. It now compares-and-sets like the PATCH path —
+      // the client's token when the screen sent one, otherwise the row this call just read above.
+      expectedUpdatedAt: expectedUpdatedAt ? new Date(expectedUpdatedAt) : existing.updatedAt,
     });
+    if (!changed) {
+      throw new ConflictException({ code: 'counterparty_conflict', message: 'Counterparty changed; reload before saving.' });
+    }
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'accounting.counterparty.update',
@@ -239,7 +246,7 @@ export class GetCounterpartyUseCase {
 export class ListCounterpartiesUseCase {
   constructor(private readonly repo: PrismaAccountingRepository) {}
 
-  async execute(ctx: RequestContext, page = 1, pageSize = 20, filter: ListCounterpartiesFilter = {}): Promise<{ data: CounterpartyRecord[]; total: number }> {
+  async execute(ctx: RequestContext, page = 1, pageSize = 20, filter: ListCounterpartiesFilter = {}): Promise<{ data: CounterpartyListItem[]; total: number }> {
     if (!ctx.permissions.includes('accounting.counterparty.read')) throw new ForbiddenException('Missing permission: accounting.counterparty.read');
     return this.repo.listCounterparties(ctx.companyId, page, pageSize, filter);
   }

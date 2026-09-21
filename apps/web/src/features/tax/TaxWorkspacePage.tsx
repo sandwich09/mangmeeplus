@@ -27,8 +27,11 @@ import {
   type TaxExportFormat,
   type TaxExportArtifact,
 } from './tax.api';
+import { monthlyPeriodDateRange } from './tax.logic';
 import { useToast } from '@/common/components/toast';
 import { canSeeRoute } from '@/features/web-core-workspace/route-permissions';
+import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
+import { listExpenses } from '@/features/expenses/expenses.api';
 
 const inputClass = 'mangmee-input';
 const btnClass = 'mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed disabled:opacity-50';
@@ -94,10 +97,55 @@ function EmptyRow({ cols, text }: { cols: number; text: string }) {
   return <tr><td colSpan={cols} className="px-4 py-6 text-center text-sm text-gray-400">{text}</td></tr>;
 }
 
+/**
+ * §11.4 / §8 (D2): non-blocking checklist line for a selected ภ.พ.30 (VAT/PP30) period — full tax
+ * invoices that stay CLAIMABLE (§8 never touches taxEvidenceStatus/inputVatClaimStatus for a
+ * missing address) but still have none, so whoever files this period gets to decide first.
+ *
+ * N must equal what `/expenses?view=addressMissing&fromDate=...&toDate=...` shows after clicking,
+ * so this sends the SAME period range into the count query — the list view now date-scopes that
+ * filter whenever the URL carries a valid range (`addressMissingListFilter` in
+ * expense-address-missing-view.logic.ts), which this link always does. That is what makes "ในงวดนี้"
+ * true; the list's own "ยังไม่มีที่อยู่" chip still links here WITHOUT dates, on purpose, to keep
+ * browsing every period's backlog — a different entry point, not this one.
+ */
+function AddressMissingChecklistLine({ companyId, period, canOpenExpenses }: { companyId: string; period: TaxPeriod; canOpenExpenses: boolean }) {
+  const branchFilter = useBranchFilter();
+  const branchId = branchFilter?.branchId ?? '';
+  const [count, setCount] = useState<number | null>(null);
+  const range = monthlyPeriodDateRange(period.periodKey);
+
+  useEffect(() => {
+    setCount(null);
+    if (!canOpenExpenses || !range) return;
+    let cancelled = false;
+    listExpenses(companyId, { vendorAddressMissing: true, fromDate: range.fromDate, toDate: range.toDate, ...(branchId ? { branchId } : {}), pageSize: 1 })
+      .then((res) => { if (!cancelled) setCount(res.total); })
+      // Informational only (§8): a failed count never blocks or errors the rest of the page.
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // `range` is left out on purpose: it is a fresh object every render (derived purely from
+    // `period.periodKey`, which IS a dependency below), and including it would re-fetch on every
+    // unrelated re-render of this page instead of only when the period actually changes.
+  }, [companyId, period.id, period.periodKey, branchId, canOpenExpenses]);
+
+  if (!canOpenExpenses || !range || !count) return null;
+
+  return (
+    <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-warning-100 bg-warning-50 p-3 text-xs font-semibold text-warning-700">
+      <span>ใบกำกับเต็มรูปในงวดนี้ที่ยังไม่มีที่อยู่ผู้ขาย {count} ใบ</span>
+      <Link href={`/companies/${companyId}/expenses?view=addressMissing&fromDate=${range.fromDate}&toDate=${range.toDate}`} className={ghostClass}>
+        ดูรายการ
+      </Link>
+    </div>
+  );
+}
+
 export function TaxWorkspacePage({ companyId, permissions }: { companyId: string; permissions: string[] }) {
   const toast = useToast();
   const can = (permission: string) => permissions.includes(permission);
   const canSeeWorkspace = canSeeRoute('/tax', permissions);
+  const canOpenExpenses = canSeeRoute('/expenses', permissions);
   const [tab, setTab] = useState<'VAT' | 'WHT' | 'CIT'>('VAT');
   const [periods, setPeriods] = useState<TaxPeriod[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<TaxPeriod | null>(null);
@@ -330,6 +378,12 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
                     ))}
                   </div>
                 </MangmeeCard>
+
+                {/* §11.4 / §8 (D2): ภ.พ.30 workpaper checklist — full tax invoices in this period
+                    still missing a vendor address. VAT/PP30 only; informational, never blocking. */}
+                {selectedPeriod.taxType === 'VAT' && selectedPeriod.formType === 'PP30' && (
+                  <AddressMissingChecklistLine companyId={companyId} period={selectedPeriod} canOpenExpenses={canOpenExpenses} />
+                )}
 
                 {/* Review issues */}
                 {issues.length > 0 && (

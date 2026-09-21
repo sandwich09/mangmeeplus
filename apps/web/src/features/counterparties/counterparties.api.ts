@@ -49,9 +49,16 @@ export function updateCounterparty(
 }
 
 /** §7: the only place a person picks a primary address by hand; needs `accounting.counterparty.manage`. */
-export function promoteSeenAddress(companyId: string, counterpartyId: string, addressText: string): Promise<CounterpartySummary> {
+export function promoteSeenAddress(
+  companyId: string,
+  counterpartyId: string,
+  addressText: string,
+  expectedUpdatedAt?: string,
+): Promise<CounterpartySummary> {
   return apiFetch(`${base(companyId)}/${encodeURIComponent(counterpartyId)}/promote-seen-address`, {
     method: 'POST',
-    body: JSON.stringify({ addressText }),
+    // §11.1/§15: the version this screen loaded, so a lost race answers `counterparty_conflict`
+    // instead of overwriting someone else's edit.
+    body: JSON.stringify({ addressText, ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}) }),
   });
 }

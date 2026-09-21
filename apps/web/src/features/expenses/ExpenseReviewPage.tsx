@@ -48,7 +48,7 @@ import type { ExpenseReviewTotalsState } from './useExpenseReviewTotals';
 import type { ExpenseDetail, ExpenseReviewStepKey, ExpensePaymentAttempt, ExpensePaymentFailure } from './expenses.model';
 import { canVoidExpenseFinancialState, isCalculatedExpenseRounding, todayCivilDate, isCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod, type RemoveExpenseReceiptInput } from '@watchdog-bms/contracts';
 import {
-  AiFieldLabel, AiFieldMissingHint, DOCUMENT_KIND_LABELS, DocumentReviewSection, ExpenseReviewEditSection,
+  AiFieldLabel, AiFieldMissingHint, BuyerMatchBanner, DOCUMENT_KIND_LABELS, DocumentReviewSection, ExpenseReviewEditSection,
   InlineSpinner, MoneyRow, STEP_HELPER_KEYS, STEP_LABEL_KEYS, expenseNoticeKey,
   extractionNotice, nonExpenseNotice,
 } from './ExpensesPages';
@@ -1164,17 +1164,31 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       <ExpenseReviewEditSection companyId={companyId} detail={detail} permissions={permissions} isMutable={canMutateDraft && !readySourceDraftMessage} canReview={canReview} canConfirm={canConfirm} showSaveDraft={step === 'data'} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onTotalsChange={setReviewTotals} totalsRetry={totalsRetry} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
     </div>
   );
+  // Vendor-address Slice 2, review fix 1: on a tax-code invoice the way forward is the line's Tax
+  // Code on step 1 — the same scroll-and-focus the ถัดไป blocker uses to reach an invalid field.
+  const openReviewLines = () => {
+    void goToStep('data').then(() => window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      const section = vendorRef.current;
+      const target = section?.querySelector<HTMLElement>('[data-testid="transaction-tax-selector"]') ?? section;
+      target?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      target?.querySelector<HTMLElement>('[role="combobox"]')?.focus({ preventScroll: true });
+    })));
+  };
   const documentReviewCard = (
-    <DocumentReviewSection
-      companyId={companyId}
-      detail={detail}
-      isMutable={isMutable}
-      canReview={canReview}
-      onSaved={async () => { setNotice(null); await load(); await onRefresh(); }}
-      onAttachPrimaryReceipt={canMutateDraft ? (file) => attachPrimaryReceipt(file, detail.branchId) : undefined}
-      receiptUploading={receiptUploading}
-      onDirtyChange={setEvidenceDirty}
-    />
+    <>
+      {/* Vendor-address §8 Slice 2: sits with the document and tax-evidence decisions it informs. */}
+      <BuyerMatchBanner companyId={companyId} detail={detail} editable={isMutable} claimed={claimedSource} permissions={permissions} onSaved={load} onOpenLines={openReviewLines} />
+      <DocumentReviewSection
+        companyId={companyId}
+        detail={detail}
+        isMutable={isMutable}
+        canReview={canReview}
+        onSaved={async () => { setNotice(null); await load(); await onRefresh(); }}
+        onAttachPrimaryReceipt={canMutateDraft ? (file) => attachPrimaryReceipt(file, detail.branchId) : undefined}
+        receiptUploading={receiptUploading}
+        onDirtyChange={setEvidenceDirty}
+      />
+    </>
   );
   // A total that disagrees with its own receipt reaches the ledger only through a named decision:
   // Finance either edits the amount or records why the stored figure stands. Accepting is bound to
