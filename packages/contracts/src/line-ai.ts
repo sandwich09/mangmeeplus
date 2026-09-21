@@ -439,6 +439,21 @@ export type BusinessDocumentClassification = {
   requiresClarification: boolean;
 };
 
+/** Receipt result validated inside the image-intake call against that call's own documentText.
+ * The API may skip the separate receipt-ocr step only when this SERVER-produced envelope exists. */
+export type LineIntakeOnePassReceipt = {
+  fields: ReceiptOcrFieldResult;
+  classification: BusinessDocumentClassification;
+};
+
+export const RECEIPT_OCR_FALLBACK_REASONS = [
+  'JSON_INCOMPLETE_OR_INVALID',
+  'TOTAL_MISSING',
+  'VAT_MISSING',
+  'ITEMS_INCOMPLETE',
+] as const;
+export type ReceiptOcrFallbackReason = (typeof RECEIPT_OCR_FALLBACK_REASONS)[number];
+
 export type ReceiptOcrRequest = {
   requestId: string;
   companyId: string;
@@ -466,6 +481,8 @@ export type ReceiptOcrResponse = {
   budgetScope?: AiBudgetScope;
   /** One entry per model call the gateway made for this request; absent from an older gateway. */
   usage?: AiUsageEntry[];
+  /** Bounded causes that triggered extract repair and/or image re-read; document text is never logged. */
+  fallbackReasons?: ReceiptOcrFallbackReason[];
 };
 
 // ─── Company AI money budget refusals (remediation spec §9.1) ────────────────
@@ -1291,6 +1308,9 @@ export type LineIntakeRoutePlan = {
    * unusable, so an older gateway that never sends it keeps today's behaviour exactly.
    */
   documentText?: string;
+  /** Present only when the gateway validated fields/classification against `documentText` with the
+   * same receipt parser and gates as receipt OCR. Absence always means run the existing OCR path. */
+  onePassReceipt?: LineIntakeOnePassReceipt;
   errorCode?: string;
   /** Ids from this request's `openClarifications` the model judged answered by this message.
    *  Membership-guarded at parse (⊆ the ids sent); the dispatcher consumes ONLY these. */

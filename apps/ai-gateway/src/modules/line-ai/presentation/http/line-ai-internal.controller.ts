@@ -22,7 +22,7 @@ import {
   parseCaptureObservationsJson,
   parseCaptureReadPages,
 } from '../../domain/logic/expense-capture-read.logic';
-import { AI_DOCUMENT_OCR_TIMEOUT_MS, EXPENSE_CAPTURE_CONTRACT_VERSION, EXPENSE_CAPTURE_OBSERVATION_LIMITS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, VALUE_ASSUMPTIONS, type AiBudgetScope, type AiModelLineage, type ExpenseCaptureExtractRequest, type ExpenseCaptureExtractResponse, type ExpenseCaptureObservations, type ExpenseCaptureReadChunk, type ExpenseCaptureReadRequest, type ExpenseCaptureReadResponse, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
+import { AI_DOCUMENT_OCR_TIMEOUT_MS, EXPENSE_CAPTURE_CONTRACT_VERSION, EXPENSE_CAPTURE_OBSERVATION_LIMITS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, VALUE_ASSUMPTIONS, type AiBudgetScope, type AiModelLineage, type ExpenseCaptureExtractRequest, type ExpenseCaptureExtractResponse, type ExpenseCaptureObservations, type ExpenseCaptureReadChunk, type ExpenseCaptureReadRequest, type ExpenseCaptureReadResponse, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeOnePassReceipt, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrFallbackReason, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
 
 // JSON bodies on these routes carry base64 media and need main.ts's 16mb parser
 // (UPLOAD_MAX_BYTES 10MB inflates to ~13.7MB in base64); every other route stays at
@@ -47,6 +47,29 @@ const MAX_RECEIPT_CATEGORY_CATALOGUE = 100;
 // an expense document, and the summary line is the honest answer.
 const MAX_RECEIPT_OCR_LINES = 40;
 const RECEIPT_EXTRACTION_MAX_TOKENS = 8192;
+const ONE_PASS_MIN_CONFIDENCE = 0.9;
+const ONE_PASS_MAX_LINES = 20;
+const ONE_PASS_DOCUMENT_KINDS = new Set([
+  'RECEIPT', 'TAX_INVOICE', 'ABBREVIATED_TAX_INVOICE', 'HANDWRITTEN_CASH_BILL',
+]);
+const ONE_PASS_VAT_SIGNAL = /(?:\bVAT\b|ภาษีมูลค่าเพิ่ม)/i;
+const ONE_PASS_WHT_SIGNAL = /(?:\bWHT\b|withholding|หัก\s*ณ\s*ที่จ่าย)/i;
+const ONE_PASS_CHARGE_SIGNAL = /(?:service\s*charge|delivery\s*(?:fee)?|packaging|platform\s*fee|rounding|ค่าบริการ|ค่าจัดส่ง|ค่าบรรจุ|ค่าธรรมเนียมแพลตฟอร์ม|ปัดเศษ|ทิป|\btip\b)/i;
+const ONE_PASS_DISCOUNT_SIGNAL = /(?:discount|coupon|voucher|promotion|ส่วนลด|คูปอง|โปรโมชั่น)/i;
+
+function onePassPrintedCurrencies(text: string): Set<string> {
+  const currencies = new Set<string>();
+  for (const code of ['USD', 'EUR', 'GBP', 'JPY', 'CNY', 'THB'] as const) {
+    if (new RegExp(`\\b${code}\\b`, 'i').test(text)) currencies.add(code);
+  }
+  if (/\bRMB\b|人民币/i.test(text)) currencies.add('CNY');
+  if (/[$]|ดอลลาร์/i.test(text)) currencies.add('USD');
+  if (/[€]|ยูโร/i.test(text)) currencies.add('EUR');
+  if (/[£]/.test(text)) currencies.add('GBP');
+  if (/[¥]|เยน|円/i.test(text)) currencies.add('JPY');
+  if (/[฿]|บาท/i.test(text)) currencies.add('THB');
+  return currencies;
+}
 /** Bedrock's own ceiling. The API sends far fewer — its budget bound is the tighter one (§4.1). */
 const MAX_CAPTURE_CHUNK_IMAGES = 20;
 /** `=== PAGE n ===` headers the API's own 12,000-char window budget does not count. */
@@ -124,6 +147,79 @@ function withRecoveredPrintedVat(
   return { ...first, fields };
 }
 
+/** A model candidate never earns trust by naming itself high-confidence. Re-run the existing
+ * receipt parser and every downstream gate against the SAME transcription, then apply a stricter
+ * one-pass bar. Any doubt returns undefined and the unchanged receipt OCR path runs. */
+export function validateIntakeOnePassReceipt(
+  plan: LineIntakeRoutePlan,
+  candidate: unknown,
+  activeCategories: Array<{ id: string; name: string }>,
+): LineIntakeOnePassReceipt | undefined {
+  const sourceClassification = plan.documentClassification;
+  const documentText = plan.documentText?.trim() ?? '';
+  if (
+    plan.status !== 'ROUTED'
+    || plan.intent !== 'EXPENSE_DOCUMENT_CAPTURE'
+    || plan.confidence < ONE_PASS_MIN_CONFIDENCE
+    || documentText.length < MIN_FORWARDED_DOCUMENT_TEXT_CHARS
+    || documentText.length > MAX_FORWARDED_DOCUMENT_TEXT_CHARS
+    || !candidate || typeof candidate !== 'object' || Array.isArray(candidate)
+    || !sourceClassification
+    || sourceClassification.confidence < ONE_PASS_MIN_CONFIDENCE
+    || sourceClassification.contentKind !== 'DOCUMENT'
+    || sourceClassification.documentFamily !== 'EXPENSE_EVIDENCE'
+    || sourceClassification.businessDirection !== 'PURCHASE_EXPENSE'
+    || sourceClassification.transactionState !== 'PAID'
+    || !ONE_PASS_DOCUMENT_KINDS.has(sourceClassification.documentKind)
+    || sourceClassification.requiresClarification
+    || sourceClassification.missingRequiredSignals.length > 0
+    || sourceClassification.contradictionSignals.length > 0
+    || sourceClassification.settlementSignals.length === 0
+  ) return undefined;
+
+  const raw = candidate as Record<string, unknown>;
+  if (!Array.isArray(raw['lines']) || raw['lines'].length === 0 || raw['lines'].length > ONE_PASS_MAX_LINES) return undefined;
+
+  const parsed = parseReceiptOcrJson(
+    JSON.stringify({ fields: candidate, classification: sourceClassification }),
+    documentText,
+    new Set(activeCategories.map((category) => category.id)),
+    1,
+  );
+  if (!parsed?.fields || !parsed.classification) return undefined;
+  const fields = applyOcrValueCrossCheck(parsed.fields, documentText, todayCivilDate(), parsed.classification.documentKind);
+  const classification = gateBusinessDocumentClassification(parsed.classification, fields, documentText);
+  const understanding: ReceiptUnderstanding = { ok: true, fields, classification };
+  const missing = new Set(fields.missingFields ?? []);
+  const printedCurrencies = onePassPrintedCurrencies(documentText);
+  if (
+    classification.contentKind !== 'DOCUMENT'
+    || classification.documentFamily !== 'EXPENSE_EVIDENCE'
+    || classification.businessDirection !== 'PURCHASE_EXPENSE'
+    || classification.transactionState !== 'PAID'
+    || !ONE_PASS_DOCUMENT_KINDS.has(classification.documentKind)
+    || classification.confidence < ONE_PASS_MIN_CONFIDENCE
+    || classification.requiresClarification
+    || classification.missingRequiredSignals.length > 0
+    || classification.contradictionSignals.length > 0
+    || (fields.confidence ?? 0) < ONE_PASS_MIN_CONFIDENCE
+    || !fields.vendorName || !fields.expenseDate || !fields.description
+    || fields.lines?.length !== raw['lines'].length
+    || missing.size > 0
+    || !hasUsableTotal(understanding)
+    || needsPrintedVatReread(understanding)
+    || receiptItemsMismatch(fields, 1)
+    || (ONE_PASS_VAT_SIGNAL.test(documentText) && !fields.vatAmount)
+    || (ONE_PASS_WHT_SIGNAL.test(documentText) && !fields.whtAmount)
+    || printedCurrencies.size > 1
+    || (printedCurrencies.size === 1 && !printedCurrencies.has(fields.currency ?? ''))
+    || (ONE_PASS_CHARGE_SIGNAL.test(documentText) && !fields.additionalCharges?.length)
+    || (ONE_PASS_DISCOUNT_SIGNAL.test(documentText) && !fields.discountAmount)
+    || ((classification.documentKind === 'TAX_INVOICE' || classification.documentKind === 'ABBREVIATED_TAX_INVOICE') && !fields.vatAmount)
+  ) return undefined;
+  return { fields, classification };
+}
+
 @ApiTags('internal')
 @Controller('internal/ai')
 @UseInterceptors(AiUsageInterceptor)
@@ -183,14 +279,22 @@ export class LineAiInternalController {
     const router = new IntentRouterAgent(
       createProvider(this.config, hasAttachment ? { timeoutMs: DOCUMENT_OCR_TIMEOUT_MS } : undefined),
     );
-    const plan = await router.routeIntake(body);
+    const routed = await router.routeIntake(body);
+    const { receiptCandidate, ...plan } = routed;
+    const onePassReceipt = validateIntakeOnePassReceipt(
+      plan,
+      receiptCandidate,
+      boundedReceiptCategories(body.activeCategories),
+    );
     // errorCode was always computed and never logged, so every failure shape — truncated output, a
     // provider error, an unparseable answer — reached the operator as the same UNAVAILABLE/UNSUPPORTED line.
     this.logger.log({
       msg: 'LINE intake routed', requestId: body.requestId, status: plan.status, intent: plan.intent,
-      confidence: plan.confidence, ...(plan.errorCode ? { errorCode: plan.errorCode } : {}),
+      confidence: plan.confidence,
+      onePassReceipt: onePassReceipt ? 'accepted' : receiptCandidate === undefined ? 'absent' : 'rejected',
+      ...(plan.errorCode ? { errorCode: plan.errorCode } : {}),
     });
-    return plan;
+    return { ...plan, ...(onePassReceipt ? { onePassReceipt } : {}) };
   }
 
   @Public()
@@ -242,16 +346,25 @@ export class LineAiInternalController {
     const extractionModelId = body.modelPolicy?.modelId ?? this.config.documentAiModelId;
     const provider = createProvider(this.config, { modelId: extractionModelId, timeoutMs: DOCUMENT_OCR_TIMEOUT_MS });
     const activeCategories = boundedReceiptCategories(body.activeCategories);
+    const fallbackReasons = new Set<ReceiptOcrFallbackReason>();
     let understood = await this.understandReceiptText(provider, documentText, activeCategories);
     // Spend the recovery budget on structure OR on vision, never both: the shared caller timeout
     // still covers at most four provider calls. A bad JSON response is not an unreadable image.
     const repairedStructure = !understood.ok && ['OCR_OUTPUT_TRUNCATED', 'OCR_JSON_PARSE_FAILED', 'OCR_SCHEMA_INVALID'].includes(understood.errorCode);
-    if (repairedStructure) understood = await this.understandReceiptText(provider, documentText, activeCategories, true);
+    if (repairedStructure) {
+      fallbackReasons.add('JSON_INCOMPLETE_OR_INVALID');
+      this.logger.warn({
+        msg: 'receipt.ocr.fallback', requestId: body.requestId, fallback: 'extract-repair',
+        reasons: [...fallbackReasons], errorCode: understood.ok ? undefined : understood.errorCode,
+      });
+      understood = await this.understandReceiptText(provider, documentText, activeCategories, true);
+    }
     // The money refusal of a LATER step (spec §12.3): the stage-1 read already happened and is
     // still reported as usage — nothing is refunded and nothing claims the expense is complete.
     // The route answers with the seam's own code so the caller can tell "เหลือไม่พอ" from a failure.
     if (!understood.ok) {
-      return { status: 'failed', errorCode: understood.errorCode, ...(understood.budgetScope ? { budgetScope: understood.budgetScope } : {}) };
+      return { status: 'failed', errorCode: understood.errorCode, ...(understood.budgetScope ? { budgetScope: understood.budgetScope } : {}),
+        ...(fallbackReasons.size ? { fallbackReasons: [...fallbackReasons] } : {}) };
     }
 
     // A warped or low-resolution photo can cost the stage-one read either the printed total or an explicitly
@@ -263,6 +376,13 @@ export class LineAiInternalController {
     const needsVatReread = needsPrintedVatReread(understood);
     const needsItemReread = understood.classification?.contentKind !== 'MULTI_DOCUMENT' && receiptItemsMismatch(understood.fields);
     if (!repairedStructure && !isPdf && this.config.modelProvider === 'bedrock' && (needsTotalReread || needsVatReread || needsItemReread)) {
+      if (needsTotalReread) fallbackReasons.add('TOTAL_MISSING');
+      if (needsVatReread) fallbackReasons.add('VAT_MISSING');
+      if (needsItemReread) fallbackReasons.add('ITEMS_INCOMPLETE');
+      this.logger.warn({
+        msg: 'receipt.ocr.fallback', requestId: body.requestId, fallback: 'image-reread',
+        reasons: [...fallbackReasons],
+      });
       const reread = await provider.generateText({
         systemPrompt: bedrockOcrPrompt('image'),
         messages: [{ role: 'user', text: 'Transcribe the attached document.' }],
@@ -301,6 +421,7 @@ export class LineAiInternalController {
         stageOneLineage,
         modelLineage(this.config, 'receipt_ocr_extract', extractionModelId),
       ],
+      ...(fallbackReasons.size ? { fallbackReasons: [...fallbackReasons] } : {}),
     };
   }
 
@@ -373,7 +494,10 @@ export class LineAiInternalController {
     if (extraction.stopReason === 'max_tokens') return { ok: false, errorCode: 'OCR_OUTPUT_TRUNCATED' };
 
     const parsed = parseReceiptOcrJson(extraction.text, documentText, new Set(activeCategories.map((category) => category.id)));
-    if (!parsed) {
+    // The extraction contract always requires classification. A fields-only object is valid for
+    // low-level parser callers but incomplete for this route; repair its JSON/schema once instead
+    // of misclassifying it as a missing-total image problem and spending a vision re-read.
+    if (!parsed || !parsed.classification) {
       try { JSON.parse(extraction.text.match(/\{[\s\S]*\}/)?.[0] ?? extraction.text); }
       catch { return { ok: false, errorCode: 'OCR_JSON_PARSE_FAILED' }; }
       return { ok: false, errorCode: 'OCR_SCHEMA_INVALID' };
@@ -711,9 +835,9 @@ export async function receiptRereadImage(mimeType: 'image/jpeg' | 'image/png', c
   return { mimeType, contentBase64 };
 }
 
-export function receiptItemsMismatch(fields: ReceiptOcrResponse['fields']): boolean {
+export function receiptItemsMismatch(fields: ReceiptOcrResponse['fields'], minimumLineCount = 2): boolean {
   if (fields?.missingFields?.includes('lines')) return true;
-  if (!fields?.lines || fields.lines.length < 2 || !fields.grandTotalAmount) return false;
+  if (!fields?.lines || fields.lines.length < minimumLineCount || !fields.grandTotalAmount) return false;
   const money = (value: string | undefined) => Number((value ?? '0').replace(/,/g, ''));
   const total = fields.lines.reduce((sum, row) => sum + money(row.amount), 0)
     - Math.abs(money(fields.discountAmount))
@@ -1180,6 +1304,7 @@ export function parseReceiptOcrJson(
   text: string,
   documentText: string,
   activeCategoryIds: ReadonlySet<string>,
+  minimumLineCount: 1 | 2 = 2,
 ): Pick<ReceiptOcrResponse, 'fields' | 'classification'> | null {
   const json = text.match(/\{[\s\S]*\}/)?.[0] ?? text;
   try {
@@ -1309,9 +1434,11 @@ export function parseReceiptOcrJson(
           ...(typeof confidence === 'number' ? { confidence } : {}),
         });
       }
-      // One surviving row says nothing the summary line does not already say, and a partially
-      // dropped set no longer represents the document — both stay with the summary path.
-      if (lines.length >= 2 && lines.length === rawFields['lines'].length) out.lines = lines;
+      // The legacy/full-OCR default still drops one surviving row because it says nothing the
+      // summary does not. One-pass asks for minimumLineCount=1 only so it can prove the candidate's
+      // sole row survived evidence checks before arithmetic reconciliation. A partially dropped set
+      // never represents the document in either mode.
+      if (lines.length >= minimumLineCount && lines.length === rawFields['lines'].length) out.lines = lines;
     }
     if (Array.isArray(rawFields['additionalCharges']) && rawFields['additionalCharges'].length <= 10) {
       const charges: NonNullable<typeof out.additionalCharges> = [];
