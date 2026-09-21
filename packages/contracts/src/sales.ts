@@ -29,13 +29,29 @@ export type SalesDealBaseTier = Exclude<PlanTierKey, 'FREE_TRIAL_15' | 'ENTERPRI
 export const SALES_DEAL_BASE_TIERS: readonly SalesDealBaseTier[] =
   ['STARTER_249', 'BASIC_499', 'PRO_999'];
 
+/** D-P5-1: an auto-renewing deal bills every month or every year — the only two Stripe recurring
+ *  intervals `assertStripePrice` and `paidInvoiceEvidence` accept. */
+export type SalesDealCadence = 'month' | 'year';
+/** D-P5-1: "N รอบแล้วกลับราคาปกติ" — 1–36 cycles; `null` means "จนกว่าจะเพิกถอน". */
+export const SALES_DEAL_CYCLES_MAX = 36;
+/**
+ * D-P5-3: where this deal's own Stripe Price stands. `null`/absent on every one-time deal.
+ * Only `READY` may be quoted. `PENDING`/`FAILED` are retried by the sales sweep; `ARCHIVED` is a
+ * Price that has been deactivated in Stripe because the deal ended, was cancelled or expired.
+ */
+export const SALES_DEAL_PRICE_STATES = ['PENDING', 'READY', 'FAILED', 'ARCHIVED'] as const;
+export type SalesDealPriceState = typeof SALES_DEAL_PRICE_STATES[number];
+
 /** Frozen into PackageChangeRequest.offerSnapshotJson when the deal is submitted; immutable once APPROVED (R3/R4). */
 export type SalesDealSnapshot = {
-  version: 2;
+  /** 2 = Phase 3 (one-time only). 3 = D-P5-1, which added the three auto-renew fields below.
+   *  A stored v2 row reads back as `autoRenew: false` — it predates the switch, it is not one. */
+  version: 2 | 3;
   base: SalesDealBaseTier;
   /** What the customer pays for the whole deal, in satang (Q2: VAT-inclusive if any). ≥ 1, no floor/ceiling (D1). */
   priceSatang: number;
-  /** 1–36 whole months from the paid-at instant (Phase 3 applies them via the one-time path, spec §19). */
+  /** 1–36 whole months from the paid-at instant (Phase 3 applies them via the one-time path, spec §19).
+   *  IGNORED when `autoRenew` — then `priceSatang` is the price of ONE cycle (D-P5-1/D-P5-2). */
   months: number;
   branchLimit: number; employeeLimit: number; monthlySlipLimit: number;
   featureKeys: string[];
@@ -46,6 +62,19 @@ export type SalesDealSnapshot = {
   aiMonthlyBudgetSatang: number | null;
   /** Customer-facing note, ≤ 200 chars, no PII, no "+" (S24). */
   description: string;
+  /**
+   * D7/D-P5-1: charge every cycle (card) or bill every cycle (QR) instead of once. One approval
+   * covers every cycle of this deal — D3's re-approval loop is for one-time deals only.
+   *
+   * Optional because a stored v2 row simply does not have it. Never read these three directly:
+   * `autoRenewOf()` (sales-deal.logic.ts) is the one reader, and it answers `false`/`null`/`null`
+   * for a v2 row and for any row whose cadence is not month/year.
+   */
+  autoRenew?: boolean;
+  /** The billing cycle when `autoRenew`; `null` otherwise. */
+  cadence?: SalesDealCadence | null;
+  /** `N` cycles then back to the catalog price (D-P5-6), or `null` = until the lead ends it. */
+  cycles?: number | null;
 };
 export type SalesDealInput = Omit<SalesDealSnapshot, 'version'> & { companyId: string; /** Team-visible only, ≤ 500 (S24). */ internalReason: string };
 export type SalesDealSaveBody = SalesDealInput & { /** Required when updating a DRAFT/REJECTED deal. */ version?: number };
@@ -54,6 +83,8 @@ export type SalesDealDecisionBody = { version: number; reason: string };
 /** approve: the audit row already records who approved and whether it was their own deal. */
 export type SalesDealApproveBody = { version: number; reason?: string };
 export type SalesDealSubmitBody = { version: number };
+/** D-P5-6 "จบดีล": a lead or SYSTEM_ADMIN ends an auto-renewing deal; the reason is audited. */
+export type SalesDealEndBody = { version: number; reason: string };
 
 export type SalesCompanyAccessState = 'NO_PACKAGE' | 'TRIAL' | 'ACTIVE' | 'EXPIRED';
 export type SalesCompanySearchItem = {
@@ -97,6 +128,15 @@ export type SalesDealView = {
   slipState: SalesDealSlipState;
   /** Q7: the renewal mode of the live subscription this deal will cancel when it is paid, if any. */
   conversionOf: 'CARD_AUTO' | 'PROMPTPAY_RENEW' | null;
+  /**
+   * D-P5-1 read back defensively: a v2 snapshot has no switch, so it reads `false`/`null`/`null`
+   * here rather than `undefined`. The console never has to know which version a row was written at.
+   */
+  autoRenew: boolean; cadence: SalesDealCadence | null; cycles: number | null;
+  /** D-P5-3: `null` on a one-time deal. Anything but `READY` means the offer cannot be paid yet. */
+  priceState: SalesDealPriceState | null;
+  /** D-P5-6: when the shop goes back to the catalog price, once that is decided. */
+  returnAt: string | null;
   createdAt: string; updatedAt: string;
 };
 export type SalesDealListDto = { items: SalesDealView[] };
@@ -135,7 +175,9 @@ export type SalesMyWorkKind = 'APPROVAL_PENDING' | 'DEAL_REJECTED' | 'DEAL_EXPIR
   /** D3: the agent's own renewal offer is sitting with the lead. */
   | 'DEAL_RENEWAL_PENDING'
   /** Q9: a customer's transfer slip is waiting for the Owner to confirm it (SYSTEM_ADMIN only). */
-  | 'DEAL_SLIP_PENDING';
+  | 'DEAL_SLIP_PENDING'
+  /** D-P5-6: this auto-renewing deal goes back to the catalog price within 14 days. */
+  | 'DEAL_ENDING';
 export type SalesMyWorkItem = { kind: SalesMyWorkKind; deal: SalesDealView; at: string };
 /** `badge` = items that need the caller's action (lead: pending approvals; sales: rejected + expired). */
 export type SalesMyWorkDto = { items: SalesMyWorkItem[]; badge: number };
@@ -145,6 +187,8 @@ export type PackageChangeDealOffer = {
   dealId: string; base: SalesDealBaseTier; baseLabel: string; priceSatang: number; months: number;
   branchLimit: number; employeeLimit: number; monthlySlipLimit: number; featureKeys: string[];
   aiMonthlyBudgetSatang: number | null; description: string; offerExpiresAt: string;
+  /** D-P5-1: "ตัดบัตร/ออกบิลทุกเดือน(ปี) ที่ราคานี้" instead of "จ่ายครั้งเดียว". */
+  autoRenew?: boolean; cadence?: SalesDealCadence | null; cycles?: number | null;
   /** Q9: `PENDING` replaces the pay buttons with "รอทีมงานตรวจสลิป"; `REJECTED` lets them retry. */
   slipState: SalesDealSlipState;
   /** Why the team turned the slip down — the only slip text a customer ever reads. */
@@ -169,6 +213,8 @@ export const SALES_REFERRAL_DAILY_ANOMALY_LIMIT = 20;
 /** `GET /v1/sales/reports/summary` — one row per agent per Bangkok month. No financial documents (S21). */
 export type SalesReportRow = {
   salesUserId: string; displayName: string; teamLeadUserId: string | null;
+  /** Phase 4 leftover: the lead's name, so the report groups without a second lookup client-side. */
+  teamLeadDisplayName: string | null;
   /** Shops opened by a deal this agent wrote, and by a signup that named their code. */
   dealActivations: number; referralActivations: number;
   /** Net of refunds; flagged rows contribute 0 until reviewed. */
@@ -194,8 +240,7 @@ export type SalesAttributionFlagListDto = { items: SalesAttributionFlagRow[] };
 export type SalesAttributionFlagReviewBody = { keep: boolean; reason: string };
 
 /**
- * Q9 bank-transfer fallback. The Owner fills these in before rollout — they are shown to a paying
- * customer, so a placeholder reaching production is a support call, not a silent bug.
+ * Q9 bank-transfer fallback — the account a customer is shown when they choose to transfer.
  *
  * ponytail: a constant, not a BillingPolicy column. There is no policy field for a bank account
  * today and one shop-independent account serves every deal; add the column when a second account
@@ -203,8 +248,8 @@ export type SalesAttributionFlagReviewBody = { keep: boolean; reason: string };
  */
 export const SALES_SLIP_BANK_ACCOUNT_TH = {
   bankName: 'ธนาคารกสิกรไทย',
-  accountName: 'บริษัท มั่งมี พลัส จำกัด',
-  accountNumber: 'xxx-x-xxxxx-x',
+  accountName: 'บจก. มั่งมียั่งยืน',
+  accountNumber: '237-2-48525-9',
   note: 'โอนแล้วแนบสลิปในหน้านี้ ทีมงานตรวจและเปิดใช้งานให้ภายในวันทำการ',
 } as const;
 /** What the customer may attach as a transfer slip. Scanned by the normal attachment pipeline. */
@@ -238,5 +283,7 @@ export const SALES_ERROR_CODES = ['SALES_DEAL_STATE_CONFLICT', 'SALES_DEAL_SELF_
   'SALES_AGENT_SUSPENDED', 'SALES_AGENT_NOT_FOUND', 'SALES_TEAM_LEAD_INVALID',
   'SALES_AGENT_USERNAME_TAKEN', 'SALES_REFERRAL_WINDOW_CLOSED',
   // Phase 4
-  'SALES_SLIP_STATE_CONFLICT', 'SALES_SLIP_REQUIRED', 'SALES_REPORT_RANGE_INVALID', 'SALES_FLAG_REVIEW_INVALID'] as const;
+  'SALES_SLIP_STATE_CONFLICT', 'SALES_SLIP_REQUIRED', 'SALES_REPORT_RANGE_INVALID', 'SALES_FLAG_REVIEW_INVALID',
+  // Phase 5 (D-P5-3 / D-P5-6)
+  'SALES_DEAL_PRICE_PENDING', 'SALES_DEAL_END_INVALID'] as const;
 export type SalesErrorCode = typeof SALES_ERROR_CODES[number];

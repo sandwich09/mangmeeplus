@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { PLAN_TIER_PRESETS, SALES_ERROR_CODES, type SalesDealStatus, type SalesDealView, type SalesMyWorkItem, type SalesMyWorkKind, type SalesReportMonth } from '@watchdog-bms/contracts';
+import { PLAN_TIER_PRESETS, SALES_ERROR_CODES, type SalesDealStatus, type SalesDealView, type SalesMyWorkItem, type SalesMyWorkKind, type SalesDealCadence, type SalesDealSnapshot, type SalesReportMonth, type SalesReportRow } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import {
-  agentStatusMeta, baseTierDefaults, companyReferral, dealBadges, dealInputFromForm, dealOverLimit, dealPaymentNote,
+  agentStatusMeta, baseTierDefaults, companyReferral, dealAutoRenew, dealBadges, dealFormFromView, dealInputFromForm,
+  dealOverLimit, dealPaymentNote, dealPriceState, dealTermText,
   dealWarnings, defaultSalesReportRange, emptyAgentForm, emptyDealForm, firstDealErrorField, formatBaht,
   isDealCancellable, isDealEditable, isMenuSelected, myWorkBadgeLabel, myWorkMeta,
   normalizeSalesCodeInput, parseBahtInput, referralLabel, referralWindowOpen, SALES_DEAL_MENU_BINDINGS,
@@ -361,7 +362,7 @@ describe('anti-gaming flags (§17.1 / D6)', () => {
 
 describe('sales report (§17.2 — one row per shop, so the report is a plain sum)', () => {
   const row = (over: Partial<SalesReportMonth['rows'][number]> = {}) => ({
-    salesUserId: 'u1', displayName: 'สมชาย', teamLeadUserId: 'l1',
+    salesUserId: 'u1', displayName: 'สมชาย', teamLeadUserId: 'l1', teamLeadDisplayName: null,
     dealActivations: 2, referralActivations: 1, amountSatang: 300_000, flaggedCount: 0, ...over,
   });
 
@@ -418,5 +419,93 @@ describe('report month range', () => {
     // 24 months is the server's cap, so 25 is refused here rather than at the round trip.
     assert.equal(salesReportRangeError({ from: '2025-01', to: '2026-12' }), null);
     assert.ok(salesReportRangeError({ from: '2024-12', to: '2026-12' }));
+  });
+});
+
+describe('Phase 5: auto-renewing deals (§17.3 / D-P5-1…6)', () => {
+  const autoForm = (over: Partial<SalesDealFormValues> = {}) =>
+    dealForm({ autoRenew: true, cadence: 'month', cycles: '', ...over });
+  const snapshot = (over: Partial<SalesDealSnapshot> = {}): SalesDealSnapshot => ({
+    version: 3, base: 'PRO_999', priceSatang: 79_900, months: 1, branchLimit: 3, employeeLimit: 10,
+    monthlySlipLimit: 500, featureKeys: [], aiMonthlyBudgetSatang: null, description: '',
+    autoRenew: false, cadence: null, cycles: null, ...over,
+  });
+
+  it('reads the v3 snapshot, and reads a v2 one as the one-time deal it is', () => {
+    assert.equal(dealAutoRenew({ months: 12 }), null);
+    assert.equal(dealAutoRenew({ autoRenew: false, cadence: 'year' }), null);
+    assert.deepEqual(dealAutoRenew({ autoRenew: true, cadence: 'year', cycles: 3 }), { cadence: 'year', cycles: 3 });
+    // null / 0 / absent all mean "จนกว่าจะเพิกถอน" — there is no zero-cycle deal.
+    assert.deepEqual(dealAutoRenew({ autoRenew: true, cadence: 'month', cycles: null }), { cadence: 'month', cycles: null });
+    assert.equal(dealAutoRenew({ autoRenew: true, cycles: 0 })!.cycles, null);
+    // D-P5-2 allows no other interval, so an unknown one from a newer API reads monthly rather
+    // than reaching a เซลล์'s phone as a machine token inside "ต่ออายุทุก…".
+    assert.equal(dealAutoRenew({ autoRenew: true, cadence: 'week' as SalesDealCadence })!.cadence, 'month');
+    assert.equal(dealAutoRenew(null), null);
+  });
+
+  it('says the term in the words the row, the summary and งานของฉัน all share', () => {
+    assert.equal(dealTermText({ months: 12 }), '12 เดือน');
+    assert.equal(dealTermText(snapshot({ autoRenew: true, cadence: 'month' })), 'ต่ออายุทุกเดือน · จนกว่าจะเพิกถอน');
+    assert.equal(dealTermText(snapshot({ autoRenew: true, cadence: 'year', cycles: 3 })), 'ต่ออายุทุกปี · 3 รอบ');
+  });
+
+  it('never validates the months box an auto-renewing form does not show, and bounds the cycles', () => {
+    // A hidden field cannot be fixed, so validating it would be a submit nobody can unblock.
+    assert.equal(validateDealForm(autoForm({ months: '' }), { forSubmit: true }).months, undefined);
+    assert.ok(validateDealForm(dealForm({ months: '' }), { forSubmit: true }).months);
+    // '' is จนกว่าจะเพิกถอน, not a missing value.
+    assert.equal(validateDealForm(autoForm(), { forSubmit: true }).cycles, undefined);
+    assert.equal(validateDealForm(autoForm({ cycles: '36' }), { forSubmit: true }).cycles, undefined);
+    assert.ok(validateDealForm(autoForm({ cycles: '0' }), { forSubmit: true }).cycles);
+    assert.ok(validateDealForm(autoForm({ cycles: '37' }), { forSubmit: true }).cycles);
+    assert.ok(validateDealForm(autoForm({ cycles: '1.5' }), { forSubmit: true }).cycles);
+  });
+
+  it('sends the three v3 fields, and sends none of them on a one-time deal', () => {
+    const once = dealInputFromForm(dealForm({ months: '6' }));
+    assert.deepEqual([once.autoRenew, once.cadence, once.cycles, once.months], [false, null, null, 6]);
+    const forever = dealInputFromForm(autoForm({ cadence: 'year' }));
+    assert.deepEqual([forever.autoRenew, forever.cadence, forever.cycles], [true, 'year', null]);
+    assert.equal(dealInputFromForm(autoForm({ cycles: '12' })).cycles, 12);
+  });
+
+  it('round-trips a saved auto-renewing deal back into the form it was typed in', () => {
+    const view = { company: { companyId: 'c1' }, internalReason: 'ต่อสัญญา',
+      snapshot: snapshot({ autoRenew: true, cadence: 'year', cycles: 3 }) } as SalesDealView;
+    const form = dealFormFromView(view);
+    assert.deepEqual([form.autoRenew, form.cadence, form.cycles], [true, 'year', '3']);
+    assert.equal(dealFormFromView({ ...view, snapshot: { ...view.snapshot, autoRenew: false } } as SalesDealView).cycles, '');
+  });
+
+  it('badges what the status cannot say: the cycle, the readiness of the price, and the end date', () => {
+    const base = { renewalOfRequestId: null, conversionOf: null, slipState: 'NONE' as const };
+    assert.deepEqual(dealBadges(base), []);
+    const labels = dealBadges({ ...base, snapshot: snapshot({ autoRenew: true, cadence: 'year' }),
+      priceState: 'PENDING', returnAt: '2027-03-01T00:00:00.000Z' }).map((badge) => badge.label);
+    assert.equal(labels[0], 'ต่ออายุอัตโนมัติ · รายปี');
+    assert.equal(labels[1], 'กำลังเตรียมราคา');
+    assert.match(labels[2]!, /^จบดีล /);
+    // D-P5-3: a failed price is a wait too — the sweep retries it — so it never offers a button.
+    const failed = dealPriceState({ priceState: 'FAILED' })!;
+    assert.equal(failed.tone, 'danger');
+    assert.match(failed.note, /ลองใหม่ให้เอง/);
+    assert.equal(dealPriceState({ priceState: 'READY' }), null);
+    assert.equal(dealPriceState({}), null);
+  });
+
+  it('gives the 14-day ending notice its own Thai line, with no enum name in it', () => {
+    const meta = myWorkMeta('DEAL_ENDING' as unknown as SalesMyWorkKind);
+    assert.equal(meta.needsAction, true);
+    assert.match(meta.note, /14 วัน/);
+    assert.doesNotMatch(meta.label, /[A-Z_]{4,}/);
+  });
+
+  it('names a team lead from the row that carries their name, not only from a row they sold', () => {
+    const months: SalesReportMonth[] = [{ monthKey: '2026-09', rows: [
+      { salesUserId: 'u1', displayName: 'สมชาย', teamLeadUserId: 'l9', teamLeadDisplayName: 'หัวหน้าเก้า',
+        dealActivations: 1, referralActivations: 0, amountSatang: 1000, flaggedCount: 0 } as SalesReportRow,
+    ] }];
+    assert.deepEqual(salesReportLeads(months), [{ userId: 'l9', displayName: 'หัวหน้าเก้า' }]);
   });
 });

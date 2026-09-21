@@ -60,7 +60,9 @@ export function saveSalesDeal(id: string, body: SalesDealSaveBody): Promise<Sale
   return apiFetch<SalesDealView>(`/v1/sales/deals/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body), suppressErrorToast: true });
 }
 
-export type SalesDealAction = 'submit' | 'approve' | 'reject' | 'cancel';
+/** `end` = D-P5-6 "จบดีล": a lead stops an auto-renewing deal, and the shop returns to the catalog
+ *  price at the end of the cycle it has paid for. Same `sales.deal.approve` right as an approval. */
+export type SalesDealAction = 'submit' | 'approve' | 'reject' | 'cancel' | 'end';
 
 export function actSalesDeal(
   id: string, action: SalesDealAction, body: SalesDealSubmitBody | SalesDealDecisionBody,

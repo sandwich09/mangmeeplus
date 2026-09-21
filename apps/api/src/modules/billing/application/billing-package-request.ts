@@ -1,7 +1,7 @@
 import type { Prisma } from '../../../generated/prisma/client';
 import { SALES_DEAL_OPEN_STATUSES, type BillingOffer, type SalesDealStatus } from '@watchdog-bms/contracts';
 import { termProjectionHash } from '../domain/paid-invoice';
-import type { DealSource } from '../domain/deal-offer';
+import { dealReturnAt, type DealSource } from '../domain/deal-offer';
 import { writeSalesAttribution } from '../../sales-console/application/sales-attribution.write';
 import { withinReferralWindow, withinRefundWindow } from '../../sales-console/domain/sales-attribution.logic';
 
@@ -71,7 +71,8 @@ export async function applyDealRequest(tx: Prisma.TransactionClient, input: { co
   // The status is the invariant, not the version: a concurrent edit that only bumped `version`
   // must not leave a paid customer with an unapplied deal row.
   const changed = await tx.packageChangeRequest.updateMany({ where: { id: deal.id, kind: 'SALES_DEAL', status: { in: ['APPROVED', 'EXPIRED'] } },
-    data: { status: 'APPLIED', paymentState: 'STRIPE_ONE_TIME', paymentRef: input.invoiceId, amountSatang: input.priceSatang,
+    data: { status: 'APPLIED', paymentState: input.deal.cadence ? 'STRIPE_SUBSCRIPTION' : 'STRIPE_ONE_TIME',
+      paymentRef: input.invoiceId, amountSatang: input.priceSatang,
       // `verifiedAt` is when Stripe took the money; `decidedAt` is when the term opened. The two
       // differ by minutes on a PromptPay QR the customer scans and leaves, so the console shows both.
       decidedAt: new Date(), verifiedAt: input.paidAt, version: { increment: 1 } } });
@@ -85,14 +86,35 @@ export async function applyDealRequest(tx: Prisma.TransactionClient, input: { co
   // §17.2: one row per company, ever — and D3 renewals never write one at all, because a renewal
   // is not a first activation. `writeSalesAttribution` re-checks the company anyway; skipping the
   // call keeps a renewal from ever being the row that wins the race.
+  // D-P5-2: an auto-renewing deal sells ONE cycle, so the agent is credited with that cycle's
+  // price and length — `months` on such a snapshot is not a duration anybody bought.
+  const cadence = input.deal.cadence ?? null;
   if (!deal.renewalOfRequestId) await writeSalesAttribution(tx, { companyId: input.companyId,
     salesUserId: input.deal.salesUserId, source: 'DEAL', amountSatang: input.priceSatang,
-    months: input.deal.months, interval: 'month', paidAt: input.paidAt,
+    months: cadence ? (cadence === 'year' ? 12 : 1) : input.deal.months, interval: cadence ?? 'month', paidAt: input.paidAt,
     sourceInvoiceId: input.invoiceId, dealRequestId: deal.id });
   await tx.auditLog.create({ data: { companyId: input.companyId, actorType: 'SYSTEM', actorRefId: 'stripe-paid-application',
     action: 'sales.deal.applied', targetType: 'package_change_request', targetId: deal.id, requestId: input.invoiceId,
     result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { dealId: deal.id, invoiceId: input.invoiceId,
       months: input.deal.months, priceSatang: input.priceSatang, salesUserId: input.deal.salesUserId, fromStatus: deal.status } } });
+}
+
+/**
+ * D-P5-6 — an N-cycle auto deal learns its return date the instant its first cycle opens.
+ *
+ * Only the DATE is written here. The `SCHEDULE_PRICE_RETURN` op itself is created later, in the
+ * cycle that ends on that date, because a two-phase schedule whose first phase ends anywhere but
+ * the account's current `paidThrough` is exactly what `currentSchedulePhase` refuses — and that
+ * would take the customer's own cancel/resume buttons down for the whole life of the deal.
+ */
+export async function scheduleDealReturn(tx: Prisma.TransactionClient, input: { companyId: string;
+  deal: DealSource; periodStart: Date }) {
+  const cadence = input.deal.cadence, cycles = input.deal.cycles ?? null;
+  if (!cadence || !cycles) return;
+  const returnAt = dealReturnAt(input.periodStart, cadence, cycles, input.periodStart.getUTCDate());
+  if (!returnAt) return;
+  await tx.packageChangeRequest.updateMany({ where: { id: input.deal.requestId, companyId: input.companyId,
+    kind: 'SALES_DEAL', returnAt: null }, data: { returnAt } });
 }
 
 /**

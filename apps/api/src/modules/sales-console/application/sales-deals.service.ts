@@ -13,6 +13,7 @@ import {
   billingOffer,
   SALES_DEAL_OPEN_STATUSES,
   SALES_DEAL_REASON_MAX,
+  SALES_DEAL_STATUSES,
   type SalesDealBaseTier,
   type SalesDealListDto,
   type SalesDealSaveBody,
@@ -22,6 +23,8 @@ import {
   type SalesMyWorkDto,
   type SalesMyWorkItem,
   type SalesMyWorkKind,
+  type SalesDealPriceState,
+  SALES_DEAL_PRICE_STATES,
 } from '@watchdog-bms/contracts';
 import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
@@ -32,7 +35,9 @@ import { AuditService } from '../../audit/application/audit.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { pushSystemLineMessage } from '../../auth/infrastructure/system-line-push';
 import { ownerLineUserIds } from '../../system-partner-management/application/use-cases/package-change-decision.use-case';
+import { SalesDealPriceService } from '../../billing/application/sales-deal-price.service';
 import {
+  autoRenewOf,
   buildDealSnapshot,
   canTransitionDeal,
   CUSTOMER_REQUEST_KIND,
@@ -69,6 +74,7 @@ type DealRow = {
   approvedByUserId: string | null; approvedAt: Date | null; selfApproved: boolean;
   offerExpiresAt: Date | null; rejectedReason: string | null; createdAt: Date; updatedAt: Date;
   renewalOfRequestId: string | null; slipSubmittedAt: Date | null;
+  priceState: string | null; returnAt: Date | null;
 };
 
 const DEAL_SELECT = {
@@ -78,6 +84,7 @@ const DEAL_SELECT = {
   approvedByUserId: true, approvedAt: true, selfApproved: true,
   offerExpiresAt: true, rejectedReason: true, createdAt: true, updatedAt: true,
   renewalOfRequestId: true, slipSubmittedAt: true,
+  priceState: true, returnAt: true,
 } as const;
 
 @Injectable()
@@ -88,19 +95,36 @@ export class SalesDealsService {
     private readonly companies: SalesCompanySearchService,
     private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly config: AppConfigService,
+    private readonly prices: SalesDealPriceService,
     @Inject(LOGGER_TOKEN) private readonly logger: AppLogger,
   ) {}
 
   // ── reads ────────────────────────────────────────────────────────────────────────────
 
-  async list(ctx: RequestContext): Promise<SalesDealListDto> {
+  async list(ctx: RequestContext, query: SalesDealListQuery = {}): Promise<SalesDealListDto> {
+    // Phase 4 leftover: the console's own filters. `status` is checked against the closed list so
+    // an unknown value is a 400 rather than a silent "no deals", and an agent may only ever narrow
+    // to themselves — `salesUserId` cannot be used to read another agent's pipeline (R11).
+    if (query.status !== undefined && !SALES_DEAL_STATUSES.includes(query.status as SalesDealStatus)) {
+      throw salesBadRequest('SALES_DEAL_STATE_CONFLICT', 'สถานะที่กรองไม่ถูกต้อง');
+    }
+    const mine = !canSeeAllDeals(ctx);
+    if (mine && query.salesUserId && query.salesUserId !== ctx.userId) {
+      throw salesForbidden('SALES_DEAL_SELF_APPROVAL', 'ดูยอดของเซลล์คนอื่นไม่ได้');
+    }
+    const salesUserId = mine ? ctx.userId : query.salesUserId;
+    // S17: an APPROVED row past its window READS as EXPIRED, so those two statuses cannot be
+    // narrowed in SQL — the column and the answer disagree. Every other status is exact.
+    const derived = query.status === 'APPROVED' || query.status === 'EXPIRED';
     const rows = await this.prisma.client.packageChangeRequest.findMany({
-      where: { kind: DEAL_KIND, ...(canSeeAllDeals(ctx) ? {} : { salesUserId: ctx.userId }) },
+      where: { kind: DEAL_KIND, ...(salesUserId ? { salesUserId } : {}),
+        ...(query.status ? derived ? { status: { in: ['APPROVED', 'EXPIRED'] } } : { status: query.status } : {}) },
       orderBy: { createdAt: 'desc' },
       take: 200,
       select: DEAL_SELECT,
     });
-    return { items: await this.toViews(rows) };
+    const items = (await this.toViews(rows)).filter((deal) => !query.status || deal.status === query.status);
+    return { items };
   }
 
   async get(ctx: RequestContext, dealId: string): Promise<SalesDealView> {
@@ -120,7 +144,9 @@ export class SalesDealsService {
       where: {
         kind: DEAL_KIND,
         OR: [
-          ...(lead ? [{ status: 'PENDING_APPROVAL' }] : []),
+          ...(lead ? [{ status: 'PENDING_APPROVAL' },
+            // D-P5-6: every deal about to go back to the catalog price is the lead's queue too.
+            { status: 'APPLIED', returnAt: { not: null } }] : []),
           // Q9: only the Owner can confirm a transfer, so only the Owner is shown the queue.
           ...(admin ? [{ paymentState: 'SLIP_PENDING' }] : []),
           { salesUserId: ctx.userId, status: { in: ['REJECTED', 'APPROVED', 'APPLIED'] } },
@@ -145,7 +171,7 @@ export class SalesDealsService {
       : lead
         ? item.kind === 'APPROVAL_PENDING'
         // D3: a renewal sitting with the lead is the agent's own work item, not something to act on.
-        : item.kind === 'DEAL_REJECTED' || item.kind === 'DEAL_EXPIRED').length;
+        : item.kind === 'DEAL_REJECTED' || item.kind === 'DEAL_EXPIRED' || item.kind === 'DEAL_ENDING').length;
     return { items, badge };
   }
 
@@ -211,7 +237,15 @@ export class SalesDealsService {
     });
     // After commit: a dead LINE OA must never undo an approval that already happened.
     await this.notifyOwners(view.company.companyId);
-    return view;
+    // D-P5-3: an auto-renewing deal needs its own recurring Stripe Price before it can be paid.
+    // The approval is NOT rolled back when Stripe is unreachable — a POST whose outcome we cannot
+    // see must not be re-run under a different deal state. `priceState` is the gate instead: the
+    // offer card stays shut and the 15-minute sweep finishes the job.
+    if (!view.autoRenew) return view;
+    const state = await this.prices.ensure(view.id);
+    // 'SKIPPED' means the row moved under us (cancelled, or another pass already finished it); the
+    // view keeps the 'PENDING' the transaction wrote rather than inventing a state.
+    return state === 'SKIPPED' ? view : { ...view, priceState: state };
   }
 
   async reject(ctx: RequestContext, dealId: string, version: number, reason: string): Promise<SalesDealView> {
@@ -227,6 +261,53 @@ export class SalesDealsService {
   async cancel(ctx: RequestContext, dealId: string, version: number, reason: string): Promise<SalesDealView> {
     const cancelReason = this.reason(reason);
     return this.transition(ctx, dealId, version, 'CANCELLED', 'cancelled', () => ({ rejectedReason: cancelReason }));
+  }
+
+
+  /**
+   * D-P5-6 "จบดีล" — a lead or SYSTEM_ADMIN ends an auto-renewing deal that runs until revoked.
+   *
+   * All this writes is the date: the shop keeps the deal price to the end of the cycle it has
+   * already paid for, and the return sweep does the provider work inside that last cycle. Nothing
+   * here touches Stripe, so a lead pressing the button can never leave a half-changed subscription.
+   */
+  async end(ctx: RequestContext, dealId: string, version: number, reason: string): Promise<SalesDealView> {
+    const endReason = this.reason(reason);
+    if (!ctx.permissions.includes('sales.deal.approve')) {
+      throw salesForbidden('SALES_DEAL_SELF_APPROVAL', 'เฉพาะหัวหน้าทีมขายเท่านั้นที่จบดีลได้');
+    }
+    const current = await this.requireDeal(ctx, dealId);
+    const auto = autoRenewOf(current.offerSnapshotJson as SalesDealSnapshot);
+    if (current.status !== 'APPLIED' || !auto.autoRenew) {
+      throw salesError('SALES_DEAL_END_INVALID', 'จบดีลได้เฉพาะดีลต่ออายุอัตโนมัติที่เปิดใช้งานอยู่');
+    }
+    if (current.returnAt) throw salesError('SALES_DEAL_END_INVALID', 'ดีลนี้มีวันสิ้นสุดอยู่แล้ว');
+    const account = await this.prisma.client.billingAccount.findFirst({
+      where: { companyId: current.companyId, paidThrough: { gt: new Date() } },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (!account?.paidThrough) throw salesError('SALES_DEAL_END_INVALID', 'ร้านนี้ยังไม่มีรอบที่ชำระแล้ว');
+    // D-P5-7/Q8: both modes record the same date, and pressing the button twice is refused above
+    // by `returnAt` already being set. What happens AT that date differs: a card deal is swapped to
+    // the catalog price by the return sweep, while a QR deal simply stops being billed — today
+    // through the shop's own "หยุดต่ออายุ" control, since a system-initiated cancel-at-period-end
+    // is a journaled provider write this phase does not own yet.
+    const returnAt = account.paidThrough;
+    const row = await this.prisma.client.$transaction(async (tx) => {
+      const written = await tx.packageChangeRequest.updateMany({
+        where: { id: dealId, kind: DEAL_KIND, status: 'APPLIED', version, returnAt: null },
+        data: { returnAt, version: { increment: 1 } },
+      });
+      if (written.count === 0) throw this.stateConflict();
+      const updated = await tx.packageChangeRequest.findUniqueOrThrow({ where: { id: dealId }, select: DEAL_SELECT });
+      await tx.auditLog.create({ data: { companyId: updated.companyId, actorUserId: ctx.userId,
+        action: 'sales.deal.ended', targetType: 'PackageChangeRequest', targetId: updated.id,
+        requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'CRITICAL',
+        metadataJson: { returnAt: returnAt.toISOString(), reason: endReason, salesUserId: updated.salesUserId } } });
+      return updated;
+    });
+    const [view] = await this.toViews([row]);
+    return view!;
   }
 
   /**
@@ -384,6 +465,9 @@ export class SalesDealsService {
       selfApproved: row.salesUserId === ctx.userId,
       // An empty approval note leaves the agent's own internalReason intact rather than blanking it.
       ...(note ? { internalReason: note } : {}),
+      // D-P5-3: 'PENDING' is what the sweep looks for, and what stops the card offering a Checkout
+      // before the Price exists. A one-time deal keeps it null and is payable immediately.
+      ...(autoRenewOf(row.offerSnapshotJson as SalesDealSnapshot).autoRenew ? { priceState: 'PENDING' } : {}),
     };
   }
 
@@ -505,6 +589,14 @@ export class SalesDealsService {
         renewalOfRequestId: row.renewalOfRequestId,
         slipState: dealSlipState(row.paymentState, row.slipSubmittedAt),
         conversionOf: conversionMode(subscriptionByCompany.get(row.companyId)),
+        // D-P5-1: read through `autoRenewOf`, so a Phase 3 (v2) row answers `false` rather than
+        // handing the console three `undefined`s to guess at.
+        ...autoRenewOf(snapshot),
+        // A value the contract does not know is not shown as one: the console reads `null` and
+        // the deal simply looks like a one-time offer rather than an unsellable auto one.
+        priceState: SALES_DEAL_PRICE_STATES.includes(row.priceState as SalesDealPriceState)
+          ? row.priceState as SalesDealPriceState : null,
+        returnAt: row.returnAt?.toISOString() ?? null,
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt.toISOString(),
       };
@@ -513,6 +605,10 @@ export class SalesDealsService {
 }
 
 type PrismaTx = Parameters<Parameters<PrismaService['client']['$transaction']>[0]>[0];
+/** `GET /v1/sales/deals` filters (Phase 4 leftover). */
+export type SalesDealListQuery = { status?: string; salesUserId?: string };
+/** D-P5-6: how far ahead the console and the OWNER are told a deal is about to end. */
+export const DEAL_ENDING_NOTICE_DAYS = 14;
 
 /**
  * The list price of the deal's base tier for the same number of months, for the form's
@@ -527,11 +623,15 @@ function catalogPriceFor(snapshot: SalesDealSnapshot | null): number {
   return billingOffer(snapshot.base as SalesDealBaseTier, 'month').priceSatang * snapshot.months;
 }
 
-export function workKind(deal: Pick<SalesDealView, 'status' | 'renewalOfRequestId'>,
-  viewer: { own: boolean; lead: boolean; paymentState: string }): SalesMyWorkKind {
+export function workKind(deal: Pick<SalesDealView, 'status' | 'renewalOfRequestId' | 'returnAt'>,
+  viewer: { own: boolean; lead: boolean; paymentState: string; now?: Date }): SalesMyWorkKind {
   const { own, lead, paymentState } = viewer;
   // A slip waiting for the Owner outranks everything: the customer has already paid.
   if (paymentState === 'SLIP_PENDING') return 'DEAL_SLIP_PENDING';
+  // D-P5-6: an auto deal inside its last 14 days is the team's cue to write the next offer — it
+  // outranks "APPLIED", which is the same row simply still running.
+  if (deal.status === 'APPLIED' && deal.returnAt &&
+    Date.parse(deal.returnAt) - (viewer.now?.getTime() ?? Date.now()) <= DEAL_ENDING_NOTICE_DAYS * 86400_000) return 'DEAL_ENDING';
   // D3: an agent sees their own renewal as "รออนุมัติ"; a lead sees the same row as their queue,
   // because a lead may approve it (D2) and the badge counts what the viewer can act on.
   if (deal.status === 'PENDING_APPROVAL') return deal.renewalOfRequestId && own && !lead ? 'DEAL_RENEWAL_PENDING' : 'APPROVAL_PENDING';
@@ -556,6 +656,11 @@ function dealFieldMessageTh(field: string): string {
     // "เครดิต AI" is the product term (W-01); never the retired AI-money wording.
     case 'aiMonthlyBudgetSatang': return 'เครดิต AI ต่อเดือนต้องเป็นจำนวนเต็มตั้งแต่ 1 สตางค์ขึ้นไป หรือเว้นว่างเพื่อใช้ค่าเริ่มต้น (ปิด AI = เอาเมนู AI ออก)';
     case 'featureKeys': return 'รายการเมนูไม่ถูกต้อง';
+    // D-P5-1: the auto-renew switch. The cadence message doubles as the "switch off but cadence
+    // left behind" answer, because both mean the same thing to the person filling the form.
+    case 'autoRenew': return 'ตัวเลือกต่ออายุอัตโนมัติไม่ถูกต้อง';
+    case 'cadence': return 'ดีลต่ออายุอัตโนมัติต้องเลือกรอบเป็นรายเดือนหรือรายปี (ดีลจ่ายครั้งเดียวไม่ต้องเลือกรอบ)';
+    case 'cycles': return 'จำนวนรอบต้องอยู่ระหว่าง 1 ถึง 36 หรือเว้นว่างเพื่อให้ต่อไปจนกว่าจะเพิกถอน';
     default: return 'ข้อมูลดีลไม่ถูกต้อง';
   }
 }

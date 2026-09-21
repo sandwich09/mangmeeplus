@@ -143,6 +143,8 @@
 
 ## D7 (มติรอบ 5): ดีลตัดบัตรอัตโนมัติ — Phase 5 (หลัง Phase 3)
 
+- สถานะ 2026-09-21 (ค่ำ): ทำแล้วบน branch ตาม spec §19.9 — snapshot v3 (autoRenew/cadence/cycles), Stripe Price เฉพาะร้านสร้างตอนอนุมัติ (สถานะราคา PENDING/READY/FAILED/ARCHIVED), Checkout แบบ subscription ด้วย Price ของดีล (บัตร/QR ทุกงวด), apply ครั้งแรกเรียก applyDealRequest, op `SCHEDULE_PRICE_RETURN` = สลับราคาบน subscription item (ไม่ใช้ schedule 2 เฟส เพราะ `currentSchedulePhase` รับเจ้าของ pendingChange เดียว) ในรอบสุดท้าย + contract อนาคต `dealReturn` คืนเมนู/เครดิต AI/ลิมิต (Q1 = preset starter), ปุ่ม "จบดีล" (ทั้งบัตรและ QR บันทึกวันสิ้นสุด; QR ยังไม่มี op หยุดบิลอัตโนมัติ — ร้านใช้ปุ่มหยุดต่ออายุเอง), แจ้ง 14 วันก่อน; หนี้: drift scan (G17), catch-up เมื่อพลาดรอบสุดท้าย, ไม่มี smoke/PG
+
 - ยกงานจาก [billing-special-price-plan-th.md](billing-special-price-plan-th.md) Phase 1–3 มาเป็น Phase 5 ของแผนนี้: `BillingSpecialPrice` ผูกกับดีล (`dealId`), สร้าง Stripe Price ตอนอนุมัติดีลที่ `autoRenew=true` (journal/observed/drain แบบ refunds), quote path ใช้ offer/priceId ของดีล, `capacity()` ใช้ offer ของดีล, legacy guard ผ่อน, `SCHEDULE_PRICE_RETURN` + issue `SPECIAL_PRICE_ENDING` + drift check, UI: สวิตช์ในฟอร์มดีล + การ์ดลูกค้าแสดง "ตัดบัตรอัตโนมัติทุกเดือน/ปี ยกเลิกได้จากหน้าแพ็กเกจ"
 - ข้อจำกัดที่ต้องบอกเซลล์ในฟอร์ม: รอบเดือน/ปีเท่านั้น, ลูกค้าต้องจ่ายด้วยบัตร, การจบดีลต้องสั่งกลับราคาปกติ
 - Tests: ตาม spec billing-special-price §15 + regression smokes เดิมด้วย fixture ราคาดีล; UAT Stripe test mode: สมัคร→ดีลอัตโนมัติ→ตัดบัตรรอบถัดไป (จำลอง invoice.paid) → กลับราคาปกติ

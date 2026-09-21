@@ -9,10 +9,19 @@ import { MENU_ENTITLEMENT_BINDINGS, SALES_SLIP_BANK_ACCOUNT_TH, type BillingPurc
  * snapshot no longer parses — simply shows no card and no deal wording.
  */
 
-/** Phase 3 sells a deal on the #667 one-time path only; Phase 5 adds the renewing modes (R10). */
+/** Phase 3 sells a deal paid once (#667); Phase 5 (D-P5-4/Q8) adds the two renewing modes — a deal
+ *  is one or the other, never both, so `dealPurchaseModes` picks the pair by the deal itself. */
 export const DEAL_PURCHASE_MODES: readonly BillingPurchaseMode[] = ['CARD_ONCE', 'PROMPTPAY_ONCE'];
+export const DEAL_AUTO_PURCHASE_MODES: readonly BillingPurchaseMode[] = ['CARD_AUTO', 'PROMPTPAY_RENEW'];
 
-export type BillingDealOffer = NonNullable<BillingStatus['deal']>;
+export function dealPurchaseModes(autoRenew: boolean): readonly BillingPurchaseMode[] {
+  return autoRenew ? DEAL_AUTO_PURCHASE_MODES : DEAL_PURCHASE_MODES;
+}
+
+/** `autoRenew`/`cadence` are the status's own (D-P5-1). `cycles` is not on `BillingStatus['deal']`:
+ *  the customer card simply omits "N รอบ แล้วกลับราคาปกติ" until it is, which is exactly what the
+ *  helpers below do with a null. */
+export type BillingDealOffer = NonNullable<BillingStatus['deal']> & { cycles?: number | null };
 /** What a deal quote carries back so the confirm screen can name the offer (not the catalog tier). */
 export type BillingDealQuote = { dealId: string; months: number; description?: string; baseLabel?: string };
 
@@ -25,11 +34,38 @@ export function billingDeal(status: { deal?: unknown } | null | undefined, now: 
   const deal = (status?.deal ?? null) as Partial<BillingDealOffer> | null;
   if (!deal || typeof deal.dealId !== 'string' || typeof deal.priceSatang !== 'number' || typeof deal.months !== 'number') return null;
   if (typeof deal.offerExpiresAt !== 'string' || !(Date.parse(deal.offerExpiresAt) > now)) return null;
-  // S39: the card uses the deal's own modes, never `availablePurchaseModes`. A renewing or unknown
-  // mode from a newer API is dropped instead of drawing a radio nothing can be paid with.
-  const purchaseModes = (Array.isArray(deal.purchaseModes) ? deal.purchaseModes : [])
-    .filter(mode => DEAL_PURCHASE_MODES.includes(mode));
-  return { ...(deal as BillingDealOffer), purchaseModes };
+  // D-P5-1: only `month`/`year` exist (D-P5-2), so anything else is read as monthly rather than
+  // reaching a customer as a machine token in "ทุก…".
+  const autoRenew = deal.autoRenew === true;
+  const cadence = deal.cadence === 'year' ? 'year' : 'month';
+  const cycles = typeof deal.cycles === 'number' && Number.isInteger(deal.cycles) && deal.cycles > 0 ? deal.cycles : null;
+  // S39: the card uses the deal's own modes, never `availablePurchaseModes`. A mode of the wrong
+  // family, or an unknown one from a newer API, is dropped instead of drawing a radio nothing can
+  // be paid with — an auto-renewing deal cannot be settled with a one-time payment and vice versa.
+  const allowed = dealPurchaseModes(autoRenew);
+  const purchaseModes = (Array.isArray(deal.purchaseModes) ? deal.purchaseModes : []).filter(mode => allowed.includes(mode));
+  return { ...(deal as BillingDealOffer), autoRenew, cadence, cycles, purchaseModes };
+}
+
+type DealRenewal = Pick<BillingDealOffer, 'autoRenew' | 'cadence' | 'cycles'>;
+const everyCycle = (deal: DealRenewal) => deal.cadence === 'year' ? 'ทุกปี' : 'ทุกเดือน';
+const cycleTail = (deal: DealRenewal) => deal.cycles ? ` · ${deal.cycles} รอบ แล้วกลับราคาปกติ` : '';
+
+/**
+ * What the shop is agreeing to, on the card (§17.3/Q8). Card and QR are genuinely different
+ * promises — one takes the money by itself, the other only sends a bill somebody has to scan — so
+ * the sentence follows the mode the customer picked, not the deal alone.
+ */
+export function dealRenewalText(deal: DealRenewal, mode: BillingPurchaseMode | undefined): string {
+  if (!deal.autoRenew) return 'จ่ายครั้งเดียว ไม่มีหักอัตโนมัติ';
+  return (mode === 'PROMPTPAY_RENEW'
+    ? `ออกบิล QR ${everyCycle(deal)} ที่ราคานี้ · สแกนจ่ายเอง`
+    : `ตัดบัตรอัตโนมัติ${everyCycle(deal)} ที่ราคานี้ · ยกเลิกได้จากหน้าแพ็กเกจ`) + cycleTail(deal);
+}
+
+/** The same promise on the confirm screen, where the price beside it is already the deal's. */
+export function dealConfirmText(deal: DealRenewal): string {
+  return `ต่ออายุอัตโนมัติที่ราคาข้อเสนอพิเศษ ${everyCycle(deal)}${cycleTail(deal)}`;
 }
 
 /** The deal a quote was priced from, or the one an attempt paid for — same narrow read. */
@@ -65,9 +101,8 @@ export function dealAiCreditText(satang: number | null | undefined): string {
 // amount is over what its banking app allows. A person at มั่งมี checks the slip by hand; nothing
 // here reads it, and none of it exists in LINE.
 //
-// `BillingStatus.deal` does not declare the two slip fields yet (they live on
-// `PackageChangeDealOffer`), so they are read structurally — the same narrow-read idiom the rest of
-// this module uses. A status that predates them simply shows the normal card.
+// The two slip fields are read structurally — the same narrow-read idiom the rest of this module
+// uses — so a status written before they existed simply shows the normal card.
 
 export type BillingDealSlipView = {
   state: Exclude<SalesDealSlipState, 'NONE'> | null;

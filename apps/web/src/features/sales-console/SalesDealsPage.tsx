@@ -7,8 +7,8 @@ import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { LoadingState } from '@/common/components/state';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { listSalesDeals } from './sales.api';
-import { dealPaymentNote, formatBaht, SALES_DEAL_STATUS_META } from './sales-console.logic';
-import { SalesDealStatusBadge, SalesEmpty, SalesNotice } from './SalesConsoleParts';
+import { dealBadges, dealPaymentNote, dealTermText, formatBaht, SALES_DEAL_STATUS_META } from './sales-console.logic';
+import { SalesDealBadges, SalesDealStatusBadge, SalesEmpty, SalesNotice } from './SalesConsoleParts';
 
 /** "ทั้งหมด" first: a เซลล์ opens this to find one shop's deal, not to audit a status. */
 const FILTERS: readonly { key: SalesDealStatus | 'ALL'; label: string }[] = [
@@ -18,13 +18,17 @@ const FILTERS: readonly { key: SalesDealStatus | 'ALL'; label: string }[] = [
 
 function DealRow({ deal }: { deal: SalesDealView }) {
   const paid = dealPaymentNote(deal);
+  // Phase 5: the row is where a เซลล์ spots the three things the status cannot say — that this one
+  // charges every cycle, when it ends, and whether its price is ready for the shop to pay (D-P5-3).
+  const badges = dealBadges(deal);
   return (
     <Link href={`/sales/deals/${encodeURIComponent(deal.id)}`} className="flex min-h-12 items-start justify-between gap-3 border-t border-gray-100 px-4 py-3 first:border-t-0 hover:bg-gray-50">
       <span className="min-w-0">
         <span className="block truncate text-[15px] font-bold text-gray-900">{deal.company.name}</span>
         <span className="mt-0.5 block text-xs text-gray-500">
-          {formatBaht(deal.snapshot.priceSatang)} · {deal.snapshot.months} เดือน · {deal.salesDisplayName}
+          {formatBaht(deal.snapshot.priceSatang)} · {dealTermText(deal.snapshot)} · {deal.salesDisplayName}
         </span>
+        {badges.length > 0 && <span className="mt-1 flex flex-wrap gap-1"><SalesDealBadges deal={deal} /></span>}
         {paid && <span className="mt-0.5 block text-xs text-brand-700">{paid}</span>}
         <span className="mt-0.5 block text-xs text-gray-400">อัปเดต {formatThaiDate(deal.updatedAt)}</span>
       </span>

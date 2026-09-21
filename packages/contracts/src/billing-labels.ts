@@ -71,6 +71,8 @@ const issueKinds: Record<string,string> = {
   PAID_NOT_APPLIED:'ชำระแล้วแต่ยังไม่เปิดสิทธิ์', PROVIDER_EVENT_FAILED:'ตรวจเหตุการณ์ Stripe ไม่สำเร็จ', RECONCILIATION_FAILED:'ตรวจสถานะล่าสุดไม่สำเร็จ',
   REFUND_FAILED:'คืนเงินไม่สำเร็จ', RENEWAL_REVIEW:'ต้องตรวจรายการต่ออายุ', REPEAT_RECOVERY:'ต้องตรวจรายการซื้อซ้ำเดิม',
   UNKNOWN_ATTEMPT:'ยังยืนยันผลรายการซื้อเดิมไม่ได้', ZERO_INVOICE_REVIEW:'ต้องตรวจใบแจ้งหนี้ยอดศูนย์',
+  // D-P5-6: the two states of a deal going back to the catalog price.
+  SPECIAL_PRICE_ENDING:'ข้อเสนอพิเศษใกล้สิ้นสุด', SPECIAL_PRICE_RETURN_REVIEW:'ต้องตรวจการกลับไปราคาปกติ',
 };
 export const billingIssueLabel = (value:string) => Object.hasOwn(issueKinds,value)?issueKinds[value]!:'รายการที่ต้องตรวจสอบ';
 const operationKinds: Record<string,string> = {
@@ -78,7 +80,7 @@ const operationKinds: Record<string,string> = {
   RECONCILE_NOTIFICATION:'ตรวจผลส่งข้อความเดิม', RETRY_PROVIDER_EVENT:'ตรวจเหตุการณ์ Stripe เดิม', CHANGE_COLLECTION:'พักหรือกลับมาเก็บเงิน', GRANT_FREE_DAYS:'แถมวันใช้งาน',
   SCHEDULE_DOWNGRADE:'ตั้งเวลาลดแพ็กเกจ', CANCEL_DOWNGRADE:'ยกเลิกการลดแพ็กเกจ', CANCEL_COLLECTION:'หยุดต่ออายุ', RESUME_COLLECTION:'เปิดต่ออายุอีกครั้ง',
   SCAN_PROVIDER_INVOICES:'ตรวจประวัติใบแจ้งหนี้ Stripe', RECORD_SUPPORT_OUTCOME:'บันทึกผลติดต่อ', PUBLISH_POLICY:'เปลี่ยนนโยบายการชำระเงิน',
-  SET_ACTION_GATE:'เปลี่ยนการเปิดบริการ', CHECK_PROVIDER_CONFIGURATION:'ตรวจการเชื่อมต่อ Stripe', REFUND:'คืนเงิน', GRANT_RECEIPTS:'เพิ่มใบเสร็จโดยผู้ดูแล', REVOKE_RECEIPTS:'ถอนใบเสร็จที่ผู้ดูแลเพิ่ม', GRANT_OVERRIDE:'ให้สิทธิ์ชั่วคราว', REVOKE_OVERRIDE:'ถอนสิทธิ์ชั่วคราว',
+  SET_ACTION_GATE:'เปลี่ยนการเปิดบริการ', CHECK_PROVIDER_CONFIGURATION:'ตรวจการเชื่อมต่อ Stripe', REFUND:'คืนเงิน', GRANT_RECEIPTS:'เพิ่มใบเสร็จโดยผู้ดูแล', REVOKE_RECEIPTS:'ถอนใบเสร็จที่ผู้ดูแลเพิ่ม', GRANT_OVERRIDE:'ให้สิทธิ์ชั่วคราว', REVOKE_OVERRIDE:'ถอนสิทธิ์ชั่วคราว', SCHEDULE_PRICE_RETURN:'ตั้งเวลากลับไปราคาปกติ',
 };
 export function billingTimelineLabel(entry: BillingTimelineEntry): {title:string;state:string} {
   if (entry.kind === 'PLAN_TERM') return {title:'แพ็กเกจปัจจุบัน',state:billingPlanLabel(entry.state)};

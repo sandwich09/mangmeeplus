@@ -148,6 +148,9 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   'sales_deal_renewal_overdue',
   'sales_deal_slip_pending',
   'sales_daily_digest',
+  // D-P5-6: 14 days before an auto-renewing deal goes back to the catalog price. Reaches the shop
+  // OWNER (console + LINE, number-free) and the sales team's own work list.
+  'sales_deal_ending',
 ];
 
 // Future triggers — disabled until source module exists

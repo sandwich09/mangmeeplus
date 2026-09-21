@@ -7,7 +7,7 @@ import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mang
 import { LoadingState } from '@/common/components/state';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { getSalesMyWork } from './sales.api';
-import { formatBaht, myWorkBadgeLabel, myWorkMeta, sortMyWork } from './sales-console.logic';
+import { dealTermText, formatBaht, myWorkBadgeLabel, myWorkMeta, sortMyWork } from './sales-console.logic';
 import { SalesEmpty, SalesNotice } from './SalesConsoleParts';
 
 function WorkRow({ item }: { item: SalesMyWorkItem }) {
@@ -19,7 +19,7 @@ function WorkRow({ item }: { item: SalesMyWorkItem }) {
         <MangmeeBadge tone={meta.tone}>{meta.label}</MangmeeBadge>
       </span>
       <span className="mt-0.5 block text-xs text-gray-500">
-        {formatBaht(item.deal.snapshot.priceSatang)} · {item.deal.snapshot.months} เดือน · {item.deal.salesDisplayName}
+        {formatBaht(item.deal.snapshot.priceSatang)} · {dealTermText(item.deal.snapshot)} · {item.deal.salesDisplayName}
       </span>
       <span className="mt-1 block text-sm leading-6 text-gray-600">
         {item.kind === 'DEAL_REJECTED' && item.deal.rejectedReason ? item.deal.rejectedReason : meta.note}

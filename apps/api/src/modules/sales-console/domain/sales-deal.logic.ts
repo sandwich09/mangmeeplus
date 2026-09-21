@@ -11,11 +11,13 @@ import {
   SALES_CODE_DEFAULT_LENGTH,
   SALES_CODE_PATTERN,
   SALES_DEAL_DESCRIPTION_MAX,
+  SALES_DEAL_CYCLES_MAX,
   SALES_DEAL_MONTHS_MAX,
   SALES_DEAL_OFFER_DAYS,
   SALES_DEAL_BASE_TIERS,
   SALES_DEAL_REASON_MAX,
   type SalesDealBaseTier,
+  type SalesDealCadence,
   type SalesDealSnapshot,
   type SalesDealSlipState,
   type SalesDealStatus,
@@ -93,7 +95,26 @@ export function normalizeSalesCode(raw: unknown): string | null {
 export type SnapshotDraft = {
   base: unknown; priceSatang: unknown; months: unknown; branchLimit: unknown; employeeLimit: unknown;
   monthlySlipLimit: unknown; featureKeys: unknown; aiMonthlyBudgetSatang: unknown; description: unknown;
+  /** D-P5-1. Absent on every v2 row and on a one-time form submit. */
+  autoRenew?: unknown; cadence?: unknown; cycles?: unknown;
 };
+
+/**
+ * D-P5-1 read back: the ONE place that decides whether a stored snapshot is an auto-renewing deal.
+ *
+ * A v2 row has no switch at all, so it answers `false`, and a row whose cadence is anything but
+ * month/year is treated the same way — an unreadable switch must never open a recurring charge.
+ */
+export function autoRenewOf(snapshot: Pick<SalesDealSnapshot, 'autoRenew' | 'cadence' | 'cycles'> | null | undefined):
+  { autoRenew: boolean; cadence: SalesDealCadence | null; cycles: number | null } {
+  const cadence = snapshot?.cadence;
+  if (snapshot?.autoRenew !== true || (cadence !== 'month' && cadence !== 'year')) {
+    return { autoRenew: false, cadence: null, cycles: null };
+  }
+  const cycles = snapshot.cycles;
+  return { autoRenew: true, cadence,
+    cycles: typeof cycles === 'number' && Number.isSafeInteger(cycles) && cycles >= 1 && cycles <= SALES_DEAL_CYCLES_MAX ? cycles : null };
+}
 
 /** Thrown with a `SalesErrorCode`-shaped reason the controller maps to a 400 body. */
 export class SalesSnapshotError extends Error {}
@@ -133,8 +154,21 @@ export function buildDealSnapshot(draft: SnapshotDraft): SalesDealSnapshot {
   if (aiBudget !== null && (typeof aiBudget !== 'number' || !Number.isSafeInteger(aiBudget) || aiBudget < 1)) {
     throw new SalesSnapshotError('aiMonthlyBudgetSatang');
   }
+  // D-P5-1: the switch is validated strictly (an unreadable cadence is an error at write time,
+  // unlike the read-back in `autoRenewOf`, which must stay total for rows already in the table).
+  const autoRenew = draft.autoRenew === undefined || draft.autoRenew === null ? false : draft.autoRenew;
+  if (typeof autoRenew !== 'boolean') throw new SalesSnapshotError('autoRenew');
+  const cadence = draft.cadence ?? null, cycles = draft.cycles ?? null;
+  if (autoRenew) {
+    // Stripe recurring prices are month or year; nothing else can be charged automatically (D-P5-2).
+    if (cadence !== 'month' && cadence !== 'year') throw new SalesSnapshotError('cadence');
+    if (cycles !== null) positiveInt(cycles, 'cycles', SALES_DEAL_CYCLES_MAX);
+  } else if (cadence !== null || cycles !== null) {
+    // A one-time deal that carries a cadence is a half-filled form, not a deal.
+    throw new SalesSnapshotError('cadence');
+  }
   return {
-    version: 2,
+    version: 3,
     base: base as SalesDealBaseTier,
     priceSatang: positiveInt(draft.priceSatang, 'priceSatang', Number.MAX_SAFE_INTEGER),
     months: positiveInt(draft.months, 'months', SALES_DEAL_MONTHS_MAX),
@@ -144,8 +178,12 @@ export function buildDealSnapshot(draft: SnapshotDraft): SalesDealSnapshot {
     featureKeys: [...new Set(draft.featureKeys as string[])],
     aiMonthlyBudgetSatang: aiBudget as number | null,
     description,
+    autoRenew,
+    cadence: autoRenew ? cadence as SalesDealCadence : null,
+    cycles: autoRenew ? cycles as number | null : null,
   };
 }
+
 
 /** Team-visible reason (S24). Bounded like every other paragraph that crosses a boundary. */
 export function requireReason(raw: unknown, max = SALES_DEAL_REASON_MAX): string {

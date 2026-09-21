@@ -131,13 +131,13 @@ describe('report aggregation (§17.2 — per agent per Bangkok month)', () => {
     salesUserId: 'agent-1', source: 'DEAL', amountSatang: 100_000, refundedSatang: 0,
     paidAt: new Date('2026-09-10T03:00:00Z'), flags: [], flagReviewedAt: null, ...over,
   });
-  const agent = (id: string) => ({ displayName: id.toUpperCase(), teamLeadUserId: 'lead-1' });
+  const agent = (id: string) => ({ displayName: id.toUpperCase(), teamLeadUserId: 'lead-1', teamLeadDisplayName: 'LEAD-1' });
 
   it('splits deal and referral activations and sums the money', () => {
     const [month] = aggregateReport([row({}), row({ source: 'REFERRAL', amountSatang: 49_900 })], agent);
     assert.equal(month!.monthKey, '2026-09');
     assert.deepEqual(month!.rows, [{
-      salesUserId: 'agent-1', displayName: 'AGENT-1', teamLeadUserId: 'lead-1',
+      salesUserId: 'agent-1', displayName: 'AGENT-1', teamLeadUserId: 'lead-1', teamLeadDisplayName: 'LEAD-1',
       dealActivations: 1, referralActivations: 1, amountSatang: 149_900, flaggedCount: 0,
     }]);
   });

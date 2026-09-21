@@ -7,14 +7,16 @@
  */
 import { Body, Controller, Get, HttpCode, Param, Post, Put, Query, Req } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { IsArray, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Min, MaxLength, ValidateIf } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min, MaxLength, ValidateIf } from 'class-validator';
 import type { Request } from 'express';
 import {
   SALES_DEAL_BASE_TIERS,
+  SALES_DEAL_CYCLES_MAX,
   SALES_DEAL_DESCRIPTION_MAX,
   SALES_DEAL_REASON_MAX,
   SALES_ROLE_KEYS,
   type SalesDealBaseTier,
+  type SalesDealCadence,
   type SalesAgentCreateResult,
   type SalesAgentListDto,
   type SalesAgentCredentialHandoff,
@@ -43,6 +45,11 @@ export class SalesDealSaveDto {
   @IsInt() @Min(1) employeeLimit!: number;
   @IsInt() @Min(1) monthlySlipLimit!: number;
   @IsArray() @IsString({ each: true }) featureKeys!: string[];
+  // D-P5-1: the auto-renew switch. `buildDealSnapshot` owns the cross-field rules (a cadence is
+  // required when the switch is on and refused when it is off); these only bound the shapes.
+  @IsBoolean() @IsOptional() autoRenew?: boolean;
+  @ValidateIf((dto) => dto.cadence !== null && dto.cadence !== undefined) @IsIn(['month', 'year']) cadence?: SalesDealCadence | null;
+  @ValidateIf((dto) => dto.cycles !== null && dto.cycles !== undefined) @IsInt() @Min(1) @Max(SALES_DEAL_CYCLES_MAX) cycles?: number | null;
   // null is a real value (inherit the platform default), so it is validated conditionally.
   // D-P3-2: zero is not a choice — closing AI removes the `ai_line_assistant` menu instead.
   @ValidateIf((dto) => dto.aiMonthlyBudgetSatang !== null) @IsInt() @Min(1) aiMonthlyBudgetSatang!: number | null;
@@ -99,10 +106,15 @@ export class SalesController {
 
   @Get('deals')
   @RequirePermissions('sales.console.read')
-  @ApiOperation({ summary: 'Deals — own only for an agent, every team for a lead' })
-  listDeals(@Req() req: Request & { context: RequestContext }): Promise<SalesDealListDto> {
+  @ApiOperation({ summary: 'Deals — own only for an agent, every team for a lead; ?status= and ?salesUserId= narrow' })
+  @ApiResponse({ status: 400, description: 'SALES_DEAL_STATE_CONFLICT — unknown status filter' })
+  listDeals(
+    @Query('status') status: string | undefined,
+    @Query('salesUserId') salesUserId: string | undefined,
+    @Req() req: Request & { context: RequestContext },
+  ): Promise<SalesDealListDto> {
     assertPlatformTenant(req.context);
-    return this.deals.list(req.context);
+    return this.deals.list(req.context, { status, salesUserId });
   }
 
   @Get('my-work')
@@ -206,6 +218,20 @@ export class SalesController {
   ): Promise<SalesDealView> {
     assertPlatformTenant(req.context);
     return this.deals.reject(req.context, dealId, dto.version, dto.reason);
+  }
+
+  @Post('deals/:dealId/end')
+  @HttpCode(200)
+  @RequirePermissions('sales.deal.approve')
+  @ApiOperation({ summary: 'D-P5-6 "จบดีล": record the cycle end an auto-renewing deal stops at' })
+  @ApiResponse({ status: 409, description: 'SALES_DEAL_END_INVALID / SALES_DEAL_STATE_CONFLICT' })
+  endDeal(
+    @Param('dealId') dealId: string,
+    @Body() dto: SalesDealDecisionDto,
+    @Req() req: Request & { context: RequestContext },
+  ): Promise<SalesDealView> {
+    assertPlatformTenant(req.context);
+    return this.deals.end(req.context, dealId, dto.version, dto.reason);
   }
 
   @Post('deals/:dealId/cancel')

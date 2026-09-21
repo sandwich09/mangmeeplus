@@ -3688,6 +3688,15 @@ model PackageChangeRequest {
   slipSubmittedAt   DateTime?
   /// Q9 slip fallback: the SYSTEM_ADMIN who confirmed or rejected the slip.
   verifiedByUserId  String?
+  /// D-P5-3 (auto-renewing deals only): this shop's own recurring Stripe Price, created at
+  /// approval and archived when the deal is cancelled, expires or returns to the catalog price.
+  stripePriceId     String?
+  stripePriceCreatedAt DateTime?
+  /// 'PENDING' | 'READY' | 'FAILED'. Only READY may be quoted; the sales sweep retries the rest.
+  priceState        String?
+  /// D-P5-6: when the shop goes back to its base tier's catalog price. Set after the first cycle
+  /// is applied (N-cycle deals) or when a lead ends an until-revoked deal.
+  returnAt          DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
   company           Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -3696,6 +3705,9 @@ model PackageChangeRequest {
   @@index([kind, status])
   @@index([salesUserId])
   @@index([renewalOfRequestId])
+  /// D-P5-3/D-P5-6: the two sweep queries — Prices still to create, and deals about to return.
+  @@index([kind, priceState])
+  @@index([returnAt])
   // One OPEN request per company, enforced by a PARTIAL unique index in the migration SQL:
   // "PackageChangeRequest_company_open_key" ON ("companyId") WHERE "status" = 'OPEN'.
   // Deal rows never take status 'OPEN', so they cannot consume that slot (S18). Their own

@@ -78,7 +78,11 @@ async function harness() {
   const prisma = { client } as never;
 
   const companies = new SalesCompanySearchService(prisma, audit);
-  const deals = new SalesDealsService(prisma, audit, companies, noLine, config as never, logger);
+  // Phase 5: the deal price writer is a Stripe-side collaborator. This suite never approves an
+  // auto-renewing deal, so a stub that refuses is exactly what the one-time paths expect.
+  const prices = { ensure: async () => 'SKIPPED' as const, archive: async () => false,
+    sweep: async () => ({ provisioned: 0, archived: 0, returnsQueued: 0 }) } as never;
+  const deals = new SalesDealsService(prisma, audit, companies, noLine, config as never, prices, logger);
   const agents = new SalesAgentsService(prisma, audit, config as never, noLine);
   const referral = new SalesReferralService(prisma, audit);
 

@@ -17,7 +17,7 @@ import { billingApi, type BillingHistory } from './billing.api';
 import BillingCollectionPanel from './BillingCollectionPanel';
 import BillingCapacityPicker from './BillingCapacityPicker';
 import {billingMonthlyAllowanceText, billingBackControl, billingControl, billingPrimaryControl, billingPurchaseModeLabel, billingSupportReference} from './billing-display';
-import { billingDeal, billingQuoteDeal, dealAiCreditText, dealMenuLabels, dealSlip } from './billing-deal';
+import { billingDeal, billingQuoteDeal, dealAiCreditText, dealConfirmText, dealMenuLabels, dealRenewalText, dealSlip } from './billing-deal';
 import BillingDealSlipPanel from './BillingDealSlipPanel';
 import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog-bms/contracts';
 
@@ -55,6 +55,9 @@ function errorText(error: unknown): string {
   if (code === 'BILLING_DEAL_EXPIRED') return 'ข้อเสนอพิเศษนี้หมดอายุแล้ว กรุณาติดต่อทีมขายเพื่อขอข้อเสนอใหม่ คุณยังเลือกแพ็กเกจปกติได้';
   if (code === 'BILLING_DEAL_NOT_FOUND') return 'ไม่พบข้อเสนอพิเศษนี้แล้ว กรุณาโหลดหน้านี้ใหม่ หรือติดต่อทีมขาย';
   if (code === 'BILLING_DEAL_SNAPSHOT_MISMATCH') return 'ข้อเสนอพิเศษนี้เปลี่ยนแล้ว กรุณาโหลดหน้านี้ใหม่เพื่อดูข้อเสนอล่าสุดก่อนชำระเงิน';
+  // D-P5-3: an auto-renewing deal's own price is created at approval; until it exists the offer
+  // cannot be quoted. A wait, not a refusal — and nothing the shop can do except try again.
+  if (code === 'SALES_DEAL_PRICE_PENDING') return 'ระบบกำลังเตรียมราคาของข้อเสนอนี้ กรุณารอสักครู่แล้วลองอีกครั้ง';
   if (code === 'CONTROL_DEAL_SUBSCRIPTION_REVIEW') return 'ร้านนี้มีสมาชิกที่ยังใช้งานอยู่ ทีมงานจะติดต่อกลับเพื่อเปลี่ยนให้ สิทธิ์เดิมยังใช้ได้ตามปกติ';
   if (code === 'BILLING_MODE_NOT_READY') return 'ยังไม่เปิดวิธีชำระเงินที่เลือก กรุณาเลือกวิธีอื่น หรือติดต่อทีมงาน';
   if (code === 'BILLING_SALES_CLOSED' || code === 'BILLING_NOT_READY') return 'ยังไม่เปิดรับชำระเงินใหม่ กรุณาติดต่อทีมงาน';
@@ -108,7 +111,6 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const [purchaseMode, setPurchaseMode] = useState<BillingPurchaseMode>('CARD_AUTO');
   // The deal card carries its own choice: its modes are the deal's (S39), not the catalog's.
   const [dealMode, setDealMode] = useState<BillingPurchaseMode | null>(null);
-  const [slipSent, setSlipSent] = useState(false);
   const emailFingerprint = useRef('');
   const [quote, setQuote] = useState<BillingQuote | null>(null), [accepted, setAccepted] = useState(false);
   const [capacity, setCapacity] = useState<{ options: BillingCapacityOptions; billingEmail: string; scheduledAt?: string; repair?: { attemptId: string; attemptVersion: number }; key: string; initialSelection?: BillingCapacitySelection } | null>(null);
@@ -263,10 +265,11 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const dealModes = deal?.purchaseModes ?? [];
   const chosenDealMode = dealMode && dealModes.includes(dealMode) ? dealMode : dealModes[0];
   // Q9: a slip in review holds the whole offer, so the card reads as "รอทีมงานตรวจ" and pays nothing.
-  // `slipSent` covers the slip this visit just sent, until the status itself reports `slipState`.
-  const dealSlipView = dealSlip(deal);
-  const slipHoldsOffer = dealSlipView.blocksPayment || slipSent;
+  const slipHoldsOffer = dealSlip(deal).blocksPayment;
   const dealQuote = billingQuoteDeal(quote);
+  // D-P5-1: the quote's own ride-along carries no cadence, and the offer being confirmed is the one
+  // still on the status — so the auto-renew wording comes from there, matched by id.
+  const autoDeal = dealQuote && deal?.dealId === dealQuote.dealId && deal.autoRenew ? deal : null;
   // The attempt says what this Checkout paid for, so the return page names the offer by itself.
   const dealReturn = returning && billingQuoteDeal(returnAttempt);
   const accountHref = status?.accessState === 'ACTIVE' ? `/companies/${encodeURIComponent(companyId)}/settings/profile#account`
@@ -418,7 +421,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           </div>
           <p className="font-bold">{deal.baseLabel}</p>
           <p className="text-2xl font-bold text-brand-800">{money(deal.priceSatang)}</p>
-          <p>รวม {deal.months} เดือน</p>
+          <p>{deal.autoRenew ? `ราคานี้${deal.cadence === 'year' ? 'ทุกปี' : 'ทุกเดือน'}` : `รวม ${deal.months} เดือน`}</p>
           <p>{deal.branchLimit} สาขา · {deal.employeeLimit} ผู้ใช้ · {deal.monthlySlipLimit.toLocaleString('th-TH')} ใบต่อเดือน</p>
           {dealMenuLabels(deal.featureKeys).length > 0 && <p>เมนูที่ได้: {dealMenuLabels(deal.featureKeys).join(' · ')}</p>}
           <p>เครดิต AI: {dealAiCreditText(deal.aiMonthlyBudgetSatang)}</p>
@@ -432,12 +435,14 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
               {dealModes.map(mode => <label key={mode} className="flex min-h-11 items-center gap-3"><input type="radio" name="dealPurchaseMode" checked={chosenDealMode === mode}
                 onChange={() => { setDealMode(mode); setQuote(null); setCapacity(null); }} />{billingPurchaseModeLabel(mode)}</label>)}
             </fieldset>
-            <p className="text-sm text-gray-600">จ่ายครั้งเดียว ไม่มีหักอัตโนมัติ</p>
+            <p className="text-sm text-gray-600">{dealRenewalText(deal, chosenDealMode)}</p>
+            {/* An auto-renewing deal's offer IS its cadence (D-P5-2), so that is the interval the
+                quote is asked for — a yearly deal priced as a month would bill the wrong period. */}
             <button className="mangmee-btn mangmee-btn-primary w-full" disabled={busy || !emailReady || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)} aria-busy={Boolean(busy)}
-              onClick={() => action(async () => { await requestQuote(deal.base, 'month', email, undefined, chosenDealMode, deal.dealId); })}>เลือกข้อเสนอนี้</button>
+              onClick={() => action(async () => { await requestQuote(deal.base, deal.autoRenew && deal.cadence === 'year' ? 'year' : 'month', email, undefined, chosenDealMode, deal.dealId); })}>เลือกข้อเสนอนี้</button>
           </>}
-          <BillingDealSlipPanel companyId={companyId} deal={deal} amountLabel={money(deal.priceSatang)} submitted={slipSent}
-            onSubmitted={() => { setSlipSent(true); setQuote(null); setCapacity(null); setReload(value => value + 1); }} />
+          <BillingDealSlipPanel companyId={companyId} deal={deal} amountLabel={money(deal.priceSatang)}
+            onSubmitted={() => { setQuote(null); setCapacity(null); setReload(value => value + 1); }} />
         </section>}
         {deal && <h3 className="text-lg font-bold">หรือเลือกแพ็กเกจปกติ</h3>}
         <fieldset className="space-y-2"><legend className="font-semibold">วิธีชำระและต่ออายุ</legend>
@@ -463,7 +468,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           })}>{offer.availability === 'COMING_SOON' ? 'เร็ว ๆ นี้' : offer.availability === 'AVAILABLE' ? current ? 'ซื้อแพ็กเกจเดิมเพิ่ม' : status.paidThrough && Date.parse(status.paidThrough) > Date.now() && status.tierKey === offer.offerKey && status.interval === 'month' && interval === 'year' ? 'เปลี่ยนเป็นรายปี' : status.paidThrough && Date.parse(status.paidThrough) > Date.now() && status.tierKey === offer.offerKey && status.interval === 'year' && interval === 'month' ? 'เปลี่ยนเป็นรายเดือนรอบถัดไป' : 'เลือกแพ็กเกจนี้' : 'ยังไม่เปิดขาย'}</button>        </article>; })}</div>
       </section>}
       {quote && <section aria-label="ยืนยันซื้อแพ็กเกจ" className="mangmee-card space-y-5 p-5 sm:p-6">
-        {dealQuote && <p className="rounded-xl bg-brand-50 p-4 text-brand-800">ข้อเสนอพิเศษ · จ่ายครั้งเดียว ไม่มีหักอัตโนมัติ · ใช้ได้ {dealQuote.months} เดือน{dealQuote.description ? ` · ${dealQuote.description}` : ''}</p>}
+        {dealQuote && <p className="rounded-xl bg-brand-50 p-4 text-brand-800">ข้อเสนอพิเศษ · {autoDeal ? dealConfirmText(autoDeal) : `จ่ายครั้งเดียว ไม่มีหักอัตโนมัติ · ใช้ได้ ${dealQuote.months} เดือน`}{dealQuote.description ? ` · ${dealQuote.description}` : ''}</p>}
         <p>{quote.purchase?.kind === 'REPEAT' ? 'สิทธิ์คงเดิม:' : 'สิทธิ์หลังชำระสำเร็จ:'} สูงสุด {quote.offer.branchLimit} สาขา · {quote.offer.employeeLimit} ผู้ใช้ รวมเจ้าของ</p>
         <div className="rounded-xl border border-gray-200 p-4" aria-label="ข้อมูลออกเอกสาร">
           <p className="font-semibold">ข้อมูลออกเอกสาร</p>
@@ -492,7 +497,9 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           </dl>}
           {quote.previousSource === 'ADMIN_MANUAL' ? <p>เริ่มแพ็กเกจใหม่เมื่อชำระสำเร็จ แพ็กเกจเดิมที่ผู้ดูแลให้ไว้ถึง {date(quote.previousTermEndsAt)} จะถูกแทนที่ วันคงเหลือ (ถ้ามี) ไม่ทบและไม่ลดราคา รับโควตาใหม่ {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ</p>
             : quote.previousSource === 'NO_TERM' ? <p>เริ่มแพ็กเกจใหม่เมื่อชำระสำเร็จ รับโควตา {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ ไม่มีวันแพ็กเกจเดิมให้ทบ</p>
-            : <p>ชำระสำเร็จแล้ว ใช้งานได้ {dealQuote ? `${dealQuote.months} เดือน` : quote.offer.interval === 'year' ? '12 เดือน' : '1 เดือน'} {!quote.purchase?.trialCarryover && <>พร้อมโควตา {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ</>}</p>}
+            /* An auto-renewing deal opens ONE cycle per payment, so its snapshot `months` — which
+               the deal itself ignores — must not be read as the term: the offer's interval is. */
+            : <p>ชำระสำเร็จแล้ว ใช้งานได้ {dealQuote && !autoDeal ? `${dealQuote.months} เดือน` : quote.offer.interval === 'year' ? '12 เดือน' : '1 เดือน'} {!quote.purchase?.trialCarryover && <>พร้อมโควตา {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ</>}</p>}
           {quote.purchase?.kind === 'INITIAL' && quote.trialEndsAt && <p className="text-sm text-gray-600">การทดลองใช้จะสิ้นสุดเมื่อชำระสำเร็จ วันทดลองที่เหลือจะไม่บวกเพิ่มในแพ็กเกจนี้</p>}
         </div>}
         {quote.featureImpact && (quote.featureImpact.removed.length > 0 || quote.featureImpact.added.length > 0 || quote.featureImpact.preservedAdmin > 0) && <section className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4" aria-label="การเปลี่ยนสิทธิ์เมนูหลังชำระ">

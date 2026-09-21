@@ -6,6 +6,7 @@ import {
   PLAN_TIER_PRESETS,
   SALES_CODE_PATTERN,
   SALES_DEAL_OPEN_STATUSES,
+  SALES_DEAL_CYCLES_MAX,
   SALES_DEAL_DESCRIPTION_MAX,
   SALES_DEAL_MONTHS_MAX,
   SALES_DEAL_REASON_MAX,
@@ -17,7 +18,10 @@ import {
   type SalesAttributionSource,
   type SalesCompanyAccessState,
   type SalesDealBaseTier,
+  type SalesDealCadence,
   type SalesDealInput,
+  type SalesDealPriceState,
+  type SalesDealSnapshot,
   type SalesDealSlipState,
   type SalesDealStatus,
   type SalesDealView,
@@ -110,6 +114,56 @@ export function isDealCancellable(status: SalesDealStatus): boolean {
   return SALES_DEAL_OPEN_STATUSES.includes(status);
 }
 
+// ── Phase 5: auto-renewing deals (§17.3 / D-P5-1…7) ──
+
+/**
+ * The v3 switch read defensively (D-P5-1): a v2 snapshot has no `autoRenew` at all and is a
+ * one-time deal by definition, so `undefined` and `false` answer the same. Only `month`/`year`
+ * exist (D-P5-2: `assertStripePrice` accepts no other recurring interval), so anything else reads
+ * as monthly rather than putting a machine token on a เซลล์'s phone inside "ต่ออายุทุก…".
+ */
+export type DealAutoRenew = { cadence: SalesDealCadence; /** null = จนกว่าจะเพิกถอน. */ cycles: number | null };
+type DealSnapshotLike = Partial<SalesDealSnapshot> | null | undefined;
+
+export function dealAutoRenew(snapshot: DealSnapshotLike): DealAutoRenew | null {
+  if (!snapshot?.autoRenew) return null;
+  const cycles = snapshot.cycles;
+  return {
+    cadence: snapshot.cadence === 'year' ? 'year' : 'month',
+    cycles: typeof cycles === 'number' && Number.isInteger(cycles) && cycles > 0 ? cycles : null,
+  };
+}
+
+/** How long the shop is buying, in one phrase — the line every deal row and summary shares. */
+export function dealTermText(snapshot: Partial<SalesDealSnapshot> & Pick<SalesDealSnapshot, 'months'>): string {
+  const auto = dealAutoRenew(snapshot);
+  if (!auto) return `${snapshot.months} เดือน`;
+  const every = auto.cadence === 'year' ? 'ทุกปี' : 'ทุกเดือน';
+  return auto.cycles ? `ต่ออายุ${every} · ${auto.cycles} รอบ` : `ต่ออายุ${every} · จนกว่าจะเพิกถอน`;
+}
+
+/**
+ * D-P5-3: the per-shop Stripe Price is created at approval, and the customer cannot be shown an
+ * offer that has no price behind it yet. `PENDING` is the normal few minutes; `FAILED` is the sweep
+ * still retrying — neither is anything the เซลล์ does by hand, so both say what happens next rather
+ * than offering a button that would do it twice.
+ */
+const DEAL_PRICE_STATE_META = {
+  PENDING: {
+    label: 'กำลังเตรียมราคา', tone: 'amber' as MangmeeTone,
+    note: 'ระบบกำลังเตรียมราคาเฉพาะร้านนี้กับผู้ให้บริการชำระเงิน ลูกค้าจะเห็นข้อเสนอเมื่อเตรียมเสร็จ ปกติไม่เกินสองสามนาที',
+  },
+  FAILED: {
+    label: 'เตรียมราคายังไม่สำเร็จ', tone: 'danger' as MangmeeTone,
+    note: 'ยังเตรียมราคาเฉพาะร้านนี้ไม่สำเร็จ ระบบจะลองใหม่ให้เองเป็นระยะ ถ้าพรุ่งนี้ยังไม่หาย กรุณาแจ้งทีมงาน',
+  },
+};
+
+export function dealPriceState(deal: { priceState?: SalesDealPriceState | null }): { label: string; tone: MangmeeTone; note: string } | null {
+  const state = deal.priceState;
+  return state === 'PENDING' || state === 'FAILED' ? DEAL_PRICE_STATE_META[state] : null;
+}
+
 // ── deal form ──
 
 export type SalesDealFormValues = {
@@ -117,6 +171,12 @@ export type SalesDealFormValues = {
   base: SalesDealBaseTier;
   priceBaht: string;
   months: string;
+  /** D-P5-1: the deal charges every cycle instead of once. `months` is then ignored. */
+  autoRenew: boolean;
+  /** Stripe recurring allows nothing else, so the form offers nothing else (D-P5-2). */
+  cadence: SalesDealCadence;
+  /** '' = จนกว่าจะเพิกถอน; '1'–'36' = that many cycles, then back to the catalog price. */
+  cycles: string;
   branchLimit: string;
   employeeLimit: string;
   monthlySlipLimit: string;
@@ -151,6 +211,9 @@ export function emptyDealForm(): SalesDealFormValues {
     base: 'STARTER_249',
     priceBaht: '',
     months: '12',
+    autoRenew: false,
+    cadence: 'month',
+    cycles: '',
     ...baseTierDefaults('STARTER_249'),
     featureKeys: [],
     aiBudgetBaht: '',
@@ -161,11 +224,15 @@ export function emptyDealForm(): SalesDealFormValues {
 
 export function dealFormFromView(deal: SalesDealView): SalesDealFormValues {
   const snapshot = deal.snapshot;
+  const auto = dealAutoRenew(snapshot);
   return {
     companyId: deal.company.companyId,
     base: snapshot.base,
     priceBaht: satangToBahtInput(snapshot.priceSatang),
     months: String(snapshot.months),
+    autoRenew: auto !== null,
+    cadence: auto?.cadence ?? 'month',
+    cycles: auto?.cycles ? String(auto.cycles) : '',
     branchLimit: String(snapshot.branchLimit),
     employeeLimit: String(snapshot.employeeLimit),
     monthlySlipLimit: String(snapshot.monthlySlipLimit),
@@ -195,9 +262,18 @@ export function validateDealForm(values: SalesDealFormValues, options: { forSubm
   // D1: no floor and no ceiling — only "not free", because a zero-baht deal has nothing to pay.
   else if (price.satang < 1) errors.priceBaht = 'ราคาต้องมากกว่า 0 บาท';
 
-  const months = wholeNumber(values.months);
-  if (months === null || months < 1 || months > SALES_DEAL_MONTHS_MAX) {
-    errors.months = `จำนวนเดือนต้องเป็นจำนวนเต็ม 1–${SALES_DEAL_MONTHS_MAX} เดือน`;
+  // D-P5-1: an auto-renewing deal sells cycles, not months — the months box is not even on screen,
+  // so validating it would block a submit on a field nobody can see.
+  if (values.autoRenew) {
+    const cycles = values.cycles.trim() ? wholeNumber(values.cycles) : null;
+    if (values.cycles.trim() && (cycles === null || cycles < 1 || cycles > SALES_DEAL_CYCLES_MAX)) {
+      errors.cycles = `จำนวนรอบต้องเป็นจำนวนเต็ม 1–${SALES_DEAL_CYCLES_MAX} รอบ`;
+    }
+  } else {
+    const months = wholeNumber(values.months);
+    if (months === null || months < 1 || months > SALES_DEAL_MONTHS_MAX) {
+      errors.months = `จำนวนเดือนต้องเป็นจำนวนเต็ม 1–${SALES_DEAL_MONTHS_MAX} เดือน`;
+    }
   }
 
   for (const [field, label] of [
@@ -235,7 +311,8 @@ export function validateDealForm(values: SalesDealFormValues, options: { forSubm
 
 /** Submit order, so "focus the first error" means the first one the เซลล์ would scroll to. */
 const DEAL_FIELD_ORDER: readonly (keyof SalesDealFormValues)[] = [
-  'companyId', 'base', 'priceBaht', 'months', 'branchLimit', 'employeeLimit', 'monthlySlipLimit',
+  'companyId', 'base', 'priceBaht', 'months', 'autoRenew', 'cadence', 'cycles',
+  'branchLimit', 'employeeLimit', 'monthlySlipLimit',
   'featureKeys', 'aiBudgetBaht', 'description', 'internalReason',
 ];
 
@@ -251,7 +328,12 @@ export function dealInputFromForm(values: SalesDealFormValues): SalesDealInput {
     companyId: values.companyId,
     base: values.base,
     priceSatang: price.ok ? price.satang : 0,
+    // `months` rides along unchanged on an auto-renewing deal: the snapshot ignores it, and sending
+    // the box's untouched default keeps the API's own 1–36 check satisfied either way (D-P5-1).
     months: Number(values.months.trim()),
+    autoRenew: values.autoRenew,
+    cadence: values.autoRenew ? values.cadence : null,
+    cycles: values.autoRenew && values.cycles.trim() ? Number(values.cycles.trim()) : null,
     branchLimit: Number(values.branchLimit.trim()),
     employeeLimit: Number(values.employeeLimit.trim()),
     monthlySlipLimit: Number(values.monthlySlipLimit.trim()),
@@ -363,6 +445,9 @@ const MY_WORK_META: Record<SalesMyWorkKind, { label: string; tone: MangmeeTone; 
   // หัวหน้า approves, because the price and the limits are copied from a deal sold months ago.
   DEAL_RENEWAL_PENDING: { label: 'ข้อเสนอต่ออายุรออนุมัติ', tone: 'amber', note: 'ระบบสร้างข้อเสนอรอบถัดไปจากดีลเดิมให้แล้ว ตรวจราคาและสิทธิ์ก่อนหัวหน้าอนุมัติ', needsAction: true },
   DEAL_SLIP_PENDING: { label: 'สลิปรอตรวจ', tone: 'amber', note: 'ลูกค้าแนบสลิปโอนเงินแล้ว รอผู้ดูแลระบบตรวจการโอน', needsAction: true },
+  // D-P5-6: 14 days before the shop goes back to the catalog price. The เซลล์ is the one who calls
+  // the shop, so it needs doing — เจ้าของร้าน gets the same notice in their own console and on LINE.
+  DEAL_ENDING: { label: 'ดีลใกล้สิ้นสุด', tone: 'amber', note: 'ดีลจะสิ้นสุดใน 14 วัน แล้วร้านกลับไปใช้ราคาปกติและเมนู/เครดิต AI ค่าเริ่มต้นของแพ็กเกจ ติดต่อลูกค้าก่อนถึงวันนั้น', needsAction: true },
 };
 
 /** An unknown kind from a newer API must read as work, not crash the whole queue on a phone. */
@@ -514,12 +599,27 @@ const SLIP_BADGE: Record<Exclude<SalesDealSlipState, 'NONE'>, { label: string; t
 };
 
 /**
- * What else is true about a deal besides its status: it was written by the renewal sweep (D3),
- * paying it cancels a live subscription (Q7/S34), or its bank slip is still being checked (Q9).
- * Each one changes what the เซลล์ says to the shop, so they sit beside the status badge.
+ * What else is true about a deal besides its status: it charges every cycle (D-P5-1) and when that
+ * stops (D-P5-6), whether its per-shop price is ready to be paid (D-P5-3), that it was written by
+ * the renewal sweep (D3), that paying it cancels a live subscription (Q7/S34), or that its bank
+ * slip is still being checked (Q9). Each one changes what the เซลล์ says to the shop, so they sit
+ * beside the status badge.
+ *
+ * The Phase 5 three are optional so a partial row — a list item, a test double — still reads: a
+ * deal written before Phase 5 carries none of them.
  */
-export function dealBadges(deal: Pick<SalesDealView, 'renewalOfRequestId' | 'conversionOf' | 'slipState'>): { label: string; tone: MangmeeTone }[] {
+export type DealBadgeInput = Pick<SalesDealView, 'renewalOfRequestId' | 'conversionOf' | 'slipState'>
+  & Partial<Pick<SalesDealView, 'snapshot' | 'returnAt' | 'priceState'>>;
+
+export function dealBadges(deal: DealBadgeInput): { label: string; tone: MangmeeTone }[] {
   const badges: { label: string; tone: MangmeeTone }[] = [];
+  const auto = dealAutoRenew(deal.snapshot);
+  if (auto) badges.push({ label: `ต่ออายุอัตโนมัติ · ${auto.cadence === 'year' ? 'รายปี' : 'รายเดือน'}`, tone: 'teal' });
+  const price = dealPriceState(deal);
+  if (price) badges.push({ label: price.label, tone: price.tone });
+  // D-P5-6: the date the shop goes back to the catalog price — the one thing a เซลล์ is asked about
+  // before it happens, and the notice the OWNER gets 14 days ahead refers to it.
+  if (deal.returnAt) badges.push({ label: `จบดีล ${formatThaiDate(deal.returnAt)}`, tone: 'amber' });
   if (deal.renewalOfRequestId) badges.push({ label: 'ต่ออายุจากดีลเดิม', tone: 'teal' });
   if (deal.conversionOf) badges.push({ label: 'แทนที่สมาชิกเดิม', tone: 'amber' });
   if (deal.slipState && deal.slipState !== 'NONE') badges.push(SLIP_BADGE[deal.slipState]);
@@ -576,18 +676,20 @@ export function salesReportRowsOf(months: readonly SalesReportMonth[]): SalesRep
 }
 
 /**
- * The teams the filter may offer. A lead is named by their own row in the answer — the summary
- * carries `teamLeadUserId` but no lead name, and an internal id is not something a person reads,
- * so a lead with no row of their own is left out rather than shown as a raw id.
+ * The teams the filter may offer. The summary now names each row's lead (`teamLeadDisplayName`);
+ * a lead who also sells is named by their own row too, which is the fallback for an answer that
+ * predates the field. Either way a lead nothing can name is left out rather than shown as a raw id.
  */
 export function salesReportLeads(months: readonly SalesReportMonth[]): { userId: string; displayName: string }[] {
   const rows = salesReportRowsOf(months);
-  const names = new Map(rows.map((row) => [row.salesUserId, row.displayName]));
-  const leadIds = [...new Set(rows.flatMap((row) => (row.teamLeadUserId ? [row.teamLeadUserId] : [])))];
-  return leadIds.flatMap((userId) => {
-    const displayName = names.get(userId);
-    return displayName ? [{ userId, displayName }] : [];
-  });
+  const own = new Map(rows.map((row) => [row.salesUserId, row.displayName]));
+  const leads = new Map<string, string>();
+  for (const row of rows) {
+    if (!row.teamLeadUserId || leads.has(row.teamLeadUserId)) continue;
+    const named = row.teamLeadDisplayName ?? own.get(row.teamLeadUserId);
+    if (named) leads.set(row.teamLeadUserId, named);
+  }
+  return [...leads].map(([userId, displayName]) => ({ userId, displayName }));
 }
 
 // ── month range ──

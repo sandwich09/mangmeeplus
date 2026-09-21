@@ -680,6 +680,12 @@ const CODE_LABELS: Record<string, string> = {
   SALES_REPORT_RANGE_INVALID: 'ช่วงเดือนไม่ถูกต้อง กรุณาเลือกเดือนเริ่มต้นและเดือนสิ้นสุดใหม่',
   SALES_FLAG_REVIEW_INVALID: 'ตรวจรายการนี้ไม่ได้แล้ว กรุณาโหลดรายการที่ถูกธงใหม่',
 
+  // Phase 5 (§17.3 / D-P5-3, D-P5-6). Both are waits, not mistakes: the price the shop pays every
+  // cycle is still being prepared, or the deal has already been told when to end. Neither reader —
+  // เซลล์ or เจ้าของร้าน — has anything to fix, so each sentence says what to expect instead.
+  SALES_DEAL_PRICE_PENDING: 'ระบบกำลังเตรียมราคาของข้อเสนอนี้ กรุณารอสักครู่แล้วลองอีกครั้ง',
+  SALES_DEAL_END_INVALID: 'จบดีลนี้ไม่ได้แล้ว กรุณาโหลดข้อมูลล่าสุดเพื่อดูสถานะและวันสิ้นสุดของดีล',
+
   // ---- ข้อเสนอพิเศษ on the customer's package page (spec §19.2, Phase 3) ----
   // The shop owner reads these, so each one says what happens next, never why the rule refused.
   BILLING_DEAL_EXPIRED: 'ข้อเสนอพิเศษนี้หมดอายุแล้ว กรุณาติดต่อทีมขายเพื่อขอข้อเสนอใหม่ คุณยังเลือกแพ็กเกจปกติได้',

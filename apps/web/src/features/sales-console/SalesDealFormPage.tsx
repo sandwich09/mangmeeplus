@@ -4,19 +4,19 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   FEATURE_PACKAGE_PRESETS,
-  SALES_COMPANY_SEARCH_MIN_CHARS, SALES_DEAL_DESCRIPTION_MAX, SALES_DEAL_MONTHS_MAX, SALES_DEAL_REASON_MAX,
+  SALES_COMPANY_SEARCH_MIN_CHARS, SALES_DEAL_CYCLES_MAX, SALES_DEAL_DESCRIPTION_MAX, SALES_DEAL_MONTHS_MAX, SALES_DEAL_REASON_MAX,
   type FeaturePackagePresetKey, type SalesCompanySearchItem, type SalesDealBaseTier, type SalesDealView,
 } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
-import { SelectField, TextField, TextareaField } from '@/common/components/field';
+import { SelectField, SwitchField, TextField, TextareaField } from '@/common/components/field';
 import { LoadingState } from '@/common/components/state';
 import { Modal } from '@/common/components/modal';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { actSalesDeal, createSalesDeal, getSalesDeal, saveSalesDeal, searchSalesCompanies, type SalesDealAction } from './sales.api';
 import {
-  baseTierDefaults, baseTierLabel, dealFormFromView, dealInputFromForm, dealPaymentNote, dealWarnings, emptyDealForm,
-  firstDealErrorField, isDealCancellable, isDealEditable, isMenuSelected, parseBahtInput,
+  baseTierDefaults, baseTierLabel, dealAutoRenew, dealFormFromView, dealInputFromForm, dealPaymentNote, dealPriceState,
+  dealWarnings, emptyDealForm, firstDealErrorField, isDealCancellable, isDealEditable, isMenuSelected, parseBahtInput,
   SALES_DEAL_BASE_TIERS, SALES_DEAL_MENU_BINDINGS, SALES_DEAL_MENU_GROUPS, toggleMenuSelection, validateDealForm,
   type SalesDealFormErrors, type SalesDealFormValues,
 } from './sales-console.logic';
@@ -147,7 +147,14 @@ const DECISION_COPY: Record<DecisionKind, { title: string; confirm: string; hint
   approve: { title: 'อนุมัติดีลนี้', confirm: 'อนุมัติ', hint: 'เมื่ออนุมัติแล้ว ระบบจะแจ้งเจ้าของร้านทาง LINE และข้อเสนอจะใช้ได้ 3 วัน', required: false },
   reject: { title: 'ปฏิเสธดีลนี้', confirm: 'ปฏิเสธ', hint: 'เซลล์จะเห็นเหตุผลนี้และแก้ไขดีลเดิมส่งใหม่ได้', required: true },
   cancel: { title: 'ยกเลิกดีลนี้', confirm: 'ยกเลิกดีล', hint: 'ยกเลิกแล้วแก้ไม่ได้ ต้องสร้างดีลใหม่หากลูกค้ายังสนใจ', required: true },
+  // D-P5-6/7: ending never takes the shop's paid cycle away — it stops the next one at the deal
+  // price. On บัตร the next cycle is the catalog price; on QR the next bill is simply not issued.
+  end: { title: 'จบดีลนี้', confirm: 'จบดีล', hint: 'รอบที่ลูกค้าจ่ายแล้วยังใช้ได้ครบ รอบถัดไปกลับไปราคาปกติและเมนู/เครดิต AI ค่าเริ่มต้นของแพ็กเกจ', required: true },
 };
+
+const CADENCE_CHOICES = [['month', 'รายเดือน'], ['year', 'รายปี']] as const;
+
+const AUTO_RENEW_HINT = 'ดีลอัตโนมัติจำกัดรอบเดือน/ปี · ลูกค้าเลือกจ่ายด้วยบัตร (ตัดอัตโนมัติ) หรือ QR (สแกนทุกงวด) · จบดีลแล้วกลับราคาปกติและเมนู/เครดิต AI ค่าเริ่มต้นของแพ็กเกจ';
 
 export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: string; canApprove: boolean }) {
   const router = useRouter();
@@ -183,6 +190,8 @@ export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: str
   useEffect(() => { if (dealId) void load(dealId); }, [dealId, load]);
 
   const editable = !deal || isDealEditable(deal.status);
+  // D-P5-6: set by the return op, either automatically after cycle N or by a lead's "จบดีล".
+  const endsAt = deal?.returnAt ?? null;
   const set = <K extends keyof SalesDealFormValues>(key: K, value: SalesDealFormValues[K]) => {
     setValues((previous) => ({ ...previous, [key]: value }));
     if (errors[key]) setErrors((previous) => ({ ...previous, [key]: undefined }));
@@ -190,13 +199,17 @@ export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: str
 
   const price = parseBahtInput(values.priceBaht);
   const months = /^\d+$/.test(values.months.trim()) ? Number(values.months.trim()) : null;
+  // D-P5-2: an auto-renewing deal is priced PER CYCLE, so "สูงกว่าราคาปกติ" compares one cycle of
+  // catalog (a year being twelve months of it) — comparing it to an N-month total would warn on
+  // every monthly deal and on none of the yearly ones.
+  const cycleCatalogSatang = company ? company.catalogMonthlyPriceSatang * (values.cadence === 'year' ? 12 : 1) : null;
   const warnings = dealWarnings({
     priceSatang: price.ok ? price.satang : null,
     // A saved deal carries the catalog total the server computed for THIS deal's tier and months —
     // that is the authority. Before the first save the picked shop's per-month catalog price stands
     // in, multiplied by the months in the form, so the เซลล์ is warned while still typing.
-    catalogPriceSatang: deal?.catalogPriceSatang
-      ?? (company && months !== null ? company.catalogMonthlyPriceSatang * months : null),
+    catalogPriceSatang: values.autoRenew ? cycleCatalogSatang : (deal?.catalogPriceSatang
+      ?? (company && months !== null ? company.catalogMonthlyPriceSatang * months : null)),
     accessState: company?.accessState ?? null,
     // S31 likewise: the deal view's own copy of the counts once it exists, the picked search row
     // before that, so a limit below what the shop runs is called out on a brand-new form too.
@@ -262,7 +275,9 @@ export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: str
       setValues(dealFormFromView(next));
       setDecision(null);
       setDecisionReason('');
-      setNotice(decision === 'approve' ? 'อนุมัติแล้ว ระบบแจ้งเจ้าของร้านทาง LINE ให้เปิดหน้าแพ็กเกจ' : decision === 'reject' ? 'ปฏิเสธดีลแล้ว' : 'ยกเลิกดีลแล้ว');
+      setNotice(decision === 'approve' ? 'อนุมัติแล้ว ระบบแจ้งเจ้าของร้านทาง LINE ให้เปิดหน้าแพ็กเกจ'
+        : decision === 'reject' ? 'ปฏิเสธดีลแล้ว'
+          : decision === 'end' ? 'ตั้งวันจบดีลแล้ว ระบบแจ้งเจ้าของร้านล่วงหน้า 14 วัน' : 'ยกเลิกดีลแล้ว');
     } catch (cause) {
       if (mounted.current) { setDecision(null); handleApiFailure(cause); }
     } finally {
@@ -290,6 +305,11 @@ export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: str
         <SalesNotice tone="warning">เหตุผลที่หัวหน้าปฏิเสธ: {deal.rejectedReason}</SalesNotice>
       )}
       {deal && dealPaymentNote(deal) && <SalesNotice tone="info">{dealPaymentNote(deal)}</SalesNotice>}
+      {/* D-P5-3: the shop cannot see an offer whose per-shop price is not ready. Saying so here is
+          the difference between "ทำไมลูกค้าไม่เห็นข้อเสนอ" and a call to the team. */}
+      {deal && dealPriceState(deal) && (
+        <SalesNotice tone={dealPriceState(deal)!.tone === 'danger' ? 'error' : 'warning'}>{dealPriceState(deal)!.note}</SalesNotice>
+      )}
       {deal?.status === 'APPROVED' && deal.offerExpiresAt && (
         <SalesNotice tone="info">
           อนุมัติโดย {deal.approvedByDisplayName ?? '—'} · ข้อเสนอใช้ได้ถึง {formatThaiDateTime(deal.offerExpiresAt)}
@@ -338,12 +358,52 @@ export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: str
             >
               {SALES_DEAL_BASE_TIERS.map((tier) => <option key={tier} value={tier}>{baseTierLabel(tier)}</option>)}
             </SelectField>
+            <SwitchField label="ต่ออายุอัตโนมัติ (ตัดบัตร/ออกบิล QR ทุกรอบ)" name="autoRenew" hint={AUTO_RENEW_HINT}
+              checked={values.autoRenew} onChange={(event) => set('autoRenew', event.target.checked)} />
             <div className="grid gap-4 sm:grid-cols-2">
-              <TextField label="ราคาที่ลูกค้าจ่าย (บาท)" name="priceBaht" inputMode="decimal" hint="รวม VAT ถ้ามี · ราคาทั้งดีล ไม่ใช่ต่อเดือน"
+              <TextField
+                label={values.autoRenew ? 'ราคาต่อรอบ (บาท)' : 'ราคาที่ลูกค้าจ่าย (บาท)'}
+                name="priceBaht" inputMode="decimal"
+                hint={values.autoRenew ? 'รวม VAT ถ้ามี · ราคาต่อ 1 รอบ ตัดทุกรอบที่ราคานี้' : 'รวม VAT ถ้ามี · ราคาทั้งดีล ไม่ใช่ต่อเดือน'}
                 value={values.priceBaht} onChange={(event) => set('priceBaht', event.target.value)} error={errors.priceBaht} />
-              <TextField label="จำนวนเดือน" name="months" inputMode="numeric" hint={`1–${SALES_DEAL_MONTHS_MAX} เดือน`}
-                value={values.months} onChange={(event) => set('months', event.target.value)} error={errors.months} />
+              {/* An auto-renewing deal has no month count to type: the cycle IS the term (D-P5-2). */}
+              {!values.autoRenew && (
+                <TextField label="จำนวนเดือน" name="months" inputMode="numeric" hint={`1–${SALES_DEAL_MONTHS_MAX} เดือน`}
+                  value={values.months} onChange={(event) => set('months', event.target.value)} error={errors.months} />
+              )}
             </div>
+            {values.autoRenew && (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <fieldset className="grid gap-1">
+                  <legend className="text-sm font-medium text-gray-700">รอบการเก็บเงิน</legend>
+                  {CADENCE_CHOICES.map(([value, label]) => (
+                    <label key={value} className="flex min-h-11 items-center gap-3 text-sm text-gray-700">
+                      <input type="radio" name="cadence" className="size-5" checked={values.cadence === value}
+                        onChange={() => set('cadence', value)} />
+                      {label}
+                    </label>
+                  ))}
+                </fieldset>
+                <fieldset className="grid gap-1">
+                  <legend className="text-sm font-medium text-gray-700">ราคานี้ใช้ถึงเมื่อไร</legend>
+                  <label className="flex min-h-11 items-center gap-3 text-sm text-gray-700">
+                    <input type="radio" name="dealDuration" className="size-5" checked={!values.cycles}
+                      onChange={() => set('cycles', '')} />
+                    จนกว่าจะเพิกถอน
+                  </label>
+                  <label className="flex min-h-11 items-center gap-3 text-sm text-gray-700">
+                    <input type="radio" name="dealDuration" className="size-5" checked={Boolean(values.cycles)}
+                      onChange={() => set('cycles', '12')} />
+                    ครบจำนวนรอบแล้วกลับราคาปกติ
+                  </label>
+                  {Boolean(values.cycles) && (
+                    <TextField label="จำนวนรอบ" name="cycles" inputMode="numeric"
+                      hint={`1–${SALES_DEAL_CYCLES_MAX} รอบ · ครบแล้วร้านกลับไปราคาปกติของแพ็กเกจฐาน`}
+                      value={values.cycles} onChange={(event) => set('cycles', event.target.value)} error={errors.cycles} />
+                  )}
+                </fieldset>
+              </div>
+            )}
             <div className="grid gap-4 sm:grid-cols-3">
               <TextField label="สาขา" name="branchLimit" inputMode="numeric" value={values.branchLimit}
                 onChange={(event) => set('branchLimit', event.target.value)} error={errors.branchLimit} />
@@ -388,6 +448,11 @@ export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: str
           )}
           {isDealCancellable(deal.status) && (
             <button type="button" className="mangmee-btn mangmee-btn-secondary sm:col-span-2" disabled={busy} onClick={() => { setDecisionReason(''); setDecision('cancel'); }}>ยกเลิกดีล</button>
+          )}
+          {/* D-P5-6: only a running auto-renewing deal can be ended, and only once — a deal whose
+              return date is already set has nothing left to decide. */}
+          {canApprove && deal.status === 'APPLIED' && dealAutoRenew(deal.snapshot) && !endsAt && (
+            <button type="button" className="mangmee-btn mangmee-btn-secondary sm:col-span-2" disabled={busy} onClick={() => { setDecisionReason(''); setDecision('end'); }}>จบดีล</button>
           )}
         </div>
       )}

@@ -358,6 +358,9 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/sales-console/domain/sales-renewal.logic.spec.ts',
       // Phase 3 deal offer / snapshot / purchase-mode rules (same reason as above).
       'src/modules/billing/domain/deal-offer.spec.ts',
+      // Phase 5 auto-renewing deals: the return operation's provider write and its definition of
+      // done, which nothing else in the suite exercises.
+      'src/modules/billing/application/billing-price-return.spec.ts',
       'src/modules/billing/domain/billing-package.spec.ts',
       'src/modules/billing/domain/paid-checkout-invoice.spec.ts',
       'src/modules/billing/infrastructure/stripe.client.spec.ts',

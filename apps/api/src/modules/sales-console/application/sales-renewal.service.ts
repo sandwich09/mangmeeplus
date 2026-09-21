@@ -11,10 +11,12 @@ import type { SalesDealSnapshot } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { Prisma } from '../../../generated/prisma/client';
 import { AuditService } from '../../audit/application/audit.service';
+import { SalesDealPriceService } from '../../billing/application/sales-deal-price.service';
 import { CreateOrUpdateNotificationEventUseCase } from '../../dashboard-notifications/application/use-cases/notification.use-cases';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { bangkokDateKey } from '../domain/sales-attribution.logic';
 import { DEAL_KIND } from '../domain/sales-deal.logic';
+import { DEAL_ENDING_NOTICE_DAYS } from './sales-deals.service';
 import { PLATFORM_TENANT_ID, SALES_LEAD_ROLE } from './sales-context';
 
 /** Trigger keys — must also be listed in IMPLEMENTED_TRIGGER_KEYS or LINE delivery is suppressed. */
@@ -22,6 +24,8 @@ export const SALES_RENEWAL_PENDING_TRIGGER = 'sales_deal_renewal_pending';
 export const SALES_RENEWAL_OVERDUE_TRIGGER = 'sales_deal_renewal_overdue';
 export const SALES_SLIP_PENDING_TRIGGER = 'sales_deal_slip_pending';
 export const SALES_DAILY_DIGEST_TRIGGER = 'sales_daily_digest';
+/** D-P5-6: the shop OWNER and the sales team, 14 days before the catalog price comes back. */
+export const SALES_DEAL_ENDING_TRIGGER = 'sales_deal_ending';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** D3: the renewal offer is written 14 days out and chased again at 7. */
@@ -29,7 +33,9 @@ export const RENEWAL_LEAD_DAYS = 14;
 export const RENEWAL_REMINDER_DAYS = 7;
 const SWEEP_BATCH_LIMIT = 200;
 
-export type SalesRenewalSweepResult = { created: number; reminded: number; failures: number };
+export type SalesRenewalSweepResult = { created: number; reminded: number; failures: number;
+  /** D-P5-3/D-P5-6: per-company Prices provisioned or archived, returns queued, endings announced. */
+  pricesProvisioned: number; pricesArchived: number; returnsQueued: number; endingsAnnounced: number };
 
 @Injectable()
 export class SalesRenewalService {
@@ -37,12 +43,71 @@ export class SalesRenewalService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly notifications: CreateOrUpdateNotificationEventUseCase,
+    private readonly prices: SalesDealPriceService,
   ) {}
 
   async sweep(now = new Date()): Promise<SalesRenewalSweepResult> {
     const created = await this.createRenewals(now);
     const reminded = await this.remindOverdue(now);
-    return { created: created.count, reminded: reminded.count, failures: created.failures + reminded.failures };
+    // D-P5-3/D-P5-6 ride the same 15-minute tick: a Stripe Price that did not get created at
+    // approval, a deal whose Price must stop being sellable, a return to queue in its final cycle,
+    // and the 14-day notice. Each is idempotent, so a missed tick only ever costs a delay.
+    const prices = await this.prices.sweep(now).catch((error) => {
+      logSweepFailure('sales_deal_price_sweep_failed', 'platform', error);
+      return { provisioned: 0, archived: 0, returnsQueued: 0 };
+    });
+    const endings = await this.announceEndings(now);
+    return { created: created.count, reminded: reminded.count,
+      failures: created.failures + reminded.failures + endings.failures,
+      pricesProvisioned: prices.provisioned, pricesArchived: prices.archived,
+      returnsQueued: prices.returnsQueued, endingsAnnounced: endings.count };
+  }
+
+  /**
+   * D-P5-6 — 14 days before an auto-renewing deal goes back to the catalog price.
+   *
+   * `renewalRemindedAt` is reused as the once-only marker: an APPLIED deal never took part in the
+   * D3 reminder loop, so the column is free on exactly these rows and no new column is needed.
+   * The OWNER's notice carries NO numbers (R14); the price lives behind their own login.
+   */
+  private async announceEndings(now: Date): Promise<{ count: number; failures: number }> {
+    const rows = await this.prisma.client.packageChangeRequest.findMany({
+      where: { kind: DEAL_KIND, status: 'APPLIED', renewalRemindedAt: null,
+        returnAt: { gt: now, lte: new Date(now.getTime() + DEAL_ENDING_NOTICE_DAYS * DAY_MS) } },
+      select: { id: true, companyId: true, salesUserId: true, returnAt: true },
+      take: SWEEP_BATCH_LIMIT,
+    });
+    let count = 0, failures = 0;
+    for (const row of rows) {
+      try {
+        const claimed = await this.prisma.client.packageChangeRequest.updateMany({
+          where: { id: row.id, status: 'APPLIED', renewalRemindedAt: null }, data: { renewalRemindedAt: now } });
+        if (claimed.count === 0) continue;
+        await this.prisma.client.$transaction(async (tx) => {
+          // The shop's own OWNERs, on their own tenant, so it reaches the console and LINE through
+          // the same path `billing.package_updated` uses.
+          const owners = await tx.companyMembership.findMany({
+            where: { companyId: row.companyId, status: 'ACTIVE', roles: { some: { role: { key: 'OWNER' } } } },
+            select: { userId: true } });
+          if (owners.length) await this.notifications.executeInTransaction({
+            recipientUserIds: owners.map((owner) => owner.userId),
+            companyId: row.companyId, triggerKey: SALES_DEAL_ENDING_TRIGGER, sourceModule: 'sales_console',
+            sourceType: 'package_change_request', sourceId: row.id, severity: 'warning',
+            title: 'ข้อเสนอพิเศษจะสิ้นสุด',
+            body: 'ข้อเสนอพิเศษของร้านจะสิ้นสุดในเร็ว ๆ นี้ แพ็กเกจจะกลับเป็นราคาปกติของแพ็กเกจเดิม เปิดหน้าแพ็กเกจเพื่อดูรายละเอียด',
+            deepLinkHref: `/companies/${row.companyId}/billing`, periodKey: row.id,
+          }, tx);
+          await this.notifySalesTeam(tx, {
+            trigger: SALES_DEAL_ENDING_TRIGGER, dealId: row.id, salesUserId: row.salesUserId, severity: 'info',
+            title: 'ข้อเสนอพิเศษใกล้สิ้นสุด',
+            body: `ร้านจะกลับไปราคาปกติวันที่ ${bangkokDateKey(row.returnAt!)} ถ้าจะต่อ ให้ออกข้อเสนอรอบใหม่ก่อนถึงวันนั้น`,
+            periodKey: `ending-${row.id}`,
+          });
+        });
+        count += 1;
+      } catch (error) { failures += 1; logSweepFailure('sales_deal_ending_notice_failed', row.companyId, error); }
+    }
+    return { count, failures };
   }
 
   /**

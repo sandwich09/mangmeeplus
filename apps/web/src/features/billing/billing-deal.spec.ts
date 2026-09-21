@@ -1,6 +1,6 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
-import { billingDeal, billingQuoteDeal, dealAiCreditText, dealMenuLabels, dealSlip, slipBankAccount } from './billing-deal';
+import { billingDeal, billingQuoteDeal, dealAiCreditText, dealConfirmText, dealMenuLabels, dealRenewalText, dealSlip, slipBankAccount } from './billing-deal';
 
 const offer = (over: Record<string, unknown> = {}) => ({
   deal: {
@@ -90,6 +90,40 @@ it('shows bank details only once the Owner has replaced the masked placeholder',
   // to transfer money is a support call, so it reads as "no account" and the panel says to call.
   assert.equal(slipBankAccount({ ...real, accountNumber: 'xxx-x-xxxxx-x' }), null);
   assert.equal(slipBankAccount({ ...real, accountNumber: '' }), null);
-  // The shipped constant is the default argument, so this asserts what production renders today.
-  assert.equal(slipBankAccount(), null);
+  // The shipped constant is the default argument, so this asserts what production renders today:
+  // the Owner has now filled the account in, so the transfer route is offered rather than a phone
+  // number. Put a mask back into the contract and the assertions above take over again.
+  assert.notEqual(slipBankAccount(), null);
+  assert.match(slipBankAccount()!.accountNumber, /^[\d\s-]+$/);
+});
+
+it('sells an auto-renewing deal with the renewing modes only, and a one-time deal with neither (D-P5-4)', () => {
+  const auto = offer({ autoRenew: true, cadence: 'month', cycles: 12, purchaseModes: ['CARD_AUTO', 'PROMPTPAY_RENEW', 'CARD_ONCE'] });
+  assert.deepEqual(billingDeal(auto, now)?.purchaseModes, ['CARD_AUTO', 'PROMPTPAY_RENEW']);
+  // A deal is one family or the other: paying an auto-renewing offer once would open a term the
+  // shop is then charged for again, so the wrong-family mode is dropped, not offered.
+  assert.deepEqual(billingDeal(offer({ purchaseModes: ['CARD_AUTO', 'CARD_ONCE'] }), now)?.purchaseModes, ['CARD_ONCE']);
+  const card = billingDeal(auto, now)!;
+  assert.equal(card.autoRenew, true);
+  assert.equal(card.cycles, 12);
+  // A status written before Phase 5 carries none of the three and must read as a one-time deal.
+  assert.equal(billingDeal(offer(), now)?.autoRenew, false);
+  assert.equal(billingDeal(offer({ autoRenew: true, cadence: 'week', cycles: 0 }), now)?.cadence, 'month');
+  assert.equal(billingDeal(offer({ autoRenew: true, cycles: 0 }), now)?.cycles, null);
+});
+
+it('promises the customer exactly what their chosen mode does, every cycle (§17.3/Q8)', () => {
+  const once = { autoRenew: false, cadence: 'month' as const, cycles: null };
+  assert.equal(dealRenewalText(once, 'CARD_ONCE'), 'จ่ายครั้งเดียว ไม่มีหักอัตโนมัติ');
+  // Card takes the money by itself; QR only sends a bill somebody has to scan. Same deal, two
+  // different promises — so the sentence follows the mode, not the deal alone.
+  const monthly = { autoRenew: true, cadence: 'month' as const, cycles: null };
+  assert.match(dealRenewalText(monthly, 'CARD_AUTO'), /ตัดบัตรอัตโนมัติทุกเดือน ที่ราคานี้ · ยกเลิกได้จากหน้าแพ็กเกจ/);
+  assert.match(dealRenewalText(monthly, 'PROMPTPAY_RENEW'), /ออกบิล QR ทุกเดือน ที่ราคานี้ · สแกนจ่ายเอง/);
+  assert.doesNotMatch(dealRenewalText(monthly, 'CARD_AUTO'), /รอบ แล้วกลับราคาปกติ/);
+  // A fixed-cycle deal must say when the special price stops, on the card and on the confirm page.
+  const yearly = { autoRenew: true, cadence: 'year' as const, cycles: 3 };
+  assert.match(dealRenewalText(yearly, 'CARD_AUTO'), /ทุกปี ที่ราคานี้ · ยกเลิกได้จากหน้าแพ็กเกจ · 3 รอบ แล้วกลับราคาปกติ$/);
+  assert.equal(dealConfirmText(monthly), 'ต่ออายุอัตโนมัติที่ราคาข้อเสนอพิเศษ ทุกเดือน');
+  assert.equal(dealConfirmText(yearly), 'ต่ออายุอัตโนมัติที่ราคาข้อเสนอพิเศษ ทุกปี · 3 รอบ แล้วกลับราคาปกติ');
 });

@@ -22,6 +22,7 @@ import { assertCompanyCanBuy, companyCanBuy, assertPolicyReady, assertStripePric
 
 import { BillingRepeat, type RepeatSource } from './billing-repeat';
 import { BillingCollection } from './billing-collection';
+import { BillingPriceReturn } from './billing-price-return';
 import { collectionContract, pendingChange, type ScheduledChange } from './billing-schedule';
 import { restartFits, restartSource, type RestartSource } from './billing-restart';
 import { fullPackagePurchaseImpact } from '../domain/billing-package';
@@ -42,10 +43,19 @@ import { billingPurchaseSource, initialPurchaseSource } from './billing-purchase
 import type { BillingPurchaseSource } from '@watchdog-bms/contracts';
 import { billingFeaturePlan, type BillingFeaturePlan } from './billing-feature-entitlements';
 import { assertDealOfferUnchanged, assertDealSnapshot, dealOffer, dealPurchaseModes, dealSnapshot, dealSnapshotHash, type DealSource } from '../domain/deal-offer';
-import { DEAL_KIND } from '../../sales-console/domain/sales-deal.logic';
+import { autoRenewOf, DEAL_KIND, dealSlipState } from '../../sales-console/domain/sales-deal.logic';
 
-export type BillingSnapshot = { trialCarryover?: TrialCarryoverSource; emailProof?: EmailProof; quote: BillingQuote; deal?: DealSource; priceId: string; productId?: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; featurePlan?: BillingFeaturePlan; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; oneTime?: { invoiceId: string; paidThrough: string; anchorDay: number; offerKey: string; interval: string }; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange } };
+/** D-P5-6: the future contract a `SCHEDULE_PRICE_RETURN` writes. The invoice that applies it puts
+ *  the shop back on the tier's default menus, AI credit and limits (Q1) even though it is a RENEWAL. */
+export type DealReturnSource = { dealRequestId: string; returnAt: string };
+export type BillingSnapshot = { trialCarryover?: TrialCarryoverSource; emailProof?: EmailProof; quote: BillingQuote; deal?: DealSource; dealReturn?: DealReturnSource; priceId: string; productId?: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; featurePlan?: BillingFeaturePlan; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; oneTime?: { invoiceId: string; paidThrough: string; anchorDay: number; offerKey: string; interval: string }; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange } };
 const oneTimeMode = (mode: BillingPurchaseMode | undefined) => mode === 'CARD_ONCE' || mode === 'PROMPTPAY_ONCE';
+/**
+ * D-P5-4 — is this pinned quote an AUTO-RENEWING deal? The quote refuses every other pairing, so
+ * the purchase mode alone is proof: a deal on a renewing mode pinned the deal's own recurring
+ * Price into `snapshot.priceId`, while a one-time deal pinned the catalog Price.
+ */
+const autoRenewDealSnapshot = (snapshot: BillingSnapshot) => !!snapshot.deal && !oneTimeMode(snapshot.quote.purchaseMode);
 const paymentCheckoutMode = (mode: BillingPurchaseMode | undefined) => oneTimeMode(mode) || mode === 'PROMPTPAY_RENEW';
 const gateForMode = (mode: BillingPurchaseMode): BillingAction => mode === 'CARD_ONCE' ? 'card_once' : mode === 'PROMPTPAY_ONCE' ? 'promptpay_once' : mode === 'PROMPTPAY_RENEW' ? 'promptpay_renew' : 'new_sales';
 function assertPurchaseMode(mode: unknown): asserts mode is BillingPurchaseMode {
@@ -63,6 +73,7 @@ export class BillingService {
   get freeDays() { return new BillingFreeDays(this.prisma, this, this.lifecycle); }
   get repeater() { return new BillingRepeat(this.prisma, this.stripe, this, this.lifecycle); }
   get collection() { return new BillingCollection(this.prisma, this.stripe, this); }
+  get priceReturn() { return new BillingPriceReturn(this.prisma, this.stripe, this); }
 
   async assertTaxSettings(policy: BillingPolicy) {
     if (policy.taxTreatment === 'NOT_VAT_REGISTERED') return;
@@ -239,8 +250,13 @@ export class BillingService {
     // one-month interval come from the snapshot, so `offerKey`/`interval` cannot redirect it (S36).
     const dealRow = body.dealId ? await this.prisma.client.packageChangeRequest.findFirst({ where: { id: body.dealId, kind: DEAL_KIND } }) : null;
     const deal = body.dealId ? assertDealSnapshot(dealRow, context.companyId, new Date()) : null;
-    if (deal && !oneTimeMode(purchaseMode)) throw billingError('BILLING_MODE_NOT_READY', 'วิธีชำระเงินนี้ยังไม่เปิดให้บริการ');
-    const { tier, interval } = deal ? { tier: deal.base, interval: 'month' as const } : paidVariant(body.offerKey, body.interval);
+    // D-P5-4: a deal is payable only on the family its own snapshot sells. An auto-renewing deal
+    // pins a recurring Price, so a one-time Checkout would charge the cycle price once and leave
+    // the shop with no subscription at all.
+    const auto = autoRenewOf(deal);
+    if (deal && (auto.autoRenew ? oneTimeMode(purchaseMode) : !oneTimeMode(purchaseMode)))
+      throw billingError('BILLING_MODE_NOT_READY', 'วิธีชำระเงินนี้ยังไม่เปิดให้บริการ');
+    const { tier, interval } = deal ? { tier: deal.base, interval: auto.cadence ?? 'month' } : paidVariant(body.offerKey, body.interval);
     if (!this.stripe.enabled) throw billingError('BILLING_NOT_READY', 'ระบบชำระเงินยังไม่เปิดให้บริการ');
     const state = await this.settings();
     if (!state.policy || !state.revision || !state.gates.new_sales) throw billingError('BILLING_SALES_CLOSED', 'ยังไม่เปิดรับชำระเงินใหม่');
@@ -294,6 +310,17 @@ export class BillingService {
     assertStripePrice(price, deal ? catalogOffer : offer, state.policy, this.stripe.livemode, priceId);
     const productId = stripeId(price.product);
     if (!productId) throw billingError('BILLING_PRICE_MISMATCH', 'ข้อมูลราคาไม่ตรงกัน กรุณาติดต่อทีมงาน');
+    // D-P5-3/D-P5-4: an auto-renewing deal bills its OWN recurring Price, created at approval on
+    // the base tier's catalog product. The catalog Price above stays the product source only.
+    let snapshotPriceId = priceId;
+    if (auto.autoRenew) {
+      if (dealRow!.priceState !== 'READY' || !dealRow!.stripePriceId)
+        throw billingError('SALES_DEAL_PRICE_PENDING', 'กำลังเตรียมราคาใน Stripe ลองใหม่ในอีกสักครู่');
+      const dealPrice = await this.stripe.request('GET', `/prices/${dealRow!.stripePriceId}`);
+      assertStripePrice(dealPrice, offer, state.policy, this.stripe.livemode, dealRow!.stripePriceId);
+      if (stripeId(dealPrice.product) !== productId) throw billingError('BILLING_PRICE_MISMATCH', 'ข้อมูลราคาไม่ตรงกัน กรุณาติดต่อทีมงาน');
+      snapshotPriceId = dealRow!.stripePriceId;
+    }
     await this.assertTaxSettings(state.policy);
     const restart = existing?.baseSubscriptionId && existing.paidThrough && existing.paidThrough <= new Date() ? await restartSource(this.prisma, this.stripe, existing) : undefined;
     if (paymentCheckoutMode(purchaseMode) && existing?.baseSubscriptionId && !restart)
@@ -385,8 +412,9 @@ export class BillingService {
       quote.purchase.projectedRemainingReceipts += trialCarryover.units;
     }
     const dealSource: DealSource | undefined = deal ? { requestId: dealRow!.id, snapshotHash: dealSnapshotHash(dealRow!.offerSnapshotJson),
-      months: deal.months, salesUserId: dealRow!.salesUserId!, aiMonthlyBudgetSatang: deal.aiMonthlyBudgetSatang } : undefined;
-    const snapshot: BillingSnapshot = { ...(trialCarryover ? { trialCarryover } : {}), emailProof, ...(dealSource ? { deal: dealSource } : {}), ...(pending ? { pendingChange: { id: pending.row.id, version: pending.row.version, proposed: pending.proposed } } : {}), quote, priceId, productId, policy: state.policy, settingsVersion: state.settings.version, termVersion: term?.updatedAt.toISOString() ?? null, termHash: termProjectionHash(term), ...(featurePreview ? { featurePlan: featurePreview.plan } : {}), ...(repeat ? { repeat } : {}), ...(oneTime ? { oneTime } : {}), ...(restart ? { restart } : {}), ...(upgrade ? { upgrade } : {}), ...(capacity ? { capacity } : {}) };
+      months: deal.months, salesUserId: dealRow!.salesUserId!, aiMonthlyBudgetSatang: deal.aiMonthlyBudgetSatang,
+      ...(auto.autoRenew ? { cadence: auto.cadence, cycles: auto.cycles } : {}) } : undefined;
+    const snapshot: BillingSnapshot = { ...(trialCarryover ? { trialCarryover } : {}), emailProof, ...(dealSource ? { deal: dealSource } : {}), ...(pending ? { pendingChange: { id: pending.row.id, version: pending.row.version, proposed: pending.proposed } } : {}), quote, priceId: snapshotPriceId, productId, policy: state.policy, settingsVersion: state.settings.version, termVersion: term?.updatedAt.toISOString() ?? null, termHash: termProjectionHash(term), ...(featurePreview ? { featurePlan: featurePreview.plan } : {}), ...(repeat ? { repeat } : {}), ...(oneTime ? { oneTime } : {}), ...(restart ? { restart } : {}), ...(upgrade ? { upgrade } : {}), ...(capacity ? { capacity } : {}) };
     await this.prisma.client.billingQuote.create({ data: { id: quoteId, companyId: company.id, initiatingUserId: context.userId,
       policyRevisionId: state.revision.id, snapshotJson: snapshot as unknown as Prisma.InputJsonValue, expiresAt: new Date(quote.expiresAt) } });
     return quote;
@@ -545,12 +573,22 @@ export class BillingService {
       await this.assertTaxSettings(snapshot.policy);
       if (paymentCheckoutMode(snapshot.quote.purchaseMode)) {
         const price = await this.stripe.request('GET', `/prices/${snapshot.priceId}`);
-        assertStripePrice(price, snapshot.deal ? paidVariant(snapshot.quote.offer.offerKey, 'month', snapshot.policy).offer : snapshot.quote.offer,
+        // A ONE-TIME deal pins the catalog Price (the product source) and pays `price_data`; an
+        // auto-renewing QR deal pins its own recurring Price, which is the deal offer itself.
+        assertStripePrice(price, snapshot.deal && !autoRenewDealSnapshot(snapshot)
+          ? paidVariant(snapshot.quote.offer.offerKey, 'month', snapshot.policy).offer : snapshot.quote.offer,
           snapshot.policy, account.livemode, snapshot.priceId);
         if (stripeId(price.product) !== snapshot.productId) throw billingError('BILLING_PRICE_MISMATCH', 'ข้อมูลราคาเปลี่ยน กรุณาตรวจสอบใหม่');
         const siblings = await this.stripe.list('/subscriptions', { customer: customerId, status: 'all' });
         if (siblings.some(sub => !['canceled', 'incomplete_expired'].includes(sub.status)))
           throw billingError('BILLING_MODE_CHANGE_PENDING', 'ยังมีสมาชิกที่สามารถเรียกเก็บเงินได้ กรุณาตรวจสอบก่อนซื้อครั้งเดียว');
+      } else if (snapshot.deal) {
+        // D-P5-4: the subscription branch never read a Price before. A CARD_AUTO deal bills the
+        // per-company Price directly on the line item, so it gets the same pre-session proof the
+        // one-time branch has had all along.
+        const price = await this.stripe.request('GET', `/prices/${snapshot.priceId}`);
+        assertStripePrice(price, snapshot.quote.offer, snapshot.policy, account.livemode, snapshot.priceId);
+        if (stripeId(price.product) !== snapshot.productId) throw billingError('BILLING_PRICE_MISMATCH', 'ข้อมูลราคาเปลี่ยน กรุณาตรวจสอบใหม่');
       }
       financialRequestStarted = true;
       const metadata = { billingAttemptId: attempt.id, billingAccountId: account.id };
@@ -687,11 +725,20 @@ export class BillingService {
     if (dealRow?.offerExpiresAt) {
       // A stored offer that no longer parses must not break the status page; the card stays away.
       try {
-        const offer = dealSnapshot(dealRow.offerSnapshotJson);
-        deal = { dealId: dealRow.id, base: offer.base, baseLabel: billingOffer(offer.base, 'month').label,
+        const offer = dealSnapshot(dealRow.offerSnapshotJson), auto = autoRenewOf(offer);
+        // Q9: a slip the Owner is still looking at has already answered the offer. Showing pay
+        // buttons next to "รอทีมงานตรวจสลิป" is how a shop pays twice for one deal.
+        const slipState = dealSlipState(dealRow.paymentState, dealRow.slipSubmittedAt);
+        deal = { dealId: dealRow.id, base: offer.base, baseLabel: billingOffer(offer.base, auto.cadence ?? 'month').label,
           priceSatang: offer.priceSatang, months: offer.months, offerExpiresAt: dealRow.offerExpiresAt.toISOString(),
-          purchaseModes: finalActions.includes('new_sales') && !(account?.baseSubscriptionId && account.paidThrough && account.paidThrough > new Date())
-            ? dealPurchaseModes(settings?.gates ?? {}) : [],
+          autoRenew: auto.autoRenew, cadence: auto.cadence, cycles: auto.cycles, slipState,
+          slipRejectedReason: slipState === 'REJECTED' ? dealRow.rejectedReason : null,
+          // D-P5-3: an auto deal whose Stripe Price is not READY cannot open a Checkout, so the
+          // card offers nothing rather than a button whose quote answers SALES_DEAL_PRICE_PENDING.
+          purchaseModes: finalActions.includes('new_sales') && slipState !== 'PENDING' &&
+            (!auto.autoRenew || dealRow.priceState === 'READY') &&
+            !(account?.baseSubscriptionId && account.paidThrough && account.paidThrough > new Date())
+            ? dealPurchaseModes(settings?.gates ?? {}, offer) : [],
           // The card's own detail, so the OWNER reads their offer here and not through the
           // package-change queue, which `company.setup.manage` gates. `internalReason` and
           // `salesUserId` stay behind in the row: the team's note is not part of the offer (S24).

@@ -4,7 +4,7 @@ import { billingPlanLabel, type SalesAgentCredentialHandoff, type SalesCompanySe
 import { MangmeeBadge, MangmeeCard } from '@/common/components/mangmee';
 import { formatThaiDate, formatThaiDateTime } from '@/common/i18n/thai-date';
 import {
-  baseTierLabel, dealBadges, formatBaht, SALES_ACCESS_STATE_META, SALES_DEAL_STATUS_META,
+  baseTierLabel, dealAutoRenew, dealBadges, dealTermText, formatBaht, SALES_ACCESS_STATE_META, SALES_DEAL_STATUS_META,
 } from './sales-console.logic';
 
 /** One banner shape for the whole console, so an error and a warning never look like two apps. */
@@ -66,11 +66,14 @@ export function SalesCompanyLine({ company }: { company: SalesCompanySearchItem 
 /** The deal card body every list, preview and approval queue shares. */
 export function SalesDealSummary({ deal }: { deal: SalesDealView }) {
   const snapshot = deal.snapshot;
+  // D-P5-1: the same two boxes mean different things on an auto-renewing deal — the price is per
+  // cycle and the term is "every cycle until …", so the หัวหน้า approving it reads which it is.
+  const auto = dealAutoRenew(snapshot);
   return (
     <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm sm:grid-cols-3">
       <div><dt className="text-xs font-semibold text-gray-500">แพ็กเกจฐาน</dt><dd className="font-bold text-gray-900">{baseTierLabel(snapshot.base)}</dd></div>
-      <div><dt className="text-xs font-semibold text-gray-500">ราคา (รวม VAT ถ้ามี)</dt><dd className="font-bold text-gray-900">{formatBaht(snapshot.priceSatang)}</dd></div>
-      <div><dt className="text-xs font-semibold text-gray-500">ระยะเวลา</dt><dd className="font-bold text-gray-900">{snapshot.months} เดือน</dd></div>
+      <div><dt className="text-xs font-semibold text-gray-500">{auto ? 'ราคาต่อรอบ (รวม VAT ถ้ามี)' : 'ราคา (รวม VAT ถ้ามี)'}</dt><dd className="font-bold text-gray-900">{formatBaht(snapshot.priceSatang)}</dd></div>
+      <div><dt className="text-xs font-semibold text-gray-500">ระยะเวลา</dt><dd className="font-bold text-gray-900">{dealTermText(snapshot)}</dd></div>
       <div><dt className="text-xs font-semibold text-gray-500">สาขา</dt><dd className="font-bold text-gray-900">{snapshot.branchLimit}</dd></div>
       <div><dt className="text-xs font-semibold text-gray-500">ผู้ใช้</dt><dd className="font-bold text-gray-900">{snapshot.employeeLimit}</dd></div>
       <div><dt className="text-xs font-semibold text-gray-500">ใบเสร็จต่อเดือน</dt><dd className="font-bold text-gray-900">{snapshot.monthlySlipLimit}</dd></div>

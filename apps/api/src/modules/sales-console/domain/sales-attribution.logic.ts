@@ -140,7 +140,7 @@ export function countableAmountSatang(row: Pick<AttributionReportRow, 'amountSat
  */
 export function aggregateReport(
   rows: readonly AttributionReportRow[],
-  agent: (salesUserId: string) => { displayName: string; teamLeadUserId: string | null },
+  agent: (salesUserId: string) => { displayName: string; teamLeadUserId: string | null; teamLeadDisplayName: string | null },
 ): SalesReportMonth[] {
   const byMonth = new Map<string, Map<string, SalesReportRow>>();
   for (const row of rows) {

@@ -18,10 +18,11 @@ import { DEAL_SLIP_ACCEPT, uploadDealSlipFile } from './billing.api';
 const SLIP_SENT = 'ส่งสลิปแล้ว รอทีมงานตรวจภายใน 1 วันทำการ';
 
 export default function BillingDealSlipPanel({
-  companyId, deal, amountLabel, submitted, onSubmitted,
-}: { companyId: string; deal: BillingDealOffer; amountLabel: string; submitted: boolean; onSubmitted: () => void }) {
+  companyId, deal, amountLabel, onSubmitted,
+}: { companyId: string; deal: BillingDealOffer; amountLabel: string; onSubmitted: () => void }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -34,6 +35,7 @@ export default function BillingDealSlipPanel({
     setError(null);
     try {
       await uploadDealSlipFile(companyId, deal.dealId, file);
+      setSent(true);
       onSubmitted();
     } catch (cause) {
       setError(apiErrorMessage(cause));
@@ -43,11 +45,11 @@ export default function BillingDealSlipPanel({
     }
   };
 
-  // A slip already under review is the whole story: no form, no second payment. `submitted` is the
-  // same answer for the slip THIS visit just sent: `BillingStatus.deal` does not carry `slipState`
-  // yet (it lives on `PackageChangeDealOffer`), and a shop whose upload changed nothing on screen
-  // sends it again. Drop the prop once the status carries the field — `slip.state` then covers it.
-  if (submitted || (slip.state && !slip.canUpload)) {
+  // A slip already under review is the whole story: no form, no second payment. `slip.state` is the
+  // status's own answer now that `BillingStatus.deal` carries it; `sent` only covers the seconds
+  // between this visit's upload and the status refresh, so an upload that changed nothing on screen
+  // cannot be sent twice.
+  if (sent || (slip.state && !slip.canUpload)) {
     return <p role="status" className="rounded-xl bg-brand-50 p-4 text-brand-800">{slip.message ?? SLIP_SENT}</p>;
   }
 

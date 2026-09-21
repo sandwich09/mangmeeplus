@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { SALES_CODE_PATTERN, SALES_DEAL_OFFER_DAYS } from '@watchdog-bms/contracts';
 import {
+  autoRenewOf,
   buildDealSnapshot,
   canTransitionDeal,
   derivedDealStatus,
@@ -94,9 +95,13 @@ describe('sales code', () => {
 });
 
 describe('deal snapshot validation', () => {
-  it('freezes a valid draft at version 2 and de-duplicates feature keys', () => {
+  it('freezes a valid draft at version 3 and de-duplicates feature keys', () => {
     const snapshot = buildDealSnapshot(draft);
-    assert.equal(snapshot.version, 2);
+    // D-P5-1: everything written from now on is v3; a draft with no switch is an explicit no.
+    assert.equal(snapshot.version, 3);
+    assert.equal(snapshot.autoRenew, false);
+    assert.equal(snapshot.cadence, null);
+    assert.equal(snapshot.cycles, null);
     assert.equal(snapshot.base, 'BASIC_499');
     assert.deepEqual(snapshot.featureKeys, ['crm']);
     assert.equal(snapshot.aiMonthlyBudgetSatang, null);
@@ -194,5 +199,46 @@ describe('over-limit preview (S31)', () => {
     const snapshot = { branchLimit: 2, employeeLimit: 5 };
     assert.deepEqual(overLimitCounts(snapshot, { branchCount: 3, employeeCount: 9 }), { branches: 1, employees: 4 });
     assert.deepEqual(overLimitCounts(snapshot, { branchCount: 1, employeeCount: 2 }), { branches: 0, employees: 0 });
+  });
+});
+
+// ── Phase 5: the auto-renew switch (D-P5-1) ────────────────────────────────────────────
+
+describe('auto-renewing deal form (D-P5-1)', () => {
+  const auto = { ...draft, autoRenew: true, cadence: 'month', cycles: 6 };
+
+  it('freezes the switch, the cadence and the cycle count', () => {
+    const snapshot = buildDealSnapshot(auto);
+    assert.equal(snapshot.version, 3);
+    assert.equal(snapshot.autoRenew, true);
+    assert.equal(snapshot.cadence, 'month');
+    assert.equal(snapshot.cycles, 6);
+    // "จนกว่าจะเพิกถอน" is a real choice, not a missing field.
+    assert.equal(buildDealSnapshot({ ...auto, cycles: null }).cycles, null);
+    assert.equal(buildDealSnapshot({ ...auto, cadence: 'year' }).cadence, 'year');
+  });
+
+  it('refuses a switch the billing side could not charge', () => {
+    // Stripe recurring prices are month or year; a "week" deal would fail at Checkout, not here.
+    assert.throws(() => buildDealSnapshot({ ...auto, cadence: 'week' }), SalesSnapshotError);
+    assert.throws(() => buildDealSnapshot({ ...auto, cadence: null }), SalesSnapshotError);
+    assert.throws(() => buildDealSnapshot({ ...auto, cycles: 0 }), SalesSnapshotError);
+    assert.throws(() => buildDealSnapshot({ ...auto, cycles: 37 }), SalesSnapshotError);
+    assert.throws(() => buildDealSnapshot({ ...auto, cycles: 1.5 }), SalesSnapshotError);
+    assert.throws(() => buildDealSnapshot({ ...auto, autoRenew: 'yes' }), SalesSnapshotError);
+    // A half-filled form: the switch is off but the cadence stayed behind.
+    assert.throws(() => buildDealSnapshot({ ...draft, cadence: 'month' }), SalesSnapshotError);
+    assert.throws(() => buildDealSnapshot({ ...draft, cycles: 6 }), SalesSnapshotError);
+  });
+
+  it('reads a stored row defensively: a v2 row is a one-time deal, never a charge', () => {
+    assert.deepEqual(autoRenewOf(buildDealSnapshot(auto)), { autoRenew: true, cadence: 'month', cycles: 6 });
+    assert.deepEqual(autoRenewOf(buildDealSnapshot(draft)), { autoRenew: false, cadence: null, cycles: null });
+    assert.deepEqual(autoRenewOf(null), { autoRenew: false, cadence: null, cycles: null });
+    // The switch alone is not enough — an unreadable cadence reads as "not auto-renewing".
+    assert.deepEqual(autoRenewOf({ autoRenew: true, cadence: 'week' } as never),
+      { autoRenew: false, cadence: null, cycles: null });
+    assert.deepEqual(autoRenewOf({ autoRenew: true, cadence: 'year', cycles: 999 } as never),
+      { autoRenew: true, cadence: 'year', cycles: null });
   });
 });

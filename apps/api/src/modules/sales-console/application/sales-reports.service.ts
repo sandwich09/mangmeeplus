@@ -63,7 +63,7 @@ export class SalesReportsService {
     }));
     return {
       from: range.from, to: range.to,
-      months: aggregateReport(report, (userId) => agents.get(userId) ?? { displayName: '', teamLeadUserId: null }),
+      months: aggregateReport(report, (userId) => agents.get(userId) ?? { displayName: '', teamLeadUserId: null, teamLeadDisplayName: null }),
     };
   }
 
@@ -88,15 +88,24 @@ export class SalesReportsService {
     return undefined;
   }
 
-  private async agentIndex(userIds: readonly string[]): Promise<Map<string, { displayName: string; teamLeadUserId: string | null }>> {
+  private async agentIndex(userIds: readonly string[]): Promise<Map<string, { displayName: string;
+    teamLeadUserId: string | null; teamLeadDisplayName: string | null }>> {
     const ids = [...new Set(userIds)];
     if (ids.length === 0) return new Map();
-    const [users, profiles] = await Promise.all([
-      this.prisma.client.user.findMany({ where: { id: { in: ids } }, select: { id: true, displayName: true } }),
-      this.prisma.client.salesAgentProfile.findMany({ where: { userId: { in: ids } }, select: { userId: true, teamLeadUserId: true } }),
-    ]);
+    const profiles = await this.prisma.client.salesAgentProfile.findMany({
+      where: { userId: { in: ids } }, select: { userId: true, teamLeadUserId: true } });
     const leadByUser = new Map(profiles.map((profile) => [profile.userId, profile.teamLeadUserId]));
-    return new Map(users.map((user) => [user.id, { displayName: user.displayName, teamLeadUserId: leadByUser.get(user.id) ?? null }]));
+    // Phase 4 leftover: leads are looked up in the SAME query as their agents, so the report can
+    // print "ทีมของ <หัวหน้า>" without a second round trip and without a lead-only read path.
+    const leadIds = [...new Set([...leadByUser.values()].filter((id): id is string => !!id && !ids.includes(id)))];
+    const users = await this.prisma.client.user.findMany({
+      where: { id: { in: [...ids, ...leadIds] } }, select: { id: true, displayName: true } });
+    const nameById = new Map(users.map((user) => [user.id, user.displayName]));
+    return new Map(ids.map((id) => {
+      const teamLeadUserId = leadByUser.get(id) ?? null;
+      return [id, { displayName: nameById.get(id) ?? '', teamLeadUserId,
+        teamLeadDisplayName: teamLeadUserId ? nameById.get(teamLeadUserId) ?? null : null }];
+    }));
   }
 
   // ── the Owner's flag queue (§17.1 "ธง ... ให้ Owner ตรวจ") ──────────────────────────
