@@ -1,16 +1,17 @@
 # Kamal release commands
 
-Two entry points share the same executor:
+Explicit release paths share the same executor:
 
 ```sh
 infra/kamal/deploy-prod --profile <deployment-profile>             # read-only preflight
 infra/kamal/deploy-uat --profile <deployment-profile>              # read-only preflight
 infra/kamal/deploy-prod --profile <deployment-profile> --prepare   # build main + full config/image checks, no deployment
-infra/kamal/deploy-prod --profile <deployment-profile> --apply     # hotfix, no pending migrations
 infra/kamal/deploy-uat --profile <deployment-profile> --apply      # normal, applies safe pending migrations
+infra/kamal/deploy-prod-hotfix --help                             # isolated Production source
+infra/kamal/promote-prod --help                                  # signed UAT artifacts, no rebuild
 ```
 
-`--mode hotfix|normal` is explicit and available on either wrapper. The wrapper seals the environment;
+`deploy-prod --apply` no longer silently selects latest main. The wrappers seal their environment and release path;
 passing `--environment` cannot turn the UAT command into Production. There is no implicit bootstrap,
 infrastructure creation, gate opening, DNS change or fallback to another environment.
 
@@ -44,27 +45,87 @@ concurrent operations still block it. Success is `PREPARED_NO_DEPLOYMENT` in the
 `result.json`; errors are terminal, with no automatic retry. `--prepare` rejects both `--apply` and
 `--rollback` combinations. It is also supported by `deploy-uat`.
 
-This is configuration/build preparation for an enrolled target, not an ECS-to-Kamal cutover tool.
+Ordinary preparation is for an enrolled target; first migration uses the separate staged target below.
 It does not prove write permissions, migration compatibility with the live DB, target pull/start
 behavior, customer journeys, or future runtime readiness. A full accepted Production deployment has
 not been measured; UAT's timings are not a Production guarantee. Do not count preparation time as
-zero when reporting an end-to-end release. `--apply` fetches/revalidates and builds current main again;
-it does not promote cached preparation evidence as proof of the newly selected source.
+zero when reporting an end-to-end release. Hotfix `--prepared-build <build-directory>` can reuse an
+exact clean source/build only after checking every phase/log, source tree, image ID/architecture/label
+and AgentCore archive. It reruns selected regressions and full config/freshness checks. Preparation
+acceptance never substitutes live rollout, signing or customer acceptance.
 
-After the controller is merged and the separate Production migration is approved/enrolled, the
-existing apply commands remain:
+After review/CI and merge of the controller, choose one Production path:
 
 ```sh
-infra/kamal/deploy-prod --profile <non-root-production-profile> --mode hotfix --apply
-infra/kamal/deploy-prod --profile <non-root-production-profile> --mode normal --apply
+infra/kamal/deploy-prod-hotfix --profile <non-root-production-profile> \
+  --source-sha <full-hotfix-sha> --production-baseline <full-serving-sha> \
+  --hotfix-path <changed-path> --regression-test <tracked-test-path> \
+  --production-browser-acceptance --apply
+infra/kamal/promote-prod --profile <non-root-production-profile> \
+  --uat-release <signed-uat-run-directory> --mode normal \
+  --production-browser-acceptance --apply
 ```
 
-Use one of these modes, not two runs. Hotfix refuses pending migrations; normal mode runs the existing
-migration safety checks. Production apply still requires the exact main controller and authenticated
-Production acceptance; UAT smoke/browser flags remain rejected. Until the Production migration is
-approved, continue using the [V2 Production protocol](../../docs/runbooks/uat-production-v2-deployment.md).
+Repeat `--hotfix-path` for **every** changed path and `--regression-test` for the relevant tests.
+Hotfix proves ancestry and the complete Production-base diff; schema/dependency/build/controller
+changes are rejected. It preserves verified serving config instead of importing main's settings.
+UAT promotion verifies the enrolled `trustedUatSigningKeyArn`, the signed receipt (maximum24hours),
+all four immutable images and AgentCore archive. It copies exact image digests without rebuilding or
+rewriting metadata. Historical receipts without a signed `promotionBundle` are rejected; create a
+new UAT acceptance with this controller. Enroll the trusted UAT key and its scoped KMS verify permission
+before promotion. Normal mode applies migrations; hotfix mode requires an unchanged catalog.
 
-**Current deployment status:** PR551/552 are merged. Main `6b95e505` deployed successfully to real
+### First ECS-to-Kamal migration
+
+The authorized September18 candidate is `0b0058adbc7353ec906a33746867af2a235b0934`, based on serving
+`fc2838c4cb691033f41595c0d43587f10377d33c`. Infrastructure is staged, not deployed application code.
+Use the hotfix command with `--first-migration --target <private-staging-target.json>` and the exact
+complete path/test arguments. This mode requires `cutoverComplete:false`, migration state
+`INFRASTRUCTURE_STAGED_NO_APPLICATION`, actual stack ARN, baseline SHA and unexpired temporary
+authority; it never accepts an ordinary completed enrollment. `--prepare` still only reads AWS.
+
+Preflight reads the stack's Ubuntu AMI and both owned rule tags before publishing or changing workers.
+The temporary migration role needs `ec2:DescribeImages` and ELB `DescribeTags` (read actions require
+resource`*`, bounded by region/expiry). The ListenerRule provider declares ModifyRule,
+SetRulePriorities, AddTags and RemoveTags; constrain writes to the two owned rule ARNs. Do not grant
+wildcard tag writes to satisfy IAM simulator differences. Verify actual scoped API permissions
+before the forward run. Stable `UPDATE_ROLLBACK_COMPLETE` is accepted only with the same retained
+route/template checks; in-progress or failed rollback remains blocked. Successful ExecuteChangeSet
+has an empty body; completion still requires matching operation events and exact template/rule readback.
+
+Apply requires controller bytes from current main. Freeze main and all Production release/recovery
+work for the operation. The controller fences the two legacy Production deployment workflows and
+checks for unfinished durable operations. Keep the shared recovery workflow idle; it is not disabled
+because UAT also uses it. API/AI stage behind operator-only routes; the old ECS services/provider and
+build authority remain available. Old workers reach STOPPED before new consumers start. Exactly two
+owned listener conditions are switched using a reviewed CloudFormation change set. Existing ECS
+rules are retained, including the actual weighted100/0 target selection. CloudWatch logging uses
+the preprovisioned groups. No Cloudflare, DNS, schema migration or gate-opening mutation is implied.
+
+Recovery uses the **same staged target/source/path/test arguments**, replacing the action with
+`--apply --rollback <terminal-first-migration-operation-id>`. It stops and verifies candidate
+consumers, restores operator-only rules and the exact old worker service body, then verifies ECS and
+customer acceptance before signing `ROLLED_BACK_TO_ECS`. A publication failure before DB sync can
+recover without a completed publication manifest. After DB sync starts, that manifest/tools image
+is mandatory. Moving AWS state, configuration drift or an uncertain mutation requires read-only
+reconciliation of its retained intent; do not start another deployment or blindly repeat recovery.
+This path has local orchestration tests; it is not evidence of a live rollback drill.
+
+Only signed forward acceptance installs `target.json` with `cutoverComplete:true`. It retains
+`ecsRollbackBaseline`; ordinary subsequent releases are blocked while this rollback window remains
+enrolled. Closing that window requires an explicit reviewed follow-up to retire old authority and
+infrastructure, remove temporary migration policy and update enrollment. Do not delete the field
+just to bypass the guard. Legacy Production workflows stay disabled after successful migration and
+are restored to their original state after accepted ECS rollback.
+
+Production requires `--production-browser-acceptance`, current administrator
+`cmt8k20fs00000q319isxwkc5`, actual SYSTEM_ADMIN/launch-gate permission, live/canOpen/OPEN and
+logout/session rejection. Existing owner sessions are allowed; no seed or password reset. Keep the
+operation alive while gathering real observations. Record the extra Production checks in its
+generated browser request; do not infer API statuses/identity from a page heading. UAT smoke flags
+remain rejected. [Canonical acceptance protocol](../../docs/runbooks/uat-production-v2-deployment.md).
+
+**Historical UAT proof:** PR551/552 are merged. Main `6b95e505` deployed successfully to real
 UAT twice with complete config/readiness and verified KMS signatures, without repair or retry:
 `20260911T170623Z-c8d84820` took4m14.836s from merge to exit;
 `20260911T171058Z-8c83ebfc` took4m25.786s including operator prechecks (command alone4m21.191s).
@@ -162,8 +223,8 @@ private files. The `.env.*` paths are ignored by Git. The target must contain:
 | `publicUrl` | Permanent public HTTPS origin |
 | `apiInternalUrl`, `aiInternalUrl` | Reachable HTTPS URLs ending in `/v1`; ingress routing/TLS already installed |
 | `sshKey` | Absolute local path to the private deployment key; optional `sshProxyCommand` for a verified bastion |
-| `acceptanceCredentials` | Absolute path to private acceptance account JSON below; omitted for explicit UAT browser/smoke acceptance |
-| `browserAcceptanceUserId` | Expected real UAT account ID when using `--uat-browser-acceptance`; contains no password |
+| `acceptanceCredentials` | Absolute path to private acceptance account JSON below; omitted for explicit browser/smoke acceptance |
+| `browserAcceptanceUserId` | Expected account ID for the explicit environment browser flag; Production requires the current administrator above |
 | `agentcoreRuntimeArn` | Existing environment runtime ARN |
 | `agentcoreQualifier`, `agentcoreCandidateQualifier` | Two dedicated, stable, non-DEFAULT endpoints; one active and one spare |
 | Real UAT/Production | Actual asymmetric `signingKeyArn`; API hosts separate from AI/worker hosts |
@@ -225,7 +286,8 @@ evidence submission. `elapsedSeconds` still includes that stage, subsequent read
 and signing. Report all three with those boundaries; never present readiness as full acceptance
 or subtract the entire browser stage and call the remainder a proven automated release time.
 
-All builds use a clean main checkout, not the operator's dirty app files. Merge this command and its
+Main/UAT builds use a clean main checkout; isolated hotfixes use their explicitly pinned Production-base source.
+Promotion uses signed UAT artifacts. Merge this command and its
 helpers/config to main before a real UAT/Production release; preflight rejects a mismatched controller.
 For the owner's explicit test of the new local command on real UAT, `--uat-controller-sha256`
 accepts only the exact hash of all functional controller/helper/config files, records that separate

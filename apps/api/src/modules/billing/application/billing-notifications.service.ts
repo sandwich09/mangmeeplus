@@ -13,7 +13,7 @@ import { EmailDeliveryService } from '../../auth/application/email-delivery.serv
 import { PostmarkSendError } from '../../auth/infrastructure/postmark.client';
 import { renderBillingStatusEmail } from '../../auth/infrastructure/auth-email.templates';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
-import { BillingService } from './billing.service';
+import { BillingService, type BillingSnapshot } from './billing.service';
 import { BillingAdminService } from './billing-admin.service';
 import { billingError, hashBilling } from '../domain/billing-policy';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
@@ -232,8 +232,14 @@ export class BillingNotificationsService {
       await lockPlanTermCompany(tx, row.companyId!);
       const { invoice, company } = await this.source(row, tx), owners = await this.owners(company.id, tx);
       if (!owners.length) throw defer('recipient_pending');
+      const purchaseMode = (invoice.contractSnapshot as unknown as BillingSnapshot | null)?.quote.purchaseMode;
+      const body = purchaseMode === 'CARD_ONCE' || purchaseMode === 'PROMPTPAY_ONCE'
+        ? 'ตรวจสอบสิทธิ์ วันหมดอายุ และประวัติการชำระเงินได้ในหน้าบริษัท หากต้องการใช้ต่อให้ซื้อใหม่'
+        : purchaseMode === 'PROMPTPAY_RENEW'
+          ? 'ตรวจสอบสิทธิ์ วันออกบิล QR รอบถัดไป และประวัติการชำระเงินได้ในหน้าบริษัท'
+          : 'ตรวจสอบสิทธิ์ วันต่ออายุ และประวัติการชำระเงินได้ในหน้าบริษัท';
       await this.events.executeInTransaction({ companyId: company.id, triggerKey: 'billing.package_updated', sourceModule: 'billing', sourceType: 'invoice',
-        sourceId: invoice.id, severity: 'info', title: 'อัปเดตแพ็กเกจมั่งมี', body: 'ตรวจสอบสิทธิ์ วันต่ออายุ และประวัติการชำระเงินได้ในหน้าบริษัท',
+        sourceId: invoice.id, severity: 'info', title: 'อัปเดตแพ็กเกจมั่งมี', body,
         deepLinkHref: `/companies/${encodeURIComponent(company.id)}/billing`, recipientUserIds: owners.map(m => m.userId) }, tx);
       for (const owner of owners.filter(m => m.user.email && m.user.emailVerifiedAt)) {
         await tx.outboxEvent.upsert({ where: { eventKey: `billing:notice-email:${invoice.id}:${owner.userId}` }, update: {}, create: {

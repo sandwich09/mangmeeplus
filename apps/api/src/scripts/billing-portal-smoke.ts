@@ -14,6 +14,7 @@ export async function checkBillingPortal(input: Parameters<typeof checkBillingRe
     invoices: await db.billingInvoice.findMany({ where: { billingAccountId: account.id }, orderBy: { id: 'asc' } }),
     grants: await db.billingReceiptGrant.findMany({ where: { companyId }, orderBy: { id: 'asc' } }) });
   const before = await financial(), customer = `cus_Portal${randomUUID().replaceAll('-', '')}`;
+  const subscription = account.baseSubscriptionId ?? `sub_Portal${randomUUID().replaceAll('-', '')}`;
   const config = { id: 'bpc_Synthetic', object: 'billing_portal.configuration', livemode: false, active: true,
     features: { payment_method_update: { enabled: true }, subscription_update: { enabled: false }, subscription_cancel: { enabled: false } } };
   let posts = 0, otherWrites = 0, responseOverride: Record<string, unknown> = {}, configOverride: Record<string, unknown> | null = null;
@@ -35,7 +36,7 @@ export async function checkBillingPortal(input: Parameters<typeof checkBillingRe
     return undefined;
   });
   const open = () => request(`${base}/portal`, 'POST', { action: 'portal_payment_method' });
-  const restoreAccount = () => db.billingAccount.update({ where: { id: account.id }, data: { customerId: customer, version: account.version, updatedAt: account.updatedAt } });
+  const restoreAccount = () => db.billingAccount.update({ where: { id: account.id }, data: { customerId: customer, baseSubscriptionId: subscription, renewalMode: 'CARD_AUTO', version: account.version, updatedAt: account.updatedAt } });
   const restoreSettings = () => db.billingSettings.update({ where: { id: settings.id }, data: { gatesJson: settings.gatesJson!, version: settings.version, updatedAt: settings.updatedAt } });
   const restoreCompany = () => db.company.update({ where: { id: companyId }, data: { status: company.status, updatedAt: company.updatedAt } });
   const restoreTerm = () => db.companyPlanTerm.update({ where: { companyId }, data: { termEndsAt: term.termEndsAt, termDisabledAt: term.termDisabledAt, updatedAt: term.updatedAt } });
@@ -144,6 +145,6 @@ export async function checkBillingPortal(input: Parameters<typeof checkBillingRe
     cases.push('portal-access-never-mutates-money-quota-or-paid-rights'); return cases;
   } finally {
     input.transport(); await restoreCompany(); await restoreTerm(); await restoreSettings();
-    await db.billingAccount.update({ where: { id: account.id }, data: { customerId: account.customerId, version: account.version, updatedAt: account.updatedAt } });
+    await db.billingAccount.update({ where: { id: account.id }, data: { customerId: account.customerId, baseSubscriptionId: account.baseSubscriptionId, renewalMode: account.renewalMode, version: account.version, updatedAt: account.updatedAt } });
   }
 }

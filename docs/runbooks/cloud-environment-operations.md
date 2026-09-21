@@ -10,6 +10,102 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Current Production Kamal — 2026-09-18 14:42 UTC
+
+This checkpoint supersedes the staging/ECS inventory below. The owner-authorized migration and
+first isolated hotfix0b0058ad completed as20260918T113740Z-2b1e04fa under explicit browser HTTP waiver.
+Current serving source is`1406d3825db2eb7d70987b207c80f89ae05edb3b`, operation
+`20260918T143800Z-e6c3b860`, state`ACCEPTED_WITH_BROWSER_HTTP_WAIVER`, KMSverified/publicOPEN.
+All four containers (API in two AZs, AI, workers) match exactsource/config/deepreadiness.
+AgentCore`watchdog_orchestrator_production_kamal-Ik7N9qDX8R` uses`kamal_production_a`, version5;
+previous0b provider remains version4 onb. Hosts/IPs in the table below remain current.
+
+All three original ECS services are parked0/0 and have no running task. Actual API/AI stopped
+13:17:57/13:18:31UTC; retain oldworker signedSTOPPED evidence because its task record expired.
+The ECS rollback window was explicitly closed, obsolete build authority retired through existing
+audit path, temporary`first-migration-20260918` IAM policy removed, and signed closure installed.
+Subsequent recovery uses native Kamal prior-container/provider snapshots, not the closed migration
+rollback procedure. Shared ALB/RDS/Redis and oldECS configs/images/history remain retained;
+both legacy Production workflows remain disabled. No DNS/Cloudflare change.
+
+Operator changed Wi-Fi: the existing three TCP22 rules now allow only`49.228.220.223/32`
+in place of`49.229.201.224/32`. This authorized drift is not yet reflected in CloudFormation's old
+OperatorCidr parameter; preserve it during future stack updates. Ordinary release/signing uses
+non-root`mangmee-kamal-production`; infrastructure bootstrap/retirement used owner`thawatchai`.
+
+Full failure retention, acceptance limitations, exact times and integration results:
+[Two-hotfix release evidence](../evidence/production-two-hotfixes-2026-09-18.md).
+Do not interpret waived browser identity/logout checks as standard protocolPASS or reuse the
+old owner acceptance as proof of future candidates. The release-specific override hash is signed.
+
+## Production Kamal staging — 2026-09-18, no application cutover
+
+Latest operation checkpoint09:46UTC: the first app handover20260918T085755Z-860908a6 failed at
+CloudFormation AMI permission validation. AWS restored the original staging template/rules and
+stack isUPDATE_ROLLBACK_COMPLETE. Explicit recovery20260918T091745Z-318a0d41 restored all3
+ECS services tofc2838c4 and provider37; candidate containers are stopped with restartdisabled.
+Customer traffic remains on ECS. Recovery is stillAWAITING_BROWSER_ACCEPTANCE, with its process
+and release lock alive; do not start a second recovery or forward run. Current admin identity is
+proved; freshcanOpen/logout204/postlogout401 and signed rollback completion remain outstanding.
+The inventory below predates this failed handover. New hosts still incur cost. Retain failed
+containers/evidence until signed recovery, then reconcile only those exact stopped containers.
+[Consolidated rehearsal and correction](../agent-memory/production-kamal-cutover-rehearsal-2026-09-18.md).
+
+The owner authorized ECS-to-Kamal migration with isolated application candidate
+`0b0058adbc7353ec906a33746867af2a235b0934`. Latest read-only proof at08:19UTC still finds all three
+ECS services running one task each on `fc2838c4cb691033f41595c0d43587f10377d33c`; capacity remains1/2.
+API/AI original listener rules retain weighted target groups100/0. Inspect `ForwardConfig.TargetGroups`
+and the healthy task IPs; do not assume every forward action has a top-level `TargetGroupArn`.
+Old AgentCore remains READY/version37. Customer traffic has not been switched to Kamal.
+
+New stack `mangmee-kamal-production` is CREATE_COMPLETE (63Add, no replacement/deletion), executed
+once as `hotfix-infrastructure-20260918T070019Z`; VPC`vpc-033eebb5100e0dbbf`10.93.0.0/24.
+
+| Role | Instance | Public IP | Private IP |
+| --- | --- | --- | --- |
+| API AZa | `i-04afe07799fd19f5d` |54.169.102.70|10.93.0.10|
+| API AZb | `i-01951e536e32a875d` |13.213.1.94|10.93.0.42|
+| AI AZc | `i-0e04890bef2ec1bfb` |18.140.237.182|10.93.0.74|
+| workers AZa | `i-028c8f2e05fe5cd84` |13.212.141.178|10.93.0.106|
+
+These four hosts are running and incur cost; only Docker/Kamal proxies were bootstrapped. Host keys
+were verified from AWS console output. No app/consumer is running there. Separate runtime roles,
+encrypted disks, IMDSv2, DB/cache boundaries,14-day log groups and host alarms are provisioned.
+Two new ALB rules require the exact operator49.229.201.224/32; original ECS rules remain intact.
+Do not start application containers or workers as an untracked test against Production queues.
+
+Ordinary non-root profile`mangmee-kamal-production` assumes the new scoped deploy role from
+`watchdog-bedrock`. Bootstrap-only owner profile`thawatchai` provisioned the new stack and temporary
+inline policy`first-migration-20260918`. That policy expires2026-09-18T13:53:49.513914Z and permits
+only the original worker service/family/pass-roles, new stack/owned listener rules, and exact old
+provider readback. Existing API/AI service mutation is excluded. GetAgentRuntimeEndpoint also checks
+the parent runtime ARN; both exact read resources must be authorized. No ordinary app deploy uses root.
+
+Private target remains`cutoverComplete:false`; do not manufacture enrollment. Use the reviewed
+[first-migration command and recovery procedure](../../infra/kamal/README.md#first-ecs-to-kamal-migration).
+Local preparation`20260918T080339Z-c854a9c3` passed64.852s/425focused app tests using the independently
+completed360.504s candidate build. These are not live deploy/rollback timings. Signed Production
+acceptance and actual SYSTEM_ADMIN/customer OPEN remain outstanding.
+[Full inventory, retained failures and operation ledger](../agent-memory/production-kamal-two-release-paths-2026-09-18.md).
+
+## Production first-migration output reads — 2026-09-18
+
+A conditions-only CloudFormation update can complete both listener rules and then roll back while
+resolving an unchanged output. Operation `20260918T101611Z-1069a958` failed on `iam:GetRole` for the
+stack's `DeployRoleArn` after both rules switched. Read every output provider before worker handover;
+valid change-set scope and runtime deployment permissions alone do not prove this boundary.
+
+The staged stack has15outputs from EC2, IAM, ECR, KMS and AgentCore. Read-only AWS registry schema
+inspection identified each native resource READ permission set. Grant only bounded metadata reads
+under the existing migration expiry, and verify actual nonroot calls; IAM simulation alone is not
+live permission proof. KMS's provider soft-fails some optional metadata reads, so an audit denial is
+not automatically a fatal GetAtt failure. ECR policy-not-found is distinct from access denied.
+
+Explicit recovery `20260918T103003Z-7bfbc4ef` is signed `ROLLED_BACK_TO_ECS`; all three ECS services
+read back original source `fc2838c4cb691033f41595c0d43587f10377d33c`, customer OPEN/live and logout
+acceptance passed. No Kamal Production enrollment or completed hotfix is implied. See
+[output audit and verification](../agent-memory/production-kamal-output-preflight-2026-09-18.md).
+
 ## Isolated AWS rehearsal completed — 2026-09-14
 
 Later owner-requested UAT power resume: both retained Kamal hosts are running again (API

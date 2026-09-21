@@ -22,6 +22,9 @@ import { grantPaidPackageReceipts } from './billing-receipt-grants';
 import { grantTrialReceiptCarryover } from './billing-trial-carryover';
 import { fulfillPaidPackageRequest } from './billing-package-request';
 import { applyCapacity, attemptCapacity, capacityOptions, capacityValid } from './billing-capacity';
+import { fullPackagePurchaseImpact } from '../domain/billing-package';
+import { paidPackageCheckoutEvidence } from '../domain/paid-checkout-invoice';
+import { paidReceiptBalance } from './billing-receipt-grants';
 
 export const BILLING_STRIPE_EVENTS = new Set(['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded',
   'checkout.session.async_payment_failed', 'invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required', 'invoice.finalization_failed',
@@ -210,6 +213,10 @@ export class BillingReconcilerService {
         await this.billing.repeater.advance(account, attempt, leaseToken, this.config.sesWebBaseUrl);
         return;
       }
+      if (attempt && ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes((attempt.quoteSnapshot as unknown as BillingSnapshot).quote.purchaseMode ?? '')) {
+        await this.reconcileOneTime(account, attempt, leaseToken);
+        return;
+      }
       const restart = attempt ? (attempt.quoteSnapshot as unknown as BillingSnapshot).restart : undefined;
       let subscriptionId = account.baseSubscriptionId ?? hintedSubscriptionId;
       if (attempt) {
@@ -250,7 +257,7 @@ export class BillingReconcilerService {
       }
       if (stripeId(subscription.customer) !== account.customerId || subscription.metadata?.billingAccountId !== account.id ||
           (account.baseSubscriptionId && account.baseSubscriptionId !== subscription.id && !restart)) throw new Error('billing.subscription_binding');
-      const contractId = restart ? attempt!.id : account.contractAttemptId ?? subscription.metadata?.billingAttemptId;
+      const contractId = attempt ? attempt.id : account.contractAttemptId ?? subscription.metadata?.billingAttemptId;
       const contract = typeof contractId === 'string' ? await this.prisma.client.billingAttempt.findUnique({ where: { id: contractId } }) : null;
       if (!contract || contract.billingAccountId !== account.id || (!account.contractAttemptId && contract.id !== account.activeAttemptId)) throw new Error('billing.contract_binding');
       // Detect a second collectible subscription before granting or offering another purchase.
@@ -275,6 +282,10 @@ export class BillingReconcilerService {
       for (const invoice of invoices.filter((i) => i.status === 'paid').sort((a, b) => a.created - b.created)) {
         // A zero trial/credit invoice is never evidence of a successful card charge.
         if (invoice.total === 0) {
+          if (snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' && invoice.billing_reason === 'subscription_create' &&
+              invoice.status === 'paid' && invoice.amount_paid === 0 && invoice.livemode === account.livemode &&
+              stripeId(invoice.customer) === account.customerId && stripeId(invoice.parent?.subscription_details?.subscription) === subscription.id)
+            continue;
           if (!await this.billing.repeater.ownedZeroInvoice(account, invoice, await this.stripe.list(`/invoices/${invoice.id}/lines`, {}))) {
             await this.billing.issue(account.companyId, 'ZERO_INVOICE_REVIEW', invoice.id);
           }
@@ -319,6 +330,7 @@ export class BillingReconcilerService {
         const item = subscription.items?.data?.find((i: StripeObject) => stripeId(i.price) === renewalSnapshot.priceId);
         const next = prepaidNext ?? (typeof item?.current_period_end === 'number' ? new Date(item.current_period_end * 1000) : null);
         await tx.billingAccount.update({ where: { id: account.id }, data: { baseSubscriptionId: subscription.id,
+          renewalMode: snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' ? 'PROMPTPAY_RENEW' : 'CARD_AUTO', billingAnchorDay: null,
           contractAttemptId: contract.id, activeAttemptId: null, subscriptionState: subscription.status,
           collectionPauseJson: observedCollectionPause(subscription) ? observedCollectionPause(subscription) as Prisma.InputJsonValue : Prisma.DbNull,
           cancelAtPeriodEnd: subscription.cancel_at_period_end === true || (typeof subscription.cancel_at === 'number' && subscription.cancel_at * 1000 === current.paidThrough?.getTime()),
@@ -376,8 +388,16 @@ export class BillingReconcilerService {
         if(subscription||session.mode!=='payment'||stripeId(session.invoice)!==invoice.id)throw new Error('billing.original_invoice_changed');
         await this.billing.repeater.importPayment(account,attempt,session,invoice,lease,recordOnly);return;
       }
+      if (['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(snapshot.quote.purchaseMode ?? '') && !subscription) {
+        if (subscription || session.mode !== 'payment' || stripeId(session.invoice) !== invoice.id) throw new Error('billing.original_invoice_changed');
+        await this.reconcileOneTime(account, attempt, lease, recordOnly, session, invoice);
+        return;
+      }
       if(!subscription||subscription.id!==subscriptionId||subscription.object!=='subscription'||subscription.livemode!==account.livemode||stripeId(subscription.customer)!==account.customerId||
-        subscription.metadata?.billingAccountId!==account.id||session.mode!=='subscription'||stripeId(session.subscription)!==subscription.id||
+        subscription.metadata?.billingAccountId!==account.id||
+        (snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW'
+          ? session.mode !== 'payment' || session.subscription != null || account.baseSubscriptionId !== subscription.id
+          : session.mode !== 'subscription' || stripeId(session.subscription) !== subscription.id) ||
         (attempt.subscriptionId&&attempt.subscriptionId!==subscription.id))throw new Error('billing.subscription_binding');
       const lines=await this.stripe.list(`/invoices/${invoice.id}/lines`,{}),start=lines[0]?.period?.start;
       if(!Number.isSafeInteger(start))throw new Error('billing.invoice_period_missing');
@@ -402,6 +422,11 @@ export class BillingReconcilerService {
       // Continue only the customer's original paid pack; the existing journal fences every command.
       await this.billing.repeater.advance(account,initial,lease,this.config.sesWebBaseUrl);return;
     }
+    if (initial && ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes((initial.quoteSnapshot as unknown as BillingSnapshot).quote.purchaseMode ?? '')) {
+      if (account.activeAttemptId !== initial.id) throw new Error('billing.original_attempt_changed');
+      await this.reconcileOneTime(account, initial, lease);
+      return;
+    }
     if(!source.subscriptionId)throw new Error('billing.subscription_binding');
     const subscription=await this.stripe.request('GET',`/subscriptions/${source.subscriptionId}`);
     if(subscription.id!==source.subscriptionId||stripeId(subscription.customer)!==account.customerId||subscription.metadata?.billingAccountId!==account.id)throw new Error('billing.subscription_binding');
@@ -415,6 +440,204 @@ export class BillingReconcilerService {
     const snapshot=(source.contractSnapshot as unknown as BillingSnapshot|null)??await this.contractSnapshot(account.id,source.periodStart,contract.quoteSnapshot as unknown as BillingSnapshot);
     await this.verifyAndApplyInvoice(account,contract,invoice,subscription,lines,snapshot,lease);
   }
+
+  private async reconcileOneTime(account: BillingAccount, attempt: BillingAttempt, lease: string,
+    recordOnly?: (tx: Prisma.TransactionClient) => Promise<void>, originalSession?: StripeObject, originalInvoice?: StripeObject) {
+    const snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
+    const mode = snapshot.quote.purchaseMode;
+    if (!['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(mode ?? '') || !account.customerId || !snapshot.productId || snapshot.repeat)
+      throw new Error('billing.one_time_contract_missing');
+    const sessions = originalSession ? [originalSession] : attempt.checkoutSessionId
+      ? [await this.stripe.request('GET', `/checkout/sessions/${attempt.checkoutSessionId}`)]
+      : (await this.stripe.list('/checkout/sessions', { customer: account.customerId })).filter(s => s.metadata?.billingAttemptId === attempt.id);
+    if (sessions.length !== 1) throw new Error('billing.checkout_unknown');
+    const session = sessions[0]!;
+    if (session.object !== 'checkout.session' || session.mode !== 'payment' || session.livemode !== account.livemode ||
+        !['open', 'complete', 'expired'].includes(session.status) || stripeId(session.customer) !== account.customerId ||
+        session.client_reference_id !== attempt.id || session.metadata?.billingAccountId !== account.id ||
+        session.metadata?.billingAttemptId !== attempt.id || session.subscription != null ||
+        (attempt.checkoutSessionId && attempt.checkoutSessionId !== session.id))
+      throw new Error('billing.one_time_session_binding');
+    if (!recordOnly && session.status === 'expired' && session.payment_status === 'unpaid' && !session.invoice) {
+      await this.prisma.client.$transaction(async tx => {
+        await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+        const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+        if (current.activeAttemptId !== attempt.id) throw new Error('billing.one_time_source_changed');
+        await tx.billingAttempt.update({ where: { id: attempt.id }, data: { status: 'EXPIRED', checkoutSessionId: session.id } });
+        await tx.billingAccount.update({ where: { id: account.id }, data: { activeAttemptId: null, observedAt: new Date(), version: { increment: 1 } } });
+      });
+      return;
+    }
+    if (session.status !== 'complete' || session.payment_status !== 'paid' || !stripeId(session.invoice)) {
+      if (!recordOnly) await this.prisma.client.billingAttempt.update({ where: { id: attempt.id }, data: {
+        status: session.status === 'open' ? 'OPEN' : 'UNKNOWN', checkoutSessionId: session.id } });
+      return;
+    }
+    const invoice = originalInvoice ?? await this.stripe.request('GET', `/invoices/${stripeId(session.invoice)}`);
+    if (invoice.id !== stripeId(session.invoice)) throw new Error('billing.one_time_invoice_binding');
+    const payments = await this.stripe.list('/invoice_payments', { invoice: invoice.id });
+    const intent = await this.stripe.request('GET', `/payment_intents/${stripeId(session.payment_intent)}`, { expand: ['latest_charge.balance_transaction'] });
+    const charge = typeof intent.latest_charge === 'object' ? intent.latest_charge :
+      await this.stripe.request('GET', `/charges/${stripeId(intent.latest_charge)}`, { expand: ['balance_transaction'] });
+    const evidence = paidPackageCheckoutEvidence({ session, invoice, payments, intent, charge, snapshot, attemptId: attempt.id,
+      billingAccountId: account.id, customerId: account.customerId, productId: snapshot.productId, livemode: account.livemode,
+      paymentMethod: mode?.startsWith('PROMPTPAY') ? 'promptpay' : 'card',
+      checkoutLines: await this.stripe.list(`/checkout/sessions/${session.id}/line_items`, {}),
+      invoiceLines: await this.stripe.list(`/invoices/${invoice.id}/lines`, {}) });
+    const impact = fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval,
+      offer: snapshot.quote.offer, verifiedPaidAt: evidence.paidAt,
+      paidThrough: snapshot.oneTime ? new Date(snapshot.oneTime.paidThrough) : null, remainingPaidReceipts: 0,
+      anchorDay: snapshot.oneTime?.anchorDay });
+    const siblings = await this.stripe.list('/subscriptions', { customer: account.customerId, status: 'all' });
+    const collectible = siblings.some(sub => !['canceled', 'incomplete_expired'].includes(sub.status));
+    await this.prisma.client.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${account.companyId}`}))`;
+      await lockPlanTermCompany(tx, account.companyId);
+      await this.assertLease(tx, account.id, lease);
+      if (recordOnly) await recordOnly(tx);
+      const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+      const existing = await tx.billingInvoice.findUnique({ where: { sourceAttemptId: attempt.id } });
+      if (existing && (existing.providerInvoiceId !== evidence.invoiceId || existing.evidenceHash !== evidence.evidenceHash))
+        throw new Error('billing.one_time_evidence_changed');
+      const row = await tx.billingInvoice.upsert({ where: { sourceAttemptId: attempt.id },
+        update: { feeSatang: evidence.feeSatang }, create: { billingAccountId: account.id, sourceAttemptId: attempt.id,
+          providerInvoiceId: evidence.invoiceId, subscriptionId: null, providerNumber: evidence.number,
+          offerSnapshot: snapshot.quote.offer as unknown as Prisma.InputJsonValue, contractSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+          policyRevisionId: attempt.policyRevisionId, currency: 'THB', totalSatang: evidence.totalSatang, paidSatang: evidence.totalSatang,
+          taxSatang: evidence.taxSatang, refundedSatang: evidence.refundedSatang, disputed: evidence.disputed,
+          financialObservedAt: new Date(), feeSatang: evidence.feeSatang, providerChargeId: evidence.chargeId,
+          periodStart: impact.serviceStartsAt, periodEnd: impact.paidThrough, providerStatus: 'paid', evidenceHash: evidence.evidenceHash } });
+      await recordBillingFinancials(tx, account, row, { refundedSatang: evidence.refundedSatang, disputed: evidence.disputed });
+      if (row.appliedAt) { await resolveAppliedInvoiceIssues(tx, account, row.id); return; }
+      const company = await tx.company.findUniqueOrThrow({ where: { id: account.companyId }, include: { planTerm: true } });
+      const source = snapshot.oneTime ? await tx.billingInvoice.findFirst({ where: { id: snapshot.oneTime.invoiceId,
+        billingAccountId: account.id, applyStatus: 'APPLIED', appliedAt: { not: null } } }) : null;
+      const capacity = await attemptCapacity(tx, account.id, attempt);
+      const capacityReady = capacity ? capacityValid(await capacityOptions(tx, company.id, snapshot.quote.offer), capacity)
+        : await restartFits(tx, company.id, snapshot.quote.offer);
+      const sourceReady = !collectible && current.activeAttemptId === attempt.id &&
+        termProjectionHash(company.planTerm) === snapshot.termHash &&
+        (!snapshot.oneTime || (source?.periodEnd.toISOString() === snapshot.oneTime.paidThrough &&
+          current.paidThrough?.toISOString() === snapshot.oneTime.paidThrough &&
+          current.billingAnchorDay === snapshot.oneTime.anchorDay && !source.refundedSatang && !source.disputed &&
+          current.termProjectionHash === snapshot.termHash)) &&
+        (!current.baseSubscriptionId || (snapshot.restart?.subscriptionId === current.baseSubscriptionId &&
+          current.paidThrough && current.paidThrough <= evidence.paidAt)) &&
+        (company.status === 'ACTIVE' || (company.status === 'DISABLED' && !!company.planTerm?.termDisabledAt));
+      if (recordOnly || !sourceReady || !capacityReady || evidence.refundedSatang || evidence.disputed ||
+          impact.paidThrough <= new Date() || evidence.paidAt > new Date()) {
+        await tx.billingInvoice.update({ where: { id: row.id }, data: { applyStatus: 'HELD',
+          errorCode: !capacityReady ? 'BILLING_CAP_SELECTION_REQUIRED' : 'access_review_required' } });
+        await detectBillingIssue(tx, { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
+          livemode: account.livemode, kind: 'PAID_HELD', referenceId: row.id });
+        return;
+      }
+      const balance = await paidReceiptBalance(tx, company.id, account.id, evidence.paidAt);
+      fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval,
+        offer: snapshot.quote.offer, verifiedPaidAt: evidence.paidAt,
+        paidThrough: snapshot.oneTime ? new Date(snapshot.oneTime.paidThrough) : null,
+        remainingPaidReceipts: balance.remaining, anchorDay: snapshot.oneTime?.anchorDay });
+      if (!snapshot.oneTime && !snapshot.restart) await grantTrialReceiptCarryover(tx, {
+        companyId: company.id, billingAccountId: account.id, invoiceId: row.id,
+        policyRevisionId: attempt.policyRevisionId, source: snapshot.trialCarryover,
+        paidAt: evidence.paidAt, periodEnd: impact.paidThrough });
+      if (capacity) await applyCapacity(tx, company.id, snapshot.quote.offer, capacity, attempt.initiatingUserId, row.id);
+      await tx.companyPlanTerm.upsert({ where: { companyId: company.id }, create: {
+        companyId: company.id, tierKey: snapshot.quote.offer.offerKey, branchLimit: snapshot.quote.offer.branchLimit,
+        employeeLimit: snapshot.quote.offer.employeeLimit, monthlySlipLimit: snapshot.quote.offer.monthlySlipLimit,
+        termStartAt: impact.serviceStartsAt, termEndsAt: impact.paidThrough, lastRenewedAt: new Date(),
+      }, update: { tierKey: snapshot.quote.offer.offerKey, branchLimit: snapshot.quote.offer.branchLimit,
+        employeeLimit: snapshot.quote.offer.employeeLimit, monthlySlipLimit: snapshot.quote.offer.monthlySlipLimit,
+        ...(!snapshot.oneTime || impact.serviceStartsAt.getTime() === evidence.paidAt.getTime() ? { termStartAt: impact.serviceStartsAt } : {}),
+        termEndsAt: impact.paidThrough, termDisabledAt: null, warmupUntil: null, warmupSlipLimit: null,
+        warn7SentAt: null, warn3SentAt: null, warn1SentAt: null, expiredNotifiedAt: null,
+        lastRenewedAt: new Date(), renewCount: { increment: 1 } } });
+      if (company.status === 'DISABLED' && company.planTerm?.termDisabledAt) await this.lifecycle.execute({ companyId: company.id,
+        targetStatus: 'ACTIVE', requestingAdminUserId: null, requestId: row.id, reason: 'stripe_verified_one_time_paid' }, tx);
+      await grantPaidPackageReceipts(tx, { companyId: company.id, billingAccountId: account.id, sourceKey: row.id,
+        policyRevisionId: attempt.policyRevisionId, kind: snapshot.oneTime ? 'REPEAT' : 'INITIAL',
+        units: snapshot.quote.offer.receiptAllowance, serviceStart: impact.serviceStartsAt, serviceEnd: impact.paidThrough,
+        availableAt: evidence.paidAt, expiresAt: impact.paidThrough });
+      const term = await tx.companyPlanTerm.findUniqueOrThrow({ where: { companyId: company.id } });
+      await tx.billingInvoice.update({ where: { id: row.id }, data: { applyStatus: 'APPLIED', appliedAt: new Date(), errorCode: null } });
+      await tx.billingAttempt.update({ where: { id: attempt.id }, data: { status: 'COMPLETED', errorCode: null, checkoutSessionId: session.id } });
+      await tx.billingAccount.update({ where: { id: account.id }, data: { paidThrough: impact.paidThrough, baseSubscriptionId: null,
+        contractAttemptId: attempt.id, activeAttemptId: mode === 'PROMPTPAY_RENEW' ? attempt.id : null,
+        subscriptionState: 'NONE', renewalMode: mode!,
+        billingAnchorDay: snapshot.oneTime?.anchorDay ?? evidence.paidAt.getUTCDate(), nextChargeAt: null,
+        cancelAtPeriodEnd: false, graceEndsAt: null, termProjectionHash: termProjectionHash(term),
+        observedAt: new Date(), version: { increment: 1 } } });
+      await fulfillPaidPackageRequest(tx, company.id, account.id, row.id);
+      await resolveAppliedInvoiceIssues(tx, account, row.id);
+      await tx.auditLog.create({ data: { companyId: company.id, actorUserId: attempt.initiatingUserId,
+        action: 'billing.invoice.applied', targetType: 'BillingInvoice', targetId: row.id, requestId: attempt.id,
+        result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { purchaseMode: mode, paidThrough: impact.paidThrough.toISOString() } } });
+      await tx.outboxEvent.upsert({ where: { eventKey: `billing:applied:${row.id}` }, update: {}, create: {
+        companyId: company.id, eventType: 'billing.invoice.applied', aggregateType: 'BillingInvoice', aggregateId: row.id,
+        eventKey: `billing:applied:${row.id}`, payloadJson: { schemaVersion: 1, occurredAt: new Date().toISOString(),
+          data: { invoiceId: row.id, companyId: company.id } } } });
+    });
+    if (mode === 'PROMPTPAY_RENEW' && !recordOnly) await this.bindPromptPayRenewal(account, attempt, snapshot, lease, impact.paidThrough);
+  }
+
+  private async bindPromptPayRenewal(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot,
+    lease: string, paidThrough: Date) {
+    const current = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+    if (current.activeAttemptId !== attempt.id || current.renewalMode !== 'PROMPTPAY_RENEW' ||
+        current.paidThrough?.getTime() !== paidThrough.getTime() || current.baseSubscriptionId)
+      throw new Error('billing.promptpay_renewal_source_changed');
+    const existing = (await this.stripe.list('/subscriptions', { customer: account.customerId, status: 'all' }))
+      .filter(sub => sub.metadata?.billingAttemptId === attempt.id && sub.metadata?.billingAccountId === account.id);
+    if (existing.length > 1) throw new Error('billing.promptpay_renewal_duplicate');
+    let sub = existing[0];
+    if (!sub) {
+      const journal = (attempt.collectionJson ?? {}) as Record<string, unknown>;
+      const requestedAt = typeof journal.qrSubscriptionRequestedAt === 'string' ? Date.parse(journal.qrSubscriptionRequestedAt) : null;
+      if (requestedAt !== null && (!Number.isSafeInteger(requestedAt) || Date.now() - requestedAt > 23 * 3600000))
+        throw new Error('billing.promptpay_renewal_request_unknown');
+      if (paidThrough.getTime() <= Date.now() + 3600000) throw new Error('billing.promptpay_renewal_boundary');
+      if (requestedAt === null) await this.prisma.client.$transaction(async tx => {
+        await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+        const fresh = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+        if (fresh.activeAttemptId !== attempt.id || fresh.baseSubscriptionId) throw new Error('billing.promptpay_renewal_source_changed');
+        await tx.billingAttempt.update({ where: { id: attempt.id }, data: {
+          collectionJson: { ...journal, qrSubscriptionRequestedAt: new Date().toISOString() } as Prisma.InputJsonValue } });
+      });
+      sub = await this.stripe.request('POST', '/subscriptions', {
+        customer: account.customerId, collection_method: 'send_invoice', days_until_due: 7,
+        payment_settings: { payment_method_types: ['promptpay'] },
+        items: [{ price: snapshot.priceId, quantity: 1, ...(snapshot.policy.taxRateId ? { tax_rates: [snapshot.policy.taxRateId] } : {}) }],
+        trial_end: Math.floor(paidThrough.getTime() / 1000), billing_mode: { type: 'classic' },
+        trial_settings: { end_behavior: { missing_payment_method: 'create_invoice' } },
+        metadata: { billingAttemptId: attempt.id, billingAccountId: account.id },
+      }, `mm:${attempt.id}:promptpay-renewal`);
+    }
+    if (sub.object !== 'subscription' || sub.livemode !== account.livemode || stripeId(sub.customer) !== account.customerId ||
+        sub.metadata?.billingAttemptId !== attempt.id || sub.metadata?.billingAccountId !== account.id ||
+        sub.collection_method !== 'send_invoice' || !['trialing', 'active'].includes(sub.status) ||
+        sub.trial_end !== Math.floor(paidThrough.getTime() / 1000) || sub.items?.data?.length !== 1 ||
+        stripeId(sub.items.data[0].price) !== snapshot.priceId || sub.payment_settings?.payment_method_types?.length !== 1 ||
+        sub.payment_settings.payment_method_types[0] !== 'promptpay')
+      throw new Error('billing.promptpay_renewal_subscription_binding');
+    const invoices = await this.stripe.list('/invoices', { subscription: sub.id });
+    if (invoices.some(i => i.livemode !== account.livemode || stripeId(i.customer) !== account.customerId ||
+        stripeId(i.parent?.subscription_details?.subscription) !== sub.id || i.total !== 0 || i.amount_paid !== 0))
+      throw new Error('billing.promptpay_renewal_early_invoice');
+    await this.prisma.client.$transaction(async tx => {
+      await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+      const fresh = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+      const paid = await tx.billingInvoice.findUnique({ where: { sourceAttemptId: attempt.id } });
+      if (fresh.activeAttemptId !== attempt.id || fresh.baseSubscriptionId || fresh.paidThrough?.getTime() !== paidThrough.getTime() ||
+          paid?.applyStatus !== 'APPLIED' || !paid.appliedAt) throw new Error('billing.promptpay_renewal_source_changed');
+      await tx.billingSubscriptionContract.upsert({ where: { billingAccountId_sourceAttemptId: {
+        billingAccountId: account.id, sourceAttemptId: attempt.id } }, create: { billingAccountId: account.id,
+        sourceAttemptId: attempt.id, effectiveAt: paidThrough, snapshotJson: snapshot as unknown as Prisma.InputJsonValue }, update: {} });
+      await tx.billingAccount.update({ where: { id: account.id }, data: { baseSubscriptionId: sub.id,
+        subscriptionState: sub.status, nextChargeAt: paidThrough, activeAttemptId: null,
+        observedAt: new Date(), version: { increment: 1 } } });
+    });
+  }
+
   private async verifyAndApplyInvoice(account:BillingAccount,contract:BillingAttempt,invoice:StripeObject,subscription:StripeObject,lines:StripeObject[],snapshot:BillingSnapshot,lease:string,recordOnly?:(tx:Prisma.TransactionClient)=>Promise<void>) {
     const payments=await this.stripe.list('/invoice_payments',{invoice:invoice.id}),payment=payments.find(p=>p.status==='paid'&&p.payment?.type==='payment_intent');
     if(!payment)throw new Error('billing.card_payment_missing');
@@ -454,14 +677,17 @@ export class BillingReconcilerService {
         }
       });
     }
-    if (!['past_due', 'unpaid'].includes(subscription.status)) return subscription;
+    const promptPayRenew = snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW';
+    if (!['past_due', 'unpaid'].includes(subscription.status) && !(promptPayRenew && subscription.status === 'active')) return subscription;
     const current = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
     if (!current.paidThrough || snapshot.policy.graceDays === null) return subscription;
+    if (promptPayRenew && current.paidThrough > new Date()) return subscription;
     const unpaid = invoices.find(invoice => invoice.id === stripeId(subscription.latest_invoice));
     // A provider status alone cannot give free access: this must be this contract's unpaid renewal.
-    if (!unpaid || unpaid.status !== 'open' || unpaid.billing_reason !== 'subscription_cycle' ||
+    if (!unpaid || unpaid.status !== 'open' || !['subscription_cycle', ...(promptPayRenew ? ['subscription_create'] : [])].includes(unpaid.billing_reason) ||
         unpaid.livemode !== account.livemode || stripeId(unpaid.customer) !== account.customerId ||
         stripeId(unpaid.parent?.subscription_details?.subscription) !== subscription.id ||
+        unpaid.collection_method !== (promptPayRenew ? 'send_invoice' : 'charge_automatically') ||
         unpaid.total !== snapshot.quote.totalSatang || unpaid.currency !== 'thb' || unpaid.amount_paid !== 0) {
       await this.billing.issue(account.companyId, 'RENEWAL_REVIEW', account.id); return subscription;
     }
@@ -501,7 +727,7 @@ export class BillingReconcilerService {
     // Reread immediately before cancelling: a recovered payment or a newer invoice changes the command.
     const latest = await this.stripe.request('GET', `/subscriptions/${subscription.id}`);
     if (latest.id !== subscription.id || latest.livemode !== account.livemode || stripeId(latest.customer) !== account.customerId || latest.metadata?.billingAccountId !== account.id) throw new Error('billing.subscription_binding');
-    if (!['past_due', 'unpaid'].includes(latest.status) || stripeId(latest.latest_invoice) !== unpaid.id) return latest;
+    if (!['past_due', 'unpaid', ...(promptPayRenew ? ['active'] : [])].includes(latest.status) || stripeId(latest.latest_invoice) !== unpaid.id) return latest;
     const key = `grace-expire:${account.id}:${current.paidThrough.getTime()}`;
     const operation = await this.prisma.client.$transaction(async tx => {
       await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, leaseToken);
@@ -576,6 +802,7 @@ export class BillingReconcilerService {
       // Historical evidence cannot replace a newer customer contract merely because its paid end is later.
       const held = !currentContract || (current.paidThrough !== null && evidence.periodEnd <= current.paidThrough) || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt)) ||
         evidence.disputed || evidence.refundedSatang > 0 || evidence.periodEnd <= new Date() || evidence.periodStart > new Date() ||
+        (snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' && evidence.periodStart.getTime() !== current.paidThrough?.getTime()) ||
         termProjectionHash(company.planTerm) !== (current.termProjectionHash ?? snapshot.termHash) || !capacityReady ||
         (restarting && (current.baseSubscriptionId !== restarting.subscriptionId || current.activeAttemptId !== contract.id ||
           current.contractAttemptId !== restarting.contractAttemptId || current.paidThrough?.toISOString() !== restarting.paidThrough));
@@ -606,6 +833,7 @@ export class BillingReconcilerService {
         if ((applyingChange || restarting) && current.pendingPlanChangeId) await tx.billingOperation.update({ where: { id: current.pendingPlanChangeId },
           data: { state: applyingChange ? 'APPLIED' : 'SUPERSEDED', observedAt: new Date(), version: { increment: 1 } } });
         await tx.billingAccount.update({ where: { id: account.id }, data: { paidThrough: evidence.periodEnd, graceEndsAt: null,
+          renewalMode: snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' ? 'PROMPTPAY_RENEW' : 'CARD_AUTO', billingAnchorDay: null,
           ...(applyingChange || restarting ? { pendingPlanChangeId: null } : {}),
           ...(restarting ? { baseSubscriptionId: evidence.subscriptionId, contractAttemptId: contract.id, activeAttemptId: null } : {}),
           termProjectionHash: termProjectionHash({ ...term, billingReceiptAccountId: account.id }), version: { increment: 1 } } });

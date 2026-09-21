@@ -1,12 +1,16 @@
-import { BILLING_PAID_TIERS } from '@watchdog-bms/contracts';
+import { BILLING_PAID_TIERS, type BillingPurchaseMode } from '@watchdog-bms/contracts';
+
+const purchaseModes: BillingPurchaseMode[] = ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'];
 
 export function billingProfileSelection(search: string) {
   const params = new URLSearchParams(search), offer = params.get('offer'), interval = params.get('interval');
   if (!BILLING_PAID_TIERS.some(value => value === offer) || !['month', 'year'].includes(interval ?? '')) return null;
-  return { offer: offer!, interval: interval!, channel: params.get('channel') === 'line' ? 'line' : 'web' };
+  const purchaseMode = params.get('purchaseMode');
+  return { offer: offer!, interval: interval!, channel: params.get('channel') === 'line' ? 'line' : 'web',
+    ...(purchaseModes.includes(purchaseMode as BillingPurchaseMode) ? { purchaseMode: purchaseMode as BillingPurchaseMode } : {}) };
 }
 
-export function billingProfileHref(companyId: string, selection: { offer: string; interval: string; channel: string }) {
+export function billingProfileHref(companyId: string, selection: { offer: string; interval: string; channel: string; purchaseMode?: BillingPurchaseMode }) {
   return `/companies/${encodeURIComponent(companyId)}/settings/profile?${new URLSearchParams({ ...selection, returnTo: 'billing' })}#shop`;
 }
 

@@ -9,7 +9,7 @@ import type { BillingSupportOutcomeKind } from '@watchdog-bms/contracts';
 import { BillingPlanAdjustmentDto, BillingReceiptAdjustmentDto, BillingRefundDto, BillingBatchDto, BillingTimelineExportDto, BillingEmptyDto, BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
 import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, HttpException, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
-import type { BillingCheckoutBody, BillingConfigurationInput, BillingConfigurationDraftInput } from '@watchdog-bms/contracts';
+import type { BillingCheckoutBody, BillingConfigurationInput, BillingConfigurationDraftInput, BillingPurchaseMode } from '@watchdog-bms/contracts';
 import { Public } from '../../../common/security/public.decorator';
 import { RequirePermissions } from '../../../common/security/permissions.decorator';
 import { assertWorkerToken } from '../../../common/security/worker-token';
@@ -465,7 +465,7 @@ export class BillingAdminController {
 @RequirePermissions('account.session.read')
 @Controller('companies/:companyId/billing')
 export class BillingController {
-  constructor(private readonly billing: BillingService, private readonly limits: RedisRateLimitService) {}
+  constructor(private readonly billing: BillingService, private readonly limits: RedisRateLimitService, private readonly checkoutExpiry: BillingCheckoutExpiryService) {}
 
   private async limit(req: AuthedRequest): Promise<void> {
     await this.billing.assertOwner(req.context);
@@ -516,8 +516,10 @@ export class BillingController {
   }
   @Post('quote') @HttpCode(200)
   async quote(@Req() req: AuthedRequest, @Body() body: BillingQuoteDto) {
-    const fields = bodyFields(body, ['offerKey', 'interval', 'billingEmail', 'capacity']);
-    const input = { offerKey: textField(fields.offerKey, 40), interval: textField(fields.interval, 10), billingEmail: textField(fields.billingEmail, 320), capacity: fields.capacity };
+    const fields = bodyFields(body, ['offerKey', 'interval', 'billingEmail', 'capacity', 'purchaseMode']);
+    if (fields.purchaseMode !== undefined && !['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(String(fields.purchaseMode))) invalid();
+    const input = { offerKey: textField(fields.offerKey, 40), interval: textField(fields.interval, 10), billingEmail: textField(fields.billingEmail, 320),
+      capacity: fields.capacity, purchaseMode: fields.purchaseMode as BillingPurchaseMode | undefined };
     await this.limit(req);
     return this.billing.quote(req.context, input);
   }
@@ -546,6 +548,10 @@ export class BillingController {
   @Post('attempts/:attemptId/resume') @HttpCode(200)
   async resume(@Req() req: AuthedRequest, @Param('attemptId') id: string) {
     await this.limit(req); return this.billing.resume(req.context, id);
+  }
+  @Post('attempts/:attemptId/cancel') @HttpCode(200)
+  async cancelCheckout(@Req() req: AuthedRequest, @Param('attemptId') id: string, @Body() body: BillingEmptyDto) {
+    bodyFields(body, []); await this.limit(req); return this.checkoutExpiry.cancelOwn(req.context, uuid(id));
   }
   @Post('refresh') @HttpCode(202)
   async refresh(@Req() req: AuthedRequest) { await this.limit(req); return this.billing.refresh(req.context); }
