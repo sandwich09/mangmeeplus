@@ -347,3 +347,15 @@ unit (สถานะดีล, snapshot, quoteTotals, ladder-less validation, l
 | D-P3-9 | scan ปิด EXPIRED ข้ามดีลที่มี BillingAttempt ยังเปิดอยู่; session ที่จ่ายหลังหมดอายุยัง apply (S46) | `expireSweep` ของ Phase 2 ยังไม่รู้จัก attempt |
 | D-P3-10 | ตาราง `SalesAttribution` สร้างใน Phase 3 (แถวแรกเมื่อดีล APPLIED, source DEAL); Phase 4 เพิ่ม REFERRAL และรายงาน | ยังไม่มีตารางนี้ในโค้ด |
 | D-P3-11 | ไม่มี smoke ของโหมดครั้งเดียว (#667) ในระบบเลย → `billing-deal-smoke.ts` ต้องสร้าง fixture โหมด payment เอง (ต้นแบบ `billing-repeat-smoke.ts`) และครอบคลุมเส้นทางครั้งเดียวของ catalog ไปด้วย | `billing-http-smoke.ts` ยืนยัน `mode === 'subscription'` เท่านั้น |
+
+### 19.7 ปรับตาม PR #676 (develop 2026-09-21 "บริษัทเดิมซื้อแพ็กเกจ catalog เองได้") — มติเพิ่มก่อน Phase 3
+
+| ID | มติ | เหตุผลจากโค้ด |
+|---|---|---|
+| R-676-1 | สิทธิ์เมนูของดีลเขียนผ่าน `billingFeaturePlan`/`applyBillingFeaturePlan` ของ #676 โดยเพิ่มพารามิเตอร์ชุดเมนูเป้าหมาย (ค่าเริ่มต้น = preset starter เดิม) — แทน D-P3-5 | ตัวเขียนของ #676 ใช้ epoch/lastSeq/runoff เดิมและเก็บ Admin override ให้แล้ว แต่เป้าหมายผูก preset starter ตายตัว |
+| R-676-2 | เส้นทางจ่ายครั้งเดียว (`reconcileOneTime`) ยังไม่ apply สิทธิ์เมนูเลยแม้ quote จะ pin `featurePlan` ไว้ → Phase 3 เติมให้ครบทั้ง catalog ครั้งเดียวและดีล (lock, `featureReady`, HELD `BILLING_ENTITLEMENT_REVIEW_REQUIRED`, runoff) | ช่องว่างของ #676 ที่กระทบ CARD_ONCE/PROMPTPAY_ONCE ทุกราย |
+| R-676-3 | ดีลรับได้เมื่อ purchase source = NO_TERM / TRIAL / ADMIN_MANUAL / PAID_EXPIRED_CURRENT_MODE หรือ PAID_CURRENT_MODE แบบครั้งเดียว (ต่อท้าย); PAID_CURRENT_MODE ที่มี subscription → `CONTROL_DEAL_SUBSCRIPTION_REVIEW`; PAID_OTHER_MODE/SOURCE_INCONSISTENT → `BILLING_SOURCE_REVIEW_REQUIRED` เดิม (แทน D-P3-3) | ใช้ตัวจำแนก `billingPurchaseSource` ตัวเดียวกับ catalog |
+| R-676-4 | ดีลจ่ายแล้ว → คำขอเปลี่ยนแพ็กเกจของลูกค้าที่ค้างถูก supersede (ฟังก์ชันเดิม); ลูกค้าซื้อ catalog สำเร็จขณะมีดีล APPROVED ที่ยังไม่จ่ายและไม่มี Checkout ค้าง → ดีลเป็น CANCELLED (`paymentState CATALOG_SUPERSEDED`) + audit + แสดงใน "งานของฉัน" | spec #676 §5: ห้ามมี Checkout active สองรายการ |
+| R-676-5 (Q10) | ดีลที่จ่ายแล้ว → ซื้อ catalog ทีหลัง = ต่อท้ายหลังวันหมดของดีล (กติกา one-time continuation เดิม, ไม่มีการคิดเครดิต); ค่าเริ่มต้นจนกว่า Owner จะสั่งต่างออกไป | #676 ปิดกรณีนี้รอมติ; การต่อท้ายไม่ทำให้มูลค่าดีลหาย |
+| R-676-6 | S15 ปิด: `BILLING_LEGACY_REVIEW_REQUIRED` ไม่มีในโค้ดแล้ว (จำแนก source แทน) | #676 ถอด guard เดิมออก |
+| R-676-7 | CI: PR gate รันเฉพาะ unit/PG spec ใน "Migrations and Boot"; billing HTTP smoke อยู่ใน extended-tests (สั่งรันเอง) → `billing-deal-smoke` ต้องรันในเครื่องก่อน push ทุกครั้ง และผูกใน extended-tests; `billing-feature-entitlements.pg.spec.ts` ของ #676 ที่ยังไม่ถูกรันใน CI ถูกผูกเข้า Migrations and Boot ด้วย | #677 ปรับโครง CI |

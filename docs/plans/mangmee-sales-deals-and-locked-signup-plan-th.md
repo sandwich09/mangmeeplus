@@ -168,6 +168,7 @@
 - Phase 4 เพิ่ม: สลิปสำรอง (Q9 ค่าเริ่มต้น = เลื่อนมาที่นี่) ยก endpoint/verify จาก special-invoice plan; แปลง subscription บัตรอัตโนมัติเป็นดีล (Q7 ค่าเริ่มต้น = ยกเลิกทันทีเมื่อจ่าย ไม่มี proration ในระบบ; ฟอร์มดีลโชว์มูลค่าคงเหลือให้เซลล์หักเอง; issue `DEAL_SUBSCRIPTION_CANCEL_PENDING` + retry; เหตุการณ์ subscription เก่าไม่ hold บัญชี — S34)
 - Phase 5 เพิ่ม: ดีลต่ออายุอัตโนมัติรองรับ `PROMPTPAY_RENEW` ด้วย (Q8 ค่าเริ่มต้น) ผ่าน Price ของดีล + `bindPromptPayRenewal`; การ์ดใช้ตัวเลือกโหมดของ #667 (`CARD_AUTO`/`PROMPTPAY_RENEW`)
 - การนับยอดทีมขาย (§17.2) ไม่เปลี่ยน: ครั้งแรกครั้งเดียวทุกโหมด; `PROMPTPAY_RENEW` นับเฉพาะ QR ครั้งแรก
+- 2026-09-21 บ่าย: merge develop 143f7e07 อีกรอบ (#676 ร้านเดิมซื้อ catalog เอง, #677 CI gate ใหม่ ~3 นาที: billing HTTP smoke ย้ายไป extended-tests แบบสั่งรันเอง, #681) — PG spec ของ sales console ผูกใน "Migrations and Boot"; มติ Phase 3 หลัง #676 อยู่ใน spec §19.7 (ใช้ `billingFeaturePlan/applyBillingFeaturePlan` + เติมให้เส้นทางครั้งเดียว, ดีลรับตาม purchase source, supersede สองทาง, ดีล→catalog = ต่อท้าย Q10)
 - Phase 1 ไม่ต้องแก้โค้ดเพิ่ม: merge develop เข้า branch แล้ว (sweep เก็บทั้ง `lockReason` และ `nextStep` ของ #667; BillingPage เก็บทั้งตัวเลือกโหมดและหัวข้อตาม `lockReason`); copy "บัตรออนไลน์" คงไว้จน Owner เปิด gate PromptPay บน production (S42)
 - รอมติ Owner: Q7 / Q8 / Q9 (spec §19.5) — ถ้าไม่ตอบ ใช้ค่าเริ่มต้น
 
