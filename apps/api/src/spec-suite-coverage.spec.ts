@@ -50,7 +50,10 @@ describe('every spec file is wired into a package.json script', () => {
   const referenced = `${packageReferences} ${readFileSync(
     join(API_ROOT, '../../scripts/line-ai-whole-chain-acceptance.catalog.mjs'),
     'utf8',
-  )} ${readFileSync(join(API_ROOT, '../../.github/workflows/ci.yml'), 'utf8')}`;
+  )} ${readFileSync(join(API_ROOT, '../../.github/workflows/ci.yml'), 'utf8')} ${readFileSync(
+    join(API_ROOT, '../../.github/workflows/extended-tests.yml'),
+    'utf8',
+  )}`;
 
   it('finds the scripts it is meant to police', () => {
     assert.ok(referenced.includes('--test'), 'expected at least one spec-running script');

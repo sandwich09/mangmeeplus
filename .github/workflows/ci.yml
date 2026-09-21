@@ -69,6 +69,7 @@ jobs:
       code_changed: ${{ steps.source.outputs.code_changed }}
       recovery_only: ${{ steps.source.outputs.recovery_only }}
       release_controller_only: ${{ steps.source.outputs.release_controller_only }}
+      release_contracts: ${{ steps.source.outputs.release_contracts }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -301,9 +302,19 @@ jobs:
               || "$acceptance_contract_bundle" == true ]] \
               || release_controller_only=false
           fi
+          # Release/deploy contract specs read workflows, infra, Dockerfiles, release scripts and a few
+          # pinned app files. A pull request touching none of those skips them; every other event runs them.
+          release_contracts=true
+          if [[ "$EVENT_NAME" == "pull_request" && "$code_changed" == "true" ]] \
+            && ! grep -qE \
+              '^(\.github/|infra/|docs/security-evidence/|apps/[^/]+/Dockerfile|apps/api/prisma/[^/]+\.ts$|apps/api/prisma/production-a5/|apps/web/app/(privacy|terms|data-deletion)/|apps/web/public/|packages/config/src/index\.ts$|packages/contracts/src/(legal-acceptance|line-ai)\.ts$|pnpm-workspace\.yaml$|\.dockerignore$)' \
+              <<< "$(git diff --name-only "$BASE_SHA" "$sha")"; then
+            release_contracts=false
+          fi
           echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
           echo "recovery_only=$recovery_only" >> "$GITHUB_OUTPUT"
           echo "release_controller_only=$release_controller_only" >> "$GITHUB_OUTPUT"
+          echo "release_contracts=$release_contracts" >> "$GITHUB_OUTPUT"
       - name: Verify maintenance policy pins before CI fan-out
         if: steps.source.outputs.code_changed == 'true' && inputs.validated_ci_run_id == ''
         run: |
@@ -332,21 +343,14 @@ jobs:
               and .path == ".github/workflows/ci.yml"
             ' >/dev/null
 
+  # The name is kept because recover-release-intent looks this job up for the PostgreSQL release-recovery
+  # proof; typechecking runs in parallel in the Typecheck job.
   typecheck-and-test:
     name: Typecheck and Test
     if: needs.resolve-source.outputs.code_changed == 'true' && inputs.validated_ci_run_id == ''
     needs: resolve-source
     runs-on: ubuntu-latest
     services:
-      billing-redis:
-        image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
       recovery-postgres:
         image: postgres:18.3-alpine@sha256:54451ecb8ab38c24c3ec123f2fd501303a3a1856a5c66e98cecf2460d5e1e9d7
         env:
@@ -372,16 +376,6 @@ jobs:
         with:
           node-version: '22'
           cache: 'pnpm'
-      - name: Install production PDF fonts
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        run: |
-          # Match the API runtime font prerequisite; fallback fonts have different text metrics.
-          # Fonts come from Ubuntu; unrelated runner Chrome feeds must not block their installation.
-          test -s /etc/apt/sources.list.d/ubuntu.sources
-          ubuntu_sources=(-o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-)
-          sudo apt-get "${ubuntu_sources[@]}" update
-          sudo apt-get "${ubuntu_sources[@]}" install -y --no-install-recommends fonts-noto-core fontconfig
-          fc-match -f '%{family}\n' 'Noto Sans Thai' | grep -Fx 'Noto Sans Thai'
       - run: pnpm install --frozen-lockfile
         if: needs.resolve-source.outputs.release_controller_only != 'true'
       - run: pnpm --filter @watchdog-bms/contracts build
@@ -406,24 +400,6 @@ jobs:
           bash infra/security/production-readiness-workflow-v2.spec.sh
           node infra/security/sync-production-maintenance-release-pins.mjs --check
           git diff --check HEAD^ HEAD
-      - run: pnpm typecheck
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-      # The type system cannot see this one: an `@Injectable()` class inheriting its constructor
-      # from an undecorated base typechecks perfectly, passes every spec (tsx emits no decorator
-      # metadata, so a spec cannot even ask), and boots (a zero-dependency class resolves fine) —
-      # then every injected field is undefined at the first call. Only the swc emit shows it, so
-      # this reads the swc emit. ~1s, no build artifacts.
-      - name: Check Nest providers carry constructor metadata in the swc build
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        run: node apps/api/scripts/check-di-metadata.mjs
-      - name: Test company profile, discovery and billing prerequisites
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        run: |
-          pnpm exec tsx --test packages/contracts/src/company-business-type.spec.ts packages/contracts/src/billing-company-profile.spec.ts
-          pnpm --filter @watchdog-bms/api exec tsx --test src/modules/data-model-core/presentation/http/company-business-type.controller.spec.ts src/modules/system-partner-management/application/use-cases/get-partner-detail.use-case.spec.ts src/modules/billing/application/billing-company-profile.spec.ts src/modules/billing/application/billing-profile-recovery.spec.ts
-          pnpm --filter @watchdog-bms/web exec tsx --test src/features/billing/billing-profile-navigation.spec.ts
       - name: Typecheck and test durable release recovery against PostgreSQL
         if: needs.resolve-source.outputs.release_controller_only != 'true'
         env:
@@ -434,210 +410,6 @@ jobs:
             --esModuleInterop --skipLibCheck \
             prisma/run-exclusive-release-operation.ts prisma/run-exclusive-release-operation.spec.ts
           pnpm --filter @watchdog-bms/api test:release-recovery
-      - name: Test A5 role bootstrap against PostgreSQL
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        env:
-          A5_BOOTSTRAP_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_recovery_ci
-        run: pnpm --filter @watchdog-bms/api test:a5-bootstrap
-      # Step 0 tax identity proves partial unique indexes, `date` columns and the migration's
-      # own backfill SQL — none of which a mocked client reproduces. Its own database, applied
-      # from an empty one, so this is also the fresh-clone `migrate deploy` check.
-      - name: Test Step 0 company tax identity against PostgreSQL
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        env:
-          PGPASSWORD: watchdog_ci
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_step0_ci
-        run: |
-          psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c 'CREATE DATABASE watchdog_step0_ci'
-          pnpm --filter @watchdog-bms/api exec prisma migrate deploy
-          pnpm --filter @watchdog-bms/api test:tax-identity-pg
-          SYSTEM_ADMIN_CUTOVER_TEST_DATABASE_URL="$DATABASE_URL" \
-            pnpm --filter @watchdog-bms/api exec tsx --test prisma/system-admin-cutover.pg.spec.ts
-      # These six specs prove things only real rows, indexes and column types can show — the
-      # `lower(username)` unique index, the `(provider, providerChannelId, providerUserId)` slot a
-      # LINE signup re-points, the driver's P2002 shape, and the `ExpenseLineChargeKind` enum column
-      # (an in-memory fake storing a plain string is green against a database that rejects the
-      # write). Each guards itself on a database named `watchdog_bms`, so they share one:
-      # `migrate deploy` for the schema, `sync-permissions` for the system roles the onboarding
-      # path reads (a full seed is demo data this does not need).
-      #
-      # Flow B recovery (review R04/F2/F10) rides the same database: its assertions are about a
-      # conditional in-transaction stamp, a rolled-back approve and an adopt-on-retry —
-      # none of which an in-memory fake can show, because the transaction IS the mechanism.
-      #
-      # `receipt-truth` rides along for the same reason at a different layer: a charge row's null
-      # VAT rate, a null withholding rate beside a non-null one, and an `ExpenseLine.reviewStatus`
-      # of NEEDS_REVIEW are all decided by the column, and an in-memory fake echoes whatever it was
-      # handed (spec `line-ai-draft-control-spec-th.md` §11).
-      #
-      # ONE INVOCATION EACH, deliberately. The runner interleaves spec files, and two of these seed
-      # usernames that collide under `lower(username)` — running them together fails on a duplicate
-      # that has nothing to do with the code under test.
-      - name: Identity, username, LINE-signup, support-request, charge-kind, signup-recovery and receipt-truth specs against PostgreSQL
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        env:
-          PGPASSWORD: watchdog_ci
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_bms?schema=public
-        run: |
-          psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c 'CREATE DATABASE watchdog_bms'
-          pnpm --filter @watchdog-bms/api exec prisma migrate deploy
-          pnpm --filter @watchdog-bms/api exec tsx prisma/sync-permissions.ts
-          ACCOUNT_PROFILE_TEST_DATABASE_URL="$DATABASE_URL" \
-            pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/auth/account-profile-username.pg.spec.ts
-          ACCOUNT_PROFILE_TEST_DATABASE_URL="$DATABASE_URL" ACCOUNT_PROFILE_REQUIRE_POSTGRES=true \
-            pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/auth/account-profile-email.pg.spec.ts
-          EMPLOYEE_ACCESS_TEST_DATABASE_URL="$DATABASE_URL" \
-            pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/employee-access/create-employee-username.pg.spec.ts
-          LINE_SIGNUP_TEST_DATABASE_URL="$DATABASE_URL" \
-            pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/external-signup/line-signup-stale-identity.pg.spec.ts
-          LINE_SIGNUP_TEST_DATABASE_URL="$DATABASE_URL" LINE_SIGNUP_REQUIRE_POSTGRES=true \
-            pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/external-signup/line-signup-duplicate-email.pg.spec.ts
-          LINE_SUPPORT_TEST_DATABASE_URL="$DATABASE_URL" \
-            pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/external-signup/line-support-request.pg.spec.ts
-          EXPENSE_CHARGE_KIND_TEST_DATABASE_URL="$DATABASE_URL" \
-            pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/expenses/expense-line-charge-kind.pg.spec.ts
-          SIGNUP_RECOVERY_TEST_DATABASE_URL="$DATABASE_URL" \
-            pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/external-signup/signup-provisioning-recovery.pg.spec.ts
-          RECEIPT_TRUTH_TEST_DATABASE_URL="$DATABASE_URL" \
-            pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/expenses/receipt-truth.pg.spec.ts
-          # S-4 draft edit: only a real database can show that the PREVIEW transaction is genuinely
-          # rolled back — a fake would "roll back" a write it never performed. Its own invocation,
-          # like every spec above: the runner interleaves files, and this one seeds a company and a
-          # user of its own.
-          LINE_DRAFT_EDIT_TEST_DATABASE_URL="$DATABASE_URL" \
-            pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/expenses/line-draft-update.pg.spec.ts
-          RECEIPT_UPLOAD_SOURCE_TEST_DATABASE_URL="$DATABASE_URL" \
-            pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/expenses/receipt-upload-source.pg.spec.ts
-          RECEIPT_SOURCE_DRAFT_TEST_DATABASE_URL="$DATABASE_URL" \
-            pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/expenses/expense-source-draft.pg.spec.ts
-          RECEIPT_RELIABILITY_TEST_DATABASE_URL="$DATABASE_URL" RECEIPT_RELIABILITY_REQUIRE_POSTGRES=true \
-            pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/line-ai/receipt-reliability.pg.spec.ts
-          ONBOARDING_RECEIPT_TEST_DATABASE_URL="$DATABASE_URL" ONBOARDING_RECEIPT_REQUIRE_POSTGRES=true \
-            pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/line-ai/onboarding-receipt-allowance.pg.spec.ts
-      - run: pnpm test
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-      - name: Test billing and partner pagination
-        run: pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/application/billing-overview-pagination.spec.ts src/modules/system-partner-management/application/use-cases/list-partners.use-case.spec.ts
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-      - name: P27, OCR, and expense payment integrity against PostgreSQL
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        env:
-          PGPASSWORD: watchdog_ci
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_p27_ci
-          P27_REQUIRE_POSTGRES: 'true'
-          OCR_REQUIRE_POSTGRES: 'true'
-          EXPENSE_PAYMENT_REQUIRE_POSTGRES: 'true'
-          # §12 money admission: the reservation concurrency/settlement invariants are properties of
-          # real advisory locks and real unique indexes, so they only mean anything against Postgres.
-          AI_BUDGET_RESERVATION_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_p27_ci
-          AI_BUDGET_RESERVATION_REQUIRE_POSTGRES: 'true'
-          # Hold-reconciliation spec §4.2: "two operators press the button and exactly one wins" and
-          # "the charge moves the aggregates once" are properties of real advisory locks and a real
-          # unique index, so they only mean anything against Postgres.
-          AI_CREDIT_HOLDS_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_p27_ci
-          AI_CREDIT_HOLDS_REQUIRE_POSTGRES: 'true'
-          # Capture appendix §2: the handoff fence, the one-file-one-read job rule, the revision
-          # CAS and the §2.4 lock order are all properties of real indexes and real advisory locks.
-          EXPENSE_CAPTURE_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_p27_ci
-          EXPENSE_CAPTURE_REQUIRE_POSTGRES: 'true'
-          # Capture appendix §4.5: disjoint claims, lease expiry and the fence that stops a dead
-          # runner overwriting the new owner are properties of FOR UPDATE SKIP LOCKED, not of a fake.
-          EXPENSE_CAPTURE_READ_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_p27_ci
-          EXPENSE_CAPTURE_READ_REQUIRE_POSTGRES: 'true'
-          # Capture appendix §9 (W05): one batch under two concurrent handoffs, the resolver against
-          # real derived sources, and the single-use fence against a real claim — none of which a
-          # fake can state.
-          EXPENSE_CAPTURE_HANDOFF_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_p27_ci
-          EXPENSE_CAPTURE_HANDOFF_REQUIRE_POSTGRES: 'true'
-          # Capture appendix §7/§12 (W06): the company pays a shop once under two approvers, a
-          # part-paid source blocks its own issuance, and a prepared certificate holds the group —
-          # all properties of real unique indexes, real check constraints and real relations.
-          EXPENSE_CAPTURE_CERTIFICATE_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_p27_ci
-          EXPENSE_CAPTURE_CERTIFICATE_REQUIRE_POSTGRES: 'true'
-        run: |
-          psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c 'CREATE DATABASE watchdog_p27_ci'
-          pnpm --filter @watchdog-bms/api exec prisma migrate deploy
-          pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/accounting-documents/infrastructure/prisma-accounting.repository.atomic-issue.spec.ts \
-            src/modules/crm/infrastructure/prisma-crm.repository.spec.ts \
-            src/modules/line-ai/application/company-ai-usage-meter.spec.ts \
-            src/modules/system-partner-management/application/use-cases/get-partner-ai-usage.use-case.spec.ts \
-            src/modules/system-partner-management/application/use-cases/set-partner-ai-model.use-case.spec.ts \
-            src/modules/expenses/infrastructure/prisma-expense.repository.payment.spec.ts
-          pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/expenses/infrastructure/substitute-expense-edit.pg.spec.ts
-          pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/line-ai/application/company-ai-budget-reservation.pg.spec.ts
-          pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/line-ai/application/company-ai-credit-holds.pg.spec.ts
-          pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/expenses/expense-capture.pg.spec.ts
-          pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/expenses/expense-capture-read.pg.spec.ts
-          pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/expenses/expense-capture-handoff.pg.spec.ts
-          pnpm --filter @watchdog-bms/api exec tsx --test \
-            src/modules/expenses/expense-capture-certificate.pg.spec.ts
-      - name: Harness manifests (protected corpus + golden stores)
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        run: pnpm test:harness
-      # The LINE AI whole-chain feature specs (substitute-receipt continuation + siblings) are named
-      # only in the acceptance catalog, so `pnpm test`'s per-package lists never run them. This runner
-      # is what executes them (plus its catalog/controlled-image/gateway/infra contracts).
-      - name: LINE AI whole-chain acceptance
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        run: node scripts/run-line-ai-whole-chain-acceptance.mjs
-      - run: pnpm --filter @watchdog-bms/api test:m01
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-      - run: pnpm --filter @watchdog-bms/api test:p1
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-      # Every spec above builds its subject with `new`, so none of them asks Nest to wire
-      # anything: a DI mistake passes the whole suite and only fails when the container starts.
-      - run: pnpm --filter @watchdog-bms/api test:boot
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-      - name: Test legal release evidence gates
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        run: |
-          bash infra/security/provision-legal-release-evidence.spec.sh
-          bash infra/security/validate-legal-release-readiness.spec.sh
-      - run: bash infra/docker/production-image-security.spec.sh
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-      - name: Test production maintenance controls
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        run: |
-          node --test infra/api-web/web-api-proxy.spec.mjs
-          pnpm --filter @watchdog-bms/ai-gateway exec tsx --test \
-            src/common/http/production-maintenance.middleware.spec.ts
-          bash infra/prod-ecs-express/production-serving-mode.spec.sh
-          bash infra/prod-ecs-express/maintenance-preflight.spec.sh
-          bash infra/prod-ecs-express/wait-production-maintenance-ingress-drain.spec.sh
-          bash infra/prod-ecs-express/verify-production-maintenance.spec.sh
-          bash infra/prod-ecs-express/system-admin-cutover.spec.sh
-          bash infra/security/validate-production-maintenance-release.spec.sh
-          bash infra/security/sync-production-maintenance-release-pins.spec.sh
-      - name: Test immutable LINE AI release identity
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        run: |
-          bash infra/ai-gateway/line-ai-release-manifest.spec.sh
-          bash infra/ai-gateway/agentcore-candidate-binding.spec.sh
-          bash infra/uat/agentcore-candidate-policy.spec.sh
-          bash infra/security/uat-release-passport-v2.spec.sh
-      - run: bash infra/security/production-a5-current-health.spec.sh
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
       - name: Build immutable AgentCore artifact
         if: github.event_name != 'pull_request'
         env:
@@ -652,8 +424,53 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  billing-integration:
-    name: Billing Integration (${{ matrix.suite }})
+  typecheck:
+    name: Typecheck
+    if: >-
+      needs.resolve-source.outputs.code_changed == 'true' &&
+      needs.resolve-source.outputs.recovery_only != 'true' &&
+      needs.resolve-source.outputs.release_controller_only != 'true' &&
+      inputs.validated_ci_run_id == ''
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @watchdog-bms/contracts build
+      - run: pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+      # TypeScript 7 (packages/typescript-native) checks api and web; the 2-vCPU runner spent ~3 min
+      # in TypeScript 5 on api alone. Single-threaded: its parallel checkers contend on this codebase.
+      # The other packages stay on their own `typecheck` scripts.
+      - name: Typecheck
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          tsc7=packages/typescript-native/node_modules/.bin/tsc
+          "$tsc7" -p apps/api/tsconfig.typecheck.json --singleThreaded &
+          api=$!
+          pnpm --filter '!@watchdog-bms/api' --filter '!@watchdog-bms/web' -r --if-present typecheck
+          pnpm --filter @watchdog-bms/web exec next typegen
+          "$tsc7" -p apps/web/tsconfig.typecheck.json --singleThreaded
+          wait "$api"
+      # The type system cannot see this one: an `@Injectable()` class inheriting its constructor
+      # from an undecorated base typechecks perfectly, passes every spec (tsx emits no decorator
+      # metadata, so a spec cannot even ask), and boots (a zero-dependency class resolves fine) —
+      # then every injected field is undefined at the first call. Only the swc emit shows it, so
+      # this reads the swc emit. ~1s, no build artifacts.
+      - name: Check Nest providers carry constructor metadata in the swc build
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        run: node apps/api/scripts/check-di-metadata.mjs
+
+  unit-tests:
+    name: Unit Tests (${{ matrix.shard }}/8)
     if: >-
       needs.resolve-source.outputs.code_changed == 'true' &&
       needs.resolve-source.outputs.recovery_only != 'true' &&
@@ -664,30 +481,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [backend, customer, operations]
-    services:
-      billing-redis:
-        image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-      recovery-postgres:
-        image: postgres:18.3-alpine@sha256:54451ecb8ab38c24c3ec123f2fd501303a3a1856a5c66e98cecf2460d5e1e9d7
-        env:
-          POSTGRES_USER: watchdog
-          POSTGRES_PASSWORD: watchdog_ci
-          POSTGRES_DB: watchdog_recovery_ci
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U watchdog -d watchdog_recovery_ci"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -707,157 +501,116 @@ jobs:
           sudo apt-get "${ubuntu_sources[@]}" install -y --no-install-recommends fonts-noto-core fontconfig
           fc-match -f '%{family}\n' 'Noto Sans Thai' | grep -Fx 'Noto Sans Thai'
       - run: pnpm install --frozen-lockfile
-      - name: Build isolated billing API
+      - run: pnpm --filter @watchdog-bms/contracts build
+      - run: pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+      - run: pnpm test
+        env:
+          # node --test deals every package's spec files across the matrix.
+          NODE_OPTIONS: --test-shard=${{ matrix.shard }}/8
+
+  acceptance:
+    name: Acceptance Checks
+    if: >-
+      needs.resolve-source.outputs.code_changed == 'true' &&
+      needs.resolve-source.outputs.recovery_only != 'true' &&
+      needs.resolve-source.outputs.release_controller_only != 'true' &&
+      inputs.validated_ci_run_id == ''
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - name: Install production PDF fonts
         run: |
-          pnpm --filter @watchdog-bms/config build
-          pnpm --filter @watchdog-bms/contracts build
-          pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
-          pnpm --filter @watchdog-bms/api build
-      - name: Prepare isolated billing databases
-        env:
-          PGPASSWORD: watchdog_ci
+          # Match the API runtime font prerequisite; fallback fonts have different text metrics.
+          # Fonts come from Ubuntu; unrelated runner Chrome feeds must not block their installation.
+          test -s /etc/apt/sources.list.d/ubuntu.sources
+          ubuntu_sources=(-o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-)
+          sudo apt-get "${ubuntu_sources[@]}" update
+          sudo apt-get "${ubuntu_sources[@]}" install -y --no-install-recommends fonts-noto-core fontconfig
+          fc-match -f '%{family}\n' 'Noto Sans Thai' | grep -Fx 'Noto Sans Thai'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @watchdog-bms/contracts build
+      - run: pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+      - name: Test company profile, discovery and billing prerequisites
         run: |
-          for database in email_otp_test watchdog_postmark_ci; do
-            psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c "CREATE DATABASE $database"
-            DATABASE_URL="postgresql://watchdog:watchdog_ci@127.0.0.1:5432/$database" pnpm --filter @watchdog-bms/api exec prisma migrate deploy
-          done
-      - name: Install billing browser
-        if: matrix.suite != 'backend'
-        run: pnpm exec playwright install --with-deps chromium
-      - name: Test trial carryover and cadence changes with real browser
-        if: matrix.suite == 'customer'
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
+          pnpm exec tsx --test packages/contracts/src/company-business-type.spec.ts packages/contracts/src/billing-company-profile.spec.ts
+          pnpm --filter @watchdog-bms/api exec tsx --test src/modules/data-model-core/presentation/http/company-business-type.controller.spec.ts src/modules/system-partner-management/application/use-cases/get-partner-detail.use-case.spec.ts src/modules/billing/application/billing-company-profile.spec.ts src/modules/billing/application/billing-profile-recovery.spec.ts
+          pnpm --filter @watchdog-bms/web exec tsx --test src/features/billing/billing-profile-navigation.spec.ts
+      - name: Test billing and partner pagination
+        run: pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/application/billing-overview-pagination.spec.ts src/modules/system-partner-management/application/use-cases/list-partners.use-case.spec.ts
+      - name: Harness manifests (protected corpus + golden stores)
+        run: pnpm test:harness
+      # The LINE AI whole-chain feature specs (substitute-receipt continuation + siblings) are named
+      # only in the acceptance catalog, so `pnpm test`'s per-package lists never run them. This runner
+      # is what executes them (plus its catalog/controlled-image/gateway/infra contracts).
+      - name: LINE AI whole-chain acceptance
+        run: node scripts/run-line-ai-whole-chain-acceptance.mjs
+      - run: pnpm --filter @watchdog-bms/api test:m01
+      - run: pnpm --filter @watchdog-bms/api test:p1
+
+  release-contracts:
+    name: Release Contracts (${{ matrix.part }})
+    if: >-
+      needs.resolve-source.outputs.code_changed == 'true' &&
+      needs.resolve-source.outputs.release_contracts == 'true' &&
+      needs.resolve-source.outputs.recovery_only != 'true' &&
+      needs.resolve-source.outputs.release_controller_only != 'true' &&
+      inputs.validated_ci_run_id == ''
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [image, runtime]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+          fetch-depth: 2
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @watchdog-bms/contracts build
+      - run: pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+      - run: bash infra/docker/production-image-security.spec.sh
+        if: matrix.part == 'image'
+      - name: Test legal release evidence gates
+        if: matrix.part == 'runtime'
         run: |
-          BILLING_TRIAL_CARRYOVER_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_PLAN_CHANGE_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test account email OTP and billing recipient against isolated PostgreSQL
-        if: matrix.suite == 'backend'
-        env:
-          PGPASSWORD: watchdog_ci
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/email_otp_test
-          EMAIL_OTP_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/email_otp_test
-          EMAIL_ACCESS_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/email_otp_test
+          bash infra/security/provision-legal-release-evidence.spec.sh
+          bash infra/security/validate-legal-release-readiness.spec.sh
+      - name: Test production maintenance controls
+        if: matrix.part == 'runtime'
         run: |
-          python3 infra/postmark/config_test.py
-          pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/infrastructure/postmark-configuration.spec.ts src/modules/system-partner-management/application/partner-ai-adjustment-history.spec.ts src/modules/auth/domain/logic/email-otp.logic.spec.ts src/modules/auth/application/account-email-otp.postgres.spec.ts src/modules/billing/application/billing-email-recipient.postgres.spec.ts src/modules/auth/application/email-access.pg.spec.ts
-      - name: Test Postmark and Stripe billing HTTP flows against isolated PostgreSQL
-        if: matrix.suite == 'backend'
-        env:
-          PGPASSWORD: watchdog_ci
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
+          node --test infra/api-web/web-api-proxy.spec.mjs
+          pnpm --filter @watchdog-bms/ai-gateway exec tsx --test \
+            src/common/http/production-maintenance.middleware.spec.ts
+          bash infra/prod-ecs-express/production-serving-mode.spec.sh
+          bash infra/prod-ecs-express/maintenance-preflight.spec.sh
+          bash infra/prod-ecs-express/wait-production-maintenance-ingress-drain.spec.sh
+          bash infra/prod-ecs-express/verify-production-maintenance.spec.sh
+          bash infra/prod-ecs-express/system-admin-cutover.spec.sh
+          bash infra/security/validate-production-maintenance-release.spec.sh
+          bash infra/security/sync-production-maintenance-release-pins.spec.sh
+      - name: Test immutable LINE AI release identity
+        if: matrix.part == 'runtime'
         run: |
-          pnpm --filter @watchdog-bms/api exec tsx --tsconfig tsconfig.json --test src/modules/billing/application/billing-checkout-expiry-owner.spec.ts src/modules/billing/domain/paid-invoice-promptpay.spec.ts
-          pnpm --filter @watchdog-bms/api exec tsx --tsconfig tsconfig.json --test src/modules/auth/postmark-delivery.pg.spec.ts src/modules/billing/billing-receipts.pg.spec.ts src/modules/billing/billing-grace.pg.spec.ts src/modules/billing/billing-trial-carryover.pg.spec.ts src/modules/billing/billing-caps.pg.spec.ts src/modules/billing/billing-issues.pg.spec.ts src/modules/line-ai/line-delivery-access.pg.spec.ts src/modules/line-ai/line-read-evidence.pg.spec.ts src/modules/line-ai/line-ledger-delivery.pg.spec.ts
-          BILLING_SETTINGS_TEST_DATABASE_URL="$DATABASE_URL" BILLING_ISSUE_TEST_DATABASE_URL="$DATABASE_URL" pnpm --filter @watchdog-bms/api exec tsx --tsconfig tsconfig.json --test src/modules/billing/billing-settings.pg.spec.ts src/modules/billing/billing-issue-resolution.pg.spec.ts
-          AUTH_LINE_BINDING_TEST_DATABASE_URL="$DATABASE_URL" pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/line-binding.pg.spec.ts
-          node apps/api/dist/apps/api/src/scripts/postmark-http-smoke.js
-          node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test signup and billing recovery with real browser and isolated providers
-        if: matrix.suite == 'customer'
-        timeout-minutes: 10
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-          BILLING_SIGNUP_JOURNEY_ONLY: '1'
-        run: |
-          node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_PROVIDER_SCANS_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_EMAIL_VERIFICATION_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_EMAIL_ACCESS_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_EMAIL_RESET_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_APPLY_RETRY_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_REPEAT_APPLY_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test optional LINE contact email in the browser
-        if: matrix.suite == 'customer'
-        timeout-minutes: 3
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/email_otp_test
-          REDIS_URL: redis://127.0.0.1:6379
-          API_PORT: '3153'
-          WEB_PORT: '3154'
-          LINE_LIFF_ID: 1234567890-Synthetic
-          NEXT_DIST_DIR: .next/email-otp-liff
-        run: pnpm exec playwright test e2e/line-signup-contact-email.spec.ts --workers=1
-      - name: Test shared LINE credential publication without restart
-        if: matrix.suite == 'customer'
-        timeout-minutes: 5
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-        run: |
-          pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/infrastructure/system-line-push.spec.ts src/modules/system-partner-management/application/use-cases/set-shared-line-credential.use-case.spec.ts
-          BILLING_LINE_CREDENTIALS_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_LINE_BINDING_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test recorded billing support outcomes with real browser
-        if: matrix.suite == 'operations'
-        timeout-minutes: 5
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-          BILLING_SUPPORT_OUTCOMES_ONLY: '1'
-        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test scheduled Stripe discovery with real browser
-        if: matrix.suite == 'operations'
-        timeout-minutes: 7
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-          BILLING_SCAN_SCHEDULE_ONLY: '1'
-          BILLING_BROWSER_E2E: '1'
-        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test scoped historical invoice discovery with real browser
-        if: matrix.suite == 'operations'
-        timeout-minutes: 7
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-          BILLING_INVOICE_SCANS_ONLY: '1'
-          BILLING_BROWSER_E2E: '1'
-        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test verified original invoice import with real browser
-        if: matrix.suite == 'operations'
-        timeout-minutes: 7
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-          BILLING_INVOICE_IMPORT_ONLY: '1'
-          BILLING_BROWSER_E2E: '1'
-        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test approved cohorts, case deadlines, policy schedule and Stripe configuration with browser recovery
-        if: matrix.suite == 'operations'
-        timeout-minutes: 10
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-          BILLING_SALES_COHORT_ONLY: '1'
-          BILLING_BROWSER_E2E: '1'
-        run: |
-          node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_CONFIG_ONLY=1 BILLING_SUPPORT_SLA_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_CONFIG_ONLY=1 BILLING_SCHEDULED_POLICY_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-          BILLING_CONFIG_ONLY=1 BILLING_READINESS_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test invoice adjustment observations and privileged documents with browser
-        if: matrix.suite == 'operations'
-        timeout-minutes: 7
-        env:
-          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
-          REDIS_URL: redis://127.0.0.1:6379
-          BILLING_ADJUSTMENTS_ONLY: '1'
-          BILLING_BROWSER_E2E: '1'
-        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          bash infra/ai-gateway/line-ai-release-manifest.spec.sh
+          bash infra/ai-gateway/agentcore-candidate-binding.spec.sh
+          bash infra/uat/agentcore-candidate-policy.spec.sh
+          bash infra/security/uat-release-passport-v2.spec.sh
+      - run: bash infra/security/production-a5-current-health.spec.sh
+        if: matrix.part == 'runtime'
 
   security-audit:
     name: Security Audit
@@ -967,13 +720,27 @@ jobs:
         run: bash infra/monitoring/runtime-alarms.spec.sh
 
   migration-review:
-    name: Migration Review
+    name: Migrations and Boot
     if: >-
       needs.resolve-source.outputs.code_changed == 'true' &&
       needs.resolve-source.outputs.release_controller_only != 'true' &&
       inputs.validated_ci_run_id == ''
     needs: resolve-source
     runs-on: ubuntu-latest
+    services:
+      recovery-postgres:
+        image: postgres:18.3-alpine@sha256:54451ecb8ab38c24c3ec123f2fd501303a3a1856a5c66e98cecf2460d5e1e9d7
+        env:
+          POSTGRES_USER: watchdog
+          POSTGRES_PASSWORD: watchdog_ci
+          POSTGRES_DB: watchdog_recovery_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U watchdog -d watchdog_recovery_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -986,6 +753,31 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @watchdog-bms/api prisma:validate
       - run: pnpm --filter @watchdog-bms/api migration:review > /tmp/watchdog-bms-migration-review.sql
+      - run: pnpm --filter @watchdog-bms/contracts build
+      - run: pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+      - name: Test A5 role bootstrap against PostgreSQL
+        if: needs.resolve-source.outputs.recovery_only != 'true'
+        env:
+          A5_BOOTSTRAP_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_recovery_ci
+        run: pnpm --filter @watchdog-bms/api test:a5-bootstrap
+      # Step 0 tax identity proves partial unique indexes, `date` columns and the migration's
+      # own backfill SQL — none of which a mocked client reproduces. Its own database, applied
+      # from an empty one, so this is also the fresh-clone `migrate deploy` check.
+      - name: Test Step 0 company tax identity against PostgreSQL
+        if: needs.resolve-source.outputs.recovery_only != 'true'
+        env:
+          PGPASSWORD: watchdog_ci
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_step0_ci
+        run: |
+          psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c 'CREATE DATABASE watchdog_step0_ci'
+          pnpm --filter @watchdog-bms/api exec prisma migrate deploy
+          pnpm --filter @watchdog-bms/api test:tax-identity-pg
+          SYSTEM_ADMIN_CUTOVER_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test prisma/system-admin-cutover.pg.spec.ts
+      # Every spec above builds its subject with `new`, so none of them asks Nest to wire
+      # anything: a DI mistake passes the whole suite and only fails when the container starts.
+      - run: pnpm --filter @watchdog-bms/api test:boot
+        if: needs.resolve-source.outputs.recovery_only != 'true'
 
   publish-production-images:
     name: Publish Production Image
@@ -996,7 +788,10 @@ jobs:
       needs.resolve-source.result == 'success' &&
       (inputs.validated_ci_run_id != '' ||
       (needs.typecheck-and-test.result == 'success' &&
-      needs.billing-integration.result == 'success' &&
+      needs.typecheck.result == 'success' &&
+      needs.unit-tests.result == 'success' &&
+      needs.acceptance.result == 'success' &&
+      needs.release-contracts.result == 'success' &&
       needs.security-audit.result == 'success' &&
       needs.secret-scan.result == 'success' &&
       needs.docker-build.result == 'success' &&
@@ -1005,7 +800,10 @@ jobs:
     needs:
       - resolve-source
       - typecheck-and-test
-      - billing-integration
+      - typecheck
+      - unit-tests
+      - acceptance
+      - release-contracts
       - security-audit
       - secret-scan
       - docker-build
@@ -1207,7 +1005,10 @@ jobs:
       needs.resolve-source.result == 'success' &&
       (inputs.validated_ci_run_id != '' ||
       (needs.typecheck-and-test.result == 'success' &&
-      needs.billing-integration.result == 'success' &&
+      needs.typecheck.result == 'success' &&
+      needs.unit-tests.result == 'success' &&
+      needs.acceptance.result == 'success' &&
+      needs.release-contracts.result == 'success' &&
       needs.security-audit.result == 'success' &&
       needs.secret-scan.result == 'success' &&
       needs.docker-build.result == 'success' &&
@@ -1216,7 +1017,10 @@ jobs:
     needs:
       - resolve-source
       - typecheck-and-test
-      - billing-integration
+      - typecheck
+      - unit-tests
+      - acceptance
+      - release-contracts
       - security-audit
       - secret-scan
       - docker-build
