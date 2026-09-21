@@ -449,6 +449,10 @@ export class SubmitReimbursementUseCase {
         roleKey: submissionRoute.responsibilityRole,
         effectiveTaskRole: submissionRoute.effectiveTaskRole,
         ownerFallbackUsedAtSubmission: submissionRoute.ownerFallbackUsed,
+        // Owner order 2026-09-21: nobody but the requester could approve, so the step below is
+        // assigned to them. Frozen with the route — part of the approval hash — so a later role
+        // change cannot re-decide it; the approval audit reads it as the reason.
+        ...(submissionRoute.soloSelfApproval && { soloSelfApprovalAtSubmission: true }),
       } : null,
       allowSelfApproval: policy.allowSelfApproval,
       requireReceipt: policy.requireReceipt,
@@ -547,6 +551,7 @@ export class SubmitReimbursementUseCase {
             effectiveTaskRole: submissionRoute?.effectiveTaskRole,
             approverRecipientCount: submissionRoute?.recipientUserIds.length ?? 0,
             ownerFallbackUsed: submissionRoute?.ownerFallbackUsed ?? false,
+            soloSelfApproval: submissionRoute?.soloSelfApproval ?? false,
             branchId: req.branchId,
             legacyRecovery: {
               documentNumberReused: persisted.documentNumberReused,

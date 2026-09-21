@@ -18,7 +18,7 @@ import {
 } from './reimbursements.api';
 import { currentDeskText, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
 import {
-  activeJourneyStep, buildJourneySteps, diffApprovalFields, errorText, formatMoney, isMissingSavedSignatureError,
+  activeJourneyStep, approverNotReadyHelp, buildJourneySteps, diffApprovalFields, errorText, formatMoney, isMissingSavedSignatureError,
   isStaleApprovalError, type JourneyAction, type JourneyStepState,
 } from './reimbursements.logic';
 import {
@@ -79,6 +79,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const [voidingPayment, setVoidingPayment] = useState<any | null>(null);
   const [staleReview, setStaleReview] = useState<{ before: any; detail: any } | null>(null);
   const [missingSignatureFor, setMissingSignatureFor] = useState<ClaimSignatureRole | null>(null);
+  const [approverHelp, setApproverHelp] = useState<ReturnType<typeof approverNotReadyHelp>>(null);
   const [focusTick, setFocusTick] = useState(0);
   const cardRef = useRef<HTMLElement>(null);
   const { previewLoadingKey, openClaimForm, openAttachment, previewModals } = useClaimDocumentPreview(companyId, setActionError);
@@ -189,7 +190,9 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const recordedPayment = (detail.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
   const desk = currentDeskText(detail.currentDesk);
   const handlers: Partial<Record<JourneyAction, () => void>> = {
-    submit: () => void act('submit', () => submitReimbursement(companyId, requestId), 'ส่งขออนุมัติเรียบร้อยแล้ว'),
+    // No approver at all: the answer names who fixes it and, for a policy manager, links there.
+    submit: () => { setApproverHelp(null); void act('submit', () => submitReimbursement(companyId, requestId), 'ส่งขออนุมัติเรียบร้อยแล้ว',
+      (e) => { const help = approverNotReadyHelp(e, permissions); setApproverHelp(help); return help !== null; }); },
     cancel: () => { setActionError(null); setReasonAction('cancel'); },
     reopen: () => void (async () => {
       // Withdrawing takes the claim off the approver's desk, so it asks first; reopening a refusal does not.
@@ -282,6 +285,14 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
           {payOpen && step.actions.includes('pay') && (
             <div className="border-t border-gray-100 pt-3">
               <PaymentForm companyId={companyId} request={detail} onCancel={() => setPayOpen(false)} onDone={() => void afterPayment()} />
+            </div>
+          )}
+          {approverHelp && step.actions.includes('submit') && (
+            <div className="space-y-2">
+              <ErrorBanner message={approverHelp.text} focus />
+              {approverHelp.policyLink && (
+                <Link className={cx(ghostClass, 'w-full sm:w-auto')} href={`${hubHref}?tab=policy`}>{ACTION_LABELS['policy-settings']}</Link>
+              )}
             </div>
           )}
           {actionError && <ErrorBanner message={actionError} />}

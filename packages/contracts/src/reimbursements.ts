@@ -107,6 +107,8 @@ export type ReimbursementPolicySnapshotV1 = {
     roleKey: string;
     effectiveTaskRole: string;
     ownerFallbackUsedAtSubmission: boolean;
+    /** Nobody but the requester could approve at submit, so they approve their own claim (owner order 2026-09-21). */
+    soloSelfApprovalAtSubmission?: boolean;
   };
   allowSelfApproval: boolean;
   requireReceipt: boolean;

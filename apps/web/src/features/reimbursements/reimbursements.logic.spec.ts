@@ -5,6 +5,7 @@ import {
   matchesSearch, formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorMessage, errorText,
   isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence, withAssignedApprovalTab,
   buildClaimTimeline, buildJourneySteps, activeJourneyStep, policyDecisionPreview, isMissingSavedSignatureError,
+  approverNotReadyHelp,
 } from './reimbursements.logic';
 
 const line = (overrides: Record<string, unknown> = {}) => ({
@@ -464,6 +465,32 @@ describe('buildClaimTimeline after a reopen', () => {
     }).map(row => `${row.state}:${row.label}`), [
       'done:ยื่นใบ', 'done:ปฏิเสธโดย คุณสมชาย', 'done:อนุมัติโดย คุณสมชาย', 'current:กำลังรอฝ่ายการเงินบันทึกจ่าย',
     ]);
+  });
+});
+
+// Owner 2026-09-21: a claim nobody can approve is refused, but the refusal says who fixes it and where.
+describe('approverNotReadyHelp', () => {
+  const notReady = Object.assign(new Error('reimbursement_approver_not_ready'), { status: 400 });
+
+  it('sends a policy manager to the settings to pick an approver', () => {
+    const help = approverNotReadyHelp(notReady, ['reimbursement.submit', 'reimbursement.policy.manage']);
+    assert.equal(help?.policyLink, true);
+    assert.match(help?.text ?? '', /^ยังไม่มีผู้อนุมัติใบเบิกนี้ เลือกบทบาทผู้อนุมัติในตั้งค่าเบิกจ่าย/);
+  });
+
+  it('tells anyone else to ask the owner for an approver or approve permission, with no link', () => {
+    const help = approverNotReadyHelp(notReady, ['reimbursement.submit']);
+    assert.equal(help?.policyLink, false);
+    assert.match(help?.text ?? '', /ขอให้เจ้าของกิจการเลือกผู้อนุมัติในตั้งค่าเบิกจ่าย หรือเพิ่มสิทธิ์อนุมัติการเบิกให้บทบาทของคุณ/);
+  });
+
+  it('shows people no codes and leaves every other error to the usual message', () => {
+    for (const permissions of [[], ['reimbursement.policy.manage']]) {
+      assert.doesNotMatch(approverNotReadyHelp(notReady, permissions)?.text ?? '', /[a-z_]{4,}/);
+    }
+    assert.equal(approverNotReadyHelp(new Error('stale_approval_snapshot'), ['reimbursement.policy.manage']), null);
+    assert.equal(approverNotReadyHelp('reimbursement_approver_not_ready', []), null);
+    assert.equal(approverNotReadyHelp(null, []), null);
   });
 });
 

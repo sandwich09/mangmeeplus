@@ -26,7 +26,7 @@ import {
 import {
   summariseQueue, matchesSearch, pageBounds,
   formatMoney, parseHubTab, visibleHubTabs, withAssignedApprovalTab, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
-  policyDecisionPreview, type HubTab,
+  policyDecisionPreview, approverNotReadyHelp, type HubTab,
 } from './reimbursements.logic';
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
@@ -225,9 +225,10 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
   }, [companyId, permissions]);
   useEffect(() => { load(); }, [load, refreshKey]);
 
+  // Only the row "ส่งอนุมัติ" uses this; a refusal for want of an approver says who can fix it.
   const action = async (id: string, fn: () => Promise<unknown>, successMessage?: string) => {
     setBusy(id); setError(null);
-    try { await fn(); await load(); if (successMessage) toast.success(successMessage); } catch (e) { setError(err(e)); } finally { setBusy(null); }
+    try { await fn(); await load(); if (successMessage) toast.success(successMessage); } catch (e) { setError(approverNotReadyHelp(e, permissions)?.text ?? err(e)); } finally { setBusy(null); }
   };
 
   const summary = useMemo(() => summariseQueue(data), [data]);
