@@ -690,7 +690,7 @@ describe('buildJourneySteps', () => {
     assert.deepEqual(active(waiting, STAFF.filter(key => key !== 'reimbursement.update_own_draft'), 'staff').actions, ['cancel', 'print']);
   });
 
-  it('shows a duplicate block at payment with its reason and gives only duplicate.resolve holders the clear', () => {
+  it('shows a duplicate block at payment with its reason and lets the payer or a duplicate.resolve holder clear it', () => {
     const blocked = claim({ ...approved, status: 'READY_FOR_PAYMENT', duplicateBlocksPayment: true,
       duplicateCandidates: [
         { id: 'd1', candidateType: 'ATTACHMENT_CHECKSUM', status: 'OPEN', score: 80 },
@@ -699,11 +699,12 @@ describe('buildJourneySteps', () => {
     const resolver = active(blocked, [...OWNER, 'reimbursement.duplicate.resolve'], 'owner');
     assert.deepEqual(resolver.actions, ['resolve-duplicate', 'cancel', 'print'], 'no pay button the API would refuse');
     assert.equal(resolver.note, 'ติดรายการซ้ำ: ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล จึงจะบันทึกจ่ายได้');
-    // A payer or the requester is told whose desk it is, with no action they cannot finish.
+    // Owner 2026-09-21: only the requester and the approver take part, so the approver who records
+    // the payment clears the block too. The requester still sees whose desk it is.
     const payer = active(blocked, [...APPROVER, 'reimbursement.payment.record'], 'boss');
-    assert.deepEqual(payer.actions, ['print']);
-    assert.match(payer.note ?? '', /^ติดรายการซ้ำ: ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น รอผู้มีสิทธิ์ตรวจรายการซ้ำ/);
-    assert.match(active(blocked, STAFF, 'staff').note ?? '', /รอผู้มีสิทธิ์ตรวจรายการซ้ำ/);
+    assert.deepEqual(payer.actions, ['resolve-duplicate', 'print']);
+    assert.match(payer.note ?? '', /^ติดรายการซ้ำ: ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น ตรวจแล้วถ้าไม่ซ้ำ/);
+    assert.match(active(blocked, STAFF, 'staff').note ?? '', /รอผู้บันทึกจ่ายตรวจรายการซ้ำ/);
     // The no-finance claim still waiting for its projection is blocked the same way.
     assert.deepEqual(active({ ...blocked, status: 'APPROVED' }, [...OWNER, 'reimbursement.duplicate.resolve'], 'owner').actions,
       ['resolve-duplicate', 'cancel', 'print']);

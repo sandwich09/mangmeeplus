@@ -7,6 +7,7 @@ import {
   UpdateReimbursementDraftUseCase,
 } from './reimbursement-request.use-case';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
+import { REIMBURSEMENT_POLICY_DEFAULTS } from '../../domain/reimbursement.constants';
 
 // Evidence fake for detailWithFileNames — decision endpoints now return the same hydrated
 // detail as a GET (names + file names), so their specs feed the assembler harmless lookups.
@@ -62,7 +63,11 @@ function fakeTx(events: any[]) {
   return { outboxEvent: { createMany: async ({ data }: any) => { events.push(...data); } } } as any;
 }
 
-function fakeRepo(req: any, policy: any = null, events: any[] = [], activeApprovers?: string[]) {
+// Finance review is OFF by default since the 2026-09-21 step-journey change. These tests were written
+// for the finance path, so their companies turn it on explicitly; the OFF path has its own tests.
+const FINANCE_REVIEW_ON = { ...REIMBURSEMENT_POLICY_DEFAULTS, financeReviewRequired: true } as any;
+
+function fakeRepo(req: any, policy: any = FINANCE_REVIEW_ON, events: any[] = [], activeApprovers?: string[]) {
   return {
     findRequestById: async () => ({ ...req, payments: [], duplicateCandidates: [], signatures: [], signedCopies: [] }),
     // Audit H-20: named approvers who can still act. Defaults to "all of them", so every existing
@@ -139,7 +144,7 @@ describe('ApproveReimbursementUseCase', () => {
     const req = baseRequest();
     const uc = approveUC(fakeRepo(req));
     const result = await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1');
-    // Default policy requires finance review, so a successful decision parks there.
+    // This company requires finance review, so a successful decision parks there.
     assert.equal(result.status, 'FINANCE_REVIEW');
   });
 
@@ -163,7 +168,7 @@ describe('ApproveReimbursementUseCase', () => {
       approvalSteps: [{ ...baseRequest().approvalSteps[0], approverUserId: 'departed-approver' }],
     });
     // Nobody active: the assignment no longer binds and the step falls back to its recorded role.
-    const uc = approveUC(fakeRepo(req, null, [], []));
+    const uc = approveUC(fakeRepo(req, FINANCE_REVIEW_ON, [], []));
 
     const result = await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1');
 
@@ -175,7 +180,7 @@ describe('ApproveReimbursementUseCase', () => {
     const req = baseRequest({
       approvalSteps: [{ ...baseRequest().approvalSteps[0], approverUserId: 'departed-approver' }],
     });
-    const uc = approveUC(fakeRepo(req, null, [], []));
+    const uc = approveUC(fakeRepo(req, FINANCE_REVIEW_ON, [], []));
     await assert.rejects(() => uc.execute(ctx({ roles: ['ACCOUNTANT'] }), 'rb-1'), /not_eligible_approver/);
   });
 
@@ -183,7 +188,7 @@ describe('ApproveReimbursementUseCase', () => {
     const req = baseRequest({
       approvalSteps: [{ ...baseRequest().approvalSteps[0], approverUserId: 'other-approver' }],
     });
-    const uc = approveUC(fakeRepo(req, null, [], ['other-approver']));
+    const uc = approveUC(fakeRepo(req, FINANCE_REVIEW_ON, [], ['other-approver']));
     await assert.rejects(() => uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1'), /not_eligible_approver/);
   });
 
@@ -194,11 +199,11 @@ describe('ApproveReimbursementUseCase', () => {
     await assert.rejects(() => uc.execute(ctx(), 'rb-1'), /stale_approval_snapshot/);
   });
 
-  it('approves and routes to FINANCE_REVIEW when finance review required (default)', async () => {
+  it('approves and routes to FINANCE_REVIEW when the company requires finance review', async () => {
     const req = baseRequest();
     const events: any[] = [];
     const projections = { execute: async () => { throw new Error('finance approval must not project'); } };
-    const uc = approveUC(fakeRepo(req, null, events), projections);
+    const uc = approveUC(fakeRepo(req, FINANCE_REVIEW_ON, events), projections);
     const detail = await uc.execute(ctx(), 'rb-1');
     assert.equal(detail.status, 'FINANCE_REVIEW');
     assert.equal(req.financeReviewStatus, 'PENDING');
