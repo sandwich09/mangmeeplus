@@ -110,7 +110,7 @@ export type BillingQuote = {
   billingEmail: string; trialEndsAt: string | null; usage: BillingReceiptUsage;
   previousSource?: BillingPurchaseSource; previousTermEndsAt?: string | null;
   featureImpact?: BillingFeatureImpact;
-  purchase?: { kind: 'INITIAL' | 'REPEAT' | 'RESTART' | 'UPGRADE'; previousInterval?: BillingInterval; previousPaidThrough: string | null; projectedPaidThrough: string;
+  purchase?: { kind: 'INITIAL' | 'REPEAT' | 'RESTART' | 'UPGRADE' | 'SCHEDULED_CHANGE'; previousInterval?: BillingInterval; previousPaidThrough: string | null; projectedPaidThrough: string;
     receiptUnitsAdded: number; projectedRemainingReceipts: number;
     trialCarryover?: { receiptUnits: number; expiresAt: string } };
   upgrade?: { prorationAt: string; nextRenewalTotalSatang: number;
@@ -153,11 +153,11 @@ export type BillingStatus = {
   planCapacityRepair?: { operationId: string; version: number; offerKey: string; interval: BillingInterval } | null;
   capacityRepair?: { attemptId: string; attemptVersion: number; offerKey: string; interval: BillingInterval } | null;
 };
-export type BillingCollectionAction = 'CANCEL_RENEWAL' | 'RESUME_RENEWAL' | 'SCHEDULE_DOWNGRADE' | 'CANCEL_DOWNGRADE' | 'EXTEND_TERM' | 'ADMIN_PAUSE_COLLECTION' | 'ADMIN_RESUME_COLLECTION';
+export type BillingCollectionAction = 'CANCEL_RENEWAL' | 'RESUME_RENEWAL' | 'SCHEDULE_DOWNGRADE' | 'CANCEL_DOWNGRADE' | 'PREPAID_PLAN_CHANGE' | 'EXTEND_TERM' | 'ADMIN_PAUSE_COLLECTION' | 'ADMIN_RESUME_COLLECTION';
 export type BillingCollectionOperation = { id: string; companyId: string; action: BillingCollectionAction; state: string; version: number;
   previewHash: string; effectiveAt: string; nextRenewalTotalSatang: number; expiresAt: string; observedAt: string | null;
   errorCode: string | null; allowedActions: ('submit' | 'withdraw')[];
-  targetOffer?: BillingOffer; capacity?: BillingCapacityImpact };
+  targetOffer?: BillingOffer; currentOffer?: BillingOffer; capacity?: BillingCapacityImpact };
 export type BillingCheckoutBody = { quoteId: string; consentRevision: string; accepted: true; channel: 'web' | 'line' };
 export type BillingCheckoutResult = { attemptId: string; state: string; checkoutUrl: string | null };
 export type BillingAttemptView = {

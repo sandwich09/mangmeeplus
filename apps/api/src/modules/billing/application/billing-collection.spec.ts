@@ -119,3 +119,17 @@ test('an unresolved email-recipient update does not block preview, confirmation 
   assert.equal(f.operation().state, 'SUCCEEDED'); assert.equal(f.writes(), 1);
   assert.equal(f.account.activeEmailOperationId, 'unknown-email-operation');
 });
+
+test('a paid prepaid plan change shows its real start date and cannot be withdrawn', async () => {
+  const f = fixture(), context = { companyId: 'company', userId: 'owner' } as RequestContext;
+  const row = await f.service.preview(context, 'CANCEL_RENEWAL');
+  const operation = f.operation(), effectiveAt = new Date(Date.now() + 86_400_000).toISOString();
+  operation.type = 'CUSTOMER_PREPAID_PLAN_CHANGE'; operation.state = 'BLOCKED'; operation.resultJson = null;
+  operation.proposedJson = { ...operation.proposedJson, action: 'PREPAID_PLAN_CHANGE', effectiveAt,
+    paidThrough: new Date(Date.now() + 32 * 86_400_000).toISOString() };
+  f.account.leaseUntil = null;
+  const view = f.service.view(operation as any, 'owner');
+  assert.equal(view.effectiveAt, effectiveAt); assert.deepEqual(view.allowedActions, []);
+  await assert.rejects(f.service.withdraw(context, row.id, operation.version));
+  assert.equal(operation.state, 'BLOCKED');
+});
