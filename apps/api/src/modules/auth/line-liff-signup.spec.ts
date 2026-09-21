@@ -244,6 +244,7 @@ describe('P10-L LIFF client script', () => {
       companyName?: string;
       discoverySource?: string;
       discoverySourceOther?: string;
+      referralSalesCode?: string;
       fetchThrows?: Error;
       sendMessagesFails?: Error;
       stored?: Record<string, string>;
@@ -307,8 +308,12 @@ describe('P10-L LIFF client script', () => {
       'discovery-other-fields': { hidden: true },
       'discovery-source-other': { ...input('discovery-source-other', options.discoverySourceOther ?? ''), disabled: true },
       'discovery-source-other-error': { textContent: '', hidden: true },
+      // D6: the "รหัสเซลล์" field, revealed by the SALES choice.
+      'discovery-sales-fields': { hidden: true },
+      'referral-sales-code': { ...input('referral-sales-code', options.referralSalesCode ?? ''), disabled: true },
+      'referral-sales-code-error': { textContent: '', hidden: true },
     };
-    const choices = ['WEBSITE', 'IG', 'TIKTOK', 'FACEBOOK', 'OTHER'].map((value) => ({
+    const choices = ['WEBSITE', 'IG', 'TIKTOK', 'FACEBOOK', 'SALES', 'OTHER'].map((value) => ({
       value, checked: value === options.discoverySource,
     }));
     const closeButtons = [{ addEventListener: listen('close') }];

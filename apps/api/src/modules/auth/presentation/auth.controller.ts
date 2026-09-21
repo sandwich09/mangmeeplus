@@ -589,6 +589,12 @@ export class AuthController {
             <input id="discovery-source-other" type="text" maxlength="${SIGNUP_DISCOVERY_OTHER_MAX}" placeholder="เช่น เพื่อนแนะนำ" aria-describedby="discovery-source-other-error" disabled />
             <p id="discovery-source-other-error" class="field-error" hidden></p>
           </div>
+          <div id="discovery-sales-fields" hidden>
+            <label for="referral-sales-code">รหัสเซลล์</label>
+            <input id="referral-sales-code" type="text" maxlength="6" inputmode="latin" autocapitalize="characters" autocomplete="off" placeholder="เช่น TON" aria-describedby="referral-sales-code-help referral-sales-code-error" disabled />
+            <p id="referral-sales-code-help" class="fine">รหัส 3–6 ตัว ตัวอักษรหรือตัวเลข สอบถามจากเซลล์ที่ดูแลคุณ</p>
+            <p id="referral-sales-code-error" class="field-error" hidden></p>
+          </div>
         </fieldset>
         <section class="legal">
           <p>${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.titleTh)} และ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.privacy.titleTh)} ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.displayVersionTh)}</p>

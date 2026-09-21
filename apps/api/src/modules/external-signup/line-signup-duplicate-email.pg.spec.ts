@@ -61,7 +61,7 @@ function wire(client: PrismaClient, tag: string, lineUserId: string, autoDailyCa
   } as any;
   const submit = new SubmitLineSignupUseCase(prisma, config, core, {
     verify: async () => ({ providerUserId: lineUserId, channelId: tag, displayName: 'เจ้าของร้านทดสอบ' }),
-  } as any, rateLimit, directory, provision, opsAlerts);
+  } as any, rateLimit, directory, provision, opsAlerts, { resolveCode: async () => null } as any);
   const queue = new SignupAdminQueueUseCase(prisma, core, { revokeAll: async () => 0 } as any, {
     enqueue: async () => { throw new Error('LINE signup must not send claim email'); },
     enqueueRejectionNotice: async () => { throw new Error('unexpected mailbox notification'); },

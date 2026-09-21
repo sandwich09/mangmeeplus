@@ -19,6 +19,9 @@ export const SALES_DEAL_MONTHS_MAX = 36;
 export const SALES_DEAL_DESCRIPTION_MAX = 200;
 export const SALES_DEAL_REASON_MAX = 500;
 export type SalesDealBaseTier = Exclude<PlanTierKey, 'FREE_TRIAL_15'>;
+/** Runtime companion of `SalesDealBaseTier` — the paid tiers a deal may be built on (R3). */
+export const SALES_DEAL_BASE_TIERS: readonly SalesDealBaseTier[] =
+  ['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999'];
 
 /** Frozen into PackageChangeRequest.offerSnapshotJson when the deal is submitted; immutable once APPROVED (R3/R4). */
 export type SalesDealSnapshot = {
@@ -37,12 +40,23 @@ export type SalesDealSnapshot = {
 };
 export type SalesDealInput = Omit<SalesDealSnapshot, 'version'> & { companyId: string; /** Team-visible only, ≤ 500 (S24). */ internalReason: string };
 export type SalesDealSaveBody = SalesDealInput & { /** Required when updating a DRAFT/REJECTED deal. */ version?: number };
+/** reject / cancel: the reason is what the agent reads back, so it is required (R5). */
 export type SalesDealDecisionBody = { version: number; reason: string };
+/** approve: the audit row already records who approved and whether it was their own deal. */
+export type SalesDealApproveBody = { version: number; reason?: string };
+export type SalesDealSubmitBody = { version: number };
 
 export type SalesCompanyAccessState = 'NO_PACKAGE' | 'TRIAL' | 'ACTIVE' | 'EXPIRED';
 export type SalesCompanySearchItem = {
   companyId: string; name: string; accessState: SalesCompanyAccessState; tierKey: PlanTierKey | null; province: string | null;
   createdAt: string; openDealId: string | null; openDealStatus: SalesDealStatus | null;
+  /** S31: what the shop runs today, so the deal form can warn before the deal is ever saved. */
+  branchCount: number; employeeCount: number;
+  /**
+   * Catalog list price per month of the shop's current paid tier (STARTER_249 when it has none),
+   * for the "สูงกว่าราคา catalog" warning. Multiply by the deal's months to compare.
+   */
+  catalogMonthlyPriceSatang: number;
 };
 export type SalesCompanySearchDto = { items: SalesCompanySearchItem[] };
 export const SALES_COMPANY_SEARCH_MIN_CHARS = 2;
@@ -50,7 +64,7 @@ export const SALES_COMPANY_SEARCH_LIMIT = 20;
 
 export type SalesDealView = {
   id: string; status: SalesDealStatus; version: number;
-  company: SalesCompanySearchItem & { branchCount: number; employeeCount: number };
+  company: SalesCompanySearchItem;
   salesUserId: string; salesDisplayName: string;
   snapshot: SalesDealSnapshot; internalReason: string;
   /** Catalog price of `base` for the same number of months (monthly price × months), for the "สูงกว่า catalog" warning. */
@@ -75,8 +89,12 @@ export type SalesAgentView = {
   createdAt: string; suspendedAt: string | null;
 };
 export type SalesAgentListDto = { items: SalesAgentView[] };
-/** Decrypted tax/bank data: SYSTEM_ADMIN only, every read audited (S10). */
-export type SalesAgentProfileDto = { legalName: string; nationalId: string; taxId: string | null; address: string; bankName: string; bankAccount: string; whtRatePercent: number };
+/**
+ * Decrypted tax/bank data: SYSTEM_ADMIN only, every read audited (S10).
+ * Every field is nullable because a lead-created agent has no payroll record yet — the read
+ * answers with nulls rather than 404, so the Owner's form opens on an empty record.
+ */
+export type SalesAgentProfileDto = { legalName: string | null; nationalId: string | null; taxId: string | null; address: string | null; bankName: string | null; bankAccount: string | null; whtRatePercent: number };
 export type SalesAgentProfileInput = { legalName: string; nationalId: string; taxId?: string | null; address: string; bankName: string; bankAccount: string; whtRatePercent: number };
 export type SalesAgentCreateBody = {
   username: string; displayName: string; phoneNumber?: string; email?: string; role: SalesRoleKey;
@@ -104,8 +122,11 @@ export type PackageChangeRequestKind = 'CUSTOMER_REQUEST' | 'SALES_DEAL' | 'SPEC
 
 export type SalesReferralSource = 'SIGNUP_CODE' | 'SIGNUP_LINK' | 'ADMIN';
 export const SALES_REFERRAL_ADMIN_WINDOW_DAYS = 30;
+/** SYSTEM_ADMIN referral repair, within the window and always with a reason (D6 anti-gaming). */
+export type SalesReferralUpdateBody = { salesCode: string | null; reason: string };
 
 export const SALES_ERROR_CODES = ['SALES_DEAL_STATE_CONFLICT', 'SALES_DEAL_SELF_APPROVAL', 'SALES_DEAL_EXPIRED', 'SALES_DEAL_ALREADY_OPEN',
   'SALES_COMPANY_NOT_FOUND', 'SALES_COMPANY_HAS_OPEN_REQUEST', 'SALES_CODE_UNKNOWN', 'SALES_CODE_TAKEN', 'SALES_CODE_INVALID',
-  'SALES_AGENT_SUSPENDED', 'SALES_AGENT_NOT_FOUND', 'SALES_TEAM_LEAD_INVALID'] as const;
+  'SALES_AGENT_SUSPENDED', 'SALES_AGENT_NOT_FOUND', 'SALES_TEAM_LEAD_INVALID',
+  'SALES_AGENT_USERNAME_TAKEN', 'SALES_REFERRAL_WINDOW_CLOSED'] as const;
 export type SalesErrorCode = typeof SALES_ERROR_CODES[number];

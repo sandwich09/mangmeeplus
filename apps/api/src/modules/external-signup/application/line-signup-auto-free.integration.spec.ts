@@ -9,6 +9,7 @@ import { CompanySignupCoreService } from './company-signup-core.service';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
 import { PartnerLifecycleTransitionUseCase } from '../../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 import { SubmitLineSignupUseCase } from './submit-line-signup.use-case';
+import type { SalesReferralService } from '../../sales-console/application/sales-referral.service';
 
 /**
  * AUTO_FREE end to end over one store: real submit → real core state machine → real provisioning →
@@ -355,7 +356,7 @@ function harness(options: { systemAdmins?: string[]; config?: Record<string, unk
   } as any;
 
   return {
-    submit: new SubmitLineSignupUseCase(store.prisma, config, core, lineIdToken, rateLimit, adminNotify, provision, opsAlerts),
+    submit: new SubmitLineSignupUseCase(store.prisma, config, core, lineIdToken, rateLimit, adminNotify, provision, opsAlerts, stubSalesReferral()),
     provision,
     core,
     store,
@@ -814,3 +815,8 @@ describe('trial guards survive a missing plan term (review HIGH-3)', () => {
     assert.equal(h.store.lineContexts.get('Uline-1').companyId, 'co-1');
   });
 });
+
+/** D6 is not what these specs exercise; an agentless resolver keeps every existing case unchanged. */
+function stubSalesReferral(): SalesReferralService {
+  return { resolveCode: async () => null } as unknown as SalesReferralService;
+}

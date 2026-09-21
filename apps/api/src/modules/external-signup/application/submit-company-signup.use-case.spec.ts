@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { SubmitCompanySignupUseCase } from './submit-company-signup.use-case';
 import type { CompanySignupInput } from '../domain/company-signup.logic';
+import type { SalesReferralService } from '../../sales-console/application/sales-referral.service';
 
 const INPUT: CompanySignupInput = {
   externalSignupId: '0f9b1d2e-3c4a-4b5c-8d7e-1f2a3b4c5d6e',
@@ -53,7 +54,7 @@ function harness(options: {
   const adminNotify = { enqueue: async (id: string) => { announced.push(id); } } as any;
 
   return {
-    useCase: new SubmitCompanySignupUseCase(prisma, core, adminNotify, mxResolver),
+    useCase: new SubmitCompanySignupUseCase(prisma, core, adminNotify, stubSalesReferral(), mxResolver),
     updates, advances, lookups, announced,
   };
 }
@@ -162,3 +163,8 @@ describe('SubmitCompanySignupUseCase', () => {
     ]);
   });
 });
+
+/** D6 is not what these specs exercise; an agentless resolver keeps every existing case unchanged. */
+function stubSalesReferral(): SalesReferralService {
+  return { resolveCode: async () => null } as unknown as SalesReferralService;
+}

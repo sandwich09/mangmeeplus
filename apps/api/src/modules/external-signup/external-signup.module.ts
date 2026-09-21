@@ -32,6 +32,7 @@ import { PublicSesEventsController } from './presentation/http/public-ses-events
 import { SignupClaimEmailInternalController } from './presentation/http/signup-claim-email-internal.controller';
 import { SystemSignupRequestController } from './presentation/http/system-signup-request.controller';
 import { SystemSupportRequestController } from './presentation/http/system-support-request.controller';
+import { SalesConsoleModule } from '../sales-console/sales-console.module';
 
 @Module({
   // AuthModule: the rate limiter and the mailer port. DataModelCoreModule: the outbox repository.
@@ -41,7 +42,9 @@ import { SystemSupportRequestController } from './presentation/http/system-suppo
   // SystemPartnerManagementModule: `PartnerLifecycleTransitionUseCase`, the one writer allowed to
   // disable a company — provisioning locks a no-package shop through it (J1).
   imports: [AuthModule, DashboardNotificationsModule, DataModelCoreModule, SystemOnboardingModule,
-    SystemPartnerManagementModule, LoggerModule],
+    SystemPartnerManagementModule, LoggerModule,
+    // D6: both signup paths resolve a sales code through SalesReferralService.
+    SalesConsoleModule],
   controllers: [
     PublicEmailAccessController,
     PublicCompanySignupController,

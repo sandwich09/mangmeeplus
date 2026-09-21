@@ -439,6 +439,19 @@ export class ProvisionSignupUseCase {
    */
   private async applyTrialGuards(companyId: string, request: SignupRow, requestId: string): Promise<void> {
     const now = new Date();
+
+    // D6 (§17.1): attribution is copied here, at the one moment the shop comes into existence, so
+    // `referredAt` is the shop's opening time — the anchor the 14-day counting window uses in
+    // Phase 4. Best-effort like every other guard in this method: a shop must never fail to open
+    // because an attribution row could not be written.
+    if (request.referralSalesUserId) {
+      const referralSalesUserId = request.referralSalesUserId;
+      await this.bestEffort(companyId, requestId, 'sales_referral', request.source, () =>
+        this.prisma.client.company.update({
+          where: { id: companyId },
+          data: { referralSalesUserId, referredAt: now, referralSource: 'SIGNUP_CODE' },
+        }));
+    }
     const preset = PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER];
 
     await this.bestEffort(companyId, requestId, 'plan_term_warmup', request.source, async () => {
@@ -612,6 +625,8 @@ type SignupRow = {
   legalLocale: string | null;
   legalUserAgent: string | null;
   legalAcceptedAt: Date | null;
+  /** D6: resolved at submit; copied onto the Company the moment the shop exists. */
+  referralSalesUserId?: string | null;
 };
 
 /**

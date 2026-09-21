@@ -60,7 +60,7 @@
 - R2 **สถานะร้าน** ใช้ term เดิม: ยังไม่มีแพ็กเกจ (term 0 วัน + `termDisabledAt`) → ใช้งาน (term เต็ม) → หมดอายุ (P29); `lockReason` derive จาก term (`termEndsAt <= termStartAt && renewCount = 0` ⇒ `no_package`)
 - R3 **ดีล** = แถว `PackageChangeRequest` kind `SALES_DEAL`; หนึ่งร้านมีดีลที่ยังไม่จบได้หนึ่งใบ (partial unique OPEN เดิม); เนื้อหาถูก snapshot ใน `offerSnapshotJson` v2: `{ base: tierKey, priceSatang, months, branchLimit, employeeLimit, monthlySlipLimit, features[], aiMonthlyBudgetSatang|null, description, salesUserId, approvedBy, offerExpiresAt }`; ราคา ≥ 1 satang ไม่มีเพดาน/พื้น (เตือนเมื่อสูงกว่า catalog หรือต่ำกว่าพื้นที่ Owner ตั้ง — ไม่ห้าม); เดือน 1–36
 - R4 **สถานะดีล**: DRAFT → PENDING_APPROVAL → APPROVED (การ์ดโชว์; `offerExpiresAt = approvedAt + 3 วัน`) → PAID (Stripe ยืนยัน/แอดมินตรวจสลิป) → APPLIED (เปิดสิทธิ์แล้ว) | EXPIRED (เลย 3 วัน; derive + scan รายวันปิดแถว) | REJECTED (หัวหน้า) | CANCELLED (เซลล์/หัวหน้า ก่อนจ่าย); แก้ไขได้เฉพาะ DRAFT/REJECTED; APPROVED แก้ไม่ได้ (ยกเลิกแล้วออกใหม่)
-- R5 **อนุมัติ**: `MANGMEE_SALES_LEAD` หรือ SYSTEM_ADMIN; ผู้สร้างอนุมัติดีลของตัวเองไม่ได้ ยกเว้น SYSTEM_ADMIN (single-admin); ทุกการเปลี่ยนสถานะมีเหตุผล + audit CRITICAL (`sales.deal.*`)
+- R5 **อนุมัติ**: `MANGMEE_SALES_LEAD` หรือ SYSTEM_ADMIN; ผู้สร้างอนุมัติดีลของตัวเองไม่ได้ ยกเว้น SYSTEM_ADMIN (single-admin); ทุกการเปลี่ยนสถานะมีเหตุผล + audit CRITICAL (`sales.deal.*`) · *(Phase 2, 2026-09-21: D2 ให้ lead อนุมัติดีลของตัวเองได้ (audit `selfApproved`); เหตุผลบังคับเฉพาะ ปฏิเสธ/ยกเลิก — อนุมัติไม่บังคับ เพื่อความเร็ว; audit เก็บผู้อนุมัติเสมอ)*
 - R6 **ชำระดีลด้วย Stripe แบบครั้งเดียว** *(แก้ไขโดย §19.2 — ใช้เส้นทางครั้งเดียวของ PR #667)*: quote จาก snapshot ดีล (ยอด = `priceSatang`, VAT ตามนโยบาย `quoteTotals`), Checkout `mode: 'payment'` `price_data { product: product ของ tier ฐาน (อ่านจาก Price catalog), unit_amount: priceSatang }`, `payment_method_types: ['card','promptpay']`; หลักฐานผ่าน `paidPackageCheckoutEvidence` (ขยายให้รับ `promptpay`), async events ที่มีอยู่; apply = term `termEndsAt = appendPackageInterval × months` จาก now, ลิมิต/เมนู/งบ AI ตาม snapshot, ใบเสร็จ = โควตาต่อเดือน (LEGACY_MONTH), `billingReceiptAccountId` **ไม่ตั้ง** (ไม่ใช่ subscription) → source แสดงเป็น `DEAL` (label ใหม่) ; re-enable บริษัทถ้า `termDisabledAt`
 - R7 **ชำระด้วยโอน+สลิป** *(เลื่อนไป Phase 4 — §19.2/Q9)*: ตาม special-invoice spec (endpoint สลิปใต้ `package-change-requests`, ตรวจไวรัส, แอดมิน verify ด้วยรหัสผ่าน → apply เดียวกับ R6); ไม่มีสิทธิ์ก่อน verify
 - R8 **ไม่มีสิทธิ์ก่อนจ่าย** ทุกช่องทาง; การ์ดข้อเสนอเป็นแค่ข้อมูล; ร้านยังล็อกจน APPLIED
@@ -119,7 +119,7 @@ Error codes ใหม่ต้องมี Thai สองที่ (`api-error-m
 
 ### Sales console (`/sales`)
 - Layout/nav ของตัวเอง (ไม่ใช่ `/system`): ดีล (รายการ+สร้าง), ร้านค้า (ค้นหา), รายงาน (lead), ทีม (lead: สร้างเซลล์/รีเซ็ตรหัส); mobile-first
-- ฟอร์มดีล: ร้าน (search), tier ฐาน (เติมค่า), ราคา (บาท อิสระ), เดือน, สาขา/ผู้ใช้/ใบต่อเดือน, เมนู (preset + สวิตช์), งบ AI, โน้ตถึงลูกค้า (≤200), เหตุผลภายใน → บันทึก DRAFT → ส่งอนุมัติ; หน้าหัวหน้า: คิวรออนุมัติ + preview + อนุมัติ/ปฏิเสธ (เหตุผล)
+- ฟอร์มดีล: ร้าน (search), tier ฐาน (เติมค่า), ราคา (บาท อิสระ), เดือน, สาขา/ผู้ใช้/ใบต่อเดือน, เมนู (preset + สวิตช์), เครดิต AI (คำในระบบคือ "เครดิต AI" เสมอ — W-01 guard), โน้ตถึงลูกค้า (≤200), เหตุผลภายใน → บันทึก DRAFT → ส่งอนุมัติ; หน้าหัวหน้า: คิวรออนุมัติ + preview + อนุมัติ/ปฏิเสธ (เหตุผล); คำเตือน "สูงกว่าราคาปกติ" ใช้ราคา catalog ฐาน (`billingOffer(base, month) × เดือน`, ไม่รวม offerTerms ของนโยบาย — เตือนอย่างเดียว) และ "เกินลิมิตใหม่" จากจำนวนสาขา/ผู้ใช้ที่ส่งมากับผลค้นหาร้าน (S31)
 
 ### Admin console (`/system`)
 - เมนูใหม่ "ทีมขาย": รายชื่อเซลล์/หัวหน้า, สร้าง/ระงับ/รีเซ็ตรหัส, ฟอร์มข้อมูลภาษี (เห็นเฉพาะ SYSTEM_ADMIN), ส่งออก CSV; ดีลทั้งหมด + ตรวจสลิป (จาก special-invoice)
@@ -210,7 +210,7 @@ unit (สถานะดีล, snapshot, quoteTotals, ladder-less validation, l
 - **สูตรนับ**: ยอดที่จ่ายและ APPLIED ผ่านดีล → `deal.salesUserId` เสมอ (ดีลชนะ) ; ยอดที่ไม่ผ่านดีล → นับให้ `referralSalesUserId` เมื่อ `paidAt <= referredAt + 14 วัน` ; หลังจากนั้นไม่นับให้ใคร (รวมรอบต่ออายุ) ; คืนเงิน/dispute ภายใน 60 วัน หักออกจากยอดเดือนที่คืน
 - "ยอดเปิดบริษัท" = ร้านที่ APPLIED ครั้งแรกภายในหน้าต่างของเซลล์ (ดีลหรือแนะนำ) นับร้านละ 1
 
-**ตัวกันโกง (บังคับในรอบแรก)**
+**ตัวกันโกง (บังคับในรอบแรก)** · *(Phase 2, 2026-09-21: การสมัครเก็บ `referralSalesCode/referralSalesUserId/referredAt/referralSource` ครบตั้งแต่วันแรก; การนับยอดและตัวกันโกงทั้งชุดทำใน Phase 4 พร้อมรายงาน — "รอบแรก" = รอบแรกของรายงาน ไม่ใช่ Phase 2)*
 - รหัสเซลล์ผูกกับบัญชีเซลล์ ACTIVE เท่านั้น; ระงับเซลล์ = รหัสหยุดรับ (ร้านเก่ายังนับตามหน้าต่างเดิม)
 - ร้านที่ OWNER มี identity เดียวกับเซลล์ (LINE userId, อีเมล, เบอร์) หรือเซลล์คนใดในทีม → ไม่นับ + ธง `self_referral` ให้ Owner ตรวจ
 - เจ้าของคนเดียวกันเปิดหลายร้าน (ตรรกะ repeat-shop ที่มีอยู่) → นับเฉพาะร้านแรก

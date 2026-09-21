@@ -641,6 +641,24 @@ const CODE_LABELS: Record<string, string> = {
   email_domain_check_unavailable: 'ตรวจอีเมลไม่ได้ชั่วคราว กรุณากดส่งคำขออีกครั้ง ลองใหม่ในอีกสักครู่',
   company_signup_concurrent_transition:
     'คำขอนี้ถูกดำเนินการโดยผู้ดูแลคนอื่นระหว่างทำรายการ กรุณาโหลดคิวคำขอใหม่แล้วตรวจสถานะล่าสุด',
+
+  // ---- Sales console + ดีลพิเศษ (sales-deals spec §11, SALES_ERROR_CODES) ----
+  // Read by a เซลล์ on a phone in front of a shop owner, so each line names the next move rather
+  // than the rule that refused. Nothing here ever quotes a price or a shop's data.
+  SALES_DEAL_STATE_CONFLICT: 'ดีลนี้ถูกแก้ไขจากที่อื่นแล้ว กรุณาโหลดข้อมูลล่าสุดก่อนทำรายการอีกครั้ง',
+  SALES_DEAL_SELF_APPROVAL: 'อนุมัติดีลของตัวเองไม่ได้ กรุณาให้หัวหน้าทีมเป็นผู้อนุมัติ',
+  SALES_DEAL_EXPIRED: 'ข้อเสนอนี้หมดอายุแล้ว กรุณาสร้างดีลใหม่ให้ลูกค้า',
+  SALES_DEAL_ALREADY_OPEN: 'ร้านนี้มีดีลที่ยังไม่ปิดอยู่แล้ว กรุณาเปิดดีลเดิมเพื่อแก้ไข หรือยกเลิกก่อนสร้างใหม่',
+  SALES_COMPANY_NOT_FOUND: 'ไม่พบร้านค้านี้ในระบบแล้ว กรุณาค้นหาร้านใหม่อีกครั้ง',
+  SALES_COMPANY_HAS_OPEN_REQUEST: 'ร้านนี้มีคำขอเปลี่ยนแพ็กเกจของลูกค้าค้างอยู่ กรุณาให้ผู้ดูแลระบบปิดคำขอนั้นก่อนอนุมัติดีล',
+  SALES_CODE_UNKNOWN: 'ไม่พบรหัสเซลล์นี้ ตรวจสอบกับเซลล์ของคุณ',
+  SALES_CODE_TAKEN: 'รหัสเซลล์นี้มีผู้ใช้แล้ว กรุณาตั้งรหัสอื่น',
+  SALES_CODE_INVALID: 'รหัสเซลล์ต้องเป็นตัวอักษรอังกฤษตัวใหญ่หรือตัวเลข 3–6 ตัว',
+  SALES_AGENT_SUSPENDED: 'บัญชีเซลล์นี้ถูกระงับอยู่ กรุณาติดต่อผู้ดูแลระบบให้เปิดใช้งานก่อน',
+  SALES_AGENT_NOT_FOUND: 'ไม่พบบัญชีเซลล์นี้แล้ว กรุณาโหลดรายชื่อทีมใหม่',
+  SALES_TEAM_LEAD_INVALID: 'หัวหน้าทีมที่เลือกใช้ไม่ได้ กรุณาเลือกหัวหน้าทีมจากรายการอีกครั้ง',
+  SALES_AGENT_USERNAME_TAKEN: 'ชื่อผู้ใช้นี้มีคนใช้แล้ว กรุณาตั้งชื่อผู้ใช้อื่น',
+  SALES_REFERRAL_WINDOW_CLOSED: 'ร้านนี้เปิดมาเกิน 30 วันแล้ว จึงแก้ผู้แนะนำไม่ได้',
 };
 
 // Several upload rejections differ only in which check caught the file; the user's next move is

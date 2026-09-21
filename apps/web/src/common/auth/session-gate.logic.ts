@@ -26,6 +26,32 @@ export function isSystemAdmin(session: WebSession): boolean {
   return session.roles.includes(SYSTEM_ADMIN_ROLE);
 }
 
+/** The มั่งมี sales console's landing path (spec §12). `/sales` itself only redirects here. */
+export const SALES_HOME_PATH = '/sales/deals';
+
+/** S07: `/sales` has its own shell, and one permission decides who may render it. */
+export function canOpenSales(session: WebSession): boolean {
+  return session.permissions.includes('sales.console.read');
+}
+
+/**
+ * S29: `MANGMEE_SALES*` are memberships of the PLATFORM tenant, so without this a เซลล์ could open
+ * that tenant's workspace — a business shell built for a shop, holding มั่งมี's own data. The two
+ * roles carry nothing but `sales.*` and `account.*`, so "no business permission at all" is the
+ * honest test: a SYSTEM_ADMIN (who also holds `sales.console.read`) keeps every shell they had.
+ */
+export function isSalesOnlySession(session: WebSession): boolean {
+  return canOpenSales(session)
+    && !isSystemAdmin(session)
+    && session.permissions.every((key) => key.startsWith('sales.') || key.startsWith('account.'));
+}
+
+/** Preserve a `/sales` deep link through every authentication gate (mirrors the /system one). */
+export function salesGateReturnPath(requestedPath: string | null | undefined): string {
+  const sanitized = usablePostAcceptanceLanding(sanitizeNextPath(requestedPath));
+  return sanitized?.startsWith('/sales') ? sanitized : SALES_HOME_PATH;
+}
+
 /** Billing delegates may enter only the billing subtree; the API verifies system-role and company scope. */
 export function canOpenSystemBilling(session: WebSession, path: string): boolean {
   const pathname = sanitizeNextPath(path)?.split(/[?#]/)[0];
@@ -75,13 +101,18 @@ export function resolveLoginLanding(
 ): string | null {
   const explicit = usableLanding(sanitizeNextPath(next));
   const home = usableLanding(sanitizeNextPath(decodeCookie(homeCookie)));
-  const landing = explicit
-    ?? home
-    ?? (isSystemAdmin(session)
-      ? '/system/partners'
-      : session.companyId
-        ? `/companies/${session.companyId}/dashboard`
-        : null);
+  // S07/S29: a sales-only session owns exactly one area. Its remembered home is the platform
+  // tenant's dashboard (the login BFF derives it from `companyId`), and following that would land
+  // it on a workspace the shell immediately bounces — so anything outside /sales is dropped here.
+  const landing = isSalesOnlySession(session)
+    ? [explicit, home].find((path) => path?.startsWith('/sales')) ?? SALES_HOME_PATH
+    : explicit
+      ?? home
+      ?? (isSystemAdmin(session)
+        ? '/system/partners'
+        : session.companyId
+          ? `/companies/${session.companyId}/dashboard`
+          : null);
 
   // Only an explicit false from the current API proves the clickwrap is current. Missing fields
   // during a rolling deployment fail closed into the gate instead of bypassing it.
@@ -140,6 +171,7 @@ export function resolvePostLegalAcceptanceTarget(
   session: WebSession,
 ): string {
   const explicit = usablePostAcceptanceLanding(sanitizeNextPath(next));
+  if (isSalesOnlySession(session)) return explicit?.startsWith('/sales') ? explicit : SALES_HOME_PATH;
   if (explicit) return explicit;
   if (isSystemAdmin(session)) return '/system/partners';
   return session.companyId ? `/companies/${session.companyId}/dashboard` : '/';

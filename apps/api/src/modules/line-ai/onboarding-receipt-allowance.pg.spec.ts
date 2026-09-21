@@ -100,7 +100,7 @@ describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => 
         new PartnerLifecycleTransitionUseCase(prisma));
       const submit = new SubmitLineSignupUseCase(prisma, config, core, {
         verify: async () => ({ providerUserId: lineUserId, channelId: tag, displayName: 'ร้านแรก' }),
-      } as never, new AuthRateLimitService(config, rateLimits), adminNotify, provision, opsAlerts);
+      } as never, new AuthRateLimitService(config, rateLimits), adminNotify, provision, opsAlerts, { resolveCode: async () => null } as never);
       await submit.execute({
         idToken: 'test.external.line.proof', companyName: tag, phoneNumber: '0812345678',
         submissionId: randomUUID(), intent: 'FIRST_SHOP',

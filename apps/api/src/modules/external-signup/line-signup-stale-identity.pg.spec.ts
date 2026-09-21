@@ -33,6 +33,7 @@ import { ProvisionSignupUseCase } from './application/provision-signup.use-case'
 import { PartnerLifecycleTransitionUseCase } from '../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 import { SignupAdminQueueUseCase } from './application/signup-admin-queue.use-case';
 import { SubmitLineSignupUseCase } from './application/submit-line-signup.use-case';
+import type { SalesReferralService } from '../sales-console/application/sales-referral.service';
 
 const databaseUrl = process.env.LINE_SIGNUP_TEST_DATABASE_URL;
 
@@ -100,7 +101,7 @@ function wire(client: PrismaClient, options: { adminUserId: string; approvalMode
   return {
     onboarding,
     provision,
-    submit: new SubmitLineSignupUseCase(prisma, config, core, lineIdToken, rateLimit, adminDirectory, provision, opsAlerts),
+    submit: new SubmitLineSignupUseCase(prisma, config, core, lineIdToken, rateLimit, adminDirectory, provision, opsAlerts, stubSalesReferral()),
     queue: new SignupAdminQueueUseCase(prisma, core, { revokeAll: async () => 0 } as any, claimEmail, provision, lineNotify),
     unlink: new UnlinkLineIdentityUseCase(prisma),
     // The OTHER writer of this identity slot (review MED-1). Real, over the same client, so the two
@@ -761,3 +762,8 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
     }
   });
 });
+
+/** D6 is not what these specs exercise; an agentless resolver keeps every existing case unchanged. */
+function stubSalesReferral(): SalesReferralService {
+  return { resolveCode: async () => null } as unknown as SalesReferralService;
+}

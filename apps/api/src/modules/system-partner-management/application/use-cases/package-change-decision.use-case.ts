@@ -51,7 +51,10 @@ export class PackageChangeDecisionUseCase {
 
   async list(status: PackageChangeRequestStatus = 'OPEN'): Promise<AdminPackageChangeQueueDto> {
     const rows = await this.prisma.client.packageChangeRequest.findMany({
-      where: { status },
+      // Customer asks only. A sales deal is decided in the sales console by a team lead, never in
+      // this queue, and the two have different states — mixing them would put DRAFT rows in front
+      // of an operator whose only buttons are APPROVE and REJECT.
+      where: { status, kind: 'CUSTOMER_REQUEST' },
       orderBy: { createdAt: 'asc' },
       take: 200,
       include: {

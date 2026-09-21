@@ -1,6 +1,14 @@
 // Permission registry: canonical source of truth for permission keys and role grants.
 // Imported by seed.ts and tested by permission-registry.spec.ts.
-import { BILLING_PERMISSIONS } from '@watchdog-bms/contracts';
+import { BILLING_PERMISSIONS, SALES_PERMISSION_KEYS, SALES_ROLE_KEYS } from '@watchdog-bms/contracts';
+
+/**
+ * Roles that belong to the PLATFORM, not to a customer company. They hold no business
+ * permission of any kind, so none of the "every company role can …" invariants below apply
+ * to them — see S29: a sales agent is a member of the platform tenant and must find nothing
+ * there to open.
+ */
+export const PLATFORM_ROLE_KEYS: readonly string[] = ['SYSTEM_ADMIN', ...SALES_ROLE_KEYS];
 
 export type PermissionRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
@@ -93,6 +101,18 @@ export const PERMISSIONS: PermissionDef[] = [
   // than system.company_onboarding.create, which only brings a new company into existence.
   { key: 'system.identity_reconciliation.resolve',  description: 'Generate and resolve company tax identity reconciliation items', riskLevel: 'CRITICAL' },
   { key: 'system.data_rights.manage',               description: 'Orchestrate restricted user/company data-rights and offboarding cases', riskLevel: 'CRITICAL' },
+  // Sales console (spec §9/§10). Platform-tenant authority for มั่งมี's own sales team — NOT the
+  // tenant role `SALES`, which is a shop employee (S06). None of these reads a shop's business or
+  // financial data: `sales.company.search` returns name/status/package/province and nothing else.
+  { key: 'sales.console.read',          description: 'Open the sales console and read own deals',   riskLevel: 'LOW' },
+  { key: 'sales.company.search',        description: 'Search shops by name (limited fields, audited)', riskLevel: 'MEDIUM' },
+  { key: 'sales.deal.create',           description: 'Create, edit and submit a sales deal',        riskLevel: 'MEDIUM' },
+  { key: 'sales.deal.approve',          description: 'Approve or reject a submitted sales deal',    riskLevel: 'HIGH' },
+  { key: 'sales.team.manage',           description: 'Create and reset sales agents in own team',   riskLevel: 'HIGH' },
+  { key: 'sales.report.read',           description: 'Read sales figures across teams',             riskLevel: 'MEDIUM' },
+  // Separate from sales.team.manage on purpose: the tax/bank record is the only sensitive PII in
+  // the console, and a team lead who creates accounts must not be able to read or export it (S10).
+  { key: 'sales.agent_profile.manage',  description: 'Read/write sales agent tax and bank details (PII)', riskLevel: 'CRITICAL' },
   // Item 05 inventory permissions
   { key: 'inventory.product.read',         description: 'Read inventory products',            riskLevel: 'LOW' },
   { key: 'inventory.product.manage',       description: 'Create/update/archive products',     riskLevel: 'MEDIUM' },
@@ -416,7 +436,19 @@ export const PERMISSIONS: PermissionDef[] = [
 ];
 
 export const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
-export const COMPANY_PERMISSION_KEYS = PERMISSION_KEYS.filter((key) => !key.startsWith('system.'));
+/**
+ * Everything a customer company's OWNER holds (`ROLE_GRANTS.OWNER` is literally this list), so a
+ * key is excluded here precisely when no shop may ever hold it.
+ *
+ * Two prefixes are platform-scoped: `system.` (partner/billing control plane) and `sales.`
+ * (มั่งมี's own sales team — spec §9/R11). `sales.` had to be named explicitly: without it every
+ * shop owner would inherit all seven sales keys, `sales.agent_profile.manage` among them, which
+ * is the agents' national-id and bank-account record.
+ */
+const PLATFORM_PERMISSION_PREFIXES = ['system.', 'sales.'];
+export const COMPANY_PERMISSION_KEYS = PERMISSION_KEYS.filter(
+  (key) => !PLATFORM_PERMISSION_PREFIXES.some((prefix) => key.startsWith(prefix)),
+);
 
 const REPORT_BI_OWN_VIEW_GRANTS = [
   'report.catalog.read', 'report.dataset.read', 'report.query.run',
@@ -505,6 +537,26 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'system.identity_reconciliation.resolve',
     // Cross-tenant privacy/offboarding case control plane; no tenant role may receive it.
     'system.data_rights.manage',
+    // Sales console: the Owner is the single admin, so every sales authority lands here too —
+    // including the PII key neither sales role may ever hold (R5/R11/S10).
+    ...SALES_PERMISSION_KEYS,
+  ],
+  // ── มั่งมี sales team (spec §5). Platform-tenant memberships, never a shop's. ──
+  // S29 is the whole point of these two lists: no business permission of ANY kind, so the
+  // platform tenant's own workspace has nothing to show them and the web gate sends them to
+  // /sales. The account.* four are exactly what signing in needs — `/v1/auth/me`,
+  // `me/companies` and legal acceptance all require `account.session.read`, the forced
+  // temp-password change requires `account.password.change`, and the registry spec requires
+  // every password-changing role to be able to link its own LINE account.
+  // `account.identity.unlink` stays out, matching every other role.
+  MANGMEE_SALES_LEAD: [
+    'account.session.read', 'account.password.change', 'account.identity.link',
+    'sales.console.read', 'sales.company.search', 'sales.deal.create', 'sales.deal.approve',
+    'sales.team.manage', 'sales.report.read',
+  ],
+  MANGMEE_SALES: [
+    'account.session.read', 'account.password.change', 'account.identity.link',
+    'sales.console.read', 'sales.company.search', 'sales.deal.create',
   ],
   COMPANY_VIEW: [
     ...REIMBURSEMENT_SELF_SERVICE_PERMISSIONS,
@@ -984,4 +1036,8 @@ export const SYSTEM_ROLES: Array<{ key: string; name: string; description: strin
   { key: 'MARKETING',       name: 'Marketing',       description: 'Marketing access' },
   { key: 'STAFF',           name: 'Staff',           description: 'General staff access' },
   { key: 'AUDITOR_READONLY',name: 'Auditor (Read-only)', description: 'Read-only audit access' },
+  // S06: prefixed so they can never be confused with the tenant role `SALES` above, which is a
+  // shop's own sales employee. UI wording is "ทีมขายมั่งมี" / "เซลล์".
+  { key: 'MANGMEE_SALES_LEAD', name: 'Mangmee Sales Lead', description: 'Mangmee sales team lead: all teams deals, approvals, team accounts' },
+  { key: 'MANGMEE_SALES',      name: 'Mangmee Sales',      description: 'Mangmee sales agent: own deals and shop search' },
 ];

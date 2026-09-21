@@ -3,14 +3,15 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import type { PublicCompanySignupBody } from '@watchdog-bms/contracts';
+import { SIGNUP_DISCOVERY_OTHER_MAX, SIGNUP_DISCOVERY_SOURCE_OPTIONS, type PublicCompanySignupBody, type SignupDiscoverySource } from '@watchdog-bms/contracts';
 import { Button } from '@/common/components/button';
-import { SwitchField, TextField } from '@/common/components/field';
+import { SelectField, SwitchField, TextField } from '@/common/components/field';
 import { trimmed } from '@/common/forms/trim';
 import { getSignupAvailability, submitCompanySignup } from './external-signup.api';
 import { SignupBrandHeader, SignupClosedNotice, SignupUnavailableNotice } from './SignupChrome';
 import {
   clampMobileInput,
+  clampSalesCodeInput,
   firstSignupErrorField,
   MOBILE_DIGITS,
   rotateSignupKeyAfter,
@@ -35,6 +36,9 @@ const EMPTY_FORM: SignupFormValues = {
   businessType: '',
   vatRegistered: false,
   taxId: '',
+  discoverySource: '',
+  discoverySourceOther: '',
+  referralSalesCode: '',
 };
 
 /**
@@ -158,6 +162,14 @@ export default function SignupPage() {
         : {}),
       consentVersion: SIGNUP_CONSENT_VERSION,
       requestedOfferKey: SELECTABLE_OFFER_KEY,
+      // D6: attribution is optional, so nothing is sent when the applicant skipped the question.
+      ...(values.discoverySource ? { discoverySource: values.discoverySource } : {}),
+      ...(values.discoverySource === 'OTHER' && trimmed(values.discoverySourceOther)
+        ? { discoverySourceOther: trimmed(values.discoverySourceOther) }
+        : {}),
+      ...(values.discoverySource === 'SALES' && clampSalesCodeInput(values.referralSalesCode)
+        ? { referralSalesCode: clampSalesCodeInput(values.referralSalesCode) }
+        : {}),
     };
     try {
       const result = await submitCompanySignup(body);
@@ -317,6 +329,42 @@ export default function SignupPage() {
                     />
                   ) : null}
                 </div>
+
+                {/* D6: the attribution question the LIFF form and the API's HTML form already ask.
+                    Optional — nobody is stopped at it — but choosing "เซลล์ของมั่งมี" reveals the
+                    one field that has to be right, because the code is what credits a real person. */}
+                <SelectField
+                  label="รู้จักเราทางไหน (ไม่บังคับ)"
+                  name="discoverySource"
+                  value={values.discoverySource}
+                  onChange={(event) => set('discoverySource', event.target.value as SignupDiscoverySource | '')}
+                >
+                  <option value="">ไม่ระบุ</option>
+                  {SIGNUP_DISCOVERY_SOURCE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </SelectField>
+                {values.discoverySource === 'OTHER' ? (
+                  <TextField
+                    label="ระบุช่องทาง"
+                    name="discoverySourceOther"
+                    maxLength={SIGNUP_DISCOVERY_OTHER_MAX}
+                    value={values.discoverySourceOther}
+                    onChange={(event) => set('discoverySourceOther', event.target.value)}
+                    error={fieldErrors.discoverySourceOther}
+                  />
+                ) : null}
+                {values.discoverySource === 'SALES' ? (
+                  <TextField
+                    label="รหัสเซลล์"
+                    name="referralSalesCode"
+                    hint="ตัวอักษรอังกฤษตัวใหญ่หรือตัวเลข 3–6 ตัว ตามที่เซลล์แจ้งไว้"
+                    value={values.referralSalesCode}
+                    onChange={(event) => set('referralSalesCode', clampSalesCodeInput(event.target.value))}
+                    error={fieldErrors.referralSalesCode}
+                    autoComplete="off"
+                  />
+                ) : null}
 
                 <TrialNotice />
 

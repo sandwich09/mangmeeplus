@@ -953,6 +953,13 @@ export default function SignupQueuePage() {
                                 รู้จักเราทางไหน: {signupDiscoveryLabel(item.discoverySource, item.discoverySourceOther)}
                               </p>
                             )}
+                            {/* D6: the resolved agent, not the raw code — the reviewer needs to
+                                know WHO to credit, and a code alone is a lookup they cannot do. */}
+                            {item.referralSales && (
+                              <p className="mt-0.5 break-words text-xs text-gray-600">
+                                รู้จักเราจากเซลล์: {item.referralSales.displayName} ({item.referralSales.salesCode})
+                              </p>
+                            )}
                             {/* LEGAL-LIFF-01: the binding acceptance happened before this row
                                 existed, and its time is the evidence an operator may be asked for. */}
                             {item.legalAcceptedAt && (

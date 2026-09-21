@@ -1,6 +1,9 @@
 import {
   CURRENT_LEGAL_DOCUMENTS,
+  SALES_CODE_PATTERN,
+  SIGNUP_DISCOVERY_OTHER_MAX,
   type PublicSignupStatusKey,
+  type SignupDiscoverySource,
   type SignupOfferKey,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -47,7 +50,17 @@ export type SignupFormValues = {
   businessType: string;
   vatRegistered: boolean;
   taxId: string;
+  /** D6: self-reported attribution. '' = ไม่ระบุ, which the server stores as nothing. */
+  discoverySource: SignupDiscoverySource | '';
+  discoverySourceOther: string;
+  /** Only meaningful with `discoverySource === 'SALES'`; resolved to an ACTIVE agent at submit. */
+  referralSalesCode: string;
 };
+
+/** D6: what the box may hold — uppercase A–Z and digits, at most 6. Typed lowercase is lifted. */
+export function clampSalesCodeInput(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+}
 
 export type SignupFieldErrors = Partial<Record<keyof SignupFormValues, string>>;
 
@@ -99,6 +112,17 @@ export function validateSignupForm(values: SignupFormValues): SignupFieldErrors 
     errors.taxId = 'เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก';
   }
 
+  // D6: the code is the whole point of choosing "เซลล์ของมั่งมี", so an empty or malformed one is
+  // caught here rather than after a round trip. Whether the code EXISTS is only knowable server-side.
+  if (values.discoverySource === 'SALES') {
+    const code = clampSalesCodeInput(values.referralSalesCode);
+    if (!code) errors.referralSalesCode = 'กรุณากรอกรหัสเซลล์ที่ได้รับ';
+    else if (!SALES_CODE_PATTERN.test(code)) errors.referralSalesCode = 'รหัสเซลล์ต้องเป็นตัวอักษรอังกฤษตัวใหญ่หรือตัวเลข 3–6 ตัว';
+  }
+  if (values.discoverySource === 'OTHER' && values.discoverySourceOther.trim().length > SIGNUP_DISCOVERY_OTHER_MAX) {
+    errors.discoverySourceOther = `ระบุได้ไม่เกิน ${SIGNUP_DISCOVERY_OTHER_MAX} ตัวอักษร`;
+  }
+
   return errors;
 }
 
@@ -125,6 +149,9 @@ export function signupSubmitErrorMessage(error: unknown): string {
  */
 const FIELD_REJECTIONS: Record<string, { field: keyof SignupFormValues; message: string }> = {
   email_domain_has_no_mx: { field: 'contactEmail', message: 'ไม่พบโดเมนอีเมลนี้ ตรวจตัวสะกดอีกครั้ง' },
+  // D6: an unknown or suspended code is the applicant's to fix with the เซลล์ who gave it to them,
+  // so it belongs under that box — a banner at the top of a long form points at nothing.
+  SALES_CODE_UNKNOWN: { field: 'referralSalesCode', message: 'ไม่พบรหัสเซลล์นี้ ตรวจสอบกับเซลล์ของคุณ' },
 };
 
 export function signupFieldRejection(
@@ -171,7 +198,7 @@ export function isTransientLoadFailure(error: unknown): boolean {
 /** Submit order, so "focus the first error" means the first one the applicant would reach. */
 const SIGNUP_FIELD_ORDER: readonly (keyof SignupFormValues)[] = [
   'companyName', 'ownerFirstName', 'ownerLastName', 'contactEmail', 'phoneNumber', 'businessType',
-  'vatRegistered', 'taxId',
+  'vatRegistered', 'taxId', 'discoverySource', 'discoverySourceOther', 'referralSalesCode',
 ];
 
 export function firstSignupErrorField(errors: SignupFieldErrors): keyof SignupFormValues | null {

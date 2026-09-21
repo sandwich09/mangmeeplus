@@ -7,6 +7,7 @@ import {
   isTransientLoadFailure,
   isThaiMobile,
   MOBILE_DIGITS,
+  clampSalesCodeInput,
   rotateSignupKeyAfter,
   SELECTABLE_OFFER_KEY,
   SIGNUP_CONSENT_VERSION,
@@ -30,7 +31,39 @@ const validForm: SignupFormValues = {
   businessType: 'ร้านขายของชำ',
   vatRegistered: false,
   taxId: '',
+  discoverySource: '',
+  discoverySourceOther: '',
+  referralSalesCode: '',
 };
+
+describe('รู้จักเราทางไหน + รหัสเซลล์ (D6)', () => {
+  it('leaves the question optional — nobody is stopped for skipping it', () => {
+    assert.deepEqual(validateSignupForm(validForm), {});
+    assert.deepEqual(validateSignupForm({ ...validForm, discoverySource: 'IG' }), {});
+  });
+
+  it('demands a well-formed code once the applicant says a เซลล์ sent them', () => {
+    assert.match(validateSignupForm({ ...validForm, discoverySource: 'SALES' }).referralSalesCode ?? '', /กรอกรหัสเซลล์/);
+    assert.ok(validateSignupForm({ ...validForm, discoverySource: 'SALES', referralSalesCode: 'AB' }).referralSalesCode);
+    assert.deepEqual(validateSignupForm({ ...validForm, discoverySource: 'SALES', referralSalesCode: 'TON1' }), {});
+  });
+
+  it('normalises what the box may hold, so a lowercase or dashed code still reaches the server clean', () => {
+    assert.equal(clampSalesCodeInput('ton-1'), 'TON1');
+    assert.equal(clampSalesCodeInput('abcdefgh'), 'ABCDEF');
+  });
+
+  it('puts an unknown code under its own field, not in a banner above a long form', () => {
+    const rejection = signupFieldRejection({ code: 'SALES_CODE_UNKNOWN' });
+    assert.equal(rejection?.field, 'referralSalesCode');
+    assert.match(rejection?.message ?? '', /ตรวจสอบกับเซลล์ของคุณ/);
+  });
+
+  it('caps the free-text "อื่น ๆ" answer at the contract length', () => {
+    assert.ok(validateSignupForm({ ...validForm, discoverySource: 'OTHER', discoverySourceOther: 'x'.repeat(201) }).discoverySourceOther);
+    assert.deepEqual(validateSignupForm({ ...validForm, discoverySource: 'OTHER', discoverySourceOther: 'เพื่อนแนะนำ' }), {});
+  });
+});
 
 describe('signup form validation', () => {
   it('accepts a complete form', () => {

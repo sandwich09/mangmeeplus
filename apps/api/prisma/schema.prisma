@@ -360,6 +360,13 @@ model Company {
   // outage must not overwrite a real VERIFIED result.
   verificationLastAttemptStatus     VerificationAttemptStatus?
   verificationLastAttemptAt         DateTime?
+  // ── D6 sales attribution (spec §17.1). Copied from the signup request at provisioning and
+  // repairable by a SYSTEM_ADMIN within SALES_REFERRAL_ADMIN_WINDOW_DAYS with a reason.
+  // Phase 2 only RECORDS these; counting and anti-gaming are Phase 4.
+  referralSalesUserId               String?
+  referredAt                        DateTime?
+  /// 'SIGNUP_CODE' | 'SIGNUP_LINK' | 'ADMIN'.
+  referralSource                    String?
   createdAt                         DateTime                                  @default(now())
   updatedAt                         DateTime                                  @updatedAt
   memberships                       CompanyMembership[]
@@ -561,6 +568,8 @@ model Company {
   documentIssueCommands             AccountingDocumentIssueCommand[]
   documentBuyerEvidenceRevisions    AccountingDocumentBuyerEvidenceRevision[]
   issueAuthzObservations            AccountingIssueAuthzObservation[]
+
+  @@index([referralSalesUserId])
 }
 
 model User {
@@ -3540,6 +3549,10 @@ model CompanySignupRequest {
   // Optional self-reported discovery; independent of the rail and influencer code.
   discoverySource        String?
   discoverySourceOther   String?            @db.VarChar(200)
+  // D6: the sales code the applicant typed, and the ACTIVE agent it resolved to at submit.
+  // An unresolvable code is refused at submit, so a stored code always had an owner.
+  referralSalesCode      String?
+  referralSalesUserId    String?
   requestedOfferKey      String?
   state                  CompanySignupState @default(RECEIVED)
   version                Int                @default(0)
@@ -3646,13 +3659,65 @@ model PackageChangeRequest {
   paymentRef        String?
   slipAttachmentId  String?
   verifiedAt        DateTime?
+  /// 'CUSTOMER_REQUEST' (the shop asking) | 'SALES_DEAL' (spec R3) | 'SPECIAL_INVOICE'.
+  /// The default is what every row written before the sales console existed means.
+  kind              String    @default("CUSTOMER_REQUEST")
+  /// SALES_DEAL only: the agent who created it. Reports credit this user (§17.1).
+  salesUserId       String?
+  approvedByUserId  String?
+  approvedAt        DateTime?
+  /// approvedAt + SALES_DEAL_OFFER_DAYS. Past it the offer reads EXPIRED even before the sweep.
+  offerExpiresAt    DateTime?
+  rejectedReason    String?
+  /// Team-visible note; never shown to the customer and never carries customer PII (S24).
+  internalReason    String?
+  /// Optimistic concurrency for every deal transition -> SALES_DEAL_STATE_CONFLICT.
+  version           Int       @default(1)
+  /// D2: a lead or SYSTEM_ADMIN approving their OWN deal. Recorded, not refused.
+  selfApproved      Boolean   @default(false)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
   company           Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId, status])
+  @@index([kind, status])
+  @@index([salesUserId])
   // One OPEN request per company, enforced by a PARTIAL unique index in the migration SQL:
   // "PackageChangeRequest_company_open_key" ON ("companyId") WHERE "status" = 'OPEN'.
+  // Deal rows never take status 'OPEN', so they cannot consume that slot (S18). Their own
+  // "one non-final deal per company" fence is a SECOND partial unique index in the same file:
+  // "PackageChangeRequest_company_open_deal_key" ON ("companyId")
+  //   WHERE "kind" = 'SALES_DEAL' AND "status" IN ('DRAFT','PENDING_APPROVAL','APPROVED').
+}
+
+/// Spec R12/S10 — what payroll needs to pay a มั่งมี sales agent and file a 50 ทวิ.
+/// The three `*Encrypted` columns hold AES-256-GCM ciphertext (credential-cipher.logic.ts) and
+/// are decrypted ONLY by the SYSTEM_ADMIN profile read and CSV export, both of which audit.
+/// A team lead never sees them; no plaintext ever reaches a DTO, a log or audit metadata.
+model SalesAgentProfile {
+  id                   String    @id @default(cuid())
+  userId               String    @unique
+  teamLeadUserId       String?
+  /// 3–6 chars [A-Z0-9], what a customer types at signup. Stops resolving when SUSPENDED.
+  salesCode            String    @unique
+  /// Every payroll column is nullable: a team lead opens the account, the Owner fills the record.
+  /// NULL means "not captured yet" — `hasProfile` on the DTO is exactly `legalName != null`.
+  legalName            String?
+  nationalIdEncrypted  String?
+  taxIdEncrypted       String?
+  address              String?
+  bankName             String?
+  bankAccountEncrypted String?
+  whtRatePercent       Int       @default(3)
+  /// 'ACTIVE' | 'SUSPENDED'. Suspending keeps the membership and the agent's deals readable.
+  status               String    @default("ACTIVE")
+  createdByUserId      String
+  suspendedAt          DateTime?
+  suspendReason        String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([teamLeadUserId])
 }
 
 model AccountClaimToken {

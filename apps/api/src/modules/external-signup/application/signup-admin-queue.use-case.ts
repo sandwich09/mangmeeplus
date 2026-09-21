@@ -177,10 +177,11 @@ export class SignupAdminQueueUseCase {
     const knownEmails = new Set(users.map((u) => u.email));
     const companyByTaxId = new Map(companies.map((c) => [c.taxId, c.name]));
     const reusedEmailRequests = new Set(emailReviewEvidence.map((evidence) => evidence.targetId));
+    const referralSales = await this.referralSalesFor(requests);
 
     return {
       items: requests.map((request) =>
-        ({ ...toQueueItem(request, knownEmails, companyByTaxId, phoneMatches, priorCompanies, eligibleCompanies, now),
+        ({ ...toQueueItem(request, knownEmails, companyByTaxId, phoneMatches, priorCompanies, eligibleCompanies, now, referralSales),
           ...(reusedEmailRequests.has(request.id) ? { emailPreviouslyUsed: true } : {}),
           priorRejectedRequestId: (reapplicationEvidence.find((row) => row.targetId === request.id)?.metadataJson as { priorRequestId?: string } | undefined)?.priorRequestId })),
       nextCursor,
@@ -1001,6 +1002,24 @@ export class SignupAdminQueueUseCase {
       },
     });
   }
+
+  /**
+   * D6: name and code of the agent each application credited, batched like every other queue
+   * lookup. Read here rather than through SalesReferralService so this use-case keeps its current
+   * constructor — the sales console owns WRITING attribution, the queue only displays it.
+   */
+  private async referralSalesFor(
+    requests: ReadonlyArray<{ referralSalesUserId?: string | null }>,
+  ): Promise<Map<string, { displayName: string; salesCode: string }>> {
+    const ids = [...new Set(requests.map((request) => request.referralSalesUserId).filter((id): id is string => Boolean(id)))];
+    if (ids.length === 0) return new Map();
+    const [profiles, users] = await Promise.all([
+      this.prisma.client.salesAgentProfile.findMany({ where: { userId: { in: ids } }, select: { userId: true, salesCode: true } }),
+      this.prisma.client.user.findMany({ where: { id: { in: ids } }, select: { id: true, displayName: true } }),
+    ]);
+    const nameById = new Map(users.map((user) => [user.id, user.displayName]));
+    return new Map(profiles.map((profile) => [profile.userId, { displayName: nameById.get(profile.userId) ?? '', salesCode: profile.salesCode }]));
+  }
 }
 
 function requiredNote(value: string | undefined, missingCode: string): string {
@@ -1103,6 +1122,7 @@ function toQueueItem(
   priorCompanies: Map<string, PriorCompany>,
   eligibleCompanies: Map<string, LineSignupEligibleCompanyDto[]>,
   now: Date,
+  referralSales: Map<string, { displayName: string; salesCode: string }> = new Map(),
 ): AdminSignupQueueItemDto {
   const priorCompany = priorCompanies.get(request.id);
   const taxIdMatch = request.taxId ? companyByTaxId.get(request.taxId) : undefined;
@@ -1115,6 +1135,8 @@ function toQueueItem(
     companyName: request.companyName,
     discoverySource: (request.discoverySource as SignupDiscoverySource | null) ?? undefined,
     discoverySourceOther: request.discoverySource === 'OTHER' ? request.discoverySourceOther ?? undefined : undefined,
+    // D6: "รู้จักเราจากเซลล์: <ชื่อ> (<รหัส>)" — the reviewer sees who to credit before approving.
+    ...(referralSales.get(request.referralSalesUserId ?? '') ? { referralSales: referralSales.get(request.referralSalesUserId ?? '')! } : {}),
     ownerDisplayName: request.ownerDisplayName,
     // Omitted rather than blanked when the application came from LINE: the queue shows "—" and no
     // reader can mistake an empty string for a real address (review B-03).
