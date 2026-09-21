@@ -70,7 +70,7 @@ describe('transaction tax web model', () => {
 
   it('renders stable conflict and incomplete-profile messages', () => {
     assert.match(transactionTaxErrorMessage({ status: 409 }), /ซ้ำ/);
-    assert.match(transactionTaxErrorMessage({ status: 422, code: 'tax_profile_incomplete' }), /โปรไฟล์/);
+    assert.match(transactionTaxErrorMessage({ status: 422, code: 'tax_profile_incomplete' }), /ชุดตั้งค่าภาษี/);
   });
 
   it('reports an entitlement 403 as feature-not-enabled, not as a permission denial', () => {

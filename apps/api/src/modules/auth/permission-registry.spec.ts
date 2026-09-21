@@ -39,6 +39,7 @@ describe('permission-registry', () => {
     ]);
     assert.deepEqual(requiredAny(AccessCatalogController.prototype, 'addresses'), [
       'access.employee.read', 'access.employee.create', 'access.employee.update',
+      'company.setup.read', 'company.legal_identity.read', 'company.legal_identity.manage',
     ]);
   });
 

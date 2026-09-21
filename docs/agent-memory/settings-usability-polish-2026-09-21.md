@@ -37,5 +37,9 @@ Verification:
   11 current untracked files. Removed material remains recoverable from
   `stash@{0}` (`codex-pre-unstaged-clean-20260921`); the original merge backup remains at
   `stash@{1}` (`codex-pre-main-develop-sync-20260921`).
-Next: Review the retained 66-path scoped diff, then commit or split it as desired. Run authenticated
-browser UAT before release.
+- Exact-main CI `35623421180` exposed two stale expectations after the final direct commit: the
+  shared address catalog now intentionally permits company-profile readers/editors, and
+  `tax_profile_incomplete` now names the tax settings set instead of the old generic profile. The
+  expectations were aligned without changing runtime behavior; the two focused suites passed 51/51.
+  Exact replacement CI is required before release.
+Next: Run exact replacement CI, then prepare and release the accepted main source to UAT.
