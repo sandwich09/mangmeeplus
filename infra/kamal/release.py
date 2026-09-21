@@ -20,6 +20,7 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -40,6 +41,9 @@ KAMAL = 'ghcr.io/basecamp/kamal:v2.12.0'
 ORDER = ('ai-gateway', 'api-web', 'workers')
 ACCOUNT = '311414082667'
 REGION = 'ap-southeast-1'
+UAT_DEPLOY_TARGET_SECONDS = 600
+UAT_PRE_MUTATION_SECONDS = 360
+UAT_BUILD_SECONDS = 240
 CONTROLLER_FILES = tuple('infra/kamal/'+p for p in ('release.py','config.json','retire-builds.cjs','deploy-uat','deploy-prod')) + tuple('infra/dev-kamal/'+p for p in ('build-complete.py','capture-config.py','release_inventory.py','verify-config.mjs','Dockerfile.tools'))
 CONTROLLER_FILES += ('infra/postmark/config.py', 'infra/postmark/config.json')
 CONTROLLER_FILES += ('infra/kamal/release_source.py', 'infra/kamal/deploy-prod-hotfix', 'infra/kamal/promote-prod')
@@ -75,6 +79,9 @@ def validate_target(t, environment, first_migration=False):
     require(t.get('environment') == environment, 'Target environment mismatch')
     require(t.get('account') == ACCOUNT and t.get('region') == REGION, 'Wrong AWS account/region')
     require(t.get('kind') in ('production', 'uat', 'dev'), 'Invalid target kind')
+    require(t.get('sshTransport', 'direct') in ('direct', 'ssm'), 'Unsupported SSH transport')
+    require(t.get('sshTransport', 'direct') != 'ssm' or not t.get('sshProxyCommand'),
+            'SSM transport owns ProxyCommand')
     require(t['kind'] != 'production' or environment == 'production', 'Production target cannot use UAT configuration')
     require(environment != 'production' or t['kind'] == 'production', 'Production cannot target dev/UAT')
     require(set(t.get('hosts', {})) == set(SERVICES), 'Every service needs enrolled hosts')
@@ -236,6 +243,7 @@ class Release:
         self.hosts = {h['instanceId']: h for rows in self.target['hosts'].values() for h in rows}
         self.changed = []
         self.remote_lock_owned = False
+        self.ssm_sessions = {}
         if self.first_migration:
             self.migration = FirstMigration(self)
         self.save()
@@ -291,8 +299,8 @@ class Release:
         runner = "import json,os,subprocess,sys;p=json.load(sys.stdin);r=subprocess.run(p['command'],env=dict(os.environ,**p['environment']),input=p['stdin'],text=True,capture_output=True,timeout=p['timeout']);print(json.dumps({'exitCode':r.returncode,'stdout':r.stdout,'stderr':r.stderr}))"
         ssh = ['ssh', '-i', str(Path(self.target['sshKey']).expanduser().resolve()), '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
                '-o', 'UserKnownHostsFile=' + str(self.work/'known_hosts'), '-o', 'ConnectTimeout=10']
-        if self.target.get('sshProxyCommand'):
-            ssh += ['-o', 'ProxyCommand=' + self.target['sshProxyCommand']]
+        proxy = self.ssh_proxy(host)
+        if proxy: ssh += ['-o', 'ProxyCommand=' + proxy]
         data = self.command(ssh + ['ubuntu@'+host['address'], 'python3 -c '+shlex.quote(runner)],
             input=json.dumps({'command':command,'environment':environment or {},'stdin':stdin,'timeout':timeout}), timeout=timeout+30)
         result = json.loads(data)
@@ -300,6 +308,53 @@ class Release:
             write(self.work/'remote-failure.private.json', {'instanceId':host['instanceId'], **result})
         require(result['exitCode'] == 0, 'Remote command failed on ' + host['instanceId'] + '; output suppressed')
         return result['stdout']
+
+    def ssh_proxy(self, host, *, container=False):
+        if self.target.get('sshTransport', 'direct') == 'ssm':
+            port = self.ssm_sessions[host['instanceId']]['port']
+            return 'nc ' + ('host.docker.internal' if container else '127.0.0.1') + ' ' + str(port)
+        return self.target.get('sshProxyCommand')
+
+    def start_ssm_transport(self):
+        if self.target.get('sshTransport', 'direct') != 'ssm': return
+        require(shutil.which('session-manager-plugin'), 'AWS Session Manager plugin is missing')
+        rows = self.aws(['ssm','describe-instance-information','--filters',
+            'Key=InstanceIds,Values='+','.join(sorted(self.hosts))])['InstanceInformationList']
+        require({r['InstanceId'] for r in rows if r.get('PingStatus') == 'Online'} == set(self.hosts),
+                'Every enrolled host must be Online in Systems Manager')
+        try:
+            for iid in sorted(self.hosts):
+                with socket.socket() as probe:
+                    probe.bind(('127.0.0.1', 0)); port = probe.getsockname()[1]
+                log_path = self.work / ('ssm-' + iid + '.private.log')
+                log = os.fdopen(os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w')
+                command = self.aws_prefix + ['ssm','start-session','--target',iid,
+                    '--document-name','AWS-StartPortForwardingSession','--parameters',
+                    json.dumps({'portNumber':['22'],'localPortNumber':[str(port)]})]
+                process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, text=True)
+                self.ssm_sessions[iid] = {'port':port,'process':process,'log':log,'path':log_path}
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                require(all(s['process'].poll() is None for s in self.ssm_sessions.values()),
+                        'Systems Manager port-forward session exited early')
+                if all('Waiting for connections' in s['path'].read_text(errors='replace') for s in self.ssm_sessions.values()):
+                    self.receipt['sshTransport'] = {'kind':'ssm','instances':sorted(self.hosts),'publicIngressRequired':False}
+                    return
+                time.sleep(0.2)
+            raise RuntimeError('Systems Manager port-forward session did not become ready')
+        except BaseException:
+            self.close_transport(); raise
+
+    def close_transport(self):
+        for session in getattr(self, 'ssm_sessions', {}).values():
+            process = session['process']
+            if process.poll() is None:
+                process.terminate()
+                try: process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill(); process.wait(timeout=5)
+            session['log'].close()
+        self.ssm_sessions = {}
 
     def preflight(self):
         require(not (self.target.get('ecsRollbackBaseline') and self.args.apply and not getattr(self,'first_migration',False)),
@@ -318,6 +373,7 @@ class Release:
                     'Host identity/state changed: ' + iid)
             require(info.get('IamInstanceProfile') and info['MetadataOptions']['HttpTokens'] == 'required'
                     and info['MetadataOptions']['HttpPutResponseHopLimit'] >= 2, 'Runtime IAM/IMDS not ready: '+iid)
+        self.start_ssm_transport()
         if self.args.environment == 'production':
             require(len({actual[h['instanceId']]['Placement']['AvailabilityZone'] for h in self.target['hosts']['api-web']}) >= 2,
                     'Production API hosts must span at least two AZs')
@@ -455,7 +511,7 @@ class Release:
         self.build_dir = self.work/'build'
         prepared = getattr(self.args, 'prepared_build', None) if hasattr(self, 'args') else None
         if prepared:
-            require(self.release_path == 'hotfix', 'Prepared local builds are only for isolated hotfixes')
+            require(self.release_path in ('main','hotfix'), 'Prepared local build cannot replace a signed UAT promotion')
             self.source = prepared.resolve().parent/'source'
             self.load_prepared_build(prepared.resolve())
         else:
@@ -465,7 +521,8 @@ class Release:
             self.load_promoted_images()
             return
         if not prepared:
-            self.command([sys.executable,str(HELPERS/'build-complete.py'),str(source),str(self.build_dir)], timeout=1800,log='build')
+            timeout = UAT_BUILD_SECONDS if self.args.environment == 'uat' and self.args.apply else 1800
+            self.command([sys.executable,str(HELPERS/'build-complete.py'),str(source),str(self.build_dir)], timeout=timeout,log='build')
         self.build = read(self.build_dir/'build-result.json')
         require(self.build['status']=='passed', 'Build/TypeScript failed')
         if getattr(self, 'release_path', 'main') == 'hotfix':
@@ -636,7 +693,9 @@ class Release:
             shutil.copyfile(Path(self.target['sshKey']).expanduser(), d/'id_ed25519'); (d/'id_ed25519').chmod(0o600)
             shutil.copyfile(self.work/'known_hosts',d/'known_hosts')
             ssh='Host *\n  StrictHostKeyChecking yes\n  UserKnownHostsFile /workdir/known_hosts\n  IdentitiesOnly yes\n'
-            if self.target.get('sshProxyCommand'): ssh+='  ProxyCommand '+self.target['sshProxyCommand']+'\n'
+            for host in self.target['hosts'][service]:
+                proxy = self.ssh_proxy(host, container=True)
+                if proxy: ssh += 'Host '+host['address']+'\n  ProxyCommand '+proxy+'\n'
             (d/'ssh_config').write_text(ssh)
             write(d/'config/deploy.yml',native_config(self.target,service,self.envs[service],self.build['sourceCommit'],d))
             (d/'.kamal').mkdir()
@@ -767,6 +826,12 @@ finally{await client.$disconnect();}})().catch(()=>process.exit(1));"""
                     with self.phase('legacy-ecs-release-fence'): self.migration.workflow_fence(disable=True)
                 with self.phase('publish-and-pull'): self.publish()
                 with self.phase('config-freshness-before-mutation'): self.config_freshness()
+                if self.args.environment == 'uat':
+                    elapsed = round(time.monotonic() - self.clock, 3)
+                    self.receipt['durationBudget'] = {'targetSeconds':UAT_DEPLOY_TARGET_SECONDS,
+                        'preMutationMaximumSeconds':UAT_PRE_MUTATION_SECONDS,'preMutationElapsedSeconds':elapsed}
+                    require(elapsed <= UAT_PRE_MUTATION_SECONDS,
+                            'UAT pre-mutation budget exceeded; reuse the exact validated --prepared-build')
                 with self.phase('provider-preparation'): self.agentcore()
                 with self.phase('database-and-feature-authority'):
                     self.changed.append('database-sync-started')
@@ -1337,6 +1402,7 @@ if(p.worker&&process.env.QUEUE_ENABLED!=='false'){
             jar.clear();credentials['password']=''
 
     def sign(self, state='ACCEPTED_LINE_DEFERRED'):
+        elapsed = round(time.monotonic()-self.clock,3)
         accepted={'schemaVersion':1,'operationId':self.id,'environment':self.args.environment,'kind':self.target['kind'],
             'sourceCommit':self.build['sourceCommit'],'releaseId':self.manifest['releaseId'],
             'state':state,'completedAt':datetime.now(timezone.utc).isoformat(),
@@ -1345,7 +1411,10 @@ if(p.worker&&process.env.QUEUE_ENABLED!=='false'){
             'rollbackOf':self.receipt.get('rollbackOf'),
             'runtimeReadback':self.receipt['runtimeReadback'],'readiness':self.receipt.get('readiness',{}),'agentcore':self.receipt['agentcore'],
             'launchRetirement':self.receipt['launchRetirement'],
-            'customerAcceptance':self.receipt['customerAcceptance'],'elapsedThroughAcceptanceSeconds':round(time.monotonic()-self.clock,3)}
+            'customerAcceptance':self.receipt['customerAcceptance'],'elapsedThroughAcceptanceSeconds':elapsed}
+        if self.args.environment == 'uat':
+            accepted.update(durationTargetSeconds=UAT_DEPLOY_TARGET_SECONDS,
+                durationTargetMet=elapsed <= UAT_DEPLOY_TARGET_SECONDS)
         if self.target['kind'] == 'uat' and state == 'ACCEPTED_LINE_DEFERRED' and not self.receipt.get('rollbackOf'):
             accepted['promotionBundle'] = promotion_bundle(self.build, self.images)
         if self.target['kind'] == 'production' and not self.receipt.get('rollbackOf'):
@@ -1394,7 +1463,7 @@ def main():
     p.add_argument('--hotfix-path',action='append',default=[],help='Every changed path in the isolated hotfix; repeat this option')
     p.add_argument('--regression-test',action='append',default=[],help='Tracked application regression test path; repeat this option')
     p.add_argument('--uat-release',type=Path,help='Exact signed accepted UAT run directory')
-    p.add_argument('--prepared-build',type=Path,help='Reuse one locally validated isolated hotfix build after source/image/archive identity checks')
+    p.add_argument('--prepared-build',type=Path,help='Reuse one exact-SHA validated main/hotfix build after source/image/archive identity checks')
     p.add_argument('--first-migration',action='store_true',help='Explicit staged ECS-to-Kamal handover; never substitutes ordinary rollback')
     action=p.add_mutually_exclusive_group()
     action.add_argument('--apply',action='store_true',help='Deploy to the enrolled target; default only checks prerequisites')
@@ -1421,6 +1490,7 @@ def main():
         return 1
     finally:
         if release:
+            release.close_transport()
             release.receipt['finishedAt']=datetime.now(timezone.utc).isoformat();release.save()
             print(json.dumps({'status':release.receipt['status'],'elapsedSeconds':release.receipt['elapsedSeconds'],'result':str(release.work/'result.json')}))
     return 0

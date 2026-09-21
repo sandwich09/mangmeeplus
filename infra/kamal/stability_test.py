@@ -19,6 +19,8 @@ contracts = importlib.util.module_from_spec(spec); spec.loader.exec_module(contr
 m = contracts.m
 spec = importlib.util.spec_from_file_location('bootstrap', HERE / 'prepare-bootstrap-update.py')
 bootstrap = importlib.util.module_from_spec(spec); spec.loader.exec_module(bootstrap)
+spec = importlib.util.spec_from_file_location('ssm_transport', HERE / 'prepare-uat-ssm-transport.py')
+ssm_transport = importlib.util.module_from_spec(spec); spec.loader.exec_module(ssm_transport)
 
 
 class Stability(unittest.TestCase):
@@ -103,6 +105,24 @@ class Stability(unittest.TestCase):
         self.assertEqual(result, original)
         original['Resources']['ApiServer']['Properties']['Tags'][0]['Value'] = 'production'
         with self.assertRaisesRegex(AssertionError, 'UAT only'): bootstrap.patch_template(original)
+
+    def test_uat_ssm_patch_removes_only_ssh_and_adds_scoped_session_permissions(self):
+        tags=[{'Key':'Environment','Value':'uat'}]
+        role=lambda name:{'Type':'AWS::IAM::Role','Properties':{'RoleName':name,'Tags':tags,
+            'Policies':[{'PolicyDocument':{'Statement':[]}}]}}
+        group=lambda:{'Type':'AWS::EC2::SecurityGroup','Properties':{'SecurityGroupIngress':[
+            {'IpProtocol':'tcp','FromPort':22,'ToPort':22,'CidrIp':'192.0.2.1/32'}]}}
+        original={'Resources':{'ApiRole':role('api'),'AiRole':role('ai'),'ApiSg':group(),'AiSg':group(),
+            'DeployRole':role('deploy'),'ApiServer':{'keep':'api'},'AiServer':{'keep':'ai'},'Unrelated':{'keep':True}}}
+        result=ssm_transport.patch_template(original)
+        self.assertEqual(original['Resources']['ApiSg']['Properties']['SecurityGroupIngress'][0]['FromPort'],22)
+        for name in ('ApiRole','AiRole'):
+            self.assertEqual(result['Resources'][name]['Properties']['ManagedPolicyArns'],[ssm_transport.SSM_CORE])
+        for name in ('ApiSg','AiSg'):
+            self.assertEqual(result['Resources'][name]['Properties']['SecurityGroupIngress'],[])
+        permissions=result['Resources']['DeployRole']['Properties']['Policies'][0]['PolicyDocument']['Statement']
+        self.assertEqual({p['Sid'] for p in permissions},{'UatSsmInventory','UatSsmSshTransport','UatSsmOwnSession'})
+        self.assertEqual(result['Resources']['Unrelated'],original['Resources']['Unrelated'])
 
     def test_rollback_restores_real_names_and_browser_rechecks_old_images(self):
         for failure in (None, 'image-after-browser', 'incomplete-browser'):
