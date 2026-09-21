@@ -233,7 +233,12 @@ export class FinanceReviewReimbursementUseCase {
    * clear it at the payment step instead — `duplicate.resolve` only, never widened (spec §6).
    */
   private async resolvePaymentDuplicates(ctx: RequestContext, id: string, reason?: string): Promise<ReimbursementRequestDetail> {
-    if (!ctx.permissions.includes('reimbursement.duplicate.resolve')) throw new ForbiddenException('Missing permission: reimbursement.duplicate.resolve');
+    // Owner 2026-09-21: a claim has only a requester and an approver, so the person who records the
+    // payment clears the block themselves, with a reason and an audit row; duplicate.resolve holders
+    // (owner, finance) still can. The finance-review decision path below is unchanged.
+    if (!ctx.permissions.includes('reimbursement.payment.record') && !ctx.permissions.includes('reimbursement.duplicate.resolve')) {
+      throw new ForbiddenException('Missing permission: reimbursement.payment.record or reimbursement.duplicate.resolve');
+    }
     const duplicateResolutionReason = reason?.trim();
     if (!duplicateResolutionReason) throw new BadRequestException('duplicate_resolution_reason_required');
 

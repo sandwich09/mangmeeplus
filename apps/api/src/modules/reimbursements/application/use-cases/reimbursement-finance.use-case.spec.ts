@@ -48,6 +48,8 @@ function fakeRepo(req: any, opts: {
    *  has a cancellation in flight or its expense projections are not posted yet. */
   paymentReadyError?: Error;
   outboxRows?: any[];
+  /** The company's stored policy row; null = defaults (finance review OFF since 2026-09-21). */
+  policy?: Record<string, unknown> | null;
 } = {}) {
   const payments: any[] = [];
   const outboxRows = opts.outboxRows ?? [];
@@ -55,7 +57,7 @@ function fakeRepo(req: any, opts: {
     lastPayment: undefined as any,
     lastResolve: undefined as any,
     findRequestById: async (_c: string, _id: string, withRel?: boolean) => (withRel ? { ...req, approvalSteps: [], payments, duplicateCandidates: [] } : req),
-    findPolicy: async () => null,
+    findPolicy: async () => opts.policy ?? null,
     getUserDisplayNames: async () => ({}),
     // Preflight the use case runs before reserving a payment number (the repository repeats it
     // under the payment lock). Default: ready.
@@ -202,7 +204,8 @@ describe('RecordReimbursementPaymentUseCase (MVP full-payment)', () => {
 
   it('rejects payment before finance review', async () => {
     const req = financeReviewedRequest({ status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING' });
-    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
+    // Finance review is OFF by default since the step-journey change, so this company turns it on.
+    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req, { policy: { financeReviewRequired: true } }), noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
     await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' }), /finance_review_required/);
   });
 
@@ -405,12 +408,22 @@ describe('FinanceReviewReimbursementUseCase', () => {
     }
   });
 
-  it('keeps the clear on duplicate.resolve with a reason, and every decision on finance_review', async () => {
+  it('lets the approver who records payment clear a payment-step duplicate block (owner: requester + approver only)', async () => {
+    const req = financeReviewedRequest({ status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED' });
+    const repo = fakeRepo(req);
+    await financeUC(repo).execute(ctx(['reimbursement.payment.record']), 'rb-1', { resolveDuplicate: true, duplicateResolutionReason: 'ใบเสร็จคนละใบ' });
+    await assert.rejects(
+      () => financeUC(repo).execute(ctx(['reimbursement.payment.record']), 'rb-1', { decision: 'APPROVED_FOR_PAYMENT' }),
+      /Missing permission: reimbursement\.finance_review/,
+    );
+  });
+
+  it('keeps the clear on payment.record or duplicate.resolve with a reason, and every decision on finance_review', async () => {
     const req = financeReviewedRequest({ status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED' });
     const repo = fakeRepo(req);
     await assert.rejects(
       () => financeUC(repo).execute(ctx(['reimbursement.finance_review']), 'rb-1', { resolveDuplicate: true, duplicateResolutionReason: 'ไม่ซ้ำ' }),
-      /Missing permission: reimbursement\.duplicate\.resolve/,
+      /Missing permission: reimbursement\.payment\.record or reimbursement\.duplicate\.resolve/,
     );
     await assert.rejects(
       () => financeUC(repo).execute(ctx(['reimbursement.duplicate.resolve']), 'rb-1', { resolveDuplicate: true, duplicateResolutionReason: '   ' }),

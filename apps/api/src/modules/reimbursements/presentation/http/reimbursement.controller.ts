@@ -222,9 +222,9 @@ export class ReimbursementController {
   // ---- Finance and payment ----
 
   @Post(':requestId/finance-review')
-  // A resolve-only call (no decision) is the payment-step duplicate clear, gated in the use case
-  // on reimbursement.duplicate.resolve; every decision still requires finance_review there.
-  @RequireAnyPermission('reimbursement.finance_review', 'reimbursement.duplicate.resolve')
+  // A resolve-only call (no decision) is the payment-step duplicate clear, gated in the use case on
+  // payment.record or duplicate.resolve; every decision still requires finance_review there.
+  @RequireAnyPermission('reimbursement.finance_review', 'reimbursement.duplicate.resolve', 'reimbursement.payment.record')
   @HttpCode(200)
   @ApiOperation({ summary: 'Finance review reimbursement request, or clear its duplicate block at the payment step' })
   reviewRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: FinanceReviewReimbursementInput) {
