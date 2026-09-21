@@ -29,12 +29,15 @@ Preflight `20260921T080803Z-1f15a73b` failed before mutation because operator so
 `sgr-06d40b953574c3c6f` and `sgr-05549553d09db8eef` enabled the accepted release and were revoked
 afterward; readback shows both absent and no active operation.
 
-This direct-public-SSH boundary is a recurring operational gap. The UAT instances are not currently
-registered as Systems Manager managed instances, the API/AI runtime roles have no SSM core policy,
-and the deploy role cannot query or start sessions. Permanent remediation requires a reviewed stack
-update that persists the SSM agent and least-privilege instance/deployer permissions, then changes
-Kamal transport to Session Manager, proves deploy/recovery through it, and removes public TCP 22.
-Do not add a broad or permanent workstation CIDR as a shortcut.
+Permanent remediation completed on 2026-09-21. CloudFormation change sets
+`uat-ssm-transport-20260921` and `uat-ssm-session-cleanup-20260921` completed without instance
+replacement. Both hosts are `Online` in Systems Manager, the private UAT target uses
+`sshTransport: ssm`, the deploy role can open only the enrolled host tunnels and terminate only its
+tag-bound sessions, and all public TCP/22 rules were removed from both UAT security groups. Read-only
+operation `20260921T112636Z-1b2d1eff` passed in 11.197 seconds with no public SSH, terminated both
+controller-owned sessions, and left zero active sessions. Do not add a workstation CIDR as a
+shortcut; use the enrolled Session Manager path and treat any unproved session cleanup as a failed
+operation requiring reconciliation.
 
 ---
 

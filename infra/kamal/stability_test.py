@@ -121,7 +121,11 @@ class Stability(unittest.TestCase):
         for name in ('ApiSg','AiSg'):
             self.assertEqual(result['Resources'][name]['Properties']['SecurityGroupIngress'],[])
         permissions=result['Resources']['DeployRole']['Properties']['Policies'][0]['PolicyDocument']['Statement']
-        self.assertEqual({p['Sid'] for p in permissions},{'UatSsmInventory','UatSsmSshTransport','UatSsmOwnSession'})
+        self.assertEqual({p['Sid'] for p in permissions},
+            {'UatSsmInventory','UatSsmSshTransport','UatSsmOwnSession','UatSsmDataChannel'})
+        own=next(p for p in permissions if p['Sid']=='UatSsmOwnSession')
+        self.assertEqual(own['Resource'],'*')
+        self.assertIn('ssm:resourceTag/aws:ssmmessages:session-id',own['Condition']['StringLike'])
         self.assertEqual(result['Resources']['Unrelated'],original['Resources']['Unrelated'])
 
     def test_rollback_restores_real_names_and_browser_rechecks_old_images(self):

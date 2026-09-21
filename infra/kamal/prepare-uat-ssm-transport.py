@@ -17,24 +17,28 @@ def patch_template(original):
         assert role['Type'] == 'AWS::IAM::Role'
         assert {'Key':'Environment','Value':'uat'} in role['Properties']['Tags'], 'UAT only'
         policies = role['Properties'].setdefault('ManagedPolicyArns', [])
-        assert SSM_CORE not in policies, 'SSM core policy is already installed'
-        policies.append(SSM_CORE)
+        if SSM_CORE not in policies: policies.append(SSM_CORE)
     for name in ('ApiSg', 'AiSg'):
         group = resources[name]
         assert group['Type'] == 'AWS::EC2::SecurityGroup'
         ingress = group['Properties'].get('SecurityGroupIngress', [])
-        assert ingress and all(r.get('FromPort') == r.get('ToPort') == 22 for r in ingress), 'Expected only operator SSH ingress'
+        assert all(r.get('FromPort') == r.get('ToPort') == 22 for r in ingress), 'Expected only operator SSH ingress'
         group['Properties']['SecurityGroupIngress'] = []
     deploy = resources['DeployRole']['Properties']['Policies'][0]['PolicyDocument']['Statement']
-    assert not any(s.get('Sid') == 'UatSsmSshTransport' for s in deploy), 'SSM deploy policy is already installed'
+    managed = {'UatSsmInventory','UatSsmSshTransport','UatSsmOwnSession','UatSsmDataChannel'}
+    deploy[:] = [statement for statement in deploy if statement.get('Sid') not in managed]
     instances = [{'Fn::Sub':'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${'+name+'}'}
                  for name in ('ApiServer','AiServer')]
     deploy.extend([
         {'Sid':'UatSsmInventory','Effect':'Allow','Action':['ssm:DescribeInstanceInformation'],'Resource':'*'},
         {'Sid':'UatSsmSshTransport','Effect':'Allow','Action':['ssm:StartSession'],
          'Resource':instances+['arn:aws:ssm:ap-southeast-1::document/AWS-StartPortForwardingSession']},
-        {'Sid':'UatSsmOwnSession','Effect':'Allow',
-         'Action':['ssm:ResumeSession','ssm:TerminateSession','ssmmessages:OpenDataChannel'],
+        {'Sid':'UatSsmOwnSession','Effect':'Allow','Action':['ssm:ResumeSession','ssm:TerminateSession'],
+         'Resource':'*','Condition':{
+             'StringLike':{'ssm:resourceTag/aws:ssmmessages:session-id':{'Fn::Sub':'${!aws:userid}*'}},
+             'StringEquals':{'ssm:resourceTag/aws:ssmmessages:target-id':[
+                 {'Ref':'ApiServer'},{'Ref':'AiServer'}]}}},
+        {'Sid':'UatSsmDataChannel','Effect':'Allow','Action':['ssmmessages:OpenDataChannel'],
          'Resource':{'Fn::Sub':'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:session/${!aws:userid}-*'}}])
     return template
 
