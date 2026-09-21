@@ -385,13 +385,12 @@ mutate_facts forged-scan-waiver '.artifactIntegrity.services[0].scanSeverityCoun
     approvedBy:"CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05",expiresAtEpoch:1791158400,
     providerStatement:"Receiving a DTLS record for a future epoch while a handshake is in progress"}]'
 
-# Renewed waiver batch, expiry 2026-10-05 (1791158400). Services sort to
-# [ai-gateway,api-web,workers], so index 1 mirrors the real api scan (all 5 rows: 3 openssl HIGH plus
-# the CRITICAL openssl and HIGH zlib rows, rawSeverityCounts {CRITICAL:1,HIGH:4}, nothing blocking)
-# and index 2 the workers scan (zlib only). Every field is spelled out here rather than read from the
-# contract table, so drift in either the table or the policy jq fails this spec.
+# Services sort to [ai-gateway,api-web,workers]. Index 1 retains the older five-row fixture expiring
+# 2026-10-05; index 2 exercises the separate trixie zlib row expiring 2026-10-21. Every field is
+# spelled out here rather than read from the contract table, so drift in either table fails this spec.
 control='Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking.'
 approval='CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05'
+trixie_approval='CHAT-OWNER-DIRECTIVE-2026-09-21-CVE-2026-85091-TRIXIE-WAIVER-2026-10-21'
 superseded_approval='CHAT-OWNER-DIRECTIVE-2026-09-05-UAT-DEPLOY-WAIVER'
 openssl_high='[
   {id:"AWS-ECR-CVE-2026-54874-OPENSSL-DTLS-UNUSED",cve:"CVE-2026-54874",
@@ -415,9 +414,14 @@ zlib_high='{id:"AWS-ECR-CVE-2026-85091-ZLIB-PRE131-MAPPING",cve:"CVE-2026-85091"
   providerStatement:"when processing non-blocking gzwrite() operations with stale external buffer pointers",
   reachabilityEvidence:"Provider states the affected range is zlib 1.3.1.2 through 1.3.2 while the scanned Debian package is 1.2.13. Node bundles its own zlib, and no process in any image writes gzip streams through the system zlib non-blocking gzwrite()/gzprintf() API (repo-verified 2026-09-05).",
   compensatingControl:$c,approvedBy:$a,expiresAtEpoch:1791158400}'
+trixie_zlib_high='{id:"AWS-ECR-CVE-2026-85091-ZLIB-TRIXIE-131-MAPPING",cve:"CVE-2026-85091",
+  severity:"HIGH",packageName:"zlib",packageVersion:"1.3.dfsg+really1.3.1-1",scannedDigest:$d,
+  providerStatement:"when processing non-blocking gzwrite() operations with stale external buffer pointers",
+  reachabilityEvidence:"Debian trixie source 1:1.3.dfsg+really1.3.1-1 has no Debian patches and predates upstream non-blocking gz* support introduced after zlib 1.3.1; ECR currently maps it to CVE-2026-85091. Node 22 bundles its own zlib, and no process in any image writes gzip streams through the system zlib non-blocking gzwrite()/gzprintf() API (repo-verified 2026-09-21).",
+  compensatingControl:$c,approvedBy:$ta,expiresAtEpoch:1792540800}'
 waive_service() {
   local out="$1" index="$2" waivers="$3" counts="$4"
-  jq -cS --arg c "$control" --arg a "$approval" --argjson i "$index" '
+  jq -cS --arg c "$control" --arg a "$approval" --arg ta "$trixie_approval" --argjson i "$index" '
     .artifactIntegrity.services[$i].scanResolvedDigest as $d
     | .artifactIntegrity.services[$i].scanSeverityCounts='"$counts"'
     | .artifactIntegrity.services[$i].scanWaivers='"$waivers" "$facts" > "$out"
@@ -428,7 +432,7 @@ waive_service "$api_waived" 1 "($openssl_high) + [$evp_critical, $zlib_high]" '{
 security_preflight_build_payload "$api_waived" "$h2" "$clone" "$clone_ref" \
   "$fixture/waived-2026-09-payload.json"
 workers_waived="$fixture/waived-scan-workers.json"
-waive_service "$workers_waived" 2 "[$zlib_high]" '{HIGH:1}'
+waive_service "$workers_waived" 2 "[$trixie_zlib_high]" '{HIGH:1}'
 security_preflight_build_payload "$workers_waived" "$h2" "$clone" "$clone_ref" \
   "$fixture/waived-workers-payload.json"
 
@@ -461,8 +465,8 @@ mutate_waived retired-waiver-row "${w}[0] += {
 
 # Expiry is compared against the evidence issue time, which the h2 fixture pins to 1700000000, so
 # exercise the boundary directly on the contract rule instead of forging a whole future-dated chain.
-# The 2026-09-05 renewal put every row on 2026-10-05, so both scans still hold one second past the
-# superseded 2026-09-10 and 2026-09-19 epochs and both lapse together at 1791158400.
+# The old batch lapses on 2026-10-05. The separate trixie zlib mapping remains valid through that
+# boundary and lapses on 2026-10-21.
 waiver_rule_at() {
   local waived="$1" index="$2"
   jq -er -L "$repo_root/infra/security" --argjson at "$3" --argjson i "$index" '
@@ -477,7 +481,9 @@ test "$(waiver_rule_at "$api_waived" 1 1791158399)" = true
 test "$(waiver_rule_at "$api_waived" 1 1791158400)" = false
 test "$(waiver_rule_at "$workers_waived" 2 1789776000)" = true
 test "$(waiver_rule_at "$workers_waived" 2 1791158399)" = true
-test "$(waiver_rule_at "$workers_waived" 2 1791158400)" = false
+test "$(waiver_rule_at "$workers_waived" 2 1791158400)" = true
+test "$(waiver_rule_at "$workers_waived" 2 1792540799)" = true
+test "$(waiver_rule_at "$workers_waived" 2 1792540800)" = false
 
 mutate_facts runtime-rds-single-az '.runtimeSecurityBaseline.rds.multiAZ=false'
 mutate_facts runtime-redis-single-node '.runtimeSecurityBaseline.redis.nodeCount=1'

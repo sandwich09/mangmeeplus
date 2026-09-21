@@ -8,9 +8,12 @@ trap 'rm -rf "$fixture"' EXIT
 
 expiry=1791158400
 approval="CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05"
+trixie_expiry=1792540800
+trixie_approval="CHAT-OWNER-DIRECTIVE-2026-09-21-CVE-2026-85091-TRIXIE-WAIVER-2026-10-21"
 old_expiry=1789776000
 attrs='[{"key":"package_name","value":"openssl"},{"key":"package_version","value":"3.0.20-1~deb12u2"}]'
 zlib_attrs='[{"key":"package_name","value":"zlib"},{"key":"package_version","value":"1.2.13.dfsg-1"}]'
+trixie_zlib_attrs='[{"key":"package_name","value":"zlib"},{"key":"package_version","value":"1.3.dfsg+really1.3.1-1"}]'
 
 # Retired 2026-09-05: CVE-2026-14456 has no row any more, so its exact advisory text must block.
 quic='{"name":"CVE-2026-14456","severity":"HIGH","description":"The issue is present since OpenSSL 3.5 when the QUIC server implementation was added.","uri":"https://nvd.nist.gov/vuln/detail/CVE-2026-14456","attributes":'"$attrs"'}'
@@ -19,6 +22,7 @@ cms='{"name":"CVE-2026-63072","severity":"HIGH","description":"The write is a fi
 cmp='{"name":"CVE-2026-63076","severity":"HIGH","description":"CMP is a specialized feature that an application must explicitly enable.","uri":"https://nvd.nist.gov/vuln/detail/CVE-2026-63076","attributes":'"$attrs"'}'
 evp='{"name":"CVE-2026-75803","severity":"CRITICAL","description":"The EVP_Cipher() API call for AEAD ciphers behaves like a one shot encryption and decryption call. It also verifies the AEAD tag after the decryption operation. However for AES-OCB and ChaCha20-Poly1305 ciphers it skipped the AEAD tag verification when an empty ciphertext was passed to the function.","uri":"https://nvd.nist.gov/vuln/detail/CVE-2026-75803","attributes":'"$attrs"'}'
 gz='{"name":"CVE-2026-85091","severity":"HIGH","description":"zlib versions 1.3.1.2 through 1.3.2 contain a heap buffer overflow vulnerability in the gz_vacate() function when processing non-blocking gzwrite() operations with stale external buffer pointers.","uri":"https://nvd.nist.gov/vuln/detail/CVE-2026-85091","attributes":'"$zlib_attrs"'}'
+trixie_gz='{"name":"CVE-2026-85091","severity":"HIGH","description":"zlib versions 1.3.1.2 through 1.3.2 contain a heap buffer overflow vulnerability in the gz_vacate() function when processing non-blocking gzwrite() operations with stale external buffer pointers.","uri":"https://nvd.nist.gov/vuln/detail/CVE-2026-85091","attributes":'"$trixie_zlib_attrs"'}'
 
 # All five renewed advisories together are waived, none blocking, all on the 2026-10-05 expiry and
 # the renewal approval id.
@@ -69,9 +73,10 @@ done
 # The renewal is load-bearing: every row still holds one second past the superseded 2026-09-19 epoch
 # and all five block on 2026-10-05. `def now` shadows the jq builtin for the whole policy.
 policy_at() {
+  local input="${2:-$fixture/exact.json}"
   printf 'def now: %s;\n' "$1" > "$fixture/policy-at-$1.jq"
   cat "$policy" >> "$fixture/policy-at-$1.jq"
-  jq -e -f "$fixture/policy-at-$1.jq" "$fixture/exact.json"
+  jq -e -f "$fixture/policy-at-$1.jq" "$input"
 }
 policy_at "$old_expiry" | jq -e --argjson expiry "$expiry" \
   '.coverageComplete and (.waivers|length)==5 and (.blocking|length)==0
@@ -80,6 +85,21 @@ policy_at "$((expiry - 1))" \
   | jq -e '.coverageComplete and (.waivers|length)==5 and (.blocking|length)==0' >/dev/null
 policy_at "$expiry" \
   | jq -e '.coverageComplete and (.waivers|length)==0 and (.blocking|length)==5' >/dev/null
+
+# The trixie mapping is a separate exact row: it survives the older batch expiry, lapses on
+# 2026-10-21, and does not match even a one-character package-version drift.
+jq -cn --argjson gz "$trixie_gz" \
+  '{imageId:{imageDigest:("sha256:"+("2"*64))},
+    imageScanFindings:{findingSeverityCounts:{HIGH:1},findings:[$gz]}}' > "$fixture/trixie.json"
+policy_at "$expiry" "$fixture/trixie.json" \
+  | jq -e --argjson expiry "$trixie_expiry" --arg approval "$trixie_approval" '
+    .coverageComplete and (.waivers|length)==1 and (.blocking|length)==0
+    and .waivers[0].expiresAtEpoch==$expiry and .waivers[0].approvedBy==$approval' >/dev/null
+policy_at "$trixie_expiry" "$fixture/trixie.json" \
+  | jq -e '.coverageComplete and (.waivers|length)==0 and (.blocking|length)==1' >/dev/null
+jq '.imageScanFindings.findings[0].attributes[1].value="1.3.dfsg+really1.3.1-1+b1"' \
+  "$fixture/trixie.json" | jq -e -f "$policy" \
+  | jq -e '.coverageComplete and (.waivers|length)==0 and (.blocking|length)==1' >/dev/null
 
 # A waived advisory beside an unknown HIGH keeps the unknown one blocking.
 jq '.imageScanFindings.findingSeverityCounts.HIGH=5

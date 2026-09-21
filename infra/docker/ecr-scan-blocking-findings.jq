@@ -46,6 +46,20 @@ def waiver_rows: [
     reachabilityEvidence: "Provider states the affected range is zlib 1.3.1.2 through 1.3.2 while the scanned Debian package is 1.2.13. Node bundles its own zlib, and no process in any image writes gzip streams through the system zlib non-blocking gzwrite()/gzprintf() API (repo-verified 2026-09-05)." }
 ];
 
+# Owner-approved 2026-09-21 through 2026-10-21T00:00:00Z for the exact trixie package ECR reported.
+# Debian source 1:1.3.dfsg+really1.3.1-1 has no downstream patches and predates the upstream
+# non-blocking gz* support that introduced this CVE; the Debian tracker still classifies it as
+# vulnerable. Keep this separate from the older batch so no other waiver receives a longer expiry.
+def trixie_waiver_rows: [
+  { id: "AWS-ECR-CVE-2026-85091-ZLIB-TRIXIE-131-MAPPING",
+    cve: "CVE-2026-85091",
+    severity: "HIGH",
+    package: "zlib",
+    version: "1.3.dfsg+really1.3.1-1",
+    anchor: "when processing non-blocking gzwrite() operations with stale external buffer pointers",
+    reachabilityEvidence: "Debian trixie source 1:1.3.dfsg+really1.3.1-1 has no Debian patches and predates upstream non-blocking gz* support introduced after zlib 1.3.1; ECR currently maps it to CVE-2026-85091. Node 22 bundles its own zlib, and no process in any image writes gzip streams through the system zlib non-blocking gzwrite()/gzprintf() API (repo-verified 2026-09-21)." }
+];
+
 # Renewed 2026-09-05 to 2026-10-05T00:00:00Z. The 2026-08 batch (expired 2026-09-10) and the 2026-09
 # batch (expired 2026-09-19) were renewed together under one Owner directive, so they now share one
 # expiry and one approval def. security-tracker.debian.org, read 2026-09-05: bookworm
@@ -61,11 +75,14 @@ def waiver_rows: [
 # returns.
 def waiver_expiry: 1791158400;
 def waiver_approval: "CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05";
+def trixie_waiver_expiry: 1792540800;
+def trixie_waiver_approval: "CHAT-OWNER-DIRECTIVE-2026-09-21-CVE-2026-85091-TRIXIE-WAIVER-2026-10-21";
 
 # Expiry and approval are attached here rather than repeated on every row. A future batch that needs
 # to lapse on its own schedule gets its own rows/expiry/approval defs and is appended with `+`.
 def waiver_table:
-  [waiver_rows[] | . + { expiry: waiver_expiry, approval: waiver_approval }];
+  [waiver_rows[] | . + { expiry: waiver_expiry, approval: waiver_approval }]
+  + [trixie_waiver_rows[] | . + { expiry: trixie_waiver_expiry, approval: trixie_waiver_approval }];
 
 def matched_waiver_row:
   . as $finding

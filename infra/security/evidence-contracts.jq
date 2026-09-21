@@ -1294,6 +1294,8 @@ def e0_h3_validator_paths: [
 # CVE-2026-63076 and CVE-2026-75803 with no bookworm fix, and CVE-2026-85091 has no fixed zlib in
 # any suite. Row AWS-ECR-CVE-2026-14456-OPENSSL-PRE35-MAPPING was retired the same day: ECR stopped
 # reporting the finding and the tracker records bookworm openssl as not-affected.
+# The separate trixie zlib 1.3.1 mapping was owner-approved 2026-09-21 through
+# 2026-10-21T00:00:00Z (1792540800); it does not extend the older batch.
 def e0_ecr_waiver_rows: [
   { id: "AWS-ECR-CVE-2026-54874-OPENSSL-DTLS-UNUSED", cve: "CVE-2026-54874",
     severity: "HIGH", packageName: "openssl", packageVersion: "3.0.20-1~deb12u2",
@@ -1324,7 +1326,13 @@ def e0_ecr_waiver_rows: [
     providerStatement: "when processing non-blocking gzwrite() operations with stale external buffer pointers",
     reachabilityEvidence: "Provider states the affected range is zlib 1.3.1.2 through 1.3.2 while the scanned Debian package is 1.2.13. Node bundles its own zlib, and no process in any image writes gzip streams through the system zlib non-blocking gzwrite()/gzprintf() API (repo-verified 2026-09-05).",
     approvedBy: "CHAT-OWNER-DIRECTIVE-2026-09-05-CVE-WAIVER-RENEWAL-2026-10-05",
-    expiresAtEpoch: 1791158400 }
+    expiresAtEpoch: 1791158400 },
+  { id: "AWS-ECR-CVE-2026-85091-ZLIB-TRIXIE-131-MAPPING", cve: "CVE-2026-85091",
+    severity: "HIGH", packageName: "zlib", packageVersion: "1.3.dfsg+really1.3.1-1",
+    providerStatement: "when processing non-blocking gzwrite() operations with stale external buffer pointers",
+    reachabilityEvidence: "Debian trixie source 1:1.3.dfsg+really1.3.1-1 has no Debian patches and predates upstream non-blocking gz* support introduced after zlib 1.3.1; ECR currently maps it to CVE-2026-85091. Node 22 bundles its own zlib, and no process in any image writes gzip streams through the system zlib non-blocking gzwrite()/gzprintf() API (repo-verified 2026-09-21).",
+    approvedBy: "CHAT-OWNER-DIRECTIVE-2026-09-21-CVE-2026-85091-TRIXIE-WAIVER-2026-10-21",
+    expiresAtEpoch: 1792540800 }
 ];
 
 # The record minus its two scan-derived fields must equal its allowlist row exactly, so id, cve,
