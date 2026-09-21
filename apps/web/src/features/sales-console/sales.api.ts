@@ -12,6 +12,7 @@ import type {
   SalesDealListDto,
   SalesDealSaveBody,
   SalesDealStatus,
+  SalesDealSubmitBody,
   SalesDealView,
   SalesMyWorkDto,
   SalesReferralUpdateBody,
@@ -56,7 +57,9 @@ export function saveSalesDeal(id: string, body: SalesDealSaveBody): Promise<Sale
 
 export type SalesDealAction = 'submit' | 'approve' | 'reject' | 'cancel';
 
-export function actSalesDeal(id: string, action: SalesDealAction, body: SalesDealDecisionBody): Promise<SalesDealView> {
+export function actSalesDeal(
+  id: string, action: SalesDealAction, body: SalesDealSubmitBody | SalesDealDecisionBody,
+): Promise<SalesDealView> {
   return apiFetch<SalesDealView>(`/v1/sales/deals/${encodeURIComponent(id)}/${action}`, {
     method: 'POST', body: JSON.stringify(body), suppressErrorToast: true,
   });

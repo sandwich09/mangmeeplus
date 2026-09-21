@@ -10,7 +10,7 @@
  * The two starting accounts are seeded by `apps/api/prisma/seed.ts` (`SEED_SALES_AGENTS`).
  */
 import { test, expect, type Browser, type Page } from '@playwright/test';
-import { WEB_BASE_URL } from './harness/auth';
+import { WEB_BASE_URL, ensureBrowserLegalAcceptance } from './harness/auth';
 
 const LEAD = { username: 'qa.mangmee.lead', password: 'Qa@MangmeeLead123' };
 const PHONE = { width: 390, height: 844 };
@@ -29,12 +29,16 @@ async function signIn(browser: Browser, username: string, password: string): Pro
 test.describe('SALES — ทีมขายมั่งมี console', () => {
   test('SALES-01 @p1 lead creates an agent, the agent creates a deal, the lead approves it', async ({ browser }) => {
     const leadPage = await signIn(browser, LEAD.username, LEAD.password);
+    // Fresh seed writes no legal-acceptance rows — every /sales/* route redirects there first.
+    await ensureBrowserLegalAcceptance(leadPage.context());
 
     // ── the console is the landing area, and /system stays closed to it (S07) ──
     await leadPage.goto(`${WEB_BASE_URL}/sales/deals`);
     await expect(leadPage.getByRole('heading', { name: 'ดีล' })).toBeVisible();
     await leadPage.goto(`${WEB_BASE_URL}/system/partners`);
-    await expect(leadPage.getByText(/ไม่มีสิทธิ์|ไม่ได้รับอนุญาต/)).toBeVisible();
+    // SystemAccessDenied renders both a heading and a description containing "ไม่มีสิทธิ์" —
+    // .first() avoids a strict-mode violation from the regex matching both.
+    await expect(leadPage.getByText(/ไม่มีสิทธิ์|ไม่ได้รับอนุญาต/).first()).toBeVisible();
 
     // ── create a เซลล์ and capture the one-time password (Q3/S28) ──
     const username = `e2e.sales.${Date.now()}`;
@@ -60,22 +64,42 @@ test.describe('SALES — ทีมขายมั่งมี console', () => {
     const agentPage = await agentContext.newPage();
     await agentPage.goto(`${WEB_BASE_URL}/sales/deals`);
     await expect(agentPage).toHaveURL(/\/change-password/);
-    await agentPage.getByLabel(/รหัสผ่านปัจจุบัน/).fill(temporaryPassword);
-    await agentPage.getByLabel(/^รหัสผ่านใหม่/).fill(newPassword);
-    await agentPage.getByLabel(/ยืนยันรหัสผ่าน/).fill(newPassword);
+    await agentPage.locator('input[name="current-password"]').fill(temporaryPassword);
+    await agentPage.locator('input[name="new-password"]').fill(newPassword);
     await agentPage.getByRole('button', { name: /บันทึก|เปลี่ยนรหัสผ่าน/ }).click();
     await expect(agentPage).not.toHaveURL(/\/change-password/, { timeout: 15_000 });
+    // ChangePasswordPage ends the session on success by design (see its handleSubmit) and sends
+    // the browser to /login. Sign back in through the real form rather than a parallel API call —
+    // a raw context.request.post here races the login page's own client-side session check over
+    // the same refresh token and trips reuse-detection ("Session is expired or revoked"); driving
+    // the page itself (line-recovery.spec.ts's proven pattern) leaves only one thing logging in.
+    await expect(agentPage).toHaveURL(/\/login/);
+    await agentPage.locator('#login-identifier').fill(username);
+    await agentPage.locator('#login-password').fill(newPassword);
+    await agentPage.getByRole('button', { name: 'เข้าสู่ระบบ', exact: true }).click();
+    await expect(agentPage).not.toHaveURL(/\/login/, { timeout: 15_000 });
+    await ensureBrowserLegalAcceptance(agentContext);
 
     // ── the เซลล์ builds a deal for a seeded shop ──
     await agentPage.goto(`${WEB_BASE_URL}/sales/deals/new`);
-    await agentPage.getByLabel('ร้านค้า').fill('Room45');
-    await agentPage.getByRole('button', { name: /Room45/ }).first().click();
+    // "Room45" is the seeded demo workspace's BRANCH name, not a Company — the picker
+    // (sales-company-search.service.ts) only matches Company.name/registeredName/id, so it
+    // never matches on a fresh seed. The seeded tenant's own name is "WatchDog Local Company"
+    // (apps/api/prisma/seed.ts DEFAULT_COMPANY).
+    await agentPage.getByLabel('ร้านค้า').fill('WatchDog Local');
+    await agentPage.getByRole('button', { name: /WatchDog Local/ }).first().click();
     await agentPage.getByLabel(/ราคาที่ลูกค้าจ่าย/).fill('4990');
     await agentPage.getByLabel('จำนวนเดือน').fill('12');
     await agentPage.getByLabel('โน้ตถึงลูกค้า').fill('ข้อเสนอพิเศษสำหรับร้านคุณ');
     await agentPage.getByLabel('เหตุผลภายใน').fill('ลูกค้าเก่า ต่อสัญญา 1 ปี');
     await agentPage.getByRole('button', { name: 'ส่งอนุมัติ' }).click();
-    await expect(agentPage.getByText('ส่งให้หัวหน้าอนุมัติแล้ว')).toBeVisible({ timeout: 15_000 });
+    // The success notice lives in /sales/deals/new's own component state, but the very next line
+    // of SalesDealFormPage's persist() calls router.replace to /sales/deals/[id] — a SEPARATE route
+    // component (apps/web/app/sales/deals/[id]/page.tsx) — which unmounts the "new" page before the
+    // notice can ever be seen (confirmed via the API trace: the submit call itself succeeds, 200,
+    // PENDING_APPROVAL). Assert the state that survives the navigation instead of the lost toast.
+    await expect(agentPage).not.toHaveURL(/\/sales\/deals\/new/, { timeout: 15_000 });
+    await expect(agentPage.getByText('รออนุมัติ')).toBeVisible();
     // A เซลล์ may never approve, their own deal least of all (D2).
     await expect(agentPage.getByRole('button', { name: 'อนุมัติ', exact: true })).toHaveCount(0);
     const dealUrl = agentPage.url();
@@ -95,5 +119,8 @@ test.describe('SALES — ทีมขายมั่งมี console', () => {
     // 390 px: no horizontal overflow anywhere on the journey's last screen.
     const overflow = await leadPage.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);
+
+    await leadPage.context().close();
+    await agentContext.close();
   });
 });

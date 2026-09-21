@@ -231,8 +231,10 @@ export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: str
     try {
       const body = { ...dealInputFromForm(values), ...(deal ? { version: deal.version } : {}) };
       const saved = deal ? await saveSalesDeal(deal.id, body) : await createSalesDeal(body);
+      // Submit takes no reason (SalesDealSubmitDto is version-only) — the deal's own
+      // internalReason was already saved above; a decision reason is only for approve/reject/cancel.
       const next = forSubmit
-        ? await actSalesDeal(saved.id, 'submit', { version: saved.version, reason: values.internalReason.trim() })
+        ? await actSalesDeal(saved.id, 'submit', { version: saved.version })
         : saved;
       if (!mounted.current) return;
       setDeal(next);
