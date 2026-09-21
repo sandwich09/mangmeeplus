@@ -118,6 +118,7 @@ function toDto(row: {
     requestedTierKey: row.requestedTierKey,
     status: row.status as PackageChangeRequestDto['status'],
     ...(row.status==='APPROVED'&&row.paymentState==='STRIPE_APPLIED'?{resolutionSource:'PAID_PURCHASE' as const}:{}),
+    ...(row.status==='CANCELLED'&&row.paymentState==='CATALOG_SUPERSEDED'?{resolutionSource:'CATALOG_PURCHASE_SUPERSEDED' as const}:{}),
     ...(row.note ? { note: row.note } : {}),
     createdAt: row.createdAt.toISOString(),
     ...(row.decidedAt ? { decidedAt: row.decidedAt.toISOString() } : {}),

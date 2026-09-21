@@ -43,6 +43,7 @@ export default function BillingIssueResolutionPanel({ issue, overview, onRefresh
           {error && <div role="alert" className="rounded-lg bg-red-50 p-4 text-red-800"><p>{error}</p><button className={`${billingControl} mt-3`} onClick={() => setReload(value => value + 1)}>ลองโหลดหลักฐานอีกครั้ง</button></div>}
           {invoice && <>
             <p className="text-gray-600">สถานะปัจจุบัน: <strong className="font-semibold text-gray-900">{billingLabel('apply', invoice.applyState)}</strong></p>
+            {invoice.errorCode === 'BILLING_ENTITLEMENT_REVIEW_REQUIRED' && <p className="rounded-lg bg-amber-50 p-4 text-amber-900">สิทธิ์เมนูเปลี่ยนจากรายการที่ลูกค้ายืนยันก่อนชำระ ต้องตรวจสิทธิ์ปัจจุบันกับรายการเดิมก่อนเปิดแพ็กเกจหรือคืนเงิน ห้ามสร้าง Checkout ใหม่หรือแก้ snapshot ของรายการที่จ่ายแล้ว</p>}
             {invoice.applyState==='APPLIED'&&<p className="text-gray-600">รายการนี้เปิดแพ็กเกจแล้ว ให้ตรวจยืนยันเพื่อปิดปัญหาที่ค้าง โดยไม่เพิ่มวันหรือโควตาซ้ำ</p>}
             {!invoice.canRetry && <p className="rounded-lg bg-amber-50 p-4 text-amber-900">ยังดำเนินการไม่ได้: ต้องมีสิทธิ์ตรวจการเปิดแพ็กเกจ ระบบชำระเงินเปิดใช้งาน และหลักฐานจ่ายครบ ดูข้อมูลบริษัทเพื่อตรวจเงื่อนไข</p>}
             <BillingOperationPanel companyId={issue.companyId!} companyVersion={invoice.accountVersion} invoiceId={invoice.id} invoiceSourceHash={invoice.sourceHash}

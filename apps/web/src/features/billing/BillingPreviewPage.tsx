@@ -27,7 +27,7 @@ export default function BillingPreviewPage({ companyId }: { companyId: string })
       else setView(kind);
     },
     openDocumentHistory: () => { setReturnSection('history'); setView('document-history'); },
-    startWithPlans: ['start', 'capacity', 'capacity-work', 'expired', 'quote-error'].includes(scenario),
+    startWithPlans: ['start', 'manual', 'capacity', 'capacity-work', 'expired', 'quote-error'].includes(scenario),
     // Selecting a scenario or restarting intentionally replaces all simulated state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [companyId, scenario, revision]);
@@ -37,7 +37,7 @@ export default function BillingPreviewPage({ companyId }: { companyId: string })
     back: () => setView('journey'),
   }), []);
   function choose(next: PreviewScenario) {
-    if (['start', 'capacity', 'capacity-work', 'upgrade', 'scheduled-change', 'expired', 'quote-error'].includes(next)) setCheckout(null);
+    if (['start', 'manual', 'capacity', 'capacity-work', 'upgrade', 'scheduled-change', 'expired', 'quote-error'].includes(next)) setCheckout(null);
     setReturnSection('package'); setScenario(next); setRevision(value => value + 1); setView('journey');
   }
   const currentPreview = useMemo(() => ({ ...preview, initialSection: returnSection }), [preview, returnSection]);

@@ -3,7 +3,7 @@ import { BillingPlanAdjustmentsService } from './billing-plan-adjustments.servic
 import { invoiceFindingSource } from './billing-invoice-finding';
 import { resolveAppliedInvoiceIssues, detectBillingIssue, resolveBillingIssue } from './billing-issues';
 import type { ScheduledChange } from './billing-schedule';
-import { BadRequestException, Injectable, Optional, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Optional, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { STRIPE_API_VERSION } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -20,11 +20,14 @@ import { restartFits, restartSource } from './billing-restart';
 import { observeBillingCharges, recordBillingFinancials } from './billing-financial';
 import { grantPaidPackageReceipts } from './billing-receipt-grants';
 import { grantTrialReceiptCarryover } from './billing-trial-carryover';
-import { fulfillPaidPackageRequest } from './billing-package-request';
-import { applyCapacity, attemptCapacity, capacityOptions, capacityValid } from './billing-capacity';
 import { fullPackagePurchaseImpact } from '../domain/billing-package';
 import { paidPackageCheckoutEvidence } from '../domain/paid-checkout-invoice';
 import { paidReceiptBalance } from './billing-receipt-grants';
+import { fulfillPaidPackageRequest, supersedeUnpaidPackageRequest } from './billing-package-request';
+import { applyCapacity, attemptCapacity, capacityOptions, capacityValid } from './billing-capacity';
+import { applyBillingFeaturePlan, billingFeaturePlan } from './billing-feature-entitlements';
+import { exclusiveEntitlementLock } from '../../feature-launch/application/execution-attempt.service';
+import { completeRunoffIfDrained } from '../../feature-launch/application/runoff-lifecycle';
 
 export const BILLING_STRIPE_EVENTS = new Set(['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded',
   'checkout.session.async_payment_failed', 'invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required', 'invoice.finalization_failed',
@@ -755,8 +758,10 @@ export class BillingReconcilerService {
   }
 
   private async applyInvoice(account: BillingAccount, contract: BillingAttempt, evidence: PaidInvoiceEvidence, snapshot: BillingSnapshot, leaseToken: string, recordOnly?:(tx:Prisma.TransactionClient)=>Promise<void>): Promise<void> {
+    let disabledFeatures: string[] = [];
     await this.prisma.client.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${account.companyId}`}))`;
+      if (evidence.kind === 'INITIAL' && snapshot.featurePlan) await tx.$executeRaw(exclusiveEntitlementLock(account.companyId));
       await lockPlanTermCompany(tx, account.companyId);
       await this.assertLease(tx, account.id, leaseToken);
       if(recordOnly)await recordOnly(tx);
@@ -799,15 +804,23 @@ export class BillingReconcilerService {
         await attemptCapacity(tx, account.id, { id: planChange!.id, quoteSnapshot: { ...snapshot, capacity: proposedChange.change.selection } as unknown as Prisma.JsonValue }) : undefined;
       const capacityReady = changeBound && ((evidence.kind !== 'INITIAL' && !applyingChange) || (capacity ?
         capacityValid(await capacityOptions(tx, company.id, snapshot.quote.offer), capacity) : await restartFits(tx, company.id, snapshot.quote.offer)));
+      let featureReady = true;
+      if (evidence.kind === 'INITIAL' && snapshot.featurePlan) {
+        try { featureReady = (await billingFeaturePlan(tx, company.id)).plan.sourceHash === snapshot.featurePlan.sourceHash; }
+        catch (error) {
+          if (!(error instanceof ConflictException) || (error.getResponse() as { code?: string }).code !== 'BILLING_ENTITLEMENT_REVIEW_REQUIRED') throw error;
+          featureReady = false;
+        }
+      } else if (evidence.kind === 'INITIAL' && snapshot.quote.previousSource && !snapshot.restart) featureReady = false;
       // Historical evidence cannot replace a newer customer contract merely because its paid end is later.
       const held = !currentContract || (current.paidThrough !== null && evidence.periodEnd <= current.paidThrough) || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt)) ||
         evidence.disputed || evidence.refundedSatang > 0 || evidence.periodEnd <= new Date() || evidence.periodStart > new Date() ||
         (snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' && evidence.periodStart.getTime() !== current.paidThrough?.getTime()) ||
-        termProjectionHash(company.planTerm) !== (current.termProjectionHash ?? snapshot.termHash) || !capacityReady ||
+        termProjectionHash(company.planTerm) !== (current.termProjectionHash ?? snapshot.termHash) || !capacityReady || !featureReady ||
         (restarting && (current.baseSubscriptionId !== restarting.subscriptionId || current.activeAttemptId !== contract.id ||
           current.contractAttemptId !== restarting.contractAttemptId || current.paidThrough?.toISOString() !== restarting.paidThrough));
       if (held) {
-        await tx.billingInvoice.update({ where: { id: invoice.id }, data: { applyStatus: 'HELD', errorCode: !capacityReady ? 'BILLING_CAP_SELECTION_REQUIRED' : 'access_review_required' } });
+        await tx.billingInvoice.update({ where: { id: invoice.id }, data: { applyStatus: 'HELD', errorCode: !capacityReady ? 'BILLING_CAP_SELECTION_REQUIRED' : !featureReady ? 'BILLING_ENTITLEMENT_REVIEW_REQUIRED' : 'access_review_required' } });
         await detectBillingIssue(tx,{stripeAccountId:account.stripeAccountId,livemode:account.livemode,companyId:company.id,kind:'PAID_HELD',referenceId:invoice.id});
         return;
       }
@@ -817,6 +830,8 @@ export class BillingReconcilerService {
           companyId: company.id, billingAccountId: account.id, invoiceId: invoice.id, policyRevisionId: snapshot.quote.policyRevision,
           source: snapshot.trialCarryover, paidAt: evidence.paidAt, periodEnd: evidence.periodEnd });
         if (capacity) await applyCapacity(tx, company.id, offer, capacity, applyingChange ? planChange!.initiatorUserId : contract.initiatingUserId, invoice.id);
+        if (evidence.kind === 'INITIAL' && snapshot.featurePlan)
+          disabledFeatures = await applyBillingFeaturePlan(tx, company.id, invoice.id, contract.initiatingUserId, snapshot.featurePlan);
         if (current.graceEndsAt && current.paidThrough) await tx.billingReceiptGrant.updateMany({ where: { billingAccountId: account.id,
           companyId: company.id, kind: { in: ['INITIAL', 'RENEWAL', 'REPEAT', 'UPGRADE'] }, expiresAt: current.graceEndsAt, serviceEnd: { lte: current.paidThrough } }, data: { expiresAt: current.paidThrough } });
         const term = await tx.companyPlanTerm.upsert({ where: { companyId: company.id }, create: {
@@ -840,14 +855,21 @@ export class BillingReconcilerService {
       }
       await tx.billingInvoice.update({ where: { id: invoice.id }, data: { applyStatus: 'APPLIED', appliedAt: new Date(), errorCode: null, version: { increment: 1 } } });
       await fulfillPaidPackageRequest(tx,company.id,account.id,invoice.id);
+      if (evidence.kind === 'INITIAL' && snapshot.featurePlan) await supersedeUnpaidPackageRequest(tx, company.id, invoice.id);
       await resolveAppliedInvoiceIssues(tx,account,invoice.id);
       await tx.auditLog.create({ data: { companyId: company.id, action: 'billing.invoice.applied', targetType: 'BillingInvoice', targetId: invoice.id,
-        requestId: invoice.id, result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { periodStart: evidence.periodStart.toISOString(), periodEnd: evidence.periodEnd.toISOString(), tierKey: snapshot.quote.offer.offerKey } } });
+        requestId: invoice.id, result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { periodStart: evidence.periodStart.toISOString(), periodEnd: evidence.periodEnd.toISOString(),
+          tierKey: snapshot.quote.offer.offerKey, previousSource: snapshot.quote.previousSource ?? null,
+          previousTermEndsAt: snapshot.quote.previousTermEndsAt ?? null, featurePlanHash: snapshot.featurePlan?.planHash ?? null } } });
       await tx.outboxEvent.upsert({ where: { eventKey: `billing:applied:${invoice.id}` }, update: {}, create: {
         companyId: company.id, eventType: 'billing.invoice.applied', aggregateType: 'BillingInvoice', aggregateId: invoice.id,
         eventKey: `billing:applied:${invoice.id}`, payloadJson: { schemaVersion: 1, occurredAt: new Date().toISOString(), data: { invoiceId: invoice.id, companyId: company.id } },
       } });
     });
+    for (const featureKey of disabledFeatures) {
+      try { await completeRunoffIfDrained(this.prisma, account.companyId, featureKey); }
+      catch { /* The durable runoff sweep completes missed post-commit transitions. */ }
+    }
   }
 
   async scan(): Promise<{ scanned: number; failed: number }> {
