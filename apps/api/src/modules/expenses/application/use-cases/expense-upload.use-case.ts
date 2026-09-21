@@ -611,6 +611,29 @@ export class ResolveDuplicateUseCase {
   }
 }
 
+/**
+ * Vendor-address §8 Slice 2: "ยืนยันว่าใช้ได้ พร้อมเหตุผล" on a tax invoice whose printed buyer does not
+ * match the company registry. It records a person's judgement and changes nothing else — no
+ * claimability, no tax evidence (E11). The audit names the mismatch, never the printed name or
+ * address it was about.
+ */
+@Injectable()
+export class ConfirmBuyerMatchUseCase {
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
+
+  async execute(ctx: RequestContext, expenseId: string, reason?: string): Promise<void> {
+    if (!ctx.permissions.includes('expense.confirm')) throw new ForbiddenException('Missing permission: expense.confirm');
+    const cleanReason = typeof reason === 'string' ? reason.trim() : '';
+    if (!cleanReason || cleanReason.length > 500) {
+      throw new BadRequestException({ code: 'expense_buyer_match_reason_required', message: 'A reason of 1 to 500 characters is required.' });
+    }
+    await this.repo.confirmBuyerMatch(
+      { companyId: ctx.companyId, expenseId, actorUserId: ctx.userId, reason: cleanReason, scopes: ctx.scopes ?? {} },
+      (tx, confirmed) => this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.buyer_match.confirm', targetType: 'expense_record', targetId: expenseId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { matchStatus: confirmed.matchStatus, reasons: confirmed.reasons ?? [] } }, tx),
+    );
+  }
+}
+
 @Injectable()
 export class ListExpenseCategoriesUseCase {
   constructor(private readonly repo: PrismaExpenseRepository) {}

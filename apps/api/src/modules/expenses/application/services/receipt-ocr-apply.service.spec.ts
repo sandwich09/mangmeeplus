@@ -32,6 +32,13 @@ function makeDuplicateRepo(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// Slice 2: the company registry the printed buyer block is compared with.
+const BUYER_REGISTRY = {
+  taxId: '0994000163011', registeredName: 'บริษัท มั่งมีพลัส จำกัด', displayName: 'มั่งมีพลัส', brandName: null,
+  addressJson: { line1: '55/3 ซอยลาดพร้าว 15', subdistrict: 'จอมพล', district: 'จตุจักร', province: 'กรุงเทพมหานคร', postalCode: '10900' },
+  branchTaxCode: null,
+};
+
 // Arithmetic fixtures have no concurrent writer; the source-boundary case below supplies exact revisions.
 function makeApplyPrisma(tx: any) {
   return { client: { $transaction: async (fn: any) => fn({
@@ -214,7 +221,8 @@ describe('ocrVatSource', () => {
   });
 });
 
-async function applyFields(fields: any, vatCaptureSnapshotJson: any = null, existing: Record<string, unknown> = {}, todayIso?: string) {
+async function applyFields(fields: any, vatCaptureSnapshotJson: any = null, existing: Record<string, unknown> = {}, todayIso?: string,
+  repoOverrides: Record<string, unknown> = {}) {
   const updates: any[] = [];
   const lines: any[] = [];
   const tx = {
@@ -226,7 +234,7 @@ async function applyFields(fields: any, vatCaptureSnapshotJson: any = null, exis
     expenseLine: { deleteMany: async () => undefined, create: async (args: any) => { lines.push(args.data); } },
   };
   const prisma = makeApplyPrisma(tx);
-  const result = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo() as any)
+  const result = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo(repoOverrides) as any)
     .apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1', fields, todayIso ? { todayIso } : {});
   return { record: updates[0]?.data, line: lines[0], lines, result };
 }
@@ -1922,7 +1930,7 @@ describe('receipt tax integrity regressions', () => {
     assert.equal(unknown.record.vendorEntityKindSnapshot, undefined);
   });
 
-  it('writes the printed seller address and keeps the buyer block as provenance only', async () => {
+  it('writes the printed seller address and keeps the buyer block out of every seller column', async () => {
     const fields = {
       grandTotalAmount: '1498.00',
       vendorName: 'บริษัท สยามวัสดุก่อสร้าง จำกัด',
@@ -1930,13 +1938,54 @@ describe('receipt tax integrity regressions', () => {
       buyerAsPrinted: { name: 'บริษัท มั่งมีพลัส จำกัด', taxId: '0994000163011', branchCode: '00000',
         addressText: '55/3 ซอยลาดพร้าว 15 แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900' },
     };
-    const result = await applyFields(fields);
+    const result = await applyFields(fields, null, {}, undefined, { getSubstituteCompanyContext: async () => BUYER_REGISTRY });
     assert.equal(result.record.vendorAddressSnapshot, '199/8 ถนนพระราม 3 แขวงบางโพงพาง เขตยานนาวา กรุงเทพฯ 10120');
-    // Slice 2 owns comparing the buyer block; this phase only has to keep it, and keep it OUT of
-    // every seller column — a buyer address stored as the vendor's is wrong on every later document.
+    // A buyer address stored as the vendor's is wrong on every later document that reuses it.
     assert.deepEqual(result.record.aiVerifiedFieldsJson.buyerAsPrinted, fields.buyerAsPrinted);
-    assert.equal('buyerAsPrintedJson' in result.record, false, 'no new column in this phase');
     assert.notEqual(result.record.vendorAddressSnapshot, fields.buyerAsPrinted.addressText);
+    assert.notEqual(result.record.vendorTaxIdSnapshot, fields.buyerAsPrinted.taxId);
+  });
+
+  // Slice 2 (vendor-address §5 row 2): the buyer block is compared on the read that produced it.
+  it('stores the printed buyer block with its comparison, and changes no tax or claim state (E11)', async () => {
+    const buyerAsPrinted = { name: 'บริษัท ร้านอื่น จำกัด', taxId: '0105512345678', branchCode: '00000', addressText: 'ถนนสีลม 10500' };
+    const registryReads: Array<[string, string | null]> = [];
+    const result = await applyFields({ grandTotalAmount: '1498.00', buyerAsPrinted }, null, { branchId: 'branch-1' }, undefined, {
+      getSubstituteCompanyContext: async (companyId: string, branchId: string | null) => { registryReads.push([companyId, branchId]); return BUYER_REGISTRY; },
+    });
+    const stored = result.record.buyerAsPrintedJson;
+    assert.deepEqual(registryReads, [['company-1', 'branch-1']], 'compared against the expense branch');
+    assert.equal(stored.matchStatus, 'MISMATCH');
+    assert.deepEqual(stored.reasons, ['TAX_ID']);
+    assert.deepEqual(stored.differences, [{ reason: 'TAX_ID', printed: '0105512345678', registered: '0994000163011' }]);
+    assert.equal(stored.name, buyerAsPrinted.name);
+    assert.equal(stored.addressText, buyerAsPrinted.addressText);
+    assert.ok(!Number.isNaN(Date.parse(stored.checkedAt)));
+    assert.equal('taxEvidenceStatus' in result.record, false);
+    assert.equal('inputVatClaimStatus' in result.record, false);
+  });
+
+  it('keeps a confirmed override across a re-read of the same page and drops it when the page changed', async () => {
+    const buyerAsPrinted = { name: 'บริษัท ร้านอื่น จำกัด', taxId: '0105512345678' };
+    const previous = {
+      ...buyerAsPrinted, matchStatus: 'MISMATCH', reasons: ['TAX_ID'],
+      differences: [{ reason: 'TAX_ID', printed: '0105512345678', registered: '0994000163011' }], checkedAt: '2026-09-20T00:00:00.000Z',
+      overrideReason: 'ใบนี้ออกผิดเลข ผู้ขายยืนยันทางอีเมลแล้ว', overriddenByUserId: 'user-9', overriddenAt: '2026-09-20T01:00:00.000Z',
+    };
+    const repo = { getSubstituteCompanyContext: async () => BUYER_REGISTRY };
+    const same = await applyFields({ grandTotalAmount: '10', buyerAsPrinted }, null, { buyerAsPrintedJson: previous }, undefined, repo);
+    assert.equal(same.record.buyerAsPrintedJson.overrideReason, previous.overrideReason);
+    const changed = await applyFields({ grandTotalAmount: '10', buyerAsPrinted: { ...buyerAsPrinted, taxId: '0105599999999' } },
+      null, { buyerAsPrintedJson: previous }, undefined, repo);
+    assert.equal(changed.record.buyerAsPrintedJson.overrideReason, undefined);
+    // A re-read of a page with no buyer block replaces the stale one instead of leaving it behind.
+    const gone = await applyFields({ grandTotalAmount: '10' }, null, { buyerAsPrintedJson: previous }, undefined, repo);
+    assert.deepEqual(gone.record.buyerAsPrintedJson, { matchStatus: 'NOT_PRINTED', checkedAt: gone.record.buyerAsPrintedJson.checkedAt });
+  });
+
+  it('leaves the column alone when neither this read nor an earlier one printed a buyer block', async () => {
+    const result = await applyFields({ grandTotalAmount: '10' });
+    assert.equal('buyerAsPrintedJson' in result.record, false);
   });
 
   it('never replaces an address already on the record (CON-5 and §7 typed-value precedence)', async () => {

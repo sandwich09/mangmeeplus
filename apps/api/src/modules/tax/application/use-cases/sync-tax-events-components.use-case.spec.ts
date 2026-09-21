@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { SyncTaxEventsUseCase } from './sync-tax-events.use-case.js';
+import { ExpenseSourceAdapter } from '../../infrastructure/adapters/expense-source.adapter.js';
 
 // These suites cover the document/expense seams; the supplier-payment WHT seam has its own file.
 const noWhtPayments = { findRecordedWithWhtByCompany: async () => [] } as any;
@@ -151,5 +152,76 @@ describe('SyncTaxEventsUseCase transaction-tax components', () => {
     assert.equal(result.skippedLocked, 1);
     assert.equal(result.reviewIssuesCreated, 1);
     assert.equal(issues[0]?.issueCode, 'SOURCE_CHANGED_AFTER_TAX_PERIOD_LOCK');
+  });
+});
+
+/**
+ * Vendor-address Slice 2, controller review fix 1: the buyer-mismatch mark flips the expense HEADER to
+ * NON_CLAIMABLE. Run through the real source adapter, that header decides ภ.พ.30 only for an expense
+ * whose lines carry no Tax Code component; once a line has one, the input VAT is built from the line
+ * and the header is never read. This is why the web offers the mark only on the header path.
+ */
+describe('header NON_CLAIMABLE against the two input-VAT paths', () => {
+  const v7Component = {
+    componentKey: 'VAT',
+    snapshot: {
+      taxCodeDefinitionId: 'def-v7', externalTaxCode: 'V7', taxProfileKey: 'WATCHDOG_TH_DOMESTIC_EXPENSE_V1', taxProfileVersion: 1,
+      taxRegime: 'VAT', taxDirection: 'INPUT', taxTreatment: 'CLAIMABLE', taxContext: 'DOMESTIC_PURCHASE', taxRate: '7',
+      sourceCurrency: 'THB', taxCurrency: 'THB', exchangeRate: '1', exchangeRateSource: 'FUNCTIONAL_CURRENCY', exchangeRateDate: '2026-09-04',
+      taxBaseAmount: '100.00', taxAmount: '7.00', claimability: 'CLAIMABLE', evidenceStatus: 'VERIFIED', accountRuleVersion: 1, reportRuleVersion: 1,
+    },
+    accountAssignments: [{ accountRole: 'INPUT_VAT_CLAIMABLE', accountId: 'acc-1154', postingSide: 'DEBIT', ruleVersion: 1 }],
+    reportContributions: [
+      { formType: 'PP30', boxKey: 'box_6_eligible_purchases', amountSource: 'TAX_BASE', amount: '100.00' },
+      { formType: 'PP30', boxKey: 'box_7_input_tax', amountSource: 'TAX_AMOUNT', amount: '7.00' },
+    ],
+  };
+  const markedExpense = (taxComponentsJson: unknown) => ({
+    id: 'exp-1', companyId: 'c1', branchId: null, status: 'CONFIRMED', expenseDate: new Date('2026-09-04'), currency: 'THB',
+    vatMode: 'VAT_EXCLUDED', vendorDocumentNumber: 'INV-9', updatedAt: new Date('2026-09-05'),
+    inputVatClaimStatus: 'NON_CLAIMABLE', taxEvidenceStatus: 'USABLE_FOR_TAX',
+    vatAmount: '7', taxableAmount: '100', whtAmount: '0', grandTotalAmount: '107',
+    lines: [{ id: 'line-1', lineNumber: 1, taxComponentsJson }],
+  });
+  // Honours the two `lines` predicates the adapter's queries actually send.
+  const adapterOver = (expense: ReturnType<typeof markedExpense>) => {
+    const hasComponents = expense.lines.some((line) => line.taxComponentsJson != null);
+    return new ExpenseSourceAdapter({ client: {
+      expenseRecord: { findMany: async ({ where }: any) => {
+        if (where.status !== 'CONFIRMED' || !where.lines) return [];
+        if (where.lines.none) return hasComponents ? [] : [expense];
+        return hasComponents ? [expense] : [];
+      } },
+      vendorBill: { findMany: async () => [] },
+    } } as any);
+  };
+  const run = async (expense: ReturnType<typeof markedExpense>) => {
+    const events: any[] = [];
+    const issues: any[] = [];
+    const taxRepo = {
+      upsertPeriod: async () => ({ id: 'pp30', status: 'OPEN' }), findEventByIdempotencyKey: async () => null,
+      supersedeEvent: async () => undefined, upsertEvent: async (event: any) => { events.push(event); },
+      createIssue: async (issue: any) => { issues.push(issue); },
+    } as any;
+    const docSource = { findFinalizedTransactionTaxLines: async () => [], findIssuedWithVatByCompany: async () => [] } as any;
+    const result = await new SyncTaxEventsUseCase(taxRepo, docSource, adapterOver(expense), noWhtPayments).execute('c1');
+    return { result, events, issues };
+  };
+
+  it('still claims the input VAT through a line Tax Code: the header mark changes nothing in ภ.พ.30', async () => {
+    const { result, events, issues } = await run(markedExpense([v7Component]));
+    assert.equal(result.vatInputCreated, 1);
+    assert.equal(events[0]?.eventType, 'VAT_INPUT');
+    assert.equal(events[0]?.sourceLineKey, 'line-1');
+    assert.deepEqual(events[0]?.reportContributions.map((c: any) => [c.boxKey, c.amount]),
+      [['box_6_eligible_purchases', '100.00'], ['box_7_input_tax', '7.00']]);
+    assert.equal(issues.some((issue) => issue.issueCode === 'INPUT_VAT_NOT_CLAIMABLE'), false, 'the header is never consulted');
+  });
+
+  it('does honour the header when no line carries a Tax Code component', async () => {
+    const { result, events, issues } = await run(markedExpense(null));
+    assert.equal(result.vatInputCreated, 0);
+    assert.deepEqual(events, []);
+    assert.equal(issues[0]?.issueCode, 'INPUT_VAT_NOT_CLAIMABLE');
   });
 });

@@ -16,24 +16,41 @@ const OTHER_ADDRESS = '99 หมู่ 2 ตำบลบางโฉลง อ�
 
 type Counterparty = Record<string, any>;
 
-function harness(rows: Counterparty[] = []) {
+/**
+ * `saveResults` drives the §11.1/§15 CAS return value one call at a time — `true` (the default once
+ * the list runs out) is "won the race", `false` is "lost it, retry". `refetched` counts the re-reads
+ * a lost race triggers, so a test can prove the retry actually happened instead of just trusting the
+ * outcome.
+ */
+function harness(rows: Counterparty[] = [], saveResults: boolean[] = []) {
   const audits: any[] = [];
   const created: any[] = [];
   const saved: any[] = [];
+  const refetched: string[] = [];
   let searchedFor: any = null;
+  let saveCalls = 0;
   const repo = {
     findCounterpartyByVendorKey: async (_companyId: string, key: unknown) => {
       searchedFor = key;
       return rows[0] ?? null;
     },
+    findCounterpartyById: async (_companyId: string, id: string) => {
+      refetched.push(id);
+      return rows[0] ? { ...rows[0], id } : null;
+    },
     createCounterparty: async (input: any) => {
       created.push(input);
       return { ...input, id: 'cp-new' };
     },
-    saveCounterpartyVendorFields: async (input: any) => { saved.push(input); },
+    saveCounterpartyVendorFields: async (input: any) => {
+      saved.push(input);
+      const result = saveCalls < saveResults.length ? saveResults[saveCalls] : true;
+      saveCalls += 1;
+      return result;
+    },
   } as any;
   const audit = { log: async (entry: any) => { audits.push(entry); } } as any;
-  return { useCase: new EnsureVendorCounterpartyFromExpenseUseCase(repo, audit), audits, created, saved, key: () => searchedFor };
+  return { useCase: new EnsureVendorCounterpartyFromExpenseUseCase(repo, audit), audits, created, saved, refetched, key: () => searchedFor };
 }
 
 const vendor = {
@@ -147,6 +164,34 @@ describe('case c — the registry address differs from the one on this document'
     assert.equal(saved[0].billingAddressJson.locked, true, 'a rebuild may never quietly unlock what the owner locked');
     assert.deepEqual(saved[0].billingAddressJson.provenance, previousProvenance, 'the primary did not change, so neither did its provenance');
     assert.deepEqual(saved[0].billingAddressJson.seenOnDocuments.map((entry: any) => entry.addressText), [ADDRESS]);
+  });
+});
+
+describe('§11.1/§15 — another writer changes the matched row mid-save', () => {
+  const matchedRow = {
+    id: 'cp-1', type: 'VENDOR', displayName: 'ร้านเดิม',
+    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    billingAddressJson: { addressText: OTHER_ADDRESS, provenance: { source: 'EXPENSE_AUTO', userId: 'u-0', at: '2026-01-01T00:00:00.000Z' } },
+  };
+
+  it('wins after one lost race: re-reads once and the retry write succeeds', async () => {
+    const { useCase, saved, refetched } = harness([matchedRow], [false, true]);
+
+    const outcome = await useCase.execute(ctx, vendor);
+
+    assert.equal(outcome.result.case, 'HISTORY');
+    assert.equal(saved.length, 2, 'the lost attempt, then the winning retry');
+    assert.deepEqual(refetched, ['cp-1'], 'exactly one re-read for the one lost race');
+  });
+
+  it('gives up after two retries and reports FAILED without throwing (§8)', async () => {
+    const { useCase, saved, refetched } = harness([matchedRow], [false, false, false]);
+
+    const outcome = await useCase.execute(ctx, vendor);
+
+    assert.deepEqual(outcome.result, { case: 'FAILED', failed: true }, 'the ordinary registry-failure outcome, not a thrown error');
+    assert.equal(saved.length, 3, '1 initial attempt + 2 retries, never a 3rd retry');
+    assert.deepEqual(refetched, ['cp-1', 'cp-1'], 'one re-read per lost race, none after the final loss');
   });
 });
 
