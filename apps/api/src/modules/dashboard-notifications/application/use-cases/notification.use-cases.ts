@@ -720,7 +720,7 @@ export function buildLineMessage(params: {
   deepLinkHref?: string;
 }): { type: 'flex'; altText: string; contents: Record<string, unknown> } {
   const severityLabel: Record<string, string> = {
-    critical: '🔴 วิกฤต',
+    critical: '🔴 สำคัญ',
     action: '🟡 ต้องดำเนินการ',
     insight: '🔵 ข้อมูล',
     info: '⚪ แจ้งเตือน',

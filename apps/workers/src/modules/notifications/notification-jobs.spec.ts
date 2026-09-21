@@ -27,6 +27,12 @@ describe('notification worker helpers', () => {
     assert.doesNotMatch(text, /Bearer|token|secret/i);
   });
 
+  it('labels critical LINE alerts as important without crisis wording', () => {
+    const text = buildLineMessage({ companyId: 'c1', triggerKey: 'plan_term_expired', title: 'แพ็กเกจหมดอายุแล้ว', body: '', severity: 'critical' });
+    assert.match(text, /สำคัญ/);
+    assert.doesNotMatch(text, /วิกฤต/);
+  });
+
   it('uses stable idempotency keys for recurring jobs', () => {
     assert.equal(dailySummaryIdempotencyKey('c1', '2026-06-25'), 'daily_summary:c1:2026-06-25');
     assert.equal(stockLowIdempotencyKey('c1', '2026-06-25'), 'stock_low:c1:2026-06-25');

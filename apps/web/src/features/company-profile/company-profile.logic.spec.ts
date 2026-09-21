@@ -435,6 +435,13 @@ describe('the profile route is reachable and dynamic', () => {
       /\{permissions\.includes\('company\.legal_identity\.manage'\) && <ProfileCompletenessCard companyId=\{companyId\} \/>\}/,
     );
   });
+
+  it('places personal signature management in the account area without changing its route', () => {
+    const page = readFileSync(new URL('./CompanyProfilePage.tsx', import.meta.url), 'utf8');
+    assert.match(page, /canManageSignature/);
+    assert.match(page, /href=\{`\/companies\/\$\{companyId\}\/expenses\/signatures`\}/);
+    assert.match(page, />\s*จัดการลายเซ็น\s*</);
+  });
 });
 
 // ─── UAT 2026-09-06 (spec §15.4.1) ───────────────────────────────────────────

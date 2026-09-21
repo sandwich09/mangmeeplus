@@ -28,7 +28,7 @@ export function buildLineMessage(params: {
   companyId: string;
 }): string {
   const severityLabel: Record<string, string> = {
-    critical: '🔴 วิกฤต',
+    critical: '🔴 สำคัญ',
     action: '🟡 ต้องดำเนินการ',
     insight: '🔵 ข้อมูล',
     info: '⚪ แจ้งเตือน',

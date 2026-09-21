@@ -297,7 +297,7 @@ export const workspaceDictionary = {
     'notification.mark_all_read': 'อ่านทั้งหมด',
     'notification.dismiss': 'ปิด',
     'notification.empty': 'ไม่มีการแจ้งเตือน',
-    'notification.severity.critical': 'วิกฤต',
+    'notification.severity.critical': 'สำคัญ',
     'notification.severity.action': 'ต้องดำเนินการ',
     'notification.severity.insight': 'ข้อมูลเชิงลึก',
     'notification.severity.info': 'แจ้งเพื่อทราบ',

@@ -9,6 +9,7 @@ import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { ChevronDownIcon } from '@/common/icons';
 import { TextField } from '@/common/components/field';
+import { ThaiAddressFields } from '@/common/components/field/ThaiAddressFields';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { LoadingState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
@@ -68,6 +69,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
   // box whose every save comes back 403 (FINANCE holds vat_registration.read but not .manage).
   const canManageShop = permissions.includes('company.legal_identity.manage');
   const canManageVat = permissions.includes('company.vat_registration.manage');
+  const canManageSignature = permissions.some((permission) => ['expense.signature.self_manage', 'expense.review', 'expense.confirm', 'expense.signature.manage'].includes(permission));
   const toast = useToast();
   const [section, setSection] = useState<'shop' | 'account'>('shop');
   const [identity, setIdentity] = useState<CompanyIdentityResponse | null>(null);
@@ -403,13 +405,12 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
               hint="ตัวเลข 13 หลัก"
               onChange={(event) => setTaxId(event.target.value.replace(/[^0-9]/g, '').slice(0, 13))}
             />
+            <ThaiAddressFields companyId={companyId} required disabled={!canEditShop || shopSaving}
+              value={{ postalCode: address.postalCode ?? '', province: address.province ?? '', district: address.district ?? '', subdistrict: address.subdistrict ?? '' }}
+              onChange={(next) => setAddress((current) => ({ ...current, ...next }))} />
             <div className="grid gap-4 sm:grid-cols-2">
               {addressField('line1', 'ที่อยู่ (บ้านเลขที่ ถนน)')}
               {addressField('line2', 'ที่อยู่เพิ่มเติม', false)}
-              {addressField('subdistrict', 'ตำบล / แขวง')}
-              {addressField('district', 'อำเภอ / เขต')}
-              {addressField('province', 'จังหวัด')}
-              {addressField('postalCode', 'รหัสไปรษณีย์')}
             </div>
           </div>
           )}
@@ -571,6 +572,13 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
             )}
             </div>
           </details>
+          {canManageSignature && <MangmeeCard className="mt-5 p-5 sm:p-6">
+            <h3 className="text-base font-semibold text-gray-900">ลายเซ็นของฉัน</h3>
+            <p className="mt-1 text-sm text-gray-600">เพิ่มหรือเปลี่ยนลายเซ็นส่วนตัวเมื่อต้องใช้ลงนามเอกสาร</p>
+            <Link className="mangmee-btn mangmee-btn-secondary mt-4 w-full sm:w-auto" href={`/companies/${companyId}/expenses/signatures`}>
+              จัดการลายเซ็น
+            </Link>
+          </MangmeeCard>}
         </div>
       </div>
     </MangmeePage>

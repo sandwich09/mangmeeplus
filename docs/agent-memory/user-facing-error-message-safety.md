@@ -15,8 +15,10 @@ Decisions:
 - Raw message, validation arrays, code, details, and request id remain available for logic/support;
   customer renderers never display them directly.
 - Both `status` and `statusCode`, plus existing API error kinds, are part of the display contract.
-- The exact reported 400 validation array maps to:
-  `ข้อมูลจากหน้าจอไม่ตรงกับที่ระบบรองรับ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง`.
+- The formerly reported 400 validation array now maps to the neutral fallback:
+  `ทำรายการต่อไม่ได้ กรุณาตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง`.
+  This supersedes the earlier screen/API-mismatch wording because an unknown 400 does not prove
+  that cause.
 - Direct API `.message` display bypasses across mounted web features are in scope. Non-display
   predicates may keep a narrow documented exemption.
 - Persisted workflow/provider/delivery diagnostics use a reviewed code mapping or generic Thai

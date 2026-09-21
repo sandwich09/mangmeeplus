@@ -135,6 +135,11 @@ describe('deriveExpenseReviewSteps', () => {
     assert.equal(stepState({ missingReceiptReason: 'ไม่ได้รับใบเสร็จ' }, 'evidence'), 'done');
     assert.equal(stepState({ missingReceiptReason: 'ไม่ได้รับใบเสร็จ', substituteReceiptEvidence: { status: 'PREPARED', artifactAttachmentId: null } }, 'evidence'), 'done');
     assert.equal(stepState({ missingReceiptReason: 'ไม่ได้รับใบเสร็จ', substituteReceiptEvidence: { status: 'ISSUED', artifactAttachmentId: 'att-1' } }, 'evidence'), 'done');
+    assert.equal(stepState({ missingReceiptReason: 'ไม่ได้รับใบเสร็จ', substituteReceiptEvidence: { status: 'SUPERSEDED', artifactAttachmentId: 'old' } }, 'evidence'), 'done');
+  });
+
+  it('a cancelled certificate with a stale reason needs document review, not signing', () => {
+    assert.equal(stepState({ aiVerificationSummaryJson: null, missingReceiptReason: 'ไม่ได้รับใบเสร็จ', substituteReceiptEvidence: null }, 'evidence'), 'pending');
   });
 
   it('flags the evidence step for the no-invoice case: no ACTIVE primary receipt and no substitute path started', () => {

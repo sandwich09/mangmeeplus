@@ -135,6 +135,11 @@ export function expenseEvidenceConfirmationError(source: ExpenseEvidenceSource &
   if (coveredByClaimForm) return null;
   if (source.substituteReceiptEvidence?.status === 'ISSUED' && source.substituteReceiptEvidence.artifactAttachmentId) return null;
   if (!hasCurrentExpenseEvidenceReview(source)) return 'กรุณาบันทึกการตรวจเอกสารและหลักฐานล่าสุดก่อนยืนยัน';
-  if (expenseEvidenceAssessment(source)?.route === 'SUBSTITUTE_RECEIPT') return 'เปิดใบรับรองฉบับเดิมและดำเนินการให้สมบูรณ์ก่อนยืนยัน';
+  if (expenseEvidenceAssessment(source)?.route === 'SUBSTITUTE_RECEIPT') {
+    if (!source.substituteReceiptEvidence || source.substituteReceiptEvidence.status === 'SUPERSEDED') {
+      return 'กรุณากลับไปตรวจเอกสารและเลือกหลักฐานที่ใช้กับรายการนี้ หรือจัดทำใบรับรองฉบับใหม่ก่อนยืนยัน';
+    }
+    return 'เปิดใบรับรองฉบับเดิมและดำเนินการให้สมบูรณ์ก่อนยืนยัน';
+  }
   return null;
 }

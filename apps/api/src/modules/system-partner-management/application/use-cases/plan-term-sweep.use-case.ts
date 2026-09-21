@@ -93,7 +93,7 @@ export class PlanTermSweepUseCase {
             // NotificationEvent/Recipient/Delivery are already a durable queue. Commit them
             // with the claim; the existing delivery worker owns all later network attempts.
             await this.notify(row.companyId, row.company.name, {
-              trigger: PLAN_TERM_EXPIRED_TRIGGER, severity: 'critical', title: 'ร้านครบกำหนดใช้งาน',
+              trigger: PLAN_TERM_EXPIRED_TRIGGER, severity: 'critical', title: 'แพ็กเกจหมดอายุแล้ว',
               body: (lineLinked) => expiredMessageTh(row.company.name, lineLinked) + nextStep,
               periodKey: `expired:${row.termEndsAt.toISOString()}`,
             }, tx);
@@ -137,7 +137,7 @@ export class PlanTermSweepUseCase {
           await tx.companyPlanTerm.update({ where: { companyId: row.companyId }, data: { [column]: now } });
           const { daysLeft } = derivePlanTermState(row.termEndsAt, row.warningDays, now);
           await this.notify(row.companyId, row.company.name, {
-            trigger: PLAN_TERM_EXPIRING_TRIGGER, severity: 'action', title: 'ใกล้ครบกำหนดใช้งาน',
+            trigger: PLAN_TERM_EXPIRING_TRIGGER, severity: 'action', title: 'แพ็กเกจใกล้หมดอายุ',
             body: (lineLinked) => warningMessageTh(row.company.name, row.termEndsAt, daysLeft, lineLinked) + nextStep,
             periodKey: `${row.termEndsAt.toISOString()}:${point}`,
           }, tx);

@@ -1,17 +1,17 @@
 'use client';
 
 import type React from 'react';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ALL_BRANCH_ROLE_KEYS, type EmployeeLineLinkPackage, type EmployeeSummary, type RoleSummary, type ThaiAddressOption } from '@watchdog-bms/contracts';
+import { ALL_BRANCH_ROLE_KEYS, type EmployeeLineLinkPackage, type EmployeeSummary, type RoleSummary } from '@watchdog-bms/contracts';
+import { ThaiAddressFields } from '@/common/components/field/ThaiAddressFields';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { ThemedSteps } from '@/common/components/steps/ThemedSteps';
 import { LoadingState } from '@/common/components/state/LoadingState';
 import { MangmeeBranchChip, MangmeeCard, cx } from '@/common/components/mangmee';
 import { useToast } from '@/common/components/toast';
 import { listBranches as listCompanyBranches, type Branch } from '../branch-settings/branches.api';
-import { completeEmployee, createEmployee, getEmployee, issueEmployeeLineLinkToken, listRoles, listThaiAddresses, updateEmployee, type CreateEmployeeResult } from './employee-access.api';
+import { completeEmployee, createEmployee, getEmployee, issueEmployeeLineLinkToken, listRoles, updateEmployee, type CreateEmployeeResult } from './employee-access.api';
 import { QrLinkCard } from './EmployeeAccessPages';
 import { employeeDateToIso, formatEmployeeDateInput } from './employee-date.logic';
 import { isEmployeeEmail } from './employee-email.logic';
@@ -52,10 +52,6 @@ const STEP_DEFS: Array<{ n: AddStep; label: string }> = [
 
 function digits(value: string, max: number) {
   return value.replace(/[^0-9]/g, '').slice(0, max);
-}
-
-function unique(values: string[]) {
-  return [...new Set(values)];
 }
 
 function isoToDob(value?: string) {
@@ -116,105 +112,6 @@ function TextField({
       />
       {error && <span id={errorId} role="alert" className="mt-1.5 block text-sm font-semibold text-error-600">{error}</span>}
     </label>
-  );
-}
-
-function SelectField({
-  label,
-  value,
-  options,
-  placeholder,
-  disabled = false,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: string[];
-  placeholder: string;
-  disabled?: boolean;
-  onChange: (value: string) => void;
-}) {
-  const labelId = useId();
-  const detailsRef = useRef<HTMLDetailsElement>(null);
-  const summaryRef = useRef<HTMLElement>(null);
-
-  useCloseOnOutsideClick(detailsRef, useCallback(() => {
-    if (detailsRef.current?.open) detailsRef.current.removeAttribute('open');
-  }, []));
-
-  function select(nextValue: string) {
-    onChange(nextValue);
-    detailsRef.current?.removeAttribute('open');
-    summaryRef.current?.focus();
-  }
-
-  function moveOptionFocus(event: React.KeyboardEvent<HTMLDivElement>) {
-    if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'].includes(event.key)) return;
-    event.preventDefault();
-    if (event.key === 'Escape') {
-      detailsRef.current?.removeAttribute('open');
-      summaryRef.current?.focus();
-      return;
-    }
-    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]'));
-    const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    const next = event.key === 'Home' ? 0
-      : event.key === 'End' ? buttons.length - 1
-        : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
-    buttons[next]?.focus();
-  }
-
-  return (
-    <div className="block">
-      <span id={labelId} className="mb-1.5 block text-[15px] font-semibold text-gray-700">{label}</span>
-      <details ref={detailsRef} className="group relative">
-        <summary
-          ref={summaryRef}
-          aria-label={`${label}: ${value || placeholder}`}
-          aria-disabled={disabled}
-          tabIndex={disabled ? -1 : 0}
-          onClick={(event) => { if (disabled) event.preventDefault(); }}
-          className={cx(
-            'flex h-11 list-none items-center justify-between rounded-lg border border-gray-300 bg-white px-3.5 text-base outline-none transition [&::-webkit-details-marker]:hidden',
-            disabled
-              ? 'cursor-not-allowed bg-gray-50 text-gray-400'
-              : 'cursor-pointer text-gray-800 hover:border-gray-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 group-open:border-brand-500 group-open:ring-2 group-open:ring-brand-100',
-          )}
-        >
-          <span className={value ? 'text-gray-800' : 'text-gray-400'}>{value || placeholder}</span>
-          <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-5 w-5 shrink-0 text-gray-500 transition group-open:rotate-180">
-            <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </summary>
-        <div
-          role="listbox"
-          aria-labelledby={labelId}
-          onKeyDown={moveOptionFocus}
-          className="absolute z-30 mt-1.5 max-h-60 w-full overflow-y-auto rounded-xl border border-gray-200 bg-white p-1.5 shadow-[var(--shadow-theme-md)]"
-        >
-          {[placeholder, ...options].map((item, index) => {
-            const optionValue = index === 0 ? '' : item;
-            const selected = optionValue === value;
-            return (
-              <button
-                key={optionValue || 'placeholder'}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                onClick={() => select(optionValue)}
-                className={cx(
-                  'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[15px] font-semibold outline-none transition focus:ring-2 focus:ring-inset focus:ring-brand-300',
-                  selected ? 'bg-brand-25 text-brand-700' : 'text-gray-700 hover:bg-gray-50',
-                )}
-              >
-                <span>{item}</span>
-                {selected && <span aria-hidden="true" className="text-brand-600">✓</span>}
-              </button>
-            );
-          })}
-        </div>
-      </details>
-    </div>
   );
 }
 
@@ -287,9 +184,6 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   const [amphoe, setAmphoe] = useState('');
   const [tambon, setTambon] = useState('');
   const [addressLine, setAddressLine] = useState('');
-  const [addressOptions, setAddressOptions] = useState<ThaiAddressOption[]>([]);
-  const [addressLoading, setAddressLoading] = useState(false);
-  const [addressLookupMessage, setAddressLookupMessage] = useState('');
   const [jobTitle, setJobTitle] = useState('');
   const [roleIds, setRoleIds] = useState<string[]>([]);
   const [branchIds, setBranchIds] = useState<string[]>([]);
@@ -373,51 +267,6 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, editEmployeeId]);
 
-  useEffect(() => {
-    let cancelled = false;
-    if (postal.length < 3) {
-      setAddressOptions([]);
-      setAddressLoading(false);
-      setAddressLookupMessage('');
-      return;
-    }
-
-    setAddressLoading(true);
-    setAddressLookupMessage('');
-    const timer = window.setTimeout(() => {
-      void listThaiAddresses(companyId, postal).then((rows) => {
-        if (cancelled) return;
-        setAddressOptions(rows);
-        if (!rows.length) {
-          setAddressLookupMessage('ไม่พบข้อมูลใน master กรุณากรอกที่อยู่เอง');
-          return;
-        }
-
-        const provinceOptions = unique(rows.map((row) => row.provinceTh));
-        const nextProvince = province || (provinceOptions.length === 1 ? provinceOptions[0]! : '');
-        const districtOptions = unique(rows.filter((row) => row.provinceTh === nextProvince).map((row) => row.districtTh));
-        const nextDistrict = amphoe || (districtOptions.length === 1 ? districtOptions[0]! : '');
-        const subdistrictOptions = rows
-          .filter((row) => row.provinceTh === nextProvince && row.districtTh === nextDistrict)
-          .map((row) => row.subdistrictTh);
-        setProvince(nextProvince);
-        setAmphoe(nextDistrict);
-        setTambon((current) => current || (subdistrictOptions.length === 1 ? subdistrictOptions[0]! : ''));
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setAddressOptions([]);
-          setAddressLookupMessage('โหลด master data ไม่สำเร็จ กรุณากรอกที่อยู่เอง');
-        }
-      })
-        .finally(() => { if (!cancelled) setAddressLoading(false); });
-    }, 300);
-
-    return () => { cancelled = true; window.clearTimeout(timer); };
-    // Fetch only when the postal code changes; current saved selections are reconciled in the response.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId, postal]);
-
   const selectedRoles = roles.filter((role) => roleIds.includes(role.id));
   const selectedRole = selectedRoles[0];
   const selectedRoleNames = selectedRoles.map((role) => role.name).join(', ');
@@ -439,18 +288,6 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
     setBranchIds(branches.map((branch) => branch.id));
     setDefaultBranchId((current) => current || (branches.length === 1 ? branches[0]!.id : ''));
   }, [branchPickerLocked, branches]);
-
-  const provinces = unique([...addressOptions.map((row) => row.provinceTh), ...(province ? [province] : [])]);
-  const districts = unique([
-    ...addressOptions.filter((row) => row.provinceTh === province).map((row) => row.districtTh),
-    ...(amphoe ? [amphoe] : []),
-  ]);
-  const subdistricts = unique([
-    ...addressOptions
-      .filter((row) => row.provinceTh === province && row.districtTh === amphoe)
-      .map((row) => row.subdistrictTh),
-    ...(tambon ? [tambon] : []),
-  ]);
 
   const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
   const avatarInitial = fullName ? `${firstName.trim()[0] ?? ''}${lastName.trim()[0] ?? ''}` : '?';
@@ -791,30 +628,12 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               </div>
 
               <div className="mb-3 mt-6 border-t border-gray-100 pt-5 text-[13px] font-extrabold tracking-[.04em] text-brand-600">2 · ที่อยู่ <span className="font-normal normal-case text-gray-400">(ถ้ามี)</span></div>
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                <TextField label="รหัสไปรษณีย์" value={postal} onChange={(event) => setPostal(event.target.value)} inputMode="numeric" maxLength={5} placeholder="เช่น 10330" inputClassName="tracking-[.08em]" />
-                {addressOptions.length ? (
-                  <SelectField label="จังหวัด" value={province} options={provinces} placeholder="— เลือกจังหวัด —" onChange={(value) => { setProvince(value); setAmphoe(''); setTambon(''); }} />
-                ) : (
-                  <TextField label="จังหวัด" value={province} onChange={(event) => setProvince(event.target.value)} placeholder="กรอกจังหวัด" />
-                )}
-                {addressOptions.length ? (
-                  <SelectField label="อำเภอ/เขต" value={amphoe} options={districts} placeholder="— เลือกอำเภอ/เขต —" disabled={!province} onChange={(value) => { setAmphoe(value); setTambon(''); }} />
-                ) : (
-                  <TextField label="อำเภอ/เขต" value={amphoe} onChange={(event) => setAmphoe(event.target.value)} placeholder="กรอกอำเภอ/เขต" />
-                )}
-                {addressOptions.length ? (
-                  <SelectField label="ตำบล/แขวง" value={tambon} options={subdistricts} placeholder="— เลือกตำบล/แขวง —" onChange={setTambon} />
-                ) : (
-                  <TextField label="ตำบล/แขวง" value={tambon} onChange={(event) => setTambon(event.target.value)} placeholder="กรอกตำบล/แขวง" />
-                )}
+              <ThaiAddressFields companyId={companyId} className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"
+                value={{ postalCode: postal, province, district: amphoe, subdistrict: tambon }}
+                onChange={(next) => { setPostalCode(next.postalCode); setProvince(next.province); setAmphoe(next.district); setTambon(next.subdistrict); }} />
+              <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 <TextField className="sm:col-span-2 xl:col-span-3" label="บ้านเลขที่ / หมู่ / ถนน" value={addressLine} onChange={(event) => setAddressLine(event.target.value)} placeholder="เช่น 45/1 ซอยสุขุมวิท ถนนสุขุมวิท" />
               </div>
-              {(addressLoading || addressLookupMessage) && (
-                <div className={cx('mt-2 text-sm', addressLookupMessage ? 'text-warning-600' : 'text-gray-400')}>
-                  {addressLoading ? 'กำลังค้นหา master data ที่อยู่...' : addressLookupMessage}
-                </div>
-              )}
             </div>
           )}
 

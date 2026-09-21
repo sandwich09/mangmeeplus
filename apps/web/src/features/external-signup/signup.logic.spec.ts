@@ -285,7 +285,7 @@ describe('submit error copy', () => {
     // Unrelated 409s keep the reviewed generic copy — this is a mapping, not a relabelling.
     assert.match(
       signupSubmitErrorMessage(Object.assign(new Error('Conflict'), { status: 409 })),
-      /ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ/,
+      /ดำเนินการต่อไม่ได้ในสถานะปัจจุบัน/,
     );
   });
 });

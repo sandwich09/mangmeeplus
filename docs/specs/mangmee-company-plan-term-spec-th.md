@@ -67,7 +67,7 @@
 
 - เข้าเขต warning (เหลือง): แจ้ง System Admin ผ่าน dashboard-notifications + แจ้ง **OWNER เท่านั้น** (Owner 2026-08-30: พนักงานไม่เห็น จนกว่าจะสั่งเปลี่ยน) เป็นบันได **7 / 3 / 1 วันก่อนครบกำหนด** — web แบนเนอร์เหลือง + แจ้งเตือน LINE ช่องเดิม, exactly-once ต่อจุดต่อ term, ต่ออายุแล้วหยุดทันทีไม่ขึ้นอีก
 - ครบกำหนด (แดง): on-access check ปฏิเสธ business routes ของบริษัทนั้นทันทีที่ now ≥ termEndsAt (แม้ sweep ยังไม่ทัน) + sweep ใน workers (ทุก ~5 นาที) เปลี่ยน `Company.status → DISABLED` ผ่าน logic ชุดเดียวกับ `PartnerLifecycleTransitionUseCase` (actor = system, reason `term_expired`, เขียน `termDisabledAt`) + แจ้งทั้งสองฝั่ง
-- ประสบการณ์ผู้ใช้บริษัทที่หมดอายุ: login ได้, เห็นบริษัทใน switcher ติดป้าย "หมดอายุ", เข้าแล้วเจอหน้าแจ้งต่ออายุ (แดง) — ไม่มี operation ข้อมูลใด ๆ ทำได้; LINE ตอบสุภาพ "บริษัทครบกำหนดใช้งานแล้ว ติดต่อ …" ผ่าน template DENIED เดิม
+- ประสบการณ์ผู้ใช้บริษัทที่หมดอายุ: login ได้, เห็นบริษัทใน switcher ติดป้าย "หมดอายุ", เข้าแล้วเจอหน้าแจ้งต่ออายุ (แดง) — ไม่มี operation ข้อมูลใด ๆ ทำได้; web/LINE ใช้คำตรงว่า "แพ็กเกจใกล้หมดอายุ" / "แพ็กเกจหมดอายุแล้ว" และป้าย severity ภาษาไทยใช้ "สำคัญ" แทน "วิกฤต"
 - ระหว่าง ACTIVE→DISABLED ด้วยเหตุ term: ห้ามแตะ SUSPENDED/ARCHIVED และห้ามชนกับ disable ที่แอดมินสั่งเอง (ถ้า status ไม่ใช่ ACTIVE อยู่แล้ว sweep ข้ามเฉย ๆ)
 
 ### 4C. ต่ออายุ (renew)
@@ -79,7 +79,7 @@
 
 ### 4D. ลิมิตสาขา / พนักงาน / สลิป
 
-- `create-branch.use-case`: นับสาขาสถานะใช้งานของบริษัท ≥ `branchLimit` → 422 ข้อความไทย "แพ็กเกจปัจจุบันสร้างได้สูงสุด X สาขา — ติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ" (แอดมินแก้ limit ได้ทันทีจากหน้า partner)
+- `create-branch.use-case`: นับสาขาสถานะใช้งานของบริษัท ≥ `branchLimit` → 422 code `plan_branch_limit_exceeded` พร้อม `details.limit/active`; หน้าเว็บบอกว่าแพ็กเกจรองรับ X สาขาและใช้งานครบแล้ว (OWNER ไปหน้าเปลี่ยนแพ็กเกจได้) แทนข้อความ generic ว่าหน้าจอไม่รองรับข้อมูล
 - `create-employee.use-case`: เงื่อนไขเดียวกันกับ `employeeLimit` (นับ membership ACTIVE ที่ไม่ใช่ SYSTEM_ADMIN)
 - บริษัทไม่มี term row = ไม่จำกัด (ตามหลักการข้อ 7); บริษัทที่เกินอยู่แล้ว = บล็อกเฉพาะสร้างใหม่ (หลักการข้อ 2)
 - `monthlySlipLimit`: เก็บ+แสดงบนหน้า admin (และหน้าแพ็กเกจของลูกค้าในอนาคต) — **ยังไม่ตัดจริง** จนกว่า P26 F-BILL-1 meter มา แล้วค่อยผูกช่องนี้เป็นเพดานจริง

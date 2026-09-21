@@ -520,7 +520,7 @@ export function buildPackageRequiredMessage(input: {
     canonicalText: text,
     contents: bubble(
       {
-        title: input.lockReason === 'no_package' ? 'ยังไม่ได้สมัครแพ็กเกจ' : 'ครบกำหนดใช้งานแล้ว',
+        title: input.lockReason === 'no_package' ? 'ยังไม่ได้สมัครแพ็กเกจ' : 'แพ็กเกจหมดอายุแล้ว',
         badge: '🔒 รอเลือกแพ็กเกจ',
         text,
       },

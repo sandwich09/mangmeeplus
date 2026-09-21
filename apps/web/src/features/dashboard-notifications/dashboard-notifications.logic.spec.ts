@@ -38,7 +38,7 @@ describe('severity presentation', () => {
   it('labels every severity in Thai with a distinct tone class', () => {
     const severities = ['critical', 'action', 'insight', 'info'] as const;
     const labels = severities.map(severityLabel);
-    assert.deepEqual(labels, ['วิกฤต', 'ต้องดำเนินการ', 'ข้อมูลเชิงลึก', 'แจ้งเพื่อทราบ']);
+    assert.deepEqual(labels, ['สำคัญ', 'ต้องดำเนินการ', 'ข้อมูลเชิงลึก', 'แจ้งเพื่อทราบ']);
     assert.equal(new Set(severities.map(severityColor)).size, severities.length);
   });
 });

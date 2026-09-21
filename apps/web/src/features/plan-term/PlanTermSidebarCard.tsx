@@ -79,11 +79,11 @@ export function PlanTermSidebarCard({ companyId }: { companyId: string }) {
     <div data-plan-term="warning" className="mt-4 rounded-2xl border border-warning-100 bg-warning-50 p-3.5">
       <button type="button" onClick={toggle} className="flex w-full items-center gap-2 text-left" aria-expanded>
         <span aria-hidden>⏳</span>
-        <span className="text-[13.5px] font-extrabold text-warning-700">ใกล้ครบกำหนดใช้งาน</span>
+        <span className="text-[13.5px] font-extrabold text-warning-700">แพ็กเกจใกล้หมดอายุ</span>
         <span className="ml-auto text-warning-500" aria-hidden>⌃</span>
       </button>
       <p className="mt-2 text-[12.5px] leading-6 text-warning-600">
-        ครบกำหนด {formatThaiDate(notice.termEndsAt)}
+        หมดอายุ {formatThaiDate(notice.termEndsAt)}
         <br />
         <span className="font-bold">เหลืออีก {notice.daysLeft} วัน</span>
       </p>

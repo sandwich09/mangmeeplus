@@ -7,6 +7,7 @@ import {
   CreateDailyOwnerSummaryUseCase,
   ProcessDueNotificationDeliveriesUseCase,
   ProcessQueuedDeliveryUseCase,
+  buildLineMessage,
 } from './notification.use-cases';
 import {
 
@@ -73,6 +74,14 @@ describe('ProcessDueNotificationDeliveriesUseCase (A4)', () => {
   it('empty due set is a no-op', async () => {
     const { sut } = makeSut([]);
     assert.deepEqual(await sut.execute(), { processed: 0, failures: 0 });
+  });
+});
+
+describe('notification LINE copy', () => {
+  it('labels critical messages as important without crisis wording', () => {
+    const message = buildLineMessage({ companyId: 'co-1', severity: 'critical', title: 'แพ็กเกจหมดอายุแล้ว', body: '' });
+    const header = (message.contents.header as { contents: Array<{ text: string }> }).contents[0]!.text;
+    assert.equal(header, '🔴 สำคัญ');
   });
 });
 

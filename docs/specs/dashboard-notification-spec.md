@@ -585,6 +585,8 @@ Severity levels:
 - `insight`: sales trend, product suggestion, stockout risk, AI recommendation.
 - `info`: export ready, report ready, summary generated, background job complete.
 
+Customer-facing Thai labels keep these machine severities unchanged but render `critical` as `สำคัญ` (not `วิกฤต`) on web and LINE.
+
 Channels:
 
 - `web`: notification center and optional web toast/polling.

@@ -21,7 +21,7 @@ export class AccessCatalogController {
   ) {}
 
   @Get('address-master')
-  @RequireAnyPermission('access.employee.read', 'access.employee.create', 'access.employee.update')
+  @RequireAnyPermission('access.employee.read', 'access.employee.create', 'access.employee.update', 'company.setup.read', 'company.legal_identity.read', 'company.legal_identity.manage')
   @ApiOperation({ summary: 'List Thai address master rows for a five-digit postal code' })
   addresses(@Query('postalCode') postalCode = '') {
     return this.listThaiAddresses.execute(postalCode);

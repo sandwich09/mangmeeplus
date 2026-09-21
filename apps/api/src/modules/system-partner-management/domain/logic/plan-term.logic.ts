@@ -176,14 +176,14 @@ export function warningMessageTh(
   lineLinked = false,
 ): string {
   return withHint(
-    `ร้าน ${companyName} จะครบกำหนดใช้งานวันที่ ${formatThaiDateTime(termEndsAt)} (อีก ${daysLeft} วัน) — ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
+    `แพ็กเกจของ${companyName}จะหมดอายุวันที่ ${formatThaiDateTime(termEndsAt)} (อีก ${daysLeft} วัน) — หากต้องการใช้งานต่อ ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
     lineLinked,
   );
 }
 
 export function expiredMessageTh(companyName: string, lineLinked = false): string {
   return withHint(
-    `ร้าน ${companyName} ครบกำหนดใช้งานแล้ว ระบบพักการใช้งานชั่วคราว ข้อมูลทั้งหมดยังอยู่ครบ — ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
+    `แพ็กเกจของ${companyName}หมดอายุแล้ว ระบบพักการใช้งานชั่วคราว ข้อมูลทั้งหมดยังอยู่ครบ — หากต้องการใช้งานต่อ ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
     lineLinked,
   );
 }
@@ -196,7 +196,7 @@ export function expiredMessageTh(companyName: string, lineLinked = false): strin
  */
 export function expiredLineOwnerMessageTh(): string {
   return [
-    '🔴 ร้านของคุณครบกำหนดใช้งานแล้ว ระบบพักการใช้งานชั่วคราวค่ะ',
+    '🔴 แพ็กเกจของคุณหมดอายุแล้ว ระบบพักการใช้งานชั่วคราวค่ะ',
     'ข้อมูลทั้งหมดยังอยู่ครบ ไม่ได้หายไปไหนนะคะ',
     'ต่ออายุได้เองที่เว็บแอป เข้าสู่ระบบแล้วจะเห็นหน้าต่ออายุทันที',
     `หรือติดต่อเรา โทร ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
@@ -206,7 +206,7 @@ export function expiredLineOwnerMessageTh(): string {
 }
 
 export function branchLimitMessageTh(limit: number): string {
-  return `แพ็กเกจปัจจุบันสร้างได้สูงสุด ${limit} สาขา — ติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ`;
+  return `แพ็กเกจปัจจุบันรองรับ ${limit} สาขา และใช้งานครบแล้ว หากต้องการเพิ่มสาขา กรุณาเปลี่ยนแพ็กเกจ`;
 }
 
 export function employeeLimitMessageTh(limit: number): string {

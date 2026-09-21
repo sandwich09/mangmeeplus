@@ -8,5 +8,5 @@ export default async function SettingsBranchesPage({
 }) {
   const { companyId } = await params;
   const session = await fetchServerSession(companyId);
-  return <BranchSettingsPage companyId={companyId} permissions={session?.permissions ?? []} />;
+  return <BranchSettingsPage companyId={companyId} permissions={session?.permissions ?? []} roles={session?.roles ?? []} />;
 }

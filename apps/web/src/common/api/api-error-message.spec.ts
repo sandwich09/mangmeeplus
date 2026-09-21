@@ -60,11 +60,11 @@ test('explains only supplier source-number duplicates without relabeling unrelat
     { status: 409 },
   )), expected);
   assert.equal(apiErrorMessage(apiError('Conflict', { status: 409 })),
-    'ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ กรุณาเปิดใหม่แล้วลองอีกครั้ง');
+    'รายการนี้ดำเนินการต่อไม่ได้ในสถานะปัจจุบัน กรุณาโหลดข้อมูลล่าสุดและตรวจสอบอีกครั้ง');
   assert.equal(apiErrorMessage(apiError(
     'Duplicate value: a record with the same unique field(s) already exists. Fields: companyId, taxInvoiceNumber',
     { status: 409 },
-  )), 'ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ กรุณาเปิดใหม่แล้วลองอีกครั้ง');
+  )), 'รายการนี้ดำเนินการต่อไม่ได้ในสถานะปัจจุบัน กรุณาโหลดข้อมูลล่าสุดและตรวจสอบอีกครั้ง');
 });
 
 test('translates a known API sentence to Thai', () => {
@@ -119,11 +119,15 @@ test('translates partial-payment validation and settlement-route failures', () =
 });
 
 test('fails closed to the status copy for every unknown API message', () => {
-  assert.equal(apiErrorMessage(apiError('API error 403', { status: 403 })), 'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน');
+  assert.equal(apiErrorMessage(apiError('API error 403', { status: 403 })), 'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อผู้ดูแลสิทธิ์ของบริษัท');
   assert.equal(
     apiErrorMessage(apiError('A sentence nobody mapped yet.', { status: 400 })),
-    'ข้อมูลจากหน้าจอไม่ตรงกับที่ระบบรองรับ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง',
+    'ทำรายการต่อไม่ได้ กรุณาตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง',
   );
+  assert.equal(apiErrorMessage(apiError('unknown conflict', { status: 409 })),
+    'รายการนี้ดำเนินการต่อไม่ได้ในสถานะปัจจุบัน กรุณาโหลดข้อมูลล่าสุดและตรวจสอบอีกครั้ง');
+  assert.equal(apiErrorMessage(apiError('unknown outage', { status: 503 })),
+    'บริการที่จำเป็นยังไม่พร้อมใช้งาน กรุณาลองใหม่ภายหลัง หากยังพบปัญหาให้ติดต่อทีมงาน');
 });
 
 test('hides the exact unknown-property validation diagnostic and retains no technical token', () => {
@@ -135,22 +139,53 @@ test('hides the exact unknown-property validation diagnostic and retains no tech
       error: 'Bad Request',
     },
   }));
-  assert.equal(message, 'ข้อมูลจากหน้าจอไม่ตรงกับที่ระบบรองรับ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง');
+  assert.equal(message, 'ทำรายการต่อไม่ได้ กรุณาตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง');
   assert.doesNotMatch(message, /visibility|property|should not exist|Bad Request|API error/i);
+});
+
+test('uses specific business guidance for confirmed system-wide gaps', () => {
+  const cases = [
+    ['duplicate_tax_id', /เลขประจำตัวผู้เสียภาษี.*ลูกค้ารายอื่น/],
+    ['sale_price_invalid', /ราคาขาย.*ตั้งแต่ 0/],
+    ['period_closed', /งวดบัญชี.*เปิดงวด/],
+    ['transaction_tax_needs_review', /ตรวจภาษี/],
+    ['NOTIFICATION_RETRY_REVIEW_REQUIRED', /ตรวจรายการเดิม/],
+    ['BILLING_NOT_CONFIGURED', /ระบบรับชำระเงินยังไม่พร้อม/],
+  ] as const;
+  for (const [code, expected] of cases) {
+    const message = apiErrorMessage(apiError('internal diagnostic', { status: 422, code }));
+    assert.match(message, expected, code);
+    assert.doesNotMatch(message, /internal|snake_case|หน้าจอไม่ตรง/);
+  }
+});
+
+test('keeps common default-open feature errors specific while legacy APIs migrate to codes', () => {
+  for (const [raw, expected] of [
+    ['Customer is not active', /ลูกค้ารายนี้ไม่ได้ใช้งาน/],
+    ['Invalid quiet hours format', /ช่วงเวลางดแจ้งเตือน/],
+    ['Exactly one employee role is required.', /หนึ่งบทบาท/],
+    ['taxId must be 13 digits', /13 หลัก/],
+    ['Channel is disabled', /LINE.*ปิดใช้งาน/],
+    ['Suggestion has expired', /หมดอายุ.*สร้างคำแนะนำใหม่/],
+    ['Invalid idempotency key', /ข้อมูลอ้างอิงรายการ/],
+  ] as const) {
+    const message = apiErrorMessage(apiError(raw, { status: 422 }));
+    assert.match(message, expected, raw);
+  }
 });
 
 test('uses the validation fallback for a second unknown validation array from details', () => {
   const message = apiErrorMessage(apiError('internalFlag must be a boolean', {
     details: { statusCode: 422, message: ['internalFlag must be a boolean'] },
   }));
-  assert.equal(message, 'ข้อมูลจากหน้าจอไม่ตรงกับที่ระบบรองรับ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง');
+  assert.equal(message, 'ทำรายการต่อไม่ได้ กรุณาตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง');
   assert.doesNotMatch(message, /internalFlag|boolean/i);
 });
 
 test('supports statusCode and hides unknown 5xx diagnostics', () => {
   assert.equal(
     apiErrorMessage(apiError('permission implementation detail', { statusCode: 403 })),
-    'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน',
+    'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อผู้ดูแลสิทธิ์ของบริษัท',
   );
   assert.equal(
     apiErrorMessage(apiError('Internal server error', { statusCode: 500 })),
@@ -419,6 +454,18 @@ test('preserves only known quota messages and translates positive plan limits', 
   ]) assert.equal(apiErrorMessage(apiError(message, { status: 422 })), message);
   assert.match(apiErrorMessage(apiError('branchLimit must be a whole number of at least 1.', { status: 422 })), /จำนวนสาขา.*1/);
   assert.doesNotMatch(apiErrorMessage(apiError('ข้อมูลภายใน database secret', { status: 422 })), /database|secret/);
+});
+
+test('uses the stable branch-capacity code and bounded package details', () => {
+  assert.equal(apiErrorMessage(apiError('private diagnostic', {
+    status: 422,
+    code: 'plan_branch_limit_exceeded',
+    details: { code: 'plan_branch_limit_exceeded', details: { limit: 2, active: 2 } },
+  })), 'แพ็กเกจปัจจุบันรองรับ 2 สาขา และใช้งานครบแล้ว หากต้องการเพิ่มสาขา กรุณาเปลี่ยนแพ็กเกจ');
+  assert.match(apiErrorMessage(apiError('private diagnostic', {
+    status: 422,
+    code: 'plan_branch_limit_exceeded',
+  })), /รองรับจำนวนสาขาครบแล้ว/);
 });
 
 

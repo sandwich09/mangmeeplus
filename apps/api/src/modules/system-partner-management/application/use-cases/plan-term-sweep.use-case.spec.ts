@@ -205,6 +205,7 @@ describe('PlanTermSweepUseCase — expiry', () => {
     assert.equal(ownerEvent.companyId, 'co-1');
     assert.equal(ownerEvent.triggerKey, 'plan_term_expired');
     assert.equal(ownerEvent.severity, 'critical');
+    assert.equal(ownerEvent.title, 'แพ็กเกจหมดอายุแล้ว');
     assert.deepEqual(ownerEvent.recipientUserIds, ['owner-1']);
     assert.match(ownerEvent.body, /ข้อมูลทั้งหมดยังอยู่ครบ/);
     assert.match(ownerEvent.body, /098-256-5628/);
@@ -293,7 +294,8 @@ describe('PlanTermSweepUseCase — warning ladder', () => {
     const ownerEvent = world.notifications.calls[0];
     assert.equal(ownerEvent.triggerKey, 'plan_term_expiring');
     assert.equal(ownerEvent.severity, 'action');
-    assert.match(ownerEvent.body, /^ร้าน ร้านหนึ่ง จะครบกำหนดใช้งานวันที่ /);
+    assert.equal(ownerEvent.title, 'แพ็กเกจใกล้หมดอายุ');
+    assert.match(ownerEvent.body, /^แพ็กเกจของร้านหนึ่งจะหมดอายุวันที่ /);
     assert.match(ownerEvent.body, /\(อีก 3 วัน\)/);
   });
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
-import { expenseEvidenceAssessment, expenseDateIsReadable } from '@watchdog-bms/contracts';
+import { expenseEvidenceAssessment, expenseEvidenceConfirmationError, expenseDateIsReadable } from '@watchdog-bms/contracts';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -38,7 +38,7 @@ import {
   CAPTURE_SOURCE_LABELS, EXPENSE_VAT_MODE_LABELS, PAYMENT_METHOD_LABELS, POSTING_STATUS_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, deriveExpenseAuditChecks,
   deriveExpenseClassificationReviewState, deriveExpenseReviewSteps, expenseAiMissingFields, expenseCapabilities, expenseDataStepBlocker, expenseEvidenceStepBlocker, hasCurrentExpenseDocumentReview,
-  expenseNeedsReceiptOrSubstitute, expenseSourceDraftViewState, expenseSubstituteReceiptReady, expenseSubstituteReceiptAction, expenseValueLabel,
+  expenseNeedsReceiptOrSubstitute, expenseSourceDraftViewState, expenseSubstituteReceiptAction, expenseValueLabel,
   canRunExpenseDuplicateCheck, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
   MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, shouldRereadReplacedReceipt, isBlockedCheckBillClassification,
   postingErrorText, vatModeRequiresRate, expensePaymentAttempt, classifyExpensePaymentFailure,
@@ -741,7 +741,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // the on-screen values are about to be overwritten — editing them or pressing ถัดไป races the
   // result. One flag covers both lanes and drives the field cover AND the footer buttons.
   const aiReading = extractionLoading || receiptUploading;
-  const substituteReady = expenseSubstituteReceiptReady(detail);
+  const evidenceError = expenseEvidenceConfirmationError(detail);
   const needsReceiptOrSubstitute = expenseNeedsReceiptOrSubstitute(detail);
   const substituteAction = expenseSubstituteReceiptAction(companyId, detail.id, detail.aiVerificationSummaryJson, detail.substituteReceiptEvidence);
   const canStartSubstitute = isMutable && canReview && hasCurrentExpenseDocumentReview(detail) && expenseEvidenceAssessment(detail)?.route === 'SUBSTITUTE_RECEIPT' && !evidenceDirty && !aiReading && !stepSaving;
@@ -765,14 +765,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // the button stayed live on a ฿0 expense. The API refuses it now; including it here means the
   // reviewer is told before the round trip, and the button no longer disagrees with the rule.
   const personalSubstitute = detail.substituteReceiptEvidence?.fundingSource === 'PERSONAL_ADVANCE';
-  const canConfirmExpense = !personalSubstitute && canConfirm && detail.status === 'READY_FOR_CONFIRMATION' && !sourceDraftIncomplete && !hasDuplicates && !classificationBlocked && substituteReady && !needsReceiptOrSubstitute && !ocrTotalUnacknowledged && !isZeroAmount;
+  const canConfirmExpense = !personalSubstitute && canConfirm && detail.status === 'READY_FOR_CONFIRMATION' && !sourceDraftIncomplete && !hasDuplicates && !classificationBlocked && !evidenceError && !needsReceiptOrSubstitute && !ocrTotalUnacknowledged && !isZeroAmount;
   // Owner requirement 2026-08-28: the reason used to live only in the button's `title`, i.e. a hover
   // tooltip — and expenses get reviewed on a phone, where nothing hovers. One helper decides it now,
   // both footers use it, and it is rendered as text under the button instead of hidden behind a cursor.
   const confirmBlocker = canConfirm && !canConfirmExpense
     ? expenseConfirmBlocker({
       status: detail.status, classificationBlocked, hasDuplicates, isConfirmedDuplicate, needsReceiptOrSubstitute,
-      substituteReady, ocrTotalUnacknowledged, isZeroAmount, classificationBlockMessage,
+      evidenceError, ocrTotalUnacknowledged, isZeroAmount, classificationBlockMessage,
     })
     : null;
   const confirmBlockedText = personalSubstitute ? 'ใบรับรองนี้ระบุว่าพนักงานจ่ายร้านแล้ว การคืนเงินต้องดำเนินการแยกตามขั้นตอนการเงิน' : sourceDraftIncomplete

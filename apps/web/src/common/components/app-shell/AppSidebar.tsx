@@ -4,7 +4,7 @@ import { withLineExternalBrowser } from '@/common/auth/line-in-app-browser.logic
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSidebar } from './SidebarContext';
-import { isActiveNavSubItem, lineLinkMenuRow } from './app-sidebar.logic';
+import { isActiveNavSubItem, lineLinkMenuRow, revealScrollDelta } from './app-sidebar.logic';
 import { ChevronDownIcon, HorizontalDotsIcon } from '@/common/icons';
 import { MangmeeLogo } from '@/common/components/brand/MangmeeLogo';
 import { Button } from '@/common/components/button';
@@ -260,22 +260,16 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
     const activeItem = activeItemRef.current;
     const scrollRoot = navScrollRef.current;
     if (!activeItem || !scrollRoot || !sidebarVisible) return undefined;
-    const scrollToActiveItem = () => {
+    const revealActiveItem = () => {
       const rootBox = scrollRoot.getBoundingClientRect();
       const itemBox = activeItem.getBoundingClientRect();
-      const centeredTop = scrollRoot.scrollTop + itemBox.top - rootBox.top - ((rootBox.height - itemBox.height) / 2);
-      scrollRoot.scrollTo({ top: Math.max(0, centeredTop) });
+      const top = revealScrollDelta(rootBox, itemBox);
+      if (top) scrollRoot.scrollBy({ top });
     };
-    let secondFrame = 0;
-    const firstFrame = window.requestAnimationFrame(() => {
-      secondFrame = window.requestAnimationFrame(scrollToActiveItem);
-    });
-    const delayedScroll = window.setTimeout(scrollToActiveItem, 360);
-    return () => {
-      window.cancelAnimationFrame(firstFrame);
-      window.cancelAnimationFrame(secondFrame);
-      window.clearTimeout(delayedScroll);
-    };
+    // Wait for the submenu height transition once; the old immediate + delayed centring made the
+    // menu visibly jump twice on every route change.
+    const delayedScroll = window.setTimeout(revealActiveItem, 320);
+    return () => window.clearTimeout(delayedScroll);
   }, [activeKey, openSubmenu, pathname, sidebarVisible]);
 
   useEffect(() => {

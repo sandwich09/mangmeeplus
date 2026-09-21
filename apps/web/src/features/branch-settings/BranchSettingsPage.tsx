@@ -1,5 +1,6 @@
 'use client';
 // 10D: Settings > สาขา — manage branches used as the in-page data scope dimension.
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mangmee';
@@ -36,7 +37,7 @@ function errMsg(e: unknown): string {
 
 const EMPTY_FORM: CreateBranchInput = { code: '', name: '', type: 'BRANCH', taxBranchCode: '' };
 
-export default function BranchSettingsPage({ companyId, permissions = [] }: { companyId: string; permissions?: readonly string[] }) {
+export default function BranchSettingsPage({ companyId, permissions = [], roles = [] }: { companyId: string; permissions?: readonly string[]; roles?: readonly string[] }) {
   const toast = useToast();
   const canManage = permissions.includes('company.branch.manage');
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -119,6 +120,9 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
   };
   const errorBanner = error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
     {error}
+    {errorCode === 'plan_branch_limit_exceeded' && roles.includes('OWNER') && <Link
+      href={`/companies/${companyId}/billing`} className="ml-2 font-semibold underline"
+    >ดูหรือเปลี่ยนแพ็กเกจ</Link>}
     {errorCode === 'branch_last_active_required' && canManage && !creating && <button
       type="button" className="ml-2 font-semibold underline"
       onClick={() => { setCreating(true); setEditing(null); setError(null); setErrorCode(null); }}

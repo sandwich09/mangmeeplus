@@ -1,4 +1,4 @@
-import { expenseEvidenceAssessment, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
+import { expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import type {
   ExpenseStatus, ExpenseVatMode, ExpensePaymentStatus, ExpensePostingStatus, ExpensePostingSourceType,
   AiVerificationStatus, DuplicateStatus, ExpenseCaptureSource, ExpensePaymentMethod,
@@ -1340,18 +1340,6 @@ export type ExpenseReviewStepKey = 'data' | 'evidence' | 'review';
 export type ExpenseReviewStepState = 'done' | 'attention' | 'pending';
 export type ExpenseReviewStep = { key: ExpenseReviewStepKey; state: ExpenseReviewStepState };
 
-/** Single source of truth for "substitute receipt ready" — shared by ExpenseReviewPage and the stepper. */
-export function expenseSubstituteReceiptReady(detail: Pick<ExpenseDetail, 'missingReceiptReason' | 'substituteReceiptGeneratedAt' | 'sourceDocumentType'> & {
-  substituteReceiptEvidence: Pick<SubstituteReceiptEvidenceSummary, 'status' | 'artifactAttachmentId'> | null;
-}): boolean {
-  if (hasCurrentExpenseEvidenceReview(detail as ExpenseDetail)) {
-    return expenseEvidenceAssessment(detail as ExpenseDetail)?.route !== 'SUBSTITUTE_RECEIPT'
-      || (detail.substituteReceiptEvidence?.status === 'ISSUED' && Boolean(detail.substituteReceiptEvidence.artifactAttachmentId));
-  }
-  const reliesOnSubstitute = Boolean(detail.missingReceiptReason || detail.substituteReceiptGeneratedAt || detail.sourceDocumentType === 'SUBSTITUTE_RECEIPT');
-  return !reliesOnSubstitute || (detail.substituteReceiptEvidence?.status === 'ISSUED' && Boolean(detail.substituteReceiptEvidence.artifactAttachmentId));
-}
-
 /** ACTIVE primary-slot receipt — the attachment that satisfies the server confirm rule (repo falls back to this purpose when `primaryAttachmentId` is unset). */
 export function expenseHasPrimaryReceipt(attachments: ReadonlyArray<{ purpose?: string; status?: string }>): boolean {
   return attachments.some((attachment) => attachment.purpose === 'expense.receipt.primary' && attachment.status === 'ACTIVE');
@@ -1418,7 +1406,8 @@ export function deriveExpenseReviewSteps(
   canReview: boolean,
 ): ExpenseReviewStep[] {
   const classificationBlocked = deriveExpenseClassificationReviewState(detail.aiVerificationSummaryJson, canReview).blocked;
-  const substituteReady = expenseSubstituteReceiptReady(detail);
+  const evidenceError = hasCurrentExpenseEvidenceReview(detail as ExpenseDetail) || detail.substituteReceiptEvidence
+    ? expenseEvidenceConfirmationError(detail as ExpenseDetail) : null;
   const needsReceiptOrSubstitute = expenseNeedsReceiptOrSubstitute(detail);
   const aiMissingEvidence = expenseAiMissingFields(detail.aiVerificationSummaryJson, 'evidence');
   // Real field values decide this step, not the AI flags: a value the user (or upload) supplied is
@@ -1430,9 +1419,9 @@ export function deriveExpenseReviewSteps(
   const dataDone = (detail.vendorNameSnapshot ?? '').trim() !== '' && Boolean(detail.expenseDate) && dateReadable && detail.lines.length > 0 && sourceDraftComplete;
   const reviewPending = canReview && ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status ?? 'NEEDS_REVIEW')
     && detail.substituteReceiptEvidence?.status !== 'ISSUED' && !hasCurrentExpenseDocumentReview(detail as ExpenseDetail);
-  const evidenceState: ExpenseReviewStepState = !reviewPending && detail.taxEvidenceStatus !== 'NEEDS_REVIEW' && !classificationBlocked && substituteReady && !needsReceiptOrSubstitute && aiMissingEvidence.length === 0
+  const evidenceState: ExpenseReviewStepState = !reviewPending && detail.taxEvidenceStatus !== 'NEEDS_REVIEW' && !classificationBlocked && !evidenceError && !needsReceiptOrSubstitute && aiMissingEvidence.length === 0
     ? 'done'
-    : classificationBlocked || !substituteReady || needsReceiptOrSubstitute ? 'attention' : 'pending';
+    : classificationBlocked || (!reviewPending && Boolean(evidenceError)) || needsReceiptOrSubstitute ? 'attention' : 'pending';
   return [
     { key: 'data', state: dataDone ? 'done' : 'pending' },
     { key: 'evidence', state: evidenceState },
@@ -1658,7 +1647,6 @@ export type ExpenseConfirmBlocker =
   | 'expenses.duplicate_confirmed_block'
   | 'expenses.price_mismatch_blocks_confirm'
   | 'expenses.zero_amount_warning'
-  | 'expenses.confirm_needs_substitute_signed'
   | 'expenses.confirm_needs_ready_status';
 
 export function expenseConfirmBlocker(input: {
@@ -1667,7 +1655,7 @@ export function expenseConfirmBlocker(input: {
   hasDuplicates: boolean;
   isConfirmedDuplicate?: boolean;
   needsReceiptOrSubstitute: boolean;
-  substituteReady: boolean;
+  evidenceError: string | null;
   ocrTotalUnacknowledged: boolean;
   isZeroAmount: boolean;
   classificationBlockMessage?: string | null;
@@ -1679,7 +1667,7 @@ export function expenseConfirmBlocker(input: {
   // Attaching the receipt is the one a person can act on immediately, so it is named before the
   // states that need someone else (a signature, a second reviewer).
   if (input.needsReceiptOrSubstitute) return { key: 'expenses.confirm_needs_receipt' };
-  if (!input.substituteReady) return { key: 'expenses.confirm_needs_substitute_signed' };
+  if (input.evidenceError) return { literal: input.evidenceError };
   if (input.hasDuplicates) return { key: 'expenses.duplicate_action_required' };
   if (input.ocrTotalUnacknowledged) return { key: 'expenses.price_mismatch_blocks_confirm' };
   if (input.isZeroAmount) return { key: 'expenses.zero_amount_warning' };

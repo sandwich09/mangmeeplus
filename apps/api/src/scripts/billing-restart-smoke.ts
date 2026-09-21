@@ -105,7 +105,7 @@ export async function checkBillingRestart(input: {
   if (input.browser) {
     const { page, origin } = input.browser;
     await page.goto(`${origin}/companies/${companyId}/billing?offer=PRO_999&interval=year&channel=line`, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true }).waitFor();
     await page.getByRole('button', { name: /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/, exact: true }).click();
     await page.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
     await page.getByText(/วันและโควตาที่หมดอายุไปแล้วไม่ทบ/).waitFor();

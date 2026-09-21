@@ -130,7 +130,7 @@ test('BILLING-UX recovery never mounts business reads and picker rejects an unow
   const expiredOverview = { ...await response.json(), accessState: 'EXPIRED', allowedActions: [] };
   await page.route(`**/api/v1/companies/${companyId}/billing`, route => route.fulfill({ json: expiredOverview }));
   await page.goto(`/companies/${companyId}/billing`);
-  await expect(page.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
   await expect(page.locator('aside')).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'กลับหน้าเลือกบริษัท', exact: true })).toBeVisible();
   expect(businessReads).toEqual([]);
@@ -140,7 +140,7 @@ test('BILLING-UX recovery never mounts business reads and picker rejects an unow
   const back = page.getByRole('link', { name: 'กลับไปเลือกแพ็กเกจ', exact: true });
   await expect(back).toHaveAttribute('href', `/companies/${companyId}/billing?interval=year`);
   await back.click();
-  await expect(page.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
   expect(businessReads).toEqual([]);
   await page.goto('/billing/companies?fromCompany=not-an-owned-company');
   await expect(page.getByRole('heading', { name: 'เลือกบริษัทที่จะจัดการแพ็กเกจ' })).toBeVisible();

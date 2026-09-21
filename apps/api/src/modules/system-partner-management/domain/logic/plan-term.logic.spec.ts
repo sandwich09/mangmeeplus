@@ -152,7 +152,7 @@ describe('Thai copy', () => {
 
   it('warning copy names the shop, the deadline and the days left', () => {
     const message = warningMessageTh('ร้านทดสอบ', END, 3);
-    assert.match(message, /^ร้าน ร้านทดสอบ จะครบกำหนดใช้งานวันที่ /);
+    assert.match(message, /^แพ็กเกจของร้านทดสอบจะหมดอายุวันที่ /);
     assert.match(message, /\(อีก 3 วัน\)/);
     assert.match(message, /ติดต่อ 098-256-5628 หรืออีเมล contact@mangmeeplus\.com/);
     // P10-L §3.7: the LINE route is offered only to someone who has LINE. Default is OFF, so a
@@ -163,6 +163,7 @@ describe('Thai copy', () => {
 
   it('expired copy promises the data is still there', () => {
     const message = expiredMessageTh('ร้านทดสอบ');
+    assert.match(message, /^แพ็กเกจของร้านทดสอบหมดอายุแล้ว/);
     assert.match(message, /ข้อมูลทั้งหมดยังอยู่ครบ/);
     assert.match(message, /ติดต่อ 098-256-5628 หรืออีเมล contact@mangmeeplus\.com/);
     assert.equal(message.includes(PACKAGE_CHANGE_HINT_TH), false, 'no hint by default');
@@ -179,7 +180,7 @@ describe('Thai copy', () => {
   });
 
   it('limit copy states the cap and where to go', () => {
-    assert.equal(branchLimitMessageTh(1), 'แพ็กเกจปัจจุบันสร้างได้สูงสุด 1 สาขา — ติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ');
+    assert.equal(branchLimitMessageTh(1), 'แพ็กเกจปัจจุบันรองรับ 1 สาขา และใช้งานครบแล้ว หากต้องการเพิ่มสาขา กรุณาเปลี่ยนแพ็กเกจ');
     assert.equal(employeeLimitMessageTh(2), 'แพ็กเกจปัจจุบันเพิ่มพนักงานได้สูงสุด 2 คน — ติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ');
   });
 });

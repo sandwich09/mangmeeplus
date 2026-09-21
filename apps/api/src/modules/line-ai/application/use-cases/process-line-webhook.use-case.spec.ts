@@ -2313,7 +2313,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
       assert.equal(sentMessages[0].type, 'flex');
       // A term that actually ran says so; only a zero-day term reads as "never subscribed".
-      assert.equal(sentMessages[0].contents.header.contents[0].text, 'ครบกำหนดใช้งานแล้ว');
+      assert.equal(sentMessages[0].contents.header.contents[0].text, 'แพ็กเกจหมดอายุแล้ว');
       assert.equal(getAiGatewayCalled(), false);
       assert.equal((updates.at(-1) as any).data.status, 'package_required');
     });
@@ -2347,7 +2347,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
       await useCase.execute({ ...BASE_EVENT });
 
-      assert.match(replies[0] ?? '', /ครบกำหนดใช้งานแล้ว/);
+      assert.match(replies[0] ?? '', /แพ็กเกจของคุณหมดอายุแล้ว/);
       assert.match(replies[0] ?? '', /ข้อมูลทั้งหมดยังอยู่ครบ/);
       assert.match(replies[0] ?? '', /098-256-5628/);
       assert.equal(getAiGatewayCalled(), false);
@@ -2395,7 +2395,7 @@ describe('ProcessLineWebhookUseCase', () => {
       await useCase.execute({ ...BASE_EVENT });
 
       assert.deepEqual(probes, [], 'a usable company never reaches the lock branch');
-      assert.doesNotMatch(replies.join('\n'), /ครบกำหนดใช้งานแล้ว|เลือกแพ็กเกจ/);
+      assert.doesNotMatch(replies.join('\n'), /แพ็กเกจของคุณหมดอายุแล้ว|เลือกแพ็กเกจ/);
     });
 
     it('S05: the resolver itself refuses an ACTIVE company whose term has already ended', async () => {

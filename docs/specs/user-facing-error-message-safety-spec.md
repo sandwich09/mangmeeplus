@@ -116,23 +116,24 @@ wins over them.
 | Signal | Customer copy |
 |---|---|
 | network / `network_error` | `เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่` |
-| 400 or 422 / `validation` | `ข้อมูลจากหน้าจอไม่ตรงกับที่ระบบรองรับ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง` |
+| 400 or 422 / `validation` | `ทำรายการต่อไม่ได้ กรุณาตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง` |
 | 401 / `unauthorized` | `เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่` |
-| 403 / `forbidden` | `คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน` |
+| 403 / `forbidden` | `คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อผู้ดูแลสิทธิ์ของบริษัท` |
 | 404 / `not_found` | `ไม่พบข้อมูลที่ต้องการ` |
-| 409 | `ข้อมูลถูกเปลี่ยนแปลงระหว่างทำรายการ กรุณาเปิดใหม่แล้วลองอีกครั้ง` |
+| 409 | `รายการนี้ดำเนินการต่อไม่ได้ในสถานะปัจจุบัน กรุณาโหลดข้อมูลล่าสุดและตรวจสอบอีกครั้ง` |
 | 413 | `ไฟล์หรือข้อมูลที่ส่งมีขนาดใหญ่เกินไป กรุณาลดขนาดแล้วลองใหม่` |
 | 429 / `rate_limited` | `ทำรายการถี่เกินไป กรุณารอสักครู่แล้วลองใหม่อีกครั้ง` |
 | 500 / `server_error` | `ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง` |
 | 502 | `เชื่อมต่อระบบไม่ได้ชั่วคราว กรุณาลองใหม่อีกครั้ง` |
-| 503 | `ระบบกำลังปรับปรุงหรือมีผู้ใช้งานหนาแน่น กรุณารอสักครู่แล้วลองใหม่` |
+| 503 | `บริการที่จำเป็นยังไม่พร้อมใช้งาน กรุณาลองใหม่ภายหลัง หากยังพบปัญหาให้ติดต่อทีมงาน` |
 | 504 | `ระบบตอบกลับช้าเกินกำหนด กรุณาลองใหม่อีกครั้ง` |
 | other 4xx | `ทำรายการไม่สำเร็จ กรุณาตรวจสอบข้อมูลแล้วลองอีกครั้ง` |
 | other 5xx | `ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง` |
 | API-shaped with no usable signal | `ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง` |
 
-The 400/422 fallback intentionally does not name a raw property. Unknown DTO validation often means
-the page and API contract do not agree, which the user cannot fix by editing an internal field.
+The 400/422 fallback intentionally does not name a raw property or guess that the page and API
+contract disagree. It covers unknown input validation and business conditions without giving a
+false recovery instruction; known cases must use reviewed code/message mappings.
 
 ## 7. Display Boundaries
 
@@ -210,7 +211,7 @@ not render or join the raw array/string merely because the enclosing request suc
 
 - [x] Given HTTP 400 with `message: ["property visibility should not exist"]`, every
   customer-visible renderer returns exactly
-  `ข้อมูลจากหน้าจอไม่ตรงกับที่ระบบรองรับ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง`.
+  `ทำรายการต่อไม่ได้ กรุณาตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง`.
 - [x] The same case never renders `visibility`, `property`, `should not exist`, `Bad Request`, or
   `API error 400` in a toast, banner, form summary, or load/error state.
 - [x] A known stable code or reviewed message remains more specific than the generic fallback.

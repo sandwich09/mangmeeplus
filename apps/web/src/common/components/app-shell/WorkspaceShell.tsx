@@ -43,11 +43,11 @@ function ShellInner({
   navItems = [],
   activeKey,
 }: Props) {
-  const { isExpanded, isHovered, isMobileOpen } = useSidebar();
+  const { isExpanded, isMobileOpen } = useSidebar();
 
   const mainContentMargin = isMobileOpen
     ? 'ml-0'
-    : isExpanded || isHovered
+    : isExpanded
     ? 'lg:ml-[289px]'
     : 'lg:ml-[86px]';
 

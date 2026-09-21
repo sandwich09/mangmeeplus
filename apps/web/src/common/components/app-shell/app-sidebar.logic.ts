@@ -15,6 +15,16 @@ export function isActiveNavSubItem(
   return sub.key === activeKey || (isPathMatch(sub.href) && !candidates.some((candidate) => candidate.href.length > sub.href.length && isPathMatch(candidate.href)));
 }
 
+/** Smallest scroll needed to reveal an item; 0 keeps an already-visible menu perfectly still. */
+export function revealScrollDelta(
+  root: { top: number; bottom: number },
+  item: { top: number; bottom: number },
+): number {
+  if (item.top < root.top) return item.top - root.top;
+  if (item.bottom > root.bottom) return item.bottom - root.bottom;
+  return 0;
+}
+
 /**
  * Self-service LINE link menu row (line-self-link spec §3, owner directive 2026-09-01).
  * `null` = the lazy account-security fetch has not landed yet: the row renders immediately (the

@@ -82,7 +82,7 @@ describe('authed-fetch', () => {
   it('does not bounce to /login when the refresh failed transiently', async () => {
     for (const [refreshStatus, expectedMessage] of [
       [502, 'เชื่อมต่อระบบไม่ได้ชั่วคราว กรุณาลองใหม่อีกครั้ง'],
-      [503, 'ระบบกำลังปรับปรุงหรือมีผู้ใช้งานหนาแน่น กรุณารอสักครู่แล้วลองใหม่'],
+      [503, 'บริการที่จำเป็นยังไม่พร้อมใช้งาน กรุณาลองใหม่ภายหลัง หากยังพบปัญหาให้ติดต่อทีมงาน'],
     ] as const) {
       const assigned = withStubbedWindow(async () => {
         const calls: Call[] = [];
@@ -352,7 +352,7 @@ describe('authed-fetch', () => {
     assert.equal(emittedBeforeCatch, true);
     assert.deepEqual(events, [{
       tone: 'error',
-      message: 'ข้อมูลจากหน้าจอไม่ตรงกับที่ระบบรองรับ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง',
+      message: 'ทำรายการต่อไม่ได้ กรุณาตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง',
     }]);
   });
 

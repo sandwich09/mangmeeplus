@@ -42,6 +42,23 @@ test('zero-attachment cash certificate can be reviewed before prepare, but canno
   assert(expenseEvidenceConfirmationError(value));
   assert.equal(expenseEvidenceConfirmationError({ ...value, substituteReceiptEvidence: { status: 'ISSUED', artifactAttachmentId: 'signed-artifact' } }), null);
 });
+
+test('cancelled certificates never authorize confirmation or send the reviewer back to sign cancelled history', () => {
+  const certificate: ExpenseEvidenceAssessment = { route: 'SUBSTITUTE_RECEIPT', receiptProblem: 'NOT_AVAILABLE', attachmentIds: [], reason: 'ร้านไม่ออกใบเสร็จ' };
+  // Expense detail excludes SUPERSEDED evidence; historical projections may still include it.
+  for (const substituteReceiptEvidence of [null, { status: 'SUPERSEDED', artifactAttachmentId: 'old-artifact' }]) {
+    const cancelled = { ...source, missingReceiptReason: certificate.reason, substituteReceiptGeneratedAt: null, substituteReceiptEvidence };
+    assert.equal(expenseEvidenceConfirmationError(cancelled), 'กรุณาบันทึกการตรวจเอกสารและหลักฐานล่าสุดก่อนยืนยัน');
+    assert.match(expenseEvidenceConfirmationError({ ...reviewed(cancelled, certificate), substituteReceiptEvidence })!, /เลือกหลักฐาน.*ฉบับใหม่/);
+    assert.equal(expenseEvidenceConfirmationError({ ...reviewed(cancelled), substituteReceiptEvidence }), null);
+    const alternative: ExpenseEvidenceAssessment = { ...certificate, route: 'ALTERNATIVE_EVIDENCE', attachmentIds: ['receipt'], reason: 'ตรวจหลักฐานการจ่ายและผู้รับแล้ว' };
+    assert.equal(expenseEvidenceConfirmationError({ ...reviewed(cancelled, alternative), substituteReceiptEvidence }), null);
+  }
+  for (const status of ['PREPARED', 'PAYER_CERTIFIED']) {
+    assert.equal(expenseEvidenceConfirmationError({ ...reviewed(source, certificate), substituteReceiptEvidence: { status } }),
+      'เปิดใบรับรองฉบับเดิมและดำเนินการให้สมบูรณ์ก่อนยืนยัน');
+  }
+});
 test('vendor, amount, selected evidence and route changes stale review; unrelated file/no-op do not', () => {
   const value = reviewed(source);
   for (const patch of [{ vendorNameSnapshot: 'different' }, { grandTotalAmount: '681' }, { attachments: [{ id: 'receipt', status: 'DELETED', checksumSha256: 'image-v1' }] },

@@ -91,7 +91,7 @@ export default function CompanyTermExpiredPage({ companyId }: { companyId: strin
               read as "your package ended today", which is the sentence this page exists to undo. */}
           {reason === 'trial_ended' && notice?.termEndsAt ? (
             <p className="mt-2 text-[14.5px] leading-7 text-gray-600">
-              ครบกำหนดเมื่อวันที่ {formatThaiDate(notice.termEndsAt)}
+              หมดอายุเมื่อวันที่ {formatThaiDate(notice.termEndsAt)}
             </p>
           ) : null}
           <a className="mangmee-btn mangmee-btn-primary mt-5 w-full" href={`/companies/${companyId}/billing`}>{PLAN_LOCK_CTA}</a>

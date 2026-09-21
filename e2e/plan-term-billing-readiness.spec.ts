@@ -161,7 +161,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
     await authedPage.goto(`/companies/${rig.companyId}/settings/branches?payment=success`);
     await expect(authedPage).toHaveURL(new RegExp(`/companies/${rig.companyId}/renew`));
     await expect(authedPage.getByRole('heading', {
-      name: 'ครบกำหนดใช้งานแล้ว', exact: true,
+      name: 'แพ็กเกจหมดอายุแล้ว', exact: true,
     })).toBeVisible();
     expect((await rig.business()).status(), 'browser success claim cannot renew a term').toBe(403);
     await authedPage.screenshot({ path: testInfo.outputPath('before-renew.png'), fullPage: true });
@@ -234,7 +234,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
     expect(notice.status()).toBe(200);
     expect(await notice.json()).toMatchObject({ derivedState: 'EXPIRED', isOwner: true });
     await authedPage.goto(`/companies/${rig.companyId}/renew`);
-    await expect(authedPage.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toBeVisible();
+    await expect(authedPage.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
   });
 
   test('BR07/RG04 password login with only a term-disabled company reaches recovery and then real access', async ({ rig, browser, urls }, info) => {
@@ -246,7 +246,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       expect(login.status()).toBe(200);
       const page = await ctx.newPage();
       await page.goto(`/companies/${rig.companyId}/renew`);
-      await expect(page.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
       await expectNoClientError(page);
       await page.screenshot({ path: info.outputPath('single-company-recovery.png') });
       await rig.outcome('paid');
@@ -274,7 +274,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       const page = await ctx.newPage();
       await page.goto(`/companies/${rig.companyId}/renew`);
       await expect(page.getByRole('heading', { name: 'บริษัทนี้พักการใช้งานชั่วคราว', exact: true })).toBeVisible();
-      await expect(page.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toHaveCount(0);
+      await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toHaveCount(0);
     } finally { await ctx.close(); }
     await rig.db.companyMembership.updateMany({ where: { userId: staff.id }, data: { status: 'DISABLED' } });
     expect((await read(rig.companyId)).status()).toBe(403);
@@ -301,7 +301,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       await authedPage.unroute('**/api/v1/plan-term/notice');
       if (status !== 401) {
         await authedPage.getByRole('button', { name: 'ลองใหม่', exact: true }).click();
-        await expect(authedPage.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toBeVisible();
+        await expect(authedPage.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
       } else await expect(authedPage.getByRole('link', { name: 'เข้าสู่ระบบ', exact: true })).toBeVisible();
     });
   }
@@ -316,7 +316,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
     const retry = authedPage.getByRole('button', { name: 'ลองใหม่', exact: true });
     await retry.focus();
     await authedPage.keyboard.press('Enter');
-    await expect(authedPage.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toBeVisible();
+    await expect(authedPage.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
     expect(await authedPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await authedPage.screenshot({ path: info.outputPath('mobile-recovery.png'), fullPage: true });
   });
@@ -370,13 +370,13 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       release();
       await Promise.all(completions);
       await expect(authedPage.getByRole('button', { name: 'สลับบริษัท', exact: true })).toContainText(other.name);
-      await expect(authedPage.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toHaveCount(0);
+      await expect(authedPage.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toHaveCount(0);
       await authedPage.unroute('**/api/v1/plan-term/notice');
       await authedPage.goBack();
       await expect(authedPage).toHaveURL(new RegExp(`/companies/${rig.companyId}/renew`));
-      await expect(authedPage.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toBeVisible();
+      await expect(authedPage.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
       await authedPage.reload();
-      await expect(authedPage.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toBeVisible();
+      await expect(authedPage.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
     } finally { release(); }
   });
 });
@@ -477,7 +477,7 @@ test.describe('BC existing admin web recovery — no Stripe or new control-suite
     const line = await browser.newContext({ baseURL: urls.web });
     try {
       await authedPage.goto(`/companies/${rig.companyId}/renew`);
-      await expect(authedPage.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toBeVisible();
+      await expect(authedPage.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
       const page = await admin.newPage();
       await page.goto(`/login?next=${encodeURIComponent(`/system/partners/${rig.companyId}`)}`);
       await submitSystemLogin(page);
@@ -531,7 +531,7 @@ test.describe('GW web + LINE round trips — real local app, simulated LINE proo
       await page.locator('#login-password').fill(user.password);
       await page.locator('button[type="submit"]').click();
       await expect(page).toHaveURL(`${urls.web}${target}`);
-      await expect(page.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
     } finally { await ctx.close(); }
   });
 
@@ -562,7 +562,7 @@ test.describe('GW web + LINE round trips — real local app, simulated LINE proo
       expect(opened).toHaveLength(1); expect(opened[0].external).toBe(true);
       const page = await external.newPage(); await page.goto(opened[0].url);
       await expect(page).toHaveURL(`${urls.web}/companies/${rig.companyId}/renew`);
-      await expect(page.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
       expect((await rig.business()).status()).toBe(403);
       expect((await liff.cookies(urls.web)).some(row => row.name.startsWith('watchdog_token'))).toBe(false);
       expect((await external.cookies()).some(row => row.name.startsWith('watchdog_token') && row.httpOnly)).toBe(true);

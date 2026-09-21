@@ -33,7 +33,7 @@ export function severityColor(severity: NotificationSeverity): string {
 
 export function severityLabel(severity: NotificationSeverity): string {
   const labels: Record<NotificationSeverity, string> = {
-    critical: 'วิกฤต',
+    critical: 'สำคัญ',
     action: 'ต้องดำเนินการ',
     insight: 'ข้อมูลเชิงลึก',
     info: 'แจ้งเพื่อทราบ',

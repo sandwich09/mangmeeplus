@@ -264,9 +264,11 @@ Navigation behavior:
 - Desktop uses persistent sidebar plus top bar.
 - Mobile uses compact top bar and slide-over or bottom navigation for primary modules.
 - Active route is visible.
+- On desktop, hover expansion of a collapsed sidebar overlays the page; only an explicit pinned expansion changes the main-content offset. Route changes scroll the active row only when it is outside the sidebar viewport and never force-centre an already visible row.
 - Unauthorized modules are hidden from primary nav unless a route is opened directly; direct open shows forbidden state.
 - Planned modules may appear as disabled only when useful for roadmap visibility. They must not fake working behavior.
 - Top bar contains company selector, language switch, user menu entry, and notification entry placeholder. Real notification data, preferences, rules, and delivery live in Dashboard and Notification item 06.
+- Personal signature setup is a low-frequency account task: keep its existing permission-checked route and contextual signing links, but expose it from the personal account area instead of the permanent Expenses submenu.
 
 Language behavior:
 

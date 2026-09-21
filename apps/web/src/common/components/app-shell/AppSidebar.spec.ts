@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isActiveNavSubItem, lineLinkMenuRow, type SidebarSubItemRef } from './app-sidebar.logic';
+import { isActiveNavSubItem, lineLinkMenuRow, revealScrollDelta, type SidebarSubItemRef } from './app-sidebar.logic';
 
 const shellDir = dirname(fileURLToPath(import.meta.url));
 
@@ -32,6 +32,25 @@ describe('isActiveNavSubItem', () => {
     assert.equal(isActiveNavSubItem('/companies/co/settings', 'settings', subItems[0], subItems), true);
     assert.equal(isActiveNavSubItem('/companies/co/settings', 'settings', subItems[1], subItems), false);
     assert.equal(isActiveNavSubItem('/companies/co/settings', 'settings', subItems[2], subItems), false);
+  });
+});
+
+describe('revealScrollDelta', () => {
+  const root = { top: 100, bottom: 500 };
+  it('does not move an active item that is already visible', () => {
+    assert.equal(revealScrollDelta(root, { top: 120, bottom: 160 }), 0);
+  });
+  it('moves only enough to reveal an item above or below the viewport', () => {
+    assert.equal(revealScrollDelta(root, { top: 70, bottom: 110 }), -30);
+    assert.equal(revealScrollDelta(root, { top: 480, bottom: 540 }), 40);
+  });
+});
+
+describe('collapsed sidebar layout', () => {
+  it('keeps main content fixed while hover expansion overlays it', () => {
+    const source = readFileSync(join(shellDir, 'WorkspaceShell.tsx'), 'utf8');
+    assert.match(source, /: isExpanded\s*\? 'lg:ml-\[289px\]'/);
+    assert.doesNotMatch(source, /isExpanded \|\| isHovered/);
   });
 });
 

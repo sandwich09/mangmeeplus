@@ -37,7 +37,11 @@ export async function assertBranchLimit(prisma: LimitPrisma, companyId: string):
   if (!term) return; // no term row = unlimited
   const active = await prisma.client.branch.count({ where: { companyId, status: 'ACTIVE' } });
   if (active >= term.branchLimit) {
-    throw new UnprocessableEntityException(branchLimitMessageTh(term.branchLimit));
+    throw new UnprocessableEntityException({
+      code: 'plan_branch_limit_exceeded',
+      message: branchLimitMessageTh(term.branchLimit),
+      details: { limit: term.branchLimit, active },
+    });
   }
 }
 

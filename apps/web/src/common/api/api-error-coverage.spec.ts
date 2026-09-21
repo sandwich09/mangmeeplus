@@ -5,11 +5,11 @@
  *
  * Translating every code at once is not the safe move: a wrong Thai sentence is worse than a
  * generic one because it sends the user to fix the wrong thing. The specific-copy coverage enforced
- * here stays on the launch surface; every unknown API-shaped error now fails closed to the shared
- * status/kind fallback instead of exposing its raw code.
+ * here stays on the default-open surface; every unknown API-shaped error now fails closed to the
+ * shared status/kind fallback instead of exposing its raw code.
  *
- * The list is derived from the API source rather than restated, so adding a code to a launch module
- * without Thai text fails here instead of appearing on a customer's screen.
+ * The list is derived from the API source rather than restated, so adding a code to a default-open
+ * module without Thai text fails here instead of appearing on a customer's screen.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,10 +18,13 @@ import { join } from 'node:path';
 import { apiErrorMessage, translateApiError } from './api-error-message';
 import { GENERIC_UPLOAD_ERROR_MESSAGE, uploadErrorMessage } from '../files/upload-file.logic';
 
-/** Modules behind the eleven launch features. Outside this set, translation is best-effort. */
-const LAUNCH_MODULES = [
+/** Default-open customer features, plus the billing/renewal boundary. */
+const OPEN_MODULES = [
   'expenses', 'reimbursements', 'employee-access', 'auth',
   'data-model-core', 'system-partner-management',
+  'crm', 'crm-inbox', 'inventory', 'dashboard-notifications',
+  'ai-draft', 'tax', 'ledger', 'workflow', 'line-ai',
+  'billing',
 ];
 
 const API_MODULES = join(__dirname, '../../../../api/src/modules');
@@ -39,9 +42,9 @@ function sourceFiles(dir: string): string[] {
  * Codes the API answers with. Both spellings the codebase uses: the bare-string exception
  * (`throw new ConflictException('stale_claim_snapshot')`) and the object form carrying `code:`.
  */
-function launchErrorCodes(): Map<string, string> {
+function openFeatureErrorCodes(): Map<string, string> {
   const codes = new Map<string, string>();
-  for (const moduleName of LAUNCH_MODULES) {
+  for (const moduleName of OPEN_MODULES) {
     for (const file of sourceFiles(join(API_MODULES, moduleName))) {
       const source = readFileSync(file, 'utf8');
       const found = [
@@ -58,14 +61,14 @@ function launchErrorCodes(): Map<string, string> {
 // answer. Listed rather than filtered by a pattern, so the exemption stays visible.
 const NOT_USER_FACING = new Set(['validation']);
 
-describe('Thai coverage for launch-feature error codes', () => {
+describe('Thai coverage for default-open feature error codes', () => {
   it('finds the API codes at all, so a moved path fails loudly instead of passing empty', () => {
-    const codes = launchErrorCodes();
-    assert.ok(codes.size > 100, `only ${codes.size} codes found — check API_MODULES resolves to the api package`);
+    const codes = openFeatureErrorCodes();
+    assert.ok(codes.size > 400, `only ${codes.size} codes found — check API_MODULES resolves to the api package`);
   });
 
-  it('has Thai text for every error code the launch modules answer with', () => {
-    const missing = [...launchErrorCodes()]
+  it('has Thai text for every error code the default-open modules answer with', () => {
+    const missing = [...openFeatureErrorCodes()]
       .filter(([code]) => !NOT_USER_FACING.has(code))
       .filter(([code]) => !translateApiError(code))
       .map(([code, moduleName]) => `${moduleName}: ${code}`)
@@ -161,7 +164,7 @@ describe('status fallbacks', () => {
   // These arrive from a proxy or the rate limiter with no body, so there is no code or message to
   // translate — without a status fallback the user saw the client's own "API error 429".
   it('renders throttling and outage statuses in Thai instead of "API error <n>"', () => {
-    for (const [status, expected] of [[429, /ถี่เกินไป/], [503, /หนาแน่น|ปรับปรุง/], [413, /ขนาดใหญ่เกิน/]] as const) {
+    for (const [status, expected] of [[429, /ถี่เกินไป/], [503, /บริการที่จำเป็นยังไม่พร้อม/], [413, /ขนาดใหญ่เกิน/]] as const) {
       const error = Object.assign(new Error(`API error ${status}`), { status });
       const message = apiErrorMessage(error);
       assert.match(message, expected, String(status));

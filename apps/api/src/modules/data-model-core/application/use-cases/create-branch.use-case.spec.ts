@@ -120,7 +120,11 @@ describe('CreateBranchUseCase', () => {
       () => uc.execute(makeCtx(['company.branch.manage']), validCmd),
       (err: unknown) => {
         assert.ok(err instanceof UnprocessableEntityException);
-        assert.equal((err.getResponse() as { message: string }).message, 'แพ็กเกจปัจจุบันสร้างได้สูงสุด 2 สาขา — ติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ');
+        assert.deepEqual(err.getResponse(), {
+          code: 'plan_branch_limit_exceeded',
+          message: 'แพ็กเกจปัจจุบันรองรับ 2 สาขา และใช้งานครบแล้ว หากต้องการเพิ่มสาขา กรุณาเปลี่ยนแพ็กเกจ',
+          details: { limit: 2, active: 2 },
+        });
         return true;
       },
     );
