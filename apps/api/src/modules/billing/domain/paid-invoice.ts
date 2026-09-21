@@ -13,11 +13,15 @@ export function paidInvoiceEvidence(invoice: StripeObject, subscription: StripeO
   payments: StripeObject[], intent: StripeObject, charge: StripeObject, snapshot: BillingSnapshot, livemode: boolean): PaidInvoiceEvidence {
   const reject = () => { throw billingError('BILLING_INVOICE_MISMATCH', 'หลักฐานการชำระเงินต้องตรวจสอบเพิ่มเติม'); };
   paidVariant(snapshot.quote.offer.offerKey, snapshot.quote.offer.interval);
+  const promptPayRenew = snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW';
   const subscriptionId = stripeId(invoice.parent?.subscription_details?.subscription);
   const customerId = stripeId(invoice.customer);
   if (!subscriptionId || !customerId || subscriptionId !== subscription.id || customerId !== stripeId(subscription.customer) ||
       invoice.object !== 'invoice' || invoice.livemode !== livemode || subscription.livemode !== livemode ||
-      invoice.status !== 'paid' || invoice.collection_method !== 'charge_automatically' || invoice.currency !== 'thb' ||
+      invoice.status !== 'paid' || invoice.collection_method !== (promptPayRenew ? 'send_invoice' : 'charge_automatically') || invoice.currency !== 'thb' ||
+      (promptPayRenew && (subscription.collection_method !== 'send_invoice' ||
+        subscription.payment_settings?.payment_method_types?.length !== 1 ||
+        subscription.payment_settings.payment_method_types[0] !== 'promptpay')) ||
       !['subscription_create', 'subscription_cycle'].includes(invoice.billing_reason) || invoice.paid_out_of_band === true ||
       invoice.amount_remaining !== 0 || invoice.total !== snapshot.quote.totalSatang || invoice.amount_paid !== invoice.total ||
       !Number.isSafeInteger(invoice.total) || invoice.total <= 0 || invoice.starting_balance !== 0 ||
@@ -39,7 +43,7 @@ export function paidInvoiceEvidence(invoice: StripeObject, subscription: StripeO
       intent.currency !== 'thb' || intent.amount_received !== invoice.total || stripeId(intent.customer) !== customerId ||
       stripeId(intent.latest_charge) !== charge.id || charge.livemode !== livemode || charge.status !== 'succeeded' || !charge.paid || !charge.captured ||
       charge.currency !== 'thb' || charge.amount !== invoice.total || stripeId(charge.customer) !== customerId ||
-      stripeId(charge.payment_intent) !== intent.id || charge.payment_method_details?.type !== 'card' ||
+      stripeId(charge.payment_intent) !== intent.id || charge.payment_method_details?.type !== (promptPayRenew ? 'promptpay' : 'card') ||
       !Number.isSafeInteger(charge.amount_refunded) || charge.amount_refunded < 0 || charge.amount_refunded > invoice.total ||
       typeof charge.disputed !== 'boolean') reject();
   const taxSatang = Array.isArray(invoice.total_taxes) ? invoice.total_taxes.reduce((sum: number, tax: StripeObject) => sum + tax.amount, 0) : 0;
@@ -48,7 +52,8 @@ export function paidInvoiceEvidence(invoice: StripeObject, subscription: StripeO
   const carriesTrial = invoice.billing_reason === 'subscription_create' && !!snapshot.trialCarryover;
   const paidAt = invoice.status_transitions?.paid_at;
   if (carriesTrial && (!Number.isSafeInteger(paidAt) || paidAt < line.period.start || paidAt * 1000 > Date.now())) reject();
-  return { ...(carriesTrial ? { paidAt: new Date(paidAt * 1000) } : {}), kind: invoice.billing_reason === 'subscription_create' ? 'INITIAL' : 'RENEWAL',
+  return { ...(carriesTrial ? { paidAt: new Date(paidAt * 1000) } : {}),
+    kind: promptPayRenew ? 'RENEWAL' : invoice.billing_reason === 'subscription_create' ? 'INITIAL' : 'RENEWAL',
     invoiceId: invoice.id, subscriptionId: subscriptionId!, customerId: customerId!, chargeId: charge.id,
     number: typeof invoice.number === 'string' ? invoice.number : null, totalSatang: invoice.total, taxSatang, paidSatang: invoice.amount_paid,
     refundedSatang: charge.amount_refunded, disputed: charge.disputed,

@@ -27,9 +27,10 @@ export type BillingScanScheduleOperation = {id:string;mode:BillingMode;state:'PR
 export type BillingScanSchedule = {mode:BillingMode|'DISABLED';revision:number;publicationId:string|null;ownerUserId:string|null;enabled:boolean;intervalHours:number;
   initialLookbackHours:number;canManage:boolean;blockedReason:string|null;nextDueAt:string|null;lastRun:BillingProviderScanView|null;lastCompletedWindowEnd:string|null};
 export type BillingInterval = 'month' | 'year';
+export type BillingPurchaseMode = 'CARD_AUTO' | 'CARD_ONCE' | 'PROMPTPAY_ONCE' | 'PROMPTPAY_RENEW';
 export type BillingOfferKey = `${PaidTier}:${BillingInterval}`;
 export type BillingTaxTreatment = 'INCLUSIVE_VAT_7' | 'EXCLUSIVE_VAT_7' | 'NOT_VAT_REGISTERED';
-export const BILLING_ACTIONS = ['new_sales', 'plan_changes', 'portal_payment_method', 'portal_change_plan', 'portal_cancel_subscription', 'notification_delivery', 'refunds'] as const;
+export const BILLING_ACTIONS = ['new_sales', 'card_once', 'promptpay_once', 'promptpay_renew', 'plan_changes', 'portal_payment_method', 'portal_change_plan', 'portal_cancel_subscription', 'notification_delivery', 'refunds'] as const;
 export type BillingAction = typeof BILLING_ACTIONS[number];
 export const BILLING_PERMISSIONS = ['system.billing.read', 'system.billing.financial.read', 'system.billing.document.read', 'system.billing.issue.manage',
   'system.billing.reconcile.run', 'system.billing.apply.retry', 'system.billing.policy.manage', 'system.billing.gate.manage',
@@ -99,6 +100,7 @@ export type BillingQuote = {
   /** Absent only on legacy quotes/history; new purchases require a reviewed profile. */
   billingProfile?: BillingCompanyProfile;
   quoteId: string; companyId: string; companyName: string; policyRevision: string; expiresAt: string;
+  purchaseMode?: BillingPurchaseMode;
   offer: BillingOffer; subtotalSatang: number; taxSatang: number; totalSatang: number;
   taxTreatment: BillingTaxTreatment; consentRevision: string; paidStart: 'IMMEDIATE' | 'AFTER_TRIAL';
   billingEmail: string; trialEndsAt: string | null; usage: BillingReceiptUsage;
@@ -125,9 +127,14 @@ export type BillingStatus = {
   paymentState: 'NONE' | 'PENDING' | 'UNKNOWN' | 'PAID' | 'FAILED' | 'ACTION_REQUIRED';
   applyState: 'NONE' | 'PENDING' | 'APPLIED' | 'HELD' | 'FAILED';
   purchaseEligibility?: 'ELIGIBLE' | 'COMPANY_SALES_CLOSED';
+  renewalMode?: BillingPurchaseMode | 'NONE';
+  availablePurchaseModes?: BillingPurchaseMode[];
+  renewalInvoiceUrl?: string | null;
+  renewalInvoiceDueAt?: string | null;
   refundReviewPending?: boolean;
   accessState: 'ACTIVE' | 'EXPIRED' | 'HELD'; subscriptionState: string; documentState: 'NONE' | 'PENDING' | 'READY';
   attemptId: string | null; reference: string | null; observedAt: string | null;
+  canCancelCheckout?: boolean;
   tierKey: string | null; interval: BillingInterval | null; termEndsAt: string | null; paidThrough: string | null; nextChargeAt: string | null;
   cancelAtPeriodEnd: boolean; graceEndsAt: string | null; allowedActions: BillingAction[];
   usage: BillingReceiptUsage;
@@ -201,7 +208,7 @@ export type BillingRefundOperation = BillingOperationView & { type:'REFUND'; sou
 
 export type BillingOperatorCompany = {
   accountId: string | null; companyId: string; companyName: string; mode: BillingMode | 'DISABLED'; version: number;
-  subscriptionState: string; paidThrough: string | null; nextChargeAt: string | null; observedAt: string | null;
+  subscriptionState: string; renewalMode?: BillingPurchaseMode | 'NONE'; paidThrough: string | null; nextChargeAt: string | null; observedAt: string | null;
   tierKey: string | null; termEndsAt: string | null; companyStatus: string; pendingAttemptId: string | null;
   source: 'TRIAL' | 'MANUAL' | 'STRIPE' | 'OTHER_BILLING' | 'NONE';
   effectiveCapacity?: CompanyPlanCapacity|null;

@@ -45,7 +45,7 @@ export function httpsUrl(value: string, field: string): string {
 
 export function renderBillingStatusEmail(companyName: string, href: string): RenderedEmail {
   const title = 'อัปเดตแพ็กเกจมั่งมี', paragraphs = [`บริษัท ${companyName} มีการอัปเดตแพ็กเกจ`,
-    'เปิดหน้าบริษัทเพื่อตรวจสอบสิทธิ์ วันต่ออายุ และเอกสารการชำระเงินจาก Stripe'];
+    'เปิดหน้าบริษัทเพื่อตรวจสอบสิทธิ์ วันสิ้นสุดสิทธิ์ และเอกสารการชำระเงินจาก Stripe'];
   return { subject: title, text: `${title}\n\n${paragraphs.join('\n')}\n\n${href}`,
     html: layout(title, paragraphs, 'ดูแพ็กเกจและประวัติการชำระเงิน', href) };
 }

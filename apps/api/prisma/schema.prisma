@@ -9516,6 +9516,8 @@ model BillingAccount {
   termProjectionHash  String?
   nextReconcileAt     DateTime @default(now())
   subscriptionState   String @default("NONE")
+  renewalMode         String @default("NONE")
+  billingAnchorDay    Int?
   cancelAtPeriodEnd   Boolean @default(false)
   paidThrough         DateTime?
   graceEndsAt         DateTime?

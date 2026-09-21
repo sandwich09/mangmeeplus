@@ -333,7 +333,7 @@ async function main() {
       }
       await page.getByRole('button', { name: 'บันทึกและกลับไปซื้อแพ็กเกจ', exact: true }).click();
       await page.getByRole('heading', { name: /ยืนยันซื้อ/ }).waitFor();
-      assert.match(page.url(), /offer=PRO_999&interval=year&channel=line&profile=updated/);
+      assert.match(page.url(), /offer=PRO_999&interval=year&channel=line&purchaseMode=CARD_AUTO&profile=updated/);
       assert.match(await page.getByLabel('ข้อมูลออกเอกสาร', { exact: true }).innerText(), /บริษัท ทดสอบเอกสาร จำกัด/);
       assert.equal(checkoutCalls, 0);
       await page.screenshot({ path: `${browser.evidenceDir}/company-profile-purchase-review-mobile.png`, fullPage: true });
