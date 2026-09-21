@@ -108,6 +108,9 @@ export async function listExpenses(
   params?: {
     status?: ExpenseStatus; branchId?: string; fromDate?: string; toDate?: string; uploadedFromDate?: string; uploadedToDate?: string;
     sourceDocumentType?: string; taxEvidenceStatus?: string; expenseCategoryId?: string; captureSource?: string;
+    /** GAP-11: full tax invoices whose seller address is still empty. The API pins the document
+     *  type itself, so this is the whole filter — `qs` sends the literal `true` it looks for. */
+    vendorAddressMissing?: boolean;
     page?: number; pageSize?: number;
   },
 ): Promise<{ data: ExpenseSummary[]; total: number; page: number; pageSize: number }> {

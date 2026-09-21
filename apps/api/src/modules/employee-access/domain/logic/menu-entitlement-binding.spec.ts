@@ -121,7 +121,7 @@ describe('MENU_ENTITLEMENT_BINDINGS', () => {
 });
 
 describe('FEATURE_PACKAGE_PRESETS menu parity', () => {
-  it('starter retains AI access while exposing six navigation entries and contextual AI', async () => {
+  it('starter retains AI access while exposing seven navigation entries and contextual AI', async () => {
     const presetKeys = new Set(FEATURE_PACKAGE_PRESETS.starter.featureKeys);
     const rows = ALL_FEATURE_ENTITLEMENT_KEYS.map((featureKey) => ({
       featureKey,
@@ -139,7 +139,11 @@ describe('FEATURE_PACKAGE_PRESETS menu parity', () => {
           && binding.entitlementKeys.some((key) => entitled.has(key))
         ))
         .map((binding) => binding.navKey),
-      ['dashboard', 'expenses', 'reimbursements', 'roles', 'settings', 'notifications'],
+      // `counterparties` joins starter because starter has `expenses`, and expense capture writes
+      // into the counterparty registry by itself. Without the menu the "ดู" link on the
+      // "เพิ่มร้านนี้ลงทะเบียนแล้ว" toast would lead nowhere and a wrong auto-saved address would
+      // have no screen to correct it on.
+      ['dashboard', 'expenses', 'counterparties', 'reimbursements', 'roles', 'settings', 'notifications'],
     );
     assert.ok(entitled.has('ai_line_assistant'));
     assert.deepEqual(filterPermissionsByEntitlement(['ai.suggestion.read', 'crm.ai.read'], entitled), ['ai.suggestion.read', 'crm.ai.read']);

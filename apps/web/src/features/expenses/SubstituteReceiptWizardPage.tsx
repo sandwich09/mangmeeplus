@@ -2789,7 +2789,7 @@ export function SubstituteReceiptWizardPage({
 
   let content: ReactNode = null;
   if (receiptEvidence && activeStep === 'expense' && detail) content = <ExpenseReviewEditSection
-    key={`${detail.id}-${detail.updatedAt}`} companyId={companyId} detail={detail}
+    key={`${detail.id}-${detail.updatedAt}`} companyId={companyId} detail={detail} permissions={permissions}
     isMutable={canEditPrepared && !busy} canReview={canReview} canConfirm={false}
     skipUnchangedSave saveRef={sourceSaveRef} onSaved={refreshAfterSourceSave} />;
   else if (receiptEvidence && (activeStep === 'details' || activeStep === 'evidence')) content = <div className="space-y-4">

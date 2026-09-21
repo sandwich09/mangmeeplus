@@ -2,6 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { AccountingDocumentSourceRow, TransactionTaxSourceLineRow } from '../../domain/ports/source-reader.port';
 
+/** `BuyerSnapshotV1.addressText` when the frozen snapshot has one. Legacy snapshots hold only
+ *  `{id, displayName, taxId, legalName}`, so anything else answers null rather than throwing.
+ *  Not the counterparty registry's `billingAddressJson` (that is `counterpartyAddressText`): this
+ *  reads the document's OWN frozen snapshot, which is what was printed on the paper. */
+function buyerSnapshotAddressText(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const addressText = (value as Record<string, unknown>)['addressText'];
+  return typeof addressText === 'string' && addressText.trim() ? addressText : null;
+}
+
 @Injectable()
 export class AccountingDocumentSourceAdapter {
   constructor(private readonly prisma: PrismaService) {}
@@ -35,6 +45,10 @@ export class AccountingDocumentSourceAdapter {
       taxInvoiceId: r.taxInvoiceId ?? null,
       counterpartyName: (r.counterparty as any)?.displayName ?? null,
       counterpartyTaxId: (r.counterparty as any)?.taxId ?? null,
+      // GAP-2: the frozen buyer snapshot already rides on this row (no extra query); its
+      // `addressText` is the address that was printed on the document we issued. Read defensively —
+      // snapshots frozen before BuyerSnapshotV1 carry no address at all.
+      counterpartyAddress: buyerSnapshotAddressText(r.counterpartySnapshotJson),
       branchCode: null,
       currency: r.currency,
       updatedAt: r.updatedAt,

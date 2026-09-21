@@ -18,6 +18,8 @@ import {
   vatSourceFromSnapshot,
 } from '../../domain/logic/expense-vat-reconciliation.logic';
 import { validateExpenseDraftAmounts, validateExpenseLineVatTreatments } from '../../domain/logic/expense-draft-amount-validation.logic';
+import { expenseVendorIdentityFields } from '../../domain/logic/expense-vendor-identity.logic';
+import { EnsureVendorCounterpartyFromExpenseUseCase } from '../../../accounting-documents/application/use-cases/ensure-vendor-counterparty-from-expense.use-case';
 import { normalizeExpensePrecisionAdjustment } from '../../domain/logic/expense-precision-adjustment.logic';
 import { expenseTotalsIdentityError } from '../../domain/logic/expense-totals.logic';
 import { applyExpenseWhtInput, expenseWhtLineRate } from '../../domain/logic/expense-wht-input.logic';
@@ -266,7 +268,11 @@ type UpdateExpenseDraftOptions = {
 
 @Injectable()
 export class UpdateExpenseDraftUseCase {
-  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, private readonly transactionTax: ExpenseTransactionTaxService) {}
+  // `ensureVendorCounterparty` is optional so the many bare-constructed unit tests in this module
+  // keep working: an expense save must not depend on the registry being wired (§8 — the registry
+  // never fails the expense).
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, private readonly transactionTax: ExpenseTransactionTaxService,
+    private readonly ensureVendorCounterparty?: EnsureVendorCounterpartyFromExpenseUseCase) {}
 
   /**
    * `options.db` lets a caller that already owns a transaction (LINE correction apply) run this
@@ -387,6 +393,10 @@ export class UpdateExpenseDraftUseCase {
     if (!['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(r.status)) {
       throw new BadRequestException(`Cannot update expense in status ${r.status}`);
     }
+    // CON-11 puts the address under exactly this status gate and, in the repository, the same
+    // material-field funding lock as the other vendor columns — no rule of its own.
+    const vendorIdentity = expenseVendorIdentityFields(input);
+    if (vendorIdentity.error) throw new BadRequestException(vendorIdentity.error);
     if (options.requireExpectedUpdatedAt && !input.expectedUpdatedAt) {
       throw new BadRequestException({
         code: 'EXPENSE_UPDATE_VERSION_REQUIRED',
@@ -787,6 +797,32 @@ export class UpdateExpenseDraftUseCase {
       if (options.lineDraftCollection) options.lineDraftCollection.aiVerificationSummaryJson = resolved;
       else nextSummaryJson = resolved;
     }
+    /**
+     * D4/§7: the registry grows from the save the reviewer just made, so this runs BEFORE the write
+     * and folds its two answers into the same statement — no second round trip, and the record the
+     * caller gets back already carries the link.
+     *
+     * Skipped when `options.db` is set: that caller owns the transaction and `line-draft-update`
+     * deliberately ROLLS IT BACK for its preview. A counterparty written on this separate
+     * connection would survive that rollback and leave a shop nobody saved. That lane only patches
+     * line amounts, never vendor identity, so nothing is lost by sitting it out.
+     */
+    const autoSave = options.db || !this.ensureVendorCounterparty
+      ? undefined
+      : await this.ensureVendorCounterparty.execute(ctx, {
+        expenseId,
+        captureSource: r.captureSource,
+        sourceReimbursementRequestId: r.sourceReimbursementRequestId,
+        vendorCounterpartyId: input.vendorCounterpartyId ?? r.vendorCounterpartyId,
+        vendorName: input.vendorNameSnapshot ?? r.vendorNameSnapshot,
+        vendorTaxId: input.vendorTaxIdSnapshot ?? r.vendorTaxIdSnapshot,
+        vendorBranchCode: vendorIdentity.fields.vendorBranchCodeSnapshot !== undefined
+          ? vendorIdentity.fields.vendorBranchCodeSnapshot : r.vendorBranchCodeSnapshot,
+        vendorAddressText: vendorIdentity.fields.vendorAddressSnapshot !== undefined
+          ? vendorIdentity.fields.vendorAddressSnapshot : r.vendorAddressSnapshot,
+        vendorEntityKind: input.vendorEntityKindSnapshot ?? r.vendorEntityKindSnapshot,
+      });
+
     const updated = await this.repo.updateExpense({
       id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId,
       assignExpenseNumber: Boolean(dateReviewInput) && expenseDraftNumberingEnabled()
@@ -801,8 +837,15 @@ export class UpdateExpenseDraftUseCase {
       ...(input.vendorCounterpartyId !== undefined && { vendorCounterpartyId: input.vendorCounterpartyId }),
       ...(input.vendorNameSnapshot !== undefined && { vendorNameSnapshot: input.vendorNameSnapshot }),
       ...(input.vendorTaxIdSnapshot !== undefined && { vendorTaxIdSnapshot: input.vendorTaxIdSnapshot }),
-      ...(input.vendorBranchCodeSnapshot !== undefined && { vendorBranchCodeSnapshot: input.vendorBranchCodeSnapshot }),
+      // CON-8/§6: these two normalize before they persist — blank is NULL, a branch code is five
+      // digits. Everything else on this list is stored exactly as it arrived.
+      ...vendorIdentity.fields,
       ...(input.vendorEntityKindSnapshot !== undefined && { vendorEntityKindSnapshot: input.vendorEntityKindSnapshot }),
+      // GAP-4: the first thing in this codebase that ever fills `vendorCounterpartyId` from web or
+      // LINE. CON-7: the registry's taxpayer class fills an empty field, which is what lets a WHT
+      // expense be confirmed at all (`expense-status.logic.ts` refuses without it).
+      ...(autoSave?.linkCounterpartyId && { vendorCounterpartyId: autoSave.linkCounterpartyId }),
+      ...(autoSave?.fillEntityKind && input.vendorEntityKindSnapshot === undefined && { vendorEntityKindSnapshot: autoSave.fillEntityKind }),
       ...(input.vendorDocumentNumber !== undefined && { vendorDocumentNumber: input.vendorDocumentNumber }),
       ...(input.note !== undefined && { note: input.note }),
       // The substitute-receipt panel saves its in-progress reason here so leaving the review page no
@@ -943,6 +986,9 @@ export class UpdateExpenseDraftUseCase {
       }
       : undefined, options.db);
     if (nextSummaryJson) updated.aiVerificationSummaryJson = nextSummaryJson;
+    // Before the `suppressGenericAudit` early return, so the LINE lanes carry it too. §8: when the
+    // registry write failed the expense still saved, and the caller has to be able to say so.
+    if (autoSave && autoSave.result.case !== 'SKIPPED') updated.vendorCounterpartyAutoSave = autoSave.result;
     if (options.suppressGenericAudit) return updated;
     void this.audit.log({
       companyId: ctx.companyId,
@@ -1199,7 +1245,9 @@ export class ConfirmExpenseUseCase {
     }
 
     const postingStatus = derivePostingStatus('CONFIRMED', r.duplicateStatus);
-    const vendorSnapshotJson = r.vendorCounterpartyId ? { id: r.vendorCounterpartyId, name: r.vendorNameSnapshot, taxId: r.vendorTaxIdSnapshot } : null;
+    // §6: the frozen snapshot now carries the branch and the printed address too, so a confirmed
+    // expense still says which shop and which address it was, whatever the registry does later.
+    const vendorSnapshotJson = r.vendorCounterpartyId ? { id: r.vendorCounterpartyId, name: r.vendorNameSnapshot, taxId: r.vendorTaxIdSnapshot, branchCode: r.vendorBranchCodeSnapshot, addressText: r.vendorAddressSnapshot } : null;
     const occurredAt = new Date().toISOString();
     const eventRequestId = authority
       ? `reimbursement:${authority.reimbursementRequestId}:${authority.reimbursementLineId}`

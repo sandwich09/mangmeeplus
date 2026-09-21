@@ -310,6 +310,12 @@ export function substituteReceiptPreparationHref(companyId: string, expenseId: s
 }
 
 export type ExpenseSummary = {
+  /**
+   * Vendor-address spec §7: not a column — the outcome of THIS write's counterparty auto-save, so
+   * the review page can show the create/fill toast, the one-line "address differs" notice or the
+   * "ยังไม่ได้บันทึกลงทะเบียนคู่ค้า" bar. Present on a write response only, never on a read.
+   */
+  vendorCounterpartyAutoSave?: import('@watchdog-bms/contracts').VendorCounterpartyAutoSaveResult;
   costSourceExpenseId?: string;
   reimbursementProgress?: import('@watchdog-bms/contracts').ExpenseReimbursementProgress;
   id: string;
@@ -365,6 +371,8 @@ export type ExpenseDetail = ExpenseSummary & {
   categoryDefaultInputTaxCode?: string | null;
   vendorTaxIdSnapshot: string | null;
   vendorBranchCodeSnapshot: string | null;
+  /** Vendor address spec §6: the seller address as printed on this document, one free-text block. */
+  vendorAddressSnapshot: string | null;
   vendorEntityKindSnapshot: BuyerEntityKind | null;
   receivedAt: string | null;
   inputVatClaimStatus: InputVatClaimStatus;
@@ -470,6 +478,10 @@ export type ExpenseDetail = ExpenseSummary & {
 export type ExpenseDraftReviewValues = {
   vendorNameSnapshot: string;
   vendorTaxIdSnapshot: string;
+  /** Vendor address spec §6/§11.2: as printed, ≤ 500 characters. '' means the document had none. */
+  vendorAddressSnapshot: string;
+  /** CON-8: five digits, or '' for สำนักงานใหญ่. '' is stored as null — never the string '00000'. */
+  vendorBranchCodeSnapshot: string;
   /** Shared by source drafts and linked certificates; preserve capture provenance. */
   businessPurpose?: string;
   originalBusinessPurpose?: string;
@@ -562,6 +574,8 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
   return {
     vendorNameSnapshot: source?.header.vendorName === null ? '' : (detail.vendorNameSnapshot ?? ''),
     vendorTaxIdSnapshot: detail.vendorTaxIdSnapshot ?? '',
+    vendorAddressSnapshot: detail.vendorAddressSnapshot ?? '',
+    vendorBranchCodeSnapshot: detail.vendorBranchCodeSnapshot ?? '',
     vendorEntityKindSnapshot: detail.vendorEntityKindSnapshot ?? '',
     vendorDocumentNumber: detail.vendorDocumentNumber ?? '',
     expenseDate: source ? source.header.expenseDate ?? ''
@@ -775,6 +789,11 @@ export function buildExpenseDraftReviewPayload(
     ].join(' · ') }),
     ...((!options.sourceDraft || values.vendorNameSnapshot.trim()) && { vendorNameSnapshot: values.vendorNameSnapshot.trim() }),
     vendorTaxIdSnapshot: taxIdDigits(values.vendorTaxIdSnapshot),
+    // Blank clears the column. `|| null` on purpose (CON-8/§6): the API stores what it is sent, and
+    // `''` or `'00000'` for "the reviewer left it empty" would make an empty field look like a
+    // typed head-office code to the vendor matcher.
+    vendorAddressSnapshot: values.vendorAddressSnapshot.trim() || null,
+    vendorBranchCodeSnapshot: values.vendorBranchCodeSnapshot.trim() || null,
     ...(values.vendorEntityKindSnapshot && { vendorEntityKindSnapshot: values.vendorEntityKindSnapshot }),
     vendorDocumentNumber: values.vendorDocumentNumber.trim(),
     ...((!options.sourceDraft || values.expenseDate) && { expenseDate: values.expenseDate }),
@@ -987,6 +1006,9 @@ export const AI_MISSING_FIELD_LABELS: Record<string, string> = {
 export const AI_REVIEW_FIELD_KEYS = {
   vendorNameSnapshot: ['vendor', 'vendorName'],
   vendorTaxIdSnapshot: ['vendorTaxId'],
+  // Vendor address spec §7 (D3 step two): the OCR does not emit `vendorAddress` yet. Registered now
+  // so the field wears the same "AI อ่านจากใบ" badge as every other read field the day it does.
+  vendorAddressSnapshot: ['vendorAddress'],
   expenseDate: ['expenseDate'],
   vendorDocumentNumber: ['documentNumber'],
   total: ['grandTotalAmount', 'amount'],

@@ -73,7 +73,8 @@ import {
   type LineSubstituteReceiptContinuationResult,
 } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { LineExpenseDraftConversationUseCase, type LineExpenseDraftConversationResult } from '../../../expenses/application/use-cases/line-expense-draft-conversation.use-case';
-import { splitLineExpenseDraftReply, isDeterministicLineExpenseDraftInput } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
+import { splitLineExpenseDraftReply, isDeterministicLineExpenseDraftInput, parseLineExpenseDraftContinuation, LINE_VENDOR_ADDRESS_PROMPT } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
+import { EXPENSE_SOURCE_DRAFT_KEY } from '../../../expenses/domain/logic/expense-source-draft.logic';
 import { InitSignatureUploadUseCase, CreateSignatureAssetUseCase, maySubmitSignature } from '../../../expenses/application/use-cases/signature-asset.use-case';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 import { lockFundingEvidence } from '../../../expenses/infrastructure/substitute-funding.guard';
@@ -1167,7 +1168,7 @@ export function formatPaypersReply(
   webBaseUrl: string | undefined,
   companyId: string,
   expenseId: string,
-  options: { acceptedAmounts?: ReceiptOcrApplyOutcome['acceptedAmounts']; hasDuplicate?: boolean; textOnly?: boolean; compact?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; chargeReconciliation?: { status: string; chargesApplied: number }; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus } = {},
+  options: { acceptedAmounts?: ReceiptOcrApplyOutcome['acceptedAmounts']; hasDuplicate?: boolean; textOnly?: boolean; compact?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; chargeReconciliation?: { status: string; chargesApplied: number }; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus; askVendorAddress?: boolean } = {},
 ): string {
   const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
   const amountValue = options.acceptedAmounts?.grandTotalAmount ?? options.fields?.grandTotalAmount ?? options.amount;
@@ -1232,6 +1233,12 @@ export function formatPaypersReply(
   }
   if (options.hasDuplicate) {
     parts.push('', '⚠️ พบไฟล์ที่อาจซ้ำกับรายการที่มีอยู่ – กรุณาตรวจสอบก่อนยืนยัน');
+  }
+  // Vendor-address §11.3: the one question this card may ask, and only when the draft conversation
+  // has an unretired ask on it — so a full tax invoice whose address could not be read is asked
+  // exactly once, and every other document (and every later card) says nothing about addresses.
+  if (options.askVendorAddress) {
+    parts.push('', LINE_VENDOR_ADDRESS_PROMPT);
   }
   // The total printed above is the DOCUMENT's own figure and nothing converted it, so a non-baht
   // document must say so here too (UAT 2026-08-29: $200.00 USD was recorded as 200 บาท). THB and an
@@ -6759,8 +6766,14 @@ export class ProcessLineWebhookUseCase {
         acceptedAmounts: { grandTotalAmount: expense.grandTotalAmount, vatAmount: expense.vatAmount, whtAmount: expense.whtAmount, netPayableAmount: expense.netPayableAmount, vatMode: expense.vatMode, discountAmount: expense.discountAmount },
         sourceDocumentType: expense.sourceDocumentType,
         categoryName: category?.name,
+        // §11.3: the draft conversation owns "already asked" — it retires the marker on the next
+        // turn, so a redelivered card repeats the summary without repeating the question.
+        askVendorAddress: parseLineExpenseDraftContinuation(
+          expense.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY],
+        )?.header.vendorAddressAsk === true && !expense.vendorAddressSnapshot,
         fields: { ...(summary?.recognizedFields as ReceiptOcrFieldResult | undefined),
           vendorName: expense.vendorNameSnapshot ?? undefined, documentNumber: expense.vendorDocumentNumber ?? undefined,
+          vendorAddress: expense.vendorAddressSnapshot ?? undefined,
           expenseDate: expense.expenseDate.toISOString().slice(0, 10),
           description: undefined, quantity: undefined, unitPrice: undefined,
           lines: expense.lines.filter(line => !line.chargeKind).map(line => ({ description: line.description, quantity: line.quantity,

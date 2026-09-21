@@ -595,6 +595,10 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'expense.update', 'expense.review', 'expense.confirm', 'expense.reject', 'expense.void', 'expense.delete',
     'expense.payment.record', 'expense.duplicate.resolve',
     'expense.category.manage', 'accounting.revenue_category.manage', 'expense.signature.self_manage', 'expense.signature.manage', 'expense.export',
+    // Vendor-address spec CON-2 / §12.1: an expense save auto-creates and fills counterparties, and
+    // the toast that announces it links to the counterparty page. ADMIN held NO counterparty key at
+    // all, so that link was a dead end for the role that works expenses owner-equal.
+    'accounting.counterparty.read', 'accounting.counterparty.manage',
     // Item 13 banking – Admin can read and manage accounts only
     'bank.account.read', 'bank.account.manage',
     'bank.statement.read', 'bank.match.read',

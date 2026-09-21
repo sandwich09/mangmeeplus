@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { IconButton } from '@/common/components/button';
 import type { ToastItem, ToastTone } from './toast.model';
 
@@ -29,7 +30,15 @@ export function Toast({ item, onDismiss }: { item: ToastItem; onDismiss: () => v
       onClick={onDismiss}
     >
       <span aria-hidden="true" className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[13px] ${TONE_CHIP[item.tone]}`}>{TONE_ICON[item.tone]}</span>
-      <span className="min-w-0 break-words pt-0.5 leading-5">{item.message}</span>
+      <span className="min-w-0 break-words pt-0.5 leading-5">
+        {item.message}
+        {item.action && (
+          <>
+            {' · '}
+            <Link href={item.action.href} className="underline underline-offset-2">{item.action.label}</Link>
+          </>
+        )}
+      </span>
       <IconButton
         type="button"
         size="sm"

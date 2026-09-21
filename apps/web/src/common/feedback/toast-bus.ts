@@ -1,8 +1,10 @@
 import { apiErrorMessage } from '../api/api-error-message';
+import type { ToastAction } from '../components/toast/toast.model';
 
 export type ToastEvent = {
   tone: 'success' | 'warning' | 'error';
   message: string;
+  action?: ToastAction;
 };
 
 const listeners = new Set<(event: ToastEvent) => void>();

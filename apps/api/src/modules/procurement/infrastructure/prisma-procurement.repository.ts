@@ -18,6 +18,7 @@ import { deriveWhtIncomeBase } from '../../tax/domain/logic/wht-report.logic';
 import { civilDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 import { branchScopeWhere, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
 import { resolveTransactionBranchId, requireTransactionBranchId } from '../../data-model-core/application/services/transaction-branch';
+import { buildCounterpartyAddressV2, counterpartyAddressText } from '../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
 import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
 
 export type ProcurementDocumentKind = 'PURCHASE_REQUEST' | 'PURCHASE_ORDER' | 'GOODS_RECEIPT' | 'VENDOR_BILL' | 'SUPPLIER_PAYMENT';
@@ -132,6 +133,15 @@ export class PrismaProcurementRepository {
     },
     createdByUserId: string,
   ): Promise<SupplierRecord> {
+    // CON-9: `addressJson` here is whatever shape the supplier form posted, and it used to be
+    // copied straight into `billingAddressJson` — the column the counterparty screen and every
+    // printed document read. Route it through the v2 helper so the column holds one shape with a
+    // provenance saying where it came from. Readers still tolerate the legacy shape
+    // (`counterpartyAddressText`), because every row written before today still has it.
+    const addressText = counterpartyAddressText(data.addressJson ?? null);
+    const billingAddressJson = addressText
+      ? buildCounterpartyAddressV2({ addressText, source: 'PROCUREMENT', userId: createdByUserId, at: new Date().toISOString() })
+      : undefined;
     return this.prisma.client.$transaction(async (tx) => {
       const counterparty = await tx.accountingCounterparty.create({
         data: {
@@ -143,7 +153,7 @@ export class PrismaProcurementRepository {
           branchCode: data.branchCode,
           email: data.email,
           phone: data.phone,
-          billingAddressJson: data.addressJson as any,
+          billingAddressJson: billingAddressJson as any,
           createdByUserId,
         },
       });

@@ -10,6 +10,7 @@ import {
   RECEIPT_ADDITIONAL_CHARGE_KINDS,
   RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE,
   todayCivilDate,
+  type BuyerEntityKind,
   type ExpenseChargeSummary,
   type ExpenseDocumentDateStatus,
   type ExpenseLineChargeKind,
@@ -19,6 +20,7 @@ import {
   type ExpenseWhtCapture,
   type ReceiptOcrAdditionalCharge,
   type ReceiptOcrFieldResult,
+  type VendorCounterpartyAutoSaveResult,
   validateExpenseWhtInput,
 } from '@watchdog-bms/contracts';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
@@ -26,6 +28,7 @@ import { reconcileExpenseDuplicateCandidates } from './expense-duplicate-detecti
 import { calcDocumentTotals, calcLineTotals } from '../../domain/logic/expense-totals.logic';
 import { reconcileExpenseVat, vatSourceFromSnapshot } from '../../domain/logic/expense-vat-reconciliation.logic';
 import { applyExpenseWhtInput, expenseWhtLineRate } from '../../domain/logic/expense-wht-input.logic';
+import { EnsureVendorCounterpartyFromExpenseUseCase } from '../../../accounting-documents/application/use-cases/ensure-vendor-counterparty-from-expense.use-case';
 
 export function toMoney4(value: string | undefined | null): string {
   const n = Number(String(value ?? '').replace(/,/g, ''));
@@ -937,7 +940,11 @@ type AppliedReceiptResult = AppliedReceiptCategory & {
 /** The applied result, or — when the record moved under the OCR round trip — the same shape with
  *  `staleSkipped` set and nothing written. One shape rather than a union so every existing caller
  *  and fixture keeps compiling; `isStaleOcrApply` is the only correct way to read it. */
-export type ReceiptOcrApplyOutcome = { candidatesCreated: number; staleSkipped?: true; committedUpdatedAt?: Date } & AppliedReceiptResult;
+export type ReceiptOcrApplyOutcome = {
+  candidatesCreated: number; staleSkipped?: true; committedUpdatedAt?: Date;
+  /** §7: the LINE summary adds one line for case a ("บันทึกร้านนี้ลงทะเบียนคู่ค้าแล้ว"). */
+  vendorCounterpartyAutoSave?: VendorCounterpartyAutoSaveResult;
+} & AppliedReceiptResult;
 
 export function isStaleOcrApply(outcome: ReceiptOcrApplyOutcome): boolean {
   return outcome.staleSkipped === true;
@@ -947,9 +954,12 @@ export function isStaleOcrApply(outcome: ReceiptOcrApplyOutcome): boolean {
 export class ReceiptOcrApplyService {
   private readonly logger = new Logger(ReceiptOcrApplyService.name);
 
+  // Optional for the same reason as `UpdateExpenseDraftUseCase`: the registry is a side effect, and
+  // the many bare-constructed specs of this service must keep applying receipts without it.
   constructor(
     private readonly prisma: PrismaService,
     private readonly expenses: PrismaExpenseRepository,
+    private readonly ensureVendorCounterparty?: EnsureVendorCounterpartyFromExpenseUseCase,
   ) {}
 
   /**
@@ -1008,7 +1018,8 @@ export class ReceiptOcrApplyService {
         // Read inside the transaction that produced these facts. A later read could bless a
         // human edit with an old OCR summary; callers must fence their follow-up writes.
         const saved = await tx.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId: ctx.companyId }, select: { updatedAt: true } });
-        return { ...result, candidatesCreated: duplicate.openCandidates, committedUpdatedAt: saved.updatedAt };
+        return { ...result, candidatesCreated: duplicate.openCandidates, committedUpdatedAt: saved.updatedAt,
+          ...(autoSave && autoSave.result.case !== 'SKIPPED' ? { vendorCounterpartyAutoSave: autoSave.result } : {}) };
       };
       const currentExpense = await tx.expenseRecord.findFirst({
         where: { id: expenseId, companyId: ctx.companyId },
@@ -1018,6 +1029,10 @@ export class ReceiptOcrApplyService {
           expenseDate: true, aiVerificationSummaryJson: true,
           primaryAttachmentId: true,
           vendorEntityKindSnapshot: true,
+          // For the vendor registry auto-save below: what the record already carries, so a re-read
+          // that writes nothing new still matches against the right shop.
+          captureSource: true, sourceReimbursementRequestId: true, vendorCounterpartyId: true,
+          vendorNameSnapshot: true, vendorTaxIdSnapshot: true, vendorBranchCodeSnapshot: true, vendorAddressSnapshot: true,
           grandTotalAmount: true, vatAmount: true, whtAmount: true, netPayableAmount: true, vatMode: true,
           discountAmount: true,
           updatedAt: true,
@@ -1062,13 +1077,49 @@ export class ReceiptOcrApplyService {
         reviewReasons = reviewReasons.filter(reason => reason !== RECEIPT_REVIEW_REASONS.dateUnverified && reason !== RECEIPT_REVIEW_REASONS.dateImplausible);
         data['aiVerificationStatus'] = reviewReasons.length > 0 ? 'NEEDS_REVIEW' : 'PARTIAL';
       }
+      /**
+       * Vendor-address §7 (Phase 4): the reader's address fills the field only while it is still
+       * empty. The `reviewedAt` filter just below protects a record somebody already reviewed; a
+       * draft is not reviewed yet, so without this a re-read would overwrite the address the payer
+       * typed into the LINE question or the review form. `buyerAsPrinted` is deliberately NOT
+       * written anywhere: it rides `aiVerifiedFieldsJson` as provenance and Slice 2 owns comparing it.
+       */
+      if (completed.vendorAddress && !currentExpense.vendorAddressSnapshot) {
+        data['vendorAddressSnapshot'] = completed.vendorAddress;
+      }
       // Re-reading a receipt must not replace a reviewer's chosen identity.
       if (currentExpense.reviewedAt) {
-        for (const key of ['vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorDocumentNumber', 'expenseDate']) delete data[key];
+        // CON-5: `vendorAddressSnapshot` belongs in this set from the day the column exists — a
+        // re-read must not delete an address a reviewer typed once OCR starts reading one (Phase 4).
+        for (const key of ['vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorAddressSnapshot', 'vendorDocumentNumber', 'expenseDate']) delete data[key];
       } else if (!currentExpense.vendorEntityKindSnapshot) {
         const kind = receiptPayeeEntityKind(completed.vendorName, completed.vendorIdentityEvidence);
         if (kind && kind === completed.vendorEntityKind) data['vendorEntityKindSnapshot'] = kind;
       }
+      /**
+       * D4/§7 from the LINE/OCR side. Placed AFTER the CON-5 protected-field filtering, so the
+       * values it matches on are the ones this apply will actually leave on the record, and before
+       * the write, so `vendorCounterpartyId` (GAP-4) and the registry's taxpayer class (CON-7) land
+       * in the same statement.
+       *
+       * The registry write runs on the base client, not on `tx`: a failure inside this transaction
+       * would abort the receipt apply, and §8 says the expense always wins. The cost is that a
+       * later rollback here leaves a counterparty row behind — harmless, since the next save links
+       * to it instead of making another.
+       */
+      const autoSave = await this.ensureVendorCounterparty?.execute(ctx, {
+        expenseId,
+        captureSource: currentExpense.captureSource,
+        sourceReimbursementRequestId: currentExpense.sourceReimbursementRequestId,
+        vendorCounterpartyId: currentExpense.vendorCounterpartyId,
+        vendorName: (data['vendorNameSnapshot'] as string | undefined) ?? currentExpense.vendorNameSnapshot,
+        vendorTaxId: (data['vendorTaxIdSnapshot'] as string | undefined) ?? currentExpense.vendorTaxIdSnapshot,
+        vendorBranchCode: (data['vendorBranchCodeSnapshot'] as string | undefined) ?? currentExpense.vendorBranchCodeSnapshot,
+        vendorAddressText: (data['vendorAddressSnapshot'] as string | undefined) ?? currentExpense.vendorAddressSnapshot,
+        vendorEntityKind: (data['vendorEntityKindSnapshot'] as BuyerEntityKind | undefined) ?? currentExpense.vendorEntityKindSnapshot,
+      });
+      if (autoSave?.linkCounterpartyId) data['vendorCounterpartyId'] = autoSave.linkCounterpartyId;
+      if (autoSave?.fillEntityKind && !data['vendorEntityKindSnapshot']) data['vendorEntityKindSnapshot'] = autoSave.fillEntityKind;
       const priorWht = currentExpense.whtInputJson as ExpenseWhtCapture | null;
       // A rerun may change line order/count. Never attach reviewed tax meaning to a new OCR row
       // by index, or erase a saved whole-bill amount/mixed historical rates with provider output.
