@@ -593,14 +593,15 @@ export class BillingService {
     const allowedActions: BillingAction[] = [];
     const renewalMode = (account?.renewalMode !== 'NONE' ? account?.renewalMode : account?.baseSubscriptionId ? 'CARD_AUTO' : 'NONE') as BillingStatus['renewalMode'];
     const eligible = companyCanBuy(settings?.policy ?? null, company.id);
+    const purchaseReady = featureReady && purchaseSource !== 'PAID_OTHER_MODE' && purchaseSource !== 'SOURCE_INCONSISTENT';
     let policyReady = false;
     if (settings?.policy) { try { assertPolicyReady(settings.policy); policyReady = true; } catch { /* Keep incomplete policies closed. */ } }
-    if (settings?.policy && policyReady && !held && featureReady && purchaseSource !== 'PAID_OTHER_MODE' && purchaseSource !== 'SOURCE_INCONSISTENT') {
-      if (!account?.baseSubscriptionId && !account?.activeAttemptId && !account?.activeCollectionOperationId && settings.gates.new_sales && eligible) allowedActions.push('new_sales');
-      if (account?.baseSubscriptionId && !account.activeAttemptId && !account.activeCollectionOperationId &&
+    if (settings?.policy && policyReady && !held) {
+      if (purchaseReady && !account?.baseSubscriptionId && !account?.activeAttemptId && !account?.activeCollectionOperationId && settings.gates.new_sales && eligible) allowedActions.push('new_sales');
+      if (purchaseReady && account?.baseSubscriptionId && !account.activeAttemptId && !account.activeCollectionOperationId &&
         ['canceled', 'incomplete_expired'].includes(account.subscriptionState) && account.paidThrough && account.paidThrough <= new Date() &&
         !(account.graceEndsAt && account.graceEndsAt > new Date()) && settings.gates.new_sales && eligible) allowedActions.push('new_sales');
-      if (account?.baseSubscriptionId && !account.activeAttemptId && !account.activeCollectionOperationId && account.subscriptionState === 'active' && !account.cancelAtPeriodEnd &&
+      if (purchaseReady && account?.baseSubscriptionId && !account.activeAttemptId && !account.activeCollectionOperationId && account.subscriptionState === 'active' && !account.cancelAtPeriodEnd &&
           account.paidThrough && account.paidThrough > new Date() && !account.graceEndsAt && settings.gates.new_sales && settings.gates.plan_changes &&
           Object.keys(settings.policy.zeroPriceIds ?? {}).length && eligible) allowedActions.push('new_sales');
       if (renewalMode === 'CARD_AUTO' && account?.baseSubscriptionId && account.customerId && settings.gates.portal_payment_method) allowedActions.push('portal_payment_method');
@@ -609,7 +610,7 @@ export class BillingService {
       ['active', 'past_due', 'unpaid', ...(renewalMode === 'PROMPTPAY_RENEW' ? ['trialing'] : [])].includes(account.subscriptionState) &&
       settings.gates.portal_cancel_subscription) allowedActions.push('portal_cancel_subscription');
     const pending = account?.pendingPlanChangeId ? await this.collection.get(context, account.pendingPlanChangeId) : null;
-    if (settings?.gates.plan_changes && (eligible || pending) && account?.paidThrough && account.paidThrough.getTime() > Date.now()+600000 && !account.cancelAtPeriodEnd && !account.graceEndsAt &&
+    if (purchaseReady && settings?.gates.plan_changes && (eligible || pending) && account?.paidThrough && account.paidThrough.getTime() > Date.now()+600000 && !account.cancelAtPeriodEnd && !account.graceEndsAt &&
       !held && !account.activeAttemptId && !account.activeCollectionOperationId && account.subscriptionState === 'active' &&
       renewalMode === 'CARD_AUTO') allowedActions.push('plan_changes');
     const snapshot = invoice?.offerSnapshot as unknown as BillingQuote['offer'] | undefined;
