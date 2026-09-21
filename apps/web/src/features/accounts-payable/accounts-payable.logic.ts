@@ -80,3 +80,31 @@ export function whtLinkErrorOutcome(error: unknown): WhtLinkErrorOutcome {
     reload: false,
   };
 }
+
+/**
+ * Vendor-address spec §10: what the handoff detail should show for "ที่อยู่ผู้รับเงิน", and whether
+ * this viewer may type one.
+ *
+ * The typed value is read BEFORE the frozen prefill, which is the whole point of storing it beside
+ * the snapshot: `prefillSnapshotHash` freezes `prefill`, so an address supplied afterwards can only
+ * live next to it, and a reader that checked the snapshot first would keep showing "ไม่มีข้อมูล" on
+ * a handoff that has one.
+ *
+ * `canType` needs the mutation permission AND a handoff still awaiting its document — the server
+ * refuses afterwards, and offering a field that is certain to be refused is the silent dead end D5
+ * forbids. A viewer without the permission just reads the same missing-value wording as every other
+ * field; it is never a disabled control.
+ */
+export type WhtHandoffPayeeAddressView = { text: string | null; canType: boolean };
+
+export function whtHandoffPayeeAddress(
+  handoff: {
+    status?: string | null;
+    payeeAddress?: string | null;
+    prefill?: { payeeSnapshot?: { address?: string | null } | null } | null;
+  } | null | undefined,
+  canLink: boolean,
+): WhtHandoffPayeeAddressView {
+  const text = handoff?.payeeAddress?.trim() || handoff?.prefill?.payeeSnapshot?.address?.trim() || null;
+  return { text, canType: !text && canLink && handoff?.status === 'REQUIRED' };
+}

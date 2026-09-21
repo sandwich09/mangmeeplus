@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAccountsPayableTab, visibleAccountsPayableTabs, whtLinkErrorOutcome } from './accounts-payable.logic';
+import { parseAccountsPayableTab, visibleAccountsPayableTabs, whtHandoffPayeeAddress, whtLinkErrorOutcome } from './accounts-payable.logic';
 
 describe('visibleAccountsPayableTabs', () => {
   it('keeps the page order for every readable AP panel', () => {
@@ -109,5 +109,42 @@ describe('whtLinkErrorOutcome', () => {
     assert.equal(whtLinkErrorOutcome({ status: 403 }).reload, false);
     assert.match(whtLinkErrorOutcome({ statusCode: 400 }).message, /เลขที่หนังสือรับรอง/);
     assert.match(whtLinkErrorOutcome({ status: 400 }).message, /เลขที่หนังสือรับรอง/);
+  });
+});
+
+describe('whtHandoffPayeeAddress', () => {
+  const frozen = { status: 'REQUIRED', prefill: { payeeSnapshot: { address: 'ที่อยู่ในสแนปช็อต' } } };
+
+  it('prefers the typed address over the frozen snapshot', () => {
+    const view = whtHandoffPayeeAddress({ ...frozen, payeeAddress: 'ที่อยู่ที่พิมพ์ภายหลัง' }, true);
+    assert.equal(view.text, 'ที่อยู่ที่พิมพ์ภายหลัง');
+    // Nothing left to supply, so no field — the snapshot value is a fallback, not a competitor.
+    assert.equal(view.canType, false);
+  });
+
+  it('falls back to the frozen snapshot when nothing has been typed', () => {
+    const view = whtHandoffPayeeAddress(frozen, true);
+    assert.equal(view.text, 'ที่อยู่ในสแนปช็อต');
+    assert.equal(view.canType, false);
+  });
+
+  it('offers the field only to a viewer who may link the certificate', () => {
+    const missing = { status: 'REQUIRED', prefill: { payeeSnapshot: { address: null } } };
+    assert.equal(whtHandoffPayeeAddress(missing, true).canType, true);
+    // Read-only viewer: the same "ไม่มีข้อมูล" reading as every other field, not a dead control.
+    assert.equal(whtHandoffPayeeAddress(missing, false).canType, false);
+    assert.equal(whtHandoffPayeeAddress(missing, false).text, null);
+  });
+
+  it('withdraws the field once the handoff is no longer awaiting a document', () => {
+    for (const status of ['EXTERNAL_LINKED', 'SYSTEM_ISSUED', 'CANCELLED']) {
+      assert.equal(whtHandoffPayeeAddress({ status, prefill: { payeeSnapshot: { address: null } } }, true).canType, false, status);
+    }
+  });
+
+  it('treats blank and missing values the same, and never throws on a legacy row', () => {
+    assert.deepEqual(whtHandoffPayeeAddress({ status: 'REQUIRED', payeeAddress: '   ' }, true), { text: null, canType: true });
+    assert.deepEqual(whtHandoffPayeeAddress(null, true), { text: null, canType: false });
+    assert.deepEqual(whtHandoffPayeeAddress({ status: 'REQUIRED' }, false), { text: null, canType: false });
   });
 });

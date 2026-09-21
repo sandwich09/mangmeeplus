@@ -9,7 +9,11 @@
 // Field list is the UNION of the contract type and what apps/web actually sends — under
 // `whitelist + forbidNonWhitelisted` an extra field is a 400 and a missing one is silently stripped.
 import { IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
-import type { LinkExternalWhtCertificateDto as LinkExternalWhtCertificateContract } from '@watchdog-bms/contracts';
+import type {
+  LinkExternalWhtCertificateDto as LinkExternalWhtCertificateContract,
+  SetWhtHandoffPayeeAddressDto as SetWhtHandoffPayeeAddressContract,
+} from '@watchdog-bms/contracts';
+import { WHT_HANDOFF_PAYEE_ADDRESS_MAX } from '@watchdog-bms/contracts';
 import { WHT_LINK_ISSUED_DATE, WHT_LINK_LIMITS } from '../../domain/logic/wht-link-evidence.logic';
 
 // Bounds come from the shared validator the use case also runs, so the two layers cannot drift.
@@ -32,4 +36,13 @@ export class LinkExternalWhtCertificateDto implements LinkExternalWhtCertificate
   issuedDate!: string;
 
   @IsString() @IsOptional() @MaxLength(WHT_LINK_LIMITS.note) note?: string;
+}
+
+/**
+ * §10: the payee address typed on the handoff screen. A DTO class for the same reason as the link
+ * body — `forbidNonWhitelisted` would otherwise let a caller post anything, and the use case
+ * re-checks the bounds so an internal caller that skips the pipe gets the identical rules.
+ */
+export class SetWhtHandoffPayeeAddressDto implements SetWhtHandoffPayeeAddressContract {
+  @IsString() @IsNotEmpty() @MaxLength(WHT_HANDOFF_PAYEE_ADDRESS_MAX) payeeAddress!: string;
 }
