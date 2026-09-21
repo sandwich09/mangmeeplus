@@ -196,7 +196,7 @@ grep -Fq "':(exclude)docs/**'" "$ci"
 grep -Fq "github.event_name == 'workflow_call'" "$ci"
 grep -Fq "github.event_name == 'workflow_dispatch'" "$ci"
 grep -Fq "inputs.validated_ci_run_id != ''" "$ci"
-test "$(grep -Fc "inputs.validated_ci_run_id == ''" "$ci")" -eq 10
+test "$(grep -Fc "inputs.validated_ci_run_id == ''" "$ci")" -eq 11
 # Gate jobs run independently, but neither publisher may bypass their result.
 grep -Fq 'shard: [1, 2, 3, 4, 5, 6, 7, 8]' "$ci"
 grep -Fq 'NODE_OPTIONS: --test-shard=${{ matrix.shard }}/8' "$ci"
@@ -205,6 +205,7 @@ for gate in unit-tests acceptance release-contracts; do
   test "$(grep -Fc "      - $gate" "$ci")" -eq 2
   test "$(grep -Fc "needs.$gate.result == 'success' &&" "$ci")" -eq 2
 done
+test "$(grep -Fc "needs.typecheck.result == 'success' &&" "$ci")" -eq 2
 # The billing journeys left the pull-request gate for the on-demand extended suite; they must not vanish.
 grep -Fq 'suite: [backend, customer, operations]' "$repo_root/.github/workflows/extended-tests.yml"
 grep -Fq '.head_sha == $sha' "$ci"

@@ -1,6 +1,7 @@
 # Agent Memory: ci-fast-pr-gate
 
-Status: Implemented on branch `ci/fast-pr-gate`; wall-clock not yet measured on a real PR run.
+Status: PR #677. First CI run 35561943019: 3.5 min wall-clock (was ~24); every gate green except
+Release Contracts (image), which lacked `prisma generate` — fixed, and Typecheck split into its own job.
 Owner: repo owner (requested 2026-09-21: pull-request CI ≤ 3 minutes, keep only what cannot be skipped).
 Scope: `.github/workflows/ci.yml`, new `.github/workflows/extended-tests.yml`, `recover-release-intent.yml`
 fallback step list, `infra/docker/production-image-security.spec.sh`, `apps/api/src/spec-suite-coverage.spec.ts`,
@@ -25,8 +26,14 @@ Decisions:
   TS7 was slower on this codebase). Local `pnpm typecheck` is unchanged (TypeScript 5), per the package.json rule.
   TS7 lives in its own workspace package so no Dockerfile installs it and root `tsc` stays 5.9.
 
+Measured (run 35561943019): Typecheck and Test 3.2 min (Typecheck 72 s + release recovery 35 s → split so they
+run in parallel), Unit Tests 1.7–3.1 min (tests 59–83 s; one shard lost 71 s to a slow `pnpm install`),
+Acceptance 2.5, Migrations and Boot 1.8, Release Contracts runtime 1.0 / image 3.1 (+prep).
+
 Open questions:
-- Real CI timing per job; rebalance shard count or move A5/Step 0 if any job exceeds ~2.7 min.
+- Re-measure after the Typecheck split; rebalance shards if a job still exceeds ~2.7 min.
+- workflow_dispatch only lists a workflow that exists on the default branch (main): Extended Tests can be run
+  by hand once promoted.
 - ci.yml / recover-release-intent.yml are controller files: promote the same blobs to main before the next
   all-target UAT deploy (deploy-uat requires source and caller ci.yml blobs to match).
 

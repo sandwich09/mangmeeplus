@@ -343,6 +343,8 @@ jobs:
               and .path == ".github/workflows/ci.yml"
             ' >/dev/null
 
+  # The name is kept because recover-release-intent looks this job up for the PostgreSQL release-recovery
+  # proof; typechecking runs in parallel in the Typecheck job.
   typecheck-and-test:
     name: Typecheck and Test
     if: needs.resolve-source.outputs.code_changed == 'true' && inputs.validated_ci_run_id == ''
@@ -398,29 +400,6 @@ jobs:
           bash infra/security/production-readiness-workflow-v2.spec.sh
           node infra/security/sync-production-maintenance-release-pins.mjs --check
           git diff --check HEAD^ HEAD
-      # TypeScript 7 (packages/typescript-native) checks api and web; the 2-vCPU runner spent ~3 min
-      # in TypeScript 5 on api alone. Single-threaded: its parallel checkers contend on this codebase.
-      # The other packages stay on their own `typecheck` scripts.
-      - name: Typecheck
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-        run: |
-          tsc7=packages/typescript-native/node_modules/.bin/tsc
-          "$tsc7" -p apps/api/tsconfig.typecheck.json --singleThreaded &
-          api=$!
-          pnpm --filter '!@watchdog-bms/api' --filter '!@watchdog-bms/web' -r --if-present typecheck
-          pnpm --filter @watchdog-bms/web exec next typegen
-          "$tsc7" -p apps/web/tsconfig.typecheck.json --singleThreaded
-          wait "$api"
-      # The type system cannot see this one: an `@Injectable()` class inheriting its constructor
-      # from an undecorated base typechecks perfectly, passes every spec (tsx emits no decorator
-      # metadata, so a spec cannot even ask), and boots (a zero-dependency class resolves fine) —
-      # then every injected field is undefined at the first call. Only the swc emit shows it, so
-      # this reads the swc emit. ~1s, no build artifacts.
-      - name: Check Nest providers carry constructor metadata in the swc build
-        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
-        run: node apps/api/scripts/check-di-metadata.mjs
       - name: Typecheck and test durable release recovery against PostgreSQL
         if: needs.resolve-source.outputs.release_controller_only != 'true'
         env:
@@ -444,6 +423,51 @@ jobs:
           path: release/agentcore/
           if-no-files-found: error
           retention-days: 90
+
+  typecheck:
+    name: Typecheck
+    if: >-
+      needs.resolve-source.outputs.code_changed == 'true' &&
+      needs.resolve-source.outputs.recovery_only != 'true' &&
+      needs.resolve-source.outputs.release_controller_only != 'true' &&
+      inputs.validated_ci_run_id == ''
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @watchdog-bms/contracts build
+      - run: pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+      # TypeScript 7 (packages/typescript-native) checks api and web; the 2-vCPU runner spent ~3 min
+      # in TypeScript 5 on api alone. Single-threaded: its parallel checkers contend on this codebase.
+      # The other packages stay on their own `typecheck` scripts.
+      - name: Typecheck
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          tsc7=packages/typescript-native/node_modules/.bin/tsc
+          "$tsc7" -p apps/api/tsconfig.typecheck.json --singleThreaded &
+          api=$!
+          pnpm --filter '!@watchdog-bms/api' --filter '!@watchdog-bms/web' -r --if-present typecheck
+          pnpm --filter @watchdog-bms/web exec next typegen
+          "$tsc7" -p apps/web/tsconfig.typecheck.json --singleThreaded
+          wait "$api"
+      # The type system cannot see this one: an `@Injectable()` class inheriting its constructor
+      # from an undecorated base typechecks perfectly, passes every spec (tsx emits no decorator
+      # metadata, so a spec cannot even ask), and boots (a zero-dependency class resolves fine) —
+      # then every injected field is undefined at the first call. Only the swc emit shows it, so
+      # this reads the swc emit. ~1s, no build artifacts.
+      - name: Check Nest providers carry constructor metadata in the swc build
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        run: node apps/api/scripts/check-di-metadata.mjs
 
   unit-tests:
     name: Unit Tests (${{ matrix.shard }}/8)
@@ -556,6 +580,8 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @watchdog-bms/contracts build
+      - run: pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
       - run: bash infra/docker/production-image-security.spec.sh
         if: matrix.part == 'image'
       - name: Test legal release evidence gates
@@ -762,6 +788,7 @@ jobs:
       needs.resolve-source.result == 'success' &&
       (inputs.validated_ci_run_id != '' ||
       (needs.typecheck-and-test.result == 'success' &&
+      needs.typecheck.result == 'success' &&
       needs.unit-tests.result == 'success' &&
       needs.acceptance.result == 'success' &&
       needs.release-contracts.result == 'success' &&
@@ -773,6 +800,7 @@ jobs:
     needs:
       - resolve-source
       - typecheck-and-test
+      - typecheck
       - unit-tests
       - acceptance
       - release-contracts
@@ -977,6 +1005,7 @@ jobs:
       needs.resolve-source.result == 'success' &&
       (inputs.validated_ci_run_id != '' ||
       (needs.typecheck-and-test.result == 'success' &&
+      needs.typecheck.result == 'success' &&
       needs.unit-tests.result == 'success' &&
       needs.acceptance.result == 'success' &&
       needs.release-contracts.result == 'success' &&
@@ -988,6 +1017,7 @@ jobs:
     needs:
       - resolve-source
       - typecheck-and-test
+      - typecheck
       - unit-tests
       - acceptance
       - release-contracts

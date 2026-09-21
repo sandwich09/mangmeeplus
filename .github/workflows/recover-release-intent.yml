@@ -221,7 +221,7 @@ jobs:
                 $job.conclusion == "success"
                 and ([$job.steps[] | select(.name == "Test AgentCore release controller without application TypeScript"
                   and .conclusion == "success")] | length) == 1
-                and (["Run pnpm install --frozen-lockfile", "Typecheck",
+                and (["Run pnpm install --frozen-lockfile",
                   "Typecheck and test durable release recovery against PostgreSQL"]
                   | all(. as $name | ([$job.steps[] | select(.name == $name and .conclusion == "skipped")] | length) == 1))
               ))
