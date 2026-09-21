@@ -1,0 +1,15 @@
+// CI typecheck with TypeScript 7 (packages/typescript-native). TS7 removed `baseUrl` and node10
+// resolution, so this restates the path aliases relative to this file; everything else is tsconfig.json.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "../..",
+    "baseUrl": null,
+    "moduleResolution": "bundler",
+    "paths": {
+      "@watchdog-bms/contracts": ["../../packages/contracts/src/index.ts"],
+      "@watchdog-bms/config": ["../../packages/config/src/index.ts"]
+    }
+  }
+}
