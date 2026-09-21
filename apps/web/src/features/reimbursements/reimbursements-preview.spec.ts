@@ -4,7 +4,10 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ReimbursementsPages.tsx'), 'utf8');
+// The drawer's sections and the preview lifecycle live in ReimbursementDetailSections, shared with the journey page.
+const source = ['ReimbursementsPages.tsx', 'ReimbursementDetailSections.tsx']
+  .map((file) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), file), 'utf8'))
+  .join('\n');
 
 describe('reimbursement self-service entry', () => {
   it('uses the effective create permission on every screen width, with matching unavailable-create guidance', () => {
@@ -46,7 +49,7 @@ describe('reimbursement policy role-picker contract', () => {
   it('uses a constrained role select with human outcome copy and no holder-count helper', () => {
     assert.match(source, /<ThemedSelect[\s\S]*?id="reimbursement-approver-role"/);
     assert.match(source, /ส่งใบเบิกให้ใครอนุมัติ\?/);
-    assert.match(source, /ยอดต่ำกว่า \{formatMoney\(form\.approvalRequiredFromAmount\)\} บาท:/);
+    assert.match(source, /policyDecisionPreview\(\{\s*approvalRequiredFromAmount: form\.approvalRequiredFromAmount/);
     assert.doesNotMatch(source, /บทบาทผู้อนุมัติเริ่มต้น/);
     assert.doesNotMatch(source, /บทบาทนี้มีผู้รับผิดชอบ/);
     assert.doesNotMatch(source, /eligibleApproverCount/);

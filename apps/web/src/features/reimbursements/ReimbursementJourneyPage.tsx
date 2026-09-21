@@ -1,0 +1,345 @@
+'use client';
+
+// หน้า journey: one claim as 4–5 steps with the current step's actions (spec §5, §6, §12).
+// Every action still goes through its own endpoint; this page re-reads the claim afterwards.
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
+import { ThemedSteps, type ThemedStepState } from '@/common/components/steps/ThemedSteps';
+import { EmptyState, ErrorState, ForbiddenState, LoadingState } from '@/common/components/state';
+import { useToast } from '@/common/components/toast';
+import { ErrorBanner, btnClass, ghostClass } from '../expenses/ExpensesUi';
+import {
+  approveReimbursement, cancelReimbursement, financeReviewReimbursement, getReimbursement, rejectReimbursement,
+  reopenReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadSignedClaimFormCopy,
+  voidReimbursementPayment,
+} from './reimbursements.api';
+import { currentDeskText, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
+import {
+  activeJourneyStep, buildJourneySteps, diffApprovalFields, errorText, formatMoney, isMissingSavedSignatureError,
+  isStaleApprovalError, type JourneyAction, type JourneyStepState,
+} from './reimbursements.logic';
+import {
+  ClaimDetailSections, ClaimSummaryCard, MissingSavedSignatureModal, PaymentForm, ReasonDialog, RejectDialog,
+  StaleApprovalDialog, StatusBadge, VoidPaymentDialog, financeActionLabel, useClaimDocumentPreview,
+} from './ReimbursementDetailSections';
+
+const STEPPER_STATE: Record<JourneyStepState, ThemedStepState> = {
+  done: 'done', current: 'current', upcoming: 'upcoming', 'needs-fix': 'attention', ended: 'attention',
+};
+
+const ACTION_LABELS: Record<JourneyAction, string> = {
+  submit: 'ส่งอนุมัติ', edit: 'แก้ไขคำขอ', cancel: 'ยกเลิกคำขอ', reopen: 'แก้ไขและส่งใหม่',
+  approve: 'อนุมัติ', reject: 'ปฏิเสธ',
+  'finance-approve': 'อนุมัติจ่าย', 'finance-return': 'ส่งกลับให้แก้ไข', 'finance-block': 'ระงับการจ่าย',
+  pay: 'บันทึกจ่าย', sign: 'ลงนามในใบเบิก', print: 'พิมพ์ใบเบิก',
+  'attach-signed-copy': 'แนบสำเนาที่เซ็นแล้ว', 'void-payment': 'ยกเลิกการจ่าย',
+};
+
+type ReasonAction = 'cancel' | 'finance-return' | 'finance-block';
+const REASON_DIALOGS: Record<ReasonAction, { title: string; description: string; confirmLabel: string; success: string; danger?: boolean }> = {
+  cancel: {
+    title: 'ยกเลิกคำขอ', confirmLabel: 'ยืนยันยกเลิกคำขอ', success: 'ยกเลิกคำขอเรียบร้อยแล้ว', danger: true,
+    description: 'ระบุเหตุผล ระบบจะปิดคำขอและยกเลิกรายการที่เกี่ยวข้อง คำขอนี้จะนำกลับมาใช้ต่อไม่ได้',
+  },
+  'finance-return': {
+    title: 'ส่งกลับให้แก้ไข', confirmLabel: 'ส่งกลับให้แก้ไข', success: 'ส่งใบเบิกกลับให้แก้ไขแล้ว',
+    description: 'ระบุข้อมูลที่ต้องแก้ไข ใบเบิกจะกลับเป็นฉบับร่างและต้องผ่านการอนุมัติใหม่',
+  },
+  'finance-block': {
+    title: 'ระงับการจ่าย', confirmLabel: 'ระงับการจ่าย', success: 'ระงับการจ่ายแล้ว', danger: true,
+    description: 'ระบุเหตุผล ใบเบิกจะค้างที่ขั้นตรวจการเงินจนกว่าฝ่ายการเงินจะอนุมัติจ่ายหรือส่งกลับให้แก้ไข',
+  },
+};
+
+export function ReimbursementJourneyPage({ companyId, requestId, userId, permissions }: {
+  companyId: string;
+  requestId: string;
+  userId: string;
+  permissions: readonly string[];
+}) {
+  const toast = useToast();
+  const hubHref = `/companies/${companyId}/reimbursements`;
+  const back = <Link href={hubHref}>← กลับไปการเบิกจ่าย</Link>;
+  const [detail, setDetail] = useState<any | null>(null);
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [payOpen, setPayOpen] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
+  const [reasonAction, setReasonAction] = useState<ReasonAction | null>(null);
+  const [voidingPayment, setVoidingPayment] = useState<any | null>(null);
+  const [staleReview, setStaleReview] = useState<{ before: any; detail: any } | null>(null);
+  const [missingSignatureFor, setMissingSignatureFor] = useState<ClaimSignatureRole | null>(null);
+  const [focusTick, setFocusTick] = useState(0);
+  const cardRef = useRef<HTMLElement>(null);
+  const { previewLoadingKey, openClaimForm, openAttachment, previewModals } = useClaimDocumentPreview(companyId, setActionError);
+
+  useEffect(() => {
+    let active = true;
+    setLoadError(null);
+    getReimbursement(companyId, requestId)
+      .then((next) => { if (active) setDetail(next); })
+      .catch((e) => { if (active) setLoadError(e); });
+    return () => { active = false; };
+  }, [companyId, requestId, reloadKey]);
+
+  // The card of the step the claim moved to takes focus (and scrolls into view) after an action.
+  useEffect(() => { if (focusTick) cardRef.current?.focus(); }, [focusTick]);
+
+  const steps = useMemo(() => (detail ? buildJourneySteps(detail, permissions, userId) : []), [detail, permissions, userId]);
+  const step = activeJourneyStep(steps);
+  const signature = (claim: any) => {
+    const active = activeJourneyStep(buildJourneySteps(claim, permissions, userId));
+    return `${active?.key}:${active?.state}`;
+  };
+
+  /**
+   * One action, then a re-read of the claim — on failure too: a two-phase action (finance
+   * อนุมัติจ่าย) commits its decision before projecting, so a thrown error can still leave the claim
+   * changed (BUG-7). A failed re-read keeps what the action returned: a frozen assignee may lose
+   * read permission the moment they decide. `handled` takes errors that open their own dialog.
+   */
+  const act = async (key: string, fn: () => Promise<any>, success: string, handled?: (e: unknown) => boolean) => {
+    const before = signature(detail);
+    setBusyAction(key); setActionError(null);
+    let ok = false;
+    let dialogOpened = false;
+    let latest: any = null;
+    try {
+      const result = await fn();
+      if (Array.isArray(result?.lines)) latest = result;
+      ok = true;
+      toast.success(success);
+    } catch (e) {
+      dialogOpened = handled?.(e) ?? false;
+      if (!dialogOpened) setActionError(errorText(e));
+    }
+    try { latest = await getReimbursement(companyId, requestId); } catch { /* keep what is on screen */ }
+    const shown = latest ?? detail;
+    if (latest) setDetail(latest);
+    setBusyAction(null);
+    if ((!ok && !dialogOpened) || signature(shown) !== before) setFocusTick((tick) => tick + 1);
+    return { ok, latest: shown };
+  };
+
+  const approve = async (review?: { detail: any }) => {
+    const before = detail;
+    let stale = false;
+    const { ok, latest } = await act(
+      'approve',
+      () => approveReimbursement(companyId, requestId, undefined, (review?.detail ?? detail).approvalSnapshotHash),
+      'อนุมัติคำขอเรียบร้อยแล้ว',
+      (e) => { stale = !review && isStaleApprovalError(e); return stale; },
+    );
+    if (stale) { setStaleReview({ before, detail: latest }); return; }
+    if (!ok) return;
+    setStaleReview(null);
+    // AC03: an approver who may also pay gets the form at once; everyone else just sees the next step.
+    if (activeJourneyStep(buildJourneySteps(latest, permissions, userId))?.actions.includes('pay')) setPayOpen(true);
+  };
+
+  const sign = (role: ClaimSignatureRole) => {
+    if (!detail?.claimSignatureAckHash) { setActionError('ไม่พบข้อมูลคำขอล่าสุด กรุณาเปิดคำขอใหม่'); return; }
+    void act('sign', () => signReimbursementClaimForm(companyId, requestId, { role, snapshotHash: detail.claimSignatureAckHash }),
+      'ลงนามใบเบิกเรียบร้อยแล้ว',
+      (e) => { if (!isMissingSavedSignatureError(e)) return false; setMissingSignatureFor(role); return true; });
+  };
+
+  const afterPayment = async () => {
+    setPayOpen(false);
+    try { setDetail(await getReimbursement(companyId, requestId)); } catch { /* keep what is on screen */ }
+    setFocusTick((tick) => tick + 1);
+  };
+
+  if (!detail) {
+    const status = (loadError as { status?: number } | null)?.status;
+    return (
+      <MangmeePage eyebrow={back} title="คำขอเบิก">
+        <MangmeeCard className="p-6">
+          {!loadError ? <LoadingState label="กำลังเปิดใบเบิก..." />
+            : status === 403 ? <ForbiddenState />
+              : status === 404 ? (
+                <EmptyState
+                  title="ไม่พบคำขอเบิกนี้"
+                  description="คำขออาจถูกลบ หรือไม่ได้อยู่ในบริษัทนี้"
+                  action={<Link href={hubHref} className={ghostClass}>กลับไปการเบิกจ่าย</Link>}
+                />
+              )
+                : <ErrorState description={errorText(loadError)} onRetry={() => setReloadKey((key) => key + 1)} />}
+        </MangmeeCard>
+      </MangmeePage>
+    );
+  }
+
+  const stepIndex = step ? steps.indexOf(step) : -1;
+  const readiness = reimbursementSubmitReadiness(detail);
+  const duplicateResolutionBlocked = detail.duplicateStatus === 'POSSIBLE_DUPLICATE'
+    && !permissions.includes('reimbursement.duplicate.resolve');
+  const recordedPayment = (detail.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
+  const desk = currentDeskText(detail.currentDesk);
+  const handlers: Partial<Record<JourneyAction, () => void>> = {
+    submit: () => void act('submit', () => submitReimbursement(companyId, requestId), 'ส่งขออนุมัติเรียบร้อยแล้ว'),
+    cancel: () => { setActionError(null); setReasonAction('cancel'); },
+    reopen: () => void act('reopen', () => reopenReimbursement(companyId, requestId), 'เปิดคำขอกลับเป็นร่างแล้ว แก้ไขและส่งอนุมัติได้อีกครั้ง'),
+    approve: () => void approve(),
+    reject: () => { setActionError(null); setRejecting(true); },
+    'finance-approve': () => void act('finance-approve', () => financeReviewReimbursement(companyId, requestId, {
+      decision: 'APPROVED_FOR_PAYMENT',
+      resolveDuplicate: detail.duplicateStatus === 'POSSIBLE_DUPLICATE',
+      duplicateResolutionReason: detail.duplicateStatus === 'POSSIBLE_DUPLICATE' ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined,
+    }), detail.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'),
+    'finance-return': () => { setActionError(null); setReasonAction('finance-return'); },
+    'finance-block': () => { setActionError(null); setReasonAction('finance-block'); },
+    pay: () => setPayOpen(true),
+    print: () => void openClaimForm(detail),
+    'void-payment': () => { setActionError(null); setVoidingPayment(recordedPayment); },
+  };
+
+  const actionButton = (action: JourneyAction, index: number) => {
+    const className = cx(index === 0 ? btnClass : ghostClass, 'w-full sm:w-auto');
+    const label = action === 'edit' && detail.financeReviewStatus === 'NEEDS_INFO' ? 'แก้ไขตามคำขอ'
+      : action === 'finance-approve' ? financeActionLabel(detail)
+        : ACTION_LABELS[action];
+    if (action === 'edit') return <Link key={action} className={className} href={`${hubHref}/${detail.id}/edit`}>{label}</Link>;
+    // Signing and the signed copy live in their sections below; the card points there.
+    if (action === 'sign') return <a key={action} className={className} href="#reimbursement-signatures">{label}</a>;
+    if (action === 'attach-signed-copy') return <a key={action} className={className} href="#reimbursement-signed-copies">{label}</a>;
+    const working = busyAction === action || (action === 'print' && previewLoadingKey !== null);
+    const blockedReason = action === 'submit' && readiness.blocked ? readiness.message
+      : action === 'finance-approve' && duplicateResolutionBlocked ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined;
+    return (
+      <button key={action} type="button" className={className} title={blockedReason}
+        disabled={busyAction !== null || previewLoadingKey !== null || Boolean(blockedReason)} aria-busy={working}
+        onClick={handlers[action]}>
+        {working ? 'กำลังดำเนินการ...' : label}
+      </button>
+    );
+  };
+  // The payment form replaces its own button while it is open.
+  const cardActions = (step?.actions ?? []).filter((action) => !(action === 'pay' && payOpen));
+  const reasonDialog = reasonAction ? REASON_DIALOGS[reasonAction] : null;
+
+  return (
+    <MangmeePage
+      eyebrow={back}
+      title={detail.requestNo ?? 'คำขอเบิกฉบับร่าง'}
+      description={desk ? `อยู่ที่ ${desk}` : undefined}
+      meta={<StatusBadge status={detail.status} />}
+    >
+      <ClaimSummaryCard detail={detail} />
+
+      <MangmeeCard className="p-4 sm:p-5">
+        <p className="mb-4 text-sm font-semibold text-gray-500">
+          {step?.state === 'ended' ? 'คำขอนี้ปิดแล้ว' : `ขั้นตอน ${stepIndex + 1} จาก ${steps.length}`}
+        </p>
+        <ThemedSteps
+          aria-label="ขั้นตอนของคำขอเบิก"
+          steps={steps.map((row) => ({
+            key: row.key,
+            label: row.label,
+            state: STEPPER_STATE[row.state],
+            ...(row.state === 'done' && row.note ? { description: row.note } : {}),
+          }))}
+        />
+      </MangmeeCard>
+
+      {step && (
+        <section ref={cardRef} tabIndex={-1} aria-labelledby="journey-step-title"
+          className="mangmee-card space-y-3 p-4 outline-none focus-visible:ring-2 focus-visible:ring-brand-500 sm:p-5">
+          <div>
+            <p className="text-xs font-bold text-brand-700">ขั้นตอน {stepIndex + 1}</p>
+            <h2 id="journey-step-title" className="mt-1 text-lg font-bold text-gray-900">{step.label}</h2>
+            {step.note && <p className="mt-1 text-sm text-gray-600">{step.note}</p>}
+          </div>
+          {step.actions.includes('submit') && readiness.blocked && readiness.message && <ErrorBanner message={readiness.message} />}
+          {cardActions.length > 0 && (
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">{cardActions.map(actionButton)}</div>
+          )}
+          {payOpen && step.actions.includes('pay') && (
+            <div className="border-t border-gray-100 pt-3">
+              <PaymentForm companyId={companyId} request={detail} onCancel={() => setPayOpen(false)} onDone={() => void afterPayment()} />
+            </div>
+          )}
+          {actionError && <ErrorBanner message={actionError} />}
+        </section>
+      )}
+
+      <ClaimDetailSections
+        detail={detail}
+        userId={userId}
+        permissions={permissions}
+        busy={busyAction !== null || previewLoadingKey !== null}
+        onOpenAttachment={(attachmentId, fileName) => void openAttachment(detail.id, attachmentId, fileName)}
+        onLineReceipt={(lineNo, file) => void act('receipt', () => setLineReceipt(companyId, requestId, detail.lines ?? [], lineNo, file, detail.branchId), 'แนบใบเสร็จเรียบร้อยแล้ว')}
+        onSign={sign}
+        onUploadSignedCopy={(file) => void act('signed-copy', () => uploadSignedClaimFormCopy(companyId, requestId, file, detail.branchId), 'แนบสำเนาใบเบิกที่ลงนามเรียบร้อยแล้ว')}
+        onRequestVoidPayment={(payment) => { setActionError(null); setVoidingPayment(payment); }}
+      />
+
+      {previewModals}
+      {missingSignatureFor && <MissingSavedSignatureModal companyId={companyId} onClose={() => setMissingSignatureFor(null)} />}
+      {rejecting && <RejectDialog
+        requestNo={detail.requestNo}
+        busy={busyAction === 'reject'}
+        error={actionError}
+        onClose={() => setRejecting(false)}
+        onConfirm={async (reason) => {
+          if ((await act('reject', () => rejectReimbursement(companyId, requestId, reason), 'ปฏิเสธคำขอเรียบร้อยแล้ว')).ok) setRejecting(false);
+        }}
+      />}
+      {reasonAction && reasonDialog && <ReasonDialog
+        title={`${reasonDialog.title} ${detail.requestNo ?? ''}`.trim()}
+        description={reasonDialog.description}
+        confirmLabel={reasonDialog.confirmLabel}
+        danger={reasonDialog.danger}
+        busy={busyAction === reasonAction}
+        error={actionError}
+        onClose={() => setReasonAction(null)}
+        onConfirm={async (reason) => {
+          const request = reasonAction === 'cancel'
+            ? () => cancelReimbursement(companyId, requestId, reason)
+            : () => financeReviewReimbursement(companyId, requestId, { decision: reasonAction === 'finance-return' ? 'NEEDS_INFO' : 'BLOCKED', note: reason });
+          if ((await act(reasonAction, request, reasonDialog.success)).ok) setReasonAction(null);
+        }}
+      />}
+      {voidingPayment && <VoidPaymentDialog
+        payment={voidingPayment}
+        busy={busyAction === 'void-payment'}
+        error={actionError}
+        onClose={() => setVoidingPayment(null)}
+        onConfirm={async (reason) => {
+          if ((await act('void-payment', () => voidReimbursementPayment(companyId, requestId, voidingPayment.id, reason),
+            'ยกเลิกการจ่ายแล้ว ใบเบิกกลับไปรอจ่าย คุณสามารถบันทึกจ่ายใหม่หรือยกเลิกคำขอต่อได้')).ok) setVoidingPayment(null);
+        }}
+      />}
+      {staleReview && <StaleApprovalDialog
+        requestNo={staleReview.detail.requestNo ?? staleReview.before.requestNo}
+        diff={diffApprovalFields(
+          {
+            reason: staleReview.before.reason,
+            amount: formatMoney(staleReview.before.amount),
+            currency: staleReview.before.currency,
+            categoryLabel: staleReview.before.categoryLabelSnapshot ?? staleReview.before.categoryKey,
+            lineCount: (staleReview.before.lines ?? []).length,
+          },
+          {
+            reason: staleReview.detail.reason,
+            amount: formatMoney(staleReview.detail.amount),
+            currency: staleReview.detail.currency,
+            categoryLabel: staleReview.detail.categoryLabelSnapshot ?? staleReview.detail.categoryKey,
+            lineCount: (staleReview.detail.lines ?? []).length,
+          },
+        )}
+        lines={staleReview.detail.lines ?? []}
+        currency={staleReview.detail.currency}
+        busy={busyAction === 'approve'}
+        error={actionError}
+        onClose={() => setStaleReview(null)}
+        onConfirm={() => void approve({ detail: staleReview.detail })}
+      />}
+    </MangmeePage>
+  );
+}

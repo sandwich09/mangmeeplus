@@ -633,6 +633,10 @@ describe('canAccessWorkspacePath', () => {
     assert.equal(filterModulesByPermissions(WORKSPACE_MODULES, permissions).some((module) => module.key === 'reimbursements'), false);
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, permissions, 'abc', '/companies/abc/reimbursements'), true);
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, permissions, 'abc', '/companies/abc/reimbursements/admin'), false);
+    // The claim's journey page is the same probe (spec §8); creating a claim is not.
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, permissions, 'abc', '/companies/abc/reimbursements/cmfr2x9k00001a2b3c4d5e6f7'), true);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, permissions, 'abc', '/companies/abc/reimbursements/new'), false);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, permissions, 'abc', '/companies/abc/reimbursements/cmfr2x9k00001a2b3c4d5e6f7/edit'), false);
   });
 
   it('blocks a protected module URL without its read permission', () => {
