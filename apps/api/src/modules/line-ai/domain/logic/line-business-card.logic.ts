@@ -386,6 +386,12 @@ export function buildSignupDoorCard(liffId: string | undefined, webBaseUrl?: str
       '',
       [
         ...(liff ? [{ label: 'เปิดร้านใหม่', uri: `https://liff.line.me/${liff}/signup` }] : []),
+        // Owner 2026-09-21: "how much is it" is the question a stranger asks before any door, and
+        // until now the only way to ask it was the rich menu — which a follower has not opened yet.
+        // The promotion card answers it and, for a stranger, carries the same เปิดร้านใหม่ door
+        // back. The command CONSTANT, like every other message button here, so the label the
+        // customer taps and the word the matcher answers cannot drift apart.
+        { label: 'ดูแพ็กเกจและราคา', text: VIEW_PACKAGES_COMMAND },
         { label: EMPLOYEE_DOOR_COMMAND, text: EMPLOYEE_DOOR_COMMAND },
         ...(linkUrl ? [{ label: 'มีบัญชีอยู่แล้ว เชื่อม LINE', uri: linkUrl }] : []),
         // §7: the one door that reaches a person. Without it the keyword is typing-only and the
