@@ -44,6 +44,8 @@ REGION = 'ap-southeast-1'
 UAT_DEPLOY_TARGET_SECONDS = 600
 UAT_PRE_MUTATION_SECONDS = 360
 UAT_BUILD_SECONDS = 240
+HOST_STORAGE_HEADROOM_BYTES = 2 * 1024 ** 3
+HOST_STORAGE_MULTIPLIER = 2
 CONTROLLER_FILES = tuple('infra/kamal/'+p for p in ('release.py','config.json','retire-builds.cjs','deploy-uat','deploy-prod')) + tuple('infra/dev-kamal/'+p for p in ('build-complete.py','capture-config.py','release_inventory.py','verify-config.mjs','Dockerfile.tools'))
 CONTROLLER_FILES += ('infra/postmark/config.py', 'infra/postmark/config.json')
 CONTROLLER_FILES += ('infra/kamal/release_source.py', 'infra/kamal/deploy-prod-hotfix', 'infra/kamal/promote-prod')
@@ -346,15 +348,41 @@ class Release:
             self.close_transport(); raise
 
     def close_transport(self):
-        for session in getattr(self, 'ssm_sessions', {}).values():
-            process = session['process']
-            if process.poll() is None:
-                process.terminate()
-                try: process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill(); process.wait(timeout=5)
-            session['log'].close()
+        sessions = getattr(self, 'ssm_sessions', {})
+        if not sessions:
+            return self.receipt.get('ssmSessionCleanup', {}).get('passed', True)
+        terminated, failures = 0, 0
+        for session in sessions.values():
+            failed = False
+            try:
+                match = re.search(r'Starting session with SessionId:\s*(\S+)', session['path'].read_text(errors='replace'))
+                if not match:
+                    failed = True
+                else:
+                    result = subprocess.run(self.aws_prefix + ['ssm','terminate-session','--session-id',match.group(1)],
+                        text=True,capture_output=True,timeout=30)
+                    if result.returncode == 0: terminated += 1
+                    else: failed = True
+            except Exception:
+                failed = True
+            try:
+                process = session['process']
+                if process.poll() is None:
+                    process.terminate()
+                    try: process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill(); process.wait(timeout=5)
+            except Exception:
+                failed = True
+            try:
+                session['log'].close()
+            except Exception:
+                failed = True
+            if failed: failures += 1
+        self.receipt['ssmSessionCleanup'] = {'passed':failures == 0 and terminated == len(sessions),
+            'terminatedCount':terminated,'failedCount':failures}
         self.ssm_sessions = {}
+        return self.receipt['ssmSessionCleanup']['passed']
 
     def preflight(self):
         require(not (self.target.get('ecsRollbackBaseline') and self.args.apply and not getattr(self,'first_migration',False)),
@@ -704,6 +732,41 @@ class Release:
                 '\n'.join(k+'=$KAMAL_APP_'+k for k in sorted(self.envs[service]))+'\n')
             self.kamal(service,['config'],fake=True)
 
+    def storage_capacity(self):
+        sizes = {}
+        for service, artifact in self.manifest['artifacts'].items():
+            info = json.loads(self.command(['docker','image','inspect',artifact['tag']]))[0]
+            require(info['Id'] == artifact['imageId'] and isinstance(info.get('Size'), int) and info['Size'] > 0,
+                    'Cannot size exact candidate image: '+service)
+            sizes[service] = info['Size']
+        assignments = {iid:set() for iid in self.hosts}
+        for service, hosts in self.target['hosts'].items():
+            for host in hosts: assignments[host['instanceId']].add(service)
+        assignments[self.target['hosts']['api-web'][0]['instanceId']].add('tools')
+        evidence = {}
+        for iid, services in assignments.items():
+            host = self.hosts[iid]
+            root = self.remote(host, ['docker','info','--format','{{.DockerRootDir}}']).strip()
+            require(root.startswith('/'), 'Docker root directory is invalid: '+iid)
+            lines = self.remote(host, ['df','-Pk',root]).splitlines()
+            fields = lines[-1].split() if lines else []
+            require(len(fields) >= 6 and fields[3].isdigit(), 'Cannot read Docker filesystem capacity: '+iid)
+            available = int(fields[3]) * 1024
+            candidate = sum(sizes[service] for service in services)
+            minimum = candidate * HOST_STORAGE_MULTIPLIER + HOST_STORAGE_HEADROOM_BYTES
+            evidence[iid] = {'availableBytes':available,'minimumRequiredBytes':minimum,
+                'candidateImageBytes':candidate,'services':sorted(services)}
+            require(available >= minimum, 'Insufficient Docker filesystem capacity before publication: '+iid)
+        self.receipt['hostStorageCapacity'] = evidence
+
+    def uat_pre_mutation_budget(self):
+        if self.args.environment != 'uat': return
+        elapsed = round(time.monotonic() - self.clock, 3)
+        self.receipt['durationBudget'] = {'targetSeconds':UAT_DEPLOY_TARGET_SECONDS,
+            'preMutationMaximumSeconds':UAT_PRE_MUTATION_SECONDS,'preMutationElapsedSeconds':elapsed}
+        require(elapsed <= UAT_PRE_MUTATION_SECONDS,
+                'UAT pre-mutation budget exceeded; reuse the exact validated --prepared-build')
+
     def kamal(self, service, command, version=None, fake=False):
         d=self.work/'native'/service
         env=dict(os.environ,KAMAL_REGISTRY_PASSWORD='synthetic' if fake else self.token)
@@ -813,6 +876,7 @@ finally{await client.$disconnect();}})().catch(()=>process.exit(1));"""
             if getattr(self.args, 'prepare', False):
                 with self.phase('main-typescript-build'): self.source_and_build()
                 with self.phase('fresh-config-and-image-validation'): self.configuration(); self.render()
+                with self.phase('host-storage-capacity'): self.storage_capacity()
                 with self.phase('config-freshness-readback'): self.config_freshness()
                 self.receipt['status']='PREPARED_NO_DEPLOYMENT'; return
             if not self.args.apply:
@@ -822,16 +886,12 @@ finally{await client.$disconnect();}})().catch(()=>process.exit(1));"""
             try:
                 with self.phase('main-typescript-build'): self.source_and_build()
                 with self.phase('fresh-config-and-image-validation'): self.configuration(); self.render()
+                with self.phase('host-storage-capacity'): self.storage_capacity()
                 if getattr(self, 'first_migration', False):
                     with self.phase('legacy-ecs-release-fence'): self.migration.workflow_fence(disable=True)
                 with self.phase('publish-and-pull'): self.publish()
                 with self.phase('config-freshness-before-mutation'): self.config_freshness()
-                if self.args.environment == 'uat':
-                    elapsed = round(time.monotonic() - self.clock, 3)
-                    self.receipt['durationBudget'] = {'targetSeconds':UAT_DEPLOY_TARGET_SECONDS,
-                        'preMutationMaximumSeconds':UAT_PRE_MUTATION_SECONDS,'preMutationElapsedSeconds':elapsed}
-                    require(elapsed <= UAT_PRE_MUTATION_SECONDS,
-                            'UAT pre-mutation budget exceeded; reuse the exact validated --prepared-build')
+                self.uat_pre_mutation_budget()
                 with self.phase('provider-preparation'): self.agentcore()
                 with self.phase('database-and-feature-authority'):
                     self.changed.append('database-sync-started')
@@ -1477,9 +1537,11 @@ def main():
     if args.prepare and args.rollback:
         p.error('--prepare cannot be combined with --rollback')
     release=None
+    exit_code=0
     try:
         release=Release(args); release.run()
     except BaseException as error:
+        exit_code=1
         if isinstance(error,KeyboardInterrupt): message='Interrupted; inspect the retained operation before retrying'
         else: message=str(error)
         if release:
@@ -1487,13 +1549,18 @@ def main():
                 release.receipt['status']='FAILED_RECONCILIATION_REQUIRED' if release.changed else 'FAILED'
             release.receipt['error']=release.redact(message)
         print('Release stopped: '+(release.redact(message) if release else message),file=sys.stderr)
-        return 1
     finally:
         if release:
-            release.close_transport()
+            if not release.close_transport():
+                exit_code=1
+                release.receipt['transportCleanupRequired']=True
+                release.receipt.setdefault('error','Systems Manager session cleanup failed; reconcile before retry')
+                if not release.receipt['status'].startswith('FAILED'):
+                    release.receipt['statusBeforeTransportCleanup']=release.receipt['status']
+                    release.receipt['status']='FAILED_TRANSPORT_CLEANUP_REQUIRED'
             release.receipt['finishedAt']=datetime.now(timezone.utc).isoformat();release.save()
             print(json.dumps({'status':release.receipt['status'],'elapsedSeconds':release.receipt['elapsedSeconds'],'result':str(release.work/'result.json')}))
-    return 0
+    return exit_code
 
 
 if __name__=='__main__':
