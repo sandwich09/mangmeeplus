@@ -1,5 +1,5 @@
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
-import type { LinkExternalWhtCertificateDto, WhtCertificateHandoffDto, CreateSupplierPaymentDto, CreateVendorBillDto, ReviewVendorBillTaxEvidenceDto, SupplierPaymentDetail, SupplierPaymentSummary, TransactionTaxContext, UpdateVendorBillTaxEvidenceDto, VendorBillDetail, VendorBillSummary } from '@watchdog-bms/contracts';
+import type { LinkExternalWhtCertificateDto, SetWhtHandoffPayeeAddressDto, WhtCertificateHandoffDto, CreateSupplierPaymentDto, CreateVendorBillDto, ReviewVendorBillTaxEvidenceDto, SupplierPaymentDetail, SupplierPaymentSummary, TransactionTaxContext, UpdateVendorBillTaxEvidenceDto, VendorBillDetail, VendorBillSummary } from '@watchdog-bms/contracts';
 
 function qs(params?: Record<string, unknown>): string {
   const q = new URLSearchParams();
@@ -123,4 +123,9 @@ export function listWhtHandoffs(companyId: string, params?: { status?: string })
 
 export function linkExternalWhtCertificate(companyId: string, handoffId: string, body: LinkExternalWhtCertificateDto) {
   return apiFetch<WhtCertificateHandoffDto>(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/external-certificate`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** §10: the address lands beside the frozen prefill, so the response carries it as its own field. */
+export function setWhtHandoffPayeeAddress(companyId: string, handoffId: string, body: SetWhtHandoffPayeeAddressDto) {
+  return apiFetch<WhtCertificateHandoffDto>(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/payee-address`, { method: 'POST', body: JSON.stringify(body) });
 }
