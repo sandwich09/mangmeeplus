@@ -145,6 +145,7 @@ function toDto(row: {
     kind,
     ...(kind === 'SALES_DEAL' ? dealOffer(row.id, row.offerSnapshotJson, row.offerExpiresAt ?? null) : {}),
     ...(row.status==='APPROVED'&&row.paymentState==='STRIPE_APPLIED'?{resolutionSource:'PAID_PURCHASE' as const}:{}),
+    ...(row.status==='CANCELLED'&&row.paymentState==='CATALOG_SUPERSEDED'?{resolutionSource:'CATALOG_PURCHASE_SUPERSEDED' as const}:{}),
     ...(row.note ? { note: row.note } : {}),
     createdAt: row.createdAt.toISOString(),
     ...(row.decidedAt ? { decidedAt: row.decidedAt.toISOString() } : {}),

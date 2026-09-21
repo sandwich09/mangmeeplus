@@ -1,3 +1,4 @@
+import { billingRateLimitWindowSeconds } from '../modules/billing/billing-rate-limit-window';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {expect} from '@playwright/test';
@@ -156,7 +157,7 @@ export async function checkBillingInvoiceImport(input:ProviderScansSmokeInput&{r
     cases.push('invoice-import-account-operation-lease-and-customer-change-fences-concurrent-workers-and-verified-local-replay-with-no-provider-io');
 
     if(input.browser){
-      const f=await finding(),{page,origin,evidenceDir}=input.browser;await new Promise(resolve=>setTimeout(resolve,60000));
+      const f=await finding(),{page,origin,evidenceDir}=input.browser;await new Promise(resolve=>setTimeout(resolve,(billingRateLimitWindowSeconds(60)+1)*1000));
       await page.setViewportSize({width:390,height:844});await page.goto(`${origin}/system/billing/companies/${companyId}/invoice-findings/${f.id}`,{waitUntil:'domcontentloaded'});
       await page.getByText('บันทึกเหตุผล (ระบบใส่ให้แล้ว)',{exact:true}).click();
       try { await page.getByLabel('เหตุผลการตรวจสอบ',{exact:true}).waitFor(); }

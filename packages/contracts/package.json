@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/employee-access.spec.ts src/line-ai-value-normalizer.spec.ts src/prisma-enum-parity.spec.ts src/feature-entitlements.spec.ts src/civil-date.spec.ts src/buyer-snapshot-v1.spec.ts src/business-policy.spec.ts src/legal-acceptance.spec.ts src/data-rights.spec.ts src/line-ai-prepared-plan.spec.ts src/line-ai-advisor-answer.spec.ts src/line-ai-record-text.spec.ts",
+    "test": "tsx --test src/employee-access.spec.ts src/line-ai-value-normalizer.spec.ts src/prisma-enum-parity.spec.ts src/feature-entitlements.spec.ts src/civil-date.spec.ts src/buyer-snapshot-v1.spec.ts src/business-policy.spec.ts src/legal-acceptance.spec.ts src/data-rights.spec.ts src/line-ai-prepared-plan.spec.ts src/line-ai-advisor-answer.spec.ts src/line-ai-record-text.spec.ts src/company-tax-identity.spec.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

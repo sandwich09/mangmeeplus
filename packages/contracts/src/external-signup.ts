@@ -449,8 +449,8 @@ export type PackageChangeRequestDto = {
   kind?: PackageChangeRequestKind;
   /** The sales offer behind a SALES_DEAL row; the card that renders it is Phase 3. */
   deal?: PackageChangeDealOffer;
-  /** Present only when the original request was fulfilled by an applied paid package. */
-  resolutionSource?: 'PAID_PURCHASE';
+  /** Whether an applied catalog purchase fulfilled or replaced this request. */
+  resolutionSource?: 'PAID_PURCHASE' | 'CATALOG_PURCHASE_SUPERSEDED';
   note?: string;
   createdAt: string;
   decidedAt?: string;

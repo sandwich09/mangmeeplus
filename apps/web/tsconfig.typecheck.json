@@ -1,0 +1,13 @@
+// CI typecheck with TypeScript 7 (packages/typescript-native). TS7 removed `baseUrl`, so this restates
+// the path aliases relative to this file; everything else is tsconfig.json.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": null,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@watchdog-bms/config": ["../../packages/config/src/index.ts"],
+      "@watchdog-bms/contracts": ["../../packages/contracts/dist/index.js"]
+    }
+  }
+}

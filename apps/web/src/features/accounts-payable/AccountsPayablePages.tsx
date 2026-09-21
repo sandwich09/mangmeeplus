@@ -8,7 +8,7 @@ import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/components/document-preview';
 import { ForbiddenState } from '@/common/components/state';
 import { formatThaiDate } from '@/common/i18n/thai-date';
-import { listVendorBills, getVendorBill, createVendorBill, matchVendorBill, submitVendorBill, approveVendorBill, rejectVendorBill, voidVendorBill, getSupplierPayment, listSupplierPayments, createSupplierPayment, voidSupplierPayment, generateSourceJournal, releasePp36InputClaim, getApAging, reviewVendorBillTaxEvidence, updateVendorBillTaxEvidence, getApprovalPolicy, updateApprovalPolicy, listWhtHandoffs, linkExternalWhtCertificate, listWhtIncomeCategories } from './accounts-payable.api';
+import { listVendorBills, getVendorBill, createVendorBill, matchVendorBill, submitVendorBill, approveVendorBill, rejectVendorBill, voidVendorBill, getSupplierPayment, listSupplierPayments, createSupplierPayment, voidSupplierPayment, generateSourceJournal, releasePp36InputClaim, getApAging, reviewVendorBillTaxEvidence, updateVendorBillTaxEvidence, getApprovalPolicy, updateApprovalPolicy, listWhtHandoffs, linkExternalWhtCertificate, setWhtHandoffPayeeAddress, listWhtIncomeCategories } from './accounts-payable.api';
 import type { WhtIncomeCategoryOption } from './accounts-payable.api';
 import type { PaymentMethod, SupplierPaymentDetail, SupplierPaymentSummary, SupplierSummary, TradeTaxEvidenceDto, TransactionTaxContext, VendorBillDetail, VendorBillSummary } from '@watchdog-bms/contracts';
 import { listSuppliers } from '@/features/procurement/procurement.api';
@@ -18,7 +18,7 @@ import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
 import { TransactionBranchField, useTransactionCreateBranchId } from '@/features/web-core-workspace/TransactionBranchField';
 import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
 import { canSubmitSupplierPayment, isSupplierPaymentWithholdingValid, isVendorBillTaxEvidenceBlocked, isVendorBillTaxEvidenceCompleteForReview } from './accounts-payable.model';
-import { parseAccountsPayableTab, visibleAccountsPayableTabs, whtLinkErrorOutcome, type AccountsPayableTab } from './accounts-payable.logic';
+import { parseAccountsPayableTab, visibleAccountsPayableTabs, whtHandoffPayeeAddress, whtLinkErrorOutcome, type AccountsPayableTab } from './accounts-payable.logic';
 import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { todayCivilDate } from '@watchdog-bms/contracts';
@@ -970,8 +970,33 @@ function WhtHandoffDetail({ companyId, handoff, canLink, onLinked, onStale }: { 
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // §10: the payee address the frozen prefill never had. Its own small form, not part of the link
+  // submit — the address is useful long before the external certificate exists.
+  const [addressDraft, setAddressDraft] = useState('');
+  const [addressBusy, setAddressBusy] = useState(false);
+  const [addressError, setAddressError] = useState<string | null>(null);
+  const [addressNotice, setAddressNotice] = useState<string | null>(null);
   const p = handoff.prefill ?? {};
   const linked = handoff.status === 'EXTERNAL_LINKED';
+  const payeeAddress = whtHandoffPayeeAddress(handoff, canLink);
+
+  const saveAddress = async () => {
+    setAddressBusy(true); setAddressError(null); setAddressNotice(null);
+    try {
+      const saved = await setWhtHandoffPayeeAddress(companyId, handoff.id, { payeeAddress: addressDraft.trim() });
+      // §8: the address is stored whether or not the registry took it. Saying so beats going quiet
+      // and letting the next document prefill from a registry that never got the write.
+      setAddressNotice(saved.counterpartyAutoSave?.failed
+        ? 'บันทึกที่อยู่ในรายการนี้แล้ว แต่ยังไม่ได้บันทึกลงทะเบียนคู่ค้า ลองใหม่ได้จากหน้าคู่ค้า'
+        : 'บันทึกที่อยู่ผู้รับเงินแล้ว');
+      setAddressDraft('');
+      onStale();
+    } catch (e) {
+      setAddressError(err(e));
+      // The server refuses once the certificate exists, which means this row is stale on screen.
+      if ((e as { code?: unknown } | null)?.code === 'wht_handoff_address_not_editable') onStale();
+    } finally { setAddressBusy(false); }
+  };
 
   const submit = async () => {
     setBusy(true); setError(null);
@@ -1012,6 +1037,44 @@ function WhtHandoffDetail({ companyId, handoff, canLink, onLinked, onStale }: { 
           <Field label="ผู้รับเงิน" value={p.payeeSnapshot?.name} />
           <Field label="เลขประจำตัวผู้เสียภาษี (ผู้รับ)" value={p.payeeSnapshot?.taxId} />
           <Field label="สาขา" value={p.payeeSnapshot?.branchCode} />
+          <div className="sm:col-span-3">
+            <dt className="text-xs text-gray-500" id={fieldId('payee-address-label')}>ที่อยู่ผู้รับเงิน</dt>
+            <dd className="text-sm text-gray-900">
+              {payeeAddress.text ? (
+                <span className="whitespace-pre-line break-words">{payeeAddress.text}</span>
+              ) : payeeAddress.canType ? (
+                <div className="mt-1 flex flex-col gap-2">
+                  <textarea
+                    id={fieldId('payee-address')}
+                    aria-labelledby={fieldId('payee-address-label')}
+                    className={inputClass}
+                    rows={2}
+                    maxLength={500}
+                    value={addressDraft}
+                    onChange={(e) => setAddressDraft(e.target.value)}
+                    placeholder="พิมพ์ที่อยู่ผู้รับเงินตามที่จะพิมพ์ลงหนังสือรับรอง"
+                    disabled={addressBusy}
+                  />
+                  <button
+                    type="button"
+                    className={`${ghostClass} self-start`}
+                    style={{ minHeight: 44, minWidth: 44 }}
+                    aria-busy={addressBusy}
+                    disabled={addressBusy || !addressDraft.trim()}
+                    onClick={() => void saveAddress()}
+                  >
+                    {addressBusy ? 'กำลังบันทึก...' : 'บันทึกที่อยู่'}
+                  </button>
+                </div>
+              ) : (
+                // Same wording as every other empty field: a viewer without the mutation permission
+                // gets a plain reading, never a control they cannot use.
+                <span className="text-amber-700">ไม่มีข้อมูล — ต้องระบุตอนออกเอกสาร</span>
+              )}
+              {addressError && <div className="mt-2"><ErrorBanner message={addressError} /></div>}
+              {addressNotice && <p role="status" aria-live="polite" className="mt-1 text-xs text-gray-600">{addressNotice}</p>}
+            </dd>
+          </div>
           <Field label="แบบ" value={p.formType} />
           <Field label="ประเภทเงินได้" value={p.incomeCategoryName ?? p.incomeCategoryCode} />
           <Field label="อัตราภาษี" value={p.whtRate} />

@@ -1161,7 +1161,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   );
   const vendorCard = (
     <div ref={vendorRef} className="scroll-mt-24" tabIndex={-1}>
-      <ExpenseReviewEditSection companyId={companyId} detail={detail} isMutable={canMutateDraft && !readySourceDraftMessage} canReview={canReview} canConfirm={canConfirm} showSaveDraft={step === 'data'} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onTotalsChange={setReviewTotals} totalsRetry={totalsRetry} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
+      <ExpenseReviewEditSection companyId={companyId} detail={detail} permissions={permissions} isMutable={canMutateDraft && !readySourceDraftMessage} canReview={canReview} canConfirm={canConfirm} showSaveDraft={step === 'data'} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onTotalsChange={setReviewTotals} totalsRetry={totalsRetry} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
     </div>
   );
   const documentReviewCard = (

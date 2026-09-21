@@ -96,6 +96,25 @@ export const COMPANY_LEGAL_ADDRESS_KEYS = [
 ] as const satisfies readonly (keyof CompanyLegalAddress)[];
 
 /**
+ * BUG-1: the one-line address a document prints — "เลขที่ ถนน แขวง/ตำบล เขต/อำเภอ จังหวัด รหัสไปรษณีย์"
+ * in `COMPANY_LEGAL_ADDRESS_KEYS` order, blanks skipped. The 50 ทวิ handoff printed
+ * `JSON.stringify(company.addressJson)` instead, so the payer address on the prefill read
+ * `{"line1":"…"}`.
+ *
+ * `Company.addressJson` is a Json column that also holds rows written before §4.1 fixed the shape,
+ * so anything that is not this shape degrades to null here rather than throwing: an unprintable
+ * address must not stop a certificate being issued.
+ */
+export function formatCompanyLegalAddress(addr: CompanyLegalAddress | null | undefined): string | null {
+  if (!addr || typeof addr !== 'object' || Array.isArray(addr)) return null;
+  const row = addr as Record<string, unknown>;
+  const parts = COMPANY_LEGAL_ADDRESS_KEYS
+    .map((key) => (typeof row[key] === 'string' ? row[key].trim() : ''))
+    .filter(Boolean);
+  return parts.length ? parts.join(' ') : null;
+}
+
+/**
  * Carried by `GET …/identity` for every holder of `company.setup.read` (§4.4). It holds no
  * identity value, only the control state the wizard needs: the CAS token it must echo back and
  * the booleans that decide which `changeKind` it may offer. Without this block the wizard would

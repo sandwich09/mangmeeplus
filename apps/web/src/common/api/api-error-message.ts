@@ -303,6 +303,20 @@ const CODE_LABELS: Record<string, string> = {
   EXPENSE_EVIDENCE_REVIEW_REQUIRED: 'บันทึกการตรวจหลักฐานล่าสุดก่อนยืนยัน หากเลือกใช้ใบแทน ต้องทำใบแทนให้สมบูรณ์ก่อน',
   EXPENSE_DOCUMENT_DATE_REVIEW_REQUIRED: 'ตรวจวันที่ในใบเสร็จที่ขั้นตรวจข้อมูล แล้วบันทึกก่อนส่งตรวจหรือยืนยันค่ะ',
   EXPENSE_SOURCE_DRAFT_RELOAD_REQUIRED: 'ข้อมูลใบเสร็จเปลี่ยนไปแล้ว กรุณาโหลดรายการใหม่ก่อนบันทึก',
+  // Vendor address spec §8: a refusal on this field must name the fix, because the user is looking
+  // at the paper and can act — "ตัดให้สั้นลง" / "5 หลัก" are the whole message.
+  // Counterparty registry. `accounting-documents` is outside the launch modules the coverage audit
+  // scans, so nothing would have caught these — and the counterparty screen shows all three.
+  // Vendor-address spec §10: supplying the payee address a frozen 50 ทวิ prefill never had. The
+  // `tax` module is outside `api-error-coverage.spec.ts`'s launch list, so nothing audits these —
+  // they are here because both strings reach the AP screen.
+  wht_handoff_address_not_editable: 'รายการนี้ออกหนังสือรับรองไปแล้ว ที่อยู่ที่พิมพ์ที่นี่จึงไม่มีผลกับเอกสารที่ออกไป แก้ที่อยู่ผู้รับเงินได้ที่หน้าคู่ค้า',
+  wht_handoff_payee_address_required: 'กรุณาพิมพ์ที่อยู่ผู้รับเงินตามที่จะพิมพ์ลงหนังสือรับรอง',
+  counterparty_conflict: 'มีคนแก้ข้อมูลคู่ค้านี้ไปแล้ว โหลดหน้านี้ใหม่แล้วบันทึกอีกครั้ง',
+  counterparty_address_too_long: 'ที่อยู่ยาวเกิน 500 ตัวอักษร ตัดให้สั้นลงแล้วบันทึกอีกครั้ง',
+  counterparty_branch_code_invalid: 'รหัสสาขาต้องเป็นตัวเลข 5 หลัก เช่น 00000 สำหรับสำนักงานใหญ่ หรือเว้นว่างไว้ก็ได้',
+  EXPENSE_VENDOR_BRANCH_CODE_INVALID: 'รหัสสาขาต้องเป็นตัวเลข 5 หลัก เช่น 00000 สำหรับสำนักงานใหญ่ หรือเว้นว่างไว้ก็ได้',
+  EXPENSE_VENDOR_ADDRESS_TOO_LONG: 'ที่อยู่ผู้ขายยาวเกิน 500 ตัวอักษร ตัดให้สั้นลงแล้วบันทึกอีกครั้ง',
   EXPENSE_PURPOSE_TEXT_INVALID: 'กรุณาใช้ช่องว่างหรือจุลภาคแทนเครื่องหมาย · ในช่อง “ซื้อไปใช้ทำอะไร” หรือเว้นช่องนี้ไว้ได้',
   EXPENSE_SOURCE_DRAFT_INVALID: 'ข้อมูลร่างบางช่องไม่ถูกต้อง กรุณาตรวจวันที่ จำนวน ราคา และหมวดค่าใช้จ่ายแล้วลองอีกครั้ง',
   expense_source_line_identity_changed: 'รายการในบิลถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่ ตรวจสอบ แล้วจึงเก็บร่างอีกครั้ง',

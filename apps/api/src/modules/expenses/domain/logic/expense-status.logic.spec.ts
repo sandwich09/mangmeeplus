@@ -343,8 +343,14 @@ describe('validateConfirm', () => {
     assert.ok(validateConfirm({ ...validInput, status: 'DRAFT' }) !== null);
   });
 
-  it('blocks confirm with POSSIBLE_DUPLICATE', () => {
-    const err = validateConfirm({ ...validInput, duplicateStatus: 'POSSIBLE_DUPLICATE' });
+  it('warns but does not block confirm on the system\'s own duplicate guess', () => {
+    // Buying the same thing twice from the same shop on one day is the daily retail pattern, not a
+    // duplicate; the warning stays on the record as an OPEN candidate instead of stopping the work.
+    assert.equal(validateConfirm({ ...validInput, duplicateStatus: 'POSSIBLE_DUPLICATE' }), null);
+  });
+
+  it('blocks confirm only once a person has marked it a duplicate', () => {
+    const err = validateConfirm({ ...validInput, duplicateStatus: 'CONFIRMED_DUPLICATE' });
     assert.ok(err !== null && err.includes('duplicate'));
   });
 

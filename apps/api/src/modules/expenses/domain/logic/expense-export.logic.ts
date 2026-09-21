@@ -43,6 +43,9 @@ export type AccountantIndexSource = {
   vendorNameSnapshot: string | null;
   vendorTaxIdSnapshot: string | null;
   vendorBranchCodeSnapshot: string | null;
+  /** GAP-7. Optional: rows written before the column existed carry no address, and a package built
+   *  from them must still export (§8 — a missing address never blocks). */
+  vendorAddressSnapshot?: string | null;
   vendorDocumentNumber: string | null;
   categoryName: string | null;
   accountHintKey: string | null;
@@ -151,6 +154,7 @@ export function buildAccountantIndexRow(source: AccountantIndexSource): Accounta
     reviewer_name: source.reviewerName ?? '',
     vendor_name: source.vendorNameSnapshot ?? '',
     vendor_tax_id: source.vendorTaxIdSnapshot ?? '',
+    vendor_address: source.vendorAddressSnapshot ?? '',
     vendor_branch_code: source.vendorBranchCodeSnapshot ?? '',
     vendor_document_number: source.vendorDocumentNumber ?? '',
     category_name: source.categoryName ?? '',

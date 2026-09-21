@@ -137,6 +137,8 @@ export class SetCompanyPlanTermUseCase {
       if (adjustment.replayed) return { term: existing ? toPlanTermDto(existing as PlanTermRow, now) : null,
         sourceVersion: planTermSourceVersion(cmd.companyId, existing), replayed: true };
       if (existing?.billingReceiptAccountId) throw paidPlanReviewRequired();
+      if (await tx.billingAccount.findFirst({ where: { companyId: cmd.companyId, activeAttemptId: { not: null } }, select: { id: true } }))
+        throw paidPlanReviewRequired();
 
       const termStartAt = parseDate(cmd.termStartAt, 'termStartAt', now);
       const termDays = cmd.termDays === undefined ? DEFAULT_TERM_DAYS : positiveInt(cmd.termDays, 'termDays');
@@ -256,6 +258,8 @@ export class RenewCompanyPlanTermUseCase {
       const adjustment = await checkPlanTermAdjustment(tx, cmd, PLAN_TERM_RENEW_ACTION, [days], existing);
       if (adjustment.replayed) return { term: toPlanTermDto(existing as PlanTermRow, now),
         sourceVersion: planTermSourceVersion(cmd.companyId, existing), replayed: true };
+      if (existing.billingReceiptAccountId || await tx.billingAccount.findFirst({ where: { companyId: cmd.companyId, activeAttemptId: { not: null } }, select: { id: true } }))
+        throw paidPlanReviewRequired();
 
       const company = await tx.company.findUnique({
         where: { id: cmd.companyId },

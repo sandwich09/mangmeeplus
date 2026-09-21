@@ -5,6 +5,8 @@ export const STRIPE_API_VERSION = '2026-08-26.dahlia' as const;
 export const BILLING_PAID_TIERS = ['STARTER_249', 'BASIC_499', 'PRO_999'] as const;
 export type PaidTier = typeof BILLING_PAID_TIERS[number];
 export type BillingMode = 'TEST' | 'LIVE';
+export type BillingPurchaseSource = 'NO_TERM' | 'TRIAL' | 'ADMIN_MANUAL' | 'PAID_CURRENT_MODE' |
+  'PAID_EXPIRED_CURRENT_MODE' | 'PAID_OTHER_MODE' | 'SOURCE_INCONSISTENT';
 export type BillingSettlementTotals = {grossCharges:string;knownTax:string;unknownTaxCharges:number;fees:string;netMovement:string;payouts:string;payoutReversals:string;excluded:number};
 export type BillingSettlementRun = {id:string;mode:BillingMode;state:string;version:number;reason:string;windowStart:string;windowEnd:string;createdAt:string;observedAt:string|null;
   pages:number;seen:number;matched:number;different:number;manual:number;missing:number;totals:BillingSettlementTotals;errorCode:string|null;retryAt:string|null;canCancel:boolean;canResume:boolean;canRun:boolean};
@@ -96,6 +98,8 @@ export type BillingReceiptUsage = {
   /** Monthly base and fixed Admin gifts have separate clocks; absent for purchased allowances. */
   monthlyAllowance?: { limit: number | null; used: number; additionalRemaining: number; additionalExpiresAt: string | null };
 };
+export type BillingFeatureImpact = { removed: { featureKey:string; labelTh:string }[];
+  added: { featureKey:string; labelTh:string }[]; preservedAdmin:number };
 export type BillingQuote = {
   /** Absent only on legacy quotes/history; new purchases require a reviewed profile. */
   billingProfile?: BillingCompanyProfile;
@@ -104,6 +108,8 @@ export type BillingQuote = {
   offer: BillingOffer; subtotalSatang: number; taxSatang: number; totalSatang: number;
   taxTreatment: BillingTaxTreatment; consentRevision: string; paidStart: 'IMMEDIATE' | 'AFTER_TRIAL';
   billingEmail: string; trialEndsAt: string | null; usage: BillingReceiptUsage;
+  previousSource?: BillingPurchaseSource; previousTermEndsAt?: string | null;
+  featureImpact?: BillingFeatureImpact;
   purchase?: { kind: 'INITIAL' | 'REPEAT' | 'RESTART' | 'UPGRADE'; previousInterval?: BillingInterval; previousPaidThrough: string | null; projectedPaidThrough: string;
     receiptUnitsAdded: number; projectedRemainingReceipts: number;
     trialCarryover?: { receiptUnits: number; expiresAt: string } };
@@ -126,8 +132,10 @@ export type BillingStatus = {
   companyId: string; companyName: string; mode: BillingMode | 'DISABLED'; policyRevision: string | null;
   paymentState: 'NONE' | 'PENDING' | 'UNKNOWN' | 'PAID' | 'FAILED' | 'ACTION_REQUIRED';
   applyState: 'NONE' | 'PENDING' | 'APPLIED' | 'HELD' | 'FAILED';
-  purchaseEligibility?: 'ELIGIBLE' | 'COMPANY_SALES_CLOSED';
+  purchaseEligibility?: 'ELIGIBLE' | 'COMPANY_SALES_CLOSED' | 'SOURCE_REVIEW_REQUIRED' | 'ENTITLEMENT_REVIEW_REQUIRED';
+  purchaseSource?: BillingPurchaseSource;
   renewalMode?: BillingPurchaseMode | 'NONE';
+  enabledPurchaseModes?: BillingPurchaseMode[];
   availablePurchaseModes?: BillingPurchaseMode[];
   renewalInvoiceUrl?: string | null;
   renewalInvoiceDueAt?: string | null;
@@ -248,7 +256,7 @@ export type BillingTimelineEntry = { reference: string; kind: string; type: stri
 export type BillingHistoryExport = {fileName:string;csv:string;rowCount:number;exportedAt:string;nextCursor:string|null;financialIncluded:boolean;auditIncluded:boolean;sha256:string};
 export type BillingTimeline = { canExport?:boolean; items: BillingTimelineEntry[]; nextCursor: string | null; auditIncluded: boolean; financialIncluded: boolean };
 export type BillingRepairPreview = { type: 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION'; companyId: string; expectedVersion: number; reason: string; referenceId?:string; invoiceSourceHash?:string;findingSourceHash?:string };
-export type BillingApplyInvoiceView = { id:string;companyId:string;mode:BillingMode;version:number;accountVersion:number;applyState:string;paymentVerified:boolean;
+export type BillingApplyInvoiceView = { id:string;companyId:string;mode:BillingMode;version:number;accountVersion:number;applyState:string;errorCode:string|null;paymentVerified:boolean;
   periodStart:string;periodEnd:string;appliedAt:string|null;observedAt:string|null;sourceHash:string;canRetry:boolean };
 export type BillingInvoiceFindingReview = BillingInvoiceFinding & {accountVersion:number;sourceHash:string;canImport:boolean};
 export type BillingRepairOperation = BillingOperationView & { sourceVersion: number; previewHash: string;

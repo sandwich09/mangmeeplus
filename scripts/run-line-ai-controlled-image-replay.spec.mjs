@@ -26,6 +26,14 @@ describe('controlled image expectation comparison', () => {
     );
   });
 
+  it('can bind the seller address a controlled image prints, exactly', () => {
+    const body = { fields: { vendorAddress: '12/3 ถนนสุขุมวิท ชลบุรี' } };
+    assert.equal(evaluateExpectation(body, 'fields.vendorAddress', ['12/3 ถนนสุขุมวิท ชลบุรี']).passed, true);
+    // The buyer address on the same page must not satisfy it — that is the whole point of the row.
+    assert.equal(evaluateExpectation(body, 'fields.vendorAddress', ['55/3 ซอยลาดพร้าว 15']).passed, false);
+    assert.equal(evaluateExpectation({ fields: {} }, 'fields.vendorAddress', ['12/3 ถนนสุขุมวิท ชลบุรี']).passed, false);
+  });
+
   it('can require a multi-entry ledger to omit a single grand total', () => {
     assert.deepEqual(
       evaluateExpectation({ fields: {} }, 'fields.grandTotalAmountAbsent', ['true']),

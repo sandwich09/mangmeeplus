@@ -3,13 +3,23 @@ import { createHash } from 'node:crypto';
 import type {
   LinkExternalWhtCertificateDto,
   RequestContext,
+  SetWhtHandoffPayeeAddressDto,
+  VendorCounterpartyAutoSaveResult,
   WhtCertificateHandoffDto,
   WhtHandoffPrefillDto,
 } from '@watchdog-bms/contracts';
+import { WHT_HANDOFF_PAYEE_ADDRESS_MAX } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
 import { FEATURE_TEMPORARILY_UNAVAILABLE } from '../../../employee-access/application/entitlement.helper';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
+import { PrismaAccountingRepository } from '../../../accounting-documents/infrastructure/prisma-accounting.repository';
+import {
+  buildCounterpartyAddressV2,
+  counterpartyAddressText,
+  decideVendorAutoSave,
+  vendorMatchKey,
+} from '../../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
 import { normalizeWhtLinkEvidence } from '../../domain/logic/wht-link-evidence.logic';
 import type { WhtLinkEvidenceInput } from '../../domain/logic/wht-link-evidence.logic';
 
@@ -46,6 +56,11 @@ export class WhtCertificateHandoffUseCase {
     private readonly taxRepo: PrismaTaxRepository,
     private readonly audit: AuditService,
     private readonly launchGate: LaunchGateGuardService,
+    // §10's registry write-back. The accounting module imports THIS module, so it cannot be
+    // imported back without a Nest cycle; the repository is stateless over the global PrismaService
+    // and is listed in this module's own providers, the same way the tax source adapters already
+    // read other modules' tables directly.
+    private readonly counterparties: PrismaAccountingRepository,
   ) {}
 
   private get table() {
@@ -184,6 +199,137 @@ export class WhtCertificateHandoffUseCase {
   }
 
   /**
+   * §10: supplies the payee address the frozen prefill never had.
+   *
+   * It lands in its own columns BESIDE `prefillSnapshotJson`. Rewriting that snapshot is not an
+   * option — `prefillSnapshotHash` is the proof that the statutory facts the operator copied have
+   * not drifted, and an edit would either break the hash or force a recompute that throws the
+   * proof away.
+   *
+   * Idempotency is proportionate rather than copied from `linkExternal`. That one needs a
+   * caller-stable command id because it is a one-way transition carrying legal evidence, where a
+   * genuine second link must be told apart from a retry. This is a last-write-wins scalar on a row
+   * that is still waiting: the same text again has nothing left to do, so a retry returns the
+   * stored row — no second column write, no second audit entry, no second registry write.
+   */
+  async setPayeeAddress(ctx: RequestContext, handoffId: string, dto: SetWhtHandoffPayeeAddressDto): Promise<WhtCertificateHandoffDto> {
+    const payeeAddress = String(dto?.payeeAddress ?? '').trim();
+    if (!payeeAddress) {
+      throw new BadRequestException({ code: 'wht_handoff_payee_address_required', message: 'กรุณาพิมพ์ที่อยู่ผู้รับเงินตามที่จะพิมพ์ลงหนังสือรับรอง' });
+    }
+    if (payeeAddress.length > WHT_HANDOFF_PAYEE_ADDRESS_MAX) {
+      throw new BadRequestException({ code: 'counterparty_address_too_long', message: 'ที่อยู่ยาวเกิน 500 ตัวอักษร ตัดให้สั้นลงแล้วบันทึกอีกครั้ง' });
+    }
+
+    const row = await this.table.findUnique({ where: { id: handoffId } });
+    if (!row || row.companyId !== ctx.companyId) throw new NotFoundException('WHT handoff not found.');
+    // The refusal: once the certificate exists, an address typed here reaches no document. Saying
+    // so beats accepting the text and letting the operator believe the paper changed.
+    if (row.status !== 'REQUIRED') throw payeeAddressNotEditable(row.status);
+    if ((row.payeeAddress ?? '') === payeeAddress) return toDto(row);
+
+    // Same conditional-write shape as the link, for the same reason: a colleague who links between
+    // the read above and this write must not end up with an address landing on a finished job.
+    const outcome = await this.table.updateMany({
+      where: { id: handoffId, companyId: ctx.companyId, status: 'REQUIRED' },
+      data: { payeeAddress, payeeAddressByUserId: ctx.userId, payeeAddressAt: new Date() },
+    });
+    if (outcome.count === 0) {
+      const current = await this.table.findUnique({ where: { id: handoffId } });
+      throw payeeAddressNotEditable(current?.status ?? null);
+    }
+    const updated = await this.table.findUnique({ where: { id: handoffId } });
+    await this.audit.log({
+      companyId: ctx.companyId,
+      actorUserId: ctx.userId,
+      action: 'tax.wht_certificate.payee_address_set',
+      targetType: 'wht_certificate_handoff',
+      targetId: handoffId,
+      requestId: ctx.requestId,
+      result: 'SUCCESS',
+      riskLevel: 'MEDIUM',
+      // CON-10: a payee address is personal data for an individual and the audit sanitizer's key
+      // list does not cover it, so the value never enters metadata — only that it changed.
+      metadataJson: { addressChanged: true },
+    });
+    return { ...toDto(updated), counterpartyAutoSave: await this.saveAddressToRegistry(ctx, row, payeeAddress) };
+  }
+
+  /**
+   * §7 cases b and c, so the next document for this payee prefills itself. §10 narrows this seam to
+   * those two: case a (creating a counterparty) stays with the expense path, which has a document
+   * and a vendor behind it.
+   *
+   * Never throws (§8, AC06). The address is already on the handoff row by the time this runs; a
+   * registry failure is reported as `FAILED` — exactly what `EnsureVendorCounterpartyFromExpense`
+   * returns — so the operator is told where to retry instead of losing what they typed.
+   */
+  private async saveAddressToRegistry(ctx: RequestContext, row: any, addressText: string): Promise<VendorCounterpartyAutoSaveResult> {
+    try {
+      const payee = (row.prefillSnapshotJson as WhtHandoffPrefillDto | null)?.payeeSnapshot;
+      // The handoff's own `branchCode` column IS the payee's tax branch code; the snapshot copy is
+      // the fallback for rows frozen before it was populated.
+      const key = vendorMatchKey({ taxId: payee?.taxId, branchCode: row.branchCode ?? payee?.branchCode, name: payee?.name });
+      if (!key) return { case: 'SKIPPED' };
+      const matched = await this.counterparties.findCounterpartyByVendorKey(ctx.companyId, key);
+      if (!matched) return { case: 'SKIPPED' };
+
+      const registryAddress = matched.billingAddressJson;
+      const registryAddressText = counterpartyAddressText(registryAddress ?? null);
+      const locked = Boolean((registryAddress as { locked?: unknown } | undefined)?.locked);
+      const decision = decideVendorAutoSave({ matched: true, registryAddressText, documentAddressText: addressText, locked });
+      const result: VendorCounterpartyAutoSaveResult = {
+        case: decision.case,
+        counterpartyId: matched.id,
+        displayName: matched.displayName,
+        ...(decision.case === 'HISTORY' && locked ? { locked: true } : {}),
+      };
+      if (!decision.promoteToPrimary && !decision.appendToHistory) return result;
+
+      const previous = (registryAddress ?? undefined) as
+        { postalCode?: string | null; provenance?: { source?: string; expenseId?: string; userId?: string; at?: string } } | undefined;
+      // A4: locked keeps the registry's own primary and only remembers what was typed here.
+      const keepPrimary = !decision.promoteToPrimary;
+      const at = new Date().toISOString();
+      await this.counterparties.saveCounterpartyVendorFields({
+        companyId: ctx.companyId,
+        counterpartyId: matched.id,
+        billingAddressJson: buildCounterpartyAddressV2({
+          addressText: keepPrimary ? registryAddressText! : addressText,
+          postalCode: keepPrimary ? previous?.postalCode ?? null : null,
+          // A person typed this one on a screen, so MANUAL — not EXPENSE_AUTO, which would claim a
+          // document that does not exist.
+          source: keepPrimary ? (previous?.provenance?.source as 'MANUAL') ?? 'MANUAL' : 'MANUAL',
+          ...(keepPrimary && previous?.provenance?.expenseId ? { expenseId: previous.provenance.expenseId } : {}),
+          userId: keepPrimary ? previous?.provenance?.userId ?? ctx.userId : ctx.userId,
+          at: keepPrimary ? previous?.provenance?.at ?? at : at,
+          previous: registryAddress,
+          // No expense behind a handoff address — the same empty marker `PromoteSeenAddressUseCase`
+          // writes for a hand-picked address with no document of its own.
+          ...(decision.appendToHistory
+            ? { appendToHistory: { addressText: keepPrimary ? addressText : registryAddressText!, expenseId: '', at } }
+            : {}),
+        }),
+        updatedByUserId: ctx.userId,
+      });
+      void this.audit.log({
+        companyId: ctx.companyId,
+        actorUserId: ctx.userId,
+        action: 'accounting.counterparty.update',
+        targetType: 'accounting_counterparty',
+        targetId: matched.id,
+        requestId: ctx.requestId,
+        result: 'SUCCESS',
+        riskLevel: 'MEDIUM',
+        metadataJson: { source: 'wht_handoff_payee_address', handoffId: row.id, addressChanged: true },
+      });
+      return result;
+    } catch {
+      return { case: 'FAILED', failed: true };
+    }
+  }
+
+  /**
    * Records the externally issued certificate against the handoff. Writes no `WhtCertificate`:
    * the SYSTEM route is closed, so there is no system number to register and no active-certificate
    * predicate to contend with (coordinator ruling OQ-3; CC5 owns that machinery).
@@ -271,6 +417,18 @@ export class WhtCertificateHandoffUseCase {
   }
 }
 
+/**
+ * D5: never a silent no-op. The handoff already has its certificate, so the text would reach no
+ * document — the refusal says that and points at the place where the address still matters.
+ */
+function payeeAddressNotEditable(status: string | null): ConflictException {
+  return new ConflictException({
+    code: 'wht_handoff_address_not_editable',
+    message: 'รายการนี้ออกหนังสือรับรองไปแล้ว ที่อยู่ที่พิมพ์ที่นี่จึงไม่มีผลกับเอกสารที่ออกไป แก้ที่อยู่ผู้รับเงินได้ที่หน้าคู่ค้า',
+    status,
+  });
+}
+
 /** Stable over key order so a replay of the same facts fingerprints identically. */
 export function fingerprint(value: unknown): string {
   return createHash('sha256').update(canonical(value)).digest('hex');
@@ -298,6 +456,9 @@ function toDto(row: any): WhtCertificateHandoffDto {
     taxPeriodId: row.taxPeriodId ?? null,
     taxEventIds: (row.taxEventIdsJson ?? []) as string[],
     prefill: row.prefillSnapshotJson as WhtHandoffPrefillDto,
+    payeeAddress: row.payeeAddress ?? null,
+    payeeAddressAt: row.payeeAddressAt?.toISOString() ?? null,
+    payeeAddressByUserId: row.payeeAddressByUserId ?? null,
     externalCertificateNumber: row.externalCertificateNumber ?? null,
     externalEvidenceRef: row.externalEvidenceRef ?? null,
     externalIssuedDate: row.externalIssuedDate?.toISOString() ?? null,

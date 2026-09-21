@@ -2483,6 +2483,10 @@ model ExpenseRecord {
   vendorNameSnapshot                 String?
   vendorTaxIdSnapshot                String?
   vendorBranchCodeSnapshot           String?
+  /// The seller address exactly as printed on the document we received (vendor-address spec §6).
+  /// One free-text block, postcode included — the RD compares it with the paper, so it is never
+  /// split into fields here. Empty never blocks anything (§8): it is a review hint, not a gate.
+  vendorAddressSnapshot              String?                            @db.VarChar(500)
   // RA-18: the payee's taxpayer class decides ภ.ง.ด.3 (INDIVIDUAL) vs ภ.ง.ด.53 (JURISTIC) when
   // this expense withholds tax. Captured at review; null means not yet classified, never "juristic".
   vendorEntityKindSnapshot           BuyerEntityKind?
@@ -5118,6 +5122,14 @@ model WhtCertificateHandoff {
   // must stay readable after the source feature is OFF (tax-spec:1835).
   prefillSnapshotJson Json
   prefillSnapshotHash String
+
+  // Vendor-address spec §10: the payee address the operator types on the handoff screen when the
+  // frozen prefill has none. Columns BESIDE the snapshot, never inside it — `prefillSnapshotHash`
+  // exists so the operator's copy of the statutory facts cannot drift, and editing the JSON would
+  // either break that hash or force it to be recomputed, which destroys the guarantee.
+  payeeAddress         String?   @db.VarChar(500)
+  payeeAddressByUserId String?
+  payeeAddressAt       DateTime?
 
   availabilityVectorJson Json
 
@@ -8759,7 +8771,8 @@ model CompanyEntitlementNormalization {
   // need no repair) out of the pass.
   normalizerVersion Int                                   @default(0)
   // The DURABLE cohort this marker was completed as: `LEGACY` = the grandfather pass materialized
-  // rows that predate explicit entitlements, `EXPLICIT` = onboarding wrote them as real decisions.
+  // rows that predate explicit entitlements, `EXPLICIT` = onboarding or verified paid package
+  // wrote a full explicit set as real decisions.
   // Verify reads THIS, never "does any row carry grantOrigin=LEGACY" — a legacy company whose
   // provenance stamp landed on zero rows is indistinguishable from an explicit one by inference,
   // and used to pass verify with its entire cohort marker missing. Null = written by a normalizer

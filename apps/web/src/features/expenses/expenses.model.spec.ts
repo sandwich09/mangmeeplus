@@ -44,6 +44,7 @@ import {
   TAX_EVIDENCE_REASON_LABELS,
   AI_SUMMARY_STATUS_LABELS,
   AI_MISSING_FIELD_LABELS,
+  AI_REVIEW_FIELD_KEYS,
   ATTACHMENT_PURPOSE_LABELS,
   isWetSignedScanAttachment,
   SUBSTITUTE_RECEIPT_STATUS_LABELS,
@@ -335,6 +336,34 @@ describe('expenses.model', () => {
     assert.equal(expenseAiFieldProvenance(null, 'vendorNameSnapshot'), null);
   });
 
+  /**
+   * Vendor address spec §7 (D3 step two) and CON-8. The OCR does not emit `vendorAddress` yet, so
+   * what this pins is the wiring it will land on: the alias is registered under the snapshot field,
+   * and the blank branch code the form starts out with reaches the API as null — not as `'00000'`,
+   * which is a head-office code a person may really type and which the vendor matcher reads as one.
+   */
+  it('registers the seller address as an AI-read field and never invents a branch code', () => {
+    assert.deepEqual([...AI_REVIEW_FIELD_KEYS.vendorAddressSnapshot], ['vendorAddress']);
+    assert.deepEqual(
+      expenseAiFieldProvenance({ recognizedFields: { vendorAddress: '99/1 ถ.สุขุมวิท' }, missingFields: [] }, 'vendorAddressSnapshot'),
+      { recognized: true, missing: false },
+    );
+    assert.deepEqual(
+      expenseAiFieldProvenance({ recognizedFields: {}, missingFields: ['vendorAddress'] }, 'vendorAddressSnapshot'),
+      { recognized: false, missing: true },
+    );
+
+    const detail = { status: 'NEEDS_REVIEW', expenseDate: '2026-09-18', lines: [],
+      vendorAddressSnapshot: ' 99/1 ถ.สุขุมวิท กรุงเทพฯ ', vendorBranchCodeSnapshot: null } as unknown as ExpenseDetail;
+    const values = reviewValues(detail);
+    assert.equal(values.vendorBranchCodeSnapshot, '');
+    const payload = buildExpenseDraftReviewPayload(values);
+    assert.equal(payload.vendorAddressSnapshot, '99/1 ถ.สุขุมวิท กรุงเทพฯ');
+    assert.equal(payload.vendorBranchCodeSnapshot, null, 'blank stays blank — never the string 00000');
+    assert.equal(buildExpenseDraftReviewPayload({ ...values, vendorBranchCodeSnapshot: '00001' }).vendorBranchCodeSnapshot, '00001');
+    assert.equal(buildExpenseDraftReviewPayload({ ...values, vendorAddressSnapshot: '   ' }).vendorAddressSnapshot, null);
+  });
+
   // Spec `line-ai-draft-control-spec-th.md` §5.2(ง). The date column is NOT NULL, so an unread date
   // still stores the upload day — a value every non-empty check passes. The server now flags it in
   // `missingFields`, and this is the chain that turns that flag into "ต้องกรอกเอง: วันที่รายจ่าย" on
@@ -444,6 +473,8 @@ describe('expenses.model', () => {
     const payload = buildExpenseDraftReviewPayload({
       vendorNameSnapshot: ' ร้านทดสอบ ',
       vendorTaxIdSnapshot: '0100000000001',
+      vendorAddressSnapshot: '',
+      vendorBranchCodeSnapshot: '',
       vendorDocumentNumber: 'INV-1',
       expenseDate: '2026-07-10',
       vatMode: 'VAT_EXCLUDED',
@@ -456,6 +487,9 @@ describe('expenses.model', () => {
     assert.deepEqual(payload, {
       vendorNameSnapshot: 'ร้านทดสอบ',
       vendorTaxIdSnapshot: '0100000000001',
+      // CON-8/§6: an untouched address and branch travel as null, never '' and never '00000'.
+      vendorAddressSnapshot: null,
+      vendorBranchCodeSnapshot: null,
       vendorDocumentNumber: 'INV-1',
       expenseDate: '2026-07-10',
       vatMode: 'VAT_EXCLUDED',
@@ -474,6 +508,8 @@ describe('expenses.model', () => {
     const payload = buildExpenseDraftReviewPayload({
       vendorNameSnapshot: 'ร้านทดสอบ',
       vendorTaxIdSnapshot: '',
+      vendorAddressSnapshot: '',
+      vendorBranchCodeSnapshot: '',
       vendorDocumentNumber: 'INV-1',
       expenseDate: '2026-08-20',
       vatMode: 'VAT_INCLUDED',
@@ -657,6 +693,7 @@ describe('expenses.model', () => {
     assert.equal(
       buildExpenseDraftReviewPayload({
         vendorNameSnapshot: 'ร้านทดสอบ', vendorTaxIdSnapshot: ' 0-1055-58096-34-8 ', vendorDocumentNumber: 'INV-1',
+        vendorAddressSnapshot: '', vendorBranchCodeSnapshot: '',
         expenseDate: '2026-07-10', vatMode: 'VAT_EXCLUDED', lines: [],
       }).vendorTaxIdSnapshot,
       '0105558096348',
@@ -673,6 +710,7 @@ describe('expenses.model', () => {
   it('sends the payee taxpayer class only once review has picked one', () => {
     const values = {
       vendorNameSnapshot: 'ร้านทดสอบ', vendorTaxIdSnapshot: '0100000000001', vendorDocumentNumber: 'INV-1',
+      vendorAddressSnapshot: '', vendorBranchCodeSnapshot: '',
       expenseDate: '2026-07-10', vatMode: 'VAT_EXCLUDED' as const, lines: [],
     };
     assert.equal(buildExpenseDraftReviewPayload({ ...values, vendorEntityKindSnapshot: 'INDIVIDUAL' }).vendorEntityKindSnapshot, 'INDIVIDUAL');
@@ -685,6 +723,8 @@ describe('expenses.model', () => {
     const payload = buildExpenseDraftReviewPayload({
       vendorNameSnapshot: '',
       vendorTaxIdSnapshot: '',
+      vendorAddressSnapshot: '',
+      vendorBranchCodeSnapshot: '',
       vendorDocumentNumber: '',
       expenseDate: '2026-07-30',
       vatMode: 'VAT_EXCLUDED',
@@ -709,6 +749,7 @@ describe('expenses.model', () => {
   it('sends a blank VAT rate rather than omitting it, so preview equals stored', () => {
     const payload = buildExpenseDraftReviewPayload({
       vendorNameSnapshot: '', vendorTaxIdSnapshot: '', vendorDocumentNumber: '',
+      vendorAddressSnapshot: '', vendorBranchCodeSnapshot: '',
       expenseDate: '2026-08-04', vatMode: 'VAT_INCLUDED',
       lines: [{
         description: 'Starbucks', quantity: '1', unitPrice: '180', discountAmount: '0',
@@ -1072,6 +1113,7 @@ describe('expenseAiSuggestion / applyExpenseAiSuggestion', () => {
 
   const emptyValues: ExpenseDraftReviewValues = {
     vendorNameSnapshot: '', vendorTaxIdSnapshot: '', vendorEntityKindSnapshot: '',
+    vendorAddressSnapshot: '', vendorBranchCodeSnapshot: '',
     vendorDocumentNumber: '', expenseDate: '', vatMode: 'NO_VAT', lines: [],
   };
 

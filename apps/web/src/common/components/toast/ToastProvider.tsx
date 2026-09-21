@@ -54,8 +54,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, [show]);
 
   const value = useMemo<ToastContextValue>(() => ({
-    success: (message) => show({ tone: 'success', message }),
-    warning: (message) => show({ tone: 'warning', message }),
+    success: (message, action) => show({ tone: 'success', message, ...(action ? { action } : {}) }),
+    warning: (message, action) => show({ tone: 'warning', message, ...(action ? { action } : {}) }),
     error: (input) => show({ tone: 'error', message: toastErrorMessage(input) }),
   }), [show]);
 
