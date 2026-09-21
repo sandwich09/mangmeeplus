@@ -1,6 +1,6 @@
 # สมัครและเข้าสู่ระบบด้วยอีเมลโดยไม่ใช้รหัสผ่าน
 
-สถานะ 2026-09-16: SOURCE MERGED DEVELOP + MAIN / REQUIRED CI PASS. Reviewed E01–E18 and implemented; PR583/584 merged after CI passed. ขอบเขตนี้ต่อจาก billing และ optional-email OTP; ไม่ deploy หรือส่งเงินจริง/เมลจริงจากการทดสอบนี้.
+สถานะ 2026-09-21: UAT พบ existing-account loop หลังกรอก OTP ถูกต้อง. Owner กำหนดให้ public OTP ที่ถูกต้องของอีเมลซึ่งตรงกับบัญชีเดียวเป็น explicit opt-in: ยืนยันอีเมล เปิด Email Login และสร้าง session ใน transaction เดียว โดยยังคง current-account, active membership, non-privileged และ security-binding guards. Hotfix ผ่าน focused PostgreSQL 16/16 และ API/Web typecheck ในเครื่องแล้ว; ยังไม่ deploy. หลักฐานส่งมอบเดิมวันที่ 2026-09-16 ยังคงเป็นประวัติของ PR583/584.
 
 ## 1. ผลลัพธ์และข้อกำหนด
 
@@ -11,12 +11,12 @@
 ## 2. Identity และ security contract
 
 - Public login proof แยกจาก AccountEmailOtpService (ผูก/เปลี่ยนอีเมลหลัง authenticated). ไม่ใช้ AccountClaimToken, verification link หรือ billing recipient เป็น login proof.
-- User.emailLoginEnabledAt เป็น opt-in ของวิธี login. บัญชี email-first ใหม่ตั้งใน transaction เปิดร้าน; บัญชีเดิมต้องยืนยัน password หรือ fresh same-account LINE proof และกดยืนยันที่หน้าความปลอดภัย. อีเมลต้อง verified และบัญชี ACTIVE. ไม่เปิดวิธีใหม่อัตโนมัติให้บัญชีเก่า และไม่เพิ่ม passwordless ให้ SYSTEM_ADMIN.
+- User.emailLoginEnabledAt เป็นสถานะของวิธี login. บัญชี email-first ใหม่ตั้งใน transaction เปิดร้าน; สำหรับบัญชีเดิม การตั้งค่าจากหน้าความปลอดภัยยังใช้ password หรือ fresh same-account LINE proof. การขอและกรอก public email OTP ถูกต้องด้วยตนเองเป็น explicit opt-in อีกทางหนึ่ง: เมื่อ challenge ผูกกับ User เดียว, อีเมลตรงกับ User.email, บัญชีและ membership ACTIVE, ไม่ใช่ SYSTEM_ADMIN/system-protected และ credential ไม่ DISABLED ให้เขียน emailVerifiedAt/emailLoginEnabledAt และสร้าง session ใน transaction เดียว. ห้าม attach/merge จาก contact email หรือข้าม current security binding.
 - Public challenge: email ปรับ lowercase, random UUID, browser secret สุ่มอย่างน้อย 256 bit เก็บ hash, purpose EMAIL_ACCESS_V1, environment/key version, security binding ของ user ถ้ามี, HMAC ของ OTP, expiry, failed attempts, delivery attempt, status. Raw OTP อยู่แค่ memory/transport ไม่ log/DB/outbox. เก็บ browser secret ใน HttpOnly SameSite cookie ของ BFF; JS เห็นเพียงสถานะ/challenge id.
 - OTP อายุ 10 นาที, ผิดได้ 5 ครั้ง, ขอใหม่ห่าง 60 วินาที, ไม่เกิน 5 ครั้ง/ชม./อีเมล และ 10 ครั้ง/วัน/อีเมล พร้อม shared fail-closed IP limiter. รหัสใหม่ยกเลิกรหัสเดิม; requestKey เดิมต้อง fingerprint ตรงและไม่ส่งซ้ำ. Changing email เริ่ม challenge ใหม่. Timing/result ก่อนพิสูจน์อีเมลไม่เปิดเผยว่ามีบัญชีหรือไม่.
 - Confirm ผูก browser secret + code + purpose + current identity snapshot. account disabled, email/security revision/credential/LINE binding เปลี่ยน, code expired/used/revoked ถูกปฏิเสธ. Count ผิด commit แม้ตอบ error. OTP ใช้ได้ครั้งเดียว; response หายให้ขอใหม่ ไม่คืน session จาก code เก่า. หลังพิสูจน์ใหม่ resume ร้าน/คำขอเดิมได้.
 - consume proof และสร้าง AuthSession เป็น transaction เดียวภายใต้ user/company/membership locks ตามลำดับเดิม. ต้องผ่าน platform/legal/password-change/company guards เดิม. Email session เก็บ fresh email reauthentication เพื่อให้ผู้สมัครใหม่ตั้งรหัสสำรองได้; อำนาจนี้หมดอายุ 5 นาทีตาม helper เดิม.
-- Unverified/duplicate legacy address ไม่ attach/merge/overwrite. หลัง proof แสดงให้ใช้ login เดิมหรือ support; ไม่มี account existence response ก่อน proof. Existing enabled account เข้า membership เดิมเท่านั้น ไม่เปิดร้านใหม่จากปุ่มสมัคร.
+- Duplicate/ambiguous legacy address ไม่ attach/merge/overwrite. Unverified address ที่เป็น User.email เดียวแบบ exact match เปิดได้เฉพาะหลัง public OTP proof ถูกต้องและ current guards ผ่าน; ไม่มี account existence response ก่อน proof. Existing account เข้า membership เดิมเท่านั้น ไม่เปิดร้านใหม่จากปุ่มสมัคร.
 
 ## 3. Signup และกฎอนุมัติ
 
@@ -42,7 +42,7 @@ AUTO_FREE ใช้ mode/cap เดียวกับ LINE (ชื่อ config 
 | Same-origin BFF | JSON จากหน้าเว็บ | ผลสำเร็จ |
 |---|---|---|
 | POST /api/auth/email-access/request | email≤254, requestKey UUID, nextPath? | challengeId, expiresAt, retryAt, deliveryStatus; HttpOnly browser cookie |
-| POST /api/auth/email-access/confirm | code 6 digits | SIGNUP / EXISTING_LOGIN_REQUIRED / LOGIN |
+| POST /api/auth/email-access/confirm | code 6 digits | SIGNUP / EXISTING_LOGIN_REQUIRED / LOGIN; exact eligible existing email proof activate+LOGIN atomically |
 | POST /api/auth/email-access/signup | companyName≤120, displayName≤160, phoneNumber, consentVersion=EMAIL_SIGNUP_V1 | STATUS หรือ LOGIN |
 | POST /api/auth/email-access/status | {} | CODE / NEW / STATUS / LOGIN; ใช้ browser cookie เดิม |
 | POST /api/v1/auth/account/email/otp/login-method | enabled boolean, currentPassword? | account email status รวม emailLoginEnabled; requires authenticated permission account.password.change + fresh proof |
@@ -56,7 +56,7 @@ BFF เท่านั้นที่ใส่ challengeId/browserSecret ไป 
 | ID | ช่องโหว่/ผลกระทบ | ข้อกำหนดปิดช่องโหว่ |
 |---|---|---|
 | E01 | verification OTP ถูกใช้เป็น login โดยผิด purpose | dedicated model/purpose/public boundary |
-| E02 | ยึดบัญชี contact email เก่า/ร่วม | explicit opt-in + verified/current snapshot; no merge |
+| E02 | ยึดบัญชี contact email เก่า/ร่วม | exact unique User.email + browser-bound OTP explicit opt-in + current snapshot/active membership/non-privileged guards; no contact attach/merge |
 | E03 | OTP เดาสุ่ม/ส่งเมลเกิน/DB leak | HMAC + bounded attempts/IP+recipient budgets + no raw secret |
 | E04 | login CSRF/session fixation/URL leak | browser secret HttpOnly + same-origin + mint new session |
 | E05 | response หาย/สองแท็บได้หลายร้าน | durable request id + single-use proof + provisioning fence |
@@ -76,7 +76,7 @@ BFF เท่านั้นที่ใส่ challengeId/browserSecret ไป 
 
 ## 6. Acceptance
 
-ต้องมี checks: new signup → logout → login → protected API; manual review → approve → OTP resume; wrong/5 attempts/expiry/resend/rate/delivery failure; replay/concurrency; unverified collision; legacy verified without opt-in; inactive user/member/company; email/password/LINE changes between request and confirm; no raw tokens in browser response; session/audit rollback; recover after provisioning crash; no duplicate trial; LINE shared cap; trial/paid entitlement unchanged; legacy signup/claim/password reset; mobile/keyboard/error/retry/back navigation. Map each result to actual check; local simulated Postmark ไม่ใช่ inbox/native acceptance. No deploy in this task.
+ต้องมี checks: new signup → logout → login → protected API; manual review → approve → OTP resume; wrong/5 attempts/expiry/resend/rate/delivery failure; replay/concurrency; unverified/disabled-email-login existing account → atomic activate+login; ambiguous collision; inactive user/member/company; privileged account; email/password/LINE changes between request and confirm; no raw tokens in browser response; activation/session/audit rollback; recover after provisioning crash; no duplicate trial; LINE shared cap; trial/paid entitlement unchanged; legacy signup/claim/password reset; mobile/keyboard/error/retry/back navigation. Map each result to actual check; local simulated Postmark ไม่ใช่ inbox/native acceptance. Deploy เป็นงานแยกและต้องทำตาม release runbook.
 
 Implementation evidence: [email-passwordless-signup-2026-09-16](../agent-memory/email-passwordless-signup-2026-09-16.md). Migration additive; deploy ต้อง migrate ก่อน app ที่อ่าน fields ใหม่. Public challenge ใช้ hashed evidence ตาม auth token ledger เดิม ไม่เก็บ raw OTP; ไม่ผูก cleanup กับการลบประวัติเมลหรือคำขอเปิดร้าน. การปิด email login ยกเลิก challenge และหยุด login ใหม่ ส่วน session เดิมใช้หน้าจัดการ session เดิมเพื่อออกจากอุปกรณ์.
 
