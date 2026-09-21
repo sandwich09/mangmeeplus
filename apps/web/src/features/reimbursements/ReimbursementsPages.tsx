@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
@@ -9,19 +9,15 @@ import { Modal } from '@/common/components/modal';
 import { EmptyState } from '@/common/components/state/EmptyState';
 import { LoadingState } from '@/common/components/state/LoadingState';
 import {
-  listReimbursements, submitReimbursement, cancelReimbursement,
-  reopenReimbursement, getReimbursement,
-  setLineReceipt,
+  listReimbursements, submitReimbursement, getReimbursement,
   listApprovalQueue, approveReimbursement, rejectReimbursement,
   listFinanceQueue, financeReviewReimbursement,
-  voidReimbursementPayment,
   getReimbursementPolicy, listReimbursementApproverOptions, updateReimbursementPolicy,
-  signReimbursementClaimForm, uploadSignedClaimFormCopy,
 } from './reimbursements.api';
 import {
   REQUEST_STATUS_LABELS, PAYMENT_STATUS_LABELS,
   FINANCE_REVIEW_LABELS, REIMBURSEMENT_CREATE_UNAVAILABLE,
-  currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness, type ClaimSignatureRole,
+  currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness,
 } from './reimbursements.model';
 import {
   baht0, dateShort, ICON, KPI, StatCard, ErrorBanner,
@@ -30,11 +26,10 @@ import {
 import {
   summariseQueue, matchesSearch, pageBounds,
   formatMoney, parseHubTab, visibleHubTabs, withAssignedApprovalTab, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
-  isMissingSavedSignatureError, policyDecisionPreview, type HubTab,
+  policyDecisionPreview, type HubTab,
 } from './reimbursements.logic';
 import {
-  ClaimDetailSections, ClaimSummaryCard, MissingSavedSignatureModal, PaymentBadge, PaymentForm, ReasonDialog, RejectDialog,
-  StaleApprovalDialog, StatusBadge, VoidPaymentDialog, financeActionLabel, useClaimDocumentPreview,
+  PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
 } from './ReimbursementDetailSections';
 import { type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
@@ -119,22 +114,12 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   const requestedTab = searchParams.get('tab');
   // Deep-link changes also select the queue when this hub is already mounted.
   const [tab, setTab] = useState<HubTab>(() => parseHubTab(requestedTab, tabs));
-  // Rows open the claim's journey page; old `?focus=` links are redirected there by the route.
+  // Rows (and the row-level "ยกเลิก" button) open the claim's journey page — the detail drawer
+  // was retired in Phase 6, so every claim view and action lives on that page now.
   const openJourney = useCallback((id: string) => router.push(`/companies/${companyId}/reimbursements/${id}`), [companyId, router]);
-  // The drawer lives at hub level so a list row can still cancel in place (retired in Phase 6).
-  const [detail, setDetail] = useState<any | null>(null);
-  const [drawerError, setDrawerError] = useState<string | null>(null);
-  const [drawerBusy, setDrawerBusy] = useState(false);
-  const detailOpenPendingRef = useRef(false);
+  // "บันทึกจ่าย" stays a quick action right on the finance row; it never needed the drawer.
   const [payFor, setPayFor] = useState<any | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const { previewLoadingKey, closeDocumentPreview, openClaimForm, openAttachment, previewModals } = useClaimDocumentPreview(companyId, setDrawerError);
-  const [missingSignatureFor, setMissingSignatureFor] = useState<ClaimSignatureRole | null>(null);
-  const [rejecting, setRejecting] = useState(false);
-  const [requestingCorrection, setRequestingCorrection] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
-  const [voidingPayment, setVoidingPayment] = useState<any | null>(null);
-  const [staleReview, setStaleReview] = useState<{ before: any; detail: any } | null>(null);
 
   // Roles can change after submission. Permission-based navigation alone would strand the exact
   // assignee, so ask the server whether this session still owns a frozen task. The queue endpoint
@@ -153,94 +138,6 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   useEffect(() => {
     setTab(parseHubTab(requestedTab, tabs));
   }, [companyId, requestedTab, tabs]);
-
-  useEffect(() => {
-    closeDocumentPreview();
-  }, [companyId, detail?.id, closeDocumentPreview]);
-
-  const openDetail = useCallback(async (id: string, requestedAction?: 'cancel') => {
-    if (detailOpenPendingRef.current) return;
-    detailOpenPendingRef.current = true;
-    closeDocumentPreview();
-    setDrawerBusy(true); setDrawerError(null);
-    try {
-      setDetail(await getReimbursement(companyId, id));
-      if (requestedAction === 'cancel') setCancelling(true);
-    }
-    catch (e) { setDrawerError(err(e)); }
-    finally { detailOpenPendingRef.current = false; setDrawerBusy(false); }
-  }, [closeDocumentPreview, companyId]);
-
-  /**
-   * Runs a drawer action, then refreshes both the drawer and the queue behind it —
-   * on failure too: a two-phase action (finance อนุมัติจ่าย) makes its decision durable
-   * before projecting, so a thrown error still leaves the claim changed. Refreshing only
-   * on success is what left the drawer showing a pre-decision claim (BUG-7).
-   */
-  const drawerAction = async (fn: () => Promise<unknown>, successMessage?: string): Promise<boolean> => {
-    if (!detail) return false;
-    let succeeded = false;
-    setDrawerBusy(true); setDrawerError(null);
-    try {
-      await fn();
-      succeeded = true;
-      if (successMessage) toast.success(successMessage);
-    }
-    catch (e) { setDrawerError(err(e)); }
-    finally {
-      try { setDetail(await getReimbursement(companyId, detail.id)); }
-      catch { /* keep the claim on screen — the action's own error is the one to show */ }
-      setRefreshKey(k => k + 1);
-      setDrawerBusy(false);
-    }
-    return succeeded;
-  };
-
-  const signWithSavedSignature = async (role: ClaimSignatureRole) => {
-    if (!detail?.claimSignatureAckHash) {
-      setDrawerError('ไม่พบข้อมูลคำขอล่าสุด กรุณาเปิดคำขอใหม่');
-      return;
-    }
-    setDrawerBusy(true); setDrawerError(null);
-    try {
-      await signReimbursementClaimForm(companyId, detail.id, {
-        role,
-        snapshotHash: detail.claimSignatureAckHash,
-      });
-      setDetail(await getReimbursement(companyId, detail.id));
-      setRefreshKey(k => k + 1);
-      toast.success('ลงนามใบเบิกเรียบร้อยแล้ว');
-    } catch (e) {
-      if (isMissingSavedSignatureError(e)) {
-        setMissingSignatureFor(role);
-      } else {
-        setDrawerError(err(e));
-      }
-    } finally {
-      setDrawerBusy(false);
-    }
-  };
-
-  const approveFromDrawer = async () => {
-    if (!detail) return;
-    setDrawerBusy(true); setDrawerError(null);
-    try {
-      const updated = await approveReimbursement(companyId, detail.id, undefined, detail.approvalSnapshotHash);
-      // Keep the mutation response: a frozen assignee may no longer have general read permission
-      // after their role changes, so a successful decision must not be reported as failed merely
-      // because the post-action GET is no longer available once the task is complete.
-      setDetail(updated);
-      setRefreshKey(k => k + 1);
-      toast.success('อนุมัติคำขอเรียบร้อยแล้ว');
-    } catch (e) {
-      if (isStaleApprovalError(e)) {
-        try {
-          const fresh = await getReimbursement(companyId, detail.id);
-          setStaleReview({ before: detail, detail: fresh });
-        } catch (e2) { setDrawerError(err(e2)); }
-      } else { setDrawerError(err(e)); }
-    } finally { setDrawerBusy(false); }
-  };
 
   if (!assignmentProbeDone && tabs.length === 0) {
     return <LoadingState label="กำลังตรวจสอบงานอนุมัติของคุณ..." />;
@@ -282,147 +179,18 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         {...queueProps}
         userId={userId}
         canCreate={permissions.includes('reimbursement.create')}
-        onRequestCancel={id => void openDetail(id, 'cancel')}
       />}
       {tab === 'approvals' && <ApprovalQueue {...queueProps} />}
       {tab === 'finance' && <FinanceQueue {...queueProps} onRecordPayment={setPayFor} />}
       {tab === 'policy' && <PolicySettings companyId={companyId} />}
-      {drawerBusy && !detail && <LoadingState label="กำลังเปิดใบเบิก..." size="sm" />}
-      {!detail && drawerError && <ErrorBanner message={drawerError} />}
 
-      {detail && <DetailDrawer
-        companyId={companyId}
-        detail={detail}
-        context={tab}
-        userId={userId}
-        permissions={permissions}
-        busy={drawerBusy || previewLoadingKey !== null}
-        error={drawerError}
-        onClose={() => { closeDocumentPreview(); setDetail(null); setDrawerError(null); }}
-        onPrintClaimForm={() => void openClaimForm(detail)}
-        onSign={role => void signWithSavedSignature(role)}
-        onUploadSignedCopy={(file) => drawerAction(() => uploadSignedClaimFormCopy(companyId, detail.id, file, detail.branchId), 'แนบสำเนาใบเบิกที่ลงนามเรียบร้อยแล้ว')}
-        onOpenAttachment={(attachmentId, fileName) => void openAttachment(detail.id, attachmentId, fileName)}
-        onLineReceipt={(lineNo, file) => drawerAction(() => setLineReceipt(companyId, detail.id, detail.lines ?? [], lineNo, file, detail.branchId), 'แนบใบเสร็จเรียบร้อยแล้ว')}
-        onSubmit={() => drawerAction(() => submitReimbursement(companyId, detail.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}
-        onRequestCancel={() => { setDrawerError(null); setCancelling(true); }}
-        onReopen={() => drawerAction(() => reopenReimbursement(companyId, detail.id), 'เปิดคำขอกลับเป็นร่างแล้ว แก้ไขและส่งอนุมัติได้อีกครั้ง')}
-        onApprove={approveFromDrawer}
-        onRequestReject={() => { setDrawerError(null); setRejecting(true); }}
-        onFinanceApprove={() => drawerAction(() => financeReviewReimbursement(companyId, detail.id, {
-          decision: 'APPROVED_FOR_PAYMENT',
-          resolveDuplicate: detail.duplicateStatus === 'POSSIBLE_DUPLICATE',
-          duplicateResolutionReason: detail.duplicateStatus === 'POSSIBLE_DUPLICATE' ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined,
-        }), detail.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว')}
-        onRequestCorrection={() => { setDrawerError(null); setRequestingCorrection(true); }}
-        onRecordPayment={() => setPayFor(detail)}
-        onRequestVoidPayment={payment => { setDrawerError(null); setVoidingPayment(payment); }}
-      />}
-      {/* Sibling of the drawer so closing the preview does not close the claim behind it. */}
-      {previewModals}
-      {missingSignatureFor && <MissingSavedSignatureModal
-        companyId={companyId}
-        onClose={() => setMissingSignatureFor(null)}
-      />}
       {payFor && <PaymentModal
         companyId={companyId}
         request={payFor}
         onClose={() => setPayFor(null)}
-        onDone={async () => {
+        onDone={() => {
           setPayFor(null);
           setRefreshKey(k => k + 1);
-          if (detail) setDetail(await getReimbursement(companyId, detail.id));
-        }}
-      />}
-      {rejecting && detail && <RejectDialog
-        requestNo={detail.requestNo}
-        busy={drawerBusy}
-        error={drawerError}
-        onClose={() => setRejecting(false)}
-        onConfirm={async reason => {
-          if (await drawerAction(async () => {
-            setDetail(await rejectReimbursement(companyId, detail.id, reason));
-          }, 'ปฏิเสธคำขอเรียบร้อยแล้ว')) {
-            setRejecting(false);
-          }
-        }}
-      />}
-      {requestingCorrection && detail && <ReasonDialog
-        title={`ส่งกลับให้แก้ไข ${detail.requestNo ?? ''}`.trim()}
-        description="ระบุข้อมูลที่ต้องแก้ไข ใบเบิกจะกลับเป็นฉบับร่างและต้องผ่านการอนุมัติใหม่"
-        confirmLabel="ส่งกลับให้แก้ไข"
-        busy={drawerBusy}
-        error={drawerError}
-        onClose={() => setRequestingCorrection(false)}
-        onConfirm={async reason => {
-          if (await drawerAction(() => financeReviewReimbursement(companyId, detail.id, { decision: 'NEEDS_INFO', note: reason }), 'ส่งใบเบิกกลับให้แก้ไขแล้ว')) {
-            setRequestingCorrection(false);
-          }
-        }}
-      />}
-      {cancelling && detail && <ReasonDialog
-        title={`ยกเลิกคำขอ ${detail.requestNo ?? ''}`.trim()}
-        description="ระบุเหตุผล ระบบจะปิดคำขอและยกเลิกรายการที่เกี่ยวข้อง คำขอนี้จะนำกลับมาใช้ต่อไม่ได้"
-        confirmLabel="ยืนยันยกเลิกคำขอ"
-        busy={drawerBusy}
-        error={drawerError}
-        danger
-        onClose={() => setCancelling(false)}
-        onConfirm={async reason => {
-          if (await drawerAction(() => cancelReimbursement(companyId, detail.id, reason), 'ยกเลิกคำขอเรียบร้อยแล้ว')) {
-            setCancelling(false);
-          }
-        }}
-      />}
-      {voidingPayment && detail && <VoidPaymentDialog
-        payment={voidingPayment}
-        busy={drawerBusy}
-        error={drawerError}
-        onClose={() => setVoidingPayment(null)}
-        onConfirm={async reason => {
-          if (await drawerAction(
-            () => voidReimbursementPayment(companyId, detail.id, voidingPayment.id, reason),
-            'ยกเลิกการจ่ายแล้ว ใบเบิกกลับไปรอจ่าย คุณสามารถบันทึกจ่ายใหม่หรือยกเลิกคำขอต่อได้',
-          )) {
-            setVoidingPayment(null);
-          }
-        }}
-      />}
-      {staleReview && <StaleApprovalDialog
-        requestNo={staleReview.detail.requestNo ?? staleReview.before.requestNo}
-        diff={diffApprovalFields(
-          {
-            reason: staleReview.before.reason,
-            amount: formatMoney(staleReview.before.amount),
-            currency: staleReview.before.currency,
-            categoryLabel: staleReview.before.categoryLabelSnapshot ?? staleReview.before.categoryKey,
-            lineCount: (staleReview.before.lines ?? []).length,
-          },
-          {
-            reason: staleReview.detail.reason,
-            amount: formatMoney(staleReview.detail.amount),
-            currency: staleReview.detail.currency,
-            categoryLabel: staleReview.detail.categoryLabelSnapshot ?? staleReview.detail.categoryKey,
-            lineCount: (staleReview.detail.lines ?? []).length,
-          },
-        )}
-        lines={staleReview.detail.lines ?? []}
-        currency={staleReview.detail.currency}
-        busy={drawerBusy}
-        error={drawerError}
-        onClose={() => setStaleReview(null)}
-        onConfirm={async () => {
-          const review = staleReview;
-          if (!review) return;
-          setDrawerBusy(true); setDrawerError(null);
-          try {
-            await approveReimbursement(companyId, review.detail.id, undefined, review.detail.approvalSnapshotHash);
-            setStaleReview(null);
-            setDetail(review.detail);
-            setRefreshKey(k => k + 1);
-            toast.success('อนุมัติคำขอเรียบร้อยแล้ว');
-          } catch (e) { setDrawerError(err(e)); }
-          finally { setDrawerBusy(false); }
         }}
       />}
     </MangmeePage>
@@ -432,11 +200,10 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
 type QueueProps = { companyId: string; refreshKey: number; onOpenDetail: (id: string) => void; permissions: readonly string[] };
 
 // ── My Requests ───────────────────────────────────────────────────────────────
-function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, canCreate, onRequestCancel }: QueueProps & {
+function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, canCreate }: QueueProps & {
   userId: string;
   permissions: readonly string[];
   canCreate: boolean;
-  onRequestCancel: (id: string) => void;
 }) {
   const toast = useToast();
   const [data, setData] = useState<any[]>([]);
@@ -594,7 +361,8 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                               onClick={e => { e.stopPropagation(); action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'); }}
                               disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked} aria-busy={Boolean(busy === r.id)}
                             >ส่งอนุมัติ</button>}
-                            {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} onClick={e => { e.stopPropagation(); onRequestCancel(r.id); }} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)}>ยกเลิก</button>}
+                            {/* Cancelling now opens the journey page (Phase 6): its own "ยกเลิกคำขอ" action carries the confirm dialog. */}
+                            {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)}>ยกเลิก</button>}
                           </div>
                         </td>
                       </tr>
@@ -634,7 +402,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                         onClick={() => action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}
                         disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked} aria-busy={Boolean(busy === r.id)}
                       >ส่งอนุมัติ</button>}
-                      {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 w-full')} onClick={() => onRequestCancel(r.id)} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)}>ยกเลิก</button>}
+                      {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 w-full')} onClick={() => onOpenDetail(r.id)} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)}>ยกเลิก</button>}
                     </div>
                   )}
                 </MangmeeCard>
@@ -648,98 +416,6 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
         </>
       )}
     </div>
-  );
-}
-
-// ── Detail drawer (lifted: reachable from every queue) ─────────────────────────
-function DetailDrawer({ companyId, detail, context, userId, permissions, busy, error, onClose, onPrintClaimForm, onSign, onUploadSignedCopy, onOpenAttachment, onLineReceipt, onSubmit, onRequestCancel, onReopen, onApprove, onRequestReject, onFinanceApprove, onRequestCorrection, onRecordPayment, onRequestVoidPayment }: {
-  companyId: string;
-  detail: any;
-  context: HubTab;
-  userId: string;
-  permissions: readonly string[];
-  busy: boolean;
-  error: string | null;
-  onClose: () => void;
-  onPrintClaimForm: () => void;
-  onSign: (role: ClaimSignatureRole) => void;
-  onUploadSignedCopy: (file: File) => void;
-  onOpenAttachment: (attachmentId: string, fileName: string) => void;
-  onLineReceipt: (lineNo: number, file: File | null) => void;
-  onSubmit: () => void;
-  onRequestCancel: () => void;
-  onReopen: () => void;
-  onApprove: () => void;
-  onRequestReject: () => void;
-  onFinanceApprove: () => void;
-  onRequestCorrection: () => void;
-  onRecordPayment: () => void;
-  onRequestVoidPayment: (payment: any) => void;
-}) {
-  const { canEditDraft, canSubmit, canCancel, canReopen } = reimbursementOwnActions(detail, userId, permissions);
-  // Task authority is resolved server-side from the frozen step assignment. Never infer it from
-  // the selected tab: a forged deep link must not offer actions, while an assignee whose role was
-  // changed after submit must still be able to finish this exact task.
-  const canApprove = detail.approvalActions?.canApprove === true;
-  const canReject = detail.approvalActions?.canReject === true;
-  const canFinanceReview = context === 'finance' && permissions.includes('reimbursement.finance_review') && detail.status === 'FINANCE_REVIEW';
-  const duplicateResolutionBlocked = detail.duplicateStatus === 'POSSIBLE_DUPLICATE'
-    && !permissions.includes('reimbursement.duplicate.resolve');
-  const canFinanceApprove = canFinanceReview && !duplicateResolutionBlocked;
-  const canRequestCorrection = canFinanceReview && detail.financeReviewStatus !== 'APPROVED_FOR_PAYMENT';
-  const canPay = context === 'finance' && permissions.includes('reimbursement.payment.record') && detail.status === 'READY_FOR_PAYMENT';
-  const submitReadiness = reimbursementSubmitReadiness(detail);
-  const showActions = canEditDraft || canSubmit || canCancel || canReopen || canApprove || canReject || canFinanceReview || canPay;
-  const footerButtons = detail.requestNo || showActions ? (
-    <>
-      {/* No requestNo, no document: drafts and claims cancelled out of DRAFT never got one. */}
-      {detail.requestNo && detail.status !== 'DRAFT' && <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={onPrintClaimForm}>พิมพ์ใบเบิก</button>}
-      {canEditDraft && <Link className={btnClass} href={`/companies/${companyId}/reimbursements/${detail.id}/edit`}>{detail.financeReviewStatus === 'NEEDS_INFO' ? 'แก้ไขตามคำขอ' : 'แก้ไขคำขอ'}</Link>}
-      {canSubmit && <button className={btnClass} title={submitReadiness.message} disabled={busy || submitReadiness.blocked} aria-busy={Boolean(busy)} onClick={onSubmit}>{busy ? 'กำลังดำเนินการ...' : 'ส่งอนุมัติ'}</button>}
-      {canCancel && <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={onRequestCancel}>ยกเลิกคำขอ</button>}
-      {canReopen && <button className={btnClass} disabled={busy} aria-busy={Boolean(busy)} onClick={onReopen}>{busy ? 'กำลังดำเนินการ...' : 'แก้ไขและยื่นใหม่'}</button>}
-      {canApprove && <button className={successBtn} style={successBtnStyle} disabled={busy} aria-busy={Boolean(busy)} onClick={onApprove}>อนุมัติ</button>}
-      {canReject && <button className={dangerClass} disabled={busy} aria-busy={Boolean(busy)} onClick={onRequestReject}>ปฏิเสธ</button>}
-      {canFinanceReview && <button className={successBtn} style={successBtnStyle} disabled={busy || duplicateResolutionBlocked} aria-busy={Boolean(busy)} title={duplicateResolutionBlocked ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={onFinanceApprove}>{financeActionLabel(detail)}</button>}
-      {canRequestCorrection && <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={onRequestCorrection}>ส่งกลับให้แก้ไข</button>}
-      {canPay && <button className={btnClass} disabled={busy} aria-busy={Boolean(busy)} onClick={onRecordPayment}>บันทึกจ่าย</button>}
-    </>
-  ) : undefined;
-  return (
-    <Modal
-      open
-      size="xl"
-      closeLabel="ปิด"
-      onClose={onClose}
-      title={(
-        <div className="flex flex-wrap items-center gap-2">
-          <span>รายละเอียดคำขอ {detail.requestNo ?? ''}</span>
-          <StatusBadge status={detail.status} />
-          <PaymentBadge status={detail.paymentStatus} />
-        </div>
-      )}
-      footer={footerButtons}
-    >
-      <div className="space-y-4">
-          {detail.status === 'DRAFT' && detail.financeReviewStatus === 'NEEDS_INFO' && detail.financeReviewNote && (
-            <ErrorBanner message={`ฝ่ายการเงินขอให้แก้ไข: ${detail.financeReviewNote}`} />
-          )}
-          {submitReadiness.blocked && submitReadiness.message && <ErrorBanner message={submitReadiness.message} />}
-          <ClaimSummaryCard detail={detail} />
-          <ClaimDetailSections
-            detail={detail}
-            userId={userId}
-            permissions={permissions}
-            busy={busy}
-            onOpenAttachment={onOpenAttachment}
-            onLineReceipt={onLineReceipt}
-            onSign={onSign}
-            onUploadSignedCopy={onUploadSignedCopy}
-            onRequestVoidPayment={onRequestVoidPayment}
-          />
-          {error && <ErrorBanner message={error} />}
-      </div>
-    </Modal>
   );
 }
 
