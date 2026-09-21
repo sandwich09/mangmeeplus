@@ -125,6 +125,72 @@ describe('reimbursement payout mirrors the claim expense projections', () => {
     });
   });
 
+  // AC08 (reimbursement-step-journey spec §10/§16): a PERSONAL_ADVANCE substitute-receipt
+  // source stays CONFIRMED and unlinked (sourceReimbursementRequestId null) once its claim
+  // line exists — prepareClaimProjections creates a SEPARATE expense row for the claim and
+  // never touches the source. This harness models BOTH rows in the same company and filters
+  // `findMany` for real (unlike the fixed single-row fakes above), so the mirror's own `where`
+  // clause is what proves the source is excluded — a regression that loosens the clause would
+  // make this fail rather than passing on a fixture that only ever had one row to return.
+  it('AC08: mirrors the payout onto the claim projection only, never onto the PERSONAL_ADVANCE source expense it was claimed from', async () => {
+    const request: any = {
+      id: 'rb-1', companyId: 'co-1', branchId: 'branch-1', status: 'READY_FOR_PAYMENT', updatedAt: VERSION,
+      amount: '289.0000', paymentTotalAmount: '0.0000', outstandingAmount: '289.0000',
+      financeReviewStatus: 'APPROVED_FOR_PAYMENT', requesterDisplayNameSnapshot: 'sandwich',
+      lines: [], approvalSteps: [], payments: [], duplicateCandidates: [],
+      createdAt: VERSION, paymentStatus: 'UNPAID', duplicateStatus: 'NO_MATCH',
+      receiptRequirementStatus: 'ATTACHED', postingStatus: 'not_required',
+      requesterUserId: 'staff-1', reason: 'r', categoryKey: 'other', currency: 'THB',
+      incurredDate: VERSION, createdByUserId: 'staff-1',
+    };
+    const source = { id: 'exp-1-personal-advance-source', companyId: 'co-1', sourceReimbursementRequestId: null, status: 'CONFIRMED', netPayableAmount: '289.0000' };
+    const projection = { id: 'exp-2', companyId: 'co-1', sourceReimbursementRequestId: 'rb-1', status: 'CONFIRMED', netPayableAmount: '289.0000' };
+    const rows = [source, projection];
+    const expenseUpdates: any[] = [];
+    const tx: any = {
+      $executeRaw: async () => 0,
+      reimbursementRequest: {
+        findFirst: async () => request,
+        findFirstOrThrow: async () => request,
+        updateMany: async ({ data }: any) => { Object.assign(request, data); return { count: 1 }; },
+      },
+      reimbursementPayment: {
+        findFirst: async () => null,
+        create: async ({ data }: any) => ({ id: 'pay-1', ...data, createdAt: VERSION, updatedAt: VERSION, status: 'RECORDED' }),
+        update: async ({ data }: any) => ({
+          id: 'pay-1', companyId: 'co-1', reimbursementRequestId: 'rb-1', paidAmount: '289.0000',
+          currency: 'THB', paymentMethod: 'BANK_TRANSFER', paidAt: PAID_AT, status: 'RECORDED',
+          postingStatus: 'pending', paidByUserId: 'finance-1', createdAt: VERSION, updatedAt: VERSION, ...data,
+        }),
+      },
+      reimbursementPolicy: { findFirst: async () => null },
+      reimbursementDuplicateCandidate: { count: async () => 0 },
+      expenseRecord: {
+        // A real filter, unlike the fixed single-row fakes above: proves the source decoy is
+        // excluded by the query shape itself, not by the fixture only ever containing one row.
+        findMany: async ({ where }: any) => rows.filter((row) => row.companyId === where.companyId
+          && row.sourceReimbursementRequestId === where.sourceReimbursementRequestId && row.status === where.status),
+        update: async (args: any) => { expenseUpdates.push(args); return {}; },
+      },
+    };
+    const client: any = { $transaction: async (work: (t: any) => Promise<unknown>) => work(tx) };
+    const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
+    (repo as any).assertClaimProjectionsReady = async () => undefined;
+
+    await repo.recordPaymentAtomic({
+      companyId: 'co-1', reimbursementRequestId: 'rb-1', idempotencyKey: 'ac08-k-1',
+      paidAmount: '289.0000', currency: 'THB', paymentMethod: 'BANK_TRANSFER',
+      paidAt: PAID_AT, paymentReference: 'TRX-123', paidByUserId: 'finance-1',
+    });
+
+    assert.equal(expenseUpdates.length, 1);
+    assert.deepEqual(expenseUpdates[0].where, { id: projection.id });
+    assert.ok(
+      !expenseUpdates.some((update) => update.where.id === source.id),
+      'the PERSONAL_ADVANCE source expense must never receive the payout mirror',
+    );
+  });
+
   it('reverts projections to unpaid when the payout is voided', async () => {
     const { repo, expenseUpdates, request } = voidHarness();
     await repo.voidPaymentTrueReversal('co-1', 'rb-1', 'pay-1', 'finance-1', 'โอนผิดบัญชี');
