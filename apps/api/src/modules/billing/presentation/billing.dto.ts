@@ -1,4 +1,5 @@
 import { Allow, ArrayMinSize, ArrayMaxSize, IsArray, IsIn, IsBoolean, IsInt, IsISO8601, IsObject, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { BILLING_PAID_TIERS } from '@watchdog-bms/contracts';
 
 // Concrete runtime DTOs for the global whitelist. Existing command parsers still own
 // conditional fields, policy/capacity semantics, versions, consent and provider invariants.
@@ -87,11 +88,13 @@ export class BillingCapacityRepairDto extends BillingVersionDto {
   @Allow() selection!: unknown;
 }
 export class BillingQuoteDto {
-  @IsString() @MinLength(1) @MaxLength(40) offerKey!: string;
-  @IsString() @MinLength(1) @MaxLength(10) interval!: string;
+  /** Omitted on a sales-deal quote: `dealId` names the offer, and its base tier is the snapshot's. */
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(40) offerKey?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(10) interval?: string;
   @IsString() @MinLength(1) @MaxLength(320) billingEmail!: string;
   @Allow() capacity?: unknown;
   @IsOptional() @IsIn(['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW']) purchaseMode?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(40) dealId?: string;
 }
 export class BillingCheckoutDto {
   @IsUUID() quoteId!: string;
@@ -112,7 +115,7 @@ export class BillingPlanAdjustmentDto extends BillingEventPreviewDto {
   @IsOptional() @IsIn(['PAUSE','RESUME']) collectionAction?: string;
   @IsOptional() @IsISO8601({strict:true,strictSeparator:true}) resumesAt?: string;
   @IsOptional() @IsInt() @Min(1) days?: number;
-  @IsOptional() @IsIn(['STARTER_249','BASIC_499','PRO_999']) tierKey?: string;
+  @IsOptional() @IsIn([...BILLING_PAID_TIERS]) tierKey?: string;
   @IsOptional() @IsInt() @Min(1) branchLimit?: number;
   @IsOptional() @IsInt() @Min(1) employeeLimit?: number;
   @IsOptional() @IsISO8601({strict:true,strictSeparator:true}) expiresAt?: string;

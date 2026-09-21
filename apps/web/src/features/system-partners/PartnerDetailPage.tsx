@@ -7,6 +7,7 @@ import {
   PARTNER_LINE_MESSAGE_MAX_LENGTH,
   PLAN_TIER_PRESETS,
   partnerAdjustmentReason,
+  SALES_DEAL_REASON_MAX,
   signupDiscoveryLabel,
   companyBusinessTypeLabel,
   type CompanyPlanTermDto,
@@ -31,6 +32,11 @@ import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '@/common/i1
 import { useEffect, useRef, useState } from 'react';
 import { WORKSPACE_ICON_NODES } from '@/features/web-core-workspace/design-icons';
 import { QrLinkCard } from '@/features/employee-access/EmployeeAccessPages';
+import { setCompanyReferral } from '@/features/sales-console/sales.api';
+import {
+  companyReferral, normalizeSalesCodeInput, referralLabel, referralWindowOpen, salesCodeError,
+  type CompanyReferralView,
+} from '@/features/sales-console/sales-console.logic';
 import PartnerAiAdjustmentHistory from './PartnerAiAdjustmentHistory';
 import PartnerPlanAdjustmentHistory from './PartnerPlanAdjustmentHistory';
 import {
@@ -275,6 +281,82 @@ function VatRegistrationField({ companyId, value, disabled, showToast, onSaved }
           {busy ? 'กำลังบันทึก…' : 'บันทึกสถานะ VAT'}
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * D6 (spec §17.1): who this shop is credited to, and the SYSTEM_ADMIN repair for it. The credit
+ * decides a เซลล์'s numbers, so it is never editable forever — the API refuses a change more than
+ * `SALES_REFERRAL_ADMIN_WINDOW_DAYS` after the shop was created, and this stops offering the edit
+ * at the same moment rather than letting an admin type a reason into a refusal.
+ *
+ * Clearing is a first-class action: an empty code with a reason sends `salesCode: null`, which is
+ * how a credit given to the wrong person is taken back rather than moved.
+ */
+function CompanyReferralField({ companyId, createdAt, referral, disabled, showToast, onSaved }: {
+  companyId: string;
+  createdAt: string;
+  referral: CompanyReferralView | null;
+  disabled: boolean;
+  showToast: (message: string, tone: 'success' | 'error') => void;
+  onSaved: () => void | Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [code, setCode] = useState(referral?.salesCode ?? '');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const windowOpen = referralWindowOpen(createdAt);
+  const trimmedCode = normalizeSalesCodeInput(code);
+  const codeError = trimmedCode ? salesCodeError(trimmedCode) : null;
+
+  const save = async () => {
+    if (!reason.trim() || codeError) return;
+    setBusy(true);
+    try {
+      await setCompanyReferral(companyId, { salesCode: trimmedCode || null, reason: reason.trim() });
+      showToast(trimmedCode ? 'บันทึกผู้แนะนำของร้านแล้ว' : 'ล้างผู้แนะนำของร้านแล้ว', 'success');
+      setEditing(false);
+      setReason('');
+      await onSaved();
+    } catch (err) {
+      showToast(apiErrorMessage(err), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <p className="text-sm text-gray-500 mb-1">แนะนำโดยเซลล์</p>
+      <p className="break-words text-base text-gray-800">{referralLabel(referral)}</p>
+      {!editing ? (
+        <button type="button" className="mt-1 min-h-11 text-base font-medium text-brand-800 underline underline-offset-4 disabled:no-underline disabled:opacity-50"
+          disabled={disabled || !windowOpen} onClick={() => { setCode(referral?.salesCode ?? ''); setReason(''); setEditing(true); }}>
+          แก้ไขผู้แนะนำ
+        </button>
+      ) : (
+        <div className="mt-2 space-y-2">
+          <div>
+            <label htmlFor={`partner-referral-code-${companyId}`} className="block text-base text-gray-600 mb-1">รหัสเซลล์ (เว้นว่าง = ไม่มีผู้แนะนำ)</label>
+            <input id={`partner-referral-code-${companyId}`} className={inputClass} value={code} disabled={busy}
+              autoComplete="off" onChange={(e) => setCode(normalizeSalesCodeInput(e.target.value))} />
+            {codeError && <p role="alert" className="mt-1 text-sm text-error-700">{codeError}</p>}
+          </div>
+          <div>
+            <label htmlFor={`partner-referral-reason-${companyId}`} className="block text-base text-gray-600 mb-1">เหตุผล (จำเป็น)</label>
+            <input id={`partner-referral-reason-${companyId}`} className={inputClass} value={reason} disabled={busy}
+              maxLength={SALES_DEAL_REASON_MAX} onChange={(e) => setReason(e.target.value)} />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={btnSecondary} disabled={busy} onClick={() => setEditing(false)}>ยกเลิก</button>
+            <button type="button" className={btnPrimary} disabled={busy || !reason.trim() || Boolean(codeError)} aria-busy={Boolean(busy)} onClick={() => void save()}>
+              {busy ? 'กำลังบันทึก…' : 'บันทึกผู้แนะนำ'}
+            </button>
+          </div>
+        </div>
+      )}
+      {!windowOpen && <p className="mt-1 text-sm text-gray-500">{apiErrorMessage({ code: 'SALES_REFERRAL_WINDOW_CLOSED' })}</p>}
     </div>
   );
 }
@@ -3025,6 +3107,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
             <ReadOnlyField label="โทรศัพท์" value={detail.phone}/>
             <ReadOnlyField label="วันที่เพิ่มบริษัท" value={formatDate(detail.createdAt)}/>
             <ReadOnlyField label="รู้จักเราทางไหน" value={signupDiscoveryLabel(detail.discoverySource, detail.discoverySourceOther)}/>
+            <CompanyReferralField companyId={companyId} createdAt={detail.createdAt} referral={companyReferral(detail)} disabled={fieldsLocked} showToast={showToast} onSaved={load}/>
           </div>
           <div className="flex flex-wrap gap-3 border-t border-gray-100 pt-4">
             <button type="button" className={btnSecondary} disabled={fieldsLocked} onClick={startEdit}>แก้ไขข้อมูลบริษัท</button>

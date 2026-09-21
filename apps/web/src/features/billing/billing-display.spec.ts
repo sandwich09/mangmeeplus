@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { BillingTimelineEntry } from '@watchdog-bms/contracts';
-import { billingDeliveryLabel, billingIssueLabel, billingLabel, billingPermissionLabel, billingTimelineLabel,billingLeavesPage,billingMonthlyAllowanceText } from './billing-display';
+import { billingDeliveryLabel, billingIssueLabel, billingLabel, billingPermissionLabel, billingPurchaseModeLabel, billingSupportReference, billingTimelineLabel,billingLeavesPage,billingMonthlyAllowanceText } from './billing-display';
 import type {MouseEvent} from 'react';
 
 test('only navigation in this tab abandons pending billing work; same links and modified clicks remain active',()=>{
@@ -15,6 +15,24 @@ test('only navigation in this tab abandons pending billing work; same links and 
     assert.equal(billingLeavesPage({...event,currentTarget:{href:'https://app.example.test/system/billing?cursor=1#details',target:''}} as MouseEvent<HTMLAnchorElement>),false);
     assert.equal(billingLeavesPage({...event,currentTarget:{href:'https://app.example.test/system/billing?cursor=2',target:''}} as MouseEvent<HTMLAnchorElement>),false);
   }finally{if(previous)Object.defineProperty(globalThis,'window',previous);else Reflect.deleteProperty(globalThis,'window');}
+});
+
+test('the number a shop owner reads to the team is short and human, never a row id', () => {
+  const short = billingSupportReference('9f1c2d3e-4b5a-6c7d-8e9f-0a1b2c3d4e5f');
+  assert.equal(short, '2C3D-4E5F');
+  assert.doesNotMatch(short!, /-.*-/);
+  assert.equal(billingSupportReference('att_01J9ZK7Q8VXY2ABCDEFGH'), 'ABCD-EFGH');
+  // An invoice number is already readable over the phone, so it is shown as it is.
+  assert.equal(billingSupportReference('PREVIEW-0001'), 'PREVIEW-0001');
+  assert.equal(billingSupportReference(null), null);
+  assert.equal(billingSupportReference(''), null);
+});
+
+test('every purchase mode has Thai wording, with no enum name left on screen', () => {
+  for (const mode of ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'] as const) {
+    assert.doesNotMatch(billingPurchaseModeLabel(mode), /[A-Z_]{4,}/);
+  }
+  assert.equal(billingPurchaseModeLabel('PROMPTPAY_ONCE'), 'PromptPay QR · จ่ายครั้งเดียว');
 });
 
 test('provider acceptance, destination delivery and web recording remain different facts', () => {

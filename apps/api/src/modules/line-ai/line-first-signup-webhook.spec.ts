@@ -98,7 +98,7 @@ describe('P10-L webhook intake (G-03/G-04)', () => {
 describe('P10-L door and status cards (§3.1/§7)', () => {
   it('offers four ways on, including one that reaches a person', () => {
     const card = JSON.stringify(buildSignupDoorCard('1234567890-abcdef', WEB_BASE));
-    assert.match(card, /เปิดร้านใหม่ ทดลองฟรี/);
+    assert.match(card, /เปิดร้านใหม่/);
     assert.match(card, /https:\/\/liff\.line\.me\/1234567890-abcdef\/signup/);
     assert.match(card, /ฉันเป็นพนักงาน/);
     assert.match(card, /ติดต่อเจ้าหน้าที่/, 'the keyword must be tappable, not only typeable');
@@ -120,7 +120,7 @@ describe('P10-L door and status cards (§3.1/§7)', () => {
   it('drops a door it cannot build rather than sending a broken link', () => {
     const noWeb = JSON.stringify(buildSignupDoorCard('1234567890-abcdef', undefined));
     assert.equal(noWeb.includes('/login?line=link-required'), false);
-    assert.match(noWeb, /เปิดร้านใหม่ ทดลองฟรี/, 'the other doors survive');
+    assert.match(noWeb, /เปิดร้านใหม่/, 'the other doors survive');
 
     const noLiff = JSON.stringify(buildSignupDoorCard(undefined, WEB_BASE));
     assert.equal(noLiff.includes('liff.line.me'), false);
@@ -379,7 +379,7 @@ describe('P10-L webhook doors', () => {
     const h = harness({ pendingSignup: null });
     await h.useCase.execute(event(LINE_FOLLOW_EVENT_TEXT));
 
-    assert.match(rendered(h), /เปิดร้านใหม่ ทดลองฟรี/);
+    assert.match(rendered(h), /เปิดร้านใหม่/);
     assert.equal(outcome(h), 'line_follow');
     // L-B follow-up (c): adding the OA is the INVITED first step of this flow. Recording it DENIED
     // put every prospect into a security signal whose whole value is that it is rare.
@@ -407,7 +407,7 @@ describe('P10-L webhook doors', () => {
 
     assert.match(rendered(h), /ได้รับคำขอแล้ว/, 'the bubble title');
     assert.match(rendered(h), /คำขอเปิดร้าน ร้านนิด เข้าระบบแล้วค่ะ/, 'the body names the shop without repeating the title');
-    assert.equal(rendered(h).includes('เปิดร้านใหม่ ทดลองฟรี'), false, 'never invite a second application');
+    assert.equal(rendered(h).includes('เปิดร้านใหม่'), false, 'never invite a second application');
   });
 
   // L-17: a customer who already has a shop and re-adds the OA is not a prospect. The three doors
@@ -419,7 +419,7 @@ describe('P10-L webhook doors', () => {
     await h.useCase.execute(event(LINE_FOLLOW_EVENT_TEXT));
 
     assert.match(rendered(h), /ยินดีต้อนรับกลับมา/);
-    assert.equal(rendered(h).includes('เปิดร้านใหม่ ทดลองฟรี'), false, 'never invite a second shop');
+    assert.equal(rendered(h).includes('เปิดร้านใหม่'), false, 'never invite a second shop');
     assert.match(rendered(h), /ติดต่อเจ้าหน้าที่/, 'the way to a person still travels with it');
     assert.equal(outcome(h), 'line_follow_known');
   });
@@ -430,7 +430,7 @@ describe('P10-L webhook doors', () => {
     const h = harness({ pendingSignup: { companyName: 'ร้านของคนอื่น' }, channelId: undefined });
     await h.useCase.execute(event(LINE_FOLLOW_EVENT_TEXT));
 
-    assert.match(rendered(h), /เปิดร้านใหม่ ทดลองฟรี/, 'the doors, never a stranger\'s status');
+    assert.match(rendered(h), /เปิดร้านใหม่/, 'the doors, never a stranger\'s status');
     assert.equal(rendered(h).includes('ร้านของคนอื่น'), false);
   });
 
@@ -450,7 +450,7 @@ describe('P10-L webhook doors', () => {
     const h = harness({ identity: null, pendingSignup: null });
     await h.useCase.execute(event('สวัสดี'));
 
-    assert.match(rendered(h), /เปิดร้านใหม่ ทดลองฟรี/);
+    assert.match(rendered(h), /เปิดร้านใหม่/);
     assert.equal(rendered(h).includes('กรุณาเชื่อมต่อบัญชี'), false);
     assert.equal(outcome(h), 'unlinked');
   });
@@ -553,7 +553,7 @@ describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spe
     await h.useCase.execute(event('ให้ AI ตอบ'));
 
     assert.doesNotMatch(rendered(h), /น้องมั่งมีกลับมาแล้ว/);
-    assert.match(rendered(h), /เปิดร้านใหม่ ทดลองฟรี/);
+    assert.match(rendered(h), /เปิดร้านใหม่/);
     assert.equal(outcome(h), 'support_resume_unavailable');
   });
 
@@ -705,7 +705,7 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
 
     assert.equal(h.supportUpdates[0].data.lastMessageText, 'อีเมลใหม่คือ owner@example.test ค่ะ');
     assert.match(rendered(h), /ส่งข้อความถึงทีมงานแล้ว/);
-    assert.equal(rendered(h).includes('เปิดร้านใหม่ ทดลองฟรี'), false);
+    assert.equal(rendered(h).includes('เปิดร้านใหม่'), false);
     assert.equal(outcome(h), 'support_follow_up');
     assert.deepEqual(h.contextUpdates[0].where, { lineUserId: 'Uline-1', aiPausedUntil: { not: null } },
       'the existing helper only extends a pause; it grants no company context');
@@ -1359,8 +1359,9 @@ describe('GW09 committed rich menu → signed webhook → deterministic reply', 
       assert.ok(h.replies.length > 0, 'every webhook tile has an actual reply path');
       assert.equal(h.packageChanges.length, 0, 'no payment or subscription mutation from a menu tap');
       if (action.text === 'โปรโมชั่น') {
-        assert.match(rendered(h), /30 วัน/);
-        assert.match(rendered(h), /กำลังเตรียมเปิดรับชำระเงิน/);
+        // R1: the card sells a package now; it no longer offers free days to anyone.
+        assert.match(rendered(h), /249 บาท/);
+        assert.equal(rendered(h).includes('ทดลอง'), false);
         assert.ok(!rendered(h).includes('PRO'));
       }
     });

@@ -1,5 +1,6 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { ForbiddenException } from '@nestjs/common';
 import { PermissionSet } from './domain/models/resolved-access.model';
 import { PermissionResolverService } from './application/permission-resolver.service';
 import { PrismaPermissionResolverRepository } from './infrastructure/prisma-permission-resolver.repository';
@@ -103,6 +104,26 @@ describe('PrismaPermissionResolverRepository branch scopes', () => {
       { userId: 'platform-user', companyId: 'other-company', status: 'ACTIVE' });
     const suspended = makePrismaResolver(makeMembership({ company: { status: 'SUSPENDED' } }));
     await assert.rejects(() => suspended.resolver.resolveForUser({ userId: 'u-1', companyId: 'co-1' }), /Company is not active/);
+  });
+
+  it('names company_term_expired only for a company DISABLED by its own term, not a plain suspension', async () => {
+    const termExpired = makePrismaResolver(makeMembership({
+      company: { status: 'DISABLED', planTerm: { termDisabledAt: new Date() } },
+    }));
+    await assert.rejects(
+      () => termExpired.resolver.resolveForUser({ userId: 'u-1', companyId: 'co-1' }),
+      (error: unknown) => {
+        assert.ok(error instanceof ForbiddenException);
+        assert.equal((error.getResponse() as any).code, 'company_term_expired');
+        return true;
+      },
+    );
+    // DISABLED without a term hold (a manual admin suspension) is not this case: same plain
+    // message as SUSPENDED above, no code for the web to redirect on.
+    const disabledNoTerm = makePrismaResolver(makeMembership({
+      company: { status: 'DISABLED', planTerm: null },
+    }));
+    await assert.rejects(() => disabledNoTerm.resolver.resolveForUser({ userId: 'u-1', companyId: 'co-1' }), /Company is not active/);
   });
 
   it('AX02 excludes disabled roles and their grants after a membership is reactivated', async () => {

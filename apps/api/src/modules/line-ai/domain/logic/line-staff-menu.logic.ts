@@ -293,15 +293,15 @@ export function buildServiceEntitlementMessage(entitled: ReadonlySet<string> | n
 export function buildPromotionCard(_assetBaseUrl: string | undefined): LineReplyMessage {
   return {
     type: 'flex',
-    altText: 'แพ็กเกจมั่งมี Plus — ทดลองฟรี 30 วัน',
+    altText: 'แพ็กเกจมั่งมี Plus',
     contents: {
       type: 'bubble', size: 'mega',
       body: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', contents: [
         { type: 'text', text: '🎁 Package ที่เหมาะกับร้านคุณ', weight: 'bold', size: 'md', color: '#101828', wrap: true },
-        { type: 'text', text: 'ทดลองฟรี 30 วัน ให้ AI อ่านรูป 15 ครั้ง แพ็กเกจรายเดือนเริ่มต้น 249 บาท กำลังเตรียมเปิดรับชำระเงินค่ะ', size: 'sm', color: '#475467', wrap: true },
+        { type: 'text', text: 'แพ็กเกจรายเดือนเริ่มต้น 249 บาท เลือกแพ็กเกจแล้วเริ่มใช้งานได้เลยค่ะ', size: 'sm', color: '#475467', wrap: true },
       ] },
       footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
-        { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'ทดลองใช้ฟรี', uri: 'https://official.mangmeeplus.com/' } },
+        { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'ดูแพ็กเกจ', uri: 'https://official.mangmeeplus.com/' } },
         // Spec §3.7: the promotion card is a PULL, so the one thing it must let the reader do is
         // ask — the request lands in the admin queue rather than changing anything by itself.
         { type: 'button', style: 'secondary', action: { type: 'message', label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND } },
@@ -354,7 +354,7 @@ export function buildCapabilityCard(): LineReplyMessage {
         { type: 'text', text: '📊 ถามข้อมูลธุรกิจ — เช่น “ยอดขายวันนี้” “ค่าใช้จ่ายเดือนนี้” “สรุปบัญชี”', size: 'sm', color: '#475467', wrap: true },
         { type: 'text', text: '💬 คุยกับน้องมั่งมี — ปรึกษาธุรกิจ บัญชี ภาษีเบื้องต้น หรือคุยเล่นก็ได้', size: 'sm', color: '#475467', wrap: true },
         { type: 'text', text: '🏢 บริษัทของฉัน — ดูหรือสลับบริษัท (พิมพ์ /companies)', size: 'sm', color: '#475467', wrap: true },
-        { type: 'text', text: '🎁 โปรโมชั่น — ดูแพ็กเกจและทดลองใช้ฟรี (พิมพ์ โปรโมชั่น)', size: 'sm', color: '#475467', wrap: true },
+        { type: 'text', text: '🎁 โปรโมชั่น — ดูแพ็กเกจและราคา (พิมพ์ โปรโมชั่น)', size: 'sm', color: '#475467', wrap: true },
         { type: 'text', text: '☎️ ติดต่อเรา — คุยกับทีมงานตัวจริง', size: 'sm', color: '#475467', wrap: true },
         { type: 'text', text: 'พิมพ์ “เมนูหลัก” เพื่อเรียกเมนูได้ทุกเมื่อค่ะ', size: 'xs', color: '#667085', wrap: true, margin: 'md' },
       ] },

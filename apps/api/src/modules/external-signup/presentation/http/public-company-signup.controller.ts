@@ -6,8 +6,9 @@ import {
   IsBoolean, IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, MinLength,
 } from 'class-validator';
 import type { Request } from 'express';
-import type {
-  PublicCompanySignupAcceptedDto, PublicSignupStatusDto, SignupClaimInfoDto, SignupClaimResultDto,
+import {
+  SIGNUP_DISCOVERY_OTHER_MAX, SIGNUP_DISCOVERY_SOURCE_OPTIONS,
+  type PublicCompanySignupAcceptedDto, type PublicSignupStatusDto, type SignupClaimInfoDto, type SignupClaimResultDto,
 } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { publicApiBase, requiredWebAppBase } from '../../../../common/http/public-api-base';
@@ -41,6 +42,11 @@ export class PublicCompanySignupDto {
   // PRO_TRIAL is the free trial's retired name, still accepted for in-flight clients and
   // normalised onto FREE_TRIAL by the domain.
   @IsIn(['FREE_TRIAL', 'PRO_TRIAL', 'STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999']) @IsOptional() requestedOfferKey?: string;
+  // D6: the same "รู้จักเราทางไหน" question the LIFF form asks. Optional so an older client that
+  // does not render it keeps submitting exactly the payload it always did.
+  @IsIn(SIGNUP_DISCOVERY_SOURCE_OPTIONS.map((option) => option.value)) @IsOptional() discoverySource?: string;
+  @IsString() @IsOptional() @MaxLength(SIGNUP_DISCOVERY_OTHER_MAX) discoverySourceOther?: string;
+  @IsString() @IsOptional() @MaxLength(6) @Matches(/^[A-Za-z0-9]*$/) referralSalesCode?: string;
 }
 
 /**
@@ -117,6 +123,9 @@ export class PublicCompanySignupController {
         consentVersion: dto.consentVersion,
         ...(dto.referralCode ? { referralCode: dto.referralCode } : {}),
         ...(dto.requestedOfferKey ? { requestedOfferKey: dto.requestedOfferKey } : {}),
+        ...(dto.discoverySource ? { discoverySource: dto.discoverySource } : {}),
+        ...(dto.discoverySourceOther ? { discoverySourceOther: dto.discoverySourceOther } : {}),
+        ...(dto.referralSalesCode ? { referralSalesCode: dto.referralSalesCode } : {}),
       },
       requestIdOf(req),
     );

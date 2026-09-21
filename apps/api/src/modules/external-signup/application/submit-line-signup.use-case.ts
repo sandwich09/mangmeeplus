@@ -28,12 +28,14 @@ import {
   optionalLineContactEmail,
   LINE_OPTIONAL_EMAIL_POLICY,
   lineIntakeContactComplete,
+  normalizeSignupSalesCode,
 } from '../domain/line-signup.logic';
 import { CompanySignupCoreService, signupStateGuard } from './company-signup-core.service';
 import { lineSignupStatusForVerified, type VerifiedLineSignupIdentity } from './get-line-signup-status.use-case';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
 import { SignupAdminNotifyService } from './signup-admin-notify.service';
 import { SignupOpsAlertService } from './signup-ops-alert.service';
+import { SalesReferralService } from '../../sales-console/application/sales-referral.service';
 
 export type SubmitLineSignupCommand = {
   /** LIFF ID token — the only identity input. */
@@ -48,6 +50,8 @@ export type SubmitLineSignupCommand = {
   referralCode?: string;
   discoverySource?: SignupDiscoverySource | null;
   discoverySourceOther?: string | null;
+  /** D6: the "รหัสเซลล์" field, only shown when discoverySource is 'SALES'. */
+  referralSalesCode?: string | null;
   legal: {
     documentVersion: string;
     statementSha256: string;
@@ -68,6 +72,8 @@ type NormalizedLineSubmission = Readonly<{
   referralCode: string | null;
   discoverySource: SignupDiscoverySource | null;
   discoverySourceOther: string | null;
+  /** Upper-cased here; resolved to an agent by the use-case, which needs the database. */
+  referralSalesCode: string | null;
   intent: LineSignupIntent;
   legal: SubmitLineSignupCommand['legal'];
 }>;
@@ -106,6 +112,7 @@ export class SubmitLineSignupUseCase {
     private readonly adminNotify: SignupAdminNotifyService,
     private readonly provision: ProvisionSignupUseCase,
     private readonly opsAlerts: SignupOpsAlertService,
+    private readonly salesReferral: SalesReferralService,
   ) {}
 
   async execute(cmd: SubmitLineSignupCommand, now = new Date()): Promise<LineSignupSubmitAcceptedDto> {
@@ -146,10 +153,15 @@ export class SubmitLineSignupUseCase {
 
     const identity = await this.resolveLineIdentity(verified.providerUserId, verified.channelId);
     await this.rateLimit.assertLineSignupUserAllowed(verified.providerUserId);
+    // D6: an unknown or suspended code is refused here, before a row exists, so a shop is never
+    // created carrying attribution nobody can honour. Resolution needs the database, which is why
+    // it lives here and not in the pure normaliser.
+    const referral = await this.salesReferral.resolveCode(normalized.referralSalesCode);
     const received = await this.create({
       externalSignupId,
       payloadHash,
       ...normalized,
+      referralSalesUserId: referral?.userId ?? null,
       attachUserId: identity.attachUserId,
       verified,
       evidence,
@@ -214,6 +226,7 @@ export class SubmitLineSignupUseCase {
         contactEmail,
         referralCode: current.referralCode,
         ...normalizeSignupDiscovery(current.discoverySource, current.discoverySourceOther),
+        referralSalesCode: current.referralSalesCode,
         intent: current.lineSignupIntent === 'ADD_SHOP' ? 'ADD_SHOP' : 'FIRST_SHOP',
         legal: {
           documentVersion: current.legalDocumentVersion ?? '',
@@ -512,6 +525,7 @@ export class SubmitLineSignupUseCase {
   private async create(input: NormalizedLineSubmission & {
     externalSignupId: string;
     payloadHash: string;
+    referralSalesUserId: string | null;
     attachUserId: string | null;
     verified: { providerUserId: string; channelId: string; displayName?: string };
     evidence: LegalSignupEvidence;
@@ -532,6 +546,8 @@ export class SubmitLineSignupUseCase {
         ...(input.referralCode ? { referralCode: input.referralCode } : {}),
         discoverySource: input.discoverySource,
         discoverySourceOther: input.discoverySourceOther,
+        referralSalesCode: input.referralSalesCode,
+        referralSalesUserId: input.referralSalesUserId,
         ...(input.attachUserId ? { attachUserId: input.attachUserId } : {}),
         lineProviderUserId: verified.providerUserId,
         lineChannelId: verified.channelId,
@@ -634,6 +650,7 @@ function normalizeSubmission(cmd: SubmitLineSignupCommand): NormalizedLineSubmis
       contactEmail: optionalLineContactEmail(cmd.contactEmail),
       referralCode: normalizeReferralCode(cmd.referralCode),
       ...normalizeSignupDiscovery(cmd.discoverySource, cmd.discoverySourceOther),
+      referralSalesCode: normalizeSignupSalesCode(cmd.discoverySource, cmd.referralSalesCode),
       intent: cmd.intent,
       legal: cmd.legal,
     };
@@ -657,6 +674,8 @@ export function lineSignupPayloadHash(
     referralCode: input.referralCode,
     // Keep legacy fingerprints byte-equivalent when this optional question was omitted.
     ...(input.discoverySource ? { discoverySource: input.discoverySource, discoverySourceOther: input.discoverySourceOther } : {}),
+    // Same rule for the sales code: a form that never showed the field hashes exactly as before.
+    ...(input.referralSalesCode ? { referralSalesCode: input.referralSalesCode } : {}),
     intent: input.intent,
     legal: input.legal,
     lineProviderUserId: verified.providerUserId,
@@ -684,6 +703,7 @@ function sameLineSubmission(
     && request.referralCode === input.referralCode
     && (request.discoverySource ?? null) === input.discoverySource
     && (request.discoverySourceOther ?? null) === input.discoverySourceOther
+    && (request.referralSalesCode ?? null) === input.referralSalesCode
     && request.legalDocumentVersion === input.legal.documentVersion
     && request.legalStatementSha256 === input.legal.statementSha256
     && request.legalReleaseFingerprintSha256 === input.legal.releaseFingerprintSha256

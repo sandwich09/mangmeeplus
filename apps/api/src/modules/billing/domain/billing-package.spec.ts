@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { billingOffer, BILLING_DRAFT_POLICY } from '@watchdog-bms/contracts';
+import { billingOffer, BILLING_DRAFT_POLICY, FEATURE_PACKAGE_PRESETS, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
 import { appendPackageInterval, fullPackagePurchaseImpact, proratedReceiptIncrease } from './billing-package';
 import { assertRefundControlPolicy, effectiveBillingGates, assertStripePrice, assertStripePortalConfiguration, parseBillingPolicy } from './billing-policy';
 import { BillingService } from '../application/billing.service';
@@ -39,13 +39,22 @@ test('HIDDEN receipt-only offers stay absent from the catalog and direct request
   } } as unknown as ConstructorParameters<typeof BillingService>[0];
   const stripe = { enabled: true, livemode: false, accountId: 'acct_test',
     request: async () => { providerCalls += 1; throw new Error('unexpected provider call'); } } as unknown as ConstructorParameters<typeof BillingService>[2];
-  const service = new BillingService(prisma, {} as ConstructorParameters<typeof BillingService>[1], stripe);
+  const service = new BillingService(prisma, { aiMonthlyBudgetSatang: 120000 } as ConstructorParameters<typeof BillingService>[1], stripe);
   for (const open of [false, true]) {
     salesEnabled = open;
     const catalog = await service.catalog();
-    assert.equal(catalog.offers.length, 8, 'only three paid packages plus locked Enterprise, each month/year');
+    assert.equal(catalog.offers.length, 8, 'four paid packages, each month/year');
     assert.deepEqual([...new Set(catalog.offers.map((offer) => offer.offerKey))], [...tiers, 'ENTERPRISE_1999']);
+    // Phase 6: ENTERPRISE sells only once its Prices are bound. This policy binds the other three,
+    // so an open catalog still offers six and Enterprise stays COMING_SOON on its own.
     assert.equal(catalog.offers.filter((offer) => offer.availability === 'AVAILABLE').length, open ? 6 : 0);
+    assert.equal(catalog.offers.filter((offer) => offer.offerKey === 'ENTERPRISE_1999')
+      .every((offer) => offer.availability === 'COMING_SOON'), true);
+    assert.equal(catalog.aiMonthlyBudgetSatang, 120000);
+    assert.deepEqual(catalog.offers.find((offer) => offer.offerKey === 'ENTERPRISE_1999')!.featureKeys,
+      [...FEATURE_PACKAGE_PRESETS.full.featureKeys]);
+    assert.deepEqual(catalog.offers.find((offer) => offer.offerKey === 'STARTER_249')!.featureKeys,
+      [...FEATURE_PACKAGE_PRESETS.starter.featureKeys]);
     for (const offerKey of ['RECEIPT_TOPUP', 'RECEIPT_ADDON']) {
       await assert.rejects(service.quote({ companyId: 'test-company', userId: 'test-owner' } as Parameters<BillingService['quote']>[0],
         { offerKey, interval: 'month', billingEmail: 'owner@example.test' }), /แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน/);
@@ -55,18 +64,28 @@ test('HIDDEN receipt-only offers stay absent from the catalog and direct request
   assert.equal(providerCalls, 0);
 });
 
-test('full-package catalog grants annual units upfront and rejects receipt-only/Enterprise purchase inputs', () => {
+test('full-package catalog grants annual units upfront, sells Enterprise at ten months, and rejects receipt-only purchase inputs', () => {
   for (const [tier, monthly, annualPrice] of [
     ['STARTER_249', 30, 249000], ['BASIC_499', 50, 499000], ['PRO_999', 100, 999000],
+    // Phase 6 (Owner 2026-09-21): the same ×10 annual rule as every other tier — 1,999 ×10 = 19,990.
+    ['ENTERPRISE_1999', 2000, 1999000],
   ] as const) {
     assert.equal(billingOffer(tier, 'month').receiptAllowance, monthly);
     const annual = billingOffer(tier, 'year');
     assert.equal(annual.receiptAllowance, monthly * 12);
     assert.equal(annual.priceSatang, annualPrice);
     assert.equal(annual.receiptAllowanceCadence, 'PAID_PERIOD');
+    assert.deepEqual(annual.featureKeys, [...TIER_FEATURE_PRESETS[tier]]);
   }
+  // Unbound Enterprise still reads "เร็ว ๆ นี้"; a bound one is an ordinary closed-sales offer the
+  // catalog can open.
   assert.equal(billingOffer('ENTERPRISE_1999', 'year').availability, 'COMING_SOON');
-  for (const tier of ['RECEIPT_TOPUP', 'ENTERPRISE_1999', 'FREE_TRIAL_15']) {
+  assert.equal(billingOffer('ENTERPRISE_1999', 'year', { ...BILLING_DRAFT_POLICY,
+    priceIds: { 'ENTERPRISE_1999:year': 'price_EnterpriseYear' } }).availability, 'UNAVAILABLE');
+  // Enterprise is a purchasable package now; only hidden receipt tiers and the trial are refused.
+  assert.equal(fullPackagePurchaseImpact({ tier: 'ENTERPRISE_1999', interval: 'year',
+    verifiedPaidAt: new Date('2026-09-21T00:00:00Z'), paidThrough: null, remainingPaidReceipts: 0 }).receiptUnitsAdded, 24000);
+  for (const tier of ['RECEIPT_TOPUP', 'FREE_TRIAL_15']) {
     assert.throws(() => fullPackagePurchaseImpact({ tier, interval: 'year', verifiedPaidAt: new Date(), paidThrough: null, remainingPaidReceipts: 0 }));
   }
 });
@@ -121,6 +140,7 @@ test('invalid/overlapping history and unsafe counts fail closed; approved defaul
   }
   assert.throws(() => appendPackageInterval(new Date(NaN), 'month'));
   assert.throws(() => appendPackageInterval(start, 'month', 32));
+  for (const count of [0, -1, 1.5, NaN, 1201]) assert.throws(() => appendPackageInterval(start, 'month', 1, count));
   assert.deepEqual(parseBillingPolicy(BILLING_DRAFT_POLICY), BILLING_DRAFT_POLICY);
   assert.throws(() => parseBillingPolicy({ ...BILLING_DRAFT_POLICY, planChanges: 'NEXT_PERIOD' }));
   assert.throws(() => parseBillingPolicy({ ...BILLING_DRAFT_POLICY, taxRateId: 'txr_oldVatRate' }));
@@ -151,11 +171,14 @@ test('approved offer prices and upfront quota share a snapshot and retain origin
   assert.equal(offer.branchLimit,original.branchLimit);assert.equal(offer.employeeLimit,original.employeeLimit);
   assert.deepEqual(billingOffer('BASIC_499','year',policy),billingOffer('BASIC_499','year'));
   assert.equal(billingOffer('ENTERPRISE_1999','year',policy).availability,'COMING_SOON');
+  // Phase 6: Enterprise reads `offerTerms` like every other tier now that it is sellable.
+  const enterprisePolicy=parseBillingPolicy({...BILLING_DRAFT_POLICY,offerTerms:{ENTERPRISE_1999:{monthlyPriceSatang:199900,annualPriceSatang:1999000,monthlyReceiptAllowance:2500}}});
+  assert.equal(billingOffer('ENTERPRISE_1999','month',enterprisePolicy).receiptAllowance,2500);
   const input={tier:'PRO_999',interval:'year',verifiedPaidAt:new Date('2026-09-15Z'),paidThrough:new Date('2027-05-15Z'),remainingPaidReceipts:200};
   assert.equal(fullPackagePurchaseImpact({...input,offer}).remainingReceipts,1700);
   assert.equal(fullPackagePurchaseImpact({...input,offer:original}).remainingReceipts,1400);
   assert.throws(()=>fullPackagePurchaseImpact({...input,offer:billingOffer('BASIC_499','year')}));
-  for(const offerTerms of [false,[],{ENTERPRISE_1999:{monthlyPriceSatang:199900,annualPriceSatang:1999000,monthlyReceiptAllowance:2000}},
+  for(const offerTerms of [false,[],{RECEIPT_TOPUP:{monthlyPriceSatang:199900,annualPriceSatang:1999000,monthlyReceiptAllowance:2000}},
     {PRO_999:{}},{PRO_999:{...policy.offerTerms!.PRO_999,extra:1}},...[-1,0,0.5,178956971,'125',NaN].map(monthlyReceiptAllowance=>({PRO_999:{...policy.offerTerms!.PRO_999,monthlyReceiptAllowance}})),
     ...[999,1000.5,100000000,'109901'].map(monthlyPriceSatang=>({PRO_999:{...policy.offerTerms!.PRO_999,monthlyPriceSatang}}))])
     assert.throws(()=>parseBillingPolicy({...policy,offerTerms}));

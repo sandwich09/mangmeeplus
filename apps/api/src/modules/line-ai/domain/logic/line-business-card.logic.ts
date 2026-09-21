@@ -1,4 +1,4 @@
-import { AI_BUDGET_REFUSAL_CODES, type AiBudgetScope, type LineAiAnswerCard, type LineAiTurnResponse } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, type AiBudgetScope, type LineAiAnswerCard, type LineAiTurnResponse, type PlanTermLockReason } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { lineMessagePreview as preview } from './line-message-preview.logic';
 import {
@@ -385,7 +385,7 @@ export function buildSignupDoorCard(liffId: string | undefined, webBaseUrl?: str
       undefined,
       '',
       [
-        ...(liff ? [{ label: 'เปิดร้านใหม่ ทดลองฟรี', uri: `https://liff.line.me/${liff}/signup` }] : []),
+        ...(liff ? [{ label: 'เปิดร้านใหม่', uri: `https://liff.line.me/${liff}/signup` }] : []),
         { label: EMPLOYEE_DOOR_COMMAND, text: EMPLOYEE_DOOR_COMMAND },
         ...(linkUrl ? [{ label: 'มีบัญชีอยู่แล้ว เชื่อม LINE', uri: linkUrl }] : []),
         // §7: the one door that reaches a person. Without it the keyword is typing-only and the
@@ -485,6 +485,45 @@ export function buildAiBudgetExceededMessage(
       [
         { label: 'ดูแพ็กเกจ', text: VIEW_PACKAGES_COMMAND },
         { label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND },
+      ],
+    ),
+  };
+}
+
+/**
+ * Spec J1/R14. The shop has no package that can be used, so the assistant answers ONE card and
+ * nothing else — no router, no model, no OCR, and no price anywhere on LINE.
+ *
+ * Modelled on `buildAiBudgetExceededMessage`: say what happened, promise the data is safe, and
+ * offer the one action that fixes it plus the door that reaches a person. The link is built by
+ * `safeTenantLink`, so it can only ever point inside this company's own web tenant.
+ */
+export function buildPackageRequiredMessage(input: {
+  lockReason: PlanTermLockReason;
+  companyId: string;
+  /** Absent when billing is closed or no web base is configured — the card then keeps only the
+   *  staff door, which is still better than a link that goes nowhere. */
+  webBaseUrl?: string;
+}): LineReplyMessage {
+  const text = 'น้องมั่งมียังตอบไม่ได้จนกว่าจะเลือกแพ็กเกจค่ะ ข้อมูลทั้งหมดยังอยู่ครบ';
+  const link = safeTenantLink(input.webBaseUrl, input.companyId,
+    `/companies/${encodeURIComponent(input.companyId)}/billing?channel=line`);
+  return {
+    type: 'flex',
+    altText: preview(text, 400),
+    canonicalText: text,
+    contents: bubble(
+      {
+        title: input.lockReason === 'no_package' ? 'ยังไม่ได้สมัครแพ็กเกจ' : 'ครบกำหนดใช้งานแล้ว',
+        badge: '🔒 รอเลือกแพ็กเกจ',
+        text,
+      },
+      input.webBaseUrl,
+      input.companyId,
+      [
+        ...(link ? [{ label: 'เลือกแพ็กเกจ', uri: link }] : []),
+        // §7: the one door that reaches a person, on the card the locked shop will keep seeing.
+        { label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND },
       ],
     ),
   };

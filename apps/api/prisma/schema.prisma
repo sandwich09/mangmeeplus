@@ -360,6 +360,13 @@ model Company {
   // outage must not overwrite a real VERIFIED result.
   verificationLastAttemptStatus     VerificationAttemptStatus?
   verificationLastAttemptAt         DateTime?
+  // ── D6 sales attribution (spec §17.1). Copied from the signup request at provisioning and
+  // repairable by a SYSTEM_ADMIN within SALES_REFERRAL_ADMIN_WINDOW_DAYS with a reason.
+  // Phase 2 only RECORDS these; counting and anti-gaming are Phase 4.
+  referralSalesUserId               String?
+  referredAt                        DateTime?
+  /// 'SIGNUP_CODE' | 'SIGNUP_LINK' | 'ADMIN'.
+  referralSource                    String?
   createdAt                         DateTime                                  @default(now())
   updatedAt                         DateTime                                  @updatedAt
   memberships                       CompanyMembership[]
@@ -561,6 +568,8 @@ model Company {
   documentIssueCommands             AccountingDocumentIssueCommand[]
   documentBuyerEvidenceRevisions    AccountingDocumentBuyerEvidenceRevision[]
   issueAuthzObservations            AccountingIssueAuthzObservation[]
+
+  @@index([referralSalesUserId])
 }
 
 model User {
@@ -3548,6 +3557,10 @@ model CompanySignupRequest {
   // Optional self-reported discovery; independent of the rail and influencer code.
   discoverySource        String?
   discoverySourceOther   String?            @db.VarChar(200)
+  // D6: the sales code the applicant typed, and the ACTIVE agent it resolved to at submit.
+  // An unresolvable code is refused at submit, so a stored code always had an owner.
+  referralSalesCode      String?
+  referralSalesUserId    String?
   requestedOfferKey      String?
   state                  CompanySignupState @default(RECEIVED)
   version                Int                @default(0)
@@ -3654,13 +3667,116 @@ model PackageChangeRequest {
   paymentRef        String?
   slipAttachmentId  String?
   verifiedAt        DateTime?
+  /// 'CUSTOMER_REQUEST' (the shop asking) | 'SALES_DEAL' (spec R3) | 'SPECIAL_INVOICE'.
+  /// The default is what every row written before the sales console existed means.
+  kind              String    @default("CUSTOMER_REQUEST")
+  /// SALES_DEAL only: the agent who created it. Reports credit this user (§17.1).
+  salesUserId       String?
+  approvedByUserId  String?
+  approvedAt        DateTime?
+  /// approvedAt + SALES_DEAL_OFFER_DAYS. Past it the offer reads EXPIRED even before the sweep.
+  offerExpiresAt    DateTime?
+  rejectedReason    String?
+  /// Team-visible note; never shown to the customer and never carries customer PII (S24).
+  internalReason    String?
+  /// Optimistic concurrency for every deal transition -> SALES_DEAL_STATE_CONFLICT.
+  version           Int       @default(1)
+  /// D2: a lead or SYSTEM_ADMIN approving their OWN deal. Recorded, not refused.
+  selfApproved      Boolean   @default(false)
+  /// D3/Phase 4: the APPLIED deal this renewal offer was cloned from. A renewal never writes
+  /// attribution (§17.2 counts first activations only) and is what makes the sweep idempotent.
+  renewalOfRequestId String?
+  /// Phase 4: when the 7-days-left reminder went out, so it goes out exactly once.
+  renewalRemindedAt DateTime?
+  /// D-P5-3 (auto-renewing deals only): this shop's own recurring Stripe Price, created at
+  /// approval and archived when the deal is cancelled, expires or returns to the catalog price.
+  stripePriceId     String?
+  stripePriceCreatedAt DateTime?
+  /// 'PENDING' | 'READY' | 'FAILED'. Only READY may be quoted; the sales sweep retries the rest.
+  priceState        String?
+  /// D-P5-6: when the shop goes back to its base tier's catalog price. Set after the first cycle
+  /// is applied (N-cycle deals) or when a lead ends an until-revoked deal.
+  returnAt          DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
   company           Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId, status])
+  @@index([kind, status])
+  @@index([salesUserId])
+  @@index([renewalOfRequestId])
+  /// D-P5-3/D-P5-6: the two sweep queries — Prices still to create, and deals about to return.
+  @@index([kind, priceState])
+  @@index([returnAt])
   // One OPEN request per company, enforced by a PARTIAL unique index in the migration SQL:
   // "PackageChangeRequest_company_open_key" ON ("companyId") WHERE "status" = 'OPEN'.
+  // Deal rows never take status 'OPEN', so they cannot consume that slot (S18). Their own
+  // "one non-final deal per company" fence is a SECOND partial unique index in the same file:
+  // "PackageChangeRequest_company_open_deal_key" ON ("companyId")
+  //   WHERE "kind" = 'SALES_DEAL' AND "status" IN ('DRAFT','PENDING_APPROVAL','APPROVED').
+}
+
+/// Spec R12/S10 — what payroll needs to pay a มั่งมี sales agent and file a 50 ทวิ.
+/// The three `*Encrypted` columns hold AES-256-GCM ciphertext (credential-cipher.logic.ts) and
+/// are decrypted ONLY by the SYSTEM_ADMIN profile read and CSV export, both of which audit.
+/// A team lead never sees them; no plaintext ever reaches a DTO, a log or audit metadata.
+model SalesAgentProfile {
+  id                   String    @id @default(cuid())
+  userId               String    @unique
+  teamLeadUserId       String?
+  /// 3–6 chars [A-Z0-9], what a customer types at signup. Stops resolving when SUSPENDED.
+  salesCode            String    @unique
+  /// Every payroll column is nullable: a team lead opens the account, the Owner fills the record.
+  /// NULL means "not captured yet" — `hasProfile` on the DTO is exactly `legalName != null`.
+  legalName            String?
+  nationalIdEncrypted  String?
+  taxIdEncrypted       String?
+  address              String?
+  bankName             String?
+  bankAccountEncrypted String?
+  whtRatePercent       Int       @default(3)
+  /// 'ACTIVE' | 'SUSPENDED'. Suspending keeps the membership and the agent's deals readable.
+  status               String    @default("ACTIVE")
+  createdByUserId      String
+  suspendedAt          DateTime?
+  suspendReason        String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([teamLeadUserId])
+}
+
+/// Who gets credited for a paid shop (spec §17.2, D-P3-10). ONE row per company, written the
+/// first time a deal is applied; Phase 4 adds 'REFERRAL' rows and the report that reads them.
+/// No Company relation on purpose: like every other billing record this row outlives the tenant
+/// row it describes, and the report is financial history, not tenant data.
+model SalesAttribution {
+  id              String   @id @default(cuid())
+  companyId       String   @unique
+  salesUserId     String
+  /// 'DEAL' (Phase 3) | 'REFERRAL' (Phase 4).
+  source          String
+  /// What the customer actually paid, in satang; `refundedSatang` is deducted by the report.
+  amountSatang    Int
+  months          Int?
+  interval        String?
+  paidAt          DateTime
+  refundedSatang  Int      @default(0)
+  /// BillingInvoice.id of the paid one-time invoice that created this row.
+  sourceInvoiceId String
+  /// PackageChangeRequest.id of the deal, when `source` is 'DEAL'.
+  dealRequestId   String?
+  /// §17.1 anti-gaming: 'self_referral' | 'repeat_owner' | 'referral_anomaly'. A flagged row counts
+  /// ZERO in every total until a SYSTEM_ADMIN reviews it; the row itself is never deleted.
+  flags                String[] @default([])
+  flaggedAt            DateTime?
+  flagReviewedAt       DateTime?
+  flagReviewedByUserId String?
+  flagReviewNote       String?
+  createdAt       DateTime @default(now())
+
+  @@index([salesUserId, paidAt])
+  @@index([flaggedAt])
 }
 
 model AccountClaimToken {
@@ -9617,6 +9733,10 @@ model BillingAttempt {
   consentAt         DateTime
   status            String @default("CREATING")
   checkoutSessionId String? @unique
+  /// PackageChangeRequest.id when this Checkout is paying a sales deal (D-P3-9). The nightly
+  /// EXPIRED sweep skips a deal that still has a live attempt, so a QR paid after the offer
+  /// window closes still applies (S46). Mirrored from `quoteSnapshot.deal.requestId`.
+  dealRequestId     String?
   collectionJson    Json?
   subscriptionId    String?
   errorCode         String?
@@ -9625,6 +9745,7 @@ model BillingAttempt {
   updatedAt         DateTime @updatedAt
   @@unique([billingAccountId, idempotencyKey])
   @@index([status, updatedAt])
+  @@index([dealRequestId])
 }
 
 model BillingInvoice {

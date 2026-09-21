@@ -7,7 +7,7 @@ import { readAiBudgetReadiness } from '../../line-ai/application/company-ai-budg
 import { paidReceiptBalance } from './billing-receipt-grants';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import type { BillingPlanAdjustmentInput, BillingPlanAdjustmentOperation, BillingPlanAdjustments, BillingPlanAdjustmentUnchanged, CompanyPlanCapacity } from '@watchdog-bms/contracts';
+import { BILLING_PAID_TIERS, type BillingPlanAdjustmentInput, type BillingPlanAdjustmentOperation, type BillingPlanAdjustments, type BillingPlanAdjustmentUnchanged, type CompanyPlanCapacity, type PaidTier } from '@watchdog-bms/contracts';
 import { Prisma, type BillingOperation, type BillingAccount } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
@@ -133,7 +133,7 @@ export class BillingPlanAdjustmentsService {
       if(this.source(s)!==input.sourceHash)throw stale();const a=s.account!,t=s.company.planTerm!,now=new Date(),before=effectivePlanCapacity(t,now);
       const active=currentCapacityOverride(t,now);let after:CompanyPlanCapacity,expiry:string|null=null;
       if(collectionChange){after=before;}else if(dayExtension){if(a.paidThrough?.toISOString()!==dayExtension.before||a.termProjectionHash!==dayExtension.termHash)throw stale();after=before;}else if(input.type==='GRANT_OVERRIDE'){
-        if(input.overrideId!==undefined||!['STARTER_249','BASIC_499','PRO_999'].includes(input.tierKey??'')||
+        if(input.overrideId!==undefined||!BILLING_PAID_TIERS.includes(input.tierKey as PaidTier)||
           ![input.branchLimit,input.employeeLimit].every(n=>Number.isSafeInteger(n)&&n!>0&&n!<=2147483647)||typeof input.expiresAt!=='string')throw new BadRequestException();
         const end=new Date(input.expiresAt);
         if(!Number.isFinite(end.getTime())||end.toISOString()!==input.expiresAt)throw new BadRequestException();

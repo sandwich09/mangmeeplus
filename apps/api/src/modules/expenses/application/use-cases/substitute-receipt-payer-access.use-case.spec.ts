@@ -18,7 +18,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateHeaderValue } from 'node:http';
 import { ForbiddenException } from '@nestjs/common';
-import { ROLE_GRANTS, SYSTEM_ROLES } from '../../../auth/permission-registry';
+import { PLATFORM_ROLE_KEYS, ROLE_GRANTS, SYSTEM_ROLES } from '../../../auth/permission-registry';
 import {
   REQUIRED_ANY_PERMISSIONS_KEY,
   REQUIRED_PERMISSIONS_KEY,
@@ -59,8 +59,11 @@ function acceptedPermissions(handler: keyof ExpenseController): string[] {
     ?? []) as string[];
 }
 
-/** SYSTEM_ADMIN is platform-only and never a company member, so it can never be a payer. */
-const COMPANY_ROLES = SYSTEM_ROLES.map((role) => role.key).filter((key) => key !== 'SYSTEM_ADMIN');
+/**
+ * PLATFORM_ROLE_KEYS are platform-only and never company members, so none of them can be a payer:
+ * SYSTEM_ADMIN, and the two มั่งมี sales roles, which hold no business permission at all (S29).
+ */
+const COMPANY_ROLES = SYSTEM_ROLES.map((role) => role.key).filter((key) => !PLATFORM_ROLE_KEYS.includes(key));
 
 /** A payer on the smallest possible role: no review, no confirm, no company-wide expense read. */
 const staffPayer = {

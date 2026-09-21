@@ -57,9 +57,16 @@ export class PrismaPermissionResolverRepository implements IPermissionResolverPo
       throw new ForbiddenException('No active company membership.');
     }
 
-    const termRecovery = input.allowTermRecovery &&
-      membership.company.status === 'DISABLED' && Boolean(membership.company.planTerm?.termDisabledAt);
+    const isTermDisabled = membership.company.status === 'DISABLED' && Boolean(membership.company.planTerm?.termDisabledAt);
+    const termRecovery = input.allowTermRecovery && isTermDisabled;
     if (membership.company.status !== 'ACTIVE' && !termRecovery) {
+      // Sales/locked-signup spec §19: every non-recovery caller routes through this one gate, so
+      // naming the reason here (rather than per-route) lets the web's authedApiFetch bounce a stale
+      // tab or deep link to /renew instead of showing a dead-end 403. A DISABLED company that is NOT
+      // term-disabled (a manual admin suspension) keeps the plain, non-actionable message.
+      if (isTermDisabled) {
+        throw new ForbiddenException({ code: 'company_term_expired', message: 'Company is not active.' });
+      }
       throw new ForbiddenException('Company is not active.');
     }
 

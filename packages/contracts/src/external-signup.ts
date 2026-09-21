@@ -1,5 +1,6 @@
 // P10 Flow B — public auto-register + admin review queue contracts.
 // Spec: docs/specs/mangmee-external-signup-contract-spec-th.md (amendment v2 2026-08-30).
+import type { PackageChangeDealOffer, PackageChangeRequestKind } from './sales.js';
 
 /** Self-reported discovery, separate from a signup rail or an influencer referral code. */
 export const SIGNUP_DISCOVERY_SOURCE_OPTIONS = [
@@ -7,6 +8,9 @@ export const SIGNUP_DISCOVERY_SOURCE_OPTIONS = [
   { value: 'IG', label: 'IG' },
   { value: 'TIKTOK', label: 'TikTok' },
   { value: 'FACEBOOK', label: 'Facebook' },
+  // D6: choosing this reveals the "รหัสเซลล์" field. The code resolves to an ACTIVE sales agent at
+  // submit; an unknown or suspended one is refused (SALES_CODE_UNKNOWN) rather than stored raw.
+  { value: 'SALES', label: 'เซลล์ของมั่งมี' },
   { value: 'OTHER', label: 'อื่น ๆ' },
 ] as const;
 export type SignupDiscoverySource = typeof SIGNUP_DISCOVERY_SOURCE_OPTIONS[number]['value'];
@@ -44,6 +48,10 @@ export type PublicCompanySignupBody = {
   taxId?: string;
   consentVersion: string;
   referralCode?: string;
+  discoverySource?: SignupDiscoverySource;
+  discoverySourceOther?: string;
+  /** D6: only meaningful with discoverySource 'SALES'; resolved to an ACTIVE agent at submit. */
+  referralSalesCode?: string;
   /** Attribution only — the provisioned package is the free trial regardless of this value. */
   requestedOfferKey?: SignupOfferKey;
 };
@@ -125,6 +133,8 @@ export type SignupClaimResultDto = {
 export type AdminSignupQueueItemDto = {
   discoverySource?: SignupDiscoverySource;
   discoverySourceOther?: string;
+  /** D6: the resolved sales agent behind a 'SALES' answer, so the reviewer sees who to credit. */
+  referralSales?: { displayName: string; salesCode: string };
   requestId: string;
   version: number;
   state: string;
@@ -201,7 +211,10 @@ export type AdminSignupQueueItemDto = {
   resolvedExistingCompanyId?: string;
   /** Current proven ACTIVE shops an operator may safely return this applicant to. */
   eligibleExistingCompanies?: LineSignupEligibleCompanyDto[];
+  /** @deprecated R1 (Owner 2026-09-20): no longer emitted. A second shop opens LOCKED like the
+   *  first, so there is no free trial to authorize. Kept so an older console still compiles. */
   requiresRepeatTrialGrant?: boolean;
+  /** @deprecated See `requiresRepeatTrialGrant`. */
   repeatTrialGranted?: boolean;
   /**
    * Why provisioning stopped, for the rows on the "มีปัญหา" tab. A bounded code the API already
@@ -245,8 +258,11 @@ export type AdminSignupDecisionBody = {
   version?: number;
   /** RETURN_EXISTING only; the server re-proves current LINE/user/membership access before commit. */
   targetCompanyId?: string;
-  /** CREATE_NEW_SHOP only; repeat trials require explicit true plus trialGrantNote. */
+  /** @deprecated R1 (Owner 2026-09-20): accepted and IGNORED. Approving a repeat applicant no
+   *  longer grants anything free, so it needs no authorization. Kept so an older console's
+   *  payload is not rejected. */
   grantRepeatTrial?: boolean;
+  /** @deprecated See `grantRepeatTrial`. */
   trialGrantNote?: string;
   /** CREATE_NEW_SHOP only; required when another person's contact data still conflicts. */
   acknowledgeSharedContact?: boolean;
@@ -353,6 +369,8 @@ export type LineSignupSubmitDto = {
   /** Optional shop contact; no mailbox verification or recovery authority. */
   contactEmail?: string | null;
   referralCode?: string;
+  /** D6: only meaningful with discoverySource 'SALES'; resolved to an ACTIVE agent at submit. */
+  referralSalesCode?: string | null;
   legal: LineSignupLegalEvidenceDto;
 };
 
@@ -424,6 +442,13 @@ export type PackageChangeRequestDto = {
   companyId: string;
   requestedTierKey: string;
   status: PackageChangeRequestStatus;
+  /**
+   * Which lane this row belongs to. Absent reads as CUSTOMER_REQUEST (every row written before the
+   * sales console existed). Only an APPROVED, unexpired SALES_DEAL is ever returned to a customer.
+   */
+  kind?: PackageChangeRequestKind;
+  /** The sales offer behind a SALES_DEAL row; the card that renders it is Phase 3. */
+  deal?: PackageChangeDealOffer;
   /** Whether an applied catalog purchase fulfilled or replaced this request. */
   resolutionSource?: 'PAID_PURCHASE' | 'CATALOG_PURCHASE_SUPERSEDED';
   note?: string;

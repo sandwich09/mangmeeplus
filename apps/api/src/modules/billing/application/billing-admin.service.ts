@@ -100,7 +100,11 @@ export class BillingAdminService {
       paidThrough: account?.paidThrough?.toISOString() ?? null, nextChargeAt: account?.nextChargeAt?.toISOString() ?? null,
       observedAt: account?.observedAt?.toISOString() ?? null, effectiveCapacity: term ? effectivePlanCapacity(term) : null, tierKey: term?.tierKey ?? null, termEndsAt: term?.termEndsAt.toISOString() ?? null,
       companyStatus: company.status, pendingAttemptId: account?.activeAttemptId ?? null,
-      source: term?.billingReceiptAccountId ? (term.billingReceiptAccountId === account?.id ? 'STRIPE' : 'OTHER_BILLING') : term?.tierKey === 'FREE_TRIAL_15' ? 'TRIAL' : term ? 'MANUAL' : 'NONE',
+      // S43/D-P3-6: 'DEAL' when the attempt that IS the current contract carries a sales-deal
+      // snapshot. Read next to `renewalMode`, which still says how the shop pays.
+      source: term?.billingReceiptAccountId ? (term.billingReceiptAccountId === account?.id
+        ? (purchase?.id === account?.contractAttemptId && (purchase?.quoteSnapshot as { deal?: unknown } | null)?.deal ? 'DEAL' : 'STRIPE')
+        : 'OTHER_BILLING') : term?.tierKey === 'FREE_TRIAL_15' ? 'TRIAL' : term ? 'MANUAL' : 'NONE',
       graceEndsAt: account?.graceEndsAt?.toISOString() ?? null, cancelEffectiveAt: account?.cancelAtPeriodEnd ? account.paidThrough?.toISOString() ?? null : null,
       origin: purchase?.channel === 'web' || purchase?.channel === 'line' ? purchase.channel : null,
       branchLimit: term?.branchLimit ?? null, employeeLimit: term?.employeeLimit ?? null,

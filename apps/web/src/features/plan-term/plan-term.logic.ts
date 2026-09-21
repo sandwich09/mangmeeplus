@@ -1,4 +1,5 @@
-import type { PlanTermNotice } from './plan-term.api';
+import { isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
+import type { PlanLockReason, PlanTermNotice } from './plan-term.api';
 
 export const PLAN_TERM_RENEW_PHONE = '098-256-5628';
 export const PLAN_TERM_CONTACT_EMAIL = 'contact@mangmeeplus.com';
@@ -27,6 +28,45 @@ export function renewalPathFor(pathname: string): string | null {
 export function isRenewalPath(pathname: string): boolean {
   return /^\/companies\/[^/]+\/renew\/?$/.test(pathname);
 }
+
+// ---- Locked shell (Owner 2026-09-20: no trial, so a shop is locked until it buys a package) ----
+
+/**
+ * Every path a locked shop may open (spec §12 เว็บลูกค้า): the settings hub and the owner's own
+ * profile, the package page with its return/invoice pages, and the renewal page itself. One list
+ * for the two gates that must agree — the sidebar the locked shell renders and the redirect in
+ * `PlanTermBanner` — so a menu can never offer a page the guard bounces.
+ */
+export function isLockedShellPath(pathname: string, companyId: string): boolean {
+  const base = `/companies/${encodeURIComponent(companyId)}`;
+  return pathname === `${base}/settings` || pathname === `${base}/settings/profile`
+    || isRenewalPath(pathname) || isBillingCustomerRecoveryPath(pathname, companyId);
+}
+
+/** An API build without `lockReason` means the P29 case it always described: a term that ran out. */
+export function planLockReason(source: { lockReason?: PlanLockReason } | null | undefined): PlanLockReason {
+  return source?.lockReason ?? 'trial_ended';
+}
+
+/**
+ * The one wording table for a locked shop (spec R2/R10), read by the shell banner, the renewal
+ * page and the package page. A shop that never had a package is told it has none to renew.
+ */
+export const PLAN_LOCK_COPY: Record<PlanLockReason, { banner: string; title: string; body: string }> = {
+  no_package: {
+    banner: 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ · เลือกแพ็กเกจเพื่อเริ่มใช้งาน',
+    title: 'ยังไม่มีแพ็กเกจ',
+    body: 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน ข้อมูลร้านและการตั้งค่าของคุณอยู่ครบ',
+  },
+  trial_ended: {
+    banner: 'ร้านนี้ครบกำหนดใช้งานแล้ว · เลือกแพ็กเกจเพื่อใช้งานต่อ',
+    title: 'ครบกำหนดใช้งานแล้ว',
+    body: 'ข้อมูลทั้งหมดยังอยู่ครบ ไม่มีอะไรหาย เมื่อเลือกแพ็กเกจแล้วใช้งานต่อได้ทันที',
+  },
+};
+
+/** The single next step for both reasons: there is nothing to renew any more, only to choose. */
+export const PLAN_LOCK_CTA = 'เลือกแพ็กเกจ';
 
 // ---- Sidebar card (Owner 2026-08-31: the warning lives in the sidebar, user-collapsible) ----
 

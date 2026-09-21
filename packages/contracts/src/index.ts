@@ -258,6 +258,7 @@ export * from './ledger.js';
 export * from './partner-management.js';
 export * from './external-signup.js';
 export * from './plan-term.js';
+export * from './sales.js';
 export * from './tax.js';
 export * from './transaction-tax.js';
 export * from './procurement.js';

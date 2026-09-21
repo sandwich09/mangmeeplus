@@ -24,10 +24,10 @@ test('the public signup journey has pages to check', () => {
   assert.ok(pages.length >= 4, `only found ${pages.map((p) => p.name).join(', ')}`);
 });
 
-// Owner 2026-09-05: self-signup no longer sells a tier. Every applicant gets the same free trial
-// the LINE-first signup gives — so a price, a tier name or a "PRO" badge on any of these pages is
-// an offer the product does not make any more.
-test('no signup page names a price or a tier', () => {
+// Owner 2026-09-05: self-signup no longer sells a tier, and since 2026-09-20 it sells no trial
+// either — the pages name the starter price and nothing else. A PRO tier name or its ฿999 on any
+// of these pages is an offer the product stopped making.
+test('no signup page names the retired PRO offer', () => {
   for (const { name, source } of pages) {
     assert.doesNotMatch(source, /999/, `${name} still quotes a price`);
     assert.doesNotMatch(source, /\bPRO\b/, `${name} still names the PRO tier`);

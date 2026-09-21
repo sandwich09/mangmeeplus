@@ -1,16 +1,25 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { COMPANY_PERMISSION_KEYS, PERMISSIONS, PERMISSION_KEYS, REIMBURSEMENT_SELF_SERVICE_PERMISSIONS, ROLE_GRANTS, SYSTEM_ROLES } from './permission-registry';
+import { COMPANY_PERMISSION_KEYS, PERMISSIONS, PERMISSION_KEYS, PLATFORM_ROLE_KEYS, REIMBURSEMENT_SELF_SERVICE_PERMISSIONS, ROLE_GRANTS, SYSTEM_ROLES } from './permission-registry';
 import { REQUIRED_ANY_PERMISSIONS_KEY } from '../../common/security/permissions.decorator';
 import { AccessCatalogController } from '../employee-access/presentation/http/access-catalog.controller';
 import { EmployeeController } from '../employee-access/presentation/http/employee.controller';
 import { PermissionController } from '../employee-access/presentation/http/permission.controller';
 import { RoleController } from '../employee-access/presentation/http/role.controller';
 import { ReimbursementPolicyController } from '../reimbursements/presentation/http/reimbursement-policy.controller';
-import { BILLING_PERMISSIONS } from '@watchdog-bms/contracts';
+import { BILLING_PERMISSIONS, SALES_PERMISSION_KEYS, SALES_ROLE_KEYS } from '@watchdog-bms/contracts';
 
 function requiredAny(target: object, method: string): string[] {
   return Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, (target as Record<string, object>)[method]);
+}
+
+/**
+ * Roles that live inside a CUSTOMER company. The platform roles (SYSTEM_ADMIN and the two
+ * มั่งมี sales roles) are excluded: they hold no business permission by design (S29), so the
+ * "every company role can ..." invariants below would be asserting the opposite of the rule.
+ */
+function companyRoleKeys(): string[] {
+  return SYSTEM_ROLES.map(({ key }) => key).filter((key) => !PLATFORM_ROLE_KEYS.includes(key));
 }
 
 describe('permission-registry', () => {
@@ -123,7 +132,7 @@ describe('permission-registry', () => {
   it('every company role can request its own reimbursement without granting approval or payment to read-only roles', () => {
     for (const { key: role } of SYSTEM_ROLES) {
       for (const permission of REIMBURSEMENT_SELF_SERVICE_PERMISSIONS) {
-        assert.equal(ROLE_GRANTS[role].includes(permission), role !== 'SYSTEM_ADMIN', `${role}: ${permission}`);
+        assert.equal(ROLE_GRANTS[role].includes(permission), !PLATFORM_ROLE_KEYS.includes(role), `${role}: ${permission}`);
       }
     }
     for (const role of ['COMPANY_VIEW', 'AUDITOR_READONLY']) {
@@ -135,7 +144,7 @@ describe('permission-registry', () => {
   });
 
   it('every company role has view-only access to reimbursements it participated in', () => {
-    for (const role of SYSTEM_ROLES.map(({ key }) => key).filter((key) => key !== 'SYSTEM_ADMIN')) {
+    for (const role of companyRoleKeys()) {
       assert.ok(
         ROLE_GRANTS[role]?.includes('reimbursement.read_related'),
         `${role} cannot read a reimbursement it participated in`,
@@ -149,7 +158,7 @@ describe('permission-registry', () => {
       'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related',
       'procurement.supplier_payment.read_related',
     ];
-    for (const role of SYSTEM_ROLES.map(({ key }) => key).filter((key) => key !== 'SYSTEM_ADMIN')) {
+    for (const role of companyRoleKeys()) {
       for (const permission of related) {
         assert.ok(ROLE_GRANTS[role]?.includes(permission), `${role} missing ${permission}`);
       }
@@ -221,6 +230,50 @@ describe('permission-registry', () => {
     assert.ok(ROLE_GRANTS.STAFF.includes('dashboard.read'));
   });
 
+  // Spec §5/§9/S06/S29. The whole security story of the sales console is "these two roles hold
+  // sales.* plus the account.* four and NOTHING else" — if a business key ever leaks into either
+  // grant list, a sales agent gains read access to the platform tenant's own workspace.
+  it('the two Mangmee sales roles hold only sales.* and the account.* login baseline', () => {
+    const loginBaseline = ['account.session.read', 'account.password.change', 'account.identity.link'];
+    for (const role of SALES_ROLE_KEYS) {
+      const grants = ROLE_GRANTS[role] ?? [];
+      assert.ok(grants.length > 0, `${role} has no grants`);
+      for (const key of loginBaseline) assert.ok(grants.includes(key), `${role} cannot sign in without ${key}`);
+      for (const key of grants) {
+        assert.ok(
+          key.startsWith('sales.') || loginBaseline.includes(key),
+          `${role} must not hold the business permission ${key} (S29)`,
+        );
+      }
+      // Never the unlink key, matching every other role, and never the PII key (S10/R11).
+      assert.equal(grants.includes('account.identity.unlink'), false, `${role} must not unlink identities`);
+      assert.equal(grants.includes('sales.agent_profile.manage'), false, `${role} must not read agent tax/bank PII`);
+    }
+  });
+
+  it('separates the sales lead from the sales agent exactly where the spec does', () => {
+    const lead = ROLE_GRANTS['MANGMEE_SALES_LEAD'] ?? [], agent = ROLE_GRANTS['MANGMEE_SALES'] ?? [];
+    // R5: an agent can never approve — not their own deal and not anyone else's.
+    for (const key of ['sales.deal.approve', 'sales.team.manage', 'sales.report.read']) {
+      assert.ok(lead.includes(key), `lead missing ${key}`);
+      assert.equal(agent.includes(key), false, `agent must not hold ${key}`);
+    }
+    for (const key of ['sales.console.read', 'sales.company.search', 'sales.deal.create']) {
+      assert.ok(lead.includes(key) && agent.includes(key), `both sales roles need ${key}`);
+    }
+  });
+
+  it('gives SYSTEM_ADMIN every sales key including the PII one, and no tenant role any of them', () => {
+    for (const key of SALES_PERMISSION_KEYS) {
+      assert.ok(PERMISSION_KEYS.includes(key), `${key} is not registered`);
+      assert.ok(ROLE_GRANTS.SYSTEM_ADMIN!.includes(key), `SYSTEM_ADMIN missing ${key}`);
+      assert.equal(COMPANY_PERMISSION_KEYS.includes(key), false, `${key} must not be a company permission`);
+      assert.equal(ROLE_GRANTS.OWNER!.includes(key), false, `OWNER must not hold ${key}`);
+      // S06: the shop's own SALES role must never pick up a platform sales authority.
+      assert.equal(ROLE_GRANTS.SALES!.includes(key), false, `tenant SALES must not hold ${key}`);
+    }
+  });
+
   it('SYSTEM_ROLES keys match ROLE_GRANTS keys', () => {
     const roleKeys = new Set(SYSTEM_ROLES.map((r) => r.key));
     const grantKeys = new Set(Object.keys(ROLE_GRANTS));
@@ -237,11 +290,13 @@ describe('permission-registry', () => {
     for (const perm of COMPANY_PERMISSION_KEYS) {
       assert.ok(ownerGrants.has(perm), `OWNER missing permission: ${perm}`);
     }
-    assert.equal([...ownerGrants].some((perm) => perm.startsWith('system.')), false);
+    // Both platform prefixes: `sales.` is not `system.`-prefixed, so checking only the latter
+    // let the whole sales key family reach OWNER unnoticed.
+    assert.equal([...ownerGrants].some((perm) => perm.startsWith('system.') || perm.startsWith('sales.')), false);
   });
 
   it('lets every company role reach accounting relation ABAC without widening document reads', () => {
-    for (const role of SYSTEM_ROLES.map((entry) => entry.key).filter((key) => key !== 'SYSTEM_ADMIN')) {
+    for (const role of companyRoleKeys()) {
       const grants = ROLE_GRANTS[role] ?? [];
       assert.ok(
         grants.includes('accounting.document.read') || grants.includes('accounting.document.read_related'),

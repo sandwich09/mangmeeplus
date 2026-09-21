@@ -6,6 +6,7 @@ import {
   PLAN_TIER_PRESETS,
   type CompanyPlanTermDto,
   type PlanTermDerivedState,
+  type PlanTermLockReason,
   type PlanTierKey,
 } from '@watchdog-bms/contracts';
 import { effectivePlanCapacity } from './plan-capacity';
@@ -57,6 +58,25 @@ export function derivePlanTermState(
 
 export function isExpired(termEndsAt: Date, now: Date): boolean {
   return now.getTime() >= termEndsAt.getTime();
+}
+
+/**
+ * Sales/locked-signup spec R2 — the ONE definition of why a locked shop is locked, read by the
+ * plan-term notice, billing status and the LINE lock card so all three say the same sentence.
+ *
+ * A zero-length term nobody ever renewed is a shop provisioning opened and immediately locked
+ * because there is no free trial any more (Owner 2026-09-20). Everything else that reached its
+ * end had a real term behind it, including every shop still running the old 30-day trial.
+ *
+ * Deliberately NOT asking whether the term has expired: callers already know that (they hold
+ * `derivedState`/`accessState`) and this stays a pure classification of the row.
+ */
+export function planTermLockReason(
+  term: { termStartAt: Date; termEndsAt: Date; renewCount: number },
+): PlanTermLockReason {
+  return term.termEndsAt.getTime() <= term.termStartAt.getTime() && term.renewCount === 0
+    ? 'no_package'
+    : 'trial_ended';
 }
 
 /**
