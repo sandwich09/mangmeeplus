@@ -714,6 +714,10 @@ describe('PrismaCrmRepository customer identity transactions', () => {
       },
       accountingCounterparty: {
         create: async () => { counterpartyCreates += 1; return { id: 'cp-1' }; },
+        // CON-1: the bundle promotes a reused VENDOR counterparty to BOTH in this transaction, so
+        // a later receipt is not dropped from the AI revenue summary. Nothing to promote here —
+        // this path just made a CUSTOMER row — but the fake has to answer the call.
+        updateMany: async () => ({ count: 0 }),
       },
       accountingDocument: {
         create: async ({ data }: any) => {

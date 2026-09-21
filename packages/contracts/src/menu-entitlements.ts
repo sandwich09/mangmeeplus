@@ -188,6 +188,22 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
     status: 'ready',
   },
   {
+    // The registry both sides write into. Parented to `expenses`, not `sales_documents`: CON-3 says
+    // a shop with sales closed must keep the vendor side. BOTH features are listed because
+    // `accounting.counterparty.*` is granted by packs under each, and a menu binding must own its
+    // gate permissions outright — turning off only one of the two would leave the permission alive
+    // through the other and the binding audit refuses that. Two keys also stop the partner
+    // console's card from repeating all five expense submenus under this one.
+    navKey: 'counterparties',
+    labelTh: 'คู่ค้า',
+    group: 'finance',
+    iconKey: 'GroupIcon',
+    parentFeatureKey: 'expenses',
+    entitlementKeys: ['expenses', 'sales_documents'],
+    gatePermissions: ['accounting.counterparty.read', 'accounting.counterparty.manage'],
+    status: 'ready',
+  },
+  {
     navKey: 'reimbursements',
     labelTh: 'การเบิกจ่าย',
     group: 'finance',

@@ -248,7 +248,7 @@ describe('diffEntitlements', () => {
         'expenses.signatures',
       ],
     );
-    assert.equal(diff.turningOn[0]?.labelTh, 'ค่าใช้จ่ายและใบเสร็จ');
+    assert.equal(diff.turningOn[0]?.labelTh, 'ค่าใช้จ่ายและใบเสร็จ / คู่ค้า');
     assert.deepEqual(changedEntitlements(server, pending), [
       { featureKey: 'expenses', enabled: true },
     ]);
@@ -300,7 +300,14 @@ describe('diffEntitlements', () => {
     );
     assert.equal(directWrites.length, ALL_FEATURE_ENTITLEMENT_KEYS.length);
     assert.equal(cards.find((card) => card.navKey === 'expenses')?.enabled, false);
-    assert.ok(cards.filter((card) => card.navKey !== 'expenses').every((card) => card.enabled));
+    // `counterparties` is parented to `expenses`, so it goes dark with it. The registry serves the
+    // sales side too, but a binding has one parent and CON-3 rules out making it `sales_documents`
+    // — a shop with sales closed must keep the vendor side. A sales-only company reaches the same
+    // rows through the accounting page's own list.
+    assert.equal(cards.find((card) => card.navKey === 'counterparties')?.enabled, false);
+    assert.ok(cards
+      .filter((card) => card.navKey !== 'expenses' && card.navKey !== 'counterparties')
+      .every((card) => card.enabled));
   });
 });
 

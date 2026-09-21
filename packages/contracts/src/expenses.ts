@@ -638,6 +638,9 @@ export type ExpenseSummary = {
   captureSource: ExpenseCaptureSource;
   vendorCounterpartyId: string | null;
   vendorNameSnapshot: string | null;
+  /** Vendor address spec §6: the seller address as printed on the document, one free-text block.
+   *  On the summary because the list filters and reports on its absence (GAP-11). */
+  vendorAddressSnapshot: string | null;
   vendorDocumentNumber: string | null;
   expenseDate: string;
   currency: string;
@@ -906,7 +909,11 @@ export type UpdateExpenseDraftInput = Partial<Omit<CreateExpenseDraftInput, 'cap
   sourceDraft?: ExpenseSourceDraftInput;
   vendorNameSnapshot?: string;
   vendorTaxIdSnapshot?: string;
-  vendorBranchCodeSnapshot?: string;
+  /** CON-8: exactly five digits, or blank/null to clear. Blank is stored as null — `'00000'` is a
+   *  real value ("head office") a person may type, never what an empty field means. */
+  vendorBranchCodeSnapshot?: string | null;
+  /** Vendor address spec §6: ≤ 500 characters as printed; blank/null clears it. */
+  vendorAddressSnapshot?: string | null;
   vendorEntityKindSnapshot?: BuyerEntityKind;
   vendorDocumentNumber?: string;
   receivedAt?: string;
@@ -935,6 +942,9 @@ export type ListExpensesFilter = {
   vendorCounterpartyId?: string;
   captureSource?: ExpenseCaptureSource;
   sourceDocumentType?: SourceDocumentType;
+  /** GAP-11: full tax invoices whose vendor address is still empty, so they can be filled in over
+   *  time. It pins `sourceDocumentType` to TAX_INVOICE — only that document type must carry one. */
+  vendorAddressMissing?: boolean;
   taxEvidenceStatus?: TaxEvidenceStatus;
   expenseCategoryId?: string;
   fromDate?: string;
@@ -1461,6 +1471,10 @@ export const ACCOUNTANT_INDEX_COLUMNS = [
   'funding_source',
   'certifying_payer_name',
   'substitute_evidence_provenance',
+  // GAP-7, trailing for the same reason as the three above: an accounting office reconciling a full
+  // tax invoice needs the seller address that is printed on the paper, and it was nowhere in the
+  // file that leaves the system. Appended so every position-based consumer keeps its offsets.
+  'vendor_address',
 ] as const;
 
 export type AccountantIndexColumn = (typeof ACCOUNTANT_INDEX_COLUMNS)[number];
@@ -1515,6 +1529,7 @@ export const ACCOUNTANT_INDEX_COLUMN_LABELS: Record<AccountantIndexColumn, strin
   funding_source: 'แหล่งเงิน',
   certifying_payer_name: 'ผู้จ่ายและรับรอง',
   substitute_evidence_provenance: 'ต้นทางใบรับรองและประวัติแก้ไข',
+  vendor_address: 'ที่อยู่ผู้ขายตามใบ',
 };
 
 /** Everyday view: what a non-accountant needs to read the export at a glance. */

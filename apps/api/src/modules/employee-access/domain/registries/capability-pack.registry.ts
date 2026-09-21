@@ -270,7 +270,10 @@ const RAW_PACKS: RawPack[] = [
     key: 'pack.expense.review', module: 'expense', featureEntitlementKey: 'expenses',
     nameTh: 'ตรวจค่าใช้จ่าย', nameEn: 'Review expenses',
     description: 'ดู/ตรวจค่าใช้จ่ายทั้งบริษัท ตรวจ AI จัดหมวด และแก้รายการซ้ำ',
-    permissionKeys: ['expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.review', 'expense.ai.verify', 'expense.category.manage', 'expense.duplicate.resolve', 'attachment.create'],
+    // `accounting.counterparty.read` (vendor-address CON-2): the reviewer is who sees the
+    // "เพิ่ม [ร้าน] ลงทะเบียนคู่ค้าแล้ว · ดู" toast, so they must be able to open what it points at.
+    // Read only — changing a primary address by hand still needs `accounting.counterparty.manage`.
+    permissionKeys: ['expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.review', 'expense.ai.verify', 'expense.category.manage', 'expense.duplicate.resolve', 'attachment.create', 'accounting.counterparty.read'],
   },
   {
     key: 'pack.expense.finance', module: 'expense', featureEntitlementKey: 'expenses',

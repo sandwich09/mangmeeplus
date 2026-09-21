@@ -168,6 +168,9 @@ export class CreateAccountantPackageUseCase {
       vendorNameSnapshot: r.evidenceSources?.sourceSnapshot?.seller?.name ?? (currentCertificate(r.id)?.snapshotJson as any)?.payee?.name ?? r.vendorNameSnapshot,
       vendorTaxIdSnapshot: r.evidenceSources?.sourceSnapshot ? r.evidenceSources.sourceSnapshot.seller?.taxId ?? null : r.vendorTaxIdSnapshot,
       vendorBranchCodeSnapshot: r.evidenceSources?.sourceSnapshot ? r.evidenceSources.sourceSnapshot.seller?.branchCode ?? null : r.vendorBranchCodeSnapshot,
+      // GAP-7. The substitute source snapshot has no address field, so the expense's own printed
+      // address is the only source — and it is what the accountant is reconciling against anyway.
+      vendorAddressSnapshot: r.vendorAddressSnapshot,
       vendorDocumentNumber: r.evidenceSources?.sourceSnapshot ? r.evidenceSources.sourceSnapshot.seller?.documentNumber ?? null : r.vendorDocumentNumber,
       categoryName: r.categoryName,
       accountHintKey: r.accountHintKey,

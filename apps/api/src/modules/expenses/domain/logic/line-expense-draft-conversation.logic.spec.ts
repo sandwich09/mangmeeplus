@@ -244,3 +244,44 @@ describe('LINE expense draft conversation logic', () => {
     assert.equal(parts.join(''), text);
   });
 });
+
+// ── Vendor address §11.3: one question, one turn, never a completeness gate ──────────────────
+
+describe('LINE one-time seller address question (vendor-address §11.3)', () => {
+  const asked = () => {
+    const state = initial();
+    state.header.vendorAddressAsk = true;
+    return state;
+  };
+  const answer = (messageText: string) =>
+    applyLineExpenseDraftAnswer({ state: asked(), messageText, categories, now: '2026-08-18T02:00:00.000Z' });
+
+  it('saves a typed address into the same header field the record is written from', () => {
+    const result = answer('99/1 ถนนเพชรบุรีตัดใหม่ แขวงบางกะปิ เขตห้วยขวาง กรุงเทพฯ 10310');
+    assert.equal(result.state.header.vendorAddress, '99/1 ถนนเพชรบุรีตัดใหม่ แขวงบางกะปิ เขตห้วยขวาง กรุงเทพฯ 10310');
+    assert.ok(result.acceptedFields.includes('D-ADDRESS'));
+    assert.equal(result.state.header.vendorAddressAsk, undefined, 'asked once');
+    assert.match(formatLineExpenseDraftReply({ state: result.state, categories, acceptedFields: result.acceptedFields }),
+      /ที่อยู่ร้าน 99\/1 ถนนเพชรบุรีตัดใหม่/u);
+  });
+
+  it('treats ข้าม, and a turn about something else, as the end of the question', () => {
+    for (const messageText of ['ข้าม', 'ไม่ทราบ', 'ยอดรวมเท่าไรนะ', 'ส่งใบใหม่ให้แล้วนะครับ']) {
+      const result = answer(messageText);
+      assert.equal(result.state.header.vendorAddress, undefined, `${messageText} must not become an address`);
+      assert.equal(result.state.header.vendorAddressAsk, undefined, 'and the ask is retired either way');
+      assert.equal(result.acceptedFields.includes('D-ADDRESS'), false);
+    }
+  });
+
+  it('asks nothing when no ask was armed, and never becomes a completeness gate', () => {
+    const untouched = applyLineExpenseDraftAnswer({
+      state: initial(), messageText: '99/1 ถนนเพชรบุรีตัดใหม่', categories, now: '2026-08-18T02:00:00.000Z',
+    });
+    assert.equal(untouched.state.header.vendorAddress, undefined);
+    // §8: a missing address may warn, never block. It stays out of `unresolvedQuestions`, which is
+    // what `assertExpenseSourceDraftComplete` and the web review form read as "still incomplete".
+    assert.equal(asked().unresolvedQuestions.some((question) => question.id === 'D-ADDRESS'), false);
+    assert.equal(answer('ข้าม').state.unresolvedQuestions.some((question) => question.id === 'D-ADDRESS'), false);
+  });
+});

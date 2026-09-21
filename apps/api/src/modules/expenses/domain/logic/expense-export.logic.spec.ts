@@ -63,8 +63,30 @@ describe('accountant index is independent of expense capture mode', () => {
     // Both slices appended a column rather than inserting one, which is what keeps every existing
     // consumer's offsets intact — the point of the original assertion. Slice A's
     // `document_date_status` sorts after this one by name, so the pair sits at the tail in that
-    // order and nothing before them moved.
-    assert.deepEqual(ACCOUNTANT_INDEX_COLUMNS.slice(-5, -3), ['additional_charges_amount', 'document_date_status']);
+    // order and nothing before them moved. GAP-7's `vendor_address` appended after them for the
+    // same reason, which is why these offsets shifted by one and nothing else did.
+    assert.deepEqual(ACCOUNTANT_INDEX_COLUMNS.slice(-6, -4), ['additional_charges_amount', 'document_date_status']);
+  });
+
+  /**
+   * GAP-7: a full tax invoice's seller address is on the paper the accounting office reconciles
+   * against, and it was in no column of the file that leaves the system. Appended, never inserted —
+   * `vendor_address` next to `vendor_tax_id` would move every column after it for CSV consumers
+   * that read by position.
+   */
+  it('exports the printed seller address, empty for a row that has none', () => {
+    const withAddress = buildAccountantIndexRow({
+      ...nonVatExpense,
+      vendorAddressSnapshot: '123/4 ถนนสุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพมหานคร 10110',
+    });
+
+    assert.equal(withAddress.vendor_address, '123/4 ถนนสุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพมหานคร 10110');
+    // §8/AC12: rows written before the column existed still export, as an empty cell.
+    assert.equal(buildAccountantIndexRow(nonVatExpense).vendor_address, '');
+    assert.equal(ACCOUNTANT_INDEX_COLUMNS.at(-1), 'vendor_address');
+    const [header, body] = buildAccountantIndexCsv([withAddress]).split('\n');
+    assert.equal(header!.split(',').at(-1), 'vendor_address');
+    assert.ok(body!.endsWith('123/4 ถนนสุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพมหานคร 10110'));
   });
 
   it('writes the CSV in the full fixed column order, tax columns included', () => {

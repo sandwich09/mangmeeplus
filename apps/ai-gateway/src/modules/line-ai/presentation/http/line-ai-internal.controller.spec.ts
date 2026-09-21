@@ -915,6 +915,107 @@ describe('applyOcrValueCrossCheck identity fields (spec §19j)', () => {
   });
 });
 
+// ── Vendor address §7/§8: the printed seller address, and the buyer block kept apart ─────────
+
+describe('receipt OCR printed addresses (vendor-address spec §7)', () => {
+  /** (a) A full tax invoice: it prints BOTH parties' addresses, as it prints both tax ids. */
+  const FULL_TAX_INVOICE_TEXT = [
+    'ใบกำกับภาษี/ใบเสร็จรับเงิน',
+    'บริษัท สยามวัสดุก่อสร้าง จำกัด (สำนักงานใหญ่)',
+    'ที่อยู่ 199/8 ถนนพระราม 3 แขวงบางโพงพาง เขตยานนาวา กรุงเทพฯ 10120',
+    'เลขประจำตัวผู้เสียภาษี 0105561000105',
+    'เลขที่ IV-2569-0412 วันที่ 12/09/2569',
+    'ผู้ซื้อ บริษัท มั่งมีพลัส จำกัด (สำนักงานใหญ่)',
+    'ที่อยู่ผู้ซื้อ 55/3 ซอยลาดพร้าว 15 แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900',
+    'เลขประจำตัวผู้เสียภาษีผู้ซื้อ 0994000163011',
+    'ปูนซีเมนต์ 10 ถุง 1,400.00',
+    'รวมเงิน 1,400.00',
+    'ภาษีมูลค่าเพิ่ม 7% 98.00',
+    'รวมทั้งสิ้น 1,498.00',
+  ].join('\n');
+  const SELLER_ADDRESS = '199/8 ถนนพระราม 3 แขวงบางโพงพาง เขตยานนาวา กรุงเทพฯ 10120';
+  const BUYER_ADDRESS = '55/3 ซอยลาดพร้าว 15 แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900';
+
+  const read = (fields: Record<string, unknown>, documentText: string, documentKind?: string) => {
+    const parsed = parseReceiptOcrJson(JSON.stringify({ fields }), documentText, new Set());
+    return applyOcrValueCrossCheck(parsed!.fields!, documentText, '2026-09-21', documentKind);
+  };
+
+  it('keeps the seller address in vendorAddress and our own block in buyerAsPrinted', () => {
+    const out = read({
+      vendorName: 'บริษัท สยามวัสดุก่อสร้าง จำกัด',
+      vendorTaxId: '0105561000105',
+      vendorAddress: SELLER_ADDRESS,
+      buyerAsPrinted: {
+        name: 'บริษัท มั่งมีพลัส จำกัด', taxId: '0994000163011', branchCode: '00000', addressText: BUYER_ADDRESS,
+      },
+      grandTotalAmount: '1,498.00',
+    }, FULL_TAX_INVOICE_TEXT, 'TAX_INVOICE');
+    assert.equal(out.vendorAddress, SELLER_ADDRESS);
+    assert.equal(out.vendorTaxId, '0105561000105', 'the seller tax id stays the seller’s');
+    assert.deepEqual(out.buyerAsPrinted, {
+      name: 'บริษัท มั่งมีพลัส จำกัด', addressText: BUYER_ADDRESS, taxId: '0994000163011', branchCode: '00000',
+    });
+    assert.notEqual(out.vendorAddress, out.buyerAsPrinted?.addressText, 'neither address crosses over');
+    assert.ok(!out.missingFields?.includes('vendorAddress'));
+  });
+
+  it('refuses a buyer address offered as the seller address, and reports the gap', () => {
+    const out = read({ vendorAddress: BUYER_ADDRESS, grandTotalAmount: '1,498.00' }, FULL_TAX_INVOICE_TEXT, 'TAX_INVOICE');
+    assert.equal(out.vendorAddress, undefined, 'a buyer address must never be saved against the vendor');
+    assert.ok(out.missingFields?.includes('vendorAddress'));
+  });
+
+  it('drops a buyer block the page never printed', () => {
+    const out = read({
+      vendorAddress: SELLER_ADDRESS,
+      buyerAsPrinted: { name: 'บริษัท ที่ไม่มีบนใบ จำกัด', addressText: '1 ถนนสมมติ', taxId: '1111111111111' },
+      grandTotalAmount: '1,498.00',
+    }, FULL_TAX_INVOICE_TEXT, 'TAX_INVOICE');
+    assert.equal(out.buyerAsPrinted, undefined);
+    assert.equal(out.vendorAddress, SELLER_ADDRESS, 'the honest sibling field survives');
+  });
+
+  it('reports a full tax invoice with no readable address, and nothing else about it', () => {
+    const out = read({ grandTotalAmount: '1,498.00' }, FULL_TAX_INVOICE_TEXT, 'TAX_INVOICE');
+    assert.equal(out.vendorAddress, undefined);
+    assert.deepEqual(out.missingFields, ['vendorAddress']);
+  });
+
+  /** (b) An abbreviated tax invoice identifies no buyer and legally needs no address. */
+  it('treats a missing address on an abbreviated tax invoice as no gap at all', () => {
+    const abbreviated = 'ใบกำกับภาษีอย่างย่อ\nร้านสะดวกซื้อ สาขาที่ 3\nนม 1 กล่อง 25.00\nรวม 60.00\nVAT 7% 3.93';
+    const out = read({ vendorName: 'ร้านสะดวกซื้อ', grandTotalAmount: '60.00' }, abbreviated, 'ABBREVIATED_TAX_INVOICE');
+    assert.equal(out.vendorAddress, undefined);
+    assert.equal(out.buyerAsPrinted, undefined);
+    assert.ok(!out.missingFields?.includes('vendorAddress'), 'no reason code where the law asks for no address');
+  });
+
+  it('strips a vendorAddress gap the model reported on a document that needs no address', () => {
+    const abbreviated = 'ใบกำกับภาษีอย่างย่อ\nร้านสะดวกซื้อ สาขาที่ 3\nรวม 60.00';
+    const out = read({ grandTotalAmount: '60.00', missingFields: ['vendorAddress'] }, abbreviated, 'ABBREVIATED_TAX_INVOICE');
+    assert.ok(!out.missingFields?.includes('vendorAddress'));
+  });
+
+  /** (c) A handwritten cash bill: a short address, written by hand, still counts as printed. */
+  it('keeps a short handwritten address on a cash bill without asking for more', () => {
+    const cashBill = 'บิลเงินสด\nร้านลุงชัย 12/3 ถนนสุขุมวิท ชลบุรี\nเล่มที่ 021 เลขที่ 1037\nค่าแรง 3,500\nรวม 3,500';
+    const out = read({
+      vendorName: 'ร้านลุงชัย', vendorAddress: '12/3 ถนนสุขุมวิท ชลบุรี', grandTotalAmount: '3,500',
+    }, cashBill, 'HANDWRITTEN_CASH_BILL');
+    assert.equal(out.vendorAddress, '12/3 ถนนสุขุมวิท ชลบุรี');
+    assert.ok(!out.missingFields?.includes('vendorAddress'));
+  });
+
+  it('flattens a wrapped seller address and refuses one longer than the column', () => {
+    const wrapped = read({ grandTotalAmount: '1,498.00', vendorAddress: '199/8 ถนนพระราม 3\n  แขวงบางโพงพาง เขตยานนาวา กรุงเทพฯ 10120' }, FULL_TAX_INVOICE_TEXT, 'TAX_INVOICE');
+    assert.equal(wrapped.vendorAddress, SELLER_ADDRESS, 'the page wraps the address; the column stores one line');
+    const tooLong = read({ grandTotalAmount: '1,498.00', vendorAddress: `${SELLER_ADDRESS} ${'ก'.repeat(500)}` }, FULL_TAX_INVOICE_TEXT, 'TAX_INVOICE');
+    assert.equal(tooLong.vendorAddress, undefined, 'over 500 characters is refused, never silently cut');
+    assert.ok(tooLong.missingFields?.includes('vendorAddress'));
+  });
+});
+
 function classification(overrides: Partial<BusinessDocumentClassification> = {}): BusinessDocumentClassification {
   return {
     contentKind: 'DOCUMENT',

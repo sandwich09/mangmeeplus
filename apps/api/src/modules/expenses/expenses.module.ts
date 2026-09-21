@@ -105,11 +105,15 @@ import { LineSubstituteReceiptContinuationUseCase } from './application/use-case
 import { LineExpenseDraftConversationUseCase } from './application/use-cases/line-expense-draft-conversation.use-case';
 import { LineDraftUpdateUseCase } from './application/use-cases/line-draft-update.use-case';
 import { LineDraftPreviewStore } from './application/services/line-draft-preview.store';
+import { AccountingDocumentsModule } from '../accounting-documents/accounting-documents.module';
 
 @Module({
   // FeatureLaunchModule supplies the guard that fences the two roots of the expenses journey
   // (manual draft, receipt upload) on `expenses/DEFAULT`.
-  imports: [AuditModule, DashboardNotificationsModule, DataModelCoreModule, TaxModule, FeatureLaunchModule],
+  // AccountingDocumentsModule supplies `EnsureVendorCounterpartyFromExpenseUseCase` (spec D4): an
+  // expense save grows the vendor registry. One-way — accounting-documents does not import this
+  // module, so there is no cycle.
+  imports: [AuditModule, DashboardNotificationsModule, DataModelCoreModule, TaxModule, FeatureLaunchModule, AccountingDocumentsModule],
   // ExpenseCaptureController FIRST: `ExpenseController` owns `@Get(':expenseId')` on the same
   // path, and Express matches in registration order — a later `capture-groups` literal would be
   // read as an expense id.
