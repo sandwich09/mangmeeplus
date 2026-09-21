@@ -372,6 +372,38 @@ export function buildNavItems(
   return [...moduleItems, buildUserGuideNavItem(companyId, iconMap)];
 }
 
+/**
+ * The entire sidebar of a shop with no usable package (spec §12 เว็บลูกค้า, Owner 2026-09-20).
+ * Fixed rather than filtered: these two are the only destinations the term guard still serves, so
+ * whatever the shop's permissions say, nothing else may appear. แพ็กเกจ is OWNER-only because only
+ * the owner may buy one (P26 §14A) — staff keep ตั้งค่า and the user menu.
+ *
+ * Every href here must satisfy `isLockedShellPath`, the redirect's copy of the same list.
+ */
+export function buildLockedNavItems(
+  companyId: string,
+  iconMap: Record<string, React.ReactNode>,
+  roles: readonly string[] = [],
+): NavItem[] {
+  const items: NavItem[] = [{
+    key: 'settings',
+    label: 'ตั้งค่า',
+    icon: iconMap.HorizontalDotsIcon ?? null,
+    href: `/companies/${companyId}/settings`,
+    group: 'admin',
+  }];
+  if (roles.includes('OWNER')) {
+    items.push({
+      key: 'billing',
+      label: 'แพ็กเกจ',
+      icon: iconMap.BoxIcon ?? null,
+      href: `/companies/${companyId}/billing`,
+      group: 'admin',
+    });
+  }
+  return items;
+}
+
 export function getActiveModuleKey(
   modules: WorkspaceModule[],
   companyId: string,

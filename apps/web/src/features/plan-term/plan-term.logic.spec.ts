@@ -1,7 +1,14 @@
 import { cardCollapsed, warningBucket, warningProgressPercent } from './plan-term.logic';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { isRenewalPath, planTermView, renewalPathFor } from './plan-term.logic';
+import {
+  PLAN_LOCK_COPY,
+  isLockedShellPath,
+  isRenewalPath,
+  planLockReason,
+  planTermView,
+  renewalPathFor,
+} from './plan-term.logic';
 import type { PlanTermNotice } from './plan-term.api';
 
 const notice = (over: Partial<PlanTermNotice>): PlanTermNotice => ({
@@ -73,5 +80,67 @@ describe('sidebar warning card', () => {
     assert.equal(warningProgressPercent(7), 100);
     assert.equal(warningProgressPercent(3), 43);
     assert.ok(warningProgressPercent(0) >= 6);
+  });
+});
+
+// Owner 2026-09-20 (spec §12): no trial, so a shop is locked until it buys a package — and the
+// locked web is exactly two destinations plus the pages that explain them.
+describe('locked shell paths', () => {
+  const companyId = 'co-1';
+
+  it('opens the settings hub, the owner profile, the package pages and the renewal page', () => {
+    for (const path of [
+      '/companies/co-1/settings',
+      '/companies/co-1/settings/profile',
+      '/companies/co-1/billing',
+      '/companies/co-1/billing/return',
+      '/companies/co-1/billing/invoices/inv-1',
+      '/companies/co-1/renew',
+    ]) {
+      assert.equal(isLockedShellPath(path, companyId), true, path);
+    }
+  });
+
+  it('closes every business page, and the settings pages the term guard refuses', () => {
+    for (const path of [
+      '/companies/co-1/dashboard',
+      '/companies/co-1/expenses',
+      '/companies/co-1/settings/branches',
+      '/companies/co-1/settings/line-oa',
+      '/companies/co-1/settings/profile/extra',
+      '/companies/co-1/billing/history',
+    ]) {
+      assert.equal(isLockedShellPath(path, companyId), false, path);
+    }
+  });
+
+  it('never opens another company\'s pages', () => {
+    assert.equal(isLockedShellPath('/companies/other/settings', companyId), false);
+    assert.equal(isLockedShellPath('/companies/other/billing', companyId), false);
+  });
+});
+
+describe('lock reason', () => {
+  // The API answers `lockReason` only once the locked-signup change ships; before it does, and for
+  // every shop locked the old way, the case it always described is a term that ran out.
+  it('falls back to the term-ended case when the API does not say', () => {
+    assert.equal(planLockReason(notice({ derivedState: 'EXPIRED' })), 'trial_ended');
+    assert.equal(planLockReason(null), 'trial_ended');
+    assert.equal(planLockReason(notice({ derivedState: 'EXPIRED', lockReason: 'no_package' })), 'no_package');
+  });
+
+  it('never tells a shop that never had a package that it ran out of one', () => {
+    assert.match(PLAN_LOCK_COPY.no_package.banner, /ยังไม่มีแพ็กเกจ/);
+    assert.match(PLAN_LOCK_COPY.no_package.title, /ยังไม่มีแพ็กเกจ/);
+    for (const line of Object.values(PLAN_LOCK_COPY.no_package)) assert.doesNotMatch(line, /ครบกำหนด|ต่ออายุ/);
+    assert.match(PLAN_LOCK_COPY.trial_ended.banner, /ครบกำหนดใช้งานแล้ว/);
+    // Owner copy rule for every customer-facing string in this journey.
+    for (const copy of Object.values(PLAN_LOCK_COPY)) {
+      for (const line of Object.values(copy)) assert.doesNotMatch(line, /\+/);
+    }
+  });
+
+  it('points both reasons at the same next step, which is choosing and not renewing', () => {
+    for (const copy of Object.values(PLAN_LOCK_COPY)) assert.match(copy.banner, /เลือกแพ็กเกจ/);
   });
 });

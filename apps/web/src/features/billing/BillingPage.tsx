@@ -9,12 +9,15 @@ import BillingCustomerFrame from './BillingCustomerFrame';
 import { BillingEmailRecipientPanel } from './BillingEmailRecipientPanel';
 import { getAccountEmailOtp, type AccountEmailOtpState } from '@/features/auth/account-email-otp.api';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BILLING_PAID_TIERS, PLAN_TIER_PRESETS, type PlanTierKey, type BillingCatalog, type BillingQuote, type BillingStatus, type BillingAttemptView, type BillingPurchaseMode } from '@watchdog-bms/contracts';import { apiErrorCode } from '@/common/api/api-error-message';
-import { PLAN_TERM_CONTACT_EMAIL, PLAN_TERM_RENEW_PHONE } from '@/features/plan-term/plan-term.logic';
+import { BILLING_PAID_TIERS, PLAN_TIER_PRESETS, type PlanTierKey, type BillingCatalog, type BillingQuote, type BillingStatus, type BillingAttemptView, type BillingPurchaseMode } from '@watchdog-bms/contracts';
+import { apiErrorCode } from '@/common/api/api-error-message';
+import { PLAN_LOCK_COPY, PLAN_TERM_CONTACT_EMAIL, PLAN_TERM_RENEW_PHONE, planLockReason } from '@/features/plan-term/plan-term.logic';
+import type { PlanLockReason } from '@/features/plan-term/plan-term.api';
 import { billingApi, type BillingHistory } from './billing.api';
 import BillingCollectionPanel from './BillingCollectionPanel';
 import BillingCapacityPicker from './BillingCapacityPicker';
-import {billingMonthlyAllowanceText, billingBackControl, billingControl, billingPrimaryControl} from './billing-display';
+import {billingMonthlyAllowanceText, billingBackControl, billingControl, billingPrimaryControl, billingPurchaseModeLabel, billingSupportReference} from './billing-display';
+import { billingDeal, billingQuoteDeal, dealAiCreditText, dealConfirmText, dealMenuLabels, dealRenewalText } from './billing-deal';
 import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog-bms/contracts';
 
 const money = (satang: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(satang / 100);
@@ -48,6 +51,14 @@ function errorText(error: unknown): string {
   if (code === 'BILLING_SOURCE_REVIEW_REQUIRED') return 'ข้อมูลการชำระเงินเดิมของบริษัทนี้ยังไม่ตรงกัน กรุณาติดต่อทีมมั่งมีก่อนเริ่มรายการใหม่';
   if (code === 'BILLING_ENTITLEMENT_REVIEW_REQUIRED') return 'ข้อมูลสิทธิ์เมนูเดิมยังไม่พร้อม กรุณาติดต่อทีมมั่งมีก่อนชำระเงิน';
   if (code === 'BILLING_REFUND_PENDING') return 'กำลังตรวจสอบคำขอคืนเงิน จึงยังซื้อหรือเปลี่ยนแพ็กเกจไม่ได้ กรุณาโหลดสถานะล่าสุดหรือติดต่อทีมมั่งมี';
+  if (code === 'BILLING_DEAL_EXPIRED') return 'ข้อเสนอพิเศษนี้หมดอายุแล้ว กรุณาติดต่อทีมขายเพื่อขอข้อเสนอใหม่ คุณยังเลือกแพ็กเกจปกติได้';
+  if (code === 'BILLING_DEAL_NOT_FOUND') return 'ไม่พบข้อเสนอพิเศษนี้แล้ว กรุณาโหลดหน้านี้ใหม่ หรือติดต่อทีมขาย';
+  if (code === 'BILLING_DEAL_SNAPSHOT_MISMATCH') return 'ข้อเสนอพิเศษนี้เปลี่ยนแล้ว กรุณาโหลดหน้านี้ใหม่เพื่อดูข้อเสนอล่าสุดก่อนชำระเงิน';
+  // D-P5-3: an auto-renewing deal's own price is created at approval; until it exists the offer
+  // cannot be quoted. A wait, not a refusal — and nothing the shop can do except try again.
+  if (code === 'SALES_DEAL_PRICE_PENDING') return 'ระบบกำลังเตรียมราคาของข้อเสนอนี้ กรุณารอสักครู่แล้วลองอีกครั้ง';
+  if (code === 'CONTROL_DEAL_SUBSCRIPTION_REVIEW') return 'ร้านนี้มีสมาชิกที่ยังใช้งานอยู่ ทีมงานจะติดต่อกลับเพื่อเปลี่ยนให้ สิทธิ์เดิมยังใช้ได้ตามปกติ';
+  if (code === 'BILLING_MODE_NOT_READY') return 'ยังไม่เปิดวิธีชำระเงินที่เลือก กรุณาเลือกวิธีอื่น หรือติดต่อทีมงาน';
   if (code === 'BILLING_SALES_CLOSED' || code === 'BILLING_NOT_READY') return 'ยังไม่เปิดรับชำระเงินใหม่ กรุณาติดต่อทีมงาน';
   return 'ยังยืนยันผลรายการไม่ได้ กรุณาตรวจสอบสถานะหรือติดต่อทีมงานพร้อมเลขอ้างอิง';
 }
@@ -64,7 +75,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const router = useRouter();
   const [previewCollectionId, setPreviewCollectionId] = useState<string>();
   const [profileMissing, setProfileMissing] = useState<BillingProfileField[] | null>(null);
-  const pendingPurchase = useRef<{ offer: string; interval: string; channel: string; purchaseMode: BillingPurchaseMode } | null>(null);
+  const pendingPurchase = useRef<{ offer: string; interval: string; channel: string; purchaseMode: BillingPurchaseMode; dealId?: string } | null>(null);
   const resumedProfile = useRef(false);
   const activeCollectionId = collectionId ?? previewCollectionId;
   const [cadenceNotice, setCadenceNotice] = useState<'upgrade' | 'pending' | false>(false);
@@ -92,11 +103,13 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     if (!selection || params.get('profile') !== 'updated') return;
     resumedProfile.current = true;
     setChoosing(true); setSection('package'); setInterval(selection.interval === 'year' ? 'year' : 'month');
-    if (selection.purchaseMode) setPurchaseMode(selection.purchaseMode);
-    void action(async () => { await requestQuote(selection.offer, selection.interval, email, undefined, selection.purchaseMode); });
+    if (selection.purchaseMode) { setPurchaseMode(selection.purchaseMode); if (selection.dealId) setDealMode(selection.purchaseMode); }
+    void action(async () => { await requestQuote(selection.offer, selection.interval, email, undefined, selection.purchaseMode, selection.dealId); });
   }, [data, emailReady, email]);
   const [interval, setInterval] = useState<'month' | 'year'>('month');
   const [purchaseMode, setPurchaseMode] = useState<BillingPurchaseMode>('CARD_AUTO');
+  // The deal card carries its own choice: its modes are the deal's (S39), not the catalog's.
+  const [dealMode, setDealMode] = useState<BillingPurchaseMode | null>(null);
   const emailFingerprint = useRef('');
   const [quote, setQuote] = useState<BillingQuote | null>(null), [accepted, setAccepted] = useState(false);
   const [capacity, setCapacity] = useState<{ options: BillingCapacityOptions; billingEmail: string; scheduledAt?: string; repair?: { attemptId: string; attemptVersion: number }; key: string; initialSelection?: BillingCapacitySelection } | null>(null);
@@ -172,8 +185,10 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     return () => { active = false; window.clearInterval(timer); window.clearTimeout(expiry); document.removeEventListener('visibilitychange', visible); };
   }, [api, data?.catalog]);
   useEffect(() => {
-    if (quote && data && (quote.policyRevision !== data.catalog.policyRevision ||
-        !data.catalog.offers.some(offer => offer.offerKey === quote.offer.offerKey && offer.interval === quote.offer.interval && offer.availability === 'AVAILABLE'))) {
+    // A deal's offer is priced from its own snapshot and is not in the catalog (S36), so only its
+    // policy revision is checked here — matching it against a catalog row would drop every quote.
+    if (quote && data && (quote.policyRevision !== data.catalog.policyRevision || (!billingQuoteDeal(quote) &&
+        !data.catalog.offers.some(offer => offer.offerKey === quote.offer.offerKey && offer.interval === quote.offer.interval && offer.availability === 'AVAILABLE')))) {
       setQuote(null); setAccepted(false); setError('ราคา หรือสถานะขายเปลี่ยนแล้ว กรุณาตรวจสอบรายการใหม่');
     }
   }, [data?.catalog, quote]);
@@ -202,12 +217,18 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     } }
     finally { if (current === generation.current) { running.current = false; setBusy(false); } }
   }
-  async function requestQuote(offerKey: string, selectedInterval: string, billingEmail: string, selection?: BillingCapacitySelection, requestedMode?: BillingPurchaseMode) {
+  async function requestQuote(offerKey: string, selectedInterval: string, billingEmail: string, selection?: BillingCapacitySelection, requestedMode?: BillingPurchaseMode, dealId?: string) {
+    // A deal is paid with one of ITS modes: falling back to the catalog's choice here would send
+    // CARD_AUTO on a deal quote, which the API refuses.
+    const mode = requestedMode ?? (dealId ? chosenDealMode ?? chosenMode : chosenMode);
     pendingPurchase.current = { offer: offerKey, interval: selectedInterval,
-      channel: new URLSearchParams(window.location.search).get('channel') === 'line' ? 'line' : 'web', purchaseMode: requestedMode ?? chosenMode };
+      channel: new URLSearchParams(window.location.search).get('channel') === 'line' ? 'line' : 'web', purchaseMode: mode, ...(dealId ? { dealId } : {}) };
     setCadenceNotice(false);
     const paid = data?.status;
-    if (paid?.paidThrough && Date.parse(paid.paidThrough) > Date.now()) {
+    // S45: a deal skips the capacity and cadence detours. Its limits may sit below what the shop
+    // runs today — nothing is deleted, the shop just cannot add more — and its term is N months,
+    // so neither the downgrade picker nor the monthly/yearly rules apply.
+    if (!dealId && paid?.paidThrough && Date.parse(paid.paidThrough) > Date.now()) {
       const targetRank = BILLING_PAID_TIERS.findIndex(tier => tier === offerKey);
       const currentRank = BILLING_PAID_TIERS.findIndex(tier => tier === paid.tierKey);
       const scheduledSubscriptionChange = paid.renewalMode === 'CARD_AUTO' && paid.subscriptionState === 'active';
@@ -227,11 +248,11 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       setData(value => value && { ...value, status: latest });
       if (!latest.billingProfile) throw new Error('billing_company_profile_unavailable');
       if (latest.billingProfile.missingFields.length) { setProfileMissing(latest.billingProfile.missingFields); setQuote(null); return; }
-      const result = await api.quote(offerKey, selectedInterval, billingEmail, selection, requestedMode ?? chosenMode);
+      const result = await api.quote(offerKey, selectedInterval, billingEmail, selection, mode, dealId);
       if (!selection) capacityDraft.current = null;
       key.current = crypto.randomUUID(); setAccepted(false); setQuote(result); setCapacity(null);
     } catch (error) {
-      if (apiErrorCode(error) !== 'BILLING_CAP_SELECTION_REQUIRED' || selection) throw error;
+      if (apiErrorCode(error) !== 'BILLING_CAP_SELECTION_REQUIRED' || selection || dealId) throw error;
       setQuote(null); setCapacity({ options: await api.capacity(offerKey, selectedInterval), billingEmail, key: crypto.randomUUID(), initialSelection: capacityDraft.current?.initialSelection });    }
   }
   const annualConversion = quote?.purchase?.kind === 'REPEAT' && quote.purchase.previousInterval === 'month' && quote.offer.interval === 'year';
@@ -247,12 +268,30 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   }, [modeAvailabilityKey]);
   const chosenMode = purchaseMode;
   const modeUnavailable = !availableModes.includes(chosenMode);
+  const deal = billingDeal(status);
+  const dealModes = deal?.purchaseModes ?? [];
+  const chosenDealMode = dealMode && dealModes.includes(dealMode) ? dealMode : dealModes[0];
+  const dealQuote = billingQuoteDeal(quote);
+  // D-P5-1: the quote's own ride-along carries no cadence, and the offer being confirmed is the one
+  // still on the status — so the auto-renew wording comes from there, matched by id.
+  const autoDeal = dealQuote && deal?.dealId === dealQuote.dealId && deal.autoRenew ? deal : null;
+  // The attempt says what this Checkout paid for, so the return page names the offer by itself.
+  const dealReturn = returning && billingQuoteDeal(returnAttempt);
   const accountHref = status?.accessState === 'ACTIVE' ? `/companies/${encodeURIComponent(companyId)}/settings/profile#account`
     : `/account/email?company=${encodeURIComponent(companyId)}&interval=${interval}`;
   const quotaReset = status?.usage.cadence === 'LEGACY_MONTH' && status.usage.resetsAt && status.termEndsAt &&
     Date.parse(status.usage.resetsAt) < Date.parse(status.termEndsAt) ? status.usage.resetsAt : null;
   const quotaExpiry = status?.usage.expiresAt ?? status?.termEndsAt;
   const confirmed = status?.accessState === 'ACTIVE' && (returning ? returnComplete : status.paymentState === 'PAID' && status.applyState === 'APPLIED');
+  // S04/R10: a shop with nothing to run on was described by three fallbacks that added up to an
+  // unlimited plan — "ยังไม่มีข้อมูลแพ็กเกจ · ใช้งานได้ถึง ยังไม่ระบุ · ใบเสร็จคงเหลือ ไม่จำกัด" — to a shop
+  // that cannot open one screen. The cast keeps the page compiling before the API ships `lockReason`.
+  const lockReason: PlanLockReason = planLockReason(status as { lockReason?: PlanLockReason } | undefined);
+  // An active shop keeps its real numbers, whatever it was sold; a held one with a term still has a
+  // package under review to describe. Only a locked shop, and a shop with no term at all, has none.
+  const noPackage = !!status && status.accessState !== 'ACTIVE' && (status.accessState === 'EXPIRED' || !status.termEndsAt);
+  const packageHeading = status?.accessState === 'EXPIRED' ? PLAN_LOCK_COPY[lockReason].title
+    : noPackage ? PLAN_LOCK_COPY.no_package.title : 'แพ็กเกจปัจจุบัน';
   const returnFailed = returning && returnAttempt?.paymentState === 'FAILED';
   const hasPaymentToCheck = status && (!confirmed || ['past_due', 'unpaid'].includes(status.subscriptionState)) && (status.paymentState !== 'NONE' || status.attemptId || returnAttemptId || status.subscriptionState !== 'NONE');
   const canResumePayment = status?.attemptId && status.canCancelCheckout && ['PENDING', 'FAILED', 'UNKNOWN', 'ACTION_REQUIRED'].includes(status.paymentState);
@@ -281,14 +320,19 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       </nav>
       {showOverview && <>
       <section aria-label="สถานะแพ็กเกจ" className="mangmee-card space-y-5 p-5 sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-bold">{returnFailed ? 'รายการชำระเงินนี้ไม่สำเร็จ' : confirmed ? returning ? 'ชำระแล้ว เปิดใช้งานแล้ว' : 'แพ็กเกจปัจจุบัน' : (returning ? returnAttempt?.paymentState === 'PAID' && returnAttempt.applyState !== 'APPLIED' : status.paymentState === 'PAID' && status.applyState !== 'APPLIED') ? 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์' : status.paymentState === 'FAILED' ? 'เรียกเก็บเงินไม่สำเร็จ' : status.attemptId ? 'กำลังตรวจสอบรายการชำระเงิน' : status.accessState === 'EXPIRED' ? 'ครบกำหนดใช้งานแล้ว' : 'แพ็กเกจปัจจุบัน'}</h2>
-          <MangmeeBadge tone={status.accessState === 'ACTIVE' ? 'brand' : 'amber'}>{status.accessState === 'ACTIVE' ? 'ใช้งานได้' : status.accessState === 'EXPIRED' ? 'ครบกำหนดใช้งาน' : 'อยู่ระหว่างตรวจสอบ'}</MangmeeBadge>
+        <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-bold">{returnFailed ? 'รายการชำระเงินนี้ไม่สำเร็จ' : confirmed ? returning ? dealReturn ? 'ใช้งานข้อเสนอพิเศษแล้ว' : 'ชำระแล้ว เปิดใช้งานแล้ว' : 'แพ็กเกจปัจจุบัน' : (returning ? returnAttempt?.paymentState === 'PAID' && returnAttempt.applyState !== 'APPLIED' : status.paymentState === 'PAID' && status.applyState !== 'APPLIED') ? 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์' : status.paymentState === 'FAILED' ? 'เรียกเก็บเงินไม่สำเร็จ' : status.attemptId ? 'กำลังตรวจสอบรายการชำระเงิน' : packageHeading}</h2>
+          <MangmeeBadge tone={status.accessState === 'ACTIVE' ? 'brand' : 'amber'}>{status.accessState === 'ACTIVE' ? 'ใช้งานได้' : status.accessState !== 'EXPIRED' ? 'อยู่ระหว่างตรวจสอบ' : lockReason === 'no_package' ? 'ยังไม่มีแพ็กเกจ' : 'ครบกำหนดใช้งาน'}</MangmeeBadge>
         </div>
-        <dl className="grid gap-5 rounded-xl bg-gray-50 p-4 sm:grid-cols-3">
+        {noPackage ? <dl className="grid gap-5 rounded-xl bg-gray-50 p-4">
+          <div><dt className="text-sm text-gray-500">แพ็กเกจ</dt><dd className="mt-2 text-lg font-bold text-gray-900">ยังไม่มีแพ็กเกจ</dd>
+            <p className="mt-1 text-sm text-gray-600">เลือกแพ็กเกจเพื่อเริ่มใช้งาน</p>
+            {/* Only when a term really ran out: a shop that never had one starts and ends today. */}
+            {lockReason === 'trial_ended' && status.termEndsAt && <p className="mt-1 text-sm text-gray-500">ครบกำหนดเมื่อ {date(status.termEndsAt)}</p>}</div>
+        </dl> : <dl className="grid gap-5 rounded-xl bg-gray-50 p-4 sm:grid-cols-3">
           <div><dt className="text-sm text-gray-500">แพ็กเกจ</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.tierKey && status.tierKey in PLAN_TIER_PRESETS ? PLAN_TIER_PRESETS[status.tierKey as PlanTierKey].labelTh : status.tierKey ? 'ต้องตรวจสอบข้อมูล' : 'ยังไม่มีข้อมูลแพ็กเกจ'}</dd></div>
           <div><dt className="text-sm text-gray-500">{status.pendingPlanChange?.action === 'PREPAID_PLAN_CHANGE' ? 'แพ็กเกจปัจจุบันใช้ถึง' : 'ใช้งานได้ถึง'}</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.pendingPlanChange?.action === 'PREPAID_PLAN_CHANGE' ? date(status.pendingPlanChange.effectiveAt) : status.termEndsAt ? date(status.termEndsAt) : 'ยังไม่ระบุ'}</dd></div>
           <div><dt className="text-sm text-gray-500">ใบเสร็จคงเหลือ</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.purchaseSource === 'NO_TERM' && status.usage.remaining === null ? 'ยังไม่ได้กำหนดโควตาแพ็กเกจ' : status.usage.remaining ?? 'ไม่จำกัด'} {status.usage.remaining !== null && 'ใบ'}</dd>{(quotaReset || (quotaExpiry && date(quotaExpiry) !== date(status.termEndsAt))) && <p className="mt-1 text-sm text-gray-500">{quotaReset ? `เริ่มรอบใหม่ ${date(quotaReset)}` : `ใบที่หมดอายุก่อนใช้ได้ถึง ${date(quotaExpiry)}`}</p>}</div>
-        </dl>
+        </dl>}
         {status.effectiveCapacity?.temporary&&<section className="space-y-2 rounded-xl border border-emerald-300 p-3" aria-label="สิทธิ์แพ็กเกจชั่วคราว"><p>ผู้ดูแลให้สิทธิ์ {PLAN_TIER_PRESETS[status.effectiveCapacity.tierKey].labelTh} ชั่วคราว</p><p>{status.effectiveCapacity.branchLimit} สาขา · {status.effectiveCapacity.employeeLimit} ผู้ใช้ ถึง {date(status.effectiveCapacity.temporary.expiresAt)}</p><p>เมื่อครบกำหนดจะใช้แพ็กเกจที่ซื้ออยู่ล่าสุด การซื้อเพิ่มด้านล่างคิดจากแพ็กเกจที่ชำระเงิน</p></section>}
 
         {status.usage.monthlyAllowance&&<p>{billingMonthlyAllowanceText(status.usage)}</p>}
@@ -302,7 +346,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {status.purchaseEligibility === 'ENTITLEMENT_REVIEW_REQUIRED' && <p role="status" className="text-sm leading-7 text-gray-600">ข้อมูลสิทธิ์เมนูเดิมยังไม่พร้อม กรุณาติดต่อทีมมั่งมีก่อนชำระเงิน</p>}
         {status.refundReviewPending && <p role="status" className="rounded-xl bg-amber-50 p-3">กำลังตรวจสอบคำขอคืนเงิน จึงยังซื้อหรือเปลี่ยนแพ็กเกจไม่ได้ คำขอนี้ไม่เปลี่ยนสิทธิ์แพ็กเกจเดิม คุณตรวจรายการเดิมด้านล่าง หรือ <a className="underline" href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>ติดต่อทีมมั่งมี</a> ได้</p>}
         {status.accessState === 'HELD' && <p>บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมงาน ข้อมูลยังอยู่ครบ</p>}
-        {(status.reference || returnAttemptId) && !confirmed && <details className="text-sm text-gray-500"><summary className="min-h-11 cursor-pointer py-2">เลขอ้างอิงสำหรับแจ้งทีมงาน</summary><p className="break-all">{returning ? returnAttemptId : status.reference}</p></details>}
+        {(status.reference || returnAttemptId) && !confirmed && <details className="text-sm text-gray-500"><summary className="min-h-11 cursor-pointer py-2">เลขอ้างอิงสำหรับแจ้งทีมงาน</summary><p className="break-all">{billingSupportReference(returning ? returnAttemptId : status.reference)}</p></details>}
         {returnFailed && <p role="status" className="rounded-xl bg-amber-50 p-3 text-amber-900">รายการนี้ไม่ได้ชำระสำเร็จหรือรายการหมดอายุ สิทธิ์แพ็กเกจเดิมยังคงเดิม</p>}
         {returning && !confirmed && timedOut && <p role="status">ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนชำระใหม่ หรือติดต่อทีมงานพร้อมเลขอ้างอิง</p>}
         {canResumePayment && <button className={button} disabled={busy} aria-busy={busy} onClick={() => action(async navigate => { const result = await api.resume(status.attemptId!); if (result.checkoutUrl) navigate(result.checkoutUrl, 'checkout'); else setReload(value => value + 1); })}>กลับไปยังรายการเดิม</button>}
@@ -325,7 +369,9 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           {refreshNotice && <button className="mangmee-btn mangmee-btn-secondary" disabled={busy} onClick={() => setReload(value => value + 1)}>อัปเดตข้อมูล</button>}</div>
           {refreshNotice && <p role="status" className="text-sm text-gray-600">{refreshNotice}</p>}
         </div>}
-        {status.allowedActions.includes('new_sales') && <button className="mangmee-btn mangmee-btn-primary" onClick={() => setChoosing(true)}>{status.subscriptionState === 'NONE' ? 'เลือกแพ็กเกจ' : 'ซื้อหรือเปลี่ยนแพ็กเกจ'}</button>}
+        {/* R10: the offer is the first card behind this button, so the button itself has to say so —
+            a locked shop with a three-day deal must not have to guess that "เลือกแพ็กเกจ" holds it. */}
+        {status.allowedActions.includes('new_sales') && <button className="mangmee-btn mangmee-btn-primary" onClick={() => setChoosing(true)}>{deal ? 'ดูข้อเสนอพิเศษสำหรับร้านคุณ' : status.subscriptionState === 'NONE' ? 'เลือกแพ็กเกจ' : 'ซื้อหรือเปลี่ยนแพ็กเกจ'}</button>}
       </section>
       </>}
       <div hidden={section !== 'payment'} className="space-y-6">
@@ -347,7 +393,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           if (quote) { setQuote(null); setCapacity(capacityDraft.current); setAccepted(false); }
           else { setChoosing(false); setAccepted(false); }
         }}><span className="text-base leading-none" aria-hidden="true">←</span>{quote ? capacityDraft.current ? 'กลับไปเลือกสาขาและผู้ใช้' : 'กลับไปเลือกแพ็กเกจ' : 'กลับไปแพ็กเกจปัจจุบัน'}</button>
-          <h2 ref={quoteHeading} tabIndex={-1} className="text-xl font-bold text-gray-900 sm:text-2xl">{quote ? <>{annualConversion ? 'เปลี่ยนเป็นรายปี:' : quote.purchase?.kind === 'REPEAT' ? 'ยืนยันซื้อแพ็กเกจเดิมเพิ่ม:' : quote.purchase?.kind === 'SCHEDULED_CHANGE' ? 'ยืนยันแพ็กเกจรอบถัดไป:' : 'ยืนยันซื้อ'} {quote.offer.label}{!annualConversion && ` ${quote.offer.interval === 'year' ? 'รายปี' : 'รายเดือน'}`}</> : status.capacityRepair ? 'ตรวจสอบสิทธิ์จากรายการชำระเงิน' : 'เลือกแพ็กเกจ'}</h2></div>}
+          <h2 ref={quoteHeading} tabIndex={-1} className="text-xl font-bold text-gray-900 sm:text-2xl">{quote ? dealQuote ? <>ยืนยันข้อเสนอพิเศษ: {quote.offer.label} · {dealQuote.months} เดือน</>
+            : <>{annualConversion ? 'เปลี่ยนเป็นรายปี:' : quote.purchase?.kind === 'REPEAT' ? 'ยืนยันซื้อแพ็กเกจเดิมเพิ่ม:' : quote.purchase?.kind === 'SCHEDULED_CHANGE' ? 'ยืนยันแพ็กเกจรอบถัดไป:' : 'ยืนยันซื้อ'} {quote.offer.label}{!annualConversion && ` ${quote.offer.interval === 'year' ? 'รายปี' : 'รายเดือน'}`}</> : status.capacityRepair ? 'ตรวจสอบสิทธิ์จากรายการชำระเงิน' : 'เลือกแพ็กเกจ'}</h2></div>}
       {capacityNotice && status.attemptId && <p role="status">{capacityNotice}</p>}
       {status.capacityRepair && !capacity && <section className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4"><p>ชำระสำเร็จแล้ว แต่ข้อมูลสาขาหรือผู้ใช้เปลี่ยน กรุณาเลือกสิทธิ์ล่าสุดเพื่อเปิดใช้งานจากรายการเดิม</p>
         <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => action(async () => { const repair = status.capacityRepair!; setCapacity({ options: await api.capacity(repair.offerKey, repair.interval), billingEmail: email, repair, key: crypto.randomUUID() }); })}>เลือกสิทธิ์สำหรับรายการที่จ่ายแล้ว</button></section>}
@@ -371,10 +418,37 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {emailReadError && <p role="alert">ยังตรวจสอบอีเมลบัญชีไม่ได้ <button className="min-h-11 font-semibold underline" onClick={() => setReload(value => value + 1)}>ลองใหม่</button></p>}
         {!emailReady && !emailReadError && <p role="status">{emailState ? <>ยืนยันอีเมลบัญชีก่อนซื้อแพ็กเกจ <Link className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline" href={accountHref}>ไปที่บัญชีของฉัน</Link></> : 'กำลังตรวจสอบอีเมลบัญชี…'}</p>}
         {catalogUnavailable && <p role="status">ยังตรวจสอบราคาปัจจุบันไม่ได้ กรุณาลองใหม่ คุณยังดูประวัติและจัดการรายการเดิมได้</p>}
+        {/* R10: the deal is the first card, above the catalog, and the catalog stays selectable. */}
+        {deal && <section aria-label="ข้อเสนอพิเศษสำหรับร้านคุณ" className="mangmee-card space-y-4 p-5 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-lg font-bold">ข้อเสนอพิเศษสำหรับร้านคุณ</h3>
+            <MangmeeBadge tone="brand">ข้อเสนอพิเศษ</MangmeeBadge>
+          </div>
+          <p className="font-bold">{deal.baseLabel}</p>
+          <p className="text-2xl font-bold text-brand-800">{money(deal.priceSatang)}</p>
+          <p>{deal.autoRenew ? `ราคานี้${deal.cadence === 'year' ? 'ทุกปี' : 'ทุกเดือน'}` : `รวม ${deal.months} เดือน`}</p>
+          <p>{deal.branchLimit} สาขา · {deal.employeeLimit} ผู้ใช้ · {deal.monthlySlipLimit.toLocaleString('th-TH')} ใบต่อเดือน</p>
+          {dealMenuLabels(deal.featureKeys).length > 0 && <p>เมนูที่ได้: {dealMenuLabels(deal.featureKeys).join(' · ')}</p>}
+          <p>เครดิต AI: {dealAiCreditText(deal.aiMonthlyBudgetSatang)}</p>
+          {deal.description && <p className="text-sm text-gray-600">{deal.description}</p>}
+          <p className="text-sm text-gray-600">ใช้ได้ถึง {date(deal.offerExpiresAt)}</p>
+          {/* S37: both one-time gates closed means nobody can pay this offer on the web today. */}
+          {!chosenDealMode ? <p role="status" className="rounded-xl bg-amber-50 p-4">ติดต่อทีมงานเพื่อชำระข้อเสนอนี้ โทร {PLAN_TERM_RENEW_PHONE}</p> : <>
+            <fieldset className="space-y-2"><legend className="font-semibold">วิธีชำระข้อเสนอนี้</legend>
+              {dealModes.map(mode => <label key={mode} className="flex min-h-11 items-center gap-3"><input type="radio" name="dealPurchaseMode" checked={chosenDealMode === mode}
+                onChange={() => { setDealMode(mode); setQuote(null); setCapacity(null); }} />{billingPurchaseModeLabel(mode)}</label>)}
+            </fieldset>
+            <p className="text-sm text-gray-600">{dealRenewalText(deal, chosenDealMode)}</p>
+            {/* An auto-renewing deal's offer IS its cadence (D-P5-2), so that is the interval the
+                quote is asked for — a yearly deal priced as a month would bill the wrong period. */}
+            <button className="mangmee-btn mangmee-btn-primary w-full" disabled={busy || !emailReady || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)} aria-busy={Boolean(busy)}
+              onClick={() => action(async () => { await requestQuote(deal.base, deal.autoRenew && deal.cadence === 'year' ? 'year' : 'month', email, undefined, chosenDealMode, deal.dealId); })}>เลือกข้อเสนอนี้</button>
+          </>}
+        </section>}
+        {deal && <h3 className="text-lg font-bold">หรือเลือกแพ็กเกจปกติ</h3>}
         <fieldset className="space-y-2"><legend className="font-semibold">วิธีชำระและต่ออายุ</legend>
           {displayedModes.map(mode => <label key={mode} className="flex min-h-11 items-center gap-3"><input type="radio" name="purchaseMode" checked={chosenMode === mode}
-            onChange={() => { setPurchaseMode(mode); setQuote(null); setCapacity(null); }} />
-            {mode === 'CARD_AUTO' ? 'บัตร · ต่ออายุอัตโนมัติ' : mode === 'CARD_ONCE' ? 'บัตร · จ่ายครั้งเดียว' : mode === 'PROMPTPAY_ONCE' ? 'PromptPay QR · จ่ายครั้งเดียว' : 'PromptPay QR · สแกนบิลทุกงวด'}</label>)}
+            onChange={() => { setPurchaseMode(mode); setQuote(null); setCapacity(null); }} />{billingPurchaseModeLabel(mode)}</label>)}
         </fieldset>
         {status.renewalMode === 'CARD_AUTO' && status.subscriptionState === 'active' && status.paidThrough && Date.parse(status.paidThrough) > Date.now() && !availableModes.includes('CARD_ONCE') &&
           <p role="status" className="rounded-xl bg-amber-50 p-4 text-sm leading-7">{modeUnavailable ? 'เลือกวิธีจ่ายใหม่นี้ได้ แต่ยังชำระซ้อนกับสมาชิกเดิมไม่ได้' : 'บริษัทนี้มีสมาชิกบัตรที่ต่ออายุอัตโนมัติอยู่'} หากต้องการเปลี่ยน ให้<button className="mx-1 font-semibold text-brand-700 underline" onClick={() => { setChoosing(false); setSection('payment'); }}>หยุดต่ออายุอัตโนมัติ</button>ก่อน สิทธิ์ที่จ่ายไว้ใช้ได้ถึง {date(status.paidThrough)} แล้วจึงซื้อด้วยวิธีใหม่</p>}
@@ -388,15 +462,24 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           const monthly = data.catalog.offers.find(item => item.offerKey === offer.offerKey && item.interval === 'month');
           const saving = interval === 'year' && monthly ? monthly.priceSatang * 12 - offer.priceSatang : 0;
           const current = status.accessState === 'ACTIVE' && status.tierKey === offer.offerKey && status.interval === offer.interval;
+          // Phase 6: every card carries the whole package. Limits, receipts and AI credit stay on
+          // screen; only the menu list — 20 rows on the largest tier — folds away on a phone.
+          const menus = dealMenuLabels(offer.featureKeys);
           return <article key={offer.offerKey} className={`mangmee-card relative flex flex-col gap-4 p-5${current ? ' !border-brand-500' : ''}`}>
           {current && <MangmeeBadge className="absolute -top-3 right-4 border">แพ็กเกจปัจจุบัน</MangmeeBadge>}
           <h3 className="font-bold">{offer.label}</h3><p className="text-xl font-bold">{money(offer.priceSatang)} / {interval === 'month' ? 'เดือน' : 'ปี'}</p>
-          <p className="text-sm text-brand-700">{interval === 'year' ? `ใช้งาน 12 เดือน${saving > 0 ? ` · ประหยัด ${money(saving)}` : ''}` : 'ชำระรายเดือน'}</p><p>{offer.branchLimit} สาขา · {offer.employeeLimit} ผู้ใช้</p><p>{offer.availability === 'COMING_SOON' ? 'แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน' : `${offer.receiptAllowance.toLocaleString('th-TH')} ใบ ได้ทันทีเมื่อชำระสำเร็จ`}</p>
+          <p className="text-sm text-brand-700">{interval === 'year' ? `ใช้งาน 12 เดือน${saving > 0 ? ` · ประหยัด ${money(saving)}` : ''}` : 'ชำระรายเดือน'}</p><p>{offer.branchLimit} สาขา · {offer.employeeLimit} ผู้ใช้</p>
+          <p>{offer.receiptAllowance.toLocaleString('th-TH')} ใบ ได้ทันทีเมื่อชำระสำเร็จ</p>
+          <p>เครดิต AI: {dealAiCreditText(data.catalog.aiMonthlyBudgetSatang)}</p>
+          {menus.length > 0 && <details className="text-sm text-gray-600"><summary className="min-h-11 cursor-pointer py-2 font-semibold text-brand-700">ดูรายละเอียดทั้งหมด · {menus.length} เมนู</summary>
+            <ul className="space-y-1 break-words">{menus.map(label => <li key={label}><span aria-hidden="true">✓ </span>{label}</li>)}</ul></details>}
+          {offer.availability === 'COMING_SOON' && <p className="text-sm text-gray-600">แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน</p>}
           <button className="mangmee-btn mangmee-btn-primary mt-auto w-full" disabled={modeUnavailable || busy || !emailReady || catalogUnavailable || Date.parse(data.catalog.validUntil) <= Date.now() || offer.availability !== 'AVAILABLE' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)} aria-busy={Boolean(busy)} onClick={() => action(async () => {
             await requestQuote(offer.offerKey, interval, email);
           })}>{offer.availability === 'COMING_SOON' ? 'เร็ว ๆ นี้' : offer.availability === 'AVAILABLE' ? current ? 'ซื้อแพ็กเกจเดิมเพิ่ม' : status.paidThrough && Date.parse(status.paidThrough) > Date.now() && status.tierKey === offer.offerKey && status.interval === 'month' && interval === 'year' ? 'เปลี่ยนเป็นรายปี' : status.paidThrough && Date.parse(status.paidThrough) > Date.now() && status.tierKey === offer.offerKey && status.interval === 'year' && interval === 'month' ? 'เปลี่ยนเป็นรายเดือนรอบถัดไป' : 'เลือกแพ็กเกจนี้' : 'ยังไม่เปิดขาย'}</button>        </article>; })}</div>
       </section>}
       {quote && <section aria-label="ยืนยันซื้อแพ็กเกจ" className="mangmee-card space-y-5 p-5 sm:p-6">
+        {dealQuote && <p className="rounded-xl bg-brand-50 p-4 text-brand-800">ข้อเสนอพิเศษ · {autoDeal ? dealConfirmText(autoDeal) : `จ่ายครั้งเดียว ไม่มีหักอัตโนมัติ · ใช้ได้ ${dealQuote.months} เดือน`}{dealQuote.description ? ` · ${dealQuote.description}` : ''}</p>}
         <p>{quote.purchase?.kind === 'REPEAT' ? 'สิทธิ์คงเดิม:' : quote.purchase?.kind === 'SCHEDULED_CHANGE' ? `สิทธิ์ตั้งแต่ ${date(quote.purchase.previousPaidThrough)}:` : 'สิทธิ์หลังชำระสำเร็จ:'} สูงสุด {quote.offer.branchLimit} สาขา · {quote.offer.employeeLimit} ผู้ใช้ รวมเจ้าของ</p>
         <div className="rounded-xl border border-gray-200 p-4" aria-label="ข้อมูลออกเอกสาร">
           <p className="font-semibold">ข้อมูลออกเอกสาร</p>
@@ -405,6 +488,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           <p className="mt-1 break-words">{quote.billingEmail}</p>
           <Link className="mt-2 inline-flex min-h-11 items-center text-brand-700 underline" href={billingProfileHref(companyId, {
             offer: quote.offer.offerKey, interval: quote.offer.interval, channel: pendingPurchase.current?.channel ?? 'web', purchaseMode: quote.purchaseMode,
+            ...(dealQuote ? { dealId: dealQuote.dealId } : {}),
           })}>แก้ไขข้อมูลบริษัท</Link>
         </div><p>ราคาก่อนภาษี {money(quote.subtotalSatang)} · ภาษี {money(quote.taxSatang)}</p>
         {quote.purchase?.kind === 'REPEAT' ? <dl className={`grid gap-5 rounded-xl bg-brand-50 p-5 ${annualConversion ? 'sm:grid-cols-2 xl:grid-cols-4' : 'sm:grid-cols-3'}`}>
@@ -424,13 +508,17 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           </dl>}
           {quote.previousSource === 'ADMIN_MANUAL' ? <p>เริ่มแพ็กเกจใหม่เมื่อชำระสำเร็จ แพ็กเกจเดิมที่ผู้ดูแลให้ไว้ถึง {date(quote.previousTermEndsAt)} จะถูกแทนที่ วันคงเหลือ (ถ้ามี) ไม่ทบและไม่ลดราคา รับโควตาใหม่ {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ</p>
             : quote.previousSource === 'NO_TERM' ? <p>เริ่มแพ็กเกจใหม่เมื่อชำระสำเร็จ รับโควตา {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ ไม่มีวันแพ็กเกจเดิมให้ทบ</p>
-            : <p>ชำระสำเร็จแล้ว ใช้งานได้ {quote.offer.interval === 'year' ? '12 เดือน' : '1 เดือน'} {!quote.purchase?.trialCarryover && <>พร้อมโควตา {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ</>}</p>}
+            /* An auto-renewing deal opens ONE cycle per payment, so its snapshot `months` — which
+               the deal itself ignores — must not be read as the term: the offer's interval is. */
+            : <p>ชำระสำเร็จแล้ว ใช้งานได้ {dealQuote && !autoDeal ? `${dealQuote.months} เดือน` : quote.offer.interval === 'year' ? '12 เดือน' : '1 เดือน'} {!quote.purchase?.trialCarryover && <>พร้อมโควตา {quote.offer.receiptAllowance.toLocaleString('th-TH')} ใบ</>}</p>}
           {quote.purchase?.kind === 'INITIAL' && quote.trialEndsAt && <p className="text-sm text-gray-600">การทดลองใช้จะสิ้นสุดเมื่อชำระสำเร็จ วันทดลองที่เหลือจะไม่บวกเพิ่มในแพ็กเกจนี้</p>}
         </div>}
-        {quote.featureImpact && (quote.featureImpact.removed.length > 0 || quote.featureImpact.added.length > 0 || quote.featureImpact.preservedAdmin > 0) && <section className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4" aria-label="การเปลี่ยนสิทธิ์เมนูหลังชำระ">
+        {/* Per-tier menu sets make this list long in both directions, so what is gained is read the
+            same way as what is lost, and only a package that really takes a menu away warns. */}
+        {quote.featureImpact && (quote.featureImpact.removed.length > 0 || quote.featureImpact.added.length > 0 || quote.featureImpact.preservedAdmin > 0) && <section className={`space-y-2 rounded-xl border p-4 ${quote.featureImpact.removed.length > 0 ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-gray-50'}`} aria-label="การเปลี่ยนสิทธิ์เมนูหลังชำระ">
           <p className="font-semibold">สิทธิ์เมนูเมื่อชำระสำเร็จ</p>
-          {quote.featureImpact.removed.length > 0 && <><p>เมนูต่อไปนี้จะหยุดใช้หลังชำระ โดยข้อมูลเดิมยังเก็บไว้:</p><ul className="list-disc space-y-1 pl-6">{quote.featureImpact.removed.map(item => <li key={item.featureKey}>{item.labelTh}</li>)}</ul></>}
-          {quote.featureImpact.added.length > 0 && <p>จะได้สิทธิ์เพิ่ม: {quote.featureImpact.added.map(item => item.labelTh).join(', ')}</p>}
+          {quote.featureImpact.removed.length > 0 && <><p>เมนูต่อไปนี้จะหยุดใช้หลังชำระ โดยข้อมูลเดิมยังเก็บไว้:</p><ul className="list-disc space-y-1 break-words pl-6">{quote.featureImpact.removed.map(item => <li key={item.featureKey}>{item.labelTh}</li>)}</ul></>}
+          {quote.featureImpact.added.length > 0 && <><p>เมนูที่จะเปิดใช้เพิ่มหลังชำระ:</p><ul className="list-disc space-y-1 break-words pl-6">{quote.featureImpact.added.map(item => <li key={item.featureKey}>{item.labelTh}</li>)}</ul></>}
           {quote.featureImpact.preservedAdmin > 0 && <p>สิทธิ์พิเศษที่ผู้ดูแลกำหนดให้เฉพาะบริษัทยังคงอยู่</p>}
         </section>}
         {quote.pendingPlanChange && <div className="space-y-1 rounded-xl bg-amber-50 p-3"><p>รายการเปลี่ยนเป็น {quote.pendingPlanChange.offer.label} ({quote.pendingPlanChange.offer.interval === 'year' ? 'รายปี' : 'รายเดือน'}) จะมีผลจาก {date(quote.pendingPlanChange.oldEffectiveAt)} เป็น {date(quote.pendingPlanChange.newEffectiveAt)}</p><p>ยอดต่ออายุหลังวันนั้น {money(quote.pendingPlanChange.totalSatang)} · คงสาขา {quote.pendingPlanChange.capacity.retainedBranches.join(', ')} · คงผู้ใช้ {quote.pendingPlanChange.capacity.retainedMembers.join(', ')}</p><p>ซื้อสำเร็จจึงยืนยันวันเปลี่ยนใหม่ หากชำระไม่สำเร็จคำสั่งเดิมคงอยู่</p></div>}
@@ -442,7 +530,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           {quote.capacity.defaults.map((item,index) => <p key={index}>สาขาเริ่มต้นของ {item.member}: {item.branch ?? 'เลือกเมื่อเข้าใช้งาน'}</p>)}<p>ข้อมูลและประวัติยังอยู่ครบ ระบบตรวจสิทธิ์อีกครั้งก่อนเปิดใช้งาน</p></div>}
         <label className="flex items-start gap-3"><input type="checkbox" className="mt-1 size-5" checked={accepted} onChange={event => setAccepted(event.target.checked)} />ฉันตรวจสอบข้อมูลและยืนยันเงื่อนไข{quote.purchaseMode === 'PROMPTPAY_RENEW' ? 'จ่ายบิลด้วย QR ทุกงวด' :
           quote.purchaseMode === 'CARD_ONCE' || quote.purchaseMode === 'PROMPTPAY_ONCE' ? 'จ่ายครั้งเดียว' : 'การชำระเงินและต่ออายุอัตโนมัติ'}</label>
-        <div className="flex flex-wrap gap-3"><button className="mangmee-btn mangmee-btn-primary" disabled={busy || !emailReady || catalogUnavailable || !accepted || Date.parse(quote.expiresAt) <= Date.now()} aria-busy={Boolean(busy)} onClick={() => action(async navigate => {
+        {/* A stale catalog does not stop a deal: its price is the approved snapshot's, not a row's. */}
+        <div className="flex flex-wrap gap-3"><button className="mangmee-btn mangmee-btn-primary" disabled={busy || !emailReady || (catalogUnavailable && !dealQuote) || !accepted || Date.parse(quote.expiresAt) <= Date.now()} aria-busy={Boolean(busy)} onClick={() => action(async navigate => {
           const params = new URLSearchParams(window.location.search);
           const result = await api.checkout({ quoteId: quote.quoteId, consentRevision: quote.consentRevision, accepted: true, channel: params.get('channel') === 'line' ? 'line' : 'web' }, key.current);
           if (result.checkoutUrl) navigate(result.checkoutUrl, 'checkout'); else { setQuote(null); setReload(value => value + 1); }

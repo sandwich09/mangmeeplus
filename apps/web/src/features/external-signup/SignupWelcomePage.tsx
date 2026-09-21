@@ -11,7 +11,7 @@ import { fetchPlanTermNotice } from '@/features/plan-term/plan-term.api';
 import { getAccountSecurityState } from '@/features/auth/auth.api';
 import { SignupBrandHeader } from './SignupChrome';
 import { SIGNUP_TRIAL_AFTER } from './signup.logic';
-import { readClaimedCompany, shouldFetchMergeOffer, type WelcomeHandoff } from './welcome-handoff.logic';
+import { packagePathFor, readClaimedCompany, shouldFetchMergeOffer, type WelcomeHandoff } from './welcome-handoff.logic';
 
 const LINE_GREEN = '#06C755';
 
@@ -250,6 +250,9 @@ function Welcome() {
   const searchParams = useSearchParams();
   const [handoff, setHandoff] = useState<WelcomeHandoff | null>(null);
   const [trialEndsAt, setTrialEndsAt] = useState<string | null>(null);
+  // Owner 2026-09-20 (spec §19): no trial, so a fresh shop is locked at once. `null` (not answered
+  // yet) reads the same as locked — neither state may promise the shop is ready to use.
+  const [locked, setLocked] = useState<boolean | null>(null);
   // The BFF sends the link lane back here with the reason; a 409 is the merge case. Read after
   // mount, not during render: the prerendered HTML has no query string, so branching on it while
   // rendering makes the server and client trees disagree.
@@ -269,7 +272,12 @@ function Welcome() {
     setHandoff(readClaimedCompany());
     let active = true;
     void fetchPlanTermNotice().then((notice) => {
-      if (active && notice) setTrialEndsAt(notice.termEndsAt);
+      if (!active || !notice) return;
+      const expired = notice.derivedState === 'EXPIRED';
+      setLocked(expired);
+      // Owner 2026-09-20: a shop opened today has a term that is already over (no trial), so its
+      // date would read as "you have until today". Only a term still running is worth a date.
+      if (!expired) setTrialEndsAt(notice.termEndsAt);
     });
     // The `line=linked` query is only ever present on the ONE navigation the callback makes. Coming
     // back from the sidebar, or reloading, the page could not tell a fresh visit from a finished
@@ -285,8 +293,16 @@ function Welcome() {
 
   const companyName = handoff?.companyName ?? 'ร้านของคุณ';
   const homePath = handoff?.homePath ?? '/';
+  const packagePath = handoff ? packagePathFor(handoff) : homePath;
   // Server first, the callback's query only as the answer while that read is in flight.
   const lineLinked = linkedOnServer ?? lineOutcome === 'linked';
+  // Only a confirmed running term may call the shop ready; not-yet-loaded reads as locked so
+  // neither state promises use of a shop that cannot yet be vouched for (spec §19).
+  const ready = Boolean(handoff) && locked === false;
+  const showLocked = Boolean(handoff) && locked === true;
+  // While the notice is still in flight the links stay neutral: neither "เข้าใช้งาน" (false for a
+  // locked shop) nor "ไปเลือกแพ็กเกจ" (wrong for a shop whose old trial still runs).
+  const settling = Boolean(handoff) && locked === null;
 
   return (
     <div className="min-h-dvh bg-gray-50">
@@ -302,20 +318,15 @@ function Welcome() {
                 <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6 9 17l-5-5" /></svg>
               </span>
             ) : null}
-            <h1 className="mt-4 text-[24px] font-extrabold leading-9 text-gray-900">
-              {handoff ? `${companyName} พร้อมใช้งานแล้ว` : 'เชื่อมบัญชี LINE'}
+            <h1 className="mt-4 break-words text-[24px] font-extrabold leading-9 text-gray-900">
+              {handoff ? (ready ? `${companyName} พร้อมใช้งานแล้ว` : `เปิดร้าน ${companyName} แล้ว`) : 'เชื่อมบัญชี LINE'}
             </h1>
-            {/* Owner 2026-09-05: one free trial for everyone, so this no longer names a tier the
-                shop was never put on. Hidden entirely when the term is unknown: a made-up date is
-                worse than no date. */}
-            {trialEndsAt ? (
-              <p className="mt-2 text-[15px] leading-7 text-gray-600">
-                {/* F1: named a paid tier while provisioning writes the free trial. The
-                    wording table's "what happens after" rides the same line, so the date never
-                    stands alone implying a renewal. */}
-                ทดลองใช้ฟรี ถึง {formatThaiDate(trialEndsAt)} — {SIGNUP_TRIAL_AFTER}
-              </p>
-            ) : null}
+            {/* Owner 2026-09-20 (spec R1): no trial to date-stamp any more. A shop that still
+                carries a running term — one opened before the trial closed — keeps being told when
+                it ends; every new shop is simply told what to do next. */}
+            <p className="mt-2 text-[15px] leading-7 text-gray-600">
+              {trialEndsAt ? `ใช้งานได้ถึง ${formatThaiDate(trialEndsAt)} — ` : ''}{SIGNUP_TRIAL_AFTER}
+            </p>
 
             {lineOutcome === 'link-failed' ? (
               <div role="alert" className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[14.5px] leading-7 text-amber-900">
@@ -333,13 +344,15 @@ function Welcome() {
                 </span>
                 <h2 className="mt-3 text-[17px] font-extrabold text-gray-900">เชื่อมบัญชี LINE สำเร็จแล้ว</h2>
                 <p className="mt-1.5 text-[14.5px] leading-7 text-gray-600">
-                  ส่งรูปใบเสร็จเข้าแชต “น้องมั่งมี” ได้เลย และครั้งหน้าเข้าเว็บด้วย LINE ได้ ไม่ต้องพิมพ์รหัส
+                  {showLocked
+                    ? 'เชื่อมบัญชี LINE แล้ว ครั้งหน้าเข้าเว็บด้วย LINE ได้ · เมื่อเลือกแพ็กเกจแล้ว ส่งรูปใบเสร็จเข้าแชต “น้องมั่งมี” ได้เลย'
+                    : 'ส่งรูปใบเสร็จเข้าแชต “น้องมั่งมี” ได้เลย และครั้งหน้าเข้าเว็บด้วย LINE ได้ ไม่ต้องพิมพ์รหัส'}
                 </p>
                 <a
-                  href="/"
+                  href={showLocked ? packagePath : '/'}
                   className="mt-4 flex h-12 w-full items-center justify-center rounded-xl bg-[#046B29] text-[15.5px] font-semibold text-white"
                 >
-                  เข้าใช้งาน
+                  {showLocked ? 'ไปเลือกแพ็กเกจ' : settling ? 'ไปต่อ' : 'เข้าใช้งาน'}
                 </a>
               </section>
             ) : (
@@ -365,8 +378,8 @@ function Welcome() {
                   </div>
                 </section>
 
-                <a href={homePath} className="mt-5 block text-center text-[14.5px] font-semibold text-gray-600 underline hover:text-gray-900">
-                  ไว้ทีหลัง — เข้าใช้งานเลย
+                <a href={showLocked ? packagePath : homePath} className="mt-5 block text-center text-[14.5px] font-semibold text-gray-600 underline hover:text-gray-900">
+                  {showLocked ? 'ไว้ทีหลัง — ไปเลือกแพ็กเกจ' : settling ? 'ไว้ทีหลัง — ไปต่อ' : 'ไว้ทีหลัง — เข้าใช้งานเลย'}
                 </a>
               </>
             )}

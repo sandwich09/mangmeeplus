@@ -47,6 +47,7 @@ const SECTIONS = [
   { href: '/system/signup-requests', label: 'คำขอสมัครใช้งาน', group: 'คำขอและการติดต่อ' },
   { href: '/system/data-rights', label: 'คำขอเกี่ยวกับข้อมูล', group: 'คำขอและการติดต่อ' },
   { href: '/system/email-delivery', label: 'สถานะอีเมล', group: 'คำขอและการติดต่อ' },
+  { href: '/system/sales-team', label: 'ทีมขาย', group: 'ตั้งค่าระบบ' },
   { href: '/system/line-settings', label: 'ตั้งค่า LINE', group: 'ตั้งค่าระบบ' },
   { href: '/system/ai-budget', label: 'เครดิตการใช้ AI', group: 'ตั้งค่าระบบ' },
   { href: '/system/platform-access', label: 'เปิด–ปิดบริการ', group: 'ตั้งค่าระบบ' },

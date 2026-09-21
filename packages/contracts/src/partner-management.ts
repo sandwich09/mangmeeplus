@@ -4,6 +4,7 @@ import type { CivilDate } from './civil-date.js';
 import type { CompanyLegalAddress, VatRegistrationStatus } from './company-tax-identity.js';
 import type { CompanyBusinessType } from './company-business-type.js';
 import type { SignupDiscoverySource } from './external-signup.js';
+import type { SalesReferralSource } from './sales.js';
 
 export type PartnerCompanyStatus = 'ACTIVE' | 'DISABLED' | 'ARCHIVED' | 'SUSPENDED';
 export type PartnerCredentialKind = 'LINE_MESSAGING_API' | 'LINE_LOGIN' | 'LINE_LIFF';
@@ -78,6 +79,17 @@ export type PartnerCompanyDetailDto = {
   /** Original signup attribution, readable even after the request leaves the review queue. */
   discoverySource?: SignupDiscoverySource;
   discoverySourceOther?: string;
+  /**
+   * D6: which มั่งมี sales agent this shop is credited to, or null. A SYSTEM_ADMIN may repair it
+   * through `PATCH /v1/system/partners/:companyId/referral` within
+   * SALES_REFERRAL_ADMIN_WINDOW_DAYS of `createdAt`, always with a reason (audit HIGH).
+   */
+  referralSales: {
+    userId: string; displayName: string; salesCode: string;
+    /** When the shop opened — the anchor Phase 4 counts the attribution window from. */
+    referredAt: string | null;
+    source: SalesReferralSource;
+  } | null;
   /**
    * VAT registration as of today. `version` is the compare-and-set token for editing it —
    * an admin console must not overwrite an answer given from the company's own screen.

@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { filterSettingsMenuItems, filterSettingsSidebarItems, SETTINGS_MENU_ITEMS } from './settings-menu.logic';
+import {
+  LOCKED_ACCOUNT_CARD,
+  filterSettingsMenuItems,
+  filterSettingsSidebarItems,
+  showsLockedAccountCard,
+  SETTINGS_MENU_ITEMS,
+} from './settings-menu.logic';
 import { canAccessWorkspacePath } from './web-core-workspace.logic';
 import { WORKSPACE_MODULES } from './web-core-workspace.constants';
 import { findRoutePermissionRule } from './route-permissions';
@@ -99,6 +105,31 @@ describe('settings menu', () => {
         `/companies/${companyId}/settings/accounting-tax-setup`),
       false,
     );
+  });
+
+  // Owner 2026-09-20 (spec §12): the hub is one of the two pages a shop with no package may open,
+  // so every card that leads somewhere the term guard refuses has to be gone from it.
+  it('keeps only ข้อมูลร้านและบัญชีของฉัน while the shop has no usable package', () => {
+    const everything = [
+      'company.setup.read', 'crm.channel.manage', 'inventory.product.read', 'company.branch.read',
+      'tax.profile.read', 'ledger.posting-rule.read', 'ledger.account.read',
+    ];
+    assert.deepEqual(filterSettingsMenuItems(everything, true).map((item) => item.key), ['company-profile']);
+    assert.equal(filterSettingsMenuItems(everything).length, 8, 'an unlocked shop keeps every card');
+    // Being locked never opens a card the member could not open anyway.
+    assert.deepEqual(filterSettingsMenuItems(['company.branch.read'], true), []);
+  });
+
+  // ข้อมูลร้านและบัญชีของฉัน needs company.setup.read, which staff do not have — so without this the
+  // one menu they are given in the locked shell opened an empty page.
+  it('gives a locked member with no company card the account card instead', () => {
+    assert.equal(showsLockedAccountCard(['expense.read'], true), true);
+    assert.equal(showsLockedAccountCard(['company.setup.read'], true), false, 'the owner gets the shop card');
+    assert.deepEqual(filterSettingsMenuItems(['company.setup.read'], true).map((item) => item.key), ['company-profile']);
+    // Never outside the locked shell: an unlocked hub already has its own cards.
+    assert.equal(showsLockedAccountCard(['expense.read'], false), false);
+    // Both pages live outside the company workspace, which is why a locked term still serves them.
+    assert.deepEqual(LOCKED_ACCOUNT_CARD.links.map((link) => link.href), ['/change-password', '/account/email']);
   });
 
   it('orders only company accounting/security routes in the settings sidebar', () => {

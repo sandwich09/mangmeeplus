@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readClaimedCompany, rememberClaimedCompany, shouldFetchMergeOffer } from './welcome-handoff.logic';
+import { packagePathFor, readClaimedCompany, rememberClaimedCompany, shouldFetchMergeOffer } from './welcome-handoff.logic';
 
 function fakeStorage(seed: Record<string, string> = {}): Storage {
   const map = new Map(Object.entries(seed));
@@ -30,6 +30,7 @@ describe('welcome handoff', () => {
     assert.deepEqual(readClaimedCompany(storage), {
       companyName: 'ร้านสมชายค้าส่ง',
       homePath: '/companies/cmp_1/dashboard',
+      companyId: 'cmp_1',
       attachedToExistingUser: false,
     });
   });
@@ -47,6 +48,7 @@ describe('welcome handoff', () => {
       const result = readClaimedCompany(fakeStorage({ 'watchdog.signupWelcome': stored }));
       assert.equal(result?.homePath, '/', homePath);
       assert.equal(result?.companyName, 'ร้านทดสอบ', homePath);
+      assert.equal(result?.companyId, '', homePath);
     }
   });
 
@@ -55,8 +57,28 @@ describe('welcome handoff', () => {
     assert.deepEqual(readClaimedCompany(fakeStorage({ 'watchdog.signupWelcome': stored })), {
       companyName: 'ร้านสมชายค้าส่ง',
       homePath: '/',
+      companyId: '',
       attachedToExistingUser: false,
     });
+  });
+});
+
+/**
+ * The package page is the one place a locked shop's welcome-page skip link and LINE-linked panel
+ * must send it (spec §19). `companyId` from the claim result is the normal case; the `homePath`
+ * scrape is only a safety net for a handoff stored before this field existed.
+ */
+describe('packagePathFor', () => {
+  it('builds the package path from companyId', () => {
+    assert.equal(packagePathFor({ companyId: 'cmp_1', homePath: '/' }), '/companies/cmp_1/billing');
+  });
+
+  it('falls back to scraping the company id out of homePath when companyId is missing', () => {
+    assert.equal(packagePathFor({ companyId: '', homePath: '/companies/cmp_1/dashboard' }), '/companies/cmp_1/billing');
+  });
+
+  it('falls back to homePath itself when neither names a company', () => {
+    assert.equal(packagePathFor({ companyId: '', homePath: '/' }), '/');
   });
 });
 

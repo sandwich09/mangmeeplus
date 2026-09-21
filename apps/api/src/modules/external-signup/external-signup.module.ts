@@ -6,6 +6,7 @@ import { AuthModule } from '../auth/auth.module';
 import { DashboardNotificationsModule } from '../dashboard-notifications/dashboard-notifications.module';
 import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
 import { SystemOnboardingModule } from '../system-onboarding/system-onboarding.module';
+import { SystemPartnerManagementModule } from '../system-partner-management/system-partner-management.module';
 import { CompanySignupCoreService } from './application/company-signup-core.service';
 import { SignupAdminNotifyService } from './application/signup-admin-notify.service';
 import { LineSignupNotifyService } from './application/line-signup-notify.service';
@@ -31,13 +32,19 @@ import { PublicSesEventsController } from './presentation/http/public-ses-events
 import { SignupClaimEmailInternalController } from './presentation/http/signup-claim-email-internal.controller';
 import { SystemSignupRequestController } from './presentation/http/system-signup-request.controller';
 import { SystemSupportRequestController } from './presentation/http/system-support-request.controller';
+import { SalesConsoleModule } from '../sales-console/sales-console.module';
 
 @Module({
   // AuthModule: the rate limiter and the mailer port. DataModelCoreModule: the outbox repository.
   // SystemOnboardingModule: the one service allowed to create a company (spec §2 rule 5).
   // LoggerModule: LOGGER_TOKEN for the claim-email send-failure event.
   // DashboardNotificationsModule: the notification event use case the admin announcement reuses.
-  imports: [AuthModule, DashboardNotificationsModule, DataModelCoreModule, SystemOnboardingModule, LoggerModule],
+  // SystemPartnerManagementModule: `PartnerLifecycleTransitionUseCase`, the one writer allowed to
+  // disable a company — provisioning locks a no-package shop through it (J1).
+  imports: [AuthModule, DashboardNotificationsModule, DataModelCoreModule, SystemOnboardingModule,
+    SystemPartnerManagementModule, LoggerModule,
+    // D6: both signup paths resolve a sales code through SalesReferralService.
+    SalesConsoleModule],
   controllers: [
     PublicEmailAccessController,
     PublicCompanySignupController,

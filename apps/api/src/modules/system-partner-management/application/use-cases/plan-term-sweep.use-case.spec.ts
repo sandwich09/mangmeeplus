@@ -9,6 +9,8 @@ type Row = {
   companyName: string;
   companyStatus: string;
   termEndsAt: Date;
+  termStartAt?: Date;
+  renewCount?: number;
   warningDays?: number;
   warn7SentAt?: Date | null;
   warn3SentAt?: Date | null;
@@ -24,6 +26,9 @@ type Row = {
  */
 function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ companyId: string; userId: string }>; lineLinked?: boolean } = {}) {
   const state = rows.map((row) => ({
+    // Epoch keeps termEndsAt > termStartAt for every existing fixture, so the default reads as a
+    // real (trial_ended) term unless a test sets termStartAt itself to model a no-package term.
+    termStartAt: new Date(0), renewCount: 0,
     warningDays: 7, warn7SentAt: null, warn3SentAt: null, warn1SentAt: null,
     expiredNotifiedAt: null, termDisabledAt: null, ...row,
   }));
@@ -121,6 +126,23 @@ describe('PlanTermSweepUseCase — expiry', () => {
     assert.equal(world.lifecycle.calls[0].requestingAdminUserId, null, 'no human actor; FK would reject a synthetic id');
     assert.ok(world.state[0].termDisabledAt instanceof Date);
     assert.ok(world.state[0].expiredNotifiedAt instanceof Date);
+  });
+
+  it('disables a zero-day no-package term as "no_package" and sends no notification', async () => {
+    const zeroDayEnd = past(0);
+    const world = makeWorld([{
+      companyId: 'co-nopkg', companyName: 'ร้านใหม่', companyStatus: 'ACTIVE',
+      termEndsAt: zeroDayEnd, termStartAt: zeroDayEnd, renewCount: 0,
+    }]);
+    const result = await world.sweep.execute();
+
+    assert.equal(result.expired, 1);
+    assert.equal(world.lifecycle.calls.length, 1);
+    assert.equal(world.lifecycle.calls[0].reason, 'no_package');
+    assert.equal(world.state[0].companyStatus, 'DISABLED');
+    assert.ok(world.state[0].termDisabledAt instanceof Date);
+    assert.ok(world.state[0].expiredNotifiedAt instanceof Date);
+    assert.equal(world.notifications.calls.length, 0, 'never had a package, so no "ครบกำหนด" notice');
   });
 
   it('is idempotent: a second pass finds nothing and notifies nobody again', async () => {

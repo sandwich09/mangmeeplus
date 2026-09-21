@@ -1,9 +1,9 @@
 import {
   CURRENT_LEGAL_DOCUMENTS,
-  PLAN_TIER_PRESETS,
-  SIGNUP_TRIAL_TIER_KEY,
-  SIGNUP_TRIAL_WARMUP_SLIPS,
+  SALES_CODE_PATTERN,
+  SIGNUP_DISCOVERY_OTHER_MAX,
   type PublicSignupStatusKey,
+  type SignupDiscoverySource,
   type SignupOfferKey,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -21,27 +21,16 @@ export const SIGNUP_SUPPORT_EMAIL = 'contact@mangmeeplus.com';
 // ── What signing up gets you ──
 
 /**
-/**
- * Owner 2026-09-05: self-signup stopped selling a tier. Every applicant gets the same free trial
- * the LINE-first signup gives, so the four priced cards — and the monthly price sitting next to a
- * free-trial badge — are gone. They described a purchase nobody was being asked to make.
- *
- * The numbers are quoted from the shared preset rather than restated, so a change to the trial
- * cannot leave this page promising the old one.
+ * Owner 2026-09-20 (spec R1): there is no free trial any more. Signing up opens the shop and
+ * nothing else — the shop works once a package is paid for — so these two lines say exactly that.
+ * The names keep their `SIGNUP_TRIAL_` prefix only because three pages import them; nothing here
+ * promises a trial, and the warm-up allowance line is gone with the allowance it described.
  */
-const TRIAL_PRESET = PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY];
+export const SIGNUP_TRIAL_HEADLINE = 'เปิดร้านแล้วเลือกแพ็กเกจเพื่อเริ่มใช้งาน';
 
-export const SIGNUP_TRIAL_DAYS = 30;
-
-export const SIGNUP_TRIAL_HEADLINE =
-  `ทดลองใช้ฟรี ${SIGNUP_TRIAL_DAYS} วัน ให้ AI อ่านรูปใบเสร็จได้ ${TRIAL_PRESET.monthlySlipLimit} ครั้ง`;
-
-/** The initial allowance equals the monthly trial limit from the shared preset. */
-export const SIGNUP_TRIAL_WARMUP = `อ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ครั้งต่อเดือนตั้งแต่วันแรก`;
-
-/** What happens at the end of it. Never implies a card, a renewal, or a charge. */
+/** What happens next. Never implies a card, a renewal, or a charge the applicant did not choose. */
 export const SIGNUP_TRIAL_AFTER =
-  'เมื่อครบกำหนด ติดต่อทีมงานเพื่อเลือกแพ็กเกจ ไม่มีการตัดเงินอัตโนมัติ';
+  'แพ็กเกจเริ่มต้น 249 บาทต่อเดือน ชำระผ่านบัตรออนไลน์ ไม่มีการตัดเงินอัตโนมัติจนกว่าคุณจะเลือก';
 
 /**
  * Still sent with the form: it is the key the server's allowlist accepts and what the admin queue
@@ -61,7 +50,17 @@ export type SignupFormValues = {
   businessType: string;
   vatRegistered: boolean;
   taxId: string;
+  /** D6: self-reported attribution. '' = ไม่ระบุ, which the server stores as nothing. */
+  discoverySource: SignupDiscoverySource | '';
+  discoverySourceOther: string;
+  /** Only meaningful with `discoverySource === 'SALES'`; resolved to an ACTIVE agent at submit. */
+  referralSalesCode: string;
 };
+
+/** D6: what the box may hold — uppercase A–Z and digits, at most 6. Typed lowercase is lifted. */
+export function clampSalesCodeInput(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+}
 
 export type SignupFieldErrors = Partial<Record<keyof SignupFormValues, string>>;
 
@@ -113,6 +112,17 @@ export function validateSignupForm(values: SignupFormValues): SignupFieldErrors 
     errors.taxId = 'เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก';
   }
 
+  // D6: the code is the whole point of choosing "เซลล์ของมั่งมี", so an empty or malformed one is
+  // caught here rather than after a round trip. Whether the code EXISTS is only knowable server-side.
+  if (values.discoverySource === 'SALES') {
+    const code = clampSalesCodeInput(values.referralSalesCode);
+    if (!code) errors.referralSalesCode = 'กรุณากรอกรหัสเซลล์ที่ได้รับ';
+    else if (!SALES_CODE_PATTERN.test(code)) errors.referralSalesCode = 'รหัสเซลล์ต้องเป็นตัวอักษรอังกฤษตัวใหญ่หรือตัวเลข 3–6 ตัว';
+  }
+  if (values.discoverySource === 'OTHER' && values.discoverySourceOther.trim().length > SIGNUP_DISCOVERY_OTHER_MAX) {
+    errors.discoverySourceOther = `ระบุได้ไม่เกิน ${SIGNUP_DISCOVERY_OTHER_MAX} ตัวอักษร`;
+  }
+
   return errors;
 }
 
@@ -139,6 +149,9 @@ export function signupSubmitErrorMessage(error: unknown): string {
  */
 const FIELD_REJECTIONS: Record<string, { field: keyof SignupFormValues; message: string }> = {
   email_domain_has_no_mx: { field: 'contactEmail', message: 'ไม่พบโดเมนอีเมลนี้ ตรวจตัวสะกดอีกครั้ง' },
+  // D6: an unknown or suspended code is the applicant's to fix with the เซลล์ who gave it to them,
+  // so it belongs under that box — a banner at the top of a long form points at nothing.
+  SALES_CODE_UNKNOWN: { field: 'referralSalesCode', message: 'ไม่พบรหัสเซลล์นี้ ตรวจสอบกับเซลล์ของคุณ' },
 };
 
 export function signupFieldRejection(
@@ -185,7 +198,7 @@ export function isTransientLoadFailure(error: unknown): boolean {
 /** Submit order, so "focus the first error" means the first one the applicant would reach. */
 const SIGNUP_FIELD_ORDER: readonly (keyof SignupFormValues)[] = [
   'companyName', 'ownerFirstName', 'ownerLastName', 'contactEmail', 'phoneNumber', 'businessType',
-  'vatRegistered', 'taxId',
+  'vatRegistered', 'taxId', 'discoverySource', 'discoverySourceOther', 'referralSalesCode',
 ];
 
 export function firstSignupErrorField(errors: SignupFieldErrors): keyof SignupFormValues | null {

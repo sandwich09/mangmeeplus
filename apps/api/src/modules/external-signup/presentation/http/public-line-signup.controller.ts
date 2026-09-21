@@ -50,6 +50,9 @@ export class LineSignupSubmitBodyDto {
   @IsOptional() @IsIn(SIGNUP_DISCOVERY_SOURCE_OPTIONS.map((option) => option.value)) discoverySource?: SignupDiscoverySource | null;
   @Transform(({ value }) => typeof value === 'string' ? value.trim() || null : value)
   @IsOptional() @IsString() @MaxLength(SIGNUP_DISCOVERY_OTHER_MAX) discoverySourceOther?: string | null;
+  // D6: shown only under "เซลล์ของมั่งมี". Shape here, existence-of-an-ACTIVE-agent at submit.
+  @Transform(({ value }) => typeof value === 'string' ? value.trim().toUpperCase() || null : value)
+  @IsOptional() @IsString() @MaxLength(6) @Matches(/^[A-Z0-9]*$/) referralSalesCode?: string | null;
   @IsObject() @ValidateNested() @Type(() => LineSignupLegalDto) legal!: LineSignupLegalDto;
 }
 
@@ -110,6 +113,7 @@ export class PublicLineSignupController {
       contactEmail: dto.contactEmail,
       discoverySource: dto.discoverySource,
       discoverySourceOther: dto.discoverySourceOther,
+      referralSalesCode: dto.referralSalesCode,
       ...(dto.referralCode ? { referralCode: dto.referralCode } : {}),
       legal: dto.legal,
       ...(req.headers['user-agent'] ? { userAgent: String(req.headers['user-agent']) } : {}),

@@ -3,14 +3,15 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import type { PublicCompanySignupBody } from '@watchdog-bms/contracts';
+import { SIGNUP_DISCOVERY_OTHER_MAX, SIGNUP_DISCOVERY_SOURCE_OPTIONS, type PublicCompanySignupBody, type SignupDiscoverySource } from '@watchdog-bms/contracts';
 import { Button } from '@/common/components/button';
-import { SwitchField, TextField } from '@/common/components/field';
+import { SelectField, SwitchField, TextField } from '@/common/components/field';
 import { trimmed } from '@/common/forms/trim';
 import { getSignupAvailability, submitCompanySignup } from './external-signup.api';
 import { SignupBrandHeader, SignupClosedNotice, SignupUnavailableNotice } from './SignupChrome';
 import {
   clampMobileInput,
+  clampSalesCodeInput,
   firstSignupErrorField,
   MOBILE_DIGITS,
   rotateSignupKeyAfter,
@@ -19,7 +20,6 @@ import {
   SIGNUP_SUPPORT_PHONE,
   SIGNUP_TRIAL_AFTER,
   SIGNUP_TRIAL_HEADLINE,
-  SIGNUP_TRIAL_WARMUP,
   signupFieldRejection,
   signupSubmitErrorMessage,
   validateSignupForm,
@@ -36,22 +36,21 @@ const EMPTY_FORM: SignupFormValues = {
   businessType: '',
   vatRegistered: false,
   taxId: '',
+  discoverySource: '',
+  discoverySourceOther: '',
+  referralSalesCode: '',
 };
 
 /**
- * Owner 2026-09-05: there is no tier to choose any more — every applicant gets the same free trial
- * the LINE-first signup gives. The four priced cards described a purchase nobody was being asked
- * to make, and pairing a monthly price with a free-trial badge read as a subscription starting now.
- * (The price itself is deliberately not repeated here: `signup-pages.qa.spec.ts` scans this file's
- * raw source, comments included, and it is right to.)
+ * Owner 2026-09-20 (spec R1): no trial, so this says what signing up actually gets you — an open
+ * shop — and what starting it costs. The warm-up line went with the trial allowance it described.
+ * (The retired PRO price is deliberately not repeated here: `signup-pages.qa.spec.ts` scans this
+ * file's raw source, comments included, and it is right to.)
  */
 export function TrialNotice() {
   return (
     <section className="rounded-xl border border-[#B6E0C4] bg-[#F2F9F4] p-3.5">
       <h2 className="text-[15.5px] font-bold text-[#046B29]">{SIGNUP_TRIAL_HEADLINE}</h2>
-      {/* F17: the first week is capped harder than the month. Said here, next to the monthly
-          number it qualifies — finding it out on day one reads as a broken app. */}
-      <p className="mt-1 text-[13.5px] leading-6 text-gray-600">{SIGNUP_TRIAL_WARMUP}</p>
       <p className="mt-1 text-[13.5px] leading-6 text-gray-600">{SIGNUP_TRIAL_AFTER}</p>
     </section>
   );
@@ -163,6 +162,14 @@ export default function SignupPage() {
         : {}),
       consentVersion: SIGNUP_CONSENT_VERSION,
       requestedOfferKey: SELECTABLE_OFFER_KEY,
+      // D6: attribution is optional, so nothing is sent when the applicant skipped the question.
+      ...(values.discoverySource ? { discoverySource: values.discoverySource } : {}),
+      ...(values.discoverySource === 'OTHER' && trimmed(values.discoverySourceOther)
+        ? { discoverySourceOther: trimmed(values.discoverySourceOther) }
+        : {}),
+      ...(values.discoverySource === 'SALES' && clampSalesCodeInput(values.referralSalesCode)
+        ? { referralSalesCode: clampSalesCodeInput(values.referralSalesCode) }
+        : {}),
     };
     try {
       const result = await submitCompanySignup(body);
@@ -322,6 +329,42 @@ export default function SignupPage() {
                     />
                   ) : null}
                 </div>
+
+                {/* D6: the attribution question the LIFF form and the API's HTML form already ask.
+                    Optional — nobody is stopped at it — but choosing "เซลล์ของมั่งมี" reveals the
+                    one field that has to be right, because the code is what credits a real person. */}
+                <SelectField
+                  label="รู้จักเราทางไหน (ไม่บังคับ)"
+                  name="discoverySource"
+                  value={values.discoverySource}
+                  onChange={(event) => set('discoverySource', event.target.value as SignupDiscoverySource | '')}
+                >
+                  <option value="">ไม่ระบุ</option>
+                  {SIGNUP_DISCOVERY_SOURCE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </SelectField>
+                {values.discoverySource === 'OTHER' ? (
+                  <TextField
+                    label="ระบุช่องทาง"
+                    name="discoverySourceOther"
+                    maxLength={SIGNUP_DISCOVERY_OTHER_MAX}
+                    value={values.discoverySourceOther}
+                    onChange={(event) => set('discoverySourceOther', event.target.value)}
+                    error={fieldErrors.discoverySourceOther}
+                  />
+                ) : null}
+                {values.discoverySource === 'SALES' ? (
+                  <TextField
+                    label="รหัสเซลล์"
+                    name="referralSalesCode"
+                    hint="ตัวอักษรอังกฤษตัวใหญ่หรือตัวเลข 3–6 ตัว ตามที่เซลล์แจ้งไว้"
+                    value={values.referralSalesCode}
+                    onChange={(event) => set('referralSalesCode', clampSalesCodeInput(event.target.value))}
+                    error={fieldErrors.referralSalesCode}
+                    autoComplete="off"
+                  />
+                ) : null}
 
                 <TrialNotice />
 

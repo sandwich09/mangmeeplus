@@ -2,7 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { FEATURE_CATALOG, MENU_ENTITLEMENT_BINDINGS } from '@watchdog-bms/contracts';
-import { filterModulesByPermissions, getActiveModuleKey, groupNavItems, buildNavItems, canAccessWorkspacePath, collectMenuTargets, resolveMenuKey } from './web-core-workspace.logic';
+import { filterModulesByPermissions, getActiveModuleKey, groupNavItems, buildLockedNavItems, buildNavItems, canAccessWorkspacePath, collectMenuTargets, resolveMenuKey } from './web-core-workspace.logic';
+import { isLockedShellPath } from '@/features/plan-term/plan-term.logic';
 import { WORKSPACE_MODULES, NAV_GROUP_ORDER, ACCOUNTING_UI_HIDDEN_MODULE_KEYS } from './web-core-workspace.constants';
 import type { NavItem } from './web-core-workspace.model';
 import { canSeeRoute, findRoutePermissionRule, ROUTE_PERMISSION_RULES } from './route-permissions';
@@ -988,5 +989,36 @@ describe('owner billing navigation', () => {
   it('does not add owner billing for a non-owner with full module permissions', () => {
     const items = buildNavItems(WORKSPACE_MODULES, 'co', 'th', {}, ALL_MODULE_PERMISSIONS, ['ADMIN']);
     assert.equal(collectMenuTargets(items).some(item => item.href.endsWith('/billing')), false);
+  });
+});
+
+// Owner 2026-09-20 (spec §12): a shop with no usable package sees two destinations and no more,
+// whatever it is permitted to do — every other page is refused by the term guard behind them.
+describe('locked shell navigation', () => {
+  it('gives the owner ตั้งค่า and แพ็กเกจ, and nothing else', () => {
+    const items = buildLockedNavItems('co', {}, ['OWNER']);
+    assert.deepEqual(items.map((item) => [item.label, item.href]), [
+      ['ตั้งค่า', '/companies/co/settings'],
+      ['แพ็กเกจ', '/companies/co/billing'],
+    ]);
+  });
+
+  it('gives staff ตั้งค่า only, because only the owner may buy a package', () => {
+    assert.deepEqual(buildLockedNavItems('co', {}, ['ACCOUNTANT']).map((item) => item.key), ['settings']);
+    assert.deepEqual(buildLockedNavItems('co', {}).map((item) => item.key), ['settings']);
+  });
+
+  // The menu and the redirect are two copies of one rule; a row the redirect bounces is a dead end.
+  it('offers only paths the locked shell itself allows', () => {
+    for (const target of collectMenuTargets(buildLockedNavItems('co', {}, ['OWNER']))) {
+      assert.equal(isLockedShellPath(target.href, 'co'), true, target.href);
+    }
+  });
+
+  it('resolves the open menu from the same targets the shell renders', () => {
+    const items = buildLockedNavItems('co', {}, ['OWNER']);
+    assert.equal(resolveMenuKey('/companies/co/billing', collectMenuTargets(items)), 'billing');
+    assert.equal(resolveMenuKey('/companies/co/settings/profile', collectMenuTargets(items)), 'settings');
+    assert.equal(resolveMenuKey('/companies/co/renew', collectMenuTargets(items)), null);
   });
 });

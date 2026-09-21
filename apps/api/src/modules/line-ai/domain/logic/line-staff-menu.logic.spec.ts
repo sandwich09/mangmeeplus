@@ -662,12 +662,15 @@ describe('promotion menu (rich menu v2 ver2)', () => {
     assert.equal(staffMenuCommand('โปรโมชั่น'), 'promotion', 'the poster keeps its own pull command');
   });
 
-  it('shows the real trial and sales availability without the obsolete PRO-free poster', () => {
+  it('sells the package without the obsolete PRO-free poster, and promises no free days', () => {
     for (const base of ['https://app.example.com/', undefined]) {
       const card = JSON.stringify(buildPromotionCard(base));
       assert.ok(!card.includes('"hero"'));
       assert.ok(!card.includes('PRO'));
-      for (const text of ['30 วัน', '15 ครั้ง', '249', 'กำลังเตรียมเปิดรับชำระเงิน', 'ขอเปลี่ยนแพ็กเกจ']) assert.ok(card.includes(text));
+      // R1 (Owner 2026-09-20): a card that still said "ทดลองฟรี 30 วัน" would be advertising
+      // something provisioning refuses to grant.
+      assert.ok(!card.includes('ทดลอง'));
+      for (const text of ['249', 'ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ']) assert.ok(card.includes(text));
     }
   });
 });
@@ -692,10 +695,11 @@ describe('standalone trial pricing FAQ', () => {
       const reply = { type: 'text', text: answer!.text, quickReply: buildPublicPolicyCardMessage(answer!).quickReply };
       assert.equal(reply?.type, 'text', text);
       if (reply?.type !== 'text') throw new Error(text);
-      assert.match(reply.text, /เลือกซื้อแพ็กเกจและยืนยันการชำระเงิน/);
+      assert.match(reply.text, /เลือกและชำระแพ็กเกจ/);
       assert.match(reply.text, /ไม่เรียกเก็บเงินอัตโนมัติ/);
-      assert.match(reply.text, /สิทธิ์ทดลองใช้ฟรีมีระยะเวลาจำกัด/);
-      assert.doesNotMatch(reply.text, /PRO|ฟรีตลอด|เปิดดูรายการ|นอกขอบเขต|249|ซื้อได้แล้ว/);
+      assert.match(reply.text, /มีสิทธิ์ทดลองฟรีอยู่ก่อน/);
+      assert.match(reply.text, /249/, 'R1: the locked shop now needs to hear the starting price');
+      assert.doesNotMatch(reply.text, /PRO|ฟรีตลอด|เปิดดูรายการ|นอกขอบเขต|ซื้อได้แล้ว/);
       assert.match(reply.text, /https:\/\/official\.mangmeeplus\.com\//);
       assert.deepEqual(reply.quickReply?.items[0]?.action, {
         type: 'message', label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND,
@@ -724,7 +728,7 @@ describe('public policy conversation', () => {
       'แบบหมดอายุฟรีแล้วบังคับสมัครต่อไหม', 'ถามว่าบังคับไหม', 'แน่นะ']) {
       const answer = resolvePublicPolicyAnswer(text, topic);
       assert.equal(answer?.topic, 'trial', text);
-      assert.match(answer!.text, /ไม่บังคับสมัครต่อ/);
+      assert.match(answer!.text, /ไม่บังคับซื้อทันที/);
       const card = buildPublicPolicyCardMessage(answer!);
       assert.equal(card.type, 'flex');
       assert.doesNotMatch(JSON.stringify(card), /expenses|เปิดดูรายการ|ทำผ่านLINEไม่ได้/);
@@ -743,12 +747,12 @@ describe('public policy conversation', () => {
 
   it('answers documented public policies without claiming an account action succeeded', () => {
     const cases = [
-      ['ทดลองฟรีกี่วัน', 'trial_limits', /30 วัน.*15 รายการ.*1 สาขา.*2 คน/],
+      ['ทดลองฟรีกี่วัน', 'trial_limits', /ตั้งค่าข้อมูลร้านและบัญชี[\s\S]*7 เมนูตามแพ็กเกจ/],
       ['ทดลองใช้ฟรีต้องผูกบัตรไหม', 'card', /ไม่ต้องผูกบัตร/],
       ['หมดโปรฟรีแล้วข้อมูลหายไหม', 'data', /ไม่ได้ถูกลบทันที/],
       ['ขอลบข้อมูลต้องทำยังไง', 'data', /ยังไม่ได้ลบข้อมูล/],
       ['ซื้อแพ็กเกจแล้วจะหักเงินอีกไหม', 'paid_renewal', /ตามเงื่อนไขที่คุณยอมรับ/],
-      ['ซื้อแพ็กเกจก่อนหมดโปรฟรีได้ไหม', 'buy_early', /วันทดลองที่เหลือไม่ทบ/],
+      ['ซื้อแพ็กเกจก่อนหมดโปรฟรีได้ไหม', 'buy_early', /เริ่มทำงานและตัดรอบชำระทันที/],
       ['อ่านใบเสร็จไม่สำเร็จเสียสิทธิ์ไหม', 'quota', /คืนสิทธิ์ที่กันไว้/],
       ['แพ็กเกจรายปีเติมสิทธิ์ทุกเดือนไหม', 'quota', /ไม่ได้เติมใหม่ทุกเดือน/],
       ['ซื้อแพ็กเกจเดิมซ้ำได้อะไร', 'plan_change', /ต่อเวลาจากวันหมดอายุเดิม/],

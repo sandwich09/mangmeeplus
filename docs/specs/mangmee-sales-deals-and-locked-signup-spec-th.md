@@ -1,0 +1,457 @@
+# Feature: สมัครแล้วล็อก (ไม่มีทดลองฟรี) + Sales console + ดีลพิเศษ + หน้าแพ็กเกจ — Spec ฉบับรวม
+
+## 1. Status
+
+- วันที่: 2026-09-20 · สถานะ: **DRAFT — โครงตามมติ Owner วันนี้ครบแล้ว รอตอบ D1–D5 (§16) ก่อนลงมือ** · ผู้เขียน: Claude (controller) · **2026-09-21: §19 ปรับตาม PR #667 (โหมดชำระครั้งเดียว บัตร/PromptPay) — Q7–Q9 รอมติ (มีค่าเริ่มต้น)**
+- **แทนที่** เอกสารก่อนหน้าของวันเดียวกัน: [free-usage-close-toggle-plan](../plans/free-usage-close-toggle-plan-th.md) (สวิตช์ไม่จำเป็นแล้ว แต่ locked shell + LINE fixes ยังใช้), [special-invoice spec](special-invoice-manual-payment-spec-th.md) (กลายเป็น "ดีล" + ช่องทางโอน), [billing-special-price spec](billing-special-price-spec-th.md) (พักไว้; ทะเบียน G01–G33 ยังอ้างอิงได้)
+- ฐานโค้ด: develop bb87c556 (หลัง #667/#669; เดิม `main` 61c7cc37) · แผน: [mangmee-sales-deals-and-locked-signup-plan-th.md](../plans/mangmee-sales-deals-and-locked-signup-plan-th.md) · memory: [mangmee-sales-deals-2026-09-20.md](../agent-memory/mangmee-sales-deals-2026-09-20.md)
+
+## 2. Goal
+
+1. ตั้งแต่นี้ **ไม่มีทดลองใช้ฟรี**: ร้านที่สมัครใหม่คุยกับ AI ไม่ได้ และบนเว็บเห็นแค่ "ตั้งค่า (ข้อมูลร้านและบัญชีของฉัน)" กับ "แพ็กเกจ" จนกว่าจะชำระเงิน; ร้านที่กำลังทดลองอยู่ใช้จนครบวันเดิม (มติ Owner)
+2. ทีมขายของมั่งมีมี **Sales console** เป็น role แยก: หัวหน้าเซลล์สร้างบัญชีเซลล์ในทีม ดูยอดขาย/ยอดเปิดบริษัทของทุกทีม อนุมัติดีล; เซลล์สร้างดีลพิเศษให้ร้านที่มีบัญชีอยู่แล้วด้วย **ราคาใดก็ได้ จำนวนเดือน โควตา สาขา ผู้ใช้ เมนู งบ AI** แล้วส่งหัวหน้าอนุมัติ
+3. เมื่ออนุมัติ ระบบสร้างการ์ด **"ข้อเสนอพิเศษสำหรับร้านคุณ"** บนหน้าแพ็กเกจของร้านนั้นร้านเดียว ลูกค้ากรอกข้อมูลและชำระเอง (บัตร/PromptPay ผ่าน Stripe เปิดสิทธิ์อัตโนมัติ; โอนแล้วแนบสลิปเป็นทางสำรอง) **ภายใน 3 วัน** ไม่มีการเปิดสิทธิ์ก่อนจ่าย
+4. Admin console (Owner) สร้างบัญชีเซลล์พร้อมข้อมูลสำหรับทำใบค่าจ้าง/50 ทวิ (คอมมิชชันคำนวณนอกระบบ)
+
+## 3. Source Docs และของเดิมที่ต่อยอด
+
+- ล็อกเมื่อ term หมด: P29 §4B (`auth.guard.ts:264-275` `company_term_expired`, allowlist `:55-79`; sweep 5 นาที; web `PlanTermBanner`/`CompanyTermExpiredPage`; LINE `replyIfTermExpiredOwner`) — ทะเบียน gap เดิม G01–G20 ใน free-usage plan §5 ยังใช้ทั้งหมด
+- Billing: Checkout/evidence/reconciler (P26), one-time Checkout ของซื้อซ้ำ (`billing-repeat.ts:266-276` `mode: 'payment'` + `price_data` ยอดที่ระบบใส่เอง), evidence แบบครั้งเดียว `paid-checkout-invoice.ts` (ตรวจกับ snapshot), event `checkout.session.async_payment_*` รับอยู่แล้ว (`billing-reconciler.service.ts:24-25`)
+- Reviewed ops + single-admin + proof รหัสผ่าน: `billing-receipt-adjustments.service.ts`, `billing-approval.ts`
+- คำขอเปลี่ยนแพ็กเกจ: `PackageChangeRequest` + คอลัมน์ payment (`schema.prisma:3314-3336`), approve atomically (`package-change-decision.use-case.ts`)
+- ผู้ใช้/รหัสผ่านชั่วคราว: `create-employee.use-case.ts` (`mustChangePassword`, `generateTemporaryPassword`, push LINE) ; platform tenant `seed-watchdog-system-company` ถือ membership SYSTEM_ADMIN; `platformScope = roles.some(SYSTEM_ADMIN)` (`billing-admin.service.ts:78`); web gate `isSystemAdmin`/`canOpenSystemBilling` (`session-gate.logic.ts:25-33`)
+- หน้าจอปัจจุบันที่เป็น to-be: หน้า "ตั้งค่า" การ์ด "ข้อมูลร้านและบัญชีของฉัน" (badge ยังกรอกไม่ครบ) และหน้า "แพ็กเกจและการชำระเงิน" (แพ็กเกจปัจจุบัน → เลือกแพ็กเกจ → การ์ด STARTER/BASIC/PRO/ENTERPRISE)
+
+## 4. Non-goals
+
+- ไม่มีสวิตช์เปิด/ปิด trial (ค่าคงที่ = ไม่มี); ไม่ตัดร้านที่กำลังทดลอง
+- ไม่มี coupon บน subscription; Price เฉพาะร้าน/ต่ออายุอัตโนมัติสำหรับดีล = Phase 5 (D7, §17.3); ไม่มี proration ในระบบ (Q7 ค่าเริ่มต้น, §19.5)
+- ไม่คำนวณคอมมิชชัน/ไม่ออกใบค่าจ้าง/50 ทวิ จากระบบ (เก็บข้อมูลให้ทำนอกระบบ)
+- ไม่มีการเปิดสิทธิ์ล่วงหน้าก่อนชำระ (ทุกช่องทาง); ไม่มี LIFF/หน้าแอปแยกสำหรับเซลล์ (ใช้เว็บเดิม)
+- ไม่ตรวจสลิปอัตโนมัติ (EasySlip) รอบแรก
+- ไม่มีการโอนเงิน/แนบสลิป (มติ Owner 2026-09-21: ลูกค้าชำระผ่าน Stripe บัตร/PromptPay เท่านั้น — กันทุจริต)
+
+## 5. User Roles
+
+| บทบาท | ที่อยู่ในระบบ | ทำอะไรได้ |
+|---|---|---|
+| SYSTEM_ADMIN (Owner) | platform tenant | ทุกอย่างของ Sales console + สร้าง/ระงับบัญชีเซลล์ + ดู/แก้ข้อมูลภาษีเซลล์ (PII) + ตรวจสลิป + อนุมัติดีลแทนหัวหน้าได้เสมอ |
+| **MANGMEE_SALES_LEAD** (role ใหม่ใน platform tenant) | `/sales/*` | สร้างบัญชีเซลล์ในทีม (รหัสผ่านชั่วคราว), ดูดีล/ยอดขาย/ยอดเปิดบริษัทของ **ทุกทีม**, อนุมัติ/ปฏิเสธดีล, สร้างดีลเอง |
+| **MANGMEE_SALES** (role ใหม่) | `/sales/*` | ค้นหาร้านที่มีบัญชี (ชื่อ, สถานะแพ็กเกจ, จังหวัด — ไม่เห็นข้อมูลธุรกิจ/การเงินของร้าน), สร้าง/แก้ดีล DRAFT, ส่งอนุมัติ, เห็นดีลและยอดของตัวเอง |
+| OWNER ร้านค้า | เว็บ/LINE | เห็นการ์ดข้อเสนอเฉพาะร้านตัวเอง กรอกข้อมูลบริษัท/อีเมล ชำระเงิน |
+| พนักงานร้าน | — | ไม่เห็นแพ็กเกจ/ข้อเสนอ (เหมือน P26 §14A) |
+
+ชื่อ role ต้องไม่ชนกับ role ระดับบริษัท `SALES` ที่มีอยู่ (`permission-registry.ts:707`) จึงใช้ prefix `MANGMEE_`
+
+## 6. Business Journey
+
+**J1 สมัครใหม่ → ล็อก**: LINE/เว็บ signup → provisioning เขียน term 0 วัน + `DISABLED`/`termDisabledAt` (reason `no_package`) ทันที (ไม่รอ sweep) + push "เปิดร้านแล้ว ขั้นต่อไปเลือกแพ็กเกจ" → LINE: ทุกข้อความ/รูปตอบการ์ด "สมัครแพ็กเกจก่อนเริ่มใช้งาน" + ปุ่มเปิดหน้าแพ็กเกจ (ไม่มี OCR/model) ; "ติดต่อเจ้าหน้าที่"/"ติดต่อเรา" ยังทำงาน → เว็บ: locked shell 2 เมนู
+
+**J2 ลูกค้าเลือกแพ็กเกจเอง**: หน้าแพ็กเกจ → การ์ด catalog → quote → กรอกที่ขาด (ที่อยู่บริษัท, อีเมล) → Checkout (บัตร/PromptPay) → เปิดสิทธิ์อัตโนมัติ (flow P26 เดิม) ; หรือเลือกโอน → ใบเรียกเก็บ + สลิป → แอดมินตรวจ → เปิดสิทธิ์
+
+**J3 เซลล์ทำดีล**: เซลล์ค้นร้าน → ฟอร์มดีล (tier ฐานเติมค่าเริ่มต้น; แก้ราคา/เดือน/ลิมิต/เมนู/งบ AI ได้หมด; โน้ตถึงลูกค้า) → ส่งอนุมัติ → หัวหน้า/Owner อนุมัติ (หรือปฏิเสธพร้อมเหตุผลถึงเซลล์) → ระบบสร้างการ์ดข้อเสนอบนหน้าแพ็กเกจของร้านนั้น + push LINE ถึง OWNER (ไม่มีตัวเลข) → ลูกค้าเลือก → กรอกที่ขาด → ชำระ (บัตร/PromptPay/โอน) → เปิดสิทธิ์ตามดีล → ดีล APPLIED; เซลล์และหัวหน้าเห็นสถานะ
+
+**J4 หมดเวลา/ต่ออายุ**: ข้อเสนอไม่ถูกจ่ายใน 3 วัน → EXPIRED การ์ดหาย ร้านยังล็อก เซลล์ออกใหม่ได้; ร้านที่จ่ายดีลแล้ว 14 วันก่อนหมด ระบบสร้างข้อเสนอรอบถัดไปเงื่อนไขเดิม (D3) → จ่ายใหม่แตะเดียว; ไม่จ่าย → P29 ล็อก
+
+**J5 Owner สร้างเซลล์**: admin console → "ทีมขาย" → สร้างผู้ใช้ (username, ชื่อ, เบอร์, อีเมล, role, ข้อมูลภาษี) → รหัสผ่านชั่วคราว (แสดงครั้งเดียว/ส่ง LINE ถ้าผูก) → เซลล์ login ครั้งแรกต้องเปลี่ยนรหัส
+
+## 7. Business Rules
+
+- R1 **ไม่มี trial**: `TRIAL_DAYS = 0` ทุกช่องทางสมัคร; copy "ทดลองฟรี 30 วัน" ทั้ง 6 จุด (LIFF สมัคร, เว็บสมัคร 3 หน้า, การ์ดโปรโมชั่น, catalog `trial`) เปลี่ยนเป็น "เลือกแพ็กเกจเพื่อเริ่มใช้งาน"; `BillingCatalog.trial` = null; ร้านที่มี term ทดลองอยู่ไม่ถูกแตะ
+- R2 **สถานะร้าน** ใช้ term เดิม: ยังไม่มีแพ็กเกจ (term 0 วัน + `termDisabledAt`) → ใช้งาน (term เต็ม) → หมดอายุ (P29); `lockReason` derive จาก term (`termEndsAt <= termStartAt && renewCount = 0` ⇒ `no_package`)
+- R3 **ดีล** = แถว `PackageChangeRequest` kind `SALES_DEAL`; หนึ่งร้านมีดีลที่ยังไม่จบได้หนึ่งใบ (partial unique OPEN เดิม); เนื้อหาถูก snapshot ใน `offerSnapshotJson` v2: `{ base: tierKey, priceSatang, months, branchLimit, employeeLimit, monthlySlipLimit, features[], aiMonthlyBudgetSatang|null, description, salesUserId, approvedBy, offerExpiresAt }`; ราคา ≥ 1 satang ไม่มีเพดาน/พื้น (เตือนเมื่อสูงกว่า catalog หรือต่ำกว่าพื้นที่ Owner ตั้ง — ไม่ห้าม); เดือน 1–36 · *(Phase 3, D-P3-1: `base` = `STARTER_249` / `BASIC_499` / `PRO_999` เท่านั้น — ตัด `ENTERPRISE_1999` ออกจาก `SALES_DEAL_BASE_TIERS` เพราะไม่มี Stripe Price ให้ `paidVariant` อ่าน product; ขนาดร้านใหญ่กำหนดผ่านลิมิตของดีลเอง)* · *(D-P3-2: `aiMonthlyBudgetSatang` = ว่าง (inherit) หรือ ≥ 1 สตางค์; 0 ถูกปฏิเสธ — ปิด AI = เอาเมนู `ai_line_assistant` ออก)*
+- R4 **สถานะดีล**: DRAFT → PENDING_APPROVAL → APPROVED (การ์ดโชว์; `offerExpiresAt = approvedAt + 3 วัน`) → PAID (Stripe ยืนยัน/แอดมินตรวจสลิป) → APPLIED (เปิดสิทธิ์แล้ว) | EXPIRED (เลย 3 วัน; derive + scan รายวันปิดแถว) | REJECTED (หัวหน้า) | CANCELLED (เซลล์/หัวหน้า ก่อนจ่าย); แก้ไขได้เฉพาะ DRAFT/REJECTED; APPROVED แก้ไม่ได้ (ยกเลิกแล้วออกใหม่)
+- R5 **อนุมัติ**: `MANGMEE_SALES_LEAD` หรือ SYSTEM_ADMIN; ผู้สร้างอนุมัติดีลของตัวเองไม่ได้ ยกเว้น SYSTEM_ADMIN (single-admin); ทุกการเปลี่ยนสถานะมีเหตุผล + audit CRITICAL (`sales.deal.*`) · *(Phase 2, 2026-09-21: D2 ให้ lead อนุมัติดีลของตัวเองได้ (audit `selfApproved`); เหตุผลบังคับเฉพาะ ปฏิเสธ/ยกเลิก — อนุมัติไม่บังคับ เพื่อความเร็ว; audit เก็บผู้อนุมัติเสมอ)*
+- R6 **ชำระดีลด้วย Stripe แบบครั้งเดียว** *(แก้ไขโดย §19.2 — ใช้เส้นทางครั้งเดียวของ PR #667)*: quote จาก snapshot ดีล (ยอด = `priceSatang`, VAT ตามนโยบาย `quoteTotals`), Checkout `mode: 'payment'` `price_data { product: product ของ tier ฐาน (อ่านจาก Price catalog), unit_amount: priceSatang }`, `payment_method_types: ['card','promptpay']`; หลักฐานผ่าน `paidPackageCheckoutEvidence` (ขยายให้รับ `promptpay`), async events ที่มีอยู่; apply = term `termEndsAt = appendPackageInterval × months` จาก now, ลิมิต/เมนู/งบ AI ตาม snapshot, ใบเสร็จ = ~~โควตาต่อเดือน (LEGACY_MONTH)~~ *(แทนโดย D-P3-4: PAID_GRANTS เหมือนแพ็กเกจจ่ายเงินทุกแบบ — `receiptAllowance = monthlySlipLimit × months` ผ่าน `grantPaidPackageReceipts` หมดอายุพร้อมดีล)*, `billingReceiptAccountId` ~~**ไม่ตั้ง**~~ *(แทนโดย D-P3-4: `grantPaidPackageReceipts` ตั้งให้เสมอ ซึ่งเป็นสิ่งที่ `billingPurchaseSource` ใช้จำแนกสัญญาที่จ่ายแล้ว)* → source แสดงเป็น `DEAL` (D-P3-6: อ่านจาก `quoteSnapshot.deal` ของ attempt ที่เป็นสัญญาปัจจุบัน) ; re-enable บริษัทถ้า `termDisabledAt`
+- R7 *(ยกเลิกโดย Owner 2026-09-21: ลูกค้าชำระผ่าน Stripe (บัตร/PromptPay) เท่านั้น ไม่มีโอน+สลิป)* **ชำระด้วยโอน+สลิป** *(เลื่อนไป Phase 4 — §19.2/Q9)*: ตาม special-invoice spec (endpoint สลิปใต้ `package-change-requests`, ตรวจไวรัส, แอดมิน verify ด้วยรหัสผ่าน → apply เดียวกับ R6); ไม่มีสิทธิ์ก่อน verify
+- R8 **ไม่มีสิทธิ์ก่อนจ่าย** ทุกช่องทาง; การ์ดข้อเสนอเป็นแค่ข้อมูล; ร้านยังล็อกจน APPLIED
+- R9 **Checkout ของดีลไม่ผูก BillingAccount/subscription เดิม** *(แก้ไขโดย §19.3)*: สร้าง BillingAccount ถ้ายังไม่มี (customer Stripe เดิม/ใหม่), ไม่แตะ `baseSubscriptionId`; ร้านที่มี subscription catalog อยู่แล้วรับดีลไม่ได้ (`CONTROL_DEAL_SUBSCRIPTION_ACTIVE`) ต้องยกเลิกต่ออายุก่อน (เตือนเซลล์ตอนสร้าง)
+- R10 **หน้าแพ็กเกจ**: การ์ดข้อเสนอเป็นการ์ดแรกก่อน catalog; catalog ยังเลือกได้; "แพ็กเกจปัจจุบัน" ของร้านล็อกแสดง "ยังไม่มีแพ็กเกจ · เลือกแพ็กเกจเพื่อเริ่มใช้งาน" ไม่ใช่ "ไม่จำกัด"; public catalog/BFF/marketing ไม่เปลี่ยน
+- R11 **การมองเห็นเซลล์**: เห็นร้านผ่าน endpoint ใหม่ที่คืนแค่ ชื่อ/สถานะ/แพ็กเกจ/จังหวัด/วันที่สมัคร; ไม่ได้ `system.partner_dashboard.read` หรือ billing permission ใด; ดีลของคนอื่นเห็นเฉพาะหัวหน้า/Owner; ข้อมูลภาษีของเซลล์เห็นเฉพาะ SYSTEM_ADMIN
+- R12 **ข้อมูลเซลล์สำหรับใบค่าจ้าง/50 ทวิ** (ตาราง `SalesAgentProfile`): ชื่อ-นามสกุลตามบัตร, เลขบัตรประชาชน/เลขผู้เสียภาษี (เข้ารหัสแบบ credential เดิม), ที่อยู่, ธนาคาร/เลขบัญชี, อัตราหัก ณ ที่จ่าย, สถานะ (ACTIVE/SUSPENDED), ทีม/หัวหน้า; ส่งออก CSV ให้บัญชี (SYSTEM_ADMIN)
+- R13 **รายงานหัวหน้า**: ต่อเซลล์/ต่อทีม/ทั้งบริษัท: ดีลตามสถานะ, ยอดชำระที่ APPLIED (รายเดือน จาก BillingInvoice/สลิปที่ verify), จำนวนร้านที่เปิดใช้ (APPLIED ครั้งแรก), conversion (APPROVED→APPLIED), ค้างชำระ; ตัวเลขมาจาก server เท่านั้น
+- R14 **LINE**: การ์ดล็อก + reply พนักงาน + ปิดช่องโหว่ 5 นาที ตาม free-usage plan §4.4; push ข้อเสนอถึง OWNER ไม่มีตัวเลข; ไม่มีราคาบน LINE
+
+## 8. Boundary and Ownership
+
+- **billing**: quote/checkout/evidence/apply ของดีลบนเส้นทางครั้งเดียวของ PR #667 (snapshot `deal`, ไม่มี `DealSource`), label `DEAL` (§19.2)
+- **external-signup**: แถว `PackageChangeRequest` + endpoint ลูกค้า (list/สลิป) — เดิม
+- **system-partner-management**: ไม่เปลี่ยน (manual term/ต่ออายุ ยังเป็นเครื่องมือ Owner)
+- **module ใหม่ `sales-console`** (apps/api): roles, `SalesAgentProfile`, deals CRUD/approve, company search, reports; ใช้ `create-employee`/`regenerate-employee-credential` ของ employee-access กับ platform tenant
+- **auth**: permission ใหม่ + role ใหม่ใน registry; web gate `canOpenSales`
+- **web**: พื้นที่ใหม่ `/sales/*` (layout + nav ของตัวเอง), admin console เพิ่ม "ทีมขาย", BillingPage เพิ่มการ์ดข้อเสนอ, locked shell
+- **line-ai**: การ์ดล็อก/reply/window (ของเดิมในแผนสวิตช์)
+- AI Gateway ไม่เกี่ยว; workers: scan รายวันปิดดีล EXPIRED และออกข้อเสนอต่ออายุ (reuse scan-worker pattern)
+
+## 9. Data Model Draft (additive)
+
+- `PackageChangeRequest`: เพิ่ม `kind` ('CUSTOMER_REQUEST'|'SALES_DEAL'|'SPECIAL_INVOICE'), `salesUserId?`, `approvedByUserId?`, `approvedAt?`, `offerExpiresAt?`, `rejectedReason?`, `version Int` (+ คอลัมน์สลิปจาก special-invoice spec) ; `paymentState` เพิ่มค่า `STRIPE_ONE_TIME`
+- `SalesAgentProfile`: `userId` (unique), `teamLeadUserId?`, `legalName`, `nationalIdEncrypted`, `taxIdEncrypted?`, `address`, `bankName`, `bankAccountEncrypted`, `whtRatePercent`, `status`, `createdByUserId`, timestamps
+- `BillingAttempt.quoteSnapshot` รองรับ `deal: { requestId, snapshotHash }`; `BillingInvoice` แถวของ Checkout ครั้งเดียว (มีอยู่จากซื้อซ้ำ) ; ไม่มีตาราง Stripe Price ใหม่
+- roles/permissions ใน `permission-registry.ts`: `MANGMEE_SALES_LEAD`, `MANGMEE_SALES`; keys `sales.console.read`, `sales.company.search`, `sales.deal.create`, `sales.deal.approve`, `sales.team.manage`, `sales.report.read`, `sales.agent_profile.manage` (SYSTEM_ADMIN)
+
+## 10. Permission and Audit
+
+- Sales console ทั้งหมดผ่าน membership ใน platform tenant + permission ข้างต้น; ไม่มี company scope ของร้าน; ทุก endpoint ปฏิเสธถ้า role อยู่ในบริษัทอื่น
+- Audit: `sales.agent.created/updated/suspended` (SYSTEM_ADMIN, PII เข้ารหัส ไม่ลง metadata), `sales.deal.created/submitted/approved/rejected/cancelled/expired/applied`, `billing.deal.checkout/apply` (CRITICAL), การเปิดดูข้อมูลภาษี (MEDIUM)
+- Proof รหัสผ่านสำหรับ verify สลิป (แอดมิน) และอนุมัติดีลที่ราคาต่ำกว่าพื้น (ถ้า Owner ตั้ง — D2)
+
+## 11. API Behavior (สรุป)
+
+| Path | Role | ผล |
+|---|---|---|
+| `GET /v1/sales/companies?q=` | sales/lead | รายชื่อร้าน (ชื่อ, สถานะ, แพ็กเกจ, จังหวัด, สมัครเมื่อ, มีดีลค้างไหม) |
+| `GET/POST /v1/sales/deals`, `PUT /:id` (DRAFT), `POST /:id/submit|approve|reject|cancel` | sales / lead | ตาม R4–R5; approve สร้างการ์ด + push OWNER + `offerExpiresAt` |
+| `GET /v1/sales/reports/summary?from&to&teamLead=&sales=` | lead/admin | R13 |
+| `GET/POST /v1/system/sales-agents`, `PATCH /:userId`, `POST /:userId/credential` | SYSTEM_ADMIN (+lead สำหรับสร้างเซลล์ในทีมด้วย `sales.team.manage` โดยไม่เห็นข้อมูลภาษี) | สร้าง user + membership platform tenant + role + profile; รหัสผ่านชั่วคราว |
+| `GET /v1/companies/:id/package-change-requests` (เดิม) | OWNER | เพิ่ม `kind`, `deal` (ราคา, เดือน, สิทธิ์, หมดอายุ, description) |
+| `POST /v1/companies/:id/billing/quote` (เดิม) body `{ dealId }` | OWNER | quote จากดีล; ต้องมีอีเมลยืนยัน (ขั้นในหน้า) และที่อยู่บริษัท (D4) |
+| `POST /v1/companies/:id/billing/checkout` (เดิม) | OWNER | Checkout ครั้งเดียว บัตร+PromptPay |
+| สลิป (เดิมจาก special-invoice) | OWNER/แอดมิน | R7 |
+
+Error codes ใหม่ต้องมี Thai สองที่ (`api-error-message.ts` + `BillingPage.errorText`): `CONTROL_DEAL_SUBSCRIPTION_ACTIVE`, `SALES_DEAL_STATE_CONFLICT`, `SALES_DEAL_SELF_APPROVAL`, `SALES_DEAL_EXPIRED`, `SALES_COMPANY_NOT_FOUND`, `BILLING_DEAL_EXPIRED`
+
+## 12. UI Behavior
+
+### เว็บลูกค้า (locked shell + หน้าแพ็กเกจ)
+- หลัง login ร้านที่ล็อก: nav 2 รายการ "ตั้งค่า" (hub แสดงเฉพาะการ์ด "ข้อมูลร้านและบัญชีของฉัน" + badge ยังกรอกไม่ครบ) และ "แพ็กเกจ"; รหัสผ่าน/อีเมล/LINE ในเมนูผู้ใช้; path อื่น → `/renew` ที่เขียนใหม่เป็น "ยังไม่มีแพ็กเกจ · เลือกแพ็กเกจเพื่อเริ่มใช้งาน" + ปุ่มไปหน้าแพ็กเกจ; API allowlist เพิ่ม identity/vat/business-type (free-usage plan S3)
+- หน้าแพ็กเกจ: "แพ็กเกจปัจจุบัน: ยังไม่มีแพ็กเกจ" → "เลือกแพ็กเกจ" → [การ์ดข้อเสนอพิเศษ (ถ้ามี): ชื่อ tier ฐาน + "ข้อเสนอพิเศษสำหรับร้านคุณ", ราคา/รวม N เดือน, สาขา·ผู้ใช้·ใบต่อเดือน, เมนูที่ได้, ใช้ได้ถึง (3 วัน), ปุ่ม "เลือกข้อเสนอนี้"] + การ์ด catalog เดิม; หลังเลือก: ขั้นกรอกอีเมล/ที่อยู่ที่ยังขาด → สรุปยอด/VAT → ยืนยัน → Stripe (บัตร/PromptPay) → หน้า return เดิม → "ใช้งานแพ็กเกจแล้ว"; ทางเลือก "โอนเงินเข้าบัญชี" → ใบเรียกเก็บ + แนบสลิป
+- 390px ไม่ล้น; error ผ่านสอง map; ไม่มีราคาบน LINE
+
+### Sales console (`/sales`)
+- Layout/nav ของตัวเอง (ไม่ใช่ `/system`): ดีล (รายการ+สร้าง), ร้านค้า (ค้นหา), รายงาน (lead), ทีม (lead: สร้างเซลล์/รีเซ็ตรหัส); mobile-first
+- ฟอร์มดีล: ร้าน (search), tier ฐาน (เติมค่า), ราคา (บาท อิสระ), เดือน, สาขา/ผู้ใช้/ใบต่อเดือน, เมนู (preset + สวิตช์), เครดิต AI (คำในระบบคือ "เครดิต AI" เสมอ — W-01 guard), โน้ตถึงลูกค้า (≤200), เหตุผลภายใน → บันทึก DRAFT → ส่งอนุมัติ; หน้าหัวหน้า: คิวรออนุมัติ + preview + อนุมัติ/ปฏิเสธ (เหตุผล); คำเตือน "สูงกว่าราคาปกติ" ใช้ราคา catalog ฐาน (`billingOffer(base, month) × เดือน`, ไม่รวม offerTerms ของนโยบาย — เตือนอย่างเดียว) และ "เกินลิมิตใหม่" จากจำนวนสาขา/ผู้ใช้ที่ส่งมากับผลค้นหาร้าน (S31)
+
+### Admin console (`/system`)
+- เมนูใหม่ "ทีมขาย": รายชื่อเซลล์/หัวหน้า, สร้าง/ระงับ/รีเซ็ตรหัส, ฟอร์มข้อมูลภาษี (เห็นเฉพาะ SYSTEM_ADMIN), ส่งออก CSV; ดีลทั้งหมด + ตรวจสลิป (จาก special-invoice)
+
+## 13. Bug / Gap / Impact Register (รวมข้ามโมดูล)
+
+ระดับ **H** ทำให้ requirement ไม่เป็นจริง/รั่ว/ทางตัน · **M** สับสน/หลุดกติกา · **L** ความสม่ำเสมอ
+
+| ID | เรื่อง | หลักฐาน | แก้ใน |
+|---|---|---|---|
+| S01 | ไม่มี trial แต่ provisioning เขียน 30 วันคงที่ และ push "ทดลองฟรี 30 วัน"; copy ฟรีฝัง 6 จุด | `provision-signup.use-case.ts:557`, `line-signup-notify.service.ts:50`, `auth.controller.ts:533-604`, `signup.logic.ts:33-42`, `line-staff-menu.logic.ts:301`, `billing.service.ts:118` | P1 (H) |
+| S02 | ร้านใหม่ term 0 วันต้อง `DISABLED` ทันที ไม่งั้น LINE ตอบได้ ≤5 นาที และ sweep ส่ง "ครบกำหนด" + แจ้ง SYSTEM_ADMIN ทุกร้าน | `plan-term-sweep.use-case.ts:60-100` | P1 (H) |
+| S03 | locked shell: ตั้งค่าบริษัทถูกบล็อก (API allowlist ไม่มี identity/vat/business-type; เว็บ redirect), ไม่มี nav, copy "ครบกำหนด" ผิดสำหรับร้านใหม่ | `auth.guard.ts:55-79`, `PlanTermBanner.tsx:30-34`, `CompanyTermExpiredPage.tsx` | P1 (H) |
+| S04 | หน้าแพ็กเกจของร้านไม่มี term แสดง "ใบเสร็จคงเหลือ ไม่จำกัด" (จริง = ไม่มีแพ็กเกจ) | ภาพหน้าจอ / `BillingPage.tsx` แพ็กเกจปัจจุบัน | P3 (M) |
+| S05 | LINE: พนักงานร้านล็อกได้ "กรุณาเชื่อมต่อบัญชี", OWNER ได้ปุ่ม "ขอเปลี่ยนแพ็กเกจ" ไม่ใช่ลิงก์หน้าแพ็กเกจ, ช่องโหว่ 5 นาที, LIFF start copy บอกให้พิมพ์คำสั่ง | `process-line-webhook.use-case.ts:1336,1803-1815,3324`, `liff-page.security.ts:174` | P1 (M) |
+| S06 | ชื่อ role `SALES` มีอยู่แล้ว (role ในบริษัทลูกค้า) → ต้องใช้ `MANGMEE_SALES*` และ UI ต้องไม่ปนคำ | `permission-registry.ts:707` | P2 (H) |
+| S07 | web gate `/system` = SYSTEM_ADMIN หรือ billing.read เท่านั้น; ไม่มีพื้นที่สำหรับ role แพลตฟอร์มอื่น → ต้องมี `/sales` layout + `canOpenSales` และ landing ตาม role | `apps/web/app/system/layout.tsx:25`, `session-gate.logic.ts:25-33,144` | P2 (H) |
+| S08 | platform tenant มี employee limit? ถ้ามี term row จะบล็อกสร้างเซลล์ (`employeeLimit`) → ต้องยืนยันว่า platform tenant ไม่มี term row/ยกเว้น | `create-employee.use-case.ts:545`, P29 §4D | P2 (M) |
+| S09 | สร้างผู้ใช้ผ่าน create-employee ต้องกรอกวันเกิด/ฟิลด์พนักงาน และผูกกับ jobTitle/HR ของบริษัท → ต้อง wrapper ที่ใส่ค่าที่จำเป็นและไม่โชว์ใน HR ของ platform tenant | `CreateEmployeeCommand` (`create-employee.use-case.ts:24-40`) | P2 (M) |
+| S10 | ข้อมูลภาษีเซลล์ = PII อ่อนไหว (เลขบัตร, บัญชีธนาคาร) ต้องเข้ารหัสแบบ `encryptCredential` และห้ามลง audit metadata/ export ต้องมีสิทธิ์เฉพาะ | `regenerate-employee-credential.use-case.ts:61` (แบบเข้ารหัส) | P2 (H) |
+| S11 | Checkout ครั้งเดียวของเดิมผูกกับ subscription (`RepeatSource` ต้องมี `baseSubscriptionId`) → ต้องมี `DealSource` แยกสำหรับร้านที่ไม่มี subscription; evidence ครั้งเดียวรับเฉพาะบัตร | `billing-repeat.ts:23,37-51`, `paid-checkout-invoice.ts:57` | ปิดโดย PR #667 → §19.2 |
+| S12 | PromptPay: Checkout ส่ง `['card']` ทั้งสองแบบ; ต้องเปิดใน Stripe account; เพดานยอดต่อรายการของ PromptPay; ใบเสร็จ Stripe สำหรับ PromptPay | `billing.service.ts:415`, `billing-repeat.ts:269` | P3 (M) — เหลือเปิด PromptPay live + เพดาน S38 |
+| S13 | apply ดีล = term ตามเดือน + ลิมิต + เมนู + งบ AI + โควตารายเดือน — ต้องเป็นธุรกรรมเดียว + follow-up idempotent (เมนู/งบ AI) ตามแบบ special-invoice; source label ใหม่ `DEAL` ใน `billing-admin.service.ts:102` และ `BillingCompanyOverview.tsx:30` | special-invoice spec R6 | P3 (H) |
+| S14 | ร้านที่มี subscription catalog แล้วรับดีลไม่ได้ (`assertNoDebt`/repeat/upgrade เดิม) → ต้อง block ตอนสร้างดีลและตอน quote | `billing-repeat.ts:132-144` | แก้เป็น §19.3 |
+| S15 | ร้าน manual/ดีลเดิมติด `BILLING_LEGACY_REVIEW_REQUIRED` เมื่อจะซื้อ catalog ทีหลัง → ผ่อนเมื่อมีดีล APPLIED มาก่อน (ทีมงานตรวจแล้ว) | `billing.service.ts:228-230` | P3 (M) |
+| S16 | อีเมลยืนยันเป็นเงื่อนไขก่อน Checkout (`verifiedAccountEmailProof`) ร้าน LINE-first ไม่มีอีเมล → ขั้นยืนยันอีเมลต้องอยู่ในหน้าแพ็กเกจ (มีแล้วบางส่วน) หรือผ่อน (D4) | `billing.service.ts:223` | P3 (H) |
+| S17 | ดีลหมดอายุ 3 วัน: ไม่มี scan → derive ตอนอ่าน + scan รายวันปิดแถว (reuse scan-worker); การ์ดต้องหายทันทีเมื่อ derive EXPIRED | — | P2 (M) |
+| S18 | one-OPEN-per-company index: ดีล PENDING ชนกับคำขอเปลี่ยนแพ็กเกจของลูกค้า/ใบพิเศษ → กติกาแปลง/ปฏิเสธ | migration `20260904120000_line_first_signup` | P2 (M) |
+| S19 | LINE push งบ/กติกา: push ข้อเสนอถึง OWNER ต้องไม่มีตัวเลขและใช้ `ownerLineUserIds`; lane billing ไม่กัน group | `package-change-decision.use-case.ts:163-200`, `process-line-webhook.use-case.ts:2404-2412` | P2 (L) |
+| S20 | `billing` ไม่อยู่ใน LAUNCH_MODULES; BillingPage มี map เอง; catalog public + marketing regex ไม่รู้จักฟิลด์ใหม่ | `api-error-coverage.spec.ts:22-25`, `BillingPage.tsx:20-46`, `billing-marketing-smoke.ts:34` | P3 (M) |
+| S21 | รายงาน "ยอดขาย": ยอดจาก BillingInvoice (Stripe) + ดีลสลิป verify ต้องรวมเป็นแหล่งเดียว และห้ามให้เซลล์เห็นเอกสารการเงินของร้าน | `billing-timeline.ts`, `financial.read` gate | P4 (M) |
+| S22 | e2e `billing-preview.spec.ts` ตรึงข้อความประหยัด ฿498; fixture ดีลต้องแยก | `e2e/billing-preview.spec.ts` | P3 (L) |
+| S23 | ร้านที่ทดลองอยู่: ห้าม provisioning/ scan ใหม่ไปแตะ term ที่มี (`update: {}` เดิมคงไว้) | `provision-signup.use-case.ts:463-470` | P1 test (H) |
+| S24 | reason/โน้ตของดีลอ่านได้ทั้งทีม → ห้ามใส่ PII ลูกค้า; โน้ตถึงลูกค้า ≤200 ไม่มี "+" | SEC-05 | P2 (L) |
+| S25 | คู่มือ/support playbook สำหรับเซลล์ + Owner (สร้างบัญชี, รีเซ็ตรหัส, ดีลค้าง) | docs/runbooks | P4 (L) |
+
+## 14. Acceptance Criteria
+
+- AC1 สมัครใหม่ (LINE และเว็บ) → ร้าน DISABLED ทันที, LINE ตอบการ์ดเดียวไม่มี model/OCR, เว็บเห็น 2 เมนู, แก้ข้อมูลบริษัทได้, ร้านทดลองเดิมไม่เปลี่ยน
+- AC2 เซลล์สร้างดีล → หัวหน้าอนุมัติ → การ์ดขึ้นเฉพาะร้านนั้น (ร้านอื่น/public/LINE ไม่มีราคา) → ลูกค้าจ่ายบัตรและ PromptPay (Stripe test) → APPLIED + สิทธิ์ตามดีลครบ (term เดือน, ลิมิต, เมนู, งบ AI) → LINE/เว็บใช้ได้; เกิน 3 วัน → EXPIRED
+- AC3 โอน+สลิป → แอดมิน verify → APPLIED; สลิปไม่ผ่าน → ยังล็อก
+- AC4 Sales console: role/permission ถูกต้อง (เซลล์เห็นเฉพาะของตัวเอง, หัวหน้าเห็นทุกทีม, self-approve ปฏิเสธ, ไม่เห็นข้อมูลธุรกิจร้าน, `/system` เข้าไม่ได้), รหัสผ่านชั่วคราวบังคับเปลี่ยน, PII เข้ารหัสและ export ได้เฉพาะ Owner
+- AC5 รายงานหัวหน้าตรงกับข้อมูลจริง (ดีล/ยอด/ร้านเปิดใช้/ค้างชำระ) ในช่วงเวลา
+- AC6 ไม่มี diff เพิ่มจาก origin/develop ในไฟล์ตรวจหลักฐาน (`paid-invoice.ts`, `paid-checkout-invoice.ts`) — PR #667 รองรับ promptpay แล้ว (§19.2)
+- AC7 390px ทุกหน้า; error Thai ทั้งสอง map; ไม่มี raw error
+
+## 15. Test Cases (สรุป; รายละเอียดในแผน)
+
+unit (สถานะดีล, snapshot, quoteTotals, ladder-less validation, lockReason) · PG (provision 0 วัน + DISABLED, ดีล state machine + unique OPEN, apply atomic + replay, permission/role) · HTTP smoke ใหม่ `billing-deal-smoke.ts` (simulated Stripe: card + promptpay async) · regression smokes เดิม · webhook LINE spec · E2E (signup → locked → deal → pay → unlocked; sales console 390) · Stripe test mode จริงบน UAT (บัตร + PromptPay)
+
+## 16. Open Questions (Owner)
+
+| ID | คำถาม | ข้อเสนอ |
+|---|---|---|
+| D1 | ราคาพื้นสำหรับ "เตือน" (ไม่ห้าม) มีไหม | ไม่มีในรอบแรก; เตือนเฉพาะสูงกว่า catalog |
+| D2 | หัวหน้าเซลล์อนุมัติดีลของตัวเองได้ไหม | ไม่ได้ (Owner อนุมัติแทน) |
+| D3 | ข้อเสนอต่ออายุอัตโนมัติ 14 วันก่อนหมด เงื่อนไขเดิม ต้องให้หัวหน้าอนุมัติซ้ำไหม | ไม่ต้อง (เงื่อนไขเดิมที่เคยอนุมัติ) |
+| D4 | ก่อนจ่ายบังคับกรอกที่อยู่บริษัท + อีเมลยืนยันในหน้าแพ็กเกจ ใช่ไหม | ใช่ (ที่อยู่เพื่อเอกสาร, อีเมลเพื่อใบเสร็จ Stripe) |
+| D5 | ร้านที่มี subscription catalog อยู่แล้ว รับดีลไม่ได้ (ต้องยกเลิกต่ออายุก่อน) ยอมรับไหม | ใช่ในรอบแรก |
+
+## 17. มติ Owner รอบ 2 (2026-09-20) และผลต่อกติกา
+
+| ID | มติ | ผลต่อ spec |
+|---|---|---|
+| D1 | ไม่มีราคาพื้น | เตือนเฉพาะราคาสูงกว่า catalog (R3 คงเดิม) |
+| D2 | หัวหน้าเซลล์อนุมัติดีลของตัวเองได้ | R5 แก้: ผู้สร้างที่เป็น `MANGMEE_SALES_LEAD`/SYSTEM_ADMIN อนุมัติเองได้; เซลล์ธรรมดาอนุมัติไม่ได้; audit ระบุ `selfApproved: true` |
+| D3 | ข้อเสนอต่ออายุต้องอนุมัติซ้ำ **และมีแจ้งเตือน** | J4/R4 แก้: 14 วันก่อนหมด ระบบสร้างดีลรอบถัดไปสถานะ PENDING_APPROVAL ผูกกับเซลล์เจ้าของดีล → แจ้งเตือนเซลล์ + หัวหน้า (เว็บ + LINE ถ้าผูก + สรุปรายวัน) → อนุมัติแล้วการ์ดถึงลูกค้า; ถ้าไม่มีใครอนุมัติภายใน 7 วันก่อนหมด เตือนซ้ำและแจ้ง Owner; ร้านล็อกตาม P29 เมื่อหมดรอบโดยไม่จ่าย |
+| D4 | บังคับที่อยู่บริษัท + อีเมลยืนยันก่อนจ่าย | R6/UI คงตามร่าง (ขั้นกรอกในหน้าแพ็กเกจ) |
+| D5 | ร้านที่มี subscription catalog **รับดีลได้ โดยจ่ายเพิ่มตามส่วนต่าง** *(ทบทวนโดย Q7 §19.5 — ค่าเริ่มต้นใหม่: ไม่มี proration ในระบบ)* | R9/S14 แก้: ดีลบนร้านที่มี subscription = "แปลงเป็นดีล": ยอดที่ต้องจ่ายวันนี้ = ราคาดีล − มูลค่าคงเหลือของรอบที่จ่ายแล้ว (คิดสัดส่วนวันด้วย `proratedPackagePrice` ที่ upgrade ใช้ [billing-package.ts](../../apps/api/src/modules/billing/domain/billing-package.ts)) ไม่ต่ำกว่า 0 → Checkout ครั้งเดียว (บัตร/PromptPay) → apply ดีลทันที (term ใหม่นับจากวันจ่าย) → ระบบสั่ง CANCEL_RENEWAL ให้ subscription เดิมสิ้นสุด ณ สิ้นรอบโดยไม่เก็บเงินอีก (system-initiated, ใช้ op เดิม) → ปุ่ม "ต่ออายุอีกครั้ง" ใน Portal ถูกปิดขณะดีล ACTIVE; quote ต้องแสดง "จ่ายวันนี้ / มูลค่าที่นำมาหัก / วันเริ่มดีล"; เงื่อนไข: subscription ต้อง `active` ไม่มีรายการค้าง (`assertNoDebt`) ไม่มี grace/ค้างชำระ ไม่งั้นปฏิเสธ `CONTROL_DEAL_SUBSCRIPTION_REVIEW` |
+
+**รายงานและการนับยอด (มติ Owner):**
+- หัวหน้าเซลล์เห็นเฉพาะยอดที่เกิดจากดีลของเซลล์ (ทุกทีม) **ไม่นับ** ยอดจากช่องทางอื่น (ลูกค้าซื้อ catalog เองบนเว็บ/LINE); เซลล์เห็นเฉพาะยอดของตัวเอง สะสมรายเดือน; ไม่มีใครในทีมขายเห็นเอกสารการเงินของร้าน (S21 = ไม่เห็น)
+- **การระบุที่มาของยอด (attribution)**: ทุกดีลมี `salesUserId` → ยอดที่จ่ายผ่านดีล (ครั้งแรกและรอบต่ออายุที่สืบทอดจากดีลเดิม) นับให้เซลล์คนนั้นอัตโนมัติ; ยอดที่ไม่ผ่านดีลไม่นับให้ใคร; ถ้าเซลล์ถูกระงับ/ย้ายทีม ดีลเดิมยังนับให้เจ้าของเดิม (ประวัติไม่เปลี่ยน) เว้นแต่ Owner โอนดีลด้วยเหตุผล (audit)
+- "ยอดเปิดบริษัท" ของเซลล์ = จำนวนร้านที่ APPLIED ดีลของเซลล์คนนั้นเป็นครั้งแรก (นับร้านละ 1)
+- S15 (ร้านที่เคยรับดีลซื้อ catalog เองได้เลย): ใช้ตามข้อเสนอ = ได้ (ยอดนั้นไม่นับให้เซลล์)
+
+| ID | คำถามค้าง | ข้อเสนอ |
+|---|---|---|
+| D6 | ต้องการนับยอดให้เซลล์ในกรณีที่ลูกค้าสมัครและซื้อ catalog เองหลังเซลล์ไปเสนอไหม (ต้องมี "รหัส/ลิงก์แนะนำของเซลล์" ตอนสมัคร หรือช่อง "รู้จักเราจากเซลล์" ที่มีอยู่แล้วในฟอร์มสมัคร) | รอบแรก **ไม่นับ** (นับเฉพาะดีล ตรงมติ); ถ้าต้องการ ทำเป็นเฟสถัดไปด้วยลิงก์แนะนำ `?ref=<รหัสเซลล์>` ที่ผูกร้านกับเซลล์ตอนสมัคร และนับยอดของร้านนั้น N เดือน |
+
+### 17.1 D6 ตัดสินแล้ว (Owner 2026-09-20): นับยอดจาก "รู้จักเราทางไหน" ด้วย ทำในรอบแรกพร้อมตัวกันโกง
+
+มติ: ยอดจากดีล = ของเซลล์ผู้สร้างดีล; ยอด subscription ที่ลูกค้าซื้อเอง = นับให้เซลล์ที่ลูกค้าระบุในช่อง "รู้จักเราทางไหน" ตอนสมัคร **ภายใน 14 วันนับจากวันเปิดร้าน (Owner แก้จาก 1 เดือน)**; เซลล์ไม่ทับพื้นที่กัน (ไม่มีกติกา first/last touch); ต้องมีตัวกันโกงตั้งแต่แรก
+
+**กติกา**
+- ฟอร์มสมัคร (LIFF + เว็บ) เพิ่ม option `SALES` "เซลล์ของมั่งมี" ใน `SIGNUP_DISCOVERY_SOURCE_OPTIONS` ([external-signup.ts:5-11](../../packages/contracts/src/external-signup.ts)) พร้อมช่อง **รหัสเซลล์แบบง่าย** (ตั้งเองได้ 3–6 ตัว ตัวพิมพ์ใหญ่/ตัวเลข ไม่ซ้ำ เช่น ชื่อเล่น "TON"; ค่าเริ่มต้นระบบสุ่ม 4 ตัวโดยไม่ใช้ตัวที่สับสน 0/O 1/I; ออกให้ทุกบัญชีเซลล์ตอนสร้าง; ลิงก์ `?ref=<รหัส>` เติมให้อัตโนมัติ); server แปลงรหัสเป็น `referralSalesUserId` ตอน submit; รหัสผิด/ไม่ ACTIVE → เก็บข้อความดิบไว้ให้แอดมินดู ไม่นับ
+- ตอน provisioning คัดลอกไป `Company.referralSalesUserId` + `referredAt` (= เวลา provision) + `referralSource` ('SIGNUP_CODE'|'SIGNUP_LINK'|'ADMIN'); แก้ได้เฉพาะ SYSTEM_ADMIN พร้อมเหตุผล (audit) ภายใน 14 วันแรก
+- **สูตรนับ**: ยอดที่จ่ายและ APPLIED ผ่านดีล → `deal.salesUserId` เสมอ (ดีลชนะ) ; ยอดที่ไม่ผ่านดีล → นับให้ `referralSalesUserId` เมื่อ `paidAt <= referredAt + 14 วัน` ; หลังจากนั้นไม่นับให้ใคร (รวมรอบต่ออายุ) ; คืนเงิน/dispute ภายใน 60 วัน หักออกจากยอดเดือนที่คืน
+- "ยอดเปิดบริษัท" = ร้านที่ APPLIED ครั้งแรกภายในหน้าต่างของเซลล์ (ดีลหรือแนะนำ) นับร้านละ 1
+
+**ตัวกันโกง (บังคับในรอบแรก)** · *(Phase 2, 2026-09-21: การสมัครเก็บ `referralSalesCode/referralSalesUserId/referredAt/referralSource` ครบตั้งแต่วันแรก; การนับยอดและตัวกันโกงทั้งชุดทำใน Phase 4 พร้อมรายงาน — "รอบแรก" = รอบแรกของรายงาน ไม่ใช่ Phase 2)*
+- รหัสเซลล์ผูกกับบัญชีเซลล์ ACTIVE เท่านั้น; ระงับเซลล์ = รหัสหยุดรับ (ร้านเก่ายังนับตามหน้าต่างเดิม)
+- ร้านที่ OWNER มี identity เดียวกับเซลล์ (LINE userId, อีเมล, เบอร์) หรือเซลล์คนใดในทีม → ไม่นับ + ธง `self_referral` ให้ Owner ตรวจ
+- เจ้าของคนเดียวกันเปิดหลายร้าน (ตรรกะ repeat-shop ที่มีอยู่) → นับเฉพาะร้านแรก
+- ระบุรหัสได้เฉพาะตอนสมัคร (หรือ Owner ใส่ให้ภายใน 30 วันพร้อมเหตุผล) ห้ามเซลล์ใส่ย้อนหลัง
+- นับเฉพาะเงินที่ Stripe/สลิปยืนยันแล้วเท่านั้น ไม่นับข้อเสนอที่ยังไม่จ่าย
+- ความผิดปกติ: รหัสเดียวถูกใช้เกิน 20 ร้าน/วัน หรือร้านแนะนำหลายร้านใช้ LINE/เบอร์/IP เดียวกัน → ธง `referral_anomaly` + สรุปให้ Owner ทุกเช้า; รายงานแยกคอลัมน์ "ดีล" กับ "แนะนำ" และเก็บหลักฐานที่มาทุกแถว
+- คิวสมัครโชว์ "รู้จักเราจากเซลล์: <ชื่อ>" ให้แอดมินเห็นตอนอนุมัติ/ตรวจสอบ
+
+มติ Owner (รอบ 3): หน้าต่างนับ 14 วันนับจากเวลาเปิดร้าน; เกณฑ์ผิดปกติ 20 ร้าน/วัน; รหัสเซลล์ต้องง่าย (ตั้งเองได้)
+
+**ช่องทาง "สรุปให้ Owner ทุกเช้า" (รอ Owner เลือก):** ระบบมีอยู่แล้ว 3 ช่อง — (ก) การแจ้งเตือนในคอนโซล + badge บนเมนู "ทีมขาย" (แน่นอนที่สุด ใช้กลไก dashboard-notifications ของ SYSTEM_ADMIN แบบเดียวกับคำขอสมัคร) (ข) LINE push ถึงบัญชีของ Owner ที่ผูก LINE กับบัญชี SYSTEM_ADMIN (ต้องผูกก่อน; วันนี้ยังไม่มี SYSTEM_ADMIN ที่ผูก LINE) (ค) อีเมลผ่าน Postmark ถึงกล่องที่กำหนด (ใช้ transport เดิมของอีเมล billing/สมัคร) — ข้อเสนอ: (ก) + (ข) ทุกวัน 07:00 ตามเวลาไทยด้วย cron เดิมของสรุปรายวัน (`daily_owner_summary` 07:00 Asia/Bangkok) โดยเพิ่ม trigger `sales_daily_digest`; (ค) เป็นทางเลือก
+
+### 17.2 มติรอบ 4 (Owner 2026-09-20) — นับยอดเฉพาะ "เปิดครั้งแรก" และสรุปรายวันในคอนโซลเท่านั้น
+
+- **ยอดของทีมขายนับเฉพาะการชำระครั้งแรกที่ทำให้ร้านเปิดใช้งาน** (ต่อร้าน 1 ครั้งตลอดอายุร้าน): เปิดด้วยแพ็กเกจรายเดือน = นับยอด 1 เดือน, รายปี = นับยอด 1 ปี, ดีลพิเศษ = นับยอดของดีลตามเดือนที่ดีลระบุ; **รอบต่ออายุทุกชนิดไม่นับ** (subscription ต่อรายเดือน/รายปี, ดีลรอบถัดไป, อัปเกรด) → สูตรใน §17.1 แก้เป็น: `first paid activation` ของร้าน → ถ้าเป็นดีล นับให้ `deal.salesUserId`; ถ้าไม่ใช่ดีลและ `paidAt <= referredAt + 14 วัน` นับให้ `referralSalesUserId`; อย่างอื่นไม่นับ; คืนเงินภายใน 60 วันหักออก; "ยอดเปิดบริษัท" = จำนวนร้านที่นับได้
+- ผลต่อการออกแบบ: รายงานเซลล์/หัวหน้าไม่ต้องติดตาม renewal เลย ตาราง attribution เก็บแค่ 1 แถวต่อร้าน (`companyId`, `salesUserId`, `source: DEAL|REFERRAL`, `amountSatang`, `interval|months`, `paidAt`, `refundedSatang`) เขียนครั้งเดียวตอน APPLIED ครั้งแรก, immutable ยกเว้น refund/โอนโดย Owner (audit)
+- ดีลรอบถัดไป (D3) ยังต้องอนุมัติ+แจ้งเตือน แต่ **ไม่สร้างยอดให้เซลล์**; เซลล์ยังเห็นสถานะร้านของตน
+- **สรุปรายวันถึง Owner = การแจ้งเตือนในคอนโซลอย่างเดียว** (badge บนเมนู "ทีมขาย" + กระดิ่ง SYSTEM_ADMIN ผ่าน dashboard-notifications, trigger `sales_daily_digest` บน cron 07:00 เดิม); ไม่ส่ง LINE/อีเมล
+
+### 17.3 มติรอบ 5 (Owner 2026-09-20): ดีลตัดบัตรอัตโนมัติได้ โดยอนุมัติครั้งเดียวตอนสร้าง (D7 = ก)
+
+- ฟอร์มดีลเพิ่มสวิตช์ **"ต่ออายุอัตโนมัติ (ตัดบัตรทุกรอบ)"**; หัวหน้าอนุมัติดีลครั้งเดียว = อนุมัติการตัดบัตรทุกรอบของดีลนั้น; **D3 (อนุมัติซ้ำ + แจ้งเตือน) ใช้เฉพาะดีลแบบจ่ายครั้งเดียว**
+- ดีลแบบตัดอัตโนมัติจำกัดรอบเป็น **รายเดือนหรือรายปี** เท่านั้น (ข้อจำกัด Stripe recurring); ดีลแบบจ่ายครั้งเดียวยังกำหนดจำนวนเดือนอิสระได้
+- กลไก = spec ที่พักไว้ [billing-special-price-spec-th.md](billing-special-price-spec-th.md): ตอนอนุมัติ ระบบสร้าง **Stripe Price เฉพาะร้าน** (product ของ tier ฐาน, `unit_amount` = ราคาดีล, recurring ตามรอบ, `tax_behavior` ตามนโยบาย, idempotent) → ลูกค้ากดการ์ดข้อเสนอ → Checkout แบบ subscription เดิม (`assertStripePrice` เทียบกับ offer ของดีล) → webhook/reconciler เดิม apply term/ใบเสร็จตาม snapshot (ลิมิตพิเศษไหลไปเอง) → **ต่ออายุอัตโนมัติที่ราคาดีล** พร้อม grace/retry/Portal/ใบเสร็จของ Stripe ทั้งชุด โดยไม่แตะโค้ดตรวจหลักฐาน (ทะเบียน G10–G33 ในสเปกนั้นยังใช้)
+- ระยะเวลาดีลแบบอัตโนมัติ: เซลล์เลือก "จนกว่าจะเพิกถอน" หรือ "N รอบแล้วกลับราคาปกติ"; การจบดีลบน subscription ที่ใช้อยู่ = op `SCHEDULE_PRICE_RETURN` (schedule เฟสถัดไปเป็น Price catalog ของ tier เดิม) พร้อม issue เตือน 14 วันก่อน; เพิกถอนก่อนใช้ = ปิด Price
+- *(ขยายโดย §19.2/Q8: บัตร หรือ QR แบบสแกนทุกงวด)* ลูกค้าต้องมีบัตร (PromptPay ตัดอัตโนมัติไม่ได้) → การ์ดข้อเสนอแบบอัตโนมัติแสดงเฉพาะ "จ่ายด้วยบัตร"; แปลง subscription เดิม (D5) ทำได้ทั้งสองแบบ: อัตโนมัติ = เปลี่ยน Price ในรอบถัดไปผ่าน schedule + ส่วนต่างรอบปัจจุบันจ่ายครั้งเดียว
+- การนับยอดทีมขายไม่เปลี่ยน: นับเฉพาะการชำระครั้งแรก
+- ลำดับงาน: Phase 5 ต่อจากดีลแบบจ่ายครั้งเดียว (Phase 3) เพราะใช้ฟอร์ม/การ์ด/อนุมัติชุดเดียวกัน ต่างกันที่ช่องทางเก็บเงิน
+
+## 18. ตรวจ gap รอบสุดท้ายหลัง D1–D7 (2026-09-20) — S26–S33 และคำถาม Q1–Q6
+
+| ID | เรื่อง | ผลกระทบ | ข้อเสนอ |
+|---|---|---|---|
+| S26 | ดีลอัตโนมัติจบแล้ว "กลับราคาปกติ" tier เดิม: term/ใบเสร็จกลับตาม catalog ผ่าน schedule แต่ **เมนู/งบ AI ที่ดีลเปิดไว้ไม่มีใครย้อน** (ไม่ได้อยู่ใน offer) | ลูกค้าจ่ายราคาปกติแต่ยังได้สิทธิ์พิเศษ | Q1 |
+| S27 | ราคาในฟอร์มดีล: เซลล์คิดเป็น "ราคาที่ลูกค้าจ่าย" แต่ระบบต้องรู้ว่ารวม VAT หรือยัง (`quoteTotals` ตามนโยบาย INCLUSIVE/EXCLUSIVE) | ยอดผิด 7% | Q2: กรอกยอดที่ลูกค้าจ่ายจริง ระบบแยก VAT ให้ |
+| S28 | รหัสผ่านชั่วคราวของเซลล์: flow เดิมส่งทาง LINE เมื่อผูกแล้ว; เซลล์ใหม่ยังไม่ผูก LINE | สร้างบัญชีแล้วส่งรหัสไม่ถึง | Q3: แสดงบนจอผู้สร้างครั้งเดียว + LINE ถ้าผูก |
+| S29 | เซลล์เป็นสมาชิก platform tenant → company switcher/หน้า workspace ของ tenant นั้นจะเปิดได้ถ้า role มี permission ธุรกิจ | เซลล์เห็นข้อมูล platform tenant | role ใหม่มีแค่ `account.*` + `sales.*`; landing ของ role = `/sales`; workspace ของ platform tenant ปฏิเสธ role นี้ |
+| S30 | แจ้งเตือนถึงเซลล์/หัวหน้า (D3 ดีลจ่ายครั้งเดียว, ดีลถูกปฏิเสธ, ใกล้หมด) ต้องมีที่แสดงใน `/sales` | แจ้งแล้วไม่มีใครเห็น | Q6: หน้า "งานของฉัน" + badge แทนกระดิ่ง; ลงทะเบียน trigger keys |
+| S31 | ดีลลดลิมิตต่ำกว่าที่ร้านใช้อยู่ (เช่น 3 สาขา → 2) | ห้ามสร้างเพิ่ม ของเดิมคงอยู่ (P29 §4D) | preview ดีลต้องแสดงจำนวนเกินให้เซลล์เห็น |
+| S32 | ร้านที่ยังอยู่ในช่วงทดลอง (ของเดิม) รับดีลได้ไหม | ถ้าได้ ดีลเริ่มทันทีเมื่อจ่าย แทน trial ที่เหลือ | Q5 |
+| S33 | ค้นหาร้านของเซลล์คืนทุกร้านในระบบ (ชื่อ/สถานะ/จังหวัด) | เห็นชื่อร้านลูกค้าทั้งระบบ | Q4: อนุญาต แต่ฟิลด์น้อยและบันทึกการค้นหา (audit LOW) |
+
+| ID | คำถาม | ข้อเสนอ |
+|---|---|---|
+| Q1 | ดีลอัตโนมัติจบ/กลับราคาปกติ → เมนู/งบ AI/ลิมิต กลับเป็นค่าเริ่มต้นของ tier หรือคงของดีล | กลับเป็นค่าเริ่มต้นของ tier (เซลล์ออกดีลใหม่ถ้าจะให้ต่อ) |
+| Q2 | ราคาที่เซลล์กรอก = ยอดที่ลูกค้าจ่ายจริง (รวม VAT ถ้ามี) ใช่ไหม | ใช่ ระบบแสดงส่วน VAT ให้อัตโนมัติ |
+| Q3 | รหัสผ่านชั่วคราวของเซลล์ส่งทางไหน | โชว์บนจอผู้สร้างครั้งเดียว (คัดลอก) + LINE ถ้าผูก |
+| Q4 | เซลล์ค้นหาร้านได้ทุกร้านในระบบไหม | ได้ เฉพาะชื่อ/สถานะ/แพ็กเกจ/จังหวัด บันทึกการค้นหา |
+| Q5 | ร้านที่ยังทดลองอยู่ รับดีลได้ไหม | ได้ จ่ายแล้วดีลเริ่มทันทีแทนวันทดลองที่เหลือ |
+| Q6 | แจ้งเตือนในคอนโซลเซลล์เป็นหน้า "งานของฉัน" + badge พอไหม | พอ |
+
+**มติ Owner ต่อ Q1–Q6 (2026-09-20):** Q1 ดีลอัตโนมัติจบ/กลับราคาปกติ → เมนู/งบ AI/ลิมิตกลับเป็นค่าเริ่มต้นของ tier (ระบบทำใน RETURN op เดียวกัน, audit) · Q2 ยังไม่จด VAT → ราคาที่เซลล์กรอก = ยอดที่ลูกค้าจ่ายจริง ไม่มีการแยก VAT ในตอนนี้; เมื่อจด VAT ภายหลัง นโยบาย billing เปลี่ยน taxTreatment แล้วระบบแยก VAT ให้เองตาม `quoteTotals` โดยฟอร์มดีลต้องแสดงชัดว่ายอดเป็น "รวม VAT" (ฟิลด์เดียว ไม่ต้องเปลี่ยน schema) · Q3 รหัสผ่านชั่วคราวแสดงบนจอผู้สร้างครั้งเดียว + ส่ง LINE ถ้าผูก · Q4 เซลล์ค้นหาได้ทุกร้าน ฟิลด์น้อย บันทึกการค้นหา (audit LOW) · Q5 ร้านที่ยังทดลองอยู่รับดีลได้ ดีลเริ่มทันทีเมื่อจ่าย (วันทดลองที่เหลือไม่ทบ — เตือนใน quote) · Q6 หน้า "งานของฉัน" + badge ในคอนโซลเซลล์ พอ
+
+## 19. ปรับตาม PR #667 (develop 2026-09-20): โหมดชำระครั้งเดียวด้วยบัตร/PromptPay และ QR ต่ออายุ
+
+วันที่ 2026-09-21 · Owner สั่ง "ปรับแผนและ spec ใหม่ก่อน รองรับชำระครั้งเดียวด้วยบัตรและ PromptPay" · อ้างอิง [billing-promptpay-qr-spec-th.md](billing-promptpay-qr-spec-th.md), PR #667 (develop) / #669 (main), migration `20260920150000_billing_purchase_modes`
+
+### 19.1 สิ่งที่ develop มีแล้ว (ไม่สร้างซ้ำ)
+
+- `BillingPurchaseMode` = `CARD_AUTO` (บัตรต่ออายุอัตโนมัติ เดิม) · `CARD_ONCE` (บัตรจ่ายครั้งเดียว) · `PROMPTPAY_ONCE` (QR จ่ายครั้งเดียว) · `PROMPTPAY_RENEW` (QR ออกบิลทุกงวด ลูกค้าสแกนเอง ไม่มีหักอัตโนมัติ)
+- gate นโยบายต่อโหมด `card_once`, `promptpay_once`, `promptpay_renew` (นอกเหนือจาก `new_sales`) — **ปิดอยู่จนกว่า UAT ของ #667 ผ่าน** และ Owner เปิดผ่านหน้าตั้งค่า billing (reviewed op เดิม)
+- `POST billing/quote` รับ `purchaseMode`; Checkout ครั้งเดียว = `mode: 'payment'`, `payment_method_types` ตามโหมด, `price_data { product ของ tier, unit_amount จาก quote snapshot }`; หลักฐาน `paidPackageCheckoutEvidence({ paymentMethod: 'card' | 'promptpay' })`; reconciler apply ครั้งเดียว: แถว `BillingInvoice` (`subscriptionId` null), term นับจากเวลาที่ Stripe ยืนยันจ่ายจริง (`fullPackagePurchaseImpact`; ถ้ายังไม่หมดรอบ ต่อท้าย `paidThrough` เดิมด้วย `billingAnchorDay`), `BillingAccount.renewalMode / billingAnchorDay / contractAttemptId`, `baseSubscriptionId = null`
+- `PROMPTPAY_RENEW`: หลังจ่าย QR ครั้งแรก ระบบผูก subscription `collection_method: send_invoice` (`trial_end = paidThrough`, ครบกำหนด 7 วัน) และแสดงลิงก์บิล QR ใน status (`renewalInvoiceUrl/renewalInvoiceDueAt`); บิลค้างไม่เพิ่มสิทธิ์; ที่ grace หมด ระบบหยุดออกบิลใหม่แต่คงหนี้ค้าง
+- OWNER ยกเลิก Checkout ที่ยังไม่จ่ายได้เอง (`POST billing/attempts/:id/cancel`; อยู่ใน allowlist ร้านล็อกแล้ว) → ร้านล็อกที่ค้าง QR ยังไม่จ่ายจะเปลี่ยนใจไปกดข้อเสนอพิเศษได้
+- `BillingStatus` เพิ่ม `renewalMode`, `availablePurchaseModes` (เฉพาะ gate ที่เปิด และ "ตระกูล" เดียวกับที่ใช้อยู่), `canCancelCheckout`; sweep/แจ้งเตือนครบกำหนดต่อท้าย "ซื้อแพ็กเกจใหม่ / เปิดบิลสแกน QR" ตาม `renewalMode`; หน้าแพ็กเกจมีตัวเลือกโหมดก่อนซื้อ; `billingProfileHref` พก `purchaseMode`
+- **กติกาของ #667 ที่ดีลต้องเคารพ**: หนึ่งบัญชีมีโหมดต่ออายุเดียว — ซื้อครั้งเดียวไม่ได้ขณะมี subscription บัตรอัตโนมัติ (`baseSubscriptionId`) ยกเว้น restart; เปลี่ยนตระกูลโหมดไม่ได้ขณะยังไม่หมดรอบ; ซื้อครั้งเดียวซ้ำขณะยังไม่หมด = ต่อท้าย `paidThrough` (ต้องมี invoice เดิมที่ไม่ refund/dispute + `billingAnchorDay`)
+
+### 19.2 ข้อที่เปลี่ยนใน spec นี้
+
+- **R6 (แก้)** ดีลใช้ **เส้นทางซื้อครั้งเดียวของ #667 ทั้งชุด** ไม่มี `DealSource`/Checkout แยก: quote `{ dealId, purchaseMode ∈ {CARD_ONCE, PROMPTPAY_ONCE} }` → snapshot `{ deal: { requestId, snapshotHash }, quote.purchaseMode, quote.offer = offer ของดีล }` → Checkout / หลักฐาน / reconciler เดิม → apply ครั้งเดียวเดิม + follow-up ของดีล **ในธุรกรรมเดียว** (ลิมิต/เมนู/งบ AI ตาม snapshot, `PackageChangeRequest → APPLIED`, แถว `SalesAttribution`, audit) → `renewalMode` = โหมดที่จ่าย (สถานะ/sweep/แจ้งเตือนของ #667 ใช้คำ "ซื้อใหม่" ได้ทันที)
+  - offer ของดีล: `offerKey` = tier ฐาน, `interval: 'month'`, **`intervalCount = months`** (catalog ยังเป็น 1 เสมอ), `priceSatang` = ราคาดีล, ลิมิตตามดีล, `receiptAllowance = monthlySlipLimit × months`; `appendPackageInterval` รับจำนวนรอบ (N เดือน รักษาวัน anchor)
+  - `assertStripePrice` (เทียบ Price catalog) ข้ามเมื่อ snapshot มี `deal` แล้วใช้ `assertDealSnapshot` แทน (แถว APPROVED, ยังไม่หมดอายุ, hash ตรง, ราคา/เดือนตรง, ร้านตรง); `productId` ยังอ่านจาก Price catalog ของ tier ฐาน; `unit_amount` มาจาก snapshot เท่านั้น
+  - gate: ดีลใช้ gate เดียวกับลูกค้าทั่วไป (`new_sales` + `card_once` / `promptpay_once`) ไม่มี gate แยก; ปิด = `BILLING_MODE_NOT_READY` และการ์ดข้อเสนอแสดงเฉพาะโหมดที่เปิด (ถ้าปิดทั้งคู่ การ์ดบอก "ติดต่อทีมงาน")
+  - `restartFits` (ตรวจสาขา/ผู้ใช้ปัจจุบันพอดีกับ offer) ไม่ใช้กับดีล — ลิมิตดีลต่ำกว่าที่ใช้อยู่ = ห้ามสร้างเพิ่ม ของเดิมคงอยู่ (S31/P29 §4D) และ preview ดีลเตือนเซลล์แล้ว
+- **R7 (เลื่อน)** โอน+สลิปเป็นทางสำรองเมื่อ gate PromptPay ปิดหรือยอดเกินเพดาน → ย้ายไป Phase 4 (Q9)
+- **R9 / S14 / D5 (แก้)** ร้านที่มีสิทธิ์อยู่แล้วรับดีลได้ตามตาราง 19.3; ไม่มีการปฏิเสธ `CONTROL_DEAL_SUBSCRIPTION_ACTIVE` อีก; ปฏิเสธเฉพาะบัญชีค้างชำระ/grace/invoice ล่าสุด refund-dispute → `CONTROL_DEAL_SUBSCRIPTION_REVIEW`
+- **R10 / §11 UI (แก้)** การ์ดข้อเสนอใช้ตัวเลือกโหมดของ #667 จำกัดเฉพาะ `CARD_ONCE` / `PROMPTPAY_ONCE` ∩ gate ที่เปิด (Phase 5 เพิ่ม `CARD_AUTO` / `PROMPTPAY_RENEW` สำหรับดีลต่ออายุอัตโนมัติ); ทางเลือกโอนเงินย้ายไปพร้อม R7; `billingProfileHref` เพิ่ม `deal=<id>` ให้ขั้นกรอกที่อยู่/อีเมล (D4) กลับมาที่การ์ดเดิม; ข้อความยืนยันก่อนจ่ายบอกชัดว่า "จ่ายครั้งเดียว ไม่มีหักอัตโนมัติ" ตาม #667
+- **§17.2 การนับยอด (ยืนยัน)** นับครั้งแรกครั้งเดียว: `CARD_ONCE` / `PROMPTPAY_ONCE` = ยอดที่จ่าย; `CARD_AUTO` = invoice `INITIAL`; `PROMPTPAY_RENEW` = การจ่าย QR ครั้งแรกเท่านั้น (บิลงวดถัดไปเป็น `RENEWAL` ไม่นับ); ดีล = ราคาดีล
+- **§17.3 / D7 (ขยาย)** ดีลต่ออายุอัตโนมัติ (Phase 5) ยังใช้ Stripe Price เฉพาะร้าน และรองรับ 2 โหมดของ #667: `CARD_AUTO` (ตัดบัตรทุกงวด) และ `PROMPTPAY_RENEW` (ออกบิล QR ทุกงวด ผ่าน `bindPromptPayRenewal` ด้วย Price ของดีล) — Q8; ข้อความเดิม "ลูกค้าต้องมีบัตร" เปลี่ยนเป็น "บัตร หรือ QR แบบสแกนทุกงวด"
+- **S11 (ปิด)** เส้นทางครั้งเดียวสำหรับร้านที่ไม่มี subscription และหลักฐาน promptpay มีแล้ว · **S12 (เหลือ)** เปิด PromptPay บนบัญชี Stripe live + เพดานยอดต่อรายการ (S38) · **AC6 (แก้)** `paid-invoice.ts` และ `paid-checkout-invoice.ts` ไม่ต้องแก้เพิ่มสำหรับดีล (พิสูจน์ด้วย diff ว่างเทียบ origin/develop)
+- copy Phase 1 "ชำระผ่านบัตรออนไลน์" คงไว้จน Owner เปิด gate PromptPay บน production แล้วจึงเปลี่ยนเป็น "บัตรหรือ PromptPay" (S42)
+
+### 19.3 ดีลบนร้านที่มีสิทธิ์อยู่แล้ว (แทน R9/D5 เดิม)
+
+| สถานะร้านตอนจ่ายดีล | ผล |
+|---|---|
+| ล็อก / หมดอายุ / ทดลองอยู่ (Q5) | ดีลเริ่มทันทีที่จ่าย: term = วันจ่าย + N เดือน, สิทธิ์ตามดีล |
+| ซื้อครั้งเดียวยังไม่หมด (`CARD_ONCE` / `PROMPTPAY_ONCE`) | ต่อท้าย: `termEndsAt = paidThrough + N เดือน` (anchor เดิม) ผ่านกลไก `snapshot.oneTime` ของ #667; **สิทธิ์ของดีล (ลิมิต/เมนู/งบ AI) มีผลทันที** ไม่มีงานรอขอบรอบ |
+| QR ต่ออายุ (`PROMPTPAY_RENEW`) | ระบบยกเลิก subscription QR ให้ (system-initiated, journal/observed) + void บิลค้าง แล้วต่อท้ายเหมือนแถวบน |
+| บัตรอัตโนมัติ (`CARD_AUTO`) — **Q7** | (ก แนะนำ) ระบบยกเลิก subscription **ทันที** เมื่อจ่ายดีล (`prorate: false`, ไม่มี refund, journal/observed) แล้วบัญชีเป็นครั้งเดียวล้วน ดีลเริ่มทันที; **ไม่มี proration ในระบบ** — ฟอร์มดีลแสดง "มูลค่าคงเหลือของรอบปัจจุบัน ฿X ถึง <วันที่>" (อ่านจาก `proratedPackagePrice`) ให้เซลล์นำไปหักในราคา/เดือนของดีลเอง · (ข) D5 เดิม: ระบบคำนวณส่วนต่างและเก็บเฉพาะส่วนต่าง + ยกเลิกทันที · (ค) ต่อท้ายรอบ = ต้องให้ reconciler ถือสอง term พร้อมกัน → ไม่แนะนำ |
+| ค้างชำระ / grace / invoice ล่าสุด refund-dispute | ปฏิเสธ `CONTROL_DEAL_SUBSCRIPTION_REVIEW` (ทีมงานเคลียร์ก่อน) |
+
+หลังยกเลิก subscription เดิม (แถว 3–4) เหตุการณ์ของ subscription นั้นต้องถูก **เพิกเฉย** ไม่ใช่ hold บัญชี (S34) — กรณีที่ยกเลิกไม่สำเร็จหลังจ่าย ให้เปิด issue `DEAL_SUBSCRIPTION_CANCEL_PENDING` + retry ตามแบบ refunds
+
+### 19.4 ทะเบียน gap เพิ่ม (S34–S45)
+
+| ID | ประเด็น | หลักฐาน | Phase |
+|---|---|---|---|
+| S34 | กติกาโหมดเดียวต่อบัญชีของ #667 ชนกับดีลบนร้านที่มี subscription/QR ต่ออายุ → ข้อยกเว้น `deal` ใน `quote()` (กฎ `paymentCheckoutMode && baseSubscriptionId` และ "ตระกูลต่างกัน") พร้อมสั่งยกเลิกตาม 19.3; เหตุการณ์ของ subscription ที่ไม่ใช่ `baseSubscriptionId` แล้วต้องไม่ hold บัญชี | `billing.service.ts` quote rules, `billing-reconciler.service.ts` | P4 (H) |
+| S35 | `BillingOffer.intervalCount: 1` เป็น literal และ `appendPackageInterval` รับแค่ month/year → ดีล N เดือนต้อง `intervalCount: number` (catalog คง 1, snapshot test byte-identical) + append N รอบ; `paidVariant`/`fullPackagePurchaseImpact` ต้องรับ offer ของดีล | `packages/contracts/src/billing.ts:41`, `billing-package.ts:16-47` | P3 (H) |
+| S36 | เส้นทางครั้งเดียวเรียก `assertStripePrice` เทียบ Price catalog → snapshot ที่มี `deal` ต้องข้ามและตรวจ hash/สถานะดีลแทน; `unit_amount` ห้ามมาจาก body | `billing.service.ts` checkout | P3 (H) |
+| S37 | gate `card_once` / `promptpay_once` ปิดจน UAT ของ #667 ผ่าน → ดีลบน production ใช้ได้ต่อเมื่อ Owner เปิด gate; dev/UAT เปิดใน test mode ได้; ต้องอยู่ใน runbook rollout ของ Phase 3 | PR #667 body | P3 rollout (H) |
+| S38 | ~~เพดานยอดต่อรายการของ PromptPay บน Stripe TH~~ **ปิด (Phase 3, 2026-09-21)**: เอกสาร Stripe (https://docs.stripe.com/payments/promptpay) ระบุสกุลเงิน การคืนเงิน และข้อพิพาท แต่**ไม่มีเพดานยอดต่อรายการ** — เพดานที่ลูกค้าเจอจริงคือวงเงินโอนของแอปธนาคารผู้จ่าย ซึ่งระบบมองไม่เห็น จึงไม่กำหนดค่าคงที่ใด ๆ และ `dealPurchaseModes` กรองตาม gate อย่างเดียว (ถ้า Stripe ประกาศเพดานเมื่อใด ให้ซ่อน `PROMPTPAY_ONCE` ในฟังก์ชันนั้น) | Stripe docs (อ่าน 2026-09-21) | P3 ปิดแล้ว |
+| S39 | `availablePurchaseModes` กรองตาม `renewalMode` ที่ใช้อยู่ → การ์ดดีลคำนวณโหมดของตัวเอง (`dealPurchaseModes`) ไม่ใช้ค่านี้ตรง ๆ | `billing.service.ts` status | P3 (M) |
+| S40 | ต่อท้ายรอบเดิมต้องมี invoice ล่าสุดไม่ refund/dispute + `billingAnchorDay` (กติกา `snapshot.oneTime`) → ดีลบนร้านที่เคย refund = review | `billing.service.ts` oneTime | P3 (L) |
+| S41 | trigger `billing.package_updated` มี body ตามโหมด → apply ดีลใช้ trigger เดิมด้วยข้อความ "ใช้งานข้อเสนอพิเศษแล้ว" (ไม่มีราคาบน LINE) | `billing-notifications.service.ts` | P3 (L) |
+| S42 | copy Phase 1 "บัตรออนไลน์" (signup after-line, FAQ นโยบาย LINE) ล้าสมัยเมื่อ gate PromptPay เปิด → เปลี่ยนพร้อมการเปิด gate บน production (Owner กำหนดเวลา) | `signup.logic.ts`, `line-public-policy.logic.ts` | rollout (L) |
+| S43 | admin overview มีคอลัมน์ `renewalMode` แล้ว → source label `DEAL` + renewalMode ต้องอ่านคู่กัน; Sales report อ่าน `SalesAttribution` เท่านั้น | `BillingCompanyOverview.tsx` | P3 (L) |
+| S44 | e2e `billing-preview.spec.ts` + `billing-preview.fixture.ts` ตรึง 4 โหมดแล้ว → fixture ดีลแยก ไม่แก้ค่าเดิม (ต่อจาก S22) | `e2e/billing-preview.spec.ts` | P3 (L) |
+| S45 | `restartFits` โยน `capacityReview` เมื่อสาขา/ผู้ใช้ปัจจุบันเกินลิมิตของ offer → ดีลข้ามการตรวจนี้ (ลิมิตต่ำกว่า = ห้ามสร้างเพิ่ม) | `billing.service.ts` quote | P3 (M) |
+
+| S46 | หมดอายุ 3 วันระหว่างจ่าย: Checkout ที่สร้างก่อน `offerExpiresAt` แล้วจ่ายทีหลัง (QR ค้าง) ต้องยัง apply (ราคาล็อกใน snapshot แล้ว, ไม่คืนเงิน); quote/checkout ใหม่หลังหมดอายุถูกปฏิเสธ; scan รายวันที่ปิด EXPIRED ต้องข้ามดีลที่มี attempt เปิดอยู่ | R4/S17 | P3 (M) |
+
+### 19.5 คำถามที่ต้องการมติ (มีค่าเริ่มต้น — ถ้าไม่ตอบ ใช้ค่าเริ่มต้น)
+
+| ID | คำถาม | ค่าเริ่มต้น (แนะนำ) | ทางเลือก |
+|---|---|---|---|
+| Q7 | ร้านที่มี subscription บัตรอัตโนมัติรับดีล: ระบบคิดส่วนต่างให้ (D5 เดิม) หรือไม่คิดในระบบ | **ไม่มี proration ในระบบ**: ยกเลิก subscription ทันทีเมื่อจ่ายดีล, ฟอร์มดีลโชว์มูลค่าคงเหลือให้เซลล์หักเอง (ราคาดีลเป็นราคาใดก็ได้อยู่แล้ว) — งานอยู่ Phase 4 | D5 เดิม: ระบบคำนวณส่วนต่างและเก็บเฉพาะส่วนต่าง (โค้ด proration + quote 3 ตัวเลข + ความเสี่ยงเถียงยอด) |
+| Q8 | ดีลต่ออายุอัตโนมัติ (Phase 5) รองรับ QR ออกบิลทุกงวดด้วยไหม | **รองรับ** (กลไกเดียวกับบัตร: Price ของดีล + `bindPromptPayRenewal`) | บัตรเท่านั้น (ตามคำเดิมของ D7) |
+| Q9 | โอน+สลิป | **ยกเลิก — ถอดออกแล้ว** (มติ Owner 2026-09-21: ชำระผ่าน Stripe บัตร/PromptPay เท่านั้น เพื่อกันทุจริต) | ~~เลื่อนไป Phase 4 เป็นทางสำรอง~~ |
+
+### 19.6 มติก่อนเริ่ม Phase 3 (controller, 2026-09-21 — จากการอ่านโค้ดเส้นทางครั้งเดียวของ #667)
+
+| ID | มติ | เหตุผลจากโค้ด |
+|---|---|---|
+| D-P3-1 | tier ฐานของดีล = STARTER_249 / BASIC_499 / PRO_999 เท่านั้น (ตัด ENTERPRISE_1999 ออกจาก `SALES_DEAL_BASE_TIERS`) | `paidVariant` (billing-policy.ts) และ `paid-checkout-invoice.ts:20` (ห้ามแตะ) รู้จักแค่ 3 tier; ENTERPRISE ไม่มี Price ใน Stripe; ลิมิตของดีลกำหนดเองได้อยู่แล้ว |
+| D-P3-2 | เครดิต AI ของดีล = ว่าง (ค่าเริ่มต้น) หรือ ≥ 1 บาท; ห้าม 0 — ปิด AI = เอาเมนู AI (`ai_line_assistant`) ออก | ตัวเขียนงบ AI ตัวเดียวในระบบปฏิเสธ 0 โดยตั้งใจ (`set-partner-ai-model.use-case.ts`) |
+| D-P3-3 | Phase 3 รองรับร้าน: ไม่มีบัญชี/ล็อก/หมดอายุ/ทดลอง (เริ่มทันที) และร้านซื้อครั้งเดียวที่ยังไม่หมด (ต่อท้าย); ร้านที่มี subscription `CARD_AUTO` หรือ `PROMPTPAY_RENEW` ที่ยังใช้งาน → `CONTROL_DEAL_SUBSCRIPTION_REVIEW` (แปลงใน Phase 4 ตาม Q7/S34) | กติกาโหมดเดียวต่อบัญชีของ #667 + การยกเลิก subscription เป็น provider write ที่ต้อง journal/observed — ไม่ใส่ใน Phase 3 |
+| D-P3-4 | ใบเสร็จของดีล = PAID_GRANTS เหมือนแพ็กเกจจ่ายเงินทุกแบบ: หน่วย = ใบต่อเดือน × เดือน หมดอายุพร้อมดีล (แทนคำว่า LEGACY_MONTH ใน R6) | เส้นทางครั้งเดียวเรียก `grantPaidPackageReceipts` และตั้ง `billingReceiptAccountId` เสมอ |
+| D-P3-5 | เมนูของดีลเขียนผ่าน helper ธุรกรรมที่แยกออกจาก `set-partner-features.use-case.ts` (epoch/lastSeq/transition เดิม); ร้านที่ normalization ของ entitlement ยังค้าง → `CONTROL_DEAL_ENTITLEMENT_REVIEW` ตอน quote | ตัวเขียน entitlement ที่ถูกต้องมีที่เดียวและปฏิเสธเมื่อ normalization ค้าง |
+| D-P3-6 | admin overview แสดง source `DEAL` เมื่อ attempt ที่เป็นสัญญาปัจจุบันมี `quoteSnapshot.deal` | วันนี้ source คิดจาก `billingReceiptAccountId` จึงอ่านเป็น STRIPE |
+| D-P3-7 | เพดาน PromptPay: ตรวจเอกสาร Stripe; ถ้า Stripe กำหนดเพดานต่อรายการ → ค่าคงที่ใน contracts + ซ่อน PromptPay เมื่อเกิน; ถ้ามีแต่เพดานฝั่งธนาคารผู้จ่าย → ไม่กำหนดในระบบ (S38) | — |
+| D-P3-8 | ขั้นกรอกที่อยู่/อีเมล (D4) ของดีลใช้ `billingProfileHref` เดิมพร้อม `deal=<id>` (offer = tier ฐาน, interval = month) | `billingProfileSelection` ตรวจ tier ที่จ่ายได้เท่านั้น |
+| D-P3-9 | scan ปิด EXPIRED ข้ามดีลที่มี BillingAttempt ยังเปิดอยู่; session ที่จ่ายหลังหมดอายุยัง apply (S46) | `expireSweep` ของ Phase 2 ยังไม่รู้จัก attempt |
+| D-P3-10 | ตาราง `SalesAttribution` สร้างใน Phase 3 (แถวแรกเมื่อดีล APPLIED, source DEAL); Phase 4 เพิ่ม REFERRAL และรายงาน | ยังไม่มีตารางนี้ในโค้ด |
+| D-P3-11 | ไม่มี smoke ของโหมดครั้งเดียว (#667) ในระบบเลย → `billing-deal-smoke.ts` ต้องสร้าง fixture โหมด payment เอง (ต้นแบบ `billing-repeat-smoke.ts`) และครอบคลุมเส้นทางครั้งเดียวของ catalog ไปด้วย | `billing-http-smoke.ts` ยืนยัน `mode === 'subscription'` เท่านั้น |
+
+### 19.7 ปรับตาม PR #676 (develop 2026-09-21 "บริษัทเดิมซื้อแพ็กเกจ catalog เองได้") — มติเพิ่มก่อน Phase 3
+
+| ID | มติ | เหตุผลจากโค้ด |
+|---|---|---|
+| R-676-1 | สิทธิ์เมนูของดีลเขียนผ่าน `billingFeaturePlan`/`applyBillingFeaturePlan` ของ #676 โดยเพิ่มพารามิเตอร์ชุดเมนูเป้าหมาย (ค่าเริ่มต้น = preset starter เดิม) — แทน D-P3-5 | ตัวเขียนของ #676 ใช้ epoch/lastSeq/runoff เดิมและเก็บ Admin override ให้แล้ว แต่เป้าหมายผูก preset starter ตายตัว |
+| R-676-2 | เส้นทางจ่ายครั้งเดียว (`reconcileOneTime`) ยังไม่ apply สิทธิ์เมนูเลยแม้ quote จะ pin `featurePlan` ไว้ → Phase 3 เติมให้ครบทั้ง catalog ครั้งเดียวและดีล (lock, `featureReady`, HELD `BILLING_ENTITLEMENT_REVIEW_REQUIRED`, runoff) | ช่องว่างของ #676 ที่กระทบ CARD_ONCE/PROMPTPAY_ONCE ทุกราย |
+| R-676-3 | ดีลรับได้เมื่อ purchase source = NO_TERM / TRIAL / ADMIN_MANUAL / PAID_EXPIRED_CURRENT_MODE หรือ PAID_CURRENT_MODE แบบครั้งเดียว (ต่อท้าย); PAID_CURRENT_MODE ที่มี subscription → `CONTROL_DEAL_SUBSCRIPTION_REVIEW`; PAID_OTHER_MODE/SOURCE_INCONSISTENT → `BILLING_SOURCE_REVIEW_REQUIRED` เดิม (แทน D-P3-3) | ใช้ตัวจำแนก `billingPurchaseSource` ตัวเดียวกับ catalog |
+| R-676-4 | ดีลจ่ายแล้ว → คำขอเปลี่ยนแพ็กเกจของลูกค้าที่ค้างถูก supersede (ฟังก์ชันเดิม); ลูกค้าซื้อ catalog สำเร็จขณะมีดีล APPROVED ที่ยังไม่จ่ายและไม่มี Checkout ค้าง → ดีลเป็น CANCELLED (`paymentState CATALOG_SUPERSEDED`) + audit + แสดงใน "งานของฉัน" | spec #676 §5: ห้ามมี Checkout active สองรายการ |
+| R-676-5 (Q10) | ดีลที่จ่ายแล้ว → ซื้อ catalog ทีหลัง = ต่อท้ายหลังวันหมดของดีล (กติกา one-time continuation เดิม, ไม่มีการคิดเครดิต); ค่าเริ่มต้นจนกว่า Owner จะสั่งต่างออกไป | #676 ปิดกรณีนี้รอมติ; การต่อท้ายไม่ทำให้มูลค่าดีลหาย |
+| R-676-6 | S15 ปิด: `BILLING_LEGACY_REVIEW_REQUIRED` ไม่มีในโค้ดแล้ว (จำแนก source แทน) | #676 ถอด guard เดิมออก |
+| R-676-7 | CI: PR gate รันเฉพาะ unit/PG spec ใน "Migrations and Boot"; billing HTTP smoke อยู่ใน extended-tests (สั่งรันเอง) → `billing-deal-smoke` ต้องรันในเครื่องก่อน push ทุกครั้ง และผูกใน extended-tests; `billing-feature-entitlements.pg.spec.ts` ของ #676 ที่ยังไม่ถูกรันใน CI ถูกผูกเข้า Migrations and Boot ด้วย | #677 ปรับโครง CI |
+
+### 19.8 มติก่อนเริ่ม Phase 4 (controller, 2026-09-21)
+
+| ID | มติ | เหตุผลจากโค้ด |
+|---|---|---|
+| R-P4-1 | ตัวกันโกง "IP ซ้ำ" (§17.1) ยังไม่ทำ — ระบบไม่เก็บ IP ตอนสมัคร (ใช้แค่ rate limit ใน Redis); ใช้ LINE userId / เบอร์ / อีเมล ของเจ้าของร้านเทียบกับบัญชีเซลและร้านที่นับแล้ว | `CompanySignupRequest` ไม่มีคอลัมน์ IP; `trustedClientIp` ใช้เฉพาะ rate limit |
+| R-P4-2 | แถวยอด (`SalesAttribution`) ที่ถูกธง (self_referral / repeat_owner / referral_anomaly) ไม่นับในยอดจนกว่า Owner จะตรวจใน admin console ("คงไว้"/"ตัดออก" พร้อมเหตุผล, audit) | ป้องกันเถียงยอด (มติ D6) |
+| R-P4-3 | sweep ของดีล (หมดอายุ/ต่ออายุ) และสรุปรายวันของทีมขายรันจาก worker ใหม่ (ทุก 15 นาที / 07:00 กรุงเทพ) — Phase 2 เปิด endpoint ไว้แต่ยังไม่มี worker เรียก | ไม่มี job ใน `apps/workers` สำหรับ sales |
+| R-P4-4 | **ยกเลิก — ถอดออกแล้ว** (มติ Owner 2026-09-21) ~~สลิป: ตรวจไวรัสผ่านทางอัปโหลดไฟล์เดิม, ยืนยันโดย SYSTEM_ADMIN ด้วยรหัสผ่านซ้ำ (proof ของหน้า billing) แล้ว apply สิทธิ์ดีลด้วยตัวเดียวกับเส้นทาง Stripe (ไม่มี invoice → `sourceInvoiceId` ว่าง, `paymentState SLIP_VERIFIED`); ระหว่างรอตรวจ ดีลไม่หมดอายุ; ปฏิเสธ = กลับเป็นอนุมัติแล้วและยืดวันหมดอายุเท่าเวลาที่รอ~~ | ต่อยอด special-invoice spec เดิมบนโค้ดปัจจุบัน |
+| R-P4-5 | แปลง subscription (Q7 ค่าเริ่มต้น): ยกเลิก subscription เดิมทันทีก่อน apply ดีล (journal/observed, ไม่มี proration), บิล QR ค้างถูก void, เหตุการณ์ของ subscription ที่ยกเลิกแล้วถูกรับรู้เป็น no-op ไม่ hold บัญชี; ยกเลิกไม่สำเร็จ → invoice HELD + issue `DEAL_SUBSCRIPTION_CANCEL_PENDING` แล้ว retry | `reconcileOneTime` hold ทุกรายการที่มี subscription ใช้งานอยู่ (S34) |
+
+### 19.9 มติก่อนเริ่ม Phase 5 (controller, 2026-09-21 — ดีลต่ออายุอัตโนมัติ)
+
+| ID | มติ | เหตุผลจากโค้ด |
+|---|---|---|
+| D-P5-1 | snapshot ดีล v3: `autoRenew`, `cadence` (เดือน/ปี), `cycles` (N รอบ หรือ ว่าง = จนกว่าจะเพิกถอน); ดีลครั้งเดียวยังใช้ `months` | — |
+| D-P5-2 | offer ของดีลอัตโนมัติ = ราคาต่อรอบ, `interval` = cadence, `intervalCount` 1, โควตาใบเสร็จต่อรอบ | `assertStripePrice` บังคับ `interval_count` 1 และ `paidInvoiceEvidence` (ห้ามแตะ) รับเฉพาะ month/year |
+| D-P5-3 | Stripe Price เฉพาะร้านสร้างตอนอนุมัติ (journal/observed, idempotent, ตรวจด้วย `assertStripePrice`, เก็บบน deal row, archive เมื่อยกเลิก/หมดอายุ/จบดีล); สร้างไม่สำเร็จ = ดีลยังรออนุมัติและ sweep ลองใหม่ | ระบบไม่เคยสร้าง Price มาก่อน (มีแต่ GET); `policy.priceIds` รับเฉพาะ key ของ catalog |
+| D-P5-4 | ดีลอัตโนมัติจ่ายได้ด้วย `CARD_AUTO` หรือ `PROMPTPAY_RENEW` (ตาม gate); Checkout แบบ subscription ใช้ Price ของดีล; เพิ่มการตรวจ Price ก่อนสร้าง session ในสาขา subscription (เดิมไม่มี) | สาขา subscription ของ `checkout()` ไม่เคยอ่าน Price |
+| D-P5-5 | apply ครั้งแรกของ subscription เรียก `applyDealRequest` เหมือนเส้นทางครั้งเดียว; renewal ใช้ snapshot ดีลจึงตรวจที่ราคาดีลเอง; ไม่มี attribution ซ้ำ | `contractSnapshot` เลือก snapshot ตามช่วงบริการ |
+| D-P5-6 | จบดีล (บัตรอัตโนมัติ) = op `SCHEDULE_PRICE_RETURN` ไฟล์ใหม่ตามแบบ collection op (ไม่แก้ `billing-collection.ts`; แก้ `billing-schedule.ts` เพียงบรรทัดรายชื่อ type ของ `ownedSchedule`): schedule 2 เฟส (ราคาดีล → ราคา catalog), เขียน contract อนาคตที่มี `dealReturn` → apply รอบนั้นคืนเมนู/เครดิต AI/ลิมิตเป็นค่าเริ่มต้นของ tier (Q1); N รอบ = สร้าง op หลังจ่ายครั้งแรก; จนกว่าจะเพิกถอน = หัวหน้ากด "จบดีล"; แจ้ง OWNER + เซล 14 วันก่อน | `currentSchedulePhase` ตรวจเฟสถัดไปจาก contract ล่าสุด; `applyInvoice` ใช้ feature plan เฉพาะ INITIAL จึงต้องมีธง `dealReturn` |
+| D-P5-7 | ดีล QR ทุกงวด (Q8): ซื้อ/ต่ออายุได้ (`bindPromptPayRenewal` ใช้ `snapshot.priceId` อยู่แล้ว); จบดีล = ยกเลิกสิ้นรอบ (ไม่มี schedule บน subscription QR) แล้วร้านซื้อ catalog | `billing-collection.ts` ปฏิเสธ schedule บน PROMPTPAY_RENEW |
+| D-P5-8 | ยังไม่ทำ drift scan ของ Price เฉพาะร้าน (G17) — op จบดีลตรวจราคาเมื่อรัน | ลดเวลา (Owner) |
+
+## 20. แพ็กเกจแสดงรายละเอียดครบ + เปิด ENTERPRISE (Phase 6, มติ Owner 2026-09-21)
+
+**ปัญหาเดิม**: การ์ดแพ็กเกจบอกแค่ราคา และ *ทุก* tier ที่จ่ายเงินได้เปิดเมนูชุดเดียวกัน เพราะ
+`billingFeaturePlan` ใช้ preset `starter` เป็นค่าเริ่มต้นตายตัว (billing-feature-entitlements.ts) — ซื้อ PRO
+ก็ได้เมนูเท่า STARTER. และ ENTERPRISE_1999 ถูกล็อกเป็น "เร็ว ๆ นี้" ตายตัวใน `billingOffer`.
+
+**มติ**: ทุกแพ็กเกจในแคตตาล็อกต้องบอกรายละเอียดครบ — เมนูที่ปลดล็อก, เพดานสาขา/ผู้ใช้, ใบเสร็จต่อเดือน,
+เครดิต AI — และการซื้อต้องเปิดเมนูตามนั้นเป๊ะ ๆ ; เปิดขาย ENTERPRISE เพราะ WHT/50 ทวิ ส่งมอบแล้ว.
+
+### 20.1 ตาราง tier → เมนู (ชุดจริงที่ implement)
+
+`TIER_FEATURE_PRESETS` ([menu-entitlements.ts](../../packages/contracts/src/menu-entitlements.ts)) คือคำตอบเดียว
+ว่าแต่ละ tier เปิดเมนูอะไร. STARTER/BASIC/PRO **คงชุดเมนูเดิม** ตาม
+[package-entitlements spec §3](mangmee-package-entitlements-spec-th.md) (ต่างกันที่เพดาน ไม่ใช่เมนู);
+ENTERPRISE = preset `full` (ทุกเมนูที่ขายได้ ยกเว้น `expense_auto_post` ซึ่งเป็นสวิตช์ของแอดมิน ไม่ใช่เมนูที่ขาย).
+
+| tier | ราคา/เดือน · /ปี | สาขา · ผู้ใช้ · ใบเสร็จ/เดือน | เมนูที่เปิด |
+|---|---|---|---|
+| STARTER_249 | 249 · 2,490 | 1 · 2 · 30 | แดชบอร์ด/แจ้งเตือน · ค่าใช้จ่าย+ใบเสร็จ (รายการ/อัปโหลด/บันทึกด้วยมือ/หมวดหมู่/หลักฐานทางบัญชี/ลายเซ็น) · การเบิกจ่าย · ผู้ช่วย AI ทาง LINE · พนักงานและสิทธิ์ · ตั้งค่าบริษัท |
+| BASIC_499 | 499 · 4,990 | 2 · 5 · 50 | เท่า STARTER |
+| PRO_999 | 999 · 9,990 | 5 · 10 · 100 | เท่า STARTER |
+| ENTERPRISE_1999 | 1,999 · 19,990 | 10 · 30 · 2,000 | ทุกเมนูข้างบน **บวก** สินค้า/สต๊อก · สินค้าและบริการ · เอกสารขาย · ลูกค้าและ CRM (ครบทุกเมนูย่อย) · เชื่อมต่อ LINE OA · บัญชีแยกประเภท · **ภาษีไทย (ภ.ง.ด. / หัก ณ ที่จ่าย 50 ทวิ)** · จัดซื้อ/เจ้าหนี้ (ใบวางบิล/การชำระเงิน/AP Aging) · ธนาคารและกระทบยอด · รายงาน/BI · ระบบอัตโนมัติ |
+
+- **เครดิต AI**: ไม่มีค่าต่อ tier — ทุกแพ็กเกจใช้ค่ากลางของแพลตฟอร์ม (`AI_MONTHLY_BUDGET_SATANG`) ซึ่ง
+  catalog ส่งออกมาเป็น `BillingCatalog.aiMonthlyBudgetSatang` ให้การ์ดแสดง. มีแต่ "ดีล" เท่านั้นที่ตั้งทับได้.
+- ทั้งสองชุดเป็น preset เดิม จึงปิด (closed) ภายใต้ `requiredFeatureKeys` และมี
+  `PLATFORM_INVARIANT_FEATURE_KEYS` ครบอยู่แล้ว.
+
+### 20.2 กติการาคา
+
+ราคารายปี = **ราคารายเดือน × 10** ทุก tier (เหมือนเดิม) → ENTERPRISE = 199,900 สตางค์/เดือน,
+1,999,000 สตางค์/ปี (19,990 บาท). `offerTerms` ของนโยบายตั้งทับได้ทุก tier รวม ENTERPRISE.
+
+### 20.3 เปิดขาย ENTERPRISE
+
+- `BILLING_PAID_TIERS` มี 4 tier → `paidVariant`, `parseBillingPolicy` (`priceIds`/`zeroPriceIds`/`offerTerms`),
+  `validateProvider`, `impact()`, `isUpgrade` และฟอร์มตั้งค่าได้แถว ENTERPRISE มาเอง.
+- **fail-closed**: `billingOffer` ตอบ `COMING_SOON` เฉพาะ ENTERPRISE ที่ยัง *ไม่ผูก* Stripe Price ในนโยบายที่ใช้อยู่;
+  `catalog()` เปลี่ยนเป็น `AVAILABLE` เมื่อ Price ของ variant นั้นถูกผูกแล้วและ gate `new_sales` เปิด. ก่อนผูก
+  quote ตอบ `BILLING_OFFER_UNAVAILABLE` (409) เหมือนเดิม — ไม่มีอะไรพังก่อน Owner ผูกราคา.
+- Stripe Product/Price ของ ENTERPRISE สร้างด้วย `apps/api/src/scripts/create-catalog-prices.ts`
+  แล้ว Owner ผูกรหัสในหน้าตั้งค่า (ดู [runbook](../runbooks/production-stripe-live-enablement.md)).
+
+### 20.4 ดีลใช้ ENTERPRISE เป็นฐานได้
+
+`SalesDealBaseTier` = ทุก tier ที่จ่ายเงินได้ (ยกเลิก D-P3-1 ที่ตัด ENTERPRISE ออกเพราะไม่มี Price).
+ฐานที่ยังไม่ผูก Price ล้มที่ quote ด้วย `BILLING_OFFER_UNAVAILABLE` และ Price ของดีลอัตโนมัติจะค้างที่
+`priceState=FAILED` (`catalog_price_missing`) จนกว่าจะผูก — ไม่มีทางเปิด Checkout ที่จ่ายไม่ได้.
+ค่าเริ่มต้นของฟอร์มดีลอ่านจาก `TIER_FEATURE_PRESETS[base]` และ offer ของดีล (`dealOffer`) พก
+`featureKeys` ของ snapshot ตัวเอง.
+
+### 20.5 จุดที่ยังไม่ทำ (ต้องมีมติก่อน)
+
+**เปลี่ยนแพ็กเกจกลางคัน (upgrade / SCHEDULE_DOWNGRADE / CUSTOMER_PREPAID_PLAN_CHANGE) ยังไม่ย้ายชุดเมนู.**
+`applyInvoice` เขียนสิทธิ์เมนูเฉพาะ `evidence.kind === 'INITIAL'` หรือรอบที่มี `dealReturn`
+(`rewritesFeatures`, billing-reconciler.service.ts) และ `quote()` pin `featurePlan` เฉพาะ
+`initialPurchaseSource` หรือดีล. เหตุผลที่ยังไม่ต่อ seam นี้:
+1. invoice ของ plan change เป็น `RENEWAL` (เฉพาะ `subscription_create` เท่านั้นที่เป็น INITIAL) จึงต้องเพิ่มธง
+   ทำนองเดียวกับ `dealReturn`;
+2. `featurePlan` ที่ pin ตอนขอเปลี่ยนจะถูกตรวจ `sourceHash` ตอน apply ที่สิ้นรอบ (อาจห่างเป็นปีสำหรับรายปี)
+   — แอดมินแก้สิทธิ์ระหว่างนั้นครั้งเดียวก็ทำให้ invoice ที่ลูกค้าจ่ายแล้ว HELD ด้วย
+   `BILLING_ENTITLEMENT_REVIEW_REQUIRED`;
+3. เส้นทางครั้งเดียว (`SCHEDULED_CHANGE` / `CUSTOMER_PREPAID_PLAN_CHANGE`) **ไม่มี invoice ที่ขอบรอบเลย**
+   (เก็บเงินล่วงหน้าไปแล้ว) จึงไม่มี hook ให้ apply ที่วันเปลี่ยน;
+4. downgrade = ถอดเมนู → เขียน runoff + `DISABLE_REQUESTED` โดยลูกค้าไม่เห็น `featureImpact` ล่วงหน้า
+   (quote แสดงเฉพาะ INITIAL) ซึ่งเป็นการตัดสินใจเชิงสินค้า.
+
+ผลตอนนี้: ตราบใดที่ STARTER/BASIC/PRO ใช้ชุดเมนูเดียวกัน การเปลี่ยนระหว่างสามตัวนั้น **ไม่มีผลต่อเมนู**
+ช่องว่างจึงกระทบเฉพาะเส้นทาง "อัปเกรดขึ้น ENTERPRISE หรือลงจาก ENTERPRISE กลางรอบ" ซึ่งต้องให้ทีมงานปรับ
+สิทธิ์ให้จากหน้าพาร์ตเนอร์ไปก่อน. ทางแก้ที่เสนอ: สร้าง op ที่ขอบรอบเหมือน `SCHEDULE_PRICE_RETURN` (สร้าง
+snapshot สด ๆ ก่อนถึงวัน) แทนการ pin ล่วงหน้า.

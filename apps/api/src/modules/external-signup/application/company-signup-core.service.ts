@@ -17,6 +17,16 @@ const SERVICE_ACTOR = 'official-signup-core';
 const SPECIAL_PROVISIONING_STATES = new Set<CompanySignupState>(['PROVISIONING', 'READY', 'PROVISIONING_FAILED']);
 
 type ReceiveResult = Readonly<{ request: CompanySignupRequest; replayed: boolean }>;
+
+/**
+ * Columns the SERVER derives from a submission rather than ones the applicant typed. Narrow by
+ * design: a wide `UncheckedCreateInput` here would let a caller overwrite the normalised payload
+ * (and the payload hash it was built from) through the back door.
+ */
+export type ServerDerivedSignupColumns = Readonly<{
+  /** D6: the ACTIVE sales agent a submitted sales code resolved to. */
+  referralSalesUserId?: string;
+}>;
 /**
  * A caller-supplied precondition, evaluated under the advisory lock. `rejectionCode` is what the
  * caller wants the operator to see, so the guard and its message stay in one place.
@@ -59,7 +69,17 @@ type ProvisionClaim = Readonly<{
 export class CompanySignupCoreService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async receive(input: CompanySignupInput, correlationRequestId: string): Promise<ReceiveResult> {
+  /**
+   * `derived` carries columns the SERVER worked out from the submission rather than ones the
+   * applicant typed — today only D6's `referralSalesUserId`, resolved from the sales code. They
+   * stay out of `payloadHash` on purpose: the hash answers "did this applicant send the same form
+   * twice", and a server-side lookup is not part of that question.
+   */
+  async receive(
+    input: CompanySignupInput,
+    correlationRequestId: string,
+    derived: ServerDerivedSignupColumns = {},
+  ): Promise<ReceiveResult> {
     let normalized: NormalizedCompanySignupInput;
     try {
       normalized = normalizeCompanySignupInput(input);
@@ -78,7 +98,7 @@ export class CompanySignupCoreService {
         return { request: existing, replayed: true };
       }
 
-      const request = await tx.companySignupRequest.create({ data: { ...normalized, payloadHash } });
+      const request = await tx.companySignupRequest.create({ data: { ...normalized, ...derived, payloadHash } });
       await this.appendEvidence(tx, request, null, 'RECEIVED', correlationRequestId);
       return { request, replayed: false };
     });

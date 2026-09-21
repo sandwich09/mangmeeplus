@@ -72,8 +72,10 @@ describe('P10-L LIFF signup page', () => {
     assert.doesNotMatch(html, /<input id="contact-email"[^>]*\brequired\b/);
     assert.ok(html.includes('ก่อนชำระแพ็กเกจ'));
     assert.ok(!/<label for="phone-number">[^<]*ไม่บังคับ/.test(html), 'phone remains required');
-    assert.ok(html.includes('ยอมรับและเริ่มทดลองใช้ฟรี'));
-    assert.ok(html.includes('ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง'));
+    // R1 (Owner 2026-09-20): the page promises a shop, never free days.
+    assert.ok(html.includes('ยอมรับและเปิดร้าน'));
+    assert.ok(html.includes('เลือกแพ็กเกจเพื่อเริ่มใช้งานหลังเปิดร้าน (เริ่มต้น 249 บาทต่อเดือน)'));
+    assert.equal(html.includes('ทดลอง'), false, 'no trial is offered to a new shop any more');
     assert.equal(html.includes('progress-reference'), false, 'public signup never renders an internal request reference');
     assert.equal(html.includes('ไม่ต้องใส่บัตร'), false, 'dropped from the trial line (Owner 2026-09-05)');
   });
@@ -242,6 +244,7 @@ describe('P10-L LIFF client script', () => {
       companyName?: string;
       discoverySource?: string;
       discoverySourceOther?: string;
+      referralSalesCode?: string;
       fetchThrows?: Error;
       sendMessagesFails?: Error;
       stored?: Record<string, string>;
@@ -275,7 +278,7 @@ describe('P10-L LIFF client script', () => {
       detail: { textContent: '' },
       greeting: { textContent: '' },
       'form-title': { textContent: '' },
-      link: { disabled: true, textContent: 'ยอมรับและเริ่มทดลองใช้ฟรี', addEventListener: listen('link') },
+      link: { disabled: true, textContent: 'ยอมรับและเปิดร้าน', addEventListener: listen('link') },
       retry: { addEventListener: listen('retry') },
       'notice-action': { hidden: true, textContent: '', addEventListener: listen('notice-action') },
       'client-notice': { hidden: true },
@@ -305,8 +308,12 @@ describe('P10-L LIFF client script', () => {
       'discovery-other-fields': { hidden: true },
       'discovery-source-other': { ...input('discovery-source-other', options.discoverySourceOther ?? ''), disabled: true },
       'discovery-source-other-error': { textContent: '', hidden: true },
+      // D6: the "รหัสเซลล์" field, revealed by the SALES choice.
+      'discovery-sales-fields': { hidden: true },
+      'referral-sales-code': { ...input('referral-sales-code', options.referralSalesCode ?? ''), disabled: true },
+      'referral-sales-code-error': { textContent: '', hidden: true },
     };
-    const choices = ['WEBSITE', 'IG', 'TIKTOK', 'FACEBOOK', 'OTHER'].map((value) => ({
+    const choices = ['WEBSITE', 'IG', 'TIKTOK', 'FACEBOOK', 'SALES', 'OTHER'].map((value) => ({
       value, checked: value === options.discoverySource,
     }));
     const closeButtons = [{ addEventListener: listen('close') }];
@@ -815,7 +822,7 @@ describe('P10-L LIFF client script', () => {
         assert.match(h.elements.status!.textContent, /^กรอกข้อมูลให้ครบ 1 จุด/, label);
         // The button invites the retry it just asked for.
         assert.equal(h.elements.link!.disabled, false, label);
-        assert.equal(h.elements.link!.textContent, 'ยอมรับและเริ่มทดลองใช้ฟรี', label);
+        assert.equal(h.elements.link!.textContent, 'ยอมรับและเปิดร้าน', label);
       }
     });
 
@@ -875,7 +882,7 @@ describe('P10-L LIFF client script', () => {
       assert.match(h.elements.status!.textContent, /098-256-5628/, 'the support line the LINE copy already gives');
       assert.match(h.elements.status!.textContent, /\n/, 'advice sits on its own line');
       assert.equal(h.elements.link!.disabled, false);
-      assert.equal(h.elements.link!.textContent, 'ยอมรับและเริ่มทดลองใช้ฟรี', 'the original label is back');
+      assert.equal(h.elements.link!.textContent, 'ยอมรับและเปิดร้าน', 'the original label is back');
     });
 
     it('treats a rate limit as a warning and repeats the wait the server named', async () => {

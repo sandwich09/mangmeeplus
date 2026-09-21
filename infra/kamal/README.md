@@ -49,10 +49,16 @@ Ordinary preparation is for an enrolled target; first migration uses the separat
 It does not prove write permissions, migration compatibility with the live DB, target pull/start
 behavior, customer journeys, or future runtime readiness. A full accepted Production deployment has
 not been measured; UAT's timings are not a Production guarantee. Do not count preparation time as
-zero when reporting an end-to-end release. Hotfix `--prepared-build <build-directory>` can reuse an
-exact clean source/build only after checking every phase/log, source tree, image ID/architecture/label
-and AgentCore archive. It reruns selected regressions and full config/freshness checks. Preparation
+zero when reporting an end-to-end release. `--prepared-build <build-directory>` can reuse an exact
+clean main or isolated-hotfix build only after checking every phase/log, source tree, image
+ID/architecture/label and AgentCore archive. A hotfix still reruns its selected regressions; every
+path reruns full config/freshness checks. Preparation
 acceptance never substitutes live rollout, signing or customer acceptance.
+
+For UAT, prepare the reviewed exact main once and pass that run's `build/` directory to `--apply`.
+The apply path targets 600 seconds, caps an unprepared build at 240 seconds, and stops before the
+first provider/database mutation if pre-mutation work exceeds 360 seconds. This is a time boundary,
+not permission to skip validation or retry an unreconciled run.
 
 After review/CI and merge of the controller, choose one Production path:
 
@@ -222,7 +228,8 @@ private files. The `.env.*` paths are ignored by Git. The target must contain:
 | `repository`, `servicePrefix` | Existing environment ECR repository and `mangmee-…` Kamal service name |
 | `publicUrl` | Permanent public HTTPS origin |
 | `apiInternalUrl`, `aiInternalUrl` | Reachable HTTPS URLs ending in `/v1`; ingress routing/TLS already installed |
-| `sshKey` | Absolute local path to the private deployment key; optional `sshProxyCommand` for a verified bastion |
+| `sshKey` | Absolute local path to the private deployment key used inside the SSM SSH tunnel |
+| `sshTransport` | `ssm` for enrolled UAT/Production hosts; direct public SSH is legacy-only |
 | `acceptanceCredentials` | Absolute path to private acceptance account JSON below; omitted for explicit browser/smoke acceptance |
 | `browserAcceptanceUserId` | Expected account ID for the explicit environment browser flag; Production requires the current administrator above |
 | `agentcoreRuntimeArn` | Existing environment runtime ARN |
@@ -260,7 +267,7 @@ labels this evidence `operator_browser_attestation`. Runtime, health and public 
 again after the wait before retirement/signing. An interrupted process requires reconciliation.
 
 Local operator prerequisites: Git, Python3 (POSIX), pnpm, Node, Docker with Linux amd64 builds,
-AWS CLI, SSH, and a non-root deployment principal. Dependencies use the existing lockfile. The
+AWS CLI, Session Manager plugin, SSH, and a non-root deployment principal. Dependencies use the existing lockfile. The
 principal needs scoped EC2/ECS discovery, ECR publish/read, Secrets Manager read, AgentCore
 runtime/endpoint read and update, and versioned artifact S3 read/write; Real UAT and Production additionally
 need KMS sign/verify. Runtime roles separately need the application's DB/cache/storage/AI access.

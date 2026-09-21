@@ -111,10 +111,11 @@ test('a LINE review records one explicit outcome and only server-proven return t
   assert.match(source, /version: item\.version/);
 });
 
-test('repeat trials and shared contact data require explicit recorded review', () => {
-  assert.match(source, /requiresRepeatTrialGrant/);
-  assert.match(source, /grantRepeatTrial/);
-  assert.match(source, /trialGrantNote/);
+test('shared contact data requires explicit recorded review, a repeat applicant no longer does', () => {
+  // Owner 2026-09-20 (spec R1): there is no trial left to grant a second time, so a repeat
+  // applicant is approved like everyone else and the shop opens locked. The queue neither offers
+  // the grant nor warns that the row is parked — both described a decision that no longer exists.
+  assert.doesNotMatch(source, /requiresRepeatTrialGrant|grantRepeatTrial|trialGrantNote|อนุญาตทดลองใช้ฟรีเพิ่ม|รอจัดแพ็กเกจ/);
   assert.match(source, /contactEmailConflict/);
   assert.match(source, /acknowledgeSharedContact/);
   assert.match(source, /sharedContactNote/);
@@ -123,7 +124,6 @@ test('repeat trials and shared contact data require explicit recorded review', (
 
 test('recovery reuses the recorded review instead of posting fresh decision fields', () => {
   assert.match(source, /!finishing && \(resolutionAction === 'APPROVE' \|\| resolutionAction === 'CREATE_NEW_SHOP'\)/);
-  assert.match(source, /!finishing && resolutionAction === 'CREATE_NEW_SHOP' && item\.requiresRepeatTrialGrant/);
   assert.match(source, /!finishing && resolutionAction === 'CREATE_NEW_SHOP' && item\.contactEmailConflict/);
 });
 

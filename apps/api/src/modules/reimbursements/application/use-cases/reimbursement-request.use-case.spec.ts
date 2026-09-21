@@ -9,7 +9,7 @@ import {
   reimbursementPeriodKey,
 } from './reimbursement-request.use-case';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
-import { ROLE_GRANTS } from '../../../auth/permission-registry';
+import { PLATFORM_ROLE_KEYS, ROLE_GRANTS } from '../../../auth/permission-registry';
 import { compileRole } from '../../../employee-access/domain/logic/capability.logic';
 import { filterPermissionsByEntitlement } from '../../../employee-access/domain/logic/feature-gate.logic';
 import {
@@ -266,7 +266,10 @@ describe('preparing reimbursement for another member', () => {
 
 describe('every company role own reimbursement journey', () => {
   const roles = { ...ROLE_GRANTS, CUSTOM_READONLY: compileRole({ entitledFeatureKeys: null }).permissionKeys };
-  for (const [role, permissions] of Object.entries(roles).filter(([key]) => key !== 'SYSTEM_ADMIN')) {
+  // PLATFORM_ROLE_KEYS, not just SYSTEM_ADMIN: the มั่งมี sales roles are members of the platform
+  // tenant and hold no business permission at all (S29), so "every company role can file its own
+  // reimbursement" is not a rule about them.
+  for (const [role, permissions] of Object.entries(roles).filter(([key]) => !PLATFORM_ROLE_KEYS.includes(key))) {
     it(`${role} creates, attaches evidence, updates and submits its own draft`, async () => {
       const state = fakeRepo();
       const cases = useCases(state);

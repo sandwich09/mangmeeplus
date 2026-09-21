@@ -6,6 +6,7 @@ import { SubmitLineSignupUseCase, lineSignupPayloadHash } from './submit-line-si
 
 import { canonicalFingerprint } from '../../../common/security/canonical-fingerprint';
 import { SIGNUP_DISCOVERY_SOURCE_OPTIONS } from '@watchdog-bms/contracts';
+import type { SalesReferralService } from '../../sales-console/application/sales-referral.service';
 
 const RELEASE = currentLegalRelease('th');
 const LEGAL = { ...RELEASE, locale: 'th' };
@@ -214,7 +215,7 @@ function harness(options: {
   const opsAlerts = { raise: async (kind: string) => { alerts.push(kind); } } as any;
 
   return {
-    useCase: new SubmitLineSignupUseCase(prisma, config, core, lineIdToken, rateLimit, adminNotify, provision, opsAlerts),
+    useCase: new SubmitLineSignupUseCase(prisma, config, core, lineIdToken, rateLimit, adminNotify, provision, opsAlerts, stubSalesReferral()),
     created, advances, audits, updates, notified, provisioned, userQuotas, capCounts, locks, alerts,
     identityReads, emailReads, quotaRecords,
     current: () => request,
@@ -241,13 +242,30 @@ describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
   });
 
   it('keeps historical payload fingerprints when discovery is omitted', () => {
-    const input = { ...CMD, referralCode: null, discoverySource: null, discoverySourceOther: null };
+    const input = {
+      ...CMD, referralCode: null, discoverySource: null, discoverySourceOther: null,
+      // D6: a form that never showed the sales-code field must hash exactly as it did before the
+      // field existed, or every in-flight applicant meets line_signup_submission_conflict.
+      referralSalesCode: null,
+    };
     const verified = { providerUserId: 'Uline-1', channelId: 'channel-1' };
     assert.equal(lineSignupPayloadHash(input, verified), canonicalFingerprint({
       companyName: input.companyName, phoneNumber: input.phoneNumber, contactEmail: input.contactEmail,
       referralCode: null, intent: input.intent, legal: input.legal,
       lineProviderUserId: verified.providerUserId, lineChannelId: verified.channelId,
     }));
+  });
+
+  it('folds a sales code into the fingerprint when the applicant gave one', () => {
+    const verified = { providerUserId: 'Uline-1', channelId: 'channel-1' };
+    const base = { ...CMD, referralCode: null, discoverySource: null, discoverySourceOther: null, referralSalesCode: null };
+    const withCode = { ...base, discoverySource: 'SALES' as const, referralSalesCode: 'TON' };
+    assert.notEqual(lineSignupPayloadHash(base, verified), lineSignupPayloadHash(withCode, verified));
+    // Two different agents are two different submissions, not a replay of one.
+    assert.notEqual(
+      lineSignupPayloadHash(withCode, verified),
+      lineSignupPayloadHash({ ...withCode, referralSalesCode: 'LEAD' }, verified),
+    );
   });
 
   it('rejects malformed discovery before persisting', async () => {
@@ -797,3 +815,8 @@ describe('SubmitLineSignupUseCase — conflicts are exceptions, not silent succe
     await assert.rejects(() => h.useCase.execute(CMD, NOW), ConflictException);
   });
 });
+
+/** D6 is not what these specs exercise; an agentless resolver keeps every existing case unchanged. */
+function stubSalesReferral(): SalesReferralService {
+  return { resolveCode: async () => null } as unknown as SalesReferralService;
+}

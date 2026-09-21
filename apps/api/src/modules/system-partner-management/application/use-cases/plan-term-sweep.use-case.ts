@@ -9,6 +9,7 @@ import {
   WARNING_LADDER_DAYS,
   derivePlanTermState,
   expiredMessageTh,
+  planTermLockReason,
   warningLadderPoint,
   warningMessageTh,
 } from '../../domain/logic/plan-term.logic';
@@ -73,24 +74,30 @@ export class PlanTermSweepUseCase {
             where: { companyId: candidate.companyId }, include: { company: { select: { status: true, name: true } } },
           });
           if (!row || row.company.status !== 'ACTIVE' || row.termEndsAt > now) return false;
+          // Sales-deals spec R2 (Owner 2026-09-20): a zero-day term nobody renewed never had a
+          // package, so it never "expired" and its owner earns no such notice.
+          const lockReason = planTermLockReason(row);
           const billing = row.billingReceiptAccountId ? await tx.billingAccount.findUnique({ where: { id: row.billingReceiptAccountId } }) : null;
           const nextStep = ['CARD_ONCE', 'PROMPTPAY_ONCE'].includes(billing?.renewalMode ?? '')
             ? ' หากต้องการใช้ต่อให้ซื้อแพ็กเกจใหม่ในหน้าการชำระเงิน' : billing?.renewalMode === 'PROMPTPAY_RENEW'
               ? ' หากต้องการใช้ต่อให้เปิดบิลและสแกน QR ในหน้าการชำระเงิน' : '';
           await this.lifecycle.execute({
-            companyId: row.companyId, targetStatus: 'DISABLED', reason: 'term_expired',
+            companyId: row.companyId, targetStatus: 'DISABLED',
+            reason: lockReason === 'no_package' ? 'no_package' : 'term_expired',
             requestingAdminUserId: null, requestId: `plan-term-expired-${row.companyId}-${row.termEndsAt.getTime()}`,
           }, tx);
           await tx.companyPlanTerm.update({ where: { companyId: row.companyId }, data: {
             termDisabledAt: now, expiredNotifiedAt: now,
           } });
-          // NotificationEvent/Recipient/Delivery are already a durable queue. Commit them
-          // with the claim; the existing delivery worker owns all later network attempts.
-          await this.notify(row.companyId, row.company.name, {
-            trigger: PLAN_TERM_EXPIRED_TRIGGER, severity: 'critical', title: 'ร้านครบกำหนดใช้งาน',
-            body: (lineLinked) => expiredMessageTh(row.company.name, lineLinked) + nextStep,
-            periodKey: `expired:${row.termEndsAt.toISOString()}`,
-          }, tx);
+          if (lockReason !== 'no_package') {
+            // NotificationEvent/Recipient/Delivery are already a durable queue. Commit them
+            // with the claim; the existing delivery worker owns all later network attempts.
+            await this.notify(row.companyId, row.company.name, {
+              trigger: PLAN_TERM_EXPIRED_TRIGGER, severity: 'critical', title: 'ร้านครบกำหนดใช้งาน',
+              body: (lineLinked) => expiredMessageTh(row.company.name, lineLinked) + nextStep,
+              periodKey: `expired:${row.termEndsAt.toISOString()}`,
+            }, tx);
+          }
           return true;
         });
         if (changed) count++;

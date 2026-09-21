@@ -27,7 +27,8 @@ export default function BillingCompanyOverview({ company: c, overview, loading, 
     event.preventDefault(); if (key === 'history') setHistoryOpened(true);
     window.history.replaceState(null, '', viewHref(key));
   };
-  const sources = { TRIAL: 'ทดลองใช้ฟรี', MANUAL: 'ผู้ดูแลกำหนดให้', STRIPE: 'ซื้อผ่าน Stripe', OTHER_BILLING: 'บัญชีชำระเงินอื่น', NONE: 'ยังไม่มีข้อมูลแพ็กเกจ' };
+  // S43/D-P3-6: a deal is read from the contract attempt's snapshot, and sits next to วิธีต่ออายุ.
+  const sources = { TRIAL: 'ทดลองใช้ฟรี', MANUAL: 'ผู้ดูแลกำหนดให้', STRIPE: 'ซื้อผ่าน Stripe', DEAL: 'ดีลพิเศษจากทีมขาย', OTHER_BILLING: 'บัญชีชำระเงินอื่น', NONE: 'ยังไม่มีข้อมูลแพ็กเกจ' };
   return <div className="space-y-6">
     <section aria-label="ข้อมูลการชำระเงินบริษัท" className="space-y-5 rounded-xl border border-gray-200 bg-white p-4 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><Link onClick={leaving} href="/system/billing" className="inline-flex min-h-11 items-center text-sm text-gray-600 underline">กลับรายชื่อบริษัท</Link><h2 className="text-xl font-semibold text-gray-900">{c.companyName}</h2><p className="mt-2 text-sm text-gray-600">{billingLabel('company', c.companyStatus)}</p></div>

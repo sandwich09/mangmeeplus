@@ -98,8 +98,34 @@ export const SETTINGS_MENU_ITEMS: readonly SettingsMenuItem[] = [
   },
 ];
 
-export function filterSettingsMenuItems(userPermissions: readonly string[]): SettingsMenuItem[] {
-  return SETTINGS_MENU_ITEMS.filter((item) => canSeeRoute(item.href, userPermissions));
+/**
+ * `locked` = this shop has no usable package (spec §12): the hub keeps only the card it may still
+ * open, ข้อมูลร้านและบัญชีของฉัน, because every other card leads to a page the term guard refuses.
+ * Permissions still decide, so a member without them sees nothing extra by being locked.
+ */
+export function filterSettingsMenuItems(userPermissions: readonly string[], locked = false): SettingsMenuItem[] {
+  return SETTINGS_MENU_ITEMS.filter((item) => (!locked || item.key === 'company-profile')
+    && canSeeRoute(item.href, userPermissions));
+}
+
+/**
+ * ข้อมูลร้านและบัญชีของฉัน needs `company.setup.read`, which staff do not have — so in the locked
+ * shell their ตั้งค่า led to an empty hub, and the two account pages that DO work for them were
+ * behind no link at all. Both live outside the company workspace, which is why they survive a
+ * locked term; neither belongs in `SETTINGS_MENU_ITEMS`, whose items are company routes.
+ */
+export const LOCKED_ACCOUNT_CARD = {
+  title: 'บัญชีของฉัน',
+  desc: 'จัดการรหัสผ่านและอีเมลของบัญชีคุณ ใช้ได้แม้ร้านยังไม่มีแพ็กเกจ',
+  links: [
+    { key: 'password', label: 'เปลี่ยนรหัสผ่าน', href: '/change-password' },
+    { key: 'email', label: 'อีเมลบัญชี', href: '/account/email' },
+  ],
+} as const;
+
+/** Only when the locked hub would otherwise have nothing on it at all. */
+export function showsLockedAccountCard(userPermissions: readonly string[], locked: boolean): boolean {
+  return locked && filterSettingsMenuItems(userPermissions, true).length === 0;
 }
 
 const SETTINGS_SIDEBAR_KEYS = [
