@@ -80,7 +80,7 @@
 - [ ] `expense-export.logic.ts`: คอลัมน์ `vendor_address`
 - [ ] `sync-tax-events.use-case.ts`: `payeeSnapshot.address` จากรายจ่าย → ทะเบียน → null (4 จุด)
 - [ ] `packages/contracts`: `formatCompanyLegalAddress(addr): string`; `create-wht-certificate.use-case.ts:72` ใช้แทน `JSON.stringify` (BUG-1)
-- [ ] handoff prefill รับ `payeeAddressOverride`
+- [x] ที่อยู่ผู้ถูกหักบน handoff — ทำเป็นสามคอลัมน์ข้าง snapshot (`payeeAddress`, `payeeAddressByUserId`, `payeeAddressAt`) แทน `payeeAddressOverride` ใน prefill เพราะ prefill ถูกล็อกด้วย `prefillSnapshotHash` (2026-09-21)
 
 ทดสอบ: spec ของ export, sync-tax-events (address precedence), create-wht-certificate (payer address เป็นข้อความ), draft/review use case (บันทึก/ล็อก), formatter golden vectors
 

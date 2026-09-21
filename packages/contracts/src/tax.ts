@@ -368,6 +368,15 @@ export type WhtCertificateHandoffDto = {
   taxPeriodId: string | null;
   taxEventIds: string[];
   prefill: WhtHandoffPrefillDto;
+  /**
+   * §10: the payee address, typed on the handoff screen when the frozen prefill has none. A
+   * sibling of `prefill`, never a field inside it — `prefillSnapshotHash` guards that snapshot so
+   * the facts the operator copies cannot drift, and readers must prefer this over
+   * `prefill.payeeSnapshot.address`.
+   */
+  payeeAddress: string | null;
+  payeeAddressAt: string | null;
+  payeeAddressByUserId: string | null;
   externalCertificateNumber: string | null;
   externalEvidenceRef: string | null;
   externalIssuedDate: string | null;
@@ -376,7 +385,19 @@ export type WhtCertificateHandoffDto = {
   linkedByUserId: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * §7/§8: what the counterparty-registry side effect of a payee-address write did. Present on
+   * that write's response only, never on a read and never persisted — it drives one confirmation
+   * line or the "ยังไม่ได้บันทึกลงทะเบียนคู่ค้า" bar.
+   */
+  counterpartyAutoSave?: import('./accounting-documents.js').VendorCounterpartyAutoSaveResult;
 };
+
+/** §10: the operator supplies the missing payee address on a handoff still awaiting its document. */
+export type SetWhtHandoffPayeeAddressDto = { payeeAddress: string };
+
+/** Same 500-character ceiling as `ExpenseRecord.vendorAddressSnapshot` (§6). */
+export const WHT_HANDOFF_PAYEE_ADDRESS_MAX = 500;
 
 export type LinkExternalWhtCertificateDto = {
   commandId: string;

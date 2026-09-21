@@ -3,7 +3,7 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { LinkExternalWhtCertificateDto } from './tax.dtos';
+import { LinkExternalWhtCertificateDto, SetWhtHandoffPayeeAddressDto } from './tax.dtos';
 import { SyncTaxEventsUseCase } from '../../application/use-cases/sync-tax-events.use-case';
 import { GenerateVatReportUseCase } from '../../application/use-cases/generate-vat-report.use-case';
 import { GenerateWhtReportUseCase } from '../../application/use-cases/generate-wht-report.use-case';
@@ -220,6 +220,22 @@ export class TaxController {
   async getWhtHandoff(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('handoffId') handoffId: string) {
     assertRouteCompany(ctx, companyId);
     return this.whtHandoffs.get(ctx, handoffId);
+  }
+
+  @Post('wht/payment-handoffs/:handoffId/payee-address')
+  @HttpCode(200)
+  // Same key as the link, not `wht.certificate.read`: this writes the address that will be printed
+  // on the certificate, so whoever may record the document may supply it (§12.1 adds no new key).
+  @RequirePermissions('wht.external_certificate.link')
+  @ApiOperation({ summary: 'Supply the payee address a frozen 50 Tawi prefill never had' })
+  async setWhtHandoffPayeeAddress(
+    @ReqCtx() ctx: RequestContext,
+    @Param('companyId') companyId: string,
+    @Param('handoffId') handoffId: string,
+    @Body() body: SetWhtHandoffPayeeAddressDto,
+  ) {
+    assertRouteCompany(ctx, companyId);
+    return this.whtHandoffs.setPayeeAddress(ctx, handoffId, body);
   }
 
   @Post('wht/payment-handoffs/:handoffId/external-certificate')
