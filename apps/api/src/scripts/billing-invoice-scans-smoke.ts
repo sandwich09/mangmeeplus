@@ -1,3 +1,4 @@
+import { billingRateLimitWindowSeconds } from '../modules/billing/billing-rate-limit-window';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {expect} from '@playwright/test';
@@ -114,7 +115,7 @@ export async function checkBillingInvoiceScans(input:ProviderScansSmokeInput&{ro
     cases.push('invoice-discovery-invalid-stored-window-refused-and-real-postgresql-audit-failure-rolls-back-findings-and-checkpoint');
 
     if(input.browser){
-      await new Promise(resolve=>setTimeout(resolve,60000));
+      await new Promise(resolve=>setTimeout(resolve,(billingRateLimitWindowSeconds(60)+1)*1000));
       const {page,origin,evidenceDir}=input.browser;await page.setViewportSize({width:390,height:844});
       page.on('response',response=>{const path=new URL(response.url()).pathname;if(path.includes('/system/billing'))browserResponses.push({path,status:response.status()});});
       const detail=await request(`/v1/system/billing/companies/${companyId}`);assert.equal(detail.status,200,JSON.stringify({status:detail.status,code:detail.body?.code}));assert.equal(detail.body.accountId,account.id);
