@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ConflictException, Logger } from '@nestjs/common';
-import { Prisma } from '../../../generated/prisma/client';
+import { ConflictException } from '@nestjs/common';
 import { ProvisionSignupUseCase, mapBusinessCategory } from './provision-signup.use-case';
+import { PartnerLifecycleTransitionUseCase } from '../../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 
 const REQUEST = {
   id: 'signup-1',
@@ -26,6 +26,11 @@ const REQUEST = {
   repeatTrialGrantedAt: null as Date | null,
 };
 
+/** The no-package lock writes its own CRITICAL audit before this one, so the provisioning
+ *  evidence row is found by its action rather than by position (J1). */
+const provisionedAudit = (audits: any[]) =>
+  audits.find((entry) => entry.data.action === 'signup.request.provisioned')!.data;
+
 const CMD = {
   requestId: 'signup-1',
   correlationRequestId: 'req-1',
@@ -43,9 +48,11 @@ function harness(options: {
   /** §15.6 (c): the core reports a fence taken from an abandoned attempt. */
   reclaimedStale?: boolean;
   priorCompanyCount?: number;
-  /** F-09: how many rows the guarded trial-budget stamp matched, and whether a split policy blocked it. */
-  aiConfigStampCount?: number;
-  aiConfigGuardedCount?: number;
+  /** S23: the term row the no-package lock reads back. `undefined` = the zero-day row provisioning
+   *  just wrote; anything else is a shop that already had a term and must be left alone. */
+  existingTerm?: { termStartAt: Date; termEndsAt: Date; renewCount: number } | null;
+  /** What the lock finds the company at — DISABLED is a retry over an already-locked shop. */
+  companyStatus?: 'ACTIVE' | 'DISABLED';
 } = {}) {
   const onboardingCalls: any[] = [];
   const companyUpdates: any[] = [];
@@ -62,8 +69,34 @@ function harness(options: {
   const aiConfigStamps: any[] = [];
   const aiConfigGuardProbes: any[] = [];
   const lineContexts: any[] = [];
+  /** J1: what the no-package lock wrote — the company status flip and the term stamps. */
+  const lifecycleWrites: any[] = [];
+  const termLockWrites: any[] = [];
 
   const request = { ...REQUEST, ...(options.request ?? {}) };
+  const provisionedAt = new Date();
+  const lockedTerm = options.existingTerm === undefined
+    ? { termStartAt: provisionedAt, termEndsAt: provisionedAt, renewCount: 0 }
+    : options.existingTerm;
+  const companyStatus = options.companyStatus ?? 'ACTIVE';
+  // The transaction the lock opens: `lockPlanTermCompany` plus everything the real
+  // `PartnerLifecycleTransitionUseCase` touches, so the spec drives the actual writer.
+  const lockTx = {
+    $queryRaw: async () => [],
+    companyPlanTerm: {
+      findUnique: async () => lockedTerm && { ...lockedTerm, company: { status: companyStatus } },
+      update: async (args: any) => { termLockWrites.push(args); return {}; },
+      updateMany: async (args: any) => { planTermStamps.push(args); return { count: 1 }; },
+    },
+    company: {
+      findUnique: async () => ({ id: 'co-1', status: companyStatus, activatedAt: null, disabledAt: null, archivedAt: null }),
+      update: async (args: any) => {
+        lifecycleWrites.push(args);
+        return { id: 'co-1', status: args.data.status, activatedAt: null, disabledAt: args.data.disabledAt ?? null, archivedAt: null };
+      },
+    },
+    auditLog: { create: (args: any) => { audits.push(args); return Promise.resolve({}); } },
+  } as any;
 
   const prisma = {
     client: {
@@ -87,14 +120,14 @@ function harness(options: {
       },
       companyAiConfiguration: {
         upsert: async (args: any) => { aiConfigUpserts.push(args); return {}; },
-        // F-09: 0 = the guarded stamp matched nothing (an admin-set budget, or a split policy).
-        updateMany: async (args: any) => { aiConfigStamps.push(args); return { count: options.aiConfigStampCount ?? 1 }; },
-        count: async (args: any) => { aiConfigGuardProbes.push(args); return options.aiConfigGuardedCount ?? 0; },
+        // Kept so a regression that starts writing an AI budget again is RECORDED, not thrown.
+        updateMany: async (args: any) => { aiConfigStamps.push(args); return { count: 1 }; },
+        count: async (args: any) => { aiConfigGuardProbes.push(args); return 0; },
       },
       lineCompanyContext: { upsert: async (args: any) => { lineContexts.push(args); return {}; } },
       companySignupRequest: { update: (args: any) => { requestUpdates.push(args); return Promise.resolve({}); } },
       auditLog: { create: (args: any) => { audits.push(args); return Promise.resolve({}); } },
-      $transaction: async (ops: any[]) => Promise.all(ops),
+      $transaction: async (work: any) => (typeof work === 'function' ? work(lockTx) : Promise.all(work)),
     },
   } as any;
 
@@ -135,119 +168,99 @@ function harness(options: {
   const opsAlerts = { raise: async (kind: string) => { alerts.push(kind); } } as any;
 
   return {
-    useCase: new ProvisionSignupUseCase(prisma, core, onboarding, config, adminDirectory, lineNotify, opsAlerts),
+    useCase: new ProvisionSignupUseCase(prisma, core, onboarding, config, adminDirectory, lineNotify, opsAlerts,
+      new PartnerLifecycleTransitionUseCase(prisma)),
     onboardingCalls, companyUpdates, requestUpdates, audits, advances, completed, failures, planTermUpserts,
     planTermUpdates, planTermStamps, aiConfigUpserts, aiConfigStamps, aiConfigGuardProbes, lineContexts, linePushes, alerts,
+    lifecycleWrites, termLockWrites,
   };
 }
 
-describe('provisioning applies the free-trial term (P29 T3; Owner 2026-09-05)', () => {
-  it('names the free-trial 30-day term on the onboarding command, not by a second upsert', async () => {
+describe('provisioning opens the shop LOCKED (R1/J1, Owner 2026-09-20)', () => {
+  it('names a zero-day term on the onboarding command, not a 30-day trial', async () => {
     const h = harness();
     await h.useCase.execute(CMD);
     // Review B-01: onboarding is TOLD the tier rather than having one upserted over it afterwards,
     // because an upsert against an existing row cannot change a tier that is already wrong.
-    // Review R02: one trial for both sources. The web form used to grant PRO_999 here.
     assert.equal(h.onboardingCalls[0].planTier, 'FREE_TRIAL_15');
-    assert.equal(h.onboardingCalls[0].planDays, 30);
-    // The single upsert that follows is the warm-up guard, and its `update` side touches nothing
-    // but the warm-up — no tier, no dates, so it can never contradict what onboarding wrote.
+    assert.equal(h.onboardingCalls[0].planDays, 0, 'R1: no free days for a new shop');
+    // The repair upsert that follows opens the same zero-day term, so a recovered shop and a
+    // happy-path shop are locked for the same reason.
     assert.equal(h.planTermUpserts.length, 1);
-    // F9: the upsert writes nothing to a row that exists, so it can never contradict what
-    // onboarding wrote; the warm-up arrives through its own conditional stamp.
+    assert.equal(h.planTermUpserts[0].create.tierKey, 'FREE_TRIAL_15');
+    assert.equal(
+      h.planTermUpserts[0].create.termEndsAt.getTime(),
+      h.planTermUpserts[0].create.termStartAt.getTime(),
+    );
+    // S23/F9: the upsert writes NOTHING to a row that exists, so it can neither shorten a term nor
+    // contradict what onboarding wrote.
     assert.deepEqual(h.planTermUpserts[0].update, {});
-    assert.equal(h.planTermStamps[0].where.warmupUntil, null);
   });
-});
 
-/**
- * Owner 2026-09-05, second half: "the same free trial" means the same PRODUCT, not only the same
- * tier row. The AI budget cap and the first-week receipt ceiling were `line-oa`-only, so a web-form
- * shop on the identical trial tier still spent the PLATFORM default AI budget and read at its full
- * tier ceiling from day one.
- */
-describe('the trial guards are the same for both sources (Owner 2026-09-05)', () => {
-  it('caps a web-form trial shop the way a LINE trial shop is capped', async () => {
+  it('disables the company as no_package and stamps the expiry notice as already sent', async () => {
     const h = harness();
     await h.useCase.execute(CMD);
 
-    const term = h.planTermUpserts[0];
-    assert.ok(term, 'a web-form trial shop must get the warm-up guard too');
-    assert.equal(term.where.companyId, 'co-1');
-    assert.equal(h.planTermStamps[0].data.warmupSlipLimit, 10);
-    assert.ok(h.planTermStamps[0].data.warmupUntil.getTime() - Date.now() > 6.5 * 24 * 3600_000);
-    assert.equal(term.create.tierKey, 'FREE_TRIAL_15');
-    assert.equal(term.create.monthlySlipLimit, 15);
-    assert.equal(term.create.termEndsAt.getTime() - term.create.termStartAt.getTime(), 30 * 24 * 3600_000);
-    assert.equal(h.aiConfigUpserts[0]?.create.monthlyBudgetSatang, 8000);
-    assert.equal(h.aiConfigStamps[0]?.data.monthlyBudgetSatang, 8000);
+    // S02: DISABLED now, not in up to five minutes when the sweep next runs \u2014 that window is long
+    // enough for the LINE assistant to answer a shop that has never paid.
+    assert.equal(h.lifecycleWrites.length, 1);
+    assert.equal(h.lifecycleWrites[0].data.status, 'DISABLED');
+    assert.ok(h.lifecycleWrites[0].data.disabledAt instanceof Date);
+
+    const transition = h.audits.find((entry: any) => entry.data.action === 'system.partner_company.lifecycle.transition');
+    assert.ok(transition, 'the lifecycle writer owns the audit');
+    assert.equal(transition.data.metadataJson.reason, 'no_package');
+    assert.equal(transition.data.actorUserId, null, 'no human pulled this lever');
+    assert.equal(transition.data.metadataJson.toStatus, 'DISABLED');
+
+    assert.equal(h.termLockWrites.length, 1);
+    assert.ok(h.termLockWrites[0].data.termDisabledAt instanceof Date, 'what makes a purchase re-enable the shop');
+    // The "\u0e04\u0e23\u0e1a\u0e01\u0e33\u0e2b\u0e19\u0e14" notice is for a term that RAN OUT. Stamping it here is what keeps
+    // the sweep from telling a brand-new shop it lost something it never had.
+    assert.ok(h.termLockWrites[0].data.expiredNotifiedAt instanceof Date);
   });
 
-  it('writes identical guard rows whichever form the shop came in through', async () => {
-    const web = harness();
-    await web.useCase.execute(CMD);
-    const line = harness({ request: LINE_REQUEST });
-    await line.useCase.execute(CMD);
+  it('sets up nothing a trial used to need: no warm-up stamp, no AI budget row', async () => {
+    const h = harness();
+    await h.useCase.execute(CMD);
 
-    const shape = (upsert: any) => ({
-      ...upsert.create,
-      termStartAt: undefined, termEndsAt: undefined, warmupUntil: undefined,
-      update: upsert.update,
-    });
-    assert.deepEqual(shape(web.planTermUpserts[0]), shape(line.planTermUpserts[0]));
-    assert.deepEqual(web.aiConfigUpserts[0], line.aiConfigUpserts[0]);
-    assert.equal(web.planTermStamps[0].data.warmupSlipLimit, line.planTermStamps[0].data.warmupSlipLimit);
-    assert.deepEqual(web.aiConfigStamps[0], line.aiConfigStamps[0]);
+    // A shop that cannot talk to the assistant until it has a package spends nothing, so there is
+    // no cap to pre-set and no first-week receipt ceiling to write.
+    assert.deepEqual(h.planTermStamps, []);
+    assert.deepEqual(h.aiConfigUpserts, []);
+    assert.deepEqual(h.aiConfigStamps, []);
   });
 
   /**
-   * F9. These guards run on EVERY provisioning, including an admin retry weeks later. Stamping the
-   * warm-up unconditionally would re-cap a shop whose first week is long past, and stamping the
-   * budget unconditionally would silently undo an admin who raised it. Both must be written once
-   * and only once: on the row that has never had one.
+   * S23, the one thing this change must not break: a shop that is ALREADY running a term \u2014 the old
+   * 30-day trial, or a package it paid for \u2014 must come out of a provisioning retry untouched.
    */
-  it('never re-stamps the warm-up or the budget over a shop that already has them', async () => {
-    const h = harness();
+  it('never locks or shortens a shop that already has a running term (S23)', async () => {
+    const running = new Date(Date.now() + 20 * 24 * 3600_000);
+    const h = harness({ existingTerm: { termStartAt: new Date(Date.now() - 10 * 24 * 3600_000), termEndsAt: running, renewCount: 0 } });
     await h.useCase.execute(CMD);
 
-    // The upsert only fills a MISSING row — its update side writes nothing at all.
-    assert.deepEqual(h.planTermUpserts[0].update, {});
-    assert.deepEqual(h.aiConfigUpserts[0].update, {});
-    // The warm-up and the cap are then stamped conditionally, so a retry matches no row.
-    assert.equal(h.planTermStamps.length, 1);
-    assert.equal(h.planTermStamps[0].where.companyId, 'co-1');
-    assert.equal(h.planTermStamps[0].where.warmupUntil, null, 'only a term that never had a warm-up');
-    assert.equal(h.planTermStamps[0].data.warmupSlipLimit, 10);
-    assert.equal(h.aiConfigStamps.length, 1);
-    assert.equal(h.aiConfigStamps[0].where.monthlyBudgetSatang, null, 'only a budget nobody has set');
-    assert.equal(h.aiConfigStamps[0].data.monthlyBudgetSatang, 8000);
+    assert.deepEqual(h.planTermUpserts[0].update, {}, 'the upsert leaves the existing row alone');
+    assert.deepEqual(h.lifecycleWrites, [], 'a running trial is not a no-package shop');
+    assert.deepEqual(h.termLockWrites, []);
   });
 
-  it('F-09: the trial cap can only land on a SHARED row with nothing scheduled, and says so when it skips', async () => {
-    const h = harness();
+  it('is idempotent: a retry over an already-locked shop writes nothing', async () => {
+    const h = harness({ companyStatus: 'DISABLED' });
     await h.useCase.execute(CMD);
-    // The stamp itself carries the guard, so a SPLIT or already-scheduled company is never matched
-    // — a retry must not lower a total an admin allocated across CHAT and OCR (spec §11.4).
-    assert.equal(h.aiConfigStamps[0].where.budgetMode, 'SHARED');
-    assert.deepEqual(h.aiConfigStamps[0].where.pendingBudgetPolicy, { equals: Prisma.DbNull });
-    // The create path for a brand-new company is unchanged: no policy fields at all.
-    assert.deepEqual(Object.keys(h.aiConfigUpserts[0].create).sort(), ['companyId', 'monthlyBudgetSatang']);
 
-    const warns: any[] = [];
-    const originalWarn = Logger.prototype.warn;
-    Logger.prototype.warn = function warn(entry: any) { warns.push(entry); return undefined as any; };
-    try {
-      const skipped = harness({ aiConfigStampCount: 0, aiConfigGuardedCount: 1 });
-      await skipped.useCase.execute(CMD);
-      assert.equal(skipped.aiConfigGuardProbes.length, 1, 'it looks at WHY the stamp matched nothing');
-      assert.ok(warns.some((entry) => entry?.msg === 'signup.ai_budget.split_policy_preserved'));
-      // A plain "already has a budget" retry is silent — only a preserved split policy is logged.
-      warns.length = 0;
-      await harness({ aiConfigStampCount: 0, aiConfigGuardedCount: 0 }).useCase.execute(CMD);
-      assert.equal(warns.filter((entry) => entry?.msg === 'signup.ai_budget.split_policy_preserved').length, 0);
-    } finally {
-      Logger.prototype.warn = originalWarn;
-    }
+    assert.deepEqual(h.lifecycleWrites, []);
+    assert.deepEqual(h.termLockWrites, []);
+  });
+
+  it('a renewed term is never re-locked even though the row is the one provisioning wrote', async () => {
+    // `renewCount > 0` is what separates a shop that came back from one that never started, even
+    // when an admin's renew left `termEndsAt` in the past.
+    const past = new Date(Date.now() - 1000);
+    const h = harness({ existingTerm: { termStartAt: past, termEndsAt: past, renewCount: 2 } });
+    await h.useCase.execute(CMD);
+
+    assert.deepEqual(h.lifecycleWrites, []);
   });
 
   it('keeps the genuinely LINE-only guard off a web-form shop', async () => {
@@ -255,9 +268,20 @@ describe('the trial guards are the same for both sources (Owner 2026-09-05)', ()
     await h.useCase.execute(CMD);
 
     // LineCompanyContext points a LINE conversation at a shop. A web-form applicant has no LINE
-    // account yet — the welcome page's link step is where that arrives.
+    // account yet \u2014 the welcome page's link step is where that arrives.
     assert.deepEqual(h.lineContexts, []);
     assert.deepEqual(h.linePushes, []);
+  });
+
+  it('opens the same locked shop whichever form it came in through', async () => {
+    const web = harness();
+    await web.useCase.execute(CMD);
+    const line = harness({ request: LINE_REQUEST });
+    await line.useCase.execute(CMD);
+
+    const shape = (upsert: any) => ({ ...upsert.create, termStartAt: undefined, termEndsAt: undefined, update: upsert.update });
+    assert.deepEqual(shape(web.planTermUpserts[0]), shape(line.planTermUpserts[0]));
+    assert.equal(web.lifecycleWrites[0].data.status, line.lifecycleWrites[0].data.status);
   });
 });
 
@@ -346,7 +370,7 @@ describe('ProvisionSignupUseCase — new-user path', () => {
     const h = harness();
     await h.useCase.execute({ ...CMD, username: 'somchai' });
 
-    const audit = h.audits[0].data;
+    const audit = provisionedAudit(h.audits);
     assert.equal(audit.action, 'signup.request.provisioned');
     assert.equal(audit.riskLevel, 'HIGH');
     assert.deepEqual(audit.metadataJson, {
@@ -373,7 +397,7 @@ describe('ProvisionSignupUseCase — attach path', () => {
     assert.equal(cmd.claimedOwner.attachUserId, 'user-9');
     assert.equal(cmd.claimedOwner.passwordHash, undefined, 'attach never sets a password');
     assert.equal(result.attachedToExistingUser, true);
-    assert.equal(h.audits[0].data.metadataJson.emailKeptExisting, false);
+    assert.equal(provisionedAudit(h.audits).metadataJson.emailKeptExisting, false);
   });
 
   it('records that an existing different address was kept', async () => {
@@ -382,7 +406,7 @@ describe('ProvisionSignupUseCase — attach path', () => {
       existingOwnerEmail: 'other@example.com',
     });
     await h.useCase.execute(CMD);
-    assert.equal(h.audits[0].data.metadataJson.emailKeptExisting, true);
+    assert.equal(provisionedAudit(h.audits).metadataJson.emailKeptExisting, true);
   });
 
   it('does not flag a keep when the existing address is the same one', async () => {
@@ -391,7 +415,7 @@ describe('ProvisionSignupUseCase — attach path', () => {
       existingOwnerEmail: 'somchai@example.com',
     });
     await h.useCase.execute(CMD);
-    assert.equal(h.audits[0].data.metadataJson.emailKeptExisting, false);
+    assert.equal(provisionedAudit(h.audits).metadataJson.emailKeptExisting, false);
   });
 });
 
@@ -443,7 +467,7 @@ describe('ProvisionSignupUseCase — LINE-first source', () => {
     assert.equal(legacy.onboardingCalls[0].companyContactEmail, undefined);
   });
 
-  it('hands onboarding the LINE owner shape and the free trial preset', async () => {
+  it('hands onboarding the LINE owner shape and the zero-day preset', async () => {
     const h = harness({ request: LINE_REQUEST });
     await h.useCase.execute(CMD);
 
@@ -456,30 +480,26 @@ describe('ProvisionSignupUseCase — LINE-first source', () => {
     // those are the email-owner shape, and this owner has none of them.
     assert.deepEqual(cmd.claimedOwner, { phoneNumber: '0982565628' });
     assert.equal(cmd.planTier, 'FREE_TRIAL_15');
-    assert.equal(cmd.planDays, 30);
+    assert.equal(cmd.planDays, 0);
     // Spec §6: the acceptance time is the one from the application, not the provisioning clock.
     assert.equal(cmd.legalAcceptance.legalAcceptedAt.toISOString(), '2026-09-04T03:21:00.000Z');
     assert.equal(cmd.legalAcceptance.displayChallenge, 'c'.repeat(64));
   });
 
-  it('caps the first week, the AI spend and the LINE company context', async () => {
+  it('locks the shop and points the LINE conversation at it', async () => {
     const h = harness({ request: LINE_REQUEST });
     await h.useCase.execute(CMD);
 
-    // §9 warm-up: seven days, and the slip ceiling comes from config, not a literal. Upserted
-    // rather than updated (review HIGH-3): onboarding writes the term post-commit best-effort, so
-    // it may not be there, and a bare update would raise P2025 on a shop that already exists.
+    // Upserted rather than updated (review HIGH-3): onboarding writes the term post-commit
+    // best-effort, so it may not be there, and a bare update would raise P2025 on a shop that
+    // already exists. The create side repairs the same zero-day term onboarding was asked for.
     const term = h.planTermUpserts[0];
     assert.equal(term.where.companyId, 'co-1');
-    assert.equal(h.planTermStamps[0].data.warmupSlipLimit, 10);
-    assert.ok(h.planTermStamps[0].data.warmupUntil.getTime() - Date.now() > 6.5 * 24 * 3600_000);
-    // The create side is the full free-trial term, so a missing row is repaired, not half-written.
     assert.equal(term.create.tierKey, 'FREE_TRIAL_15');
     assert.equal(term.create.monthlySlipLimit, 15);
-    assert.equal(term.create.termEndsAt.getTime() - term.create.termStartAt.getTime(), 30 * 24 * 3600_000);
-    // Review G-06: without this the trial shop would spend the platform default budget.
-    assert.equal(h.aiConfigUpserts[0].create.monthlyBudgetSatang, 8000);
-    assert.equal(h.aiConfigStamps[0].data.monthlyBudgetSatang, 8000);
+    assert.equal(term.create.termEndsAt.getTime(), term.create.termStartAt.getTime());
+    // J1: and the shop is LOCKED before the LINE conversation is pointed at it.
+    assert.equal(h.lifecycleWrites[0].data.status, 'DISABLED');
     // Review B-06: the first receipt must land in the shop just opened, not in a company picker.
     assert.equal(h.lineContexts[0].where.lineUserId, 'Uline-1');
     assert.equal(h.lineContexts[0].create.companyId, 'co-1');
@@ -547,7 +567,7 @@ describe('ProvisionSignupUseCase — who counts as the operator', () => {
     const h = harness({ request: { ...LINE_REQUEST, approvedByUserId: null, autoApproved: true } });
     await h.useCase.execute(CMD);
 
-    const metadata = h.audits[0].data.metadataJson;
+    const metadata = provisionedAudit(h.audits).metadataJson;
     assert.equal(metadata.source, 'line-oa');
     assert.equal(metadata.autoApproved, true);
     assert.equal(metadata.operatorResolvedFromDirectory, true);
@@ -559,7 +579,7 @@ describe('ProvisionSignupUseCase — who counts as the operator', () => {
 });
 
 // Review LOW-3: the adopt path skips onboarding, and onboarding is where the plan term is written.
-// A recovered web shop with no CompanyPlanTerm reads as unlimited, not as a trial.
+// A recovered web shop with no CompanyPlanTerm reads as unlimited, not as a locked shop.
 describe('ProvisionSignupUseCase — recovering an already-created company', () => {
   it('gives a recovered web shop the term onboarding would have written', async () => {
     const h = harness({ request: { companyId: 'co-1', ownerUserId: 'user-1' } });
@@ -573,15 +593,15 @@ describe('ProvisionSignupUseCase — recovering an already-created company', () 
     assert.equal(h.planTermUpserts[0].create.monthlySlipLimit, 15);
     // Idempotent: a term the admin already set keeps its tier and its dates through a retry.
     assert.deepEqual(h.planTermUpserts[0].update, {});
-    // And the recovered shop is capped like every other trial shop — once, if it has no cap yet.
-    assert.equal(h.aiConfigStamps[0]?.data.monthlyBudgetSatang, 8000);
+    // And the recovered shop is locked like every other new shop.
+    assert.equal(h.lifecycleWrites[0].data.status, 'DISABLED');
   });
 
-  it('leaves a recovered LINE shop to its own trial guards', async () => {
+  it('leaves a recovered LINE shop to its own post-commit guards', async () => {
     const h = harness({ request: { ...LINE_REQUEST, companyId: 'co-1', ownerUserId: 'user-1' } });
     await h.useCase.execute(CMD);
 
-    // The trial guards upsert FREE_TRIAL_15 themselves; a second preset here would race them.
+    // The post-commit guards upsert FREE_TRIAL_15 themselves; a second preset here would race them.
     assert.equal(h.planTermUpserts.length, 1);
     assert.equal(h.planTermUpserts[0].create.tierKey, 'FREE_TRIAL_15');
   });

@@ -1,5 +1,6 @@
 import { canonicalFingerprint } from '../../../common/security/canonical-fingerprint';
 import { normalizeTaxId } from '../../data-model-core/domain/logic/company-legal-identity.logic';
+import { normalizeSignupDiscovery, normalizeSignupSalesCode } from './line-signup.logic';
 
 export const COMPANY_SIGNUP_STATES = [
   'RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_VERIFIED', 'PROVISIONING', 'READY',
@@ -46,6 +47,9 @@ export type CompanySignupInput = Readonly<{
   businessType?: string;
   phoneNumber?: string;
   vatRegistered?: boolean;
+  discoverySource?: string | null;
+  discoverySourceOther?: string | null;
+  referralSalesCode?: string | null;
 }>;
 
 export type NormalizedCompanySignupInput = Readonly<{
@@ -62,6 +66,15 @@ export type NormalizedCompanySignupInput = Readonly<{
   businessType: string | null;
   phoneNumber: string | null;
   vatRegistered: boolean | null;
+  /**
+   * D6. OPTIONAL on the normalised shape, not `| null`, on purpose: a form that did not ask the
+   * question must produce the exact same `companySignupPayloadHash` it produced before the field
+   * existed, or every in-flight applicant who resubmits meets `external_signup_payload_conflict`.
+   * Same conditional-spread discipline the LINE path already uses.
+   */
+  discoverySource?: string;
+  discoverySourceOther?: string | null;
+  referralSalesCode?: string;
 }>;
 
 // Flow B (spec §4): review comes before the single claim email, so VALIDATED can only reach
@@ -174,7 +187,23 @@ function optional(value: string | undefined, field: string, max: number): string
   return value?.trim() ? bounded(value, field, max) : null;
 }
 
+/** Present only when the form actually asked — see NormalizedCompanySignupInput above. */
+function discoveryFields(input: CompanySignupInput): Partial<NormalizedCompanySignupInput> {
+  if (input.discoverySource == null) return {};
+  const { discoverySource, discoverySourceOther } = normalizeSignupDiscovery(
+    input.discoverySource, input.discoverySourceOther ?? null,
+  );
+  if (!discoverySource) return {};
+  const referralSalesCode = normalizeSignupSalesCode(discoverySource, input.referralSalesCode ?? null);
+  return {
+    discoverySource,
+    discoverySourceOther,
+    ...(referralSalesCode ? { referralSalesCode } : {}),
+  };
+}
+
 export function normalizeCompanySignupInput(input: CompanySignupInput): NormalizedCompanySignupInput {
+  const discovery = discoveryFields(input);
   const rawTaxId = input.taxId?.trim();
   const taxId = rawTaxId ? normalizeTaxId(rawTaxId) : null;
   if (taxId !== null && !/^\d{13}$/.test(taxId)) throw new Error('invalid_taxId');
@@ -206,6 +235,9 @@ export function normalizeCompanySignupInput(input: CompanySignupInput): Normaliz
     contactEmail,
     consentVersion: bounded(input.consentVersion, 'consentVersion', 64),
     referralCode: optional(input.referralCode, 'referralCode', 128),
+    // D6 (controller addendum): the web form gains the same discovery question the LIFF form has,
+    // validated by the same shared normalisers so one answer cannot mean two things.
+    ...discovery,
     requestedOfferKey,
     businessType: optional(input.businessType, 'businessType', 120),
     phoneNumber,

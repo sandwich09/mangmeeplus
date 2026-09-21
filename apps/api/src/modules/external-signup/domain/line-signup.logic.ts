@@ -30,6 +30,21 @@ export function normalizeSignupDiscovery(source: unknown, other: unknown): {
   };
 }
 
+/**
+ * D6: the "รหัสเซลล์" field is only meaningful with discoverySource 'SALES'.
+ *
+ * A code typed under any other answer is dropped rather than refused — the customer switched
+ * their answer and the stale field came along for the ride; nothing about that is an error worth
+ * blocking a signup for. Shape is checked here; whether the code belongs to an ACTIVE agent is a
+ * database question the submit use-case answers (SALES_CODE_UNKNOWN).
+ */
+export function normalizeSignupSalesCode(source: unknown, code: unknown): string | null {
+  if (source !== 'SALES') return null;
+  if (code == null || (typeof code === 'string' && !code.trim())) return null;
+  if (typeof code !== 'string') throw new Error('line_signup_discovery_sales_code_invalid');
+  return code.trim().toUpperCase();
+}
+
 export function optionalLineContactEmail(value: unknown): string | null {
   if (value == null || (typeof value === 'string' && !value.trim())) return null;
   return requireLineContactEmail(value);

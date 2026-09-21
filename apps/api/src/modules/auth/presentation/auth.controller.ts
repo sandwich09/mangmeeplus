@@ -530,7 +530,7 @@ export class AuthController {
     // way the session exchange refuses to build a handoff URL it cannot point anywhere.
     const webBase = requiredWebAppBase(this.config.sesWebBaseUrl).replace(/\/+$/, '');
     return liffPageHtml({
-      title: 'เปิดร้านใหม่ ทดลองใช้ฟรี',
+      title: 'เปิดร้านใหม่',
       data: {
         'liff-mode': 'signup',
         'liff-id': this.config.lineLiffId ?? '',
@@ -566,7 +566,7 @@ export class AuthController {
         <p><button id="retry">ลองอีกครั้ง</button></p>
       </section>
       <section id="form-view" data-view hidden>
-        <h1 id="form-title">เปิดร้านใหม่ ทดลองใช้ฟรี</h1>
+        <h1 id="form-title">เปิดร้านใหม่</h1>
         <label for="company-name">ชื่อร้าน</label>
         <input id="company-name" type="text" maxlength="${LINE_SIGNUP_COMPANY_NAME_MAX}" autocomplete="organization" />
         <p id="company-name-error" class="field-error" hidden></p>
@@ -589,6 +589,12 @@ export class AuthController {
             <input id="discovery-source-other" type="text" maxlength="${SIGNUP_DISCOVERY_OTHER_MAX}" placeholder="เช่น เพื่อนแนะนำ" aria-describedby="discovery-source-other-error" disabled />
             <p id="discovery-source-other-error" class="field-error" hidden></p>
           </div>
+          <div id="discovery-sales-fields" hidden>
+            <label for="referral-sales-code">รหัสเซลล์</label>
+            <input id="referral-sales-code" type="text" maxlength="6" inputmode="latin" autocapitalize="characters" autocomplete="off" placeholder="เช่น TON" aria-describedby="referral-sales-code-help referral-sales-code-error" disabled />
+            <p id="referral-sales-code-help" class="fine">รหัส 3–6 ตัว ตัวอักษรหรือตัวเลข สอบถามจากเซลล์ที่ดูแลคุณ</p>
+            <p id="referral-sales-code-error" class="field-error" hidden></p>
+          </div>
         </fieldset>
         <section class="legal">
           <p>${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.titleTh)} และ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.privacy.titleTh)} ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.displayVersionTh)}</p>
@@ -600,8 +606,8 @@ export class AuthController {
           <p><a href="${escapeHtml(`${webBase}${CURRENT_LEGAL_DOCUMENTS.terms.latestHref}`)}" target="_blank" rel="noopener">อ่านข้อกำหนดการใช้งาน</a></p>
           <p><a href="${escapeHtml(`${webBase}${CURRENT_LEGAL_DOCUMENTS.privacy.latestHref}`)}" target="_blank" rel="noopener">อ่านประกาศความเป็นส่วนตัว</a></p>
         </section>
-        <p><button id="link" disabled>ยอมรับและเริ่มทดลองใช้ฟรี</button></p>
-        <p class="fine">ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง</p>
+        <p><button id="link" disabled>ยอมรับและเปิดร้าน</button></p>
+        <p class="fine">เลือกแพ็กเกจเพื่อเริ่มใช้งานหลังเปิดร้าน (เริ่มต้น 249 บาทต่อเดือน)</p>
         <button id="start-existing" type="button" class="secondary">เคยใช้แล้ว เข้าร้านเดิม</button>
         <button id="form-support" type="button" class="quiet">ติดต่อเจ้าหน้าที่</button>
       </section>
@@ -654,7 +660,7 @@ export class AuthController {
       <p id="status" class="notice notice-info">กำลังเปิดหน้าเว็บให้ค่ะ</p>
       <div id="companies" hidden></div>
       <p><button id="open-web" type="button" hidden>เปิดหน้าเว็บ</button></p>
-      <p><a id="go-signup" class="btn" href="/v1/auth/line/link-page/signup" hidden>เปิดร้านใหม่ ทดลองฟรี</a></p>
+      <p><a id="go-signup" class="btn" href="/v1/auth/line/link-page/signup" hidden>เปิดร้านใหม่</a></p>
       <p><button id="link">ลองอีกครั้ง</button></p>
       <pre id="detail"></pre>`,
     });

@@ -16,6 +16,7 @@ import { SignupClaimEmailService, ACCOUNT_CLAIM_EMAIL_EVENT_TYPE } from './signu
 import { SignupAdminNotifyService, SIGNUP_PENDING_REVIEW_EVENT_TYPE } from './signup-admin-notify.service';
 import { CLAIM_EXPIRY_AFTER_APPROVAL_DAYS } from '../domain/account-claim.logic';
 import type { CompanySignupInput } from '../domain/company-signup.logic';
+import type { SalesReferralService } from '../../sales-console/application/sales-referral.service';
 
 const DAY_MS = 86_400_000;
 
@@ -94,7 +95,7 @@ function submitHarness(row: Record<string, unknown>, outbox: ReturnType<typeof f
   );
   return {
     core,
-    useCase: new SubmitCompanySignupUseCase(prisma, core.service, adminNotify, async () => [{ exchange: 'mx' }]),
+    useCase: new SubmitCompanySignupUseCase(prisma, core.service, adminNotify, stubSalesReferral(), async () => [{ exchange: 'mx' }]),
   };
 }
 
@@ -229,3 +230,8 @@ describe('R09: a reissue restarts the activation window the sweep reads', () => 
     assert.equal(window < cutoff, false, 'a freshly reissued link must not be expired by the next sweep');
   });
 });
+
+/** D6 is not what these specs exercise; an agentless resolver keeps every existing case unchanged. */
+function stubSalesReferral(): SalesReferralService {
+  return { resolveCode: async () => null } as unknown as SalesReferralService;
+}

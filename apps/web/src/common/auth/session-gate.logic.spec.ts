@@ -1,8 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  canOpenSales,
   companyGateReturnPath,
   canOpenSystemBilling,
+  isSalesOnlySession,
   isSystemAdmin,
   legalAcceptanceContextCompanyId,
   legalAcceptancePath,
@@ -11,6 +13,7 @@ import {
   resolveLoginLanding,
   resolvePostLegalAcceptanceTarget,
   resolvePasswordChangeTarget,
+  salesGateReturnPath,
   shouldAttemptSessionRecovery,
   systemGateReturnPath,
 } from './session-gate.logic';
@@ -256,6 +259,67 @@ describe('systemGateReturnPath', () => {
       '//evil.example/system/x', 'https://evil.example/system/x', '/system/../login',
       '/legal-acceptance?next=/system/partners/c1', '/change-password']) {
       assert.equal(systemGateReturnPath(path), '/system/partners', String(path));
+    }
+  });
+});
+
+describe('sales console shell boundary (S07/S29)', () => {
+  const lead = () => session({
+    companyId: 'platform-tenant',
+    roles: ['MANGMEE_SALES_LEAD'],
+    permissions: ['sales.console.read', 'sales.company.search', 'sales.deal.create', 'sales.deal.approve',
+      'sales.team.manage', 'sales.report.read', 'account.password.change'],
+  });
+  const agent = () => session({
+    companyId: 'platform-tenant',
+    roles: ['MANGMEE_SALES'],
+    permissions: ['sales.console.read', 'sales.company.search', 'sales.deal.create', 'account.password.change'],
+  });
+
+  it('opens /sales for both sales roles and for a system admin, and for nobody else', () => {
+    assert.equal(canOpenSales(agent()), true);
+    assert.equal(canOpenSales(lead()), true);
+    assert.equal(canOpenSales(session({ roles: ['SYSTEM_ADMIN'], permissions: ['sales.console.read'] })), true);
+    assert.equal(canOpenSales(session()), false);
+    assert.equal(canOpenSales(session({ roles: ['SALES'], permissions: ['crm.sales.read'] })), false, 'the tenant SALES role is a different thing (S06)');
+  });
+
+  it('treats only a permission-less-outside-sales session as sales-only, so /system keeps working for an admin', () => {
+    assert.equal(isSalesOnlySession(agent()), true);
+    assert.equal(isSalesOnlySession(lead()), true);
+    assert.equal(isSalesOnlySession(session({ roles: ['SYSTEM_ADMIN'], permissions: ['sales.console.read'] })), false);
+    // A hypothetical hybrid membership keeps its business shell rather than losing it to the console.
+    assert.equal(isSalesOnlySession(session({ permissions: ['sales.console.read', 'expenses.read'] })), false);
+    assert.equal(isSalesOnlySession(session()), false);
+  });
+
+  it('lands a sales session on the console, ignoring the platform tenant home cookie it was given', () => {
+    // The login BFF derives the home path from `companyId`, which for these roles is มั่งมี's own
+    // tenant — following it would bounce off the workspace gate instead of opening anything.
+    assert.equal(resolveLoginLanding(null, '/companies/platform-tenant/dashboard', agent()), '/sales/deals');
+    assert.equal(resolveLoginLanding('/companies/platform-tenant/dashboard', undefined, agent()), '/sales/deals');
+    assert.equal(resolveLoginLanding('/sales/deals/deal-1', undefined, lead()), '/sales/deals/deal-1');
+    assert.equal(resolveLoginLanding(null, undefined, lead()), '/sales/deals');
+  });
+
+  it('keeps the legal gate in front of the console, exactly as it does for every other landing', () => {
+    const pending = session({ ...agent(), legalAcceptanceRequired: true });
+    assert.match(resolveLoginLanding(null, undefined, pending) ?? '', /^\/legal-acceptance\?/);
+    assert.match(resolveLoginLanding(null, undefined, pending) ?? '', /next=%2Fsales%2Fdeals/);
+  });
+
+  it('returns a sales session to the console after the legal gate, never to a company dashboard', () => {
+    assert.equal(resolvePostLegalAcceptanceTarget('/companies/platform-tenant/dashboard', agent()), '/sales/deals');
+    assert.equal(resolvePostLegalAcceptanceTarget('/sales/team', lead()), '/sales/team');
+    assert.equal(resolvePostLegalAcceptanceTarget(null, agent()), '/sales/deals');
+  });
+
+  it('preserves a /sales deep link through authentication, and refuses anything outside it', () => {
+    assert.equal(salesGateReturnPath('/sales/deals/deal-1?tab=preview'), '/sales/deals/deal-1?tab=preview');
+    for (const path of [null, undefined, '/', '/system/partners', '/companies/c1/dashboard',
+      '//evil.example/sales/x', 'https://evil.example/sales/x', '/change-password',
+      '/legal-acceptance?next=/sales/deals']) {
+      assert.equal(salesGateReturnPath(path), '/sales/deals', String(path));
     }
   });
 });

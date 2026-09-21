@@ -32,9 +32,10 @@ import { FeatureLaunchModule } from './modules/feature-launch/feature-launch.mod
 import { DataRightsModule } from './modules/data-rights/data-rights.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { ExternalSignupModule } from './modules/external-signup/external-signup.module';
+import { SalesConsoleModule } from './modules/sales-console/sales-console.module';
 
 @Module({
-  imports: [ConfigModule, LoggerModule, SecurityModule, DatabaseModule, HealthModule, AuthModule, AuditModule, DataModelCoreModule, InventoryModule, DashboardNotificationsModule, LineAiModule, AccountingDocumentsModule, ExpensesModule, LedgerModule, SystemOnboardingModule, SystemIdentityReconciliationModule, SystemPartnerManagementModule, TaxModule, ProcurementModule, BankingModule, ReimbursementsModule, CrmModule, CrmInboxModule, EmployeeAccessModule, WorkflowModule, AiDraftModule, ReportsModule, FeatureLaunchModule, DataRightsModule, ExternalSignupModule, BillingModule],
+  imports: [ConfigModule, LoggerModule, SecurityModule, DatabaseModule, HealthModule, AuthModule, AuditModule, DataModelCoreModule, InventoryModule, DashboardNotificationsModule, LineAiModule, AccountingDocumentsModule, ExpensesModule, LedgerModule, SystemOnboardingModule, SystemIdentityReconciliationModule, SystemPartnerManagementModule, TaxModule, ProcurementModule, BankingModule, ReimbursementsModule, CrmModule, CrmInboxModule, EmployeeAccessModule, WorkflowModule, AiDraftModule, ReportsModule, FeatureLaunchModule, DataRightsModule, ExternalSignupModule, SalesConsoleModule, BillingModule],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

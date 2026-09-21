@@ -570,24 +570,33 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     assert.equal(h.contextUpserts[0].update.companyId, 'company-existing');
   });
 
-  it('parks a repeat trial for plan review until an admin separately grants it with a note', async () => {
+  // R1 (Owner 2026-09-20): a repeat applicant used to park at PLAN_REVIEW until an admin granted a
+  // second free trial with a note. Nothing free is granted on approval now — the second shop opens
+  // LOCKED like the first — so approval goes straight through, and the repeat stays on the audit.
+  it('approves a repeat applicant in one step, with no trial grant to ask for', async () => {
     const h = harness({ request: LINE_REQUEST, priorOwnedCompany: true });
-    const parked = await h.useCase.decide(
+    const completed = await h.useCase.decide(
       'signup-1', { action: 'CREATE_NEW_SHOP', version: 1 }, 'admin-1', 'req-plan', URLS, NOW,
     );
-    assert.equal(parked.state, 'PENDING_REVIEW');
-    assert.equal(parked.resolution, 'PLAN_REVIEW');
-    assert.deepEqual(h.provisioned, [], 'plan review must not create an empty unusable shop');
+    assert.equal(completed.state, 'COMPLETED');
+    assert.equal(completed.resolution, 'NEW_SHOP');
+    assert.equal(h.provisioned.length, 1);
+    // The pattern is still recorded: whoever reads the trail can see this was a second shop.
+    const approved = h.audits.find((entry: any) => entry.data.action === 'signup.request.approved');
+    assert.equal(approved.data.metadataJson.repeatTrial, true);
+    assert.equal(h.updates.some((u: any) => u.data.repeatTrialGrantedAt), false, 'nothing is granted');
+  });
 
+  it('accepts and ignores an older console that still sends the trial-grant fields', async () => {
+    const h = harness({ request: LINE_REQUEST, priorOwnedCompany: true });
     const completed = await h.useCase.decide(
       'signup-1', {
-        action: 'CREATE_NEW_SHOP', version: 2, grantRepeatTrial: true,
+        action: 'CREATE_NEW_SHOP', version: 1, grantRepeatTrial: true,
         trialGrantNote: 'อนุมัติทดลองใช้งานรอบใหม่ตามแผนช่วยเหลือลูกค้า',
       }, 'admin-1', 'req-grant', URLS, NOW,
     );
     assert.equal(completed.state, 'COMPLETED');
-    assert.equal(h.updates[1].data.repeatTrialGrantedByUserId, 'admin-1');
-    assert.equal(h.provisioned.length, 1);
+    assert.equal(h.updates.some((u: any) => u.data.repeatTrialGrantedAt), false);
   });
 
   it('requires an explicit shared-contact acknowledgement before creating a conflicting shop', async () => {

@@ -30,7 +30,8 @@ export async function checkBillingMarketing(input: { page: Page; appOrigin: stri
     assert.equal(upstream.status, 200); assert.equal(upstream.headers.get('access-control-allow-origin'), '*');
     assert.match(upstream.headers.get('cache-control') ?? '', /no-store/);
     const catalog = await upstream.json() as BillingCatalog;
-    assert.equal(catalog.mode, 'TEST'); assert.equal(catalog.trial.menus, 7);
+    // R1: the catalog no longer advertises a trial block (Owner 2026-09-20).
+    assert.equal(catalog.mode, 'TEST'); assert.equal(catalog.trial, undefined);
     assert.doesNotMatch(JSON.stringify(catalog), /customerId|priceIds|secret|billingEmail|stripeAccountId/);
     if (displayFixture !== 'TEST') catalog.mode = 'LIVE'; // Display-only fixture, never provider mode.
     if (displayFixture === 'CHANGED') catalog.catalogRevision = '0'.repeat(64);

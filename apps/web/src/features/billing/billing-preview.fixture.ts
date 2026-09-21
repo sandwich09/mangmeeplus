@@ -1,9 +1,9 @@
-import { BILLING_PAID_TIERS, billingOffer, type BillingCatalog, type BillingStatus, type BillingQuote, type BillingOffer, type BillingCollectionOperation, type BillingEmailRecipientOperation } from '@watchdog-bms/contracts';
+import { BILLING_PAID_TIERS, billingOffer, type SalesDealCadence, type BillingCatalog, type BillingStatus, type BillingQuote, type BillingOffer, type BillingCollectionOperation, type BillingEmailRecipientOperation, type BillingPurchaseMode } from '@watchdog-bms/contracts';
 import type { billingApi } from './billing.api';
 import { companyBillingProfile } from '@watchdog-bms/contracts';
 
 export const previewScenarios = {
-  start: 'ทดลองใช้ → ซื้อแพ็กเกจแรก', manual: 'บริษัทเดิม / วันและเมนูที่จะเปลี่ยน', capacity: 'เลือกสาขาและผู้ใช้', 'capacity-work': 'งานค้างเกินแพ็กเกจที่เลือก', upgrade: 'มีแพ็กเกจ BASIC → ซื้อเพิ่มหรือเปลี่ยน', 'one-time': 'มีแพ็กเกจ BASIC แบบจ่ายครั้งเดียว',
+  start: 'ทดลองใช้ → ซื้อแพ็กเกจแรก', manual: 'บริษัทเดิม / วันและเมนูที่จะเปลี่ยน', deal: 'ข้อเสนอพิเศษจากทีมขาย', 'deal-auto': 'ข้อเสนอพิเศษ · ต่ออายุอัตโนมัติ', capacity: 'เลือกสาขาและผู้ใช้', 'capacity-work': 'งานค้างเกินแพ็กเกจที่เลือก', upgrade: 'มีแพ็กเกจ BASIC → ซื้อเพิ่มหรือเปลี่ยน', 'one-time': 'มีแพ็กเกจ BASIC แบบจ่ายครั้งเดียว',
   'one-time-pending': 'จ่ายแพ็กเกจรอบถัดไปแล้ว', 'one-time-capacity': 'จ่ายแล้ว · ต้องเลือกสิทธิ์ใหม่', 'scheduled-change': 'มีคำสั่งเปลี่ยนแพ็กเกจสิ้นรอบ', expired: 'แพ็กเกจหมดอายุ → ซื้อใหม่',
   pending: 'รอผลชำระเงิน', activating: 'จ่ายแล้ว รอเปิดสิทธิ์', success: 'สำเร็จ / ประวัติ', failed: 'ชำระไม่สำเร็จ',
   held: 'รอตรวจสอบ', 'quote-error': 'ราคาเปลี่ยน / ลองใหม่',
@@ -11,7 +11,7 @@ export const previewScenarios = {
 export type PreviewScenario = keyof typeof previewScenarios;
 
 // In-memory only: every method is supplied here, with no fallback to a live billing API.
-export function createBillingPreview(companyId: string, scenario: PreviewScenario, selected: Pick<BillingQuote, 'offer' | 'totalSatang' | 'purchase' | 'purchaseMode'> | null, onCheckout: (quote: Pick<BillingQuote, 'offer' | 'totalSatang' | 'purchase' | 'purchaseMode'>) => void) {
+export function createBillingPreview(companyId: string, scenario: PreviewScenario, selected: Pick<BillingQuote, 'offer' | 'totalSatang' | 'purchase' | 'purchaseMode' | 'deal'> | null, onCheckout: (quote: Pick<BillingQuote, 'offer' | 'totalSatang' | 'purchase' | 'purchaseMode' | 'deal'>) => void) {
   const date = (days = 0) => new Date(Date.now() + days * 86_400_000).toISOString();
   const currentOffer = selected?.offer ?? billingOffer('BASIC_499', 'month');
   // Preview uses calendar periods, matching the live anniversary/clamping rule.
@@ -28,8 +28,10 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
   const attempted = ['success', 'pending', 'activating', 'failed', 'held'].includes(scenario);
   const currentMode = scenario === 'one-time' || prepaidChange ? 'CARD_ONCE' : selected?.purchaseMode ?? 'CARD_AUTO';
   const currentOneTime = currentMode === 'CARD_ONCE' || currentMode === 'PROMPTPAY_ONCE';
+  // Phase 6: ENTERPRISE is a normal card here — live, the API opens it as soon as its Stripe prices
+  // are bound and keeps it COMING_SOON until then. `featureKeys` rides along from the tier presets.
   const offers: BillingOffer[] = (['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999'] as const).flatMap(tier => (['month', 'year'] as const).map(interval => ({
-    ...billingOffer(tier, interval), availability: tier === 'ENTERPRISE_1999' ? 'COMING_SOON' : 'AVAILABLE', reason: null,
+    ...billingOffer(tier, interval), availability: 'AVAILABLE', reason: null,
   })));
   const status: BillingStatus = {
     billingProfile: companyBillingProfile({ name: 'บริษัทตัวอย่าง · ข้อมูลพรีวิว', addressJson: {
@@ -51,6 +53,23 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
     usage: { used: selected ? 0 : 6, limit: paid ? selected?.purchase?.projectedRemainingReceipts ?? currentOffer.receiptAllowance : 15, remaining: paid ? selected?.purchase?.projectedRemainingReceipts ?? currentOffer.receiptAllowance - 6 : 9,
       cadence: 'PAID_GRANTS', resetsAt: null, expiresAt: prepaidChange ? currentPaidThrough : paidThrough }, issues: [],
   };
+  // S44: a separate scenario, so the four pinned modes and prices of the other previews never move.
+  // `status.deal` is the whole approved offer — the card draws from it alone, as it does live.
+  const previewDeal = {
+    dealId: 'preview-deal', base: 'PRO_999' as const, baseLabel: 'มืออาชีพ · ข้อเสนอพิเศษ',
+    priceSatang: 599_000, months: 12, branchLimit: 3, employeeLimit: 10, monthlySlipLimit: 500,
+    featureKeys: ['dashboard_notifications', 'expenses', 'reimbursement', 'reports'],
+    aiMonthlyBudgetSatang: 80_000, description: 'ราคาพิเศษสำหรับร้านที่เปิดใหม่ ทีมขายดูแลตลอดสัญญา',
+    offerExpiresAt: date(3), purchaseModes: ['CARD_ONCE', 'PROMPTPAY_ONCE'] as BillingPurchaseMode[],
+    autoRenew: false, cadence: null as SalesDealCadence | null, cycles: null as number | null,
+  };
+  if (scenario === 'deal') status.deal = previewDeal;
+  // D-P5-1/D-P5-4: the same offer sold per cycle instead of once — the card's modes, price line and
+  // confirm wording all change, and only a scenario shows all three together.
+  if (scenario === 'deal-auto') {
+    status.deal = { ...previewDeal, priceSatang: 79_900, months: 1, purchaseModes: ['CARD_AUTO', 'PROMPTPAY_RENEW'],
+      description: 'ราคาพิเศษต่อเนื่อง ทีมขายดูแลตลอดสัญญา', autoRenew: true, cadence: 'month' };
+  }
   if (scenario === 'scheduled-change') {
     status.pendingPlanChange = { id: 'preview-scheduled-change', companyId, action: 'SCHEDULE_DOWNGRADE', state: 'SUCCEEDED', version: 2,
       previewHash: 'preview-hash', effectiveAt: paidThrough, nextRenewalTotalSatang: 24900, expiresAt: date(1), observedAt: date(),
@@ -67,9 +86,9 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
   }
   let quote: BillingQuote | null = null, collection: BillingCollectionOperation | null = null, recipient: BillingEmailRecipientOperation | null = null;
   let quoteFailures = scenario === 'quote-error' ? 1 : 0;
+  // R1: no trial block — new signups get none (Owner 2026-09-20), so the preview no longer emits one.
   const catalog = (): BillingCatalog => ({ schemaVersion: 1, mode: 'TEST', policyRevision: 'preview-policy', catalogRevision: 'preview-catalog',
-    generatedAt: date(), validUntil: new Date(Date.now() + 60_000).toISOString(), taxTreatment: 'NOT_VAT_REGISTERED', offers,
-    trial: { tierKey: 'FREE_TRIAL_15', days: 30, monthlySlipLimit: 15, branchLimit: 1, employeeLimit: 2, menus: 7 } });
+    generatedAt: date(), validUntil: new Date(Date.now() + 60_000).toISOString(), taxTreatment: 'NOT_VAT_REGISTERED', offers, aiMonthlyBudgetSatang: 200_000 });
   const requiredQuote = () => {
     if (!quote) throw new Error('กรุณาเลือกแพ็กเกจและตรวจยอดก่อน');
     return quote;
@@ -80,9 +99,35 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
       refundedSatang: 0, disputed: false, financialObservedAt: date(), paymentState: 'PAID', applyState: status.applyState,
       periodStart: date(), periodEnd: paidThrough, createdAt: date(), hasDocuments: true }] : [], nextCursor: null }),
     attempt: async () => ({ attemptId: 'preview-attempt', state: status.applyState, errorCode: null, observedAt: date(),
-      paymentState: status.paymentState === 'PAID' ? 'PAID' : status.paymentState === 'FAILED' ? 'FAILED' : 'PENDING', applyState: status.applyState, invoiceReference: paid ? 'PREVIEW-0001' : null }),
-    quote: async (offerKey, interval, billingEmail, capacity, purchaseMode) => {
+      paymentState: status.paymentState === 'PAID' ? 'PAID' : status.paymentState === 'FAILED' ? 'FAILED' : 'PENDING', applyState: status.applyState, invoiceReference: paid ? 'PREVIEW-0001' : null,
+      // The attempt is what tells the return page a deal paid for this term.
+      ...(selected?.deal ? { deal: { dealId: previewDeal.dealId, baseLabel: previewDeal.baseLabel, months: previewDeal.months } } : {}) }),
+    quote: async (offerKey, interval, billingEmail, capacity, purchaseMode, dealId) => {
       if (quoteFailures-- > 0) throw Object.assign(new Error('ราคาเปลี่ยนแล้ว'), { code: 'BILLING_QUOTE_STALE' });
+      if (dealId) {
+        // Priced from the deal snapshot, never from the catalog row (S36): N months in one
+        // `intervalCount`, the deal's own limits, and receipts for the whole paid period. An
+        // auto-renewing deal instead sells ONE cycle at a time (D-P5-2), so its offer is the
+        // cadence with `intervalCount` 1 and a cycle's worth of receipts.
+        const live = status.deal;
+        const cycles = live?.autoRenew ? 1 : previewDeal.months;
+        const dealOffer = { ...billingOffer(previewDeal.base, live?.autoRenew ? live.cadence ?? 'month' : 'month'),
+          intervalCount: cycles, label: previewDeal.baseLabel,
+          priceSatang: live?.priceSatang ?? previewDeal.priceSatang, branchLimit: previewDeal.branchLimit, employeeLimit: previewDeal.employeeLimit,
+          monthlySlipLimit: previewDeal.monthlySlipLimit,
+          receiptAllowance: previewDeal.monthlySlipLimit * (live?.autoRenew && live.cadence === 'year' ? 12 : cycles),
+          availability: 'AVAILABLE', reason: null } as BillingOffer;
+        quote = { quoteId: 'preview-deal-quote', companyId, companyName: status.companyName, billingProfile: status.billingProfile,
+          policyRevision: 'preview-policy', expiresAt: date(1), offer: dealOffer, subtotalSatang: dealOffer.priceSatang, taxSatang: 0,
+          totalSatang: dealOffer.priceSatang, taxTreatment: 'NOT_VAT_REGISTERED', consentRevision: 'preview-consent',
+          purchaseMode: purchaseMode ?? 'CARD_ONCE', paidStart: 'IMMEDIATE', billingEmail, trialEndsAt: null, usage: status.usage,
+          previousSource: 'NO_TERM', previousTermEndsAt: null,
+          purchase: { kind: 'INITIAL', previousPaidThrough: null, projectedPaidThrough: date(previewDeal.months * 30),
+            receiptUnitsAdded: dealOffer.receiptAllowance, projectedRemainingReceipts: dealOffer.receiptAllowance },
+        };
+        quote.deal = { dealId: previewDeal.dealId, months: previewDeal.months, description: previewDeal.description, baseLabel: previewDeal.baseLabel };
+        return quote;
+      }
       if (['capacity', 'capacity-work'].includes(scenario) && !capacity) throw Object.assign(new Error('เลือกสิทธิ์ก่อน'), { code: 'BILLING_CAP_SELECTION_REQUIRED' });
       const offer = offers.find(item => item.offerKey === offerKey && item.interval === interval)!;
       const isRepeat = paid && offer.offerKey === currentOffer.offerKey && (offer.interval === currentOffer.interval || (!currentOneTime && currentOffer.interval === 'month' && offer.interval === 'year'));

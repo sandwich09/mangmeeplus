@@ -12,6 +12,8 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(page.getByRole('heading', { name: 'พรีวิวทุกขั้นตอน · เฉพาะ local', exact: true })).toBeVisible();
   const scenario = page.getByLabel('เลือกหน้าจอที่ต้องการดู', { exact: true });
   const plans = page.getByRole('region', { name: 'เลือกแพ็กเกจ', exact: true });
+  const card = (label: string) => plans.locator('article').filter({ has: page.getByRole('heading', { name: label, exact: true }) });
+  const starter = card('เริ่มต้น (STARTER)'), enterprise = card('ธุรกิจ (ENTERPRISE)');
   async function expectTopBack(name: string, content: Locator) {
     const back = page.getByRole('button', { name, exact: true });
     await expect(back).toHaveCount(1);
@@ -25,8 +27,23 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expectTopBack('กลับไปแพ็กเกจปัจจุบัน', plans);
   await expect(plans.getByText('แพ็กเกจปัจจุบัน', { exact: true })).toHaveCount(0);
   await plans.getByRole('button', { name: 'รายปี', exact: true }).click();
-  await expect(plans.getByText('เร็ว ๆ นี้', { exact: true })).toBeDisabled();
   await expect(plans).toContainText('ใช้งาน 12 เดือน · ประหยัด ฿498.00');
+  // Phase 6: ENTERPRISE is an ordinary card once its prices are bound, and every card carries the
+  // whole package — limits, receipts and AI credit on screen, the menu list one tap away.
+  await expect(plans.getByText('เร็ว ๆ นี้', { exact: true })).toHaveCount(0);
+  await expect(enterprise.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true })).toBeEnabled();
+  await expect(enterprise).toContainText('10 สาขา · 30 ผู้ใช้');
+  await expect(enterprise).toContainText('24,000 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
+  await expect(enterprise).toContainText('เครดิต AI: 2,000.00 บาท / เดือน');
+  await enterprise.getByText('ดูรายละเอียดทั้งหมด · 21 เมนู', { exact: true }).click();
+  await expect(enterprise.getByRole('listitem')).toHaveCount(21);
+  // The headline feature leads; ภาษี names what opened ENTERPRISE rather than just "ภาษี".
+  await expect(enterprise.getByRole('listitem').first()).toHaveText('✓ ผู้ช่วย AI ทาง LINE');
+  await expect(enterprise.getByRole('listitem').filter({ hasText: 'ภ.ง.ด.53' })).toHaveText('✓ ภาษี (ภ.ง.ด.53 และ 50 ทวิ)');
+  // The three smaller tiers share one menu set (TIER_FEATURE_PRESETS); only their limits differ.
+  await expect(starter).toContainText('1 สาขา · 2 ผู้ใช้');
+  await expect(starter).toContainText('360 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
+  await expect(starter.getByText('ดูรายละเอียดทั้งหมด · 6 เมนู', { exact: true })).toBeVisible();
   await plans.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).first().click();
   await expect(page.getByRole('heading', { name: /^ยืนยันซื้อ .* รายปี$/ })).toBeVisible();
   await expect(page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ', exact: true })).toContainText('การทดลองใช้จะสิ้นสุดเมื่อชำระสำเร็จ');
@@ -201,7 +218,6 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await plans.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).first().click();
   await expect(page.getByRole('heading', { name: /^ยืนยันซื้อ/ })).toBeVisible();
   await scenario.selectOption('expired');
-  const starter = plans.locator('article').filter({ has: page.getByRole('heading', { name: 'เริ่มต้น (STARTER)', exact: true }) });
   await expect(starter.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true })).toBeEnabled();
   await starter.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
   await expect(page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ' })).toContainText('เริ่มแพ็กเกจใหม่เมื่อชำระสำเร็จ');
@@ -457,6 +473,8 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await plans.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).first().click();
   await expect(page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ' })).toContainText('ต้องเปิดบิลและสแกน QR เอง');
   await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
+  // Open the largest package's menu list so the reviewed screenshot shows a card in full.
+  await enterprise.getByText('ดูรายละเอียดทั้งหมด · 21 เมนู', { exact: true }).click();
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: info.outputPath(`billing-preview-plans-${width}.png`), fullPage: true });
   await scenario.selectOption('start');

@@ -1,6 +1,6 @@
 import { assertAccountEmailProof, lockAccountEmail } from '../../auth/application/account-email-state';
 import { randomUUID } from 'node:crypto';
-import type { BillingOffer, BillingPolicy } from '@watchdog-bms/contracts';
+import type { BillingOffer, BillingPolicy, PaidTier } from '@watchdog-bms/contracts';
 import type { PrismaService } from '../../../common/database/prisma.service';
 import type { BillingAccount, BillingAttempt, Prisma } from '../../../generated/prisma/client';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
@@ -49,7 +49,7 @@ export class BillingRepeat {
     if (accepted.quote.offer.offerKey !== offer.offerKey || (accepted.quote.offer.interval !== offer.interval && !annualConversion)) {
       throw billingError('BILLING_PLAN_CHANGE_REQUIRED', 'กรุณาใช้รายการเปลี่ยนแพ็กเกจสำหรับการเปลี่ยนระดับหรือรอบชำระ');
     }
-    const zeroPriceId = policy.zeroPriceIds?.[`${offer.offerKey as 'STARTER_249' | 'BASIC_499' | 'PRO_999'}:${offer.interval}`];
+    const zeroPriceId = policy.zeroPriceIds?.[`${offer.offerKey as PaidTier}:${offer.interval}`];
     if (!zeroPriceId) throw billingError('BILLING_REPEAT_NOT_READY', 'การซื้อแพ็กเกจซ้ำยังไม่เปิดให้บริการ กรุณาติดต่อทีมงาน');
     const zero = await this.stripe.request('GET', `/prices/${zeroPriceId}`);
     assertStripePrice(zero, { ...offer, priceSatang: 0 }, policy, account.livemode, zeroPriceId);

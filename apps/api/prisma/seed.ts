@@ -2,6 +2,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client';
 import { syncPermissions } from './sync-permissions';
 import { hashPassword } from '../src/modules/auth/domain/logic/password-credential.logic';
+import { encryptCredential } from '../src/modules/system-partner-management/domain/logic/credential-cipher.logic';
 import { WORKFLOW_TEMPLATE_CATALOG } from '../src/modules/workflow/domain/workflow-template-catalog';
 import { PrismaWorkflowRepository } from '../src/modules/workflow/infrastructure/prisma-workflow.repository';
 import { autoEnableWorkflowTemplatesForCompany } from '../src/modules/workflow/application/use-cases/workflow-template.use-case';
@@ -25,6 +26,30 @@ const SEED_COMPANY_ID = 'seed-local-company';
 const SEED_OWNER_ID = 'seed-local-owner';
 const SEED_SYSTEM_COMPANY_ID = 'seed-watchdog-system-company';
 const SEED_SYSTEM_ADMIN_ID = 'seed-watchdog-system-admin';
+
+const SEED_SALES_LEAD_ID = 'seed-mangmee-sales-lead';
+const SEED_SALES_AGENT_ID = 'seed-mangmee-sales-agent';
+
+/** Fixed QA logins for the /sales console; the web e2e depends on these exact values. */
+const SEED_SALES_AGENTS: ReadonlyArray<{
+  id: string; username: string; displayName: string; password: string;
+  role: 'MANGMEE_SALES_LEAD' | 'MANGMEE_SALES'; salesCode: string; teamLeadUserId?: string;
+}> = [
+  { id: SEED_SALES_LEAD_ID, username: 'qa.mangmee.lead', displayName: 'QA หัวหน้าทีมขาย',
+    password: 'Qa@MangmeeLead123', role: 'MANGMEE_SALES_LEAD', salesCode: 'LEAD' },
+  { id: SEED_SALES_AGENT_ID, username: 'qa.mangmee.sales', displayName: 'QA เซลล์',
+    password: 'Qa@MangmeeSales123', role: 'MANGMEE_SALES', salesCode: 'TON', teamLeadUserId: SEED_SALES_LEAD_ID },
+];
+
+/**
+ * The seed runs without AppConfigService, so it reads the same env var the service does.
+ * A local database with no key set stores a clearly-marked placeholder rather than failing the
+ * whole seed — nothing downstream decrypts these two rows except a developer looking at them.
+ */
+function seedEncrypt(plain: string): string {
+  const hex = process.env['CREDENTIAL_ENCRYPTION_KEY'];
+  return hex ? encryptCredential(plain, Buffer.from(hex, 'hex')) : `seed-unencrypted:${plain}`;
+}
 
 const DEFAULT_COMPANY = { id: SEED_COMPANY_ID, name: 'WatchDog Local Company' };
 const SECOND_COMPANY = { id: 'seed-local-company-2', name: 'Bloom Beauty Clinic' };
@@ -2711,6 +2736,56 @@ async function main() {
     update: {},
     create: { membershipId: systemMembership.id, roleId: systemAdminRole.id },
   });
+
+  // ── QA sales-team accounts (Phase 2 sales console) ──────────────────────────────────
+  // Platform-tenant memberships, NOT tenant employees, so they stay out of QA_ROLE_ACCOUNTS:
+  // a sales agent has no EmployeeAccessProfile and no HR record anywhere (S09). The web e2e
+  // signs in as exactly these two, so `mustChangePassword` is false for both — the forced
+  // first-login change is exercised by the console's own create-agent flow instead.
+  for (const agent of SEED_SALES_AGENTS) {
+    const user = await prisma.user.upsert({
+      where: { username: agent.username },
+      update: { displayName: agent.displayName, status: 'ACTIVE' },
+      create: { id: agent.id, username: agent.username, displayName: agent.displayName, status: 'ACTIVE' },
+    });
+    // Same rule as the system admin above: never overwrite a password a QA run has changed.
+    await prisma.userCredential.upsert({
+      where: { userId: user.id },
+      update: { status: 'ACTIVE', mustChangePassword: false, expiresAt: null },
+      create: { userId: user.id, passwordHash: hashPassword(agent.password), status: 'ACTIVE', mustChangePassword: false },
+    });
+    const membership = await prisma.companyMembership.upsert({
+      where: { companyId_userId: { companyId: systemCompany.id, userId: user.id } },
+      update: { status: 'ACTIVE' },
+      create: { companyId: systemCompany.id, userId: user.id, status: 'ACTIVE' },
+    });
+    const role = await prisma.role.findUniqueOrThrow({ where: { scopeKey_key: { scopeKey: 'system', key: agent.role } } });
+    await prisma.membershipRole.upsert({
+      where: { membershipId_roleId: { membershipId: membership.id, roleId: role.id } },
+      update: {},
+      create: { membershipId: membership.id, roleId: role.id },
+    });
+    // Dummy PII, encrypted exactly as the console encrypts it, so a local run exercises the
+    // decrypt path and the CSV export without inventing a second storage shape.
+    await prisma.salesAgentProfile.upsert({
+      where: { userId: user.id },
+      update: { salesCode: agent.salesCode, status: 'ACTIVE', teamLeadUserId: agent.teamLeadUserId ?? null },
+      create: {
+        userId: user.id,
+        teamLeadUserId: agent.teamLeadUserId ?? null,
+        salesCode: agent.salesCode,
+        legalName: agent.displayName,
+        nationalIdEncrypted: seedEncrypt('1103700000001'),
+        taxIdEncrypted: null,
+        address: '1 ถนนทดสอบ แขวงทดสอบ เขตทดสอบ กรุงเทพมหานคร 10110',
+        bankName: 'กสิกรไทย',
+        bankAccountEncrypted: seedEncrypt('1234567890'),
+        whtRatePercent: 3,
+        status: 'ACTIVE',
+        createdByUserId: systemAdmin.id,
+      },
+    });
+  }
 
   // Default local company
   const company = await prisma.company.upsert({
