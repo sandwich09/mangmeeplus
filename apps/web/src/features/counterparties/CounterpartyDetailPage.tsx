@@ -20,6 +20,7 @@ import {
   counterpartyFormIssue,
   counterpartyFormValues,
   counterpartyPayload,
+  counterpartyUsageBadges,
 } from './counterparties.logic';
 import {
   COUNTERPARTY_MANAGE_PERMISSION,
@@ -164,7 +165,9 @@ export function CounterpartyDetailPage({ companyId, counterpartyId, permissions 
     setSaveError(null);
     setSaved(false);
     try {
-      await promoteSeenAddress(companyId, counterpartyId, addressText);
+      // §11.1/§15: same conflict handling as `save()` below — a stale token answers
+      // `counterparty_conflict`, which the shared catch block turns into the reload prompt.
+      await promoteSeenAddress(companyId, counterpartyId, addressText, detail.updatedAt);
       setReload((value) => value + 1);
       toast.success(t('counterparties.history_promoted', locale));
     } catch (cause) {
@@ -248,12 +251,11 @@ export function CounterpartyDetailPage({ companyId, counterpartyId, permissions 
 
 /** A5: what the documents say, in place of the customer/vendor picker this screen no longer has. */
 function UsageBadges({ detail, locale }: { detail: CounterpartyDetail; locale: SupportedLocale }) {
-  const bought = detail.usageCounts?.bought ?? 0;
-  const sold = detail.usageCounts?.sold ?? 0;
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {bought > 0 && <MangmeeBadge tone="sky">{withParams(t('counterparties.badge_bought', locale), { count: String(bought) })}</MangmeeBadge>}
-      {sold > 0 && <MangmeeBadge tone="brand">{withParams(t('counterparties.badge_sold', locale), { count: String(sold) })}</MangmeeBadge>}
+      {counterpartyUsageBadges(detail).map((badge) => (
+        <MangmeeBadge key={badge.messageKey} tone={badge.tone}>{withParams(t(badge.messageKey, locale), badge.params)}</MangmeeBadge>
+      ))}
       {counterpartyAddressMissing(detail) && (
         <MangmeeBadge tone="amber">{t('counterparties.badge_address_missing', locale)}</MangmeeBadge>
       )}

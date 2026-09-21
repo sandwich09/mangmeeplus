@@ -19,6 +19,7 @@ import {
   counterpartyFormValues,
   counterpartyHref,
   counterpartyPayload,
+  counterpartyUsageBadges,
 } from './counterparties.logic';
 import {
   COUNTERPARTY_MANAGE_PERMISSION,
@@ -192,6 +193,9 @@ function CounterpartyRow({ companyId, row }: { companyId: string; row: Counterpa
       >
         <div className="flex flex-wrap items-center gap-2">
           <span className="min-w-0 break-words font-semibold text-gray-800">{row.displayName}</span>
+          {counterpartyUsageBadges(row).map((badge) => (
+            <MangmeeBadge key={badge.messageKey} tone={badge.tone}>{withParams(t(badge.messageKey, locale), badge.params)}</MangmeeBadge>
+          ))}
           {counterpartyAddressMissing(row) && (
             <MangmeeBadge tone="amber">{t('counterparties.badge_address_missing', locale)}</MangmeeBadge>
           )}

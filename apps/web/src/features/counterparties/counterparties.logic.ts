@@ -8,6 +8,7 @@ import {
   type CounterpartyFormIssue,
   type CounterpartyFormValues,
   type CounterpartySummary,
+  type CounterpartyUsageBadge,
 } from './counterparties.model';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -60,6 +61,19 @@ export function counterpartyAddress(json: unknown): CounterpartyAddressView {
 
 export function counterpartyAddressMissing(row: Pick<CounterpartySummary, 'billingAddressJson'>): boolean {
   return counterpartyAddressText(row.billingAddressJson).length === 0;
+}
+
+/**
+ * §11.1: "เคยซื้อ N ใบ / เคยขาย N ใบ", each hidden at 0. Built once here so the list row and the
+ * detail page render identical badges instead of two hand-written copies drifting apart.
+ */
+export function counterpartyUsageBadges(row: Pick<CounterpartySummary, 'usageCounts'>): CounterpartyUsageBadge[] {
+  const bought = row.usageCounts?.bought ?? 0;
+  const sold = row.usageCounts?.sold ?? 0;
+  const badges: CounterpartyUsageBadge[] = [];
+  if (bought > 0) badges.push({ tone: 'sky', messageKey: 'counterparties.badge_bought', params: { count: String(bought) } });
+  if (sold > 0) badges.push({ tone: 'brand', messageKey: 'counterparties.badge_sold', params: { count: String(sold) } });
+  return badges;
 }
 
 /** One line for a list row: newlines are what a pasted document address is full of. */
