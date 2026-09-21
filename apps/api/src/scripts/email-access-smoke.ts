@@ -82,9 +82,17 @@ export async function checkEmailAccess(input: { app: INestApplication; prisma: P
     await page.waitForURL(`**/companies/${request.companyId}/**`);
     const me = await customer.request.get(`${browser.origin}/api/v1/auth/me`);
     assert.equal(me.status(), 200); assert.equal((await me.json()).userId, owner.id);
+    // R1 (Owner 2026-09-20): a new shop opens on a zero-day term and is locked until it buys a
+    // package, so the receipt screen below is out of reach until one exists. `signup-journey-smoke`
+    // owns the locked shell itself; here the bought package is written straight to the two rows the
+    // lock touched, with the DISABLED check so the fixture cannot quietly become a no-op.
+    assert.equal((await db.company.findUniqueOrThrow({ where: { id: request.companyId } })).status, 'DISABLED');
+    await db.company.update({ where: { id: request.companyId }, data: { status: 'ACTIVE', activatedAt: new Date(), disabledAt: null } });
+    await db.companyPlanTerm.update({ where: { companyId: request.companyId }, data: { termEndsAt: new Date(Date.now() + 86400000), termDisabledAt: null } });
+    const paidTerm = await db.companyPlanTerm.findUniqueOrThrow({ where: { companyId: request.companyId } });
     await page.goto(`${browser.origin}/companies/${request.companyId}/expenses/upload`, { waitUntil: 'domcontentloaded' });
     await page.locator('fieldset:not([disabled]) input[type="file"]').first().waitFor({ state: 'attached' });
-    cases.push('browser email→OTP→reload→short form→one trial/company→HttpOnly session; no password or raw auth tokens');
+    cases.push('browser email→OTP→reload→short form→one term/company→HttpOnly session; no password or raw auth tokens');
     await customer.clearCookies();
     await db.emailAccessChallenge.update({ where: { id: issued.challengeId }, data: { createdAt: new Date(Date.now() - 61_000) } });
     await send(`/companies/${request.companyId}/expenses/upload`);
@@ -95,8 +103,8 @@ export async function checkEmailAccess(input: { app: INestApplication; prisma: P
     await page.waitForURL(`**/companies/${request.companyId}/expenses/upload`);
     assert.equal(await db.companySignupRequest.count({ where: { source: 'email-otp', contactEmail: recipient } }), 1);
     const unchanged = await db.companyPlanTerm.findUniqueOrThrow({ where: { companyId: request.companyId } });
-    assert.equal(unchanged.termEndsAt?.getTime(), term.termEndsAt?.getTime());
-    cases.push('logout/new browser proof→same account/company; no second trial or date reset');
+    assert.equal(unchanged.termEndsAt?.getTime(), paidTerm.termEndsAt?.getTime());
+    cases.push('logout/new browser proof→same account/company; no second shop or date reset');
     await page.goto(`${browser.origin}/companies/${request.companyId}/expenses/upload`, { waitUntil: 'domcontentloaded' });
     await page.locator('fieldset:not([disabled]) input[type="file"]').first().waitFor({ state: 'attached' });
     await page.screenshot({ path: `${browser.evidenceDir}/email-returning-390.png`, fullPage: true });
@@ -141,14 +149,14 @@ export async function checkEmailAccess(input: { app: INestApplication; prisma: P
     assert.equal((await approved).status(), 200);
     const finalTerm = await db.companyPlanTerm.findUniqueOrThrow({ where: { companyId: stranded.companyId } });
     assert.equal(finalTerm.termEndsAt?.getTime(), priorTerm.termEndsAt?.getTime());
-    cases.push('admin UI source-aware approval→synthetic crash after company commit→retry adopts same shop/trial without resetting dates');
+    cases.push('admin UI source-aware approval→synthetic crash after company commit→retry adopts same shop/term without resetting dates');
     await page.getByRole('button', { name: 'ตรวจสถานะอีกครั้ง', exact: true }).click();
     await page.waitForURL('**/legal-acceptance?**');
     const resolved = await db.companySignupRequest.findUniqueOrThrow({ where: { id: manual.id } });
     assert.ok(resolved.ownerUserId && resolved.companyId);
     assert.equal(await db.userCredential.count({ where: { userId: resolved.ownerUserId } }), 0);
     assert.equal(await db.emailSendAttempt.count({ where: { signupRequestId: manual.id, purpose: 'account_claim' } }), 0);
-    cases.push('manual review has no early account/trial→real admin approval→same proof resumes passwordless→no legacy claim email');
+    cases.push('manual review has no early account/term→real admin approval→same proof resumes passwordless→no legacy claim email');
     return cases;
   } finally {
     for (const [key, descriptor] of saved) { if (descriptor) Object.defineProperty(config, key, descriptor); else delete (config as any)[key]; }

@@ -116,7 +116,12 @@ export async function checkSignupJourney(input:{app:INestApplication;prisma:Pris
     assert.equal(after.companyId,createdCompany);assert.equal(after.pendingPasswordHash,null);assert.equal(after.state,'LINE_LINK_PENDING');assert.ok(createdUser);
     const newTerm=await db.companyPlanTerm.findUniqueOrThrow({where:{companyId:createdCompany}});
     assert.equal(newTerm.tierKey,'FREE_TRIAL_15');assert.equal(newTerm.monthlySlipLimit,15);assert.equal(newTerm.branchLimit,1);assert.equal(newTerm.employeeLimit,2);
-    assert.ok(newTerm.termEndsAt.getTime()-newTerm.termStartAt.getTime()>=29*86400000);
+    // R1/J1 (Owner 2026-09-20): no free trial. The term opens and ends in the same instant, and
+    // provisioning locks the shop with it rather than leaving that to the five-minute sweep — so
+    // the notice stamp is already spent and no "ครบกำหนด" mail is owed to a shop that never paid.
+    assert.equal(newTerm.termEndsAt.getTime(),newTerm.termStartAt.getTime());assert.equal(newTerm.renewCount,0);
+    assert.ok(newTerm.termDisabledAt);assert.ok(newTerm.expiredNotifiedAt);
+    assert.equal((await db.company.findUniqueOrThrow({where:{id:createdCompany}})).status,'DISABLED');
     const enabled=await db.companyFeatureEntitlement.findMany({where:{companyId:createdCompany,enabled:true}});
     assert.deepEqual(enabled.map(r=>r.featureKey).sort(),[...FEATURE_PACKAGE_PRESETS.starter.featureKeys].sort());
     assert.equal(await db.externalIdentity.count({where:{userId:createdUser,provider:'LINE'}}),0);
@@ -132,6 +137,33 @@ export async function checkSignupJourney(input:{app:INestApplication;prisma:Pris
       await page.getByRole('link',{name:'ไว้ทีหลัง — เข้าใช้งานเลย',exact:true}).click();
     }
     await page.waitForURL(`**/companies/${createdCompany}/**`);
+    // Spec §12: the whole web of a shop with no package — ตั้งค่า and, for the owner, แพ็กเกจ —
+    // and every other path bounced to /renew before a business page can mount. Strings are copied
+    // from `PLAN_LOCK_COPY` in apps/web; the API cannot import the web package.
+    await page.waitForURL(`**/companies/${createdCompany}/renew`);
+    await page.getByText('ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ · เลือกแพ็กเกจเพื่อเริ่มใช้งาน',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'สลับเมนู',exact:true}).click();
+    assert.deepEqual(await page.locator('aside nav a').allInnerTexts(),['ตั้งค่า','แพ็กเกจ']);
+    await page.goto(`${browser.origin}/companies/${createdCompany}/expenses/upload`,{waitUntil:'domcontentloaded'});
+    await page.waitForURL(`**/companies/${createdCompany}/renew`);
+    assert.equal(await page.locator('input[type="file"]').count(),0);
+    // Same refusal from outside the shell: the lock is the API's, not the router's. A no-package
+    // shop is DISABLED, so context resolution turns it away before the term check can name
+    // `company_term_expired` — that code is left for an ACTIVE shop whose term just ran out.
+    const blocked=await customer.request.get(`${browser.origin}/api/v1/companies/${createdCompany}/expenses`,{headers:{Origin:browser.origin}});
+    assert.equal(blocked.status(),403);assert.equal((await blocked.json()).message,'Company is not active.');
+    const catalogRead=page.waitForResponse(r=>r.url().endsWith('/billing/catalog'));
+    await page.goto(`${browser.origin}/companies/${createdCompany}/billing`,{waitUntil:'domcontentloaded'});
+    await page.getByRole('heading',{name:'ยังไม่มีแพ็กเกจ',exact:true}).waitFor();
+    assert.equal((await catalogRead).status(),200);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+    await page.screenshot({path:`${browser.evidenceDir}/signup-locked-package-mobile.png`});
+    // What buying a package leaves behind, written straight to the rows the lock touched: the
+    // company back to ACTIVE and a term with days left. Everything below is the journey a paying
+    // shop then walks, unchanged.
+    await db.company.update({where:{id:createdCompany},data:{status:'ACTIVE',activatedAt:new Date(),disabledAt:null}});
+    await db.companyPlanTerm.update({where:{companyId:createdCompany},data:{termEndsAt:new Date(Date.now()+86400000),termDisabledAt:null}});
+    const paidTerm=await db.companyPlanTerm.findUniqueOrThrow({where:{companyId:createdCompany}});
     await page.goto(`${browser.origin}/companies/${createdCompany}/expenses/upload`,{waitUntil:'domcontentloaded'});
     const file=await sharp({create:{width:32,height:32,channels:3,background:'#ffffff'}}).png().toBuffer();
     await page.locator('fieldset:not([disabled]) input[type="file"]').first().setInputFiles({name:'synthetic-receipt.png',mimeType:'image/png',buffer:file});
@@ -163,15 +195,16 @@ export async function checkSignupJourney(input:{app:INestApplication;prisma:Pris
     await page.locator('#login-identifier').fill(username);await page.locator('#login-password').fill(password);
     await page.getByRole('button',{name:/^(เข้าสู่ระบบ|Sign in)$/i}).click();await page.waitForURL(receiptUrl);
     await receiptButton().waitFor();assert.equal(await receiptButton().isEnabled(),true);
-    assert.deepEqual(await db.companyPlanTerm.findUniqueOrThrow({where:{companyId:createdCompany}}),newTerm);
+    assert.deepEqual(await db.companyPlanTerm.findUniqueOrThrow({where:{companyId:createdCompany}}),paidTerm);
     assert.equal(await db.expenseRecord.count({where:{companyId:createdCompany}}),1);
     assert.equal(await db.externalIdentity.count({where:{userId:createdUser,provider:'LINE'}}),0);
     assert.ok((await db.authSession.findFirstOrThrow({where:{userId:createdUser,status:'ACTIVE'}})).id!==session.id);
     await page.screenshot({path:`${browser.evidenceDir}/signup-returning-receipt-mobile.png`});
     return ['signup-web-real-form-idempotent-manual-review-no-early-company','signup-postmark-unknown-original-lookup-replay-no-extra-proof-or-send',
-      'signup-single-use-claim-real-BFF-session-seven-menus-trial15-without-line','browser-signup-claim-welcome-skip-line-legal-and-receipt-entry-mobile',
+      'signup-single-use-claim-real-BFF-session-zero-day-term-locked-company-without-line','browser-signup-claim-welcome-skip-line-legal-and-locked-shell-entry-mobile',
+      'browser-locked-shell-two-menus-bounces-business-path-and-refuses-business-API-until-package',
       'signup-first-receipt-closed-gate-retry-real-stored-bytes-and-unavailable-extraction-recovery',
-      'signup-logout-revokes-session-real-login-returns-to-saved-receipt-with-unchanged-trial',
+      'signup-logout-revokes-session-real-login-returns-to-saved-receipt-with-term-as-activated',
       'signup-expired-link-status-resend-new-proof-no-window-extension-or-early-provision',
       'signup-fragment-proof-absent-from-request-URLs-real-POST-and-legacy-link-reload'];
   } catch(error) {
