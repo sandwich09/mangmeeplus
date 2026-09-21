@@ -147,6 +147,9 @@ export async function checkSignupJourney(input:{app:INestApplication;prisma:Pris
     await page.screenshot({path:`${browser.evidenceDir}/signup-renew-locked-mobile.png`,fullPage:true});
     await page.getByRole('button',{name:'สลับเมนู',exact:true}).click();
     assert.deepEqual(await page.locator('aside nav a').allInnerTexts(),['ตั้งค่า','แพ็กเกจ']);
+    // The drawer slides in; screenshotting mid-transition caught it before the menu items settled.
+    await page.locator('aside nav a').first().waitFor({state:'visible'});
+    await page.waitForTimeout(400);
     await page.screenshot({path:`${browser.evidenceDir}/signup-locked-menu-mobile.png`});
     await page.keyboard.press('Escape');
     await page.goto(`${browser.origin}/companies/${createdCompany}/expenses/upload`,{waitUntil:'domcontentloaded'});

@@ -315,7 +315,7 @@ function Welcome() {
                 <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6 9 17l-5-5" /></svg>
               </span>
             ) : null}
-            <h1 className="mt-4 text-[24px] font-extrabold leading-9 text-gray-900">
+            <h1 className="mt-4 break-words text-[24px] font-extrabold leading-9 text-gray-900">
               {handoff ? (ready ? `${companyName} พร้อมใช้งานแล้ว` : `เปิดร้าน ${companyName} แล้ว`) : 'เชื่อมบัญชี LINE'}
             </h1>
             {/* Owner 2026-09-20 (spec R1): no trial to date-stamp any more. A shop that still
