@@ -50,7 +50,7 @@ const RECEIPT_EXTRACTION_MAX_TOKENS = 8192;
 const ONE_PASS_MIN_CONFIDENCE = 0.9;
 const ONE_PASS_MAX_LINES = 20;
 const ONE_PASS_DOCUMENT_KINDS = new Set([
-  'RECEIPT', 'TAX_INVOICE', 'ABBREVIATED_TAX_INVOICE', 'HANDWRITTEN_CASH_BILL',
+  'RECEIPT', 'HANDWRITTEN_CASH_BILL',
 ]);
 const ONE_PASS_VAT_SIGNAL = /(?:\bVAT\b|ภาษีมูลค่าเพิ่ม)/i;
 const ONE_PASS_WHT_SIGNAL = /(?:\bWHT\b|withholding|หัก\s*ณ\s*ที่จ่าย)/i;

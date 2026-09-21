@@ -1105,6 +1105,10 @@ describe('validated one-pass receipt', () => {
       contentKind: 'NON_DOCUMENT_IMAGE', documentFamily: 'NON_BUSINESS', documentKind: 'NON_FINANCIAL_IMAGE',
       transactionState: 'UNKNOWN', businessDirection: 'UNKNOWN', settlementSignals: [],
     }) }), candidate(), []), undefined);
+    assert.equal(validateIntakeOnePassReceipt(plan({ documentClassification: classification({
+      documentKind: 'TAX_INVOICE', evidenceRoles: ['TAX_EVIDENCE_CANDIDATE'],
+    }) }), candidate({ vatMode: 'VAT_EXCLUDED', vatAmount: '4.25' }), []), undefined,
+    'tax documents keep the specialist OCR fallback even when a candidate looks complete');
   });
 
   it('accepts one reconciled item but rejects incomplete/overlong item detail and missing tax VAT', () => {

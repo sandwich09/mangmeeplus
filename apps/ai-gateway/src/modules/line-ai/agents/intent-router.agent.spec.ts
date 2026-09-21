@@ -902,7 +902,8 @@ describe('LINE intake router – a transcribed page needs its own output budget'
     await c.router.routeIntake(withImage());
     assert.ok(c.seen()!.maxTokens! >= 8000, 'legacy-shaped plans still carry the transcription');
     assert.match(c.seen()!.systemPrompt!, /top-level receiptFields object/);
-    assert.match(c.seen()!.systemPrompt!, /Omit receiptFields entirely for more than 20 printed item rows/);
+    assert.match(c.seen()!.systemPrompt!, /Omit receiptFields entirely for every full or abbreviated tax invoice/);
+    assert.match(c.seen()!.systemPrompt!, /more than 20 printed item rows/);
     assert.match(c.seen()!.systemPrompt!, /a transfer slip, order\/check bill/);
   });
 
