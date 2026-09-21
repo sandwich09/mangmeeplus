@@ -41,6 +41,7 @@ function makePrisma(opts: {
   term?: Record<string, unknown> | null;
   companyStatus?: string | null;
   actorActive?: boolean;
+  activeBillingAttempt?: boolean;
 } = {}) {
   const audits: any[] = [];
   let upsertArgs: any = null;
@@ -51,6 +52,7 @@ function makePrisma(opts: {
     $queryRaw: async () => [],
     branch: {count:async()=>1},
     companyMembership: {count:async()=>2,findFirst:async()=>opts.actorActive===false?null:({id:'admin-membership'})},
+    billingAccount: {findFirst:async()=>opts.activeBillingAttempt?{id:'pending-account'}:null},
     company: {
       findUnique: async () => (opts.companyStatus === null ? null : { id: COMPANY, status: opts.companyStatus ?? 'ACTIVE' }),
     },
@@ -172,6 +174,13 @@ describe('SetCompanyPlanTermUseCase', () => {
     assert.equal(prisma.audits()[0].metadataJson.created, true);
     assert.equal(prisma.audits()[0].metadataJson.from, null);
   });
+
+  it('keeps an active Checkout from racing an Admin term edit', async () => {
+    const prisma = makePrisma({ term: termRow(), activeBillingAttempt: true });
+    await assert.rejects(new SetCompanyPlanTermUseCase(prisma).execute(cmd({expectedVersion: planTermSourceVersion(COMPANY, prisma.stored())})),
+      (error: any) => error.getResponse().code === 'paid_plan_review_required');
+    assert.equal(prisma.upsertArgs(), null);
+  });
 });
 
 describe('applyPlanTermPreset', () => {
@@ -214,6 +223,15 @@ describe('RenewCompanyPlanTermUseCase', () => {
   it('404s when there is no term to renew', async () => {
     const uc = new RenewCompanyPlanTermUseCase(makePrisma({ term: null }), makeLifecycle());
     await assert.rejects(() => uc.execute(cmd()), NotFoundException);
+  });
+
+  it('cannot manually extend a paid term or a term with active Checkout', async () => {
+    for (const opts of [{term: termRow({billingReceiptAccountId:'paid-account'})}, {term: termRow(), activeBillingAttempt:true}]) {
+      const prisma = makePrisma(opts);
+      await assert.rejects(new RenewCompanyPlanTermUseCase(prisma, makeLifecycle()).execute(cmd({expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())})),
+        (error: any) => error.getResponse().code === 'paid_plan_review_required');
+      assert.equal(prisma.updateArgs(), null);
+    }
   });
 
   it('BEFORE expiry: extends from the existing end date, not from now', async () => {

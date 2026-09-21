@@ -531,7 +531,7 @@ jobs:
       - run: pnpm test
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
       - name: Test billing and partner pagination
-        run: pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/application/billing-overview-pagination.spec.ts src/modules/system-partner-management/application/use-cases/list-partners.use-case.spec.ts
+        run: pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/application/billing-overview-pagination.spec.ts src/modules/billing/application/billing-purchase-source.spec.ts src/modules/billing/application/billing-feature-entitlements.spec.ts src/modules/system-partner-management/application/use-cases/list-partners.use-case.spec.ts
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
       - name: P27, OCR, and expense payment integrity against PostgreSQL
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
