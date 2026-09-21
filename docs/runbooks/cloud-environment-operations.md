@@ -10,6 +10,34 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Current UAT Kamal — 2026-09-21 08:34 UTC
+
+Main source `b586a588aca07e125ac42f98a3688639e07ffc3c` is serving all three UAT services after Kamal
+operation `20260921T080950Z-db54bc95`, terminal `ACCEPTED_LINE_DEFERRED` in 1,472.28 seconds.
+All 11 phases passed. Exact source/config/image readback, API/DB, AI Gateway, Workers/Redis/internal
+API, customer `OPEN`, build retirement, and KMS ECDSA signature verification passed. AgentCore
+`kamal_uat_a` version 17 is bound to the same source. GitHub UAT/READY/Production workflow IDs are
+`NOT_DISPATCHED` for this local Kamal release. Fresh authenticated browser acceptance confirmed the
+active one-time billing account can select packages, obtain an immediate prorated same-interval
+upgrade quote, obtain a prepaid interval-change quote, and receives the intended explanation when
+selecting unavailable auto renewal. No payment attempt was created during acceptance.
+
+The UAT hosts are running at API `i-0eb581c5ac3b3d7ba` / `54.169.249.160` and AI/workers
+`i-011918b0d49534d1c` / `47.129.130.187`; enrolled host keys and private addresses are unchanged.
+Preflight `20260921T080803Z-1f15a73b` failed before mutation because operator source IP
+`171.99.161.133/32` was absent from both SSH allowlists. Temporary exact rules
+`sgr-06d40b953574c3c6f` and `sgr-05549553d09db8eef` enabled the accepted release and were revoked
+afterward; readback shows both absent and no active operation.
+
+This direct-public-SSH boundary is a recurring operational gap. The UAT instances are not currently
+registered as Systems Manager managed instances, the API/AI runtime roles have no SSM core policy,
+and the deploy role cannot query or start sessions. Permanent remediation requires a reviewed stack
+update that persists the SSM agent and least-privilege instance/deployer permissions, then changes
+Kamal transport to Session Manager, proves deploy/recovery through it, and removes public TCP 22.
+Do not add a broad or permanent workstation CIDR as a shortcut.
+
+---
+
 ## Current Production Kamal — 2026-09-18 14:42 UTC
 
 This checkpoint supersedes the staging/ECS inventory below. The owner-authorized migration and
