@@ -202,3 +202,37 @@ path this flow depends on.
 2. A LINE account that ALREADY has a shop taps it: the form still opens and submits — the result is
    a SECOND shop for that account (spec §5), not an error.
 3. The tile URL contains no token and no name; only `?ref=<code>` is ever appended (§3.2).
+
+---
+
+# Ver3 (Owner 2026-09-21 — no free trial on the tile)
+
+Profile: `line-rich-menu-v2-ver3` — manifest `scripts/line-oa/rich-menu-v2-ver3.manifest.json`, spec test
+`scripts/line-oa/rich-menu-v2-ver3.manifest.spec.mjs` (`node --test`), rollback profile = Ver2.
+
+Bitmap: `apps/web/public/assets/line/mangmeeplus-line-rich-menu-v2-ver3-2500x1686.png` — the Ver2 export edited
+in place (Pillow, Sukhumvit Set Bold/Medium): the red FREE ribbon and the "Promotion Package ทดลองใช้ฟรี" text are
+removed, the tile now reads **แพ็กเกจและราคา / PACKAGES & PRICING**; every other tile is pixel-identical. `2500 x 1686`
+opaque PNG, 228,395 bytes, SHA-256 `6ff2c26e39955d75573f2f18ddb8bedd500d3285852c11f89e07e3145b78c482` (bound by the spec).
+
+Actions are unchanged from Ver2 (area 0 still sends `โปรโมชั่น`; only its accessibility label became แพ็กเกจและราคา),
+so **there is no backend gate** — Ver3 can be activated on any deployed backend that already answers Ver2.
+
+## Rollout record (2026-09-21)
+
+| env | rich-menu id | state |
+|---|---|---|
+| UAT Ver3 | `richmenu-13fb8d4d72e617420384c26d00127449` | **ACTIVE default** since 2026-09-21 (staged + activated by the controller) |
+| UAT Ver2 (rollback) | `richmenu-bf590764d063eda623f5325c95049b50` | kept |
+| Production Ver3 | `richmenu-ac7c38fdb8f0bad3e59233f71a5be1e9` | **STAGED, not active** — activate only on the Owner's word |
+| Production Ver2 (rollback) | `richmenu-195f5413dd79dc955758ad5158d2fc5b` | ACTIVE default until then |
+
+```bash
+# Production go-live (Owner confirmation first) and rollback
+node scripts/line-oa/apply-rich-menu.mjs activate --env production --rich-menu-id richmenu-ac7c38fdb8f0bad3e59233f71a5be1e9 --yes
+node scripts/line-oa/apply-rich-menu.mjs rollback --env production --rich-menu-id richmenu-195f5413dd79dc955758ad5158d2fc5b --yes
+```
+
+Held follow-ups for the same tile (Owner list 2026-09-21, not yet built): the promotion card should send a linked owner
+straight to the app package page (handoff link) and a stranger to เปิดร้านใหม่; the public-policy menu answer must
+describe the four packages. See `docs/agent-memory/mangmee-sales-deals-2026-09-20.md`.
