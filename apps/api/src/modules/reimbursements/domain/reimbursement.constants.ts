@@ -35,7 +35,9 @@ export const REIMBURSEMENT_POLICY_DEFAULTS: EffectivePolicy = {
   requireReceipt: true,
   allowMissingReceiptWithReason: false,
   duplicatePolicy: 'BLOCK_PAYMENT',
-  financeReviewRequired: true,
+  // Step-journey spec §7 / owner decision D2 + A1 (2026-09-19): default OFF so a solo owner can
+  // finish a claim in one sitting. Companies that want finance review back can switch it on.
+  financeReviewRequired: false,
   status: 'ACTIVE',
 };
 

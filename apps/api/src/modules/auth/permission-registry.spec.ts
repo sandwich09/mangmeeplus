@@ -173,15 +173,22 @@ describe('permission-registry', () => {
     }
   });
 
-  // Team decision 2026-07-28: reimbursement approvers are OWNER / ADMIN / MANAGER.
-  // Paying stays FINANCE-only, so approval and payment remain in different hands.
-  it('OWNER, ADMIN and MANAGER can approve reimbursements; FINANCE cannot', () => {
+  // Team decision 2026-07-28: reimbursement approvers are OWNER / ADMIN / MANAGER. Owner decision
+  // 2026-09-19 supersedes that decision's "paying stays FINANCE-only" half (D1/A2): an approver
+  // can record payment directly, so ADMIN/MANAGER now hold payment.record/payment.void too.
+  it('OWNER, ADMIN and MANAGER can approve and pay reimbursements; FINANCE cannot approve', () => {
     for (const role of ['OWNER', 'ADMIN', 'MANAGER']) {
       assert.ok(ROLE_GRANTS[role].includes('reimbursement.approve'), `${role} missing reimbursement.approve`);
       assert.ok(ROLE_GRANTS[role].includes('reimbursement.reject'), `${role} missing reimbursement.reject`);
+      assert.ok(ROLE_GRANTS[role].includes('reimbursement.payment.record'), `${role} missing reimbursement.payment.record`);
+      assert.ok(ROLE_GRANTS[role].includes('reimbursement.payment.void'), `${role} missing reimbursement.payment.void`);
     }
     assert.equal(ROLE_GRANTS.FINANCE.includes('reimbursement.approve'), false);
-    assert.equal(ROLE_GRANTS.ADMIN.includes('reimbursement.payment.record'), false);
+    // finance_review and duplicate.resolve are NOT widened by the 2026-09-19 decision.
+    for (const role of ['ADMIN', 'MANAGER']) {
+      assert.equal(ROLE_GRANTS[role].includes('reimbursement.finance_review'), false, `${role} must not hold reimbursement.finance_review`);
+      assert.equal(ROLE_GRANTS[role].includes('reimbursement.duplicate.resolve'), false, `${role} must not hold reimbursement.duplicate.resolve`);
+    }
   });
 
   // Owner decision 2026-07-26: ADMIN works the expense module owner-equal — the full

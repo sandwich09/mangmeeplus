@@ -293,7 +293,13 @@ const RAW_PACKS: RawPack[] = [
     key: 'pack.reimbursement.approve', module: 'reimbursement',
     nameTh: 'อนุมัติการเบิก', nameEn: 'Approve reimbursement',
     description: 'ดูและอนุมัติ/ปฏิเสธคำขอเบิก',
-    permissionKeys: ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.reject'],
+    // Owner decision 2026-09-19 (D1/A2, supersedes team decision 2026-07-28 "paying stays
+    // FINANCE-only"): an approver can record payment directly, so a custom role built from this
+    // pack gets the same payment.record/payment.void the ADMIN/MANAGER system roles now hold.
+    permissionKeys: [
+      'reimbursement.read', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.reject',
+      'reimbursement.payment.record', 'reimbursement.payment.void',
+    ],
   },
   {
     key: 'pack.reimbursement.review', module: 'reimbursement',
