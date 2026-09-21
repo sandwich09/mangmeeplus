@@ -1,0 +1,9 @@
+{
+  "name": "@watchdog-bms/typescript-native",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript 7 checker for the CI typecheck of apps/api and apps/web. Its own workspace package so no Dockerfile installs it and the repo-wide `tsc` stays TypeScript 5.",
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}
