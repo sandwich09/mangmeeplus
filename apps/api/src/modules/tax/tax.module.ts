@@ -3,6 +3,7 @@ import { AuditModule } from '../audit/audit.module';
 import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
 import { FeatureLaunchModule } from '../feature-launch/feature-launch.module';
 import { PrismaTaxRepository } from './infrastructure/repositories/prisma-tax.repository';
+import { PrismaAccountingRepository } from '../accounting-documents/infrastructure/prisma-accounting.repository';
 import { AccountingDocumentSourceAdapter } from './infrastructure/adapters/accounting-document-source.adapter';
 import { ExpenseSourceAdapter } from './infrastructure/adapters/expense-source.adapter';
 import { SupplierPaymentSourceAdapter } from './infrastructure/adapters/supplier-payment-source.adapter';
@@ -30,6 +31,11 @@ import { TaxCodeImportUseCase } from './application/use-cases/tax-code-import.us
   controllers: [TaxController, TransactionTaxController],
   providers: [
     PrismaTaxRepository,
+    // §10 registry write-back for the 50 ทวิ handoff. Provided here rather than imported:
+    // AccountingDocumentsModule imports THIS module, so importing it back is a Nest cycle. The
+    // repository is stateless over the @Global PrismaService and its only other dependency
+    // (PrismaDocumentSequenceRepository) is already exported by DataModelCoreModule below.
+    PrismaAccountingRepository,
     AccountingDocumentSourceAdapter,
     ExpenseSourceAdapter,
     SupplierPaymentSourceAdapter,

@@ -22,9 +22,10 @@ const prefill = {
  * status-conditional updateMany — because these tests exist to prove concurrency behaviour, and a
  * fake that always succeeds would prove nothing.
  */
-function makeStore(seed: any[] = []) {
+function makeStore(seed: any[] = [], registry: { matched?: any; failSave?: boolean } = {}) {
   const rows: any[] = [...seed];
   const audits: any[] = [];
+  const saves: any[] = [];
   const uniqueViolation = () => Object.assign(new Error('unique constraint'), { code: 'P2002' });
   const table = {
     findUnique: async ({ where }: any) => {
@@ -64,8 +65,30 @@ function makeStore(seed: any[] = []) {
   const taxRepo = { prisma: { client: { whtCertificateHandoff: table } } } as any;
   const audit = { log: async (entry: any) => { audits.push(entry); } } as any;
   const gate = {} as any;
-  return { rows, audits, table, value: new WhtCertificateHandoffUseCase(taxRepo, audit, gate) };
+  // The counterparty registry seam of §10. `matched` stands for the row `vendorMatchKey` finds;
+  // `failSave` is the §8 case where the registry write blows up and the address must survive it.
+  const counterparties = {
+    findCounterpartyByVendorKey: async () => registry.matched ?? null,
+    saveCounterpartyVendorFields: async (input: any) => {
+      if (registry.failSave) throw new Error('registry unavailable');
+      saves.push(input);
+    },
+  } as any;
+  return { rows, audits, saves, table, value: new WhtCertificateHandoffUseCase(taxRepo, audit, gate, counterparties) };
 }
+
+/** A registry row with an address already on it, so cases c and d have something to compare to. */
+function registryRow(billingAddressJson?: Record<string, unknown>) {
+  return { id: 'counterparty-1', displayName: 'ร้านค้า', type: 'VENDOR', ...(billingAddressJson ? { billingAddressJson } : {}) };
+}
+
+const OLD_ADDRESS = {
+  addressText: '1 ถนนเก่า แขวงเก่า เขตเก่า กรุงเทพมหานคร 10100',
+  provenance: { source: 'EXPENSE_AUTO', expenseId: 'expense-9', userId: 'user-0', at: '2026-01-01T00:00:00.000Z' },
+};
+const TYPED_ADDRESS = '99/9 ถ.สุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพมหานคร 10110';
+
+const addressAudits = (audits: any[]) => audits.filter((entry) => entry.action === 'tax.wht_certificate.payee_address_set');
 
 const baseInput = {
   companyId: 'company-1',
@@ -381,6 +404,119 @@ describe('WhtCertificateHandoffUseCase — durable prefilled handoff (H4)', () =
     assert.equal(ok.ok, true);
     // Built from the validated components, so the stored instant is exactly the day written.
     assert.equal(ok.ok && ok.value.issuedDate.toISOString(), '2026-02-28T00:00:00.000Z');
+  });
+
+  // ── §10: the payee address the frozen prefill never had ─────────────────────
+
+  it('refuses a payee address once the certificate is linked, and says where to go instead', async () => {
+    const store = makeStore([], { matched: registryRow() });
+    const created = await store.value.createOrReplay(baseInput);
+    await store.value.linkExternal(ctx, created.id, {
+      commandId: 'cmd-1', externalCertificateNumber: 'EXT-1', externalEvidenceRef: 'file-1', issuedDate: '2026-07-20',
+    });
+
+    await assert.rejects(
+      () => store.value.setPayeeAddress(ctx, created.id, { payeeAddress: TYPED_ADDRESS }),
+      (error: any) => {
+        const body = error.getResponse();
+        assert.equal(body.code, 'wht_handoff_address_not_editable');
+        assert.equal(body.status, 'EXTERNAL_LINKED');
+        // D5: never a silent no-op — the refusal names the way forward.
+        assert.match(body.message, /หน้าคู่ค้า/);
+        return true;
+      },
+    );
+    assert.equal(store.rows[0].payeeAddress ?? null, null, 'a refused write must leave the row alone');
+    assert.equal(store.saves.length, 0, 'and must not touch the registry either');
+  });
+
+  it('stores the address beside the frozen prefill, never inside it (case b fills an empty registry)', async () => {
+    const store = makeStore([], { matched: registryRow() });
+    const created = await store.value.createOrReplay(baseInput);
+    const dto = await store.value.setPayeeAddress(ctx, created.id, { payeeAddress: `  ${TYPED_ADDRESS}  ` });
+
+    assert.equal(dto.payeeAddress, TYPED_ADDRESS);
+    assert.equal(dto.payeeAddressByUserId, 'user-1');
+    // The hash exists so the operator's copy cannot drift: both it and the snapshot stay as frozen.
+    assert.deepEqual(store.rows[0].prefillSnapshotJson, prefill);
+    assert.equal(store.rows[0].prefillSnapshotHash, fingerprint(prefill));
+    assert.equal(store.rows[0].prefillSnapshotJson.payeeSnapshot.address, null);
+
+    assert.equal(dto.counterpartyAutoSave?.case, 'FILL');
+    assert.equal(dto.counterpartyAutoSave?.counterpartyId, 'counterparty-1');
+    assert.equal(store.saves.length, 1);
+    assert.equal(store.saves[0].billingAddressJson.addressText, TYPED_ADDRESS);
+    // A person typed it on a screen, so MANUAL — never EXPENSE_AUTO, which would claim a document.
+    assert.equal(store.saves[0].billingAddressJson.provenance.source, 'MANUAL');
+    const registryAudit = store.audits.find((entry: any) => entry.action === 'accounting.counterparty.update');
+    assert.equal(registryAudit.metadataJson.source, 'wht_handoff_payee_address');
+    // CON-10: the sanitizer does not redact addresses, so no audit entry may carry the value.
+    assert.equal(JSON.stringify(store.audits).includes(TYPED_ADDRESS), false);
+  });
+
+  it('case c unlocked: the typed address becomes primary and the registry remembers the old one', async () => {
+    const store = makeStore([], { matched: registryRow(OLD_ADDRESS) });
+    const created = await store.value.createOrReplay(baseInput);
+    const dto = await store.value.setPayeeAddress(ctx, created.id, { payeeAddress: TYPED_ADDRESS });
+
+    assert.equal(dto.counterpartyAutoSave?.case, 'HISTORY');
+    assert.equal(dto.counterpartyAutoSave?.locked, undefined);
+    const written = store.saves[0].billingAddressJson;
+    assert.equal(written.addressText, TYPED_ADDRESS);
+    assert.equal(written.seenOnDocuments[0].addressText, OLD_ADDRESS.addressText);
+    // No expense behind a handoff address — the same empty marker the promote path writes.
+    assert.equal(written.seenOnDocuments[0].expenseId, '');
+  });
+
+  it('case c locked: the registry keeps its primary and only remembers what was typed (A4)', async () => {
+    const store = makeStore([], { matched: registryRow({ ...OLD_ADDRESS, locked: true }) });
+    const created = await store.value.createOrReplay(baseInput);
+    const dto = await store.value.setPayeeAddress(ctx, created.id, { payeeAddress: TYPED_ADDRESS });
+
+    assert.equal(dto.counterpartyAutoSave?.case, 'HISTORY');
+    assert.equal(dto.counterpartyAutoSave?.locked, true);
+    const written = store.saves[0].billingAddressJson;
+    assert.equal(written.addressText, OLD_ADDRESS.addressText, 'a locked primary is never displaced');
+    assert.equal(written.locked, true, 'and the lock survives the rewrite');
+    assert.equal(written.provenance.expenseId, 'expense-9', 'the kept primary keeps its own provenance');
+    assert.equal(written.seenOnDocuments[0].addressText, TYPED_ADDRESS);
+    // The handoff still carries what the operator typed, whatever the registry decided.
+    assert.equal(store.rows[0].payeeAddress, TYPED_ADDRESS);
+  });
+
+  it('keeps the address when the registry write fails, and reports the failure (§8)', async () => {
+    const store = makeStore([], { matched: registryRow(), failSave: true });
+    const created = await store.value.createOrReplay(baseInput);
+    const dto = await store.value.setPayeeAddress(ctx, created.id, { payeeAddress: TYPED_ADDRESS });
+
+    assert.equal(dto.payeeAddress, TYPED_ADDRESS);
+    assert.equal(store.rows[0].payeeAddress, TYPED_ADDRESS, 'the registry must never fail the address write');
+    assert.equal(dto.counterpartyAutoSave?.case, 'FAILED');
+    assert.equal(dto.counterpartyAutoSave?.failed, true);
+  });
+
+  it('a retry of the same address writes nothing a second time', async () => {
+    const store = makeStore([], { matched: registryRow() });
+    const created = await store.value.createOrReplay(baseInput);
+    const first = await store.value.setPayeeAddress(ctx, created.id, { payeeAddress: TYPED_ADDRESS });
+    const stampedAt = store.rows[0].payeeAddressAt;
+
+    const retry = await store.value.setPayeeAddress(ctx, created.id, { payeeAddress: TYPED_ADDRESS });
+    assert.equal(retry.payeeAddress, first.payeeAddress);
+    assert.equal(store.rows[0].payeeAddressAt, stampedAt, 'a retry must not re-stamp the row');
+    assert.equal(addressAudits(store.audits).length, 1, 'nor audit the same fact twice');
+    assert.equal(store.saves.length, 1, 'nor write the registry twice');
+    assert.equal(retry.counterpartyAutoSave, undefined);
+  });
+
+  it('skips the registry when the payee matches no counterparty (§10 covers cases b and c only)', async () => {
+    const store = makeStore();
+    const created = await store.value.createOrReplay(baseInput);
+    const dto = await store.value.setPayeeAddress(ctx, created.id, { payeeAddress: TYPED_ADDRESS });
+
+    assert.equal(dto.payeeAddress, TYPED_ADDRESS);
+    assert.equal(dto.counterpartyAutoSave?.case, 'SKIPPED');
+    assert.equal(store.saves.length, 0);
   });
 
   it('persists the exact calendar day through the link, with no drift', async () => {

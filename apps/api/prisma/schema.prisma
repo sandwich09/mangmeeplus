@@ -5058,6 +5058,14 @@ model WhtCertificateHandoff {
   prefillSnapshotJson Json
   prefillSnapshotHash String
 
+  // Vendor-address spec §10: the payee address the operator types on the handoff screen when the
+  // frozen prefill has none. Columns BESIDE the snapshot, never inside it — `prefillSnapshotHash`
+  // exists so the operator's copy of the statutory facts cannot drift, and editing the JSON would
+  // either break that hash or force it to be recomputed, which destroys the guarantee.
+  payeeAddress         String?   @db.VarChar(500)
+  payeeAddressByUserId String?
+  payeeAddressAt       DateTime?
+
   availabilityVectorJson Json
 
   // Legal evidence about the externally issued RD document — real columns, not audit metadata.
