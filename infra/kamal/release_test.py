@@ -117,6 +117,33 @@ class Contracts(unittest.TestCase):
         r=m.Release.__new__(m.Release);r.target=target('uat')
         self.assertEqual(r.provider_callback(),r.target['apiInternalUrl'])
 
+    def test_ssm_transport_owns_host_specific_proxy(self):
+        t=target('uat');t['sshTransport']='ssm'
+        self.assertIs(m.validate_target(t,'uat'),t)
+        r=m.Release.__new__(m.Release);r.target=t
+        r.ssm_sessions={h['instanceId']:{'port':41000+i} for i,h in enumerate(
+            {h['instanceId']:h for rows in t['hosts'].values() for h in rows}.values())}
+        host=t['hosts']['api-web'][0]
+        self.assertEqual(r.ssh_proxy(host),'nc 127.0.0.1 41000')
+        self.assertEqual(r.ssh_proxy(host,container=True),'nc host.docker.internal 41000')
+        t['sshProxyCommand']='foreign proxy'
+        with self.assertRaisesRegex(ValueError,'owns ProxyCommand'):m.validate_target(t,'uat')
+
+    def test_exact_main_can_reuse_a_validated_prepared_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);prepared=root/'prepared'/'build';prepared.mkdir(parents=True)
+            r=m.Release.__new__(m.Release);r.work=root/'work';r.work.mkdir();r.pinned_sha='a'*40
+            r.release_path='main';r.receipt={};r.args=argparse.Namespace(prepared_build=prepared,environment='uat',apply=True)
+            loaded=[]
+            def load(directory):
+                loaded.append(directory);r.build_dir.mkdir();m.write(r.build_dir/'build-result.json',{'status':'passed'})
+            r.load_prepared_build=load
+            r.command=lambda *args,**kwargs:self.fail('prepared main must not rebuild or check out another source')
+            r.source_and_build()
+            self.assertEqual(loaded,[prepared.resolve()])
+            self.assertEqual(r.source,prepared.resolve().parent/'source')
+            self.assertEqual(r.build,{'status':'passed'})
+
     def test_complete_config_replacement_and_stable_internal_routes(self):
         settings={s:{} for s in m.SERVICES};settings['api-web']['NEW_RUNTIME_SETTING']='new'
         t=target();t['overrides']={'api-web':{'DATABASE_URL':'synthetic-dev-database'}}

@@ -85,6 +85,15 @@ Unchanged-main cold-build-cache proof `20260911T201637Z-cb364f03` also passed on
 11m39.039s including isolated-builder cleanup. No error/retry; this cold run exceeds the 10-minute
 goal. [Complete timings, zero-cache evidence and boundaries](../research/kamal-uat-cold-cache-proof-2026-09-12.md).
 
+The current UAT application release is `20260921T104804Z-b234bbdb`, exact main
+`4fb173afbc93d81d1cddfa240de18d49d08f2a46`, signed/OPEN in 379.348 seconds. For subsequent local
+Kamal UAT releases, use SSM-enrolled targets and no public TCP/22 operator rule. Prepare the exact
+main build separately and pass its `build/` directory with `--prepared-build` when cache or a retry
+would otherwise rebuild. The apply controller caps an unprepared build at 240 seconds, stops before
+mutation after 360 seconds of pre-mutation work, and records the 600-second target in signed UAT
+acceptance. These limits never authorize skipping reconciliation, exact-source/config validation,
+migrations, deep readiness, customer OPEN, retirement, or KMS signing.
+
 ## เส้นทางปกติ ฉบับคน deploy
 
 จำ flow เดียวนี้: **UAT → READY → Production**. จด ID สามตัวไว้เสมอ:
