@@ -940,7 +940,10 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.equal(h.intakeRequests.length, 0);
     }
     assert.equal(turnOutcomeWrites.length, 7);
-    assert.equal(identityQueries.length, 0);
+    // Owner 2026-09-21: only the โปรโมชั่น turn asks who tapped it, to choose its main button (the
+    // scoped lookup plus its channel-agnostic fallback, both finding nothing here). The policy
+    // answers that follow still read no account fact at all.
+    assert.equal(identityQueries.length, 2);
     assert.deepEqual(Object.keys(turnOutcomeWrites[0].create.authorizationJson.publicPolicy).sort(), ['recipientHash', 'topic']);
   });
 
