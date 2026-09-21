@@ -56,6 +56,9 @@ async function main() {
   const secret = randomUUID(), webhookSecret = `whsec_${run}`, workerToken = randomUUID();
   Object.assign(process.env, { APP_ENV: 'local', DEPLOY_ENVIRONMENT: 'local', NODE_ENV: 'test', SERVICE_NAME: 'billing-http-smoke',
     S3_BUCKET: 'synthetic-billing-smoke', DATABASE_URL: databaseUrl, EMAIL_PROVIDER: 'postmark', BILLING_MODE: 'test', RECEIPT_QUOTA_ENFORCED: 'false',
+    // The real billing limiters stay on, capped at a 10 s window so rate-limited retries wait seconds, not minutes.
+    // Settlement's forced-429 case needs ≥5 s of closure after priming; set 60 to reproduce production timing.
+    BILLING_RATE_LIMIT_WINDOW_SECONDS: process.env.BILLING_RATE_LIMIT_WINDOW_SECONDS ?? '10',
     ...(process.env.BILLING_SIGNUP_JOURNEY_ONLY==='1'?{EXTERNAL_SIGNUP_ENABLED:'true',AI_GATEWAY_INTERNAL_URL:'https://synthetic-ai.example.test'}:{}),
     EMAIL_OTP_HMAC_KEY: randomBytes(32).toString('hex'), EMAIL_OTP_HMAC_KEY_VERSION: 'test-v1',
     POSTMARK_SERVER_TOKEN: 'POSTMARK_API_TEST', POSTMARK_SERVER_ID: '9191301', POSTMARK_MESSAGE_STREAM: 'outbound', POSTMARK_FROM_ADDRESS: 'system@example.test',

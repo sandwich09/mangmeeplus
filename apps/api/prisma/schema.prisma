@@ -8706,7 +8706,8 @@ model CompanyEntitlementNormalization {
   // need no repair) out of the pass.
   normalizerVersion Int                                   @default(0)
   // The DURABLE cohort this marker was completed as: `LEGACY` = the grandfather pass materialized
-  // rows that predate explicit entitlements, `EXPLICIT` = onboarding wrote them as real decisions.
+  // rows that predate explicit entitlements, `EXPLICIT` = onboarding or verified paid package
+  // wrote a full explicit set as real decisions.
   // Verify reads THIS, never "does any row carry grantOrigin=LEGACY" — a legacy company whose
   // provenance stamp landed on zero rows is indistinguishable from an explicit one by inference,
   // and used to pass verify with its entire cohort marker missing. Null = written by a normalizer

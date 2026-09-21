@@ -1,3 +1,4 @@
+import { billingRateLimitWindowSeconds } from '../modules/billing/billing-rate-limit-window';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { expect } from '@playwright/test';
@@ -85,7 +86,7 @@ export async function checkBillingAdjustments(input:{prisma:PrismaService;compan
     if(input.browser){
       const {page,origin,evidenceDir}=input.browser;await page.setViewportSize({width:390,height:844});
       // Respect the same customer command budget after the preceding negative API cases.
-      await new Promise(resolve=>setTimeout(resolve,61000));
+      await new Promise(resolve=>setTimeout(resolve,(billingRateLimitWindowSeconds(60)+1)*1000));
       await page.goto(`${origin}/companies/${input.companyId}/billing?channel=line`,{waitUntil:'domcontentloaded'});
       await page.getByRole('button',{name:'ประวัติ',exact:true}).click();
       await page.getByRole('link',{name:'ดูเอกสาร',exact:true}).first().click();

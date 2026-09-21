@@ -32,3 +32,19 @@ export async function fulfillPaidPackageRequest(tx:Prisma.TransactionClient,comp
     metadataJson:{source:'STRIPE_PAID_APPLICATION',invoiceId:invoice.id,billingAccountId:accountId,requestedTierKey:request.requestedTierKey,
       requestedByUserId:request.requestedByUserId,fromStatus:'OPEN',toStatus:'APPROVED',notificationSource:'billing.invoice.applied'}}});
 }
+
+/** A different unpaid LINE request cannot remain actionable after this company's first catalog purchase. */
+export async function supersedeUnpaidPackageRequest(tx: Prisma.TransactionClient, companyId: string, invoiceId: string) {
+  const invoice = await tx.billingInvoice.findUnique({ where: { id: invoiceId }, select: { appliedAt: true, applyStatus: true } });
+  if (!invoice?.appliedAt || invoice.applyStatus !== 'APPLIED') return;
+  const request = await tx.packageChangeRequest.findFirst({ where: { companyId, status: 'OPEN', paymentState: 'NONE',
+    paymentRef: null, slipAttachmentId: null, createdAt: { lte: invoice.appliedAt } } });
+  if (!request) return;
+  const changed = await tx.packageChangeRequest.updateMany({ where: { id: request.id, status: 'OPEN', paymentState: 'NONE',
+    paymentRef: null, slipAttachmentId: null }, data: { status: 'CANCELLED', paymentState: 'CATALOG_SUPERSEDED', decidedAt: invoice.appliedAt } });
+  if (changed.count !== 1) return;
+  await tx.auditLog.create({ data: { companyId, actorType: 'SYSTEM', actorRefId: 'stripe-paid-application',
+    action: 'billing.package_request.superseded', targetType: 'package_change_request', targetId: request.id,
+    requestId: invoiceId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { invoiceId, requestedTierKey: request.requestedTierKey,
+      fromStatus: 'OPEN', toStatus: 'CANCELLED', source: 'CATALOG_PURCHASE' } } });
+}

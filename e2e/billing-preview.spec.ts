@@ -189,6 +189,12 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(page.getByRole('link', { name: 'จัดการรายการเบิกค้าง', exact: true })).toHaveCount(0);
   await page.getByLabel('ฉันตรวจสอบรายการที่คงไว้และรายการที่จะพักแล้ว', { exact: true }).check();
   await expect(page.getByRole('button', { name: 'ใช้การเลือกนี้และตรวจสอบราคา', exact: true })).toBeEnabled();
+  await scenario.selectOption('manual');
+  await plans.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: /^ยืนยันซื้อ/ })).toBeVisible();
+  await expect(page.getByText(/วันคงเหลือ \(ถ้ามี\) ไม่ทบและไม่ลดราคา/)).toBeVisible();
+  await expect(page.getByRole('region', { name: 'การเปลี่ยนสิทธิ์เมนูหลังชำระ' })).toContainText('รายงาน');
+  await expect(page.getByRole('region', { name: 'การเปลี่ยนสิทธิ์เมนูหลังชำระ' })).toContainText('สิทธิ์พิเศษที่ผู้ดูแล');
   await scenario.selectOption('quote-error');
   await plans.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).first().click();
   await expect(page.getByRole('alert').filter({ hasText: 'รายการหมดอายุหรือข้อมูลเปลี่ยน' })).toBeVisible();
@@ -202,6 +208,11 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   // Monthly → annual charges the annual price, carries paid time and starts annual renewal at the extended end.
   await scenario.selectOption('upgrade');
   await page.getByRole('button', { name: 'ซื้อหรือเปลี่ยนแพ็กเกจ', exact: true }).click();
+  await plans.getByRole('radio', { name: 'บัตร · จ่ายครั้งเดียว' }).check();
+  await expect(plans.getByRole('status')).toContainText('ยังชำระซ้อนกับสมาชิกเดิมไม่ได้');
+  await expect(plans.getByRole('button', { name: 'หยุดต่ออายุอัตโนมัติ' })).toBeVisible();
+  await expect(plans.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).first()).toBeDisabled();
+  await plans.getByRole('radio', { name: 'บัตร · ต่ออายุอัตโนมัติ' }).check();
   await plans.getByRole('button', { name: 'รายปี', exact: true }).click();
   const annualCard = plans.locator('article').filter({ hasText: 'เติบโต (BASIC)' });
   await annualCard.getByRole('button', { name: 'เปลี่ยนเป็นรายปี', exact: true }).click();
@@ -245,7 +256,7 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await plans.getByRole('button', { name: 'รายปี', exact: true }).click();
   // A simultaneous upgrade and cadence change has an explicit two-step route.
   await plans.locator('article').filter({ hasText: 'มืออาชีพ (PRO)' }).getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
-  await expect(plans.getByRole('status')).toContainText('เพิ่มระดับในรอบเดิมก่อน');
+  await expect(plans.getByRole('status').filter({ hasText: 'เพิ่มระดับในรอบเดิมก่อน' })).toBeVisible();
   await plans.getByRole('button', { name: 'เลือกแพ็กเกจรายเดือน', exact: true }).click();
   await starter.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
   const capacityPicker = page.getByRole('region', { name: 'เลือกสาขาและผู้ใช้', exact: true });

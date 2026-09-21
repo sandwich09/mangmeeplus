@@ -424,8 +424,8 @@ export type PackageChangeRequestDto = {
   companyId: string;
   requestedTierKey: string;
   status: PackageChangeRequestStatus;
-  /** Present only when the original request was fulfilled by an applied paid package. */
-  resolutionSource?: 'PAID_PURCHASE';
+  /** Whether an applied catalog purchase fulfilled or replaced this request. */
+  resolutionSource?: 'PAID_PURCHASE' | 'CATALOG_PURCHASE_SUPERSEDED';
   note?: string;
   createdAt: string;
   decidedAt?: string;
