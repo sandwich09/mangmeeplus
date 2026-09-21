@@ -18,10 +18,16 @@ export const SALES_DEAL_OFFER_DAYS = 3;
 export const SALES_DEAL_MONTHS_MAX = 36;
 export const SALES_DEAL_DESCRIPTION_MAX = 200;
 export const SALES_DEAL_REASON_MAX = 500;
-export type SalesDealBaseTier = Exclude<PlanTierKey, 'FREE_TRIAL_15'>;
+/**
+ * D-P3-1: ENTERPRISE_1999 is NOT a deal base. The one-time Stripe path reads the base tier's
+ * catalog Price for its product id, and ENTERPRISE has no Price — `paidVariant` and
+ * `paid-checkout-invoice.ts` know only these three. A deal expresses any size through its own
+ * branch/employee/slip limits, so nothing is lost.
+ */
+export type SalesDealBaseTier = Exclude<PlanTierKey, 'FREE_TRIAL_15' | 'ENTERPRISE_1999'>;
 /** Runtime companion of `SalesDealBaseTier` — the paid tiers a deal may be built on (R3). */
 export const SALES_DEAL_BASE_TIERS: readonly SalesDealBaseTier[] =
-  ['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999'];
+  ['STARTER_249', 'BASIC_499', 'PRO_999'];
 
 /** Frozen into PackageChangeRequest.offerSnapshotJson when the deal is submitted; immutable once APPROVED (R3/R4). */
 export type SalesDealSnapshot = {
@@ -33,7 +39,10 @@ export type SalesDealSnapshot = {
   months: number;
   branchLimit: number; employeeLimit: number; monthlySlipLimit: number;
   featureKeys: string[];
-  /** null = the tier default / platform budget; 0 closes AI for the shop. */
+  /**
+   * null = inherit the platform budget. D-P3-2: zero is refused — closing AI is done by dropping
+   * the `ai_line_assistant` menu from `featureKeys`, which is the only writer the platform has.
+   */
   aiMonthlyBudgetSatang: number | null;
   /** Customer-facing note, ≤ 200 chars, no PII, no "+" (S24). */
   description: string;
@@ -72,6 +81,8 @@ export type SalesDealView = {
   /** Current usage above the deal's limits (S31): the shop keeps them, cannot add more. */
   overLimit: { branches: number; employees: number };
   approvedByUserId: string | null; approvedByDisplayName: string | null; approvedAt: string | null; selfApproved: boolean;
+  /** Stripe's verified payment instant, and when the shop's term was actually opened (Phase 3). */
+  paidAt: string | null; appliedAt: string | null;
   offerExpiresAt: string | null; rejectedReason: string | null;
   createdAt: string; updatedAt: string;
 };
@@ -107,7 +118,7 @@ export type SalesAgentUpdateBody = {
 export type SalesAgentCredentialHandoff = { userId: string; username: string; temporaryPassword: string; expiresAt: string | null; lineNotified: boolean };
 export type SalesAgentCreateResult = { agent: SalesAgentView; credential: SalesAgentCredentialHandoff };
 
-export type SalesMyWorkKind = 'APPROVAL_PENDING' | 'DEAL_REJECTED' | 'DEAL_EXPIRED' | 'DEAL_APPROVED_WAITING' | 'DEAL_APPLIED';
+export type SalesMyWorkKind = 'APPROVAL_PENDING' | 'DEAL_REJECTED' | 'DEAL_EXPIRED' | 'DEAL_APPROVED_WAITING' | 'DEAL_APPLIED' | 'DEAL_SUPERSEDED';
 export type SalesMyWorkItem = { kind: SalesMyWorkKind; deal: SalesDealView; at: string };
 /** `badge` = items that need the caller's action (lead: pending approvals; sales: rejected + expired). */
 export type SalesMyWorkDto = { items: SalesMyWorkItem[]; badge: number };

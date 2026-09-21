@@ -1,5 +1,5 @@
 import type {MouseEvent} from 'react';
-import type {BillingReceiptUsage, BillingApprovalMode} from '@watchdog-bms/contracts';
+import type {BillingReceiptUsage, BillingApprovalMode, BillingPurchaseMode} from '@watchdog-bms/contracts';
 export { billingLabel, billingPlanLabel, billingOfferLabel, billingPermissionLabel, billingEventLabel, billingDeliveryLabel, billingIssueLabel, billingTimelineLabel } from '@watchdog-bms/contracts';
 
 export const billingControl = 'inline-flex min-h-11 items-center justify-center rounded-xl border border-gray-300 px-4 py-2 text-base font-semibold bg-white text-gray-700 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700 disabled:cursor-not-allowed disabled:opacity-50';
@@ -22,6 +22,26 @@ export function billingLeavesPage(event:MouseEvent<HTMLAnchorElement>){
   const to=new URL(event.currentTarget.href),from=window.location;
   // These Admin routes bind work by pathname; filters and batch-return links are query parameters.
   return to.origin!==from.origin||to.pathname!==from.pathname;
+}
+
+/**
+ * The number a shop owner reads out to the team. `reference` is an internal row id (a UUID), which
+ * is a machine token on a customer screen and unreadable over the phone — so only its last eight
+ * characters are shown, grouped; support matches on that suffix. A reference that is already short
+ * and human (an invoice number) is left exactly as it is.
+ */
+export function billingSupportReference(value: string | null | undefined): string | null {
+  const clean = (value ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  if (!clean) return null;
+  if (clean.length <= 12) return (value ?? '').trim();
+  const tail = clean.slice(-8);
+  return `${tail.slice(0, 4)}-${tail.slice(4)}`;
+}
+
+/** One wording for both pickers on the package page: the catalog's and the deal card's (R10/S39). */
+export function billingPurchaseModeLabel(mode: BillingPurchaseMode): string {
+  return mode === 'CARD_AUTO' ? 'บัตร · ต่ออายุอัตโนมัติ' : mode === 'CARD_ONCE' ? 'บัตร · จ่ายครั้งเดียว'
+    : mode === 'PROMPTPAY_ONCE' ? 'PromptPay QR · จ่ายครั้งเดียว' : 'PromptPay QR · สแกนบิลทุกงวด';
 }
 
 export function billingApprovalLabel(mode: BillingApprovalMode): string {

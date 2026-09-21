@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { PLAN_TIER_PRESETS, SALES_ERROR_CODES, type SalesDealStatus, type SalesMyWorkItem } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import {
-  agentStatusMeta, baseTierDefaults, companyReferral, dealInputFromForm, dealOverLimit, dealWarnings,
+  agentStatusMeta, baseTierDefaults, companyReferral, dealInputFromForm, dealOverLimit, dealPaymentNote, dealWarnings,
   emptyAgentForm, emptyDealForm, firstDealErrorField, formatBaht, isDealCancellable, isDealEditable,
   isMenuSelected, myWorkBadgeLabel, normalizeSalesCodeInput, parseBahtInput, referralLabel,
   referralWindowOpen, SALES_DEAL_MENU_BINDINGS, SALES_DEAL_STATUS_META, salesCodeError, sortMyWork,
@@ -72,10 +72,14 @@ describe('deal form validation', () => {
     assert.equal(firstDealErrorField({}), null);
   });
 
-  it('treats an empty AI credit box as the tier default and 0 as "closed"', () => {
+  it('treats an empty AI credit box as the tier default and refuses 0 (D-P3-2)', () => {
     assert.equal(dealInputFromForm(dealForm({ aiBudgetBaht: '' })).aiMonthlyBudgetSatang, null);
-    assert.equal(dealInputFromForm(dealForm({ aiBudgetBaht: '0' })).aiMonthlyBudgetSatang, 0);
     assert.equal(dealInputFromForm(dealForm({ aiBudgetBaht: '80' })).aiMonthlyBudgetSatang, 8000);
+    assert.deepEqual(validateDealForm(dealForm({ aiBudgetBaht: '' })), {});
+    assert.deepEqual(validateDealForm(dealForm({ aiBudgetBaht: '1' })), {});
+    // Closing AI is removing its menu; a 0 budget would be refused at apply, so it is refused here.
+    assert.ok(validateDealForm(dealForm({ aiBudgetBaht: '0' })).aiBudgetBaht);
+    assert.ok(validateDealForm(dealForm({ aiBudgetBaht: '0.00' })).aiBudgetBaht);
   });
 
   it('builds a request body with trimmed text and satang money', () => {
@@ -158,6 +162,20 @@ describe('deal status vocabulary', () => {
       assert.ok(SALES_DEAL_STATUS_META[status].label.trim(), status);
       assert.doesNotMatch(SALES_DEAL_STATUS_META[status].label, /[A-Z_]{4,}/, `${status} leaks its enum name`);
     }
+  });
+
+  it('tells the เซลล์ what happened after the customer paid, with dates, never timestamps', () => {
+    const row = (status: SalesDealStatus, paidAt: string | null = null, appliedAt: string | null = null) => ({ status, paidAt, appliedAt });
+    assert.equal(dealPaymentNote(row('APPROVED')), null);
+    assert.equal(dealPaymentNote(row('DRAFT')), null);
+    assert.match(dealPaymentNote(row('PAID')) ?? '', /^ลูกค้าชำระแล้ว · กำลังเปิดสิทธิ์/);
+    assert.equal(dealPaymentNote(row('APPLIED')), 'ลูกค้าชำระแล้ว · เปิดใช้งานให้ร้านแล้ว');
+    const applied = dealPaymentNote(row('APPLIED', null, '2026-09-21T03:00:00.000Z')) ?? '';
+    assert.match(applied, /^ลูกค้าชำระแล้ว · เริ่มใช้งาน .+/);
+    assert.doesNotMatch(applied, /\d{4}-\d{2}-\d{2}|T\d{2}:/);
+    // APPLIED before its own timestamp is observed still reads off the payment date.
+    assert.match(dealPaymentNote(row('APPLIED', '2026-09-21T03:00:00.000Z')) ?? '', /^ลูกค้าชำระแล้ว · เริ่มใช้งาน .+/);
+    assert.match(dealPaymentNote(row('PAID', '2026-09-21T03:00:00.000Z')) ?? '', /กำลังเปิดสิทธิ์ให้ร้าน$/);
   });
 
   it('opens editing only on DRAFT and REJECTED, and cancel only before money moves', () => {

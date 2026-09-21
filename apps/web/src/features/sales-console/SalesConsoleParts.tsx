@@ -1,6 +1,6 @@
 'use client';
 import type { ReactNode } from 'react';
-import type { SalesAgentCredentialHandoff, SalesCompanySearchItem, SalesDealView } from '@watchdog-bms/contracts';
+import { billingPlanLabel, type SalesAgentCredentialHandoff, type SalesCompanySearchItem, type SalesDealView } from '@watchdog-bms/contracts';
 import { MangmeeBadge, MangmeeCard } from '@/common/components/mangmee';
 import { formatThaiDate, formatThaiDateTime } from '@/common/i18n/thai-date';
 import {
@@ -45,7 +45,8 @@ export function SalesCompanyLine({ company }: { company: SalesCompanySearchItem 
       <p className="truncate text-[15px] font-bold text-gray-900">{company.name}</p>
       <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
         <SalesAccessStateBadge state={company.accessState} />
-        {company.tierKey && <span>{company.tierKey}</span>}
+        {/* The row printed the raw tier key (PRO_999) at a เซลล์ standing in the shop. */}
+        {company.tierKey && <span>{billingPlanLabel(company.tierKey)}</span>}
         {company.province && <span>{company.province}</span>}
         <span>เปิดร้าน {formatThaiDate(company.createdAt)}</span>
       </p>

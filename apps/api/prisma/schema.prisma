@@ -3724,6 +3724,31 @@ model SalesAgentProfile {
   @@index([teamLeadUserId])
 }
 
+/// Who gets credited for a paid shop (spec §17.2, D-P3-10). ONE row per company, written the
+/// first time a deal is applied; Phase 4 adds 'REFERRAL' rows and the report that reads them.
+/// No Company relation on purpose: like every other billing record this row outlives the tenant
+/// row it describes, and the report is financial history, not tenant data.
+model SalesAttribution {
+  id              String   @id @default(cuid())
+  companyId       String   @unique
+  salesUserId     String
+  /// 'DEAL' (Phase 3) | 'REFERRAL' (Phase 4).
+  source          String
+  /// What the customer actually paid, in satang; `refundedSatang` is deducted by the report.
+  amountSatang    Int
+  months          Int?
+  interval        String?
+  paidAt          DateTime
+  refundedSatang  Int      @default(0)
+  /// BillingInvoice.id of the paid one-time invoice that created this row.
+  sourceInvoiceId String
+  /// PackageChangeRequest.id of the deal, when `source` is 'DEAL'.
+  dealRequestId   String?
+  createdAt       DateTime @default(now())
+
+  @@index([salesUserId, paidAt])
+}
+
 model AccountClaimToken {
   id              String               @id @default(cuid())
   signupRequestId String
@@ -9678,6 +9703,10 @@ model BillingAttempt {
   consentAt         DateTime
   status            String @default("CREATING")
   checkoutSessionId String? @unique
+  /// PackageChangeRequest.id when this Checkout is paying a sales deal (D-P3-9). The nightly
+  /// EXPIRED sweep skips a deal that still has a live attempt, so a QR paid after the offer
+  /// window closes still applies (S46). Mirrored from `quoteSnapshot.deal.requestId`.
+  dealRequestId     String?
   collectionJson    Json?
   subscriptionId    String?
   errorCode         String?
@@ -9686,6 +9715,7 @@ model BillingAttempt {
   updatedAt         DateTime @updatedAt
   @@unique([billingAccountId, idempotencyKey])
   @@index([status, updatedAt])
+  @@index([dealRequestId])
 }
 
 model BillingInvoice {

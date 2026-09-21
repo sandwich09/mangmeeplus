@@ -87,11 +87,13 @@ export class BillingCapacityRepairDto extends BillingVersionDto {
   @Allow() selection!: unknown;
 }
 export class BillingQuoteDto {
-  @IsString() @MinLength(1) @MaxLength(40) offerKey!: string;
-  @IsString() @MinLength(1) @MaxLength(10) interval!: string;
+  /** Omitted on a sales-deal quote: `dealId` names the offer, and its base tier is the snapshot's. */
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(40) offerKey?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(10) interval?: string;
   @IsString() @MinLength(1) @MaxLength(320) billingEmail!: string;
   @Allow() capacity?: unknown;
   @IsOptional() @IsIn(['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW']) purchaseMode?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(40) dealId?: string;
 }
 export class BillingCheckoutDto {
   @IsUUID() quoteId!: string;

@@ -91,6 +91,8 @@
 ### Exit Criteria
 - ร้านล็อก → ดีล → จ่าย (บัตร/QR) → ใช้งานได้ภายในนาที; เส้นทางซื้อ catalog ของ #667 ไม่เปลี่ยน (diff ว่างในไฟล์หลักฐาน + smoke เดิมผ่าน)
 
+## Phase 3 — สถานะ 2026-09-21: ทำแล้วบน branch (API + เว็บ) ตาม §19.6/§19.7; หนี้ทดสอบตามคำสั่ง Owner (ไม่รัน/ไม่เขียน): `billing-deal-smoke`, PG spec ของดีล, playwright การ์ดดีล, UAT Stripe test mode
+
 ## Phase 4: ต่ออายุดีล, รายงานหัวหน้า, คู่มือ
 
 - scan 14 วันก่อนหมด: สร้างดีลรอบถัดไป APPROVED (D3) + push; รายงาน `/v1/sales/reports/summary` + หน้า; runbook เซลล์/Owner; ตัวชี้วัด time-to-active; สลิปสำรอง (Q9): ยก endpoint/verify จาก special-invoice plan (apply เดียวกับดีล); แปลง subscription บัตรอัตโนมัติเป็นดีล (Q7 ค่าเริ่มต้น: ยกเลิกทันทีเมื่อจ่าย ไม่มี proration; ฟอร์มดีลโชว์มูลค่าคงเหลือ; issue `DEAL_SUBSCRIPTION_CANCEL_PENDING` + retry; S34)

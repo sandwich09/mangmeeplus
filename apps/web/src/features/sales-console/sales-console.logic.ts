@@ -23,6 +23,7 @@ import {
   type MenuEntitlementBinding,
 } from '@watchdog-bms/contracts';
 import type { MangmeeTone } from '@/common/components/mangmee';
+import { formatThaiDate } from '@/common/i18n/thai-date';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 
 /** Where the console lives. One constant, so the layout, the header and the gates cannot drift. */
@@ -79,6 +80,19 @@ export const SALES_ROLE_LABELS: Record<SalesRoleKey, string> = {
   MANGMEE_SALES: 'เซลล์',
 };
 
+/**
+ * What happened after the customer paid, in one sentence (Phase 3). Null for every earlier status,
+ * so a เซลล์ reading a DRAFT sees nothing new. A row that is APPLIED before its `appliedAt` is
+ * observed still reads as paid — the date is the detail, the state is the news.
+ */
+export function dealPaymentNote(deal: Pick<SalesDealView, 'status' | 'paidAt' | 'appliedAt'>): string | null {
+  if (deal.status !== 'PAID' && deal.status !== 'APPLIED') return null;
+  const at = deal.status === 'APPLIED' ? deal.appliedAt ?? deal.paidAt : deal.paidAt;
+  const when = at ? formatThaiDate(at) : null;
+  if (deal.status === 'APPLIED') return when ? `ลูกค้าชำระแล้ว · เริ่มใช้งาน ${when}` : 'ลูกค้าชำระแล้ว · เปิดใช้งานให้ร้านแล้ว';
+  return when ? `ลูกค้าชำระแล้ว ${when} · กำลังเปิดสิทธิ์ให้ร้าน` : 'ลูกค้าชำระแล้ว · กำลังเปิดสิทธิ์ให้ร้าน';
+}
+
 /** DRAFT and REJECTED are the two states the เซลล์ may still edit (R3); APPROVED is immutable. */
 export function isDealEditable(status: SalesDealStatus): boolean {
   return status === 'DRAFT' || status === 'REJECTED';
@@ -100,7 +114,7 @@ export type SalesDealFormValues = {
   employeeLimit: string;
   monthlySlipLimit: string;
   featureKeys: string[];
-  /** '' = the tier default, '0' = AI closed for this shop. */
+  /** '' = the tier default; ≥ 1 บาท otherwise. Closing AI is removing its menu (D-P3-2). */
   aiBudgetBaht: string;
   description: string;
   internalReason: string;
@@ -188,6 +202,9 @@ export function validateDealForm(values: SalesDealFormValues, options: { forSubm
   if (values.aiBudgetBaht.trim()) {
     const budget = parseBahtInput(values.aiBudgetBaht);
     if (!budget.ok) errors.aiBudgetBaht = budget.message;
+    // D-P3-2: the one writer of an AI budget in the system refuses 0 on purpose — switching AI off
+    // is removing the AI menu, not funding it with nothing, and a 0 here would be refused at apply.
+    else if (budget.satang < 1) errors.aiBudgetBaht = 'เครดิต AI ต้องมากกว่า 0 บาท · ถ้าต้องการปิด AI ให้เอาเมนู AI ออกแทน';
   }
 
   const description = values.description.trim();
@@ -333,6 +350,8 @@ const MY_WORK_META: Record<SalesMyWorkKind, { label: string; tone: MangmeeTone; 
   DEAL_EXPIRED: { label: 'ข้อเสนอหมดอายุ', tone: 'slate', note: 'ลูกค้าไม่ได้ชำระภายในกำหนด สร้างข้อเสนอใหม่ได้', needsAction: true },
   DEAL_APPROVED_WAITING: { label: 'รอลูกค้าชำระเงิน', tone: 'brand', note: 'ลูกค้าเห็นข้อเสนอในหน้าแพ็กเกจแล้ว', needsAction: false },
   DEAL_APPLIED: { label: 'เปิดใช้งานแล้ว', tone: 'teal', note: 'ลูกค้าชำระเงินและเปิดใช้งานแพ็กเกจแล้ว', needsAction: false },
+  // R-676-4: the customer bought a catalog package before paying the deal, so the offer was closed.
+  DEAL_SUPERSEDED: { label: 'ลูกค้าซื้อแพ็กเกจเอง', tone: 'slate', note: 'ลูกค้าซื้อแพ็กเกจปกติแล้ว ข้อเสนอนี้จึงถูกปิด สร้างข้อเสนอใหม่ได้', needsAction: false },
 };
 
 export function myWorkMeta(kind: SalesMyWorkKind) {

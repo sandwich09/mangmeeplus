@@ -63,14 +63,16 @@ function isDealConflict(error: unknown): boolean {
 
 type DealRow = {
   id: string; companyId: string; status: string; version: number; salesUserId: string | null;
-  offerSnapshotJson: unknown; internalReason: string | null; amountSatang: number | null;
+  offerSnapshotJson: unknown; internalReason: string | null; amountSatang: number | null; paymentState: string;
+  verifiedAt: Date | null; decidedAt: Date | null;
   approvedByUserId: string | null; approvedAt: Date | null; selfApproved: boolean;
   offerExpiresAt: Date | null; rejectedReason: string | null; createdAt: Date; updatedAt: Date;
 };
 
 const DEAL_SELECT = {
   id: true, companyId: true, status: true, version: true, salesUserId: true,
-  offerSnapshotJson: true, internalReason: true, amountSatang: true,
+  offerSnapshotJson: true, internalReason: true, amountSatang: true, paymentState: true,
+  verifiedAt: true, decidedAt: true,
   approvedByUserId: true, approvedAt: true, selfApproved: true,
   offerExpiresAt: true, rejectedReason: true, createdAt: true, updatedAt: true,
 } as const;
@@ -116,6 +118,7 @@ export class SalesDealsService {
         OR: [
           ...(lead ? [{ status: 'PENDING_APPROVAL' }] : []),
           { salesUserId: ctx.userId, status: { in: ['REJECTED', 'APPROVED', 'APPLIED'] } },
+          { salesUserId: ctx.userId, status: 'CANCELLED', paymentState: 'CATALOG_SUPERSEDED' },
         ],
       },
       orderBy: { updatedAt: 'desc' },
@@ -124,8 +127,8 @@ export class SalesDealsService {
     });
     const views = await this.toViews(rows);
 
-    const items: SalesMyWorkItem[] = views.map((deal) => ({
-      kind: workKind(deal, deal.salesUserId === ctx.userId),
+    const items: SalesMyWorkItem[] = views.map((deal, index) => ({
+      kind: workKind(deal, deal.salesUserId === ctx.userId, rows[index]!.paymentState === 'CATALOG_SUPERSEDED'),
       deal,
       at: deal.updatedAt,
     }));
@@ -229,8 +232,16 @@ export class SalesDealsService {
       select: { id: true, companyId: true, version: true, salesUserId: true },
       take: 500,
     });
+    // S46: a Checkout opened inside the window is still honoured — a customer staring at a QR code
+    // must not have the offer closed underneath them. The attempt resolves the row instead.
+    const live = due.length === 0 ? [] : await this.prisma.client.billingAttempt.findMany({
+      where: { dealRequestId: { in: due.map((deal) => deal.id) }, status: { notIn: ['COMPLETED', 'FAILED', 'EXPIRED'] } },
+      select: { dealRequestId: true },
+    });
+    const paying = new Set(live.map((attempt) => attempt.dealRequestId));
     let expired = 0;
     for (const deal of due) {
+      if (paying.has(deal.id)) continue;
       const written = await this.prisma.client.packageChangeRequest.updateMany({
         where: { id: deal.id, status: 'APPROVED', version: deal.version },
         data: { status: 'EXPIRED', version: { increment: 1 } },
@@ -465,6 +476,11 @@ export class SalesDealsService {
         approvedByDisplayName: row.approvedByUserId ? nameByUserId.get(row.approvedByUserId) ?? null : null,
         approvedAt: row.approvedAt?.toISOString() ?? null,
         selfApproved: row.selfApproved,
+        // Phase 3 writes both at apply: `verifiedAt` is Stripe's payment instant, `decidedAt` the
+        // moment the term opened. `decidedAt` also carries reject/cancel, so it is only an apply
+        // date on an APPLIED row.
+        paidAt: row.verifiedAt?.toISOString() ?? null,
+        appliedAt: row.status === 'APPLIED' ? row.decidedAt?.toISOString() ?? null : null,
         offerExpiresAt: row.offerExpiresAt?.toISOString() ?? null,
         rejectedReason: row.rejectedReason,
         createdAt: row.createdAt.toISOString(),
@@ -489,8 +505,9 @@ function catalogPriceFor(snapshot: SalesDealSnapshot | null): number {
   return billingOffer(snapshot.base as SalesDealBaseTier, 'month').priceSatang * snapshot.months;
 }
 
-function workKind(deal: SalesDealView, own: boolean): SalesMyWorkKind {
+function workKind(deal: SalesDealView, own: boolean, superseded: boolean): SalesMyWorkKind {
   if (deal.status === 'PENDING_APPROVAL') return 'APPROVAL_PENDING';
+  if (deal.status === 'CANCELLED' && superseded) return 'DEAL_SUPERSEDED';
   if (deal.status === 'REJECTED' && own) return 'DEAL_REJECTED';
   if (deal.status === 'EXPIRED' && own) return 'DEAL_EXPIRED';
   if (deal.status === 'APPLIED') return 'DEAL_APPLIED';
@@ -505,7 +522,7 @@ function dealFieldMessageTh(field: string): string {
     case 'description': return 'โน้ตถึงลูกค้าต้องไม่ว่างและไม่เกิน 200 ตัวอักษร';
     case 'description_plus': return 'โน้ตถึงลูกค้าห้ามใช้เครื่องหมาย + ให้เขียนว่า "และ"';
     // "เครดิต AI" is the product term (W-01); never the retired AI-money wording.
-    case 'aiMonthlyBudgetSatang': return 'เครดิต AI ต่อเดือนต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป หรือเว้นว่างเพื่อใช้ค่าเริ่มต้น';
+    case 'aiMonthlyBudgetSatang': return 'เครดิต AI ต่อเดือนต้องเป็นจำนวนเต็มตั้งแต่ 1 สตางค์ขึ้นไป หรือเว้นว่างเพื่อใช้ค่าเริ่มต้น (ปิด AI = เอาเมนู AI ออก)';
     case 'featureKeys': return 'รายการเมนูไม่ถูกต้อง';
     default: return 'ข้อมูลดีลไม่ถูกต้อง';
   }

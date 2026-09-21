@@ -41,8 +41,9 @@ export class SalesDealSaveDto {
   @IsInt() @Min(1) employeeLimit!: number;
   @IsInt() @Min(1) monthlySlipLimit!: number;
   @IsArray() @IsString({ each: true }) featureKeys!: string[];
-  // null is a real value (inherit the tier/platform default), so it is validated conditionally.
-  @ValidateIf((dto) => dto.aiMonthlyBudgetSatang !== null) @IsInt() @Min(0) aiMonthlyBudgetSatang!: number | null;
+  // null is a real value (inherit the platform default), so it is validated conditionally.
+  // D-P3-2: zero is not a choice — closing AI removes the `ai_line_assistant` menu instead.
+  @ValidateIf((dto) => dto.aiMonthlyBudgetSatang !== null) @IsInt() @Min(1) aiMonthlyBudgetSatang!: number | null;
   @IsString() @IsNotEmpty() @MaxLength(SALES_DEAL_DESCRIPTION_MAX) description!: string;
   @IsString() @IsNotEmpty() @MaxLength(SALES_DEAL_REASON_MAX) internalReason!: string;
   @IsInt() @IsOptional() version?: number;

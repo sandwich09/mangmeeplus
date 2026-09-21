@@ -1,4 +1,5 @@
 import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity, type PlanTermLockReason } from './plan-term.js';
+import type { SalesDealBaseTier } from './sales.js';
 import type { BillingCompanyProfile } from './billing-company-profile.js';
 
 export const STRIPE_API_VERSION = '2026-08-26.dahlia' as const;
@@ -41,7 +42,9 @@ export const BILLING_PERMISSIONS = ['system.billing.read', 'system.billing.finan
 
 const MONTHLY = { STARTER_249: 24900, BASIC_499: 49900, PRO_999: 99900, ENTERPRISE_1999: 199900 } as const;
 export type BillingOffer = {
-  offerKey: Exclude<PlanTierKey, 'FREE_TRIAL_15'>; interval: BillingInterval; intervalCount: 1;
+  offerKey: Exclude<PlanTierKey, 'FREE_TRIAL_15'>; interval: BillingInterval;
+  /** Catalog offers are always 1; a sales deal (spec §19.2/S35) sells N whole months in one offer. */
+  intervalCount: number;
   label: string; priceSatang: number; currency: 'THB'; branchLimit: number; employeeLimit: number; monthlySlipLimit: number;
   /** Granted at once for the paid period; monthlySlipLimit is only the tier's monthly equivalent. */
   receiptAllowance: number; receiptAllowanceCadence: 'PAID_PERIOD';
@@ -110,6 +113,8 @@ export type BillingQuote = {
   billingEmail: string; trialEndsAt: string | null; usage: BillingReceiptUsage;
   previousSource?: BillingPurchaseSource; previousTermEndsAt?: string | null;
   featureImpact?: BillingFeatureImpact;
+  /** Present only on a sales-deal quote (spec §19.2): what the confirm screen names. */
+  deal?: { dealId: string; months: number; description: string; baseLabel: string };
   purchase?: { kind: 'INITIAL' | 'REPEAT' | 'RESTART' | 'UPGRADE'; previousInterval?: BillingInterval; previousPaidThrough: string | null; projectedPaidThrough: string;
     receiptUnitsAdded: number; projectedRemainingReceipts: number;
     trialCarryover?: { receiptUnits: number; expiresAt: string } };
@@ -139,6 +144,16 @@ export type BillingStatus = {
   availablePurchaseModes?: BillingPurchaseMode[];
   renewalInvoiceUrl?: string | null;
   renewalInvoiceDueAt?: string | null;
+  /**
+   * The APPROVED, unexpired sales deal this shop may pay for right now (spec §19.2, S39), whole:
+   * the offer card draws from this alone, so an OWNER never needs `company.setup.manage` to read
+   * their own offer. `purchaseModes` is the card's OWN list — `availablePurchaseModes` answers the
+   * catalog and is filtered by the account's renewal family.
+   */
+  deal?: { dealId: string; base: SalesDealBaseTier; baseLabel: string; priceSatang: number; months: number;
+    offerExpiresAt: string; purchaseModes: BillingPurchaseMode[];
+    branchLimit: number; employeeLimit: number; monthlySlipLimit: number;
+    featureKeys: string[]; aiMonthlyBudgetSatang: number | null; description: string };
   refundReviewPending?: boolean;
   accessState: 'ACTIVE' | 'EXPIRED' | 'HELD'; subscriptionState: string; documentState: 'NONE' | 'PENDING' | 'READY';
   /** R2: present only while `accessState` is EXPIRED — why the shop is locked, so the package page
@@ -166,6 +181,8 @@ export type BillingCheckoutResult = { attemptId: string; state: string; checkout
 export type BillingAttemptView = {
   attemptId: string; state: string; errorCode: string | null; observedAt: string;
   paymentState: 'PENDING' | 'PAID' | 'FAILED'; applyState: BillingStatus['applyState']; invoiceReference: string | null;
+  /** Present when this Checkout paid a sales deal, so the return page can name what was bought. */
+  deal?: { dealId: string; baseLabel: string; months: number };
 };
 export type BillingInvoiceItem = { id: string; number: string | null; currency: 'THB'; amountSatang: number;
   refundedSatang: number; disputed: boolean; financialObservedAt: string | null;
@@ -223,7 +240,8 @@ export type BillingOperatorCompany = {
   accountId: string | null; companyId: string; companyName: string; mode: BillingMode | 'DISABLED'; version: number;
   subscriptionState: string; renewalMode?: BillingPurchaseMode | 'NONE'; paidThrough: string | null; nextChargeAt: string | null; observedAt: string | null;
   tierKey: string | null; termEndsAt: string | null; companyStatus: string; pendingAttemptId: string | null;
-  source: 'TRIAL' | 'MANUAL' | 'STRIPE' | 'OTHER_BILLING' | 'NONE';
+  /** 'DEAL' (S43/D-P3-6): the contract attempt behind the current term carries a sales-deal snapshot. */
+  source: 'TRIAL' | 'MANUAL' | 'STRIPE' | 'DEAL' | 'OTHER_BILLING' | 'NONE';
   effectiveCapacity?: CompanyPlanCapacity|null;
   paymentState: BillingStatus['paymentState']; applyState: BillingStatus['applyState']; accessState: BillingStatus['accessState']; documentState: BillingStatus['documentState'];
   graceEndsAt: string | null; cancelEffectiveAt: string | null; origin: 'web' | 'line' | null;

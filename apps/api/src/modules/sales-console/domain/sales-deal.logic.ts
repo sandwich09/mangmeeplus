@@ -7,13 +7,13 @@
  */
 import { randomInt } from 'node:crypto';
 import {
-  PLAN_TIER_PRESETS,
   SALES_CODE_ALPHABET,
   SALES_CODE_DEFAULT_LENGTH,
   SALES_CODE_PATTERN,
   SALES_DEAL_DESCRIPTION_MAX,
   SALES_DEAL_MONTHS_MAX,
   SALES_DEAL_OFFER_DAYS,
+  SALES_DEAL_BASE_TIERS,
   SALES_DEAL_REASON_MAX,
   type SalesDealBaseTier,
   type SalesDealSnapshot,
@@ -35,12 +35,15 @@ export const FINAL_DEAL_STATUSES: readonly SalesDealStatus[] = ['APPLIED', 'EXPI
 const TRANSITIONS: Readonly<Record<SalesDealStatus, readonly SalesDealStatus[]>> = {
   DRAFT: ['PENDING_APPROVAL', 'CANCELLED'],
   PENDING_APPROVAL: ['APPROVED', 'REJECTED', 'CANCELLED'],
-  APPROVED: ['PAID', 'EXPIRED', 'CANCELLED'],
+  // The one-time payment path applies in a single commit, so APPROVED -> APPLIED is real; PAID
+  // stays the name for a payment observed without its apply. EXPIRED -> APPLIED exists only for
+  // the race in which the sweep closes a deal whose Checkout had already been paid (S46).
+  APPROVED: ['PAID', 'APPLIED', 'EXPIRED', 'CANCELLED'],
   PAID: ['APPLIED'],
   // A rejected deal becomes editable again, and saving it moves it back to DRAFT (R4).
   REJECTED: ['DRAFT', 'CANCELLED'],
   APPLIED: [],
-  EXPIRED: [],
+  EXPIRED: ['APPLIED'],
   CANCELLED: [],
 };
 
@@ -110,7 +113,9 @@ function positiveInt(value: unknown, field: string, max: number): number {
  */
 export function buildDealSnapshot(draft: SnapshotDraft): SalesDealSnapshot {
   const base = draft.base;
-  if (typeof base !== 'string' || !Object.hasOwn(PLAN_TIER_PRESETS, base) || base === 'FREE_TRIAL_15') {
+  // D-P3-1: only the three tiers that have a Stripe catalog Price behind them. A deal's own
+  // limits express any size, so dropping ENTERPRISE costs the sales team nothing.
+  if (typeof base !== 'string' || !SALES_DEAL_BASE_TIERS.includes(base as SalesDealBaseTier)) {
     throw new SalesSnapshotError('base');
   }
   const description = typeof draft.description === 'string' ? draft.description.trim() : '';
@@ -122,7 +127,9 @@ export function buildDealSnapshot(draft: SnapshotDraft): SalesDealSnapshot {
     throw new SalesSnapshotError('featureKeys');
   }
   const aiBudget = draft.aiMonthlyBudgetSatang;
-  if (aiBudget !== null && (typeof aiBudget !== 'number' || !Number.isSafeInteger(aiBudget) || aiBudget < 0)) {
+  // D-P3-2: blank (inherit) or at least one satang. Zero is refused because the only writer in the
+  // platform refuses it: turning AI off is dropping the `ai_line_assistant` menu, not a nil budget.
+  if (aiBudget !== null && (typeof aiBudget !== 'number' || !Number.isSafeInteger(aiBudget) || aiBudget < 1)) {
     throw new SalesSnapshotError('aiMonthlyBudgetSatang');
   }
   return {

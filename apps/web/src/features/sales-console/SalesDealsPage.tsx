@@ -7,7 +7,7 @@ import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { LoadingState } from '@/common/components/state';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { listSalesDeals } from './sales.api';
-import { formatBaht, SALES_DEAL_STATUS_META } from './sales-console.logic';
+import { dealPaymentNote, formatBaht, SALES_DEAL_STATUS_META } from './sales-console.logic';
 import { SalesDealStatusBadge, SalesEmpty, SalesNotice } from './SalesConsoleParts';
 
 /** "ทั้งหมด" first: a เซลล์ opens this to find one shop's deal, not to audit a status. */
@@ -17,6 +17,7 @@ const FILTERS: readonly { key: SalesDealStatus | 'ALL'; label: string }[] = [
 ];
 
 function DealRow({ deal }: { deal: SalesDealView }) {
+  const paid = dealPaymentNote(deal);
   return (
     <Link href={`/sales/deals/${encodeURIComponent(deal.id)}`} className="flex min-h-12 items-start justify-between gap-3 border-t border-gray-100 px-4 py-3 first:border-t-0 hover:bg-gray-50">
       <span className="min-w-0">
@@ -24,6 +25,7 @@ function DealRow({ deal }: { deal: SalesDealView }) {
         <span className="mt-0.5 block text-xs text-gray-500">
           {formatBaht(deal.snapshot.priceSatang)} · {deal.snapshot.months} เดือน · {deal.salesDisplayName}
         </span>
+        {paid && <span className="mt-0.5 block text-xs text-brand-700">{paid}</span>}
         <span className="mt-0.5 block text-xs text-gray-400">อัปเดต {formatThaiDate(deal.updatedAt)}</span>
       </span>
       <SalesDealStatusBadge status={deal.status} />
@@ -56,10 +58,12 @@ export default function SalesDealsPage() {
       description="ข้อเสนอพิเศษที่คุณสร้างให้ร้านค้า ตั้งแต่ฉบับร่างจนลูกค้าเปิดใช้งาน"
       actions={<Link href="/sales/deals/new" className="mangmee-btn mangmee-btn-primary">สร้างดีลใหม่</Link>}
     >
-      <div className="mangmee-segmented">
+      {/* Nine statuses do not fit 390 px: without these two the labels wrapped to three lines and
+          the last chips were clipped. One scrolling row keeps every 44 px target reachable. */}
+      <div className="mangmee-segmented max-w-full">
         {FILTERS.map((item) => (
           <button key={item.key} type="button" onClick={() => setFilter(item.key)} aria-pressed={filter === item.key}
-            className={`mangmee-tab ${filter === item.key ? 'mangmee-tab-active' : ''}`}>
+            className={`mangmee-tab shrink-0 whitespace-nowrap ${filter === item.key ? 'mangmee-tab-active' : ''}`}>
             {item.label}
           </button>
         ))}

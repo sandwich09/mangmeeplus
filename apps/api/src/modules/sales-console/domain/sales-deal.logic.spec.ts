@@ -29,6 +29,8 @@ describe('sales deal state machine', () => {
     assert.ok(canTransitionDeal('PENDING_APPROVAL', 'APPROVED'));
     assert.ok(canTransitionDeal('APPROVED', 'PAID'));
     assert.ok(canTransitionDeal('PAID', 'APPLIED'));
+    // Phase 3 pays and applies in one commit, so APPROVED -> APPLIED is a real transition.
+    assert.ok(canTransitionDeal('APPROVED', 'APPLIED'));
     // A draft can never become an offer without an approval in between.
     assert.equal(canTransitionDeal('DRAFT', 'APPROVED'), false);
     assert.equal(canTransitionDeal('PENDING_APPROVAL', 'PAID'), false);
@@ -114,8 +116,13 @@ describe('deal snapshot validation', () => {
     assert.throws(() => buildDealSnapshot({ ...draft, months: 0 }), SalesSnapshotError);
   });
 
-  it('refuses the free trial as a deal base', () => {
+  it('accepts only the three tiers that have a Stripe catalog Price (D-P3-1)', () => {
+    for (const base of ['STARTER_249', 'BASIC_499', 'PRO_999']) {
+      assert.equal(buildDealSnapshot({ ...draft, base }).base, base);
+    }
     assert.throws(() => buildDealSnapshot({ ...draft, base: 'FREE_TRIAL_15' }), SalesSnapshotError);
+    // ENTERPRISE has no Price, so the one-time Checkout could never bill it.
+    assert.throws(() => buildDealSnapshot({ ...draft, base: 'ENTERPRISE_1999' }), SalesSnapshotError);
     assert.throws(() => buildDealSnapshot({ ...draft, base: 'NOT_A_TIER' }), SalesSnapshotError);
   });
 
@@ -126,8 +133,11 @@ describe('deal snapshot validation', () => {
     assert.throws(() => buildDealSnapshot({ ...draft, description: 'CRM + สต็อก' }), SalesSnapshotError);
   });
 
-  it('treats a zero AI budget as a real choice and a negative one as invalid', () => {
-    assert.equal(buildDealSnapshot({ ...draft, aiMonthlyBudgetSatang: 0 }).aiMonthlyBudgetSatang, 0);
+  it('takes a blank AI credit as inherit and refuses zero (D-P3-2)', () => {
+    assert.equal(buildDealSnapshot({ ...draft, aiMonthlyBudgetSatang: 1 }).aiMonthlyBudgetSatang, 1);
+    // Closing AI is removing the `ai_line_assistant` menu; the platform's only budget writer
+    // refuses zero on purpose, so a deal must not be able to store one.
+    assert.throws(() => buildDealSnapshot({ ...draft, aiMonthlyBudgetSatang: 0 }), SalesSnapshotError);
     assert.throws(() => buildDealSnapshot({ ...draft, aiMonthlyBudgetSatang: -1 }), SalesSnapshotError);
   });
 

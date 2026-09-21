@@ -673,6 +673,14 @@ const CODE_LABELS: Record<string, string> = {
   SALES_TEAM_LEAD_INVALID: 'หัวหน้าทีมที่เลือกใช้ไม่ได้ กรุณาเลือกหัวหน้าทีมจากรายการอีกครั้ง',
   SALES_AGENT_USERNAME_TAKEN: 'ชื่อผู้ใช้นี้มีคนใช้แล้ว กรุณาตั้งชื่อผู้ใช้อื่น',
   SALES_REFERRAL_WINDOW_CLOSED: 'ร้านนี้เปิดมาเกิน 30 วันแล้ว จึงแก้ผู้แนะนำไม่ได้',
+
+  // ---- ข้อเสนอพิเศษ on the customer's package page (spec §19.2, Phase 3) ----
+  // The shop owner reads these, so each one says what happens next, never why the rule refused.
+  BILLING_DEAL_EXPIRED: 'ข้อเสนอพิเศษนี้หมดอายุแล้ว กรุณาติดต่อทีมขายเพื่อขอข้อเสนอใหม่ คุณยังเลือกแพ็กเกจปกติได้',
+  BILLING_DEAL_NOT_FOUND: 'ไม่พบข้อเสนอพิเศษนี้แล้ว กรุณาโหลดหน้านี้ใหม่ หรือติดต่อทีมขาย',
+  BILLING_DEAL_SNAPSHOT_MISMATCH: 'ข้อเสนอพิเศษนี้เปลี่ยนแล้ว กรุณาโหลดหน้านี้ใหม่เพื่อดูข้อเสนอล่าสุดก่อนชำระเงิน',
+  CONTROL_DEAL_SUBSCRIPTION_REVIEW: 'ร้านนี้มีสมาชิกที่ยังใช้งานอยู่ ทีมงานจะติดต่อกลับเพื่อเปลี่ยนให้ สิทธิ์เดิมยังใช้ได้ตามปกติ',
+  BILLING_MODE_NOT_READY: 'ยังไม่เปิดวิธีชำระเงินที่เลือก กรุณาเลือกวิธีอื่น หรือติดต่อทีมงาน',
 };
 
 // Several upload rejections differ only in which check caught the file; the user's next move is

@@ -15,7 +15,7 @@ import { Modal } from '@/common/components/modal';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { actSalesDeal, createSalesDeal, getSalesDeal, saveSalesDeal, searchSalesCompanies, type SalesDealAction } from './sales.api';
 import {
-  baseTierDefaults, baseTierLabel, dealFormFromView, dealInputFromForm, dealWarnings, emptyDealForm,
+  baseTierDefaults, baseTierLabel, dealFormFromView, dealInputFromForm, dealPaymentNote, dealWarnings, emptyDealForm,
   firstDealErrorField, isDealCancellable, isDealEditable, isMenuSelected, parseBahtInput,
   SALES_DEAL_BASE_TIERS, SALES_DEAL_MENU_BINDINGS, SALES_DEAL_MENU_GROUPS, toggleMenuSelection, validateDealForm,
   type SalesDealFormErrors, type SalesDealFormValues,
@@ -289,6 +289,7 @@ export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: str
       {deal?.status === 'REJECTED' && deal.rejectedReason && (
         <SalesNotice tone="warning">เหตุผลที่หัวหน้าปฏิเสธ: {deal.rejectedReason}</SalesNotice>
       )}
+      {deal && dealPaymentNote(deal) && <SalesNotice tone="info">{dealPaymentNote(deal)}</SalesNotice>}
       {deal?.status === 'APPROVED' && deal.offerExpiresAt && (
         <SalesNotice tone="info">
           อนุมัติโดย {deal.approvedByDisplayName ?? '—'} · ข้อเสนอใช้ได้ถึง {formatThaiDateTime(deal.offerExpiresAt)}
@@ -352,7 +353,7 @@ export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: str
                 onChange={(event) => set('monthlySlipLimit', event.target.value)} error={errors.monthlySlipLimit} />
             </div>
             <TextField label="เครดิต AI ต่อเดือน (บาท)" name="aiBudgetBaht" inputMode="decimal"
-              hint="เว้นว่าง = ใช้ค่าเริ่มต้นของแพ็กเกจ · ใส่ 0 = ปิดการใช้ AI"
+              hint="เว้นว่าง = ใช้ค่าเริ่มต้นของแพ็กเกจ · ปิด AI = เอาเมนู AI ออกด้านล่าง"
               value={values.aiBudgetBaht} onChange={(event) => set('aiBudgetBaht', event.target.value)} error={errors.aiBudgetBaht} />
           </MangmeeCard>
 

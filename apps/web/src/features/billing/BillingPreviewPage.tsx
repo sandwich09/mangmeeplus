@@ -9,7 +9,7 @@ import { createBillingPreview, previewScenarios, type PreviewScenario } from './
 
 const button = 'mangmee-btn mangmee-btn-secondary';
 const money = (value: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(value / 100);
-type CheckoutPreview = Pick<BillingQuote, 'offer' | 'totalSatang' | 'purchase' | 'purchaseMode'>;
+type CheckoutPreview = Pick<BillingQuote, 'offer' | 'totalSatang' | 'purchase' | 'purchaseMode' | 'deal'>;
 
 export default function BillingPreviewPage({ companyId }: { companyId: string }) {
   const [scenario, setScenario] = useState<PreviewScenario>('start'), [revision, setRevision] = useState(0);
@@ -27,7 +27,7 @@ export default function BillingPreviewPage({ companyId }: { companyId: string })
       else setView(kind);
     },
     openDocumentHistory: () => { setReturnSection('history'); setView('document-history'); },
-    startWithPlans: ['start', 'manual', 'capacity', 'capacity-work', 'expired', 'quote-error'].includes(scenario),
+    startWithPlans: ['start', 'manual', 'deal', 'capacity', 'capacity-work', 'expired', 'quote-error'].includes(scenario),
     // Selecting a scenario or restarting intentionally replaces all simulated state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [companyId, scenario, revision]);
@@ -37,7 +37,7 @@ export default function BillingPreviewPage({ companyId }: { companyId: string })
     back: () => setView('journey'),
   }), []);
   function choose(next: PreviewScenario) {
-    if (['start', 'manual', 'capacity', 'capacity-work', 'upgrade', 'scheduled-change', 'expired', 'quote-error'].includes(next)) setCheckout(null);
+    if (['start', 'manual', 'deal', 'capacity', 'capacity-work', 'upgrade', 'scheduled-change', 'expired', 'quote-error'].includes(next)) setCheckout(null);
     setReturnSection('package'); setScenario(next); setRevision(value => value + 1); setView('journey');
   }
   const currentPreview = useMemo(() => ({ ...preview, initialSection: returnSection }), [preview, returnSection]);

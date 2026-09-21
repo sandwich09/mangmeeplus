@@ -121,6 +121,7 @@ test('invalid/overlapping history and unsafe counts fail closed; approved defaul
   }
   assert.throws(() => appendPackageInterval(new Date(NaN), 'month'));
   assert.throws(() => appendPackageInterval(start, 'month', 32));
+  for (const count of [0, -1, 1.5, NaN, 1201]) assert.throws(() => appendPackageInterval(start, 'month', 1, count));
   assert.deepEqual(parseBillingPolicy(BILLING_DRAFT_POLICY), BILLING_DRAFT_POLICY);
   assert.throws(() => parseBillingPolicy({ ...BILLING_DRAFT_POLICY, planChanges: 'NEXT_PERIOD' }));
   assert.throws(() => parseBillingPolicy({ ...BILLING_DRAFT_POLICY, taxRateId: 'txr_oldVatRate' }));
