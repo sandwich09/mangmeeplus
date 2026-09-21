@@ -600,18 +600,19 @@ export class BillingService {
         }
       }
     }
-    const availablePurchaseModes: BillingPurchaseMode[] = settings?.gates.new_sales && eligible && !held
-      ? (['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'] as const).filter(mode =>
-          settings.gates[gateForMode(mode)] && (!account?.paidThrough || account.paidThrough <= new Date() ||
+    const enabledPurchaseModes: BillingPurchaseMode[] = settings?.gates.new_sales && eligible && !held
+      ? (['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'] as const).filter(mode => settings.gates[gateForMode(mode)]) : [];
+    const availablePurchaseModes: BillingPurchaseMode[] = enabledPurchaseModes.filter(mode =>
+          !account?.paidThrough || account.paidThrough <= new Date() ||
             (account.baseSubscriptionId ? renewalMode === 'CARD_AUTO' && mode === 'CARD_AUTO' : renewalMode === 'CARD_ONCE' || renewalMode === 'PROMPTPAY_ONCE'
-              ? oneTimeMode(mode) : true))) : [];
+              ? oneTimeMode(mode) : true));
     const refundReviewPending = !!(account && await pendingRefund(this.prisma.client, account));
     const issues = this.config.stripeAccountId ? await this.prisma.client.billingIssue.findMany({ where: { companyId: company.id, stripeAccountId: this.stripe.accountId,
       livemode: this.stripe.livemode, state: { not: 'RESOLVED' } }, take: 10, select: { id: true, kind: true } }) : [];
     return { companyId: company.id, companyName: company.name, billingProfile: companyBillingProfile(company), mode: this.stripe.enabled ? (this.stripe.livemode ? 'LIVE' : 'TEST') : 'DISABLED',
       collectionPause: account?.collectionPauseJson as BillingStatus['collectionPause'],
       purchaseEligibility: eligible ? 'ELIGIBLE' : 'COMPANY_SALES_CLOSED', refundReviewPending,
-      renewalMode, availablePurchaseModes,
+      renewalMode, enabledPurchaseModes, availablePurchaseModes,
       renewalInvoiceUrl, renewalInvoiceDueAt,
       policyRevision: settings?.revision?.id ?? null, ...state, subscriptionState: account?.subscriptionState ?? 'NONE',
       attemptId: attempt?.id ?? null, reference: invoice?.id ?? attempt?.id ?? null, observedAt: account?.observedAt?.toISOString() ?? null,
