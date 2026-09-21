@@ -569,7 +569,7 @@ describe('buildJourneySteps', () => {
     assert.deepEqual(active(claim({ requesterUserId: 'owner', requestNo: undefined }), OWNER, 'owner').actions, ['submit', 'edit', 'cancel']);
     const pending = claim({ ...submitted, requesterUserId: 'owner', status: 'PENDING_APPROVAL',
       approvalActions: { canApprove: true, canReject: true }, currentDesk: { kind: 'APPROVER', names: ['เจ้าของ'] } });
-    assert.deepEqual(active(pending, OWNER, 'owner').actions, ['approve', 'reject', 'cancel', 'print']);
+    assert.deepEqual(active(pending, OWNER, 'owner').actions, ['approve', 'reject', 'reopen', 'cancel', 'print']);
     assert.deepEqual(active(claim({ ...approved, requesterUserId: 'owner', status: 'READY_FOR_PAYMENT' }), OWNER, 'owner').actions, ['pay', 'cancel', 'print']);
     // AC03 path when finance review is off: the claim can still be APPROVED while its projection runs.
     assert.deepEqual(active(claim({ ...approved, requesterUserId: 'owner', status: 'APPROVED' }), OWNER, 'owner').actions, ['pay', 'cancel', 'print']);
@@ -615,7 +615,7 @@ describe('buildJourneySteps', () => {
       const step = active(claim(overrides), STAFF, 'staff');
       assert.ok(step.actions.every(action => requesterOnly.has(action)), `${overrides.status}: ${step.actions.join(',')}`);
     }
-    assert.deepEqual(active(claim({ ...submitted, status: 'PENDING_APPROVAL', currentDesk: { kind: 'APPROVER' } }), STAFF, 'staff').actions, ['cancel', 'print']);
+    assert.deepEqual(active(claim({ ...submitted, status: 'PENDING_APPROVAL', currentDesk: { kind: 'APPROVER' } }), STAFF, 'staff').actions, ['reopen', 'cancel', 'print']);
     assert.equal(active(claim({ ...approved, status: 'READY_FOR_PAYMENT' }), STAFF, 'staff').note, 'รอผู้มีสิทธิ์บันทึกจ่าย');
     // Somebody else's claim: read only.
     assert.deepEqual(active(claim({ ...submitted, status: 'PENDING_APPROVAL' }), STAFF, 'other').actions, ['print']);
@@ -638,6 +638,59 @@ describe('buildJourneySteps', () => {
     const corrected = active(claim({ financeReviewStatus: 'NEEDS_INFO', financeReviewNote: 'แนบใบเสร็จตัวจริง' }), STAFF, 'staff');
     assert.deepEqual(corrected.actions, ['edit', 'submit', 'cancel']);
     assert.equal(corrected.note, 'ฝ่ายการเงินขอให้แก้ไข: แนบใบเสร็จตัวจริง');
+  });
+
+  it('lets the requester withdraw a claim nobody has decided yet, beside cancel', () => {
+    const waiting = claim({ ...submitted, status: 'PENDING_APPROVAL', currentDesk: { kind: 'APPROVER', names: ['คุณสมชาย'] },
+      approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'PENDING' }] });
+    const step = active(waiting, STAFF, 'staff');
+    assert.deepEqual(step.actions, ['reopen', 'cancel', 'print']);
+    assert.equal(step.note, 'รอ คุณสมชาย อนุมัติ');
+    // Decided (the claim stays PENDING_APPROVAL while an approval's projection runs): nothing to withdraw.
+    const decided = { ...waiting, approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decidedAt: '2026-09-20T04:00:00.000Z' }] };
+    assert.deepEqual(active(decided, STAFF, 'staff').actions, ['cancel', 'print']);
+    // Only the requester, and only with the draft permission.
+    assert.deepEqual(active(waiting, [...STAFF, 'reimbursement.finance_review'], 'fin').actions, ['cancel', 'print']);
+    assert.deepEqual(active(waiting, STAFF.filter(key => key !== 'reimbursement.update_own_draft'), 'staff').actions, ['cancel', 'print']);
+  });
+
+  it('shows a duplicate block at payment with its reason and gives only duplicate.resolve holders the clear', () => {
+    const blocked = claim({ ...approved, status: 'READY_FOR_PAYMENT', duplicateBlocksPayment: true,
+      duplicateCandidates: [
+        { id: 'd1', candidateType: 'ATTACHMENT_CHECKSUM', status: 'OPEN', score: 80 },
+        { id: 'd2', candidateType: 'EXPENSE_LINK', status: 'DISMISSED', score: 60 },
+      ] });
+    const resolver = active(blocked, [...OWNER, 'reimbursement.duplicate.resolve'], 'owner');
+    assert.deepEqual(resolver.actions, ['resolve-duplicate', 'cancel', 'print'], 'no pay button the API would refuse');
+    assert.equal(resolver.note, 'ติดรายการซ้ำ: ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล จึงจะบันทึกจ่ายได้');
+    // A payer or the requester is told whose desk it is, with no action they cannot finish.
+    const payer = active(blocked, [...APPROVER, 'reimbursement.payment.record'], 'boss');
+    assert.deepEqual(payer.actions, ['print']);
+    assert.match(payer.note ?? '', /^ติดรายการซ้ำ: ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น รอผู้มีสิทธิ์ตรวจรายการซ้ำ/);
+    assert.match(active(blocked, STAFF, 'staff').note ?? '', /รอผู้มีสิทธิ์ตรวจรายการซ้ำ/);
+    // The no-finance claim still waiting for its projection is blocked the same way.
+    assert.deepEqual(active({ ...blocked, status: 'APPROVED' }, [...OWNER, 'reimbursement.duplicate.resolve'], 'owner').actions,
+      ['resolve-duplicate', 'cancel', 'print']);
+    // Once cleared, the payment form is back.
+    assert.deepEqual(active({ ...blocked, duplicateBlocksPayment: false }, [...OWNER, 'reimbursement.duplicate.resolve'], 'owner').actions,
+      ['pay', 'cancel', 'print']);
+  });
+
+  it('explains a self-approval block to the requester and links the settings only for policy managers', () => {
+    const own = claim({ ...submitted, status: 'PENDING_APPROVAL', requesterUserId: 'solo', currentDesk: { kind: 'APPROVER', names: ['เจ้าของ'] },
+      approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'PENDING' }],
+      approvalActions: { canApprove: false, canReject: false, selfApprovalBlocked: true } });
+    const custom = [...STAFF, 'reimbursement.approve', 'reimbursement.reject'];
+    const manager = active(own, [...custom, 'reimbursement.policy.manage'], 'solo');
+    assert.deepEqual(manager.actions, ['policy-settings', 'reopen', 'cancel', 'print']);
+    assert.match(manager.note ?? '', /^รอ เจ้าของ อนุมัติ · ใบนี้เป็นของคุณเอง/);
+    assert.match(manager.note ?? '', /"ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้"/);
+    assert.match(manager.note ?? '', /เปิดได้ที่ตั้งค่าเบิกจ่าย แล้วเปิดคำขอกลับเป็นร่างและส่งอนุมัติใหม่$/);
+    const member = active(own, custom, 'solo');
+    assert.deepEqual(member.actions, ['reopen', 'cancel', 'print']);
+    assert.match(member.note ?? '', /ขอให้เจ้าของกิจการเปิดในตั้งค่าเบิกจ่าย/);
+    // No server flag, no hint: an ordinary wait reads as before.
+    assert.equal(active({ ...own, approvalActions: { canApprove: false, canReject: false } }, custom, 'solo').note, 'รอ เจ้าของ อนุมัติ');
   });
 });
 

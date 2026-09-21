@@ -129,12 +129,17 @@ function fakeRepo(options: RepoOptions = {}) {
     findRequestById: async (companyId: string, id: string, withRelations?: boolean) => request?.companyId !== companyId || request?.id !== id
       ? null : withRelations ? { ...request, approvalSteps: [], payments: [], duplicateCandidates: [] } : request,
     updateRequest: async (_companyId: string, _id: string, data: any) => { Object.assign(request, data); return request; },
-    reopenRejectedRequest: async (_companyId: string, _id: string, expectedUpdatedAt: Date, actorUserId: string) => {
+    reopenRejectedRequest: async (_companyId: string, _id: string, expectedUpdatedAt: Date, actorUserId: string, expectedStatus = 'REJECTED') => {
       assert.equal(expectedUpdatedAt, request.updatedAt);
-      if (request.status !== 'REJECTED') throw new Error('reimbursement_changed');
+      // Mirrors the repository: a withdraw needs the current step still undecided, and cancels it.
+      const current = calls.approvalSteps.find((step) => step.id === request.currentApprovalStepId);
+      if (request.status !== expectedStatus || (expectedStatus === 'PENDING_APPROVAL' && current?.status)) {
+        throw new Error('reimbursement_changed');
+      }
+      if (expectedStatus === 'PENDING_APPROVAL') Object.assign(current ?? {}, { status: 'CANCELLED', invalidatedReason: 'withdrawn_by_requester' });
       Object.assign(request, {
-        status: 'DRAFT', rejectedAt: null, rejectionReason: null, approvalSnapshotHash: null,
-        updatedByUserId: actorUserId, updatedAt: new Date(request.updatedAt.getTime() + 1),
+        status: 'DRAFT', rejectedAt: null, rejectionReason: null, approvalSnapshotHash: null, approvalPolicySnapshotJson: null,
+        currentApprovalStepId: null, updatedByUserId: actorUserId, updatedAt: new Date(request.updatedAt.getTime() + 1),
       });
       return request;
     },
@@ -186,7 +191,7 @@ function fakeRepo(options: RepoOptions = {}) {
       if (options.submitError) throw options.submitError;
       assert.equal(expectedUpdatedAt, request.updatedAt);
       const step = approvalStep ? {
-        id: 'step-1', ...approvalStep,
+        id: `step-${calls.approvalSteps.length + 1}`, ...approvalStep,
         assignedApproverUserIds: approvalStep.assignedApproverUserIdsJson,
       } : undefined;
       if (step) calls.approvalSteps.push(step);
@@ -510,6 +515,76 @@ describe('ReopenRejectedReimbursementUseCase', () => {
       () => reopen.execute(ctx({ userId: 'someone-else', permissions: ['reimbursement.update_own_draft'] }), 'rb-1'),
       /Cannot reopen this reimbursement/,
     );
+  });
+
+  // Spec §6 step 2: "แก้ไข (เปิดกลับเป็นร่าง)" while the claim waits for approval.
+  it('lets the requester withdraw a claim nobody has decided, under the same number, and audits it', async () => {
+    const state = fakeRepo();
+    await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
+    Object.assign(state.request, { status: 'PENDING_APPROVAL', requestNo: 'RB-202601-000001' });
+    const reopen = new ReopenRejectedReimbursementUseCase(state.repo, { log: async (entry: any) => { state.calls.audits.push(entry); } } as any);
+
+    const result = await reopen.execute(ctx(), 'rb-1');
+
+    assert.equal(result.status, 'DRAFT');
+    assert.equal(state.request.requestNo, 'RB-202601-000001');
+    const audit = state.calls.audits.find((entry: any) => entry.action === 'reimbursement.request.withdraw');
+    assert.deepEqual(audit?.metadataJson, { requestNo: 'RB-202601-000001', previousStatus: 'PENDING_APPROVAL' });
+  });
+
+  it('refuses a withdraw after a decision, and from anyone but the requester — finance included', async () => {
+    const state = fakeRepo();
+    await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
+    Object.assign(state.request, { status: 'PENDING_APPROVAL', currentApprovalStepId: 'step-1' });
+    const reopen = new ReopenRejectedReimbursementUseCase(state.repo, noopAudit);
+    const finance = ctx({ userId: 'fin-1', permissions: ['reimbursement.update_own_draft', 'reimbursement.finance_review'] });
+
+    await assert.rejects(() => reopen.execute(finance, 'rb-1'), /Cannot reopen this reimbursement/);
+    state.calls.approvalSteps.push({ id: 'step-1', status: 'APPROVED' });
+    await assert.rejects(() => reopen.execute(ctx(), 'rb-1'), /reimbursement_changed/);
+    assert.equal(state.request.status, 'PENDING_APPROVAL');
+    // Finance's wider reach still reopens a refusal, as before.
+    Object.assign(state.request, { status: 'REJECTED' });
+    assert.equal((await reopen.execute(finance, 'rb-1')).status, 'DRAFT');
+  });
+
+  it('builds a fresh route when the withdrawn claim is sent again', async () => {
+    const policy = {
+      id: 'policy-1', updatedAt: new Date('2026-01-01T00:00:00.000Z'), currency: 'THB', approvalRequiredFromAmount: '1.00',
+      approverMode: 'MANAGER_ROLE', defaultApproverRole: 'MANAGER', allowSelfApproval: false, duplicatePolicy: 'WARN',
+      financeReviewRequired: false, status: 'ACTIVE', requireReceipt: false, allowMissingReceiptWithReason: false,
+    } as any;
+    const state = fakeRepo({ policy });
+    const routeInputs: any[] = [];
+    const routes = {
+      resolveNamedSubmissionRoute: async () => null,
+      // Self-approval off leaves the requester off their own route; on, they are on it.
+      resolveSubmissionRoute: async (input: any) => {
+        routeInputs.push(input);
+        return {
+          responsibilityRole: input.roleKey, effectiveTaskRole: input.roleKey,
+          recipientUserIds: input.allowSelfApproval ? [input.requesterUserId] : ['owner-1'],
+          ownerRecipientUserIds: ['owner-1'], ownerFallbackUsed: !input.allowSelfApproval,
+        };
+      },
+    } as any;
+    const submit = new SubmitReimbursementUseCase(state.repo, noopAudit, noopOutbox, evidenceService(), routes, noopProjections);
+    await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()], missingReceiptReason: 'ใบเสร็จหาย' } as any);
+    await submit.execute(ctx(), 'rb-1');
+
+    await new ReopenRejectedReimbursementUseCase(state.repo, noopAudit).execute(ctx(), 'rb-1');
+    policy.allowSelfApproval = true;
+    await submit.execute(ctx(), 'rb-1');
+
+    assert.equal(routeInputs.length, 2, 'the route is resolved again, not carried over');
+    assert.equal(routeInputs[1].allowSelfApproval, true);
+    assert.deepEqual(state.calls.approvalSteps.map((step) => [step.id, step.status ?? 'PENDING', step.assignedApproverUserIdsJson]), [
+      ['step-1', 'CANCELLED', ['owner-1']],
+      ['step-2', 'PENDING', ['staff-1']],
+    ]);
+    assert.equal(state.request.status, 'PENDING_APPROVAL');
+    assert.equal(state.request.currentApprovalStepId, 'step-2');
+    assert.equal(state.request.approvalPolicySnapshotJson.allowSelfApproval, true);
   });
 });
 

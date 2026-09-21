@@ -112,14 +112,17 @@ export async function approvalDecisionActions(
   ctx: RequestContext,
   request: ReimbursementRequestRecord,
   repo: PrismaReimbursementRepository,
-): Promise<{ canApprove: boolean; canReject: boolean }> {
+): Promise<{ canApprove: boolean; canReject: boolean; selfApprovalBlocked?: boolean }> {
   if (request.status !== 'PENDING_APPROVAL' || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) {
     return { canApprove: false, canReject: false };
   }
   const step = currentApprovalStep(request);
   const activeApprovers = await activeStepApprovers(repo, ctx.companyId, step, request.branchId);
   const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
-  if (!isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers)) {
+  const eligible = isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers);
+  // The requester is read on past eligibility: routing leaves them off their own step when
+  // self-approval is off, which is exactly the case the journey page has to explain (spec §15).
+  if (!eligible && request.requesterUserId !== ctx.userId) {
     return { canApprove: false, canReject: false };
   }
   const policy = effectivePolicyForRequest(
@@ -128,8 +131,13 @@ export async function approvalDecisionActions(
   );
   if (!assignedBySnapshot
     && isSelfApproval(request.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
-    return { canApprove: false, canReject: false };
+    // They hold the approval this step waits on, so only the switch stands in the way.
+    const blockedOnlyBySwitch = step?.status === 'PENDING'
+      && ctx.permissions.includes('reimbursement.approve')
+      && (eligible || matchesApproverRole(step.approverRoleSnapshot, ctx.roles));
+    return { canApprove: false, canReject: false, ...(blockedOnlyBySwitch && { selfApprovalBlocked: true }) };
   }
+  if (!eligible) return { canApprove: false, canReject: false };
   return {
     canApprove: assignedBySnapshot || ctx.permissions.includes('reimbursement.approve'),
     canReject: assignedBySnapshot || ctx.permissions.includes('reimbursement.reject'),

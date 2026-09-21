@@ -80,6 +80,7 @@ export class FinanceReviewReimbursementUseCase {
   ) {}
 
   async execute(ctx: RequestContext, id: string, input: FinanceReviewReimbursementInput): Promise<ReimbursementRequestDetail> {
+    if (!input.decision && input.resolveDuplicate) return this.resolvePaymentDuplicates(ctx, id, input.duplicateResolutionReason);
     if (!ctx.permissions.includes('reimbursement.finance_review')) throw new ForbiddenException('Missing permission: reimbursement.finance_review');
 
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
@@ -221,6 +222,47 @@ export class FinanceReviewReimbursementUseCase {
     } else {
       throw new BadRequestException('invalid_finance_decision');
     }
+
+    const detail = await this.repo.findRequestById(ctx.companyId, id, true);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+  }
+
+  /**
+   * The resolve-only call: under BLOCK_PAYMENT an open duplicate refuses payment, and with finance
+   * review off (the default) no finance decision ever comes to carry the override. The same holders
+   * clear it at the payment step instead — `duplicate.resolve` only, never widened (spec §6).
+   */
+  private async resolvePaymentDuplicates(ctx: RequestContext, id: string, reason?: string): Promise<ReimbursementRequestDetail> {
+    if (!ctx.permissions.includes('reimbursement.duplicate.resolve')) throw new ForbiddenException('Missing permission: reimbursement.duplicate.resolve');
+    const duplicateResolutionReason = reason?.trim();
+    if (!duplicateResolutionReason) throw new BadRequestException('duplicate_resolution_reason_required');
+
+    const req = await this.repo.findRequestById(ctx.companyId, id);
+    if (!req) throw new NotFoundException('Reimbursement request not found');
+    assertReimbursementBranchInScope(ctx, req.branchId);
+
+    await this.repo.resolvePaymentDuplicatesAtomic({
+      companyId: ctx.companyId,
+      requestId: id,
+      expectedUpdatedAt: req.updatedAt,
+      actorUserId: ctx.userId,
+      scopes: ctx.scopes ?? {},
+      resolvedAt: new Date(),
+      reason: duplicateResolutionReason,
+      onResolvedPersisted: async (tx) => {
+        await this.audit.log({
+          companyId: ctx.companyId,
+          actorUserId: ctx.userId,
+          action: 'reimbursement.duplicate.resolve',
+          targetType: 'reimbursement_request',
+          targetId: id,
+          requestId: ctx.requestId,
+          result: 'SUCCESS',
+          riskLevel: 'HIGH',
+          metadataJson: { requestDuplicateOverride: true, duplicateResolutionReason, status: req.status },
+        }, tx);
+      },
+    });
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
     return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);

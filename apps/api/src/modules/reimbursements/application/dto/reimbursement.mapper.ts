@@ -203,6 +203,7 @@ export function toRequestDetail(
     signedCopies?: ReimbursementSignedCopySummary[];
     claimSignatureAckHash?: string;
     allowMissingReceiptWithReason?: boolean;
+    duplicateBlocksPayment?: boolean;
   } = {},
 ): ReimbursementRequestDetail {
   return {
@@ -228,6 +229,7 @@ export function toRequestDetail(
     approvalSteps: (r.approvalSteps ?? []).map((s) => toStepSummary(s, displayNames)),
     payments: (r.payments ?? []).map((p) => toPaymentSummary(p, displayNames)),
     duplicateCandidates: (r.duplicateCandidates ?? []).map(toDuplicateSummary),
+    duplicateBlocksPayment: extras.duplicateBlocksPayment,
     signatures: (r.claimSignatures ?? []).map((s) => toClaimSignatureSummary(s, displayNames)),
     signedCopies: extras.signedCopies ?? [],
   };
@@ -269,5 +271,9 @@ export async function detailWithFileNames(
     signedCopies: toSignedCopySummaries(signedCopies),
     claimSignatureAckHash: claimSignatureAckHash(req),
     allowMissingReceiptWithReason: requestPolicy.allowMissingReceiptWithReason,
+    // The payment gate's own test (open candidates under BLOCK_PAYMENT). Not `duplicateStatus`:
+    // once projections run, that field carries the expense-level result, not these candidates.
+    duplicateBlocksPayment: requestPolicy.duplicatePolicy === 'BLOCK_PAYMENT'
+      && (req.duplicateCandidates ?? []).some((candidate) => candidate.status === 'OPEN'),
   });
 }
