@@ -141,7 +141,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const detailEl = document.getElementById('detail');
   const actionEl = document.getElementById('notice-action');
   /** Inputs that can carry their own error message; the signup form is the only page with any. */
-  const FIELD_IDS = ['company-name', 'phone-number', 'contact-email', 'discovery-source', 'discovery-source-other'];
+  const FIELD_IDS = ['company-name', 'phone-number', 'contact-email', 'discovery-source', 'discovery-source-other', 'referral-sales-code'];
   const actionBtn = document.getElementById(mode === 'customer' ? 'register' : 'link');
   const openLineEl = document.getElementById('open-line');
   const noticeEl = document.getElementById('client-notice');
@@ -171,7 +171,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const SIGNUP_STORAGE_KEY = 'mangmee_line_signup_submission_v1';
   const START_REASON_TH = {
     suspended: 'ร้านนี้ถูกระงับการใช้งานอยู่ค่ะ ติดต่อทีมงานเพื่อเปิดใช้อีกครั้งได้นะคะ',
-    expired: 'ช่วงทดลองใช้ของร้านนี้หมดอายุแล้วค่ะ พิมพ์ ขอเปลี่ยนแพ็กเกจ ในแชทได้เลย ทีมงานจะติดต่อกลับนะคะ',
+    expired: 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ค่ะ เข้าสู่ระบบบนเว็บแล้วเลือกแพ็กเกจเพื่อเริ่มใช้งานได้เลยนะคะ',
     no_membership: 'บัญชี LINE นี้ยังไม่ได้อยู่ในร้านไหนค่ะ ให้เจ้าของร้านส่งลิงก์เชิญให้อีกครั้งนะคะ'
   };
   const FAIL_TITLE_TH = {
@@ -211,6 +211,10 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     invalid_referralCode: { tone: 'warning', text: 'โค้ดแนะนำในลิงก์ไม่ถูกต้อง', advice: 'ปิดหน้านี้แล้วเปิดใหม่จากเมนูใน LINE โดยไม่ต้องใช้ลิงก์เดิมนะคะ' },
     line_signup_discovery_source_invalid: { tone: 'warning', text: 'ช่องทางที่เลือกยังไม่ถูกต้อง', advice: 'เลือกช่องทางที่รู้จักเราจากตัวเลือกอีกครั้งนะคะ', field: 'discovery-source' },
     line_signup_discovery_other_invalid: { tone: 'warning', text: 'ช่องทางอื่น ๆ ยาวเกินไป', advice: 'ระบุช่องทางไม่เกิน 200 ตัวอักษรนะคะ', field: 'discovery-source-other' },
+    // D6: the server refuses a code that belongs to nobody or to a suspended agent. Both answer
+    // the same way on purpose — a customer must not be able to probe which codes exist.
+    SALES_CODE_UNKNOWN: { tone: 'warning', text: 'ไม่พบรหัสเซลล์นี้', advice: 'ตรวจสอบรหัสกับเซลล์ของคุณอีกครั้งนะคะ', field: 'referral-sales-code' },
+    line_signup_discovery_sales_code_invalid: { tone: 'warning', text: 'รหัสเซลล์ไม่ถูกต้อง', advice: 'รหัสเซลล์เป็นตัวอักษรหรือตัวเลข 3–6 ตัวนะคะ', field: 'referral-sales-code' },
     // The release moved under a page left open. Only a real reload re-renders the text being agreed to.
     legal_release_changed: { tone: 'warning', text: 'หน้านี้เปิดค้างไว้นาน ข้อกำหนดมีฉบับใหม่แล้ว', advice: 'แตะปุ่มด้านล่างเพื่อโหลดหน้าใหม่ แล้วยอมรับอีกครั้งนะคะ', action: 'reload' },
     line_signup_already_pending: { tone: 'info', text: 'มีคำขอเดิมรออนุมัติอยู่แล้ว', advice: 'ทีมงานกำลังตรวจสอบให้อยู่ค่ะ พร้อมใช้เมื่อไหร่จะแจ้งในแชทนี้นะคะ' },
@@ -376,12 +380,17 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     const body = refusalBody(text);
     const known = SIGNUP_GUIDANCE[typeof body.message === 'string' ? body.message : ''];
     if (known) return known;
+    // Newer refusals carry a machine code beside the Thai sentence ({ code, message }), which is
+    // the shape billing and the sales console use. Keyed lookups win over the message text.
+    const byCode = SIGNUP_GUIDANCE[typeof body.code === 'string' ? body.code : ''];
+    if (byCode) return byCode;
     if (status === 400 && Array.isArray(body.message) && body.message.some(function (message) {
       return typeof message === 'string' && message.indexOf('contactEmail ') === 0;
     })) return SIGNUP_GUIDANCE.line_signup_email_invalid;
     if (status === 400 && Array.isArray(body.message)) {
       if (body.message.some(function (message) { return typeof message === 'string' && message.indexOf('discoverySource ') === 0; })) return SIGNUP_GUIDANCE.line_signup_discovery_source_invalid;
       if (body.message.some(function (message) { return typeof message === 'string' && message.indexOf('discoverySourceOther ') === 0; })) return SIGNUP_GUIDANCE.line_signup_discovery_other_invalid;
+      if (body.message.some(function (message) { return typeof message === 'string' && message.indexOf('referralSalesCode ') === 0; })) return SIGNUP_GUIDANCE.line_signup_discovery_sales_code_invalid;
     }
     if (status === 429) {
       const seconds = typeof body.retryAfterSeconds === 'number' ? body.retryAfterSeconds : 0;
@@ -691,7 +700,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     if (progress.state === 'COMPLETED') {
       const returned = progress.resolution === 'RETURN_EXISTING';
       setProgress('พร้อมเริ่มใช้งาน', returned
-        ? shop + ' ใช้ต่อได้เลยค่ะ ไม่มีการเปิดร้านหรือเริ่มทดลองใช้ฟรีใหม่'
+        ? shop + ' ใช้ต่อได้เลยค่ะ ไม่มีการเปิดร้านใหม่'
         : shop + ' เปิดสำเร็จแล้วค่ะ', progress);
       const entered = renderEligibleCompanies(companies, progress.entryCompanyId || '', true);
       if (!entered) {
@@ -779,8 +788,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     signupIntent = intent;
     signupReady = true;
     const addShop = intent === 'ADD_SHOP';
-    document.getElementById('form-title').textContent = addShop ? 'เปิดร้านเพิ่ม' : 'เปิดร้านใหม่ ทดลองใช้ฟรี';
-    actionBtn.textContent = addShop ? 'ยืนยันเปิดร้านเพิ่ม' : 'ยอมรับและเริ่มทดลองใช้ฟรี';
+    document.getElementById('form-title').textContent = addShop ? 'เปิดร้านเพิ่ม' : 'เปิดร้านใหม่';
+    actionBtn.textContent = addShop ? 'ยืนยันเปิดร้านเพิ่ม' : 'ยอมรับและเปิดร้าน';
     if (addShop) {
       clearSavedSubmission();
       document.getElementById('company-name').value = '';
@@ -790,6 +799,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       const choices = document.querySelectorAll('input[name="discovery-source"]');
       for (let index = 0; index < choices.length; index += 1) choices[index].checked = false;
       document.getElementById('discovery-source-other').value = '';
+      document.getElementById('referral-sales-code').value = '';
       toggleDiscoveryOther();
     }
     setFieldError('', '');
@@ -829,6 +839,12 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     const discoverySourceOther = discoverySource === 'OTHER'
       ? (document.getElementById('discovery-source-other').value || '').trim() : '';
     if (discoverySourceOther.length > 200) fields['discovery-source-other'] = 'ระบุช่องทางไม่เกิน 200 ตัวอักษรนะคะ';
+    // D6: only read when "เซลล์ของมั่งมี" is the answer, so switching away cannot smuggle a code.
+    const referralSalesCode = discoverySource === 'SALES'
+      ? (document.getElementById('referral-sales-code').value || '').trim().toUpperCase() : '';
+    if (discoverySource === 'SALES' && !/^[A-Z0-9]{3,6}$/.test(referralSalesCode)) {
+      fields['referral-sales-code'] = 'รหัสเซลล์เป็นตัวอักษรหรือตัวเลข 3–6 ตัวนะคะ';
+    }
     if (!companyName) fields['company-name'] = 'ใส่ชื่อร้านที่ลูกค้าเรียก ยาวไม่เกิน 120 ตัวอักษรนะคะ';
     if (!/^0[0-9]{9}$/.test(phoneNumber)) fields['phone-number'] = PHONE_RULE_TH;
     if (contactEmail && ( contactEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail))) {
@@ -855,6 +871,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       contactEmail,
       ...(referralCode ? { referralCode } : {}),
       ...(discoverySource ? { discoverySource, ...(discoverySourceOther ? { discoverySourceOther } : {}) } : {}),
+      ...(referralSalesCode ? { referralSalesCode } : {}),
       legal: {
         documentVersion: root.dataset.legalVersion || '',
         statementSha256: root.dataset.legalStatement || '',
@@ -991,7 +1008,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     if (!res.ok) throw new Error(refusalCode(text) || ('เปิดหน้าเว็บไม่สำเร็จ: ' + res.status));
     const session = JSON.parse(text);
     if (session.needsSignup) {
-      setStatus('ยังไม่มีร้านที่ผูกกับ LINE นี้ค่ะ เปิดร้านใหม่ทดลองฟรีได้เลยนะคะ', '', 'info');
+      setStatus('ยังไม่มีร้านที่ผูกกับ LINE นี้ค่ะ เปิดร้านใหม่ได้เลยนะคะ', '', 'info');
       const signupEl = document.getElementById('go-signup');
       if (signupEl) signupEl.hidden = false;
       return;
@@ -1104,6 +1121,13 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     const show = !!selected && selected.value === 'OTHER';
     document.getElementById('discovery-other-fields').hidden = !show;
     document.getElementById('discovery-source-other').disabled = !show;
+    // D6: the sales-code field follows the "เซลล์ของมั่งมี" choice the same way.
+    const showSales = !!selected && selected.value === 'SALES';
+    const salesFields = document.getElementById('discovery-sales-fields');
+    if (salesFields) {
+      salesFields.hidden = !showSales;
+      document.getElementById('referral-sales-code').disabled = !showSales;
+    }
   }
   const discoveryGroup = document.getElementById('discovery-source');
   if (discoveryGroup) {

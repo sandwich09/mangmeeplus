@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CreateCompanyOnboardingUseCase } from '../../system-onboarding/application/use-cases/create-company-onboarding.use-case';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
+import { PartnerLifecycleTransitionUseCase } from '../../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 
 /**
  * Review B-01 pre-flight. Every other provisioning spec mocks the onboarding service away, which
@@ -15,6 +16,7 @@ import { ProvisionSignupUseCase } from './provision-signup.use-case';
  */
 function fakePrisma() {
   const planTerms = new Map<string, any>();
+  const companies = new Map<string, any>();
   const chartRows: any[] = [];
   const autoModel = (name: string, overrides: Record<string, any> = {}): any => new Proxy({}, {
     get: (_target, method: string) => overrides[method] ?? (async (args: any) => {
@@ -41,7 +43,12 @@ function fakePrisma() {
         Object.assign(existing, args.update ?? {});
         return existing;
       },
-      findUnique: async (args: any) => planTerms.get(args.where.companyId) ?? null,
+      // The no-package lock reads the row back together with the company it belongs to.
+      findUnique: async (args: any) => {
+        const row = planTerms.get(args.where.companyId);
+        return row ? { renewCount: 0, ...row, company: { status: companies.get(args.where.companyId)?.status ?? 'ACTIVE' } } : null;
+      },
+      update: async (args: any) => Object.assign(planTerms.get(args.where.companyId), args.data),
     }),
     // The chart bootstrap re-reads what it wrote and refuses to commit unless the rows match the
     // template, so this one needs to remember rows rather than answer empty.
@@ -59,7 +66,14 @@ function fakePrisma() {
       updateMany: async ({ where }: any) => ({ count: where?.companyId === null ? 1 : 0 }),
     }),
     role: autoModel('role', { findUnique: async () => ({ id: 'role-owner' }) }),
-    company: autoModel('company', { create: async () => ({ id: 'co-1' }) }),
+    company: autoModel('company', {
+      create: async () => {
+        companies.set('co-1', { id: 'co-1', status: 'ACTIVE', activatedAt: null, disabledAt: null, archivedAt: null });
+        return { id: 'co-1' };
+      },
+      findUnique: async ({ where }: any) => companies.get(where.id) ?? null,
+      update: async ({ where, data }: any) => Object.assign(companies.get(where.id), data),
+    }),
     companyMembership: autoModel('companyMembership', { create: async () => ({ id: 'mem-1' }) }),
   };
   const client: any = new Proxy({}, {
@@ -68,11 +82,13 @@ function fakePrisma() {
         return async (arg: any) => (typeof arg === 'function' ? arg(client) : Promise.all(arg));
       }
       if (prop === '$executeRaw') return async () => 0;
+      // `lockPlanTermCompany`: a row lock this single-threaded fake does not need to model.
+      if (prop === '$queryRaw') return async () => [];
       models[prop] ??= autoModel(prop);
       return models[prop];
     },
   });
-  return { prisma: { client } as any, planTerms };
+  return { prisma: { client } as any, planTerms, companies };
 }
 
 const CONFIG = { credentialEncryptionKey: Buffer.alloc(32, 7), lineLiffId: undefined } as any;
@@ -95,7 +111,7 @@ const REQUEST = {
 };
 
 function harness(overrides: Record<string, unknown> = {}) {
-  const { prisma, planTerms } = fakePrisma();
+  const { prisma, planTerms, companies } = fakePrisma();
   const core = {
     claimProvisioning: async () => ({ request: { ...REQUEST, ...overrides }, claimed: true, attemptId: 'attempt-1' }),
     completeProvisioning: async () => ({}),
@@ -107,7 +123,8 @@ function harness(overrides: Record<string, unknown> = {}) {
   const adminDirectory = { activeSystemAdmins: async () => [{ companyId: 'sys', userId: 'sysadmin-1' }] } as any;
   const lineNotify = { enqueue: async () => undefined } as any;
   const opsAlerts = { raise: async () => undefined } as any;
-  return { useCase: new ProvisionSignupUseCase(prisma, core, onboarding, CONFIG, adminDirectory, lineNotify, opsAlerts), planTerms };
+  return { useCase: new ProvisionSignupUseCase(prisma, core, onboarding, CONFIG, adminDirectory, lineNotify, opsAlerts,
+    new PartnerLifecycleTransitionUseCase(prisma)), planTerms, companies };
 }
 
 const PROVISION = {
@@ -134,7 +151,10 @@ describe('B-01 pre-flight: the tier a signup provisioning actually writes', () =
     assert.equal(term.branchLimit, 1);
     assert.equal(term.employeeLimit, 2);
     assert.equal(term.monthlySlipLimit, 15);
-    assert.equal(term.termEndsAt.getTime() - term.termStartAt.getTime(), 30 * 24 * 60 * 60 * 1000);
+    // R1 (Owner 2026-09-20): zero days, and the shop is locked before it can be used.
+    assert.equal(term.termEndsAt.getTime(), term.termStartAt.getTime());
+    assert.ok(term.termDisabledAt instanceof Date);
+    assert.equal(h.companies.get('co-1').status, 'DISABLED');
   });
 
   it('ignores what the applicant asked for — a PRO request still provisions the free trial', async () => {
@@ -157,5 +177,8 @@ describe('B-01 pre-flight: the tier a signup provisioning actually writes', () =
     const term = h.planTerms.get('co-1');
     assert.equal(term.tierKey, 'ENTERPRISE_1999', 'a paid term must survive a provisioning retry');
     assert.equal(term.termEndsAt.getTime(), paidUntil.getTime());
+    // S23: and the no-package lock must not touch a shop whose term is still running.
+    assert.equal(h.companies.get('co-1').status, 'ACTIVE');
+    assert.equal(term.termDisabledAt, undefined);
   });
 });

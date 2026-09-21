@@ -12,13 +12,20 @@ const units = (value: number): number => {
   return value;
 };
 
-/** Preserve the billing anniversary through February/short months, without assuming 30/365 days. */
-export function appendPackageInterval(start: Date, interval: BillingInterval, anchorDay = start.getUTCDate()): Date {
+/**
+ * Preserve the billing anniversary through February/short months, without assuming 30/365 days.
+ *
+ * `count` is how many whole intervals to append at once — 1 for every catalog offer, N for a
+ * sales deal sold as N months (spec §19.2/S35). Counting months once, rather than calling this N
+ * times, is what keeps the anchor day: 31 Jan + 3 months is 30 Apr, not 30 Apr via 28 Feb.
+ */
+export function appendPackageInterval(start: Date, interval: BillingInterval, anchorDay = start.getUTCDate(), count = 1): Date {
   time(start);
-  if (!['month', 'year'].includes(interval) || !Number.isInteger(anchorDay) || anchorDay < 1 || anchorDay > 31) throw invalid();
+  if (!['month', 'year'].includes(interval) || !Number.isInteger(anchorDay) || anchorDay < 1 || anchorDay > 31 ||
+      !Number.isInteger(count) || count < 1 || count > 1200) throw invalid();
   const end = new Date(start);
   end.setUTCDate(1);
-  end.setUTCMonth(end.getUTCMonth() + (interval === 'year' ? 12 : 1));
+  end.setUTCMonth(end.getUTCMonth() + (interval === 'year' ? 12 : 1) * count);
   const lastDay = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() + 1, 0)).getUTCDate();
   end.setUTCDate(Math.min(anchorDay, lastDay));
   if (time(end) <= time(start)) throw invalid();
@@ -36,7 +43,7 @@ export function fullPackagePurchaseImpact(input: {
   const paidAt = time(input.verifiedPaidAt);
   const continuing = input.paidThrough !== null && time(input.paidThrough) > paidAt;
   const serviceStartsAt = continuing ? new Date(input.paidThrough!) : new Date(input.verifiedPaidAt);
-  const paidThrough = appendPackageInterval(serviceStartsAt, interval, continuing ? input.anchorDay : undefined);
+  const paidThrough = appendPackageInterval(serviceStartsAt, interval, continuing ? input.anchorDay : undefined, offer.intervalCount ?? 1);
   const previousRemaining = units(input.remainingPaidReceipts);
   // Expired paid allowance cannot be revived merely by buying again after a lapse.
   const remainingReceipts = units((continuing ? previousRemaining : 0) + offer.receiptAllowance);

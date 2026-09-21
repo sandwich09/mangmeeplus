@@ -17,6 +17,7 @@ import {
   lineSignupPushEventKey,
 } from './application/line-signup-notify.service';
 import { ProvisionSignupUseCase } from './application/provision-signup.use-case';
+import { PartnerLifecycleTransitionUseCase } from '../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 import { SignupAdminQueueUseCase } from './application/signup-admin-queue.use-case';
 import { SignupClaimEmailService } from './application/signup-claim-email.service';
 import { SubmitLineSignupUseCase } from './application/submit-line-signup.use-case';
@@ -50,7 +51,8 @@ function wire(client: PrismaClient, tag: string, lineUserId: string, autoDailyCa
   } as any;
   const lineNotify = { enqueue: async () => undefined } as any;
   const opsAlerts = { raise: async () => undefined } as any;
-  const provision = new ProvisionSignupUseCase(prisma, core, onboarding, config, directory, lineNotify, opsAlerts);
+  const provision = new ProvisionSignupUseCase(prisma, core, onboarding, config, directory, lineNotify, opsAlerts,
+    new PartnerLifecycleTransitionUseCase(prisma));
   const executeProvision = provision.execute.bind(provision);
   provision.execute = async (...args) => { provisionCalls += 1; return executeProvision(...args); };
   const rateLimit = {
@@ -59,7 +61,7 @@ function wire(client: PrismaClient, tag: string, lineUserId: string, autoDailyCa
   } as any;
   const submit = new SubmitLineSignupUseCase(prisma, config, core, {
     verify: async () => ({ providerUserId: lineUserId, channelId: tag, displayName: 'เจ้าของร้านทดสอบ' }),
-  } as any, rateLimit, directory, provision, opsAlerts);
+  } as any, rateLimit, directory, provision, opsAlerts, { resolveCode: async () => null } as any);
   const queue = new SignupAdminQueueUseCase(prisma, core, { revokeAll: async () => 0 } as any, {
     enqueue: async () => { throw new Error('LINE signup must not send claim email'); },
     enqueueRejectionNotice: async () => { throw new Error('unexpected mailbox notification'); },
@@ -211,13 +213,19 @@ describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, ()
     assert.equal(lostResponseReplay.progress?.requestId, firstSaved.id);
     assert.equal(lostResponseReplay.progress?.state, 'COMPLETED', 'an older exact key returns its own result, not the latest request');
 
-    const parked = await h.queue.decide(
+    // R1 (Owner 2026-09-20): approval used to park here at PLAN_REVIEW until an admin granted a
+    // second free trial. Nothing free is granted now — the second shop opens LOCKED — so one
+    // decision is enough, and the repeat stays visible on the audit above.
+    const approved = await h.queue.decide(
       secondSaved.id,
       { action: 'CREATE_NEW_SHOP', version: secondSaved.version },
-      `${tag}-admin`, `${tag}-plan-review`, URLS,
+      `${tag}-admin`, `${tag}-second-shop`, URLS,
     );
-    assert.equal(parked.resolution, 'PLAN_REVIEW', 'own contact history never bypasses repeat-trial authorization');
-    assert.equal(await client.company.count({ where: { name: { startsWith: tag } } }), 1);
+    assert.equal(approved.resolution, 'NEW_SHOP');
+    assert.equal(await client.company.count({ where: { name: { startsWith: tag } } }), 2);
+    const secondRow = await client.companySignupRequest.findUniqueOrThrow({ where: { id: secondSaved.id } });
+    const secondCompany = await client.company.findUniqueOrThrow({ where: { id: secondRow.companyId! } });
+    assert.equal(secondCompany.status, 'DISABLED', 'and it opens locked, exactly like the first');
   }));
 
   for (const source of ['account-active', 'account-disabled', 'legacy-username', 'company-active', 'company-archived'] as const) {

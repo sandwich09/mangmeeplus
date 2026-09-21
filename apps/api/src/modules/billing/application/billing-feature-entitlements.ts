@@ -11,7 +11,6 @@ type FeatureDb = Pick<Prisma.TransactionClient, 'companyFeatureEntitlement' | 'c
   'companyEntitlementNormalization' | 'entitlementTransition'>;
 const VERSION = 1;
 const CANONICAL = [...ALL_FEATURE_ENTITLEMENT_KEYS].sort();
-const BASELINE = new Set(FEATURE_PACKAGE_PRESETS.starter.featureKeys);
 const LABELS = new Map(FEATURE_CATALOG.flatMap(feature => [
   [feature.key, feature.labelTh] as const,
   ...feature.submenus.map(submenu => [submenu.key, `${feature.labelTh} · ${submenu.labelTh}`] as const),
@@ -29,7 +28,13 @@ export function billingFeaturePlanHash(plan: Omit<BillingFeaturePlan, 'planHash'
   return hashBilling([plan.version, plan.sourceHash, plan.setVersion, plan.rows.map(row => [row.featureKey, row.enabled]), plan.adminOverrideKeys]);
 }
 
-export async function billingFeaturePlan(db: FeatureDb, companyId: string): Promise<{ plan: BillingFeaturePlan; impact: BillingFeatureImpact }> {
+/**
+ * `targetFeatureKeys` is the menu set the package being paid for grants. A catalog purchase keeps
+ * the starter preset (unchanged behaviour); a sales deal passes its own `featureKeys` (R-676-1),
+ * and the plan hash pins those rows into the quote so the apply cannot drift from them.
+ */
+export async function billingFeaturePlan(db: FeatureDb, companyId: string,
+  targetFeatureKeys: readonly string[] = FEATURE_PACKAGE_PRESETS.starter.featureKeys): Promise<{ plan: BillingFeaturePlan; impact: BillingFeatureImpact }> {
   const [rows, set, normalization, transitions] = await Promise.all([
     db.companyFeatureEntitlement.findMany({ where: { companyId },
       select: { featureKey: true, enabled: true, epoch: true, lastSeq: true, grantOrigin: true } }),
@@ -49,7 +54,13 @@ export async function billingFeaturePlan(db: FeatureDb, companyId: string): Prom
   const adminOverrideKeys = [...latest].filter(([key, transition]) => !billingTransition(transition.reasonJson) && stored.has(key))
     .map(([key]) => key).sort();
   const overrides = new Set(adminOverrideKeys);
-  const target = new Map(CANONICAL.map(featureKey => [featureKey, BASELINE.has(featureKey)]));
+  // Platform invariants are not sellable menus: a target that leaves them out still gets them.
+  const wanted = new Set(targetFeatureKeys);
+  const target = new Map(CANONICAL.map(featureKey => [featureKey,
+    wanted.has(featureKey) || PLATFORM_INVARIANT_FEATURE_KEYS.includes(parentFeatureKey(featureKey))]));
+  // A target may name a child without its parent; the package grants what the child implies.
+  // (A no-op for the starter preset, which is already closed under `requiredFeatureKeys`.)
+  for (const key of CANONICAL) if (target.get(key)) for (const required of requiredFeatureKeys(key)) target.set(required, true);
   for (const key of adminOverrideKeys) target.set(key, stored.get(key)!.enabled);
   // A separately granted child needs its parent; an explicit Admin deny wins and requires review.
   for (const key of adminOverrideKeys) {

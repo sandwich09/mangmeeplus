@@ -1,4 +1,5 @@
 import { ALL_FEATURE_ENTITLEMENT_KEYS } from './feature-entitlements.js';
+import type { PlanTierKey } from './plan-term.js';
 
 export type MenuEntitlementBinding = {
   navKey: string;
@@ -470,4 +471,25 @@ export const FEATURE_PACKAGE_PRESETS: Readonly<
     labelTh: 'ครบวงจร',
     featureKeys: ALL_FEATURE_ENTITLEMENT_KEYS.filter((key) => key !== 'expense_auto_post'),
   },
+};
+
+/**
+ * What a paid catalog tier grants, so a purchase opens exactly the menus its card advertised
+ * (Owner 2026-09-21). Until now every paid tier applied the starter preset because
+ * `billingFeaturePlan` defaulted to it; this map is the single place that answers "which menus".
+ *
+ * STARTER/BASIC/PRO keep the starter set on purpose — they differ in branch/user/receipt limits,
+ * not in menus (package-entitlements spec §3). ENTERPRISE is the ครบวงจร set, which is what opened
+ * it for sale: `thai_tax` carries ภ.ง.ด./หัก ณ ที่จ่าย (50 ทวิ), `procurement` the AP side, plus
+ * ledger, reports, banking, workflow, CRM, inventory and sales documents. `expense_auto_post`
+ * stays out, exactly as the `full` preset has it — it is an Admin toggle, not a sold menu.
+ *
+ * Both sets are presets above, so both are already closed under `requiredFeatureKeys` and both
+ * carry `PLATFORM_INVARIANT_FEATURE_KEYS`.
+ */
+export const TIER_FEATURE_PRESETS: Readonly<Record<Exclude<PlanTierKey, 'FREE_TRIAL_15'>, readonly string[]>> = {
+  STARTER_249: FEATURE_PACKAGE_PRESETS.starter.featureKeys,
+  BASIC_499: FEATURE_PACKAGE_PRESETS.starter.featureKeys,
+  PRO_999: FEATURE_PACKAGE_PRESETS.starter.featureKeys,
+  ENTERPRISE_1999: FEATURE_PACKAGE_PRESETS.full.featureKeys,
 };

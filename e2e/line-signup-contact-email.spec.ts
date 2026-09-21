@@ -55,7 +55,7 @@ for (const width of [390, 1280]) {
     const response = await page.goto(`${urls.api}/auth/line/link-page/signup`);
     expect(response?.ok()).toBe(true);
     expect(response?.headers()['content-security-policy']).toContain("script-src 'self' https://static.line-scdn.net");
-    const submit = page.getByRole('button', { name: 'ยอมรับและเริ่มทดลองใช้ฟรี', exact: true });
+    const submit = page.getByRole('button', { name: 'ยอมรับและเปิดร้าน', exact: true });
     await expect(submit).toBeEnabled();
     await page.getByLabel('ชื่อร้าน', { exact: true }).fill('ร้านทดสอบเปิดใหม่');
     await page.getByLabel('เบอร์มือถือ', { exact: true }).fill('0812345678');
@@ -91,7 +91,7 @@ for (const width of [390, 1280]) {
     expect(submissions[0]?.discoverySourceOther).toBe('เพื่อนแนะนำ');
     expect(submissions[0]).not.toHaveProperty('password');
     expect(submissions[0]?.legal.displayChallenge).toMatch(/^[a-f0-9]{64}$/);
-    await expect(page.getByText('ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง', { exact: true })).toBeVisible();
+    await expect(page.getByText('เลือกแพ็กเกจเพื่อเริ่มใช้งานหลังเปิดร้าน (เริ่มต้น 249 บาทต่อเดือน)', { exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`signup-contact-email-${width}.png`), fullPage: true });
 
@@ -136,7 +136,7 @@ test('a previously used owner email waits for review without showing an active-s
   await page.getByLabel('เบอร์มือถือ', { exact: true }).fill('0812345678');
   const email = page.getByLabel('อีเมลติดต่อร้าน (ไม่บังคับ)', { exact: true });
   await email.fill('used-owner@example.test');
-  await page.getByRole('button', { name: 'ยอมรับและเริ่มทดลองใช้ฟรี', exact: true }).click();
+  await page.getByRole('button', { name: 'ยอมรับและเปิดร้าน', exact: true }).click();
 
   await expect(page.locator('#progress-view')).toBeVisible();
   await expect(page.locator('#progress-text')).toContainText('ทีมงานกำลังตรวจสอบ');
@@ -185,7 +185,7 @@ test('a completed response and reopen stay completed until the owner explicitly 
   await page.getByLabel('ระบุช่องทางอื่น ๆ', { exact: true }).fill('เพื่อนแนะนำ');
   await page.getByLabel('เบอร์มือถือ', { exact: true }).fill('0812345678');
   await page.getByLabel('อีเมลติดต่อร้าน (ไม่บังคับ)', { exact: true }).fill('ready@example.test');
-  await page.getByRole('button', { name: 'ยอมรับและเริ่มทดลองใช้ฟรี', exact: true }).click();
+  await page.getByRole('button', { name: 'ยอมรับและเปิดร้าน', exact: true }).click();
 
   await expect(page.locator('#progress-title')).toHaveText('พร้อมเริ่มใช้งาน');
   await expect(page.getByRole('button', { name: 'เริ่มใช้งาน', exact: true })).toBeVisible();

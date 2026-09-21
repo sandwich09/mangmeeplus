@@ -1,8 +1,11 @@
-import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity } from './plan-term.js';
+import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity, type PlanTermLockReason } from './plan-term.js';
+import { TIER_FEATURE_PRESETS } from './menu-entitlements.js';
+import type { SalesDealBaseTier, SalesDealCadence } from './sales.js';
 import type { BillingCompanyProfile } from './billing-company-profile.js';
 
 export const STRIPE_API_VERSION = '2026-08-26.dahlia' as const;
-export const BILLING_PAID_TIERS = ['STARTER_249', 'BASIC_499', 'PRO_999'] as const;
+/** Owner 2026-09-21: ENTERPRISE opened for purchase once WHT/50 ทวิ shipped; it is a tier like any other. */
+export const BILLING_PAID_TIERS = ['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999'] as const;
 export type PaidTier = typeof BILLING_PAID_TIERS[number];
 export type BillingMode = 'TEST' | 'LIVE';
 export type BillingPurchaseSource = 'NO_TERM' | 'TRIAL' | 'ADMIN_MANUAL' | 'PAID_CURRENT_MODE' |
@@ -41,25 +44,39 @@ export const BILLING_PERMISSIONS = ['system.billing.read', 'system.billing.finan
 
 const MONTHLY = { STARTER_249: 24900, BASIC_499: 49900, PRO_999: 99900, ENTERPRISE_1999: 199900 } as const;
 export type BillingOffer = {
-  offerKey: Exclude<PlanTierKey, 'FREE_TRIAL_15'>; interval: BillingInterval; intervalCount: 1;
+  offerKey: Exclude<PlanTierKey, 'FREE_TRIAL_15'>; interval: BillingInterval;
+  /** Catalog offers are always 1; a sales deal (spec §19.2/S35) sells N whole months in one offer. */
+  intervalCount: number;
   label: string; priceSatang: number; currency: 'THB'; branchLimit: number; employeeLimit: number; monthlySlipLimit: number;
   /** Granted at once for the paid period; monthlySlipLimit is only the tier's monthly equivalent. */
   receiptAllowance: number; receiptAllowanceCadence: 'PAID_PERIOD';
+  /**
+   * Owner 2026-09-21: the menus this offer unlocks, so a card can list them and the purchase can
+   * grant exactly them. A catalog offer carries `TIER_FEATURE_PRESETS[tier]`; a sales deal carries
+   * its own snapshot's set. Thai labels are derived from the keys by the reader.
+   */
+  featureKeys: string[];
   availability: 'AVAILABLE' | 'UNAVAILABLE' | 'COMING_SOON'; reason: string | null;
 };
 export type BillingOfferTerms = { monthlyPriceSatang:number; annualPriceSatang:number; monthlyReceiptAllowance:number;
   /** Paired optional capacities; older policies keep catalog defaults. */
   branchLimit?:number; employeeLimit?:number };
-export function billingOffer(tier: Exclude<PlanTierKey, 'FREE_TRIAL_15'>, interval: BillingInterval, policy?: Pick<BillingPolicy,'offerTerms'> | null): BillingOffer {
+export function billingOffer(tier: Exclude<PlanTierKey, 'FREE_TRIAL_15'>, interval: BillingInterval,
+  policy?: Partial<Pick<BillingPolicy,'offerTerms'|'priceIds'>> | null): BillingOffer {
   const preset = PLAN_TIER_PRESETS[tier];
-  const terms=tier==='ENTERPRISE_1999'?undefined:policy?.offerTerms?.[tier];
+  const terms=policy?.offerTerms?.[tier];
   const monthlyReceipts=terms?.monthlyReceiptAllowance??preset.monthlySlipLimit;
+  // ENTERPRISE is the one tier whose Stripe Prices the Owner has not bound yet; until it has them
+  // the honest answer is "เร็ว ๆ นี้", not "ยังไม่เปิดรับชำระเงิน". Every other tier, and ENTERPRISE
+  // once bound, falls back to the ordinary closed-sales reason and `catalog()` opens it.
+  const comingSoon = tier === 'ENTERPRISE_1999' && !policy?.priceIds?.[`${tier}:${interval}`];
   return { offerKey: tier, interval, intervalCount: 1, label: preset.labelTh,
     priceSatang: terms ? (interval==='year'?terms.annualPriceSatang:terms.monthlyPriceSatang) : MONTHLY[tier] * (interval === 'year' ? 10 : 1), currency: 'THB',
     branchLimit: terms?.branchLimit??preset.branchLimit, employeeLimit: terms?.employeeLimit??preset.employeeLimit, monthlySlipLimit: monthlyReceipts,
     receiptAllowance: monthlyReceipts * (interval === 'year' ? 12 : 1), receiptAllowanceCadence: 'PAID_PERIOD',
-    availability: tier === 'ENTERPRISE_1999' ? 'COMING_SOON' : 'UNAVAILABLE',
-    reason: tier === 'ENTERPRISE_1999' ? 'COMING_SOON' : 'BILLING_NOT_READY' };
+    featureKeys: [...TIER_FEATURE_PRESETS[tier]],
+    availability: comingSoon ? 'COMING_SOON' : 'UNAVAILABLE',
+    reason: comingSoon ? 'COMING_SOON' : 'BILLING_NOT_READY' };
 }
 
 export type BillingPolicy = {
@@ -110,6 +127,8 @@ export type BillingQuote = {
   billingEmail: string; trialEndsAt: string | null; usage: BillingReceiptUsage;
   previousSource?: BillingPurchaseSource; previousTermEndsAt?: string | null;
   featureImpact?: BillingFeatureImpact;
+  /** Present only on a sales-deal quote (spec §19.2): what the confirm screen names. */
+  deal?: { dealId: string; months: number; description: string; baseLabel: string };
   purchase?: { kind: 'INITIAL' | 'REPEAT' | 'RESTART' | 'UPGRADE' | 'SCHEDULED_CHANGE'; previousInterval?: BillingInterval; previousPaidThrough: string | null; projectedPaidThrough: string;
     receiptUnitsAdded: number; projectedRemainingReceipts: number;
     trialCarryover?: { receiptUnits: number; expiresAt: string } };
@@ -139,8 +158,24 @@ export type BillingStatus = {
   availablePurchaseModes?: BillingPurchaseMode[];
   renewalInvoiceUrl?: string | null;
   renewalInvoiceDueAt?: string | null;
+  /**
+   * The APPROVED, unexpired sales deal this shop may pay for right now (spec §19.2, S39), whole:
+   * the offer card draws from this alone, so an OWNER never needs `company.setup.manage` to read
+   * their own offer. `purchaseModes` is the card's OWN list — `availablePurchaseModes` answers the
+   * catalog and is filtered by the account's renewal family.
+   */
+  deal?: { dealId: string; base: SalesDealBaseTier; baseLabel: string; priceSatang: number; months: number;
+    offerExpiresAt: string; purchaseModes: BillingPurchaseMode[];
+    branchLimit: number; employeeLimit: number; monthlySlipLimit: number;
+    featureKeys: string[]; aiMonthlyBudgetSatang: number | null; description: string;
+    /** D-P5-1: the card says "ตัดบัตร/ออกบิลทุกเดือน(ปี) ที่ราคานี้" and `priceSatang` is per cycle.
+     *  `cycles` is "N รอบ แล้วกลับราคาปกติ"; `null` on an until-revoked deal. */
+    autoRenew: boolean; cadence: SalesDealCadence | null; cycles: number | null };
   refundReviewPending?: boolean;
   accessState: 'ACTIVE' | 'EXPIRED' | 'HELD'; subscriptionState: string; documentState: 'NONE' | 'PENDING' | 'READY';
+  /** R2: present only while `accessState` is EXPIRED — why the shop is locked, so the package page
+   *  can say "ยังไม่มีแพ็กเกจ" to a never-started shop and "ครบกำหนด" to one whose term ran out. */
+  lockReason?: PlanTermLockReason;
   attemptId: string | null; reference: string | null; observedAt: string | null;
   canCancelCheckout?: boolean;
   tierKey: string | null; interval: BillingInterval | null; termEndsAt: string | null; paidThrough: string | null; nextChargeAt: string | null;
@@ -163,6 +198,8 @@ export type BillingCheckoutResult = { attemptId: string; state: string; checkout
 export type BillingAttemptView = {
   attemptId: string; state: string; errorCode: string | null; observedAt: string;
   paymentState: 'PENDING' | 'PAID' | 'FAILED'; applyState: BillingStatus['applyState']; invoiceReference: string | null;
+  /** Present when this Checkout paid a sales deal, so the return page can name what was bought. */
+  deal?: { dealId: string; baseLabel: string; months: number };
 };
 export type BillingInvoiceItem = { id: string; number: string | null; currency: 'THB'; amountSatang: number;
   refundedSatang: number; disputed: boolean; financialObservedAt: string | null;
@@ -180,9 +217,17 @@ export type BillingAdjustments = { invoiceId: string; invoiceNumber: string | nu
   items: BillingAdjustmentItem[]; nextCursor: string | null; observedAt: string; canOpenDocuments: boolean };
 export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED'; policyRevision: string | null;
   catalogRevision: string; generatedAt: string; validUntil: string; taxTreatment: BillingTaxTreatment | null; offers: BillingOffer[];
-  trial: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 } };
+  /**
+   * The platform default AI credit every package carries, in satang per month (`AI_MONTHLY_BUDGET_SATANG`).
+   * There is no per-tier AI credit — only a sales deal ever overrides it — so the cards all read
+   * this one number (Owner 2026-09-21).
+   */
+  aiMonthlyBudgetSatang: number;
+  /** R1: no longer emitted — new signups get no trial (Owner 2026-09-20). Optional rather than
+   *  removed so an older client that still reads it keeps compiling against this contract. */
+  trial?: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 } };
 
-export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_FREE_DAYS' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE' | 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS';
+export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_FREE_DAYS' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE' | 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS' | 'SCHEDULE_PRICE_RETURN';
 export type BillingOperationState = 'DRAFT' | 'PREVIEW' | 'AWAITING_APPROVAL' | 'SCHEDULED' | 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'UNKNOWN' | 'BLOCKED' | 'FAILED' | 'CANCELLED';
 export type BillingScope = { kind: 'COMPANY'; companyId: string; mode: BillingMode } | { kind: 'PLATFORM'; mode: BillingMode };
 export type BillingConfigurationCheckItem = { kind:'POLICY'|'ACCOUNT'|'PRICE'|'PREPAID_PRICE'|'PORTAL'|'TAX'; offerKey?:BillingOfferKey;
@@ -218,7 +263,8 @@ export type BillingOperatorCompany = {
   accountId: string | null; companyId: string; companyName: string; mode: BillingMode | 'DISABLED'; version: number;
   subscriptionState: string; renewalMode?: BillingPurchaseMode | 'NONE'; paidThrough: string | null; nextChargeAt: string | null; observedAt: string | null;
   tierKey: string | null; termEndsAt: string | null; companyStatus: string; pendingAttemptId: string | null;
-  source: 'TRIAL' | 'MANUAL' | 'STRIPE' | 'OTHER_BILLING' | 'NONE';
+  /** 'DEAL' (S43/D-P3-6): the contract attempt behind the current term carries a sales-deal snapshot. */
+  source: 'TRIAL' | 'MANUAL' | 'STRIPE' | 'DEAL' | 'OTHER_BILLING' | 'NONE';
   effectiveCapacity?: CompanyPlanCapacity|null;
   paymentState: BillingStatus['paymentState']; applyState: BillingStatus['applyState']; accessState: BillingStatus['accessState']; documentState: BillingStatus['documentState'];
   graceEndsAt: string | null; cancelEffectiveAt: string | null; origin: 'web' | 'line' | null;
@@ -327,7 +373,7 @@ export type BillingReceiptAdjustments = {companyId:string;companyName:string;sou
  *  only when non-zero, so a company with no hold keeps today's panel byte for byte. This surface
  *  already shows AI money to a System Admin; no owner-facing view reads this type. */
 export type BillingPlanAdjustmentUnchanged = {remainingReceipts:number;termEndsAt:string;nextChargeAt:string|null;ocrEnabled:boolean;ocrMonthlyLimit:number|null;aiBudgetSatang:number;aiUsedSatang:number;aiOcrBudgetReached?:boolean;aiReservedSatang?:number;aiUnresolvedHolds?:number};
-export type BillingPlanAdjustmentInput = {type:'GRANT_OVERRIDE'|'REVOKE_OVERRIDE'|'GRANT_FREE_DAYS'|'CHANGE_COLLECTION';collectionAction?:'PAUSE'|'RESUME';resumesAt?:string;days?:number;tierKey?:'STARTER_249'|'BASIC_499'|'PRO_999';
+export type BillingPlanAdjustmentInput = {type:'GRANT_OVERRIDE'|'REVOKE_OVERRIDE'|'GRANT_FREE_DAYS'|'CHANGE_COLLECTION';collectionAction?:'PAUSE'|'RESUME';resumesAt?:string;days?:number;tierKey?:PaidTier;
   branchLimit?:number;employeeLimit?:number;expiresAt?:string;overrideId?:string;sourceHash:string;reason:string};
 export type BillingPlanAdjustmentOperation = BillingOperationView & {companyName:string;previewHash:string;before:CompanyPlanCapacity;after:CompanyPlanCapacity;
   collectionChange?:{action:'PAUSE'|'RESUME';before:BillingCollectionPause|null;after:BillingCollectionPause|null;openInvoices:number;draftInvoices:number;outstandingSatang:number;paidThrough:string|null;graceEndsAt:string|null;cancelAtPeriodEnd:boolean};

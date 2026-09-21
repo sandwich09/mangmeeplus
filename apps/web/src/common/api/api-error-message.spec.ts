@@ -426,3 +426,13 @@ test('offer configuration bounds give specific Thai fields and preserve private 
   assert.match(apiErrorMessage({code:'CONTROL_OFFER_PRICE_INVALID',message:'private provider debug'}),/ยอดรวมภาษี.*10.*999,999.99/);
   assert.match(apiErrorMessage({code:'CONTROL_OFFER_RECEIPTS_INVALID',message:'private quota debug'}),/จำนวนเต็ม.*รายปีคูณ 12/);
 });
+
+
+// Owner 2026-09-20 (spec R2): the same code answers a shop whose term ran out and a shop that
+// never had a package, and the API cannot tell the client which — so the one sentence both read
+// may not claim anything ended, and must name the move that actually unblocks them.
+test('explains a locked shop without claiming a package ran out or data was lost', () => {
+  const message = apiErrorMessage(apiError('Forbidden', { status: 403, code: 'company_term_expired' }));
+  assert.equal(message, 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ เลือกแพ็กเกจเพื่อเริ่มใช้งาน ข้อมูลทั้งหมดยังอยู่ครบ');
+  assert.doesNotMatch(message, /ครบกำหนด|company_term_expired/);
+});

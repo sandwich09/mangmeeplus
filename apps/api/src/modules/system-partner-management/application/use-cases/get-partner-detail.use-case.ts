@@ -7,6 +7,7 @@ import {
   type LineContextHealth,
   type PartnerCompanyDetailDto,
   type SignupDiscoverySource,
+  type SalesReferralSource,
 } from '@watchdog-bms/contracts';
 import { isCurrentEntitlementNormalization } from '../../../employee-access/application/normalize-entitlements';
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
@@ -46,6 +47,11 @@ export class GetPartnerDetailUseCase {
         activatedAt: true,
         disabledAt: true,
         archivedAt: true,
+        // D6 attribution. The agent's NAME comes from User; nothing from SalesAgentProfile except
+        // the public sales code — no payroll PII ever reaches this console view (S10).
+        referralSalesUserId: true,
+        referredAt: true,
+        referralSource: true,
         signupRequests: {
           // Read the original company-linked signup, including completed/archived shops.
           // A later return-to-existing request must not replace acquisition attribution.
@@ -109,6 +115,26 @@ export class GetPartnerDetailUseCase {
       lineContextHealth = needsSelection ? 'NEEDS_COMPANY_SELECTION' : 'LINKED';
     }
 
+    // Resolved after the main read: a company whose credited agent was since deleted shows no
+    // referral rather than a half-filled one the console cannot act on.
+    const referralAgent = c.referralSalesUserId
+      ? await this.prisma.client.salesAgentProfile.findUnique({
+        where: { userId: c.referralSalesUserId }, select: { userId: true, salesCode: true },
+      })
+      : null;
+    const referralUser = referralAgent
+      ? await this.prisma.client.user.findUnique({ where: { id: referralAgent.userId }, select: { displayName: true } })
+      : null;
+    const referralSales: PartnerCompanyDetailDto['referralSales'] = referralAgent
+      ? {
+        userId: referralAgent.userId,
+        displayName: referralUser?.displayName ?? '',
+        salesCode: referralAgent.salesCode,
+        referredAt: c.referredAt?.toISOString() ?? null,
+        source: (c.referralSource as SalesReferralSource | null) ?? 'SIGNUP_CODE',
+      }
+      : null;
+
     return {
       id: c.id,
       name: c.name,
@@ -118,6 +144,7 @@ export class GetPartnerDetailUseCase {
       businessType: { code: c.businessTypeCode ?? null, other: c.businessTypeOther ?? null, version: c.businessTypeVersion ?? 0 },
       discoverySource: (signup?.discoverySource as SignupDiscoverySource | null) ?? undefined,
       discoverySourceOther: signup?.discoverySource === 'OTHER' ? signup.discoverySourceOther ?? undefined : undefined,
+      referralSales,
       vatRegistration,
       registeredName: c.registeredName ?? undefined,
       brandName: c.brandName ?? undefined,

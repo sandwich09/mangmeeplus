@@ -7,7 +7,7 @@ import type { SignupClaimResultDto } from '@watchdog-bms/contracts';
  */
 const HANDOFF_KEY = 'watchdog.signupWelcome';
 
-export type WelcomeHandoff = { companyName: string; homePath: string; attachedToExistingUser: boolean };
+export type WelcomeHandoff = { companyName: string; homePath: string; companyId: string; attachedToExistingUser: boolean };
 
 function safeStorage(storage?: Storage): Storage | null {
   if (storage) return storage;
@@ -26,6 +26,7 @@ export function rememberClaimedCompany(result: SignupClaimResultDto, storage?: S
       JSON.stringify({
         companyName: result.companyName,
         homePath: result.homePath,
+        companyId: result.companyId,
         attachedToExistingUser: result.attachedToExistingUser,
       } satisfies WelcomeHandoff),
     );
@@ -54,11 +55,22 @@ export function readClaimedCompany(storage?: Storage): WelcomeHandoff | null {
     return {
       companyName: parsed.companyName,
       homePath,
+      companyId: typeof parsed.companyId === 'string' ? parsed.companyId : '',
       attachedToExistingUser: parsed.attachedToExistingUser === true,
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Where a locked shop must go to pick a package (sales/locked-signup spec §19, §12): the one page
+ * the lock leaves open besides settings and renew. `companyId` is what the claim result carries;
+ * the `homePath` scrape only covers a handoff stored before this field existed.
+ */
+export function packagePathFor(handoff: Pick<WelcomeHandoff, 'companyId' | 'homePath'>): string {
+  const companyId = handoff.companyId || /^\/companies\/([^/]+)/.exec(handoff.homePath)?.[1];
+  return companyId ? `/companies/${companyId}/billing` : handoff.homePath;
 }
 
 /**

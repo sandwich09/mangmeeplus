@@ -3,6 +3,7 @@ import { BillingPlanAdjustmentsService } from './billing-plan-adjustments.servic
 import { invoiceFindingSource } from './billing-invoice-finding';
 import { resolveAppliedInvoiceIssues, detectBillingIssue, resolveBillingIssue } from './billing-issues';
 import type { ScheduledChange } from './billing-schedule';
+import { PRICE_RETURN_TYPE } from './billing-price-return';
 import { BadRequestException, ConflictException, Injectable, Optional, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { STRIPE_API_VERSION } from '@watchdog-bms/contracts';
@@ -23,7 +24,7 @@ import { grantTrialReceiptCarryover } from './billing-trial-carryover';
 import { fullPackagePurchaseImpact } from '../domain/billing-package';
 import { paidPackageCheckoutEvidence } from '../domain/paid-checkout-invoice';
 import { paidReceiptBalance } from './billing-receipt-grants';
-import { fulfillPaidPackageRequest, supersedeUnpaidPackageRequest } from './billing-package-request';
+import { applyDealRequest, fulfillPaidPackageRequest, recordReferralAttribution, scheduleDealReturn, supersedeUnpaidDeal, supersedeUnpaidPackageRequest } from './billing-package-request';
 import { applyCapacity, attemptCapacity, capacityOptions, capacityValid } from './billing-capacity';
 import { applyBillingFeaturePlan, billingFeaturePlan } from './billing-feature-entitlements';
 import { exclusiveEntitlementLock } from '../../feature-launch/application/execution-attempt.service';
@@ -211,7 +212,9 @@ export class BillingReconcilerService {
         if(['GRANT_FREE_DAYS','CHANGE_COLLECTION'].includes(operation.type)){
           if(!this.planAdjustments)throw new Error('billing.free_days_handler_missing');
           await this.planAdjustments.advanceFreeDays(account,leaseToken);
-        }else await this.billing.collection.advance(account, leaseToken);
+        // D-P5-6: the deal-return swap owns the account the same way a collection command does.
+        }else if(operation.type===PRICE_RETURN_TYPE)await this.billing.priceReturn.advance(account,leaseToken);
+        else await this.billing.collection.advance(account, leaseToken);
         if (financialChargeId) await observeBillingCharges(this.prisma, this.stripe, account, leaseToken, financialChargeId);
         return;
       }
@@ -500,8 +503,11 @@ export class BillingReconcilerService {
         anchorDay: snapshot.oneTime?.anchorDay });
     const siblings = await this.stripe.list('/subscriptions', { customer: account.customerId, status: 'all' });
     const collectible = siblings.some(sub => !['canceled', 'incomplete_expired'].includes(sub.status));
+    let disabledFeatures: string[] = [];
     await this.prisma.client.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${account.companyId}`}))`;
+      // Same lock order as `applyInvoice`: OCR config, entitlements, then the plan term.
+      if (snapshot.featurePlan) await tx.$executeRaw(exclusiveEntitlementLock(account.companyId));
       await lockPlanTermCompany(tx, account.companyId);
       await this.assertLease(tx, account.id, lease);
       if (recordOnly) await recordOnly(tx);
@@ -523,10 +529,22 @@ export class BillingReconcilerService {
       const source = snapshot.oneTime ? await tx.billingInvoice.findFirst({ where: { id: snapshot.oneTime.invoiceId,
         billingAccountId: account.id, providerStatus: 'paid', applyStatus: 'APPLIED', appliedAt: { not: null } } }) : null;
       const capacity = await attemptCapacity(tx, account.id, attempt);
-      const capacityReady = capacity ? capacityValid(await capacityOptions(tx, company.id, snapshot.quote.offer), capacity)
-        : await restartFits(tx, company.id, snapshot.quote.offer);
+      // S45: a deal skips the capacity review — its limits are a ceiling on new branches/users,
+      // never a reason to hold money the customer already paid.
+      const capacityReady = !!snapshot.deal || (capacity ? capacityValid(await capacityOptions(tx, company.id, snapshot.quote.offer), capacity)
+        : await restartFits(tx, company.id, snapshot.quote.offer));
       const upgradeReady = !snapshot.upgrade || (await upgradeHistory(tx, current, snapshot.quote.offer, snapshot.policy,
         snapshot.upgrade.prorationAt)).sourceHash === snapshot.upgrade.sourceHash;
+      // R-676-2: quote and Checkout pin `featurePlan` for one-time purchases, but nothing applied
+      // it. Menus drift behind the package unless the same check/hold/apply runs here too.
+      let featureReady = true;
+      if (snapshot.featurePlan) {
+        try { featureReady = (await billingFeaturePlan(tx, company.id)).plan.sourceHash === snapshot.featurePlan.sourceHash; }
+        catch (error) {
+          if (!(error instanceof ConflictException) || (error.getResponse() as { code?: string }).code !== 'BILLING_ENTITLEMENT_REVIEW_REQUIRED') throw error;
+          featureReady = false;
+        }
+      }
       const sourceReady = !collectible && current.activeAttemptId === attempt.id &&
         termProjectionHash(company.planTerm) === snapshot.termHash &&
         (!snapshot.oneTime || (source?.periodEnd.toISOString() === snapshot.oneTime.paidThrough &&
@@ -536,10 +554,10 @@ export class BillingReconcilerService {
         (!current.baseSubscriptionId || (snapshot.restart?.subscriptionId === current.baseSubscriptionId &&
           current.paidThrough && current.paidThrough <= evidence.paidAt)) &&
         (company.status === 'ACTIVE' || (company.status === 'DISABLED' && !!company.planTerm?.termDisabledAt));
-      if (recordOnly || !sourceReady || !capacityReady || !upgradeReady || evidence.refundedSatang || evidence.disputed ||
+      if (recordOnly || !sourceReady || !capacityReady || !upgradeReady || !featureReady || evidence.refundedSatang || evidence.disputed ||
           impact.paidThrough <= new Date() || evidence.paidAt > new Date()) {
         await tx.billingInvoice.update({ where: { id: row.id }, data: { applyStatus: 'HELD',
-          errorCode: !capacityReady ? 'BILLING_CAP_SELECTION_REQUIRED' : 'access_review_required' } });
+          errorCode: !capacityReady ? 'BILLING_CAP_SELECTION_REQUIRED' : !featureReady ? 'BILLING_ENTITLEMENT_REVIEW_REQUIRED' : 'access_review_required' } });
         await detectBillingIssue(tx, { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
           livemode: account.livemode, kind: 'PAID_HELD', referenceId: row.id });
         return;
@@ -556,6 +574,7 @@ export class BillingReconcilerService {
         policyRevisionId: attempt.policyRevisionId, source: snapshot.trialCarryover,
         paidAt: evidence.paidAt, periodEnd: impact.paidThrough });
       if (capacity && !snapshot.oneTimeChange) await applyCapacity(tx, company.id, snapshot.quote.offer, capacity, attempt.initiatingUserId, row.id);
+      if (snapshot.featurePlan) disabledFeatures = await applyBillingFeaturePlan(tx, company.id, row.id, attempt.initiatingUserId, snapshot.featurePlan);
       await tx.companyPlanTerm.upsert({ where: { companyId: company.id }, create: {
         companyId: company.id, tierKey: snapshot.quote.offer.offerKey, branchLimit: snapshot.quote.offer.branchLimit,
         employeeLimit: snapshot.quote.offer.employeeLimit, monthlySlipLimit: snapshot.quote.offer.monthlySlipLimit,
@@ -595,6 +614,18 @@ export class BillingReconcilerService {
         cancelAtPeriodEnd: false, graceEndsAt: null, termProjectionHash: termProjectionHash(term), pendingPlanChangeId: scheduled?.id ?? null,
         observedAt: new Date(), version: { increment: 1 } } });
       await fulfillPaidPackageRequest(tx, company.id, account.id, row.id);
+      await supersedeUnpaidPackageRequest(tx, company.id, row.id);
+      // S13: the deal's own follow-ups share this transaction, so the row, the AI credit and the
+      // attribution can never disagree with the term the same commit wrote.
+      if (snapshot.deal) await applyDealRequest(tx, { companyId: company.id, invoiceId: row.id, deal: snapshot.deal,
+        priceSatang: snapshot.quote.offer.priceSatang, paidAt: evidence.paidAt });
+      else {
+        await supersedeUnpaidDeal(tx, company.id, row.id);
+        // §17.2 counts first activations only: a top-up (`snapshot.oneTime`) appends to a term the
+        // shop already paid for, so it is not the purchase that opened the shop.
+        if (!snapshot.oneTime) await recordReferralAttribution(tx, { companyId: company.id, invoiceId: row.id,
+          offer: snapshot.quote.offer, paidAt: evidence.paidAt });
+      }
       await resolveAppliedInvoiceIssues(tx, account, row.id);
       await tx.auditLog.create({ data: { companyId: company.id, actorUserId: attempt.initiatingUserId,
         action: 'billing.invoice.applied', targetType: 'BillingInvoice', targetId: row.id, requestId: attempt.id,
@@ -604,6 +635,10 @@ export class BillingReconcilerService {
         eventKey: `billing:applied:${row.id}`, payloadJson: { schemaVersion: 1, occurredAt: new Date().toISOString(),
           data: { invoiceId: row.id, companyId: company.id } } } });
     });
+    for (const featureKey of disabledFeatures) {
+      try { await completeRunoffIfDrained(this.prisma, account.companyId, featureKey); }
+      catch { /* The durable runoff sweep completes missed post-commit transitions. */ }
+    }
     if (mode === 'PROMPTPAY_RENEW' && !recordOnly) await this.bindPromptPayRenewal(account, attempt, snapshot, lease, impact.paidThrough);
   }
 
@@ -840,9 +875,13 @@ export class BillingReconcilerService {
 
   private async applyInvoice(account: BillingAccount, contract: BillingAttempt, evidence: PaidInvoiceEvidence, snapshot: BillingSnapshot, leaseToken: string, recordOnly?:(tx:Prisma.TransactionClient)=>Promise<void>): Promise<void> {
     let disabledFeatures: string[] = [];
+    // Q1/D-P5-6: the cycle that puts a shop back on the catalog price rewrites its menus, AI
+    // credit and limits in the same commit — even though it is an ordinary RENEWAL invoice.
+    const returning = !!snapshot.dealReturn;
+    const rewritesFeatures = evidence.kind === 'INITIAL' || returning;
     await this.prisma.client.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${account.companyId}`}))`;
-      if (evidence.kind === 'INITIAL' && snapshot.featurePlan) await tx.$executeRaw(exclusiveEntitlementLock(account.companyId));
+      if (rewritesFeatures && snapshot.featurePlan) await tx.$executeRaw(exclusiveEntitlementLock(account.companyId));
       await lockPlanTermCompany(tx, account.companyId);
       await this.assertLease(tx, account.id, leaseToken);
       if(recordOnly)await recordOnly(tx);
@@ -886,7 +925,7 @@ export class BillingReconcilerService {
       const capacityReady = changeBound && ((evidence.kind !== 'INITIAL' && !applyingChange) || (capacity ?
         capacityValid(await capacityOptions(tx, company.id, snapshot.quote.offer), capacity) : await restartFits(tx, company.id, snapshot.quote.offer)));
       let featureReady = true;
-      if (evidence.kind === 'INITIAL' && snapshot.featurePlan) {
+      if (rewritesFeatures && snapshot.featurePlan) {
         try { featureReady = (await billingFeaturePlan(tx, company.id)).plan.sourceHash === snapshot.featurePlan.sourceHash; }
         catch (error) {
           if (!(error instanceof ConflictException) || (error.getResponse() as { code?: string }).code !== 'BILLING_ENTITLEMENT_REVIEW_REQUIRED') throw error;
@@ -911,8 +950,11 @@ export class BillingReconcilerService {
           companyId: company.id, billingAccountId: account.id, invoiceId: invoice.id, policyRevisionId: snapshot.quote.policyRevision,
           source: snapshot.trialCarryover, paidAt: evidence.paidAt, periodEnd: evidence.periodEnd });
         if (capacity) await applyCapacity(tx, company.id, offer, capacity, applyingChange ? planChange!.initiatorUserId : contract.initiatingUserId, invoice.id);
-        if (evidence.kind === 'INITIAL' && snapshot.featurePlan)
+        if (rewritesFeatures && snapshot.featurePlan)
           disabledFeatures = await applyBillingFeaturePlan(tx, company.id, invoice.id, contract.initiatingUserId, snapshot.featurePlan);
+        // Q1: the deal's AI credit goes back to the platform default in the same commit as its
+        // menus. `applyDealRequest` is the only writer that set it, and this is its mirror.
+        if (returning) await tx.companyAiConfiguration.updateMany({ where: { companyId: company.id }, data: { monthlyBudgetSatang: null } });
         if (current.graceEndsAt && current.paidThrough) await tx.billingReceiptGrant.updateMany({ where: { billingAccountId: account.id,
           companyId: company.id, kind: { in: ['INITIAL', 'RENEWAL', 'REPEAT', 'UPGRADE'] }, expiresAt: current.graceEndsAt, serviceEnd: { lte: current.paidThrough } }, data: { expiresAt: current.paidThrough } });
         const term = await tx.companyPlanTerm.upsert({ where: { companyId: company.id }, create: {
@@ -937,11 +979,32 @@ export class BillingReconcilerService {
       await tx.billingInvoice.update({ where: { id: invoice.id }, data: { applyStatus: 'APPLIED', appliedAt: new Date(), errorCode: null, version: { increment: 1 } } });
       await fulfillPaidPackageRequest(tx,company.id,account.id,invoice.id);
       if (evidence.kind === 'INITIAL' && snapshot.featurePlan) await supersedeUnpaidPackageRequest(tx, company.id, invoice.id);
+      if (evidence.kind === 'INITIAL') {
+        // D-P5-5: the first cycle of an auto-renewing deal applies its row, AI credit and the one
+        // attribution row exactly as the one-time path does. Later cycles are RENEWAL and never do.
+        if (snapshot.deal) await applyDealRequest(tx, { companyId: company.id, invoiceId: invoice.id, deal: snapshot.deal,
+          priceSatang: snapshot.quote.offer.priceSatang, paidAt: evidence.paidAt ?? evidence.periodStart });
+        else {
+          await supersedeUnpaidDeal(tx, company.id, invoice.id);
+          // D6: the subscription half of the referral formula. RENEWAL/UPGRADE invoices never count.
+          // `paidAt` is only carried by a trial-converting invoice; the period start is the paid
+          // instant for every other subscription INITIAL, and both sit inside the 14-day window.
+          await recordReferralAttribution(tx, { companyId: company.id, invoiceId: invoice.id,
+            offer: snapshot.quote.offer, paidAt: evidence.paidAt ?? evidence.periodStart });
+        }
+        // D-P5-6: an N-cycle deal knows its return date the moment cycle 1 opens. The op itself is
+        // created in the final cycle, when the schedule's first phase can end exactly at that date.
+        if (snapshot.deal?.cadence && snapshot.deal.cycles) await scheduleDealReturn(tx, {
+          companyId: company.id, deal: snapshot.deal, periodStart: evidence.periodStart });
+      }
       await resolveAppliedInvoiceIssues(tx,account,invoice.id);
       await tx.auditLog.create({ data: { companyId: company.id, action: 'billing.invoice.applied', targetType: 'BillingInvoice', targetId: invoice.id,
         requestId: invoice.id, result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { periodStart: evidence.periodStart.toISOString(), periodEnd: evidence.periodEnd.toISOString(),
           tierKey: snapshot.quote.offer.offerKey, previousSource: snapshot.quote.previousSource ?? null,
-          previousTermEndsAt: snapshot.quote.previousTermEndsAt ?? null, featurePlanHash: snapshot.featurePlan?.planHash ?? null } } });
+          previousTermEndsAt: snapshot.quote.previousTermEndsAt ?? null, featurePlanHash: snapshot.featurePlan?.planHash ?? null,
+          // Q1 wants the return visible as a before/after; the plan hash above IS the "after".
+          ...(returning ? { dealReturnOf: snapshot.dealReturn!.dealRequestId, aiBudgetReset: true } : {}),
+          ...(snapshot.deal ? { dealRequestId: snapshot.deal.requestId } : {}) } } });
       await tx.outboxEvent.upsert({ where: { eventKey: `billing:applied:${invoice.id}` }, update: {}, create: {
         companyId: company.id, eventType: 'billing.invoice.applied', aggregateType: 'BillingInvoice', aggregateId: invoice.id,
         eventKey: `billing:applied:${invoice.id}`, payloadJson: { schemaVersion: 1, occurredAt: new Date().toISOString(), data: { invoiceId: invoice.id, companyId: company.id } },

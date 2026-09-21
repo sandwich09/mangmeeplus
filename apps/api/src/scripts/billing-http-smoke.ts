@@ -302,6 +302,8 @@ async function main() {
     assert.equal(originalRequest.status,201,JSON.stringify(originalRequest));assert.equal(originalRequest.body.status,'OPEN');
     assert.equal((await request(requestPath,'POST',{requestedTierKey:'PRO_999'})).body.id,originalRequest.body.id);
     const foreignRequest=await client.packageChangeRequest.create({data:{companyId:companyIds[1]!,requestedByUserId:userIds[0]!,requestedTierKey:'PRO_999'}});
+    // Phase 6: ENTERPRISE is sellable in principle but this policy binds no Price for it, so the
+    // quote still fails closed (BILLING_OFFER_UNAVAILABLE) exactly as a hidden tier does.
     for (const offerKey of ['ENTERPRISE_1999', 'RECEIPT_ONLY']) assert.equal((await request(`${base}/quote`, 'POST', { offerKey, interval: 'year', billingEmail: 'owner@example.test' })).status, 409);
     assert.equal((await request(`${base}/quote`, 'POST', { offerKey: 'PRO_999', interval: 'year', billingEmail: 'owner@example.test', amount: 1 })).status, 400);
     assert.equal(checkoutCalls, 0); cases.push('hidden-enterprise-and-forged-price-rejected');

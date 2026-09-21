@@ -6,6 +6,7 @@ import { PrismaService } from '../../../common/database/prisma.service';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { SignupAdminNotifyService } from './signup-admin-notify.service';
 import type { CompanySignupInput } from '../domain/company-signup.logic';
+import { SalesReferralService } from '../../sales-console/application/sales-referral.service';
 
 /** Spec §3: MX is looked up with a timeout, and a slow resolver must not hold the form open. */
 const MX_LOOKUP_TIMEOUT_MS = 3_000;
@@ -26,9 +27,10 @@ export class SubmitCompanySignupUseCase {
     private readonly prisma: PrismaService,
     private readonly core: CompanySignupCoreService,
     private readonly adminNotify: SignupAdminNotifyService,
+    private readonly salesReferral: SalesReferralService,
     /**
      * Test seam. `@Optional()` is required, not decorative: a plain default parameter still leaves
-     * a third entry in the constructor metadata and Nest fails to resolve it at boot.
+     * an entry in the constructor metadata and Nest fails to resolve it at boot.
      */
     @Optional() mxResolver?: MxResolver,
   ) {
@@ -36,7 +38,16 @@ export class SubmitCompanySignupUseCase {
   }
 
   async execute(input: CompanySignupInput, correlationRequestId: string): Promise<{ requestId: string }> {
-    const { request } = await this.core.receive(input, correlationRequestId);
+    // D6: resolved BEFORE the row exists, so an unknown or suspended code is a 400 the applicant
+    // can fix rather than a shop carrying attribution nobody can honour.
+    const referral = await this.salesReferral.resolveCode(
+      input.discoverySource === 'SALES' ? input.referralSalesCode ?? null : null,
+    );
+    const { request } = await this.core.receive(
+      input,
+      correlationRequestId,
+      referral ? { referralSalesUserId: referral.userId } : {},
+    );
 
     // Review R08: a replay RESUMES from where the first attempt stopped. Short-circuiting on every
     // non-RECEIVED state answered "received" to an applicant whose request was stranded at

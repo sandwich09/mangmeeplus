@@ -569,9 +569,11 @@ const CODE_LABELS: Record<string, string> = {
   password_reuse: 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม',
   current_password_incorrect: 'รหัสผ่านปัจจุบันไม่ถูกต้อง',
   company_access_unavailable: 'คุณไม่มีสิทธิ์เข้าใช้บริษัทนี้แล้ว กรุณาติดต่อเจ้าของร้าน',
-  // P29: the term ended, so business routes are refused on access. Data is intact — the copy must
-  // not read as data loss, and the only move that helps is renewing, not retrying.
-  company_term_expired: 'ร้านนี้ครบกำหนดใช้งานแล้ว ข้อมูลทั้งหมดยังอยู่ครบ ติดต่อ 098-256-5628 เพื่อใช้งานต่อ',
+  // P29: business routes are refused on access because the shop has no usable package. Data is
+  // intact — the copy must not read as data loss, and the only move that helps is choosing a
+  // package, not retrying. Neutral between the two reasons (spec R2): the code alone cannot tell a
+  // term that ended from a shop that never had one, and "ครบกำหนด" is wrong for the second.
+  company_term_expired: 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ เลือกแพ็กเกจเพื่อเริ่มใช้งาน ข้อมูลทั้งหมดยังอยู่ครบ',
 
   // ---- P10-L §8 admin support tools (system console; the reader is an operator, not a shop) ----
   // SEC-05: each says what to change, because the operator has the message in front of them.
@@ -657,6 +659,44 @@ const CODE_LABELS: Record<string, string> = {
   email_domain_check_unavailable: 'ตรวจอีเมลไม่ได้ชั่วคราว กรุณากดส่งคำขออีกครั้ง ลองใหม่ในอีกสักครู่',
   company_signup_concurrent_transition:
     'คำขอนี้ถูกดำเนินการโดยผู้ดูแลคนอื่นระหว่างทำรายการ กรุณาโหลดคิวคำขอใหม่แล้วตรวจสถานะล่าสุด',
+
+  // ---- Sales console + ดีลพิเศษ (sales-deals spec §11, SALES_ERROR_CODES) ----
+  // Read by a เซลล์ on a phone in front of a shop owner, so each line names the next move rather
+  // than the rule that refused. Nothing here ever quotes a price or a shop's data.
+  SALES_DEAL_STATE_CONFLICT: 'ดีลนี้ถูกแก้ไขจากที่อื่นแล้ว กรุณาโหลดข้อมูลล่าสุดก่อนทำรายการอีกครั้ง',
+  SALES_DEAL_SELF_APPROVAL: 'อนุมัติดีลของตัวเองไม่ได้ กรุณาให้หัวหน้าทีมเป็นผู้อนุมัติ',
+  SALES_DEAL_EXPIRED: 'ข้อเสนอนี้หมดอายุแล้ว กรุณาสร้างดีลใหม่ให้ลูกค้า',
+  SALES_DEAL_ALREADY_OPEN: 'ร้านนี้มีดีลที่ยังไม่ปิดอยู่แล้ว กรุณาเปิดดีลเดิมเพื่อแก้ไข หรือยกเลิกก่อนสร้างใหม่',
+  SALES_COMPANY_NOT_FOUND: 'ไม่พบร้านค้านี้ในระบบแล้ว กรุณาค้นหาร้านใหม่อีกครั้ง',
+  SALES_COMPANY_HAS_OPEN_REQUEST: 'ร้านนี้มีคำขอเปลี่ยนแพ็กเกจของลูกค้าค้างอยู่ กรุณาให้ผู้ดูแลระบบปิดคำขอนั้นก่อนอนุมัติดีล',
+  SALES_CODE_UNKNOWN: 'ไม่พบรหัสเซลล์นี้ ตรวจสอบกับเซลล์ของคุณ',
+  SALES_CODE_TAKEN: 'รหัสเซลล์นี้มีผู้ใช้แล้ว กรุณาตั้งรหัสอื่น',
+  SALES_CODE_INVALID: 'รหัสเซลล์ต้องเป็นตัวอักษรอังกฤษตัวใหญ่หรือตัวเลข 3–6 ตัว',
+  SALES_AGENT_SUSPENDED: 'บัญชีเซลล์นี้ถูกระงับอยู่ กรุณาติดต่อผู้ดูแลระบบให้เปิดใช้งานก่อน',
+  SALES_AGENT_NOT_FOUND: 'ไม่พบบัญชีเซลล์นี้แล้ว กรุณาโหลดรายชื่อทีมใหม่',
+  SALES_TEAM_LEAD_INVALID: 'หัวหน้าทีมที่เลือกใช้ไม่ได้ กรุณาเลือกหัวหน้าทีมจากรายการอีกครั้ง',
+  SALES_AGENT_USERNAME_TAKEN: 'ชื่อผู้ใช้นี้มีคนใช้แล้ว กรุณาตั้งชื่อผู้ใช้อื่น',
+  SALES_REFERRAL_WINDOW_CLOSED: 'ร้านนี้เปิดมาเกิน 30 วันแล้ว จึงแก้ผู้แนะนำไม่ได้',
+  // Phase 4 (§17.1 flags, §17.2 report). The ผู้ดูแลระบบ reading these only needs the next move.
+  SALES_REPORT_RANGE_INVALID: 'ช่วงเดือนไม่ถูกต้อง กรุณาเลือกเดือนเริ่มต้นและเดือนสิ้นสุดใหม่',
+  SALES_FLAG_REVIEW_INVALID: 'ตรวจรายการนี้ไม่ได้แล้ว กรุณาโหลดรายการที่ถูกธงใหม่',
+
+  // Phase 5 (§17.3 / D-P5-3, D-P5-6). Both are waits, not mistakes: the price the shop pays every
+  // cycle is still being prepared, or the deal has already been told when to end. Neither reader —
+  // เซลล์ or เจ้าของร้าน — has anything to fix, so each sentence says what to expect instead.
+  SALES_DEAL_PRICE_PENDING: 'ระบบกำลังเตรียมราคาของข้อเสนอนี้ กรุณารอสักครู่แล้วลองอีกครั้ง',
+  SALES_DEAL_END_INVALID: 'จบดีลนี้ไม่ได้แล้ว กรุณาโหลดข้อมูลล่าสุดเพื่อดูสถานะและวันสิ้นสุดของดีล',
+
+  // ---- ข้อเสนอพิเศษ on the customer's package page (spec §19.2, Phase 3) ----
+  // The shop owner reads these, so each one says what happens next, never why the rule refused.
+  BILLING_DEAL_EXPIRED: 'ข้อเสนอพิเศษนี้หมดอายุแล้ว กรุณาติดต่อทีมขายเพื่อขอข้อเสนอใหม่ คุณยังเลือกแพ็กเกจปกติได้',
+  BILLING_DEAL_NOT_FOUND: 'ไม่พบข้อเสนอพิเศษนี้แล้ว กรุณาโหลดหน้านี้ใหม่ หรือติดต่อทีมขาย',
+  BILLING_DEAL_SNAPSHOT_MISMATCH: 'ข้อเสนอพิเศษนี้เปลี่ยนแล้ว กรุณาโหลดหน้านี้ใหม่เพื่อดูข้อเสนอล่าสุดก่อนชำระเงิน',
+  CONTROL_DEAL_SUBSCRIPTION_REVIEW: 'ร้านนี้มีสมาชิกที่ยังใช้งานอยู่ ทีมงานจะติดต่อกลับเพื่อเปลี่ยนให้ สิทธิ์เดิมยังใช้ได้ตามปกติ',
+  BILLING_MODE_NOT_READY: 'ยังไม่เปิดวิธีชำระเงินที่เลือก กรุณาเลือกวิธีอื่น หรือติดต่อทีมงาน',
+  // Q7/S34: the deal is already applied and the old subscription is being cancelled in the
+  // background. Nothing for the shop to do, so the line says so rather than naming a failure.
+  DEAL_SUBSCRIPTION_CANCEL_PENDING: 'กำลังยกเลิกสมาชิกเดิมให้ร้านคุณ แพ็กเกจใหม่ใช้งานได้แล้ว ไม่ต้องดำเนินการอะไรเพิ่ม',
 };
 
 // Several upload rejections differ only in which check caught the file; the user's next move is

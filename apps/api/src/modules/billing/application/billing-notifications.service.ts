@@ -232,8 +232,12 @@ export class BillingNotificationsService {
       await lockPlanTermCompany(tx, row.companyId!);
       const { invoice, company } = await this.source(row, tx), owners = await this.owners(company.id, tx);
       if (!owners.length) throw defer('recipient_pending');
-      const purchaseMode = (invoice.contractSnapshot as unknown as BillingSnapshot | null)?.quote.purchaseMode;
-      const body = purchaseMode === 'CARD_ONCE' || purchaseMode === 'PROMPTPAY_ONCE'
+      const contract = invoice.contractSnapshot as unknown as BillingSnapshot | null;
+      const purchaseMode = contract?.quote.purchaseMode;
+      // S41: the deal wording, on the existing trigger. No price and no months travel over LINE.
+      const body = contract?.deal
+        ? 'ใช้งานข้อเสนอพิเศษแล้ว ตรวจสอบสิทธิ์ วันหมดอายุ และประวัติการชำระเงินได้ในหน้าบริษัท'
+        : purchaseMode === 'CARD_ONCE' || purchaseMode === 'PROMPTPAY_ONCE'
         ? 'ตรวจสอบสิทธิ์ วันหมดอายุ และประวัติการชำระเงินได้ในหน้าบริษัท หากต้องการใช้ต่อให้ซื้อใหม่'
         : purchaseMode === 'PROMPTPAY_RENEW'
           ? 'ตรวจสอบสิทธิ์ วันออกบิล QR รอบถัดไป และประวัติการชำระเงินได้ในหน้าบริษัท'

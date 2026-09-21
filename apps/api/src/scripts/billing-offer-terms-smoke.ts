@@ -50,7 +50,8 @@ export async function checkBillingOfferTerms(input:Parameters<typeof checkBillin
     assert.fail('Original offer configuration command did not recover within the actual rate limit');
   };
   try{
-    for(const offerTerms of [false,[],{PRO_999:{}},{ENTERPRISE_1999:terms},{PRO_999:{...terms,branchLimit:1001}},{PRO_999:{...terms,employeeLimit:0}},{PRO_999:{...terms,monthlyReceiptAllowance:0}},{PRO_999:{...terms,annualPriceSatang:0.5}}])assert.equal((await preview({...policy,offerTerms})).status,400);
+    // Phase 6: ENTERPRISE_1999 is a paid tier, so its terms are accepted; RECEIPT_ONLY never is.
+    for(const offerTerms of [false,[],{PRO_999:{}},{RECEIPT_ONLY:terms},{PRO_999:{...terms,branchLimit:1001}},{PRO_999:{...terms,employeeLimit:0}},{PRO_999:{...terms,monthlyReceiptAllowance:0}},{PRO_999:{...terms,annualPriceSatang:0.5}}])assert.equal((await preview({...policy,offerTerms})).status,400);
     mismatch=true;assert.equal((await preview(policy)).body.code,'BILLING_PRICE_MISMATCH');mismatch=false;
     assert.equal(writes,0);assert.deepEqual(await financial(),before);cases.push('offer-terms-strict-typed-allowlist-bounds-and-provider-price-mismatch-before-publication');
     if(browser){const page=browser.page;await page.setViewportSize({width:390,height:844});await page.goto(`${browser.origin}/system/billing/settings`,{waitUntil:'domcontentloaded'});
@@ -87,7 +88,8 @@ export async function checkBillingOfferTerms(input:Parameters<typeof checkBillin
     assert.deepEqual((await settings()).policy.offerTerms,policy.offerTerms);assert.deepEqual(await financial(),before);assert.equal(writes,0);
     const catalogResponse=await request('/v1/billing/catalog');assert.equal(catalogResponse.status,200,JSON.stringify(catalogResponse));const catalog=catalogResponse.body,offer=catalog.offers.find((o:any)=>o.offerKey==='PRO_999'&&o.interval==='year');
     assert.equal(offer.priceSatang,1099001);assert.equal(offer.receiptAllowance,1500);assert.equal(offer.branchLimit,7);assert.equal(offer.employeeLimit,25);
-    assert.equal(catalog.offers.filter((o:any)=>o.offerKey==='ENTERPRISE_1999').every((o:any)=>o.availability==='COMING_SOON'),true);assert.equal(catalog.trial.monthlySlipLimit,15);
+    // Phase 6: this policy binds no ENTERPRISE Price, so the tier is still "เร็ว ๆ นี้" here.
+    assert.equal(catalog.offers.filter((o:any)=>o.offerKey==='ENTERPRISE_1999').every((o:any)=>o.availability==='COMING_SOON'),true);assert.equal(catalog.trial,undefined);
     cases.push('offer-terms-public-catalog-revision-shared-default-trial-and-enterprise-lock-without-financial-mutation');
 
     if(browser&&process.env.MANGMEE_MARKETING_DIR){const {checkBillingMarketing}=await import('./billing-marketing-smoke');cases.push(...(await checkBillingMarketing({page:browser.page,appOrigin:browser.origin,directory:process.env.MANGMEE_MARKETING_DIR,evidenceDir:browser.evidenceDir,expectedPro:{monthlySatang:109901,annualSatang:1099001,annualReceipts:1500,branches:7,members:25}})).map(name=>`offer-terms-${name}`));await browser.page.setViewportSize({width:390,height:844});}

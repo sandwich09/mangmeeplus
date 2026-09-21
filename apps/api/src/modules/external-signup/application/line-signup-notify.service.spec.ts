@@ -168,7 +168,10 @@ describe('P10-L push delivery', () => {
     h.restore();
 
     const sent = JSON.stringify(h.pushes[0].body);
-    assert.match(sent, /ร้าน ร้านนิด พร้อมใช้แล้ว/);
+    // R1: the first thing a new shop is told is the one step that unlocks it, never a free trial.
+    assert.match(sent, /เปิดร้าน ร้านนิด ให้แล้ว/);
+    assert.match(sent, /เลือกแพ็กเกจเพื่อเริ่มใช้งาน/);
+    assert.equal(sent.includes('ทดลอง'), false);
     assert.match(sent, /https:\/\/liff\.line\.me\/1234567890-abcdef\/start/);
     // LINE-ONBOARD-01: nothing that could be a credential travels in a chat message.
     assert.equal(/\/l\/|token/i.test(sent), false);

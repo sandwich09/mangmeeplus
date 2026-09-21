@@ -6,7 +6,7 @@ import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import Link from 'next/link';
 import {useRouter} from 'next/navigation';
 import {useEffect,useRef,useState} from 'react';
-import {PLAN_TIER_PRESETS,type BillingPlanAdjustments,type BillingPlanAdjustmentOperation,type BillingPlanAdjustmentInput,type CompanyPlanCapacity} from '@watchdog-bms/contracts';
+import {BILLING_PAID_TIERS,PLAN_TIER_PRESETS,type BillingPlanAdjustments,type BillingPlanAdjustmentOperation,type BillingPlanAdjustmentInput,type CompanyPlanCapacity,type PaidTier} from '@watchdog-bms/contracts';
 import {authedApiFetch} from '@/common/api/authed-fetch';
 import {apiErrorCode,apiErrorMessage} from '@/common/api/api-error-message';
 import {statusOf} from '@/common/i18n/error-message.logic';
@@ -26,7 +26,7 @@ export default function BillingPlanAdjustmentsPage({companyId,operationId}:{comp
   const router=useRouter(),generation=useRef(0),key=useRef<string|null>(null);
   const [data,setData]=useState<BillingPlanAdjustments|null>(null),[operation,setOperation]=useState<BillingPlanAdjustmentOperation|null>(null);
   const [loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
-  const [tier,setTier]=useState<'STARTER_249'|'BASIC_499'|'PRO_999'>('PRO_999'),[branches,setBranches]=useState('5'),[members,setMembers]=useState('10'),[days,setDays]=useState('7');
+  const [tier,setTier]=useState<PaidTier>('PRO_999'),[branches,setBranches]=useState('5'),[members,setMembers]=useState('10'),[days,setDays]=useState('7');
   const [reason,setReason]=useState(''),[expires,setExpires]=useState(''),[password,setPassword]=useState(''),[cursor,setCursor]=useState<string|null>(null),[refresh,setRefresh]=useState(0);
   const target=companyId??(operation?.scope.kind==='COMPANY'?operation.scope.companyId:undefined);
   const companyPath=target?`/system/billing/companies/${encodeURIComponent(target)}`:'/system/billing';
@@ -87,7 +87,7 @@ export default function BillingPlanAdjustmentsPage({companyId,operationId}:{comp
         {data.blockedReason&&<div className="space-y-3 border-t border-gray-100 pt-4"><h3 className="font-semibold">{data.blockedReason==='CONTROL_PAID_PLAN_REQUIRED'?'ยังไม่มีแพ็กเกจที่พร้อมปรับสิทธิ์':'ยังปรับรายการนี้ไม่ได้'}</h3><p className="text-gray-600">{errors[data.blockedReason]??'กรุณาตรวจสถานะแพ็กเกจก่อนดำเนินการ'}</p><Link className={billingLink} href={`${companyPath}?view=payments`}>ตรวจรายการชำระเงินของบริษัท</Link></div>}
         {(data.canCreate||data.canManageCollection)&&<div className="border-t border-gray-100 pt-4"><label htmlFor="billing-plan-task" className="mb-2 block font-medium">ต้องการทำอะไร</label><ThemedSelect aria-label="ต้องการทำอะไร" id="billing-plan-task" className={field} value={task} disabled={busy} onChange={e=>setTask(e.target.value)}><option value="">เลือกงานที่ต้องการ</option>{data.canCreate&&<><option value="plan">ปรับแพ็กเกจชั่วคราว</option><option value="days">เพิ่มวันใช้งาน</option></>}{data.canManageCollection&&<option value="collection">พักหรือกลับมาเก็บเงิน</option>}</ThemedSelect><p className="mt-2 text-sm text-gray-600">เลือกหนึ่งงาน กรอกข้อมูล แล้วตรวจผลกระทบก่อนยืนยัน</p></div>}
         {data.canCreate&&<form hidden={task!=='plan'} className="space-y-3" onSubmit={e=>{e.preventDefault();void preview();}}>
-          <label htmlFor="temporary-plan" className="block">แพ็กเกจชั่วคราว</label><ThemedSelect aria-label="แพ็กเกจชั่วคราว" id="temporary-plan" className={field} value={tier} disabled={busy} onChange={e=>{const t=e.target.value as typeof tier;setTier(t);setBranches(String(PLAN_TIER_PRESETS[t].branchLimit));setMembers(String(PLAN_TIER_PRESETS[t].employeeLimit));}}>{(['STARTER_249','BASIC_499','PRO_999'] as const).map(t=><option key={t} value={t}>{PLAN_TIER_PRESETS[t].labelTh}</option>)}</ThemedSelect>
+          <label htmlFor="temporary-plan" className="block">แพ็กเกจชั่วคราว</label><ThemedSelect aria-label="แพ็กเกจชั่วคราว" id="temporary-plan" className={field} value={tier} disabled={busy} onChange={e=>{const t=e.target.value as typeof tier;setTier(t);setBranches(String(PLAN_TIER_PRESETS[t].branchLimit));setMembers(String(PLAN_TIER_PRESETS[t].employeeLimit));}}>{BILLING_PAID_TIERS.map(t=><option key={t} value={t}>{PLAN_TIER_PRESETS[t].labelTh}</option>)}</ThemedSelect>
           <label className="block">จำนวนสาขาสูงสุด<input className={field} inputMode="numeric" value={branches} disabled={busy} onChange={e=>setBranches(e.target.value)} maxLength={10}/></label>
           <label className="block">จำนวนผู้ใช้สูงสุด รวมเจ้าของ<input className={field} inputMode="numeric" value={members} disabled={busy} onChange={e=>setMembers(e.target.value)} maxLength={10}/></label>
           <BillingDateTimeField label="สิทธิ์ชั่วคราวสิ้นสุดเมื่อ" value={expires} onChange={setExpires} disabled={busy}/><p>ไม่ระบุวัน: ใช้ได้ถึง {data.maxExpiresAt?date(data.maxExpiresAt):'วันหมดอายุแพ็กเกจปัจจุบัน'}</p>

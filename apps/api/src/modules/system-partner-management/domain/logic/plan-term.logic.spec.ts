@@ -13,6 +13,7 @@ import {
   formatThaiDateTime,
   isExpired,
   isPlanTierKey,
+  planTermLockReason,
   toPlanTermDto,
   warningLadderPoint,
   warningMessageTh,
@@ -20,6 +21,34 @@ import {
 } from './plan-term.logic';
 
 const END = new Date('2026-09-29T07:00:00.000Z'); // 14:00 Bangkok
+
+/**
+ * R2. The one rule three readers share (plan-term notice, billing status, the LINE lock card), so
+ * "ยังไม่มีแพ็กเกจ" and "ครบกำหนด" can never mean two different things in two places.
+ */
+describe('planTermLockReason', () => {
+  const at = new Date('2026-09-20T03:00:00.000Z');
+
+  it('is no_package for the zero-day term provisioning writes', () => {
+    assert.equal(planTermLockReason({ termStartAt: at, termEndsAt: at, renewCount: 0 }), 'no_package');
+  });
+
+  it('is trial_ended for any term that actually ran', () => {
+    assert.equal(planTermLockReason({ termStartAt: at, termEndsAt: addDays(at, 30), renewCount: 0 }), 'trial_ended');
+    // One millisecond of term is still a term somebody was given.
+    assert.equal(planTermLockReason({ termStartAt: at, termEndsAt: new Date(at.getTime() + 1), renewCount: 0 }), 'trial_ended');
+  });
+
+  it('is trial_ended once the shop has been renewed, whatever the dates say', () => {
+    assert.equal(planTermLockReason({ termStartAt: at, termEndsAt: at, renewCount: 1 }), 'trial_ended');
+  });
+
+  it('never calls a backdated term no_package just because it ends before it starts', () => {
+    // An admin who moved `termEndsAt` backwards left a shop that DID have a package; calling that
+    // "never bought anything" would send it the wrong card.
+    assert.equal(planTermLockReason({ termStartAt: at, termEndsAt: addDays(at, -5), renewCount: 2 }), 'trial_ended');
+  });
+});
 
 describe('plan-term derived state', () => {
   it('is ACTIVE outside the warning window', () => {

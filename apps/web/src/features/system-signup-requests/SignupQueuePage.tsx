@@ -202,8 +202,6 @@ export default function SignupQueuePage() {
   const [resolutionAction, setResolutionAction] = useState<AdminSignupDecisionBody['action'] | ''>('');
   const [targetCompanyId, setTargetCompanyId] = useState('');
   const [resolutionNote, setResolutionNote] = useState('');
-  const [grantRepeatTrial, setGrantRepeatTrial] = useState(false);
-  const [trialGrantNote, setTrialGrantNote] = useState('');
   const [acknowledgeSharedContact, setAcknowledgeSharedContact] = useState(false);
   const [sharedContactNote, setSharedContactNote] = useState('');
   // Keyed by request id: one shared box put the note an operator typed for one shop onto whichever
@@ -282,8 +280,6 @@ export default function SignupQueuePage() {
       : 'APPROVE');
     setTargetCompanyId('');
     setResolutionNote('');
-    setGrantRepeatTrial(false);
-    setTrialGrantNote('');
     setAcknowledgeSharedContact(false);
     setSharedContactNote('');
     setApproving(item);
@@ -306,9 +302,6 @@ export default function SignupQueuePage() {
           ? { businessCategory } : {}),
         ...(resolutionAction === 'RETURN_EXISTING' ? { targetCompanyId } : {}),
         ...(resolutionAction === 'REQUEST_INFO' ? { resolutionNote: resolutionNote.trim() } : {}),
-        ...(!finishing && resolutionAction === 'CREATE_NEW_SHOP' && item.requiresRepeatTrialGrant
-          ? { grantRepeatTrial, ...(trialGrantNote.trim() ? { trialGrantNote: trialGrantNote.trim() } : {}) }
-          : {}),
         ...(!finishing && resolutionAction === 'CREATE_NEW_SHOP' && item.contactEmailConflict
           ? {
               acknowledgeSharedContact,
@@ -327,8 +320,6 @@ export default function SignupQueuePage() {
         }
       } else if (resolutionAction === 'RETURN_EXISTING') {
         toast.success('ปิดคำขอโดยให้กลับร้านเดิมแล้ว');
-      } else if (resolutionAction === 'CREATE_NEW_SHOP' && item.requiresRepeatTrialGrant && !grantRepeatTrial) {
-        toast.success('บันทึกรอจัดแพ็กเกจแล้ว ยังไม่ได้เปิดร้าน');
       } else {
         toast.success(finishing
           ? 'ปิดงานเรียบร้อย'
@@ -495,8 +486,6 @@ export default function SignupQueuePage() {
     (!approveFinishing && approveFromLine && !resolutionAction)
     || (resolutionAction === 'RETURN_EXISTING' && !targetCompanyId)
     || (resolutionAction === 'REQUEST_INFO' && !resolutionNote.trim())
-    || (resolutionAction === 'CREATE_NEW_SHOP' && approving.requiresRepeatTrialGrant === true
-      && grantRepeatTrial && !trialGrantNote.trim())
     || (resolutionAction === 'CREATE_NEW_SHOP' && approving.contactEmailConflict === true
       && (!acknowledgeSharedContact || !sharedContactNote.trim()))
     || ((resolutionAction === 'APPROVE' || resolutionAction === 'CREATE_NEW_SHOP')
@@ -667,34 +656,6 @@ export default function SignupQueuePage() {
               </label>
             )}
           </div>
-          )}
-
-          {resolutionAction === 'CREATE_NEW_SHOP' && !approveFinishing && approving?.requiresRepeatTrialGrant && (
-            <div className="space-y-2 rounded-lg border border-yellow-200 bg-yellow-50 p-3">
-              <p className="font-medium text-gray-900">บัญชีนี้เคยได้รับสิทธิ์ทดลองแล้ว</p>
-              <label className="flex min-h-12 items-start gap-3">
-                <input
-                  type="checkbox"
-                  className="mt-1 h-4 w-4"
-                  checked={grantRepeatTrial}
-                  onChange={(event) => setGrantRepeatTrial(event.target.checked)}
-                />
-                <span>อนุญาตทดลองใช้ฟรีเพิ่มอีกครั้ง</span>
-              </label>
-              {grantRepeatTrial ? (
-                <textarea
-                  aria-label="เหตุผลที่ให้ทดลองใช้ฟรีเพิ่ม"
-                  rows={3}
-                  maxLength={SIGNUP_RESOLUTION_NOTE_MAX_LENGTH}
-                  value={trialGrantNote}
-                  onChange={(event) => setTrialGrantNote(event.target.value)}
-                  placeholder="ระบุเหตุผลที่อนุญาต"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900"
-                />
-              ) : (
-                <p className="text-xs text-gray-700">หากไม่อนุญาต ระบบจะเก็บไว้ที่ “รอจัดแพ็กเกจ” และยังไม่เปิดร้าน</p>
-              )}
-            </div>
           )}
 
           {resolutionAction === 'CREATE_NEW_SHOP' && !approveFinishing && approving?.contactEmailConflict && (
@@ -990,6 +951,13 @@ export default function SignupQueuePage() {
                             {item.discoverySource && (
                               <p className="mt-1 break-words text-xs text-gray-600">
                                 รู้จักเราทางไหน: {signupDiscoveryLabel(item.discoverySource, item.discoverySourceOther)}
+                              </p>
+                            )}
+                            {/* D6: the resolved agent, not the raw code — the reviewer needs to
+                                know WHO to credit, and a code alone is a lookup they cannot do. */}
+                            {item.referralSales && (
+                              <p className="mt-0.5 break-words text-xs text-gray-600">
+                                รู้จักเราจากเซลล์: {item.referralSales.displayName} ({item.referralSales.salesCode})
                               </p>
                             )}
                             {/* LEGAL-LIFF-01: the binding acceptance happened before this row
