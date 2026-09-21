@@ -346,7 +346,13 @@ class Release:
             self.close_transport(); raise
 
     def close_transport(self):
+        terminated, failures = [], []
         for session in getattr(self, 'ssm_sessions', {}).values():
+            match = re.search(r'Starting session with SessionId:\s*(\S+)', session['path'].read_text(errors='replace'))
+            if match:
+                result = subprocess.run(self.aws_prefix + ['ssm','terminate-session','--session-id',match.group(1)],
+                    text=True,capture_output=True,timeout=30)
+                (terminated if result.returncode == 0 else failures).append(match.group(1))
             process = session['process']
             if process.poll() is None:
                 process.terminate()
@@ -354,6 +360,9 @@ class Release:
                 except subprocess.TimeoutExpired:
                     process.kill(); process.wait(timeout=5)
             session['log'].close()
+        if getattr(self, 'ssm_sessions', {}):
+            self.receipt['ssmSessionCleanup'] = {'passed':not failures,'terminatedCount':len(terminated),
+                'failedCount':len(failures)}
         self.ssm_sessions = {}
 
     def preflight(self):

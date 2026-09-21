@@ -129,6 +129,23 @@ class Contracts(unittest.TestCase):
         t['sshProxyCommand']='foreign proxy'
         with self.assertRaisesRegex(ValueError,'owns ProxyCommand'):m.validate_target(t,'uat')
 
+    def test_ssm_transport_explicitly_terminates_its_cloud_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'ssm.private.log';path.write_text('Starting session with SessionId: owned-session\nWaiting for connections...\n')
+            log=path.open('a')
+            class Process:
+                def poll(self):return None
+                def terminate(self):pass
+                def wait(self,timeout):return 0
+            r=m.Release.__new__(m.Release);r.aws_prefix=['aws','--profile','uat'];r.receipt={}
+            r.ssm_sessions={'i-1':{'port':41000,'process':Process(),'log':log,'path':path}}
+            completed=subprocess.CompletedProcess([],0,'{}','')
+            with patch.object(m.subprocess,'run',return_value=completed) as run:r.close_transport()
+            self.assertEqual(run.call_args.args[0],
+                ['aws','--profile','uat','ssm','terminate-session','--session-id','owned-session'])
+            self.assertEqual(r.receipt['ssmSessionCleanup'],{'passed':True,'terminatedCount':1,'failedCount':0})
+            self.assertEqual(r.ssm_sessions,{})
+
     def test_exact_main_can_reuse_a_validated_prepared_build(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);prepared=root/'prepared'/'build';prepared.mkdir(parents=True)

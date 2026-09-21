@@ -24,8 +24,8 @@ migration, readiness, customer-OPEN, retirement, or KMS-signature gates.
 
 - Both UAT hosts report `Online` in Systems Manager.
 - Read-only UAT preflight passes with `sshTransport: ssm` while no operator `/32` TCP/22 rule exists.
+- Every controller-owned Systems Manager session is explicitly terminated during cleanup.
 - The change set has no EC2 replacement and changes only the two runtime roles, deploy role, and two
   security groups.
 - Focused controller tests and repository CI pass.
 - A later deploy receipt records whether the 600-second target was met; no safety gate is skipped.
-
