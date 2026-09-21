@@ -128,6 +128,7 @@ export type BillingStatus = {
   applyState: 'NONE' | 'PENDING' | 'APPLIED' | 'HELD' | 'FAILED';
   purchaseEligibility?: 'ELIGIBLE' | 'COMPANY_SALES_CLOSED';
   renewalMode?: BillingPurchaseMode | 'NONE';
+  enabledPurchaseModes?: BillingPurchaseMode[];
   availablePurchaseModes?: BillingPurchaseMode[];
   renewalInvoiceUrl?: string | null;
   renewalInvoiceDueAt?: string | null;
