@@ -526,3 +526,58 @@ present via `COMPANY_PERMISSION_KEYS`, while `wht.certificate.issue` stays on FI
 constructor-arg updates. Web: `settings-menu.logic.spec.ts` updated for the 9th card and re-passes
 (9/9), including its generic "every card's route rule actually grants what the card promises" loop.
 New use-case spec registered in `apps/api/package.json`'s enumerated test script.
+
+Commit: `bb463f02` — "feat(wht): Phase 3 — company signature setting for the 50 ทวิ PDF"
+
+### Phase 4 — DONE
+
+**4.1 (AP `WhtHandoffDetail`)**: fixed the confirmed drift — `const issued = handoff.status ===
+'SYSTEM_ISSUED'` added alongside the existing `const linked = handoff.status === 'EXTERNAL_LINKED'`
+(previously SYSTEM_ISSUED fell through to the external-attach form). New "ออกเอกสารในระบบ" button,
+gated by a new pure predicate `canIssueSystemWhtCertificate(handoff, permissions)`
+(`accounts-payable.model.ts` — status REQUIRED + `systemIssuanceOpen` + the permission, which already
+folds in the `thai_tax` entitlement), placed beside the existing "แนบหนังสือรับรองที่ออกภายนอกแล้ว"
+form inside the same `REQUIRED`-only branch. `WhtHandoffPanel` now passes `permissions` straight
+through instead of pre-computing a `canIssue` boolean, so the component and the test both call the
+same real predicate. New client `issueSystemWhtCertificate` in `accounts-payable.api.ts`.
+
+**4.2 (Expenses confirm flow)**: both confirm buttons (guided-step and approver-only paths, which
+called an identical inline `confirmExpense` lambda) now go through one shared `doConfirm` handler,
+so the post-confirm logic lives in exactly one place. After a successful confirm, if the expense
+withheld tax (`hasWht`, read from the pre-confirm `detail` closure — whtAmount does not change as a
+*result* of confirming) and the caller holds `wht.certificate.issue`, it queries
+`GET wht/payment-handoffs?status=REQUIRED&sourcePaymentId=<expenseId>` and offers a dismissible
+prompt (never mandatory, per spec §4.2 item 3) to issue immediately. New client functions
+(`listWhtHandoffs`, `issueSystemWhtCertificate`) added directly to `expenses.api.ts` — a second thin
+copy of what `accounts-payable.api.ts` already has, matching the backend's own established
+per-module-copy convention rather than a shared cross-feature client.
+
+- **Drift found and fixed (backend, needed for §4.2 to work at all)**: the plan's §4.2 text assumes
+  `WhtCertificateHandoffUseCase.list()` can already filter by `sourcePaymentId` ("ที่มีอยู่แล้วในรูปแบบ
+  WhtCertificateHandoffUseCase.list") — it could not; `.list()` only accepted `status`/`branchId`.
+  Added `sourcePaymentId` as a third optional filter (mirrors the existing two exactly), threaded
+  through `TaxController.listWhtHandoffs`'s new `@Query('sourcePaymentId')` param. This is the
+  plan's own explicitly-named fallback path ("query handoff แยกทันทีหลัง confirm... เลือกแบบหลังถ้า
+  response เดิมไม่อยากแก้ shape เยอะ") — chosen over extending `ConfirmExpenseDto`'s response shape,
+  which the plan itself frames as the more invasive alternative.
+- **Design finding carried from Phase 2, now visible in the UI**: `WhtCertificate.pdfAttachmentId`
+  is never populated (confirmed again here), so there is no persistent "download" link to show after
+  a page reload — both AP and Expenses trigger the browser download immediately from the mint
+  response's `pdfArtifact.contentBase64` (new shared `apps/web/src/common/files/download-artifact.ts`,
+  mirrors `TaxWorkspacePage.tsx`'s existing local `downloadArtifact`, promoted to a shared util once
+  a THIRD call site needed the identical 8 lines) and keep the artifact in local React state only
+  long enough to offer a same-session "download again" button. This is a real, deliberate departure
+  from the plan's literal "pdfAttachmentId จาก certificate" text, necessitated by the Phase 2 finding,
+  not a new problem introduced here.
+
+Verify: `pnpm --filter @watchdog-bms/api typecheck` clean; `pnpm --filter @watchdog-bms/web
+typecheck` clean. New `wht-certificate-handoff.use-case.spec.ts` case for the `sourcePaymentId`
+filter (34/34 total, mock `findMany` extended to honor it). New
+`accounts-payable.model.spec.ts` cases for `canIssueSystemWhtCertificate` (S9: both gates, and
+never past REQUIRED). New `WhtHandoffDetail.wiring.spec.ts` (source-text assertions, mirrors the
+existing `ForeignCurrencyNotice.spec.ts` technique for a component too large/stateful to render:
+confirms SYSTEM_ISSUED is its own branch, the button calls the shared predicate not a duplicated
+condition, issuing downloads the PDF immediately, and the issued banner is checked before linked).
+New cases appended to the existing `ExpenseReviewPage.qa.spec.ts` (same technique: both confirm
+buttons share one handler, the prompt's gate condition, the dismiss control proving it is optional,
+and the issue-and-download wiring). All new/updated specs pass.

@@ -146,12 +146,15 @@ export class WhtCertificateHandoffUseCase {
    * `branchId` is a FILTER, not an authorization boundary — the same shape the other procurement
    * list endpoints use. No AP surface enforces a branch boundary today, and H4 does not invent one.
    */
-  async list(ctx: RequestContext, filters: { status?: string; branchId?: string } = {}): Promise<WhtCertificateHandoffDto[]> {
+  async list(ctx: RequestContext, filters: { status?: string; branchId?: string; sourcePaymentId?: string } = {}): Promise<WhtCertificateHandoffDto[]> {
     const rows = await this.table.findMany({
       where: {
         companyId: ctx.companyId,
         ...(filters.status ? { status: filters.status as any } : {}),
         ...(filters.branchId ? { sourceBranchId: filters.branchId } : {}),
+        // WHT certificate system issuance plan §4.2: lets Expenses find the handoff its own confirm
+        // just created (in the same transaction) without a new response field on ConfirmExpenseDto.
+        ...(filters.sourcePaymentId ? { sourcePaymentId: filters.sourcePaymentId } : {}),
       },
       orderBy: { createdAt: 'desc' },
       take: 200,

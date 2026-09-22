@@ -221,11 +221,12 @@ export class TaxController {
     @Param('companyId') companyId: string,
     @Query('status') status?: string,
     @Query('branchId') branchId?: string,
+    @Query('sourcePaymentId') sourcePaymentId?: string,
   ) {
     // The auth guard lets an `x-company-id` header set the context company; without this the route
     // param would be decorative and a caller could read another company's URL with their own scope.
     assertRouteCompany(ctx, companyId);
-    return this.whtHandoffs.list(ctx, { status, branchId });
+    return this.whtHandoffs.list(ctx, { status, branchId, sourcePaymentId });
   }
 
   @Get('wht/payment-handoffs/:handoffId')

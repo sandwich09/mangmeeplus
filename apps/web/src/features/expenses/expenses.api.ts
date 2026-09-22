@@ -29,7 +29,10 @@ import type {
   UpdateExpenseDraftInput,
   ExpenseSourceDraftInput,
   ExpenseDraftTotalsPreview,
+  WhtCertificateHandoffDto,
+  WhtCertificateDto,
 } from '@watchdog-bms/contracts';
+import type { TaxExportArtifact } from '../tax/tax.api';
 import { authedApiFetch as apiFetch, authedFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { emitToast } from '@/common/feedback/toast-bus';
@@ -712,4 +715,16 @@ export function previewSubstitutePaper(companyId: string, expenseId: string, evi
 
 export function acceptSubstitutePaper(companyId: string, expenseId: string, evidenceId: string, input: import('@watchdog-bms/contracts').AcceptSubstituteReceiptPaperInput): Promise<SubstituteReceiptEvidenceSummary> {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/${evidenceId}/paper/accept`, { method: 'POST', body: JSON.stringify(input) });
+}
+
+// ── WHT certificate system issuance (plan §4.2) ───────────────────────────────
+// Same Tax-module endpoints accounts-payable.api.ts already calls — each module keeps its own thin
+// copy rather than a shared cross-feature client (repo convention).
+
+export function listWhtHandoffs(companyId: string, params?: { status?: string; sourcePaymentId?: string }): Promise<WhtCertificateHandoffDto[]> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs${qs(params)}`);
+}
+
+export function issueSystemWhtCertificate(companyId: string, handoffId: string): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate`, { method: 'POST' });
 }
