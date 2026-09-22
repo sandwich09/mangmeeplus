@@ -392,6 +392,27 @@ describe('filterPermissionsByEntitlement', () => {
       ['wht.certificate.read'],
     );
   });
+
+  // WHT certificate system issuance plan §2.1 (owner decision 2026-09-22, reverses the H4 default
+  // above for this one permission only): the SYSTEM-issue button is ENTERPRISE-only, via a NEW
+  // sibling pack (`pack.wht.certificate.issue`) carrying `wht.certificate.issue` alone. It must not
+  // "fall through" into `pack.wht.certificate.manage`'s ungated status just because that pack also
+  // exists and is ungated — `filterPermissionsByEntitlement` treats a permission as ungated the
+  // moment ANY pack holding it has no featureEntitlementKey, so this only holds if
+  // `wht.certificate.issue` is absent from `pack.wht.certificate.manage`'s permissionKeys.
+  it('gates wht.certificate.issue on thai_tax, unlike its read/link siblings — never via pack.wht.certificate.manage', () => {
+    const allThree = ['wht.certificate.read', 'wht.external_certificate.link', 'wht.certificate.issue'];
+    assert.deepEqual(
+      filterPermissionsByEntitlement(allThree, new Set(['procurement'])),
+      ['wht.certificate.read', 'wht.external_certificate.link'],
+      'without thai_tax: read/link survive, issue is stripped',
+    );
+    assert.deepEqual(
+      filterPermissionsByEntitlement(allThree, new Set(['thai_tax'])),
+      allThree,
+      'with thai_tax: all three survive',
+    );
+  });
 });
 
 function prismaWithEntitlements(rows: Array<{ featureKey: string; enabled: boolean }>) {

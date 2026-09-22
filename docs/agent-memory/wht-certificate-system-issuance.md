@@ -1,7 +1,10 @@
 # Agent Memory: wht-certificate-system-issuance
 
-Status: Implementation session 2026-09-22 — Phases 1-2 of 5 done and committed (see "Implementation
-log" at the end of this file for full per-phase detail, verification, and commit hashes). Plan:
+Status: Implementation session 2026-09-22 — Phases 1-5 of 6 DONE and committed (5 commits,
+dc20214c/ed2f6f7e/bb463f02/b61e0685/plus this phase's — see "Implementation log" at the end of this
+file for full per-phase detail, verification, and commit hashes). Phase 6 (golden-fixture accountant
+review + actually opening `cap.wht50bis/SYSTEM_INITIAL_ISSUE`) is a human/process step, out of scope
+for this session by the task's own instruction — not started. Plan:
 `docs/plans/wht-certificate-system-issuance-plan.md`.
 Owner: Finance/Accounting lane (WHT / 50-ทวิ system issuance).
 Scope: Phase A discovery scan + Phase B spec authoring for enabling `cap.wht50bis/SYSTEM_INITIAL_ISSUE`
@@ -581,3 +584,61 @@ condition, issuing downloads the PDF immediately, and the issued banner is check
 New cases appended to the existing `ExpenseReviewPage.qa.spec.ts` (same technique: both confirm
 buttons share one handler, the prompt's gate condition, the dismiss control proving it is optional,
 and the issue-and-download wiring). All new/updated specs pass.
+
+Commit: `b61e0685` — "feat(wht): Phase 4 — frontend wiring at the AP and Expenses entry points"
+
+### Phase 5 — DONE
+
+Everything Phase 5 names beyond what Phases 1-4 already added test coverage for, plus a full
+regression pass:
+
+- **Item 6 (void path, S7)**: the plan cites `prisma-procurement.repository.spec.ts`, which does not
+  exist — the real file covering the supplier-payment void path is
+  `pp36-payment-reversal.repository.spec.ts` (drift, adapted). Its existing "refuses the void once a
+  real 50 ทวิ has been issued" test used a `whtCertificateHandoff.count` mock that ignored `where`
+  entirely (`count: async () => options.certificateLinked ? 1 : 0`), so it was only trivially true —
+  it never actually proved the guard's `status: { in: ['EXTERNAL_LINKED', 'SYSTEM_ISSUED'] }` query
+  covers `SYSTEM_ISSUED` specifically. Tightened the mock to inspect `where.status.in`, then added a
+  new test naming `SYSTEM_ISSUED` explicitly (renamed the original to say "externally linked" for
+  clarity). No production code changed — the guard already covered both, per finding 8d.
+- **Item 9 (pack gating)**: no `capability-pack.registry.spec.ts` exists (plan said "ถ้ามี"). Added
+  an end-to-end test to the existing `feature-gate.logic.spec.ts` instead, right beside the two
+  tests that already prove the H4 default (`wht.certificate.read`/`.external_certificate.link`
+  survive without `thai_tax`): proves `wht.certificate.issue` is stripped without `thai_tax` and
+  kept with it, using the real `filterPermissionsByEntitlement` function — the same function that
+  would let a permission "leak" ungated if it were ever accidentally added to
+  `pack.wht.certificate.manage`. This is a stronger proof than a static registry-shape assertion
+  would have been (it exercises the actual filtering behavior, not just the data).
+- **Item 10**: already done in Phase 3 (`permission-registry.spec.ts`).
+- **Items 1-5, 7-8**: already done in their respective phases (Phase 1: prisma-procurement-integrity,
+  expense-status.logic, prisma-expense.repository.atomic-confirm; Phase 2:
+  issue-wht-certificate-from-handoff.use-case.spec.ts, wht-certificate-pdf.logic.spec.ts; Phase 4:
+  accounts-payable.model.spec.ts + WhtHandoffDetail.wiring.spec.ts, expense-review-validation.spec.ts
+  + ExpenseReviewPage.qa.spec.ts).
+
+**Full regression pass** (the "รายการที่มีอยู่แล้วต้องเขียวต่อ" list plus every spec touched or added
+across all 5 phases, run together):
+- API: `create-wht-certificate.use-case.spec.ts`, `wht-certificate-handoff.use-case.spec.ts`,
+  `wht-income-category.use-case.spec.ts`, `wht-report.logic.spec.ts`,
+  `sync-tax-events-supplier-payment-wht.use-case.spec.ts`, `expense-status.logic.spec.ts`,
+  `prisma-expense.repository.atomic-confirm.spec.ts`,
+  `issue-wht-certificate-from-handoff.use-case.spec.ts`, `wht-certificate-pdf.logic.spec.ts`,
+  `prisma-procurement-integrity.repository.spec.ts`, `pp36-payment-reversal.repository.spec.ts`,
+  `permission-registry.spec.ts`, `feature-gate.logic.spec.ts`,
+  `update-company-tax-signature.use-case.spec.ts`, `tax.controller.spec.ts` — **283/283 pass**.
+- Web: `accounts-payable.logic.spec.ts`, `accounts-payable.model.spec.ts`,
+  `WhtHandoffDetail.wiring.spec.ts`, `ExpenseReviewPage.qa.spec.ts`,
+  `expense-review-validation.spec.ts`, `expenses.model.spec.ts`, `settings-menu.logic.spec.ts` —
+  **182/182 pass**.
+- `pnpm --filter @watchdog-bms/contracts build` clean.
+- `pnpm --filter @watchdog-bms/api typecheck` clean (heap-flagged script; bare `tsc --noEmit`/the
+  `lint` script OOM-aborts on this machine, confirmed in Phase 2 and unchanged since).
+- `pnpm --filter @watchdog-bms/web typecheck` clean.
+- `pnpm --filter @watchdog-bms/api prisma:validate` clean.
+
+**Deliberately NOT run** (owner's minimal-testing directive, explicit in this task's brief): the full
+enumerated `pnpm --filter @watchdog-bms/api test` (hundreds of unrelated specs), the full glob
+`pnpm --filter @watchdog-bms/web test` (every `*.spec.ts` in the web app), and
+`node scripts/run-line-ai-whole-chain-acceptance.mjs` (unrelated LINE-AI suite). All of these are
+expected to run once at merge time in CI per the standing directive; only specs touched, extended,
+or newly added by this task were run directly, across every phase.
