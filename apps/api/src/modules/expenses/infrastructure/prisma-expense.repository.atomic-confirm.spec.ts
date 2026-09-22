@@ -380,6 +380,49 @@ describe('PrismaExpenseRepository atomic tax confirmation', () => {
   });
 });
 
+// WHT certificate system issuance plan §1.2 (S3): a confirmed expense that withheld tax owes the
+// payee a 50 ทวิ, recorded as a durable REQUIRED handoff in the SAME final-mutation transaction —
+// mirroring what `createWhtHandoffForPayment` already does on the AP settlement path.
+describe('WHT certificate handoff at expense confirmation', () => {
+  it('creates a REQUIRED handoff, prefilled from the row, when the confirmed expense withheld tax', async () => {
+    const { repo, updatedAt, row, client } = harness();
+    row.whtAmount = 30;
+    row.whtCategoryCode = 'CAT1';
+    row.whtRate = 3;
+    row.vendorEntityKindSnapshot = 'INDIVIDUAL';
+    row.vendorNameSnapshot = 'ผู้รับเงิน';
+    row.vendorTaxIdSnapshot = '1111111111111';
+    const handoffs: any[] = [];
+    client.company = { findUnique: async () => ({ name: 'ผู้จ่าย', registeredName: 'บริษัท ผู้จ่าย จำกัด', taxId: '9999999999999', addressJson: null }) };
+    client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }) };
+    client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า' }) };
+    client.whtCertificateHandoff = { create: async ({ data }: any) => { handoffs.push(data); } };
+    const input = await inputFor(repo, updatedAt);
+    const result = await repo.finalizeAndConfirmExpenseCas(input, finalize);
+    assert.equal(result.expense.status, 'CONFIRMED');
+    assert.equal(handoffs.length, 1);
+    const handoff = handoffs[0];
+    assert.equal(handoff.status, 'REQUIRED');
+    assert.equal(handoff.sourcePaymentType, 'expense.record');
+    assert.equal(handoff.sourcePaymentId, 'expense-1');
+    assert.equal(handoff.sourceFeatureKey, 'expenses');
+    assert.equal(handoff.prefillSnapshotJson.payerSnapshot.branchCode, '00002', 'Phase 1.1 fix applies on the Expenses side too');
+    assert.equal(handoff.prefillSnapshotJson.payeeSnapshot.name, 'ผู้รับเงิน');
+    assert.equal(handoff.prefillSnapshotJson.formType, 'PND3');
+    assert.equal(handoff.prefillSnapshotJson.incomeCategoryCode, 'CAT1');
+    assert.equal(handoff.prefillSnapshotJson.incomeCategoryName, 'ค่าเช่า');
+    assert.equal(handoff.prefillSnapshotJson.withheldAmount, '30');
+  });
+
+  it('creates no handoff when the confirmed expense withheld nothing', async () => {
+    const { repo, updatedAt, client } = harness();
+    client.whtCertificateHandoff = { create: async () => { throw new Error('must not be called when whtAmount is 0'); } };
+    const input = await inputFor(repo, updatedAt);
+    const result = await repo.finalizeAndConfirmExpenseCas(input, finalize);
+    assert.equal(result.expense.status, 'CONFIRMED');
+  });
+});
+
 describe('evidence review at final transaction', () => {
   it('rejects a removed human review after preflight, without final lines, header or outbox', async () => {
     const h = harness();

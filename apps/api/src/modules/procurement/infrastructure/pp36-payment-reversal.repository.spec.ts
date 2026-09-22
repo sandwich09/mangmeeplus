@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { PrismaProcurementRepository } from './prisma-procurement.repository.js';
 
-function fixture(options: { claimReleased?: boolean; taxPeriodStatus?: string; certificateLinked?: boolean; whtPeriodStatus?: string; withheld?: boolean } = {}) {
+function fixture(options: { claimReleased?: boolean; taxPeriodStatus?: string; certificateLinked?: boolean; handoffStatus?: string; whtPeriodStatus?: string; withheld?: boolean } = {}) {
   const whtEvents = options.withheld
     ? [{ id: 'wht-event-1', taxPeriodId: 'wht-period-1', taxPeriod: { status: options.whtPeriodStatus ?? 'OPEN' } }]
     : [];
@@ -57,7 +57,11 @@ function fixture(options: { claimReleased?: boolean; taxPeriodStatus?: string; c
       },
     },
     whtCertificateHandoff: {
-      count: async () => options.certificateLinked ? 1 : 0,
+      // WHT certificate system issuance plan §12 finding 8d/S7: the guard's real query filters on
+      // `status: { in: ['EXTERNAL_LINKED', 'SYSTEM_ISSUED'] }` — checking `where` here (not just
+      // returning a flat count) proves the mock is exercising that exact query, so a test naming
+      // SYSTEM_ISSUED specifically is not trivially true of any status.
+      count: async ({ where }: any) => (options.certificateLinked && where.status.in.includes(options.handoffStatus ?? 'EXTERNAL_LINKED')) ? 1 : 0,
       updateMany: async ({ where, data }: any) => { handoffUpdate = { where, data }; return { count: 1 }; },
     },
     journalEntry: {
@@ -137,10 +141,17 @@ describe('withholding on supplier-payment reversal', () => {
     assert.deepEqual(whtAdjustment.metadataJson.taxEventIds, ['wht-event-1']);
   });
 
-  it('refuses the void once a real 50 ทวิ has been issued to the payee', async () => {
+  it('refuses the void once a real 50 ทวิ has been issued to the payee (externally linked)', async () => {
     // A legal document is in the payee's hands. Voiding underneath it would leave the system
     // disagreeing with a certificate the RD has — that needs a person, not a status flip.
-    await assert.rejects(() => voidIt(fixture({ withheld: true, certificateLinked: true })),
+    await assert.rejects(() => voidIt(fixture({ withheld: true, certificateLinked: true, handoffStatus: 'EXTERNAL_LINKED' })),
+      /wht_certificate_linked_requires_review/);
+  });
+
+  // WHT certificate system issuance plan §12 finding 8d / spec S7: the guard already covers
+  // SYSTEM_ISSUED alongside EXTERNAL_LINKED — this is new test coverage only, no code change.
+  it('refuses the void the same way once the SYSTEM itself has issued the 50 ทวิ', async () => {
+    await assert.rejects(() => voidIt(fixture({ withheld: true, certificateLinked: true, handoffStatus: 'SYSTEM_ISSUED' })),
       /wht_certificate_linked_requires_review/);
   });
 

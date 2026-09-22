@@ -383,6 +383,14 @@ export type WhtCertificateHandoffDto = {
   linkNote: string | null;
   linkedAt: string | null;
   linkedByUserId: string | null;
+  /** Set once SYSTEM-issued (status SYSTEM_ISSUED) — the WhtCertificate row this handoff minted. */
+  certificateId: string | null;
+  /**
+   * WHT certificate system issuance plan §2.4: whether `cap.wht50bis/SYSTEM_INITIAL_ISSUE` is OPEN,
+   * computed once per request so the AP/Expenses "ออกเอกสารในระบบ" button can decide to show/hide
+   * without an extra fetch. On `list`/`get` only — additive, defaults to false elsewhere.
+   */
+  systemIssuanceOpen: boolean;
   createdAt: string;
   updatedAt: string;
   /**
@@ -405,6 +413,17 @@ export type LinkExternalWhtCertificateDto = {
   externalEvidenceRef: string;
   issuedDate: string;
   note?: string;
+};
+
+/**
+ * WHT certificate system issuance plan §3.3 (Decision B): OWNER-only
+ * (`company.tax_signature.manage`), separate from issuing a certificate. `signatureAttachmentId`
+ * comes from the generic `companies/:companyId/attachments/{upload-intent,:id/complete}` flow —
+ * no dedicated upload endpoint for this feature. v1 is signature-only; no seal field exists.
+ */
+export type UpdateCompanyTaxSignatureDto = {
+  signatureMode: 'BLANK' | 'AUTO_STAMP';
+  signatureAttachmentId?: string;
 };
 
 /** 409 body of POST tax/wht-certificates while the SYSTEM route is CLOSED. */

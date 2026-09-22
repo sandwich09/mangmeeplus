@@ -821,6 +821,9 @@ export type ExpenseDetail = ExpenseSummary & {
   vendorBranchCodeSnapshot: string | null;
   /** WHT payee taxpayer class: INDIVIDUAL files ภ.ง.ด.3, JURISTIC files ภ.ง.ด.53. */
   vendorEntityKindSnapshot: BuyerEntityKind | null;
+  /** WHT certificate system issuance plan §1.2: ประเภทเงินได้/อัตรา, mirrors SupplierPayment. */
+  whtCategoryCode: string | null;
+  whtRate: string | null;
   vendorSnapshotJson: Record<string, unknown> | null;
   receivedAt: string | null;
   sourceDocumentLanguage: string | null;
@@ -946,6 +949,9 @@ export type UpdateExpenseDraftInput = Partial<Omit<CreateExpenseDraftInput, 'cap
   /** Vendor address spec §6: ≤ 500 characters as printed; blank/null clears it. */
   vendorAddressSnapshot?: string | null;
   vendorEntityKindSnapshot?: BuyerEntityKind;
+  /** WHT certificate system issuance plan §1.2: mirrors SupplierPayment.whtCategoryCode/whtRate. */
+  whtCategoryCode?: string;
+  whtRate?: string;
   vendorDocumentNumber?: string;
   receivedAt?: string;
   dueDate?: string;

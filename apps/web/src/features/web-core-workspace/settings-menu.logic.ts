@@ -96,6 +96,19 @@ export const SETTINGS_MENU_ITEMS: readonly SettingsMenuItem[] = [
     tone: 'lime',
     section: 'advanced',
   },
+  // WHT certificate system issuance plan §2.1b/§3.3 (Decision B): OWNER-only via
+  // `company.tax_signature.manage` — FINANCE/ACCOUNTANT (who see every other card on this page)
+  // never see this one, the same way `filterSettingsMenuItems` already hides any card whose
+  // permission the viewer lacks.
+  {
+    key: 'tax-signature',
+    href: '/settings/tax-signature',
+    title: 'ลายเซ็นผู้จ่ายเงินสำหรับ 50 ทวิ',
+    desc: 'ตั้งค่าลายเซ็นผู้มีอำนาจลงนามที่จะประทับลงหนังสือรับรองหัก ณ ที่จ่ายที่ระบบออกให้อัตโนมัติ',
+    iconKey: 'DollarLineIcon',
+    tone: 'indigo',
+    section: 'advanced',
+  },
 ];
 
 /**

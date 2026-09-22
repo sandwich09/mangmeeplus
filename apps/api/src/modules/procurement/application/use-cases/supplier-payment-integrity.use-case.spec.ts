@@ -21,7 +21,7 @@ function useCase(repo: any) {
   return new CreateSupplierPaymentUseCase(
     repo, { log: async () => undefined } as any, { append: async () => undefined } as any,
     { execute: async () => assert.fail('number reservation must not run for invalid references') } as any,
-    { execute: async () => undefined } as any, {} as any, { isSystemIssuanceOpen: async () => true } as any,
+    { execute: async () => undefined } as any, {} as any,
   );
 }
 
@@ -70,7 +70,7 @@ describe('CreateSupplierPaymentUseCase AP reference integrity', () => {
     const payable = (repo: any) => new CreateSupplierPaymentUseCase(
       repo, { log: async () => undefined } as any, { append: async () => undefined } as any,
       { execute: async () => ({ id: 'reservation-1', documentNumber: 'PAY-1' }) } as any,
-      { execute: async () => undefined } as any, {} as any, { isSystemIssuanceOpen: async () => true } as any,
+      { execute: async () => undefined } as any, {} as any,
     );
     const recorded: any[] = [];
     const settleRepo = validRepo({
@@ -106,7 +106,7 @@ describe('CreateSupplierPaymentUseCase withholding', () => {
   const recordingUseCase = (repo: any) => new CreateSupplierPaymentUseCase(
     repo, { log: async () => undefined } as any, { append: async () => undefined } as any,
     { execute: async () => ({ id: 'reservation-1', documentNumber: 'PAY-1' }) } as any,
-    { execute: async () => undefined } as any, {} as any, { isSystemIssuanceOpen: async () => true } as any,
+    { execute: async () => undefined } as any, {} as any,
   );
 
   // 1,070 of debt (1,000 base + 70 VAT), 3% withheld on the base, 1,040 actually transferred.

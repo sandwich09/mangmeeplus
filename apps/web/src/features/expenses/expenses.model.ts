@@ -382,6 +382,9 @@ export type ExpenseDetail = ExpenseSummary & {
   discountAmount: string;
   taxableAmount: string;
   whtAmount: string;
+  /** WHT certificate system issuance plan §1.2: ประเภทเงินได้/อัตรา, mirrors SupplierPayment. */
+  whtCategoryCode: string | null;
+  whtRate: string | null;
   whtInputJson?: ExpenseWhtCapture | null;
   paymentMethod: ExpensePaymentMethod | null;
   paidAt: string | null;
@@ -491,6 +494,10 @@ export type ExpenseDraftReviewValues = {
   originalNote?: string | null;
   /** '' = ยังไม่ระบุ. Only asked for when the document withholds tax (ภ.ง.ด.3 vs ภ.ง.ด.53). */
   vendorEntityKindSnapshot?: BuyerEntityKind | '';
+  /** '' = ยังไม่ระบุ. Same "only asked for when withholding tax" gate as vendorEntityKindSnapshot;
+   *  whtRate rides along, filled from the picked category's defaultRate. */
+  whtCategoryCode?: string | '';
+  whtRate?: string;
   vendorDocumentNumber: string;
   expenseDate: string;
   vatMode: ExpenseVatMode;
@@ -579,6 +586,8 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
     vendorAddressSnapshot: detail.vendorAddressSnapshot ?? '',
     vendorBranchCodeSnapshot: detail.vendorBranchCodeSnapshot ?? '',
     vendorEntityKindSnapshot: detail.vendorEntityKindSnapshot ?? '',
+    whtCategoryCode: detail.whtCategoryCode ?? '',
+    whtRate: detail.whtRate ?? '',
     vendorDocumentNumber: detail.vendorDocumentNumber ?? '',
     expenseDate: source ? source.header.expenseDate ?? ''
       : expenseDateIsReadable(detail.aiVerificationSummaryJson) ? detail.expenseDate.slice(0, 10) : '',
@@ -797,6 +806,7 @@ export function buildExpenseDraftReviewPayload(
     vendorAddressSnapshot: values.vendorAddressSnapshot.trim() || null,
     vendorBranchCodeSnapshot: values.vendorBranchCodeSnapshot.trim() || null,
     ...(values.vendorEntityKindSnapshot && { vendorEntityKindSnapshot: values.vendorEntityKindSnapshot }),
+    ...(values.whtCategoryCode && { whtCategoryCode: values.whtCategoryCode, ...(values.whtRate && { whtRate: values.whtRate }) }),
     vendorDocumentNumber: values.vendorDocumentNumber.trim(),
     ...((!options.sourceDraft || values.expenseDate) && { expenseDate: values.expenseDate }),
     vatMode: values.vatMode,

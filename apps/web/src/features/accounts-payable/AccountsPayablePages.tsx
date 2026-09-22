@@ -8,7 +8,8 @@ import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/components/document-preview';
 import { ForbiddenState } from '@/common/components/state';
 import { formatThaiDate } from '@/common/i18n/thai-date';
-import { listVendorBills, getVendorBill, createVendorBill, matchVendorBill, submitVendorBill, approveVendorBill, rejectVendorBill, voidVendorBill, getSupplierPayment, listSupplierPayments, createSupplierPayment, voidSupplierPayment, generateSourceJournal, releasePp36InputClaim, getApAging, reviewVendorBillTaxEvidence, updateVendorBillTaxEvidence, getApprovalPolicy, updateApprovalPolicy, listWhtHandoffs, linkExternalWhtCertificate, setWhtHandoffPayeeAddress, listWhtIncomeCategories } from './accounts-payable.api';
+import { listVendorBills, getVendorBill, createVendorBill, matchVendorBill, submitVendorBill, approveVendorBill, rejectVendorBill, voidVendorBill, getSupplierPayment, listSupplierPayments, createSupplierPayment, voidSupplierPayment, generateSourceJournal, releasePp36InputClaim, getApAging, reviewVendorBillTaxEvidence, updateVendorBillTaxEvidence, getApprovalPolicy, updateApprovalPolicy, listWhtHandoffs, linkExternalWhtCertificate, setWhtHandoffPayeeAddress, listWhtIncomeCategories, issueSystemWhtCertificate } from './accounts-payable.api';
+import { downloadArtifact } from '@/common/files/download-artifact';
 import type { WhtIncomeCategoryOption } from './accounts-payable.api';
 import type { PaymentMethod, SupplierPaymentDetail, SupplierPaymentSummary, SupplierSummary, TradeTaxEvidenceDto, TransactionTaxContext, VendorBillDetail, VendorBillSummary } from '@watchdog-bms/contracts';
 import { listSuppliers } from '@/features/procurement/procurement.api';
@@ -17,7 +18,7 @@ import { listTradeTaxEvidence, uploadTradeTaxEvidenceAttachment } from '@/featur
 import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
 import { TransactionBranchField, useTransactionCreateBranchId } from '@/features/web-core-workspace/TransactionBranchField';
 import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
-import { canSubmitSupplierPayment, isSupplierPaymentWithholdingValid, isVendorBillTaxEvidenceBlocked, isVendorBillTaxEvidenceCompleteForReview } from './accounts-payable.model';
+import { canSubmitSupplierPayment, isSupplierPaymentWithholdingValid, isVendorBillTaxEvidenceBlocked, isVendorBillTaxEvidenceCompleteForReview, canIssueSystemWhtCertificate } from './accounts-payable.model';
 import { parseAccountsPayableTab, visibleAccountsPayableTabs, whtHandoffPayeeAddress, whtLinkErrorOutcome, type AccountsPayableTab } from './accounts-payable.logic';
 import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -949,7 +950,7 @@ function WhtHandoffPanel({ companyId, permissions }: { companyId: string; permis
                         role="region"
                         aria-label={`ข้อมูลหนังสือรับรองของ ${h.prefill?.payeeSnapshot?.name ?? 'ผู้รับเงิน'}`}
                       >
-                        <WhtHandoffDetail companyId={companyId} handoff={h} canLink={canLink} onLinked={() => { setOpenId(null); void load(); }} onStale={() => void load()} />
+                        <WhtHandoffDetail companyId={companyId} handoff={h} canLink={canLink} permissions={permissions} onLinked={() => { setOpenId(null); void load(); }} onStale={() => void load()} />
                       </div>
                     </td></tr>
                   )}
@@ -963,7 +964,7 @@ function WhtHandoffPanel({ companyId, permissions }: { companyId: string; permis
   );
 }
 
-function WhtHandoffDetail({ companyId, handoff, canLink, onLinked, onStale }: { companyId: string; handoff: any; canLink: boolean; onLinked: () => void; onStale: () => void }) {
+function WhtHandoffDetail({ companyId, handoff, canLink, permissions, onLinked, onStale }: { companyId: string; handoff: any; canLink: boolean; permissions: readonly string[]; onLinked: () => void; onStale: () => void }) {
   const [number, setNumber] = useState('');
   const [evidenceRef, setEvidenceRef] = useState('');
   const [issuedDate, setIssuedDate] = useState('');
@@ -976,9 +977,32 @@ function WhtHandoffDetail({ companyId, handoff, canLink, onLinked, onStale }: { 
   const [addressBusy, setAddressBusy] = useState(false);
   const [addressError, setAddressError] = useState<string | null>(null);
   const [addressNotice, setAddressNotice] = useState<string | null>(null);
+  // §4.1: issuing in the system. Nothing ever populates WhtCertificate.pdfAttachmentId — the mint
+  // response is the only place the PDF bytes ever exist — so the artifact is kept in memory only
+  // long enough to offer a second download in this same screen session, never persisted or refetched.
+  const [issuing, setIssuing] = useState(false);
+  const [issueError, setIssueError] = useState<string | null>(null);
+  const [issuedPdf, setIssuedPdf] = useState<{ certificateNumber: string; fileName: string; mimeType: string; contentBase64: string } | null>(null);
   const p = handoff.prefill ?? {};
   const linked = handoff.status === 'EXTERNAL_LINKED';
+  // Drift found while reading the real code (spec §4.1 note): this used to check only
+  // EXTERNAL_LINKED, so a SYSTEM_ISSUED row still showed the "แนบเอกสารที่ออกภายนอก" form.
+  const issued = handoff.status === 'SYSTEM_ISSUED';
   const payeeAddress = whtHandoffPayeeAddress(handoff, canLink);
+
+  const doIssue = async () => {
+    setIssuing(true); setIssueError(null);
+    try {
+      const result = await issueSystemWhtCertificate(companyId, handoff.id);
+      downloadArtifact(result.pdfArtifact);
+      setIssuedPdf({ certificateNumber: result.certificateNumber, ...result.pdfArtifact });
+      // Reload the list (not `onLinked`, which also collapses this panel) — the row must stay open
+      // so the "issued" banner and the re-download button below can actually be seen.
+      onStale();
+    } catch (e) {
+      setIssueError(err(e));
+    } finally { setIssuing(false); }
+  };
 
   const saveAddress = async () => {
     setAddressBusy(true); setAddressError(null); setAddressNotice(null);
@@ -1083,37 +1107,63 @@ function WhtHandoffDetail({ companyId, handoff, canLink, onLinked, onStale }: { 
           <Field label="วันที่จ่าย" value={p.paymentDate ? formatThaiDate(p.paymentDate) : null} />
         </dl>
       </div>
-      {linked ? (
+      {issued ? (
+        <div role="status" aria-live="polite" className="rounded border border-green-200 bg-green-50 p-3 text-sm text-green-900">
+          <p>ระบบออกหนังสือรับรองให้แล้ว{issuedPdf ? ` · เลขที่ ${issuedPdf.certificateNumber}` : ''}</p>
+          {issuedPdf && (
+            <button type="button" className={`${ghostClass} mt-2`} style={{ minHeight: 44, minWidth: 44 }} onClick={() => downloadArtifact(issuedPdf)}>
+              ดาวน์โหลด PDF อีกครั้ง
+            </button>
+          )}
+        </div>
+      ) : linked ? (
         <div role="status" aria-live="polite" className="rounded border border-green-200 bg-green-50 p-3 text-sm text-green-900">
           แนบแล้ว: เลขที่ {handoff.externalCertificateNumber} · หลักฐาน {handoff.externalEvidenceRef}{handoff.externalIssuedDate ? ` · ออกเมื่อ ${formatThaiDate(handoff.externalIssuedDate)}` : ''}{handoff.linkNote ? ` · ${handoff.linkNote}` : ''}
         </div>
-      ) : canLink ? (
-        <div>
-          <h4 className="mb-2 text-sm font-semibold text-gray-900">แนบหนังสือรับรองที่ออกภายนอกแล้ว</h4>
-          {error && <ErrorBanner message={error} />}
-          <form className="grid gap-2 sm:grid-cols-5" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-            <label className="block" htmlFor={fieldId('number')}>
-              <span className="sr-only">เลขที่หนังสือรับรอง</span>
-              <input id={fieldId('number')} className={inputClass} value={number} onChange={(e) => setNumber(e.target.value)} placeholder="เลขที่หนังสือรับรอง" disabled={busy} />
-            </label>
-            <label className="block" htmlFor={fieldId('evidence')}>
-              <span className="sr-only">อ้างอิงหลักฐานหรือไฟล์</span>
-              <input id={fieldId('evidence')} className={inputClass} value={evidenceRef} onChange={(e) => setEvidenceRef(e.target.value)} placeholder="อ้างอิงหลักฐาน/ไฟล์" disabled={busy} />
-            </label>
-            <label className="block" htmlFor={fieldId('issued-date')}>
-              <span className="sr-only">วันที่ออกหนังสือรับรอง</span>
-              <ThemedDate id={fieldId('issued-date')} className={inputClass} value={issuedDate} onChange={(e) => setIssuedDate(e.target.value)} disabled={busy} />
-            </label>
-            <label className="block" htmlFor={fieldId('note')}>
-              <span className="sr-only">หมายเหตุ (ถ้ามี)</span>
-              <input id={fieldId('note')} className={inputClass} value={note} onChange={(e) => setNote(e.target.value)} placeholder="หมายเหตุ (ถ้ามี)" disabled={busy} />
-            </label>
-            <button type="submit" className={btnClass} style={{ minHeight: 44, minWidth: 44 }} aria-busy={busy} disabled={busy || !number.trim() || !evidenceRef.trim() || !issuedDate}>
-              {busy ? 'กำลังแนบ...' : 'แนบเอกสาร'}
-            </button>
-          </form>
+      ) : (
+        <div className="space-y-4">
+          {/* WHT certificate system issuance plan §4.1 (S1/S9): both gate axes — route-readiness
+              (`handoff.systemIssuanceOpen`) and the permission axis, which already folds in the
+              `thai_tax` entitlement. Placed beside the external-attach form below; the operator
+              picks one path. */}
+          {canIssueSystemWhtCertificate(handoff, permissions) && (
+            <div>
+              <h4 className="mb-2 text-sm font-semibold text-gray-900">ออกเอกสารในระบบ</h4>
+              {issueError && <ErrorBanner message={issueError} />}
+              <button type="button" className={btnClass} style={{ minHeight: 44, minWidth: 44 }} aria-busy={issuing} disabled={issuing} onClick={() => void doIssue()}>
+                {issuing ? 'กำลังออกเอกสาร...' : 'ออกเอกสารในระบบ'}
+              </button>
+            </div>
+          )}
+          {canLink && (
+            <div>
+              <h4 className="mb-2 text-sm font-semibold text-gray-900">แนบหนังสือรับรองที่ออกภายนอกแล้ว</h4>
+              {error && <ErrorBanner message={error} />}
+              <form className="grid gap-2 sm:grid-cols-5" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+                <label className="block" htmlFor={fieldId('number')}>
+                  <span className="sr-only">เลขที่หนังสือรับรอง</span>
+                  <input id={fieldId('number')} className={inputClass} value={number} onChange={(e) => setNumber(e.target.value)} placeholder="เลขที่หนังสือรับรอง" disabled={busy} />
+                </label>
+                <label className="block" htmlFor={fieldId('evidence')}>
+                  <span className="sr-only">อ้างอิงหลักฐานหรือไฟล์</span>
+                  <input id={fieldId('evidence')} className={inputClass} value={evidenceRef} onChange={(e) => setEvidenceRef(e.target.value)} placeholder="อ้างอิงหลักฐาน/ไฟล์" disabled={busy} />
+                </label>
+                <label className="block" htmlFor={fieldId('issued-date')}>
+                  <span className="sr-only">วันที่ออกหนังสือรับรอง</span>
+                  <ThemedDate id={fieldId('issued-date')} className={inputClass} value={issuedDate} onChange={(e) => setIssuedDate(e.target.value)} disabled={busy} />
+                </label>
+                <label className="block" htmlFor={fieldId('note')}>
+                  <span className="sr-only">หมายเหตุ (ถ้ามี)</span>
+                  <input id={fieldId('note')} className={inputClass} value={note} onChange={(e) => setNote(e.target.value)} placeholder="หมายเหตุ (ถ้ามี)" disabled={busy} />
+                </label>
+                <button type="submit" className={btnClass} style={{ minHeight: 44, minWidth: 44 }} aria-busy={busy} disabled={busy || !number.trim() || !evidenceRef.trim() || !issuedDate}>
+                  {busy ? 'กำลังแนบ...' : 'แนบเอกสาร'}
+                </button>
+              </form>
+            </div>
+          )}
         </div>
-      ) : null}
+      )}
     </div>
   );
 }

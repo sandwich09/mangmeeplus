@@ -39,7 +39,8 @@ function makeStore(seed: any[] = [], registry: { matched?: any; failSave?: boole
     },
     findMany: async ({ where }: any) => rows.filter((r) => r.companyId === where.companyId
       && (!where.status || r.status === where.status)
-      && (!where.sourceBranchId || r.sourceBranchId === where.sourceBranchId)),
+      && (!where.sourceBranchId || r.sourceBranchId === where.sourceBranchId)
+      && (!where.sourcePaymentId || r.sourcePaymentId === where.sourcePaymentId)),
     create: async ({ data }: any) => {
       if (rows.some((r) => r.companyId === data.companyId && r.creationCommandId === data.creationCommandId)) throw uniqueViolation();
       const row = { id: `handoff-${rows.length + 1}`, createdAt: new Date(), updatedAt: new Date(), ...data };
@@ -64,7 +65,9 @@ function makeStore(seed: any[] = [], registry: { matched?: any; failSave?: boole
   };
   const taxRepo = { prisma: { client: { whtCertificateHandoff: table } } } as any;
   const audit = { log: async (entry: any) => { audits.push(entry); } } as any;
-  const gate = {} as any;
+  // §2.4: `.list`/`.get` now read the route gate for `systemIssuanceOpen`. Resolving (never
+  // throwing) simulates OPEN, which is fine here — these fixtures do not assert on that field.
+  const gate = { assertLaunchRouteOpen: async () => undefined } as any;
   // The counterparty registry seam of §10. `matched` stands for the row `vendorMatchKey` finds;
   // `failSave` is the §8 case where the registry write blows up and the address must survive it.
   const counterparties = {
@@ -293,6 +296,17 @@ describe('WhtCertificateHandoffUseCase — durable prefilled handoff (H4)', () =
     await store.value.createOrReplay({ ...baseInput, creationCommandId: 'other', sourceBranchId: 'branch-2' });
     assert.equal((await store.value.list(ctx, { branchId: 'branch-1' })).length, 1);
     assert.equal((await store.value.list(ctx, {})).length, 2, 'no branch filter still returns the whole company');
+  });
+
+  // WHT certificate system issuance plan §4.2: Expenses finds the handoff its own confirm just
+  // created (same transaction) by sourcePaymentId, with no new field on ConfirmExpenseDto.
+  it('filters the list by sourcePaymentId', async () => {
+    const store = makeStore();
+    await store.value.createOrReplay({ ...baseInput, sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' });
+    await store.value.createOrReplay({ ...baseInput, creationCommandId: 'other-payment', sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-2' });
+    const found = await store.value.list(ctx, { sourcePaymentId: 'expense-1' });
+    assert.equal(found.length, 1);
+    assert.equal(found[0]!.sourcePaymentId, 'expense-1');
   });
 
   // ── r12 #1: the link fence is company-wide, so the handoff must be part of the replay decision ──

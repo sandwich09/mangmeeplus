@@ -25,12 +25,13 @@ describe('settings menu', () => {
         ['Tax Code และ Tax Profile', '/settings/tax-codes'],
         ['Tax Account Determination', '/settings/tax-accounts'],
         ['ผังบัญชี Master Data', '/settings/chart-of-accounts'],
+        ['ลายเซ็นผู้จ่ายเงินสำหรับ 50 ทวิ', '/settings/tax-signature'],
       ],
     );
     for (const item of SETTINGS_MENU_ITEMS) assert.ok(findRoutePermissionRule(item.href), item.key);
   });
 
-  it('shows all eight cards to a fully permitted user', () => {
+  it('shows all nine cards to a fully permitted user', () => {
     // account-security is parked (owner decision 2026-08-05), so its card no longer counts.
     assert.equal(filterSettingsMenuItems([
       'company.setup.read',
@@ -41,7 +42,8 @@ describe('settings menu', () => {
       'tax.profile.read',
       'ledger.posting-rule.read',
       'ledger.account.read',
-    ]).length, 8);
+      'company.tax_signature.manage',
+    ]).length, 9);
   });
 
   it('filters every card by any listed permission', () => {

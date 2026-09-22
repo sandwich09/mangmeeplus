@@ -452,6 +452,27 @@ const RAW_PACKS: RawPack[] = [
     description: 'ดูงานที่ต้องออก 50 ทวิ ภายนอก และแนบหนังสือรับรองที่ออกแล้วกลับเข้าระบบ',
     permissionKeys: ['wht.certificate.read', 'wht.external_certificate.link'],
   },
+  // WHT certificate system issuance plan §2.1: owner decision 2026-09-22 — the SYSTEM-issue button
+  // (only) is ENTERPRISE-gated, unlike the ungated pack above. A NEW sibling pack rather than adding
+  // `featureEntitlementKey` to `pack.tax.prepare`/reusing `tax.certificate.issue`: that permission's
+  // use case requires a pre-existing TaxPeriod/TaxEventIds this button does not have (plan §2.2), and
+  // adding the key to `pack.wht.certificate.manage` above would wrongly gate read/link too.
+  {
+    key: 'pack.wht.certificate.issue', module: 'tax', featureEntitlementKey: 'thai_tax',
+    nameTh: 'ออกหนังสือรับรองหัก ณ ที่จ่ายในระบบ', nameEn: 'System-issue WHT certificate',
+    description: 'ออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) เป็น PDF ในระบบทันทีที่ยืนยันจ่าย/ยืนยันเอกสาร',
+    permissionKeys: ['wht.certificate.issue'],
+  },
+  // WHT certificate system issuance plan §2.1b (Decision B): the signature UPLOAD/management setting
+  // is a separate, narrower permission than ISSUING a certificate — OWNER-only via omission from
+  // every role's grant list (permission-registry.ts). Gated by `thai_tax` like the pack above: the
+  // setting is meaningless without the WHT-certificate feature at all.
+  {
+    key: 'pack.company.tax_signature.manage', module: 'tax', featureEntitlementKey: 'thai_tax',
+    nameTh: 'จัดการลายเซ็นผู้จ่ายเงินสำหรับ 50 ทวิ', nameEn: 'Manage WHT certificate signature',
+    description: 'อัปโหลด/จัดการรูปลายเซ็นผู้มีอำนาจลงนามที่จะประทับลงหนังสือรับรองหัก ณ ที่จ่ายที่ระบบออกให้',
+    permissionKeys: ['company.tax_signature.manage'],
+  },
 ];
 
 export const CAPABILITY_PACKS: CapabilityPack[] = RAW_PACKS.map((p) => ({

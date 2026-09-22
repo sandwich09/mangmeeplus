@@ -2506,6 +2506,11 @@ model ExpenseRecord {
   taxableAmount                      Decimal                            @default(0) @db.Decimal(18, 4)
   vatAmount                          Decimal                            @default(0) @db.Decimal(18, 4)
   whtAmount                          Decimal                            @default(0) @db.Decimal(18, 4)
+  // The withholding DECISION behind whtAmount, mirroring SupplierPayment.whtCategoryCode/whtRate —
+  // without these a 50 ทวิ certificate from Expenses had no income category to print and no rate to
+  // report. Rate is a PERCENT ('3.0000' = 3%), matching WhtIncomeCategory.defaultRate.
+  whtCategoryCode                    String?
+  whtRate                            Decimal?                           @db.Decimal(8, 4)
   grandTotalAmount                   Decimal                            @default(0) @db.Decimal(18, 4)
   netPayableAmount                   Decimal                            @default(0) @db.Decimal(18, 4)
   paidAmount                         Decimal                            @default(0) @db.Decimal(18, 4)
@@ -4551,6 +4556,11 @@ model CompanyTaxProfile {
   accountingPeriodMonth Int       @default(12)
   taxReviewerRole       String    @default("ACCOUNTANT")
   notes                 String?
+  // WHT certificate system issuance plan §3.1 (Decision A: signature only, seal deferred). Default
+  // BLANK means a company that never opts in gets today's behaviour exactly — the signature block
+  // on an issued 50 ทวิ stays empty. signatureImageAttachmentId is set only when AUTO_STAMP.
+  signatureMode              String  @default("BLANK")
+  signatureImageAttachmentId String?
   updatedByUserId       String?
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt

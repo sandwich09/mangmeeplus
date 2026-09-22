@@ -48,6 +48,10 @@ export type ExpenseRecord = {
   taxableAmount: string;
   vatAmount: string;
   whtAmount: string;
+  // RA-18-style classification, captured at review — mirrors SupplierPayment.whtCategoryCode/whtRate
+  // (WHT certificate system issuance plan §1.2). Null means not yet classified.
+  whtCategoryCode: string | null;
+  whtRate: string | null;
   grandTotalAmount: string;
   netPayableAmount: string;
   paidAmount: string;
@@ -304,6 +308,8 @@ export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'c
   /** Server-derived only (Slice 2 re-check); never taken from a request body. */
   buyerAsPrintedJson?: import('@watchdog-bms/contracts').ExpenseBuyerAsPrinted;
   vendorEntityKindSnapshot?: BuyerEntityKind;
+  whtCategoryCode?: string;
+  whtRate?: string;
   vendorDocumentNumber?: string;
   receivedAt?: Date | null;
   dueDate?: Date | null;

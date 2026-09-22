@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { canSubmitSupplierPayment, isVendorBillTaxEvidenceBlocked, isVendorBillTaxEvidenceCompleteForReview } from './accounts-payable.model.js';
+import { canSubmitSupplierPayment, isVendorBillTaxEvidenceBlocked, isVendorBillTaxEvidenceCompleteForReview, canIssueSystemWhtCertificate } from './accounts-payable.model.js';
 
 describe('accounts payable VAT evidence model', () => {
   it('blocks claimable domestic VAT until review is verified with no remaining issue', () => {
@@ -45,5 +45,27 @@ describe('canSubmitSupplierPayment withholding', () => {
     assert.equal(canSubmitSupplierPayment({ ...base, wht: wht({ whtAmount: '1070' }) }), false);
     assert.equal(canSubmitSupplierPayment({ ...base, wht: wht({ whtAmount: '-5' }) }), false);
     assert.equal(canSubmitSupplierPayment({ ...base, wht: wht({ billWhtAmount: '30' }) }), false);
+  });
+});
+
+// WHT certificate system issuance plan §4.1 (S9): the "ออกเอกสารในระบบ" button must pass BOTH gate
+// axes — route-readiness (systemIssuanceOpen) and the permission axis (which already folds in the
+// thai_tax entitlement) — and only for a handoff still open to an action (REQUIRED).
+describe('canIssueSystemWhtCertificate (S9)', () => {
+  const required = { status: 'REQUIRED', systemIssuanceOpen: true };
+
+  it('shows the button only when both the route gate and the permission are present', () => {
+    assert.equal(canIssueSystemWhtCertificate(required, ['wht.certificate.issue']), true);
+    // S9: the company is not on ENTERPRISE — no thai_tax entitlement, so the permission never
+    // reaches the effective set at all, whatever the route-readiness gate says.
+    assert.equal(canIssueSystemWhtCertificate(required, []), false);
+    // The route-readiness gate (specialist-approved evidence) is a separate axis from entitlement.
+    assert.equal(canIssueSystemWhtCertificate({ ...required, systemIssuanceOpen: false }, ['wht.certificate.issue']), false);
+  });
+
+  it('never shows once the handoff has moved past REQUIRED', () => {
+    for (const status of ['EXTERNAL_LINKED', 'SYSTEM_ISSUED', 'CANCELLED']) {
+      assert.equal(canIssueSystemWhtCertificate({ status, systemIssuanceOpen: true }, ['wht.certificate.issue']), false, status);
+    }
   });
 });

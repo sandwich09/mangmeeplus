@@ -107,6 +107,7 @@ import { LineExpenseDraftConversationUseCase } from './application/use-cases/lin
 import { LineDraftUpdateUseCase } from './application/use-cases/line-draft-update.use-case';
 import { LineDraftPreviewStore } from './application/services/line-draft-preview.store';
 import { AccountingDocumentsModule } from '../accounting-documents/accounting-documents.module';
+import { ProcurementModule } from '../procurement/procurement.module';
 
 @Module({
   // FeatureLaunchModule supplies the guard that fences the two roots of the expenses journey
@@ -114,7 +115,10 @@ import { AccountingDocumentsModule } from '../accounting-documents/accounting-do
   // AccountingDocumentsModule supplies `EnsureVendorCounterpartyFromExpenseUseCase` (spec D4): an
   // expense save grows the vendor registry. One-way — accounting-documents does not import this
   // module, so there is no cycle.
-  imports: [AuditModule, DashboardNotificationsModule, DataModelCoreModule, TaxModule, FeatureLaunchModule, AccountingDocumentsModule],
+  // ProcurementModule: reuses ListWhtIncomeCategoriesUseCase for the Expenses income-category
+  // endpoint (WHT certificate system issuance plan §1.2) — one-way, ProcurementModule does not
+  // import ExpensesModule, so there is no cycle.
+  imports: [AuditModule, DashboardNotificationsModule, DataModelCoreModule, TaxModule, FeatureLaunchModule, AccountingDocumentsModule, ProcurementModule],
   // ExpenseCaptureController FIRST: `ExpenseController` owns `@Get(':expenseId')` on the same
   // path, and Express matches in registration order — a later `capture-groups` literal would be
   // read as an expense id.

@@ -69,7 +69,7 @@ const CERTIFICATE_WRITES = ['write:reserve-number', 'render:pdf', 'write:certifi
 
 /** Injectable seam so "the closed route rendered no statutory PDF" is observable, not assumed. */
 function makeRenderer(calls: string[]) {
-  return { render: (...args: any[]) => { calls.push('render:pdf'); return { mimeType: 'application/pdf', fileName: String(args[1]), contentBase64: '', checksum: 'sum', byteLength: 0 }; } } as any;
+  return { renderWhtCertificate: async (fields: any) => { calls.push('render:pdf'); return { mimeType: 'application/pdf', fileName: `wht-certificate-${fields.certificateNumber}`, contentBase64: '', checksum: 'sum', byteLength: 0 }; } } as any;
 }
 
 function makeHandoffs() {
@@ -90,7 +90,9 @@ function useCase(gate: LaunchGateGuardService, spy = makeSpy(), handoffs = makeH
   return {
     spy,
     handoffs,
-    value: new CreateWhtCertificateUseCase(spy.taxRepo, spy.reserveNumber, spy.commitNumber, spy.audit, gate, handoffs.value, makeRenderer(spy.calls)),
+    // companyTaxProfile.findUnique always returns null in `makeSpy`, so resolveSignature short-circuits
+    // to BLANK before ever touching attachments/storage — these stubs are never actually called.
+    value: new CreateWhtCertificateUseCase(spy.taxRepo, spy.reserveNumber, spy.commitNumber, spy.audit, gate, handoffs.value, makeRenderer(spy.calls), {} as any, {} as any),
   };
 }
 

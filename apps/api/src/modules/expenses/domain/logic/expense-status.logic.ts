@@ -105,6 +105,7 @@ export type ConfirmValidationInput = {
   grandTotalAmount: string;
   whtAmount: string;
   vendorEntityKindSnapshot: string | null;
+  whtCategoryCode: string | null;
   vatMode: string;
   inputVatClaimStatus: string;
   hasMissingReceiptPermission?: boolean;
@@ -320,6 +321,12 @@ export function validateConfirm(input: ConfirmValidationInput): string | null {
   // not be confirmed unclassified. Without this the PND53 fallback would be a permanent misfiling.
   if (parseFloat(input.whtAmount) > 0 && !input.vendorEntityKindSnapshot) {
     return 'Withholding tax requires the payee taxpayer class (บุคคลธรรมดา / นิติบุคคล) before confirmation.';
+  }
+  // WHT certificate system issuance plan §1.2 (S2): the same last-moment RA-18 rule, for the income
+  // category a 50 ทวิ certificate needs. Without it a system-issued certificate would have no
+  // ประเภทเงินได้ to print.
+  if (parseFloat(input.whtAmount) > 0 && !input.whtCategoryCode) {
+    return 'Withholding tax requires the income category (ประเภทเงินได้) before confirmation.';
   }
   if (hasAiGrandTotalMismatch(input.aiVerifiedFieldsJson, input.grandTotalAmount)
     && !hasAcknowledgedAiTotalMismatch(input.aiVerificationSummaryJson, input.grandTotalAmount)) {
