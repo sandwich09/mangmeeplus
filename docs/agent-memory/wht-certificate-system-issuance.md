@@ -687,3 +687,27 @@ per a repo-wide grep, so no other spec should be affected — worth a full run a
 
 **Still true, unchanged by this fix**: the payment itself is never blocked by an unissued certificate
 (spec:299) — this fix only changes when a handoff is *recorded*, never whether the settlement succeeds.
+
+### Post-push CI fix — DONE (commit `92963900`)
+
+PR #720 (develop-bound) CI caught a real gap the local "touched specs only" verification never
+would: `apps/web/src/common/api/api-error-coverage.spec.ts` enforces Thai text for every error code
+a default-open module can throw, scanning API source directly rather than a restated list. Six new
+codes from this session's work had none, so they would have reached the user as raw snake_case:
+`wht_handoff_not_issuable`, `wht_system_issuance_unavailable`, `wht_handoff_form_type_unresolved`,
+`wht_handoff_income_category_missing`, `wht_certificate_issue_in_progress`,
+`wht_signature_attachment_required`. Fixed by adding entries to
+`apps/web/src/common/api/api-error-message.ts`'s dictionary, next to the existing `wht_handoff_*`
+entries, reusing the Thai text already embedded in each backend exception's `message` field (already
+well-written and specific, per grep of `issue-wht-certificate-from-handoff.use-case.ts` and
+`update-company-tax-signature.use-case.ts`). `wht_handoff_not_issuable` has two throw sites with
+different messages (wrong status vs. status changed mid-request); the dictionary entry generalizes
+both since it's keyed by code, not call site.
+
+Verified locally: `npx tsx --test src/common/api/api-error-coverage.spec.ts` from `apps/web` —
+11/11 pass (was failing 1/3 subtests before the fix). Pushed; awaiting the re-triggered PR #720 CI run.
+
+**Lesson for future sessions doing web-facing error-code work in this repo**: the plan/spec's own
+"tests to add" lists did not name this suite because it's a repo-wide guard, not something scoped to
+this feature — any new user-facing exception code needs a matching entry here, and CI is the actual
+backstop since it scans API source directly rather than trusting a hand-maintained list.
