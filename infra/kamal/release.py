@@ -137,6 +137,20 @@ def validate_target(t, environment, first_migration=False):
     return t
 
 
+def enrolled_host_inventory_matches(host, info):
+    tags = {t['Key']:t['Value'] for t in info.get('Tags', [])}
+    return (info.get('State', {}).get('Name') == 'running'
+            and tags.get('aws:cloudformation:stack-name') == host['stack']
+            and info.get('VpcId') == host['vpcId'])
+
+
+def enrolled_host_matches(target, host, info):
+    address_matches = (host['address'] == info.get('PrivateIpAddress')
+                       if target.get('sshTransport', 'direct') == 'ssm'
+                       else host['address'] in (info.get('PublicIpAddress'), info.get('PrivateIpAddress')))
+    return enrolled_host_inventory_matches(host, info) and address_matches
+
+
 def native_config(target, service, env, source, directory):
     role = {'hosts': [h['address'] for h in target['hosts'][service]]}
     if service=='ai-gateway':
@@ -215,16 +229,16 @@ class Release:
         self.clock = time.monotonic()
         self.id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8]
         self.state = ROOT / '.env.kamal' / args.environment
-        target_path = args.target or self.state / 'target.json'
-        require(target_path.exists(), 'Target is not enrolled: ' + str(target_path) + '; see infra/kamal/README.md')
-        self.target = validate_target(read(target_path), args.environment, self.first_migration)
+        self.target_path = args.target or self.state / 'target.json'
+        require(self.target_path.exists(), 'Target is not enrolled: ' + str(self.target_path) + '; see infra/kamal/README.md')
+        self.target = validate_target(read(self.target_path), args.environment, self.first_migration)
         if self.first_migration:
             require(self.target['migration']['baselineSourceCommit'] == args.production_baseline, 'Enrolled ECS baseline differs from the selected source')
         self.production_browser = bool(getattr(args, 'production_browser_acceptance', False))
         require(not (args.uat_browser_acceptance and self.production_browser), 'Choose one environment browser acceptance mode')
         self.manual_browser = bool(args.uat_browser_acceptance or self.production_browser)
         self.smoke_acceptance = bool(getattr(args, 'uat_smoke_acceptance', False))
-        self.validate_acceptance_target()
+        if not getattr(args, 'reconcile_host_identity', False): self.validate_acceptance_target()
         self.work = self.state / 'runs' / self.id
         self.work.mkdir(parents=True, mode=0o700)
         self.receipt = {'schemaVersion': 1, 'operationId': self.id, 'environment': args.environment,
@@ -384,6 +398,56 @@ class Release:
         self.ssm_sessions = {}
         return self.receipt['ssmSessionCleanup']['passed']
 
+    def observed_ssm_host_key(self, instance_id):
+        require(shutil.which('ssh-keyscan'), 'ssh-keyscan is required for host identity reconciliation')
+        port = self.ssm_sessions[instance_id]['port']
+        raw = self.command(['ssh-keyscan', '-T', '10', '-t', 'ed25519', '-p', str(port), '127.0.0.1'],
+                           timeout=30, log='host-key-'+instance_id)
+        rows = [line.split() for line in raw.splitlines() if line and not line.startswith('#')]
+        require(len(rows) == 1 and len(rows[0]) == 3 and rows[0][1] == 'ssh-ed25519'
+                and re.fullmatch(r'[A-Za-z0-9+/=]+', rows[0][2]), 'Unable to read one ed25519 host key: '+instance_id)
+        return rows[0][1] + ' ' + rows[0][2]
+
+    def reconcile_host_identity(self):
+        require(self.target.get('sshTransport') == 'ssm', 'Host identity reconciliation requires sshTransport: ssm')
+        who = self.aws(['sts','get-caller-identity'])
+        require(who['Account'] == ACCOUNT and not who['Arn'].endswith(':root'), 'Expected account-scoped non-root principal')
+        infos = self.aws(['ec2','describe-instances','--instance-ids',*self.hosts])
+        actual = {row['InstanceId']:row for reservation in infos['Reservations'] for row in reservation['Instances']}
+        require(set(actual) == set(self.hosts), 'Incomplete EC2 readback')
+        for instance_id, host in self.hosts.items():
+            info = actual[instance_id]
+            require(enrolled_host_inventory_matches(host, info), 'Host identity/state changed: '+instance_id)
+            require(info.get('IamInstanceProfile') and info.get('MetadataOptions', {}).get('HttpTokens') == 'required'
+                    and info.get('MetadataOptions', {}).get('HttpPutResponseHopLimit', 0) >= 2,
+                    'Runtime IAM/IMDS not ready: '+instance_id)
+            require(info.get('PrivateIpAddress'), 'Enrolled host has no primary private address: '+instance_id)
+        self.start_ssm_transport()
+        observed = {instance_id:self.observed_ssm_host_key(instance_id) for instance_id in self.hosts}
+        rotations = sorted(instance_id for instance_id, host in self.hosts.items()
+                           if host['hostKey'] != observed[instance_id])
+        reason = (getattr(self.args, 'host_key_rotation_reason', None) or '').strip()
+        require(not rotations or (getattr(self.args, 'accept_host_key_rotation', False) and reason),
+                'Host key changed; use --accept-host-key-rotation with --host-key-rotation-reason')
+        updated = json.loads(json.dumps(self.target))
+        for hosts in updated['hosts'].values():
+            for host in hosts:
+                host['address'] = actual[host['instanceId']]['PrivateIpAddress']
+                host['hostKey'] = observed[host['instanceId']]
+        validate_target(updated, self.args.environment, self.first_migration)
+        require(self.close_transport(), 'Systems Manager session cleanup failed; target was not updated')
+        write(self.target_path, updated)
+        self.target = updated
+        self.hosts = {host['instanceId']:host for hosts in updated['hosts'].values() for host in hosts}
+        self.receipt['principalArn'] = who['Arn']
+        self.receipt['hostIdentityReconciliation'] = {
+            'updatedInstanceIds': sorted(observed),
+            'hostKeyRotationInstanceIds': rotations,
+            'hostKeyRotationReason': reason if rotations else None,
+            'addressKind': 'primary_private_ipv4',
+            'targetUpdated': True,
+        }
+
     def preflight(self):
         require(not (self.target.get('ecsRollbackBaseline') and self.args.apply and not getattr(self,'first_migration',False)),
                 'Preserved ECS rollback window is still enrolled; close it explicitly before an ordinary Kamal release')
@@ -395,9 +459,7 @@ class Release:
         require(set(actual) == set(self.hosts), 'Incomplete EC2 readback')
         for iid, h in self.hosts.items():
             info = actual[iid]
-            tags = {t['Key']:t['Value'] for t in info.get('Tags',[])}
-            require(info['State']['Name'] == 'running' and tags.get('aws:cloudformation:stack-name') == h['stack']
-                    and info['VpcId'] == h['vpcId'] and h['address'] in (info.get('PublicIpAddress'),info.get('PrivateIpAddress')),
+            require(enrolled_host_matches(self.target, h, info),
                     'Host identity/state changed: ' + iid)
             require(info.get('IamInstanceProfile') and info['MetadataOptions']['HttpTokens'] == 'required'
                     and info['MetadataOptions']['HttpPutResponseHopLimit'] >= 2, 'Runtime IAM/IMDS not ready: '+iid)
@@ -872,6 +934,9 @@ finally{await client.$disconnect();}})().catch(()=>process.exit(1));"""
                 else: self.rollback(active)
                 return
             require(not active.exists(), 'Previous deployment needs explicit reconciliation: '+str(active))
+            if getattr(self.args, 'reconcile_host_identity', False):
+                with self.phase('host-identity-reconciliation'): self.reconcile_host_identity()
+                self.receipt['status']='HOST_IDENTITY_RECONCILED'; return
             with self.phase('target-preflight'): self.preflight()
             if getattr(self.args, 'prepare', False):
                 with self.phase('main-typescript-build'): self.source_and_build()
@@ -1528,6 +1593,9 @@ def main():
     action=p.add_mutually_exclusive_group()
     action.add_argument('--apply',action='store_true',help='Deploy to the enrolled target; default only checks prerequisites')
     action.add_argument('--prepare',action='store_true',help='Build pinned main and validate complete config locally; only reads the enrolled cloud target, never deploys')
+    action.add_argument('--reconcile-host-identity',action='store_true',help='Explicitly reconcile the enrolled SSM hosts\' private addresses and verified SSH host keys; never deploys')
+    p.add_argument('--accept-host-key-rotation',action='store_true',help='Permit an observed SSM host-key rotation during explicit reconciliation only')
+    p.add_argument('--host-key-rotation-reason',help='Non-empty audit reason required with --accept-host-key-rotation')
     p.add_argument('--uat-controller-sha256', help='Explicit hash-bound test of the new local controller on real UAT only')
     p.add_argument('--uat-browser-acceptance', action='store_true', help='Wait for owner login and retained operator browser evidence on real UAT; no stored login password')
     p.add_argument('--production-browser-acceptance', action='store_true', help='Retained current-administrator browser evidence with live/OPEN/logout checks; no stored password')
@@ -1536,6 +1604,15 @@ def main():
     args=p.parse_args()
     if args.prepare and args.rollback:
         p.error('--prepare cannot be combined with --rollback')
+    if args.reconcile_host_identity:
+        if args.rollback or args.first_migration or args.uat_release or args.source_sha or args.production_baseline or args.hotfix_path or args.regression_test:
+            p.error('Host identity reconciliation cannot select a release or rollback')
+        if args.uat_browser_acceptance or args.production_browser_acceptance or args.uat_smoke_acceptance:
+            p.error('Host identity reconciliation has no customer acceptance')
+    if args.accept_host_key_rotation != bool(args.host_key_rotation_reason):
+        p.error('Host-key rotation approval requires both --accept-host-key-rotation and --host-key-rotation-reason')
+    if (args.accept_host_key_rotation or args.host_key_rotation_reason) and not args.reconcile_host_identity:
+        p.error('Host-key rotation approval is only valid with --reconcile-host-identity')
     release=None
     exit_code=0
     try:

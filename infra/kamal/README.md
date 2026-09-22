@@ -224,7 +224,7 @@ private files. The `.env.*` paths are ignored by Git. The target must contain:
 | `schemaVersion`, `environment`, `kind` | `1`, `production`/`uat`, matching kind (`dev` only for isolated rehearsal) |
 | `account`, `region` | `311414082667`, `ap-southeast-1` |
 | `hosts` | `api-web`, `ai-gateway`, `workers`; each is a nonempty array of actual hosts |
-| host identity | `instanceId`, IP `address`, `vpcId`, CloudFormation `stack`, verified `ssh-ed25519 …` `hostKey` |
+| host identity | `instanceId`, **primary private IP** `address` for `sshTransport:ssm` (a direct target may use a reachable address), `vpcId`, CloudFormation `stack`, verified `ssh-ed25519 …` `hostKey` |
 | `repository`, `servicePrefix` | Existing environment ECR repository and `mangmee-…` Kamal service name |
 | `publicUrl` | Permanent public HTTPS origin |
 | `apiInternalUrl`, `aiInternalUrl` | Reachable HTTPS URLs ending in `/v1`; ingress routing/TLS already installed |
@@ -247,6 +247,29 @@ Acceptance JSON contains `environment`, `kind`, `username`, `password`, `userId`
 `readPaths` (GET `/api/v1/…`). Real UAT/Production require a SYSTEM_ADMIN account with
 `system.launch_gate.manage`, no forced password/legal action, and customer access already `OPEN`.
 The command preserves gate decisions; it does not silently open a closed platform.
+
+### SSM host identity reconciliation
+
+The root project can reconcile an already enrolled SSM target after an intentional host-key rotation
+without depending on public IPv4 or a workstation CIDR. This is **not** a deployment and never acquires
+a remote release lock, publishes an image, or changes application infrastructure:
+
+```sh
+infra/kamal/deploy-uat --profile <uat-deploy-profile> --reconcile-host-identity \
+  --accept-host-key-rotation --host-key-rotation-reason '<approved incident/change reason>'
+infra/kamal/deploy-prod --profile <production-deploy-profile> --reconcile-host-identity \
+  --accept-host-key-rotation --host-key-rotation-reason '<approved incident/change reason>'
+```
+
+It only accepts the existing target instance IDs after EC2 state/VPC/stack/IMDS and SSM readback,
+captures each `ssh-ed25519` key through that host's SSM tunnel, and updates the private target only
+after it proves controller-owned SSM sessions were closed. It changes every enrolled address to the
+primary private IPv4. A matching key needs no rotation flag; a changed key requires both explicit
+flags above and records the reason in the private result receipt. It cannot enroll replacement
+instance IDs: that remains a reviewed environment enrollment because it changes the trust boundary.
+
+Ordinary UAT and Production releases remain fail-closed for a changed host key. Never make a release
+accept a new key, add public TCP/22, or use an Elastic IP as a workaround.
 
 For the owner's manual login on real UAT, use `--uat-browser-acceptance` and enroll
 `browserAcceptanceUserId`. This option rejects Production and isolated dev; it also supports UAT rollback with the exact restored source/version binding. The same
