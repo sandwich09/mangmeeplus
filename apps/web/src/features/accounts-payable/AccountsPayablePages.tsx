@@ -1128,10 +1128,10 @@ function WhtHandoffDetail({ companyId, handoff, canLink, permissions, onLinked, 
               picks one path. */}
           {canIssueSystemWhtCertificate(handoff, permissions) && (
             <div>
-              <h4 className="mb-2 text-sm font-semibold text-gray-900">ออกเอกสารในระบบ</h4>
+              <h4 className="mb-2 text-sm font-semibold text-gray-900">พิมพ์เอกสารทวิ 50</h4>
               {issueError && <ErrorBanner message={issueError} />}
               <button type="button" className={btnClass} style={{ minHeight: 44, minWidth: 44 }} aria-busy={issuing} disabled={issuing} onClick={() => void doIssue()}>
-                {issuing ? 'กำลังออกเอกสาร...' : 'ออกเอกสารในระบบ'}
+                {issuing ? 'กำลังพิมพ์เอกสาร...' : 'พิมพ์เอกสารทวิ 50'}
               </button>
             </div>
           )}

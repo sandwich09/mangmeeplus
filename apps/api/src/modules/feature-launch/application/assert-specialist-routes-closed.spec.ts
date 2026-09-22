@@ -23,11 +23,13 @@ describe('assertSpecialistRoutesClosed (v5.1 invariant)', () => {
   });
 
   it('fails and names the route when a SPECIALIST_LEGAL row is OPEN', async () => {
-    const rows = seededBaseline.map((row) => (row.gateKey === 'cap.wht50bis' && row.routeKey === 'SYSTEM_INITIAL_ISSUE'
+    // cap.wht50bis moved to ORDINARY/OPEN (owner decision 2026-09-22, gated by billing entitlement
+    // instead) — use a still-SPECIALIST_LEGAL row for this example.
+    const rows = seededBaseline.map((row) => (row.gateKey === 'cap.thai_tax.vat_credit_in_product_offset' && row.routeKey === 'DEFAULT'
       ? { ...row, state: 'OPEN' as const } : row));
     await assert.rejects(() => assertSpecialistRoutesClosed(prismaWith(rows)), (err: Error) => {
       assert.match(err.message, /v5\.1 invariant violated/);
-      assert.match(err.message, /cap\.wht50bis\/SYSTEM_INITIAL_ISSUE/);
+      assert.match(err.message, /cap\.thai_tax\.vat_credit_in_product_offset\/DEFAULT/);
       return true;
     });
   });
@@ -51,11 +53,11 @@ describe('assertSpecialistRoutesClosed (v5.1 invariant)', () => {
   });
 
   it('covers every SPECIALIST_LEGAL gate in the matrix', async () => {
+    // cap.wht50bis moved to ORDINARY/OPEN (owner decision 2026-09-22) — no longer a specialist gate.
     assert.deepEqual([...SPECIALIST_LEGAL_GATE_KEYS].sort(), [
       'cap.thai_tax.external_filing_correction',
       'cap.thai_tax.vat_credit_in_product_offset',
       'cap.thai_tax.vat_scope_credit_transfer',
-      'cap.wht50bis',
     ]);
   });
 });

@@ -154,20 +154,22 @@ describe('FEATURE_LAUNCH_MATRIX catalog', () => {
       if (!row.materializable) assert.ok((row.notMaterializableReason ?? '').length > 0);
     }
     assert.equal(MATERIALIZABLE_LAUNCH_MATRIX_ROWS.length, 20);
-    assert.equal(MATERIALIZABLE_LAUNCH_MATRIX_ROWS.filter((row) => row.seedState === 'OPEN').length, 16);
-    assert.equal(MATERIALIZABLE_LAUNCH_MATRIX_ROWS.filter((row) => row.seedState === 'CLOSED').length, 4);
+    // cap.wht50bis's 3 routes moved to ORDINARY/OPEN (owner decision 2026-09-22, gated by billing
+    // entitlement instead of a specialist-approval record — see assert-specialist-routes-closed.spec.ts).
+    assert.equal(MATERIALIZABLE_LAUNCH_MATRIX_ROWS.filter((row) => row.seedState === 'OPEN').length, 19);
+    assert.equal(MATERIALIZABLE_LAUNCH_MATRIX_ROWS.filter((row) => row.seedState === 'CLOSED').length, 1);
   });
 });
 
 describe('seedLaunchGates', () => {
-  it('opens the 16 ordinary rows and materializes the 4 concrete rows as CLOSED baselines', async () => {
+  it('opens the 19 ordinary rows and materializes the 1 concrete row as a CLOSED baseline', async () => {
     const prisma = makePrisma();
     const result = await seedLaunchGates(prisma, SEED_OPTIONS);
 
-    assert.equal(result.opened.length, 16);
-    assert.equal(result.closedBaseline.length, 4);
+    assert.equal(result.opened.length, 19);
+    assert.equal(result.closedBaseline.length, 1);
     assert.equal(prisma.gates.size, 20);
-    assert.equal(prisma.transitions.length, 16, 'a CLOSED baseline is not a transition');
+    assert.equal(prisma.transitions.length, 19, 'a CLOSED baseline is not a transition');
 
     for (const transition of prisma.transitions) {
       assert.equal(transition.action, 'OPEN');
@@ -209,7 +211,7 @@ describe('seedLaunchGates', () => {
     assert.equal(second.opened.length, 0);
     assert.equal(second.closedBaseline.length, 0);
     assert.equal(second.unchanged.length, 20);
-    assert.equal(prisma.transitions.length, 16, 'the second run appends no transition');
+    assert.equal(prisma.transitions.length, 19, 'the second run appends no transition');
     assert.equal(JSON.stringify([...prisma.gates.values()]), before, 'no generation moved');
   });
 
@@ -228,14 +230,16 @@ describe('seedLaunchGates', () => {
   });
 
   it('never re-closes a specialist route an operator has legitimately opened', async () => {
+    // cap.wht50bis moved to ORDINARY/OPEN (owner decision 2026-09-22) — use the one remaining
+    // materializable SPECIALIST_LEGAL example instead.
     const prisma = makePrisma([
-      { gateKey: 'cap.wht50bis', routeKey: 'SYSTEM_INITIAL_ISSUE', state: 'OPEN', generation: 1, lastSeq: 1, reason: null },
+      { gateKey: 'cap.thai_tax.vat_credit_in_product_offset', routeKey: 'DEFAULT', state: 'OPEN', generation: 1, lastSeq: 1, reason: null },
     ]);
 
     await seedLaunchGates(prisma, SEED_OPTIONS);
 
-    assert.equal(prisma.gates.get('cap.wht50bis SYSTEM_INITIAL_ISSUE').state, 'OPEN');
-    assert.equal(prisma.gates.get('cap.wht50bis SYSTEM_INITIAL_ISSUE').generation, 1);
+    assert.equal(prisma.gates.get('cap.thai_tax.vat_credit_in_product_offset DEFAULT').state, 'OPEN');
+    assert.equal(prisma.gates.get('cap.thai_tax.vat_credit_in_product_offset DEFAULT').generation, 1);
   });
 });
 
@@ -305,15 +309,17 @@ describe('seedLaunchGates — per-build attestation', () => {
   });
 
   it('never attests a SPECIALIST_LEGAL row, even one opened by SYSTEM', async () => {
+    // cap.wht50bis moved to ORDINARY/OPEN (owner decision 2026-09-22) — use the one remaining
+    // materializable SPECIALIST_LEGAL example instead.
     const prisma = makePrisma([
-      { gateKey: 'cap.wht50bis', routeKey: 'SYSTEM_INITIAL_ISSUE', state: 'OPEN', generation: 1, lastSeq: 1, reason: null },
+      { gateKey: 'cap.thai_tax.vat_credit_in_product_offset', routeKey: 'DEFAULT', state: 'OPEN', generation: 1, lastSeq: 1, reason: null },
     ]);
-    prisma.transitions.push({ ...staleSystemOpen('cap.wht50bis'), routeKey: 'SYSTEM_INITIAL_ISSUE' });
+    prisma.transitions.push(staleSystemOpen('cap.thai_tax.vat_credit_in_product_offset'));
 
     const result = await seedLaunchGates(prisma, SEED_OPTIONS);
 
     assert.deepEqual(result.attested, []);
-    assert.equal(prisma.transitions.filter((row: any) => row.gateKey === 'cap.wht50bis').length, 1);
+    assert.equal(prisma.transitions.filter((row: any) => row.gateKey === 'cap.thai_tax.vat_credit_in_product_offset').length, 1);
   });
 
   it('leaves a first-run bootstrap alone — every OPEN it just wrote already names this build', async () => {
@@ -323,7 +329,7 @@ describe('seedLaunchGates — per-build attestation', () => {
 
     const second = await seedLaunchGates(prisma, SEED_OPTIONS);
     assert.deepEqual(second.attested, []);
-    assert.equal(prisma.transitions.length, 16);
+    assert.equal(prisma.transitions.length, 19);
   });
 
   it('reads the lineage of the CURRENT generation — a human reopen buries an older SYSTEM one', async () => {
