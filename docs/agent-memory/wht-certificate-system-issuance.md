@@ -735,3 +735,15 @@ because both are project-wide invariants scanned from source (like the Thai-cove
 feature-scoped tests a plan would think to enumerate. Any future new page/component in this repo
 should expect CI, not the plan, to be the actual backstop for these three source-scanning guards:
 Thai error-text coverage, no-raw-error-display, and busy/aria-busy pairing.
+
+### Third CI round — unrelated pre-existing gap surfaced by the develop merge (commit `b3241ece`)
+
+Not caused by this feature: `modules/billing/application/billing-deal-subscription-cancel.spec.ts`
+(from an unrelated billing/sales-deal feature already merged to `develop` before this branch merged
+develop in) was never wired into any test runner, tripping `spec-suite-coverage.spec.ts`'s "leaves no
+spec file unreferenced" guard. The spec itself passes cleanly (2/2) — purely a wiring gap on develop's
+side that this PR's CI run happened to be the one to surface, since it runs against the merged tree.
+Fixed by adding it to `scripts/line-ai-whole-chain-acceptance.catalog.mjs` next to its sibling billing
+specs (billing specs are wired there, not in `apps/api/package.json`, per that file's own comments).
+Verified locally: the spec itself (2/2 pass) and `spec-suite-coverage.spec.ts` (3/3 pass). This fix
+rides into `develop` with this PR's merge, benefiting every other branch going forward too.
