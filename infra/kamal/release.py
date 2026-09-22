@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import shlex
 import shutil
 import socket
@@ -74,6 +75,18 @@ def write(path, value):
         json.dump(value, f, indent=2, ensure_ascii=False)
         f.write('\n')
     os.replace(temp, path)
+
+
+def terminate_process_group(process):
+    """Terminate a timed-out local command and every build child it started."""
+    if process.poll() is not None:
+        return
+    os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
 
 
 def validate_target(t, environment, first_migration=False):
@@ -275,14 +288,21 @@ class Release:
         return value
 
     def command(self, args, *, input=None, env=None, timeout=120, cwd=None, log=None):
+        process = subprocess.Popen(args, env=env, cwd=cwd, text=True,
+            stdin=subprocess.PIPE if input is not None else None, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, start_new_session=True)
         try:
-            r = subprocess.run(args, input=input, env=env, cwd=cwd, text=True, capture_output=True, timeout=timeout)
+            stdout, stderr = process.communicate(input=input, timeout=timeout)
         except subprocess.TimeoutExpired:
+            terminate_process_group(process)
+            stdout, stderr = process.communicate()
+            if log:
+                (self.work / (log + '.log')).write_text(self.redact((stdout or '') + (stderr or '')))
             raise RuntimeError('Command timed out; outcome may be unknown; no automatic mutation retry: ' + str(args[0]))
         if log:
-            (self.work / (log + '.log')).write_text(self.redact(r.stdout + r.stderr))
-        require(r.returncode == 0, (log or str(args[0])) + ': command failed; raw output suppressed')
-        return r.stdout
+            (self.work / (log + '.log')).write_text(self.redact((stdout or '') + (stderr or '')))
+        require(process.returncode == 0, (log or str(args[0])) + ': command failed; raw output suppressed')
+        return stdout
 
     def aws(self, args, **kwargs):
         try:

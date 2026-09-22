@@ -32,6 +32,24 @@ def target(kind='dev'):
 
 
 class Contracts(unittest.TestCase):
+    def test_timeout_terminates_the_entire_local_command_process_group(self):
+        class Process:
+            pid = 9876
+            def __init__(self): self.wait_calls = 0
+            def poll(self): return None
+            def wait(self, timeout=None):
+                self.wait_calls += 1
+                if self.wait_calls == 1:
+                    raise subprocess.TimeoutExpired('build', timeout)
+        process = Process()
+        with patch.object(m.os, 'killpg') as kill:
+            m.terminate_process_group(process)
+        self.assertEqual(kill.call_args_list, [
+            ((9876, m.signal.SIGTERM),),
+            ((9876, m.signal.SIGKILL),),
+        ])
+        self.assertEqual(process.wait_calls, 2)
+
     def test_postmark_overrides_legacy_config_with_current_secrets_and_native_evidence(self):
         for stage in ('uat', 'production'):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
@@ -591,10 +609,20 @@ class Contracts(unittest.TestCase):
     def test_secret_safe_failure_log_and_timeout(self):
         with tempfile.TemporaryDirectory() as tmp:
             r,_=self.runner(tmp);r.secrets={'private-test-secret'}
-            fake=subprocess.CompletedProcess(['bad'],1,'private-test-secret','failure private-test-secret')
-            with patch.object(m.subprocess,'run',return_value=fake),self.assertRaises(ValueError):r.command(['bad'],log='bad')
+            class FailedProcess:
+                returncode = 1
+                def communicate(self, **kwargs): return 'private-test-secret', 'failure private-test-secret'
+            with patch.object(m.subprocess,'Popen',return_value=FailedProcess()),self.assertRaises(ValueError):r.command(['bad'],log='bad')
             self.assertNotIn('private-test-secret',(r.work/'bad.log').read_text())
-            with patch.object(m.subprocess,'run',side_effect=subprocess.TimeoutExpired('bad',1)),self.assertRaisesRegex(RuntimeError,'no automatic mutation retry'):
+            class TimedOutProcess:
+                pid = 9876
+                returncode = None
+                def poll(self): return None
+                def wait(self, timeout=None): self.returncode = -15
+                def communicate(self, input=None, timeout=None):
+                    if timeout is not None: raise subprocess.TimeoutExpired('bad', timeout)
+                    return '', ''
+            with patch.object(m.subprocess,'Popen',return_value=TimedOutProcess()),patch.object(m.os,'killpg'),self.assertRaisesRegex(RuntimeError,'no automatic mutation retry'):
                 r.command(['bad'])
 
     def test_wrappers_seal_environment(self):
