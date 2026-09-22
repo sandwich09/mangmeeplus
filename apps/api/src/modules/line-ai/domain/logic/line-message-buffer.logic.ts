@@ -33,6 +33,8 @@ export type LineBufferMediaItem = {
   seq: number;
   /** Company selected when durable acceptance completed. A later company switch must not move this media. */
   companyIdAtAcceptance?: string;
+  /** True when the assistant was paused at durable acceptance; a later resume must not replay it into AI. */
+  assistantPausedAtAcceptance?: true;
 };
 
 export type LineBufferItem = LineBufferTextItem | LineBufferMediaItem;

@@ -9,8 +9,11 @@
  * would split the audit trail the inbox reads, so one place owns it and neither module owns that.
  */
 export const SUPPORT_REQUEST_ANSWERED_ACTION = 'system.support_request.answered';
+export const SUPPORT_REQUEST_PAUSE_ACTION = 'system.support_request.pause_ai';
 export const SUPPORT_REQUEST_RESUME_ACTION = 'system.support_request.resume_ai';
 export const SUPPORT_REQUEST_CLAIM_ACTION = 'system.support_request.claimed';
 export const SUPPORT_REQUEST_RELEASE_ACTION = 'system.support_request.released';
 export const SUPPORT_REQUEST_REPLY_ACTION = 'system.support_request.reply';
 export const SUPPORT_REQUEST_RESOLVE_ACTION = 'system.support_request.resolved';
+/** One support handoff pauses the LINE assistant for 24 hours unless either side resumes it first. */
+export const SUPPORT_ASSISTANT_PAUSE_MS = 24 * 60 * 60 * 1000;

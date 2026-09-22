@@ -573,6 +573,8 @@ export type SupportRequestItemDto = {
   assignedAt?: string;
   assigneeDisplayName?: string;
   assignedToMe: boolean;
+  /** Present only when this linked LINE conversation has an assistant whose pause can be managed. */
+  assistantActive?: boolean;
   assignmentNote?: string;
   /** Stable id of the latest logical send; reused only to retry that same text. */
   replyOperationId?: string;
@@ -609,6 +611,8 @@ export type SupportRequestActionDto = {
   assigneeDisplayName?: string;
   /** `resume-ai` only: whether a running assistant pause was actually lifted. */
   pauseCleared?: boolean;
+  /** Resulting server-derived assistant state after a pause/resume action. */
+  assistantActive?: boolean;
 };
 
 export type SupportRequestReplyBody = {

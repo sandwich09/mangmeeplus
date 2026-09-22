@@ -152,7 +152,7 @@ export function supportReplyWithinRetryWindow(
 }
 
 /** Resume changes only the assistant pause; the managed case remains open until explicit resolve. */
-export const canResumeAi = (status: SupportRequestStatus) => status !== 'CLOSED';
+export const canManageAi = (status: SupportRequestStatus) => status !== 'CLOSED';
 
 // ── สัญญา v3: the chat window ──
 

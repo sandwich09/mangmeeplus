@@ -28,10 +28,12 @@ import { supportAskerLabelTh } from './line-signup-notify.service';
 import {
   SUPPORT_REQUEST_ANSWERED_ACTION,
   SUPPORT_REQUEST_CLAIM_ACTION,
+  SUPPORT_REQUEST_PAUSE_ACTION,
   SUPPORT_REQUEST_RELEASE_ACTION,
   SUPPORT_REQUEST_REPLY_ACTION,
   SUPPORT_REQUEST_RESOLVE_ACTION,
   SUPPORT_REQUEST_RESUME_ACTION,
+  SUPPORT_ASSISTANT_PAUSE_MS,
 } from '../domain/support-request.constants';
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -219,7 +221,8 @@ export class SupportRequestAdminUseCase {
     const userIds = [...new Set(rows.flatMap((row) => [
       row.answeredByUserId, row.assignedToUserId, row.resolvedByUserId,
     ]).filter((id): id is string => !!id))];
-    const [companies, signups, users] = await Promise.all([
+    const lineUserIds = [...new Set(rows.filter((row) => !!row.companyId).map((row) => row.lineUserId))];
+    const [companies, signups, users, lineContexts] = await Promise.all([
       companyIds.length
         ? this.prisma.client.company.findMany({ where: { id: { in: companyIds } }, select: { id: true, name: true } })
         : Promise.resolve([]),
@@ -232,6 +235,11 @@ export class SupportRequestAdminUseCase {
       userIds.length
         ? this.prisma.client.user.findMany({ where: { id: { in: userIds } }, select: { id: true, displayName: true } })
         : Promise.resolve([]),
+      lineUserIds.length
+        ? this.prisma.client.lineCompanyContext.findMany({
+          where: { lineUserId: { in: lineUserIds } }, select: { lineUserId: true, aiPausedUntil: true },
+        })
+        : Promise.resolve([]),
     ]);
     const companyName = new Map(companies.map((row) => [row.id, row.name]));
     const appliedName = new Map(signups.map((row) => [row.id, row.companyName]));
@@ -240,6 +248,12 @@ export class SupportRequestAdminUseCase {
         ? [[row.id, row.resolutionNote] as const]
         : []));
     const userName = new Map(users.map((row) => [row.id, row.displayName]));
+    const pausedUntil = new Map(lineContexts.map((row) => [row.lineUserId, row.aiPausedUntil]));
+    const now = Date.now();
+    const assistantIsActive = (lineUserId: string) => {
+      const until = pausedUntil.get(lineUserId);
+      return !until || until.getTime() <= now;
+    };
 
     return rows.map((row): SupportRequestItemDto => ({
         id: row.id,
@@ -272,6 +286,9 @@ export class SupportRequestAdminUseCase {
           ? { assigneeDisplayName: userName.get(row.assignedToUserId) ?? 'บัญชีทีมงานที่ไม่ใช้งาน' }
           : {}),
         assignedToMe: row.assignedToUserId === adminUserId,
+        ...(row.companyId && pausedUntil.has(row.lineUserId)
+          ? { assistantActive: assistantIsActive(row.lineUserId) }
+          : {}),
         ...(row.assignmentNote ? { assignmentNote: row.assignmentNote } : {}),
         ...(row.replyOperationId ? { replyOperationId: row.replyOperationId } : {}),
         ...(row.replyFirstAttemptAt ? { replyFirstAttemptAt: row.replyFirstAttemptAt.toISOString() } : {}),
@@ -600,6 +617,11 @@ export class SupportRequestAdminUseCase {
   /** Clearing the bot pause changes no support outcome. */
   async resumeAssistant(id: string, adminUserId: string, requestId: string): Promise<SupportRequestActionDto> {
     const request = await this.requireOwnedLive(id, adminUserId);
+    if (!request.companyId) throw new UnprocessableEntityException('support_request_assistant_unavailable');
+    const context = await this.prisma.client.lineCompanyContext.findUnique({
+      where: { lineUserId: request.lineUserId }, select: { lineUserId: true },
+    });
+    if (!context) throw new UnprocessableEntityException('support_request_assistant_unavailable');
     const cleared = await this.prisma.client.lineCompanyContext.updateMany({
       where: { lineUserId: request.lineUserId, aiPausedUntil: { not: null } },
       data: { aiPausedUntil: null },
@@ -608,7 +630,26 @@ export class SupportRequestAdminUseCase {
       status: request.status,
       pauseCleared: cleared.count > 0,
     });
-    return { id, status: request.status, assignedToMe: true, pauseCleared: cleared.count > 0 };
+    return {
+      id, status: request.status, assignedToMe: true,
+      pauseCleared: cleared.count > 0, assistantActive: true,
+    };
+  }
+
+  /** Pausing the assistant changes no support outcome and is idempotent for the current LINE user. */
+  async pauseAssistant(id: string, adminUserId: string, requestId: string): Promise<SupportRequestActionDto> {
+    const request = await this.requireOwnedLive(id, adminUserId);
+    if (!request.companyId) throw new UnprocessableEntityException('support_request_assistant_unavailable');
+    const aiPausedUntil = new Date(Date.now() + SUPPORT_ASSISTANT_PAUSE_MS);
+    const paused = await this.prisma.client.lineCompanyContext.updateMany({
+      where: { lineUserId: request.lineUserId },
+      data: { aiPausedUntil },
+    });
+    if (paused.count === 0) throw new UnprocessableEntityException('support_request_assistant_unavailable');
+    await this.audit(SUPPORT_REQUEST_PAUSE_ACTION, id, request.companyId, adminUserId, requestId, {
+      status: request.status,
+    });
+    return { id, status: request.status, assignedToMe: true, assistantActive: false };
   }
 
   async resolve(

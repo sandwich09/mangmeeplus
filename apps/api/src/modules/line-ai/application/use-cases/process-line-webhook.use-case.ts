@@ -137,6 +137,7 @@ import { LineSignupNotifyService } from '../../../external-signup/application/li
 import { AuthRateLimitService } from '../../../auth/application/auth-rate-limit.service';
 import { isBusinessHours } from '../../../external-signup/domain/business-hours.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../../../external-signup/domain/company-signup.logic';
+import { SUPPORT_ASSISTANT_PAUSE_MS } from '../../../external-signup/domain/support-request.constants';
 import { advisorDirectAnswerText } from '../../domain/logic/line-advisor-direct-answer.logic';
 import { capabilityFollowUpReply, capabilityHistoryIntent, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import { safeLineErrorDetails, parseOutcomeMessages, type LineReplyMessage } from '../../infrastructure/line-reply.adapter';
@@ -195,6 +196,8 @@ export type LineReceiptUploadEvent = {
   pushTargetId?: string;
   /** Resolved at durable acceptance so a later company switch cannot move this receipt. */
   companyIdAtAcceptance?: string;
+  /** Snapshot/current support pause resolved by the durable buffer before any wait feedback. */
+  assistantPaused?: boolean;
   /** P12-3b: see `LineTextEvent.handoff`. */
   handoff?: LineHandoffRecipient;
   /** Internal buffer hook: settle any in-flight pre-reply feedback before the answer. */
@@ -214,7 +217,7 @@ export type LineMediaTurnOutcome = { outcome: 'done' | 'defer_text' };
 export type LineLegalAcceptancePreflight =
   // `companyId` on continue is present only when a single company resolved; the buffer uses it as the
   // stable debounce-cohort key. Unlinked/unresolved/multi-company continues omit it (no assignment).
-  | { status: 'continue'; companyId?: string }
+  | { status: 'continue'; companyId?: string; assistantPaused?: true }
   | { status: 'required'; companyId: string };
 
 const UNLINKED_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนใช้งานนะคะ\nเปิดเว็บแอปเพื่อเชื่อมต่อได้เลยค่ะ';
@@ -276,6 +279,10 @@ const SUPPORT_FOLLOW_UP_REPLY = '📮 ส่งข้อความถึงท
  * speech is rationed, off the `lastMessageAt` the row already carries.
  */
 const SUPPORT_FOLLOW_UP_REPEAT_REPLY = '📮 รับข้อความแล้วค่ะ';
+const SUPPORT_MEDIA_RECEIVED_REPLIES = {
+  image: '📎 รับรูปแล้วค่ะ ส่งให้ทีมงานแล้ว',
+  file: '📎 รับไฟล์แล้วค่ะ ส่งให้ทีมงานแล้ว',
+} as const;
 const SUPPORT_FOLLOW_UP_REPLY_INTERVAL_MS = 10 * 60 * 1000;
 const SUPPORT_FOLLOW_UP_REPLIES = {
   none: SUPPORT_PAUSED_REPLY,
@@ -303,8 +310,6 @@ const PACKAGE_CHANGE_UNAVAILABLE_REPLY = '📦 ตอนนี้เปิดค
 const PACKAGE_CHANGE_LINE_NOTE = 'ขอผ่าน LINE ยังไม่ได้เลือกแพ็กเกจ ทีมงานคุยกับร้านแล้วปรับได้';
 const PROFILE_GUARD_ACCEPTED_REPLY = '🔐 ได้เลยค่ะ ใส่อีเมลหรือเบอร์ไว้ในหน้าตั้งค่าได้ที่ลิงก์นี้นะคะ';
 const PROFILE_GUARD_LATER_REPLY = '👍 ได้ค่ะ ไว้พร้อมเมื่อไหร่พิมพ์ "ตั้งค่า" มาได้เลยนะคะ';
-/** §8: 24 hours, self-expiring — nobody has to remember to switch the assistant back on. */
-const SUPPORT_PAUSE_MS = 24 * 60 * 60 * 1000;
 /** The states in which an application is still travelling, so the door shows status (§3.1/§5). */
 const OPEN_LINE_SIGNUP_STATES = [
   'RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'PROVISIONING_FAILED', 'READY',
@@ -2214,7 +2219,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   /** True while a support pause set by `ติดต่อเจ้าหน้าที่` is still running (§8, 24h, self-expiring). */
-  private async assistantPaused(lineUserId: string): Promise<boolean> {
+  async assistantPaused(lineUserId: string): Promise<boolean> {
     const context = await this.prisma.client.lineCompanyContext.findUnique({
       where: { lineUserId },
       select: { aiPausedUntil: true },
@@ -2423,7 +2428,7 @@ export class ProcessLineWebhookUseCase {
    * holds is whatever the request remembered and may name a shop the person has since left.
    */
   private async pauseAssistant(lineUserId: string, companyId: string): Promise<void> {
-    const aiPausedUntil = new Date(Date.now() + SUPPORT_PAUSE_MS);
+    const aiPausedUntil = new Date(Date.now() + SUPPORT_ASSISTANT_PAUSE_MS);
     await this.prisma.client.lineCompanyContext.upsert({
       where: { lineUserId },
       create: { lineUserId, companyId, aiPausedUntil },
@@ -2513,7 +2518,7 @@ export class ProcessLineWebhookUseCase {
       // first, stays the only thing allowed to open a pause.
       await this.prisma.client.lineCompanyContext.updateMany({
         where: { lineUserId, aiPausedUntil: { not: null } },
-        data: { aiPausedUntil: new Date(Date.now() + SUPPORT_PAUSE_MS) },
+        data: { aiPausedUntil: new Date(Date.now() + SUPPORT_ASSISTANT_PAUSE_MS) },
       });
       await this.audit.log({
         action: 'signup.line.support_follow_up',
@@ -2546,25 +2551,27 @@ export class ProcessLineWebhookUseCase {
    *
    * Only a TEXT follow-up under the pause, or a tap on "ติดต่อเจ้าหน้าที่", is the customer asking
    * again. `lastMediaAt` alone: the inbox still says "📷 ส่งรูปมา" beside whatever tab the row is in,
-   * and §3 keeps the bytes out. Best effort, like the follow-up beside it — a receipt must never be
-   * lost because the support table could not be written.
+   * while v3 stores the checked bytes in the support thread. Best effort, like the follow-up beside
+   * it — a receipt must never be lost because the support table could not be written.
    */
-  private async stampSupportMedia(event: LineReceiptUploadEvent): Promise<void> {
+  private async stampSupportMedia(event: LineReceiptUploadEvent): Promise<boolean> {
     const live = await this.findLiveSupportRequest(event.lineUserId).catch((error: unknown) => {
       this.logger.warn({ msg: 'line_support_media_not_recorded', ...safeLineErrorDetails(error) });
       return null;
     });
-    if (!live) return;
+    if (!live) return false;
     try {
-      await this.prisma.client.lineSupportRequest.updateMany({
+      const stamped = await this.prisma.client.lineSupportRequest.updateMany({
         where: { id: live.id, status: live.status },
         data: { lastMediaAt: new Date() },
       });
+      if (stamped.count === 0) return false;
     } catch (error) {
       this.logger.warn({ msg: 'line_support_media_not_recorded', ...safeLineErrorDetails(error) });
-      return;
+      return false;
     }
     await this.storeSupportMedia(live.id, event);
+    return true;
   }
 
   /**
@@ -3555,7 +3562,12 @@ export class ProcessLineWebhookUseCase {
    * message under a fail-open decision.
    */
   async preflightLegalAcceptance(
-    event: { lineUserId: string; messagingChannelId?: string; companyIdAtAcceptance?: string },
+    event: {
+      lineUserId: string;
+      messagingChannelId?: string;
+      companyIdAtAcceptance?: string;
+      snapshotAssistantPause?: boolean;
+    },
   ): Promise<LineLegalAcceptancePreflight> {
     const identity = await this.resolveLineIdentity(event);
     if (!identity || identity.user.status !== 'ACTIVE') return { status: 'continue' };
@@ -3573,9 +3585,13 @@ export class ProcessLineWebhookUseCase {
       companyId: resolved.companyId,
       membershipId: access.membershipId,
     });
-    return required
-      ? { status: 'required', companyId: resolved.companyId }
-      : { status: 'continue', companyId: resolved.companyId };
+    if (required) return { status: 'required', companyId: resolved.companyId };
+    const assistantPaused = event.snapshotAssistantPause
+      && await this.assistantPaused(event.lineUserId);
+    return {
+      status: 'continue', companyId: resolved.companyId,
+      ...(assistantPaused ? { assistantPaused: true as const } : {}),
+    };
   }
 
   /** Reuse delivery evidence, not model history. An intervening event ends this public topic. */
@@ -5952,15 +5968,22 @@ export class ProcessLineWebhookUseCase {
     const requestId = randomUUID();
     if (!await this.claimWebhookEvent(event.webhookEventId, event.lineUserId)) return { outcome: 'done' };
 
-    // This lane has no pause gate of its own, so a customer answering a human WITH A PICTURE was
-    // the one message that reached nobody at all. Stamped before anything else can refuse the
-    // photo as a receipt: whether it is a valid receipt and whether a person is waiting for it are
-    // different questions. ponytail: one indexed lookup per media event — cheap enough not to gate
-    // it on the pause, which would miss an unlinked asker (who has no assistant to pause).
+    // Stamped before anything can refuse the photo as a receipt: whether it is a valid receipt and
+    // whether a person is waiting for it are different questions. v4 gates AI immediately after
+    // this write, so a paused turn reaches the operator but never reaches OCR/model/expense work.
     //
     // A MARKER only, and a marker is not a follow-up: it moves no clock, reopens nothing and
     // re-arms no mute (N1). See `stampSupportMedia`.
-    await this.stampSupportMedia(event);
+    const supportMediaRecorded = await this.stampSupportMedia(event);
+
+    // v4: the human handoff owns this turn. Keep/store the media above, then stop before identity,
+    // intake, OCR, model or expense-draft work. The reply is deterministic support state, not AI.
+    if (event.assistantPaused || await this.assistantPaused(event.lineUserId)) {
+      await this.deliverReply(event,
+        supportMediaRecorded ? SUPPORT_MEDIA_RECEIVED_REPLIES[event.messageType] : SUPPORT_PAUSED_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'support_paused');
+      return { outcome: captionText?.trim() ? 'defer_text' : 'done' };
+    }
 
     const identity = await this.resolveLineIdentity(event);
     if (!identity || identity.user.status !== 'ACTIVE') {
