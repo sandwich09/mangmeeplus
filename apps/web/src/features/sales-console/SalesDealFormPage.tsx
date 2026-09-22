@@ -156,7 +156,7 @@ const CADENCE_CHOICES = [['month', 'รายเดือน'], ['year', 'รา
 
 const AUTO_RENEW_HINT = 'ดีลอัตโนมัติจำกัดรอบเดือน/ปี · ลูกค้าเลือกจ่ายด้วยบัตร (ตัดอัตโนมัติ) หรือ QR (สแกนทุกงวด) · จบดีลแล้วกลับราคาปกติและเมนู/เครดิต AI ค่าเริ่มต้นของแพ็กเกจ';
 
-export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: string; canApprove: boolean }) {
+export default function SalesDealFormPage({ dealId, companyId, canApprove }: { dealId?: string; companyId?: string; canApprove: boolean }) {
   const router = useRouter();
   const [values, setValues] = useState<SalesDealFormValues>(emptyDealForm);
   const [company, setCompany] = useState<SalesCompanySearchItem | null>(null);
@@ -164,7 +164,7 @@ export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: str
   const [errors, setErrors] = useState<SalesDealFormErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [loading, setLoading] = useState(Boolean(dealId));
+  const [loading, setLoading] = useState(Boolean(dealId || companyId));
   const [busy, setBusy] = useState(false);
   const [decision, setDecision] = useState<DecisionKind | null>(null);
   const [decisionReason, setDecisionReason] = useState('');
@@ -188,6 +188,24 @@ export default function SalesDealFormPage({ dealId, canApprove }: { dealId?: str
   }, []);
 
   useEffect(() => { if (dealId) void load(dealId); }, [dealId, load]);
+
+  useEffect(() => {
+    if (dealId || !companyId) return;
+    const preselectedCompanyId = companyId.trim();
+    if (!preselectedCompanyId || preselectedCompanyId.length > 120) { setLoading(false); return; }
+    let cancelled = false;
+    searchSalesCompanies(preselectedCompanyId)
+      .then(({ items }) => {
+        const picked = items.find((item) => item.companyId === preselectedCompanyId);
+        if (cancelled) return;
+        if (!picked || picked.openDealId) { setFormError('ร้านนี้ไม่มีให้สร้างดีลใหม่ กรุณาตรวจรายการที่ค้างอยู่'); return; }
+        setCompany(picked);
+        setValues((previous) => ({ ...previous, companyId: picked.companyId }));
+      })
+      .catch((cause) => { if (!cancelled) setFormError(apiErrorMessage(cause)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [companyId, dealId]);
 
   const editable = !deal || isDealEditable(deal.status);
   // D-P5-6: set by the return op, either automatically after cycle N or by a lead's "จบดีล".

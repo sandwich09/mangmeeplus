@@ -60,7 +60,7 @@ export default function SalesCompaniesPage() {
                       ? <Link href={`/sales/deals/${encodeURIComponent(company.openDealId)}`} className="mangmee-btn mangmee-btn-secondary">
                         ดีลที่ค้างอยู่{company.openDealStatus ? ` · ${SALES_DEAL_STATUS_META[company.openDealStatus].label}` : ''}
                       </Link>
-                      : <Link href="/sales/deals/new" className="mangmee-btn mangmee-btn-primary">สร้างดีล</Link>}
+                      : <Link href={`/sales/deals/new?companyId=${encodeURIComponent(company.companyId)}`} className="mangmee-btn mangmee-btn-primary">สร้างดีล</Link>}
                   </div>
                 ))}
               </MangmeeCard>

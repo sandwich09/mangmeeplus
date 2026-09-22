@@ -32,6 +32,7 @@ import { completeRunoffIfDrained } from '../../feature-launch/application/runoff
 import { upgradeHistory } from './billing-upgrade';
 import { pendingChange } from './billing-schedule';
 import { movePlanMenus, queuePlanMenuMove, retryPlanMenuMoves, type PlanMenuMove } from './billing-plan-menus';
+import { DEAL_SUBSCRIPTION_CANCEL_TYPE, queueDealSubscriptionCancel } from './billing-deal-subscription-cancel';
 
 export const BILLING_STRIPE_EVENTS = new Set(['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded',
   'checkout.session.async_payment_failed', 'invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required', 'invoice.finalization_failed',
@@ -218,6 +219,7 @@ export class BillingReconcilerService {
           await this.planAdjustments.advanceFreeDays(account,leaseToken);
         // D-P5-6: the deal-return swap owns the account the same way a collection command does.
         }else if(operation.type===PRICE_RETURN_TYPE)await this.billing.priceReturn.advance(account,leaseToken);
+        else if(operation.type===DEAL_SUBSCRIPTION_CANCEL_TYPE)await this.billing.dealSubscriptionCancel.advance(account,leaseToken);
         else await this.billing.collection.advance(account, leaseToken);
         if (financialChargeId) await observeBillingCharges(this.prisma, this.stripe, account, leaseToken, financialChargeId);
         return;
@@ -227,7 +229,11 @@ export class BillingReconcilerService {
         await this.billing.repeater.advance(account, attempt, leaseToken, this.config.sesWebBaseUrl);
         return;
       }
-      if (attempt && ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes((attempt.quoteSnapshot as unknown as BillingSnapshot).quote.purchaseMode ?? '')) {
+      const activeSnapshot = attempt?.quoteSnapshot as BillingSnapshot | undefined;
+      // The old subscription belongs to a completed deal conversion, not to the current one-time
+      // contract. Its delayed Stripe events must never reconcile it back onto this account.
+      if (!account.baseSubscriptionId && hintedSubscriptionId && activeSnapshot?.subscriptionConversion?.subscriptionId === hintedSubscriptionId) return;
+      if (attempt && ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(activeSnapshot?.quote.purchaseMode ?? '')) {
         await this.reconcileOneTime(account, attempt, leaseToken);
         return;
       }
@@ -506,8 +512,11 @@ export class BillingReconcilerService {
         paidThrough: snapshot.oneTime ? new Date(snapshot.oneTime.paidThrough) : null, remainingPaidReceipts: 0,
         anchorDay: snapshot.oneTime?.anchorDay });
     const siblings = await this.stripe.list('/subscriptions', { customer: account.customerId, status: 'all' });
-    const collectible = siblings.some(sub => !['canceled', 'incomplete_expired'].includes(sub.status));
-    let disabledFeatures: string[] = [], planMenus: PlanMenuMove | null = null;
+    // The conversion source is deliberately still collectible until this paid one-time invoice
+    // applies; every other live subscription remains a hard hold.
+    const collectible = siblings.some(sub => !['canceled', 'incomplete_expired'].includes(sub.status) &&
+      sub.id !== snapshot.subscriptionConversion?.subscriptionId);
+    let disabledFeatures: string[] = [], planMenus: PlanMenuMove | null = null, cancellationOperationId: string | null = null;
     await this.prisma.client.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${account.companyId}`}))`;
       // Same lock order as `applyInvoice`: OCR config, entitlements, then the plan term.
@@ -549,14 +558,18 @@ export class BillingReconcilerService {
           featureReady = false;
         }
       }
+      const conversionReady = snapshot.subscriptionConversion
+        ? current.baseSubscriptionId === snapshot.subscriptionConversion.subscriptionId &&
+          current.paidThrough?.toISOString() === snapshot.subscriptionConversion.paidThrough && current.renewalMode === 'CARD_AUTO' &&
+          current.subscriptionState === 'active' && !current.cancelAtPeriodEnd && !current.graceEndsAt
+        : !current.baseSubscriptionId || (snapshot.restart?.subscriptionId === current.baseSubscriptionId && current.paidThrough && current.paidThrough <= evidence.paidAt);
       const sourceReady = !collectible && current.activeAttemptId === attempt.id &&
         termProjectionHash(company.planTerm) === snapshot.termHash &&
         (!snapshot.oneTime || (source?.periodEnd.toISOString() === snapshot.oneTime.paidThrough &&
           current.paidThrough?.toISOString() === snapshot.oneTime.paidThrough &&
           current.billingAnchorDay === snapshot.oneTime.anchorDay && !source.refundedSatang && !source.disputed &&
           current.termProjectionHash === snapshot.termHash)) &&
-        (!current.baseSubscriptionId || (snapshot.restart?.subscriptionId === current.baseSubscriptionId &&
-          current.paidThrough && current.paidThrough <= evidence.paidAt)) &&
+        conversionReady &&
         (company.status === 'ACTIVE' || (company.status === 'DISABLED' && !!company.planTerm?.termDisabledAt));
       if (recordOnly || !sourceReady || !capacityReady || !upgradeReady || !featureReady || evidence.refundedSatang || evidence.disputed ||
           impact.paidThrough <= new Date() || evidence.paidAt > new Date()) {
@@ -618,11 +631,17 @@ export class BillingReconcilerService {
           stripeAccountId: account.stripeAccountId, livemode: account.livemode, accountVersion: current.version };
         await queuePlanMenuMove(tx, planMenus);
       }
+      if (snapshot.subscriptionConversion) {
+        cancellationOperationId = await queueDealSubscriptionCancel(tx, { account, sourceVersion: current.version,
+          initiatorUserId: attempt.initiatingUserId, source: { accountId: account.id,
+            subscriptionId: snapshot.subscriptionConversion.subscriptionId, dealRequestId: snapshot.deal!.requestId, attemptId: attempt.id } });
+      }
       await tx.billingAccount.update({ where: { id: account.id }, data: { paidThrough: impact.paidThrough, baseSubscriptionId: null,
         contractAttemptId: attempt.id, activeAttemptId: mode === 'PROMPTPAY_RENEW' ? attempt.id : null,
         subscriptionState: 'NONE', renewalMode: mode!,
         billingAnchorDay: snapshot.oneTime?.anchorDay ?? evidence.paidAt.getUTCDate(), nextChargeAt: null,
         cancelAtPeriodEnd: false, graceEndsAt: null, termProjectionHash: termProjectionHash(term), pendingPlanChangeId: scheduled?.id ?? null,
+        ...(cancellationOperationId ? { activeCollectionOperationId: cancellationOperationId, nextReconcileAt: new Date() } : {}),
         observedAt: new Date(), version: { increment: 1 } } });
       await fulfillPaidPackageRequest(tx, company.id, account.id, row.id);
       await supersedeUnpaidPackageRequest(tx, company.id, row.id);
@@ -651,6 +670,8 @@ export class BillingReconcilerService {
       catch { /* The durable runoff sweep completes missed post-commit transitions. */ }
     }
     if (planMenus) await movePlanMenus(this.prisma, planMenus);
+    if (cancellationOperationId) await this.billing.dealSubscriptionCancel.advance(
+      await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } }), lease);
     if (mode === 'PROMPTPAY_RENEW' && !recordOnly) await this.bindPromptPayRenewal(account, attempt, snapshot, lease, impact.paidThrough);
   }
 
