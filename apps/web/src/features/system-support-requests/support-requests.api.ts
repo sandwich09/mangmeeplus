@@ -73,8 +73,8 @@ export function markSupportRequestAnswered(id: string): Promise<SupportRequestAc
   });
 }
 
-export function resumeSupportRequestAi(id: string): Promise<SupportRequestActionDto> {
-  return apiFetch<SupportRequestActionDto>(`/v1/system/support-requests/${id}/resume-ai`, {
+export function setSupportRequestAiActive(id: string, active: boolean): Promise<SupportRequestActionDto> {
+  return apiFetch<SupportRequestActionDto>(`/v1/system/support-requests/${id}/${active ? 'resume-ai' : 'pause-ai'}`, {
     method: 'POST', suppressErrorToast: true,
   });
 }

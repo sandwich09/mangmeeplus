@@ -16,8 +16,9 @@ test('the page shows a hash fragment, never a LINE id or a LINE display name', (
 // Owner 2026-09-05: no operator has LINE linked, so a request must be visible and actionable here
 // whether or not any notification went anywhere.
 test('every row is actionable from this page alone', () => {
-  assert.match(page, /ตอบแล้ว/);
-  assert.match(page, /ให้ AI ทำงานต่อ/);
+  assert.match(page, /ตอบใน LINE/);
+  assert.match(page, /AI กำลังทำงาน/);
+  assert.match(page, /AI ไม่ได้ทำงาน/);
   // The destination itself is decided in `support-requests.logic.ts` (and asserted there); what
   // this page must not do is drop the link, leaving an operator with no route to the message box.
   assert.match(page, /supportAnswerHref\(item\)/);
@@ -92,10 +93,11 @@ test('a reopened request says so, and its stamp is the one the clock counts from
     'the stamp beside a restarted clock may not be the original ask');
 });
 
-// The customer's chat changes the moment "ให้ AI ทำงานต่อ" lands.
-test('resuming the assistant asks first', () => {
+// The customer's chat changes the moment either side of the AI-state toggle lands.
+test('changing the assistant state asks first and sends a desired action', () => {
   assert.match(page, /const ok = await confirm\(\{/);
   assert.match(page, /if \(!ok\) return;/);
+  assert.match(page, /setSupportRequestAiActive\(item\.id, nextActive\)/);
 });
 
 test('the table scrolls inside its own box rather than widening the page on a phone', () => {

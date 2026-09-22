@@ -1007,6 +1007,38 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(getAiGatewayCalled(), false);
   });
 
+  it('stores support media and stops before intake/OCR/model while the assistant is paused', async () => {
+    const { prisma, updates } = makePrisma({
+      lineCompanyContext: { companyId: 'company-1', aiPausedUntil: new Date(Date.now() + 3_600_000) },
+    });
+    const { useCase, replies, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload'],
+    });
+    let storedForSupport = 0;
+    (useCase as any).stampSupportMedia = async () => {
+      storedForSupport += 1;
+      return true;
+    };
+
+    const outcome = await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-support-photo',
+      lineUserId: BASE_EVENT.lineUserId,
+      replyToken: 'reply-support-photo',
+      lineMessageId: 'line-msg-support-photo',
+      messageType: 'image',
+      messagingChannelId: BASE_EVENT.messagingChannelId,
+      assistantPaused: true,
+    });
+
+    assert.equal(outcome.outcome, 'done');
+    assert.equal(storedForSupport, 1, 'the operator thread receives the photo before the turn stops');
+    assert.match(replies[0] ?? '', /รับรูปแล้วค่ะ ส่งให้ทีมงานแล้ว/);
+    assert.doesNotMatch(replies.join('\n'), /กำลังอ่านเอกสาร|สรุปให้/);
+    assert.equal(intakeRequests.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal((updates.at(-1) as any).data.status, 'support_paused');
+  });
+
   it('does not send a trial reply when support state or durable delivery is unavailable', async () => {
     for (const failure of ['support', 'delivery']) {
       const { prisma } = makePrisma({ turnOutcomeUnavailable: failure === 'delivery' });

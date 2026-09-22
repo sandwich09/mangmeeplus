@@ -115,6 +115,13 @@ describe('sales console theme and copy', () => {
     }
   });
 
+  it('creating a deal from a searched shop preserves that exact shop (P2)', () => {
+    assert.match(source('SalesCompaniesPage.tsx'), /\/sales\/deals\/new\?companyId=\$\{encodeURIComponent\(company\.companyId\)\}/);
+    const form = source('SalesDealFormPage.tsx');
+    assert.match(form, /searchSalesCompanies\(preselectedCompanyId\)/);
+    assert.match(form, /item\.companyId === preselectedCompanyId/);
+  });
+
   it('the console never renders a shop field the search contract does not carry (Q4/S33)', () => {
     // Revenue, receipts and owner contact are exactly what "ค้นหาได้ทุกร้าน" must not hand out, and
     // a shop object is the only place they could come from — so the guard looks for the property

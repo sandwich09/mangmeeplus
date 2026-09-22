@@ -68,6 +68,8 @@ export type LineBufferIncomingItem =
       fileSize?: number;
       /** Set only by durable orphan replay; fresh webhooks resolve and snapshot it below. */
       companyIdAtAcceptance?: string;
+      /** Set only by durable orphan replay; fresh webhooks resolve and snapshot it below. */
+      assistantPausedAtAcceptance?: true;
       timestamp: number;
     };
 
@@ -167,6 +169,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
           ...(envelope.item.kind === 'media' && envelope.item.companyIdAtAcceptance
             ? { companyIdAtAcceptance: envelope.item.companyIdAtAcceptance }
             : {}),
+          ...(envelope.item.kind === 'media' ? { snapshotAssistantPause: true } : {}),
         });
     if (legal.status === 'required' && !companyCommand) {
       const shouldReply = await this.claimPendingLegalAcceptance(envelope, legal.companyId);
@@ -207,8 +210,17 @@ export class LineMessageBufferService implements OnModuleDestroy {
     const companyIdAtAcceptance = envelope.item.kind === 'media'
       ? (envelope.item.companyIdAtAcceptance ?? legal.companyId)
       : undefined;
-    const acceptedEnvelope = companyIdAtAcceptance
-      ? { ...envelope, item: { ...envelope.item, companyIdAtAcceptance } }
+    const acceptedEnvelope = envelope.item.kind === 'media'
+      ? {
+          ...envelope,
+          item: {
+            ...envelope.item,
+            ...(companyIdAtAcceptance ? { companyIdAtAcceptance } : {}),
+            ...(legal.status === 'continue' && legal.assistantPaused
+              ? { assistantPausedAtAcceptance: true as const }
+              : {}),
+          },
+        }
       : envelope;
     const acceptedAt = await this.acceptEvent(acceptedEnvelope, legal.status !== 'required');
     if (acceptedAt === null) return;
@@ -449,7 +461,10 @@ export class LineMessageBufferService implements OnModuleDestroy {
       // buffer would merge into), right after durable acceptance and before the debounce wait. The
       // promise is bound to THIS open buffer and rides into its own pending batch. Commands stay
       // immediate / no-loading.
-      if (item.kind !== 'command' && state.pending === null) this.startLoadingOnAccept(state, item.webhookEventId);
+      if (item.kind !== 'command' && state.pending === null
+        && !(item.kind === 'media' && item.assistantPausedAtAcceptance)) {
+        this.startLoadingOnAccept(state, item.webhookEventId);
+      }
     }
 
     if (item.kind === 'command' || bufferAtCapacity(state.open) || state.debounceMs === 0) {
@@ -829,20 +844,24 @@ export class LineMessageBufferService implements OnModuleDestroy {
     let deferText = false;
     for (let index = 0; index < group.mediaItems.length; index++) {
       const media = group.mediaItems[index];
-      const result = await this.withWaitFeedback(
-        state,
-        lineWaitStages({
-          kind: 'media', mediaType: media.messageType, messageText: caption, seed: media.webhookEventId,
-          loadingEnabled: this.config.lineAiLoadingAnimationEnabled,
-          latestAcceptedAt: media.acceptedAt, now: Date.now(),
-        }),
-        (beforeReply) => this.processWebhook.executeReceiptUpload(
-          { ...this.toMediaEvent(state, media), beforeReply },
-          deferText ? '' : caption,
-        ),
-        // Only the very first media turn can reuse the batch's accept-loading; later turns re-show it.
-        suppressLoading && index === 0,
-      );
+      const assistantPaused = !!media.assistantPausedAtAcceptance
+        || await this.processWebhook.assistantPaused(state.lineUserId);
+      const event = this.toMediaEvent(state, media, assistantPaused);
+      const result = assistantPaused
+        ? await this.processWebhook.executeReceiptUpload(event, deferText ? '' : caption)
+        : await this.withWaitFeedback(
+            state,
+            lineWaitStages({
+              kind: 'media', mediaType: media.messageType, messageText: caption, seed: media.webhookEventId,
+              loadingEnabled: this.config.lineAiLoadingAnimationEnabled,
+              latestAcceptedAt: media.acceptedAt, now: Date.now(),
+            }),
+            (beforeReply) => this.processWebhook.executeReceiptUpload(
+              { ...event, beforeReply }, deferText ? '' : caption,
+            ),
+            // Only the very first media turn can reuse the batch's accept-loading; later turns re-show it.
+            suppressLoading && index === 0,
+          );
       if (index === 0 && result.outcome === 'defer_text') deferText = true;
     }
     if (deferText && group.textItems.length > 0) {
@@ -887,7 +906,11 @@ export class LineMessageBufferService implements OnModuleDestroy {
     };
   }
 
-  private toMediaEvent(state: ChatState, media: LineBufferMediaItem): LineReceiptUploadEvent {
+  private toMediaEvent(
+    state: ChatState,
+    media: LineBufferMediaItem,
+    assistantPaused: boolean,
+  ): LineReceiptUploadEvent {
     return {
       webhookEventId: media.webhookEventId,
       lineUserId: state.lineUserId,
@@ -898,6 +921,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       fileSize: media.fileSize,
       messagingChannelId: state.messagingChannelId,
       pushTargetId: state.chatId,
+      assistantPaused,
       ...(media.companyIdAtAcceptance ? { companyIdAtAcceptance: media.companyIdAtAcceptance } : {}),
     };
   }

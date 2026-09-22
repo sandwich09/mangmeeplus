@@ -26,6 +26,7 @@ function item(overrides: Partial<SupportRequestItemDto> = {}): SupportRequestIte
     emailSent: true,
     notifyState: 'notified',
     assignedToMe: false,
+    assistantActive: true,
     ...overrides,
   };
 }
@@ -41,14 +42,14 @@ function render(overrides: Partial<SupportRequestItemDto>, busy = false): string
       onTakeover: () => {},
       onReply: () => {},
       onResolve: () => {},
-      onResume: () => {},
+      onToggleAi: () => {},
     }),
   );
 }
 
 /**
  * The gating here is exactly the kind a source assertion can agree with while the markup does
- * something else — `canMarkAnswered`/`canResumeAi` are unit-tested next door, but nothing proved
+ * something else — the status rules are unit-tested next door, but nothing proved
  * the row actually asks them. So the row is RENDERED, the same component every table row uses.
  */
 describe('SupportRowActions — the inbox row, rendered', () => {
@@ -61,12 +62,27 @@ describe('SupportRowActions — the inbox row, rendered', () => {
     assert.match(markup, /เปิดหน้าร้าน/);
   });
 
-  it('offers reply, resume, explicit resolution and release to the owner on a live case', () => {
+  it('shows the green active state with reply, resolution and release on a live case', () => {
     const markup = render({ status: 'ANSWERED', assignedToMe: true, assigneeDisplayName: 'พี่แอดมิน' });
     assert.match(markup, /ตอบใน LINE/);
-    assert.match(markup, /ให้ AI ทำงานต่อ/);
+    assert.match(markup, /AI กำลังทำงาน/);
+    assert.match(markup, /border-green-300/);
+    assert.match(markup, /กดเพื่อหยุด AI/);
     assert.match(markup, /แก้ไขสำเร็จและปิดเคส/);
     assert.match(markup, /ปล่อยเคส/);
+  });
+
+  it('shows the red paused state in the same toggle button', () => {
+    const markup = render({ assignedToMe: true, assistantActive: false });
+    assert.match(markup, /AI ไม่ได้ทำงาน/);
+    assert.match(markup, /border-red-300/);
+    assert.match(markup, /กดเพื่อให้ AI ทำงาน/);
+    assert.equal((markup.match(/<button[^>]*class="[^"]*border-red-300[^"]*"[^>]*>/g) ?? []).length, 1);
+  });
+
+  it('does not invent an AI toggle when the server has no current assistant context', () => {
+    const markup = render({ assignedToMe: true, assistantActive: undefined });
+    assert.doesNotMatch(markup, /AI (?:กำลัง|ไม่ได้)ทำงาน/);
   });
 
   it('offers an explicit takeover rather than leaving another operator\'s case stuck', () => {
@@ -84,7 +100,7 @@ describe('SupportRowActions — the inbox row, rendered', () => {
   it('offers no action at all on a closed request', () => {
     const markup = render({ status: 'CLOSED', companyId: undefined });
     assert.doesNotMatch(markup, /รับเคส/);
-    assert.doesNotMatch(markup, /ให้ AI ทำงานต่อ/);
+    assert.doesNotMatch(markup, /AI (?:กำลัง|ไม่ได้)ทำงาน/);
     assert.match(markup, /—/, 'an empty cell says so rather than rendering nothing');
   });
 
@@ -120,7 +136,7 @@ function renderBody(props: Partial<Parameters<typeof SupportInboxBody>[0]> = {})
       onTakeover: () => {},
       onReply: () => {},
       onResolve: () => {},
-      onResume: () => {},
+      onToggleAi: () => {},
       ...props,
     }),
   );
@@ -303,7 +319,7 @@ describe('SupportThreadMessages — the chat behind a row, rendered', () => {
     const markup = renderToStaticMarkup(React.createElement(SupportRowActions, {
       item: item({ status: 'CLOSED', companyId: undefined }), busy: false,
       onClaim: () => {}, onRelease: () => {}, onTakeover: () => {}, onReply: () => {},
-      onResolve: () => {}, onResume: () => {}, onOpenThread: () => {},
+      onResolve: () => {}, onToggleAi: () => {}, onOpenThread: () => {},
     }));
     assert.match(markup, /เปิดแชท/);
     assert.doesNotMatch(markup, />—</);
@@ -313,7 +329,7 @@ describe('SupportThreadMessages — the chat behind a row, rendered', () => {
     const props = {
       item: item({ status: 'OPEN', assignedToMe: true, assignedAt: '2026-09-20T03:00:00.000Z' }), busy: false,
       onClaim: () => {}, onRelease: () => {}, onTakeover: () => {}, onReply: () => {},
-      onResolve: () => {}, onResume: () => {},
+      onResolve: () => {}, onToggleAi: () => {},
     };
     assert.doesNotMatch(renderToStaticMarkup(React.createElement(SupportRowActions, { ...props, showReply: false })), /ตอบใน LINE/);
     assert.match(renderToStaticMarkup(React.createElement(SupportRowActions, props)), /ตอบใน LINE/);

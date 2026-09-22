@@ -159,6 +159,58 @@ class Contracts(unittest.TestCase):
         t['sshProxyCommand']='foreign proxy'
         with self.assertRaisesRegex(ValueError,'owns ProxyCommand'):m.validate_target(t,'uat')
 
+    def test_ssm_host_identity_requires_the_primary_private_address(self):
+        for kind in ('uat', 'production'):
+            with self.subTest(kind=kind):
+                t=target(kind);t['sshTransport']='ssm';host=t['hosts']['api-web'][0]
+                info={'State':{'Name':'running'},'VpcId':host['vpcId'],
+                      'PrivateIpAddress':host['address'],'PublicIpAddress':'198.51.100.9',
+                      'Tags':[{'Key':'aws:cloudformation:stack-name','Value':host['stack']}]}
+                self.assertTrue(m.enrolled_host_matches(t,host,info))
+                host['address']='198.51.100.9'
+                self.assertFalse(m.enrolled_host_matches(t,host,info))
+                t['sshTransport']='direct'
+                self.assertTrue(m.enrolled_host_matches(t,host,info))
+
+    def test_ssm_host_identity_reconciliation_requires_explicit_key_rotation_approval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target_path=Path(tmp)/'target.json';t=target('uat');t['sshTransport']='ssm';m.write(target_path,t)
+            r=m.Release.__new__(m.Release);r.target=t;r.target_path=target_path;r.first_migration=False
+            r.hosts={host['instanceId']:host for hosts in t['hosts'].values() for host in hosts};r.receipt={}
+            r.args=argparse.Namespace(environment='uat',accept_host_key_rotation=False,host_key_rotation_reason=None)
+            actual={instance_id:{'InstanceId':instance_id,'State':{'Name':'running'},'VpcId':host['vpcId'],
+                'PrivateIpAddress':host['address'],'Tags':[{'Key':'aws:cloudformation:stack-name','Value':host['stack']}],
+                'IamInstanceProfile':{'Arn':'synthetic'},'MetadataOptions':{'HttpTokens':'required','HttpPutResponseHopLimit':2}}
+                for instance_id,host in r.hosts.items()}
+            r.aws=lambda args:{('sts','get-caller-identity'):{'Account':m.ACCOUNT,'Arn':'arn:aws:iam::'+m.ACCOUNT+':role/deploy'},
+                ('ec2','describe-instances'):{'Reservations':[{'Instances':list(actual.values())}]}}[tuple(args[:2])]
+            r.start_ssm_transport=lambda:None;r.observed_ssm_host_key=lambda instance_id:'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIRotated'
+            r.close_transport=lambda:True
+            with self.assertRaisesRegex(ValueError,'accept-host-key-rotation'):r.reconcile_host_identity()
+            self.assertEqual(m.read(target_path),t)
+            r.args=argparse.Namespace(environment='uat',accept_host_key_rotation=True,host_key_rotation_reason='owner approved verified rotation')
+            r.reconcile_host_identity()
+            updated=m.read(target_path)
+            self.assertTrue(all(host['hostKey'].endswith('IRotated') for hosts in updated['hosts'].values() for host in hosts))
+            self.assertEqual(r.receipt['hostIdentityReconciliation']['hostKeyRotationInstanceIds'],sorted(r.hosts))
+
+    def test_ssm_host_identity_reconciliation_never_writes_when_cleanup_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target_path=Path(tmp)/'target.json';t=target('uat');t['sshTransport']='ssm';m.write(target_path,t)
+            r=m.Release.__new__(m.Release);r.target=t;r.target_path=target_path;r.first_migration=False
+            r.hosts={host['instanceId']:host for hosts in t['hosts'].values() for host in hosts};r.receipt={}
+            r.args=argparse.Namespace(environment='uat',accept_host_key_rotation=False,host_key_rotation_reason=None)
+            actual={instance_id:{'InstanceId':instance_id,'State':{'Name':'running'},'VpcId':host['vpcId'],
+                'PrivateIpAddress':host['address'],'Tags':[{'Key':'aws:cloudformation:stack-name','Value':host['stack']}],
+                'IamInstanceProfile':{'Arn':'synthetic'},'MetadataOptions':{'HttpTokens':'required','HttpPutResponseHopLimit':2}}
+                for instance_id,host in r.hosts.items()}
+            r.aws=lambda args:{('sts','get-caller-identity'):{'Account':m.ACCOUNT,'Arn':'arn:aws:iam::'+m.ACCOUNT+':role/deploy'},
+                ('ec2','describe-instances'):{'Reservations':[{'Instances':list(actual.values())}]}}[tuple(args[:2])]
+            r.start_ssm_transport=lambda:None;r.observed_ssm_host_key=lambda instance_id:r.hosts[instance_id]['hostKey']
+            r.close_transport=lambda:False
+            with self.assertRaisesRegex(ValueError,'cleanup failed'):r.reconcile_host_identity()
+            self.assertEqual(m.read(target_path),t)
+
     def test_ssm_transport_explicitly_terminates_its_cloud_session(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'ssm.private.log';path.write_text('Starting session with SessionId: owned-session\nWaiting for connections...\n')

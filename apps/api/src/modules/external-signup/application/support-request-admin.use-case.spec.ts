@@ -2,12 +2,13 @@ import { lineMessagingCredentialsFixture } from '../../../common/config/line-mes
 import { createHash } from 'node:crypto';
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { validate } from 'class-validator';
 import { SupportRequestAdminUseCase, toSupportMessageDto } from './support-request-admin.use-case';
 import { SupportRequestReplyDto } from '../presentation/http/system-support-request.controller';
 import {
   SUPPORT_REQUEST_CLAIM_ACTION,
+  SUPPORT_REQUEST_PAUSE_ACTION,
   SUPPORT_REQUEST_RELEASE_ACTION,
   SUPPORT_REQUEST_REPLY_ACTION,
   SUPPORT_REQUEST_RESOLVE_ACTION,
@@ -60,6 +61,7 @@ function matches(current: any, where: any): boolean {
 
 function harness(options: {
   one?: any | null; rows?: any[]; counts?: number[]; pauseCleared?: number; auditFails?: boolean;
+  pausedUntil?: Date | null;
   /** สัญญา v3: thread rows the fake returns, and the blob (if any) the content route finds. */
   messages?: any[]; blob?: any;
 } = {}) {
@@ -72,6 +74,9 @@ function harness(options: {
   const transactions: number[] = [];
   const countAnswers = [...(options.counts ?? [rows.length, rows.length])];
   let auditFails = options.auditFails ?? false;
+  let lineContext = options.pausedUntil === undefined
+    ? null
+    : { lineUserId: 'Uline-secret', companyId: 'co-1', aiPausedUntil: options.pausedUntil };
 
   const lineSupportRequest = {
     findMany: async (args: any) => { listQueries.push(args); return rows; },
@@ -92,7 +97,15 @@ function harness(options: {
       findMany: async () => options.messages ?? [],
     },
     lineSupportMessageBlob: { findFirst: async () => options.blob ?? null },
-    lineCompanyContext: { updateMany: async () => ({ count: options.pauseCleared ?? 1 }) },
+    lineCompanyContext: {
+      findMany: async () => lineContext ? [lineContext] : [],
+      findUnique: async () => lineContext,
+      updateMany: async ({ data }: any) => {
+        if (!lineContext) return { count: 0 };
+        Object.assign(lineContext, data);
+        return { count: options.pauseCleared ?? 1 };
+      },
+    },
     company: { findMany: async () => [] },
     companySignupRequest: { findMany: async () => [{
       id: 'signup-1', companyName: 'ร้านที่กำลังสมัคร', reviewResolution: 'REQUEST_INFO',
@@ -146,6 +159,7 @@ describe('support queue paging and privacy', () => {
     assert.equal(result.items[0]!.assignedToMe, true);
     assert.equal(result.items[0]!.askerLabel, 'ผู้ที่ยังไม่ได้เปิดร้าน (มีคำขอสมัคร: ร้านที่กำลังสมัคร)');
     assert.equal(result.items[0]!.requestedInformation, 'กรุณาส่งอีเมลใหม่');
+    assert.equal(result.items[0]!.assistantActive, undefined);
     assert.equal(JSON.stringify(result).includes('Uline-secret'), false);
   });
 
@@ -198,20 +212,37 @@ describe('support ownership and resolution', () => {
     );
   });
 
-  it('resume clears only the AI pause; explicit resolve closes and records the outcome', async () => {
-    const h = harness();
+  it('toggles only the AI pause; explicit resolve closes and records the outcome', async () => {
+    const h = harness({ one: row({ companyId: 'co-1', signupRequestId: null }), pausedUntil: null });
+    assert.deepEqual(await h.useCase.pauseAssistant('sr-1', ADMIN, REQUEST_ID), {
+      id: 'sr-1', status: 'OPEN', assignedToMe: true, assistantActive: false,
+    });
+    assert.equal((await h.useCase.thread('sr-1', ADMIN)).request.assistantActive, false);
+    assert.equal(h.audits[0].action, SUPPORT_REQUEST_PAUSE_ACTION);
+
     assert.deepEqual(await h.useCase.resumeAssistant('sr-1', ADMIN, REQUEST_ID), {
-      id: 'sr-1', status: 'OPEN', assignedToMe: true, pauseCleared: true,
+      id: 'sr-1', status: 'OPEN', assignedToMe: true, pauseCleared: true, assistantActive: true,
     });
     assert.equal(h.current().status, 'OPEN');
-    assert.equal(h.audits[0].action, SUPPORT_REQUEST_RESUME_ACTION);
+    assert.equal((await h.useCase.thread('sr-1', ADMIN)).request.assistantActive, true);
+    assert.equal(h.audits[1].action, SUPPORT_REQUEST_RESUME_ACTION);
 
     await h.useCase.resolve('sr-1', 'เปิดร้านและยืนยันว่าเข้าได้แล้ว', ADMIN, REQUEST_ID);
     assert.equal(h.current().status, 'CLOSED');
     assert.equal(h.current().closedReason, 'resolved');
     assert.equal(h.current().resolutionNote, 'เปิดร้านและยืนยันว่าเข้าได้แล้ว');
-    assert.equal(h.audits[1].action, SUPPORT_REQUEST_RESOLVE_ACTION);
-    assert.equal(JSON.stringify(h.audits[1]).includes('เปิดร้าน'), false);
+    assert.equal(h.audits[2].action, SUPPORT_REQUEST_RESOLVE_ACTION);
+    assert.equal(JSON.stringify(h.audits[2]).includes('เปิดร้าน'), false);
+  });
+
+  it('never rebuilds an assistant context from an old support row', async () => {
+    const h = harness({ one: row({ companyId: 'co-1', signupRequestId: null }) });
+    await assert.rejects(
+      () => h.useCase.pauseAssistant('sr-1', ADMIN, REQUEST_ID),
+      UnprocessableEntityException,
+    );
+    assert.equal((await h.useCase.thread('sr-1', ADMIN)).request.assistantActive, undefined);
+    assert.equal(h.audits.length, 0);
   });
 });
 

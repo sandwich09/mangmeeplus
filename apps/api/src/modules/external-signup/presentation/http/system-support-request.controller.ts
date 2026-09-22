@@ -205,4 +205,17 @@ export class SystemSupportRequestController {
   ): Promise<SupportRequestActionDto> {
     return this.requests.resumeAssistant(id, req.context.userId, req.context.requestId);
   }
+
+  @Post(':supportRequestId/pause-ai')
+  @HttpCode(200)
+  @RequirePermissions('system.partner_company.update')
+  @ApiOperation({ summary: 'Pause the assistant without changing the managed case outcome' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404 })
+  pauseAssistant(
+    @Param('supportRequestId') id: string,
+    @Req() req: Request & { context: RequestContext },
+  ): Promise<SupportRequestActionDto> {
+    return this.requests.pauseAssistant(id, req.context.userId, req.context.requestId);
+  }
 }

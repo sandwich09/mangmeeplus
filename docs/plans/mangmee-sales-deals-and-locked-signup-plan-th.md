@@ -3,12 +3,12 @@
 ## Linked Spec
 
 - Spec: [mangmee-sales-deals-and-locked-signup-spec-th.md](../specs/mangmee-sales-deals-and-locked-signup-spec-th.md) (ทะเบียน S01–S25 ใน §13)
-- แทนที่: free-usage-close-toggle-plan (ยกงาน S2–S5 มาใช้โดยตัดสวิตช์), special-invoice plan (ยก Phase 1 สลิปมาเป็นทางสำรอง), billing-special-price plan (พัก)
+- แทนที่: free-usage-close-toggle-plan (ยกงาน S2–S5 มาใช้โดยตัดสวิตช์), special-invoice plan (อ้างอิงเฉพาะโครงข้อมูลเดิม; ไม่ใช้ช่องทางโอน), billing-special-price plan (พัก)
 - สถานะ: DRAFT 2026-09-20 — รอ D1–D5
 
 ## Purpose
 
-ปิด trial, ล็อกร้านใหม่จนจ่าย, ให้ทีมขายทำดีลราคาอิสระผ่าน console ของตัวเองพร้อมอนุมัติ และให้ลูกค้าจ่ายเองผ่านโหมดชำระครั้งเดียวของ PR #667 (บัตร/PromptPay) โดยเปิดสิทธิ์อัตโนมัติหลังจ่าย ภายในกรอบ 3 วัน (โอน+สลิปเป็นทางสำรอง Phase 4)
+ปิด trial, ล็อกร้านใหม่จนจ่าย, ให้ทีมขายทำดีลราคาอิสระผ่าน console ของตัวเองพร้อมอนุมัติ และให้ลูกค้าจ่ายเองผ่านโหมดชำระครั้งเดียวของ PR #667 (บัตร/PromptPay) โดยเปิดสิทธิ์อัตโนมัติหลังจ่าย ภายในกรอบ 3 วัน
 
 ## Current Repository Context
 
@@ -27,10 +27,10 @@
 ## Scope
 
 ### In Scope
-- P1 ปิด trial + locked shell + LINE · P2 Sales console (roles/users/deals/approve/reports) · P3 ชำระดีลผ่านโหมดครั้งเดียวของ PR #667 (บัตร/PromptPay) + หน้าแพ็กเกจ · P4 ต่ออายุดีล/รายงาน/คู่มือ + สลิปสำรอง (Q9) + แปลง subscription บัตรอัตโนมัติ (Q7) · P5 ดีลต่ออายุอัตโนมัติ (บัตร/QR ทุกงวด)
+- P1 ปิด trial + locked shell + LINE · P2 Sales console (roles/users/deals/approve/reports) · P3 ชำระดีลผ่านโหมดครั้งเดียวของ PR #667 (บัตร/PromptPay) + หน้าแพ็กเกจ + แปลง `CARD_AUTO` เป็นดีล (Q7) · P4 ต่ออายุดีล/รายงาน/คู่มือ · P5 ดีลต่ออายุอัตโนมัติ (บัตร/QR ทุกงวด)
 
 ### Out of Scope
-- สวิตช์ trial, coupon บน subscription, proration ในระบบ (Q7 ค่าเริ่มต้น), คอมมิชชันในระบบ, EasySlip
+- สวิตช์ trial, coupon บน subscription, proration ในระบบ (Q7 ค่าเริ่มต้น), คอมมิชชันในระบบ, การโอนเงิน/แนบสลิป/EasySlip
 
 ## Phase 0: Discovery and Alignment (เสร็จ 2026-09-20)
 
@@ -56,7 +56,7 @@
 ### Tasks
 1. registry: roles `MANGMEE_SALES_LEAD`, `MANGMEE_SALES` + permission keys (spec §9); SYSTEM_ADMIN ได้ทุก key; `BillingOperatorScope` ไม่เกี่ยว
 2. migration: `SalesAgentProfile` (PII เข้ารหัส), `PackageChangeRequest` เพิ่ม `kind/salesUserId/approvedByUserId/approvedAt/offerExpiresAt/rejectedReason/version`
-3. module `sales-console` (api): `SalesAgentsService` (สร้าง user ผ่าน create-employee wrapper บน platform tenant + role + profile; รหัสผ่านชั่วคราว; suspend), `SalesDealsService` (CRUD DRAFT, submit, approve → `offerExpiresAt`+push OWNER ไม่มีตัวเลข, reject, cancel; unique OPEN handling S18; block ร้านที่มี subscription S14), `SalesCompanySearch` (ฟิลด์จำกัด), scan รายวันปิด EXPIRED (reuse scan-worker) ; controllers `/v1/sales/*`, `/v1/system/sales-agents*`; audit ครบ
+3. module `sales-console` (api): `SalesAgentsService` (สร้าง user ผ่าน create-employee wrapper บน platform tenant + role + profile; รหัสผ่านชั่วคราว; suspend), `SalesDealsService` (CRUD DRAFT, submit, approve → `offerExpiresAt`+push OWNER ไม่มีตัวเลข, reject, cancel; unique OPEN handling S18), `SalesCompanySearch` (ฟิลด์จำกัด), scan รายวันปิด EXPIRED (reuse scan-worker) ; controllers `/v1/sales/*`, `/v1/system/sales-agents*`; audit ครบ
 4. web: `apps/web/app/sales/*` layout + gate `canOpenSales` + landing ตาม role; หน้า ดีล/ร้านค้า/ทีม; admin console เมนู "ทีมขาย" (PII เฉพาะ SYSTEM_ADMIN, export CSV)
 5. ลูกค้า: `GET package-change-requests` DTO เพิ่ม `deal`
 6. (2026-09-21, ระหว่างทำ) roles ใหม่ถือเฉพาะ `sales.*` + `account.session.read/password.change/identity.link`; เหตุผลบังคับเฉพาะ reject/cancel; `SalesCompanySearchItem` ส่ง `branchCount/employeeCount/catalogMonthlyPriceSatang` ให้ฟอร์มเตือนได้ก่อนบันทึก; SYSTEM_ADMIN แก้ผู้แนะนำได้ในหน้าพาร์ตเนอร์ (`PATCH /v1/system/partners/:companyId/referral`, 30 วัน, `salesCode: null` = ล้าง); ตัวกันโกง D6 ทั้งชุดเลื่อนไป Phase 4 (สมัครเก็บข้อมูลครบแล้ว); คำในระบบ "เครดิต AI"; ฟอร์มสมัครบนเว็บได้ช่อง "รู้จักเราทางไหน" + รหัสเซล (LINE/LIFF และฟอร์ม HTML ของ API ได้ option `SALES` เช่นกัน)
@@ -95,9 +95,9 @@
 
 ## Phase 4: ต่ออายุดีล, รายงานหัวหน้า, คู่มือ
 
-- สถานะ 2026-09-21 (เย็น): ทำแล้วบน branch — ข้อเสนอต่ออายุ (sweep + worker ใหม่ + แจ้งเตือน), ยอด/ตัวกันโกง/รายงาน/ธง, สรุปรายวัน 07:00, โอน+สลิป ถอดออก (มติ Owner 2026-09-21); **ยังไม่ทำ**: แปลง subscription บัตรอัตโนมัติ/QR เป็นดีล (Q7) — ต้องมี Stripe test mode พิสูจน์ จึงพักไว้จนกว่า Owner จะอนุญาตให้ทดสอบ (ร้านที่มี subscription อยู่ยังถูกปฏิเสธด้วยข้อความ "ทีมงานจะติดต่อกลับ"); หนี้ทดสอบตามคำสั่ง Owner: sweep/digest/attribution ไม่มี PG/smoke/e2e
+- สถานะ 2026-09-21 (เย็น): ทำแล้วบน branch — ข้อเสนอต่ออายุ (sweep + worker ใหม่ + แจ้งเตือน), ยอด/ตัวกันโกง/รายงาน/ธง, สรุปรายวัน 07:00, โอน+สลิป ถอดออก (มติ Owner 2026-09-21). **2026-09-22 gap fix**: `CARD_AUTO` ที่ active/ไม่ค้างชำระจ่ายดีลแบบ one-time ได้; หลัง APPLIED คิว operation ยกเลิก subscription เดิมด้วย `prorate: false` และ retry จน observed. `PROMPTPAY_RENEW` ยัง review; UAT Stripe test mode ของ conversion ยังต้องทำ
 
-- scan 14 วันก่อนหมด: สร้างดีลรอบถัดไป APPROVED (D3) + push; รายงาน `/v1/sales/reports/summary` + หน้า; runbook เซลล์/Owner; ตัวชี้วัด time-to-active; สลิปสำรอง (Q9): ยก endpoint/verify จาก special-invoice plan (apply เดียวกับดีล); แปลง subscription บัตรอัตโนมัติเป็นดีล (Q7 ค่าเริ่มต้น: ยกเลิกทันทีเมื่อจ่าย ไม่มี proration; ฟอร์มดีลโชว์มูลค่าคงเหลือ; issue `DEAL_SUBSCRIPTION_CANCEL_PENDING` + retry; S34)
+- scan 14 วันก่อนหมด: สร้างดีลรอบถัดไป APPROVED (D3) + push; รายงาน `/v1/sales/reports/summary` + หน้า; runbook เซลล์/Owner; ตัวชี้วัด time-to-active; แปลง subscription บัตรอัตโนมัติเป็นดีล (Q7: ยกเลิกหลัง APPLIED, ไม่มี proration; issue `DEAL_SUBSCRIPTION_CANCEL_PENDING` + retry; S34)
 
 ## Integration Verification
 
@@ -108,10 +108,10 @@
 
 ## Risks
 
-- gate `card_once`/`promptpay_once` ปิดจน UAT ของ PR #667 ผ่าน (S37) + PromptPay live + เพดานยอด (S38) → dev/UAT test mode; production รอ Owner เปิด gate; fallback โอน (Phase 4, Q9)
+- gate `card_once`/`promptpay_once` ปิดจน UAT ของ PR #667 ผ่าน (S37) + PromptPay live + เพดานยอด (S38) → dev/UAT test mode; production รอ Owner เปิด gate; ไม่มี fallback โอนหรือแนบสลิป
 - ดีลราคาอิสระไม่มีบันได → ความเสี่ยงราคาผิดพลาด → เตือนสูงกว่า catalog + audit + รายงานหัวหน้า
 - PII เซลล์ (S10) → เข้ารหัส + สิทธิ์เฉพาะ + export log
-- ร้านที่มี subscription แล้ว (S14) → block ชัด + ข้อความบอกทางแก้
+- ร้านที่มี `CARD_AUTO` แล้ว (S14) → snapshot subscription เดิมก่อน Checkout, apply ดีลก่อนยกเลิกแบบ observed/retry; `PROMPTPAY_RENEW`/ค้างชำระ/grace/refund-dispute ยัง review
 - ปริมาณ PR ใหญ่ → แบ่ง phase/PR ตามข้างบน ทำ P1 ก่อนเสมอ (ปิด trial คือมติหลัก)
 
 ## Open Questions
@@ -121,7 +121,7 @@
 ## มติรอบ 2 (2026-09-20) — งานที่เพิ่ม/เปลี่ยน
 
 - Phase 2: อนุมัติเองได้สำหรับ lead/SYSTEM_ADMIN (D2) → ลด branch self-approval; audit `selfApproved`
-- ~~Phase 3~~ → Phase 4, ทบทวนโดย Q7 (spec §19.3/19.5; ค่าเริ่มต้น = ไม่มี proration): **แปลง subscription เป็นดีลโดยจ่ายส่วนต่าง** (D5): `DealSource` รองรับร้านที่มี `baseSubscriptionId` — คำนวณส่วนต่างด้วย `proratedPackagePrice` จาก contract snapshot เดิม, quote แสดง 3 ตัวเลข, Checkout ครั้งเดียว, apply ดีล, สั่ง `CANCEL_RENEWAL` ระบบ (reuse collection op, ไม่ต้องลูกค้ากด), ปิด resume ใน status/Portal ขณะดีล ACTIVE; tests: ส่วนต่าง 0/บวก, subscription ค้างชำระ/grace ถูกปฏิเสธ, cancel observed, ไม่มี invoice ซ้ำจาก Stripe หลังแปลง
+- Q7 (ทำแล้ว 2026-09-22, spec §19.3/19.5): **แปลง `CARD_AUTO` เป็นดีลโดยไม่มี proration** — ราคาในดีลคือยอดสุดท้าย, quote/checkout snapshot `baseSubscriptionId`/วันสิ้นสุดเดิม, apply ดีลทันที แล้วคิว `DEAL_SUBSCRIPTION_CANCEL` ยกเลิก Stripe ด้วย `prorate: false`; การอ่านผลเป็น source of truth, retry เมื่อยังไม่ observed, webhook เก่าถูก ignore. `PROMPTPAY_RENEW` และสถานะค้างชำระ/grace/refund-dispute ยังคง review
 - Phase 4 (เปลี่ยน): ต่ออายุดีล = สร้าง PENDING_APPROVAL อัตโนมัติ 14 วันก่อนหมด + แจ้งเตือนเซลล์/หัวหน้า (เว็บ+LINE+สรุปรายวัน) + เตือนซ้ำ 7 วัน + แจ้ง Owner (D3); รายงาน: นับเฉพาะยอดผ่านดีล ผูก `salesUserId`, เซลล์เห็นของตัวเองรายเดือน, หัวหน้าเห็นทุกทีม, ไม่มีเอกสารการเงิน; โอนดีลข้ามเซลล์ (Owner, audit)
 - Phase 5 (optional, D6): ลิงก์แนะนำของเซลล์ตอนสมัคร + นับยอดร้านที่แนะนำ N เดือน
 
@@ -170,8 +170,8 @@
 ## ปรับตาม PR #667 (2026-09-21) — โหมดชำระครั้งเดียว บัตร/PromptPay และ QR ต่ออายุ
 
 - develop bb87c556 มี `BillingPurchaseMode` (`CARD_AUTO`/`CARD_ONCE`/`PROMPTPAY_ONCE`/`PROMPTPAY_RENEW`), gate ต่อโหมด (ปิดจน UAT ของ #667 ผ่าน), Checkout `mode: 'payment'` + หลักฐาน promptpay + apply ครั้งเดียว + `bindPromptPayRenewal` + OWNER ยกเลิก Checkout — spec §19.1
-- Phase 3 เขียนใหม่ทั้งส่วน (ข้างบน): ดีล = snapshot `deal` บนเส้นทางครั้งเดียวของ #667; งานที่หายไป: `DealSource`, Checkout/evidence แยก, `payment_method_types` ของเรา, สลิปใน Phase 3; งานที่เพิ่ม: S35 (`intervalCount`/append N เดือน), S36 (`assertDealSnapshot`), S38/S39 (`dealPurchaseModes`), S45 (ข้าม `restartFits`), S46 (หมดอายุระหว่างจ่าย)
-- Phase 4 เพิ่ม: สลิปสำรอง (Q9 ค่าเริ่มต้น = เลื่อนมาที่นี่) ยก endpoint/verify จาก special-invoice plan; แปลง subscription บัตรอัตโนมัติเป็นดีล (Q7 ค่าเริ่มต้น = ยกเลิกทันทีเมื่อจ่าย ไม่มี proration ในระบบ; ฟอร์มดีลโชว์มูลค่าคงเหลือให้เซลล์หักเอง; issue `DEAL_SUBSCRIPTION_CANCEL_PENDING` + retry; เหตุการณ์ subscription เก่าไม่ hold บัญชี — S34)
+- Phase 3 เขียนใหม่ทั้งส่วน (ข้างบน): ดีล = snapshot `deal` บนเส้นทางครั้งเดียวของ #667; งานที่หายไป: `DealSource`, Checkout/evidence แยก, `payment_method_types` ของเรา, และ flow สลิปที่ถูกยกเลิก; งานที่เพิ่ม: S35 (`intervalCount`/append N เดือน), S36 (`assertDealSnapshot`), S38/S39 (`dealPurchaseModes`), S45 (ข้าม `restartFits`), S46 (หมดอายุระหว่างจ่าย)
+- Phase 3 เพิ่ม (2026-09-22): แปลง `CARD_AUTO` เป็นดีล (Q7 ไม่มี proration): quote/checkout/status ยอมรับเฉพาะ subscription ที่ปกติ; หลัง APPLIED คิว `DEAL_SUBSCRIPTION_CANCEL` และ retry จน observed; เหตุการณ์ subscription เก่าไม่ hold บัญชี — S34
 - Phase 5 เพิ่ม: ดีลต่ออายุอัตโนมัติรองรับ `PROMPTPAY_RENEW` ด้วย (Q8 ค่าเริ่มต้น) ผ่าน Price ของดีล + `bindPromptPayRenewal`; การ์ดใช้ตัวเลือกโหมดของ #667 (`CARD_AUTO`/`PROMPTPAY_RENEW`)
 - การนับยอดทีมขาย (§17.2) ไม่เปลี่ยน: ครั้งแรกครั้งเดียวทุกโหมด; `PROMPTPAY_RENEW` นับเฉพาะ QR ครั้งแรก
 - 2026-09-21 บ่าย: merge develop 143f7e07 อีกรอบ (#676 ร้านเดิมซื้อ catalog เอง, #677 CI gate ใหม่ ~3 นาที: billing HTTP smoke ย้ายไป extended-tests แบบสั่งรันเอง, #681) — PG spec ของ sales console ผูกใน "Migrations and Boot"; มติ Phase 3 หลัง #676 อยู่ใน spec §19.7 (ใช้ `billingFeaturePlan/applyBillingFeaturePlan` + เติมให้เส้นทางครั้งเดียว, ดีลรับตาม purchase source, supersede สองทาง, ดีล→catalog = ต่อท้าย Q10)

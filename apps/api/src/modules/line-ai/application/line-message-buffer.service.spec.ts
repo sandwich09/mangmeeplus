@@ -36,7 +36,13 @@ function makeHarness(opts: {
   pushResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
   eventStoreUnavailable?: boolean;
   legalAcceptanceRequired?: boolean;
-  preflightImpl?: (event: { lineUserId: string; messagingChannelId?: string; companyIdAtAcceptance?: string }) => Promise<{ status: 'continue'; companyId?: string } | { status: 'required'; companyId: string }>;
+  assistantPaused?: boolean;
+  preflightImpl?: (event: {
+    lineUserId: string;
+    messagingChannelId?: string;
+    companyIdAtAcceptance?: string;
+    snapshotAssistantPause?: boolean;
+  }) => Promise<{ status: 'continue'; companyId?: string; assistantPaused?: true } | { status: 'required'; companyId: string }>;
 } = {}) {
   const rows = new Map<string, Row>();
   const executed: any[] = [];
@@ -48,7 +54,12 @@ function makeHarness(opts: {
   const loadingCalls: string[] = [];
   const auditLogs: any[] = [];
   const serviceLogs: any[] = [];
-  const preflightCalls: Array<{ lineUserId: string; messagingChannelId?: string; companyIdAtAcceptance?: string }> = [];
+  const preflightCalls: Array<{
+    lineUserId: string;
+    messagingChannelId?: string;
+    companyIdAtAcceptance?: string;
+    snapshotAssistantPause?: boolean;
+  }> = [];
   let receiptCall = 0;
 
   const prisma = {
@@ -127,13 +138,22 @@ function makeHarness(opts: {
   } as any;
 
   const useCase = {
-    preflightLegalAcceptance: async (event: { lineUserId: string; messagingChannelId?: string; companyIdAtAcceptance?: string }) => {
+    preflightLegalAcceptance: async (event: {
+      lineUserId: string;
+      messagingChannelId?: string;
+      companyIdAtAcceptance?: string;
+      snapshotAssistantPause?: boolean;
+    }) => {
       preflightCalls.push(event);
       if (opts.preflightImpl) return opts.preflightImpl(event);
       return opts.legalAcceptanceRequired
         ? { status: 'required' as const, companyId: 'company-1' }
-        : { status: 'continue' as const };
+        : {
+            status: 'continue' as const,
+            ...(opts.assistantPaused ? { assistantPaused: true as const } : {}),
+          };
     },
+    assistantPaused: async () => opts.assistantPaused ?? false,
     execute: async (event: any) => {
       executed.push(event);
       if (opts.executeImpl) await opts.executeImpl(event);
@@ -467,6 +487,27 @@ describe('LineMessageBufferService – commands', () => {
 });
 
 describe('LineMessageBufferService – media and captions', () => {
+  it('snapshots a support pause and dispatches media without AI wait feedback or loading', async () => {
+    const h = makeHarness({
+      debounceMs: 0,
+      loadingOnAcceptEnabled: true,
+      assistantPaused: true,
+    });
+
+    await h.service.enqueue(mediaEnv('support-photo'));
+    await settle();
+
+    assert.equal(h.receipts.length, 1);
+    assert.equal(h.receipts[0]?.event.assistantPaused, true);
+    assert.equal(
+      (h.rows.get('support-photo')?.payloadJson as any)?.item?.assistantPausedAtAcceptance,
+      true,
+      'orphan replay must preserve that this media arrived while support owned the chat',
+    );
+    assert.deepEqual(h.loadingCalls, []);
+    assert.deepEqual(h.pushes, [], 'no กำลังอ่านเอกสาร wait bubble is emitted');
+  });
+
   it('keeps normal chat responsive while an uncaptioned receipt is still in OCR', async () => {
     let releaseReceipt!: () => void;
     const receiptGate = new Promise<void>((resolve) => { releaseReceipt = resolve; });

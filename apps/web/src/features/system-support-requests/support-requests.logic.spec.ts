@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SUPPORT_QUEUE_TABS,
-  canResumeAi,
+  canManageAi,
   notifiedSummary,
   supportAnswerHref,
   supportAnswerLabel,
@@ -246,8 +246,8 @@ describe('where an operator goes to answer', () => {
 
 describe('support action labels', () => {
   it('resumes AI until explicit closure', () => {
-    assert.equal(canResumeAi('ANSWERED'), true, 'answered still leaves the assistant paused');
-    assert.equal(canResumeAi('CLOSED'), false);
+    assert.equal(canManageAi('ANSWERED'), true, 'answered still permits explicit AI-state management');
+    assert.equal(canManageAi('CLOSED'), false);
   });
 
   it('names every status and every closing reason in Thai', () => {

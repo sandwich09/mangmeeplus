@@ -14,14 +14,14 @@ import {
   releaseSupportRequest,
   replySupportRequest,
   resolveSupportRequest,
-  resumeSupportRequestAi,
+  setSupportRequestAiActive,
   type SupportRequestItemDto,
 } from './support-requests.api';
 import { ChipBadge } from './SupportChip';
 import { SupportThreadModal } from './SupportThreadModal';
 import {
   SUPPORT_QUEUE_TABS,
-  canResumeAi,
+  canManageAi,
   notifiedSummary,
   supportAnswerHref,
   supportAnswerLabel,
@@ -57,7 +57,7 @@ const rowActionClass =
  * on" is exactly the rule a source assertion can agree with while the markup does something else.
  */
 export function SupportRowActions({
-  item, busy, onClaim, onRelease, onTakeover, onReply, onResolve, onResume, onOpenThread, showReply = true,
+  item, busy, onClaim, onRelease, onTakeover, onReply, onResolve, onToggleAi, onOpenThread, showReply = true,
 }: {
   item: SupportRequestItemDto;
   busy: boolean;
@@ -66,7 +66,7 @@ export function SupportRowActions({
   onTakeover: () => void;
   onReply: () => void;
   onResolve: () => void;
-  onResume: () => void;
+  onToggleAi: () => void;
   /** สัญญา v3 ข้อ 11: the chat behind this row. Absent inside the chat window itself. */
   onOpenThread?: () => void;
   /** The window hides the row's reply button while its own composer is the way to answer. */
@@ -124,14 +124,18 @@ export function SupportRowActions({
           {busy ? 'กำลังทำรายการ...' : supportReplyWithinRetryWindow(item) ? 'ลองส่งข้อความเดิม' : 'ตอบใน LINE'}
         </button>
       )}
-      {live && item.assignedToMe && canResumeAi(item.status) && (
+      {live && item.assignedToMe && canManageAi(item.status) && item.assistantActive !== undefined && (
         <button
           type="button"
           disabled={busy} aria-busy={Boolean(busy)}
-          onClick={onResume}
-          className={`${rowActionClass} border-gray-300 bg-white text-gray-700 hover:bg-gray-50`}
+          onClick={onToggleAi}
+          aria-label={item.assistantActive ? 'AI กำลังทำงาน กดเพื่อหยุด AI' : 'AI ไม่ได้ทำงาน กดเพื่อให้ AI ทำงาน'}
+          title={item.assistantActive ? 'กดเพื่อหยุด AI' : 'กดเพื่อให้ AI ทำงาน'}
+          className={`${rowActionClass} ${item.assistantActive
+            ? 'border-green-300 bg-green-50 text-green-700 hover:bg-green-100'
+            : 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100'}`}
         >
-          {busy ? 'กำลังทำรายการ...' : 'ให้ AI ทำงานต่อ'}
+          {busy ? 'กำลังทำรายการ...' : item.assistantActive ? 'AI กำลังทำงาน' : 'AI ไม่ได้ทำงาน'}
         </button>
       )}
       {live && item.assignedToMe && (
@@ -172,7 +176,7 @@ export function SupportRowActions({
  */
 export function SupportInboxBody({
   error, loading, loadingMore, items, busyId, totalCount, nextCursor,
-  onRetry, onLoadMore, onClaim, onRelease, onTakeover, onReply, onResolve, onResume, onOpenThread,
+  onRetry, onLoadMore, onClaim, onRelease, onTakeover, onReply, onResolve, onToggleAi, onOpenThread,
 }: {
   error: string | null;
   loading: boolean;
@@ -188,7 +192,7 @@ export function SupportInboxBody({
   onTakeover: (item: SupportRequestItemDto) => void;
   onReply: (item: SupportRequestItemDto) => void;
   onResolve: (item: SupportRequestItemDto) => void;
-  onResume: (item: SupportRequestItemDto) => void;
+  onToggleAi: (item: SupportRequestItemDto) => void;
   onOpenThread?: (item: SupportRequestItemDto) => void;
 }) {
   if (error) {
@@ -337,7 +341,7 @@ export function SupportInboxBody({
                       onTakeover={() => onTakeover(item)}
                       onReply={() => onReply(item)}
                       onResolve={() => onResolve(item)}
-                      onResume={() => onResume(item)}
+                      onToggleAi={() => onToggleAi(item)}
                       {...(onOpenThread ? { onOpenThread: () => onOpenThread(item) } : {})}
                     />
                   </td>
@@ -598,20 +602,23 @@ export default function SupportRequestsPage() {
     await mutate(item, () => resolveSupportRequest(item.id, note), 'บันทึกว่าแก้ไขสำเร็จและปิดเคสแล้ว');
   };
 
-  const handleResume = async (item: SupportRequestItemDto) => {
-    // The customer's chat changes the moment this lands, so it asks first — the same treatment the
-    // signup queue gives every decision a customer can feel.
+  const handleToggleAi = async (item: SupportRequestItemDto) => {
+    if (item.assistantActive === undefined) return;
+    const nextActive = !item.assistantActive;
     const ok = await confirm({
-      title: 'ให้ AI ทำงานต่อ',
-      message: `น้องมั่งมีจะกลับมาตอบในแชทของ ${item.askerLabel} เคสนี้ยังอยู่กับทีมงานจนกว่าจะบันทึกว่าแก้ไขสำเร็จ`,
-      confirmLabel: 'ให้ AI ทำงานต่อ',
-      variant: 'primary',
+      title: nextActive ? 'ให้ AI ทำงาน' : 'หยุด AI',
+      message: nextActive
+        ? `น้องมั่งมีจะกลับมาตอบในแชทของ ${item.askerLabel} เคสนี้ยังอยู่กับทีมงานจนกว่าจะบันทึกว่าแก้ไขสำเร็จ`
+        : `น้องมั่งมีจะหยุดตอบในแชทของ ${item.askerLabel} ข้อความและรูปใหม่จะส่งให้ทีมงานโดยไม่เข้า AI`,
+      confirmLabel: nextActive ? 'ให้ AI ทำงาน' : 'หยุด AI',
+      variant: nextActive ? 'primary' : 'danger',
     });
     if (!ok) return;
     setBusyId(item.id);
     try {
-      const result = await resumeSupportRequestAi(item.id);
-      toast.success(result.pauseCleared ? 'น้องมั่งมีกลับมาตอบแล้ว เคสยังไม่ถูกปิด' : 'AI ไม่ได้หยุดอยู่ และเคสยังไม่ถูกปิด');
+      const result = await setSupportRequestAiActive(item.id, nextActive);
+      patchRow(item.id, { assistantActive: result.assistantActive ?? nextActive });
+      toast.success(nextActive ? 'AI กลับมาทำงานแล้ว เคสยังไม่ถูกปิด' : 'หยุด AI แล้ว ข้อความใหม่จะส่งให้ทีมงาน');
       setThreadRefreshKey((key) => key + 1);
       await load();
     } catch (err) {
@@ -645,7 +652,7 @@ export default function SupportRequestsPage() {
               onTakeover={() => void handleTakeover(threadItem)}
               onReply={() => void handleReply(threadItem)}
               onResolve={() => void handleResolve(threadItem)}
-              onResume={() => void handleResume(threadItem)}
+              onToggleAi={() => void handleToggleAi(threadItem)}
             />
           )}
         />
@@ -700,7 +707,7 @@ export default function SupportRequestsPage() {
           onTakeover={(item) => void handleTakeover(item)}
           onReply={(item) => void handleReply(item)}
           onResolve={(item) => void handleResolve(item)}
-          onResume={(item) => void handleResume(item)}
+          onToggleAi={(item) => void handleToggleAi(item)}
           onOpenThread={(item) => setThreadItem(item)}
         />
       </div>
