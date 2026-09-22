@@ -864,6 +864,10 @@ export class UpdateExpenseDraftUseCase {
       // digits. Everything else on this list is stored exactly as it arrived.
       ...vendorIdentity.fields,
       ...(input.vendorEntityKindSnapshot !== undefined && { vendorEntityKindSnapshot: input.vendorEntityKindSnapshot }),
+      // WHT certificate system issuance plan §1.2 (S2/S3): the income-category classification a 50
+      // ทวิ certificate needs, same "captured at review" treatment as vendorEntityKindSnapshot above.
+      ...(input.whtCategoryCode !== undefined && { whtCategoryCode: input.whtCategoryCode }),
+      ...(input.whtRate !== undefined && { whtRate: input.whtRate }),
       // GAP-4: the first thing in this codebase that ever fills `vendorCounterpartyId` from web or
       // LINE. CON-7: the registry's taxpayer class fills an empty field, which is what lets a WHT
       // expense be confirmed at all (`expense-status.logic.ts` refuses without it).
@@ -1230,6 +1234,7 @@ export class ConfirmExpenseUseCase {
       grandTotalAmount: r.grandTotalAmount,
       whtAmount: r.whtAmount,
       vendorEntityKindSnapshot: r.vendorEntityKindSnapshot,
+      whtCategoryCode: r.whtCategoryCode,
       vatMode: r.vatMode,
       inputVatClaimStatus: r.inputVatClaimStatus,
       hasMissingReceiptPermission: authority?.allowMissingReceiptWithReason ?? hasPerm(ctx, 'expense.review'),

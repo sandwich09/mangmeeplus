@@ -1,5 +1,6 @@
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
-import type { LinkExternalWhtCertificateDto, SetWhtHandoffPayeeAddressDto, WhtCertificateHandoffDto, CreateSupplierPaymentDto, CreateVendorBillDto, ReviewVendorBillTaxEvidenceDto, SupplierPaymentDetail, SupplierPaymentSummary, TransactionTaxContext, UpdateVendorBillTaxEvidenceDto, VendorBillDetail, VendorBillSummary } from '@watchdog-bms/contracts';
+import type { LinkExternalWhtCertificateDto, SetWhtHandoffPayeeAddressDto, WhtCertificateHandoffDto, WhtCertificateDto, CreateSupplierPaymentDto, CreateVendorBillDto, ReviewVendorBillTaxEvidenceDto, SupplierPaymentDetail, SupplierPaymentSummary, TransactionTaxContext, UpdateVendorBillTaxEvidenceDto, VendorBillDetail, VendorBillSummary } from '@watchdog-bms/contracts';
+import type { TaxExportArtifact } from '../tax/tax.api';
 
 function qs(params?: Record<string, unknown>): string {
   const q = new URLSearchParams();
@@ -128,4 +129,14 @@ export function linkExternalWhtCertificate(companyId: string, handoffId: string,
 /** §10: the address lands beside the frozen prefill, so the response carries it as its own field. */
 export function setWhtHandoffPayeeAddress(companyId: string, handoffId: string, body: SetWhtHandoffPayeeAddressDto) {
   return apiFetch<WhtCertificateHandoffDto>(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/payee-address`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+/**
+ * WHT certificate system issuance plan §2.3/§4.1: mints the certificate directly, in the system.
+ * The PDF is returned inline (`pdfArtifact`) — nothing ever populates `WhtCertificate.pdfAttachmentId`
+ * (confirmed against the Tax-workspace issue path too), so this response is the only place the bytes
+ * exist; the caller must save them immediately.
+ */
+export function issueSystemWhtCertificate(companyId: string, handoffId: string) {
+  return apiFetch<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }>(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate`, { method: 'POST' });
 }

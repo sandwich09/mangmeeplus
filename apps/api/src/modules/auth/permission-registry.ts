@@ -221,6 +221,13 @@ export const PERMISSIONS: PermissionDef[] = [
   // issued certificate — that journey belongs to the payment-owning source feature, not Tax.
   { key: 'wht.certificate.read',        description: 'Read 50 ทวิ external handoffs',        riskLevel: 'LOW' },
   { key: 'wht.external_certificate.link', description: 'Link an externally issued 50 ทวิ',   riskLevel: 'HIGH' },
+  // WHT certificate system issuance plan §2.1: mints a 50 ทวิ directly from a settlement/expense
+  // handoff (AP/Expenses "ออกเอกสารในระบบ" button). Owner decision 2026-09-22 gates it with
+  // `thai_tax` via a dedicated pack (`pack.wht.certificate.issue`) — see capability-pack.registry.ts.
+  { key: 'wht.certificate.issue',       description: 'Issue a 50 ทวิ WHT certificate directly from a settlement/expense confirm (SYSTEM issuance)', riskLevel: 'HIGH' },
+  // WHT certificate system issuance plan §2.1b (Decision B): OWNER-only by omission — deliberately
+  // never added to any role's grant list below (mirrors company.legal_identity.manage).
+  { key: 'company.tax_signature.manage', description: "Upload/manage the company's WHT-certificate signature image (authorized signatory)", riskLevel: 'HIGH' },
   { key: 'tax.review_issue.read',       description: 'Read tax review issues',               riskLevel: 'LOW' },
   { key: 'tax.review_issue.resolve',    description: 'Resolve or ignore tax review issues',  riskLevel: 'MEDIUM' },
   { key: 'tax.adjustment.create',       description: 'Create tax period adjustments',        riskLevel: 'HIGH' },
@@ -872,7 +879,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'tax.report.read', 'tax.report.recompute', 'tax.report.export',
     'tax.filing.mark_filed', 'tax.filing.mark_paid',
     'tax.certificate.read', 'tax.certificate.issue', 'tax.certificate.void',
-    'wht.certificate.read', 'wht.external_certificate.link',
+    'wht.certificate.read', 'wht.external_certificate.link', 'wht.certificate.issue',
     'tax.review_issue.read', 'tax.review_issue.resolve',
     // Item 13 banking – Finance has all except approve, complete, reopen
     'bank.account.read', 'bank.account.manage', 'bank.account.sensitive_read',
@@ -938,7 +945,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'tax.report.read', 'tax.report.recompute', 'tax.report.export',
     'tax.filing.mark_filed', 'tax.filing.mark_paid',
     'tax.certificate.read', 'tax.certificate.issue', 'tax.certificate.void',
-    'wht.certificate.read', 'wht.external_certificate.link',
+    'wht.certificate.read', 'wht.external_certificate.link', 'wht.certificate.issue',
     'tax.review_issue.read', 'tax.review_issue.resolve',
     'tax.adjustment.create',
     // Item 13 banking – Accountant has full banking access

@@ -3,13 +3,15 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { LinkExternalWhtCertificateDto, SetWhtHandoffPayeeAddressDto } from './tax.dtos';
+import { LinkExternalWhtCertificateDto, SetWhtHandoffPayeeAddressDto, UpdateCompanyTaxSignatureDto } from './tax.dtos';
 import { SyncTaxEventsUseCase } from '../../application/use-cases/sync-tax-events.use-case';
 import { GenerateVatReportUseCase } from '../../application/use-cases/generate-vat-report.use-case';
 import { GenerateWhtReportUseCase } from '../../application/use-cases/generate-wht-report.use-case';
 import { GenerateTaxFilingPackageUseCase } from '../../application/use-cases/generate-tax-filing-package.use-case';
 import { CreateWhtCertificateUseCase } from '../../application/use-cases/create-wht-certificate.use-case';
 import { WhtCertificateHandoffUseCase } from '../../application/use-cases/wht-certificate-handoff.use-case';
+import { IssueWhtCertificateFromHandoffUseCase } from '../../application/use-cases/issue-wht-certificate-from-handoff.use-case';
+import { UpdateCompanyTaxSignatureUseCase } from '../../application/use-cases/update-company-tax-signature.use-case';
 import { SetWhtIncomeCategoryStatusUseCase } from '../../application/use-cases/wht-income-category.use-case';
 import { GetCitCalendarUseCase } from '../../application/use-cases/get-cit-calendar.use-case';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
@@ -27,6 +29,8 @@ export class TaxController {
     private readonly generateFilingPackage: GenerateTaxFilingPackageUseCase,
     private readonly createWhtCertificate: CreateWhtCertificateUseCase,
     private readonly whtHandoffs: WhtCertificateHandoffUseCase,
+    private readonly issueFromHandoff: IssueWhtCertificateFromHandoffUseCase,
+    private readonly updateSignature: UpdateCompanyTaxSignatureUseCase,
     private readonly setWhtCategoryStatus: SetWhtIncomeCategoryStatusUseCase,
     private readonly getCitCalendar: GetCitCalendarUseCase,
     private readonly taxRepo: PrismaTaxRepository,
@@ -51,7 +55,17 @@ export class TaxController {
   @ApiOperation({ summary: 'Get company tax profile' })
   async getProfile(@ReqCtx() ctx: RequestContext) {
     const row = await this.taxRepo.prisma.client.companyTaxProfile.findUnique({ where: { companyId: ctx.companyId } });
-    return row ?? { companyId: ctx.companyId, vatRegistered: false, branchPolicy: 'HEAD_OFFICE_ONLY', taxReviewerRole: 'ACCOUNTANT' };
+    return row ?? { companyId: ctx.companyId, vatRegistered: false, branchPolicy: 'HEAD_OFFICE_ONLY', taxReviewerRole: 'ACCOUNTANT', signatureMode: 'BLANK', signatureImageAttachmentId: null };
+  }
+
+  // WHT certificate system issuance plan §3.3 (Decision B): OWNER-only, deliberately a DIFFERENT
+  // permission than `tax.profile.manage` (which FINANCE/ACCOUNTANT already hold) — a company's
+  // authorized-signatory signature is more sensitive than ordinary tax configuration.
+  @Patch('tax/profile/signature')
+  @RequirePermissions('company.tax_signature.manage')
+  @ApiOperation({ summary: 'Set the company WHT-certificate signature mode (BLANK or AUTO_STAMP)' })
+  async updateTaxSignature(@ReqCtx() ctx: RequestContext, @Body() body: UpdateCompanyTaxSignatureDto) {
+    return this.updateSignature.execute(ctx, body);
   }
 
   // ─── Tax Periods ──────────────────────────────────────────────────────────
@@ -207,11 +221,12 @@ export class TaxController {
     @Param('companyId') companyId: string,
     @Query('status') status?: string,
     @Query('branchId') branchId?: string,
+    @Query('sourcePaymentId') sourcePaymentId?: string,
   ) {
     // The auth guard lets an `x-company-id` header set the context company; without this the route
     // param would be decorative and a caller could read another company's URL with their own scope.
     assertRouteCompany(ctx, companyId);
-    return this.whtHandoffs.list(ctx, { status, branchId });
+    return this.whtHandoffs.list(ctx, { status, branchId, sourcePaymentId });
   }
 
   @Get('wht/payment-handoffs/:handoffId')
@@ -250,6 +265,21 @@ export class TaxController {
   ) {
     assertRouteCompany(ctx, companyId);
     return this.whtHandoffs.linkExternal(ctx, handoffId, body);
+  }
+
+  // A new route, sibling to the two above, rather than an overload of `POST tax/wht-certificates`
+  // below: that endpoint's body shape (`CreateWhtCertificateDto`) requires a pre-existing
+  // `taxPeriodId`/`taxEventIds`, a completely different input from this one (just a `handoffId`).
+  // `wht.certificate.issue` is gated by `thai_tax` (via `pack.wht.certificate.issue`, plan §2.1) —
+  // unlike its `wht/payment-handoffs/*` siblings above, which are deliberately NOT gated — but the
+  // URL family stays the same because both AP and Expenses already read/write handoffs here.
+  @Post('wht/payment-handoffs/:handoffId/system-certificate')
+  @HttpCode(200)
+  @RequirePermissions('wht.certificate.issue')
+  @ApiOperation({ summary: 'Issue a 50 Tawi certificate directly from a settlement/expense WHT handoff' })
+  async issueSystemWhtCertificate(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('handoffId') handoffId: string) {
+    assertRouteCompany(ctx, companyId);
+    return this.issueFromHandoff.execute(ctx, handoffId);
   }
 
   // ─── CIT Calendar ────────────────────────────────────────────────────────

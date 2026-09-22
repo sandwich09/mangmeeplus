@@ -36,6 +36,7 @@ type ValidationMessageKey =
   | 'expenses.v_total_mismatch'
   | 'expenses.v_total_zero'
   | 'expenses.v_payee_kind_required'
+  | 'expenses.v_wht_category_required'
   | 'expenses.v_charge_amount_positive'
   | 'expenses.v_charge_quantity_one'
   | 'expenses.v_charge_order';
@@ -149,6 +150,12 @@ export function validateExpenseReview(
   const withholdsTax = expenseReviewWithholdsTax(values, opts.whtAmount);
   if (withholdsTax && !values.vendorEntityKindSnapshot) {
     addIssue(issues, 'vendorEntityKindSnapshot', 'error', 'expenses.v_payee_kind_required');
+  }
+
+  // WHT certificate system issuance plan §1.2 (S2): same last-moment rule, for the income category
+  // a 50 ทวิ certificate needs to print. Mirrors `validateConfirm`'s server-side twin exactly.
+  if (withholdsTax && !values.whtCategoryCode) {
+    addIssue(issues, 'whtCategoryCode', 'error', 'expenses.v_wht_category_required');
   }
 
   const vendorName = values.vendorNameSnapshot.trim();

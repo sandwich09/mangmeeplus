@@ -50,3 +50,16 @@ export function isSupplierPaymentWithholdingValid(amount: number, wht?: Supplier
   const rate = Number(wht.whtRate);
   return Number.isFinite(rate) && rate > 0 && rate <= 100;
 }
+
+/**
+ * WHT certificate system issuance plan §4.1 (S9): both gate axes. `permissions` already folds in
+ * the `thai_tax` entitlement (a company without it never has `wht.certificate.issue` in its
+ * effective permission set at all), so the only other axis to check per-handoff is route-readiness
+ * (`systemIssuanceOpen`) plus the handoff actually being open to an action (`REQUIRED`).
+ */
+export function canIssueSystemWhtCertificate(
+  handoff: { status: string; systemIssuanceOpen?: boolean },
+  permissions: readonly string[],
+): boolean {
+  return handoff.status === 'REQUIRED' && Boolean(handoff.systemIssuanceOpen) && permissions.includes('wht.certificate.issue');
+}

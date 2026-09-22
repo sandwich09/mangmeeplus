@@ -8,10 +8,11 @@
 //
 // Field list is the UNION of the contract type and what apps/web actually sends — under
 // `whitelist + forbidNonWhitelisted` an extra field is a 400 and a missing one is silently stripped.
-import { IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 import type {
   LinkExternalWhtCertificateDto as LinkExternalWhtCertificateContract,
   SetWhtHandoffPayeeAddressDto as SetWhtHandoffPayeeAddressContract,
+  UpdateCompanyTaxSignatureDto as UpdateCompanyTaxSignatureContract,
 } from '@watchdog-bms/contracts';
 import { WHT_HANDOFF_PAYEE_ADDRESS_MAX } from '@watchdog-bms/contracts';
 import { WHT_LINK_ISSUED_DATE, WHT_LINK_LIMITS } from '../../domain/logic/wht-link-evidence.logic';
@@ -45,4 +46,10 @@ export class LinkExternalWhtCertificateDto implements LinkExternalWhtCertificate
  */
 export class SetWhtHandoffPayeeAddressDto implements SetWhtHandoffPayeeAddressContract {
   @IsString() @IsNotEmpty() @MaxLength(WHT_HANDOFF_PAYEE_ADDRESS_MAX) payeeAddress!: string;
+}
+
+/** §3.3 (Decision B): company signature setting for the 50 ทวิ PDF — signature-only, no seal. */
+export class UpdateCompanyTaxSignatureDto implements UpdateCompanyTaxSignatureContract {
+  @IsIn(['BLANK', 'AUTO_STAMP']) signatureMode!: 'BLANK' | 'AUTO_STAMP';
+  @IsString() @IsOptional() signatureAttachmentId?: string;
 }

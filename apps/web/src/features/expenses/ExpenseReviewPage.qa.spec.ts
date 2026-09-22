@@ -150,3 +150,24 @@ test('the money card warns when the stored record does not add up', () => {
   }
   assert.doesNotMatch(workspaceDictionary.th['expenses.totals_identity_warning'], /\+/);
 });
+
+// WHT certificate system issuance plan §4.2: both confirm buttons (guided step + approver-only)
+// must go through the SAME handler, so the post-confirm WHT prompt logic lives in exactly one
+// place — not duplicated per button, which could drift.
+test('both confirm buttons call the shared doConfirm handler, not a duplicated inline confirmExpense', () => {
+  assert.equal((source.match(/onClick=\{\(\) => void doConfirm\(\)\}/g) ?? []).length, 2);
+  assert.doesNotMatch(source, /onClick=\{\(\) => doAction\(\(\) => confirmExpense/);
+});
+
+test('the post-confirm WHT prompt is offered only when the confirmed expense withheld tax and the permission is present, and is never mandatory', () => {
+  assert.match(source, /if \(!confirmed \|\| !hasWht \|\| !permissions\.includes\('wht\.certificate\.issue'\)\) return;/);
+  // §4.2 item 3: explicitly not mandatory — a dismiss control must exist beside the issue action.
+  assert.match(source, /onClick=\{\(\) => setWhtIssuePrompt\(null\)\}/);
+});
+
+test('issuing from the post-confirm prompt calls the system-certificate endpoint and downloads the PDF immediately', () => {
+  // Same reasoning as the AP WhtHandoffDetail wiring test: pdfAttachmentId is never populated, so
+  // the mint response is the only place the PDF bytes ever exist.
+  assert.match(source, /await issueSystemWhtCertificate\(companyId, whtIssuePrompt\.handoffId\)/);
+  assert.match(source, /downloadArtifact\(result\.pdfArtifact\)/);
+});

@@ -32,6 +32,24 @@ def target(kind='dev'):
 
 
 class Contracts(unittest.TestCase):
+    def test_timeout_terminates_the_entire_local_command_process_group(self):
+        class Process:
+            pid = 9876
+            def __init__(self): self.wait_calls = 0
+            def poll(self): return None
+            def wait(self, timeout=None):
+                self.wait_calls += 1
+                if self.wait_calls == 1:
+                    raise subprocess.TimeoutExpired('build', timeout)
+        process = Process()
+        with patch.object(m.os, 'killpg') as kill:
+            m.terminate_process_group(process)
+        self.assertEqual(kill.call_args_list, [
+            ((9876, m.signal.SIGTERM),),
+            ((9876, m.signal.SIGKILL),),
+        ])
+        self.assertEqual(process.wait_calls, 2)
+
     def test_postmark_overrides_legacy_config_with_current_secrets_and_native_evidence(self):
         for stage in ('uat', 'production'):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
@@ -220,11 +238,13 @@ class Contracts(unittest.TestCase):
                 def terminate(self):pass
                 def wait(self,timeout):return 0
             r=m.Release.__new__(m.Release);r.aws_prefix=['aws','--profile','uat'];r.receipt={}
-            r.ssm_sessions={'i-1':{'port':41000,'process':Process(),'log':log,'path':path}}
+            session_environment={'AWS_ACCESS_KEY_ID':'access','AWS_SECRET_ACCESS_KEY':'secret','AWS_SESSION_TOKEN':'token'}
+            r.ssm_sessions={'i-1':{'port':41000,'process':Process(),'log':log,'path':path,'environment':session_environment}}
             completed=subprocess.CompletedProcess([],0,'{}','')
             with patch.object(m.subprocess,'run',return_value=completed) as run:self.assertTrue(r.close_transport())
             self.assertEqual(run.call_args.args[0],
                 ['aws','--profile','uat','ssm','terminate-session','--session-id','owned-session'])
+            self.assertIs(run.call_args.kwargs['env'], session_environment)
             self.assertEqual(r.receipt['ssmSessionCleanup'],{'passed':True,'terminatedCount':1,'failedCount':0})
             self.assertEqual(r.ssm_sessions,{})
         for failure in ('missing-id','timeout'):
@@ -240,6 +260,16 @@ class Contracts(unittest.TestCase):
                     if failure=='missing-id':run.assert_not_called()
                 self.assertEqual(r.receipt['ssmSessionCleanup'],{'passed':False,'terminatedCount':0,'failedCount':1})
                 self.assertEqual(r.ssm_sessions,{})
+
+    def test_ssm_transport_uses_one_exported_credential_session_for_start_and_terminate(self):
+        r=m.Release.__new__(m.Release);r.aws_prefix=['aws','--profile','uat'];r.secrets=set()
+        output='AWS_ACCESS_KEY_ID=access\nAWS_SECRET_ACCESS_KEY=secret\nAWS_SESSION_TOKEN=token\nAWS_CREDENTIAL_EXPIRATION=tomorrow\n'
+        with patch.object(m.subprocess,'run',return_value=subprocess.CompletedProcess([],0,output,'')) as run:
+            environment=r.ssm_session_environment()
+        self.assertEqual({key:environment[key] for key in ('AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN')},
+            {'AWS_ACCESS_KEY_ID':'access','AWS_SECRET_ACCESS_KEY':'secret','AWS_SESSION_TOKEN':'token'})
+        self.assertEqual(r.secrets,{'access','secret','token'})
+        self.assertEqual(run.call_args.args[0],['aws','--profile','uat','configure','export-credentials','--format','env-no-export'])
 
     def test_exact_main_can_reuse_a_validated_prepared_build(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -591,10 +621,20 @@ class Contracts(unittest.TestCase):
     def test_secret_safe_failure_log_and_timeout(self):
         with tempfile.TemporaryDirectory() as tmp:
             r,_=self.runner(tmp);r.secrets={'private-test-secret'}
-            fake=subprocess.CompletedProcess(['bad'],1,'private-test-secret','failure private-test-secret')
-            with patch.object(m.subprocess,'run',return_value=fake),self.assertRaises(ValueError):r.command(['bad'],log='bad')
+            class FailedProcess:
+                returncode = 1
+                def communicate(self, **kwargs): return 'private-test-secret', 'failure private-test-secret'
+            with patch.object(m.subprocess,'Popen',return_value=FailedProcess()),self.assertRaises(ValueError):r.command(['bad'],log='bad')
             self.assertNotIn('private-test-secret',(r.work/'bad.log').read_text())
-            with patch.object(m.subprocess,'run',side_effect=subprocess.TimeoutExpired('bad',1)),self.assertRaisesRegex(RuntimeError,'no automatic mutation retry'):
+            class TimedOutProcess:
+                pid = 9876
+                returncode = None
+                def poll(self): return None
+                def wait(self, timeout=None): self.returncode = -15
+                def communicate(self, input=None, timeout=None):
+                    if timeout is not None: raise subprocess.TimeoutExpired('bad', timeout)
+                    return '', ''
+            with patch.object(m.subprocess,'Popen',return_value=TimedOutProcess()),patch.object(m.os,'killpg'),self.assertRaisesRegex(RuntimeError,'no automatic mutation retry'):
                 r.command(['bad'])
 
     def test_wrappers_seal_environment(self):

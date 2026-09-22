@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { TaxEventRecord, UpsertTaxEventInput } from '../../domain/ports/tax-event.repository.port';
 import type { TaxPeriodRecord, CreateTaxPeriodInput } from '../../domain/ports/tax-period.repository.port';
 import type { TaxReviewIssueRecord, CreateReviewIssueInput } from '../../domain/ports/tax-review-issue.repository.port';
 import type { TaxEventStatus, TaxEventType, TaxFormType, TaxPeriodStatus, TaxType, ReviewIssueSeverity, ReviewIssueStatus } from '@watchdog-bms/contracts';
+import { findAttachmentLinkConflict } from '../../../data-model-core/domain/logic/attachment.logic';
 
 function toStr(v: unknown): string { return String(v ?? '0'); }
 
@@ -235,5 +236,15 @@ export class PrismaTaxRepository {
       resolvedAt: row.resolvedAt ?? null, resolvedNote: row.resolvedNote ?? null,
       resolvedByUserId: row.resolvedByUserId ?? null, createdAt: row.createdAt, updatedAt: row.updatedAt,
     };
+  }
+
+  // ─── Company tax signature (WHT certificate system issuance plan §3.2) ──────
+  // Fifth copy of the `linkAttachmentToTarget`-shaped method every module that links attachments
+  // already carries its own of (expenses/procurement/reimbursements/crm-inbox) — repo convention is
+  // a small per-module copy, not a shared cross-module service.
+  async linkAttachmentToTarget(attachmentId: string, targetType: string, targetId: string, purpose: string, companyId: string, actorUserId: string): Promise<void> {
+    const conflict = await findAttachmentLinkConflict(this.prisma.client, { companyId, attachmentId, targetType });
+    if (conflict) throw new BadRequestException(conflict);
+    await this.prisma.client.attachmentLink.create({ data: { attachmentId, targetType, targetId, purpose, companyId, linkedByUserId: actorUserId } });
   }
 }

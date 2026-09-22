@@ -1338,8 +1338,7 @@ export class PrismaProcurementRepository {
     bankAccountRef?: string; supplierBankAccountId?: string; externalReference?: string; note?: string;
     supplierSnapshotJson?: Record<string, unknown>;
     allocations: { vendorBillId: string; amount: string; whtAmount?: string; pp36PaymentEvidenceIds?: string[] }[];
-  }, createdByUserId: string, taxRecognitions: Pp36PaymentRecognitionInput[] = [],
-    whtOptions: { whtSystemIssuanceOpen?: boolean } = {}): Promise<SupplierPaymentRecord> {
+  }, createdByUserId: string, taxRecognitions: Pp36PaymentRecognitionInput[] = []): Promise<SupplierPaymentRecord> {
     if (data.paymentNumber) {
       const existing = await this.prisma.client.supplierPayment.findFirst({ where: { companyId, paymentNumber: data.paymentNumber }, include: { allocations: true } });
       if (existing) return this.toSupplierPaymentRecord(existing);
@@ -1386,11 +1385,12 @@ export class PrismaProcurementRepository {
         },
         include: { allocations: true },
       });
-      // The payer withheld tax, so the payee is owed a 50 ทวิ. While the SYSTEM route is closed the
-      // system issues nothing — it records a durable, prefilled handoff in the SAME transaction as
-      // the settlement, so the obligation can never be lost by a later failure. The payment itself
-      // is never blocked by the closed route (spec:299, spec:205).
-      if (whtOptions.whtSystemIssuanceOpen === false && new Decimal(data.whtAmount ?? '0').gt(0)) {
+      // The payer withheld tax, so the payee is owed a 50 ทวิ. The system always records a durable,
+      // prefilled handoff in the SAME transaction as the settlement, so the obligation can never be
+      // lost by a later failure — issuing the certificate (system or external) is a separate,
+      // explicit action the user takes afterward from the handoff panel, never automatic here. The
+      // payment itself is never blocked by an unissued certificate (spec:299, spec:205).
+      if (new Decimal(data.whtAmount ?? '0').gt(0)) {
         await createWhtHandoffForPayment(tx, { companyId, payment, supplier, data, createdByUserId });
       }
       for (const allocation of data.allocations) {
@@ -1805,15 +1805,16 @@ async function createWhtHandoffForPayment(tx: any, input: {
 }): Promise<void> {
   const { companyId, payment, supplier, data } = input;
   const withheldAmount = String(data.whtAmount ?? '0');
-  const [company, category] = await Promise.all([
+  const [company, category, payerBranch] = await Promise.all([
     tx.company.findUnique({ where: { id: companyId }, select: { name: true, registeredName: true, taxId: true, addressJson: true } }),
     data.whtCategoryCode ? tx.whtIncomeCategory.findUnique({ where: { code: data.whtCategoryCode }, select: { nameTh: true } }) : Promise.resolve(null),
+    data.branchId ? tx.branch.findUnique({ where: { companyId_id: { companyId, id: data.branchId } }, select: { taxBranchCode: true } }) : Promise.resolve(null),
   ]);
   const prefill = {
     payerSnapshot: {
       companyName: company?.registeredName ?? company?.name ?? 'Unknown company',
       taxId: company?.taxId ?? null,
-      branchCode: null,
+      branchCode: payerBranch?.taxBranchCode ?? null,
       address: company?.addressJson ? JSON.stringify(company.addressJson) : null,
     },
     payeeSnapshot: {

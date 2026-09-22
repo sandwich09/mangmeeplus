@@ -381,6 +381,7 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/billing/application/billing-schedule.spec.ts',
       'src/modules/billing/application/billing-upgrade.spec.ts',
       'src/modules/billing/application/billing-restart.spec.ts',
+      'src/modules/billing/application/billing-deal-subscription-cancel.spec.ts',
       'src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts',
       'src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts',
       'src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts',

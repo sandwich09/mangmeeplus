@@ -1,4 +1,6 @@
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
+import { prepareAttachmentUpload, withGenericUploadError } from '@/common/files/upload-file.logic';
+import { uploadReceiptFile } from '../expenses/expenses.api';
 
 function qs(params?: Record<string, unknown>): string {
   const q = new URLSearchParams();
@@ -83,6 +85,40 @@ export type TaxFilingPackageResult = {
 
 export function listTaxPeriods(companyId: string, params?: { taxType?: string; status?: string }): Promise<{ items: TaxPeriod[]; total: number }> {
   return apiFetch(`/v1/companies/${companyId}/tax/periods${qs(params)}`);
+}
+
+export type CompanyTaxProfile = {
+  companyId: string;
+  vatRegistered: boolean;
+  branchPolicy: string;
+  taxReviewerRole: string;
+  /** WHT certificate system issuance plan §3: v1 is signature-only, no seal field. */
+  signatureMode: 'BLANK' | 'AUTO_STAMP';
+  signatureImageAttachmentId: string | null;
+};
+
+export function getTaxProfile(companyId: string): Promise<CompanyTaxProfile> {
+  return apiFetch(`/v1/companies/${companyId}/tax/profile`);
+}
+
+/** §3.3 (Decision B): OWNER-only (`company.tax_signature.manage`). */
+export function updateTaxSignature(companyId: string, body: { signatureMode: 'BLANK' | 'AUTO_STAMP'; signatureAttachmentId?: string }): Promise<{ signatureMode: 'BLANK' | 'AUTO_STAMP'; signatureImageAttachmentId: string | null }> {
+  return apiFetch(`/v1/companies/${companyId}/tax/profile/signature`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+/** Reuses the generic attachment upload flow (mirrors `uploadTradeTaxEvidenceAttachment`) — no
+ *  dedicated upload endpoint for this feature (§3.2). */
+export async function uploadCompanyTaxSignatureAttachment(companyId: string, file: File): Promise<string> {
+  return withGenericUploadError(async () => {
+    file = await prepareAttachmentUpload(file, 'image');
+    const intent = await apiFetch<{ attachmentId: string; uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string> }>(
+      `/companies/${companyId}/attachments/upload-intent`,
+      { method: 'POST', body: JSON.stringify({ originalFileName: file.name, mimeType: file.type, byteSize: file.size, visibility: 'INTERNAL' }) },
+    );
+    await uploadReceiptFile(intent.uploadUrl, intent.uploadMethod, file, intent.uploadHeaders);
+    await apiFetch(`/companies/${companyId}/attachments/${intent.attachmentId}/complete`, { method: 'POST', body: JSON.stringify({ byteSize: file.size }) });
+    return intent.attachmentId;
+  });
 }
 
 export function syncTaxEvents(companyId: string, since?: string): Promise<SyncResult> {

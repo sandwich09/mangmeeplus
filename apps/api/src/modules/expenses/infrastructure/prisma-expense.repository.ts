@@ -10,7 +10,9 @@ import { assertFullSubstitutePayment, assertSubstitutePaymentDetails, assertSubs
 import { assertExpenseSourceDraftComplete } from '../domain/logic/expense-source-draft.logic';
 import { confirmBuyerMismatch, readBuyerAsPrinted } from '../domain/logic/buyer-as-printed.logic';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
+import { deriveWhtIncomeBase } from '../../tax/domain/logic/wht-report.logic';
 import { expenseEvidenceConfirmationError, expenseEvidenceAssessment, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { Prisma } from '../../../generated/prisma/client';
@@ -138,6 +140,8 @@ function mapExpense(r: any): ExpenseRecord {
     taxableAmount: r.taxableAmount?.toString() ?? '0',
     vatAmount: r.vatAmount?.toString() ?? '0',
     whtAmount: r.whtAmount?.toString() ?? '0',
+    whtCategoryCode: r.whtCategoryCode ?? null,
+    whtRate: r.whtRate?.toString() ?? null,
     grandTotalAmount: expenseDecimalToString(r.grandTotalAmount),
     netPayableAmount: r.netPayableAmount?.toString() ?? '0',
     paidAmount: r.paidAmount?.toString() ?? '0',
@@ -977,7 +981,7 @@ export class PrismaExpenseRepository {
       throw new UnprocessableEntityException('Use voidExpenseTrueReversal for voids');
     }
     const data: any = {};
-    const fields: Array<keyof typeof rest> = ['branchId', 'status', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorAddressSnapshot', 'buyerAsPrintedJson', 'vendorEntityKindSnapshot', 'vendorDocumentNumber', 'expenseDate', 'receivedAt', 'dueDate', 'currency', 'vatMode', 'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'duplicateStatus', 'duplicateOfExpenseId', 'duplicateOverrideReason', 'primaryAttachmentId', 'extractionId', 'aiVerificationStatus', 'aiVerifiedFieldsJson', 'aiVerificationSummaryJson', 'vatCaptureSnapshotJson', 'aiVerificationConfidence', 'aiVerifiedAt', 'lineMessageId', 'lineEventId', 'missingReceiptReason', 'postingStatus', 'postingError', 'note', 'internalMemo', 'updatedByUserId', 'updatedAt', 'reviewedByUserId', 'reviewedAt', 'confirmedByUserId', 'confirmedAt', 'rejectedByUserId', 'rejectedAt', 'rejectReason', 'voidedByUserId', 'voidedAt', 'voidReason', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount', 'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'expenseNumber', 'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode', 'substituteReceiptGeneratedAt', 'substituteReceiptGeneratedByUserId', 'sourceChannelMetadataJson'];
+    const fields: Array<keyof typeof rest> = ['branchId', 'status', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorAddressSnapshot', 'buyerAsPrintedJson', 'vendorEntityKindSnapshot', 'whtCategoryCode', 'whtRate', 'vendorDocumentNumber', 'expenseDate', 'receivedAt', 'dueDate', 'currency', 'vatMode', 'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'duplicateStatus', 'duplicateOfExpenseId', 'duplicateOverrideReason', 'primaryAttachmentId', 'extractionId', 'aiVerificationStatus', 'aiVerifiedFieldsJson', 'aiVerificationSummaryJson', 'vatCaptureSnapshotJson', 'aiVerificationConfidence', 'aiVerifiedAt', 'lineMessageId', 'lineEventId', 'missingReceiptReason', 'postingStatus', 'postingError', 'note', 'internalMemo', 'updatedByUserId', 'updatedAt', 'reviewedByUserId', 'reviewedAt', 'confirmedByUserId', 'confirmedAt', 'rejectedByUserId', 'rejectedAt', 'rejectReason', 'voidedByUserId', 'voidedAt', 'voidReason', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount', 'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'expenseNumber', 'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode', 'substituteReceiptGeneratedAt', 'substituteReceiptGeneratedByUserId', 'sourceChannelMetadataJson'];
     fields.push('whtInputJson');
     for (const f of fields) {
       if (rest[f] !== undefined) data[f] = rest[f];
@@ -2443,6 +2447,11 @@ export class PrismaExpenseRepository {
         },
       });
       if (changed.count !== 1) throw new Error('Expense changed while confirming. Reload and review it again.');
+      // WHT certificate system issuance, Phase 1.2 (S3): a confirmed expense that withheld tax owes
+      // the payee a 50 ทวิ, recorded as a durable handoff in the SAME transaction as confirmation.
+      if (new Decimal(current.whtAmount ?? '0').gt(0)) {
+        await createWhtHandoffForExpense(tx, { companyId: input.companyId, expense: current });
+      }
       await tx.outboxEvent.create({
         data: {
           companyId: input.companyId,
@@ -2626,6 +2635,24 @@ export class PrismaExpenseRepository {
         },
       });
       if (changed.count !== 1) throw new ConflictException('expense_confirmation_source_version_changed');
+      // WHT certificate system issuance, Phase 1.2 (S3): a confirmed expense that withheld tax owes
+      // the payee a 50 ทวิ, recorded as a durable handoff in the SAME transaction as confirmation.
+      // The withheld amount reads from `acceptedRecord` (not `current`) because a VAT source override
+      // can recompute whtAmount from `whtInputJson`; the category/rate classification is untouched by
+      // that recompute, so it still reads from the raw row.
+      if (new Decimal(acceptedRecord.whtAmount ?? '0').gt(0)) {
+        await createWhtHandoffForExpense(tx, {
+          companyId: input.companyId,
+          expense: {
+            id: current.id, branchId: current.branchId, whtAmount: acceptedRecord.whtAmount,
+            whtCategoryCode: current.whtCategoryCode ?? null, whtRate: current.whtRate,
+            vendorCounterpartyId: current.vendorCounterpartyId, vendorNameSnapshot: current.vendorNameSnapshot,
+            vendorTaxIdSnapshot: current.vendorTaxIdSnapshot, vendorAddressSnapshot: current.vendorAddressSnapshot,
+            vendorBranchCodeSnapshot: current.vendorBranchCodeSnapshot, vendorEntityKindSnapshot: current.vendorEntityKindSnapshot,
+            expenseDate: current.expenseDate, grandTotalAmount: acceptedRecord.grandTotalAmount,
+          },
+        });
+      }
       await tx.outboxEvent.create({ data: {
         companyId: input.companyId, eventType: 'expense.confirmed', aggregateType: 'expense_record', aggregateId: input.id,
         eventKey: input.outboxEvent.eventKey, payloadJson: { ...input.outboxEvent.payloadJson, data: { ...(input.outboxEvent.payloadJson.data as Record<string, unknown>), expenseNumber } }, priority: 'NORMAL', status: 'PENDING',
@@ -3775,4 +3802,72 @@ export class PrismaExpenseRepository {
       .sort((a, b) => b[0].localeCompare(a[0]))
       .map(([yearMonth, b]) => ({ yearMonth, expenseCount: b.count, evidenceCount: b.evidenceCount, totalAmount: b.total.toFixed(4) }));
   }
+}
+
+// WHT certificate system issuance, Phase 1.2 (docs/plans/wht-certificate-system-issuance-plan.md §1.2).
+// Mirrors `createWhtHandoffForPayment` in prisma-procurement.repository.ts field-for-field, adapted to
+// ExpenseRecord's own snapshot columns. Unlike the AP side (which only records a handoff while the
+// SYSTEM route is closed), Expenses records the handoff unconditionally whenever whtAmount > 0 (S3):
+// this closes the gap H4 deliberately scoped out (wht-durable-prefilled-handoff.md OQ-2) rather than
+// reproducing AP's older closed-route-only condition.
+async function createWhtHandoffForExpense(tx: any, input: {
+  companyId: string;
+  expense: {
+    id: string; branchId: string | null; whtAmount: unknown; whtCategoryCode: string | null; whtRate: unknown;
+    vendorCounterpartyId: string | null; vendorNameSnapshot: string | null; vendorTaxIdSnapshot: string | null;
+    vendorAddressSnapshot: string | null; vendorBranchCodeSnapshot: string | null;
+    vendorEntityKindSnapshot: string | null; expenseDate: Date; grandTotalAmount: unknown;
+  };
+}): Promise<void> {
+  const { companyId, expense } = input;
+  const withheldAmount = String(expense.whtAmount ?? '0');
+  const whtRate = expense.whtRate === null || expense.whtRate === undefined ? null : String(expense.whtRate);
+  const [company, category, payerBranch] = await Promise.all([
+    tx.company.findUnique({ where: { id: companyId }, select: { name: true, registeredName: true, taxId: true, addressJson: true } }),
+    expense.whtCategoryCode ? tx.whtIncomeCategory.findUnique({ where: { code: expense.whtCategoryCode }, select: { nameTh: true } }) : Promise.resolve(null),
+    expense.branchId ? tx.branch.findUnique({ where: { companyId_id: { companyId, id: expense.branchId } }, select: { taxBranchCode: true } }) : Promise.resolve(null),
+  ]);
+  const prefill = {
+    payerSnapshot: {
+      companyName: company?.registeredName ?? company?.name ?? 'Unknown company',
+      taxId: company?.taxId ?? null,
+      branchCode: payerBranch?.taxBranchCode ?? null,
+      address: company?.addressJson ? JSON.stringify(company.addressJson) : null,
+    },
+    payeeSnapshot: {
+      name: expense.vendorNameSnapshot ?? 'Unknown payee',
+      taxId: expense.vendorTaxIdSnapshot ?? null,
+      address: expense.vendorAddressSnapshot ?? null,
+      branchCode: expense.vendorBranchCodeSnapshot ?? null,
+    },
+    // Same RD-form mapping rule as the AP side (spec §6) — BuyerEntityKind uses 'JURISTIC', not
+    // supplierType's 'JURISTIC_PERSON', but the certificate meaning is identical.
+    formType: expense.vendorEntityKindSnapshot === 'JURISTIC' ? 'PND53'
+      : expense.vendorEntityKindSnapshot === 'INDIVIDUAL' ? 'PND3' : null,
+    incomeCategoryCode: expense.whtCategoryCode ?? null,
+    incomeCategoryName: category?.nameTh ?? null,
+    whtRate,
+    grossAmount: deriveWhtIncomeBase(withheldAmount, whtRate) ?? String(expense.grandTotalAmount ?? '0'),
+    withheldAmount,
+    paymentDate: expense.expenseDate.toISOString(),
+  };
+  await tx.whtCertificateHandoff.create({
+    data: {
+      companyId,
+      status: 'REQUIRED',
+      sourcePaymentType: 'expense.record',
+      sourcePaymentId: expense.id,
+      payeeId: expense.vendorCounterpartyId ?? null,
+      branchCode: expense.vendorBranchCodeSnapshot ?? null,
+      sourceBranchId: expense.branchId ?? null,
+      sourceFeatureKey: 'expenses',
+      taxPeriodId: null,
+      taxEventIdsJson: [],
+      prefillSnapshotJson: prefill,
+      prefillSnapshotHash: createHash('sha256').update(JSON.stringify(prefill)).digest('hex'),
+      availabilityVectorJson: { gateKey: 'cap.wht50bis', routeKey: 'SYSTEM_INITIAL_ISSUE', state: 'CLOSED' },
+      creationCommandId: `wht-cert:${companyId}:expense.record:${expense.id}`,
+      payloadFingerprint: createHash('sha256').update(JSON.stringify(prefill)).digest('hex'),
+    },
+  });
 }

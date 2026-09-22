@@ -22,12 +22,14 @@ import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/compo
 import { useToast } from '@/common/components/toast';
 import { findForbiddenChars, REASON_MAX_LENGTH, sanitizeReasonInput } from '@/common/forms/sanitize';
 import { downloadDocumentAsPdf } from '@/common/files/download-document-pdf';
+import { downloadArtifact } from '@/common/files/download-artifact';
 import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import {
   acknowledgeOcrTotal, confirmDuplicate, confirmExpense, deleteExpense, dismissDuplicate,
   fetchAttachmentPreviewBlob, getExpense, getExpenseReadStatus,
   markExpenseReady, markExpenseReadyAsReviewer, recordExpensePayment, rejectExpense,
   requestExpenseExtraction, removeExpenseReceipt, runDuplicateCheck, updateExpenseReviewFields, uploadExpenseEvidenceFile, voidExpense,
+  listWhtHandoffs, issueSystemWhtCertificate,
 } from './expenses.api';
 import {
   capturePausedReasonKey, captureReadAgainAllowed, captureReadIsRunning, captureReadNotice,
@@ -358,6 +360,43 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     try { await fn(); await load(); onRefresh(); if (successMessage) toast.success(successMessage); return true; }
     catch (e) { setError(err(e)); return false; }
     finally { setActionLoading(false); }
+  };
+
+  // WHT certificate system issuance plan §4.2: not mandatory (spec §4.2 item 3) — offered right
+  // after a successful confirm, on the same page, only when both gates pass. `hasWht` below is read
+  // from this render's `detail` closure deliberately: whtAmount does not change as a result of
+  // confirming, so the value from just before the call is still the right one to check.
+  const [whtIssuePrompt, setWhtIssuePrompt] = useState<{ handoffId: string } | null>(null);
+  const [whtIssuing, setWhtIssuing] = useState(false);
+  const [whtIssueError, setWhtIssueError] = useState<string | null>(null);
+  const [whtIssuedPdf, setWhtIssuedPdf] = useState<{ certificateNumber: string; fileName: string; mimeType: string; contentBase64: string } | null>(null);
+
+  const doConfirm = async () => {
+    setWhtIssuePrompt(null); setWhtIssuedPdf(null); setWhtIssueError(null);
+    const confirmed = await doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว');
+    if (!confirmed || !hasWht || !permissions.includes('wht.certificate.issue')) return;
+    try {
+      const handoffs = await listWhtHandoffs(companyId, { status: 'REQUIRED', sourcePaymentId: expenseId });
+      const handoff = handoffs[0];
+      if (handoff?.systemIssuanceOpen) setWhtIssuePrompt({ handoffId: handoff.id });
+    } catch {
+      // Best-effort prompt only — the confirm itself already succeeded, and the AP/Expenses handoff
+      // list is always reachable later from the WHT handoff panel.
+    }
+  };
+
+  const doIssueWhtCertificate = async () => {
+    if (!whtIssuePrompt) return;
+    setWhtIssuing(true); setWhtIssueError(null);
+    try {
+      const result = await issueSystemWhtCertificate(companyId, whtIssuePrompt.handoffId);
+      downloadArtifact(result.pdfArtifact);
+      setWhtIssuedPdf({ certificateNumber: result.certificateNumber, ...result.pdfArtifact });
+      setWhtIssuePrompt(null);
+      toast.success('ออกหนังสือรับรองหัก ณ ที่จ่ายในระบบเรียบร้อยแล้ว');
+    } catch (e) {
+      setWhtIssueError(err(e));
+    } finally { setWhtIssuing(false); }
   };
 
   const editPayment = (change: () => void) => {
@@ -920,7 +959,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                 )}
                 {detail.status === 'READY_FOR_CONFIRMATION' && (
                   <>
-                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} aria-busy={Boolean(actionLoading)} title={confirmBlockedText ?? undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => void doConfirm()} disabled={actionLoading || !canConfirmExpense} aria-busy={Boolean(actionLoading)} title={confirmBlockedText ?? undefined}>{t('expenses.confirm_and_post', locale)}</button>}
                     {confirmBlockedNotice}
                   </>
                 )}
@@ -948,7 +987,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         )}
         {approverOnlyActions && (
           <>
-            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} aria-busy={Boolean(actionLoading)} title={confirmBlockedText ?? undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => void doConfirm()} disabled={actionLoading || !canConfirmExpense} aria-busy={Boolean(actionLoading)} title={confirmBlockedText ?? undefined}>{t('expenses.confirm_and_post', locale)}</button>}
             {confirmBlockedNotice}
           </>
         )}
@@ -967,6 +1006,26 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           </>
         )}
         {canRestartReview && <button className={ghostClass} onClick={() => void markReady('เริ่มตรวจใหม่เรียบร้อยแล้ว')} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.restart_review', locale)}</button>}
+        {/* WHT certificate system issuance plan §4.2: offered right after confirm, not mandatory —
+            the operator can close this and issue later from the AP-style WHT handoff list instead. */}
+        {whtIssuePrompt && (
+          <div role="status" className="w-full rounded-xl border border-brand-100 bg-brand-50 p-3 text-sm text-brand-900">
+            <p className="mb-2">เอกสารนี้หักภาษี ณ ที่จ่ายไว้ — ต้องการออกหนังสือรับรองหัก ณ ที่จ่ายในระบบตอนนี้เลยหรือไม่?</p>
+            {whtIssueError && <div className="mb-2"><ErrorBanner message={whtIssueError} /></div>}
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className={btnClass} disabled={whtIssuing} aria-busy={Boolean(whtIssuing)} onClick={() => void doIssueWhtCertificate()}>
+                {whtIssuing ? 'กำลังออกเอกสาร...' : 'ออกเอกสารในระบบ'}
+              </button>
+              <button type="button" className={ghostClass} disabled={whtIssuing} onClick={() => setWhtIssuePrompt(null)}>ปิด</button>
+            </div>
+          </div>
+        )}
+        {whtIssuedPdf && (
+          <div role="status" className="w-full rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-900">
+            ระบบออกหนังสือรับรองให้แล้ว · เลขที่ {whtIssuedPdf.certificateNumber}{' '}
+            <button type="button" className="font-semibold underline underline-offset-2" onClick={() => downloadArtifact(whtIssuedPdf)}>ดาวน์โหลด PDF อีกครั้ง</button>
+          </div>
+        )}
       </div>
     </div>
   ) : null;
