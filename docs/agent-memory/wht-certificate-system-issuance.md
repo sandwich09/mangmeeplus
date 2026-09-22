@@ -1,11 +1,12 @@
 # Agent Memory: wht-certificate-system-issuance
 
-Status: Implementation session 2026-09-22 — Phases 1-5 of 6 DONE and committed (5 commits,
-dc20214c/ed2f6f7e/bb463f02/b61e0685/plus this phase's — see "Implementation log" at the end of this
-file for full per-phase detail, verification, and commit hashes). Phase 6 (golden-fixture accountant
-review + actually opening `cap.wht50bis/SYSTEM_INITIAL_ISSUE`) is a human/process step, out of scope
-for this session by the task's own instruction — not started. Plan:
-`docs/plans/wht-certificate-system-issuance-plan.md`.
+Status: Implementation session 2026-09-22 — Phases 1-5 of 6 DONE and committed (6 commits:
+dc20214c/ed2f6f7e/bb463f02/b61e0685/f133386c/233d5249 — see "Implementation log" at the end of this
+file for full per-phase detail, verification, and commit hashes). The 6th commit is a controller-made
+correctness fix found and confirmed by the owner after Phase 5 landed (see "Post-Phase-5 fix" at the
+end). Phase 6 (golden-fixture accountant review + actually opening `cap.wht50bis/SYSTEM_INITIAL_ISSUE`)
+is a human/process step, out of scope for this session by the task's own instruction — not started.
+Plan: `docs/plans/wht-certificate-system-issuance-plan.md`.
 Owner: Finance/Accounting lane (WHT / 50-ทวิ system issuance).
 Scope: Phase A discovery scan + Phase B spec authoring for enabling `cap.wht50bis/SYSTEM_INITIAL_ISSUE`
 at the two existing confirm-time entry points (AP payment WHT tab, Expenses confirm). Correction/
@@ -642,3 +643,47 @@ enumerated `pnpm --filter @watchdog-bms/api test` (hundreds of unrelated specs),
 `node scripts/run-line-ai-whole-chain-acceptance.mjs` (unrelated LINE-AI suite). All of these are
 expected to run once at merge time in CI per the standing directive; only specs touched, extended,
 or newly added by this task were run directly, across every phase.
+
+### Post-Phase-5 fix — DONE (commit `233d5249`)
+
+While reviewing the Phase 5 completion report, the controller (main thread, not a subagent) found a
+genuine correctness bug by reading `prisma-procurement.repository.ts`'s `createSupplierPayment`
+directly: it only called `createWhtHandoffForPayment` when `whtOptions.whtSystemIssuanceOpen === false`
+— pre-existing code from before this session (blame traces to the initial import commit `668a2d08`),
+built on the assumption that once `cap.wht50bis/SYSTEM_INITIAL_ISSUE` opens, the system would mint a
+certificate **inline at settlement** instead of ever creating a handoff (a real, deliberately-tested
+pre-existing behavior — `prisma-procurement-integrity.repository.spec.ts` had a named test: "creates no
+handoff when the SYSTEM route is open (the system issues the certificate itself)").
+
+That assumption is superseded by everything this whole session actually built: the spec/plan's AP
+journey (§4.1) puts the "ออกเอกสารในระบบ" button **on the existing handoff panel**, and
+`IssueWhtCertificateFromHandoffUseCase` (Phase 2) operates on an existing `WhtCertificateHandoff` row
+by `handoffId` only. If the gate had opened in production without this fix, `createSupplierPayment`
+would have stopped creating handoffs for AP payments entirely — the new button would have had nothing
+to act on, silently breaking the whole feature for the AP entry point the moment Phase 6 completed.
+Expenses (Phase 1.2, this session) already creates its handoff unconditionally per spec S3's literal
+text, so this was a real AP/Expenses divergence, not a hypothetical.
+
+**Confirmed with the owner before fixing** (this was a genuine "system behavior" conflict per AGENTS.md's
+escalation rule, not a guess) — owner said "ยืนยัน" (confirmed) to fix AP to always create the handoff,
+matching Expenses and the spec/plan's actual button-driven design.
+
+**Fix**: removed the dead `whtOptions: { whtSystemIssuanceOpen?: boolean }` parameter from
+`createSupplierPayment` (confirmed via grep it had exactly one call site,
+`supplier-payment.use-case.ts`, itself only used to compute this one flag — removed that computation,
+its now-dead `WhtCertificateHandoffUseCase` constructor injection, and the now-unused import); the
+handoff is now created whenever `whtAmount > 0`, unconditionally. Updated every test that constructed
+`CreateSupplierPaymentUseCase` or called `createSupplierPayment` with the now-removed argument (7 call
+sites across 4 spec files) and rewrote the one test that asserted the old "no handoff when open"
+behavior into one that asserts the handoff is still recorded (renamed, `prisma-procurement-integrity.repository.spec.ts`).
+
+**Verify**: ran the 4 touched spec files directly (`prisma-procurement-integrity.repository.spec.ts`,
+`supplier-payment-integrity.use-case.spec.ts`, `vendor-bill-maker-checker.use-case.spec.ts`,
+`vendor-bill-transaction-tax.use-case.spec.ts`) via `npx tsx --test --test-reporter=dot` from
+`apps/api` — 67/67 pass, exit 0. `pnpm --filter @watchdog-bms/api typecheck` (heap-flagged script)
+clean, exit 0. Not re-run: the full 283/283 regression pass from Phase 5 (out of scope for this
+narrow fix per the owner's minimal-testing directive; nothing else references the removed parameter
+per a repo-wide grep, so no other spec should be affected — worth a full run at the next merge-time CI).
+
+**Still true, unchanged by this fix**: the payment itself is never blocked by an unissued certificate
+(spec:299) — this fix only changes when a handoff is *recorded*, never whether the settlement succeeds.
