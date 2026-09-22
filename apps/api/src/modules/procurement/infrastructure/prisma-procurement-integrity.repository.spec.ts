@@ -324,11 +324,11 @@ describe('PrismaProcurementRepository AP transaction integrity', () => {
     grossAmount: '100', whtAmount: '3', netPaidAmount: '97', allocations: [{ vendorBillId: 'bill-1', amount: '97' }],
   };
 
-  it('records a prefilled 50 ทวิ handoff in the settlement transaction when SYSTEM issuance is closed', async () => {
+  it('records a prefilled 50 ทวิ handoff in the settlement transaction', async () => {
     const handoffs: any[] = [];
     const client = settlementClient(handoffs);
     await new PrismaProcurementRepository({ client } as any).createSupplierPayment(
-      'company-1', withholdingPayment as any, 'user-1', [], { whtSystemIssuanceOpen: false },
+      'company-1', withholdingPayment as any, 'user-1', [],
     );
     assert.equal(handoffs.length, 1);
     const handoff = handoffs[0];
@@ -356,7 +356,7 @@ describe('PrismaProcurementRepository AP transaction integrity', () => {
     const client = settlementClient(handoffs);
     client.supplierProfile.findFirst = async () => ({ id: 'supplier-1', supplierType: 'INDIVIDUAL', displayNameSnapshot: 'นาย ก', legalNameSnapshot: null, taxId: '1', branchCode: null, addressJson: null });
     await new PrismaProcurementRepository({ client } as any).createSupplierPayment(
-      'company-1', withholdingPayment as any, 'user-1', [], { whtSystemIssuanceOpen: false },
+      'company-1', withholdingPayment as any, 'user-1', [],
     );
     assert.equal(handoffs[0].prefillSnapshotJson.formType, 'PND3');
     assert.equal(handoffs[0].prefillSnapshotJson.payeeSnapshot.name, 'นาย ก');
@@ -367,7 +367,7 @@ describe('PrismaProcurementRepository AP transaction integrity', () => {
     const client = settlementClient(handoffs);
     client.supplierProfile.findFirst = async () => ({ id: 'supplier-1', supplierType: 'FOREIGN', displayNameSnapshot: 'X Ltd', legalNameSnapshot: null, taxId: null, branchCode: null, addressJson: null });
     await new PrismaProcurementRepository({ client } as any).createSupplierPayment(
-      'company-1', withholdingPayment as any, 'user-1', [], { whtSystemIssuanceOpen: false },
+      'company-1', withholdingPayment as any, 'user-1', [],
     );
     assert.equal(handoffs[0].prefillSnapshotJson.formType, null);
   });
@@ -377,27 +377,24 @@ describe('PrismaProcurementRepository AP transaction integrity', () => {
     const client = settlementClient(handoffs);
     await new PrismaProcurementRepository({ client } as any).createSupplierPayment(
       'company-1', { ...withholdingPayment, whtAmount: '0', netPaidAmount: '100', allocations: [{ vendorBillId: 'bill-1', amount: '100' }] } as any,
-      'user-1', [], { whtSystemIssuanceOpen: false },
+      'user-1', [],
     );
     assert.equal(handoffs.length, 0);
   });
 
-  it('creates no handoff when the SYSTEM route is open (the system issues the certificate itself)', async () => {
-    const handoffs: any[] = [];
-    const client = settlementClient(handoffs);
-    await new PrismaProcurementRepository({ client } as any).createSupplierPayment(
-      'company-1', withholdingPayment as any, 'user-1', [], { whtSystemIssuanceOpen: true },
-    );
-    assert.equal(handoffs.length, 0);
-  });
-
-  it('settles the payment even though the closed route blocked certificate issuance', async () => {
+  // The handoff always exists regardless of `cap.wht50bis/SYSTEM_INITIAL_ISSUE`'s route-readiness
+  // state — issuing the certificate (system or external) is a separate, explicit action a user takes
+  // later from the handoff panel, never automatic at settlement. An earlier design assumed the SYSTEM
+  // route would mint the certificate inline and skip the handoff when open; the spec/plan for this
+  // feature (wht-certificate-system-issuance-spec.md §4.1) supersedes that with a button on the
+  // existing handoff panel instead, so a handoff must always exist for that button to act on.
+  it('still records the handoff even though the payment settlement never checks the SYSTEM route state', async () => {
     const handoffs: any[] = [];
     const client = settlementClient(handoffs);
     const result = await new PrismaProcurementRepository({ client } as any).createSupplierPayment(
-      'company-1', withholdingPayment as any, 'user-1', [], { whtSystemIssuanceOpen: false },
+      'company-1', withholdingPayment as any, 'user-1', [],
     );
-    // spec:299 — a closed 50 ทวิ route must never block the payment itself.
+    // spec:299 — an unissued 50 ทวิ certificate must never block the payment itself.
     assert.equal(result.id, 'pay-1');
     assert.equal(result.status, 'RECORDED');
     assert.equal(handoffs.length, 1);
@@ -410,7 +407,7 @@ describe('PrismaProcurementRepository AP transaction integrity', () => {
     const client = settlementClient(handoffs);
     client.branch.findUnique = async () => ({ taxBranchCode: '00002' });
     await new PrismaProcurementRepository({ client } as any).createSupplierPayment(
-      'company-1', withholdingPayment as any, 'user-1', [], { whtSystemIssuanceOpen: false },
+      'company-1', withholdingPayment as any, 'user-1', [],
     );
     assert.equal(handoffs[0].prefillSnapshotJson.payerSnapshot.branchCode, '00002');
   });

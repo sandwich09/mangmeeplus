@@ -9,7 +9,6 @@ import { CommitDocumentNumberUseCase } from '../../../data-model-core/applicatio
 import { civilDate, civilPeriodKey, LEDGER_SEQUENCE_KEY, PROCUREMENT_SEQUENCE_KEYS } from '@watchdog-bms/contracts';
 import { d, SETTLE_EPSILON, vendorBillTaxSourceChecksum } from '../../domain/logic/procurement.logic';
 import type { SupplierPaymentRecord } from '../../domain/models/procurement.model';
-import { WhtCertificateHandoffUseCase } from '../../../tax/application/use-cases/wht-certificate-handoff.use-case';
 import type { LedgerSourcePostingInput, ResolveTransactionTaxPreviewDto } from '@watchdog-bms/contracts';
 import { TransactionTaxConfigUseCase } from '../../../tax/application/use-cases/transaction-tax-config.use-case';
 import { formatTransactionTaxAmount } from '../../../tax/domain/logic/transaction-tax.logic';
@@ -24,7 +23,6 @@ export class CreateSupplierPaymentUseCase {
     private readonly reserveNumber: ReserveDocumentNumberUseCase,
     private readonly commitNumber: CommitDocumentNumberUseCase,
     private readonly transactionTax: TransactionTaxConfigUseCase,
-    private readonly whtHandoffs: WhtCertificateHandoffUseCase,
   ) {}
 
   async execute(ctx: RequestContext, dto: {
@@ -216,12 +214,7 @@ export class CreateSupplierPaymentUseCase {
     const periodKey = civilPeriodKey(civilDate(paymentDate));
     const reserved = await this.reserveNumber.execute({ companyId: ctx.companyId, documentType: PROCUREMENT_SEQUENCE_KEYS.PAYMENT, periodKey, reservedByUserId: ctx.userId, idempotencyKey: `pay:${ctx.companyId}:${idempotencyKey}` });
 
-    // A payment that withheld tax owes the payee a 50 ทวิ. Ask the control plane whether the system
-    // may issue it; a CLOSED route never blocks the payment (spec:299), it only decides that the
-    // certificate becomes an external handoff created atomically with the settlement below.
-    const whtSystemIssuanceOpen = await this.whtHandoffs.isSystemIssuanceOpen();
-
-    const payment = await this.repo.createSupplierPayment(ctx.companyId, { ...dto, paymentDate, paymentNumber: reserved.documentNumber, idempotencyKey }, ctx.userId, taxRecognitions, { whtSystemIssuanceOpen });
+    const payment = await this.repo.createSupplierPayment(ctx.companyId, { ...dto, paymentDate, paymentNumber: reserved.documentNumber, idempotencyKey }, ctx.userId, taxRecognitions);
     await this.commitNumber.execute({ id: reserved.id, companyId: ctx.companyId, ownerType: 'supplier_payment', ownerId: payment.id }, ctx.userId);
 
     await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'procurement.supplier_payment.create', targetType: 'supplier_payment', targetId: payment.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { supplierId: dto.supplierId, paymentNumber: reserved.documentNumber, netPaidAmount: dto.netPaidAmount, method: dto.method, allocationCount: dto.allocations.length } });

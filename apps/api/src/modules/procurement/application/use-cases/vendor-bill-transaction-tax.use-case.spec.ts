@@ -294,7 +294,6 @@ describe('vendor bill server-authoritative totals', () => {
           return finalized;
         },
       } as any,
-      { isSystemIssuanceOpen: async () => true } as any,
     );
     await useCase.execute({ companyId: 'company-1', userId: 'payer-1', requestId: 'pay-1', permissions: ['procurement.supplier_payment.create', 'procurement.supplier_payment.release'] } as any, {
       supplierId: 'supplier-1', branchId: 'branch-1', paymentDate: new Date('2026-08-15T00:00:00.000Z'), method: 'BANK_TRANSFER', currency: 'THB',

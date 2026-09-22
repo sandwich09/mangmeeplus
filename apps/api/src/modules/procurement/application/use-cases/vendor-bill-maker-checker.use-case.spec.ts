@@ -311,7 +311,7 @@ describe('Submit → approve → pay audit chain (H-07)', () => {
   });
 
   it('recording a payment requires the separate release permission', async () => {
-    const useCase = new CreateSupplierPaymentUseCase({} as any, {} as any, {} as any, {} as any, {} as any, {} as any, { isSystemIssuanceOpen: async () => true } as any);
+    const useCase = new CreateSupplierPaymentUseCase({} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
     const dto: any = { supplierId: 'sup_1', paymentDate: new Date(), method: 'BANK_TRANSFER', grossAmount: '100', netPaidAmount: '100', allocations: [] };
     await assert.rejects(
       () => useCase.execute({ companyId: 'co_1', userId: 'u1', permissions: ['procurement.supplier_payment.create'] } as any, dto),
@@ -337,7 +337,7 @@ describe('Submit → approve → pay audit chain (H-07)', () => {
     const outbox = { append: mock.fn(async () => undefined) };
     const reserveNumber = { execute: mock.fn(async () => ({ id: 'num_1', documentNumber: 'PAY-1' })) };
     const commitNumber = { execute: mock.fn(async () => undefined) };
-    const useCase = new CreateSupplierPaymentUseCase(repo, audit as any, outbox as any, reserveNumber as any, commitNumber as any, {} as any, { isSystemIssuanceOpen: async () => true } as any);
+    const useCase = new CreateSupplierPaymentUseCase(repo, audit as any, outbox as any, reserveNumber as any, commitNumber as any, {} as any);
     const payment = await useCase.execute(
       { companyId: 'co_1', userId: 'u3', requestId: 'req_1', permissions: ['procurement.supplier_payment.create', 'procurement.supplier_payment.release'] } as any,
       { supplierId: 'sup_1', paymentDate: new Date('2026-07-10'), method: 'BANK_TRANSFER', grossAmount: '1500.00', netPaidAmount: '1500.00', allocations: [{ vendorBillId: 'bill_1', amount: '1500.00' }] },
