@@ -711,3 +711,27 @@ Verified locally: `npx tsx --test src/common/api/api-error-coverage.spec.ts` fro
 "tests to add" lists did not name this suite because it's a repo-wide guard, not something scoped to
 this feature — any new user-facing exception code needs a matching entry here, and CI is the actual
 backstop since it scans API source directly rather than trusting a hand-maintained list.
+
+### Second CI round — two more repo-wide UI guards caught real gaps (commit `5ca3e6af`)
+
+Same PR #720, next CI run after the Thai-text fix: two DIFFERENT repo-wide guards failed, both
+against the new `TaxSignatureSettingsPage.tsx` (Phase 3) specifically:
+1. `no-raw-api-error-display.spec.ts` — all three `catch (cause) { setError(cause instanceof Error ?
+   cause.message : String(cause)); }` blocks displayed a raw caught exception message instead of
+   routing through the reviewed `apiErrorMessage()` translator (the pattern every other page in this
+   app already uses, e.g. `TaxWorkspacePage.tsx`, `BillingCollectionPanel.tsx`). Fixed by importing
+   `apiErrorMessage` from `@/common/api/api-error-message` and replacing all three catch bodies.
+2. `action-loading.spec.ts` — the "บันทึก" save button was `disabled={busy}` without `aria-busy={busy}`,
+   the accessibility pairing every other busy-gated button in this app follows (confirmed pattern in
+   `TaxWorkspacePage.tsx`). Fixed by adding `aria-busy={busy}` to the one button.
+
+Verified locally: `npx tsx --test` on all three touched guard specs (Thai-coverage +
+no-raw-api-error-display + action-loading) — 25/25 pass. `pnpm --filter @watchdog-bms/web typecheck`
+clean. Pushed; awaiting the third PR #720 CI run.
+
+**Compounding lesson**: this is now the SECOND and THIRD repo-wide UI-quality guard this feature's new
+UI code tripped, both on the same new file. Neither guard was named in the plan's "tests to add" list
+because both are project-wide invariants scanned from source (like the Thai-coverage one), not
+feature-scoped tests a plan would think to enumerate. Any future new page/component in this repo
+should expect CI, not the plan, to be the actual backstop for these three source-scanning guards:
+Thai error-text coverage, no-raw-error-display, and busy/aria-busy pairing.
