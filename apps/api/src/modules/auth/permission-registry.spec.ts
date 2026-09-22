@@ -492,5 +492,22 @@ describe('permission-registry', () => {
         );
       }
     });
+
+    // WHT certificate system issuance plan §2.1b/§3.3 (Decision B): the company signature setting
+    // is OWNER-only by the exact same omission mechanism as company.legal_identity.manage above —
+    // FINANCE and ACCOUNTANT keep wht.certificate.issue (issuing a certificate) but never this.
+    it('keeps the WHT-certificate company signature setting owner-only (Decision B)', () => {
+      for (const role of Object.keys(ROLE_GRANTS)) {
+        if (role === 'OWNER') continue;
+        assert.equal(
+          ROLE_GRANTS[role].includes('company.tax_signature.manage'),
+          false,
+          `${role} should not manage the company WHT-certificate signature`,
+        );
+      }
+      assert.ok(COMPANY_PERMISSION_KEYS.includes('company.tax_signature.manage'), 'OWNER gets it via COMPANY_PERMISSION_KEYS');
+      assert.ok(ROLE_GRANTS['FINANCE'].includes('wht.certificate.issue'));
+      assert.ok(ROLE_GRANTS['ACCOUNTANT'].includes('wht.certificate.issue'));
+    });
   });
 });

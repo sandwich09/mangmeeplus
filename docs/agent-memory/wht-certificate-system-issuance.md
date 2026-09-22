@@ -467,3 +467,62 @@ directly.
   but the actual PDF bytes only exist in that one mint response today — there is currently no GET
   endpoint that re-fetches a previously-issued certificate's PDF at all (Tax-workspace has the same
   gap). This is pre-existing scope, not something Phase 2 introduced.
+
+Commit: `ed2f6f7e` — "feat(wht): Phase 2 — issue permission/pack, use case, route, PDF template"
+
+### Phase 3 — DONE
+
+**3.1 (schema)**: `CompanyTaxProfile.signatureMode String @default("BLANK")` +
+`signatureImageAttachmentId String?`, additive migration
+`20260922010000_company_tax_profile_signature_mode`. No seal column at all (Decision A). `prisma
+validate`/`generate` clean.
+
+**3.2 (upload/link)**: no dedicated upload endpoints added — the web page reuses the existing
+GENERIC `companies/:companyId/attachments/{upload-intent,:id/complete}` endpoints
+(`AttachmentController`, gated by the already-broad `attachment.create`) exactly like
+`transaction-tax.api.ts`'s `uploadTradeTaxEvidenceAttachment` already does for a different tax
+upload. Only the LINKING is tax-specific: new `PrismaTaxRepository.linkAttachmentToTarget()` (fifth
+copy of the pattern, `targetType: 'company.tax_signature'`, `targetId: companyId`) — did NOT reuse
+the generic `LinkAttachmentUseCase`, because it hardcodes an allow-list of exactly two target types
+(`expense.record`, `accounting.document'`) and would need modification (out of scope) to accept a
+third.
+
+**3.3 (API + UI)**: new `PATCH companies/:companyId/tax/profile/signature`
+(`UpdateCompanyTaxSignatureUseCase`, guarded by `company.tax_signature.manage`) validates
+`AUTO_STAMP` requires `signatureAttachmentId` + the attachment is `ACTIVE` + PNG/JPEG (the only two
+formats the PDF's `<image>` can embed), links it, upserts `CompanyTaxProfile`; `BLANK` always clears
+`signatureImageAttachmentId` (never a stale reference a later re-enable would silently reuse). New
+DTO `UpdateCompanyTaxSignatureDto` (`tax.dtos.ts`) + contract type (`tax.ts`). `GET tax/profile`'s
+no-row fallback now includes `signatureMode: 'BLANK'`/`signatureImageAttachmentId: null`.
+Web: new `apps/web/src/features/tax/TaxSignatureSettingsPage.tsx` (there was NO existing company
+tax-settings page to extend — confirmed by grep, `CompanyTaxProfile` fields were entirely unread by
+the web app before this) + route
+`apps/web/app/(workspace)/companies/[companyId]/settings/tax-signature/page.tsx` + menu entry in
+`settings-menu.logic.ts` (`section: 'advanced'`) + route-permission rule in `route-permissions.ts`
+(`anyOf: ['company.tax_signature.manage']`) — both existing generic mechanisms already hide/show
+cards and refuse routes by permission, so FINANCE/ACCOUNTANT never see or reach this page at all
+(not just a 403 after opening it).
+
+**3.4 (PDF wiring)**: `IssueWhtCertificateFromHandoffUseCase.resolveSignature()` now really queries
+`CompanyTaxProfile`, loads the attachment via `PrismaAttachmentRepository`/`ATTACHMENT_STORAGE`
+(mirrors `GetSignatureImageUseCase`'s exact retrieval pattern), returns base64 + real mime type.
+**Went beyond §3.4's literal text on purpose**: also wired the identical `resolveSignature()` into
+`CreateWhtCertificateUseCase` (the Tax-workspace path) — the plan names only the handoff use case,
+but §2.5 explicitly requires "the same gate... must render the same real PDF" for both entry
+points, and leaving Tax-workspace permanently BLANK regardless of the company's setting would
+silently break that promise the moment any company opts into AUTO_STAMP. `WhtCertificateSignature`
+gained `signatureImageMimeType` (defaults to PNG) since an uploaded signature can legitimately be
+either PNG or JPEG.
+
+Verify: `prisma validate`/`generate` clean; `pnpm --filter @watchdog-bms/contracts build` clean;
+`pnpm --filter @watchdog-bms/api typecheck` clean; `pnpm --filter @watchdog-bms/web typecheck`
+clean. New `update-company-tax-signature.use-case.spec.ts` (7/7: AUTO_STAMP requires attachmentId,
+BLANK always clears, ACTIVE+PNG/JPEG validation, successful link+persist+audit). New
+`permission-registry.spec.ts` case: `company.tax_signature.manage` absent from every non-OWNER role,
+present via `COMPANY_PERMISSION_KEYS`, while `wht.certificate.issue` stays on FINANCE/ACCOUNTANT
+(the two-permission split from Decision B, both asserted in one place). Re-ran
+`create-wht-certificate.use-case.spec.ts` (8/8), `issue-wht-certificate-from-handoff.use-case.spec.ts`
+(7/7), `wht-certificate-pdf.logic.spec.ts` (7/7), `tax.controller.spec.ts` — all green after
+constructor-arg updates. Web: `settings-menu.logic.spec.ts` updated for the 9th card and re-passes
+(9/9), including its generic "every card's route rule actually grants what the card promises" loop.
+New use-case spec registered in `apps/api/package.json`'s enumerated test script.

@@ -3,7 +3,7 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { LinkExternalWhtCertificateDto, SetWhtHandoffPayeeAddressDto } from './tax.dtos';
+import { LinkExternalWhtCertificateDto, SetWhtHandoffPayeeAddressDto, UpdateCompanyTaxSignatureDto } from './tax.dtos';
 import { SyncTaxEventsUseCase } from '../../application/use-cases/sync-tax-events.use-case';
 import { GenerateVatReportUseCase } from '../../application/use-cases/generate-vat-report.use-case';
 import { GenerateWhtReportUseCase } from '../../application/use-cases/generate-wht-report.use-case';
@@ -11,6 +11,7 @@ import { GenerateTaxFilingPackageUseCase } from '../../application/use-cases/gen
 import { CreateWhtCertificateUseCase } from '../../application/use-cases/create-wht-certificate.use-case';
 import { WhtCertificateHandoffUseCase } from '../../application/use-cases/wht-certificate-handoff.use-case';
 import { IssueWhtCertificateFromHandoffUseCase } from '../../application/use-cases/issue-wht-certificate-from-handoff.use-case';
+import { UpdateCompanyTaxSignatureUseCase } from '../../application/use-cases/update-company-tax-signature.use-case';
 import { SetWhtIncomeCategoryStatusUseCase } from '../../application/use-cases/wht-income-category.use-case';
 import { GetCitCalendarUseCase } from '../../application/use-cases/get-cit-calendar.use-case';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
@@ -29,6 +30,7 @@ export class TaxController {
     private readonly createWhtCertificate: CreateWhtCertificateUseCase,
     private readonly whtHandoffs: WhtCertificateHandoffUseCase,
     private readonly issueFromHandoff: IssueWhtCertificateFromHandoffUseCase,
+    private readonly updateSignature: UpdateCompanyTaxSignatureUseCase,
     private readonly setWhtCategoryStatus: SetWhtIncomeCategoryStatusUseCase,
     private readonly getCitCalendar: GetCitCalendarUseCase,
     private readonly taxRepo: PrismaTaxRepository,
@@ -53,7 +55,17 @@ export class TaxController {
   @ApiOperation({ summary: 'Get company tax profile' })
   async getProfile(@ReqCtx() ctx: RequestContext) {
     const row = await this.taxRepo.prisma.client.companyTaxProfile.findUnique({ where: { companyId: ctx.companyId } });
-    return row ?? { companyId: ctx.companyId, vatRegistered: false, branchPolicy: 'HEAD_OFFICE_ONLY', taxReviewerRole: 'ACCOUNTANT' };
+    return row ?? { companyId: ctx.companyId, vatRegistered: false, branchPolicy: 'HEAD_OFFICE_ONLY', taxReviewerRole: 'ACCOUNTANT', signatureMode: 'BLANK', signatureImageAttachmentId: null };
+  }
+
+  // WHT certificate system issuance plan §3.3 (Decision B): OWNER-only, deliberately a DIFFERENT
+  // permission than `tax.profile.manage` (which FINANCE/ACCOUNTANT already hold) — a company's
+  // authorized-signatory signature is more sensitive than ordinary tax configuration.
+  @Patch('tax/profile/signature')
+  @RequirePermissions('company.tax_signature.manage')
+  @ApiOperation({ summary: 'Set the company WHT-certificate signature mode (BLANK or AUTO_STAMP)' })
+  async updateTaxSignature(@ReqCtx() ctx: RequestContext, @Body() body: UpdateCompanyTaxSignatureDto) {
+    return this.updateSignature.execute(ctx, body);
   }
 
   // ─── Tax Periods ──────────────────────────────────────────────────────────

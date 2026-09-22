@@ -1,9 +1,11 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { RequestContext, WhtHandoffPrefillDto } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { PrismaDocumentSequenceRepository } from '../../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
+import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
+import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
 import { formPeriodKey } from '../../domain/logic/tax-period.logic';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
 import { TaxArtifactRendererService } from '../services/tax-artifact-renderer.service';
@@ -33,6 +35,8 @@ export class IssueWhtCertificateFromHandoffUseCase {
     private readonly audit: AuditService,
     private readonly launchGate: LaunchGateGuardService,
     private readonly renderer: TaxArtifactRendererService,
+    private readonly attachments: PrismaAttachmentRepository,
+    @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
   ) {}
 
   private get table() {
@@ -44,11 +48,25 @@ export class IssueWhtCertificateFromHandoffUseCase {
   }
 
   /**
-   * Phase 3.4 wires the real `CompanyTaxProfile` lookup here. Until then this always returns
-   * `undefined` (BLANK) — exactly today's behaviour, so Phase 2 changes nothing about what prints.
+   * §3.4: `CompanyTaxProfile.signatureMode` decides whether the PDF's signature block is stamped.
+   * `BLANK`/no profile at all/no attachment/attachment gone inactive all fall through to
+   * `undefined` (BLANK) — never a broken placeholder, exactly today's behaviour for a company that
+   * never opted in.
    */
-  private async resolveSignature(_companyId: string): Promise<WhtCertificateSignature | undefined> {
-    return undefined;
+  private async resolveSignature(companyId: string): Promise<WhtCertificateSignature | undefined> {
+    const profile = await this.taxRepo.prisma.client.companyTaxProfile.findUnique({ where: { companyId } });
+    if (!profile || profile.signatureMode !== 'AUTO_STAMP' || !profile.signatureImageAttachmentId) return undefined;
+    const attachment = await this.attachments.findById({ id: profile.signatureImageAttachmentId, companyId });
+    if (!attachment || attachment.status !== 'ACTIVE') return undefined;
+    const object = await this.storage.getObject({
+      bucket: attachment.bucket, objectKey: attachment.objectKey,
+      ...(attachment.objectVersionId ? { objectVersionId: attachment.objectVersionId } : {}),
+    });
+    return {
+      mode: 'AUTO_STAMP',
+      signatureImageBase64: object.bytes.toString('base64'),
+      signatureImageMimeType: attachment.mimeType === 'image/jpeg' ? 'image/jpeg' : 'image/png',
+    };
   }
 
   async execute(ctx: RequestContext, handoffId: string) {

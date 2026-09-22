@@ -1,12 +1,15 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../../../audit/application/audit.service';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
+import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
+import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
 import { formatCompanyLegalAddress, type CompanyLegalAddress, type CreateWhtCertificateDto, type RequestContext } from '@watchdog-bms/contracts';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
 import { validateCertificateTotals } from '../../domain/logic/wht-report.logic';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
 import { TaxArtifactRendererService } from '../services/tax-artifact-renderer.service';
+import type { WhtCertificateSignature } from '../../domain/logic/wht-certificate-pdf.logic';
 import { isLaunchRouteOpen, WhtCertificateHandoffUseCase } from './wht-certificate-handoff.use-case';
 
 /**
@@ -37,7 +40,27 @@ export class CreateWhtCertificateUseCase {
     private readonly launchGate: LaunchGateGuardService,
     private readonly handoffs: WhtCertificateHandoffUseCase,
     private readonly renderer: TaxArtifactRendererService,
+    // §3.4/§2.5: the same company signature setting the AP/Expenses handoff path reads, so the
+    // Tax-workspace SYSTEM-issue path prints the identical signature block.
+    private readonly attachments: PrismaAttachmentRepository,
+    @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
   ) {}
+
+  private async resolveSignature(companyId: string): Promise<WhtCertificateSignature | undefined> {
+    const profile = await this.taxRepo.prisma.client.companyTaxProfile.findUnique({ where: { companyId } });
+    if (!profile || profile.signatureMode !== 'AUTO_STAMP' || !profile.signatureImageAttachmentId) return undefined;
+    const attachment = await this.attachments.findById({ id: profile.signatureImageAttachmentId, companyId });
+    if (!attachment || attachment.status !== 'ACTIVE') return undefined;
+    const object = await this.storage.getObject({
+      bucket: attachment.bucket, objectKey: attachment.objectKey,
+      ...(attachment.objectVersionId ? { objectVersionId: attachment.objectVersionId } : {}),
+    });
+    return {
+      mode: 'AUTO_STAMP',
+      signatureImageBase64: object.bytes.toString('base64'),
+      signatureImageMimeType: attachment.mimeType === 'image/jpeg' ? 'image/jpeg' : 'image/png',
+    };
+  }
 
   async execute(ctx: RequestContext, input: CreateWhtCertificateDto) {
     // FIRST decision on purpose: the launch gate — not this use case — decides whether a SYSTEM
@@ -114,10 +137,10 @@ export class CreateWhtCertificateUseCase {
       idempotencyKey: `tax.wht_certificate:${period.id}:${[...input.taxEventIds].sort().join(',')}`,
       reservedByUserId: ctx.userId,
     });
-    // §2.5: the real 50 ทวิ template, not the filing-package `buildMinimalPdf` — the same gate
-    // covers this Tax-workspace path and the AP/Expenses handoff path, so both must render the
-    // same real PDF. Company-level signature wiring (§3.4) is scoped to the handoff use case only;
-    // this path stays BLANK for now, matching its behaviour before this change.
+    // §2.5/§3.4: the real 50 ทวิ template, not the filing-package `buildMinimalPdf` — the same gate
+    // covers this Tax-workspace path and the AP/Expenses handoff path, so both must render the same
+    // real PDF, including the same company signature setting.
+    const signature = await this.resolveSignature(ctx.companyId);
     const pdf = await this.renderer.renderWhtCertificate({
       certificateNumber: reserved.documentNumber,
       formType: (period as { formType?: string }).formType === 'PND53' ? 'PND53' : 'PND3',
@@ -128,7 +151,7 @@ export class CreateWhtCertificateUseCase {
       withheldAmount: input.withheldAmount,
       paymentDate: input.paymentDate,
       issuedAt: new Date().toISOString(),
-    }, payerSnapshot, input.payeeSnapshot);
+    }, payerSnapshot, input.payeeSnapshot, signature);
     const row = await this.taxRepo.prisma.client.whtCertificate.create({
       data: {
         companyId: ctx.companyId,

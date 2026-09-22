@@ -26,7 +26,13 @@ export type WhtCertificateFields = {
   issuedAt: string;
 };
 
-export type WhtCertificateSignature = { mode: 'AUTO_STAMP' | 'BLANK'; signatureImageBase64?: string };
+export type WhtCertificateSignature = {
+  mode: 'AUTO_STAMP' | 'BLANK';
+  signatureImageBase64?: string;
+  /** Same two formats `InitSignatureUploadUseCase` already accepts for the personal signature
+   *  library — the only two `<image>` can embed without a re-encode. Defaults to PNG. */
+  signatureImageMimeType?: 'image/png' | 'image/jpeg';
+};
 
 function formatCertDate(iso: string): string {
   const date = new Date(iso);
@@ -71,7 +77,7 @@ export function buildWhtCertificateSvg(
   const height = signatureBlockTop + 170;
 
   const signatureImage = signature?.mode === 'AUTO_STAMP' && signature.signatureImageBase64
-    ? `<image href="data:image/png;base64,${signature.signatureImageBase64}" x="${560 - 100}" y="${signatureBlockTop + 6}" width="200" height="70" preserveAspectRatio="xMidYMid meet"/>`
+    ? `<image href="data:${signature.signatureImageMimeType ?? 'image/png'};base64,${signature.signatureImageBase64}" x="${560 - 100}" y="${signatureBlockTop + 6}" width="200" height="70" preserveAspectRatio="xMidYMid meet"/>`
     : '';
 
   const svg = `<?xml version="1.0" encoding="UTF-8"?>

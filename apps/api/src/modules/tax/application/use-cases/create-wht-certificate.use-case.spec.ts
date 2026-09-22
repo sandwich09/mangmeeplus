@@ -90,7 +90,9 @@ function useCase(gate: LaunchGateGuardService, spy = makeSpy(), handoffs = makeH
   return {
     spy,
     handoffs,
-    value: new CreateWhtCertificateUseCase(spy.taxRepo, spy.reserveNumber, spy.commitNumber, spy.audit, gate, handoffs.value, makeRenderer(spy.calls)),
+    // companyTaxProfile.findUnique always returns null in `makeSpy`, so resolveSignature short-circuits
+    // to BLANK before ever touching attachments/storage — these stubs are never actually called.
+    value: new CreateWhtCertificateUseCase(spy.taxRepo, spy.reserveNumber, spy.commitNumber, spy.audit, gate, handoffs.value, makeRenderer(spy.calls), {} as any, {} as any),
   };
 }
 

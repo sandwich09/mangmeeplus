@@ -38,6 +38,9 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
     path: '/settings/tax-accounts',
     anyOf: ['tax.config.read', 'tax.config.manage', 'ledger.posting-rule.read', 'ledger.posting-rule.manage'],
   },
+  // WHT certificate system issuance plan §2.1b/§3.3 (Decision B): OWNER-only, deliberately not
+  // `tax.profile.manage` (which FINANCE/ACCOUNTANT already hold).
+  { path: '/settings/tax-signature', anyOf: ['company.tax_signature.manage'] },
   { path: '/settings/crm-catalog/new', anyOf: ['inventory.product.manage'] },
   { path: '/settings/crm-catalog', anyOf: ['inventory.product.read'] },
   {

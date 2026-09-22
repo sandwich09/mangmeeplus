@@ -415,6 +415,17 @@ export type LinkExternalWhtCertificateDto = {
   note?: string;
 };
 
+/**
+ * WHT certificate system issuance plan §3.3 (Decision B): OWNER-only
+ * (`company.tax_signature.manage`), separate from issuing a certificate. `signatureAttachmentId`
+ * comes from the generic `companies/:companyId/attachments/{upload-intent,:id/complete}` flow —
+ * no dedicated upload endpoint for this feature. v1 is signature-only; no seal field exists.
+ */
+export type UpdateCompanyTaxSignatureDto = {
+  signatureMode: 'BLANK' | 'AUTO_STAMP';
+  signatureAttachmentId?: string;
+};
+
 /** 409 body of POST tax/wht-certificates while the SYSTEM route is CLOSED. */
 export type WhtSystemIssuanceUnavailableBody = {
   code: 'wht_system_issuance_unavailable';

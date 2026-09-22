@@ -60,6 +60,9 @@ function harness(options: { handoff?: Record<string, unknown>; onReserve?: () =>
       },
       findUnique: async ({ where }: any) => certificates.find((c) => c.id === where.id) ?? null,
     },
+    // §3.4: BLANK (no profile row) unless a test opts in — resolveSignature short-circuits before
+    // ever touching attachments/storage, so those stay unused stubs in every case here.
+    companyTaxProfile: { findUnique: async () => null },
     $transaction: async (work: (tx: unknown) => Promise<unknown>) => work(client),
   };
   const taxRepo: any = {
@@ -91,7 +94,7 @@ function harness(options: { handoff?: Record<string, unknown>; onReserve?: () =>
   return {
     handoff, certificates, commits, audits, renders, client,
     execute: (gate: LaunchGateGuardService) =>
-      new IssueWhtCertificateFromHandoffUseCase(taxRepo, reserveNumber, documentSequences, audit, gate, renderer),
+      new IssueWhtCertificateFromHandoffUseCase(taxRepo, reserveNumber, documentSequences, audit, gate, renderer, {} as any, {} as any),
   };
 }
 
