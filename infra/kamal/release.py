@@ -351,6 +351,21 @@ class Release:
             return 'nc ' + ('host.docker.internal' if container else '127.0.0.1') + ' ' + str(port)
         return self.target.get('sshProxyCommand')
 
+    def ssm_session_environment(self):
+        exported = subprocess.run(self.aws_prefix + ['configure', 'export-credentials', '--format', 'env-no-export'],
+            text=True, capture_output=True, timeout=30)
+        require(exported.returncode == 0, 'Unable to establish a stable AWS credential session for SSM transport')
+        names = {'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_CREDENTIAL_EXPIRATION'}
+        values = {}
+        for line in exported.stdout.splitlines():
+            key, separator, value = line.partition('=')
+            require(separator and key in names and value, 'Invalid stable AWS credential export for SSM transport')
+            values[key] = value
+        required = {'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN'}
+        require(required <= values.keys(), 'Incomplete stable AWS credential export for SSM transport')
+        self.secrets.update(values[key] for key in required)
+        return {**os.environ, **values}
+
     def start_ssm_transport(self):
         if self.target.get('sshTransport', 'direct') != 'ssm': return
         require(shutil.which('session-manager-plugin'), 'AWS Session Manager plugin is missing')
@@ -359,6 +374,7 @@ class Release:
         require({r['InstanceId'] for r in rows if r.get('PingStatus') == 'Online'} == set(self.hosts),
                 'Every enrolled host must be Online in Systems Manager')
         try:
+            session_environment = self.ssm_session_environment()
             for iid in sorted(self.hosts):
                 with socket.socket() as probe:
                     probe.bind(('127.0.0.1', 0)); port = probe.getsockname()[1]
@@ -367,8 +383,9 @@ class Release:
                 command = self.aws_prefix + ['ssm','start-session','--target',iid,
                     '--document-name','AWS-StartPortForwardingSession','--parameters',
                     json.dumps({'portNumber':['22'],'localPortNumber':[str(port)]})]
-                process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, text=True)
-                self.ssm_sessions[iid] = {'port':port,'process':process,'log':log,'path':log_path}
+                process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, text=True, env=session_environment)
+                self.ssm_sessions[iid] = {'port':port,'process':process,'log':log,'path':log_path,
+                    'environment':session_environment}
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
                 require(all(s['process'].poll() is None for s in self.ssm_sessions.values()),
@@ -394,7 +411,7 @@ class Release:
                     failed = True
                 else:
                     result = subprocess.run(self.aws_prefix + ['ssm','terminate-session','--session-id',match.group(1)],
-                        text=True,capture_output=True,timeout=30)
+                        text=True,capture_output=True,timeout=30,env=session.get('environment'))
                     if result.returncode == 0: terminated += 1
                     else: failed = True
             except Exception:

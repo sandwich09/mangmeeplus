@@ -16,6 +16,7 @@ The root project must retain a dependable release path to both UAT and Productio
 5. A host-key change requires both `--accept-host-key-rotation` and a non-empty reason. Address-only reconciliation is allowed only when the observed key still matches. Reconciliation may not replace an instance ID, stack, VPC, environment, or target kind.
 6. UAT and Production use the same controller and reconciliation rules but retain separate private targets, IAM profiles, KMS keys, endpoints, source paths, acceptance, and deployment commands. This work does not deploy Production or relax its acceptance protocol.
 7. Every bounded local controller command runs in its own process group. If it times out, the controller terminates that group before returning a failure, so a timed-out build cannot leave child compilers or Docker builds running while a later operation begins.
+8. Every SSM transport snapshots one AWS credential session before opening its tunnels and uses that exact environment for both `StartSession` and `TerminateSession`. The deploy role therefore remains limited to its own enrolled sessions even when the profile otherwise refreshes STS credentials per CLI invocation.
 
 ## Acceptance
 
@@ -24,3 +25,4 @@ The root project must retain a dependable release path to both UAT and Productio
 - With explicit approved rotation, it writes only the existing target's private addresses/keys and an auditable private receipt; it does not deploy or mutate AWS application infrastructure.
 - Controller and reconciliation tests cover UAT and Production-shaped targets.
 - A local-command timeout proves its build process group has been terminated; a later UAT apply may reuse only a separately completed, exact-SHA `--prepared-build` artifact.
+- SSM cleanup succeeds without granting a later, different STS session permission to terminate another principal's session.
