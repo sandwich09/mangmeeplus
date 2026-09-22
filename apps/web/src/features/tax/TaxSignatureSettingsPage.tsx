@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { useToast } from '@/common/components/toast';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { getTaxProfile, updateTaxSignature, uploadCompanyTaxSignatureAttachment, type CompanyTaxProfile } from './tax.api';
 
 const field = 'mangmee-input w-full';
@@ -32,7 +33,7 @@ export function TaxSignatureSettingsPage({ companyId, permissions }: { companyId
       setProfile(next);
       setMode(next.signatureMode);
       setPendingAttachmentId(null);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); } finally { setLoading(false); }
+    } catch (cause) { setError(apiErrorMessage(cause)); } finally { setLoading(false); }
   }, [companyId]);
   useEffect(() => { void load(); }, [load]);
 
@@ -53,7 +54,7 @@ export function TaxSignatureSettingsPage({ companyId, permissions }: { companyId
       const attachmentId = await uploadCompanyTaxSignatureAttachment(companyId, file);
       setPendingAttachmentId(attachmentId);
       toast.success('อัปโหลดรูปลายเซ็นแล้ว — กด “บันทึก” เพื่อยืนยัน');
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); }
+    } catch (cause) { setError(apiErrorMessage(cause)); } finally { setBusy(false); }
   }
 
   async function save() {
@@ -67,7 +68,7 @@ export function TaxSignatureSettingsPage({ companyId, permissions }: { companyId
       await updateTaxSignature(companyId, { signatureMode: mode, ...(mode === 'AUTO_STAMP' ? { signatureAttachmentId } : {}) });
       toast.success('บันทึกการตั้งค่าลายเซ็นเรียบร้อยแล้ว');
       await load();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); }
+    } catch (cause) { setError(apiErrorMessage(cause)); } finally { setBusy(false); }
   }
 
   const hasStoredSignature = Boolean(pendingAttachmentId || profile?.signatureImageAttachmentId);
@@ -96,7 +97,7 @@ export function TaxSignatureSettingsPage({ companyId, permissions }: { companyId
               </div>
             )}
             {error && <p className="text-sm font-bold text-error-600">{error}</p>}
-            <button type="button" className={button} onClick={() => void save()} disabled={busy}>บันทึก</button>
+            <button type="button" className={button} onClick={() => void save()} disabled={busy} aria-busy={busy}>บันทึก</button>
           </div>
         )}
       </MangmeeCard>
