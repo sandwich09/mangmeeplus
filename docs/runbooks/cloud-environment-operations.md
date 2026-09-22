@@ -22,8 +22,14 @@ active one-time billing account can select packages, obtain an immediate prorate
 upgrade quote, obtain a prepaid interval-change quote, and receives the intended explanation when
 selecting unavailable auto renewal. No payment attempt was created during acceptance.
 
-The UAT hosts are running at API `i-0eb581c5ac3b3d7ba` / `54.169.249.160` and AI/workers
-`i-011918b0d49534d1c` / `47.129.130.187`; enrolled host keys and private addresses are unchanged.
+UAT identity check 2026-09-22: API `i-0eb581c5ac3b3d7ba` is running at `52.77.253.61` and
+AI/workers `i-011918b0d49534d1c` at `47.129.179.174`; private addresses/VPC/stack/IMDS match their
+enrollment. Private target addresses remain stale (`54.169.249.160` / `47.129.130.187`) after the
+instances restarted. UAT smoke preflight `20260922T101352Z-8758c338` therefore failed in
+`target-preflight` before mutation. SSM port-22 readback found each host key differs from its enrolled
+key, so do **not** update the target or retry until the owner reconciles host provenance and re-enrolls
+both addresses and verified keys. No active Kamal deployment remains; UAT/READY/Production GitHub run
+IDs are `NOT_DISPATCHED` for this local Kamal path.
 Preflight `20260921T080803Z-1f15a73b` failed before mutation because operator source IP
 `171.99.161.133/32` was absent from both SSH allowlists. Temporary exact rules
 `sgr-06d40b953574c3c6f` and `sgr-05549553d09db8eef` enabled the accepted release and were revoked

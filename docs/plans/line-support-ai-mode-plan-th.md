@@ -1,6 +1,6 @@
 # Plan: สถานะ AI ระหว่างเจ้าหน้าที่ดูแล
 
-สถานะ: implemented and locally verified (Owner 2026-09-22); ยังไม่ deploy UAT/Production
+สถานะ: implemented and locally verified (Owner 2026-09-22); UAT hotfix ถูก block ก่อน mutation เพราะ UAT host enrollment integrity drift
 
 ## เป้าหมาย
 
@@ -22,6 +22,7 @@
 - หน้า support แสดงปุ่มเขียว `AI กำลังทำงาน` หรือแดง `AI ไม่ได้ทำงาน` จากค่าบน server และกดเปลี่ยนได้โดยไม่ปิดเคส
 - การกด “ติดต่อเจ้าหน้าที่”/“คุยกับน้องมั่งมี” ทาง LINE สะท้อนที่ปุ่มเมื่อ thread poll รอบถัดไป
 - focused tests ผ่านและไม่มีการแก้ `package.json`
+- UAT smoke preflight `20260922T101352Z-8758c338` ไม่ผ่านที่ target identity ก่อน source/build/lock/rollout: public IP ใน private target ไม่ตรงกับ instance เดิม และ SSM host-key readback ไม่ตรงกับ enrolled key จึงไม่ re-enroll หรือ retry
 
 ## Verification 2026-09-22
 
