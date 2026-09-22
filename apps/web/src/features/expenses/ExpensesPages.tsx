@@ -15,11 +15,12 @@ import {
   getExpenseCaptureCapability,
   listExpenses, getExpense, initReceiptUpload, completeReceiptUpload,
   confirmExpense, rejectExpense, voidExpense, markExpenseReady, markExpenseReadyAsReviewer, recordExpensePayment, runDuplicateCheck, dismissDuplicate,
-  uploadReceiptFile, updateExpenseDraft, listExpenseCategories,
+  uploadReceiptFile, updateExpenseDraft, listExpenseCategories, listExpenseWhtIncomeCategories,
   updateExpenseReviewFields, uploadExpenseEvidenceFile,
   createAccountantPackage, downloadIndexXlsx, requestExpenseExtraction, overrideNonExpenseClassification,
   createExpenseDraft, deleteExpense, confirmExpenseBuyerMatch,
 } from './expenses.api';
+import type { WhtIncomeCategoryOption } from './expenses.api';
 import {
   EXPENSE_VAT_MODE_LABELS, CAPTURE_SOURCE_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, buildExpenseDraftReviewPayload,
@@ -174,7 +175,7 @@ function FieldIssueNote({ issue }: { issue?: ExpenseFieldIssue }) {
 function partialDraftMayDeferIssue(issue: ExpenseFieldIssue, values: ExpenseDraftReviewValues): boolean {
   if (issue.field === 'vendorNameSnapshot') return values.vendorNameSnapshot.trim() === '';
   if (issue.field === 'expenseDate') return values.expenseDate.trim() === '';
-  if (issue.field === 'vendorEntityKindSnapshot' || issue.field === 'lines' || issue.field === 'total') return true;
+  if (issue.field === 'vendorEntityKindSnapshot' || issue.field === 'whtCategoryCode' || issue.field === 'lines' || issue.field === 'total') return true;
   const match = /^lines\.(\d+)\.(description|quantity|unitPrice|vatRate)$/.exec(issue.field);
   if (!match) return false;
   const line = values.lines[Number(match[1])];
@@ -1159,6 +1160,16 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const [values, setValues] = useState<ExpenseDraftReviewValues>(() => reviewValues(detail));
   const [sourceCategories, setSourceCategories] = useState<ExpenseCategorySummary[]>([]);
   const [sourceCategoryError, setSourceCategoryError] = useState(false);
+  // WHT certificate system issuance plan §1.2: ACTIVE income categories for the dropdown below.
+  // Mirrors accounts-payable's AccountsPayablePages.tsx — an empty catalog is a valid state (the
+  // seeded categories are DRAFT until an accountant activates them), so a fetch failure must not
+  // block reviewing or confirming an ordinary expense.
+  const [whtCategories, setWhtCategories] = useState<WhtIncomeCategoryOption[]>([]);
+  useEffect(() => {
+    let active = true;
+    void listExpenseWhtIncomeCategories(companyId).then((categories) => { if (active) setWhtCategories(categories); }).catch(() => { if (active) setWhtCategories([]); });
+    return () => { active = false; };
+  }, [companyId]);
   useEffect(() => {
     if (!detail.sourceDraft) return;
     let active = true;
@@ -1199,6 +1210,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const whtValueIssue = fieldIssue(issues, 'whtInput.value') ?? fieldIssue(issues, 'whtRate');
   const whtUnitIssue = fieldIssue(issues, 'whtInput.inputType');
   const payeeEntityKindIssue = fieldIssue(issues, 'vendorEntityKindSnapshot');
+  const whtCategoryIssue = fieldIssue(issues, 'whtCategoryCode');
 
   const documentWhtRate = expenseDocumentWhtRate(values.lines);
   const whtInput: ExpenseWhtInput = values.whtInput ?? { inputType: 'RATE', value: expenseRateToPercent(documentWhtRate ?? '') };
@@ -1833,6 +1845,27 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               {Object.entries(PAYEE_ENTITY_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </ThemedSelect>
             <FieldIssueNote issue={payeeEntityKindIssue} />
+          </div>
+        )}
+        {/* WHT certificate system issuance plan §1.2 (S2/S3): the income category a 50 ทวิ
+            certificate needs to print, same "only asked for when withholding tax" gate as the payee
+            taxpayer class above. Picking a category fills whtRate from its defaultRate — mirroring
+            the AP settlement form's suggestion behaviour — but the rate is not independently
+            editable here, unlike AP: this is a classification field, not a new payment entry. */}
+        {withholdsTax && (
+          <div className="sm:col-span-2">
+            <span className="mb-1 block text-xs font-medium text-gray-600">
+              <label htmlFor={`expense-wht-category-${detail.id}`}>{t('expenses.wht_income_category', locale)}</label>
+            </span>
+            <ThemedSelect id={`expense-wht-category-${detail.id}`} aria-label={t('expenses.wht_income_category', locale)} className={validationInputClass(whtCategoryIssue)} aria-invalid={whtCategoryIssue?.severity === 'error' || undefined} value={values.whtCategoryCode ?? ''} onChange={(e) => {
+              const code = e.target.value;
+              const picked = whtCategories.find((item) => item.code === code);
+              setValues((v) => ({ ...v, whtCategoryCode: code, whtRate: picked ? String(Number(picked.defaultRate)) : '' }));
+            }} disabled={!isMutable || busy}>
+              {!detail.whtCategoryCode && <option value="">{t('expenses.category_unspecified', locale)}</option>}
+              {whtCategories.map((item) => <option key={item.code} value={item.code}>{item.nameTh}</option>)}
+            </ThemedSelect>
+            <FieldIssueNote issue={whtCategoryIssue} />
           </div>
         )}
       </div>

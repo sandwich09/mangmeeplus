@@ -304,7 +304,7 @@ describe('PrismaProcurementRepository AP transaction integrity', () => {
         id: 'supplier-1', supplierType: 'JURISTIC_PERSON', displayNameSnapshot: 'ผู้ขาย',
         legalNameSnapshot: 'บริษัท ผู้ขาย จำกัด', taxId: '1234567890123', branchCode: '00000', addressJson: { line1: 'x' },
       }) },
-      branch: { findFirst: async () => ({ id: 'branch-1' }) },
+      branch: { findFirst: async () => ({ id: 'branch-1' }), findUnique: async () => null },
       supplierBankAccount: { findFirst: async () => ({ id: 'acct-1' }) },
       company: { findUnique: async () => ({ name: 'ผู้จ่าย', registeredName: 'บริษัท ผู้จ่าย จำกัด', taxId: '9999999999999', addressJson: null }) },
       // `allocations` last on purpose: the create payload carries a nested `{ create: [...] }`
@@ -401,5 +401,17 @@ describe('PrismaProcurementRepository AP transaction integrity', () => {
     assert.equal(result.id, 'pay-1');
     assert.equal(result.status, 'RECORDED');
     assert.equal(handoffs.length, 1);
+  });
+
+  // Phase 1.1 fix: the payer's branch tax code was previously hardcoded to null on every handoff,
+  // even though the payment names a real branch with a `taxBranchCode`.
+  it('populates the payer branch tax code from the paying branch instead of hardcoding null', async () => {
+    const handoffs: any[] = [];
+    const client = settlementClient(handoffs);
+    client.branch.findUnique = async () => ({ taxBranchCode: '00002' });
+    await new PrismaProcurementRepository({ client } as any).createSupplierPayment(
+      'company-1', withholdingPayment as any, 'user-1', [], { whtSystemIssuanceOpen: false },
+    );
+    assert.equal(handoffs[0].prefillSnapshotJson.payerSnapshot.branchCode, '00002');
   });
 });

@@ -396,6 +396,17 @@ export async function listExpenseCategories(companyId: string): Promise<ExpenseC
   return apiFetch(`/v1/companies/${companyId}/expense-categories`);
 }
 
+export type WhtIncomeCategoryOption = { code: string; nameTh: string; formType: string; defaultRate: string };
+
+/**
+ * ACTIVE income categories only (WHT certificate system issuance plan §1.2, mirrors
+ * accounts-payable.api.ts's listWhtIncomeCategories). The catalog ships DRAFT pending accountant
+ * review, so an empty list means withholding is not set up yet — not that the endpoint failed.
+ */
+export async function listExpenseWhtIncomeCategories(companyId: string): Promise<WhtIncomeCategoryOption[]> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/wht-income-categories`);
+}
+
 // ── Category management (expense.category.manage) ────────────────────────────
 
 export async function listManageCategories(companyId: string): Promise<ExpenseCategorySummary[]> {

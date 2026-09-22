@@ -82,6 +82,7 @@ import {
 } from '../../application/use-cases/expense-evidence.use-case';
 import { GetExpenseCapturePolicyUseCase } from '../../application/use-cases/expense-capture-policy.use-case';
 import { RequestReceiptExtractionUseCase } from '../../application/use-cases/expense-extraction.use-case';
+import { ListWhtIncomeCategoriesUseCase } from '../../../procurement/application/use-cases/wht-income-category.use-case';
 import { RemoveExpenseReceiptUseCase } from '../../application/use-cases/remove-expense-receipt.use-case';
 import { DeleteExpenseUseCase } from '../../application/use-cases/delete-expense.use-case';
 import { LineSubstituteReceiptContinuationUseCase } from '../../application/use-cases/line-substitute-receipt-continuation.use-case';
@@ -137,6 +138,7 @@ export class ExpenseController {
     private readonly removeReceipt: RemoveExpenseReceiptUseCase,
     private readonly capturePolicy: GetExpenseCapturePolicyUseCase,
     private readonly buyerMatch: ConfirmBuyerMatchUseCase,
+    private readonly listWhtCategories: ListWhtIncomeCategoriesUseCase,
   ) {}
 
   // Any authority that puts a user on an expense screen may read it: the answer is only whether
@@ -146,6 +148,16 @@ export class ExpenseController {
   @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.create', 'expense.review')
   captureExpensePolicy(@ReqCtx() ctx: RequestContext, @Query('on') on?: string) {
     return this.capturePolicy.execute(ctx, on);
+  }
+
+  // WHT certificate system issuance plan §1.2: the ACTIVE income-category catalog AP already reads
+  // under `procurement.supplier_payment.read` — reused here under `expense.create` (the permission
+  // that already gates entering/saving this side) rather than `tax.config.read`, same reasoning as
+  // the AP endpoint. Registered before `:expenseId` — see NOTE below.
+  @Get('wht-income-categories')
+  @RequirePermissions('expense.create')
+  whtIncomeCategories(@ReqCtx() ctx: RequestContext) {
+    return this.listWhtCategories.execute(ctx);
   }
 
   @Get()

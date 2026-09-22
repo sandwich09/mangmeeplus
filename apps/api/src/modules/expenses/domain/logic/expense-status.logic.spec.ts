@@ -307,6 +307,7 @@ describe('validateConfirm', () => {
     grandTotalAmount: '100.0000',
     whtAmount: '0.0000',
     vendorEntityKindSnapshot: null,
+    whtCategoryCode: null,
     vatMode: 'NO_VAT',
     inputVatClaimStatus: 'NON_CLAIMABLE',
     hasMissingReceiptPermission: false,
@@ -372,8 +373,16 @@ describe('validateConfirm', () => {
   it('blocks a withholding expense whose payee taxpayer class was never captured, and allows it once picked', () => {
     const withheld = { ...validInput, whtAmount: '30.0000' };
     assert.match(validateConfirm(withheld) ?? '', /payee taxpayer class/);
-    assert.equal(validateConfirm({ ...withheld, vendorEntityKindSnapshot: 'INDIVIDUAL' }), null);
-    assert.equal(validateConfirm({ ...withheld, vendorEntityKindSnapshot: 'JURISTIC' }), null);
+    assert.equal(validateConfirm({ ...withheld, vendorEntityKindSnapshot: 'INDIVIDUAL', whtCategoryCode: 'CAT1' }), null);
+    assert.equal(validateConfirm({ ...withheld, vendorEntityKindSnapshot: 'JURISTIC', whtCategoryCode: 'CAT1' }), null);
+  });
+
+  // WHT certificate system issuance plan §1.2 (S2): the same last-moment rule, for the income
+  // category a 50 ทวิ certificate needs to print.
+  it('blocks a withholding expense whose income category was never captured, and allows it once picked', () => {
+    const withheld = { ...validInput, whtAmount: '30.0000', vendorEntityKindSnapshot: 'INDIVIDUAL' as const };
+    assert.match(validateConfirm(withheld) ?? '', /income category/);
+    assert.equal(validateConfirm({ ...withheld, whtCategoryCode: 'CAT1' }), null);
   });
 
   it('blocks an OCR total mismatch until Finance acknowledges the difference', () => {

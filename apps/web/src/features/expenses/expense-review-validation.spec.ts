@@ -356,6 +356,27 @@ describe('validateExpenseReview', () => {
     assert.equal(payeeIssue(blank, '3.00')?.severity, 'error');
   });
 
+  // WHT certificate system issuance plan §1.2 (S2): same last-moment rule, mirrored for the income
+  // category a 50 ทวิ certificate needs to print.
+  it('requires the income category once the expense withholds tax', () => {
+    const categoryIssue = (values: ExpenseDraftReviewValues, whtAmount?: string) =>
+      validateExpenseReview(values, { today: '2026-07-31', whtAmount })
+        .find((issue) => issue.field === 'whtCategoryCode');
+
+    assert.equal(categoryIssue(validValues()), undefined);
+    assert.equal(categoryIssue(validValues(), '0.00'), undefined);
+
+    assert.deepEqual(categoryIssue(validValues(), '3.00'), {
+      field: 'whtCategoryCode', severity: 'error', messageKey: 'expenses.v_wht_category_required',
+    });
+    const classified = validValues(); classified.whtCategoryCode = 'CAT1';
+    assert.equal(categoryIssue(classified, '3.00'), undefined);
+
+    // '' is the "ยังไม่ระบุ" option, not a choice.
+    const blank = validValues(); blank.whtCategoryCode = '';
+    assert.equal(categoryIssue(blank, '3.00')?.severity, 'error');
+  });
+
   it('keeps line issue indexes stable', () => {
     const values = validValues();
     values.lines = Array.from({ length: 4 }, (_, index) => ({ ...values.lines[0]!, description: `line ${index + 1}` }));

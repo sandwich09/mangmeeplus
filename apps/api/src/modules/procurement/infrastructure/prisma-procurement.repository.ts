@@ -1805,15 +1805,16 @@ async function createWhtHandoffForPayment(tx: any, input: {
 }): Promise<void> {
   const { companyId, payment, supplier, data } = input;
   const withheldAmount = String(data.whtAmount ?? '0');
-  const [company, category] = await Promise.all([
+  const [company, category, payerBranch] = await Promise.all([
     tx.company.findUnique({ where: { id: companyId }, select: { name: true, registeredName: true, taxId: true, addressJson: true } }),
     data.whtCategoryCode ? tx.whtIncomeCategory.findUnique({ where: { code: data.whtCategoryCode }, select: { nameTh: true } }) : Promise.resolve(null),
+    data.branchId ? tx.branch.findUnique({ where: { companyId_id: { companyId, id: data.branchId } }, select: { taxBranchCode: true } }) : Promise.resolve(null),
   ]);
   const prefill = {
     payerSnapshot: {
       companyName: company?.registeredName ?? company?.name ?? 'Unknown company',
       taxId: company?.taxId ?? null,
-      branchCode: null,
+      branchCode: payerBranch?.taxBranchCode ?? null,
       address: company?.addressJson ? JSON.stringify(company.addressJson) : null,
     },
     payeeSnapshot: {
