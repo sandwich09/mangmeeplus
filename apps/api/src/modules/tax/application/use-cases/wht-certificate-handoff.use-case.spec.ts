@@ -64,7 +64,9 @@ function makeStore(seed: any[] = [], registry: { matched?: any; failSave?: boole
   };
   const taxRepo = { prisma: { client: { whtCertificateHandoff: table } } } as any;
   const audit = { log: async (entry: any) => { audits.push(entry); } } as any;
-  const gate = {} as any;
+  // §2.4: `.list`/`.get` now read the route gate for `systemIssuanceOpen`. Resolving (never
+  // throwing) simulates OPEN, which is fine here — these fixtures do not assert on that field.
+  const gate = { assertLaunchRouteOpen: async () => undefined } as any;
   // The counterparty registry seam of §10. `matched` stands for the row `vendorMatchKey` finds;
   // `failSave` is the §8 case where the registry write blows up and the address must survive it.
   const counterparties = {

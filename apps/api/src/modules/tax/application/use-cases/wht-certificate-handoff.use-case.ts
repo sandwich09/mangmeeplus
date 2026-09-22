@@ -156,7 +156,9 @@ export class WhtCertificateHandoffUseCase {
       orderBy: { createdAt: 'desc' },
       take: 200,
     });
-    return rows.map(toDto);
+    // §2.4: computed once per request, not per row.
+    const systemIssuanceOpen = await this.isSystemIssuanceOpen();
+    return rows.map((row: any) => toDto(row, systemIssuanceOpen));
   }
 
   /** Company-scoped lookup on the link fence, so a replay never crosses a tenant boundary. */
@@ -195,7 +197,7 @@ export class WhtCertificateHandoffUseCase {
     // Tenant check is explicit rather than part of the lookup so a cross-company id is
     // indistinguishable from a missing one.
     if (!row || row.companyId !== ctx.companyId) throw new NotFoundException('WHT handoff not found.');
-    return toDto(row);
+    return toDto(row, await this.isSystemIssuanceOpen());
   }
 
   /**
@@ -443,7 +445,7 @@ function canonical(value: unknown): string {
   return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
 }
 
-function toDto(row: any): WhtCertificateHandoffDto {
+function toDto(row: any, systemIssuanceOpen = false): WhtCertificateHandoffDto {
   return {
     id: row.id,
     companyId: row.companyId,
@@ -466,6 +468,8 @@ function toDto(row: any): WhtCertificateHandoffDto {
     sourceBranchId: row.sourceBranchId ?? null,
     linkedAt: row.linkedAt?.toISOString() ?? null,
     linkedByUserId: row.linkedByUserId ?? null,
+    certificateId: row.certificateId ?? null,
+    systemIssuanceOpen,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

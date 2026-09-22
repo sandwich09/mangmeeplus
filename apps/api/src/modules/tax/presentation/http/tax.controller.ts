@@ -10,6 +10,7 @@ import { GenerateWhtReportUseCase } from '../../application/use-cases/generate-w
 import { GenerateTaxFilingPackageUseCase } from '../../application/use-cases/generate-tax-filing-package.use-case';
 import { CreateWhtCertificateUseCase } from '../../application/use-cases/create-wht-certificate.use-case';
 import { WhtCertificateHandoffUseCase } from '../../application/use-cases/wht-certificate-handoff.use-case';
+import { IssueWhtCertificateFromHandoffUseCase } from '../../application/use-cases/issue-wht-certificate-from-handoff.use-case';
 import { SetWhtIncomeCategoryStatusUseCase } from '../../application/use-cases/wht-income-category.use-case';
 import { GetCitCalendarUseCase } from '../../application/use-cases/get-cit-calendar.use-case';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
@@ -27,6 +28,7 @@ export class TaxController {
     private readonly generateFilingPackage: GenerateTaxFilingPackageUseCase,
     private readonly createWhtCertificate: CreateWhtCertificateUseCase,
     private readonly whtHandoffs: WhtCertificateHandoffUseCase,
+    private readonly issueFromHandoff: IssueWhtCertificateFromHandoffUseCase,
     private readonly setWhtCategoryStatus: SetWhtIncomeCategoryStatusUseCase,
     private readonly getCitCalendar: GetCitCalendarUseCase,
     private readonly taxRepo: PrismaTaxRepository,
@@ -250,6 +252,21 @@ export class TaxController {
   ) {
     assertRouteCompany(ctx, companyId);
     return this.whtHandoffs.linkExternal(ctx, handoffId, body);
+  }
+
+  // A new route, sibling to the two above, rather than an overload of `POST tax/wht-certificates`
+  // below: that endpoint's body shape (`CreateWhtCertificateDto`) requires a pre-existing
+  // `taxPeriodId`/`taxEventIds`, a completely different input from this one (just a `handoffId`).
+  // `wht.certificate.issue` is gated by `thai_tax` (via `pack.wht.certificate.issue`, plan §2.1) —
+  // unlike its `wht/payment-handoffs/*` siblings above, which are deliberately NOT gated — but the
+  // URL family stays the same because both AP and Expenses already read/write handoffs here.
+  @Post('wht/payment-handoffs/:handoffId/system-certificate')
+  @HttpCode(200)
+  @RequirePermissions('wht.certificate.issue')
+  @ApiOperation({ summary: 'Issue a 50 Tawi certificate directly from a settlement/expense WHT handoff' })
+  async issueSystemWhtCertificate(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('handoffId') handoffId: string) {
+    assertRouteCompany(ctx, companyId);
+    return this.issueFromHandoff.execute(ctx, handoffId);
   }
 
   // ─── CIT Calendar ────────────────────────────────────────────────────────

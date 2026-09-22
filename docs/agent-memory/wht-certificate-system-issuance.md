@@ -1,7 +1,8 @@
 # Agent Memory: wht-certificate-system-issuance
 
-Status: Spec (DRAFT) + implementation plan (READY) written, docs-only. No code/schema/migration touched.
-Not implemented. Plan: `docs/plans/wht-certificate-system-issuance-plan.md`.
+Status: Implementation session 2026-09-22 — Phases 1-2 of 5 done and committed (see "Implementation
+log" at the end of this file for full per-phase detail, verification, and commit hashes). Plan:
+`docs/plans/wht-certificate-system-issuance-plan.md`.
 Owner: Finance/Accounting lane (WHT / 50-ทวิ system issuance).
 Scope: Phase A discovery scan + Phase B spec authoring for enabling `cap.wht50bis/SYSTEM_INITIAL_ISSUE`
 at the two existing confirm-time entry points (AP payment WHT tab, Expenses confirm). Correction/
@@ -380,4 +381,89 @@ to the shared `settlementClient` fixture) — 19/19 pass.
     scope, which named only the `branchCode: null` line). Whoever owns Phase 6 should decide whether AP's
     condition needs updating at that point — recording it now so it is not a surprise later.
 
-Commit: (recorded after the phase commit lands — see below.)
+Commit: `dc20214c` — "feat(wht): Phase 1 — payer branch code fix + Expenses WHT income category"
+
+### Phase 2 — DONE
+
+**2.1/2.1b (permission + pack)**: `permission-registry.ts` — new `wht.certificate.issue` (HIGH,
+granted to FINANCE and ACCOUNTANT right after `wht.external_certificate.link`) and
+`company.tax_signature.manage` (HIGH, deliberately not added to any role's grant list — OWNER-only
+by omission, mirrors `company.legal_identity.manage`). `capability-pack.registry.ts` — new
+`pack.wht.certificate.issue` (`featureEntitlementKey: 'thai_tax'`, holds only
+`wht.certificate.issue`) and `pack.company.tax_signature.manage` (same entitlement key, holds only
+`company.tax_signature.manage`), both siblings of the existing ungated `pack.wht.certificate.manage`.
+
+**2.2 (new use case)**: `apps/api/src/modules/tax/application/use-cases/issue-wht-certificate-from-handoff.use-case.ts`
+— `IssueWhtCertificateFromHandoffUseCase`, mints straight off a `WhtCertificateHandoff` row: tenant
+check → `REQUIRED` status check → route-gate check → `formType`/income-category null guards →
+`upsertPeriod` (finding 8a's answer, no `POST tax/sync` needed) → reserve number (P2002
+catch-and-replay) → render PDF → one `$transaction` (certificate create + number commit + conditional
+handoff `updateMany` to `SYSTEM_ISSUED`) → audit → return DTO + `pdfArtifact`.
+
+**2.3 (route)**: `POST companies/:companyId/wht/payment-handoffs/:handoffId/system-certificate` added
+to `tax.controller.ts`, sibling to `linkExternalWhtCertificate`, guarded by `wht.certificate.issue`.
+Registered in `tax.module.ts`.
+
+**2.4 (gate visibility)**: `WhtCertificateHandoffUseCase.list`/`.get`/`toDto()` now compute
+`systemIssuanceOpen` once per request and include it in `WhtCertificateHandoffDto`. Also added
+`certificateId` to the same DTO (not explicitly named in plan §2.4's text, but required for Phase
+4.1's "download the certificate after SYSTEM_ISSUED" — see finding below) — both additive, default
+to `false`/pass-through on the write-path methods (`setPayeeAddress`/`linkExternal`) which the plan
+does not name.
+
+**2.5 (PDF template)**: new `apps/api/src/modules/tax/domain/logic/wht-certificate-pdf.logic.ts`
+(`buildWhtCertificateSvg` pure SVG builder + `renderWhtCertificatePdf` thin wrapper over
+`renderSubstituteReceiptPdf`), new `TaxArtifactRendererService.renderWhtCertificate()` method.
+`CreateWhtCertificateUseCase` updated to call `renderWhtCertificate(...)` instead of
+`render('PDF', ...)` — `buildMinimalPdf`/`buildTaxExportArtifact`/`GenerateTaxFilingPackageUseCase`
+untouched. Signature wiring (`CompanyTaxProfile` lookup) is a Phase 3 stub for now
+(`resolveSignature()` always returns `undefined` = BLANK) in both the new use case and
+`CreateWhtCertificateUseCase` — Phase 3 will wire the real lookup into both, for consistency (see
+finding below; plan §3.4 only names the new use case explicitly).
+
+Verify: `pnpm --filter @watchdog-bms/contracts build` clean; `pnpm --filter @watchdog-bms/api
+typecheck` clean (heap-flagged script — see below); `pnpm --filter @watchdog-bms/api prisma:validate`
+clean (no schema change this phase); targeted specs all green —
+`issue-wht-certificate-from-handoff.use-case.spec.ts` (new, 7/7), `wht-certificate-pdf.logic.spec.ts`
+(new, 7/7), `create-wht-certificate.use-case.spec.ts` (8/8, updated renderer mock),
+`wht-certificate-handoff.use-case.spec.ts` (33/33, updated gate stub), `permission-registry.spec.ts`
+(all pass), `tax.controller.spec.ts` (all pass, constructor arg count fixed). Both new spec files
+registered in `apps/api/package.json`'s enumerated `test` script (repo convention — see recent commits
+like `test(api): register the new reimbursement defaults and workflow template specs`). Did not run
+the full enumerated `pnpm --filter @watchdog-bms/api test` list or `node
+scripts/run-line-ai-whole-chain-acceptance.mjs` — owner's minimal-testing directive defers the
+full/whole-chain suites to CI at merge time; only the specs touched or newly added this phase were run
+directly.
+
+- **`pnpm --filter @watchdog-bms/api lint` OOM-aborts** (confirmed directly — bare `tsc --noEmit`,
+  no heap flag, `SIGABRT`), exactly matching the standing memory note
+  (`api-typecheck-needs-the-heap-flag`). Used `pnpm --filter @watchdog-bms/api typecheck`
+  (`NODE_OPTIONS=--max-old-space-size=8192 tsc --noEmit` — the identical check, just with enough
+  memory) as the real verification instead, per that same memory note's guidance.
+- **Finding (adapted, not a plan contradiction): `CommitDocumentNumberUseCase.execute()` cannot be
+  called from inside the use case's own `$transaction`.** It opens its own nested
+  `this.prisma.client.$transaction(...)` internally, which would not share the outer transaction —
+  breaking the atomicity plan step 8 explicitly requires ("create WhtCertificate row →
+  commitNumber.execute(...) → whtCertificateHandoff.updateMany(...)" all "ใน Prisma $transaction
+  เดียว"). Injected `PrismaDocumentSequenceRepository` instead and called
+  `commitNumberInTransaction(tx, ...)` directly inside the transaction — the exact pattern
+  `expenseNumberInTransaction` (`prisma-expense.repository.ts`) already established for the identical
+  reserve-then-atomic-commit problem. Manually reproduced the `document.number.commit` LOW-risk audit
+  entry `CommitDocumentNumberUseCase` would otherwise have logged, so the audit trail is unaffected.
+  `ReserveDocumentNumberUseCase` is still used as-is (its own micro-transaction, outside the main one,
+  with the P2002 catch — reserving inside the main transaction would poison it on a genuine race,
+  exactly why `WhtCertificateHandoffUseCase.createOrReplay`'s own doc comment says the recovery
+  cannot be attempted inside a caller's transaction).
+- **Finding (real, not yet fully resolved — flagged for Phase 4): nothing ever populates
+  `WhtCertificate.pdfAttachmentId`.** Confirmed by grep: the existing `CreateWhtCertificateUseCase`
+  (Tax-workspace path) has never written it either — the PDF is delivered ONLY as the inline
+  `pdfArtifact.contentBase64` in the mint response, never persisted as an `AttachmentObject`. Plan
+  Phase 4.1 assumes "GET/download attachment ตาม pattern ดาวน์โหลดไฟล์ที่มีอยู่แล้วในrepo" using
+  `pdfAttachmentId` — that field will always be null, so this specific download mechanism cannot work
+  as literally described. Phase 4 will need to trigger the download directly from the mint response's
+  `pdfArtifact.contentBase64` (e.g. a `data:application/pdf;base64,...` URL/Blob) instead of a
+  separate attachment fetch. Added `certificateId` to `WhtCertificateHandoffDto` (this phase, §2.4)
+  so the AP/Expenses UI can at least identify which certificate a `SYSTEM_ISSUED` handoff points to,
+  but the actual PDF bytes only exist in that one mint response today — there is currently no GET
+  endpoint that re-fetches a previously-issued certificate's PDF at all (Tax-workspace has the same
+  gap). This is pre-existing scope, not something Phase 2 introduced.

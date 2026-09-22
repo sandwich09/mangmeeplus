@@ -383,6 +383,14 @@ export type WhtCertificateHandoffDto = {
   linkNote: string | null;
   linkedAt: string | null;
   linkedByUserId: string | null;
+  /** Set once SYSTEM-issued (status SYSTEM_ISSUED) — the WhtCertificate row this handoff minted. */
+  certificateId: string | null;
+  /**
+   * WHT certificate system issuance plan §2.4: whether `cap.wht50bis/SYSTEM_INITIAL_ISSUE` is OPEN,
+   * computed once per request so the AP/Expenses "ออกเอกสารในระบบ" button can decide to show/hide
+   * without an extra fetch. On `list`/`get` only — additive, defaults to false elsewhere.
+   */
+  systemIssuanceOpen: boolean;
   createdAt: string;
   updatedAt: string;
   /**

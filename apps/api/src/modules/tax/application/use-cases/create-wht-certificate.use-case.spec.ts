@@ -69,7 +69,7 @@ const CERTIFICATE_WRITES = ['write:reserve-number', 'render:pdf', 'write:certifi
 
 /** Injectable seam so "the closed route rendered no statutory PDF" is observable, not assumed. */
 function makeRenderer(calls: string[]) {
-  return { render: (...args: any[]) => { calls.push('render:pdf'); return { mimeType: 'application/pdf', fileName: String(args[1]), contentBase64: '', checksum: 'sum', byteLength: 0 }; } } as any;
+  return { renderWhtCertificate: async (fields: any) => { calls.push('render:pdf'); return { mimeType: 'application/pdf', fileName: `wht-certificate-${fields.certificateNumber}`, contentBase64: '', checksum: 'sum', byteLength: 0 }; } } as any;
 }
 
 function makeHandoffs() {
