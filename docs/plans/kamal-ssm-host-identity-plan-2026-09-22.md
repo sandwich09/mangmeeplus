@@ -1,6 +1,6 @@
 # Plan: permanent Kamal SSM host identity
 
-Status: UAT host reconciliation passed; application rollout pending after a pre-mutation build timeout
+Status: implemented and UAT-verified; no Production rollout
 
 ## Smallest correct change
 
@@ -26,4 +26,5 @@ Status: UAT host reconciliation passed; application rollout pending after a pre-
 - UAT reconciliation `20260922T104435Z-e8813d9a` passed and UAT preflight `20260922T104447Z-1f4824d6` passed.
 - First UAT apply `20260922T104512Z-08d85507` stopped before mutation at 257.683 seconds because its unprepared complete build exceeded the 240-second boundary. Its SSM cleanup passed; no image was published or container/database/customer state changed.
 - UAT prepare `20260922T105644Z-8039fbc1` built/config-validated `b7a9919a…` in 212.354 seconds, but correctly stopped when SSM cleanup was denied. Each profile invocation refreshed the deploy role's STS session, so the IAM own-session condition rejected a terminate call made by a later session. Owner terminated only the two exact retained controller sessions.
-- After merge, run the exact main `--prepare` path under its pinned SSM credential session, then use its verified `build/` directory for one UAT smoke apply.
+- UAT prepare `20260922T110517Z-e5d0e109` passed all five read-only phases for exact main `d67d69d3ca2224bcbc7f7e6c070bd9d5cba3f18b` in 107.258 seconds and proved SSM cleanup 2/2.
+- UAT apply `20260922T110739Z-ed3c91e5` reused that exact build and passed all 11 phases in 230.119 seconds: KMS signature verified, AgentCore pinned `kamal_uat_b` version 22, public platform access `OPEN`, and SSM cleanup 2/2. No GitHub UAT/READY/Production workflow was dispatched.

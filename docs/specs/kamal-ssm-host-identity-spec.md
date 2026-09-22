@@ -1,6 +1,6 @@
 # Kamal SSM Host Identity Spec
 
-Status: implemented; UAT host reconciliation passed, application rollout pending after pre-mutation build timeout, 2026-09-22
+Status: implemented and UAT-verified; Production controller capability only, 2026-09-22
 Owner: Platform / release owner
 
 ## Goal
