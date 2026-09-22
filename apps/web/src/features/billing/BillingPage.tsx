@@ -24,7 +24,7 @@ const money = (satang: number) => new Intl.NumberFormat('th-TH', { style: 'curre
 const date = (value: string | null | undefined) => value ? new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
 const button = billingControl;
 const catalogCardMenus = dealMenuLabels(TIER_FEATURE_PRESETS.STARTER_249);
-const enterpriseMenuSummary = 'ครบทุกเมนู: ภาษี · สมุดรายวัน · จัดซื้อและเจ้าหนี้ · บัญชีธนาคาร · รายงานการเงิน · CRM · คลังสินค้า · ผู้ช่วย AI ทาง LINE';
+const enterpriseMenuSummary = 'เมนูหลัก: ค่าใช้จ่ายและใบเสร็จ · การเบิกจ่าย · ผู้ช่วย AI ทาง LINE · พนักงานและสิทธิ์';
 function errorStatus(error: unknown): number | undefined {
   if (!error || typeof error !== 'object') return undefined;
   const value = error as { status?: unknown; statusCode?: unknown };

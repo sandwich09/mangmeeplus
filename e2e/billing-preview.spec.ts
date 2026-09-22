@@ -31,13 +31,13 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await plans.getByRole('button', { name: 'รายปี', exact: true }).click();
   await expect(plans).toContainText('ใช้งาน 12 เดือน · ประหยัด ฿498.00');
   // Enterprise is an ordinary month/year card once its prices are bound. Every tier compares the
-  // same six baseline menus; Enterprise names the additional full package separately.
+  // same six baseline menus and uses the same customer-facing main-menu summary.
   await expect(plans.getByText('เร็ว ๆ นี้', { exact: true })).toHaveCount(0);
   await expect(enterprise.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true })).toBeEnabled();
   await expect(enterprise).toContainText('10 สาขา · 30 ผู้ใช้');
   await expect(enterprise).toContainText('6,000 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
   await expect(plans).not.toContainText('เครดิต AI:');
-  await expect(enterprise).toContainText('ครบทุกเมนู: ภาษี · สมุดรายวัน · จัดซื้อและเจ้าหนี้ · บัญชีธนาคาร · รายงานการเงิน · CRM · คลังสินค้า · ผู้ช่วย AI ทาง LINE');
+  await expect(enterprise).toContainText('เมนูหลัก: ค่าใช้จ่ายและใบเสร็จ · การเบิกจ่าย · ผู้ช่วย AI ทาง LINE · พนักงานและสิทธิ์');
   await enterprise.getByText('ดูรายละเอียดทั้งหมด · 6 เมนู', { exact: true }).click();
   await expect(enterprise.getByRole('listitem')).toHaveCount(6);
   // The shared baseline starts with the LINE assistant for every tier.
