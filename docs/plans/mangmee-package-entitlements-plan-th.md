@@ -1,6 +1,6 @@
 # แผนสิทธิ์แพ็กเกจ 7 ความสามารถ / รายเดือนและรายปี / Enterprise
 
-> **Owner amendment 2026-09-22:** PE26–PE29 เปลี่ยนจาก Enterprise lock เป็นการเปิดซื้อ month/year แบบ fail-closed ที่ exact provider Price binding; โควตา 500/เดือนและ 6,000/ปี, การ์ดแสดง 6 เมนูพื้นฐานเหมือนกันทุก tierโดย Enterprise ยัง grant ชุด `full`, และซ่อนเครดิต AI บนการ์ดแคตตาล็อก. มตินี้แทน acceptance ของ Enterprise lock ด้านล่างที่เป็นประวัติ.
+> **Owner amendment 2026-09-22:** PE26–PE29 เปลี่ยนจาก Enterprise lock เป็นการเปิดซื้อ month/year แบบ fail-closed ที่ exact provider Price binding; โควตา 500/เดือนและ 6,000/ปี, การ์ดแสดง 6 เมนูพื้นฐานและข้อความสรุปเมนูหลักแบบเดียวกันทุก tier โดย Enterprise ยัง grant ชุด `full`, และซ่อนเครดิต AI บนการ์ดแคตตาล็อก. มตินี้แทน acceptance ของ Enterprise lock ด้านล่างที่เป็นประวัติ.
 
 > **Current delivery checkpoint — 2026-09-16:** โค้ดตามขอบเขตที่อนุมัติและ local acceptance ผ่านแล้ว ดู [ผลปัจจุบัน](../evidence/billing-integration-2026-09-13/final-integration-result.json), [CT/AP 57 กลุ่ม](../evidence/billing-integration-2026-09-13/final-acceptance-map.md) และ [สถานะส่งมอบ](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). กำลังรอ CI ก่อน Admin merge develop/main ทั้งสอง repo; ไม่ deploy. Native provider/device acceptance เป็นขั้นก่อนเปิดบริการจริง ข้อความ IN PROGRESS/BLOCKED/NOT RUN ตามวันที่เก่าด้านล่างเป็นประวัติและไม่ใช่งานโค้ดค้างปัจจุบัน. OTP/passwordless/auto-provision เป็นงานแยก ไม่รวมในขอบเขตส่งมอบของ branch billing นี้.
 
