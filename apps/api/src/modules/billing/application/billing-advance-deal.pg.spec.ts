@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { ALL_FEATURE_ENTITLEMENT_KEYS, BILLING_ACTIONS, BILLING_DRAFT_POLICY, billingOffer } from '@watchdog-bms/contracts';
+import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, billingOffer } from '@watchdog-bms/contracts';
 import { PrismaClient } from '../../../generated/prisma/client';
 import { buildDealSnapshot } from '../../sales-console/domain/sales-deal.logic';
 import { termProjectionHash } from '../domain/paid-invoice';
@@ -84,7 +84,7 @@ async function createFixture(client: PrismaClient, options: { currentMode: 'CARD
     'PRO_999:month': 'price_ProMonth', 'PRO_999:year': 'price_ProYear' } };
   const currentOffer = { ...billingOffer('BASIC_499', 'month', policy), availability: 'AVAILABLE' as const, reason: null };
   const deal = buildDealSnapshot({ base: 'BASIC_499', priceSatang, months: 6, branchLimit: 2, employeeLimit: 5,
-    monthlySlipLimit: 50, featureKeys: [...ALL_FEATURE_ENTITLEMENT_KEYS], aiMonthlyBudgetSatang: null,
+    monthlySlipLimit: 50, featureKeys: [], aiMonthlyBudgetSatang: null,
     description: 'ข้อเสนอพิเศษสำหรับร้านคุณ', autoRenew: true, cadence: 'month', cycles: 6 });
   const dealRow = await client.packageChangeRequest.create({ data: { companyId, requestedByUserId: userId, requestedTierKey: deal.base,
     status: 'APPROVED', kind: 'SALES_DEAL', salesUserId, approvedByUserId: salesUserId, approvedAt: new Date(),

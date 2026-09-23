@@ -55,7 +55,7 @@ function ctx(userId: string, roles: string[], permissions: string[]): RequestCon
 function snapshotBody(companyId: string) {
   return {
     companyId, base: 'BASIC_499' as const, priceSatang: 39900, months: 12,
-    branchLimit: 2, employeeLimit: 5, monthlySlipLimit: 50, featureKeys: ['crm'],
+    branchLimit: 2, employeeLimit: 5, monthlySlipLimit: 50, featureKeys: [],
     aiMonthlyBudgetSatang: null, description: 'ข้อเสนอพิเศษสำหรับร้านคุณ',
     internalReason: 'ลูกค้าเก่าต่อสัญญา',
   };

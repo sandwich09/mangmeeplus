@@ -5,7 +5,7 @@
  *
  * Everything here is pure: the row, the pinned snapshot and the gates decide the answer.
  */
-import { PLAN_TIER_PRESETS, type BillingAction, type BillingOffer, type BillingPurchaseMode,
+import { ALL_FEATURE_ENTITLEMENT_KEYS, PLAN_TIER_PRESETS, type BillingAction, type BillingOffer, type BillingPurchaseMode,
   type SalesDealCadence, type SalesDealSnapshot } from '@watchdog-bms/contracts';
 import { autoRenewOf, buildDealSnapshot, DEAL_KIND, SalesSnapshotError } from '../../sales-console/domain/sales-deal.logic';
 import { appendPackageInterval } from './billing-package';
@@ -85,7 +85,9 @@ export function dealSnapshot(offerSnapshotJson: unknown): SalesDealSnapshot {
   // rebuilds as an explicit `autoRenew: false` deal; nothing rewrites the stored JSON, and the
   // pinned hash is taken from that untouched JSON, so re-reading an old row stays byte-stable.
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || (raw.version !== 2 && raw.version !== 3 && raw.version !== 4)) throw mismatch();
-  try { return buildDealSnapshot(raw, raw.version); } catch (error) {
+  // Stored offers predate the current Sale picker. Preserve their pinned terms while new writes
+  // continue to use the narrower allowlist in buildDealSnapshot.
+  try { return buildDealSnapshot(raw, raw.version, ALL_FEATURE_ENTITLEMENT_KEYS); } catch (error) {
     if (error instanceof SalesSnapshotError) throw mismatch();
     throw error;
   }

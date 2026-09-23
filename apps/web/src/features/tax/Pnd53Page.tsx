@@ -70,7 +70,7 @@ export function Pnd53Page({ companyId, permissions }: { companyId: string; permi
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       {message && <p role="status" className="text-sm text-green-700">{message}</p>}
       <div className="flex flex-wrap gap-2">
-        {canPrepare && <button type="button" className="mangmee-btn mangmee-btn-secondary" disabled={busy}
+        {canPrepare && <button type="button" className="mangmee-btn mangmee-btn-secondary" disabled={busy} aria-busy={busy}
           onClick={() => void run(async () => { await syncPnd53(companyId); await refresh(); if (periodId) setIssues(await listPnd53Issues(companyId, periodId)); setMessage('ซิงค์ข้อมูลหัก ณ ที่จ่ายแล้ว'); })}>
           ซิงค์ข้อมูล
         </button>}
@@ -84,20 +84,20 @@ export function Pnd53Page({ companyId, permissions }: { companyId: string; permi
         </select>
       </label>
       {canPrepare && periodId && <div className="flex flex-wrap gap-2">
-        <button type="button" className="mangmee-btn mangmee-btn-secondary" disabled={busy}
+        <button type="button" className="mangmee-btn mangmee-btn-secondary" disabled={busy} aria-busy={busy}
           onClick={() => void run(async () => {
             const report = await generatePnd53(companyId, periodId) as { totalGross: string; totalWithheld: string };
             setTotals(report);
             setMessage('คำนวณ ภ.ง.ด.53 แล้ว');
           })}>คำนวณรายงาน</button>
-        <button type="button" className="mangmee-btn mangmee-btn-primary" disabled={busy || issuesLoading || issues.length > 0}
+        <button type="button" className="mangmee-btn mangmee-btn-primary" disabled={busy || issuesLoading || issues.length > 0} aria-busy={busy || issuesLoading}
           onClick={() => void run(async () => {
             const result = await exportPnd53(companyId, periodId, 'PDF');
             download(result.artifact);
             await refresh();
             setMessage(`ส่งออก ภ.ง.ด.53 เลขที่ ${result.exportNumber} แล้ว`);
           })}>ออกแบบ ภ.ง.ด.53 พร้อมใบแนบ</button>
-        {periods.find((period) => period.id === periodId)?.status === 'EXPORTED' && <button type="button" className="mangmee-btn mangmee-btn-secondary" disabled={busy}
+        {periods.find((period) => period.id === periodId)?.status === 'EXPORTED' && <button type="button" className="mangmee-btn mangmee-btn-secondary" disabled={busy} aria-busy={busy}
           onClick={() => { if (!window.confirm('ยืนยันว่าได้นำแบบ ภ.ง.ด.53 ไปยื่นแล้ว?')) return;
             void run(async () => { await markPnd53Filed(companyId, periodId); await refresh(); setMessage('บันทึกสถานะยื่นแบบแล้ว'); }); }}>
           บันทึกว่ายื่นแบบแล้ว
@@ -111,7 +111,7 @@ export function Pnd53Page({ companyId, permissions }: { companyId: string; permi
           {canPrepare && <div className="flex flex-wrap gap-2">
             <input className="mangmee-input flex-1" aria-label={`เหตุผลปิดข้อทักท้วง ${issue.issueCode}`} placeholder="เหตุผลที่ตรวจและแก้ไขแล้ว"
               value={issueNotes[issue.id] ?? ''} onChange={(event) => setIssueNotes((current) => ({ ...current, [issue.id]: event.target.value }))} />
-            <button type="button" className="mangmee-btn mangmee-btn-secondary" disabled={busy || !issueNotes[issue.id]?.trim()}
+            <button type="button" className="mangmee-btn mangmee-btn-secondary" disabled={busy || !issueNotes[issue.id]?.trim()} aria-busy={busy}
               onClick={() => void run(async () => { await resolvePnd53Issue(companyId, issue.id, issueNotes[issue.id]!); setIssues(await listPnd53Issues(companyId, periodId)); setMessage('บันทึกการตรวจรายการแล้ว'); })}>
               บันทึกว่าแก้ไขแล้ว
             </button>
