@@ -121,7 +121,7 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (s
           {challenge && challenge.status !== 'USED' && <p role="status">รหัสเดิมหมดอายุหรือใช้ไม่ได้แล้ว กรุณาขอรหัสใหม่</p>}
           {state.hasPassword && passwordField}
           {state.lineLinked && <button type="button" className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={reauthenticate}>ยืนยันตัวตนผ่าน LINE</button>}
-          <label className="block" htmlFor={`${id}-email`}>อีเมลที่ต้องการยืนยัน<input id={`${id}-email`} className={field} type="email" autoComplete="email" maxLength={254} value={email} required disabled={busy} onChange={e => { setEmail(e.target.value); request.current = null; }} /></label>
+          <label className="block" htmlFor={`${id}-email`}>อีเมลที่ต้องการยืนยัน<span className="text-red-600" aria-hidden="true"> *</span><input id={`${id}-email`} className={field} type="email" autoComplete="email" maxLength={254} value={email} required disabled={busy} onChange={e => { setEmail(e.target.value); request.current = null; }} /></label>
           {sameVerifiedEmail && <p role="status" className="text-sm text-gray-600">อีเมลนี้ยืนยันแล้ว หากต้องการเปลี่ยน กรุณากรอกอีเมลใหม่</p>}
           <button className={primaryButton} disabled={busy || !email.trim() || sameVerifiedEmail || (passwordRequired && !password) || retrySeconds > 0} aria-busy={Boolean(busy)}>{busy ? 'กำลังดำเนินการ…' : retrySeconds ? `ขอรหัสใหม่ได้ใน ${retrySeconds} วินาที` : 'ขอรหัสยืนยัน'}</button>
         </form>}

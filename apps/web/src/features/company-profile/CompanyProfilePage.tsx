@@ -316,6 +316,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
       value={address[key] ?? ''}
       disabled={!canEditShop || shopSaving}
       required={required}
+      showRequiredMark={required}
       onChange={(event) => setAddress((current) => ({ ...current, [key]: event.target.value }))}
     />
   );
@@ -395,6 +396,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
             <TextField
               label="ชื่อจดทะเบียน"
               value={registeredName}
+              showRequiredMark={!full?.displayName?.trim()}
               disabled={!canEditShop || shopSaving}
               hint="ใช้ชื่อจดทะเบียนบนใบแจ้งหนี้และใบเสร็จ หากเว้นว่างจะใช้ชื่อร้านที่สมัครไว้"
               onChange={(event) => setRegisteredName(event.target.value)}
@@ -407,7 +409,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
               hint="ตัวเลข 13 หลัก"
               onChange={(event) => setTaxId(event.target.value.replace(/[^0-9]/g, '').slice(0, 13))}
             />
-            <ThaiAddressFields companyId={companyId} required disabled={!canEditShop || shopSaving}
+            <ThaiAddressFields companyId={companyId} required showRequiredMark disabled={!canEditShop || shopSaving}
               value={{ postalCode: address.postalCode ?? '', province: address.province ?? '', district: address.district ?? '', subdistrict: address.subdistrict ?? '' }}
               onChange={(next) => setAddress((current) => ({ ...current, ...next }))} />
             <div className="grid gap-4 sm:grid-cols-2">

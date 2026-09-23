@@ -11,10 +11,11 @@ type Props = ({ companyId: string; addressMasterPath?: never } | { companyId?: n
   onChange: (value: ThaiAddressValue) => void;
   disabled?: boolean;
   required?: boolean;
+  showRequiredMark?: boolean;
   className?: string;
 };
 
-export function ThaiAddressFields({ companyId, addressMasterPath, value, onChange, disabled = false, required = false, className = 'grid gap-4 sm:grid-cols-2' }: Props) {
+export function ThaiAddressFields({ companyId, addressMasterPath, value, onChange, disabled = false, required = false, showRequiredMark = false, className = 'grid gap-4 sm:grid-cols-2' }: Props) {
   const [rows, setRows] = useState<ThaiAddressOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -85,23 +86,23 @@ export function ThaiAddressFields({ companyId, addressMasterPath, value, onChang
   };
 
   return <div className={className}>
-    <TextField label="รหัสไปรษณีย์" value={value.postalCode} disabled={disabled} required={required}
+    <TextField label="รหัสไปรษณีย์" value={value.postalCode} disabled={disabled} required={required} showRequiredMark={showRequiredMark}
       inputMode="numeric" maxLength={5} placeholder="เช่น 10330"
       onChange={(event) => onChange({ postalCode: event.target.value.replace(/\D/g, '').slice(0, 5), province: '', district: '', subdistrict: '' })} />
     {rows.length ? <>
-      <SelectField label="จังหวัด" value={value.province} disabled={disabled} required={required} onChange={(event) => chooseProvince(event.target.value)}>
+      <SelectField label="จังหวัด" value={value.province} disabled={disabled} required={required} showRequiredMark={showRequiredMark} onChange={(event) => chooseProvince(event.target.value)}>
         <option value="">— เลือกจังหวัด —</option>{provinces.map((option) => <option key={option} value={option}>{option}</option>)}
       </SelectField>
-      <SelectField label="อำเภอ / เขต" value={value.district} disabled={disabled || !value.province} required={required} onChange={(event) => chooseDistrict(event.target.value)}>
+      <SelectField label="อำเภอ / เขต" value={value.district} disabled={disabled || !value.province} required={required} showRequiredMark={showRequiredMark} onChange={(event) => chooseDistrict(event.target.value)}>
         <option value="">— เลือกอำเภอ / เขต —</option>{districts.map((option) => <option key={option} value={option}>{option}</option>)}
       </SelectField>
-      <SelectField label="ตำบล / แขวง" value={value.subdistrict} disabled={disabled || !value.district} required={required} onChange={(event) => onChange({ ...value, subdistrict: event.target.value })}>
+      <SelectField label="ตำบล / แขวง" value={value.subdistrict} disabled={disabled || !value.district} required={required} showRequiredMark={showRequiredMark} onChange={(event) => onChange({ ...value, subdistrict: event.target.value })}>
         <option value="">— เลือกตำบล / แขวง —</option>{subdistricts.map((option) => <option key={option} value={option}>{option}</option>)}
       </SelectField>
     </> : <>
-      <TextField label="จังหวัด" value={value.province} disabled={disabled} required={required} onChange={(event) => onChange({ ...value, province: event.target.value })} />
-      <TextField label="อำเภอ / เขต" value={value.district} disabled={disabled} required={required} onChange={(event) => onChange({ ...value, district: event.target.value })} />
-      <TextField label="ตำบล / แขวง" value={value.subdistrict} disabled={disabled} required={required} onChange={(event) => onChange({ ...value, subdistrict: event.target.value })} />
+      <TextField label="จังหวัด" value={value.province} disabled={disabled} required={required} showRequiredMark={showRequiredMark} onChange={(event) => onChange({ ...value, province: event.target.value })} />
+      <TextField label="อำเภอ / เขต" value={value.district} disabled={disabled} required={required} showRequiredMark={showRequiredMark} onChange={(event) => onChange({ ...value, district: event.target.value })} />
+      <TextField label="ตำบล / แขวง" value={value.subdistrict} disabled={disabled} required={required} showRequiredMark={showRequiredMark} onChange={(event) => onChange({ ...value, subdistrict: event.target.value })} />
     </>}
     {(loading || message) && <p role="status" className={`text-sm sm:col-span-full ${message ? 'text-amber-700' : 'text-gray-500'}`}>
       {loading ? 'กำลังค้นหาที่อยู่…' : message}
