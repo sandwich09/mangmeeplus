@@ -13,7 +13,7 @@ import { BillingAdminService } from './billing-admin.service';
 import { BillingConfigurationService } from './billing-configuration.service';
 import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
 import { recordBillingFinancials } from './billing-financial';
-import { pendingRefund, refundSource, refundPreview, observedRefund, refundReviewRequired } from './billing-refund-source';
+import { pendingRefund, refundSource, refundParams, refundPreview, observedRefund, refundReviewRequired } from './billing-refund-source';
 
 type Proposed={accountId:string;customerId:string;chargeId:string;membershipId:string;actorCompanyId:string;sourceHash:string;localHash:string;providerSourceHash:string;
   settingsVersion:number;policyRevisionId:string;amountSatang:number;memo:string;notifyCustomer:boolean;invoiceNumber:string|null;
@@ -82,8 +82,7 @@ export class BillingRefundsService {
       typeof input.memo!=='string'||input.memo.length>500||typeof input.notifyCustomer!=='boolean'||typeof input.sourceHash!=='string'||!/^[a-f0-9]{64}$/.test(input.sourceHash))throw new BadRequestException();
     await this.access(context,companyId,'system.billing.refund.manage');const s=await this.source(context,companyId,invoiceId),state=await this.policy(input.amountSatang);
     if(s.sourceHash!==input.sourceHash||state.settings.version!==s.state.settings.version)throw stale();
-    const id=randomUUID(),memo=input.memo.trim(),params={invoice:s.row.providerInvoiceId,amount:input.amountSatang,refund_amount:input.amountSatang,credit_amount:0,out_of_band_amount:0,
-      email_type:input.notifyCustomer?'credit_note':'none',...memo?{memo}:{},metadata:{billingRefundOperationId:id,billingAccountId:s.account.id,billingSourceHash:s.source.sourceHash}};
+    const id=randomUUID(),memo=input.memo.trim(),params=await refundParams(this.billing.stripe,s.account,s.row,s.source,id,input.amountSatang,memo,input.notifyCustomer);
     const projection=await refundPreview(this.billing.stripe,s.account,s.row,s.source,params),usage=await this.billing.usage(companyId);
     const p:Proposed={accountId:s.account.id,customerId:s.account.customerId!,chargeId:s.row.providerChargeId!,membershipId:context.membershipId,actorCompanyId:context.companyId,sourceHash:s.sourceHash,localHash:localHash(s.account,s.row),
       providerSourceHash:s.source.sourceHash,settingsVersion:state.settings.version,policyRevisionId:state.revision!.id,amountSatang:input.amountSatang,memo,notifyCustomer:input.notifyCustomer,

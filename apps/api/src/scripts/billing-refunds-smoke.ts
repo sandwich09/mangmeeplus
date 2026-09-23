@@ -29,11 +29,12 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
     amount_remaining:0,starting_balance:0,paid_out_of_band:false,post_payment_credit_notes_amount:notes.filter(n=>n.status==='issued').reduce((sum,n)=>sum+n.amount,0),
     parent:{subscription_details:{subscription:local.subscriptionId}},total_taxes:[],hosted_invoice_url:'https://invoice.stripe.com/i/synthetic',invoice_pdf:'https://pay.stripe.com/invoice/synthetic.pdf'});
   const note=(params:URLSearchParams,id:string)=>{
-    const amount=Number(params.get('amount'));return {id,object:'credit_note',livemode:false,customer:customerId,invoice:local.providerInvoiceId,currency:'thb',status:'issued',type:'post_payment',
+    // Live dahlia: the note carries exactly the requested original line; an amount-only note has no lines.
+    const line=params.get('lines[0][invoice_line_item]'),amount=Number(line?params.get('lines[0][amount]'):params.get('amount'));return {id,object:'credit_note',livemode:false,customer:customerId,invoice:local.providerInvoiceId,currency:'thb',status:'issued',type:'post_payment',
       amount,total:amount,pre_payment_amount:0,post_payment_amount:amount,total_excluding_tax:amount,amount_shipping:0,discount_amount:0,discount_amounts:[],total_taxes:[],
       customer_balance_transaction:null,out_of_band_amount:0,number:`TEST-CN-${notes.length+1}`,created:Math.floor(Date.now()/1000),memo:params.get('memo')??null,
       metadata:{billingRefundOperationId:params.get('metadata[billingRefundOperationId]'),billingAccountId:params.get('metadata[billingAccountId]'),billingSourceHash:params.get('metadata[billingSourceHash]')},
-      lines:list([{id:`cnli_Refund${run}`,object:'credit_note_line_item',livemode:false,type:'invoice_line_item',invoice_line_item:lineId,amount,discount_amount:0,discount_amounts:[],taxes:[]}]),refunds:[],pdf:'https://pay.stripe.com/credit_notes/synthetic.pdf'};
+      lines:list(line?[{id:`cnli_Refund${run}`,object:'credit_note_line_item',livemode:false,type:'invoice_line_item',invoice_line_item:line,amount,discount_amount:0,discount_amounts:[],taxes:[]}]:[]),refunds:[],pdf:'https://pay.stripe.com/credit_notes/synthetic.pdf'};
   };
   const issue=(params:URLSearchParams,status='succeeded')=>{
     const n=note(params,`cn_${randomUUID().replace(/-/g,'')}`),id=`re_${randomUUID().replace(/-/g,'')}`;
@@ -48,8 +49,9 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
     if(!native)return undefined;assert.equal(new Headers(init?.headers).get('Stripe-Version'),STRIPE_API_VERSION);
     if(method==='POST'){
       assert.equal(path,'/credit_notes');const params=new URLSearchParams(String(init?.body)),key=new Headers(init?.headers).get('Idempotency-Key')!;
-      assert.ok(key?.startsWith('billing-refund-'));assert.equal(params.get('invoice'),local.providerInvoiceId);assert.equal(params.get('amount'),params.get('refund_amount'));
-      assert.equal(params.get('credit_amount'),'0');assert.equal(params.get('out_of_band_amount'),'0');assert.ok(['none','credit_note'].includes(params.get('email_type')!));
+      assert.ok(key?.startsWith('billing-refund-'));assert.equal(params.get('invoice'),local.providerInvoiceId);assert.equal(params.get('lines[0][invoice_line_item]'),lineId);
+      assert.equal(params.get('lines[0][type]'),'invoice_line_item');assert.equal(params.get('lines[0][amount]'),params.get('refund_amount'));
+      assert.ok(!params.has('amount')&&!params.has('credit_amount'));assert.equal(params.get('out_of_band_amount'),'0');assert.ok(['none','credit_note'].includes(params.get('email_type')!));
       assert.equal(String(init?.body).includes('PRIVATE_REFUND'),false);const prior=requests.find(r=>r.key===key);if(prior)assert.equal(prior.body,init?.body);
       requests.push({key,body:String(init?.body)});if(cache.has(key))return response(cache.get(key));if(behavior==='lose-before')throw Error('Synthetic write transport uncertainty');
       const created=issue(params,behavior==='pending'?'pending':behavior==='failed'?'failed':'succeeded');cache.set(key,created);
@@ -68,7 +70,9 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
     if(path==='/invoice_payments')return response(list([{id:`inpay_Refund${run}`,object:'invoice_payment',livemode:false,invoice:local.providerInvoiceId,status:'paid',currency:'thb',amount_paid:local.paidSatang,payment:{type:'payment_intent',payment_intent:intentId}}]));
     if(path===`/invoices/${local.providerInvoiceId}/lines`)return response(list([{id:lineId,livemode:false,currency:'thb',amount:local.paidSatang}]));
     if(path==='/credit_notes/preview'){
-      if(Number(url.searchParams.get('amount'))>local.paidSatang-notes.reduce((sum,n)=>sum+n.amount,0))return response({error:{type:'invalid_request_error'}},400);
+      // Live 2026-08-26.dahlia (read-only probe 2026-09-23) answers credit_amount below 1 with this 400.
+      if(url.searchParams.has('credit_amount')&&!(Number(url.searchParams.get('credit_amount'))>=1))return response({error:{type:'invalid_request_error',code:'parameter_invalid_integer',param:'credit_amount',message:'This value must be greater than or equal to 1.'}},400);
+      if(Number(url.searchParams.get('refund_amount'))>local.paidSatang-notes.reduce((sum,n)=>sum+n.amount,0))return response({error:{type:'invalid_request_error'}},400);
       const value=note(url.searchParams,'cn_Preview');if(corrupt==='tax')value.total_excluding_tax--;return response(value);
     }
     if(path==='/credit_notes')return response(corrupt==='duplicate'&&notes.length?{...list([notes[0],notes[0]]),has_more:true}:list(notes));
@@ -168,7 +172,7 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
     const aged=await queued();behavior='lose-before';assert.equal((await execute(aged)).state,'UNKNOWN');const agedRow=await db.billingOperation.findUniqueOrThrow({where:{id:aged.id}});
     await db.billingOperation.update({where:{id:aged.id},data:{resultJson:{...(agedRow.resultJson as any),dispatchedAt:new Date(Date.now()-24*3600000).toISOString()}}});behavior='ok';
     const agedBefore=requests.length,unconfirmed=await execute(await get(aged.id));assert.equal(unconfirmed.errorCode,'CONTROL_REFUND_AGED_UNKNOWN');assert.equal(requests.length,agedBefore);
-    const p=agedRow.proposedJson as any,params=new URLSearchParams();for(const [key,value] of Object.entries(p.params)){if(key==='metadata')for(const [m,v] of Object.entries(value as object))params.set(`metadata[${m}]`,String(v));else params.set(key,String(value));}issue(params);
+    const p=agedRow.proposedJson as any,params=new URLSearchParams(),form=(key:string,value:unknown):void=>{if(value&&typeof value==='object')for(const [k,v] of Object.entries(value))form(key?`${key}[${k}]`:k,v);else params.set(key,String(value));};form('',p.params);issue(params);
     assert.equal((await execute(await get(aged.id))).state,'SUCCEEDED');assert.equal(requests.length,agedBefore);
     cases.push('refund-aged-unknown-never-blind-replays-and-positive-original-discovery-completes');
     const pending=await queued();behavior='pending';let pendingView=await execute(pending);assert.equal(pendingView.state,'QUEUED');assert.equal(pendingView.refundState,'pending');assert.ok(pendingView.creditNoteId);
