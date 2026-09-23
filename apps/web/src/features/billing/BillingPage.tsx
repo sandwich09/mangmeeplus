@@ -323,6 +323,19 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           onClick={() => setSection(value)} className={`min-h-12 flex-1 border-b-2 px-2 py-3 text-sm font-semibold sm:flex-none sm:px-5 sm:text-base ${section === value ? 'border-brand-600 text-brand-700' : 'border-transparent text-gray-600 hover:text-brand-700'}`}>{label}</button>)}
       </nav>
       {showOverview && <>
+      {!!status.billingProfile?.missingFields.length && <section role="status" aria-labelledby="billing-profile-reminder-title"
+        className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-gray-800">
+        <div>
+          <h2 id="billing-profile-reminder-title" className="font-semibold">ตั้งค่าข้อมูลบริษัทก่อนซื้อแพ็กเกจ</h2>
+          <p className="mt-1 text-sm">ข้อมูลนี้ใช้สำหรับออกใบแจ้งหนี้และใบเสร็จ กรุณากรอกช่องที่ยังขาดไว้ก่อนชำระเงิน</p>
+        </div>
+        <ul className="list-disc space-y-1 pl-5 text-sm">
+          {status.billingProfile.missingFields.map(field => <li key={field}>{BILLING_PROFILE_FIELD_LABELS[field]}</li>)}
+        </ul>
+        <Link className="mangmee-btn mangmee-btn-primary min-h-11" href={`/companies/${encodeURIComponent(companyId)}/settings/profile#shop`}>
+          กรอกข้อมูลบริษัท
+        </Link>
+      </section>}
       <section aria-label="สถานะแพ็กเกจ" className="mangmee-card space-y-5 p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-bold">{returnFailed ? 'รายการชำระเงินนี้ไม่สำเร็จ' : status.pendingDeal ? status.pendingDeal.state === 'HELD' ? 'ชำระแล้ว ต้องตรวจสอบก่อนเริ่มดีล' : status.pendingDeal.state === 'PAID' ? 'ชำระดีลแล้ว รอเริ่มสิทธิ์' : 'ชำระแล้ว กำลังยืนยันการต่ออายุ' : confirmed ? returning ? dealReturn ? 'ใช้งานข้อเสนอพิเศษแล้ว' : 'ชำระแล้ว เปิดใช้งานแล้ว' : 'แพ็กเกจปัจจุบัน' : (returning ? returnAttempt?.paymentState === 'PAID' && returnAttempt.applyState !== 'APPLIED' : status.paymentState === 'PAID' && status.applyState !== 'APPLIED') ? 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์' : status.paymentState === 'FAILED' ? 'เรียกเก็บเงินไม่สำเร็จ' : status.attemptId ? 'กำลังตรวจสอบรายการชำระเงิน' : packageHeading}</h2>
           <MangmeeBadge tone={status.accessState === 'ACTIVE' ? 'brand' : 'amber'}>{status.accessState === 'ACTIVE' ? 'ใช้งานได้' : status.accessState !== 'EXPIRED' ? 'อยู่ระหว่างตรวจสอบ' : lockReason === 'no_package' ? 'ยังไม่มีแพ็กเกจ' : 'ครบกำหนดใช้งาน'}</MangmeeBadge>
