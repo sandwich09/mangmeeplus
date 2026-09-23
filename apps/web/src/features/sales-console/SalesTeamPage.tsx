@@ -2,44 +2,38 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   SALES_CODE_DEFAULT_LENGTH, SALES_DEAL_REASON_MAX,
+  type CompanyLegalAddress,
   type SalesAgentCreateBody, type SalesAgentCredentialHandoff, type SalesAgentProfileDto,
   type SalesAgentView, type SalesAttributionFlagRow, type SalesRoleKey,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { SelectField, TextField, TextareaField } from '@/common/components/field';
+import { ThaiAddressFields } from '@/common/components/field/ThaiAddressFields';
 import { LoadingState } from '@/common/components/state';
 import { Modal } from '@/common/components/modal';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import {
-  createSalesAgent, createSalesTeamMember, getSalesAgentProfile, listSalesAgents, listSalesAttributionFlags, listSalesTeam,
+  createSalesAgent, createSalesTeamMember, getSalesAgentProfile, getSalesTeamProfile, listSalesAgents, listSalesAttributionFlags, listSalesTeam,
   resetSalesAgentCredential, resetSalesTeamCredential, reviewSalesAttributionFlag, SALES_AGENT_CSV_URL, updateSalesAgent,
 } from './sales.api';
 import {
   agentStatusMeta, emptyAgentForm, formatBaht, normalizeSalesCodeInput, SALES_ATTRIBUTION_SOURCE_LABELS,
-  SALES_ROLE_LABELS, salesFlagLabel, validateAgentForm,
+  SALES_ROLE_LABELS, SALES_BANK_NAMES, salesAgentAddress, salesFlagLabel, validateAgentForm,
   type SalesAgentFormErrors, type SalesAgentFormValues,
 } from './sales-console.logic';
 import { SalesCredentialPanel, SalesEmpty, SalesNotice } from './SalesConsoleParts';
+import { SalesProfileEditor } from './SalesProfileEditor';
 
 /**
  * One page, two rights (spec §12 "Sales console" + "Admin console"):
- *  - `scope="lead"` is `/sales/team` — a หัวหน้า creates เซลล์ and resets their password, and the
- *    tax/bank block is not rendered AND not sent, because a lead may never hold that PII (S10).
- *  - `scope="admin"` is `/system/sales-team` — SYSTEM_ADMIN, every field, suspend/reactivate,
- *    the audited profile read and the CSV export.
+ *  - `scope="lead"` is `/sales/team` — a หัวหน้า creates เซลล์ and reads own-team payroll profiles.
+ *  - `scope="admin"` is `/system/sales-team` — SYSTEM_ADMIN can also suspend/reactivate,
+ *    read/edit the audited profile and export CSV.
  */
 export type SalesTeamScope = 'lead' | 'admin';
 
-const PROFILE_FIELDS: readonly { key: keyof SalesAgentFormValues; label: string; numeric?: boolean }[] = [
-  { key: 'legalName', label: 'ชื่อ-นามสกุลตามบัตรประชาชน' },
-  { key: 'nationalId', label: 'เลขบัตรประชาชน', numeric: true },
-  { key: 'taxId', label: 'เลขประจำตัวผู้เสียภาษี (ถ้ามี)', numeric: true },
-  { key: 'address', label: 'ที่อยู่' },
-  { key: 'bankName', label: 'ธนาคาร' },
-  { key: 'bankAccount', label: 'เลขบัญชีธนาคาร', numeric: true },
-  { key: 'whtRatePercent', label: 'อัตราหัก ณ ที่จ่าย (%)', numeric: true },
-];
+const EMPTY_ADDRESS: CompanyLegalAddress = { line1: '', line2: '', subdistrict: '', district: '', province: '', postalCode: '' };
 
 export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
   const admin = scope === 'admin';
@@ -49,9 +43,12 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [values, setValues] = useState<SalesAgentFormValues>(() => emptyAgentForm());
+  const [address, setAddress] = useState<CompanyLegalAddress>(() => ({ ...EMPTY_ADDRESS }));
+  const [bankSelection, setBankSelection] = useState('');
   const [errors, setErrors] = useState<SalesAgentFormErrors>({});
   const [credential, setCredential] = useState<SalesAgentCredentialHandoff | null>(null);
   const [profile, setProfile] = useState<{ agent: SalesAgentView; data: SalesAgentProfileDto } | null>(null);
+  const [profileEditing, setProfileEditing] = useState(false);
   const [statusChange, setStatusChange] = useState<SalesAgentView | null>(null);
   const [statusReason, setStatusReason] = useState('');
   // D6 anti-gaming (§17.1). Admin console only: these rows decide whose numbers count, and the
@@ -94,7 +91,8 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
   };
 
   const submitCreate = async () => {
-    const found = validateAgentForm(values, { withProfile: admin });
+    const fullAddress = salesAgentAddress(address);
+    const found = validateAgentForm({ ...values, address: fullAddress });
     setErrors(found);
     if (Object.keys(found).length > 0) return;
     setBusy(true);
@@ -109,22 +107,22 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
         role: values.role,
         ...(values.teamLeadUserId ? { teamLeadUserId: values.teamLeadUserId } : {}),
         ...(values.salesCode.trim() ? { salesCode: values.salesCode.trim() } : {}),
-        ...(admin ? {
-          profile: {
-            legalName: values.legalName.trim(),
-            nationalId: values.nationalId.replace(/[^0-9]/g, ''),
-            taxId: values.taxId.replace(/[^0-9]/g, '') || null,
-            address: values.address.trim(),
-            bankName: values.bankName.trim(),
-            bankAccount: values.bankAccount.replace(/[^0-9]/g, ''),
-            whtRatePercent: Number(values.whtRatePercent.trim()),
-          },
-        } : {}),
+        profile: {
+          legalName: values.legalName.trim(),
+          nationalId: values.nationalId.replace(/[^0-9]/g, ''),
+          taxId: values.taxId.replace(/[^0-9]/g, '') || null,
+          address: fullAddress,
+          bankName: values.bankName.trim(),
+          bankAccount: values.bankAccount.replace(/[^0-9]/g, ''),
+          whtRatePercent: Number(values.whtRatePercent.trim()),
+        },
       };
       const result = await (admin ? createSalesAgent(body) : createSalesTeamMember(body));
       setCredential(result.credential);
       setCreating(false);
       setValues(emptyAgentForm());
+      setAddress({ ...EMPTY_ADDRESS });
+      setBankSelection('');
       setNotice(`สร้างบัญชี ${result.agent.displayName} แล้ว รหัสเซลล์ ${result.agent.salesCode}`);
       await load();
     } catch (cause) {
@@ -191,7 +189,8 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
     setBusy(true);
     setError(null);
     try {
-      setProfile({ agent, data: await getSalesAgentProfile(agent.userId) });
+      setProfile({ agent, data: await (admin ? getSalesAgentProfile(agent.userId) : getSalesTeamProfile(agent.userId)) });
+      setProfileEditing(false);
     } catch (cause) {
       setError(apiErrorMessage(cause));
     } finally {
@@ -207,7 +206,7 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
       title="ทีมขายมั่งมี"
       description={admin
         ? 'บัญชีเซลล์และหัวหน้าทีมทั้งหมด พร้อมข้อมูลภาษีและบัญชีธนาคารสำหรับจ่ายค่าคอมมิชชัน'
-        : 'สร้างบัญชีเซลล์ในทีมของคุณ และรีเซ็ตรหัสผ่านให้เมื่อจำเป็น'}
+        : 'สร้างบัญชีเซลล์ในทีม ดูข้อมูลของทีม และรีเซ็ตรหัสผ่านให้เมื่อจำเป็น'}
       actions={
         <div className="flex flex-wrap gap-2">
           {admin && <a href={SALES_AGENT_CSV_URL} className="mangmee-btn mangmee-btn-secondary">ส่งออก CSV</a>}
@@ -242,7 +241,7 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2">
                       <button type="button" disabled={busy} aria-busy={busy} className="mangmee-btn mangmee-btn-secondary" onClick={() => void resetPassword(agent)}>รีเซ็ตรหัสผ่าน</button>
-                      {admin && agent.hasProfile && (
+                      {(admin || agent.role === 'MANGMEE_SALES') && (
                         <button type="button" disabled={busy} aria-busy={busy} className="mangmee-btn mangmee-btn-secondary" onClick={() => void openProfile(agent)}>ดูข้อมูลภาษี</button>
                       )}
                       {admin && (
@@ -343,17 +342,38 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
             </SelectField>
           )}
 
-          {admin && (
-            <div className="grid gap-4 rounded-xl border border-gray-200 p-3.5">
+          <div className="grid gap-4 rounded-xl border border-gray-200 p-3.5">
               <p className="text-sm font-semibold text-gray-800">ข้อมูลภาษีและบัญชีธนาคาร</p>
-              <p className="-mt-3 text-xs leading-6 text-gray-500">ใช้จ่ายค่าคอมมิชชัน เก็บแบบเข้ารหัส และเห็นได้เฉพาะผู้ดูแลระบบ</p>
-              {PROFILE_FIELDS.map((field) => (
-                <TextField key={field.key} label={field.label} name={field.key} value={values[field.key] as string}
-                  inputMode={field.numeric ? 'numeric' : undefined} autoComplete="off"
-                  onChange={(event) => set(field.key, event.target.value as never)} error={errors[field.key]} />
-              ))}
-            </div>
-          )}
+              <p className="-mt-3 text-xs leading-6 text-gray-500">ใช้จ่ายค่าคอมมิชชัน เก็บแบบเข้ารหัส ผู้ดูแลระบบและหัวหน้าทีมที่ดูแลเซลล์เปิดดูได้</p>
+              <TextField label="ชื่อ-นามสกุลตามบัตรประชาชน" name="legalName" value={values.legalName} autoComplete="off"
+                onChange={(event) => set('legalName', event.target.value)} error={errors.legalName} />
+              <TextField label="เลขบัตรประชาชน" name="nationalId" value={values.nationalId} inputMode="numeric" maxLength={13} autoComplete="off"
+                onChange={(event) => set('nationalId', event.target.value.replace(/\D/g, '').slice(0, 13))} error={errors.nationalId} />
+              <TextField label="เลขประจำตัวผู้เสียภาษี (ถ้ามี)" name="taxId" value={values.taxId} inputMode="numeric" maxLength={13} autoComplete="off"
+                onChange={(event) => set('taxId', event.target.value.replace(/\D/g, '').slice(0, 13))} error={errors.taxId} />
+              <p className="text-sm font-semibold text-gray-800">ที่อยู่ (ตามบัตรประชาชนหรือบริษัท)</p>
+              <ThaiAddressFields addressMasterPath="/v1/system/sales-agents/address-master" required
+                value={{ postalCode: address.postalCode, province: address.province, district: address.district, subdistrict: address.subdistrict }}
+                onChange={(next) => { setAddress((current) => ({ ...current, ...next })); setErrors((current) => ({ ...current, address: undefined })); }} />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <TextField label="ที่อยู่ (บ้านเลขที่ ถนน)" value={address.line1} required maxLength={250} error={errors.address}
+                  onChange={(event) => { setAddress((current) => ({ ...current, line1: event.target.value })); setErrors((current) => ({ ...current, address: undefined })); }} />
+                <TextField label="ที่อยู่เพิ่มเติม" value={address.line2 ?? ''} maxLength={150}
+                  onChange={(event) => setAddress((current) => ({ ...current, line2: event.target.value }))} />
+              </div>
+              <SelectField label="ชื่อธนาคาร" name="bankSelection" value={bankSelection} error={errors.bankName}
+                onChange={(event) => { setBankSelection(event.target.value); set('bankName', event.target.value === 'other' ? '' : event.target.value); }}>
+                <option value="">— เลือกธนาคาร —</option>
+                {SALES_BANK_NAMES.map((bank) => <option key={bank} value={bank}>{bank}</option>)}
+                <option value="other">ธนาคารอื่น ๆ</option>
+              </SelectField>
+              {bankSelection === 'other' && <TextField label="ระบุชื่อธนาคาร" value={values.bankName} maxLength={120}
+                onChange={(event) => set('bankName', event.target.value)} error={errors.bankName} />}
+              <TextField label="เลขบัญชีธนาคาร" name="bankAccount" value={values.bankAccount} inputMode="numeric" autoComplete="off"
+                onChange={(event) => set('bankAccount', event.target.value)} error={errors.bankAccount} />
+              <TextField label="อัตราหัก ณ ที่จ่าย (%)" name="whtRatePercent" value={values.whtRatePercent} inputMode="numeric"
+                onChange={(event) => set('whtRatePercent', event.target.value)} error={errors.whtRatePercent} />
+          </div>
 
           <div className="grid gap-2 sm:grid-cols-2">
             <button type="button" className="mangmee-btn mangmee-btn-secondary" onClick={() => setCreating(false)}>ยกเลิก</button>
@@ -379,10 +399,16 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
         </div>
       </Modal>
 
-      <Modal open={profile !== null} onClose={() => setProfile(null)} title={`ข้อมูลภาษีของ ${profile?.agent.displayName ?? ''}`}>
+      <Modal open={profile !== null} onClose={() => { setProfile(null); setProfileEditing(false); }} title={`ข้อมูลภาษีของ ${profile?.agent.displayName ?? ''}`} size="lg">
         <div className="grid gap-3">
           <SalesNotice tone="warning">ระบบบันทึกการเปิดดูข้อมูลนี้ไว้ทุกครั้ง</SalesNotice>
-          {profile && (
+          {profile && profileEditing ? <SalesProfileEditor key={profile.agent.userId} initial={profile.data} admin
+            onCancel={() => setProfileEditing(false)} onSave={async (value) => {
+              await updateSalesAgent(profile.agent.userId, { profile: value });
+              setProfile({ agent: profile.agent, data: await getSalesAgentProfile(profile.agent.userId) });
+              setProfileEditing(false);
+              setNotice('บันทึกข้อมูลภาษีเรียบร้อยแล้ว');
+            }} /> : profile && (
             <dl className="grid gap-2 text-sm">
               {([
                 ['ชื่อ-นามสกุลตามบัตรประชาชน', profile.data.legalName],
@@ -395,12 +421,15 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
               ] as const).map(([label, value]) => (
                 <div key={label}>
                   <dt className="text-xs font-semibold text-gray-500">{label}</dt>
-                  <dd className="break-words font-bold text-gray-900">{value}</dd>
+                  <dd className="break-words font-bold text-gray-900">{value ?? '—'}</dd>
                 </div>
               ))}
             </dl>
           )}
-          <button type="button" className="mangmee-btn mangmee-btn-secondary" onClick={() => setProfile(null)}>ปิด</button>
+          {!profileEditing && <div className="grid gap-2 sm:grid-cols-2">
+            <button type="button" className="mangmee-btn mangmee-btn-secondary" onClick={() => setProfile(null)}>ปิด</button>
+            {admin && <button type="button" className="mangmee-btn mangmee-btn-primary" onClick={() => setProfileEditing(true)}>แก้ไขข้อมูล</button>}
+          </div>}
         </div>
       </Modal>
     </MangmeePage>

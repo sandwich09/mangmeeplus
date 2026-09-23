@@ -13,7 +13,7 @@ import { join } from 'node:path';
 
 const PAGES = [
   'SalesCompaniesPage.tsx', 'SalesConsoleParts.tsx', 'SalesDealFormPage.tsx', 'SalesDealsPage.tsx',
-  'SalesMyWorkPage.tsx', 'SalesReportsPage.tsx', 'SalesTeamPage.tsx',
+  'SalesMyWorkPage.tsx', 'SalesMyProfilePage.tsx', 'SalesProfileEditor.tsx', 'SalesReportsPage.tsx', 'SalesTeamPage.tsx',
 ];
 
 const SHELL = join(__dirname, '../../common/components/app-shell/SalesHeader.tsx');
@@ -70,12 +70,12 @@ describe('sales console theme and copy', () => {
     assert.match(text, /canApprove && deal\.status === 'PENDING_APPROVAL'/);
   });
 
-  it('the หัวหน้า team page never renders or sends tax and bank fields (S10)', () => {
+  it('the หัวหน้า can read team profiles and admin can edit them', () => {
     const text = source('SalesTeamPage.tsx');
-    // Both the block and the request body hang off the same `admin` flag: hiding the inputs while
-    // still posting their (empty) values would leave a lead writing PII rows they may not read.
-    assert.match(text, /\{admin && \(\s*\n\s*<div className="grid gap-4 rounded-xl border/);
-    assert.match(text, /\.\.\.\(admin \? \{\s*\n\s*profile: \{/);
+    assert.match(text, /<div className="grid gap-4 rounded-xl border[^\n]*>\s*<p[^>]*>ข้อมูลภาษีและบัญชีธนาคาร/);
+    assert.match(text, /profile: \{/);
+    assert.match(text, /getSalesTeamProfile\(agent\.userId\)/);
+    assert.match(text, /\{admin && <button[^\n]*onClick=\{\(\) => setProfileEditing\(true\)\}/);
   });
 
   it('the one-time password is shown once, with a copy button and no promise it can be fetched again (Q3/S28)', () => {

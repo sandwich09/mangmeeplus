@@ -14,6 +14,8 @@ import {
   SALES_REPORT_MAX_MONTHS,
   SALES_REPORT_MONTH_PATTERN,
   TIER_FEATURE_PRESETS,
+  formatCompanyLegalAddress,
+  type CompanyLegalAddress,
   type SalesAgentView,
   type SalesAttributionFlag,
   type SalesAttributionSource,
@@ -506,6 +508,16 @@ export type SalesAgentFormValues = {
 
 export type SalesAgentFormErrors = Partial<Record<keyof SalesAgentFormValues, string>>;
 
+// Source: Bank of Thailand financial institution directory, checked 2026-09-23.
+export const SALES_BANK_NAMES = [
+  'ธนาคารกรุงเทพ', 'ธนาคารกสิกรไทย', 'ธนาคารกรุงไทย', 'ธนาคารไทยพาณิชย์',
+  'ธนาคารกรุงศรีอยุธยา', 'ธนาคารทหารไทยธนชาต', 'ธนาคารยูโอบี',
+  'ธนาคารซีไอเอ็มบี ไทย', 'ธนาคารเกียรตินาคินภัทร', 'ธนาคารแลนด์ แอนด์ เฮ้าส์',
+  'ธนาคารไทยเครดิต', 'ธนาคารไอซีบีซี (ไทย)', 'ธนาคารสแตนดาร์ดชาร์เตอร์ด (ไทย)',
+  'ธนาคารออมสิน', 'ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร',
+  'ธนาคารอาคารสงเคราะห์', 'ธนาคารอิสลามแห่งประเทศไทย',
+] as const;
+
 export function emptyAgentForm(role: SalesRoleKey = 'MANGMEE_SALES'): SalesAgentFormValues {
   return {
     username: '', displayName: '', phoneNumber: '', email: '', role, teamLeadUserId: '', salesCode: '',
@@ -513,12 +525,13 @@ export function emptyAgentForm(role: SalesRoleKey = 'MANGMEE_SALES'): SalesAgent
   };
 }
 
-/**
- * The same form serves two callers with different rights: a หัวหน้า creates a เซลล์ and never sees
- * the tax/bank block (S10), so `withProfile` decides whether those fields are validated at all
- * rather than the page hiding boxes whose values would still be sent.
- */
-export function validateAgentForm(values: SalesAgentFormValues, options: { withProfile: boolean }): SalesAgentFormErrors {
+export function salesAgentAddress(value: CompanyLegalAddress): string {
+  if (!value.line1.trim() || !value.subdistrict.trim() || !value.district.trim()
+    || !value.province.trim() || !/^\d{5}$/.test(value.postalCode)) return '';
+  return formatCompanyLegalAddress(value) ?? '';
+}
+
+export function validateAgentForm(values: SalesAgentFormValues): SalesAgentFormErrors {
   const errors: SalesAgentFormErrors = {};
   const username = values.username.trim();
   if (!username) errors.username = 'กรุณากรอกชื่อผู้ใช้';
@@ -535,17 +548,22 @@ export function validateAgentForm(values: SalesAgentFormValues, options: { withP
     if (codeError) errors.salesCode = codeError;
   }
 
-  if (options.withProfile) {
-    if (!values.legalName.trim()) errors.legalName = 'กรุณากรอกชื่อ-นามสกุลตามบัตรประชาชน';
-    if (!/^\d{13}$/.test(values.nationalId.replace(/[^0-9]/g, ''))) errors.nationalId = 'เลขบัตรประชาชนต้องเป็นตัวเลข 13 หลัก';
-    const taxId = values.taxId.replace(/[^0-9]/g, '');
-    if (taxId && taxId.length !== 13) errors.taxId = 'เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก';
-    if (!values.address.trim()) errors.address = 'กรุณากรอกที่อยู่';
-    if (!values.bankName.trim()) errors.bankName = 'กรุณากรอกชื่อธนาคาร';
-    if (!/^\d{6,20}$/.test(values.bankAccount.replace(/[^0-9]/g, ''))) errors.bankAccount = 'เลขบัญชีธนาคารต้องเป็นตัวเลข 6–20 หลัก';
-    const wht = Number(values.whtRatePercent.trim());
-    if (!Number.isFinite(wht) || wht < 0 || wht > 100) errors.whtRatePercent = 'อัตราหัก ณ ที่จ่ายต้องอยู่ระหว่าง 0–100';
-  }
+  return { ...errors, ...validateSalesProfile(values) };
+}
+
+export function validateSalesProfile(values: Pick<SalesAgentFormValues,
+  'legalName' | 'nationalId' | 'taxId' | 'address' | 'bankName' | 'bankAccount' | 'whtRatePercent'>): SalesAgentFormErrors {
+  const errors: SalesAgentFormErrors = {};
+  if (!values.legalName.trim()) errors.legalName = 'กรุณากรอกชื่อ-นามสกุลตามบัตรประชาชน';
+  if (!/^\d{13}$/.test(values.nationalId.replace(/[^0-9]/g, ''))) errors.nationalId = 'เลขบัตรประชาชนต้องเป็นตัวเลข 13 หลัก';
+  const taxId = values.taxId.replace(/[^0-9]/g, '');
+  if (taxId && taxId.length !== 13) errors.taxId = 'เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก';
+  if (!values.address.trim()) errors.address = 'กรุณากรอกที่อยู่ให้ครบ';
+  else if (values.address.length > 500) errors.address = 'ที่อยู่ยาวเกิน 500 ตัวอักษร';
+  if (!values.bankName.trim()) errors.bankName = 'กรุณากรอกชื่อธนาคาร';
+  if (!/^\d{6,20}$/.test(values.bankAccount.replace(/[^0-9]/g, ''))) errors.bankAccount = 'เลขบัญชีธนาคารต้องเป็นตัวเลข 6–20 หลัก';
+  const wht = Number(values.whtRatePercent.trim());
+  if (!Number.isFinite(wht) || wht < 0 || wht > 100) errors.whtRatePercent = 'อัตราหัก ณ ที่จ่ายต้องอยู่ระหว่าง 0–100';
   return errors;
 }
 

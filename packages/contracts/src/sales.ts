@@ -146,12 +146,13 @@ export type SalesAgentView = {
 };
 export type SalesAgentListDto = { items: SalesAgentView[] };
 /**
- * Decrypted tax/bank data: SYSTEM_ADMIN only, every read audited (S10).
- * Every field is nullable because a lead-created agent has no payroll record yet — the read
- * answers with nulls rather than 404, so the Owner's form opens on an empty record.
+ * Decrypted tax/bank data: admin, self or own-team lead only; every read audited (S10).
+ * Every field is nullable because older accounts or API callers may omit a payroll record — the
+ * read answers with nulls rather than 404, so the profile form opens on an empty record.
  */
 export type SalesAgentProfileDto = { legalName: string | null; nationalId: string | null; taxId: string | null; address: string | null; bankName: string | null; bankAccount: string | null; whtRatePercent: number };
 export type SalesAgentProfileInput = { legalName: string; nationalId: string; taxId?: string | null; address: string; bankName: string; bankAccount: string; whtRatePercent: number };
+export type SalesAgentSelfProfileInput = Omit<SalesAgentProfileInput, 'whtRatePercent'>;
 export type SalesAgentCreateBody = {
   username: string; displayName: string; phoneNumber?: string; email?: string; role: SalesRoleKey;
   teamLeadUserId?: string | null; /** Omitted = generated. */ salesCode?: string; profile?: SalesAgentProfileInput;

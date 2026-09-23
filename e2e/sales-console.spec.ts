@@ -43,14 +43,30 @@ test.describe('SALES — ทีมขายมั่งมี console', () => {
     // ── create a เซลล์ and capture the one-time password (Q3/S28) ──
     const username = `e2e.sales.${Date.now()}`;
     await leadPage.goto(`${WEB_BASE_URL}/sales/team`);
+    await leadPage.route('**/api/v1/system/sales-agents/address-master?postalCode=*', (route) => route.fulfill({ json: [{
+      postalCode: '10500', provinceCode: '10', provinceTh: 'กรุงเทพมหานคร',
+      districtCode: '1004', districtTh: 'บางรัก', subdistrictCode: '100401', subdistrictTh: 'สีลม',
+    }] }));
     await leadPage.getByRole('button', { name: 'เพิ่มบัญชี' }).click();
     await leadPage.getByLabel('ชื่อผู้ใช้').fill(username);
     await leadPage.getByLabel('ชื่อที่แสดง').fill('E2E เซลล์');
+    await leadPage.getByLabel('ชื่อ-นามสกุลตามบัตรประชาชน').fill('เซลล์ ทดสอบ');
+    await leadPage.getByLabel('เลขบัตรประชาชน').fill('1103700000001');
+    await leadPage.getByLabel('เลขประจำตัวผู้เสียภาษี (ถ้ามี)').fill('1103700000001');
+    await leadPage.getByLabel('รหัสไปรษณีย์').fill('10500');
+    await expect(leadPage.getByLabel('ตำบล / แขวง')).toHaveValue('สีลม');
+    await leadPage.getByLabel('ที่อยู่ (บ้านเลขที่ ถนน)').fill('99 ถนนสีลม');
+    await leadPage.getByLabel('ชื่อธนาคาร').selectOption('ธนาคารกสิกรไทย');
+    await leadPage.getByLabel('เลขบัญชีธนาคาร').fill('1234567890');
     await leadPage.getByRole('button', { name: 'สร้างบัญชี' }).click();
 
     await expect(leadPage.getByText('แสดงครั้งเดียว')).toBeVisible();
     const temporaryPassword = (await leadPage.getByTestId('sales-temporary-password').innerText()).trim();
     expect(temporaryPassword.length).toBeGreaterThan(5);
+    const createdRow = leadPage.locator('div.border-t').filter({ hasText: username });
+    await createdRow.getByRole('button', { name: 'ดูข้อมูลภาษี' }).click();
+    await expect(leadPage.getByText('1103700000001').first()).toBeVisible();
+    await leadPage.getByRole('button', { name: 'ปิด', exact: true }).click();
 
     // ── the new เซลล์ signs in and is forced through the password gate ──
     const newPassword = `E2e@Sales${Date.now()}`;
@@ -79,6 +95,14 @@ test.describe('SALES — ทีมขายมั่งมี console', () => {
     await agentPage.getByRole('button', { name: 'เข้าสู่ระบบ', exact: true }).click();
     await expect(agentPage).not.toHaveURL(/\/login/, { timeout: 15_000 });
     await ensureBrowserLegalAcceptance(agentContext);
+
+    await agentPage.goto(`${WEB_BASE_URL}/sales/profile`);
+    await expect(agentPage.getByRole('heading', { name: 'ข้อมูลของฉัน' })).toBeVisible();
+    await agentPage.getByLabel('ที่อยู่ (ตามบัตรประชาชนหรือบริษัท)').fill('99/1 ถนนสีลม สีลม บางรัก กรุงเทพมหานคร 10500');
+    await agentPage.getByRole('button', { name: 'บันทึกข้อมูล' }).click();
+    await expect(agentPage.getByText('บันทึกข้อมูลเรียบร้อยแล้ว')).toBeVisible();
+    await agentPage.reload();
+    await expect(agentPage.getByLabel('ที่อยู่ (ตามบัตรประชาชนหรือบริษัท)')).toHaveValue('99/1 ถนนสีลม สีลม บางรัก กรุงเทพมหานคร 10500');
 
     // ── the เซลล์ builds a deal for a seeded shop ──
     await agentPage.goto(`${WEB_BASE_URL}/sales/deals/new`);
