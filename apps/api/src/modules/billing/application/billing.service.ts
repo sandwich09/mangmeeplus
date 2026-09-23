@@ -143,7 +143,8 @@ export class BillingService {
       ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(account.renewalMode));
     const paid = account ? await tx.billingInvoice.findFirst({ where: { billingAccountId: account.id, providerStatus: 'paid',
       ...(attemptBound ? { sourceAttemptId: account.contractAttemptId!, applyStatus: 'APPLIED', appliedAt: { not: null },
-        ...(account.paidThrough ? { periodEnd: account.paidThrough } : {}) } : {}) }, select: { id: true } }) : null;
+        // A refund-ended package (billing-end-package.ts) cut paidThrough below its refunded invoice's period.
+        ...(account.paidThrough ? { OR: [{ periodEnd: account.paidThrough }, { periodEnd: { gt: account.paidThrough }, refundedSatang: { gt: 0 } }] } : {}) } : {}) }, select: { id: true } }) : null;
     return billingPurchaseSource(company.planTerm, account, !!paid);
   }
 

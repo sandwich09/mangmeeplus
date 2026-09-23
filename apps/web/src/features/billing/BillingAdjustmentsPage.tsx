@@ -3,10 +3,10 @@ import Link from 'next/link';
 import BillingCustomerFrame from './BillingCustomerFrame';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
-import { billingControl, billingLabel, billingLink } from './billing-display';
+import { billingControl, billingField, billingLabel, billingLink } from './billing-display';
 import { useEffect, useRef, useState } from 'react';
-import type { BillingAdjustmentKind, BillingAdjustments } from '@watchdog-bms/contracts';
-import { apiErrorCode } from '@/common/api/api-error-message';
+import type { BillingAdjustmentKind, BillingAdjustments, BillingEndPackageReview } from '@watchdog-bms/contracts';
+import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { PLAN_TERM_CONTACT_EMAIL } from '@/features/plan-term/plan-term.logic';
 
@@ -29,7 +29,23 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
   const [kind,setKind]=useState<BillingAdjustmentKind>('refunds'),[cursor,setCursor]=useState<string|null>(null),[reload,setReload]=useState(0);
   const [data,setData]=useState<BillingAdjustments|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState<ReturnType<typeof documentError>|null>(null),[opening,setOpening]=useState(false);
   const [adjustmentsOpen,setAdjustmentsOpen]=useState(!admin);
+  const [endReview,setEndReview]=useState<BillingEndPackageReview|null>(null),[endOpen,setEndOpen]=useState(false),[endReason,setEndReason]=useState(''),[endPassword,setEndPassword]=useState(''),[endBusy,setEndBusy]=useState(false),[endMessage,setEndMessage]=useState('');
   const generation=useRef(0);
+  useEffect(()=>{
+    if(!admin||preview)return;let active=true;setEndReview(null);
+    void authedApiFetch<BillingEndPackageReview>(`${base}/invoices/${encodeURIComponent(invoiceId)}/end-package`,{cache:'no-store',suppressErrorToast:true}).then(value=>{if(active)setEndReview(value);}).catch(()=>{});
+    return()=>{active=false;};
+  },[admin,preview,base,invoiceId,reload]);
+  async function endPackage(){
+    if(endBusy||!endReason.trim()||!endPassword)return;setEndBusy(true);setEndMessage('');
+    const post=<T,>(path:string,body:unknown)=>authedApiFetch<T>(path,{method:'POST',cache:'no-store',suppressErrorToast:true,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    try{
+      await post(`${base}/reauthenticate`,{password:endPassword});
+      setEndReview(await post<BillingEndPackageReview>(`${base}/invoices/${encodeURIComponent(invoiceId)}/end-package`,{reason:endReason}));
+      setEndOpen(false);setEndReason('');setEndMessage('ยุติแพ็กเกจแล้ว ร้านเข้าได้เฉพาะหน้าตั้งค่าและหน้าแพ็กเกจ ข้อมูลยังเก็บไว้ครบ');
+    }catch(cause){setEndMessage(apiErrorMessage(cause));}
+    finally{setEndPassword('');setEndBusy(false);}
+  }
   useEffect(()=>{
     let active=true;setData(null);setOpening(false);setLoading(true);setError(null);
     void (preview ? preview.read(kind) : authedApiFetch<BillingAdjustments>(`${base}/invoices/${encodeURIComponent(invoiceId)}/adjustments/${kind}${cursor?`?cursor=${encodeURIComponent(cursor)}`:''}`,{
@@ -79,7 +95,14 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
           {data.nextCursor&&<button className={button} disabled={opening||loading} onClick={()=>setCursor(data.nextCursor)}>รายการหน้าถัดไป</button>}{cursor&&<button className={button} disabled={opening||loading} onClick={()=>setCursor(null)}>กลับไปหน้าแรก</button>}
         </section>
       </details>
-      {admin&&<details className="rounded-xl border border-gray-200 bg-white p-5 sm:p-6"><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">ต้องการคืนเงินให้ลูกค้า</summary><p className="py-3 text-gray-600">ตรวจคำขอเดิมและยอดที่คืนได้ก่อน ทุกคำขอต้องตรวจผลกระทบและยืนยัน</p><Link className={button} href={`${base}/invoices/${encodeURIComponent(invoiceId)}/refund`}>ตรวจหรือสร้างคำขอคืนเงิน</Link></details>}
+      {admin&&<details className="rounded-xl border border-gray-200 bg-white p-5 sm:p-6"><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">ต้องการคืนเงินให้ลูกค้า</summary><p className="py-3 text-gray-600">ตรวจคำขอเดิมและยอดที่คืนได้ก่อน ทุกคำขอต้องตรวจผลกระทบและยืนยัน</p><Link className={button} href={`${base}/invoices/${encodeURIComponent(invoiceId)}/refund`}>ตรวจหรือสร้างคำขอคืนเงิน</Link>
+        {endReview?.canEnd&&<div className="mt-4 space-y-3 border-t border-gray-100 pt-4"><p className="text-gray-600">รายการนี้คืนเงินครบแล้ว และยังเป็นแพ็กเกจที่ร้านใช้งานอยู่ ยุติแพ็กเกจได้ทันที ร้านจะเข้าได้เฉพาะหน้าตั้งค่าและหน้าแพ็กเกจ ข้อมูลยังเก็บไว้ครบ</p>
+          {!endOpen?<button className={button} onClick={()=>setEndOpen(true)}>ยุติแพ็กเกจของรายการนี้</button>:<form className="space-y-3" onSubmit={e=>{e.preventDefault();void endPackage();}}>
+            <label className="block">เหตุผลภายใน (ลูกค้าไม่เห็น)<textarea className={billingField} required maxLength={500} value={endReason} disabled={endBusy} onChange={e=>setEndReason(e.target.value)}/></label>
+            <label className="block">รหัสผ่านปัจจุบัน<input className={billingField} type="password" autoComplete="current-password" required maxLength={1024} value={endPassword} disabled={endBusy} onChange={e=>setEndPassword(e.target.value)}/></label>
+            <div className="flex flex-wrap gap-3"><button className={button} disabled={endBusy||!endReason.trim()||!endPassword} aria-busy={endBusy}>ยืนยันยุติแพ็กเกจ</button><button type="button" className={button} disabled={endBusy} onClick={()=>setEndOpen(false)}>ยกเลิก</button></div>
+          </form>}</div>}
+        {endMessage&&<p role="status" className="mt-3">{endMessage}</p>}</details>}
     </>}
     <details className="text-sm text-gray-600"><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงสำหรับตรวจสอบ</summary><p className="break-all">รหัสรายการ ใช้ค้นประวัติในระบบ: {invoiceId}</p></details>
   </>;
