@@ -33,7 +33,7 @@ import { uniqueConstraintFields } from '../../../common/database/prisma-error';
 import { LOGGER_TOKEN, type AppLogger } from '../../../common/logger/logger.service';
 import { AuditService } from '../../audit/application/audit.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
-import { pushSystemLineMessage } from '../../auth/infrastructure/system-line-push';
+import { pushSystemLineMessages } from '../../auth/infrastructure/system-line-push';
 import { ownerLineUserIds } from '../../system-partner-management/application/use-cases/package-change-decision.use-case';
 import { SalesDealPriceService } from '../../billing/application/sales-deal-price.service';
 import {
@@ -47,7 +47,7 @@ import {
   offerExpiryFrom,
   overLimitCounts,
   requireReason,
-  salesOfferNoticeText,
+  salesOfferNoticeMessage,
   SalesSnapshotError,
 } from '../domain/sales-deal.logic';
 import { SalesCompanySearchService } from './sales-company-search.service';
@@ -520,9 +520,9 @@ export class SalesDealsService {
     const credentials = await this.lineCredentials.get().catch(() => null);
     const token = credentials?.accessToken;
     if (!token || !credentials?.channelId) return;
-    const text = salesOfferNoticeText(this.config.webBaseUrl, companyId);
+    const message = salesOfferNoticeMessage(this.config.webBaseUrl, companyId);
     for (const providerUserId of await ownerLineUserIds(this.prisma, companyId, credentials.channelId)) {
-      if (!await pushSystemLineMessage(token, providerUserId, text)) {
+      if (!await pushSystemLineMessages(token, providerUserId, [message])) {
         this.logger.warn({ event: 'sales.deal.offer_notice_failed', riskLevel: 'LOW' }, 'sales.deal.offer_notice_failed');
       }
     }
