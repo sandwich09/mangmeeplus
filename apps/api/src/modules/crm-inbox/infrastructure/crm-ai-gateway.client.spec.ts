@@ -23,6 +23,7 @@ const prismaWith = (row: { modelId: string } | null, spendSatang?: number) =>
     client: {
       companyAiConfiguration: { findUnique: async () => row },
       companyAiMonthlyUsage: { findUnique: async () => (spendSatang === undefined ? null : { costSatang: spendSatang }) },
+      companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
     },
   }) as any;
 
@@ -114,6 +115,7 @@ function meteringPrisma(onTransaction?: () => void) {
   const client = {
     companyAiConfiguration: { findUnique: async () => null },
     companyAiMonthlyUsage: { findUnique: async () => null },
+    companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
     $transaction: async (fn: (tx: any) => Promise<any>) => {
       onTransaction?.();
       return fn({

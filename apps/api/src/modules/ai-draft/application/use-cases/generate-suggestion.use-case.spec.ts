@@ -124,6 +124,7 @@ describe('GenerateSuggestionUseCase (AI-authored)', () => {
           return spend;
         },
       },
+      companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
     },
   }) as any;
 
