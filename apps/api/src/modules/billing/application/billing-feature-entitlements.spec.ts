@@ -8,14 +8,14 @@ const starter = new Set<string>(FEATURE_PACKAGE_PRESETS.starter.featureKeys);
 type Row = { featureKey: string; enabled: boolean; epoch: number; lastSeq: number; grantOrigin: string | null; updatedAt: Date };
 type Transition = { featureKey: string; seq: number; reasonJson: unknown; actorUserId: string; action?: string };
 
-function featureDb(initialRows: Row[] = [], initialTransitions: Transition[] = []) {
+function featureDb(initialRows: Row[] = [], initialTransitions: Transition[] = [], cohortKind = 'LEGACY') {
   const rows = new Map(initialRows.map(row => [row.featureKey, { ...row }]));
   const transitions = [...initialTransitions];
   const snapshots: { featureKey: string; disableSeq: number }[] = [];
   const commands: unknown[] = [];
   let setVersion: number | null = initialRows.length ? 0 : null;
   let normalization: { status: string; normalizerVersion: number; cohortKind: string } | null = initialRows.length
-    ? { status: 'COMPLETED', normalizerVersion: 1, cohortKind: 'LEGACY' } : null;
+    ? { status: 'COMPLETED', normalizerVersion: 1, cohortKind } : null;
   const db = {
     companyFeatureEntitlement: {
       findMany: async () => [...rows.values()].sort((a, b) => a.featureKey.localeCompare(b.featureKey)),
@@ -41,6 +41,7 @@ function featureDb(initialRows: Row[] = [], initialTransitions: Transition[] = [
     entitlementTransition: {
       findMany: async () => [...transitions].filter(row => row.actorUserId !== 'SYSTEM')
         .sort((a, b) => a.featureKey.localeCompare(b.featureKey) || b.seq - a.seq),
+      count: async ({ where }: any) => transitions.filter(row => where.featureKey.in.includes(row.featureKey)).length,
       create: async ({ data }: any) => { transitions.push(data); },
     },
     runoffSnapshot: { create: async ({ data }: any) => { snapshots.push(data); } },
@@ -69,6 +70,50 @@ test('first paid package materializes a zero-row legacy company and fences every
   assert.equal(state.commands.length, 1);
   await assert.rejects(applyBillingFeaturePlan(state.db, 'company', 'another', 'owner', plan), /สิทธิ์เมนูเดิมยังไม่พร้อม/);
   assert.equal(state.commands.length, 1);
+});
+
+test('a complete 60-key EXPLICIT shop can quote and buy; the new WHT rights start OFF', async () => {
+  const oldKeys = keys.filter(key => key !== 'wht_50bis' && key !== 'wht_pnd53');
+  assert.equal(oldKeys.length, 60);
+  const oldRows = oldKeys.map(featureKey => ({ featureKey, enabled: starter.has(featureKey), epoch: 0,
+    lastSeq: 0, grantOrigin: null, updatedAt: new Date() }));
+  const { plan } = await billingFeaturePlan(featureDb(oldRows, [], 'EXPLICIT').db, 'company');
+  assert.equal(plan.rows.length, 62);
+  assert.deepEqual(plan.rows.filter(row => row.featureKey === 'wht_50bis' || row.featureKey === 'wht_pnd53'), [
+    { featureKey: 'wht_50bis', enabled: false }, { featureKey: 'wht_pnd53', enabled: false },
+  ]);
+  const enterprise = await billingFeaturePlan(featureDb(oldRows, [], 'EXPLICIT').db, 'company',
+    [...starter, 'wht_50bis', 'wht_pnd53']);
+  assert.deepEqual(enterprise.plan.rows.filter(row => row.featureKey === 'wht_50bis' || row.featureKey === 'wht_pnd53'), [
+    { featureKey: 'wht_50bis', enabled: true }, { featureKey: 'wht_pnd53', enabled: true },
+  ]);
+
+  // All existing rows differ from the target in this fixture, so the apply uses only changed-row
+  // writes. The real paid path must create both previously missing rows in the same transaction.
+  const target = new Map(plan.rows.map(row => [row.featureKey, row.enabled]));
+  const state = featureDb(oldRows.map(row => ({ ...row, enabled: !target.get(row.featureKey) })), [], 'EXPLICIT');
+  const paid = await billingFeaturePlan(state.db, 'company');
+  await applyBillingFeaturePlan(state.db, 'company', 'invoice', 'owner', paid.plan);
+  assert.equal(state.rows.size, 62);
+  assert.equal(state.rows.get('wht_50bis')?.enabled, false);
+  assert.equal(state.rows.get('wht_pnd53')?.enabled, false);
+  assert.equal(state.setVersion(), 1);
+});
+
+test('partial or altered entitlement snapshots still require review', async () => {
+  const oldKeys = keys.filter(key => key !== 'wht_50bis' && key !== 'wht_pnd53');
+  const rows = oldKeys.map(featureKey => ({ featureKey, enabled: starter.has(featureKey), epoch: 0,
+    lastSeq: 0, grantOrigin: null, updatedAt: new Date() }));
+  await assert.rejects(billingFeaturePlan(featureDb(rows.slice(0, 12), [], 'EXPLICIT').db, 'company'),
+    /สิทธิ์เมนูเดิมยังไม่พร้อม/);
+  await assert.rejects(billingFeaturePlan(featureDb(rows, [], 'LEGACY').db, 'company'),
+    /สิทธิ์เมนูเดิมยังไม่พร้อม/);
+  await assert.rejects(billingFeaturePlan(featureDb(rows, [{ featureKey: 'wht_pnd53', seq: 1,
+    reasonJson: { requestId: 'old-admin' }, actorUserId: 'admin' }], 'EXPLICIT').db, 'company'),
+  /สิทธิ์เมนูเดิมยังไม่พร้อม/);
+  await assert.rejects(billingFeaturePlan(featureDb([...rows.slice(1), {
+    ...rows[0]!, featureKey: 'unknown_key',
+  }], [], 'EXPLICIT').db, 'company'), /สิทธิ์เมนูเดิมยังไม่พร้อม/);
 });
 
 test('individual Admin decisions survive paid package conversion while ordinary legacy extras are removed', async () => {
