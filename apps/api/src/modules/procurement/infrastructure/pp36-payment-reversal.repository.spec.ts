@@ -150,6 +150,14 @@ describe('withholding on supplier-payment reversal', () => {
 
   // WHT certificate system issuance plan §12 finding 8d / spec S7: the guard already covers
   // SYSTEM_ISSUED alongside EXTERNAL_LINKED — this is new test coverage only, no code change.
+  //
+  // Correction & replacement plan Phase 6 regression note: this same assertion also proves the
+  // guard is unaffected by correction/replacement — its query is entirely on
+  // `WhtCertificateHandoff.status` (never on `WhtCertificate` at all), and neither correction nor
+  // replacement ever change that status; correction only repoints `certificateId` at the new
+  // certificate while the handoff itself stays SYSTEM_ISSUED. So the void guard blocks on the
+  // handoff's CURRENT status regardless of how many times the certificate behind it has since been
+  // corrected — there is no separate "post-correction" code path to test here, only this one.
   it('refuses the void the same way once the SYSTEM itself has issued the 50 ทวิ', async () => {
     await assert.rejects(() => voidIt(fixture({ withheld: true, certificateLinked: true, handoffStatus: 'SYSTEM_ISSUED' })),
       /wht_certificate_linked_requires_review/);

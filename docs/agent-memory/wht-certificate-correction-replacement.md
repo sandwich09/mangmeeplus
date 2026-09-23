@@ -163,3 +163,259 @@ obligation, not a new commercial feature, so a company that downgrades after iss
 still be able to correct/reissue them). No spec or plan changes needed — Phase 2.1 as written
 (add to the existing ungated `pack.wht.certificate.manage`, not a new gated pack) is already correct
 and can proceed as-is. Phase 7's blocking condition is satisfied; implementation may begin.
+
+## Implementation log
+
+Status: Implementation session 2026-09-23 — Phases 1-6 of the plan DONE and committed (6 commits:
+`9af38148`/`0c4ae311`/`5efad12a`/`c7ec0cf0`/`2872bd13`/[this memory-update commit] — see per-phase
+detail below). Worktree: `.claude/worktrees/wht-gate-unlock-20260922`, branch
+`codex/wht-gate-unlock-20260922`. Owner's minimal-testing directive (2026-09-21, still the newest
+matching instruction in memory as of this session) was followed throughout: only specs touched or
+newly added were run directly; the full enumerated `pnpm --filter @watchdog-bms/api test`, the full
+web glob suite, and `node scripts/run-line-ai-whole-chain-acceptance.mjs` were deliberately NOT run —
+left for CI at merge time per that directive and the sibling implementation session's own precedent.
+
+**Commit-order deviation from the plan's phase numbering (flagged, not a design conflict):** the plan
+lists Phase 3 (replacement) before Phase 4 (PDF template) but its own text (`docs/plans/...:16-20`,
+Phase 2.2/2.3 header) already says Phase 2/3 "ต้องรอ...Phase 4...เสร็จก่อนถึงจะ end-to-end ได้" — and
+concretely, `IssueWhtReplacementCopyUseCase` calls `TaxArtifactRendererService.renderWhtCertificate`'s
+NEW 5th parameter (`replacementCopy`) directly, so it cannot typecheck until Phase 4's renderer
+signature change exists. Rather than leave an interim commit that fails `pnpm --filter
+@watchdog-bms/api typecheck`, Phase 4 was implemented and committed (`5efad12a`) before Phase 3
+(`c7ec0cf0`) — the plan's own text anticipates exactly this dependency, so this is an adaptation, not
+a discrepancy with the plan's design. All 6 feature commits landed in the order: 1, 2, 4, 3, 5, then
+this memory update — total scope is identical to the plan's Phase 1-6.
+
+### Phase 1 — DONE (commit `9af38148`)
+
+Schema: `WhtCertificate` gained `supersededByCertificateId`/`supersedesCertificateId` (both `@unique`,
+plain strings, no Prisma `@relation` self-relation — exactly as the plan specifies),
+`correctionReason`, `replacementCopyCount` (default 0), `lastReplacementCopyAt`,
+`lastReplacementCopyByUserId`. New additive migration
+`apps/api/prisma/migrations/20260923100000_wht_certificate_correction_replacement/migration.sql`
+(`ADD COLUMN IF NOT EXISTS` ×6 + two `CREATE UNIQUE INDEX IF NOT EXISTS`, naming convention
+`WhtCertificate_<column>_key` matched against existing migrations). No changes to
+`WhtCertificateHandoff` (plan §1.2 — `certificateId` already exists).
+
+Verify: `pnpm --filter @watchdog-bms/api prisma:validate` clean; `pnpm --filter @watchdog-bms/api exec
+prisma generate` regenerated the client (7.8.0) with no errors.
+
+### Phase 2 — DONE (commit `0c4ae311`)
+
+**2.1 (permission + pack)**: `permission-registry.ts` — new `wht.certificate.correct` (HIGH), granted
+to FINANCE and ACCOUNTANT right after `wht.certificate.issue`. `capability-pack.registry.ts` — added
+to the existing ungated `pack.wht.certificate.manage` (owner's 2026-09-23 decision, §7 above — NOT a
+new gated pack, since Phase 7's blocking question was already resolved before this session started).
+
+**2.2 (use case)**: new `apps/api/src/modules/tax/application/use-cases/correct-wht-certificate.use-case.ts`
+— `CorrectWhtCertificateUseCase`, mirroring `IssueWhtCertificateFromHandoffUseCase`'s constructor,
+number-reservation/P2002-replay, and transaction shape field-for-field. Merges the caller's optional
+`corrected` fields over the current certificate's own values (never re-derives from
+`SupplierPayment`/`ExpenseRecord`), computes an `isFinancial` flag by comparing every financial field
+(category/rate/gross/withheld/paymentDate/formType/payee tax id) against the current certificate, and
+blocks financial corrections when the certificate's `TaxPeriod` is `FILED`/`PAID`/`CLOSED` with a new
+code `wht_certificate_correction_tax_period_locked` (nonfinancial corrections never blocked). Inside
+one `$transaction`: create the new certificate (`supersedesCertificateId: current.id`) → commit the
+reserved number → conditional `updateMany` voiding the old certificate
+(`where: supersededByCertificateId: null`, so a losing concurrent correction rolls back its ENTIRE
+transaction rather than leaving an orphaned second "corrected" certificate with a committed number —
+a stricter race-loser outcome than the sibling's own analogous check, which the plan's step 11
+explicitly calls for) → conditional `updateMany` repointing `WhtCertificateHandoff.certificateId`
+(status stays `SYSTEM_ISSUED` throughout). New audit action `tax.wht_certificate.correct` (HIGH,
+metadata includes `financial: boolean`).
+
+**2.3 (route)**: `POST wht/payment-handoffs/:handoffId/system-certificate/correction`, `@RequirePermissions('wht.certificate.correct')`,
+`CorrectWhtCertificateDto` new in `tax.dtos.ts` (+ two small nested override DTOs for payer/payee
+snapshot fields, `class-validator`/`class-transformer` pattern mirroring `ExpenseVatSourceOverrideDto`)
+and `WhtCertificateCorrectionInput`/`CorrectWhtCertificateDto` new in `packages/contracts/src/tax.ts`.
+Registered in `tax.module.ts`.
+
+**2.4 (route-readiness helper + DTO fields)**: `wht-certificate-handoff.use-case.ts` gained exported
+`isSystemContentCorrectionOpen`/`isSystemReplacementCopyOpen` (thin wrappers over `isLaunchRouteOpen`,
+mirroring the existing `isSystemIssuanceOpen`), plus private class methods computing them once per
+request in `list()`/`get()` only (write-path methods `setPayeeAddress`/`linkExternal` keep defaulting
+`false`, matching the sibling's own precedent exactly). `WhtCertificateHandoffDto` gained
+`systemCorrectionOpen`/`systemReplacementOpen: boolean`.
+
+New error codes needing Thai text (repo-wide `api-error-coverage.spec.ts` guard, learned from the
+sibling's own post-push CI fix — added proactively this time instead of waiting for CI):
+`wht_certificate_not_correctable`, `wht_certificate_already_superseded`,
+`wht_system_correction_unavailable`, `wht_certificate_correction_tax_period_locked` added to
+`apps/web/src/common/api/api-error-message.ts` in this phase (`wht_system_replacement_unavailable`
+added in Phase 3, since that is where it is first thrown).
+
+New test file `correct-wht-certificate.use-case.spec.ts` (8 cases: nonfinancial correction, financial
+correction when OPEN, financial correction blocked on FILED/PAID/CLOSED ×3, nonfinancial correction
+NOT blocked by a locked period, P2002 race replay, non-SYSTEM_ISSUED handoff refused, gate CLOSED
+refused, already-superseded certificate refused) — registered in `apps/api/package.json`'s enumerated
+test script alongside the Phase 3 spec (added together since both were known up front). One
+`tax.controller.spec.ts` fix: its hand-built `TaxController` constructor call needed one more `noop`
+argument for the new `correctCertificate` dependency (mechanical, not a design change).
+
+Verify: `pnpm --filter @watchdog-bms/contracts build` clean; `pnpm --filter @watchdog-bms/api
+typecheck` clean; targeted specs (`correct-wht-certificate.use-case.spec.ts`,
+`wht-certificate-handoff.use-case.spec.ts`, `permission-registry.spec.ts` [new case: FINANCE/ACCOUNTANT
+hold `wht.certificate.correct`], `feature-gate.logic.spec.ts` [new case: stays ungated unlike
+`wht.certificate.issue`], `tax.controller.spec.ts`, `issue-wht-certificate-from-handoff.use-case.spec.ts`)
+— 20+20+20+20+20+13 dots, exit 0. `api-error-coverage.spec.ts` (web) — 11/11 pass with the new codes.
+
+### Phase 4 — DONE (commit `5efad12a`, landed before Phase 3 — see deviation note above)
+
+**4.1**: `buildWhtCertificateSvg` gained an optional 5th param `replacementCopy?: { issuedAt: string }`
+— when present, prints `(ใบแทน — ออกซ้ำเมื่อ {formatCertDate(issuedAt)})` at `x=60 y=82`, safely between
+the existing เลขที่ line (`y=64`) and the payer block (`y=100`, i.e. `payerBlockTop`). No overlay, no
+diagonal stamp — plain SVG `<text>`, per spec §6.1's explicit instruction to NOT reuse the
+`SubstituteReceiptPrintStamp` diagonal-overlay convention for a fixed-title statutory form.
+
+**4.2**: `renderWhtCertificatePdf` gained an optional 3rd param `options?: { stateStamp?: 'SUPERSEDED' }`
+passed straight through to `renderSubstituteReceiptPdf`. `TaxArtifactRendererService.renderWhtCertificate`
+gained both new params (5th `replacementCopy`, 6th `options`), passed straight through to
+`buildWhtCertificateSvg`/`renderWhtCertificatePdf` respectively. Neither existing caller
+(`CreateWhtCertificateUseCase`, `IssueWhtCertificateFromHandoffUseCase`) passes them, so their output
+is byte-identical to before (confirmed by re-running their specs, see below). No caller yet passes
+`options.stateStamp` in v1 (plan §4.2/§12 open question 2 — no PDF persistence exists to re-render a
+superseded certificate from), exactly as the plan anticipates; the parameter exists as a ready seam.
+
+New spec cases in `wht-certificate-pdf.logic.spec.ts`: "ใบแทน" label appears only with `replacementCopy`
+(regression-guarded: omitted param → SVG has no "ใบแทน" text at all), and `options.stateStamp:
+'SUPERSEDED'` is proven to reach the underlying raster pipeline by asserting the resulting PDF's
+`getSubject()` contains `State: SUPERSEDED` (same technique `substitute-receipt-pdf.logic.spec.ts`
+already uses for the identical mechanism — no mock/spy needed).
+
+Verify: `pnpm --filter @watchdog-bms/api typecheck` clean; `wht-certificate-pdf.logic.spec.ts` (12/12,
+was 9 before this phase); `create-wht-certificate.use-case.spec.ts` +
+`issue-wht-certificate-from-handoff.use-case.spec.ts` re-run as a regression check on the renderer
+signature change — both green (8/8 + 7/7 dots — no change in either use case's own code this phase).
+
+### Phase 3 — DONE (commit `c7ec0cf0`, after Phase 4 — see deviation note above)
+
+New `apps/api/src/modules/tax/application/use-cases/issue-wht-replacement-copy.use-case.ts` —
+`IssueWhtReplacementCopyUseCase`. Deliberately smaller than correction: no `ReserveDocumentNumberUseCase`,
+no `TaxPeriod` lookup, no `$transaction` (a single `whtCertificate.update` is the only write — no
+unique constraint exists for two concurrent replacement requests to race on, so both incrementing
+`replacementCopyCount` is the correct, intended outcome per plan §3.1 step 6, not a bug to guard
+against). `resolveActiveCertificate()` walks the `supersededByCertificateId` chain as defense-in-depth
+for a stale `handoff.certificateId` pointer (normally unreachable since correction keeps that pointer
+current via its own conditional `updateMany`). New route `POST
+wht/payment-handoffs/:handoffId/system-certificate/replacement-copy`, sharing the
+`wht.certificate.correct` permission with the correction route (plan §2.1: one key for both actions).
+
+New test file `issue-wht-replacement-copy.use-case.spec.ts` (5 cases: same-number reissue with
+counter increment, two requests in a row both incrementing, non-SYSTEM_ISSUED refused, gate CLOSED
+refused, resolves through the supersession chain to the ACTIVE certificate when the handoff still
+points at a corrected-away one). `tax.controller.spec.ts` needed one more `noop` constructor arg
+(mechanical).
+
+Verify: `pnpm --filter @watchdog-bms/api typecheck` clean; targeted specs
+(`issue-wht-replacement-copy.use-case.spec.ts`, `tax.controller.spec.ts`,
+`correct-wht-certificate.use-case.spec.ts`, `issue-wht-certificate-from-handoff.use-case.spec.ts`) —
+20+13+20+13 dots, exit 0. `api-error-coverage.spec.ts` (web) re-run with
+`wht_system_replacement_unavailable` added — 11/11 pass.
+
+### Phase 5 — DONE (commit `2872bd13`)
+
+**5.1 (AP)**: `canCorrectWhtCertificate`/`canIssueWhtReplacementCopy` added to
+`accounts-payable.model.ts`, mirroring `canIssueSystemWhtCertificate`'s shape exactly (status
+`SYSTEM_ISSUED` + `certificateId` present + the route-readiness boolean + the permission).
+`correctSystemWhtCertificate`/`issueSystemWhtReplacementCopy` added to `accounts-payable.api.ts`. The
+`issued` block in `WhtHandoffDetail` (`AccountsPayablePages.tsx`) gained: an inline "แก้ไขหนังสือรับรอง"
+toggle + form (prefilled from `handoff.prefill` — the only certificate content this screen already
+has, since no `GET`-certificate-by-id endpoint exists to re-read what a prior correction changed; this
+is a deliberate, documented scope limit, not an oversight — see drift note below), required reason
+field, and a one-click "ออกใบแทน" button. Both download the returned PDF immediately via the existing
+`downloadArtifact` (mirrors the issue button exactly — `pdfAttachmentId` is still never populated).
+
+**5.2 (Expenses) — survey finding, reported as instructed:** the plan/spec assumed (based on an
+earlier discovery pass) that no persistent, cross-session detail view exists for a confirmed expense,
+only the session-only `whtIssuedPdf` state at `ExpenseReviewPage.tsx:1026`. Grepping the actual route
+tree found this assumption incomplete:
+`apps/web/app/(workspace)/companies/[companyId]/expenses/[expenseId]/page.tsx` renders
+`ExpenseReviewPage` directly by `expenseId`, calling `getExpense(companyId, expenseId)` fresh on every
+mount with no status restriction — and `ExpensesPages.tsx`'s `ExpenseListPage` already has a
+`sourceView === 'confirmed'` filter whose `onSelect` (`openListExpense`) navigates to exactly this
+route. So a CONFIRMED expense already has a genuine, bookmarkable, cross-session detail page — the
+form is simply disabled at that status (comment already in the source: "The whole form below is
+disabled at CONFIRMED, but nothing on the page said so"). This satisfies the plan's own explicit
+fallback ("ถ้ามี → เพิ่มปุ่มสองตัวที่นั่น") rather than its stop-and-report branch, so implementation
+proceeded rather than stopping. Added: a new effect that re-reads `GET
+wht/payment-handoffs?status=SYSTEM_ISSUED&sourcePaymentId=<expenseId>` whenever `detail.status ===
+'CONFIRMED' && hasWht && permissions.includes('wht.certificate.correct')` — independent of the
+confirm-session-only `whtIssuePrompt`/`whtIssuedPdf` state above it, so the buttons work whether the
+operator is looking at this page moments after confirming or weeks later. `canCorrectWhtCertificate`/
+`canIssueWhtReplacementCopy` duplicated into `expenses.model.ts` (thin per-module copy — matches this
+repo's own established convention for the WHT handoff API client functions, per the comment already in
+`expenses.api.ts`: "each module keeps its own thin copy rather than a shared cross-feature client").
+Same correction form/replacement button UI as AP, added to `ExpenseReviewPage.tsx`.
+
+- **Drift/scope note (documented, not a guess):** the plan's frontend text (spec §4.1) lists the
+  correction form's fields as "income category/rate/gross/withheld/payment date/form type + payee
+  identity fields" — no mention of payer-snapshot fields, even though the backend's
+  `WhtCertificateCorrectionInput` supports overriding both. The UI on both AP and Expenses therefore
+  only exposes payee-snapshot overrides, matching the plan's literal frontend scope; a payer-snapshot
+  correction (rare — the payer is the company itself) is not reachable from either UI in v1, though
+  the API accepts it if a caller sends it directly.
+
+Verify: `pnpm --filter @watchdog-bms/web typecheck` clean; `accounts-payable.model.spec.ts` (new
+`canCorrectWhtCertificate`/`canIssueWhtReplacementCopy` cases), `WhtHandoffDetail.wiring.spec.ts` (new
+cases: buttons inside the `issued` block, correction/replacement endpoints called, PDF downloaded
+immediately ×3, reason required), `expenses.model.spec.ts` (mirrored predicate cases),
+`ExpenseReviewPage.qa.spec.ts` (new cases: handoff re-read from server independent of session state,
+predicates wired, endpoints called, reason required) — all green. Repo-wide UI guards re-run given the
+sibling's own CI-round lessons: `api-error-coverage.spec.ts`, `no-raw-api-error-display.spec.ts`
+(both new error paths route through `err()`/`apiErrorMessage`, never a raw caught message),
+`action-loading.spec.ts` (both new buttons pair `aria-busy`/`disabled` correctly) — all pass locally,
+avoiding the 3 CI-round surprises the sibling session hit.
+
+### Phase 6 — DONE (this commit)
+
+Added the plan's one remaining named regression case to `pp36-payment-reversal.repository.spec.ts`:
+rather than a literally duplicate test (the guard's mock is entirely blind to `certificateId`, so a
+"post-correction" fixture cannot actually differ from the existing SYSTEM_ISSUED test at this layer),
+expanded the comment on the existing test to make the invariant explicit — the void guard's query is
+100% on `WhtCertificateHandoff.status`, which correction/replacement never change, so there is no
+separate code path a new test could exercise. Documented rather than fabricated.
+
+**Full targeted regression pass** (owner's minimal-testing directive — only touched/new specs, full
+enumerated/glob suites deferred to CI at merge, per the plan's own Phase 6 note and the sibling
+session's precedent):
+- API (10 files, 10/10 dot-groups, exit 0): `correct-wht-certificate.use-case.spec.ts`,
+  `issue-wht-replacement-copy.use-case.spec.ts`, `issue-wht-certificate-from-handoff.use-case.spec.ts`,
+  `create-wht-certificate.use-case.spec.ts`, `wht-certificate-handoff.use-case.spec.ts`,
+  `wht-certificate-pdf.logic.spec.ts`, `permission-registry.spec.ts`, `feature-gate.logic.spec.ts`,
+  `tax.controller.spec.ts`, `pp36-payment-reversal.repository.spec.ts`.
+- Web (7 files, exit 0): `accounts-payable.model.spec.ts`, `WhtHandoffDetail.wiring.spec.ts`,
+  `ExpenseReviewPage.qa.spec.ts`, `expenses.model.spec.ts`, `api-error-coverage.spec.ts`,
+  `no-raw-api-error-display.spec.ts`, `action-loading.spec.ts`.
+- `pnpm --filter @watchdog-bms/contracts build` clean.
+- `pnpm --filter @watchdog-bms/api typecheck` clean (heap-flagged script, per the standing
+  `api-typecheck-needs-the-heap-flag` memory note — bare `tsc --noEmit`/the `lint` script are known to
+  OOM-abort on this machine, not re-verified again this session since the sibling session already
+  confirmed it and nothing changed about the toolchain).
+- `pnpm --filter @watchdog-bms/api prisma:validate` clean.
+- `pnpm --filter @watchdog-bms/web typecheck` clean.
+- `apps/api/src/spec-suite-coverage.spec.ts` (repo-wide "no spec file left unregistered" guard) — 4/4
+  pass, confirming both new API spec files are correctly wired into `package.json`'s enumerated test
+  script.
+
+**Deliberately NOT run**: the full enumerated `pnpm --filter @watchdog-bms/api test` (hundreds of
+unrelated specs), the full web glob `pnpm --filter @watchdog-bms/web test`, and `node
+scripts/run-line-ai-whole-chain-acceptance.mjs` — all expected to run once at merge-time CI per the
+owner's still-current minimal-testing directive (2026-09-21, no newer contradicting instruction found
+in memory as of 2026-09-23).
+
+**Total commits this session**: 5 feature-code commits (`9af38148`, `0c4ae311`, `5efad12a`, `c7ec0cf0`,
+`2872bd13`) + this memory-update commit = 6.
+
+**Deviations from the plan, summarized for the controller:**
+1. Commit order 1, 2, 4, 3, 5 instead of the plan's literal 1, 2, 3, 4, 5 — Phase 3 has a hard
+   compile-time dependency on Phase 4's renderer signature; the plan's own text already flags this
+   exact dependency (see Phase 3/4 sections above). Scope is unchanged.
+2. Phase 5.2 (Expenses) did NOT need to stop — the persistent, cross-session confirmed-expense view
+   the plan asked about already exists (`[expenseId]/page.tsx` → `ExpenseReviewPage`), reachable from
+   `ExpenseListPage`'s "ยืนยันแล้ว" filter. Implemented per the plan's own "if it exists, add the
+   buttons there" branch.
+3. The AP/Expenses correction forms expose payee-snapshot overrides only, not payer-snapshot — matches
+   the plan's literal frontend field list (spec §4.1), even though the backend API accepts both.
+4. No new escalation was needed — every ambiguity encountered had an explicit, literal answer already
+   in the plan/spec text (financial-vs-nonfinational field list, error code naming, DTO validation
+   rigor level) or a directly analogous precedent in the sibling's own shipped code.
