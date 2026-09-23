@@ -457,6 +457,40 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
     })).status()).toBe(403);
     await expectNoClientError(authedPage);
   });
+
+  test('BR16 new no-package owner can reach email proof and package reads', async ({ rig, browser, request, urls }) => {
+    const owner = await rig.identity('OWNER');
+    await rig.expire('DISABLED', true);
+    const term = await rig.term();
+    await rig.db.companyPlanTerm.update({ where: { companyId: rig.companyId }, data: { termStartAt: term.termEndsAt } });
+    const headers = apiHeaders(owner.token, rig.companyId);
+    for (const path of [`/companies/${rig.companyId}/billing`, `/companies/${rig.companyId}/billing/history`, '/auth/account/email/otp']) {
+      const response = await request.get(`${urls.api}${path}`, { headers });
+      expect(response.status(), `${path}: ${await response.text()}`).toBe(200);
+      if (path.endsWith('/otp')) expect(await response.json()).toMatchObject({ emailRequirement: 'MISSING' });
+    }
+    for (const [path, data, extraHeaders] of [
+      [`/companies/${rig.companyId}/billing/quote`, { offerKey: 'STARTER_249', interval: 'month', billingEmail: 'owner@example.test' }, {}],
+      [`/companies/${rig.companyId}/billing/checkout`, { quoteId: randomUUID(), consentRevision: 'test', accepted: true, channel: 'web' }, { 'Idempotency-Key': randomUUID() }],
+    ] as const) {
+      const response = await request.post(`${urls.api}${path}`, { headers: { ...headers, ...extraHeaders }, data });
+      expect(response.status(), `${path}: ${await response.text()}`).toBe(409);
+      expect(await response.json()).toMatchObject({ code: 'BILLING_NOT_READY' });
+    }
+    const context = await browser.newContext({ baseURL: urls.web });
+    try {
+      const login = await context.request.post('/api/auth/login', { data: { username: owner.username, password: owner.password } });
+      expect(login.status(), await login.text()).toBe(200);
+      const page = await context.newPage();
+      await page.goto(`/account/email?company=${rig.companyId}`);
+      await expect(page.getByRole('heading', { name: 'จัดการอีเมลบัญชี', exact: true })).toBeVisible();
+      await expect(page.getByLabel('อีเมลที่ต้องการยืนยัน', { exact: true })).toBeVisible();
+      await page.getByRole('link', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(`/companies/${rig.companyId}/billing$`));
+      await expect(page.getByRole('heading', { name: /ยังไม่มีแพ็กเกจ/ })).toBeVisible();
+      await expectNoClientError(page);
+    } finally { await context.close(); }
+  });
 });
 
 // Local setup substitutes LINE identity proof only. Exchange, cookies, guards and DB are real.
