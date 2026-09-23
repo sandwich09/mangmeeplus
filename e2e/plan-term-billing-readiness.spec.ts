@@ -378,6 +378,85 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       await expect(authedPage.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
     } finally { release(); }
   });
+
+  test('BR15 no-package owner can fill and save company profile without a redirect', async ({ rig, authedPage, request, urls }) => {
+    test.setTimeout(120_000);
+    await rig.expire('DISABLED', true);
+    const term = await rig.term();
+    await rig.db.companyPlanTerm.update({ where: { companyId: rig.companyId }, data: { termStartAt: term.termEndsAt } });
+    expect(await (await rig.notice()).json()).toMatchObject({ lockReason: 'no_package' });
+
+    const profilePath = `/companies/${rig.companyId}/settings/profile`;
+    await authedPage.goto(profilePath);
+    await expect(authedPage.getByRole('heading', { name: 'ข้อมูลร้านและบัญชีของฉัน', exact: true })).toBeVisible();
+    const navigations: string[] = [];
+    authedPage.on('load', () => navigations.push(authedPage.url()));
+
+    await authedPage.getByRole('combobox', { name: 'ประเภทธุรกิจ' }).click();
+    await authedPage.getByRole('option', { name: 'อื่น ๆ' }).click();
+    await authedPage.getByLabel('ระบุประเภทธุรกิจอื่น ๆ').fill('ร้านทดสอบ');
+    await authedPage.getByLabel('ชื่อจดทะเบียน').fill('บริษัท ทดสอบ จำกัด');
+    await authedPage.getByLabel('เลขผู้เสียภาษี').fill('0105558123456');
+    const addressResponse = authedPage.waitForResponse(response =>
+      response.url().includes(`/companies/${rig.companyId}/settings/address-master?postalCode=10330`));
+    await authedPage.getByLabel('รหัสไปรษณีย์').fill('10330');
+    const found = await addressResponse;
+    expect(found.status()).toBe(200);
+    const rows = await found.json() as Array<{ provinceTh: string; districtTh: string; subdistrictTh: string }>;
+    if (rows[0]) {
+      const first = rows[0];
+      for (const [label, option] of [['จังหวัด', first.provinceTh], ['อำเภอ / เขต', first.districtTh], ['ตำบล / แขวง', first.subdistrictTh]]) {
+        const field = authedPage.locator(`[id="${label.toLowerCase().trim().replace(/\s+/g, '-')}"]`);
+        await field.click();
+        await authedPage.getByRole('option', { name: option, exact: true }).click();
+      }
+    } else {
+      await authedPage.getByLabel('จังหวัด').fill('กรุงเทพมหานคร');
+      await authedPage.getByLabel('อำเภอ / เขต').fill('ปทุมวัน');
+      await authedPage.getByLabel('ตำบล / แขวง').fill('ปทุมวัน');
+    }
+    await authedPage.getByLabel('ที่อยู่ (บ้านเลขที่ ถนน)').fill('123 ถนนตัวอย่าง');
+    await authedPage.getByLabel('ที่อยู่เพิ่มเติม').fill('ชั้น 2');
+    await authedPage.locator('#vat-status').click();
+    await authedPage.getByRole('option', { name: 'ยังไม่ได้จดทะเบียน VAT' }).click();
+
+    await expect(authedPage.getByLabel('ชื่อจดทะเบียน')).toHaveValue('บริษัท ทดสอบ จำกัด');
+    await expect(authedPage.getByLabel('เลขผู้เสียภาษี')).toHaveValue('0105558123456');
+    await expect(authedPage.getByLabel('รหัสไปรษณีย์')).toHaveValue('10330');
+    await expect(authedPage.getByLabel('ที่อยู่เพิ่มเติม')).toHaveValue('ชั้น 2');
+    await expect(authedPage).toHaveURL(new RegExp(`${profilePath}$`));
+    expect(navigations).toEqual([]);
+
+    const identityWrite = authedPage.waitForResponse(response => response.request().method() === 'PATCH'
+      && response.url().endsWith(`/companies/${rig.companyId}/identity`));
+    const businessWrite = authedPage.waitForResponse(response => response.request().method() === 'PATCH'
+      && response.url().endsWith(`/companies/${rig.companyId}/identity/business-type`));
+    const vatWrite = authedPage.waitForResponse(response => response.request().method() === 'PUT'
+      && response.url().endsWith(`/companies/${rig.companyId}/vat-registration`));
+    await authedPage.getByRole('button', { name: 'บันทึกข้อมูลร้าน', exact: true }).click();
+    for (const response of await Promise.all([identityWrite, businessWrite, vatWrite])) {
+      expect(response.status(), `${response.request().method()} ${response.url()}: ${await response.text()}`).toBe(200);
+    }
+    await expect(authedPage.getByText('บันทึกข้อมูลร้านแล้วค่ะ')).toBeVisible();
+    await expect(authedPage).toHaveURL(new RegExp(`${profilePath}$`));
+    expect(navigations).toEqual([]);
+
+    await authedPage.getByRole('button', { name: 'บัญชีของฉัน', exact: true }).click();
+    await authedPage.locator('details').filter({ hasText: 'เบอร์มือถือ' }).first().locator('summary').click();
+    const phoneInput = authedPage.locator('input[id="เบอร์มือถือ"]');
+    await phoneInput.fill('0812345678');
+    await expect(phoneInput).toHaveValue('0812345678');
+    const contactWrite = authedPage.waitForResponse(response => response.request().method() === 'PATCH'
+      && response.url().endsWith('/auth/me/contact'));
+    await authedPage.getByRole('button', { name: 'บันทึกเบอร์มือถือ', exact: true }).click();
+    expect((await contactWrite).status()).toBe(200);
+    await expect(authedPage.getByText('บันทึกเบอร์มือถือแล้วค่ะ')).toBeVisible();
+    expect(navigations).toEqual([]);
+    expect((await request.get(`${urls.api}/companies/${rig.companyId}/branches`, {
+      headers: apiHeaders(await getDevToken(request), rig.companyId),
+    })).status()).toBe(403);
+    await expectNoClientError(authedPage);
+  });
 });
 
 // Local setup substitutes LINE identity proof only. Exchange, cookies, guards and DB are real.

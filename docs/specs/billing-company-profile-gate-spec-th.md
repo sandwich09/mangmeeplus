@@ -10,7 +10,8 @@ Owner decision 2026-09-17: ให้ทำตามข้อเสนอ popup/�
 - ส่งชื่อ/ที่อยู่ไป Company-bound Stripe Customer ทั้งสร้างใหม่และลูกค้าเดิม ก่อนเริ่ม Checkout: country TH, line1 บ้านเลขที่/ถนน, line2 ที่อยู่เพิ่มเติม+ตำบล/แขวง, city อำเภอ/เขต, state จังหวัด, postal_code รหัสไปรษณีย์ รักษา verified email/customer/account/mode binding เดิม ใช้ API version ที่ repository pin
 - Stripe error/timeout ห้ามเดินหน้าชำระและห้ามแสดงว่าพร้อมแล้ว; การยืนยัน/ลองซ้ำใช้ command identity เดิม และไม่ปล่อยให้คำสั่ง profile ที่ผลยังไม่ชัดเขียนทับการซื้อใหม่จากอีกคำสั่ง
 - Quote เก่าที่ไม่มี profile ต้องสร้างใหม่ก่อนเริ่มขาย แต่ session/paid invoice เดิมยังตรวจผล/เปิดเอกสาร/เปิดสิทธิ์จากหลักฐานเดิมได้ ไม่เพิ่ม prerequisite ให้ paid fulfillment/recovery/การยกเลิก/บัตร/ประวัติ และไม่แก้เอกสารที่ออกแล้ว
-- Expired owner ต้องเข้าถึงข้อมูลร้านที่จำเป็นต่อการซื้อใหม่ได้ โดยคง membership/owner/permission/tenant/security holds; ไม่เปิด business routes ให้บริษัทหมดอายุทั่วไป
+- Expired owner ต้องเข้าถึงข้อมูลร้านที่จำเป็นต่อการซื้อใหม่ได้ รวมถึงค้นหาที่อยู่ไทยจากรหัสไปรษณีย์ในฟอร์ม โดยคง membership/owner/permission/tenant/security holds; ไม่เปิด business routes ให้บริษัทหมดอายุทั่วไป
+- แท็บบัญชีของฉันยังบันทึกเบอร์มือถือ ตั้งรหัสผ่านแรก และเปลี่ยนวิธีเข้าสู่ระบบด้วยอีเมลได้เมื่อบริษัทไม่มีแพ็กเกจ โดยผ่านสิทธิ์บัญชีเดิม
 
 Acceptance: shared rules + HTTP direct bypass/stale/error/race + Stripe payload new/existing + actual company-form→billing browser mobile/desktop + existing billing/LINE/signup regression. Provider simulation ต้องระบุแยกจาก Stripe sandbox/live; ไม่มี deploy หรือ charge จริงในงานนี้
 
