@@ -13,7 +13,7 @@ import {
   overLimitCounts,
   requireReason,
   SALES_OFFER_NOTICE_TH,
-  salesOfferNoticeText,
+  salesOfferNoticeMessage,
   SalesSnapshotError,
   tenantBillingLink,
 } from './sales-deal.logic';
@@ -157,12 +157,15 @@ describe('the approval notice pushed to shop owners (S19/R14)', () => {
   // Arabic AND Thai digits, because Thai copy can carry ๐-๙ and a regex over 0-9 would miss it.
   const NO_DIGITS = /^[^0-9\u0E50-\u0E59]*$/;
 
-  it('carries no digit of any script, with or without a link', () => {
+  it('keeps the visible notice free of prices and other numbers', () => {
     assert.match(SALES_OFFER_NOTICE_TH, NO_DIGITS);
-    assert.match(salesOfferNoticeText(undefined, 'co-1'), NO_DIGITS);
-    // A shop id is allowed to contain digits, so only the SENTENCE is checked once a link exists.
-    const [sentence] = salesOfferNoticeText('https://app.example.test', 'co-123').split('\n');
-    assert.match(sentence!, NO_DIGITS);
+    const message = salesOfferNoticeMessage('https://app.example.test', 'co-123');
+    assert.equal(message.type, 'flex');
+    if (message.type !== 'flex') return;
+    assert.match(message.altText, NO_DIGITS);
+    const card = message.contents as any;
+    assert.match(card.header.contents[0].text, NO_DIGITS);
+    assert.match(card.body.contents[0].text, NO_DIGITS);
     // Nothing that looks like money, a tier or a countdown.
     assert.equal(/บาท|฿|เดือน|วัน|สาขา|ใบ/.test(SALES_OFFER_NOTICE_TH), false);
   });
@@ -170,26 +173,31 @@ describe('the approval notice pushed to shop owners (S19/R14)', () => {
   it('links only into the shop own tree on the configured origin', () => {
     assert.equal(
       tenantBillingLink('https://app.example.test', 'co-1'),
-      'https://app.example.test/companies/co-1/billing',
+      'https://app.example.test/companies/co-1/billing?openExternalBrowser=1',
     );
     // A shop id that tries to climb out is encoded, never resolved.
     const escaped = tenantBillingLink('https://app.example.test', '../../evil');
-    assert.equal(escaped, 'https://app.example.test/companies/..%2F..%2Fevil/billing');
+    assert.equal(escaped, 'https://app.example.test/companies/..%2F..%2Fevil/billing?openExternalBrowser=1');
     assert.ok(escaped!.startsWith('https://app.example.test/companies/'));
   });
 
   it('sends the sentence alone rather than a bad link when no safe base URL exists', () => {
     for (const base of [undefined, '', 'not a url', 'javascript:alert(1)', 'ftp://app.example.test']) {
       assert.equal(tenantBillingLink(base, 'co-1'), undefined, `base ${String(base)}`);
-      assert.equal(salesOfferNoticeText(base, 'co-1'), SALES_OFFER_NOTICE_TH);
+      assert.deepEqual(salesOfferNoticeMessage(base, 'co-1'), { type: 'text', text: SALES_OFFER_NOTICE_TH });
     }
   });
 
-  it('puts the link on its own line so the sentence stays readable in a chat bubble', () => {
-    const lines = salesOfferNoticeText('https://app.example.test', 'co-1').split('\n');
-    assert.equal(lines.length, 2);
-    assert.equal(lines[0], SALES_OFFER_NOTICE_TH);
-    assert.equal(lines[1], 'https://app.example.test/companies/co-1/billing');
+  it('places the tenant link only in the card button', () => {
+    const message = salesOfferNoticeMessage('https://app.example.test', 'co-1');
+    assert.equal(message.type, 'flex');
+    if (message.type !== 'flex') return;
+    const card = message.contents as any;
+    assert.equal(card.type, 'bubble');
+    assert.deepEqual(card.footer.contents[0].action, {
+      type: 'uri', label: 'เปิดหน้าแพ็กเกจ', uri: 'https://app.example.test/companies/co-1/billing?openExternalBrowser=1',
+    });
+    assert.doesNotMatch(`${message.altText} ${JSON.stringify(card.header)} ${JSON.stringify(card.body)}`, /https?:\/\//);
   });
 });
 

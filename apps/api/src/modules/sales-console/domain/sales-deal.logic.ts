@@ -213,16 +213,33 @@ export function tenantBillingLink(webBaseUrl: string | undefined, companyId: str
     const base = new URL(webBaseUrl);
     if (base.protocol !== 'https:' && base.protocol !== 'http:') return undefined;
     const link = new URL(`/companies/${encodeURIComponent(companyId)}/billing`, `${base.origin}/`);
+    // LINE's browser and the system browser have separate cookies; start the billing login in one browser.
+    link.searchParams.set('openExternalBrowser', '1');
     return link.origin === base.origin ? link.toString() : undefined;
   } catch {
     return undefined;
   }
 }
 
-/** The whole push body: the numberless sentence, plus the shop's own link when one exists. */
-export function salesOfferNoticeText(webBaseUrl: string | undefined, companyId: string): string {
+/** The owner sees a card with one package-page action; an unavailable link leaves a useful notice. */
+export function salesOfferNoticeMessage(webBaseUrl: string | undefined, companyId: string):
+  | { type: 'text'; text: string }
+  | { type: 'flex'; altText: string; contents: Record<string, unknown> } {
   const link = tenantBillingLink(webBaseUrl, companyId);
-  return link ? `${SALES_OFFER_NOTICE_TH}\n${link}` : SALES_OFFER_NOTICE_TH;
+  if (!link) return { type: 'text', text: SALES_OFFER_NOTICE_TH };
+  return {
+    type: 'flex', altText: SALES_OFFER_NOTICE_TH,
+    contents: {
+      type: 'bubble', size: 'kilo',
+      header: { type: 'box', layout: 'vertical', backgroundColor: '#15803D', paddingAll: '16px',
+        contents: [{ type: 'text', text: 'ข้อเสนอพิเศษสำหรับร้านคุณ', color: '#FFFFFF', weight: 'bold', size: 'md', wrap: true }] },
+      body: { type: 'box', layout: 'vertical', paddingAll: '16px',
+        contents: [{ type: 'text', text: 'เปิดหน้าแพ็กเกจเพื่อดูรายละเอียดค่ะ', color: '#1A2E22', size: 'md', wrap: true }] },
+      footer: { type: 'box', layout: 'vertical', paddingAll: '12px',
+        contents: [{ type: 'button', style: 'primary', color: '#15803D',
+          action: { type: 'uri', label: 'เปิดหน้าแพ็กเกจ', uri: link } }] },
+    },
+  };
 }
 
 /** S31: what the shop already runs that the deal's limits would not allow it to add to. */
