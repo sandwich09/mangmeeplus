@@ -23,7 +23,8 @@ for required in \
   '52b4943e-e9d7-4fae-b71c-c13b0b157b27' \
   'b2e68e7f-e098-4b88-a92a-5a0f4fe2924a' \
   'watchdog-bms-production-a5-clone-execution' 'migrationTaskRoleArn:null' \
-  '"--tsconfig","/app/apps/api/tsconfig.json"' \
+  'chmod 1777 /tmp && exec setpriv --reuid=node --regid=node --init-groups' \
+  'readonlyRootFilesystem:true,user:"root"' \
   '{name:"PGDATABASE",value:$database}' '{name:"PGHOST",value:$host}' \
   '{name:"PGPASSWORD",valueFrom:($secret+":password::"+$version)}' \
   '{name:"PGUSER",valueFrom:($secret+":username::"+$version)}' \
