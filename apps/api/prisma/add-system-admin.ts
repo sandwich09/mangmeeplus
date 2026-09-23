@@ -1,6 +1,6 @@
 // One-off ops utility: grant a (new or existing) user the SYSTEM_ADMIN role.
 // Mirrors the seed.ts system-admin shape: user + credential + membership in the
-// WatchDog System company + SYSTEM_ADMIN membership role.
+// มั่งมีพลัส · ระบบภายใน company + SYSTEM_ADMIN membership role.
 //
 // Usage (from apps/api):
 //   DATABASE_URL=... ADMIN_USERNAME=jane.doe ADMIN_PASSWORD='...' \
