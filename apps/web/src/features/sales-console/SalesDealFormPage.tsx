@@ -432,8 +432,8 @@ export default function SalesDealFormPage({ dealId, companyId, canApprove }: { d
               <TextField label="ใบเสร็จต่อเดือน" name="monthlySlipLimit" inputMode="numeric" value={values.monthlySlipLimit}
                 onChange={(event) => set('monthlySlipLimit', event.target.value)} error={errors.monthlySlipLimit} />
             </div>
-            <TextField label="เครดิต AI ต่อเดือน (บาท)" name="aiBudgetBaht" inputMode="decimal"
-              hint="เว้นว่าง = ใช้ค่าเริ่มต้นของแพ็กเกจ · ปิด AI = เอาเมนู AI ออกด้านล่าง"
+            <TextField label="เครดิตแชตต่อเดือน (credit)" name="aiBudgetBaht" inputMode="decimal"
+              hint="เว้นว่าง = 80 credit · ค่า AI พิเศษที่ผู้ดูแลตั้งไว้ยังมีผล · ใบเสร็จคิดตามจำนวนที่อ่านสำเร็จ · ปิด AI = เอาเมนู AI ออกด้านล่าง"
               value={values.aiBudgetBaht} onChange={(event) => set('aiBudgetBaht', event.target.value)} error={errors.aiBudgetBaht} />
           </MangmeeCard>
 

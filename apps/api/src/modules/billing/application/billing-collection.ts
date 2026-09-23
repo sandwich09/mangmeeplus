@@ -82,6 +82,7 @@ export class BillingCollection {
     let snapshot = accepted.future, change: PlanChangeSource | undefined;
     const { sub, schedule } = await this.provider(account), target = account.paidThrough.getTime() / 1000;
     const promptPayRenew = account.renewalMode === 'PROMPTPAY_RENEW' && snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW';
+    const advanceCardTrial = account.renewalMode === 'CARD_AUTO' && !!snapshot.advanceDeal && sub.status === 'trialing';
     if (promptPayRenew && (changing(action) || schedule || sub.collection_method !== 'send_invoice' ||
         sub.payment_settings?.payment_method_types?.length !== 1 || sub.payment_settings.payment_method_types[0] !== 'promptpay'))
       throw review();
@@ -121,8 +122,8 @@ export class BillingCollection {
       sub.pause_collection || sub.pending_update || !simpleCollection(promptPayRenew ? { ...sub, collection_method: 'charge_automatically' } : sub) ||
       sub.items?.data?.length !== 1 || sub.items.has_more ||
       sub.items.data[0].quantity !== 1 || (sub.items.data[0].discounts?.length ?? 0)) throw review();
-    if (action === 'RESUME_RENEWAL' && (account.paidThrough <= new Date() || !['active', ...(promptPayRenew ? ['trialing'] : [])].includes(sub.status))) throw review();
-    if (!['active', 'past_due', 'unpaid', ...(promptPayRenew ? ['trialing'] : [])].includes(sub.status)) throw review();
+    if (action === 'RESUME_RENEWAL' && (account.paidThrough <= new Date() || !['active', ...((promptPayRenew || advanceCardTrial) ? ['trialing'] : [])].includes(sub.status))) throw review();
+    if (!['active', 'past_due', 'unpaid', ...((promptPayRenew || advanceCardTrial) ? ['trialing'] : [])].includes(sub.status)) throw review();
     let method: Proposed['method'] = 'POST', path = `/subscriptions/${sub.id}`, params: Record<string, unknown>;
     if (account.paidThrough <= new Date()) {
       if (schedule) throw review();
@@ -202,10 +203,11 @@ export class BillingCollection {
   private observed(p: Proposed, sub: StripeObject, schedule: StripeObject | null, id: string) {
     const cancel = p.action === 'CANCEL_RENEWAL', target = Date.parse(p.paidThrough) / 1000;
     const promptPayRenew = p.snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW';
+    const advanceCardTrial = p.snapshot.quote.purchaseMode === 'CARD_AUTO' && !!p.snapshot.advanceDeal;
     if (sub.status === 'canceled') return cancel && !changing(p.action);
     if (p.method === 'DELETE') return false;
-    if (sub.billing_mode?.type !== 'classic' || !(cancel ? ['active', 'past_due', 'unpaid', ...(promptPayRenew ? ['trialing'] : [])] :
-      ['active', ...(promptPayRenew ? ['trialing'] : [])]).includes(sub.status) || sub.pause_collection || sub.pending_update ||
+    if (sub.billing_mode?.type !== 'classic' || !(cancel ? ['active', 'past_due', 'unpaid', ...((promptPayRenew || advanceCardTrial) ? ['trialing'] : [])] :
+      ['active', ...((promptPayRenew || advanceCardTrial) ? ['trialing'] : [])]).includes(sub.status) || sub.pause_collection || sub.pending_update ||
       sub.collection_method !== (promptPayRenew ? 'send_invoice' : 'charge_automatically') ||
       !simpleCollection(promptPayRenew ? { ...sub, collection_method: 'charge_automatically' } : sub) || sub.items?.has_more ||
       sub.items?.data?.length !== 1 || sub.items.data[0].quantity !== 1 || (sub.items.data[0].discounts?.length ?? 0)) return false;

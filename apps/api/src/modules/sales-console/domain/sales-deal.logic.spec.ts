@@ -95,10 +95,10 @@ describe('sales code', () => {
 });
 
 describe('deal snapshot validation', () => {
-  it('freezes a valid draft at version 3 and de-duplicates feature keys', () => {
+  it('freezes a valid draft at version 4 and de-duplicates feature keys', () => {
     const snapshot = buildDealSnapshot(draft);
-    // D-P5-1: everything written from now on is v3; a draft with no switch is an explicit no.
-    assert.equal(snapshot.version, 3);
+    // v4 gives the amount CHAT-only meaning; a draft with no auto switch is an explicit no.
+    assert.equal(snapshot.version, 4);
     assert.equal(snapshot.autoRenew, false);
     assert.equal(snapshot.cadence, null);
     assert.equal(snapshot.cycles, null);
@@ -208,7 +208,7 @@ describe('auto-renewing deal form (D-P5-1)', () => {
 
   it('freezes the switch, the cadence and the cycle count', () => {
     const snapshot = buildDealSnapshot(auto);
-    assert.equal(snapshot.version, 3);
+    assert.equal(snapshot.version, 4);
     assert.equal(snapshot.autoRenew, true);
     assert.equal(snapshot.cadence, 'month');
     assert.equal(snapshot.cycles, 6);

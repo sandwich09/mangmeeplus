@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { billingOffer, BILLING_DRAFT_POLICY, FEATURE_PACKAGE_PRESETS, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
-import { appendPackageInterval, fullPackagePurchaseImpact, proratedReceiptIncrease } from './billing-package';
+import { appendPackageInterval, fullPackagePurchaseImpact, proratedPackagePrice, proratedReceiptIncrease } from './billing-package';
 import { assertRefundControlPolicy, effectiveBillingGates, assertStripePrice, assertStripePortalConfiguration, parseBillingPolicy } from './billing-policy';
 import { BillingService } from '../application/billing.service';
 
@@ -40,6 +40,8 @@ test('HIDDEN receipt-only offers stay absent from the catalog and direct request
   const stripe = { enabled: true, livemode: false, accountId: 'acct_test',
     request: async () => { providerCalls += 1; throw new Error('unexpected provider call'); } } as unknown as ConstructorParameters<typeof BillingService>[2];
   const service = new BillingService(prisma, { aiMonthlyBudgetSatang: 120000 } as ConstructorParameters<typeof BillingService>[1], stripe);
+  // This case checks offer admission before Stripe; owner authorization has its own tests.
+  service.assertOwner = async () => {};
   for (const open of [false, true]) {
     salesEnabled = open;
     const catalog = await service.catalog();
@@ -114,6 +116,16 @@ test('first/expired purchase starts now; short months and leap years preserve th
   assert.equal(appendPackageInterval(new Date('2027-02-28T10:00:00Z'), 'year', 29).toISOString(), '2028-02-29T10:00:00.000Z');
 });
 
+test('full-price BASIC after one used STARTER receipt carries 29 and grants 50 now', () => {
+  const start = new Date('2026-09-23T00:00:00Z');
+  const starterEnd = appendPackageInterval(start, 'month');
+  const impact = fullPackagePurchaseImpact({ tier: 'BASIC_499', interval: 'month', verifiedPaidAt: new Date(start.getTime() + 60_000),
+    paidThrough: starterEnd, remainingPaidReceipts: 29, anchorDay: start.getUTCDate() });
+  assert.equal(impact.receiptUnitsAdded, 50);
+  assert.equal(impact.remainingReceipts, 79);
+  assert.equal(impact.paidThrough.toISOString(), appendPackageInterval(starterEnd, 'month', start.getUTCDate()).toISOString());
+});
+
 test('upgrade adds only prorated units, including the future periods already bought', () => {
   const start = new Date('2026-01-01T00:00:00Z'), end = new Date('2027-01-01T00:00:00Z');
   const halfway = new Date((start.getTime() + end.getTime()) / 2);
@@ -125,6 +137,16 @@ test('upgrade adds only prorated units, including the future periods already bou
   ], halfway), 900, 'do not upgrade all prepaid time for the price/allowance of just one period');
   assert.equal(proratedReceiptIncrease([{ start, end, oldAllowance: 50, newAllowance: 100 }], new Date(end.getTime() - 1)), 0);
   assert.equal(proratedReceiptIncrease([{ start, end, oldAllowance: 50, newAllowance: 100 }], end), 0);
+  const monthEnd = new Date('2026-01-31T00:00:00Z');
+  const starterToBasic = [{ start, end: monthEnd, oldAllowance: 30, newAllowance: 50 }];
+  assert.equal(proratedReceiptIncrease(starterToBasic, new Date(start.getTime() + 60_000)), 20);
+  assert.equal(29 + proratedReceiptIncrease(starterToBasic, new Date(start.getTime() + 60_000)), 49);
+  assert.equal(proratedReceiptIncrease(starterToBasic, new Date('2026-01-16T00:00:00Z')), 10);
+  const bangkokStart = new Date('2026-09-22T17:00:00Z'), bangkokEnd = new Date('2026-10-22T17:00:00Z');
+  const sameDayLate = new Date('2026-09-23T16:59:00Z');
+  assert.equal(proratedReceiptIncrease([{ start: bangkokStart, end: bangkokEnd, oldAllowance: 30, newAllowance: 50 }], sameDayLate), 20);
+  assert.equal(proratedPackagePrice(24900, 49900, bangkokStart, bangkokEnd, sameDayLate), 25000);
+  assert.equal(proratedReceiptIncrease([{ start: bangkokStart, end: bangkokEnd, oldAllowance: 30, newAllowance: 50 }], new Date('2026-09-23T17:00:00Z')), 19);
 });
 
 test('invalid/overlapping history and unsafe counts fail closed; approved defaults do not enable sales', () => {

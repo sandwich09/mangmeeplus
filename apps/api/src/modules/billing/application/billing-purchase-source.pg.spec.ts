@@ -16,7 +16,7 @@ test('one-time purchase source requires the exact applied invoice and preserves 
   { skip: !databaseUrl }, async () => {
     const url = new URL(databaseUrl!);
     assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
-    assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci'].includes(url.pathname));
+    assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci', '/watchdog_preview_20260923'].includes(url.pathname));
     const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     const run = randomUUID(), companyId = `billing-source-${run}`, attemptId = `attempt-${run}`, userId = `owner-${run}`;
     let accountId = '';
@@ -87,8 +87,8 @@ test('one-time purchase source requires the exact applied invoice and preserves 
       assert.deepEqual(view.availablePurchaseModes, ['CARD_ONCE', 'PROMPTPAY_ONCE']);
       assert.equal(view.nextChargeAt, null);
       const context = { companyId, userId, requestId: run } as Parameters<BillingService['quote']>[0];
-      const quote = (purchaseMode: 'CARD_AUTO' | 'CARD_ONCE' | 'PROMPTPAY_ONCE' | 'PROMPTPAY_RENEW', offerKey = 'BASIC_499', interval = 'month') =>
-        BillingService.prototype.quote.call(service, context, { offerKey, interval, billingEmail: 'ignored@example.test', purchaseMode });
+      const quote = (purchaseMode: 'CARD_AUTO' | 'CARD_ONCE' | 'PROMPTPAY_ONCE' | 'PROMPTPAY_RENEW', offerKey = 'BASIC_499', interval = 'month', purchaseIntent?: 'FULL_PACKAGE') =>
+        BillingService.prototype.quote.call(service, context, { offerKey, interval, billingEmail: 'ignored@example.test', purchaseMode, purchaseIntent });
       for (const mode of ['CARD_ONCE', 'PROMPTPAY_ONCE'] as const) {
         const repeat = await quote(mode);
         assert.equal(repeat.purchase?.kind, 'REPEAT');
@@ -102,6 +102,13 @@ test('one-time purchase source requires the exact applied invoice and preserves 
       assert.equal(upgraded.purchase?.projectedPaidThrough, paidThrough.toISOString());
       assert.ok(upgraded.totalSatang > 0 && upgraded.totalSatang < 99900);
       assert.ok(upgraded.purchase!.receiptUnitsAdded > 0);
+      const full = await quote('CARD_ONCE', 'PRO_999', 'month', 'FULL_PACKAGE');
+      assert.equal(full.purchase?.kind, 'FULL_PACKAGE_UPGRADE');
+      assert.equal(full.totalSatang, 99900);
+      assert.equal(full.purchase?.receiptUnitsAdded, 100);
+      assert.equal(full.purchase?.projectedRemainingReceipts, 150);
+      assert.ok(Date.parse(full.purchase!.projectedPaidThrough) > paidThrough.getTime());
+      await assert.rejects(quote('CARD_AUTO', 'PRO_999', 'month', 'FULL_PACKAGE'), (error: any) => error.getResponse?.().code === 'BILLING_MODE_CHANGE_PENDING');
       const downgraded = await quote('PROMPTPAY_ONCE', 'STARTER_249');
       assert.equal(downgraded.purchase?.kind, 'SCHEDULED_CHANGE');
       assert.equal(downgraded.purchase?.previousPaidThrough, paidThrough.toISOString());
@@ -176,7 +183,7 @@ test('a prepaid one-time plan change blocks on stale capacity, accepts a fresh s
   { skip: !databaseUrl }, async () => {
     const url = new URL(databaseUrl!);
     assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
-    assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci'].includes(url.pathname));
+    assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci', '/watchdog_preview_20260923'].includes(url.pathname));
     const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     const run = randomUUID(), companyId = `billing-change-${run}`, userId = `owner-${run}`;
     const stripeAccountId = `acct_${run}`, attemptId = `attempt-${run}`, lease = `lease-${run}`;
@@ -237,8 +244,8 @@ test('a prepaid one-time plan change blocks on stale capacity, accepts a fresh s
         assert.equal(locked.leaseToken, token);
       } };
       const apply = (current: Awaited<ReturnType<typeof client.billingAccount.findUniqueOrThrow>>, token: string) =>
-        (BillingReconcilerService.prototype as any).applyDueOneTimePlanChange.call(runner, current, token) as Promise<boolean>;
-      assert.equal(await apply(await client.billingAccount.findUniqueOrThrow({ where: { id: account.id } }), lease), false);
+        (BillingReconcilerService.prototype as any).applyDueOneTimePlanChange.call(runner, current, token) as Promise<unknown>;
+      assert.equal(await apply(await client.billingAccount.findUniqueOrThrow({ where: { id: account.id } }), lease), null);
       let blocked = await client.billingOperation.findUniqueOrThrow({ where: { id: operation.id } });
       assert.equal(blocked.state, 'BLOCKED');
       assert.equal(blocked.errorCode, 'BILLING_CAP_SELECTION_REQUIRED');
@@ -252,7 +259,7 @@ test('a prepaid one-time plan change blocks on stale capacity, accepts a fresh s
         operation.id, blocked.version, freshSelection, randomUUID());
       const secondLease = `lease-2-${run}`;
       await client.billingAccount.update({ where: { id: account.id }, data: { leaseToken: secondLease, leaseUntil: new Date(Date.now()+120_000) } });
-      assert.equal(await apply(await client.billingAccount.findUniqueOrThrow({ where: { id: account.id } }), secondLease), true);
+      assert.ok(await apply(await client.billingAccount.findUniqueOrThrow({ where: { id: account.id } }), secondLease));
       blocked = await client.billingOperation.findUniqueOrThrow({ where: { id: operation.id } });
       assert.equal(blocked.state, 'APPLIED');
       assert.equal(blocked.errorCode, null);
@@ -264,7 +271,7 @@ test('a prepaid one-time plan change blocks on stale capacity, accepts a fresh s
       const appliedAccount = await client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
       assert.equal(appliedAccount.pendingPlanChangeId, null);
       assert.equal(appliedAccount.termProjectionHash, termProjectionHash(appliedTerm));
-      assert.equal(await apply(appliedAccount, secondLease), false);
+      assert.equal(await apply(appliedAccount, secondLease), null);
     } finally {
       await client.outboxEvent.deleteMany({ where: { companyId } });
       await client.auditLog.deleteMany({ where: { companyId } });

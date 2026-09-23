@@ -29,6 +29,7 @@ function governedPrisma() {
     client: {
       companyAiConfiguration: { findUnique: async () => ({ modelId: null, monthlyBudgetSatang: 1_000_000 }) },
       companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+      companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
     },
   } as any;
 }
@@ -205,6 +206,7 @@ describe('AiGatewayClient OCR governance', () => {
       client: {
         companyAiConfiguration: { findUnique: async () => ({ modelId: null, monthlyBudgetSatang: 1_000_000 }) },
         companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+        companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
         $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx),
       },
     } as any;
@@ -262,6 +264,7 @@ describe('AiGatewayClient OCR governance', () => {
       client: {
         companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: null }) },
         companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+        companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
         $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx),
       },
     } as any;
@@ -298,6 +301,7 @@ describe('AiGatewayClient OCR governance', () => {
       client: {
         companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: null }) },
         companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
+        companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
         $transaction: async () => { quotaTransactions += 1; throw new Error('unexpected OCR admission'); },
       },
     } as any;
@@ -610,6 +614,7 @@ describe('AiGatewayClient monthly budget', () => {
     const client = {
       companyAiConfiguration: { findUnique: async () => null },
       companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: spend }) },
+      companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
       $transaction: async (fn: (tx: any) => Promise<any>) => fn({
         aiUsageEvent: { createMany: async (args: any) => { recorded.push(...args.data); return { count: args.data.length }; } },
         companyAiMonthlyUsage: { upsert: async () => ({ costSatang: spend }) },

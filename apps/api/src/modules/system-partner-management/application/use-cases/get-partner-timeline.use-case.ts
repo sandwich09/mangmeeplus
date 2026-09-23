@@ -171,12 +171,13 @@ export class GetPartnerTimelineUseCase {
     const [quota,aiConfig,ocrUsage,platform]=await Promise.all([
       receiptQuotaSnapshot(this.prisma,companyId,monthKey,now),
       this.prisma.client.companyAiConfiguration.findUnique({where:{companyId},select:{monthlyBudgetSatang:true,ocrEnabled:true,ocrMonthlyLimit:true,receiptQuotaEnforced:true,
-        budgetMode:true,chatMonthlyBudgetSatang:true,ocrMonthlyBudgetSatang:true,budgetConfigVersion:true,pendingBudgetPolicy:true}}),
+        budgetMode:true,chatMonthlyBudgetSatang:true,ocrMonthlyBudgetSatang:true,salesDealChatCreditSatang:true,
+        salesDealChatCreditEndsAt:true,budgetConfigVersion:true,pendingBudgetPolicy:true}}),
       this.prisma.client.companyOcrMonthlyUsage.findUnique({where:{companyId_monthKey:{companyId,monthKey}},select:{usedCount:true}}),
       resolvePlatformAiBudget(this.prisma,this.config,true),
     ]);
     // §11.4: the SAME projection admission uses, never `monthlyBudgetSatang` + total spend. Under
-    // SHARED every scope below IS the total answer, so this shop's story reads exactly as before.
+    // SHARED, CHAT has its own cap while OCR remains inside TOTAL.
     const money=await readAiBudgetReadiness(this.prisma.client,{companyId,monthKey,row:aiConfig,
       totalSatang:aiConfig?.monthlyBudgetSatang??platform.monthlyBudgetSatang});
     // The reason can be any of three (`SPLIT_CAPS_MISSING`, `SPLIT_EXCEEDS_TOTAL`,

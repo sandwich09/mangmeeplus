@@ -45,9 +45,8 @@ export type SalesDealPriceState = typeof SALES_DEAL_PRICE_STATES[number];
 
 /** Frozen into PackageChangeRequest.offerSnapshotJson when the deal is submitted; immutable once APPROVED (R3/R4). */
 export type SalesDealSnapshot = {
-  /** 2 = Phase 3 (one-time only). 3 = D-P5-1, which added the three auto-renew fields below.
-   *  A stored v2 row reads back as `autoRenew: false` — it predates the switch, it is not one. */
-  version: 2 | 3;
+  /** 2 = one-time; 3 = auto-renew; 4 = the AI amount means CHAT credit, not total budget. */
+  version: 2 | 3 | 4;
   base: SalesDealBaseTier;
   /** What the customer pays for the whole deal, in satang (Q2: VAT-inclusive if any). ≥ 1, no floor/ceiling (D1). */
   priceSatang: number;
@@ -57,7 +56,8 @@ export type SalesDealSnapshot = {
   branchLimit: number; employeeLimit: number; monthlySlipLimit: number;
   featureKeys: string[];
   /**
-   * null = inherit the platform budget. D-P3-2: zero is refused — closing AI is done by dropping
+   * In v2/v3 this is a TOTAL budget override. In v4 it is CHAT credit; null = 80 credit.
+   * D-P3-2: zero is refused — closing AI is done by dropping
    * the `ai_line_assistant` menu from `featureKeys`, which is the only writer the platform has.
    */
   aiMonthlyBudgetSatang: number | null;
@@ -177,7 +177,7 @@ export type SalesMyWorkDto = { items: SalesMyWorkItem[]; badge: number };
 export type PackageChangeDealOffer = {
   dealId: string; base: SalesDealBaseTier; baseLabel: string; priceSatang: number; months: number;
   branchLimit: number; employeeLimit: number; monthlySlipLimit: number; featureKeys: string[];
-  aiMonthlyBudgetSatang: number | null; description: string; offerExpiresAt: string;
+  aiMonthlyBudgetSatang: number | null; creditScope?: 'CHAT' | 'TOTAL'; description: string; offerExpiresAt: string;
   /** D-P5-1: "ตัดบัตร/ออกบิลทุกเดือน(ปี) ที่ราคานี้" instead of "จ่ายครั้งเดียว". */
   autoRenew?: boolean; cadence?: SalesDealCadence | null; cycles?: number | null;
 };

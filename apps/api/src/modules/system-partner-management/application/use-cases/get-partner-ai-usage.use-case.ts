@@ -237,6 +237,8 @@ export class GetPartnerAiUsageUseCase {
           budgetMode: true,
           chatMonthlyBudgetSatang: true,
           ocrMonthlyBudgetSatang: true,
+          salesDealChatCreditSatang: true,
+          salesDealChatCreditEndsAt: true,
           budgetConfigVersion: true,
           pendingBudgetPolicy: true,
         },
@@ -297,8 +299,7 @@ export class GetPartnerAiUsageUseCase {
       row: configuration, totalSatang: overrideSatang ?? defaultSatang,
       override: overrideSatang !== null, monthKey,
     });
-    // `cap - spent - reserved`, floored at 0. A SHARED bucket has no cap to subtract from, so its
-    // `available` is null — "not set", never "unlimited" (spec §12.1).
+    // `cap - spent - reserved`, floored at 0. SHARED now has a CHAT cap; OCR remains within TOTAL.
     const scope = (capSatang: number | null, spentSatang: number, reservedSatang: number) => ({
       spentSatang, reservedSatang,
       availableSatang: capSatang === null ? null : Math.max(0, capSatang - spentSatang - reservedSatang),
@@ -327,7 +328,7 @@ export class GetPartnerAiUsageUseCase {
         policy: toPartnerAiBudgetPolicyDto(policy, this.config.aiBudgetSplitActivationEnabled === true),
         position: {
           total: scope(overrideSatang ?? defaultSatang, budgetPosition.spent.TOTAL, budgetPosition.reserved.TOTAL),
-          chat: scope(policy.mode === 'SPLIT' ? policy.chatCapSatang : null, budgetPosition.spent.CHAT, budgetPosition.reserved.CHAT),
+          chat: scope(policy.chatCapSatang, budgetPosition.spent.CHAT, budgetPosition.reserved.CHAT),
           ocr: scope(policy.mode === 'SPLIT' ? policy.ocrCapSatang : null, budgetPosition.spent.OCR, budgetPosition.reserved.OCR),
           unresolvedHolds: budgetPosition.unresolvedHolds,
           breach: budgetPosition.breach,

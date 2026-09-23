@@ -1873,7 +1873,7 @@ function AiUsageBudgetSection({
     const parsed=parseBudgetBahtInput(budgetInput);
     if(!parsed.ok){showToast(parsed.message, 'error');return;}
     const token=generation.current,desired=parsed.monthlyBudgetSatang??usage.budget.defaultSatang;
-    const accepted=await confirm({title:'ตรวจเครดิต AI ก่อนบันทึก',message:`เครดิตต่อเดือน ${satangToBaht(usage.budget.effectiveSatang)} → ${satangToBaht(desired)} ใช้แล้ว ${satangToBaht(usage.current?.costSatang??0)}${desired<=(usage.current?.costSatang??0)?' หลังบันทึกจะใช้ AI เพิ่มไม่ได้จนกว่าจะเพิ่มเครดิตหรือขึ้นเดือนใหม่':''}\nเครดิตใหม่ใช้กับงานที่เริ่มหลังบันทึก งานที่เริ่มแล้วจะทำจนจบและนับค่าใช้จ่ายตามจริง\nเหตุผล: ${reason}`,confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
+    const accepted=await confirm({title:'ตรวจเครดิต AI ก่อนบันทึก',message:`เครดิต AI รวมต่อเดือน ${satangToBaht(usage.budget.effectiveSatang)} → ${satangToBaht(desired)} ใช้รวมแล้ว ${satangToBaht(usage.current?.costSatang??0)}${desired<=(usage.current?.costSatang??0)?' หลังบันทึกจะใช้ AI เพิ่มไม่ได้จนกว่าจะเพิ่มเครดิตหรือขึ้นเดือนใหม่':''}\nเครดิตรวมใหม่ใช้กับงานที่เริ่มหลังบันทึก งานที่เริ่มแล้วจะทำจนจบและนับค่าใช้จ่ายตามจริง\nเหตุผล: ${reason}`,confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
     if(!accepted||token!==generation.current)return;
     setBudgetLoading(true);
     try {
@@ -1881,7 +1881,7 @@ function AiUsageBudgetSection({
       if(token!==generation.current)return;
       setUsage(prev=>prev?{...prev,budget:{...prev.budget,overrideSatang:result.monthlyBudgetSatang,effectiveSatang:result.monthlyBudgetSatang??prev.budget.defaultSatang}}:prev);
       setBudgetReason('');onChanged();
-      showToast(result.monthlyBudgetSatang===null?'บันทึกแล้ว บริษัทนี้ใช้เครดิต AI ตามค่าเริ่มต้นของระบบ':`บันทึกเครดิต AI ต่อเดือน ${satangToBaht(result.monthlyBudgetSatang)} แล้ว`,'success');
+      showToast(result.monthlyBudgetSatang===null?'บันทึกแล้ว บริษัทนี้ใช้เครดิต AI รวมตามค่าเริ่มต้นของระบบ':`บันทึกเครดิต AI รวมต่อเดือน ${satangToBaht(result.monthlyBudgetSatang)} แล้ว`,'success');
     }catch(err){
       if(token!==generation.current)return;
       showToast(apiErrorMessage(err),'error');
@@ -2074,7 +2074,8 @@ function AiUsageBudgetSection({
       ) : (
         <>
           <p className="text-xs text-gray-500">
-            เครดิต AI ต่อเดือนของบริษัทนี้ — ใช้หมดเมื่อไร ระบบจะปฏิเสธการเรียก AI ทุกช่องทางจนถึงเดือนถัดไป
+            เครดิต AI รวมต่อเดือนของบริษัทนี้เป็นเพดานทุกช่องทาง — เมื่อยอดรวมถึงเพดาน ระบบจะปฏิเสธการเรียก AI จนถึงเดือนถัดไป
+            เพดานแชตที่แยกต่างหากแสดงในตารางด้านล่าง
             เว้นว่างไว้ = ใช้ค่าเริ่มต้นของแพลตฟอร์ม
           </p>
 
@@ -2156,7 +2157,7 @@ function AiUsageBudgetSection({
           </label>
           <div className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3">
             <div className="flex-1">
-              <label className="block text-xs text-gray-500 mb-1" htmlFor="ai-monthly-budget">เครดิต AI ต่อเดือน (บาท)</label>
+              <label className="block text-xs text-gray-500 mb-1" htmlFor="ai-monthly-budget">เครดิต AI รวมต่อเดือน (บาท)</label>
               <input
                 id="ai-monthly-budget"
                 className={`${inputClass} min-h-11 text-base`}

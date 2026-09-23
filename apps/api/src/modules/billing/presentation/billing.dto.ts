@@ -94,6 +94,7 @@ export class BillingQuoteDto {
   @IsString() @MinLength(1) @MaxLength(320) billingEmail!: string;
   @Allow() capacity?: unknown;
   @IsOptional() @IsIn(['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW']) purchaseMode?: string;
+  @IsOptional() @IsIn(['FULL_PACKAGE']) purchaseIntent?: string;
   @IsOptional() @IsString() @MinLength(1) @MaxLength(40) dealId?: string;
 }
 export class BillingCheckoutDto {

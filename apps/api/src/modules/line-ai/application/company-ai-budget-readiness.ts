@@ -35,9 +35,9 @@ export type AiBudgetScopeReadiness =
 export type AiBudgetReadiness = {
   mode: AiBudgetMode;
   total: AiBudgetScopeReadiness;
-  /** Under `SHARED` there is no separate cap, so this is exactly `total` — today's answer. */
+  /** Under `SHARED`, the CHAT cap is checked alongside TOTAL; it may be exhausted first. */
   chat: AiBudgetScopeReadiness;
-  /** Under `SHARED` there is no separate cap, so this is exactly `total` — today's answer. */
+  /** Under `SHARED`, OCR stays inside TOTAL; under `SPLIT`, it has its own cap. */
   ocr: AiBudgetScopeReadiness;
   /** Set => admission is refused for this company/month until an operator fixes the policy. */
   policyInvalid?: AiBudgetPolicyInvalidReason;
@@ -79,8 +79,8 @@ export async function readAiBudgetReadiness(
   const policy = resolveAiBudgetPolicy({
     row: input.row,
     totalSatang: input.totalSatang,
-    // `override` only labels the refusal a reservation emits; readiness never reports it.
-    override: false,
+    // An explicit legacy/admin TOTAL override is also the effective SHARED CHAT cap.
+    override: input.row?.monthlyBudgetSatang != null,
     monthKey: input.monthKey,
   });
   const snapshot = await readAiBudgetMonthSnapshot(tx, input.companyId, input.monthKey);
@@ -112,8 +112,10 @@ export async function readAiBudgetReadiness(
       chat: scope(policy.chatCapSatang, snapshot.spent.CHAT, snapshot.reserved.CHAT),
       ocr: scope(policy.ocrCapSatang, snapshot.spent.OCR, snapshot.reserved.OCR),
     }
-    // SHARED has no bucket cap to compare against, so both buckets ARE the total answer — which is
-    // byte-for-byte what every consumer printed before SPLIT existed (spec §12.1: `null` is "not
-    // set", never "unlimited", and neither cap is enforced).
-    : { ...base, total, chat: total, ocr: total };
+    : {
+      ...base,
+      total,
+      chat: scope(policy.chatCapSatang, snapshot.spent.CHAT, snapshot.reserved.CHAT),
+      ocr: total,
+    };
 }

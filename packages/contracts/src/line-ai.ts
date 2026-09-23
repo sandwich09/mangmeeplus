@@ -4,6 +4,9 @@ import type { SourceRef } from './ai-tools.js';
 import type { AiModelLineage, AiModelPolicy, AiUsageEntry } from './ai-lineage.js';
 import type { LineAiValueCandidates } from './line-ai-value-normalizer.js';
 
+/** 1 chat credit = 1 baht of metered CHAT cost; OCR/receipt reads are accounted separately. */
+export const DEFAULT_CHAT_CREDIT_SATANG = 8_000;
+
 export type LineAiAgent = 'general' | 'inventory' | 'notifications' | 'cfo' | 'sales' | 'crm' | 'accounting' | 'tax' | 'marketing';
 
 export type LineAiAgentStatus = 'enabled' | 'limited' | 'planned';

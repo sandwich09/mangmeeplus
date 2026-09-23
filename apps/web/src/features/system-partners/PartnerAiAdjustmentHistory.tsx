@@ -5,7 +5,7 @@ import {apiErrorMessage} from '@/common/api/api-error-message';
 import {formatThaiDateTime} from '@/common/i18n/thai-date';
 import {getPartnerAiAdjustments} from './system-partners.api';
 
-const labels:Record<PartnerAiAdjustmentField,string>={modelId:'รุ่น AI',monthlyBudgetSatang:'เครดิต AI ต่อเดือน',enabled:'การอ่านเอกสารด้วย AI',monthlyLimit:'จำนวนครั้งอ่านเอกสารต่อเดือน',receiptQuotaEnforced:'การจำกัดใบเสร็จตามแพ็กเกจ',
+const labels:Record<PartnerAiAdjustmentField,string>={modelId:'รุ่น AI',monthlyBudgetSatang:'เครดิต AI รวมต่อเดือน',enabled:'การอ่านเอกสารด้วย AI',monthlyLimit:'จำนวนครั้งอ่านเอกสารต่อเดือน',receiptQuotaEnforced:'การจำกัดใบเสร็จตามแพ็กเกจ',
   budgetMode:'โหมดเครดิต AI',chatMonthlyBudgetSatang:'เพดานแชต AI ต่อเดือน',ocrMonthlyBudgetSatang:'เพดานอ่านเอกสารต่อเดือน',budgetConfigVersion:'เวอร์ชันการตั้งค่าเครดิต',pendingBudgetPolicy:'เครดิตที่ตั้งให้เริ่มเดือนถัดไป',
   creditHoldStatus:'เครดิตที่กันไว้ค้าง',creditBreachAcknowledged:'การรับทราบรายการใช้เกินที่กันไว้'};
 /** The hold statuses the three operator decisions move between (hold spec §4.2). */
