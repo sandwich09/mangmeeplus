@@ -46,6 +46,7 @@ task_groups="$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$clone_task_sg_id" "$reader_ta
   "${uat_task_sg_ids[0]}" "${uat_task_sg_ids[1]}" \
   "${production_task_sg_ids[0]}" "${production_task_sg_ids[1]}" | sort -u | jq -R . | jq -s .)"
 [ "$(jq 'length' <<< "$task_groups")" -eq 6 ]
+support_bastion_sg_id=sg-0e363ecb391c7dd17
 
 jq -e --arg vpc "$vpc_id" --arg endpointSg "$endpoint_sg_id" \
   --argjson subnets "$subnets" --argjson routeTables "$route_tables" \
@@ -76,15 +77,18 @@ jq -e --arg vpc "$vpc_id" --arg endpointSg "$endpoint_sg_id" \
     end)
   ' "$endpoints" >/dev/null
 
-jq -e --arg id "$endpoint_sg_id" --argjson taskGroups "$task_groups" '
-  .SecurityGroups|length==1 and .[0].GroupId==$id and .[0].IpPermissionsEgress==[]
-  and ([.[0].IpPermissions[]
+jq -e --arg id "$endpoint_sg_id" --arg bastion "$support_bastion_sg_id" \
+  --argjson taskGroups "$task_groups" '
+  ([.SecurityGroups[0].IpPermissions[]
     | {protocol:.IpProtocol,from:.FromPort,to:.ToPort,
        groups:([.UserIdGroupPairs[]?.GroupId]|sort),cidrs:([.IpRanges[]?.CidrIp]|sort),
        ipv6:([.Ipv6Ranges[]?.CidrIpv6]|sort),prefixes:([.PrefixListIds[]?.PrefixListId]|sort)}]
-    | sort_by([.from,.to,(.groups|join(","))])) == [
-      {protocol:"tcp",from:443,to:443,groups:$taskGroups,cidrs:[],ipv6:[],prefixes:[]}
-    ]
+    | sort_by([.from,.to,(.groups|join(","))])) as $rules
+  |
+  .SecurityGroups|length==1 and .[0].GroupId==$id and .[0].IpPermissionsEgress==[]
+  and ($rules==[{protocol:"tcp",from:443,to:443,groups:$taskGroups,cidrs:[],ipv6:[],prefixes:[]}]
+    or $rules==[{protocol:"tcp",from:443,to:443,
+      groups:($taskGroups+[$bastion]|sort),cidrs:[],ipv6:[],prefixes:[]}])
   ' "$endpoint_sg_file" >/dev/null
 
 s3_endpoint_id="$(jq -er '.VpcEndpoints[]|select(.ServiceName=="com.amazonaws.ap-southeast-1.s3")
