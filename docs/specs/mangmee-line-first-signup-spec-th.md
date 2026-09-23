@@ -1,5 +1,11 @@
 # Auto-register จาก LINE OA (LINE-first Signup) — Spec P10-L
 
+## Owner amendment 2026-09-23 — รูปประกอบข้อความต้อนรับ
+
+- เมื่อ webhook `follow` มาจาก LINE user ที่ยังไม่ผูกบัญชีและไม่มีคำขอเปิดร้านค้าง ให้ reply ในครั้งเดียวตามลำดับ: ข้อความต้อนรับที่อนุมัติไว้ → รูป `mangmeeplus-welcome-how-to-start-1080x1350.png` ที่ Owner ส่งมา → การ์ดเปิดร้าน/เชื่อมบัญชีเดิม รูปต้องเป็น image message ที่กดดูภาพเต็มได้ และใช้ URL HTTPS ของเว็บใน environment นั้น
+- ผู้ใช้ที่ผูกบัญชีแล้ว, คนที่มีคำขอค้าง, และคนที่เพียงพิมพ์ข้อความ ไม่ได้รับรูปนี้; ใช้คำตอบเดิมตามสถานะ ไม่ส่ง push เพิ่ม
+- ถ้าไม่มี public HTTPS web origin ให้ส่งข้อความและการ์ดตามเดิมโดยไม่แนบ URL รูปที่เปิดไม่ได้ ตรวจทั้ง payload, ลำดับ, และการอ่าน outcome ที่เก็บเพื่อส่งซ้ำ
+
 ## Owner amendment 2026-09-17 — รู้จักเราทางไหน
 
 Owner approved the interactive demo and requested implementation on the existing LINE signup form.
