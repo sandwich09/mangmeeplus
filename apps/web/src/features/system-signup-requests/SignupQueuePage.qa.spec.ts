@@ -85,20 +85,9 @@ test('the package-change tab offers the decision AND the partner page', () => {
   assert.match(source, /href=\{`\/system\/partners\/\$\{item\.companyId\}`\}/);
 });
 
-test('R10: approving asks for the business category the mapping could not read', () => {
-  // "คลินิก" maps to OTHER, so the PDPA health tripwire never fired for a Thai applicant even
-  // though the operator was reading the word. The dialog defaults to the server's mapping and
-  // refuses to approve while a row the mapping could not read has no choice on it.
+test('approval lets the owner set the single TSIC business type later', () => {
   assert.match(source, /const \[approving, setApproving\] = useState<AdminSignupQueueItemDto \| null>\(null\)/);
-  assert.match(source, /requiresCategoryChoice\(approving\)/);
-  assert.match(source, /COMPANY_BUSINESS_CATEGORIES\.map/);
-  assert.match(source, /setBusinessCategory\(item\.businessCategory/);
-  assert.match(source, /\? \{ businessCategory \} : \{\}/);
-  // F2: "อื่น ๆ" is confirmed, never refused — every Thai answer maps to OTHER, so refusing it
-  // meant a genuinely-other shop could not be approved at all.
-  assert.match(source, /approveBlockedOnCategory\(approving, businessCategory, confirmedOther\)/);
-  assert.match(source, /ตรวจแล้ว เป็นอื่น ๆ/);
-  assert.match(source, /setConfirmedOther\(false\)/);
+  assert.doesNotMatch(source, /signup-business-category|businessCategory/);
 });
 
 test('a LINE review records one explicit outcome and only server-proven return targets', () => {
@@ -122,8 +111,7 @@ test('shared contact data requires explicit recorded review, a repeat applicant 
   assert.match(source, /อีเมลนี้ไม่ใช้ยืนยันเจ้าของและไม่ย้ายบัญชี/);
 });
 
-test('recovery reuses the recorded review instead of posting fresh decision fields', () => {
-  assert.match(source, /!finishing && \(resolutionAction === 'APPROVE' \|\| resolutionAction === 'CREATE_NEW_SHOP'\)/);
+test('recovery reuses the recorded shared-contact review', () => {
   assert.match(source, /!finishing && resolutionAction === 'CREATE_NEW_SHOP' && item\.contactEmailConflict/);
 });
 

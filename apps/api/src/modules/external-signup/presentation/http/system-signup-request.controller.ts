@@ -6,7 +6,6 @@ import {
 import { Type } from 'class-transformer';
 import type { Request } from 'express';
 import {
-  COMPANY_BUSINESS_CATEGORIES,
   SIGNUP_REJECTION_REASON_MAX_LENGTH, SIGNUP_RESOLUTION_NOTE_MAX_LENGTH,
   type AdminSignupDecisionBody, type AdminSignupDecisionDto, type AdminSignupQueueDto, type AdminSignupReissueDto,
 } from '@watchdog-bms/contracts';
@@ -28,10 +27,6 @@ export class SignupDecisionRequestDto {
   @IsBoolean() @IsOptional() acknowledgeSharedContact?: boolean;
   @IsString() @MaxLength(SIGNUP_RESOLUTION_NOTE_MAX_LENGTH) @IsOptional() sharedContactNote?: string;
   @IsString() @MaxLength(SIGNUP_RESOLUTION_NOTE_MAX_LENGTH) @IsOptional() resolutionNote?: string;
-  // R10, APPROVE only: the enum the reviewer picked, because the form's free text ("คลินิก") maps
-  // to OTHER and left the PDPA health tripwire dead. Bounded to the closed enum here, and checked
-  // again in the use case — the value decides whether a safeguard fires.
-  @IsIn(COMPANY_BUSINESS_CATEGORIES as unknown as string[]) @IsOptional() businessCategory?: string;
   @IsBoolean() @IsOptional() notifyApplicant?: boolean;
   // Plain text, bounded: it is copied verbatim into an email body, so it gets the same treatment as
   // any other free-text field crossing a trust boundary. The template escapes it on render.

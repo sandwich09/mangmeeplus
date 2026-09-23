@@ -289,30 +289,13 @@ enum StockMovementDirection {
   OUT
 }
 
-// PDPA tenant tripwire (M-05 register §6). Kept short on purpose: the only distinction
-// this enum has to carry is health-adjacent vs not, because a clinic/wellness/spa/medical
-// tenant makes `CrmBooking.serviceName` alone s.26 health data and re-opens the deferred
-// s.41 limb (b) question. Mirrored by COMPANY_BUSINESS_CATEGORIES in packages/contracts.
-enum CompanyBusinessCategory {
-  RETAIL
-  TRADING
-  SERVICE
-  CLINIC
-  WELLNESS_SPA
-  MEDICAL_RETAIL
-  OTHER
-}
-
 model Company {
   id                                String                                    @id @default(cuid())
   name                              String
   registeredName                    String?
   brandName                         String?
   taxId                             String?
-  // Nullable column, required onboarding field: companies created before the tripwire have
-  // no category and are not backfilled here, but every new one carries a declared value.
-  businessCategory                  CompanyBusinessCategory?
-  // Self-reported DBD TSIC activity; never substitutes for the PDPA businessCategory.
+  // Self-reported DBD TSIC activity, chosen by the shop after onboarding.
   businessTypeCode                  String?                                   @db.VarChar(5)
   businessTypeOther                 String?                                   @db.VarChar(200)
   businessTypeVersion               Int                                       @default(0)
@@ -3574,11 +3557,6 @@ model CompanySignupRequest {
   version                Int                @default(0)
   failureCode            String?
   businessType           String?
-  // R10: what the applicant typed, free text, in their own language. The PDPA health tripwire
-  // needs the ENUM, and "คลินิก" is not machine-mappable — so an admin picks it at review and it is
-  // stored here. Nullable: rows decided before this existed, and every review that left it alone,
-  // fall back to the exact-match mapping of `businessType`.
-  businessCategory       String?
   phoneNumber            String?
   vatRegistered          Boolean?
   mxValid                Boolean?

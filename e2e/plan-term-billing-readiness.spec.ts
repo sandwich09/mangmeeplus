@@ -62,7 +62,6 @@ const test = base.extend<{ rig: Rig }>({
       for (const id of ids) {
         await db.company.create({ data: {
           id, name: `E2E Billing ${id === companyId ? 'A' : 'B'} ${suffix.slice(0, 8)}`,
-          businessCategory: 'RETAIL',
           memberships: { create: { userId: owner.id, roles: { create: { roleId: ownerRole.roleId } } } },
         } });
         await db.companyPlanTerm.create({ data: {

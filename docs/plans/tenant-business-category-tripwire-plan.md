@@ -1,5 +1,7 @@
 # Plan: Tenant business-category tripwire
 
+Historical plan; superseded 2026-09-23 by `company-business-type-single-source-plan-th.md`.
+
 Spec: `docs/specs/tenant-business-category-tripwire-spec.md`. Ponytail full: shortest
 correct diff, existing patterns only, no new dependency, no new permission key, no new
 alerting infrastructure.

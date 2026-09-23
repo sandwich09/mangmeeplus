@@ -426,63 +426,6 @@ const LINE_REQUEST = {
 };
 const URLS = { webBaseUrl: 'https://app.example.com', apiBaseUrl: 'https://api.example.com/v1' };
 
-// R10: the PDPA health tripwire is dead for Thai free text ("คลินิก" maps to OTHER), so the enum is
-// chosen by the human who is already reading that word — at review, never by a heuristic.
-describe('SignupAdminQueueUseCase.decide — business category at review', () => {
-  it('stores the category the admin picked alongside the approval', async () => {
-    const h = harness();
-    await h.useCase.decide(
-      'signup-1', { action: 'APPROVE', businessCategory: 'CLINIC' }, 'admin-1', 'req-1', URLS,
-    );
-    // R08: the approval facts ride the state transition's own transaction, so the category the
-    // reviewer picked commits with the state and the letter or not at all.
-    const approval = h.advances.find((a: any) => a.state === 'EMAIL_PENDING');
-    assert.equal(approval.data.businessCategory, 'CLINIC');
-    assert.equal(approval.data.approvedByUserId, 'admin-1');
-    // And it is evidence: a health-category decision an operator made has to be auditable.
-    const auditRow = h.audits.find((a) => a.data.action === 'signup.request.approved');
-    assert.equal(auditRow.data.metadataJson.businessCategory, 'CLINIC');
-  });
-
-  it('leaves the column alone when review did not pick one', async () => {
-    const h = harness();
-    await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
-    const approval = h.advances.find((a: any) => a.state === 'EMAIL_PENDING');
-    assert.equal('businessCategory' in approval.data, false);
-  });
-
-  // F3: the enum re-check is the line that decides whether a PDPA safeguard can be armed by a
-  // string nobody validated. Replacing it with `body.businessCategory ?? null` must not pass.
-  it('refuses a category the enum does not know, at the use case and not only at the DTO', async () => {
-    const h = harness();
-    await h.useCase.decide(
-      'signup-1', { action: 'APPROVE', businessCategory: 'HOSPITAL' }, 'admin-1', 'req-1', URLS,
-    );
-    const written = h.advances.find((a: any) => a.state === 'EMAIL_PENDING');
-    assert.equal('businessCategory' in written.data, false, 'nothing unvalidated is stored');
-    const auditRow = h.audits.find((a) => a.data.action === 'signup.request.approved');
-    assert.equal(auditRow.data.metadataJson.businessCategory, null);
-    // Same for an empty string and for a case that only LOOKS like the enum.
-    for (const bad of ['', 'clinic', ' CLINIC ']) {
-      const other = harness();
-      await other.useCase.decide(
-        'signup-1', { action: 'APPROVE', businessCategory: bad }, 'admin-1', 'req-1', URLS,
-      );
-      const badWrite = other.advances.find((a: any) => a.state === 'EMAIL_PENDING');
-      assert.equal('businessCategory' in badWrite.data, false, bad);
-    }
-  });
-
-  it('carries the choice into a LINE approval, which provisions inline', async () => {
-    const h = harness({ request: LINE_REQUEST });
-    await h.useCase.decide(
-      'signup-1', { action: 'CREATE_NEW_SHOP', version: 1, businessCategory: 'WELLNESS_SPA' },
-      'admin-1', 'req-1', URLS,
-    );
-    assert.equal(h.updates[0].data.businessCategory, 'WELLNESS_SPA');
-  });
-});
-
 describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
   it('provisions only from the explicit new-shop outcome', async () => {
     const h = harness({ request: LINE_REQUEST });
@@ -1132,9 +1075,7 @@ describe('SignupAdminQueueUseCase.decide — approve', () => {
     assert.equal(audit.riskLevel, 'HIGH');
     assert.equal(audit.actorUserId, 'admin-1');
     assert.equal(audit.targetId, 'signup-1');
-    // R10: null records that this reviewer did not pick a category — an enum key or nothing, and
-    // never the applicant's own words, which are the PII this row must not carry.
-    assert.deepEqual(audit.metadataJson, { hadTaxId: true, mxValid: true, businessCategory: null });
+    assert.deepEqual(audit.metadataJson, { hadTaxId: true, mxValid: true });
     // Applicant PII must never reach evidence.
     const evidence = JSON.stringify(h.audits);
     for (const pii of ['somchai@example.com', 'ร้านมั่งมี', '0105555000012', '0982565628']) {

@@ -28,13 +28,6 @@ export const SECURITY_EVENT = {
    */
   authLineHandoffDenied: 'auth.line_handoff.denied',
   /**
-   * M-05 register §6 tenant tripwire: a health-adjacent company (clinic, wellness/spa,
-   * medical retail) just onboarded, so the deferred s.41 limb (b) and controller/processor
-   * questions must be re-opened. Not a breach — a "come look at this" that would otherwise
-   * expire silently. Log-only by design: `$.riskLevel = "HIGH"` already alarms it.
-   */
-  pdpaHealthAdjacentTenantOnboarded: 'pdpa.tenant.health_adjacent_onboarded',
-  /**
    * Metering spec §7.6. A company at or over its effective monthly AI budget was refused at an
    * AI seam; the operator alert channel for the admin-only scope this feature ships with.
    */

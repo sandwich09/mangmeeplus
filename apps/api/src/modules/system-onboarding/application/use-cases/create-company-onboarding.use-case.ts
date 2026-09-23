@@ -7,10 +7,8 @@ import {
   civilDateToUtcDate,
   FEATURE_PACKAGE_PRESETS,
   isCivilDate,
-  isHealthAdjacentBusinessCategory,
   parentFeatureKey,
   type CivilDate,
-  type CompanyBusinessCategory,
   type EmployeeLineLinkPackage,
   type PlanTierKey,
   type VatFactStatus,
@@ -19,7 +17,6 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { uniqueConstraintFields } from '../../../../common/database/prisma-error';
 import { lineIdentityLockKey } from '../../../../common/database/line-identity-lock';
 import { AppConfigService } from '../../../../common/config/app-config.service';
-import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { normalizeTaxId } from '../../../data-model-core/domain/logic/company-legal-identity.logic';
 import { requireLineContactEmail } from '../../../external-signup/domain/line-signup.logic';
 import { hashPassword } from '../../../auth/domain/logic/password-credential.logic';
@@ -68,7 +65,6 @@ export type CreateCompanyOnboardingCommand = {
    * does today. Never guessed from anything else.
    */
   vatRegistration?: { status: VatFactStatus; effectiveFrom: CivilDate };
-  businessCategory: CompanyBusinessCategory; // required: the PDPA tripwire's only input
   /**
    * The company's 13-digit tax id, if the admin has it at handover. OPTIONAL for the same reason
    * vatRegistration is: an admin who does not know leaves it out and the owner captures it later
@@ -280,7 +276,6 @@ export class CreateCompanyOnboardingUseCase {
         data: {
           name: cmd.companyName,
           ...(companyContactEmail ? { email: companyContactEmail } : {}),
-          businessCategory: cmd.businessCategory,
           ...(taxId ? { taxId, legalIdentityVersion: 1 } : {}),
         },
       });
@@ -655,7 +650,6 @@ export class CreateCompanyOnboardingUseCase {
             ownerUserId: owner.id,
             modulePackage: cmd.modulePackage ?? 'starter',
             attachExistingOwner: attach,
-            businessCategory: cmd.businessCategory,
             chartTemplateKey: chartOfAccounts.templateKey,
             chartTemplateVersion: chartOfAccounts.templateVersion,
             chartTemplateChecksum: chartOfAccounts.templateChecksum,
@@ -726,31 +720,6 @@ export class CreateCompanyOnboardingUseCase {
           `Default plan term not written for company ${result.company.id}; company is unlimited until an admin sets one.`,
         );
       }
-    }
-
-    // M-05 register §6 tenant tripwire. The register defers the s.41 limb (b) "large scale"
-    // and controller/processor questions on the assumption that tenants stay general
-    // retail/trading/service; a health-adjacent tenant breaks that assumption on its own,
-    // because CrmBooking.serviceName alone then becomes s.26 health data. Emitting at HIGH
-    // reaches the dev team through the security alarm deploy.sh already installs — no new
-    // topic, no new alarm, no infrastructure change. Fired after commit so a rolled-back
-    // onboarding never pages anyone; emitSecurityEvent swallows logger failures, so this
-    // can never turn a completed onboarding into a 500.
-    if (isHealthAdjacentBusinessCategory(cmd.businessCategory)) {
-      emitSecurityEvent(
-        new Logger(CreateCompanyOnboardingUseCase.name),
-        SECURITY_EVENT.pdpaHealthAdjacentTenantOnboarded,
-        'HIGH',
-        {
-          // Deliberately no company or owner name: the alert says "go look", the audit row
-          // carries the rest. Personal data does not belong on an alarm path.
-          companyId: result.company.id,
-          businessCategory: cmd.businessCategory,
-          onboardingRunId: result.run.id,
-          actorUserId: cmd.requestingAdminUserId,
-          requestId: cmd.requestId,
-        },
-      );
     }
 
     return {

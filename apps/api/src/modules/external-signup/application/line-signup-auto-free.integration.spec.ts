@@ -585,7 +585,6 @@ describe('two overlapping provisioning runs still produce one company (review ME
   /** Drives onboarding directly, which is where the stamp and the rollback both live. */
   const onboardingCmd = (requestId: string) => ({
     companyName: 'ร้านมั่งมี',
-    businessCategory: 'RETAIL' as const,
     ownerDisplayName: 'นิด',
     ownerAuth: { kind: 'line' as const, providerUserId: 'Uline-1', channelId: 'channel-1' },
     allowDuplicateCompanyName: true,

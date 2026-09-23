@@ -47,7 +47,6 @@ export type SignupFormValues = {
   ownerLastName: string;
   contactEmail: string;
   phoneNumber: string;
-  businessType: string;
   vatRegistered: boolean;
   taxId: string;
   /** D6: self-reported attribution. '' = ไม่ระบุ, which the server stores as nothing. */
@@ -197,7 +196,7 @@ export function isTransientLoadFailure(error: unknown): boolean {
 
 /** Submit order, so "focus the first error" means the first one the applicant would reach. */
 const SIGNUP_FIELD_ORDER: readonly (keyof SignupFormValues)[] = [
-  'companyName', 'ownerFirstName', 'ownerLastName', 'contactEmail', 'phoneNumber', 'businessType',
+  'companyName', 'ownerFirstName', 'ownerLastName', 'contactEmail', 'phoneNumber',
   'vatRegistered', 'taxId', 'discoverySource', 'discoverySourceOther', 'referralSalesCode',
 ];
 

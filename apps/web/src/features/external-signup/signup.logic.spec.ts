@@ -28,7 +28,6 @@ const validForm: SignupFormValues = {
   ownerLastName: 'ใจดี',
   contactEmail: 'somchai@gmail.com',
   phoneNumber: '0812345678',
-  businessType: 'ร้านขายของชำ',
   vatRegistered: false,
   taxId: '',
   discoverySource: '',

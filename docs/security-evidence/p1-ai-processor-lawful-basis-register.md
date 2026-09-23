@@ -513,6 +513,8 @@ is a real option; budget that re-verification when planning it rather than disco
 
 ### 6.1 Tenant tripwire — what was built and how it was verified **[VERIFIED 2026-07-28]**
 
+**Change 2026-09-23:** Owner confirmed the additional PDPA work for health-adjacent tenants is complete and explicitly retired this onboarding alert. The seven-value category and its event are removed by `docs/specs/company-business-type-single-source-spec-th.md`; shop owners now set the current DBD TSIC activity after onboarding. The historical verification below describes the former control, not current behavior. This decision does not by itself establish any separate legal finding recorded elsewhere in this register.
+
 **The gap it closes.** `Company` had no industry/business-type field, so nothing in the
 system could tell a clinic from a hardware shop. The deferral in §5 rested on a tenant-mix
 assumption that no code could observe, let alone alarm on.
