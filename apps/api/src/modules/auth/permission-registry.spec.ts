@@ -509,5 +509,12 @@ describe('permission-registry', () => {
       assert.ok(ROLE_GRANTS['FINANCE'].includes('wht.certificate.issue'));
       assert.ok(ROLE_GRANTS['ACCOUNTANT'].includes('wht.certificate.issue'));
     });
+
+    // Correction & replacement plan §2.1: the same two roles that may ISSUE a SYSTEM certificate
+    // may also correct/reissue a copy of one — a continuing responsibility, not a new grant.
+    it('grants wht.certificate.correct to the same roles that hold wht.certificate.issue', () => {
+      assert.ok(ROLE_GRANTS['FINANCE'].includes('wht.certificate.correct'));
+      assert.ok(ROLE_GRANTS['ACCOUNTANT'].includes('wht.certificate.correct'));
+    });
   });
 });

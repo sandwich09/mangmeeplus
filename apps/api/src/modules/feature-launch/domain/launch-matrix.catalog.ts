@@ -187,31 +187,40 @@ export const FEATURE_LAUNCH_MATRIX: readonly LaunchMatrixRow[] = [
     specialistApprovalRequired: false,
     materializable: true,
   },
+  // Owner decision 2026-09-22 (wht-certificate-system-issuance-spec.md §8): 50-ทวิ issuance is
+  // gated by the `thai_tax`/ENTERPRISE_1999 billing entitlement alone, not by a specialist-approval
+  // record — `assertSpecialistRoutesClosed`'s deploy-time invariant matches by GATE KEY, not by
+  // individual routeKey (a route materialized under a specialist namespace gate is caught even if
+  // its routeKey isn't enumerable), so leaving SYSTEM_CONTENT_CORRECTION/SYSTEM_REPLACEMENT_COPY
+  // classified SPECIALIST_LEGAL would still block every deploy on this whole `cap.wht50bis` gate
+  // key. All three routes move to ORDINARY/OPEN together; correction/replacement have no
+  // implementation yet (still out of scope, per the spec's non-goals) — whoever builds them can
+  // reintroduce a gate informed by whatever is true at that time.
   {
     gateKey: 'cap.wht50bis',
     routeKey: 'SYSTEM_INITIAL_ISSUE',
-    routeClass: 'SPECIALIST_LEGAL',
-    seedState: 'CLOSED',
+    routeClass: 'ORDINARY',
+    seedState: 'OPEN',
     matrixRowStatus: 'RESOLVED',
-    specialistApprovalRequired: true,
+    specialistApprovalRequired: false,
     materializable: true,
   },
   {
     gateKey: 'cap.wht50bis',
     routeKey: 'SYSTEM_CONTENT_CORRECTION',
-    routeClass: 'SPECIALIST_LEGAL',
-    seedState: 'CLOSED',
+    routeClass: 'ORDINARY',
+    seedState: 'OPEN',
     matrixRowStatus: 'RESOLVED',
-    specialistApprovalRequired: true,
+    specialistApprovalRequired: false,
     materializable: true,
   },
   {
     gateKey: 'cap.wht50bis',
     routeKey: 'SYSTEM_REPLACEMENT_COPY',
-    routeClass: 'SPECIALIST_LEGAL',
-    seedState: 'CLOSED',
+    routeClass: 'ORDINARY',
+    seedState: 'OPEN',
     matrixRowStatus: 'RESOLVED',
-    specialistApprovalRequired: true,
+    specialistApprovalRequired: false,
     materializable: true,
   },
   {

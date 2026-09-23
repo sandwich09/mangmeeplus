@@ -33,9 +33,14 @@ export class TaxArtifactRendererService {
     payerSnapshot: PayerSnapshot,
     payeeSnapshot: PayeeSnapshot,
     signature?: WhtCertificateSignature,
+    // Correction & replacement plan §4.2: passed straight through to both underlying calls. Neither
+    // existing caller (CreateWhtCertificateUseCase, IssueWhtCertificateFromHandoffUseCase) passes
+    // these, so their behavior is unchanged — only IssueWhtReplacementCopyUseCase uses the first.
+    replacementCopy?: { issuedAt: string },
+    options?: { stateStamp?: 'SUPERSEDED' },
   ): Promise<TaxExportArtifact> {
-    const svg = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot, signature);
-    const buffer = await renderWhtCertificatePdf(svg, fields.certificateNumber);
+    const svg = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot, signature, replacementCopy);
+    const buffer = await renderWhtCertificatePdf(svg, fields.certificateNumber, options);
     return {
       fileName: `wht-certificate-${fields.certificateNumber}.pdf`,
       mimeType: 'application/pdf',

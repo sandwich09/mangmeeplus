@@ -1,5 +1,5 @@
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
-import type { LinkExternalWhtCertificateDto, SetWhtHandoffPayeeAddressDto, WhtCertificateHandoffDto, WhtCertificateDto, CreateSupplierPaymentDto, CreateVendorBillDto, ReviewVendorBillTaxEvidenceDto, SupplierPaymentDetail, SupplierPaymentSummary, TransactionTaxContext, UpdateVendorBillTaxEvidenceDto, VendorBillDetail, VendorBillSummary } from '@watchdog-bms/contracts';
+import type { CorrectWhtCertificateDto, LinkExternalWhtCertificateDto, SetWhtHandoffPayeeAddressDto, WhtCertificateHandoffDto, WhtCertificateDto, CreateSupplierPaymentDto, CreateVendorBillDto, ReviewVendorBillTaxEvidenceDto, SupplierPaymentDetail, SupplierPaymentSummary, TransactionTaxContext, UpdateVendorBillTaxEvidenceDto, VendorBillDetail, VendorBillSummary } from '@watchdog-bms/contracts';
 import type { TaxExportArtifact } from '../tax/tax.api';
 
 function qs(params?: Record<string, unknown>): string {
@@ -139,4 +139,18 @@ export function setWhtHandoffPayeeAddress(companyId: string, handoffId: string, 
  */
 export function issueSystemWhtCertificate(companyId: string, handoffId: string) {
   return apiFetch<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }>(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate`, { method: 'POST' });
+}
+
+/**
+ * Correction & replacement plan §5.1: mints a NEW-numbered certificate with corrected content,
+ * superseding the old one. Same "download immediately from the response" shape as
+ * `issueSystemWhtCertificate` — nothing ever populates `WhtCertificate.pdfAttachmentId`.
+ */
+export function correctSystemWhtCertificate(companyId: string, handoffId: string, body: CorrectWhtCertificateDto) {
+  return apiFetch<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }>(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate/correction`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** Same-numbered "ใบแทน" copy — no body, no form. */
+export function issueSystemWhtReplacementCopy(companyId: string, handoffId: string) {
+  return apiFetch<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }>(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate/replacement-copy`, { method: 'POST' });
 }

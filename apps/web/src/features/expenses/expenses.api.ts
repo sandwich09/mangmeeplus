@@ -728,3 +728,12 @@ export function listWhtHandoffs(companyId: string, params?: { status?: string; s
 export function issueSystemWhtCertificate(companyId: string, handoffId: string): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
   return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate`, { method: 'POST' });
 }
+
+// Correction & replacement plan §5.2 — same endpoints accounts-payable.api.ts calls.
+export function correctSystemWhtCertificate(companyId: string, handoffId: string, body: import('@watchdog-bms/contracts').CorrectWhtCertificateDto): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate/correction`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function issueSystemWhtReplacementCopy(companyId: string, handoffId: string): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate/replacement-copy`, { method: 'POST' });
+}

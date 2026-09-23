@@ -5140,6 +5140,16 @@ model WhtCertificate {
   voidedAt           DateTime?
   voidedByUserId     String?
   voidReason         String?
+  // Correction & replacement plan §1.1/§5.2 — additive, single-supersede self-relation kept as
+  // plain strings (mirrors WhtCertificateHandoff.certificateId), no Prisma `@relation`: Prisma
+  // does not support two unnamed fields pointing at each other on the same self-relation.
+  supersededByCertificateId   String?   @unique
+  supersedesCertificateId     String?   @unique
+  correctionReason            String?
+  // Replacement copy counter — a plain count instead of a per-copy ledger table (§3 non-goal).
+  replacementCopyCount        Int       @default(0)
+  lastReplacementCopyAt       DateTime?
+  lastReplacementCopyByUserId String?
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
 

@@ -8,11 +8,17 @@
 //
 // Field list is the UNION of the contract type and what apps/web actually sends — under
 // `whitelist + forbidNonWhitelisted` an extra field is a 400 and a missing one is silently stripped.
-import { IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { IsIn, IsNotEmpty, IsObject, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import type {
+  CorrectWhtCertificateDto as CorrectWhtCertificateContract,
   LinkExternalWhtCertificateDto as LinkExternalWhtCertificateContract,
+  PayeeSnapshot,
+  PayerSnapshot,
   SetWhtHandoffPayeeAddressDto as SetWhtHandoffPayeeAddressContract,
   UpdateCompanyTaxSignatureDto as UpdateCompanyTaxSignatureContract,
+  WhtCertificateCorrectionInput as WhtCertificateCorrectionInputContract,
+  WhtFormType,
 } from '@watchdog-bms/contracts';
 import { WHT_HANDOFF_PAYEE_ADDRESS_MAX } from '@watchdog-bms/contracts';
 import { WHT_LINK_ISSUED_DATE, WHT_LINK_LIMITS } from '../../domain/logic/wht-link-evidence.logic';
@@ -52,4 +58,41 @@ export class SetWhtHandoffPayeeAddressDto implements SetWhtHandoffPayeeAddressCo
 export class UpdateCompanyTaxSignatureDto implements UpdateCompanyTaxSignatureContract {
   @IsIn(['BLANK', 'AUTO_STAMP']) signatureMode!: 'BLANK' | 'AUTO_STAMP';
   @IsString() @IsOptional() signatureAttachmentId?: string;
+}
+
+/**
+ * Correction & replacement plan §2.2/§2.3: every field optional — the use case merges each one over
+ * the current certificate's own value, so an omitted field means "keep what is there today", not
+ * "clear it". Mirrors `WhtCertificateFields`/`PayerSnapshot`/`PayeeSnapshot`'s own field set.
+ */
+export class WhtCertificatePayerSnapshotOverrideDto implements Partial<PayerSnapshot> {
+  @IsString() @IsOptional() @MaxLength(200) companyName?: string;
+  @IsString() @IsOptional() @MaxLength(20) taxId?: string;
+  @IsString() @IsOptional() @MaxLength(20) branchCode?: string;
+  @IsString() @IsOptional() @MaxLength(500) address?: string;
+}
+
+export class WhtCertificatePayeeSnapshotOverrideDto implements Partial<PayeeSnapshot> {
+  @IsString() @IsOptional() @MaxLength(200) name?: string;
+  @IsString() @IsOptional() @MaxLength(20) taxId?: string;
+  @IsString() @IsOptional() @MaxLength(500) address?: string;
+  @IsString() @IsOptional() @MaxLength(20) branchCode?: string;
+}
+
+export class WhtCertificateCorrectionInputDto implements WhtCertificateCorrectionInputContract {
+  @IsIn(['PND3', 'PND53']) @IsOptional() formType?: WhtFormType;
+  @IsString() @IsOptional() @MaxLength(64) incomeCategoryCode?: string;
+  @IsString() @IsOptional() @MaxLength(200) incomeCategoryName?: string;
+  @IsString() @IsOptional() @MaxLength(20) whtRate?: string;
+  @IsString() @IsOptional() @MaxLength(20) grossAmount?: string;
+  @IsString() @IsOptional() @MaxLength(20) withheldAmount?: string;
+  @IsString() @IsOptional() paymentDate?: string;
+  @IsOptional() @ValidateNested() @Type(() => WhtCertificatePayerSnapshotOverrideDto) payerSnapshot?: WhtCertificatePayerSnapshotOverrideDto;
+  @IsOptional() @ValidateNested() @Type(() => WhtCertificatePayeeSnapshotOverrideDto) payeeSnapshot?: WhtCertificatePayeeSnapshotOverrideDto;
+}
+
+/** Body of `POST wht/payment-handoffs/:handoffId/system-certificate/correction` (plan §2.3). */
+export class CorrectWhtCertificateDto implements CorrectWhtCertificateContract {
+  @IsObject() @ValidateNested() @Type(() => WhtCertificateCorrectionInputDto) corrected!: WhtCertificateCorrectionInputDto;
+  @IsString() @IsNotEmpty() @MaxLength(500) reason!: string;
 }

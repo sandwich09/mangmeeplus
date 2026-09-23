@@ -225,6 +225,10 @@ export const PERMISSIONS: PermissionDef[] = [
   // handoff (AP/Expenses "ออกเอกสารในระบบ" button). Owner decision 2026-09-22 gates it with
   // `thai_tax` via a dedicated pack (`pack.wht.certificate.issue`) — see capability-pack.registry.ts.
   { key: 'wht.certificate.issue',       description: 'Issue a 50 ทวิ WHT certificate directly from a settlement/expense confirm (SYSTEM issuance)', riskLevel: 'HIGH' },
+  // Correction & replacement plan §2.1: shared key for both "แก้ไขหนังสือรับรอง" and "ออกใบแทน" on a
+  // SYSTEM-issued certificate — owner confirmed 2026-09-23 this stays ungated (no thai_tax), unlike
+  // wht.certificate.issue above (see capability-pack.registry.ts).
+  { key: 'wht.certificate.correct',     description: 'Correct or reissue a copy of a SYSTEM-issued 50 ทวิ certificate', riskLevel: 'HIGH' },
   // WHT certificate system issuance plan §2.1b (Decision B): OWNER-only by omission — deliberately
   // never added to any role's grant list below (mirrors company.legal_identity.manage).
   { key: 'company.tax_signature.manage', description: "Upload/manage the company's WHT-certificate signature image (authorized signatory)", riskLevel: 'HIGH' },
@@ -879,7 +883,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'tax.report.read', 'tax.report.recompute', 'tax.report.export',
     'tax.filing.mark_filed', 'tax.filing.mark_paid',
     'tax.certificate.read', 'tax.certificate.issue', 'tax.certificate.void',
-    'wht.certificate.read', 'wht.external_certificate.link', 'wht.certificate.issue',
+    'wht.certificate.read', 'wht.external_certificate.link', 'wht.certificate.issue', 'wht.certificate.correct',
     'tax.review_issue.read', 'tax.review_issue.resolve',
     // Item 13 banking – Finance has all except approve, complete, reopen
     'bank.account.read', 'bank.account.manage', 'bank.account.sensitive_read',
@@ -945,7 +949,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'tax.report.read', 'tax.report.recompute', 'tax.report.export',
     'tax.filing.mark_filed', 'tax.filing.mark_paid',
     'tax.certificate.read', 'tax.certificate.issue', 'tax.certificate.void',
-    'wht.certificate.read', 'wht.external_certificate.link', 'wht.certificate.issue',
+    'wht.certificate.read', 'wht.external_certificate.link', 'wht.certificate.issue', 'wht.certificate.correct',
     'tax.review_issue.read', 'tax.review_issue.resolve',
     'tax.adjustment.create',
     // Item 13 banking – Accountant has full banking access

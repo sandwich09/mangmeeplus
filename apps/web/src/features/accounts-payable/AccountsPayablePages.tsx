@@ -8,7 +8,7 @@ import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/components/document-preview';
 import { ForbiddenState } from '@/common/components/state';
 import { formatThaiDate } from '@/common/i18n/thai-date';
-import { listVendorBills, getVendorBill, createVendorBill, matchVendorBill, submitVendorBill, approveVendorBill, rejectVendorBill, voidVendorBill, getSupplierPayment, listSupplierPayments, createSupplierPayment, voidSupplierPayment, generateSourceJournal, releasePp36InputClaim, getApAging, reviewVendorBillTaxEvidence, updateVendorBillTaxEvidence, getApprovalPolicy, updateApprovalPolicy, listWhtHandoffs, linkExternalWhtCertificate, setWhtHandoffPayeeAddress, listWhtIncomeCategories, issueSystemWhtCertificate } from './accounts-payable.api';
+import { listVendorBills, getVendorBill, createVendorBill, matchVendorBill, submitVendorBill, approveVendorBill, rejectVendorBill, voidVendorBill, getSupplierPayment, listSupplierPayments, createSupplierPayment, voidSupplierPayment, generateSourceJournal, releasePp36InputClaim, getApAging, reviewVendorBillTaxEvidence, updateVendorBillTaxEvidence, getApprovalPolicy, updateApprovalPolicy, listWhtHandoffs, linkExternalWhtCertificate, setWhtHandoffPayeeAddress, listWhtIncomeCategories, issueSystemWhtCertificate, correctSystemWhtCertificate, issueSystemWhtReplacementCopy } from './accounts-payable.api';
 import { downloadArtifact } from '@/common/files/download-artifact';
 import type { WhtIncomeCategoryOption } from './accounts-payable.api';
 import type { PaymentMethod, SupplierPaymentDetail, SupplierPaymentSummary, SupplierSummary, TradeTaxEvidenceDto, TransactionTaxContext, VendorBillDetail, VendorBillSummary } from '@watchdog-bms/contracts';
@@ -18,7 +18,7 @@ import { listTradeTaxEvidence, uploadTradeTaxEvidenceAttachment } from '@/featur
 import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
 import { TransactionBranchField, useTransactionCreateBranchId } from '@/features/web-core-workspace/TransactionBranchField';
 import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
-import { canSubmitSupplierPayment, isSupplierPaymentWithholdingValid, isVendorBillTaxEvidenceBlocked, isVendorBillTaxEvidenceCompleteForReview, canIssueSystemWhtCertificate } from './accounts-payable.model';
+import { canSubmitSupplierPayment, isSupplierPaymentWithholdingValid, isVendorBillTaxEvidenceBlocked, isVendorBillTaxEvidenceCompleteForReview, canIssueSystemWhtCertificate, canCorrectWhtCertificate, canIssueWhtReplacementCopy } from './accounts-payable.model';
 import { parseAccountsPayableTab, visibleAccountsPayableTabs, whtHandoffPayeeAddress, whtLinkErrorOutcome, type AccountsPayableTab } from './accounts-payable.logic';
 import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -983,7 +983,25 @@ function WhtHandoffDetail({ companyId, handoff, canLink, permissions, onLinked, 
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState<string | null>(null);
   const [issuedPdf, setIssuedPdf] = useState<{ certificateNumber: string; fileName: string; mimeType: string; contentBase64: string } | null>(null);
+  // Correction & replacement plan §5.1: same "download immediately, keep in memory for a same-session
+  // re-download" shape as `issuedPdf` above — no PDF is ever persisted server-side.
+  const [correctOpen, setCorrectOpen] = useState(false);
+  const [correctBusy, setCorrectBusy] = useState(false);
+  const [correctError, setCorrectError] = useState<string | null>(null);
+  const [correctedPdf, setCorrectedPdf] = useState<{ certificateNumber: string; fileName: string; mimeType: string; contentBase64: string } | null>(null);
+  const [replaceBusy, setReplaceBusy] = useState(false);
+  const [replaceError, setReplaceError] = useState<string | null>(null);
   const p = handoff.prefill ?? {};
+  // Prefill from the handoff's own frozen facts — the only certificate content this screen already
+  // has (no GET-certificate-by-id endpoint exists to re-read what a prior correction changed).
+  const [correctForm, setCorrectForm] = useState(() => ({
+    incomeCategoryCode: p.incomeCategoryCode ?? '', incomeCategoryName: p.incomeCategoryName ?? '',
+    whtRate: p.whtRate ?? '', grossAmount: p.grossAmount ?? '', withheldAmount: p.withheldAmount ?? '',
+    paymentDate: p.paymentDate ? p.paymentDate.slice(0, 10) : '', formType: p.formType ?? 'PND53',
+    payeeName: p.payeeSnapshot?.name ?? '', payeeTaxId: p.payeeSnapshot?.taxId ?? '',
+    payeeAddress: p.payeeSnapshot?.address ?? '', payeeBranchCode: p.payeeSnapshot?.branchCode ?? '',
+    reason: '',
+  }));
   const linked = handoff.status === 'EXTERNAL_LINKED';
   // Drift found while reading the real code (spec §4.1 note): this used to check only
   // EXTERNAL_LINKED, so a SYSTEM_ISSUED row still showed the "แนบเอกสารที่ออกภายนอก" form.
@@ -1002,6 +1020,47 @@ function WhtHandoffDetail({ companyId, handoff, canLink, permissions, onLinked, 
     } catch (e) {
       setIssueError(err(e));
     } finally { setIssuing(false); }
+  };
+
+  const doCorrect = async () => {
+    setCorrectBusy(true); setCorrectError(null);
+    try {
+      const result = await correctSystemWhtCertificate(companyId, handoff.id, {
+        corrected: {
+          formType: correctForm.formType as 'PND3' | 'PND53',
+          incomeCategoryCode: correctForm.incomeCategoryCode || undefined,
+          incomeCategoryName: correctForm.incomeCategoryName || undefined,
+          whtRate: correctForm.whtRate || undefined,
+          grossAmount: correctForm.grossAmount || undefined,
+          withheldAmount: correctForm.withheldAmount || undefined,
+          paymentDate: correctForm.paymentDate ? new Date(correctForm.paymentDate).toISOString() : undefined,
+          payeeSnapshot: {
+            name: correctForm.payeeName || undefined,
+            taxId: correctForm.payeeTaxId || undefined,
+            address: correctForm.payeeAddress || undefined,
+            branchCode: correctForm.payeeBranchCode || undefined,
+          },
+        },
+        reason: correctForm.reason.trim(),
+      });
+      downloadArtifact(result.pdfArtifact);
+      setCorrectedPdf({ certificateNumber: result.certificateNumber, ...result.pdfArtifact });
+      setCorrectOpen(false);
+      onStale();
+    } catch (e) {
+      setCorrectError(err(e));
+    } finally { setCorrectBusy(false); }
+  };
+
+  const doReplace = async () => {
+    setReplaceBusy(true); setReplaceError(null);
+    try {
+      const result = await issueSystemWhtReplacementCopy(companyId, handoff.id);
+      downloadArtifact(result.pdfArtifact);
+      onStale();
+    } catch (e) {
+      setReplaceError(err(e));
+    } finally { setReplaceBusy(false); }
   };
 
   const saveAddress = async () => {
@@ -1109,11 +1168,95 @@ function WhtHandoffDetail({ companyId, handoff, canLink, permissions, onLinked, 
       </div>
       {issued ? (
         <div role="status" aria-live="polite" className="rounded border border-green-200 bg-green-50 p-3 text-sm text-green-900">
-          <p>ระบบออกหนังสือรับรองให้แล้ว{issuedPdf ? ` · เลขที่ ${issuedPdf.certificateNumber}` : ''}</p>
-          {issuedPdf && (
-            <button type="button" className={`${ghostClass} mt-2`} style={{ minHeight: 44, minWidth: 44 }} onClick={() => downloadArtifact(issuedPdf)}>
+          <p>ระบบออกหนังสือรับรองให้แล้ว{(correctedPdf ?? issuedPdf) ? ` · เลขที่ ${(correctedPdf ?? issuedPdf)!.certificateNumber}` : ''}</p>
+          {(correctedPdf ?? issuedPdf) && (
+            <button type="button" className={`${ghostClass} mt-2`} style={{ minHeight: 44, minWidth: 44 }} onClick={() => downloadArtifact((correctedPdf ?? issuedPdf)!)}>
               ดาวน์โหลด PDF อีกครั้ง
             </button>
+          )}
+          {/* Correction & replacement plan §5.1: same block, gated by canCorrectWhtCertificate/
+              canIssueWhtReplacementCopy — both axes (route-readiness + permission) already fold in. */}
+          {canCorrectWhtCertificate(handoff, permissions) && (
+            <div className="mt-3 border-t border-green-200 pt-3">
+              <button
+                type="button"
+                className={`${ghostClass} min-h-11 min-w-11`}
+                aria-expanded={correctOpen}
+                aria-controls={fieldId('correct-form')}
+                onClick={() => setCorrectOpen((value) => !value)}
+              >
+                {correctOpen ? 'ปิดฟอร์มแก้ไข' : 'แก้ไขหนังสือรับรอง'}
+              </button>
+              {correctOpen && (
+                <form id={fieldId('correct-form')} className="mt-2 grid gap-2 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void doCorrect(); }}>
+                  <label className="block" htmlFor={fieldId('correct-income-code')}>
+                    <span className="text-xs text-gray-600">รหัสประเภทเงินได้</span>
+                    <input id={fieldId('correct-income-code')} className={inputClass} value={correctForm.incomeCategoryCode} onChange={(e) => setCorrectForm((f) => ({ ...f, incomeCategoryCode: e.target.value }))} disabled={correctBusy} />
+                  </label>
+                  <label className="block" htmlFor={fieldId('correct-income-name')}>
+                    <span className="text-xs text-gray-600">ชื่อประเภทเงินได้</span>
+                    <input id={fieldId('correct-income-name')} className={inputClass} value={correctForm.incomeCategoryName} onChange={(e) => setCorrectForm((f) => ({ ...f, incomeCategoryName: e.target.value }))} disabled={correctBusy} />
+                  </label>
+                  <label className="block" htmlFor={fieldId('correct-form-type')}>
+                    <span className="text-xs text-gray-600">แบบ</span>
+                    <ThemedSelect id={fieldId('correct-form-type')} className={inputClass} value={correctForm.formType} disabled={correctBusy} onChange={(e) => setCorrectForm((f) => ({ ...f, formType: e.target.value }))}>
+                      <option value="PND3">ภ.ง.ด.3</option>
+                      <option value="PND53">ภ.ง.ด.53</option>
+                    </ThemedSelect>
+                  </label>
+                  <label className="block" htmlFor={fieldId('correct-rate')}>
+                    <span className="text-xs text-gray-600">อัตราภาษี (%)</span>
+                    <input id={fieldId('correct-rate')} className={inputClass} value={correctForm.whtRate} onChange={(e) => setCorrectForm((f) => ({ ...f, whtRate: e.target.value }))} disabled={correctBusy} />
+                  </label>
+                  <label className="block" htmlFor={fieldId('correct-gross')}>
+                    <span className="text-xs text-gray-600">จำนวนเงินที่จ่าย</span>
+                    <input id={fieldId('correct-gross')} className={inputClass} value={correctForm.grossAmount} onChange={(e) => setCorrectForm((f) => ({ ...f, grossAmount: e.target.value }))} disabled={correctBusy} />
+                  </label>
+                  <label className="block" htmlFor={fieldId('correct-withheld')}>
+                    <span className="text-xs text-gray-600">ภาษีที่หักไว้</span>
+                    <input id={fieldId('correct-withheld')} className={inputClass} value={correctForm.withheldAmount} onChange={(e) => setCorrectForm((f) => ({ ...f, withheldAmount: e.target.value }))} disabled={correctBusy} />
+                  </label>
+                  <label className="block" htmlFor={fieldId('correct-payment-date')}>
+                    <span className="text-xs text-gray-600">วันที่จ่าย</span>
+                    <ThemedDate id={fieldId('correct-payment-date')} className={inputClass} value={correctForm.paymentDate} onChange={(e) => setCorrectForm((f) => ({ ...f, paymentDate: e.target.value }))} disabled={correctBusy} />
+                  </label>
+                  <label className="block" htmlFor={fieldId('correct-payee-name')}>
+                    <span className="text-xs text-gray-600">ชื่อผู้รับเงิน</span>
+                    <input id={fieldId('correct-payee-name')} className={inputClass} value={correctForm.payeeName} onChange={(e) => setCorrectForm((f) => ({ ...f, payeeName: e.target.value }))} disabled={correctBusy} />
+                  </label>
+                  <label className="block" htmlFor={fieldId('correct-payee-taxid')}>
+                    <span className="text-xs text-gray-600">เลขประจำตัวผู้เสียภาษี (ผู้รับ)</span>
+                    <input id={fieldId('correct-payee-taxid')} className={inputClass} value={correctForm.payeeTaxId} onChange={(e) => setCorrectForm((f) => ({ ...f, payeeTaxId: e.target.value }))} disabled={correctBusy} />
+                  </label>
+                  <label className="block" htmlFor={fieldId('correct-payee-branch')}>
+                    <span className="text-xs text-gray-600">สาขา</span>
+                    <input id={fieldId('correct-payee-branch')} className={inputClass} value={correctForm.payeeBranchCode} onChange={(e) => setCorrectForm((f) => ({ ...f, payeeBranchCode: e.target.value }))} disabled={correctBusy} />
+                  </label>
+                  <label className="block sm:col-span-2" htmlFor={fieldId('correct-payee-address')}>
+                    <span className="text-xs text-gray-600">ที่อยู่ผู้รับเงิน</span>
+                    <input id={fieldId('correct-payee-address')} className={inputClass} value={correctForm.payeeAddress} onChange={(e) => setCorrectForm((f) => ({ ...f, payeeAddress: e.target.value }))} disabled={correctBusy} />
+                  </label>
+                  <label className="block sm:col-span-2" htmlFor={fieldId('correct-reason')}>
+                    <span className="text-xs text-gray-600">เหตุผลที่แก้ไข (บังคับ)</span>
+                    <input id={fieldId('correct-reason')} className={inputClass} value={correctForm.reason} onChange={(e) => setCorrectForm((f) => ({ ...f, reason: e.target.value }))} disabled={correctBusy} placeholder="เช่น พิมพ์ยอดผิด แก้ที่อยู่ผู้รับเงิน" />
+                  </label>
+                  {correctError && <div className="sm:col-span-2"><ErrorBanner message={correctError} /></div>}
+                  <div className="sm:col-span-2">
+                    <button type="submit" className={btnClass} style={{ minHeight: 44, minWidth: 44 }} aria-busy={correctBusy} disabled={correctBusy || !correctForm.reason.trim()}>
+                      {correctBusy ? 'กำลังแก้ไข...' : 'ยืนยันแก้ไข'}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+          {canIssueWhtReplacementCopy(handoff, permissions) && (
+            <div className="mt-3 border-t border-green-200 pt-3">
+              {replaceError && <div className="mb-2"><ErrorBanner message={replaceError} /></div>}
+              <button type="button" className={`${ghostClass} min-h-11 min-w-11`} aria-busy={replaceBusy} disabled={replaceBusy} onClick={() => void doReplace()}>
+                {replaceBusy ? 'กำลังออกใบแทน...' : 'ออกใบแทน'}
+              </button>
+            </div>
           )}
         </div>
       ) : linked ? (
@@ -1128,10 +1271,10 @@ function WhtHandoffDetail({ companyId, handoff, canLink, permissions, onLinked, 
               picks one path. */}
           {canIssueSystemWhtCertificate(handoff, permissions) && (
             <div>
-              <h4 className="mb-2 text-sm font-semibold text-gray-900">ออกเอกสารในระบบ</h4>
+              <h4 className="mb-2 text-sm font-semibold text-gray-900">พิมพ์เอกสารทวิ 50</h4>
               {issueError && <ErrorBanner message={issueError} />}
               <button type="button" className={btnClass} style={{ minHeight: 44, minWidth: 44 }} aria-busy={issuing} disabled={issuing} onClick={() => void doIssue()}>
-                {issuing ? 'กำลังออกเอกสาร...' : 'ออกเอกสารในระบบ'}
+                {issuing ? 'กำลังพิมพ์เอกสาร...' : 'พิมพ์เอกสารทวิ 50'}
               </button>
             </div>
           )}
