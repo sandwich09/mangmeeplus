@@ -376,6 +376,7 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/billing/application/billing-free-days.spec.ts',
       'src/modules/billing/application/billing-financial.spec.ts',
       'src/modules/billing/application/billing-refund-source.spec.ts',
+      'src/modules/billing/application/billing-end-package.spec.ts',
       'src/modules/billing/application/billing-settlement-source.spec.ts',
       'src/modules/billing/application/billing-checkout-expiry-source.spec.ts',
       'src/modules/billing/application/billing-reconcile-command.spec.ts',

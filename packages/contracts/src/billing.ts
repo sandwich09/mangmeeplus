@@ -253,7 +253,9 @@ export type BillingCheckoutReview = {companyId:string;companyName:string;attempt
 export type BillingCheckoutExpiryOperation = BillingOperationView & {companyName:string;previewHash:string;dispatchedAt:string|null;
   providerState:BillingCheckoutState|null;paymentState:BillingCheckoutPaymentState|null;reconciliationPending:boolean;reviewCaseId:string|null;allowedActions:('submit'|'cancel'|'run')[]};
 
-export type BillingRefundInput = { amountSatang:number; reason:string; memo:string; notifyCustomer:boolean; sourceHash:string };
+/** endPackage: after a SUCCEEDED refund, end the running paid package now (default keeps it). */
+export type BillingRefundInput = { amountSatang:number; reason:string; memo:string; notifyCustomer:boolean; sourceHash:string; endPackage?:boolean };
+export type BillingEndPackageReview = { canEnd:boolean; blockedReason:string|null };
 export type BillingRefundReview = { companyId:string; companyName:string; invoiceId:string; invoiceNumber:string|null; mode:BillingMode;
   paidSatang:number; refundedSatang:number; disputed:boolean; refundLimitSatang:number|null; canCreate:boolean; blockedReason:string|null;
   sourceHash:string; observedAt:string; usage:BillingStatus['usage']; adjustments:BillingAdjustmentItem[] };
@@ -261,7 +263,8 @@ export type BillingRefundOperation = BillingOperationView & { type:'REFUND'; sou
   companyName:string; invoiceNumber:string|null; amountSatang:number; taxSatang:number; memo:string; notifyCustomer:boolean;
   paidSatang:number; previousRefundedSatang:number; usage:BillingStatus['usage'];
   allowedActions:('submit'|'approve'|'cancel'|'run')[]; dispatchedAt:string|null; creditNoteId:string|null; creditNoteNumber:string|null;
-  refundId:string|null; refundState:BillingAdjustmentItem['status']|null; reviewCaseId:string|null; bankReceiptConfirmed:false };
+  refundId:string|null; refundState:BillingAdjustmentItem['status']|null; reviewCaseId:string|null; bankReceiptConfirmed:false;
+  endPackage:boolean; packageEnded:boolean|null };
 
 export type BillingOperatorCompany = {
   accountId: string | null; companyId: string; companyName: string; mode: BillingMode | 'DISABLED'; version: number;
