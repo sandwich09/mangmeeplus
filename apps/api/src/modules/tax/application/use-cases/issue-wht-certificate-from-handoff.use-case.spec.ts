@@ -86,8 +86,8 @@ function harness(options: { handoff?: Record<string, unknown>; onReserve?: () =>
   };
   const audit: any = { log: async (entry: any) => { audits.push(entry); } };
   const renderer: any = {
-    renderWhtCertificate: async (fields: any) => {
-      renders.push(fields);
+    renderWhtCertificate: async (fields: any, _payer: any, payee: any) => {
+      renders.push({ ...fields, payee });
       return { mimeType: 'application/pdf', fileName: `wht-certificate-${fields.certificateNumber}`, contentBase64: '', checksum: 'sum', byteLength: 0 };
     },
   };
@@ -115,6 +115,20 @@ describe('IssueWhtCertificateFromHandoffUseCase', () => {
     assert.equal(h.handoff.status, 'SYSTEM_ISSUED');
     assert.equal(h.handoff.certificateId, h.certificates[0].id);
     assert.ok(h.audits.some((entry) => entry.action === 'tax.wht_certificate.issue' && entry.metadataJson.source === 'handoff'));
+  });
+
+  it('prints the operator-typed payee address over the frozen prefill, leaving the prefill untouched', async () => {
+    const typed = harness({ handoff: { payeeAddress: '99 ถนนสุขุมวิท กรุงเทพฯ 10110' } });
+    await typed.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1');
+    assert.equal(typed.renders[0].payee.address, '99 ถนนสุขุมวิท กรุงเทพฯ 10110');
+    assert.equal(typed.certificates[0].payeeSnapshotJson.address, '99 ถนนสุขุมวิท กรุงเทพฯ 10110', 'replacement/correction re-renders read this');
+    assert.equal(typed.renders[0].payee.name, 'บริษัท ผู้รับเงิน จำกัด');
+    assert.equal(typed.handoff.prefillSnapshotJson.payeeSnapshot.address, null, 'the hashed prefill is never rewritten');
+
+    const fallback = harness({ handoff: { payeeAddress: null,
+      prefillSnapshotJson: prefill({ payeeSnapshot: { name: 'ผู้รับ', taxId: null, address: 'ที่อยู่จากต้นทาง', branchCode: null } }) } });
+    await fallback.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1');
+    assert.equal(fallback.renders[0].payee.address, 'ที่อยู่จากต้นทาง');
   });
 
   it('replays the winner instead of a raw P2002 when two identical mints race', async () => {
