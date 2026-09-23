@@ -17,6 +17,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { ValidationPipe } from '@nestjs/common';
+import type { SalesAgentSelfProfileInput } from '@watchdog-bms/contracts';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../generated/prisma/client';
 import { SalesAgentsService } from './application/sales-agents.service';
@@ -24,6 +28,8 @@ import { SalesCompanySearchService } from './application/sales-company-search.se
 import { SalesDealsService } from './application/sales-deals.service';
 import { SalesReferralService } from './application/sales-referral.service';
 import { PLATFORM_TENANT_ID } from './application/sales-context';
+import { SalesSelfProfileDto, SalesTeamCreateDto } from './presentation/http/sales.controller';
+import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../common/pipes/validation-pipe.options';
 import { encryptCredential } from '../system-partner-management/domain/logic/credential-cipher.logic';
 import type { RequestContext } from '../auth/domain/models/request-context.model';
 
@@ -148,6 +154,92 @@ async function reason(code: () => Promise<unknown>): Promise<string> {
     return response?.code ?? (error as Error).constructor.name;
   }
 }
+
+it('accepts a complete lead-created payroll profile and validates its nested tax fields', () => {
+  const body = {
+    username: 'sales.new', displayName: 'เซลล์ใหม่', role: 'MANGMEE_SALES',
+    profile: {
+      legalName: 'เซลล์ ใหม่', nationalId: '1103700000001', taxId: '1103700000001',
+      address: '99 ถนนสีลม สีลม บางรัก กรุงเทพมหานคร 10500',
+      bankName: 'ธนาคารกสิกรไทย', bankAccount: '1234567890', whtRatePercent: 3,
+    },
+  };
+  assert.deepEqual(validateSync(plainToInstance(SalesTeamCreateDto, body)), []);
+  const invalid = plainToInstance(SalesTeamCreateDto, {
+    ...body, profile: { ...body.profile, nationalId: '11037000000012', taxId: '123' },
+  });
+  assert.ok(validateSync(invalid).some((error) => error.property === 'profile'));
+});
+
+it('rejects a self profile attempt to write withholding rate', async () => {
+  const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+  const input = { legalName: 'เซลล์', nationalId: '1103700000001', taxId: null,
+    address: 'ที่อยู่', bankName: 'ธนาคาร', bankAccount: '1234567890' };
+  await pipe.transform(input, { type: 'body', metatype: SalesSelfProfileDto });
+  await assert.rejects(() => pipe.transform({ ...input, whtRatePercent: 0 },
+    { type: 'body', metatype: SalesSelfProfileDto }));
+});
+
+it('scopes decrypted profile reads to admin, self and own-team lead before audit', async () => {
+  const rows = [
+    { id: 'p1', userId: 'agent-1', teamLeadUserId: 'lead-1' },
+    { id: 'p2', userId: 'agent-2', teamLeadUserId: 'lead-2' },
+  ];
+  const queries: Array<Record<string, string>> = [];
+  const audits: Array<Record<string, unknown>> = [];
+  const prisma = { client: { salesAgentProfile: { findFirst: async ({ where }: { where: Record<string, string> }) => {
+    queries.push(where);
+    const row = rows.find((item) => item.userId === where.userId && (!where.teamLeadUserId || item.teamLeadUserId === where.teamLeadUserId));
+    return row ? { id: row.id, legalName: 'ชื่อจริง', nationalIdEncrypted: null, taxIdEncrypted: null,
+      address: 'ที่อยู่', bankName: 'ธนาคาร', bankAccountEncrypted: null, whtRatePercent: 3 } : null;
+  } } } } as never;
+  const audit = { log: async (entry: Record<string, unknown>) => { audits.push(entry); } } as never;
+  const service = new SalesAgentsService(prisma, audit, config as never, noLine);
+  const lead = ctx('lead-1', ['MANGMEE_SALES_LEAD'], LEAD_PERMISSIONS);
+  const agent = ctx('agent-1', ['MANGMEE_SALES'], AGENT_PERMISSIONS);
+  const owner = ctx('owner', ['SYSTEM_ADMIN'], ['sales.agent_profile.manage']);
+
+  assert.equal((await service.readProfile(lead, 'agent-1')).legalName, 'ชื่อจริง');
+  assert.deepEqual(queries.at(-1), { userId: 'agent-1', teamLeadUserId: 'lead-1' });
+  assert.equal(await reason(() => service.readProfile(lead, 'agent-2')), 'SALES_AGENT_NOT_FOUND');
+  assert.deepEqual(queries.at(-1), { userId: 'agent-2', teamLeadUserId: 'lead-1' });
+  assert.equal((await service.readProfile(agent, 'agent-1')).legalName, 'ชื่อจริง');
+  assert.deepEqual(queries.at(-1), { userId: 'agent-1' });
+  const queryCount = queries.length;
+  assert.equal(await reason(() => service.readProfile(agent, 'agent-2')), 'SALES_AGENT_NOT_FOUND');
+  assert.equal(queries.length, queryCount, 'other-user access fails before reading a PII row');
+  assert.equal((await service.readProfile(owner, 'agent-2')).legalName, 'ชื่อจริง');
+  assert.equal(audits.length, 3, 'only successful reads produce view audits');
+  assert.ok(audits.every((entry) => !JSON.stringify(entry).includes('ชื่อจริง')));
+});
+
+it('self profile updates encrypt identities and cannot change withholding rate', async () => {
+  let written: Record<string, unknown> | null = null;
+  const audits: Array<Record<string, unknown>> = [];
+  const row = { id: 'p1', legalName: 'เซลล์', nationalIdEncrypted: null, taxIdEncrypted: null,
+    address: 'ที่อยู่เดิม', bankName: 'ธนาคารเดิม', bankAccountEncrypted: null, whtRatePercent: 3 };
+  const profile = {
+    update: async ({ data }: { data: Record<string, unknown> }) => { written = data; return { id: row.id }; },
+    findFirst: async () => row,
+  };
+  const prisma = { client: { salesAgentProfile: profile, $transaction: async (work: (tx: unknown) => Promise<unknown>) =>
+    work({ salesAgentProfile: profile }) } } as never;
+  const audit = { log: async (entry: Record<string, unknown>) => { audits.push(entry); } } as never;
+  const service = new SalesAgentsService(prisma, audit, config as never, noLine);
+  const agent = ctx('agent-1', ['MANGMEE_SALES'], AGENT_PERMISSIONS);
+  await service.updateOwnProfile(agent, {
+    legalName: 'เซลล์ ใหม่', nationalId: '1103700000001', taxId: null,
+    address: 'ที่อยู่ใหม่', bankName: 'ธนาคารใหม่', bankAccount: '1234567890',
+    whtRatePercent: 0,
+  } as unknown as SalesAgentSelfProfileInput);
+  const columns = written as Record<string, unknown> | null;
+  assert.ok(columns);
+  assert.equal('whtRatePercent' in columns, false);
+  assert.notEqual(columns.nationalIdEncrypted, '1103700000001');
+  assert.notEqual(columns.bankAccountEncrypted, '1234567890');
+  assert.ok(audits.some((entry) => entry.action === 'sales.agent.updated'));
+  assert.ok(audits.every((entry) => !JSON.stringify(entry).includes('1103700000001')));
+});
 
 describe('sales console on real PostgreSQL', { skip: !databaseUrl }, () => {
   it('allows one non-final deal per company and reports the collision as SALES_DEAL_ALREADY_OPEN', async () => {
@@ -341,16 +433,29 @@ describe('sales console on real PostgreSQL', { skip: !databaseUrl }, () => {
     } finally { await h.teardown(); }
   });
 
-  it('gives a new agent a forced-change credential, a unique code and a platform membership', async () => {
+  it('lets a lead create an agent with payroll details and a forced-change temporary password', async () => {
     const h = await harness();
     try {
       const created = await h.agents.create(h.lead, {
         username: `${h.tag}-new`, displayName: 'เซลล์ใหม่', role: 'MANGMEE_SALES',
+        profile: {
+          legalName: 'เซลล์ ใหม่', nationalId: '1103700000001', taxId: '1103700000001',
+          address: '99 ถนนสีลม สีลม บางรัก กรุงเทพมหานคร 10500',
+          bankName: 'ธนาคารกสิกรไทย', bankAccount: '1234567890', whtRatePercent: 3,
+        },
       });
       assert.match(created.agent.salesCode, /^[A-Z0-9]{3,6}$/);
       assert.equal(created.agent.teamLeadUserId, h.leadId, 'a lead creates inside their own team');
+      assert.equal(created.agent.hasProfile, true);
       assert.equal(created.credential.lineNotified, false, 'a brand-new agent has no LINE identity (S28)');
       assert.ok(created.credential.temporaryPassword.length > 0);
+
+      const stored = await h.client.salesAgentProfile.findUniqueOrThrow({ where: { userId: created.agent.userId } });
+      assert.equal(stored.address, '99 ถนนสีลม สีลม บางรัก กรุงเทพมหานคร 10500');
+      assert.notEqual(stored.nationalIdEncrypted, '1103700000001');
+      assert.notEqual(stored.bankAccountEncrypted, '1234567890');
+      assert.equal(JSON.stringify(await h.agents.list(h.lead)).includes('1103700000001'), false);
+      assert.equal(JSON.stringify(created).includes('1103700000001'), false);
 
       const credential = await h.client.userCredential.findUniqueOrThrow({ where: { userId: created.agent.userId } });
       assert.equal(credential.mustChangePassword, true);
@@ -374,13 +479,13 @@ describe('sales console on real PostgreSQL', { skip: !databaseUrl }, () => {
     } finally { await h.teardown(); }
   });
 
-  it('leaves a lead-created agent with no payroll record until the Owner fills one in', async () => {
+  it('keeps omitted payroll details empty and refuses profile writes without team or admin permission', async () => {
     const h = await harness();
     try {
       const created = await h.agents.create(h.lead, {
         username: `${h.tag}-blank`, displayName: 'เซลล์ยังไม่มีข้อมูลภาษี', role: 'MANGMEE_SALES',
       });
-      assert.equal(created.agent.hasProfile, false, 'a lead cannot attach payroll data (S10)');
+      assert.equal(created.agent.hasProfile, false, 'API callers may still omit payroll data');
 
       // NULL, not an encrypted empty string: "never captured" must be distinguishable from blank.
       const row = await h.client.salesAgentProfile.findUniqueOrThrow({ where: { userId: created.agent.userId } });
@@ -399,9 +504,9 @@ describe('sales console on real PostgreSQL', { skip: !databaseUrl }, () => {
         bankName: null, bankAccount: null, whtRatePercent: 3,
       });
 
-      // A lead sending payroll data is refused outright rather than silently dropped.
+      // A caller without team or admin permission cannot smuggle payroll data into create.
       assert.equal(
-        await reason(() => h.agents.create(h.lead, {
+        await reason(() => h.agents.create(h.agent, {
           username: `${h.tag}-pii`, displayName: 'ลอง', role: 'MANGMEE_SALES',
           profile: {
             legalName: 'ห้ามผ่าน', nationalId: '1103700000001', address: 'x',

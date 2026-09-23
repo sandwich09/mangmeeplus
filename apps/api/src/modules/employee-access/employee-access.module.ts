@@ -66,5 +66,6 @@ import { EntitlementExceptionUseCase } from './application/use-cases/entitlement
     PrismaBusinessPolicyRepository,
     { provide: BUSINESS_POLICY_REPOSITORY, useExisting: PrismaBusinessPolicyRepository },
   ],
+  exports: [ListThaiAddressesUseCase],
 })
 export class EmployeeAccessModule {}

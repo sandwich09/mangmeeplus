@@ -6,8 +6,7 @@ import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 import { SelectField, TextField } from './Field';
 import { autofillThaiAddress, uniqueAddressValues, type ThaiAddressValue } from './thai-address.logic';
 
-type Props = {
-  companyId: string;
+type Props = ({ companyId: string; addressMasterPath?: never } | { companyId?: never; addressMasterPath: string }) & {
   value: ThaiAddressValue;
   onChange: (value: ThaiAddressValue) => void;
   disabled?: boolean;
@@ -15,7 +14,7 @@ type Props = {
   className?: string;
 };
 
-export function ThaiAddressFields({ companyId, value, onChange, disabled = false, required = false, className = 'grid gap-4 sm:grid-cols-2' }: Props) {
+export function ThaiAddressFields({ companyId, addressMasterPath, value, onChange, disabled = false, required = false, className = 'grid gap-4 sm:grid-cols-2' }: Props) {
   const [rows, setRows] = useState<ThaiAddressOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -36,7 +35,7 @@ export function ThaiAddressFields({ companyId, value, onChange, disabled = false
     setLoading(true);
     setMessage('');
     const timer = window.setTimeout(() => {
-      void apiFetch<ThaiAddressOption[]>(`/companies/${companyId}/settings/address-master?postalCode=${encodeURIComponent(value.postalCode)}`)
+      void apiFetch<ThaiAddressOption[]>(`${addressMasterPath ?? `/companies/${companyId}/settings/address-master`}?postalCode=${encodeURIComponent(value.postalCode)}`)
         .then((nextRows) => {
           if (cancelled) return;
           setRows(nextRows);
@@ -58,7 +57,7 @@ export function ThaiAddressFields({ companyId, value, onChange, disabled = false
         .finally(() => { if (!cancelled) setLoading(false); });
     }, 300);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [companyId, value.postalCode]);
+  }, [companyId, addressMasterPath, value.postalCode]);
 
   const provinces = uniqueAddressValues([...rows.map((row) => row.provinceTh), ...(value.province ? [value.province] : [])]);
   const districts = uniqueAddressValues([

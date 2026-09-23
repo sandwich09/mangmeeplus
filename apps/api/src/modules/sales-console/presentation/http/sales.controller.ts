@@ -5,9 +5,10 @@
  * permission answers "may this role do it", `assertPlatformTenant` answers "is this caller
  * actually มั่งมี staff and not a company-scoped role that happens to be named the same".
  */
-import { Body, Controller, Get, HttpCode, Param, Post, Put, Query, Req } from '@nestjs/common';
-import { ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min, MaxLength, ValidateIf } from 'class-validator';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Put, Query, Req } from '@nestjs/common';
+import { ApiOperation, ApiResponse, PickType } from '@nestjs/swagger';
+import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Max, Min, MaxLength, ValidateIf, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import type { Request } from 'express';
 import {
   SALES_DEAL_BASE_TIERS,
@@ -20,6 +21,7 @@ import {
   type SalesAgentCreateResult,
   type SalesAgentListDto,
   type SalesAgentCredentialHandoff,
+  type SalesAgentProfileDto,
   type SalesCompanySearchDto,
   type SalesDealListDto,
   type SalesDealView,
@@ -33,6 +35,7 @@ import { SalesCompanySearchService } from '../../application/sales-company-searc
 import { SalesDealsService } from '../../application/sales-deals.service';
 import { SalesReportsService } from '../../application/sales-reports.service';
 import { assertPlatformTenant } from '../../application/sales-context';
+import { SalesAgentProfileDtoIn } from './system-sales-agents.controller';
 
 export class SalesDealSaveDto {
   @IsString() @IsNotEmpty() @MaxLength(40) companyId!: string;
@@ -81,7 +84,12 @@ export class SalesTeamCreateDto {
   @IsString() @IsOptional() @MaxLength(254) email?: string;
   @IsIn([...SALES_ROLE_KEYS]) role!: 'MANGMEE_SALES_LEAD' | 'MANGMEE_SALES';
   @IsString() @IsOptional() @MaxLength(6) salesCode?: string;
+  @IsObject() @IsOptional() @ValidateNested() @Type(() => SalesAgentProfileDtoIn) profile?: SalesAgentProfileDtoIn;
 }
+
+export class SalesSelfProfileDto extends PickType(SalesAgentProfileDtoIn, [
+  'legalName', 'nationalId', 'taxId', 'address', 'bankName', 'bankAccount',
+] as const) {}
 
 @Controller('sales')
 export class SalesController {
@@ -248,8 +256,26 @@ export class SalesController {
   }
 
   // ── team (lead) ──────────────────────────────────────────────────────────────────────
-  // The lead's half of agent management: create and reset inside their own team, and never a
-  // single tax/bank field — that surface is `/v1/system/sales-agents` under its own key (S10).
+  // Leads can read only their team; every sales user can read/write only their own profile.
+
+  @Get('me/profile')
+  @RequirePermissions('sales.console.read')
+  @ApiOperation({ summary: 'Read own tax and bank profile; audited' })
+  myProfile(@Req() req: Request & { context: RequestContext }): Promise<SalesAgentProfileDto> {
+    assertPlatformTenant(req.context);
+    return this.agents.readProfile(req.context, req.context.userId);
+  }
+
+  @Patch('me/profile')
+  @RequirePermissions('sales.console.read')
+  @ApiOperation({ summary: 'Update own identity, address and bank details; withholding rate remains admin-owned' })
+  updateMyProfile(
+    @Body() dto: SalesSelfProfileDto,
+    @Req() req: Request & { context: RequestContext },
+  ): Promise<SalesAgentProfileDto> {
+    assertPlatformTenant(req.context);
+    return this.agents.updateOwnProfile(req.context, dto);
+  }
 
   @Get('team')
   @RequirePermissions('sales.team.manage')
@@ -269,6 +295,17 @@ export class SalesController {
   ): Promise<SalesAgentCreateResult> {
     assertPlatformTenant(req.context);
     return this.agents.create(req.context, dto);
+  }
+
+  @Get('team/:userId/profile')
+  @RequirePermissions('sales.team.manage')
+  @ApiOperation({ summary: 'Read a profile in the caller own team; audited' })
+  teamProfile(
+    @Param('userId') userId: string,
+    @Req() req: Request & { context: RequestContext },
+  ): Promise<SalesAgentProfileDto> {
+    assertPlatformTenant(req.context);
+    return this.agents.readProfile(req.context, userId);
   }
 
   @Post('team/:userId/credential')
