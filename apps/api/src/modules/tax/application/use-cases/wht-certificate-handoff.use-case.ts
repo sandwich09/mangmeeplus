@@ -40,6 +40,15 @@ export async function isLaunchRouteOpen(guard: LaunchGateGuardService, gateKey: 
   }
 }
 
+/** Correction & replacement plan §2.4/§8.1 — defensive re-check, same shape as `isSystemIssuanceOpen`. */
+export async function isSystemContentCorrectionOpen(guard: LaunchGateGuardService): Promise<boolean> {
+  return isLaunchRouteOpen(guard, 'cap.wht50bis', 'SYSTEM_CONTENT_CORRECTION');
+}
+
+export async function isSystemReplacementCopyOpen(guard: LaunchGateGuardService): Promise<boolean> {
+  return isLaunchRouteOpen(guard, 'cap.wht50bis', 'SYSTEM_REPLACEMENT_COPY');
+}
+
 /**
  * The durable EXTERNAL_CERTIFICATE_REQUIRED artifact.
  *
@@ -74,6 +83,15 @@ export class WhtCertificateHandoffUseCase {
    */
   async isSystemIssuanceOpen(): Promise<boolean> {
     return isLaunchRouteOpen(this.launchGate, 'cap.wht50bis', 'SYSTEM_INITIAL_ISSUE');
+  }
+
+  /** Correction & replacement plan §2.4: computed alongside `isSystemIssuanceOpen` for `list`/`get`. */
+  private async isSystemCorrectionOpen(): Promise<boolean> {
+    return isSystemContentCorrectionOpen(this.launchGate);
+  }
+
+  private async isSystemReplacementOpen(): Promise<boolean> {
+    return isSystemReplacementCopyOpen(this.launchGate);
   }
 
   /**
@@ -160,8 +178,10 @@ export class WhtCertificateHandoffUseCase {
       take: 200,
     });
     // §2.4: computed once per request, not per row.
-    const systemIssuanceOpen = await this.isSystemIssuanceOpen();
-    return rows.map((row: any) => toDto(row, systemIssuanceOpen));
+    const [systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen] = await Promise.all([
+      this.isSystemIssuanceOpen(), this.isSystemCorrectionOpen(), this.isSystemReplacementOpen(),
+    ]);
+    return rows.map((row: any) => toDto(row, systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen));
   }
 
   /** Company-scoped lookup on the link fence, so a replay never crosses a tenant boundary. */
@@ -200,7 +220,10 @@ export class WhtCertificateHandoffUseCase {
     // Tenant check is explicit rather than part of the lookup so a cross-company id is
     // indistinguishable from a missing one.
     if (!row || row.companyId !== ctx.companyId) throw new NotFoundException('WHT handoff not found.');
-    return toDto(row, await this.isSystemIssuanceOpen());
+    const [systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen] = await Promise.all([
+      this.isSystemIssuanceOpen(), this.isSystemCorrectionOpen(), this.isSystemReplacementOpen(),
+    ]);
+    return toDto(row, systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen);
   }
 
   /**
@@ -448,7 +471,7 @@ function canonical(value: unknown): string {
   return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
 }
 
-function toDto(row: any, systemIssuanceOpen = false): WhtCertificateHandoffDto {
+function toDto(row: any, systemIssuanceOpen = false, systemCorrectionOpen = false, systemReplacementOpen = false): WhtCertificateHandoffDto {
   return {
     id: row.id,
     companyId: row.companyId,
@@ -473,6 +496,8 @@ function toDto(row: any, systemIssuanceOpen = false): WhtCertificateHandoffDto {
     linkedByUserId: row.linkedByUserId ?? null,
     certificateId: row.certificateId ?? null,
     systemIssuanceOpen,
+    systemCorrectionOpen,
+    systemReplacementOpen,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

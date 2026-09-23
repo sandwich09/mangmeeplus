@@ -15,6 +15,7 @@ import { GenerateTaxFilingPackageUseCase } from './application/use-cases/generat
 import { CreateWhtCertificateUseCase } from './application/use-cases/create-wht-certificate.use-case';
 import { WhtCertificateHandoffUseCase } from './application/use-cases/wht-certificate-handoff.use-case';
 import { IssueWhtCertificateFromHandoffUseCase } from './application/use-cases/issue-wht-certificate-from-handoff.use-case';
+import { CorrectWhtCertificateUseCase } from './application/use-cases/correct-wht-certificate.use-case';
 import { UpdateCompanyTaxSignatureUseCase } from './application/use-cases/update-company-tax-signature.use-case';
 import { TaxArtifactRendererService } from './application/services/tax-artifact-renderer.service';
 import { GetCitCalendarUseCase } from './application/use-cases/get-cit-calendar.use-case';
@@ -49,6 +50,7 @@ import { TaxCodeImportUseCase } from './application/use-cases/tax-code-import.us
     CreateWhtCertificateUseCase,
     WhtCertificateHandoffUseCase,
     IssueWhtCertificateFromHandoffUseCase,
+    CorrectWhtCertificateUseCase,
     UpdateCompanyTaxSignatureUseCase,
     TaxArtifactRendererService,
     GetCitCalendarUseCase,

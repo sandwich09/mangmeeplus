@@ -844,6 +844,10 @@ const CODE_LABELS: Record<string, string> = {
   wht_handoff_form_type_unresolved: 'ไม่สามารถระบุแบบ ภ.ง.ด. ได้ กรุณาตรวจสอบประเภทผู้รับเงินก่อนออกเอกสาร',
   wht_handoff_income_category_missing: 'ไม่มีข้อมูลประเภทเงินได้/อัตราหัก ณ ที่จ่ายในรายการนี้ กรุณากรอกให้ครบก่อนออกเอกสาร',
   wht_certificate_issue_in_progress: 'กำลังออกเอกสารนี้อยู่ กรุณาลองใหม่อีกครั้ง',
+  wht_certificate_not_correctable: 'แก้ไข/ออกใบแทนไม่ได้ เพราะไม่ใช่เอกสารที่ระบบออกให้ กรุณาโหลดหน้าใหม่แล้วตรวจสถานะ',
+  wht_certificate_already_superseded: 'หนังสือรับรองนี้ถูกแทนที่ไปแล้ว กรุณาโหลดข้อมูลใหม่',
+  wht_system_correction_unavailable: 'ระบบยังไม่เปิดการแก้ไขหนังสือรับรองอัตโนมัติ',
+  wht_certificate_correction_tax_period_locked: 'งวดภาษีของหนังสือรับรองนี้ปิดแล้ว ไม่สามารถแก้ไขยอด/อัตรา/หมวดเงิน/วันที่ได้ กรุณาทำรายการแก้ไขทางบัญชีแยกต่างหาก',
   wht_signature_attachment_required: 'กรุณาอัปโหลดรูปลายเซ็นก่อนเปิดใช้การประทับอัตโนมัติ',
   tax_reviewer_role_required: 'รายการนี้ต้องให้ผู้ตรวจภาษีดำเนินการ กรุณาติดต่อผู้ที่ได้รับมอบหมาย',
 
