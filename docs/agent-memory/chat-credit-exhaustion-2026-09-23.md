@@ -17,4 +17,5 @@ Verification:
 - Playwright `--list` finds the admin readiness case; it passed against the seeded preview DB on `localhost:15432` using isolated ports `3020/3021`.
 - The standard `e2e/run-local.sh` preflight still cannot run against its default `localhost:5432` because that PostgreSQL is down. The isolated E2E does not write budget state; the first request is mocked to fail, retry reads the seeded endpoint with deterministic budget values, and the optional holds route is mocked unavailable.
 - `git diff --check` passed for the scoped API, web, docs, and E2E changes.
+- PR CI exposed older CHAT-cap test fakes that lacked the bucket-usage delegate. The CRM, draft, and LINE gateway fixtures now provide zero settled CHAT spend for their under-budget cases; the focused suites pass. The new deal-credit spec is listed in the whole-chain runner, and the new billing buttons expose `aria-busy` while fetching a quote.
 Next: Local handoff is ready. `apps/web/next-env.d.ts` was checked after all E2E runs and is clean.
