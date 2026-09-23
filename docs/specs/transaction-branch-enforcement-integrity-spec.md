@@ -104,7 +104,7 @@ state: every real company always holds one undeletable `HEAD_OFFICE`. Option (a)
 `DISABLED` hole is therefore a plain defect — the guard must fire on any transition out of `ACTIVE`,
 not only on `ARCHIVED`, and it must not depend on the branch's type.
 
-**The exception costs nothing in the guard.** The platform tenant (`WatchDog System`) is exempt
+**The exception costs nothing in the guard.** The platform tenant (`มั่งมีพลัส · ระบบภายใน`) is exempt
 because it is a system-admin workspace, not a customer. It has **zero branch rows and never had
 any**, so a transition guard can never fire for it — there is no branch to move out of `ACTIVE`.
 No carve-out code is needed. The exception only matters if someone later builds a health check or
@@ -319,7 +319,7 @@ All questions raised by the first draft are answered. None remain open.
 | **D2** | Pre-enforcement history parked on the head office | **Do nothing.** Not expected in production, effort out of proportion, risk of collateral damage | G5 accepted as a known limitation; residual risk recorded in G5 |
 | **D3** | Is a company with zero ACTIVE branches legal? | **No.** Every real company always has one undeletable head office | G1 takes option (a); G3 closes as moot; two other documents need amending (AC7) |
 | **D4** | May a company hold two head offices? | **No.** One per company | New guard on create (AC2); matches tax branch code `00000` practice |
-| **D5** | The platform tenant `WatchDog System` has no branches | **Exception, by design.** It is a system-admin workspace, not a customer | Costs nothing in the guard (it has no branch to disable); matters only for any future health check — see G1 |
+| **D5** | The platform tenant `มั่งมีพลัส · ระบบภายใน` has no branches | **Exception, by design.** It is a system-admin workspace, not a customer | Costs nothing in the guard (it has no branch to disable); matters only for any future health check — see G1 |
 
 Copy decision recorded with D3: when the last active branch is disabled, refuse **and** offer to
 create the replacement branch in the same step, rather than refusing flatly.

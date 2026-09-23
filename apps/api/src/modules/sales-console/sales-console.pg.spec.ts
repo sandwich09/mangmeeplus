@@ -89,7 +89,7 @@ async function harness() {
   // The platform tenant and the two system roles this module assigns.
   await client.company.upsert({
     where: { id: PLATFORM_TENANT_ID }, update: {},
-    create: { id: PLATFORM_TENANT_ID, name: 'WatchDog System', status: 'ACTIVE' },
+    create: { id: PLATFORM_TENANT_ID, name: 'มั่งมีพลัส · ระบบภายใน', status: 'ACTIVE' },
   });
   for (const key of ['MANGMEE_SALES_LEAD', 'MANGMEE_SALES']) {
     await client.role.upsert({

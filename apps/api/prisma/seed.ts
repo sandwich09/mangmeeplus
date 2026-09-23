@@ -53,7 +53,7 @@ function seedEncrypt(plain: string): string {
 
 const DEFAULT_COMPANY = { id: SEED_COMPANY_ID, name: 'WatchDog Local Company' };
 const SECOND_COMPANY = { id: 'seed-local-company-2', name: 'Bloom Beauty Clinic' };
-const SYSTEM_COMPANY = { id: SEED_SYSTEM_COMPANY_ID, name: 'WatchDog System' };
+const SYSTEM_COMPANY = { id: SEED_SYSTEM_COMPANY_ID, name: 'มั่งมีพลัส · ระบบภายใน' };
 
 const DEFAULT_OWNER = {
   id: SEED_OWNER_ID,
@@ -2697,14 +2697,14 @@ async function main() {
   const systemAdmin = await prisma.user.upsert({
     where: { username: SYSTEM_ADMIN_USERNAME },
     update: {
-      displayName: 'WatchDog System Admin',
+      displayName: 'ผู้ดูแลระบบมั่งมีพลัส',
       status: 'ACTIVE',
       isSystemProtected: true,
     },
     create: {
       id: SEED_SYSTEM_ADMIN_ID,
       username: SYSTEM_ADMIN_USERNAME,
-      displayName: 'WatchDog System Admin',
+      displayName: 'ผู้ดูแลระบบมั่งมีพลัส',
       status: 'ACTIVE',
       isSystemProtected: true,
     },

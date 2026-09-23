@@ -37,6 +37,9 @@ test('explains source-draft validation, completion, and item races in plain Thai
 });
 
 test('distinguishes a wrong current password from an expired session', () => {
+  assert.equal(apiErrorMessage(apiError('Current password is required for this password change.', {
+    status: 400, code: 'current_password_required',
+  })), 'กรุณากรอกรหัสผ่านปัจจุบันก่อนเปลี่ยนรหัสผ่าน');
   assert.equal(apiErrorMessage(apiError('Current password is incorrect.', {
     status: 400, code: 'current_password_incorrect',
   })), 'รหัสผ่านปัจจุบันไม่ถูกต้อง');

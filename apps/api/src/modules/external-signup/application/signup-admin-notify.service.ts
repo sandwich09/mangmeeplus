@@ -100,7 +100,7 @@ export class SignupAdminNotifyService {
     const message = signupPendingReviewMessage(request.companyName, request.source);
     let opened = false;
     // Grouped by company because the notification rail is company-scoped; in practice every system
-    // admin sits in the one WatchDog System company, so this is a single call.
+    // admins sit in the one platform tenant, so this is a single call.
     for (const [companyId, userIds] of groupByCompany(admins)) {
       const result = await this.notifications.execute({
         companyId,

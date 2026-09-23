@@ -53,8 +53,8 @@ test('ADD is fresh-only and replay-safe; REVOKE requires a changed replacement p
   try {
     await prisma.company.upsert({
       where: { id: 'seed-watchdog-system-company' },
-      update: { name: 'WatchDog System', status: 'ACTIVE' },
-      create: { id: 'seed-watchdog-system-company', name: 'WatchDog System', status: 'ACTIVE' },
+      update: { name: 'มั่งมีพลัส · ระบบภายใน', status: 'ACTIVE' },
+      create: { id: 'seed-watchdog-system-company', name: 'มั่งมีพลัส · ระบบภายใน', status: 'ACTIVE' },
     });
     await prisma.role.upsert({
       where: { scopeKey_key: { scopeKey: 'system', key: 'SYSTEM_ADMIN' } },
