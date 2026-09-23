@@ -848,6 +848,7 @@ const CODE_LABELS: Record<string, string> = {
   wht_certificate_already_superseded: 'หนังสือรับรองนี้ถูกแทนที่ไปแล้ว กรุณาโหลดข้อมูลใหม่',
   wht_system_correction_unavailable: 'ระบบยังไม่เปิดการแก้ไขหนังสือรับรองอัตโนมัติ',
   wht_certificate_correction_tax_period_locked: 'งวดภาษีของหนังสือรับรองนี้ปิดแล้ว ไม่สามารถแก้ไขยอด/อัตรา/หมวดเงิน/วันที่ได้ กรุณาทำรายการแก้ไขทางบัญชีแยกต่างหาก',
+  wht_system_replacement_unavailable: 'ระบบยังไม่เปิดการออกใบแทนอัตโนมัติ',
   wht_signature_attachment_required: 'กรุณาอัปโหลดรูปลายเซ็นก่อนเปิดใช้การประทับอัตโนมัติ',
   tax_reviewer_role_required: 'รายการนี้ต้องให้ผู้ตรวจภาษีดำเนินการ กรุณาติดต่อผู้ที่ได้รับมอบหมาย',
 

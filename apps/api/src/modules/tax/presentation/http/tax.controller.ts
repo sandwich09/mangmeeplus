@@ -12,6 +12,7 @@ import { CreateWhtCertificateUseCase } from '../../application/use-cases/create-
 import { WhtCertificateHandoffUseCase } from '../../application/use-cases/wht-certificate-handoff.use-case';
 import { IssueWhtCertificateFromHandoffUseCase } from '../../application/use-cases/issue-wht-certificate-from-handoff.use-case';
 import { CorrectWhtCertificateUseCase } from '../../application/use-cases/correct-wht-certificate.use-case';
+import { IssueWhtReplacementCopyUseCase } from '../../application/use-cases/issue-wht-replacement-copy.use-case';
 import { UpdateCompanyTaxSignatureUseCase } from '../../application/use-cases/update-company-tax-signature.use-case';
 import { SetWhtIncomeCategoryStatusUseCase } from '../../application/use-cases/wht-income-category.use-case';
 import { GetCitCalendarUseCase } from '../../application/use-cases/get-cit-calendar.use-case';
@@ -32,6 +33,7 @@ export class TaxController {
     private readonly whtHandoffs: WhtCertificateHandoffUseCase,
     private readonly issueFromHandoff: IssueWhtCertificateFromHandoffUseCase,
     private readonly correctCertificate: CorrectWhtCertificateUseCase,
+    private readonly issueReplacementCopy: IssueWhtReplacementCopyUseCase,
     private readonly updateSignature: UpdateCompanyTaxSignatureUseCase,
     private readonly setWhtCategoryStatus: SetWhtIncomeCategoryStatusUseCase,
     private readonly getCitCalendar: GetCitCalendarUseCase,
@@ -300,6 +302,18 @@ export class TaxController {
   ) {
     assertRouteCompany(ctx, companyId);
     return this.correctCertificate.execute(ctx, handoffId, body.corrected, body.reason);
+  }
+
+  // Correction & replacement plan §3.2: an identical, same-numbered copy for a lost PDF — no body,
+  // no number reservation. Shares `wht.certificate.correct` with the correction route above
+  // (plan §2.1: one key covers both actions).
+  @Post('wht/payment-handoffs/:handoffId/system-certificate/replacement-copy')
+  @HttpCode(200)
+  @RequirePermissions('wht.certificate.correct')
+  @ApiOperation({ summary: 'Reissue an identical, same-numbered copy (ใบแทน) of a SYSTEM-issued 50 Tawi certificate' })
+  async issueSystemWhtReplacementCopy(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('handoffId') handoffId: string) {
+    assertRouteCompany(ctx, companyId);
+    return this.issueReplacementCopy.execute(ctx, handoffId);
   }
 
   // ─── CIT Calendar ────────────────────────────────────────────────────────
