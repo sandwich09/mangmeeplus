@@ -104,12 +104,37 @@ export function refundNoteProjection(note:StripeObject,account:BillingAccount,ro
   return {amountSatang:amount,taxSatang:sum,totalExcludingTax:note.total_excluding_tax,lines,taxes:tax};
 }
 
+/** Live 2026-08-26.dahlia rejects `credit_amount: 0` and previews an amount-only note with no lines, so a refund names the
+ *  original invoice lines: the amount fills them in id order, each capped by what issued notes have not credited yet.
+ *  ponytail: line amounts exclude exclusive VAT, so such a note over-credits and refundNoteProjection fails it closed;
+ *  allocate pre-tax amounts if EXCLUSIVE_VAT_7 refunds are ever needed in-app. */
+export async function refundParams(stripe:StripeClient,account:BillingAccount,row:BillingInvoice,source:Awaited<ReturnType<typeof refundSource>>,
+  operationId:string,amount:number,memo:string,notifyCustomer:boolean) {
+  const credited=new Map<string,number>();
+  for(const n of source.notes.filter(n=>n.status==='issued')){
+    const embedded=n.lines?.object==='list'&&n.lines.has_more===false&&Array.isArray(n.lines.data)?n.lines.data as StripeObject[]:null;
+    for(const l of embedded??await completeList(stripe,`/credit_notes/${n.id}/lines`,{},'cnli')){
+      if(!l||l.object!=='credit_note_line_item'||l.type!=='invoice_line_item'||!nativeId(l.invoice_line_item,'il')||!integer(l.amount))throw refundReviewRequired();
+      credited.set(l.invoice_line_item,(credited.get(l.invoice_line_item)??0)+l.amount);
+    }
+  }
+  const lines:{type:'invoice_line_item';invoice_line_item:string;amount:number}[]=[];let left=amount;
+  for(const o of (await completeList(stripe,`/invoices/${row.providerInvoiceId}/lines`,{},'il')).sort((a,b)=>a.id.localeCompare(b.id))){
+    if(o.livemode!==account.livemode||o.currency!=='thb'||!Number.isSafeInteger(o.amount))throw refundReviewRequired();
+    const take=Math.min(left,o.amount-(credited.get(o.id)??0));
+    if(take>0){lines.push({type:'invoice_line_item',invoice_line_item:o.id,amount:take});left-=take;}
+  }
+  if(left!==0)throw refundReviewRequired();
+  return {invoice:row.providerInvoiceId,lines,refund_amount:amount,out_of_band_amount:0,email_type:notifyCustomer?'credit_note':'none',...memo?{memo}:{},
+    metadata:{billingRefundOperationId:operationId,billingAccountId:account.id,billingSourceHash:source.sourceHash}};
+}
+
 export async function refundPreview(stripe:StripeClient,account:BillingAccount,row:BillingInvoice,source:Awaited<ReturnType<typeof refundSource>>,params:Record<string,unknown>) {
-  if(!integer(params.amount)||Number(params.amount)<1||Number(params.amount)>row.paidSatang-source.charge.amount_refunded||source.charge.disputed||source.refunds.some(r=>!['succeeded','failed','canceled'].includes(r.status))||
+  if(!integer(params.refund_amount)||Number(params.refund_amount)<1||Number(params.refund_amount)>row.paidSatang-source.charge.amount_refunded||source.charge.disputed||source.refunds.some(r=>!['succeeded','failed','canceled'].includes(r.status))||
     source.notes.some(n=>n.status==='issued'&&(n.customer_balance_transaction!=null||(n.out_of_band_amount??0)!==0)))throw refundReviewRequired();
   let note:StripeObject;
   try{note=await stripe.request('GET','/credit_notes/preview',params);}catch{throw refundReviewRequired();}
-  const projection=refundNoteProjection(note,account,row,source.invoice,params.amount as number);
+  const projection=refundNoteProjection(note,account,row,source.invoice,params.refund_amount as number);
   const originalLines=await completeList(stripe,`/invoices/${row.providerInvoiceId}/lines`,{},'il');
   if(projection.lines.some((line:{invoiceLineId:string;amount:number})=>!originalLines.some(original=>original.id===line.invoiceLineId&&original.livemode===account.livemode&&original.currency==='thb'&&integer(original.amount)&&original.amount>=line.amount)))throw refundReviewRequired();
   return projection;
