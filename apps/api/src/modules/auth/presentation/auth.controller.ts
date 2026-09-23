@@ -432,6 +432,7 @@ export class AuthController {
   // transaction, so it can never be a public endpoint.
   @Post('line/qr/approve')
   @HttpCode(200)
+  @RequirePermissions('account.session.read')
   @ApiOperation({ summary: 'Approve a scanned desktop QR login for the current user' })
   @ApiBody({ type: LineQrApproveDto })
   @ApiResponse({ status: 200, description: 'Transaction approved' })
