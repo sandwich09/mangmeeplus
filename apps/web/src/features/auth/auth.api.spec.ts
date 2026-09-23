@@ -60,6 +60,16 @@ describe('changePassword', () => {
     ]);
   });
 
+  it('omits the current password for a verified forced-change session', async () => {
+    let body: unknown;
+    globalThis.fetch = async (input, init) => {
+      if (String(input) === '/api/auth/change-password') body = JSON.parse(String(init?.body));
+      return new Response(null, { status: 204 });
+    };
+    await changePassword(undefined, 'Permanent12!');
+    assert.deepEqual(body, { newPassword: 'Permanent12!' });
+  });
+
   it('retains session-expiry guidance when a genuine 401 cannot refresh', async () => {
     const calls: string[] = [];
     globalThis.fetch = async (input) => {

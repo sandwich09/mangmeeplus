@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 
-async function render(props: { homePath?: string | null } = {}): Promise<string> {
+async function render(props: { homePath?: string | null; isForcedPasswordChange?: boolean; canSkipCurrentPassword?: boolean } = {}): Promise<string> {
   const { default: ChangePasswordPage } = await import('./ChangePasswordPage');
   return renderToStaticMarkup(React.createElement(ChangePasswordPage, props));
 }
@@ -30,7 +30,20 @@ describe('ChangePasswordPage exits', () => {
   it('distinguishes a voluntary change from the forced temporary-password journey', async () => {
     assert.match(await render({ homePath: '/companies/c1/dashboard' }), /ตั้งรหัสผ่านใหม่เพื่อความปลอดภัยของบัญชี/);
     assert.doesNotMatch(await render({ homePath: '/companies/c1/dashboard' }), /ต้องเปลี่ยนรหัสผ่านชั่วคราว/);
-    assert.match(await render({ homePath: null }), /ต้องเปลี่ยนรหัสผ่านชั่วคราว/);
+    assert.match(await render({ homePath: null, isForcedPasswordChange: true }), /ต้องเปลี่ยนรหัสผ่านชั่วคราว/);
+  });
+
+  it('shows new and confirm fields for a password-verified forced change', async () => {
+    const forced = await render({ isForcedPasswordChange: true, canSkipCurrentPassword: true });
+    assert.doesNotMatch(forced, /name="current-password"/);
+    assert.match(forced, /name="new-password"/);
+    assert.match(forced, /name="confirm-password"/);
+  });
+
+  it('keeps current-password reauthentication for an ordinary change', async () => {
+    const ordinary = await render({ homePath: '/companies/c1/dashboard' });
+    assert.match(ordinary, /name="current-password"/);
+    assert.match(ordinary, /name="confirm-password"/);
   });
 });
 

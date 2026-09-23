@@ -64,8 +64,8 @@ test.describe('SALES — ทีมขายมั่งมี console', () => {
     const agentPage = await agentContext.newPage();
     await agentPage.goto(`${WEB_BASE_URL}/sales/deals`);
     await expect(agentPage).toHaveURL(/\/change-password/);
-    await agentPage.locator('input[name="current-password"]').fill(temporaryPassword);
     await agentPage.locator('input[name="new-password"]').fill(newPassword);
+    await agentPage.locator('input[name="confirm-password"]').fill(newPassword);
     await agentPage.getByRole('button', { name: /บันทึก|เปลี่ยนรหัสผ่าน/ }).click();
     await expect(agentPage).not.toHaveURL(/\/change-password/, { timeout: 15_000 });
     // ChangePasswordPage ends the session on success by design (see its handleSubmit) and sends

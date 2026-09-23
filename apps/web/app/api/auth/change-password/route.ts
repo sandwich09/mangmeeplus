@@ -13,15 +13,15 @@ export async function POST(request: NextRequest) {
     currentPassword?: unknown;
     newPassword?: unknown;
   };
-  const currentPassword = typeof body.currentPassword === 'string' ? body.currentPassword.trim() : '';
+  const currentPassword = typeof body.currentPassword === 'string' ? body.currentPassword.trim() : undefined;
   const newPassword = typeof body.newPassword === 'string' ? body.newPassword.trim() : '';
-  if (!currentPassword || !newPassword) {
-    return NextResponse.json({ message: 'Current and new passwords are required.' }, { status: 400 });
+  if (!newPassword) {
+    return NextResponse.json({ message: 'A new password is required.' }, { status: 400 });
   }
 
   let apiRes: Response;
   try {
-    apiRes = await forwardPasswordChange(accessToken, { currentPassword, newPassword });
+    apiRes = await forwardPasswordChange(accessToken, { newPassword, ...(currentPassword ? { currentPassword } : {}) });
   } catch {
     return NextResponse.json({ message: 'Cannot reach the authentication service.' }, { status: 502 });
   }

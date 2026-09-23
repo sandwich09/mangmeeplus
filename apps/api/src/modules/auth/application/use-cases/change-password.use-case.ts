@@ -16,16 +16,38 @@ export const CURRENT_PASSWORD_INCORRECT = {
   message: 'Current password is incorrect.',
 };
 
+export const CURRENT_PASSWORD_REQUIRED = {
+  code: 'current_password_required',
+  message: 'Current password is required for this password change.',
+};
+
+export function canSkipCurrentPassword(input: {
+  credential: { mustChangePassword: boolean; updatedAt: Date } | null;
+  passwordCredentialVersion: Date | null | undefined;
+}): boolean {
+  return Boolean(
+    input.credential?.mustChangePassword
+    && input.passwordCredentialVersion
+    && input.credential.updatedAt.getTime() === input.passwordCredentialVersion.getTime(),
+  );
+}
+
 @Injectable()
 export class ChangePasswordUseCase {
   constructor(private readonly prisma: PrismaService) {}
 
-  async execute(userId: string, currentPassword: string, newPassword: string, currentTokenId: string): Promise<void> {
+  async execute(
+    userId: string,
+    currentPassword: string | undefined,
+    newPassword: string,
+    currentTokenId: string,
+    sessionId?: string,
+  ): Promise<void> {
     const credential = await this.prisma.client.userCredential.findUnique({ where: { userId } });
     if (!credential || credential.status === 'DISABLED') {
       throw new UnauthorizedException('Current password is incorrect.');
     }
-    if (!verifyPassword(currentPassword, credential.passwordHash)) {
+    if (currentPassword && !verifyPassword(currentPassword, credential.passwordHash)) {
       throw new BadRequestException(CURRENT_PASSWORD_INCORRECT);
     }
 
@@ -45,6 +67,18 @@ export class ChangePasswordUseCase {
       const current = await tx.userCredential.findUnique({ where: { userId } });
       if (!current || current.passwordHash !== credential.passwordHash || current.status === 'DISABLED' ||
           (current.expiresAt && current.expiresAt <= new Date())) throw new BadRequestException(CURRENT_PASSWORD_INCORRECT);
+      if (!currentPassword) {
+        const session = sessionId
+          ? await tx.authSession.findUnique({
+            where: { id: sessionId },
+            select: { userId: true, passwordCredentialVersion: true },
+          })
+          : null;
+        if (session?.userId !== userId || !canSkipCurrentPassword({
+          credential: current,
+          passwordCredentialVersion: session?.passwordCredentialVersion,
+        })) throw new BadRequestException(CURRENT_PASSWORD_REQUIRED);
+      }
       await tx.emailVerificationToken.updateMany({ where: { userId, status: 'PENDING' }, data: { status: 'REVOKED' } });
       await tx.user.update({ where: { id: userId }, data: { emailRevision: { increment: 1 } } });
       await tx.userCredential.update({

@@ -134,6 +134,7 @@ describe('IssueTokenUseCase', () => {
   it('locks and rechecks the verified password credential before creating a watchdog session', async () => {
     const credentialUpdatedAt = new Date('2026-08-09T08:00:00.000Z');
     const order: string[] = [];
+    let sessionInput: any;
     const tx = {
       $queryRaw: async (strings: TemplateStringsArray) => {
         assert.match(strings.join('?'), /UserCredential.*FOR UPDATE/);
@@ -147,8 +148,9 @@ describe('IssueTokenUseCase', () => {
         },
       },
       authSession: {
-        create: async () => {
+        create: async (input: any) => {
           order.push('session');
+          sessionInput = input;
           return {};
         },
       },
@@ -165,6 +167,7 @@ describe('IssueTokenUseCase', () => {
       .execute('user-123', 'watchdog', credentialUpdatedAt);
 
     assert.deepEqual(order, ['lock', 'recheck', 'session']);
+    assert.equal(sessionInput.data.passwordCredentialVersion.getTime(), credentialUpdatedAt.getTime());
   });
 
   it('rejects a password login whose credential changed before its session was created', async () => {
@@ -660,6 +663,51 @@ describe('ChangePasswordUseCase', () => {
     await assert.rejects(
       () => new ChangePasswordUseCase(prisma).execute('user-1', '01011990', '01011990', 'session-current'),
       (error: any) => error.getStatus() === 400 && error.getResponse().code === 'password_reuse',
+    );
+    assert.equal(updated, false);
+  });
+
+  it('accepts a new password without the current password only for the matching password-login session', async () => {
+    const credential = {
+      status: 'TEMPORARY', mustChangePassword: true, passwordHash: hashPassword('temporary-password'),
+      expiresAt: null, updatedAt: new Date('2026-09-23T00:00:00.000Z'),
+    };
+    let updated = false;
+    const prisma = { client: {
+      userCredential: { findUnique: async () => credential },
+      $transaction: async (fn: any) => fn({
+        $executeRaw: async () => 1,
+        $queryRaw: async () => [],
+        userCredential: { findUnique: async () => credential, update: async () => { updated = true; return {}; } },
+        authSession: { findUnique: async () => ({ userId: 'user-1', passwordCredentialVersion: credential.updatedAt }), updateMany: async () => ({ count: 0 }) },
+        emailVerificationToken: { updateMany: async () => ({ count: 0 }) },
+        user: { update: async () => ({}) },
+      }),
+    } } as any;
+
+    await new ChangePasswordUseCase(prisma).execute('user-1', undefined, 'chosen-new-password', 'session-token', 'session-row');
+    assert.equal(updated, true);
+  });
+
+  it('requires the current password when the session did not prove the pending credential', async () => {
+    const credential = {
+      status: 'TEMPORARY', mustChangePassword: true, passwordHash: hashPassword('temporary-password'),
+      expiresAt: null, updatedAt: new Date('2026-09-23T00:00:00.000Z'),
+    };
+    let updated = false;
+    const prisma = { client: {
+      userCredential: { findUnique: async () => credential },
+      $transaction: async (fn: any) => fn({
+        $executeRaw: async () => 1,
+        $queryRaw: async () => [],
+        userCredential: { findUnique: async () => credential, update: async () => { updated = true; return {}; } },
+        authSession: { findUnique: async () => ({ userId: 'user-1', passwordCredentialVersion: new Date('2026-09-22T00:00:00.000Z') }) },
+      }),
+    } } as any;
+
+    await assert.rejects(
+      () => new ChangePasswordUseCase(prisma).execute('user-1', undefined, 'chosen-new-password', 'session-token', 'session-row'),
+      (error: any) => error.getStatus() === 400 && error.getResponse().code === 'current_password_required',
     );
     assert.equal(updated, false);
   });

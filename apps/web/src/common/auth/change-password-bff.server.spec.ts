@@ -28,6 +28,15 @@ describe('forwardPasswordChange', () => {
       newPassword: 'Permanent12!',
     });
   });
+
+  it('forwards a forced change without a current-password field', async () => {
+    let body: unknown;
+    await forwardPasswordChange('chunked.access.token', { newPassword: 'Permanent12!' }, async (_url, init) => {
+      body = JSON.parse(init!.body as string);
+      return new Response(null, { status: 204 });
+    });
+    assert.deepEqual(body, { newPassword: 'Permanent12!' });
+  });
 });
 
 describe('change-password BFF response contract', () => {

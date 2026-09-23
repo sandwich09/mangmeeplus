@@ -355,7 +355,7 @@ test.describe('SET — settings', () => {
     const permanentPassword = `Union@${suffix}Aa`;
     const changed = await request.post(`${API_BASE_URL}/auth/password/change`, {
       headers: apiHeaders(accessToken, companyId),
-      data: { currentPassword: created.temporaryPassword, newPassword: permanentPassword },
+      data: { newPassword: permanentPassword },
     });
     expect(changed.ok(), await changed.text()).toBe(true);
 
