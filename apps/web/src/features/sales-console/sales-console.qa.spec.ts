@@ -85,6 +85,13 @@ describe('sales console theme and copy', () => {
     assert.match(text, /ยังไม่ได้ผูก LINE/);
   });
 
+  it('shows the returned temporary password above the team list after create or reset', () => {
+    const team = source('SalesTeamPage.tsx');
+    assert.match(team, /setCredential\(result\.credential\);[\s\S]{0,300}await load\(\)/);
+    assert.match(team, /setCredential\(await \(admin \? resetSalesAgentCredential\(agent\.userId\) : resetSalesTeamCredential\(agent\.userId\)\)\)/);
+    assert.ok(team.indexOf('{credential && <SalesCredentialPanel') < team.indexOf('{agents === null'));
+  });
+
   it('reading an agent profile says on screen that the read is recorded (S10)', () => {
     assert.match(source('SalesTeamPage.tsx'), /ระบบบันทึกการเปิดดูข้อมูลนี้ไว้ทุกครั้ง/);
   });

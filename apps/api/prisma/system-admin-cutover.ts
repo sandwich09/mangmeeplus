@@ -165,7 +165,7 @@ export async function executeSystemAdminCutover(
         throw new Error(`ADD refuses to overwrite existing user ${input.username}`);
       }
       const company = await tx.company.findUnique({ where: { id: SYSTEM_COMPANY_ID }, select: { status: true } });
-      if (company?.status !== 'ACTIVE') throw new Error('WatchDog System company is not active');
+      if (company?.status !== 'ACTIVE') throw new Error('Platform tenant is not active');
       const role = await tx.role.findUnique({
         where: { scopeKey_key: { scopeKey: 'system', key: 'SYSTEM_ADMIN' } },
       });

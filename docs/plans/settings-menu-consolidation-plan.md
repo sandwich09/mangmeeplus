@@ -115,7 +115,7 @@ pattern in `expenses/[expenseId]/page.tsx`. One page, one URL.
 
 I initially recommended leaving ความปลอดภัยบัญชี and พนักงานและสิทธิ์ ungated on lockout grounds. **The
 owner corrected the premise and is right**: these switches live on the Partner Companies screen in
-WatchDog System Admin, i.e. they are set by the *platform operator* to match what each company pays for —
+ผู้ดูแลระบบมั่งมีพลัส, i.e. they are set by the *platform operator* to match what each company pays for —
 never by the company itself.
 
 That removes the lockout argument. A company cannot switch its own administration off, and the platform
