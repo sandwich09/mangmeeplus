@@ -855,10 +855,10 @@ jq -cnS --arg family "$task_family" --arg executionRole "$execution_role_arn" \
    requiresCompatibilities:["FARGATE"],cpu:"2048",memory:"4096",
    runtimePlatform:{cpuArchitecture:"X86_64",operatingSystemFamily:"LINUX"},
    volumes:[{name:"tmp"}],containerDefinitions:[{
-     name:"clone",image:$image,essential:true,readonlyRootFilesystem:true,user:"node",
-     workingDirectory:"/app",command:["/app/node_modules/.bin/tsx",
-       "--tsconfig","/app/apps/api/tsconfig.json",
-       $program],
+     name:"clone",image:$image,essential:true,readonlyRootFilesystem:true,user:"root",
+     workingDirectory:"/app",entryPoint:["/bin/sh","-c"],
+     command:[("chmod 1777 /tmp && exec setpriv --reuid=node --regid=node --init-groups "+
+       "/app/node_modules/.bin/tsx --tsconfig /app/apps/api/tsconfig.json "+$program)],
      environment:([{name:"PRODUCTION_A5_EXPECTED_CLONE_HOST",value:$host},
        {name:"PGDATABASE",value:$database},{name:"PGHOST",value:$host},
        {name:"PGPORT",value:$port},
@@ -894,7 +894,12 @@ jq -e --arg source "$SOURCE_SHA" --arg profile "$A5_CLONE_PROFILE" \
   .taskDefinition as $t
   | ($t.taskRoleArn//null)==null and ($t.containerDefinitions|length)==1
   and $t.containerDefinitions[0].image==$image
-  and $t.containerDefinitions[0].command[-1]==$program
+  and $t.containerDefinitions[0].readonlyRootFilesystem==true
+  and $t.containerDefinitions[0].user=="root"
+  and $t.containerDefinitions[0].entryPoint==["/bin/sh","-c"]
+  and $t.containerDefinitions[0].command==[("chmod 1777 /tmp && exec setpriv --reuid=node --regid=node --init-groups "+
+    "/app/node_modules/.bin/tsx --tsconfig /app/apps/api/tsconfig.json "+$program)]
+  and $t.containerDefinitions[0].mountPoints==[{sourceVolume:"tmp",containerPath:"/tmp",readOnly:false}]
   and ([$t.containerDefinitions[0].environment[]|select(.name=="GIT_SHA")|.value])==[$source]
   and ([$t.containerDefinitions[0].environment[]
     | select(.name=="PGDATABASE" or .name=="PGHOST" or .name=="PGPORT")]
