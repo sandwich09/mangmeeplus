@@ -699,7 +699,7 @@ class Release:
         images = {}
         with self.registry_login() as login_env:
             for service, artifact in self.uat_bundle['images'].items():
-                self.command(['docker','pull',artifact['uri']],env=login_env,timeout=240,log='pull-uat-'+service)
+                self.command(['docker','pull','--platform','linux/amd64',artifact['uri']],env=login_env,timeout=240,log='pull-uat-'+service)
                 info = json.loads(self.command(['docker','image','inspect',artifact['uri']]))[0]
                 require(info['Id'] == artifact['imageId'] and info['Architecture'] == 'amd64'
                         and info['Config']['Labels'].get('org.opencontainers.image.revision') == self.pinned_sha,
