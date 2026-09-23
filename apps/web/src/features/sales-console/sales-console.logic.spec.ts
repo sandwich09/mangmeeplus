@@ -38,6 +38,8 @@ describe('deal price in baht', () => {
 describe('deal form validation', () => {
   it('accepts a complete form', () => {
     assert.deepEqual(validateDealForm(dealForm(), { forSubmit: true }), {});
+    assert.deepEqual(validateDealForm(dealForm({ featureKeys: ['wht_pnd53', 'wht_50bis'] })), {});
+    assert.ok(validateDealForm(dealForm({ featureKeys: ['thai_tax'] })).featureKeys);
   });
 
   it('needs a shop, a price above zero and 1–36 months (D1/R3)', () => {

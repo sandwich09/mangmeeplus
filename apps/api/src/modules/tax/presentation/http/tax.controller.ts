@@ -52,6 +52,90 @@ export class TaxController {
     return profile?.taxReviewerRole?.trim() || 'ACCOUNTANT';
   }
 
+  private async pnd53Period(companyId: string, periodId: string) {
+    const period = await this.taxRepo.findPeriodById(companyId, periodId);
+    if (!period || period.formType !== 'PND53') throw new NotFoundException('PND53 period not found');
+    return period;
+  }
+
+  @Get('tax/pnd53/periods')
+  @RequirePermissions('wht.pnd53.read')
+  @ApiOperation({ summary: 'List only PND53 periods' })
+  async listPnd53Periods(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string) {
+    assertRouteCompany(ctx, companyId);
+    return this.taxRepo.findPeriods(ctx.companyId, { taxType: 'WHT', formType: 'PND53', pageSize: 100 });
+  }
+
+  @Get('tax/pnd53/periods/:periodId/events')
+  @RequirePermissions('wht.pnd53.read')
+  @ApiOperation({ summary: 'Read source events for one PND53 period' })
+  async listPnd53Events(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string) {
+    assertRouteCompany(ctx, companyId);
+    await this.pnd53Period(ctx.companyId, periodId);
+    return this.taxRepo.findEventsByPeriod(ctx.companyId, periodId);
+  }
+
+  @Post('tax/pnd53/sync')
+  @HttpCode(200)
+  @RequirePermissions('wht.pnd53.prepare')
+  @ApiOperation({ summary: 'Sync tax source facts before preparing PND53' })
+  async syncPnd53(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string) {
+    assertRouteCompany(ctx, companyId);
+    await this.syncEvents.execute(ctx.companyId, undefined, 'PND53');
+    return { synced: true };
+  }
+
+  @Post('tax/pnd53/periods/:periodId/report')
+  @HttpCode(200)
+  @RequirePermissions('wht.pnd53.prepare')
+  @ApiOperation({ summary: 'Compute only a PND53 report' })
+  async generatePnd53(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string) {
+    assertRouteCompany(ctx, companyId);
+    const period = await this.pnd53Period(ctx.companyId, periodId);
+    return this.generateWht.execute(ctx.companyId, 'PND53', period.periodKey);
+  }
+
+  @Post('tax/pnd53/periods/:periodId/export')
+  @HttpCode(200)
+  @RequirePermissions('wht.pnd53.prepare')
+  @ApiOperation({ summary: 'Produce the official printable PND53 form and annexes' })
+  async exportPnd53(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string,
+    @Body() body: { exportFormat: 'PDF' }) {
+    assertRouteCompany(ctx, companyId);
+    await this.pnd53Period(ctx.companyId, periodId);
+    if (body?.exportFormat !== 'PDF') throw new BadRequestException('PND53 filing form must be exported as PDF.');
+    return this.generateFilingPackage.execute(ctx, periodId, 'PDF');
+  }
+
+  @Get('tax/pnd53/periods/:periodId/review-issues')
+  @RequirePermissions('wht.pnd53.read')
+  @ApiOperation({ summary: 'List only review issues for a PND53 period' })
+  async listPnd53Issues(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string) {
+    assertRouteCompany(ctx, companyId);
+    await this.pnd53Period(ctx.companyId, periodId);
+    return this.taxRepo.findIssuesByPeriod(ctx.companyId, periodId, { status: 'OPEN' });
+  }
+
+  @Patch('tax/pnd53/review-issues/:issueId/resolve')
+  @RequirePermissions('wht.pnd53.prepare')
+  @ApiOperation({ summary: 'Resolve an issue belonging to a PND53 period' })
+  async resolvePnd53Issue(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('issueId') issueId: string, @Body() body: { note: string }) {
+    assertRouteCompany(ctx, companyId);
+    const issue = await this.taxRepo.prisma.client.taxReviewIssue.findFirst({ where: { id: issueId, companyId: ctx.companyId } });
+    if (!issue) throw new NotFoundException('PND53 review issue not found');
+    await this.pnd53Period(ctx.companyId, issue.taxPeriodId);
+    return this.resolveIssue(ctx, companyId, issueId, body);
+  }
+
+  @Patch('tax/pnd53/periods/:periodId/mark-filed')
+  @RequirePermissions('wht.pnd53.prepare')
+  @ApiOperation({ summary: 'Record that an exported PND53 paper form was filed' })
+  async markPnd53Filed(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string, @Body() body: { note?: string }) {
+    assertRouteCompany(ctx, companyId);
+    await this.pnd53Period(ctx.companyId, periodId);
+    return this.markFiled(ctx, companyId, periodId, body);
+  }
+
   // ─── Company Tax Profile ──────────────────────────────────────────────────
 
   @Get('tax/profile')
@@ -274,7 +358,7 @@ export class TaxController {
   // A new route, sibling to the two above, rather than an overload of `POST tax/wht-certificates`
   // below: that endpoint's body shape (`CreateWhtCertificateDto`) requires a pre-existing
   // `taxPeriodId`/`taxEventIds`, a completely different input from this one (just a `handoffId`).
-  // `wht.certificate.issue` is gated by `thai_tax` (via `pack.wht.certificate.issue`, plan §2.1) —
+  // `wht.certificate.issue` is gated by `wht_50bis` (legacy `thai_tax` also retains it) —
   // unlike its `wht/payment-handoffs/*` siblings above, which are deliberately NOT gated — but the
   // URL family stays the same because both AP and Expenses already read/write handoffs here.
   @Post('wht/payment-handoffs/:handoffId/system-certificate')

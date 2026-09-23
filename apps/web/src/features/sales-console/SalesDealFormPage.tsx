@@ -4,8 +4,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   FEATURE_PACKAGE_PRESETS,
+  SALES_DEAL_ALLOWED_FEATURE_KEYS,
   SALES_COMPANY_SEARCH_MIN_CHARS, SALES_DEAL_CYCLES_MAX, SALES_DEAL_DESCRIPTION_MAX, SALES_DEAL_MONTHS_MAX, SALES_DEAL_REASON_MAX,
-  type FeaturePackagePresetKey, type SalesCompanySearchItem, type SalesDealBaseTier, type SalesDealView,
+  type SalesCompanySearchItem, type SalesDealBaseTier, type SalesDealView,
 } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
@@ -97,14 +98,17 @@ function CompanyPicker({
 /** preset + switches (spec §12): the preset fills the list, the per-menu toggles tune it. */
 function MenuPicker({ featureKeys, onChange, disabled }: { featureKeys: string[]; onChange: (keys: string[]) => void; disabled: boolean }) {
   const selectedCount = useMemo(
-    () => SALES_DEAL_MENU_BINDINGS.filter((binding) => isMenuSelected(featureKeys, binding)).length,
+    () => SALES_DEAL_MENU_BINDINGS.filter((binding) => isMenuSelected(featureKeys, binding)
+      && binding.entitlementKeys.every((key) => SALES_DEAL_ALLOWED_FEATURE_KEYS.includes(key))).length
+      + Number(featureKeys.includes('wht_50bis')),
     [featureKeys],
   );
+  const legacyKeys = featureKeys.filter((key) => !SALES_DEAL_ALLOWED_FEATURE_KEYS.includes(key));
   return (
     <div className="grid gap-3">
       <div className="flex flex-wrap gap-2">
-        {(Object.keys(FEATURE_PACKAGE_PRESETS) as FeaturePackagePresetKey[]).map((presetKey) => (
-          <button key={presetKey} type="button" disabled={disabled}
+        {(['starter', 'standard', 'full'] as const).map((presetKey) => (
+          <button key={presetKey} type="button" disabled={disabled || presetKey !== 'starter'}
             onClick={() => onChange([...FEATURE_PACKAGE_PRESETS[presetKey].featureKeys])}
             className="mangmee-btn mangmee-btn-secondary">
             ชุด{FEATURE_PACKAGE_PRESETS[presetKey].labelTh}
@@ -122,8 +126,10 @@ function MenuPicker({ featureKeys, onChange, disabled }: { featureKeys: string[]
               <div className="mt-1.5 flex flex-wrap gap-2">
                 {bindings.map((binding) => {
                   const on = isMenuSelected(featureKeys, binding);
+                  const available = binding.entitlementKeys.every((key) => SALES_DEAL_ALLOWED_FEATURE_KEYS.includes(key))
+                    && binding.parentFeatureKey !== null && SALES_DEAL_ALLOWED_FEATURE_KEYS.includes(binding.parentFeatureKey);
                   return (
-                    <button key={binding.navKey} type="button" disabled={disabled}
+                    <button key={binding.navKey} type="button" disabled={disabled || !available}
                       onClick={() => onChange(toggleMenuSelection(featureKeys, binding, !on))}
                       aria-pressed={on}
                       className={`mangmee-btn ${on ? 'mangmee-btn-primary' : 'mangmee-btn-secondary'}`}>
@@ -136,6 +142,14 @@ function MenuPicker({ featureKeys, onChange, disabled }: { featureKeys: string[]
           );
         })}
       </div>
+      <button type="button" disabled={disabled} aria-pressed={featureKeys.includes('wht_50bis')}
+        onClick={() => onChange(featureKeys.includes('wht_50bis')
+          ? featureKeys.filter((key) => key !== 'wht_50bis')
+          : [...featureKeys, 'wht_50bis'])}
+        className={`mangmee-btn ${featureKeys.includes('wht_50bis') ? 'mangmee-btn-primary' : 'mangmee-btn-secondary'}`}>
+        ออกหนังสือรับรอง 50 ทวิในระบบ
+      </button>
+      {legacyKeys.length > 0 && <p role="alert" className="text-sm text-amber-700">ดีลฉบับเดิมมีฟีเจอร์ที่ยังไม่เปิดขาย เลือกชุดเริ่มต้นก่อนบันทึกใหม่</p>}
       <p className="text-xs text-gray-400">เลือกไว้ {selectedCount} เมนู</p>
     </div>
   );
@@ -440,6 +454,7 @@ export default function SalesDealFormPage({ dealId, companyId, canApprove }: { d
           <MangmeeCard className="grid gap-3 p-4">
             <p className="text-sm font-semibold text-gray-700">เมนูที่ร้านได้ใช้</p>
             <MenuPicker featureKeys={values.featureKeys} disabled={busy} onChange={(keys) => set('featureKeys', keys)} />
+            {errors.featureKeys && <p role="alert" className="text-sm text-red-700">{errors.featureKeys}</p>}
           </MangmeeCard>
 
           <MangmeeCard className="grid gap-4 p-4">

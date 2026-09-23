@@ -1,5 +1,9 @@
 # Thai Tax 2026 Spec
 
+## Paper print-format check (2026-09-23)
+
+The ภ.ง.ด.53 PDF is printed on the Revenue Department main form and attachment linked at https://rd.go.th/7064.html. Filled Thai values must stay inside their published boxes and must not hide or overlap adjacent labels, tax IDs, or amounts. The form and attachment are static print pages with the original official labels; the payer signs and dates the paper before submission. Inputs that cannot fit or cannot be classified in the supported section 3 ter categories are refused before a filing PDF is accepted. The corresponding 50 ทวิ print correction is specified in `wht-certificate-system-issuance-spec.md`.
+
 ## 1. Status
 
 Confirmed v5.1 product/UX baseline for Thai-tax work as of 2026-07-31. CC4/CC5 owner decisions are adopted; implementation still follows Plan F0 and every Thai-specialist operational route remains CLOSED until its own evidence passes. Canonical order remains [[plans/master-implementation-checklist|Master Implementation Checklist]] item 11. VAT-registration truth/compatibility and canonical filing-scope behavior follow Feature Entitlement Decoupling Spec v5.1 CC4. The legacy VAT tuple and period-level filing lifecycle below are compatibility projections, not correctness sources.

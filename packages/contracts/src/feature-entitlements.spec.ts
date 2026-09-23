@@ -22,9 +22,9 @@ import {
 const onlyThese = (...on: string[]) => (key: string) => on.includes(key);
 
 describe('feature catalog shape (spec §6.1)', () => {
-  it('freezes 18 top-level keys, 16 of them sellable', () => {
-    assert.equal(FEATURE_KEYS.length, 18);
-    assert.equal(FEATURE_CATALOG.filter((feature) => feature.sellable).length, 16);
+  it('includes two narrow WHT rights while keeping platform baseline keys', () => {
+    assert.equal(FEATURE_KEYS.length, 20);
+    assert.equal(FEATURE_CATALOG.filter((feature) => feature.sellable).length, 18);
     assert.deepEqual(
       FEATURE_CATALOG.filter((feature) => !feature.sellable).map((feature) => feature.key).sort(),
       ['company_settings', 'employee_access'],

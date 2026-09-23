@@ -57,12 +57,13 @@ export class SyncTaxEventsUseCase {
       : this.taxRepo.findEventByIdempotencyKey(versionKey);
   }
 
-  async execute(companyId: string, since?: Date): Promise<SyncResult> {
+  async execute(companyId: string, since?: Date, scope: 'ALL' | 'PND53' = 'ALL'): Promise<SyncResult> {
     const result: SyncResult = { transactionTaxComponentsCreated: 0, voidedComponentsSuperseded: 0, vatOutputCreated: 0, vatInputCreated: 0, whtCreated: 0, reviewIssuesCreated: 0, skippedLocked: 0 };
     const company = await this.taxRepo.prisma?.client?.company?.findUnique?.({ where: { id: companyId }, select: { baseCurrency: true } });
     if (!company && this.taxRepo instanceof PrismaTaxRepository) throw new Error('company_base_currency_missing');
     const baseCurrency = company?.baseCurrency?.toUpperCase() ?? 'THB';
 
+    if (scope === 'ALL') {
     // ── Authoritative line/component snapshots (item 11B) ────────────────────
     const [documentLines, purchaseLines] = await Promise.all([
       this.docSource.findFinalizedTransactionTaxLines?.(companyId, since) ?? [],
@@ -244,6 +245,8 @@ export class SyncTaxEventsUseCase {
       result.vatInputCreated++;
     }
 
+    }
+
     // ── WHT from confirmed expenses with whtAmount > 0 ────────────────────────
     const whtExpenses = await this.expenseSource.findConfirmedWithWhtByCompany(companyId, since);
     for (const exp of whtExpenses) {
@@ -252,6 +255,7 @@ export class SyncTaxEventsUseCase {
       // ภ.ง.ด.53. A payee that review has not classified yet keeps PND53 as the documented fallback; a
       // 13-digit tax ID does not distinguish the two classes, so nothing is inferred from it.
       const formType: TaxFormType = exp.payeeEntityKind === 'INDIVIDUAL' ? 'PND3' : 'PND53';
+      if (scope === 'PND53' && formType !== 'PND53') continue;
       const eventType = formType === 'PND3' ? 'WHT_PND3' : 'WHT_PND53';
       const periodKey = formPeriodKey(formType, exp.expenseDate);
       const period = await this.taxRepo.upsertPeriod({ companyId, taxType: 'WHT', formType, periodKey });
@@ -310,6 +314,7 @@ export class SyncTaxEventsUseCase {
       // at from a tax ID. FOREIGN payees also land here — ภ.ง.ด.54 is out of scope, so they surface
       // for review instead of silently taking a form that does not apply.
       const formType: TaxFormType = pay.supplierType === 'INDIVIDUAL' ? 'PND3' : 'PND53';
+      if (scope === 'PND53' && formType !== 'PND53') continue;
       const eventType = formType === 'PND3' ? 'WHT_PND3' : 'WHT_PND53';
       const periodKey = formPeriodKey(formType, pay.paymentDate);
       const period = await this.taxRepo.upsertPeriod({ companyId, taxType: 'WHT', formType, periodKey });

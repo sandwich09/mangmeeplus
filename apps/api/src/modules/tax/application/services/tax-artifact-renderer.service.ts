@@ -3,7 +3,7 @@ import { Injectable } from '@nestjs/common';
 import type { PayeeSnapshot, PayerSnapshot, TaxExportFormat } from '@watchdog-bms/contracts';
 import { buildTaxExportArtifact } from '../../domain/logic/tax-export.logic';
 import type { TaxExportArtifact } from '../../domain/logic/tax-export.logic';
-import { buildWhtCertificateSvg, renderWhtCertificatePdf } from '../../domain/logic/wht-certificate-pdf.logic';
+import { renderWhtCertificatePdf } from '../../domain/logic/wht-certificate-pdf.logic';
 import type { WhtCertificateFields, WhtCertificateSignature } from '../../domain/logic/wht-certificate-pdf.logic';
 
 /**
@@ -21,8 +21,8 @@ export class TaxArtifactRendererService {
   }
 
   /**
-   * WHT certificate system issuance plan §2.5: the real 50 ทวิ template — a dedicated SVG→raster→
-   * pdf-lib pipeline, never `buildMinimalPdf`/`render('PDF', ...)` above (shared with
+   * WHT certificate system issuance plan §2.5 with the 2026-09-23 print correction: the published
+   * Revenue Department 50 ทวิ master with a Thai fill-in overlay, never `buildMinimalPdf`/`render('PDF', ...)` above (shared with
    * `GenerateTaxFilingPackageUseCase`'s unrelated tax filing-package export). Used by BOTH the
    * Tax-workspace `CreateWhtCertificateUseCase` and the new AP/Expenses
    * `IssueWhtCertificateFromHandoffUseCase` — the same gate covers both entry points, so both must
@@ -39,8 +39,7 @@ export class TaxArtifactRendererService {
     replacementCopy?: { issuedAt: string },
     options?: { stateStamp?: 'SUPERSEDED' },
   ): Promise<TaxExportArtifact> {
-    const svg = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot, signature, replacementCopy);
-    const buffer = await renderWhtCertificatePdf(svg, fields.certificateNumber, options);
+    const buffer = await renderWhtCertificatePdf(fields, payerSnapshot, payeeSnapshot, signature, replacementCopy, options);
     return {
       fileName: `wht-certificate-${fields.certificateNumber}.pdf`,
       mimeType: 'application/pdf',

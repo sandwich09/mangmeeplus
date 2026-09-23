@@ -9,7 +9,7 @@ import BillingCustomerFrame from './BillingCustomerFrame';
 import { BillingEmailRecipientPanel } from './BillingEmailRecipientPanel';
 import { getAccountEmailOtp, type AccountEmailOtpState } from '@/features/auth/account-email-otp.api';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BILLING_PAID_TIERS, DEFAULT_CHAT_CREDIT_SATANG, PLAN_TIER_PRESETS, TIER_FEATURE_PRESETS, type PlanTierKey, type BillingCatalog, type BillingQuote, type BillingStatus, type BillingAttemptView, type BillingPurchaseMode } from '@watchdog-bms/contracts';
+import { BILLING_PAID_TIERS, DEFAULT_CHAT_CREDIT_SATANG, PLAN_TIER_PRESETS, type PlanTierKey, type BillingCatalog, type BillingQuote, type BillingStatus, type BillingAttemptView, type BillingPurchaseMode } from '@watchdog-bms/contracts';
 import { apiErrorCode } from '@/common/api/api-error-message';
 import { PLAN_LOCK_COPY, PLAN_TERM_CONTACT_EMAIL, PLAN_TERM_RENEW_PHONE, planLockReason } from '@/features/plan-term/plan-term.logic';
 import type { PlanLockReason } from '@/features/plan-term/plan-term.api';
@@ -23,8 +23,7 @@ import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog
 const money = (satang: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(satang / 100);
 const date = (value: string | null | undefined) => value ? new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
 const button = billingControl;
-const catalogCardMenus = dealMenuLabels(TIER_FEATURE_PRESETS.STARTER_249);
-const enterpriseMenuSummary = 'เมนูหลัก: ค่าใช้จ่ายและใบเสร็จ · การเบิกจ่าย · ผู้ช่วย AI ทาง LINE · พนักงานและสิทธิ์';
+const enterpriseMenuSummary = 'เพิ่มสิทธิ์ออก ภ.ง.ด.53 และพิมพ์หนังสือรับรอง 50 ทวิในระบบ';
 function errorStatus(error: unknown): number | undefined {
   if (!error || typeof error !== 'object') return undefined;
   const value = error as { status?: unknown; statusCode?: unknown };
@@ -478,9 +477,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
             (status.renewalMode === 'CARD_ONCE' || status.renewalMode === 'PROMPTPAY_ONCE') &&
             (chosenMode === 'CARD_ONCE' || chosenMode === 'PROMPTPAY_ONCE') && status.interval === offer.interval &&
             BILLING_PAID_TIERS.indexOf(offer.offerKey as typeof BILLING_PAID_TIERS[number]) > currentRank;
-          // Every card compares the same six baseline entrances; Enterprise names its additional
-          // full-package coverage separately without reducing the entitlement snapshot it grants.
-          const menus = catalogCardMenus;
+          // Read the offer's actual snapshot so the card matches what checkout grants.
+          const menus = dealMenuLabels(offer.featureKeys);
           return <article key={offer.offerKey} className={`mangmee-card relative flex flex-col gap-4 p-5${current ? ' !border-brand-500' : ''}`}>
           {current && <MangmeeBadge className="absolute -top-3 right-4 border">แพ็กเกจปัจจุบัน</MangmeeBadge>}
           <h3 className="font-bold">{offer.label}</h3><p className="text-xl font-bold">{money(offer.priceSatang)} / {interval === 'month' ? 'เดือน' : 'ปี'}</p>

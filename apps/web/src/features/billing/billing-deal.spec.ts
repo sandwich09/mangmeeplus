@@ -57,9 +57,8 @@ it('names the menus and the AI credit the customer is buying', () => {
   assert.deepEqual(dealMenuLabels(['ai_line_assistant', 'expenses']), ['ผู้ช่วย AI ทาง LINE', 'ค่าใช้จ่ายและใบเสร็จ']);
   assert.deepEqual(dealMenuLabels(['ai_line_assistant']), ['ผู้ช่วย AI ทาง LINE']);
   assert.equal(dealMenuLabels(['ai_line_assistant']).includes('AI แนะนำ'), false);
-  // ภ.ง.ด.53 and 50 ทวิ are why ENTERPRISE opened; the card says so where the sidebar says "ภาษี".
-  assert.deepEqual(dealMenuLabels(['thai_tax']), ['ภาษี (ภ.ง.ด.53 และ 50 ทวิ)']);
-  assert.equal(dealMenuLabels(['thai_tax']).includes('ภาษี'), false);
+  assert.deepEqual(dealMenuLabels(['wht_pnd53', 'wht_50bis']), ['ออก ภ.ง.ด.53 ในระบบ', 'ออกหนังสือรับรอง 50 ทวิในระบบ']);
+  assert.deepEqual(dealMenuLabels(['thai_tax']), ['ภาษี']);
 
   assert.equal(dealAiCreditText(null), 'ใช้เพดาน AI รวมของระบบ');
   assert.equal(dealAiCreditText(undefined), 'ใช้เพดาน AI รวมของระบบ');

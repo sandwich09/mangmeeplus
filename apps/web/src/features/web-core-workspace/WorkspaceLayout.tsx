@@ -62,6 +62,7 @@ const DESIGN_HANDOFF_NAV_ORDER = [
   'reimbursements',
   'journal',
   'tax',
+  'pnd53',
   'reports',
   'roles',
   'settings',

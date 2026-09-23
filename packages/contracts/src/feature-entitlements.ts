@@ -13,7 +13,7 @@ export type FeatureDefinition = {
   group: 'operate' | 'finance' | 'growth';
   /**
    * Feature-decoupling spec §6.1 (spec:244-263): `false` marks a PLATFORM baseline key that is
-   * always on for an active company and is never a commercial toggle. 16 of the 18 top-level
+   * always on for an active company and is never a commercial toggle. 18 of the 20 top-level
    * keys are sellable; `employee_access` and `company_settings` are not.
    */
   sellable: boolean;
@@ -159,6 +159,22 @@ export const FEATURE_CATALOG: FeatureDefinition[] = [
     key: 'thai_tax',
     labelTh: 'ภาษีไทย',
     descriptionTh: 'จัดการข้อมูลและรายงานภาษี VAT, WHT และ CIT',
+    group: 'finance',
+    sellable: true,
+    submenus: [],
+  },
+  {
+    key: 'wht_pnd53',
+    labelTh: 'ออก ภ.ง.ด.53 ในระบบ',
+    descriptionTh: 'จัดทำและส่งออกแบบ ภ.ง.ด.53 พร้อมใบแนบสำหรับพิมพ์ยื่น',
+    group: 'finance',
+    sellable: true,
+    submenus: [],
+  },
+  {
+    key: 'wht_50bis',
+    labelTh: 'ออกหนังสือรับรอง 50 ทวิในระบบ',
+    descriptionTh: 'พิมพ์หนังสือรับรองหักภาษี ณ ที่จ่ายจากรายการจ่ายในระบบ',
     group: 'finance',
     sellable: true,
     submenus: [],

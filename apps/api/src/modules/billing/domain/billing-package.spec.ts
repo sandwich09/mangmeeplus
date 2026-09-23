@@ -51,7 +51,7 @@ test('HIDDEN receipt-only offers stay absent from the catalog and direct request
     assert.equal(catalog.offers.filter((offer) => offer.availability === 'AVAILABLE').length, open ? 8 : 0);
     assert.equal(catalog.aiMonthlyBudgetSatang, 120000);
     assert.deepEqual(catalog.offers.find((offer) => offer.offerKey === 'ENTERPRISE_1999')!.featureKeys,
-      [...FEATURE_PACKAGE_PRESETS.full.featureKeys]);
+      [...TIER_FEATURE_PRESETS.ENTERPRISE_1999]);
     assert.deepEqual(catalog.offers.find((offer) => offer.offerKey === 'STARTER_249')!.featureKeys,
       [...FEATURE_PACKAGE_PRESETS.starter.featureKeys]);
     for (const offerKey of ['RECEIPT_TOPUP', 'RECEIPT_ADDON']) {

@@ -239,6 +239,16 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
     deepLinkTargets: ['taxPeriod'],
   },
   {
+    key: 'pnd53',
+    labelKey: 'module.pnd53',
+    buildHref: (companyId) => `/companies/${companyId}/tax/pnd53`,
+    iconKey: 'DocsIcon',
+    navGroup: 'finance',
+    requiredAnyPermissions: ['wht.pnd53.read', 'wht.pnd53.prepare'],
+    status: 'ready',
+    deepLinkTargets: ['pnd53'],
+  },
+  {
     key: 'accounts-payable',
     labelKey: 'module.accounts_payable',
     buildHref: (companyId) => `/companies/${companyId}/accounts-payable`,

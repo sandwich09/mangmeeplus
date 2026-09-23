@@ -1267,7 +1267,7 @@ function WhtHandoffDetail({ companyId, handoff, canLink, permissions, onLinked, 
         <div className="space-y-4">
           {/* WHT certificate system issuance plan §4.1 (S1/S9): both gate axes — route-readiness
               (`handoff.systemIssuanceOpen`) and the permission axis, which already folds in the
-              `thai_tax` entitlement. Placed beside the external-attach form below; the operator
+              `wht_50bis` entitlement. Placed beside the external-attach form below; the operator
               picks one path. */}
           {canIssueSystemWhtCertificate(handoff, permissions) && (
             <div>

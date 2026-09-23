@@ -215,6 +215,8 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'tax.certificate.read',        description: 'Read 50 ทวิ WHT certificates',          riskLevel: 'LOW' },
   { key: 'tax.certificate.issue',       description: 'Issue 50 ทวิ WHT certificates',         riskLevel: 'HIGH' },
   { key: 'tax.certificate.void',        description: 'Void issued 50 ทวิ WHT certificates',   riskLevel: 'HIGH' },
+  { key: 'wht.pnd53.read',              description: 'Read PND53 periods and source events', riskLevel: 'LOW' },
+  { key: 'wht.pnd53.prepare',           description: 'Compute and export PND53 reports', riskLevel: 'HIGH' },
   // Decoupled from `thai_tax` on purpose (spec:301-302): when the system cannot issue the
   // 50 ทวิ itself, the operator must still be able to see the handoff and link an externally
   // issued certificate — that journey belongs to the payment-owning source feature, not Tax.
@@ -222,7 +224,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'wht.external_certificate.link', description: 'Link an externally issued 50 ทวิ',   riskLevel: 'HIGH' },
   // WHT certificate system issuance plan §2.1: mints a 50 ทวิ directly from a settlement/expense
   // handoff (AP/Expenses "ออกเอกสารในระบบ" button). Owner decision 2026-09-22 gates it with
-  // `thai_tax` via a dedicated pack (`pack.wht.certificate.issue`) — see capability-pack.registry.ts.
+  // `wht_50bis` via a dedicated pack; legacy `thai_tax` grants are retained.
   { key: 'wht.certificate.issue',       description: 'Issue a 50 ทวิ WHT certificate directly from a settlement/expense confirm (SYSTEM issuance)', riskLevel: 'HIGH' },
   // Correction & replacement plan §2.1: shared key for both "แก้ไขหนังสือรับรอง" and "ออกใบแทน" on a
   // SYSTEM-issued certificate — owner confirmed 2026-09-23 this stays ungated (no thai_tax), unlike
@@ -883,6 +885,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'tax.filing.mark_filed', 'tax.filing.mark_paid',
     'tax.certificate.read', 'tax.certificate.issue', 'tax.certificate.void',
     'wht.certificate.read', 'wht.external_certificate.link', 'wht.certificate.issue', 'wht.certificate.correct',
+    'wht.pnd53.read', 'wht.pnd53.prepare',
     'tax.review_issue.read', 'tax.review_issue.resolve',
     // Item 13 banking – Finance has all except approve, complete, reopen
     'bank.account.read', 'bank.account.manage', 'bank.account.sensitive_read',
@@ -949,6 +952,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'tax.filing.mark_filed', 'tax.filing.mark_paid',
     'tax.certificate.read', 'tax.certificate.issue', 'tax.certificate.void',
     'wht.certificate.read', 'wht.external_certificate.link', 'wht.certificate.issue', 'wht.certificate.correct',
+    'wht.pnd53.read', 'wht.pnd53.prepare',
     'tax.review_issue.read', 'tax.review_issue.resolve',
     'tax.adjustment.create',
     // Item 13 banking – Accountant has full banking access
