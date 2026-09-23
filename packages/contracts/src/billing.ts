@@ -129,7 +129,9 @@ export type BillingQuote = {
   featureImpact?: BillingFeatureImpact;
   /** Present only on a sales-deal quote (spec §19.2): what the confirm screen names. */
   deal?: { dealId: string; months: number; description: string; baseLabel: string };
-  purchase?: { kind: 'INITIAL' | 'REPEAT' | 'RESTART' | 'UPGRADE' | 'SCHEDULED_CHANGE'; previousInterval?: BillingInterval; previousPaidThrough: string | null; projectedPaidThrough: string;
+  /** Paid now; the running one-time package keeps its rights until this boundary. */
+  advanceDeal?: { startsAt: string; firstCycleEndsAt: string; nextChargeAt: string };
+  purchase?: { kind: 'INITIAL' | 'REPEAT' | 'RESTART' | 'UPGRADE' | 'FULL_PACKAGE_UPGRADE' | 'SCHEDULED_CHANGE' | 'ADVANCE_DEAL'; previousInterval?: BillingInterval; previousPaidThrough: string | null; projectedPaidThrough: string;
     receiptUnitsAdded: number; projectedRemainingReceipts: number;
     trialCarryover?: { receiptUnits: number; expiresAt: string } };
   upgrade?: { prorationAt: string; nextRenewalTotalSatang: number;
@@ -167,11 +169,12 @@ export type BillingStatus = {
   deal?: { dealId: string; base: SalesDealBaseTier; baseLabel: string; priceSatang: number; months: number;
     offerExpiresAt: string; purchaseModes: BillingPurchaseMode[];
     branchLimit: number; employeeLimit: number; monthlySlipLimit: number;
-    featureKeys: string[]; aiMonthlyBudgetSatang: number | null; description: string;
+    featureKeys: string[]; aiMonthlyBudgetSatang: number | null; creditScope?: 'CHAT' | 'TOTAL'; description: string;
     /** D-P5-1: the card says "ตัดบัตร/ออกบิลทุกเดือน(ปี) ที่ราคานี้" and `priceSatang` is per cycle.
      *  `cycles` is "N รอบ แล้วกลับราคาปกติ"; `null` on an until-revoked deal. */
     autoRenew: boolean; cadence: SalesDealCadence | null; cycles: number | null };
   refundReviewPending?: boolean;
+  pendingDeal?: { dealId: string; purchaseMode: 'CARD_AUTO' | 'PROMPTPAY_RENEW'; startsAt: string; firstCycleEndsAt: string; nextChargeAt: string; state: 'PAID' | 'PENDING_BINDING' | 'HELD' } | null;
   accessState: 'ACTIVE' | 'EXPIRED' | 'HELD'; subscriptionState: string; documentState: 'NONE' | 'PENDING' | 'READY';
   /** R2: present only while `accessState` is EXPIRED — why the shop is locked, so the package page
    *  can say "ยังไม่มีแพ็กเกจ" to a never-started shop and "ครบกำหนด" to one whose term ran out. */
@@ -202,6 +205,7 @@ export type BillingAttemptView = {
   paymentState: 'PENDING' | 'PAID' | 'FAILED'; applyState: BillingStatus['applyState']; invoiceReference: string | null;
   /** Present when this Checkout paid a sales deal, so the return page can name what was bought. */
   deal?: { dealId: string; baseLabel: string; months: number };
+  advanceDeal?: { startsAt: string; firstCycleEndsAt: string; nextChargeAt: string };
 };
 export type BillingInvoiceItem = { id: string; number: string | null; currency: 'THB'; amountSatang: number;
   refundedSatang: number; disputed: boolean; financialObservedAt: string | null;
@@ -220,9 +224,7 @@ export type BillingAdjustments = { invoiceId: string; invoiceNumber: string | nu
 export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED'; policyRevision: string | null;
   catalogRevision: string; generatedAt: string; validUntil: string; taxTreatment: BillingTaxTreatment | null; offers: BillingOffer[];
   /**
-   * The platform default AI credit every package carries, in satang per month (`AI_MONTHLY_BUDGET_SATANG`).
-   * There is no per-tier AI credit — only a sales deal ever overrides it — so the cards all read
-   * this one number (Owner 2026-09-21).
+   * Legacy TOTAL safety budget, not the 80-credit CHAT allowance.
    */
   aiMonthlyBudgetSatang: number;
   /** R1: no longer emitted — new signups get no trial (Owner 2026-09-20). Optional rather than

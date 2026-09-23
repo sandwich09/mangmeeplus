@@ -141,14 +141,13 @@ describe('GetPartnerAiUsageUseCase', () => {
       overrideSatang: null,
       defaultSatang: 5_000_000,
       ceilingSatang: 50_000_000,
-      // Every existing company resolves SHARED with no caps and no pending policy (spec §12.5).
-      policy: { mode: 'SHARED', chatCapSatang: null, ocrCapSatang: null, source: 'ACTIVE',
+      // Every existing SHARED company now has the separate 80-credit CHAT default.
+      policy: { mode: 'SHARED', chatCapSatang: 8_000, ocrCapSatang: null, source: 'ACTIVE',
         revision: `0:${bangkokMonthKey()}:ACTIVE`, pending: null, splitActivationEnabled: false },
-      // Phase E1b: the live money position. Under SHARED a BUCKET has no cap to subtract from, so
-      // its `available` is null — "not set", never "unlimited" (spec §12.1).
+      // CHAT has its own remaining credit; OCR still uses the total only.
       position: {
         total: { spentSatang: 0, reservedSatang: 0, availableSatang: 5_000_000 },
-        chat: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
+        chat: { spentSatang: 0, reservedSatang: 0, availableSatang: 8_000 },
         ocr: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
         unresolvedHolds: 0, breach: false,
       },
@@ -163,13 +162,12 @@ describe('GetPartnerAiUsageUseCase', () => {
       overrideSatang: 900_000,
       defaultSatang: 5_000_000,
       ceilingSatang: 50_000_000,
-      policy: { mode: 'SHARED', chatCapSatang: null, ocrCapSatang: null, source: 'ACTIVE',
+      policy: { mode: 'SHARED', chatCapSatang: 900_000, ocrCapSatang: null, source: 'ACTIVE',
         revision: `0:${bangkokMonthKey()}:ACTIVE`, pending: null, splitActivationEnabled: false },
-      // Phase E1b: the live money position. Under SHARED a BUCKET has no cap to subtract from, so
-      // its `available` is null — "not set", never "unlimited" (spec §12.1).
+      // The explicit operator override retains the special effective CHAT allowance.
       position: {
         total: { spentSatang: 0, reservedSatang: 0, availableSatang: 900_000 },
-        chat: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
+        chat: { spentSatang: 0, reservedSatang: 0, availableSatang: 900_000 },
         ocr: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
         unresolvedHolds: 0, breach: false,
       },

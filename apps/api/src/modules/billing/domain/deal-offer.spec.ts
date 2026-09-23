@@ -128,9 +128,21 @@ test('a v3 snapshot reads back whole, and a v2 one reads back as a one-time deal
   // The Phase 3 row shape is still readable and is NOT auto-renewing.
   assert.equal(dealSnapshot({ ...snapshot }).autoRenew, false);
   assert.equal(dealSnapshot({ ...snapshot }).cadence, null);
-  throwsWith('BILLING_DEAL_SNAPSHOT_MISMATCH', () => dealSnapshot({ ...auto, version: 4 }));
+  throwsWith('BILLING_DEAL_SNAPSHOT_MISMATCH', () => dealSnapshot({ ...auto, version: 5 }));
   // A switch that is on with an unusable cadence must never become a recurring charge.
   throwsWith('BILLING_DEAL_SNAPSHOT_MISMATCH', () => dealSnapshot({ ...auto, cadence: 'week' }));
+});
+
+test('v4 pins CHAT credit while v2/v3 keep their legacy TOTAL meaning', () => {
+  const current = { ...auto, version: 4 as const, aiMonthlyBudgetSatang: 8000 };
+  assert.equal(dealSnapshot(current).version, 4);
+  assert.equal(dealSnapshot(auto).version, 3);
+  const currentRow = { ...row, offerSnapshotJson: current };
+  const pinnedChat = { ...pinned, snapshotHash: dealSnapshotHash(current), months: current.months,
+    aiMonthlyBudgetSatang: 8000, creditScope: 'CHAT' as const, cadence: 'month' as const, cycles: 6 };
+  assert.equal(assertDealSnapshot(currentRow, 'company_1', now, pinnedChat).version, 4);
+  throwsWith('BILLING_DEAL_SNAPSHOT_MISMATCH', () => assertDealSnapshot(currentRow, 'company_1', now,
+    { ...pinnedChat, creditScope: 'TOTAL' }));
 });
 
 test('the return date is the end of cycle N, on the anchor day (D-P5-6)', () => {

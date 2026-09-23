@@ -328,7 +328,8 @@ async function resolveEffectiveBudget(
     where: { companyId },
     select: {
       monthlyBudgetSatang: true, budgetMode: true, chatMonthlyBudgetSatang: true,
-      ocrMonthlyBudgetSatang: true, budgetConfigVersion: true, pendingBudgetPolicy: true,
+      ocrMonthlyBudgetSatang: true, salesDealChatCreditSatang: true, salesDealChatCreditEndsAt: true,
+      budgetConfigVersion: true, pendingBudgetPolicy: true,
     },
   }) : null;
   const override = row?.monthlyBudgetSatang != null;
@@ -402,9 +403,8 @@ export async function assertCompanyAiBudget(
     });
     return { allowed: false, reason: 'unavailable' };
   }
-  // SPLIT: the bounded-overshoot comparison below cannot honour a per-bucket cap, so admission
-  // moves to the reservation engine — one durable hold per provider invocation, priced from the
-  // step's declared bound (spec §12.3). SHARED falls straight through, byte-for-byte as before.
+  // SPLIT uses a durable bound per provider invocation. SHARED keeps the leased total comparison
+  // and adds a settled CHAT bucket stop below, with the same bounded overshoot as its total.
   if (policy.mode === 'SPLIT') return reserveCompanyAiBudgetStep(prisma, config, companyId, monthKey, step!);
 
   if (spendSatang >= budget.budgetSatang) {
@@ -415,6 +415,25 @@ export async function assertCompanyAiBudget(
       override: budget.override,
     });
     return { allowed: false, reason: 'exceeded', spendSatang, budgetSatang: budget.budgetSatang, override: budget.override };
+  }
+  if (step?.budgetBucket === 'CHAT') {
+    try {
+      const row = await prisma.client.companyAiMonthlyBucketUsage.findUnique({
+        where: { companyId_monthKey_bucket: { companyId, monthKey, bucket: 'CHAT' } },
+        select: { costSatang: true },
+      });
+      const chatSpent = row?.costSatang ?? 0;
+      if (chatSpent >= policy.chatCapSatang!) {
+        return { allowed: false, reason: 'exceeded', spendSatang: chatSpent,
+          budgetSatang: policy.chatCapSatang!,
+          override: budget.override || (budget.policyRow?.salesDealChatCreditSatang != null &&
+            (!budget.policyRow.salesDealChatCreditEndsAt || budget.policyRow.salesDealChatCreditEndsAt > new Date())),
+          budgetScope: 'CHAT' };
+      }
+    } catch (err) {
+      logger.warn({ msg: 'ai.chat_credit.read_failed', companyId, error: (err as Error).message });
+      return { allowed: false, reason: 'unavailable', budgetScope: 'CHAT' };
+    }
   }
   return { allowed: true };
 }

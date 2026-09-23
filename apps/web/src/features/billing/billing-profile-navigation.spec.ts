@@ -18,6 +18,10 @@ it('returns to the same company and selected paid package, never to an arbitrary
   assert.equal(billingProfileReturnHref('company/a', new URL(once, 'https://local.test').search),
     '/companies/company%2Fa/billing?offer=PRO_999&interval=month&channel=web&purchaseMode=CARD_ONCE&profile=updated');
   assert.equal(billingProfileSelection('?offer=PRO_999&interval=month&purchaseMode=INVALID')?.purchaseMode, undefined);
+  const full = billingProfileHref('c1', { offer: 'BASIC_499', interval: 'month', channel: 'web', purchaseMode: 'CARD_ONCE', purchaseIntent: 'FULL_PACKAGE' });
+  assert.equal(billingProfileSelection(new URL(full, 'https://local.test').search)?.purchaseIntent, 'FULL_PACKAGE');
+  assert.match(billingProfileReturnHref('c1', new URL(full, 'https://local.test').search) ?? '', /purchaseIntent=FULL_PACKAGE/);
+  assert.equal(billingProfileSelection('?offer=BASIC_499&interval=month&purchaseIntent=INVALID')?.purchaseIntent, undefined);
 });
 
 it('carries a deal through the address detour and back to its own card', () => {

@@ -20,8 +20,9 @@ function harness(options: {
   overrides?: Array<{ companyId: string; monthlyBudgetSatang: number | null;
     /** Split policy (spec §12.4). Absent on every pre-SPLIT case, which resolves to SHARED. */
     budgetMode?: string; chatMonthlyBudgetSatang?: number; ocrMonthlyBudgetSatang?: number;
+    salesDealChatCreditSatang?: number | null; salesDealChatCreditEndsAt?: Date | null;
     budgetConfigVersion?: number; pendingBudgetPolicy?: unknown }>;
-  /** Per-bucket month-to-date spend, for the SPLIT cases only. */
+  /** Per-bucket month-to-date spend. */
   buckets?: Array<{ companyId: string; bucket: string; costSatang: number }>;
   /** The platform settings ROW, which is what a company inherits when it has no override. */
   platformBudget?: { monthlyBudgetSatang: number; ceilingSatang: number } | null;
@@ -56,9 +57,11 @@ function harness(options: {
         count: async (args: any) => { outboxCounts.push(args); return options.stuckPushes ?? 0; },
       },
       companyAiConfiguration: { findMany: async () => options.overrides ?? [] },
-      // Only the SPLIT cases reach these: a SHARED trial is still decided by the two bulk reads.
+      // The sweep batch-reads CHAT usage before applying SHARED defaults/deal overrides or SPLIT policy.
       companyAiMonthlyBucketUsage: {
-        findMany: async (args: any) => (options.buckets ?? []).filter((row) => row.companyId === args.where.companyId),
+        findMany: async (args: any) => (options.buckets ?? []).filter((row) =>
+          (args.where.companyId.in ?? [args.where.companyId]).includes(row.companyId)
+          && (args.where.bucket === undefined || row.bucket === args.where.bucket)),
       },
       aiBudgetReservation: {
         groupBy: async (args: any) => { reservationQueries.push(args); return options.holdCompanies ?? []; },
@@ -242,6 +245,33 @@ describe('SignupOpsAlertService.sweepTrialBudgets — §15.6 (d)', () => {
         .service.sweepTrialBudgets(EVENING),
       { exhausted: 1, raised: true },
     );
+  });
+
+  it('counts a SHARED trial whose default CHAT credit is exhausted before the TOTAL cap', async () => {
+    const h = harness({
+      threshold: 1, trials: trials(1),
+      usage: [{ companyId: 'co-0', costSatang: 8000 }],
+      buckets: [{ companyId: 'co-0', bucket: 'CHAT', costSatang: 8000 }],
+      platformBudget: { monthlyBudgetSatang: 200_000, ceilingSatang: 300_000 },
+    });
+    assert.deepEqual(await h.service.sweepTrialBudgets(EVENING), { exhausted: 1, raised: true });
+  });
+
+  it('uses the live SHARED sales-deal CHAT allowance in the trial exhaustion sweep', async () => {
+    const deal = {
+      companyId: 'co-0', monthlyBudgetSatang: null, budgetMode: 'SHARED',
+      salesDealChatCreditSatang: 12_000, salesDealChatCreditEndsAt: new Date('2026-09-30T17:00:00.000Z'),
+    };
+    const platformBudget = { monthlyBudgetSatang: 200_000, ceilingSatang: 300_000 };
+    const under = harness({ threshold: 1, trials: trials(1), overrides: [deal],
+      usage: [{ companyId: 'co-0', costSatang: 10_000 }],
+      buckets: [{ companyId: 'co-0', bucket: 'CHAT', costSatang: 10_000 }], platformBudget });
+    assert.deepEqual(await under.service.sweepTrialBudgets(EVENING), { exhausted: 0, raised: false });
+
+    const spent = harness({ threshold: 1, trials: trials(1), overrides: [deal],
+      usage: [{ companyId: 'co-0', costSatang: 12_000 }],
+      buckets: [{ companyId: 'co-0', bucket: 'CHAT', costSatang: 12_000 }], platformBudget });
+    assert.deepEqual(await spent.service.sweepTrialBudgets(EVENING), { exhausted: 1, raised: true });
   });
 
   // The legacy domain, which the D2 rewrite briefly lost: the old loop walked the month's USAGE

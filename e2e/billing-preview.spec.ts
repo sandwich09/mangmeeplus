@@ -230,10 +230,15 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   const oneTimeCurrent = plans.locator('article').filter({ has: page.getByText('แพ็กเกจปัจจุบัน', { exact: true }) });
   await expect(oneTimeCurrent).toContainText('เติบโต (BASIC)');
   const pro = plans.locator('article').filter({ has: page.getByRole('heading', { name: 'มืออาชีพ (PRO)', exact: true }) });
-  await pro.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
+  await pro.getByRole('button', { name: 'อัปเกรดจ่ายส่วนต่าง', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'ยืนยันซื้อ มืออาชีพ (PRO) รายเดือน', exact: true })).toBeVisible();
   await expect(repeatReview).toContainText('ชำระส่วนต่างและเริ่ม มืออาชีพ (PRO) เมื่อยืนยันการชำระสำเร็จ');
   await expect(repeatReview).toContainText('ราคาเต็มเมื่อซื้อรอบใหม่ ฿999.00');
+  await repeatReview.getByRole('button', { name: /ดูทางเลือกซื้อ มืออาชีพ \(PRO\) เต็มแพ็ก/ }).click();
+  await expect(repeatReview).toContainText('จ่ายราคาเต็ม ฿999.00');
+  await expect(repeatReview).toContainText('เพิ่มโควตาเต็ม 100 ใบ');
+  await repeatReview.getByRole('button', { name: 'กลับไปดูราคาอัปเกรดจ่ายส่วนต่าง' }).click();
+  await expect(repeatReview).toContainText('ชำระส่วนต่างและเริ่ม มืออาชีพ (PRO)');
   await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
   await plans.getByRole('radio', { name: 'PromptPay QR · จ่ายครั้งเดียว' }).check();
   const oneTimeStarter = plans.locator('article').filter({ has: page.getByRole('heading', { name: 'เริ่มต้น (STARTER)', exact: true }) });

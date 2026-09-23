@@ -102,7 +102,7 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
       paymentState: status.paymentState === 'PAID' ? 'PAID' : status.paymentState === 'FAILED' ? 'FAILED' : 'PENDING', applyState: status.applyState, invoiceReference: paid ? 'PREVIEW-0001' : null,
       // The attempt is what tells the return page a deal paid for this term.
       ...(selected?.deal ? { deal: { dealId: previewDeal.dealId, baseLabel: previewDeal.baseLabel, months: previewDeal.months } } : {}) }),
-    quote: async (offerKey, interval, billingEmail, capacity, purchaseMode, dealId) => {
+    quote: async (offerKey, interval, billingEmail, capacity, purchaseMode, dealId, purchaseIntent) => {
       if (quoteFailures-- > 0) throw Object.assign(new Error('ราคาเปลี่ยนแล้ว'), { code: 'BILLING_QUOTE_STALE' });
       if (dealId) {
         // Priced from the deal snapshot, never from the catalog row (S36): N months in one
@@ -133,23 +133,25 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
       const isRepeat = paid && offer.offerKey === currentOffer.offerKey && (offer.interval === currentOffer.interval || (!currentOneTime && currentOffer.interval === 'month' && offer.interval === 'year'));
       const isUpgrade = paid && offer.interval === currentOffer.interval
         && BILLING_PAID_TIERS.findIndex(tier => tier === offer.offerKey) > BILLING_PAID_TIERS.findIndex(tier => tier === currentOffer.offerKey);
+      const fullPackageUpgrade = purchaseIntent === 'FULL_PACKAGE' && currentOneTime && isUpgrade;
+      if (purchaseIntent === 'FULL_PACKAGE' && !fullPackageUpgrade) throw Object.assign(new Error('ซื้อเต็มแพ็กใช้ได้เฉพาะการอัปเกรดแพ็กจ่ายครั้งเดียว'), { code: 'BILLING_PACKAGE_STATE_INVALID' });
       const isScheduled = paid && currentOneTime && !isRepeat && !isUpgrade;
       if (paid && !isRepeat && !isUpgrade && !isScheduled) throw Object.assign(new Error('กรุณาติดต่อทีมงานเพื่อเปลี่ยนแพ็กเกจหรือรอบชำระ'), { code: 'BILLING_PLAN_CHANGE_REQUIRED' });
       if (isRepeat && currentOffer.interval !== offer.interval && status.pendingPlanChange) throw Object.assign(new Error('ตรวจรายการเปลี่ยนแพ็กเกจก่อน'), { code: 'BILLING_CADENCE_PENDING_CHANGE' });
-      const total = isUpgrade ? offer.priceSatang - currentOffer.priceSatang : offer.priceSatang;
-      const added = isUpgrade ? offer.receiptAllowance - currentOffer.receiptAllowance : offer.receiptAllowance;
+      const total = isUpgrade && !fullPackageUpgrade ? offer.priceSatang - currentOffer.priceSatang : offer.priceSatang;
+      const added = isUpgrade && !fullPackageUpgrade ? offer.receiptAllowance - currentOffer.receiptAllowance : offer.receiptAllowance;
       const trialUnits = !paid && scenario !== 'expired' && scenario !== 'manual' ? status.usage.remaining ?? 0 : 0;
       quote = { quoteId: 'preview-quote', companyId, companyName: status.companyName, billingProfile: status.billingProfile, policyRevision: 'preview-policy', expiresAt: date(1),
         offer, subtotalSatang: total, taxSatang: 0, totalSatang: total, taxTreatment: 'NOT_VAT_REGISTERED', consentRevision: 'preview-consent', purchaseMode: purchaseMode ?? 'CARD_AUTO',
         paidStart: 'IMMEDIATE', billingEmail, trialEndsAt: !paid && scenario !== 'expired' && scenario !== 'manual' ? date(7) : null, usage: status.usage,
         ...(scenario === 'manual' ? { previousSource: 'ADMIN_MANUAL' as const, previousTermEndsAt: status.termEndsAt,
           featureImpact: { removed: [{ featureKey: 'reports', labelTh: 'รายงาน' }], added: [], preservedAdmin: 1 } } : {}),
-        purchase: { kind: isUpgrade ? 'UPGRADE' : isRepeat ? 'REPEAT' : isScheduled ? 'SCHEDULED_CHANGE' : scenario === 'expired' ? 'RESTART' : 'INITIAL', previousPaidThrough: status.paidThrough, ...(isRepeat && currentOffer.interval !== offer.interval ? { previousInterval: currentOffer.interval } : {}),
-          projectedPaidThrough: isUpgrade ? paidThrough : extend(isRepeat || isScheduled ? paidThrough : date(), offer.interval), receiptUnitsAdded: added,
+        purchase: { kind: fullPackageUpgrade ? 'FULL_PACKAGE_UPGRADE' : isUpgrade ? 'UPGRADE' : isRepeat ? 'REPEAT' : isScheduled ? 'SCHEDULED_CHANGE' : scenario === 'expired' ? 'RESTART' : 'INITIAL', previousPaidThrough: status.paidThrough, ...(isRepeat && currentOffer.interval !== offer.interval ? { previousInterval: currentOffer.interval } : {}),
+          projectedPaidThrough: isUpgrade && !fullPackageUpgrade ? paidThrough : extend(isRepeat || isScheduled || fullPackageUpgrade ? paidThrough : date(), offer.interval), receiptUnitsAdded: added,
           projectedRemainingReceipts: (isScheduled ? 0 : paid ? status.usage.remaining ?? 0 : trialUnits) + added,
           ...(trialUnits > 0 ? { trialCarryover: { receiptUnits: trialUnits, expiresAt: extend(date(), offer.interval) } } : {}) },
         // This fixture's current paid period starts now; a live quote prorates over its actual paid segments.
-        ...(isUpgrade ? { upgrade: { prorationAt: date(), nextRenewalTotalSatang: offer.priceSatang,
+        ...(isUpgrade && !fullPackageUpgrade ? { upgrade: { prorationAt: date(), nextRenewalTotalSatang: offer.priceSatang,
           segments: [{ start: date(), end: paidThrough, amountSatang: total, receiptUnitsAdded: added }] } } : {}),
         ...(capacity ? { capacity: { retainedBranches: capacity.branchIds.map(id => id === 'ho' ? 'สำนักงานใหญ่' : 'สาขาตัวอย่าง'), suspendedBranches: ['สาขาที่ไม่เลือก'],
           retainedMembers: ['เจ้าของร้าน', ...capacity.memberships.slice(1).map(() => 'พนักงานตัวอย่าง')], suspendedMembers: ['พนักงานที่ไม่เลือก'], defaults: [] } } : {}),

@@ -27,7 +27,7 @@ import { BillingPriceReturn } from './billing-price-return';
 import { BillingDealSubscriptionCancel, canConvertDealSubscription } from './billing-deal-subscription-cancel';
 import { collectionContract, pendingChange, type ScheduledChange } from './billing-schedule';
 import { restartFits, restartSource, type RestartSource } from './billing-restart';
-import { fullPackagePurchaseImpact } from '../domain/billing-package';
+import { appendPackageInterval, fullPackagePurchaseImpact } from '../domain/billing-package';
 import { isUpgrade, upgradeHistory, upgradePreview, type UpgradeSource } from './billing-upgrade';
 import { capacityOptions, capacityValid, capacityImpact, capacityReview, parseCapacitySelection, purchasedCapacityOffer } from './billing-capacity';
 import type { BillingCapacitySelection } from '@watchdog-bms/contracts';
@@ -50,8 +50,8 @@ import { autoRenewOf, DEAL_KIND } from '../../sales-console/domain/sales-deal.lo
 
 /** D-P5-6: the future contract a `SCHEDULE_PRICE_RETURN` writes. The invoice that applies it puts
  *  the shop back on the tier's default menus, AI credit and limits (Q1) even though it is a RENEWAL. */
-export type DealReturnSource = { dealRequestId: string; returnAt: string };
-export type BillingSnapshot = { trialCarryover?: TrialCarryoverSource; emailProof?: EmailProof; quote: BillingQuote; deal?: DealSource; dealReturn?: DealReturnSource; subscriptionConversion?: { subscriptionId: string; paidThrough: string }; priceId: string; productId?: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; featurePlan?: BillingFeaturePlan; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; oneTime?: { invoiceId: string; paidThrough: string; anchorDay: number; offerKey: string; interval: string }; oneTimeChange?: { effectiveAt: string; currentOffer: BillingOffer }; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange } };
+export type DealReturnSource = { dealRequestId: string; returnAt: string; creditScope?: 'CHAT' | 'TOTAL' };
+export type BillingSnapshot = { trialCarryover?: TrialCarryoverSource; emailProof?: EmailProof; quote: BillingQuote; deal?: DealSource; dealReturn?: DealReturnSource; subscriptionConversion?: { subscriptionId: string; paidThrough: string }; advanceDeal?: { invoiceId: string; contractAttemptId: string; paidThrough: string; firstCycleEndsAt: string; anchorDay: number }; priceId: string; productId?: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; featurePlan?: BillingFeaturePlan; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; oneTime?: { invoiceId: string; paidThrough: string; anchorDay: number; offerKey: string; interval: string }; oneTimeChange?: { effectiveAt: string; currentOffer: BillingOffer }; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange } };
 const oneTimeMode = (mode: BillingPurchaseMode | undefined) => mode === 'CARD_ONCE' || mode === 'PROMPTPAY_ONCE';
 /**
  * D-P5-4 — is this pinned quote an AUTO-RENEWING deal? The quote refuses every other pairing, so
@@ -60,6 +60,7 @@ const oneTimeMode = (mode: BillingPurchaseMode | undefined) => mode === 'CARD_ON
  */
 const autoRenewDealSnapshot = (snapshot: BillingSnapshot) => !!snapshot.deal && !oneTimeMode(snapshot.quote.purchaseMode);
 const paymentCheckoutMode = (mode: BillingPurchaseMode | undefined) => oneTimeMode(mode) || mode === 'PROMPTPAY_RENEW';
+const paymentCheckoutSnapshot = (snapshot: BillingSnapshot) => paymentCheckoutMode(snapshot.quote.purchaseMode) || !!snapshot.advanceDeal;
 const gateForMode = (mode: BillingPurchaseMode): BillingAction => mode === 'CARD_ONCE' ? 'card_once' : mode === 'PROMPTPAY_ONCE' ? 'promptpay_once' : mode === 'PROMPTPAY_RENEW' ? 'promptpay_renew' : 'new_sales';
 function assertPurchaseMode(mode: unknown): asserts mode is BillingPurchaseMode {
   if (!['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(String(mode)))
@@ -262,7 +263,7 @@ export class BillingService {
     });
   }
 
-  async quote(context: RequestContext, body: { offerKey?: string; interval?: string; billingEmail: string; capacity?: unknown; purchaseMode?: BillingPurchaseMode; dealId?: string }): Promise<BillingQuote> {
+  async quote(context: RequestContext, body: { offerKey?: string; interval?: string; billingEmail: string; capacity?: unknown; purchaseMode?: BillingPurchaseMode; purchaseIntent?: 'FULL_PACKAGE'; dealId?: string }): Promise<BillingQuote> {
     await this.assertOwner(context);
     const purchaseMode = body.purchaseMode ?? 'CARD_AUTO';
     assertPurchaseMode(purchaseMode);
@@ -300,13 +301,15 @@ export class BillingService {
     // snapshot freezes the exact subscription, so Checkout cannot turn a changed account into a
     // second charge; the reconciler then journals and retries the provider cancellation.
     const convertingDeal = !!deal && canConvertDealSubscription(existing);
+    const advanceDealEligible = !!deal && auto.autoRenew && !!existing?.paidThrough && existing.paidThrough > new Date() &&
+      oneTimeMode(existing.renewalMode as BillingPurchaseMode) && !existing.baseSubscriptionId;
     if (deal && existing?.baseSubscriptionId && existing.paidThrough && existing.paidThrough > new Date() && !convertingDeal)
       throw billingError('CONTROL_DEAL_SUBSCRIPTION_REVIEW', 'ร้านนี้มีสมาชิกที่ยังใช้งานอยู่ ทีมงานจะติดต่อกลับ');
     if (existing?.renewalMode === 'PROMPTPAY_RENEW' && existing.paidThrough && existing.paidThrough > new Date())
       throw billingError('BILLING_PLAN_CHANGE_REQUIRED', 'สมาชิก QR ที่กำลังใช้งานต้องจัดการบิลหรือรอสิ้นรอบก่อนซื้อแพ็กเกจใหม่');
-    if (purchaseMode === 'PROMPTPAY_RENEW' && existing?.paidThrough && existing.paidThrough > new Date())
+    if (purchaseMode === 'PROMPTPAY_RENEW' && existing?.paidThrough && existing.paidThrough > new Date() && !advanceDealEligible)
       throw billingError('BILLING_MODE_CHANGE_PENDING', 'กรุณารอให้แพ็กเกจปัจจุบันสิ้นสุดก่อนเริ่มต่ออายุด้วย QR');
-    if (!convertingDeal && existing?.paidThrough && existing.paidThrough > new Date() && existing.renewalMode !== 'NONE' &&
+    if (!convertingDeal && !advanceDealEligible && existing?.paidThrough && existing.paidThrough > new Date() && existing.renewalMode !== 'NONE' &&
         (oneTimeMode(purchaseMode) !== oneTimeMode(existing.renewalMode as BillingPurchaseMode)))
       throw billingError('BILLING_MODE_CHANGE_PENDING', 'กรุณารอให้แพ็กเกจปัจจุบันสิ้นสุดก่อนเปลี่ยนวิธีต่ออายุ');
     // Preserve the existing pending-checkout contract while a paid invoice is HELD before apply;
@@ -362,6 +365,15 @@ export class BillingService {
       ? await this.prisma.client.billingInvoice.findFirst({ where: { billingAccountId: existing.id, sourceAttemptId: existing.contractAttemptId!,
         providerStatus: 'paid', applyStatus: 'APPLIED', appliedAt: { not: null } }, orderBy: { createdAt: 'desc' } }) : null;
     const previousSnapshot = previous?.contractSnapshot as BillingSnapshot | null;
+    const advanceDeal = advanceDealEligible ? (() => {
+      if (!previous || previous.refundedSatang || previous.disputed || !previousSnapshot || !existing?.billingAnchorDay ||
+          previous.periodEnd.getTime() !== existing.paidThrough!.getTime() || !existing.contractAttemptId ||
+          existing.pendingPlanChangeId || existing.termProjectionHash !== termProjectionHash(term))
+        throw billingError('BILLING_PACKAGE_STATE_INVALID', 'ข้อมูลแพ็กเกจเดิมต้องตรวจสอบ กรุณาติดต่อทีมงาน');
+      return { invoiceId: previous.id, contractAttemptId: existing.contractAttemptId,
+        paidThrough: existing.paidThrough!.toISOString(), anchorDay: existing.billingAnchorDay,
+        firstCycleEndsAt: appendPackageInterval(existing.paidThrough!, interval, existing.billingAnchorDay).toISOString() };
+    })() : undefined;
     let upgrade: UpgradeSource | undefined, oneTimeChange: BillingSnapshot['oneTimeChange'];
     const oneTime = !convertingDeal && oneTimeMode(purchaseMode) && existing?.paidThrough && existing.paidThrough > new Date() ? (() => {
       if (!previous || previous.refundedSatang || previous.disputed || !previousSnapshot || !existing.billingAnchorDay ||
@@ -382,9 +394,13 @@ export class BillingService {
       return { invoiceId: previous.id, paidThrough: existing.paidThrough.toISOString(), anchorDay: existing.billingAnchorDay,
         offerKey: currentOffer.offerKey, interval: currentOffer.interval };
     })() : undefined;
-    if (!deal && oneTime && !oneTimeChange && previousSnapshot && isUpgrade(previousSnapshot.quote.offer, offer)) {
+    const fullPackageUpgrade = body.purchaseIntent === 'FULL_PACKAGE';
+    if (fullPackageUpgrade && (deal || !oneTime || !previousSnapshot || previousSnapshot.deal ||
+        !isUpgrade(previousSnapshot.quote.offer, offer) || oneTimeChange))
+      throw billingError('BILLING_PACKAGE_STATE_INVALID', 'ซื้อแพ็กเต็มเพิ่มได้เฉพาะแพ็กจ่ายครั้งเดียวที่ยังใช้งานอยู่และระดับสูงกว่าในรอบเดียวกัน');
+    if (!fullPackageUpgrade && !deal && oneTime && !oneTimeChange && previousSnapshot && isUpgrade(previousSnapshot.quote.offer, offer)) {
       const history = await upgradeHistory(this.prisma.client, existing!, offer, state.policy, new Date(Math.floor(Date.now()/1000)*1000).toISOString());
-      if (history.segments[0]!.oldOffer.offerKey !== term?.tierKey || Date.parse(history.segments[0]!.end) <= Date.now()+2401000)
+      if (history.segments.at(-1)!.oldOffer.offerKey !== term?.tierKey || Date.parse(history.segments[0]!.end) <= Date.now()+2401000)
         throw billingError('BILLING_UPGRADE_BOUNDARY', 'ใกล้วันเปลี่ยนรอบแล้ว กรุณาตรวจสถานะใหม่หลังเปลี่ยนรอบหรือติดต่อทีมงาน');
       const preview = await upgradePreview(this.stripe, history.amountSatang, state.policy);
       upgrade = { ...history, previewId: preview.previewId, previewHash: preview.previewHash };
@@ -427,7 +443,7 @@ export class BillingService {
     // and `movePlanMenus` rebuilds the plan at the boundary. Display only, so a shop whose menu
     // rows still need a team review can still buy. A RESTART pins like a first purchase: the term
     // already ended, so the package being bought now is the only thing deciding the menus.
-    const featurePinned = !!deal || packageMenuPurchaseSource(purchaseSource);
+    const featurePinned = !!deal || fullPackageUpgrade || packageMenuPurchaseSource(purchaseSource);
     const featurePreview = featurePinned
       ? await billingFeaturePlan(this.prisma.client, company.id, deal ? deal.featureKeys : TIER_FEATURE_PRESETS[tier])
       : upgrade || oneTimeChange ? await billingFeaturePlan(this.prisma.client, company.id, TIER_FEATURE_PRESETS[tier]).catch(() => null) : null;
@@ -442,14 +458,16 @@ export class BillingService {
       ...(featurePreview ? { featureImpact: featurePreview.impact } : {}),
       ...(deal ? { deal: { dealId: dealRow!.id, months: deal.months, description: deal.description, baseLabel: catalogOffer.label } } : {}),
       usage: await this.usage(company.id) };
+    if (advanceDeal) quote.advanceDeal = { startsAt: advanceDeal.paidThrough, firstCycleEndsAt: advanceDeal.firstCycleEndsAt,
+      nextChargeAt: advanceDeal.firstCycleEndsAt };
     if (capacityPreview) quote.capacity = capacityPreview;
     const impact = fullPackagePurchaseImpact({ tier, interval, offer, verifiedPaidAt: new Date(Math.floor(Date.now() / 1000) * 1000),
-      paidThrough: repeat ? new Date(repeat.paidThrough) : oneTime ? new Date(oneTime.paidThrough) : null,
-      remainingPaidReceipts: repeat || (oneTime && !oneTimeChange) ? quote.usage.remaining ?? 0 : 0, anchorDay: repeat?.anchorDay ?? oneTime?.anchorDay });
-    quote.purchase = { kind: oneTimeChange ? 'SCHEDULED_CHANGE' : repeat || oneTime ? 'REPEAT' : restart || purchaseSource === 'PAID_EXPIRED_CURRENT_MODE' ? 'RESTART' : 'INITIAL', previousPaidThrough: repeat?.paidThrough ?? oneTime?.paidThrough ?? restart?.paidThrough ?? null,
+      paidThrough: advanceDeal ? new Date(advanceDeal.paidThrough) : repeat ? new Date(repeat.paidThrough) : oneTime ? new Date(oneTime.paidThrough) : null,
+      remainingPaidReceipts: repeat || (oneTime && !oneTimeChange) ? quote.usage.remaining ?? 0 : 0, anchorDay: advanceDeal?.anchorDay ?? repeat?.anchorDay ?? oneTime?.anchorDay });
+    quote.purchase = { kind: advanceDeal ? 'ADVANCE_DEAL' : fullPackageUpgrade ? 'FULL_PACKAGE_UPGRADE' : oneTimeChange ? 'SCHEDULED_CHANGE' : repeat || oneTime ? 'REPEAT' : restart || purchaseSource === 'PAID_EXPIRED_CURRENT_MODE' ? 'RESTART' : 'INITIAL', previousPaidThrough: advanceDeal?.paidThrough ?? repeat?.paidThrough ?? oneTime?.paidThrough ?? restart?.paidThrough ?? null,
       ...(repeat && repeat.sourceInterval !== interval && !existing?.pendingPlanChangeId ? { previousInterval: repeat.sourceInterval } : {}),
-      projectedPaidThrough: impact.paidThrough.toISOString(), receiptUnitsAdded: impact.receiptUnitsAdded,
-      projectedRemainingReceipts: impact.remainingReceipts + (repeat || oneTime ? 0 : (await paidReceiptBalance(this.prisma.client,company.id,null)).remaining) };
+      projectedPaidThrough: advanceDeal?.firstCycleEndsAt ?? impact.paidThrough.toISOString(), receiptUnitsAdded: impact.receiptUnitsAdded,
+      projectedRemainingReceipts: impact.remainingReceipts + (advanceDeal || repeat || oneTime ? 0 : (await paidReceiptBalance(this.prisma.client,company.id,null)).remaining) };
     if (upgrade) {
       quote.expiresAt = new Date(Date.parse(upgrade.prorationAt)+600000).toISOString();
       const paidThrough = repeat?.paidThrough ?? oneTime!.paidThrough;
@@ -472,8 +490,9 @@ export class BillingService {
     }
     const dealSource: DealSource | undefined = deal ? { requestId: dealRow!.id, snapshotHash: dealSnapshotHash(dealRow!.offerSnapshotJson),
       months: deal.months, salesUserId: dealRow!.salesUserId!, aiMonthlyBudgetSatang: deal.aiMonthlyBudgetSatang,
+      creditScope: deal.version === 4 ? 'CHAT' : 'TOTAL',
       ...(auto.autoRenew ? { cadence: auto.cadence, cycles: auto.cycles } : {}) } : undefined;
-    const snapshot: BillingSnapshot = { ...(trialCarryover ? { trialCarryover } : {}), emailProof, ...(dealSource ? { deal: dealSource } : {}), ...(subscriptionConversion ? { subscriptionConversion } : {}), ...(pending ? { pendingChange: { id: pending.row.id, version: pending.row.version, proposed: pending.proposed } } : {}), quote, priceId: snapshotPriceId, productId, policy: state.policy, settingsVersion: state.settings.version, termVersion: term?.updatedAt.toISOString() ?? null, termHash: termProjectionHash(term), ...(featurePinned && featurePreview ? { featurePlan: featurePreview.plan } : {}), ...(repeat ? { repeat } : {}), ...(oneTime ? { oneTime } : {}), ...(oneTimeChange ? { oneTimeChange } : {}), ...(restart ? { restart } : {}), ...(upgrade ? { upgrade } : {}), ...(capacity ? { capacity } : {}) };
+    const snapshot: BillingSnapshot = { ...(trialCarryover ? { trialCarryover } : {}), emailProof, ...(dealSource ? { deal: dealSource } : {}), ...(subscriptionConversion ? { subscriptionConversion } : {}), ...(advanceDeal ? { advanceDeal } : {}), ...(pending ? { pendingChange: { id: pending.row.id, version: pending.row.version, proposed: pending.proposed } } : {}), quote, priceId: snapshotPriceId, productId, policy: state.policy, settingsVersion: state.settings.version, termVersion: term?.updatedAt.toISOString() ?? null, termHash: termProjectionHash(term), ...(featurePinned && featurePreview ? { featurePlan: featurePreview.plan } : {}), ...(repeat ? { repeat } : {}), ...(oneTime ? { oneTime } : {}), ...(oneTimeChange ? { oneTimeChange } : {}), ...(restart ? { restart } : {}), ...(upgrade ? { upgrade } : {}), ...(capacity ? { capacity } : {}) };
     await this.prisma.client.billingQuote.create({ data: { id: quoteId, companyId: company.id, initiatingUserId: context.userId,
       policyRevisionId: state.revision.id, snapshotJson: snapshot as unknown as Prisma.InputJsonValue, expiresAt: new Date(quote.expiresAt) } });
     return quote;
@@ -523,13 +542,23 @@ export class BillingService {
       const source = await this.purchaseSource(company, account, tx);
       if (source === 'PAID_OTHER_MODE' || source === 'SOURCE_INCONSISTENT') throw billingError('BILLING_SOURCE_REVIEW_REQUIRED', 'ข้อมูลการชำระเงินเดิมไม่ตรงกัน กรุณาติดต่อทีมงาน');
       if (snapshot.quote.previousSource && source !== snapshot.quote.previousSource) throw billingError('BILLING_QUOTE_STALE', 'แพ็กเกจเดิมเปลี่ยน กรุณาตรวจสอบใหม่');
-      if ((packageMenuPurchaseSource(source) || snapshot.deal) && (!snapshot.featurePlan || (await billingFeaturePlan(tx, context.companyId)).plan.sourceHash !== snapshot.featurePlan.sourceHash))
+      if ((packageMenuPurchaseSource(source) || snapshot.deal || snapshot.quote.purchase?.kind === 'FULL_PACKAGE_UPGRADE') && (!snapshot.featurePlan || (await billingFeaturePlan(tx, context.companyId)).plan.sourceHash !== snapshot.featurePlan.sourceHash))
         throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์เมนูเปลี่ยน กรุณาตรวจสอบใหม่');
       if ((company.planTerm?.updatedAt.toISOString() ?? null) !== snapshot.termVersion) throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์บริษัทเปลี่ยน กรุณาตรวจสอบใหม่');
       if (snapshot.subscriptionConversion && (!account || account.baseSubscriptionId !== snapshot.subscriptionConversion.subscriptionId ||
           account.paidThrough?.toISOString() !== snapshot.subscriptionConversion.paidThrough || account.renewalMode !== 'CARD_AUTO' ||
           account.subscriptionState !== 'active' || account.cancelAtPeriodEnd || account.graceEndsAt))
         throw billingError('BILLING_QUOTE_STALE', 'สมาชิกเดิมเปลี่ยน กรุณาตรวจสอบดีลอีกครั้ง');
+      if (snapshot.advanceDeal) {
+        const old = await tx.billingInvoice.findFirst({ where: { id: snapshot.advanceDeal.invoiceId, billingAccountId: account?.id,
+          sourceAttemptId: snapshot.advanceDeal.contractAttemptId, providerStatus: 'paid', applyStatus: 'APPLIED', appliedAt: { not: null } } });
+        if (!snapshot.deal?.cadence || !account || !oneTimeMode(account.renewalMode as BillingPurchaseMode) || account.baseSubscriptionId ||
+            account.contractAttemptId !== snapshot.advanceDeal.contractAttemptId || account.paidThrough?.toISOString() !== snapshot.advanceDeal.paidThrough ||
+            account.billingAnchorDay !== snapshot.advanceDeal.anchorDay || account.termProjectionHash !== snapshot.termHash || account.pendingPlanChangeId ||
+            !old || old.periodEnd.toISOString() !== snapshot.advanceDeal.paidThrough || old.refundedSatang || old.disputed ||
+            appendPackageInterval(new Date(snapshot.advanceDeal.paidThrough), snapshot.deal.cadence, snapshot.advanceDeal.anchorDay).toISOString() !== snapshot.advanceDeal.firstCycleEndsAt)
+          throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์หรือรายการเดิมเปลี่ยน กรุณาตรวจสอบใหม่');
+      }
       if (account?.activeAttemptId || (account?.baseSubscriptionId && !snapshot.repeat && !snapshot.restart && !snapshot.subscriptionConversion)) throw billingError('BILLING_PURCHASE_PENDING', 'มีรายการชำระเงินอยู่แล้ว กรุณาตรวจสถานะเดิม');
       if (snapshot.restart && (!account || account.baseSubscriptionId !== snapshot.restart.subscriptionId || account.contractAttemptId !== snapshot.restart.contractAttemptId ||
         account.paidThrough?.toISOString() !== snapshot.restart.paidThrough || account.termProjectionHash !== snapshot.restart.termHash)) throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์หรือสมาชิกเดิมเปลี่ยน กรุณาตรวจสอบใหม่');
@@ -541,7 +570,8 @@ export class BillingService {
         if (!account || !source || source.refundedSatang || source.disputed || account.baseSubscriptionId ||
             !account.paidThrough || account.paidThrough.toISOString() !== snapshot.oneTime.paidThrough ||
             account.billingAnchorDay !== snapshot.oneTime.anchorDay || account.termProjectionHash !== snapshot.termHash ||
-            source.periodEnd.getTime() !== account.paidThrough.getTime())
+            source.periodEnd.getTime() !== account.paidThrough.getTime() ||
+            (snapshot.quote.purchase?.kind === 'FULL_PACKAGE_UPGRADE' && account.paidThrough <= new Date()))
           throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์หรือรายการเดิมเปลี่ยน กรุณาตรวจสอบใหม่');
       }
       if (snapshot.oneTimeChange && (!state.gates.plan_changes || account?.pendingPlanChangeId ||
@@ -621,7 +651,16 @@ export class BillingService {
         const source = await this.purchaseSource(company, await this.account(context.companyId, tx), tx);
         if (source === 'PAID_OTHER_MODE' || source === 'SOURCE_INCONSISTENT' || (snapshot.quote.previousSource && source !== snapshot.quote.previousSource))
           throw billingError('BILLING_QUOTE_STALE', 'แพ็กเกจเดิมเปลี่ยน กรุณาตรวจสอบใหม่');
-        if ((packageMenuPurchaseSource(source) || snapshot.deal) && (!snapshot.featurePlan || (await billingFeaturePlan(tx, context.companyId)).plan.sourceHash !== snapshot.featurePlan.sourceHash))
+        if (snapshot.advanceDeal) {
+          const old = await tx.billingInvoice.findUnique({ where: { id: snapshot.advanceDeal.invoiceId } });
+          const current = await this.account(context.companyId, tx);
+          if (!current || current.activeAttemptId !== attempt.id || current.baseSubscriptionId || current.pendingPlanChangeId ||
+              current.contractAttemptId !== snapshot.advanceDeal.contractAttemptId || current.paidThrough?.toISOString() !== snapshot.advanceDeal.paidThrough ||
+              current.termProjectionHash !== snapshot.termHash || old?.billingAccountId !== current.id || old.applyStatus !== 'APPLIED' ||
+              old.providerStatus !== 'paid' || old.refundedSatang || old.disputed)
+            throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์หรือรายการเดิมเปลี่ยน กรุณาตรวจสอบใหม่');
+        }
+        if ((packageMenuPurchaseSource(source) || snapshot.deal || snapshot.quote.purchase?.kind === 'FULL_PACKAGE_UPGRADE') && (!snapshot.featurePlan || (await billingFeaturePlan(tx, context.companyId)).plan.sourceHash !== snapshot.featurePlan.sourceHash))
           throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์เมนูเปลี่ยน กรุณาตรวจสอบใหม่');
         if ((company.planTerm?.updatedAt.toISOString() ?? null) !== snapshot.termVersion || company.name !== snapshot.quote.companyName) throw billingError('BILLING_QUOTE_STALE', 'ข้อมูลบริษัทหรือสิทธิ์เปลี่ยน กรุณาตรวจสอบใหม่');
         await lockAccountEmail(tx, context.userId);
@@ -638,7 +677,7 @@ export class BillingService {
           throw billingError('BILLING_RECIPIENT_UPDATE_REQUIRED', 'ผู้รับเอกสารเปลี่ยนแล้ว กรุณาตรวจข้อมูลบริษัทก่อนเริ่มชำระเงินใหม่');
       }
       await this.assertTaxSettings(snapshot.policy);
-      if (paymentCheckoutMode(snapshot.quote.purchaseMode)) {
+      if (paymentCheckoutSnapshot(snapshot)) {
         const price = await this.stripe.request('GET', `/prices/${snapshot.priceId}`);
         // A ONE-TIME deal pins the catalog Price (the product source) and pays `price_data`; an
         // auto-renewing QR deal pins its own recurring Price, which is the deal offer itself.
@@ -659,11 +698,12 @@ export class BillingService {
       }
       financialRequestStarted = true;
       const metadata = { billingAttemptId: attempt.id, billingAccountId: account.id };
-      const once = paymentCheckoutMode(snapshot.quote.purchaseMode);
+      const once = paymentCheckoutSnapshot(snapshot);
       const session = await this.stripe.request('POST', '/checkout/sessions', once ? {
         mode: 'payment', customer: customerId, client_reference_id: attempt.id,
         payment_method_types: [snapshot.quote.purchaseMode?.startsWith('PROMPTPAY') ? 'promptpay' : 'card'],
-        metadata, payment_intent_data: { metadata },
+        metadata, payment_intent_data: { metadata, ...(snapshot.advanceDeal && snapshot.quote.purchaseMode === 'CARD_AUTO'
+          ? { setup_future_usage: 'off_session' } : {}) },
         invoice_creation: { enabled: true, invoice_data: { metadata,
           ...(snapshot.policy.taxTreatment !== 'NOT_VAT_REGISTERED' && snapshot.policy.issuer ? { account_tax_ids: [snapshot.policy.issuer.stripeTaxId] } : {}) } },
         line_items: [{ quantity: 1, price_data: { product: snapshot.productId, currency: 'thb',
@@ -725,12 +765,27 @@ export class BillingService {
         featureReady = false;
       }
     }
-    const invoice = account ? await this.prisma.client.billingInvoice.findFirst({ where: { billingAccountId: account.id }, orderBy: [{ periodEnd: 'desc' }, { createdAt: 'desc' }] }) : null;
     const attempt = account?.activeAttemptId ? await this.prisma.client.billingAttempt.findUnique({ where: { id: account.activeAttemptId } }) : null;
+    const advance = (attempt?.quoteSnapshot as unknown as BillingSnapshot | undefined)?.advanceDeal;
+    const invoice = account ? advance
+      ? await this.prisma.client.billingInvoice.findFirst({ where: { id: advance.invoiceId, billingAccountId: account.id } })
+      : oneTimeMode(account.renewalMode as BillingPurchaseMode) && account.contractAttemptId && account.paidThrough
+        ? await this.prisma.client.billingInvoice.findFirst({ where: { billingAccountId: account.id,
+          sourceAttemptId: account.contractAttemptId, periodEnd: account.paidThrough } })
+      : await this.prisma.client.billingInvoice.findFirst({ where: { billingAccountId: account.id }, orderBy: [{ periodEnd: 'desc' }, { createdAt: 'desc' }] }) : null;
+    const advanceInvoice = advance && account ? await this.prisma.client.billingInvoice.findFirst({ where: { billingAccountId: account.id,
+      sourceAttemptId: attempt!.id, providerStatus: 'paid' } }) : null;
+    const advanceOperation = advanceInvoice && account ? await this.prisma.client.billingOperation.findUnique({ where: {
+      stripeAccountId_livemode_idempotencyKey: { stripeAccountId: account.stripeAccountId, livemode: account.livemode,
+        idempotencyKey: `advance-deal:${attempt!.id}` } } }) : null;
     const settings = this.stripe.enabled ? await this.settings() : null;
     const state = billingState(company, account, invoice, attempt), held = state.accessState === 'HELD';
     const allowedActions: BillingAction[] = [];
     const renewalMode = (account?.renewalMode !== 'NONE' ? account?.renewalMode : account?.baseSubscriptionId ? 'CARD_AUTO' : 'NONE') as BillingStatus['renewalMode'];
+    const cardAdvanceContract = account?.subscriptionState === 'trialing' && renewalMode === 'CARD_AUTO' && account.contractAttemptId
+      ? await this.prisma.client.billingSubscriptionContract.findFirst({ where: { billingAccountId: account.id,
+        sourceAttemptId: account.contractAttemptId }, select: { snapshotJson: true } }) : null;
+    const cardAdvanceTrial = !!(cardAdvanceContract?.snapshotJson as unknown as BillingSnapshot | undefined)?.advanceDeal;
     const eligible = companyCanBuy(settings?.policy ?? null, company.id);
     const purchaseReady = featureReady && purchaseSource !== 'PAID_OTHER_MODE' && purchaseSource !== 'SOURCE_INCONSISTENT';
     let policyReady = false;
@@ -746,7 +801,7 @@ export class BillingService {
       if (renewalMode === 'CARD_AUTO' && account?.baseSubscriptionId && account.customerId && settings.gates.portal_payment_method) allowedActions.push('portal_payment_method');
     }
     if (settings && !held && account?.baseSubscriptionId && !account.activeAttemptId && !account.activeCollectionOperationId &&
-      ['active', 'past_due', 'unpaid', ...(renewalMode === 'PROMPTPAY_RENEW' ? ['trialing'] : [])].includes(account.subscriptionState) &&
+      ['active', 'past_due', 'unpaid', ...((renewalMode === 'PROMPTPAY_RENEW' || cardAdvanceTrial) ? ['trialing'] : [])].includes(account.subscriptionState) &&
       settings.gates.portal_cancel_subscription) allowedActions.push('portal_cancel_subscription');
     const pending = account?.pendingPlanChangeId ? await this.collection.get(context, account.pendingPlanChangeId) : null;
     if (purchaseReady && settings?.gates.plan_changes && (eligible || pending) && account?.paidThrough && account.paidThrough.getTime() > Date.now()+600000 && !account.cancelAtPeriodEnd && !account.graceEndsAt &&
@@ -812,12 +867,18 @@ export class BillingService {
           // package-change queue, which `company.setup.manage` gates. `internalReason` and
           // `salesUserId` stay behind in the row: the team's note is not part of the offer (S24).
           branchLimit: offer.branchLimit, employeeLimit: offer.employeeLimit, monthlySlipLimit: offer.monthlySlipLimit,
-          featureKeys: offer.featureKeys, aiMonthlyBudgetSatang: offer.aiMonthlyBudgetSatang, description: offer.description };
+          featureKeys: offer.featureKeys, aiMonthlyBudgetSatang: offer.aiMonthlyBudgetSatang,
+          creditScope: offer.version === 4 ? 'CHAT' : 'TOTAL', description: offer.description };
       } catch { deal = undefined; }
     }
     return { companyId: company.id, companyName: company.name, billingProfile: companyBillingProfile(company), mode: this.stripe.enabled ? (this.stripe.livemode ? 'LIVE' : 'TEST') : 'DISABLED',
       collectionPause: account?.collectionPauseJson as BillingStatus['collectionPause'],
       renewalMode, enabledPurchaseModes, availablePurchaseModes,
+      pendingDeal: advanceInvoice && advanceOperation?.state !== 'APPLIED' ? { dealId: (attempt!.quoteSnapshot as unknown as BillingSnapshot).deal!.requestId,
+        purchaseMode: (attempt!.quoteSnapshot as unknown as BillingSnapshot).quote.purchaseMode as 'CARD_AUTO' | 'PROMPTPAY_RENEW',
+        startsAt: advance!.paidThrough, firstCycleEndsAt: advance!.firstCycleEndsAt, nextChargeAt: advance!.firstCycleEndsAt,
+        state: advanceInvoice.applyStatus === 'HELD' || advanceOperation?.state === 'BLOCKED' ? 'HELD' :
+          (advanceOperation?.resultJson as { subscriptionId?: string } | null)?.subscriptionId ? 'PAID' : 'PENDING_BINDING' } : null,
       renewalInvoiceUrl, renewalInvoiceDueAt,
       purchaseSource,
       purchaseEligibility: !eligible ? 'COMPANY_SALES_CLOSED' : purchaseSource === 'PAID_OTHER_MODE' || purchaseSource === 'SOURCE_INCONSISTENT'
@@ -905,6 +966,7 @@ export class BillingService {
     return { attemptId: attempt.id, state: attempt.status, errorCode: attempt.errorCode, observedAt: attempt.updatedAt.toISOString(),
       paymentState: invoice?.providerStatus === 'paid' ? 'PAID' : ['FAILED', 'EXPIRED'].includes(attempt.status) ? 'FAILED' : 'PENDING',
       applyState: invoice ? invoice.applyStatus as BillingStatus['applyState'] : 'NONE', invoiceReference: invoice?.id ?? null,
+      ...(snapshot.quote.advanceDeal ? { advanceDeal: snapshot.quote.advanceDeal } : {}),
       ...(snapshot.deal ? { deal: { dealId: snapshot.deal.requestId, months: snapshot.deal.months,
         baseLabel: snapshot.quote.deal?.baseLabel ?? snapshot.quote.offer.label } } : {}) };
   }
@@ -920,7 +982,7 @@ export class BillingService {
     if (!state.gates.new_sales || !state.gates[gateForMode(purchaseMode)] || state.revision?.id !== attempt.policyRevisionId) return result;
     await this.stripe.assertAccount();
     const session = await this.stripe.request('GET', `/checkout/sessions/${attempt.checkoutSessionId}`);
-    if (session.mode !== ((attempt.quoteSnapshot as unknown as BillingSnapshot).repeat || paymentCheckoutMode(purchaseMode) ? 'payment' : 'subscription') || stripeId(session.customer) !== account.customerId || session.metadata?.billingAccountId !== account.id || session.metadata?.billingAttemptId !== id) throw billingError('BILLING_MAPPING_MISMATCH', 'กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง');
+    if (session.mode !== ((attempt.quoteSnapshot as unknown as BillingSnapshot).repeat || paymentCheckoutSnapshot(attempt.quoteSnapshot as unknown as BillingSnapshot) ? 'payment' : 'subscription') || stripeId(session.customer) !== account.customerId || session.metadata?.billingAccountId !== account.id || session.metadata?.billingAttemptId !== id) throw billingError('BILLING_MAPPING_MISMATCH', 'กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง');
     await this.assertOwner(context);
     const company = await this.prisma.client.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
     if (!company || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))) return result;

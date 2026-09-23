@@ -4,7 +4,7 @@
  * are composed by the AI Gateway and rendered by `formatLineReply`.
  * No NestJS, Prisma, HTTP, LINE SDK, AI provider, or storage imports.
  */
-import { AI_BUDGET_REFUSAL_CODES, type LineAiRefusalReason } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, type AiBudgetScope, type LineAiRefusalReason } from '@watchdog-bms/contracts';
 // One base-URL resolution for the whole app. The previous local const fell back to the production
 // host, so any environment without WEB_BASE_URL/PUBLIC_BASE_URL sent its users to production.
 import { webLink } from '../../../../common/http/web-link';
@@ -55,8 +55,16 @@ export const REFUSAL_MESSAGES: Record<LineAiRefusalReason, string> = {
  * path sends a flex card with package buttons, but the drain pushes text through its own seam and
  * this is the exact string its stored-delivery integrity check re-derives.
  */
-export function formatAiBudgetRefusalNotice(code: string): string {
-  return code === AI_BUDGET_REFUSAL_CODES.insufficient
+export function formatAiBudgetRefusalNotice(code: string, budgetScope?: AiBudgetScope): string {
+  const insufficient = code === AI_BUDGET_REFUSAL_CODES.insufficient;
+  if (budgetScope === 'CHAT') {
+    return insufficient
+      ? '💚 เครดิต AI ส่วนแชตที่เหลือของเดือนนี้ไม่พอตอบข้อความก่อนหน้านี้ค่ะ น้องมั่งมีจึงยังไม่ได้ตอบให้นะคะ '
+        + 'เดือนหน้าเริ่มใหม่ การเปลี่ยนแพ็กเกจไม่เติมเครดิตแชตในเดือนนี้ หากต้องการตรวจสอบสิทธิ์ดีลพิเศษ กรุณาพิมพ์ “ติดต่อเจ้าหน้าที่” ค่ะ'
+      : '💚 เครดิต AI ส่วนแชตของเดือนนี้หมดแล้วค่ะ น้องมั่งมีจึงยังไม่ได้ตอบข้อความก่อนหน้านี้ให้นะคะ '
+        + 'เดือนหน้าเริ่มใหม่ การเปลี่ยนแพ็กเกจไม่เติมเครดิตแชตในเดือนนี้ หากต้องการตรวจสอบสิทธิ์ดีลพิเศษ กรุณาพิมพ์ “ติดต่อเจ้าหน้าที่” ค่ะ';
+  }
+  return insufficient
     ? '💚 เครดิต AI ที่เหลือของเดือนนี้ไม่พอตอบข้อความก่อนหน้านี้ค่ะ น้องมั่งมีจึงยังไม่ได้ตอบให้นะคะ '
       + 'เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยค่ะ'
     : '💚 เครดิต AI ของเดือนนี้หมดแล้วค่ะ น้องมั่งมีจึงยังไม่ได้ตอบข้อความก่อนหน้านี้ให้นะคะ '

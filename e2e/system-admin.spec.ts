@@ -147,6 +147,64 @@ test.describe('SYS — system admin', () => {
     await expectNoClientError(page);
   });
 
+  test('SYS AI credit readiness loads, recovers from an API error, and shows the exhausted 80-credit chat cap', async ({ page }) => {
+    await login(page, SEED_USERS.systemAdmin.username, SEED_USERS.systemAdmin.password);
+    let attempts = 0;
+    let recoveredReads = 0;
+    let allowRetry = false;
+    let releaseFirstFailure!: () => void;
+    const firstFailureGate = new Promise<void>((resolve) => { releaseFirstFailure = resolve; });
+    await page.route(`**/api/v1/system/partners/${COMPANY_ID}/ai-usage`, async (route) => {
+      attempts += 1;
+      if (!allowRetry) {
+        await firstFailureGate;
+        await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'temporarily unavailable' }) });
+        return;
+      }
+
+      recoveredReads += 1;
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      const usage = await response.json();
+      // Keep this browser check read-only and deterministic: chat is at its default ฿80 cap while
+      // the shared total still has room, which is the readiness state the admin needs to diagnose.
+      usage.budget.effectiveSatang = 100_000;
+      usage.budget.policy = { ...usage.budget.policy, mode: 'SHARED', chatCapSatang: 8_000, ocrCapSatang: null };
+      usage.budget.position = {
+        ...usage.budget.position,
+        total: { spentSatang: 8_000, reservedSatang: 0, availableSatang: 92_000 },
+        chat: { spentSatang: 8_000, reservedSatang: 0, availableSatang: 0 },
+        ocr: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
+      };
+      usage.current = usage.current
+        ? { ...usage.current, costSatang: 8_000 }
+        : { monthKey: '2026-09', costSatang: 8_000, callCount: 1, inputTokens: 1, outputTokens: 1, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 };
+      await route.fulfill({ response, json: usage });
+    });
+    await page.route(`**/api/v1/system/partners/${COMPANY_ID}/ai-credit-holds`, route =>
+      route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ message: 'not available in this check' }) }));
+
+    await page.goto(`/system/partners/${COMPANY_ID}?view=ai`);
+    const usageCard = page.getByRole('heading', { name: 'การใช้งานและเครดิต AI', exact: true }).locator('..').locator('..');
+    await expect(usageCard.getByRole('status')).toContainText('กำลังโหลดข้อมูล AI');
+    releaseFirstFailure();
+    await expect(usageCard.getByRole('button', { name: 'ลองโหลดข้อมูลอีกครั้ง', exact: true })).toBeVisible();
+    allowRetry = true;
+    await usageCard.getByRole('button', { name: 'ลองโหลดข้อมูลอีกครั้ง', exact: true }).click();
+
+    await expect(usageCard.getByTestId('ai-budget-position')).toBeVisible();
+    const chat = usageCard.getByTestId('ai-budget-scope-chat');
+    await expect(chat).toContainText('฿80.00');
+    await expect(chat).toContainText('฿0.00');
+    const total = usageCard.getByTestId('ai-budget-scope-total');
+    await expect(total).toContainText('฿1,000.00');
+    await expect(total).toContainText('฿920.00');
+    expect(attempts).toBeGreaterThanOrEqual(2);
+    expect(recoveredReads).toBe(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expectNoClientError(page);
+  });
+
   test('SYS-03 @p1 onboarding form can start a draft onboarding', async ({ page }) => {
     await login(page, SEED_USERS.systemAdmin.username, SEED_USERS.systemAdmin.password);
     await page.goto('/system/company-onboardings/new');

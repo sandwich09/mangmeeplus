@@ -130,8 +130,9 @@ function makeUseCase(opts: {
   };
   // The drain's own logger, so a test can assert what an operator actually sees at level 40.
   const warnings: any[] = [];
-  (useCase as any).logger = { warn: (payload: any) => warnings.push(payload), debug: () => {}, log: () => {}, error: () => {} };
-  return { useCase, acks, ackReasons, pushes, turnRequests, aiTurnUpdates, eventUpdates, shadowRecords, shadowFlushes, warnings, state, identityReads, deliveryRows, prisma };
+  const terminalLogs: any[] = [];
+  (useCase as any).logger = { warn: (payload: any) => warnings.push(payload), debug: () => {}, log: (payload: any) => terminalLogs.push(payload), error: () => {} };
+  return { useCase, acks, ackReasons, pushes, turnRequests, aiTurnUpdates, eventUpdates, shadowRecords, shadowFlushes, warnings, terminalLogs, state, identityReads, deliveryRows, prisma };
 }
 
 describe('AP22 queued UNKNOWN and accepted recovery', () => {
@@ -671,10 +672,10 @@ describe('DrainLineLedgerUseCase finally-flush (mutation-proved)', () => {
  * were transient, with its reason rewritten on the way out.
  */
 describe('drain: a permanent money refusal is an answer, not a retry (§9.4)', () => {
-  const budgetThrow = (code: string) => () => {
+  const budgetThrow = (code: string, budgetScope = 'TOTAL') => () => {
     const error: any = new Error(code);
     error.getStatus = () => 429;
-    error.getResponse = () => ({ code, budgetScope: 'TOTAL' });
+    error.getResponse = () => ({ code, budgetScope });
     throw error;
   };
   /** Older than LINE_AI_CONTEXT_WINDOW_MINUTES, so nobody is still waiting on this turn. */
@@ -698,6 +699,24 @@ describe('drain: a permanent money refusal is an answer, not a retry (§9.4)', (
       assert.equal(h.eventUpdates.at(-1).data.status, code === 'AI_BUDGET_INSUFFICIENT' ? 'ai_budget_insufficient' : 'ai_budget_exceeded');
     });
   }
+
+  it('keeps CHAT scope through a reclaimed refusal and removes the same-month package upsell', async () => {
+    const h = makeUseCase({
+      claims: [{ entry: entry({ kind: 'turn' }), deliveryCount: 1, idleMs: 10_000 }],
+      turnFn: budgetThrow('AI_MONTHLY_BUDGET_EXCEEDED', 'CHAT'),
+    });
+    await h.useCase.execute(20, NOW);
+
+    assert.match(h.pushes[0]!.text, /เครดิต AI ส่วนแชตของเดือนนี้หมดแล้ว/);
+    assert.match(h.pushes[0]!.text, /ไม่เติมเครดิตแชตในเดือนนี้/);
+    assert.match(h.pushes[0]!.text, /ติดต่อเจ้าหน้าที่/);
+    assert.doesNotMatch(h.pushes[0]!.text, /ขอเปลี่ยนแพ็กเกจ|ดูแพ็กเกจ/);
+    const saved = [...h.deliveryRows.values()][0]!;
+    assert.deepEqual(saved.authorizationJson.staticRefusal,
+      { code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'CHAT' });
+    assert.equal(saved.completionJson.budgetScope, 'CHAT');
+    assert.equal(h.terminalLogs.find((event) => event.msg === 'line.ai.terminal')?.budgetScope, 'CHAT');
+  });
 
   it('never sends an unsolicited notice for a stale turn or a sub_request', async () => {
     for (const claim of [entry({ kind: 'turn', createdAt: STALE }), entry({ kind: 'sub_request', createdAt: STALE })]) {

@@ -243,7 +243,7 @@ export type PartnerAiBudgetPolicyDto = {
 export type PartnerAiBudgetScopePositionDto = {
   spentSatang: number;
   reservedSatang: number;
-  /** `null` under SHARED for a BUCKET: there is no cap to subtract from, not "unlimited". */
+  /** CHAT has a cap under SHARED; OCR is null there because it only uses TOTAL. */
   availableSatang: number | null;
 };
 
