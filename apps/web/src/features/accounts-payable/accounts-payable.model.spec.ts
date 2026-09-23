@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { canSubmitSupplierPayment, isVendorBillTaxEvidenceBlocked, isVendorBillTaxEvidenceCompleteForReview, canIssueSystemWhtCertificate } from './accounts-payable.model.js';
+import { canSubmitSupplierPayment, isVendorBillTaxEvidenceBlocked, isVendorBillTaxEvidenceCompleteForReview, canIssueSystemWhtCertificate, canCorrectWhtCertificate, canIssueWhtReplacementCopy } from './accounts-payable.model.js';
 
 describe('accounts payable VAT evidence model', () => {
   it('blocks claimable domestic VAT until review is verified with no remaining issue', () => {
@@ -66,6 +66,32 @@ describe('canIssueSystemWhtCertificate (S9)', () => {
   it('never shows once the handoff has moved past REQUIRED', () => {
     for (const status of ['EXTERNAL_LINKED', 'SYSTEM_ISSUED', 'CANCELLED']) {
       assert.equal(canIssueSystemWhtCertificate({ status, systemIssuanceOpen: true }, ['wht.certificate.issue']), false, status);
+    }
+  });
+});
+
+// Correction & replacement plan §5.1/§5.3: mirrors canIssueSystemWhtCertificate's shape exactly —
+// both gate axes, and only past REQUIRED (into SYSTEM_ISSUED with a certificateId), never earlier.
+describe('canCorrectWhtCertificate / canIssueWhtReplacementCopy', () => {
+  const issued = { status: 'SYSTEM_ISSUED', certificateId: 'cert-1', systemCorrectionOpen: true, systemReplacementOpen: true };
+
+  it('canCorrectWhtCertificate needs SYSTEM_ISSUED + certificateId + systemCorrectionOpen + the permission', () => {
+    assert.equal(canCorrectWhtCertificate(issued, ['wht.certificate.correct']), true);
+    assert.equal(canCorrectWhtCertificate(issued, []), false, 'no permission');
+    assert.equal(canCorrectWhtCertificate({ ...issued, systemCorrectionOpen: false }, ['wht.certificate.correct']), false, 'gate closed');
+    assert.equal(canCorrectWhtCertificate({ ...issued, certificateId: null }, ['wht.certificate.correct']), false, 'no certificateId');
+  });
+
+  it('canIssueWhtReplacementCopy needs SYSTEM_ISSUED + certificateId + systemReplacementOpen + the permission', () => {
+    assert.equal(canIssueWhtReplacementCopy(issued, ['wht.certificate.correct']), true);
+    assert.equal(canIssueWhtReplacementCopy(issued, []), false, 'no permission');
+    assert.equal(canIssueWhtReplacementCopy({ ...issued, systemReplacementOpen: false }, ['wht.certificate.correct']), false, 'gate closed');
+  });
+
+  it('never shows for a status other than SYSTEM_ISSUED, including REQUIRED and EXTERNAL_LINKED', () => {
+    for (const status of ['REQUIRED', 'EXTERNAL_LINKED', 'CANCELLED']) {
+      assert.equal(canCorrectWhtCertificate({ ...issued, status }, ['wht.certificate.correct']), false, status);
+      assert.equal(canIssueWhtReplacementCopy({ ...issued, status }, ['wht.certificate.correct']), false, status);
     }
   });
 });

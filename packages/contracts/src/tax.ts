@@ -326,6 +326,29 @@ export type CreateWhtCertificateDto = {
   taxEventIds: string[];
 };
 
+// ─── 50 ทวิ Correction & Replacement ──────────────────────────────────────────
+//
+// Correction & replacement plan §2.2: fields a "แก้ไขหนังสือรับรอง" submission may override. Every
+// field optional — a value the caller omits keeps the current certificate's own value (the use case
+// merges before validating, never derives from SupplierPayment/ExpenseRecord).
+
+export type WhtCertificateCorrectionInput = {
+  formType?: WhtFormType;
+  incomeCategoryCode?: string;
+  incomeCategoryName?: string;
+  whtRate?: string;
+  grossAmount?: string;
+  withheldAmount?: string;
+  paymentDate?: string;
+  payerSnapshot?: Partial<PayerSnapshot>;
+  payeeSnapshot?: Partial<PayeeSnapshot>;
+};
+
+export type CorrectWhtCertificateDto = {
+  corrected: WhtCertificateCorrectionInput;
+  reason: string;
+};
+
 // ─── 50 ทวิ External Handoff (H4) ─────────────────────────────────────────────
 //
 // While `cap.wht50bis/SYSTEM_INITIAL_ISSUE` is CLOSED the system issues no certificate.
@@ -391,6 +414,13 @@ export type WhtCertificateHandoffDto = {
    * without an extra fetch. On `list`/`get` only — additive, defaults to false elsewhere.
    */
   systemIssuanceOpen: boolean;
+  /**
+   * Correction & replacement plan §2.4: whether `cap.wht50bis/SYSTEM_CONTENT_CORRECTION` /
+   * `SYSTEM_REPLACEMENT_COPY` are OPEN, computed once per request exactly like `systemIssuanceOpen`
+   * above. On `list`/`get` only — additive, defaults to false elsewhere.
+   */
+  systemCorrectionOpen: boolean;
+  systemReplacementOpen: boolean;
   createdAt: string;
   updatedAt: string;
   /**

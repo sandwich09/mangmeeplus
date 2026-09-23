@@ -450,7 +450,11 @@ const RAW_PACKS: RawPack[] = [
     key: 'pack.wht.certificate.manage', module: 'tax',
     nameTh: 'หนังสือรับรองหัก ณ ที่จ่าย (แนบภายนอก)', nameEn: 'WHT certificate handoff',
     description: 'ดูงานที่ต้องออก 50 ทวิ ภายนอก และแนบหนังสือรับรองที่ออกแล้วกลับเข้าระบบ',
-    permissionKeys: ['wht.certificate.read', 'wht.external_certificate.link'],
+    // Correction & replacement plan §2.1: owner confirmed 2026-09-23 this stays ungated — fixing/
+    // reissuing a certificate the company already issued is an ongoing compliance obligation, not a
+    // new commercial feature (unlike wht.certificate.issue's own dedicated ENTERPRISE-gated pack
+    // below).
+    permissionKeys: ['wht.certificate.read', 'wht.external_certificate.link', 'wht.certificate.correct'],
   },
   // WHT certificate system issuance plan §2.1: owner decision 2026-09-22 — the SYSTEM-issue button
   // (only) is ENTERPRISE-gated, unlike the ungated pack above. A NEW sibling pack rather than adding

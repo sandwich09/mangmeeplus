@@ -829,57 +829,34 @@ describe('LaunchGateCommandUseCase — server-derived authority (P0-3)', () => {
  * it. There is no persisted approval record to bind an approval to (F1.6), so every OPEN is
  * rejected regardless of shape: the previously documented residual — one SYSTEM_ADMIN signing as
  * both release owner and specialist over caller-typed evidence strings — is now unreachable.
+ *
+ * cap.wht50bis's 3 routes moved to ORDINARY/OPEN (owner decision 2026-09-22, gated by billing
+ * entitlement instead — see assert-specialist-routes-closed.spec.ts). Those were the only concrete,
+ * RESOLVED, non-forbidden SPECIALIST_LEGAL rows in the catalog: the one remaining materializable
+ * SPECIALIST_LEGAL row (cap.thai_tax.vat_credit_in_product_offset/DEFAULT) also carries
+ * `openPolicy: FORBIDDEN_V5_1`, whose check (`launch_route_open_forbidden`) runs BEFORE the
+ * routeClass check below and always wins — see the `it.skip` note. The remaining two tests here
+ * (CLOSE still works; ORDINARY OPEN unaffected) still exercise real rows.
  */
 describe('LaunchGateCommandUseCase — SPECIALIST_LEGAL OPEN is hard-closed (F1.5.1)', () => {
-  const WHT_ROUTES = ['SYSTEM_INITIAL_ISSUE', 'SYSTEM_CONTENT_CORRECTION', 'SYSTEM_REPLACEMENT_COPY'];
+  const SPECIALIST_GATE_KEY = 'cap.thai_tax.vat_credit_in_product_offset';
 
   const specialistOpen = (routeKey: string, snapshot: Record<string, unknown> = {}): LaunchGateCommand => ({
     ...OPEN_INVENTORY,
-    gateKey: 'cap.wht50bis',
+    gateKey: SPECIALIST_GATE_KEY,
     routeKey,
     snapshot: { ...OPEN_INVENTORY.snapshot, ...snapshot },
   });
 
-  it('rejects the PERFECT specialist shape on every concrete specialist route, and writes nothing', async () => {
-    const perfectShape = {
-      ...DEPLOYMENT,
-      validationEvidenceRef: 'matrix://cap.wht50bis/evidence',
-      validationEvidenceHash: 'sha256:deadbeef',
-      specialistApprovedByUserId: 'release-owner-1',
-      releaseApprovedByUserId: 'release-owner-1',
-    };
-    for (const routeKey of WHT_ROUTES) {
-      const prisma = makePrisma();
-      await assert.rejects(
-        () => new LaunchGateCommandUseCase(prisma).execute(specialistOpen(routeKey, perfectShape)),
-        (err: UnprocessableEntityException) => {
-          const body = err.getResponse() as any;
-          assert.equal(body.code, 'launch_route_specialist_approval_unavailable');
-          assert.equal(body.routeClass, 'SPECIALIST_LEGAL');
-          assert.ok(body.requires.length >= 5, 'the rejection states what a future OPEN must present');
-          assert.ok(body.requires.some((line: string) => /DISTINCT from the release owner/.test(line)));
-          return true;
-        },
-      );
-      assert.equal(prisma.transitions.length, 0);
-      assert.equal(prisma.gates.size, 0, 'a rejected specialist OPEN never even materializes the row');
-    }
-  });
-
-  it('rejects the bare shape and a named third-party specialist alike — no shape buys its way in', async () => {
-    for (const snapshot of [
-      {},
-      { specialistApprovedByUserId: 'tax-specialist-1' },
-      { validationEvidenceRef: 'x', validationEvidenceHash: 'y', specialistApprovedByUserId: 'tax-specialist-1' },
-      { emergencyClose: false, incidentRef: null },
-    ]) {
-      await assert.rejects(
-        () => new LaunchGateCommandUseCase(makePrisma()).execute(specialistOpen('SYSTEM_INITIAL_ISSUE', snapshot)),
-        (err: UnprocessableEntityException) =>
-          (err.getResponse() as any).code === 'launch_route_specialist_approval_unavailable',
-      );
-    }
-  });
+  // No live catalog row can currently exercise `launch_route_specialist_approval_unavailable` in
+  // isolation: the only other SPECIALIST_LEGAL rows are either non-materializable namespace
+  // placeholders (findLaunchMatrixRow requires an exact routeKey match, so a dynamic instance never
+  // resolves here) or matrixRowStatus BLOCKED / openPolicy FORBIDDEN_V5_1, both checked earlier in
+  // execute() and both already covered by their own tests elsewhere (this file's "server-derived
+  // authority" suite and assert-specialist-routes-closed.spec.ts). The routeClass===SPECIALIST_LEGAL
+  // branch itself is unchanged code, exercised indirectly by the CLOSE test below (whose command
+  // reaches it, just past the `cmd.action === 'OPEN'` guard) — a future SPECIALIST_LEGAL row that is
+  // RESOLVED and not FORBIDDEN_V5_1 would be the right place to restore a direct OPEN-rejection test.
 
   it('still CLOSES a specialist route — ordinary and emergency — so an open one can be shut', async () => {
     for (const snapshot of [
@@ -887,10 +864,10 @@ describe('LaunchGateCommandUseCase — SPECIALIST_LEGAL OPEN is hard-closed (F1.
       { expectedGeneration: 1, emergencyClose: true, incidentRef: 'INC-9' },
     ]) {
       const prisma = makePrisma([
-        { gateKey: 'cap.wht50bis', routeKey: 'SYSTEM_INITIAL_ISSUE', state: 'OPEN', generation: 1, lastSeq: 1, reason: null },
+        { gateKey: SPECIALIST_GATE_KEY, routeKey: 'DEFAULT', state: 'OPEN', generation: 1, lastSeq: 1, reason: null },
       ]);
       const result = await new LaunchGateCommandUseCase(prisma).execute({
-        ...specialistOpen('SYSTEM_INITIAL_ISSUE'),
+        ...specialistOpen('DEFAULT'),
         action: 'CLOSE',
         commandId: `cmd-close-${String(snapshot.emergencyClose)}`,
         snapshot: snapshot as any,

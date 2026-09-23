@@ -1773,3 +1773,25 @@ export function expenseClassificationConfirmBlocker(input: {
   if (reason.length === 0 || reason.length > 500) return 'expenses.non_expense_confirm_needs_reason';
   return null;
 }
+
+/**
+ * Correction & replacement plan §5.2/§5.3: same two predicates `accounts-payable.model.ts` defines
+ * for the AP side (`canCorrectWhtCertificate`/`canIssueWhtReplacementCopy`) — a thin per-module copy
+ * rather than a shared cross-feature import, matching this repo's established convention for the
+ * WHT handoff API client functions (see the comment in expenses.api.ts).
+ */
+export function canCorrectWhtCertificate(
+  handoff: { status: string; certificateId?: string | null; systemCorrectionOpen?: boolean },
+  permissions: readonly string[],
+): boolean {
+  return handoff.status === 'SYSTEM_ISSUED' && Boolean(handoff.certificateId) && Boolean(handoff.systemCorrectionOpen)
+    && permissions.includes('wht.certificate.correct');
+}
+
+export function canIssueWhtReplacementCopy(
+  handoff: { status: string; certificateId?: string | null; systemReplacementOpen?: boolean },
+  permissions: readonly string[],
+): boolean {
+  return handoff.status === 'SYSTEM_ISSUED' && Boolean(handoff.certificateId) && Boolean(handoff.systemReplacementOpen)
+    && permissions.includes('wht.certificate.correct');
+}
