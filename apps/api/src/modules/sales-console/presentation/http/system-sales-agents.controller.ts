@@ -1,14 +1,13 @@
 /**
  * `/v1/system/sales-agents*` — the Owner's half of the sales team (spec §11, §12 Admin console).
  *
- * Everything that touches the tax/bank record sits behind `sales.agent_profile.manage`, which only
- * SYSTEM_ADMIN holds: a team lead can create and reset agents but must never read or export a
- * national id or a bank account (S10/R11).
+ * Admin reads, updates and exports sit behind `sales.agent_profile.manage`.
+ * Scoped lead and self access is exposed by `/v1/sales/*` (S10/R11).
  */
-import { Body, Controller, Get, Header, HttpCode, Param, Patch, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Header, HttpCode, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 import {
-  IsBoolean, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Max, MaxLength, Min, ValidateNested,
+  IsBoolean, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import type { Request } from 'express';
@@ -23,17 +22,18 @@ import {
   type SalesAttributionFlagReviewBody,
   type SalesReferralUpdateBody,
 } from '@watchdog-bms/contracts';
-import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { SalesAgentsService } from '../../application/sales-agents.service';
 import { SalesReferralService } from '../../application/sales-referral.service';
 import { SalesReportsService } from '../../application/sales-reports.service';
+import { ListThaiAddressesUseCase } from '../../../employee-access/application/use-cases/list-thai-addresses.use-case';
 import { assertPlatformTenant } from '../../application/sales-context';
 
 export class SalesAgentProfileDtoIn {
   @IsString() @IsNotEmpty() @MaxLength(200) legalName!: string;
-  @IsString() @IsNotEmpty() @MaxLength(40) nationalId!: string;
-  @IsString() @IsOptional() @MaxLength(40) taxId?: string | null;
+  @IsString() @IsNotEmpty() @MaxLength(13) @Matches(/^\d{13}$/) nationalId!: string;
+  @IsString() @IsOptional() @MaxLength(13) @Matches(/^\d{13}$/) taxId?: string | null;
   @IsString() @IsNotEmpty() @MaxLength(500) address!: string;
   @IsString() @IsNotEmpty() @MaxLength(120) bankName!: string;
   @IsString() @IsNotEmpty() @MaxLength(40) bankAccount!: string;
@@ -70,7 +70,15 @@ export class SalesReferralUpdateDto {
 
 @Controller('system/sales-agents')
 export class SystemSalesAgentsController {
-  constructor(private readonly agents: SalesAgentsService) {}
+  constructor(private readonly agents: SalesAgentsService, private readonly listThaiAddresses: ListThaiAddressesUseCase) {}
+
+  @Get('address-master')
+  @RequireAnyPermission('sales.agent_profile.manage', 'sales.team.manage')
+  @ApiOperation({ summary: 'Thai address options for the sales payroll profile' })
+  addresses(@Query('postalCode') postalCode = '', @Req() req: Request & { context: RequestContext }) {
+    assertPlatformTenant(req.context);
+    return this.listThaiAddresses.execute(postalCode);
+  }
 
   @Get()
   @RequirePermissions('sales.agent_profile.manage')

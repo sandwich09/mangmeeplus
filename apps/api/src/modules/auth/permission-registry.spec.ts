@@ -253,9 +253,9 @@ describe('permission-registry', () => {
           `${role} must not hold the business permission ${key} (S29)`,
         );
       }
-      // Never the unlink key, matching every other role, and never the PII key (S10/R11).
+      // Never the unlink key or the admin-wide PII management key (S10/R11).
       assert.equal(grants.includes('account.identity.unlink'), false, `${role} must not unlink identities`);
-      assert.equal(grants.includes('sales.agent_profile.manage'), false, `${role} must not read agent tax/bank PII`);
+      assert.equal(grants.includes('sales.agent_profile.manage'), false, `${role} must not manage every agent tax/bank profile`);
     }
   });
 

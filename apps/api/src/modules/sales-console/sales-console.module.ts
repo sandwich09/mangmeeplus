@@ -4,6 +4,7 @@ import { AuditModule } from '../audit/audit.module';
 import { BillingModule } from '../billing/billing.module';
 import { DashboardNotificationsModule } from '../dashboard-notifications/dashboard-notifications.module';
 import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
+import { EmployeeAccessModule } from '../employee-access/employee-access.module';
 import { SystemPartnerManagementModule } from '../system-partner-management/system-partner-management.module';
 import { SalesAgentsService } from './application/sales-agents.service';
 import { SalesCompanySearchService } from './application/sales-company-search.service';
@@ -26,7 +27,7 @@ import { SystemSalesAgentsController, SystemSalesAttributionController, SystemSa
  * SalesReferralService is exported because both signup paths resolve sales codes through it.
  */
 @Module({
-  imports: [LoggerModule, AuditModule, BillingModule, DashboardNotificationsModule, DataModelCoreModule, SystemPartnerManagementModule],
+  imports: [LoggerModule, AuditModule, BillingModule, DashboardNotificationsModule, DataModelCoreModule, EmployeeAccessModule, SystemPartnerManagementModule],
   controllers: [
     SalesController,
     SystemSalesAgentsController,

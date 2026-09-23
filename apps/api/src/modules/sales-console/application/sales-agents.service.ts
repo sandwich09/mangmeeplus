@@ -18,6 +18,7 @@ import {
   type SalesAgentListDto,
   type SalesAgentProfileDto,
   type SalesAgentProfileInput,
+  type SalesAgentSelfProfileInput,
   type SalesAgentStatus,
   type SalesAgentUpdateBody,
   type SalesAgentView,
@@ -72,7 +73,7 @@ export class SalesAgentsService {
 
   /**
    * The team list. A lead sees their own team plus themselves; SYSTEM_ADMIN sees everyone.
-   * Never returns a single PII field — those live behind `sales.agent_profile.manage` alone (S10).
+   * Never returns a single PII field; scoped profile reads use a separate audited endpoint.
    */
   async list(ctx: RequestContext): Promise<SalesAgentListDto> {
     const profiles = await this.prisma.client.salesAgentProfile.findMany({
@@ -86,10 +87,10 @@ export class SalesAgentsService {
 
   async create(ctx: RequestContext, body: SalesAgentCreateBody): Promise<SalesAgentCreateResult> {
     const role = this.requireRole(body.role);
-    // S10: only the Owner may attach the tax/bank record. A lead creating an agent simply cannot
-    // send one — the field is refused rather than silently dropped.
-    if (body.profile && !ctx.permissions.includes('sales.agent_profile.manage')) {
-      throw salesBadRequest('SALES_AGENT_NOT_FOUND', 'เฉพาะผู้ดูแลระบบเท่านั้นที่กรอกข้อมูลภาษีของเซลล์ได้');
+    // A lead can supply payroll details for a new agent in their own team.
+    if (body.profile && !ctx.permissions.includes('sales.agent_profile.manage')
+      && !(ctx.permissions.includes('sales.team.manage') && role === SALES_AGENT_ROLE)) {
+      throw salesBadRequest('SALES_AGENT_NOT_FOUND', 'ไม่มีสิทธิ์กรอกข้อมูลภาษีของเซลล์');
     }
     // A lead may only create plain agents, and only inside their own team (R11/§11).
     const teamLeadUserId = isSystemAdmin(ctx)
@@ -263,10 +264,14 @@ export class SalesAgentsService {
     return this.handoff(userId, user.username ?? '', temporaryPassword, expiresAt);
   }
 
-  /** S10: decrypted PII. SYSTEM_ADMIN only, and every read is an audited event. */
+  /** Decrypted PII, scoped to admin, self or own-team lead; every read is audited. */
   async readProfile(ctx: RequestContext, userId: string): Promise<SalesAgentProfileDto> {
-    const row = await this.prisma.client.salesAgentProfile.findUnique({
-      where: { userId },
+    const admin = isSystemAdmin(ctx) && ctx.permissions.includes('sales.agent_profile.manage');
+    const self = userId === ctx.userId && ctx.permissions.includes('sales.console.read');
+    const lead = ctx.permissions.includes('sales.team.manage');
+    if (!admin && !self && !lead) throw salesNotFound('SALES_AGENT_NOT_FOUND', 'ไม่พบบัญชีเซลล์นี้');
+    const row = await this.prisma.client.salesAgentProfile.findFirst({
+      where: admin || self ? { userId } : { userId, teamLeadUserId: ctx.userId },
       select: {
         id: true, legalName: true, nationalIdEncrypted: true, taxIdEncrypted: true,
         address: true, bankName: true, bankAccountEncrypted: true, whtRatePercent: true,
@@ -289,6 +294,25 @@ export class SalesAgentsService {
       bankAccount: plain(row.bankAccountEncrypted),
       whtRatePercent: row.whtRatePercent,
     };
+  }
+
+  /** A sales user can replace only their own identity/address/bank fields. WHT stays admin-owned. */
+  async updateOwnProfile(ctx: RequestContext, profile: SalesAgentSelfProfileInput): Promise<SalesAgentProfileDto> {
+    if (!ctx.permissions.includes('sales.console.read')) throw salesNotFound('SALES_AGENT_NOT_FOUND', 'ไม่พบบัญชีเซลล์นี้');
+    const ownColumns = this.profileColumns(profile, false);
+    await this.prisma.client.$transaction(async (tx) => {
+      const row = await tx.salesAgentProfile.update({
+        where: { userId: ctx.userId },
+        data: ownColumns,
+        select: { id: true },
+      });
+      await this.audit.log({
+        actorUserId: ctx.userId, companyId: PLATFORM_TENANT_ID, action: 'sales.agent.updated',
+        targetType: 'SalesAgentProfile', targetId: row.id, requestId: ctx.requestId,
+        result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { userId: ctx.userId, profileChanged: true, selfEdited: true },
+      }, tx);
+    });
+    return this.readProfile(ctx, ctx.userId);
   }
 
   /** R12: the payroll hand-off. SYSTEM_ADMIN only, audited HIGH because it moves every agent's PII at once. */
@@ -371,16 +395,15 @@ export class SalesAgentsService {
       : error;
   }
 
-  private profileColumns(profile: SalesAgentProfileInput | undefined) {
-    // A lead-created agent has no payroll record yet, so every column stays NULL. Encrypted empty
-    // strings would make "never captured" indistinguishable from "entered as blank".
+  private profileColumns(profile: SalesAgentProfileInput | SalesAgentSelfProfileInput | undefined, includeWht = true) {
+    // An omitted profile stays NULL, distinguishing "never captured" from an entered value.
     if (!profile) return {};
     const key = this.config.credentialEncryptionKey;
     return {
       legalName: profile.legalName.trim(),
       address: profile.address.trim(),
       bankName: profile.bankName.trim(),
-      whtRatePercent: profile.whtRatePercent,
+      ...(includeWht && 'whtRatePercent' in profile ? { whtRatePercent: profile.whtRatePercent } : {}),
       nationalIdEncrypted: encryptCredential(profile.nationalId.trim(), key),
       bankAccountEncrypted: encryptCredential(profile.bankAccount.trim(), key),
       taxIdEncrypted: profile.taxId?.trim() ? encryptCredential(profile.taxId.trim(), key) : null,
