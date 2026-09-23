@@ -36,6 +36,7 @@ const SECTIONS = [
   { href: MY_WORK_HREF, label: 'งานของฉัน', group: 'งานขาย' },
   { href: REPORTS_HREF, label: 'รายงาน', group: 'งานขาย' },
   { href: '/sales/team', label: 'ทีม', group: 'จัดการทีม' },
+  { href: '/sales/profile', label: 'ข้อมูลของฉัน', group: 'บัญชี' },
 ];
 
 const SalesHeader: React.FC<{ canManageTeam?: boolean; canReadReports?: boolean; environment?: string }> = ({ canManageTeam = false, canReadReports = false, environment }) => {

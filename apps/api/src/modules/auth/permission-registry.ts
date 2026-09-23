@@ -108,10 +108,9 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'sales.company.search',        description: 'Search shops by name (limited fields, audited)', riskLevel: 'MEDIUM' },
   { key: 'sales.deal.create',           description: 'Create, edit and submit a sales deal',        riskLevel: 'MEDIUM' },
   { key: 'sales.deal.approve',          description: 'Approve or reject a submitted sales deal',    riskLevel: 'HIGH' },
-  { key: 'sales.team.manage',           description: 'Create and reset sales agents in own team',   riskLevel: 'HIGH' },
+  { key: 'sales.team.manage',           description: 'Create/reset agents and read own-team tax/bank profiles', riskLevel: 'CRITICAL' },
   { key: 'sales.report.read',           description: 'Read sales figures across teams',             riskLevel: 'MEDIUM' },
-  // Separate from sales.team.manage on purpose: the tax/bank record is the only sensitive PII in
-  // the console, and a team lead who creates accounts must not be able to read or export it (S10).
+  // Admin-wide read/write/export stays separate from a lead's own-team read (S10).
   { key: 'sales.agent_profile.manage',  description: 'Read/write sales agent tax and bank details (PII)', riskLevel: 'CRITICAL' },
   // Item 05 inventory permissions
   { key: 'inventory.product.read',         description: 'Read inventory products',            riskLevel: 'LOW' },

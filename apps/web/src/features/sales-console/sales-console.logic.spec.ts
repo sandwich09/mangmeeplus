@@ -8,7 +8,7 @@ import {
   dealWarnings, defaultSalesReportRange, emptyAgentForm, emptyDealForm, firstDealErrorField, formatBaht,
   isDealCancellable, isDealEditable, isMenuSelected, myWorkBadgeLabel, myWorkMeta,
   normalizeSalesCodeInput, parseBahtInput, referralLabel, referralWindowOpen, SALES_DEAL_MENU_BINDINGS,
-  SALES_DEAL_STATUS_META, salesCodeError, salesFlagLabel, salesReportLeads, salesReportRangeError,
+  SALES_DEAL_STATUS_META, salesAgentAddress, salesCodeError, salesFlagLabel, salesReportLeads, salesReportRangeError,
   salesReportRowsOf, salesReportTotals, sortMyWork, sortSalesReportMonths,
   toggleMenuSelection, validateAgentForm, validateDealForm, type SalesDealFormValues,
 } from './sales-console.logic';
@@ -270,21 +270,32 @@ describe('sales agent form', () => {
     legalName: 'สมชาย ใจดี', nationalId: '1234567890123', address: 'กรุงเทพ', bankName: 'กสิกรไทย', bankAccount: '1234567890',
   });
 
-  it('validates the login fields for a หัวหน้า without ever asking for tax or bank data (S10)', () => {
-    assert.deepEqual(validateAgentForm({ ...emptyAgentForm(), username: 'a.b', displayName: 'ก' }, { withProfile: false }), {});
-    assert.ok(validateAgentForm(emptyAgentForm(), { withProfile: false }).username);
-    assert.ok(validateAgentForm({ ...emptyAgentForm(), username: 'สมชาย', displayName: 'ก' }, { withProfile: false }).username);
+  it('requires payroll details when creating a เซลล์, including from a หัวหน้า', () => {
+    const errors = validateAgentForm({ ...emptyAgentForm(), username: 'a.b', displayName: 'ก' });
+    assert.equal(errors.username, undefined);
+    assert.ok(errors.legalName);
+    assert.ok(errors.address);
+    assert.ok(errors.bankName);
+    assert.ok(validateAgentForm(emptyAgentForm()).username);
+    assert.ok(validateAgentForm({ ...emptyAgentForm(), username: 'สมชาย', displayName: 'ก' }).username);
   });
 
-  it('requires the tax/bank block only on the admin console', () => {
-    assert.deepEqual(validateAgentForm(filled(), { withProfile: true }), {});
-    assert.ok(validateAgentForm({ ...filled(), nationalId: '123' }, { withProfile: true }).nationalId);
-    assert.ok(validateAgentForm({ ...filled(), bankAccount: '12' }, { withProfile: true }).bankAccount);
-    assert.ok(validateAgentForm({ ...filled(), whtRatePercent: '101' }, { withProfile: true }).whtRatePercent);
+  it('validates tax and bank details before creating an account', () => {
+    assert.deepEqual(validateAgentForm(filled()), {});
+    assert.ok(validateAgentForm({ ...filled(), nationalId: '123' }).nationalId);
+    assert.ok(validateAgentForm({ ...filled(), bankAccount: '12' }).bankAccount);
+    assert.ok(validateAgentForm({ ...filled(), whtRatePercent: '101' }).whtRatePercent);
+  });
+
+  it('keeps an incomplete address out of the payroll profile and formats a complete one', () => {
+    const address = { line1: '99 ถนนสีลม', line2: '', postalCode: '10500', province: 'กรุงเทพมหานคร', district: 'บางรัก', subdistrict: 'สีลม' };
+    assert.equal(salesAgentAddress({ ...address, subdistrict: '' }), '');
+    assert.equal(salesAgentAddress(address), '99 ถนนสีลม สีลม บางรัก กรุงเทพมหานคร 10500');
+    assert.ok(validateAgentForm({ ...filled(), address: 'ก'.repeat(501) }).address);
   });
 
   it('rejects a hand-typed sales code that could never resolve', () => {
-    assert.ok(validateAgentForm({ ...filled(), salesCode: 'AB' }, { withProfile: true }).salesCode);
+    assert.ok(validateAgentForm({ ...filled(), salesCode: 'AB' }).salesCode);
   });
 
   it('says why a suspended agent is inert rather than showing a bare status key', () => {

@@ -5,6 +5,7 @@ import type {
   SalesAgentCredentialHandoff,
   SalesAgentListDto,
   SalesAgentProfileDto,
+  SalesAgentSelfProfileInput,
   SalesAgentUpdateBody,
   SalesAgentView,
   SalesCompanySearchDto,
@@ -74,7 +75,21 @@ export function getSalesMyWork(init?: { signal?: AbortSignal }): Promise<SalesMy
   return apiFetch<SalesMyWorkDto>('/v1/sales/my-work', { ...init, suppressErrorToast: true });
 }
 
-// ── team (หัวหน้า: `sales.team.manage`, no tax/bank fields) ──
+// ── team and own profile ──
+
+export function getMySalesProfile(init?: { signal?: AbortSignal }): Promise<SalesAgentProfileDto> {
+  return apiFetch<SalesAgentProfileDto>('/v1/sales/me/profile', { ...init, suppressErrorToast: true });
+}
+
+export function updateMySalesProfile(body: SalesAgentSelfProfileInput): Promise<SalesAgentProfileDto> {
+  return apiFetch<SalesAgentProfileDto>('/v1/sales/me/profile', {
+    method: 'PATCH', body: JSON.stringify(body), suppressErrorToast: true,
+  });
+}
+
+export function getSalesTeamProfile(userId: string): Promise<SalesAgentProfileDto> {
+  return apiFetch<SalesAgentProfileDto>(`/v1/sales/team/${encodeURIComponent(userId)}/profile`, { suppressErrorToast: true });
+}
 
 export function listSalesTeam(init?: { signal?: AbortSignal }): Promise<SalesAgentListDto> {
   return apiFetch<SalesAgentListDto>('/v1/sales/team', { ...init, suppressErrorToast: true });
@@ -154,4 +169,3 @@ export function reviewSalesAttributionFlag(companyId: string, body: SalesAttribu
     method: 'POST', body: JSON.stringify(body), suppressErrorToast: true,
   });
 }
-
