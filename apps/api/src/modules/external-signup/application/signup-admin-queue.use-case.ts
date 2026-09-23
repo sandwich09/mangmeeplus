@@ -8,13 +8,13 @@ import type {
   LineSignupEligibleCompanyDto,
   SignupDiscoverySource,
 } from '@watchdog-bms/contracts';
-import { COMPANY_BUSINESS_CATEGORIES, SIGNUP_RESOLUTION_NOTE_MAX_LENGTH } from '@watchdog-bms/contracts';
+import { SIGNUP_RESOLUTION_NOTE_MAX_LENGTH } from '@watchdog-bms/contracts';
 import type { CompanySignupRequest, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { CompanySignupCoreService, signupStateGuard } from './company-signup-core.service';
 import { AccountClaimTokenService } from './account-claim-token.service';
 import { SignupClaimEmailService } from './signup-claim-email.service';
-import { ProvisionSignupUseCase, mapBusinessCategory, reviewedBusinessCategory } from './provision-signup.use-case';
+import { ProvisionSignupUseCase } from './provision-signup.use-case';
 import { LineSignupNotifyService } from './line-signup-notify.service';
 import { shortLineIdHash } from './signup-admin-notify.service';
 import { lineSignupContactEmailConflict, SubmitLineSignupUseCase } from './submit-line-signup.use-case';
@@ -476,15 +476,6 @@ export class SignupAdminQueueUseCase {
         throw new ConflictException(`invalid_signup_decision:${request.state}`);
       }
       const approvedAt = new Date();
-      // R10: the enum the reviewer picked, stored with the approval it belongs to. Re-checked here
-      // rather than trusted: the PDPA tripwire may only be armed by a value the enum knows.
-      const chosenCategory = (COMPANY_BUSINESS_CATEGORIES as readonly string[])
-        .includes(body.businessCategory ?? '')
-        ? (body.businessCategory as string)
-        : null;
-      // Absent means "review did not decide", which must leave the column alone rather than write
-      // a null over a choice an earlier decision made.
-      const reviewedCategory = chosenCategory ? { businessCategory: chosenCategory } : {};
       // A LINE approval IS provisioning; so is a retry from PROVISIONING_FAILED on either source.
       // A web retry must never take the branch below it: that row claimed its link long ago, and
       // sending it back to EMAIL_PENDING would ask for a mailbox proof it has already given.
@@ -497,7 +488,7 @@ export class SignupAdminQueueUseCase {
         if (firstDecision) {
           await this.prisma.client.companySignupRequest.update({
             where: { id: requestId },
-            data: { approvedAt, approvedByUserId: adminUserId, ...reviewedCategory },
+            data: { approvedAt, approvedByUserId: adminUserId },
           });
         }
         // Review F16: a retry is not a decision. Filing it as a second `signup.request.approved`
@@ -513,9 +504,6 @@ export class SignupAdminQueueUseCase {
             fromState: request.state,
             retryOfFailedProvisioning: retryingProvisioning,
             finishedStrandedRow: !firstDecision && !retryingProvisioning,
-            // R10: which category armed (or did not arm) the PDPA tripwire is part of what this
-            // operator decided, on a retry as much as on the first decision.
-            businessCategory: chosenCategory,
           },
         );
         if (!urls) throw new ConflictException('signup_provisioning_urls_required');
@@ -535,12 +523,9 @@ export class SignupAdminQueueUseCase {
       // waiting on an email nobody would send — and the retry read the state and reported success.
       // R09: `claimWindowStartedAt` is the clock the 30-day sweep and the self-serve resend read.
       // It starts here and RESTARTS on a reissue; `approvedAt` stays the audit fact it always was.
-      // R10: the reviewer's category is one of those approval facts, so it rides the SAME
-      // transaction rather than a second update that a failure could leave behind.
       await this.core.advance(requestId, 'EMAIL_PENDING', correlationRequestId, undefined, undefined, {
         data: {
           approvedAt, approvedByUserId: adminUserId, claimWindowStartedAt: approvedAt,
-          ...reviewedCategory,
         },
         // Review F8: the letter AND the record of the decision ride the transaction that makes it.
         // The audit goes FIRST so a failure in the letter proves the audit rolls back with it
@@ -550,7 +535,6 @@ export class SignupAdminQueueUseCase {
           await this.audit(requestId, adminUserId, correlationRequestId, 'signup.request.approved', {
             hadTaxId: request.taxId !== null,
             mxValid: request.mxValid ?? false,
-            businessCategory: chosenCategory,
           }, tx);
           await this.claimEmail.enqueue(requestId, 'approve', approvedAt, tx);
         },
@@ -773,8 +757,6 @@ export class SignupAdminQueueUseCase {
       // authorize. `repeatTrial` is still computed, and still recorded on the approval audit, so
       // the pattern stays visible to whoever reads the trail. `body.grantRepeatTrial` and
       // `body.trialGrantNote` are accepted and ignored, for a console that has not shipped yet.
-      const chosenCategory = (COMPANY_BUSINESS_CATEGORIES as readonly string[])
-        .includes(body.businessCategory ?? '') ? body.businessCategory! : null;
 
       const changed = await tx.companySignupRequest.update({
         where: { id: current.id },
@@ -787,7 +769,6 @@ export class SignupAdminQueueUseCase {
           resolvedByUserId: adminUserId,
           approvedAt: current.approvedAt ?? now,
           approvedByUserId: current.approvedByUserId ?? adminUserId,
-          ...(chosenCategory ? { businessCategory: chosenCategory } : {}),
           ...(contactEmailConflict && newSharedNote ? {
             sharedContactReviewedAt: now,
             sharedContactReviewedByUserId: adminUserId,
@@ -1149,10 +1130,6 @@ function toQueueItem(
     ...(request.vatRegistered !== null ? { vatRegistered: request.vatRegistered } : {}),
     ...(request.taxId ? { taxId: request.taxId } : {}),
     ...(request.requestedOfferKey ? { requestedOfferKey: request.requestedOfferKey } : {}),
-    // R10: the server owns the mapping, so the approve dialog can default to it — and can see that
-    // a row with free text answering OTHER is one where the reviewer has to make the call.
-    businessCategory: reviewedBusinessCategory(request.businessCategory)
-      ?? mapBusinessCategory(request.businessType),
     ...(request.mxValid !== null ? { mxValid: request.mxValid } : {}),
     // P10-L §8: the operator has to be able to tell the two sources apart at a glance, and a LINE
     // row shows a LINE name and an acceptance time where a web row shows an address and MX.

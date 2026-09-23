@@ -166,7 +166,7 @@ async function seed(client: PrismaClient, tag: string, lineUserId: string) {
   const role = await client.role.findUniqueOrThrow({ where: { scopeKey_key: { scopeKey: 'system', key: 'OWNER' } } });
   await client.user.create({ data: { id: userId, displayName: `${tag} owner`, status: 'ACTIVE' } });
   for (const [id, name] of [[companyId, `ร้านปัจจุบัน ${tag}`], [staleCompanyId, `The lobby clube ${tag}`]] as const) {
-    await client.company.create({ data: { id, name, businessCategory: 'RETAIL', status: 'ACTIVE' } });
+    await client.company.create({ data: { id, name, status: 'ACTIVE' } });
   }
   await client.companyMembership.create({
     data: { id: `${tag}-membership`, companyId, userId, status: 'ACTIVE' },

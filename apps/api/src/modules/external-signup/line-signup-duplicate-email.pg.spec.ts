@@ -237,7 +237,7 @@ describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, ()
         status: source === 'account-disabled' ? 'DISABLED' : 'ACTIVE',
       } });
       else await client.company.create({ data: {
-        id: `${tag}-old-company`, name: `${tag}-old-company`, businessCategory: 'RETAIL', email: historical,
+        id: `${tag}-old-company`, name: `${tag}-old-company`, email: historical,
         status: source === 'company-archived' ? 'ARCHIVED' : 'ACTIVE',
       } });
       const h = wire(client, tag, `U${tag}-new`);
@@ -252,7 +252,7 @@ describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, ()
     const email = `${tag}+second@example.test`, cmd = command(tag, email);
     await client.company.create({ data: {
       id: `${tag}-old-company`, name: cmd.companyName, phone: cmd.phoneNumber,
-      businessCategory: 'RETAIL', email: `${tag}@example.test`, status: 'ACTIVE',
+      email: `${tag}@example.test`, status: 'ACTIVE',
     } });
     const h = wire(client, tag, `U${tag}-new`);
     const result = await h.submit.execute(cmd);

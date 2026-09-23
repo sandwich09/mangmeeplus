@@ -1,0 +1,25 @@
+# ประเภทธุรกิจแหล่งเดียวหลังเปิดร้าน
+
+Status: Approved by owner 2026-09-23.
+
+## เป้าหมาย
+
+ร้านเลือกประเภทธุรกิจเองที่ ตั้งค่า → ข้อมูลร้าน หลังเปิดร้านแล้ว โดยใช้รหัส DBD TSIC (หรือ `OTHER` พร้อมข้อความ) ใน `Company.businessTypeCode/businessTypeOther` เป็นค่าปัจจุบันเพียงชุดเดียว
+
+## พฤติกรรม
+
+- หน้ารับคำขอและหน้าสร้างร้านของ System Admin ไม่ถามหมวดธุรกิจแบบ 7 ตัวเลือกอีกต่อไป การอนุมัติและการสร้างร้านไม่บังคับประเภทธุรกิจ
+- ฟอร์มสมัครสาธารณะไม่ถามประเภทธุรกิจล่วงหน้า ข้อมูล free text ของคำขอเก่ายังคงอ่านได้เพื่อประวัติ แต่ไม่ใช้เป็นค่าปัจจุบันของร้าน
+- ร้านใหม่มี `businessTypeCode = null` จนเจ้าของตั้งเองในหน้าข้อมูลร้าน ค่า “ยังไม่ระบุ” ต้องไม่ถูกแปลงเป็น `OTHER`
+- ยกเลิก `Company.businessCategory`, `CompanySignupRequest.businessCategory`, enum และการ map ค่า free text เป็นหมวดกว้าง; migration ลบคอลัมน์เก่า ไม่เติม TSIC อัตโนมัติจากหมวดเก่าเพราะไม่มี mapping ที่แน่นอน
+- API อนุมัติคำขอและสร้างร้านไม่รับ `businessCategory` เป็น input อีกต่อไป หน้า UI ไม่ส่งค่านี้
+- Owner ยืนยันว่า PDPA สำหรับกิจการสุขภาพดำเนินการแล้ว และให้ยกเลิกสัญญาณเตือน `pdpa.tenant.health_adjacent_onboarded` ที่อาศัยหมวดเดิม; ประวัติ audit ที่บันทึกไว้แล้วไม่แก้ย้อนหลัง
+- สิทธิ์แก้ TSIC, validation, version CAS, audit และการแสดงผลใน Admin Console ใช้กติกาเดิม
+
+## Acceptance
+
+1. อนุมัติคำขอ LINE/เว็บและสร้างร้านโดยไม่เลือกหมวดกว้างได้ ร้านใหม่มี TSIC ว่าง
+2. หน้าอนุมัติและหน้าสร้างร้านไม่มีตัวเลือกหมวดกว้าง; หน้าข้อมูลร้านยังเลือก TSIC/OTHER และบันทึกได้
+3. API ไม่เขียนหมวดเก่าลง company, signup request หรือ audit ใหม่ และไม่มี PDPA event เดิมจาก onboarding
+4. Schema/migration เหลือ `Company.businessTypeCode/businessTypeOther/businessTypeVersion` เป็นค่าประเภทธุรกิจปัจจุบันของร้าน
+5. Focused API/web checks และ typecheck ผ่าน หรือบันทึกข้อจำกัดที่ตรวจไม่ได้

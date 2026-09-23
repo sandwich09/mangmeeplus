@@ -85,7 +85,7 @@ describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => 
       const onboarding = new CreateCompanyOnboardingUseCase(prisma, config, legal);
       // CI migrates and syncs permission roles; it deliberately does not seed demo accounts.
       const operatorRole = await client.role.findUniqueOrThrow({ where: { scopeKey_key: { scopeKey: 'system', key: 'SYSTEM_ADMIN' } } });
-      await client.company.create({ data: { id: operatorCompanyId, name: operatorCompanyId, businessCategory: 'RETAIL', status: 'ACTIVE' } });
+      await client.company.create({ data: { id: operatorCompanyId, name: operatorCompanyId, status: 'ACTIVE' } });
       await client.user.create({ data: { id: operatorUserId, displayName: `${tag} operator`, status: 'ACTIVE' } });
       await client.companyMembership.create({ data: {
         companyId: operatorCompanyId, userId: operatorUserId, status: 'ACTIVE', roles: { create: { roleId: operatorRole.id } },

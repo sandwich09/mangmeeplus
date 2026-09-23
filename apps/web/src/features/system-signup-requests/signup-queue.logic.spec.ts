@@ -1,9 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { COMPANY_BUSINESS_CATEGORIES, SIGNUP_DISCOVERY_SOURCE_OPTIONS, signupDiscoveryLabel, type AdminSignupQueueItemDto } from '@watchdog-bms/contracts';
+import { SIGNUP_DISCOVERY_SOURCE_OPTIONS, signupDiscoveryLabel, type AdminSignupQueueItemDto } from '@watchdog-bms/contracts';
 import {
   approveLabel,
-  BUSINESS_CATEGORY_LABELS,
   canApproveSignup,
   canRejectSignup,
   canReissueSignup,
@@ -19,9 +18,7 @@ import {
   signupStateChip,
   rejectNotifyDefault,
   rejectNotifyLabel,
-  approveBlockedOnCategory,
   queueEmptyForReal,
-  requiresCategoryChoice,
   tabLoadsOwnList,
   SIGNUP_QUEUE_TABS,
 } from './signup-queue.logic';
@@ -381,37 +378,6 @@ describe('queue tabs', () => {
     assert.equal(canReissueSignup(row.state), false);
   });
 
-  // R10: the PDPA health tripwire reads the closed enum, and the form asks for free text — an
-  // applicant who typed "คลินิก" mapped to OTHER and the safeguard never fired. The reviewer, who
-  // is looking straight at that word, decides; nothing here guesses from the text.
-  it('makes the reviewer choose a category when the mapping could not', () => {
-    assert.equal(requiresCategoryChoice(item({ businessType: 'คลินิก', businessCategory: 'OTHER' })), true);
-    // Already decided, at review or by an exact match: nothing left to ask.
-    assert.equal(requiresCategoryChoice(item({ businessType: 'คลินิก', businessCategory: 'CLINIC' })), false);
-    assert.equal(requiresCategoryChoice(item({ businessType: 'RETAIL', businessCategory: 'RETAIL' })), false);
-    // Nothing was typed, so there is nothing the mapping failed to read — OTHER is the true answer.
-    assert.equal(requiresCategoryChoice(item({ businessCategory: 'OTHER' })), false);
-    assert.equal(requiresCategoryChoice(item({ businessType: '   ', businessCategory: 'OTHER' })), false);
-    // A row from before the column existed answers the same way as an unmapped one.
-    assert.equal(requiresCategoryChoice(item({ businessType: 'คลินิก' })), true);
-  });
-
-  // F2: every Thai answer maps to OTHER, so refusing OTHER refused the only value the dialog
-  // offered — a barber shop ("ร้านตัดผม") genuinely IS "other" and could never be approved. The
-  // reviewer records that deliberately instead; the tripwire still gets a decision, not a default.
-  it('lets the reviewer record OTHER deliberately rather than blocking it', () => {
-    const row = item({ businessType: 'ร้านตัดผม', businessCategory: 'OTHER' });
-    assert.equal(approveBlockedOnCategory(row, 'OTHER', false), true, 'not yet confirmed');
-    assert.equal(approveBlockedOnCategory(row, 'OTHER', true), false, 'confirmed as genuinely other');
-    // Picking a real category needs no confirmation at all.
-    assert.equal(approveBlockedOnCategory(row, 'CLINIC', false), false);
-    // A row the mapping already read is never blocked, confirmed or not.
-    const mapped = item({ businessType: 'RETAIL', businessCategory: 'RETAIL' });
-    assert.equal(approveBlockedOnCategory(mapped, 'OTHER', false), false);
-    // Nothing typed: OTHER is the true answer and there is nothing to confirm.
-    assert.equal(approveBlockedOnCategory(item({ businessCategory: 'OTHER' }), 'OTHER', false), false);
-  });
-
   // F4: "ไม่มีคำขอในกลุ่มนี้" is a claim about the DATABASE. Saying it because the page happens to
   // hold nothing is exactly the lie R13 existed to remove — a failed load and a genuinely empty
   // tab look identical on screen but mean opposite things.
@@ -428,11 +394,6 @@ describe('queue tabs', () => {
     assert.equal(queueEmptyForReal([row], { ALL: 0 }, 'ALL'), false);
   });
 
-  it('has a Thai label for every category the reviewer can pick', () => {
-    for (const key of COMPANY_BUSINESS_CATEGORIES) {
-      assert.ok(BUSINESS_CATEGORY_LABELS[key], key);
-    }
-  });
 });
 
 it('email OTP recovery closes existing provisioning and never promises legacy account attachment', () => {

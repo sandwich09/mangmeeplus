@@ -71,7 +71,7 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
       () => client.$queryRaw`SELECT 1`, 'RECEIPT_TRUTH_REQUIRE_POSTGRES');
     if (unreachable) return;
     await client.user.create({ data: { id: userId, displayName: 'ผู้ทดสอบ', status: 'ACTIVE' } });
-    await client.company.create({ data: { id: companyId, name: `ร้าน ${tag}`, businessCategory: 'SERVICE' } });
+    await client.company.create({ data: { id: companyId, name: `ร้าน ${tag}` } });
     await client.branch.create({ data: { id: branchId, companyId, code: 'HO', name: 'สำนักงานใหญ่', type: 'HEAD_OFFICE', createdByUserId: userId } });
   });
 
