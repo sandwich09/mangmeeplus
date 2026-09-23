@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { encryptCredential } from '../../domain/logic/credential-cipher.logic';
+import { revokeActiveSessions } from '../../../auth/domain/logic/session-revocation.logic';
 import {
   generateTemporaryPassword,
   hashTemporaryPassword,
@@ -40,8 +41,8 @@ export class PartnerMemberPasswordResetUseCase {
     const expiresAt = temporaryPasswordExpiry(new Date());
     const tempPasswordEncrypted = encryptCredential(temporaryPassword, this.config.credentialEncryptionKey);
 
-    await this.prisma.client.$transaction([
-      this.prisma.client.userCredential.update({
+    await this.prisma.client.$transaction(async (tx) => {
+      await tx.userCredential.update({
         where: { userId: cmd.memberUserId },
         data: {
           passwordHash: hashTemporaryPassword(temporaryPassword),
@@ -50,8 +51,9 @@ export class PartnerMemberPasswordResetUseCase {
           expiresAt,
           tempPasswordEncrypted,
         },
-      }),
-      this.prisma.client.auditLog.create({
+      });
+      const revokedSessionCount = await revokeActiveSessions(tx.authSession, { userId: cmd.memberUserId });
+      await tx.auditLog.create({
         data: {
           actorUserId: cmd.requestingAdminUserId,
           action: 'system.partner_member.password.reset',
@@ -60,10 +62,10 @@ export class PartnerMemberPasswordResetUseCase {
           requestId: cmd.requestId,
           result: 'SUCCESS',
           riskLevel: 'CRITICAL',
-          metadataJson: { companyId: cmd.companyId, memberUserId: cmd.memberUserId },
+          metadataJson: { companyId: cmd.companyId, memberUserId: cmd.memberUserId, revokedSessionCount },
         },
-      }),
-    ]);
+      });
+    });
 
     return {
       userId: cmd.memberUserId,

@@ -22,6 +22,7 @@ function makePrisma(opts: {
   const credentialUpdates: any[] = [];
   const identityUpdates: any[] = [];
   const userUpdates: any[] = [];
+  const sessionRevokes: any[] = [];
   const contextDeletes: any[] = [];
   const handoffRevokes: any[] = [];
   const ops = {
@@ -49,6 +50,7 @@ function makePrisma(opts: {
         opts.credential === null ? null : { id: 'cred-1', tempPasswordEncrypted: null, ...opts.credential },
       update: async (args: any) => { credentialUpdates.push(args); return {}; },
     },
+    authSession: { updateMany: async (args: any) => { sessionRevokes.push(args); return { count: 1 }; } },
     auditLog: { create: async (args: any) => { audits.push(args.data); return {}; } },
     company: { findUnique: async () => ({ id: 'co-1' }) },
     user: {
@@ -58,14 +60,14 @@ function makePrisma(opts: {
     },
   };
   const client = { ...ops, $transaction: async (arg: any) => (typeof arg === 'function' ? arg(ops) : Promise.all(arg)) };
-  return { prisma: { client } as any, audits, credentialUpdates, identityUpdates, userUpdates, contextDeletes, handoffRevokes };
+  return { prisma: { client } as any, audits, credentialUpdates, identityUpdates, userUpdates, contextDeletes, handoffRevokes, sessionRevokes };
 }
 
 const cmd = { companyId: 'co-1', memberUserId: 'user-1', requestingAdminUserId: 'admin-1', requestId: 'req-1' };
 
 describe('PartnerMemberPasswordResetUseCase', () => {
   it('stores a hash + encrypted copy and returns the password once', async () => {
-    const { prisma, audits, credentialUpdates } = makePrisma();
+    const { prisma, audits, credentialUpdates, sessionRevokes } = makePrisma();
     const result = await new PartnerMemberPasswordResetUseCase(prisma, config).execute(cmd);
 
     assert.ok(result.temporaryPassword.length >= 10);
@@ -75,6 +77,8 @@ describe('PartnerMemberPasswordResetUseCase', () => {
     assert.equal(data.mustChangePassword, true);
     assert.notEqual(data.tempPasswordEncrypted, result.temporaryPassword); // never plaintext at rest
     assert.equal(audits[0].action, 'system.partner_member.password.reset');
+    assert.deepEqual(sessionRevokes[0].where, { userId: 'user-1', status: 'ACTIVE' });
+    assert.equal(audits[0].metadataJson.revokedSessionCount, 1);
     assert.ok(!JSON.stringify(audits).includes(result.temporaryPassword));
   });
 

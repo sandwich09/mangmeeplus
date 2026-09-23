@@ -72,7 +72,16 @@ export class IssueTokenUseCase {
     );
 
     const expiresAt = new Date(Date.now() + REFRESH_EXPIRES_IN * 1000);
-    const sessionData = { userId, tokenId, familyId, expiresAt, status: 'ACTIVE' as const };
+    const sessionData = {
+      userId,
+      tokenId,
+      familyId,
+      expiresAt,
+      status: 'ACTIVE' as const,
+      ...(authProvider === 'watchdog' && credentialUpdatedAt instanceof Date
+        ? { passwordCredentialVersion: credentialUpdatedAt }
+        : {}),
+    };
     if (authProvider === 'email' && credentialUpdatedAt && !(credentialUpdatedAt instanceof Date)) {
       // Caller holds account/membership locks and consumes the email proof in this transaction.
       await credentialUpdatedAt.tx.authSession.create({ data: { ...sessionData,

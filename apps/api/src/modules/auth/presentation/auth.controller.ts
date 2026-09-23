@@ -65,7 +65,7 @@ import { RevokeOtherSessionsUseCase } from '../application/use-cases/revoke-othe
 import { LinkLineIdentityUseCase } from '../application/use-cases/link-line-identity.use-case';
 import { UnlinkLineIdentityUseCase } from '../application/use-cases/unlink-line-identity.use-case';
 import { PasswordLoginUseCase } from '../application/use-cases/password-login.use-case';
-import { ChangePasswordUseCase } from '../application/use-cases/change-password.use-case';
+import { canSkipCurrentPassword, ChangePasswordUseCase } from '../application/use-cases/change-password.use-case';
 import { CompleteEmployeeLineLinkUseCase } from '../application/use-cases/complete-employee-line-link.use-case';
 import { NotifyPasswordResetRequestUseCase } from '../application/use-cases/notify-password-reset-request.use-case';
 import { GetAccountSecurityStateUseCase } from '../application/use-cases/get-account-security-state.use-case';
@@ -151,7 +151,7 @@ class PasswordLoginDto {
 }
 
 class ChangePasswordDto {
-  @IsString() @IsNotEmpty() currentPassword!: string;
+  @IsString() @IsNotEmpty() @IsOptional() currentPassword?: string;
   @IsString() @MinLength(8) newPassword!: string;
 }
 
@@ -851,7 +851,7 @@ export class AuthController {
   ): Promise<void> {
     const tokenId = extractSid(req);
     if (!tokenId) throw new UnauthorizedException('Cannot identify session.');
-    await this.changePassword.execute(req.context.userId, dto.currentPassword, dto.newPassword, tokenId);
+    await this.changePassword.execute(req.context.userId, dto.currentPassword, dto.newPassword, tokenId, req.context.sessionId);
   }
 
   @Get('account/security')
@@ -983,14 +983,20 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Current user context' })
   async me(@Req() req: Request & { context: RequestContext }) {
     const { userId, companyId, membershipId, roles, permissions, scopes, authProvider } = req.context;
-    const [user, credential, legalAcceptance, membership] = await Promise.all([
+    const [user, credential, legalAcceptance, membership, session] = await Promise.all([
       this.prisma.client.user.findUnique({ where: { id: userId }, select: { displayName: true } }),
-      this.prisma.client.userCredential.findUnique({ where: { userId }, select: { mustChangePassword: true } }),
+      this.prisma.client.userCredential.findUnique({ where: { userId }, select: { mustChangePassword: true, updatedAt: true } }),
       this.legalAcceptance.getStatus(req.context),
       this.prisma.client.companyMembership.findFirst({
         where: { id: membershipId, companyId, userId, status: 'ACTIVE' },
         select: { roles: { where: { role: { key: { in: roles } } }, select: { role: { select: { key: true, name: true } } } } },
       }),
+      req.context.sessionId
+        ? this.prisma.client.authSession.findUnique({
+          where: { id: req.context.sessionId },
+          select: { passwordCredentialVersion: true },
+        })
+        : Promise.resolve(null),
     ]);
     // AuthGuard exempts /v1/auth/* from the temporary-password block, so this route answers for a
     // blocked session too — and it is the only way such a session can learn that it is blocked.
@@ -1008,6 +1014,10 @@ export class AuthController {
       scopes,
       authProvider,
       mustChangePassword: credential?.mustChangePassword ?? false,
+      canSkipCurrentPassword: canSkipCurrentPassword({
+        credential,
+        passwordCredentialVersion: session?.passwordCredentialVersion,
+      }),
       legalAcceptanceRequired: legalAcceptance.required,
     };
   }

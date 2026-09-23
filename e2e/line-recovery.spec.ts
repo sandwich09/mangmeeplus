@@ -80,8 +80,8 @@ for (const width of [390, 1280]) {
       await expect(page).toHaveURL(/\/change-password/);
       await expect(page.getByRole('button', { name: 'เปลี่ยนรหัสผ่าน', exact: true })).toBeVisible();
       await page.screenshot({ path: info.outputPath(`forced-change-${width}.png`), fullPage: true });
-      await page.locator('input[name="current-password"]').fill(rawRecovery);
       await page.locator('input[name="new-password"]').fill('chosen-new-ui-password');
+      await page.locator('input[name="confirm-password"]').fill('chosen-new-ui-password');
       await page.getByRole('button', { name: 'เปลี่ยนรหัสผ่าน', exact: true }).click();
       await expect(page).toHaveURL(/\/login/);
       const saved = await client.userCredential.findUniqueOrThrow({ where: { userId } });

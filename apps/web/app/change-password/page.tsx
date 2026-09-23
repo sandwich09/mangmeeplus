@@ -14,11 +14,17 @@ export const dynamic = 'force-dynamic';
 // (an API older than this build) keeps the sign-out-only page instead of a button that loops.
 export default async function ChangePasswordRoute() {
   const result = await fetchServerSessionResult();
+  if (result.status === 'signed_out') redirect('/login?next=%2Fchange-password');
   if (result.status === 'platform_closed') redirect('/maintenance');
-  const session = result.status === 'signed_in' && result.session.mustChangePassword === false
-    ? result.session
-    : null;
-  const homeCookie = session ? (await cookies()).get(HOME_PATH_COOKIE)?.value : undefined;
+  if (result.status === 'unavailable') throw new Error('Cannot reach the authentication service. Please try again.');
+  if (result.status === 'forbidden') throw new Error('This session cannot change the password. Please sign in again.');
+  const session = result.session;
+  const mayLeave = session.mustChangePassword === false;
+  const homeCookie = mayLeave ? (await cookies()).get(HOME_PATH_COOKIE)?.value : undefined;
 
-  return <ChangePasswordPage homePath={session ? resolveLoginLanding(null, homeCookie, session) : null} />;
+  return <ChangePasswordPage
+    homePath={mayLeave ? resolveLoginLanding(null, homeCookie, session) : null}
+    isForcedPasswordChange={session.mustChangePassword}
+    canSkipCurrentPassword={session.canSkipCurrentPassword}
+  />;
 }

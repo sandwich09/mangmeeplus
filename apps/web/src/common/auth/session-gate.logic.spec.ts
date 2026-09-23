@@ -29,6 +29,7 @@ function session(overrides: Partial<WebSession> = {}): WebSession {
     permissions: [],
     authProvider: 'watchdog',
     mustChangePassword: false,
+    canSkipCurrentPassword: false,
     legalAcceptanceRequired: false,
     ...overrides,
   };

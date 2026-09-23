@@ -11,6 +11,8 @@ export type WebSession = {
   authProvider: 'watchdog' | 'line' | 'dev';
   /** Set while a temporary password is pending: the API 403s this session out of every business route. */
   mustChangePassword: boolean;
+  /** This exact password-login session proved the current credential and may complete the forced change. */
+  canSkipCurrentPassword: boolean;
   /** Current access token is blocked from business routes until the legal release is acknowledged. */
   legalAcceptanceRequired: boolean;
 };

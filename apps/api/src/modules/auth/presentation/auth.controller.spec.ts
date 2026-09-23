@@ -278,23 +278,25 @@ describe('AuthController password change session binding', () => {
       { currentPassword: 'old-password', newPassword: 'new-password' } as any,
       {
         headers: { authorization: `Bearer x.${payload}.y` },
-        context: { userId: 'user-1' },
+        context: { userId: 'user-1', sessionId: 'auth-session-row' },
       } as any,
     );
 
-    assert.deepEqual(calls[0], ['user-1', 'old-password', 'new-password', 'session-current']);
+    assert.deepEqual(calls[0], ['user-1', 'old-password', 'new-password', 'session-current', 'auth-session-row']);
   });
 });
 
 // AuthGuard exempts /v1/auth/* from the temporary-password block, so GET /auth/me answers a blocked
 // session too — and is therefore the only place it can learn that every other route is closed to it.
 describe('AuthController me()', () => {
-  function makeMeController(mustChangePassword: boolean | null) {
+  function makeMeController(mustChangePassword: boolean | null, proofMatches = true) {
     const stub = {} as any;
+    const credentialUpdatedAt = new Date('2026-09-23T00:00:00.000Z');
     const prisma = {
       client: {
         user: { findUnique: async () => ({ displayName: 'Somsak' }) },
-        userCredential: { findUnique: async () => (mustChangePassword === null ? null : { mustChangePassword }) },
+        userCredential: { findUnique: async () => (mustChangePassword === null ? null : { mustChangePassword, updatedAt: credentialUpdatedAt }) },
+        authSession: { findUnique: async () => ({ passwordCredentialVersion: proofMatches ? credentialUpdatedAt : new Date('2026-09-22T00:00:00.000Z') }) },
         companyMembership: { findFirst: async (query: any) => {
           assert.deepEqual(query.where, { id: 'm-1', companyId: 'company-1', userId: 'user-1', status: 'ACTIVE' });
           return { roles: query.select.roles.where.role.key.in.map((key: string) => ({ role: { key, name: key === 'CUSTOM_QA' ? 'QA named role' : 'Owner' } })) };
@@ -314,12 +316,18 @@ describe('AuthController me()', () => {
   const context = {
     context: {
       userId: 'user-1', companyId: 'company-1', membershipId: 'm-1',
-      roles: ['OWNER'], permissions: [], scopes: {}, authProvider: 'watchdog',
+      roles: ['OWNER'], permissions: [], scopes: {}, authProvider: 'watchdog', sessionId: 'session-1',
     },
   } as any;
 
   it('reports a pending temporary password', async () => {
-    assert.equal((await makeMeController(true).me(context)).mustChangePassword, true);
+    const result = await makeMeController(true).me(context);
+    assert.equal(result.mustChangePassword, true);
+    assert.equal(result.canSkipCurrentPassword, true);
+  });
+
+  it('does not offer the no-current-password form to a stale session', async () => {
+    assert.equal((await makeMeController(true, false).me(context)).canSkipCurrentPassword, false);
   });
 
   it('reports a normal session as free to navigate', async () => {

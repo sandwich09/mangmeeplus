@@ -118,8 +118,8 @@ test.describe('LEGAL — explicit Terms acceptance and Privacy Notice acknowledg
       expect(prematureAcceptance.status()).toBe(403);
       expect(await prematureAcceptance.json()).toMatchObject({ code: 'password_change_required' });
 
-      await page.locator('input[name="current-password"]').fill(created.temporaryPassword);
       await page.locator('input[name="new-password"]').fill(changedPassword);
+      await page.locator('input[name="confirm-password"]').fill(changedPassword);
       await page.getByRole('button', { name: /เปลี่ยนรหัสผ่าน|Change password/i }).click();
       await expect(page).toHaveURL(/\/login(?:\?|$)/);
 

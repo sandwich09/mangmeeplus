@@ -87,7 +87,7 @@ export function confirmEmailVerification(token: string): Promise<{ email: string
   return publicApi.post<{ email: string; verifiedAt: string }>('/api/v1/auth/account/email/verify', { token });
 }
 
-export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+export async function changePassword(currentPassword: string | undefined, newPassword: string): Promise<void> {
   try {
     await publicApi.post<void>('/api/auth/change-password', { currentPassword, newPassword });
   } catch (error) {

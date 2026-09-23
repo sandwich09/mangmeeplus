@@ -640,6 +640,9 @@ model AuthSession {
   emailReauthExpiresAt DateTime?
   billingReauthenticatedAt DateTime?
   billingCredentialVersion DateTime?
+  // Snapshot of the credential that a password login just verified. It may complete a forced
+  // password change without asking for the same temporary password again.
+  passwordCredentialVersion DateTime?
   userId          String
   tokenId         String            @unique
   // L-01: the immediately-previous refresh token id and the instant it was rotated out.

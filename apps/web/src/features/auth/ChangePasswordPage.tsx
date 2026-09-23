@@ -15,10 +15,20 @@ import { changePassword } from './auth.api';
  * `homePath` is set only when the server confirmed this session is free to navigate away — a
  * temporary-password session gets null, because every route it could reach bounces it back here.
  */
-export default function ChangePasswordPage({ homePath = null }: { homePath?: string | null }) {
+export default function ChangePasswordPage({
+  homePath = null,
+  isForcedPasswordChange = false,
+  canSkipCurrentPassword = false,
+}: {
+  homePath?: string | null;
+  isForcedPasswordChange?: boolean;
+  canSkipCurrentPassword?: boolean;
+}) {
   const [locale] = useLocale();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [currentPasswordRequired, setCurrentPasswordRequired] = useState(!canSkipCurrentPassword);
   const [loading, setLoading] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,9 +57,13 @@ export default function ChangePasswordPage({ homePath = null }: { homePath?: str
       setError(t('auth.change.error.min', locale));
       return;
     }
-    // A date-of-birth temporary password is already 8 characters, so the length rule alone
-    // let people "change" it to itself. The API enforces this too; this is the fast answer.
-    if (nextPassword === current) {
+    // The API rejects reuse in both forms; compare locally only when this form collected the
+    // current password, because a forced flow deliberately does not retain it in the browser.
+    if (confirmPassword !== newPassword) {
+      setError(t('auth.reset.error.mismatch', locale));
+      return;
+    }
+    if (current && nextPassword === current) {
       setError(t('auth.change.error.same', locale));
       return;
     }
@@ -58,7 +72,7 @@ export default function ChangePasswordPage({ homePath = null }: { homePath?: str
     try {
       // Cookie-authenticated via the shared client; /v1/auth/* is exempt from the
       // must-change-password block so this works with a temporary password.
-      await changePassword(current, nextPassword);
+      await changePassword(currentPasswordRequired ? current : undefined, nextPassword);
       localStorage.removeItem('watchdog.pendingRedirectPath');
       localStorage.removeItem('watchdog.pendingCompanyId');
       // The guard re-reads UserCredential.mustChangePassword per request, so the block already
@@ -67,10 +81,12 @@ export default function ChangePasswordPage({ homePath = null }: { homePath?: str
       const loggedOut = await logoutCurrentSession('/login');
       if (!loggedOut) throw new Error('Password changed, but the session could not be ended.');
     } catch (nextError) {
+      if ((nextError as { code?: string }).code === 'current_password_required') setCurrentPasswordRequired(true);
       setError(localizedErrorMessage(nextError, locale, {
         fallback: 'auth.change.error.failed',
         conflictCodes: {
           current_password_incorrect: 'auth.change.error.current',
+          current_password_required: 'auth.change.error.current_required',
           password_reuse: 'auth.change.error.same',
         },
       }));
@@ -84,21 +100,23 @@ export default function ChangePasswordPage({ homePath = null }: { homePath?: str
       <div className="w-full max-w-sm bg-white rounded-lg border border-gray-200 p-8 space-y-6">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">{t('auth.change.title', locale)}</h1>
-          <p className="text-sm text-gray-500 mt-1">{t(homePath ? 'auth.change.optional_subtitle' : 'auth.change.subtitle', locale)}</p>
+          <p className="text-sm text-gray-500 mt-1">{t(isForcedPasswordChange ? 'auth.change.subtitle' : 'auth.change.optional_subtitle', locale)}</p>
         </div>
         {error && (
           <div className="rounded bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{error}</div>
         )}
         <form onSubmit={handleSubmit} className="space-y-4">
-          <TextField
-            label={t('auth.change.current', locale)}
-            name="current-password"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-          />
+          {currentPasswordRequired && (
+            <TextField
+              label={t('auth.change.current', locale)}
+              name="current-password"
+              type="password"
+              autoComplete="current-password"
+              required
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+            />
+          )}
           <TextField
             label={t('auth.change.new', locale)}
             name="new-password"
@@ -109,6 +127,16 @@ export default function ChangePasswordPage({ homePath = null }: { homePath?: str
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             hint={t('auth.reset.hint_min', locale)}
+          />
+          <TextField
+            label={t('auth.reset.confirm_password', locale)}
+            name="confirm-password"
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={8}
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
           />
           <Button type="submit" className="w-full" loading={loading} disabled={signingOut}>
             {t('auth.change.submit', locale)}
