@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import type {BillingAccount,BillingInvoice} from '../../../generated/prisma/client';
 import {configurationHash} from '../domain/billing-policy';
-import {assertOriginalInvoiceCharge,refundNoteProjection,refundPreview,observedRefund} from './billing-refund-source';
-import type {StripeClient} from '../infrastructure/stripe.client';
+import {assertOriginalInvoiceCharge,refundNoteProjection,refundParams,refundPreview,observedRefund} from './billing-refund-source';
+import {StripeRequestError,type StripeClient} from '../infrastructure/stripe.client';
 
 const account={id:'account',customerId:'cus_Test',livemode:false} as BillingAccount;
 const invoice={id:'invoice',providerInvoiceId:'in_Test',providerChargeId:'ch_Test',paidSatang:10700,totalSatang:10700,taxSatang:700} as BillingInvoice;
@@ -35,10 +35,32 @@ test('a paid-invoice preview must use a real original invoice line and current r
   let amount=10700;
   const stripe={request:async(_method:string,path:string)=>path==='/credit_notes/preview'?note():{object:'list',has_more:false,data:[{id:'il_Test',livemode:false,currency:'thb',amount}]}} as unknown as StripeClient;
   const source={invoice:{total_taxes:[tax(700)]},charge:{disputed:false,amount_refunded:0},refunds:[],notes:[]} as any;
-  assert.equal((await refundPreview(stripe,account,invoice,source,{amount:1070})).taxSatang,70);
-  amount=100;await assert.rejects(refundPreview(stripe,account,invoice,source,{amount:1070}));amount=10700;
-  await assert.rejects(refundPreview(stripe,account,invoice,{...source,charge:{disputed:false,amount_refunded:10700}},{amount:1070}));
-  await assert.rejects(refundPreview(stripe,account,invoice,{...source,refunds:[{status:'pending'}]},{amount:1070}));
+  assert.equal((await refundPreview(stripe,account,invoice,source,{refund_amount:1070})).taxSatang,70);
+  amount=100;await assert.rejects(refundPreview(stripe,account,invoice,source,{refund_amount:1070}));amount=10700;
+  await assert.rejects(refundPreview(stripe,account,invoice,{...source,charge:{disputed:false,amount_refunded:10700}},{refund_amount:1070}));
+  await assert.rejects(refundPreview(stripe,account,invoice,{...source,refunds:[{status:'pending'}]},{refund_amount:1070}));
+});
+test('refund params name original invoice lines net of issued notes, the only shape live dahlia previews',async()=>{
+  const paid={...invoice,paidSatang:24900,totalSatang:24900,taxSatang:0} as BillingInvoice;
+  const stripe={request:async(_method:string,path:string,params:Record<string,any>)=>{
+    if(path==='/invoices/in_Test/lines')return {object:'list',has_more:false,data:[{id:'il_B',livemode:false,currency:'thb',amount:14900},{id:'il_A',livemode:false,currency:'thb',amount:10000}]};
+    if(path==='/credit_notes/cn_Paged/lines')return {object:'list',has_more:false,data:[{id:'cnli_Paged',object:'credit_note_line_item',type:'invoice_line_item',invoice_line_item:'il_A',amount:6000}]};
+    // Live 2026-08-26.dahlia (read-only probe 2026-09-23): credit_amount below 1 is a 400 and an amount-only preview has no lines.
+    if(params.credit_amount!==undefined&&!(params.credit_amount>=1))throw new StripeRequestError('REJECTED','request_rejected');
+    const amount=params.amount??params.refund_amount,data=(params.lines??[]).map((l:any)=>({object:'credit_note_line_item',livemode:false,type:'invoice_line_item',invoice_line_item:l.invoice_line_item,amount:l.amount,taxes:[]}));
+    return {...note(),amount,total:amount,post_payment_amount:amount,total_excluding_tax:amount,total_taxes:[],lines:{object:'list',has_more:false,data}};
+  }} as unknown as StripeClient;
+  const source={invoice:{total_taxes:[]},charge:{disputed:false,amount_refunded:6000},refunds:[],sourceHash:'source',notes:[
+    {id:'cn_Paged',status:'issued',lines:{object:'list',has_more:true,data:[]}},
+    {id:'cn_Void',status:'void',lines:{object:'list',has_more:false,data:[{object:'credit_note_line_item',type:'invoice_line_item',invoice_line_item:'il_B',amount:14900}]}}]} as any;
+  const params=await refundParams(stripe,account,paid,source,'command',12000,'',false);
+  assert.deepEqual(params,{invoice:'in_Test',lines:[{type:'invoice_line_item',invoice_line_item:'il_A',amount:4000},{type:'invoice_line_item',invoice_line_item:'il_B',amount:8000}],
+    refund_amount:12000,out_of_band_amount:0,email_type:'none',metadata:{billingRefundOperationId:'command',billingAccountId:'account',billingSourceHash:'source'}});
+  assert.deepEqual((await refundPreview(stripe,account,paid,source,params)).lines.map((l:{invoiceLineId:string;amount:number})=>[l.invoiceLineId,l.amount]),[['il_A',4000],['il_B',8000]]);
+  const amountOnly={invoice:'in_Test',amount:12000,refund_amount:12000,email_type:'none'};
+  await assert.rejects(refundPreview(stripe,account,paid,source,{...amountOnly,credit_amount:0,out_of_band_amount:0}),'the pre-fix params are a live 400');
+  await assert.rejects(refundPreview(stripe,account,paid,source,amountOnly),'an amount-only preview has no lines');
+  await assert.rejects(refundParams(stripe,account,paid,source,'command',18901,'',false),'only 4000 + 14900 is still creditable');
 });
 test('positive discovery binds original command, charge and one refund; a note alone never proves bank receipt',async()=>{
   const n=note(),projection=configurationHash(refundNoteProjection(n,account,invoice,{total_taxes:[tax(700)]},1070));
