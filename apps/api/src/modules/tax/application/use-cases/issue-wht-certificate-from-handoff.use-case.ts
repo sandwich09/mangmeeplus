@@ -117,6 +117,10 @@ export class IssueWhtCertificateFromHandoffUseCase {
       return this.reloadWinner(handoffId);
     }
 
+    // Contract (`WhtCertificateHandoffDto.payeeAddress`): the operator-typed address wins over the
+    // frozen prefill's. Merged into the certificate's own snapshot only — the handoff's
+    // `prefillSnapshotJson`/`prefillSnapshotHash` stay untouched.
+    const payee = { ...prefill.payeeSnapshot, address: row.payeeAddress?.trim() || prefill.payeeSnapshot.address };
     const issuedAt = new Date();
     const fields = {
       certificateNumber: reserved.documentNumber,
@@ -129,7 +133,7 @@ export class IssueWhtCertificateFromHandoffUseCase {
       paymentDate: prefill.paymentDate,
       issuedAt: issuedAt.toISOString(),
     };
-    const pdf = await this.renderer.renderWhtCertificate(fields, prefill.payerSnapshot, prefill.payeeSnapshot, signature);
+    const pdf = await this.renderer.renderWhtCertificate(fields, prefill.payerSnapshot, payee, signature);
 
     const client = this.taxRepo.prisma.client as any;
     const { certificateRow, handoffUpdated } = await client.$transaction(async (tx: any) => {
@@ -140,7 +144,7 @@ export class IssueWhtCertificateFromHandoffUseCase {
           status: 'ISSUED',
           taxPeriodId: period.id,
           periodKey: period.periodKey,
-          payeeSnapshotJson: prefill.payeeSnapshot as any,
+          payeeSnapshotJson: payee as any,
           payerSnapshotJson: prefill.payerSnapshot as any,
           incomeCategoryCode: prefill.incomeCategoryCode,
           incomeCategoryName: prefill.incomeCategoryName,
