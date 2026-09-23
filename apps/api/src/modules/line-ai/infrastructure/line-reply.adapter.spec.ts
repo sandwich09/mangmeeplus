@@ -7,6 +7,21 @@ import { lineMessagePreview } from '../domain/logic/line-message-preview.logic';
 import { buildPendingApprovalCard, buildStaffMainMenu } from '../domain/logic/line-staff-menu.logic';
 
 describe('LineReplyAdapter rich payload delivery', () => {
+  it('keeps an HTTPS image in the saved outcome and the LINE reply', async () => {
+    const image = { type: 'image' as const, originalContentUrl: 'https://app.example.test/welcome.png', previewImageUrl: 'https://app.example.test/welcome.png' };
+    assert.deepEqual(parseOutcomeMessages([image]), [image]);
+    assert.equal(parseOutcomeMessages([{ ...image, previewImageUrl: 'http://app.example.test/welcome.png' }]), null);
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+        assert.deepEqual(JSON.parse(String(init?.body)).messages, [image]);
+        return new Response('', { status: 200 });
+      }) as typeof fetch;
+      const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'synthetic' } as any), {} as any);
+      assert.equal(await adapter.sendReply('reply-token', [image]), 'ok');
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
   it('accepts Thai receipt previews with emoji without losing the full card or splitting a surrogate', () => {
     for (const text of ['🧾📋' + 'ก'.repeat(398), 'ก'.repeat(398) + '🧾ต่อท้าย', 'ข้อมูล'.repeat(120) + ' 2,409.70 บาท']) {
       const card = buildLineAssistantTextCardMessage(text, 'https://app.example.test', 'c1');
