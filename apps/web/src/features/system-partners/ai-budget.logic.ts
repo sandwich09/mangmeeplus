@@ -283,7 +283,8 @@ export type AiBudgetSavedPolicy = {
 export function aiBudgetDraftFromPolicy(policy: AiBudgetSavedPolicy, currentMonthKey: string): AiBudgetDraft {
   return {
     mode: policy.mode === 'SPLIT' ? 'SPLIT' : 'SHARED',
-    chat: policy.chatCapSatang === null ? '' : satangToBahtInput(policy.chatCapSatang),
+    // In SHARED the displayed 80-credit stop is not an editable split allocation.
+    chat: policy.mode !== 'SPLIT' || policy.chatCapSatang === null ? '' : satangToBahtInput(policy.chatCapSatang),
     ocr: policy.ocrCapSatang === null ? '' : satangToBahtInput(policy.ocrCapSatang),
     effectiveMonthKey: currentMonthKey,
   };
@@ -342,7 +343,8 @@ export function aiBudgetDraftChanged(draft: AiBudgetDraft, policy: AiBudgetSaved
   if (!parsed.ok) return true;
   const desired = parsed.policy;
   const against = draft.effectiveMonthKey === currentMonthKey
-    ? { mode: policy.mode, chat: policy.chatCapSatang, ocr: policy.ocrCapSatang }
+    ? { mode: policy.mode, chat: policy.mode === 'SPLIT' ? policy.chatCapSatang : null,
+        ocr: policy.mode === 'SPLIT' ? policy.ocrCapSatang : null }
     : policy.pending
       ? { mode: policy.pending.mode, chat: policy.pending.chatMonthlyBudgetSatang, ocr: policy.pending.ocrMonthlyBudgetSatang }
       : null;
@@ -380,7 +382,7 @@ export function aiBudgetScopeRows(
   const split = budget.policy.mode === 'SPLIT';
   return [
     { key: 'total', label: AI_BUDGET_SCOPE_LABELS.total, capSatang: budget.effectiveSatang, ...budget.position.total },
-    { key: 'chat', label: AI_BUDGET_SCOPE_LABELS.chat, capSatang: split ? budget.policy.chatCapSatang : null, ...budget.position.chat },
+    { key: 'chat', label: AI_BUDGET_SCOPE_LABELS.chat, capSatang: budget.policy.chatCapSatang, ...budget.position.chat },
     { key: 'ocr', label: AI_BUDGET_SCOPE_LABELS.ocr, capSatang: split ? budget.policy.ocrCapSatang : null, ...budget.position.ocr },
   ];
 }

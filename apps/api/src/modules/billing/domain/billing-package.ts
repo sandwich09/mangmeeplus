@@ -11,6 +11,7 @@ const units = (value: number): number => {
   if (!Number.isSafeInteger(value) || value < 0 || value > 2_147_483_647) throw invalid();
   return value;
 };
+const bangkokDay = (milliseconds: number) => Math.floor((milliseconds + 7 * 60 * 60 * 1000) / 86_400_000);
 
 /**
  * Preserve the billing anniversary through February/short months, without assuming 30/365 days.
@@ -66,8 +67,13 @@ export function proratedReceiptIncrease(periods: readonly {
     if (start >= end || start < previousEnd || newAllowance < oldAllowance) throw invalid();
     previousEnd = end;
     const remaining = Math.max(0, end - Math.max(at, start));
-    // Integer arithmetic keeps flooring deterministic even for multiple years of prepaid service.
-    total = units(total + Number(BigInt(newAllowance - oldAllowance) * BigInt(remaining) / BigInt(end - start)));
+    if (at >= start && at < end && bangkokDay(at) === bangkokDay(start)) {
+      total = units(total + newAllowance - oldAllowance);
+      continue;
+    }
+    // After purchase day, round each paid segment half up in exact integer arithmetic.
+    const duration = BigInt(end - start);
+    total = units(total + Number((BigInt(newAllowance - oldAllowance) * BigInt(remaining) * 2n + duration) / (2n * duration)));
   }
   return total;
 }
@@ -75,7 +81,9 @@ export function proratedReceiptIncrease(periods: readonly {
 /** Round each accepted price difference half up, in integer satang, over actual service time. */
 export function proratedPackagePrice(oldPrice: number, newPrice: number, start: Date, end: Date, at: Date): number {
   units(oldPrice); units(newPrice);
-  const duration = time(end) - time(start), remaining = Math.max(0, time(end) - Math.max(time(at), time(start)));
+  const startMs = time(start), endMs = time(end), atMs = time(at);
+  const duration = endMs - startMs, remaining = Math.max(0, endMs - Math.max(atMs, startMs));
   if (duration <= 0 || newPrice < oldPrice) throw invalid();
+  if (atMs >= startMs && atMs < endMs && bangkokDay(atMs) === bangkokDay(startMs)) return newPrice - oldPrice;
   return units(Number((BigInt(newPrice - oldPrice) * BigInt(remaining) * 2n + BigInt(duration)) / (2n * BigInt(duration))));
 }

@@ -9,13 +9,14 @@ const DEAL_ID = /^[A-Za-z0-9_-]{1,64}$/;
 export function billingProfileSelection(search: string) {
   const params = new URLSearchParams(search), offer = params.get('offer'), interval = params.get('interval');
   if (!BILLING_PAID_TIERS.some(value => value === offer) || !['month', 'year'].includes(interval ?? '')) return null;
-  const purchaseMode = params.get('purchaseMode'), dealId = params.get('deal');
+  const purchaseMode = params.get('purchaseMode'), dealId = params.get('deal'), purchaseIntent = params.get('purchaseIntent');
   return { offer: offer!, interval: interval!, channel: params.get('channel') === 'line' ? 'line' : 'web',
     ...(purchaseModes.includes(purchaseMode as BillingPurchaseMode) ? { purchaseMode: purchaseMode as BillingPurchaseMode } : {}),
-    ...(dealId && DEAL_ID.test(dealId) ? { dealId } : {}) };
+    ...(dealId && DEAL_ID.test(dealId) ? { dealId } : {}),
+    ...(purchaseIntent === 'FULL_PACKAGE' ? { purchaseIntent: 'FULL_PACKAGE' as const } : {}) };
 }
 
-type BillingProfileSelection = { offer: string; interval: string; channel: string; purchaseMode?: BillingPurchaseMode; dealId?: string };
+type BillingProfileSelection = { offer: string; interval: string; channel: string; purchaseMode?: BillingPurchaseMode; dealId?: string; purchaseIntent?: 'FULL_PACKAGE' };
 
 /** `dealId` travels as `deal`, on both legs, or the return href would hand back a param
  *  `billingProfileSelection` does not read and the customer would land on the catalog. */

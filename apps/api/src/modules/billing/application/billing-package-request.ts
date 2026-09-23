@@ -64,13 +64,14 @@ export async function supersedeUnpaidPackageRequest(tx: Prisma.TransactionClient
  * what they bought. The audit row records which status it came from.
  */
 export async function applyDealRequest(tx: Prisma.TransactionClient, input: { companyId: string; invoiceId: string;
-  deal: DealSource; priceSatang: number; paidAt: Date }) {
+  deal: DealSource; priceSatang: number; paidAt: Date; serviceEnd?: Date }) {
   const deal = await tx.packageChangeRequest.findFirst({ where: { id: input.deal.requestId, companyId: input.companyId,
-    kind: 'SALES_DEAL', status: { in: ['APPROVED', 'EXPIRED'] } } });
+    kind: 'SALES_DEAL', status: { in: ['APPROVED', 'EXPIRED', 'PAID'] } } });
   if (!deal) return;
   // The status is the invariant, not the version: a concurrent edit that only bumped `version`
   // must not leave a paid customer with an unapplied deal row.
-  const changed = await tx.packageChangeRequest.updateMany({ where: { id: deal.id, kind: 'SALES_DEAL', status: { in: ['APPROVED', 'EXPIRED'] } },
+  const changed = await tx.packageChangeRequest.updateMany({ where: { id: deal.id, kind: 'SALES_DEAL', status: { in: ['APPROVED', 'EXPIRED', 'PAID'] },
+      ...(deal.status === 'PAID' ? { paymentRef: input.invoiceId } : {}) },
     data: { status: 'APPLIED', paymentState: input.deal.cadence ? 'STRIPE_SUBSCRIPTION' : 'STRIPE_ONE_TIME',
       paymentRef: input.invoiceId, amountSatang: input.priceSatang,
       // `verifiedAt` is when Stripe took the money; `decidedAt` is when the term opened. The two
@@ -79,7 +80,16 @@ export async function applyDealRequest(tx: Prisma.TransactionClient, input: { co
   if (changed.count !== 1) return;
   // D-P3-2: null leaves the platform default in place; zero is refused when the deal is written,
   // because closing AI is the `ai_line_assistant` menu, not a budget of nothing.
-  if (input.deal.aiMonthlyBudgetSatang !== null) await tx.companyAiConfiguration.upsert({
+  if (input.deal.creditScope === 'CHAT' && !input.deal.cadence && !input.serviceEnd) {
+    throw new Error('one-time deal chat credit requires its paid service end');
+  }
+  if (input.deal.creditScope === 'CHAT') await tx.companyAiConfiguration.upsert({
+    where: { companyId: input.companyId },
+    create: { companyId: input.companyId, salesDealChatCreditSatang: input.deal.aiMonthlyBudgetSatang,
+      salesDealChatCreditEndsAt: input.deal.cadence ? null : input.serviceEnd },
+    update: { salesDealChatCreditSatang: input.deal.aiMonthlyBudgetSatang,
+      salesDealChatCreditEndsAt: input.deal.cadence ? null : input.serviceEnd } });
+  if (input.deal.creditScope !== 'CHAT' && input.deal.aiMonthlyBudgetSatang !== null) await tx.companyAiConfiguration.upsert({
     where: { companyId: input.companyId },
     create: { companyId: input.companyId, monthlyBudgetSatang: input.deal.aiMonthlyBudgetSatang },
     update: { monthlyBudgetSatang: input.deal.aiMonthlyBudgetSatang } });

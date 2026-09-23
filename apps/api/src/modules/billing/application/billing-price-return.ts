@@ -171,8 +171,9 @@ export class BillingPriceReturn {
     const state = await this.billing.settings();
     if (!state.policy || !state.revision || !deal.returnAt) return null;
     assertPolicyReady(state.policy);
-    const auto = autoRenewOf(dealSnapshot(deal.offerSnapshotJson));
-    const base = dealSnapshot(deal.offerSnapshotJson).base;
+    const dealOfferSnapshot = dealSnapshot(deal.offerSnapshotJson);
+    const auto = autoRenewOf(dealOfferSnapshot);
+    const base = dealOfferSnapshot.base;
     if (!auto.cadence) return null;
     const priceId = state.policy.priceIds[`${base}:${auto.cadence}`];
     if (!priceId) return null;
@@ -194,7 +195,8 @@ export class BillingPriceReturn {
       ...future, deal: undefined, repeat: undefined, restart: undefined, upgrade: undefined,
       oneTime: undefined, capacity: undefined, planChangeId: undefined, pendingChange: undefined,
       trialCarryover: undefined,
-      dealReturn: { dealRequestId: deal.id, returnAt: deal.returnAt.toISOString() },
+      dealReturn: { dealRequestId: deal.id, returnAt: deal.returnAt.toISOString(),
+        creditScope: dealOfferSnapshot.version === 4 ? 'CHAT' : 'TOTAL' },
       quote: { ...future.quote, offer: { ...offer, availability: 'AVAILABLE', reason: null },
         policyRevision: state.revision.id, ...quoteTotals(offer.priceSatang, state.policy.taxTreatment),
         taxTreatment: state.policy.taxTreatment!, consentRevision: state.policy.consentRevision,

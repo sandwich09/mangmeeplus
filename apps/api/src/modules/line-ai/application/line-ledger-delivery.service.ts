@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
-import { LINE_AI_CONTEXT_WINDOW_MINUTES } from '@watchdog-bms/contracts';
+import { LINE_AI_CONTEXT_WINDOW_MINUTES, type AiBudgetScope } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma, type LineLedgerDelivery } from '../../../generated/prisma/client';
 import type { LedgerEntry } from './line-ai-ledger.service';
@@ -8,7 +8,7 @@ import { parseOutcomeMessages, type LineReplyMessage } from '../infrastructure/l
 
 const LEASE_MS = 3 * 60_000;
 const TERMINAL = new Set(['ACCEPTED', 'REFUSED', 'PARKED']);
-export type LineLedgerCompletion = { status: string; refused: boolean; errorCode: string | null; replyPreview: string; toolCount: number; outcome?: 'followed_up' | 'refused'; reason?: string };
+export type LineLedgerCompletion = { status: string; refused: boolean; errorCode: string | null; replyPreview: string; toolCount: number; outcome?: 'followed_up' | 'refused'; reason?: string; budgetScope?: AiBudgetScope };
 export type LineLedgerClaim = { kind: 'prepare' | 'deliver' | 'terminal' | 'busy'; row: LineLedgerDelivery; token: string };
 
 export const lineLedgerDeliveryId = (entry: Pick<LedgerEntry, 'key' | 'id'>) => createHash('sha256').update(JSON.stringify([entry.key, entry.id])).digest('hex');

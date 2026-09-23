@@ -568,7 +568,9 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
       assert.equal(h.replies.length, 1);                                      // (5)
       const card = customerReplies(h.replies)[0];
       assert.match(card, /เครดิต AI ส่วนแชตของเดือนนี้หมดแล้วค่ะ/);
-      assert.match(card, /ขอเปลี่ยนแพ็กเกจ/);
+      assert.match(card, /ไม่เติมเครดิตแชตในเดือนนี้/);
+      assert.match(card, /ติดต่อเจ้าหน้าที่/);
+      assert.doesNotMatch(card, /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ/);
       assertNoMoneyFigure(card);
 
       // ── phase B: the same user sends a receipt picture ────────────────────

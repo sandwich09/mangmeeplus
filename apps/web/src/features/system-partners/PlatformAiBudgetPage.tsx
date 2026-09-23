@@ -92,8 +92,8 @@ export default function PlatformAiBudgetPage() {
 
         <div>
           <h1 className="text-xl font-semibold text-gray-900">เครดิต AI กลาง</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            บริษัทที่ไม่ได้ตั้งเครดิตเฉพาะจะใช้เครดิตเริ่มต้นนี้ ส่วนเพดานใช้จำกัดเครดิตที่ผู้ดูแลตั้งให้แต่ละบริษัท
+            <p className="text-sm text-gray-500 mt-1">
+            นี่คือเพดานเครดิต AI รวมที่ทุกช่องทางใช้ร่วมกัน แยกจากเพดานเครดิตแชต 80 credit ต่อเดือน; บริษัทที่ไม่ได้ตั้งเครดิตรวมเฉพาะจะใช้ค่าเริ่มต้นนี้
           </p>
         </div>
 
@@ -107,15 +107,15 @@ export default function PlatformAiBudgetPage() {
         ) : (
           <>
             <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-              <strong>ค่าที่ใช้อยู่:</strong> เครดิตเริ่มต้น {satangToBaht(budget.monthlyBudgetSatang)} ต่อเดือน
-              เพดาน {satangToBaht(budget.ceilingSatang)} ต่อบริษัท
+              <strong>ค่าที่ใช้อยู่:</strong> เครดิต AI รวมเริ่มต้น {satangToBaht(budget.monthlyBudgetSatang)} ต่อเดือน
+              เพดานรวม {satangToBaht(budget.ceilingSatang)} ต่อบริษัท
               การลดเพดานมีผลกับการตั้งเครดิตครั้งต่อไป เครดิตเฉพาะบริษัทที่ตั้งสูงไว้แล้วจะยังคงเดิม
             </div>
 
             <div className="rounded-lg border border-gray-200 bg-white px-5 py-4 space-y-4">
               <div>
                 <label className="block text-sm text-gray-600 mb-1" htmlFor="platform-ai-monthly-budget">
-                  เครดิตเริ่มต้นต่อเดือน (บาท) *
+                  เครดิต AI รวมเริ่มต้นต่อเดือน (บาท) *
                 </label>
                 <input
                   id="platform-ai-monthly-budget"
@@ -131,7 +131,7 @@ export default function PlatformAiBudgetPage() {
 
               <div>
                 <label className="block text-sm text-gray-600 mb-1" htmlFor="platform-ai-ceiling">
-                  เพดานเครดิตที่ตั้งให้แต่ละบริษัท (บาท) *
+                  เพดานเครดิต AI รวมที่ตั้งให้แต่ละบริษัท (บาท) *
                 </label>
                 <input
                   id="platform-ai-ceiling"

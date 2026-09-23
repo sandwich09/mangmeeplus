@@ -1,4 +1,4 @@
-import { FEATURE_CATALOG, MENU_ENTITLEMENT_BINDINGS, type BillingPurchaseMode, type BillingStatus } from '@watchdog-bms/contracts';
+import { DEFAULT_CHAT_CREDIT_SATANG, FEATURE_CATALOG, MENU_ENTITLEMENT_BINDINGS, type BillingPurchaseMode, type BillingStatus } from '@watchdog-bms/contracts';
 
 /**
  * The sales team's ข้อเสนอพิเศษ on the customer's package page (spec §19.2 R10, §12 "หน้าแพ็กเกจ").
@@ -100,10 +100,10 @@ export function dealMenuLabels(featureKeys: readonly string[] | null | undefined
   return keys.has('ai_line_assistant') ? [AI_ASSISTANT_LABEL, ...menus] : menus;
 }
 
-/** D-P3-2: empty = the package default, ≥ 1 บาท = that budget. A legacy 0 still means AI closed. */
-export function dealAiCreditText(satang: number | null | undefined): string {
-  if (satang === null || satang === undefined) return 'ใช้ค่าเริ่มต้นของแพ็กเกจ';
+/** v4 = chat credits; old approved deals retain their TOTAL-budget wording. */
+export function dealAiCreditText(satang: number | null | undefined, scope: 'CHAT' | 'TOTAL' = 'TOTAL'): string {
+  if (scope === 'CHAT') return `${((satang ?? DEFAULT_CHAT_CREDIT_SATANG) / 100).toLocaleString('th-TH')} credit / เดือน`;
+  if (satang === null || satang === undefined) return 'ใช้เพดาน AI รวมของระบบ';
   if (satang <= 0) return 'ปิดการใช้งาน AI';
   return `${(satang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท / เดือน`;
 }
-

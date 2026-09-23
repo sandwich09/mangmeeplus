@@ -61,10 +61,12 @@ it('names the menus and the AI credit the customer is buying', () => {
   assert.deepEqual(dealMenuLabels(['thai_tax']), ['ภาษี (ภ.ง.ด.53 และ 50 ทวิ)']);
   assert.equal(dealMenuLabels(['thai_tax']).includes('ภาษี'), false);
 
-  assert.equal(dealAiCreditText(null), 'ใช้ค่าเริ่มต้นของแพ็กเกจ');
-  assert.equal(dealAiCreditText(undefined), 'ใช้ค่าเริ่มต้นของแพ็กเกจ');
+  assert.equal(dealAiCreditText(null), 'ใช้เพดาน AI รวมของระบบ');
+  assert.equal(dealAiCreditText(undefined), 'ใช้เพดาน AI รวมของระบบ');
   assert.equal(dealAiCreditText(0), 'ปิดการใช้งาน AI');
   assert.equal(dealAiCreditText(80_000), '800.00 บาท / เดือน');
+  assert.equal(dealAiCreditText(null, 'CHAT'), '80 credit / เดือน');
+  assert.equal(dealAiCreditText(12_000, 'CHAT'), '120 credit / เดือน');
 });
 
 

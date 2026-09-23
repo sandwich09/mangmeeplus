@@ -8,7 +8,7 @@
  * caller supplies the already-read configuration row, the effective total `T` it resolved, and the
  * PINNED Bangkok month; this file only decides.
  */
-import type { PartnerAiBudgetPolicyDto } from '@watchdog-bms/contracts';
+import { DEFAULT_CHAT_CREDIT_SATANG, type PartnerAiBudgetPolicyDto } from '@watchdog-bms/contracts';
 import { bangkokMonthKey } from './company-ai-usage-meter';
 
 export type AiBudgetMode = 'SHARED' | 'SPLIT';
@@ -37,9 +37,14 @@ export type AiBudgetPendingPolicy = {
  * a fresh row does — the same tolerance `resolveEffectiveBudget` already gives a missing delegate.
  */
 export type CompanyAiBudgetPolicyRow = {
+  /** Explicit legacy/admin total override also defines the SHARED CHAT ceiling. */
+  monthlyBudgetSatang?: number | null;
   budgetMode?: string | null;
   chatMonthlyBudgetSatang?: number | null;
   ocrMonthlyBudgetSatang?: number | null;
+  /** New sales deals override the platform CHAT default without replacing admin settings. */
+  salesDealChatCreditSatang?: number | null;
+  salesDealChatCreditEndsAt?: Date | null;
   budgetConfigVersion?: number | null;
   pendingBudgetPolicy?: unknown;
 };
@@ -49,7 +54,7 @@ export type ResolvedAiBudgetPolicy = {
   mode: AiBudgetMode;
   totalSatang: number;
   override: boolean;
-  /** Under SHARED these are informational: `null` = not set, and neither cap is enforced. */
+  /** SHARED enforces the default or deal CHAT cap; OCR remains within the total. */
   chatCapSatang: number | null;
   ocrCapSatang: number | null;
   /** `PENDING_ACTIVATED` = the stored pending policy's month has arrived; the columns lag. */
@@ -127,6 +132,7 @@ export function resolveAiBudgetPolicy(input: {
   totalSatang: number;
   override: boolean;
   monthKey: string;
+  at?: Date;
 }): ResolvedAiBudgetPolicy {
   const row = input.row ?? {};
   const parsed = parsePendingBudgetPolicy(row.pendingBudgetPolicy);
@@ -136,6 +142,13 @@ export function resolveAiBudgetPolicy(input: {
   const effective = reached
     ? { mode: parsed.mode as string, chat: parsed.chatMonthlyBudgetSatang, ocr: parsed.ocrMonthlyBudgetSatang }
     : { mode: activeMode, chat: row.chatMonthlyBudgetSatang ?? null, ocr: row.ocrMonthlyBudgetSatang ?? null };
+
+  // SHARED's old split columns were informational. Enforcing an old 0 here would close a shop.
+  // Existing explicit TOTAL overrides were the operator's AI credit before CHAT had its own cap.
+  // Preserve that effective special allowance; new deals only replace the platform default.
+  const dealCreditLive = !row.salesDealChatCreditEndsAt || row.salesDealChatCreditEndsAt > (input.at ?? new Date());
+  const sharedChatCap = input.override ? input.totalSatang
+    : dealCreditLive ? row.salesDealChatCreditSatang ?? DEFAULT_CHAT_CREDIT_SATANG : DEFAULT_CHAT_CREDIT_SATANG;
 
   const base = {
     totalSatang: input.totalSatang,
@@ -149,10 +162,13 @@ export function resolveAiBudgetPolicy(input: {
   } as const;
 
   // Malformed stored state refuses before anything else: a row we cannot read is not a SHARED row.
-  if (parsed === null || !isMode(effective.mode) || !isCap(effective.chat) || !isCap(effective.ocr)) {
+  if (parsed === null || !isMode(effective.mode) || !isCap(effective.chat) || !isCap(effective.ocr)
+    || !isCap(row.salesDealChatCreditSatang ?? null)
+    || (row.salesDealChatCreditEndsAt != null && (!(row.salesDealChatCreditEndsAt instanceof Date)
+      || Number.isNaN(row.salesDealChatCreditEndsAt.getTime())))) {
     return { ...base, mode: 'SHARED', pending: null, invalidReason: 'POLICY_MALFORMED' };
   }
-  if (effective.mode === 'SHARED') return { ...base, mode: 'SHARED' };
+  if (effective.mode === 'SHARED') return { ...base, mode: 'SHARED', chatCapSatang: sharedChatCap };
 
   if (effective.chat === null || effective.ocr === null) {
     return { ...base, mode: 'SPLIT', invalidReason: 'SPLIT_CAPS_MISSING' };

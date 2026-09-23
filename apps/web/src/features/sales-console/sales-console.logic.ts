@@ -295,7 +295,7 @@ export function validateDealForm(values: SalesDealFormValues, options: { forSubm
     if (!budget.ok) errors.aiBudgetBaht = budget.message;
     // D-P3-2: the one writer of an AI budget in the system refuses 0 on purpose — switching AI off
     // is removing the AI menu, not funding it with nothing, and a 0 here would be refused at apply.
-    else if (budget.satang < 1) errors.aiBudgetBaht = 'เครดิต AI ต้องมากกว่า 0 บาท · ถ้าต้องการปิด AI ให้เอาเมนู AI ออกแทน';
+    else if (budget.satang < 1) errors.aiBudgetBaht = 'เครดิตแชตต้องมากกว่า 0 credit · ถ้าต้องการปิด AI ให้เอาเมนู AI ออกแทน';
   }
 
   const description = values.description.trim();
