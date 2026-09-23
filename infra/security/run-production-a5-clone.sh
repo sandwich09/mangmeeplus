@@ -750,7 +750,7 @@ else
 fi
 snapshot_arn="$(jq -er '.DBSnapshotArn' <<< "$snapshot")"
 snapshot_created_iso="$(jq -er '.SnapshotCreateTime' <<< "$snapshot")"
-snapshot_created_epoch="$(date -u -d "$snapshot_created_iso" +%s)"
+snapshot_created_epoch="$(python3 -c 'from datetime import datetime; import sys; print(int(datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")).timestamp()))' "$snapshot_created_iso")"
 now_epoch="$(date -u +%s)"
 [ "$snapshot_created_epoch" -le "$now_epoch" ] && [ $((now_epoch-snapshot_created_epoch)) -le 129600 ]
 
