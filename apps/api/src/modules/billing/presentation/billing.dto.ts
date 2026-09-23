@@ -132,6 +132,10 @@ export class BillingRefundDto extends BillingEventPreviewDto {
   @IsInt() @Min(1) amountSatang!: number;
   @IsString() @MaxLength(500) memo!: string;
   @IsBoolean() notifyCustomer!: boolean;
+  @IsOptional() @IsBoolean() endPackage?: boolean;
+}
+export class BillingEndPackageDto {
+  @IsString() @MinLength(1) @MaxLength(500) reason!: string;
 }
 export class BillingBatchDto {
   // Existing reconcileBatchInput validates every nested field and rejects unknown keys.

@@ -6,7 +6,7 @@ import { BillingCheckoutExpiryService } from '../application/billing-checkout-ex
 import { BillingBatchesService } from '../application/billing-batches.service';
 import { BillingSettlementService } from '../application/billing-settlement.service';
 import type { BillingSupportOutcomeKind } from '@watchdog-bms/contracts';
-import { BillingPlanAdjustmentDto, BillingReceiptAdjustmentDto, BillingRefundDto, BillingBatchDto, BillingTimelineExportDto, BillingEmptyDto, BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
+import { BillingEndPackageDto, BillingPlanAdjustmentDto, BillingReceiptAdjustmentDto, BillingRefundDto, BillingBatchDto, BillingTimelineExportDto, BillingEmptyDto, BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
 import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, HttpException, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import type { BillingCheckoutBody, BillingConfigurationInput, BillingConfigurationDraftInput, BillingPurchaseMode } from '@watchdog-bms/contracts';
@@ -147,6 +147,14 @@ export class BillingAdminController {
   @Post('companies/:id/invoices/:invoiceId/refund-preview') @HttpCode(200) @RequirePermissions('system.billing.refund.manage') @Header('Cache-Control','no-store')
   async refundPreview(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Body() body:BillingRefundDto){
     await this.operationLimit(req);return this.refunds.preview(req.context,textField(companyId,128),uuid(invoiceId),body as BillingRefundInput);
+  }
+  @Get('companies/:id/invoices/:invoiceId/end-package') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  endPackageReview(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Query() query:unknown){
+    bodyFields(query,[]);return this.refunds.endPackageReview(req.context,textField(companyId,128),uuid(invoiceId));
+  }
+  @Post('companies/:id/invoices/:invoiceId/end-package') @HttpCode(200) @RequirePermissions('system.billing.refund.manage') @Header('Cache-Control','no-store')
+  async endPackage(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Body() body:BillingEndPackageDto){
+    const fields=bodyFields(body,['reason']);await this.operationLimit(req);return this.refunds.endPackage(req.context,textField(companyId,128),uuid(invoiceId),textField(fields.reason,500));
   }
   @Get('companies/:id/invoices/:invoiceId/refund-requests') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   async refundRequests(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Query() query:unknown){
