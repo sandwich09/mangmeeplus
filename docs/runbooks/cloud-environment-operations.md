@@ -10,16 +10,16 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## Current UAT Kamal — 2026-09-22 11:11 UTC
+## Current UAT Kamal — 2026-09-23 01:37 UTC
 
-Main source `d67d69d3ca2224bcbc7f7e6c070bd9d5cba3f18b` is serving all three UAT services after Kamal
-operation `20260922T110739Z-ed3c91e5`, terminal `ACCEPTED_LINE_DEFERRED` in 230.119 seconds.
-All 11 phases passed: exact source/config/image readback, API/DB, AI Gateway, Workers/Redis/internal
-API, customer `OPEN`, build retirement, and KMS ECDSA signature verification. AgentCore
-`kamal_uat_b` version 22 is pinned to the same source. The owner-authorized UAT smoke passed all
-service config/readiness plus public `/api/v1/auth/platform-access` and `/login`; public readback is
-`OPEN`. Live LINE acceptance remains `DEFERRED_BY_OWNER`. GitHub UAT/READY/Production workflow IDs are
-`NOT_DISPATCHED` because this is the local Kamal release path.
+Main source `abd2b4a37da242669a04a6e5a4506e0caf2e95a9` is serving all three UAT services after Kamal
+operation `20260923T013213Z-a576cd15`, terminal `ACCEPTED_LINE_DEFERRED` in 323.562 seconds.
+All 12 phases passed: exact prepared source/config/image readback, provider preparation, safe pending
+migrations, API/DB, AI Gateway, Workers/Redis/internal API, native rollout, public customer `OPEN`,
+build retirement, and KMS ECDSA signature verification. The owner-authorized UAT smoke passed all
+service config/readiness plus public `/api/v1/auth/platform-access` and `/login`; live LINE acceptance
+remains `DEFERRED_BY_OWNER`. The operation terminated both controller-owned SSM sessions. GitHub
+UAT/READY/Production workflow IDs are `NOT_DISPATCHED` because this is the local Kamal release path.
 
 The durable UAT target now retains its enrolled EC2 identities: API `i-0eb581c5ac3b3d7ba` at private
 `10.92.0.10`, and AI/workers `i-011918b0d49534d1c` at private `10.92.0.42`. Explicit reconciliation
