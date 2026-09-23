@@ -1,6 +1,6 @@
 'use client';
 import type { ReactNode } from 'react';
-import { billingPlanLabel, type SalesAgentCredentialHandoff, type SalesCompanySearchItem, type SalesDealView } from '@watchdog-bms/contracts';
+import { billingPlanLabel, DEFAULT_CHAT_CREDIT_SATANG, type SalesAgentCredentialHandoff, type SalesCompanySearchItem, type SalesDealView } from '@watchdog-bms/contracts';
 import { MangmeeBadge, MangmeeCard } from '@/common/components/mangmee';
 import { formatThaiDate, formatThaiDateTime } from '@/common/i18n/thai-date';
 import {
@@ -78,10 +78,12 @@ export function SalesDealSummary({ deal }: { deal: SalesDealView }) {
       <div><dt className="text-xs font-semibold text-gray-500">ผู้ใช้</dt><dd className="font-bold text-gray-900">{snapshot.employeeLimit}</dd></div>
       <div><dt className="text-xs font-semibold text-gray-500">ใบเสร็จต่อเดือน</dt><dd className="font-bold text-gray-900">{snapshot.monthlySlipLimit}</dd></div>
       <div className="col-span-2 sm:col-span-3">
-        <dt className="text-xs font-semibold text-gray-500">เครดิต AI ต่อเดือน</dt>
+        <dt className="text-xs font-semibold text-gray-500">{snapshot.version === 4 ? 'เครดิตแชตต่อเดือน' : 'เพดาน AI รวมต่อเดือน'}</dt>
         <dd className="font-bold text-gray-900">
-          {snapshot.aiMonthlyBudgetSatang === null ? 'ใช้ค่าเริ่มต้นของแพ็กเกจ'
-            : snapshot.aiMonthlyBudgetSatang === 0 ? 'ปิดการใช้ AI' : formatBaht(snapshot.aiMonthlyBudgetSatang)}
+          {snapshot.version === 4
+            ? `${((snapshot.aiMonthlyBudgetSatang ?? DEFAULT_CHAT_CREDIT_SATANG) / 100).toLocaleString('th-TH')} credit`
+            : snapshot.aiMonthlyBudgetSatang === null ? 'ใช้เพดาน AI รวมของระบบ'
+              : snapshot.aiMonthlyBudgetSatang === 0 ? 'ปิดการใช้ AI' : formatBaht(snapshot.aiMonthlyBudgetSatang)}
         </dd>
       </div>
       {snapshot.description && (

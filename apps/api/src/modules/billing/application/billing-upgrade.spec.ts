@@ -88,6 +88,28 @@ test('mixed monthly/annual purchases keep each paid price through successive upg
   await assert.rejects(upgradeHistory(db,account,billingOffer('PRO_999','year'),BILLING_DRAFT_POLICY,new Date(+at+1000).toISOString()));
 });
 
+test('a later upgrade prices stacked STARTER and full-price BASIC segments separately', async () => {
+  const start = new Date('2026-09-23T00:00:00Z'), firstEnd = new Date('2026-10-23T00:00:00Z');
+  const end = new Date('2026-11-23T00:00:00Z'), at = new Date(start.getTime() + 60_000);
+  const starter = billingOffer('STARTER_249', 'month'), basic = billingOffer('BASIC_499', 'month');
+  const grants = [
+    { id: 'starter', kind: 'INITIAL', sourceKey: 'starter', units: 30, serviceStart: start, serviceEnd: firstEnd, availableAt: start, expiresAt: end, revokedAt: null, sourceHash: 'starter' },
+    { id: 'basic', kind: 'REPEAT', sourceKey: 'basic', units: 50, serviceStart: firstEnd, serviceEnd: end, availableAt: at, expiresAt: end, revokedAt: null, sourceHash: 'basic' },
+  ];
+  const invoices = grants.map((grant, index) => ({ id: grant.id, appliedAt: at, applyStatus: 'APPLIED', providerStatus: 'paid',
+    paidSatang: index ? 49900 : 24900, totalSatang: index ? 49900 : 24900, refundedSatang: 0, disputed: false,
+    evidenceHash: grant.id, periodStart: grant.serviceStart, periodEnd: grant.serviceEnd,
+    contractSnapshot: { quote: { offer: index ? basic : starter }, policy: BILLING_DRAFT_POLICY } }));
+  const db: any = { billingReceiptGrant: { findMany: async () => grants }, billingInvoice: { findMany: async () => invoices },
+    billingOperation: { findMany: async () => [] } };
+  const result = await upgradeHistory(db, { id: 'account', companyId: 'company', baseSubscriptionId: null, paidThrough: end } as any,
+    billingOffer('PRO_999', 'month'), BILLING_DRAFT_POLICY, at.toISOString());
+  assert.deepEqual(result.segments.map(segment => segment.oldOffer.offerKey), ['STARTER_249', 'BASIC_499']);
+  assert.equal(result.segments[0]!.amountSatang, proratedPackagePrice(24900, 99900, start, firstEnd, at));
+  assert.equal(result.segments[1]!.amountSatang, 50000);
+  assert.equal(result.segments[1]!.receiptUnitsAdded, 50);
+});
+
 
 test('zero-valued cadence invoices are recognized only when the completed journal recorded them', async () => {
   const start=Date.parse('2026-01-16Z')/1000,end=Date.parse('2027-01-16Z')/1000;

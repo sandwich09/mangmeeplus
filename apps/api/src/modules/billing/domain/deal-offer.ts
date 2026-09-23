@@ -14,6 +14,8 @@ import { billingError, configurationHash } from './billing-policy';
 /** What the quote pins into `BillingSnapshot.deal`; the apply reads it back without a second lookup. */
 export type DealSource = { requestId: string; snapshotHash: string; months: number; salesUserId: string;
   aiMonthlyBudgetSatang: number | null;
+  /** v2/v3 = TOTAL; v4 = CHAT. Absent on old pinned invoices means TOTAL. */
+  creditScope?: 'CHAT' | 'TOTAL';
   /** D-P5-1: the cycle an auto-renewing deal bills on; absent on every one-time deal. The apply
    *  credits the agent with ONE cycle, not `months`, which an auto-renewing deal does not use. */
   cadence?: SalesDealCadence | null;
@@ -82,8 +84,8 @@ export function dealSnapshot(offerSnapshotJson: unknown): SalesDealSnapshot {
   // D-P5-1: v2 (one-time only) and v3 (auto-renew aware) are both live in the table. A v2 row
   // rebuilds as an explicit `autoRenew: false` deal; nothing rewrites the stored JSON, and the
   // pinned hash is taken from that untouched JSON, so re-reading an old row stays byte-stable.
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || (raw.version !== 2 && raw.version !== 3)) throw mismatch();
-  try { return buildDealSnapshot(raw); } catch (error) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || (raw.version !== 2 && raw.version !== 3 && raw.version !== 4)) throw mismatch();
+  try { return buildDealSnapshot(raw, raw.version); } catch (error) {
     if (error instanceof SalesSnapshotError) throw mismatch();
     throw error;
   }
@@ -105,6 +107,7 @@ export function assertDealSnapshot(row: DealRequestRow | null, companyId: string
   const auto = autoRenewOf(snapshot);
   if (pinned && (pinned.requestId !== row.id || pinned.salesUserId !== row.salesUserId || pinned.months !== snapshot.months ||
       pinned.aiMonthlyBudgetSatang !== snapshot.aiMonthlyBudgetSatang ||
+      (pinned.creditScope ?? 'TOTAL') !== (snapshot.version === 4 ? 'CHAT' : 'TOTAL') ||
       (pinned.cadence ?? null) !== auto.cadence || (pinned.cycles ?? null) !== auto.cycles ||
       pinned.snapshotHash !== dealSnapshotHash(row.offerSnapshotJson))) throw mismatch();
   return snapshot;

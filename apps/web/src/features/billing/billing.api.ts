@@ -21,8 +21,8 @@ export function billingApi(companyId: string) {
     history: (cursor?: string) => get<BillingHistory>(`${base}/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
     // `dealId` still sends the deal's base tier and 'month' — the API prices the offer from the
     // approved snapshot, never from this body (S36).
-    quote: (offerKey: string, interval: string, billingEmail: string, capacity?: BillingCapacitySelection, purchaseMode: BillingPurchaseMode = 'CARD_AUTO', dealId?: string) =>
-      post<BillingQuote>('/quote', { offerKey, interval, billingEmail, capacity, purchaseMode, ...(dealId ? { dealId } : {}) }),
+    quote: (offerKey: string, interval: string, billingEmail: string, capacity?: BillingCapacitySelection, purchaseMode: BillingPurchaseMode = 'CARD_AUTO', dealId?: string, purchaseIntent?: 'FULL_PACKAGE') =>
+      post<BillingQuote>('/quote', { offerKey, interval, billingEmail, capacity, purchaseMode, ...(dealId ? { dealId } : {}), ...(purchaseIntent ? { purchaseIntent } : {}) }),
     capacity: (offerKey: string, interval: string) => get<BillingCapacityOptions>(`${base}/capacity?offerKey=${encodeURIComponent(offerKey)}&interval=${encodeURIComponent(interval)}`),
     repairCapacity: (attemptId: string, expectedVersion: number, selection: BillingCapacitySelection, key: string) => post<{ operationId: string; queued: boolean }>(`/attempts/${encodeURIComponent(attemptId)}/capacity`, { expectedVersion, selection, accepted: true }, key),
     checkout: (body: BillingCheckoutBody, key: string) => post<BillingCheckoutResult>('/checkout', body, key),
@@ -39,4 +39,3 @@ export function billingApi(companyId: string) {
     document: (id: string, kind: 'invoice' | 'receipt' | 'pdf') => post<{ url: string }>(`/documents/${encodeURIComponent(id)}/open`, { kind }),
   };
 }
-

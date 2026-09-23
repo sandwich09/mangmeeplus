@@ -2,14 +2,14 @@ import { observedCollectionPause } from './billing-admin-collection';
 import { BillingPlanAdjustmentsService } from './billing-plan-adjustments.service';
 import { invoiceFindingSource } from './billing-invoice-finding';
 import { resolveAppliedInvoiceIssues, detectBillingIssue, resolveBillingIssue } from './billing-issues';
-import type { ScheduledChange } from './billing-schedule';
+import { sameScheduleTaxes, simpleCollection, type ScheduledChange } from './billing-schedule';
 import { PRICE_RETURN_TYPE } from './billing-price-return';
 import { BadRequestException, ConflictException, Injectable, Optional, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { STRIPE_API_VERSION } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
-import { Prisma, type BillingAccount, type BillingAttempt } from '../../../generated/prisma/client';
+import { Prisma, type BillingAccount, type BillingAttempt, type BillingOperation } from '../../../generated/prisma/client';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { PartnerLifecycleTransitionUseCase } from '../../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 import { StripeClient, stripeId, verifyStripeSignature, type StripeObject } from '../infrastructure/stripe.client';
@@ -21,7 +21,7 @@ import { restartFits, restartSource } from './billing-restart';
 import { observeBillingCharges, recordBillingFinancials } from './billing-financial';
 import { grantPaidPackageReceipts } from './billing-receipt-grants';
 import { grantTrialReceiptCarryover } from './billing-trial-carryover';
-import { fullPackagePurchaseImpact } from '../domain/billing-package';
+import { appendPackageInterval, fullPackagePurchaseImpact } from '../domain/billing-package';
 import { paidPackageCheckoutEvidence } from '../domain/paid-checkout-invoice';
 import { paidReceiptBalance } from './billing-receipt-grants';
 import { applyDealRequest, fulfillPaidPackageRequest, recordReferralAttribution, scheduleDealReturn, supersedeUnpaidDeal, supersedeUnpaidPackageRequest } from './billing-package-request';
@@ -33,6 +33,8 @@ import { upgradeHistory } from './billing-upgrade';
 import { pendingChange } from './billing-schedule';
 import { movePlanMenus, queuePlanMenuMove, retryPlanMenuMoves, type PlanMenuMove } from './billing-plan-menus';
 import { DEAL_SUBSCRIPTION_CANCEL_TYPE, queueDealSubscriptionCancel } from './billing-deal-subscription-cancel';
+import { dealSnapshotHash } from '../domain/deal-offer';
+import type { PaidCheckoutEvidence } from '../domain/paid-checkout-invoice';
 
 export const BILLING_STRIPE_EVENTS = new Set(['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded',
   'checkout.session.async_payment_failed', 'invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required', 'invoice.finalization_failed',
@@ -185,6 +187,7 @@ export class BillingReconcilerService {
 
   async reconcileAccount(accountId: string, hintedSubscriptionId?: string, financialChargeId?: string, onlyInvoiceId?: string): Promise<void> {
     const now = new Date(), leaseToken = randomUUID();
+    let nextReconcileAt: Date | null = null;
     const acquired = await this.prisma.client.billingAccount.updateMany({ where: { id: accountId, stripeAccountId: this.stripe.accountId, livemode: this.stripe.livemode,
       OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] }, data: { leaseToken, leaseUntil: new Date(now.getTime() + 120_000) } });
     if (!acquired.count) throw new Error('billing.reconciliation_busy');
@@ -233,8 +236,8 @@ export class BillingReconcilerService {
       // The old subscription belongs to a completed deal conversion, not to the current one-time
       // contract. Its delayed Stripe events must never reconcile it back onto this account.
       if (!account.baseSubscriptionId && hintedSubscriptionId && activeSnapshot?.subscriptionConversion?.subscriptionId === hintedSubscriptionId) return;
-      if (attempt && ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(activeSnapshot?.quote.purchaseMode ?? '')) {
-        await this.reconcileOneTime(account, attempt, leaseToken);
+      if (attempt && (activeSnapshot?.advanceDeal || ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(activeSnapshot?.quote.purchaseMode ?? ''))) {
+        nextReconcileAt = await this.reconcileOneTime(account, attempt, leaseToken) ?? null;
         return;
       }
       const restart = attempt ? (attempt.quoteSnapshot as unknown as BillingSnapshot).restart : undefined;
@@ -302,7 +305,7 @@ export class BillingReconcilerService {
       for (const invoice of invoices.filter((i) => i.status === 'paid').sort((a, b) => a.created - b.created)) {
         // A zero trial/credit invoice is never evidence of a successful card charge.
         if (invoice.total === 0) {
-          if (snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' && invoice.billing_reason === 'subscription_create' &&
+          if ((snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' || snapshot.advanceDeal) && invoice.billing_reason === 'subscription_create' &&
               invoice.status === 'paid' && invoice.amount_paid === 0 && invoice.livemode === account.livemode &&
               stripeId(invoice.customer) === account.customerId && stripeId(invoice.parent?.subscription_details?.subscription) === subscription.id)
             continue;
@@ -363,7 +366,8 @@ export class BillingReconcilerService {
       await this.prisma.client.billingIssue.updateMany({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode, referenceId: account.id, kind: 'RECONCILIATION_FAILED', state: { not: 'RESOLVED' } },
         data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
     } finally {
-      await this.prisma.client.billingAccount.updateMany({ where: { id: accountId, leaseToken }, data: { leaseToken: null, leaseUntil: null, nextReconcileAt: new Date(Date.now() + (onlyInvoiceId?0:300_000)) } });
+      await this.prisma.client.billingAccount.updateMany({ where: { id: accountId, leaseToken }, data: { leaseToken: null, leaseUntil: null,
+        nextReconcileAt: nextReconcileAt ?? new Date(Date.now() + (onlyInvoiceId ? 0 : 300_000)) } });
     }
   }
 
@@ -465,7 +469,8 @@ export class BillingReconcilerService {
     recordOnly?: (tx: Prisma.TransactionClient) => Promise<void>, originalSession?: StripeObject, originalInvoice?: StripeObject) {
     const snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
     const mode = snapshot.quote.purchaseMode;
-    if (!['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(mode ?? '') || !account.customerId || !snapshot.productId || snapshot.repeat)
+    if (!(snapshot.advanceDeal ? ['CARD_AUTO', 'PROMPTPAY_RENEW'].includes(mode ?? '') :
+        ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(mode ?? '')) || !account.customerId || !snapshot.productId || snapshot.repeat)
       throw new Error('billing.one_time_contract_missing');
     if ((snapshot.upgrade && !snapshot.oneTime) || (snapshot.oneTimeChange && (!snapshot.oneTime || snapshot.upgrade || mode === 'PROMPTPAY_RENEW')))
       throw new Error('billing.one_time_change_contract');
@@ -506,6 +511,9 @@ export class BillingReconcilerService {
       paymentMethod: mode?.startsWith('PROMPTPAY') ? 'promptpay' : 'card',
       checkoutLines: await this.stripe.list(`/checkout/sessions/${session.id}/line_items`, {}),
       invoiceLines: await this.stripe.list(`/invoices/${invoice.id}/lines`, {}) });
+    if (snapshot.advanceDeal) {
+      return this.reconcileAdvanceDeal(account, attempt, snapshot, evidence, intent, lease, recordOnly);
+    }
     const impact = snapshot.upgrade ? { serviceStartsAt: new Date(snapshot.upgrade.prorationAt), paidThrough: new Date(snapshot.oneTime!.paidThrough) } :
       fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval,
         offer: snapshot.quote.offer, verifiedPaidAt: evidence.paidAt,
@@ -568,7 +576,8 @@ export class BillingReconcilerService {
         (!snapshot.oneTime || (source?.periodEnd.toISOString() === snapshot.oneTime.paidThrough &&
           current.paidThrough?.toISOString() === snapshot.oneTime.paidThrough &&
           current.billingAnchorDay === snapshot.oneTime.anchorDay && !source.refundedSatang && !source.disputed &&
-          current.termProjectionHash === snapshot.termHash)) &&
+          current.termProjectionHash === snapshot.termHash &&
+          (snapshot.quote.purchase?.kind !== 'FULL_PACKAGE_UPGRADE' || evidence.paidAt < new Date(snapshot.oneTime.paidThrough)))) &&
         conversionReady &&
         (company.status === 'ACTIVE' || (company.status === 'DISABLED' && !!company.planTerm?.termDisabledAt));
       if (recordOnly || !sourceReady || !capacityReady || !upgradeReady || !featureReady || evidence.refundedSatang || evidence.disputed ||
@@ -648,8 +657,10 @@ export class BillingReconcilerService {
       // S13: the deal's own follow-ups share this transaction, so the row, the AI credit and the
       // attribution can never disagree with the term the same commit wrote.
       if (snapshot.deal) await applyDealRequest(tx, { companyId: company.id, invoiceId: row.id, deal: snapshot.deal,
-        priceSatang: snapshot.quote.offer.priceSatang, paidAt: evidence.paidAt });
+        priceSatang: snapshot.quote.offer.priceSatang, paidAt: evidence.paidAt, serviceEnd: impact.paidThrough });
       else {
+        if (!snapshot.oneTime) await tx.companyAiConfiguration.updateMany({ where: { companyId: company.id },
+          data: { salesDealChatCreditSatang: null, salesDealChatCreditEndsAt: null } });
         await supersedeUnpaidDeal(tx, company.id, row.id);
         // §17.2 counts first activations only: a top-up (`snapshot.oneTime`) appends to a term the
         // shop already paid for, so it is not the purchase that opened the shop.
@@ -673,6 +684,333 @@ export class BillingReconcilerService {
     if (cancellationOperationId) await this.billing.dealSubscriptionCancel.advance(
       await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } }), lease);
     if (mode === 'PROMPTPAY_RENEW' && !recordOnly) await this.bindPromptPayRenewal(account, attempt, snapshot, lease, impact.paidThrough);
+  }
+
+  /** First cycle is paid now, but the running one-time term remains authoritative until its end. */
+  private async reconcileAdvanceDeal(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot,
+    evidence: PaidCheckoutEvidence, intent: StripeObject, lease: string, recordOnly?: (tx: Prisma.TransactionClient) => Promise<void>) {
+    const source = snapshot.advanceDeal!, deal = snapshot.deal!;
+    const startsAt = new Date(source.paidThrough), endsAt = new Date(source.firstCycleEndsAt);
+    if (!deal?.cadence || !snapshot.featurePlan || !['CARD_AUTO', 'PROMPTPAY_RENEW'].includes(snapshot.quote.purchaseMode ?? '') ||
+        appendPackageInterval(startsAt, deal.cadence, source.anchorDay).getTime() !== endsAt.getTime())
+      throw new Error('billing.advance_deal_contract');
+    await this.prisma.client.$transaction(async tx => {
+      await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+      if (recordOnly) await recordOnly(tx);
+      const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+      const old = await tx.billingInvoice.findFirst({ where: { id: source.invoiceId, billingAccountId: account.id,
+        sourceAttemptId: source.contractAttemptId, providerStatus: 'paid', applyStatus: 'APPLIED', appliedAt: { not: null } } });
+      const existing = await tx.billingInvoice.findUnique({ where: { sourceAttemptId: attempt.id } });
+      if (existing && (existing.providerInvoiceId !== evidence.invoiceId || existing.evidenceHash !== evidence.evidenceHash))
+        throw new Error('billing.advance_deal_evidence_changed');
+      const invoice = await tx.billingInvoice.upsert({ where: { sourceAttemptId: attempt.id },
+        update: { feeSatang: evidence.feeSatang }, create: { billingAccountId: account.id, sourceAttemptId: attempt.id,
+          providerInvoiceId: evidence.invoiceId, subscriptionId: null, providerNumber: evidence.number,
+          offerSnapshot: snapshot.quote.offer as unknown as Prisma.InputJsonValue, contractSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+          policyRevisionId: attempt.policyRevisionId, currency: 'THB', totalSatang: evidence.totalSatang, paidSatang: evidence.totalSatang,
+          taxSatang: evidence.taxSatang, refundedSatang: evidence.refundedSatang, disputed: evidence.disputed,
+          financialObservedAt: new Date(), feeSatang: evidence.feeSatang, providerChargeId: evidence.chargeId,
+          periodStart: startsAt, periodEnd: endsAt, providerStatus: 'paid', evidenceHash: evidence.evidenceHash } });
+      await recordBillingFinancials(tx, account, invoice, { refundedSatang: evidence.refundedSatang, disputed: evidence.disputed });
+      if (invoice.appliedAt) return;
+      const company = await tx.company.findUniqueOrThrow({ where: { id: account.companyId }, include: { planTerm: true } });
+      const dealRow = await tx.packageChangeRequest.findFirst({ where: { id: deal.requestId, companyId: account.companyId, kind: 'SALES_DEAL' } });
+      const ready = !recordOnly && current.activeAttemptId === attempt.id && !current.baseSubscriptionId &&
+        ['CARD_ONCE', 'PROMPTPAY_ONCE'].includes(current.renewalMode) && current.contractAttemptId === source.contractAttemptId &&
+        current.paidThrough?.getTime() === startsAt.getTime() && current.billingAnchorDay === source.anchorDay &&
+        current.termProjectionHash === snapshot.termHash && !current.pendingPlanChangeId &&
+        old?.periodEnd.getTime() === startsAt.getTime() && !old.refundedSatang && !old.disputed &&
+        termProjectionHash(company.planTerm) === snapshot.termHash &&
+        (company.status === 'ACTIVE' || (company.status === 'DISABLED' && !!company.planTerm?.termDisabledAt)) &&
+        dealRow && ['APPROVED', 'EXPIRED', 'PAID'].includes(dealRow.status) &&
+        dealSnapshotHash(dealRow.offerSnapshotJson) === deal.snapshotHash &&
+        (dealRow.status !== 'PAID' || dealRow.paymentRef === invoice.id);
+      if (!ready || evidence.refundedSatang || evidence.disputed || endsAt <= new Date()) {
+        await tx.billingInvoice.update({ where: { id: invoice.id }, data: { applyStatus: 'HELD', errorCode: 'access_review_required' } });
+        await detectBillingIssue(tx, { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
+          livemode: account.livemode, kind: 'PAID_HELD', referenceId: invoice.id });
+        return;
+      }
+      if (dealRow!.status !== 'PAID') await tx.packageChangeRequest.update({ where: { id: dealRow!.id }, data: {
+        status: 'PAID', paymentState: 'STRIPE_ONE_TIME', paymentRef: invoice.id, amountSatang: snapshot.quote.offer.priceSatang,
+        verifiedAt: evidence.paidAt, version: { increment: 1 } } });
+      await tx.billingOperation.upsert({ where: { stripeAccountId_livemode_idempotencyKey: {
+        stripeAccountId: account.stripeAccountId, livemode: account.livemode, idempotencyKey: `advance-deal:${attempt.id}` } },
+        update: {}, create: { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
+          type: 'CUSTOMER_ADVANCE_RENEWING_DEAL', state: 'PAID', referenceId: attempt.id, sourceVersion: current.version,
+          proposedJson: { accountId: account.id, invoiceId: invoice.id, oldInvoiceId: old!.id,
+            startsAt: source.paidThrough, firstCycleEndsAt: source.firstCycleEndsAt,
+            snapshot: snapshot as unknown as Prisma.InputJsonValue },
+          reason: 'paid_deal_waiting_for_old_term', initiatorUserId: attempt.initiatingUserId,
+          idempotencyKey: `advance-deal:${attempt.id}`, requestHash: hashBilling([attempt.id, invoice.id, source, deal]),
+          expiresAt: endsAt, scheduledFor: startsAt, observedAt: new Date() } });
+      await tx.billingAttempt.update({ where: { id: attempt.id }, data: { status: 'COMPLETED', errorCode: null,
+        checkoutSessionId: evidence.checkoutSessionId } });
+    });
+    if (recordOnly) return;
+    const row = await this.prisma.client.billingInvoice.findUnique({ where: { sourceAttemptId: attempt.id } });
+    const operation = await this.prisma.client.billingOperation.findUnique({ where: { stripeAccountId_livemode_idempotencyKey: {
+      stripeAccountId: account.stripeAccountId, livemode: account.livemode, idempotencyKey: `advance-deal:${attempt.id}` } } });
+    if (!row || !operation || operation.state === 'APPLIED') return;
+    if (row.refundedSatang || row.disputed) {
+      await this.cancelAdvanceDeal(account, operation, attempt, lease);
+      return;
+    }
+    if (row.applyStatus === 'HELD') {
+      if (operation.state === 'PAID') await this.stopAdvanceSubscription(account, operation, attempt);
+      return;
+    }
+    if (operation.state === 'BLOCKED') {
+      await this.stopAdvanceSubscription(account, operation, attempt);
+      return;
+    }
+    if (operation.state !== 'PAID') return;
+    // Stripe limits trial_end to two years from the billing anchor. A stacked one-time term can
+    // extend beyond that window; keep the paid operation reserved and bind when it enters range.
+    const bindAt = new Date(endsAt);
+    bindAt.setUTCFullYear(bindAt.getUTCFullYear() - 2);
+    bindAt.setUTCDate(bindAt.getUTCDate() + 2);
+    if (bindAt > new Date()) return bindAt;
+    const subscription = await this.bindAdvanceDeal(account, attempt, snapshot, intent, operation, lease);
+    if (new Date() >= startsAt) await this.activateAdvanceDeal(account, attempt, snapshot, row.id, operation.id, subscription, lease);
+  }
+
+  private async bindAdvanceDeal(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot,
+    intent: StripeObject, operation: BillingOperation, lease: string): Promise<StripeObject> {
+    const firstCycleEndsAt = new Date(snapshot.advanceDeal!.firstCycleEndsAt);
+    const card = snapshot.quote.purchaseMode === 'CARD_AUTO';
+    let paymentMethodId: string | null = null;
+    if (card) {
+      paymentMethodId = stripeId(intent.payment_method);
+      const method = paymentMethodId ? await this.stripe.request('GET', `/payment_methods/${paymentMethodId}`) : null;
+      if (intent.setup_future_usage !== 'off_session' || !method || method.object !== 'payment_method' ||
+          method.type !== 'card' || stripeId(method.customer) !== account.customerId)
+        throw new Error('billing.advance_deal_card_not_saved');
+    }
+    const siblings = await this.stripe.list('/subscriptions', { customer: account.customerId, status: 'all' });
+    const bound = siblings.filter(sub => sub.metadata?.billingAttemptId === attempt.id && sub.metadata?.billingAccountId === account.id);
+    if (bound.length > 1 || siblings.some(sub => !['canceled', 'incomplete_expired'].includes(sub.status) && !bound.some(own => own.id === sub.id)))
+      throw new Error('billing.advance_deal_duplicate_subscription');
+    let subscription = bound[0];
+    const result = (operation.resultJson ?? {}) as { subscriptionId?: string };
+    if (result.subscriptionId && subscription?.id !== result.subscriptionId)
+      throw new Error('billing.advance_deal_subscription_changed');
+    if (!subscription) {
+      const journal = (attempt.collectionJson ?? {}) as Record<string, unknown>;
+      const requestedAt = typeof journal.advanceSubscriptionRequestedAt === 'string' ? Date.parse(journal.advanceSubscriptionRequestedAt) : null;
+      if (requestedAt !== null && (!Number.isFinite(requestedAt) || Date.now() - requestedAt > 23 * 3600000))
+        throw new Error('billing.advance_deal_subscription_unknown');
+      if (firstCycleEndsAt.getTime() <= Date.now() + 3600000) throw new Error('billing.advance_deal_renewal_boundary');
+      if (requestedAt === null) await this.prisma.client.$transaction(async tx => {
+        await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+        const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+        if (current.activeAttemptId !== attempt.id || current.baseSubscriptionId) throw new Error('billing.advance_deal_source_changed');
+        await tx.billingAttempt.update({ where: { id: attempt.id }, data: {
+          collectionJson: { ...journal, advanceSubscriptionRequestedAt: new Date().toISOString() } as Prisma.InputJsonValue } });
+      });
+      subscription = await this.stripe.request('POST', '/subscriptions', {
+        customer: account.customerId, collection_method: card ? 'charge_automatically' : 'send_invoice',
+        ...(card ? { default_payment_method: paymentMethodId,
+          payment_settings: { payment_method_types: ['card'] } } : {
+          days_until_due: 7, payment_settings: { payment_method_types: ['promptpay'] } }),
+        items: [{ price: snapshot.priceId, quantity: 1,
+          ...(snapshot.policy.taxRateId ? { tax_rates: [snapshot.policy.taxRateId] } : {}) }],
+        trial_end: Math.floor(firstCycleEndsAt.getTime() / 1000), billing_mode: { type: 'classic' },
+        trial_settings: { end_behavior: { missing_payment_method: card ? 'cancel' : 'create_invoice' } },
+        metadata: { billingAttemptId: attempt.id, billingAccountId: account.id, advanceDeal: 'true' },
+      }, `mm:${attempt.id}:advance-renewal`);
+    }
+    if (subscription.object !== 'subscription' || subscription.livemode !== account.livemode ||
+        stripeId(subscription.customer) !== account.customerId || subscription.metadata?.billingAttemptId !== attempt.id ||
+        subscription.metadata?.billingAccountId !== account.id || subscription.metadata?.advanceDeal !== 'true' ||
+        subscription.collection_method !== (card ? 'charge_automatically' : 'send_invoice') ||
+        subscription.billing_mode?.type !== 'classic' ||
+        !simpleCollection(card ? subscription : { ...subscription, collection_method: 'charge_automatically' }) ||
+        !['trialing', 'active'].includes(subscription.status) ||
+        subscription.trial_end !== Math.floor(firstCycleEndsAt.getTime() / 1000) ||
+        subscription.items?.has_more || subscription.items?.data?.length !== 1 ||
+        stripeId(subscription.items.data[0].price) !== snapshot.priceId ||
+        subscription.items.data[0].quantity !== 1 || (subscription.items.data[0].discounts?.length ?? 0) ||
+        !sameScheduleTaxes(subscription.items.data[0].tax_rates, snapshot.policy.taxRateId) ||
+        subscription.payment_settings?.payment_method_types?.length !== 1 ||
+        subscription.payment_settings.payment_method_types[0] !== (card ? 'card' : 'promptpay') ||
+        (card && stripeId(subscription.default_payment_method) !== paymentMethodId)) {
+      await this.stopAdvanceSubscription(account, operation, attempt);
+      await this.holdAdvanceBinding(account, operation, attempt, lease, 'subscription_binding');
+      throw new Error('billing.advance_deal_subscription_binding');
+    }
+    const invoices = await this.stripe.list('/invoices', { subscription: subscription.id });
+    if (invoices.some(i => i.livemode !== account.livemode || stripeId(i.customer) !== account.customerId ||
+        stripeId(i.parent?.subscription_details?.subscription) !== subscription.id ||
+        (i.created * 1000 < firstCycleEndsAt.getTime() && (i.total !== 0 || i.amount_paid !== 0)))) {
+      await this.stopAdvanceSubscription(account, operation, attempt);
+      await this.holdAdvanceBinding(account, operation, attempt, lease, 'early_invoice');
+      throw new Error('billing.advance_deal_early_invoice');
+    }
+    await this.prisma.client.$transaction(async tx => {
+      await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+      const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+      const paid = await tx.billingInvoice.findUnique({ where: { sourceAttemptId: attempt.id } });
+      if (current.activeAttemptId !== attempt.id || current.baseSubscriptionId || paid?.providerStatus !== 'paid' ||
+          paid.refundedSatang || paid.disputed || paid.applyStatus === 'HELD') throw new Error('billing.advance_deal_source_changed');
+      await tx.billingOperation.update({ where: { id: operation.id }, data: {
+        resultJson: { subscriptionId: subscription.id }, observedAt: new Date(), version: { increment: 1 } } });
+      await tx.billingAttempt.update({ where: { id: attempt.id }, data: { subscriptionId: subscription.id } });
+    });
+    return subscription;
+  }
+
+  private async holdAdvanceBinding(account: BillingAccount, operation: BillingOperation, attempt: BillingAttempt,
+    lease: string, reason: string) {
+    await this.prisma.client.$transaction(async tx => {
+      await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+      const invoice = await tx.billingInvoice.findUnique({ where: { sourceAttemptId: attempt.id } });
+      const current = await tx.billingOperation.findUnique({ where: { id: operation.id } });
+      if (!invoice || invoice.billingAccountId !== account.id || current?.state !== 'PAID' ||
+          current.companyId !== account.companyId || current.referenceId !== attempt.id)
+        throw new Error('billing.advance_deal_hold_source_changed');
+      await tx.billingInvoice.update({ where: { id: invoice.id }, data: { applyStatus: 'HELD', errorCode: reason } });
+      await tx.billingOperation.update({ where: { id: operation.id }, data: { state: 'BLOCKED', errorCode: reason,
+        observedAt: new Date(), version: { increment: 1 } } });
+      await detectBillingIssue(tx, { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
+        livemode: account.livemode, kind: 'PAID_HELD', referenceId: invoice.id });
+    });
+  }
+
+  private async stopAdvanceSubscription(account: BillingAccount, operation: BillingOperation, attempt: BillingAttempt) {
+    const boundId = (operation.resultJson as { subscriptionId?: string } | null)?.subscriptionId;
+    const owned = (await this.stripe.list('/subscriptions', { customer: account.customerId, status: 'all' }))
+      .filter(sub => sub.metadata?.billingAttemptId === attempt.id && sub.metadata?.billingAccountId === account.id);
+    if (owned.length > 1 || (boundId && owned[0]?.id !== boundId)) throw new Error('billing.advance_deal_cancel_binding');
+    const subscriptionId = owned[0]?.id;
+    if (subscriptionId) {
+      const subscription = await this.stripe.request('GET', `/subscriptions/${subscriptionId}`);
+      if (stripeId(subscription.customer) !== account.customerId || subscription.metadata?.billingAttemptId !== attempt.id ||
+          subscription.metadata?.billingAccountId !== account.id) throw new Error('billing.advance_deal_cancel_binding');
+      if (!['canceled', 'incomplete_expired'].includes(subscription.status))
+        await this.stripe.request('DELETE', `/subscriptions/${subscriptionId}`, { invoice_now: false, prorate: false },
+          `mm:${attempt.id}:advance-stop`);
+      const stopped = await this.stripe.request('GET', `/subscriptions/${subscriptionId}`);
+      if (!['canceled', 'incomplete_expired'].includes(stopped.status)) throw new Error('billing.advance_deal_cancel_unconfirmed');
+    }
+    return subscriptionId;
+  }
+
+  private async cancelAdvanceDeal(account: BillingAccount, operation: BillingOperation, attempt: BillingAttempt, lease: string) {
+    const subscriptionId = await this.stopAdvanceSubscription(account, operation, attempt);
+    await this.prisma.client.$transaction(async tx => {
+      await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+      const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+      const paid = await tx.billingInvoice.findUnique({ where: { sourceAttemptId: attempt.id } });
+      if (current.activeAttemptId !== attempt.id || current.baseSubscriptionId || !paid ||
+          (!paid.refundedSatang && !paid.disputed)) throw new Error('billing.advance_deal_refund_changed');
+      await tx.billingOperation.update({ where: { id: operation.id }, data: { state: 'CANCELLED', errorCode: 'payment_reversed',
+        observedAt: new Date(), version: { increment: 1 } } });
+      await tx.billingInvoice.update({ where: { id: paid.id }, data: { applyStatus: 'HELD', errorCode: 'payment_reversed' } });
+      await tx.packageChangeRequest.updateMany({ where: { id: attempt.dealRequestId ?? '', companyId: account.companyId,
+        kind: 'SALES_DEAL', status: 'PAID', paymentRef: paid.id }, data: { status: 'CANCELLED', version: { increment: 1 } } });
+      await tx.billingAccount.update({ where: { id: account.id }, data: { activeAttemptId: null, observedAt: new Date(), version: { increment: 1 } } });
+      await tx.auditLog.create({ data: { companyId: account.companyId, action: 'billing.advance_deal.cancelled',
+        targetType: 'BillingOperation', targetId: operation.id, requestId: operation.id, result: 'SUCCESS', riskLevel: 'CRITICAL',
+        metadataJson: { invoiceId: paid.id, subscriptionId: subscriptionId ?? null, reason: 'payment_reversed' } } });
+    });
+  }
+
+  private async activateAdvanceDeal(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot,
+    invoiceId: string, operationId: string, subscription: StripeObject, lease: string) {
+    const advance = snapshot.advanceDeal!, startsAt = new Date(advance.paidThrough), endsAt = new Date(advance.firstCycleEndsAt);
+    if (subscription.status !== 'trialing' && subscription.status !== 'active') throw new Error('billing.advance_deal_subscription_inactive');
+    let disabledFeatures: string[] = [];
+    let move: PlanMenuMove | null = null;
+    await this.prisma.client.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${account.companyId}`}))`;
+      await tx.$executeRaw(exclusiveEntitlementLock(account.companyId));
+      await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
+      const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+      const operation = await tx.billingOperation.findUniqueOrThrow({ where: { id: operationId } });
+      if (operation.state === 'APPLIED') return;
+      const invoice = await tx.billingInvoice.findFirst({ where: { id: invoiceId, billingAccountId: account.id,
+        sourceAttemptId: attempt.id, providerStatus: 'paid' } });
+      const old = await tx.billingInvoice.findFirst({ where: { id: advance.invoiceId, billingAccountId: account.id,
+        sourceAttemptId: advance.contractAttemptId, providerStatus: 'paid', applyStatus: 'APPLIED', appliedAt: { not: null } } });
+      const company = await tx.company.findUniqueOrThrow({ where: { id: account.companyId }, include: { planTerm: true } });
+      const paidDeal = await tx.packageChangeRequest.findUnique({ where: { id: snapshot.deal!.requestId } });
+      const sourceReady = current.activeAttemptId === attempt.id && !current.baseSubscriptionId && !current.pendingPlanChangeId &&
+        current.contractAttemptId === advance.contractAttemptId && current.paidThrough?.getTime() === startsAt.getTime() &&
+        current.billingAnchorDay === advance.anchorDay && current.termProjectionHash === snapshot.termHash &&
+        termProjectionHash(company.planTerm) === snapshot.termHash && old?.periodEnd.getTime() === startsAt.getTime() &&
+        !old.refundedSatang && !old.disputed && invoice?.periodStart.getTime() === startsAt.getTime() &&
+        invoice.periodEnd.getTime() === endsAt.getTime() && !invoice.refundedSatang && !invoice.disputed &&
+        invoice.applyStatus === 'PENDING' && !invoice.appliedAt && operation.state === 'PAID' &&
+        operation.companyId === account.companyId && operation.stripeAccountId === account.stripeAccountId &&
+        operation.livemode === account.livemode && operation.type === 'CUSTOMER_ADVANCE_RENEWING_DEAL' &&
+        operation.referenceId === attempt.id && paidDeal?.companyId === account.companyId && paidDeal.kind === 'SALES_DEAL' &&
+        paidDeal.status === 'PAID' && paidDeal.paymentRef === invoiceId &&
+        dealSnapshotHash(paidDeal.offerSnapshotJson) === snapshot.deal!.snapshotHash &&
+        (operation.resultJson as { subscriptionId?: string } | null)?.subscriptionId === subscription.id &&
+        company.planTerm && (company.status === 'ACTIVE' || (company.status === 'DISABLED' && !!company.planTerm.termDisabledAt));
+      if (!sourceReady) {
+        await tx.billingOperation.update({ where: { id: operation.id }, data: { state: 'BLOCKED',
+          errorCode: 'source_changed', observedAt: new Date(), version: { increment: 1 } } });
+        await detectBillingIssue(tx, { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
+          livemode: account.livemode, kind: 'PAID_HELD', referenceId: invoiceId });
+        return;
+      }
+      let featureReady = false;
+      try { featureReady = (await billingFeaturePlan(tx, account.companyId)).plan.sourceHash === snapshot.featurePlan!.sourceHash; }
+      catch (error) {
+        if (!(error instanceof ConflictException) || (error.getResponse() as { code?: string }).code !== 'BILLING_ENTITLEMENT_REVIEW_REQUIRED') throw error;
+      }
+      if (!featureReady) {
+        await tx.billingOperation.update({ where: { id: operation.id }, data: { state: 'BLOCKED',
+          errorCode: 'BILLING_ENTITLEMENT_REVIEW_REQUIRED', observedAt: new Date(), version: { increment: 1 } } });
+        await detectBillingIssue(tx, { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
+          livemode: account.livemode, kind: 'PAID_HELD', referenceId: invoiceId });
+        return;
+      }
+      disabledFeatures = await applyBillingFeaturePlan(tx, account.companyId, invoiceId, attempt.initiatingUserId, snapshot.featurePlan!);
+      const offer = snapshot.quote.offer;
+      const term = await tx.companyPlanTerm.update({ where: { companyId: account.companyId }, data: {
+        tierKey: offer.offerKey, branchLimit: offer.branchLimit, employeeLimit: offer.employeeLimit,
+        monthlySlipLimit: offer.monthlySlipLimit, termStartAt: startsAt, termEndsAt: endsAt,
+        termDisabledAt: null, warmupUntil: null, warmupSlipLimit: null, warn7SentAt: null, warn3SentAt: null,
+        warn1SentAt: null, expiredNotifiedAt: null, lastRenewedAt: new Date(), renewCount: { increment: 1 } } });
+      if (company.status === 'DISABLED' && company.planTerm?.termDisabledAt) await this.lifecycle.execute({ companyId: account.companyId,
+        targetStatus: 'ACTIVE', requestingAdminUserId: null, requestId: invoiceId,
+        reason: 'stripe_verified_advance_deal', }, tx);
+      await grantPaidPackageReceipts(tx, { companyId: account.companyId, billingAccountId: account.id, sourceKey: invoiceId,
+        policyRevisionId: attempt.policyRevisionId, kind: 'INITIAL', units: offer.receiptAllowance,
+        serviceStart: startsAt, serviceEnd: endsAt, availableAt: startsAt, expiresAt: endsAt });
+      await tx.billingSubscriptionContract.upsert({ where: { billingAccountId_sourceAttemptId: {
+        billingAccountId: account.id, sourceAttemptId: attempt.id } }, create: { billingAccountId: account.id,
+        sourceAttemptId: attempt.id, effectiveAt: endsAt, snapshotJson: snapshot as unknown as Prisma.InputJsonValue }, update: {} });
+      await tx.billingInvoice.update({ where: { id: invoiceId }, data: { applyStatus: 'APPLIED', appliedAt: new Date(), errorCode: null } });
+      await tx.billingOperation.update({ where: { id: operation.id }, data: { state: 'APPLIED', errorCode: null,
+        observedAt: new Date(), version: { increment: 1 } } });
+      await tx.billingAccount.update({ where: { id: account.id }, data: { paidThrough: endsAt, baseSubscriptionId: subscription.id,
+        contractAttemptId: attempt.id, activeAttemptId: null, subscriptionState: subscription.status,
+        renewalMode: snapshot.quote.purchaseMode!, billingAnchorDay: null, nextChargeAt: endsAt,
+        cancelAtPeriodEnd: false, graceEndsAt: null, termProjectionHash: termProjectionHash(term),
+        observedAt: new Date(), version: { increment: 1 } } });
+      await applyDealRequest(tx, { companyId: account.companyId, invoiceId, deal: snapshot.deal!,
+        priceSatang: offer.priceSatang, paidAt: paidDeal?.verifiedAt ?? invoice!.financialObservedAt ?? startsAt });
+      await scheduleDealReturn(tx, { companyId: account.companyId, deal: snapshot.deal!, periodStart: startsAt });
+      move = { companyId: account.companyId, invoiceId, actorUserId: attempt.initiatingUserId,
+        stripeAccountId: account.stripeAccountId, livemode: account.livemode, accountVersion: current.version };
+      await queuePlanMenuMove(tx, move);
+      await tx.auditLog.create({ data: { companyId: account.companyId, actorUserId: attempt.initiatingUserId,
+        action: 'billing.advance_deal.applied', targetType: 'BillingInvoice', targetId: invoiceId, requestId: attempt.id,
+        result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { startsAt: advance.paidThrough,
+          firstCycleEndsAt: advance.firstCycleEndsAt, subscriptionId: subscription.id } } });
+      await tx.outboxEvent.upsert({ where: { eventKey: `billing:applied:${invoiceId}` }, update: {}, create: {
+        companyId: account.companyId, eventType: 'billing.invoice.applied', aggregateType: 'BillingInvoice', aggregateId: invoiceId,
+        eventKey: `billing:applied:${invoiceId}`, payloadJson: { schemaVersion: 1, occurredAt: new Date().toISOString(),
+          data: { invoiceId, companyId: account.companyId } } } });
+    });
+    for (const featureKey of disabledFeatures) {
+      try { await completeRunoffIfDrained(this.prisma, account.companyId, featureKey); } catch { /* Reconciler retries runoff. */ }
+    }
+    if (move) await movePlanMenus(this.prisma, move);
   }
 
   /** Phase 7: returns the menu move the boundary now owes, so the caller can run it after commit. */
@@ -991,7 +1329,9 @@ export class BillingReconcilerService {
           disabledFeatures = await applyBillingFeaturePlan(tx, company.id, invoice.id, contract.initiatingUserId, snapshot.featurePlan);
         // Q1: the deal's AI credit goes back to the platform default in the same commit as its
         // menus. `applyDealRequest` is the only writer that set it, and this is its mirror.
-        if (returning) await tx.companyAiConfiguration.updateMany({ where: { companyId: company.id }, data: { monthlyBudgetSatang: null } });
+        if (returning) await tx.companyAiConfiguration.updateMany({ where: { companyId: company.id },
+          data: snapshot.dealReturn!.creditScope === 'CHAT'
+            ? { salesDealChatCreditSatang: null, salesDealChatCreditEndsAt: null } : { monthlyBudgetSatang: null } });
         if (current.graceEndsAt && current.paidThrough) await tx.billingReceiptGrant.updateMany({ where: { billingAccountId: account.id,
           companyId: company.id, kind: { in: ['INITIAL', 'RENEWAL', 'REPEAT', 'UPGRADE'] }, expiresAt: current.graceEndsAt, serviceEnd: { lte: current.paidThrough } }, data: { expiresAt: current.paidThrough } });
         const term = await tx.companyPlanTerm.upsert({ where: { companyId: company.id }, create: {
@@ -1030,6 +1370,8 @@ export class BillingReconcilerService {
         if (snapshot.deal) await applyDealRequest(tx, { companyId: company.id, invoiceId: invoice.id, deal: snapshot.deal,
           priceSatang: snapshot.quote.offer.priceSatang, paidAt: evidence.paidAt ?? evidence.periodStart });
         else {
+          await tx.companyAiConfiguration.updateMany({ where: { companyId: company.id },
+            data: { salesDealChatCreditSatang: null, salesDealChatCreditEndsAt: null } });
           await supersedeUnpaidDeal(tx, company.id, invoice.id);
           // D6: the subscription half of the referral formula. RENEWAL/UPGRADE invoices never count.
           // `paidAt` is only carried by a trial-converting invoice; the period start is the paid

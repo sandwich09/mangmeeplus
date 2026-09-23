@@ -76,7 +76,7 @@ export async function upgradeHistory(db: Prisma.TransactionClient, account: Bill
   });
   cursor = skipFree(cursor, account.paidThrough.getTime());
   if (!segments.length && gifts.length && cursor === account.paidThrough.getTime()) throw billingError('BILLING_UPGRADE_GIFT_ONLY', 'เวลาที่เหลือเป็นวันแถม ซื้อแพ็กเกจเดิมเพิ่มก่อน แล้วจึงเปลี่ยนเป็นแพ็กเกจที่สูงขึ้น');
-  if (!segments.length || cursor !== account.paidThrough.getTime() || new Set(segments.map(s => s.oldOffer.offerKey)).size !== 1) throw review();
+  if (!segments.length || cursor !== account.paidThrough.getTime()) throw review();
   const amountSatang = segments.reduce((sum,s) => sum+s.amountSatang,0), receiptUnitsAdded = segments.reduce((sum,s) => sum+s.receiptUnitsAdded,0);
   if (!Number.isSafeInteger(amountSatang) || amountSatang < 1000 || !Number.isSafeInteger(receiptUnitsAdded) || receiptUnitsAdded > 2147483647) throw review();
   return { prorationAt, segments, amountSatang, receiptUnitsAdded, sourceHash: hashBilling([account.id, account.baseSubscriptionId,

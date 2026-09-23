@@ -474,24 +474,33 @@ export function buildAiBudgetExceededMessage(
   const what = chatOnly ? 'เครดิต AI ส่วนแชตของเดือนนี้' : 'เครดิต AI ของเดือนนี้';
   const text = insufficient
     ? `${chatOnly ? 'เครดิต AI ส่วนแชตที่เหลือ' : 'เครดิต AI ที่เหลือ'}ของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ `
-      + `${trialTier ? 'ช่วงทดลองมีเครดิต AI จำกัดต่อเดือน ' : ''}เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ`
+      + `${trialTier ? 'ช่วงทดลองมีเครดิต AI จำกัดต่อเดือน ' : ''}เดือนหน้าเริ่มใหม่`
+      + `${chatOnly ? ' การเปลี่ยนแพ็กเกจไม่เติมเครดิตแชตในเดือนนี้ หากต้องการตรวจสอบสิทธิ์ดีลพิเศษ กรุณาติดต่อทีมงานค่ะ'
+        : ' หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ'}`
+    : chatOnly
+      ? `${what}หมดแล้วค่ะ เดือนหน้าเริ่มใหม่ การเปลี่ยนแพ็กเกจไม่เติมเครดิตแชตในเดือนนี้ `
+        + 'หากต้องการตรวจสอบสิทธิ์ดีลพิเศษ กรุณาติดต่อทีมงานค่ะ'
     : trialTier
       ? `${what}หมดแล้วค่ะ ช่วงทดลองมีเครดิต AI จำกัดต่อเดือน เดือนหน้าเริ่มใหม่ `
         + 'หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ'
       : `${what}หมดแล้วค่ะ เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ`;
+  const actions = chatOnly
+    ? [{ label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND }]
+    : [
+      { label: 'ดูแพ็กเกจ', text: VIEW_PACKAGES_COMMAND },
+      { label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND },
+    ];
   return {
     type: 'flex',
     altText: preview(text, 400),
-    contents: bubble(
+      contents: bubble(
       insufficient
-        ? { title: 'เครดิต AI เดือนนี้เหลือไม่พอ', badge: '💚 เครดิต AI เหลือไม่พอเริ่มงาน', text }
+        ? { title: chatOnly ? 'เครดิต AI ส่วนแชตที่เหลือไม่พอ' : 'เครดิต AI เดือนนี้เหลือไม่พอ',
+          badge: chatOnly ? '💚 เครดิต AI ส่วนแชตเหลือไม่พอเริ่มงาน' : '💚 เครดิต AI เหลือไม่พอเริ่มงาน', text }
         : { title: chatOnly ? 'เครดิต AI ส่วนแชตเดือนนี้หมดแล้ว' : 'เครดิต AI เดือนนี้หมดแล้ว', badge: '💚 เครดิต AI หมดเดือนนี้', text },
       undefined,
       '',
-      [
-        { label: 'ดูแพ็กเกจ', text: VIEW_PACKAGES_COMMAND },
-        { label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND },
-      ],
+      actions,
     ),
   };
 }

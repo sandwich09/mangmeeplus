@@ -286,6 +286,8 @@ describe('split AI budget policy helpers', () => {
   it('prefills the form from the SAVED policy, in baht, satang included', () => {
     assert.deepEqual(aiBudgetDraftFromPolicy(shared, '2026-09'),
       { mode: 'SHARED', chat: '', ocr: '', effectiveMonthKey: '2026-09' });
+    assert.equal(aiBudgetDraftFromPolicy({ ...shared, chatCapSatang: 8_000 }, '2026-09').chat, '',
+      'the SHARED default is displayed as a cap, not copied into editable SPLIT settings');
     assert.deepEqual(aiBudgetDraftFromPolicy({ ...split, chatCapSatang: 3050 }, '2026-09'),
       { mode: 'SPLIT', chat: '30.50', ocr: '70', effectiveMonthKey: '2026-09' });
     // A cap of 0 is a real saved value, not an empty field.
@@ -342,9 +344,11 @@ describe('split AI budget policy helpers', () => {
     assert.deepEqual(rows.map((row) => row.key), ['total', 'chat', 'ocr']);
     assert.equal(rows[2]!.reservedSatang, 500);
 
-    // Under SHARED a bucket has no cap to subtract from: "not set", never "unlimited" (§12.1).
+    // Older API data can still carry null; the current API supplies an 80-credit CHAT cap.
     const sharedRows = aiBudgetScopeRows({ effectiveSatang: 10000, policy: shared, position });
     assert.deepEqual(sharedRows.map((row) => row.capSatang), [10000, null, null]);
+    assert.deepEqual(aiBudgetScopeRows({ effectiveSatang: 10000,
+      policy: { ...shared, chatCapSatang: 8_000 }, position }).map((row) => row.capSatang), [10000, 8_000, null]);
     assert.equal(aiBudgetCapLabel(null), 'ยังไม่ตั้ง');
     assert.match(aiBudgetCapLabel(0), /ปิดส่วนนี้/);
     assert.equal(aiBudgetCapLabel(3000), '฿30.00');

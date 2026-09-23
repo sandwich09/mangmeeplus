@@ -143,6 +143,19 @@
 
 ## D7 (มติรอบ 5): ดีลตัดบัตรอัตโนมัติ — Phase 5 (หลัง Phase 3)
 
+### Follow-up 2026-09-23: ซื้อดีลอัตโนมัติล่วงหน้า
+
+มติและเกณฑ์รับงานอยู่ใน spec §19.10. ปรับจาก `CARD_ONCE`/`PROMPTPAY_ONCE` ที่ยังไม่หมดไปยังดีล `autoRenew=true` ให้เก็บเงินงวดแรกตอนซื้อ, เริ่มสิทธิ์ดีลเมื่อ `paidThrough` เดิม, และเก็บรอบถัดไปหลังงวดดีลแรก. งานต้องปิดเป็นชุดเดียว:
+
+1. Quote/status: จำแนก advance deal จาก deal snapshot กับแหล่งเงินเดิม; pin invoice, `paidThrough`, anchor, term, Price และแสดงวันเริ่ม/วันสิ้นงวด; guard ของ quote กับ purchase modes ใน status ต้องตรงกัน.
+2. Checkout/evidence: ใช้ payment Checkout สำหรับงวดแรก (รวมบัตร `CARD_AUTO` แบบ advance), บันทึกความยินยอมบัตรสำหรับ off-session renewal, ตรวจหลักฐานและ idempotency ก่อนบันทึก `PAID`.
+3. Apply/binding: เก็บสิทธิ์เดิมจนถึง boundary; สร้าง operation เปิดใช้ที่ retry ได้; ผูก subscription บัตร/QR ให้เรียกเก็บครั้งต่อไปตอนสิ้นงวดดีลแรก; ป้องกันบิลศูนย์บาท/ซ้ำและรองรับ refund ก่อนเริ่ม.
+4. UI/verification: บอกวันเริ่มสิทธิ์/วันตัดรอบถัดไปและสถานะรอเปิดใช้; focused tests ครอบคลุมบัตร, QR, replay, expiration, source drift, refund, activation และ renewal; ตรวจ backend-to-frontend contract.
+
+สถานะในเครื่อง 2026-09-23: ข้อ 1–3 และ UI ข้อ 4 ลงโค้ดแล้ว รวม `PAID` operation, สิทธิ์เริ่มตามวัน, การหยุด subscription เมื่อ HELD/BLOCKED, การเลื่อนผูก subscription เมื่อ trial เกินขอบเขต Stripe และการหยุดต่ออายุบัตรช่วงงวดดีลแรก. ชุด API ที่เกี่ยวข้องผ่าน 268 เคส (ข้าม 2), focused PostgreSQL/Stripe simulation ผ่าน 3/3 (บัตร, QR, refund/replay, activation, ดีลไกลเกินสองปี), billing E2E ผ่าน 2/2, พรีวิวซื้อแพ็ก 2/2 ที่ desktop/mobile, customer billing UX 5/5 และ web typecheck ผ่าน. API typecheck ติดเฉพาะ DTO ของ `counterparty.controller.ts:128` ที่ไม่เกี่ยวกับ billing. ยังไม่มีการทดสอบ Stripe จริงหรือ deploy; รายละเอียดและข้อจำกัดอยู่ใน [task memory](../agent-memory/sales-deal-advance-purchase-2026-09-23.md).
+
+ห้ามปลด `BILLING_MODE_CHANGE_PENDING` อย่างเดียว เพราะ Checkout แบบ subscription ปัจจุบันเริ่มเก็บเงินทันทีและ apply invoice จะชน `paidThrough` เดิม.
+
 - สถานะ 2026-09-21 (ค่ำ): ทำแล้วบน branch ตาม spec §19.9 — snapshot v3 (autoRenew/cadence/cycles), Stripe Price เฉพาะร้านสร้างตอนอนุมัติ (สถานะราคา PENDING/READY/FAILED/ARCHIVED), Checkout แบบ subscription ด้วย Price ของดีล (บัตร/QR ทุกงวด), apply ครั้งแรกเรียก applyDealRequest, op `SCHEDULE_PRICE_RETURN` = สลับราคาบน subscription item (ไม่ใช้ schedule 2 เฟส เพราะ `currentSchedulePhase` รับเจ้าของ pendingChange เดียว) ในรอบสุดท้าย + contract อนาคต `dealReturn` คืนเมนู/เครดิต AI/ลิมิต (Q1 = preset starter), ปุ่ม "จบดีล" (ทั้งบัตรและ QR บันทึกวันสิ้นสุด; QR ยังไม่มี op หยุดบิลอัตโนมัติ — ร้านใช้ปุ่มหยุดต่ออายุเอง), แจ้ง 14 วันก่อน; หนี้: drift scan (G17), catch-up เมื่อพลาดรอบสุดท้าย, ไม่มี smoke/PG
 
 - ยกงานจาก [billing-special-price-plan-th.md](billing-special-price-plan-th.md) Phase 1–3 มาเป็น Phase 5 ของแผนนี้: `BillingSpecialPrice` ผูกกับดีล (`dealId`), สร้าง Stripe Price ตอนอนุมัติดีลที่ `autoRenew=true` (journal/observed/drain แบบ refunds), quote path ใช้ offer/priceId ของดีล, `capacity()` ใช้ offer ของดีล, legacy guard ผ่อน, `SCHEDULE_PRICE_RETURN` + issue `SPECIAL_PRICE_ENDING` + drift check, UI: สวิตช์ในฟอร์มดีล + การ์ดลูกค้าแสดง "ตัดบัตรอัตโนมัติทุกเดือน/ปี ยกเลิกได้จากหน้าแพ็กเกจ"

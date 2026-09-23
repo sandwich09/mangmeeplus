@@ -7,6 +7,7 @@ import { PrismaOutboxRepository } from '../../data-model-core/infrastructure/rep
 import { CreateOrUpdateNotificationEventUseCase } from '../../dashboard-notifications/application/use-cases/notification.use-cases';
 import { bangkokMonthKey, resolvePlatformAiBudget } from '../../line-ai/application/company-ai-usage-meter';
 import { readAiBudgetReadiness } from '../../line-ai/application/company-ai-budget-readiness';
+import { resolveAiBudgetPolicy } from '../../line-ai/application/company-ai-budget-policy';
 import { TRIAL_COUNTER_TIER_KEY } from '../../system-partner-management/domain/logic/receipt-quota.logic';
 import { bangkokDayKey } from '../domain/business-hours.logic';
 import { LINE_SIGNUP_PUSH_EVENT_TYPE } from './line-signup-notify.service';
@@ -195,7 +196,7 @@ export class SignupOpsAlertService {
     const companyIds = trials.map((trial) => trial.companyId);
     // From the caller's clock, not a second one: a sweep given `now` must count that month.
     const monthKey = bangkokMonthKey(now);
-    const [usage, configurations, platform] = await Promise.all([
+    const [usage, configurations, bucketUsage, platform] = await Promise.all([
       this.prisma.client.companyAiMonthlyUsage.findMany({
         where: { companyId: { in: companyIds }, monthKey },
         select: { companyId: true, costSatang: true },
@@ -206,8 +207,13 @@ export class SignupOpsAlertService {
         // with its total still open, and this sweep used to be blind to that.
         select: {
           companyId: true, monthlyBudgetSatang: true, budgetMode: true, chatMonthlyBudgetSatang: true,
-          ocrMonthlyBudgetSatang: true, budgetConfigVersion: true, pendingBudgetPolicy: true,
+          ocrMonthlyBudgetSatang: true, salesDealChatCreditSatang: true, salesDealChatCreditEndsAt: true,
+          budgetConfigVersion: true, pendingBudgetPolicy: true,
         },
+      }),
+      this.prisma.client.companyAiMonthlyBucketUsage.findMany({
+        where: { companyId: { in: companyIds }, monthKey, bucket: 'CHAT' },
+        select: { companyId: true, costSatang: true },
       }),
       // The DB settings row, which is what a company actually inherits — the ENV value is only the
       // fallback when no row exists, and reading it directly made this sweep disagree with the five
@@ -215,6 +221,7 @@ export class SignupOpsAlertService {
       resolvePlatformAiBudget(this.prisma, this.config, true),
     ]);
     const rowByCompany = new Map(configurations.map((row) => [row.companyId, row]));
+    const chatSpendByCompany = new Map(bucketUsage.map((row) => [row.companyId, row.costSatang]));
 
     let exhausted = 0;
     // The USAGE rows, not the trial list: a company with no usage row this month has spent nothing,
@@ -224,13 +231,19 @@ export class SignupOpsAlertService {
     for (const { companyId, costSatang } of usage) {
       const row = rowByCompany.get(companyId);
       const totalSatang = row?.monthlyBudgetSatang ?? platform.monthlyBudgetSatang;
-      // ponytail: the TOTAL comparison stays right here, on the two bulk reads. This sweep looks at
-      // up to 500 trials every 15 minutes, and routing every one of them through the per-company
-      // projection would turn 3 queries into ~2000. Only a company whose stored policy is SPLIT, or
-      // whose pending policy might be unreadable, can be out of money with the total still open —
-      // those few pay for the projection. Batch the bucket aggregates if trial counts ever grow.
+      // ponytail: the sweep uses bulk bucket reads too; routing each of up to 500 trials through the
+      // full projection every 15 minutes would multiply these reads per company.
       if (costSatang >= totalSatang) { exhausted += 1; continue; }
-      if ((row?.budgetMode ?? 'SHARED') === 'SHARED' && row?.pendingBudgetPolicy == null) continue;
+      if ((row?.budgetMode ?? 'SHARED') === 'SHARED' && row?.pendingBudgetPolicy == null) {
+        const policy = resolveAiBudgetPolicy({
+          row, totalSatang, override: row?.monthlyBudgetSatang != null, monthKey, at: now,
+        });
+        if (policy.invalidReason
+          || (policy.chatCapSatang !== null && (chatSpendByCompany.get(companyId) ?? 0) >= policy.chatCapSatang)) {
+          exhausted += 1;
+        }
+        continue;
+      }
       const money = await readAiBudgetReadiness(this.prisma.client, { companyId, monthKey, row, totalSatang });
       // `EXHAUSTED` is a budget that ran out — the condition §15.6 (d) is about. `CLOSED` is an
       // operator's own cap of 0: a decision, not an incident, and announcing it daily would train

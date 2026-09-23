@@ -13,7 +13,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { LineReadEvidenceService } from '../line-read-evidence.service';
 import { LineLedgerDeliveryService, lineLedgerDeliveryId, type LineLedgerClaim, type LineLedgerCompletion } from '../line-ledger-delivery.service';
 import { randomUUID } from 'node:crypto';
-import type { LineAiTurnRequest, LineUserContext } from '@watchdog-bms/contracts';
+import type { AiBudgetScope, LineAiTurnRequest, LineUserContext } from '@watchdog-bms/contracts';
 import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, type AiBudgetRefusalCode } from '@watchdog-bms/contracts';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -66,15 +66,28 @@ const LEDGER_FEATURE_KEY = 'ai_line_assistant';
 class LedgerEntryHeldError extends Error {}
 
 /** A refusal this drain can compose itself, with no model call and no read evidence. */
-type StaticRefusalReason = 'feature_disabled' | 'forbidden' | AiBudgetRefusalCode;
+type BudgetStaticRefusal = { code: AiBudgetRefusalCode; budgetScope?: AiBudgetScope };
+type StaticRefusalReason = 'feature_disabled' | 'forbidden' | AiBudgetRefusalCode | BudgetStaticRefusal;
 
+const isBudgetStaticRefusal = (value: unknown): value is BudgetStaticRefusal => {
+  if (!value || typeof value !== 'object') return false;
+  const { code, budgetScope } = value as { code?: unknown; budgetScope?: unknown };
+  return isAiBudgetPermanentRefusal(typeof code === 'string' ? code : undefined)
+    && (budgetScope === undefined || budgetScope === 'TOTAL' || budgetScope === 'CHAT' || budgetScope === 'OCR');
+};
 const isStaticRefusalReason = (value: unknown): value is StaticRefusalReason =>
-  value === 'feature_disabled' || value === 'forbidden' || isAiBudgetRefusalCode(typeof value === 'string' ? value : undefined);
+  value === 'feature_disabled' || value === 'forbidden'
+  || isAiBudgetRefusalCode(typeof value === 'string' ? value : undefined)
+  || isBudgetStaticRefusal(value);
 
 /** The ONE place that says what a stored static refusal must contain, so the producer above and the
  *  pre-send integrity check below can never disagree about its exact text. */
-const staticRefusalText = (reason: StaticRefusalReason): string =>
-  reason === 'feature_disabled' || reason === 'forbidden' ? formatRefusal(reason) : formatAiBudgetRefusalNotice(reason);
+const staticRefusalText = (reason: StaticRefusalReason): string => {
+  if (reason === 'feature_disabled' || reason === 'forbidden') return formatRefusal(reason);
+  return typeof reason === 'string'
+    ? formatAiBudgetRefusalNotice(reason)
+    : formatAiBudgetRefusalNotice(reason.code, reason.budgetScope);
+};
 
 @Injectable()
 export class DrainLineLedgerUseCase {
@@ -249,9 +262,12 @@ export class DrainLineLedgerUseCase {
       // A `turn` still inside the reply window has a real person waiting: tell them once. A stale
       // turn or a `sub_request` gets no unsolicited push — nobody is waiting on those.
       if (entry.kind === 'turn' && this.inContextWindow(entry, now)) {
-        return this.sendStaticRefusal(entry, claim, deliveryCount, budget.code);
+        return this.sendStaticRefusal(entry, claim, deliveryCount, {
+          code: budget.code,
+          ...(budget.budgetScope ? { budgetScope: budget.budgetScope } : {}),
+        });
       }
-      if (entry.kind === 'turn') await this.finalizeSourceEvent(entry, status, budget.code);
+      if (entry.kind === 'turn') await this.finalizeSourceEvent(entry, status, budget.code, budget.budgetScope);
       if (!await this.deliveryStore.finish(claim, 'REFUSED', budget.code)) throw new LedgerEntryHeldError('queued delivery lease changed');
       // Terminal ack: topping the budget up or a new month must not revive this entry by itself.
       await this.ledger.ack(entry, 'refused', { reason: budget.code });
@@ -301,17 +317,20 @@ export class DrainLineLedgerUseCase {
 
   private async sendStaticRefusal(entry: LedgerEntry, claim: LineLedgerClaim, deliveryCount: number, reason: StaticRefusalReason): Promise<'followedUp' | 'refused' | 'parked'> {
     const text = staticRefusalText(reason);
-    const budget = isAiBudgetRefusalCode(reason);
+    const budget = typeof reason === 'string'
+      ? (isAiBudgetRefusalCode(reason) ? { code: reason } : null)
+      : isBudgetStaticRefusal(reason) ? reason : null;
     const completion: LineLedgerCompletion = {
       status: budget
-        ? (reason === AI_BUDGET_REFUSAL_CODES.insufficient ? 'ai_budget_insufficient' : 'ai_budget_exceeded')
-        : reason,
+        ? (budget.code === AI_BUDGET_REFUSAL_CODES.insufficient ? 'ai_budget_insufficient' : 'ai_budget_exceeded')
+        : reason === 'feature_disabled' ? reason : 'forbidden',
       refused: true,
       // The money code IS the durable reason (spec §9.1); replaying this attempt must reuse it
       // rather than re-derive an answer from whatever the budget says later.
-      errorCode: budget ? reason : reason === 'feature_disabled' ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
+      errorCode: budget ? budget.code : reason === 'feature_disabled' ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
       replyPreview: text.slice(0, 240), toolCount: 0, outcome: 'refused',
-      reason: budget ? reason : reason === 'feature_disabled' ? reason : 'identity_or_permission_revoked',
+      reason: budget ? budget.code : reason === 'feature_disabled' ? reason : 'identity_or_permission_revoked',
+      ...(budget?.budgetScope ? { budgetScope: budget.budgetScope } : {}),
     };
     if (!await this.saveDelivery(claim, [this.lineReply.buildTextMessage(text)], { v: 1, staticRefusal: reason }, completion)) throw new LedgerEntryHeldError('queued refusal producer lease expired');
     return this.sendSavedDelivery(entry, claim, deliveryCount);
@@ -324,7 +343,7 @@ export class DrainLineLedgerUseCase {
       return 'parked';
     }
     const messages = parseOutcomeMessages(claim.row.messagesJson);
-    const marker = (claim.row.authorizationJson as { staticRefusal?: string } | null)?.staticRefusal;
+    const marker = (claim.row.authorizationJson as { staticRefusal?: unknown } | null)?.staticRefusal;
     const staticRefusal = isStaticRefusalReason(marker) && messages?.length === 1
       && messages[0].type === 'text' && messages[0].text === staticRefusalText(marker) && !messages[0].quickReply;
     const current = messages && (freshlyVerified || staticRefusal || await this.readEvidence.verifyDelivery(claim.row.authorizationJson, {
@@ -383,6 +402,7 @@ export class DrainLineLedgerUseCase {
           companyId: entry.companyId,
           status: completion.status,
           errorCode: completion.errorCode,
+          budgetScope: completion.budgetScope,
         });
       }
     }
@@ -395,7 +415,7 @@ export class DrainLineLedgerUseCase {
     return completion.outcome === 'refused' ? 'refused' : 'followedUp';
   }
 
-  private async finalizeSourceEvent(entry: LedgerEntry, status: string, errorCode: string): Promise<void> {
+  private async finalizeSourceEvent(entry: LedgerEntry, status: string, errorCode: string, budgetScope?: AiBudgetScope): Promise<void> {
     if (entry.kind !== 'turn' || !entry.webhookEventId) return;
     const updated = await this.prisma.client.lineWebhookEventLog.updateMany({
       where: {
@@ -412,6 +432,7 @@ export class DrainLineLedgerUseCase {
         companyId: entry.companyId,
         status,
         errorCode,
+        budgetScope,
       });
     }
   }

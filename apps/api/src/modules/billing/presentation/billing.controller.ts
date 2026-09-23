@@ -520,14 +520,16 @@ export class BillingController {
   }
   @Post('quote') @HttpCode(200)
   async quote(@Req() req: AuthedRequest, @Body() body: BillingQuoteDto) {
-    const fields = bodyFields(body, ['offerKey', 'interval', 'billingEmail', 'capacity', 'purchaseMode', 'dealId']);
+    const fields = bodyFields(body, ['offerKey', 'interval', 'billingEmail', 'capacity', 'purchaseMode', 'purchaseIntent', 'dealId']);
     if (fields.purchaseMode !== undefined && !['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(String(fields.purchaseMode))) invalid();
+    if (fields.purchaseIntent !== undefined && fields.purchaseIntent !== 'FULL_PACKAGE') invalid();
     // A deal quote names the offer with `dealId`; its base tier and month come from the APPROVED
     // row, so `offerKey`/`interval` are optional there and ignored by the service (S36).
     const dealId = fields.dealId === undefined ? undefined : textField(fields.dealId, 40);
     const input = { ...(dealId ? { dealId } : { offerKey: textField(fields.offerKey, 40), interval: textField(fields.interval, 10) }),
       billingEmail: textField(fields.billingEmail, 320),
-      capacity: fields.capacity, purchaseMode: fields.purchaseMode as BillingPurchaseMode | undefined };
+      capacity: fields.capacity, purchaseMode: fields.purchaseMode as BillingPurchaseMode | undefined,
+      purchaseIntent: fields.purchaseIntent as 'FULL_PACKAGE' | undefined };
     await this.limit(req);
     return this.billing.quote(req.context, input);
   }

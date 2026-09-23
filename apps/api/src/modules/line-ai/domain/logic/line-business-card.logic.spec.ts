@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { LineAiTurnResponse } from '@watchdog-bms/contracts';
 import {
   buildExpenseDraftCardMessage,
+  buildAiBudgetExceededMessage,
   buildLineAssistantTextCardMessage,
   buildLineBusinessAnswerMessage,
   buildReceiptQuotaExceededMessage,
@@ -407,5 +408,28 @@ describe('receipt quota card (P10-L §3.7/§7)', () => {
     assert.equal(message.type, 'flex');
     assert.equal((message as { altText: string }).altText, text);
     assert.equal((message as { contents: any }).contents.body.contents[1].text, text);
+  });
+});
+
+describe('CHAT budget refusal card', () => {
+  it('does not suggest a package change as a same-month chat-credit refill', () => {
+    for (const budgetErrorCode of ['AI_MONTHLY_BUDGET_EXCEEDED', 'AI_BUDGET_INSUFFICIENT']) {
+      const message = buildAiBudgetExceededMessage(false, { budgetErrorCode, budgetScope: 'CHAT' });
+      const rendered = JSON.stringify(message);
+      assert.match(rendered, /เครดิต AI ส่วนแชต/);
+      assert.match(rendered, /ไม่เติมเครดิตแชตในเดือนนี้/);
+      assert.match(rendered, /ติดต่อเจ้าหน้าที่/);
+      assert.doesNotMatch(rendered, /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|โปรโมชั่น/);
+      assert.deepEqual(((message as any).contents).footer.contents.map((item: any) => item.action), [
+        { type: 'message', label: 'ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' },
+      ]);
+    }
+  });
+
+  it('keeps the existing package actions for a TOTAL refusal', () => {
+    const rendered = JSON.stringify(buildAiBudgetExceededMessage(false,
+      { budgetErrorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' }));
+    assert.match(rendered, /ขอเปลี่ยนแพ็กเกจ/);
+    assert.match(rendered, /"label":"ดูแพ็กเกจ"/);
   });
 });
