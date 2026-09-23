@@ -67,7 +67,7 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
   /** One company per case, so concurrency inside a case cannot be polluted by a neighbour. */
   async function company(suffix: string, policy: { chat?: number | null; ocr?: number | null; total?: number | null; mode?: string } = {}) {
     const companyId = `${tag}-${suffix}`;
-    await client.company.create({ data: { id: companyId, name: companyId, businessCategory: 'SERVICE' } });
+    await client.company.create({ data: { id: companyId, name: companyId } });
     await client.companyAiConfiguration.create({
       data: {
         companyId,

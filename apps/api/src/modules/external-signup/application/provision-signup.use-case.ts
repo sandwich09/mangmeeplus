@@ -1,7 +1,5 @@
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
-import {
-  COMPANY_BUSINESS_CATEGORIES, PLAN_TIER_PRESETS, SIGNUP_TRIAL_TIER_KEY, type CompanyBusinessCategory,
-} from '@watchdog-bms/contracts';
+import { PLAN_TIER_PRESETS, SIGNUP_TRIAL_TIER_KEY } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { CreateCompanyOnboardingUseCase } from '../../system-onboarding/application/use-cases/create-company-onboarding.use-case';
@@ -283,10 +281,6 @@ export class ProvisionSignupUseCase {
       // Legacy queued applications may have none. Adopting a committed company never rewrites
       // a later contact/account edit; the initial transaction adopts only an available address.
       ...(lineOa && request.contactEmail ? { companyContactEmail: request.contactEmail, unverifiedOwnerEmail: request.contactEmail } : {}),
-      // R10: the enum the reviewer chose wins over the free-text mapping, which reads "คลินิก" as
-      // OTHER and leaves the PDPA health tripwire dead for anyone who answered in Thai.
-      businessCategory: reviewedBusinessCategory(request.businessCategory)
-        ?? mapBusinessCategory(request.businessType),
       ...(request.taxId ? { taxId: request.taxId } : {}),
       ownerDisplayName: request.ownerDisplayName,
       ...(lineOa ? this.lineOwnerShape(request) : this.emailOwnerShape(request, cmd.username)),
@@ -608,8 +602,6 @@ type SignupRow = {
   companyName: string;
   ownerDisplayName: string;
   businessType: string | null;
-  /** R10: the enum an admin picked at review; null means "use the free-text mapping". */
-  businessCategory: string | null;
   taxId: string | null;
   contactEmail: string | null;
   phoneNumber: string | null;
@@ -628,30 +620,6 @@ type SignupRow = {
   /** D6: resolved at submit; copied onto the Company the moment the shop exists. */
   referralSalesUserId?: string | null;
 };
-
-/**
- * `businessType` is free text from the public form; `CompanyBusinessCategory` is a closed enum whose
- * only job is the PDPA health tripwire. An exact match is honoured, anything else becomes OTHER —
- * never a guess, because guessing "คลินิก" into CLINIC from arbitrary text would be a tripwire we
- * cannot defend. An admin corrects the category in company settings.
- */
-export function mapBusinessCategory(businessType: string | null): CompanyBusinessCategory {
-  const candidate = businessType?.trim().toUpperCase().replace(/[\s-]+/g, '_') ?? '';
-  return (COMPANY_BUSINESS_CATEGORIES as readonly string[]).includes(candidate)
-    ? (candidate as CompanyBusinessCategory)
-    : 'OTHER';
-}
-
-/**
- * R10: the category an admin picked at review, stored as TEXT so a value the enum later drops can
- * still be read back. Anything the enum does not know is NOT a licence to invent one — the caller
- * falls back to the mapping, which is the conservative OTHER.
- */
-export function reviewedBusinessCategory(stored: string | null): CompanyBusinessCategory | null {
-  return stored && (COMPANY_BUSINESS_CATEGORIES as readonly string[]).includes(stored)
-    ? (stored as CompanyBusinessCategory)
-    : null;
-}
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

@@ -1,7 +1,8 @@
 # Spec: Tenant business-category tripwire (health-adjacent onboarding alert)
 
-Status: Approved for build (closes the tripwire item in
-`docs/security-evidence/p1-ai-processor-lawful-basis-register.md` §6).
+Status: Historical; superseded by owner decision 2026-09-23 and
+`docs/specs/company-business-type-single-source-spec-th.md`. The seven-value field and its
+onboarding alert are retired; this document records the former design only.
 Owner: Platform/AI Security.
 Date: 2026-07-28.
 

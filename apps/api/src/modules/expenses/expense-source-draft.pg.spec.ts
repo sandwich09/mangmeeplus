@@ -27,7 +27,7 @@ describe('receipt source draft continuity on PostgreSQL (T11–T18)', { skip: !d
       || url.port === '15432' && url.pathname === '/mangmee_billing_20260912');
     client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     await client.user.create({ data: { id: userId, displayName: 'Source draft test', status: 'ACTIVE' } });
-    await client.company.create({ data: { id: companyId, name: tag, businessCategory: 'SERVICE' } });
+    await client.company.create({ data: { id: companyId, name: tag } });
     await client.branch.create({ data: { id: branchId, companyId, code: 'HO', name: 'HO', type: 'HEAD_OFFICE', createdByUserId: userId } });
     await client.companyMembership.create({ data: { id: `${tag}-member`, companyId, userId, status: 'ACTIVE', branchScopeMode: 'ALL_BRANCHES' } });
     await client.expenseCategory.create({ data: { id: categoryId, companyId, name: 'วัสดุสำนักงาน', accountHintKey: 'office' } });
