@@ -222,7 +222,9 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
       if (plan.vatStatus && identity?.vatRegistration) {
         try {
           await putVatRegistration(companyId, {
-            commandId: `profile-vat-${companyId}-${plan.vatStatus}-${identity.vatRegistration.version}`,
+            // The command registry is already scoped by companyId; including a long company ID
+            // can exceed the API's 64-character commandId limit.
+            commandId: `profile-vat-${plan.vatStatus}-${identity.vatRegistration.version}`,
             expectedVersion: identity.vatRegistration.version,
             command: { kind: 'UPSERT_FACT', status: plan.vatStatus, effectiveFrom: todayCivilDate('Asia/Bangkok') },
           });
