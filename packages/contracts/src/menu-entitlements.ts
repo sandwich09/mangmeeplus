@@ -257,6 +257,16 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
     status: 'ready',
   },
   {
+    navKey: 'pnd53',
+    labelTh: 'ภ.ง.ด.53',
+    group: 'finance',
+    iconKey: 'DocsIcon',
+    parentFeatureKey: 'wht_pnd53',
+    entitlementKeys: ['wht_pnd53'],
+    gatePermissions: ['wht.pnd53.read', 'wht.pnd53.prepare'],
+    status: 'ready',
+  },
+  {
     navKey: 'accounts-payable',
     labelTh: 'เจ้าหนี้การค้า',
     group: 'finance',
@@ -478,18 +488,21 @@ export const FEATURE_PACKAGE_PRESETS: Readonly<
  * (Owner 2026-09-21). Until now every paid tier applied the starter preset because
  * `billingFeaturePlan` defaulted to it; this map is the single place that answers "which menus".
  *
- * STARTER/BASIC/PRO keep the starter set on purpose — they differ in branch/user/receipt limits,
- * not in menus (package-entitlements spec §3). ENTERPRISE is the ครบวงจร set, which is what opened
- * it for sale: `thai_tax` carries ภ.ง.ด./หัก ณ ที่จ่าย (50 ทวิ), `procurement` the AP side, plus
- * ledger, reports, banking, workflow, CRM, inventory and sales documents. `expense_auto_post`
- * stays out, exactly as the `full` preset has it — it is an Admin toggle, not a sold menu.
+ * All four paid tiers share starter menus. ENTERPRISE adds only ภ.ง.ด.53 and system-issued 50 ทวิ;
+ * that narrow right must never turn on the whole `thai_tax` workspace.
  *
- * Both sets are presets above, so both are already closed under `requiredFeatureKeys` and both
- * carry `PLATFORM_INVARIANT_FEATURE_KEYS`.
+ * The starter base is a preset above and carries `PLATFORM_INVARIANT_FEATURE_KEYS`.
  */
 export const TIER_FEATURE_PRESETS: Readonly<Record<Exclude<PlanTierKey, 'FREE_TRIAL_15'>, readonly string[]>> = {
   STARTER_249: FEATURE_PACKAGE_PRESETS.starter.featureKeys,
   BASIC_499: FEATURE_PACKAGE_PRESETS.starter.featureKeys,
   PRO_999: FEATURE_PACKAGE_PRESETS.starter.featureKeys,
-  ENTERPRISE_1999: FEATURE_PACKAGE_PRESETS.full.featureKeys,
+  ENTERPRISE_1999: [...FEATURE_PACKAGE_PRESETS.starter.featureKeys, 'wht_pnd53', 'wht_50bis'],
 };
+
+/** Feature keys a newly drafted Sale deal may sell. Existing paid snapshots remain immutable. */
+export const SALES_DEAL_ALLOWED_FEATURE_KEYS: readonly string[] = [
+  ...FEATURE_PACKAGE_PRESETS.starter.featureKeys,
+  'wht_pnd53',
+  'wht_50bis',
+];

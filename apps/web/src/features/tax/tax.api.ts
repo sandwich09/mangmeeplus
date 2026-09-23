@@ -87,6 +87,35 @@ export function listTaxPeriods(companyId: string, params?: { taxType?: string; s
   return apiFetch(`/v1/companies/${companyId}/tax/periods${qs(params)}`);
 }
 
+export function listPnd53Periods(companyId: string): Promise<{ items: TaxPeriod[]; total: number }> {
+  return apiFetch(`/v1/companies/${companyId}/tax/pnd53/periods`);
+}
+
+export function syncPnd53(companyId: string): Promise<{ synced: true }> {
+  return apiFetch(`/v1/companies/${companyId}/tax/pnd53/sync`, { method: 'POST' });
+}
+
+export function generatePnd53(companyId: string, periodId: string) {
+  return apiFetch(`/v1/companies/${companyId}/tax/pnd53/periods/${periodId}/report`, { method: 'POST' });
+}
+
+export function exportPnd53(companyId: string, periodId: string, exportFormat: TaxExportFormat): Promise<TaxFilingPackageResult> {
+  return apiFetch(`/v1/companies/${companyId}/tax/pnd53/periods/${periodId}/export`,
+    { method: 'POST', body: JSON.stringify({ exportFormat }) });
+}
+
+export function listPnd53Issues(companyId: string, periodId: string): Promise<ReviewIssue[]> {
+  return apiFetch(`/v1/companies/${companyId}/tax/pnd53/periods/${periodId}/review-issues`);
+}
+
+export function resolvePnd53Issue(companyId: string, issueId: string, note: string): Promise<ReviewIssue> {
+  return apiFetch(`/v1/companies/${companyId}/tax/pnd53/review-issues/${issueId}/resolve`, { method: 'PATCH', body: JSON.stringify({ note }) });
+}
+
+export function markPnd53Filed(companyId: string, periodId: string): Promise<TaxPeriod> {
+  return apiFetch(`/v1/companies/${companyId}/tax/pnd53/periods/${periodId}/mark-filed`, { method: 'PATCH', body: JSON.stringify({}) });
+}
+
 export type CompanyTaxProfile = {
   companyId: string;
   vatRegistered: boolean;

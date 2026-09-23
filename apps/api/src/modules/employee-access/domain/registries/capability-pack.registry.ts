@@ -425,6 +425,12 @@ const RAW_PACKS: RawPack[] = [
 
   // ---- Tax ----
   {
+    key: 'pack.wht.pnd53', module: 'tax', featureEntitlementKey: 'wht_pnd53',
+    nameTh: 'จัดทำ ภ.ง.ด.53', nameEn: 'Prepare PND53',
+    description: 'ดูงวดและรายการ ภ.ง.ด.53 คำนวณรายงาน และส่งออกเอกสารเฉพาะแบบนี้',
+    permissionKeys: ['wht.pnd53.read', 'wht.pnd53.prepare'],
+  },
+  {
     key: 'pack.tax.view', module: 'tax', featureEntitlementKey: 'thai_tax',
     nameTh: 'ดูภาษี/รายงาน', nameEn: 'View tax & reports',
     description: 'ดูโปรไฟล์ภาษี งวด รายงาน หนังสือรับรองหัก ณ ที่จ่าย และประเด็นตรวจ',
@@ -462,9 +468,16 @@ const RAW_PACKS: RawPack[] = [
   // use case requires a pre-existing TaxPeriod/TaxEventIds this button does not have (plan §2.2), and
   // adding the key to `pack.wht.certificate.manage` above would wrongly gate read/link too.
   {
-    key: 'pack.wht.certificate.issue', module: 'tax', featureEntitlementKey: 'thai_tax',
+    key: 'pack.wht.certificate.issue', module: 'tax', featureEntitlementKey: 'wht_50bis',
     nameTh: 'ออกหนังสือรับรองหัก ณ ที่จ่ายในระบบ', nameEn: 'System-issue WHT certificate',
     description: 'ออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) เป็น PDF ในระบบทันทีที่ยืนยันจ่าย/ยืนยันเอกสาร',
+    permissionKeys: ['wht.certificate.issue'],
+  },
+  // Pre-change paid full-Tax terms and immutable deal snapshots keep the issuance right they bought.
+  {
+    key: 'pack.wht.certificate.issue.legacy', module: 'tax', featureEntitlementKey: 'thai_tax',
+    nameTh: 'ออก 50 ทวิจากสิทธิ์ภาษีเดิม', nameEn: 'Legacy Tax WHT issuance',
+    description: 'คงสิทธิ์ออกหนังสือรับรองในระบบสำหรับร้านที่มีแพ็กภาษีเดิม',
     permissionKeys: ['wht.certificate.issue'],
   },
   // WHT certificate system issuance plan §2.1b (Decision B): the signature UPLOAD/management setting
@@ -472,9 +485,15 @@ const RAW_PACKS: RawPack[] = [
   // every role's grant list (permission-registry.ts). Gated by `thai_tax` like the pack above: the
   // setting is meaningless without the WHT-certificate feature at all.
   {
-    key: 'pack.company.tax_signature.manage', module: 'tax', featureEntitlementKey: 'thai_tax',
+    key: 'pack.company.tax_signature.manage', module: 'tax', featureEntitlementKey: 'wht_50bis',
     nameTh: 'จัดการลายเซ็นผู้จ่ายเงินสำหรับ 50 ทวิ', nameEn: 'Manage WHT certificate signature',
     description: 'อัปโหลด/จัดการรูปลายเซ็นผู้มีอำนาจลงนามที่จะประทับลงหนังสือรับรองหัก ณ ที่จ่ายที่ระบบออกให้',
+    permissionKeys: ['company.tax_signature.manage'],
+  },
+  {
+    key: 'pack.company.tax_signature.manage.legacy', module: 'tax', featureEntitlementKey: 'thai_tax',
+    nameTh: 'ลายเซ็น 50 ทวิจากสิทธิ์ภาษีเดิม', nameEn: 'Legacy Tax WHT signature',
+    description: 'คงสิทธิ์ลายเซ็นสำหรับร้านที่มีแพ็กภาษีเดิม',
     permissionKeys: ['company.tax_signature.manage'],
   },
 ];

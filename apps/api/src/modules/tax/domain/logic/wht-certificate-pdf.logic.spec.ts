@@ -1,117 +1,46 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFName } from 'pdf-lib';
 import type { PayeeSnapshot, PayerSnapshot } from '@watchdog-bms/contracts';
-import { buildWhtCertificateSvg, renderWhtCertificatePdf, type WhtCertificateFields } from './wht-certificate-pdf.logic';
+import { renderWhtCertificatePdf, type WhtCertificateFields } from './wht-certificate-pdf.logic';
 
-// The golden-fixture example transcribed in docs/agent-memory/wht-certificate-system-issuance.md
-// (owner-supplied real 50 ทวิ, WT2026090002) — same values, so this spec doubles as a smoke check
-// against the primary Phase 6 acceptance case's numbers.
-const payerSnapshot: PayerSnapshot = {
-  companyName: 'บริษัท มั่งมียั่งยืน จำกัด (สำนักงานใหญ่)',
-  taxId: '0105569135722',
-  branchCode: null,
-  address: '123/219 หมู่ 11 แขวงบางขุนเทียน เขตจอมทอง กรุงเทพมหานคร 10150',
+const payer: PayerSnapshot = {
+  companyName: 'บริษัท มั่งมีกิจทดสอบ จำกัด', taxId: '0105569135722', branchCode: null,
+  address: JSON.stringify({ line1: '123/219 ถนนพระรามสอง', line2: null, subdistrict: 'สามเสนใน', district: 'พญาไท', province: 'กรุงเทพมหานคร', postalCode: '10400' }),
 };
-const payeeSnapshot: PayeeSnapshot = {
-  name: 'บริษัท เลิฟไดร์ฟ คาร์เร้นท์ จำกัด (สำนักงานใหญ่)',
-  taxId: '0105563047775',
-  address: '703 ถนนวงศ์สว่าง แขวงวงศ์สว่าง เขตบางซื่อ กรุงเทพมหานคร 10800',
-  branchCode: null,
+const payee: PayeeSnapshot = {
+  name: 'บริษัท ผู้รับเงินทดสอบ จำกัด', taxId: '0105563047775', branchCode: null,
+  address: JSON.stringify({ line1: '123 ถนนสุขุมวิท', subdistrict: 'คลองตันเหนือ', district: 'วัฒนา', province: 'กรุงเทพมหานคร', postalCode: '10110' }),
 };
 const fields: WhtCertificateFields = {
-  certificateNumber: 'WT2026090002',
-  formType: 'PND53',
-  incomeCategoryCode: 'CAT5',
-  incomeCategoryName: 'ค่าเช่า/ค่าบริการ',
-  whtRate: '5',
-  grossAmount: '1000.00',
-  withheldAmount: '50.00',
-  paymentDate: '2026-09-12T00:00:00.000Z',
-  issuedAt: '2026-09-12T00:00:00.000Z',
+  certificateNumber: 'WHT-2026-00001', formType: 'PND53',
+  incomeCategoryCode: 'WHT_SERVICE_5', incomeCategoryName: 'ค่าบริการ (นิติบุคคล)',
+  whtRate: '3', grossAmount: '10000.00', withheldAmount: '300.00',
+  paymentDate: '2026-09-23T00:00:00.000Z', issuedAt: '2026-09-23T00:00:00.000Z',
 };
 
-describe('buildWhtCertificateSvg', () => {
-  it('includes every real 50 ทวิ field the spec requires (§6)', () => {
-    const svg = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot).toString('utf8');
-    assert.match(svg, /0-1055-69135-72-2/, 'payer tax id, formatted 13-digit');
-    assert.match(svg, /0-1055-63047-77-5/, 'payee tax id, formatted 13-digit');
-    assert.match(svg, /WT2026090002/, 'เล่มที่/เลขที่');
-    assert.match(svg, /เลิฟไดร์ฟ/, 'payee name');
-    assert.match(svg, /มั่งมียั่งยืน/, 'payer name');
-    assert.match(svg, /ค่าเช่า\/ค่าบริการ/, 'incomeCategoryName');
-    assert.match(svg, /1,000\.00/, 'gross amount (จำนวนเงินที่จ่าย)');
-    assert.match(svg, /50\.00/, 'withheld amount (ภาษีที่หักและนำส่ง)');
-    assert.match(svg, /ห้าสิบบาทถ้วน/, 'รวมเงินภาษีที่หักนำส่ง (ตัวอักษร)');
-    assert.match(svg, /ภ\.ง\.ด\.53/, 'ภ.ง.ด. checkbox label present');
-    assert.match(svg, /ภ\.ง\.ด\.3/, 'the other form is still labelled, just unchecked');
-    assert.match(svg, /หัก ณ ที่จ่าย/, 'ผู้จ่ายเงิน checkbox');
-  });
-
-  it('checks ภ.ง.ด.53 for a juristic payee and ภ.ง.ด.3 for an individual payee — never both', () => {
-    const pnd53 = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot).toString('utf8');
-    const pnd3 = buildWhtCertificateSvg({ ...fields, formType: 'PND3' }, payerSnapshot, payeeSnapshot).toString('utf8');
-    // One ✓ for the form-type checkbox and one for the fixed "(1) หัก ณ ที่จ่าย" checkbox — never
-    // more (both boxes checked) or fewer (the actual class silently unchecked).
-    assert.equal((pnd53.match(/✓/g) ?? []).length, 2);
-    assert.equal((pnd3.match(/✓/g) ?? []).length, 2);
-  });
-
-  it('places the stored signature image only under AUTO_STAMP, never a placeholder under BLANK', () => {
-    const unset = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot).toString('utf8');
-    const blank = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot, { mode: 'BLANK' }).toString('utf8');
-    const stamped = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot, { mode: 'AUTO_STAMP', signatureImageBase64: 'Zm9v' }).toString('utf8');
-    assert.ok(!unset.includes('<image'), 'no signature setting at all draws nothing, matching today');
-    assert.ok(!blank.includes('<image'), 'BLANK draws no image at all');
-    assert.ok(stamped.includes('<image href="data:image/png;base64,Zm9v"'), 'AUTO_STAMP draws the stored signature');
-  });
-
-  it('AUTO_STAMP without an actual image behaves exactly like BLANK, never a broken placeholder', () => {
-    const svg = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot, { mode: 'AUTO_STAMP' }).toString('utf8');
-    assert.ok(!svg.includes('<image'));
-  });
-
-  it('Decision A (2026-09-22): v1 is signature-only — no seal/stamp element exists at all', () => {
-    const svg = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot, { mode: 'AUTO_STAMP', signatureImageBase64: 'Zm9v' }).toString('utf8');
-    assert.ok(!/seal|ตราประทับ/i.test(svg));
-  });
-
-  // Correction & replacement plan §4.1/§6.1: the "ใบแทน" label is printed text next to เลขที่, only
-  // when a caller explicitly asks for it — every existing caller (SYSTEM_INITIAL_ISSUE, correction)
-  // passes nothing, so this must be a pure regression guard as well.
-  it('prints the "ใบแทน" label with its reissue date only when replacementCopy is supplied', () => {
-    const withCopy = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot, undefined, { issuedAt: '2026-09-20T00:00:00.000Z' }).toString('utf8');
-    assert.match(withCopy, /ใบแทน — ออกซ้ำเมื่อ 20\/09\/2026/);
-  });
-
-  it('omits the "ใบแทน" label entirely when replacementCopy is not supplied (regression)', () => {
-    const svg = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot).toString('utf8');
-    assert.ok(!svg.includes('ใบแทน'));
-  });
-});
-
-describe('renderWhtCertificatePdf', () => {
-  it('rasters real Thai ink into a one-page A4 PDF, past the dark-pixel-ratio guard', async () => {
-    const svg = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot);
-    const bytes = await renderWhtCertificatePdf(svg, fields.certificateNumber);
+describe('Revenue Department 50 ทวิ PDF', () => {
+  it('prints both statutory copies on A4 with the official labels, without form widgets or raw address JSON', async () => {
+    const bytes = await renderWhtCertificatePdf(fields, payer, payee);
     const pdf = await PDFDocument.load(bytes);
-    assert.equal(pdf.getPageCount(), 1);
+    assert.equal(pdf.getPageCount(), 2);
     assert.equal(pdf.getTitle(), fields.certificateNumber);
-    assert.ok(bytes.subarray(0, 5).equals(Buffer.from('%PDF-')));
+    for (const page of pdf.getPages()) {
+      assert.equal(Math.round(page.getWidth()), 595);
+      assert.equal(Math.round(page.getHeight()), 842);
+      assert.equal(String(page.node.get(PDFName.of('Annots'))), '[ ]');
+    }
+    assert.ok(!bytes.includes(Buffer.from('"line1"')), 'serialized address must never be printed');
   });
 
-  it('rejects an implausibly blank certificate the same way substitute receipts do', async () => {
-    const blank = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="850" height="180"><rect width="850" height="180" fill="white"/></svg>');
-    await assert.rejects(renderWhtCertificatePdf(blank, 'WT-BLANK'), /Thai font missing from the runtime image/);
-  });
-
-  // Correction & replacement plan §4.2/§6.2: the seam through to `renderSubstituteReceiptPdf`'s own
-  // `stateStamp` mechanism — no v1 caller wires this yet, but the parameter must actually reach the
-  // underlying raster pipeline for the day it does.
-  it('passes options.stateStamp through to the underlying substitute-receipt raster pipeline', async () => {
-    const svg = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot);
-    const bytes = await renderWhtCertificatePdf(svg, fields.certificateNumber, { stateStamp: 'SUPERSEDED' });
+  it('renders replacement and superseded state without losing the official form', async () => {
+    const bytes = await renderWhtCertificatePdf(fields, payer, payee, { mode: 'BLANK' }, { issuedAt: '2026-09-24T00:00:00Z' }, { stateStamp: 'SUPERSEDED' });
     const pdf = await PDFDocument.load(bytes);
-    assert.match(pdf.getSubject() ?? '', /State: SUPERSEDED/);
+    assert.equal(pdf.getPageCount(), 2);
+    assert.equal(pdf.getSubject(), 'State: SUPERSEDED');
+  });
+
+  it('fails safely if a legacy address is malformed JSON', async () => {
+    await assert.rejects(renderWhtCertificatePdf(fields, { ...payer, address: '{"line1":' }, payee), /invalid JSON/);
   });
 });

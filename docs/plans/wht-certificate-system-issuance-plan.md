@@ -1,5 +1,9 @@
 # WHT Certificate System Issuance Plan — ออกเอกสาร 50 ทวิ ในระบบ
 
+## Print-format correction (2026-09-23)
+
+Replace the custom 50 ทวิ SVG page with an overlay on the published Revenue Department master. Normalize legacy serialized addresses at the render boundary and constrain each value to its printed field. Compare rendered A4 pages with the master and with a long Thai payer/payee fixture; verify ordinary, blank-signature, signed, and ใบแทน paths. Recheck the existing ภ.ง.ด.53 main/annex overlay on the Revenue Department masters in the same pass.
+
 Status: READY (docs-first; ยังไม่เริ่ม implement)
 Spec: `docs/specs/wht-certificate-system-issuance-spec.md`
 Memory: `docs/agent-memory/wht-certificate-system-issuance.md`

@@ -74,11 +74,8 @@ export function billingQuoteDeal(quote: { deal?: unknown } | null | undefined): 
   return deal && typeof deal.dealId === 'string' && typeof deal.months === 'number' ? deal as BillingDealQuote : null;
 }
 
-/** A sidebar label answers "where am I"; a package card has to answer "what did I buy". The two
- *  differ in exactly one place: ภาษี ships ภ.ง.ด.53 and 50 ทวิ, which is why ENTERPRISE opened at
- *  all, and a customer comparing packages cannot see that in the word "ภาษี". Display only — the
- *  binding, and so the menu itself, keeps its own name. */
-const CARD_MENU_LABELS: Record<string, string> = { tax: 'ภาษี (ภ.ง.ด.53 และ 50 ทวิ)' };
+/** The dedicated PND53 route is sold separately from the full Tax workspace. */
+const CARD_MENU_LABELS: Record<string, string> = { pnd53: 'ออก ภ.ง.ด.53 ในระบบ' };
 /** The LINE assistant is the headline of the whole product and has no menu of its own — its only
  *  binding is the contextual AI แนะนำ, which is a sub-item, not the feature. Named from the feature
  *  catalog so the card, the console and the workspace all say the same Thai. */
@@ -97,7 +94,11 @@ export function dealMenuLabels(featureKeys: readonly string[] | null | undefined
     .filter(binding => binding.status === 'ready' && binding.navigation !== 'contextual'
       && binding.entitlementKeys.length > 0 && binding.entitlementKeys.every(key => keys.has(key)))
     .map(binding => CARD_MENU_LABELS[binding.navKey] ?? binding.labelTh);
-  return keys.has('ai_line_assistant') ? [AI_ASSISTANT_LABEL, ...menus] : menus;
+  return [
+    ...(keys.has('ai_line_assistant') ? [AI_ASSISTANT_LABEL] : []),
+    ...menus,
+    ...(keys.has('wht_50bis') ? ['ออกหนังสือรับรอง 50 ทวิในระบบ'] : []),
+  ];
 }
 
 /** v4 = chat credits; old approved deals retain their TOTAL-budget wording. */

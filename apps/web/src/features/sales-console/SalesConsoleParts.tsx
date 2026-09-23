@@ -78,6 +78,16 @@ export function SalesDealSummary({ deal }: { deal: SalesDealView }) {
       <div><dt className="text-xs font-semibold text-gray-500">ผู้ใช้</dt><dd className="font-bold text-gray-900">{snapshot.employeeLimit}</dd></div>
       <div><dt className="text-xs font-semibold text-gray-500">ใบเสร็จต่อเดือน</dt><dd className="font-bold text-gray-900">{snapshot.monthlySlipLimit}</dd></div>
       <div className="col-span-2 sm:col-span-3">
+        <dt className="text-xs font-semibold text-gray-500">สิทธิ์เพิ่มเติม</dt>
+        <dd className="text-gray-900">
+          {[
+            snapshot.featureKeys.includes('thai_tax') && 'เมนูภาษี (สิทธิ์ดีลเดิม)',
+            snapshot.featureKeys.includes('wht_pnd53') && 'ออก ภ.ง.ด.53 ในระบบ',
+            snapshot.featureKeys.includes('wht_50bis') && 'ออกหนังสือรับรอง 50 ทวิในระบบ',
+          ].filter(Boolean).join(' · ') || 'ไม่มี'}
+        </dd>
+      </div>
+      <div className="col-span-2 sm:col-span-3">
         <dt className="text-xs font-semibold text-gray-500">{snapshot.version === 4 ? 'เครดิตแชตต่อเดือน' : 'เพดาน AI รวมต่อเดือน'}</dt>
         <dd className="font-bold text-gray-900">
           {snapshot.version === 4

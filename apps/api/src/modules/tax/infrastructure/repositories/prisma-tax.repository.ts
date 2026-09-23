@@ -26,11 +26,12 @@ export class PrismaTaxRepository {
     return row ? this.toPeriodRecord(row) : null;
   }
 
-  async findPeriods(companyId: string, filters?: { taxType?: TaxType; status?: TaxPeriodStatus; periodKey?: string; page?: number; pageSize?: number }): Promise<{ items: TaxPeriodRecord[]; total: number }> {
+  async findPeriods(companyId: string, filters?: { taxType?: TaxType; formType?: string; status?: TaxPeriodStatus; periodKey?: string; page?: number; pageSize?: number }): Promise<{ items: TaxPeriodRecord[]; total: number }> {
     const page = filters?.page ?? 1;
     const pageSize = filters?.pageSize ?? 20;
     const where: Record<string, unknown> = { companyId };
     if (filters?.taxType) where['taxType'] = filters.taxType;
+    if (filters?.formType) where['formType'] = filters.formType;
     if (filters?.status) where['status'] = filters.status;
     if (filters?.periodKey) where['periodKey'] = filters.periodKey;
     const [items, total] = await Promise.all([

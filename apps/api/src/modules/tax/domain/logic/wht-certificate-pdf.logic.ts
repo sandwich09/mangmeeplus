@@ -1,156 +1,134 @@
-import type { PayeeSnapshot, PayerSnapshot, WhtFormType } from '@watchdog-bms/contracts';
-import { renderSubstituteReceiptPdf } from '../../../expenses/domain/logic/substitute-receipt-pdf.logic';
-import { fitToWidth, formatThaiTaxId, money, thaiBahtText, wrapText, xml } from '../../../expenses/domain/logic/substitute-receipt.logic';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { PDFDocument, PDFName } from 'pdf-lib';
+import sharp from 'sharp';
+import { formatCompanyLegalAddress, type CompanyLegalAddress, type PayeeSnapshot, type PayerSnapshot, type WhtFormType } from '@watchdog-bms/contracts';
+import { money, thaiBahtText } from '../../../expenses/domain/logic/substitute-receipt.logic';
 
-/**
- * WHT certificate system issuance plan §2.5 — the real 50 ทวิ template, built as its own dedicated
- * SVG rather than reusing/replacing `buildMinimalPdf` (which `GenerateTaxFilingPackageUseCase`
- * shares and must not change). Reuses the substitute-receipt module's SVG-building conventions
- * (font stack, `xml`/`money`/`formatThaiTaxId`/`wrapText`/`thaiBahtText` helpers) and its
- * `renderSubstituteReceiptPdf` raster pipeline directly — no new raster pipeline, no new dependency.
- *
- * Decision A (2026-09-22): v1 is signature-only. There is no seal/stamp param at all — the seal
- * position on the real form stays blank in every case, not a placeholder.
- */
+// Revenue Department printable master: https://rd.go.th/fileadmin/tax_pdf/withhold/approve_wh3_081156.pdf
+const MASTER = join(__dirname, '../../assets/rd-wht50bis.pdf');
 
 export type WhtCertificateFields = {
-  certificateNumber: string;
-  formType: WhtFormType;
-  incomeCategoryCode: string;
-  incomeCategoryName: string;
-  whtRate: string;
-  grossAmount: string;
-  withheldAmount: string;
-  paymentDate: string;
-  /** When the certificate was minted — printed as the document's own issue date. */
-  issuedAt: string;
+  certificateNumber: string; formType: WhtFormType;
+  incomeCategoryCode: string; incomeCategoryName: string; whtRate: string;
+  grossAmount: string; withheldAmount: string; paymentDate: string; issuedAt: string;
 };
-
 export type WhtCertificateSignature = {
   mode: 'AUTO_STAMP' | 'BLANK';
   signatureImageBase64?: string;
-  /** Same two formats `InitSignatureUploadUseCase` already accepts for the personal signature
-   *  library — the only two `<image>` can embed without a re-encode. Defaults to PNG. */
   signatureImageMimeType?: 'image/png' | 'image/jpeg';
 };
+type Rect = { x: number; y: number; width: number; height: number };
+type Mark = { x: number; y: number; text: string; size: number; maxWidth?: number; anchor?: 'start' | 'end' };
 
-function formatCertDate(iso: string): string {
+function xml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[char]!);
+}
+function printedAddress(value: string | null): string {
+  if (!value) return '-';
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{')) return trimmed.replace(/\s+/gu, ' ');
+  let parsed: unknown;
+  try { parsed = JSON.parse(trimmed); } catch { throw new Error('WHT certificate address contains invalid JSON'); }
+  const formatted = formatCompanyLegalAddress(parsed as CompanyLegalAddress);
+  if (!formatted) throw new Error('WHT certificate address cannot be printed');
+  return formatted;
+}
+function buddhistDate(iso: string): string {
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '-';
-  return `${String(date.getUTCDate()).padStart(2, '0')}/${String(date.getUTCMonth() + 1).padStart(2, '0')}/${date.getUTCFullYear()}`;
+  if (Number.isNaN(date.getTime())) throw new Error('WHT certificate date is invalid');
+  return `${String(date.getUTCDate()).padStart(2, '0')}/${String(date.getUTCMonth() + 1).padStart(2, '0')}/${date.getUTCFullYear() + 543}`;
 }
-
-const FIELD_WIDTH = 760;
-
-/** Pure — no I/O, no randomness, so a golden-fixture byte comparison is possible in tests. */
-export function buildWhtCertificateSvg(
-  fields: WhtCertificateFields,
-  payerSnapshot: PayerSnapshot,
-  payeeSnapshot: PayeeSnapshot,
-  signature?: WhtCertificateSignature,
-  // Correction & replacement plan §4.1/§6.1: printed text next to เลขที่, not a diagonal overlay —
-  // 50 ทวิ is a fixed-title statutory form, so the "copy" convention `substitute-receipt.logic.ts`
-  // uses (a swapped title) does not apply. undefined (default) leaves the document byte-identical to
-  // today for every existing caller (SYSTEM_INITIAL_ISSUE, correction).
-  replacementCopy?: { issuedAt: string },
-): Buffer {
-  const isPnd53 = fields.formType === 'PND53';
-  const payerAddressLines = wrapText(`ที่อยู่: ${payerSnapshot.address ?? '-'}`, FIELD_WIDTH);
-  const payeeAddressLines = wrapText(`ที่อยู่: ${payeeSnapshot.address ?? '-'}`, FIELD_WIDTH);
-  const bahtText = thaiBahtText(fields.withheldAmount);
-
-  let y = 100;
-  const payerBlockTop = y;
-  y += 26; // name
-  y += 26; // taxId + branch
-  const payerAddressY = y;
-  y += payerAddressLines.length * 20 + 16;
-  const payeeBlockTop = y;
-  y += 26;
-  y += 26;
-  const payeeAddressY = y;
-  y += payeeAddressLines.length * 20 + 16;
-  const formCheckboxY = y + 10;
-  y += 46;
-  const tableTop = y;
-  const tableHeaderHeight = 36;
-  const tableRowY = tableTop + tableHeaderHeight + 26;
-  const tableBottom = tableRowY + 20;
-  const totalTextY = tableBottom + 30;
-  const payerCheckboxY = totalTextY + 40;
-  const signatureBlockTop = payerCheckboxY + 40;
-  const height = signatureBlockTop + 170;
-
-  const signatureImage = signature?.mode === 'AUTO_STAMP' && signature.signatureImageBase64
-    ? `<image href="data:${signature.signatureImageMimeType ?? 'image/png'};base64,${signature.signatureImageBase64}" x="${560 - 100}" y="${signatureBlockTop + 6}" width="200" height="70" preserveAspectRatio="xMidYMid meet"/>`
+function field(marks: Mark[], rects: Map<string, Rect>, name: string, text: string, size = 8, anchor: 'start' | 'end' = 'start'): void {
+  const rect = rects.get(name);
+  if (!rect) throw new Error(`Revenue Department 50 ทวิ field missing: ${name}`);
+  marks.push({
+    x: anchor === 'end' ? rect.x + rect.width - 2 : rect.x + 2,
+    y: rect.y + size * 0.35,
+    text, size, maxWidth: rect.width - 4, anchor,
+  });
+}
+function taxId(marks: Mark[], rects: Map<string, Rect>, name: string, value: string | null): void {
+  if (!value) return;
+  if (!/^\d{13}$/.test(value)) throw new Error('WHT certificate tax ID must contain 13 digits');
+  const rect = rects.get(name);
+  if (!rect) throw new Error(`Revenue Department 50 ทวิ field missing: ${name}`);
+  // The official comb has 17 positions: 1-4-5-2-1 digits plus four printed separators.
+  const slots = [0, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14, 16];
+  for (const [i, digit] of [...value].entries()) marks.push({
+    x: rect.x + (slots[i]! + 0.5) * rect.width / 17,
+    y: rect.y + 3,
+    text: digit, size: 8,
+  });
+}
+function incomeFields(code: string): { date: string; paid: string; tax: string; description?: string } {
+  if (code === 'WHT_INTEREST') return { date: 'date4', paid: 'pay1.3', tax: 'tax1.3' };
+  if (code === 'WHT_DIVIDEND') throw new Error('Dividend 50 ทวิ requires a reviewed dividend-credit classification');
+  if (code.startsWith('WHT_OTHER')) return { date: 'date14.1', paid: 'pay1.13.1', tax: 'tax1.13.1', description: 'spec3' };
+  if (/^WHT_(SERVICE|RENT|PROFESSIONAL|ADVERTISING|TRANSPORT)_(3|5|IND|JUR)$/.test(code) || code === 'WHT_PRIZE' || code === 'CAT5') {
+    return { date: 'date14.0', paid: 'pay1.13.0', tax: 'tax1.13.0' };
+  }
+  throw new Error(`WHT certificate income category needs statutory row review: ${code}`);
+}
+function makeMarks(fields: WhtCertificateFields, payer: PayerSnapshot, payee: PayeeSnapshot, rects: Map<string, Rect>, replacement?: { issuedAt: string }): Mark[] {
+  const marks: Mark[] = [];
+  const number = /^(.*[-/])([^-\/]+)$/.exec(fields.certificateNumber);
+  if (number) field(marks, rects, 'book_no', number[1]!.slice(0, -1), 7);
+  field(marks, rects, 'run_no', number ? number[2]! : fields.certificateNumber, 7);
+  taxId(marks, rects, 'id1', payer.taxId);
+  taxId(marks, rects, 'id1_2', payee.taxId);
+  field(marks, rects, 'name1', payer.companyName, 8);
+  field(marks, rects, 'name2', payee.name, 8);
+  field(marks, rects, 'add1', printedAddress(payer.address), 7.6);
+  field(marks, rects, 'add2', printedAddress(payee.address), 7.6);
+  field(marks, rects, fields.formType === 'PND53' ? 'chk7' : 'chk4', '✓', 11);
+  field(marks, rects, 'chk8', '✓', 10);
+  const income = incomeFields(fields.incomeCategoryCode);
+  field(marks, rects, income.date, buddhistDate(fields.paymentDate), 7.5);
+  field(marks, rects, income.paid, money(fields.grossAmount), 8, 'end');
+  field(marks, rects, income.tax, money(fields.withheldAmount), 8, 'end');
+  if (income.description) field(marks, rects, income.description, fields.incomeCategoryName, 7.5);
+  field(marks, rects, 'pay1.14', money(fields.grossAmount), 8, 'end');
+  field(marks, rects, 'tax1.14', money(fields.withheldAmount), 8, 'end');
+  field(marks, rects, 'total', thaiBahtText(fields.withheldAmount), 8);
+  const [day, month, year] = buddhistDate(fields.issuedAt).split('/');
+  field(marks, rects, 'date_pay', day!, 8);
+  field(marks, rects, 'month_pay', month!, 8);
+  field(marks, rects, 'year_pay', year!, 8);
+  if (replacement) marks.push({ x: 408, y: 797, text: `ใบแทน ${buddhistDate(replacement.issuedAt)}`, size: 8, maxWidth: 93 });
+  return marks;
+}
+function overlay(width: number, height: number, marks: Mark[], signature?: WhtCertificateSignature, stamp?: 'SUPERSEDED'): Buffer {
+  const text = marks.map((mark) => {
+    const chars = [...mark.text].filter((char) => !/\p{Mark}/u.test(char)).length;
+    const fit = mark.maxWidth && chars * mark.size * 0.67 > mark.maxWidth ? ` textLength="${mark.maxWidth}" lengthAdjust="spacingAndGlyphs"` : '';
+    return `<text x="${mark.x}" y="${height - mark.y}" font-size="${mark.size}" text-anchor="${mark.anchor ?? 'start'}"${fit}>${xml(mark.text)}</text>`;
+  }).join('');
+  const image = signature?.mode === 'AUTO_STAMP' && signature.signatureImageBase64
+    ? `<image href="data:${signature.signatureImageMimeType ?? 'image/png'};base64,${signature.signatureImageBase64}" x="340" y="${height - 105}" width="133" height="31" preserveAspectRatio="xMidYMid meet"/>`
     : '';
-
-  const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="850" height="${height}" viewBox="0 0 850 ${height}" role="img" aria-label="หนังสือรับรองการหักภาษี ณ ที่จ่าย">
-  <rect width="850" height="${height}" fill="#fff"/>
-  <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
-    <text x="425" y="40" text-anchor="middle" font-size="22" font-weight="700">หนังสือรับรองการหักภาษี ณ ที่จ่าย</text>
-    <text x="425" y="64" text-anchor="middle" font-size="13">ตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร</text>
-    <text x="60" y="64" font-weight="700">เลขที่ ${xml(fields.certificateNumber)}</text>
-    ${replacementCopy ? `<text x="60" y="82" font-size="12" fill="#b91c1c">(ใบแทน — ออกซ้ำเมื่อ ${xml(formatCertDate(replacementCopy.issuedAt))})</text>` : ''}
-
-    <text x="60" y="${payerBlockTop}" font-weight="700">ผู้มีหน้าที่หักภาษี ณ ที่จ่าย (ผู้จ่ายเงิน)</text>
-    <text x="60" y="${payerBlockTop + 26}">ชื่อ: ${xml(payerSnapshot.companyName)}</text>
-    <text x="60" y="${payerBlockTop + 52}">เลขประจำตัวผู้เสียภาษีอากร: ${xml(payerSnapshot.taxId ? formatThaiTaxId(payerSnapshot.taxId) : '-')} สาขา: ${xml(payerSnapshot.branchCode ?? 'สำนักงานใหญ่')}</text>
-    ${payerAddressLines.map((line, index) => `<text x="60" y="${payerAddressY + index * 20}">${xml(line)}</text>`).join('')}
-
-    <text x="60" y="${payeeBlockTop}" font-weight="700">ผู้ถูกหักภาษี ณ ที่จ่าย (ผู้รับเงิน)</text>
-    <text x="60" y="${payeeBlockTop + 26}">ชื่อ: ${xml(payeeSnapshot.name)}</text>
-    <text x="60" y="${payeeBlockTop + 52}">เลขประจำตัวผู้เสียภาษีอากร/เลขประจำตัวประชาชน: ${xml(payeeSnapshot.taxId ? formatThaiTaxId(payeeSnapshot.taxId) : '-')}</text>
-    ${payeeAddressLines.map((line, index) => `<text x="60" y="${payeeAddressY + index * 20}">${xml(line)}</text>`).join('')}
-
-    <text x="60" y="${formCheckboxY}">ยื่นรายการตามแบบ:</text>
-    <rect x="200" y="${formCheckboxY - 12}" width="14" height="14" fill="#fff" stroke="#111"/>
-    ${!isPnd53 ? '<text x="203" y="' + formCheckboxY + '" font-weight="700">✓</text>' : ''}
-    <text x="222" y="${formCheckboxY}">ภ.ง.ด.3 (บุคคลธรรมดา)</text>
-    <rect x="400" y="${formCheckboxY - 12}" width="14" height="14" fill="#fff" stroke="#111"/>
-    ${isPnd53 ? '<text x="403" y="' + formCheckboxY + '" font-weight="700">✓</text>' : ''}
-    <text x="422" y="${formCheckboxY}">ภ.ง.ด.53 (นิติบุคคล)</text>
-
-    <rect x="60" y="${tableTop}" width="730" height="${tableHeaderHeight}" fill="#f3f3f3" stroke="#888"/>
-    <text x="70" y="${tableTop + 24}" font-weight="700">ประเภทเงินได้พึงประเมินที่จ่าย</text>
-    <text x="430" y="${tableTop + 24}" font-weight="700">วันที่จ่าย</text>
-    <text x="540" y="${tableTop + 24}" font-weight="700" text-anchor="end">จำนวนเงินที่จ่าย</text>
-    <text x="700" y="${tableTop + 24}" font-weight="700" text-anchor="end">ภาษีที่หักและนำส่ง</text>
-    <rect x="60" y="${tableTop + tableHeaderHeight}" width="730" height="46" fill="#fff" stroke="#888"/>
-    <text x="70" y="${tableRowY}"${fitToWidth(`${fields.incomeCategoryName} (${fields.incomeCategoryCode}) — อัตรา ${money(fields.whtRate)}%`, 350)}>${xml(fields.incomeCategoryName)} (${xml(fields.incomeCategoryCode)}) — อัตรา ${xml(money(fields.whtRate))}%</text>
-    <text x="430" y="${tableRowY}">${xml(formatCertDate(fields.paymentDate))}</text>
-    <text x="540" y="${tableRowY}" text-anchor="end">${money(fields.grossAmount)}</text>
-    <text x="700" y="${tableRowY}" text-anchor="end">${money(fields.withheldAmount)}</text>
-
-    <text x="60" y="${totalTextY}">รวมเงินภาษีที่หักนำส่ง (ตัวอักษร): ${xml(bahtText)}</text>
-
-    <text x="60" y="${payerCheckboxY}">ผู้จ่ายเงิน</text>
-    <rect x="130" y="${payerCheckboxY - 12}" width="14" height="14" fill="#fff" stroke="#111"/>
-    <text x="133" y="${payerCheckboxY}" font-weight="700">✓</text>
-    <text x="152" y="${payerCheckboxY}">(1) หัก ณ ที่จ่าย</text>
-
-    <line x1="460" y1="${signatureBlockTop + 92}" x2="760" y2="${signatureBlockTop + 92}" stroke="#222"/>
-    ${signatureImage}
-    <text x="610" y="${signatureBlockTop + 116}" text-anchor="middle">ลงชื่อ ....................................... ผู้จ่ายเงิน</text>
-    <text x="610" y="${signatureBlockTop + 142}" text-anchor="middle">วันที่ออกหนังสือรับรองฯ ${xml(formatCertDate(fields.issuedAt))}</text>
-  </g>
-</svg>`;
-  return Buffer.from(svg, 'utf8');
+  const state = stamp ? `<text x="${width / 2}" y="${height / 2}" text-anchor="middle" font-size="58" fill="#b91c1c" opacity=".4" transform="rotate(-30 ${width / 2} ${height / 2})">SUPERSEDED</text>` : '';
+  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><g fill="#111" font-family="Noto Sans Thai, Noto Sans, sans-serif">${text}</g>${image}${state}</svg>`);
 }
 
-/** `renderSubstituteReceiptPdf` is the general-purpose SVG→raster→pdf-lib primitive the
- *  substitute-receipt feature already validated (Thai-font raster + dark-pixel-ratio guard) — no
- *  expense-specific logic is baked into it, so this calls it directly instead of forking a second
- *  raster pipeline (plan §2.5). */
+/** The statutory certificate has two matching copies; the published RD page supplies all printed labels. */
 export async function renderWhtCertificatePdf(
-  svg: Buffer,
-  certificateNumber: string,
-  // §6.2/§4.2: a seam for re-rendering a superseded certificate with the generic diagonal
-  // 'SUPERSEDED' overlay `renderSubstituteReceiptPdf` already supports — no v1 caller passes this yet
-  // (no PDF persistence exists to re-render from, see plan §12 finding 2/open question 2), added so
-  // the capability exists without inventing a second raster pipeline later.
+  fields: WhtCertificateFields, payer: PayerSnapshot, payee: PayeeSnapshot,
+  signature?: WhtCertificateSignature, replacement?: { issuedAt: string },
   options?: { stateStamp?: 'SUPERSEDED' },
 ): Promise<Buffer> {
-  return renderSubstituteReceiptPdf(svg, certificateNumber, options);
+  const master = await PDFDocument.load(await readFile(MASTER));
+  const rects = new Map(master.getForm().getFields().map((f) => [f.getName(), f.acroField.getWidgets()[0]!.getRectangle()]));
+  const pdf = await PDFDocument.create();
+  const pages = await pdf.copyPages(master, [0, 0]);
+  for (const page of pages) {
+    page.node.delete(PDFName.of('Annots')); // remove the clear-data button and blank widgets
+    pdf.addPage(page);
+    const { width, height } = page.getSize();
+    const png = await sharp(overlay(width, height, makeMarks(fields, payer, payee, rects, replacement), signature, options?.stateStamp), { density: 192 }).png().toBuffer();
+    page.drawImage(await pdf.embedPng(png), { x: 0, y: 0, width, height });
+  }
+  pdf.setTitle(fields.certificateNumber);
+  if (options?.stateStamp) pdf.setSubject(`State: ${options.stateStamp}`);
+  return Buffer.from(await pdf.save());
 }

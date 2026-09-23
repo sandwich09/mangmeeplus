@@ -77,10 +77,23 @@ function harness(sources: {
     findConfirmedWithWhtByCompany: async () => sources.whtExpenses ?? [],
   } as any;
   const paymentSource = { findRecordedWithWhtByCompany: async () => sources.payments ?? [] } as any;
-  return { events, run: () => new SyncTaxEventsUseCase(taxRepo, docSource, expenseSource, paymentSource).execute('company-1') };
+  return { events, run: (scope: 'ALL' | 'PND53' = 'ALL') =>
+    new SyncTaxEventsUseCase(taxRepo, docSource, expenseSource, paymentSource).execute('company-1', undefined, scope) };
 }
 
 describe('SyncTaxEventsUseCase payee address', () => {
+  it('PND53-only sync leaves VAT and PND3 source events untouched', async () => {
+    const h = harness({
+      documents: [outputDocument()],
+      vatExpenses: [vatExpense()],
+      whtExpenses: [whtExpense(), whtExpense({ id: 'expense-individual', payeeEntityKind: 'INDIVIDUAL' })],
+      payments: [whtPayment(), whtPayment({ id: 'payment-individual', supplierType: 'INDIVIDUAL' })],
+    });
+    const result = await h.run('PND53');
+    assert.deepEqual(h.events.map((event) => event.eventType), ['WHT_PND53', 'WHT_PND53']);
+    assert.equal(result.vatInputCreated, 0);
+    assert.equal(result.vatOutputCreated, 0);
+  });
   it('carries the printed seller address onto the VAT_INPUT event', async () => {
     const h = harness({ vatExpenses: [vatExpense()] });
 

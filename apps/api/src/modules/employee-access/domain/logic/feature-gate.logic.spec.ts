@@ -400,18 +400,24 @@ describe('filterPermissionsByEntitlement', () => {
   // exists and is ungated — `filterPermissionsByEntitlement` treats a permission as ungated the
   // moment ANY pack holding it has no featureEntitlementKey, so this only holds if
   // `wht.certificate.issue` is absent from `pack.wht.certificate.manage`'s permissionKeys.
-  it('gates wht.certificate.issue on thai_tax, unlike its read/link siblings — never via pack.wht.certificate.manage', () => {
+  it('gates new 50 ทวิ issuance on its narrow right while retaining the legacy Tax grant', () => {
     const allThree = ['wht.certificate.read', 'wht.external_certificate.link', 'wht.certificate.issue'];
     assert.deepEqual(
       filterPermissionsByEntitlement(allThree, new Set(['procurement'])),
       ['wht.certificate.read', 'wht.external_certificate.link'],
-      'without thai_tax: read/link survive, issue is stripped',
+      'without the issue right: read/link survive, issue is stripped',
     );
     assert.deepEqual(
-      filterPermissionsByEntitlement(allThree, new Set(['thai_tax'])),
+      filterPermissionsByEntitlement(allThree, new Set(['wht_50bis'])),
       allThree,
-      'with thai_tax: all three survive',
+      'with the narrow issue right: all three survive',
     );
+    assert.deepEqual(filterPermissionsByEntitlement(allThree, new Set(['thai_tax'])), allThree);
+    assert.deepEqual(filterPermissionsByEntitlement(allThree, new Set(['wht_pnd53'])),
+      ['wht.certificate.read', 'wht.external_certificate.link']);
+    assert.deepEqual(filterPermissionsByEntitlement(['wht.pnd53.read', 'wht.pnd53.prepare'], new Set(['wht_pnd53'])),
+      ['wht.pnd53.read', 'wht.pnd53.prepare']);
+    assert.deepEqual(filterPermissionsByEntitlement(['tax.period.read', 'tax.report.recompute'], new Set(['wht_pnd53'])), []);
   });
 
   // Correction & replacement plan §2.1/§8.2: owner confirmed 2026-09-23 this stays ungated, unlike

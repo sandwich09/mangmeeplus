@@ -16,6 +16,7 @@ import {
   SALES_DEAL_OFFER_DAYS,
   SALES_DEAL_BASE_TIERS,
   SALES_DEAL_REASON_MAX,
+  SALES_DEAL_ALLOWED_FEATURE_KEYS,
   type SalesDealBaseTier,
   type SalesDealCadence,
   type SalesDealSnapshot,
@@ -144,7 +145,8 @@ export function buildDealSnapshot(draft: SnapshotDraft, snapshotVersion: 2 | 3 |
   // S24: the customer-facing note is written as prose. "+" reads as a broken bullet in LINE and in
   // the offer card, and the Owner copy rule is to write "และ".
   if (description.includes('+')) throw new SalesSnapshotError('description_plus');
-  if (!Array.isArray(draft.featureKeys) || draft.featureKeys.some((key) => typeof key !== 'string')) {
+  if (!Array.isArray(draft.featureKeys) || draft.featureKeys.some((key) =>
+    typeof key !== 'string' || !SALES_DEAL_ALLOWED_FEATURE_KEYS.includes(key))) {
     throw new SalesSnapshotError('featureKeys');
   }
   const aiBudget = draft.aiMonthlyBudgetSatang;

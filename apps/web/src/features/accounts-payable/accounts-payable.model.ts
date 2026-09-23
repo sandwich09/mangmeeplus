@@ -53,8 +53,8 @@ export function isSupplierPaymentWithholdingValid(amount: number, wht?: Supplier
 
 /**
  * WHT certificate system issuance plan §4.1 (S9): both gate axes. `permissions` already folds in
- * the `thai_tax` entitlement (a company without it never has `wht.certificate.issue` in its
- * effective permission set at all), so the only other axis to check per-handoff is route-readiness
+ * the `wht_50bis` entitlement (or a retained legacy Tax grant) before
+ * `wht.certificate.issue` reaches the effective permission set. The other axis is route-readiness
  * (`systemIssuanceOpen`) plus the handoff actually being open to an action (`REQUIRED`).
  */
 export function canIssueSystemWhtCertificate(

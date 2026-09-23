@@ -1,5 +1,9 @@
 # WHT Certificate System Issuance Spec — ออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ในระบบ ครั้งแรก
 
+## Print-format correction (2026-09-23)
+
+The system PDF must print on the Revenue Department's published 50 ทวิ form, with Thai text confined to its payer, payee, tax ID, filing type, income, amount, and signature fields. The PDF must not expose serialized address JSON, overlap form labels or adjacent columns, or substitute a visually different blank page. The Revenue Department source is https://rd.go.th/fileadmin/tax_pdf/withhold/approve_wh3_081156.pdf. A replacement copy retains its number and shows ใบแทน. The payer signature stays blank unless the company chose automatic signature. The same renderer applies to initial issuance, correction, and replacement.
+
 Status: DRAFT (docs-first, ยังไม่ implement)
 Owner: Finance/Accounting lane
 Related (cross-reference เท่านั้น, ไม่แก้ไขไฟล์เหล่านี้):

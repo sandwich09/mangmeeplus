@@ -9,15 +9,17 @@
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { FEATURE_PACKAGE_PRESETS } from '@watchdog-bms/contracts';
+import { FEATURE_PACKAGE_PRESETS, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
 import { PLAN_MENUS_STALE_MS, planMenuRetryable, planMenuTarget } from './billing-plan-menus';
 
 test('a paid tier resolves to its own menu set (§20.1)', () => {
   assert.deepEqual(planMenuTarget('STARTER_249', false), FEATURE_PACKAGE_PRESETS.starter.featureKeys);
-  assert.deepEqual(planMenuTarget('ENTERPRISE_1999', false), FEATURE_PACKAGE_PRESETS.full.featureKeys);
-  // The gap §20.5 named: only a change that crosses into or out of ENTERPRISE moves any menu.
+  assert.deepEqual(planMenuTarget('ENTERPRISE_1999', false), TIER_FEATURE_PRESETS.ENTERPRISE_1999);
+  // A change into or out of Enterprise moves only its two added rights.
   assert.deepEqual(planMenuTarget('BASIC_499', false), planMenuTarget('PRO_999', false));
   assert.notDeepEqual(planMenuTarget('PRO_999', false), planMenuTarget('ENTERPRISE_1999', false));
+  assert.deepEqual(planMenuTarget('ENTERPRISE_1999', false)?.filter((key) => !FEATURE_PACKAGE_PRESETS.starter.featureKeys.includes(key as never)),
+    ['wht_pnd53', 'wht_50bis']);
 });
 
 test('a live deal keeps its own snapshot, whatever the base tier says', () => {
