@@ -646,7 +646,7 @@ export function staffMenuCommand(text: string): StaffMenuCommand | null {
   if (normalized === 'บริการของเรา') return 'services';
   if (normalized === 'ติดต่อเรา') return 'contact';
   if (normalized === RESUME_AI_COMMAND) return 'talk';
-  if (normalized === PACKAGE_CHANGE_COMMAND) return 'package_change';
+  if (normalized === PACKAGE_CHANGE_COMMAND || normalized === 'ขอเปลี่ยนแพ็คเกจ') return 'package_change';
   if (normalized === EMPLOYEE_DOOR_COMMAND) return 'employee';
   if (normalized === STAFF_CONTACT_COMMAND) return 'staff_contact';
   if (RESUME_AI_ALIASES.some((alias) => normalized === menuCommandKey(alias))) return 'resume_ai';
@@ -659,7 +659,7 @@ export function staffMenuCommand(text: string): StaffMenuCommand | null {
   // this word by interpolating `VIEW_PACKAGES_COMMAND`, so a literal re-typed here is the one way
   // that sentence could come to name a word this matcher no longer answers. `แพ็กเกจ` stays a bare
   // alias: nothing renders it, so nothing can drift from it.
-  if (normalized === VIEW_PACKAGES_COMMAND || normalized === 'แพ็กเกจ') return 'promotion';
+  if (normalized === VIEW_PACKAGES_COMMAND || normalized === 'แพ็กเกจ' || normalized === 'แพ็คเกจ') return 'promotion';
   return null;
 }
 

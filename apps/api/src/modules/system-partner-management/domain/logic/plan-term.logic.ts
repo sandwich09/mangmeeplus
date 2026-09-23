@@ -155,51 +155,36 @@ export function formatThaiDateTime(value: Date): string {
   return `${THAI_DATE.format(value)} เวลา ${THAI_TIME.format(value)} น.`;
 }
 
-/**
- * P10-L §3.7. The notification rail renders one fixed "open in the web app" button, so the second
- * way out is offered as WORDS — and the words are the command: `staffMenuCommand` answers
- * "ขอเปลี่ยนแพ็กเกจ" typed into the chat.
- *
- * Appended ONLY when the owner actually has a linked LINE account. The same body is what the web
- * dashboard renders, and telling a Flow B or admin-created customer to type into a LINE chat they
- * have never opened is an instruction they cannot follow.
- */
-export const PACKAGE_CHANGE_HINT_TH = 'หรือพิมพ์ ขอเปลี่ยนแพ็กเกจ ในแชท LINE นี้ ทีมงานจะติดต่อกลับให้ค่ะ';
-
-const withHint = (message: string, lineLinked: boolean) =>
-  (lineLinked ? `${message} ${PACKAGE_CHANGE_HINT_TH}` : message);
+const continuationTh = (selfServeBilling: boolean, paymentHint: string): string => selfServeBilling
+  ? `ต่ออายุหรือเปลี่ยนแพ็กเกจได้เองในเว็บแอปค่ะ${paymentHint} หากต้องการความช่วยเหลือ โทร ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`
+  : `หากต้องการใช้งานต่อ ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`;
 
 export function warningMessageTh(
   companyName: string,
   termEndsAt: Date,
   daysLeft: number,
-  lineLinked = false,
+  selfServeBilling = false,
+  paymentHint = '',
 ): string {
-  return withHint(
-    `แพ็กเกจของ${companyName}จะหมดอายุวันที่ ${formatThaiDateTime(termEndsAt)} (อีก ${daysLeft} วัน) — หากต้องการใช้งานต่อ ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
-    lineLinked,
-  );
+  return `แพ็กเกจของ${companyName} จะหมดอายุวันที่ ${formatThaiDateTime(termEndsAt)} (อีก ${daysLeft} วัน) — ${continuationTh(selfServeBilling, paymentHint)}`;
 }
 
-export function expiredMessageTh(companyName: string, lineLinked = false): string {
-  return withHint(
-    `แพ็กเกจของ${companyName}หมดอายุแล้ว ระบบพักการใช้งานชั่วคราว ข้อมูลทั้งหมดยังอยู่ครบ — หากต้องการใช้งานต่อ ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
-    lineLinked,
-  );
+export function expiredMessageTh(companyName: string, selfServeBilling = false, paymentHint = ''): string {
+  return `แพ็กเกจของ${companyName} หมดอายุแล้ว ระบบพักการใช้งานชั่วคราว ข้อมูลทั้งหมดยังอยู่ครบ — ${continuationTh(selfServeBilling, paymentHint)}`;
 }
 
 /**
  * The LINE answer for the OWNER of a term-expired company (spec §renew, Owner 2026-08-30: "ตอบสุภาพ
  * ชวนติดต่อ แจ้งเฉพาะ OWNER"). Staff never see this — they keep the generic unavailable reply and no
- * package detail. Says the three things an owner needs in one screen: it ended, the data is safe,
- * and the two ways back. Kept beside the other plan-term copy so the contact details have one home.
+ * package detail. This reply is used only when self-service billing is closed, so it points to
+ * support instead of promising a checkout page. Kept beside the other plan-term copy so the
+ * contact details have one home.
  */
 export function expiredLineOwnerMessageTh(): string {
   return [
     '🔴 แพ็กเกจของคุณหมดอายุแล้ว ระบบพักการใช้งานชั่วคราวค่ะ',
     'ข้อมูลทั้งหมดยังอยู่ครบ ไม่ได้หายไปไหนนะคะ',
-    'ต่ออายุได้เองที่เว็บแอป เข้าสู่ระบบแล้วจะเห็นหน้าต่ออายุทันที',
-    `หรือติดต่อเรา โทร ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
+    `หากต้องการใช้งานต่อ ติดต่อทีมงาน โทร ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
     // No typed-command hint here: this reply is delivered with a real "ขอเปลี่ยนแพ็กเกจ" quick
     // reply attached, and a sentence telling someone to type what a button already offers is noise.
   ].join('\n');

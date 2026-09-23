@@ -498,6 +498,7 @@ export class ProcessQueuedDeliveryUseCase {
       const event = current.recipient.event;
       const result = await pushLineMessage(token, lineUserId, buildLineMessage({
         companyId,
+        triggerKey: event.triggerKey,
         title: event.title,
         body: event.body,
         severity: event.severity.toLowerCase(),
@@ -598,6 +599,7 @@ export class ProcessQueuedDeliveryUseCase {
       const event = current.recipient.event;
       const result = await pushLineMessage(token, lineUserId, buildLineMessage({
         companyId,
+        triggerKey: event.triggerKey,
         title: event.title,
         body: event.body,
         severity: event.severity.toLowerCase(),
@@ -714,6 +716,7 @@ async function crmNotificationCustomerId(tx: any, companyId: string, event: any)
 
 export function buildLineMessage(params: {
   companyId: string;
+  triggerKey?: string;
   title: string;
   body: string;
   severity: string;
@@ -729,6 +732,8 @@ export function buildLineMessage(params: {
   // so a worker without WEB_BASE_URL/PUBLIC_BASE_URL pushed an unreachable link instead of a path.
   const href = params.deepLinkHref ?? `/companies/${params.companyId}/dashboard`;
   const deepLink = webLink(href);
+  const buttonLabel = (params.triggerKey === 'plan_term_expiring' || params.triggerKey === 'plan_term_expired')
+    && href.endsWith(`/companies/${params.companyId}/billing`) ? 'จัดการแพ็กเกจ' : 'เปิดรายการในเว็บ';
   const label = severityLabel[params.severity] ?? '📣 แจ้งเตือน';
   const title = Array.from(params.title.trim() || 'แจ้งเตือนจากมั่งมีพลัส').slice(0, 120).join('');
   const body = Array.from(params.body.trim()).slice(0, 1_000).join('');
@@ -757,7 +762,7 @@ export function buildLineMessage(params: {
           type: 'box', layout: 'vertical', paddingAll: '12px',
           contents: [{
             type: 'button', style: 'primary', color: '#15803D',
-            action: { type: 'uri', label: 'เปิดรายการในเว็บ', uri: deepLink },
+            action: { type: 'uri', label: buttonLabel, uri: deepLink },
           }],
         },
       } : {}),

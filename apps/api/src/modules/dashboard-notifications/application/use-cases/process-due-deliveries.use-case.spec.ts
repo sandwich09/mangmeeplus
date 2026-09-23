@@ -83,6 +83,16 @@ describe('notification LINE copy', () => {
     const header = (message.contents.header as { contents: Array<{ text: string }> }).contents[0]!.text;
     assert.equal(header, '🔴 สำคัญ');
   });
+
+  it('offers the billing action on self-service plan-term notices', () => {
+    const message = buildLineMessage({
+      companyId: 'co-1', triggerKey: 'plan_term_expiring', severity: 'action', title: 'แพ็กเกจใกล้หมดอายุ',
+      body: 'เลือกแพ็กเกจและชำระเงินได้เอง', deepLinkHref: 'https://app.example.test/companies/co-1/billing',
+    });
+    const footer = message.contents.footer as { contents: Array<{ action: { label: string; uri: string } }> };
+    assert.equal(footer.contents[0]!.action.label, 'จัดการแพ็กเกจ');
+    assert.match(footer.contents[0]!.action.uri, /\/companies\/co-1\/billing$/);
+  });
 });
 
 describe('CreateOrUpdateNotificationEventUseCase recipients', () => {
