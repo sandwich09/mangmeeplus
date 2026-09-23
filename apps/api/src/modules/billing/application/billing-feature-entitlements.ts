@@ -11,6 +11,8 @@ type FeatureDb = Pick<Prisma.TransactionClient, 'companyFeatureEntitlement' | 'c
   'companyEntitlementNormalization' | 'entitlementTransition'>;
 const VERSION = 1;
 const CANONICAL = [...ALL_FEATURE_ENTITLEMENT_KEYS].sort();
+const NEW_WHT_KEYS = ['wht_50bis', 'wht_pnd53'] as const;
+const PRE_20260923_CATALOG = CANONICAL.filter(key => !NEW_WHT_KEYS.some(added => added === key));
 const LABELS = new Map(FEATURE_CATALOG.flatMap(feature => [
   [feature.key, feature.labelTh] as const,
   ...feature.submenus.map(submenu => [submenu.key, `${feature.labelTh} · ${submenu.labelTh}`] as const),
@@ -45,8 +47,15 @@ export async function billingFeaturePlan(db: FeatureDb, companyId: string,
   ]);
   rows.sort((a, b) => a.featureKey < b.featureKey ? -1 : a.featureKey > b.featureKey ? 1 : 0);
   const untouchedLegacy = rows.length === 0 && !normalization && !set && transitions.length === 0;
-  if (!untouchedLegacy && (!isCurrentEntitlementNormalization(normalization) || !set || rows.length !== CANONICAL.length ||
-    rows.some((row, index) => row.featureKey !== CANONICAL[index]))) throw review();
+  const completeCatalog = rows.length === CANONICAL.length && rows.every((row, index) => row.featureKey === CANONICAL[index]);
+  // Shops normalized before the two WHT rights existed have exactly the former 60 keys. Both
+  // missing rights are already effectively OFF; the paid apply materializes all 62 rows atomically.
+  const previousCatalog = normalization?.cohortKind === 'EXPLICIT' && CANONICAL.length === 62 &&
+    PRE_20260923_CATALOG.length === 60 && rows.length === PRE_20260923_CATALOG.length &&
+    rows.every((row, index) => row.featureKey === PRE_20260923_CATALOG[index]) &&
+    await db.entitlementTransition.count({ where: { companyId, featureKey: { in: [...NEW_WHT_KEYS] } } }) === 0;
+  if (!untouchedLegacy && (!isCurrentEntitlementNormalization(normalization) || !set ||
+    (!completeCatalog && !previousCatalog))) throw review();
 
   const stored = new Map(rows.map(row => [row.featureKey, row]));
   const latest = new Map<string, (typeof transitions)[number]>();

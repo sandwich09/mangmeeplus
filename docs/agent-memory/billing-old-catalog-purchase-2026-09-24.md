@@ -1,0 +1,10 @@
+# Agent Memory: Purchase with the former entitlement catalog
+
+Status: API compatibility fix prepared locally; not deployed. Production data unchanged.
+Owner: Codex
+Scope: The Production 2026-09-23 release added `wht_pnd53` and `wht_50bis` to the canonical catalog. Eighty-eight previously normalized EXPLICIT shops still have the complete former 60 rows, so `billingFeaturePlan` refused status, quote and purchase. Twelve partial test shops and seven zero-row shops have different states; the owner directed us to ignore the 12 tests.
+Decisions: A one-person resolution uses the existing API billing path. Accept only an exact 60-key, completed EXPLICIT snapshot when the catalog is exactly the known 62-key version. Missing WHT rights remain OFF. The paid apply already writes all 62 rows in one transaction and preserves its source-hash/CAS checks. Partial or altered sets still fail closed. Do not use the Production T2 data-write route: `docs/runbooks/production-support-access.md` requires a second operator to arm it, and the owner is alone in this project.
+Open questions: Production release authorization and live purchase acceptance after deployment.
+Artifacts: `apps/api/src/modules/billing/application/billing-feature-entitlements.ts`, focused spec, and `docs/specs/package-sale-feature-scope-2026-09-23.md`.
+Verification: Focused entitlement unit tests 6/6 passed, including an exact old 60-key quote and paid apply to 62 keys with the new WHT rights OFF, Enterprise target enabling both new rights, and rejection of 12-key, altered, LEGACY and prior-transition snapshots. API typecheck and `git diff --check` passed on the final code. No Production data or service changed.
+Next: Run focused tests/typecheck on the final diff, integrate with the current main/develop source, then follow the UAT/Production release protocol. Verify the affected account's Billing status/quote and a real authorized purchase path after release. Record exact UAT, READY and Production run IDs if a release is dispatched; do not infer customer `OPEN` from code or local tests.
