@@ -1,6 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { DenyByDefaultGuard } from '../../common/security/deny-by-default.guard';
+import { AuthController } from './presentation/auth.controller';
 import { ApproveLineWebLoginTransactionUseCase } from './application/use-cases/approve-line-web-login-transaction.use-case';
 import { RedeemLineWebLoginTransactionUseCase } from './application/use-cases/redeem-line-web-login-transaction.use-case';
 import { hashLineWebQrValue } from './domain/logic/line-web-qr.logic';
@@ -54,6 +57,17 @@ const assertNoRawSecretInAudit = (logged: any[]) => {
   assert.ok(!serialized.includes(PUBLIC_CODE), 'audit metadata must never carry the raw public code');
   assert.ok(!serialized.includes(DESKTOP_SECRET), 'audit metadata must never carry the raw desktop secret');
 };
+
+it('allows QR approval for a signed-in account and denies one without session permission', () => {
+  const guard = new DenyByDefaultGuard(new Reflector());
+  const context = (permissions: string[]) => ({
+    getHandler: () => AuthController.prototype.lineQrApprove,
+    getClass: () => AuthController,
+    switchToHttp: () => ({ getRequest: () => ({ context: { permissions } }) }),
+  }) as any;
+  assert.equal(guard.canActivate(context(['account.session.read'])), true);
+  assert.throws(() => guard.canActivate(context([])), ForbiddenException);
+});
 
 // ---- ApproveLineWebLoginTransactionUseCase ----
 
