@@ -36,3 +36,28 @@ test('the issued banner renders before the external-linked banner, and the issue
   assert.ok(issuedAt >= 0 && linkedAt > issuedAt, 'issued must be checked before linked');
   assert.ok(issueButtonAt >= 0 && externalFormAt > issueButtonAt, 'the issue button must precede the external-attach form in the same branch');
 });
+
+// Correction & replacement plan §5.1/§5.3: the two new buttons live inside the SAME `issued` block,
+// gated by the shared predicates from accounts-payable.model.ts — never a duplicated condition.
+test('the correction form and replacement button render through the shared predicates, inside the issued block', () => {
+  const issuedAt = page.indexOf('{issued ? (');
+  const linkedAt = page.indexOf(') : linked ? (');
+  const correctAt = page.indexOf('{canCorrectWhtCertificate(handoff, permissions) && (');
+  const replaceAt = page.indexOf('{canIssueWhtReplacementCopy(handoff, permissions) && (');
+  assert.ok(correctAt > issuedAt && correctAt < linkedAt, 'the correction block must be inside the issued branch');
+  assert.ok(replaceAt > issuedAt && replaceAt < linkedAt, 'the replacement button must be inside the issued branch');
+});
+
+test('correcting calls the correction endpoint and downloads the returned PDF immediately', () => {
+  assert.match(page, /await correctSystemWhtCertificate\(companyId, handoff\.id, \{/);
+  const downloadCalls = page.match(/downloadArtifact\(result\.pdfArtifact\)/g) ?? [];
+  assert.ok(downloadCalls.length >= 3, 'issue, correct, and replace must each download the mint response immediately');
+});
+
+test('issuing a replacement copy calls the replacement-copy endpoint and downloads the returned PDF immediately, with no form', () => {
+  assert.match(page, /await issueSystemWhtReplacementCopy\(companyId, handoff\.id\)/);
+});
+
+test('the correction form requires a reason before it can be submitted', () => {
+  assert.match(page, /disabled=\{correctBusy \|\| !correctForm\.reason\.trim\(\)\}/);
+});

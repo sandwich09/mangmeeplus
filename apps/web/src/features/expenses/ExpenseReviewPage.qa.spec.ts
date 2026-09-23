@@ -171,3 +171,26 @@ test('issuing from the post-confirm prompt calls the system-certificate endpoint
   assert.match(source, /await issueSystemWhtCertificate\(companyId, whtIssuePrompt\.handoffId\)/);
   assert.match(source, /downloadArtifact\(result\.pdfArtifact\)/);
 });
+
+// Correction & replacement plan §5.2 survey finding: this page IS the persistent, cross-session
+// detail view for a confirmed expense (the [expenseId] route renders it directly) — unlike
+// whtIssuePrompt/whtIssuedPdf above, which are confirm-session-only, the handoff here is re-read
+// from the server on every load so the two buttons work long after the confirming session ends.
+test('the correction/replacement handoff is re-read from the server whenever the expense is CONFIRMED and withheld tax, not carried from session state', () => {
+  assert.match(source, /detail\.status !== 'CONFIRMED' \|\| !\(Number\(detail\.whtAmount\) > 0\) \|\| !permissions\.includes\('wht\.certificate\.correct'\)/);
+  assert.match(source, /listWhtHandoffs\(companyId, \{ status: 'SYSTEM_ISSUED', sourcePaymentId: expenseId \}\)/);
+});
+
+test('the correction form and replacement button render through the shared accounts-payable-mirrored predicates', () => {
+  assert.match(source, /\{canCorrectWhtCertificate\(whtHandoff, permissions\) && \(/);
+  assert.match(source, /\{canIssueWhtReplacementCopy\(whtHandoff, permissions\) && \(/);
+});
+
+test('correcting calls the correction endpoint and downloads the returned PDF immediately, requiring a reason', () => {
+  assert.match(source, /await correctSystemWhtCertificate\(companyId, whtHandoff\.id, \{/);
+  assert.match(source, /disabled=\{correctBusy \|\| !correctForm\.reason\.trim\(\)\}/);
+});
+
+test('issuing a replacement copy calls the replacement-copy endpoint with no form', () => {
+  assert.match(source, /await issueSystemWhtReplacementCopy\(companyId, whtHandoff\.id\)/);
+});
