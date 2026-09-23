@@ -59,6 +59,7 @@ const TERM_RECOVERY_ROUTES = new Set([
   'GET /v1/auth/legal-acceptance', 'POST /v1/auth/legal-acceptance',
   'POST /v1/auth/password/change', 'POST /v1/auth/logout',
   'GET /v1/auth/account/security',
+  'PATCH /v1/auth/me/contact', 'POST /v1/auth/me/password/set',
 ]);
 
 // Account email proof is a prerequisite for payment, including after a term hold.
@@ -66,7 +67,7 @@ const TERM_RECOVERY_ROUTES = new Set([
 export function isAccountEmailRecoveryRoute(method: string, path: string): boolean {
   const clean = cleanRequestPath(path).toLowerCase(), prefix = '/v1/auth/account/email/otp';
   return method === 'GET' ? new RegExp(`^${prefix}(?:/[^/]+)?$`).test(clean)
-    : method === 'POST' && new RegExp(`^${prefix}/(?:request|line-reauth(?:/start)?|[^/]+/(?:resend|confirm|cancel))$`).test(clean);
+    : method === 'POST' && new RegExp(`^${prefix}/(?:request|login-method|line-reauth(?:/start)?|[^/]+/(?:resend|confirm|cancel))$`).test(clean);
 }
 
 // Only implemented billing and package-request read/create routes may recover a term hold.
@@ -75,6 +76,7 @@ export function isCompanyProfileRecoveryRoute(method: string, path: string): boo
   const clean = cleanRequestPath(path).toLowerCase(), prefix = '/v1/companies/[^/]+';
   return ((method === 'GET' || method === 'PATCH') && new RegExp(`^${prefix}/identity$`).test(clean))
     || (method === 'PATCH' && new RegExp(`^${prefix}/identity/business-type$`).test(clean))
+    || (method === 'GET' && new RegExp(`^${prefix}/settings/address-master$`).test(clean))
     || (method === 'PUT' && new RegExp(`^${prefix}/vat-registration$`).test(clean));
 }
 

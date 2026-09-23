@@ -25,7 +25,7 @@ export function ThaiAddressFields({ companyId, addressMasterPath, value, onChang
 
   useEffect(() => {
     let cancelled = false;
-    if (value.postalCode.length < 3) {
+    if (disabled || value.postalCode.length < 3) {
       setRows([]);
       setLoading(false);
       setMessage('');
@@ -57,7 +57,7 @@ export function ThaiAddressFields({ companyId, addressMasterPath, value, onChang
         .finally(() => { if (!cancelled) setLoading(false); });
     }, 300);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [companyId, addressMasterPath, value.postalCode]);
+  }, [companyId, addressMasterPath, disabled, value.postalCode]);
 
   const provinces = uniqueAddressValues([...rows.map((row) => row.provinceTh), ...(value.province ? [value.province] : [])]);
   const districts = uniqueAddressValues([
