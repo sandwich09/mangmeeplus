@@ -8,18 +8,19 @@ import { ThemedSelect, type ThemedSelectProps } from './ThemedSelect';
 type FieldFrameProps = {
   id: string;
   label: string;
+  showRequiredMark?: boolean;
   error?: string;
   hint?: string;
   children: ReactNode;
 };
 
-function FieldFrame({ id, label, error, hint, children }: FieldFrameProps) {
+function FieldFrame({ id, label, showRequiredMark, error, hint, children }: FieldFrameProps) {
   const hintId = hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
 
   return (
     <label htmlFor={id} className="flex flex-col gap-1.5 text-sm font-medium text-gray-700">
-      {label}
+      <span>{label}{showRequiredMark && <span className="text-red-600" aria-hidden="true"> *</span>}</span>
       {children}
       {hint && <span id={hintId} className="text-xs font-normal text-gray-400">{hint}</span>}
       {error && <FieldError id={errorId}>{error}</FieldError>}
@@ -36,11 +37,12 @@ function getFieldId(id: string | undefined, name: string | undefined, label: str
 
 export interface TextFieldProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
+  showRequiredMark?: boolean;
   error?: string;
   hint?: string;
 }
 
-export function TextField({ id, label, error, hint, className, ...rest }: TextFieldProps) {
+export function TextField({ id, label, showRequiredMark, error, hint, className, ...rest }: TextFieldProps) {
   const [locale] = useLocale();
   const [revealed, setRevealed] = useState(false);
   const fieldId = getFieldId(id, rest.name, label);
@@ -61,7 +63,7 @@ export function TextField({ id, label, error, hint, className, ...rest }: TextFi
   );
 
   return (
-    <FieldFrame id={fieldId} label={label} error={error} hint={hint}>
+    <FieldFrame id={fieldId} label={label} showRequiredMark={showRequiredMark} error={error} hint={hint}>
       {isPassword ? (
         <span className="relative block">
           {input}
@@ -88,18 +90,19 @@ export function TextField({ id, label, error, hint, className, ...rest }: TextFi
 
 export interface SelectFieldProps extends ThemedSelectProps {
   label: string;
+  showRequiredMark?: boolean;
   error?: string;
   hint?: string;
 }
 
-export function SelectField({ id, label, error, hint, className, children, ...rest }: SelectFieldProps) {
+export function SelectField({ id, label, showRequiredMark, error, hint, className, children, ...rest }: SelectFieldProps) {
   const fieldId = getFieldId(id, rest.name, label);
   const describedBy = [hint ? `${fieldId}-hint` : undefined, error ? `${fieldId}-error` : undefined]
     .filter(Boolean)
     .join(' ');
 
   return (
-    <FieldFrame id={fieldId} label={label} error={error} hint={hint}>
+    <FieldFrame id={fieldId} label={label} showRequiredMark={showRequiredMark} error={error} hint={hint}>
       <ThemedSelect
         id={fieldId}
         aria-invalid={!!error}
