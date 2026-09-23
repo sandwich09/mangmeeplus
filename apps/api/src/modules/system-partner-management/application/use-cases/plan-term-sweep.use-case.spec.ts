@@ -2,7 +2,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { PlanTermSweepUseCase } from './plan-term-sweep.use-case';
 import { DAY_MS } from '../../domain/logic/plan-term.logic';
-import { PACKAGE_CHANGE_HINT_TH } from '../../domain/logic/plan-term.logic';
 
 type Row = {
   companyId: string;
@@ -24,7 +23,7 @@ type Row = {
  * filter (so "skips non-ACTIVE" is a real result, not a stub), and `updateMany` behaves as a
  * compare-and-set (so exactly-once is a real result too).
  */
-function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ companyId: string; userId: string }>; lineLinked?: boolean } = {}) {
+function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ companyId: string; userId: string }>; billingMode?: 'disabled' | 'test' | 'live' } = {}) {
   const state = rows.map((row) => ({
     // Epoch keeps termEndsAt > termStartAt for every existing fixture, so the default reads as a
     // real (trial_ended) term unless a test sets termStartAt itself to model a no-package term.
@@ -79,10 +78,6 @@ function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ comp
           return admins.map((admin) => ({ companyId: admin.companyId, userId: admin.userId }));
         },
       },
-      // P10-L §3.7: whether the copy may name a LINE command depends on this row existing.
-      externalIdentity: {
-        findFirst: async () => (opts.lineLinked === false ? null : { id: 'ext-1' }),
-      },
     },
   } as any;
 
@@ -107,7 +102,7 @@ function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ comp
 
   notifications.executeInTransaction = notifications.execute;
 
-  return { prisma, lifecycle, notifications, state, sweep: new PlanTermSweepUseCase(prisma, lifecycle, notifications, { lineMessagingChannelId: 'synthetic' } as any) };
+  return { prisma, lifecycle, notifications, state, sweep: new PlanTermSweepUseCase(prisma, lifecycle, notifications, { billingMode: opts.billingMode ?? 'disabled' } as any) };
 }
 
 const past = (days: number) => new Date(Date.now() - days * DAY_MS);
@@ -216,32 +211,26 @@ describe('PlanTermSweepUseCase — expiry', () => {
   });
 });
 
-// P10-L §3.7. The body the rail persists is what the WEB dashboard renders, and this sweep runs for
-// every company on the platform — Flow B customers and admin-created shops included. Telling one of
-// those owners to type "ขอเปลี่ยนแพ็กเกจ" into a LINE chat is an instruction they cannot follow.
-describe('PlanTermSweepUseCase — the LINE hint follows the customer, not the sweep', () => {
-  it('omits it for a web-only company and includes it for a LINE-linked one', async () => {
-    const webOnly = makeWorld([{ companyId: 'co-web', companyName: 'ร้านเว็บ', companyStatus: 'ACTIVE', termEndsAt: past(1) }], { lineLinked: false });
-    await webOnly.sweep.execute();
-    const webBody = webOnly.notifications.calls[0]!.body as string;
-    assert.equal(webBody.includes(PACKAGE_CHANGE_HINT_TH), false);
-    assert.match(webBody, /ข้อมูลทั้งหมดยังอยู่ครบ/, 'the rest of the message is unchanged');
-    // The System Admin copy is the same body, so it must not carry it either.
-    assert.equal((webOnly.notifications.calls[1]!.body as string).includes(PACKAGE_CHANGE_HINT_TH), false);
+describe('PlanTermSweepUseCase — owner self-service route', () => {
+  for (const [state, termEndsAt] of [['warning', future(3)], ['expired', past(1)]] as const) {
+    it(`links a ${state} owner directly to billing when self-service is enabled`, async () => {
+      const world = makeWorld([{ companyId: 'co-1', companyName: 'ร้านหนึ่ง', companyStatus: 'ACTIVE', termEndsAt }], { billingMode: 'test' });
+      await world.sweep.execute();
+      const [owner, admin] = world.notifications.calls;
+      assert.match(owner.body, /ต่ออายุหรือเปลี่ยนแพ็กเกจได้เองในเว็บแอป/);
+      assert.doesNotMatch(owner.body, /พิมพ์.*ขอเปลี่ยนแพ็กเกจ|ทีมงานจะติดต่อกลับ/);
+      assert.equal(owner.deepLinkHref, '/companies/co-1/billing');
+      assert.equal(admin.deepLinkHref, '/system/partners/co-1');
+    });
+  }
 
-    const lineShop = makeWorld([{ companyId: 'co-line', companyName: 'ร้านไลน์', companyStatus: 'ACTIVE', termEndsAt: past(1) }], { lineLinked: true });
-    await lineShop.sweep.execute();
-    assert.ok((lineShop.notifications.calls[0]!.body as string).endsWith(PACKAGE_CHANGE_HINT_TH));
-  });
-
-  it('applies the same rule to the 7/3/1 warnings', async () => {
-    const webOnly = makeWorld([{ companyId: 'co-web', companyName: 'ร้านเว็บ', companyStatus: 'ACTIVE', termEndsAt: future(3) }], { lineLinked: false });
-    await webOnly.sweep.execute();
-    assert.equal((webOnly.notifications.calls[0]!.body as string).includes(PACKAGE_CHANGE_HINT_TH), false);
-
-    const lineShop = makeWorld([{ companyId: 'co-line', companyName: 'ร้านไลน์', companyStatus: 'ACTIVE', termEndsAt: future(3) }], { lineLinked: true });
-    await lineShop.sweep.execute();
-    assert.ok((lineShop.notifications.calls[0]!.body as string).endsWith(PACKAGE_CHANGE_HINT_TH));
+  it('keeps the contact route when billing is disabled', async () => {
+    const world = makeWorld([{ companyId: 'co-1', companyName: 'ร้านหนึ่ง', companyStatus: 'ACTIVE', termEndsAt: future(3) }]);
+    await world.sweep.execute();
+    const owner = world.notifications.calls[0];
+    assert.doesNotMatch(owner.body, /ได้เองในเว็บแอป/);
+    assert.match(owner.body, /ติดต่อ 098-256-5628/);
+    assert.equal(owner.deepLinkHref, '/companies/co-1/dashboard');
   });
 });
 
@@ -295,7 +284,7 @@ describe('PlanTermSweepUseCase — warning ladder', () => {
     assert.equal(ownerEvent.triggerKey, 'plan_term_expiring');
     assert.equal(ownerEvent.severity, 'action');
     assert.equal(ownerEvent.title, 'แพ็กเกจใกล้หมดอายุ');
-    assert.match(ownerEvent.body, /^แพ็กเกจของร้านหนึ่งจะหมดอายุวันที่ /);
+    assert.match(ownerEvent.body, /^แพ็กเกจของร้านหนึ่ง จะหมดอายุวันที่ /);
     assert.match(ownerEvent.body, /\(อีก 3 วัน\)/);
   });
 

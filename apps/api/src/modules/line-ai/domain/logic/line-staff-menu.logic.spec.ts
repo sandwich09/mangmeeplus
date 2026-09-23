@@ -648,6 +648,7 @@ describe('promotion menu (rich menu v2 ver2)', () => {
   it('matches the promotion command, emoji-prefixed and synonym forms included', () => {
     assert.equal(staffMenuCommand('โปรโมชั่น'), 'promotion');
     assert.equal(staffMenuCommand('แพ็กเกจ'), 'promotion');
+    assert.equal(staffMenuCommand('แพ็คเกจ'), 'promotion');
     assert.equal(staffMenuCommand('🎁 โปรโมชั่น'), 'promotion');
     assert.equal(staffMenuCommand('โปรโมชั่นอะไรดี'), null);
   });
@@ -658,6 +659,8 @@ describe('promotion menu (rich menu v2 ver2)', () => {
   it('routes the quota card\'s package-change command to the real request, not the poster', () => {
     assert.equal(staffMenuCommand('ขอเปลี่ยนแพ็กเกจ'), 'package_change');
     assert.equal(staffMenuCommand(' ขอเปลี่ยนแพ็กเกจ '), 'package_change', 'the button sends it verbatim');
+    assert.equal(staffMenuCommand('ขอเปลี่ยนแพ็คเกจ'), 'package_change', 'typed spelling must reach the same owner-checked route');
+    assert.equal(staffMenuCommand('ขอเปลี่ยนแพ็คเกจได้ไหม'), null, 'an ordinary question must not trigger a request');
     assert.equal(staffMenuCommand('ขอเปลี่ยนแพ็กเกจได้ไหม'), null, 'still a whole-message command');
     assert.equal(staffMenuCommand('โปรโมชั่น'), 'promotion', 'the poster keeps its own pull command');
   });

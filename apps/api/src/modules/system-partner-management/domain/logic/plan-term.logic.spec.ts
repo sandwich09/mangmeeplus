@@ -1,9 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { staffMenuCommand } from '../../../line-ai/domain/logic/line-staff-menu.logic';
 import {
   DAY_MS,
-  PACKAGE_CHANGE_HINT_TH,
   addDays,
   branchLimitMessageTh,
   derivePlanTermState,
@@ -152,30 +150,28 @@ describe('Thai copy', () => {
 
   it('warning copy names the shop, the deadline and the days left', () => {
     const message = warningMessageTh('ร้านทดสอบ', END, 3);
-    assert.match(message, /^แพ็กเกจของร้านทดสอบจะหมดอายุวันที่ /);
+    assert.match(message, /^แพ็กเกจของร้านทดสอบ จะหมดอายุวันที่ /);
     assert.match(message, /\(อีก 3 วัน\)/);
     assert.match(message, /ติดต่อ 098-256-5628 หรืออีเมล contact@mangmeeplus\.com/);
-    // P10-L §3.7: the LINE route is offered only to someone who has LINE. Default is OFF, so a
-    // caller that forgets the flag cannot tell a web-only customer to type into a chat.
-    assert.equal(message.includes(PACKAGE_CHANGE_HINT_TH), false, 'no hint by default');
-    assert.ok(warningMessageTh('ร้านทดสอบ', END, 3, true).endsWith(PACKAGE_CHANGE_HINT_TH));
+    const selfServe = warningMessageTh('ร้านทดสอบ', END, 3, true);
+    assert.match(selfServe, /ต่ออายุหรือเปลี่ยนแพ็กเกจได้เองในเว็บแอป/);
+    assert.match(selfServe, /หากต้องการความช่วยเหลือ โทร 098-256-5628/);
+    assert.doesNotMatch(selfServe, /พิมพ์.*ขอเปลี่ยนแพ็กเกจ|ทีมงานจะติดต่อกลับ/);
+    const withPaymentHint = warningMessageTh('ร้านทดสอบ', END, 3, true, ' เปิดบิลและสแกน QR ในหน้าการชำระเงินค่ะ');
+    assert.ok(withPaymentHint.indexOf('เปิดบิล') < withPaymentHint.indexOf('หากต้องการความช่วยเหลือ'));
   });
 
   it('expired copy promises the data is still there', () => {
     const message = expiredMessageTh('ร้านทดสอบ');
-    assert.match(message, /^แพ็กเกจของร้านทดสอบหมดอายุแล้ว/);
+    assert.match(message, /^แพ็กเกจของร้านทดสอบ หมดอายุแล้ว/);
     assert.match(message, /ข้อมูลทั้งหมดยังอยู่ครบ/);
     assert.match(message, /ติดต่อ 098-256-5628 หรืออีเมล contact@mangmeeplus\.com/);
-    assert.equal(message.includes(PACKAGE_CHANGE_HINT_TH), false, 'no hint by default');
-    assert.ok(expiredMessageTh('ร้านทดสอบ', true).endsWith(PACKAGE_CHANGE_HINT_TH));
-    // The hint has to be the command the matcher answers, or it is a sentence that goes nowhere.
-    assert.equal(staffMenuCommand('ขอเปลี่ยนแพ็กเกจ'), 'package_change');
+    assert.match(expiredMessageTh('ร้านทดสอบ', true), /ต่ออายุหรือเปลี่ยนแพ็กเกจได้เองในเว็บแอป/);
   });
 
-  // The inbound LINE reply carries a real quick-reply button, so repeating the typed instruction
-  // there would be telling someone to type what they can tap.
-  it('leaves the typed-command hint out of the reply that already has a button', () => {
-    assert.equal(expiredLineOwnerMessageTh().includes(PACKAGE_CHANGE_HINT_TH), false);
+  it('directs the expired owner to support when billing is closed', () => {
+    assert.match(expiredLineOwnerMessageTh(), /ติดต่อทีมงาน/);
+    assert.doesNotMatch(expiredLineOwnerMessageTh(), /ต่ออายุได้เองที่เว็บแอป/);
     assert.match(expiredLineOwnerMessageTh(), /ข้อมูลทั้งหมดยังอยู่ครบ/);
   });
 
