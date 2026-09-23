@@ -633,6 +633,12 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             <span aria-hidden>·</span>
             <Link href="/data-deletion" className="underline hover:text-gray-600">การลบข้อมูล</Link>
           </nav>
+          <a
+            href="https://official.mangmeeplus.com/"
+            className="mt-2 flex h-11 w-full items-center justify-center rounded-xl text-[14.5px] font-semibold text-gray-600 no-underline transition hover:bg-gray-50 hover:text-gray-900"
+          >
+            {locale === 'th' ? 'รู้จักมั่งมีพลัส' : 'Explore MangmeePlus'}
+          </a>
         </div>
       </div>
 
