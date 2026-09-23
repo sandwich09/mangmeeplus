@@ -380,7 +380,9 @@ class Release:
                     probe.bind(('127.0.0.1', 0)); port = probe.getsockname()[1]
                 log_path = self.work / ('ssm-' + iid + '.private.log')
                 log = os.fdopen(os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w')
-                command = self.aws_prefix + ['ssm','start-session','--target',iid,
+                # Use the exported session credentials directly: --profile can refresh to a
+                # different role session before cleanup, which cannot terminate this session.
+                command = ['aws','--region',REGION,'ssm','start-session','--target',iid,
                     '--document-name','AWS-StartPortForwardingSession','--parameters',
                     json.dumps({'portNumber':['22'],'localPortNumber':[str(port)]})]
                 process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, text=True, env=session_environment)
@@ -410,7 +412,7 @@ class Release:
                 if not match:
                     failed = True
                 else:
-                    result = subprocess.run(self.aws_prefix + ['ssm','terminate-session','--session-id',match.group(1)],
+                    result = subprocess.run(['aws','--region',REGION,'ssm','terminate-session','--session-id',match.group(1)],
                         text=True,capture_output=True,timeout=30,env=session.get('environment'))
                     if result.returncode == 0: terminated += 1
                     else: failed = True

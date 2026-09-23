@@ -243,7 +243,7 @@ class Contracts(unittest.TestCase):
             completed=subprocess.CompletedProcess([],0,'{}','')
             with patch.object(m.subprocess,'run',return_value=completed) as run:self.assertTrue(r.close_transport())
             self.assertEqual(run.call_args.args[0],
-                ['aws','--profile','uat','ssm','terminate-session','--session-id','owned-session'])
+                ['aws','--region',m.REGION,'ssm','terminate-session','--session-id','owned-session'])
             self.assertIs(run.call_args.kwargs['env'], session_environment)
             self.assertEqual(r.receipt['ssmSessionCleanup'],{'passed':True,'terminatedCount':1,'failedCount':0})
             self.assertEqual(r.ssm_sessions,{})
@@ -260,6 +260,29 @@ class Contracts(unittest.TestCase):
                     if failure=='missing-id':run.assert_not_called()
                 self.assertEqual(r.receipt['ssmSessionCleanup'],{'passed':False,'terminatedCount':0,'failedCount':1})
                 self.assertEqual(r.ssm_sessions,{})
+
+    def test_ssm_transport_start_uses_exported_credentials_without_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r=m.Release.__new__(m.Release);r.target={'sshTransport':'ssm'}
+            r.hosts={'i-1':{}};r.work=Path(tmp);r.ssm_sessions={};r.receipt={}
+            r.aws_prefix=['aws','--region',m.REGION,'--profile','uat']
+            r.aws=lambda args:{'InstanceInformationList':[{'InstanceId':'i-1','PingStatus':'Online'}]}
+            session_environment={'AWS_ACCESS_KEY_ID':'access','AWS_SECRET_ACCESS_KEY':'secret','AWS_SESSION_TOKEN':'token'}
+            r.ssm_session_environment=lambda:session_environment
+            class Process:
+                def poll(self):return None
+                def terminate(self):pass
+                def wait(self,timeout):return 0
+            def start(command,**kwargs):
+                kwargs['stdout'].write('Starting session with SessionId: owned-session\nWaiting for connections...\n')
+                kwargs['stdout'].flush()
+                self.assertEqual(command[:4],['aws','--region',m.REGION,'ssm'])
+                self.assertNotIn('--profile',command)
+                self.assertIs(kwargs['env'],session_environment)
+                return Process()
+            with patch.object(m.subprocess,'Popen',side_effect=start),patch.object(m.subprocess,'run',return_value=subprocess.CompletedProcess([],0,'{}','')):
+                r.start_ssm_transport()
+                self.assertTrue(r.close_transport())
 
     def test_ssm_transport_uses_one_exported_credential_session_for_start_and_terminate(self):
         r=m.Release.__new__(m.Release);r.aws_prefix=['aws','--profile','uat'];r.secrets=set()
