@@ -23,6 +23,18 @@ import type {
 import { WHT_HANDOFF_PAYEE_ADDRESS_MAX } from '@watchdog-bms/contracts';
 import { WHT_LINK_ISSUED_DATE, WHT_LINK_LIMITS } from '../../domain/logic/wht-link-evidence.logic';
 
+export class ExportPnd53Dto {
+  @IsIn(['PDF']) exportFormat!: 'PDF';
+}
+
+export class ResolvePnd53IssueDto {
+  @IsString() @IsNotEmpty() @MaxLength(500) note!: string;
+}
+
+export class MarkPnd53FiledDto {
+  @IsString() @IsOptional() @MaxLength(500) note?: string;
+}
+
 // Bounds come from the shared validator the use case also runs, so the two layers cannot drift.
 export class LinkExternalWhtCertificateDto implements LinkExternalWhtCertificateContract {
   /** Caller-stable: the same command id replays instead of linking twice. */

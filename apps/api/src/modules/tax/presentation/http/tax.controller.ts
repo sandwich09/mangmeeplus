@@ -3,7 +3,7 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { CorrectWhtCertificateDto, LinkExternalWhtCertificateDto, SetWhtHandoffPayeeAddressDto, UpdateCompanyTaxSignatureDto } from './tax.dtos';
+import { CorrectWhtCertificateDto, ExportPnd53Dto, LinkExternalWhtCertificateDto, MarkPnd53FiledDto, ResolvePnd53IssueDto, SetWhtHandoffPayeeAddressDto, UpdateCompanyTaxSignatureDto } from './tax.dtos';
 import { SyncTaxEventsUseCase } from '../../application/use-cases/sync-tax-events.use-case';
 import { GenerateVatReportUseCase } from '../../application/use-cases/generate-vat-report.use-case';
 import { GenerateWhtReportUseCase } from '../../application/use-cases/generate-wht-report.use-case';
@@ -100,7 +100,7 @@ export class TaxController {
   @RequirePermissions('wht.pnd53.prepare')
   @ApiOperation({ summary: 'Produce the official printable PND53 form and annexes' })
   async exportPnd53(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string,
-    @Body() body: { exportFormat: 'PDF' }) {
+    @Body() body: ExportPnd53Dto) {
     assertRouteCompany(ctx, companyId);
     await this.pnd53Period(ctx.companyId, periodId);
     if (body?.exportFormat !== 'PDF') throw new BadRequestException('PND53 filing form must be exported as PDF.');
@@ -119,7 +119,7 @@ export class TaxController {
   @Patch('tax/pnd53/review-issues/:issueId/resolve')
   @RequirePermissions('wht.pnd53.prepare')
   @ApiOperation({ summary: 'Resolve an issue belonging to a PND53 period' })
-  async resolvePnd53Issue(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('issueId') issueId: string, @Body() body: { note: string }) {
+  async resolvePnd53Issue(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('issueId') issueId: string, @Body() body: ResolvePnd53IssueDto) {
     assertRouteCompany(ctx, companyId);
     const issue = await this.taxRepo.prisma.client.taxReviewIssue.findFirst({ where: { id: issueId, companyId: ctx.companyId } });
     if (!issue) throw new NotFoundException('PND53 review issue not found');
@@ -130,7 +130,7 @@ export class TaxController {
   @Patch('tax/pnd53/periods/:periodId/mark-filed')
   @RequirePermissions('wht.pnd53.prepare')
   @ApiOperation({ summary: 'Record that an exported PND53 paper form was filed' })
-  async markPnd53Filed(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string, @Body() body: { note?: string }) {
+  async markPnd53Filed(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodId') periodId: string, @Body() body: MarkPnd53FiledDto) {
     assertRouteCompany(ctx, companyId);
     await this.pnd53Period(ctx.companyId, periodId);
     return this.markFiled(ctx, companyId, periodId, body);

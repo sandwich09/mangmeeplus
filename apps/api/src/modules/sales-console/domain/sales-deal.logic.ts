@@ -133,7 +133,8 @@ function positiveInt(value: unknown, field: string, max: number): number {
  * form shows, never a refusal here. Q2: the number IS what the customer pays; no VAT is split out
  * while มั่งมี is not VAT-registered.
  */
-export function buildDealSnapshot(draft: SnapshotDraft, snapshotVersion: 2 | 3 | 4 = 4): SalesDealSnapshot {
+export function buildDealSnapshot(draft: SnapshotDraft, snapshotVersion: 2 | 3 | 4 = 4,
+  allowedFeatureKeys: readonly string[] = SALES_DEAL_ALLOWED_FEATURE_KEYS): SalesDealSnapshot {
   const base = draft.base;
   // D-P3-1: only the three tiers that have a Stripe catalog Price behind them. A deal's own
   // limits express any size, so dropping ENTERPRISE costs the sales team nothing.
@@ -146,7 +147,7 @@ export function buildDealSnapshot(draft: SnapshotDraft, snapshotVersion: 2 | 3 |
   // the offer card, and the Owner copy rule is to write "และ".
   if (description.includes('+')) throw new SalesSnapshotError('description_plus');
   if (!Array.isArray(draft.featureKeys) || draft.featureKeys.some((key) =>
-    typeof key !== 'string' || !SALES_DEAL_ALLOWED_FEATURE_KEYS.includes(key))) {
+    typeof key !== 'string' || !allowedFeatureKeys.includes(key))) {
     throw new SalesSnapshotError('featureKeys');
   }
   const aiBudget = draft.aiMonthlyBudgetSatang;
