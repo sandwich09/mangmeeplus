@@ -1,10 +1,11 @@
 # Agent Memory: company-business-type-single-source-2026-09-23
 
-Status: Implemented and locally verified on isolated `origin/develop` worktree; PR/CI/merge pending.
+Status: Application change merged; UAT deploy of the original one-step DROP failed before migration applied. Two-stage contract rollout in progress.
 Owner: thawatchai + Codex.
 Scope: Remove approval/onboarding business category and use owner-selected TSIC in company settings as the current business type.
 Decisions: Owner confirmed the former PDPA health-adjacent alert can be retired because that work is complete. Preserve historical signup free text and audit records; do not infer TSIC from the old seven-value category.
-Open questions: None.
+Open questions: Reviewed physical-drop procedure, clone rehearsal, and immutable backup evidence remain required before contract migration.
 Artifacts: `docs/specs/company-business-type-single-source-spec-th.md`, `docs/plans/company-business-type-single-source-plan-th.md`.
 Verification: Prisma client generated and schema validated. Isolated API typecheck passed; focused API tests 168/168 and security-event tests 38/38; web typecheck passed and focused web tests 157/157; contracts typecheck and focused tests 49/49. `git diff --check` passed. No DB migration or browser session was run locally; release migration and UI smoke remain CI/UAT responsibilities.
-Next: Commit scoped files, open PR to develop, wait for exact-head CI, admin merge, then integrate the same change to main under owner authorization. No deploy in this task.
+2026-09-23 live release evidence: UAT operation `20260923T132233Z-063a9259` failed in the first migration catalog guard. Read-only DB inspection found no applied drop migration, both legacy columns and enum present, and 36 populated Company plus 2 populated CompanySignupRequest values. Production has 88 populated Company plus 1 populated CompanySignupRequest values. All UAT services still serve signed source `d6b8838a`; provider qualifier `kamal_uat_b` remains serving. Original failure preserved; scoped reconciliation is recorded in its private `reconciliation.json`, and its local/remote locks were released after unchanged-state proof. Production was untouched.
+Next: Review and deploy the application-only compatibility stage to UAT, then Production with signed acceptance. Create a separately reviewed physical-drop procedure that takes a recoverable backup, rehearses the exact data-bearing migration on a clone, checks all serving sources, and verifies the resulting schema. Never run the original DROP before the application rollout or bypass automatic migration safety.
