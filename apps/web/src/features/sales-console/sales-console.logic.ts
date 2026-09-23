@@ -14,6 +14,7 @@ import {
   SALES_REPORT_MAX_MONTHS,
   SALES_REPORT_MONTH_PATTERN,
   TIER_FEATURE_PRESETS,
+  SALES_DEAL_ALLOWED_FEATURE_KEYS,
   formatCompanyLegalAddress,
   type CompanyLegalAddress,
   type SalesAgentView,
@@ -263,6 +264,9 @@ const wholeNumber = (raw: string): number | null => {
 export function validateDealForm(values: SalesDealFormValues, options: { forSubmit: boolean } = { forSubmit: false }): SalesDealFormErrors {
   const errors: SalesDealFormErrors = {};
   if (!values.companyId) errors.companyId = 'กรุณาเลือกร้านค้าก่อน';
+  if (values.featureKeys.some((key) => !SALES_DEAL_ALLOWED_FEATURE_KEYS.includes(key))) {
+    errors.featureKeys = 'เลือกได้เฉพาะฟีเจอร์เริ่มต้น ภ.ง.ด.53 และ 50 ทวิในระบบ';
+  }
 
   const price = parseBahtInput(values.priceBaht);
   if (!values.priceBaht.trim()) errors.priceBaht = 'กรอกราคาที่ลูกค้าต้องจ่าย';

@@ -30,16 +30,16 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(enterprise).toContainText('500 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
   await plans.getByRole('button', { name: 'รายปี', exact: true }).click();
   await expect(plans).toContainText('ใช้งาน 12 เดือน · ประหยัด ฿498.00');
-  // Enterprise is an ordinary month/year card once its prices are bound. Every tier compares the
-  // same six baseline menus and uses the same customer-facing main-menu summary.
+  // Enterprise keeps the shared starter set and adds only PND53 and system 50 ทวิ.
   await expect(plans.getByText('เร็ว ๆ นี้', { exact: true })).toHaveCount(0);
   await expect(enterprise.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true })).toBeEnabled();
   await expect(enterprise).toContainText('10 สาขา · 30 ผู้ใช้');
   await expect(enterprise).toContainText('6,000 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
   await expect(plans).not.toContainText('เครดิต AI:');
-  await expect(enterprise).toContainText('เมนูหลัก: ค่าใช้จ่ายและใบเสร็จ · การเบิกจ่าย · ผู้ช่วย AI ทาง LINE · พนักงานและสิทธิ์');
-  await enterprise.getByText('ดูรายละเอียดทั้งหมด · 6 เมนู', { exact: true }).click();
-  await expect(enterprise.getByRole('listitem')).toHaveCount(6);
+  await expect(enterprise).toContainText('เพิ่มสิทธิ์ออก ภ.ง.ด.53 และพิมพ์หนังสือรับรอง 50 ทวิในระบบ');
+  await enterprise.getByText('ดูรายละเอียดทั้งหมด · 8 เมนู', { exact: true }).click();
+  await expect(enterprise.getByRole('listitem')).toHaveCount(8);
+  await expect(enterprise.getByRole('listitem')).toContainText(['ออก ภ.ง.ด.53 ในระบบ', 'ออกหนังสือรับรอง 50 ทวิในระบบ']);
   // The shared baseline starts with the LINE assistant for every tier.
   await expect(enterprise.getByRole('listitem').first()).toHaveText('✓ ผู้ช่วย AI ทาง LINE');
   // The three smaller tiers share one menu set (TIER_FEATURE_PRESETS); only their limits differ.
@@ -481,7 +481,7 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ' })).toContainText('ต้องเปิดบิลและสแกน QR เอง');
   await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
   // Open the largest package's menu list so the reviewed screenshot shows a card in full.
-  await enterprise.getByText('ดูรายละเอียดทั้งหมด · 6 เมนู', { exact: true }).click();
+  await enterprise.getByText('ดูรายละเอียดทั้งหมด · 8 เมนู', { exact: true }).click();
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: info.outputPath(`billing-preview-plans-${width}.png`), fullPage: true });
   await scenario.selectOption('start');

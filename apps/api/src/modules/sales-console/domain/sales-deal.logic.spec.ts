@@ -20,7 +20,7 @@ import {
 
 const draft = {
   base: 'BASIC_499', priceSatang: 49900, months: 12, branchLimit: 2, employeeLimit: 5,
-  monthlySlipLimit: 50, featureKeys: ['crm', 'crm'], aiMonthlyBudgetSatang: null,
+  monthlySlipLimit: 50, featureKeys: ['expenses', 'expenses'], aiMonthlyBudgetSatang: null,
   description: 'ข้อเสนอพิเศษสำหรับร้านคุณ',
 };
 
@@ -103,7 +103,11 @@ describe('deal snapshot validation', () => {
     assert.equal(snapshot.cadence, null);
     assert.equal(snapshot.cycles, null);
     assert.equal(snapshot.base, 'BASIC_499');
-    assert.deepEqual(snapshot.featureKeys, ['crm']);
+    assert.deepEqual(snapshot.featureKeys, ['expenses']);
+    assert.deepEqual(buildDealSnapshot({ ...draft, featureKeys: ['wht_pnd53', 'wht_50bis'] }).featureKeys,
+      ['wht_pnd53', 'wht_50bis']);
+    assert.throws(() => buildDealSnapshot({ ...draft, featureKeys: ['thai_tax'] }), SalesSnapshotError);
+    assert.throws(() => buildDealSnapshot({ ...draft, featureKeys: ['crm'] }), SalesSnapshotError);
     assert.equal(snapshot.aiMonthlyBudgetSatang, null);
   });
 

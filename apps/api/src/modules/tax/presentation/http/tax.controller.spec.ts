@@ -45,6 +45,32 @@ describe('TaxController tenant and filing transition gates', () => {
   });
 });
 
+describe('narrow PND53 routes', () => {
+  it('lists only PND53 periods for the authenticated company', async () => {
+    const value = controller({
+      findPeriods: async (companyId: string, filters: unknown) => {
+        assert.equal(companyId, 'company-1');
+        assert.deepEqual(filters, { taxType: 'WHT', formType: 'PND53', pageSize: 100 });
+        return { items: [], total: 0 };
+      },
+    });
+    assert.deepEqual(await value.listPnd53Periods(ctx, 'company-1'), { items: [], total: 0 });
+    await assert.rejects(() => value.listPnd53Periods(ctx, 'company-2'), /company/i);
+  });
+
+  it('refuses export and event reads for a VAT or PND3 period before calling the report service', async () => {
+    for (const formType of ['PP30', 'PND3']) {
+      const value = controller({
+        findPeriodById: async () => ({ id: 'other-period', formType, periodKey: '2026-09' }),
+      });
+      await assert.rejects(() => value.exportPnd53(ctx, 'company-1', 'other-period', { exportFormat: 'PDF' }), /PND53 period not found/);
+      await assert.rejects(() => value.listPnd53Events(ctx, 'company-1', 'other-period'), /PND53 period not found/);
+      await assert.rejects(() => value.listPnd53Issues(ctx, 'company-1', 'other-period'), /PND53 period not found/);
+      await assert.rejects(() => value.markPnd53Filed(ctx, 'company-1', 'other-period', {}), /PND53 period not found/);
+    }
+  });
+});
+
 describe('GAP-04 taxReviewerRole enforcement', () => {
   // A period stuck at REVIEWED so mark-filed reaches its transition guard only after the reviewer-role gate passes.
   const reviewedPeriodRepo = (taxReviewerRole: string | null) => withProfile({
