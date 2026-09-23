@@ -70,6 +70,16 @@ expect_reject() {
     exit 1
   fi
 }
+jq --arg bastion sg-0e363ecb391c7dd17 \
+  '.SecurityGroups[0].IpPermissions[0].UserIdGroupPairs += [{GroupId:$bastion}]' \
+  "$work/endpoint-sg.json" > "$work/support-bastion.json"
+validate "$work/endpoints.json" "$work/routes.json" "$work/support-bastion.json" \
+  "$work/support-bastion-boundary.json"
+jq --arg rogue sg-08888888888888888 \
+  '.SecurityGroups[0].IpPermissions[0].UserIdGroupPairs += [{GroupId:$rogue}]' \
+  "$work/endpoint-sg.json" > "$work/rogue-endpoint-source.json"
+expect_reject rogue-endpoint-source "$work/endpoints.json" "$work/routes.json" \
+  "$work/rogue-endpoint-source.json"
 jq '.SecurityGroups[0].IpPermissionsEgress=[{IpProtocol:"tcp",FromPort:443,ToPort:443,
   IpRanges:[{CidrIp:"0.0.0.0/0"}]}]' "$work/endpoint-sg.json" > "$work/public-egress.json"
 expect_reject public-egress "$work/endpoints.json" "$work/routes.json" "$work/public-egress.json"
