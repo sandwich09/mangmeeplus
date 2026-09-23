@@ -574,6 +574,7 @@ const CODE_LABELS: Record<string, string> = {
   // ---- เข้าสู่ระบบ / บัญชีผู้ใช้ ----
   password_change_required: 'ต้องเปลี่ยนรหัสผ่านก่อนเข้าใช้งาน',
   password_reuse: 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม',
+  current_password_required: 'กรุณากรอกรหัสผ่านปัจจุบันก่อนเปลี่ยนรหัสผ่าน',
   current_password_incorrect: 'รหัสผ่านปัจจุบันไม่ถูกต้อง',
   company_access_unavailable: 'คุณไม่มีสิทธิ์เข้าใช้บริษัทนี้แล้ว กรุณาติดต่อเจ้าของร้าน',
   // P29: business routes are refused on access because the shop has no usable package. Data is

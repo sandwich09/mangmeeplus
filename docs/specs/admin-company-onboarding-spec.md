@@ -251,7 +251,7 @@ Add or extend only if missing:
   - `system.shared_line_credential.manage`
 - Seeded super-user permissions:
   - Includes all system-admin onboarding permissions.
-  - Is implemented as protected `SYSTEM_ADMIN` membership on the internal `WatchDog System` tenant, never on a customer company.
+  - Is implemented as protected `SYSTEM_ADMIN` membership on the internal `มั่งมีพลัส · ระบบภายใน` tenant, never on a customer company.
   - Customer-company roles, including `OWNER`, exclude `system.*` permissions.
   - Normal role-management flows cannot remove the protected super-user grant.
 - Customer permissions reuse existing company-scoped keys.

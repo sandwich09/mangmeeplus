@@ -19,9 +19,9 @@ The repository owner dispatches one constrained GitHub Actions workflow from pro
 - Production only; no runtime service deployment and no customer-gate mutation.
 - Controller must be the current protected `main`, dispatched by the repository owner, under the existing `watchdog-bms-production-deploy` concurrency group.
 - Executor image must come from one exact, unexpired, successful signed UAT Release Passport and pass signature/source verification.
-- `ADD` accepts a fresh username only. It must not overwrite an existing user or credential and must create only the permanent WatchDog System membership with `SYSTEM_ADMIN`.
+- `ADD` accepts a fresh username only. It must not overwrite an existing user or credential and must create only the permanent มั่งมีพลัส · ระบบภายใน membership with `SYSTEM_ADMIN`.
 - `ADD` always sets `mustChangePassword=true` and writes one high-risk audit record without credential material.
-- `REVOKE` fails unless the replacement credential is active with `mustChangePassword=false` and the replacement has an active WatchDog System `SYSTEM_ADMIN` membership.
+- `REVOKE` fails unless the replacement credential is active with `mustChangePassword=false` and the replacement has an active มั่งมีพลัส · ระบบภายใน `SYSTEM_ADMIN` membership.
 - `REVOKE` disables the old credential and revokes active sessions in one transaction. The protected user and protected role row remain for historical integrity.
 - Both operations are idempotent only for their exact audit request id; a different request against an existing target fails closed.
 - No password, access token, refresh token, database URL, secret value, or password hash may appear in logs, outputs, task environment values, artifacts, or repository files.

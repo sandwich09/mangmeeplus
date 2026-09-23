@@ -4,6 +4,7 @@ const THAI_SYSTEM_ROLE_NAMES: Record<string, string> = {
   OWNER: 'เจ้าของกิจการ', ADMIN: 'ผู้ดูแลบริษัท', SYSTEM_ADMIN: 'ผู้ดูแลระบบ', MANAGER: 'ผู้จัดการ',
   HR: 'ฝ่ายบุคคล', SALES: 'ฝ่ายขาย', INVENTORY: 'ฝ่ายคลังสินค้า', FINANCE: 'ฝ่ายการเงิน',
   ACCOUNTANT: 'ฝ่ายบัญชี', MARKETING: 'ฝ่ายการตลาด', STAFF: 'พนักงาน', AUDITOR_READONLY: 'ผู้ตรวจสอบ (ดูอย่างเดียว)',
+  MANGMEE_SALES_LEAD: 'หัวหน้าทีมขายมั่งมี', MANGMEE_SALES: 'เซลล์มั่งมี',
 };
 
 export function roleDisplayName(role: Pick<RoleSummary, 'key' | 'name'> & { isSystem?: boolean }): string {

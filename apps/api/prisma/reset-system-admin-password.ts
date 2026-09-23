@@ -47,17 +47,17 @@ async function main() {
 
   const systemCompany = await prisma.company.upsert({
     where: { id: SYSTEM_COMPANY_ID },
-    update: { name: 'WatchDog System' },
-    create: { id: SYSTEM_COMPANY_ID, name: 'WatchDog System' },
+    update: { name: 'มั่งมีพลัส · ระบบภายใน' },
+    create: { id: SYSTEM_COMPANY_ID, name: 'มั่งมีพลัส · ระบบภายใน' },
   });
 
   const user = await prisma.user.upsert({
     where: { username },
-    update: { displayName: 'WatchDog System Admin', status: 'ACTIVE', isSystemProtected: true },
+    update: { displayName: 'ผู้ดูแลระบบมั่งมีพลัส', status: 'ACTIVE', isSystemProtected: true },
     create: {
       id: SYSTEM_ADMIN_ID,
       username,
-      displayName: 'WatchDog System Admin',
+      displayName: 'ผู้ดูแลระบบมั่งมีพลัส',
       status: 'ACTIVE',
       isSystemProtected: true,
     },

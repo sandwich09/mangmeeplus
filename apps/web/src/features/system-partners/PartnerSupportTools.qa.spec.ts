@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { lineOnlyUser } from './UserLookupSection';
+import { roleKeyDisplayName } from '../employee-access/role-picker.logic';
 
 const partnerPage = readFileSync(new URL('./PartnerDetailPage.tsx', import.meta.url), 'utf8');
 const lookup = readFileSync(new URL('./UserLookupSection.tsx', import.meta.url), 'utf8');
@@ -73,4 +74,9 @@ test('lineOnlyUser is exactly "no username, no email, LINE linked"', () => {
 test('the user lookup shows a LINE badge instead of two dashes for a LINE-only account', () => {
   assert.match(lookup, /\{lineOnlyUser\(user\) && <span className=\{greenBadge\}>LINE<\/span>\}/);
   assert.match(lookup, /เข้าใช้งานด้วย LINE เท่านั้น ไม่มีชื่อผู้ใช้และอีเมล/);
+});
+
+test('platform sales roles have a Thai operator label', () => {
+  assert.equal(roleKeyDisplayName('MANGMEE_SALES_LEAD'), 'หัวหน้าทีมขายมั่งมี');
+  assert.equal(roleKeyDisplayName('MANGMEE_SALES'), 'เซลล์มั่งมี');
 });
