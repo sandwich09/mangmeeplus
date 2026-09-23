@@ -460,9 +460,14 @@ test "$AWS_REGION" = ap-southeast-1
 [[ "$MIGRATION_IMAGE" =~ ^311414082667\.dkr\.ecr\.ap-southeast-1\.amazonaws\.com/watchdog-bms-migration-tool@sha256:[0-9a-f]{64}$ ]]
 [ -d "$OUTPUT_DIR" ] && [ ! -L "$OUTPUT_DIR" ] && [ -z "$(find "$OUTPUT_DIR" -mindepth 1 -print -quit)" ]
 aws_config="$OUTPUT_DIR/aws-cli.config"
-printf '%s\n' '[default]' 'cli_connect_timeout = 5' 'cli_read_timeout = 30' \
-  'retry_mode = standard' 'max_attempts = 2' > "$aws_config"
-export AWS_CONFIG_FILE="$aws_config"
+if [ -n "${AWS_PROFILE:-}" ]; then
+  # Keep the caller's profile configuration so SSO/login credentials can refresh during RDS waits.
+  export AWS_RETRY_MODE=standard AWS_MAX_ATTEMPTS=2
+else
+  printf '%s\n' '[default]' 'cli_connect_timeout = 5' 'cli_read_timeout = 30' \
+    'retry_mode = standard' 'max_attempts = 2' > "$aws_config"
+  export AWS_CONFIG_FILE="$aws_config"
+fi
 A5_CLONE_PROFILE="${A5_CLONE_PROFILE:-reviewed-v1}"
 case "$A5_CLONE_PROFILE" in
   reviewed-v1) clone_program=/app/apps/api/prisma/production-a5/run-clone-rehearsal.ts ;;
