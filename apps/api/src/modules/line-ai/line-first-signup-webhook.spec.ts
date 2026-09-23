@@ -217,6 +217,7 @@ function harness(options: {
   channelId?: string;
   liffId?: string;
   webBaseUrl?: string;
+  billingMode?: 'disabled' | 'test' | 'live';
   /** สัญญา v3 ceilings: how many bubbles / stored files the live request already holds. */
   threadMessageCount?: number;
   threadMediaCount?: number;
@@ -338,6 +339,7 @@ function harness(options: {
       webBaseUrl: 'webBaseUrl' in options ? options.webBaseUrl : 'https://app.example.test',
       sesWebBaseUrl: 'https://app.example.test',
       externalSignupEnabled: true,
+      billingMode: options.billingMode ?? 'disabled',
     } as any,
     {} as any,
     { log: async (entry: any) => { audits.push(entry); } } as any,
@@ -1282,6 +1284,20 @@ describe('the original question outlives every follow-up (UAT 2026-09-06)', () =
 describe('P10-L package change from LINE (§3.7)', () => {
   const identity = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
 
+  it('routes the typed แพ็คเกจ spelling to the owner billing page in test mode', async () => {
+    const h = harness({
+      identity,
+      billingMode: 'test',
+      ownerMembership: { companyId: 'co-1', company: { name: 'ร้านหนึ่ง', planTerm: { tierKey: 'FREE_TRIAL_15' } } },
+    });
+    await h.useCase.execute(event('ขอเปลี่ยนแพ็คเกจ'));
+
+    assert.equal(h.packageChanges.length, 0);
+    assert.equal(outcome(h), 'billing_review_link');
+    assert.match(rendered(h), /\/companies\/co-1\/billing\?channel=line/);
+    assert.doesNotMatch(rendered(h), /ยังทำผ่าน LINE ไม่ได้|ทีมงานจะติดต่อกลับ/);
+  });
+
   it('opens a request for an owner and says the team will call back', async () => {
     const h = harness({
       identity,
@@ -1317,7 +1333,7 @@ describe('P10-L package change from LINE (§3.7)', () => {
 
   it('refuses a non-owner without opening anything', async () => {
     const h = harness({ identity, ownerMembership: null });
-    await h.useCase.execute(event(PACKAGE_CHANGE_COMMAND));
+    await h.useCase.execute(event('ขอเปลี่ยนแพ็คเกจ'));
 
     assert.equal(h.packageChanges.length, 0);
     assert.match(rendered(h), /ต้องให้เจ้าของร้านเป็นคนขอ/);

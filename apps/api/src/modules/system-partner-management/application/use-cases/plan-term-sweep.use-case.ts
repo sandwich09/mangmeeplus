@@ -47,6 +47,10 @@ export class PlanTermSweepUseCase {
     @Optional() @Inject(AppConfigService) private readonly config: AppConfigService | null = null,
   ) {}
 
+  private get selfServeBilling(): boolean {
+    return this.config?.billingMode === 'test' || this.config?.billingMode === 'live';
+  }
+
   async execute(limit = SWEEP_BATCH_LIMIT): Promise<PlanTermSweepResult> {
     const now = new Date();
     const expiry = await this.sweepExpiry(now, limit);
@@ -78,9 +82,9 @@ export class PlanTermSweepUseCase {
           // package, so it never "expired" and its owner earns no such notice.
           const lockReason = planTermLockReason(row);
           const billing = row.billingReceiptAccountId ? await tx.billingAccount.findUnique({ where: { id: row.billingReceiptAccountId } }) : null;
-          const nextStep = ['CARD_ONCE', 'PROMPTPAY_ONCE'].includes(billing?.renewalMode ?? '')
-            ? ' หากต้องการใช้ต่อให้ซื้อแพ็กเกจใหม่ในหน้าการชำระเงิน' : billing?.renewalMode === 'PROMPTPAY_RENEW'
-              ? ' หากต้องการใช้ต่อให้เปิดบิลและสแกน QR ในหน้าการชำระเงิน' : '';
+          const nextStep = !this.selfServeBilling ? '' : ['CARD_ONCE', 'PROMPTPAY_ONCE'].includes(billing?.renewalMode ?? '')
+            ? ' แพ็กเกจแบบชำระครั้งเดียวซื้อแพ็กเกจใหม่ได้ในหน้าการชำระเงินค่ะ' : billing?.renewalMode === 'PROMPTPAY_RENEW'
+              ? ' เปิดบิลและสแกน QR ในหน้าการชำระเงินได้ค่ะ' : '';
           await this.lifecycle.execute({
             companyId: row.companyId, targetStatus: 'DISABLED',
             reason: lockReason === 'no_package' ? 'no_package' : 'term_expired',
@@ -94,7 +98,7 @@ export class PlanTermSweepUseCase {
             // with the claim; the existing delivery worker owns all later network attempts.
             await this.notify(row.companyId, row.company.name, {
               trigger: PLAN_TERM_EXPIRED_TRIGGER, severity: 'critical', title: 'แพ็กเกจหมดอายุแล้ว',
-              body: (lineLinked) => expiredMessageTh(row.company.name, lineLinked) + nextStep,
+              body: expiredMessageTh(row.company.name, this.selfServeBilling, nextStep),
               periodKey: `expired:${row.termEndsAt.toISOString()}`,
             }, tx);
           }
@@ -127,9 +131,9 @@ export class PlanTermSweepUseCase {
           });
           if (!row || row.company.status !== 'ACTIVE' || row.termEndsAt <= now) return false;
           const billing = row.billingReceiptAccountId ? await tx.billingAccount.findUnique({ where: { id: row.billingReceiptAccountId } }) : null;
-          const nextStep = ['CARD_ONCE', 'PROMPTPAY_ONCE'].includes(billing?.renewalMode ?? '')
-            ? ' หากต้องการใช้ต่อให้ซื้อแพ็กเกจใหม่ในหน้าการชำระเงิน' : billing?.renewalMode === 'PROMPTPAY_RENEW'
-              ? ' กรุณาเปิดบิลและสแกน QR ในหน้าการชำระเงิน' : '';
+          const nextStep = !this.selfServeBilling ? '' : ['CARD_ONCE', 'PROMPTPAY_ONCE'].includes(billing?.renewalMode ?? '')
+            ? ' แพ็กเกจแบบชำระครั้งเดียวซื้อแพ็กเกจใหม่ได้ในหน้าการชำระเงินค่ะ' : billing?.renewalMode === 'PROMPTPAY_RENEW'
+              ? ' เปิดบิลและสแกน QR ในหน้าการชำระเงินได้ค่ะ' : '';
           const point = warningLadderPoint(row.termEndsAt, now);
           if (point === null) return false;
           const column = LADDER_SENT_COLUMN[point];
@@ -138,7 +142,7 @@ export class PlanTermSweepUseCase {
           const { daysLeft } = derivePlanTermState(row.termEndsAt, row.warningDays, now);
           await this.notify(row.companyId, row.company.name, {
             trigger: PLAN_TERM_EXPIRING_TRIGGER, severity: 'action', title: 'แพ็กเกจใกล้หมดอายุ',
-            body: (lineLinked) => warningMessageTh(row.company.name, row.termEndsAt, daysLeft, lineLinked) + nextStep,
+            body: warningMessageTh(row.company.name, row.termEndsAt, daysLeft, this.selfServeBilling, nextStep),
             periodKey: `${row.termEndsAt.toISOString()}:${point}`,
           }, tx);
           return true;
@@ -158,16 +162,6 @@ export class PlanTermSweepUseCase {
    * the platform company they are members of — a recipient is only ever created for a user who
    * holds an ACTIVE membership in the event's company, so the two cannot be one event.
    */
-  /** Give LINE instructions only when the notification recipient has a current channel binding. */
-  private async ownerHasLinkedLine(userIds: string[], tx: Prisma.TransactionClient): Promise<boolean> {
-    if (!this.config?.lineMessagingChannelId) return false;
-    const identity = await tx.externalIdentity.findFirst({
-      where: { userId: { in: userIds }, provider: 'LINE', providerChannelId: this.config.lineMessagingChannelId, status: 'ACTIVE' },
-      select: { id: true },
-    });
-    return identity !== null;
-  }
-
   private async notify(
     companyId: string,
     companyName: string,
@@ -175,12 +169,7 @@ export class PlanTermSweepUseCase {
       trigger: string;
       severity: string;
       title: string;
-      /**
-       * Composed here rather than passed in, because whether the copy may name a LINE command
-       * depends on something only this method knows: whether an OWNER of this shop actually has a
-       * linked LINE account (P10-L §3.7). The same body reaches the web dashboard.
-       */
-      body: (lineLinked: boolean) => string;
+      body: string;
       periodKey: string;
     },
     tx: Prisma.TransactionClient,
@@ -189,9 +178,6 @@ export class PlanTermSweepUseCase {
       where: { companyId, status: 'ACTIVE', roles: { some: { role: { key: 'OWNER' } } } },
       select: { userId: true },
     });
-    // One extra query per notified shop, on a sweep that runs a handful of rows a day.
-    const lineLinked = owners.length > 0 && await this.ownerHasLinkedLine(owners.map((owner) => owner.userId), tx);
-    const body = message.body(lineLinked);
     if (owners.length > 0) {
       await this.notifications.executeInTransaction({
         companyId,
@@ -201,8 +187,8 @@ export class PlanTermSweepUseCase {
         sourceId: companyId,
         severity: message.severity,
         title: message.title,
-        body,
-        deepLinkHref: `/companies/${companyId}/dashboard`,
+        body: message.body,
+        deepLinkHref: `/companies/${companyId}/${this.selfServeBilling ? 'billing' : 'dashboard'}`,
         recipientUserIds: owners.map((owner) => owner.userId),
         periodKey: message.periodKey,
       }, tx);
@@ -226,7 +212,7 @@ export class PlanTermSweepUseCase {
         sourceId: companyId,
         severity: message.severity,
         title: `${message.title}: ${companyName}`,
-        body,
+        body: message.body,
         deepLinkHref: `/system/partners/${companyId}`,
         recipientUserIds: userIds,
         periodKey: message.periodKey,

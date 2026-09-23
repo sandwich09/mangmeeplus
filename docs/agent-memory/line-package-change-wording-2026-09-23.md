@@ -1,0 +1,14 @@
+# Agent Memory: LINE package change wording
+
+Status: scoped fix prepared for develop/main merge; not deployed
+Owner: Codex, 2026-09-23
+Scope: LINE expiry notice copy and self-service button, typed package command, adjacent promotion command, and webhook route verification.
+Decisions:
+- Screenshot showed a warning inviting `ขอเปลี่ยนแพ็กเกจ`, followed by a user typing the common spelling `ขอเปลี่ยนแพ็คเกจ` and receiving the generic AI web-only reply. The exact command matcher previously accepted only `แพ็กเกจ`.
+- Accept `แพ็คเกจ` as a whole-message alias for package change and bare package promotion. Ordinary sentences remain in the AI route; an alias does not bypass OWNER, company selection, billing-mode, or support-pause rules.
+- User clarified that customers can continue in the app themselves. In billing `test`/`live`, expiry warnings and expired notices lead with self-service renewal or package change; phone/email is help. The owner notification deep link now opens that company's billing page, and the LINE card button says `จัดการแพ็กเกจ`. Billing `disabled` retains contact-first copy and the dashboard link. The generic wording also covers paid subscriptions that may renew without asking the customer to make a second payment.
+- The shared notification body appears in LINE, web, and the system admin view. Removing the typed-command hint also removes misleading instructions for recipients without a linked LINE account. The typed command still works for customers who use it; it sends a billing link in `test`/`live` and creates the staff request in `disabled`. The expired-owner LINE reply used only in `disabled` now directs to staff instead of promising a checkout page.
+Open questions: none for this local fix.
+Artifacts: `line-staff-menu.logic.ts`, `plan-term.logic.ts`, `plan-term-sweep.use-case.ts`, notification LINE card builder, focused specs, P29 and LINE signup spec amendments.
+Verification: The five focused staff-menu, webhook, plan-term copy, sweep, and notification suites passed again in a clean worktree from `origin/develop`; `git diff --check` passed. Test-mode webhook confirms the alternate spelling reaches billing without a generic AI refusal, and the non-owner case still denies it. API typecheck in the clean worktree did not pass because the temporary checkout reused dependency/generated-code links from another checkout: errors were outside this diff in config/tax and a missing `zod` package link. A typecheck in the original dirty workspace found two unrelated accounting counterparty errors (`counterparty.use-case.ts:257`, `counterparty.controller.ts:128`). PR CI is the merge gate.
+Next: merge into develop and main as requested. A UAT/Production deployment still follows its release protocol when requested; verify the reply in the real LINE OA after release. Previously sent notification cards keep their old text.
