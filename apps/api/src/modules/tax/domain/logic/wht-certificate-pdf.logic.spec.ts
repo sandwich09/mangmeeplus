@@ -75,6 +75,19 @@ describe('buildWhtCertificateSvg', () => {
     const svg = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot, { mode: 'AUTO_STAMP', signatureImageBase64: 'Zm9v' }).toString('utf8');
     assert.ok(!/seal|ตราประทับ/i.test(svg));
   });
+
+  // Correction & replacement plan §4.1/§6.1: the "ใบแทน" label is printed text next to เลขที่, only
+  // when a caller explicitly asks for it — every existing caller (SYSTEM_INITIAL_ISSUE, correction)
+  // passes nothing, so this must be a pure regression guard as well.
+  it('prints the "ใบแทน" label with its reissue date only when replacementCopy is supplied', () => {
+    const withCopy = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot, undefined, { issuedAt: '2026-09-20T00:00:00.000Z' }).toString('utf8');
+    assert.match(withCopy, /ใบแทน — ออกซ้ำเมื่อ 20\/09\/2026/);
+  });
+
+  it('omits the "ใบแทน" label entirely when replacementCopy is not supplied (regression)', () => {
+    const svg = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot).toString('utf8');
+    assert.ok(!svg.includes('ใบแทน'));
+  });
 });
 
 describe('renderWhtCertificatePdf', () => {
@@ -90,5 +103,15 @@ describe('renderWhtCertificatePdf', () => {
   it('rejects an implausibly blank certificate the same way substitute receipts do', async () => {
     const blank = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="850" height="180"><rect width="850" height="180" fill="white"/></svg>');
     await assert.rejects(renderWhtCertificatePdf(blank, 'WT-BLANK'), /Thai font missing from the runtime image/);
+  });
+
+  // Correction & replacement plan §4.2/§6.2: the seam through to `renderSubstituteReceiptPdf`'s own
+  // `stateStamp` mechanism — no v1 caller wires this yet, but the parameter must actually reach the
+  // underlying raster pipeline for the day it does.
+  it('passes options.stateStamp through to the underlying substitute-receipt raster pipeline', async () => {
+    const svg = buildWhtCertificateSvg(fields, payerSnapshot, payeeSnapshot);
+    const bytes = await renderWhtCertificatePdf(svg, fields.certificateNumber, { stateStamp: 'SUPERSEDED' });
+    const pdf = await PDFDocument.load(bytes);
+    assert.match(pdf.getSubject() ?? '', /State: SUPERSEDED/);
   });
 });

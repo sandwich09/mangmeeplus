@@ -53,6 +53,8 @@ import {
   canDeleteExpense,
   canAccessExpenseTab,
   expenseDeleteErrorMessage,
+  canCorrectWhtCertificate,
+  canIssueWhtReplacementCopy,
   expenseDeleteTargetLabel,
   isExpensePending,
   summarizeExpenseKpis,
@@ -1227,5 +1229,31 @@ describe('receipt review document date', () => {
     assert.equal(reviewValues(detail).expenseDate, '');
     assert.equal(reviewValues({ ...detail, aiVerificationSummaryJson: { dateStatus: 'verified' } }).expenseDate, '2026-09-17');
     assert.equal(reviewValues({ ...detail, aiVerificationSummaryJson: null }).expenseDate, '2026-09-17', 'legacy known dates remain unchanged');
+  });
+});
+
+// Correction & replacement plan §5.2/§5.3: mirrors accounts-payable.model.ts's own tests for the
+// same two predicates — a thin per-module copy, same behavior.
+describe('canCorrectWhtCertificate / canIssueWhtReplacementCopy (Expenses)', () => {
+  const issued = { status: 'SYSTEM_ISSUED', certificateId: 'cert-1', systemCorrectionOpen: true, systemReplacementOpen: true };
+
+  it('canCorrectWhtCertificate needs SYSTEM_ISSUED + certificateId + systemCorrectionOpen + the permission', () => {
+    assert.equal(canCorrectWhtCertificate(issued, ['wht.certificate.correct']), true);
+    assert.equal(canCorrectWhtCertificate(issued, []), false);
+    assert.equal(canCorrectWhtCertificate({ ...issued, systemCorrectionOpen: false }, ['wht.certificate.correct']), false);
+    assert.equal(canCorrectWhtCertificate({ ...issued, certificateId: null }, ['wht.certificate.correct']), false);
+  });
+
+  it('canIssueWhtReplacementCopy needs SYSTEM_ISSUED + certificateId + systemReplacementOpen + the permission', () => {
+    assert.equal(canIssueWhtReplacementCopy(issued, ['wht.certificate.correct']), true);
+    assert.equal(canIssueWhtReplacementCopy(issued, []), false);
+    assert.equal(canIssueWhtReplacementCopy({ ...issued, systemReplacementOpen: false }, ['wht.certificate.correct']), false);
+  });
+
+  it('never shows for a status other than SYSTEM_ISSUED', () => {
+    for (const status of ['REQUIRED', 'EXTERNAL_LINKED', 'CANCELLED']) {
+      assert.equal(canCorrectWhtCertificate({ ...issued, status }, ['wht.certificate.correct']), false, status);
+      assert.equal(canIssueWhtReplacementCopy({ ...issued, status }, ['wht.certificate.correct']), false, status);
+    }
   });
 });

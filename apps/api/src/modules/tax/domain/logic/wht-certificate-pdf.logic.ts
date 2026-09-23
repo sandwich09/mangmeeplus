@@ -48,6 +48,11 @@ export function buildWhtCertificateSvg(
   payerSnapshot: PayerSnapshot,
   payeeSnapshot: PayeeSnapshot,
   signature?: WhtCertificateSignature,
+  // Correction & replacement plan §4.1/§6.1: printed text next to เลขที่, not a diagonal overlay —
+  // 50 ทวิ is a fixed-title statutory form, so the "copy" convention `substitute-receipt.logic.ts`
+  // uses (a swapped title) does not apply. undefined (default) leaves the document byte-identical to
+  // today for every existing caller (SYSTEM_INITIAL_ISSUE, correction).
+  replacementCopy?: { issuedAt: string },
 ): Buffer {
   const isPnd53 = fields.formType === 'PND53';
   const payerAddressLines = wrapText(`ที่อยู่: ${payerSnapshot.address ?? '-'}`, FIELD_WIDTH);
@@ -87,6 +92,7 @@ export function buildWhtCertificateSvg(
     <text x="425" y="40" text-anchor="middle" font-size="22" font-weight="700">หนังสือรับรองการหักภาษี ณ ที่จ่าย</text>
     <text x="425" y="64" text-anchor="middle" font-size="13">ตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร</text>
     <text x="60" y="64" font-weight="700">เลขที่ ${xml(fields.certificateNumber)}</text>
+    ${replacementCopy ? `<text x="60" y="82" font-size="12" fill="#b91c1c">(ใบแทน — ออกซ้ำเมื่อ ${xml(formatCertDate(replacementCopy.issuedAt))})</text>` : ''}
 
     <text x="60" y="${payerBlockTop}" font-weight="700">ผู้มีหน้าที่หักภาษี ณ ที่จ่าย (ผู้จ่ายเงิน)</text>
     <text x="60" y="${payerBlockTop + 26}">ชื่อ: ${xml(payerSnapshot.companyName)}</text>
@@ -137,6 +143,14 @@ export function buildWhtCertificateSvg(
  *  substitute-receipt feature already validated (Thai-font raster + dark-pixel-ratio guard) — no
  *  expense-specific logic is baked into it, so this calls it directly instead of forking a second
  *  raster pipeline (plan §2.5). */
-export async function renderWhtCertificatePdf(svg: Buffer, certificateNumber: string): Promise<Buffer> {
-  return renderSubstituteReceiptPdf(svg, certificateNumber);
+export async function renderWhtCertificatePdf(
+  svg: Buffer,
+  certificateNumber: string,
+  // §6.2/§4.2: a seam for re-rendering a superseded certificate with the generic diagonal
+  // 'SUPERSEDED' overlay `renderSubstituteReceiptPdf` already supports — no v1 caller passes this yet
+  // (no PDF persistence exists to re-render from, see plan §12 finding 2/open question 2), added so
+  // the capability exists without inventing a second raster pipeline later.
+  options?: { stateStamp?: 'SUPERSEDED' },
+): Promise<Buffer> {
+  return renderSubstituteReceiptPdf(svg, certificateNumber, options);
 }

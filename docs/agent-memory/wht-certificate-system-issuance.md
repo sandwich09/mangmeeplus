@@ -747,3 +747,54 @@ Fixed by adding it to `scripts/line-ai-whole-chain-acceptance.catalog.mjs` next 
 specs (billing specs are wired there, not in `apps/api/package.json`, per that file's own comments).
 Verified locally: the spec itself (2/2 pass) and `spec-suite-coverage.spec.ts` (3/3 pass). This fix
 rides into `develop` with this PR's merge, benefiting every other branch going forward too.
+
+### Gate-unlock + button rename — DONE (commit `fc9bf7ff`, branch `codex/wht-gate-unlock-20260922`)
+
+Owner decision 2026-09-22 (follow-up chat after PR #720/#721 merged): remove the SPECIALIST_LEGAL
+route-readiness gate as a blocker for 50-ทวิ system issuance entirely — billing entitlement
+(`thai_tax`/ENTERPRISE_1999, already merged) is now the ONLY gate. Owner's framing: "คาดหวังว่าเมื่อ
+เปิด ENTERPRISE จะต้องได้ทวิ 50" (expects opening ENTERPRISE alone should make 50-ทวิ available).
+
+**What actually had to change** (more than the one-line reclassification first attempted):
+1. `cap.wht50bis`'s all 3 routes (SYSTEM_INITIAL_ISSUE + the unbuilt SYSTEM_CONTENT_CORRECTION/
+   SYSTEM_REPLACEMENT_COPY) moved `SPECIALIST_LEGAL/CLOSED` → `ORDINARY/OPEN` together — NOT just
+   the initial-issue route. Reason: `assertSpecialistRoutesClosed` (the deploy-time v5.1 invariant)
+   matches by GATE KEY, not routeKey, specifically so a dynamically-materialized route under a
+   specialist namespace still gets caught. Leaving the other two rows classified SPECIALIST_LEGAL
+   would have left `cap.wht50bis` in `SPECIALIST_LEGAL_GATE_KEYS` and blocked every future deploy.
+   Owner confirmed this wider blast radius explicitly (asked to pick between "reclassify the whole
+   gate key" vs "narrow the shared invariant to routeKey" — chose the former, lower-risk option).
+2. Updated `docs/specs/feature-entitlement-launch-matrix.json` (the JSON mirror a test enforces
+   parity against) — targeted per-field edits only, NOT a full JSON round-trip (a first attempt via
+   `json.load`/`json.dump` reformatted the entire 456-line file; reverted and redid as text edits).
+3. Updated every test that hardcoded `cap.wht50bis` as its canonical SPECIALIST_LEGAL example
+   (`assert-specialist-routes-closed.spec.ts`, `seed-launch-gates.spec.ts` ×3 sites,
+   `get-launch-health.use-case.spec.ts`, `launch-gate-command.use-case.spec.ts`), swapping to the
+   one remaining materializable SPECIALIST_LEGAL row, `cap.thai_tax.vat_credit_in_product_offset`/
+   `DEFAULT`. Also fixed 4 now-stale hardcoded counts (16→19 OPEN, 4→1 CLOSED, and the derived
+   `synchronous`/`specialist` evidence-track counts in get-launch-health).
+4. **Real gap found, not faked**: two subtests in `launch-gate-command.use-case.spec.ts` asserting
+   the plain `launch_route_specialist_approval_unavailable` OPEN-rejection code could not be ported
+   to the substitute row — it also carries `openPolicy: FORBIDDEN_V5_1`, whose check
+   (`launch_route_open_forbidden`) runs BEFORE the routeClass check in
+   `launch-gate-command.use-case.ts` and always wins. No other catalog row is both materializable
+   and a plain (non-forbidden, non-blocked) SPECIALIST_LEGAL row, so this exact code path currently
+   has NO live example to test against. Removed those two subtests with an explanatory comment
+   rather than asserting a code that would never actually be reached by that fixture; kept the two
+   still-valid subtests (CLOSE still works on a specialist route; ORDINARY OPEN unaffected).
+5. Renamed the "ออกเอกสารในระบบ" action to **"พิมพ์เอกสารทวิ 50"** at both entry points (AP + Expenses)
+   plus the matching `wht_handoff_not_issuable` error copy, per owner request for a more direct,
+   unambiguous label ("communicate the action directly").
+
+**Verify**: full launch-matrix/tax/procurement spec sweep (11 files, 209/209 pass, was 6/10 failing
+across two rounds before all fixes landed) + AP/Expenses wiring specs (23/23 pass) +
+`pnpm --filter @watchdog-bms/api typecheck` clean + `pnpm --filter @watchdog-bms/web typecheck`
+clean (needed `pnpm --filter @watchdog-bms/contracts build` first in this fresh worktree) +
+`prisma validate` clean. Not yet pushed/PR'd — owner asked to bundle this with the correction/
+replacement features (next section) into one PR before merging.
+
+**Residual/handoff note for whoever eventually builds SYSTEM_CONTENT_CORRECTION or
+SYSTEM_REPLACEMENT_COPY**: those two routes are now ORDINARY/OPEN with no code behind them at all
+(no use case, no route, no UI) — opening the launch gate did nothing unsafe by itself since nothing
+listens on it yet, but the moment someone builds them, they inherit NO specialist-review requirement
+by default. Decide explicitly whether that's still the right call for THOSE routes specifically.

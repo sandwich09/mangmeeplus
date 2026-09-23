@@ -413,6 +413,18 @@ describe('filterPermissionsByEntitlement', () => {
       'with thai_tax: all three survive',
     );
   });
+
+  // Correction & replacement plan §2.1/§8.2: owner confirmed 2026-09-23 this stays ungated, unlike
+  // wht.certificate.issue above — it goes into the same ungated pack.wht.certificate.manage as
+  // read/link, not a new gated pack.
+  it('keeps wht.certificate.correct ungated for a company without thai_tax, unlike wht.certificate.issue', () => {
+    const keys = ['wht.certificate.read', 'wht.external_certificate.link', 'wht.certificate.correct', 'wht.certificate.issue'];
+    assert.deepEqual(
+      filterPermissionsByEntitlement(keys, new Set(['procurement'])),
+      ['wht.certificate.read', 'wht.external_certificate.link', 'wht.certificate.correct'],
+      'without thai_tax: correct survives alongside read/link, only issue is stripped',
+    );
+  });
 });
 
 function prismaWithEntitlements(rows: Array<{ featureKey: string; enabled: boolean }>) {

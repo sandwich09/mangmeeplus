@@ -6,7 +6,7 @@ const ctx = { companyId: 'company-1', userId: 'user-1', roles: ['ACCOUNTANT'], p
 
 function controller(repo: any) {
   const noop = {} as any;
-  return new TaxController(noop, noop, noop, noop, noop, noop, noop, noop, noop, noop, repo, { log: async () => undefined } as any);
+  return new TaxController(noop, noop, noop, noop, noop, noop, noop, noop, noop, noop, noop, noop, repo, { log: async () => undefined } as any);
 }
 
 /** Wraps a repo with a companyTaxProfile.findUnique stub (null → default ACCOUNTANT reviewer). */

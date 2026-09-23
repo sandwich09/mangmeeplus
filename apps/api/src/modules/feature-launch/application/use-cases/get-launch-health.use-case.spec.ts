@@ -143,7 +143,9 @@ describe('GetLaunchHealthUseCase — row type A (runbook §2.1)', () => {
     const view = await new GetLaunchHealthUseCase(makePrisma()).execute();
 
     assert.equal(view.gates.length, MATERIALIZABLE_LAUNCH_MATRIX_ROWS.length);
-    assert.equal(view.gates.length, 20, '16 seeded-OPEN + 4 concrete specialist/deferred rows');
+    // cap.wht50bis's 3 routes moved to ORDINARY/OPEN (owner decision 2026-09-22): 19 seeded-OPEN +
+    // 1 concrete specialist/deferred row (the still-forbidden VAT-credit-offset route).
+    assert.equal(view.gates.length, 20, '19 seeded-OPEN + 1 concrete specialist/deferred row');
     for (const row of view.gates) {
       assert.equal(row.state, 'CLOSED');
       assert.equal(row.generation, 0);
@@ -152,8 +154,8 @@ describe('GetLaunchHealthUseCase — row type A (runbook §2.1)', () => {
     assert.deepEqual(view.evidenceTracks, {
       materialized: { present: 0, required: 20 },
       async: { catalogComplete: 13, observed: 0, required: 13 },
-      synchronous: { journeysPassed: null, required: 3 },
-      specialist: { accepted: null, required: 3 },
+      synchronous: { journeysPassed: null, required: 6 },
+      specialist: { accepted: null, required: 0 },
       deferred: { closed: 0, required: 1 },
     });
   });

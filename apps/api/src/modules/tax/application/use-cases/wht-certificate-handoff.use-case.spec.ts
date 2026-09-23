@@ -195,6 +195,29 @@ describe('WhtCertificateHandoffUseCase — durable prefilled handoff (H4)', () =
     assert.equal(listed[0].companyId, 'company-1');
   });
 
+  // Correction & replacement plan §2.4: `systemCorrectionOpen`/`systemReplacementOpen` are computed
+  // independently of `systemIssuanceOpen` and of each other, on both `.list` and `.get`.
+  it('computes systemCorrectionOpen/systemReplacementOpen independently on list and get', async () => {
+    const store = makeStore();
+    const created = await store.value.createOrReplay(baseInput);
+    const gate = {
+      assertLaunchRouteOpen: async (_gateKey: string, routeKey: string) => {
+        if (routeKey === 'SYSTEM_REPLACEMENT_COPY') {
+          throw { getResponse: () => ({ code: 'feature_temporarily_unavailable' }) };
+        }
+      },
+    } as any;
+    const taxRepo = { prisma: { client: { whtCertificateHandoff: store.table } } } as any;
+    const value = new WhtCertificateHandoffUseCase(taxRepo, { log: async () => undefined } as any, gate, { findCounterpartyByVendorKey: async () => null } as any);
+    const got = await value.get(ctx, created.id);
+    assert.equal(got.systemIssuanceOpen, true);
+    assert.equal(got.systemCorrectionOpen, true);
+    assert.equal(got.systemReplacementOpen, false);
+    const [listed] = await value.list(ctx);
+    assert.equal(listed.systemCorrectionOpen, true);
+    assert.equal(listed.systemReplacementOpen, false);
+  });
+
   it('fingerprints stably regardless of key order', () => {
     assert.equal(fingerprint({ a: 1, b: 2 }), fingerprint({ b: 2, a: 1 }));
     assert.notEqual(fingerprint({ a: 1 }), fingerprint({ a: 2 }));

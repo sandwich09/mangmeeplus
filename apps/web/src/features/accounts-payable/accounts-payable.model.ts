@@ -63,3 +63,25 @@ export function canIssueSystemWhtCertificate(
 ): boolean {
   return handoff.status === 'REQUIRED' && Boolean(handoff.systemIssuanceOpen) && permissions.includes('wht.certificate.issue');
 }
+
+/**
+ * Correction & replacement plan §5.1: mirrors `canIssueSystemWhtCertificate` exactly, one axis
+ * swapped — only a certificate the SYSTEM itself issued (`certificateId` present) may be corrected,
+ * and the route-readiness axis is `systemCorrectionOpen` instead of `systemIssuanceOpen`.
+ */
+export function canCorrectWhtCertificate(
+  handoff: { status: string; certificateId?: string | null; systemCorrectionOpen?: boolean },
+  permissions: readonly string[],
+): boolean {
+  return handoff.status === 'SYSTEM_ISSUED' && Boolean(handoff.certificateId) && Boolean(handoff.systemCorrectionOpen)
+    && permissions.includes('wht.certificate.correct');
+}
+
+/** Same shape as `canCorrectWhtCertificate`, checking `systemReplacementOpen` instead. */
+export function canIssueWhtReplacementCopy(
+  handoff: { status: string; certificateId?: string | null; systemReplacementOpen?: boolean },
+  permissions: readonly string[],
+): boolean {
+  return handoff.status === 'SYSTEM_ISSUED' && Boolean(handoff.certificateId) && Boolean(handoff.systemReplacementOpen)
+    && permissions.includes('wht.certificate.correct');
+}
