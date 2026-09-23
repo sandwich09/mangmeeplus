@@ -216,6 +216,7 @@ function harness(options: {
   /** Absent means LINE_MESSAGING_CHANNEL_ID is unset (L-19). */
   channelId?: string;
   liffId?: string;
+  webBaseUrl?: string;
   /** สัญญา v3 ceilings: how many bubbles / stored files the live request already holds. */
   threadMessageCount?: number;
   threadMediaCount?: number;
@@ -325,7 +326,7 @@ function harness(options: {
       lineMessagingChannelId: 'channelId' in options ? options.channelId : 'msg-channel-1',
       lineSignupBusinessDays: 'MON-SAT',
       lineSignupBusinessHours: '09:00-18:00',
-      webBaseUrl: 'https://app.example.test',
+      webBaseUrl: 'webBaseUrl' in options ? options.webBaseUrl : 'https://app.example.test',
       sesWebBaseUrl: 'https://app.example.test',
     } as any),
     prisma,
@@ -334,7 +335,7 @@ function harness(options: {
       lineMessagingChannelId: 'channelId' in options ? options.channelId : 'msg-channel-1',
       lineSignupBusinessDays: 'MON-SAT',
       lineSignupBusinessHours: '09:00-18:00',
-      webBaseUrl: 'https://app.example.test',
+      webBaseUrl: 'webBaseUrl' in options ? options.webBaseUrl : 'https://app.example.test',
       sesWebBaseUrl: 'https://app.example.test',
       externalSignupEnabled: true,
     } as any,
@@ -393,9 +394,13 @@ describe('P10-L webhook doors', () => {
 
     assert.match(rendered(h), /เปิดร้านใหม่/);
     assert.equal(outcome(h), 'line_follow');
-    // Owner 2026-09-21: two messages in the one reply — the hello, then the card it points at.
-    // Order matters: step 1 of the greeting names a button the reader must already be looking at.
-    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['text', 'flex']);
+    // The image joins the hello and the door in one reply; step 1 still points to the card below.
+    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['text', 'image', 'flex']);
+    assert.deepEqual(h.replies.flat()[1], {
+      type: 'image',
+      originalContentUrl: 'https://app.example.test/assets/line/mangmeeplus-welcome-how-to-start-1080x1350.png',
+      previewImageUrl: 'https://app.example.test/assets/line/mangmeeplus-welcome-how-to-start-1080x1350.png',
+    });
     assert.match(spoken(h), /^สวัสดีค่ะ 🙏 ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อนนะคะ\n/);
     assert.match(spoken(h), /กด "เปิดร้านใหม่" ในการ์ดด้านล่าง/);
     // L-B follow-up (c): adding the OA is the INVITED first step of this flow. Recording it DENIED
@@ -407,6 +412,12 @@ describe('P10-L webhook doors', () => {
     assert.equal(entry.metadataJson.entry, 'follow');
     assert.equal(entry.metadataJson.lineUserId, '[REDACTED]');
     assert.equal(h.eventLog.at(-1)!.data.errorCode, null, 'the successful outcome explicitly clears any earlier error marker');
+  });
+
+  it('keeps the welcome and door when no public HTTPS image URL is configured', async () => {
+    const h = harness({ webBaseUrl: 'http://localhost:3000' });
+    await h.useCase.execute(event(LINE_FOLLOW_EVENT_TEXT));
+    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['text', 'flex']);
   });
 
   it('still records a DENIED attempt when an unlinked stranger MESSAGES the OA', async () => {

@@ -245,6 +245,7 @@ const FOLLOW_WELCOME_REPLY = 'สวัสดีค่ะ 🙏 ขอบคุ�
   + '3. ใช้งานได้ทันที ทั้งในแอปและในแชทนี้\n'
   + '\n'
   + 'อยากดูราคาก่อน กดช่อง "แพ็กเกจและราคา" ที่เมนูด้านล่างแชทได้เลยค่ะ';
+const FOLLOW_WELCOME_IMAGE_PATH = '/assets/line/mangmeeplus-welcome-how-to-start-1080x1350.png';
 /** The way out of a support pause, as every reply that offers one prints it: the tile's own words,
  *  tapped or typed (Owner 2026-09-06). Built from the command so the hint and the matcher cannot
  *  drift — and never "AI": the customer knows her as น้องมั่งมี. */
@@ -2121,7 +2122,12 @@ export class ProcessLineWebhookUseCase {
   private async entryDoorMessages(lineUserId: string, welcome = false): Promise<LineReplyMessage[]> {
     const pending = await this.findOpenLineSignup(lineUserId);
     if (!pending) {
-      return welcome ? [{ type: 'text', text: FOLLOW_WELCOME_REPLY }, this.doorCard()] : [this.doorCard()];
+      if (!welcome) return [this.doorCard()];
+      const imageUrl = absoluteWebLink(this.config.webBaseUrl, FOLLOW_WELCOME_IMAGE_PATH);
+      const image: LineReplyMessage | null = URL.canParse(imageUrl) && new URL(imageUrl).protocol === 'https:'
+        ? { type: 'image', originalContentUrl: imageUrl, previewImageUrl: imageUrl }
+        : null;
+      return [{ type: 'text', text: FOLLOW_WELCOME_REPLY }, ...(image ? [image] : []), this.doorCard()];
     }
     return [buildSignupStatusCard(pending.companyName, isBusinessHours(new Date(), {
       days: this.config.lineSignupBusinessDays,

@@ -15,6 +15,7 @@ export type LineReplyMessage = {
   quickReply?: { items: LineQuickReplyItem[] };
 } & (
   | { type: 'text'; text: string }
+  | { type: 'image'; originalContentUrl: string; previewImageUrl: string }
   | { type: 'flex'; altText: string; canonicalText?: string; contents: Record<string, unknown> }
 );
 
@@ -45,8 +46,12 @@ export type LineDeliveryResult = 'ok' | 'failed_token' | 'failed_flex' | 'failed
 export function parseOutcomeMessages(value: unknown): LineReplyMessage[] | null {
   if (!Array.isArray(value) || value.length === 0 || value.length > 5) return null;
   const messages = value as Array<Partial<LineReplyMessage>>;
+  const imageUrl = (url: unknown) => typeof url === 'string' && url.length <= 2000
+    && URL.canParse(url) && new URL(url).protocol === 'https:';
   const valid = messages.every((message) => (message?.type === 'text' && typeof (message as { text?: unknown }).text === 'string'
     && (message as { text: string }).text.length > 0 && (message as { text: string }).text.length <= 5000)
+    || (message?.type === 'image' && imageUrl((message as { originalContentUrl?: unknown }).originalContentUrl)
+      && imageUrl((message as { previewImageUrl?: unknown }).previewImageUrl))
     || (message?.type === 'flex' && typeof (message as { altText?: unknown }).altText === 'string'
       && (message as { altText: string }).altText.length > 0 && (message as { altText: string }).altText.length <= LINE_FLEX_PREVIEW_LIMIT
       && ((message as { canonicalText?: unknown }).canonicalText === undefined
