@@ -159,7 +159,6 @@ type Registration = {
 // Authoritative list of pairs. Cross-named pairs are NOT discoverable by the
 // sweep below — adding one here is the only thing that covers it.
 const REGISTRY: Registration[] = [
-  { source: 'company-profile.ts', arrayName: 'COMPANY_BUSINESS_CATEGORIES', prismaEnum: 'CompanyBusinessCategory' },
   { source: 'index.ts', arrayName: 'DOCUMENT_RESET_POLICIES', prismaEnum: 'DocumentResetPolicy' },
   { source: 'procurement.ts', arrayName: 'SUPPLIER_STATUSES', prismaEnum: 'SupplierStatus' },
   { source: 'procurement.ts', arrayName: 'SUPPLIER_TYPES', prismaEnum: 'SupplierType' },

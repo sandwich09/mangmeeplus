@@ -46,7 +46,7 @@ describe('receipt reliability on PostgreSQL', { skip: !databaseUrl }, () => {
     unreachable = await pgSpecUnreachableReason(() => client.$queryRaw`SELECT 1`, 'RECEIPT_RELIABILITY_REQUIRE_POSTGRES');
     if (unreachable) return;
     await client.user.create({ data: { id: userId, displayName: 'Synthetic receipt reliability', status: 'ACTIVE' } });
-    await client.company.create({ data: { id: companyId, name: tag, businessCategory: 'SERVICE' } });
+    await client.company.create({ data: { id: companyId, name: tag } });
     await client.branch.create({ data: { id: branchId, companyId, code: 'HO', name: 'Synthetic branch', type: 'HEAD_OFFICE', createdByUserId: userId } });
   });
   after(async () => {

@@ -256,7 +256,6 @@ export class SubmitLineSignupUseCase {
           sharedContactReviewedAt: null,
           sharedContactReviewedByUserId: null,
           sharedContactReviewNote: null,
-          businessCategory: null,
           version: { increment: 1 },
         },
       });

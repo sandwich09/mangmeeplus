@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
-  COMPANY_BUSINESS_CATEGORIES,
   PLAN_TIER_PRESETS,
   type PlanTierKey,
   SIGNUP_REJECTION_REASON_MAX_LENGTH,
@@ -27,9 +26,7 @@ import {
   type AdminSignupQueueItemDto,
 } from './signup-requests.api';
 import {
-  approveBlockedOnCategory,
   approveLabel,
-  BUSINESS_CATEGORY_LABELS,
   canApproveSignup,
   canRejectSignup,
   canReissueSignup,
@@ -39,7 +36,6 @@ import {
   queueEmptyForReal,
   rejectNotifyDefault,
   rejectNotifyLabel,
-  requiresCategoryChoice,
   signupBusinessSummary,
   signupFailureChip,
   signupHintChips,
@@ -192,13 +188,7 @@ export default function SignupQueuePage() {
   const [rejecting, setRejecting] = useState<AdminSignupQueueItemDto | null>(null);
   const [notifyApplicant, setNotifyApplicant] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
-  // R10: approving now carries the business category, so it gets a dialog of its own — the PDPA
-  // health tripwire reads that enum and free Thai text can never map onto it.
   const [approving, setApproving] = useState<AdminSignupQueueItemDto | null>(null);
-  const [businessCategory, setBusinessCategory] = useState<string>('OTHER');
-  // F2: "อื่น ๆ" is a legitimate answer — a barber shop really is one — so it is confirmed, not
-  // refused. Reset with every dialog so a confirmation never carries to the next shop.
-  const [confirmedOther, setConfirmedOther] = useState(false);
   const [resolutionAction, setResolutionAction] = useState<AdminSignupDecisionBody['action'] | ''>('');
   const [targetCompanyId, setTargetCompanyId] = useState('');
   const [resolutionNote, setResolutionNote] = useState('');
@@ -269,12 +259,7 @@ export default function SignupQueuePage() {
     void load();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // R10: approving is where the business category is decided, so it needs a form rather than a
-  // yes/no. `useConfirm` renders one sentence and nothing else.
   const openApprove = (item: AdminSignupQueueItemDto) => {
-    // Default to what the server mapped, so a row the mapping DID read is one click as before.
-    setBusinessCategory(item.businessCategory ?? 'OTHER');
-    setConfirmedOther(false);
     setResolutionAction(isLineSignup(item)
       ? (isFinishingStrandedRow(item.state) ? 'CREATE_NEW_SHOP' : '')
       : 'APPROVE');
@@ -298,8 +283,6 @@ export default function SignupQueuePage() {
       const body: AdminSignupDecisionBody = {
         action: resolutionAction,
         ...(fromLine ? { version: item.version } : {}),
-        ...(!finishing && (resolutionAction === 'APPROVE' || resolutionAction === 'CREATE_NEW_SHOP')
-          ? { businessCategory } : {}),
         ...(resolutionAction === 'RETURN_EXISTING' ? { targetCompanyId } : {}),
         ...(resolutionAction === 'REQUEST_INFO' ? { resolutionNote: resolutionNote.trim() } : {}),
         ...(!finishing && resolutionAction === 'CREATE_NEW_SHOP' && item.contactEmailConflict
@@ -476,20 +459,12 @@ export default function SignupQueuePage() {
         ? `เลือกผลที่จะเกิดกับคำขอของร้าน ${approving.companyName} ให้ชัดเจนก่อนบันทึก`
         : approveFromEmail ? `เปิดร้านให้ ${approving.ownerDisplayName} ผู้สมัครกลับเข้าด้วยรหัสอีเมลเดิมได้ โดยไม่ต้องตั้งรหัสผ่าน`
         : `อนุมัติและส่งอีเมลตั้งรหัสให้ ${approving.contactEmail ?? approving.ownerDisplayName} ใช่หรือไม่`;
-  // R10/F2: a row whose free text the mapping could not read may not be approved on the DEFAULT —
-  // but "อื่น ๆ" chosen on purpose is a decision, and the checkbox is how it says so.
-  const approveNeedsOtherConfirmed = approving !== null
-    && requiresCategoryChoice(approving)
-    && (resolutionAction === 'APPROVE' || resolutionAction === 'CREATE_NEW_SHOP')
-    && businessCategory === 'OTHER';
   const approveBlocked = approving !== null && (
     (!approveFinishing && approveFromLine && !resolutionAction)
     || (resolutionAction === 'RETURN_EXISTING' && !targetCompanyId)
     || (resolutionAction === 'REQUEST_INFO' && !resolutionNote.trim())
     || (resolutionAction === 'CREATE_NEW_SHOP' && approving.contactEmailConflict === true
       && (!acknowledgeSharedContact || !sharedContactNote.trim()))
-    || ((resolutionAction === 'APPROVE' || resolutionAction === 'CREATE_NEW_SHOP')
-      && approveBlockedOnCategory(approving, businessCategory, confirmedOther))
   );
 
   const visible = tab === 'AUTO_APPROVED' ? (autoItems ?? []) : items;
@@ -510,10 +485,6 @@ export default function SignupQueuePage() {
     <div className="min-h-dvh bg-gray-50 p-6">
       {confirmDialog}
 
-      {/* R10. Approving is the last moment anyone looks at this application before a company
-          exists, and the PDPA health tripwire reads an enum the public form cannot produce: it asks
-          for free text, and "คลินิก" maps to OTHER. So the reviewer picks — defaulted to whatever
-          the server mapped, and REQUIRED when the mapping could not read what was typed. */}
       <Modal
         open={approving !== null}
         title={approveDialogTitle}
@@ -608,54 +579,6 @@ export default function SignupQueuePage() {
               />
               <p className="text-xs text-gray-500">ลูกค้าจะเห็นข้อความนี้ ({resolutionNote.length}/{SIGNUP_RESOLUTION_NOTE_MAX_LENGTH})</p>
             </div>
-          )}
-
-          {(resolutionAction === 'APPROVE' || (resolutionAction === 'CREATE_NEW_SHOP' && !approveFinishing)) && (
-          <div className="space-y-1.5">
-            <label htmlFor="signup-business-category" className="block text-sm font-medium text-gray-700">
-              ประเภทธุรกิจของร้านนี้
-            </label>
-            {/* What the applicant actually typed, next to the choice it is being turned into. */}
-            {approving?.businessType && (
-              <p className="text-xs text-gray-500">
-                ผู้สมัครกรอกว่า “{approving.businessType}”
-              </p>
-            )}
-            <select
-              id="signup-business-category"
-              value={businessCategory}
-              onChange={(e) => setBusinessCategory(e.target.value)}
-              disabled={busyId !== null}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-brand-400 focus:outline-none disabled:bg-gray-50"
-            >
-              {COMPANY_BUSINESS_CATEGORIES.map((category) => (
-                <option key={category} value={category}>{BUSINESS_CATEGORY_LABELS[category]}</option>
-              ))}
-            </select>
-            <p className="text-xs text-gray-500">
-              เลือกให้ตรงกับสิ่งที่ร้านทำจริง คลินิก สปา หรือร้านขายยา จะเข้าสู่การตรวจ PDPA เพิ่ม
-            </p>
-            {/* F2: shown only where the mapping could not read the free text AND the reviewer is
-                staying on "อื่น ๆ". Ticking it is the record that a human looked and decided —
-                which is the whole point of moving this decision to review. */}
-            {approveNeedsOtherConfirmed && (
-              <label className="flex items-start gap-2 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4"
-                  checked={confirmedOther}
-                  onChange={(e) => setConfirmedOther(e.target.checked)}
-                  disabled={busyId !== null}
-                />
-                <span className="text-xs text-gray-700">
-                  ตรวจแล้ว เป็นอื่น ๆ
-                  <span className="mt-0.5 block text-gray-500">
-                    ระบบอ่าน “{approving?.businessType}” ไม่ได้ ยืนยันว่าร้านนี้ไม่ใช่คลินิก สปา หรือร้านขายยา
-                  </span>
-                </span>
-              </label>
-            )}
-          </div>
           )}
 
           {resolutionAction === 'CREATE_NEW_SHOP' && !approveFinishing && approving?.contactEmailConflict && (

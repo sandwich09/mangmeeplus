@@ -129,7 +129,6 @@ describe('R04: a provisioning that dies after the company commits (real PostgreS
       await assert.rejects(
         () => w.onboarding.execute({
           companyName: request.companyName,
-          businessCategory: 'OTHER',
           ownerDisplayName: 'สมชาย ใจดี',
           ownerUsername: `${tag}user2`,
           claimedOwner: { email: `${tag}-2@example.com` },

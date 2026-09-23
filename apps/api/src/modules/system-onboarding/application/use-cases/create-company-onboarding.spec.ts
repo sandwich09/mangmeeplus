@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { lineIdentityLockKey } from '../../../../common/database/line-identity-lock';
 import { CreateCompanyOnboardingUseCase } from './create-company-onboarding.use-case';
 import { verifyPassword } from '../../../auth/domain/logic/password-credential.logic';
@@ -140,7 +140,6 @@ function expenseCategoryTx() {
 function makeCmd(overrides: Partial<Parameters<CreateCompanyOnboardingUseCase['execute']>[0]> = {}) {
   return {
     companyName: 'Acme Co',
-    businessCategory: 'RETAIL',
     ownerFirstName: 'John',
     ownerLastName: 'Doe',
     ownerUsername: 'john.doe',
@@ -1071,18 +1070,6 @@ describe('CreateCompanyOnboardingUseCase attachExistingOwner', () => {
 });
 
 /**
- * M-05 register §6 tenant tripwire. The register defers the s.41 limb (b) and
- * controller/processor questions on the assumption that tenants stay general
- * retail/trading/service; a health-adjacent tenant invalidates that on its own. These cases
- * are what stop the deferral expiring silently, so they assert the alarm-visible shape
- * (`riskLevel` root-level, which is what the production metric filter reads) and not just
- * that "some log happened".
- *
- * Capture is via `Logger.overrideLogger` — the emitter uses Nest's `Logger`, bridged to the
- * pino stream by M-02, per the `security-event-emitters.spec.ts` precedent.
- */
-
-/**
  * Audit H-31: the admin knows the company's tax id at handover, but company.legal_identity.manage
  * lives inside the company, so until now the number could not be captured until the owner first
  * logged in — and sellerIdentityComplete could never become true.
@@ -1157,6 +1144,8 @@ describe('CreateCompanyOnboardingUseCase tax identity capture', () => {
     await run();
 
     assert.equal(captured.company.taxId, undefined);
+    assert.equal(captured.company.businessTypeCode, undefined);
+    assert.equal('businessCategory' in captured.company, false);
     assert.equal(captured.company.legalIdentityVersion, undefined, 'version stays at the schema default');
     assert.equal(captured.revisions.length, 0);
     assert.equal(captured.taxProfiles.length, 0);
@@ -1167,114 +1156,6 @@ describe('CreateCompanyOnboardingUseCase tax identity capture', () => {
       const { run } = harness(bad);
       await assert.rejects(run, /13 digits/, bad);
     }
-  });
-});
-
-describe('CreateCompanyOnboardingUseCase PDPA tenant tripwire', () => {
-  function captureWarnings(): { lines: Array<Record<string, unknown>>; restore: () => void } {
-    const lines: Array<Record<string, unknown>> = [];
-    Logger.overrideLogger({
-      log: () => {}, error: () => {}, debug: () => {}, verbose: () => {}, fatal: () => {},
-      warn: (message: unknown) => void lines.push(message as Record<string, unknown>),
-    });
-    return { lines, restore: () => Logger.overrideLogger(false) };
-  }
-
-  function tripwirePrisma() {
-    const captured = { companyArgs: undefined as any, auditArgs: undefined as any };
-    const prisma = {
-      client: {
-        user: { findUnique: async () => null },
-        company: { findFirst: async () => null },
-        role: { findUnique: async () => ({ id: 'role-owner' }) },
-        // P29: the post-commit default-term write (asserted in its own describe block below).
-        companyPlanTerm: { upsert: async (args: any) => args.create },
-        $transaction: async (fn: (tx: any) => Promise<any>) => {
-          const chart = chartBootstrapTx('co-health-1');
-          const tx = {
-            ...expenseCategoryTx(),
-            company: {
-              create: async (args: any) => { captured.companyArgs = args; return { id: 'co-health-1' }; },
-              update: chart.companyUpdate,
-            },
-            chartOfAccount: chart.chartOfAccount,
-            user: { create: async () => ({ id: 'owner-1' }) },
-            userCredential: { create: async () => ({}) },
-            companyMembership: { create: async () => ({ id: 'mem-1' }) },
-            membershipRole: { create: async () => ({}) },
-            employeeLineLinkToken: { create: async () => ({}) },
-            branch: { create: async () => ({}) },
-            companyVatRegistrationState: { create: async () => ({}) },
-            ...entitlementTx(),
-            ...taxConfigTx(),
-            companyOnboardingRun: { create: async () => ({ id: 'run-health-1' }) },
-            auditLog: { create: async (args: any) => { captured.auditArgs = args; return {}; } },
-            ...workflowTx(),
-          };
-          return fn(tx);
-        },
-      },
-    } as any;
-    return { prisma, captured };
-  }
-
-  const EVENT = 'pdpa.tenant.health_adjacent_onboarded';
-
-  for (const category of ['CLINIC', 'WELLNESS_SPA', 'MEDICAL_RETAIL'] as const) {
-    it(`alerts the dev team when a ${category} tenant onboards`, async () => {
-      const { prisma } = tripwirePrisma();
-      const { lines, restore } = captureWarnings();
-      try {
-        await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({ businessCategory: category }));
-      } finally {
-        restore();
-      }
-
-      const events = lines.filter((line) => line['msg'] === EVENT);
-      assert.equal(events.length, 1, 'exactly one alert per qualifying onboarding');
-      const event = events[0]!;
-      // Root-level riskLevel is the whole mechanism: the production metric filter reads
-      // $.riskLevel, so a nested or missing one is a tripwire that never fires.
-      assert.equal(event['riskLevel'], 'HIGH');
-      assert.equal(event['businessCategory'], category);
-      assert.equal(event['companyId'], 'co-health-1');
-      assert.equal(event['onboardingRunId'], 'run-health-1');
-      assert.equal(event['actorUserId'], 'admin-1');
-      assert.equal(event['requestId'], 'req-1');
-      // The alert says "go look" — identity detail stays on the audit row.
-      assert.ok(!('companyName' in event), 'no company name on the alarm path');
-      assert.ok(!('ownerDisplayName' in event), 'no owner name on the alarm path');
-    });
-  }
-
-  for (const category of ['RETAIL', 'TRADING', 'SERVICE', 'OTHER'] as const) {
-    it(`stays silent for a ${category} tenant`, async () => {
-      const { prisma } = tripwirePrisma();
-      const { lines, restore } = captureWarnings();
-      try {
-        await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({ businessCategory: category }));
-      } finally {
-        restore();
-      }
-      assert.equal(
-        lines.filter((line) => line['msg'] === EVENT).length,
-        0,
-        'a tripwire that fires on every onboarding is one nobody reads',
-      );
-    });
-  }
-
-  it('persists the declared category on the company and the audit row', async () => {
-    const { prisma, captured } = tripwirePrisma();
-    const { restore } = captureWarnings();
-    try {
-      await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({ businessCategory: 'CLINIC' }));
-    } finally {
-      restore();
-    }
-    assert.equal(captured.companyArgs.data.businessCategory, 'CLINIC');
-    // The durable half: log retention expires, the audit row does not.
-    assert.equal(captured.auditArgs.data.metadataJson.businessCategory, 'CLINIC');
   });
 });
 

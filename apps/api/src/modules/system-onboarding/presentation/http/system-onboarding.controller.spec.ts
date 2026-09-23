@@ -15,7 +15,7 @@ const REQ = {
   context: { userId: 'admin-1', requestId: 'req-1' },
 } as any;
 
-const DTO = { companyName: 'ร้านทดสอบ', businessCategory: 'RETAIL', ownerDisplayName: 'สมชาย', ownerUsername: 'somchai' } as any;
+const DTO = { companyName: 'ร้านทดสอบ', ownerDisplayName: 'สมชาย', ownerUsername: 'somchai' } as any;
 
 function harness(sesWebBaseUrl: string | null = 'https://app.mangmeeplus.com') {
   const calls: any[] = [];
@@ -50,7 +50,7 @@ describe('SystemOnboardingController — "ลูกค้าใช้ LINE เ�
   it('asks for the line-link-later owner and sends no username', async () => {
     const h = harness();
     await h.controller.create(
-      { companyName: 'ร้านนิด', businessCategory: 'RETAIL', ownerDisplayName: 'นิด', ownerLineOnly: true } as any,
+      { companyName: 'ร้านนิด', ownerDisplayName: 'นิด', ownerLineOnly: true } as any,
       REQ,
     );
     assert.deepEqual(h.calls[0].ownerAuth, { kind: 'line-link-later' });

@@ -71,7 +71,7 @@ export async function checkSignupJourney(input:{app:INestApplication;prisma:Pris
     signupId=(await submission.json()).requestId;assert.ok(signupId);
     const signup=await db.companySignupRequest.findUniqueOrThrow({where:{id:signupId}});assert.equal(signup.state,'PENDING_REVIEW');assert.equal(signup.companyId,null);assert.equal(mail.length,0);
     const duplicate=await pub('company-signups',submission.request().postDataJSON());assert.equal(duplicate.status,202);assert.equal(duplicate.body.requestId,signupId);
-    const approved=await request(`/v1/system/signup-requests/${signupId}/decision`,'POST',{action:'APPROVE',businessCategory:'OTHER'});assert.equal(approved.status,200);assert.equal(approved.body.state,'EMAIL_PENDING');
+    const approved=await request(`/v1/system/signup-requests/${signupId}/decision`,'POST',{action:'APPROVE'});assert.equal(approved.status,200);assert.equal(approved.body.state,'EMAIL_PENDING');
     assert.equal((await input.drain()).status,201);assert.equal(mail.length,1);
     const attempt=await db.emailSendAttempt.findUniqueOrThrow({where:{id:mail[0]!.input.Metadata.sendAttemptId}});assert.equal(attempt.status,'UNKNOWN');
     const originalProofs=await db.accountClaimToken.findMany({where:{signupRequestId:signupId}});assert.equal(originalProofs.length,1);

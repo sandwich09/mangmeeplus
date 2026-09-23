@@ -5,7 +5,6 @@ import { BackLink } from '@/common/components/app-shell/BackLink';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { useConfirm } from '@/common/components/modal';
-import { COMPANY_BUSINESS_CATEGORIES, type CompanyBusinessCategory } from '@watchdog-bms/contracts';
 import { authedFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
@@ -14,17 +13,6 @@ import { todayCivilDate } from '@watchdog-bms/contracts';
 const inputClass = 'mangmee-input';
 const btnClass = 'mangmee-btn mangmee-btn-primary disabled:opacity-50';
 const labelClass = 'block text-xs font-medium text-gray-600 mb-1';
-
-/** Labels only — the values and the health-adjacent set are owned by contracts. */
-const BUSINESS_CATEGORY_LABELS: Record<CompanyBusinessCategory, string> = {
-  RETAIL: 'ค้าปลีก (Retail)',
-  TRADING: 'ค้าส่ง / เทรดดิ้ง (Trading / wholesale)',
-  SERVICE: 'บริการทั่วไป (General service)',
-  CLINIC: 'คลินิก / สถานพยาบาล (Clinic)',
-  WELLNESS_SPA: 'สปา / เวลเนส (Spa / wellness)',
-  MEDICAL_RETAIL: 'ร้านขายยา / เวชภัณฑ์ (Pharmacy / medical retail)',
-  OTHER: 'อื่น ๆ (Other)',
-};
 
 // BackToPartnersLink was replaced by the shared BackLink component, which every admin screen
 // now uses so the back affordance looks and behaves the same everywhere.
@@ -326,9 +314,6 @@ function HandoffPackage({ result }: { result: HandoffResult }) {
 
 export default function SystemOnboardingNewPage() {
   const [companyName, setCompanyName] = useState('');
-  // No default value: the admin has to make an actual choice. A pre-selected category is
-  // the one everyone ships past, and it is the PDPA tripwire's only input.
-  const [businessCategory, setBusinessCategory] = useState<'' | CompanyBusinessCategory>('');
   // '' = ยังไม่ทราบ. An admin who does not know leaves it blank and the company stays UNKNOWN —
   // every reader then behaves exactly as it does today. Never guessed from anything else.
   const [taxId, setTaxId] = useState('');
@@ -367,7 +352,6 @@ export default function SystemOnboardingNewPage() {
         method: 'POST',
         body: JSON.stringify({
           companyName,
-          businessCategory,
           // Omitted when blank, like the VAT answer: the owner captures it later on the identity
           // screen. Sent as digits so a number typed as 0-1234-56789-01-2 is the same value the
           // identity screen would store.
@@ -445,27 +429,6 @@ export default function SystemOnboardingNewPage() {
               <div>
                 <label className={labelClass}>Company Name *</label>
                 <input className={inputClass} required value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
-              </div>
-              <div>
-                <label className={labelClass} htmlFor="businessCategory">ประเภทธุรกิจ / Business Category *</label>
-                <ThemedSelect
-                  id="businessCategory"
-                  aria-label="ประเภทธุรกิจ / Business Category"
-                  // `name` is what renders the hidden input, so `required` still blocks submit.
-                  name="businessCategory"
-                  className={inputClass}
-                  required
-                  value={businessCategory}
-                  onChange={(e) => setBusinessCategory(e.target.value as CompanyBusinessCategory)}
-                >
-                  <option value="">— เลือกประเภทธุรกิจ / Select —</option>
-                  {COMPANY_BUSINESS_CATEGORIES.map((category) => (
-                    <option key={category} value={category}>{BUSINESS_CATEGORY_LABELS[category]}</option>
-                  ))}
-                </ThemedSelect>
-                <p className="mt-1 text-xs text-gray-500">
-                  Pick what the customer actually does. Health-adjacent categories (clinic, spa/wellness, pharmacy) trigger a PDPA review — picking the wrong one skips it.
-                </p>
               </div>
               <div>
                 <label className={labelClass} htmlFor="taxId">เลขประจำตัวผู้เสียภาษี / Tax ID</label>

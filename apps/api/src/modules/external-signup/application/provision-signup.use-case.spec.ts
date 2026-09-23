@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException } from '@nestjs/common';
-import { ProvisionSignupUseCase, mapBusinessCategory } from './provision-signup.use-case';
+import { ProvisionSignupUseCase } from './provision-signup.use-case';
 import { PartnerLifecycleTransitionUseCase } from '../../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 
 const REQUEST = {
@@ -285,49 +285,6 @@ describe('provisioning opens the shop LOCKED (R1/J1, Owner 2026-09-20)', () => {
   });
 });
 
-describe('mapBusinessCategory', () => {
-  it('honours an exact enum match and never guesses free text', () => {
-    assert.equal(mapBusinessCategory('RETAIL'), 'RETAIL');
-    assert.equal(mapBusinessCategory('wellness spa'), 'WELLNESS_SPA');
-    // Thai free text is not machine-mappable, and a wrong guess would mis-set the PDPA tripwire.
-    assert.equal(mapBusinessCategory('ร้านค้าปลีก'), 'OTHER');
-    assert.equal(mapBusinessCategory('คลินิก'), 'OTHER');
-    assert.equal(mapBusinessCategory(null), 'OTHER');
-    assert.equal(mapBusinessCategory('  '), 'OTHER');
-  });
-});
-
-/**
- * R10. The mapping above is right to refuse a guess, but it left the PDPA health tripwire dead for
- * every Thai applicant: someone who types "คลินิก" becomes OTHER, and the onboarding safeguard that
- * exists for clinics never fires — while the admin approving the row is looking straight at the
- * word. So the admin picks the enum at review, and THAT is what provisioning uses.
- */
-describe('the business category chosen at review', () => {
-  it('reaches onboarding instead of the free-text mapping', async () => {
-    const h = harness({ request: { businessType: 'คลินิก', businessCategory: 'CLINIC' } });
-    await h.useCase.execute(CMD);
-    assert.equal(h.onboardingCalls[0].businessCategory, 'CLINIC');
-  });
-
-  it('falls back to the mapping when review left it alone', async () => {
-    const h = harness({ request: { businessType: 'ร้านค้าปลีก', businessCategory: null } });
-    await h.useCase.execute(CMD);
-    assert.equal(h.onboardingCalls[0].businessCategory, 'OTHER');
-    const exact = harness({ request: { businessType: 'RETAIL', businessCategory: null } });
-    await exact.useCase.execute(CMD);
-    assert.equal(exact.onboardingCalls[0].businessCategory, 'RETAIL');
-  });
-
-  // A stored value the enum does not know is not a licence to invent one — the tripwire must never
-  // be armed or disarmed by a string nobody validated.
-  it('ignores a stored value that is not in the enum', async () => {
-    const h = harness({ request: { businessType: 'คลินิก', businessCategory: 'HOSPITAL' } });
-    await h.useCase.execute(CMD);
-    assert.equal(h.onboardingCalls[0].businessCategory, 'OTHER');
-  });
-});
-
 describe('ProvisionSignupUseCase — new-user path', () => {
   it('provisions through the onboarding service with the self-chosen password', async () => {
     const h = harness();
@@ -336,6 +293,7 @@ describe('ProvisionSignupUseCase — new-user path', () => {
     assert.deepEqual(result, { companyId: 'co-1', companyName: 'ร้านมั่งมี', attachedToExistingUser: false });
     const cmd = h.onboardingCalls[0];
     assert.equal(cmd.ownerUsername, 'somchai');
+    assert.equal('businessCategory' in cmd, false);
     assert.equal(cmd.claimedOwner.email, 'somchai@example.com');
     assert.equal(cmd.claimedOwner.passwordHash, 'scrypt$salt$hash');
     assert.equal(cmd.claimedOwner.attachUserId, undefined);

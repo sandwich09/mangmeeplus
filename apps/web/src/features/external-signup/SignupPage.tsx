@@ -33,7 +33,6 @@ const EMPTY_FORM: SignupFormValues = {
   ownerLastName: '',
   contactEmail: '',
   phoneNumber: '',
-  businessType: '',
   vatRegistered: false,
   taxId: '',
   discoverySource: '',
@@ -155,7 +154,6 @@ export default function SignupPage() {
       ownerLastName: trimmed(values.ownerLastName),
       contactEmail: trimmed(values.contactEmail),
       phoneNumber: values.phoneNumber.replace(/[^0-9]/g, ''),
-      ...(trimmed(values.businessType) ? { businessType: trimmed(values.businessType) } : {}),
       vatRegistered: values.vatRegistered,
       ...(values.vatRegistered && values.taxId.replace(/[^0-9]/g, '')
         ? { taxId: values.taxId.replace(/[^0-9]/g, '') }
@@ -286,16 +284,6 @@ export default function SignupPage() {
                   error={fieldErrors.phoneNumber}
                   autoComplete="tel"
                 />
-                {/* The one field on this form that is genuinely optional, and the only one that
-                    never said so — people stopped at it looking for something to fill in. */}
-                <TextField
-                  label="ประเภทธุรกิจ (ไม่บังคับ)"
-                  name="businessType"
-                  hint="เช่น ร้านขายของชำ ร้านอาหาร ร้านวัสดุก่อสร้าง คลินิก"
-                  value={values.businessType}
-                  onChange={(event) => set('businessType', event.target.value)}
-                />
-
                 <div className="space-y-3 rounded-xl border border-gray-200 p-3.5">
                   <fieldset>
                     <legend className="text-sm font-semibold text-gray-800">การจดทะเบียน VAT</legend>

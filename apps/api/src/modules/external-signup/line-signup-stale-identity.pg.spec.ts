@@ -162,7 +162,7 @@ async function seedOldShop(
   await client.user.create({ data: { id: adminUserId, displayName: `${tag} admin`, status: 'ACTIVE' } });
   await client.user.create({ data: { id: oldUserId, displayName: `${tag} owner`, status: 'ACTIVE' } });
   await client.company.create({
-    data: { id: oldCompanyId, name: `ร้านเก่า ${tag}`, businessCategory: 'RETAIL', status: 'DISABLED' },
+    data: { id: oldCompanyId, name: `ร้านเก่า ${tag}`, status: 'DISABLED' },
   });
   await client.companyMembership.create({
     data: { id: `${tag}-old-membership`, companyId: oldCompanyId, userId: oldUserId, status: membershipStatus },
@@ -650,7 +650,7 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
       const rivalUserId = `${tag}-rival-user`;
       const rivalCompanyId = `${tag}-rival-company`;
       await client.user.create({ data: { id: rivalUserId, displayName: `${tag} rival`, status: 'ACTIVE' } });
-      await client.company.create({ data: { id: rivalCompanyId, name: `ร้านคู่แข่ง ${tag}`, businessCategory: 'RETAIL' } });
+      await client.company.create({ data: { id: rivalCompanyId, name: `ร้านคู่แข่ง ${tag}` } });
       await client.companyMembership.create({ data: { companyId: rivalCompanyId, userId: rivalUserId, status: 'ACTIVE' } });
 
       const accepted = await h.submit.execute(submitCmd(`${tag}-race`), NOW);
@@ -726,7 +726,6 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
 
       const race = (suffix: string) => h.onboarding.execute({
         companyName: `ร้านแข่ง ${tag} ${suffix}`,
-        businessCategory: 'RETAIL',
         ownerDisplayName: 'นิด',
         ownerAuth: { kind: 'line', providerUserId: lineUserId, channelId: CHANNEL },
         allowDuplicateCompanyName: true,

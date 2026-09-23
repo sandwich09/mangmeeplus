@@ -135,8 +135,8 @@ async function createFixture(client: Client, phase: string, rows: number): Promi
   await client.query('BEGIN');
   try {
     await client.query(`
-      INSERT INTO "Company" (id,name,status,timezone,locale,"baseCurrency","businessCategory","createdAt","updatedAt")
-      VALUES ($1,$2,'SUSPENDED','Asia/Bangkok','th-TH','THB','OTHER',now(),now())
+      INSERT INTO "Company" (id,name,status,timezone,locale,"baseCurrency","createdAt","updatedAt")
+      VALUES ($1,$2,'SUSPENDED','Asia/Bangkok','th-TH','THB',now(),now())
     `, [companyId, fixtureName]);
     await client.query('COMMIT');
   } catch (error) {

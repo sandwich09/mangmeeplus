@@ -59,7 +59,7 @@ describe('AI credit hold reconciliation on PostgreSQL', { skip: !databaseUrl }, 
   /** One company per case, so a decision in one cannot disturb another's invariants. */
   async function company(suffix: string, policy: { chat?: number; ocr?: number; total?: number } = {}) {
     const companyId = `${tag}-${suffix}`;
-    await client.company.create({ data: { id: companyId, name: companyId, businessCategory: 'SERVICE' } });
+    await client.company.create({ data: { id: companyId, name: companyId } });
     await client.companyAiConfiguration.create({
       data: {
         companyId, monthlyBudgetSatang: policy.total ?? 100_000, modelId: HAIKU, budgetMode: 'SPLIT',
