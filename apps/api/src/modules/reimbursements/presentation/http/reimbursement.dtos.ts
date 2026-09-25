@@ -69,7 +69,8 @@ export class ReimbursementInternalNoteDto {
 export class UpdateReimbursementPolicyDto implements UpdateReimbursementPolicyInput {
   @IsDateString({ strict: true }) @Matches(/T/) @IsOptional() expectedUpdatedAt?: string;
   @Matches(MONEY) @IsOptional() approvalRequiredFromAmount?: string;
-  @IsString() @IsNotEmpty() @MaxLength(120) @IsOptional() defaultApproverRole?: string;
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20) @IsString({ each: true }) @IsNotEmpty({ each: true }) @MaxLength(120, { each: true })
+  @IsOptional() defaultApproverRoles?: string[];
   @IsBoolean() @IsOptional() allowSelfApproval?: boolean;
   @IsBoolean() @IsOptional() requireReceipt?: boolean;
   @IsBoolean() @IsOptional() allowMissingReceiptWithReason?: boolean;

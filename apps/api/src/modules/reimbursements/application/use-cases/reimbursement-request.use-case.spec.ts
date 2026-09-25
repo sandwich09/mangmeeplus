@@ -973,6 +973,15 @@ describe('submission route when the requester is the only approver', () => {
     assert.deepEqual([owner.recipientUserIds, owner.effectiveTaskRole, owner.ownerFallbackUsed, owner.soloSelfApproval], [['owner-1'], 'OWNER', true, undefined]);
   });
 
+  it('drops the requester but keeps every other holder of every policy role', async () => {
+    const roles = { CEO: [{ userId: 'solo-1' }, { userId: 'ceo-1' }], OWNER: [{ userId: 'owner-1' }], MANAGER: [{ userId: 'mgr-1' }] };
+    const both = await resolver(roles).resolveSubmissionRoute({ ...input, roleKey: 'CEO', roleKeys: ['CEO', 'OWNER'] });
+    assert.deepEqual([both.responsibilityRole, both.effectiveTaskRole, both.recipientUserIds, both.ownerFallbackUsed], ['CEO', 'CEO', ['ceo-1', 'owner-1'], false]);
+    // Nobody in any listed role: the owner fallback still applies.
+    const empty = await resolver({ CEO: [], MANAGER: [], OWNER: [{ userId: 'owner-1' }] }).resolveSubmissionRoute({ ...input, roleKey: 'CEO', roleKeys: ['CEO', 'MANAGER'] });
+    assert.deepEqual([empty.recipientUserIds, empty.effectiveTaskRole, empty.ownerFallbackUsed], [['owner-1'], 'OWNER', true]);
+  });
+
   it('still refuses when the requester could not approve it either', async () => {
     // Not a holder of the routed role (the default MANAGER route, their own role elsewhere)…
     await assert.rejects(() => resolver({ MANAGER: [], OWNER: [] }).resolveSubmissionRoute({ ...input, roleKey: 'MANAGER' }), /reimbursement_approver_not_ready/);
@@ -1033,12 +1042,13 @@ describe('reimbursement policy role save', () => {
     };
     const useCase = new UpdateReimbursementPolicyUseCase(
       repo as any, { log: async () => undefined } as any,
-      { load: async () => [option] } as any,
+      { load: async () => [option, { ...option, key: 'OWNER', name: 'Owner', optionLabel: 'Owner' }] } as any,
     );
 
-    await useCase.execute(policyCtx, { defaultApproverRole: ' ACCOUNTANT ' });
+    await useCase.execute(policyCtx, { defaultApproverRoles: [' ACCOUNTANT ', 'OWNER', 'ACCOUNTANT'] });
     assert.deepEqual(written, {
-      defaultApproverRole: 'ACCOUNTANT', approverMode: 'CUSTOM_ROLE', defaultApproverUserId: null,
+      defaultApproverRoles: ['ACCOUNTANT', 'OWNER'], defaultApproverRole: 'ACCOUNTANT',
+      approverMode: 'CUSTOM_ROLE', defaultApproverUserId: null,
     });
   });
 
@@ -1047,10 +1057,11 @@ describe('reimbursement policy role save', () => {
     const useCase = new UpdateReimbursementPolicyUseCase(
       { findPolicy: async () => null, upsertPolicy: async () => { wrote = true; return policy({}); } } as any,
       { log: async () => undefined } as any,
-      { load: async () => [{ ...option, selectable: false }] } as any,
+      { load: async () => [{ ...option, selectable: false }, { ...option, key: 'OWNER' }] } as any,
     );
 
-    await assert.rejects(useCase.execute(policyCtx, { defaultApproverRole: 'ACCOUNTANT' }), /approver_role_not_eligible/);
+    // One unready role is enough to refuse the whole list.
+    await assert.rejects(useCase.execute(policyCtx, { defaultApproverRoles: ['OWNER', 'ACCOUNTANT'] }), /approver_role_not_eligible/);
     assert.equal(wrote, false);
   });
 
@@ -1074,7 +1085,7 @@ describe('reimbursement policy role save', () => {
       { load: async () => [option] } as any,
     );
 
-    await useCase.execute(policyCtx, { defaultApproverRole: 'ACCOUNTANT' });
+    await useCase.execute(policyCtx, { defaultApproverRoles: ['ACCOUNTANT'] });
     assert.equal(audits[0]?.action, 'reimbursement.policy.update');
     assert.equal(outboxRows[0]?.eventType, 'reimbursement.policy_updated');
     assert.equal(outboxRows[0]?.aggregateId, 'policy-1');

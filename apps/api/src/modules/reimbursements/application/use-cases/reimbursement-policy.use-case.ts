@@ -40,6 +40,8 @@ export type ReimbursementSubmissionRoute = {
 
 export type ReimbursementSubmissionRouteInput = {
   roleKey: string;
+  /** Policy roles, first = `roleKey`; absent on re-reads of a submitted claim, which keeps one role. */
+  roleKeys?: string[];
   branchId?: string;
   requesterUserId: string;
   allowSelfApproval: boolean;
@@ -192,10 +194,14 @@ export class ListReimbursementApproverOptionsUseCase {
     input: ReimbursementSubmissionRouteInput,
     soloExemption = false,
   ): ReimbursementSubmissionRoute {
-    const selected = roles.find((role) => role.key === input.roleKey);
-    if (!hasApproverCapability(selected) || ['SYSTEM_ADMIN', 'COMPANY_VIEW'].includes(input.roleKey)) {
-      throw new BadRequestException('approver_role_not_eligible');
-    }
+    // Holders of any policy role may decide. A role that can no longer approve adds nobody; the
+    // route is refused only when none of them can.
+    const selectedRoles = (input.roleKeys?.length ? input.roleKeys : [input.roleKey])
+      .filter((key) => !['SYSTEM_ADMIN', 'COMPANY_VIEW'].includes(key))
+      .map((key) => roles.find((role) => role.key === key))
+      .filter(hasApproverCapability);
+    const selected = selectedRoles[0];
+    if (!selected) throw new BadRequestException('approver_role_not_eligible');
     const actionable = (role: ApproverRoleCandidate) => role.holders.filter((holder) => (
       !!holder.userId
       && holderCoversRequest(holder, input.branchId)
@@ -208,10 +214,10 @@ export class ListReimbursementApproverOptionsUseCase {
     ));
     const owner = roles.find((role) => role.key === 'OWNER');
     const ownerHolders = hasApproverCapability(owner) ? actionable(owner) : [];
-    let holders = actionable(selected!);
-    let effectiveTaskRole = selected!.key;
+    let holders = selectedRoles.flatMap(actionable);
+    let effectiveTaskRole = selected.key;
     let ownerFallbackUsed = false;
-    if (holders.length === 0 && selected!.key !== 'OWNER') {
+    if (holders.length === 0 && !selectedRoles.some((role) => role.key === 'OWNER')) {
       if (ownerHolders.length > 0) {
         holders = ownerHolders;
         effectiveTaskRole = 'OWNER';
@@ -226,11 +232,11 @@ export class ListReimbursementApproverOptionsUseCase {
     // dead-ending. Anyone else eligible — another holder or the OWNER fallback — still decides first.
     // An OWNER holder is exempt and never dropped, so the routed role is the only place to look.
     const soloSelfApproval = soloExemption && recipientUserIds.length === 0
-      && selected!.holders.some((holder) => holder.userId === input.requesterUserId && holderCoversRequest(holder, input.branchId));
+      && selectedRoles.some((role) => role.holders.some((holder) => holder.userId === input.requesterUserId && holderCoversRequest(holder, input.branchId)));
     if (soloSelfApproval) recipientUserIds = [input.requesterUserId];
     if (recipientUserIds.length === 0) throw new BadRequestException('reimbursement_approver_not_ready');
     return {
-      responsibilityRole: selected!.key,
+      responsibilityRole: selected.key,
       effectiveTaskRole,
       recipientUserIds,
       ownerRecipientUserIds: [...new Set(ownerHolders.map((holder) => holder.userId!).filter(Boolean))].sort(),
@@ -363,6 +369,7 @@ export class GetReimbursementPolicyUseCase {
       approvalRequiredFromAmount: REIMBURSEMENT_POLICY_DEFAULTS.approvalRequiredFromAmount,
       approverMode: REIMBURSEMENT_POLICY_DEFAULTS.approverMode,
       defaultApproverRole: REIMBURSEMENT_POLICY_DEFAULTS.defaultApproverRole,
+      defaultApproverRoles: REIMBURSEMENT_POLICY_DEFAULTS.defaultApproverRoles,
       allowSelfApproval: REIMBURSEMENT_POLICY_DEFAULTS.allowSelfApproval,
       requireReceipt: REIMBURSEMENT_POLICY_DEFAULTS.requireReceipt,
       allowMissingReceiptWithReason: REIMBURSEMENT_POLICY_DEFAULTS.allowMissingReceiptWithReason,
@@ -405,21 +412,24 @@ export class UpdateReimbursementPolicyUseCase {
       data.approvalRequiredFromAmount = input.approvalRequiredFromAmount;
       data.approvalThresholdAmount = input.approvalRequiredFromAmount;
     }
-    if (input.defaultApproverRole !== undefined) {
-      const roleKey = input.defaultApproverRole?.trim();
-      if (!roleKey) throw new BadRequestException('approver_role_required');
-      const option = (await this.approverOptions.load(ctx.companyId)).find((item) => item.key === roleKey);
-      if (!option?.selectable) throw new BadRequestException('approver_role_not_eligible');
-      data.defaultApproverRole = roleKey;
-      data.approverMode = approverModeForRole(roleKey);
+    const allSelectable = async (roleKeys: string[]) => {
+      const options = await this.approverOptions.load(ctx.companyId);
+      return roleKeys.length > 0 && roleKeys.every((key) => options.find((item) => item.key === key)?.selectable);
+    };
+    if (input.defaultApproverRoles !== undefined) {
+      const roleKeys = [...new Set(input.defaultApproverRoles.map((key) => key.trim()).filter(Boolean))];
+      if (roleKeys.length === 0) throw new BadRequestException('approver_role_required');
+      if (!await allSelectable(roleKeys)) throw new BadRequestException('approver_role_not_eligible');
+      data.defaultApproverRoles = roleKeys;
+      data.defaultApproverRole = roleKeys[0];
+      data.approverMode = approverModeForRole(roleKeys[0]!);
       data.defaultApproverUserId = null;
     } else if (nextStatus === 'ACTIVE') {
       const currentMode = existing?.approverMode ?? REIMBURSEMENT_POLICY_DEFAULTS.approverMode;
-      const currentRole = existing?.defaultApproverRole ?? REIMBURSEMENT_POLICY_DEFAULTS.defaultApproverRole;
+      const currentRoles = existing?.defaultApproverRoles ?? REIMBURSEMENT_POLICY_DEFAULTS.defaultApproverRoles ?? [];
       const roleBased = ['MANAGER_ROLE', 'OWNER_ROLE', 'CUSTOM_ROLE'].includes(currentMode);
       if (roleBased) {
-        const option = (await this.approverOptions.load(ctx.companyId)).find((item) => item.key === currentRole);
-        if (!option?.selectable) throw new BadRequestException('reimbursement_approver_not_ready');
+        if (!await allSelectable(currentRoles)) throw new BadRequestException('reimbursement_approver_not_ready');
       } else if (currentMode === 'CUSTOM_USER') {
         const userId = existing?.defaultApproverUserId;
         const active = await this.repo.findActiveApproverUserIds(ctx.companyId, userId ? [userId] : []);
@@ -445,12 +455,14 @@ export class UpdateReimbursementPolicyUseCase {
         metadataJson: {
           before: before ? {
             approverMode: before.approverMode, defaultApproverRole: before.defaultApproverRole,
+            defaultApproverRoles: before.defaultApproverRoles,
             approvalRequiredFromAmount: before.approvalRequiredFromAmount, status: before.status,
             financeReviewRequired: before.financeReviewRequired, allowSelfApproval: before.allowSelfApproval,
             duplicatePolicy: before.duplicatePolicy, slaHours: before.slaHours,
           } : null,
           after: {
             approverMode: after.approverMode, defaultApproverRole: after.defaultApproverRole,
+            defaultApproverRoles: after.defaultApproverRoles,
             approvalRequiredFromAmount: after.approvalRequiredFromAmount, status: after.status,
             financeReviewRequired: after.financeReviewRequired, allowSelfApproval: after.allowSelfApproval,
             duplicatePolicy: after.duplicatePolicy, slaHours: after.slaHours,

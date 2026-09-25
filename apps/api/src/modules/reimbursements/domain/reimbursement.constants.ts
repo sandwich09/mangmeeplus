@@ -23,6 +23,8 @@ export type EffectivePolicy = {
   approverMode: ReimbursementApproverMode;
   defaultApproverUserId?: string;
   defaultApproverRole?: string;
+  /** Current policy only; a submitted claim's snapshot keeps just the first role. */
+  defaultApproverRoles?: string[];
   allowSelfApproval: boolean;
   requireReceipt: boolean;
   allowMissingReceiptWithReason: boolean;
@@ -37,6 +39,7 @@ export const REIMBURSEMENT_POLICY_DEFAULTS: EffectivePolicy = {
   approvalRequiredFromAmount: '1.00',
   approverMode: 'MANAGER_ROLE',
   defaultApproverRole: 'MANAGER',
+  defaultApproverRoles: ['MANAGER'],
   allowSelfApproval: false,
   requireReceipt: true,
   allowMissingReceiptWithReason: false,
@@ -55,6 +58,7 @@ export function effectivePolicy(record: ReimbursementPolicyRecord | null): Effec
     approverMode: record.approverMode,
     defaultApproverUserId: record.defaultApproverUserId,
     defaultApproverRole: record.defaultApproverRole,
+    defaultApproverRoles: record.defaultApproverRoles,
     allowSelfApproval: record.allowSelfApproval,
     requireReceipt: record.requireReceipt,
     allowMissingReceiptWithReason: record.allowMissingReceiptWithReason,
