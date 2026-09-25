@@ -13,6 +13,7 @@ export default async function ReimbursementPage({ params }: {
       requestId={requestId}
       userId={session?.userId ?? ''}
       permissions={session?.permissions ?? []}
+      roles={session?.roles ?? []}
     />
   );
 }

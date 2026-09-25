@@ -1867,6 +1867,39 @@ export class PrismaReimbursementRepository {
     return row ? this.toRequest(row) : null;
   }
 
+  async listInternalNotes(companyId: string, requestId: string) {
+    return this.prisma.client.reimbursementInternalNote.findMany({
+      where: { companyId, reimbursementRequestId: requestId },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+  }
+
+  async findInternalNote(companyId: string, requestId: string, noteId: string) {
+    return this.prisma.client.reimbursementInternalNote.findFirst({
+      where: { id: noteId, companyId, reimbursementRequestId: requestId },
+    });
+  }
+
+  async createInternalNote(companyId: string, requestId: string, authorUserId: string, body: string) {
+    return this.prisma.client.reimbursementInternalNote.create({
+      data: { companyId, reimbursementRequestId: requestId, authorUserId, body },
+    });
+  }
+
+  async updateInternalNote(companyId: string, requestId: string, noteId: string, body: string) {
+    const changed = await this.prisma.client.reimbursementInternalNote.updateMany({
+      where: { id: noteId, companyId, reimbursementRequestId: requestId }, data: { body },
+    });
+    if (changed.count !== 1) throw new NotFoundException('Internal note not found');
+  }
+
+  async deleteInternalNote(companyId: string, requestId: string, noteId: string) {
+    const changed = await this.prisma.client.reimbursementInternalNote.deleteMany({
+      where: { id: noteId, companyId, reimbursementRequestId: requestId },
+    });
+    if (changed.count !== 1) throw new NotFoundException('Internal note not found');
+  }
+
   async listRequests(where: ListRequestsWhere): Promise<ReimbursementRequestRecord[]> {
     const predicates: Prisma.ReimbursementRequestWhereInput[] = [
       branchScopeWhere(where.scopes ?? {}) as Prisma.ReimbursementRequestWhereInput,

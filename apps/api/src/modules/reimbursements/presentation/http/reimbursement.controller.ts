@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Param, Body, Query, HttpCode, UseGuards } from '@nestjs/common';
+import { Controller, Delete, Get, Post, Patch, Param, Body, Query, HttpCode, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
@@ -20,12 +20,14 @@ import {
   RecordReimbursementPaymentDto,
   SignReimbursementClaimFormDto,
   UpdateReimbursementDraftDto,
+  ReimbursementInternalNoteDto,
 } from './reimbursement.dtos';
 import {
   CreateReimbursementDraftUseCase,
   ListReimbursementSourcesUseCase,
   UpdateReimbursementDraftUseCase,
   GetReimbursementDetailUseCase,
+  ReimbursementInternalNotesUseCase,
   ListReimbursementsUseCase,
   SubmitReimbursementUseCase,
   CancelReimbursementUseCase,
@@ -60,6 +62,7 @@ export class ReimbursementController {
     private readonly sources: ListReimbursementSourcesUseCase,
     private readonly updateDraft: UpdateReimbursementDraftUseCase,
     private readonly getDetail: GetReimbursementDetailUseCase,
+    private readonly internalNotes: ReimbursementInternalNotesUseCase,
     private readonly listRequests: ListReimbursementsUseCase,
     private readonly submit: SubmitReimbursementUseCase,
     private readonly cancel: CancelReimbursementUseCase,
@@ -168,6 +171,30 @@ export class ReimbursementController {
   @ApiOperation({ summary: 'Get reimbursement detail (read permission or exact frozen approval assignment)' })
   get(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
     return this.getDetail.execute(ctx, requestId);
+  }
+
+  @Post(':requestId/internal-notes')
+  @RequirePermissions('account.session.read')
+  @ApiOperation({ summary: 'Add a company-internal reimbursement note' })
+  addInternalNote(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: ReimbursementInternalNoteDto) {
+    return this.internalNotes.create(ctx, requestId, body.body);
+  }
+
+  @Patch(':requestId/internal-notes/:noteId')
+  @RequirePermissions('account.session.read')
+  @HttpCode(204)
+  @ApiOperation({ summary: 'Edit a company-internal reimbursement note' })
+  editInternalNote(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string,
+    @Param('noteId') noteId: string, @Body() body: ReimbursementInternalNoteDto) {
+    return this.internalNotes.update(ctx, requestId, noteId, body.body);
+  }
+
+  @Delete(':requestId/internal-notes/:noteId')
+  @RequirePermissions('account.session.read')
+  @HttpCode(204)
+  @ApiOperation({ summary: 'Delete a company-internal reimbursement note' })
+  deleteInternalNote(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Param('noteId') noteId: string) {
+    return this.internalNotes.delete(ctx, requestId, noteId);
   }
 
   @Patch(':requestId')

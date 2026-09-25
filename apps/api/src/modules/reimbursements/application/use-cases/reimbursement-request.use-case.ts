@@ -7,6 +7,7 @@ import type {
   ReimbursementLineInput,
   ReimbursementRequestSummary,
   ReimbursementRequestDetail,
+  ReimbursementInternalNote,
   ReimbursementPolicySnapshotV1,
   ReimbursementSourceSnapshot,
 } from '@watchdog-bms/contracts';
@@ -275,20 +276,83 @@ export class GetReimbursementDetailUseCase {
   async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestDetail> {
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
-    const approvalActions = await approvalDecisionActions(ctx, req, this.repo);
-    try {
-      await assertCanReadRequest(ctx, req, this.repo);
-    } catch (error) {
-      // A frozen assignment is a capability for this exact task, not a general
-      // reimbursement read grant. It survives a later role/permission edit so
-      // the assignee can still inspect and finish the work already routed to them.
-      if (!(error instanceof ForbiddenException)
-        || (!approvalActions.canApprove && !approvalActions.canReject)) throw error;
-    }
+    const approvalActions = await assertCanReadRequestOrAssignment(ctx, req, this.repo);
+    const notes = await this.repo.listInternalNotes(ctx.companyId, id);
+    const names = await this.repo.getUserDisplayNames(ctx.companyId, notes.map(note => note.authorUserId));
     return {
       ...await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req),
       approvalActions,
+      internalNotes: notes.map(note => ({
+        id: note.id,
+        authorUserId: note.authorUserId,
+        authorName: names[note.authorUserId] ?? 'สมาชิกบริษัท',
+        body: note.body,
+        createdAt: note.createdAt.toISOString(),
+        updatedAt: note.updatedAt.toISOString(),
+      })),
     };
+  }
+}
+
+async function assertCanReadRequestOrAssignment(ctx: RequestContext, req: ReimbursementRequestRecord, repo: PrismaReimbursementRepository) {
+  const approvalActions = await approvalDecisionActions(ctx, req, repo);
+  try {
+    await assertCanReadRequest(ctx, req, repo);
+  } catch (error) {
+    // A frozen assignment permits this exact claim even after a role change.
+    if (!(error instanceof ForbiddenException)
+      || (!approvalActions.canApprove && !approvalActions.canReject)) throw error;
+  }
+  return approvalActions;
+}
+
+@Injectable()
+export class ReimbursementInternalNotesUseCase {
+  constructor(private readonly repo: PrismaReimbursementRepository, private readonly audit: AuditService) {}
+
+  private async assertAccess(ctx: RequestContext, requestId: string) {
+    const req = await this.repo.findRequestById(ctx.companyId, requestId, true);
+    if (!req) throw new NotFoundException('Reimbursement request not found');
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
+  }
+
+  private body(value: string): string {
+    const body = value.trim();
+    if (!body || body.length > 2000) throw new BadRequestException('internal_note_body_invalid');
+    return body;
+  }
+
+  async create(ctx: RequestContext, requestId: string, body: string): Promise<ReimbursementInternalNote> {
+    await this.assertAccess(ctx, requestId);
+    const note = await this.repo.createInternalNote(ctx.companyId, requestId, ctx.userId, this.body(body));
+    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId,
+      action: 'reimbursement.internal_note.create', targetType: 'reimbursement_request', targetId: requestId,
+      requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { noteId: note.id } });
+    const names = await this.repo.getUserDisplayNames(ctx.companyId, [ctx.userId]);
+    return { id: note.id, authorUserId: note.authorUserId, authorName: names[ctx.userId] ?? 'สมาชิกบริษัท',
+      body: note.body, createdAt: note.createdAt.toISOString(), updatedAt: note.updatedAt.toISOString() };
+  }
+
+  async update(ctx: RequestContext, requestId: string, noteId: string, body: string): Promise<void> {
+    await this.assertAccess(ctx, requestId);
+    const note = await this.repo.findInternalNote(ctx.companyId, requestId, noteId);
+    if (!note) throw new NotFoundException('Internal note not found');
+    if (note.authorUserId !== ctx.userId && !ctx.roles.includes('OWNER')) throw new ForbiddenException('Cannot edit this internal note');
+    await this.repo.updateInternalNote(ctx.companyId, requestId, noteId, this.body(body));
+    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId,
+      action: 'reimbursement.internal_note.update', targetType: 'reimbursement_request', targetId: requestId,
+      requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { noteId } });
+  }
+
+  async delete(ctx: RequestContext, requestId: string, noteId: string): Promise<void> {
+    await this.assertAccess(ctx, requestId);
+    const note = await this.repo.findInternalNote(ctx.companyId, requestId, noteId);
+    if (!note) throw new NotFoundException('Internal note not found');
+    if (note.authorUserId !== ctx.userId && !ctx.roles.includes('OWNER')) throw new ForbiddenException('Cannot delete this internal note');
+    await this.repo.deleteInternalNote(ctx.companyId, requestId, noteId);
+    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId,
+      action: 'reimbursement.internal_note.delete', targetType: 'reimbursement_request', targetId: requestId,
+      requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { noteId } });
   }
 }
 
