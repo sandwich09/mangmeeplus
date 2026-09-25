@@ -1245,11 +1245,11 @@ describe('run-level expense follow-up execution', () => {
       return { ok: true, json: async () => ({ output_text: '{}' }) } as Response;
     };
   };
-  const expenseErp = (inputs: Array<Record<string, unknown>>, failMonth?: string) => ({
+  const expenseErp = (inputs: Array<Record<string, unknown>>, failMonth?: string, failStatus = 'error') => ({
     invoke: async (tool: any, _ctx: unknown, input: Record<string, unknown> = {}) => {
       inputs.push({ tool: tool.name, ...input });
       if (tool.name === 'expense.list_recent' && input.fromDate === failMonth) return {
-        toolName: tool.name, status: 'error', data: null, sourceRefs: [], asOf: new Date().toISOString(),
+        toolName: tool.name, status: failStatus, data: null, sourceRefs: [], asOf: new Date().toISOString(),
       };
       const fromDate = String(input.fromDate ?? '2026-09-01'), toDate = String(input.toDate ?? '2026-09-25');
       const amount = fromDate === '2026-07-01' ? 700 : fromDate === '2026-08-01' ? 800 : 100;
@@ -1379,9 +1379,48 @@ describe('run-level expense follow-up execution', () => {
     const result = await new OrchestratorAgent(expenseErp(inputs, '2026-08-01'), makeConfig()).run(req);
     assert.equal(inputs.length, 2);
     assert.equal(result.deterministicExpenseSummary, undefined);
+    assert.match(result.replyText, /กรกฎาคม 2569: 700\.00 บาท/);
+    assert.match(result.replyText, /สิงหาคม 2569: ยังดึงข้อมูลได้ไม่ครบ/);
+    assert.doesNotMatch(result.replyText, /800\.00/);
+  });
+
+  it('does not reveal a partial amount when the second read is forbidden', async () => {
+    const inputs: Array<Record<string, unknown>> = [];
+    configureLoopProvider(text => expensePlan(text), periods.map(period => ({ callTool: 'expense.list_recent', input: {
+      fromDate: period.fromDate, toDate: period.toDate,
+    } })));
+    const req = makeReq('ค่าใช้จ่ายเดือนกรกฎาคมและสิงหาคม 2569');
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods };
+    const result = await new OrchestratorAgent(expenseErp(inputs, '2026-08-01', 'forbidden'), makeConfig()).run(req);
+    assert.equal(inputs.length, 2);
     assert.doesNotMatch(result.replyText, /700\.00|800\.00/);
-    assert.match(result.replyText, /ยังยืนยันยอดและรายการค่าใช้จ่าย/);
-    assert.equal(result.presentation, undefined);
+  });
+
+  it('does not repeat or quote a second month read with inconsistent data', async () => {
+    for (const corrupt of [
+      (data: any) => ({ ...data, summary: { ...data.summary, countedItems: 1 } }),
+      (data: any) => ({ ...data, period: { ...data.period, fromDate: '2026-09-01' } }),
+    ]) {
+      const inputs: Array<Record<string, unknown>> = [];
+      configureLoopProvider(text => expensePlan(text), periods.map(period => ({ callTool: 'expense.list_recent', input: {
+        fromDate: period.fromDate, toDate: period.toDate,
+      } })));
+      const req = makeReq('ค่าใช้จ่ายเดือนกรกฎาคมและสิงหาคม 2569');
+      req.userContext.permissions.push('expense.read');
+      req.valueCandidates = { amounts: [], dates: [], periods };
+      const base = expenseErp(inputs);
+      const erp = { invoke: async (tool: any, ctx: unknown, input: Record<string, unknown> = {}) => {
+        const result = await base.invoke(tool, ctx, input);
+        return input.fromDate === '2026-08-01' ? { ...result, data: corrupt(result.data) } : result;
+      } } as any;
+      const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
+      assert.equal(inputs.length, 2);
+      assert.equal(result.deterministicExpenseSummary, undefined);
+      assert.match(result.replyText, /กรกฎาคม 2569: 700\.00 บาท/);
+      assert.match(result.replyText, /สิงหาคม 2569: ยังดึงข้อมูลได้ไม่ครบ/);
+      assert.doesNotMatch(result.replyText, /800\.00/);
+    }
   });
 
   const mixedPlan = (text: string) => ({ status: 'ROUTABLE', language: 'th', intents: [
