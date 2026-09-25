@@ -1,6 +1,6 @@
 # Business Document Image Intake Spec
 
-Status: Implemented and locally verified for items 09, 10B, 08, and 15A; live Thai-document calibration smoke remains before production-ready claim (owner decision 2026-07-13)
+Status: Implemented and locally verified for items 09, 10B, 08, and 15A; §5.8 utility-sheet follow-up locally tested 2026-09-25, not deployed; live Thai-document calibration smoke remains before production-ready claim
 
 Linked plan: [[plans/business-document-image-intake-plan|Business Document Image Intake Plan]]
 
@@ -177,6 +177,18 @@ These kinds can produce review guidance and web deep links only in this slice. T
 - `MULTI_DOCUMENT`: more than one independent document is visible. Do not merge vendors, dates, totals, or routes. Ask for one document per image in the first slice.
 - `NON_FINANCIAL_IMAGE`: no document structure or business-record evidence. No expense draft or business mutation.
 
+### 5.8 Utility sheets with an invoice and receipt (2026-09-25 follow-up)
+
+A water or electricity sheet can contain the current period's invoice and a prior period's receipt. The LINE reader must show each independently titled part's role, printed billing period and printed amount from the same image. It must never add the amounts or mark the current invoice paid because an older receipt is present.
+
+The OCR response may carry a bounded `utilityDocuments` summary alongside `MULTI_DOCUMENT`. Each part must have a bill or receipt title, a billing-period span and a total span that occur in stage-one OCR text; unsupported or contradictory parts are dropped. Two verified parts force `MULTI_DOCUMENT` at the image-reading boundary even if a model also emits a single-document classification. When the two verified parts are exactly one bill and one receipt for the immediately preceding billing month, the expense intake must accept the **prior-period receipt** as reviewable expense evidence, keyed from the receipt's own printed total. A receipt for the prior month is not proof that the current bill was paid. The LINE reply explicitly calls one part the current-period invoice and the other the previous-period receipt, names both amounts, and says what was actually saved. No second photo is required. If the period relationship, amount, document roles, expense direction, or capture permission is uncertain, retain the image for review without populating one expense. A single utility invoice or receipt continues through the existing reviewed-draft path.
+
+Payment coupons, barcode amounts, usage-history rows and a second page of instructions are not separate documents solely because they repeat a total. A bill and receipt for the same period represent one liability with two evidence roles; displaying both does not authorize duplicate expense creation. A screenshot containing unrelated bills remains `MULTI_DOCUMENT` and requires review. This slice does not settle a live utility account or infer a paid state from a payment instruction.
+
+The initial photo saves only the prior-period receipt draft. If that same user then explicitly asks in the same LINE chat to save the current utility invoice too, create a separate `SUPPLIER_BILL` expense draft from the verified current-period amount and reuse the image as evidence. It stays `UNPAID`, requires review, and does not create a payment. The command must resolve exactly one recent, source-bound combined sheet within the user's company and branch scope; ambiguous or stale sources require clarification. Repeating the command must return the same draft. “ใบแจ้งหนี้” in this context means the supplier's water/electricity bill; issuing a sales invoice to a customer is a separate action.
+
+The utility part provides a period and gross amount, not a reviewed transaction date, line allocation or VAT treatment. The draft must keep those fields pending review. In the current Expenses web journey, supporting evidence can be appended only while the expense is still a draft or ready for confirmation. The LINE reply must therefore say to attach any later receipt to this draft **before** confirming it; it must not promise automatic matching or attachment after confirmation. A future post-confirmation receipt workflow needs its own scoped design if the owner wants the bill confirmed as a payable before payment.
+
 ## 6. Reason Codes
 
 ```text
@@ -219,7 +231,7 @@ HUMAN_REVIEW_REQUIRED
 | Quotation | No expense; show accounting/sales review guidance | Keep explicit upload draft/evidence, apply no expense fields, and block ready/confirm until finance resolution | Conversation attachment/review only; never issue quotation |
 | Appointment/booking/reservation | No expense; show `/bookings` review guidance | No expense auto-key | Conversation attachment; existing proposal + explicit-confirmation gates remain authoritative |
 | Signature image | Existing pending owner-approval ticket | Existing signature upload path | Conversation attachment unless customer flow explicitly supports it |
-| Non-financial/unreadable/multi-document/ambiguous | Clarify or ask re-upload; no expense | Keep explicit draft/evidence, apply nothing, show reason, and block ready/confirm until finance resolution | Conversation attachment plus staff review |
+| Non-financial/unreadable/multi-document/ambiguous | Clarify or ask re-upload; no expense, except the verified current-invoice/prior-receipt utility sheet in §5.8 creates one prior-receipt review draft and can create a separate current supplier-bill draft on explicit follow-up | Keep explicit draft/evidence, apply nothing, show reason, and block ready/confirm until finance resolution | Conversation attachment plus staff review |
 | Provider unavailable | Uncaptioned/ambiguous media must enter clarification, never expense fallback; explicit expense context may use existing manual-review confirmation | Existing manual review remains available because user chose Expenses | Keep conversation attachment; no automated mutation |
 
 ## 8. Shared Employee LINE Sequence
@@ -292,6 +304,7 @@ No expense record should exist before the decision accepts an expense family, ex
 26. Manual web upload classified as quotation/order/scheduling/non-financial/unreadable/multi-document cannot mark ready or confirm through UI or direct API.
 27. Finance override requires `expense.review`, acknowledgement, selected expense document type, and bounded reason; incidental draft edits do not override.
 28. A valid finance resolution preserves the original AI classification, writes a distinct HIGH-risk audit event, and then allows the normal ready/confirm validations.
+29. A utility invoice for September with an August receipt on the same provider sheet creates one reviewable August receipt draft from the August total. The September invoice is reported as a separate amount due and does not make the August receipt a payment against September. Same-period, non-consecutive, ambiguous, and unreadable parts do not take this exception.
 
 ## 12. Non-Goals for This Slice
 

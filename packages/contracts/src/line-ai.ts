@@ -451,6 +451,7 @@ export type LineIntakeOnePassReceipt = {
 
 export const RECEIPT_OCR_FALLBACK_REASONS = [
   'JSON_INCOMPLETE_OR_INVALID',
+  'UTILITY_PARTS_MISSING',
   'TOTAL_MISSING',
   'VAT_MISSING',
   'ITEMS_INCOMPLETE',
@@ -478,6 +479,15 @@ export type ReceiptOcrResponse = {
   status: 'ok' | 'not_configured' | 'failed';
   fields?: ReceiptOcrFieldResult;
   classification?: BusinessDocumentClassification;
+  /** Evidence-validated utility parts. Intake may draft the prior receipt when it accompanies
+   *  a new bill; this array itself never records a payment. */
+  utilityDocuments?: Array<{
+    role: 'BILL_DUE' | 'RECEIPT_PAID';
+    period: string;
+    amount: string;
+    titleEvidence: string;
+    amountEvidence: string;
+  }>;
   modelLineage?: AiModelLineage[];
   errorCode?: string;
   /** Set only when `errorCode` is one of `AI_BUDGET_REFUSAL_CODES` (spec §9.1). */
