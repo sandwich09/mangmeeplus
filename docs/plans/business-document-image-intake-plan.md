@@ -1,6 +1,6 @@
 # Business Document Image Intake Plan
 
-Status: Implemented and locally verified (2026-07-13); live provider/LINE calibration smoke pending
+Status: Implemented and locally verified (2026-07-13); utility-sheet follow-up locally tested 2026-09-25, not deployed; live provider/LINE calibration smoke pending
 
 Spec: [[specs/business-document-image-intake-spec|Business Document Image Intake Spec]]
 
@@ -128,6 +128,16 @@ Review evidence must explicitly cover:
 
 - No schema migration or config change is expected.
 - Deploy API + AI Gateway + web together because the additive contract and UI notice span all three.
+
+## Utility-sheet follow-up (2026-09-25)
+
+Product evidence: the ลองจ่าย Production photo is one ordinary MWA sheet with a September invoice (110.05 THB) and an August receipt (82.28 THB). Stage-one OCR saw both amounts, but the single-expense `MULTI_DOCUMENT` guard discarded all fields. The [official-source case inventory](../research/thai-water-electricity-bill-use-cases-2026-09-25-th.md) includes coupons, arrears, repeated totals and other layouts that must not be collapsed.
+
+Implementation: add a small read-only `utilityDocuments` response to the existing OCR contract; request it in the existing extraction call, validate its title/period/total against that call's stage-one text, and force multi-document classification when two verified parts survive. If stage one shows a combined utility sheet but general extraction omits the parts or returns malformed JSON, use one bounded utility-only recovery call within the existing four-call OCR budget. Keep `fields` absent for `MULTI_DOCUMENT`. Propagate the summary through the existing API preflight and show bounded Thai LINE copy. Preserve the pending-media and permission gates, including the numbered-reply guard. No new dependency, schema or expense mutation.
+
+The previous local proposal selected the current bill and left the prior receipt unrecorded. The owner corrected that: the prior-period receipt is itself expense evidence. The combined-sheet exception saves **one reviewable receipt draft for the previous period**, with the amount sourced only from the verified receipt part. Show the current notice as a separate due amount; it never settles against the older receipt. On the owner's later explicit-command decision, a same-chat request to save the current notice creates a separate `SUPPLIER_BILL` draft from the source-bound verified current amount and links the original image. Keep it unpaid and idempotent. Reject ambiguous, stale, out-of-scope, or inaccessible source records; do not interpret the request as issuing a customer sales invoice. Preserve the standalone supplier-bill path. Verify both draft amounts and periods, permission and launch gates, repeated commands, no payment, no summed amount, and unsafe-pair fallback.
+
+Verification: focused parser tests for invoice plus prior receipt, same-period bill plus receipt, repeated coupon amount, ungrounded value, unrelated multi-entry ledger, and a single bill; AI Gateway and LINE integration tests for no single-expense mutation. Replay available official public specimens and the exact incident image locally when retrievable; record which fixture classes were actually run. Do not claim all 52 research candidates passed without actual examples. UAT/Production release follows the mandatory deployment runbook separately.
 - Keep current AI provider kill switches and manual review available.
 - Smoke with a real receipt, quantity-only food order, quotation, appointment/booking confirmation, unrelated photo, and blurry image before production-ready claim.
 

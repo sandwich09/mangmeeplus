@@ -33,6 +33,7 @@ import { receiptProgressLabel, receiptStatusQuestion } from '../../domain/logic/
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import type { ExpenseRecord } from '../../../expenses/domain/models/expense.model';
 import { pickLineDefaultBranchId } from '../../../expenses/domain/logic/line-receipt-branch.logic';
+import { assertExpenseRootOpen } from '../../../expenses/application/expense-launch-gate';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 import { CorrectLineCapturedExpenseUseCase } from '../../../expenses/application/use-cases/line-correction.use-case';
 import { LineDraftUpdateUseCase } from '../../../expenses/application/use-cases/line-draft-update.use-case';
@@ -122,8 +123,8 @@ import { FEATURE_TEMPORARILY_UNAVAILABLE, loadEntitledFeatureKeys } from '../../
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
-import type { AiBudgetScope, BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, PlanTermLockReason, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFallbackReason, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import type { AiBudgetScope, BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, PlanTermLockReason, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFallbackReason, ReceiptOcrFieldResult, ReceiptOcrResponse, RequestContext } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, mapThaiDigits, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, LINE_CLARIFICATION_SOURCE_MAX_BYTES, type LedgerEntry, type LedgerSubRequestInput } from '../line-ai-ledger.service';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
@@ -446,6 +447,99 @@ const MEDIA_CLARIFY_REPLY = [
   '2) ภาพประกอบคำถาม ไม่ต้องบันทึก',
   '3) สรุปหลายรายการ (เก็บไฟล์ไว้ตรวจ แต่ยังไม่สร้างค่าใช้จ่าย)',
 ].join('\n');
+const MULTI_DOCUMENT_CLARIFY_REPLY = [
+  '📄 พบเอกสารมากกว่า 1 ฉบับในภาพ จึงยังไม่ดึงยอดไปบันทึกเป็นค่าใช้จ่ายรายการเดียวค่ะ',
+  'รูปเดิมเก็บไว้แล้ว ตอบ 3 เพื่อเก็บไว้ตรวจโดยไม่สร้างค่าใช้จ่าย จากนั้นส่งเอกสารแยกทีละภาพเพื่อให้อ่านยอดแต่ละใบค่ะ',
+].join('\n');
+function formatUtilityDocumentsReply(parts: NonNullable<ReceiptOcrResponse['utilityDocuments']>): string {
+  return [
+    `📄 อ่านเอกสารค่าน้ำ/ค่าไฟได้ ${parts.length} ส่วนจากภาพเดียว:`,
+    ...parts.slice(0, 4).map((part) => {
+      const label = part.role === 'BILL_DUE' ? 'ใบแจ้ง' : 'ใบเสร็จ';
+      const state = part.role === 'BILL_DUE' ? 'ยอดเรียกเก็บ ยังไม่ยืนยันว่าชำระ' : 'หลักฐานรับเงินของงวดนี้';
+      return `• ${label} งวด ${part.period.replace(/\s+/g, ' ').slice(0, 60)}: ${part.amount} บาท (${state})`;
+    }),
+    'ยังไม่รวมยอดหรือสร้างค่าใช้จ่ายจากภาพนี้ ตอบ 3 เพื่อเก็บรูปไว้ตรวจและเปิดรายการแยกตามงวดค่ะ',
+  ].join('\n');
+}
+
+const UTILITY_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+  'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+
+function utilityMonthIndex(period: string): number | null {
+  const value = mapThaiDigits(period.trim().replace(/^(?:งวด|เดือน|ประจำเดือน)\s*/u, ''));
+  const numeric = value.match(/^(\d{1,2})\s*[/.-]\s*(\d{2}|\d{4})$/u);
+  const named = value.match(/^([ก-๙]+)\s+(\d{2}|\d{4})$/u);
+  const month = numeric ? Number(numeric[1]) : named ? UTILITY_MONTHS.indexOf(named[1]!) + 1 : 0;
+  const rawYear = Number(numeric?.[2] ?? named?.[2]);
+  if (month < 1 || month > 12 || !Number.isInteger(rawYear)) return null;
+  const beYear = rawYear < 100 ? 2500 + rawYear : rawYear < 2400 ? rawYear + 543 : rawYear;
+  if (beYear < 2500 || beYear > 2700) return null;
+  return beYear * 12 + month;
+}
+
+/** One normal utility sheet has one current invoice and last month's receipt. The paid receipt
+ * enters the existing single-expense draft path; the new invoice remains read-only here. */
+function priorUtilityReceipt(ocr: ReceiptOcrPreflight): {
+  bill: NonNullable<ReceiptOcrResponse['utilityDocuments']>[number];
+  receipt: NonNullable<ReceiptOcrResponse['utilityDocuments']>[number];
+  fields: ReceiptOcrFieldResult;
+  classification: BusinessDocumentClassification;
+} | null {
+  const parts = ocr.utilityDocuments;
+  const source = ocr.classification;
+  if (ocr.status !== 'OCR_EXTRACTED_NEEDS_REVIEW' || source?.contentKind !== 'MULTI_DOCUMENT'
+    || source.businessDirection === 'SALES_RECEIVABLE' || source.businessDirection === 'CUSTOMER_INBOUND'
+    || source.contradictionSignals.length || parts?.length !== 2) return null;
+  const bill = parts.find((part) => part.role === 'BILL_DUE');
+  const receipt = parts.find((part) => part.role === 'RECEIPT_PAID');
+  if (!bill || !receipt || !/(?:ค่าน้ำ|ประปา|ค่าไฟ|ไฟฟ้า)/u.test(bill.titleEvidence)
+    || !/(?:ใบเสร็จ|ใบรับเงิน|ใบสรุปรับเงิน)/u.test(receipt.titleEvidence)) return null;
+  const billMonth = utilityMonthIndex(bill.period);
+  const receiptMonth = utilityMonthIndex(receipt.period);
+  const amount = mapThaiDigits(receipt.amount).replace(/,/g, '');
+  if (billMonth === null || receiptMonth !== billMonth - 1 || !/^\d+(?:\.\d{1,2})?$/u.test(amount)
+    || Number(amount) <= 0 || !Number.isFinite(Number(amount))) return null;
+  const classification: BusinessDocumentClassification = {
+    contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
+    businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', evidenceRoles: ['EXPENSE_SUPPORT', 'PAYMENT_PROOF'],
+    confidence: source.confidence, evidenceSignals: [receipt.titleEvidence, receipt.period, receipt.amountEvidence],
+    amountSignals: [receipt.amountEvidence], settlementSignals: [receipt.titleEvidence], missingRequiredSignals: [],
+    contradictionSignals: [], requiresClarification: false,
+  };
+  const fields: ReceiptOcrFieldResult = {
+    description: `${receipt.titleEvidence} งวด ${receipt.period}`, grandTotalAmount: amount,
+    missingFields: ['vendor', 'expenseDate', 'documentNumber', 'vatAmount', 'category'],
+  };
+  return isExpenseExtractionEligible(classification, amount) ? { bill, receipt, fields, classification } : null;
+}
+
+/** A request for the supplier's current utility notice in the photo just discussed. */
+export function isUtilityBillSaveRequest(text: string): boolean {
+  const value = normalizeLineText(text).toLocaleLowerCase('th-TH');
+  return /(บันทึก|สร้าง|เก็บ|ลงรายการ)/u.test(value)
+    && /(ใบแจ้ง(?:หนี้|ค่าน้ำ|ค่าไฟ)?|บิล(?:ค่าน้ำ|ค่าไฟ)?)/u.test(value)
+    && /(ค่าน้ำ|ค่าไฟ|ประปา|ไฟฟ้า|งวด(?:นี้|ปัจจุบัน)|ด้วย|รูป(?:นี้|เดิม))/u.test(value)
+    && !/(ออกใบแจ้งหนี้|ให้ลูกค้า|ขาย|(?:อย่า|ไม่ต้อง|ห้าม)\s*(?:บันทึก|สร้าง|เก็บ|ลงรายการ)|ไหม|หรือเปล่า|[?？])/u.test(value);
+}
+
+function savedUtilityBill(expense: ExpenseRecordWithRelations): NonNullable<ReceiptOcrResponse['utilityDocuments']>[number] | null {
+  const parts = expense.aiVerificationSummaryJson?.utilityDocuments;
+  if (expense.sourceDocumentType !== 'RECEIPT' || !Array.isArray(parts) || parts.length !== 2) return null;
+  const bill = parts.find((part) => part?.role === 'BILL_DUE');
+  const receipt = parts.find((part) => part?.role === 'RECEIPT_PAID');
+  if (!bill || !receipt || typeof bill.period !== 'string' || typeof receipt.period !== 'string'
+    || typeof bill.titleEvidence !== 'string' || typeof receipt.titleEvidence !== 'string'
+    || typeof bill.amount !== 'string' || typeof receipt.amount !== 'string'
+    || !/(?:ค่าน้ำ|ประปา|ค่าไฟ|ไฟฟ้า)/u.test(bill.titleEvidence)
+    || !/(?:ใบเสร็จ|ใบรับเงิน|ใบสรุปรับเงิน)/u.test(receipt.titleEvidence)
+    || utilityMonthIndex(bill.period) === null
+    || utilityMonthIndex(receipt.period) !== utilityMonthIndex(bill.period)! - 1
+    || !/^\d{1,14}(?:\.\d{1,2})?$/u.test(mapThaiDigits(bill.amount).replace(/,/gu, ''))
+    || Number(mapThaiDigits(bill.amount).replace(/,/gu, '')) <= 0
+    || Number(mapThaiDigits(receipt.amount).replace(/,/gu, '')) !== Number(expense.grandTotalAmount)) return null;
+  return bill;
+}
 
 /** Keep a governed OCR refusal useful: the attachment remains recoverable and the same simple
  * numbered manual path stays available. Internal route/config names never reach the customer.
@@ -598,8 +692,8 @@ export function expensePathNonReceiptLead(
 /** RECEIPT-05's own numbered question, recorded on the row it belongs to. The pending row is scoped
  *  per user while conversations are per chat, so the chat is part of the record: an answer typed in
  *  a different chat must not resolve bytes that were questioned in this one. */
-function receiptClarifyQuestion(event: { lineUserId: string; pushTargetId?: string }): Record<string, unknown> {
-  return { kind: 'RECEIPT_CLARIFY', chatKeyHash: chatKeyHashOf(event) };
+function receiptClarifyQuestion(event: { lineUserId: string; pushTargetId?: string }, detectedMultiDocument = false): Record<string, unknown> {
+  return { kind: 'RECEIPT_CLARIFY', chatKeyHash: chatKeyHashOf(event), ...(detectedMultiDocument ? { detectedMultiDocument: true } : {}) };
 }
 
 /**
@@ -630,6 +724,7 @@ type ReceiptOcrPreflight = {
   budgetScope?: AiBudgetScope;
   /** Bounded recovery causes; safe to persist because they contain no document text. */
   fallbackReasons?: ReceiptOcrFallbackReason[];
+  utilityDocuments?: ReceiptOcrResponse['utilityDocuments'];
   processingPath?: 'one_pass' | 'receipt_ocr';
 };
 
@@ -1006,6 +1101,8 @@ export function classifyPendingMediaReply(text: string): 'receipt' | 'illustrati
   // purpose: a bare '1' is an answer, but '1500' or 'จ่ายไป 2 ใบ' is not.
   const numbered = /^(?:(?:อัน|ข้อ|ตัว)?\s*(?:ที่)?\s*)?([123])[.)]?$/.exec(t);
   if (numbered) return numbered[1] === '1' ? 'receipt' : numbered[1] === '2' ? 'illustration' : 'multiple';
+  // ponytail: a choice plus a short expense label is still choice 1; amounts are not.
+  if (/^1[.)]?\s+ค่า[ก-๙]+$/u.test(t)) return 'receipt';
   // Thai ordinals are the same answer spelled out, and just as unambiguous against a numbered list.
   if (/^(?:อัน|ข้อ|ตัว)?(?:ที่\s*)?(?:แรก|หนึ่ง)$/.test(t)) return 'receipt';
   if (/^(?:อัน|ข้อ|ตัว)?(?:ที่\s*)?(?:สอง|ที่สอง)$/.test(t)) return 'illustration';
@@ -4052,11 +4149,14 @@ export class ProcessLineWebhookUseCase {
         mediaResumeCapsule = `↩️ รูปที่รอจำแนกยังเก็บไว้อยู่ค่ะ\n${substituteAnswer.question}`;
       }
       const splitReply = substituteAnswer ? null : splitPendingMediaReply(normalizedText);
-      const decision = substituteAnswer?.outcome === 'new_expense'
+      const answer = substituteAnswer?.outcome === 'new_expense'
         ? 'receipt' as const
         : substituteAnswer
           ? 'ambiguous' as const
           : splitReply?.decision ?? classifyPendingMediaReply(normalizedText);
+      // A numbered answer cannot turn two independently classified documents into one expense.
+      const detectedMultiDocument = (pendingMedia.askedQuestionJson as { detectedMultiDocument?: unknown } | null)?.detectedMultiDocument === true;
+      const decision = detectedMultiDocument && answer === 'receipt' ? 'multiple' : answer;
       if (decision === 'receipt') {
         try {
           await this.resolvePendingMediaAsReceipt(
@@ -4087,7 +4187,9 @@ export class ProcessLineWebhookUseCase {
           [PENDING_MEDIA_RESOLUTION]?: { id: string; companyId: string; userId: string; status: 'RESOLVED_ILLUSTRATION' | 'RESOLVED_MULTI_ENTRY_REVIEW' };
         })[PENDING_MEDIA_RESOLUTION] = { id: pendingMedia.id, companyId, userId: identity.userId, status: 'RESOLVED_MULTI_ENTRY_REVIEW' };
         const reply = [
-          '📋 เก็บไฟล์สรุปหลายรายการไว้ตรวจแล้ว และยังไม่ได้สร้างค่าใช้จ่ายรายการเดียวจากยอดรวมค่ะ',
+          detectedMultiDocument
+            ? '📄 รูปเดิมมีเอกสารมากกว่า 1 ฉบับ เก็บไฟล์ไว้ตรวจแล้ว และยังไม่ได้สร้างค่าใช้จ่ายรายการเดียวค่ะ'
+            : '📋 เก็บไฟล์สรุปหลายรายการไว้ตรวจแล้ว และยังไม่ได้สร้างค่าใช้จ่ายรายการเดียวจากยอดรวมค่ะ',
           'ระบบ LINE ยังไม่รองรับการแยกหลายรายการอัตโนมัติ กรุณาส่งเอกสารแยกรายการ หรือบันทึก/ตรวจในเว็บแอป:',
           absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`),
         ].join('\n');
@@ -4146,6 +4248,23 @@ export class ProcessLineWebhookUseCase {
     const recentCapturedExpenses = canCaptureExpense
       ? await this.loadCorrectionCandidates(companyId, identity.userId, chatKeyHashOf(event), resolvedAccess.scopes)
       : [];
+    if (isUtilityBillSaveRequest(normalizedText)) {
+      if (!await this.mayDeliverBusinessReply(event)) return;
+      if (recentCapturedExpenses.length && !await this.correctionCandidatesCurrent(expenseDraftCtx, chatKeyHashOf(event), JSON.stringify(recentCapturedExpenses))) {
+        await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
+        return;
+      }
+      const reply = !canCaptureExpense ? receiptDeniedReply(resolvedAccess)
+        : entitledFeatureKeys !== null && !entitledFeatureKeys.has('expenses.upload') ? EXPENSE_FEATURE_DISABLED_REPLY
+        : await this.saveRecentUtilityBill(event, expenseDraftCtx, recentCapturedExpenses, normalizedText);
+      await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
+      await this.persistIntakeTurn({
+        userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: normalizedText, replyText: reply, intent: 'EVIDENCE_CAPTURE',
+      });
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      return;
+    }
     let activeExpenseDrafts = expenseDraftConversationEnabled && canCaptureExpense && this.expenseDraftConversation
       ? await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event))
       : [];
@@ -6327,7 +6446,8 @@ export class ProcessLineWebhookUseCase {
         // Only the delivery that CREATES the pending row asks the clarify question. A redelivery
         // (new webhookEventId, same lineMessageId) reuses the row and stays silent — idempotent.
         const { created, pending } = await this.ensurePendingMedia(
-          ctx, event, companyId, identity.userId, caption, media, receiptClarifyQuestion(event),
+          ctx, event, companyId, identity.userId, caption, media,
+          receiptClarifyQuestion(event),
         );
         if (created) {
           await this.deliverReply(event, MEDIA_CLARIFY_REPLY);
@@ -6411,7 +6531,7 @@ export class ProcessLineWebhookUseCase {
     // JPEG/PNG classification runs once, before initReceiptUpload. PDF/unsupported media produces
     // NOT_REQUESTED and therefore fails closed unless a routed expense caption supplies purpose.
     admissionAttempt.receiptRequested = true;
-    const ocr = await this.tryExtractReceiptFields(
+    const readOcr = await this.tryExtractReceiptFields(
       ctx,
       event.lineMessageId,
       media,
@@ -6423,6 +6543,16 @@ export class ProcessLineWebhookUseCase {
       routePlan.onePassReceipt,
       admissionAttempt,
     );
+    const utilityReceipt = canCaptureExpense ? priorUtilityReceipt(readOcr) : null;
+    const ocr: ReceiptOcrPreflight = utilityReceipt
+      ? { ...readOcr, fields: utilityReceipt.fields, classification: utilityReceipt.classification }
+      : readOcr;
+    // An uncaptioned provider sheet may be routed as a reference because it contains two titled
+    // sections. The verified prior receipt is still expense evidence for a user allowed to capture.
+    const expenseRoutePlan = utilityReceipt && !caption && routePlan.status === 'ROUTED'
+      && routePlan.intent === 'BUSINESS_DOCUMENT_REFERENCE'
+      ? { ...routePlan, intent: 'EXPENSE_DOCUMENT_CAPTURE' as const }
+      : routePlan;
 
     // P10-L §15.1 (review G-01): the shop's plan ran out of receipts. `admitCompanyOcr` is the one
     // place that decides this — for a LINE photo it decides at the intake router, whose refusal
@@ -6522,7 +6652,7 @@ export class ProcessLineWebhookUseCase {
       return { outcome: 'done' };
     }
 
-    const decision = decideLineBusinessDocument(routePlan, ocr, caption.length > 0);
+    const decision = decideLineBusinessDocument(expenseRoutePlan, ocr, caption.length > 0);
     if (ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW' && isSuccessfulNonReceiptClassification(ocr.classification)) {
       admissionAttempt.receiptRequested = false;
     }
@@ -6643,12 +6773,16 @@ export class ProcessLineWebhookUseCase {
         // copy — §17.6 forbids claiming "เก็บไฟล์ไว้แล้ว" without a persisted identity.
       }
       const reply = decision.persistMedia
-        ? formatOcrGovernanceClarifyReply(ocr.errorCode, ocr.status === 'OCR_FAILED')
+        ? ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW' && decision.classification?.contentKind === 'MULTI_DOCUMENT'
+          ? ocr.utilityDocuments?.length ? formatUtilityDocumentsReply(ocr.utilityDocuments) : MULTI_DOCUMENT_CLARIFY_REPLY
+          : formatOcrGovernanceClarifyReply(ocr.errorCode, ocr.status === 'OCR_FAILED')
         : formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId);
       let terminalStatus = 'clarification_required';
       if (decision.persistMedia && canCaptureExpense) {
         const { created, pending } = await this.ensurePendingMedia(
-          ctx, event, companyId, identity.userId, caption, media, receiptClarifyQuestion(event),
+          ctx, event, companyId, identity.userId, caption, media,
+          receiptClarifyQuestion(event,
+            ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW' && decision.classification?.contentKind === 'MULTI_DOCUMENT'),
         );
         if (created) {
           await this.deliverReply(event, reply);
@@ -6679,7 +6813,7 @@ export class ProcessLineWebhookUseCase {
       mimeType: media.mimeType,
       byteSize: media.byteSize,
       // Let OCR or the user supply the document date.
-      note: 'LINE receipt upload',
+      note: utilityReceipt ? `LINE utility receipt: ${utilityReceipt.receipt.period}` : 'LINE receipt upload',
       captureSource: 'LINE_UPLOAD',
       lineCapture: { lineMessageId: event.lineMessageId, lineEventId: event.webhookEventId, chatKeyHash: chatKeyHashOf(event) },
     });
@@ -6843,6 +6977,7 @@ export class ProcessLineWebhookUseCase {
           // over LINE and one uploaded in the browser explain themselves the same way.
           ...(reviewReasons.length > 0 ? { reviewReasons } : {}),
           ...(chargeReconciliation ? { chargeReconciliation } : {}),
+          ...(utilityReceipt ? { utilityDocuments: readOcr.utilityDocuments } : {}),
           // Field-level evidence for the date: the four-state answer plus what the reader had to
           // infer to produce it (§5.2). `assumed` is NOT a review trigger — it is the label the
           // card, the review page, the list and the export all render.
@@ -6876,6 +7011,15 @@ export class ProcessLineWebhookUseCase {
     // สร้างรายการ" is impossible here by construction, which is exactly §18.4's rule.
     const nrOnExpense = expensePathNonReceiptLead(decision.classification, ocrFields?.grandTotalAmount);
     if (nrOnExpense) replyTexts[0] = `${nrOnExpense}\n\n${replyTexts[0]!}`;
+    if (utilityReceipt) replyTexts[0] = [
+      `📄 รูปนี้มีเอกสาร${/(?:ค่าน้ำ|ประปา)/u.test(utilityReceipt.bill.titleEvidence) ? 'ค่าน้ำ' : 'ค่าไฟ'} 2 งวดค่ะ`,
+      `• งวดก่อน ${utilityReceipt.receipt.period}: ใบเสร็จ ${utilityReceipt.receipt.amount} บาท — บันทึกร่างค่าใช้จ่ายจากใบเสร็จแล้ว รอตรวจข้อมูล`,
+      `• งวดปัจจุบัน ${utilityReceipt.bill.period}: ${utilityReceipt.bill.titleEvidence} ${utilityReceipt.bill.amount} บาท — เป็นยอดที่เรียกเก็บ ยังไม่ใช่หลักฐานว่าชำระ และยังไม่ได้บันทึกจากภาพนี้`,
+      'ไม่ได้รวมสองยอดหรือบันทึกการชำระเงินจากใบแจ้งค่ะ',
+      'หากต้องการบันทึกใบแจ้งงวดปัจจุบันเป็นร่างบิลค้างชำระด้วย พิมพ์ “บันทึกใบแจ้งหนี้ด้วย” ค่ะ',
+      'เมื่อชำระงวดปัจจุบันแล้ว ส่งใบเสร็จของงวดนั้นเข้ามาเพื่อบันทึกค่าใช้จ่ายค่ะ',
+      '', replyTexts[0]!,
+    ].join('\n');
     await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
     await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, intent.expenseId, access.scopes);
     await this.persistIntakeTurn({
@@ -8227,6 +8371,85 @@ ${link}`, ctx.companyId, access);
     });
   }
 
+  private async saveRecentUtilityBill(
+    event: LineTextEvent, ctx: RequestContext, recent: LineIntakeCorrectionCandidate[], command: string,
+  ): Promise<string> {
+    if (!this.expenseRepo) return 'ยังบันทึกใบแจ้งจากรูปเดิมไม่ได้ค่ะ กรุณาเปิดรายการค่าใช้จ่ายในเว็บแอป';
+    const requestedPeriod = mapThaiDigits(command).match(/\b\d{1,2}\s*[/.-]\s*(?:\d{2}|\d{4})\b/u)?.[0];
+    const candidates: Array<{ source: ExpenseRecordWithRelations; bill: NonNullable<ReceiptOcrResponse['utilityDocuments']>[number] }> = [];
+    for (const item of recent) {
+      if (item.sourceDocumentType !== 'RECEIPT') continue;
+      const source = await this.expenseRepo.findByIdWithRelations(ctx.companyId, item.id, undefined, ctx.scopes ?? {});
+      if (!source || source.createdByUserId !== ctx.userId || source.captureSource !== 'LINE_UPLOAD'
+        || source.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)
+        || !isBranchInScope(ctx.scopes ?? {}, source.branchId)
+        || !source.primaryAttachmentId
+        || !source.attachments.some(link => link.id === source.primaryAttachmentId && link.purpose === 'expense.receipt.primary')) continue;
+      const bill = savedUtilityBill(source);
+      if (bill && (!requestedPeriod || utilityMonthIndex(requestedPeriod) === utilityMonthIndex(bill.period))) candidates.push({ source, bill });
+    }
+    if (candidates.length !== 1) return candidates.length > 1
+      ? 'พบรูปบิลค่าน้ำ/ค่าไฟหลายรูปในแชทนี้ กรุณาระบุงวด เช่น “บันทึกใบแจ้งค่าน้ำงวด 09/69” ค่ะ'
+      : 'ยังไม่พบใบแจ้งค่าน้ำ/ค่าไฟจากรูปที่อ่านแยกงวดได้ในแชทนี้ กรุณาส่งรูปอีกครั้งค่ะ';
+    const { source, bill } = candidates[0]!;
+    const utilityKind = /(?:ค่าน้ำ|ประปา)/u.test(bill.titleEvidence) ? 'ค่าน้ำ' : 'ค่าไฟ';
+    if (!requestedPeriod && recent[0]?.id !== source.id) {
+      return `มีเอกสารอื่นส่งต่อจากรูป${utilityKind}แล้วค่ะ หากหมายถึงใบแจ้งงวด ${bill.period} ให้พิมพ์ “บันทึกใบแจ้ง${utilityKind}งวด ${bill.period}”`;
+    }
+    const amount = toMoney4(mapThaiDigits(bill.amount).replace(/,/gu, ''));
+    await assertExpenseRootOpen(this.launchGate, this.audit, ctx, 'expense.create');
+    let inserted = false;
+    const saved = await this.prisma.client.$transaction(async tx => {
+      await tx.$executeRaw`SELECT id FROM "ExpenseRecord" WHERE id = ${source.id} AND "companyId" = ${ctx.companyId} FOR SHARE`;
+      const current = await this.expenseRepo!.findByIdWithRelations(ctx.companyId, source.id, tx, ctx.scopes ?? {});
+      if (!current || current.updatedAt.getTime() !== source.updatedAt.getTime()
+        || current.primaryAttachmentId !== source.primaryAttachmentId || !savedUtilityBill(current)
+        || !current.attachments.some(link => link.id === source.primaryAttachmentId && link.purpose === 'expense.receipt.primary')
+        || current.createdByUserId !== ctx.userId || current.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)) {
+        throw new ConflictException('The source bill changed. Please review the original record.');
+      }
+      await tx.$executeRaw`SELECT id FROM "AttachmentObject" WHERE id = ${source.primaryAttachmentId!} AND "companyId" = ${ctx.companyId} FOR SHARE`;
+      const attachment = await tx.attachmentObject.findFirst({ where: {
+        id: source.primaryAttachmentId!, companyId: ctx.companyId, status: 'ACTIVE',
+      }, select: { id: true } });
+      if (!attachment) throw new ConflictException('The source image is unavailable.');
+      const created = await this.expenseRepo!.createExpense({
+        companyId: ctx.companyId, branchId: source.branchId ?? undefined,
+        draftIdempotencyKey: `utility-bill:${source.id}`,
+        draftPayloadHash: createHash('sha256').update(JSON.stringify([source.id, bill.period, amount, source.primaryAttachmentId])).digest('hex'),
+        draftReplayScopes: ctx.scopes ?? {},
+        captureSource: 'LINE_UPLOAD', expenseDate: civilDateToUtcDate(todayCivilDate()), currency: 'THB',
+        vatMode: 'NEEDS_REVIEW', inputVatClaimStatus: 'NEEDS_REVIEW',
+        note: `${bill.titleEvidence} งวด ${bill.period}`.slice(0, 240),
+        createdByUserId: ctx.userId, lineEventId: event.webhookEventId,
+        sourceDocumentType: 'SUPPLIER_BILL', taxEvidenceStatus: 'NEEDS_REVIEW',
+        taxEvidenceReasonCode: 'UNREADABLE_OR_LOW_CONFIDENCE', aiVerificationStatus: 'NEEDS_REVIEW',
+        sourceChannelMetadataJson: { channel: 'LINE', kind: 'utility_bill_followup', chatKeyHash: chatKeyHashOf(event), sourceReceiptExpenseId: source.id },
+        aiVerificationSummaryJson: {
+          status: 'OCR_EXTRACTED_NEEDS_REVIEW', recognizedFields: { description: bill.titleEvidence, grandTotalAmount: amount },
+          utilityDocuments: [bill], missingFields: ['vendor', 'expenseDate', 'documentNumber', 'vatAmount', 'category'],
+          dateStatus: 'unknown', nextAction: 'review_in_web',
+        },
+        subtotalAmount: amount, discountAmount: '0', taxableAmount: amount, vatAmount: '0', whtAmount: '0',
+        grandTotalAmount: amount, netPayableAmount: amount, outstandingAmount: amount,
+      }, async (db, record) => {
+        inserted = true;
+        await this.expenseRepo!.linkAttachment(record.id, source.primaryAttachmentId!, 'expense.receipt.primary', ctx.companyId, ctx.userId, db);
+        await db.expenseRecord.update({ where: { id: record.id }, data: { primaryAttachmentId: source.primaryAttachmentId } });
+        await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.create',
+          targetType: 'expense_record', targetId: record.id, requestId: ctx.requestId, result: 'SUCCESS',
+          riskLevel: 'MEDIUM', metadataJson: { captureSource: 'LINE_UPLOAD', sourceReceiptExpenseId: source.id, documentType: 'SUPPLIER_BILL' } }, db);
+      }, tx);
+      return created;
+    });
+    const currentSource = await this.expenseRepo.findByIdWithRelations(ctx.companyId, source.id, undefined, ctx.scopes ?? {});
+    const currentBill = await this.expenseRepo.findByIdWithRelations(ctx.companyId, saved.id, undefined, ctx.scopes ?? {});
+    if (!currentSource || !currentBill) throw new ConflictException('The saved bill is unavailable.');
+    this.rememberReceiptDeliverySource(event, ctx, currentSource);
+    this.rememberReceiptDeliverySource(event, ctx, currentBill);
+    return `${inserted ? '✅ บันทึก' : '✅ มี'}ร่างบิล${utilityKind}งวด ${bill.period} ${bill.amount} บาท${inserted ? 'แล้ว' : 'อยู่แล้ว'}ค่ะ\nยังไม่ชำระและยังไม่บันทึกการจ่ายเงิน กรุณาตรวจข้อมูลและ VAT ในเว็บแอป หากจะเก็บใบเสร็จงวดนี้กับรายการเดิม ให้แนบขณะยังเป็นร่างก่อนส่งตรวจ เพื่อไม่ให้เกิดรายการซ้ำ: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${saved.id}`)}`;
+  }
+
   /** Durably record which clarifications this terminal turn consumed, then let Redis catch up.
    *  Guidance has no business transaction of its own, so the markers commit in one short
    *  transaction BEFORE delivery — an ack gated on a successful reply is exactly the hole that
@@ -8517,6 +8740,7 @@ ${link}`, ctx.companyId, access);
         status: 'OCR_EXTRACTED_NEEDS_REVIEW',
         fields: result.fields ?? null,
         classification: result.classification ?? null,
+        ...(result.utilityDocuments ? { utilityDocuments: result.utilityDocuments } : {}),
         ...(result.fallbackReasons?.length ? { fallbackReasons: result.fallbackReasons } : {}),
         processingPath: 'receipt_ocr',
       };
