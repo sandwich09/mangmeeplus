@@ -2291,7 +2291,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
             // §11.4: scoped to the checklist's range when the URL carries a valid one, every period
             // otherwise (§8 - the chip's own link, so old documents can be filled in any time).
             : sourceView === 'addressMissing' ? addressMissingListFilter(requestedFrom, requestedTo)
-            : { uploadedFromDate: fromDate, uploadedToDate: toDate }),
+            : { fromDate, toDate }),
           page: nextPage, pageSize: 200,
         });
         if (version !== loadVersion.current) return;
@@ -2398,7 +2398,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
     const version = loadVersion.current;
     setExporting(true); setExportError(null); setExportNotice(null);
     try {
-      const result = await createAccountantPackage(companyId, { dateField: sourceView === 'confirmed' ? 'expenseDate' : 'uploadedAt', fromDate, toDate, columnSet, ...(branchId ? { branchId } : {}) });
+      const result = await createAccountantPackage(companyId, { dateField: 'expenseDate', fromDate, toDate, columnSet, ...(branchId ? { branchId } : {}) });
       if (version !== loadVersion.current) return;
       // The package covers confirmed expenses only. Downloading an empty workbook reads as a broken
       // export; say which rows it would have contained instead.
@@ -2457,7 +2457,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
               : <ThemedDate mode="month" className={cx(inputClass, 'w-auto shrink-0 whitespace-nowrap')} value={month} onChange={(e) => setMonth(e.target.value)} />}
             {gran === 'day' && <button className={cx(ghostClass, 'shrink-0 whitespace-nowrap px-3')} onClick={() => setDay(todayCivilDate())}>{t('expenses.today', locale)}</button>}
           </div>
-          <p className="mt-1 text-xs text-gray-400">{t('expenses.intake_filter_desc', locale)}</p>
+          <p className="mt-1 text-xs text-gray-400">{t('expenses.document_filter_desc', locale)}</p>
         </div>}
         {/* Export uses the shared dialog so opening options never resizes this toolbar. */}
         {(!sourceView || sourceView === 'confirmed') && (

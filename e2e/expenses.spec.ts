@@ -424,7 +424,7 @@ test('EXP-25 @p1 stores expenseDate as a calendar date even when posted an insta
   expect(detail.expenseDate, 'a date column must not carry a time').toMatch(/T00:00:00(\.000)?Z$/);
 });
 
-test('EXP-26 @p1 keeps a backdated document in its intake month and labels both dates', async ({ authedPage, api, companyId }) => {
+test('EXP-26 @p1 groups a backdated document by document month and labels both dates', async ({ authedPage, api, companyId }) => {
   const intakeDate = civilDate(new Date());
   const documentDate = addCivilDays(intakeDate, -51);
   const branch = await firstActiveBranch(api, companyId);
@@ -463,23 +463,43 @@ test('EXP-26 @p1 keeps a backdated document in its intake month and labels both 
     const url = new URL(request.url());
     return request.method() === 'GET'
       && url.pathname.endsWith(`/companies/${companyId}/expenses`)
-      && url.searchParams.has('uploadedFromDate');
+      && url.searchParams.has('fromDate');
   });
   await gotoCompany(authedPage, companyId, '/expenses');
   const listUrl = new URL((await listRequestPromise).url());
   const [year, month] = intakeDate.slice(0, 7).split('-').map(Number);
   const lastDay = new Date(Date.UTC(year!, month!, 0)).getUTCDate();
-  expect(listUrl.searchParams.get('uploadedFromDate')).toBe(`${intakeDate.slice(0, 7)}-01`);
-  expect(listUrl.searchParams.get('uploadedToDate')).toBe(`${intakeDate.slice(0, 7)}-${String(lastDay).padStart(2, '0')}`);
-  expect(listUrl.searchParams.get('fromDate')).toBeNull();
-  expect(listUrl.searchParams.get('toDate')).toBeNull();
+  expect(listUrl.searchParams.get('fromDate')).toBe(`${intakeDate.slice(0, 7)}-01`);
+  expect(listUrl.searchParams.get('toDate')).toBe(`${intakeDate.slice(0, 7)}-${String(lastDay).padStart(2, '0')}`);
+  expect(listUrl.searchParams.get('uploadedFromDate')).toBeNull();
+  expect(listUrl.searchParams.get('uploadedToDate')).toBeNull();
 
   const row = authedPage.getByTestId('expenses-row').filter({ hasText: vendor });
+  await expect(authedPage.getByTestId('expenses-row').filter({ hasText: sameMonthVendor })).toBeVisible();
+  await expect(row).toHaveCount(0);
+
+  const documentMonth = documentDate.slice(0, 7);
+  const [documentYear, documentMonthNumber] = documentMonth.split('-').map(Number);
+  const documentLastDay = new Date(Date.UTC(documentYear!, documentMonthNumber!, 0)).getUTCDate();
+  const documentListRequestPromise = authedPage.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return request.method() === 'GET'
+      && url.pathname.endsWith(`/companies/${companyId}/expenses`)
+      && url.searchParams.get('fromDate') === `${documentMonth}-01`;
+  });
+  await authedPage.locator('.mangmee-segmented + div button[role="combobox"]').click();
+  if (documentYear !== year) await authedPage.getByRole('button', { name: 'ปีก่อนหน้า' }).click();
+  await authedPage.getByRole('button', {
+    name: ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'][documentMonthNumber! - 1],
+    exact: true,
+  }).click();
+  const documentListUrl = new URL((await documentListRequestPromise).url());
+  expect(documentListUrl.searchParams.get('toDate')).toBe(`${documentMonth}-${String(documentLastDay).padStart(2, '0')}`);
   await expect(row).toBeVisible();
   await expect(row).toContainText('วันที่เอกสาร');
   await expect(row).toContainText('ส่งเข้าระบบ');
   await expect(row).toContainText('เอกสารย้อนหลัง 51 วัน');
-  await expect(authedPage.getByTestId('expenses-row').filter({ hasText: sameMonthVendor })).not.toContainText('เอกสารย้อนหลัง');
+  await expect(authedPage.getByTestId('expenses-row').filter({ hasText: sameMonthVendor })).toHaveCount(0);
 
   const exportRequestPromise = authedPage.waitForRequest((request) => (
     request.method() === 'POST' && new URL(request.url()).pathname.endsWith(`/companies/${companyId}/expenses/accountant-package`)
@@ -487,15 +507,11 @@ test('EXP-26 @p1 keeps a backdated document in its intake month and labels both 
   await authedPage.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true }).click();
   await authedPage.getByRole('button', { name: 'ส่งออก Excel' }).click();
   const exportPayload = (await exportRequestPromise).postDataJSON();
-  // The export follows the axis the list is showing (ExpensesPages `exportExcel`): this page is on
-  // the intake month, and only the `view=confirmed` entry point exports by document date. Changed
-  // with the branch enforcement itself, in commit 88aef194.
-  expect(exportPayload.dateField).toBe('uploadedAt');
-  expect(exportPayload.fromDate).toBe(`${intakeDate.slice(0, 7)}-01`);
-  expect(exportPayload.toDate).toBe(`${intakeDate.slice(0, 7)}-${String(lastDay).padStart(2, '0')}`);
+  expect(exportPayload.dateField).toBe('expenseDate');
+  expect(exportPayload.fromDate).toBe(`${documentMonth}-01`);
+  expect(exportPayload.toDate).toBe(`${documentMonth}-${String(documentLastDay).padStart(2, '0')}`);
 
   await authedPage.setViewportSize({ width: 390, height: 844 });
-  await authedPage.reload();
   const card = authedPage.getByTestId('expenses-card').filter({ hasText: vendor });
   await expect(card).toBeVisible();
   await expect(card).toContainText('วันที่เอกสาร');
