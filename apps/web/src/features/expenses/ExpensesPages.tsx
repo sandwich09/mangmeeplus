@@ -2256,6 +2256,21 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   // EXP-UX-01: `?highlight=<expenseId>` is written by ส่งตรวจสอบ. Always the id, never "the newest
   // row" — with two people submitting at once, "newest" points at somebody else's document.
   const highlightId = searchParams.get('highlight') ?? '';
+  const [highlightReadyId, setHighlightReadyId] = useState('');
+  useEffect(() => {
+    if (!highlightId || sourceView) return;
+    let active = true;
+    // A just-submitted backdated document must open in its document month, where the list now lives.
+    void getExpense(companyId, highlightId)
+      .then((expense) => {
+        if (!active) return;
+        const documentDate = expense.expenseDate.slice(0, 10);
+        if (isCivilDate(documentDate)) { setGran('month'); setMonth(civilPeriodKey(documentDate)); }
+      })
+      .catch(() => {}) // A stale or inaccessible highlight must not block the list.
+      .finally(() => { if (active) setHighlightReadyId(highlightId); });
+    return () => { active = false; };
+  }, [companyId, highlightId, sourceView, setGran, setMonth]);
   const focusedHighlight = useRef('');
   const scrolledToHighlight = useRef('');
   const branchFilter = useBranchFilter();
@@ -2278,6 +2293,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   useEffect(() => { if (sourceView) { setChip('all'); setQuery(''); } }, [sourceView, requestedFrom, requestedTo, setChip, setQuery]);
 
   const load = useCallback(async () => {
+    if (highlightId && !sourceView && highlightReadyId !== highlightId) return;
     const version = ++loadVersion.current;
     setLoading(true); setRows([]); setError(null);
     try {
@@ -2307,7 +2323,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
     }
     finally { if (version === loadVersion.current) setLoading(false); }
     // `branchFilter` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
-  }, [companyId, branchId, fromDate, toDate, sourceView, requestedFrom, requestedTo]);
+  }, [companyId, branchId, fromDate, toDate, sourceView, requestedFrom, requestedTo, highlightId, highlightReadyId]);
   useEffect(() => { void load(); return () => { loadVersion.current += 1; }; }, [load]);
   useEffect(() => {
     setCategoryNamesLoading(true);

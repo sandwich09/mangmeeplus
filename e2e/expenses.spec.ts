@@ -517,6 +517,19 @@ test('EXP-26 @p1 groups a backdated document by document month and labels both d
   await expect(card).toContainText('วันที่เอกสาร');
   await expect(card).toContainText('ส่งเข้าระบบ');
   await expect(card).toContainText('เอกสารย้อนหลัง 51 วัน');
+
+  // ส่งตรวจ and batch upload return with ?highlight=id. A backdated row must open its
+  // document month automatically, including after a fresh navigation with no saved filter.
+  const highlightedRequestPromise = authedPage.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return request.method() === 'GET'
+      && url.pathname.endsWith(`/companies/${companyId}/expenses`)
+      && url.searchParams.get('fromDate') === `${documentMonth}-01`;
+  });
+  await gotoCompany(authedPage, companyId, `/expenses?highlight=${created.id}`);
+  await highlightedRequestPromise;
+  await expect(authedPage.getByTestId('expenses-card').filter({ hasText: vendor }))
+    .toHaveAttribute('data-highlighted', 'true');
 });
 
 // §19m: the first POST really commits; only its browser response is lost. Run against
