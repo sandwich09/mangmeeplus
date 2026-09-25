@@ -17,7 +17,10 @@ describe('seed preview attachment fixtures', () => {
     const metadata = await sharp(bytes).metadata();
 
     assert.deepEqual(bytes, buildSeedPaymentProofPng());
-    assert.equal(createHash('sha256').update(bytes).digest('hex'), 'bc3e56c1ec116493635838b13575eb1649860e386edbd5986ac0cc80b021c5ba');
+    // Pin the picture, not the compressed bytes: `deflateSync` output depends on the zlib Node was
+    // built with (official builds bundle Chromium's zlib, Homebrew's node links the system zlib, and
+    // the two compress this image one byte apart), while the decoded pixels are identical everywhere.
+    assert.equal(createHash('sha256').update(await sharp(bytes).raw().toBuffer()).digest('hex'), '351357072108eb11c0947878822938ec8260842bcde85bfb4126b2a1c3c6ec1e');
     assert.equal(metadata.format, 'png');
     assert.equal(metadata.width, 640);
     assert.equal(metadata.height, 400);
