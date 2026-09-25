@@ -46,3 +46,10 @@ Next:
 - Kept the current counterparty owner decision D8: whoever added the row can edit it. The separate email fix sends a blank field as `null` through web, API DTO, and create/update input so it clears the stored value.
 - Verification on the integrated tree: contracts build; API, AI Gateway, and web typechecks; focused Gateway, LINE API, counterparty API, and counterparty web tests; `git diff HEAD --check` all passed.
 - The owner will deploy. No UAT, Production, cloud service, or customer gate was changed in this integration.
+
+## Post-merge read-failure guard (2026-09-26)
+
+- A second-month tool result with an inconsistent count or echoed period could previously be treated as a usable partial read. An echoed-period mismatch could also trigger an unnecessary second request for the same month.
+- Multi-month completion now stops on a failed or internally inconsistent read. Verified months retain their amounts; the affected month is labelled `ยังดึงข้อมูลได้ไม่ครบ` as required by the period-resolution spec. A forbidden read suppresses all partial amounts.
+- Focused Gateway tests cover a failed second month, inconsistent count, mismatched echoed period, and a forbidden second-month read. No live LINE/UAT or deployment was performed.
+- Verification: `pnpm --filter @watchdog-bms/ai-gateway exec tsx --test src/modules/line-ai/agents/orchestrator.agent.spec.ts src/modules/line-ai/agents/orchestrator-model-loop.agent.spec.ts` — 90/90 passed; `pnpm --filter @watchdog-bms/ai-gateway typecheck` and `git diff --check` passed.
