@@ -466,6 +466,15 @@ describe('resolvePeriodCandidates (spec §3.1)', () => {
     assert.deepEqual(periods.map((p) => `${p.kind}:${p.fromDate}`), ['day:2026-09-17', 'month:2026-08-01']);
   });
 
+  it('keeps both months from the Production wording, including the common July spelling', () => {
+    const message = 'มั่งมี ช่วยสรุปค่าใช้จ่าย ของเดือนกรกฏาคม และ สิงหาคม ให้หน่อย';
+    const periods = extractValueCandidates(message, '2026-09-25').periods ?? [];
+    assert.deepEqual(periods.map((period) => [period.fromDate, period.toDate]), [
+      ['2026-07-01', '2026-07-31'], ['2026-08-01', '2026-08-31'],
+    ]);
+    assert.ok(periods.every((period) => message.includes(period.span)));
+  });
+
   it('emits no periods at all without an injected today (the resolver never reads the clock)', () => {
     assert.equal(extractValueCandidates('ยอดขายเดือนที่แล้ว').periods, undefined);
     assert.equal(extractValueCandidates('สวัสดีค่ะ', FRIDAY).periods, undefined);

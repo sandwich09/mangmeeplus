@@ -74,6 +74,72 @@ function trackingErpTools(calledTools: string[]) {
 }
 
 describe('OrchestratorAgent – model-driven tool loop', () => {
+  it('completes both Production expense months in the same resolved branch after one model call', async () => {
+    const text = 'มั่งมี ช่วยสรุปค่าใช้จ่าย ของเดือนกรกฏาคม และ สิงหาคม ให้หน่อย';
+    const req = makeReq(text);
+    req.userContext.permissions = ['expense.read'];
+    req.valueCandidates = extractValueCandidates(text, '2026-09-25');
+    const [july, august] = req.valueCandidates.periods!;
+    const calls: Array<{ fromDate: string; toDate: string; branchId?: string }> = [];
+    const erpTools = { invoke: async (_tool: any, _ctx: any, input: any) => {
+      calls.push(input);
+      const julyCall = input.fromDate === july!.fromDate;
+      return {
+        toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-25T03:50:00.000Z',
+        sourceRefs: [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true,
+          webPath: '/companies/c1/expenses?branchId=branch-1' }],
+        data: { total: julyCall ? 7 : 25, branchId: 'branch-1',
+          period: { fromDate: input.fromDate, toDate: input.toDate },
+          summary: { totalAmount: julyCall ? 25147.80 : 214899.57, pendingAmount: 0,
+            confirmedAmount: 0, paidAmount: 0, unpaidAmount: 0 }, items: [] },
+      };
+    } } as any;
+    const plan = { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'read_summary',
+      subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }],
+      refusals: [], requiresHumanReview: false };
+    const oneJulyCall = [
+      { callTool: 'expense.list_recent', input: { fromDate: july!.fromDate, toDate: july!.toDate, branchId: 'Head Office' } },
+      { done: true },
+    ];
+    installFetch(plan, oneJulyCall);
+    const result = await new OrchestratorAgent(erpTools, makeConfig()).run(req);
+    assert.deepEqual(calls, [
+      { fromDate: july!.fromDate, toDate: july!.toDate, branchId: 'Head Office' },
+      { fromDate: august!.fromDate, toDate: august!.toDate, branchId: 'branch-1' },
+    ]);
+    assert.match(result.replyText, /ก\.ค\..*25,147\.80 บาท \(7 รายการ\)/);
+    assert.match(result.replyText, /ส\.ค\..*214,899\.57 บาท \(25 รายการ\)/);
+    assert.equal(result.presentation?.cards.length, 1);
+    assert.equal(result.presentation?.cards[0]?.text, result.replyText);
+    assert.equal(result.presentation?.cards[0]?.webLink?.label, 'เลือกเดือนในรายการค่าใช้จ่าย');
+
+    calls.length = 0;
+    installFetch(plan, oneJulyCall);
+    const failedAugust = { invoke: async (tool: any, ctx: any, input: any) => input.fromDate === august!.fromDate
+      ? { toolName: tool.name, status: 'unavailable', asOf: '2026-09-25T03:50:00.000Z', sourceRefs: [] }
+      : erpTools.invoke(tool, ctx, input) } as any;
+    const partial = await new OrchestratorAgent(failedAugust, makeConfig()).run(req);
+    assert.match(partial.replyText, /25,147\.80 บาท/);
+    assert.match(partial.replyText, /ส\.ค\..*ยังดึงข้อมูลได้ไม่ครบ/);
+    assert.doesNotMatch(partial.replyText, /214,899\.57/);
+    assert.equal(partial.coverage?.[0]?.verdict, 'uncovered');
+
+    calls.length = 0;
+    installFetch(plan, oneJulyCall);
+    const bounded = await new OrchestratorAgent(erpTools, makeConfig({ aiMaxToolCalls: 1 })).run(req);
+    assert.equal(calls.length, 1, 'the missing month does not exceed the configured tool budget');
+    assert.match(bounded.replyText, /ส\.ค\..*ยังดึงข้อมูลได้ไม่ครบ/);
+
+    installFetch(plan, oneJulyCall);
+    let unresolvedCalls = 0;
+    const unresolved = await new OrchestratorAgent({ invoke: async () => {
+      unresolvedCalls += 1;
+      return { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-25T03:50:00.000Z', sourceRefs: [],
+        data: { branchUnresolved: 'Unknown', availableBranches: [{ id: 'branch-1', name: 'Head Office' }] } };
+    } } as any, makeConfig()).run(req);
+    assert.equal(unresolvedCalls, 1, 'an unresolved branch never triggers an all-branch second read');
+    assert.match(unresolved.replyText, /ไม่พบสาขาที่ระบุ/);
+  });
   it('offers and executes own-scope tools only when anyOfPermissions matches', async () => {
     const expensePlan = {
       status: 'ROUTABLE', language: 'th',

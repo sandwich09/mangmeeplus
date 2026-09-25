@@ -192,6 +192,57 @@ function turnPeriodSource(candidates: LineAiValueCandidates | undefined): LineAi
   return (candidates?.dates ?? []).some((date) => !isAmbiguousDateCandidate(date)) ? 'explicit' : 'default';
 }
 
+/** The one case where a one-call prepared answer cannot cover the user's request. */
+function requestedExpenseMonths(req: LineAiTurnRequest, plan: AgentIntentPlan): LineAiPeriodCandidate[] {
+  const periods = req.valueCandidates?.periods ?? [];
+  if (plan.intents.length !== 1 || plan.refusals.length > 0
+    || plan.intents[0]?.subject !== 'expense'
+    || !plan.intents[0].requiredTools.includes('expense.list_recent')
+    || periods.length < 2 || periods.some((period) => period.kind !== 'month' || isAmbiguousPeriodCandidate(period))) return [];
+  const unique = periods.filter((period, index) => periods.findIndex((other) =>
+    other.fromDate === period.fromDate && other.toDate === period.toDate) === index);
+  return unique.length > 1 ? unique : [];
+}
+
+function expenseMonthData(output: SpecialistOutput, period: LineAiPeriodCandidate): Record<string, unknown> | undefined {
+  if (output.status !== 'SUCCEEDED') return undefined;
+  const data = output.toolData?.find((item) => item.tool === 'expense.list_recent')?.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
+  const row = data as Record<string, unknown>;
+  const echoed = row['period'];
+  if (!echoed || typeof echoed !== 'object' || Array.isArray(echoed)) return undefined;
+  const window = echoed as Record<string, unknown>;
+  return window['fromDate'] === period.fromDate && window['toDate'] === period.toDate ? row : undefined;
+}
+
+function expenseMonthNumbers(data: Record<string, unknown> | undefined): { amount: number; count: number } | undefined {
+  const summary = data?.['summary'];
+  const amount = summary && typeof summary === 'object' && !Array.isArray(summary)
+    ? Number((summary as Record<string, unknown>)['totalAmount']) : NaN;
+  const count = Number(data?.['total']);
+  return Number.isFinite(amount) && Number.isSafeInteger(count) && count >= 0 && data?.['truncated'] !== true
+    ? { amount, count } : undefined;
+}
+
+function expenseMonthReply(periods: LineAiPeriodCandidate[], outputs: SpecialistOutput[], language: string): string {
+  const english = language.toLowerCase().startsWith('en');
+  const lines = [english ? 'Expenses by document month:' : 'ค่าใช้จ่ายตามเดือนของวันที่เอกสาร:'];
+  for (const period of periods) {
+    const data = outputs.map((output) => expenseMonthData(output, period)).find(Boolean);
+    const numbers = expenseMonthNumbers(data);
+    const label = period.label;
+    if (numbers) {
+      const money = new Intl.NumberFormat(english ? 'en-US' : 'th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(numbers.amount);
+      lines.push(english ? `${label}: THB ${money} (${numbers.count} items)` : `${label}: ${money} บาท (${numbers.count} รายการ)`);
+    } else {
+      lines.push(english ? `${label}: data unavailable or incomplete` : `${label}: ยังดึงข้อมูลได้ไม่ครบ`);
+    }
+  }
+  lines.push(english ? 'Counts and totals exclude rejected and voided documents.'
+    : 'ยอดและจำนวนไม่รวมเอกสารที่ปฏิเสธหรือยกเลิก');
+  return lines.join('\n');
+}
+
 // ── Item 10F native tool-use loop (Bedrock Converse toolConfig / OpenAI tools) ──
 // The model may request SEVERAL permission-checked read tools per turn (parallel calls) and
 // the same tool twice with different input (dedupe key = tool + canonical input, replacing the
@@ -648,6 +699,14 @@ export class OrchestratorAgent {
       featureDisabledTools.push(...runtimeFeatureDisabled);
       plan = removeRuntimeBlockedTools(plan, req.messageText, runtimeFeatureDisabled);
     }
+    const monthReply = askUserQuestion ? undefined : await this.completeExpenseMonths(ctx, req, plan, outputs, maxToolCalls);
+    if (monthReply) {
+      const months = requestedExpenseMonths(req, plan);
+      const matched = months.map((month) => outputs.map((output) => expenseMonthData(output, month)).find(Boolean));
+      const branches = new Set(matched.filter(Boolean).map((data) => typeof data?.['branchId'] === 'string' ? data['branchId'] : ''));
+      coverage = [{ request: req.messageText, subject: 'expense',
+        verdict: matched.every((data) => !!expenseMonthNumbers(data)) && branches.size === 1 ? 'covered' : 'uncovered' }];
+    }
     const composableOutputs = outputs.filter((output) => !(output.facts.length === 0
       && (output.toolData?.length ?? 0) === 0
       && output.toolCalls.length > 0
@@ -660,6 +719,9 @@ export class OrchestratorAgent {
       // API turns a `/companies/…` path into a one-time auto-login handoff link on delivery.
       companyId: req.userContext.companyId,
     });
+    const webLinks = monthReply ? composed.webLinks.map((link) => ({
+      ...link, label: plan.language.startsWith('en') ? 'Choose a month in the expense list' : 'เลือกเดือนในรายการค่าใช้จ่าย',
+    })) : composed.webLinks;
     // Owner decision 2026-07-03: text business-read answers are model-composed from the raw tool
     // data (grounded by the number guard; deterministic compose is the fallback).
     // Refusal/no-data/permission-denied replies keep their deterministic templates.
@@ -684,6 +746,8 @@ export class OrchestratorAgent {
       // asks ONE clarifying question instead of guessing; the follow-up turn resolves it via
       // conversationContext.
       replyText = askUserQuestion;
+    } else if (monthReply) {
+      replyText = monthReply;
     } else if (draftUpdateReply(toolData)) {
       // Spec §5.4: a preview is rendered by the deterministic Thai template only, so no sentence
       // can promise a total the server did not compute — and no model text can imply the change
@@ -718,14 +782,13 @@ export class OrchestratorAgent {
     }
     replyText = appendPartialAvailability(replyText, plan, featureDisabledTools);
     replyText = appendPlanRefusalLines(replyText, plan);
-    const presentation = buildAnswerPresentation(
-      plan,
-      composableOutputs,
-      replyText,
-      req.messageText,
-      req.userContext.locale,
-      !!askUserQuestion,
-    );
+    const presentation: LineAiAnswerPresentation | undefined = monthReply
+      ? { kind: 'answer_cards', cards: [{
+        text: replyText,
+        sourceLabels: [...new Set(composed.sourceRefs.map((source) => source.label))],
+        ...(webLinks[0] ? { webLink: webLinks[0] } : {}),
+      }] }
+      : buildAnswerPresentation(plan, composableOutputs, replyText, req.messageText, req.userContext.locale, !!askUserQuestion);
 
     // A zero-tool clarification must still reach the API ledger. The critic only runs after
     // tool output, so synthesize the same typed outcome for JSON/native ask_user paths.
@@ -744,11 +807,60 @@ export class OrchestratorAgent {
       outputs,
       replyText,
       sourceRefs: composed.sourceRefs,
-      webLinks: composed.webLinks,
+      webLinks,
       ...(presentation ? { presentation } : {}),
       durationMs: Date.now() - startMs,
       ...(coverage ? { coverage } : {}),
     };
+  }
+
+  /** Fill the month's missing read through the same specialist, tenant and branch scope. The model
+   *  still chooses the first read (and any branch); code only completes explicit month candidates. */
+  private async completeExpenseMonths(
+    ctx: ErpToolContext,
+    req: LineAiTurnRequest,
+    plan: AgentIntentPlan,
+    outputs: SpecialistOutput[],
+    budget: number,
+  ): Promise<string | undefined> {
+    const months = requestedExpenseMonths(req, plan);
+    if (months.length === 0) return undefined;
+    if (outputs.some((output) => output.toolData?.some((item) => item.tool === 'expense.list_recent'
+      && !!item.data && typeof item.data === 'object' && !Array.isArray(item.data)
+      && typeof (item.data as Record<string, unknown>)['branchUnresolved'] === 'string'))) {
+      return plan.language.startsWith('en')
+        ? 'I could not summarize these months because the branch was not found. Please choose a branch from the list.'
+        : 'ยังสรุปค่าใช้จ่ายสองเดือนนี้ไม่ได้ เพราะไม่พบสาขาที่ระบุ กรุณาเลือกสาขาที่มีอยู่ค่ะ';
+    }
+    const reads = months.flatMap((month) => outputs.map((output) => expenseMonthData(output, month)).filter((data): data is Record<string, unknown> => !!data));
+    if (reads.length === 0) return outputs.some((output) => output.toolData?.some((item) => item.tool === 'expense.list_recent'))
+      ? plan.language.startsWith('en') ? 'I could not verify both requested months. Please try again.'
+        : 'ยังตรวจสอบค่าใช้จ่ายทั้งสองเดือนที่ขอไม่ได้ค่ะ กรุณาลองอีกครั้ง'
+      : undefined;
+    const branches = new Set(reads.map((data) => typeof data['branchId'] === 'string' ? data['branchId'] : ''));
+    if (branches.size !== 1) return plan.language.startsWith('en')
+      ? 'I could not compare those months because the results used different branch scopes.'
+      : 'ยังเปรียบเทียบค่าใช้จ่ายสองเดือนนี้ไม่ได้ เพราะผลลัพธ์ใช้ขอบเขตสาขาต่างกันค่ะ';
+    const branchId = [...branches][0];
+    const specialist = this.createSpecialist('accounting');
+    const tool = LINE_TOOL_REGISTRY.find((entry) => entry.name === 'expense.list_recent');
+    if (!specialist || !tool) return expenseMonthReply(months, outputs, plan.language);
+    let used = outputs.reduce((sum, output) => sum + output.toolCalls.length, 0);
+    const todayIso = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+    for (const month of months) {
+      if (outputs.some((output) => expenseMonthData(output, month))) continue;
+      if (used >= budget) break;
+      const input = sanitizeToolInput(tool, {
+        fromDate: month.fromDate, toDate: month.toDate, ...(branchId ? { branchId } : {}),
+      }, preparedAllowedPeriods(req.valueCandidates, todayIso));
+      if (input['fromDate'] !== month.fromDate || input['toDate'] !== month.toDate) break;
+      const output = await specialist.run(ctx, {
+        ...plan.intents[0]!, requiredTools: ['expense.list_recent'],
+      }, 1, input, month.label);
+      outputs.push(output);
+      used += output.toolCalls.length || 1;
+    }
+    return expenseMonthReply(months, outputs, plan.language);
   }
 
   /**
@@ -772,6 +884,7 @@ export class OrchestratorAgent {
       this.logger.log({ msg: 'line.ai.prepared_simple_read.fallback', requestId: req.requestId, reason, periodSource });
       return null;
     };
+    if ((req.valueCandidates?.periods?.length ?? 0) > 1) return fallback('multiple_periods');
     // Defense in depth: re-parse the wrapper immediately before use — an invalid/forged/state-changed
     // wrapper drops the whole lane before any call.
     const plan = parseLineAiPreparedPlan(req.preparedPlan);

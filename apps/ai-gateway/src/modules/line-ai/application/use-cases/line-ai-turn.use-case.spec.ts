@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LineAiTurnUseCase } from './line-ai-turn.use-case';
 import {
-  AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, parseAiBudgetEnvelope, type LineAiTurnRequest,
+  AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, extractValueCandidates, parseAiBudgetEnvelope, type LineAiTurnRequest,
 } from '@watchdog-bms/contracts';
 import { runWithUsageContext } from '../../../../common/usage/usage-context';
 
@@ -173,6 +173,23 @@ describe('LineAiTurnUseCase – feature flag routing', () => {
 });
 
 describe('LineAiTurnUseCase – agentcore runtime routing', () => {
+  it('forwards validated month candidates to AgentCore without changing the user text', async () => {
+    const text = 'สรุปค่าใช้จ่ายเดือนกรกฏาคม และ สิงหาคม';
+    const candidates = extractValueCandidates(text, '2026-09-25');
+    let invoked: any;
+    const runtime = {
+      invoke: async (input: any) => {
+        invoked = input;
+        return { turnId: 't', replyText: 'ok', plan: { status: 'ROUTABLE', intents: [] },
+          durationMs: 1, refused: false, sourceRefs: [], webLinks: [], toolsInvoked: [] };
+      },
+    } as any;
+    const useCase = new LineAiTurnUseCase(makeErpTools(), makeOrchestrator(),
+      { lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'agentcore' } as any, runtime);
+    await useCase.execute({ ...validReq, messageText: text, valueCandidates: candidates });
+    assert.equal(invoked.messageText, text);
+    assert.deepEqual(invoked.valueCandidates, candidates);
+  });
   it('routes to AgentCore adapter when LINE_AI_AGENT_RUNTIME=agentcore', async () => {
     let agentcoreCalled = false;
     let invokeInput: any;

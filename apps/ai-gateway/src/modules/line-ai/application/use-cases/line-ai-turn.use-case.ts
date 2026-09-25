@@ -5,7 +5,7 @@
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiTurnResponse, ToolResult, SourceRef } from '@watchdog-bms/contracts';
-import { AI_BUDGET_REFUSAL_CODES, asIntakeRouteIntent, isBusinessIntakeIntent, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, asIntakeRouteIntent, extractValueCandidates, isBusinessIntakeIntent, parseLineAiPreparedPlan, parseLineAiValueCandidates } from '@watchdog-bms/contracts';
 import { currentBudgetState } from '../../../../common/usage/usage-context';
 import { classifyIntent, chooseAgent, selectTools, getRefusalReason, validateTurnRequest } from '../../domain/logic/line-ai-turn.logic';
 import { ErpToolClient, type ErpToolContext } from '../../infrastructure/erp-tool.client';
@@ -163,6 +163,10 @@ export class LineAiTurnUseCase {
       ...req,
       preparedPlan: parseLineAiPreparedPlan(req.preparedPlan),
       intakeIntent: asIntakeRouteIntent(req.intakeIntent),
+      valueCandidates: req.valueCandidates
+        ? parseLineAiValueCandidates(req.valueCandidates, req.messageText)
+          ?? extractValueCandidates(req.messageText, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }))
+        : undefined,
     };
     if (this.config.lineAiAgentOrchestrationEnabled) {
       return this.runOrchestratorPath(bounded, startMs);
@@ -220,6 +224,7 @@ export class LineAiTurnUseCase {
           sha256: '',
         })),
         conversationContext: req.conversationContext,
+        ...(req.valueCandidates ? { valueCandidates: req.valueCandidates } : {}),
         ...(preparedPlan ? { preparedPlan } : {}),
         ...(req.intakeIntent ? { intakeIntent: req.intakeIntent } : {}),
       });
