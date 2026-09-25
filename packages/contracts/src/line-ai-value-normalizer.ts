@@ -854,6 +854,13 @@ export function unresolvedMonthName(text: string, periods: LineAiPeriodCandidate
       cursor = nextStart + nextToken.length;
     }
   }
+  // A separated full month-like word can also be a typo without the word เดือน before it.
+  for (const match of text.matchAll(/(?:^|[\s,(]|และ\s*)([ก-๙]{5,14}?)(?=$|\s|และ|[),/.!?]|ปี\s*\d)/gu)) {
+    const token = match[1]!;
+    const start = (match.index ?? 0) + match[0].lastIndexOf(token);
+    if (FULL_THAI_MONTH_NAMES.some(([name]) => name.slice(0, 3) === token.slice(0, 3))
+      && !coveredAt(start)) return token;
+  }
   return null;
 }
 
