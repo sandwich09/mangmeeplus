@@ -349,6 +349,15 @@ describe('filterPermissionsByEntitlement', () => {
     assert.deepEqual(filterPermissionsByEntitlement(permissions, new Set(['product_catalog'])), permissions);
   });
 
+  // Owner 2026-09-25: the registry is shared by purchases and sales. `manage` used to ride only on a
+  // sales-gated pack, so an expenses-only shop could see its counterparties and not correct them.
+  it('keeps counterparty read and manage while either expenses or sales documents is on', () => {
+    const keys = ['accounting.counterparty.read', 'accounting.counterparty.manage'];
+    assert.deepEqual(filterPermissionsByEntitlement(keys, entitledWithChildren('expenses')), keys);
+    assert.deepEqual(filterPermissionsByEntitlement(keys, entitledWithChildren('sales_documents')), keys);
+    assert.deepEqual(filterPermissionsByEntitlement(keys, entitledWithChildren('crm')), []);
+  });
+
   it('gates crm.channel.* behind line_oa rather than crm', () => {
     const permissions = ['crm.channel.read', 'crm.channel.manage'];
     assert.deepEqual(filterPermissionsByEntitlement(permissions, entitledWithChildren('crm')), []);

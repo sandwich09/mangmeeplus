@@ -87,7 +87,17 @@ export type AccountingCounterpartySummary = {
 export type AccountingCounterpartyDetail = AccountingCounterpartySummary & {
   billingAddressJson?: Record<string, unknown>;
   shippingAddressJson?: Record<string, unknown>;
+  /**
+   * Absent, like `usageCounts`, for a viewer who only added the row: both are company-wide expense
+   * facts, and having added a counterparty opens that row, not other people's receipts.
+   */
   recentExpenses?: Array<{ id: string; expenseDate: string; vendorDocumentNumber?: string; grandTotalAmount: string }>;
+  /**
+   * Owner 2026-09-25: THIS viewer may edit — they hold `accounting.counterparty.manage` or they added
+   * the row. Decided by the server so the screen never re-derives the rule; optional so an older API
+   * during a rolling deploy still renders.
+   */
+  canEdit?: boolean;
 };
 
 // Additive v2 shape for `AccountingCounterparty.billingAddressJson` (spec: vendor-address-and-
@@ -114,7 +124,8 @@ export type CounterpartyAddressV2 = {
   /**
    * A4: off by default. On, a newer document address no longer becomes the primary — it is only
    * remembered in `seenOnDocuments`. Lives on the address JSON rather than a column because it is
-   * a property of this address, and only `accounting.counterparty.manage` may set it (§12.1).
+   * a property of this address, and only `accounting.counterparty.manage` — or whoever added the
+   * row (owner 2026-09-25) — may set it (§12.1).
    */
   locked?: boolean;
 };

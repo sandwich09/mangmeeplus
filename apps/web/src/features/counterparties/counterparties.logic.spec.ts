@@ -152,10 +152,26 @@ describe('counterpartyAutoSaveNotice', () => {
     assert.equal(attempted?.messageKey, 'counterparties.auto_save_failed');
   });
 
-  it('drops the link for a reader without accounting.counterparty.read instead of linking to a refusal', () => {
-    const notice = counterpartyAutoSaveNotice({ case: 'CREATE', counterpartyId: 'c1', displayName: 'ร้านก' }, { canReadCounterparty: false });
-    assert.equal(notice?.counterpartyId, null);
+  // Owner 2026-09-25: whoever added a counterparty may open it, without accounting.counterparty.read.
+  const nonReader = { canReadCounterparty: false };
+
+  it('keeps the link on a create for a non-reader, because this very save added the row', () => {
+    const notice = counterpartyAutoSaveNotice({ case: 'CREATE', counterpartyId: 'c1', displayName: 'ร้านก' }, nonReader);
+    assert.equal(notice?.counterpartyId, 'c1');
     assert.equal(notice?.messageKey, 'counterparties.auto_save_created');
+  });
+
+  it('drops the link on a fill or a history hint for a non-reader instead of linking to a refusal', () => {
+    const filled = counterpartyAutoSaveNotice({ case: 'FILL', counterpartyId: 'c1', displayName: 'ร้านก' }, nonReader);
+    assert.equal(filled?.counterpartyId, null);
+    assert.equal(filled?.messageKey, 'counterparties.auto_save_filled');
+    assert.equal(counterpartyAutoSaveNotice({ case: 'HISTORY', counterpartyId: 'c1' }, nonReader)?.counterpartyId, null);
+  });
+
+  it('drops the link on a failed create for a non-reader, which may have added nothing', () => {
+    const failed = counterpartyAutoSaveNotice({ case: 'CREATE', failed: true, counterpartyId: 'c1' }, nonReader);
+    assert.equal(failed?.kind, 'bar');
+    assert.equal(failed?.counterpartyId, null);
   });
 });
 

@@ -61,13 +61,12 @@ export function CounterpartyDetailPage({ companyId, counterpartyId, permissions 
 }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
-  const canRead = permissions.includes(COUNTERPARTY_READ_PERMISSION);
-  const canManage = permissions.includes(COUNTERPARTY_MANAGE_PERMISSION);
 
   const [detail, setDetail] = useState<CounterpartyDetail | null>(null);
   const [values, setValues] = useState<CounterpartyFormValues>(() => counterpartyFormValues(null));
   const [issue, setIssue] = useState<CounterpartyFormIssue | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [forbidden, setForbidden] = useState(false);
   const [saveError, setSaveError] = useState<{ message: string; stale: boolean } | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -79,10 +78,12 @@ export function CounterpartyDetailPage({ companyId, counterpartyId, permissions 
   // moment it appears.
   useEffect(() => { setDetail(null); }, [companyId, counterpartyId]);
 
+  // Always asked, never pre-gated on `accounting.counterparty.read`: whoever added the row may open
+  // it too (owner 2026-09-25), and only the server knows who that was. Its 403 is the refusal.
   useEffect(() => {
-    if (!canRead) return;
     let active = true;
     setLoadError(null);
+    setForbidden(false);
     setRefreshing(true);
     getCounterparty(companyId, counterpartyId)
       .then((result) => {
@@ -91,10 +92,14 @@ export function CounterpartyDetailPage({ companyId, counterpartyId, permissions 
         setValues(counterpartyFormValues(result));
         setIssue(null);
       })
-      .catch((cause) => { if (active) setLoadError(err(cause, locale)); })
+      .catch((cause) => {
+        if (!active) return;
+        if (cause instanceof ApiError && cause.kind === 'forbidden') setForbidden(true);
+        else setLoadError(err(cause, locale));
+      })
       .finally(() => { if (active) setRefreshing(false); });
     return () => { active = false; };
-  }, [canRead, companyId, counterpartyId, reload, locale]);
+  }, [companyId, counterpartyId, reload, locale]);
 
   const change = useCallback((next: Partial<CounterpartyFormValues>) => {
     setValues((current) => ({ ...current, ...next }));
@@ -102,7 +107,7 @@ export function CounterpartyDetailPage({ companyId, counterpartyId, permissions 
     setSaved(false);
   }, []);
 
-  if (!canRead) {
+  if (forbidden) {
     return (
       <MangmeePage title={t('counterparties.title', locale)}>
         <MangmeeCard className="p-4">
@@ -117,11 +122,12 @@ export function CounterpartyDetailPage({ companyId, counterpartyId, permissions 
     );
   }
 
-  const backLink = (
+  // The list needs `accounting.counterparty.read`; someone who only added this row would land on a refusal.
+  const backLink = permissions.includes(COUNTERPARTY_READ_PERMISSION) ? (
     <Link href={`/companies/${encodeURIComponent(companyId)}/counterparties`} className="mangmee-btn mangmee-btn-secondary">
       {t('counterparties.back_to_list', locale)}
     </Link>
-  );
+  ) : undefined;
 
   if (loadError || !detail) {
     return (
@@ -135,6 +141,8 @@ export function CounterpartyDetailPage({ companyId, counterpartyId, permissions 
     );
   }
 
+  // The server decides (`canEdit`); the permission is only the fallback for an older API.
+  const canManage = detail.canEdit ?? permissions.includes(COUNTERPARTY_MANAGE_PERMISSION);
   const address = counterpartyAddress(detail.billingAddressJson);
 
   const save = async () => {
@@ -234,7 +242,8 @@ export function CounterpartyDetailPage({ companyId, counterpartyId, permissions 
             <CounterpartyContactFields values={values} onChange={change} disabled={!canManage || busy} />
           </MangmeeCard>
 
-          <RecentExpensesCard companyId={companyId} detail={detail} locale={locale} />
+          {/* Absent for a viewer who only added the row; an empty list still shows its empty line. */}
+          {detail.recentExpenses !== undefined && <RecentExpensesCard companyId={companyId} detail={detail} locale={locale} />}
 
           {canManage && (
             <div className="mangmee-safe-bottom flex justify-end">

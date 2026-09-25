@@ -26,11 +26,20 @@ const COUNTERPARTY_ADDRESS_MAX_LENGTH = 500;
 export type CounterpartyAddressInput = {
   addressText?: string | null;
   postalCode?: string | null;
-  /** A4: only `accounting.counterparty.manage` reaches this, and only from the counterparty screen. */
+  /** A4: only the counterparty screen sends this — `accounting.counterparty.manage`, or whoever added the row. */
   locked?: boolean;
 };
 
 type ManualCounterpartyInput = Omit<CreateCounterpartyInput, 'companyId' | 'createdByUserId' | 'type'> & CounterpartyAddressInput;
+
+/**
+ * Owner 2026-09-25: a counterparty is editable whichever way it arrived (a sales document, a
+ * purchase, typed by hand) by holders of the counterparty permission AND by whoever added it. Every
+ * creation path stamps `createdByUserId` with the acting user, so that column is "added it".
+ */
+function addedBy(ctx: RequestContext, counterparty: Pick<CounterpartyRecord, 'createdByUserId'>): boolean {
+  return counterparty.createdByUserId === ctx.userId;
+}
 
 /**
  * Turns the screen's two address fields into the stored v2 shape, keeping whatever a prior write
@@ -136,9 +145,12 @@ export class UpdateCounterpartyUseCase {
     input: Omit<UpdateCounterpartyInput, 'companyId' | 'counterpartyId' | 'updatedByUserId' | 'expectedUpdatedAt'>
       & CounterpartyAddressInput & { expectedUpdatedAt?: string },
   ): Promise<CounterpartyRecord> {
-    if (!ctx.permissions.includes('accounting.counterparty.manage')) throw new ForbiddenException('Missing permission: accounting.counterparty.manage');
-
+    // Loaded before the check because who added the row decides it. Without `manage`, a missing row
+    // and someone else's row get the same refusal, so the caller learns nothing about either.
     const existing = await this.repo.findCounterpartyById(ctx.companyId, counterpartyId);
+    if (!ctx.permissions.includes('accounting.counterparty.manage') && !(existing && addedBy(ctx, existing))) {
+      throw new ForbiddenException('Missing permission: accounting.counterparty.manage');
+    }
     if (!existing) throw new NotFoundException(`Counterparty ${counterpartyId} not found`);
 
     const { addressText, postalCode, locked, branchCode, expectedUpdatedAt, ...rest } = input;
@@ -171,17 +183,19 @@ export class UpdateCounterpartyUseCase {
 /**
  * §7/§11.1: the only place a person chooses a primary address by hand. The review page has no such
  * control on purpose — the owner's round-1 feedback was that deciding there confused people — so
- * this endpoint is the counterparty screen's, and it needs `accounting.counterparty.manage` even
- * though the automatic writes do not (A3).
+ * this endpoint is the counterparty screen's, and it needs `accounting.counterparty.manage` (or
+ * having added the row, owner 2026-09-25) even though the automatic writes do not (A3).
  */
 @Injectable()
 export class PromoteSeenAddressUseCase {
   constructor(private readonly repo: PrismaAccountingRepository, private readonly audit: AuditService) {}
 
   async execute(ctx: RequestContext, counterpartyId: string, addressText: string, expectedUpdatedAt?: string): Promise<CounterpartyRecord> {
-    if (!ctx.permissions.includes('accounting.counterparty.manage')) throw new ForbiddenException('Missing permission: accounting.counterparty.manage');
-
+    // Same order as the PATCH path: without `manage`, missing and not-theirs answer the same 403.
     const existing = await this.repo.findCounterpartyById(ctx.companyId, counterpartyId);
+    if (!ctx.permissions.includes('accounting.counterparty.manage') && !(existing && addedBy(ctx, existing))) {
+      throw new ForbiddenException('Missing permission: accounting.counterparty.manage');
+    }
     if (!existing) throw new NotFoundException(`Counterparty ${counterpartyId} not found`);
 
     const wanted = normalizeThaiAddress(addressText);
@@ -234,11 +248,23 @@ export class PromoteSeenAddressUseCase {
 export class GetCounterpartyUseCase {
   constructor(private readonly repo: PrismaAccountingRepository) {}
 
-  async execute(ctx: RequestContext, counterpartyId: string): Promise<CounterpartyRecord & CounterpartyUsage> {
-    if (!ctx.permissions.includes('accounting.counterparty.read')) throw new ForbiddenException('Missing permission: accounting.counterparty.read');
+  async execute(
+    ctx: RequestContext,
+    counterpartyId: string,
+  ): Promise<CounterpartyRecord & Partial<CounterpartyUsage> & { canEdit: boolean }> {
     const result = await this.repo.findCounterpartyById(ctx.companyId, counterpartyId);
+    const canRead = ctx.permissions.includes('accounting.counterparty.read');
+    const mine = !!result && addedBy(ctx, result);
+    // Without read, a missing row and someone else's row get the same refusal as before.
+    if (!canRead && !mine) throw new ForbiddenException('Missing permission: accounting.counterparty.read');
     if (!result) throw new NotFoundException(`Counterparty ${counterpartyId} not found`);
-    return { ...result, ...(await this.repo.counterpartyUsage(ctx.companyId, counterpartyId)) };
+    return {
+      ...result,
+      // Usage badges and the last five purchases are company-wide expense facts. The creator path
+      // opens the row they added, not other people's receipts, so a creator without read gets neither.
+      ...(canRead ? await this.repo.counterpartyUsage(ctx.companyId, counterpartyId) : {}),
+      canEdit: ctx.permissions.includes('accounting.counterparty.manage') || mine,
+    };
   }
 }
 
