@@ -137,8 +137,9 @@ jq -cnS --arg family "$family" --arg execution "$execution_role" --arg image "$M
   {family:$family,executionRoleArn:$execution,networkMode:"awsvpc",requiresCompatibilities:["FARGATE"],
    cpu:"1024",memory:"2048",runtimePlatform:{cpuArchitecture:"X86_64",operatingSystemFamily:"LINUX"},
    volumes:[{name:"tmp"}],containerDefinitions:[{name:"catalog",image:$image,essential:true,
-    readonlyRootFilesystem:true,user:"node",workingDirectory:"/app",
-    command:["/app/node_modules/.bin/tsx","--tsconfig","/app/apps/api/tsconfig.json",
+   readonlyRootFilesystem:true,user:"root",workingDirectory:"/app",entryPoint:["/bin/sh","-c"],
+    command:["chmod 1777 /tmp && exec setpriv --reuid=node --regid=node --init-groups "+
+      "/app/node_modules/.bin/tsx --tsconfig /app/apps/api/tsconfig.json "+
       "/app/apps/api/prisma/verify-applied-migration-catalog.ts"],
     environment:[{name:"ALLOW_PENDING_MIGRATIONS",value:"true"},{name:"GIT_SHA",value:$source},
       {name:"HOME",value:"/tmp"},{name:"REQUIRE_NO_AWS_CREDENTIALS",value:"true"},
