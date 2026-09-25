@@ -10,11 +10,14 @@ The existing day/month selector on the main Expenses page must filter `ExpenseRe
 
 Special views (`confirmed`, `unpaid`, and missing-address) keep their existing explicit scopes. The accountant export from a document-period page uses `dateField: 'expenseDate'`. Other pages and APIs that deliberately query by intake date retain that capability.
 
+When a completed review or batch upload opens the list with `?highlight=<expenseId>`, the list resolves that accessible expense's document date and selects its month before loading rows. A stale or inaccessible highlight falls back to the normal list. This keeps the post-submit confirmation visible even for a backdated document.
+
 ## Acceptance
 
 - A record dated July appears in July and not September even when entered in September; likewise for August.
 - Day and month selectors, visible totals/status counts, empty copy, and export refer to document date.
 - Rows still display both dates and the late-document badge where applicable.
+- A backdated record opened through a `highlight` link is visible and highlighted in its document month.
 - No accounting, tax, approval, payment, or data mutation semantics change.
 
 This decision supersedes the main-list intake-date and export lens sections of [the 2026-08-15 spec](expense-upload-date-visibility-spec.md).
