@@ -8,7 +8,9 @@ import {
   formatThaiPeriodRange,
   isAmbiguousPeriodCandidate,
   mapThaiDigits,
+  PERIOD_ASSUMPTIONS,
   toIsoDate,
+  unresolvedMonthName,
   VALUE_ASSUMPTIONS,
 } from './line-ai-value-normalizer.js';
 
@@ -484,6 +486,28 @@ describe('resolvePeriodCandidates (spec §3.1)', () => {
       ['2026-09']);
     assert.deepEqual(extractValueCandidates('ยอดค่าใช้จ่าย กค 2568', '2026-09-25').periods?.map((period) => period.monthKey),
       ['2025-07']);
+  });
+
+  it('corrects only a unique one-character full month typo and flags unclear month names', () => {
+    const message = 'สรุปค่าใช้จ่ายเดือนกรกดาคม และ สิงหาคม';
+    const periods = extractValueCandidates(message, '2026-09-25').periods ?? [];
+    assert.deepEqual(periods.map((period) => period.monthKey), ['2026-07', '2026-08']);
+    assert.ok(periods[0]?.assumptions.includes(PERIOD_ASSUMPTIONS.monthNameTypoCorrected));
+    assert.match(periods[0]?.label ?? '', /ตีความ "กรกดาคม" เป็น/);
+    assert.equal(unresolvedMonthName(message, periods), null);
+    assert.deepEqual(extractValueCandidates('เดือนสิงหาคาม 2568', '2026-09-25').periods?.map((period) => period.monthKey), ['2025-08']);
+
+    const unclear = 'สรุปค่าใช้จ่ายเดือนกรกดาคน และ สิงหาคม';
+    assert.equal(unresolvedMonthName(unclear, extractValueCandidates(unclear, '2026-09-25').periods ?? []), 'กรกดาคน');
+    const unclearSecond = 'สรุปค่าใช้จ่ายเดือนกรกฎาคม และ สิงหาตน';
+    assert.equal(unresolvedMonthName(unclearSecond, extractValueCandidates(unclearSecond, '2026-09-25').periods ?? []), 'สิงหาตน');
+    const unclearShort = 'สรุปค่าใช้จ่ายเดือนกคและสข';
+    assert.equal(unresolvedMonthName(unclearShort, extractValueCandidates(unclearShort, '2026-09-25').periods ?? []), 'สข');
+    assert.equal(unresolvedMonthName('ค่าใช้จ่ายเดือนกข', []), 'กข');
+    const current = extractValueCandidates('เดือนนี้มีค่าใช้จ่ายเท่าไหร่', '2026-09-25').periods ?? [];
+    assert.equal(unresolvedMonthName('เดือนนี้มีค่าใช้จ่ายเท่าไหร่', current), null);
+    assert.equal(unresolvedMonthName('ปลายเดือนขายได้เท่าไหร่', []), null);
+    assert.equal(unresolvedMonthName('ค่าใช้จ่ายเดือนละ 500 บาท', []), null);
   });
 
   it('emits no periods at all without an injected today (the resolver never reads the clock)', () => {
