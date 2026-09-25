@@ -590,23 +590,39 @@ function requestedExpenseMonths(req: LineAiTurnRequest, plan: AgentIntentPlan): 
 }
 
 function expenseMonthData(output: SpecialistOutput, period: LineAiPeriodCandidate): Record<string, unknown> | undefined {
-  if (output.status !== 'SUCCEEDED') return undefined;
-  const data = output.toolData?.find((item) => item.tool === 'expense.list_recent')?.data;
+  if (output.status !== 'SUCCEEDED' || !output.toolCalls.some((call) =>
+    call.name === 'expense.list_recent' && call.status === 'ok')
+    || typeof output.asOf !== 'string' || !Number.isFinite(Date.parse(output.asOf))) return undefined;
+  const entry = output.toolData?.find((item) => item.tool === 'expense.list_recent');
+  if (entry?.input?.['fromDate'] !== period.fromDate || entry.input['toDate'] !== period.toDate) return undefined;
+  const data = entry.data;
   if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
   const row = data as Record<string, unknown>;
   const echoed = row['period'];
   if (!echoed || typeof echoed !== 'object' || Array.isArray(echoed)) return undefined;
   const window = echoed as Record<string, unknown>;
-  return window['fromDate'] === period.fromDate && window['toDate'] === period.toDate ? row : undefined;
+  return window['fromDate'] === period.fromDate && window['toDate'] === period.toDate
+    && window['defaultedToCurrentMonth'] === false ? row : undefined;
 }
 
 function expenseMonthNumbers(data: Record<string, unknown> | undefined): { amount: number; count: number } | undefined {
   const summary = data?.['summary'];
-  const amount = summary && typeof summary === 'object' && !Array.isArray(summary)
-    ? Number((summary as Record<string, unknown>)['totalAmount']) : NaN;
-  const count = Number(data?.['total']);
-  return Number.isFinite(amount) && Number.isSafeInteger(count) && count >= 0 && data?.['truncated'] !== true
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return undefined;
+  const row = summary as Record<string, unknown>;
+  const rawAmount = row['totalAmount'];
+  const amount = typeof rawAmount === 'number' || (typeof rawAmount === 'string' && /^\d+(\.\d+)?$/.test(rawAmount))
+    ? Number(rawAmount) : NaN;
+  const count = data?.['total'];
+  const cancelled = row['cancelledCount'];
+  return Number.isFinite(amount) && typeof count === 'number' && Number.isSafeInteger(count) && count >= 0
+    && row['countedItems'] === count && typeof cancelled === 'number' && Number.isSafeInteger(cancelled) && cancelled >= 0
+    && (data?.['truncated'] === undefined || data['truncated'] === false)
     ? { amount, count } : undefined;
+}
+
+function expenseMonthReadFailed(outputs: SpecialistOutput[], months: LineAiPeriodCandidate[]): boolean {
+  return outputs.some((output) => output.toolCalls.some((call) => call.name === 'expense.list_recent'
+    && (call.status !== 'ok' || !months.some((month) => !!expenseMonthNumbers(expenseMonthData(output, month))))));
 }
 
 function expenseMonthReply(periods: LineAiPeriodCandidate[], outputs: SpecialistOutput[], language: string): string {
@@ -1225,8 +1241,8 @@ export class OrchestratorAgent {
       : composableOutputs;
     const deterministicExpense = expenseSummaryRequested && expenseToolExecuted
       ? deterministicExpenseSummaryReply(req, expenseOutputs) : undefined;
-    const expenseReadFailed = expenseOutputs.some((output) => output.toolCalls.some((call) =>
-      call.name === 'expense.list_recent' && call.status !== 'ok'));
+    const expenseAccessForbidden = expenseOutputs.some((output) => output.toolCalls.some((call) =>
+      call.name === 'expense.list_recent' && call.status === 'forbidden'));
 
     const composer = new ResponseComposerAgent();
     const composed = composer.compose(plan, outputsForComposer, req.messageText, req.userContext.locale, {
@@ -1271,7 +1287,7 @@ export class OrchestratorAgent {
       finalSourceRefs = [];
       finalWebLinks = [];
       terminalExpenseResult = true;
-    } else if (monthReply && !deterministicExpense && !expenseReadFailed && !mixedIntent) {
+    } else if (monthReply && !deterministicExpense && !expenseAccessForbidden && !mixedIntent) {
       replyText = monthReply;
     } else if (expenseToolExecuted && mixedIntent) {
       const otherReply = toolData.length > 0 && plan.status !== 'UNROUTABLE'
@@ -1429,8 +1445,7 @@ export class OrchestratorAgent {
         : 'ยังสรุปค่าใช้จ่ายสองเดือนนี้ไม่ได้ เพราะไม่พบสาขาที่ระบุ กรุณาเลือกสาขาที่มีอยู่ค่ะ';
     }
     const reads = months.flatMap((month) => outputs.map((output) => expenseMonthData(output, month)).filter((data): data is Record<string, unknown> => !!data));
-    if (outputs.some((output) => output.toolCalls.some((call) =>
-      call.name === 'expense.list_recent' && call.status !== 'ok'))) {
+    if (expenseMonthReadFailed(outputs, months)) {
       return expenseMonthReply(months, outputs, plan.language);
     }
     if (reads.length === 0) return outputs.some((output) => output.toolData?.some((item) => item.tool === 'expense.list_recent'))
