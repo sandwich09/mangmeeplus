@@ -6,5 +6,5 @@ Spec: [Expense document-date list filter](../specs/expense-document-date-list-fi
 
 1. Reuse the existing `fromDate`/`toDate` API filter, which already maps to `expenseDate` and orders document-date results. Change only the default main-list query; preserve special-view behavior.
 2. Set the main-list accountant export to `dateField: 'expenseDate'` and update Thai/English helper and empty-state copy.
-3. Update the existing Expenses E2E journey to assert that a backdated document is in its document month, absent from its intake month, and retains both date labels and the late badge.
+3. Resolve `highlight` links to the accessible expense's document month before loading the list, so review and batch-upload return paths stay visible. Update the existing Expenses E2E journey to assert that a backdated document is in its document month, absent from its intake month, retains both date labels and the late badge, and is highlighted after a fresh navigation.
 4. Run a focused check and typecheck; record exact evidence in task memory. No migration is required. Production deploy requires its separate release protocol.
