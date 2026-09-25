@@ -22,6 +22,7 @@ const stubOrchestrator = {
     sourceRefs: [{ label: 'สินค้าใกล้หมด', module: 'inventory', entityType: 'product', permissionChecked: true as const }],
     webLinks: [{ label: 'สินค้าใกล้หมด', path: '/inventory/low-stock' }],
     presentation: { kind: 'answer_cards' as const, cards: [{ text: 'stub reply', sourceLabels: ['สินค้าใกล้หมด'] }] },
+    deterministicExpenseCriterionConfirmation: true,
     durationMs: 1,
   }),
 };
@@ -365,6 +366,7 @@ describe('AgentCore Runtime – HTTP endpoints', () => {
     assert.deepEqual(body['sourceRefs'], [{ label: 'สินค้าใกล้หมด', module: 'inventory', entityType: 'product', permissionChecked: true }]);
     assert.deepEqual(body['webLinks'], [{ label: 'สินค้าใกล้หมด', path: '/inventory/low-stock' }]);
     assert.deepEqual(body['presentation'], { kind: 'answer_cards', cards: [{ text: 'stub reply', sourceLabels: ['สินค้าใกล้หมด'] }] });
+    assert.equal(body['deterministicExpenseCriterionConfirmation'], true);
     assert.ok(!('usage' in body), 'a turn with no model call reports no usage rows');
   });
 

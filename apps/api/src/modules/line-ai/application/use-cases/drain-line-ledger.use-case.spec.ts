@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { LINE_AI_EXPENSE_CRITERION_REPLIES } from '@watchdog-bms/contracts';
 import { LAUNCH_SHADOW_READ_FAILED_EVENT, LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
 import { DrainLineLedgerUseCase } from './drain-line-ledger.use-case';
 import { REFUSAL_MESSAGES } from '../../domain/logic/line-ai-formatter.logic';
@@ -177,6 +178,37 @@ describe('AP22 queued UNKNOWN and accepted recovery', () => {
     assert.equal(h.turnRequests.length, 0); assert.equal(h.pushes.length, 0);
     assert.equal(h.acks[0].outcome, accepted ? 'followed_up' : 'parked');
     assert.deepEqual(h.ackReasons, ['original_outcome_owns_delivery']);
+  });
+});
+
+describe('drain read-free expense criterion replay', () => {
+  it('saves an API-validated access proof and retries without another model turn', async () => {
+    const opts = {
+      claims: [{ entry: entry({ text: 'ไม่รวมรายการที่ถูกปฏิเสธหรือยกเลิกแล้วใช่ไหม' }), deliveryCount: 1, idleMs: 10_000 }],
+      pushResult: 'failed_other' as 'failed_other' | 'ok',
+      turnFn: (req: any) => ({ requestId: req.requestId, replyText: LINE_AI_EXPENSE_CRITERION_REPLIES.generalTh,
+        sourceRefs: [], sourceLabels: [], webLinks: [], intent: 'read_summary', agent: 'accounting', refused: false,
+        toolsInvoked: [], durationMs: 5, deterministicExpenseCriterionConfirmation: true }),
+    };
+    const h = makeUseCase(opts);
+    let proofChecks = 0;
+    (h.useCase as any).readEvidence = {
+      forTurn: async () => [], verify: async () => true,
+      isReadFreeExpenseCriterionConfirmation: async () => true,
+      verifyDelivery: async (proof: any) => { proofChecks++; return proof?.access?.kind === 'expense_criterion_confirmation'; },
+    };
+    await h.useCase.execute(20, NOW);
+    const delivery = [...h.deliveryRows.values()][0];
+    assert.equal(delivery.status, 'UNKNOWN');
+    assert.equal(delivery.authorizationJson.access.kind, 'expense_criterion_confirmation');
+    assert.equal(delivery.authorizationJson.read, undefined);
+
+    opts.pushResult = 'ok';
+    await h.useCase.execute(20, NOW);
+    assert.equal(proofChecks, 1);
+    assert.equal(h.turnRequests.length, 1);
+    assert.equal(h.pushes.length, 2);
+    assert.equal([...h.deliveryRows.values()][0].status, 'ACCEPTED');
   });
 });
 

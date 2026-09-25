@@ -16,6 +16,9 @@ export type AgentRunResult = {
   sourceRefs: SourceRef[];
   webLinks: LineAiWebLink[];
   presentation?: LineAiAnswerPresentation;
+  /** True only when the expense summary was rendered deterministically from all included results. */
+  deterministicExpenseSummary?: boolean;
+  deterministicExpenseCriterionConfirmation?: boolean;
   durationMs: number;
   /** Item 10F: critic verdicts per sub-request; present only on the native tool-loop path. */
   coverage?: LineAiCoverageItem[];

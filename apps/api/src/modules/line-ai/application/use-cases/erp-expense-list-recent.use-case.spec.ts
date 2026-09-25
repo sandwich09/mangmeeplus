@@ -24,15 +24,20 @@ const expense = (over: Record<string, unknown>) => ({
 
 /** Prisma fake for the branch catalog read; honors the ABAC `id: { in }` narrowing the tool sends. */
 function fakePrisma(branches: Array<{ id: string; name: string; code?: string }> = []) {
+  const rows = branches.map((b) => ({ id: b.id, name: b.name, code: b.code ?? `C-${b.id}` }));
+  const allowed = (where: any) => rows.filter((b) => {
+    if (where?.companyId && where.companyId !== 'c1') return false;
+    if (where?.status && where.status !== 'ACTIVE') return false;
+    if (where?.id?.in && !where.id.in.includes(b.id)) return false;
+    if (where?.name && where.name !== b.name) return false;
+    if (where?.OR && !where.OR.some((term: any) => term.id ? term.id === b.id : term.code === b.code)) return false;
+    return true;
+  });
   return {
     client: {
       branch: {
-        findMany: async ({ where }: any) => {
-          const scope: string[] | undefined = where?.id?.in;
-          return branches
-            .filter((b) => !scope || scope.includes(b.id))
-            .map((b) => ({ id: b.id, name: b.name, code: b.code ?? `C-${b.id}` }));
-        },
+        findFirst: async ({ where }: any) => allowed(where)[0] ?? null,
+        findMany: async ({ where, take }: any) => allowed(where).slice(0, take),
       },
     },
   } as any;
@@ -161,6 +166,59 @@ describe('ExpenseListRecentTool', () => {
     assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses?branchId=branch-1');
   });
 
+  it('asks for a disambiguating branch code when exact names collide', async () => {
+    const { tool, filters } = makeFilterCapturingTool([
+      { id: 'branch-1', name: 'สาขากลาง', code: 'A' },
+      { id: 'branch-2', name: 'สาขากลาง', code: 'B' },
+    ]);
+    const result = await tool.execute(baseCtx, { branchId: 'สาขากลาง' });
+
+    assert.equal(filters.length, 0);
+    assert.deepEqual((result.data as any).availableBranches, [
+      { id: 'branch-1', name: 'สาขากลาง', code: 'A' },
+      { id: 'branch-2', name: 'สาขากลาง', code: 'B' },
+    ]);
+    assert.equal((result.data as any).branchAmbiguous, 'สาขากลาง');
+  });
+
+  it('reports branch lookup limits instead of implying a requested branch does not exist', async () => {
+    const branches = Array.from({ length: 101 }, (_, index) => ({
+      id: `branch-${index}`, name: `สาขา ${index}`, code: `B-${index}`,
+    }));
+    const { tool, filters } = makeFilterCapturingTool(branches);
+    const result = await tool.execute(baseCtx, { branchId: 'missing-name' });
+
+    assert.equal(filters.length, 0);
+    assert.equal((result.data as any).branchLookupLimited, true);
+    assert.equal((result.data as any).availableBranches.length, 100);
+  });
+
+  it('asks when the requested branch text collides with another branch identifier', async () => {
+    const { tool, filters } = makeFilterCapturingTool([
+      { id: 'STP', name: 'สาขาหนึ่ง', code: 'A' },
+      { id: 'branch-2', name: 'สาขาสอง', code: 'STP' },
+    ]);
+    const result = await tool.execute(baseCtx, { branchId: 'STP' });
+
+    assert.equal(filters.length, 0);
+    assert.equal((result.data as any).branchAmbiguous, 'STP');
+  });
+
+  it('does not widen an incomplete or invalid date range to 1970 or the current month', async () => {
+    const { tool, filters } = makeFilterCapturingTool();
+    for (const input of [
+      { fromDate: '2026-07-01' },
+      { toDate: '2026-07-31' },
+      { fromDate: '2026-07-40', toDate: '2026-07-31' },
+      { fromDate: '2026-08-01', toDate: '2026-07-31' },
+    ]) {
+      const result = await tool.execute(baseCtx, input);
+      assert.equal(result.status, 'error');
+      assert.equal(result.errorCode, 'INVALID_EXPENSE_PERIOD');
+    }
+    assert.equal(filters.length, 0);
+  });
+
   // Typos and partial wording are the model's job to reconcile — the tool hands back the real
   // catalog instead of answering a confident zero for a branch that exists under another spelling.
   it('returns the branch catalog instead of records when the branch cannot be resolved', async () => {
@@ -170,7 +228,7 @@ describe('ExpenseListRecentTool', () => {
     assert.equal(filters.length, 0);
     const data = result.data as any;
     assert.equal(data.branchUnresolved, 'สาธุประดิด');
-    assert.deepEqual(data.availableBranches, [{ id: 'branch-1', name: 'สาธุประดิษฐ์' }]);
+    assert.deepEqual(data.availableBranches, [{ id: 'branch-1', code: 'C-branch-1', name: 'สาธุประดิษฐ์' }]);
     assert.deepEqual(result.sourceRefs, []);
   });
 
@@ -185,7 +243,7 @@ describe('ExpenseListRecentTool', () => {
     assert.equal(filters.length, 0);
     const data = result.data as any;
     assert.equal(data.branchUnresolved, 'บางนา');
-    assert.deepEqual(data.availableBranches, [{ id: 'branch-1', name: 'สาธุประดิษฐ์' }]);
+    assert.deepEqual(data.availableBranches, [{ id: 'branch-1', code: 'C-branch-1', name: 'สาธุประดิษฐ์' }]);
   });
 
   it('caps the page loop and flags the answer as truncated', async () => {

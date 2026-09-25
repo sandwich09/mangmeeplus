@@ -36,7 +36,7 @@ class CreateCounterpartyDto {
   @IsString() @IsOptional() @MaxLength(32) taxId?: string;
   @IsString() @IsOptional() @MaxLength(16) branchCode?: string;
   @IsIn(BUYER_ENTITY_KINDS) @IsOptional() entityKind?: BuyerEntityKind;
-  @IsEmail() @IsOptional() @MaxLength(255) email?: string;
+  @IsEmail() @IsOptional() @MaxLength(255) email?: string | null;
   @IsString() @IsOptional() @MaxLength(32) phone?: string;
   // Length is checked in the use case, not here: §8 wants "ตัดให้สั้นลง" with the limit in it, and a
   // decorator would answer with the framework's generic sentence instead.
@@ -50,7 +50,7 @@ class UpdateCounterpartyDto {
   @IsString() @IsOptional() @MaxLength(32) taxId?: string;
   @IsString() @IsOptional() @MaxLength(16) branchCode?: string;
   @IsIn(BUYER_ENTITY_KINDS) @IsOptional() entityKind?: BuyerEntityKind;
-  @IsEmail() @IsOptional() @MaxLength(255) email?: string;
+  @IsEmail() @IsOptional() @MaxLength(255) email?: string | null;
   @IsString() @IsOptional() @MaxLength(32) phone?: string;
   @IsString() @IsOptional() addressText?: string;
   @IsString() @IsOptional() @MaxLength(16) postalCode?: string;

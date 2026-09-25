@@ -5,11 +5,13 @@
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiTurnResponse, ToolResult, SourceRef } from '@watchdog-bms/contracts';
-import { AI_BUDGET_REFUSAL_CODES, asIntakeRouteIntent, extractValueCandidates, isBusinessIntakeIntent, parseLineAiPreparedPlan, parseLineAiValueCandidates } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_TOOL_REGISTRY, asIntakeRouteIntent, extractValueCandidates, isBusinessIntakeIntent, parseLineAiPreparedPlan, parseLineAiValueCandidates } from '@watchdog-bms/contracts';
 import { currentBudgetState } from '../../../../common/usage/usage-context';
 import { classifyIntent, chooseAgent, selectTools, getRefusalReason, validateTurnRequest } from '../../domain/logic/line-ai-turn.logic';
 import { ErpToolClient, type ErpToolContext } from '../../infrastructure/erp-tool.client';
 import { OrchestratorAgent } from '../../agents/orchestrator.agent';
+import { allExpenseBranchesRequested, expenseBranchScopeRequested, expenseCriterionOnlyMessage, thaiExpenseMonthMentions, uncertainExpenseFilter, unsupportedExpenseFilter } from '../../agents/orchestrator.agent';
+import { formatExpenseSummary } from '../../agents/prepared-simple-read-formatter';
 import { AiGatewayConfigService } from '../../../../common/config/ai-gateway-config.service';
 import { AgentCoreRuntimeClient } from '../../infrastructure/runtime/agentcore-runtime.client';
 import { toolAccessOutcome } from '../../agents/tool-availability';
@@ -37,6 +39,11 @@ const CAPTURE_PENDING_REPLY = [
   'ระบบยังไม่สามารถบันทึกหรือยืนยันความถูกต้องให้อัตโนมัติได้ในตอนนี้',
   'กรุณาตรวจสอบเลขที่เอกสาร ผู้ขาย/ผู้รับเงิน เลขประจำตัวผู้เสียภาษี ที่อยู่ วันที่ ยอดรวม และ VAT ในเว็บแอปก่อนบันทึกนะคะ',
 ].join('\n');
+
+function currentBangkokMonthRange(now = new Date()): { fromDate: string; toDate: string } {
+  const today = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+  return { fromDate: `${today.slice(0, 7)}-01`, toDate: today };
+}
 
 function buildReplyFromToolResults(results: ToolResult[]): string {
   const ok = results.filter((r) => r.status === 'ok' && r.data !== undefined && r.data !== null);
@@ -204,6 +211,7 @@ export class LineAiTurnUseCase {
         companyId: req.userContext.companyId,
         userId: req.userContext.internalUserId,
         membershipId: req.userContext.membershipId,
+        chatKeyHash: req.userContext.chatKeyHash,
         branchIds: req.userContext.branchIds,
         locationIds: req.userContext.locationIds,
         roles: req.userContext.roles,
@@ -224,7 +232,7 @@ export class LineAiTurnUseCase {
           sha256: '',
         })),
         conversationContext: req.conversationContext,
-        ...(req.valueCandidates ? { valueCandidates: req.valueCandidates } : {}),
+        valueCandidates: req.valueCandidates,
         ...(preparedPlan ? { preparedPlan } : {}),
         ...(req.intakeIntent ? { intakeIntent: req.intakeIntent } : {}),
       });
@@ -247,6 +255,8 @@ export class LineAiTurnUseCase {
         sourceLabels: [...new Set(sourceRefs.map((source) => source.label))],
         webLinks: result.webLinks,
         ...(result.presentation ? { presentation: result.presentation } : {}),
+       ...(result.deterministicExpenseSummary ? { deterministicExpenseSummary: true } : {}),
+        ...(result.deterministicExpenseCriterionConfirmation ? { deterministicExpenseCriterionConfirmation: true } : {}),
         intent: (result.plan.intents[0] as any)?.intent ?? 'unknown',
         agent: (result.plan.intents[0] as any)?.agent ?? 'general',
         refused: result.refused || result.plan.status === 'UNROUTABLE',
@@ -293,6 +303,8 @@ export class LineAiTurnUseCase {
         sourceLabels: [...new Set(result.sourceRefs.map((s) => s.label))],
         webLinks: result.webLinks,
         ...(result.presentation ? { presentation: result.presentation } : {}),
+       ...(result.deterministicExpenseSummary ? { deterministicExpenseSummary: true } : {}),
+        ...(result.deterministicExpenseCriterionConfirmation ? { deterministicExpenseCriterionConfirmation: true } : {}),
         intent: result.plan.intents[0]?.intent ?? 'unknown',
         agent: result.plan.intents[0]?.agent ?? 'general',
         refused: result.plan.status === 'UNROUTABLE',
@@ -311,9 +323,111 @@ export class LineAiTurnUseCase {
     }
   }
 
-  // ── Item 07 deterministic path (unchanged) ─────────────────────────────────
+  // ── Legacy deterministic fallback ─────────────────────────────────────────
 
   private async runDeterministicPath(req: LineAiTurnRequest, startMs: number): Promise<LineAiTurnResponse> {
+    // This exact, fixed answer carries no business figures and requires no ERP read. Check the
+    // expense tool's live permission/entitlement first; API delivery then stamps its own current
+    // access proof and rejects any changed, embellished, or sourced response.
+    const hasPriorExpenseContext = req.conversationContext?.deliveredExpenseSummary?.statusBasis === 'exclude_rejected_voided'
+      && req.conversationContext.deliveredExpenseSummary.ranges.length > 0;
+    if ((req.attachments?.length ?? 0) === 0 && expenseCriterionOnlyMessage(req.messageText, hasPriorExpenseContext)) {
+      const expenseTool = LINE_TOOL_REGISTRY.find(tool => tool.name === 'expense.list_recent');
+      const access = expenseTool ? toolAccessOutcome(expenseTool, req.userContext) : 'forbidden';
+      if (access === 'feature_disabled') {
+        return this.buildRefusedResponse(req, 'feature_disabled', featureDisabledReply(['expense.list_recent'], req.userContext.locale), startMs);
+      }
+      if (access !== 'allowed') return this.buildRefusedResponse(req, 'forbidden', FORBIDDEN_REPLY, startMs);
+      const summary = req.conversationContext?.deliveredExpenseSummary;
+      const hasDeliveredProof = summary?.version === 1 && summary.statusBasis === 'exclude_rejected_voided'
+        && Number.isFinite(Date.parse(summary.deliveredAt)) && summary.ranges.length > 0 && summary.ranges.length <= 24;
+      const language = /[\u0E00-\u0E7F]/u.test(req.messageText) ? 'th' : 'en';
+      return {
+        ...this.baseResponse(req, 'read_summary', 'accounting', startMs),
+        replyText: language === 'en'
+          ? hasDeliveredProof ? LINE_AI_EXPENSE_CRITERION_REPLIES.deliveredEn : LINE_AI_EXPENSE_CRITERION_REPLIES.generalEn
+          : hasDeliveredProof ? LINE_AI_EXPENSE_CRITERION_REPLIES.deliveredTh : LINE_AI_EXPENSE_CRITERION_REPLIES.generalTh,
+        deterministicExpenseCriterionConfirmation: true,
+      };
+    }
+    const noAttachments = (req.attachments?.length ?? 0) === 0;
+    const mentionsExpense = /(?:ค่าใช้จ่าย|รายจ่าย|\bexpenses?\b|\bspend\b)/iu.test(req.messageText);
+    const mentionsOtherBusinessTopic = /(?:ภาษี|\bvat\b|ภ\.?พ\.?\s*\d*|ยอดขาย|การขาย|ขาย|\bsales?\b|สต็อก|สินค้า|\bstock\b|รายได้|\bincome\b|ลูกค้า|\bcrm\b|จัดซื้อ|\bprocurement\b)/iu.test(req.messageText);
+    const asksExpenseDetail = /(?:เลขที่|สถานะ|รายละเอียด|ใบเสร็จ|บิล|เอกสาร|ผู้ขาย|ผู้รับเงิน|ขอรายการ|ดูรายการ|แสดงรายการ|รายการอะไร|รายการไหน|อะไรบ้าง|ไหนบ้าง|receipt|invoice|vendor|status|detail|\bexp[-\s]?\d{2,}\b)/iu.test(req.messageText);
+    if (noAttachments && mentionsExpense && !mentionsOtherBusinessTopic && uncertainExpenseFilter(req.messageText, hasPriorExpenseContext)) {
+      const expenseTool = LINE_TOOL_REGISTRY.find(tool => tool.name === 'expense.list_recent');
+      const access = expenseTool ? toolAccessOutcome(expenseTool, req.userContext) : 'forbidden';
+      if (access === 'feature_disabled') return this.buildRefusedResponse(req, 'feature_disabled', featureDisabledReply(['expense.list_recent'], req.userContext.locale), startMs);
+      if (access !== 'allowed') return this.buildRefusedResponse(req, 'forbidden', FORBIDDEN_REPLY, startMs);
+      return {
+        ...this.baseResponse(req, 'read_summary', 'accounting', startMs),
+        replyText: 'ยังระบุเงื่อนไขรายการค่าใช้จ่ายที่ต้องการรวมออกไม่ได้ค่ะ ต้องการรวมหรือตัดรายการแบบใดออกคะ',
+      };
+    }
+    if (noAttachments && mentionsExpense && !mentionsOtherBusinessTopic && asksExpenseDetail) {
+      const expenseDetailTool = LINE_TOOL_REGISTRY.find(tool => tool.name === 'expense.get_detail');
+      const access = expenseDetailTool ? toolAccessOutcome(expenseDetailTool, req.userContext) : 'forbidden';
+      if (access === 'feature_disabled') {
+        return this.buildRefusedResponse(req, 'feature_disabled', featureDisabledReply(['expense.get_detail'], req.userContext.locale), startMs);
+      }
+      if (access !== 'allowed') return this.buildRefusedResponse(req, 'forbidden', FORBIDDEN_REPLY, startMs);
+      return {
+        ...this.buildRefusedResponse(req, 'unsupported_yet', 'LINE เวอร์ชันนี้ยังแสดงรายละเอียดค่าใช้จ่ายตามเลขที่หรือสถานะไม่ได้ค่ะ กรุณาเปิดเว็บเพื่อตรวจสอบค่ะ', startMs, 'read_detail', 'accounting'),
+        webLinks: [{ label: 'เปิดรายการค่าใช้จ่ายในเว็บ', path: `/companies/${req.userContext.companyId}/expenses` }],
+      };
+    }
+    const hasExpenseSummaryIntent = noAttachments && mentionsExpense && !mentionsOtherBusinessTopic && !asksExpenseDetail;
+    const expenseTool = LINE_TOOL_REGISTRY.find(tool => tool.name === 'expense.list_recent');
+    const hasExpenseFollowupContext = noAttachments && !mentionsOtherBusinessTopic && !asksExpenseDetail
+      && (req.conversationContext?.deliveredExpenseSummary?.ranges.length ?? 0) > 0
+      && (expenseBranchScopeRequested(req.messageText) || allExpenseBranchesRequested(req.messageText)
+        || unsupportedExpenseFilter(req.messageText, hasPriorExpenseContext)
+        || uncertainExpenseFilter(req.messageText, hasPriorExpenseContext)
+        || /(?:เดือนก่อนหน้า|เดือนก่อนหน้านั้น|เดือนที่แล้ว|เดือนนี้|ยอดล่าสุด|ช่วงเดิม|อันนี้|อันนั้น|previous month|month before|latest|same period)/iu.test(req.messageText));
+    let expenseToolForPath: (typeof LINE_TOOL_REGISTRY)[number] | undefined;
+    let currentExpenseRequestValidated = false;
+    if (hasExpenseSummaryIntent || hasExpenseFollowupContext) {
+      const access = expenseTool ? toolAccessOutcome(expenseTool, req.userContext) : 'forbidden';
+      if (access === 'feature_disabled') {
+        return this.buildRefusedResponse(req, 'feature_disabled', featureDisabledReply(['expense.list_recent'], req.userContext.locale), startMs);
+      }
+      if (access !== 'allowed') return this.buildRefusedResponse(req, 'forbidden', FORBIDDEN_REPLY, startMs);
+      const periods = req.valueCandidates?.periods ?? [];
+      const dates = req.valueCandidates?.dates ?? [];
+      const inherited = req.conversationContext?.deliveredExpenseSummary?.ranges ?? [];
+      const monthsMentioned = thaiExpenseMonthMentions(req.messageText);
+      const currentRange = currentBangkokMonthRange();
+      const explicitCurrentRange = periods.length === 1 && dates.length === 0
+        && periods[0]?.fromDate === currentRange.fromDate && periods[0]?.toDate === currentRange.toDate;
+      const explicitCurrentCue = /(?:เดือนนี้|เดือนปัจจุบัน|this month|current month)/iu.test(req.messageText)
+        && periods.length === 0 && dates.length === 0 && monthsMentioned.length === 0;
+      const latestCue = /(?:ยอดล่าสุด|ล่าสุด|ปัจจุบัน|ตอนนี้|latest|recent|current)/iu.test(req.messageText)
+        && periods.length === 0 && dates.length === 0 && monthsMentioned.length === 0;
+      const priorRelative = /(?:เดือนก่อนหน้า|เดือนก่อนหน้านั้น|เดือนที่แล้ว|previous month|month before)/iu.test(req.messageText);
+      const explicitDateText = /\b\d{4}[-/]\d{1,2}[-/]?\d{0,2}\b/u.test(req.messageText);
+      const hasUnsafeScope = unsupportedExpenseFilter(req.messageText, hasPriorExpenseContext)
+        || uncertainExpenseFilter(req.messageText, hasPriorExpenseContext)
+        || expenseBranchScopeRequested(req.messageText) || allExpenseBranchesRequested(req.messageText)
+        || priorRelative || explicitDateText
+        || (periods.length > 0 && !explicitCurrentRange)
+        || dates.length > 0
+        || (monthsMentioned.length > 0 && !(monthsMentioned.length === 1 && explicitCurrentRange));
+      const hasUsableCurrentPeriod = !hasUnsafeScope
+        && (periods.length === 0 || explicitCurrentRange)
+        && (inherited.length === 0 || explicitCurrentRange || explicitCurrentCue || latestCue);
+      if (!hasUsableCurrentPeriod) {
+        const followupReply = hasExpenseFollowupContext || inherited.length > 0
+          ? 'LINE เวอร์ชันนี้ยังตรวจช่วงค่าใช้จ่ายที่ติดตามไว้ไม่ได้ค่ะ กรุณาระบุช่วงวันที่ครบทั้งวันเริ่มต้นและวันสิ้นสุด หรือเปิดเว็บเพื่อตรวจสอบค่ะ'
+          : 'LINE เวอร์ชันนี้ยังตรวจช่วงค่าใช้จ่ายที่ระบุไม่ได้ค่ะ กรุณาถามยอดของเดือนปัจจุบัน หรือเปิดเว็บเพื่อตรวจสอบค่ะ';
+        return {
+          ...this.buildRefusedResponse(req, 'unsupported_yet', followupReply, startMs, 'read_summary', 'accounting'),
+          webLinks: [{ label: 'เปิดรายการค่าใช้จ่ายในเว็บ', path: `/companies/${req.userContext.companyId}/expenses` }],
+        };
+      }
+      if (!expenseTool) return this.buildRefusedResponse(req, 'tool_unavailable', ERROR_REPLY, startMs, 'read_summary', 'accounting');
+      expenseToolForPath = expenseTool;
+      currentExpenseRequestValidated = true;
+    }
     const text = req.messageText.toLowerCase().trim();
     const intent = classifyIntent(text, (req.attachments?.length ?? 0) > 0);
     const agent = chooseAgent(intent, text);
@@ -335,7 +449,7 @@ export class LineAiTurnUseCase {
       return this.buildRefusedResponse(req, refusalReason, replyText, startMs, intent, agent);
     }
 
-    const tools = selectTools(agent, intent, text);
+    const tools = expenseToolForPath ? [expenseToolForPath] : selectTools(agent, intent, text);
     if (tools.length === 0) {
       return { ...this.baseResponse(req, intent, agent, startMs), replyText: ERROR_REPLY, refused: false };
     }
@@ -349,6 +463,7 @@ export class LineAiTurnUseCase {
       branchIds: req.userContext.branchIds,
       locationIds: req.userContext.locationIds,
       locale: req.userContext.locale,
+      chatKeyHash: req.userContext.chatKeyHash,
       actorDelegations: req.actorDelegations,
     };
 
@@ -368,6 +483,30 @@ export class LineAiTurnUseCase {
     }
     if (topTools.length === 0 && forbiddenTools.length > 0) {
       return this.buildRefusedResponse(req, 'forbidden', FORBIDDEN_REPLY, startMs, intent, agent);
+    }
+    if (topTools.some(tool => tool.name === 'expense.list_recent') && !currentExpenseRequestValidated) {
+      if (unsupportedExpenseFilter(req.messageText, hasPriorExpenseContext)) {
+        return { ...this.baseResponse(req, intent, agent, startMs), refused: false,
+          replyText: 'ตอนนี้ LINE ยังยืนยันยอดค่าใช้จ่ายตามเงื่อนไขนี้ไม่ได้ค่ะ กรุณาตรวจสอบในเว็บเพื่อดูยอดตามเกณฑ์ที่ต้องการ' };
+      }
+      const inherited = req.conversationContext?.deliveredExpenseSummary?.ranges ?? [];
+      const explicitPeriod = (req.valueCandidates?.periods?.length ?? 0) > 0 || (req.valueCandidates?.dates?.length ?? 0) > 0;
+      const priorRelative = /(?:เดือนก่อนหน้า|เดือนก่อนหน้านั้น|previous month|month before)/iu.test(req.messageText);
+      const branchScopeRequested = expenseBranchScopeRequested(req.messageText);
+      const allBranchesRequested = allExpenseBranchesRequested(req.messageText);
+      // This legacy path invokes read tools with `{}`. Any inherited result scope, including an
+      // all-branch range, therefore needs a clarification instead of silently becoming current
+      // month/all branches. The orchestrator path owns validated follow-up selection.
+      if (explicitPeriod || branchScopeRequested || allBranchesRequested || priorRelative || inherited.length > 0) {
+        return { ...this.baseResponse(req, intent, agent, startMs), refused: false,
+          replyText: priorRelative && inherited.length === 0
+            ? 'ขอทราบเดือนและปีที่ต้องการตรวจอีกครั้งได้ไหมคะ'
+            : branchScopeRequested || allBranchesRequested || inherited.some(range => range.branchId !== null)
+              ? 'LINE เวอร์ชันนี้ยังตรวจสาขาหรือช่วงติดตามเดิมไม่ได้ค่ะ กรุณาระบุช่วงวันที่ครบทั้งวันเริ่มต้นและวันสิ้นสุด หรือเปิดเว็บเพื่อตรวจสอบค่ะ'
+              : inherited.length > 0
+                ? 'LINE เวอร์ชันนี้ยังใช้ช่วงติดตามเดิมไม่ได้ค่ะ กรุณาระบุเดือนและปีที่ต้องการตรวจอีกครั้งนะคะ'
+              : 'LINE เวอร์ชันนี้ยังตรวจช่วงที่ระบุไม่ได้ค่ะ กรุณาเปิดเว็บเพื่อตรวจสอบ หรือถามยอดของเดือนปัจจุบันค่ะ' };
+      }
     }
     const toolInput = intent === 'capture_accounting_evidence' ? { attachments: req.attachments ?? [], messageText: req.messageText } : {};
     const results = await Promise.all(topTools.map((t) => this.erpTools.invoke(t, erpCtx, toolInput)));
@@ -389,7 +528,27 @@ export class LineAiTurnUseCase {
       return this.buildRefusedResponse(req, 'forbidden', FORBIDDEN_REPLY, startMs, intent, agent);
     }
 
-    const replyText = buildCaptureReplyFromToolResults(results) ?? buildReplyFromToolResults(results);
+    let replyText = buildCaptureReplyFromToolResults(results) ?? buildReplyFromToolResults(results);
+    let deterministicExpenseSummary = false;
+    const expenseResult = results.find(result => result.toolName === 'expense.list_recent');
+    if (expenseResult) {
+      const formatted = expenseResult.status === 'ok'
+        ? formatExpenseSummary(expenseResult.data && typeof expenseResult.data === 'object' && !Array.isArray(expenseResult.data)
+          ? expenseResult.data as Record<string, unknown> : undefined,
+        { language: /[\u0E00-\u0E7F]/u.test(req.messageText) ? 'th' : 'en', locale: req.userContext.locale },
+        expenseResult.sourceRefs?.find(source => source.module === 'expenses' && source.entityType === 'expense_summary'), expenseResult.asOf)
+        : { kind: 'unverified' as const };
+      if (formatted.kind === 'answer') {
+        replyText = formatted.replyText;
+        const data = expenseResult.data as Record<string, unknown>;
+        const period = data['period'] as Record<string, unknown> | undefined;
+        deterministicExpenseSummary = topTools.length === 1 && results.length === 1 && data['truncated'] !== true
+          && period?.['defaultedToCurrentMonth'] === true
+          && (!req.conversationContext?.deliveredExpenseSummary || currentExpenseRequestValidated);
+      } else {
+        replyText = 'ยังไม่สามารถยืนยันสรุปค่าใช้จ่ายช่วงนี้ได้ค่ะ กรุณาลองใหม่อีกครั้งหรือเปิดเว็บเพื่อตรวจสอบ';
+      }
+    }
     const allSourceRefs = results.flatMap((r) => r.sourceRefs ?? []);
     const sourceLabels = [...new Set(allSourceRefs.map((s: SourceRef) => s.label))];
     const webLinks = allSourceRefs.filter((s: SourceRef) => !!s.webPath).map((s: SourceRef) => ({ label: s.label, path: s.webPath! }));
@@ -429,6 +588,7 @@ export class LineAiTurnUseCase {
         ...(r.errorCode ? { errorCode: r.errorCode } : {}),
       })),
       durationMs: Date.now() - startMs,
+      ...(deterministicExpenseSummary ? { deterministicExpenseSummary: true } : {}),
       ...(presentation ? { presentation } : {}),
     };
   }

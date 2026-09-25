@@ -165,6 +165,23 @@ export type LineAiConversationContextTurn = {
   refused?: boolean;
 };
 
+/** Non-monetary scope proof for a delivered expense summary. Supplied only by the API after its
+ *  current identity/access/chat and delivery checks; it is never a business-data source. */
+export type LineAiDeliveredExpenseSummary = {
+  version: 1;
+  deliveredAt: string;
+  statusBasis: 'exclude_rejected_voided';
+  continuationOfPrior?: true;
+  ranges: Array<{ fromDate: string; toDate: string; branchId: string | null }>;
+};
+
+export const LINE_AI_EXPENSE_CRITERION_REPLIES = {
+  deliveredTh: 'ยอดค่าใช้จ่ายที่แสดงก่อนหน้านี้ไม่รวมรายการที่ “ปฏิเสธ” และ “ยกเลิก” อยู่แล้วค่ะ ยอดนั้นยังรวมรายการที่อยู่ระหว่างตรวจสอบด้วยค่ะ',
+  generalTh: 'ตามเกณฑ์ทั่วไป ยอดค่าใช้จ่ายบน LINE ไม่นับรายการที่ถูกปฏิเสธหรือยกเลิก และยังรวมรายการที่อยู่ระหว่างตรวจสอบค่ะ',
+  deliveredEn: 'The delivered expense summary already excluded rejected and voided records. It still included records under review.',
+  generalEn: 'LINE expense summaries exclude rejected and voided records, while still including records under review.',
+} as const;
+
 export type LineAiConversationContext = {
   /** Previous stored LINE turns included only when the latest turn is within this window. */
   windowMinutes: number;
@@ -172,6 +189,8 @@ export type LineAiConversationContext = {
   maxTurns: number;
   lastTurnAt?: string;
   recentTurns: LineAiConversationContextTurn[];
+  /** Latest fully evidenced expense summary delivered in this same chat and current access scope. */
+  deliveredExpenseSummary?: LineAiDeliveredExpenseSummary;
 };
 
 /** Internal request from API to AI Gateway for one LINE turn. */
@@ -1429,6 +1448,10 @@ export type LineAiTurnResponse = {
   modelLineage?: AiModelLineage[];
   /** Grounded LINE presentation. Absent for clarification, refusal, unavailable, and failed reads. */
   presentation?: LineAiAnswerPresentation;
+  /** Set only when the expense-summary reply was rendered deterministically from every included result. */
+  deterministicExpenseSummary?: boolean;
+  /** Set only for a fixed read-free answer about the expense summary exclusion rule. */
+  deterministicExpenseCriterionConfirmation?: boolean;
   /** Item 10F: critic verdicts per sub-request (native loop path only). Drives the API-side
    *  ledger acks/appends; absent on the 10B paths. */
   coverage?: LineAiCoverageItem[];
@@ -1555,7 +1578,7 @@ export type SpecialistOutput = {
   risks?: ReceiptRisk;
   requiresHumanReview: boolean;
   /** Bounded raw tool data snapshots for the model answer layer (grounding source). */
-  toolData?: Array<{ tool: string; data: unknown }>;
+  toolData?: Array<{ tool: string; data: unknown; input?: Record<string, unknown> }>;
   /** As-of timestamp of the primary successful tool result, carried so a deterministic formatter can
    *  state data freshness without re-invoking the tool. Absent when no tool returned a dated result. */
   asOf?: string;

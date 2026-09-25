@@ -122,7 +122,8 @@ const expenseSummary = (over: Record<string, unknown> = {}): Record<string, unkn
   countedItems: 42, cancelledCount: 0, totalAmount: 1234567.5, pendingAmount: 0,
   draftAmount: 0, confirmedAmount: 1234567.5, paidAmount: 1234567.5, unpaidAmount: 0, ...over,
 });
-const expenseOutput = (data: Record<string, unknown>): SpecialistOutput => readOutput('expense.list_recent', data, EXPENSE_SOURCE);
+const expenseOutput = (data: Record<string, unknown>, asOf?: string): SpecialistOutput =>
+  readOutput('expense.list_recent', data, EXPENSE_SOURCE, asOf);
 const expenseData = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   total: 42,
   period: { fromDate: '2026-08-01', toDate: '2026-08-25', defaultedToCurrentMonth: true },
@@ -137,9 +138,9 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
     assert.equal(r.kind, 'answer');
     if (r.kind !== 'answer') return;
     assert.match(r.replyText, /^ค่าใช้จ่าย: 1,234,567\.50 บาท \(42 รายการ\)/);
-    assert.match(r.replyText, /\nช่วง: 2026-08-01 – 2026-08-25/);
+    assert.match(r.replyText, /\nช่วง: 1 สิงหาคม 2569 – 25 สิงหาคม 2569/);
     assert.match(r.replyText, /\nที่มา: รายการค่าใช้จ่าย/);
-    assert.match(r.replyText, /\nข้อมูล ณ 2026-08-25/);
+    assert.match(r.replyText, /\nข้อมูล ณ 25 สิงหาคม 2569/);
     assert.equal(r.webLinks[0]?.path, '/companies/c1/expenses');
     assert.equal(r.sourceRefs[0]?.label, 'รายการค่าใช้จ่าย');
     // Invariant 7: Thai copy stays NFC (NFKC would decompose สระอำ and break anchored matching).
@@ -182,17 +183,29 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
 
   it('uses the effective source period even for one-sided or conflicting proposed dates, and never fabricates one', () => {
     const requested = formatPreparedSimpleRead(EXPENSE, expenseOutput(expenseData()), { ...TH, proposedInput: { fromDate: '2026-07-01', toDate: '2026-07-31' } });
-    if (requested.kind === 'answer') assert.match(requested.replyText, /\nช่วง: 2026-08-01 – 2026-08-25/);
+    if (requested.kind === 'answer') assert.match(requested.replyText, /\nช่วง: 1 สิงหาคม 2569 – 25 สิงหาคม 2569/);
     const oneSided = formatPreparedSimpleRead(EXPENSE, expenseOutput(expenseData()), { ...TH, proposedInput: { fromDate: '2026-08-01' } });
-    if (oneSided.kind === 'answer') assert.match(oneSided.replyText, /\nช่วง: 2026-08-01 – 2026-08-25/);
+    if (oneSided.kind === 'answer') assert.match(oneSided.replyText, /\nช่วง: 1 สิงหาคม 2569 – 25 สิงหาคม 2569/);
     // No proposed dates (the tool's current-month default): the tool's own echoed window is stated.
     const echoed = formatPreparedSimpleRead(EXPENSE, expenseOutput(expenseData()), { ...TH, proposedInput: {} });
-    if (echoed.kind === 'answer') assert.match(echoed.replyText, /\nช่วง: 2026-08-01 – 2026-08-25/);
+    if (echoed.kind === 'answer') assert.match(echoed.replyText, /\nช่วง: 1 สิงหาคม 2569 – 25 สิงหาคม 2569/);
     // Neither names a period → the line is omitted rather than assuming a default the tool may not have used.
     const noPeriod = expenseData();
     delete noPeriod['period'];
     const omitted = formatPreparedSimpleRead(EXPENSE, expenseOutput(noPeriod), TH);
     if (omitted.kind === 'answer') assert.doesNotMatch(omitted.replyText, /ช่วง:/);
+  });
+
+  it('localizes the tool-defaulted month and uses the Bangkok date for an as-of instant near UTC midnight', () => {
+    const output = expenseOutput(expenseData({
+      period: { fromDate: '2026-08-01', toDate: '2026-08-31', defaultedToCurrentMonth: true },
+    }), '2026-08-25T18:00:00.000Z');
+    const r = formatPreparedSimpleRead(EXPENSE, output, { ...TH, proposedInput: {} });
+    assert.equal(r.kind, 'answer');
+    if (r.kind !== 'answer') return;
+    assert.match(r.replyText, /\nช่วง: 1 สิงหาคม 2569 – 31 สิงหาคม 2569/);
+    assert.match(r.replyText, /\nข้อมูล ณ 26 สิงหาคม 2569/);
+    assert.doesNotMatch(r.replyText, /2026-08-(?:01|25|26|31)/);
   });
 
   it('returns unverified when the total is absent or the summary is missing', () => {
