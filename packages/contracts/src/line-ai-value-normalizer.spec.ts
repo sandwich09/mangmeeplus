@@ -475,6 +475,17 @@ describe('resolvePeriodCandidates (spec §3.1)', () => {
     assert.ok(periods.every((period) => message.includes(period.span)));
   });
 
+  it('reads bounded punctuation-free Thai month abbreviations without finding March inside มีค่าใช้จ่าย', () => {
+    for (const message of ['สรุปค่าใช้จ่ายเดือน กค และ สค', 'สรุปค่าใช้จ่าย กค สค', 'ค่าใช้จ่ายเดือนกคและสค']) {
+      assert.deepEqual(extractValueCandidates(message, '2026-09-25').periods?.map((period) => period.monthKey),
+        ['2026-07', '2026-08']);
+    }
+    assert.deepEqual(extractValueCandidates('เดือนนี้มีค่าใช้จ่ายเท่าไหร่', '2026-09-25').periods?.map((period) => period.monthKey),
+      ['2026-09']);
+    assert.deepEqual(extractValueCandidates('ยอดค่าใช้จ่าย กค 2568', '2026-09-25').periods?.map((period) => period.monthKey),
+      ['2025-07']);
+  });
+
   it('emits no periods at all without an injected today (the resolver never reads the clock)', () => {
     assert.equal(extractValueCandidates('ยอดขายเดือนที่แล้ว').periods, undefined);
     assert.equal(extractValueCandidates('สวัสดีค่ะ', FRIDAY).periods, undefined);
