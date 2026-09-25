@@ -7,7 +7,7 @@
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiPeriodCandidate, LineAiValueCandidates, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta } from '@watchdog-bms/contracts';
-import { LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, isBusinessIntakeIntent, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, isBusinessIntakeIntent, parseLineAiPreparedPlan, resolvePeriodCandidates, unresolvedMonthName } from '@watchdog-bms/contracts';
 import { extractJson } from '../../../common/ai/extract-json';
 import type { AgentRunResult } from './agent-types';
 import { IntentRouterAgent, ROUTER_ENABLED_TOOLS, isSubjectCompatible, isZeroToolIntent } from './intent-router.agent';
@@ -563,6 +563,10 @@ export class OrchestratorAgent {
   async run(req: LineAiTurnRequest): Promise<AgentRunResult> {
     const startMs = Date.now();
     const maxToolCalls = this.config.aiMaxToolCalls;
+    const unresolvedMonth = isBusinessIntakeIntent(req.intakeIntent)
+      ? unresolvedMonthName(req.messageText, req.valueCandidates?.periods
+        ?? resolvePeriodCandidates(req.messageText, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })))
+      : null;
 
     // ponytail: provider created per-run; cheap for DisabledProvider, acceptable for local demo
     const provider = createProvider(this.config, { modelId: req.modelPolicy?.modelId });
@@ -595,7 +599,7 @@ export class OrchestratorAgent {
     // with a deterministic formatter — no router.route, native/model loop, critic, or composer. ANY
     // pre-call failure runs ZERO prepared calls and falls through to the fresh, non-narrowed route()
     // below; a post-call outcome is answered here (never re-executing the tool).
-    if (this.config.lineAiPreparedSimpleReadEnabled) {
+    if (this.config.lineAiPreparedSimpleReadEnabled && !unresolvedMonth) {
       if (req.preparedPlan) {
         const laneResult = await this.executePreparedSimpleRead(ctx, req, startMs);
         if (laneResult) return laneResult;
@@ -661,10 +665,12 @@ export class OrchestratorAgent {
     // provider capable) → JSON one-tool-at-a-time loop (10B) → deterministic plan dispatch.
     // Every path uses the same permission-checked tools, per-agent allowlists (domain
     // isolation), and deterministic fact-shaping (grounding).
-    let askUserQuestion: string | undefined;
+    let askUserQuestion: string | undefined = unresolvedMonth
+      ? `ชื่อเดือน "${unresolvedMonth}" หมายถึงเดือนใดคะ? กรุณาระบุชื่อเดือนเต็มหรือคำย่อ เช่น ก.ค.`
+      : undefined;
     let coverage: LineAiCoverageItem[] | undefined;
     let nativeRan = false;
-    if (plan.status !== 'UNROUTABLE' && !zeroToolIntent) {
+    if (plan.status !== 'UNROUTABLE' && !zeroToolIntent && !askUserQuestion) {
       const budget = maxToolCalls;
       let textOutputs: SpecialistOutput[] = [];
       if (this.config.lineAiTooluseLoopEnabled && typeof provider.generateWithTools === 'function') {
