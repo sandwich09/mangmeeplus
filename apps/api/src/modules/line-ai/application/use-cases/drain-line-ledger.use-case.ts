@@ -15,6 +15,7 @@ import { LineLedgerDeliveryService, lineLedgerDeliveryId, type LineLedgerClaim, 
 import { randomUUID } from 'node:crypto';
 import type { AiBudgetScope, LineAiTurnRequest, LineUserContext } from '@watchdog-bms/contracts';
 import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, type AiBudgetRefusalCode } from '@watchdog-bms/contracts';
+import { hashMessagePreview } from '../../domain/logic/line-ai-classifier.logic';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -231,7 +232,7 @@ export class DrainLineLedgerUseCase {
     const turnRequest: LineAiTurnRequest = {
       requestId: randomUUID(),
       webhookEventId: entry.webhookEventId || entry.id,
-      userContext,
+      userContext: { ...userContext, chatKeyHash: hashMessagePreview(entry.chatKey) },
       ...(modelPolicy && { modelPolicy }),
       messageText: entry.text,
       messagePreviewHash: entry.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16) || 'ledger',
@@ -274,6 +275,11 @@ export class DrainLineLedgerUseCase {
       return 'refused';
     }
     const sourceIds = await this.readEvidence.forTurn(turnRequest, response).catch(() => null);
+    const criterionRequest: LineAiTurnRequest = {
+      ...turnRequest,
+      userContext: { ...turnRequest.userContext, chatKeyHash: hashMessagePreview(entry.chatKey) },
+    };
+    const readFreeCriterion = sourceIds?.length === 0 && await this.readEvidence.isReadFreeExpenseCriterionConfirmation?.(criterionRequest, response).catch(() => false);
 
     const text = formatLineReply(response, this.config.webBaseUrl);
     // P12-3b: the identity was just re-resolved above (`userContext`), so a drained answer carries
@@ -290,6 +296,12 @@ export class DrainLineLedgerUseCase {
       userId: entry.userId, companyId: entry.companyId, fingerprint: originalAccess, requestId: turnRequest.requestId, ids: sourceIds,
       webhookEventId: entry.webhookEventId || entry.id, channelId,
       recipientHash: lineDeliveryRecipientHash(entry.chatKey, entry.chatKey, channelId),
+    } } : readFreeCriterion ? { access: {
+      kind: 'expense_criterion_confirmation', userId: entry.userId, companyId: entry.companyId,
+      membershipId: userContext.membershipId, fingerprint: originalAccess,
+      webhookEventId: entry.webhookEventId || entry.id, channelId,
+      recipientHash: lineDeliveryRecipientHash(entry.chatKey, entry.chatKey, channelId),
+      chatKeyHash: hashMessagePreview(entry.chatKey),
     } } : {}) };
     const completion: LineLedgerCompletion = { status: terminalStatusForLineTurn(response), refused: response.refused,
       errorCode: response.errorCode ?? null, replyPreview: response.replyText.slice(0, 240), toolCount: response.toolsInvoked.length };

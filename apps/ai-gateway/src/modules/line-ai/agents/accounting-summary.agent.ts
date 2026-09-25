@@ -245,7 +245,7 @@ export class AccountingSummaryAgent {
     // Spec §3.4: one period line per tool that echoed a window, appended AFTER the numbers it covers
     // and only for a tool whose read actually landed in `toolData`.
     const periodFacts: Array<{ tool: string; fact: AgentFact }> = [];
-    const toolData: Array<{ tool: string; data: unknown }> = [];
+    const toolData: Array<{ tool: string; data: unknown; input?: Record<string, unknown> }> = [];
     let asOf: string | undefined;
     let permissionDenied = false;
     let unsupportedModule = false;
@@ -264,7 +264,7 @@ export class AccountingSummaryAgent {
       if (result.status === 'unsupported_module') { unsupportedModule = true; continue; }
       if (result.status !== 'ok') { readFailed = true; continue; }
       if (!hasExplicitShape(result.data)) { readFailed = true; continue; }
-      toolData.push({ tool: tool.name, data: result.data });
+      toolData.push({ tool: tool.name, data: result.data, input: toolInput });
       if (asOf === undefined) asOf = result.asOf;
 
       if (tool.name === 'notifications.get_daily_summary') {

@@ -1753,9 +1753,9 @@ export function lineClarificationContentHash(item: Pick<LedgerSubRequestInput, '
 @Injectable()
 export class ProcessLineWebhookUseCase {
   private readonly logger = new Logger(ProcessLineWebhookUseCase.name);
-  private readonly deliveryAccess = new WeakMap<object, { userId: string; companyId: string; fingerprint: string; allowDuringSupportPause?: boolean }>();
+  private readonly deliveryAccess = new WeakMap<object, { userId: string; companyId: string; membershipId: string; fingerprint: string; allowDuringSupportPause?: boolean }>();
   private readonly deliveryDenialNotified = new WeakSet<object>();
-  private readonly deliverySources = new WeakMap<object, { requestId: string; ids: string[] | null }>();
+  private readonly deliverySources = new WeakMap<object, { requestId: string; ids: string[] | null; expenseSummary?: LineAiConversationContext['deliveredExpenseSummary']; expenseCriterionConfirmation?: boolean }>();
   private readonly deliveryDraftPreviews = new WeakMap<object, { context: RequestContext; chatKeyHash: string; requestId: string; previewId: string | null; phase: 'PENDING' | 'APPLIED' }>();
   private readonly deliveryReceiptSources = new WeakMap<object, { context: RequestContext; chatKeyHash: string;
     records: Map<string, string | null>; categories: Map<string, string | null>; draftChoices?: LineExpenseDraftRouteContext[] }>();
@@ -3599,18 +3599,32 @@ export class ProcessLineWebhookUseCase {
         if (updated.count !== 1) return null;
         return { messages, accepted: false };
       }
-      const producerId = randomUUID(), access = this.deliveryAccess.get(event), sources = this.deliverySources.get(event);
-      const topic = this.publicPolicyTopics.get(event);
+     const producerId = randomUUID(), access = this.deliveryAccess.get(event), sources = this.deliverySources.get(event);
+     const topic = this.publicPolicyTopics.get(event);
+      const recipientHash = lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? '');
       const authorizationJson = { v: 1, producerId,
         ...(topic ? { publicPolicy: { topic,
           recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? ''),
         } } : {}),
+        ...(access && sources?.ids?.length === 0 && sources.expenseCriterionConfirmation === true
+          && !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event) && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event) ? { access: {
+            kind: 'expense_criterion_confirmation', userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
+            fingerprint: access.fingerprint, webhookEventId, recipientHash, channelId: event.messagingChannelId ?? '',
+            chatKeyHash: chatKeyHashOf(event),
+          } } : {}),
         ...(access && sources?.ids?.length && !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event) && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event) ? { read: {
           userId: access.userId, companyId: access.companyId, fingerprint: access.fingerprint,
           requestId: sources.requestId, ids: sources.ids, webhookEventId,
-          recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? ''),
+          recipientHash,
           channelId: event.messagingChannelId ?? '',
         } } : {}),
+        ...(access && sources?.expenseSummary && sources.ids?.length && !this.deliveryDraftPreviews.has(event)
+          && !this.deliveryReceiptSources.has(event) && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event) ? { expenseSummary: {
+            userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
+            fingerprint: access.fingerprint, chatKeyHash: chatKeyHashOf(event), recipientHash,
+            statusBasis: sources.expenseSummary.statusBasis, continuationOfPrior: sources.expenseSummary.continuationOfPrior === true,
+            ranges: sources.expenseSummary.ranges,
+          } } : {}),
       };
       const outcome = await this.prisma.client.lineTurnOutcome.upsert({
         where: { webhookEventId },
@@ -3956,7 +3970,7 @@ export class ProcessLineWebhookUseCase {
     // Read once for the whole turn: the AI gate, the capability copy, and the gateway turn request
     // all need the same entitlement set. `null` stays the legacy fail-open sentinel.
     const entitledFeatureKeys = await loadEntitledFeatureKeys(this.prisma, companyId);
-    this.deliveryAccess.set(event, { userId: identity.userId, companyId,
+    this.deliveryAccess.set(event, { userId: identity.userId, companyId, membershipId: resolvedAccess.membershipId,
       fingerprint: resolvedLineDeliveryAccessFingerprint(identity.userId, companyId, resolvedAccess, entitledFeatureKeys),
       allowDuringSupportPause: deterministicCommand });
     const menuCommand = staffMenuCommand(event.messageText);
@@ -4210,7 +4224,7 @@ export class ProcessLineWebhookUseCase {
       // re-ask about THAT file instead of asking the customer to send one.
     }
 
-    const conversationContext = canQuery ? await this.loadConversationContext(companyId, identity.userId) : undefined;
+    const conversationContext = canQuery ? await this.loadConversationContext(companyId, identity.userId, event) : undefined;
     const valueCandidates = computeValueCandidates(normalizedText);
     // Item 10F: chatKey = groupId ?? roomId ?? userId (same as the buffer); open waiting_user
     // ledger entries ride the turn as DATA so the model can complete the ORIGINAL request.
@@ -5488,7 +5502,13 @@ export class ProcessLineWebhookUseCase {
     }
 
     // The API's own read rows are authoritative even when gateway telemetry omits them.
-    this.deliverySources.set(event, { requestId, ids: await this.readEvidence.forTurn(turnRequest, turnResponse).catch(() => null) });
+    const evidenceIds = await this.readEvidence.forTurn(turnRequest, turnResponse).catch(() => null);
+    const expenseSummary = evidenceIds && this.readEvidence.deliveredExpenseSummaryForTurn
+      ? await this.readEvidence.deliveredExpenseSummaryForTurn(turnRequest, turnResponse).catch(() => undefined) : undefined;
+    const expenseCriterionConfirmation = evidenceIds?.length === 0 && this.readEvidence.isReadFreeExpenseCriterionConfirmation
+      ? await this.readEvidence.isReadFreeExpenseCriterionConfirmation(turnRequest, turnResponse).catch(() => false) : false;
+    this.deliverySources.set(event, { requestId, ids: evidenceIds, ...(expenseSummary ? { expenseSummary } : {}),
+      ...(expenseCriterionConfirmation ? { expenseCriterionConfirmation: true } : {}) });
 
     // 9. Persist the turn + audit FIRST, so a LINE delivery failure can never lose the record.
     if (turnResponse.refusalReason === 'mutation_blocked') {
@@ -5992,7 +6012,7 @@ export class ProcessLineWebhookUseCase {
     } catch { /* telemetry cannot change the outcome it observes */ }
   }
 
-  private async loadConversationContext(companyId: string, userId: string): Promise<LineAiConversationContext | undefined> {
+  private async loadConversationContext(companyId: string, userId: string, event: LineTextEvent | LineReceiptUploadEvent): Promise<LineAiConversationContext | undefined> {
     const since = new Date(Date.now() - LINE_AI_CONTEXT_WINDOW_MINUTES * 60 * 1000);
     const rows = await this.prisma.client.aiTurn.findMany({
       where: {
@@ -6004,6 +6024,7 @@ export class ProcessLineWebhookUseCase {
       orderBy: { createdAt: 'desc' },
       take: LINE_AI_CONTEXT_MAX_TURNS,
       select: {
+        webhookEventId: true,
         createdAt: true,
         userMessagePreview: true,
         replyPreview: true,
@@ -6028,11 +6049,50 @@ export class ProcessLineWebhookUseCase {
         refused: row.refused,
       };
     });
+    let deliveredExpenseSummary: LineAiConversationContext['deliveredExpenseSummary'];
+    const current = this.deliveryAccess.get(event);
+    const chatKeyHash = chatKeyHashOf(event);
+    if (current && typeof this.prisma.client.lineTurnOutcome.findMany === 'function') {
+      const eventIds = rows.flatMap(row => typeof row.webhookEventId === 'string' ? [row.webhookEventId] : []);
+      const outcomes = eventIds.length ? await this.prisma.client.lineTurnOutcome.findMany({
+        where: { webhookEventId: { in: eventIds }, deliveredAt: { not: null } },
+        select: { webhookEventId: true, deliveredAt: true, authorizationJson: true },
+      }).catch(() => []) : [];
+      const proved = outcomes.flatMap(outcome => {
+        const root = outcome.authorizationJson as Record<string, unknown> | null;
+        const saved = root?.['expenseSummary'] as Record<string, unknown> | undefined;
+        const ranges = Array.isArray(saved?.['ranges']) ? saved['ranges'] : [];
+        if (!outcome.deliveredAt || !saved || saved['userId'] !== userId || saved['companyId'] !== companyId
+          || saved['membershipId'] !== current.membershipId
+          || saved['fingerprint'] !== current.fingerprint || saved['chatKeyHash'] !== chatKeyHash
+          || saved['recipientHash'] !== lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? '')
+          || saved['statusBasis'] !== 'exclude_rejected_voided' || ranges.length === 0 || ranges.length > 24) return [];
+        const parsed = ranges.flatMap(range => {
+          if (!range || typeof range !== 'object' || Array.isArray(range)) return [];
+          const item = range as Record<string, unknown>;
+          if (typeof item['fromDate'] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(item['fromDate'])
+            || typeof item['toDate'] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(item['toDate'])
+            || item['fromDate'] > item['toDate'] || !(item['branchId'] === null || typeof item['branchId'] === 'string')) return [];
+          return [{ fromDate: item['fromDate'], toDate: item['toDate'], branchId: item['branchId'] as string | null }];
+        });
+        if (parsed.length !== ranges.length) return [];
+        const deliveredAt = outcome.deliveredAt instanceof Date ? outcome.deliveredAt : new Date(String(outcome.deliveredAt));
+        if (!Number.isFinite(deliveredAt.getTime())) return [];
+        return [{ at: deliveredAt, descriptor: { version: 1 as const, deliveredAt: deliveredAt.toISOString(),
+          statusBasis: 'exclude_rejected_voided' as const,
+          ...(saved['continuationOfPrior'] === true ? { continuationOfPrior: true as const } : {}), ranges: parsed } }];
+      });
+      const sorted = proved.sort((a, b) => b.at.getTime() - a.at.getTime());
+      const distinctScopes = new Set(sorted.map(item => JSON.stringify(item.descriptor.ranges
+        .map(range => [range.fromDate, range.toDate, range.branchId]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))))));
+      if (sorted.length && (distinctScopes.size === 1 || sorted[0]!.descriptor.continuationOfPrior)) deliveredExpenseSummary = sorted[0]!.descriptor;
+    }
     return {
       windowMinutes: LINE_AI_CONTEXT_WINDOW_MINUTES,
       maxTurns: LINE_AI_CONTEXT_MAX_TURNS,
       lastTurnAt: recentTurns.at(-1)?.at,
       recentTurns,
+      ...(deliveredExpenseSummary ? { deliveredExpenseSummary } : {}),
     };
   }
 
@@ -6166,7 +6226,7 @@ export class ProcessLineWebhookUseCase {
     await this.recordShadowTurn(companyId);
     if (await this.refuseWhenLaunchRouteClosed(event, identity.userId, companyId, requestId)) return;
     const entitledFeatureKeys = await loadEntitledFeatureKeys(this.prisma, companyId);
-    this.deliveryAccess.set(event, { userId: identity.userId, companyId,
+    this.deliveryAccess.set(event, { userId: identity.userId, companyId, membershipId: access.membershipId,
       fingerprint: resolvedLineDeliveryAccessFingerprint(identity.userId, companyId, access, entitledFeatureKeys) });
     if (lineAssistantDisabledFor(entitledFeatureKeys)) {
       await this.deliverReply(event, formatRefusal('feature_disabled'));
@@ -6318,7 +6378,7 @@ export class ProcessLineWebhookUseCase {
     // LINE Intake Router: semantic classification of the media message
     // (expense evidence vs signature vs other) before any record is created.
     const conversationContext = access.permissions.includes('line.ai.query')
-      ? await this.loadConversationContext(companyId, identity.userId)
+      ? await this.loadConversationContext(companyId, identity.userId, event)
       : undefined;
     const caption = captionText?.trim() ?? '';
     const captionSuffix = caption ? ` ${caption}` : '';
