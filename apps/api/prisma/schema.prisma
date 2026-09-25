@@ -6503,6 +6503,8 @@ model ReimbursementPolicy {
   approverMode                  ReimbursementApproverMode    @default(MANAGER_ROLE)
   defaultApproverUserId         String?
   defaultApproverRole           String?                      @default("MANAGER")
+  /// Every role whose holders may approve (any one decides). `defaultApproverRole` keeps the first.
+  defaultApproverRoles          String[]                     @default([])
   allowSelfApproval             Boolean                      @default(false)
   requireReceipt                Boolean                      @default(true)
   allowMissingReceiptWithReason Boolean                      @default(false)

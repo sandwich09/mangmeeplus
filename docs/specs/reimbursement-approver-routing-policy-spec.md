@@ -5,6 +5,7 @@
 - Status: **Implemented and locally verified on the PR branch; UAT/Production release evidence is not claimed.**
 - Date: 2026-08-21
 - Latest owner decision: policy administrators choose one role, not a person or internal routing mode.
+- Amendment 2026-09-25 (owner): administrators may choose several roles; any holder of any selected role decides, first decision wins. See D1.
 - Parent: [[specs/reimbursement-approval-spec|Reimbursement and Approval Spec]] (item 14)
 - Related journey: [[specs/reimbursement-journey-uplift-spec|Reimbursement Journey Uplift Spec]]
 - Plan: [[plans/reimbursement-approver-routing-policy-plan|Reimbursement Policy Correctness Implementation Plan]]
@@ -94,6 +95,14 @@ The policy screen exposes:
 ```
 
 The client selects one logical role key. Mode and user are server-owned. The control shows role names only: no holder count, raw key, permission key, coverage enum, or quorum-like wording. A logical key may appear as secondary admin context only when duplicate display names need disambiguation.
+
+**Amendment 2026-09-25** (owner: "ให้ใส่ role เพิ่มได้ ทั้ง owner ceo หรือใดๆที่อยากใส่เพิ่ม"). The control is a checkbox list and the client sends one or more role keys (`defaultApproverRoles`). Every selected role must be selectable when it is saved.
+- At submit, the route freezes the union of actionable holders across all selected roles. The requester and self-approval rules are unchanged.
+- The OWNER fallback applies only when no selected role has an actionable holder.
+- A selected role that later loses approve capability contributes nobody.
+- The following keep only the first selected role, so the snapshot schema (§8) is unchanged: `defaultApproverRole`, `approverMode`, the snapshot `route.roleKey`/`effectiveTaskRole`, and the step's `approverRoleSnapshot`.
+- Known limit: if every frozen assignee of a pending step leaves, D4 recovery uses the first role plus OWNER, not every selected role.
+- Still out of scope: multi-step and amount-tiered routing.
 
 ### D2 — Canonical server mapping
 
@@ -452,7 +461,7 @@ The endpoint returns no employee directory, contact data, credentials, or raw pe
 type UpdateReimbursementPolicyInput = {
   expectedUpdatedAt?: string;          // required for a stored row
   approvalRequiredFromAmount?: string;
-  defaultApproverRole?: string;        // present only when explicitly edited
+  defaultApproverRoles?: string[];     // 1–20 role keys, present only when explicitly edited (D1 amendment 2026-09-25)
   allowSelfApproval?: boolean;
   requireReceipt?: boolean;
   allowMissingReceiptWithReason?: boolean;

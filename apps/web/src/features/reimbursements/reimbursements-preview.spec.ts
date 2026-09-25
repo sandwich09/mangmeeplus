@@ -42,9 +42,9 @@ describe('reimbursement document preview lifecycle', () => {
 });
 
 describe('reimbursement policy role-picker contract', () => {
-  it('uses a constrained role select with human outcome copy and no holder-count helper', () => {
-    assert.match(source, /<ThemedSelect[\s\S]*?id="reimbursement-approver-role"/);
-    assert.match(source, /ส่งใบเบิกให้ใครอนุมัติ\?/);
+  it('uses constrained role checkboxes (any holder decides) with human outcome copy and no holder-count helper', () => {
+    assert.match(source, /<legend[^>]*>ส่งใบเบิกให้ใครอนุมัติ\?<\/legend>[\s\S]*?roleOptions\.map[\s\S]*?type="checkbox"[\s\S]*?toggleRole\(option\.key\)/);
+    assert.match(source, /defaultApproverRoles: form\.defaultApproverRoles/);
     assert.match(source, /policyDecisionPreview\(\{\s*approvalRequiredFromAmount: form\.approvalRequiredFromAmount/);
     assert.doesNotMatch(source, /บทบาทผู้อนุมัติเริ่มต้น/);
     assert.doesNotMatch(source, /บทบาทนี้มีผู้รับผิดชอบ/);

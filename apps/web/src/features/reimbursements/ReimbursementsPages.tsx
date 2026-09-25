@@ -817,7 +817,11 @@ function PolicySettings({ companyId }: { companyId: string }) {
         getReimbursementPolicy(companyId),
         listReimbursementApproverOptions(companyId),
       ]);
-      setForm(policy); setApproverOptions(options); setApproverChanged(false);
+      // A role that no longer exists can be neither ticked nor unticked: drop it, and let the next
+      // save store the shorter list.
+      const roles = (policy.defaultApproverRoles ?? []).filter((key) => options.some((option) => option.key === key));
+      setForm({ ...policy, defaultApproverRoles: roles }); setApproverOptions(options);
+      setApproverChanged(roles.length !== (policy.defaultApproverRoles ?? []).length);
     }
     catch (e) { setError(err(e)); } finally { setLoading(false); }
   }, [companyId]);
@@ -829,7 +833,7 @@ function PolicySettings({ companyId }: { companyId: string }) {
       await updateReimbursementPolicy(companyId, {
         ...(form.id !== 'default' && { expectedUpdatedAt: form.updatedAt }),
         approvalRequiredFromAmount: form.approvalRequiredFromAmount,
-        ...(approverChanged && { defaultApproverRole: form.defaultApproverRole }),
+        ...(approverChanged && { defaultApproverRoles: form.defaultApproverRoles }),
         allowSelfApproval: form.allowSelfApproval,
         requireReceipt: form.requireReceipt,
         allowMissingReceiptWithReason: form.allowMissingReceiptWithReason,
@@ -850,14 +854,23 @@ function PolicySettings({ companyId }: { companyId: string }) {
   if (!form) return <ErrorBanner message={error ?? 'โหลดนโยบายไม่สำเร็จ'} />;
 
   const roleBasedRoute = ['MANAGER_ROLE', 'OWNER_ROLE', 'CUSTOM_ROLE'].includes(form.approverMode);
-  const selectedOption = approverOptions.find((option) => option.key === form.defaultApproverRole);
-  const selectableOptions = approverOptions.filter((option) => option.selectable || option.key === form.defaultApproverRole);
+  // A legacy person-based route ticks nothing until a role is picked.
+  const selectedRoles: string[] = roleBasedRoute || approverChanged ? form.defaultApproverRoles ?? [] : [];
+  const selectedOptions = approverOptions.filter((option) => selectedRoles.includes(option.key));
+  const roleOptions = approverOptions.filter((option) => option.selectable || selectedRoles.includes(option.key));
   const readyOptions = approverOptions.filter((option) => option.selectable);
-  const routeReady = form.status !== 'ACTIVE' || (approverChanged
-    ? Boolean(selectedOption?.selectable)
-    : !roleBasedRoute || Boolean(selectedOption?.selectable));
-  const roleLabel = approverRoleName(selectedOption);
-  const ownerRoute = selectedOption?.key === 'OWNER';
+  const rolesNotReady = selectedOptions.some((option) => !option.selectable);
+  const routeReady = !(roleBasedRoute || approverChanged)
+    || (selectedRoles.length > 0 && (form.status !== 'ACTIVE' || !rolesNotReady));
+  const roleLabel = selectedOptions.map(approverRoleName).join(' หรือ ');
+  const ownerRoute = selectedRoles.includes('OWNER');
+  const toggleRole = (key: string) => {
+    setApproverChanged(true);
+    setForm((f: any) => ({
+      ...f,
+      defaultApproverRoles: selectedRoles.includes(key) ? selectedRoles.filter((role) => role !== key) : [...selectedRoles, key],
+    }));
+  };
 
   return (
     <form onSubmit={save} className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -882,35 +895,28 @@ function PolicySettings({ companyId }: { companyId: string }) {
               <label className="mb-1.5 block text-xs font-semibold text-gray-600">ต้องอนุมัติเมื่อยอดตั้งแต่ (บาท)</label>
               <input className={inputClass} type="number" min="0" step="0.01" required value={form.approvalRequiredFromAmount} onChange={e => setForm((f: any) => ({ ...f, approvalRequiredFromAmount: e.target.value }))} />
             </div>
-            <div>
-              <label htmlFor="reimbursement-approver-role" className="mb-1.5 block text-xs font-semibold text-gray-600">ส่งใบเบิกให้ใครอนุมัติ?</label>
-              <ThemedSelect
-                id="reimbursement-approver-role"
-                aria-label="ส่งใบเบิกให้ใครอนุมัติ"
-                className={inputClass}
-                value={roleBasedRoute || approverChanged ? form.defaultApproverRole ?? '' : ''}
-                onChange={e => { setApproverChanged(true); setForm((f: any) => ({ ...f, defaultApproverRole: e.target.value })); }}
-                disabled={readyOptions.length === 0}
-                required={roleBasedRoute || approverChanged}
-              >
-                <option value="">เลือกบทบาทผู้อนุมัติ</option>
-                {selectableOptions.map((option) => (
-                  <option key={option.key} value={option.key} disabled={!option.selectable}>
-                    {approverRoleName(option)}{option.selectable ? '' : ' — ยังไม่พร้อมใช้งาน'}
-                  </option>
+            <fieldset className="min-w-0">
+              <legend className="mb-1.5 block text-xs font-semibold text-gray-600">ส่งใบเบิกให้ใครอนุมัติ?</legend>
+              <p className="mb-2 text-xs text-gray-500">เลือกได้หลายบทบาท ทุกคนในบทบาทที่เลือกอนุมัติได้ ระบบใช้ผลจากคนแรกที่อนุมัติหรือปฏิเสธ</p>
+              <div className="space-y-2">
+                {roleOptions.map((option) => (
+                  <label key={option.key} className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-800 transition hover:border-brand-200">
+                    <span className="min-w-0">{approverRoleName(option)}{option.selectable ? '' : ' — ยังไม่พร้อมใช้งาน'}</span>
+                    <input type="checkbox" className="h-4 w-4 shrink-0" checked={selectedRoles.includes(option.key)} onChange={() => toggleRole(option.key)} />
+                  </label>
                 ))}
-              </ThemedSelect>
+              </div>
               {readyOptions.length === 0 ? (
                 <p className="mt-1 text-xs text-error-600">ยังไม่มีบทบาทที่พร้อมอนุมัติ กรุณาให้ผู้ดูแลเพิ่มสิทธิ์และพนักงานในหน้าบทบาทและสิทธิ์</p>
-              ) : !selectedOption?.selectable && roleBasedRoute && form.defaultApproverRole ? (
-                <p className="mt-1 text-xs text-error-600">บทบาทที่ตั้งไว้ยังไม่มีคนพร้อมอนุมัติ กรุณาเลือกบทบาทใหม่</p>
-              ) : !selectedOption?.selectable && !roleBasedRoute && !approverChanged ? (
+              ) : rolesNotReady ? (
+                <p className="mt-1 text-xs text-error-600">บางบทบาทที่เลือกยังไม่มีคนพร้อมอนุมัติ กรุณาเอาออกหรือเลือกบทบาทอื่น</p>
+              ) : !roleBasedRoute && !approverChanged ? (
                 <p className="mt-1 text-xs text-warning-700">การตั้งค่าเดิมระบุผู้อนุมัติเป็นรายบุคคล หากต้องการเปลี่ยนเส้นทางให้เลือกบทบาทใหม่</p>
-              ) : !selectedOption?.selectable ? (
-                <p className="mt-1 text-xs text-gray-500">เลือกบทบาทของผู้รับผิดชอบ ไม่ต้องพิมพ์ชื่อหรือตัวแปรระบบ</p>
+              ) : selectedRoles.length === 0 ? (
+                <p className="mt-1 text-xs text-gray-500">เลือกอย่างน้อย 1 บทบาท</p>
               ) : null}
-              {!ownerRoute && <p className="mt-1 text-xs text-gray-500">ถ้ายังไม่มีคนในบทบาทนี้ เจ้าของกิจการเป็นผู้อนุมัติ</p>}
-            </div>
+              {!ownerRoute && <p className="mt-1 text-xs text-gray-500">ถ้ายังไม่มีคนในบทบาทที่เลือก เจ้าของกิจการเป็นผู้อนุมัติ</p>}
+            </fieldset>
             <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200 sm:col-span-2">
               <span className="min-w-0">
                 <span className="block text-sm font-semibold text-gray-800">ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้</span>

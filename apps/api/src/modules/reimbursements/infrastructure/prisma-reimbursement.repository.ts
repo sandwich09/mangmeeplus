@@ -2847,6 +2847,10 @@ export class PrismaReimbursementRepository {
       approverMode: row.approverMode,
       defaultApproverUserId: opt(row.defaultApproverUserId),
       defaultApproverRole: opt(row.defaultApproverRole),
+      // A row saved before roles became a list (or by seed) still routes to its single role.
+      defaultApproverRoles: row.defaultApproverRoles?.length
+        ? row.defaultApproverRoles
+        : row.defaultApproverRole ? [row.defaultApproverRole] : [],
       allowSelfApproval: row.allowSelfApproval,
       requireReceipt: row.requireReceipt,
       allowMissingReceiptWithReason: row.allowMissingReceiptWithReason,
