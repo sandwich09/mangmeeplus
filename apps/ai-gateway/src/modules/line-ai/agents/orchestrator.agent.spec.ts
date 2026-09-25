@@ -1013,6 +1013,17 @@ describe('OrchestratorAgent period resolution', () => {
     });
   }
 
+  it('does not serve a two-month expense request from a one-call prepared plan', async () => {
+    const message = 'สรุปค่าใช้จ่ายเดือนกรกฏาคม และ สิงหาคม';
+    const [july, august] = extractValueCandidates(message, '2026-09-25').periods ?? [];
+    assert.ok(july && august);
+    const { client } = recordingErpTools(july.fromDate, july.toDate);
+    const orchestrator = new OrchestratorAgent(client, laneConfig(['expense.list_recent::single_metric']));
+    const logs = sink(orchestrator);
+    await orchestrator.run(periodRequest(message, 'expense.list_recent', { fromDate: july.fromDate, toDate: july.toDate }));
+    assert.ok(laneLogs(logs).some((entry) => entry.reason === 'multiple_periods'));
+  });
+
   it('drops a date the model invented and keeps one a candidate backs (prepared lane)', async () => {
     const message = 'ยอดขายเดือนที่แล้วเท่าไหร่';
     const resolved = period(message);

@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { connect, type AddressInfo } from 'node:net';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage } from 'node:http';
-import { LINE_AI_CONTEXT_MAX_TURNS } from '@watchdog-bms/contracts';
+import { LINE_AI_CONTEXT_MAX_TURNS, extractValueCandidates } from '@watchdog-bms/contracts';
 import { validatePayload, payloadToTurnRequest, makeHttpServer, loadInternalSecret, loadJwtSecret, readBody, PayloadTooLargeError } from './runtime';
 import { appendUsage } from '../common/usage/usage-context';
 
@@ -47,6 +47,14 @@ after(async () => {
 // ── validatePayload tests ──────────────────────────────────────────────────────
 
 describe('AgentCore Runtime – payload validation', () => {
+  it('preserves validated period candidates and rejects invented wire dates', () => {
+    const messageText = 'สรุปค่าใช้จ่ายเดือนกรกฏาคม และ สิงหาคม';
+    const valueCandidates = extractValueCandidates(messageText, '2026-09-25');
+    const base = { turnId: 't', companyId: 'c', userId: 'u', messageText };
+    assert.deepEqual(payloadToTurnRequest(validatePayload({ ...base, valueCandidates })!).valueCandidates, valueCandidates);
+    const forged = { ...valueCandidates, periods: [{ ...valueCandidates.periods![0]!, fromDate: '2025-01-01' }] };
+    assert.deepEqual(payloadToTurnRequest(validatePayload({ ...base, valueCandidates: forged })!).valueCandidates, valueCandidates);
+  });
   it('loads the internal secret from its exact ARN instead of runtime metadata', async () => {
     const env: NodeJS.ProcessEnv = {
       AI_GATEWAY_INTERNAL_SECRET_ARN: 'arn:aws:secretsmanager:ap-southeast-1:123:secret:watchdog-bms/production/ai-gateway-internal-secret-x',
