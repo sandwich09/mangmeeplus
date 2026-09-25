@@ -2256,6 +2256,21 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   // EXP-UX-01: `?highlight=<expenseId>` is written by ส่งตรวจสอบ. Always the id, never "the newest
   // row" — with two people submitting at once, "newest" points at somebody else's document.
   const highlightId = searchParams.get('highlight') ?? '';
+  const [highlightReadyId, setHighlightReadyId] = useState('');
+  useEffect(() => {
+    if (!highlightId || sourceView) return;
+    let active = true;
+    // A just-submitted backdated document must open in its document month, where the list now lives.
+    void getExpense(companyId, highlightId)
+      .then((expense) => {
+        if (!active) return;
+        const documentDate = expense.expenseDate.slice(0, 10);
+        if (isCivilDate(documentDate)) { setGran('month'); setMonth(civilPeriodKey(documentDate)); }
+      })
+      .catch(() => {}) // A stale or inaccessible highlight must not block the list.
+      .finally(() => { if (active) setHighlightReadyId(highlightId); });
+    return () => { active = false; };
+  }, [companyId, highlightId, sourceView, setGran, setMonth]);
   const focusedHighlight = useRef('');
   const scrolledToHighlight = useRef('');
   const branchFilter = useBranchFilter();
@@ -2278,6 +2293,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   useEffect(() => { if (sourceView) { setChip('all'); setQuery(''); } }, [sourceView, requestedFrom, requestedTo, setChip, setQuery]);
 
   const load = useCallback(async () => {
+    if (highlightId && !sourceView && highlightReadyId !== highlightId) return;
     const version = ++loadVersion.current;
     setLoading(true); setRows([]); setError(null);
     try {
@@ -2291,7 +2307,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
             // §11.4: scoped to the checklist's range when the URL carries a valid one, every period
             // otherwise (§8 - the chip's own link, so old documents can be filled in any time).
             : sourceView === 'addressMissing' ? addressMissingListFilter(requestedFrom, requestedTo)
-            : { uploadedFromDate: fromDate, uploadedToDate: toDate }),
+            : { fromDate, toDate }),
           page: nextPage, pageSize: 200,
         });
         if (version !== loadVersion.current) return;
@@ -2307,7 +2323,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
     }
     finally { if (version === loadVersion.current) setLoading(false); }
     // `branchFilter` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
-  }, [companyId, branchId, fromDate, toDate, sourceView, requestedFrom, requestedTo]);
+  }, [companyId, branchId, fromDate, toDate, sourceView, requestedFrom, requestedTo, highlightId, highlightReadyId]);
   useEffect(() => { void load(); return () => { loadVersion.current += 1; }; }, [load]);
   useEffect(() => {
     setCategoryNamesLoading(true);
@@ -2398,7 +2414,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
     const version = loadVersion.current;
     setExporting(true); setExportError(null); setExportNotice(null);
     try {
-      const result = await createAccountantPackage(companyId, { dateField: sourceView === 'confirmed' ? 'expenseDate' : 'uploadedAt', fromDate, toDate, columnSet, ...(branchId ? { branchId } : {}) });
+      const result = await createAccountantPackage(companyId, { dateField: 'expenseDate', fromDate, toDate, columnSet, ...(branchId ? { branchId } : {}) });
       if (version !== loadVersion.current) return;
       // The package covers confirmed expenses only. Downloading an empty workbook reads as a broken
       // export; say which rows it would have contained instead.
@@ -2457,7 +2473,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
               : <ThemedDate mode="month" className={cx(inputClass, 'w-auto shrink-0 whitespace-nowrap')} value={month} onChange={(e) => setMonth(e.target.value)} />}
             {gran === 'day' && <button className={cx(ghostClass, 'shrink-0 whitespace-nowrap px-3')} onClick={() => setDay(todayCivilDate())}>{t('expenses.today', locale)}</button>}
           </div>
-          <p className="mt-1 text-xs text-gray-400">{t('expenses.intake_filter_desc', locale)}</p>
+          <p className="mt-1 text-xs text-gray-400">{t('expenses.document_filter_desc', locale)}</p>
         </div>}
         {/* Export uses the shared dialog so opening options never resizes this toolbar. */}
         {(!sourceView || sourceView === 'confirmed') && (

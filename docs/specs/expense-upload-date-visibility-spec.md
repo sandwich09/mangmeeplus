@@ -1,5 +1,7 @@
 # Expense Upload-Date Visibility and Late-Document Tag Spec
 
+> Historical decision (2026-08-15): the main Expenses list used the intake date. The main-list period and export decisions in this document are superseded by [Expense document-date list filter](expense-document-date-list-filter-2026-09-25.md). Both-date labels and the late-document tag remain in effect.
+
 ## 1. Status
 
 v0.3, 2026-08-15. **Implemented and locally verified.**

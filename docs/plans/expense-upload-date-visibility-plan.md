@@ -1,5 +1,7 @@
 # Expense Upload-Date Visibility Plan
 
+> Historical implementation plan. The main-list period and export behavior is superseded by [Expense document-date list filter plan](expense-document-date-list-filter-2026-09-25.md).
+
 ## 1. Status
 
 v0.3, 2026-08-15. **Implemented and locally verified.**
