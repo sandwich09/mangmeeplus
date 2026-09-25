@@ -503,6 +503,8 @@ describe('resolvePeriodCandidates (spec §3.1)', () => {
     assert.equal(unresolvedMonthName(unclearSecond, extractValueCandidates(unclearSecond, '2026-09-25').periods ?? []), 'สิงหาตน');
     const unclearShort = 'สรุปค่าใช้จ่ายเดือนกคและสข';
     assert.equal(unresolvedMonthName(unclearShort, extractValueCandidates(unclearShort, '2026-09-25').periods ?? []), 'สข');
+    const bareUnclear = 'สรุปค่าใช้จ่าย กรกดาคน และ สิงหาคม';
+    assert.equal(unresolvedMonthName(bareUnclear, extractValueCandidates(bareUnclear, '2026-09-25').periods ?? []), 'กรกดาคน');
     assert.equal(unresolvedMonthName('ค่าใช้จ่ายเดือนกข', []), 'กข');
     const current = extractValueCandidates('เดือนนี้มีค่าใช้จ่ายเท่าไหร่', '2026-09-25').periods ?? [];
     assert.equal(unresolvedMonthName('เดือนนี้มีค่าใช้จ่ายเท่าไหร่', current), null);

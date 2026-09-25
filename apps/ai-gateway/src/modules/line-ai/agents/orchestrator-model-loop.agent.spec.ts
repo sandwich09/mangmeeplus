@@ -160,6 +160,15 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
     assert.match(unclearSecondResult.replyText, /สิงหาตน.*หมายถึงเดือนใด/);
 
     calls.length = 0;
+    const bareTypoText = 'สรุปค่าใช้จ่าย กรกดาคน และ สิงหาคม';
+    const bareTypoReq = { ...req, intakeIntent: 'BUSINESS_READ_QUESTION', messageText: bareTypoText,
+      valueCandidates: extractValueCandidates(bareTypoText, '2026-09-25') } as LineAiTurnRequest;
+    installFetch(plan, oneJulyCall);
+    const bareTypoResult = await new OrchestratorAgent(erpTools, makeConfig()).run(bareTypoReq);
+    assert.equal(calls.length, 0, 'a separated misspelling must not default to September');
+    assert.match(bareTypoResult.replyText, /กรกดาคน.*หมายถึงเดือนใด/);
+
+    calls.length = 0;
     installFetch(plan, oneJulyCall);
     const failedAugust = { invoke: async (tool: any, ctx: any, input: any) => input.fromDate === august!.fromDate
       ? { toolName: tool.name, status: 'unavailable', asOf: '2026-09-25T03:50:00.000Z', sourceRefs: [] }
