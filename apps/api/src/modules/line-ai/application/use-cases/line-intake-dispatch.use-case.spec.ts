@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { resolveTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
-import { chatKeyHashOf, lineClarificationContentHash, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isExactStandaloneGreeting } from './process-line-webhook.use-case';
+import { chatKeyHashOf, lineClarificationContentHash, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isExactStandaloneGreeting, isUtilityBillSaveRequest } from './process-line-webhook.use-case';
 import { isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import { receiptStatusQuestion, receiptProgressLabel } from '../../domain/logic/line-receipt-status.logic';
 import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
@@ -238,6 +238,7 @@ function makeHarness(opts: {
   const createUploadIntentCalls: any[] = [];
   const completeAttachmentCalls: any[] = [];
   const createExpenseCalls: any[] = [];
+  const draftKeys = new Map<string, string>();
   const candidateQueries: any[] = [];
   const correctionCalls: any[] = [];
   const linkAttachmentCalls: any[] = [];
@@ -321,7 +322,16 @@ function makeHarness(opts: {
       if (capturedRows.has(_input.expenseId)) capturedRows.get(_input.expenseId).duplicateStatus = duplicateStatus;
       return { openCandidates: matched.length, duplicateStatus };
     },
-    createExpense: async (input: any) => { createExpenseCalls.push(input); const saved = emptyMedia('expense-clarified-1', { primaryAttachmentId: null, ...input }); capturedRows.set(saved.id, saved); return structuredClone(saved); },
+    createExpense: async (input: any, withinTx?: (tx: any, expense: any) => Promise<void>, db?: any) => {
+      createExpenseCalls.push(input);
+      const existingId = input.draftIdempotencyKey && draftKeys.get(input.draftIdempotencyKey);
+      if (existingId) return structuredClone(capturedRows.get(existingId));
+      const saved = emptyMedia('expense-clarified-1', { primaryAttachmentId: null, ...input });
+      capturedRows.set(saved.id, saved);
+      if (input.draftIdempotencyKey) draftKeys.set(input.draftIdempotencyKey, saved.id);
+      await withinTx?.(db ?? prisma.client, saved);
+      return structuredClone(saved);
+    },
     linkAttachment: async (...args: any[]) => {
       linkAttachmentCalls.push(args);
       const saved = capturedRows.get(args[0]);
@@ -2514,7 +2524,7 @@ describe('LINE intake dispatch – media path', () => {
       fields: {},
     },
     {
-      name: 'multi-document image', expected: /สรุปหลายรายการ/,
+      name: 'multi-document image', expected: /เอกสารมากกว่า 1 ฉบับ/,
       intent: 'EXPENSE_DOCUMENT_CAPTURE' as const,
       classification: businessClassification({ contentKind: 'MULTI_DOCUMENT', documentKind: 'NEEDS_REVIEW', requiresClarification: true, missingRequiredSignals: ['MULTIPLE_DOCUMENTS'] }),
       fields: { grandTotalAmount: '900.00' },
@@ -2542,6 +2552,11 @@ describe('LINE intake dispatch – media path', () => {
       assert.equal(pendingMediaRows.length, preservesMultiple ? 1 : 0);
       assert.equal(h.captureState.groups.length, 0, 'the group lane is withdrawn');
       assert.match(h.replies[0] ?? '', scenario.expected);
+      if (preservesMultiple) {
+        assert.match(h.replies[0] ?? '', /ตอบ 3 .*ส่งเอกสารแยกทีละภาพ/);
+        assert.doesNotMatch(h.replies[0] ?? '', /รูปนี้เป็นอะไร/);
+        assert.equal(pendingMediaRows[0].askedQuestionJson.detectedMultiDocument, true);
+      }
       if (persistsAsDraft) {
         // Truthful copy (appendix §25): a draft exists, so the reply says so rather than claiming
         // "ยังไม่ได้สร้างรายการ" beside a link to the record it created.
@@ -2555,6 +2570,175 @@ describe('LINE intake dispatch – media path', () => {
       }
     });
   }
+
+  it('creates only the prior utility receipt draft and reports the current bill as due', async () => {
+    for (const [billPeriod, receiptPeriod, intent] of [
+      ['กันยายน 2569', 'สิงหาคม 2569', 'EXPENSE_DOCUMENT_CAPTURE'],
+      ['09/69', '08/2569', 'BUSINESS_DOCUMENT_REFERENCE'],
+    ] as const) {
+      const { prisma, recordUpdates, pendingMediaRows } = makePrisma();
+      const classification = businessClassification({ contentKind: 'MULTI_DOCUMENT', documentKind: 'NEEDS_REVIEW', requiresClarification: true, missingRequiredSignals: ['MULTIPLE_DOCUMENTS'] });
+      const h = makeHarness({
+        permissions: ['expense.receipt.line_upload'],
+        routePlan: { status: 'ROUTED', intent, language: 'th', confidence: 0.95, documentClassification: classification },
+        receiptOcrResult: {
+          status: 'ok', classification,
+          utilityDocuments: [
+            { role: 'BILL_DUE', period: billPeriod, amount: '110.05', titleEvidence: 'ใบแจ้งค่าน้ำประปา', amountEvidence: 'รวม 110.05' },
+            { role: 'RECEIPT_PAID', period: receiptPeriod, amount: '82.28', titleEvidence: 'ใบเสร็จรับเงิน', amountEvidence: 'รวม 82.28' },
+          ],
+        }, prisma,
+      });
+
+      await h.useCase.executeReceiptUpload({ ...MEDIA_EVENT, webhookEventId: `evt-combined-water-sheet-${billPeriod}` });
+
+      assert.equal(h.initCalls.length, 1, billPeriod);
+      assert.equal(recordUpdates.length, 2, billPeriod);
+      assert.equal(pendingMediaRows.length, 0, billPeriod);
+      assert.equal(recordUpdates[0].data.aiVerificationSummaryJson.recognizedFields.grandTotalAmount, '82.28');
+      assert.equal(recordUpdates[1].data.sourceDocumentType, 'RECEIPT');
+      assert.equal(recordUpdates[1].data.aiVerificationSummaryJson.utilityDocuments[1].amount, '82.28');
+      assert.match(h.replies[0] ?? '', /รูปนี้มีเอกสารค่าน้ำ 2 งวด/);
+      assert.match(h.replies[0] ?? '', new RegExp(`งวดปัจจุบัน ${billPeriod}: ใบแจ้งค่าน้ำประปา 110\\.05 บาท — เป็นยอดที่เรียกเก็บ`));
+      assert.match(h.replies[0] ?? '', new RegExp(`งวดก่อน ${receiptPeriod}: ใบเสร็จ 82\\.28 บาท — บันทึกร่างค่าใช้จ่ายจากใบเสร็จแล้ว`));
+      assert.match(h.replies[0] ?? '', /ยังไม่ได้บันทึกจากภาพนี้/);
+      assert.match(h.replies[0] ?? '', /ไม่ได้รวมสองยอดหรือบันทึกการชำระเงินจากใบแจ้ง/);
+      assert.match(h.replies[0] ?? '', /บันทึกใบแจ้งหนี้ด้วย/);
+      assert.match(h.replies[0] ?? '', /เมื่อชำระงวดปัจจุบันแล้ว ส่งใบเสร็จของงวดนั้นเข้ามา/);
+      assert.doesNotMatch(h.replies[0] ?? '', /ส่งเอกสารแยก/);
+      assert.doesNotMatch(h.replies[0] ?? '', /192\.33/);
+    }
+  });
+
+  it('saves the current utility supplier bill only on an explicit source-bound follow-up, and reuses it on retry', async () => {
+    const chatKeyHash = chatKeyHashOf(TEXT_EVENT);
+    const source = {
+      id: 'expense-1', companyId: 'company-1', createdByUserId: 'user-1', branchId: 'branch-1',
+      captureSource: 'LINE_UPLOAD', status: 'DRAFT', sourceDocumentType: 'RECEIPT',
+      primaryAttachmentId: 'att-1', attachments: [{ id: 'att-1', purpose: 'expense.receipt.primary' }],
+      grandTotalAmount: '82.2800', updatedAt: new Date('2026-09-25T10:00:00Z'),
+      sourceChannelMetadataJson: { channel: 'LINE', chatKeyHash },
+      aiVerificationSummaryJson: { utilityDocuments: [
+        { role: 'BILL_DUE', period: '09/69', amount: '110.05', titleEvidence: 'ใบแจ้งค่าน้ำประปา', amountEvidence: 'รวม 110.05' },
+        { role: 'RECEIPT_PAID', period: '08/2569', amount: '82.28', titleEvidence: 'ใบเสร็จรับเงิน', amountEvidence: 'รวม 82.28' },
+      ] },
+    };
+    const recentCaptures = [{ id: source.id, expenseDate: new Date(), grandTotalAmount: '82.28', sourceDocumentType: 'RECEIPT', createdAt: new Date() }];
+    const h = makeHarness({
+      permissions: ['line.ai.query', 'expense.receipt.line_upload'],
+      recentCaptures,
+      expenseDetail: (id: string) => id === source.id ? source : undefined,
+    });
+    const command = 'ขอให้สร้างใบแจ้งหนี้ด้วย';
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: command });
+    assert.equal(h.createExpenseCalls.length, 1);
+    assert.equal(h.createExpenseCalls[0].sourceDocumentType, 'SUPPLIER_BILL');
+    assert.equal(h.createExpenseCalls[0].vatMode, 'NEEDS_REVIEW');
+    assert.equal(h.createExpenseCalls[0].grandTotalAmount, '110.0500');
+    assert.equal(h.createExpenseCalls[0].outstandingAmount, '110.0500');
+    assert.equal(h.createExpenseCalls[0].lineMessageId, undefined);
+    assert.equal(h.linkAttachmentCalls.length, 1);
+    assert.match(h.replies[0] ?? '', /ยังไม่ชำระและยังไม่บันทึกการจ่ายเงิน/);
+    assert.doesNotMatch(h.replies[0] ?? '', /82\.28/);
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-text-retry', lineMessageId: 'msg-text-retry', messageText: command });
+    assert.equal(h.linkAttachmentCalls.length, 1, 'retry must reuse the draft and original image');
+    assert.match(h.replies[1] ?? '', /มีร่างบิลค่าน้ำงวด 09\/69 110\.05 บาทอยู่แล้ว/);
+    recentCaptures.unshift({ id: 'later-document', expenseDate: new Date(), grandTotalAmount: '50', sourceDocumentType: 'OTHER_EXPENSE_DOCUMENT', createdAt: new Date() });
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-unrelated', lineMessageId: 'msg-unrelated', messageText: command });
+    assert.match(h.replies[2] ?? '', /มีเอกสารอื่นส่งต่อจากรูปค่าน้ำแล้ว/);
+    assert.equal(h.linkAttachmentCalls.length, 1);
+  });
+
+  it('does not treat a sales invoice request or an unproven utility amount as the saved bill', async () => {
+    assert.equal(isUtilityBillSaveRequest('สร้างใบแจ้งหนี้ให้ลูกค้าด้วย'), false);
+    assert.equal(isUtilityBillSaveRequest('ออกใบแจ้งหนี้ด้วย'), false);
+    assert.equal(isUtilityBillSaveRequest('ไม่ต้องสร้างใบแจ้งหนี้ด้วย'), false);
+    assert.equal(isUtilityBillSaveRequest('สร้างใบแจ้งหนี้ด้วยได้ไหม'), false);
+    assert.equal(isUtilityBillSaveRequest('ขอให้สร้างใบแจ้งหนี้ด้วย'), true);
+    const source = {
+      id: 'expense-1', companyId: 'company-1', createdByUserId: 'user-1', branchId: 'branch-1',
+      captureSource: 'LINE_UPLOAD', sourceDocumentType: 'RECEIPT', primaryAttachmentId: 'att-1',
+      attachments: [{ id: 'att-1', purpose: 'expense.receipt.primary' }], grandTotalAmount: '99.0000',
+      updatedAt: new Date(), sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(TEXT_EVENT) },
+      aiVerificationSummaryJson: { utilityDocuments: [
+        { role: 'BILL_DUE', period: '09/69', amount: '110.05', titleEvidence: 'ใบแจ้งค่าน้ำประปา' },
+        { role: 'RECEIPT_PAID', period: '08/2569', amount: '82.28', titleEvidence: 'ใบเสร็จรับเงิน' },
+      ] },
+    };
+    const h = makeHarness({
+      permissions: ['line.ai.query', 'expense.receipt.line_upload'],
+      recentCaptures: [{ id: source.id, expenseDate: new Date(), grandTotalAmount: '99', sourceDocumentType: 'RECEIPT', createdAt: new Date() }],
+      expenseDetail: source,
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'บันทึกใบแจ้งหนี้ด้วย' });
+    assert.equal(h.createExpenseCalls.length, 0);
+    assert.match(h.replies[0] ?? '', /ยังไม่พบใบแจ้งค่าน้ำ\/ค่าไฟ/);
+  });
+
+  it('requires capture permission and an unambiguous period before saving another utility bill', async () => {
+    const makeSource = (id: string, billPeriod: string, receiptPeriod: string, amount: string) => ({
+      id, companyId: 'company-1', createdByUserId: 'user-1', branchId: 'branch-1',
+      captureSource: 'LINE_UPLOAD', sourceDocumentType: 'RECEIPT', primaryAttachmentId: `att-${id}`,
+      attachments: [{ id: `att-${id}`, purpose: 'expense.receipt.primary' }], grandTotalAmount: amount,
+      updatedAt: new Date('2026-09-25T10:00:00Z'), sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(TEXT_EVENT) },
+      aiVerificationSummaryJson: { utilityDocuments: [
+        { role: 'BILL_DUE', period: billPeriod, amount: '110.05', titleEvidence: 'ใบแจ้งค่าน้ำประปา' },
+        { role: 'RECEIPT_PAID', period: receiptPeriod, amount, titleEvidence: 'ใบเสร็จรับเงิน' },
+      ] },
+    });
+    const sources = [makeSource('receipt-a', '09/69', '08/69', '82.28'), makeSource('receipt-b', '10/69', '09/69', '75.00')];
+    const recentCaptures = sources.map(source => ({ id: source.id, expenseDate: new Date(), grandTotalAmount: source.grandTotalAmount,
+      sourceDocumentType: 'RECEIPT', createdAt: new Date() }));
+    const denied = makeHarness({ permissions: ['line.ai.query'], recentCaptures, expenseDetail: (id: string) => sources.find(source => source.id === id) });
+    await denied.useCase.execute({ ...TEXT_EVENT, messageText: 'บันทึกใบแจ้งหนี้ด้วย' });
+    assert.equal(denied.createExpenseCalls.length, 0);
+    const allowed = makeHarness({ permissions: ['line.ai.query', 'expense.receipt.line_upload'], recentCaptures,
+      expenseDetail: (id: string) => sources.find(source => source.id === id) });
+    await allowed.useCase.execute({ ...TEXT_EVENT, messageText: 'บันทึกใบแจ้งหนี้ด้วย' });
+    assert.equal(allowed.createExpenseCalls.length, 0);
+    assert.match(allowed.replies[0] ?? '', /หลายรูป/);
+    await allowed.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-period-choice', lineMessageId: 'msg-period-choice', messageText: 'บันทึกใบแจ้งค่าน้ำงวด 09/69' });
+    assert.equal(allowed.createExpenseCalls.length, 1);
+    assert.equal(allowed.createExpenseCalls[0].sourceChannelMetadataJson.sourceReceiptExpenseId, 'receipt-a');
+  });
+
+  it('keeps an unrelated or same-period utility pair in review without a draft', async () => {
+    for (const [receiptPeriod, receiptAmount] of [
+      ['กันยายน 2569', '82.28'], ['มิถุนายน 2569', '82.28'],
+      ['อ่านงวดไม่ได้', '82.28'], ['สิงหาคม 2569', '999.99'],
+    ]) {
+      const { prisma, recordUpdates, pendingMediaRows } = makePrisma();
+      const classification = businessClassification({ contentKind: 'MULTI_DOCUMENT', documentKind: 'NEEDS_REVIEW', requiresClarification: true, missingRequiredSignals: ['MULTIPLE_DOCUMENTS'] });
+      const h = makeHarness({
+        permissions: ['expense.receipt.line_upload'],
+        routePlan: { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95, documentClassification: classification },
+        receiptOcrResult: { status: 'ok', classification, utilityDocuments: [
+          { role: 'BILL_DUE', period: 'กันยายน 2569', amount: '110.05', titleEvidence: 'ใบแจ้งค่าน้ำประปา', amountEvidence: 'รวม 110.05' },
+          { role: 'RECEIPT_PAID', period: receiptPeriod, amount: receiptAmount, titleEvidence: 'ใบเสร็จรับเงิน', amountEvidence: 'รวม 82.28' },
+        ] }, prisma,
+      });
+      await h.useCase.executeReceiptUpload({ ...MEDIA_EVENT, webhookEventId: `evt-utility-${receiptPeriod}` });
+      assert.equal(h.initCalls.length, 0, receiptPeriod);
+      assert.equal(recordUpdates.length, 0, receiptPeriod);
+      assert.equal(pendingMediaRows.length, 1, receiptPeriod);
+    }
+  });
+
+  it('does not create a utility bill draft from a reference route without capture permission', async () => {
+    const { prisma, recordUpdates } = makePrisma();
+    const classification = businessClassification({ contentKind: 'MULTI_DOCUMENT', documentKind: 'NEEDS_REVIEW', requiresClarification: true, missingRequiredSignals: ['MULTIPLE_DOCUMENTS'] });
+    const h = makeHarness({
+      permissions: ['line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_DOCUMENT_REFERENCE', language: 'th', confidence: 0.95, documentClassification: classification },
+      receiptOcrResult: { status: 'ok', classification, utilityDocuments: [
+        { role: 'BILL_DUE', period: '09/69', amount: '110.05', titleEvidence: 'ใบแจ้งค่าน้ำประปา', amountEvidence: 'รวม 110.05' },
+        { role: 'RECEIPT_PAID', period: '08/2569', amount: '82.28', titleEvidence: 'ใบเสร็จรับเงิน', amountEvidence: 'รวม 82.28' },
+      ] }, prisma,
+    });
+    await h.useCase.executeReceiptUpload({ ...MEDIA_EVENT, webhookEventId: 'evt-utility-no-capture' });
+    assert.equal(h.initCalls.length, 0);
+    assert.equal(recordUpdates.length, 0);
+  });
 
   it('denies an expense route before OCR or existing-expense lookup when capture permission is missing', async () => {
     const { prisma, recordUpdates } = makePrisma();
@@ -2989,6 +3173,19 @@ describe('LINE intake dispatch – RECEIPT-05 media-clarify follow-up', () => {
     assert.equal(h.routeRequests.length, 0, 'the model cannot reinterpret the safe multi-entry decision');
   });
 
+  it('"1 ค่าไฟ" cannot turn a known multi-document photo into one expense', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows, { askedQuestionJson: { kind: 'RECEIPT_CLARIFY', detectedMultiDocument: true } });
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], prisma });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-multi-choice-one', messageText: '1 ค่าไฟ' });
+
+    assert.equal(h.createExpenseCalls.length, 0);
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_MULTI_ENTRY_REVIEW');
+    assert.match(h.replies[0] ?? '', /เอกสารมากกว่า 1 ฉบับ/);
+    assert.equal(h.routeRequests.length, 0);
+  });
+
   it('keeps an illustration choice pending until the deferred answer is delivered', async () => {
     const { prisma, pendingMediaRows } = makePrisma();
     seedPendingRow(pendingMediaRows);
@@ -3144,6 +3341,9 @@ describe('classifyPendingMediaReply (RECEIPT-05 follow-up resolver)', () => {
   // with no picture attached to it, which made the assistant ask for a picture again.
   it('accepts the numbered choice the question actually offers', () => {
     for (const t of ['1', '1.', '1)', 'ข้อ 1', 'แรก', 'อันแรก', 'ข้อแรก', 'อันที่ 1']) {
+      assert.equal(classifyPendingMediaReply(t), 'receipt', t);
+    }
+    for (const t of ['1 ค่าไฟ', '1 ค่าน้ำ']) {
       assert.equal(classifyPendingMediaReply(t), 'receipt', t);
     }
     for (const t of ['2', '2)', 'ข้อ 2', 'สอง', 'อันที่สอง']) {

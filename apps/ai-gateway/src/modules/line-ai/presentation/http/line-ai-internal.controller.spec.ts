@@ -5,7 +5,7 @@ import type { CallHandler, ExecutionContext } from '@nestjs/common';
 import { defer, firstValueFrom } from 'rxjs';
 import { AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey } from '@watchdog-bms/contracts';
 import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
-import { BASE64_MEDIA_ROUTES, LineAiInternalController, parseReceiptOcrJson, receiptRereadImage, receiptItemsMismatch, validateIntakeOnePassReceipt } from './line-ai-internal.controller';
+import { BASE64_MEDIA_ROUTES, LineAiInternalController, parseReceiptOcrJson, parseUtilityDocuments, receiptRereadImage, receiptItemsMismatch, validateIntakeOnePassReceipt } from './line-ai-internal.controller';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import type { BusinessDocumentClassification, LineAiTurnRequest } from '@watchdog-bms/contracts';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
@@ -1264,6 +1264,55 @@ describe('business document classification gate', () => {
   });
 });
 
+describe('utility document parts from one image', () => {
+  const page = 'การประปานครหลวง\nใบแจ้งค่าน้ำประปา งวด กันยายน 2569\nรวมทั้งสิ้น 110.05\nใบเสร็จรับเงิน/ใบกำกับภาษี งวด สิงหาคม 2569\nรวมทั้งสิ้น 82.28';
+  const parts = [
+    { role: 'BILL_DUE', period: 'กันยายน 2569', amount: '110.05', titleEvidence: 'ใบแจ้งค่าน้ำประปา', amountEvidence: 'รวมทั้งสิ้น 110.05' },
+    { role: 'RECEIPT_PAID', period: 'สิงหาคม 2569', amount: '82.28', titleEvidence: 'ใบเสร็จรับเงิน/ใบกำกับภาษี', amountEvidence: 'รวมทั้งสิ้น 82.28' },
+  ];
+
+  it('keeps invoice and prior receipt amounts separate', () => {
+    assert.deepEqual(parseUtilityDocuments(JSON.stringify({ utilityDocuments: parts }), page), parts);
+    const alternateTitle = 'ใบสรุปรับเงิน/ใบกำกับภาษี';
+    const alternatePage = page.replace('ใบเสร็จรับเงิน/ใบกำกับภาษี', alternateTitle);
+    const alternateParts = [parts[0], { ...parts[1], titleEvidence: alternateTitle }];
+    assert.deepEqual(parseUtilityDocuments(JSON.stringify({ utilityDocuments: alternateParts }), alternatePage), alternateParts);
+  });
+
+  it('accepts two evidence roles for one billing period without summing them', () => {
+    const samePeriod = parts.map((part) => ({ ...part, period: 'กันยายน 2569' }));
+    const samePeriodPage = page.replace('สิงหาคม 2569', 'กันยายน 2569');
+    assert.equal(parseUtilityDocuments(JSON.stringify({ utilityDocuments: samePeriod }), samePeriodPage)?.length, 2);
+  });
+
+  it('separates an electricity invoice and receipt without treating a coupon as a third part', () => {
+    const electricity = 'การไฟฟ้านครหลวง\nใบแจ้งค่าไฟฟ้า งวด 09/2569\nยอดที่ต้องชำระ 1,234.56\nส่วนชำระ 1,234.56\nใบเสร็จรับเงิน งวด 08/2569\nรับชำระ 980.00';
+    const electricityParts = [
+      { role: 'BILL_DUE', period: '09/2569', amount: '1,234.56', titleEvidence: 'ใบแจ้งค่าไฟฟ้า', amountEvidence: 'ยอดที่ต้องชำระ 1,234.56' },
+      { role: 'RECEIPT_PAID', period: '08/2569', amount: '980.00', titleEvidence: 'ใบเสร็จรับเงิน', amountEvidence: 'รับชำระ 980.00' },
+    ];
+    assert.deepEqual(parseUtilityDocuments(JSON.stringify({ utilityDocuments: electricityParts }), electricity), electricityParts);
+    assert.equal(parseUtilityDocuments(JSON.stringify({ utilityDocuments: [...electricityParts, electricityParts[0]] }), electricity)?.length, 2);
+  });
+
+  it('does not turn a coupon, usage history, or an invented amount into another document', () => {
+    const coupon = `${page.split('ใบเสร็จรับเงิน')[0]}ส่วนชำระเงิน 110.05\nประวัติการใช้น้ำ 82.28`;
+    assert.equal(parseUtilityDocuments(JSON.stringify({ utilityDocuments: parts }), coupon), undefined);
+    assert.equal(parseUtilityDocuments(JSON.stringify({ utilityDocuments: [parts[0], { ...parts[1], amount: '999.99' }] }), page), undefined);
+    assert.equal(parseUtilityDocuments(JSON.stringify({ utilityDocuments: [parts[0], parts[0]] }), page), undefined);
+    const singleBill = 'การประปาส่วนภูมิภาค\nใบแจ้งค่าน้ำประปา (ไม่ใช่ใบเสร็จรับเงิน)\nงวด 09/65\nรวม 454.75';
+    assert.equal(parseUtilityDocuments(JSON.stringify({ utilityDocuments: [
+      { role: 'BILL_DUE', period: '09/65', amount: '454.75', titleEvidence: 'ใบแจ้งค่าน้ำประปา', amountEvidence: 'รวม 454.75' },
+      { role: 'RECEIPT_PAID', period: '09/65', amount: '454.75', titleEvidence: 'ใบเสร็จรับเงิน', amountEvidence: 'รวม 454.75' },
+    ] }), singleBill), undefined);
+  });
+
+  it('keeps unrelated ledgers and one ordinary bill outside this summary', () => {
+    assert.equal(parseUtilityDocuments(JSON.stringify({ utilityDocuments: parts }), 'รายจ่าย 110.05\nรายจ่าย 82.28'), undefined);
+    assert.equal(parseUtilityDocuments(JSON.stringify({ utilityDocuments: [parts[0]] }), page), undefined);
+  });
+});
+
 describe('receipt OCR image re-read for missing critical printed money', () => {
   // Typhoon reads a warped photo and loses the printed total line; stage 2 can only report an
   // ambiguous number, which the API's expense gate refuses. The receipt's real total is 180.00.
@@ -1320,6 +1369,9 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     firstLines?: Array<Record<string, unknown>>;
     secondLines?: Array<Record<string, unknown>>;
     rereadMarker?: string;
+    utilityDocuments?: Array<Record<string, unknown>>;
+    utilityFallbackParts?: Array<Record<string, unknown>>;
+    malformedUtilityExtraction?: boolean;
   } = {}) {
     const firstReadText = options.firstReadText ?? TYPHOON_TEXT_WITHOUT_TOTAL;
     const rereadText = options.rereadText ?? BEDROCK_REREAD_TEXT;
@@ -1336,6 +1388,13 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
         readCount += 1;
         const text = readCount === 1 ? firstReadText : rereadText;
         return { output: { message: { content: [{ text: JSON.stringify({ natural_text: text }) }] } } };
+      }
+      const extractCount = calls.filter((call) => call === 'extract').length;
+      if (options.malformedUtilityExtraction && extractCount <= 2) {
+        return { output: { message: { content: [{ text: JSON.stringify({ fields: { grandTotalAmount: firstTotal } }) }] } } };
+      }
+      if (options.utilityFallbackParts && extractCount > (options.malformedUtilityExtraction ? 2 : 1)) {
+        return { output: { message: { content: [{ text: JSON.stringify({ utilityDocuments: options.utilityFallbackParts }) }] } } };
       }
       const rereadMarker = options.rereadMarker ?? options.rereadVatAmount ?? 'Total Amount 180.00';
       const sawRereadText = JSON.stringify(content).includes(rereadMarker);
@@ -1358,6 +1417,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
               text: JSON.stringify({
                 classification: classification(total, sawRereadText ? false : (options.firstRequiresClarification ?? true), options.contentKind),
                 fields,
+                ...(options.utilityDocuments ? { utilityDocuments: options.utilityDocuments } : {}),
               }),
             }],
           },
@@ -1491,6 +1551,104 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       assert.equal(result.classification?.requiresClarification, true);
       assert.equal(result.fields, undefined, 'a multi-entry page cannot expose one expense draft');
       assert.deepEqual(bedrock.calls, ['read', 'extract'], 'multi-entry classification must not be weakened by a total re-read');
+    } finally {
+      bedrock.restore();
+      restoreFetch();
+    }
+  });
+
+  it('forces a combined MWA sheet to multi-document and returns only verified parts', async () => {
+    const page = 'การประปานครหลวง\nใบแจ้งค่าน้ำประปา งวด กันยายน 2569\nรวมทั้งสิ้น 110.05\nใบเสร็จรับเงิน งวด สิงหาคม 2569\nรวมทั้งสิ้น 82.28';
+    const utilityDocuments = [
+      { role: 'BILL_DUE', period: 'กันยายน 2569', amount: '110.05', titleEvidence: 'ใบแจ้งค่าน้ำประปา', amountEvidence: 'รวมทั้งสิ้น 110.05' },
+      { role: 'RECEIPT_PAID', period: 'สิงหาคม 2569', amount: '82.28', titleEvidence: 'ใบเสร็จรับเงิน', amountEvidence: 'รวมทั้งสิ้น 82.28' },
+    ];
+    const restoreFetch = stubTyphoon(page);
+    const bedrock = stubBedrock({ firstReadText: page, firstTotal: '110.05', contentKind: 'DOCUMENT', utilityDocuments });
+    try {
+      const controller = new LineAiInternalController(
+        { aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000,
+          modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', documentAiModelId: 'test-model' } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+      const result = await controller.receiptOcr('secret', request);
+      assert.equal(result.classification?.contentKind, 'MULTI_DOCUMENT');
+      assert.equal(result.fields, undefined);
+      assert.deepEqual(result.utilityDocuments, utilityDocuments);
+      assert.deepEqual(bedrock.calls, ['read', 'extract']);
+    } finally {
+      bedrock.restore();
+      restoreFetch();
+    }
+  });
+
+  it('recovers MWA parts when extraction selected only the current invoice', async () => {
+    const page = 'การประปานครหลวง ใบแจ้งค่าน้ำประปา\nงวด 09/69\nรวม 110.05\nใบเสร็จรับเงิน/ใบกำกับภาษี\nงวด 08/69\nรวม 82.28';
+    const parts = [
+      { role: 'BILL_DUE', period: '09/69', amount: '110.05', titleEvidence: 'ใบแจ้งค่าน้ำประปา', amountEvidence: 'รวม 110.05' },
+      { role: 'RECEIPT_PAID', period: '08/69', amount: '82.28', titleEvidence: 'ใบเสร็จรับเงิน/ใบกำกับภาษี', amountEvidence: 'รวม 82.28' },
+    ];
+    const restoreFetch = stubTyphoon(page);
+    const bedrock = stubBedrock({ firstReadText: page, firstTotal: '110.05', contentKind: 'DOCUMENT', utilityFallbackParts: parts });
+    try {
+      const controller = new LineAiInternalController(
+        { aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000,
+          modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', documentAiModelId: 'test-model' } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+      const result = await controller.receiptOcr('secret', request);
+      assert.equal(result.classification?.contentKind, 'MULTI_DOCUMENT');
+      assert.equal(result.fields, undefined);
+      assert.deepEqual(result.utilityDocuments, parts);
+      assert.deepEqual(result.fallbackReasons, ['UTILITY_PARTS_MISSING']);
+      assert.deepEqual(bedrock.calls, ['read', 'extract', 'extract']);
+    } finally {
+      bedrock.restore();
+      restoreFetch();
+    }
+  });
+
+  it('uses the utility-only read after two malformed general extractions', async () => {
+    const page = 'การประปานครหลวง ใบแจ้งค่าน้ำประปา\nงวด 09/69\nรวม 110.05\nใบเสร็จรับเงิน/ใบกำกับภาษี\nงวด 08/69\nรวม 82.28';
+    const parts = [
+      { role: 'BILL_DUE', period: '09/69', amount: '110.05', titleEvidence: 'ใบแจ้งค่าน้ำประปา', amountEvidence: 'รวม 110.05' },
+      { role: 'RECEIPT_PAID', period: '08/69', amount: '82.28', titleEvidence: 'ใบเสร็จรับเงิน/ใบกำกับภาษี', amountEvidence: 'รวม 82.28' },
+    ];
+    const restoreFetch = stubTyphoon(page);
+    const bedrock = stubBedrock({ firstReadText: page, firstTotal: '110.05', malformedUtilityExtraction: true, utilityFallbackParts: parts });
+    try {
+      const controller = new LineAiInternalController(
+        { aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000,
+          modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', documentAiModelId: 'test-model' } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+      const result = await controller.receiptOcr('secret', request);
+      assert.equal(result.classification?.contentKind, 'MULTI_DOCUMENT');
+      assert.equal(result.fields, undefined);
+      assert.deepEqual(result.utilityDocuments, parts);
+      assert.deepEqual(result.fallbackReasons, ['JSON_INCOMPLETE_OR_INVALID', 'UTILITY_PARTS_MISSING']);
+      assert.deepEqual(bedrock.calls, ['read', 'extract', 'extract', 'extract']);
+    } finally {
+      bedrock.restore();
+      restoreFetch();
+    }
+  });
+
+  it('does not mistake a single utility invoice saying it is not a receipt for two parts', async () => {
+    const page = 'ใบแจ้งค่าน้ำประปา (ไม่ใช่ใบเสร็จรับเงิน)\nการประปาส่วนภูมิภาค\nงวด 09/65\nรวมเงินที่ต้องชำระ 454.75';
+    const restoreFetch = stubTyphoon(page);
+    const bedrock = stubBedrock({ firstReadText: page, firstTotal: '454.75', firstRequiresClarification: false, contentKind: 'DOCUMENT' });
+    try {
+      const controller = new LineAiInternalController(
+        { aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000,
+          modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', documentAiModelId: 'test-model' } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+      const result = await controller.receiptOcr('secret', request);
+      assert.equal(result.classification?.contentKind, 'DOCUMENT');
+      assert.equal(result.fields?.grandTotalAmount, '454.75');
+      assert.equal(result.utilityDocuments, undefined);
+      assert.deepEqual(bedrock.calls, ['read', 'extract']);
     } finally {
       bedrock.restore();
       restoreFetch();
