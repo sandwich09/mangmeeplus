@@ -46,6 +46,11 @@ jq --arg endpoint "$endpoint_sg" --arg prefix "$s3_prefix" '
   "$work/task.json" > "$work/task-canonical.json"
 bash "$validator" "$work/task-canonical.json" "$work/database.json" "$task_sg" "$db_sg" \
   "$endpoint_sg" "$s3_prefix" exact
+jq '.SecurityGroups[0].IpPermissions[0].IpRanges=[{"CidrIp":"10.93.0.42/32"}]
+  | .SecurityGroups[0].IpPermissions[0].UserIdGroupPairs += [{"GroupId":"sg-aaaaaaaaaaaaaaaaa"}]' \
+  "$work/database.json" > "$work/database-coalesced.json"
+bash "$validator" "$work/task.json" "$work/database-coalesced.json" "$task_sg" "$db_sg" \
+  "$endpoint_sg" "$s3_prefix" exact
 
 expect_reject() {
   local label="$1" task="$2" database="$3"

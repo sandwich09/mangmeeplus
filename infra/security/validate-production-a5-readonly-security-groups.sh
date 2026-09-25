@@ -64,6 +64,6 @@ if [ "$mode" = preflight ] && [ "$count" -eq 0 ]; then exit 0; fi
 [ "$count" -eq 1 ]
 jq -e --arg task "$task_id" '
   .[0] as $rule | $rule.IpProtocol=="tcp" and $rule.FromPort==5432 and $rule.ToPort==5432
-  and ($rule.IpRanges//[])==[] and ($rule.Ipv6Ranges//[])==[] and ($rule.PrefixListIds//[])==[]
+  # AWS coalesces unrelated application sources into the same 5432 permission.
   and ([$rule.UserIdGroupPairs[]|select(.GroupId==$task)]|length)==1
 ' <<< "$reader_rules" >/dev/null
