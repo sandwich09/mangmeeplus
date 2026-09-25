@@ -23,8 +23,10 @@ jq -e --arg family "$family" --arg image "$image" --arg secret "${secret}:::${ve
   and $t.volumes==[{name:"tmp",host:{}}] and ($t.containerDefinitions|length)==1
   and ($t.containerDefinitions[0] as $c
     | $c.name=="catalog" and $c.image==$image and $c.essential==true
-    and $c.readonlyRootFilesystem==true and $c.user=="node" and $c.workingDirectory=="/app"
-    and $c.command==["/app/node_modules/.bin/tsx","--tsconfig","/app/apps/api/tsconfig.json",
+    and $c.readonlyRootFilesystem==true and $c.user=="root" and $c.workingDirectory=="/app"
+    and $c.entryPoint==["/bin/sh","-c"]
+    and $c.command==["chmod 1777 /tmp && exec setpriv --reuid=node --regid=node --init-groups "+
+      "/app/node_modules/.bin/tsx --tsconfig /app/apps/api/tsconfig.json "+
       "/app/apps/api/prisma/verify-applied-migration-catalog.ts"]
     and ($c.environment|sort_by(.name))==([
       {name:"ALLOW_PENDING_MIGRATIONS",value:"true"},{name:"GIT_SHA",value:$source},
