@@ -59,7 +59,8 @@ it('backfills old custom/read-only roles idempotently and resolves feature-gated
           assert.deepEqual(where, { userId: 'u-1', companyId: 'co-1', status: 'ACTIVE' });
           return { id: 'm-1', companyId: 'co-1', company: { status: 'ACTIVE' },
             branchScopeMode: 'ALL_BRANCHES', branchScopes: [],
-            roles: [{ role: { key: roles.get(roleId)!.key, permissions: [...held].map((key) => ({ permission: { key } })) } }],
+            // The resolver authorizes only ACTIVE roles (since 2026-09-12); a role row always carries its status.
+            roles: [{ role: { key: roles.get(roleId)!.key, status: 'ACTIVE', permissions: [...held].map((key) => ({ permission: { key } })) } }],
           };
         } },
         companyFeatureEntitlement: { findMany: async () => [{ featureKey: 'reimbursement', enabled }] },
