@@ -702,7 +702,7 @@ export const PERIOD_ASSUMPTIONS = {
 
 const MS_PER_CIVIL_DAY = 86_400_000;
 const CIVIL_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
-const MAX_PERIOD_CANDIDATES = 8;
+const MAX_PERIOD_CANDIDATES = 12;
 const MAX_RELATIVE_DAYS = 366;
 const MAX_RELATIVE_MONTHS = 24;
 const MAX_RELATIVE_WEEKS = 52;
@@ -854,6 +854,10 @@ export function unresolvedMonthName(text: string, periods: LineAiPeriodCandidate
       cursor = nextStart + nextToken.length;
     }
   }
+  for (const match of text.matchAll(/(?:เดือน|\bmonth\b)\s*([0-9๐-๙]{1,4})(?![0-9๐-๙])/giu)) {
+    const start = (match.index ?? 0) + match[0].lastIndexOf(match[1]!);
+    if (!coveredAt(start)) return match[1]!;
+  }
   // A separated full month-like word can also be a typo without the word เดือน before it.
   for (const match of text.matchAll(/(?:^|[\s,(]|และ\s*)([ก-๙]{5,14}?)(?=$|\s|และ|[),/.!?]|ปี\s*\d)/gu)) {
     const token = match[1]!;
@@ -964,6 +968,19 @@ const PERIOD_RULES: PeriodRule[] = [
   { pattern: /(?:last|previous)\s*month/gi, build: (_m, today) => monthsAgo(1, today, 'เดือนที่แล้ว') },
   { pattern: /เดือนนี้/gu, fuzzyGuard: true, build: (_m, today) => monthsAgo(0, today, 'เดือนนี้') },
   { pattern: /this\s*month/gi, build: (_m, today) => monthsAgo(0, today, 'เดือนนี้') },
+  {
+    pattern: /(?:เดือน|\bmonth\b)\s*(\d{1,2}(?:(?:\s*,\s*|\s*(?:และ|and)\s*|\s+)\d{1,2})+)(?!\d)(?:\s*(?:ปี|year)\s*['’]?(\d{2,4})|\s+(\d{4}))?(?=$|\s|[),/.!?])/giu,
+    build: (m, today) => {
+      const months = m[1]!.match(/\d{1,2}/g)?.map(Number) ?? [];
+      if (months.some((month) => month < 1 || month > 12)) return [];
+      const english = /\bmonth\b/i.test(m[0]);
+      return months.flatMap((month) => numberedMonth(month, m[2] ?? m[3], today, english));
+    },
+  },
+  {
+    pattern: /(เดือน|\bmonth\b)\s*(\d{1,2})(?!\d)(?:\s*(?:ปี|year)\s*['’]?(\d{2,4})|\s+(\d{4}))?(?=$|\s|และ|[),/.!?])/giu,
+    build: (m, today) => numberedMonth(Number(m[2]), m[3] ?? m[4], today, /^month$/i.test(m[1]!)),
+  },
   // ── quarters (calendar, never fiscal) ────────────────────────────────────
   {
     pattern: /(?:ไตรมาส\s*(?:ที่\s*)?|\bq)([1-4])(?:\s*[/\-]\s*|\s*(?:ปี|year)\s*|\s+)?(\d{2,4})?/giu,
@@ -996,6 +1013,10 @@ const PERIOD_RULES: PeriodRule[] = [
   {
     pattern: new RegExp(`(${PERIOD_MONTH_ALTERNATION})\\s*(?:ปี\\s*)?['’]?(\\d{2,4})`, 'giu'),
     build: (m, today) => namedMonth(m[1]!, m[2], today),
+  },
+  {
+    pattern: /(?:เดือน|\bmonth\b)\s*(may\.?)(?=$|\s|และ|[),/.!?])/giu,
+    build: (m, today) => namedMonth(m[1]!, undefined, today),
   },
   {
     pattern: new RegExp(`(${PERIOD_MONTH_ALTERNATION_NO_YEAR})`, 'giu'),
@@ -1125,6 +1146,12 @@ function namedMonth(monthName: string, rawYear: string | undefined, todayIso: st
       reading.assumptions.includes(VALUE_ASSUMPTIONS.eraReadBe)
         ? [...reading.assumptions, PERIOD_ASSUMPTIONS.yearReadBe]
         : reading.assumptions));
+}
+
+function numberedMonth(month: number, rawYear: string | undefined, todayIso: string, english: boolean): PeriodReading[] {
+  if (month < 1 || month > 12) return [];
+  const name = (english ? ENGLISH_MONTHS : FULL_THAI_MONTH_NAMES).find(([, value]) => value === month)?.[0];
+  return name ? namedMonth(name, rawYear, todayIso) : [];
 }
 
 function rangeReading(fromDate: string, toDate: string, assumptions: string[]): PeriodReading[] {
