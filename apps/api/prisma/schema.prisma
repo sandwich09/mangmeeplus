@@ -6573,6 +6573,7 @@ model ReimbursementRequest {
   duplicateCandidates          ReimbursementDuplicateCandidate[]
   lines                        ReimbursementLine[]
   claimSignatures              ReimbursementClaimSignature[]
+  internalNotes                ReimbursementInternalNote[]
   sourceExpenses               ExpenseRecord[]                       @relation("ExpenseSourceReimbursementRequest")
 
   @@unique([companyId, requestNo])
@@ -6585,6 +6586,19 @@ model ReimbursementRequest {
   @@index([companyId, submittedByUserId])
   @@index([companyId, financeReviewedByUserId], map: "ReimbursementRequest_company_finance_reviewer_idx")
   @@index([companyId, cancellationPendingByUserId], map: "ReimbursementRequest_company_cancel_actor_idx")
+}
+
+model ReimbursementInternalNote {
+  id                     String               @id @default(cuid())
+  companyId              String
+  reimbursementRequestId String
+  authorUserId           String
+  body                   String               @db.VarChar(2000)
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  request                ReimbursementRequest @relation(fields: [companyId, reimbursementRequestId], references: [companyId, id], onDelete: Cascade)
+
+  @@index([companyId, reimbursementRequestId, createdAt])
 }
 
 /// One expense row of a claim (1 ใบเบิก หลายรายการ). Header `amount` is the

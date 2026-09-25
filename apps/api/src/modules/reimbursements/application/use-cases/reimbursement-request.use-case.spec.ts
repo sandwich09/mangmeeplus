@@ -6,6 +6,7 @@ import {
   ReopenRejectedReimbursementUseCase,
   UpdateReimbursementDraftUseCase,
   SubmitReimbursementUseCase,
+  ReimbursementInternalNotesUseCase,
   reimbursementPeriodKey,
 } from './reimbursement-request.use-case';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
@@ -44,6 +45,42 @@ describe('reimbursementPeriodKey', () => {
   it('rolls the month at Bangkok midnight rather than UTC midnight', () => {
     assert.equal(reimbursementPeriodKey(new Date('2026-07-31T16:59:59.999Z')), '2026-07');
     assert.equal(reimbursementPeriodKey(new Date('2026-07-31T17:00:00.000Z')), '2026-08');
+  });
+});
+
+describe('ReimbursementInternalNotesUseCase', () => {
+  it('keeps notes company-scoped and lets only the author or owner edit and delete', async () => {
+    const now = new Date('2026-09-25T00:00:00.000Z');
+    const notes: any[] = [];
+    const auditRows: any[] = [];
+    let claimStatus = 'DRAFT';
+    const repo = {
+      findRequestById: async (companyId: string) => companyId === 'co-1'
+        ? { id: 'claim-1', companyId, branchId: 'branch-1', requesterUserId: 'staff-1', status: claimStatus } : null,
+      createInternalNote: async (_companyId: string, _requestId: string, authorUserId: string, body: string) => {
+        const note = { id: 'note-1', authorUserId, body, createdAt: now, updatedAt: now }; notes.push(note); return note;
+      },
+      findInternalNote: async (_companyId: string, _requestId: string, noteId: string) => notes.find(note => note.id === noteId) ?? null,
+      updateInternalNote: async (_companyId: string, _requestId: string, noteId: string, body: string) => { notes.find(note => note.id === noteId).body = body; },
+      deleteInternalNote: async (_companyId: string, _requestId: string, noteId: string) => { notes.splice(notes.findIndex(note => note.id === noteId), 1); },
+      getUserDisplayNames: async () => ({ 'staff-1': 'ผู้เบิก' }),
+    } as any;
+    const useCase = new ReimbursementInternalNotesUseCase(repo, { log: async (entry: any) => { auditRows.push(entry); } } as any);
+    const author = ctx({ scopes: { branchIds: ['branch-1'] } });
+    claimStatus = 'PAID';
+    const created = await useCase.create(author, 'claim-1', '  ตรวจเอกสารแล้ว  ');
+    assert.equal(created.body, 'ตรวจเอกสารแล้ว');
+    await assert.rejects(() => useCase.create(author, 'claim-1', '   '), /internal_note_body_invalid/);
+    await assert.rejects(() => useCase.create(ctx({ companyId: 'co-2' }), 'claim-1', 'x'), /not found/i);
+    await assert.rejects(() => useCase.create(ctx({ scopes: { branchIds: ['branch-2'] } }), 'claim-1', 'x'), /branch/i);
+    await assert.rejects(() => useCase.update(ctx({ userId: 'other', permissions: ['reimbursement.read'] }), 'claim-1', 'note-1', 'changed'), /Cannot edit/);
+    await useCase.update(ctx({ userId: 'owner', roles: ['OWNER'], permissions: ['reimbursement.read'] }), 'claim-1', 'note-1', '  checked  ');
+    assert.equal(notes[0].body, 'checked');
+    await assert.rejects(() => useCase.delete(ctx({ userId: 'other', permissions: ['reimbursement.read'] }), 'claim-1', 'note-1'), /Cannot delete/);
+    await useCase.delete(author, 'claim-1', 'note-1');
+    assert.equal(notes.length, 0);
+    assert.deepEqual(auditRows.map(row => row.action), ['reimbursement.internal_note.create', 'reimbursement.internal_note.update', 'reimbursement.internal_note.delete']);
+    assert.ok(auditRows.every(row => !JSON.stringify(row.metadataJson).includes('checked')));
   });
 });
 
