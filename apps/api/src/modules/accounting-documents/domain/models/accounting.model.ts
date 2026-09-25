@@ -207,7 +207,7 @@ export type CreateCounterpartyInput = {
   taxId?: string;
   branchCode?: string;
   entityKind?: BuyerEntityKind;
-  email?: string;
+  email?: string | null;
   phone?: string;
   billingAddressJson?: Record<string, unknown>;
   shippingAddressJson?: Record<string, unknown>;
@@ -222,7 +222,7 @@ export type UpdateCounterpartyInput = {
   taxId?: string;
   branchCode?: string;
   entityKind?: BuyerEntityKind;
-  email?: string;
+  email?: string | null;
   phone?: string;
   billingAddressJson?: Record<string, unknown>;
   shippingAddressJson?: Record<string, unknown>;

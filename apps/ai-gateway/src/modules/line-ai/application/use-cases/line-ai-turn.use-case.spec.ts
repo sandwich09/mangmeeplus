@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LineAiTurnUseCase } from './line-ai-turn.use-case';
 import {
-  AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, extractValueCandidates, parseAiBudgetEnvelope, type LineAiTurnRequest,
+  AI_BUDGET_STEP_BOUNDS, LINE_AI_EXPENSE_CRITERION_REPLIES, aiBudgetInvocationKey, extractValueCandidates, parseAiBudgetEnvelope, type LineAiTurnRequest,
 } from '@watchdog-bms/contracts';
 import { runWithUsageContext } from '../../../../common/usage/usage-context';
 
@@ -117,6 +117,150 @@ describe('LineAiTurnUseCase – feature flag routing', () => {
     const resp = await useCase.execute(validReq);
     assert.equal(resp.presentation?.kind, 'answer_cards');
     assert.ok(resp.presentation?.cards.some((card) => /0/.test(card.text)));
+  });
+
+  it('deterministic path confirms the fixed expense basis without an ERP read, with or without delivered proof', async () => {
+    const calls: string[] = [];
+    const erpTools = { invoke: async (tool: any) => {
+      calls.push(tool.name);
+      return { toolName: tool.name, status: 'ok', data: { total: 123 }, sourceRefs: [], asOf: new Date().toISOString() };
+    } } as any;
+    const config = { lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' } as any;
+    const useCase = new LineAiTurnUseCase(erpTools, makeOrchestrator(), config, makeAgentcoreRuntime());
+    const messageText = 'ยอดค่าใช้จ่ายไม่รวมรายการยกเลิกใช่ไหม';
+    const userContext = { ...validReq.userContext, permissions: [...validReq.userContext.permissions, 'expense.read'] };
+    const general = await useCase.execute({ ...validReq, messageText, userContext });
+    const delivered = await useCase.execute({ ...validReq, messageText: 'เอาแบบไม่รวมยอดยกเลิกและปฏิเสธ', userContext,
+      conversationContext: { windowMinutes: 15, maxTurns: 5, recentTurns: [], deliveredExpenseSummary: {
+        version: 1, deliveredAt: new Date().toISOString(), statusBasis: 'exclude_rejected_voided',
+        ranges: [{ fromDate: '2026-08-01', toDate: '2026-08-31', branchId: null }],
+      } } });
+
+    assert.deepEqual(calls, []);
+    assert.equal(general.replyText, LINE_AI_EXPENSE_CRITERION_REPLIES.generalTh);
+    assert.equal(general.deterministicExpenseCriterionConfirmation, true);
+    assert.equal(delivered.replyText, LINE_AI_EXPENSE_CRITERION_REPLIES.deliveredTh);
+    assert.equal(delivered.deterministicExpenseCriterionConfirmation, true);
+    assert.deepEqual(general.toolsInvoked, []);
+    assert.equal(general.presentation, undefined);
+  });
+
+  it('deterministic path does not issue a read-free expense answer without expense permission', async () => {
+    const calls: string[] = [];
+    const erpTools = { invoke: async (tool: any) => { calls.push(tool.name); return { toolName: tool.name, status: 'ok', data: {}, sourceRefs: [] }; } } as any;
+    const config = { lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' } as any;
+    const useCase = new LineAiTurnUseCase(erpTools, makeOrchestrator(), config, makeAgentcoreRuntime());
+    const response = await useCase.execute({ ...validReq, messageText: 'ยอดค่าใช้จ่ายไม่รวมรายการยกเลิกและปฏิเสธใช่ไหม' });
+    assert.deepEqual(calls, []);
+    assert.equal(response.refused, true);
+    assert.equal(response.refusalReason, 'forbidden');
+    assert.equal(response.deterministicExpenseCriterionConfirmation, undefined);
+  });
+
+  it('deterministic path clarifies a misspelled expense status instead of reading the default total', async () => {
+    const calls: string[] = [];
+    const erpTools = { invoke: async (tool: any) => { calls.push(tool.name); return { toolName: tool.name, status: 'ok', data: {}, sourceRefs: [] }; } } as any;
+    const config = { lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' } as any;
+    const useCase = new LineAiTurnUseCase(erpTools, makeOrchestrator(), config, makeAgentcoreRuntime());
+    const req = { ...validReq, messageText: 'ค่าใช้จ่ายไม่รวมปฎิเสธ', userContext: {
+      ...validReq.userContext, permissions: [...validReq.userContext.permissions, 'expense.read'],
+    } };
+    const response = await useCase.execute(req);
+    assert.deepEqual(calls, []);
+    assert.match(response.replyText, /ยังระบุเงื่อนไขรายการค่าใช้จ่าย/);
+    assert.equal(response.deterministicExpenseSummary, undefined);
+  });
+
+  it('deterministic path fails closed on expense periods and inherited branch follow-ups without calling defaults', async () => {
+    const calls: string[] = [];
+    const erpTools = { invoke: async (tool: any) => { calls.push(tool.name); return { toolName: tool.name, status: 'ok', data: {}, sourceRefs: [] }; } } as any;
+    const config = { lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' } as any;
+    const useCase = new LineAiTurnUseCase(erpTools, makeOrchestrator(), config, makeAgentcoreRuntime());
+    const userContext = { ...validReq.userContext, permissions: [...validReq.userContext.permissions, 'expense.read'] };
+    const explicitPeriod = await useCase.execute({ ...validReq, messageText: 'ค่าใช้จ่ายเดือนกรกฎาคม 2569 เท่าไร', userContext });
+    const inheritedBranch = await useCase.execute({ ...validReq, messageText: 'ดูเฉพาะสาขา A', userContext,
+      conversationContext: { windowMinutes: 15, maxTurns: 5, recentTurns: [], deliveredExpenseSummary: {
+        version: 1, deliveredAt: new Date().toISOString(), statusBasis: 'exclude_rejected_voided',
+        ranges: [{ fromDate: '2026-08-01', toDate: '2026-08-31', branchId: 'branch-a' }],
+      } } });
+    assert.deepEqual(calls, []);
+    assert.equal(explicitPeriod.refusalReason, 'unsupported_yet');
+    assert.equal(inheritedBranch.refusalReason, 'unsupported_yet');
+    assert.match(inheritedBranch.replyText, /ช่วงค่าใช้จ่ายที่ติดตามไว้/);
+  });
+
+  it('deterministic path keeps the safe current-month expense summary on its permission-checked tool', async () => {
+    const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+    const month = Number(today.slice(5, 7));
+    const fromDate = `${today.slice(0, 7)}-01`;
+    const toDate = today;
+    const erpTools = { invoke: async (tool: any, _ctx: unknown, input: Record<string, unknown> = {}) => {
+      calls.push({ tool: tool.name, input });
+      return { toolName: tool.name, status: 'ok', data: {
+        total: 1, period: { fromDate, toDate, defaultedToCurrentMonth: true },
+        summary: { totalAmount: '123.00', countedItems: 1, cancelledCount: 0 }, items: [],
+      }, sourceRefs: [{ label: 'ค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true }], asOf: new Date().toISOString() };
+    } } as any;
+    const config = { lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' } as any;
+    const useCase = new LineAiTurnUseCase(erpTools, makeOrchestrator(), config, makeAgentcoreRuntime());
+    const req = { ...validReq, messageText: 'ดูค่าใช้จ่าย', userContext: {
+      ...validReq.userContext, permissions: [...validReq.userContext.permissions, 'expense.read'],
+    } };
+    const response = await useCase.execute(req);
+    assert.deepEqual(calls, [{ tool: 'expense.list_recent', input: {} }]);
+    assert.equal(response.deterministicExpenseSummary, true);
+    assert.match(response.replyText, /123\.00/);
+    assert.match(response.replyText, /ช่วง: 1 /);
+    assert.match(response.replyText, new RegExp(`– ${Number(today.slice(-2))} `));
+
+    const explicitCurrent = await useCase.execute({ ...req, messageText: 'ค่าใช้จ่ายเดือนนี้เท่าไร',
+      valueCandidates: { amounts: [], dates: [], periods: [{ span: 'Current month', kind: 'month', fromDate, toDate,
+        monthKey: today.slice(0, 7), source: 'explicit', label: 'เดือนนี้', assumptions: [] }] } as any,
+    });
+    assert.equal(calls.length, 2);
+    assert.equal(explicitCurrent.deterministicExpenseSummary, true);
+
+    const thaiMonths = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+      'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+    const currentMonthIndex = month! - 1;
+    const previousMonthIndex = (currentMonthIndex + 11) % 12;
+    const incompleteMultiMonth = await useCase.execute({ ...req,
+      messageText: `ดูค่าใช้จ่ายเดือน${thaiMonths[previousMonthIndex]}และ${thaiMonths[currentMonthIndex]} 2569`,
+      valueCandidates: { amounts: [], dates: [], periods: [{ span: 'Current month', kind: 'month', fromDate, toDate,
+        monthKey: today.slice(0, 7), source: 'explicit', label: thaiMonths[currentMonthIndex]!, assumptions: [] }] } as any,
+    });
+    assert.equal(calls.length, 2, 'a model/extractor omission must not turn a two-month ask into a one-month read');
+    assert.equal(incompleteMultiMonth.deterministicExpenseSummary, undefined);
+    assert.equal(incompleteMultiMonth.refusalReason, 'unsupported_yet');
+  });
+
+  it('deterministic path never turns an expense record status question into a current-month total', async () => {
+    const calls: string[] = [];
+    const erpTools = { invoke: async (tool: any) => { calls.push(tool.name); return { toolName: tool.name, status: 'ok', data: {}, sourceRefs: [] }; } } as any;
+    const config = { lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' } as any;
+    const useCase = new LineAiTurnUseCase(erpTools, makeOrchestrator(), config, makeAgentcoreRuntime());
+    const response = await useCase.execute({ ...validReq, messageText: 'ค่าใช้จ่ายเลขที่ EXP-123 สถานะอะไร', userContext: {
+      ...validReq.userContext, permissions: [...validReq.userContext.permissions, 'expense.read'],
+    } });
+    assert.deepEqual(calls, []);
+    assert.equal(response.refusalReason, 'unsupported_yet');
+    assert.equal(response.deterministicExpenseSummary, undefined);
+    assert.match(response.replyText, /รายละเอียดค่าใช้จ่าย/);
+  });
+
+  it('deterministic path does not hijack mixed sales or tax questions into an expense-only summary', async () => {
+    const calls: string[] = [];
+    const erpTools = { invoke: async (tool: any) => { calls.push(tool.name); return { toolName: tool.name, status: 'ok', data: {}, sourceRefs: [] }; } } as any;
+    const config = { lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' } as any;
+    const useCase = new LineAiTurnUseCase(erpTools, makeOrchestrator(), config, makeAgentcoreRuntime());
+    for (const messageText of ['สรุปค่าใช้จ่ายและยอดขาย', 'ภาษีค่าใช้จ่ายเดือนนี้เท่าไร',
+      'ยอดขายไม่รวมยกเลิกใช่ไหม', 'ยอดขายและค่าใช้จ่ายไม่รวมยกเลิกใช่ไหม']) {
+      const response = await useCase.execute({ ...validReq, messageText });
+      assert.equal(response.deterministicExpenseSummary, undefined, messageText);
+      assert.equal(response.deterministicExpenseCriterionConfirmation, undefined, messageText);
+    }
+    assert.equal(calls.includes('expense.list_recent'), false);
   });
 
   it('feature enabled routes to local orchestrator (strands-local) and uses its reply', async () => {

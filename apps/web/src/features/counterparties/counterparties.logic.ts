@@ -136,7 +136,7 @@ export function counterpartyPayload(values: CounterpartyFormValues): Record<stri
     addressText: values.addressText.trim(),
     postalCode: values.postalCode.trim(),
     locked: values.locked,
-    email: values.email.trim(),
+    email: values.email.trim() || null,
     phone: values.phone.trim(),
   };
 }

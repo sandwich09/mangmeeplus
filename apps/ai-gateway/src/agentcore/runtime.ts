@@ -51,7 +51,8 @@ export type RuntimePayload = {
   turnId: string;
   companyId: string;
   userId: string;
-  membershipId?: string;
+ membershipId?: string;
+  chatKeyHash?: string;
   branchIds?: string[];
   locationIds?: string[];
   roles?: string[];
@@ -113,12 +114,44 @@ function parseConversationContext(value: unknown): LineAiTurnRequest['conversati
   });
   if (recentTurns.length === 0) return undefined;
   const lastTurnAt = boundedString(raw['lastTurnAt'], 64);
+  const summaryRaw = raw['deliveredExpenseSummary'];
+  const deliveredExpenseSummary = summaryRaw && typeof summaryRaw === 'object' && !Array.isArray(summaryRaw)
+    ? parseDeliveredExpenseSummary(summaryRaw)
+    : undefined;
   return {
     windowMinutes: LINE_AI_CONTEXT_WINDOW_MINUTES,
     maxTurns: MAX_CONTEXT_TURNS,
     ...(lastTurnAt && { lastTurnAt }),
     recentTurns,
+    ...(deliveredExpenseSummary ? { deliveredExpenseSummary } : {}),
   };
+}
+
+function parseDeliveredExpenseSummary(value: unknown): NonNullable<LineAiTurnRequest['conversationContext']>['deliveredExpenseSummary'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const deliveredAt = boundedString(raw['deliveredAt'], 64);
+  const ranges = Array.isArray(raw['ranges']) ? raw['ranges'] : [];
+  if (raw['version'] !== 1 || !deliveredAt || !Number.isFinite(Date.parse(deliveredAt))
+    || raw['statusBasis'] !== 'exclude_rejected_voided' || ranges.length === 0 || ranges.length > 24) return undefined;
+  const parsed = ranges.flatMap((range) => {
+    if (!range || typeof range !== 'object' || Array.isArray(range)) return [];
+    const item = range as Record<string, unknown>;
+    const fromDate = item['fromDate'], toDate = item['toDate'], branchId = item['branchId'];
+    if (typeof fromDate !== 'string' || !isCivilDate(fromDate) || typeof toDate !== 'string' || !isCivilDate(toDate)
+      || fromDate > toDate || !(branchId === null || (typeof branchId === 'string' && branchId.length <= 200))) return [];
+    return [{ fromDate, toDate, branchId }];
+  });
+ return parsed.length === ranges.length
+    ? { version: 1, deliveredAt, statusBasis: 'exclude_rejected_voided',
+      ...(raw['continuationOfPrior'] === true ? { continuationOfPrior: true as const } : {}), ranges: parsed }
+    : undefined;
+}
+
+function isCivilDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
 function parseActorDelegations(value: unknown): Record<string, string[]> | undefined {
@@ -235,7 +268,8 @@ export function validatePayload(body: unknown): RuntimePayload | null {
       turnId: typeof p['turnId'] === 'string' && p['turnId'] ? p['turnId'] : `playground-${Date.now()}`,
       companyId: typeof p['companyId'] === 'string' && p['companyId'] ? p['companyId'] : 'playground-company',
       userId: typeof p['userId'] === 'string' && p['userId'] ? p['userId'] : 'playground-user',
-      membershipId: typeof p['membershipId'] === 'string' ? p['membershipId'] : undefined,
+     membershipId: typeof p['membershipId'] === 'string' ? p['membershipId'] : undefined,
+      chatKeyHash: typeof p['chatKeyHash'] === 'string' && /^[a-f0-9]{16,64}$/.test(p['chatKeyHash']) ? p['chatKeyHash'] : undefined,
       branchIds: Array.isArray(p['branchIds']) ? (p['branchIds'] as string[]) : undefined,
       locationIds: Array.isArray(p['locationIds']) ? (p['locationIds'] as string[]) : undefined,
       roles: Array.isArray(p['roles']) ? (p['roles'] as string[]) : undefined,
@@ -263,7 +297,8 @@ export function validatePayload(body: unknown): RuntimePayload | null {
     turnId: p['turnId'],
     companyId: p['companyId'],
     userId: p['userId'],
-    membershipId: typeof p['membershipId'] === 'string' ? p['membershipId'] : undefined,
+   membershipId: typeof p['membershipId'] === 'string' ? p['membershipId'] : undefined,
+    chatKeyHash: typeof p['chatKeyHash'] === 'string' && /^[a-f0-9]{16,64}$/.test(p['chatKeyHash']) ? p['chatKeyHash'] : undefined,
     branchIds: Array.isArray(p['branchIds']) ? (p['branchIds'] as string[]) : undefined,
     locationIds: Array.isArray(p['locationIds']) ? (p['locationIds'] as string[]) : undefined,
     roles: Array.isArray(p['roles']) ? (p['roles'] as string[]) : undefined,
@@ -301,7 +336,8 @@ export function payloadToTurnRequest(p: RuntimePayload): LineAiTurnRequest {
       lineUserId: '',
       internalUserId: p.userId,
       companyId: p.companyId,
-      membershipId: p.membershipId ?? '',
+     membershipId: p.membershipId ?? '',
+      ...(p.chatKeyHash ? { chatKeyHash: p.chatKeyHash } : {}),
       permissions: p.permissions ?? [],
       entitlementDeniedPermissions: p.entitlementDeniedPermissions,
       entitledFeatureKeys: p.entitledFeatureKeys,
@@ -465,6 +501,8 @@ async function handleInvocation(
       sourceRefs: result.sourceRefs,
       webLinks: result.webLinks,
       ...(result.presentation ? { presentation: result.presentation } : {}),
+      ...(result.deterministicExpenseSummary ? { deterministicExpenseSummary: true } : {}),
+      ...(result.deterministicExpenseCriterionConfirmation ? { deterministicExpenseCriterionConfirmation: true } : {}),
       // AgentRunResult exposes sources only in aggregate; do not fabricate per-tool attribution.
       toolsInvoked: result.outputs.flatMap((output) => output.toolCalls),
       ...(usage.length > 0 ? { usage } : {}),

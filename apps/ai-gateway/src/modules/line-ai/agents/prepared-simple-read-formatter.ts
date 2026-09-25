@@ -30,6 +30,10 @@ export type PreparedFormatContext = {
    *  — the user's own words plus the dates, e.g. `เดือนที่แล้ว (1–31 ส.ค. 2569)`. Set only when the
    *  input matched a candidate exactly, so it can never name a window the tool did not read. */
   periodLabel?: string;
+  /** Customer wording copied from the request when branch scope is explicit; never an ERP identifier. */
+  branchLabel?: string;
+  /** Thai calendar rendering for the as-of date, used only by the expense summary answer. */
+  asOfLabel?: string;
 };
 
 const isEnglish = (ctx: PreparedFormatContext): boolean =>
@@ -43,15 +47,45 @@ function groupThousands(value: string): string {
   return frac ? `${grouped}.${frac}` : grouped;
 }
 
-function asOfLine(asOf: string | undefined, english: boolean): string {
+function asOfLine(asOf: string | undefined, english: boolean, thaiLabel?: string): string {
   if (!asOf) return '';
   const day = asOf.slice(0, 10);
-  return english ? `\nData as of ${day}` : `\nข้อมูล ณ ${day}`;
+  return english ? `\nData as of ${day}` : `\nข้อมูล ณ ${thaiLabel ?? day}`;
 }
 
 function rangePhrase(from: string | undefined, to: string | undefined): string | undefined {
   if (from && to) return from === to ? from : `${from} – ${to}`;
   return from ?? to;
+}
+
+const THAI_FULL_MONTH_NAMES = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+function thaiIsoDate(value: string | undefined): string | undefined {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) return undefined;
+  return `${Number(value.slice(8, 10))} ${THAI_FULL_MONTH_NAMES[Number(value.slice(5, 7)) - 1]} ${Number(value.slice(0, 4)) + 543}`;
+}
+
+/** The tool timestamp is an instant; display the business date where this tenant operates. */
+export function thaiExpenseAsOfLabel(asOf: string | undefined): string | undefined {
+  if (!asOf) return undefined;
+  const instant = new Date(asOf);
+  if (!Number.isFinite(instant.getTime())) return undefined;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(instant);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value;
+  const year = part('year'), month = part('month'), day = part('day');
+  return year && month && day ? thaiIsoDate(`${year.padStart(4, '0')}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`) : undefined;
+}
+
+function thaiExpenseRange(data: Record<string, unknown> | undefined): string | undefined {
+  const period = data?.['period'];
+  if (!period || typeof period !== 'object' || Array.isArray(period)) return undefined;
+  const range = period as Record<string, unknown>;
+  const from = thaiIsoDate(typeof range['fromDate'] === 'string' ? range['fromDate'] : undefined);
+  const to = thaiIsoDate(typeof range['toDate'] === 'string' ? range['toDate'] : undefined);
+  return from && to ? from === to ? from : `${from} – ${to}` : undefined;
 }
 
 /**
@@ -251,7 +285,8 @@ export function formatExpenseSummary(
   const cancelled = typeof totals['cancelledCount'] === 'number' ? totals['cancelledCount'] as number : 0;
   const { sourceRefs, webLinks, sourceText } = groundedSource(sourceRef, english);
 
-  const label = english ? 'Expenses' : 'ค่าใช้จ่าย';
+  const label = english ? `${ctx.branchLabel ? `${ctx.branchLabel} — ` : ''}Expenses`
+    : `${ctx.branchLabel ? `${ctx.branchLabel} — ` : ''}ค่าใช้จ่าย`;
   const amount = english ? `${moneyText(total)} THB` : `${moneyText(total)} บาท`;
   const countText = !countAvailable ? (english ? ' (record count unavailable)' : ' (ยังยืนยันจำนวนรายการไม่ได้)')
     : english ? ` (${plural(count, 'record')})` : ` (${groupThousands(String(count))} รายการ)`;
@@ -260,7 +295,9 @@ export function formatExpenseSummary(
       : `\nไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ ${groupThousands(String(cancelled))} รายการ`)
     : '';
 
-  const replyText = `${label}: ${amount}${countText}${cancelledText}${periodLine(undefined, data, english, ctx.periodLabel)}${sourceText}${asOfLine(asOf, english)}`;
+  const localizedAsOf = ctx.asOfLabel ?? thaiExpenseAsOfLabel(asOf);
+  const asOfText = english ? asOfLine(asOf, true) : localizedAsOf ? asOfLine(asOf, false, localizedAsOf) : '';
+  const replyText = `${label}: ${amount}${countText}${cancelledText}${periodLine(undefined, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfText}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 

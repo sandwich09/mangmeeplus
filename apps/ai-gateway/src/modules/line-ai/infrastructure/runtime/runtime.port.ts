@@ -1,11 +1,12 @@
 /** AgentCore Runtime invoke port – spec section 9.2. */
-import type { AgentToolCall, AiModelPolicy, AiUsageEntry, LineAiAnswerPresentation, LineAiConversationContext, LineAiExpectedRuntimeIdentity, LineAiPreparedPlan, LineAiRefusalReason, LineAiRuntimeBinding, LineAiRuntimeIdentity, LineAiStageDurations, LineAiValueCandidates, LineAiWebLink, LineIntakeRouteIntent, SourceRef } from '@watchdog-bms/contracts';
+import type { AgentToolCall, AiModelPolicy, AiUsageEntry, LineAiAnswerPresentation, LineAiConversationContext, LineAiExpectedRuntimeIdentity, LineAiPreparedPlan, LineAiRefusalReason, LineAiRuntimeBinding, LineAiRuntimeIdentity, LineAiStageDurations, LineAiTurnRequest, LineAiWebLink, LineIntakeRouteIntent, SourceRef } from '@watchdog-bms/contracts';
 
 export type AgentCoreInvokeInput = {
   turnId: string;
   companyId: string;
   userId: string;
   membershipId?: string;
+  chatKeyHash?: string;
   branchIds?: string[];
   locationIds?: string[];
   roles?: string[];
@@ -20,7 +21,7 @@ export type AgentCoreInvokeInput = {
   qualifier?: string;
   attachments?: ReadonlyArray<{ attachmentId: string; mimeType: string; kind: string; sha256: string }>;
   conversationContext?: LineAiConversationContext;
-  valueCandidates?: LineAiValueCandidates;
+  valueCandidates?: LineAiTurnRequest['valueCandidates'];
   /** Optional additive fused plan (latency/autonomy §7). Already bounded by the caller's
    *  `parseLineAiPreparedPlan`; the runtime re-parses it again before any consumption. */
   preparedPlan?: LineAiPreparedPlan;
@@ -37,6 +38,8 @@ export type AgentCoreInvokeResult = {
   sourceRefs: SourceRef[];
   webLinks: LineAiWebLink[];
   presentation?: LineAiAnswerPresentation;
+  deterministicExpenseSummary?: boolean;
+  deterministicExpenseCriterionConfirmation?: boolean;
   toolsInvoked: Array<AgentToolCall & { sourceRefs?: SourceRef[] }>;
   /** Model calls the artifact made; absent from an artifact built before usage reporting. */
   usage?: AiUsageEntry[];

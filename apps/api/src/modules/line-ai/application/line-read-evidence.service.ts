@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { LINE_TOOL_REGISTRY, hasToolFeature, hasToolPermissions, type ToolResult, type LineAiTurnRequest, type LineAiTurnResponse } from '@watchdog-bms/contracts';
+import { LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_TOOL_REGISTRY, hasToolFeature, hasToolPermissions, type ToolResult, type LineAiConversationContext, type LineAiTurnRequest, type LineAiTurnResponse } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import { PermissionResolverService } from '../../access-control/application/permission-resolver.service';
@@ -12,6 +12,159 @@ export const LINE_READ_EVIDENCE_MAX = 64;
 export const LINE_READ_EVIDENCE_MAX_INPUT_BYTES = 8192;
 export const LINE_READ_EVIDENCE_MAX_AGE_MS = 60 * 60 * 1000;
 const READ_CATEGORIES = new Set(['read_summary', 'read_detail', 'report', 'suggestion']);
+const EXPENSE_STATUS_BASIS = 'exclude_rejected_voided_v1';
+
+type ExpenseSummaryEvidence = { fromDate: string; toDate: string; branchId: string | null; defaultedToCurrentMonth: boolean; statusBasis: typeof EXPENSE_STATUS_BASIS; truncated: boolean };
+
+function isCivilDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function expenseSummaryEvidence(result: ToolResult): ExpenseSummaryEvidence | undefined {
+  if (result.toolName !== 'expense.list_recent' || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)) return undefined;
+  const data = result.data as Record<string, unknown>;
+  const summary = data['summary'];
+  if (!Number.isFinite(Date.parse(result.asOf)) || typeof data['total'] !== 'number' || !Number.isSafeInteger(data['total']) || data['total'] < 0
+    || !summary || typeof summary !== 'object' || Array.isArray(summary)) return undefined;
+  const totals = summary as Record<string, unknown>;
+  if (typeof totals['totalAmount'] !== 'number' || !Number.isFinite(totals['totalAmount'])
+    || totals['countedItems'] !== data['total'] || typeof totals['cancelledCount'] !== 'number'
+    || !Number.isSafeInteger(totals['cancelledCount']) || totals['cancelledCount'] < 0
+    || (data['truncated'] !== undefined && typeof data['truncated'] !== 'boolean')) return undefined;
+  const period = data['period'];
+  if (!period || typeof period !== 'object' || Array.isArray(period)) return undefined;
+ const range = period as Record<string, unknown>;
+ if (!isCivilDate(range['fromDate']) || !isCivilDate(range['toDate']) || range['fromDate'] > range['toDate']) return undefined;
+  if (typeof range['defaultedToCurrentMonth'] !== 'boolean') return undefined;
+  const branchId = data['branchId'];
+  if (!(branchId === undefined || (typeof branchId === 'string' && branchId.length > 0 && branchId.length <= 200))) return undefined;
+ return { fromDate: range['fromDate'], toDate: range['toDate'], branchId: typeof branchId === 'string' ? branchId : null,
+    defaultedToCurrentMonth: range['defaultedToCurrentMonth'], statusBasis: EXPENSE_STATUS_BASIS, truncated: data['truncated'] === true };
+}
+
+function expenseBranchScopeRequested(text: string): boolean {
+  const withoutAllBranches = text.replace(/ทุก\s*สาขา|\ball\s+branches\b/giu, '');
+  if (/(?:สาขา|\bbranch\b)/iu.test(withoutAllBranches)) return true;
+  return /เฉพาะ(?!\s*(?:เดือน|ช่วง|งวด|หมวด|รายการ|ยืนยัน|จ่าย|ปฏิเสธ|ยกเลิก|มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|กรกฏาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม|ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.))[\u0E00-\u0E7F]{3,}/iu.test(text);
+}
+
+function allExpenseBranchesRequested(text: string): boolean {
+  return /(?:ทุก\s*สาขา|\ball\s+branches\b)/iu.test(text);
+}
+
+function messageIdentifiesBranch(branchId: string, text: string): boolean {
+  const normalized = branchId.normalize('NFC').trim().toLocaleLowerCase();
+  const message = text.normalize('NFC').toLocaleLowerCase();
+  if (/^[a-z0-9][a-z0-9_-]*$/iu.test(normalized)) {
+    const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, 'iu').test(message);
+  }
+  const branch = message.match(/(?:สาขา|\bbranch\b)\s*[:：]?\s*([\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N}\s.'’_-]{0,79})/iu)
+    ?? message.match(/(?:ดู\s*เฉพาะ|เอา\s*เฉพาะ|เฉพาะ)\s*([\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N}\s.'’_-]{0,79})/iu);
+  if (!branch?.[1]) return false;
+  const phrase = branch[1].split(/\s+(?:เดือน|ช่วง|งวด|และ|กับ|สำหรับ|เฉพาะ)(?=\s|$)/iu)[0]!.trim().replace(/[.,!?。]+$/u, '');
+  return phrase === normalized;
+}
+
+function anchoredPriorMonth(request: LineAiTurnRequest): { fromDate: string; toDate: string } | null | undefined {
+  if (!/(?:เดือนก่อนหน้า|เดือนก่อนหน้านั้น|previous month|month before)/iu.test(request.messageText)) return undefined;
+  const ranges = request.conversationContext?.deliveredExpenseSummary?.ranges ?? [];
+  const unique = [...new Map(ranges.map(range => [`${range.fromDate}:${range.toDate}:${range.branchId ?? ''}`, range])).values()];
+  if (unique.length !== 1) return null;
+  const prior = unique[0]!;
+  if (!/^\d{4}-\d{2}-01$/.test(prior.fromDate) || !isCivilDate(prior.fromDate)) return null;
+  const year = Number(prior.fromDate.slice(0, 4)), month = Number(prior.fromDate.slice(5, 7));
+  if (prior.toDate !== new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10)) return null;
+  const previousMonth = new Date(Date.UTC(year, month - 2, 1));
+  return { fromDate: previousMonth.toISOString().slice(0, 10),
+    toDate: new Date(Date.UTC(previousMonth.getUTCFullYear(), previousMonth.getUTCMonth() + 1, 0)).toISOString().slice(0, 10) };
+}
+
+export function thaiMonthMentions(text: string): number[] | undefined {
+  const months = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+  const distanceAtMostOne = (left: string, right: string): boolean => {
+    if (Math.abs(left.length - right.length) > 1) return false;
+    let i = 0, j = 0, edits = 0;
+    while (i < left.length && j < right.length) {
+      if (left[i] === right[j]) { i++; j++; continue; }
+      if (++edits > 1) return false;
+      if (left.length > right.length) i++;
+      else if (right.length > left.length) j++;
+      else { i++; j++; }
+    }
+    return edits + (i < left.length || j < right.length ? 1 : 0) <= 1;
+  };
+  // Thai words are commonly concatenated without spaces ("กรกฏาคมและสิงหาคม"). Scan bounded
+  // substrings in each Thai run so a misspelled month cannot disappear behind the conjunction.
+  const runs = text.match(/[\u0E00-\u0E7F]+/gu) ?? [];
+  const hits: Array<{ start: number; end: number; month: number }> = [];
+  for (const run of runs) {
+    const chars = Array.from(run);
+    if (chars.length > 8000) return undefined;
+    for (let start = 0; start < chars.length; start++) {
+      for (let month = 0; month < months.length; month++) {
+        const width = Array.from(months[month]!).length;
+        for (const size of [width - 1, width, width + 1]) {
+          if (size < 5 || start + size > chars.length) continue;
+          if (distanceAtMostOne(chars.slice(start, start + size).join(''), months[month]!)) {
+            hits.push({ start, end: start + size, month: month + 1 });
+          }
+        }
+      }
+    }
+  }
+  hits.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+  const mentions: number[] = [];
+  let consumedUntil = -1;
+  for (const hit of hits) {
+    if (hit.start < consumedUntil) continue;
+    mentions.push(hit.month);
+    consumedUntil = hit.end;
+  }
+  return mentions;
+}
+
+function rangeMonths(fromDate: string, toDate: string): number[] | undefined {
+  const fromYear = Number(fromDate.slice(0, 4)), fromMonth = Number(fromDate.slice(5, 7));
+  const toYear = Number(toDate.slice(0, 4)), toMonth = Number(toDate.slice(5, 7));
+  const count = (toYear - fromYear) * 12 + toMonth - fromMonth + 1;
+  if (count < 1 || count > 24) return undefined;
+  return Array.from({ length: count }, (_, index) => ((fromMonth - 1 + index) % 12) + 1);
+}
+
+const EXPENSE_CONTEXT_TEXT = /(?:ค่าใช้จ่าย|รายจ่าย|\bexpenses?\b|\bspend\b)/iu;
+const OTHER_BUSINESS_CONTEXT_TEXT = /(?:ภาษี|\bvat\b|ภ\.?พ\.?\s*\d*|ยอดขาย|การขาย|ขาย|\bsales?\b|สต็อก|สินค้า|\bstock\b|รายได้|\bincome\b|ลูกค้า|\bcrm\b|จัดซื้อ|\bprocurement\b)/iu;
+
+export function isExpenseCriterionOnlyText(text: string, hasPriorExpenseContext = false): boolean {
+  return (EXPENSE_CONTEXT_TEXT.test(text) || hasPriorExpenseContext)
+    && /(?:ไม่รวม|ยกเว้น|ตัด.{0,20}(?:ออก|ทิ้ง)|exclude)/iu.test(text)
+    && /(?:ปฏิเสธ|ยกเลิก|rejected|voided|cancelled)/iu.test(text)
+    && /(?:ใช่|หรือเปล่า|หรือไม่|เอาแบบ|ถูกไหม|ใช่ไหม|ไหม|หรือยัง|exclude)/iu.test(text)
+    && !OTHER_BUSINESS_CONTEXT_TEXT.test(text)
+    && !/(?:เท่าไหร่|เท่าไร|กี่\s*บาท|เปรียบเทียบ|compare|breakdown|เฉพาะ|สาขา|branch|ทั้งหมด|ทุกแห่ง|แยกตาม|เปลี่ยน|ขอรายการ|ดูรายการ|แสดงรายการ|อะไรบ้าง|ไหนบ้าง|รายการ.*(?:อะไร|ไหน)|status\s*(?:filter|only)|filter\s*(?:by\s*)?status|เดือน|งวด|ช่วง|วันที่|เมื่อวาน|วันนี้|สัปดาห์|ปี\s*\d{2,4}|มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|กรกฏาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม|month|year|week|date|\b\d{4}[-/]\d{1,2}\b)/iu.test(text);
+}
+
+export function parseExpenseCriterionAccessAuthorization(value: unknown): {
+  userId: string; companyId: string; fingerprint: string; webhookEventId: string; recipientHash: string; channelId: string; chatKeyHash: string;
+} | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const root = value as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(root, 'read')) return null;
+  const access = root['access'];
+  if (root['v'] !== 1 || typeof root['producerId'] !== 'string' || !root['producerId']
+    || !access || typeof access !== 'object' || Array.isArray(access)) return null;
+  const proof = access as Record<string, unknown>;
+  if (proof['kind'] !== 'expense_criterion_confirmation'
+    || ['userId', 'companyId', 'webhookEventId'].some(key => typeof proof[key] !== 'string' || !proof[key])
+    || typeof proof['membershipId'] !== 'string' || !proof['membershipId']
+    || typeof proof['fingerprint'] !== 'string' || !proof['fingerprint'] || proof['fingerprint'].length > 32768
+    || typeof proof['channelId'] !== 'string' || proof['channelId'].length > 200
+    || typeof proof['chatKeyHash'] !== 'string' || !/^[a-f0-9]{16,64}$/.test(proof['chatKeyHash'])
+    || typeof proof['recipientHash'] !== 'string' || !/^[a-f0-9]{64}$/.test(proof['recipientHash'])) return null;
+  return proof as { userId: string; companyId: string; fingerprint: string; webhookEventId: string; recipientHash: string; channelId: string; chatKeyHash: string };
+}
 
 export const isLineEvidenceRead = (toolName: string) => READ_CATEGORIES.has(LINE_TOOL_REGISTRY.find(tool => tool.name === toolName)?.category ?? '');
 
@@ -42,7 +195,9 @@ export class LineReadEvidenceService {
     if (!meta || !READ_CATEGORIES.has(meta.category) || result.status !== 'ok'
       || !ctx.requestId || !ctx.membershipId) throw new Error('LINE_READ_EVIDENCE_UNSUPPORTED');
     // Grounding text belongs to draft preview and is deliberately never persisted here.
-    const snapshot = JSON.stringify({ input, locale: ctx.locale, ...(ctx.chatKeyHash ? { chatKeyHash: ctx.chatKeyHash } : {}) });
+    const expenseSummary = expenseSummaryEvidence(result);
+    const snapshot = JSON.stringify({ input, locale: ctx.locale, ...(ctx.chatKeyHash ? { chatKeyHash: ctx.chatKeyHash } : {}),
+      ...(expenseSummary ? { expenseSummary } : {}) });
     if (Buffer.byteLength(snapshot, 'utf8') > LINE_READ_EVIDENCE_MAX_INPUT_BYTES) throw new Error('LINE_READ_EVIDENCE_INPUT_LIMIT');
     const resultHash = lineReadResultHash(result);
     return this.prisma.client.$transaction(async tx => {
@@ -82,12 +237,143 @@ export class LineReadEvidenceService {
     return rows.map(row => row.id);
   }
 
+  /** Only an API-bound, deterministic expense presentation with complete matching API reads can
+   *  authorize a future criterion confirmation. The reply text, Gateway telemetry and old amounts
+   *  are never persisted as evidence. */
+  async deliveredExpenseSummaryForTurn(request: LineAiTurnRequest, response: LineAiTurnResponse): Promise<LineAiConversationContext['deliveredExpenseSummary'] | undefined> {
+    if (response.deterministicExpenseSummary !== true || response.refused || !request.userContext.chatKeyHash
+      || !Array.isArray(response.toolCalls) || response.toolCalls.length === 0 || response.toolCalls.length > 24
+      || response.toolCalls.some(call => call.name !== 'expense.list_recent' || call.status !== 'ok')) return undefined;
+    const mentions = thaiMonthMentions(request.messageText);
+    if (!mentions) return undefined;
+    const anchored = anchoredPriorMonth(request);
+    if (anchored === null) return undefined;
+    const rows = await this.prisma.client.lineReadEvidence.findMany({
+      where: { companyId: request.userContext.companyId, userId: request.userContext.internalUserId, requestId: request.requestId },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], take: LINE_READ_EVIDENCE_MAX + 1,
+      select: { toolName: true, membershipId: true, inputJson: true },
+    });
+    if (rows.length !== response.toolCalls.length || rows.length > LINE_READ_EVIDENCE_MAX
+      || rows.some(row => row.toolName !== 'expense.list_recent' || row.membershipId !== request.userContext.membershipId)) return undefined;
+    const ranges: NonNullable<LineAiConversationContext['deliveredExpenseSummary']>['ranges'] = [];
+    const months = new Set<number>();
+    for (const row of rows) {
+      const saved = row.inputJson as { input?: unknown; chatKeyHash?: unknown; expenseSummary?: unknown } | null;
+      const descriptor = saved?.expenseSummary as ExpenseSummaryEvidence | undefined;
+      if (!saved || saved.chatKeyHash !== request.userContext.chatKeyHash || !descriptor
+        || descriptor.statusBasis !== EXPENSE_STATUS_BASIS || descriptor.truncated
+        || !isCivilDate(descriptor.fromDate) || !isCivilDate(descriptor.toDate) || descriptor.fromDate > descriptor.toDate
+        || !(descriptor.branchId === null || (typeof descriptor.branchId === 'string' && descriptor.branchId.length > 0 && descriptor.branchId.length <= 200))) return undefined;
+      const input = saved.input as Record<string, unknown> | undefined;
+      if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+      // A query must use either no explicit period or both boundaries exactly as resolved by the API.
+      const hasFrom = input['fromDate'] !== undefined, hasTo = input['toDate'] !== undefined;
+     if (hasFrom !== hasTo || (hasFrom && (input['fromDate'] !== descriptor.fromDate || input['toDate'] !== descriptor.toDate))) return undefined;
+      if (descriptor.defaultedToCurrentMonth !== (!hasFrom && !hasTo)) return undefined;
+      const coveredMonths = rangeMonths(descriptor.fromDate, descriptor.toDate);
+      if (!coveredMonths) return undefined;
+      coveredMonths.forEach(month => months.add(month));
+      ranges.push({ fromDate: descriptor.fromDate, toDate: descriptor.toDate, branchId: descriptor.branchId });
+    }
+    const inheritedRanges = request.conversationContext?.deliveredExpenseSummary?.ranges ?? [];
+    const branchRequested = expenseBranchScopeRequested(request.messageText);
+    const allBranchesRequested = allExpenseBranchesRequested(request.messageText);
+    const branchFollowupWithoutReference = branchRequested && inheritedRanges.length === 0
+      && /(?:ดู\s*เฉพาะ|เอา\s*เฉพาะ|อันนี้)/iu.test(request.messageText)
+      && (request.valueCandidates?.periods?.length ?? 0) === 0 && (request.valueCandidates?.dates?.length ?? 0) === 0
+      && anchored === undefined;
+    if (branchFollowupWithoutReference) return undefined;
+    if (branchRequested && rows.some(row => {
+      const saved = row.inputJson as { input?: Record<string, unknown>; expenseSummary?: ExpenseSummaryEvidence } | null;
+      const input = saved?.input;
+      const descriptor = saved?.expenseSummary;
+      return typeof input?.['branchId'] !== 'string' || !descriptor || descriptor.branchId === null
+        || !messageIdentifiesBranch(input['branchId'], request.messageText);
+    })) return undefined;
+    if (allBranchesRequested && rows.some(row => {
+      const saved = row.inputJson as { input?: Record<string, unknown>; expenseSummary?: ExpenseSummaryEvidence } | null;
+      return saved?.input?.['branchId'] !== undefined || saved?.expenseSummary?.branchId !== null;
+    })) return undefined;
+    if (!allBranchesRequested && !branchRequested && inheritedRanges.some(range => range.branchId !== null) && rows.some(row => {
+      const saved = row.inputJson as { input?: Record<string, unknown>; expenseSummary?: ExpenseSummaryEvidence } | null;
+      const branchId = saved?.expenseSummary?.branchId;
+      return branchId === null || typeof saved?.input?.['branchId'] !== 'string' || saved.input['branchId'] !== branchId
+        || !inheritedRanges.some(prior => prior.branchId === branchId);
+    })) return undefined;
+    if (!allBranchesRequested && !branchRequested && inheritedRanges.every(range => range.branchId === null) && rows.some(row => {
+      const saved = row.inputJson as { input?: Record<string, unknown> } | null;
+      return saved?.input?.['branchId'] !== undefined;
+    })) return undefined;
+    const requestedPeriods = anchored ? [anchored] : request.valueCandidates?.periods ?? [];
+    const latestRefresh = mentions.length === 0 && requestedPeriods.length === 0 && /(?:ล่าสุด|ปัจจุบัน|ตอนนี้|current|latest|recent)/iu.test(request.messageText);
+    const expectedRanges = requestedPeriods.length > 0
+      ? requestedPeriods.map(period => ({ fromDate: period.fromDate, toDate: period.toDate }))
+      : latestRefresh && rows.every(row => {
+        const saved = row.inputJson as { expenseSummary?: ExpenseSummaryEvidence } | null;
+        return saved?.expenseSummary?.defaultedToCurrentMonth === true;
+      }) ? ranges.map(range => ({ fromDate: range.fromDate, toDate: range.toDate }))
+      : inheritedRanges.length > 0 && ranges.length === inheritedRanges.length
+        ? inheritedRanges.map(range => ({ fromDate: range.fromDate, toDate: range.toDate }))
+        : mentions.length === 0 && rows.every(row => {
+          const saved = row.inputJson as { expenseSummary?: ExpenseSummaryEvidence } | null;
+          return saved?.expenseSummary?.defaultedToCurrentMonth === true;
+        }) ? ranges.map(range => ({ fromDate: range.fromDate, toDate: range.toDate }))
+        : [];
+    if (expectedRanges.length === 0 || expectedRanges.length !== ranges.length
+      || expectedRanges.some(expected => !ranges.some(range => range.fromDate === expected.fromDate && range.toDate === expected.toDate))) return undefined;
+    if (new Set(expectedRanges.map(range => `${range.fromDate}:${range.toDate}`)).size !== expectedRanges.length
+      || new Set(ranges.map(range => `${range.fromDate}:${range.toDate}`)).size !== ranges.length) return undefined;
+   if (mentions.some(month => !months.has(month))) return undefined;
+    if (mentions.length > 0 && requestedPeriods.length === 0) return undefined;
+    const continuationOfPrior = inheritedRanges.length > 0
+      && expectedRanges.every(expected => inheritedRanges.some(prior => prior.fromDate === expected.fromDate && prior.toDate === expected.toDate))
+      && (requestedPeriods.length === 0 || /เฉพาะ|only|just/iu.test(request.messageText));
+    return { version: 1, deliveredAt: new Date().toISOString(), statusBasis: 'exclude_rejected_voided', ranges,
+      ...(continuationOfPrior ? { continuationOfPrior: true as const } : {}) };
+  }
+
+  async isReadFreeExpenseCriterionConfirmation(request: LineAiTurnRequest, response: LineAiTurnResponse): Promise<boolean> {
+    if (response.deterministicExpenseCriterionConfirmation !== true || response.refused
+      || response.toolsInvoked.length !== 0 || (response.toolCalls?.length ?? 0) !== 0
+      || response.sourceRefs.length !== 0 || response.sourceLabels.length !== 0 || response.webLinks.length !== 0
+      || response.presentation !== undefined
+      || !(Object.values(LINE_AI_EXPENSE_CRITERION_REPLIES) as readonly string[]).includes(response.replyText)
+      || !isExpenseCriterionOnlyText(request.messageText,
+        request.conversationContext?.deliveredExpenseSummary?.statusBasis === 'exclude_rejected_voided'
+        && request.conversationContext.deliveredExpenseSummary.ranges.length > 0)
+      || (request.attachments?.length ?? 0) > 0
+      || (request.valueCandidates?.dates?.length ?? 0) > 0
+      || (request.valueCandidates?.periods?.length ?? 0) > 0
+      ) return false;
+    const expenseTool = LINE_TOOL_REGISTRY.find(tool => tool.name === 'expense.list_recent');
+    if (!expenseTool) return false;
+    const access = await this.resolver.resolveAccess(request.userContext.internalUserId, request.userContext.companyId);
+    if (access.companyId !== request.userContext.companyId || !access.permissions.includes('ai.tool.invoke')
+      || !hasToolPermissions(expenseTool, access.permissions)) return false;
+    const entitled = await loadEntitledFeatureKeys(this.prisma, request.userContext.companyId);
+    if (!hasToolFeature(expenseTool, entitled)) return false;
+    const saved = request.conversationContext?.deliveredExpenseSummary;
+    if (response.replyText === LINE_AI_EXPENSE_CRITERION_REPLIES.deliveredTh
+      || response.replyText === LINE_AI_EXPENSE_CRITERION_REPLIES.deliveredEn) {
+      if (!saved || saved.statusBasis !== 'exclude_rejected_voided' || !Number.isFinite(Date.parse(saved.deliveredAt))
+        || saved.ranges.length === 0 || saved.ranges.length > 24) return false;
+    }
+    const count = await this.prisma.client.lineReadEvidence.count({ where: {
+      companyId: request.userContext.companyId, userId: request.userContext.internalUserId, requestId: request.requestId,
+    } });
+    return count === 0;
+  }
+
   async verifyDelivery(value: unknown, recipient: { webhookEventId: string; lineUserId: string; chatId: string; channelId: string }): Promise<boolean> {
-    const read = parseLineReadDeliveryAuthorization(value);
-    if (!read || read.webhookEventId !== recipient.webhookEventId || recipient.lineUserId !== recipient.chatId
-      || read.channelId !== recipient.channelId
-      || read.recipientHash !== lineDeliveryRecipientHash(recipient.lineUserId, recipient.chatId, recipient.channelId)) return false;
-    if (!await this.verify(read.companyId, read.userId, read.requestId, read.ids)) return false;
+    const root = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+    const hasRead = !!root && Object.prototype.hasOwnProperty.call(root, 'read');
+    const read = hasRead ? parseLineReadDeliveryAuthorization(value) : null;
+    const accessProof = !hasRead ? parseExpenseCriterionAccessAuthorization(value) : null;
+    const proof = hasRead ? read : accessProof;
+    if (!proof || proof.webhookEventId !== recipient.webhookEventId || recipient.lineUserId !== recipient.chatId
+      || proof.channelId !== recipient.channelId
+      || proof.recipientHash !== lineDeliveryRecipientHash(recipient.lineUserId, recipient.chatId, recipient.channelId)) return false;
+    if (read && !await this.verify(read.companyId, read.userId, read.requestId, read.ids)) return false;
     // Resolve again after potentially slow source reads; source access is not actor continuity.
     const where = { provider: 'LINE' as const, status: 'ACTIVE' as const, providerUserId: recipient.lineUserId };
     // An explicit canonical unlink must beat an older active alias, just as on the live webhook path.
@@ -96,13 +382,13 @@ export class LineReadEvidenceService {
     }, include: { user: true } }) : null;
     if (scoped && scoped.status !== 'ACTIVE') return false;
     const identity = scoped ?? await this.prisma.client.externalIdentity.findFirst({ where, include: { user: true } });
-    if (!identity || identity.userId !== read.userId || identity.user.status !== 'ACTIVE' || identity.user.aiAssistantOptOutAt) return false;
-    const access = await this.resolver.resolveAccess(read.userId, read.companyId);
-    const entitled = await loadEntitledFeatureKeys(this.prisma, read.companyId);
+    if (!identity || identity.userId !== proof.userId || identity.user.status !== 'ACTIVE' || identity.user.aiAssistantOptOutAt) return false;
+    const access = await this.resolver.resolveAccess(proof.userId, proof.companyId);
+    const entitled = await loadEntitledFeatureKeys(this.prisma, proof.companyId);
     const context = await this.prisma.client.lineCompanyContext.findUnique({ where: { lineUserId: recipient.lineUserId }, select: { companyId: true, aiPausedUntil: true } });
-    return (!context?.companyId || context.companyId === read.companyId)
+    return (!context?.companyId || context.companyId === proof.companyId)
       && (!context?.aiPausedUntil || context.aiPausedUntil.getTime() <= Date.now())
-      && read.fingerprint === resolvedLineDeliveryAccessFingerprint(read.userId, read.companyId, access, entitled);
+      && proof.fingerprint === resolvedLineDeliveryAccessFingerprint(proof.userId, proof.companyId, access, entitled);
   }
 
   /** Read implementations only. This never invokes a model, capture, preview, approval or mutation. */
