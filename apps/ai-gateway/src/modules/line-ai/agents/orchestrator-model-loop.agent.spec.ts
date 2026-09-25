@@ -1,7 +1,7 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { OrchestratorAgent } from './orchestrator.agent';
-import type { LineAiTurnRequest } from '@watchdog-bms/contracts';
+import { extractValueCandidates, parseLineAiPreparedPlan, type LineAiTurnRequest } from '@watchdog-bms/contracts';
 
 // Exercises the model-driven tool loop: when a provider is available the model chooses which
 // planned tool to call next (bounded by requiredTools and the routed agent's allowlist), with deterministic fact-shaping
@@ -120,6 +120,44 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
     const shortResult = await new OrchestratorAgent(erpTools, makeConfig()).run(shortReq);
     assert.deepEqual(calls.map((call) => call.fromDate), [july!.fromDate, august!.fromDate]);
     assert.match(shortResult.replyText, /25,147\.80 บาท[\s\S]*214,899\.57 บาท/);
+
+    calls.length = 0;
+    const typoText = 'สรุปค่าใช้จ่ายเดือนกรกดาคม และ สิงหาคม';
+    const typoReq = { ...req, intakeIntent: 'BUSINESS_READ_QUESTION', messageText: typoText,
+      valueCandidates: extractValueCandidates(typoText, '2026-09-25') } as LineAiTurnRequest;
+    installFetch(plan, oneJulyCall);
+    const typoResult = await new OrchestratorAgent(erpTools, makeConfig()).run(typoReq);
+    assert.deepEqual(calls.map((call) => call.fromDate), [july!.fromDate, august!.fromDate]);
+    assert.match(typoResult.replyText, /ตีความ "กรกดาคม" เป็น[\s\S]*25,147\.80 บาท/);
+
+    calls.length = 0;
+    const unclearText = 'สรุปค่าใช้จ่ายเดือนกรกดาคน และ สิงหาคม';
+    const unclearReq = { ...req, intakeIntent: 'BUSINESS_READ_QUESTION', messageText: unclearText,
+      valueCandidates: extractValueCandidates(unclearText, '2026-09-25') } as LineAiTurnRequest;
+    unclearReq.preparedPlan = parseLineAiPreparedPlan({
+      version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'single_metric',
+      intentPlan: plan, proposedCalls: [{ toolName: 'expense.list_recent', input: {
+        fromDate: august!.fromDate, toDate: august!.toDate,
+      } }],
+    });
+    assert.ok(unclearReq.preparedPlan);
+    installFetch(plan, oneJulyCall);
+    const unclearResult = await new OrchestratorAgent(erpTools, makeConfig({
+      lineAiPreparedSimpleReadEnabled: true,
+      lineAiDeterministicResponseFamilies: ['expense.list_recent::single_metric'],
+    })).run(unclearReq);
+    assert.equal(calls.length, 0, 'unclear month must not read August alone or default to September');
+    assert.match(unclearResult.replyText, /กรกดาคน.*หมายถึงเดือนใด/);
+    assert.equal(unclearResult.coverage?.[0]?.verdict, 'needs_user');
+
+    calls.length = 0;
+    const unclearSecondText = 'สรุปค่าใช้จ่ายเดือนกรกฎาคม และ สิงหาตน';
+    const unclearSecondReq = { ...req, intakeIntent: 'BUSINESS_READ_QUESTION', messageText: unclearSecondText,
+      valueCandidates: extractValueCandidates(unclearSecondText, '2026-09-25') } as LineAiTurnRequest;
+    installFetch(plan, oneJulyCall);
+    const unclearSecondResult = await new OrchestratorAgent(erpTools, makeConfig()).run(unclearSecondReq);
+    assert.equal(calls.length, 0, 'a misspelled second month must not yield a July-only answer');
+    assert.match(unclearSecondResult.replyText, /สิงหาตน.*หมายถึงเดือนใด/);
 
     calls.length = 0;
     installFetch(plan, oneJulyCall);
@@ -261,8 +299,6 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
 	});
 
 // ── Item 10F: explicit-date membership guard on loop tool inputs ─────────────
-
-import { extractValueCandidates } from '@watchdog-bms/contracts';
 
 describe('OrchestratorAgent – loop date membership (item 10F)', () => {
   it('drops a self-converted (Buddhist-era) date and keeps candidate/current dates', async () => {
