@@ -696,6 +696,8 @@ export const PERIOD_ASSUMPTIONS = {
   lastNDaysIncludeToday: 'last_n_days_include_today',
   /** A month name, quarter or range written with no year: the most recent occurrence not in the future. */
   yearAssumedLatest: 'year_assumed_latest_past',
+  /** A uniquely identifiable full Thai month name had one mistyped Unicode character. */
+  monthNameTypoCorrected: 'month_name_typo_corrected',
 } as const;
 
 const MS_PER_CIVIL_DAY = 86_400_000;
@@ -798,6 +800,60 @@ const PERIOD_MONTH_ALTERNATION_NO_YEAR = PERIOD_MONTH_NAMES
 function periodMonthFromName(name: string): number | null {
   const lowered = name.toLowerCase();
   for (const [candidate, month] of [...PERIOD_MONTH_NAMES, ...PERIOD_SHORT_MONTH_NAMES]) if (candidate === lowered) return month;
+  return null;
+}
+
+// ponytail: one edit on a full month name only; short aliases and uncertain matches need clarification.
+const FULL_THAI_MONTH_NAMES = THAI_MONTHS.filter(([name]) => name.length > 4 && !name.includes('.'));
+function oneEditApart(left: string, right: string): boolean {
+  const a = [...left];
+  const b = [...right];
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0; let j = 0; let edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i += 1; j += 1; continue; }
+    if (++edits > 1) return false;
+    if (a.length >= b.length) i += 1;
+    if (a.length <= b.length) j += 1;
+  }
+  return edits + Number(i < a.length || j < b.length) === 1;
+}
+
+function correctedThaiMonthName(token: string): string | null {
+  const matches = FULL_THAI_MONTH_NAMES.filter(([name]) => oneEditApart(token, name));
+  return new Set(matches.map(([, month]) => month)).size === 1 ? matches[0]![0] : null;
+}
+
+/** An explicit `เดือน...` whose month cannot be resolved must never silently use the current month. */
+export function unresolvedMonthName(text: string, periods: LineAiPeriodCandidate[]): string | null {
+  const coveredAt = (index: number): boolean => periods.some((period) => {
+    let start = text.indexOf(period.span);
+    while (start >= 0) {
+      if (start <= index && index < start + period.span.length) return true;
+      start = text.indexOf(period.span, start + 1);
+    }
+    return false;
+  });
+  for (const match of text.matchAll(/เดือน\s*([ก-๙]+)/gu)) {
+    const token = match[1]!.split('และ', 1)[0]!;
+    const before = text.slice(Math.max(0, (match.index ?? 0) - 4), match.index);
+    if (/(?:ต้น|กลาง|ปลาย|สิ้น)$/u.test(before)
+      || /^(?:นี้|หน้า|ถัดไป|ก่อน|ที่แล้ว|ปัจจุบัน|ละ)/u.test(token) || token.length < 2) continue;
+    const tokenStart = (match.index ?? 0) + match[0].indexOf(match[1]!);
+    if (!coveredAt(tokenStart)) return token.slice(0, 32);
+    let cursor = tokenStart + token.length;
+    for (;;) {
+      const next = /^\s*และ\s*([ก-๙]+)/u.exec(text.slice(cursor));
+      if (!next) break;
+      const nextToken = next[1]!.split('และ', 1)[0]!;
+      const nextStart = cursor + next[0].indexOf(next[1]!);
+      if (!nextToken.startsWith('เดือน') && (
+        nextToken.length <= 3 && PERIOD_SHORT_MONTH_NAMES.some(([name]) => name[0] === nextToken[0])
+        || nextToken.length > 3 && FULL_THAI_MONTH_NAMES.some(([name]) => name.slice(0, 2) === nextToken.slice(0, 2))
+      ) && !coveredAt(nextStart)) return nextToken.slice(0, 32);
+      cursor = nextStart + nextToken.length;
+    }
+  }
   return null;
 }
 
@@ -1185,7 +1241,8 @@ export function resolvePeriodCandidates(
       toDate,
       ...(reading.monthKey ? { monthKey: reading.monthKey } : {}),
       source: reading.source,
-      label: reading.word ? `${reading.word} (${range})` : range,
+      label: reading.assumptions.includes(PERIOD_ASSUMPTIONS.monthNameTypoCorrected)
+        ? `ตีความ "${span}" เป็น ${range}` : reading.word ? `${reading.word} (${range})` : range,
       assumptions,
     };
     if (out.some((existing) => existing.kind === candidate.kind
@@ -1209,9 +1266,28 @@ export function resolvePeriodCandidates(
       for (const reading of rule.build(match, todayIso)) push(text.slice(start, end), reading);
     }
   }
+  // Recover a clear, one-character typo in a full Thai month name. The original span remains on
+  // the candidate for wire validation and audit; the correction is only a date interpretation.
+  const typoPattern = /(?:เดือน\s*|^|[\s,(]|และ\s*)([ก-๙]{5,14}?)(?=$|\s|และ|[),/.!?]|ปี\s*\d)/gu;
+  for (const match of mapped.matchAll(typoPattern)) {
+    const token = match[1]!;
+    const start = (match.index ?? 0) + match[0].lastIndexOf(token);
+    const nameEnd = start + token.length;
+    if (overlaps(used, start, nameEnd)) continue;
+    const corrected = correctedThaiMonthName(token);
+    if (!corrected) continue;
+    const year = /^\s*(?:ปี\s*)?['’]?(\d{2,4})(?=$|\s|และ|[),/])/u.exec(mapped.slice(nameEnd));
+    const end = nameEnd + (year?.[0].length ?? 0);
+    used.push({ start, end });
+    for (const reading of namedMonth(corrected, year?.[1], todayIso)) {
+      push(text.slice(start, end), {
+        ...reading, assumptions: [...reading.assumptions, PERIOD_ASSUMPTIONS.monthNameTypoCorrected],
+      });
+    }
+  }
   for (const found of dateCandidateRanges(text, dates)) push(found.span, found.reading);
 
-  return out.slice(0, MAX_PERIOD_CANDIDATES);
+  return out.sort((a, b) => text.indexOf(a.span) - text.indexOf(b.span)).slice(0, MAX_PERIOD_CANDIDATES);
 }
 
 // ── Discovery helpers ─────────────────────────────────────────────────────────

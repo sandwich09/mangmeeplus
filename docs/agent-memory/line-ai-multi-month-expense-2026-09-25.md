@@ -8,6 +8,7 @@ Decisions:
 - Use the existing permission-checked `expense.list_recent` and document-date filter. No data migration or new tool.
 - Preserve validated date candidates through the Gateway/AgentCore boundary. Admit the observed `กรกฏาคม` spelling in the shared month parser.
 - Admit punctuation-free Thai month abbreviations only after `เดือน` or a clear token boundary; the generic month regex still excludes them to avoid false March matches inside `มีค่าใช้จ่าย`.
+- Follow-up: a clear full Thai month name one Unicode character from exactly one calendar month is interpreted with an audit assumption and visible label. An explicit unresolved `เดือน...` in a business read asks for the month before any tool call, including the prepared lane; ordinary relative expressions remain unchanged.
 - For one expense intent with multiple resolved months, complete missing monthly reads within the existing tool budget and same resolved branch. Render each month from echoed tool data; show an explicit incomplete state for failed or truncated reads.
 - A one-call prepared plan cannot serve a multi-month expense answer and falls back before any prepared tool call.
 
@@ -26,6 +27,7 @@ Verification:
 - AI Gateway / AgentCore focused and adjacent suites: 188/188, including one-model-call completion, resolved branch reuse, incomplete August on tool failure or budget exhaustion, unresolved branch, prepared-lane fallback, and wire round-trip.
 - ERP expense/business tool suites: 48/48 after generating the local Prisma client; confirmed document-date range, status exclusions, branch resolution, and truncation behavior. The first attempt could not load the absent generated Prisma client; generation resolved that setup issue.
 - `pnpm --filter @watchdog-bms/contracts build`, `pnpm --filter @watchdog-bms/ai-gateway typecheck`, and `build:agentcore` passed (the standalone build required building the workspace config package first). `git diff --check` passed.
+- Month-typo follow-up: contracts full suite 330/330, AI Gateway full suite 1,267/1,267, contracts build, Gateway typecheck and AgentCore build passed. Tests include unique typo recovery, visible correction, an unclear first or second month with zero ERP calls even when a prepared read is present, shorthand, and relative-month regressions.
 - No live LINE canary, Production data mutation, or deployment in this implementation.
 
 Next: Production rollout follows `docs/runbooks/uat-production-v2-deployment.md` separately, with a live LINE canary comparing each month to current tool output.
