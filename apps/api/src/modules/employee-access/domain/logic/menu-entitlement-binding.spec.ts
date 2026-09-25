@@ -145,6 +145,11 @@ describe('FEATURE_PACKAGE_PRESETS menu parity', () => {
       // have no screen to correct it on.
       ['dashboard', 'expenses', 'counterparties', 'reimbursements', 'roles', 'settings', 'notifications'],
     );
+    // ...and the screen must be able to correct it, not just show it (owner 2026-09-25).
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['accounting.counterparty.read', 'accounting.counterparty.manage'], entitled),
+      ['accounting.counterparty.read', 'accounting.counterparty.manage'],
+    );
     assert.ok(entitled.has('ai_line_assistant'));
     assert.deepEqual(filterPermissionsByEntitlement(['ai.suggestion.read', 'crm.ai.read'], entitled), ['ai.suggestion.read', 'crm.ai.read']);
   });

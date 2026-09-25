@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Patch, Param, Body, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { IsBoolean, IsEmail, IsIn, IsISO8601, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
-import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { BUYER_ENTITY_KINDS } from '@watchdog-bms/contracts';
@@ -67,6 +67,16 @@ class PromoteSeenAddressDto {
   @IsISO8601() @IsOptional() expectedUpdatedAt?: string;
 }
 
+/**
+ * Owner 2026-09-25: whoever added a counterparty (through their purchase or sales document, or by
+ * hand) may open and edit it. The route admits the relation keys members hold for their own
+ * documents: `expense.read_related` is in every built-in company role and the core pack, and
+ * `accounting.document.read_related` covers the sales side. Each is entitlement-gated to its own
+ * feature (`expenses.list` / `sales_documents`), so the door stays shut for a company with neither.
+ * The use case then requires the counterparty permission or `createdByUserId === ctx.userId`.
+ */
+const ADDED_BY_PATH = ['expense.read_related', 'accounting.document.read_related'] as const;
+
 @ApiTags('accounting')
 @Controller('companies/:companyId/accounting/counterparties')
 export class CounterpartyController {
@@ -98,7 +108,7 @@ export class CounterpartyController {
   }
 
   @Get(':counterpartyId')
-  @RequirePermissions('accounting.counterparty.read')
+  @RequireAnyPermission('accounting.counterparty.read', ...ADDED_BY_PATH)
   @ApiOperation({ summary: 'Get counterparty by id' })
   async getCounterparty(
     @ReqCtx() ctx: RequestContext,
@@ -118,7 +128,7 @@ export class CounterpartyController {
   }
 
   @Patch(':counterpartyId')
-  @RequirePermissions('accounting.counterparty.manage')
+  @RequireAnyPermission('accounting.counterparty.manage', ...ADDED_BY_PATH)
   @ApiOperation({ summary: 'Update counterparty' })
   async updateCounterparty(
     @ReqCtx() ctx: RequestContext,
@@ -129,7 +139,7 @@ export class CounterpartyController {
   }
 
   @Post(':counterpartyId/promote-seen-address')
-  @RequirePermissions('accounting.counterparty.manage')
+  @RequireAnyPermission('accounting.counterparty.manage', ...ADDED_BY_PATH)
   @ApiOperation({ summary: 'Make an address seen on a document the primary one' })
   async promote(
     @ReqCtx() ctx: RequestContext,

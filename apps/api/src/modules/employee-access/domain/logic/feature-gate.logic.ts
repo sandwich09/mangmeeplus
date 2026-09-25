@@ -16,6 +16,11 @@ const SUBFEATURE_RULES = FEATURE_CATALOG.flatMap((feature) =>
 
 // Prefix gates, checked BEFORE pack membership so they win even for permissions that live in an
 // ungated capability pack. A permission is kept if ANY listed feature is enabled.
+//  - accounting.counterparty.*: the registry is shared by purchases and sales (the `counterparties`
+//                      menu binding lists both features). `manage` lived only in the sales-gated
+//                      pack.billing.operate, so an expenses-only shop (every starter tier) kept read
+//                      and lost edit, OWNER included (UAT 2026-09-25). Checked before pack membership,
+//                      so both keys stay while EITHER feature is on and go only when both are off.
 //  - inventory.product.*: the product/service catalog is sold independently from Inventory + CRM.
 //  - report.*        : item 18 report catalog/BI has no pack; gate by the `reports` toggle.
 //  - reimbursement.* : reimbursement packs carry no feature key (it's a spending flow), so gate it
@@ -41,6 +46,7 @@ const SUBFEATURE_RULES = FEATURE_CATALOG.flatMap((feature) =>
 const PREFIX_FEATURE_RULES: ReadonlyArray<{ prefix: string; featureKeys: readonly string[] }> = [
   { prefix: 'accounting.document.read_related', featureKeys: ['sales_documents'] },
   { prefix: 'accounting.revenue_category.', featureKeys: ['sales_documents'] },
+  { prefix: 'accounting.counterparty.', featureKeys: ['expenses', 'sales_documents'] },
   { prefix: 'expense.read_related', featureKeys: ['expenses.list'] },
   { prefix: 'procurement.purchase_request.read_related', featureKeys: ['procurement.purchase_requests'] },
   { prefix: 'procurement.purchase_order.read_related', featureKeys: ['procurement.purchase_orders'] },
