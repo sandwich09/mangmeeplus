@@ -10,9 +10,10 @@ import { ThemedSteps, type ThemedStepState } from '@/common/components/steps/The
 import { EmptyState, ErrorState, ForbiddenState, LoadingState } from '@/common/components/state';
 import { useConfirm } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
-import { ErrorBanner, btnClass, ghostClass } from '../expenses/ExpensesUi';
+import { ErrorBanner, btnClass, ghostClass, inputClass } from '../expenses/ExpensesUi';
 import {
-  approveReimbursement, cancelReimbursement, financeReviewReimbursement, getReimbursement, rejectReimbursement,
+  addReimbursementInternalNote, approveReimbursement, cancelReimbursement, deleteReimbursementInternalNote,
+  editReimbursementInternalNote, financeReviewReimbursement, getReimbursement, rejectReimbursement,
   reopenReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadSignedClaimFormCopy,
   voidReimbursementPayment,
 } from './reimbursements.api';
@@ -58,11 +59,12 @@ const REASON_DIALOGS: Record<ReasonAction, { title: string; description: string;
   },
 };
 
-export function ReimbursementJourneyPage({ companyId, requestId, userId, permissions }: {
+export function ReimbursementJourneyPage({ companyId, requestId, userId, permissions, roles = [] }: {
   companyId: string;
   requestId: string;
   userId: string;
   permissions: readonly string[];
+  roles?: readonly string[];
 }) {
   const toast = useToast();
   const { confirm, confirmDialog } = useConfirm();
@@ -81,8 +83,43 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const [missingSignatureFor, setMissingSignatureFor] = useState<ClaimSignatureRole | null>(null);
   const [approverHelp, setApproverHelp] = useState<ReturnType<typeof approverNotReadyHelp>>(null);
   const [focusTick, setFocusTick] = useState(0);
+  const [noteBody, setNoteBody] = useState('');
+  const [editingNote, setEditingNote] = useState<string | null>(null);
+  const [noteBusy, setNoteBusy] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
   const cardRef = useRef<HTMLElement>(null);
   const { previewLoadingKey, openClaimForm, openAttachment, previewModals } = useClaimDocumentPreview(companyId, setActionError);
+
+  const saveNote = async () => {
+    if (!noteBody.trim() || noteBusy) return;
+    setNoteBusy(true); setNoteError(null);
+    try {
+      const wasEditing = editingNote;
+      if (wasEditing) {
+        await editReimbursementInternalNote(companyId, requestId, wasEditing, noteBody.trim());
+        setDetail((current: any) => ({ ...current, internalNotes: (current.internalNotes ?? []).map((note: any) =>
+          note.id === wasEditing ? { ...note, body: noteBody.trim(), updatedAt: new Date().toISOString() } : note) }));
+      } else {
+        const note = await addReimbursementInternalNote(companyId, requestId, noteBody.trim());
+        setDetail((current: any) => ({ ...current, internalNotes: [...(current.internalNotes ?? []), note] }));
+      }
+      setNoteBody(''); setEditingNote(null);
+      toast.success(wasEditing ? 'แก้ไขโน้ตแล้ว' : 'เพิ่มโน้ตแล้ว');
+    } catch (error) { setNoteError(errorText(error)); }
+    finally { setNoteBusy(false); }
+  };
+
+  const removeNote = async (noteId: string) => {
+    if (!(await confirm({ title: 'ลบโน้ตภายใน', message: 'ลบโน้ตนี้ออกจากรายการเบิก?', confirmLabel: 'ลบโน้ต', cancelLabel: 'กลับ', variant: 'danger' }))) return;
+    setNoteBusy(true); setNoteError(null);
+    try {
+      await deleteReimbursementInternalNote(companyId, requestId, noteId);
+      setDetail((current: any) => ({ ...current, internalNotes: (current.internalNotes ?? []).filter((note: any) => note.id !== noteId) }));
+      if (editingNote === noteId) { setEditingNote(null); setNoteBody(''); }
+      toast.success('ลบโน้ตแล้ว');
+    } catch (error) { setNoteError(errorText(error)); }
+    finally { setNoteBusy(false); }
+  };
 
   useEffect(() => {
     let active = true;
@@ -256,6 +293,48 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       meta={<StatusBadge status={detail.status} />}
     >
       <ClaimSummaryCard detail={detail} />
+
+      <MangmeeCard className="space-y-3 p-4 sm:p-5">
+        <div>
+          <h2 className="font-bold text-gray-900">โน้ตภายในบริษัท</h2>
+          <p className="text-xs text-gray-500">เห็นได้เฉพาะผู้ที่มีสิทธิ์ดูใบเบิกนี้ ไม่ปรากฏในใบเบิกที่พิมพ์</p>
+        </div>
+        {(detail.internalNotes ?? []).length === 0 && <p className="text-sm text-gray-500">ยังไม่มีโน้ต</p>}
+        <ul className="space-y-3">
+          {(detail.internalNotes ?? []).map((note: any) => (
+            <li key={note.id} className="rounded-lg border border-gray-200 p-3 text-sm">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="text-xs text-gray-500">{note.authorName} · {new Date(note.createdAt).toLocaleString('th-TH')}</div>
+                {(note.authorUserId === userId || roles.includes('OWNER')) && (
+                  <div className="flex gap-2">
+                    <button type="button" className="text-brand-700 hover:underline" aria-label={`แก้ไขโน้ตของ ${note.authorName}`} disabled={noteBusy}
+                      onClick={() => { setEditingNote(note.id); setNoteBody(note.body); setNoteError(null); }}>แก้ไข</button>
+                    <button type="button" className="text-red-700 hover:underline" aria-label={`ลบโน้ตของ ${note.authorName}`} disabled={noteBusy}
+                      onClick={() => void removeNote(note.id)}>ลบ</button>
+                  </div>
+                )}
+              </div>
+              <p className="mt-2 whitespace-pre-wrap break-words text-gray-800">{note.body}</p>
+              {note.updatedAt !== note.createdAt && <p className="mt-1 text-xs text-gray-400">แก้ไขแล้ว {new Date(note.updatedAt).toLocaleString('th-TH')}</p>}
+            </li>
+          ))}
+        </ul>
+        <label htmlFor="reimbursement-internal-note" className="block text-sm font-semibold text-gray-700">
+          {editingNote ? 'แก้ไขโน้ต' : 'เพิ่มโน้ต'}
+        </label>
+        <textarea id="reimbursement-internal-note" className={cx(inputClass, 'min-h-24 w-full resize-y')}
+          value={noteBody} onChange={(event) => setNoteBody(event.target.value)} maxLength={2000}
+          placeholder="เขียนข้อมูลสำหรับคนในบริษัท" disabled={noteBusy} />
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className={btnClass} disabled={noteBusy || !noteBody.trim()} aria-busy={noteBusy} onClick={() => void saveNote()}>
+            {noteBusy ? 'กำลังบันทึก...' : editingNote ? 'บันทึกการแก้ไข' : 'เพิ่มโน้ต'}
+          </button>
+          {editingNote && <button type="button" className={ghostClass} disabled={noteBusy}
+            onClick={() => { setEditingNote(null); setNoteBody(''); setNoteError(null); }}>ยกเลิก</button>}
+          <span className="text-xs text-gray-400">{noteBody.length}/2000</span>
+        </div>
+        {noteError && <ErrorBanner message={noteError} />}
+      </MangmeeCard>
 
       <MangmeeCard className="p-4 sm:p-5">
         <p className="mb-4 text-sm font-semibold text-gray-500">

@@ -4,6 +4,7 @@ import type { RequestContext } from '@watchdog-bms/contracts';
 import {
   assertCanReadRequest,
   GetReimbursementDetailUseCase,
+  ReimbursementInternalNotesUseCase,
   ListReimbursementsUseCase,
 } from './reimbursement-request.use-case';
 import { GetReimbursementAiSummaryUseCase } from './reimbursement-summary.use-case';
@@ -52,6 +53,9 @@ describe('reimbursement related-view ABAC', () => {
     // both normal read ABAC and that task-scoped capability.
     assert.equal(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, prototype.get), undefined);
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.get), ['account.session.read']);
+    for (const handler of ['addInternalNote', 'editInternalNote', 'deleteInternalNote'] as const) {
+      assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype[handler]), ['account.session.read']);
+    }
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.listApprovalQueue), ['account.session.read']);
     assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, prototype.update), ['reimbursement.update_own_draft', 'reimbursement.finance_review']);
     // Approve/reject are gated by exact frozen assignment or current permission in the
@@ -113,26 +117,34 @@ describe('reimbursement related-view ABAC', () => {
         assignedAt: now, createdAt: now, updatedAt: now,
       }],
     } as any;
-    const useCase = new GetReimbursementDetailUseCase({
+    const noteRepo = {
       findRequestById: async () => pending,
       findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
       findPolicy: async () => null,
       isUserRelatedToRequest: async () => false,
-      getUserDisplayNames: async () => ({}),
+      getUserDisplayNames: async () => ({ 'actor-1': 'Approver' }),
       listSignedClaimFormCopies: async () => [],
-    } as any, {
+      listInternalNotes: async () => [{ id: 'note-1', authorUserId: 'actor-1', body: 'สำหรับทีม', createdAt: now, updatedAt: now }],
+      createInternalNote: async (_companyId: string, _requestId: string, authorUserId: string, body: string) =>
+        ({ id: 'note-2', authorUserId, body, createdAt: now, updatedAt: now }),
+    } as any;
+    const useCase = new GetReimbursementDetailUseCase(noteRepo, {
       getAttachmentFileName: async () => undefined,
       getAttachmentFileNames: async () => ({}),
     } as any);
+    const notes = new ReimbursementInternalNotesUseCase(noteRepo, { log: async () => undefined } as any);
 
     const detail = await useCase.execute(ctx({ permissions: [], roles: ['STAFF'] }), pending.id);
     assert.deepEqual(detail.approvalActions, { canApprove: true, canReject: true });
+    assert.deepEqual(detail.internalNotes?.map(note => [note.authorName, note.body]), [['Approver', 'สำหรับทีม']]);
+    assert.equal((await notes.create(ctx({ permissions: [], roles: ['STAFF'] }), pending.id, 'สำหรับผู้อนุมัติ')).body, 'สำหรับผู้อนุมัติ');
 
     pending.approvalSteps[0].assignedApproverUserIds = ['someone-else'];
     await assert.rejects(
       useCase.execute(ctx({ permissions: [], roles: ['STAFF'] }), pending.id),
       /Cannot read this reimbursement/,
     );
+    await assert.rejects(() => notes.create(ctx({ permissions: [], roles: ['STAFF'] }), pending.id, 'ไม่ควรได้'), /Cannot read this reimbursement/);
   });
 
   it('lists only related records under the caller branch scope', async () => {

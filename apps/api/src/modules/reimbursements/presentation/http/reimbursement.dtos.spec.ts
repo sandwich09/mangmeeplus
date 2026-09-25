@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import {
-  CreateReimbursementRequestDto, LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto, UpdateReimbursementDraftDto,
+  CreateReimbursementRequestDto, LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto,
+  ReimbursementInternalNoteDto, UpdateReimbursementDraftDto,
 } from './reimbursement.dtos';
 
 // The exact global-pipe configuration main.ts registers: this is the runtime gate
@@ -19,6 +20,15 @@ const validLine = {
   amount: '120.50',
 };
 const validCreate = { reason: 'ไปพบลูกค้า', currency: 'THB', lines: [validLine] };
+
+describe('ReimbursementInternalNoteDto', () => {
+  it('accepts bounded text and rejects forged fields', async () => {
+    await pipe.transform({ body: 'ตรวจเอกสารแล้ว' }, { type: 'body', metatype: ReimbursementInternalNoteDto });
+    await rejects(ReimbursementInternalNoteDto, { body: 'x'.repeat(2001) });
+    await rejects(ReimbursementInternalNoteDto, { body: 'x', authorUserId: 'other' });
+    await rejects(ReimbursementInternalNoteDto, { body: 42 });
+  });
+});
 
 async function rejects(metatype: any, body: Record<string, unknown>) {
   await assert.rejects(

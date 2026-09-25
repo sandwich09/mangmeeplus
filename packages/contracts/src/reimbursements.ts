@@ -358,6 +358,15 @@ export type ReimbursementSignedCopySummary = {
   acknowledgedByName?: string;
 };
 
+export type ReimbursementInternalNote = {
+  id: string;
+  authorUserId: string;
+  authorName: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type SignReimbursementClaimFormInput = {
   role: ReimbursementClaimSignatureRole;
   /** Legacy callers may provide a claim-scoped upload; otherwise the server resolves the signer's saved signature. */
@@ -418,6 +427,7 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   signatures: ReimbursementClaimSignatureSummary[];
   /** Uploaded scans/photos of the wet-ink signed form, newest first. */
   signedCopies: ReimbursementSignedCopySummary[];
+  internalNotes?: ReimbursementInternalNote[];
 };
 
 // ---- Inputs ----

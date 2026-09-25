@@ -3,7 +3,7 @@ import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 // uploadReceiptFile helper, which resolves the URL and turns a failed PUT into a readable message.
 import { uploadReceiptFile as uploadFileToStorage } from '../expenses/expenses.api';
 import { prepareAttachmentUpload, withGenericUploadError } from '@/common/files/upload-file.logic';
-import type { ReimbursementApproverRoleOption, ReimbursementPolicySummary, ReimbursementSourceOptions } from '@watchdog-bms/contracts';
+import type { ReimbursementApproverRoleOption, ReimbursementInternalNote, ReimbursementPolicySummary, ReimbursementSourceOptions } from '@watchdog-bms/contracts';
 
 function qs(params?: Record<string, unknown>): string {
   const q = new URLSearchParams();
@@ -27,6 +27,15 @@ export function listReimbursements(companyId: string, params?: Record<string, un
 }
 export function getReimbursement(companyId: string, id: string) {
   return apiFetch<any>(`${base(companyId)}/${id}`);
+}
+export function addReimbursementInternalNote(companyId: string, id: string, body: string) {
+  return apiFetch<ReimbursementInternalNote>(`${base(companyId)}/${id}/internal-notes`, { method: 'POST', body: JSON.stringify({ body }) });
+}
+export function editReimbursementInternalNote(companyId: string, id: string, noteId: string, body: string) {
+  return apiFetch(`${base(companyId)}/${id}/internal-notes/${noteId}`, { method: 'PATCH', body: JSON.stringify({ body }) });
+}
+export function deleteReimbursementInternalNote(companyId: string, id: string, noteId: string) {
+  return apiFetch(`${base(companyId)}/${id}/internal-notes/${noteId}`, { method: 'DELETE' });
 }
 export function createReimbursement(companyId: string, body: Record<string, unknown>) {
   return apiFetch<any>(base(companyId), { method: 'POST', body: JSON.stringify(body) });

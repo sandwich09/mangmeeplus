@@ -62,6 +62,10 @@ export class UpdateReimbursementDraftDto implements UpdateReimbursementDraftInpu
   lines?: ReimbursementLineDto[];
 }
 
+export class ReimbursementInternalNoteDto {
+  @IsString() @MaxLength(2000) body!: string;
+}
+
 export class UpdateReimbursementPolicyDto implements UpdateReimbursementPolicyInput {
   @IsDateString({ strict: true }) @Matches(/T/) @IsOptional() expectedUpdatedAt?: string;
   @Matches(MONEY) @IsOptional() approvalRequiredFromAmount?: string;
