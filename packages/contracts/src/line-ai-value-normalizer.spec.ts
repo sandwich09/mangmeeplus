@@ -512,6 +512,45 @@ describe('resolvePeriodCandidates (spec §3.1)', () => {
     assert.equal(unresolvedMonthName('ค่าใช้จ่ายเดือนละ 500 บาท', []), null);
   });
 
+  it('resolves all twelve numbered months and English abbreviations without a current-month fallback', () => {
+    const english = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    for (let month = 1; month <= 12; month += 1) {
+      const key = `2025-${String(month).padStart(2, '0')}`;
+      const latest = `${month <= 9 ? '2026' : '2025'}-${String(month).padStart(2, '0')}`;
+      for (const message of [
+        `ค่าใช้จ่ายเดือน ${month} ปี 2568`,
+        `expenses month ${month} year 2025`,
+        `expenses ${english[month - 1]} 2025`,
+        `ค่าใช้จ่ายเดือน ${english[month - 1]} ปี 2568`,
+      ]) {
+        assert.deepEqual(extractValueCandidates(message, '2026-09-25').periods?.map((period) => period.monthKey), [key], message);
+      }
+      for (const message of [`ค่าใช้จ่ายเดือน ${month}`, `ค่าใช้จ่ายเดือน ${english[month - 1]}`,
+        ...(month === 5 ? [] : [`expenses ${english[month - 1]}`])]) {
+        assert.deepEqual(extractValueCandidates(message, '2026-09-25').periods?.map((period) => period.monthKey), [latest], message);
+      }
+    }
+    assert.deepEqual(extractValueCandidates('ค่าใช้จ่ายเดือน 1 2 3', '2026-09-25').periods?.map((period) => period.monthKey),
+      ['2026-01', '2026-02', '2026-03']);
+    assert.deepEqual(extractValueCandidates('ค่าใช้จ่ายเดือน 1, 2 และ 3 ปี 2569', '2026-09-25').periods?.map((period) => period.monthKey),
+      ['2026-01', '2026-02', '2026-03']);
+    assert.deepEqual(extractValueCandidates('expenses month 1, 2, 3 2025', '2026-09-25').periods?.map((period) => period.monthKey),
+      ['2025-01', '2025-02', '2025-03']);
+    assert.deepEqual(extractValueCandidates(`ค่าใช้จ่ายเดือน ${Array.from({ length: 12 }, (_, index) => index + 1).join(' ')} ปี 2568`, '2026-09-25')
+      .periods?.map((period) => period.monthKey),
+      Array.from({ length: 12 }, (_, index) => `2025-${String(index + 1).padStart(2, '0')}`));
+    assert.deepEqual(extractValueCandidates('ค่าใช้จ่ายเดือน 12', '2026-09-25').periods?.map((period) => period.monthKey), ['2025-12']);
+    assert.deepEqual(extractValueCandidates('ค่าใช้จ่ายเดือน ๑๒', '2026-09-25').periods?.map((period) => period.monthKey), ['2025-12']);
+    assert.deepEqual(extractValueCandidates('ค่าใช้จ่ายเดือน 1 ปี 69', '2026-09-25').periods?.map((period) => period.monthKey), ['2026-01']);
+    assert.deepEqual(extractValueCandidates('expenses month 1 year 26', '2026-09-25').periods?.map((period) => period.monthKey), ['2026-01']);
+    assert.deepEqual(extractValueCandidates('expenses jan jun jul', '2026-09-25').periods?.map((period) => period.monthKey),
+      ['2026-01', '2026-06', '2026-07']);
+    const invalid = 'ค่าใช้จ่ายเดือน 13';
+    assert.equal(unresolvedMonthName(invalid, extractValueCandidates(invalid, '2026-09-25').periods ?? []), '13');
+    assert.equal(unresolvedMonthName('ค่าใช้จ่ายเดือน 0', []), '0');
+    assert.equal(unresolvedMonthName('expenses month 13', []), '13');
+  });
+
   it('emits no periods at all without an injected today (the resolver never reads the clock)', () => {
     assert.equal(extractValueCandidates('ยอดขายเดือนที่แล้ว').periods, undefined);
     assert.equal(extractValueCandidates('สวัสดีค่ะ', FRIDAY).periods, undefined);
