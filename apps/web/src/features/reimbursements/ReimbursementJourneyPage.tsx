@@ -307,9 +307,9 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
                 <div className="text-xs text-gray-500">{note.authorName} · {new Date(note.createdAt).toLocaleString('th-TH')}</div>
                 {(note.authorUserId === userId || roles.includes('OWNER')) && (
                   <div className="flex gap-2">
-                    <button type="button" className="text-brand-700 hover:underline" aria-label={`แก้ไขโน้ตของ ${note.authorName}`} disabled={noteBusy}
+                    <button type="button" className="text-brand-700 hover:underline" aria-label={`แก้ไขโน้ตของ ${note.authorName}`} disabled={noteBusy} aria-busy={noteBusy}
                       onClick={() => { setEditingNote(note.id); setNoteBody(note.body); setNoteError(null); }}>แก้ไข</button>
-                    <button type="button" className="text-red-700 hover:underline" aria-label={`ลบโน้ตของ ${note.authorName}`} disabled={noteBusy}
+                    <button type="button" className="text-red-700 hover:underline" aria-label={`ลบโน้ตของ ${note.authorName}`} disabled={noteBusy} aria-busy={noteBusy}
                       onClick={() => void removeNote(note.id)}>ลบ</button>
                   </div>
                 )}
