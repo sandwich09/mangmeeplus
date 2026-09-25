@@ -1,9 +1,10 @@
 /**
  * The counterparty screen's own endpoints (spec §12, §12.1, A4, A5). What is being protected:
  * `type` can no longer be chosen by a client; the "ใช้อันนี้เป็นหลัก" button and the lock switch are
- * the only manual address decisions and they need `accounting.counterparty.manage`; two people
- * editing at once get told to reload instead of overwriting each other; and an over-long address or
- * a four-digit branch code is refused with the sentence that says how to fix it (§8).
+ * the only manual address decisions and they need `accounting.counterparty.manage` or having added
+ * the row (owner 2026-09-25); two people editing at once get told to reload instead of overwriting
+ * each other; and an over-long address or a four-digit branch code is refused with the sentence that
+ * says how to fix it (§8).
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -181,7 +182,7 @@ describe('promote-seen-address (§7, §12.1)', () => {
     assert.equal(calls.saved[0].billingAddressJson.provenance.source, 'MANUAL', 'a person chose this one');
   });
 
-  it('needs accounting.counterparty.manage, unlike the automatic writes (A3)', async () => {
+  it('needs accounting.counterparty.manage or having added it, unlike the automatic writes (A3)', async () => {
     const { repo, calls } = repoWith(withHistory);
 
     await assert.rejects(
@@ -266,5 +267,75 @@ describe('list and detail (§12)', () => {
 
     await assert.rejects(() => new GetCounterpartyUseCase(repo).execute(ctx([]), 'cp-1'), (error: unknown) => error instanceof ForbiddenException);
     await assert.rejects(() => new ListCounterpartiesUseCase(repo).execute(ctx([])), (error: unknown) => error instanceof ForbiddenException);
+  });
+});
+
+describe('whoever added a counterparty may open and edit it (owner 2026-09-25)', () => {
+  // `ctx()` is user u-1. The relation key is what lets such a caller past the route guard at all.
+  const creatorOnly = ['expense.read_related'];
+  const added = {
+    id: 'cp-1', type: 'VENDOR', displayName: 'ร้านเดิม', createdByUserId: 'u-1',
+    billingAddressJson: { addressText: ADDRESS, seenOnDocuments: [{ addressText: OLD_ADDRESS, expenseId: 'exp-1', at: '2026-01-01T00:00:00.000Z' }] },
+  };
+  const someoneElses = { ...added, createdByUserId: 'u-9' };
+
+  it('lets the person who added it edit and promote without accounting.counterparty.manage', async () => {
+    const { repo, calls } = repoWith(added);
+
+    await new UpdateCounterpartyUseCase(repo, audit, openGate).execute(ctx(creatorOnly), 'cp-1', { displayName: 'ชื่อใหม่' });
+    await new PromoteSeenAddressUseCase(repo, audit).execute(ctx(creatorOnly), 'cp-1', OLD_ADDRESS);
+
+    assert.equal(calls.updated[0].displayName, 'ชื่อใหม่');
+    assert.equal(calls.saved[0].billingAddressJson.addressText, OLD_ADDRESS);
+  });
+
+  it('refuses a row someone else added, and a missing one, with the same 403 and writes nothing', async () => {
+    const { repo, calls } = repoWith(someoneElses);
+    const missing = repoWith();
+    const forbidden = (error: unknown) => error instanceof ForbiddenException;
+
+    await assert.rejects(() => new UpdateCounterpartyUseCase(repo, audit, openGate).execute(ctx(creatorOnly), 'cp-1', { displayName: 'ชื่อใหม่' }), forbidden);
+    await assert.rejects(() => new PromoteSeenAddressUseCase(repo, audit).execute(ctx(creatorOnly), 'cp-1', OLD_ADDRESS), forbidden);
+    await assert.rejects(() => new UpdateCounterpartyUseCase(missing.repo, audit, openGate).execute(ctx(creatorOnly), 'cp-x', { displayName: 'ชื่อใหม่' }), forbidden);
+    await assert.rejects(() => new PromoteSeenAddressUseCase(missing.repo, audit).execute(ctx(creatorOnly), 'cp-x', OLD_ADDRESS), forbidden);
+    assert.deepEqual(calls.updated, []);
+    assert.deepEqual(calls.saved, []);
+    // Only a manage holder learns the row does not exist.
+    await assert.rejects(
+      () => new UpdateCounterpartyUseCase(missing.repo, audit, openGate).execute(ctx(), 'cp-x', { displayName: 'ชื่อใหม่' }),
+      (error: unknown) => error instanceof NotFoundException,
+    );
+  });
+
+  it('opens the row for whoever added it, without the company-wide usage and purchases', async () => {
+    const { repo } = repoWith(added);
+
+    const detail = await new GetCounterpartyUseCase(repo).execute(ctx(creatorOnly), 'cp-1');
+
+    assert.equal(detail.displayName, 'ร้านเดิม');
+    assert.equal(detail.canEdit, true);
+    assert.equal('usageCounts' in detail, false);
+    assert.equal('recentExpenses' in detail, false);
+  });
+
+  it('tells the screen who may edit: not a reader who did not add it, always a manage holder', async () => {
+    const { repo } = repoWith(someoneElses);
+
+    const reader = await new GetCounterpartyUseCase(repo).execute(ctx(['accounting.counterparty.read']), 'cp-1');
+    assert.equal(reader.canEdit, false);
+    assert.deepEqual(reader.usageCounts, { bought: 3, sold: 1 });
+
+    const manager = await new GetCounterpartyUseCase(repo).execute(ctx(), 'cp-1');
+    assert.equal(manager.canEdit, true);
+  });
+
+  it('answers a missing row with 403, not 404, to a caller without read', async () => {
+    const { repo } = repoWith();
+
+    await assert.rejects(() => new GetCounterpartyUseCase(repo).execute(ctx(creatorOnly), 'cp-x'), (error: unknown) => error instanceof ForbiddenException);
+    await assert.rejects(
+      () => new GetCounterpartyUseCase(repo).execute(ctx(['accounting.counterparty.read']), 'cp-x'),
+      (error: unknown) => error instanceof NotFoundException,
+    );
   });
 });
