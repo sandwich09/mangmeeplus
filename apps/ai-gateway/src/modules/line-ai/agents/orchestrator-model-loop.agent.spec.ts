@@ -214,8 +214,8 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
       ? { toolName: tool.name, status: 'unavailable', asOf: '2026-09-25T03:50:00.000Z', sourceRefs: [] }
       : erpTools.invoke(tool, ctx, input) } as any;
     const partial = await new OrchestratorAgent(failedAugust, makeConfig()).run(req);
-    assert.match(partial.replyText, /ยังยืนยันยอดและรายการค่าใช้จ่าย/);
-    assert.doesNotMatch(partial.replyText, /25,147\.80 บาท/);
+    assert.match(partial.replyText, /ก\.ค\. 2569: 25,147\.80 บาท/);
+    assert.match(partial.replyText, /ส\.ค\. 2569: ยังดึงข้อมูลได้ไม่ครบ/);
     assert.doesNotMatch(partial.replyText, /214,899\.57/);
     assert.equal(partial.coverage?.[0]?.verdict, 'uncovered');
 
