@@ -780,6 +780,10 @@ const PERIOD_MONTH_NAMES: Array<[string, number]> = [
   ...THAI_MONTHS.filter(([name]) => name.includes('.') || name.length > 4),
   ...ENGLISH_MONTHS,
 ];
+// Punctuation-free Thai abbreviations are allowed only after เดือน or at a token boundary. The
+// generic month-name regex must not see them: มีค inside มีค่าใช้จ่าย is not March.
+const PERIOD_SHORT_MONTH_NAMES = THAI_MONTHS.filter(([name]) => !name.includes('.') && name.length <= 3);
+const PERIOD_SHORT_MONTH_ALTERNATION = PERIOD_SHORT_MONTH_NAMES.map(([name]) => name).sort((a, b) => b.length - a.length).join('|');
 const PERIOD_MONTH_ALTERNATION = PERIOD_MONTH_NAMES
   .map(([name]) => name.replace(/\./g, '\\.'))
   .sort((a, b) => b.length - a.length)
@@ -793,7 +797,7 @@ const PERIOD_MONTH_ALTERNATION_NO_YEAR = PERIOD_MONTH_NAMES
 
 function periodMonthFromName(name: string): number | null {
   const lowered = name.toLowerCase();
-  for (const [candidate, month] of PERIOD_MONTH_NAMES) if (candidate === lowered) return month;
+  for (const [candidate, month] of [...PERIOD_MONTH_NAMES, ...PERIOD_SHORT_MONTH_NAMES]) if (candidate === lowered) return month;
   return null;
 }
 
@@ -918,6 +922,14 @@ const PERIOD_RULES: PeriodRule[] = [
     build: (m, today) => numericDayRange(m[1]!, m[2]!, m[3]!, m[4]!, m[5], today),
   },
   // ── named months (± พ.ศ./ค.ศ./two-digit year, else the latest non-future occurrence) ──
+  {
+    pattern: new RegExp(`เดือน\\s*(${PERIOD_SHORT_MONTH_ALTERNATION})\\s*(?:ปี\\s*)?['’]?(\\d{2,4})?(?=$|\\s|และ|[),/])`, 'giu'),
+    build: (m, today) => namedMonth(m[1]!, m[2], today),
+  },
+  {
+    pattern: new RegExp(`(?:^|\\s|[,(]|และ\\s*)(${PERIOD_SHORT_MONTH_ALTERNATION})\\s*(?:ปี\\s*)?['’]?(\\d{2,4})?(?=$|\\s|และ|[),/])`, 'giu'),
+    build: (m, today) => namedMonth(m[1]!, m[2], today),
+  },
   {
     pattern: new RegExp(`(${PERIOD_MONTH_ALTERNATION})\\s*(?:ปี\\s*)?['’]?(\\d{2,4})`, 'giu'),
     build: (m, today) => namedMonth(m[1]!, m[2], today),

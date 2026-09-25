@@ -115,6 +115,14 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
 
     calls.length = 0;
     installFetch(plan, oneJulyCall);
+    const shortText = 'ค่าใช้จ่ายเดือนกคและสค';
+    const shortReq = { ...req, messageText: shortText, valueCandidates: extractValueCandidates(shortText, '2026-09-25') };
+    const shortResult = await new OrchestratorAgent(erpTools, makeConfig()).run(shortReq);
+    assert.deepEqual(calls.map((call) => call.fromDate), [july!.fromDate, august!.fromDate]);
+    assert.match(shortResult.replyText, /25,147\.80 บาท[\s\S]*214,899\.57 บาท/);
+
+    calls.length = 0;
+    installFetch(plan, oneJulyCall);
     const failedAugust = { invoke: async (tool: any, ctx: any, input: any) => input.fromDate === august!.fromDate
       ? { toolName: tool.name, status: 'unavailable', asOf: '2026-09-25T03:50:00.000Z', sourceRefs: [] }
       : erpTools.invoke(tool, ctx, input) } as any;
