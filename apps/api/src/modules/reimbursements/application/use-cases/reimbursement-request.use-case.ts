@@ -497,6 +497,7 @@ export class SubmitReimbursementUseCase {
       submissionRoute ??= await this.approverRoutes.resolveSubmissionRoute({
         companyId: ctx.companyId,
         roleKey,
+        roleKeys: policy.defaultApproverRoles,
         branchId: req.branchId,
         requesterUserId: req.requesterUserId,
         allowSelfApproval: policy.allowSelfApproval,

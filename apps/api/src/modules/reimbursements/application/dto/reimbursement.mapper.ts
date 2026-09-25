@@ -38,6 +38,7 @@ export function toPolicySummary(p: ReimbursementPolicyRecord): ReimbursementPoli
     approverMode: p.approverMode,
     defaultApproverUserId: p.defaultApproverUserId,
     defaultApproverRole: p.defaultApproverRole,
+    defaultApproverRoles: p.defaultApproverRoles,
     allowSelfApproval: p.allowSelfApproval,
     requireReceipt: p.requireReceipt,
     allowMissingReceiptWithReason: p.allowMissingReceiptWithReason,

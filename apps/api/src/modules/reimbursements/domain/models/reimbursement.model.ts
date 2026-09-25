@@ -32,6 +32,7 @@ export type ReimbursementPolicyRecord = {
   approverMode: ReimbursementApproverMode;
   defaultApproverUserId?: string;
   defaultApproverRole?: string;
+  defaultApproverRoles: string[];
   allowSelfApproval: boolean;
   requireReceipt: boolean;
   allowMissingReceiptWithReason: boolean;

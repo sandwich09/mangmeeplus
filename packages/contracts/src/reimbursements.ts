@@ -129,7 +129,10 @@ export type ReimbursementPolicySummary = {
   approvalRequiredFromAmount: string;
   approverMode: ReimbursementApproverMode;
   defaultApproverUserId?: string;
+  /** First of `defaultApproverRoles`. */
   defaultApproverRole?: string;
+  /** Holders of any of these roles may approve; the first decision wins. */
+  defaultApproverRoles?: string[];
   allowSelfApproval: boolean;
   requireReceipt: boolean;
   allowMissingReceiptWithReason: boolean;
@@ -144,7 +147,7 @@ export type ReimbursementPolicySummary = {
 export type UpdateReimbursementPolicyInput = {
   expectedUpdatedAt?: string;
   approvalRequiredFromAmount?: string;
-  defaultApproverRole?: string;
+  defaultApproverRoles?: string[];
   allowSelfApproval?: boolean;
   requireReceipt?: boolean;
   allowMissingReceiptWithReason?: boolean;
