@@ -65,7 +65,8 @@ export type CounterpartyFormIssue = { field: keyof CounterpartyFormValues; messa
  * §7 cases a-d as the review page renders them: a toast for a create/fill, one quiet line under the
  * address field for a differing address (A4 — no button, nothing to decide), and a bar when the
  * expense saved but the registry write did not. `counterpartyId` is null when the reader holds no
- * `accounting.counterparty.read`, which hides the link instead of leading to a refusal (§8).
+ * `accounting.counterparty.read` and this save did not just add the row (its creator may open it,
+ * owner 2026-09-25), which hides the link instead of leading to a refusal (§8).
  */
 export type CounterpartyAutoSaveNotice = {
   kind: 'toast' | 'hint' | 'bar';
