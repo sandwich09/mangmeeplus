@@ -1,6 +1,6 @@
 # Agent Memory: reimbursement multi-role approvers
 
-Status: Implemented locally, unit and type checks pass (2026-09-25). Not deployed.
+Status: Implemented and verified locally (2026-09-25); shipped as separate PRs to develop and main with a local CI sign-off (GitHub Actions unavailable). Not deployed to UAT/Production (owner: not yet).
 Owner: Claude (session with the owner, 2026-09-25)
 Scope: reimbursement policy "ส่งใบเบิกให้ใครอนุมัติ?" becomes a multi-role checkbox list (e.g. OWNER + CEO + MANAGER).
 
@@ -22,9 +22,15 @@ Artifacts:
 - Spec: `docs/specs/reimbursement-approver-routing-policy-spec.md` (D1 amendment, §9.2)
 
 Verification:
-- `prisma validate` and `prisma generate` pass. The migration SQL came from `prisma migrate diff` plus the backfill UPDATE. It was not applied, because no local database was reachable.
-- API reimbursement and workflow specs: 540 pass, 0 fail, 16 skipped. All 16 skips are DB-only tests ("no database reachable").
-- Web reimbursement and user-guide specs: 147/147 pass. Web typecheck is clean.
-- API typecheck: clean for the reimbursement changes. It still has 2 errors from the in-progress counterparty work already on the branch (`counterparty.use-case.ts:257`, `counterparty.controller.ts:128`), which this change does not touch.
+- The migration SQL came from `prisma migrate diff` plus the backfill UPDATE. It applies from empty (`migrate deploy`), and replayed over pre-migration rows it gives `{CEO}` for a role-routed policy and `{}` for a legacy null role.
+- A live local instance ran this commit (API + web, freshly migrated and seeded PostgreSQL 18.3), exercised through local dev tokens only:
+  - The policy saved as [OWNER, MANAGER]; a list containing an unknown role returned `approver_role_not_eligible`.
+  - A STAFF claim showed up in the approval queue of both owners and the manager, and not for FINANCE.
+  - The manager approved (→ READY_FOR_PAYMENT) and the owner queue cleared. A second approval returned 422.
+- Browser check on the policy page:
+  - The checkboxes, preview line and summary match the saved roles.
+  - Ticking ADMIN and unticking MANAGER saved [OWNER, ADMIN]; the audit log shows before and after.
+  - Unticking every role disables save and shows "เลือกอย่างน้อย 1 บทบาท".
+- Full local CI (every PR job of `ci.yml`) runs against the exact heads; results are in the PR sign-off.
 
-Next: run `prisma migrate deploy` on a real database, then in the browser tick OWNER + another role and submit a claim to confirm both see it in the queue.
+Next: UAT/Production deploy when the owner asks (follow `docs/runbooks/uat-production-v2-deployment.md`; the release carries migration `20260925160000_reimbursement_policy_approver_roles`).
