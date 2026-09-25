@@ -23,8 +23,10 @@ jq -cnS --arg family "$family" --arg image "$image" --arg secret "${secret}:::${
    networkMode:"awsvpc",requiresCompatibilities:["FARGATE"],cpu:"1024",memory:"2048",
    runtimePlatform:{cpuArchitecture:"X86_64",operatingSystemFamily:"LINUX"},volumes:[{name:"tmp",host:{}}],
    containerDefinitions:[{name:"catalog",image:$image,essential:true,readonlyRootFilesystem:true,
-    user:"node",workingDirectory:"/app",command:["/app/node_modules/.bin/tsx","--tsconfig",
-      "/app/apps/api/tsconfig.json","/app/apps/api/prisma/verify-applied-migration-catalog.ts"],
+    user:"root",workingDirectory:"/app",entryPoint:["/bin/sh","-c"],
+    command:["chmod 1777 /tmp && exec setpriv --reuid=node --regid=node --init-groups "+
+      "/app/node_modules/.bin/tsx --tsconfig /app/apps/api/tsconfig.json "+
+      "/app/apps/api/prisma/verify-applied-migration-catalog.ts"],
     environment:[{name:"ALLOW_PENDING_MIGRATIONS",value:"true"},{name:"GIT_SHA",value:$source},
       {name:"HOME",value:"/tmp"},{name:"REQUIRE_NO_AWS_CREDENTIALS",value:"true"},
       {name:"TMPDIR",value:"/tmp"},{name:"XDG_CACHE_HOME",value:"/tmp/cache"}],
@@ -46,6 +48,8 @@ jq '.taskDefinition.taskRoleArn="arn:aws:iam::311414082667:role/writer"' "$work/
 reject task-role
 jq '.taskDefinition.containerDefinitions[0].command[-1]="/app/other.ts"' "$work/good.json" > "$work/command.json"
 reject command
+jq '.taskDefinition.containerDefinitions[0].user="node"' "$work/good.json" > "$work/no-tmp-init.json"
+reject no-tmp-init
 jq '.taskDefinition.containerDefinitions[0].environment[] |=
   if .name=="ALLOW_PENDING_MIGRATIONS" then .value="false" else . end' "$work/good.json" > "$work/no-pending.json"
 reject no-pending
