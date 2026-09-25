@@ -122,6 +122,28 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
     assert.match(shortResult.replyText, /25,147\.80 บาท[\s\S]*214,899\.57 บาท/);
 
     calls.length = 0;
+    const numericText = 'สรุปค่าใช้จ่ายเดือน 1 2 3 ปี 2569';
+    const numericReq = { ...req, messageText: numericText,
+      valueCandidates: extractValueCandidates(numericText, '2026-09-25') } as LineAiTurnRequest;
+    installFetch(plan, [{ callTool: 'expense.list_recent', input: {
+      fromDate: '2026-01-01', toDate: '2026-01-31', branchId: 'Head Office',
+    } }, { done: true }]);
+    await new OrchestratorAgent(erpTools, makeConfig()).run(numericReq);
+    assert.deepEqual(calls.map((call) => call.fromDate), ['2026-01-01', '2026-02-01', '2026-03-01']);
+
+    calls.length = 0;
+    const allMonthsText = `สรุปค่าใช้จ่ายเดือน ${Array.from({ length: 12 }, (_, index) => index + 1).join(' ')} ปี 2568`;
+    const allMonthsReq = { ...req, messageText: allMonthsText,
+      valueCandidates: extractValueCandidates(allMonthsText, '2026-09-25') } as LineAiTurnRequest;
+    installFetch(plan, [{ callTool: 'expense.list_recent', input: {
+      fromDate: '2025-01-01', toDate: '2025-01-31', branchId: 'Head Office',
+    } }, { done: true }]);
+    const allMonthsResult = await new OrchestratorAgent(erpTools, makeConfig({ aiMaxToolCalls: 8 })).run(allMonthsReq);
+    assert.equal(calls.length, 8, 'the twelve-month request stays within the existing tool budget');
+    assert.match(allMonthsResult.replyText, /ธ\.ค\..*ยังดึงข้อมูลได้ไม่ครบ/);
+    assert.equal(allMonthsResult.coverage?.[0]?.verdict, 'uncovered');
+
+    calls.length = 0;
     const typoText = 'สรุปค่าใช้จ่ายเดือนกรกดาคม และ สิงหาคม';
     const typoReq = { ...req, intakeIntent: 'BUSINESS_READ_QUESTION', messageText: typoText,
       valueCandidates: extractValueCandidates(typoText, '2026-09-25') } as LineAiTurnRequest;
@@ -167,6 +189,24 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
     const bareTypoResult = await new OrchestratorAgent(erpTools, makeConfig()).run(bareTypoReq);
     assert.equal(calls.length, 0, 'a separated misspelling must not default to September');
     assert.match(bareTypoResult.replyText, /กรกดาคน.*หมายถึงเดือนใด/);
+
+    calls.length = 0;
+    const invalidMonthText = 'สรุปค่าใช้จ่ายเดือน 13';
+    const invalidMonthReq = { ...req, intakeIntent: 'BUSINESS_READ_QUESTION', messageText: invalidMonthText,
+      valueCandidates: extractValueCandidates(invalidMonthText, '2026-09-25') } as LineAiTurnRequest;
+    installFetch(plan, oneJulyCall);
+    const invalidMonthResult = await new OrchestratorAgent(erpTools, makeConfig()).run(invalidMonthReq);
+    assert.equal(calls.length, 0, 'an invalid numbered month must not use the current month');
+    assert.match(invalidMonthResult.replyText, /"13".*1–12/);
+
+    calls.length = 0;
+    const futureText = 'สรุปค่าใช้จ่ายเดือน 12 ปี 2569';
+    const futureReq = { ...req, intakeIntent: 'BUSINESS_READ_QUESTION', messageText: futureText,
+      valueCandidates: extractValueCandidates(futureText, '2026-09-25') } as LineAiTurnRequest;
+    installFetch(plan, oneJulyCall);
+    const futureResult = await new OrchestratorAgent(erpTools, makeConfig()).run(futureReq);
+    assert.equal(calls.length, 0, 'an explicit future month must not read the current month');
+    assert.match(futureResult.replyText, /"12".*ตรวจเดือนและปี/);
 
     calls.length = 0;
     installFetch(plan, oneJulyCall);

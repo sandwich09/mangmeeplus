@@ -7,7 +7,7 @@
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiPeriodCandidate, LineAiValueCandidates, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta } from '@watchdog-bms/contracts';
-import { LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, isBusinessIntakeIntent, parseLineAiPreparedPlan, resolvePeriodCandidates, unresolvedMonthName } from '@watchdog-bms/contracts';
+import { LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, isBusinessIntakeIntent, mapThaiDigits, parseLineAiPreparedPlan, resolvePeriodCandidates, unresolvedMonthName } from '@watchdog-bms/contracts';
 import { extractJson } from '../../../common/ai/extract-json';
 import type { AgentRunResult } from './agent-types';
 import { IntentRouterAgent, ROUTER_ENABLED_TOOLS, isSubjectCompatible, isZeroToolIntent } from './intent-router.agent';
@@ -665,8 +665,13 @@ export class OrchestratorAgent {
     // provider capable) → JSON one-tool-at-a-time loop (10B) → deterministic plan dispatch.
     // Every path uses the same permission-checked tools, per-agent allowlists (domain
     // isolation), and deterministic fact-shaping (grounding).
+    const number = unresolvedMonth ? Number(mapThaiDigits(unresolvedMonth)) : NaN;
     let askUserQuestion: string | undefined = unresolvedMonth
-      ? `ชื่อเดือน "${unresolvedMonth}" หมายถึงเดือนใดคะ? กรุณาระบุชื่อเดือนเต็มหรือคำย่อ เช่น ก.ค.`
+      ? Number.isInteger(number)
+        ? number < 1 || number > 12
+          ? `เลขเดือน "${unresolvedMonth}" ต้องอยู่ระหว่าง 1–12 ค่ะ กรุณาระบุใหม่`
+          : `ช่วงเดือน "${unresolvedMonth}" ยังตอบไม่ได้ค่ะ กรุณาตรวจเดือนและปีที่ต้องการอีกครั้ง`
+        : `ชื่อเดือน "${unresolvedMonth}" หมายถึงเดือนใดคะ? กรุณาระบุชื่อเดือนเต็มหรือคำย่อ เช่น ก.ค.`
       : undefined;
     let coverage: LineAiCoverageItem[] | undefined;
     let nativeRan = false;
