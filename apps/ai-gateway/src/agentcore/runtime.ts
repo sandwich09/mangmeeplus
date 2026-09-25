@@ -16,6 +16,8 @@ import {
   LINE_AI_CONTEXT_MAX_TURNS,
   LINE_AI_RUNTIME_CONTRACT_VERSION,
   parseLineAiPreparedPlan,
+  parseLineAiValueCandidates,
+  extractValueCandidates,
   asIntakeRouteIntent,
 } from '@watchdog-bms/contracts';
 import type { LineAiPreparedPlan, LineAiTurnRequest, LineIntakeRouteIntent } from '@watchdog-bms/contracts';
@@ -65,6 +67,7 @@ export type RuntimePayload = {
   modelPolicy?: LineAiTurnRequest['modelPolicy'];
   attachments?: unknown[];
   conversationContext?: LineAiTurnRequest['conversationContext'];
+  valueCandidates?: LineAiTurnRequest['valueCandidates'];
   /** Optional additive fused plan (latency/autonomy §7); re-parsed and bounded here, never cast. */
   preparedPlan?: LineAiPreparedPlan;
   /** Trusted outer intake provenance; re-validated by explicit membership here, never cast. */
@@ -245,6 +248,8 @@ export function validatePayload(body: unknown): RuntimePayload | null {
       modelPolicy: parseModelPolicy(p['modelPolicy']),
       attachments,
       conversationContext: parseConversationContext(p['conversationContext']),
+      valueCandidates: parseLineAiValueCandidates(p['valueCandidates'], prompt)
+        ?? (p['valueCandidates'] ? extractValueCandidates(prompt, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })) : undefined),
       preparedPlan: parseLineAiPreparedPlan(p['preparedPlan']),
       intakeIntent: asIntakeRouteIntent(p['intakeIntent']),
     };
@@ -271,6 +276,8 @@ export function validatePayload(body: unknown): RuntimePayload | null {
     modelPolicy: parseModelPolicy(p['modelPolicy']),
     attachments,
     conversationContext: parseConversationContext(p['conversationContext']),
+    valueCandidates: parseLineAiValueCandidates(p['valueCandidates'], messageText)
+      ?? (p['valueCandidates'] ? extractValueCandidates(messageText, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })) : undefined),
     preparedPlan: parseLineAiPreparedPlan(p['preparedPlan']),
     intakeIntent: asIntakeRouteIntent(p['intakeIntent']),
   };
@@ -286,6 +293,7 @@ export function payloadToTurnRequest(p: RuntimePayload): LineAiTurnRequest {
     modelPolicy: p.modelPolicy,
     attachments: (p.attachments ?? []) as LineAiTurnRequest['attachments'],
     conversationContext: p.conversationContext,
+    ...(p.valueCandidates ? { valueCandidates: p.valueCandidates } : {}),
     ...(p.entitledFeatureKeys && { entitledFeatureKeys: p.entitledFeatureKeys }),
     ...(p.preparedPlan ? { preparedPlan: p.preparedPlan } : {}),
     ...(p.intakeIntent ? { intakeIntent: p.intakeIntent } : {}),

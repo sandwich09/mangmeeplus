@@ -57,6 +57,44 @@ export type LineAiValueCandidates = {
   periods?: LineAiPeriodCandidate[];
 };
 
+/** Re-bound the annotation at the Gateway/AgentCore wire. A malformed candidate must never become
+ *  authority for a tool date; callers can re-extract from the unchanged message on rejection. */
+export function parseLineAiValueCandidates(value: unknown, messageText: string): LineAiValueCandidates | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (!Array.isArray(raw['amounts']) || raw['amounts'].length > MAX_AMOUNT_CANDIDATES
+    || !Array.isArray(raw['dates']) || raw['dates'].length > MAX_DATE_CANDIDATES
+    || (raw['periods'] !== undefined && (!Array.isArray(raw['periods']) || raw['periods'].length > MAX_PERIOD_CANDIDATES))) return undefined;
+  const record = (item: unknown): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item);
+  const span = (item: Record<string, unknown>): boolean =>
+    typeof item['span'] === 'string' && item['span'].length > 0 && item['span'].length <= 160 && messageText.includes(item['span']);
+  const assumptions = (item: Record<string, unknown>): boolean =>
+    Array.isArray(item['assumptions']) && item['assumptions'].length <= 12
+    && item['assumptions'].every((part: unknown) => typeof part === 'string' && part.length <= 64);
+  const day = (date: unknown): date is string => {
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+    const ms = Date.parse(`${date}T00:00:00Z`);
+    return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === date;
+  };
+  if (!raw['amounts'].every((item: unknown) => record(item) && span(item)
+    && typeof item['value'] === 'string' && item['value'].length <= 64
+    && /^\d+(?:\.\d+)?$/.test(item['value']) && Number.isFinite(Number(item['value']))
+    && (item['currencyToken'] === undefined || typeof item['currencyToken'] === 'string' && item['currencyToken'].length <= 16)
+    && (item['assumptions'] === undefined || assumptions(item)))) return undefined;
+  if (!raw['dates'].every((item: unknown) => record(item) && span(item) && day(item['isoDate'])
+    && item['day'] === Number(item['isoDate'].slice(8, 10))
+    && item['month'] === Number(item['isoDate'].slice(5, 7))
+    && item['yearBe'] === Number(item['isoDate'].slice(0, 4)) + 543
+    && assumptions(item))) return undefined;
+  if (Array.isArray(raw['periods']) && !raw['periods'].every((item: unknown) => record(item) && span(item)
+    && (LINE_AI_PERIOD_KINDS as readonly unknown[]).includes(item['kind'])
+    && day(item['fromDate']) && day(item['toDate']) && item['fromDate'] <= item['toDate']
+    && (item['monthKey'] === undefined || item['kind'] === 'month' && item['monthKey'] === item['fromDate'].slice(0, 7))
+    && ['relative', 'explicit', 'named_month'].includes(String(item['source']))
+    && typeof item['label'] === 'string' && item['label'].length <= 200 && assumptions(item))) return undefined;
+  return value as LineAiValueCandidates;
+}
+
 /** Assumption/ambiguity markers carried on candidates. Ambiguity markers make a candidate
  *  unusable for auto-capture (guards force discovery); the others are audit/display notes. */
 export const VALUE_ASSUMPTIONS = {
@@ -278,7 +316,7 @@ function matchCurrencyToken(text: string, index: number): { token: string; known
 
 const THAI_MONTHS: Array<[string, number]> = [
   ['มกราคม', 1], ['กุมภาพันธ์', 2], ['มีนาคม', 3], ['เมษายน', 4], ['พฤษภาคม', 5], ['มิถุนายน', 6],
-  ['กรกฎาคม', 7], ['สิงหาคม', 8], ['กันยายน', 9], ['ตุลาคม', 10], ['พฤศจิกายน', 11], ['ธันวาคม', 12],
+  ['กรกฎาคม', 7], ['กรกฏาคม', 7], ['สิงหาคม', 8], ['กันยายน', 9], ['ตุลาคม', 10], ['พฤศจิกายน', 11], ['ธันวาคม', 12],
   ['ม.ค.', 1], ['ก.พ.', 2], ['มี.ค.', 3], ['เม.ย.', 4], ['พ.ค.', 5], ['มิ.ย.', 6],
   ['ก.ค.', 7], ['ส.ค.', 8], ['ก.ย.', 9], ['ต.ค.', 10], ['พ.ย.', 11], ['ธ.ค.', 12],
   // OCR commonly drops abbreviation punctuation; CLDR lenient parsing permits both forms.
