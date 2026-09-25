@@ -219,10 +219,24 @@ const EXPENSE_PAGE_CAP = 10;
 export function resolvePeriodInput(input: { fromDate?: unknown; toDate?: unknown } | undefined): { fromDate: string; toDate: string; defaulted: boolean } {
   const fromDate = typeof input?.fromDate === 'string' && DATE_PATTERN.test(input.fromDate) ? input.fromDate : undefined;
   const toDate = typeof input?.toDate === 'string' && DATE_PATTERN.test(input.toDate) ? input.toDate : undefined;
-  if (fromDate || toDate) {
-    return { fromDate: fromDate ?? '1970-01-01', toDate: toDate ?? bangkokToday(), defaulted: false };
-  }
+  if (fromDate || toDate) return { fromDate: fromDate ?? '1970-01-01', toDate: toDate ?? bangkokToday(), defaulted: false };
   return { ...currentMonthRange(), defaulted: true };
+}
+
+function isCivilDate(value: string): boolean {
+  if (!DATE_PATTERN.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function resolveExpensePeriodInput(input: { fromDate?: unknown; toDate?: unknown } | undefined) {
+  const hasFrom = input?.fromDate !== undefined;
+  const hasTo = input?.toDate !== undefined;
+  if (!hasFrom && !hasTo) return { ...currentMonthRange(), defaulted: true };
+  const fromDate = typeof input?.fromDate === 'string' && isCivilDate(input.fromDate) ? input.fromDate : undefined;
+  const toDate = typeof input?.toDate === 'string' && isCivilDate(input.toDate) ? input.toDate : undefined;
+  if (!fromDate || !toDate || fromDate > toDate) return { invalid: true as const };
+  return { fromDate, toDate, defaulted: false };
 }
 
 @Injectable()
@@ -236,7 +250,11 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       && !ctx.permissions.includes('expense.read_related') && !ctx.permissions.includes('expense.read_own')) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
-    const period = resolvePeriodInput(input);
+    const period = resolveExpensePeriodInput(input);
+    if ('invalid' in period) {
+      return { toolName: this.toolName, status: 'error', errorCode: 'INVALID_EXPENSE_PERIOD',
+        errorMessage: 'A complete valid expense date range is required.', sourceRefs: [], asOf };
+    }
     // The model copies whatever the user said — a branch name, code, or id, typos included. Exact
     // id/name/code resolves here; anything else returns the ACTIVE branches in this user's scope
     // instead of records, so the MODEL does the semantic matching (retry with the right id, or ask)
@@ -246,23 +264,54 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
     const requestedBranch = typeof input?.branchId === 'string' && input.branchId.trim() ? input.branchId.trim() : undefined;
     let branchId: string | undefined;
     if (requestedBranch) {
-      const branches = await this.prisma.client.branch.findMany({
-        where: {
-          companyId: ctx.companyId,
-          status: 'ACTIVE',
-          ...(ctx.branchIds ? { id: { in: ctx.branchIds } } : {}),
-        },
+      const scopeWhere = {
+        companyId: ctx.companyId,
+        status: 'ACTIVE' as const,
+        ...(ctx.branchIds ? { id: { in: ctx.branchIds } } : {}),
+      };
+      // Exact identifiers are unique within a company; names are not. Resolve identifiers first,
+      // then require a unique name match. This avoids both arbitrary duplicate-name selection and
+      // the old first-100 scan hiding a valid exact id/code match.
+      const identifiers = await this.prisma.client.branch.findMany({
+        where: { ...scopeWhere, OR: [{ id: requestedBranch }, { code: requestedBranch }] },
         select: { id: true, name: true, code: true },
-        take: 100,
+        take: 2,
       });
-      const hit = branches.find((b) => b.id === requestedBranch || b.name === requestedBranch || b.code === requestedBranch);
+      if (identifiers.length > 1) {
+        return { toolName: this.toolName, status: 'ok', data: {
+          branchAmbiguous: requestedBranch,
+          availableBranches: identifiers.map((b) => ({ id: b.id, name: b.name, code: b.code })),
+        }, sourceRefs: [], asOf };
+      }
+      let hit = identifiers[0];
       if (!hit) {
+        const names = await this.prisma.client.branch.findMany({
+          where: { ...scopeWhere, name: requestedBranch },
+          select: { id: true, name: true, code: true },
+          take: 2,
+        });
+        if (names.length > 1) {
+          return { toolName: this.toolName, status: 'ok', data: {
+            branchAmbiguous: requestedBranch,
+            availableBranches: names.map((b) => ({ id: b.id, name: b.name, code: b.code })),
+          }, sourceRefs: [], asOf };
+        }
+        hit = names[0];
+      }
+      if (!hit) {
+        const branches = await this.prisma.client.branch.findMany({
+          where: scopeWhere,
+          select: { id: true, name: true, code: true },
+          take: 101,
+        });
+        const lookupLimited = branches.length > 100;
         return {
           toolName: this.toolName,
           status: 'ok',
           data: {
             branchUnresolved: requestedBranch,
-            availableBranches: branches.map((b) => ({ id: b.id, name: b.name })),
+            availableBranches: branches.slice(0, 100).map((b) => ({ id: b.id, name: b.name, code: b.code })),
+            ...(lookupLimited ? { branchLookupLimited: true } : {}),
           },
           sourceRefs: [],
           asOf,

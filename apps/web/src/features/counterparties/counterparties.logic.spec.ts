@@ -114,6 +114,7 @@ describe('counterpartyPayload', () => {
     assert.equal('type' in payload, false);
     assert.equal(payload.branchCode, '');
     assert.equal(payload.displayName, 'ร้าน');
+    assert.equal(payload.email, null, 'a blank email clears the stored value');
     // CON-7: an unset taxpayer class stays unset rather than being decided by the screen.
     assert.equal('entityKind' in payload, false);
     assert.equal(counterpartyPayload({ ...counterpartyFormValues(null), displayName: 'ร้าน', entityKind: 'INDIVIDUAL' }).entityKind, 'INDIVIDUAL');

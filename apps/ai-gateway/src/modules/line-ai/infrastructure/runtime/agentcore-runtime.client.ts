@@ -244,6 +244,8 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
       !Array.isArray(raw['webLinks']) ||
       !Array.isArray(raw['toolsInvoked']) ||
       (raw['presentation'] !== undefined && !isAnswerPresentation(raw['presentation']))
+     || (raw['deterministicExpenseSummary'] !== undefined && typeof raw['deterministicExpenseSummary'] !== 'boolean')
+      || (raw['deterministicExpenseCriterionConfirmation'] !== undefined && typeof raw['deterministicExpenseCriterionConfirmation'] !== 'boolean')
     ) {
       throw failure('Malformed AgentCore response', 'MALFORMED_RESPONSE', { agentcoreHttpMs });
     }
@@ -268,6 +270,8 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
       ? Number(rawModelCallCount)
       : undefined;
     const refusalReason = coerceRefusalReason(rawRefusalReason);
+   const deterministicExpenseSummary = raw['deterministicExpenseSummary'] === true;
+    const deterministicExpenseCriterionConfirmation = raw['deterministicExpenseCriterionConfirmation'] === true;
     const errorCode = typeof rawErrorCode === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(rawErrorCode)
       ? rawErrorCode
       : undefined;
@@ -296,6 +300,8 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
       ...(modelCallCount !== undefined ? { modelCallCount } : {}),
       ...(refusalReason ? { refusalReason } : {}),
       ...(errorCode ? { errorCode } : {}),
+     ...(deterministicExpenseSummary ? { deterministicExpenseSummary: true } : {}),
+      ...(deterministicExpenseCriterionConfirmation ? { deterministicExpenseCriterionConfirmation: true } : {}),
     } as unknown as AgentCoreInvokeResult;
   }
 

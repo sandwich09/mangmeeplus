@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAnswerPresentation, OrchestratorAgent, withoutRefusedCoverage } from './orchestrator.agent';
+import { branchInputMatchesMessage, buildAnswerPresentation, expenseCriterionOnlyMessage, OrchestratorAgent, uncertainExpenseFilter, unsupportedExpenseFilter, validExpensePeriodSelection, withoutRefusedCoverage } from './orchestrator.agent';
 import { ResponseComposerAgent } from './response-composer.agent';
 import { extractValueCandidates, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import type { LineAiPreparedPlan, LineAiTurnRequest } from '@watchdog-bms/contracts';
@@ -417,6 +417,12 @@ describe('OrchestratorAgent', () => {
 
   it('shows a complete broad expense summary while preserving source-backed details and counts on request', async () => {
     const calledTools: string[] = [];
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+    const currentMonthStart = `${today.slice(0, 7)}-01`;
+    const asOfAtBangkokStart = new Date(`${today}T00:30:00+07:00`).toISOString();
+    const thaiMonth = new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', month: 'long' }).format(new Date(asOfAtBangkokStart));
+    const thaiYear = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Bangkok', year: 'numeric' }).format(new Date(asOfAtBangkokStart))) + 543;
+    const todayDay = Number(today.slice(8, 10));
     const erpTools = {
       invoke: async (tool: any) => {
         calledTools.push(tool.name);
@@ -425,9 +431,11 @@ describe('OrchestratorAgent', () => {
           status: tool.name === 'expense.list_recent' ? 'ok' : 'unsupported_module',
           data: tool.name === 'expense.list_recent' ? {
             total: 7,
-            period: { fromDate: '2026-09-01', toDate: '2026-09-17' },
+            period: { fromDate: currentMonthStart, toDate: today, defaultedToCurrentMonth: true },
             summary: {
               totalAmount: 11875,
+              countedItems: 7,
+              cancelledCount: 0,
               pendingAmount: 0,
               draftAmount: 0,
               confirmedAmount: 11875,
@@ -442,7 +450,7 @@ describe('OrchestratorAgent', () => {
           sourceRefs: tool.name === 'expense.list_recent'
             ? [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, webPath: '/companies/company-1/expenses' }]
             : [],
-          asOf: new Date().toISOString(),
+          asOf: tool.name === 'expense.list_recent' ? asOfAtBangkokStart : new Date().toISOString(),
         };
       },
     } as any;
@@ -454,7 +462,9 @@ describe('OrchestratorAgent', () => {
     assert.ok(result.replyText.includes('11,875.00'));
     assert.ok(!result.replyText.includes('สิ้นกำหนดวันนี้'));
     assert.ok(!result.replyText.includes('เกินกำหนด'));
-    assert.match(result.replyText, /^ค่าใช้จ่าย: 11,875\.00 บาท \(7 รายการ\)\nช่วง: 2026-09-01 – 2026-09-17\nที่มา: รายการค่าใช้จ่าย\nข้อมูล ณ /);
+    assert.ok(result.replyText.startsWith(`ค่าใช้จ่าย: 11,875.00 บาท (7 รายการ)\nช่วง: 1 ${thaiMonth} ${thaiYear} – ${todayDay} ${thaiMonth} ${thaiYear}`));
+    assert.ok(result.replyText.includes(`\nข้อมูล ณ ${todayDay} ${thaiMonth} ${thaiYear}`));
+    assert.doesNotMatch(result.replyText, new RegExp(today));
     assert.doesNotMatch(result.replyText, /รอตรวจสอบ|ยืนยันแล้ว|จ่ายแล้ว|ยังไม่จ่าย|บริษัท โฟลว์แอคเคาท์/);
     assert.ok(!result.replyText.includes('expense-draft-empty'));
     assert.deepEqual(result.webLinks, [{ label: 'รายการค่าใช้จ่าย', path: '/companies/company-1/expenses' }]);
@@ -473,7 +483,7 @@ describe('OrchestratorAgent', () => {
     }
 
     // Both committed menu entries send this text; either execution lane must produce the same card.
-    const menuReq = makeReq('ดูค่าใช้จ่ายเดือนนี้');
+    const menuReq = makeReq('ดูค่าใช้จ่าย');
     menuReq.userContext.permissions.push('expense.read');
     const full = await orchestrator.run(menuReq);
     const preparedPlan = parseLineAiPreparedPlan({
@@ -495,6 +505,8 @@ describe('OrchestratorAgent', () => {
     assert.deepEqual(prepared.presentation, full.presentation);
     assert.deepEqual(prepared.sourceRefs, full.sourceRefs);
     assert.deepEqual(prepared.webLinks, full.webLinks);
+    assert.ok(prepared.replyText.includes(`\nช่วง: 1 ${thaiMonth} ${thaiYear} – ${todayDay} ${thaiMonth} ${thaiYear}`));
+    assert.ok(prepared.replyText.includes(`\nข้อมูล ณ ${todayDay} ${thaiMonth} ${thaiYear}`));
   });
 
   it('expense query with unavailable tool does not fall back to accounting no-data copy', async () => {
@@ -514,6 +526,67 @@ describe('OrchestratorAgent', () => {
     assert.ok(result.replyText.includes('รายการค่าใช้จ่าย'));
     assert.ok(!result.replyText.includes('ข้อมูลบัญชี'));
     assert.equal(result.presentation, undefined);
+  });
+
+  it('does not let deterministic no-provider fallback widen an explicit expense period', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const erpTools = { invoke: async (tool: any, _ctx: unknown, input: Record<string, unknown> = {}) => {
+      calls.push({ tool: tool.name, ...input });
+      return { toolName: tool.name, status: 'ok', data: { total: 1, period: { fromDate: '2026-09-01', toDate: '2026-09-25', defaultedToCurrentMonth: true },
+        summary: { totalAmount: 10, countedItems: 1, cancelledCount: 0 } }, sourceRefs: [], asOf: new Date().toISOString() };
+    } } as any;
+    globalThis.fetch = async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      const userText = String(body.input?.[0]?.content?.[0]?.text ?? '{}');
+      let payload: any = {};
+      try { payload = JSON.parse(userText.slice(userText.lastIndexOf('\n') + 1)); } catch { payload = {}; }
+      if (typeof payload.reply === 'string') return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
+      if (Array.isArray(payload.availableTools)) return { ok: false, status: 503, json: async () => ({}) } as Response;
+      if (typeof payload.messageText === 'string') return { ok: true, json: async () => ({ output_text: JSON.stringify(planFor(payload.messageText)) }) } as Response;
+      return { ok: false, status: 503, json: async () => ({}) } as Response;
+    };
+    const message = 'ค่าใช้จ่ายเดือนกรกฎาคม 2569 เท่าไร';
+    const req = makeReq(message);
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = extractValueCandidates(message, '2026-09-25');
+    const result = await new OrchestratorAgent(erpTools, makeConfig()).run(req);
+    assert.deepEqual(calls, [], 'the fallback must clarify instead of reading the tool default');
+    assert.match(result.replyText, /ช่วงวันที่หรือขอบเขตสาขา/);
+    assert.equal(result.deterministicExpenseSummary, undefined);
+  });
+
+  it('keeps safe non-expense reads in a mixed no-provider turn while deferring the scoped expense read', async () => {
+    const calls: string[] = [];
+    const erpTools = { invoke: async (tool: any) => {
+      calls.push(tool.name);
+      return { toolName: tool.name, status: 'ok', data: { totalSales: 500, currency: 'THB', transactionCount: 1,
+        period: { fromDate: '2026-07-01', toDate: '2026-07-31' } }, sourceRefs: [], asOf: new Date().toISOString() };
+    } } as any;
+    globalThis.fetch = async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      const userText = String(body.input?.[0]?.content?.[0]?.text ?? '{}');
+      let payload: any = {};
+      try { payload = JSON.parse(userText.slice(userText.lastIndexOf('\n') + 1)); } catch { payload = {}; }
+      if (typeof payload.reply === 'string') return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
+      if (Array.isArray(payload.availableTools)) return { ok: false, status: 503, json: async () => ({}) } as Response;
+      if (typeof payload.messageText === 'string') return { ok: true, json: async () => ({ output_text: JSON.stringify({
+        status: 'ROUTABLE', language: 'th', refusals: [], requiresHumanReview: false, intents: [
+          { intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] },
+          { intent: 'report_request', subject: 'sale', agent: 'sales', priority: 2, requiredTools: ['sales.get_sales_summary'], missingContext: [] },
+        ],
+      }) }) } as Response;
+      return { ok: false, status: 503, json: async () => ({}) } as Response;
+    };
+    const message = 'ค่าใช้จ่ายเดือนกรกฎาคม 2569 และยอดขาย';
+    const req = makeReq(message);
+    req.userContext.permissions.push('expense.read', 'crm.report.read');
+    req.valueCandidates = { amounts: [], dates: [], periods: [{ span: 'July 2026', kind: 'month', fromDate: '2026-07-01',
+      toDate: '2026-07-31', monthKey: '2026-07', source: 'explicit', label: 'กรกฎาคม 2569', assumptions: [] }] } as any;
+    const result = await new OrchestratorAgent(erpTools, makeConfig()).run(req);
+    assert.deepEqual(calls, ['sales.get_sales_summary']);
+    assert.match(result.replyText, /ยอดขาย/);
+    assert.match(result.replyText, /ช่วงวันที่หรือขอบเขตสาขา/);
+    assert.equal(result.deterministicExpenseSummary, undefined);
   });
 
   it('sales query invokes the permission-checked sales summary tool and includes its transaction count', async () => {
@@ -1096,5 +1169,329 @@ describe('OrchestratorAgent period resolution', () => {
     }) as typeof fetch;
     await new OrchestratorAgent(loop.client, makeConfig()).run(periodRequest(message, 'sales.get_sales_summary'));
     assert.deepEqual(loop.seen.map((call) => call.input), [{}], 'an unbacked window is dropped, not read');
+  });
+});
+
+describe('expense follow-up branch scope', () => {
+  const priorContext = {
+    windowMinutes: 15,
+    maxTurns: 15,
+    recentTurns: [],
+    deliveredExpenseSummary: {
+      version: 1 as const,
+      deliveredAt: '2026-09-25T00:00:00.000Z',
+      statusBasis: 'exclude_rejected_voided' as const,
+      ranges: [{ fromDate: '2026-08-01', toDate: '2026-08-31', branchId: 'branch-a' }],
+    },
+  };
+
+  it('carries the verified branch when resolving the previous month from a delivered branch summary', () => {
+    const req = { ...makeReq('แล้วเดือนก่อนหน้าล่ะ'), conversationContext: priorContext };
+    const inheritedBranchInput = { fromDate: '2026-07-01', toDate: '2026-07-31', branchId: 'branch-a' };
+    assert.equal(validExpensePeriodSelection(inheritedBranchInput, inheritedBranchInput, req), true);
+    const widenedInput = { fromDate: '2026-07-01', toDate: '2026-07-31' };
+    assert.equal(validExpensePeriodSelection(widenedInput, widenedInput, req), false);
+    const substitutedBranch = { ...inheritedBranchInput, branchId: 'branch-b' };
+    assert.equal(validExpensePeriodSelection(substitutedBranch, substitutedBranch, req), false);
+  });
+
+  it('allows an explicit all-branches refresh of the delivered period and omits branchId', () => {
+    const req = { ...makeReq('ดูยอดเดือนสิงหาคมทุกสาขา'), conversationContext: priorContext,
+      valueCandidates: { amounts: [], dates: [], periods: [{ span: 'August 2026', kind: 'month' as const,
+        fromDate: '2026-08-01', toDate: '2026-08-31', monthKey: '2026-08', source: 'explicit' as const,
+        label: 'สิงหาคม 2569', assumptions: [] }] } };
+    const allBranchesInput = { fromDate: '2026-08-01', toDate: '2026-08-31' };
+    assert.equal(validExpensePeriodSelection(allBranchesInput, allBranchesInput, req), true);
+    const staleBranchInput = { ...allBranchesInput, branchId: 'branch-a' };
+    assert.equal(validExpensePeriodSelection(staleBranchInput, staleBranchInput, req), false);
+  });
+
+  it('matches short branch codes as whole tokens, not as letters inside month names', () => {
+    const req = makeReq('ค่าใช้จ่าย August branch B');
+    assert.equal(branchInputMatchesMessage('A', req), false);
+    assert.equal(branchInputMatchesMessage('B', req), true);
+  });
+
+  it('accepts a grounded branch when the user also gives an explicit month', () => {
+    const req = { ...makeReq('ยอดค่าใช้จ่ายเดือนสิงหาคม 2569 ดูเฉพาะสาขา A'),
+      valueCandidates: { amounts: [], dates: [], periods: [{ span: 'August 2026', kind: 'month' as const,
+        fromDate: '2026-08-01', toDate: '2026-08-31', monthKey: '2026-08', source: 'explicit' as const,
+        label: 'สิงหาคม 2569', assumptions: [] }] } };
+    const correct = { fromDate: '2026-08-01', toDate: '2026-08-31', branchId: 'A' };
+    assert.equal(validExpensePeriodSelection(correct, correct, req), true);
+    const wrongBranch = { ...correct, branchId: 'B' };
+    assert.equal(validExpensePeriodSelection(wrongBranch, wrongBranch, req), false);
+  });
+});
+
+describe('run-level expense follow-up execution', () => {
+  const periods = [
+    { span: 'July 2026', kind: 'month' as const, fromDate: '2026-07-01', toDate: '2026-07-31', monthKey: '2026-07', source: 'explicit' as const, label: 'กรกฎาคม 2569', assumptions: [] },
+    { span: 'August 2026', kind: 'month' as const, fromDate: '2026-08-01', toDate: '2026-08-31', monthKey: '2026-08', source: 'explicit' as const, label: 'สิงหาคม 2569', assumptions: [] },
+  ];
+  const expensePlan = (messageText: string) => ({ status: 'ROUTABLE', language: 'th', intents: [{ intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }], refusals: [], requiresHumanReview: false });
+  const configureLoopProvider = (messagePlan: (text: string) => unknown, choices: Array<{ callTool: string; input: Record<string, unknown> }>) => {
+    globalThis.fetch = async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      const userText = String(body.input?.[0]?.content?.[0]?.text ?? '{}');
+      let payload: any = {};
+      try { payload = JSON.parse(userText.slice(userText.lastIndexOf('\n') + 1)); } catch { payload = {}; }
+      if (typeof payload.reply === 'string') return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
+      if (Array.isArray(payload.availableTools)) {
+        const next = choices.shift();
+        return { ok: true, json: async () => ({ output_text: JSON.stringify(next ?? {}) }) } as Response;
+      }
+      if (typeof payload.messageText === 'string') return { ok: true, json: async () => ({ output_text: JSON.stringify(messagePlan(payload.messageText)) }) } as Response;
+      return { ok: true, json: async () => ({ output_text: '{}' }) } as Response;
+    };
+  };
+  const expenseErp = (inputs: Array<Record<string, unknown>>, failMonth?: string) => ({
+    invoke: async (tool: any, _ctx: unknown, input: Record<string, unknown> = {}) => {
+      inputs.push({ tool: tool.name, ...input });
+      if (tool.name === 'expense.list_recent' && input.fromDate === failMonth) return {
+        toolName: tool.name, status: 'error', data: null, sourceRefs: [], asOf: new Date().toISOString(),
+      };
+      const fromDate = String(input.fromDate ?? '2026-09-01'), toDate = String(input.toDate ?? '2026-09-25');
+      const amount = fromDate === '2026-07-01' ? 700 : fromDate === '2026-08-01' ? 800 : 100;
+      return { toolName: tool.name, status: 'ok', data: { total: 2, period: { fromDate, toDate, defaultedToCurrentMonth: input.fromDate === undefined },
+        summary: { totalAmount: amount, countedItems: 2, cancelledCount: 0 }, ...(typeof input.branchId === 'string' ? { branchId: input.branchId } : {}) },
+        sourceRefs: [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, webPath: '/companies/company-1/expenses' }],
+        asOf: new Date().toISOString() };
+    },
+  } as any);
+
+  it('queries and deterministically presents two periods from the full model loop', async () => {
+    const inputs: Array<Record<string, unknown>> = [];
+    const message = 'ค่าใช้จ่ายเดือนกรกฎาคมและสิงหาคม 2569';
+    configureLoopProvider(text => expensePlan(text), periods.map(period => ({ callTool: 'expense.list_recent', input: { fromDate: period.fromDate, toDate: period.toDate } })));
+    const req = makeReq(message);
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods };
+    const result = await new OrchestratorAgent(expenseErp(inputs), makeConfig()).run(req);
+    assert.deepEqual(inputs, periods.map(period => ({ tool: 'expense.list_recent', fromDate: period.fromDate, toDate: period.toDate })));
+    assert.equal(result.deterministicExpenseSummary, true);
+    assert.match(result.replyText, /700\.00/);
+    assert.match(result.replyText, /800\.00/);
+    assert.match(result.replyText, /ช่วง: กรกฎาคม 2569/);
+    assert.match(result.replyText, /ช่วง: สิงหาคม 2569/);
+    assert.equal(result.presentation?.cards[0]?.text, result.replyText);
+  });
+
+  it('reuses a verified branch across every prior month range in a branch-only follow-up', async () => {
+    const inputs: Array<Record<string, unknown>> = [];
+    configureLoopProvider(text => expensePlan(text), periods.map(period => ({ callTool: 'expense.list_recent', input: { fromDate: period.fromDate, toDate: period.toDate, branchId: 'A' } })));
+    const req = makeReq('ดูเฉพาะสาขา A');
+    req.userContext.permissions.push('expense.read');
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], deliveredExpenseSummary: {
+      version: 1, deliveredAt: '2026-09-25T00:00:00.000Z', statusBasis: 'exclude_rejected_voided',
+      ranges: periods.map(period => ({ fromDate: period.fromDate, toDate: period.toDate, branchId: 'A' })),
+    } };
+    req.valueCandidates = { amounts: [], dates: [], periods: [] };
+    const result = await new OrchestratorAgent(expenseErp(inputs), makeConfig()).run(req);
+    assert.deepEqual(inputs, periods.map(period => ({ tool: 'expense.list_recent', fromDate: period.fromDate, toDate: period.toDate, branchId: 'A' })));
+    assert.equal(result.deterministicExpenseSummary, true);
+    assert.match(result.replyText, /700\.00/);
+    assert.match(result.replyText, /800\.00/);
+  });
+
+  it('accepts Thai branch names as input and the resolved ERP branch id in the result', async () => {
+    const inputs: Array<Record<string, unknown>> = [];
+    configureLoopProvider(text => expensePlan(text), periods.slice(1).map(period => ({ callTool: 'expense.list_recent',
+      input: { fromDate: period.fromDate, toDate: period.toDate, branchId: 'สาธุประดิษฐ์' } })));
+    const req = makeReq('ดูเฉพาะสาขา สาธุประดิษฐ์');
+    req.userContext.permissions.push('expense.read');
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], deliveredExpenseSummary: {
+      version: 1, deliveredAt: '2026-09-25T00:00:00.000Z', statusBasis: 'exclude_rejected_voided',
+      ranges: [{ fromDate: '2026-08-01', toDate: '2026-08-31', branchId: 'uuid-A' }],
+    } };
+    req.valueCandidates = { amounts: [], dates: [], periods: [] };
+    const resolvedErp = { invoke: async (tool: any, _ctx: unknown, input: Record<string, unknown> = {}) => {
+      inputs.push({ tool: tool.name, ...input });
+      const fromDate = String(input.fromDate);
+      return { toolName: tool.name, status: 'ok', data: { total: 1, period: { fromDate, toDate: String(input.toDate), defaultedToCurrentMonth: false },
+        summary: { totalAmount: 100, countedItems: 1, cancelledCount: 0 }, branchId: 'uuid-A' },
+        sourceRefs: [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, webPath: '/companies/company-1/expenses' }],
+        asOf: new Date().toISOString() };
+    } } as any;
+    const result = await new OrchestratorAgent(resolvedErp, makeConfig()).run(req);
+    assert.deepEqual(inputs, [{ tool: 'expense.list_recent', fromDate: '2026-08-01', toDate: '2026-08-31', branchId: 'สาธุประดิษฐ์' }]);
+    assert.equal(result.deterministicExpenseSummary, true);
+    assert.match(result.replyText, /สาธุประดิษฐ์/);
+    assert.doesNotMatch(result.replyText, /uuid-A/);
+    assert.equal(result.presentation?.cards[0]?.text, result.replyText);
+  });
+
+  it('explains duplicate branch names without exposing branch ids or reporting zero expenses', async () => {
+    const inputs: Array<Record<string, unknown>> = [];
+    configureLoopProvider(text => expensePlan(text), [{ callTool: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', branchId: 'สาธุประดิษฐ์' } }]);
+    const req = makeReq('ค่าใช้จ่ายเดือนสิงหาคม 2569 สาขา สาธุประดิษฐ์');
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods: [periods[1]!] };
+    const erp = { invoke: async (tool: any, _ctx: unknown, input: Record<string, unknown> = {}) => {
+      inputs.push({ tool: tool.name, ...input });
+      return { toolName: tool.name, status: 'ok', data: { branchAmbiguous: 'uuid-secret', availableBranches: [
+        { id: 'uuid-secret-1', name: 'สาธุประดิษฐ์', code: 'A' }, { id: 'uuid-secret-2', name: 'สาธุประดิษฐ์', code: 'B' },
+      ] }, sourceRefs: [], asOf: new Date().toISOString() };
+    } } as any;
+    const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
+    assert.equal(inputs.length, 1);
+    assert.match(result.replyText, /หลายสาขาที่ใช้ชื่อเดียวกัน/);
+    assert.match(result.replyText, /เลือกสาขาจากหน้าเว็บ/);
+    assert.doesNotMatch(result.replyText, /uuid-secret|รหัส|\bA\b|\bB\b|0\.00|0 รายการ/);
+    assert.equal(result.deterministicExpenseSummary, undefined);
+  });
+
+  it('explains an unresolved branch without repeating its code or claiming there are no expenses', async () => {
+    configureLoopProvider(text => expensePlan(text), [{ callTool: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', branchId: 'secret-code' } }]);
+    const req = makeReq('ค่าใช้จ่ายเดือนสิงหาคม 2569 สาขา secret-code');
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods: [periods[1]!] };
+    const erp = { invoke: async (tool: any) => ({ toolName: tool.name, status: 'ok', data: {
+      branchUnresolved: 'secret-code', availableBranches: [{ id: 'uuid-secret', name: 'สาขากลาง' }],
+    }, sourceRefs: [], asOf: new Date().toISOString() }) } as any;
+    const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
+    assert.match(result.replyText, /ยังระบุสาขาที่ต้องการไม่ได้/);
+    assert.match(result.replyText, /เลือกสาขาจากหน้าเว็บ/);
+    assert.doesNotMatch(result.replyText, /secret-code|uuid-secret|0\.00|0 รายการ/);
+  });
+
+  it('does not present an August-only result as complete when a misspelled July was also requested', async () => {
+    const inputs: Array<Record<string, unknown>> = [];
+    const august = periods[1]!;
+    configureLoopProvider(text => expensePlan(text), [{ callTool: 'expense.list_recent', input: { fromDate: august.fromDate, toDate: august.toDate } }]);
+    const req = makeReq('ค่าใช้จ่ายเดือนกรกฏาคมและสิงหาคม 2569');
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods: [august] };
+    const result = await new OrchestratorAgent(expenseErp(inputs), makeConfig()).run(req);
+    assert.deepEqual(inputs, []);
+    assert.equal(result.deterministicExpenseSummary, undefined);
+    assert.doesNotMatch(result.replyText, /700\.00|800\.00/);
+    assert.match(result.replyText, /ขอทราบเดือนและปี/);
+  });
+
+  it('does not report a complete total when the second period read fails', async () => {
+    const inputs: Array<Record<string, unknown>> = [];
+    const message = 'ค่าใช้จ่ายเดือนกรกฎาคมและสิงหาคม 2569';
+    configureLoopProvider(text => expensePlan(text), periods.map(period => ({ callTool: 'expense.list_recent', input: { fromDate: period.fromDate, toDate: period.toDate } })));
+    const req = makeReq(message);
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods };
+    const result = await new OrchestratorAgent(expenseErp(inputs, '2026-08-01'), makeConfig()).run(req);
+    assert.equal(inputs.length, 2);
+    assert.equal(result.deterministicExpenseSummary, undefined);
+    assert.doesNotMatch(result.replyText, /700\.00|800\.00/);
+    assert.match(result.replyText, /ยังยืนยันยอดและรายการค่าใช้จ่าย/);
+    assert.equal(result.presentation, undefined);
+  });
+
+  const mixedPlan = (text: string) => ({ status: 'ROUTABLE', language: 'th', intents: [
+    { intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] },
+    { intent: 'report_request', subject: 'sale', agent: 'sales', priority: 2, requiredTools: ['sales.get_sales_summary'], missingContext: [] },
+  ], refusals: [], requiresHumanReview: false });
+  const mixedErp = (calls: string[]) => ({ invoke: async (tool: any, _ctx: unknown, input: Record<string, unknown> = {}) => {
+    calls.push(tool.name);
+    return { toolName: tool.name, status: 'ok', data: { totalSales: '500.00', transactionCount: 1, period: 'วันนี้' },
+      sourceRefs: [{ label: 'ยอดขาย', module: 'sales', entityType: 'summary', permissionChecked: true, webPath: '/sales' }], asOf: new Date().toISOString() };
+  } } as any);
+
+  it('keeps the independent sales answer when the expense criterion is a mixed-intent question', async () => {
+    const calls: string[] = [];
+    configureLoopProvider(mixedPlan, [{ callTool: 'sales.get_sales_summary', input: {} }]);
+    const req = makeReq('ยอดขายและค่าใช้จ่ายไม่รวมยกเลิกใช่ไหม');
+    req.userContext.permissions.push('crm.report.read', 'expense.read');
+    const result = await new OrchestratorAgent(mixedErp(calls), makeConfig()).run(req);
+    assert.deepEqual(calls, ['sales.get_sales_summary']);
+    assert.match(result.replyText, /500\.00/);
+    assert.match(result.replyText, /ไม่นับรายการที่ถูกปฏิเสธหรือยกเลิก/);
+    assert.equal(result.deterministicExpenseCriterionConfirmation, undefined);
+    assert.doesNotMatch(result.replyText, /ยอดค่าใช้จ่าย[:：]?\s*[\d,]+/);
+  });
+
+  it('keeps sales when an unsupported expense filter is requested and never reads an unfiltered expense total', async () => {
+    const calls: string[] = [];
+    configureLoopProvider(mixedPlan, [{ callTool: 'sales.get_sales_summary', input: {} }]);
+    const req = makeReq('ยอดขายวันนี้และค่าใช้จ่ายเฉพาะยืนยันแล้ว');
+    req.userContext.permissions.push('crm.report.read', 'expense.read');
+    const result = await new OrchestratorAgent(mixedErp(calls), makeConfig()).run(req);
+    assert.deepEqual(calls, ['sales.get_sales_summary']);
+    assert.match(result.replyText, /500\.00/);
+    assert.match(result.replyText, /ยังยืนยันยอดค่าใช้จ่ายตามเงื่อนไขนี้ไม่ได้/);
+    assert.equal(result.deterministicExpenseCriterionConfirmation, undefined);
+    assert.doesNotMatch(result.replyText, /(?:ค่าใช้จ่าย|Expenses)[:：]?\s*[\d,]+/);
+  });
+
+  it('recovers the sales route when the mixed router initially proposes only the expense tool', async () => {
+    const calls: string[] = [];
+    configureLoopProvider(text => text.includes('ค่าใช้จ่าย')
+      ? { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1,
+        requiredTools: ['expense.list_recent'], missingContext: [] }], refusals: [], requiresHumanReview: false }
+      : { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'report_request', subject: 'sale', agent: 'sales', priority: 1,
+        requiredTools: ['sales.get_sales_summary'], missingContext: [] }], refusals: [], requiresHumanReview: false },
+    [{ callTool: 'sales.get_sales_summary', input: {} }]);
+    const req = makeReq('ยอดขายและค่าใช้จ่ายไม่รวมยกเลิกใช่ไหม');
+    req.userContext.permissions.push('crm.report.read', 'expense.read');
+    const result = await new OrchestratorAgent(mixedErp(calls), makeConfig()).run(req);
+    assert.deepEqual(calls, ['sales.get_sales_summary']);
+    assert.match(result.replyText, /500\.00/);
+    assert.match(result.replyText, /ไม่นับรายการที่ถูกปฏิเสธหรือยกเลิก/);
+    assert.equal(result.deterministicExpenseCriterionConfirmation, undefined);
+  });
+
+  it('does not confirm an expense criterion when expense permission is missing from a mixed turn', async () => {
+    const calls: string[] = [];
+    configureLoopProvider(mixedPlan, [{ callTool: 'sales.get_sales_summary', input: {} }]);
+    const req = makeReq('ยอดขายและค่าใช้จ่ายไม่รวมยกเลิกใช่ไหม');
+    req.userContext.permissions.push('crm.report.read');
+    const result = await new OrchestratorAgent(mixedErp(calls), makeConfig()).run(req);
+    assert.deepEqual(calls, ['sales.get_sales_summary']);
+    assert.match(result.replyText, /ไม่มีสิทธิ์ดูยอดค่าใช้จ่าย/);
+    assert.doesNotMatch(result.replyText, /ไม่รวมรายการที่ถูกปฏิเสธหรือยกเลิก/);
+    assert.equal(result.deterministicExpenseCriterionConfirmation, undefined);
+  });
+
+  it('does not append expense filter copy to a sales-only status question', async () => {
+    const calls: string[] = [];
+    configureLoopProvider(text => ({ status: 'ROUTABLE', language: 'th', intents: [{ intent: 'report_request', subject: 'sale', agent: 'sales', priority: 1,
+      requiredTools: ['sales.get_sales_summary'], missingContext: [] }], refusals: [], requiresHumanReview: false }),
+    [{ callTool: 'sales.get_sales_summary', input: {} }]);
+    const req = makeReq('ยอดขายเฉพาะยืนยันแล้ว');
+    req.userContext.permissions.push('crm.report.read');
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], deliveredExpenseSummary: {
+      version: 1, deliveredAt: '2026-09-25T00:00:00.000Z', statusBasis: 'exclude_rejected_voided',
+      ranges: [{ fromDate: '2026-08-01', toDate: '2026-08-31', branchId: null }],
+    } };
+    const result = await new OrchestratorAgent(mixedErp(calls), makeConfig()).run(req);
+    assert.deepEqual(calls, ['sales.get_sales_summary']);
+    assert.doesNotMatch(result.replyText, /ค่าใช้จ่ายตามเงื่อนไข|ยังยืนยันยอดค่าใช้จ่าย/);
+  });
+
+  it('does not classify sales-only exclusion questions as expense confirmations', () => {
+    assert.equal(expenseCriterionOnlyMessage('ยอดขายไม่รวมยกเลิกใช่ไหม'), false);
+    assert.equal(unsupportedExpenseFilter('ยอดขายไม่รวมยกเลิกใช่ไหม'), false);
+    assert.equal(unsupportedExpenseFilter('ยอดขายเฉพาะยืนยันแล้ว'), false);
+    assert.equal(unsupportedExpenseFilter('ยอดขายเฉพาะยืนยันแล้ว', true), false);
+    assert.equal(uncertainExpenseFilter('ยอดขายไม่รวมปฎิเสด', true), false);
+  });
+
+  it('recognizes unsupported expense status, category, and actual-paid filters', () => {
+    for (const text of ['ค่าใช้จ่ายเฉพาะยืนยันแล้ว', 'ค่าใช้จ่ายเฉพาะจ่ายแล้ว', 'ค่าใช้จ่ายรวมรายการยกเลิก',
+      'ค่าใช้จ่ายเฉพาะหมวดเดินทาง', 'ค่าใช้จ่ายจ่ายจริงเท่าไร']) assert.equal(unsupportedExpenseFilter(text), true, text);
+    assert.equal(uncertainExpenseFilter('ค่าใช้จ่ายไม่รวมปฎิเสธ'), true);
+    assert.equal(uncertainExpenseFilter('ค่าใช้จ่ายเฉพาะสิงหาคม'), false);
+    assert.equal(uncertainExpenseFilter('ค่าใช้จ่ายไม่รวมค่าขนส่ง'), true);
+    assert.equal(uncertainExpenseFilter('ค่าใช้จ่ายเฉพาะสิงหาค์'), true);
+    assert.equal(expenseCriterionOnlyMessage('ยอดค่าใช้จ่ายไม่รวมรายการยกเลิกใช่ไหม'), true);
+    assert.equal(expenseCriterionOnlyMessage('อันนี้ไม่รวมรายการยกเลิกใช่ไหม', true), true);
+  });
+
+  it('asks for clarification on a misspelled expense status instead of running a broad summary', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const req = makeReq('ค่าใช้จ่ายไม่รวมรายการปฎิเสด');
+    req.userContext.permissions.push('expense.read');
+    const erp = expenseErp(calls);
+    const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
+    assert.deepEqual(calls, []);
+    assert.match(result.replyText, /ยังระบุเงื่อนไขรายการค่าใช้จ่าย/);
+    assert.doesNotMatch(result.replyText, /\d[\d,]*\.\d{2}|ไม่พบรายการ/);
   });
 });

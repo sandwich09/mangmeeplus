@@ -88,27 +88,27 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
         toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-25T03:50:00.000Z',
         sourceRefs: [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true,
           webPath: '/companies/c1/expenses?branchId=branch-1' }],
-        data: { total: julyCall ? 7 : 25, branchId: 'branch-1',
-          period: { fromDate: input.fromDate, toDate: input.toDate },
-          summary: { totalAmount: julyCall ? 25147.80 : 214899.57, pendingAmount: 0,
-            confirmedAmount: 0, paidAmount: 0, unpaidAmount: 0 }, items: [] },
+        data: { total: julyCall ? 7 : 25, branchId: 'branch-1', truncated: false,
+          period: { fromDate: input.fromDate, toDate: input.toDate, defaultedToCurrentMonth: false },
+          summary: { totalAmount: julyCall ? 25147.80 : 214899.57, countedItems: julyCall ? 7 : 25,
+            cancelledCount: 0, pendingAmount: 0, confirmedAmount: 0, paidAmount: 0, unpaidAmount: 0 }, items: [] },
       };
     } } as any;
     const plan = { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'read_summary',
       subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }],
       refusals: [], requiresHumanReview: false };
     const oneJulyCall = [
-      { callTool: 'expense.list_recent', input: { fromDate: july!.fromDate, toDate: july!.toDate, branchId: 'Head Office' } },
+      { callTool: 'expense.list_recent', input: { fromDate: july!.fromDate, toDate: july!.toDate } },
       { done: true },
     ];
     installFetch(plan, oneJulyCall);
     const result = await new OrchestratorAgent(erpTools, makeConfig()).run(req);
     assert.deepEqual(calls, [
-      { fromDate: july!.fromDate, toDate: july!.toDate, branchId: 'Head Office' },
-      { fromDate: august!.fromDate, toDate: august!.toDate, branchId: 'branch-1' },
+      { fromDate: july!.fromDate, toDate: july!.toDate },
+      { fromDate: august!.fromDate, toDate: august!.toDate },
     ]);
-    assert.match(result.replyText, /ก\.ค\..*25,147\.80 บาท \(7 รายการ\)/);
-    assert.match(result.replyText, /ส\.ค\..*214,899\.57 บาท \(25 รายการ\)/);
+    assert.match(result.replyText, /25,147\.80 บาท \(7 รายการ\)[\s\S]*ก\.ค\. 2569/);
+    assert.match(result.replyText, /214,899\.57 บาท \(25 รายการ\)[\s\S]*ส\.ค\. 2569/);
     assert.equal(result.presentation?.cards.length, 1);
     assert.equal(result.presentation?.cards[0]?.text, result.replyText);
     assert.equal(result.presentation?.cards[0]?.webLink?.label, 'เลือกเดือนในรายการค่าใช้จ่าย');
@@ -126,7 +126,7 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
     const numericReq = { ...req, messageText: numericText,
       valueCandidates: extractValueCandidates(numericText, '2026-09-25') } as LineAiTurnRequest;
     installFetch(plan, [{ callTool: 'expense.list_recent', input: {
-      fromDate: '2026-01-01', toDate: '2026-01-31', branchId: 'Head Office',
+      fromDate: '2026-01-01', toDate: '2026-01-31',
     } }, { done: true }]);
     await new OrchestratorAgent(erpTools, makeConfig()).run(numericReq);
     assert.deepEqual(calls.map((call) => call.fromDate), ['2026-01-01', '2026-02-01', '2026-03-01']);
@@ -136,7 +136,7 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
     const allMonthsReq = { ...req, messageText: allMonthsText,
       valueCandidates: extractValueCandidates(allMonthsText, '2026-09-25') } as LineAiTurnRequest;
     installFetch(plan, [{ callTool: 'expense.list_recent', input: {
-      fromDate: '2025-01-01', toDate: '2025-01-31', branchId: 'Head Office',
+      fromDate: '2025-01-01', toDate: '2025-01-31',
     } }, { done: true }]);
     const allMonthsResult = await new OrchestratorAgent(erpTools, makeConfig({ aiMaxToolCalls: 8 })).run(allMonthsReq);
     assert.equal(calls.length, 8, 'the twelve-month request stays within the existing tool budget');
@@ -150,7 +150,7 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
     installFetch(plan, oneJulyCall);
     const typoResult = await new OrchestratorAgent(erpTools, makeConfig()).run(typoReq);
     assert.deepEqual(calls.map((call) => call.fromDate), [july!.fromDate, august!.fromDate]);
-    assert.match(typoResult.replyText, /ตีความ "กรกดาคม" เป็น[\s\S]*25,147\.80 บาท/);
+    assert.match(typoResult.replyText, /25,147\.80 บาท[\s\S]*ตีความ "กรกดาคม" เป็น/);
 
     calls.length = 0;
     const unclearText = 'สรุปค่าใช้จ่ายเดือนกรกดาคน และ สิงหาคม';
@@ -214,8 +214,8 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
       ? { toolName: tool.name, status: 'unavailable', asOf: '2026-09-25T03:50:00.000Z', sourceRefs: [] }
       : erpTools.invoke(tool, ctx, input) } as any;
     const partial = await new OrchestratorAgent(failedAugust, makeConfig()).run(req);
-    assert.match(partial.replyText, /25,147\.80 บาท/);
-    assert.match(partial.replyText, /ส\.ค\..*ยังดึงข้อมูลได้ไม่ครบ/);
+    assert.match(partial.replyText, /ยังยืนยันยอดและรายการค่าใช้จ่าย/);
+    assert.doesNotMatch(partial.replyText, /25,147\.80 บาท/);
     assert.doesNotMatch(partial.replyText, /214,899\.57/);
     assert.equal(partial.coverage?.[0]?.verdict, 'uncovered');
 
