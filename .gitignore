@@ -38,3 +38,6 @@ test-results/
 # Evidence screenshots are ~170MB per full run: the manifest and results.jsonl are the
 # reviewable record, the PNGs are local artifacts (spec docs/specs/mobile-first-launch-features-spec.md section 12.6).
 outputs/mobile-evidence/**/*.png
+
+# Python bytecode from the infra/* release tooling tests.
+__pycache__/
