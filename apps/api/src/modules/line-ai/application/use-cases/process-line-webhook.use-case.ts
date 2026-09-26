@@ -6052,7 +6052,7 @@ export class ProcessLineWebhookUseCase {
     let deliveredExpenseSummary: LineAiConversationContext['deliveredExpenseSummary'];
     const current = this.deliveryAccess.get(event);
     const chatKeyHash = chatKeyHashOf(event);
-    if (current && typeof this.prisma.client.lineTurnOutcome.findMany === 'function') {
+    if (current && typeof this.prisma.client.lineTurnOutcome?.findMany === 'function') {
       const eventIds = rows.flatMap(row => typeof row.webhookEventId === 'string' ? [row.webhookEventId] : []);
       const outcomes = eventIds.length ? await this.prisma.client.lineTurnOutcome.findMany({
         where: { webhookEventId: { in: eventIds }, deliveredAt: { not: null } },
