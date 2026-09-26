@@ -1,0 +1,37 @@
+{
+  "sourceCommit": "f932b57766f5dd22c0d28aedd4bc06f210e374ef",
+  "date": "2026-09-27",
+  "method": "Actual pinned function/method AST extracted and TypeScript transpiled in isolated VM. Synthetic values/stub notifier outcome; no provider, database, cloud, or application bootstrap.",
+  "tests": [
+    {
+      "id": "retry-key-canonical-only-change",
+      "pass": true,
+      "providerWireEqual": true,
+      "retryKeyDifferent": true,
+      "unchangedPayloadKeyStable": true
+    },
+    {
+      "id": "outcome-slots",
+      "pass": true,
+      "fiveAccepted": true,
+      "sixRejected": true
+    },
+    {
+      "id": "canonical-storage-limit",
+      "pass": true,
+      "canonical5001Rejected": true
+    },
+    {
+      "id": "notifier-skipped-publication",
+      "pass": true,
+      "skipped": 1,
+      "published": 1,
+      "failed": 0,
+      "limit": "Control-flow probe only: source notifyExpense lines221-224 maps non-ok sends to skipped; does not simulate live delivery."
+    }
+  ],
+  "files": [
+    "apps/api/src/modules/line-ai/infrastructure/line-reply.adapter.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/line-capture-result-notifier.use-case.ts"
+  ]
+}

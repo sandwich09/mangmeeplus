@@ -1,6 +1,12 @@
 # LINE AI Latency and Autonomy Lanes Implementation Plan
 
-## Status
+For proposed reliability v2 work, apply the [reliability spec](../specs/mangmee-ai-understanding-and-advisor-reliability-spec-th.md) §§2/20/20.1 and its [plan](mangmee-ai-understanding-and-advisor-reliability-plan-2026-09-26.md) Phase4: preserve quality against the intelligence-enhanced candidate before speed optimization, keep native enablement separately gated, and validate proposed v2 round/deadline budgets before replacing existing bounds. This adds no runtime activation.
+
+## Current evidence reconciliation — 2026-09-26
+
+The implementation-status block below is a historical checkpoint, not current enablement truth. Existing Phase0 traces and hosted Production/UAT baseline from2026-09-03 are real. Fresh read-only checks found AgentCore Productionv12/UATv33 on sourcea2b926c6 with prepared enabled/four families; UAT application hosts were stopped. AiTurn runtime timings exist, but current full LINE end-to-end coverage and eligible prepared hit rate remain unproved. Production Kamal log groups changed and current scoped read access is denied; UAT native deployment config does not add the Production awslogs driver. Continue this plan by reconciling existing collectors/access/correlation/coverage/reporting, not creating a second timing system. See [live evidence](../research/mangmee-ai-live-timing-readback-2026-09-26-th.md).
+
+## Status (historical implementation checkpoint)
 
 Phases 0–2 plus the real Phase 3 producer and Phase 4 deterministic simple-read EXECUTION lane are
 code-implemented DEFAULT-OFF and verified (an earlier router-skip-only Phase-4 attempt was rejected and
@@ -222,6 +228,8 @@ Create the exact independently default-off flags enumerated in the spec. Record 
 the old path restored by each flag in config tests before any canary.
 
 ## Rollback
+
+For reliability v2, the numeric quality margins below are additional operational stop triggers, not pre-canary regression allowances. Confirmed optimization-induced quality loss fails its acceptance gate and stops expansion even below these thresholds; keep the original isolation/authority controls and runtime budget enforcement.
 
 - Feature flags return each lane independently to the current path.
 - Any authorization, tenant, entitlement, mutation, source-honesty, or identifier-leak regression is
