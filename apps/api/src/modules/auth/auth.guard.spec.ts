@@ -626,24 +626,35 @@ describe('DenyByDefaultGuard', () => {
 
 
 describe('billing recovery boundaries', () => {
-  it('allows expired owners to repair only the company profile routes and keeps staff and legal gates', async () => {
-    const routes = [['GET', 'identity'], ['PATCH', 'identity'], ['PATCH', 'identity/business-type'], ['GET', 'settings/address-master?postalCode=10330'], ['PUT', 'vat-registration']];
+  it('allows company profile recovery only with the permission for that exact route', async () => {
+    const routes = [
+      ['GET', 'identity', 'company.setup.read'],
+      ['PATCH', 'identity', 'company.legal_identity.manage'],
+      ['PATCH', 'identity/business-type', 'company.legal_identity.manage'],
+      ['GET', 'settings/address-master?postalCode=10330', 'company.setup.read'],
+      ['GET', 'vat-registration', 'company.vat_registration.read'],
+      ['PUT', 'vat-registration', 'company.vat_registration.manage'],
+    ];
     const expired = prismaFor('test-sub', null, { termEndsAt: new Date(0) });
     expired.client.company = { findUnique: async () => ({ status: 'ACTIVE' }) };
-    let roles = ['OWNER'], recovery = false;
+    let permissions: string[] = [], recovery = false;
     const resolver = { execute: async (...args: any[]) => {
-      recovery = args[4]; return { ...await noopResolve.execute(args[0], args[1]), roles };
+      recovery = args[4]; return { ...await noopResolve.execute(args[0], args[1]), roles: ['CHIEF_OPERATING_OFFICER'], permissions };
     } } as any;
     const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolver, localConfig, expired, acceptedLegal);
-    for (const [method, suffix] of routes) {
+    for (const [method, suffix, permission] of routes) {
       const path = `/v1/companies/c1/${suffix}`;
       assert.equal(isCompanyProfileRecoveryRoute(method!, path), true);
+      permissions = [permission!];
       assert.equal(await guard.canActivate(makeContext({ method, path, authHeader: 'Bearer token' })), true);
       assert.equal(recovery, true);
-      roles = ['STAFF'];
+      permissions = [];
       await assert.rejects(guard.canActivate(makeContext({ method, path, authHeader: 'Bearer token' })), ForbiddenException);
-      roles = ['OWNER'];
     }
+    permissions = ['company.setup.read'];
+    assert.equal(await guard.canActivate(makeContext({
+      path: '/v1/companies/c1/settings/address-master?postalCode=10330', authHeader: 'Bearer token',
+    })), true);
     for (const [method, path] of [['POST', 'identity'], ['DELETE', 'identity'], ['PATCH', 'identity/other'], ['POST', 'settings/address-master'], ['GET', 'settings/address-master/other'], ['GET', 'expenses']])
       assert.equal(isCompanyProfileRecoveryRoute(method!, `/v1/companies/c1/${path}`), false);
     const legal = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolver, localConfig, expired,

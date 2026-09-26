@@ -61,6 +61,8 @@ export function CounterpartyDetailPage({ companyId, counterpartyId, permissions 
 }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
+  const canReadRegistry = permissions.includes(COUNTERPARTY_READ_PERMISSION)
+    || permissions.includes(COUNTERPARTY_MANAGE_PERMISSION);
 
   const [detail, setDetail] = useState<CounterpartyDetail | null>(null);
   const [values, setValues] = useState<CounterpartyFormValues>(() => counterpartyFormValues(null));
@@ -94,12 +96,12 @@ export function CounterpartyDetailPage({ companyId, counterpartyId, permissions 
       })
       .catch((cause) => {
         if (!active) return;
-        if (cause instanceof ApiError && cause.kind === 'forbidden') setForbidden(true);
+        if (cause instanceof ApiError && (cause.kind === 'forbidden' || (!canReadRegistry && cause.kind === 'not_found'))) setForbidden(true);
         else setLoadError(err(cause, locale));
       })
       .finally(() => { if (active) setRefreshing(false); });
     return () => { active = false; };
-  }, [companyId, counterpartyId, reload, locale]);
+  }, [canReadRegistry, companyId, counterpartyId, reload, locale]);
 
   const change = useCallback((next: Partial<CounterpartyFormValues>) => {
     setValues((current) => ({ ...current, ...next }));
@@ -123,7 +125,7 @@ export function CounterpartyDetailPage({ companyId, counterpartyId, permissions 
   }
 
   // The list needs `accounting.counterparty.read`; someone who only added this row would land on a refusal.
-  const backLink = permissions.includes(COUNTERPARTY_READ_PERMISSION) ? (
+  const backLink = canReadRegistry ? (
     <Link href={`/companies/${encodeURIComponent(companyId)}/counterparties`} className="mangmee-btn mangmee-btn-secondary">
       {t('counterparties.back_to_list', locale)}
     </Link>

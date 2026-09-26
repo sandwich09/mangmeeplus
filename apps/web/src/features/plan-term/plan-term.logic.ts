@@ -8,14 +8,14 @@ export type PlanTermView = 'none' | 'warning-banner' | 'renewal-page';
 
 /**
  * What the shell does with the term notice (P29 §4B, §5):
- * - the yellow warning is OWNER-only — staff are not shown the company's package dates at all;
+ * - the yellow warning is for members whose permissions allow them to manage the package;
  * - an ended term sends everyone to the renewal page, because no data operation is possible;
  * - no term row (`null`) is a grandfathered company with unlimited use, not an expiry.
  */
 export function planTermView(notice: PlanTermNotice | null, alreadyOnRenewalPage = false): PlanTermView {
   if (!notice) return 'none';
   if (notice.derivedState === 'EXPIRED') return alreadyOnRenewalPage ? 'none' : 'renewal-page';
-  if (notice.derivedState === 'WARNING' && notice.isOwner) return 'warning-banner';
+  if (notice.derivedState === 'WARNING' && (notice.canManagePlan ?? notice.isOwner)) return 'warning-banner';
   return 'none';
 }
 

@@ -120,7 +120,7 @@ export default function BranchSettingsPage({ companyId, permissions = [], roles 
   };
   const errorBanner = error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
     {error}
-    {errorCode === 'plan_branch_limit_exceeded' && roles.includes('OWNER') && <Link
+    {errorCode === 'plan_branch_limit_exceeded' && permissions.includes('company.plan.manage') && <Link
       href={`/companies/${companyId}/billing`} className="ml-2 font-semibold underline"
     >ดูหรือเปลี่ยนแพ็กเกจ</Link>}
     {errorCode === 'branch_last_active_required' && canManage && !creating && <button

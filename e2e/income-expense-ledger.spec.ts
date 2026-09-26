@@ -165,7 +165,7 @@ test.describe('P27 — income and expense ledger', () => {
     expect(create.status()).toBe(403);
   });
 
-  test('LED-06 @smoke CLOSED hides every sales root action but keeps runoff usable on desktop and mobile', async ({ apiAs, pageAs, companyId }) => {
+  test('LED-06 @smoke CLOSED hides sales root actions but allows counterparty registry and runoff', async ({ apiAs, pageAs, companyId }) => {
     test.skip(!process.env['DATABASE_URL'], 'DATABASE_URL is required for reversible launch-gate evidence');
     const financeApi = await apiAs('FINANCE');
     const financePage = await pageAs('FINANCE');
@@ -174,7 +174,7 @@ test.describe('P27 — income and expense ledger', () => {
     financePage.on('console', (message) => {
       if (message.type() === 'error') errors.push(message.text());
     });
-    await ensureVatRegistrationAnswered(financeApi, companyId);
+    await ensureVatRegistrationAnswered(await apiAs('OWNER'), companyId);
     const quotation = await json<DocumentRecord>(await financeApi.post(`companies/${companyId}/accounting/documents`, {
       data: {
         documentType: 'QUOTATION', documentDate: bangkokToday(), vatMode: 'NO_VAT',
@@ -195,9 +195,14 @@ test.describe('P27 — income and expense ledger', () => {
       await expect(financePage.getByRole('button', { name: 'แก้ไขร่าง' })).toBeVisible();
 
       const counterparty = await financeApi.post(`companies/${companyId}/accounting/counterparties`, {
-        data: { type: 'CUSTOMER', displayName: unique('must stay blocked') },
+        data: { displayName: unique('registry while sales closed') },
       });
-      expect(counterparty.status()).toBe(403);
+      expect(counterparty.status()).toBe(201);
+      const createdCounterparty = await json<{ id: string }>(counterparty);
+      const registryEdit = await financeApi.patch(`companies/${companyId}/accounting/counterparties/${createdCounterparty.id}`, {
+        data: { phone: '0812345678' },
+      });
+      expect(registryEdit.ok()).toBe(true);
       const submit = await financeApi.post(`companies/${companyId}/accounting/documents/${quotation.id}/submit-approval`, { data: {} });
       expect(submit.status()).toBe(403);
 

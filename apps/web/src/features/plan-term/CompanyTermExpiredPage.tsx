@@ -72,7 +72,7 @@ export default function CompanyTermExpiredPage({ companyId }: { companyId: strin
     );
   }
 
-  const isOwner = notice?.isOwner === true;
+  const canManagePlan = notice?.canManagePlan ?? notice?.isOwner ?? false;
   const reason = planLockReason(notice);
   const copy = PLAN_LOCK_COPY[reason];
   // A term that ran out keeps the red of P29; a shop that never had a package is not an error, it
@@ -83,7 +83,7 @@ export default function CompanyTermExpiredPage({ companyId }: { companyId: strin
 
   return (
     <div className="mx-auto w-full max-w-md px-4 py-8 sm:max-w-lg">
-      {isOwner ? (
+      {canManagePlan ? (
         <div role="alert" className="mangmee-card p-5 sm:p-7">
           <h1 className={`text-[22px] font-extrabold leading-9 ${titleTone}`}>{copy.title}</h1>
           <p className="mt-3 text-[15px] leading-7 text-gray-700">{copy.body}</p>

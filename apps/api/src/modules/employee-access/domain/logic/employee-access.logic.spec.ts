@@ -10,6 +10,7 @@ import {
   identityLast4,
   maskIdentityNumber,
   normalizeIdentityNumber,
+  ownerGatedGrantViolation,
   OWNER_LINE_LINK_TOKEN_TTL_MS,
   roleGrantViolation,
 } from './employee-access.logic';
@@ -122,6 +123,14 @@ describe('employee-access.logic', () => {
       ['accounting.payment.create', 'access.role.financial.assign'],
       undefined,
     ), undefined);
+  });
+
+  it('lets only the actual owner grant and assign company package management regardless of role name', () => {
+    const customRole = { key: 'CHIEF_OPERATING_OFFICER', permissionKeys: ['company.plan.manage'] };
+    assert.match(roleGrantViolation([customRole], ['company.plan.manage'], undefined) ?? '', /company owner/);
+    assert.equal(roleGrantViolation([customRole], ['company.plan.manage'], undefined, true), undefined);
+    assert.match(ownerGatedGrantViolation(['company.plan.manage'], new Set(['company.plan.manage', 'access.role.financial.assign'])) ?? '', /requires the company owner/);
+    assert.equal(ownerGatedGrantViolation(['company.plan.manage'], new Set(), true), undefined);
   });
 
   it('restores only raw permissions the resolver proves were removed by entitlements', () => {

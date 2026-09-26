@@ -808,6 +808,9 @@ export class UpdateExpenseDraftUseCase {
      * connection would survive that rollback and leave a shop nobody saved. That lane only patches
      * line amounts, never vendor identity, so nothing is lost by sitting it out.
      */
+    const receiptUploaderUserId = !options.db && this.ensureVendorCounterparty && r.primaryAttachmentId
+      ? await this.repo.findPrimaryReceiptUploader(ctx.companyId, expenseId, r.primaryAttachmentId)
+      : null;
     const autoSave = options.db || !this.ensureVendorCounterparty
       ? undefined
       : await this.ensureVendorCounterparty.execute(ctx, {
@@ -822,6 +825,7 @@ export class UpdateExpenseDraftUseCase {
         vendorAddressText: vendorIdentity.fields.vendorAddressSnapshot !== undefined
           ? vendorIdentity.fields.vendorAddressSnapshot : r.vendorAddressSnapshot,
         vendorEntityKind: input.vendorEntityKindSnapshot ?? r.vendorEntityKindSnapshot,
+        ...(receiptUploaderUserId ? { receiptUploaderUserId } : {}),
       });
     /**
      * Slice 2 (§5 row 2): re-check the printed buyer block against the company registry and the

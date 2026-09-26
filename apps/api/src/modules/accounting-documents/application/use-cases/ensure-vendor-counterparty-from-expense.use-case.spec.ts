@@ -38,6 +38,7 @@ function harness(rows: Counterparty[] = [], saveResults: boolean[] = []) {
       refetched.push(id);
       return rows[0] ? { ...rows[0], id } : null;
     },
+    isCounterpartyReceiptUploader: async (_companyId: string, id: string, userId: string) => rows.some((row) => row.id === id && row.receiptUploaderUserId === userId),
     createCounterparty: async (input: any) => {
       created.push(input);
       return { ...input, id: 'cp-new' };
@@ -55,6 +56,7 @@ function harness(rows: Counterparty[] = [], saveResults: boolean[] = []) {
 
 const vendor = {
   expenseId: 'exp-1',
+  receiptUploaderUserId: 'u-1',
   captureSource: 'WEB_MANUAL',
   vendorName: 'บริษัท ตัวอย่าง จำกัด',
   vendorTaxId: '0105558123456',
@@ -74,6 +76,17 @@ describe('case a — no counterparty matches the vendor key', () => {
     assert.equal(created[0].billingAddressJson.addressText, ADDRESS);
     assert.equal(created[0].billingAddressJson.provenance.source, 'EXPENSE_AUTO');
     assert.equal(created[0].billingAddressJson.provenance.expenseId, 'exp-1');
+    assert.equal(created[0].receiptUploaderUserId, 'u-1');
+    assert.equal(outcome.result.canOpenCounterparty, true);
+  });
+
+  it('keeps the source receipt uploader when another employee triggers the auto-save', async () => {
+    const { useCase, created } = harness();
+
+    await useCase.execute({ ...ctx, userId: 'u-reviewer' }, { ...vendor, receiptUploaderUserId: 'u-1' });
+
+    assert.equal(created[0].createdByUserId, 'u-reviewer');
+    assert.equal(created[0].receiptUploaderUserId, 'u-1');
   });
 
   it('names a branch row so two rows of one shop are told apart (§13)', async () => {
@@ -122,6 +135,15 @@ describe('case b — the counterparty exists but has no address', () => {
     assert.deepEqual(created, [], 'CON-12: never a second row beside one that already exists');
     assert.equal(saved[0].billingAddressJson.addressText, ADDRESS);
     assert.equal(outcome.linkCounterpartyId, 'cp-1');
+  });
+
+  it('returns a scoped open link to the original uploader of an existing row', async () => {
+    const row = { id: 'cp-1', type: 'VENDOR', displayName: 'ร้านเดิม', receiptUploaderUserId: 'u-1', billingAddressJson: null };
+    const { useCase } = harness([row]);
+
+    const outcome = await useCase.execute(ctx, vendor);
+
+    assert.equal(outcome.result.canOpenCounterparty, true);
   });
 
   it('matches a row CRM created as CUSTOMER and promotes it to BOTH (CON-12)', async () => {

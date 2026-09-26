@@ -160,11 +160,9 @@ export function counterpartyAutoSaveNotice(
   options: { canReadCounterparty: boolean },
 ): CounterpartyAutoSaveNotice | null {
   if (!result) return null;
-  // Hiding the link beats linking to a refusal (§8); the sentence still carries the way forward.
-  // A successful CREATE keeps it without read: this very save added the row, and whoever added a
-  // counterparty may open it (owner 2026-09-25). FILL/HISTORY touched a row this save did not add,
-  // and a failed attempt may have added nothing, so those still need read.
-  const mayOpen = options.canReadCounterparty || (result.case === 'CREATE' && !result.failed);
+  // The API grants row-scoped access only to its creator or original receipt uploader.
+  const mayOpen = !result.failed && result.case !== 'FAILED'
+    && (options.canReadCounterparty || result.canOpenCounterparty === true);
   const counterpartyId = mayOpen && result.counterpartyId ? result.counterpartyId : null;
 
   // Checked before the case map: a failed write may still carry the case it was attempting, and

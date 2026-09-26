@@ -158,6 +158,7 @@ function packageHarness(options: {
   rows?: any[];
   /** Roles the caller holds in the company; no membership at all when null. */
   roles?: string[] | null;
+  permissionKeys?: string[];
 } = {}) {
   const audits: any[] = [];
   const rows: any[] = [];
@@ -171,7 +172,10 @@ function packageHarness(options: {
           membershipQueries.push(args);
           return options.roles === null
             ? null
-            : { roles: (options.roles ?? ['OWNER']).map((key) => ({ role: { key } })) };
+            : { roles: (options.roles ?? ['OWNER']).map((key) => ({
+              role: { permissions: (options.permissionKeys ?? ((options.roles ?? ['OWNER']).includes('OWNER') ? ['company.plan.manage'] : []))
+                .map((permission) => ({ permission: { key: permission } })) },
+            })) };
         },
       },
       packageChangeRequest: {
@@ -213,18 +217,22 @@ describe('PackageChangeRequestUseCase', () => {
     assert.equal(JSON.stringify(h.rows).includes('monthlySlipLimit'), false);
   });
 
-  // Review LOW-2: the route's `company.setup.manage` permission is also held by a default ADMIN,
-  // but spec §4 puts this decision with the OWNER — it is about what the shop PAYS.
-  it('refuses a member who can edit settings but does not own the shop', async () => {
+  // Package authority is delegated through one explicit permission, independent of role name.
+  it('refuses members whose active roles do not hold company.plan.manage', async () => {
     for (const roles of [['ADMIN'], ['MANAGER', 'FINANCE'], []]) {
       const h = packageHarness({ roles });
       await assert.rejects(() => h.useCase.create(cmd), (error: unknown) => {
         assert.ok(error instanceof ForbiddenException);
-        assert.match(JSON.stringify((error as ForbiddenException).getResponse()), /owner_role_required/);
+        assert.match(JSON.stringify((error as ForbiddenException).getResponse()), /company_plan_manage_required/);
         return true;
       });
       assert.deepEqual(h.audits, [], String(roles));
     }
+  });
+
+  it('allows a custom-named role with the permission to request a package change', async () => {
+    const h = packageHarness({ roles: ['CHIEF_OPERATING_OFFICER'], permissionKeys: ['company.plan.manage'] });
+    assert.equal((await h.useCase.create(cmd)).status, 'OPEN');
   });
 
   // P10-L §3.7. The expiry message carries this button, and an expired trial leaves the company
