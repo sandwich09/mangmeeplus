@@ -406,6 +406,7 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       // cross-user, cross-chat/company). `pnpm test`'s per-package list does not name this file, so
       // this runner is what executes it.
       'src/modules/line-ai/infrastructure/line-intake-state.repository.spec.ts',
+      'src/modules/line-ai/application/line-read-evidence.spec.ts',
       'src/modules/line-ai/domain/logic/line-ai-terminal-outcome.logic.spec.ts',
       'src/modules/line-ai/domain/logic/line-ai-reconciliation.logic.spec.ts',
       'src/modules/expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec.ts',
