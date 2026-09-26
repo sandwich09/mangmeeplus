@@ -10,6 +10,25 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Read-only timing/inventory checkpoint — 2026-09-26
+
+This live read supersedes the September25 running-host snapshot for UAT: API
+`i-0eb581c5ac3b3d7ba` and AI/workers `i-011918b0d49534d1c` were both `stopped`.
+All four enrolled Production application hosts were `running`; both RDS instances were `available`.
+No host, service, flag, IAM policy or deployment was changed for this audit. Production health wasOK.
+AgentCore endpoints `kamal_production_b` v12 and `kamal_uat_b` v33 were READY/sourcea2b926c6;
+endpoint readiness does not mean the stopped UAT application is serving.
+
+Timing logs need migration-aware inspection: Production groups now include
+`/ecs/mangmee-kamal-production-{api-web,ai-gateway,workers}`. Existing scoped operator/deploy profiles
+could discover groups but were denied streams/events. AgentCore log groups exist for both environments,
+but event reads were also denied. UAT native_config at sourcea2 adds awslogs only forProduction;
+zero recent events in the old UAT ECS group is not proof of absent instrumentation. Inspect retained
+Docker logs when UAT is open under an authorized operation; do not start hosts merely to make a
+read-only audit appear complete. Existing DB timing was readable through the documented support paths.
+ProductionT1 and UATreadonlytunnel sessions were closed; owned active-session readback waszero.
+[Evidence, query windows and limitations](../research/mangmee-ai-live-timing-readback-2026-09-26-th.md).
+
 ## Current UAT Kamal — 2026-09-23 01:37 UTC
 
 Main source `abd2b4a37da242669a04a6e5a4506e0caf2e95a9` is serving all three UAT services after Kamal

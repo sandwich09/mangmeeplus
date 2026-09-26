@@ -1,5 +1,7 @@
 # Agent Memory: line-ai-latency-and-autonomy-lanes
 
+Current-evidence note2026-09-26: the status/default2500ms/one-family/no-hosted-baseline statements below describe earlier checkpoints. Sourcef932 now defaults2000ms with1000/1500/2000 cohorts and10compiledfamilies. Hosted baseline2026-09-03 exists; live read-only AgentCoreprodv12/UATv33 on a2 haspreparedtrue/fourfamilies. Do not infer current API debounce from source defaults or prepared served rate from flags. [Fresh live timing audit](../research/mangmee-ai-live-timing-readback-2026-09-26-th.md) records persisted samples, stopped UAT, log-access/transport/correlation gaps and closed support sessions. Reuse Phase0 instrumentation and add only missing coverage/reporting.
+
 Status: Phase 0–2 code IMPLEMENTED default-off and verified with focused tests/typechecks, then
 hardened by FOUR corrective review rounds — round 1 (loading ordering, acceptedAt anchoring,
 deterministic boundary, receiver validation, trace milestones), round 2 (per-batch loading

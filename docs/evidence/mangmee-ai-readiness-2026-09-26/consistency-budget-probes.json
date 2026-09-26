@@ -1,0 +1,17 @@
+{
+  "baseline": "f932b57766f5dd22c0d28aedd4bc06f210e374ef",
+  "mode": "pure-functions-synthetic-no-network",
+  "sourceParity": "git diff --name-only f932b577 -- packages/contracts/src/ai-budget-bounds.ts apps/ai-gateway/src/common/usage/ai-budget-provider.ts returned no differences",
+  "runner": "pnpm exec tsx consistency-budget-probes.ts",
+  "passed": 5,
+  "checks": [
+    "Current intake envelope accepted",
+    "Second intake ordinal rejected under maxCalls=1",
+    "Proposed maxCalls=2 envelope rejected by current receiver",
+    "Undeclared public-lookup step rejected",
+    "16383-byte Thai state plus 4000-byte prompt exceeds intake 20000-byte estimate"
+  ],
+  "contextEstimate": 20383,
+  "intakeBound": 20000,
+  "limitations": "Synthetic dependency probes; not provider, production, data-query, or latency verification"
+}

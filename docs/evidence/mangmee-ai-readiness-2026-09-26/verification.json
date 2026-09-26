@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "auditedAt": "2026-09-26",
+  "sourceCommit": "a2b926c6ee80f26065aecef6998415db1d1a379f",
+  "sourceWorktree": "/Users/thawatchai/.codex/worktrees/latest-main-uat-prod-20260925/mangmeeplus",
+  "release": {
+    "operationId": "20260926T025240Z-4ecec619",
+    "completedAt": "2026-09-26T03:01:32.792693+00:00",
+    "state": "ACCEPTED_LINE_DEFERRED",
+    "sourceReadbackAllServices": "a2b926c6ee80f26065aecef6998415db1d1a379f",
+    "customerAcceptancePassed": true
+  },
+  "awsReadback": {
+    "endpoint": "kamal_production_b",
+    "version": "12",
+    "status": "READY",
+    "source": "a2b926c6ee80f26065aecef6998415db1d1a379f",
+    "nativeToolLoopEnv": null,
+    "nativeToolLoopDefault": false,
+    "coverageEnv": null,
+    "coverageDefault": true,
+    "coverageOnlyInNativeLoop": true,
+    "preparedRead": true,
+    "draftEdit": true
+  },
+  "reproductions": {
+    "falseBlocks": {
+      "method": "actual OrchestratorAgent.run, synthetic request, no model or ERP execution",
+      "exitCode": 0,
+      "results": [
+        {
+          "messageText": "สรุปค่าใช้จ่ายแยกตามหมวดเดือนนี้",
+          "actual": "ตอนนี้ LINE ยังยืนยันยอดค่าใช้จ่ายตามเงื่อนไขนี้ไม่ได้ค่ะ กรุณาตรวจสอบในเว็บเพื่อดูยอดตามเกณฑ์ที่ต้องการ",
+          "erpCalls": 0
+        },
+        {
+          "messageText": "ค่าใช้จ่ายเดือนนี้เท่าไร ไม่รวมยกเลิกและปฏิเสธ",
+          "actual": "ตอนนี้ LINE ยังยืนยันยอดค่าใช้จ่ายตามเงื่อนไขนี้ไม่ได้ค่ะ กรุณาตรวจสอบในเว็บเพื่อดูยอดตามเกณฑ์ที่ต้องการ",
+          "erpCalls": 0
+        },
+        {
+          "messageText": "สรุปค่าใช้จ่ายเดือนนี้ ไม่รวมรายการที่ยกเลิก",
+          "actual": "ยังระบุเงื่อนไขรายการค่าใช้จ่ายที่ต้องการรวมออกไม่ได้ค่ะ ต้องการรวมหรือตัดรายการแบบใดออกคะ",
+          "erpCalls": 0
+        }
+      ]
+    },
+    "numericGuard": {
+      "method": "actual ResponseComposerAgent.composeAnswer with adversarial stub model output; not real-model hallucination-frequency evidence",
+      "exitCode": 0,
+      "results": [
+        {
+          "question": "ยอดรับเงินจริงเท่าไร",
+          "source": {
+            "totalSales": "1000.00",
+            "transactionCount": 2,
+            "basis": "recorded_received_payments"
+          },
+          "actual": "ยอดรับเงินจริง 2 บาท",
+          "acceptedWrongResult": true
+        },
+        {
+          "question": "ยอดรับเงินจริง 999 บาทใช่ไหม",
+          "source": {
+            "totalSales": "1000.00",
+            "transactionCount": 2,
+            "basis": "recorded_received_payments"
+          },
+          "actual": "ยอดรับเงินจริง 999 บาท",
+          "acceptedWrongResult": true
+        }
+      ]
+    },
+    "runtimeWire": {
+      "method": "Actual runtime HTTP handler via makeHttpServer + PassThrough; no listening socket; actual orchestrator for blocked response and stub for clarification coverage",
+      "exitCode": 0,
+      "results": [
+        {
+          "case": "blocked_reply_telemetry",
+          "reply": "ตอนนี้ LINE ยังยืนยันยอดค่าใช้จ่ายตามเงื่อนไขนี้ไม่ได้ค่ะ กรุณาตรวจสอบในเว็บเพื่อดูยอดตามเกณฑ์ที่ต้องการ",
+          "planStatus": "ROUTABLE",
+          "refused": false,
+          "refusalReason": null,
+          "tools": []
+        },
+        {
+          "case": "clarification_transport",
+          "receivedOpenClarifications": null,
+          "receivedChatKeyHash": "abcdef0123456789",
+          "orchestratorCoverage": [
+            {
+              "request": "ค่าใช้จ่ายเดือนอะไร",
+              "subject": "expense",
+              "verdict": "needs_user",
+              "question": "เดือนไหนคะ"
+            }
+          ],
+          "wireCoverage": null
+        }
+      ]
+    }
+  },
+  "historicalProductionTimings": {
+    "source": "277722ff6045298dac22182875379ea4826b00da",
+    "notCurrentReleaseBenchmark": true,
+    "rows": [
+      {
+        "at": "2026-09-25T08:48:07.698Z",
+        "durationMs": 4369,
+        "runtimeTotalMs": 4781,
+        "agentcoreHttpMs": 6664,
+        "modelCalls": 2
+      },
+      {
+        "at": "2026-09-25T09:02:30.833Z",
+        "durationMs": 6231,
+        "runtimeTotalMs": 6580,
+        "agentcoreHttpMs": 8390,
+        "modelCalls": 2
+      }
+    ]
+  },
+  "boundedProductionMetadata": {
+    "lookbackDays": 30,
+    "maximumRows": 500,
+    "returnedRows": 249,
+    "refused": 19,
+    "refusalReasonCounts": {
+      "unsupported_module": 8,
+      "unsupported_yet": 7,
+      "feature_disabled": 1,
+      "mutation_blocked": 1,
+      "tool_unavailable": 1,
+      "unspecified": 1
+    },
+    "durationSamples": 95,
+    "recordedDurationP50Ms": 3983,
+    "recordedDurationP95Ms": 7637,
+    "limitation": "Mixed releases and intents, incomplete duration coverage, not proof all refusals were erroneous; excludes full LINE end-to-end timing."
+  },
+  "readOnlySession": {
+    "incident": "INC-20260926-AI-VERIFY",
+    "sessionId": "watchdog-bedrock-dev-dnrnp7tk74r3bpv5r5yrysvypy",
+    "user": "watchdog_support_ro",
+    "defaultTransactionReadOnly": "on",
+    "exitedNormally": true
+  },
+  "limits": [
+    "No actual model/provider invocations",
+    "No new LINE messages or banking messages",
+    "No source/package/deployment writes",
+    "Current release runtime latency has no sample in queried AiTurn metadata",
+    "No full-product browser journey certification"
+  ]
+}

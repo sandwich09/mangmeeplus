@@ -1,0 +1,33 @@
+{
+  "sourceSha": "f932b57766f5dd22c0d28aedd4bc06f210e374ef",
+  "sourcePath": "apps/ai-gateway/src/modules/line-ai/agents/response-composer.agent.ts",
+  "sourceBlob": "56464a14f94c39adddfe34af03599798f776013d",
+  "method": "Pinned whole composer source transpiled in VM; non-exercised imported persona/catalog stubs; provider stub; no network/DB/app bootstrap.",
+  "probes": [
+    {
+      "name": "compose_max_tokens_suffix_โดย",
+      "providerOutput": "บริษัทมีทั้งหมด 2 สาขา: Head Office และ สาขาลาดพร้าว โดย",
+      "result": "บริษัทมีทั้งหมด 2 สาขา",
+      "acceptedPartial": false
+    },
+    {
+      "name": "compose_max_tokens_suffix_และ",
+      "providerOutput": "บริษัทมีทั้งหมด 2 สาขา: Head Office และ สาขาลาดพร้าว และ",
+      "result": "บริษัทมีทั้งหมด 2 สาขา: Head Office และ สาขาลาดพร้าว และ",
+      "acceptedPartial": true
+    },
+    {
+      "name": "polish_max_tokens",
+      "result": "ยอดขาย 100 บาท และ",
+      "acceptedPartial": true
+    },
+    {
+      "name": "history_preview_arithmetic",
+      "inputLength": 259,
+      "previewLength": 240,
+      "tailConstraintRetained": false,
+      "note": "Source slice arithmetic only; not live conversation reproduction"
+    }
+  ],
+  "limitations": "Initial โดย suffix is rejected by other guards; และ suffix demonstrates max_tokens partial accepted by compose/polish. No production frequency or real model behavior measured."
+}

@@ -1,0 +1,38 @@
+{
+  "date": "2026-09-27",
+  "kind": "documentation_validation_only",
+  "baseline": "f932b57766f5dd22c0d28aedd4bc06f210e374ef",
+  "files": 9,
+  "localLinksChecked": 81,
+  "activeCapabilities": 17,
+  "activeWorkPackages": 15,
+  "knownFindings": 30,
+  "executionSlices": 22,
+  "dependencyDAG": "PASS",
+  "crossContractInvariants": "PASS",
+  "stableAcceptanceIds": 55,
+  "activeAcceptanceIds": 53,
+  "deferredAcceptanceIds": 2,
+  "errors": [],
+  "applicationTestsRun": false,
+  "runtimeReadinessClaim": false,
+  "fileHashes": {
+    "docs/specs/mangmee-ai-understanding-and-advisor-reliability-spec-th.md": "902e8740525978087f40d928897bc6881e75c51b345b002bbecb8934d6ef34c6",
+    "docs/plans/mangmee-ai-understanding-and-advisor-reliability-plan-2026-09-26.md": "c65f27b3356071b79a0dad19347b197aa8e48f0d75a0ba79da786bcc661ce3f3",
+    "docs/plans/mangmee-ai-implementation-index-2026-09-27.md": "b7ce4a72236d5227c94cea2b3898830346753a97a09b2ea34129a331062d29fe",
+    "docs/qa/mangmee-conversation-acceptance-catalog-2026-09-26-th.md": "463c9e223917fc5758903582f461df4c0d43f094476f83107e62083a839966d6",
+    "docs/agent-memory/mangmee-starter-advisor-audit-2026-09-26.md": "6e6ceaefa87b1b1460d483394c6bbdfbbc07d0f5acec1e7b88ff4dd332685d19",
+    "docs/specs/mangmee-ai-business-document-write-contract-2026-09-27.md": "20512e3731689b6e89a7994c82938aa134a68337a833e8db60629c200912add1",
+    "docs/specs/mangmee-ai-core-capability-contract-2026-09-27.md": "58a4e4b7a026a9228b430cefa9a36d2c47e3668dca30757868f7f106bcb1b5f7",
+    "docs/specs/mangmee-ai-input-provider-budget-contract-2026-09-27.md": "d475dacacd0bc2933bf34dd538d507c966339ea59f5db342165495f351c4adae",
+    "docs/specs/mangmee-ai-reliability-delivery-contract-2026-09-27.md": "feec20adee7fddbdf22af8d26d5c1cbda7c5408bed31ca6e53db875251e6375f"
+  },
+  "mergePackaging": {
+    "checkedFiles": 35,
+    "localLinksChecked": 195,
+    "errors": [],
+    "applicationChangesIncluded": false,
+    "ciWaitRequired": false,
+    "markdownHardBreaks": "backslash_preserving_rendered_line_break"
+  }
+}
