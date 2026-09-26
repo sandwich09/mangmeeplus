@@ -329,7 +329,7 @@ describe('ResponseComposerAgent.composeAnswer (model-composed grounded answer)',
     sourceRefs: [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true as const, webPath: '/companies/company-1/expenses' }],
     asOf: '2026-09-17T10:00:00Z',
   };
-  const expenseSummaryTh = 'ค่าใช้จ่าย: 85.00 บาท (7 รายการ)\nไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ 1 รายการ\nช่วง: 2026-08-01 – 2026-08-31\nที่มา: รายการค่าใช้จ่าย\nข้อมูล ณ 2026-09-17';
+  const expenseSummaryTh = 'ค่าใช้จ่าย: 85.00 บาท (7 รายการ)\nไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ 1 รายการ\nช่วง: 1 สิงหาคม 2569 – 31 สิงหาคม 2569\nที่มา: รายการค่าใช้จ่าย\nข้อมูล ณ 17 กันยายน 2569';
   const expenseSummaryEn = 'Expenses: 85.00 THB (7 records)\nExcludes 1 rejected or voided record\nPeriod: 2026-08-01 – 2026-08-31\nSource: รายการค่าใช้จ่าย\nData as of 2026-09-17';
 
   it('returns total, count, effective period and source without model composition', async () => {
@@ -533,7 +533,7 @@ describe('ResponseComposerAgent.composeAnswer (model-composed grounded answer)',
       [{ tool: 'expense.list_recent', data }], expenseFallback, provider, expenseMeta);
     const zero = await summarize({ ...expenseData[0]!.data, total: 0, items: [], summary: { totalAmount: 0, cancelledCount: 0 } });
     assert.match(zero, /^ค่าใช้จ่าย: 0\.00 บาท \(0 รายการ\)/);
-    assert.match(zero, /ช่วง: 2026-08-01 – 2026-08-31\nที่มา: รายการค่าใช้จ่าย/);
+    assert.match(zero, /ช่วง: 1 สิงหาคม 2569 – 31 สิงหาคม 2569\nที่มา: รายการค่าใช้จ่าย/);
     for (const total of [undefined, null, '7', -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
       const reply = await summarize({ ...expenseData[0]!.data, total });
       assert.match(reply, /85\.00 บาท \(ยังยืนยันจำนวนรายการไม่ได้\)/);
