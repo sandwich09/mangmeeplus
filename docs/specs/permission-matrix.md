@@ -43,6 +43,7 @@ Define default role permissions for WatchDog-BMS so web, LINE AI assistant, back
 |---|---|---|---|---|---|---|---|---|---|---|
 | Users/Roles | admin | admin | none | none | none | none | none | none | none | read |
 | Company setup | admin | admin | read | none | none | read | read | none | none | read |
+| Company package and billing | admin | none | none | none | none | none | none | none | none | none |
 | Products | admin | write | read | read | read | read | read | read | none | read |
 | Inventory movement | admin | read | read | none | write | read | read | none | none | read |
 | Stock count | admin | read | read | none | write | read | read | none | none | read |
@@ -66,6 +67,8 @@ Define default role permissions for WatchDog-BMS so web, LINE AI assistant, back
 | Marketplace connection | admin | admin | read | read | read | finance read | read | read | none | read |
 | Audit log | admin | read | team | own | own | finance | read | own | own | read |
 | AI chat | admin | read per role | team per role | own sales | inventory | finance | accounting/tax | marketing | own | read-only |
+
+The package row shows default grants. The OWNER may add `company.plan.manage` to a custom role and assign that role to a member; the role name does not change access. ADMIN has no package grant by default and cannot grant or assign this permission. Company identity and VAT editing keep their own permissions.
 
 ## 5.0 Employee Access and Role Management Permission Keys
 
@@ -233,8 +236,9 @@ existing ones handed out where the journey needs them:
   `accounting.counterparty.manage` (assumption A3, precedent `EnsureCustomerCounterpartyUseCase`):
   it is a side effect of an expense write that already passed permission and entitlement checks, and
   every one is audited with `metadataJson.source = 'expense_auto_link'`.
-- A user without `accounting.counterparty.read` still types addresses on the expense; the toast just
-  drops its "ดู" link.
+- A user without registry read still types addresses on the expense. The API supplies the "ดู" link
+  only if this user created that counterparty or uploaded the primary receipt that created it. That
+  row permission does not expose the registry list or the counterparty's expense history.
 
 ## 5.3 Expense Permission Keys
 

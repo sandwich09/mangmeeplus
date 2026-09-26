@@ -2,7 +2,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException } from '@nestjs/common';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { CreateCounterpartyUseCase, UpdateCounterpartyUseCase } from './counterparty.use-case';
 import { CreateDocumentUseCase, SubmitQuotationApprovalUseCase } from './document.use-case';
 import { CreatePaymentUseCase } from './payment.use-case';
 import { RecordSimpleIncomeUseCase, simpleIncomePayloadFingerprint } from './record-simple-income.use-case';
@@ -476,32 +475,6 @@ describe('P27 BLOCK_NEW_ROOT mutation coverage', () => {
   const closedTransactionalGate = {
     assertLaunchRouteOpenInTransaction: async () => { throw featureTemporarilyUnavailable('sales_documents'); },
   } as any;
-
-  it('blocks counterparty create and update inside their final transactions', async () => {
-    const deniedActions: string[] = [];
-    let writes = 0;
-    const audit = { log: async (entry: any) => { deniedActions.push(entry.action); } } as any;
-    const repo = {
-      resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => selected ?? scopes.branchIds?.[0] ?? 'branch-1',
-
-      findCounterpartyById: async () => ({ id: 'cp-1' }),
-      createCounterparty: async (_input: unknown, before: (db: unknown) => Promise<void>) => {
-        await before({});
-        writes += 1;
-      },
-      updateCounterparty: async (_input: unknown, before: (db: unknown) => Promise<void>) => {
-        await before({});
-        writes += 1;
-      },
-    } as any;
-    await assert.rejects(() => new CreateCounterpartyUseCase(repo, audit, closedTransactionalGate)
-      // A5: the body no longer carries `type` — the server owns it.
-      .execute(mutationCtx, { displayName: 'Blocked customer' }));
-    await assert.rejects(() => new UpdateCounterpartyUseCase(repo, audit, closedTransactionalGate)
-      .execute(mutationCtx, 'cp-1', { displayName: 'Blocked update' }));
-    assert.equal(writes, 0);
-    assert.deepEqual(deniedActions, ['accounting.counterparty.create', 'accounting.counterparty.update']);
-  });
 
   it('blocks quotation submit before its status mutation', async () => {
     let statusWrites = 0;

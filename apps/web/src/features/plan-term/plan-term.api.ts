@@ -14,8 +14,10 @@ export type PlanTermNotice = {
   derivedState: PlanTermDerivedState;
   termEndsAt: string;
   daysLeft: number;
-  /** Only the OWNER sees term detail; staff get the neutral line instead (P29 §5). */
+  /** Only the actual OWNER is the legal/account owner. */
   isOwner: boolean;
+  /** This membership may manage package renewal through company.plan.manage. */
+  canManagePlan?: boolean;
   /** Present only while EXPIRED. */
   lockReason?: PlanLockReason;
 };
@@ -34,7 +36,8 @@ export async function readPlanTermNotice(companyId?: string): Promise<PlanTermNo
   const body = await response.json();
   if (body === null) return null;
   if (!['ACTIVE', 'WARNING', 'EXPIRED'].includes(body?.derivedState) ||
-      typeof body.isOwner !== 'boolean' || typeof body.termEndsAt !== 'string') {
+      typeof body.isOwner !== 'boolean' || typeof body.termEndsAt !== 'string' ||
+      (body.canManagePlan !== undefined && typeof body.canManagePlan !== 'boolean')) {
     throw new PlanTermNoticeError(502);
   }
   return body as PlanTermNotice;

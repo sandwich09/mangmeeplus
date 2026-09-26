@@ -139,6 +139,8 @@ export type CounterpartyAddressV2 = {
 export type VendorCounterpartyAutoSaveResult = {
   case: 'SKIPPED' | 'CREATE' | 'FILL' | 'HISTORY' | 'NOOP' | 'FAILED';
   counterpartyId?: string;
+  /** This actor may open the one record they created or originated from their receipt. */
+  canOpenCounterparty?: true;
   /** For the toast text — "เพิ่ม [ร้าน] ลงทะเบียนคู่ค้าแล้ว". */
   displayName?: string;
   /** Case c only: the registry kept its own primary address because it is locked (A4). */

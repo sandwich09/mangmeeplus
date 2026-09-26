@@ -212,6 +212,8 @@ export type CreateCounterpartyInput = {
   billingAddressJson?: Record<string, unknown>;
   shippingAddressJson?: Record<string, unknown>;
   createdByUserId: string;
+  /** Receipt uploader when this row is first auto-created from an expense. */
+  receiptUploaderUserId?: string;
 };
 
 export type UpdateCounterpartyInput = {

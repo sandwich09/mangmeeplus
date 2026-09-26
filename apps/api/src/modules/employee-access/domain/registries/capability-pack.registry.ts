@@ -62,6 +62,12 @@ const RAW_PACKS: RawPack[] = [
     description: 'แก้ข้อมูลบริษัท สาขา เลขที่เอกสาร และไฟล์แนบ',
     permissionKeys: ['company.setup.manage', 'company.branch.manage', 'document.sequence.manage', 'attachment.create', 'attachment.delete', 'outbox.event.read'],
   },
+  {
+    key: 'pack.company.plan.manage', module: 'company',
+    nameTh: 'จัดการแพ็กเกจและการชำระเงิน', nameEn: 'Manage company package and billing',
+    description: 'เลือกหรือเปลี่ยนแพ็กเกจ ซื้อบริการ และดูหรือชำระเงินของบริษัท',
+    permissionKeys: ['company.plan.manage'],
+  },
   // Deliberately NO featureEntitlementKey, both of them. A company that never bought `thai_tax`
   // still has one legal name, one tax id and one VAT status — those are facts about the company,
   // not features of the tax workspace, and the Step 0 wizard has to run for every tenant

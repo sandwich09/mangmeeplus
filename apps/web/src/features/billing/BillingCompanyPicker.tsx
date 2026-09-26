@@ -5,22 +5,22 @@ import { apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeBadge, MangmeeCard } from '@/common/components/mangmee';
 import BillingCustomerFrame from './BillingCustomerFrame';
 
-type CompanyChoice = { companyId: string; companyName: string; roles: string[]; expired: boolean };
+type CompanyChoice = { companyId: string; companyName: string; canManagePlan: boolean; expired: boolean };
 export default function BillingCompanyPicker({ query, fromCompany }: { query: string; fromCompany?: string }) {
   const [companies, setCompanies] = useState<CompanyChoice[] | null>(null), [error, setError] = useState(''), [reload, setReload] = useState(0);
   useEffect(() => {
     let active = true;
     setError('');
     void authedApiFetch<{ data: CompanyChoice[] }>('/auth/me/companies', { cache: 'no-store', suppressErrorToast: true })
-      .then(result => { if (active) setCompanies(result.data.filter(company => company.roles.includes('OWNER'))); })
+      .then(result => { if (active) setCompanies(result.data.filter(company => company.canManagePlan)); })
       .catch(e => { if (active) { setCompanies(null); setError(apiErrorMessage(e)); } });
     return () => { active = false; };
   }, [reload]);
   const origin = companies?.find(company => company.companyId === fromCompany);
-  return <BillingCustomerFrame title="เลือกบริษัทที่จะจัดการแพ็กเกจ" description="ดูแพ็กเกจและประวัติการชำระเงินของบริษัทที่คุณเป็นเจ้าของ"
+  return <BillingCustomerFrame title="เลือกบริษัทที่จะจัดการแพ็กเกจ" description="ดูแพ็กเกจและประวัติการชำระเงินของบริษัทที่คุณมีสิทธิ์บริหาร"
     backHref={origin ? `/companies/${encodeURIComponent(origin.companyId)}/billing` : '/'} backLabel={origin ? `กลับแพ็กเกจของ ${origin.companyName}` : 'กลับหน้าหลัก'}>
     {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4"><p>{error}</p><button className="mangmee-btn mangmee-btn-secondary mt-3" onClick={() => setReload(value => value + 1)}>ลองใหม่</button></div>}
-    {!companies && !error && <p role="status">กำลังตรวจสอบบริษัทที่คุณเป็นเจ้าของ…</p>}
+    {!companies && !error && <p role="status">กำลังตรวจสอบบริษัทที่คุณจัดการแพ็กเกจได้…</p>}
     {companies?.length === 0 && <p>ยังไม่มีบริษัทที่คุณเป็นเจ้าของ กรุณาให้เจ้าของบริษัทดำเนินการ หรือติดต่อทีมมั่งมี</p>}
     {companies && companies.length > 0 && <MangmeeCard className="divide-y divide-gray-100">
       {companies.map(company => <div key={company.companyId} className="flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6">

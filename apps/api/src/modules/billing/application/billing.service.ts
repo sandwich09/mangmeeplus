@@ -106,10 +106,18 @@ export class BillingService {
       ORDER BY r.id FOR SHARE OF m, mr, r`;
     const member = await tx.companyMembership.findUnique({
       where: { companyId_userId: { companyId: context.companyId, userId: context.userId } },
-      include: { user: { select: { status: true } }, roles: { include: { role: true } } },
+      include: {
+        user: { select: { status: true } },
+        roles: {
+          where: { role: { status: 'ACTIVE' } },
+          include: { role: { include: { permissions: { select: { permission: { select: { key: true } } } } } } },
+        },
+      },
     });
     if (!member || member.status !== 'ACTIVE' || member.user.status !== 'ACTIVE' ||
-        !member.roles.some((r) => r.role.key === 'OWNER' && r.role.status === 'ACTIVE')) throw new ForbiddenException('เฉพาะเจ้าของบริษัทเท่านั้น');
+        !member.roles.some((r) => r.role.permissions.some((rp) => rp.permission.key === 'company.plan.manage'))) {
+      throw new ForbiddenException('ต้องได้รับสิทธิ์จัดการแพ็กเกจบริษัท');
+    }
   }
 
   async settings(tx: Prisma.TransactionClient = this.prisma.client) {

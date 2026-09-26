@@ -1026,6 +1026,7 @@ export class ReceiptOcrApplyService {
         where: { id: expenseId, companyId: ctx.companyId },
         select: {
           expenseCategoryId: true,
+          createdByUserId: true,
           reviewedAt: true,
           expenseDate: true, aiVerificationSummaryJson: true,
           primaryAttachmentId: true,
@@ -1111,8 +1112,12 @@ export class ReceiptOcrApplyService {
        * later rollback here leaves a counterparty row behind — harmless, since the next save links
        * to it instead of making another.
        */
+      const receiptUploaderUserId = this.ensureVendorCounterparty && currentExpense.primaryAttachmentId
+        ? await this.expenses.findPrimaryReceiptUploader(ctx.companyId, expenseId, currentExpense.primaryAttachmentId)
+        : null;
       const autoSave = await this.ensureVendorCounterparty?.execute(ctx, {
         expenseId,
+        ...(receiptUploaderUserId ? { receiptUploaderUserId } : {}),
         captureSource: currentExpense.captureSource,
         sourceReimbursementRequestId: currentExpense.sourceReimbursementRequestId,
         vendorCounterpartyId: currentExpense.vendorCounterpartyId,

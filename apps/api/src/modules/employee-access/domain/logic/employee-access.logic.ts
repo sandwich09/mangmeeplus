@@ -26,7 +26,11 @@ export const OWNER_GATED_GRANT_KEYS = ['reimbursement.read', OPERATIONAL_ROLE_AS
 export function ownerGatedGrantViolation(
   finalPermissionKeys: string[],
   granterPermissionKeys: ReadonlySet<string> | null,
+  isOwner = false,
 ): string | undefined {
+  if (finalPermissionKeys.includes('company.plan.manage') && !isOwner) {
+    return 'Granting company package management to a role requires the company owner.';
+  }
   if (!granterPermissionKeys || granterPermissionKeys.has(FINANCIAL_ROLE_ASSIGN_PERMISSION)) return undefined;
   const gated = OWNER_GATED_GRANT_KEYS.find((key) => finalPermissionKeys.includes(key));
   return gated ? `Granting ${gated} to a role requires the company owner.` : undefined;
@@ -49,6 +53,9 @@ export function roleGrantViolation(
   ]);
   if (roles.some((role) => NON_ASSIGNABLE_ROLE_KEYS.includes(role.key))) {
     return 'Owner and platform access cannot be granted through employee provisioning.';
+  }
+  if (roles.some((role) => role.permissionKeys.includes('company.plan.manage')) && !requesterIsOwner) {
+    return 'Assigning a role with company package management requires the company owner.';
   }
   // OWNER grants every company permission by definition, while its effective permissions may be
   // feature-filtered and candidate system roles still expose their raw permission rows.

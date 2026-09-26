@@ -642,6 +642,18 @@ export class PrismaExpenseRepository {
     return attachment?.checksumSha256 ?? null;
   }
 
+  async findPrimaryReceiptUploader(companyId: string, expenseId: string, attachmentId: string): Promise<string | null> {
+    const link = await this.prisma.client.attachmentLink.findFirst({
+      where: {
+        companyId, targetType: 'expense.record', targetId: expenseId,
+        attachmentId, purpose: 'expense.receipt.primary',
+        attachment: { companyId, status: 'ACTIVE' as any },
+      },
+      select: { attachment: { select: { uploadedByUserId: true } } },
+    });
+    return link?.attachment.uploadedByUserId ?? null;
+  }
+
   async findExpenseIdsByAttachmentChecksum(
     companyId: string,
     excludeId: string,

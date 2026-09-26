@@ -1084,7 +1084,10 @@ export class AuthController {
       select: {
         companyId: true,
         company: { select: { name: true, status: true, planTerm: { select: { termEndsAt: true } } } },
-        roles: { where: { role: { status: 'ACTIVE' } }, select: { role: { select: { key: true } } } },
+        roles: {
+          where: { role: { status: 'ACTIVE' } },
+          select: { role: { select: { key: true, permissions: { select: { permission: { select: { key: true } } } } } } },
+        },
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -1094,6 +1097,7 @@ export class AuthController {
         companyId: m.companyId,
         companyName: m.company.name,
         roles: m.roles.map((r) => r.role.key),
+        canManagePlan: m.roles.some((r) => r.role.permissions.some((rp) => rp.permission.key === 'company.plan.manage')),
         // Exact-hour truth, not sweep truth: an ACTIVE company past its term is already expired.
         expired:
           m.company.status === 'DISABLED' ||

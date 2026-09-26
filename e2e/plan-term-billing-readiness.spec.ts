@@ -28,6 +28,7 @@ type Rig = {
   ownerRenew: () => Promise<import('@playwright/test').APIResponse>;
   notice: () => Promise<import('@playwright/test').APIResponse>;
   identity: (role: 'OWNER' | 'STAFF', acceptLegal?: boolean) => Promise<{ id: string; username: string; password: string; token: string }>;
+  customManager: () => Promise<{ id: string; username: string; password: string; token: string }>;
 };
 
 function requireLocal(value: string, label: string): void {
@@ -133,6 +134,61 @@ const test = base.extend<{ rig: Rig }>({
           const { accessToken: token } = await res.json();
           if (acceptLegal) await ensureBearerLegalAcceptance(request, token, companyId);
           return { id, username, password, token };
+        },
+        customManager: async () => {
+          const headers = apiHeaders(ownerToken, companyId);
+          const packsResponse = await request.get(`${urls.api}/companies/${companyId}/settings/capability-packs`, { headers });
+          expect(packsResponse.ok(), await packsResponse.text()).toBe(true);
+          const catalog = await packsResponse.json() as { modules: Array<{ packs: Array<{ key: string; grantableByCurrentUser: boolean }> }> };
+          const packKeys = [
+            'pack.company.plan.manage', 'pack.company.settings.view', 'pack.company.settings.manage',
+            'pack.company.legal_identity.manage', 'pack.company.vat_registration.manage',
+          ];
+          const packs = catalog.modules.flatMap((module) => module.packs);
+          for (const key of packKeys) expect(packs.find((pack) => pack.key === key)?.grantableByCurrentUser, key).toBe(true);
+
+          const roleResponse = await request.post(`${urls.api}/companies/${companyId}/settings/roles`, {
+            headers, data: { name: `Chief Officer ${suffix.slice(0, 8)}`, capabilityPackKeys: packKeys },
+          });
+          expect(roleResponse.ok(), await roleResponse.text()).toBe(true);
+          const role = await roleResponse.json() as { id: string; key: string; permissionKeys: string[] };
+          expect(role.permissionKeys).toEqual(expect.arrayContaining([
+            'company.plan.manage', 'company.setup.read', 'company.setup.manage',
+            'company.legal_identity.manage', 'company.vat_registration.manage',
+          ]));
+
+          const digits = randomUUID().replaceAll('-', '');
+          const username = `plan.manager.${digits.slice(-12)}`;
+          const employeeResponse = await request.post(`${urls.api}/companies/${companyId}/settings/employees`, {
+            headers,
+            data: {
+              displayName: `Plan manager ${digits.slice(-6)}`, legalName: 'Plan Manager E2E', username,
+              dateOfBirth: '1990-01-01', identityType: 'PASSPORT', identityNumber: `PLAN${digits.slice(-10)}`,
+              phoneNumber: `08${digits.slice(-8)}`, roleIds: [role.id],
+            },
+          });
+          expect(employeeResponse.ok(), await employeeResponse.text()).toBe(true);
+          const employee = await employeeResponse.json() as { employeeId: string; username: string; temporaryPassword: string };
+          const user = await db.user.findUniqueOrThrow({ where: { username: employee.username } });
+          userIds.push(user.id);
+          const complete = await request.post(`${urls.api}/companies/${companyId}/settings/employees/${employee.employeeId}/complete`, { headers, data: {} });
+          expect(complete.ok(), await complete.text()).toBe(true);
+
+          const firstLogin = await request.post(`${urls.api}/auth/password/login`, {
+            data: { username: employee.username, password: employee.temporaryPassword },
+          });
+          expect(firstLogin.ok(), await firstLogin.text()).toBe(true);
+          const firstToken = (await firstLogin.json() as { accessToken: string }).accessToken;
+          const password = `Plan@${digits.slice(-8)}Aa`;
+          const changed = await request.post(`${urls.api}/auth/password/change`, {
+            headers: apiHeaders(firstToken, companyId), data: { newPassword: password },
+          });
+          expect(changed.ok(), await changed.text()).toBe(true);
+          const verifiedLogin = await request.post(`${urls.api}/auth/password/login`, { data: { username: employee.username, password } });
+          expect(verifiedLogin.ok(), await verifiedLogin.text()).toBe(true);
+          const token = (await verifiedLogin.json() as { accessToken: string }).accessToken;
+          await ensureBearerLegalAcceptance(request, token, companyId);
+          return { id: user.id, username: employee.username, password, token };
         },
       });
     } finally {
@@ -377,6 +433,108 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       await authedPage.reload();
       await expect(authedPage.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
     } finally { release(); }
+  });
+
+  test('BR17 owner-delegated custom role can manage package and edit company profile through expiry; staff stays blocked', async ({ rig, request, browser, urls }) => {
+    const manager = await rig.customManager();
+    const staff = await rig.identity('STAFF');
+    const headers = apiHeaders(manager.token, rig.companyId);
+    const staffHeaders = apiHeaders(staff.token, rig.companyId);
+
+    const me = await request.get(`${urls.api}/auth/me`, { headers });
+    expect(me.status(), await me.text()).toBe(200);
+    const meBody = await me.json() as { roles: string[]; permissions: string[] };
+    expect(meBody.roles).toEqual(expect.arrayContaining([expect.stringMatching(/^CHIEF_OFFICER_/)]));
+    expect(meBody.permissions).toEqual(expect.arrayContaining([
+      'company.plan.manage', 'company.legal_identity.manage', 'company.vat_registration.manage',
+    ]));
+
+    const companies = await request.get(`${urls.api}/auth/me/companies`, { headers });
+    expect(companies.status()).toBe(200);
+    expect(await companies.json()).toMatchObject({ data: expect.arrayContaining([
+      expect.objectContaining({ companyId: rig.companyId, canManagePlan: true }),
+    ]) });
+    expect((await request.get(`${urls.api}/companies/${rig.companyId}/billing`, { headers })).status()).toBe(200);
+    const notice = await request.get(`${urls.api}/plan-term/notice`, { headers });
+    expect(notice.status()).toBe(200);
+    expect(await notice.json()).toMatchObject({ canManagePlan: true, isOwner: false });
+    expect((await request.get(`${urls.api}/companies/${rig.companyId}/identity`, { headers })).status()).toBe(200);
+    expect((await request.get(`${urls.api}/companies/${rig.companyId}/vat-registration`, { headers })).status()).toBe(200);
+
+    await rig.expire('DISABLED', true);
+    const identity = await request.get(`${urls.api}/companies/${rig.companyId}/identity`, { headers });
+    expect(identity.status(), await identity.text()).toBe(200);
+    const identityBody = await identity.json() as { identity: { businessType: { version: number } } };
+    const edited = await request.patch(`${urls.api}/companies/${rig.companyId}/identity/business-type`, {
+      headers, data: { expectedVersion: identityBody.identity.businessType.version, code: '01111', other: null },
+    });
+    expect(edited.status(), await edited.text()).toBe(200);
+    expect((await request.get(`${urls.api}/companies/${rig.companyId}/billing`, { headers })).status()).toBe(200);
+    const vat = await request.get(`${urls.api}/companies/${rig.companyId}/vat-registration`, { headers });
+    expect(vat.status(), await vat.text()).toBe(200);
+    const vatBody = await vat.json() as { version: number };
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+    const vatWrite = await request.put(`${urls.api}/companies/${rig.companyId}/vat-registration`, {
+      headers,
+      data: {
+        commandId: `delegated-vat-${randomUUID()}`,
+        expectedVersion: vatBody.version,
+        command: { kind: 'UPSERT_FACT', status: 'REGISTERED', effectiveFrom: today },
+      },
+    });
+    expect(vatWrite.status(), await vatWrite.text()).toBe(200);
+    const change = await request.post(`${urls.api}/companies/${rig.companyId}/package-change-requests`, {
+      headers, data: { requestedTierKey: 'STARTER_249' },
+    });
+    expect(change.status(), await change.text()).toBe(201);
+
+    expect((await request.get(`${urls.api}/companies/${rig.companyId}/billing`, { headers: staffHeaders })).status()).toBe(403);
+    expect((await request.patch(`${urls.api}/companies/${rig.companyId}/identity/business-type`, {
+      headers: staffHeaders, data: { expectedVersion: identityBody.identity.businessType.version, code: '01111', other: null },
+    })).status()).toBe(403);
+    expect((await request.put(`${urls.api}/companies/${rig.companyId}/vat-registration`, {
+      headers: staffHeaders,
+      data: {
+        commandId: `staff-vat-${randomUUID()}`, expectedVersion: vatBody.version,
+        command: { kind: 'UPSERT_FACT', status: 'NOT_REGISTERED', effectiveFrom: today },
+      },
+    })).status()).toBe(403);
+    expect((await request.post(`${urls.api}/companies/${rig.companyId}/package-change-requests`, {
+      headers: staffHeaders, data: { requestedTierKey: 'STARTER_249' },
+    })).status()).toBe(403);
+
+    const context = await browser.newContext({ baseURL: urls.web });
+    try {
+      const login = await context.request.post('/api/auth/login', {
+        data: { username: manager.username, password: manager.password, remember: true },
+      });
+      expect(login.status(), await login.text()).toBe(200);
+      await ensureBrowserLegalAcceptance(context, rig.companyId);
+      const page = await context.newPage();
+      await page.goto(`/companies/${rig.companyId}/billing`);
+      await expect(page.getByRole('heading', { name: 'แพ็กเกจและการชำระเงิน' })).toBeVisible();
+      await page.goto(`/companies/${rig.companyId}/settings/profile`);
+      await expect(page.getByRole('heading', { name: 'ข้อมูลร้านและบัญชีของฉัน' })).toBeVisible();
+      const businessType = page.getByRole('combobox', { name: 'ประเภทธุรกิจ' });
+      await expect(businessType).toBeEnabled();
+      await businessType.click();
+      await page.getByPlaceholder('ค้นหาชื่อธุรกิจหรือรหัส TSIC').fill('01112');
+      await page.getByRole('option', { name: /01112/ }).click();
+      const vatStatus = page.locator('#vat-status');
+      await expect(vatStatus).toBeEnabled();
+      await vatStatus.click();
+      await page.getByRole('option', { name: 'ยังไม่ได้จดทะเบียน VAT' }).click();
+      const save = page.getByRole('button', { name: 'บันทึกข้อมูลร้าน', exact: true });
+      await expect(save).toBeEnabled();
+      await save.click();
+      await expect(page.getByText('บันทึกข้อมูลร้านแล้วค่ะ')).toBeVisible();
+      await expect.poll(async () => (await rig.db.company.findUniqueOrThrow({ where: { id: rig.companyId } })).businessTypeCode).toBe('01112');
+      await expect.poll(async () => (await (await page.request.get(`${urls.api}/companies/${rig.companyId}/vat-registration`, {
+        headers: apiHeaders(manager.token, rig.companyId),
+      })).json() as { status: string }).status).toBe('NOT_REGISTERED');
+    } finally { await context.close(); }
   });
 
   test('BR15 no-package owner can fill and save company profile without a redirect', async ({ rig, authedPage, request, urls }) => {

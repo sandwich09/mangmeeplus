@@ -361,6 +361,25 @@ describe('CreateRoleUseCase', () => {
     assert.equal(result.name, 'Payout watcher');
     assert.ok(state.rolePermissions.some((rp) => rp.permissionId === 'perm-reimbursement.read'));
   });
+
+  it('lets OWNER grant package management to a custom role regardless of its name', async () => {
+    const { prisma, state } = makePrisma();
+    const result = await new CreateRoleUseCase(prisma).execute({
+      companyId: COMPANY_ID, name: 'Chief Operating Officer', permissionKeys: ['company.plan.manage'],
+      requestingUserId: 'owner-1', requestId: 'req-plan-manager', isOwner: true,
+    });
+    assert.equal(result.key, 'CHIEF_OPERATING_OFFICER');
+    assert.ok(state.rolePermissions.some((rp) => rp.roleId === result.id && rp.permissionId === 'perm-company.plan.manage'));
+  });
+
+  it('does not let a delegated package manager grant that permission to another role', async () => {
+    const { prisma } = makePrisma();
+    await assert.rejects(() => new CreateRoleUseCase(prisma).execute({
+      companyId: COMPANY_ID, name: 'Another package manager', permissionKeys: ['company.plan.manage'],
+      requestingUserId: 'manager-1', requestId: 'req-plan-manager',
+      granterPermissionKeys: ['company.plan.manage', 'access.role.manage'], isOwner: false,
+    }), /requires the company owner/);
+  });
 });
 
 describe('UpdateRoleUseCase', () => {

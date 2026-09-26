@@ -65,7 +65,7 @@ export class CreateRoleUseCase {
       granterPermissionKeys: granterScope,
     });
     if (!hasNonCoreCapability(finalKeys)) throw new ForbiddenException('At least one permission is required.');
-    const ownerGated = ownerGatedGrantViolation(finalKeys, granterScope);
+    const ownerGated = ownerGatedGrantViolation(finalKeys, granterScope, cmd.isOwner === true);
     if (ownerGated) throw new ForbiddenException(ownerGated);
 
     const permissions = await this.prisma.client.permission.findMany({

@@ -809,6 +809,18 @@ describe('canAccessWorkspacePath', () => {
     assert.equal(canSeeRoute('/settings/crm-catalog/new', ['inventory.product.manage']), true);
     assert.equal(findRoutePermissionRule('/settings/accounting-tax-setup/review')?.path, '/settings/accounting-tax-setup');
   });
+
+  it('opens only a counterparty detail deep link to expense users, not the full registry', () => {
+    const uploader = ['expense.receipt.upload'];
+    assert.equal(canSeeRoute('/counterparties', uploader), false);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, uploader, 'abc', '/companies/abc/counterparties'), false);
+    assert.equal(canSeeRoute('/counterparties/cp-1', uploader), true);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, uploader, 'abc', '/companies/abc/counterparties/cp-1'), true);
+
+    const creator = ['expense.create'];
+    assert.equal(canSeeRoute('/counterparties', creator), false);
+    assert.equal(canSeeRoute('/counterparties/cp-1', creator), true);
+  });
 });
 
 describe('WORKSPACE_MODULES', () => {
@@ -958,21 +970,21 @@ describe('resolveMenuKey', () => {
 });
 
 
-describe('owner billing navigation', () => {
-  it('places one billing entry under company settings', () => {
-    const items = buildNavItems(WORKSPACE_MODULES, 'co', 'th', {}, ALL_MODULE_PERMISSIONS, ['OWNER']);
+describe('package management navigation', () => {
+  it('places one billing entry under company settings for the assigned permission', () => {
+    const items = buildNavItems(WORKSPACE_MODULES, 'co', 'th', {}, [...ALL_MODULE_PERMISSIONS, 'company.plan.manage']);
     const settings = items.find(item => item.key === 'settings')!;
     assert.equal(settings.subItems?.filter(item => item.href === '/companies/co/billing').length, 1);
     assert.equal(items.filter(item => item.href === '/companies/co/billing').length, 0);
   });
   it('keeps billing available without granting business settings when all feature modules are absent', () => {
-    const items = buildNavItems([], 'co', 'th', {}, [], ['OWNER']);
+    const items = buildNavItems([], 'co', 'th', {}, ['company.plan.manage']);
     const settings = items.find(item => item.key === 'settings')!;
     assert.equal(settings.href, undefined);
     assert.deepEqual(settings.subItems?.map(item => item.href), ['/companies/co/billing']);
   });
-  it('does not add owner billing for a non-owner with full module permissions', () => {
-    const items = buildNavItems(WORKSPACE_MODULES, 'co', 'th', {}, ALL_MODULE_PERMISSIONS, ['ADMIN']);
+  it('does not add billing without the dedicated permission, regardless of role name', () => {
+    const items = buildNavItems(WORKSPACE_MODULES, 'co', 'th', {}, ALL_MODULE_PERMISSIONS, ['CEO']);
     assert.equal(collectMenuTargets(items).some(item => item.href.endsWith('/billing')), false);
   });
 });
@@ -980,28 +992,28 @@ describe('owner billing navigation', () => {
 // Owner 2026-09-20 (spec §12): a shop with no usable package sees two destinations and no more,
 // whatever it is permitted to do — every other page is refused by the term guard behind them.
 describe('locked shell navigation', () => {
-  it('gives the owner ตั้งค่า and แพ็กเกจ, and nothing else', () => {
-    const items = buildLockedNavItems('co', {}, ['OWNER']);
+  it('gives a permission holder ตั้งค่า and แพ็กเกจ, and nothing else', () => {
+    const items = buildLockedNavItems('co', {}, ['company.plan.manage']);
     assert.deepEqual(items.map((item) => [item.label, item.href]), [
       ['ตั้งค่า', '/companies/co/settings'],
       ['แพ็กเกจ', '/companies/co/billing'],
     ]);
   });
 
-  it('gives staff ตั้งค่า only, because only the owner may buy a package', () => {
-    assert.deepEqual(buildLockedNavItems('co', {}, ['ACCOUNTANT']).map((item) => item.key), ['settings']);
+  it('gives staff ตั้งค่า only when the package permission was not assigned', () => {
+    assert.deepEqual(buildLockedNavItems('co', {}, ['company.setup.manage']).map((item) => item.key), ['settings']);
     assert.deepEqual(buildLockedNavItems('co', {}).map((item) => item.key), ['settings']);
   });
 
   // The menu and the redirect are two copies of one rule; a row the redirect bounces is a dead end.
   it('offers only paths the locked shell itself allows', () => {
-    for (const target of collectMenuTargets(buildLockedNavItems('co', {}, ['OWNER']))) {
+    for (const target of collectMenuTargets(buildLockedNavItems('co', {}, ['company.plan.manage']))) {
       assert.equal(isLockedShellPath(target.href, 'co'), true, target.href);
     }
   });
 
   it('resolves the open menu from the same targets the shell renders', () => {
-    const items = buildLockedNavItems('co', {}, ['OWNER']);
+    const items = buildLockedNavItems('co', {}, ['company.plan.manage']);
     assert.equal(resolveMenuKey('/companies/co/billing', collectMenuTargets(items)), 'billing');
     assert.equal(resolveMenuKey('/companies/co/settings/profile', collectMenuTargets(items)), 'settings');
     assert.equal(resolveMenuKey('/companies/co/renew', collectMenuTargets(items)), null);
