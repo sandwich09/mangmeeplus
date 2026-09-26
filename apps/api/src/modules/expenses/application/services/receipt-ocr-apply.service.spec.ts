@@ -222,7 +222,7 @@ describe('ocrVatSource', () => {
 });
 
 async function applyFields(fields: any, vatCaptureSnapshotJson: any = null, existing: Record<string, unknown> = {}, todayIso?: string,
-  repoOverrides: Record<string, unknown> = {}) {
+  repoOverrides: Record<string, unknown> = {}, ensureVendorCounterparty?: { execute: (ctx: unknown, input: any) => Promise<any> }) {
   const updates: any[] = [];
   const lines: any[] = [];
   const tx = {
@@ -234,10 +234,36 @@ async function applyFields(fields: any, vatCaptureSnapshotJson: any = null, exis
     expenseLine: { deleteMany: async () => undefined, create: async (args: any) => { lines.push(args.data); } },
   };
   const prisma = makeApplyPrisma(tx);
-  const result = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo(repoOverrides) as any)
+  const result = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo(repoOverrides) as any, ensureVendorCounterparty as any)
     .apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1', fields, todayIso ? { todayIso } : {});
   return { record: updates[0]?.data, line: lines[0], lines, result };
 }
+
+describe('ReceiptOcrApplyService.apply — receipt uploader scope', () => {
+  it('uses the uploadedByUserId on the linked source receipt, not the expense creator or OCR actor', async () => {
+    const seen: any[] = [];
+    const { result } = await applyFields({ vendorName: 'ร้าน OCR', grandTotalAmount: '10.00' }, null, {
+      primaryAttachmentId: 'receipt-1', createdByUserId: 'expense-creator', captureSource: 'WEB_MANUAL',
+      sourceReimbursementRequestId: null, vendorCounterpartyId: null, vendorNameSnapshot: null,
+      vendorTaxIdSnapshot: null, vendorBranchCodeSnapshot: null, vendorAddressSnapshot: null,
+      vendorEntityKindSnapshot: null, reviewedAt: null,
+    }, undefined, {
+      findPrimaryReceiptUploader: async (companyId: string, expenseId: string, attachmentId: string) => {
+        assert.deepEqual([companyId, expenseId, attachmentId], ['company-1', 'expense-1', 'receipt-1']);
+        return 'receipt-uploader';
+      },
+    }, {
+      execute: async (ctx, input) => {
+        seen.push({ ctx, input });
+        return { result: { case: 'CREATE', counterpartyId: 'cp-1' }, linkCounterpartyId: 'cp-1' };
+      },
+    });
+
+    assert.equal(seen[0].ctx.userId, 'user-1');
+    assert.equal(seen[0].input.receiptUploaderUserId, 'receipt-uploader');
+    assert.equal(result.vendorCounterpartyAutoSave?.counterpartyId, 'cp-1');
+  });
+});
 
 describe('ReceiptOcrApplyService.apply staleness guard', () => {
   it('returns the original committed revision with duplicate detection in the same transaction', async () => {

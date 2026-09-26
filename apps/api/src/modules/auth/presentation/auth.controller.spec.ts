@@ -348,6 +348,31 @@ describe('AuthController me()', () => {
   });
 });
 
+describe('AuthController myCompanies()', () => {
+  it('reports package access from active role permissions, regardless of role name', async () => {
+    let query: any;
+    const prisma = { client: { companyMembership: { findMany: async (input: any) => {
+      query = input;
+      return [
+        { companyId: 'co-manager', company: { name: 'Manager shop', status: 'ACTIVE', planTerm: null }, roles: [
+          { role: { key: 'CHIEF_OPERATING_OFFICER', permissions: [{ permission: { key: 'company.plan.manage' } }] } },
+        ] },
+        { companyId: 'co-staff', company: { name: 'Staff shop', status: 'ACTIVE', planTerm: null }, roles: [
+          { role: { key: 'STAFF', permissions: [] } },
+        ] },
+      ];
+    } } } };
+    const result = await AuthController.prototype.myCompanies.call(
+      { prisma } as any,
+      { context: { userId: 'u1' } } as any,
+    );
+    assert.equal(query.select.roles.where.role.status, 'ACTIVE');
+    assert.deepEqual(result.data.map((company) => [company.companyId, company.canManagePlan]), [
+      ['co-manager', true], ['co-staff', false],
+    ]);
+  });
+});
+
 describe('AuthController LIFF page security (H-08)', () => {
   it('does not reflect a closing-script employee token into executable HTML', async () => {
     const payload = '</script><script>globalThis.__h08_xss__=true</script>';

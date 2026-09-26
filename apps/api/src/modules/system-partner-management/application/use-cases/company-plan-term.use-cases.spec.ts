@@ -337,11 +337,18 @@ describe('GetPlanTermNoticeUseCase', () => {
     assert.equal((await new GetPlanTermNoticeUseCase(prisma).execute(COMPANY, ['SALES']))?.isOwner, false);
   });
 
+  it('reports package authority from permission, independent of role name and ownership', async () => {
+    const prisma = makePrisma({ term: termRow({ termEndsAt: new Date(Date.now() + 3 * DAY_MS) }) });
+    const notice = await new GetPlanTermNoticeUseCase(prisma).execute(COMPANY, ['CHIEF_OPERATING_OFFICER'], ['company.plan.manage']);
+    assert.equal(notice?.isOwner, false);
+    assert.equal(notice?.canManagePlan, true);
+  });
+
   it('carries state and deadline but never limits or tier', async () => {
     const prisma = makePrisma({ term: termRow({ termEndsAt: new Date(NOW_ISH().getTime() - DAY_MS) }) });
     const notice = await new GetPlanTermNoticeUseCase(prisma).execute(COMPANY, ['STAFF']);
     assert.deepEqual(Object.keys(notice ?? {}).sort(),
-      ['daysLeft', 'derivedState', 'isOwner', 'lockReason', 'termEndsAt']);
+      ['canManagePlan', 'daysLeft', 'derivedState', 'isOwner', 'lockReason', 'termEndsAt']);
     assert.equal(notice?.derivedState, 'EXPIRED');
     assert.equal(notice?.daysLeft, 0);
   });

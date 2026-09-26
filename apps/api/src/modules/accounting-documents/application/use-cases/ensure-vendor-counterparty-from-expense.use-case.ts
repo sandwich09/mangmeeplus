@@ -20,6 +20,8 @@ export type VendorAutoSaveContext = { companyId: string; userId: string; request
 
 export type EnsureVendorCounterpartyInput = {
   expenseId: string;
+  /** Uploader of the linked active primary receipt; unlike ctx.userId this can differ from the reviewer. */
+  receiptUploaderUserId?: string | null;
   /** CON-4: both markers of a system-generated expense; either one skips the whole thing. */
   captureSource?: string | null;
   sourceReimbursementRequestId?: string | null;
@@ -117,10 +119,11 @@ export class EnsureVendorCounterpartyFromExpenseUseCase {
           }
           : {}),
         createdByUserId: ctx.userId,
+        ...(input.receiptUploaderUserId ? { receiptUploaderUserId: input.receiptUploaderUserId } : {}),
       });
       this.log(ctx, 'create', created.id, input.expenseId, Boolean(documentAddressText));
       return {
-        result: { case: 'CREATE', counterpartyId: created.id, displayName: created.displayName },
+        result: { case: 'CREATE', counterpartyId: created.id, displayName: created.displayName, canOpenCounterparty: true },
         linkCounterpartyId: created.id,
       };
     }
@@ -171,6 +174,10 @@ export class EnsureVendorCounterpartyFromExpenseUseCase {
           case: decision.case,
           counterpartyId: matched.id,
           displayName: matched.displayName,
+          ...(matched.createdByUserId === ctx.userId
+            || await this.repo.isCounterpartyReceiptUploader(ctx.companyId, matched.id, ctx.userId)
+            ? { canOpenCounterparty: true as const }
+            : {}),
           ...(decision.case === 'HISTORY' && locked ? { locked: true } : {}),
         },
         ...(input.vendorCounterpartyId ? {} : { linkCounterpartyId: matched.id }),

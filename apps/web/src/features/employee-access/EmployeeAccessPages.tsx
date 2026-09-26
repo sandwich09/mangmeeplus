@@ -41,15 +41,15 @@ import {
 
 // ── Smart Roles: display maps ────────────────────────────────────────────────
 const MODULE_LABEL: Record<string, string> = {
-  foundation: 'พื้นฐาน', company: 'บริษัทและระบบ', people: 'พนักงานและสิทธิ์',
-  inventory: 'สินค้าและสต๊อก', sales: 'ลูกค้าและการขาย', billing: 'บิลและเอกสาร',
-  expense: 'ค่าใช้จ่าย', reimbursement: 'การเบิกจ่าย', procurement: 'จัดซื้อและเจ้าหนี้',
-  banking: 'ธนาคารและกระทบยอด', accounting: 'บัญชีแยกประเภท', tax: 'ภาษี',
+  foundation: 'งานพื้นฐาน', company: 'ตั้งค่าบริษัท', people: 'พนักงาน',
+  inventory: 'สินค้า', sales: 'ลูกค้าและการขาย', billing: 'บิลและใบเสร็จ',
+  expense: 'ค่าใช้จ่าย', reimbursement: 'ขอเงินคืน', procurement: 'ซื้อสินค้าและจ่ายผู้ขาย',
+  banking: 'บัญชีธนาคาร', accounting: 'บัญชีและงบการเงิน', tax: 'ภาษี',
 };
 const INDUSTRY_LABEL: Record<string, string> = {
-  crosscutting: 'ทั่วไป', retail: 'ค้าปลีก', trading: 'ค้าส่ง/เทรดดิ้ง', service: 'บริการ', ecommerce: 'อีคอมเมิร์ซ',
+  crosscutting: 'ใช้ได้ทุกธุรกิจ', retail: 'ร้านค้าปลีก', trading: 'ธุรกิจค้าส่ง', service: 'ธุรกิจบริการ', ecommerce: 'ร้านขายออนไลน์',
 };
-const RISK_LABEL: Record<RiskLevel, string> = { LOW: 'ต่ำ', MEDIUM: 'ปานกลาง', HIGH: 'สูง', CRITICAL: 'วิกฤติ' };
+const RISK_LABEL: Record<RiskLevel, string> = { LOW: 'ต่ำ', MEDIUM: 'ปานกลาง', HIGH: 'เสี่ยงสูง', CRITICAL: 'เสี่ยงสูงมาก' };
 const RISK_STYLE: Record<RiskLevel, string> = {
   LOW: 'bg-gray-100 text-gray-500 border-gray-200',
   MEDIUM: 'bg-blue-50 text-blue-700 border-blue-200',
@@ -58,7 +58,7 @@ const RISK_STYLE: Record<RiskLevel, string> = {
 };
 const DROP_REASON_LABEL: Record<string, string> = {
   not_entitled: 'บริษัทนี้ยังใช้งานรายการนี้ไม่ได้',
-  above_granter_scope: 'คุณยังไม่มีสิทธิ์เพิ่มรายการนี้',
+  above_granter_scope: 'คุณยังมอบหมายงานนี้ให้พนักงานไม่ได้',
   unknown: 'รายการนี้ไม่พร้อมใช้งาน',
 };
 /**
@@ -233,8 +233,8 @@ type Tab = 'employees' | 'roles' | 'matrix';
 export function EmployeeAccessWorkspacePage({ companyId, initialTab = 'employees' }: { companyId: string; initialTab?: Tab }) {
   const tabs: { key: Tab; label: string; href: string; icon: ReactNode; desc: string }[] = [
     { key: 'employees', label: 'พนักงาน', href: `/companies/${companyId}/settings/employees`, icon: <UserIcon className="h-4 w-4" />, desc: 'สร้างบัญชีและจัดการสถานะพนักงาน' },
-    { key: 'roles', label: 'บทบาทและสิทธิ์', href: `/companies/${companyId}/settings/roles`, icon: <LockIcon className="h-4 w-4" />, desc: 'กำหนดความสามารถตามบทบาท' },
-    { key: 'matrix', label: 'ภาพรวมสิทธิ์', href: `/companies/${companyId}/settings/access-overview`, icon: <TableIcon className="h-4 w-4" />, desc: 'ดูว่าแต่ละคนทำอะไรได้บ้าง' },
+    { key: 'roles', label: 'กำหนดหน้าที่พนักงาน', href: `/companies/${companyId}/settings/roles`, icon: <LockIcon className="h-4 w-4" />, desc: 'เลือกว่างานอะไรที่คนในแต่ละหน้าที่ทำได้' },
+    { key: 'matrix', label: 'ใครทำงานอะไรได้', href: `/companies/${companyId}/settings/access-overview`, icon: <TableIcon className="h-4 w-4" />, desc: 'ดูว่าแต่ละคนเปิดดูหรือทำรายการอะไรได้บ้าง' },
   ];
   return (
     <div className="min-h-[calc(100dvh-var(--app-header-h))] bg-[#f7faf8]">
@@ -245,8 +245,8 @@ export function EmployeeAccessWorkspacePage({ companyId, initialTab = 'employees
               <LockIcon className="h-3.5 w-3.5" />
               ตั้งค่าระบบ
             </div>
-            <h1 className="text-2xl font-extrabold text-gray-900 sm:text-3xl">สิทธิ์การใช้งาน</h1>
-            <p className="mt-1 text-sm text-gray-500">จัดการพนักงาน บทบาท และภาพรวมสิทธิ์ในที่เดียว</p>
+            <h1 className="text-2xl font-extrabold text-gray-900 sm:text-3xl">พนักงานและหน้าที่</h1>
+            <p className="mt-1 text-sm text-gray-500">เพิ่มพนักงาน กำหนดงานที่แต่ละคนทำได้ และดูภาพรวมในที่เดียว</p>
           </div>
           <div className="hidden rounded-lg border border-gray-200 bg-white px-4 py-3 text-right shadow-sm sm:block">
             <div className="text-xs font-medium text-gray-400">ขอบเขตการใช้งาน</div>
@@ -795,7 +795,7 @@ function RolesView({ companyId }: { companyId: string }) {
       setTemplates(templatesResult.value);
     } else {
       setTemplates([]);
-      smartWarnings.push('บทบาทแนะนำ');
+      smartWarnings.push('ตัวอย่างหน้าที่');
     }
 
     if (smartWarnings.length > 0) {
@@ -820,16 +820,16 @@ function RolesView({ companyId }: { companyId: string }) {
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{smartRolesWarning}</div>
       )}
       <div className="grid gap-3 md:grid-cols-3">
-        <StatTile icon={<LockIcon className="h-5 w-5" />} label="บทบาททั้งหมด" value={String(roles.length)} />
-        <StatTile icon={<BoltIcon className="h-5 w-5" />} label="งานที่เลือกได้" value={String(allPacks.filter((p) => !p.isCore && !p.locked && p.grantableByCurrentUser).length)} tone="blue" />
-        <StatTile icon={<TableIcon className="h-5 w-5" />} label="บทบาทที่กำหนดเอง" value={String(roles.filter((role) => !role.isSystem).length)} tone="gold" />
+        <StatTile icon={<LockIcon className="h-5 w-5" />} label="หน้าที่ที่ตั้งไว้" value={String(roles.length)} />
+        <StatTile icon={<BoltIcon className="h-5 w-5" />} label="งานที่มอบหมายได้" value={String(allPacks.filter((p) => !p.isCore && !p.locked && p.grantableByCurrentUser).length)} tone="blue" />
+        <StatTile icon={<TableIcon className="h-5 w-5" />} label="หน้าที่ที่สร้างเอง" value={String(roles.filter((role) => !role.isSystem).length)} tone="gold" />
       </div>
       <div className={`${panelClass} flex flex-wrap items-center justify-between gap-3 p-4`}>
-        <SectionTitle eyebrow="บทบาทตามความสามารถ" title="บทบาทและสิทธิ์">
-          เลือกงานที่คนในบทบาทนี้ทำได้ ระบบจะจัดสิทธิ์ที่จำเป็นให้เอง
+        <SectionTitle eyebrow="ตั้งชื่อหน้าที่และเลือกงาน" title="กำหนดหน้าที่พนักงาน">
+          ตั้งชื่อได้ตามบริษัท เช่น CEO, CTO หรือ CFO แล้วเลือกว่างานอะไรที่คนชื่อนี้ทำได้
         </SectionTitle>
         <button className={showCreate ? ghostClass : btnClass} disabled={!canEditRoles} onClick={() => setShowCreate((v) => !v)}>
-          {showCreate ? 'ยกเลิก' : <><PlusIcon className="h-4 w-4" /> เพิ่มบทบาท</>}
+          {showCreate ? 'ยกเลิก' : <><PlusIcon className="h-4 w-4" /> เพิ่มหน้าที่</>}
         </button>
       </div>
 
@@ -838,7 +838,7 @@ function RolesView({ companyId }: { companyId: string }) {
         <RoleBuilder
           companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable} permissionCatalog={catalog}
           onCancel={() => setShowCreate(false)}
-          onSubmit={async (body) => { await createRole(companyId, body); toast.success('สร้างบทบาทแล้ว'); setShowCreate(false); void reload(); }}
+          onSubmit={async (body) => { await createRole(companyId, body); toast.success('สร้างหน้าที่แล้ว'); setShowCreate(false); void reload(); }}
         />
         </div>
       )}
@@ -855,7 +855,7 @@ function RolesView({ companyId }: { companyId: string }) {
                   </div>
                   <div className="min-w-0">
                     <div className="font-bold text-gray-900">{roleDisplayName(role, locale)} {role.isSystem && <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">ระบบ</span>}</div>
-                    <div className="mt-1 text-xs leading-5 text-gray-500">{role.description || 'ไม่มีคำอธิบาย'}</div>
+                    <div className="mt-1 text-xs leading-5 text-gray-500">{role.description || 'ยังไม่ได้เขียนคำอธิบาย'}</div>
                   </div>
                 </div>
                 {!role.isSystem && (
@@ -863,7 +863,7 @@ function RolesView({ companyId }: { companyId: string }) {
                     <button className={ghostClass} disabled={!canEditRoles} onClick={() => setEditingRoleId(editingRoleId === role.id ? null : role.id)}>
                       {editingRoleId === role.id ? 'ย่อ' : 'แก้ไข'}
                     </button>
-                    <button className={dangerClass} disabled={!canEditRoles || disablingRoleId !== null} aria-busy={Boolean(disablingRoleId === role.id)} onClick={async () => { setDisablingRoleId(role.id); try { await disableRole(companyId, role.id); toast.success('ปิดใช้งานบทบาทแล้ว'); void reload(); } catch (e) { setError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed' })); } finally { setDisablingRoleId(null); } }}>
+                    <button className={dangerClass} disabled={!canEditRoles || disablingRoleId !== null} aria-busy={Boolean(disablingRoleId === role.id)} onClick={async () => { setDisablingRoleId(role.id); try { await disableRole(companyId, role.id); toast.success('ปิดหน้าที่นี้แล้ว'); void reload(); } catch (e) { setError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed' })); } finally { setDisablingRoleId(null); } }}>
                       <TrashIcon className="h-4 w-4" />
                       {disablingRoleId === role.id ? 'กำลังปิดใช้งาน...' : 'ปิดใช้งาน'}
                     </button>
@@ -879,14 +879,14 @@ function RolesView({ companyId }: { companyId: string }) {
                   ))}
                 </div>
               ) : (
-                <div className="text-xs text-gray-500">ตั้งค่าสิทธิ์ตามบทบาทนี้แล้ว</div>
+                <div className="text-xs text-gray-500">หน้าที่นี้ยังไม่มีงานเพิ่มเติมที่เลือก</div>
               )}
               {editingRoleId === role.id && canEditRoles && (
                 <RoleBuilder
                   companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable} permissionCatalog={catalog}
                   initial={role}
                   onCancel={() => setEditingRoleId(null)}
-                  onSubmit={async (body) => { await updateRole(companyId, role.id, body); toast.success('บันทึกบทบาทแล้ว'); setEditingRoleId(null); void reload(); }}
+                  onSubmit={async (body) => { await updateRole(companyId, role.id, body); toast.success('บันทึกหน้าที่แล้ว'); setEditingRoleId(null); void reload(); }}
                 />
               )}
             </div>
@@ -984,19 +984,19 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
   return (
     <form onSubmit={submit} className={`${panelClass} min-w-0 overflow-hidden lg:col-span-2`}>
       <div className="border-b border-gray-100 bg-linear-to-r from-brand-25 to-white px-5 py-4">
-        <SectionTitle eyebrow={initial ? 'แก้ไขบทบาท' : 'บทบาทใหม่'} title={initial ? 'แก้ไขบทบาท' : 'เพิ่มบทบาท'}>
-          เลือกหน้าที่และงานที่ทำได้ ระบบจะจัดสิทธิ์ที่จำเป็นให้เอง
+        <SectionTitle eyebrow={initial ? 'แก้หน้าที่พนักงาน' : 'หน้าที่พนักงานใหม่'} title={initial ? 'แก้ไขหน้าที่' : 'เพิ่มหน้าที่'}>
+          หน้าที่นี้จะบอกว่าพนักงานทำอะไรได้ เลือกงานด้านล่าง แล้วระบบจะตั้งค่าการเข้าใช้ให้เอง
         </SectionTitle>
       </div>
       <div className="space-y-5 p-5">
       {error && <ErrorBanner message={error} />}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
-          <FieldLabel>ชื่อบทบาท</FieldLabel>
+          <FieldLabel>ชื่อตำแหน่งหรือหน้าที่</FieldLabel>
           <input className={inputClass} required value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div>
-          <FieldLabel>คำอธิบาย (ถ้ามี)</FieldLabel>
+          <FieldLabel>อธิบายหน้าที่นี้ (ถ้ามี)</FieldLabel>
           <input className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} />
         </div>
       </div>
@@ -1007,16 +1007,18 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
           {/* Step 1 — Job preset */}
           {roleOptionsAvailable && byIndustry.length > 0 && (
             <div>
-              <div className="mb-2 text-xs font-bold text-gray-600">1. เลือกบทบาทตั้งต้น (ไม่บังคับ)</div>
+              <div className="mb-1 text-xs font-bold text-gray-600">1. เลือกตัวอย่างหน้าที่ (ข้ามได้)</div>
+              <p className="mb-2 text-xs leading-5 text-gray-500">เลือกแบบที่ใกล้เคียงเพื่อเริ่มต้น ระบบจะเปลี่ยนรายการที่เลือกอยู่ให้เป็นตัวอย่างนี้ แล้วคุณแก้รายการด้านล่างต่อได้</p>
               <div className={`${mutedPanelClass} space-y-3 p-3`}>
                 {byIndustry.map(([industry, tpls]) => (
                   <div key={industry}>
                     <div className="mb-1 text-[11px] font-semibold uppercase text-gray-400">{INDUSTRY_LABEL[industry] ?? 'งานทั่วไป'}</div>
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="grid gap-2 sm:grid-cols-2">
                       {tpls.map((t) => (
-                        <button type="button" key={t.key} onClick={() => applyPreset(t)} title={t.description}
-                          className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:border-brand-300 hover:bg-brand-50">
-                          {t.nameTh}
+                        <button type="button" key={t.key} onClick={() => applyPreset(t)}
+                          className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-left text-xs text-gray-700 hover:border-brand-300 hover:bg-brand-50">
+                          <span className="block font-semibold">{t.nameTh}</span>
+                          <span className="mt-1 block leading-5 text-gray-500">{t.description}</span>
                         </button>
                       ))}
                     </div>
@@ -1029,7 +1031,8 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
           {/* Step 2 — Capability packs */}
           {roleOptionsAvailable && (
             <div>
-              <div className="mb-2 text-xs font-bold text-gray-600">{byIndustry.length > 0 ? '2. เลือกงานที่ทำได้' : 'เลือกงานที่ทำได้'}</div>
+              <div className="mb-1 text-xs font-bold text-gray-600">{byIndustry.length > 0 ? '2. เลือกสิ่งที่พนักงานทำได้' : 'เลือกสิ่งที่พนักงานทำได้'}</div>
+              <p className="mb-2 text-xs leading-5 text-gray-500">เลือกได้หลายข้อ ข้อความใต้แต่ละข้อบอกว่าเมื่อเลือกแล้ว พนักงานจะดู แก้ อนุมัติ หรือจ่ายอะไรได้บ้าง</p>
               <div className={`${mutedPanelClass} max-h-96 space-y-3 overflow-y-auto p-3`}>
                 {packModules.map(({ module, packs }) => {
                   const shown = packs.filter((p) => availablePackKeys.has(p.key));
@@ -1060,25 +1063,25 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
               </div>
               {availablePackKeys.size === 0 && (
                 <div className="rounded-lg border border-gray-200 bg-white px-3 py-4 text-sm text-gray-500">
-                  บริษัทนี้ยังไม่มีงานเพิ่มเติมที่เปิดให้กำหนด
+                  ตอนนี้ยังไม่มีงานเพิ่มเติมให้เลือก
                 </div>
               )}
               {preservedKeys.length > 0 && (
                 <details className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs" open>
-                  <summary className="cursor-pointer font-semibold">สิทธิ์เดิมที่คงไว้ ({preservedKeys.length} รายการ)</summary>
-                  <p className="mt-2 text-gray-600">สิทธิ์เหล่านี้ไม่ได้เป็นงานครบทั้งชุด จึงไม่ติ๊กช่องงานด้านบน การบันทึกจะคงสิทธิ์เดิมไว้ การเลือกบทบาทตั้งต้นใหม่จะใช้สิทธิ์ของชุดที่เลือกแทน</p>
+                  <summary className="cursor-pointer font-semibold">งานเดิมที่จะเก็บไว้ ({preservedKeys.length} รายการ)</summary>
+                  <p className="mt-2 text-gray-600">รายการเหล่านี้ไม่ตรงกับงานตัวเลือกข้อใดข้อหนึ่ง ระบบจึงแสดงแยกไว้ เมื่อบันทึกจะยังเก็บรายการเดิมไว้ แต่ถ้าเลือกตัวอย่างหน้าที่ รายการที่เลือกอยู่จะเปลี่ยนตามตัวอย่างนั้น</p>
                   <ul className="mt-2 list-disc space-y-1 pl-4">
-                    {preservedKeys.map((key) => <li key={key}>{permissionCatalog.find((p) => p.key === key)?.description ?? key}</li>)}
+                    {preservedKeys.map((key) => <li key={key}>{permissionCatalog.find((p) => p.key === key)?.description ?? 'สิทธิ์เดิมที่ตั้งไว้'}</li>)}
                   </ul>
                 </details>
               )}
-              <p className="mt-1 text-[11px] text-gray-400">ทุกบทบาทเข้าสู่ระบบ ดูหน้าหลัก และรับการแจ้งเตือนได้โดยอัตโนมัติ</p>
+              <p className="mt-1 text-[11px] text-gray-400">พนักงานทุกคนเข้าใช้ระบบ ดูหน้าหลัก และรับการแจ้งเตือนได้อยู่แล้ว</p>
             </div>
           )}
 
           {!roleOptionsAvailable && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
-              ยังโหลดตัวเลือกสำหรับกำหนดบทบาทไม่ได้ กรุณายกเลิกแล้วลองใหม่อีกครั้ง
+              โหลดรายการงานไม่สำเร็จ กรุณายกเลิกแล้วลองใหม่อีกครั้ง
             </div>
           )}
         </div>
@@ -1086,14 +1089,14 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
         {/* Right: live preview */}
         <div className="min-w-0 space-y-3 rounded-lg border border-brand-100 bg-brand-50/70 p-4">
           <div className="flex flex-wrap items-center justify-between">
-            <div className="text-sm font-bold text-gray-800">สรุปว่างานนี้ทำอะไรได้บ้าง</div>
+            <div className="text-sm font-bold text-gray-800">พนักงานที่ได้หน้าที่นี้จะทำอะไรได้</div>
             {previewing && <span className="text-[11px] text-gray-400">กำลังคำนวณ...</span>}
           </div>
           {!roleOptionsAvailable && <p className="text-xs text-gray-500">ยังแสดงตัวอย่างไม่ได้ กรุณาลองใหม่อีกครั้ง</p>}
-          {!preview && !previewing && roleOptionsAvailable && <p className="text-xs text-gray-400">เลือกงานเพื่อดูตัวอย่าง</p>}
+          {!preview && !previewing && roleOptionsAvailable && <p className="text-xs text-gray-400">เลือกงานทางซ้ายเพื่อดูตัวอย่าง</p>}
           {preview && (
             <>
-              <div className="text-[11px] text-gray-500">{preview.capabilities.length} กลุ่มงาน</div>
+              <div className="text-[11px] text-gray-500">เลือกไว้ {preview.capabilities.length} รายการ</div>
               <div className="flex flex-wrap gap-1">
                 {preview.capabilities.length === 0 && <span className="text-xs text-gray-400">ยังไม่มีกลุ่มงานที่เลือก</span>}
                 {preview.capabilities.map((c) => (
@@ -1104,13 +1107,13 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
               </div>
               {initial && ((preview.addedVsCurrent?.length ?? 0) > 0 || (preview.removedVsCurrent?.length ?? 0) > 0) && (
                 <div className="text-[11px] text-gray-500">
-                  {(preview.addedVsCurrent?.length ?? 0) > 0 && <span className="text-green-700">+{preview.addedVsCurrent!.length} เพิ่ม</span>}{' '}
-                  {(preview.removedVsCurrent?.length ?? 0) > 0 && <span className="text-red-700">−{preview.removedVsCurrent!.length} เอาออก</span>}
+                  {(preview.addedVsCurrent?.length ?? 0) > 0 && <span className="text-green-700">เพิ่ม {preview.addedVsCurrent!.length} รายการ</span>}{' '}
+                  {(preview.removedVsCurrent?.length ?? 0) > 0 && <span className="text-red-700">เอาออก {preview.removedVsCurrent!.length} รายการ</span>}
                 </div>
               )}
               {preview.droppedKeys.length > 0 && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
-                  <div className="font-medium">บางรายการไม่สามารถเพิ่มได้:</div>
+                  <div className="font-medium">บางรายการเลือกไม่ได้:</div>
                   <ul className="list-disc pl-4">
                     {[...new Set(preview.droppedKeys.map((d) => d.reason))].map((r) => (
                       <li key={r}>{DROP_REASON_LABEL[r] ?? 'รายการนี้ไม่พร้อมใช้งาน'} ({preview.droppedKeys.filter((d) => d.reason === r).length})</li>

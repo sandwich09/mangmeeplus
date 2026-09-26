@@ -23,6 +23,18 @@ describe('capability-pack registry integrity', () => {
     assert.equal(packs.find((pack) => pack.key === 'pack.reimbursement.approve')!.grantableByCurrentUser, false);
   });
 
+  it('exposes package management as grantable only to the actual owner', async () => {
+    const prisma = { client: { companyFeatureEntitlement: { findMany: async () => [] } } } as any;
+    const useCase = new ListCapabilityPacksUseCase(prisma);
+    const owner = await useCase.execute('co-1', ['company.plan.manage'], true);
+    const delegated = await useCase.execute('co-1', ['company.plan.manage', 'access.role.financial.assign'], false);
+    const findPack = (catalog: typeof owner) => catalog.modules.flatMap((module) => module.packs)
+      .find((pack) => pack.key === 'pack.company.plan.manage');
+
+    assert.equal(findPack(owner)?.grantableByCurrentUser, true);
+    assert.equal(findPack(delegated)?.grantableByCurrentUser, false);
+  });
+
   it('every pack key is a known company permission key', () => {
     for (const pack of CAPABILITY_PACKS) {
       for (const k of pack.permissionKeys) {

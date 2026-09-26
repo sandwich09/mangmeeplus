@@ -111,6 +111,7 @@ export class PrismaAccountingRepository {
         billingAddressJson: input.billingAddressJson as any,
         shippingAddressJson: input.shippingAddressJson as any,
         createdByUserId: input.createdByUserId,
+        receiptUploaderUserId: input.receiptUploaderUserId,
       },
       });
       return this.toCounterpartyRecord(row);
@@ -157,6 +158,14 @@ export class PrismaAccountingRepository {
   async findCounterpartyById(companyId: string, id: string): Promise<CounterpartyRecord | null> {
     const row = await this.prisma.client.accountingCounterparty.findFirst({ where: { id, companyId } });
     return row ? this.toCounterpartyRecord(row) : null;
+  }
+
+  async isCounterpartyReceiptUploader(companyId: string, counterpartyId: string, userId: string): Promise<boolean> {
+    const row = await this.prisma.client.accountingCounterparty.findFirst({
+      where: { id: counterpartyId, companyId, receiptUploaderUserId: userId },
+      select: { id: true },
+    });
+    return Boolean(row);
   }
 
   /**

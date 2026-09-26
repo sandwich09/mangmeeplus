@@ -6,6 +6,9 @@ export type RoutePermissionRule = {
 };
 
 export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
+  { path: '/counterparties', anyOf: ['accounting.counterparty.read', 'accounting.counterparty.manage'] },
+  // The API checks creator/uploader provenance before exposing a single row.
+  { path: '/counterparties/', anyOf: ['accounting.counterparty.read', 'accounting.counterparty.manage', 'expense.read_related', 'accounting.document.read_related', 'expense.create', 'expense.update', 'expense.review', 'expense.receipt.upload', 'expense.receipt.line_upload'] },
   { path: '/settings/permissions', anyOf: ['access.role.manage'] },
   { path: '/settings/roles', anyOf: ['access.role.manage'] },
   { path: '/settings/po-approval', anyOf: ['procurement.purchase_order.manage'] },
@@ -14,7 +17,7 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
   // P10-L §15.4. `company.setup.read` is the LOW key every settings-capable member holds, so a
   // manager can open the page and read the masked shop block plus their own account section; the
   // shop form itself un-masks and saves only for a holder of `company.legal_identity.manage`,
-  // which the API enforces and the registry keeps OWNER-only pending QP2.
+  // which the API enforces separately from access to the settings hub.
   { path: COMPANY_PROFILE_SETTINGS_PATH, anyOf: ['company.setup.read'] },
   { path: '/settings/line-oa', anyOf: ['crm.channel.manage'] },
   { path: '/settings/notifications', anyOf: ['notification.preference.manage'] },
@@ -118,7 +121,7 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
 ];
 
 function isUnderPath(path: string, rulePath: string): boolean {
-  return path === rulePath || path.startsWith(`${rulePath}/`);
+  return rulePath.endsWith('/') ? path.startsWith(rulePath) : path === rulePath || path.startsWith(`${rulePath}/`);
 }
 
 export function findRoutePermissionRule(path: string): RoutePermissionRule | undefined {

@@ -25,6 +25,7 @@ const ADDRESS = '123/4 ถนนสุขุมวิท แขวงคลอ�
 function makeUseCase(options: {
   autoSave?: (input: any) => Promise<any>;
   record?: Record<string, unknown>;
+  receiptUploaderUserId?: string | null;
 } = {}) {
   const updates: any[] = [];
   const seen: any[] = [];
@@ -39,6 +40,7 @@ function makeUseCase(options: {
       aiVerificationSummaryJson: null,
       ...options.record,
     }),
+    findPrimaryReceiptUploader: async () => options.receiptUploaderUserId ?? null,
     findByIdWithRelations: async () => ({ lines: [] }),
     updateExpense: async (input: any) => { updates.push(input); return { ...input }; },
     listLineChargeKinds: async () => new Map<number, { chargeKind: string | null; description: string }>(),
@@ -75,6 +77,17 @@ describe('a review save and the vendor registry', () => {
     assert.equal(seen[0].vendorName, 'ร้านชื่อใหม่');
     assert.equal(seen[0].vendorAddressText, ADDRESS);
     assert.equal(seen[0].vendorBranchCode, '00001');
+  });
+
+  it('uses the primary receipt file uploader, not the expense creator, for scoped access', async () => {
+    const { useCase, seen } = makeUseCase({
+      record: { createdByUserId: 'expense-creator', primaryAttachmentId: 'receipt-1' },
+      receiptUploaderUserId: 'receipt-uploader',
+    });
+
+    await useCase.execute(ctx, 'exp-1', { vendorNameSnapshot: 'ร้านทดสอบ' } as any);
+
+    assert.equal(seen[0].receiptUploaderUserId, 'receipt-uploader');
   });
 
   it('CON-7: fills the empty taxpayer class from the registry, which is what unblocks a WHT confirm', async () => {

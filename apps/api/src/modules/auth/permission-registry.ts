@@ -27,6 +27,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'account.identity.unlink',    description: 'Unlink external identity',           riskLevel: 'MEDIUM' },
   { key: 'company.setup.read',         description: 'Read company setup',                 riskLevel: 'LOW' },
   { key: 'company.setup.manage',       description: 'Manage company setup',               riskLevel: 'LOW' },
+  { key: 'company.plan.manage',        description: 'Manage company package and billing purchases', riskLevel: 'CRITICAL' },
   // Opens the ตั้งค่าบริษัท hub. Its own key rather than a reused one: company.setup.read is
   // held by Manager/Finance/Accountant, and company.setup.manage also guards the
   // substitute-receipt policy — gating the menu on either would either leak the menu or hand

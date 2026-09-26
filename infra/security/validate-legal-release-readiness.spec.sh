@@ -81,7 +81,7 @@ fi
 LEGAL_RELEASE_EVIDENCE_SHA256="$manifest_hash" \
   LEGAL_RELEASE_EVIDENCE_DIR="$fixture/reviewed-evidence" \
   bash "$validator" "$fixture" |
-  grep -F 'Legal release gate passed for v3' >/dev/null
+  grep -Fq 'Legal release gate passed for v3'
 
 # Hashing a symlink target is not evidence that the reviewed path itself remained
 # immutable. Reject both evidence indirection and a Git working-tree type change.

@@ -23,6 +23,12 @@ function companyRoleKeys(): string[] {
 }
 
 describe('permission-registry', () => {
+  it('grants package management to OWNER by default, not ADMIN', () => {
+    assert.ok(COMPANY_PERMISSION_KEYS.includes('company.plan.manage'));
+    assert.ok(ROLE_GRANTS.OWNER!.includes('company.plan.manage'));
+    assert.ok(!ROLE_GRANTS.ADMIN!.includes('company.plan.manage'));
+  });
+
   it('billing control grants are registered only for platform administration, never customer OWNER', () => {
     assert.ok(BILLING_PERMISSIONS.includes('system.billing.approval.approve'));
     for (const key of BILLING_PERMISSIONS) {

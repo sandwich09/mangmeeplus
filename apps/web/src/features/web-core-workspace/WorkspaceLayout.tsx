@@ -114,8 +114,8 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
 function LockedWorkspaceLayout({ children, companyId, session, notice }: Props & { notice: PlanTermNotice }) {
   const pathname = usePathname() ?? '';
   const navItems = useMemo(
-    () => buildLockedNavItems(companyId, ICON_MAP, session.roles),
-    [companyId, session.roles],
+    () => buildLockedNavItems(companyId, ICON_MAP, session.permissions),
+    [companyId, session.permissions],
   );
 
   return (
