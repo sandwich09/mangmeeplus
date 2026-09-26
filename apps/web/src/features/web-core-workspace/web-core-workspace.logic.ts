@@ -167,7 +167,7 @@ export function buildNavItems(
     ...modules.flatMap((module) => module.requiredAnyPermissions),
     ...ROUTE_PERMISSION_RULES.flatMap((rule) => rule.anyOf),
   ],
-  roles: readonly string[] = [],
+  _roles: readonly string[] = [],
 ): NavItem[] {
   const moduleMap = new Map(modules.map((mod) => [mod.key, mod]));
   // 'notifications' stays here so the module never renders as a top-level row: the notification
@@ -339,9 +339,8 @@ export function buildNavItems(
     return [item];
   });
 
-  // Billing is an owner account task, independent of paid feature access. Keep it reachable
-  // even when the owner has no other settings entries; the billing API still checks OWNER.
-  if (roles.includes('OWNER')) {
+  // Package management is independent of paid feature access and follows an explicit company grant.
+  if (userPermissions.includes('company.plan.manage')) {
     let settings = moduleItems.find(item => item.key === 'settings');
     if (!settings) {
       settings = { key: 'settings', label: t('module.settings', locale), icon: iconMap.HorizontalDotsIcon ?? null, group: 'admin', subItems: [] };
@@ -357,16 +356,15 @@ export function buildNavItems(
 
 /**
  * The entire sidebar of a shop with no usable package (spec §12 เว็บลูกค้า, Owner 2026-09-20).
- * Fixed rather than filtered: these two are the only destinations the term guard still serves, so
- * whatever the shop's permissions say, nothing else may appear. แพ็กเกจ is OWNER-only because only
- * the owner may buy one (P26 §14A) — staff keep ตั้งค่า and the user menu.
+ * Fixed rather than filtered: these two are the only destinations the term guard still serves.
+ * The package link appears only for memberships with `company.plan.manage`.
  *
  * Every href here must satisfy `isLockedShellPath`, the redirect's copy of the same list.
  */
 export function buildLockedNavItems(
   companyId: string,
   iconMap: Record<string, React.ReactNode>,
-  roles: readonly string[] = [],
+  permissions: readonly string[] = [],
 ): NavItem[] {
   const items: NavItem[] = [{
     key: 'settings',
@@ -375,7 +373,7 @@ export function buildLockedNavItems(
     href: `/companies/${companyId}/settings`,
     group: 'admin',
   }];
-  if (roles.includes('OWNER')) {
+  if (permissions.includes('company.plan.manage')) {
     items.push({
       key: 'billing',
       label: 'แพ็กเกจ',

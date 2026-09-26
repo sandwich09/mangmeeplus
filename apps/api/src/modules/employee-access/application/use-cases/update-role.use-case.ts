@@ -53,6 +53,7 @@ export class UpdateRoleUseCase {
       const ownerGated = ownerGatedGrantViolation(
         existing.isSystem ? finalKeys : finalKeys.filter((key) => !existingKeys.has(key)),
         granterScope,
+        cmd.isOwner === true,
       );
       if (ownerGated) throw new ForbiddenException(ownerGated);
       permissions = await this.prisma.client.permission.findMany({

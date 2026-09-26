@@ -1926,6 +1926,8 @@ model AccountingCounterparty {
   shippingAddressJson Json?
   status              AccountingCounterpartyStatus @default(ACTIVE)
   createdByUserId     String
+  /// Uploader of the receipt that first auto-created this counterparty.
+  receiptUploaderUserId String?
   updatedByUserId     String?
   createdAt           DateTime                     @default(now())
   updatedAt           DateTime                     @updatedAt

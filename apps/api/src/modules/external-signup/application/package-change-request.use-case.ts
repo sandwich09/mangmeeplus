@@ -33,10 +33,9 @@ export class PackageChangeRequestUseCase {
     if (!Object.hasOwn(PLAN_TIER_PRESETS, cmd.requestedTierKey)) {
       throw new UnprocessableEntityException(`tierKey "${cmd.requestedTierKey}" is not a known plan tier.`);
     }
-    // Spec §4: OWNER of the company, not merely someone who can edit its settings. The route's
-    // permission is `company.setup.manage`, which a default ADMIN also holds — asking to change
-    // what the shop PAYS is the owner's decision, so the role is checked as well as the permission.
-    await this.assertOwner(cmd.companyId, cmd.requestedByUserId);
+    // `company.setup.manage` is also held by ADMIN. Package changes require the narrower
+    // company.plan.manage permission; the caller may receive it through any company role name.
+    await this.assertCanManagePlan(cmd.companyId, cmd.requestedByUserId);
 
     try {
       const created = await this.prisma.client.$transaction(async (tx) => {
@@ -78,7 +77,7 @@ export class PackageChangeRequestUseCase {
   }
 
   /**
-   * An ACTIVE membership, held by an OWNER, in a company that is ACTIVE or DISABLED.
+   * An ACTIVE membership with an active role holding company.plan.manage, in a company that is ACTIVE or DISABLED.
    *
    * DISABLED belongs here (P10-L §3.7): a trial that ran out leaves the company DISABLED, and the
    * expiry message this flow sends carries a "ขอเปลี่ยนแพ็กเกจ" button — a shop that cannot ask
@@ -88,13 +87,18 @@ export class PackageChangeRequestUseCase {
    * SUSPENDED and ARCHIVED stay out: those are an operator's decision, and the way back is a
    * conversation with the operator, not a request in the same queue.
    */
-  private async assertOwner(companyId: string, userId: string): Promise<void> {
+  private async assertCanManagePlan(companyId: string, userId: string): Promise<void> {
     const membership = await this.prisma.client.companyMembership.findFirst({
       where: { companyId, userId, status: 'ACTIVE', company: { status: { in: ['ACTIVE', 'DISABLED'] } } },
-      select: { roles: { select: { role: { select: { key: true } } } } },
+      select: {
+        roles: {
+          where: { role: { status: 'ACTIVE' } },
+          select: { role: { select: { permissions: { select: { permission: { select: { key: true } } } } } } },
+        },
+      },
     });
-    if (!membership?.roles.some((entry) => entry.role.key === 'OWNER')) {
-      throw new ForbiddenException('owner_role_required');
+    if (!membership?.roles.some((entry) => entry.role.permissions.some((rp) => rp.permission.key === 'company.plan.manage'))) {
+      throw new ForbiddenException('company_plan_manage_required');
     }
   }
 

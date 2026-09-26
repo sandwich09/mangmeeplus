@@ -313,7 +313,7 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
                   return;
                 }
                 if (c.companyId !== companyId) {
-                  const destination = /^\/companies\/[^/]+\/billing(?:\/|$)/.test(pathname) && c.roles.includes('OWNER') ? 'billing' : 'dashboard';
+                  const destination = /^\/companies\/[^/]+\/billing(?:\/|$)/.test(pathname) && c.canManagePlan ? 'billing' : 'dashboard';
                   window.location.assign(`/companies/${c.companyId}/${destination}`);
                 }
               }}

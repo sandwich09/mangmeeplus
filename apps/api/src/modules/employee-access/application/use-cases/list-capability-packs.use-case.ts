@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { CapabilityPackCatalog, CapabilityPackView } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { CAPABILITY_PACKS } from '../../domain/registries/capability-pack.registry';
+import { ownerGatedGrantViolation } from '../../domain/logic/employee-access.logic';
 import { loadEntitledFeatureKeys } from '../entitlement.helper';
 
 @Injectable()
@@ -18,7 +19,9 @@ export class ListCapabilityPacksUseCase {
         ...pack,
         locked,
         grantableByCurrentUser: pack.key === 'pack.reimbursement.self'
-          || isOwner || pack.permissionKeys.every((k) => granter.has(k)),
+          ? true
+          : ownerGatedGrantViolation(pack.permissionKeys, granter, isOwner) === undefined
+            && (isOwner || pack.permissionKeys.every((k) => granter.has(k))),
       };
     });
 

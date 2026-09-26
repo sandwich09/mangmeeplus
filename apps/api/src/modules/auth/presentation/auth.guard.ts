@@ -71,13 +71,28 @@ export function isAccountEmailRecoveryRoute(method: string, path: string): boole
 }
 
 // Only implemented billing and package-request read/create routes may recover a term hold.
-// Session, legal/platform access, tenant and route permissions still apply; mutations require OWNER.
+// Session, legal/platform access, tenant and route permissions still apply.
 export function isCompanyProfileRecoveryRoute(method: string, path: string): boolean {
   const clean = cleanRequestPath(path).toLowerCase(), prefix = '/v1/companies/[^/]+';
   return ((method === 'GET' || method === 'PATCH') && new RegExp(`^${prefix}/identity$`).test(clean))
     || (method === 'PATCH' && new RegExp(`^${prefix}/identity/business-type$`).test(clean))
     || (method === 'GET' && new RegExp(`^${prefix}/settings/address-master$`).test(clean))
-    || (method === 'PUT' && new RegExp(`^${prefix}/vat-registration$`).test(clean));
+    || ((method === 'GET' || method === 'PUT') && new RegExp(`^${prefix}/vat-registration$`).test(clean));
+}
+
+function hasCompanyProfileRecoveryPermission(method: string, path: string, permissions: readonly string[]): boolean {
+  const clean = cleanRequestPath(path).toLowerCase(), prefix = '/v1/companies/[^/]+';
+  const identity = new RegExp(`^${prefix}/identity$`).test(clean);
+  const businessType = new RegExp(`^${prefix}/identity/business-type$`).test(clean);
+  const addressMaster = new RegExp(`^${prefix}/settings/address-master$`).test(clean);
+  const vat = new RegExp(`^${prefix}/vat-registration$`).test(clean);
+  const routePermissions = method === 'GET' && identity ? ['company.setup.read']
+    : method === 'GET' && addressMaster
+      ? ['access.employee.read', 'access.employee.create', 'access.employee.update', 'company.setup.read', 'company.legal_identity.read', 'company.legal_identity.manage']
+      : method === 'GET' && vat ? ['company.vat_registration.read']
+        : method === 'PATCH' && (identity || businessType) ? ['company.legal_identity.manage']
+          : method === 'PUT' && vat ? ['company.vat_registration.manage'] : [];
+  return routePermissions.some((permission) => permissions.includes(permission));
 }
 
 export function isBillingRecoveryRoute(method: string, path: string): boolean {
@@ -271,12 +286,14 @@ export class AuthGuard implements CanActivate {
     // P29) matches nothing here and is completely unaffected. SYSTEM_ADMIN is exempt for the same
     // reason it is exempt from the platform-closed gate above: the console that fixes an expiry
     // must not be lockable by one.
-    const ownerProfileRecovery = isCompanyProfileRecoveryRoute(req.method, reqPath) && req.context.roles.includes('OWNER');
-    if (isCompanyProfileRecoveryRoute(req.method, reqPath) && !ownerProfileRecovery && !req.context.roles.includes('SYSTEM_ADMIN')) {
+    const authorizedProfileRecovery = isCompanyProfileRecoveryRoute(req.method, reqPath)
+      && hasCompanyProfileRecoveryPermission(req.method, reqPath, req.context.permissions);
+    if (isCompanyProfileRecoveryRoute(req.method, reqPath) && !authorizedProfileRecovery && !req.context.roles.includes('SYSTEM_ADMIN')) {
       const company = await this.prisma.client.company.findUnique({ where: { id: req.context.companyId }, select: { status: true } });
-      if (company?.status !== 'ACTIVE') throw new ForbiddenException('เฉพาะเจ้าของบริษัทเท่านั้นที่แก้ข้อมูลเพื่อซื้อแพ็กเกจใหม่ได้');
+      if (company?.status !== 'ACTIVE') throw new ForbiddenException('ไม่มีสิทธิ์กู้คืนข้อมูลบริษัท');
     }
-    if (!isTermExpiryExempt(reqPath) && !isBillingRecoveryRoute(req.method, reqPath) && !ownerProfileRecovery && !req.context.roles.includes('SYSTEM_ADMIN')) {
+    if (!isTermExpiryExempt(reqPath) && !isBillingRecoveryRoute(req.method, reqPath)
+      && !authorizedProfileRecovery && !req.context.roles.includes('SYSTEM_ADMIN')) {
       const term = await this.prisma.client.companyPlanTerm.findUnique({
         where: { companyId: req.context.companyId },
         select: { termEndsAt: true },

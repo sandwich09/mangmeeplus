@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import type { RolePreviewInput, RolePreviewResult } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { compileRole, summarizeCapabilities, toEffectivePermissions } from '../../domain/logic/capability.logic';
+import { ownerGatedGrantViolation } from '../../domain/logic/employee-access.logic';
 import { loadEntitledFeatureKeys } from '../entitlement.helper';
 
 export type PreviewRoleCommand = RolePreviewInput & {
@@ -33,6 +34,13 @@ export class PreviewRoleUseCase {
       entitledFeatureKeys: entitled,
       granterPermissionKeys: granterScope,
     });
+    const existingKeys = new Set(role?.permissions.map((p) => p.permission.key) ?? []);
+    const ownerGated = ownerGatedGrantViolation(
+      role && !role.isSystem ? permissionKeys.filter((key) => !existingKeys.has(key)) : permissionKeys,
+      granterScope,
+      cmd.isOwner,
+    );
+    if (ownerGated) throw new ForbiddenException(ownerGated);
 
     let addedVsCurrent: string[] | undefined;
     let removedVsCurrent: string[] | undefined;

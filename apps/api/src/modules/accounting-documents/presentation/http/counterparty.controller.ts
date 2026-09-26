@@ -73,9 +73,13 @@ class PromoteSeenAddressDto {
  * documents: `expense.read_related` is in every built-in company role and the core pack, and
  * `accounting.document.read_related` covers the sales side. Each is entitlement-gated to its own
  * feature (`expenses.list` / `sales_documents`), so the door stays shut for a company with neither.
- * The use case then requires the counterparty permission or `createdByUserId === ctx.userId`.
+ * The use case then requires a registry permission or the creator/original receipt-uploader relation.
  */
-const ADDED_BY_PATH = ['expense.read_related', 'accounting.document.read_related'] as const;
+const ADDED_BY_PATH = [
+  'expense.read_related', 'accounting.document.read_related',
+  'expense.create', 'expense.update', 'expense.review',
+  'expense.receipt.upload', 'expense.receipt.line_upload',
+] as const;
 
 @ApiTags('accounting')
 @Controller('companies/:companyId/accounting/counterparties')
@@ -108,7 +112,7 @@ export class CounterpartyController {
   }
 
   @Get(':counterpartyId')
-  @RequireAnyPermission('accounting.counterparty.read', ...ADDED_BY_PATH)
+  @RequireAnyPermission('accounting.counterparty.read', 'accounting.counterparty.manage', ...ADDED_BY_PATH)
   @ApiOperation({ summary: 'Get counterparty by id' })
   async getCounterparty(
     @ReqCtx() ctx: RequestContext,
@@ -128,7 +132,7 @@ export class CounterpartyController {
   }
 
   @Patch(':counterpartyId')
-  @RequireAnyPermission('accounting.counterparty.manage', ...ADDED_BY_PATH)
+  @RequireAnyPermission('accounting.counterparty.read', 'accounting.counterparty.manage', ...ADDED_BY_PATH)
   @ApiOperation({ summary: 'Update counterparty' })
   async updateCounterparty(
     @ReqCtx() ctx: RequestContext,
@@ -139,7 +143,7 @@ export class CounterpartyController {
   }
 
   @Post(':counterpartyId/promote-seen-address')
-  @RequireAnyPermission('accounting.counterparty.manage', ...ADDED_BY_PATH)
+  @RequireAnyPermission('accounting.counterparty.read', 'accounting.counterparty.manage', ...ADDED_BY_PATH)
   @ApiOperation({ summary: 'Make an address seen on a document the primary one' })
   async promote(
     @ReqCtx() ctx: RequestContext,

@@ -26,7 +26,7 @@ export class PlanTermNoticeController {
   @ApiResponse({ status: 200 })
   async get(@Req() req: AuthedRequest, @Res() res: Response) {
     // Nest's default null response has an empty body; clients require JSON null for unlimited terms.
-    return res.json(await this.notice.execute(req.context.companyId, req.context.roles));
+    return res.json(await this.notice.execute(req.context.companyId, req.context.roles, req.context.permissions));
   }
 }
 

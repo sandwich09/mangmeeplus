@@ -21,8 +21,7 @@ export class CreatePackageChangeRequestDto {
  * queue and never touches the tier. Only the reviewed Admin writer or verified paid application
  * changes the package; an open request is not payment evidence.
  *
- * Guarded by `company.setup.manage`, the existing company-settings permission an OWNER holds. No
- * new permission key: asking about your own plan is a settings action, not a new authority.
+ * Guarded by `company.plan.manage`, which the owner can delegate to a custom role with any title.
  */
 @Controller('companies/:companyId/package-change-requests')
 export class CompanyPackageChangeController {
@@ -30,7 +29,7 @@ export class CompanyPackageChangeController {
 
   @Post()
   @HttpCode(201)
-  @RequirePermissions('company.setup.manage')
+  @RequirePermissions('company.plan.manage')
   @ApiOperation({ summary: 'Ask an admin to move this company to another package' })
   @ApiResponse({ status: 201, description: 'The open request — the same one on a repeated ask' })
   create(
@@ -48,7 +47,7 @@ export class CompanyPackageChangeController {
   }
 
   @Get()
-  @RequirePermissions('company.setup.manage')
+  @RequirePermissions('company.plan.manage')
   @ApiOperation({ summary: 'This company own package-change requests, newest first' })
   list(@Param('companyId') companyId: string): Promise<PackageChangeRequestDto[]> {
     return this.packageChange.listForCompany(companyId);

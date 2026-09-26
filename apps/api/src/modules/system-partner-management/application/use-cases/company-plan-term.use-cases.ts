@@ -396,6 +396,8 @@ export type PlanTermNoticeDto = {
   termEndsAt: string;
   daysLeft: number;
   isOwner: boolean;
+  /** Whether this membership can manage package renewal through company.plan.manage. */
+  canManagePlan: boolean;
   /** R2: only ever present on an EXPIRED notice — a running term has nothing to explain. */
   lockReason?: PlanTermLockReason;
 } | null;
@@ -404,7 +406,7 @@ export type PlanTermNoticeDto = {
 export class GetPlanTermNoticeUseCase {
   constructor(private readonly prisma: PrismaService) {}
 
-  async execute(companyId: string, roles: readonly string[]): Promise<PlanTermNoticeDto> {
+  async execute(companyId: string, roles: readonly string[], permissions: readonly string[] = []): Promise<PlanTermNoticeDto> {
     const row = await this.prisma.client.companyPlanTerm.findUnique({
       where: { companyId },
       select: { termStartAt: true, termEndsAt: true, warningDays: true, renewCount: true },
@@ -418,9 +420,10 @@ export class GetPlanTermNoticeUseCase {
       // R2: the locked shell needs to know whether to invite a purchase or a renewal, and only the
       // term row can tell it apart. Absent while the term still runs, so nothing else changes.
       ...(derivedState === 'EXPIRED' ? { lockReason: planTermLockReason(row) } : {}),
-      // The banner is OWNER-only (Owner 2026-08-30); staff still get the state so the expired
-      // screen can route them to the neutral "ask the shop owner" copy.
+      // Keep actual ownership separate from who may purchase a plan. Staff still get the state so
+      // the expired screen can route them to the neutral "ask the shop owner" copy.
       isOwner: roles.includes('OWNER'),
+      canManagePlan: permissions.includes('company.plan.manage'),
     };
   }
 }

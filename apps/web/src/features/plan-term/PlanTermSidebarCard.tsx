@@ -16,7 +16,7 @@ const storageKey = (companyId: string) => `watchdog.planTermCard.${companyId}`;
 
 /**
  * P29 warning as a collapsible card at the bottom of the sidebar (Owner 2026-08-31 — replaces the
- * full-width banner so pages stay clean). OWNER-only while WARNING; the expired state is handled by
+ * full-width banner so pages stay clean). Package managers see the warning; the expired state is handled by
  * the renewal-page redirect, not here. Collapse is remembered per ladder step: the card re-opens on
  * its own when the 3-day and 1-day windows begin.
  */
