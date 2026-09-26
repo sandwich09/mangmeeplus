@@ -1,0 +1,1383 @@
+{
+  "version": "2.4",
+  "date": "2026-09-27",
+  "baseline": "f932b57766f5dd22c0d28aedd4bc06f210e374ef",
+  "evidenceKind": "design_traceability_not_runtime_verification",
+  "activeCapabilityCount": 17,
+  "activeWorkPackageCount": 15,
+  "knownFindingCount": 30,
+  "activeAcceptanceIdCount": 53,
+  "deferred": {
+    "capabilities": [
+      "C13"
+    ],
+    "workPackages": [
+      "W10"
+    ],
+    "acceptanceIds": [
+      "E18",
+      "E19"
+    ]
+  },
+  "contracts": {
+    "core": "docs/specs/mangmee-ai-core-capability-contract-2026-09-27.md",
+    "input": "docs/specs/mangmee-ai-input-provider-budget-contract-2026-09-27.md",
+    "delivery": "docs/specs/mangmee-ai-reliability-delivery-contract-2026-09-27.md",
+    "business": "docs/specs/mangmee-ai-business-document-write-contract-2026-09-27.md"
+  },
+  "capabilities": [
+    {
+      "id": "C01",
+      "slices": [
+        "W00",
+        "W11"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C02",
+      "slices": [
+        "W01",
+        "W03"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C03",
+      "slices": [
+        "W04"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C04",
+      "slices": [
+        "W02"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C05",
+      "slices": [
+        "W12"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C06",
+      "slices": [
+        "W02",
+        "W03",
+        "W06A"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C07",
+      "slices": [
+        "W04"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C08",
+      "slices": [
+        "W00",
+        "W04",
+        "W08"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C09",
+      "slices": [
+        "W09"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C10",
+      "slices": [
+        "W06A",
+        "W06B",
+        "W06C"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C11",
+      "slices": [
+        "W05"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C12",
+      "slices": [
+        "W07A",
+        "W07B"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C14",
+      "slices": [
+        "W05",
+        "W06A"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C15",
+      "slices": [
+        "W13F",
+        "W13I_R1",
+        "W13I_R2"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C16",
+      "slices": [
+        "W11",
+        "W13I_R1",
+        "W13I_R2"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C17",
+      "slices": [
+        "W14",
+        "W15_R1",
+        "W15_R2",
+        "W15_R3"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "C18",
+      "slices": [
+        "W02",
+        "W06C",
+        "W13F"
+      ],
+      "status": "planned"
+    }
+  ],
+  "workPackages": [
+    {
+      "id": "W00",
+      "status": "planned"
+    },
+    {
+      "id": "W01",
+      "status": "planned"
+    },
+    {
+      "id": "W02",
+      "status": "planned"
+    },
+    {
+      "id": "W03",
+      "status": "planned"
+    },
+    {
+      "id": "W04",
+      "status": "planned"
+    },
+    {
+      "id": "W05",
+      "status": "planned"
+    },
+    {
+      "id": "W06",
+      "status": "planned"
+    },
+    {
+      "id": "W07",
+      "status": "planned"
+    },
+    {
+      "id": "W08",
+      "status": "planned"
+    },
+    {
+      "id": "W09",
+      "status": "planned"
+    },
+    {
+      "id": "W11",
+      "status": "planned"
+    },
+    {
+      "id": "W12",
+      "status": "planned"
+    },
+    {
+      "id": "W13",
+      "status": "planned"
+    },
+    {
+      "id": "W14",
+      "status": "planned"
+    },
+    {
+      "id": "W15",
+      "status": "planned"
+    }
+  ],
+  "slices": [
+    {
+      "id": "W00",
+      "dependencies": [],
+      "contracts": [
+        "core"
+      ],
+      "acceptanceIds": [
+        "E14"
+      ],
+      "release": "all",
+      "status": "planned"
+    },
+    {
+      "id": "W01",
+      "dependencies": [
+        "W00"
+      ],
+      "contracts": [
+        "core",
+        "input",
+        "delivery"
+      ],
+      "acceptanceIds": [
+        "E01",
+        "E10",
+        "E20"
+      ],
+      "release": "R1",
+      "status": "planned"
+    },
+    {
+      "id": "W02",
+      "dependencies": [
+        "W01"
+      ],
+      "contracts": [
+        "core"
+      ],
+      "acceptanceIds": [
+        "E02",
+        "E03",
+        "E04",
+        "E05",
+        "E06"
+      ],
+      "release": "R1",
+      "status": "planned"
+    },
+    {
+      "id": "W03",
+      "dependencies": [
+        "W01",
+        "W02"
+      ],
+      "contracts": [
+        "core",
+        "input",
+        "business"
+      ],
+      "acceptanceIds": [
+        "U01",
+        "U02",
+        "U03",
+        "U04",
+        "U05",
+        "U06",
+        "U25",
+        "N04",
+        "E03",
+        "E08"
+      ],
+      "release": "R1",
+      "status": "planned"
+    },
+    {
+      "id": "W04",
+      "dependencies": [
+        "W03"
+      ],
+      "contracts": [
+        "core"
+      ],
+      "acceptanceIds": [
+        "U07",
+        "U08",
+        "U22",
+        "U23",
+        "N01",
+        "N02",
+        "N03"
+      ],
+      "release": "R1",
+      "status": "planned"
+    },
+    {
+      "id": "W05",
+      "dependencies": [
+        "W01"
+      ],
+      "contracts": [
+        "core"
+      ],
+      "acceptanceIds": [
+        "E10",
+        "E11",
+        "E14",
+        "N03"
+      ],
+      "release": "R1",
+      "status": "planned"
+    },
+    {
+      "id": "W06A",
+      "dependencies": [
+        "W03",
+        "W05"
+      ],
+      "contracts": [
+        "core",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E08",
+        "E09",
+        "E10",
+        "E11",
+        "E23"
+      ],
+      "release": "R1",
+      "status": "planned"
+    },
+    {
+      "id": "W06B",
+      "dependencies": [
+        "W03",
+        "W05"
+      ],
+      "contracts": [
+        "core"
+      ],
+      "acceptanceIds": [
+        "E11",
+        "E14"
+      ],
+      "release": "R1",
+      "status": "planned"
+    },
+    {
+      "id": "W06C",
+      "dependencies": [
+        "W03",
+        "W05",
+        "W11",
+        "W13F"
+      ],
+      "contracts": [
+        "business",
+        "delivery"
+      ],
+      "acceptanceIds": [
+        "U15",
+        "U24",
+        "E07",
+        "E09",
+        "E14",
+        "E23"
+      ],
+      "release": "R2",
+      "status": "planned"
+    },
+    {
+      "id": "W07A",
+      "dependencies": [
+        "W02",
+        "W05"
+      ],
+      "contracts": [
+        "core",
+        "business"
+      ],
+      "acceptanceIds": [
+        "U17",
+        "U18",
+        "U19",
+        "U20",
+        "E12"
+      ],
+      "release": "R1",
+      "status": "planned"
+    },
+    {
+      "id": "W07B",
+      "dependencies": [
+        "W02",
+        "W05",
+        "W11",
+        "W13F"
+      ],
+      "contracts": [
+        "core",
+        "input",
+        "delivery"
+      ],
+      "acceptanceIds": [
+        "E01",
+        "E13"
+      ],
+      "release": "R2",
+      "status": "planned"
+    },
+    {
+      "id": "W08",
+      "dependencies": [
+        "W00",
+        "W04"
+      ],
+      "contracts": [
+        "core"
+      ],
+      "acceptanceIds": [
+        "E14"
+      ],
+      "release": "R2",
+      "status": "planned"
+    },
+    {
+      "id": "W09",
+      "dependencies": [
+        "W04",
+        "W06A",
+        "W11"
+      ],
+      "contracts": [
+        "core",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E15",
+        "E16",
+        "E17"
+      ],
+      "release": "R2",
+      "status": "planned"
+    },
+    {
+      "id": "W11",
+      "dependencies": [
+        "W00"
+      ],
+      "contracts": [
+        "input"
+      ],
+      "acceptanceIds": [
+        "E01",
+        "E08",
+        "E20"
+      ],
+      "release": "all",
+      "status": "planned"
+    },
+    {
+      "id": "W12",
+      "dependencies": [
+        "W02",
+        "W04"
+      ],
+      "contracts": [
+        "core"
+      ],
+      "acceptanceIds": [
+        "E21",
+        "E22"
+      ],
+      "release": "R3",
+      "status": "planned"
+    },
+    {
+      "id": "W13F",
+      "dependencies": [
+        "W01",
+        "W02",
+        "W11"
+      ],
+      "contracts": [
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E05",
+        "E07",
+        "E20",
+        "E23"
+      ],
+      "release": "R1",
+      "status": "planned"
+    },
+    {
+      "id": "W13I_R1",
+      "dependencies": [
+        "W13F",
+        "W04",
+        "W06A",
+        "W06B",
+        "W07A"
+      ],
+      "contracts": [
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E07",
+        "E20",
+        "E23"
+      ],
+      "release": "R1",
+      "status": "planned"
+    },
+    {
+      "id": "W13I_R2",
+      "dependencies": [
+        "W13I_R1",
+        "W06C",
+        "W07B",
+        "W08",
+        "W09"
+      ],
+      "contracts": [
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E07",
+        "E13",
+        "E15",
+        "E23"
+      ],
+      "release": "R2",
+      "status": "planned"
+    },
+    {
+      "id": "W14",
+      "dependencies": [
+        "W00"
+      ],
+      "contracts": [
+        "core",
+        "input",
+        "delivery",
+        "business"
+      ],
+      "acceptanceIds": [
+        "E24"
+      ],
+      "release": "all",
+      "status": "planned"
+    },
+    {
+      "id": "W15_R1",
+      "dependencies": [
+        "W13I_R1",
+        "W14"
+      ],
+      "contracts": [
+        "core",
+        "input",
+        "delivery",
+        "business"
+      ],
+      "acceptanceIds": [
+        "E23",
+        "E24"
+      ],
+      "release": "R1",
+      "status": "planned"
+    },
+    {
+      "id": "W15_R2",
+      "dependencies": [
+        "W15_R1",
+        "W13I_R2"
+      ],
+      "contracts": [
+        "core",
+        "input",
+        "delivery",
+        "business"
+      ],
+      "acceptanceIds": [
+        "E13",
+        "E15",
+        "E23",
+        "E24"
+      ],
+      "release": "R2",
+      "status": "planned"
+    },
+    {
+      "id": "W15_R3",
+      "dependencies": [
+        "W15_R2",
+        "W12"
+      ],
+      "contracts": [
+        "core",
+        "input",
+        "delivery",
+        "business"
+      ],
+      "acceptanceIds": [
+        "E21",
+        "E22",
+        "E23",
+        "E24"
+      ],
+      "release": "R3",
+      "status": "planned"
+    }
+  ],
+  "findings": [
+    {
+      "id": "CI01",
+      "slices": [
+        "W01",
+        "W05",
+        "W06B"
+      ],
+      "contracts": [
+        "core",
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E01",
+        "E10",
+        "E11",
+        "E14",
+        "E20",
+        "N03"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI02",
+      "slices": [
+        "W05"
+      ],
+      "contracts": [
+        "core"
+      ],
+      "acceptanceIds": [
+        "E10",
+        "E11",
+        "E14",
+        "N03"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI03",
+      "slices": [
+        "W05"
+      ],
+      "contracts": [
+        "core"
+      ],
+      "acceptanceIds": [
+        "E10",
+        "E11",
+        "E14",
+        "N03"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI04",
+      "slices": [
+        "W05"
+      ],
+      "contracts": [
+        "core"
+      ],
+      "acceptanceIds": [
+        "E10",
+        "E11",
+        "E14",
+        "N03"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI05",
+      "slices": [
+        "W05"
+      ],
+      "contracts": [
+        "core"
+      ],
+      "acceptanceIds": [
+        "E10",
+        "E11",
+        "E14",
+        "N03"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI06",
+      "slices": [
+        "W05",
+        "W06B"
+      ],
+      "contracts": [
+        "core"
+      ],
+      "acceptanceIds": [
+        "E10",
+        "E11",
+        "E14",
+        "N03"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI07",
+      "slices": [
+        "W02"
+      ],
+      "contracts": [
+        "core"
+      ],
+      "acceptanceIds": [
+        "E02",
+        "E03",
+        "E04",
+        "E05",
+        "E06"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI08",
+      "slices": [
+        "W02",
+        "W07A"
+      ],
+      "contracts": [
+        "business",
+        "core"
+      ],
+      "acceptanceIds": [
+        "E02",
+        "E03",
+        "E04",
+        "E05",
+        "E06",
+        "E12",
+        "U17",
+        "U18",
+        "U19",
+        "U20"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI09",
+      "slices": [
+        "W07A",
+        "W13F"
+      ],
+      "contracts": [
+        "business",
+        "core",
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E05",
+        "E07",
+        "E12",
+        "E20",
+        "E23",
+        "U17",
+        "U18",
+        "U19",
+        "U20"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI10",
+      "slices": [
+        "W04",
+        "W13F"
+      ],
+      "contracts": [
+        "core",
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E05",
+        "E07",
+        "E20",
+        "E23",
+        "N01",
+        "N02",
+        "N03",
+        "U07",
+        "U08",
+        "U22",
+        "U23"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI11",
+      "slices": [
+        "W07B"
+      ],
+      "contracts": [
+        "core",
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E01",
+        "E13"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI12",
+      "slices": [
+        "W06C",
+        "W13F"
+      ],
+      "contracts": [
+        "business",
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E05",
+        "E07",
+        "E09",
+        "E14",
+        "E20",
+        "E23",
+        "U15",
+        "U24"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI13",
+      "slices": [
+        "W01",
+        "W11"
+      ],
+      "contracts": [
+        "core",
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E01",
+        "E08",
+        "E10",
+        "E20"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI14",
+      "slices": [
+        "W07A",
+        "W07B",
+        "W13F"
+      ],
+      "contracts": [
+        "business",
+        "core",
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E01",
+        "E05",
+        "E07",
+        "E12",
+        "E13",
+        "E20",
+        "E23",
+        "U17",
+        "U18",
+        "U19",
+        "U20"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI15",
+      "slices": [
+        "W09",
+        "W11"
+      ],
+      "contracts": [
+        "core",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E01",
+        "E08",
+        "E15",
+        "E16",
+        "E17",
+        "E20"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "CI16",
+      "slices": [
+        "W14",
+        "W15_R1",
+        "W15_R2",
+        "W15_R3"
+      ],
+      "contracts": [
+        "business",
+        "core",
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E13",
+        "E15",
+        "E21",
+        "E22",
+        "E23",
+        "E24"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "DI01",
+      "slices": [
+        "W01",
+        "W03"
+      ],
+      "contracts": [
+        "business",
+        "core",
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E01",
+        "E03",
+        "E08",
+        "E10",
+        "E20",
+        "N04",
+        "U01",
+        "U02",
+        "U03",
+        "U04",
+        "U05",
+        "U06",
+        "U25"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "DI02",
+      "slices": [
+        "W03"
+      ],
+      "contracts": [
+        "business",
+        "core",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E03",
+        "E08",
+        "N04",
+        "U01",
+        "U02",
+        "U03",
+        "U04",
+        "U05",
+        "U06",
+        "U25"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "DI03",
+      "slices": [
+        "W01",
+        "W03"
+      ],
+      "contracts": [
+        "business",
+        "core",
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E01",
+        "E03",
+        "E08",
+        "E10",
+        "E20",
+        "N04",
+        "U01",
+        "U02",
+        "U03",
+        "U04",
+        "U05",
+        "U06",
+        "U25"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "DI04",
+      "slices": [
+        "W02",
+        "W06A",
+        "W13F"
+      ],
+      "contracts": [
+        "core",
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E02",
+        "E03",
+        "E04",
+        "E05",
+        "E06",
+        "E07",
+        "E08",
+        "E09",
+        "E10",
+        "E11",
+        "E20",
+        "E23"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "DI05",
+      "slices": [
+        "W11"
+      ],
+      "contracts": [
+        "input"
+      ],
+      "acceptanceIds": [
+        "E01",
+        "E08",
+        "E20"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "DI06",
+      "slices": [
+        "W01",
+        "W11"
+      ],
+      "contracts": [
+        "core",
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E01",
+        "E08",
+        "E10",
+        "E20"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "DI07",
+      "slices": [
+        "W13F"
+      ],
+      "contracts": [
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E05",
+        "E07",
+        "E20",
+        "E23"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "DI08",
+      "slices": [
+        "W13F"
+      ],
+      "contracts": [
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E05",
+        "E07",
+        "E20",
+        "E23"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "DI09",
+      "slices": [
+        "W13F"
+      ],
+      "contracts": [
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E05",
+        "E07",
+        "E20",
+        "E23"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "DI10",
+      "slices": [
+        "W07A",
+        "W13F"
+      ],
+      "contracts": [
+        "business",
+        "core",
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E05",
+        "E07",
+        "E12",
+        "E20",
+        "E23",
+        "U17",
+        "U18",
+        "U19",
+        "U20"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "DI11",
+      "slices": [
+        "W11"
+      ],
+      "contracts": [
+        "input"
+      ],
+      "acceptanceIds": [
+        "E01",
+        "E08",
+        "E20"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "DI12",
+      "slices": [
+        "W03",
+        "W06A"
+      ],
+      "contracts": [
+        "business",
+        "core",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E03",
+        "E08",
+        "E09",
+        "E10",
+        "E11",
+        "E23",
+        "N04",
+        "U01",
+        "U02",
+        "U03",
+        "U04",
+        "U05",
+        "U06",
+        "U25"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "DI13",
+      "slices": [
+        "W03",
+        "W06A"
+      ],
+      "contracts": [
+        "business",
+        "core",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E03",
+        "E08",
+        "E09",
+        "E10",
+        "E11",
+        "E23",
+        "N04",
+        "U01",
+        "U02",
+        "U03",
+        "U04",
+        "U05",
+        "U06",
+        "U25"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    },
+    {
+      "id": "DI14",
+      "slices": [
+        "W06C",
+        "W07B",
+        "W13F"
+      ],
+      "contracts": [
+        "business",
+        "core",
+        "delivery",
+        "input"
+      ],
+      "acceptanceIds": [
+        "E01",
+        "E05",
+        "E07",
+        "E09",
+        "E13",
+        "E14",
+        "E20",
+        "E23",
+        "U15",
+        "U24"
+      ],
+      "status": "planned",
+      "closureEvidence": null
+    }
+  ],
+  "acceptanceIds": [
+    "U01",
+    "U02",
+    "U03",
+    "U04",
+    "U05",
+    "U06",
+    "U07",
+    "U08",
+    "U09",
+    "U10",
+    "U11",
+    "U12",
+    "U13",
+    "U14",
+    "U15",
+    "U16",
+    "U17",
+    "U18",
+    "U19",
+    "U20",
+    "U21",
+    "U22",
+    "U23",
+    "U24",
+    "U25",
+    "N01",
+    "N02",
+    "N03",
+    "N04",
+    "N05",
+    "N06",
+    "E01",
+    "E02",
+    "E03",
+    "E04",
+    "E05",
+    "E06",
+    "E07",
+    "E08",
+    "E09",
+    "E10",
+    "E11",
+    "E12",
+    "E13",
+    "E14",
+    "E15",
+    "E16",
+    "E17",
+    "E18",
+    "E19",
+    "E20",
+    "E21",
+    "E22",
+    "E23",
+    "E24"
+  ]
+}

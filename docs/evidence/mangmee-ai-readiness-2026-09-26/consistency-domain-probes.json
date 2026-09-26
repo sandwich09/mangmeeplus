@@ -1,0 +1,153 @@
+{
+  "baseline": "f932b57766f5dd22c0d28aedd4bc06f210e374ef",
+  "generatedAt": "2026-09-26T16:12:14.437Z",
+  "command": "node docs/evidence/mangmee-ai-readiness-2026-09-26/consistency-domain-probes.cjs",
+  "mode": "pure_pinned_source_extraction",
+  "dependencies": {
+    "node": "v22.23.2",
+    "typescript": "5.9.3"
+  },
+  "sources": [
+    {
+      "path": "packages/contracts/src/ai-tools.ts",
+      "gitBlob": "a9537c426969f03e352e40250c13ef94e0a5c69f",
+      "declarations": []
+    },
+    {
+      "path": "apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent.ts",
+      "gitBlob": "f4fc1d29ce2c609b845381d1ffc0e7294413307f",
+      "declarations": [
+        {
+          "name": "LOOP_DATE_PATTERN",
+          "line": 465
+        },
+        {
+          "name": "LOOP_PERIOD_KEY_PATTERN",
+          "line": 466
+        },
+        {
+          "name": "DATE_INPUT_FIELDS",
+          "line": 474
+        },
+        {
+          "name": "PERIOD_KEY_INPUT_FIELDS",
+          "line": 476
+        },
+        {
+          "name": "sanitizeToolInput",
+          "line": 487
+        }
+      ]
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/use-cases/erp-tools.use-case.ts",
+      "gitBlob": "c75b292c0361778f0c64be6bba5c6f702ad35e03",
+      "declarations": [
+        {
+          "name": "DATE_PATTERN",
+          "line": 213
+        },
+        {
+          "name": "resolvePeriodInput",
+          "line": 219
+        },
+        {
+          "name": "isCivilDate",
+          "line": 226
+        },
+        {
+          "name": "resolveExpensePeriodInput",
+          "line": 232
+        }
+      ]
+    },
+    {
+      "path": "apps/api/src/modules/ledger/domain/logic/journal-balance.logic.ts",
+      "gitBlob": "ad325bad45f3d10ef1d6ecc9910346832523e207",
+      "declarations": [
+        {
+          "name": "decimal",
+          "line": 5
+        },
+        {
+          "name": "deriveBalance",
+          "line": 80
+        }
+      ]
+    }
+  ],
+  "fixtures": {
+    "clock": "2026-09-26",
+    "timezone": "Asia/Bangkok"
+  },
+  "checks": {
+    "ledgerPeriod": {
+      "tool": "ledger.get_financial_summary",
+      "registryLine": 377,
+      "declaredInputFields": [],
+      "requested": {
+        "periodKey": "2026-08"
+      },
+      "sanitized": {},
+      "finding": "Explicit periodKey is removed by the real sanitizer because the real registry entry declares no input fields."
+    },
+    "dateCases": [
+      {
+        "input": {
+          "toDate": "2026-08-31"
+        },
+        "sharedHelper": {
+          "fromDate": "1970-01-01",
+          "toDate": "2026-08-31",
+          "defaulted": false
+        },
+        "expenseStrictHelper": {
+          "invalid": true
+        }
+      },
+      {
+        "input": {
+          "fromDate": "bad",
+          "toDate": "bad"
+        },
+        "sharedHelper": {
+          "fromDate": "2026-09-01",
+          "toDate": "2026-09-26",
+          "defaulted": true
+        },
+        "expenseStrictHelper": {
+          "invalid": true
+        }
+      },
+      {
+        "input": {
+          "fromDate": "2026-02-30",
+          "toDate": "2026-02-30"
+        },
+        "sharedHelper": {
+          "fromDate": "2026-02-30",
+          "toDate": "2026-02-30",
+          "defaulted": false
+        },
+        "expenseStrictHelper": {
+          "invalid": true
+        }
+      }
+    ],
+    "precision": {
+      "input": "90071992547409.9900",
+      "actual4dp": "90071992547409.9844",
+      "actual2dp": "90071992547409.98",
+      "expected4dp": "90071992547409.9900",
+      "expected2dp": "90071992547409.99",
+      "precondition": "Synthetic large amount within Decimal(18,4); one CREDIT-normal balance. P&L formats this numeric return with toFixed(4)."
+    }
+  },
+  "limitations": [
+    "Source-level probes, not live runtime, natural-language end-to-end, deployment, or incident-frequency evidence.",
+    "Actual pinned functions and registry object are transpiled into isolated VM contexts; application modules are not bootstrapped.",
+    "Date clock helpers are deterministic fixture stubs; no database, network, cloud, or model provider is called.",
+    "Precision probe covers an unusually large valid stored amount; it does not establish customer exposure.",
+    "The runner writes only its adjacent JSON evidence file; no application source is changed."
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "sourceCommit": "f932b57766f5dd22c0d28aedd4bc06f210e374ef",
+  "file": "apps/api/src/modules/expenses/domain/logic/line-draft-update.logic.ts",
+  "date": "2026-09-27",
+  "method": "Pinned actual parser AST + helper functions transpiled in isolated VM; synthetic inputs. No DB/provider.",
+  "tests": [
+    {
+      "id": "business-header-values-truncated",
+      "pass": true,
+      "requestedVendorLength": 201,
+      "parsedVendorLength": 200,
+      "requestedDocumentLength": 61,
+      "parsedDocumentLength": 60,
+      "accepted": true
+    },
+    {
+      "id": "note-overflow-explicit-rejection-negative-control",
+      "pass": true,
+      "inputLength": 501,
+      "outcome": {
+        "ok": false,
+        "reason": "note_append_too_long"
+      }
+    }
+  ]
+}

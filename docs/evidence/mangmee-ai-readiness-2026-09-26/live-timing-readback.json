@@ -1,0 +1,180 @@
+{
+  "checkedAtUtc": "2026-09-26T16:42:21.136234+00:00",
+  "mode": "read_only_existing_telemetry",
+  "applicationChanged": false,
+  "infraOrFlagsChanged": false,
+  "rawCustomerTextRead": false,
+  "newProviderCalls": false,
+  "lookbackHours": 72,
+  "historicalBaseline": {
+    "document": "docs/agent-memory/line-ai-hosted-baseline-2026-09-03.md",
+    "window": "2026-08-27 through 2026-09-03",
+    "productionBusinessN": 11,
+    "productionBusinessEstimatedE2eP50Ms": 11690,
+    "productionBusinessEstimatedE2eP95Ms": 13392,
+    "uatBusinessEstimatedE2eP50Ms": 12544,
+    "isCurrentSlo": false,
+    "method": "Historical report sums buffer+queue+instrumented stage durations; not a new device-visible benchmark"
+  },
+  "production": {
+    "ec2HostsRunning": 4,
+    "rds": "available",
+    "health": "ok",
+    "runtimeEndpoint": {
+      "name": "kamal_production_b",
+      "version": "12",
+      "sourceCommit": "a2b926c6ee80f26065aecef6998415db1d1a379f",
+      "status": "READY",
+      "preparedRead": true,
+      "fusedPlanShadow": true,
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "families": [
+        "sales.get_sales_summary::single_metric",
+        "expense.list_recent::single_metric",
+        "accounting.get_summary::list",
+        "expense.get_daily_closing::single_metric"
+      ]
+    },
+    "database": {
+      "role": "watchdog_support_ro",
+      "readOnly": "on",
+      "statementTimeout": "15s",
+      "aiTurnRows": 18,
+      "runtimeTimedRows": 5,
+      "untimedRows": 13,
+      "latestAiTurnUtc": "2026-09-26T14:48:30.155Z",
+      "latestTimedUtc": "2026-09-25T09:02:30.833Z",
+      "timedSources": [
+        "641a71af94a07b42bcb13ba2b8f2e6975fe2216e",
+        "277722ff6045298dac22182875379ea4826b00da"
+      ],
+      "currentA2TimedRowsInWindow": 0,
+      "last24hUsageCounts": {
+        "line.intake-route": 9,
+        "ocr.receipt.extract": 14,
+        "ocr.receipt.image-reread": 6
+      }
+    },
+    "cloudwatch": {
+      "apiGroup": "/ecs/mangmee-kamal-production-api-web",
+      "groupExists": true,
+      "readStatus": "AccessDenied: DescribeLogStreams/FilterLogEvents using existing scoped operator/deploy profiles",
+      "runtimeGroupExists": true,
+      "runtimeFilterStatus": "AccessDenied"
+    },
+    "limitations": [
+      "Runtime endpoint identity was read live; this is not a full API/worker container-source attestation.",
+      "Missing durationMs is not proof that no API log exists; intake/media paths do not all persist runtime fields in AiTurn."
+    ]
+  },
+  "uat": {
+    "ec2HostsStopped": 2,
+    "rds": "available",
+    "runtimeEndpoint": {
+      "name": "kamal_uat_b",
+      "version": "33",
+      "sourceCommit": "a2b926c6ee80f26065aecef6998415db1d1a379f",
+      "status": "READY",
+      "preparedRead": true,
+      "fusedPlanShadow": true,
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "families": [
+        "sales.get_sales_summary::single_metric",
+        "expense.list_recent::single_metric",
+        "accounting.get_summary::list",
+        "expense.get_daily_closing::single_metric"
+      ]
+    },
+    "database": {
+      "role": "watchdog",
+      "readOnly": "on",
+      "statementTimeout": "15s",
+      "method": "Documented UAT tunnel; connection default_transaction_read_only=on plus BEGIN READ ONLY; credentials not printed or retained",
+      "aiTurnRows": 12,
+      "runtimeTimedRows": 6,
+      "untimedRows": 6,
+      "timedCompleted": 4,
+      "timedRefused": 2,
+      "timedSource": "a2b926c6ee80f26065aecef6998415db1d1a379f",
+      "agentcoreHttpRangeMs": [
+        4040,
+        10949
+      ],
+      "modelCallsRange": [
+        1,
+        3
+      ]
+    },
+    "timedRows": [
+      {
+        "atUtc": "2026-09-26T02:25:04.136Z",
+        "durationMs": 2794,
+        "runtimeTotalMs": 3205,
+        "agentcoreHttpMs": 5045,
+        "modelCalls": 1
+      },
+      {
+        "atUtc": "2026-09-26T02:25:29.796Z",
+        "durationMs": 2464,
+        "runtimeTotalMs": 2790,
+        "agentcoreHttpMs": 4151,
+        "modelCalls": 1
+      },
+      {
+        "atUtc": "2026-09-26T02:26:08.582Z",
+        "durationMs": 4941,
+        "runtimeTotalMs": 5375,
+        "agentcoreHttpMs": 7226,
+        "modelCalls": 3
+      },
+      {
+        "atUtc": "2026-09-26T02:26:57.178Z",
+        "durationMs": 8076,
+        "runtimeTotalMs": 8400,
+        "agentcoreHttpMs": 9706,
+        "modelCalls": 2
+      },
+      {
+        "atUtc": "2026-09-26T02:27:56.361Z",
+        "durationMs": 9193,
+        "runtimeTotalMs": 9583,
+        "agentcoreHttpMs": 10949,
+        "modelCalls": 3
+      },
+      {
+        "atUtc": "2026-09-26T02:29:53.477Z",
+        "durationMs": 2352,
+        "runtimeTotalMs": 2675,
+        "agentcoreHttpMs": 4040,
+        "modelCalls": 1
+      }
+    ],
+    "cloudwatch": {
+      "queriedLegacyApiGroup": "/ecs/watchdog-bms-uat-api-web",
+      "filter": "line.ai.api_trace",
+      "windowHours": 72,
+      "returned": 0,
+      "paginationComplete": true,
+      "runtimeGroupExists": true,
+      "runtimeFilterStatus": "AccessDenied",
+      "sourceLoggingObservation": "a2 infra/kamal/release.py:183-185 explicitly adds awslogs only for production; stopped UAT host Docker logs were not inspected"
+    }
+  },
+  "cloudwatchRuntimeMetrics": {
+    "namespace": "WatchDog/Runtime",
+    "listMetricsReturned": 0,
+    "limitation": "Discovery result only; not proof that no historic timing/log data exists."
+  },
+  "sessions": {
+    "production": "watchdog-bedrock-dev-9ixtyesyn8ayb9b2gv7rq7rjsi",
+    "uat": "watchdog-bedrock-dev-q7yibhst7pxnoiyrdjxaeoute4",
+    "bothClosed": true,
+    "ownedActiveSessionReadback": 0
+  },
+  "limitations": [
+    "No new traffic was generated to populate metrics.",
+    "No current full LINE end-to-end distribution or grounded correctness benchmark established.",
+    "Six UAT runtime samples are insufficient for p95 acceptance and include refusals.",
+    "Enabled prepared flags do not establish actual eligible prepared hit rate; API and runtime trace joining remains required."
+  ]
+}

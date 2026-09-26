@@ -1,5 +1,7 @@
 # Mangmee Accounting and Tax Knowledge Spec
 
+> Follow-up 2026-09-26: [Understanding and advisor reliability spec](mangmee-ai-understanding-and-advisor-reliability-spec-th.md) และ [แผน](../plans/mangmee-ai-understanding-and-advisor-reliability-plan-2026-09-26.md) นำ R0/R2 policy ในเอกสารนี้ไปแก้ runtime ที่ยังบล็อก general/business knowledge พร้อม continuity และ evidence gates โดยไม่รอ live web search หรือข้ามกฎ approved/effective sources ของ R3/R4; ยังไม่มี implementation/activation จากงานเขียนแผนนี้
+
 สถานะ: **PARTIAL READY** — product-help source manifest/retrieval security เริ่ม P23-0/1 ได้; tax/accounting pack publication รอ §19; แผนส่งมอบอยู่ใน [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p23--knowledge-pack)
 
 เอกสารหลัก: [Mangmee Accounting Operating System Spec](mangmee-accounting-operating-system-spec-th.md)
