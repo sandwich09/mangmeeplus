@@ -1,5 +1,7 @@
 # LINE AI Mangmee Advisor and Natural Conversation Spec
 
+> Follow-up 2026-09-26: [Understanding and advisor reliability spec](mangmee-ai-understanding-and-advisor-reliability-spec-th.md) และ [แผน](../plans/mangmee-ai-understanding-and-advisor-reliability-plan-2026-09-26.md) กำหนดการแก้ false refusal, context loss, handoff และความขัดแย้ง card-only กับ stable general knowledge โดยต่อระบบเดิม v2.1แยกexisting/repair/new capabilities พร้อมpubliclookup R2/explicitpreferences R3และacceptance catalog; C13/W10เสียงพักตามผู้ใช้; supersede open-web/preference deferralเฉพาะขอบเขตที่ระบุในspecใหม่ ข้อกำหนดใหม่ยังเป็นproposed; source a2 direct-answer gate รองรับ SOCIAL_CHAT เท่านั้น อย่าใช้ชื่อ mode หรือสถานะเอกสารนี้แทนหลักฐานเปิดใช้จริง
+
 ## 1. สถานะ
 
 - สถานะ: **DRAFT v2; Phase 1 default-off scaffolding merge แล้ว (`4c472d6c`, PR #235), ยังไม่มี user-visible activation** — Slice A เดินต่อได้ตามแผน; knowledge/company activation ยังติด gate

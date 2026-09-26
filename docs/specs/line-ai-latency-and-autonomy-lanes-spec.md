@@ -1,6 +1,10 @@
 # LINE AI Latency and Autonomy Lanes Spec
 
-## 1. Status
+## Current applicability — 2026-09-26
+
+The implementation status and deployment observations below are historical checkpoints. See the [Production/UAT readback](../research/mangmee-ai-live-timing-readback-2026-09-26-th.md) for the dated runtime configuration and remaining measurement limits. For the proposed reliability v2 work, the [reliability spec](mangmee-ai-understanding-and-advisor-reliability-spec-th.md) §§2, 20 and 20.1 govern quality preservation, bounded execution and candidate budget validation; this does not authorize runtime activation or alter existing deployment configuration.
+
+## 1. Status — historical implementation checkpoint
 
 Design approved for evaluation. Phase 0–2 and the real Phase 3 producer + Phase 4 deterministic simple-read
 EXECUTION lane are IMPLEMENTED default-off (see `docs/agent-memory/line-ai-latency-and-autonomy-lanes.md`
@@ -137,8 +141,10 @@ can obtain a fresh validated delegation before any tool call.
 ### 6.3 Full agentic lane
 
 Multi-intent, comparison, analysis, ambiguous input, missing identifiers, open clarification, partial
-availability, or unverified response families keep the native tool loop and model synthesis. Fused
-planning may remove the duplicate plan-router call, but this lane does not trade away reasoning depth.
+availability, or unverified response families keep the supported bounded full-orchestration path and
+model synthesis. Native tool-loop enablement is separately budget/evaluation-gated and is not required
+by this lane; reliability v2 keeps it disabled for its current rollout. Fused planning may remove the
+duplicate plan-router call, but this lane does not trade away reasoning depth.
 
 ### 6.4 Casual conversation
 
@@ -384,6 +390,8 @@ The fallback re-plans from trusted request/context and receives no authority fro
 
 ## 14. Acceptance and Rollback Gates
 
+For reliability v2, §20.1 of the [reliability spec](mangmee-ai-understanding-and-advisor-reliability-spec-th.md) supersedes the quality-regression allowances below: compare against the intelligence-enhanced candidate before speed optimization and pass its quality-preservation gate before canary. The numeric quality margins remain additional operational stop triggers, not permission to accept confirmed quality loss. Budget targets must pass that gate before replacing existing bounds; runtime limits remain mandatory.
+
 Required before canary:
 
 - existing combined operator replay remains 436/436 with zero forbidden tool calls;
@@ -409,7 +417,8 @@ confirmation controls. Report Thai and English separately wherever both exist in
 
 Latency and cost reduction are gated hypotheses, not design guarantees. Larger fused prompts or lower
 cache reuse may erase the expected saving; retain a change only when measured per-completed-intent cost
-and latency pass these gates while quality remains inside its numeric margins.
+and latency pass these gates while quality meets the applicable release gate (including reliability
+v2 §20.1 where in scope), not merely the historical numeric margins.
 
 Immediate rollback: any cross-tenant result, permission/entitlement bypass, final mutation, raw
 identifier leakage, forged prepared-plan execution, or feedback before durable acceptance.

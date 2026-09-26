@@ -1,0 +1,162 @@
+{
+  "sourceCommit": "f932b57766f5dd22c0d28aedd4bc06f210e374ef",
+  "date": "2026-09-27",
+  "method": "Results reported by delegated source auditors in this session. Actual pinned Git TypeScript transpiled/executed in memory with synthetic inputs and isolated dependency stubs. No files changed by agents; no provider/DB/cloud calls. This file records observations, not an executable test harness or E2E evidence.",
+  "inputGrounding": {
+    "reportedAssertionsPassed": 11,
+    "observations": [
+      {
+        "probe": "note_tail_after_grounding_prefix",
+        "inputChars": 1220,
+        "fullEvidenceFailure": null,
+        "prefix1000Failure": "noteAppend"
+      },
+      {
+        "probe": "21st_amount_correction",
+        "inputChars": 227,
+        "candidateCount": 20,
+        "desiredAmount": "999",
+        "desiredAmountPresent": false,
+        "groundingFailure": "amount"
+      },
+      {
+        "probe": "busy_buffer_fit",
+        "pendingChars": 3900,
+        "incomingChars": 200,
+        "fittingPrefixCount": 0,
+        "notice": "rate_limited; not silent truncation"
+      },
+      {
+        "probe": "single_oversize_buffer_item",
+        "inputChars": 5000,
+        "retainedChars": 5000
+      },
+      {
+        "probe": "buffer_to_runtime",
+        "firstChars": 3900,
+        "secondChars": 5000,
+        "joinedChars": 8901,
+        "atCapacityBeforeSecond": false,
+        "atCapacityAfterSecond": true
+      },
+      {
+        "probe": "runtime_boundary",
+        "chars8000Accepted": true,
+        "chars8001Accepted": false
+      }
+    ]
+  },
+  "delivery": [
+    {
+      "probe": "generic_card_1300_plus_qualifier",
+      "visibleTailRetained": false,
+      "canonicalTailRetained": true,
+      "outcomeAccepted": true
+    },
+    {
+      "probe": "structured_card_fallback",
+      "canonicalPresent": false,
+      "fallbackChars": 400,
+      "tailRetained": false
+    },
+    {
+      "probe": "generic_canonical5001",
+      "outcomeAccepted": false
+    },
+    {
+      "probe": "five_text_parts_plus_confirm",
+      "objects": 6,
+      "outcomeAccepted": false
+    },
+    {
+      "probe": "split_4799Thai_plus_emoji",
+      "firstPartFinalCodeUnit": "D83D",
+      "secondPartFirstCodeUnit": "DE00",
+      "joinedSourceEqual": true
+    },
+    {
+      "probe": "text24001",
+      "parts": 6
+    },
+    {
+      "probe": "supported_header_confirm_preview",
+      "fields": [
+        "expenseDate",
+        "vendorName",
+        "documentNumber",
+        "note"
+      ],
+      "altTextUtf16": 500,
+      "limit": 400,
+      "outcomeAccepted": false
+    }
+  ],
+  "providerBudget": [
+    {
+      "probe": "openai_incomplete_tool_arguments",
+      "actual": {
+        "ok": true,
+        "input": {},
+        "stopReason": "tool_use"
+      }
+    },
+    {
+      "probe": "bedrock_nontext_then_visible_text",
+      "actual": {
+        "ok": true,
+        "text": "",
+        "stopReason": "end_turn"
+      }
+    },
+    {
+      "probe": "envelope_output_version_skew",
+      "current1024Accepted": true,
+      "changed4096Accepted": false
+    },
+    {
+      "probe": "sonnet_line_turn_hold_at_fx33",
+      "current1024Satang": 546,
+      "hypothetical4096Satang": 698,
+      "deltaPerInvocation": 152
+    },
+    {
+      "probe": "actual_intake_utf8_estimator",
+      "input": "ยอดขายวันนี้",
+      "bound": 20000,
+      "plain": 14239,
+      "advisor": 19194,
+      "fused": 40779,
+      "advisorAndFused": 45734,
+      "scope": "SPLIT guarded envelope; no live flag claim"
+    }
+  ],
+  "businessDocuments": [
+    {
+      "probe": "substitute_purpose_plus_question",
+      "input": "วัตถุประสงค์: ไปพบลูกค้า\nใบนี้ใช้ลดภาษีได้ไหม",
+      "rawNonQuestionLines": "วัตถุประสงค์: ไปพบลูกค้า",
+      "afterActualNormalizeNonQuestionLines": ""
+    },
+    {
+      "probe": "substitute_field_overflow",
+      "unlabeledPurpose201Accepted": false,
+      "labeledValue501Accepted": false,
+      "policy": "undefined/ignored without typed overflow, not silent slice"
+    },
+    {
+      "probe": "reimbursement_media_route",
+      "intent": "REIMBURSEMENT_REQUEST_START",
+      "semanticOutcome": "REIMBURSEMENT_CLAIM",
+      "fundingSource": "EMPLOYEE_PAID",
+      "decision": "unsupported",
+      "providerCallsDuringProbe": 0
+    }
+  ],
+  "limitations": [
+    "No live incidence measurement",
+    "No DB crash/race or LINE/browser tests",
+    "No inference that downstream validation executes malformed calls",
+    "Current bounds and plain prompt are passing negative controls",
+    "Support-case probes intentionally excluded after owner clarified business-document scope"
+  ]
+}
