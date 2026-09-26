@@ -146,6 +146,8 @@ export type VendorCounterpartyAutoSaveResult = {
   /** Case c only: the registry kept its own primary address because it is locked (A4). */
   locked?: boolean;
   failed?: true;
+  /** Registry action succeeded, but the expense could not be linked under its expected revision. */
+  linkFailed?: true;
 };
 
 export type AccountingDocumentLineSummary = {

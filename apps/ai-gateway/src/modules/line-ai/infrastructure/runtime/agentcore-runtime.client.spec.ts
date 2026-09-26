@@ -65,6 +65,28 @@ const validResult = {
 };
 
 describe('AgentCoreRuntimeClient', () => {
+  it('reads the serving edit flag with a signed, model-free capability probe', async () => {
+    const orig = globalThis.fetch;
+    let body: Record<string, unknown> = {};
+    globalThis.fetch = async (_url: any, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        turnId: body['turnId'], replyText: '', plan: { status: 'UNROUTABLE', intents: [] }, durationMs: 0,
+        refused: false, sourceRefs: [], webLinks: [], toolsInvoked: [], lineDraftEditEnabled: true,
+      }), { status: 200 }) as any;
+    };
+    try {
+      const enabled = await new AgentCoreRuntimeClient(makeConfig()).lineDraftEditCapabilityEnabled();
+      assert.equal(enabled, true);
+      assert.equal(body['lineDraftEditCapabilityProbe'], true);
+      assert.equal(body['messageText'], 'capability probe');
+      assert.equal(body['permissions'] instanceof Array && (body['permissions'] as unknown[]).length, 0);
+      assert.ok(!('companyId' in body && body['companyId'] !== 'line-edit-capability-probe'));
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
   it('throws RUNTIME_NOT_CONFIGURED when ARN is empty', async () => {
     const client = new AgentCoreRuntimeClient(makeConfig(''));
     await assert.rejects(

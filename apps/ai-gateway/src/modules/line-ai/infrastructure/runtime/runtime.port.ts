@@ -27,6 +27,8 @@ export type AgentCoreInvokeInput = {
   preparedPlan?: LineAiPreparedPlan;
   /** Trusted outer intake provenance; the runtime re-validates it by explicit membership. */
   intakeIntent?: LineIntakeRouteIntent;
+  /** Internal zero-model config probe used by the authenticated Gateway capability endpoint. */
+  lineDraftEditCapabilityProbe?: true;
 };
 
 export type AgentCoreInvokeResult = {
@@ -50,6 +52,8 @@ export type AgentCoreInvokeResult = {
   runtimeBinding?: LineAiRuntimeBinding;
   stageDurationsMs?: LineAiStageDurations;
   modelCallCount?: number;
+  /** Present only on a capability probe response. */
+  lineDraftEditEnabled?: boolean;
 };
 
 export interface IAgentCoreRuntime {

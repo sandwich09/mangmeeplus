@@ -177,14 +177,16 @@ function makeHarness(opts: {
 }
 
 let uniq = 0;
-function textEnv(id: string, body: string, opts: { chatId?: string; userId?: string; timestamp?: number } = {}): LineBufferEnvelope {
+function textEnv(id: string, body: string, opts: { chatId?: string; userId?: string; timestamp?: number; draftUpdatePreviewId?: string } = {}): LineBufferEnvelope {
   uniq += 1;
   const userId = opts.userId ?? 'user-1';
   return {
     chatId: opts.chatId ?? userId,
     lineUserId: userId,
     messagingChannelId: 'ch-1',
-    item: { kind: 'text', webhookEventId: id, replyToken: `rt-${id}`, text: body, lineMessageId: `mid-${id}`, timestamp: opts.timestamp ?? uniq },
+    item: { kind: 'text', webhookEventId: id, replyToken: `rt-${id}`, text: body,
+      ...(opts.draftUpdatePreviewId ? { draftUpdatePreviewId: opts.draftUpdatePreviewId } : {}),
+      lineMessageId: `mid-${id}`, timestamp: opts.timestamp ?? uniq },
   };
 }
 function mediaEnv(id: string, opts: { chatId?: string; userId?: string; timestamp?: number } = {}): LineBufferEnvelope {
@@ -361,6 +363,20 @@ describe('LineMessageBufferService – legal acceptance pre-storage gate', () =>
     );
     assert.equal(h.rows.size, 0);
     assert.equal(h.executed.length, 0);
+  });
+});
+
+describe('LineMessageBufferService – card-bound draft postbacks', () => {
+  it('preserves opaque previewId through accepted payload and fast dispatch without changing command text', async () => {
+    const previewId = '550e8400-e29b-41d4-a716-446655440000';
+    const h = makeHarness({ debounceMs: 0 });
+    await h.service.enqueue(textEnv('draft-card-confirm', 'ยืนยันการแก้ไข', { draftUpdatePreviewId: previewId }));
+
+    assert.equal((h.rows.get('draft-card-confirm')?.payloadJson as any)?.item?.text, 'ยืนยันการแก้ไข');
+    assert.equal((h.rows.get('draft-card-confirm')?.payloadJson as any)?.item?.draftUpdatePreviewId, previewId);
+    await sleep(20);
+    assert.equal(h.executed[0]?.messageText, 'ยืนยันการแก้ไข');
+    assert.equal(h.executed[0]?.draftUpdatePreviewId, previewId);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendUserNote, canCorrectAmount, evaluateCorrectionHints, withPurposeNote, type CorrectionEvidence, type CorrectionTargetSnapshot } from './line-correction.logic';
+import { appendUserNote, canCorrectAmount, evaluateCorrectionHints, isExpenseEditCapabilityQuestion, withPurposeNote, type CorrectionEvidence, type CorrectionTargetSnapshot } from './line-correction.logic';
 import { LINE_CORRECTION_FIELDS } from '@watchdog-bms/contracts';
 
 const TODAY = '2026-08-03';
@@ -120,6 +120,20 @@ describe('LINE correction guards', () => {
 
     assert.equal(outcome.status, 'guidance');
     assert.match(outcome.status === 'guidance' ? outcome.reason : '', /no_correctable_field/);
+  });
+});
+
+describe('LINE expense edit capability question', () => {
+  it('matches a narrow question without a proposed value', () => {
+    for (const text of ['แก้รายการได้ไหม', 'บิลนี้แก้ผ่านไลน์ได้หรือเปล่า', 'ค่าใช้จ่ายเมื่อกี้แก้ได้มั้ย']) {
+      assert.equal(isExpenseEditCapabilityQuestion(text), true, text);
+    }
+  });
+
+  it('leaves corrections with a new value or a different intent on the normal route', () => {
+    for (const text of ['แก้ยอดเป็น 2,500 ได้ไหม', 'แก้วันที่เป็น 20 ก.ค.', 'รายการเดียวหรือเปล่า', 'ทำอะไรได้บ้าง']) {
+      assert.equal(isExpenseEditCapabilityQuestion(text), false, text);
+    }
   });
 });
 

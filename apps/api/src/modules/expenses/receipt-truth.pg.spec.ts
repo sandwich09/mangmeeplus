@@ -26,7 +26,6 @@ import { PrismaAuditRepository } from '../audit/infrastructure/prisma-audit.repo
 import { PrismaExpenseRepository } from './infrastructure/prisma-expense.repository';
 import { ReceiptOcrApplyService, RECEIPT_REVIEW_REASONS } from './application/services/receipt-ocr-apply.service';
 import { CorrectLineCapturedExpenseUseCase } from './application/use-cases/line-correction.use-case';
-import { UpdateExpenseDraftUseCase } from './application/use-cases/expense-draft.use-case';
 
 const databaseUrl = process.env.RECEIPT_TRUTH_TEST_DATABASE_URL;
 
@@ -92,13 +91,6 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
 
   const ctx = () => ({ companyId, userId, requestId: randomUUID(), permissions: ['expense.update'], scopes: {} } as any);
   const audit = () => new AuditService(new PrismaAuditRepository({ client } as any), { error: () => undefined } as any);
-  // The correction lane never reaches transaction-tax resolution (it writes header fields and, at
-  // most, the single trivial line a text note creates), so the real service is not wired here.
-  const updateDraft = () => new UpdateExpenseDraftUseCase(
-    new PrismaExpenseRepository({ client } as any),
-    audit(),
-    { resolveLines: async (_c: unknown, lines: unknown) => lines } as any,
-  );
   const apply = () => new ReceiptOcrApplyService({ client } as any, new PrismaExpenseRepository({ client } as any));
 
   /** A LINE-captured draft exactly as `initReceiptUpload` leaves it: the upload day as a placeholder
@@ -272,64 +264,21 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
     assert.deepEqual(outcome.reviewReasons, [RECEIPT_REVIEW_REASONS.dateUnverified]);
   });
 
-  it('appends the user note through the real transaction without losing the provenance', async (t) => {
+  it('keeps the legacy correction adapter read-only; preview/apply tests own note writes', async (t) => {
     if (unreachable) return t.skip(unreachable);
     const expenseId = await draft();
-    const record = await client.expenseRecord.findUniqueOrThrow({ where: { id: expenseId } });
-    const useCase = new CorrectLineCapturedExpenseUseCase(
-      { client } as any,
-      new PrismaExpenseRepository({ client } as any),
-      updateDraft(),
-      audit(),
-    );
-    const text = 'จากบิลเมื่อกี้มี service charge 10% นะ แก้ไขได้ใช่ไหม';
-
-    const outcome = await useCase.execute(ctx(), {
+    const before = await client.expenseRecord.findUniqueOrThrow({ where: { id: expenseId } });
+    const outcome = await new CorrectLineCapturedExpenseUseCase().execute(ctx(), {
       lineMessageIdHash: `${tag}-msg`, chatKeyHash: 'receipt-truth-chat',
       candidates: [{ id: expenseId, label: 'BHC' }] as never,
-      hints: { note: { to: text } } as never,
-      evidence: [{ text, todayIso: TODAY }],
+      hints: { note: { to: 'เพิ่มหมายเหตุจากไลน์' } } as never,
+      evidence: [{ text: 'เพิ่มหมายเหตุจากไลน์', todayIso: TODAY }],
     });
-
-    assert.equal(outcome.status, 'applied');
+    assert.equal(outcome.status, 'guidance');
+    if (outcome.status === 'guidance') assert.equal(outcome.reason, 'preview_required');
     const after = await client.expenseRecord.findUniqueOrThrow({ where: { id: expenseId } });
-    assert.ok(after.note?.startsWith('LINE receipt upload'), `provenance must survive, got: ${after.note}`);
-    assert.ok(after.note?.includes(`ผู้ใช้แจ้ง: ${text}`));
-    assert.ok((after.note?.length ?? 0) <= 500, 'the column never grows past the cap');
-    assert.equal(after.grandTotalAmount.toFixed(2), record.grandTotalAmount.toFixed(2), 'and no money moved');
-  });
-
-  it('caps a full note in the column rather than dropping what the user said', async (t) => {
-    if (unreachable) return t.skip(unreachable);
-    const expenseId = await draft(`LINE receipt upload${'!'.repeat(441)}`);
-    const useCase = new CorrectLineCapturedExpenseUseCase(
-      { client } as any,
-      new PrismaExpenseRepository({ client } as any),
-      updateDraft(),
-      audit(),
-    );
-    const text = 'จากบิลเมื่อกี้มี service charge 10% นะ แก้ไขได้ใช่ไหม';
-
-    const outcome = await useCase.execute(ctx(), {
-      lineMessageIdHash: `${tag}-msg-cap`, chatKeyHash: 'receipt-truth-chat',
-      candidates: [{ id: expenseId, label: 'BHC' }] as never,
-      hints: { note: { to: text } } as never,
-      evidence: [{ text, todayIso: TODAY }],
-    });
-
-    assert.equal((outcome as { noteOutcome?: string }).noteOutcome, 'truncated');
-    const after = await client.expenseRecord.findUniqueOrThrow({ where: { id: expenseId } });
-    assert.ok(after.note!.length <= 500);
-    assert.ok(after.note!.startsWith('LINE receipt upload'));
-    assert.ok(after.note!.includes('ผู้ใช้แจ้ง:'), 'something of what he said is recorded, not nothing');
-    assert.equal(outcome.status, 'applied'); if (outcome.status !== 'applied') return;
-    assert.deepEqual(outcome.source, { id: expenseId, updatedAt: after.updatedAt });
-    await client.expenseRecord.update({ where: { id: expenseId }, data: { note: 'Human edit after correction' } });
-    const human = await client.expenseRecord.findUniqueOrThrow({ where: { id: expenseId } });
-    const replay = await useCase.execute(ctx(), { lineMessageIdHash: `${tag}-msg-cap`, chatKeyHash: 'receipt-truth-chat',
-      candidates: [{ id: expenseId, label: 'BHC' }] as never, hints: { note: { to: text } } as never, evidence: [{ text, todayIso: TODAY }] });
-    assert.equal(replay.status, 'applied'); if (replay.status !== 'applied') return;
-    assert.deepEqual(replay.source, outcome.source); assert.equal(replay.noteOutcome, 'truncated');
-    assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expenseId } }), human);
+    assert.equal(after.note, before.note);
+    assert.equal(after.updatedAt.getTime(), before.updatedAt.getTime());
+    assert.equal(after.grandTotalAmount.toFixed(2), before.grandTotalAmount.toFixed(2));
   });
 });

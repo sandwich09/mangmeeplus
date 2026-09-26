@@ -20,6 +20,7 @@ type Explain = {
   totalsIdentity?: unknown;
   assumptions?: unknown;
   amountEditableOverLine?: unknown;
+  editableOverLine?: unknown;
 };
 
 const PLAIN_DECIMAL = /^-?\d+(\.\d+)?$/;
@@ -151,7 +152,7 @@ function assumptionLine(assumptions: unknown): string | undefined {
  * The reply. Reads ONLY `data`; refuses (undefined) unless the totals identity is fully present, so
  * an incomplete read never becomes a confident sentence about someone's money.
  */
-export function formatExpenseExplainReply(data: unknown): string | undefined {
+export function formatExpenseExplainReply(data: unknown, lineDraftEditEnabled = true): string | undefined {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
   const explain = data as Explain;
   if (explain.found === false) return undefined;
@@ -207,13 +208,12 @@ export function formatExpenseExplainReply(data: unknown): string | undefined {
     const gap = money(identity['gapAmount']);
     lines.push(`⚠️ ยอดหัวเอกสารกับรายการไม่ตรงกัน${gap ? ` ต่างกัน ${gap}` : ''} — ตรวจในเว็บนะคะ`);
   }
-  if (statusLabel) lines.push(`สถานะตอนนี้: ${statusLabel}`);
+  if (statusLabel) lines.push(`สถานะตอนนี้: ${statusLabel}${header['status'] === 'READY_FOR_CONFIRMATION' ? ' (ยังไม่ยืนยัน)' : ''}`);
   const assumption = assumptionLine(explain.assumptions);
   if (assumption) lines.push(assumption);
-  // Honest about the LINE lane as it stands today (spec §5.3): the correction lane changes the four
-  // text fields, not money. S-4 replaces this sentence when draft editing ships.
-  lines.push(explain.amountEditableOverLine === true
-    ? 'ถ้าจะแก้ พิมพ์บอกได้เลยค่ะ'
-    : 'แก้วันที่ ร้าน เลขที่เอกสาร หรือหมายเหตุ พิมพ์บอกได้เลยค่ะ ส่วนการแก้ยอดเงินทำในเว็บนะคะ');
+  const editable = lineDraftEditEnabled && Array.isArray(explain.editableOverLine) && explain.editableOverLine.length > 0;
+  lines.push(editable
+    ? 'ถ้าจะแก้ผ่าน LINE ให้พิมพ์ฟิลด์กับค่าใหม่ ระบบจะแสดงตัวอย่างก่อน และจะบันทึกเมื่อกด “ยืนยัน” เท่านั้นค่ะ'
+    : 'รายการนี้ยังแก้ผ่าน LINE ไม่ได้ค่ะ กรุณาเปิดรายการในเว็บเพื่อตรวจหรือแก้ไข');
   return lines.join('\n');
 }

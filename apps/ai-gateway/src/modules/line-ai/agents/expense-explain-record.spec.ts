@@ -305,8 +305,7 @@ describe('S-3 explain lane — deterministic rendering', () => {
     assert.match(result.replyText, /บิล «BHC» 03\/09\/2569/, 'the OCR-read vendor is quoted, and the date is Buddhist-era');
     assert.match(result.replyText, /ค่าบริการ 152\.00/);
     assert.match(result.replyText, /แยกเป็นช่องของตัวเอง/, 'it answers the "why separate" question');
-    // Honest about today's LINE lane: the four text fields, money in web (spec §5.3).
-    assert.match(result.replyText, /แก้ยอดเงินทำในเว็บ/);
+    assert.match(result.replyText, /แสดงตัวอย่างก่อน และจะบันทึกเมื่อกด “ยืนยัน” เท่านั้น/);
     // One card carrying the record link; the answer text itself never writes a URL.
     assert.equal(result.presentation?.kind, 'answer_cards');
     assert.equal(result.presentation?.cards.length, 1);
@@ -327,6 +326,18 @@ describe('S-3 explain lane — deterministic rendering', () => {
   it('names the assumed values when the reader could not verify them', () => {
     const reply = formatExpenseExplainReply({ ...BHC_EXPLAIN, assumptions: [{ field: 'expenseDate', reason: 'unverified' }] });
     assert.match(reply!, /ยังไม่ยืนยัน: วันที่เอกสาร/);
+  });
+
+  it('does not claim a READY_FOR_CONFIRMATION record is confirmed, and fails closed when serving edit is off', () => {
+    const ready = formatExpenseExplainReply({ ...BHC_EXPLAIN,
+      header: { ...BHC_EXPLAIN.header, status: 'READY_FOR_CONFIRMATION', statusLabel: 'พร้อมยืนยัน' },
+    });
+    assert.match(ready!, /สถานะตอนนี้: พร้อมยืนยัน \(ยังไม่ยืนยัน\)/);
+    const unavailable = formatExpenseExplainReply(BHC_EXPLAIN, false);
+    assert.match(unavailable!, /ยังแก้ผ่าน LINE ไม่ได้/);
+    assert.doesNotMatch(unavailable!, /กด “ยืนยัน”/);
+    const noCapability = formatExpenseExplainReply({ ...BHC_EXPLAIN, editableOverLine: [], amountEditableOverLine: false });
+    assert.match(noCapability!, /ยังแก้ผ่าน LINE ไม่ได้/);
   });
 
   it('refuses (rather than half-answers) a result whose totals identity is incomplete', () => {
@@ -476,7 +487,7 @@ const SECURITY: Record<string, { req?: Partial<LineAiTurnRequest>; data?: unknow
     assert: (reply) => {
       assertOnlyGroundedNumbers(reply, 'injected mutation order');
       assert.doesNotMatch(reply, /ยืนยันแล้ว|แก้ให้แล้ว/, 'no mutation is ever claimed');
-      assert.match(reply, /แก้ยอดเงินทำในเว็บ/, 'the honest capability sentence still stands');
+      assert.match(reply, /แสดงตัวอย่างก่อน และจะบันทึกเมื่อกด “ยืนยัน” เท่านั้น/, 'edit copy describes the confirmation boundary');
     },
   },
   // ── Injection through the DOCUMENT: OCR copies the paper, so these fields are attacker text ──

@@ -22,6 +22,14 @@ import type { LineCorrectionField, LineIntakeCorrectionHints, LineIntakeCorrecti
 /** One evidence text plus the day it was written, so relative readings resolve as they did then. */
 export type CorrectionEvidence = { text: string; todayIso: string };
 
+/** Narrow read-only question about the LINE edit capability. Keep requests carrying a value or a
+ * field-specific change on the normal correction route, where they can only produce a preview. */
+export function isExpenseEditCapabilityQuestion(text: string): boolean {
+  const normalized = text.normalize('NFKC').trim().replace(/[\s\u200b]+/gu, '');
+  if (!normalized || normalized.length > 80 || /\d/u.test(normalized)) return false;
+  return /^(?:(?:บิล|รายการ|ค่าใช้จ่าย)(?:นี้|เมื่อกี้|ล่าสุด)?(?:ในไลน์|ผ่านไลน์)?|ไลน์)?(?:แก้(?:ไข)?(?:รายการ|บิล|ค่าใช้จ่าย)?(?:ผ่านไลน์|ในไลน์)?|แก้ในไลน์)(?:ได้)?(?:ไหม|มั้ย|หรือเปล่า|ได้หรือไม่)[?？!！]*$/u.test(normalized);
+}
+
 export type CorrectionTargetSnapshot = {
   expenseDate: string | null;
   grandTotalAmount: string | null;

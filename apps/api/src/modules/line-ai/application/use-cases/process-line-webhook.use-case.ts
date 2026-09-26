@@ -38,7 +38,8 @@ import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } 
 import { CorrectLineCapturedExpenseUseCase } from '../../../expenses/application/use-cases/line-correction.use-case';
 import { LineDraftUpdateUseCase } from '../../../expenses/application/use-cases/line-draft-update.use-case';
 import { detectLineDraftEditRequest } from '../../../expenses/domain/logic/line-draft-update.logic';
-import { LINE_DRAFT_UPDATE_TOOLS, type LineDraftUpdateTool, type LineIntakeCorrectionHints } from '@watchdog-bms/contracts';
+import { evaluateCorrectionHints, isExpenseEditCapabilityQuestion } from '../../../expenses/domain/logic/line-correction.logic';
+import { LINE_DRAFT_UPDATE_TOOLS, type LineDraftUpdateTool } from '@watchdog-bms/contracts';
 import {
   DRAFT_UPDATE_ALREADY_APPLIED_PREFIX,
   draftProposalAckReason,
@@ -174,6 +175,8 @@ export type LineTextEvent = {
   lineMessageId?: string;
   /** Chat to push into when the reply token has expired (group id in group chats). */
   pushTargetId?: string;
+  /** Exact preview bound to a validated draft confirm/cancel postback; typed commands lack this. */
+  draftUpdatePreviewId?: string;
   /** Internal buffer hook: settle any in-flight pre-reply feedback before the answer. */
   beforeReply?: () => Promise<void>;
   /** P12-3b: filled in once the turn has resolved WHO it is answering, so the send boundary can
@@ -2794,9 +2797,9 @@ export class ProcessLineWebhookUseCase {
   }
 
   /**
-   * P10-L §3.7. Opens a package-change request for the shop this owner runs. Everything the request
-   * depends on is re-derived here (SEC-04): the button carries an intent and no ids, so a forged
-   * postback can only ever ask for what the sender could already ask for by typing.
+   * P10-L §3.7. Opens a package-change request for the shop this owner runs. This button is
+   * intent-only: it carries no record identifiers, and the owned shop is re-derived here, so a
+   * forged postback can only ask for what the sender could already ask for by typing.
    */
   private async handlePackageChangeRequest(
     event: LineTextEvent,
@@ -2897,9 +2900,9 @@ export class ProcessLineWebhookUseCase {
   }
 
   /**
-   * S-4 beat two (spec §5.4, J3.2/J3.4). The button said "yes" or "no" and nothing else; which
-   * record, which change and whether it is still applicable are all re-derived server-side from
-   * the pending preview this chat holds.
+   * S-4 beat two (spec §5.4, J3.2/J3.4). The button carries its action and opaque previewId. The
+   * server loads that exact chat-bound proposal, then rechecks its record, permissions and current
+   * revision before confirming or cancelling it.
    *
    * Every outcome is an honest sentence: applied names what changed and links the record, a moved
    * record says so and drops the proposal, a confirmed record gets the `mutation_blocked` copy
@@ -2917,8 +2920,13 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'draft_update_disabled', undefined, ctx.companyId);
       return;
     }
+    if (!event.draftUpdatePreviewId) {
+      await this.deliverReply(event, DRAFT_UPDATE_EXPIRED_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'draft_update_expired', undefined, ctx.companyId);
+      return;
+    }
     if (!confirm) {
-      const cancelled = await this.draftUpdate.cancel(ctx, chatKeyHash);
+      const cancelled = await this.draftUpdate.cancel(ctx, chatKeyHash, event.draftUpdatePreviewId);
       await this.deliverCompletedReply(
         event,
         cancelled === 'cancelled' ? DRAFT_UPDATE_CANCELLED_REPLY : DRAFT_UPDATE_EXPIRED_REPLY,
@@ -2929,12 +2937,12 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    const outcome = await this.draftUpdate.apply(ctx, chatKeyHash, event.webhookEventId);
+    const outcome = await this.draftUpdate.apply(ctx, chatKeyHash, event.webhookEventId, event.draftUpdatePreviewId);
     let reply: string;
     let status = 'completed';
     if (outcome.status === 'applied') {
       this.deliveryDraftPreviews.set(event, { context: ctx, chatKeyHash, requestId: ctx.requestId, previewId: outcome.preview.previewId, phase: 'APPLIED' });
-      const applied = draftUpdateAppliedReply(this.config.webBaseUrl, ctx.companyId, outcome.expenseId, outcome.preview);
+      const applied = draftUpdateAppliedReply(this.config.webBaseUrl, ctx.companyId, outcome.expenseId, outcome.preview, outcome.vendorCounterpartyAutoSave);
       // A double tap is the commonest thing a person does to a slow button; saying "nothing is
       // pending" would deny an edit they really made.
       reply = outcome.replayed ? `${DRAFT_UPDATE_ALREADY_APPLIED_PREFIX} ${applied}` : applied;
@@ -2985,7 +2993,12 @@ export class ProcessLineWebhookUseCase {
     });
     if (outcome.status === 'preview') {
       this.deliveryDraftPreviews.set(event, { context: ctx, chatKeyHash: chatKeyHashOf(event), requestId: ctx.requestId, previewId: outcome.preview.previewId, phase: 'PENDING' });
-      await this.deliverRequiredMessages(event, [buildDraftUpdatePreviewCard(outcome.preview)]);
+      try {
+        await this.deliverRequiredMessages(event, [buildDraftUpdatePreviewCard(outcome.preview)]);
+      } catch (error) {
+        await this.draftUpdate.discardUndeliveredPreview(ctx, chatKeyHashOf(event), outcome.preview.previewId);
+        throw error;
+      }
       await this.persistIntakeTurn({
         userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizeLineText(event.messageText),
@@ -3021,24 +3034,6 @@ export class ProcessLineWebhookUseCase {
       ctx.companyId,
     );
     return 'answered';
-  }
-
-  /**
-   * The router's `amount` correction hint, read as a draft edit (spec §5.4).
-   *
-   * `amount` never arrives as words this turn can parse — it is a bounded hint the model SELECTED
-   * from grounded value candidates — so it needs its own translation. The line it lands on is
-   * deliberately left unset: the use case fills it with the record's only line, or refuses with
-   * `ambiguous_line`, which is the "บรรทัดไหน" clarify this lane already sends. `from` is not
-   * carried: the direction guard belongs to the five-field lane, and a draft edit asks for
-   * confirmation anyway.
-   */
-  private amountCorrectionAsDraftEdit(
-    hints: LineIntakeCorrectionHints | undefined,
-    candidates: LineIntakeCorrectionCandidate[],
-  ): { tool: LineDraftUpdateTool; input: Record<string, unknown> } | null {
-    if (!hints?.amount?.to || candidates.length !== 1) return null;
-    return { tool: 'expense.draft.set_line', input: { amount: hints.amount.to } };
   }
 
   private async deliverRequiredMessages(
@@ -3329,7 +3324,8 @@ export class ProcessLineWebhookUseCase {
       const draft = this.deliveryDraftPreviews.get(event);
       if (draft) {
         denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
-        const applied = draft.phase === 'APPLIED' ? await this.draftUpdate?.appliedResult(draft.context, draft.chatKeyHash) : null;
+        const applied = draft.phase === 'APPLIED' && draft.previewId
+          ? await this.draftUpdate?.appliedResult(draft.context, draft.chatKeyHash, draft.previewId) : null;
         const current = draft.phase === 'APPLIED' ? (applied?.status === 'applied' ? applied.preview : null)
           : await this.draftUpdate?.pendingPreview(draft.context, draft.chatKeyHash, draft.requestId);
         sourcesCurrent = sourcesCurrent && Boolean(draft.previewId && current?.previewId === draft.previewId);
@@ -3416,7 +3412,8 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async correctionCandidatesCurrent(ctx: RequestContext, chatKeyHash: string, snapshot: string, originalChoices = false): Promise<boolean> {
-    if (!this.expenseRepo || !RECEIPT_CAPTURE_PERMISSIONS.some(permission => ctx.permissions.includes(permission))) return false;
+    if (!this.expenseRepo || (!RECEIPT_CAPTURE_PERMISSIONS.some(permission => ctx.permissions.includes(permission))
+      && !ctx.permissions.includes('expense.update'))) return false;
     try {
       // Compare the facts/ordering actually used, not unrelated questionnaire metadata writes.
       const original = JSON.parse(snapshot) as LineIntakeCorrectionCandidate[];
@@ -3500,7 +3497,8 @@ export class ProcessLineWebhookUseCase {
       if (source.candidates && source.candidates !== '[]'
         && !await this.correctionCandidatesCurrent(ctx, source.chatKeyHash, source.candidates, true)) return false;
       if (source.draft) {
-        const saved = source.draft.phase === 'APPLIED' ? await this.draftUpdate?.appliedResult(ctx, source.chatKeyHash) : null;
+        const saved = source.draft.phase === 'APPLIED' && source.draft.previewId
+          ? await this.draftUpdate?.appliedResult(ctx, source.chatKeyHash, source.draft.previewId) : null;
         const preview = source.draft.phase === 'APPLIED' ? saved?.status === 'applied' ? saved.preview : null
           : await this.draftUpdate?.pendingPreview(ctx, source.chatKeyHash, source.draft.requestId);
         if (!source.draft.previewId || preview?.previewId !== source.draft.previewId) return false;
@@ -3976,6 +3974,7 @@ export class ProcessLineWebhookUseCase {
     const menuCommand = staffMenuCommand(event.messageText);
     const canCaptureExpense = RECEIPT_CAPTURE_PERMISSIONS
       .some((permission) => resolvedAccess.permissions.includes(permission));
+    const expenseEditingFeatureEnabled = entitledFeatureKeys === null || entitledFeatureKeys.has('expenses');
 
     // These two cards are deterministic product entry points, not AI turns. They keep their own
     // feature/permission gates and remain available when the model provider or AI feature is off.
@@ -4021,10 +4020,9 @@ export class ProcessLineWebhookUseCase {
     }
 
     // S-4 (spec §5.4): the two buttons on a draft-edit confirm card. Handled HERE — after company,
-    // membership and permissions are resolved, before any AI turn — because the postback carries an
-    // intent and nothing else: everything it acts on is re-derived from this chat (SEC-04). A
-    // customer who types the same two phrases lands in exactly the same place, which is the
-    // property that makes a forged `data` value harmless.
+    // membership and permissions are resolved, before any AI turn. The validated postback carries
+    // its action and opaque previewId; the record, patch, and permission decision remain server-
+    // derived. Typed confirm/cancel phrases have no bound previewId and cannot act on a proposal.
     // Gated on the flag, not just on the handler: with S-4 off these two phrases must behave the
     // way any other text did before S-4 — they fall through to the ordinary AI turn. Recognising
     // them as commands while the lane is dark would be a behaviour change a rollback cannot undo.
@@ -4042,7 +4040,11 @@ export class ProcessLineWebhookUseCase {
     const capabilityHelp = isCapabilityQuestion(event.messageText)
       ? (lead: string) => capabilityEntitlementReply(lead, entitledFeatureKeys)
       : undefined;
-    await this.recordShadowTurn(companyId);
+    // This is the one user turn whose contract forbids non-transport persistence. The shadow sweep
+    // flushes an operational telemetry row, so skip that observation for this narrow question;
+    // the launch gate below still runs and retains its existing refusal/audit behavior.
+    const editCapabilityQuestion = isExpenseEditCapabilityQuestion(event.messageText);
+    if (!editCapabilityQuestion) await this.recordShadowTurn(companyId);
     if (await this.refuseWhenLaunchRouteClosed(event, identity.userId, companyId, requestId, capabilityHelp)) return;
     if (lineAssistantDisabledFor(entitledFeatureKeys)) {
       if (capabilityHelp) await this.deliverRequiredMessages(event, capabilityHelp(formatRefusal('feature_disabled')));
@@ -4065,12 +4067,13 @@ export class ProcessLineWebhookUseCase {
     }
 
     const canQuery = resolvedAccess.permissions.includes('line.ai.query');
+    const canEditLine = resolvedAccess.permissions.includes('expense.update');
     const canSubmitSignature = maySubmitSignature(resolvedAccess.permissions);
     // Phase 1 is personal-chat only. Group/room capture retains the proven single-turn path.
     const expenseDraftConversationEnabled = this.config.lineExpenseDraftConversationEnabled === true
       && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
       && Boolean(this.expenseDraftConversation);
-    if (!canQuery && !canCaptureExpense && !canSubmitSignature) {
+    if (!canQuery && !canCaptureExpense && !canSubmitSignature && !editCapabilityQuestion) {
       await this.deliverReply(event, FORBIDDEN_REPLY);
       await this.audit.log({
         companyId,
@@ -4131,6 +4134,13 @@ export class ProcessLineWebhookUseCase {
       where: { companyId, userId: identity.userId, status: 'PENDING', expiresAt: { gt: new Date() } },
       orderBy: { createdAt: 'desc' },
     });
+    if (editCapabilityQuestion && pendingMedia) {
+      await this.deliverCompletedReply(event,
+        'มีรูปก่อนหน้าที่รอคำตอบอยู่ค่ะ กรุณาตอบคำถามของรูปนั้นก่อน แล้วค่อยถามเรื่องแก้รายการอีกครั้งนะคะ',
+        companyId, resolvedAccess);
+      await this.updateEventLog(event.webhookEventId, 'expense_edit_capability_waiting', undefined, companyId);
+      return;
+    }
     if (pendingMedia) {
       // §11: these bytes may be waiting on a question the substitute work asked. That question is
       // recorded ON the row, so its answer is resolved against the list that was actually printed —
@@ -4259,7 +4269,7 @@ export class ProcessLineWebhookUseCase {
       : undefined;
 
     // Correction targets: this user's recent captures in THIS chat, inside branch scope.
-    const recentCapturedExpenses = canCaptureExpense
+    const recentCapturedExpenses = canCaptureExpense || canEditLine
       ? await this.loadCorrectionCandidates(companyId, identity.userId, chatKeyHashOf(event), resolvedAccess.scopes)
       : [];
     if (isUtilityBillSaveRequest(normalizedText)) {
@@ -4291,6 +4301,45 @@ export class ProcessLineWebhookUseCase {
       await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
       return false;
     };
+    if (editCapabilityQuestion) {
+      let waitingForEarlierWork = openWaiting.length > 0 || activeExpenseDrafts.length > 0;
+      if (!waitingForEarlierWork && this.config.lineAiSubstituteSemanticRoutingMode === 'primary'
+        && this.substituteReceiptContinuation) {
+        const state = await this.substituteReceiptContinuation.substituteContext(expenseDraftCtx, {
+          chatKeyHash: chatKeyHashOf(event), recentCandidateCount: recentCapturedExpenses.length,
+        });
+        waitingForEarlierWork = state.workflowState !== 'none' || state.hasPendingQuestion;
+      }
+      if (waitingForEarlierWork) {
+        await this.deliverCompletedReply(event,
+          'มีงานก่อนหน้าที่รอคำตอบอยู่ค่ะ กรุณาตอบหรือจบงานนั้นก่อน แล้วค่อยถามเรื่องแก้รายการอีกครั้งนะคะ',
+          companyId, resolvedAccess);
+        await this.updateEventLog(event.webhookEventId, 'expense_edit_capability_waiting', undefined, companyId);
+        return;
+      }
+      if (canCaptureExpense || canEditLine) this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
+      if (!await this.mayDeliverBusinessReply(event)) return;
+      const servingEnabled = canQuery && canEditLine && expenseEditingFeatureEnabled && this.draftUpdate?.enabled
+        ? await this.aiGateway.lineDraftEditCapabilityEnabled(requestId)
+        : false;
+      const reply = !servingEnabled
+        ? `ตอนนี้ยังแก้รายการผ่าน LINE ไม่ได้ค่ะ${canEditLine ? ' กรุณาเปิดรายการในเว็บแอปเพื่อตรวจและแก้ไข:' : ' ต้องมีสิทธิ์แก้ไขรายการก่อนค่ะ'}\n${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`)}`
+        : recentCapturedExpenses.length === 0
+          ? `ระบบรองรับการแก้รายการเดิมผ่าน LINE แต่ยังไม่พบรายการที่คุณบันทึกไว้ในแชทนี้ภายใน 24 ชั่วโมงซึ่งแก้ได้ค่ะ\n${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`)}`
+          : [
+            recentCapturedExpenses.length === 1
+              ? `ถ้าหมายถึงรายการนี้ แก้ผ่าน LINE ได้ค่ะ: ${recentCapturedExpenses[0]!.label}`
+              : 'ถ้าหมายถึงรายการใดรายการหนึ่งในรายการด้านล่าง แก้ผ่าน LINE ได้ค่ะ:',
+            ...(recentCapturedExpenses.length > 1
+              ? recentCapturedExpenses.map((candidate, index) => `${index + 1}) ${candidate.label}`)
+              : []),
+            'พิมพ์ฟิลด์กับค่าใหม่ เช่น “แก้วันที่เป็น 20 กันยายน 2569” ระบบจะแสดงตัวอย่างให้ตรวจ และจะบันทึกก็ต่อเมื่อคุณกด “ยืนยัน” เท่านั้น',
+            ...(recentCapturedExpenses.length > 1 ? ['กรุณาระบุบิลหรือวันที่ก่อนแก้ค่ะ'] : []),
+          ].join('\n');
+      await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
+      await this.updateEventLog(event.webhookEventId, 'expense_edit_capability', undefined, companyId);
+      return;
+    }
     const statusQuestion = receiptStatusQuestion(normalizedText);
     // §17.5, deterministic and BEFORE any model: a question about a file that may never have become
     // an expense cannot be answered from the expense list, and must still answer when AI is down.
@@ -5196,7 +5245,7 @@ export class ProcessLineWebhookUseCase {
     }
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_CAPTURE_CORRECTION') {
-      if (!canCaptureExpense) {
+      if (!canCaptureExpense && !canEditLine) {
         await this.deliverReply(event, receiptDeniedReply(resolvedAccess));
         await this.updateEventLog(event.webhookEventId,
           receiptFeatureDisabled(resolvedAccess) ? 'feature_disabled' : 'forbidden',
@@ -5212,6 +5261,7 @@ export class ProcessLineWebhookUseCase {
         await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
         return;
       }
+      const correctionPlan = this.planConsumption(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'correction_apply');
       const originalIds = resolvedChoices[0]?.candidateExpenseIds;
       const originalCandidates = originalIds ? await this.loadCorrectionCandidates(companyId, identity.userId,
         chatKeyHashOf(event), resolvedAccess.scopes, originalIds) : recentCapturedExpenses;
@@ -5220,7 +5270,6 @@ export class ProcessLineWebhookUseCase {
         await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
         return;
       }
-      const correctionPlan = this.planConsumption(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'correction_apply');
       const correctionCtx: RequestContext = {
         requestId, authSubject: identity.userId, userId: identity.userId, companyId,
         membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
@@ -5236,44 +5285,96 @@ export class ProcessLineWebhookUseCase {
       // is the own-record marker, and the detector additionally refuses a message that names
       // somebody else's document. `amount` is handled below because it arrives as a router HINT
       // rather than as words this function can read.
-      const draftRequest = detectLineDraftEditRequest(normalizedText)
-        ?? this.amountCorrectionAsDraftEdit(routePlan.correctionHints, correctionCandidates);
-      const draftOutcome = draftRequest && this.draftUpdate?.enabled
+      const hints = routePlan.correctionHints;
+      const hintedFields = (['expenseDate', 'amount', 'vendorName', 'documentNumber', 'note'] as const)
+        .filter((field) => hints?.[field] !== undefined);
+      const detectedRequest = detectLineDraftEditRequest(normalizedText);
+      const headerFields = hintedFields.filter((field) => field !== 'amount');
+      const mixedEdit = (detectedRequest && hintedFields.length > 0)
+        || (headerFields.length > 0 && hintedFields.includes('amount'));
+      let draftRequest: { tool: LineDraftUpdateTool; input: Record<string, unknown> } | null = detectedRequest;
+      let draftTargetId: string | undefined;
+      let draftClarification: string | undefined;
+      if (!draftRequest && hintedFields.length > 0) {
+        const hintedTarget = hints?.targetExpenseId
+          ? correctionCandidates.find((candidate) => candidate.id === hints.targetExpenseId)
+          : correctionCandidates.length === 1 ? correctionCandidates[0] : undefined;
+        if (!hintedTarget && correctionCandidates.length > 1) {
+          draftClarification = [
+            'พบหลายรายการค่ะ กรุณาระบุบิลหรือวันที่ก่อน แล้วส่งการแก้ไขทีละอย่างนะคะ',
+            ...correctionCandidates.map((candidate, index) => `${index + 1}) ${candidate.label}`),
+          ].join('\n');
+        } else if (hintedTarget && this.expenseRepo && hints) {
+          const target = await this.expenseRepo.findByIdWithRelations(companyId, hintedTarget.id, undefined, resolvedAccess.scopes);
+          if (target) {
+            const checked = evaluateCorrectionHints(hints, {
+              expenseDate: target.expenseDate?.toISOString() ?? null,
+              grandTotalAmount: target.grandTotalAmount,
+              vendorNameSnapshot: target.vendorNameSnapshot,
+              vendorDocumentNumber: target.vendorDocumentNumber,
+              note: target.note,
+            }, correctionEvidence, ['expenseDate', 'amount', 'vendorName', 'documentNumber', 'note']);
+            if (checked.status === 'clarify') draftClarification = CORRECTION_DIRECTION_CLARIFY_REPLY;
+            if (checked.status === 'applicable') {
+              const fields = checked.fields;
+              const amount = fields.amount?.to;
+              const header = {
+                ...(fields.expenseDate ? { expenseDate: fields.expenseDate.to } : {}),
+                ...(fields.vendorName ? { vendorName: fields.vendorName.to } : {}),
+                ...(fields.documentNumber ? { documentNumber: fields.documentNumber.to } : {}),
+                ...(fields.note ? { noteAppend: fields.note.to } : {}),
+              };
+              draftRequest = amount
+                ? { tool: 'expense.draft.set_line', input: { amount } }
+                : { tool: 'expense.draft.set_header', input: header };
+              draftTargetId = hintedTarget.id;
+            }
+          }
+        }
+      }
+      if (mixedEdit) draftClarification = 'ขอแก้ทีละอย่างก่อนนะคะ เพื่อให้ตัวอย่างแสดงการเปลี่ยนแปลงครบและไม่ตกหล่นค่ะ';
+      if (draftClarification) {
+        this.rememberCandidateDeliverySources(event, expenseDraftCtx, correctionCandidates, Boolean(originalIds));
+        await this.deliverCompletedReply(event, draftClarification, companyId, resolvedAccess);
+        await this.persistIntakeTurn({
+          userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: normalizedText, replyText: draftClarification, intent: 'CLARIFY',
+        });
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+        return;
+      }
+      const effectiveDraftEditEnabled = canQuery && canEditLine && expenseEditingFeatureEnabled && this.draftUpdate?.enabled
+        ? await this.aiGateway.lineDraftEditCapabilityEnabled(requestId)
+        : false;
+      const draftOutcome = draftRequest && effectiveDraftEditEnabled
         ? await this.proposeDraftUpdate(event, correctionCtx, resolvedAccess, draftRequest, correctionEvidence,
-          correctionCandidates.length === 1 ? correctionCandidates[0]!.id : undefined)
+          draftTargetId ?? (correctionCandidates.length === 1 ? correctionCandidates[0]!.id : undefined))
         : 'not_handled';
       if (draftOutcome !== 'not_handled') {
         await this.ackConsumed(correctionPlan, draftProposalAckReason(draftOutcome));
         return;
       }
-      // Try to apply; every guard failure degrades to the guidance reply — never to a create.
-      const applied = this.correctExpense
+      // The legacy compatibility use case only clarifies or explains the preview requirement.
+      const guidanceOutcome = this.correctExpense
         ? await this.correctExpense.execute(correctionCtx, {
           lineMessageIdHash: hashMessagePreview(event.lineMessageId ?? event.webhookEventId),
           chatKeyHash: chatKeyHashOf(event),
           candidates: correctionCandidates,
           ...(routePlan.correctionHints ? { hints: routePlan.correctionHints } : {}),
           evidence: correctionEvidence,
-          ...(correctionPlan ? { consumption: correctionPlan.consumption } : {}),
         })
         : { status: 'guidance' as const, reason: 'correction_module_unavailable' };
 
-      let reply: string;
-      if (applied.status === 'applied') {
-        this.rememberReceiptDeliverySource(event, correctionCtx, { id: applied.expenseId,
-          updatedAt: applied.source?.id === applied.expenseId ? applied.source.updatedAt : undefined });
-        await this.ackConsumed(correctionPlan, 'correction_apply');
-        reply = formatCorrectionAppliedReply(this.config.webBaseUrl, companyId, applied.expenseId, applied.fields, normalizedText, applied.noteOutcome);
-      } else if (applied.status === 'clarify') {
-        reply = CORRECTION_DIRECTION_CLARIFY_REPLY;
-      } else {
+      let reply = guidanceOutcome.status === 'clarify'
+        ? CORRECTION_DIRECTION_CLARIFY_REPLY
+        : formatCorrectionGuidanceReply(this.config.webBaseUrl, companyId, correctionCandidates, canEdit, guidanceOutcome.reason);
+      if (guidanceOutcome.status !== 'clarify') {
         this.rememberCandidateDeliverySources(event, expenseDraftCtx, correctionCandidates, Boolean(originalIds));
-        reply = formatCorrectionGuidanceReply(this.config.webBaseUrl, companyId, correctionCandidates, canEdit, applied.reason);
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'correction_guidance');
       }
-      const expenseDraftInterruption = applied.status === 'clarify' ? undefined : await interruptExpenseDraft();
+      const expenseDraftInterruption = guidanceOutcome.status === 'clarify' ? undefined : await interruptExpenseDraft();
       if (expenseDraftInterruption) reply = `${reply}\n\n${expenseDraftInterruption}`;
-      if (applied.status === 'clarify') await this.deliverReply(event, reply);
+      if (guidanceOutcome.status === 'clarify') await this.deliverReply(event, reply);
       else await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -5284,11 +5385,11 @@ export class ProcessLineWebhookUseCase {
         targetType: correctionCandidates.length === 1 ? 'expense_record' : 'LineWebhookEvent',
         targetId: correctionCandidates.length === 1 ? correctionCandidates[0].id : event.webhookEventId,
         requestId, result: 'SUCCESS', riskLevel: 'LOW',
-        metadataJson: { candidateCount: correctionCandidates.length, canEdit, outcome: applied.status },
+        metadataJson: { candidateCount: correctionCandidates.length, canEdit, outcome: guidanceOutcome.status },
       });
       await this.updateEventLog(
         event.webhookEventId,
-        applied.status === 'clarify' ? 'clarification_required' : 'completed',
+        guidanceOutcome.status === 'clarify' ? 'clarification_required' : 'completed',
         undefined,
         companyId,
       );
@@ -5555,9 +5656,9 @@ export class ProcessLineWebhookUseCase {
     // S-4 (spec §5.4): when the gateway's plan reached one of the five `draft_update` tools, the
     // API has already computed and stored a preview for THIS turn — the tool call is the proposal,
     // the card is the question, and the write is still the confirm postback. The card is built
-    // here rather than by the gateway because only the API may print the buttons whose postbacks
-    // it will have to re-derive (SEC-04), and because every figure on it comes from the server's
-    // own rolled-back run, never from model text.
+    // here rather than by the gateway because only the API may print buttons bound to the exact
+    // previewId that its confirm/cancel handlers validate, and because every figure on it comes
+    // from the server's own rolled-back run, never from model text.
     const hasDraftPreview = turnResponse.toolsInvoked.some((tool) => (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(tool));
     const draftPreview = hasDraftPreview
       ? await this.draftUpdate?.pendingPreview(expenseDraftCtx, chatKeyHashOf(event), requestId)

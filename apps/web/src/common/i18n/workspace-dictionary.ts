@@ -1667,6 +1667,7 @@ export const workspaceDictionary = {
     'counterparties.auto_save_history': 'ที่อยู่ต่างจากใบครั้งก่อน ระบบจำอันล่าสุดนี้ไว้เติมให้ครั้งหน้า ดูประวัติได้ที่หน้าคู่ค้า',
     'counterparties.auto_save_history_locked': 'ที่อยู่ต่างจากใบครั้งก่อน ทะเบียนล็อกที่อยู่หลักไว้ จึงเก็บเฉพาะใบนี้ ดูประวัติได้ที่หน้าคู่ค้า',
     'counterparties.auto_save_failed': 'บันทึกรายจ่ายสำเร็จแล้ว แต่ยังไม่ได้บันทึกลงทะเบียนคู่ค้า ลองใหม่ได้จากหน้าคู่ค้า',
+    'counterparties.auto_save_link_failed': 'บันทึกร้านในทะเบียนคู่ค้าแล้ว แต่เชื่อมกับรายการนี้ไม่สำเร็จ กรุณาเปิดรายการใหม่เพื่อตรวจสอบ',
   },
   en: {
     'shell.toggle_sidebar': 'Toggle Sidebar',
@@ -3287,6 +3288,7 @@ export const workspaceDictionary = {
     'counterparties.auto_save_history': 'This address differs from the previous document. The newest one is remembered for next time; the history is on the counterparty page.',
     'counterparties.auto_save_history_locked': 'This address differs from the previous document. The registry keeps its own primary address, so only this document carries it; the history is on the counterparty page.',
     'counterparties.auto_save_failed': 'The expense was saved, but it was not written to the counterparty registry. You can try again from the counterparty page.',
+    'counterparties.auto_save_link_failed': 'The counterparty was saved, but could not be linked to this expense. Reopen the expense to review it.',
   },
 } as const;
 

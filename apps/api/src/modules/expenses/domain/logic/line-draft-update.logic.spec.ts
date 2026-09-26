@@ -293,6 +293,7 @@ describe('existingChargeLikeProductLine + appendNote', () => {
   it('appends the note and never overwrites the capture provenance', () => {
     assert.equal(appendNote('LINE receipt upload', 'จ่ายสด'), 'LINE receipt upload\nผู้ใช้แจ้ง: จ่ายสด');
     assert.equal(appendNote(null, 'จ่ายสด'), 'ผู้ใช้แจ้ง: จ่ายสด');
-    assert.equal(appendNote('x'.repeat(600), 'y').length, 500);
+    assert.equal(appendNote('x'.repeat(490), 'y').length, 504,
+      'the append stays intact so the use case can reject it instead of previewing a silently truncated value');
   });
 });

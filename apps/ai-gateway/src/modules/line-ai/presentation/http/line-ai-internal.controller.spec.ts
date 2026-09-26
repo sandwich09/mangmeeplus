@@ -27,6 +27,21 @@ const linkedUserReq: LineAiTurnRequest = {
 };
 
 describe('LineAiInternalController', () => {
+  it('reports only this authenticated serving runtime draft-edit flag', async () => {
+    assert.deepEqual(await new LineAiInternalController(
+      { aiGatewayInternalSecret: 'secret', lineAiDraftEditEnabled: true } as any,
+      { execute: async () => { throw new Error('not a model turn'); }, lineDraftEditCapabilityEnabled: async () => true } as any,
+    ).lineDraftEditCapability('secret', { requestId: 'probe-1' }), { enabled: true });
+    assert.deepEqual(await new LineAiInternalController(
+      { aiGatewayInternalSecret: 'secret', lineAiDraftEditEnabled: false } as any,
+      { execute: async () => { throw new Error('not a model turn'); }, lineDraftEditCapabilityEnabled: async () => false } as any,
+    ).lineDraftEditCapability('secret', { requestId: 'probe-2' }), { enabled: false });
+    await assert.rejects(() => new LineAiInternalController(
+      { aiGatewayInternalSecret: 'secret', lineAiDraftEditEnabled: true } as any,
+      { execute: async () => { throw new Error('not a model turn'); }, lineDraftEditCapabilityEnabled: async () => true } as any,
+    ).lineDraftEditCapability('wrong', { requestId: 'probe-3' }), UnauthorizedException);
+  });
+
   it('fails closed when internal secret is not configured', async () => {
     const controller = new LineAiInternalController(
       { aiGatewayInternalSecret: undefined } as any,

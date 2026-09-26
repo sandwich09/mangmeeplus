@@ -396,6 +396,21 @@ export class LineAiInternalController {
   ) {}
 
   @Public()
+  @Post('line-draft-edit-capability')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Internal: report whether this serving runtime exposes LINE draft edit tools' })
+  async lineDraftEditCapability(
+    @Headers('x-internal-secret') secret: string | undefined,
+    @Body() body: { requestId?: string },
+  ): Promise<{ enabled: boolean }> {
+    assertInternalSecret(secret, this.config.aiGatewayInternalSecret);
+    if (typeof body?.requestId !== 'string' || !body.requestId.trim()) {
+      throw new BadRequestException('Invalid capability probe payload.');
+    }
+    return { enabled: await this.turnUseCase.lineDraftEditCapabilityEnabled() };
+  }
+
+  @Public()
   @Post('line-turn')
   @HttpCode(200)
   @ApiOperation({ summary: 'Internal: process one LINE AI turn (API service only)' })
@@ -442,6 +457,7 @@ export class LineAiInternalController {
     const hasAttachment = (body.attachments?.length ?? 0) > 0;
     const router = new IntentRouterAgent(
       createProvider(this.config, hasAttachment ? { timeoutMs: DOCUMENT_OCR_TIMEOUT_MS } : undefined),
+      this.config.lineAiDraftEditEnabled,
     );
     const routed = await router.routeIntake(body);
     const { receiptCandidate, ...plan } = routed;

@@ -104,7 +104,9 @@ export function parseLineDraftPatch(tool: LineDraftUpdateTool, input: Record<str
       if (vendor) patch.vendorName = vendor;
       const documentNumber = str(input['documentNumber'], 60);
       if (documentNumber) patch.documentNumber = documentNumber;
-      const noteAppend = str(input['noteAppend'], DRAFT_NOTE_APPEND_MAX);
+      const rawNoteAppend = typeof input['noteAppend'] === 'string' ? input['noteAppend'].trim() : '';
+      if (rawNoteAppend.length > DRAFT_NOTE_APPEND_MAX) return { ok: false, reason: 'note_append_too_long' };
+      const noteAppend = str(rawNoteAppend, DRAFT_NOTE_APPEND_MAX);
       if (noteAppend) patch.noteAppend = noteAppend;
       const touched = Boolean(patch.expenseDate || patch.vendorName || patch.documentNumber || patch.noteAppend);
       return touched ? { ok: true, patch } : { ok: false, reason: 'no_header_field' };
@@ -315,7 +317,7 @@ export function projectLineDraftPatch(
     }
     if (patch.vendorName) diff.push({ field: 'vendorName', label: 'ผู้ขาย/ผู้รับเงิน', kind: 'text', before: text(record.vendorNameSnapshot), after: text(patch.vendorName) });
     if (patch.documentNumber) diff.push({ field: 'documentNumber', label: 'เลขที่เอกสาร', kind: 'identifier', before: identifier(record.vendorDocumentNumber), after: identifier(patch.documentNumber) });
-    if (patch.noteAppend) diff.push({ field: 'note', label: 'หมายเหตุ', kind: 'text', before: text(record.note), after: text(patch.noteAppend) });
+    if (patch.noteAppend) diff.push({ field: 'note', label: 'เพิ่มหมายเหตุ', kind: 'text', before: null, after: text(patch.noteAppend) });
     // Header-only: the stored lines ride along untouched so the use case's whole-set replacement is
     // a no-op on them rather than a deletion.
     return { lines: renumber(current), diff, warnings };
@@ -481,11 +483,11 @@ function renumber(lines: DraftLineInput[]): DraftLineInput[] {
   return [...products, ...charges].map((line, index) => ({ ...line, lineNumber: index + 1 }));
 }
 
-/** Append-only, capped, and never overwriting the capture provenance (spec §5.3). */
+/** Append-only and never overwrites capture provenance; the use case rejects values over the cap. */
 export function appendNote(current: string | null, addition: string): string {
   const line = `ผู้ใช้แจ้ง: ${addition}`;
   const merged = current?.trim() ? `${current.trim()}\n${line}` : line;
-  return merged.slice(0, DRAFT_NOTE_APPEND_MAX);
+  return merged;
 }
 
 /** A rate arrives as either "7" or "0.07"; the column stores the fraction. */

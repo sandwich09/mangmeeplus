@@ -24,6 +24,7 @@ import { PrismaExpenseCaptureRepository } from '../../../expenses/infrastructure
 import { LineMessageBufferService, type LineBufferEnvelope } from '../line-message-buffer.service';
 import { LINE_RECEIPT_RETRY_LEASE_CODE, LINE_RECEIPT_RETRY_LEASE_MS, LINE_RECEIPT_RETRY_WAIT_CODE } from '../company-ocr-governance';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
+import { isLineDraftPreviewId } from '../../domain/logic/line-staff-menu.logic';
 import { emitLineAiTerminalOutcome } from '../../domain/logic/line-ai-terminal-outcome.logic';
 import { LineReplyAdapter, parseOutcomeMessages, repairLegacyOutcomePreview, safeLineErrorDetails } from '../../infrastructure/line-reply.adapter';
 
@@ -64,7 +65,11 @@ export function parseBufferEnvelope(value: unknown): LineBufferEnvelope | null {
   if (typeof envelope.lineUserId !== 'string' || !envelope.lineUserId) return null;
   if (typeof envelope.messagingChannelId !== 'string') return null;
   if (!item || typeof item.webhookEventId !== 'string' || typeof item.replyToken !== 'string') return null;
-  if (item.kind === 'text') return typeof item.text === 'string' ? (envelope as LineBufferEnvelope) : null;
+  if (item.kind === 'text') {
+    if (typeof item.text !== 'string') return null;
+    if ('draftUpdatePreviewId' in item && !isLineDraftPreviewId(item.draftUpdatePreviewId)) return null;
+    return envelope as LineBufferEnvelope;
+  }
   if (item.kind === 'media') return typeof item.lineMessageId === 'string' ? (envelope as LineBufferEnvelope) : null;
   return null;
 }

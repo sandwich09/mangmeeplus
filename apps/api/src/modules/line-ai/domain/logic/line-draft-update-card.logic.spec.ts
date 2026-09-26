@@ -1,14 +1,12 @@
 /**
  * The confirm card and its replies (draft-control spec §5.4, P10-L SEC-04).
- *
- * The load-bearing assertion in this file is the smallest one: the two buttons carry an intent and
- * NOTHING else. Every id that is not in `data` is an id a forged postback cannot choose, which is
- * what makes "re-derive the preview from the chat" a security property rather than a convenience.
+ * The opaque previewId binds each visible button to exactly the preview it rendered; the card never
+ * carries an expense or company id.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { LineDraftUpdatePreview } from '@watchdog-bms/contracts';
-import { linePostbackCommandText, staffMenuCommand } from './line-staff-menu.logic';
+import { lineDraftUpdatePostbackPreviewId, linePostbackCommandText, staffMenuCommand } from './line-staff-menu.logic';
 import {
   DRAFT_UPDATE_CANCEL_COMMAND,
   DRAFT_UPDATE_CONFIRM_COMMAND,
@@ -20,7 +18,7 @@ import {
 } from './line-draft-update-card.logic';
 
 const preview: LineDraftUpdatePreview = {
-  previewId: 'p-1',
+  previewId: '550e8400-e29b-41d4-a716-446655440000',
   recordType: 'expense',
   expenseId: 'exp-1',
   record: { vendorName: 'BHC', expenseDate: '2026-09-03', statusLabel: 'รอตรวจสอบ' },
@@ -41,25 +39,32 @@ function allText(value: unknown, out: string[] = []): string[] {
 }
 
 describe('draft update confirm card', () => {
-  it('carries an intent and no ids in either postback (SEC-04)', () => {
+  it('binds both buttons to this preview while preserving their visible labels (SEC-04)', () => {
     const card = buildDraftUpdatePreviewCard(preview) as any;
     const buttons = card.contents.footer.contents;
     assert.deepEqual(buttons.map((button: any) => button.action.data), [
-      'action=draft-update-confirm',
-      'action=draft-update-cancel',
+      'action=draft-update-confirm&previewId=' + preview.previewId,
+      'action=draft-update-cancel&previewId=' + preview.previewId,
     ]);
-    for (const id of [preview.previewId, preview.expenseId]) {
-      assert.ok(!allText(card).some((text) => text.includes(id)), `${id} must never ride in the card`);
-    }
+    assert.deepEqual(buttons.map((button: any) => button.action.label), ['ยืนยัน', 'ยกเลิก']);
+    assert.ok(!allText(card).some((text) => text.includes(preview.expenseId)), 'expense id must never ride in the card');
   });
 
   it('routes both postbacks through the SAME lane a typed message takes — when the flag is on', () => {
-    assert.equal(linePostbackCommandText('action=draft-update-confirm', true), DRAFT_UPDATE_CONFIRM_COMMAND);
-    assert.equal(linePostbackCommandText('action=draft-update-cancel', true), DRAFT_UPDATE_CANCEL_COMMAND);
+    const confirm = 'action=draft-update-confirm&previewId=' + preview.previewId;
+    const cancel = 'action=draft-update-cancel&previewId=' + preview.previewId;
+    assert.equal(linePostbackCommandText(confirm, true), DRAFT_UPDATE_CONFIRM_COMMAND);
+    assert.equal(linePostbackCommandText(cancel, true), DRAFT_UPDATE_CANCEL_COMMAND);
+    assert.equal(lineDraftUpdatePostbackPreviewId(confirm, DRAFT_UPDATE_CONFIRM_COMMAND), preview.previewId);
+    assert.equal(lineDraftUpdatePostbackPreviewId(cancel, DRAFT_UPDATE_CANCEL_COMMAND), preview.previewId);
+    assert.equal(lineDraftUpdatePostbackPreviewId('action=draft-update-confirm', DRAFT_UPDATE_CONFIRM_COMMAND), undefined);
+    assert.equal(lineDraftUpdatePostbackPreviewId(confirm + '&extra=1', DRAFT_UPDATE_CONFIRM_COMMAND), undefined);
+    assert.equal(lineDraftUpdatePostbackPreviewId(confirm + '&previewId=' + preview.previewId, DRAFT_UPDATE_CONFIRM_COMMAND), undefined);
+    assert.equal(lineDraftUpdatePostbackPreviewId(cancel, DRAFT_UPDATE_CONFIRM_COMMAND), undefined);
     assert.equal(staffMenuCommand(DRAFT_UPDATE_CONFIRM_COMMAND), 'draft_update_confirm');
     assert.equal(staffMenuCommand(DRAFT_UPDATE_CANCEL_COMMAND), 'draft_update_cancel');
     // An unknown action answers null and the event is dropped, not guessed.
-    assert.equal(linePostbackCommandText('action=draft-update-confirm-2&previewId=p-1', true), null);
+    assert.equal(linePostbackCommandText('action=draft-update-confirm-2&previewId=' + preview.previewId, true), null);
   });
 
   // With S-4 off no card carries these buttons, so the only thing that can send one is a forgery.
@@ -84,6 +89,8 @@ describe('draft update confirm card', () => {
   it('states the new total and keeps the fallback text carrying it too', () => {
     const card = buildDraftUpdatePreviewCard(preview) as any;
     assert.match(card.altText, /ยอดรวมใหม่ 1,789\.04/);
+    assert.match(card.altText, /ส่งคำขอแก้ไขใหม่/);
+    assert.doesNotMatch(card.altText, /ยืนยันการแก้ไข|ยกเลิกการแก้ไข/);
     assert.ok(allText(card.contents.body).includes('1,789.04'));
     assert.ok(allText(card.contents.body).some((text) => text.includes('เดิม 1,626.40')));
   });

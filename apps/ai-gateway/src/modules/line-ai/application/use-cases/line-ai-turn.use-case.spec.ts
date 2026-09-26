@@ -74,6 +74,24 @@ function makeAgentcoreRuntime(
 }
 
 describe('LineAiTurnUseCase – feature flag routing', () => {
+  it('reports edit capability only when the serving S-4 catalog is enabled across both runtimes', async () => {
+    let remoteCalls = 0;
+    const runtime = {
+      invoke: async () => ({}),
+      lineDraftEditCapabilityEnabled: async () => { remoteCalls += 1; return true; },
+    } as any;
+    const capability = (config: Record<string, unknown>) => new LineAiTurnUseCase(
+      makeErpTools(), makeOrchestrator(), config as any, runtime,
+    ).lineDraftEditCapabilityEnabled();
+
+    assert.equal(await capability({ lineAiDraftEditEnabled: true, lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' }), false,
+      'deterministic mode has no S-4 tool catalog');
+    assert.equal(await capability({ lineAiDraftEditEnabled: true, lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'strands-local' }), true);
+    assert.equal(await capability({ lineAiDraftEditEnabled: false, lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'strands-local' }), false);
+    assert.equal(await capability({ lineAiDraftEditEnabled: true, lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'agentcore' }), true);
+    assert.equal(remoteCalls, 1, 'only the separately served AgentCore mode is probed');
+  });
+
   it('feature disabled uses item 07 deterministic path (not orchestrator)', async () => {
     let orchestratorCalled = false;
     const orchestrator = { run: async () => { orchestratorCalled = true; return {} as any; } } as any;

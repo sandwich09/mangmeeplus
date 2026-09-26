@@ -9,7 +9,7 @@ function sign(rawBody: Buffer, secret: string): string {
   return createHmac('sha256', secret).update(rawBody).digest('base64');
 }
 
-function makeController(enqueueImpl?: (envelope: unknown) => Promise<void>) {
+function makeController(enqueueImpl?: (envelope: unknown) => Promise<void>, draftEditEnabled = false) {
   const enqueued: any[] = [];
   const controller = new LineWebhookController(lineMessagingCredentialsFixture({
       lineMessagingChannelSecret: 'line-secret',
@@ -18,6 +18,7 @@ function makeController(enqueueImpl?: (envelope: unknown) => Promise<void>) {
     {
       lineMessagingChannelSecret: 'line-secret',
       lineMessagingChannelId: 'msg-channel-1',
+      lineAiDraftEditEnabled: draftEditEnabled,
     } as any,
     {
       enqueue: async (envelope: unknown) => {
@@ -110,6 +111,28 @@ describe('LineWebhookController', () => {
     assert.equal(enqueued[0].item.text, 'คุยกับน้องมั่งมี');
     assert.equal(enqueued[0].item.webhookEventId, 'evt-talk');
     assert.equal(enqueued[0].item.timestamp, 1751700000000);
+  });
+
+  it('passes only a strictly shaped preview id with draft confirm/cancel postbacks', async () => {
+    const { controller, enqueued } = makeController(undefined, true);
+    const previewId = '550e8400-e29b-41d4-a716-446655440000';
+    await controller.lineWebhook(requestFor({
+      events: [
+        { type: 'postback', webhookEventId: 'draft-confirm', replyToken: 'c', source: { userId: 'u1' },
+          postback: { data: `action=draft-update-confirm&previewId=${previewId}` } },
+        { type: 'postback', webhookEventId: 'draft-cancel', replyToken: 'x', source: { userId: 'u1' },
+          postback: { data: `action=draft-update-cancel&previewId=${previewId}` } },
+        { type: 'postback', webhookEventId: 'draft-old-card', replyToken: 'o', source: { userId: 'u1' },
+          postback: { data: 'action=draft-update-confirm' } },
+        { type: 'postback', webhookEventId: 'draft-duplicate-id', replyToken: 'd', source: { userId: 'u1' },
+          postback: { data: `action=draft-update-confirm&previewId=${previewId}&previewId=${previewId}` } },
+      ],
+    }));
+
+    assert.deepEqual(enqueued.map((row) => row.item.text), [
+      'ยืนยันการแก้ไข', 'ยกเลิกการแก้ไข', 'ยืนยันการแก้ไข', 'ยืนยันการแก้ไข',
+    ], 'synthetic command text stays stable for atomic fast dispatch');
+    assert.deepEqual(enqueued.map((row) => row.item.draftUpdatePreviewId), [previewId, previewId, undefined, undefined]);
   });
 
   it('enqueues image and file messages as media items', async () => {
