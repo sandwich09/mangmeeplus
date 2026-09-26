@@ -153,6 +153,12 @@ describe('counterpartyAutoSaveNotice', () => {
     assert.equal(attempted?.messageKey, 'counterparties.auto_save_failed');
   });
 
+  it('states that the registry saved when only the expense link CAS failed', () => {
+    const notice = counterpartyAutoSaveNotice({ case: 'CREATE', failed: true, linkFailed: true, counterpartyId: 'c1' }, allowed);
+    assert.equal(notice?.kind, 'bar');
+    assert.equal(notice?.messageKey, 'counterparties.auto_save_link_failed');
+  });
+
   // The API proves row-scoped access for the creator or original receipt uploader.
   const nonReader = { canReadCounterparty: false };
 

@@ -45,6 +45,7 @@ function build(options: {
   /** Free text an attacker printed on the receipt, which the diff and the card will render. */
   lineDescription?: string;
   vendorName?: string;
+  note?: string | null;
   /** Extra stored lines, for cases that need more than the single product row. */
   extraLines?: unknown[];
   /** Make the real write path refuse, the way a broken totals identity does. */
@@ -53,12 +54,12 @@ function build(options: {
   const updatedAt = options.updatedAt ?? new Date('2026-09-05T10:00:00.000Z');
   const record = {
     id: EXPENSE, companyId: 'co-1', branchId: null, status: options.status ?? 'NEEDS_REVIEW',
-    createdByUserId: 'u-1', updatedAt, vatMode: 'VAT_EXCLUDED', note: null,
+    createdByUserId: 'u-1', updatedAt, vatMode: 'VAT_EXCLUDED', note: options.note ?? null,
     vendorNameSnapshot: options.vendorName ?? 'BHC', vendorDocumentNumber: null,
     expenseDate: new Date('2026-09-03T00:00:00.000Z'),
     subtotalAmount: '1520', discountAmount: '0', taxableAmount: '1520',
     vatAmount: '106.4', grandTotalAmount: '1626.4',
-    lines: [line(options.lineDescription), ...(options.extraLines ?? [])], charges: [],
+    lines: [line(options.lineDescription), ...(options.extraLines ?? [])], charges: [], attachments: [],
   };
   // `writes` counts calls into the write path; `applies` counts only the ones whose transaction
   // COMMITTED. The preview deliberately calls the real write path and then throws out of the
@@ -66,15 +67,45 @@ function build(options: {
   // invariant this corpus exists to state.
   let writes = 0;
   let applies = 0;
+  const operationOrder: string[] = [];
   const audits: string[] = [];
+  const vendorRegistryInputs: any[] = [];
+  const vendorLinkUpdates: any[] = [];
+  let transactionCommitted = false;
+  let failVendorLinkUpdate = false;
+  const tx = {
+    $executeRaw: async () => { operationOrder.push('lock'); },
+    expenseRecord: { findFirstOrThrow: async () => ({ updatedAt: record.updatedAt }) },
+  };
   const repo = {
     findByIdWithRelations: async (companyId: string, id: string) =>
       (companyId === record.companyId && id === record.id ? record : null),
+    runDuplicateCheck: async (_input: unknown, detect: (tx: unknown) => Promise<string[]>) => {
+      operationOrder.push('reconcile');
+      await detect(tx);
+      record.updatedAt = new Date(record.updatedAt.getTime() + 1_000);
+      return { openCandidates: 0, duplicateStatus: 'NO_MATCH' as const };
+    },
+    findNearDuplicates: async () => [],
+    findExpenseIdsByAttachmentChecksum: async () => [],
+    createDuplicateCandidate: async () => undefined,
+    findPrimaryReceiptUploader: async () => 'receipt-uploader-1',
+    updateExpense: async (input: any) => {
+      vendorLinkUpdates.push(input);
+      if (!transactionCommitted) throw new Error('vendor link attempted before expense commit');
+      if (failVendorLinkUpdate) throw new Error('expected revision changed');
+      if (input.expectedUpdatedAt.getTime() !== record.updatedAt.getTime()) throw new Error('expected revision changed');
+      if ('vendorCounterpartyId' in input) (record as any).vendorCounterpartyId = input.vendorCounterpartyId;
+      if ('vendorEntityKindSnapshot' in input) (record as any).vendorEntityKindSnapshot = input.vendorEntityKindSnapshot;
+      record.updatedAt = new Date(record.updatedAt.getTime() + 1_000);
+      return record;
+    },
   };
   /** Somebody saved the record in web. Exactly what the CAS exists to notice. */
   const moveRecordInWeb = () => { record.updatedAt = new Date(record.updatedAt.getTime() + 1_000); };
   const update = {
     execute: async () => {
+      operationOrder.push('update');
       writes += 1;
       if (options.updateThrows) throw options.updateThrows;
       return { ...record, grandTotalAmount: '1789.04', taxableAmount: '1672', subtotalAmount: '1520', vatAmount: '117.04', discountAmount: '0' };
@@ -84,8 +115,9 @@ function build(options: {
     client: {
       $transaction: async (run: (tx: unknown) => Promise<unknown>) => {
         const before = writes;
-        const result = await run({});
+        const result = await run(tx);
         applies += writes - before;
+        transactionCommitted = true;
         return result;
       },
     },
@@ -96,7 +128,11 @@ function build(options: {
     prisma as never, repo as never, update as never, audit as never, store,
     { lineAiDraftEditEnabled: options.enabled ?? true } as never,
   );
-  return { useCase, store, record, audits, moveRecordInWeb, applies: () => applies };
+  return {
+    useCase, store, repo, record, audits, operationOrder, vendorRegistryInputs, vendorLinkUpdates,
+    moveRecordInWeb, applies: () => applies, isTransactionCommitted: () => transactionCommitted,
+    failVendorLinkUpdate: (value: boolean) => { failVendorLinkUpdate = value; },
+  };
 }
 
 const ctx = (over: Partial<RequestContext> = {}): RequestContext => ({
@@ -112,6 +148,33 @@ const charge = (evidence: string) => ({
   requestId: 'r-1',
   evidence: [{ text: evidence, todayIso: '2026-09-05' }],
   expenseId: EXPENSE,
+});
+
+async function confirm(h: Harness, eventId: string, context: RequestContext = ctx(), chat = CHAT, previewId?: string) {
+  const pending = await h.store.load(context.companyId, chat);
+  const applied = pending ? null : await h.store.loadApplied(context.companyId, chat);
+  return h.useCase.apply(context, chat, eventId, previewId ?? pending?.previewId ?? applied?.previewId);
+}
+
+describe('preview delivery cleanup across local and Redis stores', () => {
+  it('still checks the attached Redis preview after removing the matching local copy', async () => {
+    const store = new LineDraftPreviewStore();
+    const entry = { previewId: 'preview-failed', companyId: 'co-1', userId: 'u-1', chatKeyHash: CHAT } as any;
+    await store.save(entry);
+    let redisRaw: string | null = JSON.stringify(entry);
+    let gets = 0;
+    const redis = {
+      get: async () => { gets += 1; return redisRaw; },
+      set: async () => 'OK',
+      del: async () => { if (!redisRaw) return 0; redisRaw = null; return 1; },
+      quit: async () => undefined,
+    };
+    store.attachClient(redis);
+
+    assert.equal(await store.discardIfCurrent('co-1', CHAT, 'preview-failed'), true);
+    assert.equal(gets, 1, 'Redis is checked even when the same id was removed from local memory');
+    assert.equal(redisRaw, null);
+  });
 });
 
 /** Each eval id, executed. The map is asserted complete against the frozen corpus below. */
@@ -145,7 +208,7 @@ const CASES: Record<string, (h: Harness) => Promise<void>> = {
     // The web save lands between the card and the button. The proposal described a record that no
     // longer exists, so it is dropped rather than re-based onto whatever is there now.
     h.moveRecordInWeb();
-    const outcome = await h.useCase.apply(ctx(), CHAT, 'evt-raced');
+    const outcome = await confirm(h, 'evt-raced');
     assert.equal(outcome.status, 'changed');
     assert.equal((outcome as any).expenseId, EXPENSE, 'the reply can link the record to look at');
     assert.equal(await h.useCase.pendingPreview(ctx(), CHAT), null, 'and the stale proposal is gone');
@@ -154,9 +217,9 @@ const CASES: Record<string, (h: Harness) => Promise<void>> = {
     const previewed = await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'));
     assert.equal(previewed.status, 'preview');
     // Same user, same company, different chat: the preview is keyed to the chat that was shown it.
-    assert.equal((await h.useCase.apply(ctx(), OTHER_CHAT, 'evt-other-chat')).status, 'expired');
+    assert.equal((await confirm(h, 'evt-other-chat', ctx(), OTHER_CHAT)).status, 'expired');
     // A different user in the SAME chat cannot confirm it either.
-    assert.equal((await h.useCase.apply(ctx({ userId: 'u-2' }), CHAT, 'evt-other-user')).status, 'expired');
+    assert.equal((await confirm(h, 'evt-other-user', ctx({ userId: 'u-2' }))).status, 'expired');
   },
   'draft-confirmed-record-edit': async (h) => {
     const outcome = await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'));
@@ -174,7 +237,7 @@ const CASES: Record<string, (h: Harness) => Promise<void>> = {
     // And the confirm beat re-checks rather than trusting what the preview decided: a preview made
     // while the caller could edit is refused once the grant is gone.
     assert.equal((await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'))).status, 'preview');
-    const later = await h.useCase.apply(capture, CHAT, 'evt-perm');
+    const later = await confirm(h, 'evt-perm', capture);
     assert.equal(later.status, 'blocked');
     assert.equal((later as any).reason, 'forbidden');
   },
@@ -220,7 +283,7 @@ const CASES: Record<string, (h: Harness) => Promise<void>> = {
     // J3.2 then J3.3. Checking the "already applied" memory BEFORE the pending slot meant the
     // second confirm wrote nothing and cheerfully restated the FIRST edit's diff and total.
     assert.equal((await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'))).status, 'preview');
-    const first = await h.useCase.apply(ctx(), CHAT, 'evt-first');
+    const first = await confirm(h, 'evt-first');
     assert.equal(first.status, 'applied');
     const firstDiff = JSON.stringify((first as any).preview.diff);
 
@@ -233,7 +296,7 @@ const CASES: Record<string, (h: Harness) => Promise<void>> = {
     assert.equal(second.status, 'preview', 'a new edit must still preview normally');
     assert.notEqual(JSON.stringify((second as any).preview.diff), firstDiff);
 
-    const confirmed = await h.useCase.apply(ctx(), CHAT, 'evt-second');
+    const confirmed = await confirm(h, 'evt-second');
     assert.equal(confirmed.status, 'applied');
     assert.notEqual((confirmed as any).replayed, true, 'the second confirm is a real apply, not a replay');
     assert.equal(
@@ -282,17 +345,43 @@ describe('LINE draft edit — frozen security eval', () => {
     assert.equal(h.applies(), 0);
   });
 
+  it('refuses an append that would exceed the note limit instead of previewing a truncated value', async () => {
+    const h = build({ note: 'x'.repeat(490) });
+    const outcome = await h.useCase.preview(ctx(), {
+      tool: 'expense.draft.set_header', input: { noteAppend: 'เพิ่มข้อมูลนี้' },
+      chatKeyHash: CHAT, requestId: 'r-1', expenseId: EXPENSE,
+      evidence: [{ text: 'เพิ่มข้อมูลนี้', todayIso: '2026-09-05' }],
+    });
+    assert.equal(outcome.status, 'blocked');
+    assert.equal((outcome as any).detail, 'note_append_exceeds_limit');
+    assert.equal(await h.useCase.pendingPreview(ctx(), CHAT), null);
+  });
+
+  it('takes the duplicate lock before a confirmed write and remembers the post-reconciliation revision', async () => {
+    const h = build();
+    assert.equal((await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'))).status, 'preview');
+    h.operationOrder.length = 0;
+
+    const applied = await confirm(h, 'evt-confirm-duplicate-check');
+
+    assert.equal(applied.status, 'applied');
+    assert.deepEqual(h.operationOrder.slice(0, 3), ['lock', 'update', 'reconcile']);
+    const replay = await confirm(h, 'evt-confirm-duplicate-check-replay');
+    assert.equal(replay.status, 'applied');
+    assert.equal((replay as any).replayed, true, 'the applied memory uses the final revision after duplicate reconciliation');
+  });
+
   it('rechecks applied-memory permission, source and exact committed revision without another write', async () => {
     const h = build();
     assert.equal((await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'))).status, 'preview');
-    assert.equal((await h.useCase.apply(ctx(), CHAT, 'first')).status, 'applied');
-    assert.equal((await h.useCase.apply(ctx(), CHAT, 'same')).status, 'applied');
-    const denied = await h.useCase.apply(ctx({ permissions: [] }), CHAT, 'revoked');
+    assert.equal((await confirm(h, 'first')).status, 'applied');
+    assert.equal((await confirm(h, 'same')).status, 'applied');
+    const denied = await confirm(h, 'revoked', ctx({ permissions: [] }));
     assert.equal(denied.status, 'blocked');assert.doesNotMatch(JSON.stringify(denied), /BHC|1789/);
     h.record.branchId = 'outside' as any;
-    assert.equal((await h.useCase.apply(ctx({ scopes: { branchIds: ['allowed'] } }), CHAT, 'branch')).status, 'blocked');
+    assert.equal((await confirm(h, 'branch', ctx({ scopes: { branchIds: ['allowed'] } }))).status, 'blocked');
     h.record.branchId = null;h.moveRecordInWeb();
-    assert.equal((await h.useCase.apply(ctx(), CHAT, 'changed')).status, 'changed');
+    assert.equal((await confirm(h, 'changed')).status, 'changed');
     assert.equal(h.applies(), 1);
   });
 
@@ -302,9 +391,9 @@ describe('LINE draft edit — frozen security eval', () => {
     const stored = (await h.store.load('co-1', CHAT))!;
     await h.store.discard('co-1', CHAT);
     await h.store.remember('co-1', CHAT, stored);
-    assert.equal((await h.useCase.apply(ctx(), CHAT, 'legacy')).status, 'changed');
+    assert.equal((await confirm(h, 'legacy')).status, 'changed');
     await h.store.remember('co-1', CHAT, { ...stored, companyId: 'foreign', appliedExpenseUpdatedAt: h.record.updatedAt.toISOString() });
-    const foreign = await h.useCase.apply(ctx(), CHAT, 'foreign');
+    const foreign = await confirm(h, 'foreign');
     assert.equal(foreign.status, 'expired');assert.doesNotMatch(JSON.stringify(foreign), /BHC|1789/);
     assert.equal(h.applies(), 0);
   });
@@ -373,18 +462,20 @@ describe('LINE draft edit — frozen security eval', () => {
   it('answers a second tap as already applied, not as expired', async () => {
     const harness = build();
     assert.equal((await harness.useCase.preview(ctx(), charge('ค่าบริการ 10%'))).status, 'preview');
-    const first = await harness.useCase.apply(ctx(), CHAT, 'evt-1');
+    const first = await confirm(harness, 'evt-1');
     assert.equal(first.status, 'applied');
     assert.notEqual((first as any).replayed, true);
 
-    const second = await harness.useCase.apply(ctx(), CHAT, 'evt-1-again');
+    const second = await confirm(harness, 'evt-1-again');
     assert.equal(second.status, 'applied');
     assert.equal((second as any).replayed, true);
     assert.equal(harness.applies(), 1, 'and the record is written exactly once');
-    assert.equal((await harness.useCase.appliedResult(ctx(), CHAT)).status, 'applied');
+    const appliedEntry = await harness.store.loadApplied('co-1', CHAT);
+    assert.ok(appliedEntry);
+    assert.equal((await harness.useCase.appliedResult(ctx(), CHAT, appliedEntry!.previewId)).status, 'applied');
     harness.moveRecordInWeb();
-    assert.equal((await harness.useCase.appliedResult(ctx(), CHAT)).status, 'changed');
-    assert.equal((await harness.useCase.appliedResult(ctx({ permissions: [] }), CHAT)).status, 'blocked');
+    assert.equal((await harness.useCase.appliedResult(ctx(), CHAT, appliedEntry!.previewId)).status, 'changed');
+    assert.equal((await harness.useCase.appliedResult(ctx({ permissions: [] }), CHAT, appliedEntry!.previewId)).status, 'blocked');
     assert.equal(harness.applies(), 1, 'delivery validation is read only');
   });
 
@@ -401,5 +492,169 @@ describe('LINE draft edit — frozen security eval', () => {
         assert.equal(row.expectedApplyCount, 0, `${row.id} must never write`);
       }
     }
+  });
+});
+
+describe('SEC-04 exact preview binding', () => {
+  it('serializes preview replacement against claims across two store workers', async () => {
+    const values = new Map<string, string>();
+    const redis = {
+      get: async (key: string) => values.get(key) ?? null,
+      set: async (key: string, value: string) => { values.set(key, value); return 'OK'; },
+      del: async (key: string) => Number(values.delete(key)),
+      quit: async () => undefined,
+      eval: async (script: string, numberOfKeys: number, ...args: string[]) => {
+        const keys = args.slice(0, numberOfKeys);
+        const argv = args.slice(numberOfKeys);
+        if (numberOfKeys === 3) {
+          if (values.has(keys[1]!)) return 0;
+          values.delete(keys[2]!);
+          values.set(keys[0]!, argv[0]!);
+          return 1;
+        }
+        if (numberOfKeys === 2) {
+          const raw = values.get(keys[0]!);
+          if (!raw || (JSON.parse(raw) as any).previewId !== argv[0] || values.has(keys[1]!)) return null;
+          values.set(keys[1]!, argv[1]!);
+          return raw;
+        }
+        if (numberOfKeys === 1 && values.get(keys[0]!) === argv[0]) return Number(values.delete(keys[0]!));
+        throw new Error(`unexpected preview-store script: ${script}`);
+      },
+    };
+    const workerA = new LineDraftPreviewStore();
+    const workerB = new LineDraftPreviewStore();
+    workerA.attachClient(redis);
+    workerB.attachClient(redis);
+    const entry = (previewId: string) => ({ previewId, companyId: 'co-1', userId: 'u-1', chatKeyHash: CHAT,
+      expenseId: EXPENSE, expenseUpdatedAt: '2026-09-05T10:00:00.000Z', patch: {}, preview: {}, requestId: 'r-1' } as any);
+    const firstId = '550e8400-e29b-41d4-a716-446655440000';
+    const secondId = '650e8400-e29b-41d4-a716-446655440001';
+    assert.equal(await workerA.save(entry(firstId)), true);
+    const claim = await workerA.claimCurrent('co-1', CHAT, firstId);
+    assert.ok(claim);
+    assert.equal(await workerB.save(entry(secondId)), false, 'a second worker cannot replace a claimed preview');
+    assert.equal((await workerB.load('co-1', CHAT))?.previewId, firstId);
+    await workerA.releaseClaim('co-1', CHAT, claim!.token);
+    assert.equal(await workerB.save(entry(secondId)), true);
+    assert.equal(await workerA.claimCurrent('co-1', CHAT, firstId), null, 'old card is stale after replacement');
+    assert.equal((await workerA.claimCurrent('co-1', CHAT, secondId))?.entry.previewId, secondId);
+  });
+
+  it('refuses an old card confirm/cancel after a newer preview and accepts only the current id', async () => {
+    const h = build();
+    const first = await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'));
+    assert.equal(first.status, 'preview');
+    const firstId = (first as any).preview.previewId as string;
+    const second = await h.useCase.preview(ctx(), {
+      ...charge('เปลี่ยนบรรทัด 1 เป็น 500'), tool: 'expense.draft.set_line',
+      input: { lineNumber: 1, amount: '500' },
+    });
+    assert.equal(second.status, 'preview');
+    const secondId = (second as any).preview.previewId as string;
+    assert.notEqual(firstId, secondId);
+
+    assert.equal((await h.useCase.apply(ctx(), CHAT, 'old-confirm', firstId)).status, 'expired');
+    assert.equal(await h.useCase.cancel(ctx(), CHAT, firstId), 'expired');
+    assert.equal((await h.store.load('co-1', CHAT))?.previewId, secondId, 'neither old action discards the newer proposal');
+    assert.equal(h.applies(), 0, 'an old card never applies the latest edit');
+
+    assert.equal(await h.useCase.cancel(ctx(), CHAT, secondId), 'cancelled');
+    assert.equal(await h.store.load('co-1', CHAT), null, 'the current cancel consumes only its own preview');
+  });
+
+  it('prevents a new preview from replacing an atomically claimed card until mutation finishes', async () => {
+    const h = build();
+    const first = await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'));
+    const firstId = (first as any).preview.previewId as string;
+    const claim = await h.store.claimCurrent('co-1', CHAT, firstId);
+    assert.ok(claim);
+    const second = await h.useCase.preview(ctx(), {
+      ...charge('เปลี่ยนบรรทัด 1 เป็น 500'), tool: 'expense.draft.set_line',
+      input: { lineNumber: 1, amount: '500' },
+    });
+    assert.equal(second.status, 'blocked');
+    assert.equal((await h.store.load('co-1', CHAT))?.previewId, firstId);
+    await h.store.releaseClaim('co-1', CHAT, claim!.token);
+    assert.equal((await h.useCase.preview(ctx(), {
+      ...charge('เปลี่ยนบรรทัด 1 เป็น 500'), tool: 'expense.draft.set_line',
+      input: { lineNumber: 1, amount: '500' },
+    })).status, 'preview');
+    assert.notEqual((await h.store.load('co-1', CHAT))?.previewId, firstId);
+  });
+
+  it('rechecks permission and record revision before canceling the exact preview', async () => {
+    const h = build();
+    const preview = await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'));
+    const previewId = (preview as any).preview.previewId as string;
+    assert.equal(await h.useCase.cancel(ctx({ permissions: [] }), CHAT, previewId), 'expired');
+    assert.equal((await h.store.load('co-1', CHAT))?.previewId, previewId, 'revoked permission does not consume the preview');
+
+    h.moveRecordInWeb();
+    assert.equal(await h.useCase.cancel(ctx(), CHAT, previewId), 'expired');
+    assert.equal(await h.store.load('co-1', CHAT), null, 'a stale revision cannot be reported as a successful cancel');
+    assert.equal(h.applies(), 0, 'cancel never updates the expense');
+  });
+});
+
+describe('LINE vendor counterparty autosave parity', () => {
+  const vendorChange = () => ({
+    tool: 'expense.draft.set_header' as const,
+    input: { vendorName: 'ร้านใหม่' }, chatKeyHash: CHAT, requestId: 'r-1', expenseId: EXPENSE,
+    evidence: [{ text: 'ร้านใหม่', todayIso: '2026-09-05' }],
+  });
+
+  it('runs eligible vendor autosave only after confirmed expense commit and links by committed revision', async () => {
+    const h = build();
+    Object.assign(h.record, {
+      primaryAttachmentId: 'att-1', captureSource: 'LINE_UPLOAD', sourceReimbursementRequestId: null,
+      vendorCounterpartyId: 'cp-old', vendorTaxIdSnapshot: '0105558123456', vendorBranchCodeSnapshot: '00001',
+      vendorAddressSnapshot: 'ที่อยู่จากใบเสร็จ', vendorEntityKindSnapshot: 'JURISTIC',
+    });
+    const registryResult = { case: 'CREATE', counterpartyId: 'cp-new', displayName: 'ร้านใหม่', canOpenCounterparty: true };
+    (h.useCase as any).ensureVendorCounterparty = { execute: async (context: unknown, input: unknown) => {
+      assert.equal(h.isTransactionCommitted(), true, 'registry autosave starts only after the main transaction commits');
+      h.vendorRegistryInputs.push({ context, input });
+      return { result: registryResult, linkCounterpartyId: 'cp-new' };
+    } };
+
+    const preview = await h.useCase.preview(ctx(), vendorChange());
+    assert.equal(preview.status, 'preview');
+    assert.equal(h.vendorRegistryInputs.length, 0, 'rollback preview has no registry side effect');
+    const previewId = (preview as any).preview.previewId as string;
+    const outcome = await h.useCase.apply(ctx(), CHAT, 'confirm-vendor', previewId);
+    assert.equal(outcome.status, 'applied');
+    assert.equal(h.vendorRegistryInputs.length, 1);
+    const registryInput = h.vendorRegistryInputs[0]!.input;
+    assert.equal(registryInput.vendorName, 'ร้านใหม่');
+    assert.equal(registryInput.vendorCounterpartyId, null, 'a renamed vendor cannot retain the old registry link');
+    assert.equal(registryInput.receiptUploaderUserId, 'receipt-uploader-1');
+    assert.equal(registryInput.captureSource, 'LINE_UPLOAD');
+    assert.equal(registryInput.sourceReimbursementRequestId, null);
+    assert.equal(h.vendorLinkUpdates.length, 1);
+    assert.equal(h.vendorLinkUpdates[0].vendorCounterpartyId, 'cp-new');
+    const appliedEntry = await h.store.loadApplied('co-1', CHAT);
+    assert.equal(h.vendorLinkUpdates[0].expectedUpdatedAt.getTime() + 1_000,
+      new Date(appliedEntry!.appliedExpenseUpdatedAt!).getTime(), 'link CAS uses the committed revision; its follow-up update becomes the final replay revision');
+    assert.equal((outcome as any).vendorCounterpartyAutoSave.case, 'CREATE');
+    assert.equal((await h.useCase.appliedResult(ctx(), CHAT, previewId) as any).vendorCounterpartyAutoSave.case, 'CREATE');
+  });
+
+  it('keeps the expense edit successful and labels a post-save link CAS failure accurately', async () => {
+    const h = build();
+    h.failVendorLinkUpdate(true);
+    (h.useCase as any).ensureVendorCounterparty = { execute: async () => ({
+      result: { case: 'CREATE', counterpartyId: 'cp-new', displayName: 'BHC', canOpenCounterparty: true },
+      linkCounterpartyId: 'cp-new',
+    }) };
+    const preview = await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'));
+    assert.equal(preview.status, 'preview');
+    const previewId = (preview as any).preview.previewId as string;
+    const outcome = await h.useCase.apply(ctx(), CHAT, 'confirm-link-failure', previewId);
+    assert.equal(outcome.status, 'applied', 'the committed expense edit is never reported as retryable failure');
+    assert.equal((outcome as any).vendorCounterpartyAutoSave.linkFailed, true);
+    assert.equal((outcome as any).vendorCounterpartyAutoSave.failed, true);
+    assert.equal((await h.useCase.appliedResult(ctx(), CHAT, previewId) as any).vendorCounterpartyAutoSave.linkFailed, true);
+    assert.equal(h.applies(), 1);
   });
 });

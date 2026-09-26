@@ -928,7 +928,9 @@ export type CreateExpenseDraftInput = {
   }>;
 };
 
-export type UpdateExpenseDraftInput = Partial<Omit<CreateExpenseDraftInput, 'captureSource' | 'lines' | 'idempotencyKey' | 'expenseCategoryId'>> & {
+export type UpdateExpenseDraftInput = Partial<Omit<CreateExpenseDraftInput, 'captureSource' | 'lines' | 'idempotencyKey' | 'expenseCategoryId' | 'vendorCounterpartyId'>> & {
+  /** Explicitly detach an outdated vendor link when the seller identity changes. */
+  vendorCounterpartyId?: string | null;
   /** Null explicitly clears the document-level category; line categories remain independent. */
   expenseCategoryId?: string | null;
   /** Interactive callers send the version they loaded; API PATCH/override routes require it. */

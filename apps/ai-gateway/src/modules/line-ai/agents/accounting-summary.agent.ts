@@ -219,7 +219,7 @@ Output language must follow the user's input language.
 `.trim();
 
 export class AccountingSummaryAgent {
-  constructor(private readonly erpTools: ErpToolClient) {}
+  constructor(private readonly erpTools: ErpToolClient, private readonly lineDraftEditEnabled = true) {}
 
   async run(
     ctx: AgentContext,
@@ -392,7 +392,7 @@ export class AccountingSummaryAgent {
         // Spec §5.5: the whole answer is the deterministic Thai template, so the grounded fact IS
         // that text. The orchestrator uses the same renderer for replyText and never lets the model
         // rewrite it; this fact exists so the output is SUCCEEDED and carries the record's link.
-        const explained = formatExpenseExplainReply(data);
+        const explained = formatExpenseExplainReply(data, this.lineDraftEditEnabled);
         if (!explained) { readFailed = true; toolData.pop(); continue; }
         pushFacts({ label: TOOL_FACT_LABELS[tool.name]!, value: explained });
       } else if ((LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(tool.name)) {

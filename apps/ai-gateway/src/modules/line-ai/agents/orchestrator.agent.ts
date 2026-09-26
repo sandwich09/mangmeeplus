@@ -923,9 +923,9 @@ export const EXPLAIN_RECORD_TOOL = 'expense.explain_record';
 
 /** The deterministic explain answer for this turn, when one of the gathered reads was an explain
  *  whose result the formatter could fully verify. `undefined` keeps the ordinary composed path. */
-function explainedRecordReply(toolData: Array<{ tool: string; data: unknown }>): string | undefined {
+function explainedRecordReply(toolData: Array<{ tool: string; data: unknown }>, lineDraftEditEnabled = true): string | undefined {
   const entry = toolData.find((item) => item.tool === EXPLAIN_RECORD_TOOL);
-  return entry ? formatExpenseExplainReply(entry.data) : undefined;
+  return entry ? formatExpenseExplainReply(entry.data, lineDraftEditEnabled) : undefined;
 }
 
 /** The deterministic draft-edit answer for this turn, when one of the gathered calls was a
@@ -1353,10 +1353,10 @@ export class OrchestratorAgent {
       // can promise a total the server did not compute — and no model text can imply the change
       // was saved. The API attaches the [ยืนยัน]/[ยกเลิก] buttons to this same turn.
       replyText = draftUpdateReply(toolData)!;
-    } else if (explainedRecordReply(toolData)) {
+    } else if (explainedRecordReply(toolData, this.config.lineAiDraftEditEnabled)) {
       // Spec §5.5: an explain answer is rendered by the deterministic Thai template only. No model
       // call, so no sentence can restate someone's money in a number the tool did not return.
-      replyText = explainedRecordReply(toolData)!;
+      replyText = explainedRecordReply(toolData, this.config.lineAiDraftEditEnabled)!;
     } else if (plan.status !== 'UNROUTABLE' && toolData.length > 0) {
       replyText = await composer.composeAnswer(req.messageText, toolData, composed.replyText, provider, {
         planLanguage: plan.language,
@@ -1661,13 +1661,13 @@ export class OrchestratorAgent {
       case 'sales':
       case 'crm':
       case 'tax':
-        return new AccountingSummaryAgent(this.erpTools);
+        return new AccountingSummaryAgent(this.erpTools, this.config.lineAiDraftEditEnabled);
       case 'inventory':
         return new InventoryAgent(this.erpTools);
       case 'general':
       case 'notifications':
         // ponytail: general falls back to accounting summary (dashboard/notifications)
-        return new AccountingSummaryAgent(this.erpTools);
+        return new AccountingSummaryAgent(this.erpTools, this.config.lineAiDraftEditEnabled);
       default:
         return null;
     }

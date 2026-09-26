@@ -167,6 +167,9 @@ export function counterpartyAutoSaveNotice(
 
   // Checked before the case map: a failed write may still carry the case it was attempting, and
   // the bar is the only thing that tells the user the registry is behind the expense (§8).
+  if (result.linkFailed) {
+    return { kind: 'bar', messageKey: 'counterparties.auto_save_link_failed', counterpartyId };
+  }
   if (result.failed || result.case === 'FAILED') {
     return { kind: 'bar', messageKey: 'counterparties.auto_save_failed', counterpartyId };
   }

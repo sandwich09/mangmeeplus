@@ -7,7 +7,7 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../common/logger/security-event';
 import { verifyLineWebhookSignature } from '../infrastructure/line-webhook-verifier';
 import { LineMessageBufferService } from '../../line-ai/application/line-message-buffer.service';
-import { LINE_FOLLOW_EVENT_TEXT, linePostbackCommandText } from '../../line-ai/domain/logic/line-staff-menu.logic';
+import { LINE_FOLLOW_EVENT_TEXT, lineDraftUpdatePostbackPreviewId, linePostbackCommandText } from '../../line-ai/domain/logic/line-staff-menu.logic';
 
 type LineMessageEvent = {
   type: string;
@@ -86,6 +86,9 @@ export class LineWebhookController {
           : event.type === 'postback'
             ? linePostbackCommandText(event.postback?.data, this.config.lineAiDraftEditEnabled)
             : null;
+        const draftUpdatePreviewId = event.type === 'postback'
+          ? lineDraftUpdatePostbackPreviewId(event.postback?.data, synthetic)
+          : undefined;
         if (synthetic) {
           await this.messageBuffer.enqueue({
             chatId,
@@ -96,6 +99,7 @@ export class LineWebhookController {
               webhookEventId: event.webhookEventId ?? `${lineUserId}-${Date.now()}`,
               replyToken: event.replyToken,
               text: synthetic,
+              ...(draftUpdatePreviewId ? { draftUpdatePreviewId } : {}),
               timestamp,
             },
           });

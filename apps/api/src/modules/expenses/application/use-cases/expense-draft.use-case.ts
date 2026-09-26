@@ -817,7 +817,7 @@ export class UpdateExpenseDraftUseCase {
         expenseId,
         captureSource: r.captureSource,
         sourceReimbursementRequestId: r.sourceReimbursementRequestId,
-        vendorCounterpartyId: input.vendorCounterpartyId ?? r.vendorCounterpartyId,
+        vendorCounterpartyId: input.vendorCounterpartyId !== undefined ? input.vendorCounterpartyId : r.vendorCounterpartyId,
         vendorName: input.vendorNameSnapshot ?? r.vendorNameSnapshot,
         vendorTaxId: input.vendorTaxIdSnapshot ?? r.vendorTaxIdSnapshot,
         vendorBranchCode: vendorIdentity.fields.vendorBranchCodeSnapshot !== undefined

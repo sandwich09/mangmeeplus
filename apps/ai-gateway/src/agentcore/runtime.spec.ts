@@ -486,6 +486,28 @@ describe('AgentCore Runtime – L-12 invocation bounds', () => {
     }
   }
 
+  it('answers the S-4 capability probe from this runtime flag without invoking the orchestrator', async () => {
+    const prior = process.env['LINE_AI_DRAFT_EDIT_ENABLED'];
+    let orchestratorCalls = 0;
+    try {
+      for (const enabled of [true, false]) {
+        process.env['LINE_AI_DRAFT_EDIT_ENABLED'] = String(enabled);
+        await withServer({ run: async () => { orchestratorCalls += 1; throw new Error('model path must not run'); } }, async (url) => {
+          const response = await fetch(`${url}/invocations`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lineDraftEditCapabilityProbe: true }),
+          });
+          assert.equal(response.status, 200);
+          assert.equal((await response.json() as any).lineDraftEditEnabled, enabled);
+        });
+      }
+      assert.equal(orchestratorCalls, 0);
+    } finally {
+      if (prior === undefined) delete process.env['LINE_AI_DRAFT_EDIT_ENABLED'];
+      else process.env['LINE_AI_DRAFT_EDIT_ENABLED'] = prior;
+    }
+  });
+
   it('rejects an oversize Content-Length without reading the body at all', async () => {
     const attached: string[] = [];
     const fakeReq = {

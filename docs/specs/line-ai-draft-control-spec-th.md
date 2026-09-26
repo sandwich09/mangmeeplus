@@ -2,6 +2,8 @@
 
 สถานะ: APPROVED-FOR-BUILD (Owner อนุมัติ 5 ข้อ 2026-09-05) · เจ้าของ: Owner · ผู้เขียน: Fable (control) · ผู้ทำ: Opus ตาม `docs/plans/line-ai-draft-control-plan-th.md`
 
+ข้อกำหนดติดตาม 2026-09-26: [คำตอบและสิทธิ์แก้ค่าใช้จ่ายผ่าน LINE](line-ai-expense-edit-capability-consistency-spec-th.md) ระบุ Owner decision ว่า **ทุกฟิลด์ต้อง preview → กดยืนยัน** และปิดช่องว่างระหว่างคำชวนแก้กับคำถาม “แก้รายการได้ไหม”; ให้ใช้เอกสารติดตามนี้กับงานแก้ไขรอบถัดไป
+
 ## 0. ทำไมต้องมี (หลักฐานจริงจาก UAT 2026-09-03)
 
 Owner ส่งบิลร้านอาหาร (BHC) ที่มี "Service charge 10% 152.00" ผ่าน LINE แล้วพบ 4 อย่างในเทิร์นเดียว (log UAT api-web + ai-gateway, build 71263dd0, expense `cmtldq6vb00rp4s4906qfzpl8`):
@@ -89,7 +91,7 @@ Owner ส่งบิลร้านอาหาร (BHC) ที่มี "Servi
 
 ### 5.4 แก้ draft ผ่าน LINE (S-4)
 - tools (category ใหม่ `draft_update` ใน `ToolCategory`, `ai-tools.ts:5`): `expense.draft.set_header` (expenseDate, vendorName, documentNumber, noteAppend), `expense.draft.set_line` (lineNumber, description?, amount?, vatTreatment?), `expense.draft.add_charge` (kind, amount | percentOfSubtotal, vatTreatment?), `expense.draft.remove_line` (lineNumber, สินค้าหรือค่าใช้จ่ายเพิ่ม), `expense.draft.set_vat_mode` (vatMode, rate) — ทุกตัว `requiredPermissions` = สิทธิ์เดียวกับเว็บ (`expense.update`/`expenses.update` ตามที่ controller เว็บใช้ — ผู้ทำต้องอ่าน controller จริง), `requiresErpPermissionCheck: true`, `sensitiveAudit: true`
-- **สองจังหวะเสมอ**: (1) `preview` — API คำนวณผลลัพธ์ผ่าน reconcile service เดียวกับเว็บแบบ dry-run แล้วคืน diff (ก่อน/หลัง ยอดรวมใหม่ คำเตือน) → การ์ด LINE "ยืนยัน/ยกเลิก" ที่ผูกกับ `previewId` (TTL 10 นาที, ผูก company + user + chat + record `updatedAt`); (2) `apply` — postback `ยืนยัน` → ตรวจ `updatedAt` เท่าเดิม (ไม่งั้น "รายการเปลี่ยนไปแล้ว ขอดูใหม่") → เขียนใน transaction เดียว → audit `expense.line_ai.draft_update` (before/after/previewId/messageId) → ตอบผลจริง
+- **สองจังหวะเสมอ**: (1) `preview` — API คำนวณผลลัพธ์ผ่าน reconcile service เดียวกับเว็บแบบ dry-run แล้วคืน diff (ก่อน/หลัง ยอดรวมใหม่ คำเตือน) → การ์ด LINE "ยืนยัน/ยกเลิก" ที่ผูกกับ `previewId` (TTL 10 นาที, ผูก company + user + chat + record `updatedAt`); (2) `apply` — confirm/cancel postback ส่ง `action` และ opaque `previewId` ของการ์ดใบนั้น โดยไม่ส่ง expense/company id → API ตรวจ action+UUID แบบเข้มและ claim preview เดิมก่อน mutation; การ์ดเก่าหรือข้อความยืนยันที่พิมพ์เองใช้กับ preview ล่าสุดไม่ได้ → ตรวจ permission/status/branch และ `updatedAt` เท่าเดิม (ไม่งั้น "รายการเปลี่ยนไปแล้ว ขอดูใหม่") → เขียนใน transaction เดียว → audit `expense.line_ai.draft_update` (before/after/previewId/messageId) → ตอบผลจริง
 - guard: สถานะ ∈ DRAFT/NEEDS_REVIEW/READY_FOR_CONFIRMATION; provenance แชท + หน้าต่างเวลาเดียวกับ correction lane; หนึ่ง preview ค้างต่อแชท (ใหม่แทนเก่า); rate limit ต่อผู้ใช้ (ใช้ limiter เดิมของ LINE); ไม่นับโควตาใบเสร็จ (`RECEIPT_QUOTA` นับเฉพาะการจับใหม่)
 - ข้อความจากโมเดลกำหนดได้แค่ **ข้อเสนอ** (tool + args) — server ตรวจ args ด้วย schema, ตัวเลขต้องมาจากข้อความผู้ใช้หรือจาก record (grounding เดิมของ correction lane); prompt injection ในรูป/ข้อความห้ามทำให้เกิด apply โดยไม่มี postback ยืนยัน
 - correction lane เดิม (5 ฟิลด์) กลายเป็นผู้ใช้ tools เดียวกัน: `amount` → `set_line` เมื่อมีบรรทัดเดียว มิฉะนั้นถาม "บรรทัดไหน" (clarify เดิม); ลบ `amountOnlyLine`
@@ -110,7 +112,7 @@ Owner ส่งบิลร้านอาหาร (BHC) ที่มี "Servi
 ## 7. สถานะ/สิทธิ์/audit
 
 - สิทธิ์: อ่าน = สิทธิ์เดิมของ `expense.get_detail`; แก้ = สิทธิ์เดียวกับ `updateExpenseDraft` ของเว็บ; ไม่มีสิทธิ์ใหม่
-- audit: `expense.line_ai.draft_update` (apply), `expense.line_ai.draft_preview` (preview, LOW), `expense.line_correction.apply` (คงไว้ แต่ payload ต้องบอกว่าเป็น note-append)
+- audit: `expense.line_ai.draft_update` (confirmed apply), `expense.line_ai.draft_preview` (preview, LOW). **Superseded 2026-09-26:** `expense.line_correction.apply` is retired because direct correction writes are disabled; see [LINE expense edit capability consistency](line-ai-expense-edit-capability-consistency-spec-th.md).
 - state ของ preview: Redis key `line-ai:draft-preview:<companyId>:<chatKey>` (TTL 600s) — ไม่มีตารางใหม่
 
 ## 8. Config & rollout
