@@ -465,6 +465,26 @@ async function handleInvocation(
     return;
   }
 
+  // The gateway uses this IAM-authenticated probe only for an explicit LINE edit-capability
+  // question. Report the flag from this separately deployed process without running the model.
+  if (typeof body === 'object' && body !== null
+    && (body as Record<string, unknown>)['lineDraftEditCapabilityProbe'] === true) {
+    const sourceCommit = process.env['GIT_SHA'];
+    const artifactSha256 = process.env['AGENTCORE_ARTIFACT_SHA256'];
+    const serviceVersion = process.env['SERVICE_VERSION'];
+    const runtimeIdentity = sourceCommit && artifactSha256 && serviceVersion
+      ? { sourceCommit, artifactSha256, serviceVersion, contractVersion: LINE_AI_RUNTIME_CONTRACT_VERSION }
+      : undefined;
+    json(res, 200, {
+      turnId: (body as Record<string, unknown>)['turnId'],
+      replyText: '', plan: { status: 'UNROUTABLE', intents: [] }, durationMs: 0, refused: false,
+      sourceRefs: [], webLinks: [], toolsInvoked: [],
+      lineDraftEditEnabled: process.env['LINE_AI_DRAFT_EDIT_ENABLED'] === 'true',
+      ...(runtimeIdentity ? { runtimeIdentity } : {}),
+    });
+    return;
+  }
+
   const payload = validatePayload(body);
   if (!payload) {
     json(res, 400, { error: 'INVALID_PAYLOAD', message: 'turnId, companyId, userId, and messageText are required' });

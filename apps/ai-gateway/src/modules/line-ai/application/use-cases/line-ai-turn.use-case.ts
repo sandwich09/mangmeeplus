@@ -129,6 +129,16 @@ export class LineAiTurnUseCase {
     @Inject(AgentCoreRuntimeClient) private readonly agentcoreRuntime: AgentCoreRuntimeClient,
   ) {}
 
+  /** Effective S-4 capability across the Gateway and an optionally separate AgentCore artifact. */
+  async lineDraftEditCapabilityEnabled(): Promise<boolean> {
+    if (!this.config.lineAiDraftEditEnabled) return false;
+    // The deterministic path has no S-4 tool catalog. Never report full LINE edit capability
+    // unless the serving orchestration is enabled.
+    if (!this.config.lineAiAgentOrchestrationEnabled) return false;
+    if (this.config.lineAiAgentRuntime !== 'agentcore') return true;
+    return this.agentcoreRuntime.lineDraftEditCapabilityEnabled();
+  }
+
   async execute(req: LineAiTurnRequest): Promise<LineAiTurnResponse> {
     const startMs = Date.now();
     const response = await this.executeInner(req, startMs);

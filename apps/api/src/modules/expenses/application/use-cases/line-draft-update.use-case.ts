@@ -9,8 +9,8 @@
  * identity all pass BEFORE the user is asked anything.
  *
  * **APPLY** is reachable only from a confirm postback. It re-derives everything from the chat: the
- * postback carries an intent and no ids (SEC-04), the stored preview is looked up by
- * company+chat, its binding is re-checked, and the record's `updatedAt` must still be the one the
+ * postback carries the exact preview id (SEC-04), the stored preview is claimed by company+chat,
+ * its binding is re-checked, and the record's `updatedAt` must still be the one the
  * preview was computed against. Then the same use case runs for real, in one transaction, with the
  * audit row inside it.
  *
@@ -27,6 +27,7 @@ import type {
   LineDraftUpdateTool,
   LineDraftUpdateTotals,
   RequestContext,
+  VendorCounterpartyAutoSaveResult,
 } from '@watchdog-bms/contracts';
 import { EXPENSE_LINE_CHARGE_KIND_LABELS, EXPENSE_STATUS_LABELS, scrubRecordText } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -37,6 +38,7 @@ import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.lo
 import type { ExpenseRecordWithRelations } from '../../domain/models/expense.model';
 import {
   appendNote,
+  DRAFT_NOTE_APPEND_MAX,
   existingChargeLikeProductLine,
   groundingFailure,
   parseLineDraftPatch,
@@ -47,7 +49,9 @@ import {
 } from '../../domain/logic/line-draft-update.logic';
 import type { CorrectionEvidence } from '../../domain/logic/line-correction.logic';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
+import { reconcileExpenseDuplicateCandidates } from '../services/expense-duplicate-detection';
 import { LINE_DRAFT_PREVIEW_TTL_SECONDS, LineDraftPreviewStore, type StoredDraftPreview } from '../services/line-draft-preview.store';
+import { EnsureVendorCounterpartyFromExpenseUseCase } from '../../../accounting-documents/application/use-cases/ensure-vendor-counterparty-from-expense.use-case';
 import { UpdateExpenseDraftUseCase } from './expense-draft.use-case';
 
 /** Spec §2: LINE may edit only these. CONFIRMED and VOIDED are the web's, and say so. */
@@ -57,6 +61,11 @@ const EDITABLE_STATUSES = new Set(['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMAT
 const PREVIEW_RATE_SCOPE = 'line-draft-preview-user';
 const PREVIEW_MAX_PER_WINDOW = 20;
 const PREVIEW_WINDOW_SECONDS = 300;
+const DRAFT_PREVIEW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function isDraftPreviewId(value: unknown): value is string {
+  return typeof value === 'string' && DRAFT_PREVIEW_ID.test(value);
+}
 
 export type LineDraftUpdateBlocked = {
   status: 'blocked';
@@ -83,7 +92,7 @@ export type LineDraftPreviewOutcome =
   | LineDraftUpdateBlocked;
 
 export type LineDraftApplyOutcome =
-  | { status: 'applied'; preview: LineDraftUpdatePreview; expenseId: string; replayed?: boolean }
+  | { status: 'applied'; preview: LineDraftUpdatePreview; expenseId: string; replayed?: boolean; vendorCounterpartyAutoSave?: VendorCounterpartyAutoSaveResult }
   | { status: 'cancelled' }
   | { status: 'expired' }
   | { status: 'changed'; expenseId: string }
@@ -120,6 +129,7 @@ export class LineDraftUpdateUseCase {
     private readonly previews: LineDraftPreviewStore,
     private readonly config: AppConfigService,
     @Optional() private readonly rateLimits?: RedisRateLimitService,
+    @Optional() private readonly ensureVendorCounterparty?: EnsureVendorCounterpartyFromExpenseUseCase,
   ) {}
 
   get enabled(): boolean {
@@ -158,6 +168,11 @@ export class LineDraftUpdateUseCase {
     }
     const parsed = parseLineDraftPatch(input.tool, resolved);
     if (!parsed.ok) return { status: 'blocked', reason: 'invalid_patch', detail: parsed.reason };
+
+    if (parsed.patch.tool === 'expense.draft.set_header' && parsed.patch.noteAppend
+      && appendNote(target.note, parsed.patch.noteAppend).length > DRAFT_NOTE_APPEND_MAX) {
+      return { status: 'blocked', reason: 'invalid_patch', detail: 'note_append_exceeds_limit' };
+    }
 
     const grounding = groundingFailure(parsed.patch, input.evidence, recordAmountValues(target.lines));
     if (grounding) return { status: 'blocked', reason: 'ungrounded_value', detail: grounding };
@@ -221,17 +236,22 @@ export class LineDraftUpdateUseCase {
     // rather than show a button that cannot work.
     if (!(await this.previews.save(stored))) return { status: 'blocked', reason: 'feature_disabled', detail: 'preview_store_unavailable' };
 
-    await this.audit.log({
-      companyId: ctx.companyId,
-      actorUserId: ctx.userId,
-      action: 'expense.line_ai.draft_preview',
-      targetType: 'expense_record',
-      targetId: target.id,
-      requestId: ctx.requestId,
-      result: 'SUCCESS',
-      riskLevel: 'LOW',
-      metadataJson: { previewId: preview.previewId, tool: input.tool, fields: preview.diff.map((entry) => entry.field) },
-    });
+    try {
+      await this.audit.log({
+        companyId: ctx.companyId,
+        actorUserId: ctx.userId,
+        action: 'expense.line_ai.draft_preview',
+        targetType: 'expense_record',
+        targetId: target.id,
+        requestId: ctx.requestId,
+        result: 'SUCCESS',
+        riskLevel: 'LOW',
+        metadataJson: { previewId: preview.previewId, tool: input.tool, fields: preview.diff.map((entry) => entry.field) },
+      });
+    } catch (error) {
+      await this.previews.discardIfCurrent(ctx.companyId, input.chatKeyHash, preview.previewId);
+      throw error;
+    }
     return { status: 'preview', preview };
   }
 
@@ -250,52 +270,68 @@ export class LineDraftUpdateUseCase {
     return stored.preview;
   }
 
+  async discardUndeliveredPreview(ctx: RequestContext, chatKeyHash: string, previewId: string): Promise<void> {
+    if (!ctx.permissions.includes('expense.update')) return;
+    await this.previews.discardIfCurrent(ctx.companyId, chatKeyHash, previewId);
+  }
+
   /** Read only: delivery and double-tap recovery must never execute the edit again. */
-  async appliedResult(ctx: RequestContext, chatKeyHash: string): Promise<LineDraftApplyOutcome> {
+  async appliedResult(ctx: RequestContext, chatKeyHash: string, previewId: string): Promise<LineDraftApplyOutcome> {
     if (!this.enabled) return { status: 'blocked', reason: 'feature_disabled' };
     if (!ctx.permissions.includes('expense.update')) return { status: 'blocked', reason: 'forbidden' };
     const applied = await this.previews.loadApplied(ctx.companyId, chatKeyHash);
     if (!applied || applied.companyId !== ctx.companyId || applied.userId !== ctx.userId || applied.chatKeyHash !== chatKeyHash)
       return { status: 'expired' };
+    if (!isDraftPreviewId(previewId) || applied.previewId !== previewId) return { status: 'expired' };
     const record = await this.repo.findByIdWithRelations(ctx.companyId, applied.expenseId, undefined, ctx.scopes ?? {});
     const guard = this.guardRecord(ctx, record);
     if (guard) return guard;
     if (!applied.appliedExpenseUpdatedAt || record!.updatedAt.toISOString() !== applied.appliedExpenseUpdatedAt)
       return { status: 'changed', expenseId: record!.id };
-    return { status: 'applied', preview: applied.preview, expenseId: applied.expenseId, replayed: true };
+    return { status: 'applied', preview: applied.preview, expenseId: applied.expenseId, replayed: true,
+      ...(applied.vendorCounterpartyAutoSave ? { vendorCounterpartyAutoSave: applied.vendorCounterpartyAutoSave } : {}) };
   }
 
-  /** Beat two, confirm. Everything is re-derived from the chat; the postback proves only intent. */
-  async apply(ctx: RequestContext, chatKeyHash: string, webhookEventId: string): Promise<LineDraftApplyOutcome> {
+  /** Beat two, confirm. The card's previewId selects one proposal; every other authority is re-checked. */
+  async apply(ctx: RequestContext, chatKeyHash: string, webhookEventId: string, expectedPreviewId?: string): Promise<LineDraftApplyOutcome> {
     if (!this.enabled) return { status: 'blocked', reason: 'feature_disabled' };
     if (!ctx.permissions.includes('expense.update')) return { status: 'blocked', reason: 'forbidden' };
-    const stored = await this.previews.load(ctx.companyId, chatKeyHash);
+    if (!isDraftPreviewId(expectedPreviewId)) return { status: 'expired' };
+    const claim = await this.previews.claimCurrent(ctx.companyId, chatKeyHash, expectedPreviewId);
+    if (!claim) return this.appliedResult(ctx, chatKeyHash, expectedPreviewId);
+    try {
+      return await this.applyClaimed(ctx, chatKeyHash, webhookEventId, claim.entry);
+    } finally {
+      await this.previews.releaseClaim(ctx.companyId, chatKeyHash, claim.token);
+    }
+  }
+
+  private async applyClaimed(
+    ctx: RequestContext,
+    chatKeyHash: string,
+    webhookEventId: string,
+    stored: StoredDraftPreview,
+  ): Promise<LineDraftApplyOutcome> {
     // Wrong user, wrong chat, wrong company, or simply gone: all one answer, because telling them
     // apart would confirm that some other chat holds a pending edit.
-    if (!stored || stored.companyId !== ctx.companyId || stored.userId !== ctx.userId || stored.chatKeyHash !== chatKeyHash) {
-      // ONLY with nothing pending is this a second tap on a card already confirmed. Checking the
-      // applied memory first was a real bug: within its window, a SECOND edit would preview
-      // normally, the user would press ยืนยัน, nothing would be written, and the reply would
-      // restate the FIRST edit — J3.2 followed by J3.3, which is the ordinary journey.
-      return this.appliedResult(ctx, chatKeyHash);
-    }
+    if (stored.companyId !== ctx.companyId || stored.userId !== ctx.userId || stored.chatKeyHash !== chatKeyHash) return { status: 'expired' };
     const record = await this.repo.findByIdWithRelations(ctx.companyId, stored.expenseId, undefined, ctx.scopes ?? {});
     const guard = this.guardRecord(ctx, record);
     if (guard) {
-      await this.previews.discard(ctx.companyId, chatKeyHash);
+      await this.previews.discardIfCurrent(ctx.companyId, chatKeyHash, stored.previewId);
       return guard;
     }
     const target = record!;
     if (target.updatedAt.toISOString() !== stored.expenseUpdatedAt) {
       // Someone edited it in web between the card and the button. The proposal described a
       // different record than the one that exists now, so it is dropped, not re-based.
-      await this.previews.discard(ctx.companyId, chatKeyHash);
+      await this.previews.discardIfCurrent(ctx.companyId, chatKeyHash, stored.previewId);
       return { status: 'changed', expenseId: target.id };
     }
 
     const projected = projectLineDraftPatch(target, stored.patch);
     if ('error' in projected) {
-      await this.previews.discard(ctx.companyId, chatKeyHash);
+      await this.previews.discardIfCurrent(ctx.companyId, chatKeyHash, stored.previewId);
       return { status: 'blocked', reason: 'invalid_patch', detail: projected.error };
     }
 
@@ -304,12 +340,27 @@ export class LineDraftUpdateUseCase {
     let appliedExpenseUpdatedAt: string | undefined;
     try {
       appliedExpenseUpdatedAt = await client.$transaction(async (tx: any) => {
+      const duplicateSensitive = (stored.patch.tool === 'expense.draft.set_header'
+        && Boolean(stored.patch.expenseDate || stored.patch.vendorName || stored.patch.documentNumber))
+        || (stored.patch.tool === 'expense.draft.set_line'
+          && (stored.patch.amount !== undefined || stored.patch.vatTreatment !== undefined || stored.patch.chargeKind !== undefined))
+        || stored.patch.tool === 'expense.draft.add_charge'
+        || stored.patch.tool === 'expense.draft.remove_line'
+        || stored.patch.tool === 'expense.draft.set_vat_mode';
+      if (duplicateSensitive) {
+        // Match legacy correction's lock order: company reconciliation lock BEFORE the expense
+        // update, then re-use this transaction during candidate reconciliation.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:duplicate-reconciliation`}))`;
+      }
       const updated = await this.updateDraft.execute(
         ctx,
         target.id,
         this.buildInput(target, stored.patch, projected.lines),
         { db: tx, suppressGenericAudit: true, requireExpectedUpdatedAt: true },
       );
+      if (duplicateSensitive) {
+        await reconcileExpenseDuplicateCandidates(this.repo, ctx.companyId, target.id, ctx.userId, ctx.scopes ?? {}, tx);
+      }
       // In the same transaction as the mutation: an audit row that survived a rollback would claim
       // an edit that never happened, and this row is the durable provenance of a LINE-made change.
       await this.audit.log({
@@ -330,33 +381,112 @@ export class LineDraftUpdateUseCase {
           diff: stored.preview.diff,
         },
       }, tx);
-      return updated.updatedAt.toISOString();
+      // Reconciliation can itself update the expense's duplicate status and updatedAt. Remember
+      // the final committed revision so delivery proof and double-tap replay compare with reality.
+      if (!duplicateSensitive) return updated.updatedAt.toISOString();
+      const committed = await tx.expenseRecord.findFirstOrThrow({ where: { id: target.id, companyId: ctx.companyId }, select: { updatedAt: true } });
+      return committed.updatedAt.toISOString();
       });
     } catch (err) {
       // The row moved between our own re-read and the write — the same race the `updatedAt` compare
       // above catches, just lost by a smaller margin. Same answer either way: drop the proposal and
       // ask the user to look again, never re-base it onto a record they have not seen.
       if (err instanceof ConflictException) {
-        await this.previews.discard(ctx.companyId, chatKeyHash);
+        await this.previews.discardIfCurrent(ctx.companyId, chatKeyHash, stored.previewId);
         return { status: 'changed', expenseId: target.id };
       }
       throw err;
     }
 
-    await this.previews.discard(ctx.companyId, chatKeyHash);
+    const autoSave = await this.saveVendorCounterpartyAfterCommit(ctx, target, stored.patch, appliedExpenseUpdatedAt!);
+    appliedExpenseUpdatedAt = autoSave.updatedAt;
+    await this.previews.discardIfCurrent(ctx.companyId, chatKeyHash, stored.previewId);
     // Remembered briefly so a SECOND tap on the same card answers "แก้ไปแล้วค่ะ" rather than
     // "there is nothing pending" — a double tap is the commonest thing a person does to a button
     // whose reply is slow, and telling them nothing happened would be a lie about their own edit.
-    await this.previews.remember(ctx.companyId, chatKeyHash, { ...stored, appliedExpenseUpdatedAt });
-    return { status: 'applied', preview: stored.preview, expenseId: target.id };
+    await this.previews.remember(ctx.companyId, chatKeyHash, {
+      ...stored,
+      appliedExpenseUpdatedAt,
+      ...(autoSave.result ? { vendorCounterpartyAutoSave: autoSave.result } : {}),
+    });
+    return {
+      status: 'applied', preview: stored.preview, expenseId: target.id,
+      ...(autoSave.result ? { vendorCounterpartyAutoSave: autoSave.result } : {}),
+    };
+  }
+
+  /** Mirror expense-save registry behavior only after the LINE expense transaction commits. */
+  private async saveVendorCounterpartyAfterCommit(
+    ctx: RequestContext,
+    target: ExpenseRecordWithRelations,
+    patch: LineDraftPatch,
+    committedUpdatedAt: string,
+  ): Promise<{ updatedAt: string; result?: VendorCounterpartyAutoSaveResult }> {
+    if (!this.ensureVendorCounterparty) return { updatedAt: committedUpdatedAt };
+    try {
+      const vendorName = patch.tool === 'expense.draft.set_header' && patch.vendorName !== undefined
+        ? patch.vendorName : target.vendorNameSnapshot;
+      const vendorIdentityChanged = vendorName !== target.vendorNameSnapshot;
+      const receiptUploaderUserId = target.primaryAttachmentId
+        ? await this.repo.findPrimaryReceiptUploader(ctx.companyId, target.id, target.primaryAttachmentId)
+        : null;
+      const outcome = await this.ensureVendorCounterparty.execute(ctx, {
+        expenseId: target.id,
+        ...(receiptUploaderUserId ? { receiptUploaderUserId } : {}),
+        captureSource: target.captureSource,
+        sourceReimbursementRequestId: target.sourceReimbursementRequestId,
+        vendorCounterpartyId: vendorIdentityChanged ? null : target.vendorCounterpartyId,
+        vendorName,
+        vendorTaxId: target.vendorTaxIdSnapshot,
+        vendorBranchCode: target.vendorBranchCodeSnapshot,
+        vendorAddressText: target.vendorAddressSnapshot,
+        vendorEntityKind: target.vendorEntityKindSnapshot,
+      });
+      let updatedAt = committedUpdatedAt;
+      if (outcome.result.case !== 'FAILED' && outcome.result.case !== 'SKIPPED'
+        && (outcome.linkCounterpartyId || outcome.fillEntityKind)) {
+        try {
+          const updated = await this.repo.updateExpense({
+            id: target.id,
+            companyId: ctx.companyId,
+            updatedByUserId: ctx.userId,
+            expectedUpdatedAt: new Date(committedUpdatedAt),
+            ...(outcome.linkCounterpartyId ? { vendorCounterpartyId: outcome.linkCounterpartyId } : {}),
+            ...(outcome.fillEntityKind ? { vendorEntityKindSnapshot: outcome.fillEntityKind } : {}),
+          });
+          updatedAt = updated.updatedAt.toISOString();
+        } catch {
+          return { updatedAt: committedUpdatedAt, result: { ...outcome.result, failed: true, linkFailed: true } };
+        }
+      }
+      return {
+        updatedAt,
+        ...(outcome.result.case !== 'SKIPPED' ? { result: outcome.result } : {}),
+      };
+    } catch {
+      // The main expense edit already committed; registry/link failures are reported as FAILED
+      // and never make a retryable confirm appear to have lost the expense change.
+      return { updatedAt: committedUpdatedAt, result: { case: 'FAILED', failed: true } };
+    }
   }
 
   /** Beat two, cancel. Drops the proposal; touches nothing else. */
-  async cancel(ctx: Pick<RequestContext, 'companyId' | 'userId'>, chatKeyHash: string): Promise<'cancelled' | 'expired'> {
-    const stored = await this.previews.load(ctx.companyId, chatKeyHash);
-    if (!stored || stored.userId !== ctx.userId) return 'expired';
-    await this.previews.discard(ctx.companyId, chatKeyHash);
-    return 'cancelled';
+  async cancel(ctx: RequestContext, chatKeyHash: string, expectedPreviewId?: string): Promise<'cancelled' | 'expired'> {
+    if (!this.enabled || !ctx.permissions.includes('expense.update') || !isDraftPreviewId(expectedPreviewId)) return 'expired';
+    const claim = await this.previews.claimCurrent(ctx.companyId, chatKeyHash, expectedPreviewId);
+    if (!claim) return 'expired';
+    try {
+      const stored = claim.entry;
+      if (stored.companyId !== ctx.companyId || stored.userId !== ctx.userId || stored.chatKeyHash !== chatKeyHash) return 'expired';
+      const record = await this.repo.findByIdWithRelations(ctx.companyId, stored.expenseId, undefined, ctx.scopes ?? {});
+      if (this.guardRecord(ctx, record) || record!.updatedAt.toISOString() !== stored.expenseUpdatedAt) {
+        await this.previews.discardIfCurrent(ctx.companyId, chatKeyHash, stored.previewId);
+        return 'expired';
+      }
+      return await this.previews.discardIfCurrent(ctx.companyId, chatKeyHash, stored.previewId) ? 'cancelled' : 'expired';
+    } finally {
+      await this.previews.releaseClaim(ctx.companyId, chatKeyHash, claim.token);
+    }
   }
 
   /** Status, ownership and branch scope, re-checked at both beats — routing decided no authority. */
@@ -418,7 +548,10 @@ export class LineDraftUpdateUseCase {
       expectedUpdatedAt: record.updatedAt.toISOString(),
       lines,
       ...(header?.expenseDate ? { expenseDate: header.expenseDate } : {}),
-      ...(header?.vendorName ? { vendorNameSnapshot: header.vendorName } : {}),
+      ...(header?.vendorName ? {
+        vendorNameSnapshot: header.vendorName,
+        ...(header.vendorName !== record.vendorNameSnapshot ? { vendorCounterpartyId: null } : {}),
+      } : {}),
       ...(header?.documentNumber ? { vendorDocumentNumber: header.documentNumber } : {}),
       ...(header?.noteAppend ? { note: appendNote(record.note, header.noteAppend) } : {}),
       ...(vat ? { vatMode: vat.vatMode as ExpenseVatMode } : {}),

@@ -241,6 +241,16 @@ describe('parseBufferEnvelope', () => {
       assert.equal(parseBufferEnvelope(value), null);
     }
   });
+
+  it('replays a valid card-bound preview id and rejects malformed or legacy draft postback bindings', () => {
+    const previewId = '550e8400-e29b-41d4-a716-446655440000';
+    const envelope = envelopeFor('draft-confirm');
+    envelope.item.text = 'ยืนยันการแก้ไข';
+    (envelope.item as any).draftUpdatePreviewId = previewId;
+    assert.equal((parseBufferEnvelope(envelope)?.item as any)?.draftUpdatePreviewId, previewId);
+    assert.equal(parseBufferEnvelope({ ...envelope, item: { ...envelope.item, draftUpdatePreviewId: 'bad-id' } }), null);
+    assert.equal(parseBufferEnvelope({ ...envelope, item: { ...envelope.item, draftUpdatePreviewId: undefined } }), null);
+  });
 });
 
 describe('parseOutcomeMessages', () => {

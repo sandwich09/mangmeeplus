@@ -342,7 +342,7 @@ describe('LINE draft edit preview→confirm on real PostgreSQL', { skip: !databa
       // ── 2. A web edit between the card and the button ──────────────────────────
       await client.expenseRecord.update({ where: { id: expense.id }, data: { vendorNameSnapshot: 'BHC (web edit)' } });
       assert.equal(await draft.pendingPreview(ctx, CHAT), null, 'stale source facts cannot return from the preview reader');
-      const raced = await draft.apply(ctx, CHAT, 'evt-race');
+      const raced = await draft.apply(ctx, CHAT, 'evt-race', preview.previewId);
       assert.equal(raced.status, 'changed', 'a moved record is refused, never re-based');
       const afterRace = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id }, include: { lines: true } });
       assert.equal(afterRace.lines.length, 1, 'and nothing is written');
@@ -354,7 +354,7 @@ describe('LINE draft edit preview→confirm on real PostgreSQL', { skip: !databa
       const second = await draft.preview({ ...ctx, requestId: 'req-2' }, { ...request, requestId: 'req-2', expenseId: expense.id });
       assert.equal(second.status, 'preview');
       const promised = (second as { preview: any }).preview.totalsAfter;
-      const applied = await draft.apply({ ...ctx, requestId: 'req-2' }, CHAT, 'evt-confirm');
+      const applied = await draft.apply({ ...ctx, requestId: 'req-2' }, CHAT, 'evt-confirm', (second as { preview: any }).preview.previewId);
       assert.equal(applied.status, 'applied');
 
       const saved = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
@@ -384,15 +384,15 @@ describe('LINE draft edit preview→confirm on real PostgreSQL', { skip: !databa
         ['after', 'before', 'diff', 'previewId', 'tool', 'webhookEventId'],
       );
       assert.equal(await draft.pendingPreview(ctx, CHAT), null, 'the preview is consumed');
-      const same = await draft.apply(ctx, CHAT, 'evt-confirm-repeat');
+      const same = await draft.apply(ctx, CHAT, 'evt-confirm-repeat', (second as { preview: any }).preview.previewId);
       assert.equal(same.status, 'applied');assert.equal((same as any).replayed, true);
-      const revoked = await draft.apply({ ...ctx, permissions: [] }, CHAT, 'evt-confirm-revoked');
+      const revoked = await draft.apply({ ...ctx, permissions: [] }, CHAT, 'evt-confirm-revoked', (second as { preview: any }).preview.previewId);
       assert.equal(revoked.status, 'blocked');assert.doesNotMatch(JSON.stringify(revoked), /BHC|1789/);
       const outside = await client.branch.create({ data: { companyId: company, code: 'OUTSIDE', name: 'Other scope', type: 'BRANCH' } });
       await client.expenseRecord.update({ where: { id: expense.id }, data: { branchId: outside.id } });
-      const moved = await draft.apply({ ...ctx, scopes: { branchIds: [] } }, CHAT, 'evt-confirm-moved');
+      const moved = await draft.apply({ ...ctx, scopes: { branchIds: [] } }, CHAT, 'evt-confirm-moved', (second as { preview: any }).preview.previewId);
       assert.equal(moved.status, 'blocked');assert.doesNotMatch(JSON.stringify(moved), /BHC|1789/);
-      const changed = await draft.apply(ctx, CHAT, 'evt-confirm-changed');assert.equal(changed.status, 'changed');
+      const changed = await draft.apply(ctx, CHAT, 'evt-confirm-changed', (second as { preview: any }).preview.previewId);assert.equal(changed.status, 'changed');
       assert.equal(audits.filter(entry => entry.action === 'expense.line_ai.draft_update').length, 1, 'history reads and double taps never rerun the edit');
 
       // ── 4. Status guard, and cross-company ─────────────────────────────────────

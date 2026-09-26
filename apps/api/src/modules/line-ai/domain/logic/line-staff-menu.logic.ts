@@ -614,8 +614,8 @@ export type StaffMenuCommand =
   // §2.4 delta: the typed aliases of the way out of the support pause. The tile's own words are
   // `talk`, which the use case routes by pause state.
   | 'resume_ai'
-  // S-4 (draft-control spec §5.4): the two buttons on the draft-edit confirm card. Typed answers
-  // work too, which is the point of SEC-04 — a postback may do nothing a message could not.
+  // S-4 (draft-control spec §5.4): typed words still enter the command lane, but only the card
+  // postback carries the opaque previewId required to apply or cancel that exact proposal.
   | 'draft_update_confirm' | 'draft_update_cancel'
   | 'follow';
 
@@ -664,10 +664,9 @@ export function staffMenuCommand(text: string): StaffMenuCommand | null {
 }
 
 /**
- * P10-L G-04 / SEC-04. A postback carries INTENT and nothing else: a bare action name, no company
- * id, no request id, no state. Each one resolves to a command the text lane already answers, so the
- * single place that re-checks membership, role and company state stays the only place that decides
- * anything — a forged `data` value can therefore reach no further than a typed message could.
+ * P10-L G-04 / SEC-04. Ordinary menu postbacks carry only intent: no company id, request id, or
+ * business state. Draft-edit confirm/cancel are the narrow exception; their separate parser below
+ * requires an opaque previewId to keep an old card from acting on a newer proposal.
  */
 const POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
   'line-rich-talk': RESUME_AI_COMMAND,
@@ -677,8 +676,8 @@ const POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
 };
 
 /**
- * S-4: the confirm/cancel buttons carry an intent and no ids. The server re-derives which preview
- * they answer from the chat, so a forged or replayed `data` reaches nothing.
+ * S-4: confirm/cancel buttons carry an opaque previewId. The API verifies that exact preview is
+ * still current for this chat, so old or malformed postbacks cannot select a newer proposal.
  *
  * Gated on the flag, and this is the point: with S-4 off no card carries these buttons, so the only
  * thing that can send one is a forgery. Resolving it to a command anyway sent the event down the
@@ -708,4 +707,29 @@ export function linePostbackCommandText(data: string | undefined, draftEditEnabl
   if (!action) return null;
   if (draftEditEnabled && DRAFT_POSTBACK_ACTIONS[action]) return DRAFT_POSTBACK_ACTIONS[action]!;
   return POSTBACK_ACTIONS[action] ?? null;
+}
+
+const LINE_DRAFT_PREVIEW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+export function isLineDraftPreviewId(value: unknown): value is string {
+  return typeof value === 'string' && LINE_DRAFT_PREVIEW_ID.test(value);
+}
+
+/** A draft action is bound only by the exact, small postback shape rendered on its card. */
+export function lineDraftUpdatePostbackPreviewId(data: string | undefined, commandText: string | null): string | undefined {
+  if (!data || data.length > 256 || !commandText) return undefined;
+  try {
+    const entries = [...new URLSearchParams(data).entries()];
+    if (entries.length !== 2) return undefined;
+    const actions = entries.filter(([key]) => key === 'action');
+    const ids = entries.filter(([key]) => key === 'previewId');
+    if (actions.length !== 1 || ids.length !== 1) return undefined;
+    const expectedAction = commandText === DRAFT_UPDATE_CONFIRM_COMMAND
+      ? 'draft-update-confirm'
+      : commandText === DRAFT_UPDATE_CANCEL_COMMAND ? 'draft-update-cancel' : undefined;
+    if (!expectedAction || actions[0]![1] !== expectedAction || !isLineDraftPreviewId(ids[0]![1])) return undefined;
+    return ids[0]![1];
+  } catch {
+    return undefined;
+  }
 }

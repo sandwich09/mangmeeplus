@@ -288,7 +288,9 @@ export type CreateExpenseRecordInput = {
 // The capture lineage and the payer are INSERT-only through this type: `updateExpense` does not
 // carry them, so accepting them here would be a field that type-checks and silently does nothing.
 // A handoff writes them in its own transaction, under the group lock (appendix §5).
-export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'companyId' | 'captureSource' | 'createdByUserId' | 'missingReceiptReason' | 'expenseCategoryId' | 'draftIdempotencyKey' | 'draftPayloadHash' | 'draftReplayScopes' | 'captureGroupId' | 'captureAllocationId' | 'captureScopeKey' | 'payerUserId' | 'vendorBranchCodeSnapshot' | 'vendorAddressSnapshot'>> & {
+export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'companyId' | 'captureSource' | 'createdByUserId' | 'missingReceiptReason' | 'expenseCategoryId' | 'draftIdempotencyKey' | 'draftPayloadHash' | 'draftReplayScopes' | 'captureGroupId' | 'captureAllocationId' | 'captureScopeKey' | 'payerUserId' | 'vendorBranchCodeSnapshot' | 'vendorAddressSnapshot' | 'vendorCounterpartyId'>> & {
+  /** Explicitly detach an outdated vendor link when the seller identity changes. */
+  vendorCounterpartyId?: string | null;
   id: string;
   companyId: string;
   updatedByUserId: string;

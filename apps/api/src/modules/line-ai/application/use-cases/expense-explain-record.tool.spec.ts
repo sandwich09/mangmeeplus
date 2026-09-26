@@ -77,6 +77,30 @@ describe('expense.explain_record', () => {
     assert.ok(Math.abs(ageMs - LINE_RECENT_CAPTURE_WINDOW_MS) < 5_000, 'recency window is the shared one');
   });
 
+  it('advertises preview edits only for an authorized, current chat candidate in an editable state', async () => {
+    const { repo } = makeRepo();
+    const tool = new ExpenseExplainRecordTool(getExpense(), repo, { enabled: true } as any);
+    const authorized = await tool.execute({ ...ctx, permissions: ['expense.read_own', 'expense.update'] } as any, {});
+    assert.deepEqual((authorized.data as any).editableOverLine,
+      ['expenseDate', 'vendorName', 'documentNumber', 'note', 'amount', 'charges', 'vat']);
+    assert.equal((authorized.data as any).amountEditableOverLine, true);
+
+    const explicitId = await tool.execute({ ...ctx, permissions: ['expense.read_own', 'expense.update'] } as any,
+      { recordRefKind: 'id', recordRefValue: 'exp-bhc' });
+    assert.deepEqual((explicitId.data as any).editableOverLine, [], 'an id-only read has no LINE provenance proof');
+    assert.equal((explicitId.data as any).amountEditableOverLine, false);
+
+    const confirmed = await new ExpenseExplainRecordTool(
+      getExpense({ ...BHC, status: 'CONFIRMED' }), repo, { enabled: true } as any,
+    ).execute({ ...ctx, permissions: ['expense.read_own', 'expense.update'] } as any, {});
+    assert.deepEqual((confirmed.data as any).editableOverLine, [], 'confirmed records cannot be advertised');
+
+    const ready = await new ExpenseExplainRecordTool(
+      getExpense({ ...BHC, status: 'READY_FOR_CONFIRMATION' }), repo, { enabled: true } as any,
+    ).execute({ ...ctx, permissions: ['expense.read_own', 'expense.update'] } as any, {});
+    assert.ok((ready.data as any).editableOverLine.length > 0, 'READY_FOR_CONFIRMATION is still editable but not confirmed');
+  });
+
   it('resolves a documentNumber inside the same chat-provenance set, and refuses one outside it', async () => {
     const { repo } = makeRepo();
     const tool = new ExpenseExplainRecordTool(getExpense(), repo);

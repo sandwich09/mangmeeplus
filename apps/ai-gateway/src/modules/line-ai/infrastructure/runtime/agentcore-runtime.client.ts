@@ -155,6 +155,21 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
       .credentials as unknown as () => Promise<AwsCreds>;
   }
 
+  /** The separately deployed artifact reports its own catalog flag without running the model. */
+  async lineDraftEditCapabilityEnabled(): Promise<boolean> {
+    try {
+      const result = await this.invoke({
+        turnId: `line-edit-capability-${randomUUID()}`,
+        companyId: 'line-edit-capability-probe', userId: 'line-edit-capability-probe',
+        messageText: 'capability probe', locale: 'th-TH', permissions: [],
+        lineDraftEditCapabilityProbe: true,
+      });
+      return result.lineDraftEditEnabled === true;
+    } catch {
+      return false;
+    }
+  }
+
   async invoke(input: AgentCoreInvokeInput): Promise<AgentCoreInvokeResult> {
     if (!this.runtimeArn) {
       throw Object.assign(new Error('AGENTCORE_RUNTIME_ARN not configured'), { code: 'RUNTIME_NOT_CONFIGURED' });
@@ -204,7 +219,7 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
 
     const httpStartedAt = Date.now();
     const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), this.timeoutMs);
+    const timer = setTimeout(() => abort.abort(), input.lineDraftEditCapabilityProbe ? Math.min(this.timeoutMs, 3_000) : this.timeoutMs);
     let response: Response;
     try {
       response = await this.signedPost(url, host, canonicalPath, canonicalQs, sessionId, body, creds, abort.signal);

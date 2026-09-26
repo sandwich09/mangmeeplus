@@ -266,6 +266,10 @@ export class ExpenseExplainRecordTool implements ErpReadToolPort {
       if (!expenseId) return { toolName: this.toolName, status: 'ok', data: { found: false }, sourceRefs: [listRef], asOf, errorCode: 'EXPENSE_NOT_FOUND' };
 
       const expense = await this.getExpense.execute(toCtx(ctx), expenseId);
+      const mayEditThisLineRecord = ref.kind !== 'id'
+        && ctx.permissions.includes('expense.update')
+        && this.draftEditEnabled
+        && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status);
       const products = expense.lines.filter((line) => line.chargeKind == null);
       const chargeTotal = expense.charges.reduce((sum, charge) => sum.plus(new Decimal(charge.amount)), new Decimal(0));
       return {
@@ -316,10 +320,10 @@ export class ExpenseExplainRecordTool implements ErpReadToolPort {
           //
           // With S-4 ON the draft tools really do change money, on exactly the receipts this tool
           // explains, so the answer says so. The flag decides; the copy never guesses.
-          editableOverLine: this.draftEditEnabled
+          editableOverLine: mayEditThisLineRecord
             ? ['expenseDate', 'vendorName', 'documentNumber', 'note', 'amount', 'charges', 'vat']
-            : ['expenseDate', 'vendorName', 'documentNumber', 'note'],
-          amountEditableOverLine: this.draftEditEnabled,
+            : [],
+          amountEditableOverLine: mayEditThisLineRecord,
         },
         sourceRefs: [source(ctx, asOf, expense.expenseNumber ?? 'ค่าใช้จ่าย', 'expenses', 'expense', expense.id, `/companies/${ctx.companyId}/expenses/${expense.id}`)],
       };
