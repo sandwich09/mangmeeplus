@@ -8,12 +8,10 @@
  * scrubbed where it was built; the card re-bounds anyway, because a card is the last place that
  * could print a total nobody calculated).
  *
- * The two buttons carry `action=draft-update-confirm` / `action=draft-update-cancel` and NOTHING
- * else — no preview id, no expense id, no company id (P10-L SEC-04). The server re-derives the
- * pending preview from the chat that pressed the button, so a forged postback can reach no further
- * than typing the same words could.
+ * The two buttons carry the exact preview id shown on this card, and no expense or company id.
+ * The server re-checks company, chat, user, permission, status and record revision before acting.
  */
-import { scrubRecordIdentifier, scrubRecordText, type LineDraftUpdateDiffField, type LineDraftUpdatePreview } from '@watchdog-bms/contracts';
+import { scrubRecordIdentifier, scrubRecordText, type LineDraftUpdateDiffField, type LineDraftUpdatePreview, type VendorCounterpartyAutoSaveResult } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { absoluteWebLink } from '../../../../common/http/web-link';
 
@@ -74,11 +72,17 @@ export function formatRecordLabel(record: LineDraftUpdatePreview['record']): str
   return [vendor || 'ไม่ระบุผู้ขาย', formatThaiDate(record.expenseDate), record.statusLabel.slice(0, 40)].join(' · ');
 }
 
+function diffValue(entry: LineDraftUpdatePreview['diff'][number]): string {
+  return entry.field === 'note'
+    ? cell(entry.after, entry.kind)
+    : `${cell(entry.before, entry.kind)} → ${cell(entry.after, entry.kind)}`;
+}
+
 /** "จะเพิ่มค่าบริการ 10% = 152.00 ให้บิล BHC 03/09/2569 ยอดรวมใหม่ 1,789.04 ค่ะ" — the one line the
  *  card leads with, built from the diff rather than written per tool. */
 export function draftUpdateHeadline(preview: LineDraftUpdatePreview): string {
   const changes = preview.diff.slice(0, MAX_DIFF_ROWS)
-    .map((entry) => `${entry.label}: ${cell(entry.before, entry.kind)} → ${cell(entry.after, entry.kind)}`)
+    .map((entry) => `${entry.label}: ${diffValue(entry)}`)
     .join(' · ');
   // The label is built from structured fields, but the vendor name inside it is still OCR text —
   // so it is bounded here too rather than trusted because an earlier layer already scrubbed it.
@@ -92,7 +96,7 @@ export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): Li
     layout: 'vertical' as const,
     contents: [
       { type: 'text' as const, text: entry.label, size: 'xs' as const, color: '#667085', wrap: true },
-      { type: 'text' as const, text: `${cell(entry.before, entry.kind)} → ${cell(entry.after, entry.kind)}`, size: 'sm' as const, color: '#101828', wrap: true },
+      { type: 'text' as const, text: diffValue(entry), size: 'sm' as const, color: '#101828', wrap: true },
     ],
   }));
   const hidden = Math.max(preview.diff.length - MAX_DIFF_ROWS, 0);
@@ -100,7 +104,7 @@ export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): Li
     type: 'flex',
     // The plain-text equivalent LINE shows when Flex cannot render: same numbers, no buttons, so a
     // fallback delivery never silently loses the amount the user is being asked about.
-    altText: `${draftUpdateHeadline(preview)} · ยอดรวมใหม่ ${money(preview.totalsAfter.grandTotalAmount)} — ตอบ "${DRAFT_UPDATE_CONFIRM_COMMAND}" หรือ "${DRAFT_UPDATE_CANCEL_COMMAND}"`,
+    altText: `${draftUpdateHeadline(preview)} · ยอดรวมใหม่ ${money(preview.totalsAfter.grandTotalAmount)} — หากไม่เห็นปุ่ม ให้ส่งคำขอแก้ไขใหม่เพื่อรับบัตรอีกครั้ง`,
     contents: {
       type: 'bubble',
       size: 'mega',
@@ -155,18 +159,18 @@ export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): Li
         layout: 'vertical',
         spacing: 'sm',
         contents: [
-          // SEC-04: intent only. No ids ride in `data`, so the server must re-derive the preview
-          // from the chat — which is exactly what makes a replayed or forged postback inert.
+          // SEC-04: the opaque id binds this button to this card; the server still rechecks the
+          // current preview, user/chat binding, record revision, permissions and status.
           {
             type: 'button',
             style: 'primary',
             color: '#22C55E',
-            action: { type: 'postback', label: 'ยืนยัน', data: 'action=draft-update-confirm', displayText: DRAFT_UPDATE_CONFIRM_COMMAND },
+            action: { type: 'postback', label: 'ยืนยัน', data: 'action=draft-update-confirm&previewId=' + encodeURIComponent(preview.previewId), displayText: DRAFT_UPDATE_CONFIRM_COMMAND },
           },
           {
             type: 'button',
             style: 'secondary',
-            action: { type: 'postback', label: 'ยกเลิก', data: 'action=draft-update-cancel', displayText: DRAFT_UPDATE_CANCEL_COMMAND },
+            action: { type: 'postback', label: 'ยกเลิก', data: 'action=draft-update-cancel&previewId=' + encodeURIComponent(preview.previewId), displayText: DRAFT_UPDATE_CANCEL_COMMAND },
           },
         ],
       },
@@ -180,14 +184,23 @@ export function draftUpdateAppliedReply(
   companyId: string,
   expenseId: string,
   preview: LineDraftUpdatePreview,
+  vendorAutoSave?: VendorCounterpartyAutoSaveResult,
 ): string {
   const changes = preview.diff.slice(0, MAX_DIFF_ROWS)
     .map((entry) => `${entry.label} ${cell(entry.after, entry.kind)}`)
     .join(' · ');
-  return [
+  const reply = [
     `✅ แก้ให้แล้วค่ะ: ${changes} · ยอดรวม ${money(preview.totalsAfter.grandTotalAmount)}`,
     `ดูในเว็บ: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`)}`,
-  ].join('\n');
+  ];
+  if (vendorAutoSave?.linkFailed) {
+    reply.push('บันทึกร้านในทะเบียนคู่ค้าแล้ว แต่เชื่อมกับรายการนี้ไม่สำเร็จ กรุณาเปิดรายการในเว็บเพื่อตรวจสอบ');
+  } else if (vendorAutoSave?.failed || vendorAutoSave?.case === 'FAILED') {
+    reply.push('บันทึกรายจ่ายสำเร็จแล้ว แต่ยังไม่ได้บันทึกลงทะเบียนคู่ค้า ลองใหม่ได้จากหน้าคู่ค้า');
+  } else if (vendorAutoSave?.case === 'CREATE') {
+    reply.push('บันทึก' + (scrubRecordText(vendorAutoSave.displayName, 60) || 'ร้านนี้') + ' ลงทะเบียนคู่ค้าแล้ว');
+  }
+  return reply.join('\n');
 }
 
 /** What the correction lane's `proposeDraftUpdate` did with a turn. */

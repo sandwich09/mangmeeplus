@@ -115,6 +115,19 @@ export class AiGatewayClient {
     private readonly prisma: PrismaService,
   ) {}
 
+  /** Small authenticated config read used only when LINE is about to claim edit capability. */
+  async lineDraftEditCapabilityEnabled(requestId: string): Promise<boolean> {
+    try {
+      const result = await this.postInternal<{ enabled?: unknown }>(
+        '/internal/ai/line-draft-edit-capability', { requestId }, requestId, 3_000,
+      );
+      return result.enabled === true;
+    } catch {
+      // An unavailable serving runtime must never be advertised as able to preview edits.
+      return false;
+    }
+  }
+
   async requestLineTurn(
     request: LineAiTurnRequest,
     /** `retryOrdinal` is the ledger drain's `deliveryCount`: the same attempt, the next try. */

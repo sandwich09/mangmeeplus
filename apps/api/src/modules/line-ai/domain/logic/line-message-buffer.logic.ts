@@ -10,6 +10,8 @@ export type LineBufferTextItem = {
   webhookEventId: string;
   replyToken: string;
   text: string;
+  /** Exact draft preview targeted by a validated LINE postback. */
+  draftUpdatePreviewId?: string;
   lineMessageId?: string;
   /** LINE event timestamp (ms) — used to heal cross-POST arrival reordering. */
   timestamp: number;

@@ -55,6 +55,8 @@ export type LineBufferIncomingItem =
       webhookEventId: string;
       replyToken: string;
       text: string;
+      /** Exact preview id from a validated confirm/cancel postback; synthetic command text stays unchanged. */
+      draftUpdatePreviewId?: string;
       lineMessageId?: string;
       timestamp: number;
     }
@@ -903,6 +905,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       messagingChannelId: state.messagingChannelId,
       lineMessageId: last.lineMessageId,
       pushTargetId: state.chatId,
+      ...(last.draftUpdatePreviewId ? { draftUpdatePreviewId: last.draftUpdatePreviewId } : {}),
     };
   }
 

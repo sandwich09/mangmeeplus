@@ -589,6 +589,8 @@ function makeUseCase(
       substituteContinuation?: any;
       substituteLedger?: any;
       expenseDraftConversation?: any;
+      draftUpdate?: any;
+      lineEditCapabilityFn?: (requestId: string) => Promise<boolean>;
       openWaiting?: any[];
       /** Defaults to the seeded OPEN route; pass `closedLaunchGate`/`brokenLaunchGate` to drive the
        *  AI-lane kill switch. */
@@ -630,6 +632,7 @@ function makeUseCase(
 	        if (intakeRouteFn) return intakeRouteFn(req);
 	        throw new Error('LINE intake router not expected');
 	      },
+	      lineDraftEditCapabilityEnabled: async (requestId: string) => opts.lineEditCapabilityFn?.(requestId) ?? false,
 	      requestReceiptOcr: async (req: any, options?: any) => {
 	        if (opts.receiptOcrFn) return opts.receiptOcrFn(req, options);
 	        throw new Error('receipt OCR not expected');
@@ -678,8 +681,12 @@ function makeUseCase(
     opts.approvalQueues?.reimbursement,
     opts.approvalQueues?.purchaseRequests,
     opts.approvalQueues?.purchaseOrders,
-    undefined, // intakeState
-    opts.handoffLinks, // P12-3b handoff seam; absent = LINE_WEB_HANDOFF_ENABLED off
+      undefined, // intakeState
+      opts.handoffLinks, // P12-3b handoff seam; absent = LINE_WEB_HANDOFF_ENABLED off
+      undefined, // packageChange
+      undefined, // signupNotify
+      undefined, // rateLimit
+      opts.draftUpdate,
   );
   (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
 
@@ -784,6 +791,7 @@ describe('AP22 live source delivery fence', () => {
       let current = fault !== 'missing', reads = 0, previews = 0, applies = 0;
       const h = makeUseCase(prisma, {
         permissions: ['line.ai.query', 'expense.receipt.line_upload', 'expense.update'],
+        lineEditCapabilityFn: async () => true,
         intakeRouteFn: () => ({ status: 'ROUTED', intent: 'EXPENSE_CAPTURE_CORRECTION', language: 'th', confidence: 1 }),
         ...(fault === 'handoff' ? { handoffLinks: { wrapOutgoingLineContent: async (_recipient: unknown, messages: unknown) => { current = false; return messages; } } } : {}),
         ...(fault === 'reply-fallback' ? { sendReplyFn: async (_token: string, messages: unknown) => {
@@ -791,18 +799,20 @@ describe('AP22 live source delivery fence', () => {
         } } : {}),
       });
       const totals = { subtotalAmount: '987654', discountAmount: '0', chargesAmount: '0', taxableAmount: '987654', vatAmount: '0', grandTotalAmount: '987654' };
-      const preview = { previewId: 'preview-1', recordType: 'expense', expenseId: 'exp-1',
+      const preview = { previewId: '550e8400-e29b-41d4-a716-446655440000', recordType: 'expense', expenseId: 'exp-1',
         record: { vendorName: 'Private draft', expenseDate: '2026-09-15', statusLabel: 'ร่าง' }, tool: 'expense.draft.add_charge',
         diff: [], warnings: [], totalsBefore: totals, totalsAfter: totals, expiresAt: new Date(Date.now() + 600000).toISOString() };
       const check = (context: any) => { reads++; assert.ok(context.permissions.includes('expense.update')); return current; };
       (h.useCase as any).draftUpdate = {
         enabled: true, preview: async () => { previews++; return { status: 'preview', preview }; },
+        discardUndeliveredPreview: async () => true,
         apply: async () => { applies++; return { status: 'applied', preview, expenseId: 'exp-1' }; },
         pendingPreview: async (context: any) => check(context) ? preview : null,
         appliedResult: async (context: any) => check(context) ? { status: 'applied', preview, expenseId: 'exp-1' } : { status: 'changed', expenseId: 'exp-1' },
       };
       const delivery = h.useCase.execute({ ...BASE_EVENT, webhookEventId: `draft-${phase}-${fault}`,
-        messageText: phase === 'confirm' ? 'ยืนยันการแก้ไข' : 'เพิ่มค่าบริการ 10%' });
+        messageText: phase === 'confirm' ? 'ยืนยันการแก้ไข' : 'เพิ่มค่าบริการ 10%',
+        ...(phase === 'confirm' ? { draftUpdatePreviewId: preview.previewId } : {}) });
       if (fault === 'unchanged') await delivery;
       else await assert.rejects(delivery, /LINE_DELIVERY_FAILED_PERMANENT/);
       assert.equal(previews, phase === 'preview' ? 1 : 0); assert.equal(applies, phase === 'confirm' ? 1 : 0);
@@ -831,7 +841,7 @@ describe('AP22 live source delivery fence', () => {
     const totals = { subtotalAmount: '987654', discountAmount: '0', chargesAmount: '0', taxableAmount: '987654', vatAmount: '0', grandTotalAmount: '987654' };
     (h.useCase as any).draftUpdate = { pendingPreview: async (context: any) => {
       reads++;assert.ok(context.permissions.includes('expense.update'));assert.equal(context.companyId, 'company-1');
-      return current ? { previewId: 'preview-1', recordType: 'expense', expenseId: 'exp-1', record: { vendorName: 'Private draft', expenseDate: '2026-09-15', statusLabel: 'ร่าง' },
+      return current ? { previewId: '550e8400-e29b-41d4-a716-446655440000', recordType: 'expense', expenseId: 'exp-1', record: { vendorName: 'Private draft', expenseDate: '2026-09-15', statusLabel: 'ร่าง' },
         tool: 'expense.draft.set_header', diff: [], warnings: [], totalsBefore: totals, totalsAfter: totals, expiresAt: new Date(Date.now() + 600000).toISOString() } : null;
     } };
     (h.useCase as any).readEvidence = { forTurn: async () => ['unrelated-read'], verify: async () => true };
@@ -1638,7 +1648,7 @@ describe('ProcessLineWebhookUseCase', () => {
   });
 
   it('does not open the lane when the guard itself fails — the turn is thrown, never modelled', async () => {
-    const { prisma } = makePrisma();
+    const { prisma, aiTurns } = makePrisma();
     const { useCase, getAiGatewayCalled } = makeUseCase(prisma, {
       permissions: ['line.ai.query'],
       launchGate: brokenLaunchGate,
@@ -5132,6 +5142,182 @@ describe('LINE webhook shadow coverage (piece 5)', () => {
     // No company means no entitlement question to ask; a fabricated observation would be worse
     // than none.
     assert.deepEqual(since(), []);
+  });
+
+  it('does not persist shadow telemetry for the read-only expense-edit capability question', async () => {
+    const { prisma, aiTurns } = makePrisma();
+    const candidate = { id: 'exp-1', label: 'ใบเสร็จ · 26 ก.ย. 2569 · 100.00', createdAt: new Date().toISOString() };
+    const { useCase, replies } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'expense.update'],
+      expenseRepo: { findByIdWithRelations: async () => ({}), listCategories: async () => [] },
+      draftUpdate: { enabled: true, preview: async () => assert.fail('capability question must not preview') },
+      lineEditCapabilityFn: async () => true,
+    });
+    (useCase as any).loadCorrectionCandidates = async () => [candidate];
+    const since = takeNewRecords();
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-edit-capability-read-only', messageText: 'แก้รายการได้ไหม' });
+
+    assert.deepEqual(since(), [], 'shadow.flush would persist telemetry outside the allowed webhook outcome log');
+    assert.equal(aiTurns.length, 0, 'no intake/conversation turn is persisted');
+    assert.match(replies.join('\n'), /ถ้าหมายถึงรายการนี้/);
+    assert.match(replies.join('\n'), /ยืนยัน/);
+  });
+
+  it('keeps an active clarification open when the user asks only about LINE edit capability', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, ledgerCalls, intakeRequests, aiGatewayRequests } = makeLedgerUseCase(prisma, {
+      permissions: ['line.ai.query', 'expense.update'],
+      openWaiting: [{
+        id: 'wait-edit-capability', question: 'ต้องการแก้ฟิลด์ไหนคะ?', text: 'แก้รายการนี้', subject: 'expense',
+        askedAt: new Date().toISOString(),
+        entry: { id: 'wait-edit-capability', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 't0', kind: 'sub_request', userId: 'user-1' },
+      }],
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-edit-capability-pending', messageText: 'แก้รายการได้ไหม' });
+
+    assert.equal(ledgerCalls.acks.length, 0, 'the earlier clarification remains open');
+    assert.equal(ledgerCalls.turns.length, 0, 'the read-only question is not appended to the ledger');
+    assert.equal(intakeRequests.length, 0);
+    assert.equal(aiGatewayRequests.length, 0);
+  });
+});
+
+describe('LINE expense edit uses the three-turn preview boundary', () => {
+  const candidate = { id: 'exp-edit-1', label: 'ใบเสร็จ · 26 ก.ย. 2569 · 100.00', amount: '100.00', createdAt: new Date().toISOString() };
+  const record = {
+    id: candidate.id, companyId: 'company-1', createdByUserId: 'user-1', captureSource: 'LINE_UPLOAD',
+    sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf({ lineUserId: 'line-user-secret' }) },
+    branchId: null, status: 'NEEDS_REVIEW', expenseDate: new Date('2026-09-26T00:00:00Z'),
+    grandTotalAmount: '100.00', vendorNameSnapshot: 'ร้านทดสอบ', vendorDocumentNumber: null, note: 'LINE receipt upload',
+    updatedAt: new Date('2026-09-26T00:00:00Z'),
+  };
+  const preview = {
+    previewId: '550e8400-e29b-41d4-a716-446655440000', expenseId: candidate.id,
+    record: { vendorName: 'ร้านทดสอบ', expenseDate: '2026-09-26', statusLabel: 'รอตรวจสอบ' },
+    diff: [{ field: 'amount', label: 'ยอดรวม', before: '100.00', after: '250.00', kind: 'money' }],
+    totalsBefore: { grandTotalAmount: '100.00' }, totalsAfter: { grandTotalAmount: '250.00' }, warnings: [],
+  } as any;
+  const expenseRepo = { findByIdWithRelations: async () => record, listCategories: async () => [] };
+  const route = (over: Record<string, unknown> = {}) => ({
+    status: 'ROUTED', intent: 'EXPENSE_CAPTURE_CORRECTION', language: 'th', confidence: 1,
+    correctionHints: { targetExpenseId: candidate.id, amount: { to: '250' } }, ...over,
+  });
+
+  it('asks read-only, previews a correction without update, and applies only on confirm postback', async () => {
+    const { prisma, updates, aiTurns } = makePrisma();
+    const calls: { preview: any[]; apply: number; cancel: number; appliedPreviewIds: string[] } = { preview: [], apply: 0, cancel: 0, appliedPreviewIds: [] };
+    let probeCalls = 0;
+    const draftUpdate = {
+      enabled: true,
+      preview: async (_ctx: any, input: any) => { calls.preview.push(input); return { status: 'preview', preview }; },
+      pendingPreview: async () => preview,
+      appliedResult: async () => ({ status: 'applied', preview, expenseId: candidate.id }),
+      apply: async (_ctx: any, _chat: string, _eventId: string, previewId: string) => {
+        calls.apply += 1; calls.appliedPreviewIds.push(previewId);
+        return { status: 'applied', preview, expenseId: candidate.id };
+      },
+      cancel: async () => { calls.cancel += 1; return 'cancelled'; },
+    };
+    const { useCase, replies, intakeRequests, auditEvents } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'expense.update'], expenseRepo, draftUpdate,
+      lineEditCapabilityFn: async () => { probeCalls += 1; return true; },
+      intakeRouteFn: () => route(),
+    });
+    (useCase as any).loadCorrectionCandidates = async () => [candidate];
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-edit-question', messageText: 'แก้รายการได้ไหม' });
+    assert.equal(aiTurns.length, 0, 'the capability-only first turn has no intake write');
+    assert.equal(calls.preview.length, 0);
+    assert.equal(calls.apply, 0);
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-edit-preview', messageText: 'แก้ยอดเป็น 250 บาท' });
+    assert.equal(calls.preview.length, 1, JSON.stringify({ probeCalls, intakeRequests, replies, auditEvents }));
+    assert.equal(calls.preview[0].tool, 'expense.draft.set_line');
+    assert.equal(calls.apply, 0, 'preview never calls apply');
+    const previewUpdate = updates.find((row: any) => row.data?.status === 'draft_update_preview') as any;
+    assert.equal(previewUpdate?.data?.status, 'draft_update_preview');
+    assert.match(JSON.stringify(replies), /ยืนยัน/);
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-edit-typed-confirm', messageText: 'ยืนยันการแก้ไข' });
+    assert.equal(calls.apply, 0, 'typed confirm has no card binding and cannot act on the latest preview');
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-edit-typed-cancel', messageText: 'ยกเลิกการแก้ไข' });
+    assert.equal(calls.cancel, 0, 'typed cancel cannot discard the latest preview');
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-edit-confirm', messageText: 'ยืนยันการแก้ไข', draftUpdatePreviewId: preview.previewId });
+    assert.equal(calls.apply, 1, 'only a bound confirm postback reaches apply');
+    assert.deepEqual(calls.appliedPreviewIds, [preview.previewId]);
+  });
+
+  it('does not preview with the API flag off or without expense.update', async () => {
+    for (const scenario of [
+      { name: 'flag-off', permissions: ['line.ai.query', 'expense.update'], enabled: false },
+      { name: 'no-update', permissions: ['line.ai.query'], enabled: true },
+    ]) {
+      const { prisma } = makePrisma();
+      let previews = 0;
+      let applies = 0;
+      const { useCase } = makeUseCase(prisma, {
+        permissions: scenario.permissions, expenseRepo,
+        draftUpdate: { enabled: scenario.enabled,
+          preview: async () => { previews += 1; return { status: 'preview', preview }; },
+          apply: async () => { applies += 1; return { status: 'applied', preview, expenseId: candidate.id }; } },
+        lineEditCapabilityFn: async () => true,
+        intakeRouteFn: () => route(),
+      });
+      (useCase as any).loadCorrectionCandidates = async () => [candidate];
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-edit-${scenario.name}`, messageText: 'แก้ยอดเป็น 250 บาท' });
+      assert.equal(previews, 0, scenario.name);
+      assert.equal(applies, 0, scenario.name);
+    }
+  });
+
+  it('previews combined date/vendor/document/note corrections as one header patch without entering the legacy writer', async () => {
+    const { prisma } = makePrisma();
+    const headerHints = {
+      targetExpenseId: candidate.id,
+      expenseDate: { to: '2026-09-20' },
+      vendorName: { to: 'ร้านใหม่' },
+      documentNumber: { to: 'AB123' },
+      note: { to: 'เพิ่มหมายเหตุ' },
+    };
+    const inputs: any[] = [];
+    let directWrites = 0;
+    const draftUpdate = {
+      enabled: true,
+      preview: async (_ctx: any, input: any) => { inputs.push(input); return { status: 'preview', preview }; },
+      pendingPreview: async () => preview,
+    };
+    const { useCase } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'expense.update'], expenseRepo, draftUpdate,
+      lineEditCapabilityFn: async () => true,
+      intakeRouteFn: () => route({ correctionHints: headerHints }),
+    });
+    (useCase as any).loadCorrectionCandidates = async () => [candidate];
+    (useCase as any).correctExpense = { execute: async () => { directWrites += 1; return { status: 'applied' }; } };
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-edit-header-preview',
+      messageText: 'แก้วันที่ 2026-09-20 ร้านใหม่ เลขที่ AB123 เพิ่มหมายเหตุ' });
+
+    assert.equal(inputs.length, 1);
+    assert.equal(inputs[0].tool, 'expense.draft.set_header');
+    assert.deepEqual(inputs[0].input, {
+      expenseDate: '2026-09-20', vendorName: 'ร้านใหม่', documentNumber: 'AB123', noteAppend: 'เพิ่มหมายเหตุ',
+    });
+    assert.equal(directWrites, 0, 'legacy correction writer is never reached before confirm');
+  });
+
+  it('lists multiple candidates and does not choose a target for a capability question', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, replies } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'expense.update'], expenseRepo, draftUpdate: { enabled: true },
+      lineEditCapabilityFn: async () => true,
+    });
+    (useCase as any).loadCorrectionCandidates = async () => [candidate, { ...candidate, id: 'exp-edit-2', label: 'ใบเสร็จ · 25 ก.ย. 2569 · 80.00' }];
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-edit-multiple', messageText: 'แก้รายการได้ไหม' });
+    assert.match(replies.join('\n'), /1\) ใบเสร็จ/);
+    assert.match(replies.join('\n'), /2\) ใบเสร็จ/);
+    assert.match(replies.join('\n'), /ระบุบิลหรือวันที่ก่อนแก้/);
   });
 });
 

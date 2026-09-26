@@ -29,7 +29,7 @@ function governedPrisma() {
     client: {
       companyAiConfiguration: { findUnique: async () => ({ modelId: null, monthlyBudgetSatang: 1_000_000 }) },
       companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
-      companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
+      companyAiMonthlyBucketUsage: { findUnique: async () => null },
     },
   } as any;
 }
@@ -76,6 +76,32 @@ describe('AiGatewayClient failure classification', () => {
       async () => ({ ok: false, status: 503 } as Response),
       'AI_GATEWAY_UNAVAILABLE',
     );
+  });
+});
+
+describe('AiGatewayClient draft-edit capability probe', () => {
+  it('returns true only for an authenticated positive response and fails closed otherwise', async () => {
+    const client = new AiGatewayClient(
+      { aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'workload-secret' } as any,
+      { issue: () => 'signed' } as any,
+      undefined,
+      governedPrisma(),
+    );
+    const original = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (_input, init) => {
+        assert.equal((init?.headers as Record<string, string>)['X-Internal-Secret'], 'workload-secret');
+        assert.match(String(_input), /line-draft-edit-capability$/u);
+        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+      }) as typeof fetch;
+      assert.equal(await client.lineDraftEditCapabilityEnabled('probe-1'), true);
+      globalThis.fetch = (async () => new Response(JSON.stringify({ enabled: 'yes' }), { status: 200 })) as typeof fetch;
+      assert.equal(await client.lineDraftEditCapabilityEnabled('probe-2'), false);
+      globalThis.fetch = (async () => { throw new Error('gateway offline'); }) as typeof fetch;
+      assert.equal(await client.lineDraftEditCapabilityEnabled('probe-3'), false);
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 });
 
@@ -201,12 +227,13 @@ describe('AiGatewayClient OCR governance', () => {
       auditLog: { findFirst: async () => null, create: async ({ data }: any) => { compensations.push(data); return data; } },
       aiUsageEvent: { createMany: async ({ data }: any) => { providerUsage.push(...data); return { count: data.length }; } },
       companyAiMonthlyUsage: { upsert: async ({ create }: any) => ({ costSatang: create.costSatang }) },
+      companyAiMonthlyBucketUsage: { findUnique: async () => null },
     };
     const prisma = {
       client: {
         companyAiConfiguration: { findUnique: async () => ({ modelId: null, monthlyBudgetSatang: 1_000_000 }) },
         companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
-        companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
+        companyAiMonthlyBucketUsage: { findUnique: async () => null },
         $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx),
       },
     } as any;
@@ -614,10 +641,11 @@ describe('AiGatewayClient monthly budget', () => {
     const client = {
       companyAiConfiguration: { findUnique: async () => null },
       companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: spend }) },
-      companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
+      companyAiMonthlyBucketUsage: { findUnique: async () => null },
       $transaction: async (fn: (tx: any) => Promise<any>) => fn({
         aiUsageEvent: { createMany: async (args: any) => { recorded.push(...args.data); return { count: args.data.length }; } },
         companyAiMonthlyUsage: { upsert: async () => ({ costSatang: spend }) },
+        companyAiMonthlyBucketUsage: { findUnique: async () => null },
       }),
     };
     return { prisma: { client } as any, recorded, setSpend: (value: number) => { spend = value; } };

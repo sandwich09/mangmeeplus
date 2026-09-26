@@ -332,11 +332,13 @@ PREVIEW; the write is a `ยืนยัน` postback that no model can send.
   promising a total the apply would not produce, and a rolled-back run of the actual write path
   cannot disagree with itself. It also proves the validators, the VAT reconciliation, the tax-code
   resolution and the §5.1 totals identity all pass *before* the user is asked anything.
-- **APPLY** (`.apply`) is reachable only from the confirm postback. The postback carries
-  `action=draft-update-confirm` and no ids (P10-L SEC-04); the server looks the preview up by
-  company + chat, re-checks `{companyId, userId, chatKeyHash}` and refuses unless the record's
-  `updatedAt` is still the one the preview was computed against. Then the same use case runs for
-  real, in one transaction, with `expense.line_ai.draft_update` written inside it.
+- **APPLY** (`.apply`) is reachable only from the card's confirm postback. It carries
+  `action=draft-update-confirm` and that card's opaque `previewId` (P10-L SEC-04); the server
+  atomically claims only the still-current preview, re-checks `{companyId, userId, chatKeyHash}` and
+  refuses unless the record's `updatedAt` is still the one the preview was computed against. Old,
+  malformed, and legacy no-id buttons expire; typed confirm/cancel text cannot act on the latest
+  preview. A claim blocks replacement until the apply/cancel finishes. Then the same use case runs
+  for real, in one transaction, with `expense.line_ai.draft_update` written inside it.
 
 **Five tools** (`draft_update`, a new `ToolCategory`): `expense.draft.set_header`, `set_line`,
 `add_charge`, `remove_line`, `set_vat_mode`. `requiredPermissions: ['expense.update']` — exactly
@@ -414,7 +416,7 @@ category with `LINE_DRAFT_EDIT_DISABLED`, no preview card, and a stray confirm p
 | 5 | Flag ignored (`classificationDenial` admits `draft_update` unconditionally) | `internal-tools.controller.spec.ts` — "refuses every draft_update tool while LINE_AI_DRAFT_EDIT_ENABLED is off"; `intent-router.agent.spec.ts` — catalog gate | RED |
 | 6 | Grounding dropped (accept any model-supplied amount) | `line-draft-update.logic.spec.ts` — "refuses a number nobody said…"; eval `draft-injection-in-ocr-text-orders-edit` | RED |
 | 7 | Scrubber narrowed back to ASCII digits | `line-ai-record-text.spec.ts` — Thai/fullwidth totals; eval `draft-injection-thai-numeral-total` | RED |
-| 8 | Postback carries `previewId` | `line-draft-update-card.logic.spec.ts` — "carries an intent and no ids (SEC-04)" | RED |
+| 8 | Confirm/cancel buttons fail to carry the exact `previewId` | `line-draft-update-card.logic.spec.ts`, controller, buffer, orphan-replay and draft security specs | RED |
 
 The first run of this table found two rows that survived, and both were test bugs rather than code
 bugs: M1 had no fast test at all (only the pg spec could move a row revision), and the two injection
@@ -603,7 +605,7 @@ LINE_DRAFT_EDIT_TEST_DATABASE_URL='postgresql://watchdog:watchdog_local_password
 | m6 | Grounding dropped | logic spec; eval injection row |
 | m7 | Scrubber narrowed to ASCII digits | contracts spec; api eval |
 | m7b | The ledger calls a proposal an applied correction | card spec — "never records a draft-lane turn as an applied correction" |
-| m8 | Postback carries `previewId` | card spec (SEC-04) |
+| m8 | Confirm/cancel buttons carry exact `previewId`; old/typed commands cannot select a replacement | card/controller/buffer/orphan replay/security specs (SEC-04) |
 | m8b | Forget the "บรรทัด N เป็น X" parser | logic spec — the J3.7 clarify answer |
 | m9 | Link detection back to a TLD allowlist | contracts spec |
 | m9b | Remove `amount` from the correction lane whatever the flag says | `line-correction.use-case.spec.ts` |
