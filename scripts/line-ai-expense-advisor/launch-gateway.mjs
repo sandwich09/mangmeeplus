@@ -70,7 +70,9 @@ const env = {
   S3_BUCKET: 'local-eval-only', S3_ENDPOINT: 'http://127.0.0.1:9',
   S3_PUBLIC_ENDPOINT: 'http://127.0.0.1:9', S3_ACCESS_KEY_ID: 'local-eval-only',
   S3_SECRET_ACCESS_KEY: 'local-eval-only', S3_FORCE_PATH_STYLE: 'true',
-  WEB_BASE_URL: 'https://web.eval.test', LOG_LEVEL: 'warn',
+  WEB_BASE_URL: 'https://web.eval.test', LOG_LEVEL: process.env.MANGMEE_EVAL_LOG_LEVEL ?? 'warn',
+  // Production's non-secret AI settings (shared with run-real.ts); the runtime stays strands-local.
+  ...JSON.parse(readFileSync(resolve(REPO_ROOT, 'scripts/line-ai-expense-advisor/production-ai-env.json'), 'utf8')).gateway,
 };
 
 const entry = resolve(REPO_ROOT, 'apps/ai-gateway/dist/apps/ai-gateway/src/main.js');

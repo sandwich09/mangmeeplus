@@ -63,6 +63,8 @@ const DB_NAME = 'watchdog_ai_reliability_replay_expense_advisor';
 const CORPUS_PATH = process.env['MANGMEE_EVAL_CORPUS'] ?? resolve(REPO_ROOT, 'scripts/line-ai-expense-advisor/corpus.sample.json');
 const REDIS_URL = process.env['MANGMEE_EVAL_REDIS_URL'] ?? 'redis://127.0.0.1:16389/13';
 const API_PORT = Number(process.env['MANGMEE_EVAL_API_PORT'] ?? '19291');
+// Production's non-secret AI settings, so a run measures what customers get (shared with launch-gateway.mjs).
+const PRODUCTION_AI_ENV = JSON.parse(readFileSync(resolve(REPO_ROOT, 'scripts/line-ai-expense-advisor/production-ai-env.json'), 'utf8')) as { api: Record<string, string>; gateway: Record<string, string> };
 const DETERMINISTIC_FAMILIES = process.env['MANGMEE_EVAL_DETERMINISTIC_RESPONSE_FAMILIES']
   ?? 'expense.list_recent::single_metric,expense.list_recent::list,expense.get_breakdown::list,expense.get_daily_closing::single_metric,reimbursement.list_pending_approvals::list,reimbursement.get_summary::single_metric';
 // See the file header note: the in-process API this script boots needs its own record of the
@@ -283,7 +285,7 @@ async function main(): Promise<void> {
       price: sha256File('apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.ts'),
     },
     apiPort: API_PORT, gatewayUrl, databaseUrl: databaseUrl.toString(), redisUrl: REDIS_URL,
-    environment: { LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: DETERMINISTIC_FAMILIES },
+    environment: { ...PRODUCTION_AI_ENV.api, LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: DETERMINISTIC_FAMILIES },
     repeats: 1, cohort: '1000', bootstrapLaunchGates: true,
   };
 
