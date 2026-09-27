@@ -4206,7 +4206,10 @@ export class ProcessLineWebhookUseCase {
       answer: { status: pendingSubrequestIds.length ? 'PARTIAL' : 'COMPLETE', pendingSubrequestIds, items },
       preferredMessages: items.map((_item, index) => index < messages.length && index !== financialControlIndex ? messages[index]! : null),
       ...(control ? { controlMessage: messages[financialControlIndex]! } : {}) });
-    const saved = await this.deliveryPlans.savePlan({ kind: 'WEBHOOK', id: outcomeId }, plan, new Date(log.createdAt.getTime() + this.config.aiDataRetentionDays * 86400000), now, event.webhookEventId);
+    // Spec §4 R-M2 / deliveredExpenseSummary regression: graduating to a delivery plan must not
+    // silently drop the SAME access-proof recordTurnOutcome persists — see buildTurnAuthorizationJson.
+    const authorizationJson = this.buildTurnAuthorizationJson(event, randomUUID());
+    const saved = await this.deliveryPlans.savePlan({ kind: 'WEBHOOK', id: outcomeId }, plan, new Date(log.createdAt.getTime() + this.config.aiDataRetentionDays * 86400000), now, event.webhookEventId, authorizationJson);
     if (!saved) return 'failed_other';
     return this.replayDeliveryPlan(saved.id, event, 2);
   }
@@ -4640,6 +4643,50 @@ export class ProcessLineWebhookUseCase {
   }
 
   /** Only a provider-rejected representation can be replaced; ordinary fallback cannot rewrite facts. */
+  /** Spec §4 R-M2, and the pre-existing deliveredExpenseSummary/expense-criterion-confirmation
+   *  proofs: the SAME access-proof shape every LineTurnOutcome.authorizationJson write persists, so
+   *  loadConversationContext reads either writer back the same way — the legacy upsert path
+   *  (recordTurnOutcome, below) or the delivery-plan-v2 path (sendMessagesV2, via
+   *  LineLedgerDeliveryService.savePlan). A pure function of the event's own WeakMap state, never DB
+   *  state, so either caller can build it before its own, very different write happens. */
+  private buildTurnAuthorizationJson(
+    event: { webhookEventId: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string },
+    producerId: string,
+  ): Prisma.InputJsonValue {
+    const access = this.deliveryAccess.get(event), sources = this.deliverySources.get(event);
+    const topic = this.publicPolicyTopics.get(event);
+    const recipientHash = lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? '');
+    const noOtherSource = !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event)
+      && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event);
+    return { v: 1, producerId,
+      ...(topic ? { publicPolicy: { topic, recipientHash } } : {}),
+      ...(access && sources?.ids?.length === 0 && sources.expenseCriterionConfirmation === true && noOtherSource ? { access: {
+        kind: 'expense_criterion_confirmation', userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
+        fingerprint: access.fingerprint, webhookEventId: event.webhookEventId, recipientHash, channelId: event.messagingChannelId ?? '',
+        chatKeyHash: chatKeyHashOf(event),
+      } } : {}),
+      ...(access && sources?.ids?.length && noOtherSource ? { read: {
+        userId: access.userId, companyId: access.companyId, fingerprint: access.fingerprint,
+        requestId: sources.requestId, ids: sources.ids, webhookEventId: event.webhookEventId,
+        recipientHash, channelId: event.messagingChannelId ?? '',
+      } } : {}),
+      ...(access && sources?.expenseSummary && sources.ids?.length && noOtherSource ? { expenseSummary: {
+        userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
+        fingerprint: access.fingerprint, chatKeyHash: chatKeyHashOf(event), recipientHash,
+        statusBasis: sources.expenseSummary.statusBasis, continuationOfPrior: sources.expenseSummary.continuationOfPrior === true,
+        ranges: sources.expenseSummary.ranges,
+      } } : {}),
+      // Spec §4 R-M2: same access-proof shape as expenseSummary above, so loadConversationContext's
+      // existing identity/chat/recipient re-check (§4 R-M7: none of this survives a scope change)
+      // covers this too without a second verification path.
+      ...(access && sources?.recentReads?.length && sources.ids?.length && noOtherSource ? { readMemory: {
+        userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
+        fingerprint: access.fingerprint, chatKeyHash: chatKeyHashOf(event), recipientHash,
+        entries: sources.recentReads,
+      } } : {}),
+    };
+  }
+
   private async recordTurnOutcome(
     event: { webhookEventId: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string },
     messages: LineReplyMessage[],
@@ -4662,42 +4709,8 @@ export class ProcessLineWebhookUseCase {
         if (updated.count !== 1) return null;
         return { messages, accepted: false };
       }
-     const producerId = randomUUID(), access = this.deliveryAccess.get(event), sources = this.deliverySources.get(event);
-     const topic = this.publicPolicyTopics.get(event);
-      const recipientHash = lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? '');
-      const authorizationJson = { v: 1, producerId,
-        ...(topic ? { publicPolicy: { topic,
-          recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? ''),
-        } } : {}),
-        ...(access && sources?.ids?.length === 0 && sources.expenseCriterionConfirmation === true
-          && !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event) && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event) ? { access: {
-            kind: 'expense_criterion_confirmation', userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
-            fingerprint: access.fingerprint, webhookEventId, recipientHash, channelId: event.messagingChannelId ?? '',
-            chatKeyHash: chatKeyHashOf(event),
-          } } : {}),
-        ...(access && sources?.ids?.length && !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event) && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event) ? { read: {
-          userId: access.userId, companyId: access.companyId, fingerprint: access.fingerprint,
-          requestId: sources.requestId, ids: sources.ids, webhookEventId,
-          recipientHash,
-          channelId: event.messagingChannelId ?? '',
-        } } : {}),
-        ...(access && sources?.expenseSummary && sources.ids?.length && !this.deliveryDraftPreviews.has(event)
-          && !this.deliveryReceiptSources.has(event) && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event) ? { expenseSummary: {
-            userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
-            fingerprint: access.fingerprint, chatKeyHash: chatKeyHashOf(event), recipientHash,
-            statusBasis: sources.expenseSummary.statusBasis, continuationOfPrior: sources.expenseSummary.continuationOfPrior === true,
-            ranges: sources.expenseSummary.ranges,
-          } } : {}),
-        // Spec §4 R-M2: same access-proof shape as expenseSummary above, so loadConversationContext's
-        // existing identity/chat/recipient re-check (§4 R-M7: none of this survives a scope change)
-        // covers this too without a second verification path.
-        ...(access && sources?.recentReads?.length && sources.ids?.length && !this.deliveryDraftPreviews.has(event)
-          && !this.deliveryReceiptSources.has(event) && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event) ? { readMemory: {
-            userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
-            fingerprint: access.fingerprint, chatKeyHash: chatKeyHashOf(event), recipientHash,
-            entries: sources.recentReads,
-          } } : {}),
-      };
+      const producerId = randomUUID();
+      const authorizationJson = this.buildTurnAuthorizationJson(event, producerId);
       const outcome = await this.prisma.client.lineTurnOutcome.upsert({
         where: { webhookEventId },
         create: { webhookEventId, companyId: log?.companyId ?? null, messagesJson, authorizationJson, presentationKind, attempts: 1 },
@@ -4839,7 +4852,10 @@ export class ProcessLineWebhookUseCase {
       initiatorHash: deliveryHash(event.lineUserId), admissionPolicyDigest: admission.policyDigest, sourceManifestDigest: deliveryHash('public-general:2.4'), approvedPublicSourceIds: [], issuedAt: now.toISOString(), expiresAt };
     const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: outcomeId, createdAt: log.createdAt.toISOString(), readyAt: now.toISOString(), expiresAt, firstDispatchDeadlineAt: new Date(grant.finalDeadlineAtMs).toISOString(), authorization,
       control: null, businessResult: null, answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: response.replyText, required: true, sourceProofIds: [] }] } });
-    const saved = await this.deliveryPlans.savePlan({ kind: 'WEBHOOK', id: outcomeId }, plan, new Date(log.createdAt.getTime() + this.config.aiDataRetentionDays * 86400000), now, event.webhookEventId);
+    // Same access-proof shape recordTurnOutcome persists — see buildTurnAuthorizationJson. A public
+    // turn has no deliveryAccess/deliverySources of its own, so this is just {v, producerId}.
+    const authorizationJson = this.buildTurnAuthorizationJson(event, randomUUID());
+    const saved = await this.deliveryPlans.savePlan({ kind: 'WEBHOOK', id: outcomeId }, plan, new Date(log.createdAt.getTime() + this.config.aiDataRetentionDays * 86400000), now, event.webhookEventId, authorizationJson);
     if (!saved) { await this.updateEventLog(event.webhookEventId, 'delivery_pending', 'LINE_OUTCOME_RECOVERY_REQUIRED'); return; }
     const delivered = await this.replayDeliveryPlan(saved.id, event, 2);
     await this.updateEventLog(event.webhookEventId, delivered === 'ok' ? 'completed' : 'delivery_pending', delivered === 'ok' ? undefined : 'LINE_DELIVERY_V2_PENDING', admission.companyId);

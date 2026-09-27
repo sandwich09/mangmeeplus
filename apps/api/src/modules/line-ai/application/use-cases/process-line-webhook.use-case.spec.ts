@@ -2338,6 +2338,34 @@ describe('ProcessLineWebhookUseCase', () => {
       false,
       'R-M6: memory carries no amounts',
     );
+
+    // Regression (present on main since v2.4 turned delivery-plan-v2 on by default, controller
+    // finding 2026-09-27): sendMessagesV2's LineTurnOutcome rows carry presentationKind
+    // 'delivery_plan_v2' instead of 'text'/'flex' — separately fixed in line-ledger-delivery.service.ts
+    // so that write no longer nulls authorizationJson. loadConversationContext itself never switches
+    // on presentationKind, so the SAME already-proven-correct row (just re-labelled, same access-proof
+    // fields untouched) must keep working — and an expenseSummary proof alongside it must too, since
+    // that pre-existing field shares the exact same read path and regressed the exact same way.
+    outcome1.presentationKind = 'delivery_plan_v2';
+    outcome1.authorizationJson = { ...outcome1.authorizationJson,
+      expenseSummary: { ...outcome1.authorizationJson.readMemory, statusBasis: 'exclude_rejected_voided', continuationOfPrior: false,
+        ranges: [{ fromDate: '2026-09-01', toDate: '2026-09-28', branchId: null }] } };
+    delete outcome1.authorizationJson.expenseSummary.entries;
+    const h3 = makeUseCase(prisma, {
+      permissions: ['line.ai.query'], config,
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }),
+      aiGatewayFn: () => ({
+        requestId: 'req-mem-3', replyText: 'รายการที่ 3 คือร้านสามการค้าค่ะ', sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_detail', agent: 'accounting', refused: false, toolsInvoked: [], toolCalls: [],
+        modelCallCount: 1, modelLineage: [], usage: [], durationMs: 10,
+      }),
+    });
+    (h3.useCase as any).readEvidence = readEvidence;
+    await h3.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-mem-3', messageText: 'รายการที่ 3 คือร้านอะไรครับ' });
+    const recentReadsV2 = h3.intakeRequests[0]?.conversationContext?.recentReads;
+    assert.ok(recentReadsV2?.length, 'a delivery_plan_v2-labelled outcome must still surface recentReads');
+    assert.equal(recentReadsV2[0].shownItems?.[2]?.id, 'expense-3');
+    assert.ok(h3.intakeRequests[0]?.conversationContext?.deliveredExpenseSummary, 'and deliveredExpenseSummary, which regressed the same way on the v2 path');
   });
 
   /**

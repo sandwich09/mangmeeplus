@@ -104,5 +104,37 @@ test('G3/G6 durable delivery PostgreSQL leases, immutable replay, cancellation a
       await client.lineDeliveryPlan.update({ where: { id: plan.planId }, data: { planHash: '0'.repeat(64) } });
       await assert.rejects(service.claimPlan(plan.planId, fence, now), /CORRUPT/);
     });
+    // Regression (present on main since v2.4 turned delivery-plan-v2 on by default): a brand-new
+    // webhook event graduating straight to v2 used to always leave LineTurnOutcome.authorizationJson
+    // a JSON null, silently dropping the R-M2 readMemory AND the pre-existing deliveredExpenseSummary
+    // proof for every v2-delivered turn — loadConversationContext's identity/chat/recipient re-check
+    // has nothing to read for either field. savePlan's new authorizationJson parameter closes this.
+    await t.test('R-M2/deliveredExpenseSummary: a webhook fence graduating straight to v2 persists the SAME access-proof, never JSON null', async () => {
+      const webhookEventId = `${tag}-${events.length}`; events.push(webhookEventId);
+      await client.lineWebhookEventLog.create({ data: { webhookEventId, eventType: 'message', status: 'delivery_pending' } });
+      const outcomeId = randomUUID();
+      const expiry = new Date(now.getTime() + 59 * 60_000).toISOString();
+      const authorization: DeliveryAuthorizationV2 = { v: 2, kind: 'PUBLIC_GENERAL', admissionOwner: { kind: 'WEBHOOK', id: outcomeId, revision: 0 },
+        destination: { channelId: 'test-oa', channel: 'line', channelKind: 'USER', lineTargetId: 'test-user', targetHash: 'hash', chatKeyHash: 'chat' },
+        actorUserId: null, initiatorHash: 'initiator', admissionPolicyDigest: 'policy', sourceManifestDigest: 'manifest', approvedPublicSourceIds: [],
+        issuedAt: now.toISOString(), expiresAt: expiry };
+      const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: outcomeId, createdAt: now.toISOString(), expiresAt: expiry, readyAt: now.toISOString(),
+        firstDispatchDeadlineAt: new Date(now.getTime() + 3000).toISOString(), authorization, control: null, businessResult: null,
+        answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: 'ค่าใช้จ่าย: 3 รายการ', required: true, sourceProofIds: [] }] } });
+      // Same authorizationJson shape recordTurnOutcome (legacy path) persists — see
+      // process-line-webhook.use-case.ts buildTurnAuthorizationJson — both proofs present, one call.
+      const authorizationJson = { v: 1, producerId: randomUUID(),
+        readMemory: { userId: 'user-x', companyId: 'company-x', membershipId: 'mem-x', fingerprint: 'fp', chatKeyHash: 'chat-hash', recipientHash: 'recipient-hash',
+          entries: [{ tool: 'expense.list_recent', answerShape: 'list', asOf: now.toISOString(),
+            shownItems: [{ ordinal: 1, id: 'expense-1', label: 'ร้านหนึ่ง' }, { ordinal: 2, id: 'expense-2', label: 'ร้านสอง' }, { ordinal: 3, id: 'expense-3', label: 'ร้านสามการค้า' }] }] },
+        expenseSummary: { userId: 'user-x', companyId: 'company-x', membershipId: 'mem-x', fingerprint: 'fp', chatKeyHash: 'chat-hash', recipientHash: 'recipient-hash',
+          statusBasis: 'exclude_rejected_voided', continuationOfPrior: false, ranges: [{ fromDate: '2026-09-01', toDate: '2026-09-28', branchId: null }] } };
+      const fence: LineDeliveryOwnerFence = { kind: 'WEBHOOK', id: outcomeId };
+      const saved = await service.savePlan(fence, plan, new Date(now.getTime() + 86400000), now, webhookEventId, authorizationJson as any);
+      assert.ok(saved, 'plan saved on first graduation from a brand-new webhook event');
+      const outcome = await client.lineTurnOutcome.findUniqueOrThrow({ where: { webhookEventId } });
+      assert.equal(outcome.presentationKind, 'delivery_plan_v2');
+      assert.deepEqual(outcome.authorizationJson, authorizationJson, 'graduating to v2 must not drop the R-M2/deliveredExpenseSummary proof to JSON null');
+    });
   } finally { await client.lineWebhookEventLog.deleteMany({ where: { webhookEventId: { in: events } } }); await client.$disconnect(); }
 });
