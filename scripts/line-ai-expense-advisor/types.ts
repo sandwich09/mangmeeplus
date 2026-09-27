@@ -12,6 +12,7 @@
  */
 import assert from 'node:assert/strict';
 import { PERIOD_TOKENS, type PeriodToken } from './period';
+import { isKnownPlaceholder, referencedPlaceholders } from './template';
 
 export const ROLES = ['OWNER', 'MANAGER', 'STAFF', 'ACCOUNTANT', 'AUDITOR_READONLY'] as const;
 export type EvalRole = (typeof ROLES)[number];
@@ -114,6 +115,9 @@ function validateTags(tags: unknown, path: string): asserts tags is TurnTags {
 function validateTurn(turn: unknown, path: string): asserts turn is Turn {
   assert.ok(isPlainObject(turn), `${path}: turn must be an object`);
   assert.ok(nonEmptyString(turn['user']), `${path}.user: required non-empty string`);
+  for (const key of referencedPlaceholders(turn['user'] as string)) {
+    assert.ok(isKnownPlaceholder(key), `${path}.user: unknown placeholder {{${key}}} (see template.ts TEMPLATE_PLACEHOLDERS)`);
+  }
   assert.ok(nonEmptyString(turn['category']), `${path}.category: required non-empty string`);
   if (turn['language'] !== undefined) {
     assert.ok(Array.isArray(turn['language']) && (turn['language'] as unknown[]).every(nonEmptyString), `${path}.language: must be a string array`);

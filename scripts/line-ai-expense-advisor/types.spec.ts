@@ -93,6 +93,20 @@ describe('validateCorpus', () => {
     assert.throws(() => validateCorpus(corpus), /unsupported value/);
   });
 
+  it('accepts known {{...}} date placeholders in user text', () => {
+    const corpus = { version: 1, conversations: [validConversation({
+      turns: [{ user: 'เดือน{{last_month_th}} {{last_month_be_year}} จ่ายไปเท่าไหร่คะ', category: '1', expect: { tags: { must_answer: true } } }],
+    })] };
+    assert.doesNotThrow(() => validateCorpus(corpus));
+  });
+
+  it('rejects an unknown {{...}} placeholder in user text', () => {
+    const corpus = { version: 1, conversations: [validConversation({
+      turns: [{ user: '{{next_month_th}} จ่ายไปเท่าไหร่คะ', category: '1', expect: { tags: { must_answer: true } } }],
+    })] };
+    assert.throws(() => validateCorpus(corpus), /unknown placeholder/);
+  });
+
   it('rejects an unknown tag key', () => {
     const corpus = { version: 1, conversations: [validConversation({
       turns: [{ user: 'x', category: '19', expect: { tags: { unexpected_tag: true } } }],

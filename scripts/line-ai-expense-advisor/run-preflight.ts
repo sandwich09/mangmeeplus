@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { validateCorpus, flattenTurns, type Corpus } from './types';
 import { buildCompanySeed, applySeedRows, SHARED_ACCESS_ROWS, type CompanySeed } from './seed';
 import { bootOracle, resolveGoldCallInput, extractShownItems, extractExpectedFacts, gitHeadSha, type ShownItem } from './oracle';
+import { renderUserText } from './template';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const SECRETS_PATH = process.env['MANGMEE_EVAL_SECRETS_PATH'] ?? '/tmp/mangmee-latency-pilot-20260927/runtime-secrets.json';
@@ -119,6 +120,7 @@ async function main(): Promise<void> {
     let tagOnlyTurns = 0;
     let hardErrors = 0;
     let factsExtracted = 0;
+    let renderedTurns = 0;
     const byCategory = new Map<string, { total: number; ok: number }>();
     const byToolStatus = new Map<string, number>();
     const errorDetails: Array<{ conversationId: string; turnIndex: number; tool: string; error: string }> = [];
@@ -128,6 +130,17 @@ async function main(): Promise<void> {
       const bucket = byCategory.get(turn.category) ?? { total: 0, ok: 0 };
       bucket.total += 1;
       byCategory.set(turn.category, bucket);
+      try {
+        // Renders {{this_month_th}}-style placeholders with the SAME function run-real.ts uses,
+        // from the SAME clock — preflight has no model to send this text to, but rendering it here
+        // still proves the corpus's own placeholders are well-formed (validateCorpus already
+        // checked they are KNOWN; this checks they actually resolve) before a real run pays for it.
+        renderUserText(turn.user, now);
+        renderedTurns += 1;
+      } catch (error) {
+        hardErrors += 1;
+        errorDetails.push({ conversationId: conversation.id, turnIndex, tool: 'renderUserText', error: error instanceof Error ? error.message : String(error) });
+      }
       if (!turn.expect.calls?.length) { tagOnlyTurns += 1; bucket.ok += 1; continue; }
       dataTurns += 1;
       const company = companies[conversation.company];
@@ -158,7 +171,7 @@ async function main(): Promise<void> {
       sourceCommit: gitHeadSha(REPO_ROOT),
       conversations: corpus.conversations.length,
       turns: flat.length,
-      dataTurns, tagOnlyTurns, hardErrors, factsExtracted,
+      dataTurns, tagOnlyTurns, hardErrors, factsExtracted, renderedTurns,
       byCategory: Object.fromEntries(byCategory),
       byToolStatus: Object.fromEntries(byToolStatus),
       errorDetails,

@@ -46,7 +46,7 @@
       "role": "OWNER",
       "turns": [
         {
-          "user": "เดือนนี้ยังไม่จ่ายเท่าไหร่คะ",
+          "user": "ถึงวันที่ {{today_day}} {{this_month_abbr_th}} {{this_be_year_short}} ยังไม่จ่ายเท่าไหร่คะ",
           "category": "3",
           "language": ["th"],
           "expect": { "calls": [
@@ -54,7 +54,7 @@
           ] }
         },
         {
-          "user": "เดือนที่แล้วจ่ายจิงไปเท่าไหร่คะ",
+          "user": "เดือน{{last_month_th}} {{last_month_be_year}} จ่ายจิงไปเท่าไหร่คะ",
           "category": "3",
           "language": ["th-misspelled"],
           "expect": { "calls": [
@@ -170,7 +170,7 @@
       "role": "AUDITOR_READONLY",
       "turns": [
         {
-          "user": "เดือนนี้ใช้เงินไปเท่าไหร่แล้วอะ",
+          "user": "{{this_month_th}} {{this_ce_year}} ใช้เงินไปเท่าไหร่แล้วอะ",
           "category": "1",
           "language": ["th-spoken"],
           "expect": { "calls": [
