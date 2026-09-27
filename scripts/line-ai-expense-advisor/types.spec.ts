@@ -79,6 +79,25 @@ describe('validateCorpus', () => {
     assert.throws(() => validateCorpus(corpus), /tool/);
   });
 
+  it('accepts a gold call with a valid answerShape and groupBy', () => {
+    const corpus = { version: 1, conversations: [validConversation({
+      turns: [{ user: 'x', category: '7', expect: { calls: [{ tool: 'expense.list_recent', input: {}, answerShape: 'list' }] } },
+        { user: 'y', category: '5', expect: { calls: [{ tool: 'expense.get_breakdown', input: {}, answerShape: 'breakdown', groupBy: 'vendor' }] } }],
+    })] };
+    assert.doesNotThrow(() => validateCorpus(corpus));
+  });
+
+  it('rejects an unknown answerShape or groupBy', () => {
+    const badShape = { version: 1, conversations: [validConversation({
+      turns: [{ user: 'x', category: '1', expect: { calls: [{ tool: 'expense.list_recent', input: {}, answerShape: 'summary' }] } }],
+    })] };
+    assert.throws(() => validateCorpus(badShape), /answerShape/);
+    const badGroup = { version: 1, conversations: [validConversation({
+      turns: [{ user: 'x', category: '4', expect: { calls: [{ tool: 'expense.get_breakdown', input: {}, groupBy: 'region' }] } }],
+    })] };
+    assert.throws(() => validateCorpus(badGroup), /groupBy/);
+  });
+
   it('rejects an unsupported gold input value', () => {
     const corpus = { version: 1, conversations: [validConversation({
       turns: [{ user: 'x', category: '1', expect: { calls: [{ tool: 'expense.list_recent', input: { branchId: { nested: true } } }] } }],

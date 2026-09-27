@@ -18,7 +18,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateCorpus, flattenTurns, type Corpus } from './types';
 import { buildCompanySeed, applySeedRows, SHARED_ACCESS_ROWS, type CompanySeed } from './seed';
-import { bootOracle, resolveGoldCallInput, extractShownItems, extractExpectedFacts, gitHeadSha, type ShownItem } from './oracle';
+import { bootOracle, resolveGoldCallInput, extractShownItems, extractExpectedFactsForCall, gitHeadSha, type ShownItem } from './oracle';
 import { renderUserText } from './template';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
           byToolStatus.set(result.status, (byToolStatus.get(result.status) ?? 0) + 1);
           const shown = extractShownItems(call.tool, result);
           if (shown.length) priorShownItems = shown;
-          factsExtracted += extractExpectedFacts(call.tool, result).length;
+          factsExtracted += extractExpectedFactsForCall(call.tool, result, call).length;
         } catch (error) {
           turnOk = false;
           hardErrors += 1;

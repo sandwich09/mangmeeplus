@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { resolvePeriodToken } from './period';
-import type { GoldCall, GoldInputValue } from './types';
+import type { AnswerShape, GoldCall, GoldInputValue, GroupByDimension } from './types';
 import type { ExpectedFact } from './scorer';
 
 export type ShownItem = { index: number; id: string; date: string | null; label: string };
@@ -31,6 +31,7 @@ const TOOL_MODULES: Record<string, { file: string; exportName: string }> = {
   'expense.get_detail': { file: 'modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.js', exportName: 'ExpenseGetDetailTool' },
   'reimbursement.list_pending_approvals': { file: 'modules/line-ai/application/use-cases/erp-reimbursement-tools.use-case.js', exportName: 'ReimbursementListPendingApprovalsTool' },
   'reimbursement.get_summary': { file: 'modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.js', exportName: 'ReimbursementGetSummaryTool' },
+  'reimbursement.get_detail': { file: 'modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.js', exportName: 'ReimbursementGetDetailTool' },
 };
 
 export type OracleEnv = {
@@ -164,8 +165,9 @@ const MONEY_LEAF = /^-?\d+(\.\d+)?$/;
 
 /** Best-effort generic scan: any numeric leaf under an "amount/total"-looking key becomes a money
  * fact, any numeric leaf under a "count/total"-looking key becomes a count fact. Bounded depth so a
- * malformed/huge result cannot loop forever. Used as the fallback for a tool with no dedicated rule
- * below (e.g. reimbursement.get_summary, whose exact shape this oracle never had to hard-code). */
+ * malformed/huge result cannot loop forever. Last-resort fallback ONLY — every tool this oracle
+ * actually dispatches to (TOOL_MODULES above) has its own rule in `extractExpectedFacts` below; this
+ * exists for a future tool added to the roster before its rule is. */
 function scanNumericFacts(value: unknown, keyHint: string, depth: number, out: ExpectedFact[]): void {
   if (depth > 4 || value === null || value === undefined) return;
   if (typeof value === 'number' || (typeof value === 'string' && MONEY_LEAF.test(value))) {
@@ -179,42 +181,106 @@ function scanNumericFacts(value: unknown, keyHint: string, depth: number, out: E
   }
 }
 
-/** Facts a delivered reply must contain for this gold call to be considered grounded (task step 3:
- * totals/counts, top-group breakdown amounts, item-line amounts) — never hand-typed, always read
- * back off the oracle's own ToolResult. */
-export function extractExpectedFacts(tool: string, result: { status: string; data?: unknown }): ExpectedFact[] {
+const DEFAULT_ANSWER_SHAPE: Record<string, AnswerShape> = {
+  'expense.list_recent': 'single_metric',
+  'expense.get_breakdown': 'breakdown',
+  'expense.get_detail': 'detail',
+  'reimbursement.list_pending_approvals': 'pending_approvals',
+  'reimbursement.get_summary': 'single_metric',
+  'reimbursement.get_detail': 'detail',
+};
+
+function moneyFact(data: Record<string, unknown>, key: string, label: string): ExpectedFact[] {
+  return data[key] != null ? [{ kind: 'money', value: data[key] as string | number, label }] : [];
+}
+function countFact(data: Record<string, unknown>, key: string, label: string): ExpectedFact[] {
+  return data[key] != null ? [{ kind: 'count', value: data[key] as string | number, label }] : [];
+}
+function textFact(data: Record<string, unknown>, key: string, label: string): ExpectedFact[] {
+  return data[key] ? [{ kind: 'text', value: String(data[key]), label }] : [];
+}
+function dateFact(data: Record<string, unknown>, key: string, label: string): ExpectedFact[] {
+  return data[key] ? [{ kind: 'date', value: String(data[key]), label }] : [];
+}
+
+/** single metric (task follow-up 2): the total and the item count. Both `expense.list_recent`
+ * (its usual answerShape) and `reimbursement.get_summary` map onto this even though their real
+ * field names differ — `reimbursement.get_summary`'s shape
+ * (GetReimbursementAiSummaryUseCase.execute, read from source) has no one "total"/"count" pair,
+ * so `totalUnpaidAmount` and `pendingApprovalCount` are the closest real fields to what "ใบเบิก
+ * ของฉันถึงไหนแล้ว" is asking. */
+function singleMetricFacts(tool: string, data: Record<string, unknown>): ExpectedFact[] {
+  if (tool === 'reimbursement.get_summary') {
+    return [...moneyFact(data, 'totalUnpaidAmount', 'total_unpaid'), ...countFact(data, 'pendingApprovalCount', 'pending_count')];
+  }
+  const summary = (data['summary'] as Record<string, unknown> | undefined) ?? {};
+  return [...moneyFact(summary, 'totalAmount', 'total'), ...countFact(summary, 'countedItems', 'count')];
+}
+
+/** breakdown: the overall total plus the top 3 groups' names and amounts, from whichever grouping
+ * `groupBy` selects (default "category"). `byVendor` (task follow-up 2: `{vendorId, vendor,
+ * currency, count, totalAmount, linked?}` plus `vendorHasMore`) is read the same way once present;
+ * absent today, this degrades to no vendor groups rather than throwing. */
+function breakdownFacts(data: Record<string, unknown>, groupBy: GroupByDimension): ExpectedFact[] {
+  const groupField = groupBy === 'category' ? 'byCategory' : groupBy === 'branch' ? 'byBranch' : 'byVendor';
+  const nameField = groupBy;
+  const groups = (data[groupField] as Array<Record<string, unknown>> | undefined) ?? [];
+  const top3 = [...groups].sort((a, b) => Number(b['totalAmount'] ?? 0) - Number(a['totalAmount'] ?? 0)).slice(0, 3);
+  return [
+    ...moneyFact(data, 'totalAmount', 'total'),
+    ...top3.flatMap((group) => [...textFact(group, nameField, 'group_name'), ...moneyFact(group, 'totalAmount', 'group_amount')]),
+  ];
+}
+
+/** list: the first 3 items' amounts and vendor names (a null vendor snapshot contributes no text
+ * fact for that item — the amount is still required). */
+function listFacts(data: Record<string, unknown>): ExpectedFact[] {
+  const items = ((data['items'] as Array<Record<string, unknown>> | undefined) ?? []).slice(0, 3);
+  return items.flatMap((item) => [...moneyFact(item, 'grandTotalAmount', 'item_amount'), ...textFact(item, 'vendorNameSnapshot', 'item_vendor')]);
+}
+
+/** detail: the amount, date and vendor. A reimbursement claim has no vendor — its requester is the
+ * closest identity fact a reply would actually state. */
+function detailFacts(tool: string, data: Record<string, unknown>): ExpectedFact[] {
+  if (tool === 'reimbursement.get_detail') {
+    return [...moneyFact(data, 'amount', 'amount'), ...dateFact(data, 'incurredDate', 'date'), ...textFact(data, 'requesterDisplayName', 'requester_as_vendor')];
+  }
+  return [...moneyFact(data, 'grandTotalAmount', 'amount'), ...dateFact(data, 'expenseDate', 'date'), ...textFact(data, 'vendorName', 'vendor')];
+}
+
+/** pending approvals: the count and the total. The tool exposes no separate aggregate amount
+ * (erp-reimbursement-tools.use-case.ts, read from source), so "the total" is the sum of the
+ * (already-capped-at-10) listed items' own amounts — the only total a truthful reply could state. */
+function pendingApprovalsFacts(data: Record<string, unknown>): ExpectedFact[] {
+  const items = (data['items'] as Array<Record<string, unknown>> | undefined) ?? [];
+  const sum = items.reduce((total, item) => total + Number(item['amount'] ?? 0), 0);
+  return [...countFact(data, 'total', 'count'), ...(items.length ? [{ kind: 'money' as const, value: sum, label: 'sum_of_listed_amounts' }] : [])];
+}
+
+/** Facts a delivered reply must contain for this gold call to be considered grounded — never
+ * hand-typed, always read back off the oracle's own ToolResult. Required-only per shape (task
+ * follow-up 2); everything else about the result is optional and not checked. */
+export function extractExpectedFacts(tool: string, result: { status: string; data?: unknown }, answerShape?: AnswerShape): ExpectedFact[] {
   if (result.status !== 'ok' || !result.data) return [];
   const data = result.data as Record<string, unknown>;
-  const facts: ExpectedFact[] = [];
-  if (tool === 'expense.list_recent') {
-    const summary = data['summary'] as Record<string, unknown> | undefined;
-    if (summary?.['totalAmount'] != null) facts.push({ kind: 'money', value: summary['totalAmount'] as string, label: 'total' });
-    if (summary?.['countedItems'] != null) facts.push({ kind: 'count', value: summary['countedItems'] as number, label: 'count' });
-    for (const item of ((data['items'] as Array<Record<string, unknown>>) ?? []).slice(0, 10)) {
-      if (item['grandTotalAmount'] != null) facts.push({ kind: 'money', value: item['grandTotalAmount'] as string, label: `item:${item['id']}` });
-    }
-    return facts;
+  const shape = answerShape ?? DEFAULT_ANSWER_SHAPE[tool];
+  switch (shape) {
+    case 'single_metric': return singleMetricFacts(tool, data);
+    case 'breakdown': return breakdownFacts(data, 'category');
+    case 'list': return listFacts(data);
+    case 'detail': return detailFacts(tool, data);
+    case 'pending_approvals': return pendingApprovalsFacts(data);
+    default: { const facts: ExpectedFact[] = []; scanNumericFacts(data, '', 0, facts); return facts; }
   }
-  if (tool === 'expense.get_breakdown') {
-    if (data['totalAmount'] != null) facts.push({ kind: 'money', value: data['totalAmount'] as string, label: 'total' });
-    if (data['totalCount'] != null) facts.push({ kind: 'count', value: data['totalCount'] as number, label: 'count' });
-    for (const group of ((data['byCategory'] as Array<Record<string, unknown>>) ?? []).slice(0, 8)) {
-      facts.push({ kind: 'money', value: group['totalAmount'] as string, label: `category:${group['category']}` });
-    }
-    return facts;
-  }
-  if (tool === 'expense.get_detail') {
-    if (data['grandTotalAmount'] != null) facts.push({ kind: 'money', value: data['grandTotalAmount'] as string, label: 'total' });
-    return facts;
-  }
-  if (tool === 'reimbursement.list_pending_approvals') {
-    if (data['total'] != null) facts.push({ kind: 'count', value: data['total'] as number, label: 'count' });
-    for (const item of ((data['items'] as Array<Record<string, unknown>>) ?? []).slice(0, 10)) {
-      if (item['amount'] != null) facts.push({ kind: 'money', value: item['amount'] as string, label: `item:${item['id']}` });
-    }
-    return facts;
-  }
-  // reimbursement.get_summary and anything else: generic numeric scan (see scanNumericFacts).
-  scanNumericFacts(data, '', 0, facts);
-  return facts;
+}
+
+/** Same as `extractExpectedFacts`, but honors a gold call's own `groupBy` override for the
+ * "breakdown" shape (`extractExpectedFacts` always uses "category" since it has no GoldCall to
+ * read). Callers with a `GoldCall` in hand (run-preflight.ts, run-real.ts) should prefer this. */
+export function extractExpectedFactsForCall(tool: string, result: { status: string; data?: unknown }, call: Pick<GoldCall, 'answerShape' | 'groupBy'>): ExpectedFact[] {
+  if (result.status !== 'ok' || !result.data) return [];
+  const data = result.data as Record<string, unknown>;
+  const shape = call.answerShape ?? DEFAULT_ANSWER_SHAPE[tool];
+  if (shape === 'breakdown') return breakdownFacts(data, call.groupBy ?? 'category');
+  return extractExpectedFacts(tool, result, shape);
 }

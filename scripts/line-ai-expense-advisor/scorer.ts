@@ -100,7 +100,16 @@ export function moneyTextVariants(value: string | number): string[] {
   return [...variants];
 }
 
-export type ExpectedFact = { kind: 'money' | 'count'; value: string | number; label?: string };
+export type ExpectedFact =
+  | { kind: 'money'; value: string | number; label?: string }
+  | { kind: 'count'; value: string | number; label?: string }
+  /** A name copied verbatim from the source data (category, vendor, requester, ...). Exact
+   * substring, no formatting variants — this harness does not paraphrase proper nouns. */
+  | { kind: 'text'; value: string; label?: string }
+  /** A civil date or ISO datetime string. Matched WEAKLY, on the day-of-month digits only (with
+   * or without a leading zero) — this harness does not own the reply's Thai date formatting, so
+   * it cannot assert the exact rendered string, only that the right day was mentioned somewhere. */
+  | { kind: 'date'; value: string; label?: string };
 
 function normalizeForSearch(text: string): string {
   return text.replace(/,/g, '');
@@ -110,7 +119,11 @@ function normalizeForSearch(text: string): string {
 export function factInText(fact: ExpectedFact, deliveredText: string): boolean {
   const haystack = normalizeForSearch(deliveredText);
   if (fact.kind === 'count') return haystack.includes(String(fact.value));
-  return moneyTextVariants(fact.value).some((variant) => haystack.includes(normalizeForSearch(variant)));
+  if (fact.kind === 'money') return moneyTextVariants(fact.value).some((variant) => haystack.includes(normalizeForSearch(variant)));
+  if (fact.kind === 'text') return deliveredText.includes(fact.value);
+  const day = new Date(fact.value).getUTCDate();
+  if (!Number.isFinite(day)) return false;
+  return haystack.includes(String(day)) || haystack.includes(String(day).padStart(2, '0'));
 }
 
 export function scoreFacts(expectedFacts: ExpectedFact[], deliveredText: string): CheckResult {

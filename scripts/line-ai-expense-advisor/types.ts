@@ -25,9 +25,23 @@ export type ShownItemRef = { $fromShownItems: number };
 export type GoldInputValue = string | number | boolean | null | PeriodRef | ShownItemRef;
 export type GoldInput = Record<string, GoldInputValue>;
 
+/** Which required-fact rule applies to a gold call's result (docs/qa/line-ai-expense-advisor-eval.md
+ * "Required facts by answer shape"). Optional — defaults per tool (oracle.ts DEFAULT_ANSWER_SHAPE);
+ * only needed to override the default, e.g. `expense.list_recent` as a `list` instead of its usual
+ * `single_metric`. */
+export const ANSWER_SHAPES = ['single_metric', 'breakdown', 'list', 'detail', 'pending_approvals'] as const;
+export type AnswerShape = (typeof ANSWER_SHAPES)[number];
+
+/** Which grouping a `breakdown` shape's required top-3 facts come from. Only meaningful with
+ * answerShape "breakdown"; defaults to "category". */
+export const GROUP_BY_DIMENSIONS = ['category', 'branch', 'vendor'] as const;
+export type GroupByDimension = (typeof GROUP_BY_DIMENSIONS)[number];
+
 export type GoldCall = {
   tool: string;
   input: GoldInput;
+  answerShape?: AnswerShape;
+  groupBy?: GroupByDimension;
   /** Other {tool, input} shapes that would equally correctly answer the same question. */
   alternatives?: GoldCall[];
 };
@@ -90,11 +104,17 @@ function validateGoldCall(call: unknown, path: string): asserts call is GoldCall
   for (const [key, value] of Object.entries(call['input'] as Record<string, unknown>)) {
     assert.ok(isGoldInputValue(value), `${path}.input.${key}: unsupported value ${JSON.stringify(value)}`);
   }
+  if (call['answerShape'] !== undefined) {
+    assert.ok((ANSWER_SHAPES as readonly string[]).includes(call['answerShape'] as string), `${path}.answerShape: must be one of ${ANSWER_SHAPES.join(', ')}`);
+  }
+  if (call['groupBy'] !== undefined) {
+    assert.ok((GROUP_BY_DIMENSIONS as readonly string[]).includes(call['groupBy'] as string), `${path}.groupBy: must be one of ${GROUP_BY_DIMENSIONS.join(', ')}`);
+  }
   if (call['alternatives'] !== undefined) {
     assert.ok(Array.isArray(call['alternatives']), `${path}.alternatives: must be an array`);
     (call['alternatives'] as unknown[]).forEach((alt, index) => validateGoldCall(alt, `${path}.alternatives[${index}]`));
   }
-  const knownKeys = new Set(['tool', 'input', 'alternatives']);
+  const knownKeys = new Set(['tool', 'input', 'answerShape', 'groupBy', 'alternatives']);
   for (const key of Object.keys(call)) assert.ok(knownKeys.has(key), `${path}.${key}: unknown field`);
 }
 

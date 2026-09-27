@@ -73,7 +73,7 @@
           "category": "7",
           "language": ["th"],
           "expect": { "calls": [
-            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "limit": 5 } }
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "limit": 5 }, "answerShape": "list" }
           ] }
         },
         {
