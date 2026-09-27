@@ -38,6 +38,71 @@ function documentClassification(overrides: Partial<BusinessDocumentClassificatio
 }
 
 describe('LINE intake router – routeIntake', () => {
+  it('requires consistent canonical simple-read filters and preserves candidate month-to-date bounds', () => {
+    const prompt = intakeRouterSystemPrompt({ fusedPlan: true }, false, true);
+    assert.match(prompt, /requestedFilters and preparedPlan\.proposedCalls\[0\]\.input MUST carry the same canonical business filter keys and exact scalar values/);
+    assert.match(prompt, /EITHER periodKey OR the complete fromDate\/toDate pair, never both/);
+    assert.match(prompt, /month-to-date or spending so far/);
+    assert.match(prompt, /end clamped to today; do not widen it to the whole month through periodKey/);
+    assert.match(prompt, /omit preparedPlan and retain the full semantic request for normal planning/);
+    assert.match(prompt, /never overrides evidence or source validation/);
+    assert.doesNotMatch(intakeRouterSystemPrompt({ fusedPlan: true }, false, false), /same canonical business filter/);
+    assert.doesNotMatch(intakeRouterSystemPrompt({}, false, true), /same canonical business filter/);
+  });
+
+  it('offers exact full-part refs for Thai text and surrogate pairs without repairing invalid model evidence', async () => {
+    // Real Sonnet NAT-01 failed twice with endUtf16=34 although this exact typo-preserving input is 32.
+    for (const rawText of ['เดือนนี้ค่าไช้จ่ายไปเท่าไหร่แล้ว', '😀 เดือนนี้ค่าไช้จ่ายไปเท่าไหร่แล้ว']) {
+      const built = await createLineAiInputEvidence({ turnKey: 'nat-evidence', parts: [{ partId: 'part-0',
+        eventIdHash: 'a'.repeat(64), acceptedAtMs: 1, rawText }] });
+      assert.ok(built);
+      const expectedRef = { partId: 'part-0', startUtf16: 0, endUtf16: rawText.length,
+        rawSha256: built.inputEvidence.parts[0]!.rawSha256 };
+      const answer = (ref: unknown) => ({ intent: 'BUSINESS_READ_QUESTION', confidence: 0.97, language: 'th',
+        semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ดูยอดรายจ่ายเดือนนี้', requiredEvidence: [],
+          requestedFilters: {}, dependsOn: [], evidenceRefs: [ref] }] });
+      const request = baseRequest({ messageText: rawText, inputEvidence: built.inputEvidence });
+      const accepted = await new IntentRouterAgent({ generateText: async (input) => {
+        const payload = JSON.parse(input.messages[0]!.text);
+        assert.equal(payload.messageText, rawText);
+        assert.equal(payload.inputEvidenceParts[0].rawText, rawText);
+        assert.deepEqual(payload.inputEvidenceParts[0].fullPartRef, expectedRef);
+        assert.ok(input.systemPrompt);
+        assert.match(input.systemPrompt, /COPY that fullPartRef object verbatim/);
+        return { ok: true as const, text: JSON.stringify(answer(payload.inputEvidenceParts[0].fullPartRef)) };
+      } }).routeIntake(request);
+      assert.equal(accepted.status, 'ROUTED');
+      assert.deepEqual(accepted.semanticSubrequests?.[0]?.evidenceRefs, [expectedRef]);
+      for (const invalid of [
+        { ...expectedRef, endUtf16: rawText.length + 2 },
+        { ...expectedRef, rawSha256: 'b'.repeat(64) },
+        { ...expectedRef, partId: 'another-part' },
+        ...(rawText.startsWith('😀') ? [{ ...expectedRef, endUtf16: 1 }] : []),
+      ]) {
+        const rejected = await new IntentRouterAgent(modelAnswer(answer(invalid))).routeIntake(request);
+        assert.equal(rejected.errorCode, 'ROUTER_SEMANTIC_SCHEMA_INVALID', 'no clamping, rebinding or hash repair');
+      }
+    }
+  });
+
+  it('offers separate source refs for buffered parts and leaves empty parts and legacy prompts unchanged', async () => {
+    const built = await createLineAiInputEvidence({ turnKey: 'parts-turn', parts: ['ดูรายจ่าย', '', 'เฉพาะที่ยืนยันแล้ว'].map((rawText, index) => ({
+      partId: `part-${index}`, eventIdHash: String(index + 1).repeat(64), acceptedAtMs: index, rawText,
+    })) });
+    assert.ok(built);
+    const refs = built.inputEvidence.parts.filter(part => part.rawText.length).map(part => ({ partId: part.partId,
+      startUtf16: 0, endUtf16: part.rawText.length, rawSha256: part.rawSha256 }));
+    const capture: { input?: ProviderInput } = {};
+    const plan = await new IntentRouterAgent(modelAnswer({ intent: 'BUSINESS_READ_QUESTION', confidence: 0.95,
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'รายจ่ายยืนยันแล้ว', requiredEvidence: [], requestedFilters: {},
+        dependsOn: [], evidenceRefs: refs }] }, capture)).routeIntake(baseRequest({ ...built }));
+    assert.equal(plan.status, 'ROUTED');
+    const payload = JSON.parse(capture.input!.messages[0]!.text);
+    assert.equal(payload.inputEvidenceParts[1].fullPartRef, undefined, 'empty input cannot provide a nonempty evidence span');
+    assert.deepEqual(payload.inputEvidenceParts.filter((part: { rawText: string }) => part.rawText).map((part: { fullPartRef: unknown }) => part.fullPartRef), refs);
+    assert.doesNotMatch(intakeRouterSystemPrompt({}, false, false), /fullPartRef/);
+  });
+
   it('uses only the selected retained write clause while keeping the live selection input unchanged', async () => {
     const oldText = 'บันทึกค่ากาแฟ 120 บาท วันที่ 26/9/2569\nบันทึกค่าเดินทาง 999 บาท';
     const old = await createLineAiInputEvidence({ turnKey: 'old-turn', parts: [{ partId: 'old-part', eventIdHash: 'a'.repeat(64),

@@ -1012,10 +1012,51 @@ export class OrchestratorAgent {
   ) {}
 
   async run(req: LineAiTurnRequest): Promise<AgentRunResult> {
-    if (req.inputEvidence && req.budgetGrantV2 && req.semanticSubrequests?.length) return runSemanticTurnV2({ req,
-      provider: createProvider(this.config, { modelId: req.modelPolicy?.modelId }), invoke: (meta, context, args) => this.erpTools.invoke(meta, context, args),
-      draftEditEnabled: this.config.lineAiDraftEditEnabled, reimbursementDraftEnabled: this.config.lineAiReimbursementDraftWriteEnabled,
-      publicLookupEnabled: this.config.lineAiPublicLookupEnabled, approvedKnowledgeEnabled: this.config.lineAiApprovedKnowledgeEnabled });
+    if (req.inputEvidence && req.budgetGrantV2 && req.semanticSubrequests?.length) {
+      const started = Date.now(), inventory = req.semanticSubrequests, item = inventory[0]!;
+      const prepared = parseLineAiPreparedPlan(req.preparedPlan);
+      // A simple grant has already spent its intake slot. Reuse the guarded, compiled read
+      // instead of spending the last slot planning and then refusing the answer.
+      if (this.config.lineAiPreparedSimpleReadEnabled && inventory.length === 1 && item.kind === 'read'
+        && !item.dependsOn.length && !item.entityReference && prepared
+        && !unresolvedMonthName(req.messageText, req.valueCandidates?.periods
+          ?? resolvePeriodCandidates(req.messageText, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })))
+        && Object.entries(item.requestedFilters).every(([key, value]) => prepared.proposedCalls[0]?.input[key] === value)) {
+        const ctx: ErpToolContext = { requestId: req.requestId, companyId: req.userContext.companyId,
+          userId: req.userContext.internalUserId, membershipId: req.userContext.membershipId,
+          permissions: req.userContext.permissions, branchIds: req.userContext.branchIds, locationIds: req.userContext.locationIds,
+          locale: req.userContext.locale, chatKeyHash: req.userContext.chatKeyHash, actorDelegations: req.actorDelegations,
+          inputEvidence: req.inputEvidence, budgetGrantV2: req.budgetGrantV2,
+          ...(req.valueCandidates && 'version' in req.valueCandidates && req.valueCandidates.version === 2
+            ? { valueCandidatesV2: req.valueCandidates } : {}) };
+        let result = await this.executePreparedSimpleRead(ctx, req, started);
+        if (result) {
+          const handled = result.presentation?.kind === 'answer_cards' && result.sourceRefs.length > 0
+            && result.sourceRefs.every(source => source.permissionChecked) && result.outputs.every(output => output.status === 'SUCCEEDED');
+          if (!handled && result.presentation) result = this.buildPreparedHonestTerminal(result.plan, result.outputs[0]!, req, started);
+          const status = handled ? 'handled' : result.outputs.some(output => output.status === 'PERMISSION_DENIED') ? 'denied' : 'needs_user';
+          return { ...result, semanticCoverage: [{ index: item.index, status,
+            ...(handled ? { sourceRefIds: result.sourceRefs.map(source => source.id ?? `${source.module}:${source.entityType}:${source.entityId ?? 'summary'}`) }
+              : { reasonCode: status === 'denied' ? 'READ_ACCESS_DENIED' : 'READ_SOURCE_UNAVAILABLE' }),
+            ...(status === 'needs_user' ? { question: result.replyText.slice(0, 500) } : {}) }] };
+        }
+      }
+      // Never widen an issued grant or execute a partial control call that leaves no answer slot.
+      if (req.budgetGrantV2.maxTurnSlots === 2 && inventory.some(subrequest => !['general', 'help'].includes(subrequest.kind))) {
+        const language = req.responsePreferences?.language ?? (req.userContext.locale.startsWith('en') ? 'en' : 'th');
+        const replyText = language === 'en'
+          ? 'This request could not be verified. No action was taken; please try again.'
+          : 'ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่';
+        return { plan: { status: 'ROUTABLE', language, intents: [], refusals: [], requiresHumanReview: false },
+          outputs: [], replyText, sourceRefs: [], webLinks: [], durationMs: Date.now() - started,
+          semanticCoverage: inventory.map(subrequest => ({ index: subrequest.index, status: 'needs_user',
+            reasonCode: 'PREPARED_READ_UNAVAILABLE', question: replyText })) };
+      }
+      return runSemanticTurnV2({ req,
+        provider: createProvider(this.config, { modelId: req.modelPolicy?.modelId }), invoke: (meta, context, args) => this.erpTools.invoke(meta, context, args),
+        draftEditEnabled: this.config.lineAiDraftEditEnabled, reimbursementDraftEnabled: this.config.lineAiReimbursementDraftWriteEnabled,
+        publicLookupEnabled: this.config.lineAiPublicLookupEnabled, approvedKnowledgeEnabled: this.config.lineAiApprovedKnowledgeEnabled });
+    }
     const startMs = Date.now();
     const knowledgeRequest = req as LineAiTurnRequest & { approvedKnowledge?: boolean; selectedKnowledgeCardIds?: string[] };
     const knowledgeEnabled = this.config.lineAiApprovedKnowledgeEnabled === true && knowledgeRequest.approvedKnowledge === true;

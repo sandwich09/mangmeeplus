@@ -3,6 +3,7 @@
  * Sends server-derived context only; never raw LINE secrets or user tokens.
  */
 import { HttpException, HttpStatus, Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import {
   AI_DOCUMENT_OCR_TIMEOUT_MS, AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS,
@@ -190,7 +191,7 @@ export class AiGatewayClient {
   }): Promise<LineDocumentQaGatewayResponse> {
     const evidence = await createLineAiInputEvidence({
       turnKey: input.budgetGrantV2.turnKey,
-      parts: [{ partId: 'qa-input-manifest', eventIdHash: aiBudgetAttemptHash(input.jobId), acceptedAtMs: Date.now(),
+      parts: [{ partId: 'qa-input-manifest', eventIdHash: createHash('sha256').update(input.jobId).digest('hex'), acceptedAtMs: Date.now(),
         rawText: lineDocumentQaInputEvidenceText(input.question, input.pages, input.questions) }],
     });
     if (!evidence) return { status: 'failed', errorCode: 'QA_INPUT_EVIDENCE_INVALID' };

@@ -1,0 +1,2286 @@
+{
+  "reviewType": "AI-assisted source and runtime evidence review; not human certification",
+  "humanReviewStatus": "UNREVIEWED",
+  "primaryRun": {
+    "result": "/tmp/mangmee-natural-20260927/full-60.json",
+    "manifest": "/tmp/mangmee-natural-20260927/full-60.manifest.json",
+    "rawProviderOutputs": "/tmp/mangmee-natural-20260927/full-provider-outputs.jsonl",
+    "sourceCommit": "f9444099ee4ce88cb95d99ef192b1c6bf2fac543",
+    "corpusDigest": "3bd1e6668c351809d9cc0fb0bd2ead69511ad5e99ab3cf1971b7c36d0d988122",
+    "resultSha256": "ea3fd00b64d6d5fcddc4e3a7a4e96a9b28effc6d6652fe3b8abc807edc504ee0",
+    "startedAt": "2026-09-27T04:03:43.800Z",
+    "completedAt": "2026-09-27T04:18:40.696Z",
+    "model": {
+      "provider": "bedrock",
+      "modelId": "global.anthropic.claude-sonnet-4-6",
+      "region": "ap-southeast-1",
+      "transport": "local-http",
+      "runtime": "strands-local"
+    },
+    "compiledHashes": {
+      "apps/api/dist/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.js": "3e918a84e044784e70643245700859886a5013558ef7014a0c1d2f0c6cd428cb",
+      "apps/ai-gateway/dist/apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent.js": "9e2ad5fc43b79c9c8df1219481e87ddfd87024c1d95215628c34c8c1d9920103",
+      "apps/ai-gateway/dist/apps/ai-gateway/src/modules/line-ai/agents/semantic-turn-v2.js": "6fd7585b4ba24d5b8bf6604dd36874cf132f16a138ac042cab67d45a17ae3e1e"
+    },
+    "boundary": {
+      "runtime": "compiled_nest_api_postgres",
+      "line": "synthetic_http_sink",
+      "nativeLineVerified": false,
+      "cacheStateVerified": false,
+      "activationEligible": false
+    },
+    "repeats": 1
+  },
+  "denominators": {
+    "reviewRequestedTurns": 20,
+    "reviewObservedTurns": 16,
+    "reviewNotRunTurns": 4,
+    "fullPlannedTurns": 60,
+    "fullObservedTurns": 56,
+    "fullNotRunTurns": 4
+  },
+  "scopeNotes": [
+    "This is the primary frozen run only. Later storage/product fixes and media reruns must remain distinct.",
+    "No quality percentage or broad golden score is inferred. Observed no-write is scoped to captured business tables plus draft-action state, not a native LINE acceptance claim.",
+    "One repeat and 56 observed turns do not satisfy minimum 3 repeats / 100 timed-case latency acceptance.",
+    "A synthetic HTTP sink received the wire; native LINE rendering, action invocation, URL login/authorization and live pages were not exercised.",
+    "NAT-08 delivered-option prerequisites failed earlier. Later fixed script questions remain actual inputs; do not invent assistant candidates or score selection as though options were delivered.",
+    "NAT-05 metadata-only intake hasImageContent:false and no reader call cannot establish OCR failure on the clear generated receipt. Missing data must not be reported as 0."
+  ],
+  "assets": {
+    "version": 1,
+    "status": "draft",
+    "humanCertified": false,
+    "assets": {
+      "receipt-clear": {
+        "fileName": "receipt-clear.png",
+        "mimeType": "image/png",
+        "pages": 1,
+        "sha256": "23a09641ef60c99317f4330e95c5bb9f93daa70ed4fbe681ce16bf0864a31f3c",
+        "labelFile": "receipt-clear.label.json",
+        "labelDigest": "b68b2b891b2794e7c56962f603e30d56198a461263a8bd0d19d5b2f42d72fdc3",
+        "labelledBy": null,
+        "status": "draft",
+        "path": "/Users/thawatchai/.codex/worktrees/mangmee-ai-spec-v24/mangmeeplus/docs/research/mangmee-ai-natural-assets-2026-09-27/receipt-clear.png",
+        "labelPath": "/Users/thawatchai/.codex/worktrees/mangmee-ai-spec-v24/mangmeeplus/docs/research/mangmee-ai-natural-assets-2026-09-27/receipt-clear.label.json",
+        "actualLabel": {
+          "assetId": "receipt-clear",
+          "fileName": "receipt-clear.png",
+          "mimeType": "image/png",
+          "sourceFields": [
+            {
+              "page": 1,
+              "field": "merchant",
+              "originalValue": "Green Bowl Synthetic Cafe"
+            },
+            {
+              "page": 1,
+              "field": "date",
+              "originalValue": "2026-09-21"
+            },
+            {
+              "page": 1,
+              "field": "subtotal",
+              "amountRole": "before_vat",
+              "originalValue": "1196.63 THB"
+            },
+            {
+              "page": 1,
+              "field": "vat",
+              "amountRole": "vat_component",
+              "originalValue": "83.87 THB"
+            },
+            {
+              "page": 1,
+              "field": "total",
+              "amountRole": "gross_total",
+              "originalValue": "1280.50 THB"
+            }
+          ],
+          "unreadable": [],
+          "partial": [],
+          "pages": 1,
+          "status": "draft",
+          "labelledBy": null,
+          "expectedZeroQaFinancialWrites": true,
+          "provenance": {
+            "kind": "synthetic",
+            "reviewedBy": null,
+            "reviewedAt": null,
+            "note": "NAT-only authored visible content; not human-certified; no customer data"
+          }
+        },
+        "hashVerified": true
+      },
+      "receipt-partial": {
+        "fileName": "receipt-partial.pdf",
+        "mimeType": "application/pdf",
+        "pages": 2,
+        "sha256": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+        "labelFile": "receipt-partial.label.json",
+        "labelDigest": "b1f80777fa41c9769924b9c3319569dc0468b345a22e5c8145f14c42bd7dc0d2",
+        "labelledBy": null,
+        "status": "draft",
+        "path": "/Users/thawatchai/.codex/worktrees/mangmee-ai-spec-v24/mangmeeplus/docs/research/mangmee-ai-natural-assets-2026-09-27/receipt-partial.pdf",
+        "labelPath": "/Users/thawatchai/.codex/worktrees/mangmee-ai-spec-v24/mangmeeplus/docs/research/mangmee-ai-natural-assets-2026-09-27/receipt-partial.label.json",
+        "actualLabel": {
+          "assetId": "receipt-partial",
+          "fileName": "receipt-partial.pdf",
+          "mimeType": "application/pdf",
+          "sourceFields": [
+            {
+              "page": 1,
+              "field": "merchant",
+              "originalValue": "Sample Catering Test Kitchen"
+            },
+            {
+              "page": 1,
+              "field": "date",
+              "originalValue": "2026-09-20"
+            },
+            {
+              "page": 1,
+              "field": "total",
+              "amountRole": "gross_total",
+              "originalValue": "1580.00 THB"
+            },
+            {
+              "page": 2,
+              "field": "note",
+              "originalValue": "READABLE NOTE: Lunch catering for a team meeting."
+            },
+            {
+              "page": 2,
+              "field": "service_item",
+              "originalValue": "Prepared lunch boxes"
+            },
+            {
+              "page": 2,
+              "field": "quantity",
+              "originalValue": "10 boxes"
+            },
+            {
+              "page": 2,
+              "field": "delivery_date",
+              "originalValue": "2026-09-20"
+            }
+          ],
+          "unknownFields": [
+            {
+              "field": "vat",
+              "reason": "Not separately shown"
+            },
+            {
+              "page": 2,
+              "field": "customer_tax_id",
+              "reason": "Black field contains no encoded value"
+            }
+          ],
+          "unreadable": [],
+          "partial": [
+            {
+              "page": 2,
+              "fields": [
+                "customer_tax_id"
+              ],
+              "reason": "Only this field is obscured; other listed page-2 text is readable"
+            }
+          ],
+          "pages": 2,
+          "status": "draft",
+          "labelledBy": null,
+          "expectedZeroQaFinancialWrites": true,
+          "provenance": {
+            "kind": "synthetic",
+            "reviewedBy": null,
+            "reviewedAt": null,
+            "note": "NAT-only authored visible content; not human-certified; no customer data"
+          }
+        },
+        "hashVerified": true
+      },
+      "document-unreadable": {
+        "fileName": "document-unreadable.pdf",
+        "mimeType": "application/pdf",
+        "pages": 2,
+        "sha256": "37b80639d6d96436268e911c8792542c3c7e0e1e3e18fabd84b462e0f8324f01",
+        "labelFile": "document-unreadable.label.json",
+        "labelDigest": "cf69ae2118b60b9e50551cdf56defa5418a98a263f4d8524cccc46d8d0c71894",
+        "labelledBy": null,
+        "status": "draft",
+        "path": "/Users/thawatchai/.codex/worktrees/mangmee-ai-spec-v24/mangmeeplus/docs/research/mangmee-ai-natural-assets-2026-09-27/document-unreadable.pdf",
+        "labelPath": "/Users/thawatchai/.codex/worktrees/mangmee-ai-spec-v24/mangmeeplus/docs/research/mangmee-ai-natural-assets-2026-09-27/document-unreadable.label.json",
+        "actualLabel": {
+          "assetId": "document-unreadable",
+          "fileName": "document-unreadable.pdf",
+          "mimeType": "application/pdf",
+          "sourceFields": [
+            {
+              "page": 1,
+              "field": "document_type",
+              "originalValue": "Synthetic tax document cover"
+            },
+            {
+              "page": 1,
+              "field": "reference",
+              "originalValue": "NAT-REPLACEMENT-002"
+            },
+            {
+              "page": 1,
+              "field": "date",
+              "originalValue": "2026-09-22"
+            },
+            {
+              "page": 2,
+              "field": "test_marker",
+              "originalValue": "SYNTHETIC TEST DATA ONLY — PAGE 2 OF 2"
+            }
+          ],
+          "unknownFields": [
+            {
+              "page": 2,
+              "field": "business_content",
+              "reason": "Only an intentionally degraded raster is supplied; no business text is readable"
+            }
+          ],
+          "unreadable": [
+            {
+              "page": 2,
+              "fields": [
+                "business_content"
+              ],
+              "reason": "Business body is a degraded raster. The test marker is readable; do not call the entire page blank."
+            }
+          ],
+          "partial": [],
+          "pages": 2,
+          "status": "draft",
+          "labelledBy": null,
+          "expectedZeroQaFinancialWrites": true,
+          "provenance": {
+            "kind": "synthetic",
+            "reviewedBy": null,
+            "reviewedAt": null,
+            "note": "NAT-only authored visible content; not human-certified; no customer data"
+          }
+        },
+        "hashVerified": true
+      }
+    }
+  },
+  "sourceFacts": {
+    "somchaiRepairBillsLastWeek": [
+      {
+        "id": "NAT-SOMCHAI-850",
+        "date": "2026-09-15",
+        "amount": "850.00"
+      },
+      {
+        "id": "NAT-SOMCHAI-1750",
+        "date": "2026-09-18",
+        "amount": "1750.00"
+      }
+    ],
+    "week": "2026-09-14..2026-09-20",
+    "somchaiStationeryBill": {
+      "id": "NAT-SOMCHAI-OFFICE",
+      "date": "2026-09-17",
+      "amount": "1100",
+      "vendorName": "สมชายเครื่องเขียน",
+      "evidence": "NAT-08 T2 actual expense.list_recent result"
+    },
+    "repairVendor": "สมชายการช่าง",
+    "NAT07UserProvidedAmount": "1200 THB",
+    "NAT07UserProvidedCashPart": "200 THB",
+    "NAT07RemainderInference": "1000 THB only if total 1200 and split payment meaning confirmed; no actual payment action authorized"
+  },
+  "criticalFindings": [
+    {
+      "id": "PRIMARY-NAT06-PREMATURE-EXPENSE",
+      "severity": "P1 candidate",
+      "scenarioId": "NAT-06",
+      "turn": 1,
+      "description": "An expense was created for a read-only PDF question before any explicit write request. This exists before the independent storage failure.",
+      "expenseId": "cmujav8lt00n03uk1upj283ly",
+      "evidenceHash": "571b1419d38d406c73ccf30b9f255d060dbd1429dc645640fd4e840413a9eee1",
+      "evidence": "database_snapshot create effect in primary result records NAT-06 traces[0]; Gateway intake semanticSubrequests[0].kind read",
+      "notEstablished": "No OCR values, totals, final confirmation or payment mutation were recorded by this finding."
+    },
+    {
+      "id": "PRIMARY-MEDIA-EGRESS",
+      "severity": "test environment blocker",
+      "description": "Primary runtime fetch allowlist excluded manifest localStorageEndpoint http://127.0.0.1:19009 for presigned upload. NAT06 upload remained PENDING_UPLOAD / RETRYABLE_RECEIPT_UPLOAD_ERROR; no reader job was observed in pre-reset local read-only inspection. Root confirmed this allowlist cause and scheduled a distinct rerun.",
+      "evidence": "primary runtime frozen commit plus live read-only snapshot previously reported; full runtimeDiagnostics NAT-06 REPLAY_TERMINAL_TIMEOUT",
+      "notEstablished": "Do not equate 6,749 ms observed model end / 6,838 ms last wire with terminal completion: this turn waited for the 120-second terminal timeout."
+    },
+    {
+      "id": "PRIMARY-NAT08-WRONG-REFERENCE",
+      "severity": "P1/P2 product accuracy candidate",
+      "description": "vendorName reference silently becomes recent in readExplainRecordRef; final answer turns recent-chat absence into whole-system merchant-bill absence. Actual raw list contained the bills.",
+      "source": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts:215-223,270",
+      "evidence": "NAT-08 T3 tool input/result and wire; NAT-08 T2 source rows"
+    }
+  ],
+  "turns": [
+    {
+      "scenarioId": "NAT-05",
+      "turn": 1,
+      "user": "ใบนี้รวมเท่าไหร่อะ",
+      "expectedBehaviorFromUnreviewedCriteria": "อ่านยอดรวมของรูปที่แนบและบอกข้อจำกัดถ้าอ่านไม่ชัด",
+      "limitFromUnreviewedCriteria": "คำถามอ่านเอกสารอย่างเดียวต้องไม่มี expense/reimbursement write",
+      "reviewStatus": "NOT_ACHIEVED_DEPENDENCY_AND_ROUTING",
+      "reviewNoteTh": "ไม่ได้อ่านยอด 1,280.50 บาทจริง; intake เห็น attachment metadata hasImageContent:false แล้วกล่าวว่าภาพอ่านไม่ได้ ทั้งที่ภาพสังเคราะห์อ่านได้ชัด ไม่มี document reader call ในหลักฐาน จึงไม่ใช่ผลวัด OCR accuracy; เกิดเพียง AttachmentObject.create ไม่เกิดรายจ่าย",
+      "observed": true,
+      "actualWireTexts": [
+        "ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ปกติไม่เกิน 1 นาที เสร็จแล้วน้องจะสรุปให้เลยนะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ",
+        "ภาพที่แนบมาไม่สามารถอ่านได้ค่ะ รบกวนส่งภาพใบเสร็จหรือเอกสารที่ต้องการดูยอดรวมใหม่อีกครั้งได้ไหมคะ?"
+      ],
+      "actualTraceOutcome": "needs_input",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [
+        {
+          "kind": "AttachmentObject.create",
+          "recordId": "cmujau9f600jj3uk11fw9v8fx",
+          "revision": "2026-09-27T04:09:05.586",
+          "evidence": "database_snapshot",
+          "evidenceHash": "27b38a4538c781090e1bab40432e98c670f4155d8ac0dbab5350231a23474927"
+        }
+      ],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-1334263aa721dc42c23e-0",
+          "eventType": "message",
+          "status": "clarification_required",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:09:05.636Z",
+          "createdAt": "2026-09-27T04:08:58.745Z"
+        },
+        {
+          "webhookEventId": "replay-1334263aa721dc42c23e-1",
+          "eventType": "message",
+          "status": "batched",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:09:05.638Z",
+          "createdAt": "2026-09-27T04:08:58.755Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 6821,
+        "firstWire": 1031,
+        "lastWire": 6894
+      },
+      "providerUsageRows": 1,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 1279,
+      "outputTokens": 406,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "reason": "The user asks for a total on 'this document' but the attached image has no readable content, so it is impossible to read or classify the document.",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "read",
+                "goal": "อ่านยอดรวมจากเอกสารที่แนบมา",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 18,
+                    "rawSha256": "da4ea40432a584fb7e3bf6fa53c1f0d07ffcaf59e3209ccf3b128dd451bf8fa5"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "snapshotDigest": "1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c",
+      "receiptIds": [
+        "sink-9a1acfd1-bcd7-4c8b-864b-436c87266830",
+        "sink-1651d204-8570-4f91-b028-9bd6925ee16f"
+      ]
+    },
+    {
+      "scenarioId": "NAT-05",
+      "turn": 2,
+      "user": "VAT ล่ะ ไม่ใช่ยอดรวมนะ",
+      "expectedBehaviorFromUnreviewedCriteria": "อ่านส่วน VAT จากใบเดิม แยกบทบาทจำนวนเงินชัดเจน",
+      "limitFromUnreviewedCriteria": "ไม่คำนวณอัตราหรือสิทธิ์ภาษีแทนข้อความบนเอกสาร และไม่ยกยอดรวมมาตอบ VAT",
+      "reviewStatus": "NOT_ACHIEVED_CONTEXT",
+      "reviewNoteTh": "ไม่ได้ตอบ VAT 83.87 บาทจากใบเดิม; route เปลี่ยนเป็น general CLARIFY แล้ว AI_GENERAL_ADMISSION_UNAVAILABLE การแยก total/VAT และการอ้างไฟล์เดิมยังไม่สำเร็จ",
+      "observed": true,
+      "actualWireTexts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "actualTraceOutcome": "temporarily_unavailable",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-b2db9ab4e1b760ed2ee6-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_GENERAL_ADMISSION_UNAVAILABLE",
+          "processedAt": "2026-09-27T04:09:14.106Z",
+          "createdAt": "2026-09-27T04:09:05.701Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 8354,
+        "firstWire": 8411,
+        "lastWire": 8411
+      },
+      "providerUsageRows": 1,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 1115,
+      "outputTokens": 495,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "reason": "The message 'VAT ล่ะ ไม่ใช่ยอดรวมนะ' references a VAT value (not the total) but there is no active draft, recent captured expense, or open clarification to anchor it to — it is ambiguous between corre",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "general",
+                "goal": "User states a value is VAT (not a grand total) — ambiguous between correcting a VAT field on a prior record or clarifying a VAT amount for a new/draft capture",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 22,
+                    "rawSha256": "8e085b8e260d2f55ffd8f021538424691dd561b9b56bc8bc9018950061e43493"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "snapshotDigest": "1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c",
+      "receiptIds": [
+        "sink-d9799df7-c1d8-463e-a556-0987f5b3ba83"
+      ]
+    },
+    {
+      "scenarioId": "NAT-05",
+      "turn": 3,
+      "user": "ชื่อร้านกับวันที่อ่านว่าอะไร",
+      "expectedBehaviorFromUnreviewedCriteria": "ตอบเฉพาะที่มีหลักฐานบนไฟล์พร้อมระบุส่วนไม่ชัด",
+      "limitFromUnreviewedCriteria": "ไม่ยืมชื่อ/วันที่จากใบก่อนหน้าหรือเดาจากชื่อไฟล์",
+      "reviewStatus": "NOT_ACHIEVED_CONTEXT",
+      "reviewNoteTh": "ไม่ได้ตอบชื่อร้านหรือวันที่; SEMANTIC_CONTROL_UNAVAILABLE แล้วกลับถามประเภทภาพ 1/2/3 ข้อความว่ารูปยังอยู่ไม่พิสูจน์ว่า bytes อัปโหลดสำเร็จหรือ reader อ่านได้",
+      "observed": true,
+      "actualWireTexts": [
+        "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง\n\n↩️ รูปที่รอจำแนกยังเก็บไว้อยู่ค่ะ\n🤔 รูปนี้เป็นอะไรคะ ตอบเลขข้อได้เลยนะคะ\n1) ใบเสร็จ/เอกสารค่าใช้จ่ายรายการเดียวที่ต้องการบันทึก\n2) ภาพประกอบคำถาม ไม่ต้องบันทึก\n3) สรุปหลายรายการ (เก็บไฟล์ไว้ตรวจ แต่ยังไม่สร้างค่าใช้จ่าย)",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง"
+      ],
+      "actualTraceOutcome": "needs_input",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-dcc2bab598984ee5469d-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:09:26.839Z",
+          "createdAt": "2026-09-27T04:09:14.188Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 12583,
+        "firstWire": 12651,
+        "lastWire": 12651
+      },
+      "providerUsageRows": 3,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 7197,
+      "outputTokens": 695,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "reason": "The user asks what the store name and date say, but there is no image or document attached to read from.",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "read",
+                "goal": "อ่านชื่อร้านและวันที่จากเอกสารที่ไม่ได้แนบมา",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 28,
+                    "rawSha256": "73d51c21771e72a8611456019593af645f9cd11510d625e2f45e6ee28012c783"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "method": "requestLineTurn",
+          "response": {
+            "replyText": "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง",
+            "intent": "unknown",
+            "semanticCoverage": [
+              {
+                "index": 0,
+                "status": "needs_user",
+                "reasonCode": "SEMANTIC_CONTROL_UNAVAILABLE",
+                "question": "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง"
+              }
+            ]
+          }
+        }
+      ],
+      "snapshotDigest": "1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c",
+      "receiptIds": [
+        "sink-826dd27c-11f9-4e8d-8141-6e721aff5b9e"
+      ]
+    },
+    {
+      "scenarioId": "NAT-05",
+      "turn": 4,
+      "user": "แค่ถามนะ อย่าเพิ่งลงรายจ่าย",
+      "expectedBehaviorFromUnreviewedCriteria": "ยืนยันขอบเขตว่าเป็นการถามเนื้อหา ไม่สร้างร่างใหม่จากประโยคนี้",
+      "limitFromUnreviewedCriteria": "ต้องตรวจว่าไม่มีผลเขียนเกิดตั้งแต่ข้อความ 1–3 ไม่อาศัยคำตอบรับปากอย่างเดียว",
+      "reviewStatus": "NO_WRITE_OBSERVED_BUT_ACK_FAILED",
+      "reviewNoteTh": "ไม่มี expense/reimbursement write ตั้งแต่ข้อ 1–4 แต่คำตอบเป็น unavailable แทนการรับทราบขอบเขตอ่านอย่างเดียว",
+      "observed": true,
+      "actualWireTexts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "actualTraceOutcome": "temporarily_unavailable",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-398416665f01520186fe-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_GENERAL_ADMISSION_UNAVAILABLE",
+          "processedAt": "2026-09-27T04:09:34.057Z",
+          "createdAt": "2026-09-27T04:09:26.973Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 7031,
+        "firstWire": 7088,
+        "lastWire": 7088
+      },
+      "providerUsageRows": 1,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 1336,
+      "outputTokens": 439,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "reason": "User says 'just asking, don't record an expense yet' but has not stated a question — unclear what they want to ask or which open task they are commenting on.",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "general",
+                "goal": "ผู้ใช้แจ้งว่าต้องการถามเฉยๆ ยังไม่ให้บันทึกรายจ่าย แต่ยังไม่ได้ระบุคำถาม",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 27,
+                    "rawSha256": "14202e485f6a9a7e210a77231adafccddda935676143b02a5c80eee713d9f24c"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "snapshotDigest": "1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c",
+      "receiptIds": [
+        "sink-e29ac171-26aa-4971-b99e-f65f0d28cfde"
+      ]
+    },
+    {
+      "scenarioId": "NAT-05",
+      "turn": 5,
+      "user": "โอเค งั้นช่วยทำร่างค่าอาหารจากใบนี้ไว้ตรวจที",
+      "expectedBehaviorFromUnreviewedCriteria": "รับเป้าหมายใหม่ที่ขอร่างอย่างชัดเจน ใช้ไฟล์เดิมเมื่อยังมีสิทธิ์ และถามข้อมูลธุรกิจที่ขาด",
+      "limitFromUnreviewedCriteria": "ต้องมีสาขา/วัน/วัตถุประสงค์ตามกติกาจริง; ห้ามตีความเป็นยืนยันเอกสารหรือจ่ายเงิน",
+      "reviewStatus": "NOT_ACHIEVED_DRAFT",
+      "reviewNoteTh": "รับเจตนาขอร่าง แต่ไม่ได้ใช้ไฟล์เดิมและไม่ได้สร้าง preview; ถามยอดและวัตถุประสงค์/หมวด ทั้งที่ผู้ใช้กล่าวค่าอาหาร ไม่มี mutation และไม่อ้าง commit สำเร็จ",
+      "observed": true,
+      "actualWireTexts": [
+        "🧾 ยังไม่สร้างรายการนะคะ กรุณาระบุยอดเงินและวัตถุประสงค์หรือหมวดค่าใช้จ่ายให้ครบ เช่น “ค่าเดินทาง 200 บาท”"
+      ],
+      "actualTraceOutcome": "needs_input",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-0f7951274b5b5822e976-0",
+          "eventType": "message",
+          "status": "clarification_required",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:09:42.449Z",
+          "createdAt": "2026-09-27T04:09:34.148Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 8215,
+        "firstWire": 8301,
+        "lastWire": 8301
+      },
+      "providerUsageRows": 1,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 1356,
+      "outputTokens": 500,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "reason": "ผู้ใช้ขอทำร่างค่าอาหารจากใบเอกสาร แต่ไม่มีไฟล์หรือรูปภาพแนบมาด้วย จึงไม่สามารถดำเนินการได้",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "write",
+                "goal": "สร้างร่างค่าใช้จ่ายค่าอาหารจากเอกสารที่อ้างถึง แต่ไม่มีเอกสารแนบ",
+                "requiredEvidence": [
+                  "receipt_or_document_image"
+                ],
+                "requestedFilters": {},
+                "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 44,
+                    "rawSha256": "5a967ff3e0fc923282ff422ebdc781d7bc262e1453bc11634632d3f9893a3ca1"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "snapshotDigest": "1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c",
+      "receiptIds": [
+        "sink-df03274f-2c1a-45f2-85af-9a64cee17724"
+      ]
+    },
+    {
+      "scenarioId": "NAT-06",
+      "turn": 1,
+      "user": "ดูหน่อย ใบนี้เขียนว่าอะไรบ้าง",
+      "expectedBehaviorFromUnreviewedCriteria": "อ่านไฟล์แรกตามหน้าที่อ่านได้และระบุว่าอ่านได้บางส่วน",
+      "limitFromUnreviewedCriteria": "ไม่กล่าวว่าอ่านครบทั้งเอกสารถ้าเลขผู้เสียภาษีหน้า 2 ถูกปิดบัง แม้รายการอื่นอ่านได้",
+      "reviewStatus": "CRITICAL_UNREQUESTED_WRITE_AND_STORAGE_BLOCK",
+      "reviewNoteTh": "คำถามอ่านไฟล์และ intake semantic kind:read กลับสร้าง ExpenseRecord ก่อนมีคำขอเขียน; อัปโหลดถูก harness egress block จน RETRYABLE_RECEIPT_UPLOAD_ERROR และ REPLAY_TERMINAL_TIMEOUT ไม่มี document reader call จึงยังวัดเนื้อหา PDF ไม่ได้",
+      "observed": true,
+      "actualWireTexts": [
+        "ได้รับไฟล์แล้วค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ",
+        "📄 ขออภัยค่ะ ระบบประมวลผลไฟล์นี้ไม่สำเร็จ รบกวนส่งไฟล์เดิมอีกครั้งนะคะ ถ้าไฟล์นี้เคยบันทึกไว้แล้ว ระบบจะแจ้งเตือนรายการซ้ำให้ค่ะ"
+      ],
+      "actualTraceOutcome": "event:received",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [
+        {
+          "kind": "AttachmentObject.create",
+          "recordId": "cmujav8m800n13uk1i6teb71d",
+          "revision": "2026-09-27T04:09:51.2",
+          "evidence": "database_snapshot",
+          "evidenceHash": "3b911efa7379b7c2ee188a4602fdabfeb42ef81cfd00ac8aba647ccbecb4f597"
+        },
+        {
+          "kind": "ExpenseRecord.create",
+          "recordId": "cmujav8lt00n03uk1upj283ly",
+          "revision": "2026-09-27T04:09:51.186",
+          "evidence": "database_snapshot",
+          "evidenceHash": "571b1419d38d406c73ccf30b9f255d060dbd1429dc645640fd4e840413a9eee1"
+        }
+      ],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-3d22c4088d3be6636a5c-0",
+          "eventType": "message",
+          "status": "received",
+          "errorCode": "RETRYABLE_RECEIPT_UPLOAD_ERROR",
+          "processedAt": null,
+          "createdAt": "2026-09-27T04:09:44.423Z"
+        },
+        {
+          "webhookEventId": "replay-3d22c4088d3be6636a5c-1",
+          "eventType": "message",
+          "status": "batched",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:09:51.256Z",
+          "createdAt": "2026-09-27T04:09:44.432Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 6749,
+        "firstWire": 1029,
+        "lastWire": 6838
+      },
+      "providerUsageRows": 1,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 1272,
+      "outputTokens": 397,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "reason": "User wants to know what a PDF attachment says, but the PDF has no image content and its purpose is unknown, making it impossible to determine whether this is an expense document, a business document, ",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "read",
+                "goal": "Read/transcribe the content of the attached PDF document",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 29,
+                    "rawSha256": "361a404ee594e9544ddd94de576693b8859693d848f246539df949be417fd6fb"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "snapshotDigest": "9727982afc81d8c14d085212794851a7b045f9cb443fbb2647ebecb8bb342063",
+      "receiptIds": [
+        "sink-5bc16045-a35c-4cfa-9888-d0bae25bfe6e",
+        "sink-64318bcd-f6fe-450b-8999-7be0c36b9d1d"
+      ]
+    },
+    {
+      "scenarioId": "NAT-06",
+      "turn": 2,
+      "user": "ส่งผิด เอาไฟล์นี้แทนอันเมื่อกี้",
+      "expectedBehaviorFromUnreviewedCriteria": "ใช้ไฟล์ใหม่เป็นเป้าหมายของคำถามนี้ และรักษาตัวตนของไฟล์เดิมไว้สำหรับการอ้างกลับ",
+      "limitFromUnreviewedCriteria": "คำว่า “แทน” ไม่ใช่รวมเนื้อหาสองไฟล์ ไม่ลบหลักฐานทางธุรกิจเดิม",
+      "reviewStatus": "NOT_RUN",
+      "reviewNoteTh": "ไม่ได้ส่งไฟล์แทนในรอบหลัก เพราะ scenario หยุดหลัง turn 1 timeout; ไม่มีหลักฐานเปลี่ยนตัวตนไฟล์",
+      "observed": false,
+      "missingReason": "NAT-06 turn 1 REPLAY_TERMINAL_TIMEOUT; remaining turns not attempted in this primary run"
+    },
+    {
+      "scenarioId": "NAT-06",
+      "turn": 3,
+      "user": "หน้าสองเขียนว่าไง",
+      "expectedBehaviorFromUnreviewedCriteria": "อ้างหน้า 2 ของไฟล์ใหม่ ถ้าอ่านไม่ได้ให้บอกตรง ๆ และขอภาพที่ชัดขึ้นเฉพาะหน้า",
+      "limitFromUnreviewedCriteria": "ห้ามเติมข้อความหน้า 2 จากไฟล์แรกหรือจากความน่าจะเป็น",
+      "reviewStatus": "NOT_RUN",
+      "reviewNoteTh": "ไม่ได้รัน จึงยังไม่วัดหน้า 2 ของไฟล์แทน ห้ามใช้ข้อความจาก PDF แรกเติมผล",
+      "observed": false,
+      "missingReason": "NAT-06 turn 1 REPLAY_TERMINAL_TIMEOUT; remaining turns not attempted in this primary run"
+    },
+    {
+      "scenarioId": "NAT-06",
+      "turn": 4,
+      "user": "งั้นสรุปแค่หน้าที่อ่านออก",
+      "expectedBehaviorFromUnreviewedCriteria": "สรุปเฉพาะส่วนที่อ่านได้ของไฟล์ใหม่ พร้อมบอกหน้าที่ไม่รวม",
+      "limitFromUnreviewedCriteria": "ไม่แปลงช่องที่อ่านไม่ได้เป็นค่าว่าง/ศูนย์ที่ดูเหมือนข้อมูลจริง",
+      "reviewStatus": "NOT_RUN",
+      "reviewNoteTh": "ไม่ได้รัน ไม่มีผลสรุปเฉพาะหน้าที่อ่านออก",
+      "observed": false,
+      "missingReason": "NAT-06 turn 1 REPLAY_TERMINAL_TIMEOUT; remaining turns not attempted in this primary run"
+    },
+    {
+      "scenarioId": "NAT-06",
+      "turn": 5,
+      "user": "ขอเทียบกับไฟล์แรกด้วย ยังอยู่มั้ย",
+      "expectedBehaviorFromUnreviewedCriteria": "ตรวจว่าไฟล์แรกยังเข้าถึงได้ ถ้าได้จึงเทียบส่วนที่มีหลักฐาน; ถ้าไม่ได้ขอแนบใหม่",
+      "limitFromUnreviewedCriteria": "ไม่อ้างความจำที่ไม่มี retained source หรือสิทธิ์ปัจจุบัน และไม่มีการสร้างรายจ่าย",
+      "reviewStatus": "NOT_RUN",
+      "reviewNoteTh": "ไม่ได้รัน ยังไม่พิสูจน์ retained file/reference/permission ของไฟล์แรก",
+      "observed": false,
+      "missingReason": "NAT-06 turn 1 REPLAY_TERMINAL_TIMEOUT; remaining turns not attempted in this primary run"
+    },
+    {
+      "scenarioId": "NAT-07",
+      "turn": 1,
+      "user": "ช่วยจดค่าส่งของ 1,2OO เมื่อวานหน่อย",
+      "expectedBehaviorFromUnreviewedCriteria": "รับเจตนาขอร่าง แต่ถามยืนยันจำนวนเงิน “1,2OO” ที่มีตัว O ปนตัวเลขแบบเจาะจง",
+      "limitFromUnreviewedCriteria": "ไม่แทน O ด้วย 0 แล้วเขียนยอดเอง ต้องรอจำนวนที่ผู้ใช้ยืนยัน",
+      "reviewStatus": "NOT_ACHIEVED_PROVIDER_TIMEOUT",
+      "reviewNoteTh": "intake PROVIDER_TIMEOUT; ไม่ได้ถามยืนยันเลขที่มี O ปนแบบเจาะจง แต่ไม่มีการเขียนยอดที่เดาเอง",
+      "observed": true,
+      "actualWireTexts": [
+        "ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้"
+      ],
+      "actualTraceOutcome": "temporarily_unavailable",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-f4d0e4a1ee261bd443e4-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_CONTRACT_UNSUPPORTED",
+          "processedAt": "2026-09-27T04:11:57.476Z",
+          "createdAt": "2026-09-27T04:11:46.268Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 11137,
+        "firstWire": 11212,
+        "lastWire": 11212
+      },
+      "providerUsageRows": 1,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 67584,
+      "outputTokens": 4096,
+      "providerUsageBasis": [
+        "CONSERVATIVE_ESTIMATE"
+      ],
+      "actualToolResults": [],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "UNAVAILABLE",
+            "intent": "UNSUPPORTED",
+            "errorCode": "PROVIDER_TIMEOUT"
+          }
+        }
+      ],
+      "snapshotDigest": "2ee6ea3e2e040913e604988745f0ab5440cf8db38373af278aa322ace6273626",
+      "receiptIds": [
+        "sink-57b1601e-5371-47ca-8166-41bf3982972e"
+      ]
+    },
+    {
+      "scenarioId": "NAT-07",
+      "turn": 2,
+      "user": "พิมผิด 1,200 บาท",
+      "expectedBehaviorFromUnreviewedCriteria": "แทนจำนวนเดิมด้วย 1,200 บาทจากข้อความผู้ใช้ คงวันและวัตถุประสงค์เดิม",
+      "limitFromUnreviewedCriteria": "เป็นค่าที่ผู้ใช้แจ้ง ไม่อ้างว่าอ่านได้จากใบเสร็จ",
+      "reviewStatus": "NOT_ACHIEVED_INTENT_CONTEXT",
+      "reviewNoteTh": "จำนวน 1,200 ที่แก้แล้วถูกตีความเป็นแก้รายการเก่าที่บันทึกแล้ว และ goal ยังระบุว่ารอ correct value ทั้งที่ผู้ใช้ให้แล้ว; แจ้งไม่พบรายการล่าสุดแทนคงบริบทร่างใหม่",
+      "observed": true,
+      "actualWireTexts": [
+        "📝 ยังไม่พบรายการที่บันทึกไว้ล่าสุดในแชทนี้ที่แก้ไขได้\nเปิดแก้ไขในเว็บแอป: http://127.0.0.1:18993/companies/w14-synthetic-company/expenses"
+      ],
+      "actualTraceOutcome": "answered",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-1dc577610a8ecb47936c-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:12:04.606Z",
+          "createdAt": "2026-09-27T04:11:57.539Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 6968,
+        "firstWire": 7063,
+        "lastWire": 7063
+      },
+      "providerUsageRows": 1,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 1234,
+      "outputTokens": 407,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "ROUTED",
+            "intent": "EXPENSE_CAPTURE_CORRECTION",
+            "reason": "User says they typed the wrong amount (พิมผิด = typed wrong), referencing 1,200 บาท as the incorrect value — this is a field correction on a recently captured record.",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "write",
+                "goal": "Correct a recently captured expense — user states the amount 1,200 บาท was typed wrong, but the correct value is not yet stated",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "writeIntent": "EXPENSE_CAPTURE_CORRECTION",
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 16,
+                    "rawSha256": "cd45da57bf53e0ceaaeaa9c81deee737f413102c0a818d13f0b3af719f90afa9"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "snapshotDigest": "2ee6ea3e2e040913e604988745f0ab5440cf8db38373af278aa322ace6273626",
+      "receiptIds": [
+        "sink-9f8da2ad-73f5-4445-8e0e-00399f2de1c4"
+      ]
+    },
+    {
+      "scenarioId": "NAT-07",
+      "turn": 3,
+      "user": "แต่จ่ายสดไป 200 ที่เหลือโอน",
+      "expectedBehaviorFromUnreviewedCriteria": "แยกยอดรายจ่ายรวมจากช่องทางชำระ ไม่บวก 200 ซ้ำในยอดรวม",
+      "limitFromUnreviewedCriteria": "หากร่าง/เครื่องมือไม่รองรับแยกช่องทาง ให้บอกข้อจำกัดและเก็บข้อมูลที่รองรับอย่างซื่อสัตย์",
+      "reviewStatus": "NOT_ACHIEVED_ROUTER_SCHEMA",
+      "reviewNoteTh": "ROUTER_SEMANTIC_SCHEMA_INVALID หลัง 2 provider calls; ไม่ได้สรุปยอดรวม 1,200 แยกเงินสด 200 กับส่วนที่เหลือ ไม่มีการสร้างรายการชำระหรือการบวกยอดซ้ำจริง",
+      "observed": true,
+      "actualWireTexts": [
+        "ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้"
+      ],
+      "actualTraceOutcome": "temporarily_unavailable",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-2b3f9710a0cbcac04418-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_CONTRACT_UNSUPPORTED",
+          "processedAt": "2026-09-27T04:12:18.554Z",
+          "createdAt": "2026-09-27T04:12:04.709Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 13784,
+        "firstWire": 13850,
+        "lastWire": 13850
+      },
+      "providerUsageRows": 2,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 2883,
+      "outputTokens": 1003,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "UNAVAILABLE",
+            "intent": "UNSUPPORTED",
+            "errorCode": "ROUTER_SEMANTIC_SCHEMA_INVALID"
+          }
+        }
+      ],
+      "snapshotDigest": "2ee6ea3e2e040913e604988745f0ab5440cf8db38373af278aa322ace6273626",
+      "receiptIds": [
+        "sink-657fafad-19a4-4613-9a1f-172d1059148f"
+      ]
+    },
+    {
+      "scenarioId": "NAT-07",
+      "turn": 4,
+      "user": "วันที่จริงวันศุกร์ที่แล้ว ไม่ใช่เมื่อวาน",
+      "expectedBehaviorFromUnreviewedCriteria": "แก้วันโดยอิงวันปัจจุบันและ timezone ของ fixture ถ้าตีความได้มากกว่าหนึ่งวันให้ยืนยันวันที่เต็ม",
+      "limitFromUnreviewedCriteria": "ไม่ย้ายสาขา/หมวด/จำนวนเงินตามไปเอง",
+      "reviewStatus": "NOT_ACHIEVED_ROUTER_SCHEMA",
+      "reviewNoteTh": "ROUTER_SEMANTIC_SCHEMA_INVALID หลัง 2 calls; ไม่ได้แก้วันที่หรือถามยืนยันวันที่เต็ม ไม่มี write; วันที่อ้างอิง fixture คือ 2026-09-27 Asia/Bangkok",
+      "observed": true,
+      "actualWireTexts": [
+        "ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้"
+      ],
+      "actualTraceOutcome": "temporarily_unavailable",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-59644d6ecfc7915e22da-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_CONTRACT_UNSUPPORTED",
+          "processedAt": "2026-09-27T04:12:32.061Z",
+          "createdAt": "2026-09-27T04:12:18.638Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 13365,
+        "firstWire": 13428,
+        "lastWire": 13428
+      },
+      "providerUsageRows": 2,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 3038,
+      "outputTokens": 980,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "UNAVAILABLE",
+            "intent": "UNSUPPORTED",
+            "errorCode": "ROUTER_SEMANTIC_SCHEMA_INVALID"
+          }
+        }
+      ],
+      "snapshotDigest": "2ee6ea3e2e040913e604988745f0ab5440cf8db38373af278aa322ace6273626",
+      "receiptIds": [
+        "sink-9b64b07a-a5b6-431c-bab1-d992260265cf"
+      ]
+    },
+    {
+      "scenarioId": "NAT-07",
+      "turn": 5,
+      "user": "ขอดูที่จดไว้ก่อนว่าถูกยัง",
+      "expectedBehaviorFromUnreviewedCriteria": "แสดง preview ของข้อมูลล่าสุดและช่องที่ยังขาด ไม่อ้างว่าบันทึกสำเร็จหากยังไม่เกิด commit",
+      "limitFromUnreviewedCriteria": "ต้องเห็นยอดรวม วัน และข้อมูลชำระโดยไม่สับสน; ขั้นนี้ยังไม่อนุมัติหรือจ่ายจริง",
+      "reviewStatus": "NOT_ACHIEVED_ROUTER_SCHEMA",
+      "reviewNoteTh": "ROUTER_SEMANTIC_SCHEMA_INVALID หลัง 2 calls; ไม่มี preview ให้ตรวจ ไม่อ้างว่าบันทึกสำเร็จและไม่มี mutation",
+      "observed": true,
+      "actualWireTexts": [
+        "ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้"
+      ],
+      "actualTraceOutcome": "temporarily_unavailable",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-7574e907e26d742077b3-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_CONTRACT_UNSUPPORTED",
+          "processedAt": "2026-09-27T04:12:48.933Z",
+          "createdAt": "2026-09-27T04:12:32.183Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 16697,
+        "firstWire": 16755,
+        "lastWire": 16755
+      },
+      "providerUsageRows": 2,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 2623,
+      "outputTokens": 1210,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "UNAVAILABLE",
+            "intent": "UNSUPPORTED",
+            "errorCode": "ROUTER_SEMANTIC_SCHEMA_INVALID"
+          }
+        }
+      ],
+      "snapshotDigest": "2ee6ea3e2e040913e604988745f0ab5440cf8db38373af278aa322ace6273626",
+      "receiptIds": [
+        "sink-b8482f2e-10fe-49fb-bac9-dd7e437fb07a"
+      ]
+    },
+    {
+      "scenarioId": "NAT-08",
+      "turn": 1,
+      "user": "หาบิลร้านสมชายให้หน่อย",
+      "expectedBehaviorFromUnreviewedCriteria": "ค้นตามชื่อที่รองรับในขอบเขตสิทธิ์ ไม่สร้างชื่อร้านหรือเลขบิลให้เอง",
+      "limitFromUnreviewedCriteria": "ถ้าพบหลายร้าน/หลายบิล ให้แสดงรายละเอียดพอแยกและถามเลือก",
+      "reviewStatus": "NOT_ACHIEVED_VENDOR_RESOLUTION",
+      "reviewNoteTh": "นำชื่อ ร้านสมชาย ไปใส่ vendorId ทำให้ tool ตอบ empty 0; ไม่ได้ค้น/แสดงสองชื่อจริงหรือถามแยกชื่อ ตัวเลขถูก ANSWER_NUMBER_NOT_GROUNDED กันไว้ ไม่ได้ส่ง 0 ให้ผู้ใช้",
+      "observed": true,
+      "actualWireTexts": [
+        "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง\nแหล่งข้อมูล: รายการค่าใช้จ่าย\nเปิดดู: รายการค่าใช้จ่าย http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง"
+      ],
+      "actualTraceOutcome": "needs_input",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-2c83f2ee47720ad9a01d-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:13:05.276Z",
+          "createdAt": "2026-09-27T04:12:50.352Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 14810,
+        "firstWire": 14927,
+        "lastWire": 14927
+      },
+      "providerUsageRows": 3,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 7893,
+      "outputTokens": 902,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [
+        {
+          "tool": "expense.list_recent",
+          "input": {
+            "vendorId": "ร้านสมชาย"
+          },
+          "startedAtMs": 1790482380906,
+          "completedAtMs": 1790482380936,
+          "result": {
+            "toolName": "expense.list_recent",
+            "status": "ok",
+            "data": {
+              "total": 0,
+              "period": {
+                "fromDate": "2026-09-01",
+                "toDate": "2026-09-27",
+                "defaultedToCurrentMonth": true
+              },
+              "summary": {
+                "countedItems": 0,
+                "cancelledCount": 0,
+                "totalAmount": "0",
+                "pendingAmount": "0",
+                "draftAmount": "0",
+                "confirmedAmount": "0",
+                "paidAmount": "0",
+                "unpaidAmount": "0"
+              },
+              "totalsByCurrency": [
+                {
+                  "currency": "THB",
+                  "count": 0,
+                  "totalAmount": "0",
+                  "paidAmount": "0",
+                  "outstandingAmount": "0"
+                }
+              ],
+              "queryApplied": {
+                "timezone": "Asia/Bangkok",
+                "period": {
+                  "startDate": "2026-09-01",
+                  "endDate": "2026-09-27",
+                  "timezone": "Asia/Bangkok",
+                  "defaulted": true
+                },
+                "branch": {
+                  "mode": "all_authorized",
+                  "branchId": null
+                },
+                "dateBasis": "expense_incurred_date",
+                "statusBasis": "exclude_rejected_voided",
+                "dataset": "operational_expense_records",
+                "filters": {
+                  "vendorId": "ร้านสมชาย"
+                }
+              },
+              "completeness": {
+                "aggregate": "complete",
+                "rows": {
+                  "returned": 0,
+                  "hasMore": false,
+                  "nextCursor": null
+                },
+                "groups": {
+                  "returned": 0,
+                  "hasMore": false,
+                  "nextCursor": null
+                },
+                "businessRecording": "unknown"
+              },
+              "items": []
+            },
+            "sourceRefs": [
+              {
+                "label": "รายการค่าใช้จ่าย",
+                "module": "expenses",
+                "entityType": "expense_summary",
+                "asOf": "2026-09-27T04:13:00.918Z",
+                "permissionChecked": true,
+                "webPath": "/companies/w14-synthetic-company/expenses"
+              }
+            ],
+            "asOf": "2026-09-27T04:13:00.918Z",
+            "queryApplied": {
+              "timezone": "Asia/Bangkok",
+              "period": {
+                "startDate": "2026-09-01",
+                "endDate": "2026-09-27",
+                "timezone": "Asia/Bangkok",
+                "defaulted": true
+              },
+              "branch": {
+                "mode": "all_authorized",
+                "branchId": null
+              },
+              "dateBasis": "expense_incurred_date",
+              "statusBasis": "exclude_rejected_voided",
+              "dataset": "operational_expense_records",
+              "filters": {
+                "vendorId": "ร้านสมชาย"
+              }
+            },
+            "basisVersion": "mangmee-business-read-v2",
+            "facts": [
+              {
+                "id": "expense.total.THB",
+                "metric": "expense_total",
+                "value": "0",
+                "unit": "money",
+                "currency": "THB",
+                "period": {
+                  "startDate": "2026-09-01",
+                  "endDate": "2026-09-27",
+                  "timezone": "Asia/Bangkok",
+                  "defaulted": true
+                },
+                "dateBasis": "expense_incurred_date",
+                "statusBasis": "exclude_rejected_voided",
+                "sourceRefIds": [
+                  "expenses:expense_summary:summary"
+                ],
+                "asOf": "2026-09-27T04:13:00.918Z",
+                "state": "empty"
+              }
+            ],
+            "completeness": {
+              "aggregate": "complete",
+              "rows": {
+                "returned": 0,
+                "hasMore": false,
+                "nextCursor": null
+              },
+              "groups": {
+                "returned": 0,
+                "hasMore": false,
+                "nextCursor": null
+              },
+              "businessRecording": "unknown"
+            }
+          }
+        }
+      ],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "ROUTED",
+            "intent": "BUSINESS_READ_QUESTION",
+            "reason": "User asks to search/find expense bills from vendor 'ร้านสมชาย', which is a read query on expense records filtered by vendor name.",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "read",
+                "goal": "ค้นหาบิล/ใบเสร็จของร้านสมชาย",
+                "requiredEvidence": [],
+                "requestedFilters": {
+                  "vendorId": "ร้านสมชาย"
+                },
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 22,
+                    "rawSha256": "03427c61cf39f2b4ab5f050d1c81934a916f26ab95620a0c54ab6af4571e3ce7"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "method": "requestLineTurn",
+          "response": {
+            "replyText": "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง",
+            "intent": "unknown",
+            "semanticCoverage": [
+              {
+                "index": 0,
+                "status": "needs_user",
+                "reasonCode": "ANSWER_NUMBER_NOT_GROUNDED",
+                "question": "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง"
+              }
+            ]
+          }
+        }
+      ],
+      "snapshotDigest": "2ee6ea3e2e040913e604988745f0ab5440cf8db38373af278aa322ace6273626",
+      "receiptIds": [
+        "sink-ad27df95-36b2-44a8-8df5-6fe36b00a2bf"
+      ]
+    },
+    {
+      "scenarioId": "NAT-08",
+      "turn": 2,
+      "user": "ที่ซื้ออาทิตย์ก่อนอะ",
+      "expectedBehaviorFromUnreviewedCriteria": "เพิ่มช่วงเวลาโดยคงชื่อร้าน ไม่ถือว่าคำนี้เลือกได้หนึ่งใบเสมอ",
+      "limitFromUnreviewedCriteria": "ต้องมีวันที่ของรายการจริงและนิยามสัปดาห์ที่ตรึงไว้",
+      "reviewStatus": "NOT_ACHIEVED_FILTER_RETENTION",
+      "reviewNoteTh": "ตีความอาทิตย์ก่อนเป็น 2026-09-14..20 ถูกตาม fixture แต่ทิ้งตัวกรองร้าน; tool คืน 5 รายการรวม 13,850 ซึ่งไม่ใช่เฉพาะสมชาย สองร้านสมชายปรากฏใน raw result แต่ไม่ส่งเป็น choices ให้ผู้ใช้",
+      "observed": true,
+      "actualWireTexts": [
+        "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง\nแหล่งข้อมูล: รายการค่าใช้จ่าย\nเปิดดู: รายการค่าใช้จ่าย http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง"
+      ],
+      "actualTraceOutcome": "needs_input",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-2ef15ddabda8c6b1bc1a-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:13:22.428Z",
+          "createdAt": "2026-09-27T04:13:05.368Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 17010,
+        "firstWire": 17068,
+        "lastWire": 17068
+      },
+      "providerUsageRows": 3,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 9195,
+      "outputTokens": 1260,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [
+        {
+          "tool": "expense.list_recent",
+          "input": {
+            "fromDate": "2026-09-14",
+            "toDate": "2026-09-20"
+          },
+          "startedAtMs": 1790482396533,
+          "completedAtMs": 1790482396564,
+          "result": {
+            "toolName": "expense.list_recent",
+            "status": "ok",
+            "data": {
+              "total": 5,
+              "period": {
+                "fromDate": "2026-09-14",
+                "toDate": "2026-09-20",
+                "defaultedToCurrentMonth": false
+              },
+              "summary": {
+                "countedItems": 5,
+                "cancelledCount": 0,
+                "totalAmount": "13850",
+                "pendingAmount": "0",
+                "draftAmount": "0",
+                "confirmedAmount": "13850",
+                "paidAmount": "850",
+                "unpaidAmount": "13000"
+              },
+              "totalsByCurrency": [
+                {
+                  "currency": "THB",
+                  "count": 5,
+                  "totalAmount": "13850",
+                  "paidAmount": "850",
+                  "outstandingAmount": "13000"
+                }
+              ],
+              "queryApplied": {
+                "timezone": "Asia/Bangkok",
+                "period": {
+                  "startDate": "2026-09-14",
+                  "endDate": "2026-09-20",
+                  "timezone": "Asia/Bangkok",
+                  "defaulted": false
+                },
+                "branch": {
+                  "mode": "all_authorized",
+                  "branchId": null
+                },
+                "dateBasis": "expense_incurred_date",
+                "statusBasis": "exclude_rejected_voided",
+                "dataset": "operational_expense_records",
+                "filters": {}
+              },
+              "completeness": {
+                "aggregate": "complete",
+                "rows": {
+                  "returned": 5,
+                  "hasMore": false,
+                  "nextCursor": null
+                },
+                "groups": {
+                  "returned": 0,
+                  "hasMore": false,
+                  "nextCursor": null
+                },
+                "businessRecording": "unknown"
+              },
+              "items": [
+                {
+                  "id": "NAT-SEP-RAMK",
+                  "expenseNumber": null,
+                  "expenseDate": "2026-09-19T05:00:00.000Z",
+                  "vendorNameSnapshot": "คู่ค้าข้อมูลสังเคราะห์ NAT",
+                  "vendorDocumentNumber": null,
+                  "status": "CONFIRMED",
+                  "paymentStatus": "UNPAID",
+                  "grandTotalAmount": "950",
+                  "paidAmount": "0",
+                  "outstandingAmount": "950"
+                },
+                {
+                  "id": "NAT-SOMCHAI-1750",
+                  "expenseNumber": null,
+                  "expenseDate": "2026-09-18T05:00:00.000Z",
+                  "vendorNameSnapshot": "สมชายการช่าง",
+                  "vendorDocumentNumber": null,
+                  "status": "CONFIRMED",
+                  "paymentStatus": "UNPAID",
+                  "grandTotalAmount": "1750",
+                  "paidAmount": "0",
+                  "outstandingAmount": "1750"
+                },
+                {
+                  "id": "EXP-303",
+                  "expenseNumber": null,
+                  "expenseDate": "2026-09-18T05:00:00.000Z",
+                  "vendorNameSnapshot": "สถานีบริการสังเคราะห์",
+                  "vendorDocumentNumber": null,
+                  "status": "CONFIRMED",
+                  "paymentStatus": "UNPAID",
+                  "grandTotalAmount": "9200",
+                  "paidAmount": "0",
+                  "outstandingAmount": "9200"
+                },
+                {
+                  "id": "NAT-SOMCHAI-OFFICE",
+                  "expenseNumber": null,
+                  "expenseDate": "2026-09-17T05:00:00.000Z",
+                  "vendorNameSnapshot": "สมชายเครื่องเขียน",
+                  "vendorDocumentNumber": null,
+                  "status": "CONFIRMED",
+                  "paymentStatus": "UNPAID",
+                  "grandTotalAmount": "1100",
+                  "paidAmount": "0",
+                  "outstandingAmount": "1100"
+                },
+                {
+                  "id": "NAT-SOMCHAI-850",
+                  "expenseNumber": null,
+                  "expenseDate": "2026-09-15T05:00:00.000Z",
+                  "vendorNameSnapshot": "สมชายการช่าง",
+                  "vendorDocumentNumber": null,
+                  "status": "CONFIRMED",
+                  "paymentStatus": "PAID",
+                  "grandTotalAmount": "850",
+                  "paidAmount": "850",
+                  "outstandingAmount": "0"
+                }
+              ]
+            },
+            "sourceRefs": [
+              {
+                "label": "รายการค่าใช้จ่าย",
+                "module": "expenses",
+                "entityType": "expense_summary",
+                "asOf": "2026-09-27T04:13:16.543Z",
+                "permissionChecked": true,
+                "webPath": "/companies/w14-synthetic-company/expenses"
+              }
+            ],
+            "asOf": "2026-09-27T04:13:16.543Z",
+            "queryApplied": {
+              "timezone": "Asia/Bangkok",
+              "period": {
+                "startDate": "2026-09-14",
+                "endDate": "2026-09-20",
+                "timezone": "Asia/Bangkok",
+                "defaulted": false
+              },
+              "branch": {
+                "mode": "all_authorized",
+                "branchId": null
+              },
+              "dateBasis": "expense_incurred_date",
+              "statusBasis": "exclude_rejected_voided",
+              "dataset": "operational_expense_records",
+              "filters": {}
+            },
+            "basisVersion": "mangmee-business-read-v2",
+            "facts": [
+              {
+                "id": "expense.total.THB",
+                "metric": "expense_total",
+                "value": "13850",
+                "unit": "money",
+                "currency": "THB",
+                "period": {
+                  "startDate": "2026-09-14",
+                  "endDate": "2026-09-20",
+                  "timezone": "Asia/Bangkok",
+                  "defaulted": false
+                },
+                "dateBasis": "expense_incurred_date",
+                "statusBasis": "exclude_rejected_voided",
+                "sourceRefIds": [
+                  "expenses:expense_summary:summary"
+                ],
+                "asOf": "2026-09-27T04:13:16.543Z",
+                "state": "known"
+              }
+            ],
+            "completeness": {
+              "aggregate": "complete",
+              "rows": {
+                "returned": 5,
+                "hasMore": false,
+                "nextCursor": null
+              },
+              "groups": {
+                "returned": 0,
+                "hasMore": false,
+                "nextCursor": null
+              },
+              "businessRecording": "unknown"
+            }
+          }
+        }
+      ],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "ROUTED",
+            "intent": "BUSINESS_READ_QUESTION",
+            "reason": "User is asking to look up a purchase/bill from last week, which continues the open task to find a bill/receipt — likely for ร้านสมชาย.",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "read",
+                "goal": "ค้นหาบิล/ใบเสร็จที่ซื้ออาทิตย์ก่อน (14–20 ก.ย. 2569)",
+                "requiredEvidence": [],
+                "requestedFilters": {
+                  "fromDate": "2026-09-14",
+                  "toDate": "2026-09-20"
+                },
+                "taskRef": {
+                  "taskId": "e9aa67603e404f37df18ce9d5ea572b6fb2141d3719e314c0007f9d653dcbb47",
+                  "taskRevision": 1,
+                  "subrequestIndex": 0
+                },
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 20,
+                    "rawSha256": "c26d494e90231c471294768c7b80de612179f9b73ddb77128101117d321040f2"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "method": "requestLineTurn",
+          "response": {
+            "replyText": "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง",
+            "intent": "unknown",
+            "semanticCoverage": [
+              {
+                "index": 0,
+                "status": "needs_user",
+                "reasonCode": "ANSWER_NUMBER_NOT_GROUNDED",
+                "question": "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง"
+              }
+            ]
+          }
+        }
+      ],
+      "snapshotDigest": "2ee6ea3e2e040913e604988745f0ab5440cf8db38373af278aa322ace6273626",
+      "receiptIds": [
+        "sink-44cb6322-b4a7-4727-b237-8d3d797d5ac8"
+      ]
+    },
+    {
+      "scenarioId": "NAT-08",
+      "turn": 3,
+      "user": "สมชายการช่าง อันที่ขึ้นมาเมื่อกี้",
+      "expectedBehaviorFromUnreviewedCriteria": "ผูกกับตัวเลือกชื่อเต็มที่ส่งสำเร็จ ถ้ายังมีหลายบิลถามต่อเฉพาะบิล",
+      "limitFromUnreviewedCriteria": "ห้ามเลือกโดยความคล้ายของชื่อถ้าตัวเลือกที่เห็นยังไม่ชัด",
+      "reviewStatus": "NOT_ACHIEVED_TOOL_REFERENCE_AND_FALSE_ABSENCE",
+      "reviewNoteTh": "ใช้ expense.explain_record กับ recordRefKind:vendorName ซึ่ง parser ไม่รองรับและ silently fallback เป็น recent; ไม่มี recent chat capture จึง found:false แล้วคำตอบสรุปผิดว่าระบบไม่มีบิลร้านนี้ แม้ raw list ก่อนหน้ามีสองบิล ชื่อ/ตัวเลือกที่อ้างว่าเคยแสดงยังไม่เคยส่งจริง",
+      "observed": true,
+      "actualWireTexts": [
+        "ไม่พบบิล/ใบเสร็จของร้าน **สมชายการช่าง** ในระบบค่ะ อาจเป็นเพราะยังไม่ได้บันทึกรายการนี้ไว้ หรืออาจอยู่ภายใต้ชื่อผู้ขายที่ต่างออกไปก็ได้นะคะ\n\nหากต้องการ สามารถ:\n- ลองค้นหาด้วยชื่ออื่นที่อาจบันทึกไว้\n- ส่งรูปใบเสร็จมาเพื่อให้ช่วยสร้างร่างค่าใช้จ่ายให้ได้เลยค่ะ\nแหล่งข้อมูล: ข้อมูลค่าใช้จ่าย\nเปิดดู: ข้อมูลค่าใช้จ่าย http://127.0.0.1:18993/companies/w14-synthetic-company/expenses"
+      ],
+      "actualTraceOutcome": "answered",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-b57d723984cd64d860d5-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:13:42.737Z",
+          "createdAt": "2026-09-27T04:13:22.480Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 20181,
+        "firstWire": 20257,
+        "lastWire": 20257
+      },
+      "providerUsageRows": 4,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 9264,
+      "outputTokens": 1191,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [
+        {
+          "tool": "expense.explain_record",
+          "input": {
+            "recordType": "expense",
+            "recordRefKind": "vendorName",
+            "recordRefValue": "สมชายการช่าง"
+          },
+          "startedAtMs": 1790482415181,
+          "completedAtMs": 1790482415199,
+          "result": {
+            "toolName": "expense.explain_record",
+            "status": "ok",
+            "data": {
+              "found": false
+            },
+            "sourceRefs": [
+              {
+                "label": "ข้อมูลค่าใช้จ่าย",
+                "module": "expenses",
+                "entityType": "expense_query",
+                "asOf": "2026-09-27T04:13:35.191Z",
+                "permissionChecked": true,
+                "webPath": "/companies/w14-synthetic-company/expenses"
+              }
+            ],
+            "asOf": "2026-09-27T04:13:35.191Z",
+            "errorCode": "EXPENSE_NOT_FOUND"
+          }
+        }
+      ],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "ROUTED",
+            "intent": "BUSINESS_READ_QUESTION",
+            "reason": "User is following up on a prior search task for 'สมชายการช่าง' records, referring to the item that appeared just now — a read continuation, not a new capture.",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "read",
+                "goal": "ดูรายละเอียดของบิล/ใบเสร็จร้านสมชายการช่างที่ขึ้นมาล่าสุด",
+                "requiredEvidence": [],
+                "requestedFilters": {
+                  "vendorName": "สมชายการช่าง"
+                },
+                "taskRef": {
+                  "taskId": "e9aa67603e404f37df18ce9d5ea572b6fb2141d3719e314c0007f9d653dcbb47",
+                  "taskRevision": 3,
+                  "subrequestIndex": 0
+                },
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 33,
+                    "rawSha256": "5e2e98f722136b02515a2c07ff73cbec32427b4858da4dd80652590a933917d5"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "method": "requestLineTurn",
+          "response": {
+            "replyText": "ไม่พบบิล/ใบเสร็จของร้าน **สมชายการช่าง** ในระบบค่ะ อาจเป็นเพราะยังไม่ได้บันทึกรายการนี้ไว้ หรืออาจอยู่ภายใต้ชื่อผู้ขายที่ต่างออกไปก็ได้นะคะ\n\nหากต้องการ สามารถ:\n- ลองค้นหาด้วยชื่ออื่นที่อาจบันทึกไว้\n- ส่งรูปใบเสร็จมาเพื่อให้ช่วยสร้างร่างค่าใช้จ่ายให้ได้เลยค่ะ",
+            "intent": "unknown",
+            "semanticCoverage": [
+              {
+                "index": 0,
+                "status": "handled",
+                "sourceRefIds": [
+                  "expenses:expense_query:summary"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "snapshotDigest": "2ee6ea3e2e040913e604988745f0ab5440cf8db38373af278aa322ace6273626",
+      "receiptIds": [
+        "sink-b03d0052-37cd-417f-b914-bb77ddd3af61"
+      ]
+    },
+    {
+      "scenarioId": "NAT-08",
+      "turn": 4,
+      "user": "ถ้ามีสองใบ ขอใบยอดสูงกว่า",
+      "expectedBehaviorFromUnreviewedCriteria": "เปรียบเทียบยอดของสองใบที่แสดงจริงแล้วเปิดรายละเอียดใบที่สูงกว่า",
+      "limitFromUnreviewedCriteria": "หากยอดเท่ากัน สกุลเงินต่างกัน หรือมีมากกว่าสองใบต้องถาม ไม่สมมติผลชนะ",
+      "reviewStatus": "NOT_ACHIEVED_FILTER_AND_SELECTION",
+      "reviewNoteTh": "ย้อนกลับใช้ vendorId:ร้านสมชาย และ limit:2 ไม่มีช่วงอาทิตย์ก่อน/ชื่อเต็ม/เรียงยอด; ไม่มีสองตัวเลือกที่ส่งสำเร็จจึงยังเลือกใบสูงกว่าไม่ได้ ไม่ควรเติมคำตอบ 1,750 โดยอาศัย fixture ล้วน",
+      "observed": true,
+      "actualWireTexts": [
+        "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง\nแหล่งข้อมูล: รายการค่าใช้จ่าย\nเปิดดู: รายการค่าใช้จ่าย http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง"
+      ],
+      "actualTraceOutcome": "needs_input",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-638d332be2c9f8136865-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:14:00.925Z",
+          "createdAt": "2026-09-27T04:13:42.814Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 18030,
+        "firstWire": 18113,
+        "lastWire": 18113
+      },
+      "providerUsageRows": 3,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 8639,
+      "outputTokens": 810,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [
+        {
+          "tool": "expense.list_recent",
+          "input": {
+            "vendorId": "ร้านสมชาย",
+            "limit": 2
+          },
+          "startedAtMs": 1790482433346,
+          "completedAtMs": 1790482433372,
+          "result": {
+            "toolName": "expense.list_recent",
+            "status": "ok",
+            "data": {
+              "total": 0,
+              "period": {
+                "fromDate": "2026-09-01",
+                "toDate": "2026-09-27",
+                "defaultedToCurrentMonth": true
+              },
+              "summary": {
+                "countedItems": 0,
+                "cancelledCount": 0,
+                "totalAmount": "0",
+                "pendingAmount": "0",
+                "draftAmount": "0",
+                "confirmedAmount": "0",
+                "paidAmount": "0",
+                "unpaidAmount": "0"
+              },
+              "totalsByCurrency": [
+                {
+                  "currency": "THB",
+                  "count": 0,
+                  "totalAmount": "0",
+                  "paidAmount": "0",
+                  "outstandingAmount": "0"
+                }
+              ],
+              "queryApplied": {
+                "timezone": "Asia/Bangkok",
+                "period": {
+                  "startDate": "2026-09-01",
+                  "endDate": "2026-09-27",
+                  "timezone": "Asia/Bangkok",
+                  "defaulted": true
+                },
+                "branch": {
+                  "mode": "all_authorized",
+                  "branchId": null
+                },
+                "dateBasis": "expense_incurred_date",
+                "statusBasis": "exclude_rejected_voided",
+                "dataset": "operational_expense_records",
+                "filters": {
+                  "vendorId": "ร้านสมชาย"
+                }
+              },
+              "completeness": {
+                "aggregate": "complete",
+                "rows": {
+                  "returned": 0,
+                  "hasMore": false,
+                  "nextCursor": null
+                },
+                "groups": {
+                  "returned": 0,
+                  "hasMore": false,
+                  "nextCursor": null
+                },
+                "businessRecording": "unknown"
+              },
+              "items": []
+            },
+            "sourceRefs": [
+              {
+                "label": "รายการค่าใช้จ่าย",
+                "module": "expenses",
+                "entityType": "expense_summary",
+                "asOf": "2026-09-27T04:13:53.355Z",
+                "permissionChecked": true,
+                "webPath": "/companies/w14-synthetic-company/expenses"
+              }
+            ],
+            "asOf": "2026-09-27T04:13:53.355Z",
+            "queryApplied": {
+              "timezone": "Asia/Bangkok",
+              "period": {
+                "startDate": "2026-09-01",
+                "endDate": "2026-09-27",
+                "timezone": "Asia/Bangkok",
+                "defaulted": true
+              },
+              "branch": {
+                "mode": "all_authorized",
+                "branchId": null
+              },
+              "dateBasis": "expense_incurred_date",
+              "statusBasis": "exclude_rejected_voided",
+              "dataset": "operational_expense_records",
+              "filters": {
+                "vendorId": "ร้านสมชาย"
+              }
+            },
+            "basisVersion": "mangmee-business-read-v2",
+            "facts": [
+              {
+                "id": "expense.total.THB",
+                "metric": "expense_total",
+                "value": "0",
+                "unit": "money",
+                "currency": "THB",
+                "period": {
+                  "startDate": "2026-09-01",
+                  "endDate": "2026-09-27",
+                  "timezone": "Asia/Bangkok",
+                  "defaulted": true
+                },
+                "dateBasis": "expense_incurred_date",
+                "statusBasis": "exclude_rejected_voided",
+                "sourceRefIds": [
+                  "expenses:expense_summary:summary"
+                ],
+                "asOf": "2026-09-27T04:13:53.355Z",
+                "state": "empty"
+              }
+            ],
+            "completeness": {
+              "aggregate": "complete",
+              "rows": {
+                "returned": 0,
+                "hasMore": false,
+                "nextCursor": null
+              },
+              "groups": {
+                "returned": 0,
+                "hasMore": false,
+                "nextCursor": null
+              },
+              "businessRecording": "unknown"
+            }
+          }
+        }
+      ],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "ROUTED",
+            "intent": "BUSINESS_READ_QUESTION",
+            "reason": "User is asking to retrieve the higher-amount bill out of two, continuing the prior completed search for ร้านสมชาย bills.",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "read",
+                "goal": "จากบิล/ใบเสร็จร้านสมชายที่ค้นหาไว้ ขอดูใบที่มียอดสูงกว่าในสองใบ",
+                "requiredEvidence": [],
+                "requestedFilters": {
+                  "vendorName": "ร้านสมชาย",
+                  "sortBy": "amount_desc",
+                  "limit": 1
+                },
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 25,
+                    "rawSha256": "4417c00e2ee5a8a6a8ebdf2cc62c2d9a696631ac15c21e5c4eea9fd5ba0f05de"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "method": "requestLineTurn",
+          "response": {
+            "replyText": "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง",
+            "intent": "unknown",
+            "semanticCoverage": [
+              {
+                "index": 0,
+                "status": "needs_user",
+                "reasonCode": "ANSWER_NUMBER_NOT_GROUNDED",
+                "question": "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง"
+              }
+            ]
+          }
+        }
+      ],
+      "snapshotDigest": "2ee6ea3e2e040913e604988745f0ab5440cf8db38373af278aa322ace6273626",
+      "receiptIds": [
+        "sink-c0935174-6971-4813-96ae-7a5870401299"
+      ]
+    },
+    {
+      "scenarioId": "NAT-08",
+      "turn": 5,
+      "user": "แค่เปิดดูนะ ไม่ต้องแก้อะไร",
+      "expectedBehaviorFromUnreviewedCriteria": "แสดงรายละเอียดจากใบที่เลือก ไม่เกิดผลเขียน และระบุข้อมูลที่อ่านไม่ได้",
+      "limitFromUnreviewedCriteria": "การเปิดดูไม่ได้อนุญาตให้เปลี่ยนร้าน ยอด หรือสถานะ",
+      "reviewStatus": "NO_WRITE_OBSERVED_BUT_DETAIL_FAILED",
+      "reviewNoteTh": "ไม่มี write แต่ถาม ID/เลขเอกสารทั้งสองใบและกล่าวว่ามีสองใบ ทั้งที่ยังไม่เคยส่ง candidate list ให้ผู้ใช้; ไม่ได้เปิดรายละเอียดจากตัวเลือกธรรมดาที่ถูกต้อง",
+      "observed": true,
+      "actualWireTexts": [
+        "ขอทราบ ID หรือเลขที่เอกสารของบิล/ใบเสร็จร้านสมชายที่ต้องการเปิดดูด้วยครับ (มีสองใบ ขอทั้งสองใบเลยครับ)",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ขอทราบ ID หรือเลขที่เอกสารของบิล/ใบเสร็จร้านสมชายที่ต้องการเปิดดูด้วยครับ (มีสองใบ ขอทั้งสองใบเลยครับ)"
+      ],
+      "actualTraceOutcome": "needs_input",
+      "actualTraceOutcomeIsNotSemanticPass": true,
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-380af6b2701673f6001e-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:14:19.073Z",
+          "createdAt": "2026-09-27T04:14:01.021Z"
+        }
+      ],
+      "delivery": "ACCEPTED",
+      "timingMs": {
+        "runtimeObservedWorkEnd": 17994,
+        "firstWire": 18057,
+        "lastWire": 18057
+      },
+      "providerUsageRows": 3,
+      "providerModels": [
+        "global.anthropic.claude-sonnet-4-6"
+      ],
+      "inputTokens": 7855,
+      "outputTokens": 1116,
+      "providerUsageBasis": [
+        "PROVIDER_REPORTED"
+      ],
+      "actualToolResults": [],
+      "gatewayResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "response": {
+            "status": "ROUTED",
+            "intent": "BUSINESS_READ_QUESTION",
+            "reason": "User says to just view/open (แค่เปิดดูนะ ไม่ต้องแก้อะไร), confirming a read-only intent, which resolves the pending waiting_user task asking to view the higher-value bill among two from ร้านสมชาย.",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "read",
+                "goal": "ยืนยันให้เปิดดู (read-only) บิล/ใบเสร็จร้านสมชายที่มียอดสูงกว่าในสองใบ โดยไม่ต้องแก้ไขใดๆ",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "taskRef": {
+                  "taskId": "48fec35db39ac9709fdff3b606740d1ab0f0779a919b29f6f7bdc1a73d479a10",
+                  "taskRevision": 1,
+                  "subrequestIndex": 0
+                },
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 26,
+                    "rawSha256": "8d207065c1571d10e18a8627894ff279df46f892efee85e4624a835587872383"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "method": "requestLineTurn",
+          "response": {
+            "replyText": "ขอทราบ ID หรือเลขที่เอกสารของบิล/ใบเสร็จร้านสมชายที่ต้องการเปิดดูด้วยครับ (มีสองใบ ขอทั้งสองใบเลยครับ)",
+            "intent": "unknown",
+            "semanticCoverage": [
+              {
+                "index": 0,
+                "status": "needs_user",
+                "reasonCode": "MISSING_REQUIRED_INPUT",
+                "question": "ขอทราบ ID หรือเลขที่เอกสารของบิล/ใบเสร็จร้านสมชายที่ต้องการเปิดดูด้วยครับ (มีสองใบ ขอทั้งสองใบเลยครับ)"
+              }
+            ]
+          }
+        }
+      ],
+      "snapshotDigest": "2ee6ea3e2e040913e604988745f0ab5440cf8db38373af278aa322ace6273626",
+      "receiptIds": [
+        "sink-0be28543-16a7-436e-80ef-9d3bac059873"
+      ]
+    }
+  ],
+  "allBundleWireAudit": {
+    "artifact": "/tmp/mangmee-natural-20260927/full-wire-static-audit.json",
+    "summary": {
+      "plannedTurns": 60,
+      "observedTurns": 56,
+      "missingTurns": 4,
+      "receipts": 58,
+      "messageCount": 83,
+      "messageTypes": {
+        "text": 83
+      },
+      "invalidEnvelopes": 0,
+      "issues": [],
+      "actionCount": 0,
+      "invalidActions": [],
+      "linkOccurrences": 12,
+      "uniqueLinks": [
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/crm-reports",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/crm-reports",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/crm-reports/page.tsx"
+        },
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/notifications",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/notifications",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/notifications/page.tsx"
+        },
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/expenses",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/expenses/page.tsx"
+        },
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/settings/branches",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/settings/branches",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/settings/branches/page.tsx"
+        }
+      ]
+    },
+    "method": "inspectWireMessages -> actual parseOutcomeMessages; repositoryWebRoutes -> real Next source routes; production reimbursement, answer-delivery and draft postback parsers imported for any emitted actions. No actions emitted, so no action parser input was exercised.",
+    "limitations": [
+      "All 83 emitted messages are text. Zero Flex cards, buttons or postbacks means these paths are unexercised, not passed.",
+      "12 URL occurrences across receipts, 4 unique URLs; all same company/source route exists. No live link followed.",
+      "No envelope issue, internal canonicalText, invalid URL, external link, cross-company link or missing source route was found in captured payloads."
+    ]
+  },
+  "runtimeDiagnostics": [
+    {
+      "scenarioId": "NAT-03",
+      "repeat": 0,
+      "phase": "gateway",
+      "stage": "requestLineTurn",
+      "error": {
+        "name": "AiGatewayRequestError",
+        "code": "AI_GATEWAY_TIMEOUT"
+      }
+    },
+    {
+      "scenarioId": "NAT-06",
+      "repeat": 0,
+      "phase": "turn",
+      "stage": "turn:0",
+      "error": {
+        "name": "Error",
+        "assertion": "REPLAY_TERMINAL_TIMEOUT"
+      }
+    },
+    {
+      "scenarioId": "NAT-12",
+      "repeat": 0,
+      "phase": "webhook",
+      "stage": "execute",
+      "error": {
+        "name": "BadRequestException"
+      }
+    },
+    {
+      "scenarioId": "NAT-12",
+      "repeat": 0,
+      "phase": "gateway",
+      "stage": "requestLineTurn",
+      "error": {
+        "name": "AiGatewayRequestError",
+        "code": "AI_GATEWAY_TIMEOUT"
+      }
+    }
+  ]
+}

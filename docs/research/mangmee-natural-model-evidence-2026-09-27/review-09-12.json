@@ -1,0 +1,662 @@
+{
+  "version": 1,
+  "reviewKind": "AI semantic evidence review; not human acceptance",
+  "source": "primary.json",
+  "rawSourceSha256": "ea3fd00b64d6d5fcddc4e3a7a4e96a9b28effc6d6652fe3b8abc807edc504ee0",
+  "sourceCommit": "f9444099ee4ce88cb95d99ef192b1c6bf2fac543",
+  "counts": {
+    "FAIL": 20
+  },
+  "notes": [
+    "No forbidden-branch data observed is a separate safety subcheck, not a useful-answer pass.",
+    "No financial mutation in captured effects is not proof draft/create/cancel works.",
+    "NAT11 captured conversation preferenceJson remains null and preferenceVersion0; no preference acceptance.",
+    "No tax-law answer was generated or certified in this test."
+  ],
+  "rows": [
+    {
+      "scenarioId": "NAT-09",
+      "turn": 1,
+      "status": "FAIL",
+      "user": "ช่วยสรุปรายจ่ายสิงหาให้หน่อย",
+      "wire": [
+        {
+          "text": "ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่",
+          "type": "text"
+        },
+        {
+          "text": "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่",
+          "type": "text"
+        }
+      ],
+      "reason": "ไม่สรุปสิงหาคมทั้งที่ fixture มีข้อมูล: ไม่มี tool read และขอให้ลองใหม่",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-da80ee484aea117aa2fa-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:14:29.249Z",
+          "createdAt": "2026-09-27T04:14:20.645Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-d65ac048-13e0-48e0-b9e3-88081e5c34d1"
+      ],
+      "latencyToLastWireSeconds": 8.607,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-09,turnIndex=0]"
+    },
+    {
+      "scenarioId": "NAT-09",
+      "turn": 2,
+      "status": "FAIL",
+      "user": "เดี๋ยวนะ VAT ในบิลคืออะไร",
+      "wire": [
+        {
+          "text": "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง",
+          "type": "text"
+        }
+      ],
+      "reason": "คำถาม VAT พื้นฐานจบด้วย AI_GENERAL_ADMISSION_UNAVAILABLE",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-e9542db386c3b81b4416-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_GENERAL_ADMISSION_UNAVAILABLE",
+          "processedAt": "2026-09-27T04:14:37.543Z",
+          "createdAt": "2026-09-27T04:14:29.305Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-f7139e49-b9da-4bb0-8e7a-154e0868ce63"
+      ],
+      "latencyToLastWireSeconds": 8.244,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-09,turnIndex=1]"
+    },
+    {
+      "scenarioId": "NAT-09",
+      "turn": 3,
+      "status": "FAIL",
+      "user": "แปลว่าเอาไปขอคืนได้ทุกใบเลยปะ",
+      "wire": [
+        {
+          "text": "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง",
+          "type": "text"
+        }
+      ],
+      "reason": "คำถามต่อเรื่อง VAT จบด้วย admission unavailable ไม่ได้ใช้บริบทหรืออธิบายข้อจำกัด",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-ed45f43065895f901039-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_GENERAL_ADMISSION_UNAVAILABLE",
+          "processedAt": "2026-09-27T04:14:45.456Z",
+          "createdAt": "2026-09-27T04:14:37.604Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-23100955-4ac2-401c-8c72-9d9f58182a87"
+      ],
+      "latencyToLastWireSeconds": 7.856,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-09,turnIndex=2]"
+    },
+    {
+      "scenarioId": "NAT-09",
+      "turn": 4,
+      "status": "FAIL",
+      "user": "โอเค กลับไปอันเมื่อกี้ แยกค่าของกับค่าบริการที",
+      "wire": [
+        {
+          "text": "📝 ยังไม่พบรายการที่บันทึกไว้ล่าสุดในแชทนี้ที่แก้ไขได้\nเปิดแก้ไขในเว็บแอป: http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+          "type": "text"
+        }
+      ],
+      "reason": "คำสั่งกลับไปแยกหมวดของสรุปถูกส่งไปแก้รายการล่าสุดและส่งเว็บ",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-0b88d9a206138d1bdf3d-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:14:53.183Z",
+          "createdAt": "2026-09-27T04:14:45.507Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-2876c549-d81c-4ddf-92c7-788bd4a145c6"
+      ],
+      "latencyToLastWireSeconds": 7.672,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-09,turnIndex=3]"
+    },
+    {
+      "scenarioId": "NAT-09",
+      "turn": 5,
+      "status": "FAIL",
+      "user": "ขอแบบส่งให้หุ้นส่วนอ่านได้ สั้น ๆ",
+      "wire": [
+        {
+          "text": "อยากได้สรุปแบบไหนส่งให้หุ้นส่วนครับ? เช่น\n• สรุปรายจ่ายเดือนนี้\n• สรุปยอดขาย\n• สรุปกำไร-ขาดทุน\n• หรืออื่น ๆ?",
+          "type": "text"
+        },
+        {
+          "text": "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: อยากได้สรุปแบบไหนส่งให้หุ้นส่วนครับ? เช่น\n• สรุปรายจ่ายเดือนนี้\n• สรุปยอดขาย\n• สรุปกำไร-ขาดทุน\n• หรืออื่น ๆ?",
+          "type": "text"
+        }
+      ],
+      "reason": "สูญเสียหัวข้อสรุปสิงหาคม จึงถามชนิดสรุปใหม่และถามซ้ำ",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-3939da0b622caca3f777-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:15:08.411Z",
+          "createdAt": "2026-09-27T04:14:53.285Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-e1c9a9dc-ed36-4001-a181-ed769e83dee6"
+      ],
+      "latencyToLastWireSeconds": 15.131,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-09,turnIndex=4]"
+    },
+    {
+      "scenarioId": "NAT-10",
+      "turn": 1,
+      "status": "FAIL",
+      "user": "เดือนนี้มีค่าน้ำค่าไฟมั้ย",
+      "wire": [
+        {
+          "text": "ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่",
+          "type": "text"
+        },
+        {
+          "text": "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่",
+          "type": "text"
+        }
+      ],
+      "reason": "ไม่ตรวจรายการค่าน้ำค่าไฟ ไม่มี tool read",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-2908c8da10ad6e329bc3-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:15:18.576Z",
+          "createdAt": "2026-09-27T04:15:09.940Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-e761dc2e-997f-4e54-af7d-a2064f70a711"
+      ],
+      "latencyToLastWireSeconds": 8.639,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-10,turnIndex=0]"
+    },
+    {
+      "scenarioId": "NAT-10",
+      "turn": 2,
+      "status": "FAIL",
+      "user": "ไม่เจอแปลว่ายังไม่ได้จ่ายใช่มั้ย",
+      "wire": [
+        {
+          "text": "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง",
+          "type": "text"
+        },
+        {
+          "text": "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง",
+          "type": "text"
+        }
+      ],
+      "reason": "ไม่แยกไม่พบรายการออกจากยังไม่ได้จ่าย",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-1a54c60603b6b508d6ce-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:15:40.381Z",
+          "createdAt": "2026-09-27T04:15:18.691Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-6774284d-94e7-429a-b5e6-791f189d4d90"
+      ],
+      "latencyToLastWireSeconds": 21.697,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-10,turnIndex=1]"
+    },
+    {
+      "scenarioId": "NAT-10",
+      "turn": 3,
+      "status": "FAIL",
+      "user": "งั้นดูของอีกสาขาให้ที สาขาที่ฉันเข้าไม่ได้",
+      "wire": [
+        {
+          "text": "ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่",
+          "type": "text"
+        },
+        {
+          "text": "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่",
+          "type": "text"
+        }
+      ],
+      "reason": "ไม่รั่วข้อมูลสาขาต้องห้าม แต่ไม่อธิบายสิทธิ์หรือช่วยส่วนที่ทำได้",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-d5f9a7386c232ca186b3-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:15:50.320Z",
+          "createdAt": "2026-09-27T04:15:40.483Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-7502ce73-788f-48a2-9a2f-6e4028e5545e"
+      ],
+      "latencyToLastWireSeconds": 9.842,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-10,turnIndex=2]"
+    },
+    {
+      "scenarioId": "NAT-10",
+      "turn": 4,
+      "status": "FAIL",
+      "user": "เอาเฉพาะสาขาที่ฉันดูได้ก็ได้",
+      "wire": [
+        {
+          "text": "ต้องตรวจข้อมูลหรือสิทธิ์ของส่วนนี้ก่อน ยังไม่ได้ทำรายการให้",
+          "type": "text"
+        },
+        {
+          "text": "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ต้องตรวจข้อมูลหรือสิทธิ์ของส่วนนี้ก่อน ยังไม่ได้ทำรายการให้",
+          "type": "text"
+        }
+      ],
+      "reason": "ยังไม่อ่านสาขาที่มีสิทธิ์หลังผู้ใช้ลดขอบเขต",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-b8be5bbac54a480aaa24-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:16:02.358Z",
+          "createdAt": "2026-09-27T04:15:50.431Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-3907fa40-075d-4c29-b20d-3937cfa51871"
+      ],
+      "latencyToLastWireSeconds": 11.935,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-10,turnIndex=3]"
+    },
+    {
+      "scenarioId": "NAT-10",
+      "turn": 5,
+      "status": "FAIL",
+      "user": "แล้วรู้ได้ไงว่ารายการครบ ยังมีไฟล์ที่ไม่ได้อ่านมั้ย",
+      "wire": [
+        {
+          "text": "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง",
+          "type": "text"
+        },
+        {
+          "text": "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง",
+          "type": "text"
+        }
+      ],
+      "reason": "ไม่ตรวจสถานะไฟล์หรือบอกข้อจำกัดความครบถ้วน ขอให้ส่งคำขออีกครั้ง",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-69deb03790fd9b81de90-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:16:28.934Z",
+          "createdAt": "2026-09-27T04:16:02.464Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-31574bd5-23f6-4d8c-819e-2caf5fc5e7ba"
+      ],
+      "latencyToLastWireSeconds": 26.478,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-10,turnIndex=4]"
+    },
+    {
+      "scenarioId": "NAT-11",
+      "turn": 1,
+      "status": "FAIL",
+      "user": "รายจ่ายเดือนนี้สรุปให้ที ขอไม่ยาว",
+      "wire": [
+        {
+          "text": "ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่",
+          "type": "text"
+        },
+        {
+          "text": "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่",
+          "type": "text"
+        }
+      ],
+      "reason": "ไม่สรุปรายจ่ายแม้มี fixture",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-0691b37167439cd9511a-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:16:38.887Z",
+          "createdAt": "2026-09-27T04:16:30.478Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-a5d05204-9c1b-4031-9512-a5e69b56c645"
+      ],
+      "latencyToLastWireSeconds": 8.412,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-11,turnIndex=0]"
+    },
+    {
+      "scenarioId": "NAT-11",
+      "turn": 2,
+      "status": "FAIL",
+      "user": "ต่อไปตอบสั้น ๆ แบบนี้นะ จำไว้ได้มั้ย",
+      "wire": [
+        {
+          "text": "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง",
+          "type": "text"
+        }
+      ],
+      "reason": "คำขอจำวิธีตอบไม่ถูกบันทึก จบด้วย admission unavailable",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-2339dbad17f893b7bf20-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_GENERAL_ADMISSION_UNAVAILABLE",
+          "processedAt": "2026-09-27T04:16:47.399Z",
+          "createdAt": "2026-09-27T04:16:38.963Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-ee225dc7-dcd9-4d03-be08-79b938480f0b"
+      ],
+      "latencyToLastWireSeconds": 8.443,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-11,turnIndex=1]"
+    },
+    {
+      "scenarioId": "NAT-11",
+      "turn": 3,
+      "status": "FAIL",
+      "user": "แต่อันเมื่อกี้ขอละเอียดหน่อย ทำไมยอดเพิ่ม",
+      "wire": [
+        {
+          "text": "ขออภัยค่ะ ระบบค้นหารายการค่าใช้จ่ายที่เพิ่งบันทึกไม่พบข้อมูลในขณะนี้ (EXPENSE_NOT_FOUND) จึงไม่สามารถอธิบายได้ว่าทำไมยอดรวมถึงเพิ่มขึ้นค่ะ\n\nเพื่อให้ช่วยได้ตรงจุด รบกวนแจ้งข้อมูลเพิ่มเติมได้เลยนะคะ เช่น\n• เลขที่เอกสารหรือชื่อรายการที่บันทึกไป\n• วันที่บันทึก\n• หมวดหมู่ค่าใช้จ่าย\n\nหรือจะดูข้อมูลค่าใช้จ่ายทั้งหมดได้ที่ลิงก์นี้ค่ะ\nแหล่งข้อมูล: ข้อมูลค่าใช้จ่าย\nเปิดดู: ข้อมูลค่าใช้จ่าย http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+          "type": "text"
+        }
+      ],
+      "reason": "ถามเหตุยอดเพิ่มแต่ไปหาเอกสารล่าสุดและ EXPENSE_NOT_FOUND",
+      "tools": [
+        {
+          "tool": "expense.explain_record",
+          "input": {},
+          "status": "ok"
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-4ccd3ca54b10338f715e-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:17:08.766Z",
+          "createdAt": "2026-09-27T04:16:47.537Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-eb4e9018-ee42-49ff-bb50-daee910964cb"
+      ],
+      "latencyToLastWireSeconds": 21.248,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-11,turnIndex=2]"
+    },
+    {
+      "scenarioId": "NAT-11",
+      "turn": 4,
+      "status": "FAIL",
+      "user": "ตอนนี้จำอะไรเกี่ยวกับวิธีตอบฉันอยู่บ้าง",
+      "wire": [
+        {
+          "text": "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง",
+          "type": "text"
+        }
+      ],
+      "reason": "ไม่อ่าน preference ที่บันทึกไว้ จบด้วย admission unavailable",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-95d30b9cafe3accca538-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_GENERAL_ADMISSION_UNAVAILABLE",
+          "processedAt": "2026-09-27T04:17:17.276Z",
+          "createdAt": "2026-09-27T04:17:08.869Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-85542503-8c33-43da-b751-f9c4cdf19447"
+      ],
+      "latencyToLastWireSeconds": 8.409,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-11,turnIndex=3]"
+    },
+    {
+      "scenarioId": "NAT-11",
+      "turn": 5,
+      "status": "FAIL",
+      "user": "ลืมเรื่องตอบสั้นไปก่อน",
+      "wire": [
+        {
+          "text": "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง",
+          "type": "text"
+        }
+      ],
+      "reason": "ไม่ดำเนินคำขอลืม preference จบด้วย admission unavailable",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-45ea45fb22c1c43d2c03-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_GENERAL_ADMISSION_UNAVAILABLE",
+          "processedAt": "2026-09-27T04:17:25.370Z",
+          "createdAt": "2026-09-27T04:17:17.421Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-6eb2f2e4-cbb7-42e2-827c-637bb97a779d"
+      ],
+      "latencyToLastWireSeconds": 7.957,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-11,turnIndex=4]"
+    },
+    {
+      "scenarioId": "NAT-12",
+      "turn": 1,
+      "status": "FAIL",
+      "user": "ทำร่างค่าส่งของวันนี้สามร้อยบาทให้หน่อย",
+      "wire": [
+        {
+          "type": "text",
+          "text": "⏳ ขออภัยค่ะ ระบบตอบกลับไม่ได้ชั่วคราว กรุณาลองส่งข้อความอีกครั้งนะคะ"
+        }
+      ],
+      "reason": "คำขอร่างค่าส่งสามร้อยจบด้วย BadRequestException ไม่มี preview หรือร่าง",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-c28bbc729acec5304d55-0",
+          "eventType": "message",
+          "status": "unavailable_delivered",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:17:36.617Z",
+          "createdAt": "2026-09-27T04:17:26.863Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-b6875daf-47cd-450f-85f7-38f092c48cfb"
+      ],
+      "latencyToLastWireSeconds": 9.767,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-12,turnIndex=0]"
+    },
+    {
+      "scenarioId": "NAT-12",
+      "turn": 2,
+      "status": "FAIL",
+      "user": "อันเมื่อกี้ไม่ใช่ 300 เป็น 350 นะ",
+      "wire": [
+        {
+          "text": "ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้",
+          "type": "text"
+        }
+      ],
+      "reason": "รับคำแก้350ไม่ได้ AI_CONTRACT_UNSUPPORTED",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-22b2b89ac6cae0340a67-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_CONTRACT_UNSUPPORTED",
+          "processedAt": "2026-09-27T04:17:50.002Z",
+          "createdAt": "2026-09-27T04:17:36.677Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-6581ebb4-d7b9-4e8f-93c7-0bbda774edaf"
+      ],
+      "latencyToLastWireSeconds": 13.33,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-12,turnIndex=1]"
+    },
+    {
+      "scenarioId": "NAT-12",
+      "turn": 3,
+      "status": "FAIL",
+      "user": "เดี๋ยว ๆ ยกเลิกก่อน",
+      "wire": [
+        {
+          "text": "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง",
+          "type": "text"
+        }
+      ],
+      "reason": "ไม่ยืนยันสถานะยกเลิก จบด้วย admission unavailable",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-088e46a8ca4ce2b7260e-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_GENERAL_ADMISSION_UNAVAILABLE",
+          "processedAt": "2026-09-27T04:17:58.003Z",
+          "createdAt": "2026-09-27T04:17:50.122Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-5bd444fb-28ed-477c-b9bd-57b03945b936"
+      ],
+      "latencyToLastWireSeconds": 7.888,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-12,turnIndex=2]"
+    },
+    {
+      "scenarioId": "NAT-12",
+      "turn": 4,
+      "status": "FAIL",
+      "user": "เมื่อกี้เน็ตหลุด สรุปบันทึกไปยัง",
+      "wire": [
+        {
+          "text": "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง",
+          "type": "text"
+        }
+      ],
+      "reason": "ไม่ตรวจสถานะเมื่อผู้ใช้ถามว่าบันทึกไปหรือยัง",
+      "tools": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-e18579370e792463950f-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_GENERAL_ADMISSION_UNAVAILABLE",
+          "processedAt": "2026-09-27T04:18:13.420Z",
+          "createdAt": "2026-09-27T04:17:58.103Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-6dbb2277-9fe0-465b-9956-a1082accd700"
+      ],
+      "latencyToLastWireSeconds": 15.317,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-12,turnIndex=3]"
+    },
+    {
+      "scenarioId": "NAT-12",
+      "turn": 5,
+      "status": "FAIL",
+      "user": "งั้นขอดูข้อมูลเดิมก่อน อย่าเพิ่งทำใหม่",
+      "wire": [
+        {
+          "type": "text",
+          "text": "⏱ ขออภัยค่ะ รอบนี้ระบบใช้เวลานานเกินไปจนต้องหยุดก่อนค่ะ พิมพ์คำถามเดิมส่งมาใหม่ได้เลยนะคะ"
+        }
+      ],
+      "reason": "อ่าน expense.list_recent จริงแต่ตอบ timeout ไม่แสดงรายการเดิม",
+      "tools": [
+        {
+          "tool": "expense.list_recent",
+          "input": {},
+          "status": "ok"
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-e7867f1a67d3c9a16914-0",
+          "eventType": "message",
+          "status": "ai_error",
+          "errorCode": "LINE_AI_AI_TIMEOUT",
+          "processedAt": "2026-09-27T04:18:40.564Z",
+          "createdAt": "2026-09-27T04:18:13.531Z"
+        }
+      ],
+      "receiptIds": [
+        "sink-12c25245-2a72-441d-a1a4-76003b60981e"
+      ],
+      "latencyToLastWireSeconds": 27.046,
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-12,turnIndex=4]"
+    }
+  ]
+}

@@ -1,8 +1,9 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { HttpException } from '@nestjs/common';
 import type { LineAiTurnRequest } from '@watchdog-bms/contracts';
-import { AI_BUDGET_ESTIMATOR_VERSION_V2, AI_BUDGET_PROFILE_TABLE_DIGEST_V2, AI_BUDGET_STEP_BOUNDS, createLineAiInputEvidence } from '@watchdog-bms/contracts';
+import { AI_BUDGET_ESTIMATOR_VERSION_V2, AI_BUDGET_PROFILE_TABLE_DIGEST_V2, AI_BUDGET_STEP_BOUNDS, createLineAiInputEvidence, lineDocumentQaInputEvidenceText, verifyLineAiInputEvidence } from '@watchdog-bms/contracts';
 import { __resetCompanyAiBudgetCache } from '../application/company-ai-usage-meter';
 import { aiBudgetAttemptHash } from '../application/company-ai-budget-reservation';
 import { AiGatewayClient, AiGatewayRequestError } from './ai-gateway.client';
@@ -1075,6 +1076,44 @@ describe('AiGatewayClient SPLIT admission (spec §12.3/§12.6, ADR 0013 §4/§6)
 
 
 describe('AiGatewayClient v2 transport', () => {
+  it('builds full SHA-256 QA evidence before authenticated document transport', async () => {
+    const sha = (value: string) => createHash('sha256').update(value).digest('hex'), now = Date.now();
+    const question = 'หน้า 1 ยอดรวมเท่าไร', jobId = 'qa-job', source = 'rendered page';
+    const pages = [{ attachmentId: 'attachment-1', page: 1, sourceMimeType: 'application/pdf' as const, mimeType: 'image/png' as const,
+      contentHash: sha('source PDF'), renderedSha256: sha(source), contentBase64: Buffer.from(source).toString('base64') }];
+    const inputDigest = sha(lineDocumentQaInputEvidenceText(question, pages));
+    const grant = { version: 2 as const, turnKey: 'qa-turn', authorityKind: 'qa_job' as const, authorityId: jobId, channelOwnerDigest: sha('owner'),
+      attemptKey: 'qa-attempt', monthKey: '2026-09', payerCompanyId: 'company-1', model: { provider: 'bedrock' as const, modelId: SPLIT_FIXTURE_MODEL_ID, region: 'ap-southeast-1' },
+      allowedProfileIds: ['document-qa/2' as const], profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, maxTurnSlots: 2 as const, maxRepairs: 1 as const,
+      admittedAtMs: now, workDeadlineAtMs: now + 897000, finalDeadlineAtMs: now + 900000, nonce: 'qa-nonce', nextOrdinal: 1, issuerVersion: 'fixture', signature: sha('signature') };
+    let validated = 0;
+    const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'synthetic' } as any,
+      { issue: () => { throw new Error('QA must not issue a business delegation'); } } as any, undefined,
+      { client: new Proxy({}, { get: () => { throw new Error('QA must not create a legacy hold or duplicate usage'); } }) } as any,
+      { validate: async (received: unknown, digest: string, scope: unknown) => {
+        validated++; assert.deepEqual(received, grant); assert.equal(digest, inputDigest);
+        assert.deepEqual(scope, { companyId: 'company-1', userId: 'user-1' }); return true;
+      } } as any);
+    const input = { requestId: 'qa-request', companyId: 'company-1', userId: 'user-1', jobId, jobRevision: 1, turnId: grant.turnKey,
+      question, pages, inputDigest, inputSetHash: sha('input-set'), questionDigest: sha(question), readerVersion: 'line-document-qa/1' as const, budgetGrantV2: grant };
+    const original = globalThis.fetch; let calls = 0;
+    globalThis.fetch = async (url, init) => {
+      calls++; assert.match(String(url), /\/internal\/ai\/line-document-qa$/);
+      const request = JSON.parse(String(init?.body)), evidence = await verifyLineAiInputEvidence(request.inputEvidence, request.messageText);
+      assert.ok(evidence); assert.equal(evidence.parts[0]!.eventIdHash, sha(jobId));
+      assert.equal(evidence.joinedSha256, inputDigest); assert.deepEqual(request.pages, pages);
+      assert.deepEqual(request.budgetGrantV2, grant); assert.equal(request.budgetEnvelope, undefined);
+      return new Response(JSON.stringify({ status: 'failed', errorCode: 'SYNTHETIC_TRANSPORT_REACHED' }));
+    };
+    try {
+      assert.deepEqual(await client.requestLineDocumentQa(input), { status: 'failed', errorCode: 'SYNTHETIC_TRANSPORT_REACHED' });
+      assert.equal(calls, 1); assert.equal(validated, 1);
+      assert.deepEqual(await client.requestLineDocumentQa({ ...input, inputDigest: sha('different manifest') }), { status: 'failed', errorCode: 'QA_INPUT_DIGEST_MISMATCH' });
+      assert.equal(calls, 1, 'a transplanted manifest must still fail before transport');
+      assert.equal(aiBudgetAttemptHash(jobId).length, 32, 'reservation identity helper remains unchanged');
+    } finally { globalThis.fetch = original; }
+  });
+
   it('forwards authenticated evidence with the pinned model and no legacy hold or duplicate usage metering', async () => {
     const built = await createLineAiInputEvidence({ turnKey: 'v2-transport', parts: [{ partId: 'one', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: baseTurnRequest.messageText }] });
     assert.ok(built);

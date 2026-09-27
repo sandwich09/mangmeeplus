@@ -1,0 +1,1107 @@
+{
+  "summary": {
+    "plannedTurns": 60,
+    "observedTurns": 56,
+    "missingTurns": 4,
+    "receipts": 58,
+    "messageCount": 83,
+    "messageTypes": {
+      "text": 83
+    },
+    "invalidEnvelopes": 0,
+    "issues": [],
+    "actionCount": 0,
+    "invalidActions": [],
+    "linkOccurrences": 12,
+    "uniqueLinks": [
+      {
+        "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/crm-reports",
+        "status": "same_company_route_exists",
+        "route": "/companies/[companyId]/crm-reports",
+        "source": "apps/web/app/(workspace)/companies/[companyId]/crm-reports/page.tsx"
+      },
+      {
+        "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/notifications",
+        "status": "same_company_route_exists",
+        "route": "/companies/[companyId]/notifications",
+        "source": "apps/web/app/(workspace)/companies/[companyId]/notifications/page.tsx"
+      },
+      {
+        "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+        "status": "same_company_route_exists",
+        "route": "/companies/[companyId]/expenses",
+        "source": "apps/web/app/(workspace)/companies/[companyId]/expenses/page.tsx"
+      },
+      {
+        "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/settings/branches",
+        "status": "same_company_route_exists",
+        "route": "/companies/[companyId]/settings/branches",
+        "source": "apps/web/app/(workspace)/companies/[companyId]/settings/branches/page.tsx"
+      }
+    ]
+  },
+  "receipts": [
+    {
+      "scenarioId": "NAT-01",
+      "turn": 1,
+      "receipt": 1,
+      "receiptId": "sink-2d16c530-b6de-47ab-ac4a-db7bfca967b6",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ค่าใช้จ่าย: 27,230.50 บาท (9 รายการ)\nช่วง: เดือนนี้ (1–27 ก.ย. 2569)\nที่มา: รายการค่าใช้จ่าย\nข้อมูล ณ 27 กันยายน 2569"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-01",
+      "turn": 2,
+      "receipt": 1,
+      "receiptId": "sink-2807d1f4-78be-43a8-8afa-f62ae1880caf",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-01",
+      "turn": 3,
+      "receipt": 1,
+      "receiptId": "sink-ea598806-7037-420f-a2e2-5d74e689ff75",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-01",
+      "turn": 4,
+      "receipt": 1,
+      "receiptId": "sink-0b12248e-544b-4836-af32-f9214e038f56",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ต้องตรวจข้อมูลหรือสิทธิ์ของส่วนนี้ก่อน ยังไม่ได้ทำรายการให้",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ต้องตรวจข้อมูลหรือสิทธิ์ของส่วนนี้ก่อน ยังไม่ได้ทำรายการให้"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-01",
+      "turn": 5,
+      "receipt": 1,
+      "receiptId": "sink-7751c258-64e0-4f66-bfde-62b393371133",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ขอให้ระบุด้วยครับว่าอยากลด **อะไร** เช่น ค่าใช้จ่าย, สต็อกสินค้า, ต้นทุน, หรืออย่างอื่น? และถ้ามีหมวดหมู่หรือช่วงเวลาที่สนใจเป็นพิเศษ บอกมาได้เลยครับ จะได้ดึงข้อมูลได้ตรงจุด",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ขอให้ระบุด้วยครับว่าอยากลด **อะไร** เช่น ค่าใช้จ่าย, สต็อกสินค้า, ต้นทุน, หรืออย่างอื่น? และถ้ามีหมวดหมู่หรือช่วงเวลาที่สนใจเป็นพิเศษ บอกมาได้เลยครับ จะได้ดึงข้อมูลได้ตรงจุด"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-02",
+      "turn": 1,
+      "receipt": 1,
+      "receiptId": "sink-6fbfca48-e6a3-4e74-aa29-80d3c6a4ad39",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยอดรับเงินจริง: 374,300 บาท (3 รายการ)\nช่วง: เดือนนี้ (1–27 ก.ย. 2569)\nที่มา: ยอดรับเงินจริงจากลูกค้า\nข้อมูล ณ 2026-09-27"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-02",
+      "turn": 2,
+      "receipt": 1,
+      "receiptId": "sink-da81f1fa-6497-43e4-953d-f53da081fd39",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ขอยืนยันความเข้าใจครับ — ที่บอกว่า 'ยอดขาย' หมายถึงเงินที่ลูกค้าจ่ายมาแล้ว (cash received / receipts) นั้น ต้องการให้ระบบแสดงข้อมูลยอดรับชำระจากลูกค้าในช่วงเวลาใด และสาขาไหนครับ (หรือต้องการดูภาพรวมทุกสาขา)?",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ขอยืนยันความเข้าใจครับ — ที่บอกว่า 'ยอดขาย' หมายถึงเงินที่ลูกค้าจ่ายมาแล้ว (cash received / receipts) นั้น ต้องการให้ระบบแสดงข้อมูลยอดรับชำระจากลูกค้าในช่วงเวลาใด และสาขาไหนครับ (หรือต้องการดูภาพรวมทุกสาขา)?"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-02",
+      "turn": 3,
+      "receipt": 1,
+      "receiptId": "sink-a54e60fe-a97a-4f8b-a960-b59bb1573d9a",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง\nแหล่งข้อมูล: ยอดรับเงินจริงจากลูกค้า\nเปิดดู: ยอดรับเงินจริงจากลูกค้า http://127.0.0.1:18993/companies/w14-synthetic-company/crm-reports",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง"
+      ],
+      "actions": [],
+      "links": [
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/crm-reports",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/crm-reports",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/crm-reports/page.tsx"
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-02",
+      "turn": 4,
+      "receipt": 1,
+      "receiptId": "sink-8d671f34-249d-441a-af76-c259ffc6b18f",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-02",
+      "turn": 5,
+      "receipt": 1,
+      "receiptId": "sink-d57cfa78-0745-4c76-8716-5edaa282bfb7",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง\nแหล่งข้อมูล: รายการแจ้งเตือน, แดชบอร์ดสุขภาพธุรกิจ\nเปิดดู: รายการแจ้งเตือน http://127.0.0.1:18993/companies/w14-synthetic-company/notifications",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง"
+      ],
+      "actions": [],
+      "links": [
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/notifications",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/notifications",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/notifications/page.tsx"
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-03",
+      "turn": 1,
+      "receipt": 1,
+      "receiptId": "sink-a450a426-6cb6-45d1-b490-c7808b63be7b",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "⏱ ขออภัยค่ะ รอบนี้ระบบใช้เวลานานเกินไปจนต้องหยุดก่อนค่ะ พิมพ์คำถามเดิมส่งมาใหม่ได้เลยนะคะ"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-03",
+      "turn": 2,
+      "receipt": 1,
+      "receiptId": "sink-4aaf17df-6539-4e4b-ab5e-d772c6fc764b",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง\nแหล่งข้อมูล: รายการค่าใช้จ่าย\nเปิดดู: รายการค่าใช้จ่าย http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง"
+      ],
+      "actions": [],
+      "links": [
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/expenses",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/expenses/page.tsx"
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-03",
+      "turn": 3,
+      "receipt": 1,
+      "receiptId": "sink-e59f9001-d271-4e6c-a163-094e7557f0bf",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ต้องตรวจข้อมูลหรือสิทธิ์ของส่วนนี้ก่อน ยังไม่ได้ทำรายการให้",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ต้องตรวจข้อมูลหรือสิทธิ์ของส่วนนี้ก่อน ยังไม่ได้ทำรายการให้"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-03",
+      "turn": 4,
+      "receipt": 1,
+      "receiptId": "sink-36edcd14-88e7-4ca8-86e5-a401a790dd7c",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-03",
+      "turn": 5,
+      "receipt": 1,
+      "receiptId": "sink-bf489d06-0209-4d01-a5af-23931b7bfb6e",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ข้อมูลที่มีอยู่เป็นยอดรวมทุกสาขา ยังไม่มีข้อมูลแยกเฉพาะสำนักงานใหญ่ในผลลัพธ์นี้ค่ะ เพื่อให้เปรียบเทียบได้ถูกต้อง ขอถามเพิ่มเติมสักข้อนะคะ\nแหล่งข้อมูล: สาขาของบริษัท, รายการค่าใช้จ่าย\nเปิดดู: สาขาของบริษัท http://127.0.0.1:18993/companies/w14-synthetic-company/settings/branches",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ข้อมูลที่มีอยู่เป็นยอดรวมทุกสาขา ยังไม่มีข้อมูลแยกเฉพาะสำนักงานใหญ่ในผลลัพธ์นี้ค่ะ เพื่อให้เปรียบเทียบได้ถูกต้อง ขอถามเพิ่มเติมสักข้อนะคะ"
+      ],
+      "actions": [],
+      "links": [
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/settings/branches",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/settings/branches",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/settings/branches/page.tsx"
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-04",
+      "turn": 1,
+      "receipt": 1,
+      "receiptId": "sink-0cbc2e80-e48c-4a0d-880f-9fad8f8fc457",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "1. ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง\n\n2. บิลที่จ่ายเองเมื่อวาน (26 ก.ย.) — มีรายละเอียดเพิ่มเติมไหมคะ เช่น ชื่อร้าน/ผู้ขาย, จำนวนเงิน, หรือหมายเลขเอกสาร? เพื่อให้ช่วยตรวจสอบได้ถูกต้องว่าเข้าเงื่อนไขการเบิกได้หรือเปล่า\nแหล่งข้อมูล: สรุปค่าใช้จ่ายแยกกลุ่ม\nเปิดดู: สรุปค่าใช้จ่ายแยกกลุ่ม http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง\nข้อ 2: บิลที่จ่ายเองเมื่อวาน (26 ก.ย.) — มีรายละเอียดเพิ่มเติมไหมคะ เช่น ชื่อร้าน/ผู้ขาย, จำนวนเงิน, หรือหมายเลขเอกสาร? เพื่อให้ช่วยตรวจสอบได้ถูกต้องว่าเข้าเงื่อนไขการเบิกได้หรือเปล่า"
+      ],
+      "actions": [],
+      "links": [
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/expenses",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/expenses/page.tsx"
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-04",
+      "turn": 2,
+      "receipt": 1,
+      "receiptId": "sink-7bd38cde-1728-4709-aa14-8a7251c985d7",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-04",
+      "turn": 3,
+      "receipt": 1,
+      "receiptId": "sink-350c4981-e5f4-4edd-a50d-416b8e78acc9",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-04",
+      "turn": 4,
+      "receipt": 1,
+      "receiptId": "sink-06993ded-b50b-439c-88f8-12c35c21376a",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-04",
+      "turn": 5,
+      "receipt": 1,
+      "receiptId": "sink-2951e2a8-2449-489c-a6a4-fa9ea26222e6",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-05",
+      "turn": 1,
+      "receipt": 1,
+      "receiptId": "sink-9a1acfd1-bcd7-4c8b-864b-436c87266830",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ปกติไม่เกิน 1 นาที เสร็จแล้วน้องจะสรุปให้เลยนะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-05",
+      "turn": 1,
+      "receipt": 2,
+      "receiptId": "sink-1651d204-8570-4f91-b028-9bd6925ee16f",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ภาพที่แนบมาไม่สามารถอ่านได้ค่ะ รบกวนส่งภาพใบเสร็จหรือเอกสารที่ต้องการดูยอดรวมใหม่อีกครั้งได้ไหมคะ?"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-05",
+      "turn": 2,
+      "receipt": 1,
+      "receiptId": "sink-d9799df7-c1d8-463e-a556-0987f5b3ba83",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-05",
+      "turn": 3,
+      "receipt": 1,
+      "receiptId": "sink-826dd27c-11f9-4e8d-8141-6e721aff5b9e",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง\n\n↩️ รูปที่รอจำแนกยังเก็บไว้อยู่ค่ะ\n🤔 รูปนี้เป็นอะไรคะ ตอบเลขข้อได้เลยนะคะ\n1) ใบเสร็จ/เอกสารค่าใช้จ่ายรายการเดียวที่ต้องการบันทึก\n2) ภาพประกอบคำถาม ไม่ต้องบันทึก\n3) สรุปหลายรายการ (เก็บไฟล์ไว้ตรวจ แต่ยังไม่สร้างค่าใช้จ่าย)",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-05",
+      "turn": 4,
+      "receipt": 1,
+      "receiptId": "sink-e29ac171-26aa-4971-b99e-f65f0d28cfde",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-05",
+      "turn": 5,
+      "receipt": 1,
+      "receiptId": "sink-df03274f-2c1a-45f2-85af-9a64cee17724",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "🧾 ยังไม่สร้างรายการนะคะ กรุณาระบุยอดเงินและวัตถุประสงค์หรือหมวดค่าใช้จ่ายให้ครบ เช่น “ค่าเดินทาง 200 บาท”"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-06",
+      "turn": 1,
+      "receipt": 1,
+      "receiptId": "sink-5bc16045-a35c-4cfa-9888-d0bae25bfe6e",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ได้รับไฟล์แล้วค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-06",
+      "turn": 1,
+      "receipt": 2,
+      "receiptId": "sink-64318bcd-f6fe-450b-8999-7be0c36b9d1d",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "📄 ขออภัยค่ะ ระบบประมวลผลไฟล์นี้ไม่สำเร็จ รบกวนส่งไฟล์เดิมอีกครั้งนะคะ ถ้าไฟล์นี้เคยบันทึกไว้แล้ว ระบบจะแจ้งเตือนรายการซ้ำให้ค่ะ"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-07",
+      "turn": 1,
+      "receipt": 1,
+      "receiptId": "sink-57b1601e-5371-47ca-8166-41bf3982972e",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-07",
+      "turn": 2,
+      "receipt": 1,
+      "receiptId": "sink-9f8da2ad-73f5-4445-8e0e-00399f2de1c4",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "📝 ยังไม่พบรายการที่บันทึกไว้ล่าสุดในแชทนี้ที่แก้ไขได้\nเปิดแก้ไขในเว็บแอป: http://127.0.0.1:18993/companies/w14-synthetic-company/expenses"
+      ],
+      "actions": [],
+      "links": [
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/expenses",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/expenses/page.tsx"
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-07",
+      "turn": 3,
+      "receipt": 1,
+      "receiptId": "sink-657fafad-19a4-4613-9a1f-172d1059148f",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-07",
+      "turn": 4,
+      "receipt": 1,
+      "receiptId": "sink-9b64b07a-a5b6-431c-bab1-d992260265cf",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-07",
+      "turn": 5,
+      "receipt": 1,
+      "receiptId": "sink-b8482f2e-10fe-49fb-bac9-dd7e437fb07a",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-08",
+      "turn": 1,
+      "receipt": 1,
+      "receiptId": "sink-ad27df95-36b2-44a8-8df5-6fe36b00a2bf",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง\nแหล่งข้อมูล: รายการค่าใช้จ่าย\nเปิดดู: รายการค่าใช้จ่าย http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง"
+      ],
+      "actions": [],
+      "links": [
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/expenses",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/expenses/page.tsx"
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-08",
+      "turn": 2,
+      "receipt": 1,
+      "receiptId": "sink-44cb6322-b4a7-4727-b237-8d3d797d5ac8",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง\nแหล่งข้อมูล: รายการค่าใช้จ่าย\nเปิดดู: รายการค่าใช้จ่าย http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง"
+      ],
+      "actions": [],
+      "links": [
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/expenses",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/expenses/page.tsx"
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-08",
+      "turn": 3,
+      "receipt": 1,
+      "receiptId": "sink-b03d0052-37cd-417f-b914-bb77ddd3af61",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ไม่พบบิล/ใบเสร็จของร้าน **สมชายการช่าง** ในระบบค่ะ อาจเป็นเพราะยังไม่ได้บันทึกรายการนี้ไว้ หรืออาจอยู่ภายใต้ชื่อผู้ขายที่ต่างออกไปก็ได้นะคะ\n\nหากต้องการ สามารถ:\n- ลองค้นหาด้วยชื่ออื่นที่อาจบันทึกไว้\n- ส่งรูปใบเสร็จมาเพื่อให้ช่วยสร้างร่างค่าใช้จ่ายให้ได้เลยค่ะ\nแหล่งข้อมูล: ข้อมูลค่าใช้จ่าย\nเปิดดู: ข้อมูลค่าใช้จ่าย http://127.0.0.1:18993/companies/w14-synthetic-company/expenses"
+      ],
+      "actions": [],
+      "links": [
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/expenses",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/expenses/page.tsx"
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-08",
+      "turn": 4,
+      "receipt": 1,
+      "receiptId": "sink-c0935174-6971-4813-96ae-7a5870401299",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง\nแหล่งข้อมูล: รายการค่าใช้จ่าย\nเปิดดู: รายการค่าใช้จ่าย http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้ กรุณาตรวจข้อมูลต้นทาง"
+      ],
+      "actions": [],
+      "links": [
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/expenses",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/expenses/page.tsx"
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-08",
+      "turn": 5,
+      "receipt": 1,
+      "receiptId": "sink-0be28543-16a7-436e-80ef-9d3bac059873",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ขอทราบ ID หรือเลขที่เอกสารของบิล/ใบเสร็จร้านสมชายที่ต้องการเปิดดูด้วยครับ (มีสองใบ ขอทั้งสองใบเลยครับ)",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ขอทราบ ID หรือเลขที่เอกสารของบิล/ใบเสร็จร้านสมชายที่ต้องการเปิดดูด้วยครับ (มีสองใบ ขอทั้งสองใบเลยครับ)"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-09",
+      "turn": 1,
+      "receipt": 1,
+      "receiptId": "sink-d65ac048-13e0-48e0-b9e3-88081e5c34d1",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-09",
+      "turn": 2,
+      "receipt": 1,
+      "receiptId": "sink-f7139e49-b9da-4bb0-8e7a-154e0868ce63",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-09",
+      "turn": 3,
+      "receipt": 1,
+      "receiptId": "sink-23100955-4ac2-401c-8c72-9d9f58182a87",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-09",
+      "turn": 4,
+      "receipt": 1,
+      "receiptId": "sink-2876c549-d81c-4ddf-92c7-788bd4a145c6",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "📝 ยังไม่พบรายการที่บันทึกไว้ล่าสุดในแชทนี้ที่แก้ไขได้\nเปิดแก้ไขในเว็บแอป: http://127.0.0.1:18993/companies/w14-synthetic-company/expenses"
+      ],
+      "actions": [],
+      "links": [
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/expenses",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/expenses/page.tsx"
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-09",
+      "turn": 5,
+      "receipt": 1,
+      "receiptId": "sink-e1c9a9dc-ed36-4001-a181-ed769e83dee6",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "อยากได้สรุปแบบไหนส่งให้หุ้นส่วนครับ? เช่น\n• สรุปรายจ่ายเดือนนี้\n• สรุปยอดขาย\n• สรุปกำไร-ขาดทุน\n• หรืออื่น ๆ?",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: อยากได้สรุปแบบไหนส่งให้หุ้นส่วนครับ? เช่น\n• สรุปรายจ่ายเดือนนี้\n• สรุปยอดขาย\n• สรุปกำไร-ขาดทุน\n• หรืออื่น ๆ?"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-10",
+      "turn": 1,
+      "receipt": 1,
+      "receiptId": "sink-e761dc2e-997f-4e54-af7d-a2064f70a711",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-10",
+      "turn": 2,
+      "receipt": 1,
+      "receiptId": "sink-6774284d-94e7-429a-b5e6-791f189d4d90",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-10",
+      "turn": 3,
+      "receipt": 1,
+      "receiptId": "sink-7502ce73-788f-48a2-9a2f-6e4028e5545e",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-10",
+      "turn": 4,
+      "receipt": 1,
+      "receiptId": "sink-3907fa40-075d-4c29-b20d-3937cfa51871",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ต้องตรวจข้อมูลหรือสิทธิ์ของส่วนนี้ก่อน ยังไม่ได้ทำรายการให้",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ต้องตรวจข้อมูลหรือสิทธิ์ของส่วนนี้ก่อน ยังไม่ได้ทำรายการให้"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-10",
+      "turn": 5,
+      "receipt": 1,
+      "receiptId": "sink-31574bd5-23f6-4d8c-819e-2caf5fc5e7ba",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-11",
+      "turn": 1,
+      "receipt": 1,
+      "receiptId": "sink-a5d05204-9c1b-4031-9512-a5e69b56c645",
+      "messageTypes": [
+        "text",
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-11",
+      "turn": 2,
+      "receipt": 1,
+      "receiptId": "sink-ee225dc7-dcd9-4d03-be08-79b938480f0b",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-11",
+      "turn": 3,
+      "receipt": 1,
+      "receiptId": "sink-eb4e9018-ee42-49ff-bb50-daee910964cb",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ขออภัยค่ะ ระบบค้นหารายการค่าใช้จ่ายที่เพิ่งบันทึกไม่พบข้อมูลในขณะนี้ (EXPENSE_NOT_FOUND) จึงไม่สามารถอธิบายได้ว่าทำไมยอดรวมถึงเพิ่มขึ้นค่ะ\n\nเพื่อให้ช่วยได้ตรงจุด รบกวนแจ้งข้อมูลเพิ่มเติมได้เลยนะคะ เช่น\n• เลขที่เอกสารหรือชื่อรายการที่บันทึกไป\n• วันที่บันทึก\n• หมวดหมู่ค่าใช้จ่าย\n\nหรือจะดูข้อมูลค่าใช้จ่ายทั้งหมดได้ที่ลิงก์นี้ค่ะ\nแหล่งข้อมูล: ข้อมูลค่าใช้จ่าย\nเปิดดู: ข้อมูลค่าใช้จ่าย http://127.0.0.1:18993/companies/w14-synthetic-company/expenses"
+      ],
+      "actions": [],
+      "links": [
+        {
+          "url": "http://127.0.0.1:18993/companies/w14-synthetic-company/expenses",
+          "status": "same_company_route_exists",
+          "route": "/companies/[companyId]/expenses",
+          "source": "apps/web/app/(workspace)/companies/[companyId]/expenses/page.tsx"
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-11",
+      "turn": 4,
+      "receipt": 1,
+      "receiptId": "sink-85542503-8c33-43da-b751-f9c4cdf19447",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-11",
+      "turn": 5,
+      "receipt": 1,
+      "receiptId": "sink-6eb2f2e4-cbb7-42e2-827c-637bb97a779d",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-12",
+      "turn": 1,
+      "receipt": 1,
+      "receiptId": "sink-b6875daf-47cd-450f-85f7-38f092c48cfb",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "⏳ ขออภัยค่ะ ระบบตอบกลับไม่ได้ชั่วคราว กรุณาลองส่งข้อความอีกครั้งนะคะ"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-12",
+      "turn": 2,
+      "receipt": 1,
+      "receiptId": "sink-6581ebb4-d7b9-4e8f-93c7-0bbda774edaf",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-12",
+      "turn": 3,
+      "receipt": 1,
+      "receiptId": "sink-5bd444fb-28ed-477c-b9bd-57b03945b936",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-12",
+      "turn": 4,
+      "receipt": 1,
+      "receiptId": "sink-6dbb2277-9fe0-465b-9956-a1082accd700",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "actions": [],
+      "links": []
+    },
+    {
+      "scenarioId": "NAT-12",
+      "turn": 5,
+      "receipt": 1,
+      "receiptId": "sink-12c25245-2a72-441d-a1a4-76003b60981e",
+      "messageTypes": [
+        "text"
+      ],
+      "envelopeValid": true,
+      "issues": [],
+      "texts": [
+        "⏱ ขออภัยค่ะ รอบนี้ระบบใช้เวลานานเกินไปจนต้องหยุดก่อนค่ะ พิมพ์คำถามเดิมส่งมาใหม่ได้เลยนะคะ"
+      ],
+      "actions": [],
+      "links": []
+    }
+  ]
+}

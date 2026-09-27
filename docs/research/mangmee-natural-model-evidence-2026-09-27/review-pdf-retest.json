@@ -1,0 +1,825 @@
+{
+  "reviewType": "Independent AI-assisted artifact/source inspection; not human certification",
+  "humanReviewStatus": "UNREVIEWED",
+  "runKind": "Separate PDF guard retest; never replace or merge into primary 56/60 denominator",
+  "inputs": {
+    "pdf-guard-nat06.json": {
+      "path": "/tmp/mangmee-natural-20260927/pdf-guard-nat06.json",
+      "sha256": "3afa19865c01f332eb08020a24befb2f218e829937fbff0ef6eaa147de6aa148"
+    },
+    "pdf-guard-nat06.manifest.json": {
+      "path": "/tmp/mangmee-natural-20260927/pdf-guard-nat06.manifest.json",
+      "sha256": "dd573dc109d57a8e83501d24837e1453e198cead8b88297b8906ebd014f643ae"
+    },
+    "pdf-guard-provider-outputs.jsonl": {
+      "path": "/tmp/mangmee-natural-20260927/pdf-guard-provider-outputs.jsonl",
+      "sha256": "c2c75e8a6bfb4e478b7c45579d5bd168a2339dccdce1ee75a9417a204ec7a2b9"
+    }
+  },
+  "sourceCommit": "063b7f2a2e6b4d7f031b942e9f4baccd55bd31b3",
+  "compiledHashes": {
+    "apps/api/dist/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.js": "f9393fce2b38121bf181bd0821aef4e4c4614f2a8a2041d3bb45dac62967ac6e",
+    "apps/ai-gateway/dist/apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent.js": "9e2ad5fc43b79c9c8df1219481e87ddfd87024c1d95215628c34c8c1d9920103",
+    "apps/ai-gateway/dist/apps/ai-gateway/src/modules/line-ai/agents/semantic-turn-v2.js": "6fd7585b4ba24d5b8bf6604dd36874cf132f16a138ac042cab67d45a17ae3e1e"
+  },
+  "startedAt": "2026-09-27T04:28:01.474Z",
+  "completedAt": "2026-09-27T04:28:44.818Z",
+  "boundary": {
+    "runtime": "compiled_nest_api_postgres",
+    "line": "synthetic_http_sink",
+    "nativeLineVerified": false,
+    "cacheStateVerified": false,
+    "activationEligible": false
+  },
+  "counts": {
+    "plannedTurns": 5,
+    "observedTurns": 5,
+    "missingTurns": 0,
+    "intakeProviderCalls": 5,
+    "documentProviderCalls": 0,
+    "recordError": null,
+    "ExpenseRecordEffects": 0,
+    "reimbursementEffects": 0,
+    "AttachmentObjectCreates": 2,
+    "AttachmentLinkCreates": 2,
+    "draftActionsObserved": 0
+  },
+  "conclusions": {
+    "guardRegression": "Observed fixed for this five-turn retest: no implicit ExpenseRecord/reimbursement effects. Only storage/QA linkage writes occurred. This does not certify all read-only paths.",
+    "functionalPdfJourney": "NOT_ACHIEVED: no document-reading provider calls or content result; two QA client attempts blocked before HTTP, retained identity regressed, T4 delivery source changed.",
+    "pageCount": "Both exact manifest assets are physically two-page PDFs, hashes verified. Runtime task refs include pages[1,2] for both files, and raw provider task projections preserve those refs. No raw QA request pages/body was captured; do not treat page refs as successful OCR coverage.",
+    "nativeLine": "Unverified; synthetic sink only.",
+    "latency": "One five-turn retest does not meet repeated or p95 acceptance requirements."
+  },
+  "criticalFindings": [
+    {
+      "id": "PDF-QA-EVENT-HASH-LENGTH",
+      "classification": "deterministic production client contract mismatch",
+      "description": "requestLineDocumentQa passes eventIdHash=aiBudgetAttemptHash(jobId), which produces 32 hex characters; createLineAiInputEvidence requires a full 64-hex HASH. Evidence builder returns undefined, yielding QA_INPUT_EVIDENCE_INVALID before postInternal.",
+      "sourceReferences": [
+        "apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.ts:190-196",
+        "apps/api/src/modules/line-ai/application/company-ai-budget-reservation.ts:67-68",
+        "packages/contracts/src/line-ai-input-evidence.ts:37,137"
+      ],
+      "evidence": "T2/T3 client method responses; provider JSONL contains only 5 intake calls. partId qa-input-manifest satisfies ID grammar; it is not the mismatch.",
+      "inference": "Worker calls client only after materializePages/canRun. Therefore the local queued attempts got past PDF access/rendering; this is not evidence of model OCR quality."
+    },
+    {
+      "id": "PDF-WRONG-RETAINED-ATTACHMENT",
+      "classification": "file identity regression",
+      "description": "T2 after-state/T3 before-state has replacement hash37b806… attachment cmujbiyv7002pryk1cj4grdtk. T3 after-state selects original hash8e6829… attachment cmujbiteu002cryk1nlubons2, despite user asking page two of the replacement. T4 raw provider task projection corroborates original selection.",
+      "evidence": "turns[1].retainedTaskRefs.after vs turns[2].retainedTaskRefs.before/after and raw provider input call4",
+      "scope": "No incorrect page content was delivered because QA stopped earlier; wrong retained authority exists independently."
+    },
+    {
+      "id": "PDF-SOURCE-CHANGED-DELIVERY",
+      "classification": "delivery failure",
+      "description": "T4 event delivery_failed / LINE_DELIVERY_SOURCE_CHANGED, no frozen delivery requirement, delivery NONE. A plain fallback was accepted by sink; this is not successful frozen answer delivery."
+    }
+  ],
+  "assets": [
+    {
+      "assetId": "receipt-partial",
+      "path": "/Users/thawatchai/.codex/worktrees/mangmee-model-test-baseline/mangmeeplus/docs/research/mangmee-ai-natural-assets-2026-09-27/receipt-partial.pdf",
+      "sha256": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+      "actualPdfPages": 2,
+      "bytes": 85142,
+      "metadataVerification": "pdfinfo, sha256 at manifest path",
+      "humanCertified": false
+    },
+    {
+      "assetId": "document-unreadable",
+      "path": "/Users/thawatchai/.codex/worktrees/mangmee-model-test-baseline/mangmeeplus/docs/research/mangmee-ai-natural-assets-2026-09-27/document-unreadable.pdf",
+      "sha256": "37b80639d6d96436268e911c8792542c3c7e0e1e3e18fabd84b462e0f8324f01",
+      "actualPdfPages": 2,
+      "bytes": 101060,
+      "metadataVerification": "pdfinfo, sha256 at manifest path",
+      "humanCertified": false
+    }
+  ],
+  "turns": [
+    {
+      "turn": 1,
+      "user": "ดูหน่อย ใบนี้เขียนว่าอะไรบ้าง",
+      "attachmentIds": [
+        "receipt-partial"
+      ],
+      "reviewStatus": "SAFE_NO_IMPLICIT_EXPENSE_BUT_NOT_READ",
+      "noteTh": "รับไฟล์แรกแล้วถามประเภทเอกสารแทนอ่าน ทั้งที่ผู้ใช้ขอเนื้อหา; มีเพียง AttachmentObject.create ไม่มีรายจ่าย ไม่ได้ตอบเนื้อหา/ชื่อไฟล์/จำนวนหน้า",
+      "actualWireTexts": [
+        "ได้รับไฟล์แล้วค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ",
+        "ไฟล์ PDF ที่แนบมานี้เป็นเอกสารประเภทไหนคะ เช่น ใบเสร็จ/ใบกำกับภาษี, เอกสารธุรกิจ (ใบเสนอราคา/ใบสั่งซื้อ), หรืออื่นๆ?"
+      ],
+      "actions": [],
+      "actualTraceOutcome": "needs_input",
+      "delivery": {
+        "requiredBatchIds": [
+          "0d25e348cdcba0211167f4864e9977a2daed46e1037d6ef0bde0dcec257a71ef:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "0d25e348cdcba0211167f4864e9977a2daed46e1037d6ef0bde0dcec257a71ef:batch:0",
+            "wireHash": "1f4cbc97e0e9236cdb96fd6741085219ca4c5c8eb2f159e3521ba3c4e9945b10",
+            "acceptedAtMs": 1790483291305,
+            "receiptId": "sink-1888a70d-0608-4b76-a0a3-d88b68c9aa6c"
+          }
+        ],
+        "status": "ACCEPTED"
+      },
+      "events": [
+        {
+          "webhookEventId": "replay-3d22c4088d3be6636a5c-0",
+          "eventType": "message",
+          "status": "clarification_required",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:28:11.317Z",
+          "createdAt": "2026-09-27T04:28:04.252Z"
+        },
+        {
+          "webhookEventId": "replay-3d22c4088d3be6636a5c-1",
+          "eventType": "message",
+          "status": "batched",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:28:11.319Z",
+          "createdAt": "2026-09-27T04:28:04.263Z"
+        }
+      ],
+      "effects": [
+        {
+          "kind": "AttachmentObject.create",
+          "recordId": "cmujbiteu002cryk1nlubons2",
+          "revision": "2026-09-27T04:28:11.269",
+          "evidence": "database_snapshot",
+          "evidenceHash": "366db0cab50bb2316d3907ded6fd9e1ca9302474beda0a7d176904037ab5cb26"
+        }
+      ],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "retainedTaskRefs": {
+        "before": [],
+        "after": []
+      },
+      "gatewayClientResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "75f20e60-0390-430e-ac17-ac1d4aaf0a5e",
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.55,
+            "reason": "User wants to know what is written on an attached PDF, but the file purpose is unknown and has no image content, making it impossible to determine if it is an expense document, a business reference do",
+            "clarifyQuestion": "ไฟล์ PDF ที่แนบมานี้เป็นเอกสารประเภทไหนคะ เช่น ใบเสร็จ/ใบกำกับภาษี, เอกสารธุรกิจ (ใบเสนอราคา/ใบสั่งซื้อ), หรืออื่นๆ?",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "read",
+                "goal": "อ่าน/สรุปเนื้อหาของเอกสาร PDF ที่แนบมา",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 29,
+                    "rawSha256": "361a404ee594e9544ddd94de576693b8859693d848f246539df949be417fd6fb"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "timingMs": {
+        "runtimeObservedWorkEnd": 6969,
+        "firstWire": 1049,
+        "lastWire": 7071
+      },
+      "providerUsageRows": 1,
+      "providerInputTokens": 1272,
+      "providerOutputTokens": 439,
+      "validationFailures": []
+    },
+    {
+      "turn": 2,
+      "user": "ส่งผิด เอาไฟล์นี้แทนอันเมื่อกี้",
+      "attachmentIds": [
+        "document-unreadable"
+      ],
+      "reviewStatus": "QA_BLOCKED_BEFORE_PROVIDER",
+      "noteTh": "รับไฟล์แทนและสร้างงานอ่าน/ลิงก์ไฟล์ แต่ API-side QA_INPUT_EVIDENCE_INVALID หยุดก่อน HTTP ไป document QA และก่อนโมเดลอ่าน; final wire แสดงประโยคเป้าหมายภาษาอังกฤษภายใน ไม่ได้สรุปหน้า 1 ที่อ่านได้",
+      "actualWireTexts": [
+        "ได้รับไฟล์แล้วค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ",
+        "กำลังอ่านไฟล์เพื่อตอบคำถามค่ะ เมื่ออ่านเสร็จจะตอบในแชตนี้ ยังไม่ได้สร้างรายการค่าใช้จ่ายหรือใบเบิก",
+        "ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ กรุณาส่งไฟล์ที่ชัดเจนหรือเลือกหน้าใหม่ ยังไม่ได้สร้างรายการให้",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: Replace previously sent file with this new unreadable PDF attachment"
+      ],
+      "actions": [
+        {
+          "type": "message",
+          "label": "ยกเลิกอ่านไฟล์",
+          "text": "/qa cancel cmujbiywr002tryk1o83e9fsg",
+          "syntaxValid": true,
+          "parser": "handleDocumentQaControl exact command regex (source; not invoked)",
+          "jobId": "cmujbiywr002tryk1o83e9fsg",
+          "invoked": false,
+          "jobIdMatchesActualQaAttempt": true
+        }
+      ],
+      "actualTraceOutcome": "needs_input",
+      "delivery": {
+        "requiredBatchIds": [
+          "59e874cb5cfc367a3be395f4df383b63d648ea64763a8b3d7dc35730d3cdba00:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "59e874cb5cfc367a3be395f4df383b63d648ea64763a8b3d7dc35730d3cdba00:batch:0",
+            "wireHash": "eb75404b3dbede5b5e533e4933925b118acd70930e3e2227b4ffc45355ac3dd4",
+            "acceptedAtMs": 1790483299887,
+            "receiptId": "sink-65170e6f-1a97-4bcd-bf07-548c11f08a1e"
+          }
+        ],
+        "status": "ACCEPTED"
+      },
+      "events": [
+        {
+          "webhookEventId": "replay-5e964de497aa52e91d30-1",
+          "eventType": "message",
+          "status": "batched",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:28:18.405Z",
+          "createdAt": "2026-09-27T04:28:11.427Z"
+        },
+        {
+          "webhookEventId": "replay-5e964de497aa52e91d30-0",
+          "eventType": "message",
+          "status": "document_qa_failed",
+          "errorCode": "QA_INPUT_EVIDENCE_INVALID",
+          "processedAt": "2026-09-27T04:28:19.895Z",
+          "createdAt": "2026-09-27T04:28:11.413Z"
+        }
+      ],
+      "effects": [
+        {
+          "kind": "AttachmentLink.create",
+          "recordId": "cmujbiywu002uryk1citl4rkr",
+          "revision": "f7e3e014dd8f4e5098174f6e270bca058ae969c23feb12674ffea8a2f784f3c3",
+          "evidence": "database_snapshot",
+          "evidenceHash": "79e5eb0d5c5cc1e9e815b0e3b3b2950a7755df73384924894364669c5f254ca8"
+        },
+        {
+          "kind": "AttachmentObject.create",
+          "recordId": "cmujbiyv7002pryk1cj4grdtk",
+          "revision": "2026-09-27T04:28:18.34",
+          "evidence": "database_snapshot",
+          "evidenceHash": "961801a3b3eb07f86afe11ad49266a1e60429e9bf1d0c447a6a8c3b960529fa2"
+        }
+      ],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "retainedTaskRefs": {
+        "before": [],
+        "after": [
+          {
+            "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+            "revision": 2,
+            "state": "waiting_user",
+            "attachmentPageRefs": [
+              {
+                "pages": [
+                  1,
+                  2
+                ],
+                "contentHash": "37b80639d6d96436268e911c8792542c3c7e0e1e3e18fabd84b462e0f8324f01",
+                "attachmentId": "cmujbiyv7002pryk1cj4grdtk"
+              }
+            ],
+            "sourceRevisionLocators": [
+              {
+                "revision": "1",
+                "sourceId": "cmujbiywr002tryk1o83e9fsg",
+                "sourceType": "LINE_DOCUMENT_QA_0_0"
+              }
+            ]
+          }
+        ]
+      },
+      "gatewayClientResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "d582bf70-7f9d-473f-a73b-6c52fef9676d",
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.45,
+            "reason": "User says they sent the wrong file and wants to replace it with this one, but the attached PDF is unreadable/unknown purpose, so it is ambiguous whether this is an expense document, a business documen",
+            "clarifyQuestion": "ไฟล์ที่ส่งมาใหม่นี้คืออะไรครับ — เป็นใบเสร็จ/เอกสารค่าใช้จ่าย หรือเป็นเอกสารธุรกิจประเภทอื่น (เช่น ใบเสนอราคา, ใบสั่งซื้อ)?",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "file",
+                "goal": "Replace previously sent file with this new unreadable PDF attachment",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 31,
+                    "rawSha256": "d823e38e762700395efb96f09d7b69549389f666292c3eff6203871660d4c690"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "method": "requestLineDocumentQa",
+          "requestId": "qa:cmujbiywr002tryk1o83e9fsg:1:359663f3-8a92-45ae-8f3a-88669c1d233b",
+          "response": {
+            "status": "failed",
+            "errorCode": "QA_INPUT_EVIDENCE_INVALID"
+          }
+        }
+      ],
+      "timingMs": {
+        "runtimeObservedWorkEnd": 8407,
+        "firstWire": 1039,
+        "lastWire": 8488
+      },
+      "providerUsageRows": 1,
+      "providerInputTokens": 1288,
+      "providerOutputTokens": 430,
+      "validationFailures": []
+    },
+    {
+      "turn": 3,
+      "user": "หน้าสองเขียนว่าไง",
+      "attachmentIds": [],
+      "reviewStatus": "WRONG_RETAINED_FILE_AND_QA_BLOCKED",
+      "noteTh": "คำถามหน้าสองไม่มีไฟล์แนบใหม่ แต่ after-state เปลี่ยน attachment จากไฟล์แทนกลับเป็นไฟล์แรก; requestedFilters.page ไม่ได้ระบุและ retained refs เป็น pages[1,2] ไม่ใช่ page2-only; QA ถูกบล็อกก่อน provider จึงไม่มีข้อความผิดหน้าถูกส่งออก แต่ source identity เสียแล้ว",
+      "actualWireTexts": [
+        "กำลังอ่านไฟล์เดิมเพื่อตอบคำถามใหม่นี้ค่ะ ยังไม่ได้สร้างรายการ",
+        "ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ กรุณาส่งไฟล์ที่ชัดเจนหรือเลือกหน้าใหม่ ยังไม่ได้สร้างรายการให้",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: Replace previously sent file with this new unreadable PDF attachment"
+      ],
+      "actions": [
+        {
+          "type": "message",
+          "label": "ยกเลิกอ่านไฟล์",
+          "text": "/qa cancel cmujbj6ym0031ryk1euagnw05",
+          "syntaxValid": true,
+          "parser": "handleDocumentQaControl exact command regex (source; not invoked)",
+          "jobId": "cmujbj6ym0031ryk1euagnw05",
+          "invoked": false,
+          "jobIdMatchesActualQaAttempt": true
+        }
+      ],
+      "actualTraceOutcome": "needs_input",
+      "delivery": {
+        "requiredBatchIds": [
+          "c5dc4bc525f9ef46b635d7d3cb153e7e35ebae5da9eb9b2a9a7c2e53c7be7336:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "c5dc4bc525f9ef46b635d7d3cb153e7e35ebae5da9eb9b2a9a7c2e53c7be7336:batch:0",
+            "wireHash": "eb75404b3dbede5b5e533e4933925b118acd70930e3e2227b4ffc45355ac3dd4",
+            "acceptedAtMs": 1790483309064,
+            "receiptId": "sink-42a99c82-5eb7-4b57-8a86-5ebd4e5f023b"
+          }
+        ],
+        "status": "ACCEPTED"
+      },
+      "events": [
+        {
+          "webhookEventId": "replay-0cbe97db9c7b59d05fcb-0",
+          "eventType": "message",
+          "status": "document_qa_failed",
+          "errorCode": "QA_INPUT_EVIDENCE_INVALID",
+          "processedAt": "2026-09-27T04:28:29.072Z",
+          "createdAt": "2026-09-27T04:28:19.942Z"
+        }
+      ],
+      "effects": [
+        {
+          "kind": "AttachmentLink.create",
+          "recordId": "cmujbj6yo0032ryk14rjfzhov",
+          "revision": "ccf98048d2bfae7fc276d8b4d99fc2b23dbc37d9125fd3c58093dd450b2b619a",
+          "evidence": "database_snapshot",
+          "evidenceHash": "1ffb8976dade98abb2858ef3d08b1669470597985441296d9be9e1c77f2b9399"
+        }
+      ],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "retainedTaskRefs": {
+        "before": [
+          {
+            "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+            "revision": 2,
+            "state": "waiting_user",
+            "attachmentPageRefs": [
+              {
+                "pages": [
+                  1,
+                  2
+                ],
+                "contentHash": "37b80639d6d96436268e911c8792542c3c7e0e1e3e18fabd84b462e0f8324f01",
+                "attachmentId": "cmujbiyv7002pryk1cj4grdtk"
+              }
+            ],
+            "sourceRevisionLocators": [
+              {
+                "revision": "1",
+                "sourceId": "cmujbiywr002tryk1o83e9fsg",
+                "sourceType": "LINE_DOCUMENT_QA_0_0"
+              }
+            ]
+          }
+        ],
+        "after": [
+          {
+            "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+            "revision": 5,
+            "state": "waiting_user",
+            "attachmentPageRefs": [
+              {
+                "pages": [
+                  1,
+                  2
+                ],
+                "contentHash": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+                "attachmentId": "cmujbiteu002cryk1nlubons2"
+              }
+            ],
+            "sourceRevisionLocators": [
+              {
+                "revision": "1",
+                "sourceId": "cmujbj6ym0031ryk1euagnw05",
+                "sourceType": "LINE_DOCUMENT_QA_0_0"
+              }
+            ]
+          }
+        ]
+      },
+      "gatewayClientResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "0ae79210-0f1d-4c74-9be7-b2587f0f430d",
+          "response": {
+            "status": "ROUTED",
+            "intent": "UNSUPPORTED",
+            "language": "th",
+            "confidence": 0.55,
+            "reason": "User is asking what page two says, which refers to a previously uploaded document — this is a document content question, not a business data read or an expense/signature intake action.",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "file",
+                "goal": "Read or transcribe the content of page two of a previously submitted document",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "taskRef": {
+                  "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+                  "taskRevision": 2,
+                  "subrequestIndex": 0
+                },
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 17,
+                    "rawSha256": "46e93ef845bc46debf193564b76143702a95fd53ba2e2980d1f65a0c79a0b300"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "method": "requestLineDocumentQa",
+          "requestId": "qa:cmujbj6ym0031ryk1euagnw05:1:ae194b10-67aa-4735-9c3f-070310ad361d",
+          "response": {
+            "status": "failed",
+            "errorCode": "QA_INPUT_EVIDENCE_INVALID"
+          }
+        }
+      ],
+      "timingMs": {
+        "runtimeObservedWorkEnd": 9058,
+        "firstWire": 8908,
+        "lastWire": 9132
+      },
+      "providerUsageRows": 1,
+      "providerInputTokens": 1511,
+      "providerOutputTokens": 575,
+      "validationFailures": []
+    },
+    {
+      "turn": 4,
+      "user": "งั้นสรุปแค่หน้าที่อ่านออก",
+      "attachmentIds": [],
+      "reviewStatus": "DELIVERY_SOURCE_CHANGED_NO_SUMMARY",
+      "noteTh": "intake EXPENSE_DRAFT_CONTINUATION ทั้งที่ semantic kind:file; ไม่มี QA call/ไม่มีสรุป ต่อมา LINE_DELIVERY_SOURCE_CHANGED, trace delivery NONE แม้ sink ได้ fallback หนึ่งข้อความ; ข้อความบอกให้เปิดเว็บแต่ไม่มี URL ให้กด",
+      "actualWireTexts": [
+        "ข้อมูลต้นทางเปลี่ยนหรือยังตรวจสอบไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการหรือถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ"
+      ],
+      "actions": [],
+      "actualTraceOutcome": "event:delivery_failed",
+      "delivery": {
+        "requiredBatchIds": [],
+        "accepted": [],
+        "status": "NONE"
+      },
+      "events": [
+        {
+          "webhookEventId": "replay-eb0d26037c4f6f9a25e7-0",
+          "eventType": "message",
+          "status": "delivery_failed",
+          "errorCode": "LINE_DELIVERY_SOURCE_CHANGED",
+          "processedAt": "2026-09-27T04:28:35.891Z",
+          "createdAt": "2026-09-27T04:28:29.114Z"
+        }
+      ],
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "retainedTaskRefs": {
+        "before": [
+          {
+            "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+            "revision": 5,
+            "state": "waiting_user",
+            "attachmentPageRefs": [
+              {
+                "pages": [
+                  1,
+                  2
+                ],
+                "contentHash": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+                "attachmentId": "cmujbiteu002cryk1nlubons2"
+              }
+            ],
+            "sourceRevisionLocators": [
+              {
+                "revision": "1",
+                "sourceId": "cmujbj6ym0031ryk1euagnw05",
+                "sourceType": "LINE_DOCUMENT_QA_0_0"
+              }
+            ]
+          }
+        ],
+        "after": [
+          {
+            "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+            "revision": 5,
+            "state": "waiting_user",
+            "attachmentPageRefs": [
+              {
+                "pages": [
+                  1,
+                  2
+                ],
+                "contentHash": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+                "attachmentId": "cmujbiteu002cryk1nlubons2"
+              }
+            ],
+            "sourceRevisionLocators": [
+              {
+                "revision": "1",
+                "sourceId": "cmujbj6ym0031ryk1euagnw05",
+                "sourceType": "LINE_DOCUMENT_QA_0_0"
+              }
+            ]
+          }
+        ]
+      },
+      "gatewayClientResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "f46efa17-2f57-4dc8-88a1-045fe2bca734",
+          "response": {
+            "status": "ROUTED",
+            "intent": "EXPENSE_DRAFT_CONTINUATION",
+            "language": "th",
+            "confidence": 0.82,
+            "reason": "User is continuing the open file task by asking to summarize only the readable pages of the previously submitted unreadable PDF attachment.",
+            "captureHints": {
+              "confidence": 0.72,
+              "missingFields": []
+            },
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "file",
+                "goal": "Process only the readable pages of the previously attached unreadable PDF",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "taskRef": {
+                  "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+                  "taskRevision": 5,
+                  "subrequestIndex": 0
+                },
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 25,
+                    "rawSha256": "d90d41021c237022d04cac8cd650960e8b66a42fa43028eebed6d4726ac601cd"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "timingMs": {
+        "runtimeObservedWorkEnd": 6755,
+        "firstWire": 6788,
+        "lastWire": 6788
+      },
+      "providerUsageRows": 1,
+      "providerInputTokens": 1386,
+      "providerOutputTokens": 478,
+      "validationFailures": [
+        "no_frozen_delivery_requirement"
+      ]
+    },
+    {
+      "turn": 5,
+      "user": "ขอเทียบกับไฟล์แรกด้วย ยังอยู่มั้ย",
+      "attachmentIds": [],
+      "reviewStatus": "NO_AVAILABILITY_OR_COMPARISON_RESULT",
+      "noteTh": "ถามย้ำว่าหมายถึงไฟล์แรกหรือเอกสารธุรกิจอื่น แทนตรวจและบอกการเข้าถึงไฟล์แรกอย่างเป็นรูปธรรม; ไม่มี comparison/reader call และไม่แต่งเนื้อหาเอกสาร",
+      "actualWireTexts": [
+        "คุณต้องการเปรียบเทียบกับไฟล์แรกที่ส่งมาก่อนหน้านี้ (ไฟล์ PDF ที่แนบมาในงานที่ค้างอยู่) หรือต้องการเปรียบเทียบเอกสารธุรกิจอื่น เช่น ใบเสร็จหรือใบแจ้งหนี้ที่เคยบันทึกไว้?"
+      ],
+      "actions": [],
+      "actualTraceOutcome": "needs_input",
+      "delivery": {
+        "requiredBatchIds": [
+          "4ab1e751bff80e511e38c8b59d4564dd52d944d844dff12ffd1a664a75c9e07c:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "4ab1e751bff80e511e38c8b59d4564dd52d944d844dff12ffd1a664a75c9e07c:batch:0",
+            "wireHash": "adde317a3f8b5d627b8991ba008a2ade324915369621d9167dbf591a4ac66075",
+            "acceptedAtMs": 1790483324709,
+            "receiptId": "sink-513c084d-4b1b-412c-9f89-5670caa6822d"
+          }
+        ],
+        "status": "ACCEPTED"
+      },
+      "events": [
+        {
+          "webhookEventId": "replay-55a64e225e5e89bec330-0",
+          "eventType": "message",
+          "status": "clarification_required",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:28:44.722Z",
+          "createdAt": "2026-09-27T04:28:35.992Z"
+        }
+      ],
+      "effects": [],
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "retainedTaskRefs": {
+        "before": [
+          {
+            "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+            "revision": 5,
+            "state": "waiting_user",
+            "attachmentPageRefs": [
+              {
+                "pages": [
+                  1,
+                  2
+                ],
+                "contentHash": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+                "attachmentId": "cmujbiteu002cryk1nlubons2"
+              }
+            ],
+            "sourceRevisionLocators": [
+              {
+                "revision": "1",
+                "sourceId": "cmujbj6ym0031ryk1euagnw05",
+                "sourceType": "LINE_DOCUMENT_QA_0_0"
+              }
+            ]
+          }
+        ],
+        "after": [
+          {
+            "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+            "revision": 6,
+            "state": "active",
+            "attachmentPageRefs": [
+              {
+                "pages": [
+                  1,
+                  2
+                ],
+                "contentHash": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+                "attachmentId": "cmujbiteu002cryk1nlubons2"
+              }
+            ],
+            "sourceRevisionLocators": [
+              {
+                "revision": "1",
+                "sourceId": "cmujbj6ym0031ryk1euagnw05",
+                "sourceType": "LINE_DOCUMENT_QA_0_0"
+              }
+            ]
+          }
+        ]
+      },
+      "gatewayClientResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "81529849-d40e-4d22-890e-2964d3d39ade",
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.55,
+            "reason": "The user asks to compare with 'the first file' and whether it is still available, which likely continues the open file task (taskId eb2b54d8…) but could also be a general document comparison question ",
+            "clarifyQuestion": "คุณต้องการเปรียบเทียบกับไฟล์แรกที่ส่งมาก่อนหน้านี้ (ไฟล์ PDF ที่แนบมาในงานที่ค้างอยู่) หรือต้องการเปรียบเทียบเอกสารธุรกิจอื่น เช่น ใบเสร็จหรือใบแจ้งหนี้ที่เคยบันทึกไว้?",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "file",
+                "goal": "Compare current content with the first file previously submitted and check if it is still available",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "taskRef": {
+                  "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+                  "taskRevision": 5,
+                  "subrequestIndex": 0
+                },
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 33,
+                    "rawSha256": "f28bca891f2065cd8d77bf6d7c36b1fa0aa15555ddabaac525e1cd7045ddad40"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "timingMs": {
+        "runtimeObservedWorkEnd": 8638,
+        "firstWire": 8727,
+        "lastWire": 8727
+      },
+      "providerUsageRows": 1,
+      "providerInputTokens": 1415,
+      "providerOutputTokens": 571,
+      "validationFailures": []
+    }
+  ],
+  "wireAudit": {
+    "artifact": "/tmp/mangmee-natural-20260927/pdf-guard-wire-static-audit.json",
+    "summary": {
+      "plannedTurns": 5,
+      "observedTurns": 5,
+      "missingTurns": 0,
+      "receipts": 9,
+      "messageCount": 11,
+      "messageTypes": {
+        "text": 11
+      },
+      "invalidEnvelopes": 0,
+      "issues": [],
+      "actionCount": 2,
+      "invalidActions": [],
+      "linkOccurrences": 0,
+      "uniqueLinks": []
+    },
+    "limitations": [
+      "11 text messages in 9 receipts. No Flex cards.",
+      "Two message-type quick replies match exact production /qa cancel command regex and target their corresponding QA job. They were not clicked/invoked, so owner/epoch authorization and cancellation transition remain unexercised.",
+      "No links emitted, including T4 text directing the user to open the web. No route/cross-company link problem can be inferred from a zero-link sample.",
+      "All message envelopes passed repository parser; native rendering unverified."
+    ]
+  },
+  "runtimeDiagnostics": [],
+  "primaryPreservation": "Primary f9444099 remains 56/60 observed, including its real unrequested ExpenseRecord create and storage timeout. This 063b7f2a retest is independent evidence only."
+}
