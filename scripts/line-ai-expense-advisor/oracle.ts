@@ -32,6 +32,7 @@ const TOOL_MODULES: Record<string, { file: string; exportName: string }> = {
   'reimbursement.list_pending_approvals': { file: 'modules/line-ai/application/use-cases/erp-reimbursement-tools.use-case.js', exportName: 'ReimbursementListPendingApprovalsTool' },
   'reimbursement.get_summary': { file: 'modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.js', exportName: 'ReimbursementGetSummaryTool' },
   'reimbursement.get_detail': { file: 'modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.js', exportName: 'ReimbursementGetDetailTool' },
+  'expense.get_daily_closing': { file: 'modules/line-ai/application/use-cases/erp-expense-daily-closing.use-case.js', exportName: 'ExpenseGetDailyClosingTool' },
 };
 
 export type OracleEnv = {
@@ -188,6 +189,7 @@ const DEFAULT_ANSWER_SHAPE: Record<string, AnswerShape> = {
   'reimbursement.list_pending_approvals': 'pending_approvals',
   'reimbursement.get_summary': 'single_metric',
   'reimbursement.get_detail': 'detail',
+  'expense.get_daily_closing': 'daily_closing',
 };
 
 /** `{categoryAmbiguous|vendorAmbiguous|branchAmbiguous, availableCategories|availableVendors|
@@ -278,6 +280,33 @@ function pendingApprovalsFacts(data: Record<string, unknown>): ExpectedFact[] {
   return [...countFact(data, 'total', 'count'), ...(items.length ? [{ kind: 'money' as const, value: sum, label: 'sum_of_listed_amounts' }] : [])];
 }
 
+// erp-expense-daily-closing.use-case.ts, read from source: a `{currency, count, total}[]` bucket
+// (collapseMoneyRows) carries both a count and an amount; a `{count}` bucket carries only a count.
+const DAILY_CLOSING_MONEY_BUCKETS = ['occurredToday', 'dueEndOfDay', 'overdue', 'unscheduledOutstanding'] as const;
+const DAILY_CLOSING_COUNT_BUCKETS = ['submittedToday', 'pendingReview', 'evidenceBlockers', 'duplicateRisks'] as const;
+
+/** daily closing: the count and amount of each of that day's buckets, as the tool itself returns
+ * them (task follow-up: "counts and amounts of that day's buckets"). `occurredToday`/
+ * `dueEndOfDay`/`overdue`/`unscheduledOutstanding` carry a `totals: {currency,count,total}[]`
+ * (summed across currencies into one count/one amount fact each — this corpus seeds THB only, so
+ * collapsing never hides a mixed-currency case it would need to represent separately);
+ * `submittedToday`/`pendingReview`/`evidenceBlockers`/`duplicateRisks` carry only a `count`.
+ * `excluded` (rejected/voided) is deliberately NOT required — it is metadata about what the
+ * closing EXCLUDED, not a bucket total the customer asked about. */
+function dailyClosingFacts(data: Record<string, unknown>): ExpectedFact[] {
+  const facts: ExpectedFact[] = [];
+  for (const key of DAILY_CLOSING_MONEY_BUCKETS) {
+    const bucket = data[key] as Record<string, unknown> | undefined;
+    const totals = (bucket?.['totals'] as Array<Record<string, unknown>> | undefined) ?? [];
+    if (!totals.length) continue;
+    const count = totals.reduce((sum, row) => sum + Number(row['count'] ?? 0), 0);
+    const amount = totals.reduce((sum, row) => sum + Number(row['total'] ?? 0), 0);
+    facts.push({ kind: 'count', value: count, label: `${key}_count` }, { kind: 'money', value: amount, label: `${key}_amount` });
+  }
+  for (const key of DAILY_CLOSING_COUNT_BUCKETS) facts.push(...countFact((data[key] as Record<string, unknown> | undefined) ?? {}, 'count', `${key}_count`));
+  return facts;
+}
+
 /** Facts a delivered reply must contain for this gold call to be considered grounded — never
  * hand-typed, always read back off the oracle's own ToolResult. Required-only per shape (task
  * follow-up 2); everything else about the result is optional and not checked. Empty for an
@@ -294,6 +323,7 @@ export function extractExpectedFacts(tool: string, result: { status: string; dat
     case 'list': return listFacts(data);
     case 'detail': return detailFacts(tool, data);
     case 'pending_approvals': return pendingApprovalsFacts(data);
+    case 'daily_closing': return dailyClosingFacts(data);
     default: { const facts: ExpectedFact[] = []; scanNumericFacts(data, '', 0, facts); return facts; }
   }
 }

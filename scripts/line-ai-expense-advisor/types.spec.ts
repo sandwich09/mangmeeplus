@@ -92,7 +92,8 @@ describe('validateCorpus', () => {
   it('accepts a gold call with a valid answerShape and groupBy', () => {
     const corpus = { version: 1, conversations: [validConversation({
       turns: [{ user: 'x', category: '7', expect: { calls: [{ tool: 'expense.list_recent', input: {}, answerShape: 'list' }] } },
-        { user: 'y', category: '5', expect: { calls: [{ tool: 'expense.get_breakdown', input: {}, answerShape: 'breakdown', groupBy: 'vendor' }] } }],
+        { user: 'y', category: '5', expect: { calls: [{ tool: 'expense.get_breakdown', input: {}, answerShape: 'breakdown', groupBy: 'vendor' }] } },
+        { user: 'z', category: '13', expect: { calls: [{ tool: 'expense.get_daily_closing', input: {}, answerShape: 'daily_closing' }] } }],
     })] };
     assert.doesNotThrow(() => validateCorpus(corpus));
   });

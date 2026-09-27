@@ -29,7 +29,7 @@ export type GoldInput = Record<string, GoldInputValue>;
  * "Required facts by answer shape"). Optional — defaults per tool (oracle.ts DEFAULT_ANSWER_SHAPE);
  * only needed to override the default, e.g. `expense.list_recent` as a `list` instead of its usual
  * `single_metric`. */
-export const ANSWER_SHAPES = ['single_metric', 'breakdown', 'list', 'detail', 'pending_approvals'] as const;
+export const ANSWER_SHAPES = ['single_metric', 'breakdown', 'list', 'detail', 'pending_approvals', 'daily_closing'] as const;
 export type AnswerShape = (typeof ANSWER_SHAPES)[number];
 
 /** Which grouping a `breakdown` shape's required top-3 facts come from. Only meaningful with

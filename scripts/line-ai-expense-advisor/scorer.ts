@@ -52,7 +52,14 @@ function canonicalizePeriod(input: Record<string, unknown>, now: Date): { fromDa
 /** `limit` has a real default (20) baked into ExpenseListRecentTool; an omitted gold `limit` means
  * "don't care", never "must omit it too", so it is intentionally not defaulted/compared here unless
  * gold names it explicitly (handled by the caller only checking keys gold sets). `categoryId`/
- * `vendorId`/`branchId` are handled separately below (RESOLVED_DIMENSIONS), never here. */
+ * `vendorId`/`branchId` are handled separately below (DIMENSION_INPUT_KEYS), never here.
+ * `groupBy` never appears here on purpose: it lives on `GoldCall` itself (a corpus/fact-extraction
+ * selector — "which grouping's top-3 facts to require", oracle.ts breakdownFacts), never inside
+ * `input` — confirmed against the 223-turn corpus.tuning.json, which uses it exactly that way 43
+ * times. `expense.get_breakdown` has no `groupBy` INPUT to compare: it already returns every
+ * grouping (byCategory/byBranch/byVendor) at once, so there is nothing the model sends for this
+ * key to "pass through" as tool/input equivalence — `extractExpectedFactsForCall` already honors
+ * gold's `groupBy` on the FACTS side, which is where it actually acts. */
 const PASSTHROUGH_KEYS = ['documentStatus', 'paymentStatus', 'expenseId', 'limit'];
 
 /** A gold call naming a category/vendor/branch by id OR by name (the model may say "น้ำมัน" where
