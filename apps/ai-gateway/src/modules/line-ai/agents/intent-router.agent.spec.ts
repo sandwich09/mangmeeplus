@@ -559,6 +559,16 @@ describe('IntentRouterAgent – conversation read memory (spec §4 R-M3/R-M4)', 
     assert.match(prompt, /a value the current message actually states always overrides the copied one/);
     assert.match(prompt, /a clear change of subject copies nothing/);
   });
+
+  it('item 3 (spec §3 row 8): the compact simpleRead guidance covers an ordinal reference to expense.get_detail/reimbursement.get_detail', () => {
+    const prompt = intakeRouterSystemPrompt({ fusedPlan: true }, false, true, false,
+      new Set(['expense.get_detail::single_metric', 'reimbursement.get_detail::single_metric']));
+    assert.match(prompt, /an ordinal reference to a record already shown this chat \("รายการที่ 3", "อันที่ 2"\) may instead use tool expense\.get_detail or reimbursement\.get_detail with answerShape "single_metric"/);
+    assert.match(prompt, /putting its id in filters\.expenseId or filters\.reimbursementId copied ONLY from that ordinal's entry in the newest matching conversationContext\.recentReads shownItems/);
+    // The same guidance is absent when the compact/simpleRead lane itself is off (no families offered).
+    const off = intakeRouterSystemPrompt({ fusedPlan: true }, false, true, false, new Set());
+    assert.doesNotMatch(off, /expense\.get_detail or reimbursement\.get_detail/);
+  });
 });
 
 describe('IntentRouterAgent – intake clarifyQuestion (discovery)', () => {

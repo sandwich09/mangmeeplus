@@ -446,6 +446,51 @@ function formatExpenseListRecentList(output: SpecialistOutput, ctx: PreparedForm
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
+/**
+ * Item 3 (spec §3 row 8, "รายการที่ 3 คือร้านอะไรครับ") — `expense.get_detail` as one record's
+ * identity, for an ordinal follow-up about a single already-shown expense. Unlike the summary/list
+ * families this reads ONE permission-checked record, not a page of an aggregate, so it never checks
+ * `aggregationIncomplete` — there is nothing here a page cap could understate. States the date (Thai
+ * calendar), vendor (or the honest "unnamed vendor" label list_recent's own list already uses),
+ * total amount, document/payment status in the SAME Thai labels expense.list_recent's filter line
+ * uses, the category the tool names (when it does — erp-core-detail-tools.use-case.ts does not send
+ * one today; kept optional so a future field is rendered rather than requiring a shape change here),
+ * the access-scope line when not company-wide (same `scopeLine` convention as every other family),
+ * source and link.
+ */
+function formatExpenseGetDetailSingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'expense.get_detail');
+  const expenseDate = data?.['expenseDate'];
+  const amount = data?.['grandTotalAmount'];
+  const status = data?.['status'];
+  const paymentStatus = data?.['paymentStatus'];
+  if (typeof expenseDate !== 'string' || typeof status !== 'string' || !status
+    || typeof paymentStatus !== 'string' || !paymentStatus || !isMoney(amount)) return { kind: 'unverified' };
+  const dateLabel = thaiIsoDate(expenseDate.slice(0, 10));
+  if (!dateLabel) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const vendor = typeof data?.['vendorName'] === 'string' && data['vendorName']
+    ? data['vendorName'] as string : (english ? 'Unknown vendor' : 'ไม่ระบุร้าน');
+  const documentStatusLabel = english ? humanizedEnum(status) : (EXPENSE_STATUS_LABELS as Record<string, string>)[status] ?? status;
+  const paymentStatusLabel = english ? humanizedEnum(paymentStatus) : (EXPENSE_PAYMENT_STATUS_LABELS as Record<string, string>)[paymentStatus] ?? paymentStatus;
+  const category = data?.['categoryName'];
+  const categoryText = typeof category === 'string' && category
+    ? (english ? `\nCategory: ${category}` : `\nหมวด: ${category}`) : '';
+  const scopeText = scopeLine(data?.['accessScope'], english);
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+
+  const headline = english
+    ? `Expense: ${vendor}, ${expenseDate.slice(0, 10)}, ${moneyText(amount)} THB`
+    : `ค่าใช้จ่าย: ${vendor} วันที่ ${dateLabel} ยอด ${moneyText(amount)} บาท`;
+  const statusText = english
+    ? `\nDocument status: ${documentStatusLabel} · Payment status: ${paymentStatusLabel}`
+    : `\nสถานะเอกสาร: ${documentStatusLabel} · สถานะการจ่าย: ${paymentStatusLabel}`;
+
+  const replyText = `${headline}${statusText}${categoryText}${scopeText}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
 /** R-A2: enough breakdown groups to stay readable in one bubble; the rest are folded into "อื่นๆ". */
 const MAX_BREAKDOWN_GROUPS = 8;
 
@@ -925,6 +970,48 @@ function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
+/** Same Thai wording the web app already shows for these exact status values
+ *  (apps/web/src/features/reimbursements/reimbursements.model.ts REQUEST_STATUS_LABELS) — kept as
+ *  one small local map the same way ACCOUNTING_DOCUMENT_TYPE_TH above is: no cross-app import, only
+ *  the one formatter that needs it. An unknown/legacy status keeps its raw key, never a guess. */
+const REIMBURSEMENT_STATUS_TH: Record<string, string> = {
+  DRAFT: 'ร่าง', PENDING_APPROVAL: 'รออนุมัติ', APPROVED: 'อนุมัติแล้ว', REJECTED: 'ปฏิเสธ',
+  CANCELLED: 'ยกเลิก', FINANCE_REVIEW: 'รอตรวจสอบการเงิน', READY_FOR_PAYMENT: 'พร้อมจ่าย',
+  PARTIALLY_PAID: 'จ่ายบางส่วน', PAID: 'จ่ายแล้ว', VOIDED: 'เพิกถอน',
+};
+
+/**
+ * Item 3 (spec §3 row 8) — `reimbursement.get_detail` as one claim's identity, for an ordinal
+ * follow-up about a single already-shown reimbursement. One permission-checked record, not a page
+ * of an aggregate, so — like expense.get_detail's single-record family — this never checks
+ * `aggregationIncomplete`. States the requester (or an honest "unnamed requester", the same label
+ * list_pending_approvals already uses), incurred date (Thai calendar), amount, status in the SAME
+ * wording the web app already uses for this exact value, source and link.
+ */
+function formatReimbursementGetDetailSingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'reimbursement.get_detail');
+  const incurredDate = data?.['incurredDate'];
+  const amount = data?.['amount'];
+  const status = data?.['status'];
+  if (typeof incurredDate !== 'string' || typeof status !== 'string' || !status || !isMoney(amount)) return { kind: 'unverified' };
+  const dateLabel = thaiIsoDate(incurredDate.slice(0, 10));
+  if (!dateLabel) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const requester = typeof data?.['requesterDisplayName'] === 'string' && data['requesterDisplayName']
+    ? data['requesterDisplayName'] as string : (english ? 'Unknown requester' : 'ไม่ระบุผู้ขอ');
+  const statusLabel = english ? humanizedEnum(status) : REIMBURSEMENT_STATUS_TH[status] ?? status;
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+
+  const headline = english
+    ? `Reimbursement: ${requester}, ${incurredDate.slice(0, 10)}, ${moneyText(amount)} THB`
+    : `ใบเบิกจ่าย: ${requester} วันที่ ${dateLabel} ยอด ${moneyText(amount)} บาท`;
+  const statusText = english ? `\nStatus: ${statusLabel}` : `\nสถานะ: ${statusLabel}`;
+
+  const replyText = `${headline}${statusText}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
 /**
  * Authoritative deterministic terminal copy for a prepared read that did NOT reach a verified success —
  * an unavailable/error/failed source, or a success the compiled formatter could not verify. It states an
@@ -948,9 +1035,11 @@ const COMPILED_FORMATTERS: ReadonlyMap<string, (output: SpecialistOutput, ctx: P
     [preparedFamilyKey('sales.get_sales_summary', 'single_metric'), formatSalesSummarySingleMetric],
     [preparedFamilyKey('expense.list_recent', 'single_metric'), formatExpenseListRecentSingleMetric],
     [preparedFamilyKey('expense.list_recent', 'list'), formatExpenseListRecentList],
+    [preparedFamilyKey('expense.get_detail', 'single_metric'), formatExpenseGetDetailSingleMetric],
     [preparedFamilyKey('expense.get_breakdown', 'list'), formatExpenseBreakdownList],
     [preparedFamilyKey('reimbursement.list_pending_approvals', 'list'), formatReimbursementPendingApprovalsList],
     [preparedFamilyKey('reimbursement.get_summary', 'single_metric'), formatReimbursementGetSummarySingleMetric],
+    [preparedFamilyKey('reimbursement.get_detail', 'single_metric'), formatReimbursementGetDetailSingleMetric],
     [preparedFamilyKey('accounting.get_summary', 'list'), formatAccountingSummaryList],
     [preparedFamilyKey('expense.get_daily_closing', 'single_metric'), formatExpenseDailyClosingSingleMetric],
     [preparedFamilyKey('tax.get_vat_summary', 'single_metric'), formatTaxVatSummarySingleMetric],

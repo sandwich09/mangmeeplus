@@ -11,6 +11,9 @@ const EXPENSE_LIST = 'expense.list_recent::list';
 const BREAKDOWN = 'expense.get_breakdown::list';
 const REIMBURSEMENT_APPROVALS = 'reimbursement.list_pending_approvals::list';
 const REIMBURSEMENT_SUMMARY = 'reimbursement.get_summary::single_metric';
+// Item 3 (spec §3 row 8): the two ordinal-follow-up detail families.
+const EXPENSE_DETAIL = 'expense.get_detail::single_metric';
+const REIMBURSEMENT_DETAIL = 'reimbursement.get_detail::single_metric';
 const ACCOUNTING = 'accounting.get_summary::list';
 const DAILY = 'expense.get_daily_closing::single_metric';
 // Wave 2 R5 (spec §6.2): the four questions that used 6–7 model calls in the 2026-09-17 corpus run.
@@ -35,7 +38,8 @@ function salesOutput(data: Record<string, unknown>): SpecialistOutput {
 describe('prepared-simple-read compiled formatter registry', () => {
   it('exposes exactly the compiled families (sales, F1 expense, R-L4 list/breakdown/reimbursement, F2 accounting, F3 daily, F4–F7 R5 — compiled ≠ active)', () => {
     assert.deepEqual([...COMPILED_PREPARED_FAMILY_KEYS],
-      [SALES, EXPENSE, EXPENSE_LIST, BREAKDOWN, REIMBURSEMENT_APPROVALS, REIMBURSEMENT_SUMMARY, ACCOUNTING, DAILY, VAT, LOW_STOCK, AP, AP_LIST, CRM, CRM_LIST]);
+      [SALES, EXPENSE, EXPENSE_LIST, EXPENSE_DETAIL, BREAKDOWN, REIMBURSEMENT_APPROVALS, REIMBURSEMENT_SUMMARY, REIMBURSEMENT_DETAIL,
+        ACCOUNTING, DAILY, VAT, LOW_STOCK, AP, AP_LIST, CRM, CRM_LIST]);
     // Compiling a family does NOT enable it: the operator allowlist is empty by default, so the lane
     // stays dormant until each family passes its own blind pairwise eval (plan Phase 5 gate).
     assert.deepEqual([...activePreparedFamilies([])], []);
@@ -1367,6 +1371,141 @@ describe('R-L4 F11 reimbursement.get_summary::single_metric — สรุปเ�
       reimbursementSummaryData({ completeness: { aggregate: 'partial' } }),
     ]) {
       assert.equal(formatPreparedSimpleRead(REIMBURSEMENT_SUMMARY, summaryOutput(broken), TH).kind, 'unverified');
+    }
+  });
+});
+
+// ── R-L4 F12 — expense.get_detail::single_metric ("รายการที่ 3 คือร้านอะไรครับ") ──────────────────
+// Fixture shape copied from the real tool result (ExpenseGetDetailTool's success path,
+// erp-core-detail-tools.use-case.ts): ONE already-permission-checked record, never a page — so
+// (unlike F1/F8) there is no `truncated`/`completeness` case to guard against here.
+const EXPENSE_DETAIL_SOURCE: SourceRef = {
+  label: 'EXP-2026-0009', module: 'expenses', entityType: 'expense',
+  permissionChecked: true, webPath: '/companies/c1/expenses/e1',
+};
+const expenseDetailOutput = (data: Record<string, unknown>, asOf?: string): SpecialistOutput =>
+  readOutput('expense.get_detail', data, EXPENSE_DETAIL_SOURCE, asOf);
+const expenseDetailData = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  expenseDate: '2026-08-05T10:00:00.000Z', vendorName: 'ร้านสมใจ', status: 'CONFIRMED',
+  paymentStatus: 'PAID', grandTotalAmount: '900.00', ...over,
+});
+
+describe('R-L4 F12 expense.get_detail::single_metric — รายละเอียดค่าใช้จ่าย', () => {
+  it('states the Thai date, vendor, amount, document/payment status, source, as-of and link (Thai)', () => {
+    const r = formatPreparedSimpleRead(EXPENSE_DETAIL, expenseDetailOutput(expenseDetailData()), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind !== 'answer') return;
+    assert.match(r.replyText, /^ค่าใช้จ่าย: ร้านสมใจ วันที่ 5 สิงหาคม 2569 ยอด 900\.00 บาท/);
+    assert.match(r.replyText, /\nสถานะเอกสาร: ยืนยันแล้ว · สถานะการจ่าย: ชำระแล้ว/);
+    assert.match(r.replyText, /\nที่มา: EXP-2026-0009/);
+    assert.deepEqual(r.webLinks, [{ label: 'EXP-2026-0009', path: '/companies/c1/expenses/e1' }]);
+  });
+
+  it('answers in English with the same grounded values', () => {
+    const r = formatPreparedSimpleRead(EXPENSE_DETAIL, expenseDetailOutput(expenseDetailData()), EN);
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') {
+      assert.match(r.replyText, /^Expense: ร้านสมใจ, 2026-08-05, 900\.00 THB/);
+      assert.match(r.replyText, /\nDocument status: Confirmed · Payment status: Paid/);
+    }
+  });
+
+  it('names an unnamed vendor instead of leaving it blank', () => {
+    const r = formatPreparedSimpleRead(EXPENSE_DETAIL, expenseDetailOutput(expenseDetailData({ vendorName: null })), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') assert.match(r.replyText, /^ค่าใช้จ่าย: ไม่ระบุร้าน/);
+  });
+
+  it('states the category only when the tool names one', () => {
+    const withCategory = formatPreparedSimpleRead(EXPENSE_DETAIL,
+      expenseDetailOutput(expenseDetailData({ categoryName: 'อาหาร' })), TH);
+    assert.equal(withCategory.kind, 'answer');
+    if (withCategory.kind === 'answer') assert.match(withCategory.replyText, /\nหมวด: อาหาร/);
+    const without = formatPreparedSimpleRead(EXPENSE_DETAIL, expenseDetailOutput(expenseDetailData()), TH);
+    assert.equal(without.kind, 'answer');
+    if (without.kind === 'answer') assert.doesNotMatch(without.replyText, /\nหมวด:/);
+  });
+
+  it('item 1: states the own/related scope the same way the single-metric family does', () => {
+    const own = formatPreparedSimpleRead(EXPENSE_DETAIL, expenseDetailOutput(expenseDetailData({ accessScope: 'own' })), TH);
+    assert.equal(own.kind, 'answer');
+    if (own.kind === 'answer') assert.match(own.replyText, /\nขอบเขต: เฉพาะรายการของคุณ/);
+    const company = formatPreparedSimpleRead(EXPENSE_DETAIL, expenseDetailOutput(expenseDetailData({ accessScope: 'company' })), TH);
+    assert.equal(company.kind, 'answer');
+    if (company.kind === 'answer') assert.doesNotMatch(company.replyText, /ขอบเขต:/);
+  });
+
+  it('never fabricates for a malformed or incomplete shape', () => {
+    for (const broken of [
+      expenseDetailData({ expenseDate: undefined }), expenseDetailData({ expenseDate: 'not-a-date' }),
+      expenseDetailData({ grandTotalAmount: null }), expenseDetailData({ status: '' }),
+      expenseDetailData({ status: 42 }), expenseDetailData({ paymentStatus: undefined }),
+    ]) {
+      assert.equal(formatPreparedSimpleRead(EXPENSE_DETAIL, expenseDetailOutput(broken), TH).kind, 'unverified');
+    }
+  });
+});
+
+// ── R-L4 F13 — reimbursement.get_detail::single_metric ("ใบเบิกที่ 2 สถานะอะไร") ────────────────────
+// Fixture shape copied from the real tool result (ReimbursementGetDetailTool's success path,
+// erp-core-detail-tools.use-case.ts): ONE permission-scoped record, never a page.
+const REIMBURSEMENT_DETAIL_SOURCE: SourceRef = {
+  label: 'REQ-0002', module: 'reimbursements', entityType: 'reimbursement',
+  permissionChecked: true, webPath: '/companies/c1/reimbursements/r2',
+};
+const reimbursementDetailOutput = (data: Record<string, unknown>, asOf?: string): SpecialistOutput =>
+  readOutput('reimbursement.get_detail', data, REIMBURSEMENT_DETAIL_SOURCE, asOf);
+const reimbursementDetailData = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  requesterDisplayName: 'สมชาย', incurredDate: '2026-08-06', amount: '1500.00', status: 'PENDING_APPROVAL', ...over,
+});
+
+describe('R-L4 F13 reimbursement.get_detail::single_metric — รายละเอียดใบเบิก', () => {
+  it('states the requester, Thai date, amount, status, source, as-of and link (Thai)', () => {
+    const r = formatPreparedSimpleRead(REIMBURSEMENT_DETAIL, reimbursementDetailOutput(reimbursementDetailData()), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind !== 'answer') return;
+    assert.match(r.replyText, /^ใบเบิกจ่าย: สมชาย วันที่ 6 สิงหาคม 2569 ยอด 1,500\.00 บาท/);
+    assert.match(r.replyText, /\nสถานะ: รออนุมัติ/);
+    assert.match(r.replyText, /\nที่มา: REQ-0002/);
+    assert.deepEqual(r.webLinks, [{ label: 'REQ-0002', path: '/companies/c1/reimbursements/r2' }]);
+  });
+
+  it('answers in English with the same grounded values', () => {
+    const r = formatPreparedSimpleRead(REIMBURSEMENT_DETAIL, reimbursementDetailOutput(reimbursementDetailData()), EN);
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') {
+      assert.match(r.replyText, /^Reimbursement: สมชาย, 2026-08-06, 1,500\.00 THB/);
+      assert.match(r.replyText, /\nStatus: Pending approval/);
+    }
+  });
+
+  it('names an unnamed requester instead of leaving it blank', () => {
+    const r = formatPreparedSimpleRead(REIMBURSEMENT_DETAIL,
+      reimbursementDetailOutput(reimbursementDetailData({ requesterDisplayName: undefined })), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') assert.match(r.replyText, /^ใบเบิกจ่าย: ไม่ระบุผู้ขอ/);
+  });
+
+  it('renders every known status in the same Thai wording the web app already uses', () => {
+    const labels: Record<string, string> = {
+      DRAFT: 'ร่าง', PENDING_APPROVAL: 'รออนุมัติ', APPROVED: 'อนุมัติแล้ว', REJECTED: 'ปฏิเสธ',
+      CANCELLED: 'ยกเลิก', FINANCE_REVIEW: 'รอตรวจสอบการเงิน', READY_FOR_PAYMENT: 'พร้อมจ่าย',
+      PARTIALLY_PAID: 'จ่ายบางส่วน', PAID: 'จ่ายแล้ว', VOIDED: 'เพิกถอน',
+    };
+    for (const [status, label] of Object.entries(labels)) {
+      const r = formatPreparedSimpleRead(REIMBURSEMENT_DETAIL, reimbursementDetailOutput(reimbursementDetailData({ status })), TH);
+      assert.equal(r.kind, 'answer', status);
+      if (r.kind === 'answer') assert.match(r.replyText, new RegExp(`\\nสถานะ: ${label}$`, 'm'), status);
+    }
+  });
+
+  it('never fabricates for a malformed or incomplete shape', () => {
+    for (const broken of [
+      reimbursementDetailData({ incurredDate: undefined }), reimbursementDetailData({ incurredDate: 'bad-date' }),
+      reimbursementDetailData({ amount: null }), reimbursementDetailData({ status: '' }),
+      reimbursementDetailData({ status: 7 }),
+    ]) {
+      assert.equal(formatPreparedSimpleRead(REIMBURSEMENT_DETAIL, reimbursementDetailOutput(broken), TH).kind, 'unverified');
     }
   });
 });

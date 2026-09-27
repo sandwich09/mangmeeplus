@@ -555,7 +555,7 @@ export const aiGatewayConfigSchema = baseConfigSchema.extend({
   // code default and the UAT/production override use the same list (docs/specs/mangmee-ai-expense-
   // advisor-spec-th.md §5) — the four families already active plus list_recent::list, get_breakdown::
   // list, and both reimbursement families.
-  LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: z.string().default('sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric,expense.list_recent::list,expense.get_breakdown::list,reimbursement.list_pending_approvals::list,reimbursement.get_summary::single_metric'),
+  LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: z.string().default('sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric,expense.list_recent::list,expense.get_breakdown::list,reimbursement.list_pending_approvals::list,reimbursement.get_summary::single_metric,expense.get_detail::single_metric,reimbursement.get_detail::single_metric'),
   // Phase 6 secondary runtime experiments. RESERVED / INERT: these three flags parse and expose getters
   // but are NOT wired to any behavior yet — toggling them changes nothing at runtime. They exist so the
   // env contract is stable ahead of the wiring; keep them default-false and do not document them as active

@@ -222,14 +222,14 @@ function detailAnswerEnvelope(text: string) {
   return JSON.stringify({ answers: [{ index: 0, status: 'handled', text, sourceRefIds: ['expenses:expense:expense-detail-one'] }] });
 }
 
-async function runDetail(controls: string[], messageText: string) {
+async function runDetail(controls: string[], messageText: string, enabledDeterministicFamilies?: ReadonlySet<string>) {
   const queue = [...controls];
   const provider: IModelProvider = { async generateText(_input: ProviderInput): Promise<ProviderOutput> {
     return { ok: true, text: queue.shift() ?? '{}' };
   } };
   return runSemanticTurnV2({
     req: detailRequest(messageText), provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
-    publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+    publicLookupEnabled: false, approvedKnowledgeEnabled: false, enabledDeterministicFamilies,
     async invoke(): Promise<ToolResult> { return expenseGetDetailResult(); },
   });
 }
@@ -255,5 +255,31 @@ describe('semantic turn v2: item 2 (spec §3 row 8) small user-typed ordinals ar
     const result = await runDetail([DETAIL_CONTROL_CALL, detailAnswerEnvelope(text)], 'รายการที่ 3 คือร้านอะไรครับ');
     assert.notEqual(result.semanticCoverage?.[0]?.status, 'handled');
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
+  });
+});
+
+// ── Item 3 (spec §3 row 8) — expense.get_detail::single_metric as the deterministic fallback ──────
+// Same recovery C1(c)/(d) already proves for expense.list_recent: grounding-exhausted (or otherwise
+// uncitable) composition never shows the raw rejection or lingers as `needs_user` — it renders the
+// SAME verified, model-free formatter the prepared lane trusts, gated by the SAME operator allowlist.
+describe('semantic turn v2: item 3 (spec §3 row 8) expense.get_detail as the deterministic fallback', () => {
+  const INVENTED_DETAIL = 'รายการที่ 3 ยังค้างจ่ายอีกประมาณ 3,500 บาทค่ะ';
+
+  it('renders expense.get_detail::single_metric when its family is enabled, never `needs_user`', async () => {
+    const result = await runDetail([DETAIL_CONTROL_CALL, detailAnswerEnvelope(INVENTED_DETAIL)],
+      'รายการที่ 3 คือร้านอะไรครับ', new Set(['expense.get_detail::single_metric']));
+    const coverage = result.semanticCoverage?.[0];
+    assert.equal(coverage?.status, 'handled');
+    assert.equal(coverage?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
+    assert.match(result.replyText, /ค่าใช้จ่าย: ไม่ระบุร้าน วันที่ 14 กันยายน 2569 ยอด 900\.00 บาท/);
+    assert.ok(!result.replyText.includes('3,500'));
+  });
+
+  it('falls back to the honest §8 terminal (unsupported, not needs_user) when no family is enabled', async () => {
+    const result = await runDetail([DETAIL_CONTROL_CALL, detailAnswerEnvelope(INVENTED_DETAIL)], 'รายการที่ 3 คือร้านอะไรครับ');
+    const coverage = result.semanticCoverage?.[0];
+    assert.equal(coverage?.status, 'unsupported');
+    assert.notEqual(coverage?.status, 'needs_user');
+    assert.equal(coverage?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
   });
 });

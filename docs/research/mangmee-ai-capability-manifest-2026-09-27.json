@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "016b43c69a88dbf8596106c366651ab95bc88e43",
-  "sourceRevision": "97af794df325428b21b7e1f7fe541cde2b969a49",
-  "checkoutBranch": "claude/mangmee-ai-advisor-20260927",
-  "checkoutDirty": false,
+  "sourceRevision": "3691605c819a561793dee5005e6d1c79cd727c30",
+  "checkoutBranch": "claude/mangmee-ai-advisor-fixes3",
+  "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -169,7 +169,7 @@
     },
     {
       "path": "packages/config/src/index.ts",
-      "sha256": "e810f30f907b1a89b0682fb700929a7ed650176e5e8c1e50505d3177037936ef"
+      "sha256": "12555d439cd0f6deed69d5f4364ede807b0c0ea07e7052214523f26c0dcf9654"
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-27T21:38:09.436Z",
-  "manifestDigest": "2fae5c217dff73c0091130634a6fb15371183fe54676d4b323e70a7678424125"
+  "generatedAt": "2026-09-27T22:56:41.566Z",
+  "manifestDigest": "c4e136d4e6930c525d1a038429fe57538c30f654d6f2e3e96e91584c9c30d676"
 }

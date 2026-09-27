@@ -632,7 +632,8 @@ describe('aiGatewayConfigSchema – item 10B new keys', () => {
     assert.equal(parsed.LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES,
       'sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,'
       + 'expense.get_daily_closing::single_metric,expense.list_recent::list,expense.get_breakdown::list,'
-      + 'reimbursement.list_pending_approvals::list,reimbursement.get_summary::single_metric');
+      + 'reimbursement.list_pending_approvals::list,reimbursement.get_summary::single_metric,'
+      + 'expense.get_detail::single_metric,reimbursement.get_detail::single_metric');
     assert.equal(parsed.LINE_AI_PROVIDER_CLIENT_REUSE_ENABLED, false);
     assert.equal(parsed.LINE_AI_AGENTCORE_SESSION_AFFINITY_ENABLED, false);
     assert.equal(parsed.LINE_AI_SMALL_ROUTER_SHADOW_ENABLED, false);
