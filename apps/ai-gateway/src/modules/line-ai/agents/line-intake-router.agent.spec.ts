@@ -38,6 +38,18 @@ function documentClassification(overrides: Partial<BusinessDocumentClassificatio
 }
 
 describe('LINE intake router – routeIntake', () => {
+  it('requires consistent canonical simple-read filters and preserves candidate month-to-date bounds', () => {
+    const prompt = intakeRouterSystemPrompt({ fusedPlan: true }, false, true);
+    assert.match(prompt, /requestedFilters and preparedPlan\.proposedCalls\[0\]\.input MUST carry the same canonical business filter keys and exact scalar values/);
+    assert.match(prompt, /EITHER periodKey OR the complete fromDate\/toDate pair, never both/);
+    assert.match(prompt, /month-to-date or spending so far/);
+    assert.match(prompt, /end clamped to today; do not widen it to the whole month through periodKey/);
+    assert.match(prompt, /omit preparedPlan and retain the full semantic request for normal planning/);
+    assert.match(prompt, /never overrides evidence or source validation/);
+    assert.doesNotMatch(intakeRouterSystemPrompt({ fusedPlan: true }, false, false), /same canonical business filter/);
+    assert.doesNotMatch(intakeRouterSystemPrompt({}, false, true), /same canonical business filter/);
+  });
+
   it('offers exact full-part refs for Thai text and surrogate pairs without repairing invalid model evidence', async () => {
     // Real Sonnet NAT-01 failed twice with endUtf16=34 although this exact typo-preserving input is 32.
     for (const rawText of ['เดือนนี้ค่าไช้จ่ายไปเท่าไหร่แล้ว', '😀 เดือนนี้ค่าไช้จ่ายไปเท่าไหร่แล้ว']) {

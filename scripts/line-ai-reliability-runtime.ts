@@ -245,6 +245,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
   const { AppModule } = requireApi(resolve(compiled, 'app.module.js'));
   const originalFetch = globalThis.fetch;
   let app: any, client: any, current: ReliabilityFixture | undefined, snapshot: RuntimeSourceSnapshot | undefined, repeat = 0, unsafeToReset = false;
+  let processingWebhook = 0;
   let active: { acceptedAt: number; eventIds: string[]; before: Record<string, JsonRow[]>; usageIds: Set<string>; tools: ReliabilityTurnTrace['tools']; results: ToolResult[];
     responses: LineAiTurnResponse[]; deliveryCoverage: LineAiSemanticCoverageV2[] | null; missing: string[]; requests: string[]; completedAt: number | null; errors: string[]; critical: string[]; receipts: RuntimeWireReceipt[];
     toolResults: RuntimeTurnEvidence['toolResults']; gatewayResponses: RuntimeTurnEvidence['gatewayResponses']; reviewBefore: RuntimeReviewState } | undefined;
@@ -258,7 +259,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
     for (const table of EFFECT_TABLES) if (tables.has(table)) output[table] = await client.$queryRawUnsafe(`SELECT row_to_json(t) AS row FROM "${table}" t`).then((rows: any[]) => rows.map(row => row.row));
     return output;
   };
-  const pendingWork = async () => (await client.lineDocumentQaJob.count({ where: { status: { in: ['QUEUED', 'READING'] } } }))
+  const pendingWork = async () => processingWebhook + (await client.lineDocumentQaJob.count({ where: { status: { in: ['QUEUED', 'READING'] } } }))
     + (await client.expenseCaptureReadJob.count({ where: { status: { in: ['QUEUED', 'PREPARING', 'READING'] } } }));
   const readReviewState = async (): Promise<RuntimeReviewState> => {
     assert.ok(current, 'REPLAY_NO_CURRENT_OWNER');
@@ -385,6 +386,12 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         state?.toolResults.push(structuredClone({ tool: dto.toolName, input: dto.input, startedAtMs, completedAtMs: Date.now(), failed: true })); throw error; } });
       const gateway = app.get(AiGatewayClient);
       const webhook = app.get(ProcessLineWebhookUseCase);
+      // response_ready clears the replay payload before delivery finishes. Do not move the
+      // active receipt owner to the next turn while the real buffer handler is still running.
+      for (const method of ['execute', 'executeReceiptUpload']) instrumentRuntimeMethod(webhook, method, async (original, args) => {
+        processingWebhook++;
+        try { return await original(...args); } finally { processingWebhook--; }
+      });
       instrumentRuntimeMethod(webhook, 'sendMessagesV2', async (original, args) => {
         const result = await original(...args);
         const coverage = webhook.semanticDelivery.get(args[0]);
