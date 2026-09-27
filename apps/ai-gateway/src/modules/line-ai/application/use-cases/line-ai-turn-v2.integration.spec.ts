@@ -449,7 +449,8 @@ it('does not let model-authored product buttons escape the reviewed-help boundar
   assert.doesNotMatch(run.response.replyText, /MAGIC_AUTO_APPROVE_ALL|อนุมัติจ่ายให้อัตโนมัติ/);
   assert.match(run.response.replyText, /ยังไม่มีคู่มือที่ตรวจสอบแล้ว/);
   assert.match(run.response.replyText, /กำไรกับเงินสดเป็นคนละมุมมอง/);
-  assert.deepEqual(run.response.semanticCoverage?.map(item => item.status), ['needs_user', 'handled']);
+  // Spec R-L3: "no reviewed guide yet" is a statement, not a question to the user, so it is terminal.
+  assert.deepEqual(run.response.semanticCoverage?.map(item => item.status), ['unsupported', 'handled']);
   assert.equal(run.apiCalls.length, 0);
   assert.equal(run.events.filter(event => event === 'vendor:answer').length, 1, 'the unresolved general clause still composes once');
 });
