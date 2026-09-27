@@ -309,6 +309,8 @@ Notifier first preparation still calls existing owner operations only where curr
 
 ## 9. Rollout and rollback sequence
 
+Owner update 2026-09-27: the parent spec overrides the initial OFF/test-cohort rollout below. Delivery and terminal replay now default ON; empty company/channel rollout lists impose no extra restriction on authorized admission. Nonempty lists still restrict, explicit OFF still pauses new work, and v1/v2 readers, migration/contract compatibility, current authorization, maintenance suppression and release acceptance remain mandatory. Public/general conversation here is not public web lookup, which stays OFF.
+
 1. Add schema and code that reads v1/v2 but writes v1; retain all v1 payload/hash semantics. Deploy these readers to every API and worker before enabling any v2 writer. Do not backfill accepted/UNKNOWN v1 payloads into newly rendered answers.
 2. Add config `LINE_AI_DELIVERY_PLAN_V2_PUBLIC_CHANNEL_IDS` (empty by default, validated messaging-channel allowlist) for stateless/public v2 admission; known-company private admission uses the company allowlist. All routes require the same versioned readers. Add config `LINE_AI_DELIVERY_PLAN_V2_ENABLED=false` and `LINE_AI_DELIVERY_PLAN_V2_WRITE_COMPANY_IDS` (explicit company allowlist). Reader support is unconditional after migration; disabling writes must never stop recovery of existing v2 plans. Existing terminal-replay feature must be enabled for an allowlisted company before v2 writes can start.
 3. Shadow-plan synthetic/regression traffic without sending extra messages. Validate coverage, controls, bounds, authorization and payload hash. Compare canonical answer to visible text; no provider shadow requests.

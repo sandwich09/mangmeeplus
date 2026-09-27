@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
+  isLineAiRolloutAllowed,
   validateProductionConfig,
   redactLogValue,
   SENSITIVE_LOG_KEY_PATTERN,
@@ -705,9 +706,9 @@ describe('aiGatewayConfigSchema – item 10B new keys', () => {
 
 describe('apiConfigSchema LINE draft edit rollout gate (S-4)', () => {
   const base = { APP_ENV: 'local', SERVICE_NAME: 'api', DATABASE_URL: 'postgresql://local', S3_BUCKET: 'local' };
-  it('defaults the LINE draft edit lane off', () => {
-    assert.equal(apiConfigSchema.parse(base).LINE_AI_DRAFT_EDIT_ENABLED, false);
-    assert.equal(aiGatewayConfigSchema.parse({ ...base, SERVICE_NAME: 'ai-gateway' }).LINE_AI_DRAFT_EDIT_ENABLED, false);
+  it('defaults the LINE draft edit lane on in both services', () => {
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_DRAFT_EDIT_ENABLED, true);
+    assert.equal(aiGatewayConfigSchema.parse({ ...base, SERVICE_NAME: 'ai-gateway' }).LINE_AI_DRAFT_EDIT_ENABLED, true);
   });
   it('accepts an explicit UAT enable on both services', () => {
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_DRAFT_EDIT_ENABLED: 'true' }).LINE_AI_DRAFT_EDIT_ENABLED, true);
@@ -715,6 +716,11 @@ describe('apiConfigSchema LINE draft edit rollout gate (S-4)', () => {
       aiGatewayConfigSchema.parse({ ...base, SERVICE_NAME: 'ai-gateway', LINE_AI_DRAFT_EDIT_ENABLED: 'true' }).LINE_AI_DRAFT_EDIT_ENABLED,
       true,
     );
+  });
+  it('preserves an explicit off in both services', () => {
+    for (const schema of [apiConfigSchema, aiGatewayConfigSchema]) {
+      assert.equal(schema.parse({ ...base, LINE_AI_DRAFT_EDIT_ENABLED: 'false' }).LINE_AI_DRAFT_EDIT_ENABLED, false);
+    }
   });
   it('refuses a non-boolean spelling rather than treating it as truthy', () => {
     assert.equal(apiConfigSchema.safeParse({ ...base, LINE_AI_DRAFT_EDIT_ENABLED: 'yes' }).success, false);
@@ -806,10 +812,8 @@ describe('apiConfigSchema LINE AI latency/autonomy Phase-1 flags', () => {
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED: 'false' }).LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, false);
   });
 
-  it('durable terminal-outcome replay defaults off and opts in only on an explicit boolean', () => {
-    // Off is the whole safety property of this WP: no outcome row is written, so nothing can be
-    // replayed and the sweep keeps selecting exactly the rows it selects today.
-    assert.equal(apiConfigSchema.parse(base).LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED, false);
+  it('durable terminal-outcome replay defaults on and honors an explicit off', () => {
+    assert.equal(apiConfigSchema.parse(base).LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED, true);
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED: 'true' }).LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED, true);
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED: 'false' }).LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED, false);
   });
@@ -1676,10 +1680,10 @@ describe('LINE reliability v2 rollout configuration', () => {
   ] as const;
 
   for (const [service, schema] of [['API', apiConfigSchema], ['Gateway', aiGatewayConfigSchema]] as const) {
-    it(`${service} defaults every new writer and capability off with no admitted owners`, () => {
+    it(`${service} defaults supported capabilities on, public lookup off, and rollout restrictions empty`, () => {
       const config = schema.parse(base);
-      assert.equal(config.LINE_AI_RELIABILITY_V2_MODE, 'off');
-      for (const key of flags) assert.equal(config[key], false, key);
+      assert.equal(config.LINE_AI_RELIABILITY_V2_MODE, 'on');
+      for (const key of flags) assert.equal(config[key], key !== 'LINE_AI_PUBLIC_LOOKUP_ENABLED', key);
       for (const key of allowlists) assert.deepEqual(config[key], [], key);
       for (const key of flags) {
         assert.equal(schema.parse({ ...base, [key]: 'false' })[key], false, key);
@@ -1688,7 +1692,7 @@ describe('LINE reliability v2 rollout configuration', () => {
       }
     });
 
-    it(`${service} validates exact allowlists without wildcard or blank admission`, () => {
+    it(`${service} validates optional exact rollout restrictions without wildcards or malformed entries`, () => {
       for (const key of allowlists) {
         assert.deepEqual(schema.parse({ ...base, [key]: ' company-A,1234567890,company-A ' })[key], ['company-A', '1234567890']);
         assert.deepEqual(schema.parse({ ...base, [key]: '  ' })[key], []);
@@ -1699,6 +1703,7 @@ describe('LINE reliability v2 rollout configuration', () => {
     });
 
     it(`${service} keeps shadow distinct and rejects unknown mode values`, () => {
+      assert.equal(schema.parse({ ...base, LINE_AI_RELIABILITY_V2_MODE: 'off' }).LINE_AI_RELIABILITY_V2_MODE, 'off');
       assert.equal(schema.parse({ ...base, LINE_AI_RELIABILITY_V2_MODE: 'shadow' }).LINE_AI_RELIABILITY_V2_MODE, 'shadow');
       assert.equal(schema.parse({ ...base, LINE_AI_RELIABILITY_V2_MODE: 'on' }).LINE_AI_RELIABILITY_V2_MODE, 'on');
       assert.equal(schema.safeParse({ ...base, LINE_AI_RELIABILITY_V2_MODE: 'enabled' }).success, false);
@@ -1715,6 +1720,19 @@ describe('LINE reliability v2 rollout configuration', () => {
     const gateway = aiGatewayConfigSchema.parse(env);
     for (const key of ['LINE_AI_RELIABILITY_V2_MODE', ...flags, ...allowlists] as const) {
       assert.deepEqual(api[key], gateway[key], key);
+    }
+  });
+});
+
+
+describe('LINE AI rollout restriction', () => {
+  it('allows an authorized nonblank ID when unrestricted and honors exact restrictions', () => {
+    assert.equal(isLineAiRolloutAllowed([], 'company-A'), true);
+    assert.equal(isLineAiRolloutAllowed([], ''), false);
+    assert.equal(isLineAiRolloutAllowed([], '  '), false);
+    assert.equal(isLineAiRolloutAllowed(['company-A'], 'company-A'), true);
+    for (const id of ['company-B', 'company-a', ' company-A', 'company-A ']) {
+      assert.equal(isLineAiRolloutAllowed(['company-A'], id), false);
     }
   });
 });

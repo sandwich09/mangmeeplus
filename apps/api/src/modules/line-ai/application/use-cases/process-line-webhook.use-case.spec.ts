@@ -5744,6 +5744,21 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
   }
   const P = { permissions: ['line.ai.query', 'expense.review'] };
 
+  it('advertises substitute semantics for a bound v2 turn while legacy off stays off', async () => {
+    for (const [bound, mode, expected] of [[true, 'off', true], [false, 'off', false], [false, 'primary', true]] as const) {
+      const { prisma } = makePrisma();
+      const { useCase, intakeRequests } = makeUseCase(prisma, { ...P, config: { lineAiSubstituteSemanticRoutingMode: mode }, intakeRouteFn: READ_ROUTE });
+      const handler = useCase as any;
+      const event = { ...BASE_EVENT, webhookEventId: `semantic-cap-${bound}-${mode}` };
+      if (bound) handler.boundConversations.set(event, {});
+      handler.prepareTextGrantV2 = async () => undefined;
+      handler.reliabilityContext = async () => ({});
+      await handler.tryRouteIntake({ event, requestId: 'request', companyId: 'company-1', userId: 'user-1', permissions: P.permissions, messageText: 'ทำใบทดแทน' });
+      assert.equal(intakeRequests.length, 1);
+      assert.equal(intakeRequests[0].capabilities.substituteSemantic, expected);
+    }
+  });
+
   it('PRIMARY: a semantic SUBSTITUTE route executes the continuation exactly once (fresh, no consume)', async () => {
     const { prisma } = makePrisma();
     const sub = makeSub();

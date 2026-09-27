@@ -197,11 +197,20 @@ def native_config(target, service, env, source, directory):
     return config
 
 
-def make_overrides(target, source, artifact, configured):
+def make_overrides(target, source, artifact, configured, captured=None):
     overrides = {s: dict(configured[s]) for s in SERVICES}
     for s, values in target.get('overrides', {}).items():
         require(s in SERVICES, 'Unknown override service')
         overrides[s].update(values)
+    # Full releases share the existing Gateway approval decision with an older API baseline.
+    # Explicit API restrictions (including false/empty) win; no approval is invented here.
+    # Hotfix callers omit captured to preserve their exact serving configuration.
+    if captured is not None:
+        api = dict(captured['api-web'], **overrides['api-web'])
+        gateway = dict(captured['ai-gateway'], **overrides['ai-gateway'])
+        for key in ('APPROVED_AI_MODEL_IDS', 'AI_GLOBAL_INFERENCE_PROFILE_APPROVED', 'AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF'):
+            if key not in api and key in gateway:
+                overrides['api-web'][key] = gateway[key]
     base = target['publicUrl'].rstrip('/')
     api, ai = target['apiInternalUrl'], target['aiInternalUrl']
     if target['kind'] == 'dev':
@@ -749,7 +758,9 @@ class Release:
             require(config_path.exists(), 'Release command/config must be committed to main before an environment deployment')
             self.receipt['controllerConfigSha256'] = hashlib.sha256(config_path.read_bytes()).hexdigest()
             configured = read(config_path)[self.args.environment]
-        overrides = make_overrides(self.target,self.build['sourceCommit'],self.build['agentcore']['sha256'],configured)
+        captured = None if getattr(self, 'release_path', 'main') == 'hotfix' else {
+            s: read(capture/(s+'.resolved.json')) for s in SERVICES}
+        overrides = make_overrides(self.target,self.build['sourceCommit'],self.build['agentcore']['sha256'],configured,captured)
         if getattr(self, 'release_path', 'main') != 'hotfix':
             overrides['api-web'].update(self.postmark_configuration(capture))
         self.secrets.update(v for values in overrides.values() for v in values.values() if isinstance(v,str) and len(v)>=8)

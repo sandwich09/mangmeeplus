@@ -1,13 +1,13 @@
 # Implementation index: ลงมือแก้ AI มั่งมี v2.4
 
 วันที่: 2026-09-27\
-สถานะ: **Implemented and locally verified, activation remains OFF; no deployed-quality claim**\
+สถานะ: **Built-in capabilities default ON; public lookup deferred; deployment and real-provider quality unverified**\
 Implementation baseline: `8b05ed33` (isolated `codex/mangmee-ai-reliability-implementation-20260927`); original dirty checkout untouched\
 Parent: [plan](mangmee-ai-understanding-and-advisor-reliability-plan-2026-09-26.md), [spec](../specs/mangmee-ai-understanding-and-advisor-reliability-spec-th.md)
 
 ## 1. วิธีเริ่มงานและนิยามว่า “ครบ”
 
-ใช้เอกสารนี้เป็น implementation entry point ไม่ต้องออกแบบสามช่องว่างเดิมใหม่: full input/evidence, durable multipart delivery และ reimbursement DRAFT writer มี wire/schema/transaction/state/test contract แล้วใน appendices ด้านล่าง รวม active scope R1/R2/R3 ทั้ง 17 capabilities และ 15 W packages; C13/W10/เคสเสียง E18/E19 ยังพัก Financial Profile/Services Needs ยังไม่รวม
+ใช้เอกสารนี้เป็น implementation entry point ไม่ต้องออกแบบสามช่องว่างเดิมใหม่: full input/evidence, durable multipart delivery และ reimbursement DRAFT writer มี wire/schema/transaction/state/test contract แล้วใน appendices ด้านล่าง Implementation เดิมครอบคลุม 17 capabilities และ 15 W packages; owner update 2026-09-27 พัก C09/W09 public lookup เพิ่ม ทำให้ rollout ปัจจุบันเหลือ 16 capabilities; C13/W10/เคสเสียง E18/E19 ยังพัก Financial Profile/Services Needs ยังไม่รวม
 
 “ครบ” ในที่นี้หมายถึง **ขอบเขตที่ตกลงและข้อบกพร่องที่ตรวจพบมีเจ้าของงานและเกณฑ์ตรวจทั้งหมด** ไม่ได้หมายถึงพิสูจน์ว่าไม่มีบัคอื่นซ่อนอยู่ ข้อค้นพบใหม่จาก implementation/E2E ต้องเพิ่มใน issue map โดยไม่ลบทิ้งหรือเปลี่ยน oracle เพื่อให้ผ่าน สถานะของทุกรายการเริ่ม `planned`; ปิดเป็น `verified` ได้เมื่อมี exact commit/config และหลักฐานตามระดับที่กำหนด
 
@@ -131,21 +131,21 @@ Schema inventory: W02conversation+pendingmedia, W13deliverychild, W06Creimbursem
 
 เปิดทีละoperation familyหลังreader/schema+permissionparity: semantic v2, context v2, fact v2, delivery v2 เป็นR1 coordinatedset; R2 reimbursementdraft/generalQA/knowledge/publicและR3preferencesมีeffectiveflagแยก Confignames finalใช้existingnamespaceในpackages/config ไม่เปิดด้วยenvstringที่ไม่มีparser/default/test ทั้งAPIและGatewaymustnegotiatecontract/configdigests Unknownflag/versionfailclosedเฉพาะoperation ไม่disablegeneralทั้งหมด
 
-Exact configuration additions ใน `packages/config/src/index.ts`/AppConfigService (API และ Gateway parsers ใช้ enum/default เดียวกัน):
+Owner update 2026-09-27 supersedes the earlier OFF rollout defaults: no manual secret/flag setup for built-in AI capabilities; public lookup remains deferred. See the parent spec owner update. Exact configuration additions ใน `packages/config/src/index.ts`/AppConfigService (API และ Gateway parsers ใช้ enum/default เดียวกัน):
 
 | Config | Default / activation rule |
 |---|---|
-| `LINE_AI_RELIABILITY_V2_MODE` | `off` enum off/shadow/on; shadow เป็น validation ของ existing artifacts ไม่ยิง paid model ซ้ำ ไม่สร้างfinancialstateใหม่ |
-| `LINE_AI_RELIABILITY_V2_COMPANY_IDS` | empty comma-separated validated company IDs; private v2 admissionต้องon+allowlisted+matchingreader/profiledigest |
-| `LINE_AI_DELIVERY_PLAN_V2_ENABLED` / `LINE_AI_DELIVERY_PLAN_V2_WRITE_COMPANY_IDS` | false/empty ตามdelivery appendix; readers/recoveryไม่ปิดตามnewwriteflag |
-| `LINE_AI_DELIVERY_PLAN_V2_PUBLIC_CHANNEL_IDS` | empty validated messaging-channel allowlist for stateless/public v2; no privatecontext/company inferred to qualify |
-| `LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED` | false ตามbusiness appendix; onยังต้องผ่านoperationpermission/quiesce/previewpolicy |
-| `LINE_AI_DOCUMENT_QA_ENABLED` | false; onเมื่อQAreader/model/profile/storage/currentaccessผ่านG7 |
-| `LINE_AI_APPROVED_KNOWLEDGE_ENABLED` | false; approvedmanifestdigestต้องload/validateสำเร็จ; basic capabilityhelpยังทำงาน |
+| `LINE_AI_RELIABILITY_V2_MODE` | `on` enum off/shadow/on; explicit off/shadow do not admit v2; shadow has no paid comparison execution |
+| `LINE_AI_RELIABILITY_V2_COMPANY_IDS` | empty = no cohort restriction; nonempty exact validated company IDs restrict admission; matching reader/profile and current permissions remain required |
+| `LINE_AI_DELIVERY_PLAN_V2_ENABLED` / `LINE_AI_DELIVERY_PLAN_V2_WRITE_COMPANY_IDS` | true / empty = unrestricted authorized company cohort; readers/recoveryไม่ปิดตามnewwriteflag |
+| `LINE_AI_DELIVERY_PLAN_V2_PUBLIC_CHANNEL_IDS` | empty = no extra cohort restriction; nonempty validated IDs restrict stateless/general channels; primary-channel/current admission still mandatory, no private context inferred |
+| `LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED` | true; ยังต้องผ่าน operation permission/quiesce/preview/confirm policy |
+| `LINE_AI_DOCUMENT_QA_ENABLED` | true; QA reader/model/profile/storage/current access still required |
+| `LINE_AI_APPROVED_KNOWLEDGE_ENABLED` | true; approved manifest digest/content must load and validate; DRAFT cards remain unusable; basic capability help works |
 | `LINE_AI_PUBLIC_LOOKUP_ENABLED` | false; approvedconfiguredprovider/model/region+tariff+sourcepolicyบังคับ ไม่เปิดจากflagอย่างเดียว |
-| `LINE_AI_PREFERENCES_ENABLED` | false; owner/cas/migration/noticeพร้อมก่อนR3 |
+| `LINE_AI_PREFERENCES_ENABLED` | true; current owner/CAS/migration/notice remain required |
 
-Existing `LINE_AI_DRAFT_EDIT_ENABLED`, reimbursementsemanticmode, intake/advisor/orchestration/native/ledger/replay flagsยังเป็นgatesเดิม ไม่overrideด้วยnewflag. Runtimeeffective manifestประกาศintersectionของactualflags+contract+profile; disagreement=`schema_unsupported`/temporarily_unavailableเฉพาะcapability Privatev2 admissionrequiresdeliveryv2writesready ไม่เปิดsenderก่อนallreaders. Public/stateless generalใช้verifiedadmissionscopeตามdeliveryappendix ไม่สร้างcompanyจากallowlistหรือโหลดprivatecontextเพื่อผ่านflag
+Existing `LINE_AI_DRAFT_EDIT_ENABLED` (API/Gateway/AgentCore) and `LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED` also default true. Other reimbursementsemanticmode, intake/advisor/orchestration/native/ledger gates keep their current deployment policy; model/provider credentials and approvals are not feature toggles. Runtimeeffective manifestประกาศintersectionของactualflags+contract+profile; disagreement=`schema_unsupported`/temporarily_unavailableเฉพาะcapability Privatev2 admissionrequiresdeliveryv2writesready ไม่เปิดsenderก่อนallreaders. Public/stateless generalใช้verifiedadmissionscopeตามdeliveryappendix ไม่สร้างcompanyจากallowlistหรือโหลดprivatecontextเพื่อผ่านflag
 
 Rollbackลำดับ: stopnewadmission/feature → keepcompatibleworkers/replayers → drainหรือterminallyclassifystoredjobs/UNKNOWN → ปิดnewreadpathหลังไม่มีactiveversion ห้ามrevertoldbinaryที่อ่านv2outcomeไม่ได้หรือลบcommittedproof การปิดfeatureไม่ย้อนbusinesscommit; draft update retainedpermission policyตามbusinessappendix
 
@@ -164,7 +164,7 @@ Machine-readable coverage: [implementation readiness map](../evidence/mangmee-ai
 
 ## 8. Implementation candidate closure — 2026-09-27
 
-The active R1/R2/R3 implementation is closed for final candidate verification; release activation is not accepted. The task uses a dedicated local PostgreSQL database and Redis; no cloud state, live provider or native LINE acceptance has been inferred from these tests. New activation flags remain off. `AI_BUDGET_V2_SUPPORTED=true` now advertises the implemented protocol; it does not enable issuance or satisfy provider/model quality acceptance. Two compiled Nest apps have exercised the authenticated capability, intake ordinal0, narrowed answer ordinal1, PostgreSQL reserve/settle and no-redispatch replay with an explicitly synthetic provider. The exact frozen commit/config and final registered run belong to the task memory and candidate evidence; local code closure does not substitute for those checks. See [task memory](../agent-memory/mangmee-ai-reliability-implementation-2026-09-27.md) for commands/logs and parent-owned evidence.
+The active R1/R2/R3 implementation is closed for final candidate verification; release activation is not accepted. The task uses a dedicated local PostgreSQL database and Redis; no cloud state, live provider or native LINE acceptance has been inferred from these tests. That initial candidate used OFF defaults. The later owner update above enables built-in defaults and leaves public lookup off; the historical test evidence is unchanged. `AI_BUDGET_V2_SUPPORTED=true` now advertises the implemented protocol; it does not enable issuance or satisfy provider/model quality acceptance. Two compiled Nest apps have exercised the authenticated capability, intake ordinal0, narrowed answer ordinal1, PostgreSQL reserve/settle and no-redispatch replay with an explicitly synthetic provider. The exact frozen commit/config and final registered run belong to the task memory and candidate evidence; local code closure does not substitute for those checks. See [task memory](../agent-memory/mangmee-ai-reliability-implementation-2026-09-27.md) for commands/logs and parent-owned evidence.
 
 The 22 concrete implementation seams below record implementation closure and the remaining external acceptance gates. “Local tests” means deterministic or isolated PostgreSQL evidence only; it does not close model quality, native LINE, content approval or deployment gates.
 
@@ -185,7 +185,7 @@ The 22 concrete implementation seams below record implementation closure and the
 | 13 W07B job/reader | Durable question-only job, original budget transfer, lease/source/owner checks, raster reader; Original-authority/per-clause question digest, exact offered question coverage, actual PG job and issuer checks | Native provider fixtures and optional PDF adapter feasibility; no native PDF support claimed |
 | 14 W07B media/transport | Pre-capture question route, generic ACTIVE attachment, same-file/page follow-up, explicit selected-file set, foreground/async recovery and cancel controls; 16 QA/task bridge tests + actual PG context and pending-media checks; durable job/task binding survives recovery, cancellation fences sources | Native LINE/background timing acceptance; independent non-file clauses remain visibly pending within the two-call QA task limit |
 | 15 W08 approved help | Bounded 12-card pack, immutable source/body hashes, same-call selection, render-time rights; focused tests | Pack is DRAFT; immutable help rendering prevents invented product buttons. Source/content approval plus Recall@5 and actual mixed-help quality remain activation gates |
-| 16 W09 public lookup | API admission, isolated provider payload, same-context hosted execution, actual units/pinned tariff; usecase integration and policy/citation tests | Real provider freshness/citations/cost/native LINE acceptance |
+| 16 W09 public lookup | Implementation retained; default OFF per owner update 2026-09-27 | Deferred from current rollout; keep disabled negative controls, no paid public lookup |
 | 17 W11 authority/budget | API durable issuer/reservation atomic cursor/profile/repair, tariff pin, transfer, old/new controls; real PG tests | Compiled two-app protocol and broad local regressions pass; actual rendered-model capacity measurements and activation approval remain gated |
 | 18 W11 provider completion | Completion/argument checks, usage on failure, exact rendered bounds/echo, post-reserve deadlines; wrapper tests | Real provider completion/refusal/timeout/usage/SDK retry acceptance and supported model review |
 | 19 W12 preferences | Explicit list/set/delete/expiry with full owner/CAS and fixed style keys | Explicit expiry/delete/replay and current-owner PostgreSQL checks exist; deployed privacy UX remains gated. No implicit financial profile |
@@ -212,3 +212,12 @@ No known implementation gap remains in the active scope after the final Astra so
 
 
 Final local verification: full API package **8,620 passed, zero failed, 12 reported environment-specific skips**; full Gateway package **1,367 passed, zero skips**; registered whole-chain groups **4/5/80/272/4/66/1,712/461 passed**, zero skips; relevant PostgreSQL **59 passed**, real Redis **37 passed**, and separate replay-reset PostgreSQL safety proof **1 passed**, zero skips. These groups overlap and must not be summed as a unique total. API/Gateway/web and replay TypeScript checks, contracts/config/API/Gateway/AgentCore builds and fresh256-migration replay pass. Runtime reset only clears the dedicated synthetic database on its locked connection; production append-only triggers remain unchanged and are proven active before business execution. The clean-source webhook opt-out proof accepts the expected response withzero provider calls/effects/cost. This does not certify real-model intelligence, native LINE delivery or production latency.
+
+
+## 9. Owner-requested activation follow-up — 2026-09-27
+
+The follow-up removes manual feature/cohort setup for the existing configured AI service, preserves explicit operational OFF overrides and exact optional cohort restrictions, and keeps public lookup OFF. It also aligns the separately deployed AgentCore draft-edit probe, receipt evidence readers, notifier, buffering and private/public admission. Public payer identity remains available for budget/debounce accounting; it cannot bypass a private company restriction. Bound v2 substitute routing is advertised consistently with its actual execution lane even when the legacy substitute mode is OFF.
+
+The dependency audit found that the deployed model configured in repository deployment scripts (`global.anthropic.claude-sonnet-4-6`) was missing from v2 capacity/tariff negotiation. The follow-up adds that exact model with the existing global-profile approval/reference and provider/model/region checks retained. Bedrock's official model card supports its capacity; integration remains capped at 200,000 context tokens to stay within the reviewed standard-context tariff. This is compatibility evidence, not a measurement of model quality or speed. See [follow-up memory](../agent-memory/mangmee-ai-default-activation-2026-09-27.md) for verification and merge receipts.
+
+Human review starts at the [review packet](../research/mangmee-ai-human-review-2026-09-27-th.md). The existing 225-case corpus and synthetic assets remain DRAFT; no reviewer approval or real-provider result is fabricated. Current rollout excludes C09 public-lookup success cases; a versioned scoped evaluation must preserve disabled-feature negative controls and cannot silently drop failed attempts from its denominator. New defaults do not bypass normal maintenance HTTP/queue controls or the mandatory live release protocol.

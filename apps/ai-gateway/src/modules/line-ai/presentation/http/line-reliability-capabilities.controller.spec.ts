@@ -28,3 +28,29 @@ test('an unready downstream artifact never becomes a ready gateway capability', 
   const stale = new LineReliabilityCapabilitiesController(config as never, { lineBudgetV2CapabilityEnabled: async () => false } as never);
   assert.equal((await stale.capabilities(config.aiGatewayInternalSecret, {})).ready, false);
 });
+
+test('the deployed Sonnet 4.6 profile requires named global approval and every existing readiness gate', async () => {
+  const modelId = 'global.anthropic.claude-sonnet-4-6';
+  const deployed = { ...config, modelProvider: 'bedrock', bedrockModelId: modelId,
+    approvedAiModelIds: [modelId], aiGlobalInferenceProfileApproved: true,
+    aiGlobalInferenceProfileApprovalRef: 'synthetic-approved-resolution' };
+  const result = await new LineReliabilityCapabilitiesController(deployed as never, turn)
+    .capabilities(config.aiGatewayInternalSecret, {});
+  assert.equal(result.ready, true);
+  assert.deepEqual(result.model, { provider: 'bedrock', modelId, region: 'ap-southeast-1',
+    contextTokens: 200_000, maxOutputTokens: 64_000 });
+  for (const patch of [
+    { aiGlobalInferenceProfileApproved: false }, { aiGlobalInferenceProfileApprovalRef: undefined },
+    { aiGlobalInferenceProfileApprovalRef: '   ' }, { approvedAiProviders: [] },
+    { approvedAiModelIds: [] }, { approvedAiRegions: [] }, { modelProvider: 'openai', openAiModel: modelId },
+    { bedrockModelId: `${modelId}-invented`, approvedAiModelIds: [`${modelId}-invented`] },
+  ]) {
+    const denied = await new LineReliabilityCapabilitiesController({ ...deployed, ...patch } as never, turn)
+      .capabilities(config.aiGatewayInternalSecret, {});
+    assert.equal(denied.ready, false, JSON.stringify(patch));
+    assert.equal(denied.model, undefined);
+  }
+  assert.equal((await new LineReliabilityCapabilitiesController(deployed as never,
+    { lineBudgetV2CapabilityEnabled: async () => false } as never)
+    .capabilities(config.aiGatewayInternalSecret, {})).ready, false);
+});
