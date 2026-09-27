@@ -13,6 +13,7 @@ import type { ToolResult, SourceRef, LineAiTurnResponse, LineAiSemanticCoverageV
 import { classifyLineAiTerminalOutcome } from '../apps/api/src/modules/line-ai/domain/logic/line-ai-terminal-outcome.logic';
 import { reliabilityDigest, replayReliabilityCorpus, type ReliabilityCorpus, type ReliabilityFixture, type ReliabilityReplayAdapter, type ReliabilityTurnTrace } from './line-ai-reliability-fixtures';
 import type { ReliabilityAttempt } from './line-ai-reliability-evaluation';
+import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../apps/api/src/common/pipes/validation-pipe.options';
 
 type JsonRow = Record<string, any>;
 export type RuntimeSourceSnapshot = {
@@ -31,6 +32,29 @@ export type ReliabilityRuntimeManifest = {
   /** Non-secret runtime flags. Credentials come from the caller's environment, never this artifact. */
   environment: Record<string, string>; repeats: number; cohort: ReliabilityAttempt['cohort'];
 };
+export type RuntimeWireReceipt = { messages: unknown; at: number; receiptId: string; path: string; payloadHash: string };
+export type RuntimeTurnEvidence = {
+  scenarioId: string; repeat: number; turnIndex: number; user: string; attachmentIds: string[];
+  companyId: string; sourceSnapshot: string; snapshotDigest: string; webBaseUrl?: string;
+  acceptedAtMs: number; modelWorkCompletedAtMs: number | null;
+  receipts: RuntimeWireReceipt[];
+  toolResults: Array<{ tool: string; input: unknown; startedAtMs: number; completedAtMs: number; result?: ToolResult; failed?: true }>;
+  gatewayResponses: Array<{ method: string; requestId: string; startedAtMs: number; completedAtMs: number; response: unknown }>;
+  webhookEvents: unknown[]; providerUsage: unknown[]; reservations: unknown[];
+  reviewState: { before: RuntimeReviewState; after: RuntimeReviewState };
+  delivery: ReliabilityTurnTrace['delivery'];
+};
+export type RuntimeReviewState = { draftActions: unknown[]; conversations: unknown[]; truncated: boolean };
+/** Preserve the exact synthetic wire/result snapshot; later application mutation cannot rewrite evidence. */
+export const captureRuntimeTurnEvidence = (value: RuntimeTurnEvidence): RuntimeTurnEvidence => structuredClone(value);
+/** Never export arbitrary exception text: HTTP/Prisma errors can contain credentials or headers. */
+export function runtimeFailureDiagnostic(error: unknown) {
+  const value = error as { name?: unknown; code?: unknown; message?: unknown; meta?: { modelName?: unknown; target?: unknown } } | null;
+  const safe = (item: unknown) => typeof item === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(item) ? item : undefined;
+  return { name: safe(value?.name) ?? 'UnknownError', code: safe(value?.code),
+    assertion: typeof value?.message === 'string' ? value.message.match(/\bREPLAY_[A-Z_]+\b/)?.[0] : undefined,
+    model: safe(value?.meta?.modelName), target: Array.isArray(value?.meta?.target) ? value.meta.target.map(safe).filter(Boolean) : undefined };
+}
 const sha = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
 const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]']);
 export function assertIsolatedReplayDatabase(value: string): void {
@@ -195,7 +219,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
   const Redis = requireApi('ioredis');
   const redis = new Redis(manifest.redisUrl, { lazyConnect: true, enableOfflineQueue: false, maxRetriesPerRequest: 0 });
   const redisOwnerKey = 'reliability-runtime-database-owner', redisOwner = new URL(manifest.databaseUrl).pathname;
-  const { NestFactory } = requireApi('@nestjs/core'), { Logger } = requireApi('@nestjs/common');
+  const { NestFactory } = requireApi('@nestjs/core'), { Logger, ValidationPipe } = requireApi('@nestjs/common');
   const { PrismaService } = requireApi(resolve(compiled, 'common/database/prisma.service.js'));
   const { LineWebhookController } = requireApi(resolve(compiled, 'modules/auth/presentation/line-webhook.controller.js'));
   const { AiGatewayClient } = requireApi(resolve(compiled, 'modules/line-ai/infrastructure/ai-gateway.client.js'));
@@ -210,8 +234,12 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
   const originalFetch = globalThis.fetch;
   let app: any, client: any, current: ReliabilityFixture | undefined, snapshot: RuntimeSourceSnapshot | undefined, repeat = 0, unsafeToReset = false;
   let active: { acceptedAt: number; eventIds: string[]; before: Record<string, JsonRow[]>; usageIds: Set<string>; tools: ReliabilityTurnTrace['tools']; results: ToolResult[];
-    responses: LineAiTurnResponse[]; deliveryCoverage: LineAiSemanticCoverageV2[] | null; missing: string[]; requests: string[]; completedAt: number | null; errors: string[]; critical: string[]; receipts: Array<{ messages: unknown; at: number; receiptId: string }> } | undefined;
+    responses: LineAiTurnResponse[]; deliveryCoverage: LineAiSemanticCoverageV2[] | null; missing: string[]; requests: string[]; completedAt: number | null; errors: string[]; critical: string[]; receipts: RuntimeWireReceipt[];
+    toolResults: RuntimeTurnEvidence['toolResults']; gatewayResponses: RuntimeTurnEvidence['gatewayResponses']; reviewBefore: RuntimeReviewState } | undefined;
   let turnStates: Array<NonNullable<typeof active>> = [];
+  const turnEvidence: RuntimeTurnEvidence[] = [];
+  const runtimeDiagnostics: Array<{ scenarioId: string; repeat: number; phase: string; stage: string; error: ReturnType<typeof runtimeFailureDiagnostic> }> = [];
+  let stage = 'initializing';
   const readEffects = async () => {
     const exists = await client.$queryRawUnsafe('SELECT tablename FROM pg_tables WHERE schemaname=\'public\'') as { tablename: string }[];
     const tables = new Set(exists.map(row => row.tablename)), output: Record<string, JsonRow[]> = {};
@@ -220,6 +248,14 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
   };
   const pendingWork = async () => (await client.lineDocumentQaJob.count({ where: { status: { in: ['QUEUED', 'READING'] } } }))
     + (await client.expenseCaptureReadJob.count({ where: { status: { in: ['QUEUED', 'PREPARING', 'READING'] } } }));
+  const readReviewState = async (): Promise<RuntimeReviewState> => {
+    assert.ok(current, 'REPLAY_NO_CURRENT_OWNER');
+    const [draftActions, conversations] = await Promise.all([
+      client.reimbursementDraftAction.findMany({ where: { companyId: current.fixture.company, actorUserId: current.fixture.actor }, orderBy: { id: 'asc' }, take: 101 }),
+      client.aiConversation.findMany({ where: { companyId: current.fixture.company, userId: current.fixture.actor }, orderBy: { id: 'asc' }, take: 101 }),
+    ]);
+    return { draftActions: draftActions.slice(0, 100), conversations: conversations.slice(0, 100), truncated: draftActions.length > 100 || conversations.length > 100 };
+  };
   globalThis.fetch = (async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     if (url.hostname === 'api.line.me') {
@@ -232,7 +268,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
           || body.replyToken !== undefined && !active.eventIds.some(id => body.replyToken === `${id}-token`)) {
           active.critical.push('cross_recipient_attempt'); throw new Error('REPLAY_WRONG_RECIPIENT');
         }
-        active.receipts.push({ messages: body.messages, at: Date.now(), receiptId });
+        active.receipts.push({ messages: structuredClone(body.messages), at: Date.now(), receiptId, path: url.pathname, payloadHash: reliabilityDigest(body) });
       }
       return new Response('{}', { status: 200, headers: { 'x-line-request-id': receiptId } });
     }
@@ -255,9 +291,9 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       client.aiConversation.findMany({ where: { companyId: row.fixture.company, userId: row.fixture.actor } }),
       client.lineDeliveryPlan.findMany({ where: { companyId: row.fixture.company, createdAt: { gte: new Date(state.acceptedAt) } } }),
       client.lineTurnOutcome.findMany({ where: { webhookEventId: { in: state.eventIds } } }),
-      client.aiBudgetReservation.findMany({ where: { createdAt: { gte: new Date(state.acceptedAt) }, status: { in: ['DISPATCHED', 'UNRESOLVED', 'SETTLED'] } } })]);
+      client.aiBudgetReservation.findMany({ where: { createdAt: { gte: new Date(state.acceptedAt) } } })]);
     const calls = usage.filter((item: any) => !state.usageIds.has(item.id) && item.eventKind === 'MODEL_CALL');
-    const unreported = holds.filter((hold: any) => !calls.some((call: any) => call.invocationKey === hold.invocationKey));
+    const unreported = holds.filter((hold: any) => ['DISPATCHED', 'UNRESOLVED', 'SETTLED'].includes(hold.status) && !calls.some((call: any) => call.invocationKey === hold.invocationKey));
     const cited = new Set(state.responses.flatMap(response => response.sourceRefs.filter(ref => ref.permissionChecked).map(runtimeSourceId)));
     const coverage = state.deliveryCoverage ?? state.responses.flatMap(response => response.semanticCoverage ?? []);
     const taskIds = tasks.flatMap((task: any) => task.taskStateJson?.tasks?.map((item: any) => item.taskId) ?? []);
@@ -265,6 +301,20 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
     const delivery = runtimeDeliveryEvidence(plans, outcomes, state.receipts);
     if (state.receipts.length && !delivery.requiredBatchIds.length) state.errors.push('no_frozen_delivery_requirement');
     if (unreported.length) state.errors.push('provider_usage_unobserved');
+    const evidence = captureRuntimeTurnEvidence({ scenarioId: row.id, repeat, turnIndex, user: turn.user, attachmentIds: turn.attachmentIds,
+      companyId: row.fixture.company, sourceSnapshot: row.fixture.sourceSnapshot, snapshotDigest: manifest.snapshotDigests[row.fixture.sourceSnapshot]!,
+      webBaseUrl: app.get(AppConfigService).webBaseUrl, acceptedAtMs: state.acceptedAt, modelWorkCompletedAtMs: state.completedAt,
+      receipts: state.receipts, toolResults: state.toolResults, gatewayResponses: state.gatewayResponses,
+      webhookEvents: events.map(({ webhookEventId, eventType, status, errorCode, processedAt, createdAt }: any) => ({ webhookEventId, eventType, status, errorCode, processedAt, createdAt })),
+      providerUsage: calls.map(({ id, requestId, invocationKey, sourceRoute, usageTag, modelId, ok, inputTokens, outputTokens, cacheReadInputTokens, cacheWriteInputTokens,
+        costSatang, requestKind, budgetBucket, usageBasis, eventKind, pricingSnapshot, createdAt }: any) => ({ id, requestId, invocationKey, sourceRoute, usageTag, modelId, ok,
+        inputTokens, outputTokens, cacheReadInputTokens, cacheWriteInputTokens, costSatang, requestKind, budgetBucket, usageBasis, eventKind, pricingSnapshot, createdAt })),
+      reservations: holds.map(({ id, invocationKey, sourceRoute, stepKind, bucket, status, upperBoundSatang, settledCostSatang, usageBasis, createdAt, dispatchedAt, settledAt }: any) =>
+        ({ id, invocationKey, sourceRoute, stepKind, bucket, status, upperBoundSatang, settledCostSatang, usageBasis, createdAt, dispatchedAt, settledAt })),
+      reviewState: { before: state.reviewBefore, after: await readReviewState() }, delivery });
+    if (evidence.reviewState.before.truncated || evidence.reviewState.after.truncated) state.errors.push('review_state_truncated');
+    const previous = turnEvidence.findIndex(item => item.scenarioId === row.id && item.repeat === repeat && item.turnIndex === turnIndex);
+    if (previous < 0) turnEvidence.push(evidence); else turnEvidence[previous] = evidence;
     return { inputDigest: reliabilityDigest({ user: turn.user, attachmentIds: turn.attachmentIds }), scopeDigest: reliabilityDigest(row.fixture),
       sourceSnapshot: row.fixture.sourceSnapshot, acceptedAtMs: state.acceptedAt, outcome, taskId: new Set(taskIds).size === 1 ? taskIds[0] : null,
       askedSlots: [...new Set(state.missing)], tools: state.tools, facts: runtimeSourceFacts(state.results, cited), effects: runtimeDatabaseEffects(state.before, after),
@@ -276,6 +326,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
     // A local LINE sink cannot prove native delivery even when the selected Gateway uses a live model.
     provenance: 'fixture',
     async reset(row, ordinal) {
+      stage = 'quiescence';
       assert.equal(unsafeToReset, false, 'REPLAY_PREVIOUS_WORK_NOT_QUIESCENT');
       if (app) { await app.close(); app = undefined; } active = undefined;
       turnStates = [];
@@ -286,14 +337,18 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       assert.ok(Object.keys(snapshot.assets).length === row.assets.length && Object.entries(snapshot.assets).every(([id, asset]) => row.assets.some(expected => expected.id === id && expected.sha256 === asset.sha256 && expected.mimeType === asset.mimeType)), 'REPLAY_ASSET_MANIFEST_MISMATCH');
       process.env.LINE_MESSAGING_CHANNEL_ID = row.fixture.messagingChannelId;
       Logger.overrideLogger(false);
+      stage = 'nest_create';
       app = await NestFactory.create(AppModule, { abortOnError: false, logger: false, rawBody: true });
       client = app.get(PrismaService).client;
+      stage = 'redis_reset';
       if (redis.status === 'wait') await redis.connect();
       const owner = await redis.get(redisOwnerKey);
       assert.ok(owner === redisOwner || owner === null && await redis.dbsize() === 0, 'REPLAY_REDIS_CONTAINS_OTHER_WORK');
       await redis.flushdb(); await redis.set(redisOwnerKey, redisOwner);
+      stage = 'database_reset';
       await resetRuntimeFixtureDatabase(databaseLock, manifest.databaseUrl);
-      for (const seed of snapshot.rows) { assert.ok(/^[a-z][A-Za-z0-9]*$/.test(seed.model) && typeof client[seed.model]?.create === 'function', 'REPLAY_INVALID_SEED_MODEL'); await client[seed.model].create({ data: seed.data }); }
+      for (const [index, seed] of snapshot.rows.entries()) { assert.ok(/^[a-z][A-Za-z0-9]*$/.test(seed.model) && typeof client[seed.model]?.create === 'function', 'REPLAY_INVALID_SEED_MODEL'); stage = `seed:${index}:${seed.model}`; await client[seed.model].create({ data: seed.data }); }
+      stage = 'seed_access_validation';
       const entitlementRows = await client.companyFeatureEntitlement.findMany({ where: { companyId: row.fixture.company }, select: { featureKey: true, enabled: true } });
       assert.ok(entitlementRows.length, 'REPLAY_EXPLICIT_ENTITLEMENT_SEED_REQUIRED');
       assert.deepEqual(entitlementRows.filter((item: any) => item.enabled).map((item: any) => item.featureKey).sort(),
@@ -307,9 +362,11 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         assert.deepEqual([...access.permissions].sort(), [...row.fixture.permissions].sort(), 'REPLAY_PERMISSION_SEED_MISMATCH');
         assert.deepEqual([...access.scopes.branchIds].sort(), [...row.fixture.branches].sort(), 'REPLAY_BRANCH_SEED_MISMATCH');
       }
-      instrumentRuntimeMethod(app.get(InternalToolsController), 'invoke', async (invoke, args) => { const dto = args[2]; try { const result = await invoke(...args);
-        active?.tools.push({ tool: dto.toolName, input: dto.input, resultHash: reliabilityDigest(result), status: result.status }); active?.results.push(result); return result;
-      } catch (error) { active?.tools.push({ tool: dto.toolName, input: dto.input, resultHash: reliabilityDigest({ failed: true }), status: 'error' }); throw error; } });
+      instrumentRuntimeMethod(app.get(InternalToolsController), 'invoke', async (invoke, args) => { const dto = args[2], state = active, startedAtMs = Date.now(); try { const result = await invoke(...args);
+        state?.tools.push({ tool: dto.toolName, input: dto.input, resultHash: reliabilityDigest(result), status: result.status }); state?.results.push(result);
+        state?.toolResults.push(structuredClone({ tool: dto.toolName, input: dto.input, startedAtMs, completedAtMs: Date.now(), result })); return result;
+      } catch (error) { state?.tools.push({ tool: dto.toolName, input: dto.input, resultHash: reliabilityDigest({ failed: true }), status: 'error' });
+        state?.toolResults.push(structuredClone({ tool: dto.toolName, input: dto.input, startedAtMs, completedAtMs: Date.now(), failed: true })); throw error; } });
       const gateway = app.get(AiGatewayClient);
       const webhook = app.get(ProcessLineWebhookUseCase);
       instrumentRuntimeMethod(webhook, 'sendMessagesV2', async (original, args) => {
@@ -319,14 +376,17 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         return result;
       });
       for (const method of ['requestLineTurn', 'requestLinePublicGeneral', 'requestLineIntakeRoute', 'requestLineDocumentQa']) {
-        instrumentRuntimeMethod(gateway, method, async (original, args) => { if (active) active.requests.push(args[0].requestId); try { const result = await original(...args);
-          if (active) { active.completedAt = Date.now(); if (Array.isArray(result.sourceRefs)) active.responses.push(result);
-            active.missing.push(...runtimeAskedSlots(result)); } return result;
-        } catch (error) { active?.errors.push(`${method}_failed`); throw error; } });
+        instrumentRuntimeMethod(gateway, method, async (original, args) => { const state = active, startedAtMs = Date.now(); if (state) state.requests.push(args[0].requestId); try { const result = await original(...args);
+          if (state) { state.completedAt = Date.now(); if (Array.isArray(result.sourceRefs)) state.responses.push(result);
+            state.gatewayResponses.push(structuredClone({ method, requestId: args[0].requestId, startedAtMs, completedAtMs: state.completedAt, response: result }));
+            state.missing.push(...runtimeAskedSlots(result)); } return result;
+        } catch (error) { state?.errors.push(`${method}_failed`); throw error; } });
       }
-      app.setGlobalPrefix('v1'); await app.listen(manifest.apiPort, '127.0.0.1');
+      stage = 'nest_listen';
+      app.setGlobalPrefix('v1'); app.useGlobalPipes(new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS)); await app.listen(manifest.apiPort, '127.0.0.1');
     },
     async turn(row, turnIndex) {
+      stage = `turn:${turnIndex}`;
       assert.equal(current?.id, row.id); assert.ok(snapshot && app);
       const turn = row.turns[turnIndex]!, prefix = `replay-${sha(`${row.id}:${repeat}:${turnIndex}`).slice(0, 20)}`;
       const postbackLabel = snapshot.postbackLabels?.[turnIndex];
@@ -338,7 +398,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       const before = await readEffects(), usageIds = new Set<string>((await client.aiUsageEvent.findMany({ select: { id: true } })).map((item: any) => item.id));
       const at = Date.now();
       active = { acceptedAt: at, eventIds: inputs.map((_, index) => `${prefix}-${index}`), before, usageIds,
-        tools: [], results: [], responses: [], deliveryCoverage: null, missing: [], requests: [], completedAt: null, errors: [], critical: [], receipts: [] };
+        tools: [], results: [], responses: [], deliveryCoverage: null, missing: [], requests: [], completedAt: null, errors: [], critical: [], receipts: [], toolResults: [], gatewayResponses: [], reviewBefore: await readReviewState() };
       turnStates.push(active);
       const body = { destination: row.fixture.messagingChannelId, events: inputs.map((message, index) => ({
         ...(postbackData ? { type: 'postback', postback: { data: postbackData } } : { type: 'message', message }),
@@ -366,6 +426,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       return collect(row, index);
     },
     async finalize(row, traces) {
+      stage = 'finalize';
       const receipts = turnStates.flatMap(state => state.receipts);
       for (const [index, trace] of traces.entries()) {
         const state = turnStates[index]!;
@@ -374,14 +435,20 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         } } });
         const outcomes = await client.lineTurnOutcome.findMany({ where: { webhookEventId: { in: state.eventIds } } });
         trace.delivery = runtimeDeliveryEvidence(plans, outcomes, receipts);
+        const evidence = turnEvidence.find(item => item.scenarioId === row.id && item.repeat === repeat && item.turnIndex === index);
+        if (evidence) evidence.delivery = structuredClone(trace.delivery);
       }
     },
   };
+  for (const method of ['reset', 'turn', 'finalize'] as const) instrumentRuntimeMethod(adapter, method, async (original, args) => {
+    try { return await original(...args); }
+    catch (error) { runtimeDiagnostics.push({ scenarioId: args[0].id, repeat: method === 'reset' ? args[1] : repeat, phase: method, stage, error: runtimeFailureDiagnostic(error) }); throw error; }
+  });
   try {
     await databaseLock.connect();
     const locked = await databaseLock.query("SELECT pg_try_advisory_lock(hashtext('line-reliability-runtime-reset')) AS locked");
     assert.equal(locked.rows[0]?.locked, true, 'REPLAY_DATABASE_IN_USE');
     const replay = await replayReliabilityCorpus(manifest.corpus, adapter, { repeats: manifest.repeats, cohort: manifest.cohort, cache: 'unknown' });
-    return { ...replay, boundary: { runtime: 'compiled_nest_api_postgres', line: 'synthetic_http_sink', nativeLineVerified: false, cacheStateVerified: false, activationEligible: false } };
+    return { ...replay, turnEvidence, runtimeDiagnostics, boundary: { runtime: 'compiled_nest_api_postgres', line: 'synthetic_http_sink', nativeLineVerified: false, cacheStateVerified: false, activationEligible: false } };
   } finally { try { if (app) await app.close(); } finally { redis.disconnect(); await databaseLock.end(); globalThis.fetch = originalFetch; Logger.overrideLogger(true); } }
 }

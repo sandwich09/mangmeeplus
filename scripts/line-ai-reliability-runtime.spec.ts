@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assertIsolatedReplayDatabase, runtimeAskedSlots, runtimeDatabaseEffects, runtimeDeliveryEvidence, runtimeSourceFacts, runtimeSourceId, runtimeSemanticOutcome, instrumentRuntimeMethod, selectRuntimePostback } from './line-ai-reliability-runtime';
+import { assertIsolatedReplayDatabase, captureRuntimeTurnEvidence, runtimeFailureDiagnostic, runtimeAskedSlots, runtimeDatabaseEffects, runtimeDeliveryEvidence, runtimeSourceFacts, runtimeSourceId, runtimeSemanticOutcome, instrumentRuntimeMethod, selectRuntimePostback, type RuntimeTurnEvidence } from './line-ai-reliability-runtime';
 
 test('clarification trace keeps nested typed missing fields without guessing slots from prose', () => {
   assert.deepEqual(runtimeAskedSlots({ missingFields: ['amount'], captureHints: { missingFields: ['expenseDate', 'amount'] },
@@ -75,4 +75,35 @@ test('instrumented actual methods retain receiver and thrown effects', async () 
   assert.equal(selectRuntimePostback(message, 'ยืนยัน'), 'action=confirm&previewId=actual-current-preview');
   assert.throws(() => selectRuntimePostback(message, 'ยกเลิก'), /NOT_UNIQUELY/);
   assert.throws(() => selectRuntimePostback([message, { type: 'postback', label: 'ยืนยัน', data: 'other-preview' }], 'ยืนยัน'), /NOT_UNIQUELY/);
+});
+
+test('human evidence preserves wire, raw intake/tool results and review state without later mutation', () => {
+  const original: RuntimeTurnEvidence = {
+    scenarioId: 'NAT-01', repeat: 0, turnIndex: 0, user: 'ใบนี้เท่าไหร่', attachmentIds: ['receipt-a'], companyId: 'company-a',
+    sourceSnapshot: 'source-a', snapshotDigest: 'a'.repeat(64), acceptedAtMs: 100, modelWorkCompletedAtMs: 180,
+    receipts: [{ messages: [{ type: 'text', text: '250.00 บาท' }], at: 200, receiptId: 'sink-1', path: '/v2/bot/message/reply', payloadHash: 'b'.repeat(64) }],
+    toolResults: [{ tool: 'expense.get_detail', input: { id: 'expense-a' }, startedAtMs: 110, completedAtMs: 140, result: { status: 'ok', data: { amount: '250.00' } } as any }],
+    gatewayResponses: [{ method: 'requestLineIntakeRoute', requestId: 'request-a', startedAtMs: 105, completedAtMs: 180,
+      response: { semanticSubrequests: [{ text: 'ใบนี้เท่าไหร่' }], preparedPlan: { steps: ['read'] } } }],
+    webhookEvents: [{ status: 'completed' }], providerUsage: [{ modelId: 'actual-model', inputTokens: 200, outputTokens: 30, usageBasis: 'PROVIDER_REPORTED' }], reservations: [],
+    reviewState: { before: { draftActions: [], conversations: [], truncated: false }, after: { draftActions: [{ status: 'PREVIEW' }], conversations: [{ preferenceJson: { brevity: 'short' } }], truncated: false } },
+    delivery: { requiredBatchIds: ['batch-a'], accepted: [{ batchId: 'batch-a', wireHash: 'c'.repeat(64), acceptedAtMs: 200, receiptId: 'sink-1' }], status: 'ACCEPTED' },
+  };
+  const captured = captureRuntimeTurnEvidence(original);
+  (original.receipts[0]!.messages as any[])[0].text = 'changed';
+  (original.gatewayResponses[0]!.response as any).preparedPlan.steps.push('write');
+  (original.reviewState.after.conversations[0] as any).preferenceJson.brevity = 'long';
+  assert.equal((captured.receipts[0]!.messages as any[])[0].text, '250.00 บาท');
+  assert.deepEqual((captured.gatewayResponses[0]!.response as any).preparedPlan.steps, ['read']);
+  assert.equal((captured.reviewState.after.conversations[0] as any).preferenceJson.brevity, 'short');
+  assert.equal(captured.receipts[0]!.at - captured.acceptedAtMs, 100);
+  assert.equal((captured.toolResults[0]!.result as any).data.amount, '250.00');
+});
+
+test('failure diagnostics retain assertion and Prisma code but never arbitrary secret-bearing text', () => {
+  assert.equal(runtimeFailureDiagnostic(new Error('REPLAY_ENTITLEMENT_SEED_MISMATCH')).assertion, 'REPLAY_ENTITLEMENT_SEED_MISMATCH');
+  const diagnostic = runtimeFailureDiagnostic({ name: 'PrismaClientKnownRequestError', code: 'P2002', message: 'postgresql://user:secret@localhost/private',
+    meta: { modelName: 'User', target: ['email', 'https://secret@example.com'] } });
+  assert.deepEqual(diagnostic, { name: 'PrismaClientKnownRequestError', code: 'P2002', assertion: undefined, model: 'User', target: ['email'] });
+  assert.ok(!JSON.stringify(diagnostic).includes('secret'));
 });
