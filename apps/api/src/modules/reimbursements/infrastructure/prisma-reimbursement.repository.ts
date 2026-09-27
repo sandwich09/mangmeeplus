@@ -30,6 +30,9 @@ import type {
   CreateReimbursementRequestData,
   MaterializeClaimExpenseItem,
   ReimbursementSignedCopyAck,
+  ReimbursementDraftActionOwner,
+  ReimbursementDraftActionRecord,
+  ReimbursementDraftPreparedCommand,
 } from '../domain/models/reimbursement.model';
 import {
   REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
@@ -50,8 +53,12 @@ import {
   matchesApproverRole,
   frozenApprovalAuthority,
   validatePaymentRecording,
+  validateRequestFields,
+  deriveHeaderFromLines,
+  computeReceiptRequirement,
 } from '../domain/logic/reimbursement.logic';
 import { exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { deliveryHash, parseDeliveryBatchStates, parseLineDeliveryPlan } from '../../line-ai/domain/logic/line-delivery-plan.logic';
 
 function dec(v: unknown): string {
   return v != null ? String(v) : '0';
@@ -93,6 +100,9 @@ export type ListRequestsWhere = {
   status?: string;
   paymentStatus?: string;
   statuses?: string[];
+  search?: string;
+  skip?: number;
+  take?: number;
 };
 
 /** View-only actor graph. Linked raw ids are resolved before this predicate is built. */
@@ -315,7 +325,8 @@ export class PrismaReimbursementRepository {
     return rows.map((row: any) => ({ userId: row.userId as string, displayName: row.user.displayName as string }));
   }
 
-  async listReimbursementSources(companyId: string, branchId: string, requesterUserId: string, search: string, expenseId?: string): Promise<import('@watchdog-bms/contracts').ReimbursementSourceOption[]> {
+  async listReimbursementSources(companyId: string, branchId: string, requesterUserId: string, search: string, expenseId?: string,
+    page: { skip?: number; take?: number } = {}): Promise<import('@watchdog-bms/contracts').ReimbursementSourceOption[]> {
     const tx = this.prisma.client as any;
     const certificates = await tx.expenseSubstituteReceiptEvidence.findMany({ where: { companyId, branchId, payerUserId: requesterUserId }, select: { expenseId: true } });
     const rows = await tx.expenseRecord.findMany({
@@ -323,7 +334,8 @@ export class PrismaReimbursementRepository {
       // uploaded but the server knows THIS requester paid is claimable by them.
       where: { companyId, branchId, sourceReimbursementRequestId: null, ...(expenseId ? { id: expenseId } : {}), OR: [{ createdByUserId: requesterUserId }, { payerUserId: requesterUserId }, { id: { in: certificates.map((row: any) => row.expenseId) } }],
         ...(search ? { AND: [{ OR: [{ vendorNameSnapshot: { contains: search, mode: 'insensitive' } }, { vendorDocumentNumber: { contains: search, mode: 'insensitive' } }, { note: { contains: search, mode: 'insensitive' } }] }] } : {}),
-      }, include: { lines: { orderBy: { lineNumber: 'asc' } }, expenseCategory: true }, orderBy: [{ expenseDate: 'desc' }, { id: 'desc' }], take: 50,
+      }, include: { lines: { orderBy: { lineNumber: 'asc' } }, expenseCategory: true }, orderBy: [{ expenseDate: 'desc' }, { id: 'desc' }],
+      skip: page.skip ?? 0, take: page.take ?? 50,
     });
     return Promise.all(rows.map(async (row: any) => {
       let snapshot; let reason;
@@ -424,6 +436,304 @@ export class PrismaReimbursementRepository {
       });
       return this.toRequest(row);
     });
+  }
+
+  // ---- LINE reimbursement draft actions ----
+
+  async findOrCreateDraftAction(input: ReimbursementDraftActionOwner & {
+    id: string;
+    taskId: string;
+    actionOrdinal: number;
+    intentKeyHash: string;
+    operation: 'CREATE' | 'UPDATE';
+    expiresAt: Date;
+  }): Promise<ReimbursementDraftActionRecord> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      const ownerLock = [input.companyId, input.actorUserId, input.membershipId, input.messagingChannelId, input.chatKeyHash, input.ownerEpoch].join(':');
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`reimbursement-draft-owner:${ownerLock}`}))`;
+      const currentTime = await this.transactionTime(tx);
+      const active = await tx.reimbursementDraftAction.findFirst({ where: {
+        companyId: input.companyId, id: { not: input.id }, status: { in: ['COLLECTING', 'PREVIEW'] }, expiresAt: { gt: currentTime },
+        ...this.actionOwnerWhere(input),
+      }, select: { id: true } });
+      if (active) throw new ConflictException('reimbursement_active_action_exists');
+      await tx.reimbursementDraftAction.createMany({ data: [{ ...input, status: 'COLLECTING' }], skipDuplicates: true });
+      const row = await tx.reimbursementDraftAction.findFirst({ where: { companyId: input.companyId, intentKeyHash: input.intentKeyHash } });
+      if (!row || row.id !== input.id || row.taskId !== input.taskId || row.actionOrdinal !== input.actionOrdinal
+        || row.operation !== input.operation || !this.actionOwnerMatches(row, input)) throw new ConflictException('reimbursement_action_identity_conflict');
+      return this.toDraftAction(row);
+    });
+  }
+
+  async findDraftAction(companyId: string, actionId: string): Promise<ReimbursementDraftActionRecord | null> {
+    const row = await (this.prisma.client as any).reimbursementDraftAction.findFirst({ where: { id: actionId, companyId } });
+    return row ? this.toDraftAction(row) : null;
+  }
+
+  async findActiveDraftAction(owner: ReimbursementDraftActionOwner, now = new Date()): Promise<ReimbursementDraftActionRecord | null> {
+    const row = await (this.prisma.client as any).reimbursementDraftAction.findFirst({
+      where: { status: { in: ['COLLECTING', 'PREVIEW'] }, expiresAt: { gt: now }, ...this.actionOwnerWhere(owner) },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    return row ? this.toDraftAction(row) : null;
+  }
+
+  async isDraftActionOwnerCurrent(owner: ReimbursementDraftActionOwner, sharedMessagingChannelId?: string, allowOptOut = false): Promise<boolean> {
+    return this.draftActionOwnerCurrent(this.prisma.client as any, owner, sharedMessagingChannelId, allowOptOut);
+  }
+
+  async saveDraftActionCollection(input: {
+    owner: ReimbursementDraftActionOwner;
+    actionId: string;
+    expectedUpdatedAt: Date;
+    commandJson: unknown;
+    sourceProofJson: unknown;
+    requestId?: string;
+    expectedRequestUpdatedAt?: Date;
+    expiresAt: Date;
+  }): Promise<ReimbursementDraftActionRecord | null> {
+    const client = this.prisma.client as any;
+    const changed = await client.reimbursementDraftAction.updateMany({
+      where: {
+        id: input.actionId, companyId: input.owner.companyId, updatedAt: input.expectedUpdatedAt,
+        status: { in: ['COLLECTING', 'PREVIEW'] }, ...this.actionOwnerWhere(input.owner),
+      },
+      data: {
+        status: 'COLLECTING', previewRevision: 0, confirmationDigest: null, previewJson: Prisma.DbNull,
+        previewDeliveryId: null, commandJson: input.commandJson as Prisma.InputJsonValue,
+        sourceProofJson: input.sourceProofJson as Prisma.InputJsonValue, requestId: input.requestId ?? null,
+        expectedRequestUpdatedAt: input.expectedRequestUpdatedAt ?? null, expiresAt: input.expiresAt,
+      },
+    });
+    if (changed.count !== 1) return null;
+    return this.findDraftAction(input.owner.companyId, input.actionId);
+  }
+
+  async saveDraftActionPreview(input: {
+    owner: ReimbursementDraftActionOwner;
+    actionId: string;
+    expectedUpdatedAt: Date;
+    commandJson: unknown;
+    previewJson: unknown;
+    sourceProofJson: unknown;
+    confirmationDigest: string;
+    previewRevision: number;
+    requestId?: string;
+    expectedRequestUpdatedAt?: Date;
+    expiresAt: Date;
+  }): Promise<ReimbursementDraftActionRecord | null> {
+    const client = this.prisma.client as any;
+    const changed = await client.reimbursementDraftAction.updateMany({
+      where: {
+        id: input.actionId, companyId: input.owner.companyId, updatedAt: input.expectedUpdatedAt,
+        status: { in: ['COLLECTING', 'PREVIEW'] }, ...this.actionOwnerWhere(input.owner),
+      },
+      data: {
+        status: 'PREVIEW', previewRevision: input.previewRevision, commandJson: input.commandJson as Prisma.InputJsonValue,
+        previewJson: input.previewJson as Prisma.InputJsonValue, sourceProofJson: input.sourceProofJson as Prisma.InputJsonValue,
+        confirmationDigest: input.confirmationDigest, previewDeliveryId: null, requestId: input.requestId ?? null,
+        expectedRequestUpdatedAt: input.expectedRequestUpdatedAt ?? null, expiresAt: input.expiresAt,
+      },
+    });
+    if (changed.count !== 1) return null;
+    return this.findDraftAction(input.owner.companyId, input.actionId);
+  }
+
+  async markDraftActionWebRendered(input: {
+    owner: ReimbursementDraftActionOwner; actionId: string; previewRevision: number; confirmationDigest: string; receiptId: string; now: Date;
+  }): Promise<boolean> {
+    return (await (this.prisma.client as any).reimbursementDraftAction.updateMany({
+      where: { id: input.actionId, companyId: input.owner.companyId, status: 'PREVIEW', previewRevision: input.previewRevision,
+        confirmationDigest: input.confirmationDigest, expiresAt: { gt: input.now }, ...this.actionOwnerWhere(input.owner) },
+      data: { previewDeliveryId: input.receiptId },
+    })).count === 1;
+  }
+
+  async markDraftActionLineDelivered(input: {
+    owner: ReimbursementDraftActionOwner; actionId: string; previewRevision: number; confirmationDigest: string; deliveryPlanId: string; now: Date;
+  }): Promise<boolean> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      const currentTime = await this.transactionTime(tx);
+      const plan = await tx.lineDeliveryPlan.findFirst({ where: { id: input.deliveryPlanId, status: 'ACCEPTED', acceptedAt: { not: null }, expiresAt: { gt: currentTime } } });
+      const parsed = plan && plan.planHash === deliveryHash(plan.planJson) ? parseLineDeliveryPlan(plan.planJson) : null;
+      const states = parsed ? parseDeliveryBatchStates(plan.batchStateJson, parsed) : null;
+      const control = parsed?.control;
+      if (!control || control.kind !== 'REIMBURSEMENT_DRAFT_CONFIRM' || control.actionId !== input.actionId
+        || control.previewRevision !== input.previewRevision || control.confirmationDigest !== input.confirmationDigest
+        || Date.parse(control.expiresAt) <= currentTime.getTime() || !states || states.some((state) => state.status !== 'ACCEPTED')
+        || parsed.authorization.kind !== 'PRIVATE' || parsed.authorization.actor.companyId !== input.owner.companyId
+        || parsed.authorization.actor.userId !== input.owner.actorUserId || parsed.authorization.actor.membershipId !== input.owner.membershipId
+        || parsed.authorization.actor.channel !== input.owner.channel || parsed.authorization.actor.channelKind !== input.owner.channelKind
+        || parsed.authorization.actor.channelId !== input.owner.messagingChannelId || parsed.authorization.actor.chatKeyHash !== input.owner.chatKeyHash
+        || parsed.authorization.actor.ownerEpoch !== input.owner.ownerEpoch) return false;
+      return (await tx.reimbursementDraftAction.updateMany({ where: {
+        id: input.actionId, companyId: input.owner.companyId, status: 'PREVIEW', previewRevision: input.previewRevision,
+        confirmationDigest: input.confirmationDigest, expiresAt: { gt: currentTime }, ...this.actionOwnerWhere(input.owner),
+      }, data: { previewDeliveryId: input.deliveryPlanId } })).count === 1;
+    });
+  }
+
+  async cancelDraftAction(input: {
+    owner: ReimbursementDraftActionOwner; actionId: string; previewRevision: number; confirmationDigest: string; now: Date; sharedMessagingChannelId?: string;
+  }): Promise<'cancelled' | 'applied' | 'expired' | 'stale' | 'forbidden'> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      const currentTime = await this.transactionTime(tx);
+      await this.lockDraftAction(tx, input.actionId);
+      const row = await tx.reimbursementDraftAction.findFirst({ where: { id: input.actionId, companyId: input.owner.companyId } });
+      if (!row || !this.actionOwnerMatches(row, input.owner) || !await this.draftActionOwnerCurrent(tx, input.owner, input.sharedMessagingChannelId, true)) return 'forbidden';
+      if (row.status === 'APPLIED') return 'applied';
+      if (row.status === 'CANCELLED') return 'cancelled';
+      if (row.status === 'EXPIRED' || row.expiresAt <= currentTime) {
+        if (['COLLECTING', 'PREVIEW'].includes(row.status)) await tx.reimbursementDraftAction.updateMany({ where: { id: row.id, status: row.status, updatedAt: row.updatedAt },
+          data: { status: 'EXPIRED', previewDeliveryId: null, commandJson: Prisma.DbNull, previewJson: Prisma.DbNull, sourceProofJson: Prisma.DbNull } });
+        return 'expired';
+      }
+      if (row.status !== 'PREVIEW' || row.previewRevision !== input.previewRevision || row.confirmationDigest !== input.confirmationDigest) return 'stale';
+      const changed = await tx.reimbursementDraftAction.updateMany({ where: { id: row.id, status: 'PREVIEW', updatedAt: row.updatedAt }, data: {
+        status: 'CANCELLED', expiresAt: currentTime, previewDeliveryId: null,
+        commandJson: Prisma.DbNull, previewJson: Prisma.DbNull, sourceProofJson: Prisma.DbNull,
+      } });
+      return changed.count === 1 ? 'cancelled' : 'stale';
+    });
+  }
+
+  async cancelDraftCollection(input: {
+    owner: ReimbursementDraftActionOwner; actionId: string; sharedMessagingChannelId?: string;
+  }): Promise<'cancelled' | 'applied' | 'expired' | 'stale' | 'forbidden'> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      const currentTime = await this.transactionTime(tx);
+      await this.lockDraftAction(tx, input.actionId);
+      const row = await tx.reimbursementDraftAction.findFirst({ where: { id: input.actionId, companyId: input.owner.companyId } });
+      if (!row || !this.actionOwnerMatches(row, input.owner)
+        || !await this.draftActionOwnerCurrent(tx, input.owner, input.sharedMessagingChannelId, true)) return 'forbidden';
+      if (row.status === 'APPLIED') return 'applied';
+      if (row.status === 'CANCELLED') return 'cancelled';
+      if (row.status === 'EXPIRED' || row.expiresAt <= currentTime) {
+        if (row.status === 'COLLECTING') await tx.reimbursementDraftAction.updateMany({ where: { id: row.id, status: 'COLLECTING', updatedAt: row.updatedAt }, data: {
+          status: 'EXPIRED', commandJson: Prisma.DbNull, previewJson: Prisma.DbNull, sourceProofJson: Prisma.DbNull,
+          confirmationDigest: null, previewDeliveryId: null,
+        } });
+        return 'expired';
+      }
+      if (row.status !== 'COLLECTING') return 'stale';
+      const changed = await tx.reimbursementDraftAction.updateMany({ where: { id: row.id, status: 'COLLECTING', updatedAt: row.updatedAt }, data: {
+        status: 'CANCELLED', expiresAt: currentTime, commandJson: Prisma.DbNull, previewJson: Prisma.DbNull,
+        sourceProofJson: Prisma.DbNull, confirmationDigest: null, previewDeliveryId: null,
+      } });
+      return changed.count === 1 ? 'cancelled' : 'stale';
+    });
+  }
+
+  async applyDraftActionAtomic(input: {
+    owner: ReimbursementDraftActionOwner;
+    actionId: string;
+    previewRevision: number;
+    confirmationDigest: string;
+    requestId: string;
+    traceRequestId: string;
+    now: Date;
+    sharedMessagingChannelId?: string;
+  }): Promise<{ kind: 'applied' | 'already_applied'; action: ReimbursementDraftActionRecord; request: ReimbursementRequestRecord }
+    | { kind: 'cancelled' | 'expired' | 'stale' | 'needs_fields' | 'not_delivered' | 'forbidden' }> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      await lockPlanTermCompany(tx, input.owner.companyId);
+      const currentTime = await this.transactionTime(tx);
+      await this.lockDraftAction(tx, input.actionId);
+      const row = await tx.reimbursementDraftAction.findFirst({ where: { id: input.actionId, companyId: input.owner.companyId } });
+      if (!row || !this.actionOwnerMatches(row, input.owner)) return { kind: 'forbidden' } as const;
+      if (row.status === 'APPLIED') {
+        if (!await this.draftActionOwnerCurrent(tx, input.owner, input.sharedMessagingChannelId, true)) return { kind: 'forbidden' } as const;
+        const request = await tx.reimbursementRequest.findFirst({ where: { id: row.requestId, companyId: input.owner.companyId }, include: { lines: { orderBy: { lineNo: 'asc' } } } });
+        return request ? { kind: 'already_applied', action: this.toDraftAction(row), request: this.toRequest(request) } as const : { kind: 'stale' } as const;
+      }
+      if (!await this.draftActionOwnerCurrent(tx, input.owner, input.sharedMessagingChannelId, false)) return { kind: 'forbidden' } as const;
+      if (row.status === 'CANCELLED') return { kind: 'cancelled' } as const;
+      if (row.status === 'EXPIRED' || row.expiresAt <= currentTime) {
+        if (['COLLECTING', 'PREVIEW'].includes(row.status)) await tx.reimbursementDraftAction.updateMany({ where: { id: row.id, status: row.status, updatedAt: row.updatedAt },
+          data: { status: 'EXPIRED', previewDeliveryId: null, commandJson: Prisma.DbNull, previewJson: Prisma.DbNull, sourceProofJson: Prisma.DbNull } });
+        return { kind: 'expired' } as const;
+      }
+      if (row.status === 'COLLECTING') return { kind: 'needs_fields' } as const;
+      if (row.status !== 'PREVIEW' || row.previewRevision !== input.previewRevision || row.confirmationDigest !== input.confirmationDigest) return { kind: 'stale' } as const;
+      if (!row.previewDeliveryId) return { kind: 'not_delivered' } as const;
+      const command = this.parseDraftPreparedCommand(row.commandJson);
+      if (!command || command.operation !== row.operation || command.requestId !== (row.requestId ?? undefined)
+        || command.expectedRequestUpdatedAt !== (row.expectedRequestUpdatedAt?.toISOString() ?? undefined)) return { kind: 'stale' } as const;
+      const policy = effectivePolicy(await tx.reimbursementPolicy.findFirst({ where: { companyId: input.owner.companyId, branchId: null }, orderBy: { createdAt: 'asc' } }).then((value: any) => value ? this.toPolicy(value) : null));
+      if (!isDeepStrictEqual(command.policyProof, { currency: policy.currency, requireReceipt: policy.requireReceipt, allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason })) return { kind: 'stale' } as const;
+      const lines: ReimbursementLineWriteData[] = command.lines.map((line) => ({ ...line, incurredDate: new Date(line.incurredDate) }));
+      if (validateRequestFields({ reason: command.reason, lines }).length > 0) return { kind: 'stale' } as const;
+      const header = deriveHeaderFromLines(lines);
+      if (header.amount !== command.header.amount || header.categoryKey !== command.header.categoryKey
+        || (header.categoryLabelSnapshot ?? undefined) !== command.header.categoryLabelSnapshot
+        || header.incurredDate.toISOString() !== command.header.incurredDate) return { kind: 'stale' } as const;
+      const receipt = computeReceiptRequirement({ requireReceipt: policy.requireReceipt, allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason,
+        lines, missingReceiptReason: command.missingReceiptReason });
+      if (receipt.status !== command.receiptRequirementStatus) return { kind: 'stale' } as const;
+      if (!await tx.branch.findFirst({ where: { id: command.branchId, companyId: input.owner.companyId, status: 'ACTIVE' }, select: { id: true } })) return { kind: 'stale' } as const;
+      const member = await tx.companyMembership.findFirst({ where: activeApproverMembershipWhere(input.owner.companyId, [command.requesterUserId], command.branchId), include: { user: { select: { displayName: true } } } });
+      if (!member || member.user.displayName !== command.requesterDisplayNameSnapshot) return { kind: 'stale' } as const;
+      await assertReimbursementSources(tx, { companyId: input.owner.companyId, requesterUserId: command.requesterUserId, branchId: command.branchId, currency: command.currency, lines });
+
+      let request: any;
+      if (command.operation === 'CREATE') {
+        if (input.requestId !== row.id) return { kind: 'stale' } as const;
+        request = await tx.reimbursementRequest.create({ data: {
+          id: input.requestId, companyId: input.owner.companyId, branchId: command.branchId, requesterUserId: command.requesterUserId,
+          requesterDisplayNameSnapshot: command.requesterDisplayNameSnapshot, title: command.title, reason: command.reason,
+          categoryKey: header.categoryKey, categoryLabelSnapshot: header.categoryLabelSnapshot, amount: header.amount,
+          currency: command.currency, incurredDate: header.incurredDate, missingReceiptReason: command.missingReceiptReason,
+          receiptRequirementStatus: command.receiptRequirementStatus, outstandingAmount: header.amount, createdByUserId: input.owner.actorUserId,
+        } });
+        await this.replaceLines(tx, input.owner.companyId, request.id, lines);
+      } else {
+        if (!command.requestId || command.requestId !== input.requestId || !command.expectedRequestUpdatedAt) return { kind: 'stale' } as const;
+        await this.lockRequest(tx, input.owner.companyId, command.requestId);
+        const expected = new Date(command.expectedRequestUpdatedAt);
+        const changed = await tx.reimbursementRequest.updateMany({ where: { id: command.requestId, companyId: input.owner.companyId, status: 'DRAFT', updatedAt: expected }, data: {
+          title: command.title ?? null, reason: command.reason, missingReceiptReason: command.missingReceiptReason ?? null,
+          amount: header.amount, categoryKey: header.categoryKey, categoryLabelSnapshot: header.categoryLabelSnapshot ?? null,
+          incurredDate: header.incurredDate, outstandingAmount: header.amount, receiptRequirementStatus: command.receiptRequirementStatus,
+          updatedByUserId: input.owner.actorUserId, updatedAt: this.nextVersion(expected),
+        } });
+        if (changed.count !== 1) return { kind: 'stale' } as const;
+        await this.replaceLines(tx, input.owner.companyId, command.requestId, lines);
+        if (command.invalidateSignatures) await tx.reimbursementClaimSignature.deleteMany({ where: { companyId: input.owner.companyId, reimbursementRequestId: command.requestId } });
+        request = await tx.reimbursementRequest.findFirstOrThrow({ where: { id: command.requestId, companyId: input.owner.companyId } });
+      }
+      const committedAt = currentTime;
+      const result = {
+        schemaVersion: 1, actionId: row.id, operation: command.operation, requestId: request.id, committedState: 'DRAFT',
+        amount: decStr(d(String(request.amount))), currency: request.currency, confirmationDigest: row.confirmationDigest,
+        committedAt: committedAt.toISOString(), appliedRequestUpdatedAt: request.updatedAt.toISOString(),
+      };
+      await new PrismaAuditRepository(this.prisma).log({ companyId: input.owner.companyId, actorUserId: input.owner.actorUserId,
+        action: command.operation === 'CREATE' ? 'reimbursement.request.create_line_ai' : 'reimbursement.request.update_draft_line_ai',
+        targetType: 'reimbursement_request', targetId: request.id, requestId: input.traceRequestId, result: 'SUCCESS', riskLevel: 'HIGH',
+        metadataJson: { actionId: row.id, previewRevision: row.previewRevision, confirmationDigest: row.confirmationDigest, lineCount: lines.length },
+      }, tx);
+      const applied = await tx.reimbursementDraftAction.updateMany({ where: { id: row.id, status: 'PREVIEW', updatedAt: row.updatedAt,
+        previewRevision: input.previewRevision, confirmationDigest: input.confirmationDigest }, data: {
+          status: 'APPLIED', requestId: request.id, resultJson: result, appliedAt: committedAt,
+          appliedRequestUpdatedAt: request.updatedAt, commandJson: Prisma.DbNull, previewJson: Prisma.DbNull, sourceProofJson: Prisma.DbNull,
+        } });
+      if (applied.count !== 1) throw new ConflictException('reimbursement_action_changed');
+      const action = await tx.reimbursementDraftAction.findUniqueOrThrow({ where: { id: row.id } });
+      const complete = await tx.reimbursementRequest.findFirstOrThrow({ where: { id: request.id, companyId: input.owner.companyId }, include: { lines: { orderBy: { lineNo: 'asc' } } } });
+      return { kind: 'applied', action: this.toDraftAction(action), request: this.toRequest(complete) } as const;
+    });
+  }
+
+  async markDraftActionStale(input: { owner: ReimbursementDraftActionOwner; actionId: string; previewRevision: number; confirmationDigest: string }): Promise<void> {
+    await (this.prisma.client as any).reimbursementDraftAction.updateMany({ where: {
+      id: input.actionId, companyId: input.owner.companyId, status: 'PREVIEW', previewRevision: input.previewRevision,
+      confirmationDigest: input.confirmationDigest, ...this.actionOwnerWhere(input.owner),
+    }, data: { status: 'STALE', previewDeliveryId: null, commandJson: Prisma.DbNull, previewJson: Prisma.DbNull, sourceProofJson: Prisma.DbNull } });
   }
 
   async submitDraftAtomic(data: {
@@ -1913,7 +2223,11 @@ export class PrismaReimbursementRepository {
         requesterUserId: where.requesterUserId,
         status: (where.status as any) ?? (where.statuses ? { in: where.statuses as any } : undefined),
         paymentStatus: where.paymentStatus as any,
-        AND: predicates,
+        AND: [...predicates, ...(where.search ? [{ OR: [
+          { requestNo: { contains: where.search, mode: 'insensitive' as const } },
+          { title: { contains: where.search, mode: 'insensitive' as const } },
+          { reason: { contains: where.search, mode: 'insensitive' as const } },
+        ] }] : [])],
       },
       // Queues show a line count, not the lines themselves — keep the list query cheap.
       include: {
@@ -1923,6 +2237,8 @@ export class PrismaReimbursementRepository {
         }),
       },
       orderBy: { createdAt: 'desc' },
+      skip: where.skip,
+      take: where.take,
     });
     return rows.map((r) => this.toRequest(r));
   }
@@ -2835,6 +3151,107 @@ export class PrismaReimbursementRepository {
   }
 
   // ---- Mappers ----
+
+  private actionOwnerWhere(owner: ReimbursementDraftActionOwner) {
+    return {
+      actorUserId: owner.actorUserId,
+      membershipId: owner.membershipId,
+      channel: owner.channel,
+      channelKind: owner.channelKind,
+      messagingChannelId: owner.messagingChannelId,
+      chatKeyHash: owner.chatKeyHash,
+      ownerEpoch: owner.ownerEpoch,
+    };
+  }
+
+  private actionOwnerMatches(row: any, owner: ReimbursementDraftActionOwner): boolean {
+    return row.companyId === owner.companyId && Object.entries(this.actionOwnerWhere(owner)).every(([key, value]) => row[key] === value);
+  }
+
+  private async draftActionOwnerCurrent(
+    tx: any,
+    owner: ReimbursementDraftActionOwner,
+    sharedMessagingChannelId: string | undefined,
+    allowOptOut: boolean,
+  ): Promise<boolean> {
+    const channelCurrent = owner.messagingChannelId === sharedMessagingChannelId || Boolean(await tx.lineChannelBinding.findFirst({
+      where: { companyId: owner.companyId, messagingChannelId: owner.messagingChannelId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
+      select: { id: true },
+    }));
+    if (!channelCurrent) return false;
+    const member = await tx.companyMembership.findFirst({
+      where: {
+        id: owner.membershipId, companyId: owner.companyId, userId: owner.actorUserId, status: 'ACTIVE',
+        user: { status: 'ACTIVE', ...(!allowOptOut ? { aiAssistantOptOutAt: null } : {}) }, company: { status: 'ACTIVE' },
+      }, select: { id: true },
+    });
+    if (!member) return false;
+    return Boolean(await tx.aiConversation.findFirst({ where: {
+      companyId: owner.companyId, userId: owner.actorUserId, membershipId: owner.membershipId,
+      channel: owner.channel, channelKind: owner.channelKind, messagingChannelId: owner.messagingChannelId,
+      chatKeyHash: owner.chatKeyHash, lifecycleEpoch: owner.ownerEpoch,
+    }, select: { id: true } }));
+  }
+
+  private async lockDraftAction(tx: any, actionId: string): Promise<void> {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`reimbursement-draft-action:${actionId}`}))`;
+    await tx.$queryRaw`SELECT "id" FROM "ReimbursementDraftAction" WHERE "id" = ${actionId}::uuid FOR UPDATE`;
+  }
+
+  private async transactionTime(tx: any): Promise<Date> {
+    const [row] = await tx.$queryRaw<Array<{ currentTime: Date }>>`SELECT CURRENT_TIMESTAMP AS "currentTime"`;
+    if (!row?.currentTime) throw new Error('reimbursement_database_time_unavailable');
+    return row.currentTime;
+  }
+
+  private parseDraftPreparedCommand(value: unknown): ReimbursementDraftPreparedCommand | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || Buffer.byteLength(JSON.stringify(value), 'utf8') > 128 * 1024) return null;
+    const command = value as Partial<ReimbursementDraftPreparedCommand>;
+    const string = (candidate: unknown, max = 1_000) => typeof candidate === 'string' && candidate.length <= max;
+    if (command.schemaVersion !== 1 || !['CREATE', 'UPDATE'].includes(String(command.operation))
+      || !string(command.requesterUserId, 200) || !string(command.requesterDisplayNameSnapshot, 500)
+      || !string(command.branchId, 200) || !string(command.reason, 1_000) || !command.reason!.trim()
+      || !string(command.currency, 3) || !command.header || typeof command.header !== 'object'
+      || !string(command.header.amount, 32) || !string(command.header.categoryKey, 80)
+      || !string(command.header.incurredDate, 40) || !Number.isFinite(Date.parse(command.header.incurredDate!))
+      || !Array.isArray(command.lines) || command.lines.length < 1 || command.lines.length > 50
+      || !command.policyProof || typeof command.policyProof !== 'object'
+      || !string(command.policyProof.currency, 3) || typeof command.policyProof.requireReceipt !== 'boolean'
+      || typeof command.policyProof.allowMissingReceiptWithReason !== 'boolean'
+      || typeof command.invalidateSignatures !== 'boolean'
+      || !['REQUIRED', 'ATTACHED', 'MISSING_WITH_REASON', 'WAIVED_BY_POLICY'].includes(String(command.receiptRequirementStatus))) return null;
+    if (command.title !== undefined && !string(command.title, 200)
+      || command.missingReceiptReason !== undefined && !string(command.missingReceiptReason, 500)
+      || command.header.categoryLabelSnapshot !== undefined && !string(command.header.categoryLabelSnapshot, 160)) return null;
+    if (command.operation === 'CREATE' && (command.requestId !== undefined || command.expectedRequestUpdatedAt !== undefined)) return null;
+    if (command.operation === 'UPDATE' && (!string(command.requestId, 200) || !string(command.expectedRequestUpdatedAt, 40)
+      || !Number.isFinite(Date.parse(command.expectedRequestUpdatedAt!)))) return null;
+    for (const [index, line] of command.lines.entries()) {
+      if (!line || typeof line !== 'object' || line.lineNo !== index + 1 || !string(line.incurredDate, 40)
+        || !Number.isFinite(Date.parse(line.incurredDate)) || !string(line.description, 500) || !line.description.trim()
+        || !string(line.categoryKey, 80) || !line.categoryKey || !string(line.amount, 32)
+        || !/^\d{1,14}(?:\.\d{1,4})?$/.test(line.amount)
+        || line.purpose != null && !string(line.purpose, 500)
+        || line.categoryLabelSnapshot != null && !string(line.categoryLabelSnapshot, 160)
+        || line.attachmentId != null && !string(line.attachmentId, 64)
+        || line.linkedExpenseId != null && !string(line.linkedExpenseId, 64)) return null;
+    }
+    return command as ReimbursementDraftPreparedCommand;
+  }
+
+  private toDraftAction(row: any): ReimbursementDraftActionRecord {
+    return {
+      id: row.id, companyId: row.companyId, actorUserId: row.actorUserId, membershipId: row.membershipId,
+      channel: row.channel, channelKind: row.channelKind, messagingChannelId: row.messagingChannelId,
+      chatKeyHash: row.chatKeyHash, ownerEpoch: row.ownerEpoch, taskId: row.taskId, actionOrdinal: row.actionOrdinal,
+      intentKeyHash: row.intentKeyHash, operation: row.operation, status: row.status, previewRevision: row.previewRevision,
+      requestId: opt(row.requestId), expectedRequestUpdatedAt: opt(row.expectedRequestUpdatedAt),
+      commandJson: opt(row.commandJson), previewJson: opt(row.previewJson), sourceProofJson: opt(row.sourceProofJson),
+      confirmationDigest: opt(row.confirmationDigest), resultJson: opt(row.resultJson),
+      appliedRequestUpdatedAt: opt(row.appliedRequestUpdatedAt), previewDeliveryId: opt(row.previewDeliveryId),
+      expiresAt: row.expiresAt, appliedAt: opt(row.appliedAt), createdAt: row.createdAt, updatedAt: row.updatedAt,
+    };
+  }
 
   private toPolicy(row: any): ReimbursementPolicyRecord {
     return {

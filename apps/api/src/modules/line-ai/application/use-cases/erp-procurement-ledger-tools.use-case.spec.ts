@@ -23,7 +23,7 @@ const period = {
 describe('LINE ERP procurement and ledger tools', () => {
   it('denies all tools before calling their authoritative sources', async () => {
     let calls = 0;
-    const source = { execute: async () => { calls += 1; return { data: [], total: 0, page: 1, pageSize: 10 }; } } as any;
+    const source = { execute: async () => { calls += 1; return { data: [], total: 0, page: 1, pageSize: 10 }; }, aggregate: async () => { calls += 1; return {}; } } as any;
     const noPerms = { ...baseCtx, permissions: [] };
     const tools = [
       new ProcurementGetSummaryTool(source),
@@ -36,27 +36,34 @@ describe('LINE ERP procurement and ledger tools', () => {
     assert.equal(calls, 0);
   });
 
-  it('returns exact PO record counts without inventing a monetary aggregate', async () => {
+  it('returns exact PO record counts and currency-separated monetary aggregates', async () => {
     const filters: any[] = [];
-    const tool = new ProcurementGetSummaryTool({ execute: async (_ctx: any, filter: any) => {
+    const tool = new ProcurementGetSummaryTool({ aggregate: async (_ctx: any, filter: any) => {
       filters.push(filter);
-      return { data: [], total: filter.status === 'DRAFT' ? 2 : filter.status ? 0 : 2, page: 1, pageSize: 1 };
+      return {
+        asOf: new Date('2026-07-31T00:00:00Z'), total: 2,
+        byStatus: [{ status: 'DRAFT', count: 2 }],
+        byCurrency: [{ currency: 'THB', count: 2, totalAmount: '250.0000' }],
+      };
     } } as any);
     const result = await tool.execute(baseCtx, { fromDate: '2026-07-01', toDate: '2026-07-31' });
     assert.equal(result.status, 'ok');
     assert.equal((result.data as any).total, 2);
     assert.equal((result.data as any).byStatus.DRAFT, 2);
-    assert.equal((result.data as any).monetarySummaryAvailable, false);
+    assert.equal((result.data as any).monetarySummaryAvailable, true);
+    assert.deepEqual((result.data as any).totalsByCurrency, [{ currency: 'THB', count: 2, totalAmount: '250.0000' }]);
     assert.equal((result.data as any).basis, 'canonical_purchase_order_record_counts');
-    assert.equal(filters.every((filter) => filter.branchId === 'b1'), true);
+    assert.equal(filters.every((filter) => filter.branchId === undefined), true, 'ABAC scope is enforced by the source use case');
   });
 
-  it('fails closed for disallowed or ambiguous branch scope', async () => {
-    const source = { execute: async () => { throw new Error('must not call'); } } as any;
+  it('fails closed for a disallowed branch and supports all authorized branches', async () => {
+    const source = { aggregate: async () => ({ asOf: new Date(), total: 0, byStatus: [], byCurrency: [] }) } as any;
     const tool = new ProcurementGetSummaryTool(source);
     assert.equal((await tool.execute(baseCtx, { branchId: 'b2' })).errorCode, 'BRANCH_SCOPE_DENIED');
     const multiBranch = { ...baseCtx, branchIds: ['b1', 'b2'] };
-    assert.equal((await tool.execute(multiBranch)).errorCode, 'MULTI_BRANCH_SUMMARY_UNSUPPORTED');
+    const allAuthorized = await tool.execute(multiBranch);
+    assert.equal(allAuthorized.status, 'ok');
+    assert.equal((allAuthorized.data as any).branchId, null);
   });
 
   it('bounds supplier results and strips private contact/tax fields', async () => {
@@ -132,7 +139,7 @@ describe('LINE ERP procurement and ledger tools', () => {
     assert.equal((result.data as any).currency, null);
     assert.equal((result.data as any).profitAndLoss.netProfit, '35.0000');
     assert.deepEqual([trialCalls, pnlCalls, balanceCalls], [0, 1, 0]);
-    const absent = await tool.execute(baseCtx, { periodKey: 'missing' });
+    const absent = await tool.execute(baseCtx, { periodKey: '2025-01' });
     assert.deepEqual(absent.data, { found: false });
     assert.equal(absent.errorCode, 'LEDGER_PERIOD_NOT_FOUND');
     assert.equal(absent.sourceRefs[0]?.permissionChecked, true);

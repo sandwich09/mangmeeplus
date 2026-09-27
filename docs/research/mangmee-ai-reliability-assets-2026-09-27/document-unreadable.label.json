@@ -1,0 +1,36 @@
+{
+  "assetId": "document-unreadable",
+  "fileName": "document-unreadable.pdf",
+  "mimeType": "application/pdf",
+  "pages": 2,
+  "status": "draft",
+  "labelledBy": null,
+  "sourceFields": [
+    {
+      "page": 1,
+      "field": "document_type",
+      "amountRole": null,
+      "originalValue": "synthetic tax document cover"
+    }
+  ],
+  "expectedZeroQaFinancialWrites": true,
+  "questionOnlyRoutes": [
+    "document_page_question",
+    "readability_question"
+  ],
+  "unreadable": [
+    {
+      "page": 2,
+      "fields": [
+        "all"
+      ],
+      "reason": "canonical fixture intentionally unreadable"
+    }
+  ],
+  "partial": [],
+  "provenance": {
+    "reviewedBy": null,
+    "reviewedAt": null,
+    "note": "synthetic unreadable document; no customer data"
+  }
+}

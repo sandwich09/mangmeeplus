@@ -11,6 +11,13 @@ import { GetExpenseUseCase } from '../../../expenses/application/use-cases/expen
 import { GetReimbursementDetailUseCase } from '../../../reimbursements/application/use-cases/reimbursement-request.use-case';
 import { GetReimbursementAiSummaryUseCase } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
+import {
+  BUSINESS_READ_BASIS_VERSION,
+  appliedQuery,
+  completeResult,
+  fact,
+  sourceRefId,
+} from '../../domain/logic/business-read-source.logic';
 
 function now(): string { return new Date().toISOString(); }
 
@@ -121,38 +128,35 @@ export class AccountingGetReceivableSummaryTool implements ErpReadToolPort {
   constructor(private readonly listDocuments: ListDocumentsUseCase) {}
 
   async execute(ctx: ErpToolContext): Promise<ToolResult> {
-    const asOf = now();
+    let asOf = now();
     return safely(this.toolName, asOf, 'RECEIVABLE_UNAVAILABLE', async () => {
-      let page = 1;
-      let openCount = 0;
-      const totals = new Map<string, Decimal>();
-      const due: Array<{ id: string; documentNumber: string; dueDate: string | null; outstandingAmount: string; currency: string; paymentStatus: string }> = [];
-      while (true) {
-        const result = await this.listDocuments.execute(toCtx(ctx), { documentType: 'INVOICE', page, pageSize: 100 });
-        for (const doc of result.data) {
-          let outstanding: Decimal;
-          try { outstanding = new Decimal(doc.outstandingAmount); }
-          catch { continue; }
-          if (doc.status === 'VOIDED' || !outstanding.isFinite() || outstanding.lte(0)) continue;
-          openCount += 1;
-          totals.set(doc.currency, (totals.get(doc.currency) ?? new Decimal(0)).add(outstanding));
-          if (due.length < 10) due.push({
-            id: doc.id, documentNumber: doc.documentNumber ?? doc.id,
-            dueDate: doc.dueDate?.toISOString() ?? null, outstandingAmount: doc.outstandingAmount,
-            currency: doc.currency, paymentStatus: doc.paymentStatus ?? 'UNPAID',
-          });
-        }
-        if (page * result.pageSize >= result.total) break;
-        page += 1;
-      }
+      const aggregate = await this.listDocuments.aggregateOpenReceivables(toCtx(ctx));
+      asOf = aggregate.asOf.toISOString();
+      const sourceRefs = [source(ctx, asOf, 'ลูกหนี้คงค้าง', 'accounting-documents', 'receivable_summary', undefined, `/companies/${ctx.companyId}/accounting`)];
+      const queryApplied = appliedQuery(undefined, {
+        branch: { mode: 'all_authorized', branchId: null }, dateBasis: 'accounting_document_due_date',
+        statusBasis: 'issued_non_void_invoices_with_positive_outstanding', dataset: 'operational_accounts_receivable',
+      });
+      const completeness = completeResult(aggregate.items.length, aggregate.hasMore, aggregate.totalsByCurrency.length, false);
       return {
         toolName: this.toolName, status: 'ok', asOf,
         data: {
-          basis: 'issued_non_void_invoices_with_positive_outstanding', openCount,
-          totalsByCurrency: [...totals].map(([currency, amount]) => ({ currency, outstandingAmount: amount.toFixed(2) })),
-          items: due,
+          basis: 'issued_non_void_invoices_with_positive_outstanding', openCount: aggregate.openCount,
+          totalsByCurrency: aggregate.totalsByCurrency,
+          items: aggregate.items.map((item) => ({ ...item, documentNumber: item.documentNumber ?? item.id, dueDate: item.dueDate?.toISOString() ?? null })),
+          queryApplied,
+          completeness,
         },
-        sourceRefs: [source(ctx, asOf, 'ลูกหนี้คงค้าง', 'accounting-documents', 'receivable_summary', undefined, `/companies/${ctx.companyId}/accounting`)],
+        sourceRefs,
+        queryApplied,
+        basisVersion: BUSINESS_READ_BASIS_VERSION,
+        facts: aggregate.totalsByCurrency.map((row) => fact({
+          id: `accounting.receivable.${row.currency}`, metric: 'receivable_outstanding', value: row.outstandingAmount,
+          unit: 'money', currency: row.currency, period: null, dateBasis: queryApplied.dateBasis,
+          statusBasis: queryApplied.statusBasis, sourceRefIds: sourceRefs.map(sourceRefId), asOf,
+          state: row.count === 0 ? 'empty' : 'known',
+        })),
+        completeness,
       };
     });
   }

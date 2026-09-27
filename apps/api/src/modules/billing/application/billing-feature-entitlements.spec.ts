@@ -17,6 +17,7 @@ function featureDb(initialRows: Row[] = [], initialTransitions: Transition[] = [
   let normalization: { status: string; normalizerVersion: number; cohortKind: string } | null = initialRows.length
     ? { status: 'COMPLETED', normalizerVersion: 1, cohortKind } : null;
   const db = {
+    aiConversation: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
     companyFeatureEntitlement: {
       findMany: async () => [...rows.values()].sort((a, b) => a.featureKey.localeCompare(b.featureKey)),
       upsert: async ({ where, create, update }: any) => {

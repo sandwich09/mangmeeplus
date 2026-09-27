@@ -96,6 +96,14 @@ export class ListPurchaseOrdersUseCase {
     }, ctx.scopes ?? {});
     return { data, total, page: filter.page ?? 1, pageSize: filter.pageSize ?? 20 };
   }
+
+  async aggregate(ctx: RequestContext, filter: { branchId?: string; fromDate: string; toDate: string }) {
+    if (!ctx.permissions.includes('procurement.purchase_order.read')) throw new ForbiddenException();
+    if (ctx.scopes?.branchIds && filter.branchId && !ctx.scopes.branchIds.includes(filter.branchId)) {
+      throw new ForbiddenException('Branch is out of scope');
+    }
+    return this.repo.aggregatePurchaseOrders(ctx.companyId, filter, ctx.scopes ?? {});
+  }
 }
 
 @Injectable()

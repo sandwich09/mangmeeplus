@@ -4,6 +4,7 @@ import { ErpToolClient, enforceSourceHonesty, toolMetaToPolicy } from './erp-too
 import { ToolPolicyEnforcerService } from '../../../common/ai/tool-policy-enforcer.service';
 import type { AiGatewayConfigService } from '../../../common/config/ai-gateway-config.service';
 import type { ToolMeta } from '@watchdog-bms/contracts';
+import { runWithUsageContext } from '../../../common/usage/usage-context';
 
 function makeConfig(overrides: Partial<AiGatewayConfigService> = {}): AiGatewayConfigService {
   return {
@@ -130,6 +131,20 @@ describe('ErpToolClient – governed tool path', () => {
     const mismatch = enforceSourceHonesty(readTool, { ...valid, sourceRefs: [{ ...valid.sourceRefs[0]!, module: 'employee-access' }] });
     assert.equal(mismatch.errorCode, 'TOOL_RESULT_SOURCE_MISMATCH');
     assert.equal(mismatch.data, undefined);
+  });
+
+  it('accepts ACTION locators only from reimbursement draft tools and never as ERP read evidence', () => {
+    const reimbursementTool: ToolMeta = { ...draftTool, name: 'reimbursement.draft.get_options',
+      sourceModule: 'reimbursements', businessSubjects: ['reimbursement'] };
+    const action = { toolName: reimbursementTool.name, status: 'ok' as const,
+      data: { reimbursementDraft: { status: 'needs_fields' } }, sourceRefs: [{ label: 'draft',
+        module: 'reimbursements', entityType: 'reimbursement_draft_action', entityId: 'action-1',
+        permissionChecked: true as const, sourceType: 'ACTION' as const }], asOf: '2026-09-27T00:00:00Z' };
+    assert.equal(enforceSourceHonesty(reimbursementTool, action), action);
+    assert.equal(enforceSourceHonesty(readTool, { ...action, toolName: readTool.name,
+      sourceRefs: [{ ...action.sourceRefs[0]!, module: 'inventory' }] }).errorCode, 'TOOL_RESULT_SOURCE_MISMATCH');
+    assert.equal(enforceSourceHonesty(reimbursementTool, { ...action,
+      sourceRefs: [{ ...action.sourceRefs[0]!, sourceType: 'ERP_READ' }] }).errorCode, 'TOOL_RESULT_SOURCE_MISMATCH');
   });
 
   it('scrubs business data and sources from every typed non-ok result', () => {
@@ -370,5 +385,36 @@ describe('ErpToolClient – governed tool path', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it('forwards reimbursement evidence from trusted context and only the request-scoped v2 grant', async () => {
+    const originalFetch = globalThis.fetch;
+    let posted: any;
+    const grant = { version: 2, turnKey: 'turn', authorityKind: 'webhook_event', authorityId: 'event',
+      channelOwnerDigest: 'a'.repeat(64), attemptKey: 'attempt', monthKey: '2026-09', payerCompanyId: 'company-1',
+      model: { provider: 'openai', modelId: 'model', region: 'ap-southeast-1' }, allowedProfileIds: ['line-control/2'],
+      profileTableDigest: 'b'.repeat(64), maxTurnSlots: 4, maxRepairs: 1, admittedAtMs: 1,
+      workDeadlineAtMs: 2, finalDeadlineAtMs: 3, nonce: 'nonce', nextOrdinal: 0,
+      issuerVersion: 'line-budget-issuer:2', signature: 'c'.repeat(64) } as any;
+    const evidence = { version: 2, turnKey: 'turn', parts: [], joinedSha256: 'd'.repeat(64), complete: true,
+      utf16Units: 0, utf8Bytes: 0, normalizationVersion: 'lookup-v2' } as any;
+    const candidates = { version: 2, inputDigest: evidence.joinedSha256, extractorVersion: 'value-v2',
+      todayIso: '2026-09-27', completeness: 'complete', counts: { amounts: 0, dates: 0, periods: 0 },
+      amounts: [], dates: [], periods: [] } as any;
+    globalThis.fetch = async (_url, init) => {
+      posted = JSON.parse(String(init?.body));
+      return { ok: true, json: async () => ({ toolName: readTool.name, status: 'ok', data: { count: 1 },
+        sourceRefs: [{ label: 'stock', module: 'inventory', entityType: 'stock', permissionChecked: true }], asOf: new Date().toISOString() }) } as Response;
+    };
+    try {
+      const config = makeConfig(), client = new ErpToolClient(config, makeEnforcer(config));
+      await runWithUsageContext({ companyId: 'company-1', budget: { status: 'active-v2', grant,
+        inputDigest: evidence.joinedSha256, sourceRoute: 'line', calls: 0, repairCount: 0 } }, () =>
+        client.invoke(readTool, { ...ctx, inputEvidence: evidence, valueCandidatesV2: candidates,
+          budgetGrantV2: { ...grant, signature: 'f'.repeat(64) }, actorDelegations: { [readTool.name]: ['delegation'] } }, {}));
+      assert.deepEqual(posted.context.inputEvidence, evidence);
+      assert.deepEqual(posted.context.valueCandidatesV2, candidates);
+      assert.deepEqual(posted.context.budgetGrantV2, grant);
+    } finally { globalThis.fetch = originalFetch; }
   });
 });

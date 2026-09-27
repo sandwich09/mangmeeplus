@@ -11,6 +11,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { AiGatewayConfigService } from '../../../../common/config/ai-gateway-config.service';
+import { AI_BUDGET_ESTIMATOR_VERSION_V2, AI_BUDGET_PROFILE_TABLE_DIGEST_V2, parseLineAiSemanticCoverage } from '@watchdog-bms/contracts';
 import type {
   AiUsageEntry,
   LineAiExpectedRuntimeIdentity,
@@ -170,6 +171,33 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
     }
   }
 
+  /** Negotiates the actual separately deployed artifact without dispatching a model or private data. */
+  async lineBudgetV2CapabilityEnabled(): Promise<boolean> {
+    if (!this.expectedRuntimeIdentity) return false;
+    try {
+      const result = await this.invoke({
+        turnId: `line-budget-v2-capability-${randomUUID()}`,
+        companyId: 'line-budget-v2-capability-probe', userId: 'line-budget-v2-capability-probe',
+        messageText: 'capability probe', locale: 'th-TH', permissions: [],
+        lineBudgetV2CapabilityProbe: true,
+      });
+      const capability = result.lineBudgetV2Capability;
+      const identity = result.runtimeIdentity;
+      return capability?.supported === true
+        && capability.inputContractVersion === 2
+        && capability.providerOutputVersion === 2
+        && capability.budgetContractVersion === 2
+        && capability.profileTableDigest === AI_BUDGET_PROFILE_TABLE_DIGEST_V2
+        && capability.estimatorVersion === AI_BUDGET_ESTIMATOR_VERSION_V2
+        && !!identity
+        && identity.sourceCommit === this.expectedRuntimeIdentity.sourceCommit
+        && identity.artifactSha256 === this.expectedRuntimeIdentity.artifactSha256
+        && identity.contractVersion === this.expectedRuntimeIdentity.contractVersion;
+    } catch {
+      return false;
+    }
+  }
+
   async invoke(input: AgentCoreInvokeInput): Promise<AgentCoreInvokeResult> {
     if (!this.runtimeArn) {
       throw Object.assign(new Error('AGENTCORE_RUNTIME_ARN not configured'), { code: 'RUNTIME_NOT_CONFIGURED' });
@@ -219,7 +247,7 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
 
     const httpStartedAt = Date.now();
     const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), input.lineDraftEditCapabilityProbe ? Math.min(this.timeoutMs, 3_000) : this.timeoutMs);
+    const timer = setTimeout(() => abort.abort(), input.lineDraftEditCapabilityProbe || input.lineBudgetV2CapabilityProbe ? Math.min(this.timeoutMs, 3_000) : this.timeoutMs);
     let response: Response;
     try {
       response = await this.signedPost(url, host, canonicalPath, canonicalQs, sessionId, body, creds, abort.signal);
@@ -264,6 +292,12 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
     ) {
       throw failure('Malformed AgentCore response', 'MALFORMED_RESPONSE', { agentcoreHttpMs });
     }
+    const semanticCoverage = input.semanticSubrequests
+      ? parseLineAiSemanticCoverage(raw['semanticCoverage'], input.semanticSubrequests)
+      : undefined;
+    if (input.semanticSubrequests && !semanticCoverage) {
+      throw failure('AgentCore semantic coverage missing or invalid', 'AI_CONTRACT_UNSUPPORTED', { agentcoreHttpMs });
+    }
 
     const {
       usage: rawUsage,
@@ -272,6 +306,7 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
       modelCallCount: rawModelCallCount,
       refusalReason: rawRefusalReason,
       errorCode: rawErrorCode,
+      semanticCoverage: _rawSemanticCoverage,
       ...rest
     } = raw;
     const usage = coerceUsage(rawUsage);
@@ -317,6 +352,7 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
       ...(errorCode ? { errorCode } : {}),
      ...(deterministicExpenseSummary ? { deterministicExpenseSummary: true } : {}),
       ...(deterministicExpenseCriterionConfirmation ? { deterministicExpenseCriterionConfirmation: true } : {}),
+      ...(semanticCoverage ? { semanticCoverage } : {}),
     } as unknown as AgentCoreInvokeResult;
   }
 

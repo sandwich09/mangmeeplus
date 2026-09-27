@@ -1,3 +1,4 @@
+import Decimal from 'decimal.js';
 import { ConflictException, Injectable, PayloadTooLargeException } from '@nestjs/common';
 import type {
   ReportColumnDto,
@@ -64,17 +65,12 @@ function computedAt(): string {
   return new Date().toISOString();
 }
 
-function money(value: unknown): number {
-  const parsed = Number(String(value ?? '0').replace(/,/g, ''));
-  return Number.isFinite(parsed) ? parsed : 0;
+function money(value: unknown): Decimal {
+  return new Decimal(String(value ?? '0').replace(/,/g, ''));
 }
 
 function rowMoney(value: unknown): string {
   return money(value).toFixed(4);
-}
-
-function absMoney(value: unknown): number {
-  return Math.abs(money(value));
 }
 
 function str(value: ReportFilterValue | undefined): string | undefined {
@@ -197,7 +193,7 @@ function chartFromRows(rows: AdapterResult['rows'], labelKey: string, valueKey: 
   return {
     kind,
     labels: rows.slice(0, 12).map((row) => String(row[labelKey] ?? '')),
-    series: [{ key: valueKey, label, values: rows.slice(0, 12).map((row) => Number(row[valueKey] ?? 0)) }],
+    series: [{ key: valueKey, label, values: rows.slice(0, 12).map((row) => String(row[valueKey] ?? 0)) }],
   };
 }
 
@@ -358,12 +354,13 @@ export class ReportSourceAdapters {
     const detail = await foldSourceRows(async (page, pageSize) => {
       const result = await this.documents.execute(ctx, { documentType: 'INVOICE', page, pageSize });
       return { items: result.data, total: result.total };
-    }, { rows: [] as AdapterResult['rows'], total: 0, outstanding: 0 }, (result, docs) => {
+    }, { rows: [] as AdapterResult['rows'], total: 0, outstanding: new Decimal(0), currencies: new Set<string>() }, (result, docs) => {
       for (const doc of docs) {
-        if (money(doc.outstandingAmount) <= 0 || doc.status === 'VOIDED') continue;
+        if (money(doc.outstandingAmount).lte(0) || !['ISSUED', 'CREDITED', 'DEBITED', 'CLOSED'].includes(doc.status)) continue;
         const outputIndex = result.total;
         result.total += 1;
-        result.outstanding += money(doc.outstandingAmount);
+        result.outstanding = result.outstanding.add(money(doc.outstandingAmount));
+        result.currencies.add(doc.currency ?? 'unknown');
         if (exportMode || (outputIndex >= start && outputIndex < end)) {
           result.rows.push({
             documentId: doc.id,
@@ -372,6 +369,7 @@ export class ReportSourceAdapters {
             documentDate: iso(doc.documentDate),
             dueDate: iso(doc.dueDate ?? doc.documentDate),
             outstandingAmount: doc.outstandingAmount,
+            currency: doc.currency ?? null,
             paymentStatus: doc.paymentStatus ?? 'UNPAID',
           });
         }
@@ -379,14 +377,17 @@ export class ReportSourceAdapters {
       if (exportMode) assertReportRowLimit(result.total);
       return result;
     });
-    const outstandingAmount = rowMoney(detail.outstanding);
-    const reconciliation = await this.ledgerControlReconciliation(ctx, query, 'accounts_receivable', outstandingAmount);
+    const outstandingAmount = detail.currencies.size > 1 ? null : rowMoney(detail.outstanding);
+    const reconciliation = outstandingAmount === null
+      ? { totals: {}, warnings: ['mixed_currency_total_unavailable'], sourcePermissionsUsed: [] }
+      : await this.ledgerControlReconciliation(ctx, query, 'accounts_receivable', outstandingAmount);
     return baseResult(definition, { ...query, page: 1 }, detail.rows, [
       { key: 'documentNumber', label: 'Document', type: 'string' },
       { key: 'counterpartyName', label: 'Customer', type: 'string' },
       { key: 'documentDate', label: 'Document date', type: 'date' },
       { key: 'dueDate', label: 'Due date', type: 'date' },
       { key: 'outstandingAmount', label: 'Outstanding', type: 'money' },
+      { key: 'currency', label: 'Currency', type: 'string' },
       { key: 'paymentStatus', label: 'Payment', type: 'string' },
     ], {
       status: detail.total === 0 ? 'EMPTY' : 'READY',
@@ -431,14 +432,14 @@ export class ReportSourceAdapters {
 
   private async ledgerControlReconciliation(ctx: RequestContext, query: ValidatedQuery, reportGroup: 'accounts_receivable' | 'accounts_payable', sourceTotal: string): Promise<{ totals: Record<string, string | number | null>; warnings: string[]; sourcePermissionsUsed: string[] }> {
     if (!ctx.permissions.includes('ledger.report.read')) return { totals: {}, warnings: ['ledger_control_permission_missing'], sourcePermissionsUsed: [] };
-    if (absMoney(sourceTotal) < 0.005) return { totals: {}, warnings: [], sourcePermissionsUsed: [] };
+    if (money(sourceTotal).abs().lt('0.005')) return { totals: {}, warnings: [], sourcePermissionsUsed: [] };
     const periodKey = periodKeyFromDate(query.filters.asOfDate);
     const tb = await this.trialBalance.execute(ctx, periodKey);
     const lines = tb.lines.filter((line) => line.reportGroup === reportGroup);
     if (lines.length === 0) return { totals: { ledgerControlPeriodKey: periodKey }, warnings: ['ledger_control_account_not_found_or_unposted'], sourcePermissionsUsed: ['ledger.report.read'] };
 
-    const ledgerControlAmount = lines.reduce((sum, line) => sum + money(line.balance), 0);
-    const difference = money(sourceTotal) - ledgerControlAmount;
+    const ledgerControlAmount = lines.reduce((sum, line) => sum.add(money(line.balance)), new Decimal(0));
+    const difference = money(sourceTotal).sub(ledgerControlAmount);
     return {
       totals: {
         ledgerControlAmount: rowMoney(ledgerControlAmount),
@@ -446,7 +447,7 @@ export class ReportSourceAdapters {
         ledgerControlPeriodKey: periodKey,
         ledgerControlAccountCodes: lines.map((line) => line.accountCode).join(', '),
       },
-      warnings: Math.abs(difference) >= 0.005 ? ['ledger_control_mismatch'] : [],
+      warnings: difference.abs().gte('0.005') ? ['ledger_control_mismatch'] : [],
       sourcePermissionsUsed: ['ledger.report.read'],
     };
   }
@@ -457,33 +458,26 @@ export class ReportSourceAdapters {
     const sourcePermissionsUsed: string[] = [];
     if (ctx.permissions.includes('accounting.document.read')) {
       sourcePermissionsUsed.push('accounting.document.read');
-      const invoices = await foldSourceRows(async (page, pageSize) => {
-        const result = await this.documents.execute(ctx, { documentType: 'INVOICE', status: 'ISSUED', fromDate: str(query.filters.fromDate), toDate: str(query.filters.toDate), page, pageSize });
-        return { items: result.data, total: result.total };
-      }, { count: 0, amount: 0 }, (totals, docs) => {
-        for (const doc of docs) {
-          totals.count += 1;
-          totals.amount += money(doc.grandTotalAmount);
-        }
-        return totals;
+      const invoices = await this.documents.aggregateByType(ctx, {
+        documentType: 'INVOICE', status: 'ISSUED', fromDate: str(query.filters.fromDate), toDate: str(query.filters.toDate),
       });
-      rows.push({
-        source: 'issued_invoices',
-        count: invoices.count,
-        amount: rowMoney(invoices.amount),
-      });
+      for (const group of invoices.byType.INVOICE?.totalsByCurrency ?? []) {
+        rows.push({ source: 'issued_invoices', currency: group.currency, count: group.count, amount: rowMoney(group.totalAmount) });
+      }
     } else {
       warnings.push('accounting_documents_scope_forbidden');
     }
     if (ctx.permissions.includes('crm.report.read')) {
       sourcePermissionsUsed.push('crm.report.read');
       const crm = await this.crmSummary.execute(ctx, 'all');
-      rows.push({ source: 'crm_open_pipeline', count: crm.pipelineOpenCount, amount: crm.pipelineTotalAmount });
+      rows.push({ source: 'crm_open_pipeline', currency: null, count: crm.pipelineOpenCount, amount: crm.pipelineTotalAmount });
+      warnings.push('crm_pipeline_currency_unavailable');
     } else {
       warnings.push('crm_scope_forbidden');
     }
     return baseResult(definition, query, rows, [
       { key: 'source', label: 'Source', type: 'string' },
+      { key: 'currency', label: 'Currency', type: 'string' },
       { key: 'count', label: 'Count', type: 'number' },
       { key: 'amount', label: 'Amount', type: 'money' },
     ], {
@@ -587,29 +581,12 @@ export class ReportSourceAdapters {
       : ctx.permissions.includes('expense.review')
         ? 'expense.review'
         : 'expense.read_own';
-    const byStatus = await foldSourceRows(async (page, pageSize) => {
-      const result = await this.expenses.execute(ctx, { fromDate: str(query.filters.fromDate), toDate: str(query.filters.toDate), page, pageSize });
-      return { items: result.data, total: result.total };
-    }, new Map<string, { count: number; total: number; paid: number; unpaid: number }>(), (totals, expenses) => {
-      for (const expense of expenses) {
-        const bucket = totals.get(expense.status) ?? { count: 0, total: 0, paid: 0, unpaid: 0 };
-        bucket.count += 1;
-        bucket.total += money(expense.grandTotalAmount);
-        bucket.paid += money(expense.paidAmount);
-        bucket.unpaid += money(expense.outstandingAmount);
-        totals.set(expense.status, bucket);
-      }
-      return totals;
+    const rows = await this.expenses.readReportSummary(ctx, {
+      fromDate: str(query.filters.fromDate), toDate: str(query.filters.toDate),
     });
-    const rows = [...byStatus.entries()].map(([status, bucket]) => ({
-      status,
-      count: bucket.count,
-      grandTotalAmount: bucket.total.toFixed(4),
-      paidAmount: bucket.paid.toFixed(4),
-      outstandingAmount: bucket.unpaid.toFixed(4),
-    }));
     return baseResult(definition, query, rows, [
       { key: 'status', label: 'Status', type: 'string' },
+      { key: 'currency', label: 'Currency', type: 'string' },
       { key: 'count', label: 'Count', type: 'number' },
       { key: 'grandTotalAmount', label: 'Total', type: 'money' },
       { key: 'paidAmount', label: 'Paid', type: 'money' },

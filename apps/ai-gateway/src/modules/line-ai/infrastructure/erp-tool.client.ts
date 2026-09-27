@@ -6,8 +6,12 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AiGatewayConfigService } from '../../../common/config/ai-gateway-config.service';
 import { ToolPolicyEnforcerService } from '../../../common/ai/tool-policy-enforcer.service';
-import type { ToolResult, ToolMeta } from '@watchdog-bms/contracts';
+import { parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase,
+  LINE_REIMBURSEMENT_DRAFT_TOOL_NAMES,
+  type AiBudgetGrantV2, type LineAiInputEvidenceV2, type LineAiValueCandidatesV2,
+  type ToolResult, type ToolMeta } from '@watchdog-bms/contracts';
 import type { ToolPolicy } from '../../../common/ai/tool-policy.model';
+import { currentBudgetGrantV2 } from '../../../common/usage/usage-context';
 
 // ponytail: intentionally empty — every previously-stubbed tool now has an API endpoint.
 // Kept so a future not-yet-wired tool can short-circuit to unsupported_module instead of HTTP 404.
@@ -36,7 +40,14 @@ export type ErpToolContext = {
    *  boundary can refuse a draft edit whose number nobody said. Carries no authority, and is
    *  bounded at {@link GROUNDING_TEXT_MAX} before it is sent. */
   groundingText?: string;
+  /** Complete turn evidence/candidates originate in the admitted request, never tool arguments. */
+  inputEvidence?: LineAiInputEvidenceV2;
+  valueCandidatesV2?: LineAiValueCandidatesV2;
+  /** Type-level carrier for callers; egress always uses the request-scoped validated grant. */
+  budgetGrantV2?: AiBudgetGrantV2;
   actorDelegations?: Record<string, string[]>;
+  /** Process-local egress canaries; stripped before any API request. */
+  privateLookupCanaries?: string[];
 };
 
 /** Derive ToolPolicy from ToolMeta for enforcer assertion. */
@@ -80,6 +91,21 @@ export function enforceSourceHonesty(tool: ToolMeta, value: unknown): ToolResult
       ...(typeof result.errorMessage === 'string' ? { errorMessage: result.errorMessage } : {}),
     };
   }
+  if (tool.name === 'public.lookup') {
+    const data = result.data && typeof result.data === 'object' && !Array.isArray(result.data)
+      ? result.data as Record<string, unknown> : undefined;
+    const admission = data?.['approvedLookup'];
+    const lookup = admission && typeof admission === 'object' && !Array.isArray(admission)
+      ? admission as Record<string, unknown> : undefined;
+    const request = parsePublicLookupRequest(lookup?.['request']);
+    const policy = request && publicLookupPolicy(request);
+    if (data?.['admissionOnly'] !== true || !request || !policy
+      || canonicalJson(lookup?.['policy']) !== canonicalJson(policy)) {
+      return invalid();
+    }
+    // Admission metadata is not a searched fact and intentionally has no source citation yet.
+    return { toolName: tool.name, status: 'ok', data: { admissionOnly: true, approvedLookup: { request, policy } }, sourceRefs: [], asOf };
+  }
   if (result.toolName !== tool.name) {
     return { toolName: tool.name, status: 'error', sourceRefs: [], asOf, errorCode: 'TOOL_RESULT_NAME_MISMATCH' };
   }
@@ -90,6 +116,14 @@ export function enforceSourceHonesty(tool: ToolMeta, value: unknown): ToolResult
     return { toolName: tool.name, status: 'error', sourceRefs: [], asOf, errorCode: 'TOOL_RESULT_NO_SOURCE' };
   }
   if (result.sourceRefs.some((ref) => ref.module !== tool.sourceModule || ref.permissionChecked !== true)) {
+    return { toolName: tool.name, status: 'error', sourceRefs: [], asOf, errorCode: 'TOOL_RESULT_SOURCE_MISMATCH' };
+  }
+  const reimbursementDraft = (LINE_REIMBURSEMENT_DRAFT_TOOL_NAMES as readonly string[]).includes(tool.name);
+  const actionSourceMismatch = reimbursementDraft
+    ? result.sourceRefs.length !== 1 || result.sourceRefs.some(ref => ref.sourceType !== 'ACTION'
+        || ref.entityType !== 'reimbursement_draft_action' || typeof ref.entityId !== 'string' || !ref.entityId)
+    : result.sourceRefs.some(ref => ref.sourceType === 'ACTION');
+  if (actionSourceMismatch) {
     return { toolName: tool.name, status: 'error', sourceRefs: [], asOf, errorCode: 'TOOL_RESULT_SOURCE_MISMATCH' };
   }
   return result as ToolResult;
@@ -135,6 +169,21 @@ export class ErpToolClient {
       };
     }
 
+    if (tool.name === 'public.lookup') {
+      const grant = currentBudgetGrantV2();
+      const request = parsePublicLookupRequest(input);
+      if (!this.config.lineAiPublicLookupEnabled || !grant || grant.model.provider !== 'openai'
+        || !grant.allowedProfileIds.includes('public-lookup/2') || !request || !publicLookupPolicy(request)) {
+        return { toolName: tool.name, status: 'unavailable', sourceRefs: [], asOf: new Date().toISOString(), errorCode: 'PUBLIC_POLICY_UNAVAILABLE' };
+      }
+      const canaries = [ctx.companyId, ctx.userId, ctx.membershipId, ctx.chatKeyHash,
+        ...(ctx.branchIds ?? []), ...(ctx.locationIds ?? []), ...(ctx.privateLookupCanaries ?? [])]
+        .filter((value): value is string => typeof value === 'string' && value.length > 0);
+      if (publicQueryNeedsRephrase(request.publicQuestion, canaries)) {
+        return { toolName: tool.name, status: 'unavailable', sourceRefs: [], asOf: new Date().toISOString(), errorCode: 'PUBLIC_QUERY_REQUIRES_REPHRASE' };
+      }
+    }
+
     // Policy decision → audit record → execute
     const policy = toolMetaToPolicy(tool);
     try {
@@ -171,9 +220,21 @@ export class ErpToolClient {
       'X-Actor-Delegation': actorDelegation,
     };
 
+    const budgetGrantV2 = currentBudgetGrantV2();
     const body = JSON.stringify({
       toolName: tool.name,
-      context: { ...ctx, actorDelegations: undefined },
+      // Explicit allowlist: runtime-only fields (including semantic inventory and delegations) can
+      // never leak into the API DTO through object spread. The three v2 fields originate on the
+      // admitted turn; the signed grant is replaced with the request-scoped validated copy.
+      context: {
+        requestId: ctx.requestId, companyId: ctx.companyId, userId: ctx.userId,
+        membershipId: ctx.membershipId, permissions: ctx.permissions, branchIds: ctx.branchIds,
+        locationIds: ctx.locationIds, locale: ctx.locale, chatKeyHash: ctx.chatKeyHash,
+        ...(ctx.groundingText !== undefined ? { groundingText: ctx.groundingText.slice(0, GROUNDING_TEXT_MAX) } : {}),
+        ...(ctx.inputEvidence ? { inputEvidence: ctx.inputEvidence } : {}),
+        ...(ctx.valueCandidatesV2 ? { valueCandidatesV2: ctx.valueCandidatesV2 } : {}),
+        ...(budgetGrantV2 ? { budgetGrantV2 } : {}),
+      },
       input,
     });
 
@@ -207,4 +268,11 @@ export class ErpToolClient {
     }
     return guarded;
   }
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.keys(value as Record<string, unknown>).sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(',')}}`;
+  return JSON.stringify(value) ?? 'null';
 }

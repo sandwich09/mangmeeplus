@@ -376,6 +376,7 @@ model Company {
   aiTurns                           AiTurn[]
   lineReadEvidence                  LineReadEvidence[]
   lineLedgerDeliveries              LineLedgerDelivery[]
+  lineDocumentQaJobs                LineDocumentQaJob[]
   aiToolInvocations                 AiToolInvocation[]
   // Item 08
   accountingCounterparties          AccountingCounterparty[]
@@ -483,6 +484,7 @@ model Company {
   reimbursementDuplicateCandidates  ReimbursementDuplicateCandidate[]
   reimbursementLines                ReimbursementLine[]
   reimbursementClaimSignatures      ReimbursementClaimSignature[]
+  reimbursementDraftActions         ReimbursementDraftAction[]
   // Item 15 CRM
   crmCustomers                      CrmCustomer[]
   crmContacts                       CrmContactPerson[]
@@ -575,6 +577,7 @@ model User {
   externalIdentities      ExternalIdentity[]
   lineReadEvidence        LineReadEvidence[]
   lineLedgerDeliveries    LineLedgerDelivery[]
+  lineDocumentQaJobs      LineDocumentQaJob[]
   sessions                AuthSession[]
   emailVerificationTokens EmailVerificationToken[]
   passwordResetTokens     PasswordResetToken[]
@@ -586,6 +589,7 @@ model User {
   signupRequestsOwned     CompanySignupRequest[]
   // Item 10C
   employeeAccessProfiles  EmployeeAccessProfile[]
+  reimbursementDraftActions ReimbursementDraftAction[]
   // Spec §4F account merge (both sides of one ticket).
   mergeTicketsAsNew       AccountMergeTicket[]     @relation("AccountMergeTicketNewUser")
   mergeTicketsAsExisting  AccountMergeTicket[]     @relation("AccountMergeTicketExistingUser")
@@ -953,6 +957,7 @@ model CompanyMembership {
   roles                 MembershipRole[]
   branchScopes          MembershipBranchScope[]
   employeeAccessProfile EmployeeAccessProfile?
+  reimbursementDraftActions ReimbursementDraftAction[]
 
   @@unique([companyId, userId])
   @@index([userId, status])
@@ -1073,6 +1078,8 @@ model OutboxEvent {
   @@index([status, availableAt, priority])
   @@index([companyId, createdAt])
   @@index([aggregateType, aggregateId])
+  deliveryPlan LineDeliveryPlan?
+
 }
 
 model Branch {
@@ -1624,16 +1631,31 @@ enum AiTurnIntent {
 }
 
 model AiConversation {
-  id        String   @id @default(cuid())
-  companyId String
-  userId    String
-  channel   String   @default("line")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  turns     AiTurn[]
-  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  id                  String   @id @default(cuid())
+  companyId           String
+  userId              String
+  channel             String   @default("line")
+  channelKind         String?
+  messagingChannelId  String?
+  chatKeyHash         String?
+  membershipId        String?
+  stateVersion        Int      @default(0)
+  taskStateJson       Json?
+  stateExpiresAt      DateTime?
+  lifecycleEpoch      Int      @default(0)
+  preferenceJson      Json?
+  preferenceVersion   Int      @default(0)
+  preferenceRequestId String?
+  preferenceExpiresAt DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  turns               AiTurn[]
+  company             Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
+  @@unique([companyId, userId, membershipId, channel, channelKind, messagingChannelId, chatKeyHash], map: "AiConversation_full_owner_key")
   @@index([companyId, userId, channel])
+  @@index([stateExpiresAt])
+  @@index([companyId, membershipId])
 }
 
 model AiTurn {
@@ -1687,6 +1709,60 @@ enum LineLedgerDeliveryStatus {
   PARKED
 }
 
+enum LineDocumentQaJobStatus {
+  QUEUED
+  READING
+  ANSWER_READY
+  FAILED
+  EXPIRED
+  CANCELED
+}
+
+/// One full-owner, question-only image/PDF read. It has no expense/capture relation by design.
+model LineDocumentQaJob {
+  id                         String                 @id @default(cuid())
+  companyId                  String
+  userId                     String
+  ownerMembershipId          String
+  ownerEpoch                 Int
+  ownerDigest                String
+  channelKind                String
+  messagingChannelId         String
+  chatKeyHash                String
+  turnId                     String
+  questionText               String
+  questionsJson              Json?
+  admittedAt                 DateTime               @default(now())
+  attachmentsJson            Json
+  inputDigest                String
+  inputSetHash               String
+  questionDigest              String
+  readerVersion              String
+  status                     LineDocumentQaJobStatus @default(QUEUED)
+  revision                   Int                    @default(1)
+  leaseOwner                 String?
+  leaseUntil                 DateTime?
+  leaseFence                 Int                    @default(0)
+  foregroundDeadlineAt       DateTime
+  jobDeadlineAt              DateTime
+  budgetAuthorityJson        Json?
+  budgetAuthorityRevision    Int                    @default(0)
+  resultJson                 Json?
+  resultHash                 String?
+  errorCode                  String?
+  createdAt                  DateTime               @default(now())
+  updatedAt                  DateTime               @updatedAt
+  expiresAt                  DateTime
+  purgeAt                    DateTime
+  company                    Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user                       User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerDigest, turnId, inputSetHash, questionDigest, readerVersion])
+  @@index([status, leaseUntil])
+  @@index([companyId, expiresAt])
+  @@index([companyId, userId, createdAt])
+}
+
 /// First exact queued response per Redis stream/entry. A reclaim never regenerates saved output.
 model LineLedgerDelivery {
   id                   String                   @id
@@ -1702,6 +1778,7 @@ model LineLedgerDelivery {
   messagesJson         Json?
   authorizationJson    Json?
   completionJson       Json?
+  acceptedRequestJson  Json?
   attempts             Int                      @default(0)
   acceptedAt           DateTime?
   errorCode            String?
@@ -1712,6 +1789,11 @@ model LineLedgerDelivery {
 
   @@index([companyId, status, createdAt])
   @@index([createdAt])
+  deliveryPlan LineDeliveryPlan?
+
+  budgetAuthorityJson Json?
+  budgetAuthorityRevision Int @default(0)
+
 }
 
 /// Bounded original read inputs and result digest for current-source delivery revalidation.
@@ -1779,6 +1861,9 @@ model LineWebhookEventLog {
   @@index([lineUserIdHash])
   @@index([status, createdAt])
   @@index([createdAt])
+  budgetAuthorityJson Json?
+  budgetAuthorityRevision Int @default(0)
+
 }
 
 /// Canonical terminal outcome for ONE turn (uat-correctness-latency §8.3, reliability §6/E3).
@@ -1810,6 +1895,8 @@ model LineTurnOutcome {
   createdAt        DateTime  @default(now())
 
   event LineWebhookEventLog @relation(fields: [webhookEventId], references: [webhookEventId], onDelete: Cascade)
+  deliveryPlan LineDeliveryPlan?
+
 }
 
 // ---- Item 08: Accounting Documents MVP ----
@@ -6579,6 +6666,7 @@ model ReimbursementRequest {
   claimSignatures              ReimbursementClaimSignature[]
   internalNotes                ReimbursementInternalNote[]
   sourceExpenses               ExpenseRecord[]                       @relation("ExpenseSourceReimbursementRequest")
+  draftActions                 ReimbursementDraftAction[]
 
   @@unique([companyId, requestNo])
   @@unique([companyId, id])
@@ -6590,6 +6678,47 @@ model ReimbursementRequest {
   @@index([companyId, submittedByUserId])
   @@index([companyId, financeReviewedByUserId], map: "ReimbursementRequest_company_finance_reviewer_idx")
   @@index([companyId, cancellationPendingByUserId], map: "ReimbursementRequest_company_cancel_actor_idx")
+}
+
+model ReimbursementDraftAction {
+  id                       String   @id @default(uuid()) @db.Uuid
+  companyId                String
+  actorUserId              String
+  membershipId             String
+  messagingChannelId       String
+  channel                  String   @db.VarChar(16)
+  channelKind              String   @db.VarChar(16)
+  chatKeyHash              String   @db.VarChar(64)
+  ownerEpoch               Int
+  taskId                    String   @db.Uuid
+  actionOrdinal            Int
+  intentKeyHash            String   @db.Char(64)
+  operation                String   @db.VarChar(16)
+  status                   String   @default("COLLECTING") @db.VarChar(16)
+  previewRevision          Int      @default(0)
+  requestId                String?
+  expectedRequestUpdatedAt DateTime?
+  commandJson              Json?
+  previewJson              Json?
+  sourceProofJson          Json?
+  confirmationDigest       String?  @db.Char(64)
+  resultJson               Json?
+  appliedRequestUpdatedAt  DateTime?
+  previewDeliveryId        String?
+  expiresAt                DateTime
+  appliedAt                DateTime?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+  company                  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  actor                    User     @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  membership               CompanyMembership @relation(fields: [membershipId], references: [id], onDelete: Restrict)
+  request                  ReimbursementRequest? @relation(fields: [companyId, requestId], references: [companyId, id], onDelete: Restrict)
+
+  @@unique([companyId, intentKeyHash])
+  @@index([companyId, actorUserId, status, expiresAt])
+  @@index([companyId, membershipId, createdAt])
+  @@index([companyId, requestId])
+  @@index([status, expiresAt])
 }
 
 model ReimbursementInternalNote {
@@ -8572,6 +8701,15 @@ model LineIntakePendingMedia {
 
   @@unique([companyId, lineMessageId])
   @@index([companyId, userId, status])
+  channelKind        String?
+  messagingChannelId String?
+  chatKeyHash        String?
+  membershipId       String?
+  lifecycleEpoch     Int      @default(0)
+  intakeStateId      String?
+  readJobId          String?
+  revision           Int      @default(0)
+
 }
 
 // CUST-05: atomic per-channel daily auto-reply cap. Reservation = single UPDATE ...
@@ -9902,4 +10040,35 @@ model EmailAccessChallenge {
   createdAt            DateTime @default(now())
   @@index([email, createdAt])
   @@index([expiresAt])
+}
+
+model LineDeliveryPlan {
+  id               String   @id
+  outcomeId        String?  @unique
+  ledgerDeliveryId String?  @unique
+  outboxEventId    String?  @unique
+  companyId        String?
+  userId           String?
+  version          Int      @default(2)
+  planJson         Json
+  planHash         String
+  batchStateJson   Json
+  status           String   @default("READY")
+  leaseToken       String?
+  leaseExpiresAt   DateTime?
+  expiresAt        DateTime
+  purgeAt          DateTime
+  acceptedAt       DateTime?
+  cancelledAt      DateTime?
+  cancelReason     String?
+  nextAttemptAt    DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  outcome          LineTurnOutcome? @relation(fields: [outcomeId], references: [id], onDelete: Cascade)
+  ledger           LineLedgerDelivery? @relation(fields: [ledgerDeliveryId], references: [id], onDelete: Cascade)
+  outbox           OutboxEvent? @relation(fields: [outboxEventId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt, expiresAt])
+  @@index([purgeAt])
+  @@index([companyId, userId, createdAt])
 }

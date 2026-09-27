@@ -1,0 +1,78 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { assertIsolatedReplayDatabase, runtimeAskedSlots, runtimeDatabaseEffects, runtimeDeliveryEvidence, runtimeSourceFacts, runtimeSourceId, runtimeSemanticOutcome, instrumentRuntimeMethod, selectRuntimePostback } from './line-ai-reliability-runtime';
+
+test('clarification trace keeps nested typed missing fields without guessing slots from prose', () => {
+  assert.deepEqual(runtimeAskedSlots({ missingFields: ['amount'], captureHints: { missingFields: ['expenseDate', 'amount'] },
+    reimbursementHints: { missingFields: ['purpose'] }, correctionHints: { missingFields: ['targetExpenseId'] } }),
+  ['amount', 'expenseDate', 'purpose', 'targetExpenseId']);
+  assert.deepEqual(runtimeAskedSlots({ clarifyQuestion: 'Which period?', semanticCoverage: [{ status: 'needs_user', question: 'Which account?' }] }), []);
+  assert.deepEqual(runtimeAskedSlots({ missingFields: [null, {}, '', 'not a field'] }), []);
+});
+
+test('runtime replay refuses production, ordinary development databases and foreign schemas before reset', () => {
+  assert.doesNotThrow(() => assertIsolatedReplayDatabase('postgresql://test:test@127.0.0.1:15440/watchdog_ai_reliability_replay_smoke?schema=public'));
+  for (const url of ['postgresql://test:test@db.prod/watchdog_ai_reliability_replay_smoke', 'postgresql://test:test@localhost/watchdog_bms',
+    'postgresql://test:test@localhost/watchdog_ai_reliability_replay_smoke?schema=customer', 'https://localhost/watchdog_ai_reliability_replay_smoke']) assert.throws(() => assertIsolatedReplayDatabase(url), /DEDICATED_LOCAL/);
+});
+
+test('effect evidence detects create/update/delete even when the application throws after commit', () => {
+  const changes = runtimeDatabaseEffects({ ExpenseRecord: [{ id: 'same', version: 1 }, { id: 'edit', version: 2 }, { id: 'gone' }] },
+    { ExpenseRecord: [{ id: 'same', version: 1 }, { id: 'edit', version: 3 }, { id: 'new', version: 1 }] });
+  assert.deepEqual(changes.map(row => [row.kind, row.recordId, row.revision]), [
+    ['ExpenseRecord.create', 'new', '1'], ['ExpenseRecord.delete', 'gone', 'deleted'], ['ExpenseRecord.update', 'edit', '3'],
+  ]);
+  assert.ok(changes.every(row => row.evidence === 'database_snapshot' && /^[a-f0-9]{64}$/.test(row.evidenceHash)));
+});
+
+test('collector uses cited permission-checked source facts without copying oracle values', () => {
+  const result = { status: 'ok', sourceRefs: [{ id: 'source-1', permissionChecked: true }], facts: [{ id: 'f1', metric: 'expense_total', value: '12.50', unit: 'money', currency: 'THB',
+    period: { startDate: '2026-09-01', endDate: '2026-09-30', timezone: 'Asia/Bangkok' }, dateBasis: 'expense_date', statusBasis: 'not_voided', sourceRefIds: ['source-1'], asOf: '2026-09-27T00:00:00Z', state: 'known' }] } as any;
+  assert.equal(runtimeSourceFacts([result], new Set()).length, 0);
+  const [fact] = runtimeSourceFacts([result], new Set(['source-1']));
+  assert.equal(fact!.basis, 'expense_date|not_voided'); assert.equal(fact!.value, '12.50'); assert.equal(fact!.sourceRef, 'source-1');
+  assert.deepEqual(runtimeSourceFacts([{ ...result, status: 'forbidden' }], new Set(['source-1'])), []);
+  const source = { label: 'Expense summary', module: 'expense', entityType: 'expense_summary', permissionChecked: true } as const;
+  const canonical = runtimeSourceId(source);
+  const idless = { ...result, sourceRefs: [source], facts: [{ ...result.facts[0], sourceRefIds: [canonical] }] };
+  assert.equal(runtimeSourceFacts([idless], new Set([canonical]))[0]?.sourceRef, 'expense:expense_summary:summary');
+  assert.equal(runtimeSourceFacts([idless], new Set(['some-other-source'])).length, 0);
+  assert.equal(runtimeSourceFacts([{ ...idless, sourceRefs: [{ ...source, permissionChecked: false }] } as any], new Set([canonical])).length, 0);
+});
+
+test('semantic outcome preserves partial clauses and normalizes actual typed terminal evidence', () => {
+  assert.equal(runtimeSemanticOutcome([{ index: 0, status: 'handled' }, { index: 1, status: 'needs_user' }], [], []), 'partial');
+  assert.equal(runtimeSemanticOutcome([{ index: 0, status: 'denied' }], [], []), 'access_denied');
+  assert.equal(runtimeSemanticOutcome([{ index: 0, status: 'unsupported' }], [], []), 'unsupported_action');
+  assert.equal(runtimeSemanticOutcome([{ index: 0, status: 'needs_user' }], [], []), 'needs_input');
+  assert.equal(runtimeSemanticOutcome([], [{ status: 'batched' }, { status: 'completed' }], []), 'answered');
+  assert.equal(runtimeSemanticOutcome([], [{ status: 'completed' }], [{ refused: true, refusalReason: 'mutation_blocked' } as any]), 'policy_blocked');
+  assert.equal(runtimeSemanticOutcome([], [{ status: 'no_membership' }], []), 'access_denied');
+  assert.equal(runtimeSemanticOutcome([], [{ status: 'clarification_required' }], []), 'needs_input');
+  assert.equal(runtimeSemanticOutcome([], [{ status: 'new_unclassified_status' }], []), 'event:new_unclassified_status');
+  assert.equal(runtimeSemanticOutcome([], [], []), 'missing_terminal_event');
+});
+
+test('delivery completeness comes from every frozen batch, not merely the batches sent', () => {
+  const one = [{ type: 'text', text: 'first' }], two = [{ type: 'text', text: 'last' }];
+  const plans = [{ planJson: { batches: [{ id: 'b1', primary: { wireHash: 'a'.repeat(64), messages: one } }, { id: 'b2', primary: { wireHash: 'b'.repeat(64), messages: two } }] },
+    batchStateJson: [{ batchId: 'b1', status: 'ACCEPTED', variant: 'primary', providerRequestId: 'receipt-1' }, { batchId: 'b2', status: 'READY', variant: 'primary', providerRequestId: null }] }];
+  const partial = runtimeDeliveryEvidence(plans, [], [{ messages: one, at: 10, receiptId: 'receipt-1' }]);
+  assert.deepEqual(partial.requiredBatchIds, ['b1', 'b2']); assert.equal(partial.accepted.length, 1); assert.equal(partial.status, 'INCOMPLETE');
+  assert.equal(runtimeDeliveryEvidence(plans, [], [{ messages: two, at: 10, receiptId: 'receipt-1' }]).accepted.length, 0, 'wrong payload cannot prove acceptance');
+});
+
+test('instrumented actual methods retain receiver and thrown effects', async () => {
+  const service = { value: 0, async mutate(n: number) { this.value += n; if (n < 0) throw new Error('after-write'); return this.value; } };
+  const seen: string[] = [];
+  instrumentRuntimeMethod(service, 'mutate', async (original, args) => { try { const result = await original(...args); seen.push(`ok:${result}`); return result; } catch (error) { seen.push('failed'); throw error; } });
+  assert.equal(await service.mutate(2), 2); await assert.rejects(service.mutate(-1), /after-write/);
+  assert.equal(service.value, 1); assert.deepEqual(seen, ['ok:2', 'failed']);
+});
+
+ test('runtime clicks only one exact action already accepted in the preceding wire', () => {
+  const message = { type: 'flex', contents: { footer: { contents: [{ type: 'button', action: { type: 'postback', label: 'ยืนยัน', data: 'action=confirm&previewId=actual-current-preview' } }] } } };
+  assert.equal(selectRuntimePostback(message, 'ยืนยัน'), 'action=confirm&previewId=actual-current-preview');
+  assert.throws(() => selectRuntimePostback(message, 'ยกเลิก'), /NOT_UNIQUELY/);
+  assert.throws(() => selectRuntimePostback([message, { type: 'postback', label: 'ยืนยัน', data: 'other-preview' }], 'ยืนยัน'), /NOT_UNIQUELY/);
+});

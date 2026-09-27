@@ -78,7 +78,8 @@ describe('the AI revenue summary after a promotion (CON-1, AC16)', () => {
               return payment.companyId === where.companyId
                 && payment.direction === where.direction
                 && payment.status === where.status
-                && payment.paidAt >= where.paidAt.gte && payment.paidAt <= where.paidAt.lte
+                && payment.paidAt >= where.paidAt.gte
+                && (where.paidAt.lt ? payment.paidAt < where.paidAt.lt : payment.paidAt <= where.paidAt.lte)
                 && !!counterparty && allowed.includes(counterparty.type);
             });
             if (matched.length === 0) return [];

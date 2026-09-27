@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import type { CallHandler, ExecutionContext } from '@nestjs/common';
 import { defer, firstValueFrom } from 'rxjs';
 import {
-  AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, parseAiBudgetEnvelope,
-  type AiBudgetEnvelope, type AiUsageEntry,
+  AI_BUDGET_PROFILE_TABLE_DIGEST_V2, AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, parseAiBudgetEnvelope, parseAiBudgetEnvelopeV2,
+  createLineAiInputEvidence, type AiBudgetEnvelope, type AiBudgetGrantV2, type AiUsageEntry,
 } from '@watchdog-bms/contracts';
 import { AiUsageInterceptor, internalAiSourceRoute } from './ai-usage.interceptor';
 import {
@@ -12,7 +12,7 @@ import {
   type BudgetRequestState,
 } from './usage-context';
 import { pdfPageUpperBound, withAiBudgetEnvelope } from './ai-budget-provider';
-import { createAiBudgetSeam, type AiBudgetSeam, type AiBudgetSettleOutcome, type AiBudgetStepOutcome } from './ai-budget-seam';
+import { createAiBudgetSeam, type AiBudgetSeam, type AiBudgetSettleOutcome, type AiBudgetStepOutcome, type AiBudgetStepV2Outcome } from './ai-budget-seam';
 import {
   SETTLE_EVIDENCE_MAX_AGE_MS, SETTLE_EVIDENCE_MAX_ENTRIES,
   beginGuardedProviderCall, drainAiBudgetDurability, endGuardedProviderCall, enqueueSettleEvidence,
@@ -115,6 +115,25 @@ describe('AiUsageInterceptor', () => {
       (err: Error) => err.message === 'handler exploded',
     );
   });
+
+  it('opens a v2 budget state only when the raw evidence, grant and both capabilities agree', async () => {
+    const built = await createLineAiInputEvidence({
+      turnKey: V2_GRANT.turnKey,
+      parts: [{ partId: 'part-v2', eventIdHash: 'd'.repeat(64), acceptedAtMs: 1, rawText: 'ดูสต็อก' }],
+    });
+    assert.ok(built);
+    let state: BudgetRequestState | undefined;
+    await intercept({
+      companyId: 'co-1', requestId: 'req-v2', messageText: built.messageText,
+      inputEvidence: built.inputEvidence, budgetGrantV2: V2_GRANT,
+      contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'],
+    }, async () => {
+      state = currentBudgetState();
+      return {};
+    });
+    assert.equal(state?.status, 'active-v2');
+    assert.equal(state?.status === 'active-v2' ? state.inputDigest : undefined, built.inputEvidence.joinedSha256);
+  });
 });
 
 // ── Phase E1c: the SPLIT budget envelope (ADR 0013 §6, spec §12.3/§12.6) ──────
@@ -151,6 +170,45 @@ function wireEnvelope(envelope: AiBudgetEnvelope, over: Record<string, unknown> 
 
 function activeState(envelope: AiBudgetEnvelope, calls = 0) {
   return { status: 'active' as const, envelope, sourceRoute: 'receipt-ocr', requestId: 'req-1', calls };
+}
+
+const V2_GRANT: AiBudgetGrantV2 = {
+  version: 2, turnKey: 'turn-v2', authorityKind: 'webhook_event', authorityId: 'event-v2',
+  channelOwnerDigest: 'a'.repeat(64), attemptKey: 'attempt-v2', monthKey: '2026-09', payerCompanyId: 'co-1',
+  model: { provider: 'bedrock', modelId: 'test-model', region: 'ap-southeast-1' },
+  allowedProfileIds: ['line-control/2'], profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2,
+  maxTurnSlots: 4, maxRepairs: 1, admittedAtMs: Date.now() - 1_000, workDeadlineAtMs: Date.now() + 60_000,
+  finalDeadlineAtMs: Date.now() + 120_000, nonce: 'nonce-v2', issuerVersion: 'api-1', signature: 'b'.repeat(64), nextOrdinal: 0,
+};
+
+function activeV2State(calls = 0) {
+  return {
+    status: 'active-v2' as const, grant: V2_GRANT, inputDigest: 'c'.repeat(64), sourceRoute: 'line-turn',
+    requestId: 'req-v2', calls, repairCount: 0,
+  };
+}
+
+function v2Seam(log: ReturnType<typeof trace>, repairs: boolean[] = []): AiBudgetSeam {
+  return {
+    async step(input) {
+      return fakeSeam(log).step(input);
+    },
+    async stepV2(invocation, repair): Promise<AiBudgetStepV2Outcome> {
+      repairs.push(repair);
+      log.events.push(`v2-step:${invocation.ordinal}:${repair}`);
+      const envelope = parseAiBudgetEnvelopeV2({
+        ...invocation, version: 2, reservationId: `reservation-${invocation.ordinal}`,
+        invocationKey: `${invocation.grant.payerCompanyId}#${invocation.grant.attemptKey}#provider-v2#${invocation.ordinal}`,
+        tariffVersion: 'tariff-v2',
+      });
+      if (!envelope) throw new Error('test fixture produced an invalid v2 envelope');
+      return { ok: true, envelope };
+    },
+    async settle(input) {
+      log.events.push(`settle:${input.invocationKey}:${input.entry.ok}:${input.entry.usageBasis ?? 'none'}`);
+      return 'recorded';
+    },
+  };
 }
 
 /** Records the order of everything that happens, which is the property most of these assert. */
@@ -493,7 +551,140 @@ describe('withAiBudgetEnvelope: step ordering and refusals', () => {
   });
 });
 
+describe('withAiBudgetEnvelope: v2 budget envelope', () => {
+  it('carries the original work deadline into the provider without changing payload or refreshing time', async () => {
+    const log = trace(), provider = guarded(fakeProvider(log), v2Seam(log), log), state = activeV2State();
+    const input = textInput({ usageTag: 'line.loop', maxTokens: 1024, deadlineAt: state.grant.workDeadlineAtMs - 500 });
+    await runWithUsageContext({ companyId: 'co-1', budget: state }, () => provider.generateText(input));
+    assert.equal(log.inputs[0]?.deadlineAt, input.deadlineAt);
+    assert.deepEqual(log.inputs[0]?.messages, input.messages);
+    assert.notEqual(log.inputs[0], input);
+  });
+
+  it('does not dispatch if the reservation round trip consumes the remaining work time', async () => {
+    const realNow = Date.now; let now = realNow(); Date.now = () => now;
+    try {
+      const log = trace(), seam = v2Seam(log), original = seam.stepV2!;
+      const state = activeV2State(); state.grant = { ...V2_GRANT, workDeadlineAtMs: now + 500, finalDeadlineAtMs: now + 3500 };
+      seam.stepV2 = async (invocation, repair) => { const answer = await original(invocation, repair); now += 501; return answer; };
+      const result = await runWithUsageContext({ companyId: 'co-1', budget: state }, () => guarded(fakeProvider(log), seam, log).generateText(textInput({ usageTag: 'line.loop', maxTokens: 1024 })));
+      assert.equal(result.ok, false); assert.ok(log.events.includes('v2-step:0:false')); assert.equal(log.inputs.length, 0);
+    } finally { Date.now = realNow; }
+  });
+
+  it('refuses a changed reservation echo and invalid output bounds before any vendor dispatch', async () => {
+    for (const changed of ['signature', 'output'] as const) {
+      const log = trace(), seam = v2Seam(log), original = seam.stepV2!;
+      seam.stepV2 = async (invocation, repair) => {
+        const result = await original(invocation, repair); if (!result.ok) return result;
+        return { ok: true, envelope: { ...result.envelope, ...(changed === 'output' ? { requestedOutputTokens: 100 } : { grant: { ...result.envelope.grant, signature: 'd'.repeat(64) } }) } };
+      };
+      const result = await runWithUsageContext({ companyId: 'co-1', budget: activeV2State() }, () => guarded(fakeProvider(log), seam, log).generateText(textInput({ usageTag: 'line.loop', maxTokens: 1024 })));
+      assert.equal(result.ok, false); assert.equal(log.inputs.length, 0);
+    }
+    for (const maxTokens of [NaN, Infinity, 1.5, -1]) {
+      const log = trace(); await runWithUsageContext({ companyId: 'co-1', budget: activeV2State() }, () => guarded(fakeProvider(log), v2Seam(log), log).generateText(textInput({ usageTag: 'line.loop', maxTokens })));
+      assert.equal(log.inputs.length, 0); assert.equal(log.events.some(event => event.startsWith('v2-step:')), false);
+    }
+  });
+
+  it('limits a document QA call to 45 seconds even with a longer admitted job deadline', async () => {
+    const log = trace(), before = Date.now(), state = activeV2State(1);
+    state.grant = { ...state.grant, authorityKind: 'qa_job', allowedProfileIds: ['document-qa/2'], admittedAtMs: before, maxTurnSlots: 2, workDeadlineAtMs: before + 897000, finalDeadlineAtMs: before + 900000 };
+    await runWithUsageContext({ companyId: 'co-1', budget: state }, () => guarded(fakeProvider(log), v2Seam(log), log).generateText(textInput({ usageTag: 'line.document.qa', maxTokens: 1024 })));
+    assert.ok(log.inputs[0]?.deadlineAt && log.inputs[0].deadlineAt >= before + 45000 && log.inputs[0].deadlineAt <= Date.now() + 45000);
+  });
+
+  it('suppresses a late vendor success but preserves its actual paid usage for settlement', async () => {
+    const realNow = Date.now; let now = realNow(); Date.now = () => now;
+    try {
+      const log = trace(), state = activeV2State(); state.grant = { ...state.grant, workDeadlineAtMs: now + 100, finalDeadlineAtMs: now + 3100 };
+      const provider = guarded({ generateText: async () => { appendUsage({ ...entry('line.loop'), usageBasis: 'PROVIDER_REPORTED' }); now += 101; return { ok: true, text: 'late success' }; } }, v2Seam(log), log);
+      const result = await runWithUsageContext({ companyId: 'co-1', budget: state }, () => provider.generateText(textInput({ usageTag: 'line.loop', maxTokens: 1024 })));
+      assert.equal(result.ok, false); if (!result.ok) assert.equal(result.error.code, 'PROVIDER_TIMEOUT');
+      assert.ok(log.events.some(event => event.startsWith('settle:') && event.endsWith(':PROVIDER_REPORTED')));
+    } finally { Date.now = realNow; }
+  });
+
+  it('queues late settlement off the response path and still posts that exact evidence later', async () => {
+    resetSettleEvidence(); let posts = 0;
+    const seam = createAiBudgetSeam({ baseUrl: 'https://synthetic-api.test/v1', secret: 'test', timeoutMs: 1000 }, () => {}, async () => { posts++; return new Response(JSON.stringify({ result: 'settled' })); });
+    try {
+      assert.equal(await seam.settle({ invocationKey: 'late-v2', sourceRoute: 'line-turn', entry: entry('line.loop'), deadlineAt: Date.now() - 1 }), 'unreachable');
+      assert.equal(posts, 0); assert.equal(settleEvidenceDepth(), 1);
+      await runSettleEvidenceQueue(() => {}, Date.now(), { ignoreBackoff: true });
+      assert.equal(posts, 1); assert.equal(settleEvidenceDepth(), 0);
+    } finally { resetSettleEvidence(); }
+  });
+
+  it('reserves ordinal zero through the v2 seam and settles the same invocation', async () => {
+    const log = trace();
+    const provider = guarded(fakeProvider(log), v2Seam(log), log);
+    const drained = await runWithUsageContext({ companyId: 'co-1', budget: activeV2State() }, async () => {
+      await provider.generateText(textInput({ usageTag: 'line.loop', maxTokens: 1024 }));
+      return drainUsage();
+    });
+    assert.equal(log.events[0], 'v2-step:0:false');
+    assert.ok(log.events.includes('provider'));
+    assert.equal(drained[0]?.invocationKey, 'co-1#attempt-v2#provider-v2#0');
+  });
+
+  it('uses the global ordinal even when a profile has its own smaller maxCalls', async () => {
+    const log = trace();
+    const provider = guarded(fakeProvider(log), v2Seam(log), log);
+    const drained = await runWithUsageContext({ companyId: 'co-1', budget: activeV2State(2) }, async () => {
+      await provider.generateText(textInput({ usageTag: 'line.loop', maxTokens: 1024 }));
+      return drainUsage();
+    });
+    assert.ok(log.events.includes('v2-step:2:false'));
+    assert.equal(drained[0]?.invocationKey, 'co-1#attempt-v2#provider-v2#2');
+  });
+
+  it('allows one bounded repair reservation after an incomplete provider result', async () => {
+    const log = trace();
+    let calls = 0;
+    const inner: IModelProvider = { generateText: async () => {
+      calls += 1;
+      appendUsage({ ...entry('line.loop'), ok: calls > 1 });
+      return calls === 1
+        ? { ok: false, error: { code: 'PROVIDER_OUTPUT_INCOMPLETE', message: 'incomplete', retryable: false } }
+        : { ok: true, text: 'repaired', stopReason: 'end_turn' };
+    } };
+    const logRepairs: boolean[] = [];
+    const provider = guarded(inner, v2Seam(log, logRepairs), log);
+    const result = await runWithUsageContext({ companyId: 'co-1', budget: activeV2State() }, async () => {
+      await provider.generateText(textInput({ usageTag: 'line.loop', maxTokens: 1024 }));
+      return provider.generateText(textInput({ usageTag: 'line.loop', maxTokens: 1024 }));
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(logRepairs, [false, true]);
+    assert.equal(calls, 2);
+  });
+});
+
 describe('withAiBudgetEnvelope: invocation evidence', () => {
+  it('keeps a dispatched hold unresolved when a provider supplies no usage basis', async () => {
+    const log = trace();
+    const provider: IModelProvider = {
+      generateText: async () => {
+        log.events.push('provider');
+        appendUsage({
+          tag: 'ocr.receipt.extract', modelId: 'test-model', ok: true,
+          inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 1,
+        });
+        return { ok: true, text: 'answer', stopReason: 'end_turn' };
+      },
+    };
+    await runWithUsageContext(
+      { companyId: 'co-1', budget: activeState(OCR_ENVELOPE) },
+      () => guarded(provider, fakeSeam(log), log).generateText(textInput()),
+    );
+
+    assert.ok(log.events.includes('provider'));
+    assert.equal(log.events.some((event) => event.startsWith('settle:')), false);
+    assert.ok(log.events.includes('log:ai.budget.evidence_missing'));
+  });
+
   it('posts evidence for a FAILED provider call too — real cost must never become zero', async () => {
     const log = trace();
     const result = await runWithUsageContext(

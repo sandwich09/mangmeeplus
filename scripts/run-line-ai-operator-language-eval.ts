@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 /** Real-provider semantic-router evaluation. No API, DB, ERP, LINE, or mutation tool is used. */
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import type { LineIntakeRouteIntent, LineIntakeRoutePlan, LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import { IntentRouterAgent } from '../apps/ai-gateway/src/modules/line-ai/agents/intent-router.agent';
 import { createProvider } from '../apps/ai-gateway/src/modules/line-ai/infrastructure/provider/provider.factory';
@@ -155,11 +156,19 @@ const concurrency = Number.isInteger(requestedConcurrency)
   ? Math.max(1, Math.min(requestedConcurrency, 8))
   : 3;
 const selected = LINE_AI_ALL_OPERATOR_CASES.slice(0, limit);
+const requestedRepeats = Number(process.env['LINE_AI_EVAL_REPEATS'] ?? '3');
+
+export function evaluationSchedule<T extends { id: string }>(cases: readonly T[], repeats: number): Array<{ testCase: T; repeat: number }> {
+  if (!Number.isInteger(repeats) || repeats < 1 || repeats > 10) throw new Error('INVALID_EVALUATION_REPEATS');
+  if (new Set(cases.map((row) => row.id)).size !== cases.length) throw new Error('DUPLICATE_EVALUATION_CASE');
+  return Array.from({ length: repeats }, (_, repeat) => cases.map((testCase) => ({ testCase, repeat }))).flat();
+}
 
 type EvaluationCase = OperatorLanguageCase | OperatorAvailabilityCase;
 
 type Evaluation = {
   id: string;
+  repeat: number;
   category: EvaluationCase['category'];
   expectedTools: string[];
   plannedTools: string[];
@@ -174,7 +183,7 @@ function difference(left: string[], right: string[]): string[] {
   return left.filter((item) => !rightSet.has(item));
 }
 
-function evaluate(testCase: EvaluationCase, plannedTools: string[], durationMs: number, planStatus: 'ROUTABLE' | 'PARTIAL' | 'UNROUTABLE'): Evaluation {
+function evaluate(testCase: EvaluationCase, plannedTools: string[], durationMs: number, planStatus: 'ROUTABLE' | 'PARTIAL' | 'UNROUTABLE', repeat: number): Evaluation {
   const planned = [...new Set(plannedTools)].sort();
   const expected = [...new Set(testCase.expectedTools)].sort();
   const missing = difference(expected, planned);
@@ -193,6 +202,7 @@ function evaluate(testCase: EvaluationCase, plannedTools: string[], durationMs: 
   ];
   return {
     id: testCase.id,
+    repeat,
     category: testCase.category,
     expectedTools: expected,
     plannedTools: planned,
@@ -208,7 +218,8 @@ async function main() {
     throw new Error(`CORPUS_BELOW_REQUIRED_MINIMUM:${selected.length}`);
   }
   const router = new IntentRouterAgent(createProvider(config));
-  const results = new Array<Evaluation>(selected.length);
+  const scheduled = evaluationSchedule(selected, requestedRepeats);
+  const results = new Array<Evaluation>(scheduled.length);
   const startedAt = Date.now();
 
   // One preflight prevents a missing credential/network path from being mistaken for hundreds
@@ -223,19 +234,25 @@ async function main() {
     preflightPlan.intents.flatMap((intent) => intent.requiredTools),
     Date.now() - preflightStartedAt,
     preflightPlan.status,
+    0,
   );
   let nextIndex = 1;
 
-  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(0, selected.length - 1)) }, async () => {
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(0, scheduled.length - 1)) }, async () => {
     while (true) {
       const index = nextIndex;
       nextIndex += 1;
-      const testCase = selected[index];
-      if (!testCase) return;
+      const entry = scheduled[index];
+      if (!entry) return;
+      const { testCase, repeat } = entry;
       const caseStartedAt = Date.now();
-      const plan = await router.route(testCase.message);
-      const plannedTools = plan.intents.flatMap((intent) => intent.requiredTools);
-      results[index] = evaluate(testCase, plannedTools, Date.now() - caseStartedAt, plan.status);
+      try {
+        const plan = await router.route(testCase.message);
+        const plannedTools = plan.intents.flatMap((intent) => intent.requiredTools);
+        results[index] = evaluate(testCase, plannedTools, Date.now() - caseStartedAt, plan.status, repeat);
+      } catch {
+        results[index] = { ...evaluate(testCase, [], Date.now() - caseStartedAt, 'UNROUTABLE', repeat), passed: false, reason: 'PROVIDER_EXCEPTION' };
+      }
     }
   }));
 
@@ -250,13 +267,18 @@ async function main() {
   //  - every other provider-eligible row is scored against its pinned expected intent.
   // The uat-correctness-latency §14.1 semantic dataset rides this same pass (it is a subset of the same
   // corpus). Absent provider credentials the whole runner is unavailable, so this evidence stays pending.
-  const substituteResults = [] as Array<{ id: string; category: string; scoringBasis: SubstituteRowScore['scoringBasis']; expectedIntent: string; actualIntent: string; passed: boolean; reason?: string }>;
-  const substituteSkipped = [] as string[];
-  for (const testCase of LINE_AI_SUBSTITUTE_ROUTING_CORPUS) {
-    if (testCase.category === 'unavailable') { substituteSkipped.push(testCase.id); continue; }
-    const plan = await router.routeIntake(buildSubstituteRouteRequest(testCase));
-    const { scoringBasis, passed, reason } = scoreSubstituteRow(testCase, plan);
-    substituteResults.push({ id: testCase.id, category: testCase.category, scoringBasis, expectedIntent: testCase.expectedIntent, actualIntent: plan.intent, passed, ...(passed ? {} : { reason }) });
+  const substituteResults = [] as Array<{ id: string; repeat: number; durationMs: number; category: string; scoringBasis: SubstituteRowScore['scoringBasis']; expectedIntent: string; actualIntent: string; passed: boolean; reason?: string }>;
+  const substituteSkipped = LINE_AI_SUBSTITUTE_ROUTING_CORPUS.filter((row) => row.category === 'unavailable').map((row) => row.id);
+  for (const { testCase, repeat } of evaluationSchedule(LINE_AI_SUBSTITUTE_ROUTING_CORPUS.filter((row) => row.category !== 'unavailable'), requestedRepeats)) {
+    const caseStartedAt = Date.now();
+    try {
+      const plan = await router.routeIntake(buildSubstituteRouteRequest(testCase));
+      const { scoringBasis, passed, reason } = scoreSubstituteRow(testCase, plan);
+      substituteResults.push({ id: testCase.id, repeat, durationMs: Date.now() - caseStartedAt, category: testCase.category, scoringBasis, expectedIntent: testCase.expectedIntent, actualIntent: plan.intent, passed, ...(passed ? {} : { reason }) });
+    } catch {
+      const { scoringBasis } = scoreSubstituteRow(testCase, { intent: 'UNAVAILABLE' });
+      substituteResults.push({ id: testCase.id, repeat, durationMs: Date.now() - caseStartedAt, category: testCase.category, scoringBasis, expectedIntent: testCase.expectedIntent, actualIntent: 'UNAVAILABLE', passed: false, reason: 'PROVIDER_EXCEPTION' });
+    }
   }
   const substituteFailures = substituteResults.filter((result) => !result.passed);
 
@@ -271,6 +293,10 @@ async function main() {
   }));
   console.log(JSON.stringify({
     event: 'line_ai_operator_language_eval_complete',
+    evidenceScope: 'semantic_router_only_no_domain_or_delivery',
+    corpusSha256: createHash('sha256').update(JSON.stringify({ selected, substitute: LINE_AI_SUBSTITUTE_ROUTING_CORPUS })).digest('hex'),
+    scenarioCount: selected.length,
+    repeats: requestedRepeats,
     provider: config.modelProvider,
     model: config.modelProvider === 'bedrock' ? config.bedrockModelId : config.openAiModel,
     total: results.length,
@@ -280,6 +306,7 @@ async function main() {
     durationMs: Date.now() - startedAt,
     categoryCounts,
     failures,
+    results,
     substitute: {
       corpusTotal: LINE_AI_SUBSTITUTE_ROUTING_CORPUS.length,
       scored: substituteResults.length,
@@ -291,7 +318,9 @@ async function main() {
       scoredByNotSubstitute: substituteResults.filter((r) => r.scoringBasis === 'not_substitute').length,
       scoredByNotCommand: substituteResults.filter((r) => r.scoringBasis === 'not_command').length,
       semanticCoverageScored: substituteResults.filter((r) => semanticCoverageIds.has(r.id)).length,
+      distinctSemanticCoverageScenarios: new Set(substituteResults.filter((r) => semanticCoverageIds.has(r.id)).map((r) => r.id)).size,
       failures: substituteFailures,
+      results: substituteResults,
     },
   }, null, 2));
   if (failures.length > 0 || substituteFailures.length > 0) process.exitCode = 1;

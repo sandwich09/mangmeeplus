@@ -2,7 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LineAiTurnUseCase } from './line-ai-turn.use-case';
 import {
-  AI_BUDGET_STEP_BOUNDS, LINE_AI_EXPENSE_CRITERION_REPLIES, aiBudgetInvocationKey, extractValueCandidates, parseAiBudgetEnvelope, type LineAiTurnRequest,
+  AI_BUDGET_PROFILE_TABLE_DIGEST_V2, AI_BUDGET_STEP_BOUNDS, LINE_AI_EXPENSE_CRITERION_REPLIES,
+  aiBudgetInvocationKey, createLineAiInputEvidence, extractValueCandidates, parseAiBudgetEnvelope, type LineAiTurnRequest,
 } from '@watchdog-bms/contracts';
 import { runWithUsageContext } from '../../../../common/usage/usage-context';
 
@@ -74,6 +75,39 @@ function makeAgentcoreRuntime(
 }
 
 describe('LineAiTurnUseCase – feature flag routing', () => {
+  it('rejects a valid v2 input when the receiver has no matching v2 budget state', async () => {
+    const built = await createLineAiInputEvidence({
+      turnKey: 'turn-v2',
+      parts: [{ partId: 'part-v2', eventIdHash: 'a'.repeat(64), acceptedAtMs: 100, rawText: 'ดูสต็อกสินค้า' }],
+    });
+    assert.ok(built);
+    let orchestratorCalled = false;
+    let runtimeCalled = false;
+    const orchestrator = { run: async () => { orchestratorCalled = true; return {} as any; } } as any;
+    const runtime = { invoke: async () => { runtimeCalled = true; return {} as any; } } as any;
+    const useCase = new LineAiTurnUseCase(makeErpTools(), orchestrator, {
+      lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'strands-local',
+    } as any, runtime);
+    const response = await useCase.execute({
+      ...validReq,
+      messageText: built.messageText,
+      inputEvidence: built.inputEvidence,
+      contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'],
+      budgetGrantV2: {
+        version: 2, turnKey: 'turn-v2', authorityKind: 'webhook_event', authorityId: 'event-v2',
+        channelOwnerDigest: 'b'.repeat(64), attemptKey: 'attempt-v2', monthKey: '2026-09', payerCompanyId: 'company-1',
+        model: { provider: 'bedrock', modelId: 'apac.anthropic.claude-3-haiku-20240307-v1:0', region: 'ap-southeast-1' },
+        allowedProfileIds: ['line-intake-text/2'], profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2,
+        maxTurnSlots: 4, maxRepairs: 1, admittedAtMs: 100, workDeadlineAtMs: 10_000, finalDeadlineAtMs: 20_000,
+        nonce: 'nonce-v2', issuerVersion: 'api-1', signature: 'c'.repeat(64),
+      },
+    });
+
+    assert.equal(response.errorCode, 'AI_BUDGET_UNAVAILABLE');
+    assert.equal(orchestratorCalled, false);
+    assert.equal(runtimeCalled, false);
+  });
+
   it('reports edit capability only when the serving S-4 catalog is enabled across both runtimes', async () => {
     let remoteCalls = 0;
     const runtime = {

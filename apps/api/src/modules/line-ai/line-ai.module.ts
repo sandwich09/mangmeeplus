@@ -1,3 +1,14 @@
+import { LineReimbursementDraftAdapterService } from './application/line-reimbursement-draft-adapter.service';
+import { ReimbursementDraftGetOptionsTool, ReimbursementDraftPreviewCreateTool, ReimbursementDraftPreviewUpdateTool } from './infrastructure/reimbursement-draft-tools';
+import { LineDocumentQaService } from './application/line-document-qa.service';
+import { LineDocumentQaWorker } from './application/line-document-qa.worker';
+import { LineDocumentQaInternalController } from './presentation/http/line-document-qa-internal.controller';
+import { LineReimbursementDraftService } from './application/line-reimbursement-draft.service';
+import { PublicLookupAdmissionTool } from './infrastructure/public-lookup';
+import { BankingModule } from '../banking/banking.module';
+import { BankGetAccountBalancesTool, BankGetReconciliationStatusTool } from './application/use-cases/erp-banking-tools.use-case';
+import { LineAiBudgetAuthorityService } from './application/line-ai-budget-authority.service';
+import { LineConversationContextService } from './application/line-conversation-context.service';
 import { Module } from '@nestjs/common';
 import { LineReadEvidenceService } from './application/line-read-evidence.service';
 import { LineLedgerDeliveryService } from './application/line-ledger-delivery.service';
@@ -137,6 +148,9 @@ import { LineExplainFileAttemptTool } from './application/use-cases/line-file-at
 import { LineWebhookController } from '../auth/presentation/line-webhook.controller';
 
 const erpTools = [
+  LineExplainFileAttemptTool,
+  ReimbursementDraftGetOptionsTool, ReimbursementDraftPreviewCreateTool, ReimbursementDraftPreviewUpdateTool,
+  PublicLookupAdmissionTool,
   CompanyGetCurrentContextTool,
   CompanyListBranchesTool,
   CompanyEmployeeSummaryTool,
@@ -198,6 +212,8 @@ const erpTools = [
   ProcurementGetPurchaseOrderDetailTool,
   LedgerGetPeriodStatusTool,
   LedgerGetReportSummaryTool,
+  BankGetAccountBalancesTool,
+  BankGetReconciliationStatusTool,
 ];
 
 @Module({
@@ -209,6 +225,7 @@ const erpTools = [
     DashboardNotificationsModule,
     ExpensesModule,
     LedgerModule,
+    BankingModule,
     TaxModule,
     WorkflowModule,
     AccountingDocumentsModule,
@@ -222,7 +239,7 @@ const erpTools = [
     FeatureLaunchModule,
     ExternalSignupModule,
   ],
-  controllers: [InternalToolsController, InternalAiBudgetController, LineAiLedgerInternalController, LineCaptureResultsInternalController, LineWebhookController],
+  controllers: [LineDocumentQaInternalController, InternalToolsController, InternalAiBudgetController, LineAiLedgerInternalController, LineCaptureResultsInternalController, LineWebhookController],
   providers: [
     LineReplyAdapter,
     ActorDelegationService,
@@ -235,11 +252,16 @@ const erpTools = [
     DrainLineLedgerUseCase,
     RecoverOrphanLineEventsUseCase,
     LineCaptureResultNotifierUseCase,
-    LineExplainFileAttemptTool,
     ...erpTools,
     { provide: ERP_READ_TOOL_REGISTRY, inject: erpTools,
       useFactory: (...tools: ErpReadToolPort[]) => new Map(tools.map(tool => [tool.toolName, tool])) },
     LineReadEvidenceService,
+    LineConversationContextService,
+    LineDocumentQaService,
+    LineDocumentQaWorker,
+    LineReimbursementDraftAdapterService,
+    LineReimbursementDraftService,
+    LineAiBudgetAuthorityService,
     LineLedgerDeliveryService,
   ],
   exports: [ProcessLineWebhookUseCase, LineMessageBufferService],

@@ -136,6 +136,36 @@ function makeUseCase(opts: {
   return { useCase, acks, ackReasons, pushes, turnRequests, aiTurnUpdates, eventUpdates, shadowRecords, shadowFlushes, warnings, terminalLogs, state, identityReads, deliveryRows, prisma };
 }
 
+describe('v2 ledger never recreates a paid turn from a stale Redis reference', () => {
+  it('parks uncovered v2 subrequests without a model call, even beyond the legacy delivery cap', async () => {
+    const queued = entry({ reliabilityVersion: 2 });
+    const harness = makeUseCase({ claims: [{ entry: queued, deliveryCount: 9, idleMs: 1000 }] });
+    const result = await harness.useCase.execute(20, NOW);
+    assert.equal(result.parked, 1);
+    assert.equal(harness.turnRequests.length, 0);
+    assert.equal(harness.pushes.length, 0);
+    assert.deepEqual(harness.ackReasons, ['v2_subrequest_requires_new_admission']);
+  });
+  it('refuses missing authoritative request rather than treating v2 text as a legacy turn', async () => {
+    const queued = entry({ kind: 'turn', reliabilityVersion: 2, durableDeliveryId: 'a'.repeat(64) });
+    const harness = makeUseCase({ claims: [{ entry: queued, deliveryCount: 1, idleMs: 1000 }] });
+    const result = await harness.useCase.execute(20, NOW);
+    assert.equal(result.refused, 1);
+    assert.equal(harness.turnRequests.length, 0);
+    assert.equal(harness.pushes.length, 0);
+  });
+  it('a saved v2 parent whose child is missing cannot send the legacy sentinel or regenerate', async () => {
+    const queued = entry({ kind: 'turn', reliabilityVersion: 2 });
+    const harness = makeUseCase({ claims: [{ entry: queued, deliveryCount: 1, idleMs: 1000 }] });
+    harness.deliveryRows.set(JSON.stringify([queued.key, queued.id]), { id: 'parent', status: 'READY', messagesJson: [{ type: 'text', text: 'SENTINEL' }],
+      completionJson: { deliveryPlanVersion: 2, deliveryPlanId: 'missing' } });
+    const result = await harness.useCase.execute(20, NOW);
+    assert.equal(result.refused, 1);
+    assert.equal(harness.turnRequests.length, 0);
+    assert.ok(harness.pushes.every(push => push.text !== 'SENTINEL'));
+  });
+});
+
 describe('AP22 queued UNKNOWN and accepted recovery', () => {
   it('reuses saved bytes/key after UNKNOWN without another model or handoff', async () => {
     const opts = { claims: [{ entry: entry(), deliveryCount: 1, idleMs: 10_000 }], pushResult: 'failed_other' as 'failed_other' | 'ok' };

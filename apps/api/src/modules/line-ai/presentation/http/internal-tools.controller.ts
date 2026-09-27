@@ -2,7 +2,8 @@
  * Internal-only controller for AI Gateway to invoke ERP read tools.
  * Requires workload secret plus API-issued, single-use actor delegation.
  */
-import { Controller, Inject, Post, Body, Headers, UnauthorizedException, Logger, HttpCode } from '@nestjs/common';
+import { Controller, Inject, Optional, Post, Body, Headers, UnauthorizedException, Logger, HttpCode } from '@nestjs/common';
+import { PublicLookupAdmissionTool } from '../../infrastructure/public-lookup';
 import { LineReadEvidenceService, isLineEvidenceRead } from '../../application/line-read-evidence.service';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
@@ -13,10 +14,14 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import {
   LINE_ALLOWED_TOOL_CATEGORIES,
   LINE_DRAFT_UPDATE_TOOL_CATEGORY,
+  LINE_REIMBURSEMENT_DRAFT_TOOL_NAMES,
   LINE_TOOL_REGISTRY,
   allowedToolCategories,
   hasToolFeature,
   hasToolPermissions,
+  parseAiBudgetGrantV2,
+  verifyLineAiInputEvidence,
+  verifyLineAiValueCandidatesV2,
   type ToolCategory,
   type ToolMeta,
   type ToolResult,
@@ -85,6 +90,12 @@ import {
   LedgerGetPeriodStatusTool,
   LedgerGetReportSummaryTool,
 } from '../../application/use-cases/erp-procurement-ledger-tools.use-case';
+import { BankGetAccountBalancesTool, BankGetReconciliationStatusTool } from '../../application/use-cases/erp-banking-tools.use-case';
+import {
+  ReimbursementDraftGetOptionsTool,
+  ReimbursementDraftPreviewCreateTool,
+  ReimbursementDraftPreviewUpdateTool,
+} from '../../infrastructure/reimbursement-draft-tools';
 
 /**
  * Audit H-23: this was a `type` named `...Dto`, so the global ValidationPipe saw metatype `Object`
@@ -117,6 +128,10 @@ class InternalToolContextDto {
   //  `forbidNonWhitelisted` a length violation 400s the whole request, which would take out every
   //  ERP read of a turn whose LINE message happened to be long. The value is cut where it is read.
   @IsString() @IsOptional() groundingText?: string;
+  /** Trusted turn metadata is carried beside tool arguments and verified again below. */
+  @IsObject() @IsOptional() inputEvidence?: Record<string, unknown>;
+  @IsObject() @IsOptional() valueCandidatesV2?: Record<string, unknown>;
+  @IsObject() @IsOptional() budgetGrantV2?: Record<string, unknown>;
   @IsArray() @IsString({ each: true }) @IsOptional() roles?: string[];
   @IsArray() @IsString({ each: true }) @IsOptional() permissions?: string[];
   @IsArray() @IsString({ each: true }) @IsOptional() branchIds?: string[];
@@ -225,6 +240,12 @@ export class InternalToolsController {
     private readonly draftAddCharge: ExpenseDraftAddChargeTool,
     private readonly draftRemoveLine: ExpenseDraftRemoveLineTool,
     private readonly draftSetVatMode: ExpenseDraftSetVatModeTool,
+    private readonly bankAccountBalances: BankGetAccountBalancesTool,
+    private readonly bankReconciliationStatus: BankGetReconciliationStatusTool,
+    @Optional() private readonly publicLookup?: PublicLookupAdmissionTool,
+    @Optional() private readonly reimbursementDraftGetOptions?: ReimbursementDraftGetOptionsTool,
+    @Optional() private readonly reimbursementDraftPreviewCreate?: ReimbursementDraftPreviewCreateTool,
+    @Optional() private readonly reimbursementDraftPreviewUpdate?: ReimbursementDraftPreviewUpdateTool,
   ) {
     this.toolMap.set('company.get_current_context', this.companyCtx);
     this.toolMap.set('company.list_branches', this.companyBranches);
@@ -292,6 +313,12 @@ export class InternalToolsController {
     this.toolMap.set('expense.draft.add_charge', this.draftAddCharge);
     this.toolMap.set('expense.draft.remove_line', this.draftRemoveLine);
     this.toolMap.set('expense.draft.set_vat_mode', this.draftSetVatMode);
+    this.toolMap.set('bank.get_account_balances', this.bankAccountBalances);
+    this.toolMap.set('bank.get_reconciliation_status', this.bankReconciliationStatus);
+    if (this.publicLookup) this.toolMap.set('public.lookup', this.publicLookup);
+    if (this.reimbursementDraftGetOptions) this.toolMap.set('reimbursement.draft.get_options', this.reimbursementDraftGetOptions);
+    if (this.reimbursementDraftPreviewCreate) this.toolMap.set('reimbursement.draft.preview_create', this.reimbursementDraftPreviewCreate);
+    if (this.reimbursementDraftPreviewUpdate) this.toolMap.set('reimbursement.draft.preview_update', this.reimbursementDraftPreviewUpdate);
   }
 
   @Public()
@@ -412,6 +439,15 @@ export class InternalToolsController {
         errorCode: 'AI_PERMISSION_DENIED',
       };
     }
+    const evidenceText = dto.context.inputEvidence && Array.isArray(dto.context.inputEvidence['parts'])
+      ? dto.context.inputEvidence['parts'].map((part) => part && typeof part === 'object' && !Array.isArray(part)
+        ? (part as Record<string, unknown>)['rawText'] : undefined).filter((part): part is string => typeof part === 'string').join('\n')
+      : '';
+    const inputEvidence = dto.context.inputEvidence
+      ? await verifyLineAiInputEvidence(dto.context.inputEvidence, evidenceText) : undefined;
+    const valueCandidatesV2 = inputEvidence && dto.context.valueCandidatesV2
+      ? await verifyLineAiValueCandidatesV2(dto.context.valueCandidatesV2, inputEvidence) : undefined;
+    const budgetGrantV2 = parseAiBudgetGrantV2(dto.context.budgetGrantV2);
     const ctx: ErpToolContext = {
       requestId: auditRequestId,
       companyId: access.companyId,
@@ -426,6 +462,9 @@ export class InternalToolsController {
       locale: dto.context.locale ?? 'th',
       ...(dto.context.chatKeyHash ? { chatKeyHash: dto.context.chatKeyHash } : {}),
       ...(dto.context.groundingText ? { groundingText: dto.context.groundingText.slice(0, GROUNDING_TEXT_MAX_CHARS) } : {}),
+      ...(inputEvidence ? { inputEvidence } : {}),
+      ...(valueCandidatesV2 ? { valueCandidatesV2 } : {}),
+      ...(budgetGrantV2 ? { budgetGrantV2 } : {}),
     };
 
     // L-08 deny order — registry entry, then classification, then ERP permissions, then company
@@ -490,6 +529,23 @@ export class InternalToolsController {
     const tool = this.toolMap.get(dto.toolName);
     if (!tool) return deny('SOURCE_MODULE_NOT_READY', 'LOW', 'unsupported_module', 'SOURCE_MODULE_NOT_READY');
 
+    // Registry fields are the public wire contract. Reject drift here so a newly supplied filter
+    // can never be silently ignored by an older adapter and produce a plausible answer for the
+    // wrong population.
+    const supportedFields = new Set([...(meta.requiredInputFields ?? []), ...(meta.optionalInputFields ?? [])]);
+    const unsupportedFields = Object.keys(dto.input ?? {}).filter((field) => !supportedFields.has(field));
+    if (unsupportedFields.length > 0) {
+      await this.auditToolOutcome({
+        companyId: ctx.companyId, actorUserId: ctx.userId, requestId: auditRequestId,
+        toolName: dto.toolName, reasonCode: 'UNSUPPORTED_FILTER', riskLevel: 'LOW', startedAt,
+        extra: { unsupportedFields: unsupportedFields.sort() },
+      });
+      return {
+        toolName: dto.toolName, status: 'error', sourceRefs: [], asOf: new Date().toISOString(),
+        errorCode: 'UNSUPPORTED_FILTER', errorMessage: `Unsupported input fields: ${unsupportedFields.sort().join(', ')}`,
+      };
+    }
+
     try {
       const result = await tool.execute(ctx, dto.input ?? {});
       if (result.toolName !== dto.toolName) throw new Error('LINE_READ_RESULT_TOOL_MISMATCH');
@@ -544,6 +600,9 @@ export class InternalToolsController {
   private classificationDenial(meta: ToolMeta): string | undefined {
     const category = meta.category as string;
     if (!KNOWN_TOOL_CATEGORIES.has(category)) return 'TOOL_CATEGORY_UNKNOWN';
+    if ((LINE_REIMBURSEMENT_DRAFT_TOOL_NAMES as readonly string[]).includes(meta.name)) {
+      return this.config.lineAiReimbursementDraftWriteEnabled ? undefined : 'LINE_REIMBURSEMENT_DRAFT_WRITE_DISABLED';
+    }
     if (MUTATION_TOOL_CATEGORIES.has(meta.category) && !this.config.aiFinalMutationEnabled) {
       return 'AI_FINAL_MUTATION_DISABLED';
     }

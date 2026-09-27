@@ -1,3 +1,5 @@
+import { verifyLineAiInputEvidence, validateLineAiSourceRefV2, type LineAiInputEvidenceV2, type LineAiSourceRefV2 } from './line-ai-input-evidence.js';
+
 // LINE AI value normalizer – deterministic amount/date candidate extraction (item 10F).
 //
 // Annotation-only by design (ADR 0011): the user's text is NEVER rewritten. This module
@@ -9,6 +11,8 @@
 
 export type LineAiAmountCandidate = {
   /** Exact substring of the source text this reading came from. */
+  candidateId?: string;
+  source?: LineAiSourceRefV2;
   span: string;
   /** Plain decimal string, e.g. "60" or "1234.50". */
   value: string;
@@ -18,6 +22,8 @@ export type LineAiAmountCandidate = {
 };
 
 export type LineAiDateCandidate = {
+  candidateId?: string;
+  source?: LineAiSourceRefV2;
   span: string;
   day: number;
   month: number;
@@ -34,6 +40,7 @@ export type LineAiPeriodKind = (typeof LINE_AI_PERIOD_KINDS)[number];
 /** One defensible reading of a PERIOD the user named (period-resolution spec §3.1). Resolved by code
  *  from the text plus the injected `todayIso`; the model only SELECTS one of these, never computes a
  *  calendar itself (ADR 0011). Both bounds are inclusive ISO-8601 CE civil dates (Asia/Bangkok days). */
+export type LineAiPeriodSource = 'relative' | 'explicit' | 'named_month';
 export type LineAiPeriodCandidate = {
   /** Exact substring of the source text this reading came from. */
   span: string;
@@ -42,7 +49,9 @@ export type LineAiPeriodCandidate = {
   toDate: string;
   /** 'YYYY-MM' — set only for `kind: 'month'`, for tools whose input is a period key. */
   monthKey?: string;
-  source: 'relative' | 'explicit' | 'named_month';
+  candidateId?: string;
+  source: LineAiPeriodSource | LineAiSourceRefV2;
+  periodSource?: LineAiPeriodSource;
   /** Thai display phrase naming the period WITH its dates, e.g. `เดือนที่แล้ว (1–31 ส.ค. 2569)`. */
   label: string;
   assumptions: string[];
@@ -62,6 +71,7 @@ export type LineAiValueCandidates = {
 export function parseLineAiValueCandidates(value: unknown, messageText: string): LineAiValueCandidates | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const raw = value as Record<string, unknown>;
+  if (raw['version'] === 2) return parseLineAiValueCandidatesV2(value, messageText);
   if (!Array.isArray(raw['amounts']) || raw['amounts'].length > MAX_AMOUNT_CANDIDATES
     || !Array.isArray(raw['dates']) || raw['dates'].length > MAX_DATE_CANDIDATES
     || (raw['periods'] !== undefined && (!Array.isArray(raw['periods']) || raw['periods'].length > MAX_PERIOD_CANDIDATES))) return undefined;
@@ -446,7 +456,7 @@ export type LineAiDocumentContext = 'receipt' | 'chat';
 export function extractValueCandidates(
   text: string,
   todayIso?: string,
-  options: { documentContext?: LineAiDocumentContext } = {},
+  options: { documentContext?: LineAiDocumentContext; scan?: CandidateScan } = {},
 ): LineAiValueCandidates {
   const receiptMode = options.documentContext === 'receipt';
   const mapped = mapThaiDigits(text);
@@ -467,8 +477,11 @@ export function extractValueCandidates(
     const assumptions = [...extraAssumptions, ...reading.assumptions];
     if (todayIso && isoDate > todayIso) assumptions.push(VALUE_ASSUMPTIONS.futureDate);
     const span = text.slice(start, end);
-    if (dates.some((d) => d.isoDate === isoDate && d.span === span)) return;
-    dates.push({ span, day, month, yearBe: reading.yearBe, isoDate, assumptions });
+    const candidate = { span, day, month, yearBe: reading.yearBe, isoDate, assumptions };
+    options.scan?.observe('date', candidate, start, end);
+    if (!options.scan && dates.some((d) => d.isoDate === isoDate && d.span === span)) return;
+    dates.push(candidate);
+    options.scan?.datePositions.set(candidate, { start, end });
   };
 
   const recordDateRange = (start: number, end: number): void => {
@@ -603,9 +616,10 @@ export function extractValueCandidates(
     const start = match.index;
     const end = start + match[0].length;
     if (overlaps(dateRanges, start, end)) continue;
-    const value = Number.parseFloat(match[0].replace(/,/g, ''));
-    if (!Number.isFinite(value)) continue;
-    pushAmount(amounts, text, mapped, start, end, value);
+    const raw = match[0].replace(/,/g, '');
+    const value = options.scan ? canonicalDecimal(raw) : Number.parseFloat(raw);
+    if (value === null || typeof value === 'number' && !Number.isFinite(value)) continue;
+    pushAmount(amounts, text, mapped, start, end, value, options.scan);
   }
 
   // 7) Thai number words (no word boundaries in Thai – substring scan, longest token first).
@@ -616,9 +630,9 @@ export function extractValueCandidates(
       cursor += 1;
       continue;
     }
-    const value = evaluateWordTokens(scanned.tokens);
-    if (value !== null && value > 0) {
-      pushAmount(amounts, text, mapped, cursor, scanned.end, value);
+    const value = options.scan ? evaluateWordTokensExact(scanned.tokens) : evaluateWordTokens(scanned.tokens);
+    if (value !== null && BigInt(value) > 0n) {
+      pushAmount(amounts, text, mapped, cursor, scanned.end, value, options.scan);
     }
     cursor = scanned.end;
   }
@@ -627,20 +641,20 @@ export function extractValueCandidates(
   const englishWordPattern = /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million)(?:[\s-](?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million))*\b/gi;
   for (const match of text.matchAll(englishWordPattern)) {
     const tokens = match[0].toLowerCase().split(/[\s-]+/).map((w) => ENGLISH_NUMBER_WORDS[w]).filter((t): t is WordToken => !!t);
-    const value = evaluateWordTokens(tokens);
-    if (value !== null && value > 0) {
-      pushAmount(amounts, text, mapped, match.index, match.index + match[0].length, value);
+    const value = options.scan ? evaluateWordTokensExact(tokens) : evaluateWordTokens(tokens);
+    if (value !== null && BigInt(value) > 0n) {
+      pushAmount(amounts, text, mapped, match.index, match.index + match[0].length, value, options.scan);
     }
   }
 
   // 9) Periods (spec §3.1). Computed HERE so every producer of value candidates gets them for free.
   //    A period is meaningless without a clock, so a caller that injects no `todayIso` gets none, and
   //    a turn that names no period carries no `periods` key at all — existing payloads are unchanged.
-  const periods = todayIso ? resolvePeriodCandidates(text, todayIso, dates) : [];
+  const periods = todayIso ? resolvePeriodCandidates(text, todayIso, dates, options.scan) : [];
 
   return {
-    amounts: amounts.slice(0, MAX_AMOUNT_CANDIDATES),
-    dates: dates.slice(0, MAX_DATE_CANDIDATES),
+    amounts: options.scan ? amounts : amounts.slice(0, MAX_AMOUNT_CANDIDATES),
+    dates: options.scan ? dates : dates.slice(0, MAX_DATE_CANDIDATES),
     ...(periods.length > 0 ? { periods } : {}),
   };
 }
@@ -657,7 +671,7 @@ function scanThaiWordTokens(text: string, from: number): { tokens: WordToken[]; 
   return tokens.length > 0 ? { tokens, end: at } : null;
 }
 
-function pushAmount(into: LineAiAmountCandidate[], text: string, mapped: string, start: number, end: number, value: number): void {
+function pushAmount(into: LineAiAmountCandidate[], text: string, mapped: string, start: number, end: number, value: number | string, scan?: CandidateScan): void {
   const span = text.slice(start, end);
   const currency = matchCurrencyToken(mapped, end);
   const assumptions: string[] = [];
@@ -668,7 +682,8 @@ function pushAmount(into: LineAiAmountCandidate[], text: string, mapped: string,
     ...(currency ? { currencyToken: currency.token } : {}),
     ...(assumptions.length > 0 ? { assumptions } : {}),
   };
-  if (into.some((a) => a.value === candidate.value && a.span === candidate.span)) return;
+  scan?.observe('amount', candidate, start, end);
+  if (!scan && into.some((a) => a.value === candidate.value && a.span === candidate.span)) return;
   into.push(candidate);
 }
 
@@ -767,7 +782,7 @@ type PeriodReading = {
   toDate: string;
   /** Thai word/phrase the user used ('' for a named month or an explicit range, whose label IS the range). */
   word: string;
-  source: LineAiPeriodCandidate['source'];
+  source: LineAiPeriodSource;
   assumptions: string[];
   monthKey?: string;
 };
@@ -1067,7 +1082,7 @@ function monthReading(
   yearCe: number,
   month: number,
   word: string,
-  source: LineAiPeriodCandidate['source'],
+  source: LineAiPeriodSource,
   assumptions: string[],
 ): PeriodReading {
   const bounds = monthBounds(yearCe, month);
@@ -1225,22 +1240,22 @@ function numericDayRange(
  *  already read, separated by a range marker in the source text (spec §3.1 "ใช้ date candidate เดิม
  *  2 ตัวที่ไม่กำกวม"). Month-period boundaries are excluded — those are not stated days. */
 const RANGE_MARKER = /^\s*(?:-|–|—|~|ถึง|to)\s*$/u;
-function dateCandidateRanges(text: string, dates: LineAiDateCandidate[]): Array<{ span: string; reading: PeriodReading }> {
+function dateCandidateRanges(text: string, dates: LineAiDateCandidate[], scan?: CandidateScan): Array<{ span: string; reading: PeriodReading; start: number; end: number }> {
   const usable = dates.filter((date) => !isAmbiguousDateCandidate(date)
-    && !date.assumptions.includes(VALUE_ASSUMPTIONS.monthPeriodBoundary));
-  const out: Array<{ span: string; reading: PeriodReading }> = [];
+    && !date.assumptions.includes(VALUE_ASSUMPTIONS.monthPeriodBoundary)).sort((a, b) => (scan?.datePositions.get(a)?.start ?? 0) - (scan?.datePositions.get(b)?.start ?? 0));
+  const out: Array<{ span: string; reading: PeriodReading; start: number; end: number }> = [];
   for (let i = 0; i + 1 < usable.length; i += 1) {
     const left = usable[i]!;
     const right = usable[i + 1]!;
-    const leftStart = text.indexOf(left.span);
+    const leftStart = scan?.datePositions.get(left)?.start ?? text.indexOf(left.span);
     if (leftStart < 0) continue;
     const gapStart = leftStart + left.span.length;
-    const gapEnd = text.indexOf(right.span, gapStart);
+    const gapEnd = scan?.datePositions.get(right)?.start ?? text.indexOf(right.span, gapStart);
     if (gapEnd < 0 || !RANGE_MARKER.test(text.slice(gapStart, gapEnd))) continue;
     const [from, to] = left.isoDate <= right.isoDate ? [left.isoDate, right.isoDate] : [right.isoDate, left.isoDate];
     const span = text.slice(leftStart, gapEnd + right.span.length);
     for (const reading of rangeReading(from, to, [...new Set([...left.assumptions, ...right.assumptions])])) {
-      out.push({ span, reading });
+      out.push({ span, reading, start: leftStart, end: gapEnd + right.span.length });
     }
   }
   return out;
@@ -1256,13 +1271,14 @@ export function resolvePeriodCandidates(
   text: string,
   todayIso: string,
   dates: LineAiDateCandidate[] = [],
+  scan?: CandidateScan,
 ): LineAiPeriodCandidate[] {
   if (!CIVIL_DATE_PATTERN.test(todayIso)) return [];
   const mapped = mapThaiDigits(text);
   const used: SpanRange[] = [];
   const out: LineAiPeriodCandidate[] = [];
 
-  const push = (span: string, reading: PeriodReading): void => {
+  const push = (span: string, reading: PeriodReading, start: number, end: number): void => {
     if (reading.fromDate > todayIso) return; // wholly future: there is nothing to read
     const clamped = reading.toDate > todayIso;
     const toDate = clamped ? todayIso : reading.toDate;
@@ -1279,7 +1295,8 @@ export function resolvePeriodCandidates(
         ? `ตีความ "${span}" เป็น ${range}` : reading.word ? `${reading.word} (${range})` : range,
       assumptions,
     };
-    if (out.some((existing) => existing.kind === candidate.kind
+    scan?.observe('period', candidate, start, end);
+    if (!scan && out.some((existing) => existing.kind === candidate.kind
       && existing.fromDate === candidate.fromDate
       && existing.toDate === candidate.toDate
       && existing.span === candidate.span)) return;
@@ -1297,7 +1314,7 @@ export function resolvePeriodCandidates(
       // by a looser rule as plain "เดือนที่แล้ว". No candidate means the tool's default period, and
       // the answer says which period that was.
       used.push({ start, end });
-      for (const reading of rule.build(match, todayIso)) push(text.slice(start, end), reading);
+      for (const reading of rule.build(match, todayIso)) push(text.slice(start, end), reading, start, end);
     }
   }
   // Recover a clear, one-character typo in a full Thai month name. The original span remains on
@@ -1316,12 +1333,12 @@ export function resolvePeriodCandidates(
     for (const reading of namedMonth(corrected, year?.[1], todayIso)) {
       push(text.slice(start, end), {
         ...reading, assumptions: [...reading.assumptions, PERIOD_ASSUMPTIONS.monthNameTypoCorrected],
-      });
+      }, start, end);
     }
   }
-  for (const found of dateCandidateRanges(text, dates)) push(found.span, found.reading);
+  for (const found of dateCandidateRanges(text, dates, scan)) push(found.span, found.reading, found.start, found.end);
 
-  return out.sort((a, b) => text.indexOf(a.span) - text.indexOf(b.span)).slice(0, MAX_PERIOD_CANDIDATES);
+  return scan ? out : out.sort((a, b) => text.indexOf(a.span) - text.indexOf(b.span)).slice(0, MAX_PERIOD_CANDIDATES);
 }
 
 // ── Discovery helpers ─────────────────────────────────────────────────────────
@@ -1341,4 +1358,157 @@ export function formatDateClarifyQuestion(candidates: LineAiDateCandidate[]): st
   const unique = [...new Set(options)];
   if (unique.length < 2) return null;
   return `วันที่ "${span}" หมายถึง ${unique.join(' หรือ ')}?`.slice(0, MAX_CLARIFY_LENGTH);
+}
+
+/** V2 annotates complete original inputs; it never promotes a legacy truncated candidate list. */
+export type LineAiValueCandidatesV2 = {
+  version: 2;
+  inputDigest: string;
+  extractorVersion: 'value-v2';
+  todayIso: string;
+  completeness: 'complete' | 'overflow';
+  counts: { amounts: number; dates: number; periods: number };
+  amounts: Array<LineAiAmountCandidate & { candidateId: string; source: LineAiSourceRefV2 }>;
+  dates: Array<LineAiDateCandidate & { candidateId: string; source: LineAiSourceRefV2 }>;
+  periods: Array<LineAiPeriodCandidate & { candidateId: string; source: LineAiSourceRefV2; periodSource: LineAiPeriodSource }>;
+};
+
+export const LINE_AI_VALUE_CANDIDATES_V2_LIMITS = { amounts: 128, dates: 64, periods: 32, utf8Bytes: 49_152 } as const;
+type CandidateKind = 'amount' | 'date' | 'period';
+type ValueCandidate = LineAiAmountCandidate | LineAiDateCandidate | LineAiPeriodCandidate;
+type CandidateScan = {
+  observe(kind: CandidateKind, candidate: ValueCandidate, start: number, end: number): void;
+  datePositions: WeakMap<LineAiDateCandidate, SpanRange>;
+};
+
+function canonicalDecimal(value: string): string | null {
+  if (!/^\d+(?:\.\d+)?$/u.test(value)) return null;
+  const [integer, decimal] = value.split('.');
+  const whole = integer!.replace(/^0+(?=\d)/u, '');
+  const fraction = decimal?.replace(/0+$/u, '');
+  return fraction ? `${whole}.${fraction}` : whole;
+}
+
+/** Money words use integer arithmetic even beyond Number.MAX_SAFE_INTEGER. */
+function evaluateWordTokensExact(tokens: WordToken[]): string | null {
+  let total = 0n, pending = 0n;
+  for (const token of tokens) {
+    const value = BigInt(token.value);
+    if (token.kind === 'unit') { pending += value; continue; }
+    const figure = pending === 0n ? 1n : pending;
+    total = value >= 1_000_000n ? (total + figure) * value : total + figure * value;
+    pending = 0n;
+  }
+  return tokens.length ? String(total + pending) : null;
+}
+
+function candidateCanonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(candidateCanonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.entries(value).filter(([, item]) => item !== undefined)
+    .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+    .map(([key, item]) => `${JSON.stringify(key)}:${candidateCanonicalJson(item)}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+
+async function candidateHash(value: string): Promise<string> {
+  const bytes = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function canonicalReading(kind: CandidateKind, candidate: ValueCandidate): string {
+  if (kind === 'amount') return (candidate as LineAiAmountCandidate).value;
+  if (kind === 'date') return (candidate as LineAiDateCandidate).isoDate;
+  const period = candidate as LineAiPeriodCandidate;
+  return candidateCanonicalJson([period.kind, period.fromDate, period.toDate, period.monthKey ?? null]);
+}
+
+/** Full scan with original UTF-16 coordinates, followed by all-or-nothing bounded encoding. */
+export async function extractValueCandidatesV2(input: LineAiInputEvidenceV2, todayIso: string): Promise<LineAiValueCandidatesV2 | undefined> {
+  const evidence = await verifyLineAiInputEvidence(input, input.parts.map(part => part.rawText).join('\n'));
+  if (!evidence || !/^\d{4}-\d{2}-\d{2}$/u.test(todayIso)
+    || toIsoDate(Number(todayIso.slice(8)), Number(todayIso.slice(5, 7)), Number(todayIso.slice(0, 4))) !== todayIso) return undefined;
+  const found: Array<{ kind: CandidateKind; candidate: ValueCandidate; part: number; source: LineAiSourceRefV2; reading: string; tuple: string }> = [];
+  for (const [partIndex, part] of evidence.parts.entries()) {
+    extractValueCandidates(part.rawText, todayIso, { scan: {
+      datePositions: new WeakMap(),
+      observe(kind, candidate, start, end) {
+        const source = { partId: part.partId, startUtf16: start, endUtf16: end, rawSha256: part.rawSha256 };
+        const reading = canonicalReading(kind, candidate);
+        const tuple = candidateCanonicalJson([evidence.joinedSha256, kind, part.partId, start, end, reading, 'value-v2']);
+        found.push({ kind, candidate, part: partIndex, source, reading, tuple });
+      },
+    } });
+  }
+  found.sort((a, b) => a.part - b.part || a.source.startUtf16 - b.source.startUtf16 || a.source.endUtf16 - b.source.endUtf16
+    || (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0) || (a.reading < b.reading ? -1 : a.reading > b.reading ? 1 : 0));
+  const unique = found.filter((item, index) => index === 0 || item.tuple !== found[index - 1]!.tuple);
+  const counts = { amounts: unique.filter(item => item.kind === 'amount').length, dates: unique.filter(item => item.kind === 'date').length,
+    periods: unique.filter(item => item.kind === 'period').length };
+  const result: LineAiValueCandidatesV2 = { version: 2, inputDigest: evidence.joinedSha256, extractorVersion: 'value-v2', todayIso,
+    completeness: 'complete', counts, amounts: [], dates: [], periods: [] };
+  const overflow = () => ({ ...result, completeness: 'overflow' as const, amounts: [], dates: [], periods: [] });
+  if (counts.amounts > 128 || counts.dates > 64 || counts.periods > 32 || unique.some(item => item.candidate.span.length > 160)) return overflow();
+  for (const item of unique) {
+    const candidateId = await candidateHash(item.tuple);
+    if (item.kind === 'amount') result.amounts.push({ ...item.candidate as LineAiAmountCandidate, candidateId, source: item.source });
+    else if (item.kind === 'date') result.dates.push({ ...item.candidate as LineAiDateCandidate, candidateId, source: item.source });
+    else {
+      const period = item.candidate as LineAiPeriodCandidate;
+      result.periods.push({ ...period, periodSource: period.source as LineAiPeriodSource, candidateId, source: item.source });
+    }
+  }
+  if (new TextEncoder().encode(JSON.stringify(result)).byteLength > LINE_AI_VALUE_CANDIDATES_V2_LIMITS.utf8Bytes) return overflow();
+  // Reuse existing canonical field rules, including max decimal length, rather than loosen v2.
+  if (!parseLineAiValueCandidatesV2(result, evidence.parts.map(part => part.rawText).join('\n'), evidence)) return overflow();
+  return result;
+}
+
+/** Structural parse only; every receiver must additionally re-extract through the async verifier. */
+export function parseLineAiValueCandidatesV2(value: unknown, messageText: string, evidence?: LineAiInputEvidenceV2): LineAiValueCandidatesV2 | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const allowed = ['version', 'inputDigest', 'extractorVersion', 'todayIso', 'completeness', 'counts', 'amounts', 'dates', 'periods'];
+  if (Object.keys(raw).some(key => !allowed.includes(key)) || allowed.some(key => !(key in raw)) || raw['version'] !== 2
+    || raw['extractorVersion'] !== 'value-v2' || typeof raw['inputDigest'] !== 'string' || !/^[0-9a-f]{64}$/u.test(raw['inputDigest'])
+    || typeof raw['todayIso'] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(raw['todayIso'])
+    || toIsoDate(Number(raw['todayIso'].slice(8)), Number(raw['todayIso'].slice(5, 7)), Number(raw['todayIso'].slice(0, 4))) !== raw['todayIso']
+    || !['complete', 'overflow'].includes(String(raw['completeness'])) || !raw['counts'] || typeof raw['counts'] !== 'object'
+    || Array.isArray(raw['counts']) || new TextEncoder().encode(JSON.stringify(value)).byteLength > 49_152) return undefined;
+  const counts = raw['counts'] as Record<string, unknown>;
+  if (Object.keys(counts).length !== 3 || !['amounts', 'dates', 'periods'].every(key => Number.isSafeInteger(counts[key]) && Number(counts[key]) >= 0 && Number(counts[key]) <= 48_000)) return undefined;
+  const ids = new Set<string>();
+  for (const key of ['amounts', 'dates', 'periods'] as const) {
+    const items = raw[key];
+    if (!Array.isArray(items) || items.length > LINE_AI_VALUE_CANDIDATES_V2_LIMITS[key]
+      || (raw['completeness'] === 'overflow' ? items.length !== 0 : items.length !== counts[key])) return undefined;
+    for (const item of items) {
+      if (!item || typeof item !== 'object' || Array.isArray(item) || typeof item.candidateId !== 'string'
+        || !/^[0-9a-f]{64}$/u.test(item.candidateId) || ids.has(item.candidateId) || !item.source || typeof item.source !== 'object'
+        || Array.isArray(item.source)) return undefined;
+      ids.add(item.candidateId);
+      const source = item.source as Record<string, unknown>;
+      if (Object.keys(source).length !== 4 || typeof source['partId'] !== 'string' || !/^[\x21-\x7e]{1,128}$/u.test(source['partId'])
+        || !Number.isSafeInteger(source['startUtf16']) || !Number.isSafeInteger(source['endUtf16']) || Number(source['startUtf16']) < 0
+        || Number(source['endUtf16']) <= Number(source['startUtf16']) || Number(source['endUtf16']) > 12_000
+        || typeof source['rawSha256'] !== 'string' || !/^[0-9a-f]{64}$/u.test(source['rawSha256'])
+        || evidence && validateLineAiSourceRefV2(source, evidence) !== item.span) return undefined;
+      const legacy = { ...item, ...(key === 'periods' ? { source: item.periodSource } : {}) };
+      if (!parseLineAiValueCandidates({ amounts: key === 'amounts' ? [legacy] : [], dates: key === 'dates' ? [legacy] : [],
+        periods: key === 'periods' ? [legacy] : [] }, messageText)) return undefined;
+      const keys = key === 'amounts' ? ['span', 'value', 'currencyToken', 'assumptions', 'candidateId', 'source']
+        : key === 'dates' ? ['span', 'day', 'month', 'yearBe', 'isoDate', 'assumptions', 'candidateId', 'source']
+          : ['span', 'kind', 'fromDate', 'toDate', 'monthKey', 'periodSource', 'source', 'label', 'assumptions', 'candidateId'];
+      if (Object.keys(item).some(field => !keys.includes(field))) return undefined;
+    }
+  }
+  if (evidence && raw['inputDigest'] !== evidence.joinedSha256) return undefined;
+  return value as LineAiValueCandidatesV2;
+}
+
+/** Reject missing readings, shifted duplicate spans, tampered values and false overflow claims. */
+export async function verifyLineAiValueCandidatesV2(value: unknown, evidence: LineAiInputEvidenceV2): Promise<LineAiValueCandidatesV2 | undefined> {
+  const parsed = parseLineAiValueCandidatesV2(value, evidence.parts.map(part => part.rawText).join('\n'), evidence);
+  if (!parsed) return undefined;
+  const extracted = await extractValueCandidatesV2(evidence, parsed.todayIso);
+  return extracted && candidateCanonicalJson(extracted) === candidateCanonicalJson(parsed) ? parsed : undefined;
 }

@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { connect, type AddressInfo } from 'node:net';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage } from 'node:http';
-import { LINE_AI_CONTEXT_MAX_TURNS, extractValueCandidates } from '@watchdog-bms/contracts';
+import { AI_BUDGET_PROFILE_TABLE_DIGEST_V2, LINE_AI_CONTEXT_MAX_TURNS, createLineAiInputEvidence, extractValueCandidates } from '@watchdog-bms/contracts';
 import { validatePayload, payloadToTurnRequest, makeHttpServer, loadInternalSecret, loadJwtSecret, readBody, PayloadTooLargeError } from './runtime';
 import { appendUsage } from '../common/usage/usage-context';
 
@@ -48,6 +48,44 @@ after(async () => {
 // ── validatePayload tests ──────────────────────────────────────────────────────
 
 describe('AgentCore Runtime – payload validation', () => {
+  it('preserves complete v2 raw input and grant through the AgentCore hop, with the wider bounded input', async () => {
+    const text = 'ก'.repeat(8_500);
+    const built = await createLineAiInputEvidence({
+      turnKey: 'turn-2',
+      parts: [{ partId: 'part-1', eventIdHash: 'a'.repeat(64), acceptedAtMs: 100, rawText: text }],
+    });
+    assert.ok(built);
+    const budgetGrantV2 = {
+      version: 2 as const, turnKey: 'turn-2', authorityKind: 'webhook_event' as const,
+      authorityId: 'event-1', channelOwnerDigest: 'b'.repeat(64), attemptKey: 'attempt-1', monthKey: '2026-09',
+      payerCompanyId: 'company-1', model: { provider: 'bedrock' as const, modelId: 'apac.anthropic.claude-3-haiku-20240307-v1:0', region: 'ap-southeast-1' },
+      allowedProfileIds: ['line-intake-text/2' as const], profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2,
+      maxTurnSlots: 4 as const, maxRepairs: 1 as const, admittedAtMs: 100, workDeadlineAtMs: 10_000,
+      finalDeadlineAtMs: 20_000, nonce: 'nonce-1', issuerVersion: 'api-1', nextOrdinal: 0, signature: 'c'.repeat(64),
+    };
+    const payload = validatePayload({
+      turnId: 'turn-2', companyId: 'company-1', userId: 'user-1', messageText: built.messageText,
+      inputEvidence: built.inputEvidence, budgetGrantV2,
+      contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'],
+    });
+    assert.ok(payload);
+    const request = payloadToTurnRequest(payload!);
+    assert.equal(request.messageText, built.messageText);
+    assert.deepEqual(request.inputEvidence, built.inputEvidence);
+    assert.deepEqual(request.budgetGrantV2, budgetGrantV2);
+    assert.deepEqual(request.contractCapabilities, ['input-evidence-v2', 'budget-envelope-v2']);
+  });
+
+  it('rejects v2 fields without both negotiated capabilities and an API grant', async () => {
+    const built = await createLineAiInputEvidence({
+      turnKey: 'turn-3', parts: [{ partId: 'part-1', eventIdHash: 'a'.repeat(64), acceptedAtMs: 100, rawText: 'ดูยอดขาย' }],
+    });
+    assert.ok(built);
+    const base = { turnId: 'turn-3', companyId: 'company-1', userId: 'user-1', messageText: built.messageText, inputEvidence: built.inputEvidence };
+    assert.equal(validatePayload({ ...base, contractCapabilities: ['input-evidence-v2'] }), null);
+    assert.equal(validatePayload({ ...base, contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'] }), null);
+  });
+
   it('preserves validated period candidates and rejects invented wire dates', () => {
     const messageText = 'สรุปค่าใช้จ่ายเดือนกรกฏาคม และ สิงหาคม';
     const valueCandidates = extractValueCandidates(messageText, '2026-09-25');

@@ -163,6 +163,11 @@ export class PrismaOutboxRepository implements OutboxRepositoryPort {
     return cas.count === 1;
   }
 
+  async markDead(input: { id: string; claimToken: string | null; expectedEventType: string; error: string }): Promise<boolean> {
+    return (await this.prisma.client.outboxEvent.updateMany({ where: { id: input.id, status: 'PROCESSING', claimToken: input.claimToken, eventType: input.expectedEventType },
+      data: { status: 'DEAD', lastError: input.error.slice(0, 200), lockedAt: null, lockedBy: null, claimToken: null } })).count === 1;
+  }
+
   async markFailed(input: MarkOutboxFailedInput): Promise<boolean> {
     const row = await this.prisma.client.outboxEvent.findUnique({
       where: { id: input.id },

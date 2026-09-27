@@ -10,6 +10,7 @@
  * accepted output only reconciles bookkeeping. Source/actor proof is checked before each send.
  */
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { LineDocumentQaService } from '../line-document-qa.service';
 import { LineReadEvidenceService } from '../line-read-evidence.service';
 import { LineLedgerDeliveryService, lineLedgerDeliveryId, type LineLedgerClaim, type LineLedgerCompletion } from '../line-ledger-delivery.service';
 import { randomUUID } from 'node:crypto';
@@ -33,6 +34,8 @@ import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
 import { emitLineAiTerminalOutcome, knownAiBudgetRefusal, terminalStatusForLineTurn } from '../../domain/logic/line-ai-terminal-outcome.logic';
 import { LineHandoffLinkService } from '../line-handoff-link.service';
 import { lineDeliveryAccessFingerprint, lineDeliveryRecipientHash } from '../line-delivery-access';
+import { parseAcceptedLedgerRequest, type AcceptedLedgerRequest } from '../line-ledger-accepted-request';
+import { deliveryHash, parseLineDeliveryPlan, type DeliveryPlanV2 } from '../../domain/logic/line-delivery-plan.logic';
 
 export type DrainLineLedgerResult = {
   skipped?: boolean;
@@ -68,7 +71,7 @@ class LedgerEntryHeldError extends Error {}
 
 /** A refusal this drain can compose itself, with no model call and no read evidence. */
 type BudgetStaticRefusal = { code: AiBudgetRefusalCode; budgetScope?: AiBudgetScope };
-type StaticRefusalReason = 'feature_disabled' | 'forbidden' | AiBudgetRefusalCode | BudgetStaticRefusal;
+type StaticRefusalReason = 'feature_disabled' | 'forbidden' | 'original_answer_unavailable' | AiBudgetRefusalCode | BudgetStaticRefusal;
 
 const isBudgetStaticRefusal = (value: unknown): value is BudgetStaticRefusal => {
   if (!value || typeof value !== 'object') return false;
@@ -77,13 +80,14 @@ const isBudgetStaticRefusal = (value: unknown): value is BudgetStaticRefusal => 
     && (budgetScope === undefined || budgetScope === 'TOTAL' || budgetScope === 'CHAT' || budgetScope === 'OCR');
 };
 const isStaticRefusalReason = (value: unknown): value is StaticRefusalReason =>
-  value === 'feature_disabled' || value === 'forbidden'
+  value === 'feature_disabled' || value === 'forbidden' || value === 'original_answer_unavailable'
   || isAiBudgetRefusalCode(typeof value === 'string' ? value : undefined)
   || isBudgetStaticRefusal(value);
 
 /** The ONE place that says what a stored static refusal must contain, so the producer above and the
  *  pre-send integrity check below can never disagree about its exact text. */
 const staticRefusalText = (reason: StaticRefusalReason): string => {
+  if (reason === 'original_answer_unavailable') return 'คำตอบก่อนหน้ายังไม่สำเร็จภายในเวลาที่กำหนดค่ะ จึงยังยืนยันผลให้ไม่ได้ หากเป็นคำถามให้ถามใหม่ได้เลย หากขอสร้างหรือแก้รายการไว้ กรุณาตรวจสถานะรายการเดิมก่อนส่งซ้ำค่ะ';
   if (reason === 'feature_disabled' || reason === 'forbidden') return formatRefusal(reason);
   return typeof reason === 'string'
     ? formatAiBudgetRefusalNotice(reason)
@@ -94,6 +98,7 @@ const staticRefusalText = (reason: StaticRefusalReason): string => {
 export class DrainLineLedgerUseCase {
   private readonly logger = new Logger(DrainLineLedgerUseCase.name);
   @Inject(LineReadEvidenceService) private readonly readEvidence!: LineReadEvidenceService;
+  @Inject(LineDocumentQaService) private readonly documentQa!: LineDocumentQaService;
   @Inject(LineLedgerDeliveryService) private readonly deliveryStore!: LineLedgerDeliveryService;
 
   constructor(
@@ -184,7 +189,8 @@ export class DrainLineLedgerUseCase {
       await this.ledger.ack(entry, parked ? 'parked' : 'refused', { reason: claim.row.errorCode });
       return parked ? 'parked' : 'refused';
     }
-    if (deliveryCount > this.config.lineAiLedgerDeliveryCap) {
+    if (deliveryCount > this.config.lineAiLedgerDeliveryCap && entry.reliabilityVersion !== 2
+      && (claim.row.completionJson as LineLedgerCompletion | null)?.deliveryPlanVersion !== 2) {
       if (!await this.deliveryStore.finish(claim, 'PARKED', 'LINE_LEDGER_DELIVERY_CAP_EXCEEDED')) throw new LedgerEntryHeldError('queued delivery lease changed');
       await this.finalizeSourceEvent(entry, 'failed_terminal', 'LINE_LEDGER_DELIVERY_CAP_EXCEEDED');
       await this.ledger.ack(entry, 'parked', { deliveryCount });
@@ -193,6 +199,19 @@ export class DrainLineLedgerUseCase {
 
     if (!await this.canReceiveFollowup(entry)) return this.refuseChangedDelivery(entry, claim);
     if (claim.kind === 'deliver') return this.sendSavedDelivery(entry, claim, deliveryCount);
+
+    if (entry.reliabilityVersion === 2 || claim.row.acceptedRequestJson) {
+      // Only the original admission may spend its grant. The foreground lease runs through its
+      // final deadline; reclaim may deliver frozen output, but cannot invent another paid turn.
+      if (entry.kind === 'sub_request') {
+        await this.deliveryStore.finish(claim, 'PARKED', 'LINE_V2_SUBREQUEST_REQUIRES_NEW_ADMISSION');
+        await this.ledger.ack(entry, 'parked', { reason: 'v2_subrequest_requires_new_admission' });
+        return 'parked';
+      }
+      const accepted = parseAcceptedLedgerRequest(claim.row.acceptedRequestJson, { ...entry, messagingChannelId: entry.messagingChannelId ?? '' });
+      if (!accepted || !await this.acceptedOwnerCurrent(entry, accepted)) return this.refuseChangedDelivery(entry, claim);
+      return this.sendStaticRefusal(entry, claim, deliveryCount, 'original_answer_unavailable');
+    }
 
     // Freeze in place (owner decision 2026-08-04): the family may have been switched off while this
     // entry sat in the ledger. Terminal ack, not a retry — a re-enable must not revive a turn from
@@ -327,6 +346,86 @@ export class DrainLineLedgerUseCase {
     return true;
   }
 
+  private async acceptedOwnerCurrent(entry: LedgerEntry, accepted: AcceptedLedgerRequest): Promise<boolean> {
+    const current = await this.resolveUserContext(entry);
+    const features = await loadEntitledFeatureKeys(this.prisma, entry.companyId);
+    if (!current || current.membershipId !== accepted.request.userContext.membershipId || lineAssistantDisabledFor(features)
+      || lineDeliveryAccessFingerprint(current, features) !== accepted.accessFingerprint) return false;
+    return !!await this.prisma.client.aiConversation.findFirst({ where: { id: accepted.conversationId,
+      companyId: entry.companyId, userId: entry.userId, membershipId: current.membershipId, channel: 'line', channelKind: 'USER',
+      messagingChannelId: accepted.channelId, chatKeyHash: accepted.chatKeyHash, lifecycleEpoch: accepted.ownerEpoch } });
+  }
+
+  /** Used by continuation controls as well as every queued batch; no model or write tools. */
+  async verifyLedgerDeliveryPlan(plan: DeliveryPlanV2, event: { lineUserId: string; pushTargetId?: string; messagingChannelId?: string }): Promise<boolean> {
+    if (plan.producerKind !== 'LEDGER' || plan.authorization.kind !== 'PRIVATE' || Date.parse(plan.expiresAt) <= Date.now()) return false;
+    const a = plan.authorization.actor;
+    if (a.channelId !== event.messagingChannelId || (event.pushTargetId && event.pushTargetId !== event.lineUserId)
+      || a.chatKeyHash !== hashMessagePreview(event.lineUserId)
+      || a.recipientHash !== lineDeliveryRecipientHash(event.lineUserId, event.lineUserId, a.channelId)) return false;
+    const parent = await this.prisma.client.lineLedgerDelivery.findUnique({ where: { id: plan.producerId } });
+    if (!parent || parent.companyId !== a.companyId || parent.userId !== a.userId || parent.expiresAt <= new Date()) return false;
+    const entry: LedgerEntry = { id: parent.entryId, key: '', companyId: a.companyId, userId: a.userId, chatKey: event.lineUserId,
+      kind: 'turn', turnId: a.requestId, webhookEventId: parent.webhookEventId, messagingChannelId: a.channelId, text: '', createdAt: parent.createdAt.toISOString() };
+    if (!await this.canReceiveFollowup(entry)) return false;
+    const current = await this.resolveUserContext(entry);
+    const features = await loadEntitledFeatureKeys(this.prisma, a.companyId);
+    if (!current || current.membershipId !== a.membershipId || lineAssistantDisabledFor(features)
+      || lineDeliveryAccessFingerprint(current, features) !== a.accessFingerprint) return false;
+    for (const proof of plan.authorization.proofs) {
+      if (proof.kind === 'LINE_DOCUMENT_QA') {
+        const { id: _id, ...qaProof } = proof;
+        if (!await this.documentQa.verifyDeliveryProof(qaProof, { companyId: a.companyId, userId: a.userId, membershipId: a.membershipId,
+          ownerEpoch: a.ownerEpoch, channelKind: 'USER', messagingChannelId: a.channelId, chatKeyHash: a.chatKeyHash })) return false;
+        continue;
+      }
+      if (proof.kind !== 'READ' || !Array.isArray(proof.evidenceIds) || !proof.evidenceIds.every(id => typeof id === 'string')
+        || !await this.readEvidence.verify(a.companyId, a.userId, a.requestId, proof.evidenceIds as string[])) return false;
+    }
+    // Recheck epoch after the potentially slow current-source read.
+    return !!await this.prisma.client.aiConversation.findFirst({ where: { id: a.conversationId, companyId: a.companyId,
+      userId: a.userId, membershipId: a.membershipId, channel: 'line', channelKind: 'USER', messagingChannelId: a.channelId,
+      chatKeyHash: a.chatKeyHash, lifecycleEpoch: a.ownerEpoch } });
+  }
+
+  private async sendSavedPlan(entry: LedgerEntry, claim: LineLedgerClaim, planId: string, deliveryCount: number): Promise<'followedUp' | 'refused' | 'parked'> {
+    for (let n = 0; n < 2; n++) {
+      const row = await this.prisma.client.lineDeliveryPlan.findUnique({ where: { id: planId } });
+      const plan = parseLineDeliveryPlan(row?.planJson);
+      if (!row || !plan || row.ledgerDeliveryId !== claim.row.id || row.planHash !== deliveryHash(plan)) return this.refuseSourceDelivery(entry, claim);
+      if (row.status === 'ACCEPTED') {
+        // ACCEPTED is provider evidence. This reconciliation never re-sends or regenerates.
+        await this.prisma.client.lineLedgerDelivery.updateMany({ where: { id: claim.row.id, leaseToken: claim.token, status: { in: ['READY', 'UNKNOWN'] } },
+          data: { status: 'ACCEPTED', acceptedAt: row.acceptedAt ?? new Date(), leaseToken: null, leaseExpiresAt: null } });
+        return this.completeSavedDelivery(entry, claim, deliveryCount);
+      }
+      if (['REFUSED', 'EXPIRED', 'CANCELLED'].includes(row.status)) {
+        await this.deliveryStore.finish(claim, 'REFUSED', `LINE_PLAN_${row.status}`);
+        await this.ledger.ack(entry, 'refused', { reason: `LINE_PLAN_${row.status}` });
+        return 'refused';
+      }
+      if (!await this.verifyLedgerDeliveryPlan(plan, { lineUserId: entry.chatKey, messagingChannelId: entry.messagingChannelId }).catch(() => false)) return this.refuseSourceDelivery(entry, claim);
+      if (!await this.deliveryStore.beginSend(claim)) throw new LedgerEntryHeldError('queued plan owner changed');
+      const batch = await this.deliveryStore.claimPlan(planId, { kind: 'LEDGER', id: claim.row.id, token: claim.token });
+      if (!batch) { await this.deliveryStore.finish(claim, 'UNKNOWN'); throw new LedgerEntryHeldError('queued plan awaiting retry or continuation'); }
+      const dispatch = await this.deliveryStore.beginPlanBatch(batch, 'PUSH');
+      if (!dispatch) { await this.deliveryStore.finish(claim, 'UNKNOWN'); throw new LedgerEntryHeldError('queued plan dispatch window unavailable'); }
+      const frozen = batch.plan.batches[dispatch.index]![batch.states[dispatch.index]!.variant]!;
+      const result = await this.lineReply.sendFrozenV2({ transport: 'PUSH', target: entry.chatKey, channelId: entry.messagingChannelId, messages: frozen.messages, pushRetryKey: frozen.pushRetryKey, timeoutMs: dispatch.timeoutMs });
+      if (!await this.deliveryStore.finishPlanBatch(batch, dispatch.index, result)) throw new LedgerEntryHeldError('queued plan acceptance needs reconciliation');
+      if (batch.states.every(state => state.status === 'ACCEPTED')) {
+        if (!await this.deliveryStore.finish(claim, 'ACCEPTED')) throw new LedgerEntryHeldError('queued parent acceptance needs reconciliation');
+        return this.completeSavedDelivery(entry, claim, deliveryCount);
+      }
+      if (result.kind !== 'accepted') {
+        await this.deliveryStore.finish(claim, 'UNKNOWN', result.code);
+        throw new LedgerEntryHeldError('queued frozen delivery pending');
+      }
+    }
+    await this.deliveryStore.finish(claim, 'UNKNOWN');
+    throw new LedgerEntryHeldError('queued plan awaits continuation');
+  }
+
   private async sendStaticRefusal(entry: LedgerEntry, claim: LineLedgerClaim, deliveryCount: number, reason: StaticRefusalReason): Promise<'followedUp' | 'refused' | 'parked'> {
     const text = staticRefusalText(reason);
     const budget = typeof reason === 'string'
@@ -335,13 +434,13 @@ export class DrainLineLedgerUseCase {
     const completion: LineLedgerCompletion = {
       status: budget
         ? (budget.code === AI_BUDGET_REFUSAL_CODES.insufficient ? 'ai_budget_insufficient' : 'ai_budget_exceeded')
-        : reason === 'feature_disabled' ? reason : 'forbidden',
+        : reason === 'feature_disabled' ? reason : reason === 'original_answer_unavailable' ? 'provider_unavailable' : 'forbidden',
       refused: true,
       // The money code IS the durable reason (spec §9.1); replaying this attempt must reuse it
       // rather than re-derive an answer from whatever the budget says later.
-      errorCode: budget ? budget.code : reason === 'feature_disabled' ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
+      errorCode: budget ? budget.code : reason === 'original_answer_unavailable' ? 'LINE_ORIGINAL_ANSWER_UNAVAILABLE' : reason === 'feature_disabled' ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
       replyPreview: text.slice(0, 240), toolCount: 0, outcome: 'refused',
-      reason: budget ? budget.code : reason === 'feature_disabled' ? reason : 'identity_or_permission_revoked',
+      reason: budget ? budget.code : reason === 'feature_disabled' || reason === 'original_answer_unavailable' ? reason : 'identity_or_permission_revoked',
       ...(budget?.budgetScope ? { budgetScope: budget.budgetScope } : {}),
     };
     if (!await this.saveDelivery(claim, [this.lineReply.buildTextMessage(text)], { v: 1, staticRefusal: reason }, completion)) throw new LedgerEntryHeldError('queued refusal producer lease expired');
@@ -353,6 +452,12 @@ export class DrainLineLedgerUseCase {
       if (!await this.deliveryStore.finish(claim, 'REFUSED', 'LINE_ORIGINAL_OUTCOME_OWNS_DELIVERY')) throw new LedgerEntryHeldError('queued delivery lease changed');
       await this.ledger.ack(entry, 'parked', { reason: 'original_outcome_owns_delivery' });
       return 'parked';
+    }
+    // Child presence wins even after flags are disabled or the parent checkpoint was interrupted.
+    const savedPlan = await this.prisma.client.lineDeliveryPlan?.findUnique({ where: { ledgerDeliveryId: claim.row.id } });
+    if (savedPlan || (claim.row.completionJson as LineLedgerCompletion | null)?.deliveryPlanVersion === 2) {
+      if (!savedPlan) return this.refuseSourceDelivery(entry, claim);
+      return this.sendSavedPlan(entry, claim, savedPlan.id, deliveryCount);
     }
     const messages = parseOutcomeMessages(claim.row.messagesJson);
     const marker = (claim.row.authorizationJson as { staticRefusal?: unknown } | null)?.staticRefusal;

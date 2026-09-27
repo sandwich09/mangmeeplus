@@ -6,6 +6,8 @@ import { COMPANY_PERMISSION_KEYS } from '../../../auth/permission-registry';
 import { compileRole, hasNonCoreCapability } from '../../domain/logic/capability.logic';
 import { ownerGatedGrantViolation } from '../../domain/logic/employee-access.logic';
 import { ROLE_INCLUDE, toRoleSummary } from '../dto/employee-access.mapper';
+import { invalidateLineConversationState } from '../../../line-ai/application/line-conversation-context.service';
+import { lockPlanTermCompany } from '../../../system-partner-management/application/lock-plan-term-company';
 
 export type UpdateRoleCommand = UpdateRoleInput & {
   companyId: string;
@@ -63,6 +65,7 @@ export class UpdateRoleUseCase {
     }
 
     const targetRoleId = await this.prisma.client.$transaction(async (tx) => {
+      await lockPlanTermCompany(tx, cmd.companyId);
       let targetRoleId = cmd.roleId;
 
       if (existing.isSystem) {
@@ -132,6 +135,19 @@ export class UpdateRoleUseCase {
         await tx.rolePermission.createMany({ data: permissions.map((p) => ({ roleId: targetRoleId, permissionId: p.id })) });
       }
 
+      let aiConversationsInvalidated = 0;
+      // Explicit permission replacement invalidates even an equal submitted set: the pre-lock
+      // snapshot may have raced another administrator's intervening permission update.
+      if (permissions || existing.isSystem) {
+        const members = await tx.companyMembership.findMany({
+          where: { companyId: cmd.companyId, roles: { some: { roleId: targetRoleId } } },
+          select: { userId: true }, distinct: ['userId'],
+        });
+        for (const member of members) aiConversationsInvalidated += await invalidateLineConversationState(
+          tx, { companyId: cmd.companyId, userId: member.userId }, false,
+        );
+      }
+
       await tx.auditLog.create({
         data: {
           companyId: cmd.companyId,
@@ -144,6 +160,7 @@ export class UpdateRoleUseCase {
           riskLevel: 'HIGH',
           metadataJson: {
             permissionKeys: finalKeys,
+            aiConversationsInvalidated,
             ...(cmd.capabilityPackKeys?.length ? { capabilityPackKeys: cmd.capabilityPackKeys } : {}),
           },
         },

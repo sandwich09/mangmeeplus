@@ -609,6 +609,7 @@ export function buildLineBusinessAnswerMessage(
   return {
     type: 'flex',
     altText: preview(fallbackText, 400) || 'ข้อมูลจากน้องมั่งมี',
+    canonicalText: response.presentation?.kind === 'answer_cards' ? response.presentation.cards.map(card => [card.title, card.text].filter(Boolean).join('\n')).join('\n\n') : fallbackText,
     contents: bubbles.length === 1 ? bubbles[0]! : { type: 'carousel', contents: bubbles },
   };
 }

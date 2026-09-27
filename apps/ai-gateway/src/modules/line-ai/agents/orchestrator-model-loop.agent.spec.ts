@@ -51,12 +51,12 @@ function installFetch(plan: unknown, loopChoices: unknown[], payloads: any[] = [
     payloads.push(payload);
     if ('availableTools' in payload) {
       const choice = loopChoices[i++] ?? { done: true };
-      return { ok: true, json: async () => ({ output_text: JSON.stringify(choice) }) } as Response;
+      return Response.json({ status: 'completed', output_text: JSON.stringify(choice) });
     }
     if (typeof payload.reply === 'string') {
-      return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
+      return Response.json({ status: 'completed', output_text: payload.reply });
     }
-    return { ok: true, json: async () => ({ output_text: JSON.stringify(plan) }) } as Response;
+    return Response.json({ status: 'completed', output_text: JSON.stringify(plan) });
   }) as typeof fetch;
 }
 

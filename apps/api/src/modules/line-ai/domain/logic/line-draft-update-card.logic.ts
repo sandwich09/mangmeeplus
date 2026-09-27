@@ -1,3 +1,4 @@
+import { lineMessagePreview } from './line-message-preview.logic';
 /**
  * The LINE surface of S-4 (draft-control spec §5.4, J3): one confirm card and the replies that
  * follow it.
@@ -19,13 +20,13 @@ export const DRAFT_UPDATE_CONFIRM_COMMAND = 'ยืนยันการแก�
 export const DRAFT_UPDATE_CANCEL_COMMAND = 'ยกเลิกการแก้ไข';
 
 /** At most this many diff rows are printed; the rest are summarised. A card is a decision aid. */
-const MAX_DIFF_ROWS = 5;
+const MAX_DIFF_ROWS = 64;
 
 function money(value: string): string {
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed)
-    ? parsed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : '—';
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(value);
+  if (!match) return '—';
+  const fraction = (match[3] ?? '').replace(/0+$/, '').padEnd(2, '0');
+  return `${match[1]}${match[2]!.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${fraction}`;
 }
 
 /**
@@ -40,17 +41,17 @@ function cell(value: string | null, kind: LineDraftUpdateDiffField['kind'] = 'te
   if (value === null) return 'ยังไม่ระบุ';
   switch (kind) {
     case 'text':
-      return scrubRecordText(value, 60) || '—';
+      return scrubRecordText(value, 1000) || '—';
     case 'identifier':
       // Null means "not a document number at all" — a value that could read as a total or a host.
-      return scrubRecordIdentifier(value, 40) ?? '—';
+      return scrubRecordIdentifier(value, 1000) ?? '—';
     case 'date':
       return formatThaiDate(value);
     case 'money':
       return money(value);
     case 'plain':
       // Server-generated, but still bounded: a constant that grew unexpectedly must not blow up a bubble.
-      return value.slice(0, 60);
+      return value;
   }
 }
 
@@ -73,9 +74,7 @@ export function formatRecordLabel(record: LineDraftUpdatePreview['record']): str
 }
 
 function diffValue(entry: LineDraftUpdatePreview['diff'][number]): string {
-  return entry.field === 'note'
-    ? cell(entry.after, entry.kind)
-    : `${cell(entry.before, entry.kind)} → ${cell(entry.after, entry.kind)}`;
+  return `${cell(entry.before, entry.kind)} → ${cell(entry.after, entry.kind)}`;
 }
 
 /** "จะเพิ่มค่าบริการ 10% = 152.00 ให้บิล BHC 03/09/2569 ยอดรวมใหม่ 1,789.04 ค่ะ" — the one line the
@@ -87,6 +86,13 @@ export function draftUpdateHeadline(preview: LineDraftUpdatePreview): string {
   // The label is built from structured fields, but the vendor name inside it is still OCR text —
   // so it is bounded here too rather than trusted because an earlier layer already scrubbed it.
   return `จะแก้ ${formatRecordLabel(preview.record)} — ${changes}`;
+}
+
+export function draftUpdateCanonicalDiff(preview: LineDraftUpdatePreview): string {
+  return [`ยืนยันการแก้ไขรายการ ${formatRecordLabel(preview.record)}`,
+    ...preview.diff.map(entry => `${entry.label}: ${diffValue(entry)}`),
+    `ยอดรวมเดิม ${money(preview.totalsBefore.grandTotalAmount)} → ยอดรวมใหม่ ${money(preview.totalsAfter.grandTotalAmount)}`,
+    ...preview.warnings.map(warning => `⚠️ ${scrubRecordText(warning, 1000)}`)].join('\n');
 }
 
 export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): LineReplyMessage {
@@ -104,7 +110,8 @@ export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): Li
     type: 'flex',
     // The plain-text equivalent LINE shows when Flex cannot render: same numbers, no buttons, so a
     // fallback delivery never silently loses the amount the user is being asked about.
-    altText: `${draftUpdateHeadline(preview)} · ยอดรวมใหม่ ${money(preview.totalsAfter.grandTotalAmount)} — หากไม่เห็นปุ่ม ให้ส่งคำขอแก้ไขใหม่เพื่อรับบัตรอีกครั้ง`,
+    altText: lineMessagePreview(`${draftUpdateHeadline(preview)} · ยอดรวมใหม่ ${money(preview.totalsAfter.grandTotalAmount)} — หากไม่เห็นปุ่ม ให้ส่งคำขอแก้ไขใหม่เพื่อรับบัตรอีกครั้ง`),
+    canonicalText: draftUpdateCanonicalDiff(preview),
     contents: {
       type: 'bubble',
       size: 'mega',
@@ -145,7 +152,7 @@ export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): Li
                 align: 'end' as const,
               }]
             : []),
-          ...preview.warnings.slice(0, 2).map((warning) => ({
+          ...preview.warnings.map((warning) => ({
             type: 'text' as const,
             text: `⚠️ ${scrubRecordText(warning, 160)}`,
             size: 'xs' as const,

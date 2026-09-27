@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { invalidateLineConversationState } from '../../../line-ai/application/line-conversation-context.service';
 import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -562,6 +563,9 @@ export class SetPartnerFeaturesUseCase {
         },
       });
 
+      if (changedFeatures.some(feature => feature.enabled !== wasOn(feature.featureKey))) {
+        await invalidateLineConversationState(tx, { companyId: cmd.companyId }, false);
+      }
       await tx.auditLog.create({
         data: {
           actorUserId: cmd.requestingAdminUserId,

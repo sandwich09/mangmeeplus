@@ -6,10 +6,13 @@ import {
   civilDate,
   civilDateToUtcDate,
   civilDayRangeToUtc,
+  civilInstantDayRangeToUtc,
   civilPeriodKey,
+  civilPeriodRange,
   coerceCivilDate,
   exclusiveEndOfDay,
   isCivilDate,
+  isCivilPeriodKey,
   todayCivilDate,
   utcDateToCivilDate,
 } from './civil-date.js';
@@ -93,11 +96,19 @@ describe('civilDayRangeToUtc', () => {
     assert.equal(civilDayRangeToUtc(undefined, '2026-08-05').gte, undefined);
   });
 
-  // A caller sending a full ISO string must not widen the range by a day.
-  it('ignores any time part in its inputs', () => {
-    const range = civilDayRangeToUtc('2026-08-05T23:59:00.000Z', '2026-08-05T23:59:00.000Z');
-    assert.equal(range.gte?.toISOString(), '2026-08-05T00:00:00.000Z');
-    assert.equal(range.lt?.toISOString(), '2026-08-06T00:00:00.000Z');
+  it('rejects timestamps, incomplete/reversed ranges, and impossible days', () => {
+    assert.throws(() => civilDayRangeToUtc('2026-08-05T23:59:00.000Z', '2026-08-05'));
+    assert.throws(() => civilDayRangeToUtc('2026-08-06', '2026-08-05'));
+    assert.throws(() => civilDayRangeToUtc('2026-02-29', '2026-03-01'));
+  });
+
+  it('converts business-local days separately for timestamp columns', () => {
+    const bangkok = civilInstantDayRangeToUtc('2026-08-05', '2026-08-05');
+    assert.equal(bangkok.gte?.toISOString(), '2026-08-04T17:00:00.000Z');
+    assert.equal(bangkok.lt?.toISOString(), '2026-08-05T17:00:00.000Z');
+    const utc = civilInstantDayRangeToUtc('2026-08-05', '2026-08-05', 'UTC');
+    assert.equal(utc.gte?.toISOString(), '2026-08-05T00:00:00.000Z');
+    assert.equal(utc.lt?.toISOString(), '2026-08-06T00:00:00.000Z');
   });
 });
 
@@ -138,5 +149,17 @@ describe('civilPeriodKey', () => {
     // Composed with todayCivilDate this is the fix for the UTC-month period defaults: an instant
     // at 02:00 Bangkok on the 1st belongs to the new month, where toISOString() said the old one.
     assert.equal(civilPeriodKey(todayCivilDate('Asia/Bangkok', new Date('2026-08-31T19:00:00.000Z'))), '2026-09');
+  });
+});
+
+describe('civilPeriodRange', () => {
+  it('validates months and preserves leap days', () => {
+    assert.equal(isCivilPeriodKey('2024-02'), true);
+    assert.deepEqual(civilPeriodRange('2024-02'), { startDate: '2024-02-01', endDate: '2024-02-29' });
+    assert.deepEqual(civilPeriodRange('2026-02'), { startDate: '2026-02-01', endDate: '2026-02-28' });
+    for (const bad of ['2026-00', '2026-13', '2026-2', '2101-01']) {
+      assert.equal(isCivilPeriodKey(bad), false);
+      assert.throws(() => civilPeriodRange(bad));
+    }
   });
 });

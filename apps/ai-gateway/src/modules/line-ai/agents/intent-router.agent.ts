@@ -5,13 +5,16 @@
  * route BEFORE any source-module use case runs. It emits a route plan only.
  * Uses model prompt when a provider is configured; fails closed when model routing is unavailable.
  */
-import { BUSINESS_DOCUMENT_REASON_CODES, LINE_CORRECTION_FIELDS, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, isAmbiguousDateCandidate, formatDateClarifyQuestion, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
-import type { AgentIntentPlan, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, LineIntakeExpenseItemHint, LineIntakeReimbursementHints, LineIntakeRouteIntent, LineIntakeRoutePlan, LineIntakeRouteRequest } from '@watchdog-bms/contracts';
+import { BUSINESS_DOCUMENT_REASON_CODES, LINE_CORRECTION_FIELDS, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, extractValueCandidates, isAmbiguousDateCandidate, formatDateClarifyQuestion, lineAiRetainedTaskSourceMatchesProjection, lineAiRetainedTaskSourceText, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan, parseLineAiSemanticSubrequests, verifyLineAiRetainedTaskSource } from '@watchdog-bms/contracts';
+import type { AgentIntentPlan, LineAiConversationContext, LineAiInputEvidenceV2, LineAiOpenClarification, LineAiRetainedTaskSourceV2, LineAiTaskProjectionV2, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, LineIntakeExpenseItemHint, LineIntakeReimbursementHints, LineIntakeRouteIntent, LineIntakeRoutePlan, LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { Logger } from '@nestjs/common';
 import { extractJson } from '../../../common/ai/extract-json';
 import { parseBusinessDocumentClassification } from '../domain/logic/business-document-classification.logic';
 import { MANGMEE_PERSONA_PROMPT } from './mangmee-persona';
+import { APPROVED_KNOWLEDGE_SELECTION_PROMPT, offeredKnowledgeMetadata, parseSelectedKnowledgeCardIds, productKnowledgeAccess, type KnowledgeMetadata, type ProductKnowledgePack } from './approved-knowledge';
+import { PRODUCT_HELP_PACK } from './approved-product-help';
+import { currentBudgetState } from '../../../common/usage/usage-context';
 
 /** The reason-code vocabulary, rendered from the contract itself so the prompt can never drift
  *  from the parser. UAT 2026-08-27: these two arrays were the only classification fields the
@@ -158,6 +161,11 @@ export const ROUTER_ENABLED_TOOLS = new Set([
 
 /** The subset of the list above that disappears when the draft-edit flag is off. */
 const ROUTER_DRAFT_UPDATE_TOOLS: ReadonlySet<string> = new Set<string>(LINE_DRAFT_UPDATE_TOOLS);
+const PUBLIC_LOOKUP_ROUTING_PROMPT = [
+  'A public.lookup is only for facts that are public and should be checked from reviewed public sources, such as current public policy, rates, news or public product facts.',
+  'Never use public.lookup for this company, this user, private records, customer details, business results, or anything inferred from conversationContext. The API admission tool validates the query and chooses its source policy.',
+  'For public.lookup use subject "unknown", requiredTools ["public.lookup"], and preserve any other request as a separate intent.',
+].join('\n');
 
 // Registered-but-waiting tools for modules/read adapters not yet implemented (items 13/14/15/18): the model
 // can see they exist (disabled catalog) and users get a safe channel-unavailable reply; flip
@@ -307,7 +315,7 @@ documentText itself is UNCHANGED: transcribe the page exactly as its own field d
 
 /** Trusted, bounded capabilities the API turns on per request. Default (all false) MUST reproduce the
  *  exact legacy prompt byte-for-byte — no fused/substitute/advisor sections, no cost/routing change. */
-export type IntakeRouterCapabilities = { fusedPlan?: boolean; substituteSemantic?: boolean; reimbursementSemantic?: boolean; advisor?: boolean };
+export type IntakeRouterCapabilities = { fusedPlan?: boolean; substituteSemantic?: boolean; reimbursementSemantic?: boolean; advisor?: boolean; approvedKnowledge?: boolean };
 
 /**
  * Build the LINE Intake Router system prompt. With no capabilities and no image the result is the
@@ -318,7 +326,7 @@ export type IntakeRouterCapabilities = { fusedPlan?: boolean; substituteSemantic
  * {@link IMAGE_CAPTURE_HINTS_SECTION}). It defaults to false, so every text call — and every existing
  * caller and spec that passes one argument — keeps the exact prompt it had before.
  */
-export function intakeRouterSystemPrompt(caps: IntakeRouterCapabilities = {}, hasImage = false): string {
+export function intakeRouterSystemPrompt(caps: IntakeRouterCapabilities = {}, hasImage = false, semanticV2 = false, retainedTask = false): string {
   const substituteEnum = caps.substituteSemantic ? ' | "SUBSTITUTE_RECEIPT_CONTINUATION"' : '';
   const reimbursementEnum = caps.reimbursementSemantic ? ' | "REIMBURSEMENT_REQUEST_START"' : '';
   const advisorEnum = caps.advisor ? ' | "ADVISOR_CONVERSATION"' : '';
@@ -334,6 +342,9 @@ export function intakeRouterSystemPrompt(caps: IntakeRouterCapabilities = {}, ha
   const preparedPlanField = caps.fusedPlan
     ? ', // business-document images only, see below\n  "preparedPlan": { ... } // OPTIONAL bounded pre-plan; omit unless highly confident, see "Fused prepared plan" below'
     : ' // business-document images only, see below';
+  const semanticInventoryField = semanticV2
+    ? '\n  "semanticSubrequests": [{ "index": 0, "kind": "read"|"general"|"write"|"help"|"public"|"file", "goal": "...", "requiredEvidence": [], "requestedFilters": {}, "dependsOn": [], "evidenceRefs": [{ "partId": "...", "startUtf16": 0, "endUtf16": 1, "rawSha256": "..." }] }] // REQUIRED, one item per distinct user request; max 8,'
+    : '';
   return `
 You are the LINE Intake Router Agent for MangmeePlus.
 Classify one LINE message (text, caption, and attachments) into exactly ONE intake route.
@@ -348,7 +359,7 @@ Return only compact JSON with this shape:
   "clarifyQuestion": "CLARIFY only: ONE short clarifying question in the user's language that names the concrete choices you are unsure between",
   "captureHints": { ... }, // only for EXPENSE_DOCUMENT_CAPTURE, see below
   "correctionHints": { ... }, // only for EXPENSE_CAPTURE_CORRECTION, see below${semanticFields}${advisorAnswerField}
-  "resolvedClarificationIds": ["id from openClarifications this message answers"],
+  "resolvedClarificationIds": ["id from openClarifications this message answers"],${semanticInventoryField}
   "documentClassification": { ... },
   "documentText": "images only: the page transcribed verbatim as markdown, exactly as you would read it aloud — every number, date and identifier copied character for character, tables kept as tables. Omit entirely when there is no image or the page is unreadable. This is a transcription, never a summary and never your interpretation: do not correct, round, translate or complete anything you cannot see. Keep it under 12000 characters; if the page would need more than that, omit this field entirely rather than stopping mid-transcription — a cut-off answer is unreadable, a missing one is simply read again."${preparedPlanField}
 }
@@ -362,6 +373,8 @@ Route meanings:
 - MUTATION_REQUEST_REFUSAL: user asks for a final business mutation: approve, pay, transfer money, post ledger, file tax, export, activate/apply a signature, change permissions.
 - CLARIFY: image/text is ambiguous between routes, or too unclear to act on. When unsure between capture and signature, choose CLARIFY.
 - UNSUPPORTED: unrelated to business data or expense/signature intake (small talk goes here too).
+${semanticV2 ? `For the required semanticSubrequests inventory, preserve EVERY distinct clause in the original message, including mixed business reads, general/science questions, approved help, public lookup requests, file requests, unsupported requests, and blocked write requests. Use exact zero-based contiguous indices in the original clause order, max 8; never discard a clause because it looks like a label, fragment, quoted title, or question. Each goal is a concise interpretation, but every item MUST include one or more evidenceRefs copied as exact UTF-16 offsets into the supplied inputEvidenceParts (partId/rawSha256); the span text must be the user's accepted raw text, with no lowercasing, normalization, or truncation. Entity references, when included, are exact user_text spans only. When this clause answers or resumes a pending task, include taskRef:{taskId,taskRevision,subrequestIndex} copied exactly from the offered taskProjection; select only waiting_user/paused tasks and needs_user/pending subrequests. An independent side question has no taskRef and does not replace or cancel the prior task. Do not invent a task or guess between multiple tasks: ask one specific selection question. For an explicit write clause, include writeIntent selected from EXPENSE_DOCUMENT_CAPTURE, EXPENSE_DRAFT_CONTINUATION, EXPENSE_CAPTURE_CORRECTION, SUBSTITUTE_RECEIPT_CONTINUATION, REIMBURSEMENT_REQUEST_START when it matches that clause. Keep the writeIntent even when a mixed question makes the outer intent BUSINESS_READ. Never put writeIntent on general/help/read/file questions; a question about writing is not a requested write. Negation, missing target, or unclear operation must remain a clarification, never manufacture write authority. Do not treat this inventory as permission or mutation authority. Return valid JSON; missing, duplicate, or incomplete coverage is a schema failure.` : ''}
+${retainedTask ? `retainedTaskSource is a server-verified selection of exactly ONE historical write clause. The live messageText remains the user's current selection command. Route only that selected clause: return exactly one semanticSubrequest, copy retainedTaskSource.taskRef unchanged, and keep retainedTaskSource.selectedClause.kind/writeIntent unchanged. Its evidenceRefs still point to the live inputEvidenceParts. captureHints may copy values only from retainedTaskSource.selectedClause.text or the live messageText, and numeric/date hints must select from retainedTaskSource.selectedClause.valueCandidates. No sibling historical clause is available or authorized; never infer one.` : ''}
 For EXPENSE_DOCUMENT_CAPTURE or BUSINESS_DOCUMENT_REFERENCE images, include documentClassification:
 {
   "contentKind": "DOCUMENT"|"MULTI_DOCUMENT"|"NON_DOCUMENT_IMAGE"|"UNREADABLE"|"AMBIGUOUS",
@@ -419,16 +432,22 @@ export class IntentRouterAgent {
   /** `draftEditEnabled` decides whether the five S-4 draft tools appear in the catalog this router
    *  hands the model (spec §8). Defaulted false so every existing construction — and every spec —
    *  keeps the exact pre-S-4 catalog byte-for-byte. */
-  constructor(private readonly provider: IModelProvider, private readonly draftEditEnabled = false) {}
+  constructor(private readonly provider: IModelProvider, private readonly draftEditEnabled = false,
+    private readonly knowledge: { enabled?: boolean; pack?: ProductKnowledgePack } = {},
+    private readonly publicLookupEnabled = false) {}
 
-  async route(messageText: string, hasAttachment = false, conversationContext?: LineAiConversationContext, openClarifications?: LineAiOpenClarification[]): Promise<AgentIntentPlan> {
+  async route(messageText: string, hasAttachment = false, conversationContext?: LineAiConversationContext, openClarifications?: LineAiOpenClarification[], knowledgeMetadata?: KnowledgeMetadata[], taskProjection?: LineAiTaskProjectionV2): Promise<AgentIntentPlan & { selectedKnowledgeCardIds?: string[] }> {
     if (isCrisisMessage(messageText)) return crisisPlan(messageText);
-    const providerPlan = await this.modelRoute(messageText, hasAttachment, conversationContext, openClarifications);
+    const providerPlan = await this.modelRoute(messageText, hasAttachment, conversationContext, openClarifications, this.knowledge.enabled ? knowledgeMetadata : undefined, this.enabledTools(), taskProjection);
     return providerPlan ?? unavailablePlan(messageText);
   }
 
+  private enabledTools(): ReadonlySet<string> {
+    return this.publicLookupEnabled ? new Set([...ROUTER_ENABLED_TOOLS, 'public.lookup']) : ROUTER_ENABLED_TOOLS;
+  }
+
   /** LINE Intake Router contract: one semantic route per message, fail closed to typed UNAVAILABLE. */
-  async routeIntake(request: LineIntakeRouteRequest): Promise<LineIntakeRoutePlan & { receiptCandidate?: unknown }> {
+  async routeIntake(request: LineIntakeRouteRequest): Promise<LineIntakeRoutePlan & { receiptCandidate?: unknown; selectedKnowledgeCardIds?: string[] }> {
     const images = (request.attachments ?? [])
       .filter((a) => a.contentBase64 && (a.mimeType === 'image/jpeg' || a.mimeType === 'image/png'))
       .map((a) => ({ mimeType: a.mimeType as 'image/jpeg' | 'image/png', contentBase64: a.contentBase64 as string }));
@@ -440,6 +459,19 @@ export class IntentRouterAgent {
     // default (all off) reproduces the exact legacy prompt/payload/catalog/maxTokens (no fused-plan section,
     // no substitute instructions, no ~21KB tool catalog, no extra cost).
     const caps: IntakeRouterCapabilities = asIntakeRouterCapabilities(request.capabilities);
+    const retainedTaskSource = request.retainedTaskSource === undefined ? undefined
+      : await verifyLineAiRetainedTaskSource(request.retainedTaskSource);
+    if (request.retainedTaskSource !== undefined && (!retainedTaskSource
+      || !lineAiRetainedTaskSourceMatchesProjection(retainedTaskSource, request.taskProjection))) {
+      return unavailableIntakePlan(request.messageText, 'AI_CONTRACT_UNSUPPORTED');
+    }
+    const retainedText = retainedTaskSource ? lineAiRetainedTaskSourceText(retainedTaskSource) : undefined;
+    if (retainedTaskSource && !retainedText) return unavailableIntakePlan(request.messageText, 'AI_CONTRACT_UNSUPPORTED');
+    const retainedAcceptedAt = retainedTaskSource && Math.min(...retainedTaskSource.semanticSubrequest.evidenceRefs!.map((ref) =>
+      retainedTaskSource.inputEvidence.parts.find((part) => part.partId === ref.partId)!.acceptedAtMs));
+    const retainedValueCandidates = retainedText && retainedAcceptedAt !== undefined
+      ? extractValueCandidates(retainedText, new Date(retainedAcceptedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }))
+      : undefined;
     // Advisor precedence (advisor spec §9.1 rank 3): an attachment/document route ALWAYS beats advisor,
     // so a turn carrying one is never even OFFERED the route. Deleting the capability here — not just
     // instructing the prompt — makes the prompt, the parser and the cost identical to advisor-off, so a
@@ -460,8 +492,16 @@ export class IntentRouterAgent {
     // so the image prefix still gets its cache checkpoint.
     if (caps.fusedPlan && hasAttachment) delete caps.fusedPlan;
 
+    const knowledgeMetadata = caps.approvedKnowledge && this.knowledge.enabled && !hasAttachment
+      ? offeredKnowledgeMetadata(this.knowledge.pack ?? PRODUCT_HELP_PACK,
+        productKnowledgeAccess(request.permissions, request.enabledFeatures ?? [], true,
+          /[\u0E00-\u0E7F]/u.test(request.messageText) ? 'th' : 'en'))
+      : [];
+
+    const semanticV2 = request.inputEvidence !== undefined;
     const payload = {
       messageText: request.messageText,
+      ...(request.inputEvidence ? { inputEvidenceParts: request.inputEvidence.parts.map(({ partId, rawText, rawSha256 }) => ({ partId, rawText, rawSha256 })) } : {}),
       locale: request.locale,
       // Baseline: the glossary rides in the DATA payload (legacy). When fused planning is on it moves into
       // the stable cacheable catalog block below (so the fused prefix caches) and is omitted here.
@@ -470,7 +510,15 @@ export class IntentRouterAgent {
       permissions: request.permissions,
       enabledFeatures: request.enabledFeatures ?? [],
       activeCategories: request.activeCategories ?? [],
+      ...(knowledgeMetadata.length ? { approvedKnowledge: knowledgeMetadata } : {}),
       ...(request.conversationContext && { conversationContext: request.conversationContext }),
+      ...(semanticV2 && request.taskProjection ? { taskProjection: request.taskProjection } : {}),
+      ...(retainedTaskSource && retainedText && retainedValueCandidates ? { retainedTaskSource: {
+        taskRef: retainedTaskSource.taskRef,
+        selectedClause: { originalIndex: retainedTaskSource.semanticSubrequest.index,
+          kind: retainedTaskSource.semanticSubrequest.kind, writeIntent: retainedTaskSource.semanticSubrequest.writeIntent,
+          text: retainedText, valueCandidates: retainedValueCandidates },
+      } } : {}),
       ...(request.valueCandidates && { valueCandidates: request.valueCandidates }),
       ...(request.openClarifications && { openClarifications: request.openClarifications }),
       ...(request.recentCapturedExpenses?.length ? { recentCapturedExpenses: request.recentCapturedExpenses } : {}),
@@ -481,38 +529,50 @@ export class IntentRouterAgent {
       ...(caps.substituteSemantic && request.substituteContext ? { substituteContext: request.substituteContext } : {}),
     };
 
-    const result = await this.provider.generateText({
-      systemPrompt: intakeRouterSystemPrompt(caps, hasAttachment),
-      // The ~21KB glossary + tool catalog is a cost/latency price paid ONLY when fused planning needs it.
-      ...(caps.fusedPlan ? { cacheableContext: JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog(this.draftEditEnabled) }) } : {}),
-      messages: [{ role: 'user', text: JSON.stringify(payload) }],
-      ...(images.length > 0 ? { images } : {}),
-      // Legacy keeps 1000; only the (larger) fused output needs the bigger bound. An image asks for
-      // documentText on top of whichever plan shape is on, so it needs the document budget either way.
-      maxTokens: images.length > 0 ? INTAKE_DOCUMENT_MAX_TOKENS : caps.fusedPlan ? 1500 : 1000,
-      usageTag: 'line.intake-route',
-    });
-
-    if (!result.ok) {
-      // A money refusal keeps the seam's own code (`AI_BUDGET_*`), so the API can tell it from a
-      // provider outage instead of reporting "the router is temporarily down" (spec §9.1).
-      return unavailableIntakePlan(request.messageText, result.error.budgetCode ?? result.error.code);
+    let result: Awaited<ReturnType<IModelProvider['generateText']>> | undefined;
+    let parsed: LineIntakeRoutePlan | null = null;
+    const attemptLimit = semanticV2 && !hasAttachment ? 2 : 1;
+    for (let attempt = 0; attempt < attemptLimit; attempt += 1) {
+      if (attempt > 0) {
+        const budget = currentBudgetState();
+        if (budget?.status !== 'active-v2' || budget.calls >= budget.grant.maxTurnSlots
+          || budget.repairCount >= budget.grant.maxRepairs) break;
+        budget.repairPending = true;
+      }
+      result = await this.provider.generateText({
+        systemPrompt: intakeRouterSystemPrompt(caps, hasAttachment, semanticV2, !!retainedTaskSource)
+          + (knowledgeMetadata.length ? `\n${APPROVED_KNOWLEDGE_SELECTION_PROMPT}` : ''),
+        // The ~21KB glossary + tool catalog is a cost/latency price paid ONLY when fused planning needs it.
+        ...(caps.fusedPlan ? { cacheableContext: JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog(this.draftEditEnabled, this.publicLookupEnabled) }) } : {}),
+        messages: [{ role: 'user', text: JSON.stringify({ ...payload, ...(attempt > 0 ? {
+          schemaRepair: 'Return the same route plus a complete semanticSubrequests array: one item per distinct clause, contiguous indexes, exact original evidenceRefs. Do not omit any request.'
+        } : {}) }) }],
+        ...(images.length > 0 ? { images } : {}),
+        // V2 text plans carry the complete semantic inventory. Image calls keep their one-call
+        // document ceiling; legacy text callers retain their original output limits.
+        maxTokens: images.length > 0 ? INTAKE_DOCUMENT_MAX_TOKENS : semanticV2 ? 4_096 : caps.fusedPlan ? 1500 : 1000,
+        usageTag: 'line.intake-route',
+      });
+      if (!result.ok) break;
+      parsed = parseIntakePlan(
+        result.text, request.messageText, request.valueCandidates, request.openClarifications,
+        request.recentCapturedExpenses, request.activeExpenseDrafts, caps, request.inputEvidence, request.taskProjection,
+        retainedTaskSource, retainedText, retainedValueCandidates,
+      );
+      if (parsed) break;
     }
 
-    const parsed = parseIntakePlan(
-      result.text,
-      request.messageText,
-      request.valueCandidates,
-      request.openClarifications,
-      request.recentCapturedExpenses,
-      request.activeExpenseDrafts,
-      caps,
-    );
+    if (!result || !result.ok) {
+      // A money refusal keeps the seam's own code (`AI_BUDGET_*`), so the API can tell it from a
+      // provider outage instead of reporting "the router is temporarily down" (spec §9.1).
+      return unavailableIntakePlan(request.messageText, result?.error.budgetCode ?? result?.error.code ?? 'AI_PROVIDER_UNAVAILABLE');
+    }
     if (!parsed) {
       // A response the model ran out of room to finish is not the same failure as a model that answered
       // badly, and the two need opposite fixes (raise the budget vs. fix the prompt). UAT 2026-08-28 spent
       // hours reading the second story off the first one's logs, so the two now carry different codes.
-      const errorCode = result.stopReason === 'max_tokens' ? 'ROUTER_OUTPUT_TRUNCATED' : 'ROUTER_JSON_PARSE_FAILED';
+      const errorCode = semanticV2 ? 'ROUTER_SEMANTIC_SCHEMA_INVALID'
+        : result.stopReason === 'max_tokens' ? 'ROUTER_OUTPUT_TRUNCATED' : 'ROUTER_JSON_PARSE_FAILED';
       // UAT 2026-09-06: a parse failure that was NOT truncation left no evidence at all — the model had
       // written a tutorial instead of JSON and nobody could tell that from the code alone. Model output
       // only, bounded and whitespace-collapsed; never the user's messageText or any payload field.
@@ -607,32 +667,39 @@ export class IntentRouterAgent {
     const receiptCandidate = hasAttachment && parsed.intent === 'EXPENSE_DOCUMENT_CAPTURE'
       ? extractReceiptCandidate(result.text)
       : undefined;
-    if (!prepared && !advisorAnswer && receiptCandidate === undefined) return parsed;
+    let selectedKnowledgeCardIds: string[] | undefined;
+    if (knowledgeMetadata.length) {
+      try { selectedKnowledgeCardIds = parseSelectedKnowledgeCardIds(JSON.parse(extractJson(result.text)).selectedKnowledgeCardIds, knowledgeMetadata); } catch { /* invalid optional selection never changes the route */ }
+    }
+    if (!prepared && !advisorAnswer && receiptCandidate === undefined && !selectedKnowledgeCardIds?.length) return parsed;
     return {
       ...parsed,
       ...(prepared ? { preparedPlan: prepared } : {}),
       ...(advisorAnswer ? { advisorAnswer } : {}),
       ...(receiptCandidate !== undefined ? { receiptCandidate } : {}),
+      ...(selectedKnowledgeCardIds?.length ? { selectedKnowledgeCardIds } : {}),
     };
   }
 
-  private async modelRoute(messageText: string, hasAttachment: boolean, conversationContext?: LineAiConversationContext, openClarifications?: LineAiOpenClarification[]): Promise<AgentIntentPlan | null> {
+  private async modelRoute(messageText: string, hasAttachment: boolean, conversationContext?: LineAiConversationContext, openClarifications?: LineAiOpenClarification[], knowledgeMetadata?: KnowledgeMetadata[], enabledTools: ReadonlySet<string> = this.enabledTools(), taskProjection?: LineAiTaskProjectionV2): Promise<(AgentIntentPlan & { selectedKnowledgeCardIds?: string[] }) | null> {
     // The catalog is deterministic (static registries), so it rides as the turn's leading
     // cacheable block instead of being buried after the varying messageText where no stable
     // prefix can form. Same user turn, same model-visible content.
     // INTENT_ROUTER_SYSTEM_PROMPT is itself under the provider's checkpoint threshold, but this
     // checkpoint sits after it in the prefix and so caches system + catalog together.
-    const catalog = JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog(this.draftEditEnabled) });
+    const catalog = JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog(this.draftEditEnabled, this.publicLookupEnabled) });
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const result = await this.provider.generateText({
-        systemPrompt: INTENT_ROUTER_SYSTEM_PROMPT,
+        systemPrompt: INTENT_ROUTER_SYSTEM_PROMPT + (this.publicLookupEnabled ? `\n${PUBLIC_LOOKUP_ROUTING_PROMPT}` : '') + (knowledgeMetadata?.length ? `\n${APPROVED_KNOWLEDGE_SELECTION_PROMPT}` : ''),
         cacheableContext: catalog,
         messages: [{
           role: 'user',
           text: JSON.stringify({
             messageText,
             hasAttachment,
+            ...(knowledgeMetadata?.length ? { approvedKnowledge: knowledgeMetadata } : {}),
             ...(conversationContext && { conversationContext }),
+            ...(taskProjection && { taskProjection }),
             ...(openClarifications?.length && { openClarifications }),
             ...(attempt > 0 && { correction: 'Previous plan selected a tool incompatible with its subject. Return a compatible plan or UNROUTABLE.' }),
           }),
@@ -644,10 +711,14 @@ export class IntentRouterAgent {
 
       try {
         const parsed = JSON.parse(extractJson(result.text)) as AgentIntentPlan;
-        const normalized = normalizeToolAvailability(normalizeRefusalReasons(parsed), messageText);
+        const normalized = normalizeToolAvailability(normalizeRefusalReasons(parsed), messageText, enabledTools);
         if (!normalized) continue;
-        if (!isPlan(normalized)) return null;
-        return normalized;
+        if (!isPlan(normalized, enabledTools)) return null;
+        const selectedKnowledgeCardIds = knowledgeMetadata?.length
+          ? parseSelectedKnowledgeCardIds((parsed as AgentIntentPlan & { selectedKnowledgeCardIds?: unknown }).selectedKnowledgeCardIds, knowledgeMetadata)
+          : undefined;
+        const { selectedKnowledgeCardIds: _untrustedSelection, ...safePlan } = normalized as AgentIntentPlan & { selectedKnowledgeCardIds?: unknown };
+        return { ...safePlan, ...(selectedKnowledgeCardIds?.length ? { selectedKnowledgeCardIds } : {}) };
       } catch {
         return null;
       }
@@ -670,7 +741,7 @@ function extractReceiptCandidate(rawText: string): unknown {
   }
 }
 
-function isPlan(value: unknown): value is AgentIntentPlan {
+function isPlan(value: unknown, enabledTools: ReadonlySet<string> = ROUTER_ENABLED_TOOLS): value is AgentIntentPlan {
   const plan = value as AgentIntentPlan;
   const zeroToolIntents = plan?.intents?.filter((intent) => isZeroToolIntent(intent.intent)) ?? [];
   const hasValidIntents = plan.status === 'UNROUTABLE'
@@ -680,7 +751,7 @@ function isPlan(value: unknown): value is AgentIntentPlan {
         Array.isArray(intent.requiredTools) &&
         intent.requiredTools.length > 0 &&
         LINE_AI_BUSINESS_SUBJECTS.includes(intent.subject) &&
-        intent.requiredTools.every((tool) => ROUTER_ENABLED_TOOLS.has(tool) && isSubjectCompatible(intent.subject, tool)),
+        intent.requiredTools.every((tool) => enabledTools.has(tool) && isSubjectCompatible(intent.subject, tool)),
       ));
   return !!plan
     && ['ROUTABLE', 'PARTIAL', 'UNROUTABLE'].includes(plan.status)
@@ -734,7 +805,7 @@ function isValidZeroToolIntent(intent: AgentIntentPlan['intents'][number] | unde
     && intent.requiredTools.length === 0;
 }
 
-function buildFeatureCatalog(draftEditEnabled = false): {
+function buildFeatureCatalog(draftEditEnabled = false, publicLookupEnabled = false): {
   enabledFeatures: Array<{ toolName: string; sourceModule: string; category: string; agentHints: readonly string[]; description: string; businessSubjects: readonly string[]; questionKinds: readonly string[]; requiredInputFields: readonly string[]; optionalInputFields: readonly string[] }>;
   disabledFeatures: Array<{ toolName: string; sourceModule: string; category: string; agentHints: readonly string[]; description: string; businessSubjects: readonly string[]; questionKinds: readonly string[]; requiredInputFields: readonly string[]; optionalInputFields: readonly string[]; reason: string }>;
 } {
@@ -751,14 +822,14 @@ function buildFeatureCatalog(draftEditEnabled = false): {
     // Flag off ⇒ the five draft tools are not in the catalog at all. "Offered then refused" would
     // have advertised an ability this deployment does not have, which is the exact failure the
     // capability card was built to stop.
-    enabledFeatures: [...ROUTER_ENABLED_TOOLS]
+    enabledFeatures: [...ROUTER_ENABLED_TOOLS, ...(publicLookupEnabled ? ['public.lookup'] : [])]
       .filter((toolName) => draftEditEnabled || !ROUTER_DRAFT_UPDATE_TOOLS.has(toolName))
       .map(toFeature),
     disabledFeatures: [...ROUTER_DISABLED_TOOLS].map((toolName) => ({ ...toFeature(toolName), reason: 'backend_tool_not_wired' })),
   };
 }
 
-function normalizeToolAvailability(plan: AgentIntentPlan, messageText: string): AgentIntentPlan | null {
+function normalizeToolAvailability(plan: AgentIntentPlan, messageText: string, enabledTools: ReadonlySet<string> = ROUTER_ENABLED_TOOLS): AgentIntentPlan | null {
   if (!plan || !Array.isArray(plan.intents) || !Array.isArray(plan.refusals)) return null;
   if (plan.intents.some((intent) => isZeroToolIntent(intent.intent))) {
     return plan.intents.length === 1 && isValidZeroToolIntent(plan.intents[0]) ? plan : null;
@@ -768,7 +839,7 @@ function normalizeToolAvailability(plan: AgentIntentPlan, messageText: string): 
   for (const intent of plan.intents) {
     if (!LINE_AI_BUSINESS_SUBJECTS.includes(intent.subject)) return null;
     if (!Array.isArray(intent.requiredTools) || intent.requiredTools.length === 0) return null;
-    if (intent.requiredTools.some((tool) => !ROUTER_ENABLED_TOOLS.has(tool) && !ROUTER_DISABLED_TOOLS.has(tool))) return null;
+    if (intent.requiredTools.some((tool) => !enabledTools.has(tool) && !ROUTER_DISABLED_TOOLS.has(tool))) return null;
     if (intent.requiredTools.some((tool) => !isSubjectCompatible(intent.subject, tool))) return null;
     if (intent.requiredTools.some((tool) => ROUTER_DISABLED_TOOLS.has(tool))) {
       disabledCount += 1;
@@ -787,6 +858,7 @@ function normalizeToolAvailability(plan: AgentIntentPlan, messageText: string): 
 }
 
 export function isSubjectCompatible(subject: AgentIntentPlan['intents'][number]['subject'], toolName: string): boolean {
+  if (toolName === 'public.lookup') return subject === 'unknown';
   return LINE_TOOL_REGISTRY.find((tool) => tool.name === toolName)?.businessSubjects.includes(subject) ?? false;
 }
 
@@ -821,6 +893,10 @@ function disabledFeaturePlan(messageText: string): AgentIntentPlan {
 }
 
 const MAX_INTAKE_REASON_LENGTH = 200;
+const CAPTURE_HINT_LIMITS = {
+  sourceDocumentType: 80, sourceDocumentLanguage: 20, vendorName: 200, description: 200,
+  businessPurpose: 500, expenseDate: 32, amount: 64, expenseCategoryId: 128,
+} as const;
 
 /** Item 10F input-side membership guard – the mirror of the composer's output number guard.
  *  When deterministic candidates exist for the turn text, model-written amount/expenseDate
@@ -864,6 +940,26 @@ function applyCaptureHintValueGuards(
   return { dateNeedsDiscovery };
 }
 
+function applyRetainedCaptureHintTextGuards(
+  hints: NonNullable<LineIntakeRoutePlan['captureHints']>,
+  allowedTexts: readonly string[],
+): void {
+  const missing = new Set(hints.missingFields ?? []);
+  for (const key of ['vendorName', 'description', 'businessPurpose'] as const) {
+    const value = hints[key];
+    if (value && !allowedTexts.some((text) => text.includes(value))) {
+      delete hints[key];
+      missing.add(key);
+    }
+  }
+  hints.items = hints.items?.filter((item) => {
+    const values = [item.sourceText, item.description, item.quantity, item.unit, item.unitPrice, item.totalAmount]
+      .filter((value): value is string => !!value);
+    return values.every((value) => allowedTexts.some((text) => text.includes(value)));
+  });
+  hints.missingFields = [...missing].slice(0, 20);
+}
+
 /** Membership guard: the model may only name clarification ids this request actually carried,
  *  so a hallucinated or replayed id can never consume someone else's open entry. */
 function parseResolvedClarificationIds(raw: unknown, openClarifications?: LineAiOpenClarification[]): string[] | undefined {
@@ -897,7 +993,8 @@ function parseCorrectionHints(raw: unknown, candidates: LineIntakeCorrectionCand
     const to = typeof pair['to'] === 'string' ? pair['to'].trim() : '';
     if (!to) { missing.add(field); continue; }
     const from = typeof pair['from'] === 'string' ? pair['from'].trim() : '';
-    hints[field] = { to: to.slice(0, MAX_CORRECTION_VALUE_LENGTH), ...(from ? { from: from.slice(0, MAX_CORRECTION_VALUE_LENGTH) } : {}) };
+    // The API owns field-specific limits. Preserve the proposal so it can reject an overlong field without losing its tail.
+    hints[field] = { to, ...(from ? { from } : {}) };
   }
 
   if (typeof source['confidence'] === 'number') hints.confidence = source['confidence'];
@@ -960,12 +1057,30 @@ function parseIntakePlan(
   recentCapturedExpenses?: LineIntakeCorrectionCandidate[],
   activeExpenseDrafts?: LineIntakeRouteRequest['activeExpenseDrafts'],
   caps: IntakeRouterCapabilities = {},
+  inputEvidence?: LineAiInputEvidenceV2,
+  taskProjection?: LineAiTaskProjectionV2,
+  retainedTaskSource?: LineAiRetainedTaskSourceV2,
+  retainedText?: string,
+  retainedValueCandidates?: LineAiValueCandidates,
 ): LineIntakeRoutePlan | null {
   try {
     const raw = JSON.parse(extractJson(text)) as Record<string, unknown>;
     // Validate the intake intent by the shared contract membership check — no local allowlist, no cast.
     const intent = asIntakeRouteIntent(raw['intent']);
     if (!intent) return null;
+    const semanticSubrequests = inputEvidence
+      ? parseLineAiSemanticSubrequests(raw['semanticSubrequests'], messageText, inputEvidence)
+      : undefined;
+    if (inputEvidence && !semanticSubrequests) return null;
+    if (semanticSubrequests?.some(item => item.taskRef && !taskProjection?.tasks.some(task => task.taskId === item.taskRef!.taskId
+      && task.revision === item.taskRef!.taskRevision && ['waiting_user', 'paused'].includes(task.state)
+      && task.subrequests.some(sub => sub.index === item.taskRef!.subrequestIndex && sub.kind === item.kind && ['needs_user', 'pending'].includes(sub.status))))) return null;
+    if (retainedTaskSource && (semanticSubrequests?.length !== 1
+      || semanticSubrequests[0]!.kind !== retainedTaskSource.semanticSubrequest.kind
+      || semanticSubrequests[0]!.writeIntent !== retainedTaskSource.semanticSubrequest.writeIntent
+      || semanticSubrequests[0]!.taskRef?.taskId !== retainedTaskSource.taskRef.taskId
+      || semanticSubrequests[0]!.taskRef?.taskRevision !== retainedTaskSource.taskRef.taskRevision
+      || semanticSubrequests[0]!.taskRef?.subrequestIndex !== retainedTaskSource.taskRef.subrequestIndex)) return null;
     // A route the prompt never offered is invalid output: fail closed to UNAVAILABLE (legacy safe fallback),
     // so an un-offered claim can never reach any dispatcher branch.
     if (intent === 'REIMBURSEMENT_REQUEST_START' && !caps.reimbursementSemantic) return null;
@@ -1001,19 +1116,29 @@ function parseIntakePlan(
       captureHints = {};
       for (const key of ['sourceDocumentType', 'sourceDocumentLanguage', 'vendorName', 'description', 'businessPurpose', 'expenseDate', 'amount', 'expenseCategoryId'] as const) {
         const value = hints[key];
-        if (typeof value === 'string' && value.trim()) captureHints[key] = value.trim();
+        if (typeof value === 'string' && value.trim()) {
+          if (value.trim().length > CAPTURE_HINT_LIMITS[key]) return null;
+          captureHints[key] = value.trim();
+        }
       }
       const offeredDraftIds = new Set((activeExpenseDrafts ?? []).map((draft) => draft.expenseId));
       if (typeof hints['targetExpenseId'] === 'string' && offeredDraftIds.has(hints['targetExpenseId'])) {
         captureHints.targetExpenseId = hints['targetExpenseId'];
       }
       if (Array.isArray(hints['items'])) {
-        captureHints.items = hints['items'].slice(0, 20).flatMap((value) => {
+        if (hints['items'].length > 20) return null;
+        const itemStringKeys = ['itemRef', 'sourceText', 'description', 'quantity', 'unit', 'unitPrice', 'totalAmount', 'expenseCategoryId', 'taxTreatment'] as const;
+        if (hints['items'].some((value) => value && typeof value === 'object' && !Array.isArray(value)
+          && itemStringKeys.some((key) => typeof (value as Record<string, unknown>)[key] === 'string'
+            && ((value as Record<string, string>)[key]?.trim().length ?? 0) > 200))) return null;
+        captureHints.items = hints['items'].flatMap((value) => {
           if (!value || typeof value !== 'object') return [];
           const item = value as Record<string, unknown>;
           const parsed: LineIntakeExpenseItemHint = {};
-          for (const key of ['itemRef', 'sourceText', 'description', 'quantity', 'unit', 'unitPrice', 'totalAmount', 'expenseCategoryId', 'taxTreatment'] as const) {
-            if (typeof item[key] === 'string' && item[key].trim()) parsed[key] = item[key].trim().slice(0, 200);
+          for (const key of itemStringKeys) {
+            if (typeof item[key] === 'string' && item[key].trim()) {
+              parsed[key] = item[key].trim();
+            }
           }
           if (typeof item['accountingClass'] === 'string' && ['OPEX', 'ASSET', 'INVENTORY', 'LIABILITY', 'REVENUE', 'UNKNOWN'].includes(item['accountingClass'])) {
             parsed.accountingClass = item['accountingClass'] as NonNullable<LineIntakeExpenseItemHint['accountingClass']>;
@@ -1021,8 +1146,9 @@ function parseIntakePlan(
           if (typeof item['itemBehavior'] === 'string' && ['STOCKABLE', 'NON_STOCK', 'SERVICE', 'UNKNOWN'].includes(item['itemBehavior'])) {
             parsed.itemBehavior = item['itemBehavior'] as NonNullable<LineIntakeExpenseItemHint['itemBehavior']>;
           }
-          if (typeof item['confidence'] === 'number') parsed.confidence = item['confidence'];
-          if (Array.isArray(item['missingFields'])) parsed.missingFields = item['missingFields'].filter((field): field is string => typeof field === 'string').slice(0, 10);
+          if (typeof item['confidence'] === 'number' && item['confidence'] >= 0 && item['confidence'] <= 1) parsed.confidence = item['confidence'];
+          if (Array.isArray(item['missingFields']) && item['missingFields'].length <= 10
+            && item['missingFields'].every((field) => typeof field === 'string' && field.length <= 80)) parsed.missingFields = item['missingFields'];
           return Object.keys(parsed).length ? [parsed] : [];
         });
       }
@@ -1030,8 +1156,9 @@ function parseIntakePlan(
       if (typeof vatMode === 'string' && ['NO_VAT', 'VAT_INCLUDED', 'VAT_EXCLUDED', 'EXEMPT', 'NEEDS_REVIEW'].includes(vatMode)) {
         captureHints.vatMode = vatMode as NonNullable<LineIntakeRoutePlan['captureHints']>['vatMode'];
       }
-      if (typeof hints['confidence'] === 'number') captureHints.confidence = hints['confidence'];
-      if (Array.isArray(hints['missingFields'])) captureHints.missingFields = hints['missingFields'].filter((v): v is string => typeof v === 'string').slice(0, 20);
+      if (typeof hints['confidence'] === 'number' && hints['confidence'] >= 0 && hints['confidence'] <= 1) captureHints.confidence = hints['confidence'];
+      if (Array.isArray(hints['missingFields']) && hints['missingFields'].length <= 20
+        && hints['missingFields'].every((field) => typeof field === 'string' && field.length <= 80)) captureHints.missingFields = hints['missingFields'];
     }
 
     const documentClassification = raw['documentClassification'] === undefined
@@ -1053,12 +1180,16 @@ function parseIntakePlan(
       ? parseCorrectionHints(raw['correctionHints'], recentCapturedExpenses)
       : undefined;
 
-    if ((intent === 'EXPENSE_DOCUMENT_CAPTURE' || intent === 'EXPENSE_DRAFT_CONTINUATION') && captureHints && valueCandidates) {
-      const guard = applyCaptureHintValueGuards(captureHints, valueCandidates);
+    if (retainedTaskSource && captureHints && retainedText) {
+      applyRetainedCaptureHintTextGuards(captureHints, [retainedText, messageText]);
+    }
+    const captureCandidates = retainedTaskSource ? retainedValueCandidates : valueCandidates;
+    if ((intent === 'EXPENSE_DOCUMENT_CAPTURE' || intent === 'EXPENSE_DRAFT_CONTINUATION') && captureHints && captureCandidates) {
+      const guard = applyCaptureHintValueGuards(captureHints, captureCandidates);
       if (guard.dateNeedsDiscovery) {
         // Owner rule (ADR 0011): ambiguous/unmappable dates get ONE clarify naming the
         // concrete readings — never a guessed draft. The next turn resolves via context.
-        const question = formatDateClarifyQuestion(valueCandidates.dates);
+        const question = formatDateClarifyQuestion(captureCandidates.dates);
         return {
           status: 'ROUTED',
           intent: 'CLARIFY',
@@ -1068,6 +1199,7 @@ function parseIntakePlan(
           ...(question ? { clarifyQuestion: question } : {}),
           ...(resolvedClarificationIds ? { resolvedClarificationIds } : {}),
           ...semantic,
+          ...(semanticSubrequests ? { semanticSubrequests } : {}),
         };
       }
     }
@@ -1086,6 +1218,7 @@ function parseIntakePlan(
       ...(resolvedClarificationIds ? { resolvedClarificationIds } : {}),
       ...semantic,
       ...(reimbursementHints ? { reimbursementHints } : {}),
+      ...(semanticSubrequests ? { semanticSubrequests } : {}),
     };
   } catch {
     return null;

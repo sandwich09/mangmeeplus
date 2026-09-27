@@ -62,6 +62,11 @@ export class UpdateReimbursementDraftDto implements UpdateReimbursementDraftInpu
   lines?: ReimbursementLineDto[];
 }
 
+export class ReimbursementDraftActionControlDto {
+  @IsInt() @Min(1) previewRevision!: number;
+  @Matches(/^[0-9a-f]{64}$/) confirmationDigest!: string;
+}
+
 export class ReimbursementInternalNoteDto {
   @IsString() @MaxLength(2000) body!: string;
 }

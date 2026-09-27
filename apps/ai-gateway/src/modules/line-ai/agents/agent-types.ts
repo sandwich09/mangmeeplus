@@ -3,7 +3,7 @@
  * No NestJS, HTTP, or DB imports.
  */
 import type { ErpToolContext } from '../infrastructure/erp-tool.client';
-import type { AgentFact, AgentIntentPlan, SpecialistOutput, LineAiWebLink, LineAiCoverageItem, LineAiAnswerPresentation, SourceRef } from '@watchdog-bms/contracts';
+import type { AgentFact, AgentIntentPlan, SpecialistOutput, LineAiWebLink, LineAiCoverageItem, LineAiSemanticCoverageV2, LineAiAnswerPresentation, SourceRef } from '@watchdog-bms/contracts';
 import { formatThaiPeriodRange } from '@watchdog-bms/contracts';
 
 // ponytail: AgentContext = ErpToolContext; requestId is already optional there
@@ -22,6 +22,7 @@ export type AgentRunResult = {
   durationMs: number;
   /** Item 10F: critic verdicts per sub-request; present only on the native tool-loop path. */
   coverage?: LineAiCoverageItem[];
+  semanticCoverage?: LineAiSemanticCoverageV2[];
 };
 
 /**

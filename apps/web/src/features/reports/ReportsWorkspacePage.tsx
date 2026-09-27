@@ -441,13 +441,14 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                   <h2 className="text-sm font-semibold text-gray-900">กราฟ</h2>
                   <div className="mt-3 grid gap-2">
                     {result.chart.labels.map((label, i) => {
-                      const value = Number(result.chart?.series[0]?.values[i] ?? 0);
+                      const sourceValue = result.chart?.series[0]?.values[i] ?? 0;
+                      const value = Number(sourceValue);
                       const max = Math.max(...(result.chart?.series[0]?.values.map((v) => Number(v ?? 0)) ?? [1]), 1);
                       return (
                         <div key={`${label}-${i}`} className="grid grid-cols-[160px_minmax(0,1fr)_80px] items-center gap-3 text-sm">
                           <span className="truncate text-gray-600">{label}</span>
                           <span className="h-2 rounded-full bg-brand-100"><span className="block h-2 rounded-full bg-brand-500" style={{ width: `${Math.max(4, (value / max) * 100)}%` }} /></span>
-                          <span className="text-right font-medium text-gray-900">{valueText(value)}</span>
+                          <span className="text-right font-medium text-gray-900">{valueText(sourceValue)}</span>
                         </div>
                       );
                     })}

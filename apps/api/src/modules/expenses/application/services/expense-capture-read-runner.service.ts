@@ -47,6 +47,7 @@ export const EXPENSE_CAPTURE_MAX_ATTEMPTS = 5;
 export const EXPENSE_CAPTURE_READ_FINISHED_EVENT: typeof EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE = EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE;
 
 type CaptureCheckpoint = {
+  windowPlanVersion?: 2;
   version: 1;
   /** Page index → what stage 1 read. Bounded per page by the gateway's own page cap. */
   pages: Record<string, { text: string; truncated?: boolean; blank?: boolean }>;
@@ -329,6 +330,16 @@ export class ExpenseCaptureReadRunnerService {
     // Windows run over whatever stage 1 produced, even when the read stopped early: facts from the
     // pages that WERE read are worth more to the reviewer than a job that reports only a pause.
     if (!pausedReason) {
+      const fieldEvidenceV2 = this.config.lineAiReliabilityV2Mode === 'on'
+        && this.config.lineAiReliabilityV2CompanyIds.includes(job.companyId);
+      const savedWindows = Object.values(checkpoint.windows);
+      // Old long-page checkpoints indexed windows after silently clipping page tails. Their wN
+      // identities cannot be applied to the complete window plan, nor upgraded by inference.
+      if (savedWindows.length && (checkpoint.windowPlanVersion !== 2 && Object.values(checkpoint.pages).some(page => (page.text?.length ?? 0) > EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars)
+        || fieldEvidenceV2 && savedWindows.some(window => window.fieldEvidenceVersion !== 2))) {
+        return { status: 'FAILED', errorCode: 'CAPTURE_WINDOW_EVIDENCE_VERSION_CHANGED' };
+      }
+      checkpoint = { ...checkpoint, windowPlanVersion: 2 };
       const windows = planWindows(checkpoint.pages);
       manifest = { ...manifest, windows: windows.map((window) => ({ id: window.id, pageIndexes: window.pageIndexes, state: 'pending' as const })) };
       for (const window of windows) {
@@ -345,6 +356,7 @@ export class ExpenseCaptureReadRunnerService {
           jobId: job.id,
           windowId: window.id,
           window: {
+            ...(fieldEvidenceV2 ? { evidenceSource: { version: 2 as const, attachmentId: attachment.id, checksumSha256: checksum } } : {}),
             fileLabel: job.fileId ?? job.expenseId ?? job.id,
             pageIndexes: window.pageIndexes,
             pages: window.pages,
@@ -357,6 +369,9 @@ export class ExpenseCaptureReadRunnerService {
           manifest = markWindow(manifest, window.id, 'failed');
           await this.persist(job, owner, { checkpoint, manifest, calls });
           continue;
+        }
+        if (fieldEvidenceV2 && result.observations.fieldEvidenceVersion !== 2) {
+          return { status: 'FAILED', errorCode: 'CAPTURE_FIELD_EVIDENCE_UNSUPPORTED' };
         }
         checkpoint = { ...checkpoint, windows: { ...checkpoint.windows, [window.id]: result.observations } };
         if (result.modelLineage) lineage.push(result.modelLineage);
@@ -687,6 +702,7 @@ function readCheckpoint(value: unknown): CaptureCheckpoint {
     pages: raw.pages && typeof raw.pages === 'object' ? raw.pages : {},
     chunks: raw.chunks && typeof raw.chunks === 'object' ? raw.chunks : {},
     windows: raw.windows && typeof raw.windows === 'object' ? raw.windows : {},
+    ...(raw.windowPlanVersion === 2 ? { windowPlanVersion: 2 as const } : {}),
     ...(raw.ocrEventId ? { ocrEventId: raw.ocrEventId } : {}),
     // The two per-JOB meters. A stored value that is not a finite number is treated as no value
     // rather than as zero of a budget — a corrupted checkpoint must not hand out a fresh run.

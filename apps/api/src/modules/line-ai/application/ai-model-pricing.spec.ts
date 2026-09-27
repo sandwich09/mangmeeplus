@@ -147,3 +147,33 @@ describe('priceAiStepUpperBound', () => {
     }
   });
 });
+
+describe('v2 rendered invocation pricing and pinned settlement', () => {
+  it('reserves actual rendered input, including cold-cache and hosted costs, instead of the profile ceiling', async () => {
+    const { priceRenderedAiInvocationV2 } = await import('./ai-model-pricing');
+    const tariff = { version: 'fixture:1', provider: 'openai' as const, modelId: 'fixture-model', region: 'fixture', thbPerUsd: 33,
+      usdPerMTok: { input: 1, output: 4, cacheRead: 0.1, cacheWrite: 2 }, externalUsdPerUnit: 0.01 };
+    const small = priceRenderedAiInvocationV2(tariff, 1024, 512, 2)!;
+    const large = priceRenderedAiInvocationV2(tariff, 160000, 512, 2)!;
+    assert.ok(small.upperBoundSatang < large.upperBoundSatang);
+    assert.equal(small.snapshot.bounds.maxInputTokens, 1024);
+    assert.equal(small.upperBoundSatang, Math.ceil((1024 * 2 / 1e6 + 512 * 4 / 1e6 + 0.02) * 33 * 100));
+    assert.equal(priceRenderedAiInvocationV2({ ...tariff, externalUsdPerUnit: undefined }, 1024, 512, 2), null);
+  });
+  it('settles against the pinned tariff despite an unrelated live model price and retains unknown hosted usage', async () => {
+    const { priceRenderedAiInvocationV2, computePinnedAiCostV2 } = await import('./ai-model-pricing');
+    const tariff = { version: 'fixture:2', provider: 'openai' as const, modelId: 'unlisted-model', region: 'fixture', thbPerUsd: 33,
+      usdPerMTok: { input: 1, output: 4, cacheRead: 0.1, cacheWrite: 2 }, externalUsdPerUnit: 0.01 };
+    const { snapshot } = priceRenderedAiInvocationV2(tariff, 4096, 1024, 2)!;
+    tariff.usdPerMTok.input = 999;
+    const entry = { modelId: 'unlisted-model', inputTokens: 1000, outputTokens: 100, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 };
+    assert.equal(computePinnedAiCostV2(snapshot, entry), null);
+    assert.equal(computePinnedAiCostV2(snapshot, entry, null), null);
+    assert.equal(computePinnedAiCostV2(snapshot, { ...entry, modelId: 'different-model' }, 1), null);
+    const billed = computePinnedAiCostV2(snapshot, entry, 1)!;
+    assert.equal(billed.costSatang, 38);
+    assert.equal(billed.pricingSnapshot.usdPerMTok.input, 1);
+    assert.equal(Object.values(billed.pricingSnapshot.componentSatang).reduce((sum, n) => sum + n, 0)
+      + billed.pricingSnapshot.externalToolCostSatang, billed.costSatang);
+  });
+});

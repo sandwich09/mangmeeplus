@@ -60,7 +60,7 @@ const AMOUNT_PATTERN = /^-?\d{1,14}(\.\d{1,4})?$/;
 function str(value: unknown, max = 200): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
-  return trimmed ? trimmed.slice(0, max) : undefined;
+  return trimmed && trimmed.length <= max ? trimmed : undefined;
 }
 
 /** Accepts what the model wire can carry for a money field — a bounded numeric string or a finite
@@ -73,7 +73,8 @@ function amount(value: unknown): string | undefined {
 }
 
 function lineNumber(value: unknown): number | undefined {
-  const parsed = typeof value === 'number' ? value : Number.parseInt(str(value, 8) ?? '', 10);
+  const raw = typeof value === 'string' ? value.trim() : undefined;
+  const parsed = typeof value === 'number' ? value : raw && /^\d+$/.test(raw) ? Number(raw) : NaN;
   return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= MAX_LINE_NUMBER ? parsed : undefined;
 }
 
@@ -81,9 +82,9 @@ function lineNumber(value: unknown): number | undefined {
  *  not already a resolved date is a routing bug, not something to guess at. */
 function isoDate(value: unknown): string | undefined {
   const raw = str(value, 32);
-  if (!raw || !/^\d{4}-\d{2}-\d{2}/.test(raw)) return undefined;
-  const day = raw.slice(0, 10);
-  return Number.isNaN(new Date(`${day}T00:00:00.000Z`).getTime()) ? undefined : day;
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return undefined;
+  const parsed = new Date(`${raw}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== raw ? undefined : raw;
 }
 
 /**
@@ -91,7 +92,12 @@ function isoDate(value: unknown): string | undefined {
  * or malformed required field refuses the whole call rather than writing a partial edit.
  */
 export function parseLineDraftPatch(tool: LineDraftUpdateTool, input: Record<string, unknown>): LineDraftPatchParse {
-  const recordType = str(input['recordType'], 32) ?? 'expense';
+  // Reject the whole proposal before reading any field; never convert a long value into a different edit.
+  for (const [field, max] of Object.entries({ vendorName: 200, documentNumber: 60, description: 200, noteAppend: DRAFT_NOTE_APPEND_MAX })) {
+    const value = input[field];
+    if (typeof value === 'string' && value.trim().length > max) return { ok: false, reason: `field_too_long:${field}:${max}` };
+  }
+  const recordType = input['recordType'] === undefined ? 'expense' : str(input['recordType'], 32);
   if (recordType !== 'expense') return { ok: false, reason: 'record_type_not_supported' };
 
   switch (tool) {

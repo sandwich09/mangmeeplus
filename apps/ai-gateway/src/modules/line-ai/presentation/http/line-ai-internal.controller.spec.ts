@@ -201,22 +201,15 @@ describe('LineAiInternalController', () => {
       if (JSON.parse(init.body as string).input?.some?.((item: any) => JSON.stringify(item).includes('input_image'))) {
         stageOneAuth = init.headers.Authorization;
         stageOneBody = JSON.parse(init.body);
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
+        return new Response(JSON.stringify({ status: 'completed',
             output_text: '{"natural_text":"# ใบเสร็จ ร้านกาแฟ\\nยอดก่อนค่าบริการ 55.00\\nService charge 10.00\\nหัก ณ ที่จ่าย 1.50\\nยอดรวม 65.00 บาท"}',
-          }),
-        };
+          }), { status: 200 });
       }
       // Stage 2: OpenAI provider (Responses API) maps OCR markdown -> draft fields.
       const extractionBody = JSON.parse(init.body);
       extractionInput = JSON.stringify(extractionBody.input);
       extractionInstructions = String(extractionBody.instructions ?? '');
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
+      return new Response(JSON.stringify({ status: 'completed',
           output_text: JSON.stringify({
             classification: {
               contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
@@ -247,8 +240,7 @@ describe('LineAiInternalController', () => {
               missingFields: ['vendorTaxId'],
             },
           }),
-        }),
-      };
+        }), { status: 200 });
     }) as any;
 
     try {
@@ -308,18 +300,11 @@ describe('LineAiInternalController', () => {
     const runOcr = async (rows: unknown[]) => {
       globalThis.fetch = (async (url: any, init: any) => {
         if (JSON.parse(init.body as string).input?.some?.((item: any) => JSON.stringify(item).includes('input_image'))) {
-          return {
-            ok: true,
-            status: 200,
-            json: async () => ({
+          return new Response(JSON.stringify({ status: 'completed',
               output_text: '{"natural_text":"ใบเสร็จ ร้านอาหาร\\nพิซซ่า 1 524.00\\nปีกไก่ 2 298.00\\nรวม 822.00 PAID"}',
-            }),
-          };
+            }), { status: 200 });
         }
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
+        return new Response(JSON.stringify({ status: 'completed',
             output_text: JSON.stringify({
               classification: {
                 contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
@@ -329,8 +314,7 @@ describe('LineAiInternalController', () => {
               },
               fields: { grandTotalAmount: '822.00', vatMode: 'NO_VAT', lines: rows },
             }),
-          }),
-        };
+          }), { status: 200 });
       }) as any;
       const controller = new LineAiInternalController(
         {
@@ -378,16 +362,9 @@ describe('LineAiInternalController', () => {
     const runOcr = async (expenseCategoryId: string, evidenceSignals: string[]) => {
       globalThis.fetch = (async (url: any, init: any) => {
         if (JSON.parse(init.body as string).input?.some?.((item: any) => JSON.stringify(item).includes('input_image'))) {
-          return {
-            ok: true,
-            status: 200,
-            json: async () => ({ output_text: '{"natural_text":"ใบเสร็จ ร้านกาแฟ\\nTOTAL 65.00 PAID"}', }),
-          };
+          return new Response(JSON.stringify({ status: 'completed',  output_text: '{"natural_text":"ใบเสร็จ ร้านกาแฟ\\nTOTAL 65.00 PAID"}', }), { status: 200 });
         }
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
+        return new Response(JSON.stringify({ status: 'completed',
             output_text: JSON.stringify({
               classification: {
                 contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
@@ -400,8 +377,7 @@ describe('LineAiInternalController', () => {
                 categorySuggestion: { expenseCategoryId, confidence: 0.95, evidenceSignals },
               },
             }),
-          }),
-        };
+          }), { status: 200 });
       }) as any;
       const controller = new LineAiInternalController(
         {
@@ -439,12 +415,9 @@ describe('LineAiInternalController', () => {
     const runOcr = async (rawVatRate: string) => {
       globalThis.fetch = (async (url: any, init: any) => {
         if (JSON.parse(init.body as string).input?.some?.((item: any) => JSON.stringify(item).includes('input_image'))) {
-          return { ok: true, status: 200, json: async () => ({ output_text: `{"natural_text":"${ocrText}"}`, }) };
+          return new Response(JSON.stringify({ status: 'completed',  output_text: `{"natural_text":"${ocrText}"}`, }), { status: 200 });
         }
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
+        return new Response(JSON.stringify({ status: 'completed',
             output_text: JSON.stringify({
               classification: {
                 contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
@@ -457,8 +430,7 @@ describe('LineAiInternalController', () => {
                 vatAmount: '37.94', grandTotalAmount: '580.00', vatMode: 'VAT_EXCLUDED',
               },
             }),
-          }),
-        };
+          }), { status: 200 });
       }) as any;
       const controller = new LineAiInternalController(
         {
@@ -500,11 +472,7 @@ describe('LineAiInternalController', () => {
 
   it('receipt OCR fails typed when the page reads but the extraction provider is disabled', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ choices: [{ message: { content: '{"natural_text":"# ใบเสร็จ"}' } }] }),
-    })) as any;
+    globalThis.fetch = (async () => (new Response(JSON.stringify({ choices: [{ message: { content: '{"natural_text":"# ใบเสร็จ"}' } }] }), { status: 200 }))) as any;
     try {
       const controller = new LineAiInternalController(
         { aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000, modelProvider: 'disabled' } as any,
@@ -525,7 +493,7 @@ describe('LineAiInternalController', () => {
 
   it('receipt OCR maps a provider throttle to failed with bounded error code', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => ({ ok: false, status: 429, json: async () => ({}) })) as any;
+    globalThis.fetch = (async () => (new Response(JSON.stringify({}), { status: 429 }))) as any;
     try {
       const controller = new LineAiInternalController(
         {
@@ -631,22 +599,14 @@ describe('LineAiInternalController', () => {
     let extractionInput = '';
     globalThis.fetch = (async (url: any, init: any) => {
       if (JSON.parse(init.body as string).input?.some?.((item: any) => JSON.stringify(item).includes('input_image'))) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
+        return new Response(JSON.stringify({ status: 'completed',
             output_text: '{"natural_text":"| วันที่ | รายการ | ถอน | ฝาก | คงเหลือ |\\n| 01/07/69 | รับโอน | | 1,500.00 | 11,500.00 |"}',
-          }),
-        };
+          }), { status: 200 });
       }
       extractionInput = JSON.stringify(JSON.parse(init.body).input);
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
+      return new Response(JSON.stringify({ status: 'completed',
           output_text: '{"rows":[{"postedDate":"2026-07-01","description":"รับโอน","credit":"1500.00","balance":"11500.00","confidence":0.93},{"description":"   "},{"bogus":123}]}',
-        }),
-      };
+        }), { status: 200 });
     }) as any;
 
     try {
@@ -1348,25 +1308,17 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     globalThis.fetch = (async (url: any, init: any) => {
       const requested = String(url);
       if (requested.includes('api.opentyphoon.ai')) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ choices: [{ message: { content: JSON.stringify({ natural_text: documentText }) } }] }),
-        };
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ natural_text: documentText }) } }] }), { status: 200 });
       }
       // OpenAI stage 2 over whatever text it was given.
       const input = JSON.stringify(JSON.parse(init.body).input);
       const total = input.includes('180.00') ? '180.00' : '160.00';
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
+      return new Response(JSON.stringify({ status: 'completed',
           output_text: JSON.stringify({
             classification: classification(total, total === '160.00'),
             fields: { vendorName: 'Starbucks Coffee', grandTotalAmount: total },
           }),
-        }),
-      };
+        }), { status: 200 });
     }) as any;
     return () => { globalThis.fetch = originalFetch; };
   }
@@ -1402,14 +1354,14 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       if (isRead) {
         readCount += 1;
         const text = readCount === 1 ? firstReadText : rereadText;
-        return { output: { message: { content: [{ text: JSON.stringify({ natural_text: text }) }] } } };
+        return { stopReason: 'end_turn', output: { message: { content: [{ text: JSON.stringify({ natural_text: text }) }] } } };
       }
       const extractCount = calls.filter((call) => call === 'extract').length;
       if (options.malformedUtilityExtraction && extractCount <= 2) {
-        return { output: { message: { content: [{ text: JSON.stringify({ fields: { grandTotalAmount: firstTotal } }) }] } } };
+        return { stopReason: 'end_turn', output: { message: { content: [{ text: JSON.stringify({ fields: { grandTotalAmount: firstTotal } }) }] } } };
       }
       if (options.utilityFallbackParts && extractCount > (options.malformedUtilityExtraction ? 2 : 1)) {
-        return { output: { message: { content: [{ text: JSON.stringify({ utilityDocuments: options.utilityFallbackParts }) }] } } };
+        return { stopReason: 'end_turn', output: { message: { content: [{ text: JSON.stringify({ utilityDocuments: options.utilityFallbackParts }) }] } } };
       }
       const rereadMarker = options.rereadMarker ?? options.rereadVatAmount ?? 'Total Amount 180.00';
       const sawRereadText = JSON.stringify(content).includes(rereadMarker);
@@ -1425,7 +1377,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
           ...(sawRereadText ? { vatAmount: options.rereadVatAmount } : { missingFields: ['vatAmount'] }),
         } : {}),
       };
-      return {
+      return { stopReason: 'end_turn',
         output: {
           message: {
             content: [{
@@ -1909,8 +1861,8 @@ describe('receipt OCR reuses the intake read', () => {
       const content = command.input.messages.at(-1).content;
       const isRead = content.some((block: any) => block.image || block.document);
       calls.push(isRead ? 'read' : 'extract');
-      if (isRead) return { output: { message: { content: [{ text: JSON.stringify({ natural_text: PAGE }) }] } } };
-      return { output: { message: { content: [{ text: JSON.stringify({
+      if (isRead) return { stopReason: 'end_turn', output: { message: { content: [{ text: JSON.stringify({ natural_text: PAGE }) }] } } };
+      return { stopReason: 'end_turn', output: { message: { content: [{ text: JSON.stringify({
         classification: {
           contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
           businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', confidence: 0.9,
@@ -1963,7 +1915,7 @@ describe('receipt OCR reuses the intake read', () => {
 
   it('still cross-checks extraction against the forwarded page, not against itself', async () => {
     const original = BedrockRuntimeClient.prototype.send;
-    (BedrockRuntimeClient.prototype as any).send = async () => ({ output: { message: { content: [{ text: JSON.stringify({
+    (BedrockRuntimeClient.prototype as any).send = async () => ({ stopReason: 'end_turn', output: { message: { content: [{ text: JSON.stringify({
       classification: classification(),
       fields: { vendorName: 'ร้านกาแฟ', grandTotalAmount: '9999.00' },
     }) }] } } });
@@ -2110,10 +2062,7 @@ describe('receipt-ocr under a SPLIT budget envelope (E1c)', () => {
       const body = JSON.parse(init.body);
       if (requested.endsWith('/internal/ai/budget-step')) {
         seen.push(`step:${body.ordinal}:${body.monthKey}:${body.companyId}`);
-        return {
-          ok: true,
-          status: 200,
-          json: async () => (step.ok
+        return new Response(JSON.stringify(step.ok
             ? {
               ok: true,
               envelope: {
@@ -2121,12 +2070,11 @@ describe('receipt-ocr under a SPLIT budget envelope (E1c)', () => {
                 invocationKey: aiBudgetInvocationKey(body.companyId, body.attemptKey, body.stepKind, body.ordinal),
               },
             }
-            : { ok: false, code: step.code, budgetScope: step.budgetScope }),
-        };
+            : { ok: false, code: step.code, budgetScope: step.budgetScope }), { status: 200 });
       }
       if (requested.endsWith('/internal/ai/budget-settle')) {
         seen.push(`settle:${body.invocationKey}:${body.sourceRoute}:${body.usage.tag}`);
-        return { ok: true, status: 200, json: async () => ({ result: 'settled' }) };
+        return new Response(JSON.stringify({ result: 'settled' }), { status: 200 });
       }
       throw new Error(`unexpected fetch to ${requested}`);
     }) as any;
@@ -2273,5 +2221,106 @@ describe('receipt-ocr under a SPLIT budget envelope (E1c)', () => {
       bedrock.restore();
       money.restore();
     }
+  });
+});
+
+describe('receipt OCR strict evidence v2', () => {
+  const attachmentBase64 = Buffer.from('synthetic receipt image').toString('base64');
+  const strictParse = (fields: Record<string, unknown>, page: string) => parseReceiptOcrJson(
+    JSON.stringify({ fields }), page, new Set(), 2, { requireEvidenceV2: true, attachmentBase64, attachmentId: 'att-receipt' },
+  );
+
+  it('accepts an existing single-page receipt when each value cites its own labeled span', () => {
+    const page = '[SELLER]ร้านทดสอบ[/SELLER]\nวันที่ 2026-09-12\nรวมทั้งสิ้น 1,177.00';
+    const parsed = strictParse({
+      vendorName: 'ร้านทดสอบ', expenseDate: '2026-09-12', grandTotalAmount: '1,177.00',
+      fieldEvidence: {
+        vendorName: { pageIndex: 0, span: '[SELLER]ร้านทดสอบ[/SELLER]' },
+        expenseDate: { pageIndex: 0, span: 'วันที่ 2026-09-12' },
+        grandTotalAmount: { pageIndex: 0, span: 'รวมทั้งสิ้น 1,177.00' },
+      },
+    }, page);
+    assert.equal(parsed?.fields?.grandTotalAmount, '1,177.00');
+    assert.equal(parsed?.receiptEvidence?.fields['grandTotalAmount']?.rawValue, '1,177.00');
+  });
+
+  it('rejects a cash amount cited from a different field role despite matching elsewhere', () => {
+    const page = 'TOTAL 1,177.00 CASH 1,200.00 CHANGE 23.00';
+    assert.equal(strictParse({ grandTotalAmount: '1,200.00', fieldEvidence: {
+      grandTotalAmount: { pageIndex: 0, span: page },
+    } }, page), null);
+  });
+
+  it('rejects missing or ambiguous negative signs and keeps a printed accounting sign in evidence', () => {
+    const ambiguous = 'ROUNDING 0.05';
+    assert.equal(strictParse({ additionalCharges: [{ kind: 'ROUNDING', description: 'Rounding', amount: '-0.05', evidenceSignal: ambiguous }],
+      fieldEvidence: {
+        'additionalCharges.0.description': { pageIndex: 0, span: ambiguous },
+        'additionalCharges.0.amount': { pageIndex: 0, span: ambiguous },
+      } }, ambiguous), null);
+
+    const printed = 'ROUNDING (0.05)';
+    const printedFields = { additionalCharges: [{ kind: 'ROUNDING', description: 'Rounding', amount: '-0.05', evidenceSignal: printed }],
+      fieldEvidence: {
+        'additionalCharges.0.description': { pageIndex: 0, span: printed },
+        'additionalCharges.0.amount': { pageIndex: 0, span: printed },
+      } };
+    const parsed = strictParse(printedFields, printed);
+    assert.equal(parsed?.receiptEvidence?.fields['additionalCharges.0.amount']?.rawValue, '(0.05)');
+
+    assert.equal(strictParse({ discountAmount: '-0.05', fieldEvidence: {
+      discountAmount: { pageIndex: 0, span: 'DISCOUNT 0.05' },
+    } }, 'DISCOUNT 0.05'), null, 'the model cannot add a negative sign that the page did not print');
+  });
+
+  it('rejects dates or document numbers cited from the wrong labeled span', () => {
+    assert.equal(strictParse({ expenseDate: '2026-09-12', fieldEvidence: {
+      expenseDate: { pageIndex: 0, span: 'วันที่ 2026-09-11' },
+    } }, 'วันที่ 2026-09-11'), null);
+    assert.equal(strictParse({ documentNumber: '2026-09-12', fieldEvidence: {
+      documentNumber: { pageIndex: 0, span: 'วันที่ 2026-09-12' },
+    } }, 'วันที่ 2026-09-12'), null);
+  });
+
+  it('rejects duplicated page text and seller identities mixed across pages', () => {
+    const duplicate = '<!-- PAGE: 0 -->\nTOTAL 10.00\n<!-- PAGE: 1 -->\nTOTAL 10.00';
+    assert.equal(strictParse({ grandTotalAmount: '10.00', fieldEvidence: {
+      grandTotalAmount: { pageIndex: 0, span: 'TOTAL 10.00' },
+    } }, duplicate), null);
+
+    const mixed = '<!-- PAGE: 0 -->\n[SELLER]ร้านทดสอบ[/SELLER]\n<!-- PAGE: 1 -->\nTAX ID 1234567890123';
+    assert.equal(strictParse({ vendorName: 'ร้านทดสอบ', vendorTaxId: '1234567890123', fieldEvidence: {
+      vendorName: { pageIndex: 0, span: '[SELLER]ร้านทดสอบ[/SELLER]' },
+      vendorTaxId: { pageIndex: 1, span: 'TAX ID 1234567890123' },
+    } }, mixed), null);
+
+    const twoVendors = '<!-- PAGE: 0 -->\n[SELLER]ร้านเอ[/SELLER]\n<!-- PAGE: 1 -->\n[SELLER]ร้านบี[/SELLER]\nTOTAL 20.00';
+    assert.equal(strictParse({ vendorName: 'ร้านเอ', grandTotalAmount: '20.00', fieldEvidence: {
+      vendorName: { pageIndex: 0, span: '[SELLER]ร้านเอ[/SELLER]' },
+      grandTotalAmount: { pageIndex: 1, span: 'TOTAL 20.00' },
+    } }, twoVendors), null);
+  });
+
+  it('rejects a malformed row instead of returning a partial line list', () => {
+    const page = 'Tea 1 10.00\nCoffee 1 20.00';
+    assert.equal(strictParse({ lines: [
+      { description: 'Tea', quantity: '1', amount: '10.00', evidenceSignal: 'Tea 1 10.00' },
+      { description: 'Coffee', quantity: '1', amount: '20oops', evidenceSignal: 'Coffee 1 20.00' },
+    ], fieldEvidence: {
+      'lines.0.description': { pageIndex: 0, span: 'Tea 1 10.00' },
+      'lines.0.quantity': { pageIndex: 0, span: 'Tea 1 10.00' },
+      'lines.0.amount': { pageIndex: 0, span: 'Tea 1 10.00' },
+      'lines.1.description': { pageIndex: 0, span: 'Coffee 1 20.00' },
+      'lines.1.quantity': { pageIndex: 0, span: 'Coffee 1 20.00' },
+      'lines.1.amount': { pageIndex: 0, span: 'Coffee 1 20.00' },
+    } }, page), null);
+  });
+
+  it('rejects a source field that would otherwise be silently dropped for exceeding its storage bound', () => {
+    const overlongAddress = 'A'.repeat(501);
+    const page = `ADDRESS ${overlongAddress}`;
+    assert.equal(strictParse({ vendorAddress: overlongAddress, fieldEvidence: {
+      vendorAddress: { pageIndex: 0, span: page },
+    } }, page), null);
   });
 });

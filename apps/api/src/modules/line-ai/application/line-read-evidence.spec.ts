@@ -118,6 +118,16 @@ describe('delivered expense summary proof binding', () => {
     toolCalls: Array.from({ length: count }, () => ({ name: 'expense.list_recent', status: 'ok' })) }) as any;
   const serviceFor = (rows: unknown[]) => new LineReadEvidenceService({ client: { lineReadEvidence: { findMany: async () => rows } } } as any, {} as any, new Map());
 
+  it('preserves periodKey through a delivered summary and rejects conflicting or invalid periods', async () => {
+    const evidence = row('2026-08-01', '2026-08-31');
+    (evidence.inputJson as any).input = { periodKey: '2026-08' };
+    assert.equal((await serviceFor([evidence]).deliveredExpenseSummaryForTurn(request('ยอดค่าใช้จ่ายเดือนสิงหาคม 2569', [period('2026-08-01', '2026-08-31')]), response(1)))?.ranges.length, 1);
+    for (const input of [{ periodKey: '2026-13' }, { periodKey: '2026-09' }, { periodKey: '2026-08', fromDate: '2026-08-01' }]) {
+      (evidence.inputJson as any).input = input;
+      assert.equal(await serviceFor([evidence]).deliveredExpenseSummaryForTurn(request('ยอดค่าใช้จ่ายเดือนสิงหาคม 2569', [period('2026-08-01', '2026-08-31')]), response(1)), undefined);
+    }
+  });
+
   it('binds every requested period to one successful API evidence row', async () => {
     const periods = [period('2026-07-01', '2026-07-31'), period('2026-08-01', '2026-08-31')];
     const valid = await serviceFor([row('2026-07-01', '2026-07-31'), row('2026-08-01', '2026-08-31')])
@@ -174,5 +184,42 @@ describe('delivered expense summary proof binding', () => {
     const delivered = await serviceFor([evidence]).deliveredExpenseSummaryForTurn(
       request('ค่าใช้จ่ายเดือนสิงหาคม 2569 สาขา สาธุประดิษฐ์', [branchPeriod]), response(1));
     assert.equal(delivered?.ranges[0]?.branchId, 'uuid-branch-a');
+  });
+});
+
+describe('v2 public and action source boundaries', () => {
+  const request = { requestId: 'request', userContext: { companyId: 'company', internalUserId: 'user' } } as any;
+  const service = () => new LineReadEvidenceService({ client: { lineReadEvidence: { findMany: async () => [] } } } as any, {} as any, new Map());
+  it('does not replay public lookup admission as an ERP read, but rejects a private source attached to it', async () => {
+    const response = { toolsInvoked: ['public.lookup'], toolCalls: [{ name: 'public.lookup', status: 'ok' }], sourceRefs: [{ module: 'public', entityType: 'public_source' }] } as any;
+    assert.deepEqual(await service().forTurn(request, response), []);
+    assert.equal(await service().forTurn(request, { ...response, sourceRefs: [{ module: 'expenses', entityType: 'expense' }] }), null);
+  });
+  it('recognizes explicit draft ACTION locators only on reported draft tools', async () => {
+    const response = { toolsInvoked: ['reimbursement.draft.get_options'], toolCalls: [{ name: 'reimbursement.draft.get_options', status: 'ok' }], sourceRefs: [{ module: 'reimbursements', entityType: 'reimbursement_draft_action', sourceType: 'ACTION' }] } as any;
+    assert.deepEqual(await service().forTurn(request, response), []);
+    assert.equal(await service().forTurn(request, { ...response, toolsInvoked: [], toolCalls: [] }), null);
+    assert.equal(await service().forTurn(request, { ...response, sourceRefs: [{ ...response.sourceRefs[0], sourceType: 'ERP_READ' }] }), null);
+  });
+});
+
+describe('exact aggregate read provenance compatibility', () => {
+  it('records decimal strings without precision loss and refuses narrowed/partial summary reuse', async () => {
+    let saved: any;
+    const tx = { $executeRaw: async () => {}, lineReadEvidence: { count: async () => 0, create: async ({ data }: any) => { saved = data; return { id: 'proof' }; } } };
+    const service = new LineReadEvidenceService({ client: { $transaction: async (fn: any) => fn(tx) } } as any, {} as any, new Map());
+    const ctx = { companyId: 'company', userId: 'user', membershipId: 'member', requestId: 'request', locale: 'th-TH', chatKeyHash: 'a'.repeat(16) } as any;
+    const result = { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-27T00:00:00.000Z', sourceRefs: [],
+      data: { total: 1, summary: { countedItems: 1, cancelledCount: 0, totalAmount: '90071992547409.93' }, period: { fromDate: '2026-08-01', toDate: '2026-08-31', defaultedToCurrentMonth: false } },
+      queryApplied: { timezone: 'Asia/Bangkok', dateBasis: 'expense_incurred_date', statusBasis: 'exclude_rejected_voided', dataset: 'operational_expense_records', filters: {} },
+      completeness: { aggregate: 'complete' } } as any;
+    await service.record(ctx, { periodKey: '2026-08' }, result);
+    assert.equal(saved.inputJson.expenseSummary.fromDate, '2026-08-01');
+    assert.equal(result.data.summary.totalAmount, '90071992547409.93');
+    for (const changes of [{ queryApplied: { ...result.queryApplied, filters: { categoryId: 'travel' } } },
+      { queryApplied: { ...result.queryApplied, statusBasis: 'CONFIRMED' } }, { completeness: { aggregate: 'partial' } }]) {
+      await service.record(ctx, { periodKey: '2026-08' }, { ...result, ...changes });
+      assert.equal(saved.inputJson.expenseSummary, undefined);
+    }
   });
 });

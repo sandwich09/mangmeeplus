@@ -1,3 +1,20 @@
+import { validateLineAiSourceRefV2, parseLineAiSemanticCoverage, parseLineAiSemanticSubrequests, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
+import { PDFDocument } from 'pdf-lib';
+import { LineDocumentQaError, LineDocumentQaService, type LineDocumentQaJobRow, type LineDocumentQaOwner } from '../line-document-qa.service';
+import { LineDocumentQaWorker } from '../line-document-qa.worker';
+import { parseLineDocumentQaResult } from '@watchdog-bms/contracts';
+import { LineReimbursementDraftService } from '../line-reimbursement-draft.service';
+import type { LineReimbursementDraftResult } from '../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case';
+import { LineReimbursementDraftAdapterService } from '../line-reimbursement-draft-adapter.service';
+import { buildReimbursementDraftMessages, buildReimbursementOptionsMessages } from '../../domain/logic/line-reimbursement-draft-card.logic';
+import { DrainLineLedgerUseCase } from './drain-line-ledger.use-case';
+import { LineCaptureResultNotifierUseCase } from './line-capture-result-notifier.use-case';
+import { parseLinePreferenceCommand, formatLinePreferences, LINE_PREFERENCE_NOTICE } from '../../domain/logic/line-preference-command.logic';
+import { createLineAiInputEvidence, verifyLineAiInputEvidence, type AiBudgetGrantV2, type AiBudgetProfileIdV2 } from '@watchdog-bms/contracts';
+import { LineLedgerDeliveryService } from '../line-ledger-delivery.service';
+import { buildLineDeliveryPlan, deliveryHash, lineDeliveryPlanId, parseLineDeliveryPlan, parseDeliveryBatchStates, type DeliveryAuthorizationV2, type DeliveryPlanV2 } from '../../domain/logic/line-delivery-plan.logic';
+import { parseAcceptedLedgerRequest } from '../line-ledger-accepted-request';
+import { LineConversationContextService, lineConversationId, type LineConversationOwner } from '../line-conversation-context.service';
 import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 /**
  * Processes a verified LINE text message event end-to-end:
@@ -9,7 +26,7 @@ import { LineMessagingCredentialsService } from '../../../../common/config/line-
  * 6. Reply to LINE
  * 7. Persist turn
  */
-import { HttpException, Inject, Injectable, Logger, Optional, ForbiddenException, ConflictException, ServiceUnavailableException } from '@nestjs/common';
+import { HttpException, Inject, forwardRef, Injectable, Logger, Optional, ForbiddenException, ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { LineReadEvidenceService } from '../line-read-evidence.service';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '../../../../generated/prisma/client';
@@ -125,7 +142,7 @@ import { ListApprovalQueueUseCase } from '../../../reimbursements/application/us
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
 import type { AiBudgetScope, BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, PlanTermLockReason, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFallbackReason, ReceiptOcrFieldResult, ReceiptOcrResponse, RequestContext } from '@watchdog-bms/contracts';
-import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, mapThaiDigits, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, extractValueCandidatesV2, mapThaiDigits, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, LINE_CLARIFICATION_SOURCE_MAX_BYTES, type LedgerEntry, type LedgerSubRequestInput } from '../line-ai-ledger.service';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
@@ -171,12 +188,16 @@ export type LineTextEvent = {
   lineUserId: string;
   replyToken: string;
   messageText: string;
+  inputEvidence?: import('@watchdog-bms/contracts').LineAiInputEvidenceV2;
   messagingChannelId: string;
+  channelKind?: 'USER' | 'GROUP' | 'ROOM';
   lineMessageId?: string;
   /** Chat to push into when the reply token has expired (group id in group chats). */
   pushTargetId?: string;
   /** Exact preview bound to a validated draft confirm/cancel postback; typed commands lack this. */
   draftUpdatePreviewId?: string;
+  reimbursementDraftControl?: import('../line-reimbursement-draft.service').LineReimbursementDraftControl;
+  answerDeliveryControl?: import('../../domain/logic/line-delivery-plan.logic').LineAnswerDeliveryControl;
   /** Internal buffer hook: settle any in-flight pre-reply feedback before the answer. */
   beforeReply?: () => Promise<void>;
   /** P12-3b: filled in once the turn has resolved WHO it is answering, so the send boundary can
@@ -196,6 +217,7 @@ export type LineReceiptUploadEvent = {
   fileName?: string;
   fileSize?: number;
   messagingChannelId: string;
+  channelKind?: 'USER'|'GROUP'|'ROOM';
   /** Chat to push into when the reply token has expired (group id in group chats). */
   pushTargetId?: string;
   /** Resolved at durable acceptance so a later company switch cannot move this receipt. */
@@ -667,7 +689,7 @@ const MEDIA_PENDING_REQUEST_TEXT = 'ไฟล์ที่ผู้ใช้ส�
 const PENDING_MEDIA_RESOLUTION = Symbol('pendingMediaResolution');
 
 /** Same chatKey the text path and the message buffer use: the group, else the person. */
-function mediaChatKey(event: LineReceiptUploadEvent): string {
+function mediaChatKey(event: { lineUserId: string; pushTargetId?: string }): string {
   return event.pushTargetId ?? event.lineUserId;
 }
 
@@ -1756,6 +1778,24 @@ export function lineClarificationContentHash(item: Pick<LedgerSubRequestInput, '
 @Injectable()
 export class ProcessLineWebhookUseCase {
   private readonly logger = new Logger(ProcessLineWebhookUseCase.name);
+  private readonly documentQaDelivery = new WeakMap<object, LineDocumentQaJobRow>();
+  @Inject(LineDocumentQaService) private readonly documentQa!: LineDocumentQaService;
+  @Inject(LineDocumentQaWorker) private readonly documentQaWorker!: LineDocumentQaWorker;
+  private readonly semanticDelivery = new WeakMap<object, NonNullable<LineAiTurnResponse['semanticCoverage']>>();
+  private readonly deliveryReimbursements = new WeakMap<object, { context: RequestContext; result: LineReimbursementDraftResult }>();
+  @Inject(LineReimbursementDraftService) private readonly reimbursementDrafts!: LineReimbursementDraftService;
+  @Inject(LineReimbursementDraftAdapterService) private readonly reimbursementAdapter!: LineReimbursementDraftAdapterService;
+  private readonly intakePlansV2 = new WeakMap<LineTextEvent, GovernedLineIntakeRoutePlan>();
+  private readonly semanticTaskMappings = new WeakMap<object, Array<{ index: number; taskId: string; subrequestIndex: number }>>();
+  private readonly pendingMediaNotices = new WeakMap<object, LineReplyMessage>();
+  private readonly retainedTaskSources = new WeakMap<object, { source: NonNullable<LineIntakeRouteRequest['retainedTaskSource']>; sourceText: string; operationId: string }>();
+  private readonly mixedBusinessQuestions = new WeakMap<object, { requestId: string; ledgerId?: string | null;
+    businessIndexes: number[]; businessStatus: 'handled' | 'needs_user' | 'denied'; selectionRequired: boolean;
+    dependentQuestions: Array<{ index: number; goal: string; dependsOn: number[] }>;
+    response: LineAiTurnResponse; coverage: NonNullable<LineAiTurnResponse['semanticCoverage']> }>();
+  private readonly mediaTextContinuations = new WeakMap<LineTextEvent, { route: GovernedLineIntakeRoutePlan; requestId: string }>();
+  private readonly reimbursementOptionsDelivery = new WeakMap<object, { actionId: string; options: NonNullable<Awaited<ReturnType<LineReimbursementDraftAdapterService['readDisplayOptions']>>> }>();
+  private readonly budgetGrantsV2 = new WeakMap<object, AiBudgetGrantV2>();
   private readonly deliveryAccess = new WeakMap<object, { userId: string; companyId: string; membershipId: string; fingerprint: string; allowDuringSupportPause?: boolean }>();
   private readonly deliveryDenialNotified = new WeakSet<object>();
   private readonly deliverySources = new WeakMap<object, { requestId: string; ids: string[] | null; expenseSummary?: LineAiConversationContext['deliveredExpenseSummary']; expenseCriterionConfirmation?: boolean }>();
@@ -1770,6 +1810,11 @@ export class ProcessLineWebhookUseCase {
   private readonly publicPolicyTopics = new WeakMap<object, PublicPolicyTopic>();
   private readonly replayedOutcomes = new WeakMap<object, unknown>();
   private readonly intermediateDeliveries = new WeakSet<object>();
+  private readonly boundConversations = new WeakMap<object, { owner: LineConversationOwner; id: string; epoch: number }>();
+  @Inject(forwardRef(() => DrainLineLedgerUseCase)) private readonly ledgerDrain!: Pick<DrainLineLedgerUseCase, 'verifyLedgerDeliveryPlan'>;
+  @Inject(LineCaptureResultNotifierUseCase) private readonly captureNotifier!: LineCaptureResultNotifierUseCase;
+  @Inject(LineLedgerDeliveryService) private readonly deliveryPlans!: LineLedgerDeliveryService;
+  @Inject(LineConversationContextService) private readonly contextV2!: LineConversationContextService;
   @Inject(LineReadEvidenceService) private readonly readEvidence!: LineReadEvidenceService;
 
   constructor(private readonly lineCredentials: LineMessagingCredentialsService,
@@ -2057,6 +2102,8 @@ export class ProcessLineWebhookUseCase {
    */
   private async tryRouteIntake(input: {
     requestId: string;
+    event?: LineTextEvent;
+    enabledFeatures?: string[];
     /** The original webhook event — the intake's money ATTEMPT identity (ADR 0013 §4). */
     webhookEventId?: string;
     retryWebhookEventId?: string;
@@ -2074,8 +2121,14 @@ export class ProcessLineWebhookUseCase {
     substituteContext?: LineIntakeSubstituteContext;
     busyWaitDeadlineMs?: number;
   }): Promise<GovernedLineIntakeRoutePlan> {
+    const continuation = input.event && this.mediaTextContinuations.get(input.event);
+    if (continuation) return continuation.route;
+    const cached = input.event && this.intakePlansV2.get(input.event);
+    if (cached) return cached;
     try {
-      const activeCategories = this.expenseRepo
+      const budgetGrantV2 = input.event ? await this.prepareTextGrantV2(input.event, input.requestId) : undefined;
+      const reliabilityContext = input.event ? await this.reliabilityContext(input.event) : {};
+      const activeCategories = !budgetGrantV2 && this.expenseRepo
         ? (await this.expenseRepo.listCategories(input.companyId)).map((c) => ({ id: c.id, name: c.name }))
         : [];
       return await this.aiGateway.requestLineIntakeRoute({
@@ -2087,6 +2140,10 @@ export class ProcessLineWebhookUseCase {
         userId: input.userId,
         locale: 'th-TH',
         messageText: input.messageText,
+        ...reliabilityContext,
+        ...(input.event && this.retainedTaskSources?.get(input.event) ? { retainedTaskSource: this.retainedTaskSources.get(input.event)!.source } : {}),
+        ...(budgetGrantV2 && input.event?.inputEvidence ? { inputEvidence: input.event.inputEvidence, budgetGrantV2, contractCapabilities: ['input-evidence-v2' as const, 'budget-envelope-v2' as const] } : {}),
+        ...(input.enabledFeatures ? { enabledFeatures: input.enabledFeatures } : {}),
         ...(input.conversationContext && { conversationContext: input.conversationContext }),
         ...(input.valueCandidates && { valueCandidates: input.valueCandidates }),
         ...(input.openClarifications && { openClarifications: input.openClarifications }),
@@ -2097,12 +2154,14 @@ export class ProcessLineWebhookUseCase {
         // intake prompt/catalog/cost. fusedPlan gates the fused-plan section + ~21KB catalog; substitute
         // gates the substitute semantic instructions.
         capabilities: {
+          approvedKnowledge: !!input.event && this.boundConversations.has(input.event) && this.config.lineAiApprovedKnowledgeEnabled,
           fusedPlan: this.config.lineAiFusedPlanShadowEnabled || this.config.lineAiPreparedSimpleReadEnabled,
           // PRIMARY only — 'shadow' is an inert NO-GO that must stay byte-identical to 'off' (no substitute
           // capability, so the router is never even offered the semantic route it could not safely act on).
           substituteSemantic: this.config.lineAiSubstituteSemanticRoutingMode === 'primary',
           // clarify_only/handoff only — 'shadow' is inert like 'off' (the router is never offered the route).
-          reimbursementSemantic: this.config.lineAiReimbursementSemanticMode === 'clarify_only'
+          reimbursementSemantic: (!!input.event && this.boundConversations.has(input.event) && this.config.lineAiReimbursementDraftWriteEnabled)
+            || this.config.lineAiReimbursementSemanticMode === 'clarify_only'
             || this.config.lineAiReimbursementSemanticMode === 'handoff',
           // Advisor staged capability (advisor spec §17): taken ONLY from server config, never from a
           // message, a client field or a user-supplied company id. The stages are cumulative, so each
@@ -2160,7 +2219,7 @@ export class ProcessLineWebhookUseCase {
     quickReply?: LineReplyMessage['quickReply'],
   ): Promise<void> {
     const result = await this.deliverMessages(event, [{
-      ...this.lineReply.buildTextMessage(text),
+      ...(this.boundConversations.has(event) ? { type: 'text' as const, text } : this.lineReply.buildTextMessage(text)),
       ...(quickReply ? { quickReply } : {}),
     }]);
     if (result !== 'ok') throw new LineDeliveryError(result);
@@ -2937,6 +2996,13 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
+    const v2Preview = await this.prisma.client.lineDeliveryPlan.findFirst({ where: { companyId: ctx.companyId, userId: ctx.userId,
+      planJson: { path: ['control', 'previewId'], equals: event.draftUpdatePreviewId } }, select: { status: true, planJson: true } });
+    if (v2Preview && (v2Preview.status !== 'ACCEPTED' || !parseLineDeliveryPlan(v2Preview.planJson))) {
+      await this.deliverReply(event, 'ยังยืนยันไม่ได้ค่ะ รายละเอียดคำขอแก้ไขยังส่งไม่ครบ กรุณารอหรืออ่านส่วนที่เหลือก่อน');
+      await this.updateEventLog(event.webhookEventId, 'draft_update_blocked', 'PREVIEW_NOT_FULLY_DELIVERED', ctx.companyId);
+      return;
+    }
     const outcome = await this.draftUpdate.apply(ctx, chatKeyHash, event.webhookEventId, event.draftUpdatePreviewId);
     let reply: string;
     let status = 'completed';
@@ -2957,7 +3023,7 @@ export class ProcessLineWebhookUseCase {
       status = outcome.reason === 'forbidden' ? 'forbidden' : 'draft_update_blocked';
     }
     await this.deliverCompletedReply(event, reply, ctx.companyId, access);
-    await this.persistIntakeTurn({
+    await this.persistIntakeTurn({ event,
       userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: normalizeLineText(event.messageText), replyText: reply, intent: 'CORRECTION',
     });
@@ -2996,10 +3062,11 @@ export class ProcessLineWebhookUseCase {
       try {
         await this.deliverRequiredMessages(event, [buildDraftUpdatePreviewCard(outcome.preview)]);
       } catch (error) {
-        await this.draftUpdate.discardUndeliveredPreview(ctx, chatKeyHashOf(event), outcome.preview.previewId);
+        const savedPlan = this.boundConversations.has(event) && await this.prisma.client.lineTurnOutcome.findUnique({ where: { webhookEventId: event.webhookEventId }, select: { presentationKind: true } });
+        if (!savedPlan || savedPlan.presentationKind !== 'delivery_plan_v2') await this.draftUpdate.discardUndeliveredPreview(ctx, chatKeyHashOf(event), outcome.preview.previewId);
         throw error;
       }
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizeLineText(event.messageText),
         replyText: outcome.preview.previewId, intent: 'CORRECTION',
@@ -3010,7 +3077,7 @@ export class ProcessLineWebhookUseCase {
     if (outcome.status === 'move_suggestion') {
       const reply = draftUpdateMoveSuggestionReply(outcome.lineNumber, outcome.chargeLabel);
       await this.deliverCompletedReply(event, reply, ctx.companyId, access);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizeLineText(event.messageText), replyText: reply, intent: 'CORRECTION',
       });
@@ -3023,7 +3090,7 @@ export class ProcessLineWebhookUseCase {
     if (outcome.reason === 'feature_disabled') return 'not_handled';
     const reply = draftUpdateBlockedReply(outcome.reason, this.config.webBaseUrl, ctx.companyId, outcome.expenseId);
     await this.deliverCompletedReply(event, reply, ctx.companyId, access);
-    await this.persistIntakeTurn({
+    await this.persistIntakeTurn({ event,
       userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: normalizeLineText(event.messageText), replyText: reply, intent: 'CORRECTION',
     });
@@ -3067,6 +3134,7 @@ export class ProcessLineWebhookUseCase {
     /** Spec §13: the state badge the reply's own use case chose. Absent renders exactly as before. */
     badge?: string,
   ): Promise<void> {
+    if (this.boundConversations.has(event)) return this.deliverRequiredMessages(event, [{ type: 'text', text }]);
     if (Array.from(text).length > LINE_FLEX_CARD_BODY_MAX_CHARS) {
       return this.deliverCompletedReplies(event, splitLineExpenseDraftReply(text), companyId, access, undefined, true);
     }
@@ -3105,7 +3173,8 @@ export class ProcessLineWebhookUseCase {
     expenseDraft?: LineExpenseDraftCardFacts,
     requestedDraftEdit = false,
   ): Promise<void> {
-    if (texts.length === 0 || texts.length > LINE_MAX_MESSAGES_PER_REPLY) throw new Error('LINE_EXPENSE_DRAFT_REPLY_PARTS_INVALID');
+    if (texts.length === 0 || texts.length > (this.boundConversations.has(event) ? 15 : LINE_MAX_MESSAGES_PER_REPLY)) throw new Error('LINE_EXPENSE_DRAFT_REPLY_PARTS_INVALID');
+    if (this.boundConversations.has(event)) return this.deliverRequiredMessages(event, texts.map(text => ({ type: 'text' as const, text })));
     const messages = await this.timeStage(event.webhookEventId, 'render', async () => {
       const terminal = texts[texts.length - 1]!;
       // Default-off is the legacy shape exactly: every part a text message, completion quick reply on the
@@ -3149,7 +3218,878 @@ export class ProcessLineWebhookUseCase {
     event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; beforeReply?: () => Promise<void>; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
-    return this.timeStage(event.webhookEventId, 'line_delivery', () => this.sendMessages(event, messages));
+    const mediaNotice = this.pendingMediaNotices?.get(event);
+    if (mediaNotice) messages = [...messages, mediaNotice];
+    const mixed = this.mixedBusinessQuestions?.get(event);
+    if (!mixed || this.intermediateDeliveries.has(event)) return this.timeStage(event.webhookEventId, 'line_delivery', () => this.sendMessages(event, messages));
+    const businessText = messages.map(message => message.type === 'text' ? message.text : message.type === 'flex' ? message.canonicalText ?? '' : '').join('\n');
+    const businessCoverage: NonNullable<LineAiTurnResponse['semanticCoverage']> = mixed.businessIndexes.map(index => ({ index,
+      status: mixed.selectionRequired ? 'needs_user' : mixed.businessStatus,
+      ...(mixed.selectionRequired ? { question: `กรุณาเลือกทำข้อ ${index + 1} ก่อน ระบบจะใช้รายละเอียดเดิมของข้อนี้`, reasonCode: 'FINANCIAL_ACTION_SELECTION_REQUIRED' }
+        : mixed.businessStatus === 'needs_user' ? { question: businessText.length <= 500 && businessText.trim() ? businessText : 'กรุณาตอบข้อมูลที่รายการนี้ถามให้ครบ', reasonCode: 'BUSINESS_INPUT_REQUIRED' } : {}) }));
+    const unresolvedDependencies = (item: { dependsOn: number[] }) => item.dependsOn.filter(index =>
+      mixed.selectionRequired || mixed.businessStatus !== 'handled' || !mixed.businessIndexes.includes(index));
+    const dependentCoverage: NonNullable<LineAiTurnResponse['semanticCoverage']> = mixed.dependentQuestions.map(item => ({ index: item.index,
+      status: 'needs_user', reasonCode: 'DEPENDENCY_SOURCE_PENDING',
+      question: unresolvedDependencies(item).length === 0
+        ? `กรุณาถามข้อ ${item.index + 1} ต่อโดยอ้างรายการที่เพิ่งบันทึก`
+        : `กรุณาทำข้อ ${unresolvedDependencies(item).map(index => index + 1).join(', ')} ให้เสร็จก่อน แล้วถามข้อ ${item.index + 1} ต่อ` }));
+    const coverage: NonNullable<LineAiTurnResponse['semanticCoverage']> = [...mixed.coverage, ...businessCoverage, ...dependentCoverage]
+      .sort((a, b) => a.index - b.index);
+    this.semanticDelivery.set(event, coverage);
+    const dependentText = mixed.dependentQuestions.map(item => unresolvedDependencies(item).length === 0
+      ? `⏳ ข้อ ${item.index + 1} “${item.goal}” ยังรออ่านจากผลจริงค่ะ กรุณาถามข้อนี้อีกครั้งโดยอ้าง “รายการที่เพิ่งบันทึก”`
+      : `⏳ ข้อ ${item.index + 1} “${item.goal}” ต้องรอให้ข้อ ${unresolvedDependencies(item).map(index => index + 1).join(', ')} เสร็จก่อน ระบบยังไม่ได้ตอบข้อนี้จากข้อมูลที่ยังไม่บันทึก`).join('\n');
+    const sideText = [mixed.response.replyText.trim() ? formatLineReply(mixed.response, this.config.webBaseUrl) : '', dependentText].filter(Boolean).join('\n\n');
+    const remainingChoices = this.retainedTaskSources?.has(event) && mixed.businessStatus === 'handled' ? await this.remainingTaskChoiceMessages(event) : [];
+    const combined = [...messages, ...splitLineExpenseDraftReply(sideText).filter(Boolean).map(text => ({ type: 'text' as const, text })), ...remainingChoices];
+    const result = await this.timeStage(event.webhookEventId, 'line_delivery', () => this.sendMessages(event, combined));
+    if (result === 'ok') {
+      await this.settleSemanticTask(event as LineTextEvent, coverage);
+      const bound = this.boundConversations.get(event);
+      if (bound && mixed.ledgerId) await this.ledger?.ack({ key: ledgerKey(bound.owner.companyId, mediaChatKey(event)), id: mixed.ledgerId,
+        companyId: bound.owner.companyId, turnId: mixed.requestId, kind: 'turn' }, 'acked');
+    }
+    return result;
+  }
+
+  private async handleDocumentQaControl(event: LineTextEvent): Promise<boolean> {
+    const match = /^\/qa cancel ([A-Za-z0-9_-]{1,128})$/u.exec(event.messageText.trim());
+    const bound = this.boundConversations.get(event); if (!match || !bound) return false;
+    const owner = { ...bound.owner, ownerEpoch: bound.epoch }, job = await this.documentQa.getById(match[1]!).catch(() => null);
+    if (!job || job.companyId !== owner.companyId || job.userId !== owner.userId || job.ownerMembershipId !== owner.membershipId
+      || job.ownerEpoch !== owner.ownerEpoch || job.messagingChannelId !== owner.messagingChannelId || job.chatKeyHash !== owner.chatKeyHash) {
+      await this.deliverReply(event, 'ไม่พบงานอ่านไฟล์นี้ในแชตปัจจุบันค่ะ'); return true;
+    }
+    const canceled = await this.documentQa.cancel(job.id, owner);
+    const pending = await this.prisma.client.lineIntakePendingMedia.findMany({ where: { companyId: owner.companyId, userId: owner.userId,
+      readJobId: job.id, ...this.pendingMediaBinding(event) }, select: { askedQuestionJson: true } });
+    // ANSWER_READY stays immutable. Stopping its pending delivery never rewrites the saved answer.
+    await this.prisma.client.lineIntakePendingMedia.updateMany({ where: { companyId: owner.companyId, userId: owner.userId,
+      readJobId: job.id, ...this.pendingMediaBinding(event) }, data: { status: 'EXPIRED', revision: { increment: 1 } } });
+    for (const row of pending) {
+      const webhookEventId = (row.askedQuestionJson as { webhookEventId?: string } | null)?.webhookEventId;
+      if (!webhookEventId) continue;
+      const outcome = await this.prisma.client.lineTurnOutcome.findUnique({ where: { webhookEventId }, include: { deliveryPlan: true } });
+      const plan = parseLineDeliveryPlan(outcome?.deliveryPlan?.planJson);
+      if (plan?.authorization.kind === 'PRIVATE' && plan.authorization.actor.ownerEpoch === bound.epoch
+        && plan.authorization.actor.chatKeyHash === bound.owner.chatKeyHash
+        && plan.authorization.proofs.some(proof => proof.kind === 'LINE_DOCUMENT_QA' && proof.jobId === job.id)) {
+        await this.deliveryPlans.cancelPlan(outcome!.deliveryPlan!.id, outcome!.deliveryPlan!.planHash);
+      }
+    }
+    await this.deliverReply(event, canceled ? 'ยกเลิกงานอ่านไฟล์แล้วค่ะ ยังไม่ได้สร้างรายการ'
+      : 'หยุดการส่งคำตอบอ่านไฟล์ที่ค้างแล้วค่ะ ไม่ได้ย้อนข้อมูลหรือรายการใด');
+    const inventory = await this.restoreDocumentQaTask(event, job.id);
+    if (inventory.length) await this.settleSemanticTask(event, inventory.map(item => ({ index: item.index,
+      status: item.kind === 'file' ? 'unsupported' as const : 'needs_user' as const,
+      reasonCode: item.kind === 'file' ? 'QA_CANCELED_BY_USER' : 'QA_SEPARATE_CLAUSE_PENDING', question: item.goal })));
+    await this.updateEventLog(event.webhookEventId, 'document_qa_canceled', undefined, owner.companyId); return true;
+  }
+
+  private async deliverDocumentQaProgress(event: LineTextEvent | LineReceiptUploadEvent, jobId: string, text: string): Promise<void> {
+    this.intermediateDeliveries.add(event);
+    await this.deliverRequiredMessages(event, [{ type: 'text', text, quickReply: { items: [{ type: 'action',
+      action: { type: 'message', label: 'ยกเลิกอ่านไฟล์', text: `/qa cancel ${jobId}` } }] } }]);
+  }
+
+  private pendingMediaSelectionMessage(rows: Array<{ attachmentId: string; lineMessageId: string }>): LineReplyMessage {
+    const choices = rows.slice(0, 6), a = choices[0], b = choices[1];
+    return { type: 'text', text: `เก็บไฟล์แต่ละไฟล์แยกกันแล้วค่ะ กรุณาเลือกไฟล์ที่จะทำต่อ หรือระบุว่าไฟล์ใหม่แทนหรือเพิ่มเติมไฟล์เดิม ยังไม่ได้อ่านหรือสร้างรายการจากไฟล์ที่ไม่ได้เลือก\n${choices.map((row, i) => `ไฟล์ ${i + 1}: ${row.attachmentId}`).join('\n')}`,
+      quickReply: { items: [
+        ...choices.map((row, i) => ({ type: 'action' as const, action: { type: 'message' as const, label: `เลือกไฟล์ ${i + 1}`, text: `/media select ${row.attachmentId}` } })),
+        ...(a && b ? [{ type: 'action' as const, action: { type: 'message' as const, label: 'ไฟล์ใหม่แทนเดิม', text: `/media replace ${a.attachmentId} ${b.attachmentId}` } },
+          { type: 'action' as const, action: { type: 'message' as const, label: 'เก็บทั้งสองไฟล์', text: `/media supplement ${a.attachmentId} ${b.attachmentId}` } }] : []),
+      ] } };
+  }
+
+  /** Exact server-rendered controls change only pending attachment selection, never financial records. */
+  private async handlePendingMediaControl(event: LineTextEvent): Promise<boolean> {
+    const match = /^\/media (select|replace|supplement) ([A-Za-z0-9_-]{1,128})(?: ([A-Za-z0-9_-]{1,128}))?$/u.exec(event.messageText.trim());
+    const bound = this.boundConversations.get(event); if (!match || !bound) return false;
+    const operation = match[1]!, firstId = match[2]!, secondId = match[3];
+    if (operation === 'select' ? secondId !== undefined : !secondId || secondId === firstId) {
+      await this.deliverReply(event, 'คำสั่งเลือกไฟล์ไม่ครบค่ะ กรุณาเลือกจากปุ่มของไฟล์ปัจจุบัน'); return true;
+    }
+    const where = { companyId: bound.owner.companyId, userId: bound.owner.userId, status: 'PENDING' as const,
+      expiresAt: { gt: new Date() }, ...this.pendingMediaBinding(event) };
+    const rows = await this.prisma.client.lineIntakePendingMedia.findMany({ where, orderBy: { createdAt: 'asc' }, take: 6 });
+    const a = rows.find(row => row.attachmentId === firstId), b = secondId ? rows.find(row => row.attachmentId === secondId) : undefined;
+    if (!a || secondId && !b || rows.some(row => row.readJobId)) {
+      await this.deliverReply(event, 'ไฟล์ที่เลือกเปลี่ยนหรือเริ่มอ่านแล้วค่ะ กรุณาส่งคำถามใหม่พร้อมไฟล์ ยังไม่ได้เปลี่ยนไฟล์ของงานเดิม'); return true;
+    }
+    const selected = operation === 'replace' ? b! : a, ids = operation === 'supplement' ? [a.attachmentId, b!.attachmentId] : [selected.attachmentId];
+    try {
+      await this.prisma.client.$transaction(async tx => {
+        for (const row of rows) {
+          const metadata = row.askedQuestionJson && typeof row.askedQuestionJson === 'object' && !Array.isArray(row.askedQuestionJson) ? row.askedQuestionJson : {};
+          const updated = await tx.lineIntakePendingMedia.updateMany({ where: { ...where, id: row.id, revision: row.revision },
+            data: { ...(operation === 'replace' && row.id === a.id ? { status: 'EXPIRED' } : {}),
+              askedQuestionJson: { ...metadata, selectedForContinuation: row.id === selected.id, selectedAttachmentIds: ids }, revision: { increment: 1 } } });
+          if (updated.count !== 1) throw new Error('LINE_PENDING_MEDIA_STALE');
+        }
+      });
+    } catch {
+      await this.deliverReply(event, 'รายการไฟล์เปลี่ยนระหว่างเลือกค่ะ กรุณาเลือกใหม่ ยังไม่ได้เปลี่ยนไฟล์ให้'); return true;
+    }
+    await this.deliverReply(event, operation === 'supplement' ? 'เก็บทั้งสองไฟล์เป็นชุดเดียวกันแล้วค่ะ บอกคำถามที่ต้องการให้ช่วยอ่านได้เลย ยังไม่ได้สร้างรายการ'
+      : operation === 'replace' ? 'เลือกไฟล์ใหม่แทนไฟล์เดิมแล้วค่ะ ไฟล์เดิมจะไม่ถูกนำไปอ่านในงานนี้ ยังไม่ได้สร้างรายการ'
+        : 'เลือกไฟล์นี้ไว้แล้วค่ะ บอกคำถามหรือประเภทเอกสารที่จะทำต่อได้เลย ยังไม่ได้สร้างรายการ');
+    await this.updateEventLog(event.webhookEventId, 'media_selection_saved', undefined, bound.owner.companyId); return true;
+  }
+
+  private async handlePreferenceCommand(event: LineTextEvent, requestId: string): Promise<boolean> {
+    const command = parseLinePreferenceCommand(event.messageText); if (!command) return false;
+    const bound = this.boundConversations.get(event);
+    if (!bound || !this.config.lineAiPreferencesEnabled) {
+      await this.deliverReply(event, 'การจำรูปแบบคำตอบยังไม่เปิดใช้ในแชตนี้ค่ะ คุณยังระบุรูปแบบที่ต้องการสำหรับคำตอบครั้งนี้ได้');
+      await this.updateEventLog(event.webhookEventId, 'preference_unavailable'); return true;
+    }
+    let reply: string, status = 'preference_completed';
+    try {
+      const current = await this.contextV2.listPreferences(bound.owner);
+      if (!current || current.epoch !== bound.epoch) throw new Error('STALE_PREFERENCE_OWNER');
+      if (command.kind === 'list') reply = formatLinePreferences(current.values) + '\n' + LINE_PREFERENCE_NOTICE;
+      else {
+        const applied = await this.contextV2.changePreferences(bound.owner, { requestId: event.webhookEventId, expectedVersion: current.version, epoch: bound.epoch,
+          ...(command.kind === 'set' ? { set: command.values } : { delete: command.keys }) });
+        if (applied !== 'applied') throw new Error('STALE_PREFERENCE_VERSION');
+        await this.audit.log({ companyId: bound.owner.companyId, actorUserId: bound.owner.userId, action: 'ai.line.preference.changed', targetType: 'AiConversation', targetId: bound.id,
+          requestId, result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { operation: command.kind, fields: command.kind === 'set' ? Object.keys(command.values) : command.keys } });
+        reply = command.kind === 'set' ? 'จำรูปแบบคำตอบให้แล้วค่ะ\n' + LINE_PREFERENCE_NOTICE : 'ลบรูปแบบคำตอบที่ระบุแล้วค่ะ';
+      }
+    } catch { reply = 'ตอนนี้ตรวจสอบหรือบันทึกความจำไม่ได้ค่ะ ยังยืนยันไม่ได้ว่าระบบจำหรือลบให้แล้ว'; status = 'preference_unavailable'; }
+    await this.deliverReply(event, reply); await this.updateEventLog(event.webhookEventId, status, undefined, bound.owner.companyId); return true;
+  }
+
+  private async textEvidenceV2(event: LineTextEvent) {
+    if (!this.boundConversations.has(event)) return undefined;
+    if (event.inputEvidence) {
+      const verified = await verifyLineAiInputEvidence(event.inputEvidence, event.messageText);
+      if (!verified) throw new Error('LINE_INPUT_EVIDENCE_INVALID');
+      return verified;
+    }
+    const log = await this.prisma.client.lineWebhookEventLog.findUnique({ where: { webhookEventId: event.webhookEventId } });
+    if (!log) throw new Error('LINE_INPUT_EVIDENCE_MISSING');
+    const created = await createLineAiInputEvidence({ turnKey: deliveryHash(event.webhookEventId), parts: [{ partId: 'part-0',
+      eventIdHash: deliveryHash(event.webhookEventId), acceptedAtMs: log.createdAt.getTime(), rawText: event.messageText }] });
+    if (!created) throw new Error('LINE_INPUT_EVIDENCE_INVALID');
+    event.inputEvidence = created.inputEvidence;
+    return created.inputEvidence;
+  }
+
+  private async textValueCandidates(event: LineTextEvent, legacyText: string): Promise<LineAiTurnRequest['valueCandidates']> {
+    const evidence = await this.textEvidenceV2(event);
+    if (!evidence) return computeValueCandidates(legacyText);
+    const admittedAt = Math.min(...evidence.parts.map(part => part.acceptedAtMs));
+    const todayIso = new Date(admittedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+    const candidates = await extractValueCandidatesV2(evidence, todayIso);
+    if (!candidates) throw new Error('LINE_INPUT_EVIDENCE_INVALID');
+    return candidates;
+  }
+
+  private async prepareTextGrantV2(event: LineTextEvent, requestId: string): Promise<AiBudgetGrantV2 | undefined> {
+    const bound = this.boundConversations.get(event);
+    if (!bound) return undefined;
+    const stored = this.budgetGrantsV2.get(event); if (stored) return stored;
+    const log = await this.prisma.client.lineWebhookEventLog.findUnique({ where: { webhookEventId: event.webhookEventId } });
+    if (!log) throw new HttpException({ code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' }, 429);
+    const evidence = await this.textEvidenceV2(event);
+    if (!evidence) throw new HttpException({ code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' }, 429);
+    const claimed = await this.prisma.client.lineWebhookEventLog.updateMany({ where: { id: log.id, OR: [{ companyId: null }, { companyId: bound.owner.companyId }] }, data: { companyId: bound.owner.companyId } });
+    if (claimed.count !== 1) throw new HttpException({ code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' }, 429);
+    event.inputEvidence = evidence;
+    const accepted = evidence.parts.map(part => part.acceptedAtMs), first = Math.min(...accepted), last = Math.max(...accepted);
+    const grant = await this.aiGateway.issueLineReliabilityGrant(requestId, { authorityKind: 'webhook_event', authorityId: log.id,
+      owner: { kind: 'PRIVATE', owner: bound.owner, epoch: bound.epoch }, turnKey: evidence.turnKey, attemptKey: deliveryHash(['line-turn-v2', event.webhookEventId]),
+      inputDigest: evidence.joinedSha256, requestKind: 'TEXT', admittedAtMs: first, coalescingExtraMs: Math.min(6000, Math.max(0, last - first)),
+      lane: 'public', allowedProfileIds: ['line-intake-text/2'] });
+    if (!grant) throw new HttpException({ code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' }, 429);
+    this.budgetGrantsV2.set(event, grant); return grant;
+  }
+
+  /** Already classified from full input, without reading expense/context repositories. */
+  private async deliverPureGeneralV2(event: LineTextEvent, requestId: string, route: GovernedLineIntakeRoutePlan,
+    access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>, features: ReadonlySet<string> | readonly string[] | null,
+    candidates: LineAiTurnRequest['valueCandidates']): Promise<void> {
+    const bound = this.boundConversations.get(event), initial = this.budgetGrantsV2.get(event);
+    if (!bound || !initial || !event.inputEvidence || !route.semanticSubrequests?.length) throw new Error('AI_CONTRACT_UNSUPPORTED');
+    const grant = await this.aiGateway.narrowLineReliabilityGrant(initial, 'general', ['line-answer/2']);
+    if (!grant) { await this.deliverReply(event, AI_BUDGET_UNAVAILABLE_REPLY); return; }
+    this.budgetGrantsV2.set(event, grant);
+    const resumes = route.semanticSubrequests.some(item => item.taskRef);
+    if (resumes && !await this.preserveSemanticTask(event, route.semanticSubrequests)) {
+      await this.deliverReply(event, 'งานที่ต้องการทำต่อเปลี่ยนแล้วค่ะ กรุณาระบุงานปัจจุบันอีกครั้ง'); return;
+    }
+    const request: LineAiTurnRequest = { requestId, webhookEventId: event.webhookEventId,
+      userContext: { lineUserId: '[REDACTED]', internalUserId: bound.owner.userId, companyId: bound.owner.companyId,
+        membershipId: bound.owner.membershipId, permissions: access.permissions, roles: access.roles, branchIds: access.scopes.branchIds,
+        entitledFeatureKeys: features ? [...features] : undefined, locale: 'th-TH', chatKeyHash: bound.owner.chatKeyHash },
+      messageText: event.messageText, messagePreviewHash: hashMessagePreview(event.messageText),
+      inputEvidence: event.inputEvidence, budgetGrantV2: grant, contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'],
+      semanticSubrequests: route.semanticSubrequests, ...await this.reliabilityContext(event),
+      ...(candidates ? { valueCandidates: candidates } : {}), intakeIntent: route.intent,
+      ...(features ? { entitledFeatureKeys: [...features] } : {}),
+      ...(this.config.lineAiApprovedKnowledgeEnabled ? { approvedKnowledge: true, selectedKnowledgeCardIds: route.selectedKnowledgeCardIds } : {}) };
+    const ledgerId = await this.ledger?.appendTurn({ messagingChannelId: event.messagingChannelId, companyId: bound.owner.companyId,
+      chatKey: mediaChatKey(event), turnId: requestId, webhookEventId: event.webhookEventId, userId: bound.owner.userId, text: event.messageText,
+      acceptedRequest: { request, ownerEpoch: bound.epoch, conversationId: bound.id, accessFingerprint: this.deliveryAccess.get(event)!.fingerprint } });
+    let response: LineAiTurnResponse;
+    try { response = await this.aiGateway.requestLineTurn(request); }
+    catch { await this.deliverReply(event, 'ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณาลองใหม่'); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_GENERAL_UNAVAILABLE', bound.owner.companyId); return; }
+    if (response.toolsInvoked.length || !response.semanticCoverage || response.semanticCoverage.length !== route.semanticSubrequests.length) {
+      await this.deliverReply(event, 'ยังตรวจสอบคำตอบครบทุกส่วนไม่ได้ค่ะ กรุณาลองใหม่'); return;
+    }
+    this.semanticDelivery.set(event, response.semanticCoverage);
+    this.deliverySources.set(event, { requestId, ids: [] });
+    await this.persistTurn(bound.owner.userId, bound.owner.companyId, event.webhookEventId, request.messagePreviewHash,
+      event.messageText.slice(0, PREVIEW_MAX_CHARS), response, event);
+    await this.updateEventLog(event.webhookEventId, 'response_ready', undefined, bound.owner.companyId);
+    const delivered = await this.deliverMessages(event, [{ type: 'text', text: formatLineReply(response, this.config.webBaseUrl) }]);
+    if (delivered !== 'ok') return;
+    if (resumes) await this.settleSemanticTask(event, response.semanticCoverage);
+    if (ledgerId) await this.ledger?.ack({ key: ledgerKey(bound.owner.companyId, mediaChatKey(event)), id: ledgerId,
+      companyId: bound.owner.companyId, turnId: requestId, kind: 'turn' }, 'acked');
+    await this.updateEventLog(event.webhookEventId, 'completed', undefined, bound.owner.companyId);
+  }
+
+  /** Independent questions use the same admitted turn; existing API write paths keep all domain guards. */
+  private async prepareMixedBusinessQuestions(event: LineTextEvent, requestId: string, route: GovernedLineIntakeRoutePlan,
+    access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>, features: ReadonlySet<string> | null,
+    candidates: LineAiTurnRequest['valueCandidates']): Promise<boolean> {
+    const inventory = route.semanticSubrequests, bound = this.boundConversations.get(event), grant = this.budgetGrantsV2.get(event);
+    if (!bound || !grant || !event.inputEvidence || !inventory || inventory.length < 2 && !this.retainedTaskSources?.has(event)) return false;
+    const writes = inventory.filter(item => item.kind === 'write'), others = inventory.filter(item => item.kind !== 'write');
+    if (!writes.length || writes.some(item => !item.writeIntent || !['EXPENSE_DOCUMENT_CAPTURE', 'EXPENSE_DRAFT_CONTINUATION', 'EXPENSE_CAPTURE_CORRECTION', 'SUBSTITUTE_RECEIPT_CONTINUATION', ...(writes.length > 1 ? ['REIMBURSEMENT_REQUEST_START'] : [])].includes(item.writeIntent))
+      || others.some(item => !['general', 'help', 'read', 'public'].includes(item.kind))) return false;
+    const blocked = new Set(writes.map(item => item.index));
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const item of others) if (!blocked.has(item.index) && item.dependsOn.some(index => blocked.has(index))) {
+        blocked.add(item.index); changed = true;
+      }
+    }
+    const independent = others.filter(item => !blocked.has(item.index));
+    const dependent = others.filter(item => blocked.has(item.index));
+    const indices = new Map(independent.map((item, index) => [item.index, index]));
+    const request: LineAiTurnRequest = { requestId, webhookEventId: event.webhookEventId, userContext: { lineUserId: '[REDACTED]', internalUserId: bound.owner.userId,
+      companyId: bound.owner.companyId, membershipId: bound.owner.membershipId, permissions: access.permissions, roles: access.roles,
+      branchIds: access.scopes.branchIds, locationIds: access.scopes.locationIds, entitledFeatureKeys: features ? [...features] : undefined,
+      locale: 'th-TH', chatKeyHash: bound.owner.chatKeyHash }, messageText: event.messageText, messagePreviewHash: hashMessagePreview(event.messageText),
+      inputEvidence: event.inputEvidence, budgetGrantV2: grant, contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'],
+      semanticSubrequests: independent.map((item, index) => ({ ...item, index, dependsOn: item.dependsOn.map(dep => indices.get(dep)!).filter(dep => dep !== undefined) })),
+      ...await this.reliabilityContext(event), ...(candidates ? { valueCandidates: candidates } : {}),
+      intakeIntent: 'BUSINESS_READ_QUESTION', ...(features ? { entitledFeatureKeys: [...features] } : {}),
+      ...(this.config.lineAiApprovedKnowledgeEnabled ? { approvedKnowledge: true, selectedKnowledgeCardIds: route.selectedKnowledgeCardIds } : {}) };
+    const ledgerId = await this.ledger?.appendTurn({ messagingChannelId: event.messagingChannelId, companyId: bound.owner.companyId,
+      chatKey: mediaChatKey(event), turnId: requestId, webhookEventId: event.webhookEventId, userId: bound.owner.userId, text: event.messageText,
+      acceptedRequest: { request: { ...request, semanticSubrequests: inventory, intakeIntent: route.intent }, ownerEpoch: bound.epoch,
+        conversationId: bound.id, accessFingerprint: this.deliveryAccess.get(event)!.fingerprint } });
+    if (writes.length > 1) await this.bindMixedTaskSource(event, requestId);
+    let response: LineAiTurnResponse = { replyText: '', requestId, intent: 'unknown', agent: 'general', durationMs: 0,
+      toolsInvoked: [], sourceLabels: [], sourceRefs: [], webLinks: [], refused: false, semanticCoverage: [] };
+    if (independent.length) try {
+      response = await this.aiGateway.requestLineTurn(request);
+      if (!parseLineAiSemanticCoverage(response.semanticCoverage, request.semanticSubrequests!) || response.semanticCoverage!.length !== independent.length
+        || response.toolsInvoked.some(name => name.startsWith('reimbursement.draft.') || (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(name))) throw new Error('MIXED_COVERAGE_INVALID');
+      const evidenceIds = await this.readEvidence.forTurn(request, response);
+      if (!evidenceIds) throw new Error('MIXED_READ_EVIDENCE_UNAVAILABLE');
+      this.deliverySources.set(event, { requestId, ids: evidenceIds });
+    } catch {
+      response = { replyText: independent.map(item => `${item.goal}: ยังตอบส่วนนี้ไม่สำเร็จค่ะ กรุณาถามส่วนนี้อีกครั้ง`).join('\n'),
+        requestId, intent: 'unknown', agent: 'general', durationMs: 0, toolsInvoked: [], sourceLabels: [], sourceRefs: [], webLinks: [], refused: false,
+        semanticCoverage: independent.map((_item, index) => ({ index, status: 'needs_user', reasonCode: 'INDEPENDENT_ANSWER_UNAVAILABLE', question: 'กรุณาถามส่วนนี้อีกครั้ง' })) };
+      this.deliverySources.set(event, { requestId, ids: [] });
+    } else this.deliverySources.set(event, { requestId, ids: [] });
+    this.mixedBusinessQuestions.set(event, { requestId, ledgerId, businessIndexes: writes.map(item => item.index),
+      businessStatus: 'needs_user', selectionRequired: writes.length > 1,
+      dependentQuestions: dependent.map(item => ({ index: item.index, goal: item.goal, dependsOn: item.dependsOn.filter(index => blocked.has(index)) })), response,
+      coverage: response.semanticCoverage!.map(item => ({ ...item, index: independent[item.index]!.index })) });
+    return true;
+  }
+
+  /** References stay in bounded task state; the immutable original input stays in its existing ledger parent. */
+  private async bindMixedTaskSource(event: LineTextEvent, requestId: string): Promise<void> {
+    const bound = this.boundConversations.get(event), mappings = this.semanticTaskMappings.get(event);
+    if (!bound || !mappings?.length) throw new Error('LINE_TASK_SOURCE_MISSING');
+    const id = deliveryHash(['line-ledger-v2', bound.owner.companyId, bound.owner.userId, bound.owner.messagingChannelId,
+      bound.owner.chatKeyHash, event.webhookEventId, requestId]);
+    const row = await this.prisma.client.lineLedgerDelivery.findUnique({ where: { id } });
+    const accepted = row && parseAcceptedLedgerRequest(row.acceptedRequestJson, { companyId: bound.owner.companyId,
+      userId: bound.owner.userId, webhookEventId: event.webhookEventId, turnId: requestId, chatKey: mediaChatKey(event), messagingChannelId: bound.owner.messagingChannelId });
+    if (!accepted || accepted.ownerEpoch !== bound.epoch || accepted.conversationId !== bound.id) throw new Error('LINE_TASK_SOURCE_MISSING');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const projection = await this.contextV2.projection(bound.owner);
+      if (!projection || projection.lifecycleEpoch !== bound.epoch) throw new Error('LINE_CONTEXT_STALE_EPOCH');
+      const tasks = structuredClone(projection.tasks);
+      for (const taskId of new Set(mappings.map(mapping => mapping.taskId))) {
+        const task = tasks.find(item => item.taskId === taskId);
+        if (!task || task.state !== 'active') throw new Error('LINE_CONTEXT_STALE_STATE');
+        const selected = mappings.filter(mapping => mapping.taskId === taskId);
+        // Resumed actions retain their first original clause, not the selection command in a later turn.
+        const locators = task.sourceRevisionLocators ?? [];
+        task.sourceRevisionLocators = [...locators, ...selected.filter(mapping => !locators.some(locator => locator.sourceType.startsWith(`LINE_ACCEPTED_TASK_${mapping.subrequestIndex}_`)))
+          .map(mapping => ({ sourceType: `LINE_ACCEPTED_TASK_${mapping.subrequestIndex}_${mapping.index}`, sourceId: id, revision: accepted.digest }))];
+        if (task.sourceRevisionLocators.length > 8) throw new Error('LINE_TASK_SOURCE_LIMIT');
+        task.revision++;
+      }
+      if (await this.contextV2.save(bound.owner, projection.stateVersion, bound.epoch, { version: 2, tasks })) return;
+    }
+    throw new Error('LINE_CONTEXT_STALE_STATE');
+  }
+
+  /** Exact selection controls choose a stored clause; they never import a different owner's text or restart its old budget. */
+  private async prepareRetainedTaskSelection(event: LineTextEvent): Promise<boolean> {
+    if (!event.messageText.startsWith('/task choose ')) return false;
+    const bound = this.boundConversations.get(event);
+    if (!bound) return false;
+    this.retainedTaskSources.delete(event);
+    try {
+      const match = /^\/task choose ([A-Za-z0-9_-]{1,128}) ([0-9]{1,10}) ([0-7])$/u.exec(event.messageText);
+      const projection = await this.contextV2.projection(bound.owner);
+      const task = match && projection?.tasks.find(item => item.taskId === match[1]);
+      const localIndex = Number(match?.[3]);
+      const sub = task?.subrequests.find(item => item.index === localIndex);
+      if (!match || !projection || projection.lifecycleEpoch !== bound.epoch || !task || task.revision !== Number(match[2])
+        || !['waiting_user', 'paused'].includes(task.state) || sub?.kind !== 'write' || !['needs_user', 'pending'].includes(sub.status)) throw new Error('LINE_TASK_STALE_SELECTION');
+      const locator = task.sourceRevisionLocators?.find(item => item.sourceType.startsWith(`LINE_ACCEPTED_TASK_${localIndex}_`));
+      const originalIndex = Number(locator?.sourceType.split('_').at(-1));
+      const row = locator && await this.prisma.client.lineLedgerDelivery.findUnique({ where: { id: locator.sourceId } });
+      if (!row || row.companyId !== bound.owner.companyId || row.userId !== bound.owner.userId || row.expiresAt.getTime() <= Date.now()) throw new Error('LINE_TASK_SOURCE_EXPIRED');
+      const raw = row.acceptedRequestJson as { request?: { requestId?: string } } | null;
+      const accepted = parseAcceptedLedgerRequest(row.acceptedRequestJson, { companyId: bound.owner.companyId, userId: bound.owner.userId,
+        webhookEventId: row.webhookEventId, turnId: raw?.request?.requestId ?? '', chatKey: mediaChatKey(event), messagingChannelId: bound.owner.messagingChannelId });
+      if (!accepted || accepted.ownerEpoch !== bound.epoch || accepted.conversationId !== bound.id || accepted.digest !== locator!.revision
+        || accepted.accessFingerprint !== this.deliveryAccess.get(event)?.fingerprint) throw new Error('LINE_TASK_SOURCE_CHANGED');
+      const evidence = accepted.request.inputEvidence!;
+      const inventory = parseLineAiSemanticSubrequests(accepted.request.semanticSubrequests, accepted.request.messageText, evidence);
+      const original = inventory?.find(item => item.index === originalIndex);
+      if (!original || original.kind !== 'write' || !original.writeIntent || !original.evidenceRefs?.length) throw new Error('LINE_TASK_SOURCE_MISSING');
+      if (original.dependsOn.some(dependency => !projection.tasks.some(parent => parent.sourceRevisionLocators?.some(source => {
+        const match = /^LINE_ACCEPTED_TASK_([0-7])_([0-7])$/u.exec(source.sourceType);
+        return source.sourceId === locator!.sourceId && source.revision === locator!.revision && Number(match?.[2]) === dependency
+          && parent.subrequests.find(item => item.index === Number(match?.[1]))?.status === 'handled';
+      })))) throw new Error('LINE_TASK_DEPENDENCY_PENDING');
+      const refs = original.evidenceRefs;
+      if (inventory!.some(item => item.index !== originalIndex && item.kind === 'write' && item.evidenceRefs?.some(other => refs.some(ref =>
+        ref.partId === other.partId && ref.startUtf16 < other.endUtf16 && other.startUtf16 < ref.endUtf16)))) throw new Error('LINE_TASK_SOURCE_AMBIGUOUS');
+      const sourceText = refs.map(ref => validateLineAiSourceRefV2(ref, evidence)).filter((text): text is string => text !== undefined).join('\n');
+      if (!sourceText.trim()) throw new Error('LINE_TASK_SOURCE_MISSING');
+      this.retainedTaskSources.set(event, { source: { taskRef: { taskId: task.taskId, taskRevision: task.revision, subrequestIndex: localIndex },
+        inputEvidence: evidence, semanticSubrequest: original }, sourceText, operationId: deliveryHash(['line-task-action', bound.id, task.taskId, localIndex]) });
+      return false;
+    } catch {
+      await this.deliverReply(event, 'งานที่เลือกเปลี่ยนหรือหมดอายุแล้วค่ะ ยังไม่ได้ทำรายการ กรุณาเลือกงานค้างปัจจุบันอีกครั้ง');
+      return true;
+    }
+  }
+
+  private async remainingTaskChoiceMessages(event: object): Promise<LineReplyMessage[]> {
+    const bound = this.boundConversations.get(event), mappings = this.semanticTaskMappings.get(event);
+    const projection = bound && await this.contextV2.projection(bound.owner);
+    if (!projection || projection.lifecycleEpoch !== bound!.epoch || !mappings) throw new Error('LINE_TASK_SOURCE_MISSING');
+    const remaining = projection.tasks.flatMap(task => task.subrequests.filter(sub => sub.kind === 'write' && ['needs_user', 'pending'].includes(sub.status)
+      && !mappings.some(mapping => mapping.taskId === task.taskId && mapping.subrequestIndex === sub.index)
+      && task.sourceRevisionLocators?.some(locator => locator.sourceType.startsWith(`LINE_ACCEPTED_TASK_${sub.index}_`)))
+      .map(sub => ({ task, sub, revision: task.revision + (mappings.some(mapping => mapping.taskId === task.taskId) ? 1 : 0) })));
+    if (!remaining.length) return [];
+    const choices = remaining.slice(0, 8);
+    return [{ type: 'text', text: ['รายการต่อไปนี้ยังไม่ได้ทำ รายละเอียดเดิมยังอยู่ค่ะ เลือกงานที่จะทำต่อได้เลย',
+      ...choices.map(({ sub }, index) => `${index + 1}) ${sub.goal}`)].join('\n'), quickReply: { items: choices.map(({ task, sub, revision }, index) => ({
+        type: 'action' as const, action: { type: 'message' as const, label: `ทำรายการ ${index + 1} ต่อ`, text: `/task choose ${task.taskId} ${revision} ${sub.index}` },
+      })) } }];
+  }
+
+  private async deliverMixedBusinessWriteSelection(event: LineTextEvent,
+    writes: NonNullable<LineAiTurnRequest['semanticSubrequests']>): Promise<LineDeliveryResult> {
+    const bound = this.boundConversations.get(event), mappings = this.semanticTaskMappings.get(event);
+    const projection = bound && await this.contextV2.projection(bound.owner);
+    if (!projection || projection.lifecycleEpoch !== bound!.epoch || !mappings) throw new Error('LINE_TASK_SOURCE_MISSING');
+    const items = writes.map(item => {
+      const mapping = mappings.find(value => value.index === item.index), task = projection.tasks.find(value => value.taskId === mapping?.taskId);
+      if (!task || !mapping) throw new Error('LINE_TASK_SOURCE_MISSING');
+      // Successful delivery increments the task revision once. Failed delivery leaves this control unusable.
+      return { type: 'action' as const, action: { type: 'message' as const, label: `ทำข้อ ${item.index + 1} ก่อน`,
+        text: `/task choose ${task.taskId} ${task.revision + 1} ${mapping.subrequestIndex}` } };
+    });
+    const text = ['มีคำขอสร้างหรือแก้เอกสารหลายรายการค่ะ ระบบยังไม่ได้เริ่มรายการใด กรุณาเลือกทำทีละรายการ',
+      ...writes.map(item => `${item.index + 1}) ${item.goal}`),
+      'เลือกปุ่มของรายการที่ต้องการทำก่อน ระบบจะใช้รายละเอียดเดิมของข้อนั้น รายการอื่นยังพักไว้ค่ะ'].join('\n');
+    const messages: LineReplyMessage[] = splitLineExpenseDraftReply(text).map(part => ({ type: 'text', text: part }));
+    const last = messages.at(-1); if (last?.type === 'text') last.quickReply = { items };
+    return this.deliverMessages(event, messages);
+  }
+
+  private async preserveSemanticTask(event: LineTextEvent, subrequests: NonNullable<LineAiTurnRequest['semanticSubrequests']>): Promise<boolean> {
+    const bound = this.boundConversations.get(event); if (!bound) return true;
+    const newTaskId = deliveryHash(['line-task', bound.id, event.webhookEventId]);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const projection = await this.contextV2.projection(bound.owner);
+      if (!projection || projection.lifecycleEpoch !== bound.epoch) return false;
+      const tasks = structuredClone(projection.tasks.filter(task => !['completed', 'canceled', 'invalidated'].includes(task.state)));
+      const mappings: Array<{ index: number; taskId: string; subrequestIndex: number }> = [];
+      const touched = new Set<string>();
+      const fresh = subrequests.filter(item => !item.taskRef);
+      for (const item of subrequests) {
+        if (!item.taskRef) { mappings.push({ index: item.index, taskId: newTaskId, subrequestIndex: fresh.indexOf(item) }); continue; }
+        const ref = item.taskRef, task = tasks.find(task => task.taskId === ref.taskId);
+        const previous = task?.subrequests.find(sub => sub.index === ref.subrequestIndex);
+        if (!task || task.revision !== ref.taskRevision || !['waiting_user', 'paused'].includes(task.state)
+          || !previous || previous.kind !== item.kind || !['needs_user', 'pending'].includes(previous.status)
+          || mappings.some(mapping => mapping.taskId === ref.taskId && mapping.subrequestIndex === ref.subrequestIndex)) return false;
+        mappings.push({ index: item.index, taskId: ref.taskId, subrequestIndex: ref.subrequestIndex });
+        touched.add(task.taskId);
+      }
+      for (const task of tasks) if (touched.has(task.taskId)) {
+        task.revision++; task.state = 'active';
+        for (const mapping of mappings.filter(item => item.taskId === task.taskId)) task.subrequests.find(sub => sub.index === mapping.subrequestIndex)!.status = 'pending';
+      }
+      if (fresh.length && !tasks.some(task => task.taskId === newTaskId)) {
+        if (tasks.length >= 4) return false;
+        tasks.push({ taskId: newTaskId, revision: 0, kind: fresh[0]!.kind, state: 'active', userGoal: fresh[0]!.goal,
+          subrequests: fresh.map((item, index) => ({ index, kind: item.kind, goal: item.goal, status: 'pending' })) });
+      }
+      if (await this.contextV2.save(bound.owner, projection.stateVersion, bound.epoch, { version: 2, tasks })) {
+        this.semanticTaskMappings.set(event, mappings); return true;
+      }
+    }
+    return false;
+  }
+
+  /** Save the bounded completion before transport so ACCEPTED replay can finish task CAS after a crash. */
+  private async persistSemanticTaskCompletion(event: LineTextEvent | LineReceiptUploadEvent): Promise<void> {
+    const bound = this.boundConversations.get(event), mappings = this.semanticTaskMappings.get(event), coverage = this.semanticDelivery.get(event);
+    if (!bound || !mappings?.length || !coverage?.length || this.intermediateDeliveries.has(event)) return;
+    const row = await this.prisma.client.lineLedgerDelivery.findFirst({ where: { companyId: bound.owner.companyId, userId: bound.owner.userId,
+      webhookEventId: event.webhookEventId, expiresAt: { gt: new Date() }, acceptedRequestJson: { not: Prisma.AnyNull } } });
+    if (!row) return; // QA uses its durable job/task proof instead of a ledger parent.
+    const projection = await this.contextV2.projection(bound.owner);
+    if (!projection || projection.lifecycleEpoch !== bound.epoch || mappings.length !== coverage.length) throw new Error('LINE_CONTEXT_STALE_STATE');
+    const revisions = Object.fromEntries(mappings.map(mapping => {
+      const task = projection.tasks.find(item => item.taskId === mapping.taskId);
+      if (!task || !['active', 'waiting_job'].includes(task.state)) throw new Error('LINE_CONTEXT_STALE_STATE');
+      return [task.taskId, task.revision];
+    }));
+    const result = this.deliveryReimbursements?.get(event)?.result;
+    const actionIds = result?.status === 'preview' ? [result.preview.actionId] : result?.status === 'applied' ? [String(result.receipt.actionId)] : [];
+    const completion = { version: 1 as const, actionIds, ownerEpoch: bound.epoch, conversationId: bound.id,
+      accessFingerprint: this.deliveryAccess.get(event)!.fingerprint, mappings, coverage, revisions };
+    const previous = (row.completionJson ?? {}) as Record<string, Prisma.InputJsonValue>;
+    const digest = deliveryHash(completion);
+    if (previous.semanticTaskCompletion) {
+      if (previous.semanticTaskCompletionDigest !== digest) throw new Error('LINE_TASK_COMPLETION_CHANGED');
+      return;
+    }
+    const updated = await this.prisma.client.lineLedgerDelivery.updateMany({ where: { id: row.id, companyId: bound.owner.companyId,
+      completionJson: row.completionJson === null ? { equals: Prisma.DbNull } : { equals: row.completionJson as Prisma.InputJsonValue } },
+      data: { completionJson: { ...previous, semanticTaskCompletion: completion as unknown as Prisma.InputJsonValue,
+        semanticTaskCompletionDigest: digest, semanticTaskCompletionApplied: false } } });
+    if (updated.count !== 1) throw new Error('LINE_TASK_COMPLETION_CHANGED');
+  }
+
+  private async reconcileDeliveredSemanticTasks(event: LineTextEvent): Promise<void> {
+    const bound = this.boundConversations.get(event); if (!bound) return;
+    const rows = await this.prisma.client.lineLedgerDelivery.findMany({ where: { companyId: bound.owner.companyId, userId: bound.owner.userId,
+      expiresAt: { gt: new Date() }, completionJson: { path: ['semanticTaskCompletionApplied'], equals: false } },
+      orderBy: { createdAt: 'asc' }, take: 32, include: { deliveryPlan: true } });
+    for (const row of rows) {
+      const saved = row.completionJson as Record<string, unknown>, completion = saved?.semanticTaskCompletion as {
+        version: number; ownerEpoch: number; conversationId: string; accessFingerprint: string;
+        mappings: Array<{ index: number; taskId: string; subrequestIndex: number }>;
+        coverage: NonNullable<LineAiTurnResponse['semanticCoverage']>; revisions: Record<string, number>; actionIds: string[];
+      } | undefined;
+      if (!completion || completion.version !== 1 || deliveryHash(completion) !== saved.semanticTaskCompletionDigest
+        || completion.ownerEpoch !== bound.epoch || completion.conversationId !== bound.id || completion.accessFingerprint !== this.deliveryAccess.get(event)?.fingerprint) continue;
+      const requestId = (row.acceptedRequestJson as { request?: { requestId?: string } } | null)?.request?.requestId;
+      const accepted = parseAcceptedLedgerRequest(row.acceptedRequestJson, { companyId: bound.owner.companyId, userId: bound.owner.userId,
+        webhookEventId: row.webhookEventId, turnId: requestId ?? '', chatKey: mediaChatKey(event), messagingChannelId: bound.owner.messagingChannelId });
+      if (!accepted || accepted.conversationId !== bound.id || accepted.ownerEpoch !== bound.epoch
+        || !accepted.request.semanticSubrequests || !parseLineAiSemanticCoverage(completion.coverage, accepted.request.semanticSubrequests)
+        || completion.mappings.length !== completion.coverage.length) continue;
+      const outcome = row.deliveryPlan ? null : await this.prisma.client.lineTurnOutcome.findUnique({ where: { webhookEventId: row.webhookEventId }, include: { deliveryPlan: true } });
+      const delivered = row.deliveryPlan ?? outcome?.deliveryPlan, plan = parseLineDeliveryPlan(delivered?.planJson);
+      if (delivered?.status !== 'ACCEPTED' || !plan || delivered.planHash !== deliveryHash(plan)
+        || !parseDeliveryBatchStates(delivered.batchStateJson, plan)?.every(batch => batch.status === 'ACCEPTED') || plan.authorization.kind !== 'PRIVATE'
+        || plan.authorization.actor.ownerEpoch !== bound.epoch || plan.authorization.actor.conversationId !== bound.id
+        || plan.authorization.actor.userId !== bound.owner.userId || plan.authorization.actor.companyId !== bound.owner.companyId
+        || plan.authorization.actor.membershipId !== bound.owner.membershipId || plan.authorization.actor.channelId !== bound.owner.messagingChannelId
+        || plan.authorization.actor.chatKeyHash !== bound.owner.chatKeyHash
+        || plan.authorization.actor.accessFingerprint !== completion.accessFingerprint) continue;
+      const previousMappings = this.semanticTaskMappings.get(event);
+      this.semanticTaskMappings.set(event, completion.mappings);
+      try { await this.settleSemanticTask(event, completion.coverage, completion.actionIds, completion.revisions); }
+      finally { if (previousMappings) this.semanticTaskMappings.set(event, previousMappings); else this.semanticTaskMappings.delete(event); }
+      const projection = await this.contextV2.projection(bound.owner);
+      if (!projection || projection.lifecycleEpoch !== bound.epoch) continue;
+      if (Object.entries(completion.revisions).every(([id, revision]) => !projection.tasks.some(task => task.taskId === id && task.revision === revision))) {
+        await this.prisma.client.lineLedgerDelivery.updateMany({ where: { id: row.id, completionJson: { equals: row.completionJson as Prisma.InputJsonValue } },
+          data: { completionJson: { ...saved, semanticTaskCompletionApplied: true } as Prisma.InputJsonValue } });
+      }
+    }
+  }
+
+  private async settleSemanticTask(event: LineTextEvent, coverage: NonNullable<LineAiTurnResponse['semanticCoverage']>, actionIds: string[] = [], expectedRevisions?: Record<string, number>): Promise<void> {
+    const bound = this.boundConversations.get(event), mappings = this.semanticTaskMappings.get(event);
+    if (!bound || !mappings || mappings.length !== coverage.length) return;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const projection = await this.contextV2.projection(bound.owner);
+      if (!projection || projection.lifecycleEpoch !== bound.epoch) return;
+      const tasks = structuredClone(projection.tasks), touched = new Set<string>();
+      for (const result of coverage) {
+        const mapping = mappings.find(item => item.index === result.index);
+        const task = mapping && tasks.find(task => task.taskId === mapping.taskId);
+        const sub = task?.subrequests.find(sub => sub.index === mapping!.subrequestIndex);
+        if (!task || !sub || !['active', 'waiting_job'].includes(task.state) || expectedRevisions && task.revision !== expectedRevisions[task.taskId]) return;
+        sub.status = result.status; touched.add(task.taskId);
+        if (result.status === 'needs_user') task.deliveredQuestionRefs = [...new Set([...(task.deliveredQuestionRefs ?? []), deliveryHash([task.taskId, sub.index, result.question])])].slice(-8);
+        if (sub.kind === 'write' && actionIds.length === 1) task.slots = { ...task.slots, [`reimbursementActionId${sub.index}`]: actionIds[0]! };
+      }
+      for (const task of tasks) if (touched.has(task.taskId)) {
+        task.revision++;
+        task.state = task.subrequests.some(sub => ['needs_user', 'pending'].includes(sub.status)) ? 'waiting_user' : 'completed';
+      }
+      if (await this.contextV2.save(bound.owner, projection.stateVersion, bound.epoch, { version: 2, tasks })) return;
+    }
+  }
+
+  private documentQaQuestions(event: LineTextEvent, inventory: NonNullable<LineAiTurnRequest['semanticSubrequests']>) {
+    const evidence = event.inputEvidence;
+    if (!evidence || evidence.parts.map(part => part.rawText).join('\n') !== event.messageText) throw new Error('QA_QUESTION_EVIDENCE_MISSING');
+    const offsets = new Map<string, number>(); let offset = 0;
+    for (const part of evidence.parts) { offsets.set(part.partId, offset); offset += part.rawText.length + 1; }
+    return inventory.filter(item => item.kind === 'file').map(item => {
+      if (!item.evidenceRefs?.length) throw new Error('QA_QUESTION_EVIDENCE_MISSING');
+      const ranges = item.evidenceRefs.map(ref => {
+        if (validateLineAiSourceRefV2(ref, evidence) === undefined) throw new Error('QA_QUESTION_EVIDENCE_MISSING');
+        return { start: offsets.get(ref.partId)! + ref.startUtf16, end: offsets.get(ref.partId)! + ref.endUtf16 };
+      });
+      return { subrequestIndex: item.index, question: event.messageText.slice(Math.min(...ranges.map(item => item.start)), Math.max(...ranges.map(item => item.end))) };
+    });
+  }
+
+  /** Persist the accepted inventory against its job so recovery does not rely on WeakMaps. */
+  private async bindDocumentQaTask(event: LineTextEvent | LineReceiptUploadEvent, jobId: string): Promise<void> {
+    const bound = this.boundConversations.get(event), mappings = this.semanticTaskMappings.get(event);
+    if (!bound || !mappings?.length) throw new Error('QA_TASK_BINDING_MISSING');
+    const job = await this.documentQa.getById(jobId);
+    if (!job || job.companyId !== bound.owner.companyId || job.userId !== bound.owner.userId
+      || job.ownerMembershipId !== bound.owner.membershipId || job.ownerEpoch !== bound.epoch
+      || job.messagingChannelId !== bound.owner.messagingChannelId || job.chatKeyHash !== bound.owner.chatKeyHash
+      || !Array.isArray(job.attachmentsJson)) throw new Error('QA_TASK_OWNER_MISMATCH');
+    const refs = (job.attachmentsJson as Array<{ attachmentId: string; contentHash: string; requestedPages: number[] }>)
+      .map(item => ({ attachmentId: item.attachmentId, contentHash: item.contentHash, pages: item.requestedPages }));
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const projection = await this.contextV2.projection(bound.owner);
+      if (!projection || projection.lifecycleEpoch !== bound.epoch) throw new Error('LINE_CONTEXT_STALE_EPOCH');
+      const tasks = structuredClone(projection.tasks);
+      for (const taskId of new Set(mappings.map(item => item.taskId))) {
+        const task = tasks.find(item => item.taskId === taskId);
+        if (!task || task.state !== 'active') throw new Error('LINE_CONTEXT_STALE_STATE');
+        const selected = mappings.filter(item => item.taskId === taskId);
+        const retained = (task.sourceRevisionLocators ?? []).filter(loc => !selected.some(item => loc.sourceType.startsWith(`LINE_DOCUMENT_QA_${item.subrequestIndex}_`)));
+        task.sourceRevisionLocators = [...retained, ...selected.map(item => ({ sourceType: `LINE_DOCUMENT_QA_${item.subrequestIndex}_${item.index}`, sourceId: jobId, revision: String(job.revision) }))];
+        if (task.sourceRevisionLocators.length > 8) throw new Error('QA_TASK_SOURCE_LIMIT');
+        if (selected.some(item => task.subrequests[item.subrequestIndex]?.kind === 'file')) {
+          task.attachmentPageRefs = refs;
+        }
+        task.state = 'waiting_job'; task.revision++;
+      }
+      if (await this.contextV2.save(bound.owner, projection.stateVersion, bound.epoch, { version: 2, tasks })) return;
+    }
+    throw new Error('LINE_CONTEXT_STALE_STATE');
+  }
+
+  private async restoreDocumentQaTask(event: LineTextEvent | LineReceiptUploadEvent, jobId: string) {
+    const bound = this.boundConversations.get(event); if (!bound) return [];
+    const projection = await this.contextV2.projection(bound.owner);
+    if (!projection || projection.lifecycleEpoch !== bound.epoch) return [];
+    const selected: Array<{ index: number; taskId: string; subrequestIndex: number; kind: string; goal: string }> = [];
+    for (const task of projection.tasks) {
+      if (task.state !== 'waiting_job') continue;
+      for (const locator of task.sourceRevisionLocators ?? []) {
+        const match = /^LINE_DOCUMENT_QA_([0-7])_([0-7])$/u.exec(locator.sourceType);
+        if (!match || locator.sourceId !== jobId) continue;
+        const sub = task.subrequests[Number(match[1])]; if (!sub) continue;
+        selected.push({ index: Number(match[2]), taskId: task.taskId, subrequestIndex: sub.index, kind: sub.kind, goal: sub.goal });
+      }
+    }
+    selected.sort((a, b) => a.index - b.index);
+    if (selected.length) this.semanticTaskMappings.set(event, selected);
+    return selected;
+  }
+
+  private async reliabilityContext(event: LineTextEvent) {
+    const bound = this.boundConversations.get(event); if (!bound) return {};
+    const taskProjection = await this.contextV2.projection(bound.owner);
+    if (!taskProjection || taskProjection.lifecycleEpoch !== bound.epoch) throw new Error('LINE_CONTEXT_STALE_EPOCH');
+    const preferences = this.config.lineAiPreferencesEnabled ? await this.contextV2.listPreferences(bound.owner) : null;
+    if (preferences && preferences.epoch !== bound.epoch) throw new Error('LINE_CONTEXT_STALE_EPOCH');
+    return { taskProjection, ...(preferences ? { responsePreferences: { language: 'th' as const, detail: 'normal' as const, presentation: 'prose' as const, ...preferences.values } } : {}) };
+  }
+
+  private async bindConversation(event: LineTextEvent | LineReceiptUploadEvent): Promise<void> {
+    const access = this.deliveryAccess.get(event);
+    if (!access) return;
+    const owner = this.conversationOwner(access.companyId, access.userId, event);
+    if (!owner) return;
+    const row = await this.contextV2.admit(owner);
+    this.boundConversations.set(event, { owner, id: row.id, epoch: row.lifecycleEpoch });
+  }
+
+  private async webhookPlanAuthorization(event: LineTextEvent | LineReceiptUploadEvent, expiresAt: string): Promise<DeliveryAuthorizationV2 | null> {
+    const access = this.deliveryAccess.get(event), bound = this.boundConversations.get(event);
+    if (!access || !bound || this.deliveryWaitingSources.has(event)) return null;
+    const proofs: Extract<DeliveryAuthorizationV2, { kind: 'PRIVATE' }>['proofs'] = [];
+    const qaJob = this.documentQaDelivery.get(event);
+    if (qaJob) proofs.push({ id: 'document-qa', ...this.documentQa.buildDeliveryProof(qaJob), kind: 'LINE_DOCUMENT_QA' });
+    const read = this.deliverySources.get(event);
+    if (read?.ids === null) return null;
+    if (read?.ids?.length) proofs.push({ id: 'read', kind: 'READ', evidenceIds: read.ids });
+    const receipt = this.deliveryReceiptSources.get(event);
+    if (receipt) {
+      if ([...receipt.records.values(), ...receipt.categories.values()].some(v => v === null)) return null;
+      proofs.push({ id: 'receipt', kind: 'EXPENSE_REVISION', records: [...receipt.records].map(([id, revision]) => ({ id, revision })), categories: [...receipt.categories].map(([id, name]) => ({ id, name })), choices: receipt.draftChoices ?? null });
+    }
+    const draft = this.deliveryDraftPreviews.get(event);
+    if (draft) {
+      const applied = draft.phase === 'APPLIED' && draft.previewId ? await this.draftUpdate?.appliedResult(draft.context, draft.chatKeyHash, draft.previewId) : null;
+      const preview = draft.phase === 'APPLIED' ? applied?.status === 'applied' ? applied.preview : null : await this.draftUpdate?.pendingPreview(draft.context, draft.chatKeyHash, draft.requestId);
+      if (!preview || preview.previewId !== draft.previewId) return null;
+      proofs.push({ id: 'draft', kind: 'EXPENSE_EDIT_PREVIEW', previewId: preview.previewId, requestId: draft.requestId, phase: draft.phase, previewRevision: deliveryHash(preview) });
+    }
+    for (const [i, substitute] of (this.deliverySubstituteSources.get(event) ?? []).entries()) {
+      if (!substitute.source) return null;
+      proofs.push({ id: `substitute-${i}`, kind: 'SUBSTITUTE', source: substitute.source });
+    }
+    const reimbursement = this.deliveryReimbursements.get(event)?.result;
+    if (reimbursement && (reimbursement.status === 'preview' || reimbursement.status === 'applied')) {
+      const actionId = reimbursement.status === 'preview' ? reimbursement.preview.actionId : String(reimbursement.receipt.actionId);
+      proofs.push({ id: 'reimbursement', kind: 'REIMBURSEMENT_DRAFT', actionId, status: reimbursement.status, resultHash: deliveryHash(reimbursement) });
+    }
+    const reimbursementOptions = this.reimbursementOptionsDelivery.get(event);
+    if (reimbursementOptions) proofs.push({ id: 'reimbursement-options', kind: 'REIMBURSEMENT_OPTIONS', actionId: reimbursementOptions.actionId, optionsHash: deliveryHash(reimbursementOptions.options) });
+    const candidates = this.deliveryCandidates.get(event);
+    if (candidates) {
+      const rows = JSON.parse(candidates.snapshot) as LineIntakeCorrectionCandidate[];
+      proofs.push({ id: 'candidates', kind: 'CANDIDATES', ids: rows.map(r => r.id), snapshotHash: deliveryHash(rows), originalChoices: candidates.originalChoices === true });
+    }
+    return { v: 2, kind: 'PRIVATE', actor: { userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
+      requestId: read?.requestId ?? draft?.requestId ?? event.webhookEventId, accessFingerprint: access.fingerprint, channelId: event.messagingChannelId,
+      channel: 'line', channelKind: 'USER', recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId), chatKeyHash: chatKeyHashOf(event), conversationId: bound.id, ownerEpoch: bound.epoch },
+      issuedAt: new Date().toISOString(), expiresAt, proofs };
+  }
+
+  /** Rebuild current permission context before checking frozen source locators. No stored permissions. */
+  private async verifyWebhookPlan(plan: DeliveryPlanV2, event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string }): Promise<boolean> {
+    if (plan.authorization.kind === 'PUBLIC_GENERAL') return this.verifyPublicPlan(plan, event);
+    const auth = plan.authorization, a = auth.actor;
+    if (a.channelId !== event.messagingChannelId || (event.pushTargetId && event.pushTargetId !== event.lineUserId)
+      || a.recipientHash !== lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? '')
+      || a.chatKeyHash !== chatKeyHashOf(event) || Date.parse(auth.expiresAt) <= Date.now()) return false;
+    const owner: LineConversationOwner = { companyId: a.companyId, userId: a.userId, membershipId: a.membershipId, channel: 'line', channelKind: 'USER', messagingChannelId: a.channelId, chatKeyHash: a.chatKeyHash };
+    const bound = await this.contextV2.load(owner);
+    if (!bound || bound.row.id !== a.conversationId || bound.row.lifecycleEpoch !== a.ownerEpoch) return false;
+    const resolved = await this.permissionResolver.resolveAccess(a.userId, a.companyId);
+    if (resolved.membershipId !== a.membershipId) return false;
+    const ctx: RequestContext = { authSubject: a.userId, authProvider: 'line', requestId: a.requestId, companyId: a.companyId, userId: a.userId, membershipId: a.membershipId, permissions: resolved.permissions, roles: resolved.roles, scopes: resolved.scopes };
+    this.deliveryAccess.set(event, { userId: a.userId, companyId: a.companyId, membershipId: a.membershipId, fingerprint: a.accessFingerprint });
+    this.deliverySources.delete(event); this.deliveryReceiptSources.delete(event); this.deliveryDraftPreviews.delete(event);
+    this.deliverySubstituteSources.delete(event); this.deliveryCandidates.delete(event);
+    for (const proof of auth.proofs) {
+      if (proof.kind === 'LINE_DOCUMENT_QA') {
+        const { id: _id, ...qaProof } = proof;
+        if (!await this.documentQa.verifyDeliveryProof(qaProof, { companyId: a.companyId, userId: a.userId, membershipId: a.membershipId, ownerEpoch: a.ownerEpoch, channelKind: 'USER', messagingChannelId: a.channelId, chatKeyHash: a.chatKeyHash })) return false;
+      } else if (proof.kind === 'READ') {
+        if (!Array.isArray(proof.evidenceIds) || !proof.evidenceIds.every(id => typeof id === 'string')) return false;
+        this.deliverySources.set(event, { requestId: a.requestId, ids: proof.evidenceIds as string[] });
+      } else if (proof.kind === 'EXPENSE_REVISION') {
+        if (!Array.isArray(proof.records) || !Array.isArray(proof.categories)) return false;
+        this.deliveryReceiptSources.set(event, { context: ctx, chatKeyHash: a.chatKeyHash,
+          records: new Map((proof.records as Array<{ id: string; revision: string }>).map(r => [r.id, r.revision])),
+          categories: new Map((proof.categories as Array<{ id: string; name: string }>).map(r => [r.id, r.name])),
+          ...(proof.choices ? { draftChoices: proof.choices as LineExpenseDraftRouteContext[] } : {}) });
+      } else if (proof.kind === 'EXPENSE_EDIT_PREVIEW') {
+        if (typeof proof.previewId !== 'string' || typeof proof.requestId !== 'string' || !['PENDING', 'APPLIED'].includes(String(proof.phase))) return false;
+        const applied = proof.phase === 'APPLIED' ? await this.draftUpdate?.appliedResult(ctx, a.chatKeyHash, proof.previewId) : null;
+        const preview = proof.phase === 'APPLIED' ? applied?.status === 'applied' ? applied.preview : null : await this.draftUpdate?.pendingPreview(ctx, a.chatKeyHash, proof.requestId);
+        if (!preview || deliveryHash(preview) !== proof.previewRevision) return false;
+        this.deliveryDraftPreviews.set(event, { context: ctx, chatKeyHash: a.chatKeyHash, requestId: proof.requestId, previewId: proof.previewId, phase: proof.phase as 'PENDING' | 'APPLIED' });
+      } else if (proof.kind === 'SUBSTITUTE') {
+        const list = this.deliverySubstituteSources.get(event) ?? [];
+        list.push({ context: ctx, source: proof.source as LineSubstituteReceiptContinuationResult['source'] }); this.deliverySubstituteSources.set(event, list);
+      } else if (proof.kind === 'REIMBURSEMENT_DRAFT') {
+        if (typeof proof.actionId !== 'string' || !['preview', 'applied'].includes(String(proof.status))) return false;
+        const result = await this.reimbursementDrafts.get({ ctx, owner, ownerEpoch: a.ownerEpoch, actionId: proof.actionId });
+        if (result.status !== proof.status || deliveryHash(result) !== proof.resultHash) return false;
+      } else if (proof.kind === 'REIMBURSEMENT_OPTIONS') {
+        if (typeof proof.actionId !== 'string') return false;
+        const options = await this.reimbursementAdapter.readDisplayOptions({ ctx, owner, ownerEpoch: a.ownerEpoch, actionId: proof.actionId });
+        if (!options || deliveryHash(options) !== proof.optionsHash) return false;
+      } else if (proof.kind === 'CANDIDATES') {
+        if (!Array.isArray(proof.ids) || !proof.ids.every(id => typeof id === 'string')) return false;
+        const current = await this.loadCorrectionCandidates(a.companyId, a.userId, a.chatKeyHash, resolved.scopes, proof.originalChoices ? proof.ids as string[] : undefined);
+        if (deliveryHash(current) !== proof.snapshotHash) return false;
+        this.deliveryCandidates.set(event, { context: ctx, chatKeyHash: a.chatKeyHash, snapshot: JSON.stringify(current), originalChoices: proof.originalChoices === true });
+      } else return false;
+    }
+    if (!await this.mayDeliverBusinessReply(event)) return false;
+    const after = await this.contextV2.load(owner);
+    return !!after && after.row.lifecycleEpoch === a.ownerEpoch;
+  }
+
+  async replayDeliveryPlan(planId: string, event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string }, automaticBatches = 1): Promise<LineDeliveryResult> {
+    for (let n = 0; n < Math.min(2, automaticBatches); n++) {
+      const row = await this.prisma.client.lineDeliveryPlan.findUnique({ where: { id: planId } });
+      const plan = parseLineDeliveryPlan(row?.planJson);
+      if (!row || !plan || row.planHash !== deliveryHash(plan) || !row.outcomeId) return 'failed_permanent';
+      if (row.status === 'ACCEPTED') return 'ok';
+      if (['REFUSED', 'EXPIRED', 'CANCELLED'].includes(row.status)) return 'failed_permanent';
+      if (!await this.verifyWebhookPlan(plan, event).catch(() => false)) {
+        await this.prisma.client.lineDeliveryPlan.updateMany({ where: { id: row.id, status: { in: ['READY', 'UNKNOWN', 'WAITING_CONTINUATION'] } }, data: { status: 'REFUSED', cancelReason: 'AUTH_OR_SOURCE_CHANGED' } });
+        return 'failed_permanent';
+      }
+      const claim = await this.deliveryPlans.claimPlan(row.id, { kind: 'WEBHOOK', id: row.outcomeId });
+      if (!claim) return 'failed_other';
+      const pending = claim.states.find(s => s.status !== 'ACCEPTED');
+      const transport = n === 0 && claim.states.findIndex(s => s.status !== 'ACCEPTED') === 0 && event.replyToken && !pending?.replyAttempted && !pending?.firstAttemptAt ? 'REPLY' : 'PUSH';
+      const dispatch = await this.deliveryPlans.beginPlanBatch(claim, transport);
+      if (!dispatch) return 'failed_other';
+      const frozen = claim.plan.batches[dispatch.index]![claim.states[dispatch.index]!.variant]!;
+      const result = await this.lineReply.sendFrozenV2({ channelId: plan.authorization.kind === 'PRIVATE' ? plan.authorization.actor.channelId : plan.authorization.destination.channelId, transport, target: transport === 'REPLY' ? event.replyToken : event.pushTargetId ?? event.lineUserId, messages: frozen.messages, pushRetryKey: frozen.pushRetryKey, timeoutMs: dispatch.timeoutMs });
+      if (!await this.deliveryPlans.finishPlanBatch(claim, dispatch.index, result)) return 'failed_other';
+      if (result.kind !== 'accepted') return result.rejection === 'PERMANENT' ? 'failed_permanent' : 'failed_other';
+      if (claim.states.every(s => s.status === 'ACCEPTED')) {
+        await this.prisma.client.lineTurnOutcome.updateMany({ where: { id: row.outcomeId, deliveredAt: null }, data: { deliveredAt: new Date() } });
+        return 'ok';
+      }
+    }
+    return 'failed_other';
+  }
+
+  /** This handler is reached only after verified identity, current company/member/legal admission. */
+  private async handleReimbursementDraftControl(event: LineTextEvent, ctx: RequestContext): Promise<void> {
+    const control = event.reimbursementDraftControl!;
+    const owner: LineConversationOwner = { companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId!,
+      channel: 'line', channelKind: 'USER', messagingChannelId: event.messagingChannelId, chatKeyHash: chatKeyHashOf(event) };
+    const current = await this.contextV2.load(owner);
+    if (!current || event.pushTargetId && event.pushTargetId !== event.lineUserId) {
+      await this.deliverReply(event, 'ร่างนี้หมดอายุหรือสิทธิ์เปลี่ยนแล้วค่ะ');
+      await this.updateEventLog(event.webhookEventId, 'reimbursement_blocked', 'STALE_OWNER', ctx.companyId); return;
+    }
+    const ownerEpoch = current.row.lifecycleEpoch;
+    this.boundConversations.set(event, { owner, epoch: ownerEpoch, id: current.row.id });
+    const prior = await this.reimbursementDrafts.get({ ctx, owner, ownerEpoch, actionId: control.actionId });
+    let result: LineReimbursementDraftResult = prior;
+    if (prior.status !== 'applied') {
+      if (control.action === 'reimbursement_draft_cancel') result = await this.reimbursementDrafts.cancel({ ctx, owner, ownerEpoch, control });
+      else {
+        const plan = await this.prisma.client.lineDeliveryPlan.findFirst({ where: { companyId: ctx.companyId,
+          planJson: { path: ['control', 'actionId'], equals: control.actionId } }, orderBy: { createdAt: 'desc' } });
+        result = plan ? await this.reimbursementDrafts.confirm({ ctx, owner, ownerEpoch, control, deliveryPlanId: plan.id })
+          : { status: 'blocked', errorCode: 'preview_not_fully_delivered' };
+      }
+    }
+    if (result.status === 'applied' || result.status === 'cancelled') {
+      const projection = await this.contextV2.projection(owner);
+      const mappings = projection?.tasks.flatMap(task => task.subrequests.filter(sub => sub.kind === 'write'
+        && task.slots?.[`reimbursementActionId${sub.index}`] === control.actionId)
+        .map(sub => ({ index: 0, taskId: task.taskId, subrequestIndex: sub.index, kind: sub.kind, goal: sub.goal }))) ?? [];
+      if (mappings.length === 1) this.semanticTaskMappings.set(event, mappings);
+    }
+    await this.deliverReimbursementDraftResult(event, ctx, result);
+    if (result.status === 'applied' || result.status === 'cancelled') await this.finishReimbursementTask(owner, ownerEpoch, control.actionId, result.status === 'applied');
+    await this.updateEventLog(event.webhookEventId, result.status === 'applied' ? 'completed' : 'reimbursement_' + result.status, undefined, ctx.companyId);
+  }
+
+  private async finishReimbursementTask(owner: LineConversationOwner, epoch: number, actionId: string, applied: boolean): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const projection = await this.contextV2.projection(owner);
+      if (!projection || projection.lifecycleEpoch !== epoch) return;
+      const tasks = projection.tasks.map(task => {
+        const linked = task.subrequests.filter(sub => sub.kind === 'write' && task.slots?.[`reimbursementActionId${sub.index}`] === actionId);
+        // Legacy single-write projections can still finish; an unindexed action never completes several clauses.
+        const legacy = !linked.length && task.subrequests.filter(sub => sub.kind === 'write').length === 1
+          && task.sourceRevisionLocators?.some(ref => ref.sourceType === 'REIMBURSEMENT_ACTION' && ref.sourceId === actionId);
+        if (!linked.length && !legacy) return task;
+        const subrequests = task.subrequests.map(sub => linked.some(item => item.index === sub.index) || legacy && sub.kind === 'write'
+          ? { ...sub, status: applied ? 'handled' as const : 'unsupported' as const } : sub);
+        if (subrequests.every((sub, index) => sub.status === task.subrequests[index]!.status)) return task;
+        return { ...task, revision: task.revision + 1, subrequests,
+          state: subrequests.some(sub => sub.status === 'pending' || sub.status === 'needs_user') ? 'waiting_user' as const : applied ? 'completed' as const : 'canceled' as const };
+      });
+      if (tasks.every((task, index) => task === projection.tasks[index])) return;
+      if (await this.contextV2.save(owner, projection.stateVersion, epoch, { version: 2, tasks })) return;
+    }
+  }
+
+  /** Used by the permission-checked proposal adapter and exact zero-model controls. */
+  async deliverReimbursementDraftResult(event: LineTextEvent, ctx: RequestContext, result: LineReimbursementDraftResult): Promise<void> {
+    this.deliveryReimbursements.set(event, { context: ctx, result });
+    const remaining = (result.status === 'applied' || result.status === 'cancelled') && this.semanticTaskMappings.has(event)
+      ? await this.remainingTaskChoiceMessages(event) : [];
+    await this.deliverRequiredMessages(event, [...buildReimbursementDraftMessages(result, this.config.webBaseUrl ?? '', ctx.companyId), ...remaining]);
+  }
+
+  private async handleAnswerDeliveryControl(event: LineTextEvent): Promise<void> {
+    const control = event.answerDeliveryControl!;
+    const row = await this.prisma.client.lineDeliveryPlan.findUnique({ where: { id: control.planId } });
+    const plan = parseLineDeliveryPlan(row?.planJson);
+    if (!row || !plan || row.planHash !== deliveryHash(plan) || !(plan.producerKind === 'CAPTURE_OUTBOX'
+      ? await this.captureNotifier.verifyCaptureDeliveryPlan(plan, event).catch(() => null)
+      : plan.producerKind === 'LEDGER' ? await this.ledgerDrain.verifyLedgerDeliveryPlan(plan, event).catch(() => false)
+      : await this.verifyWebhookPlan(plan, event).catch(() => false))) {
+      await this.lineReply.sendReply(event.replyToken, [{ type: 'text', text: 'คำตอบชุดนี้หมดอายุหรือสิทธิ์เปลี่ยนแล้วค่ะ กรุณาถามใหม่' }]);
+      await this.updateEventLog(event.webhookEventId, 'delivery_failed', 'LINE_PLAN_CONTROL_DENIED'); return;
+    }
+    if (control.action === 'cancel') {
+      const canceled = await this.deliveryPlans.cancelPlan(row.id, row.planHash);
+      await this.lineReply.sendReply(event.replyToken, [{ type: 'text', text: canceled ? 'หยุดส่งส่วนที่เหลือแล้วค่ะ การหยุดส่งคำตอบไม่ย้อนรายการที่บันทึกไปแล้ว' : 'คำตอบชุดนี้สิ้นสุดแล้วค่ะ' }]);
+      await this.updateEventLog(event.webhookEventId, 'completed'); return;
+    }
+    const continued = await this.deliveryPlans.continuePlan(row.id, row.planHash, control.next);
+    if (plan.producerKind === 'CAPTURE_OUTBOX' || plan.producerKind === 'LEDGER') {
+      await this.lineReply.sendReply(event.replyToken, [{ type: 'text', text: continued ? 'กำลังส่งคำตอบส่วนที่เหลือค่ะ' : 'คำตอบส่วนนี้กำลังส่งหรือสิ้นสุดแล้วค่ะ' }]);
+      await this.updateEventLog(event.webhookEventId, 'completed'); return;
+    }
+    const result = await this.replayDeliveryPlan(row.id, event);
+    await this.updateEventLog(event.webhookEventId, result === 'ok' ? 'completed' : 'delivery_pending', result === 'ok' ? undefined : 'LINE_DELIVERY_V2_PENDING');
+  }
+
+  private async sendMessagesV2(event: LineTextEvent | LineReceiptUploadEvent, messages: LineReplyMessage[]): Promise<LineDeliveryResult> {
+    const existing = await this.prisma.client.lineTurnOutcome.findUnique({ where: { webhookEventId: event.webhookEventId }, include: { deliveryPlan: true } });
+    if (existing) {
+      if (existing.presentationKind !== 'delivery_plan_v2' || !existing.deliveryPlan) return 'failed_other';
+      return this.replayDeliveryPlan(existing.deliveryPlan.id, event, 2);
+    }
+    await this.persistSemanticTaskCompletion(event);
+    const log = await this.prisma.client.lineWebhookEventLog.findUnique({ where: { webhookEventId: event.webhookEventId } });
+    if (!log) return 'failed_other';
+    const reimbursement = this.deliveryReimbursements.get(event)?.result;
+    const previewExpiry = reimbursement?.status === 'preview' ? Date.parse(reimbursement.preview.expiresAt) : Infinity;
+    const now = new Date(), expiresAt = new Date(Math.min(log.createdAt.getTime() + 60 * 60_000, now.getTime() + 60 * 60_000, previewExpiry)).toISOString();
+    const authorization = await this.webhookPlanAuthorization(event, expiresAt);
+    if (!authorization) return 'failed_other';
+    const outcomeId = deliveryHash(['line-outcome-v2', event.webhookEventId]);
+    const planId = lineDeliveryPlanId('WEBHOOK', outcomeId);
+    const draft = this.deliveryDraftPreviews.get(event);
+    const previewProof = authorization.kind === 'PRIVATE' ? authorization.proofs.find(p => p.kind === 'EXPENSE_EDIT_PREVIEW') : undefined;
+    const reimbursementControlIndex = reimbursement?.status === 'preview' ? messages.findIndex(m => m.type === 'flex' && JSON.stringify(m.contents).includes('reimbursement_draft_confirm')) : -1;
+    const controlIndex = draft?.phase === 'PENDING' ? messages.findIndex(m => m.type === 'flex' && JSON.stringify(m.contents).includes('action=draft-update-confirm')) : -1;
+    const items = messages.map(message => {
+      const text = message.type === 'text' ? message.text : message.type === 'flex' ? message.canonicalText : null;
+      if (!text) throw new Error('LINE_PLAN_CANONICAL_TEXT_REQUIRED');
+      return { kind: 'answer' as const, text, required: true, sourceProofIds: authorization.kind === 'PRIVATE' ? authorization.proofs.map(p => p.id) : [] };
+    });
+    const financialControlIndex = reimbursementControlIndex >= 0 ? reimbursementControlIndex : controlIndex;
+    const control = reimbursement?.status === 'preview' && reimbursementControlIndex >= 0
+      ? { kind: 'REIMBURSEMENT_DRAFT_CONFIRM' as const, actionId: reimbursement.preview.actionId, previewRevision: reimbursement.preview.previewRevision, confirmationDigest: reimbursement.preview.confirmationDigest, expiresAt: reimbursement.preview.expiresAt, requiredItemIds: items.map((_x, i) => `${planId}:item:${i}`) }
+      : controlIndex >= 0 && previewProof && draft?.previewId ? { kind: 'EXPENSE_EDIT_CONFIRM' as const, previewId: draft.previewId, previewRevision: String(previewProof.previewRevision), expiresAt, requiredItemIds: items.map((_x, i) => `${planId}:item:${i}`) } : null;
+    const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: outcomeId, createdAt: log.createdAt.toISOString(), readyAt: now.toISOString(), expiresAt,
+      firstDispatchDeadlineAt: new Date(this.documentQaDelivery.get(event)?.jobDeadlineAt.getTime() ?? (log.budgetAuthorityJson as { grant?: { finalDeadlineAtMs?: number } } | null)?.grant?.finalDeadlineAtMs ?? log.createdAt.getTime() + 40_000).toISOString(), authorization, control, businessResult: reimbursement?.status === 'applied' ? { kind: 'REIMBURSEMENT_DRAFT', operationKey: String(reimbursement.receipt.actionId), committedAt: String(reimbursement.receipt.committedAt), recordIds: [String(reimbursement.receipt.requestId)], resultingRevisions: [String(reimbursement.receipt.appliedRequestUpdatedAt)] } : null,
+      answer: { status: this.semanticDelivery.get(event)?.some(item => item.status === 'needs_user') || (parseLineDocumentQaResult(this.documentQaDelivery.get(event)?.resultJson)?.coverage.failed.length ?? 0) > 0 ? 'PARTIAL' : 'COMPLETE', pendingSubrequestIds: (this.semanticDelivery.get(event) ?? []).filter(item => item.status === 'needs_user').map(item => String(item.index)), items }, ...(control ? { controlMessage: messages[financialControlIndex]! } : {}) });
+    const saved = await this.deliveryPlans.savePlan({ kind: 'WEBHOOK', id: outcomeId }, plan, new Date(log.createdAt.getTime() + this.config.aiDataRetentionDays * 86400000), now, event.webhookEventId);
+    if (!saved) return 'failed_other';
+    return this.replayDeliveryPlan(saved.id, event, 2);
   }
 
   private async sendMessages(
@@ -3180,6 +4120,12 @@ export class ProcessLineWebhookUseCase {
         data: { deliveryOwnerId: 'webhook' },
       });
       if (owner.count !== 1) return 'failed_other';
+    }
+    const bound = this.boundConversations.get(event);
+    if (this.config.lineAiDeliveryPlanV2Enabled && this.config.lineAiTerminalOutcomeReplayEnabled && !this.intermediateDeliveries.has(event) && bound) {
+      const result = await this.sendMessagesV2(event as LineTextEvent, messages);
+      if (result !== 'ok') await this.updateEventLog(event.webhookEventId, 'delivery_pending', 'LINE_DELIVERY_V2_PENDING');
+      return result;
     }
     const persistentOutcome = this.config.lineAiTerminalOutcomeReplayEnabled && !this.intermediateDeliveries.has(event);
     if (persistentOutcome) {
@@ -3471,7 +4417,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async appendSourceBoundClarifications(event: LineTextEvent | LineReceiptUploadEvent, input: Parameters<LineAiLedgerService['appendSubRequests']>[0]) {
-    await this.ledger?.appendSubRequests({ ...input, items: input.items.map(item => ({ ...item,
+    await this.ledger?.appendSubRequests({ ...input, ...(this.boundConversations.has(event) ? { reliabilityVersion: 2 as const } : {}), items: input.items.map(item => ({ ...item,
       sourceContext: this.clarificationSourceContext(event, item),
     })) });
   }
@@ -3709,6 +4655,81 @@ export class ProcessLineWebhookUseCase {
     };
   }
 
+  /** Public admission metadata only: no membership, company profile, private context or ERP read. */
+  async preflightPublicGeneral(event: { lineUserId: string; messagingChannelId: string; chatId: string; channelKind?: 'USER'|'GROUP'|'ROOM' }, existingPlan = false) {
+    if (!existingPlan && (this.config.lineAiReliabilityV2Mode !== 'on' || !this.config.lineAiDeliveryPlanV2Enabled)
+      || event.messagingChannelId !== this.config.lineMessagingChannelId
+      || !this.config.lineAiDeliveryPlanV2PublicChannelIds.includes(event.messagingChannelId)) return null;
+    await this.launchGate.assertLaunchRouteOpen('ai_line_assistant');
+    const channels = await this.prisma.client.lineChannelBinding.findMany({ where: { messagingChannelId: event.messagingChannelId, status: 'ACTIVE', company: { status: 'ACTIVE' } }, select: { id: true, companyId: true, updatedAt: true }, take: 2 });
+    if (channels.length !== 1) return null;
+    const binding = channels[0]!;
+    const identity = await this.prisma.client.externalIdentity.findFirst({ where: { provider: 'LINE', providerChannelId: event.messagingChannelId, providerUserId: event.lineUserId, status: 'ACTIVE' }, select: { userId: true, user: { select: { status: true, aiAssistantOptOutAt: true } } } });
+    // No anonymous consent exemption is invented: this gate uses only current policy evidence.
+    if (!identity || identity.user.status !== 'ACTIVE' || identity.user.aiAssistantOptOutAt
+      || await this.legalAcceptance.isPublicAiAcceptanceRequired(identity.userId) || await this.assistantPaused(event.lineUserId)) return null;
+    const features = await loadEntitledFeatureKeys(this.prisma, binding.companyId);
+    if (lineAssistantDisabledFor(features)) return null;
+    return { companyId: binding.companyId, actorUserId: identity.userId,
+      policyDigest: deliveryHash({ version: 2, bindingId: binding.id, updatedAt: binding.updatedAt.toISOString(), features: features ? [...features].sort() : null }) };
+  }
+
+  private async executePublicGeneral(event: LineTextEvent, requestId: string): Promise<void> {
+    const target = event.pushTargetId ?? event.lineUserId;
+    const channelKind = event.channelKind === 'GROUP' || event.channelKind === 'ROOM' ? event.channelKind : target !== event.lineUserId ? 'GROUP' : 'USER';
+    const admission = await this.preflightPublicGeneral({ lineUserId: event.lineUserId, messagingChannelId: event.messagingChannelId, chatId: target, channelKind }).catch(() => null);
+    if (!admission) {
+      const messages = [{ type: 'text' as const, text: 'แชตนี้ยังไม่พร้อมตอบด้วย AI ค่ะ งานเอกสารหรือข้อมูลบริษัทกรุณาส่งในแชตส่วนตัว' }];
+      const result = await this.lineReply.sendReply(event.replyToken, messages);
+      if (result === 'failed_token') await this.lineReply.sendPush(target, messages, `public-unavailable:${event.webhookEventId}`);
+      await this.updateEventLog(event.webhookEventId, 'public_unavailable'); return;
+    }
+    const log = await this.prisma.client.lineWebhookEventLog.findUniqueOrThrow({ where: { webhookEventId: event.webhookEventId } });
+    // Public admission deliberately has no private conversation binding. Verify its complete input
+    // against the accepted webhook timestamp without consulting private context.
+    const evidence = event.inputEvidence ? await verifyLineAiInputEvidence(event.inputEvidence, event.messageText)
+      : (await createLineAiInputEvidence({ turnKey: deliveryHash(event.webhookEventId), parts: [{ partId: 'part-0',
+          eventIdHash: deliveryHash(event.webhookEventId), acceptedAtMs: log.createdAt.getTime(), rawText: event.messageText }] }))?.inputEvidence;
+    if (!evidence) { await this.updateEventLog(event.webhookEventId, 'input_rejected', 'LINE_INPUT_EVIDENCE_INVALID'); return; }
+    await this.prisma.client.lineWebhookEventLog.update({ where: { id: log.id }, data: { companyId: admission.companyId } });
+    const accepted = evidence.parts.map(part => part.acceptedAtMs), first = Math.min(...accepted), last = Math.max(...accepted);
+    const grant = await this.aiGateway.issueLineReliabilityGrant(requestId, { authorityKind: 'webhook_event', authorityId: log.id,
+      owner: { kind: 'PUBLIC_GENERAL', owner: { companyId: admission.companyId, channel: 'line', channelKind, messagingChannelId: event.messagingChannelId, chatKeyHash: chatKeyHashOf(event) } },
+      turnKey: evidence.turnKey, attemptKey: deliveryHash(['public-turn-v2', event.webhookEventId]), inputDigest: evidence.joinedSha256, requestKind: 'TEXT',
+      admittedAtMs: first, coalescingExtraMs: Math.min(6000, Math.max(0, last - first)), lane: 'general', allowedProfileIds: ['line-answer/2'] });
+    if (!grant) { await this.lineReply.sendReply(event.replyToken, [{ type: 'text', text: AI_BUDGET_UNAVAILABLE_REPLY }]); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_BUDGET_UNAVAILABLE'); return; }
+    const response = await this.aiGateway.requestLinePublicGeneral({ requestId, webhookEventId: event.webhookEventId, kind: 'PUBLIC_GENERAL', messageText: event.messageText,
+      inputEvidence: evidence, budgetGrantV2: grant, contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'], publicAdmission: { channelKind, channelKeyHash: chatKeyHashOf(event), payerCompanyId: admission.companyId, admissionId: log.id } });
+    if (response.status !== 'answered' || Date.now() >= grant.finalDeadlineAtMs - 500) {
+      await this.lineReply.sendReply(event.replyToken, [{ type: 'text', text: 'ยังตอบคำขอนี้ไม่สำเร็จค่ะ ระบบไม่ได้อ่านหรือทำรายการในบริษัทให้' }]);
+      await this.updateEventLog(event.webhookEventId, 'provider_unavailable', response.errorCode ?? 'DEADLINE_EXCEEDED'); return;
+    }
+    const now = new Date(), expiresAt = new Date(log.createdAt.getTime() + 60 * 60_000).toISOString(), outcomeId = deliveryHash(['line-outcome-v2', event.webhookEventId]);
+    const current = await this.prisma.client.lineWebhookEventLog.findUniqueOrThrow({ where: { id: log.id } });
+    const authorization: DeliveryAuthorizationV2 = { v: 2, kind: 'PUBLIC_GENERAL', admissionOwner: { kind: 'WEBHOOK', id: outcomeId, revision: current.budgetAuthorityRevision },
+      destination: { channelId: event.messagingChannelId, channel: 'line', channelKind, lineTargetId: target, targetHash: deliveryHash(target), chatKeyHash: chatKeyHashOf(event) }, actorUserId: admission.actorUserId,
+      initiatorHash: deliveryHash(event.lineUserId), admissionPolicyDigest: admission.policyDigest, sourceManifestDigest: deliveryHash('public-general:2.4'), approvedPublicSourceIds: [], issuedAt: now.toISOString(), expiresAt };
+    const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: outcomeId, createdAt: log.createdAt.toISOString(), readyAt: now.toISOString(), expiresAt, firstDispatchDeadlineAt: new Date(grant.finalDeadlineAtMs).toISOString(), authorization,
+      control: null, businessResult: null, answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: response.replyText, required: true, sourceProofIds: [] }] } });
+    const saved = await this.deliveryPlans.savePlan({ kind: 'WEBHOOK', id: outcomeId }, plan, new Date(log.createdAt.getTime() + this.config.aiDataRetentionDays * 86400000), now, event.webhookEventId);
+    if (!saved) { await this.updateEventLog(event.webhookEventId, 'delivery_pending', 'LINE_OUTCOME_RECOVERY_REQUIRED'); return; }
+    const delivered = await this.replayDeliveryPlan(saved.id, event, 2);
+    await this.updateEventLog(event.webhookEventId, delivered === 'ok' ? 'completed' : 'delivery_pending', delivered === 'ok' ? undefined : 'LINE_DELIVERY_V2_PENDING', admission.companyId);
+  }
+
+  private async verifyPublicPlan(plan: DeliveryPlanV2, event: { lineUserId: string; pushTargetId?: string; messagingChannelId?: string }): Promise<boolean> {
+    if (plan.authorization.kind !== 'PUBLIC_GENERAL' || plan.control || plan.businessResult) return false;
+    const auth = plan.authorization, d = auth.destination;
+    if (event.messagingChannelId !== d.channelId || deliveryHash(event.lineUserId) !== auth.initiatorHash || (event.pushTargetId ?? event.lineUserId) !== d.lineTargetId
+      || deliveryHash(d.lineTargetId) !== d.targetHash || Date.parse(auth.expiresAt) <= Date.now() || auth.approvedPublicSourceIds.length || auth.sourceManifestDigest !== deliveryHash('public-general:2.4')) return false;
+    const current = await this.preflightPublicGeneral({ lineUserId: event.lineUserId, messagingChannelId: d.channelId, chatId: d.lineTargetId, channelKind: d.channelKind }, true);
+    if (!current || current.actorUserId !== auth.actorUserId || current.policyDigest !== auth.admissionPolicyDigest) return false;
+    const outcome = await this.prisma.client.lineTurnOutcome.findUnique({ where: { id: auth.admissionOwner.id }, include: { event: true } });
+    const owner = outcome?.event;
+    return !!owner && owner.companyId === current.companyId && owner.budgetAuthorityRevision === auth.admissionOwner.revision && owner.deliveryOwnerId === 'webhook'
+      && !['cancelled', 'expired', 'revoked'].includes(owner.status);
+  }
+
   /** Reuse delivery evidence, not model history. An intervening event ends this public topic. */
   private async lastDeliveredPublicPolicy(event: LineTextEvent): Promise<PublicPolicyTopic | undefined> {
     if (!this.config.lineAiTerminalOutcomeReplayEnabled) return undefined;
@@ -3730,14 +4751,18 @@ export class ProcessLineWebhookUseCase {
   }
 
   async execute(event: LineTextEvent): Promise<void> {
-    const requestId = randomUUID();
+    const mediaContinuation = this.mediaTextContinuations.get(event);
+    const requestId = mediaContinuation?.requestId ?? randomUUID();
 
     // 1. Atomically claim the event. The message buffer may have created the
     //    `received` row already; processedAt is the compare-and-set claim marker.
-    if (!await this.claimWebhookEvent(event.webhookEventId, event.lineUserId)) {
+    if (!mediaContinuation && !await this.claimWebhookEvent(event.webhookEventId, event.lineUserId)) {
       this.logger.log({ msg: 'Duplicate webhook event skipped', webhookEventId: event.webhookEventId });
       return;
     }
+
+    if (event.answerDeliveryControl) { await this.handleAnswerDeliveryControl(event); return; }
+    if (event.channelKind === 'GROUP' || event.channelKind === 'ROOM' || event.pushTargetId && event.pushTargetId !== event.lineUserId) { await this.executePublicGeneral(event, requestId); return; }
 
     // Public deterministic command: the verified controller and event claim already ran, but no
     // identity, company, acceptance, permission, entitlement, or model read is needed.
@@ -3892,7 +4917,7 @@ export class ProcessLineWebhookUseCase {
     // shown. Swallowing them filed a button press as a sentence for an operator to read and gave
     // back a confirmation nobody asked for. S-4's two phrases only count while its lane is lit; with
     // the flag off they are ordinary text and stay under the pause like any other sentence.
-    const deterministicCommand = publicCommand !== null
+    const deterministicCommand = !!event.reimbursementDraftControl || publicCommand !== null
       && (this.draftUpdate?.enabled === true
         || (publicCommand !== 'draft_update_confirm' && publicCommand !== 'draft_update_cancel'));
     if (!deterministicCommand
@@ -3971,6 +4996,13 @@ export class ProcessLineWebhookUseCase {
     this.deliveryAccess.set(event, { userId: identity.userId, companyId, membershipId: resolvedAccess.membershipId,
       fingerprint: resolvedLineDeliveryAccessFingerprint(identity.userId, companyId, resolvedAccess, entitledFeatureKeys),
       allowDuringSupportPause: deterministicCommand });
+    await this.bindConversation(event);
+    if (event.reimbursementDraftControl) {
+      await this.handleReimbursementDraftControl(event, { requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+        membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions,
+        scopes: resolvedAccess.scopes, authProvider: 'line' });
+      return;
+    }
     const menuCommand = staffMenuCommand(event.messageText);
     const canCaptureExpense = RECEIPT_CAPTURE_PERMISSIONS
       .some((permission) => resolvedAccess.permissions.includes(permission));
@@ -4066,6 +5098,11 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
+    await this.reconcileDeliveredSemanticTasks(event);
+    if (await this.handlePreferenceCommand(event, requestId)) return;
+    if (await this.handlePendingMediaControl(event)) return;
+    if (await this.handleDocumentQaControl(event)) return;
+    if (await this.prepareRetainedTaskSelection(event)) return;
     const canQuery = resolvedAccess.permissions.includes('line.ai.query');
     const canEditLine = resolvedAccess.permissions.includes('expense.update');
     const canSubmitSignature = maySubmitSignature(resolvedAccess.permissions);
@@ -4123,17 +5160,44 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    let normalizedText = normalizeLineText(event.messageText);
+    // V2 classifies from accepted input and bounded task state before any private ERP prefetch.
+    if (canQuery && this.boundConversations.has(event)) {
+      const candidates = await this.textValueCandidates(event, event.messageText);
+      const earlyRoute = await this.tryRouteIntake({ event, requestId, webhookEventId: event.webhookEventId,
+        companyId, userId: identity.userId, permissions: resolvedAccess.permissions, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : [],
+        messageText: event.messageText, ...(candidates ? { valueCandidates: candidates } : {}) });
+      this.intakePlansV2.set(event, earlyRoute);
+      if (earlyRoute.status !== 'ROUTED' || !earlyRoute.semanticSubrequests?.length) {
+        await this.deliverReply(event, 'ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้');
+        await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_CONTRACT_UNSUPPORTED', companyId); return;
+      }
+      if (await this.resumeDocumentQuestionV2(event, requestId, earlyRoute, resolvedAccess)) return;
+      if (earlyRoute.semanticSubrequests.every(item => ['general', 'help'].includes(item.kind))) {
+        await this.deliverPureGeneralV2(event, requestId, earlyRoute, resolvedAccess, entitledFeatureKeys, candidates); return;
+      }
+    }
+
+    let normalizedText = this.boundConversations.has(event) ? event.messageText : normalizeLineText(event.messageText);
     let mediaResumeCapsule: string | undefined;
 
     // RECEIPT-05 (owner decision 2026-07-12): if this user has an unresolved media-clarify
     // question, their reply decides it deterministically BEFORE any AI routing — receipt →
     // build the draft from the stored attachment; illustration → answer the original caption;
     // multiple → retain for review without collapsing rows; ambiguous → leave it PENDING.
-    const pendingMedia = await this.prisma.client.lineIntakePendingMedia.findFirst({
-      where: { companyId, userId: identity.userId, status: 'PENDING', expiresAt: { gt: new Date() } },
-      orderBy: { createdAt: 'desc' },
-    });
+    const pendingWhere = { companyId, userId: identity.userId, status: 'PENDING' as const, expiresAt: { gt: new Date() }, ...this.pendingMediaBinding(event) };
+    const pendingRows = this.boundConversations.has(event)
+      ? await this.prisma.client.lineIntakePendingMedia.findMany({ where: pendingWhere, orderBy: { createdAt: 'asc' }, take: 6 })
+      : [await this.prisma.client.lineIntakePendingMedia.findFirst({ where: pendingWhere, orderBy: { createdAt: 'desc' } })].filter((row): row is NonNullable<typeof row> => !!row);
+    const explicitlySelected = pendingRows.filter(row => (row.askedQuestionJson as { selectedForContinuation?: boolean } | null)?.selectedForContinuation === true);
+    if (pendingRows.length > 1 && explicitlySelected.length !== 1) {
+      await this.deliverRequiredMessages(event, [this.pendingMediaSelectionMessage(pendingRows)]);
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', 'MEDIA_SELECTION_REQUIRED', companyId); return;
+    }
+    const pendingMedia = explicitlySelected[0] ?? pendingRows[0];
+    if (pendingMedia && ((pendingMedia.askedQuestionJson as { selectedAttachmentIds?: string[] } | null)?.selectedAttachmentIds?.length ?? 0) > 1) {
+      await this.deliverReply(event, 'ไฟล์ชุดนี้ยังเก็บไว้ครบค่ะ หากจะบันทึกรายการ กรุณาเลือกไฟล์หลักจากปุ่มก่อน หรือถามให้อ่านทั้งชุดได้โดยไม่สร้างรายการ');
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', 'MEDIA_PURPOSE_REQUIRED', companyId); return;
+    }
     if (editCapabilityQuestion && pendingMedia) {
       await this.deliverCompletedReply(event,
         'มีรูปก่อนหน้าที่รอคำตอบอยู่ค่ะ กรุณาตอบคำถามของรูปนั้นก่อน แล้วค่อยถามเรื่องแก้รายการอีกครั้งนะคะ',
@@ -4218,7 +5282,7 @@ export class ProcessLineWebhookUseCase {
           absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`),
         ].join('\n');
         await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
-        await this.persistIntakeTurn({
+        await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: reply, intent: 'CLARIFY',
         });
@@ -4235,7 +5299,7 @@ export class ProcessLineWebhookUseCase {
     }
 
     const conversationContext = canQuery ? await this.loadConversationContext(companyId, identity.userId, event) : undefined;
-    const valueCandidates = computeValueCandidates(normalizedText);
+    const valueCandidates = await this.textValueCandidates(event, normalizedText);
     // Item 10F: chatKey = groupId ?? roomId ?? userId (same as the buffer); open waiting_user
     // ledger entries ride the turn as DATA so the model can complete the ORIGINAL request.
     const chatKey = event.pushTargetId ?? event.lineUserId;
@@ -4282,7 +5346,7 @@ export class ProcessLineWebhookUseCase {
         : entitledFeatureKeys !== null && !entitledFeatureKeys.has('expenses.upload') ? EXPENSE_FEATURE_DISABLED_REPLY
         : await this.saveRecentUtilityBill(event, expenseDraftCtx, recentCapturedExpenses, normalizedText);
       await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: reply, intent: 'EVIDENCE_CAPTURE',
       });
@@ -4396,7 +5460,7 @@ export class ProcessLineWebhookUseCase {
         this.logger.warn({ msg: 'line_receipt_status_unavailable', ...safeLineErrorDetails(error) });
       }
       await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: reply, intent: 'UNKNOWN',
       });
@@ -4417,9 +5481,11 @@ export class ProcessLineWebhookUseCase {
         webhookEventId: event.webhookEventId,
       });
       if (result.handled) {
+        const mixedContinuation = this.mixedBusinessQuestions?.get(event);
+        if (mixedContinuation) mixedContinuation.businessStatus = ['ENDED', 'CANCELLED'].includes(result.status) ? 'handled' : 'needs_user';
         this.rememberContinuationDeliverySource(event, expenseDraftCtx, result);
         await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess, undefined, true);
-        await this.persistIntakeTurn({
+        await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: result.replyTexts.join('\n'), intent: 'CLARIFY',
         });
@@ -4435,7 +5501,7 @@ export class ProcessLineWebhookUseCase {
         ...(entitledFeatureKeys && { entitledFeatureKeys: [...entitledFeatureKeys] }),
       })}${interruption ? `\n\n${interruption}` : ''}`;
       await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: reply, intent: 'UNKNOWN',
       });
@@ -4448,7 +5514,7 @@ export class ProcessLineWebhookUseCase {
         this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
         const reply = ['พบรายการล่าสุดมากกว่า 1 รายการ กรุณาระบุรายการก่อนค่ะ', ...recentCapturedExpenses.map((item, index) => `${index + 1}) ${item.label}`)].join('\n');
         await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
-        await this.persistIntakeTurn({
+        await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: reply, intent: 'CLARIFY',
         });
@@ -4479,7 +5545,7 @@ export class ProcessLineWebhookUseCase {
           this.rememberReceiptDeliverySource(event, expenseDraftCtx, current, category);
           const reply = `${formatGroundedReceiptFollowUp(this.config.webBaseUrl, companyId, current, category?.name, normalizedText)}${interruption ? `\n\n${interruption}` : ''}`;
           await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
-          await this.persistIntakeTurn({
+          await this.persistIntakeTurn({ event,
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
             userMessagePreview: normalizedText, replyText: reply, intent: 'READ_SUMMARY',
           });
@@ -4490,7 +5556,7 @@ export class ProcessLineWebhookUseCase {
     }
 
     const hasSubstituteClarification = openWaiting.some((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION');
-    const substituteMode = this.config.lineAiSubstituteSemanticRoutingMode;
+    const substituteMode = this.boundConversations.has(event) ? 'primary' : this.config.lineAiSubstituteSemanticRoutingMode;
     const continuationCtx: RequestContext = {
       requestId, authSubject: identity.userId, userId: identity.userId, companyId,
       membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
@@ -4604,7 +5670,7 @@ export class ProcessLineWebhookUseCase {
         this.logger.warn({ msg: 'line_substitute_continuation_after_capture_failed', requestId, ...safeLineErrorDetails(error) });
         const degraded = `${captureReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED}`;
         await this.deliverCompletedReply(event, degraded, companyId, resolvedAccess);
-        await this.persistIntakeTurn({
+        await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: degraded, intent: 'EVIDENCE_CAPTURE',
         });
@@ -4640,7 +5706,7 @@ export class ProcessLineWebhookUseCase {
         const merged = `${captureReply ? `${captureReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n` : ''}${result.replyText}`;
         const replyText = `${merged}${interruption ? `\n\n${interruption}` : ''}`;
         await this.deliverCompletedReply(event, replyText, companyId, resolvedAccess, result.badge);
-        await this.persistIntakeTurn({
+        await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText, intent: captured ? 'EVIDENCE_CAPTURE' : 'CLARIFY',
         });
@@ -4691,7 +5757,7 @@ export class ProcessLineWebhookUseCase {
       this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
       const reply = formatNextStepGuidanceReply(this.config.webBaseUrl, companyId, recentCapturedExpenses[0]);
       await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: reply, intent: 'READ_SUMMARY',
       });
@@ -4716,7 +5782,7 @@ export class ProcessLineWebhookUseCase {
       // Ordering only: the outcome is recorded before delivery so a failed send leaves a record of what
       // was decided. This is NOT the §8.3 durable replay — `persistIntakeTurn` is best-effort memory
       // (it swallows its own failure) and no seam re-sends a persisted outcome on a later retry.
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: EXACT_GREETING_REPLY, intent: 'UNKNOWN',
       });
@@ -4740,7 +5806,8 @@ export class ProcessLineWebhookUseCase {
     // One busy-wait budget for the WHOLE live turn (intake + gateway turn share it), so a turn
     // queued behind an in-flight media turn waits for the lease instead of bouncing the user.
     const busyWaitDeadlineMs = Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS;
-    const routePlan = await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({
+    let routePlan = await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({
+      event, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : [],
       requestId,
       webhookEventId: event.webhookEventId,
       companyId,
@@ -4758,6 +5825,43 @@ export class ProcessLineWebhookUseCase {
       busyWaitDeadlineMs,
     }));
 
+    const retainedTask = this.retainedTaskSources?.get(event);
+    if (retainedTask) {
+      const selected = routePlan.semanticSubrequests?.[0], ref = selected?.taskRef;
+      if (routePlan.status !== 'ROUTED' || routePlan.semanticSubrequests?.length !== 1 || selected?.kind !== 'write'
+        || selected.writeIntent !== retainedTask.source.semanticSubrequest.writeIntent || !ref
+        || ref.taskId !== retainedTask.source.taskRef.taskId || ref.taskRevision !== retainedTask.source.taskRef.taskRevision
+        || ref.subrequestIndex !== retainedTask.source.taskRef.subrequestIndex) {
+        await this.deliverReply(event, 'ยังตรวจสอบรายการที่เลือกไม่สำเร็จค่ะ รายละเอียดเดิมยังเก็บไว้ ยังไม่ได้สร้างหรือแก้เอกสาร'); return;
+      }
+      // Domain grounding sees the selected immutable clause. The current intake input/grant stay on the selection event.
+      normalizedText = retainedTask.sourceText;
+    }
+    const typedWrites = routePlan.semanticSubrequests?.filter(item => item.kind === 'write');
+    const multipleExistingBusinessWrites = (typedWrites?.length ?? 0) > 1 && typedWrites!.every(item => item.writeIntent
+      && ['EXPENSE_DOCUMENT_CAPTURE', 'EXPENSE_DRAFT_CONTINUATION', 'EXPENSE_CAPTURE_CORRECTION', 'SUBSTITUTE_RECEIPT_CONTINUATION', 'REIMBURSEMENT_REQUEST_START'].includes(item.writeIntent));
+    if (this.boundConversations.has(event) && typedWrites?.length === 1 && typedWrites[0]?.writeIntent) {
+      routePlan = { ...routePlan, intent: typedWrites[0].writeIntent };
+    }
+    const initialGrantV2 = this.budgetGrantsV2.get(event);
+    if (this.boundConversations.has(event)) {
+      if (!initialGrantV2 || routePlan.status !== 'ROUTED') {
+        await this.deliverReply(event, 'ยังดำเนินการข้อความชุดนี้ไม่ได้ค่ะ ระบบตรวจสอบขอบเขตคำขอไม่สำเร็จ ยังไม่ได้ทำรายการให้');
+        await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_CONTRACT_UNSUPPORTED', companyId); return;
+      }
+      const hasPublic = routePlan.semanticSubrequests?.some(item => item.kind === 'public') === true && this.config.lineAiPublicLookupEnabled;
+      const onlyGeneral = routePlan.semanticSubrequests?.every(item => ['general', 'help'].includes(item.kind)) === true;
+      const lane = hasPublic ? 'public' : onlyGeneral ? 'general' : !routePlan.semanticSubrequests && (routePlan.intent === 'ADVISOR_CONVERSATION' || routePlan.intent === 'UNSUPPORTED') ? 'general'
+        : routePlan.preparedPlan?.complexity === 'simple' ? 'simple' : 'mixed';
+      const profiles: AiBudgetProfileIdV2[] = lane === 'public' ? ['line-control/2', 'line-answer/2', 'public-lookup/2'] : lane === 'general' ? ['line-answer/2'] : ['line-control/2', 'line-answer/2'];
+      const narrowed = await this.aiGateway.narrowLineReliabilityGrant(initialGrantV2, lane, profiles);
+      if (!narrowed) { await this.deliverReply(event, AI_BUDGET_UNAVAILABLE_REPLY); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_BUDGET_UNAVAILABLE', companyId); return; }
+      this.budgetGrantsV2.set(event, narrowed);
+    }
+    if (routePlan.semanticSubrequests && !await this.preserveSemanticTask(event, routePlan.semanticSubrequests)) {
+      await this.deliverReply(event, 'ยังบันทึกบริบทคำขอชุดนี้ไม่ได้ค่ะ กรุณาเลือกงานค้างที่จะทำต่อหรือส่งคำขออีกครั้ง ยังไม่ได้ทำรายการใหม่ให้');
+      await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'LINE_CONTEXT_STALE_STATE', companyId); return;
+    }
     if (!await this.mayDeliverBusinessReply(event) || !await this.waitingSourcesCurrent(event, expenseDraftCtx, routedWaiting)) return;
     if (!await draftRouteCurrent()) return;
     if (recentCapturedExpenses.length) {
@@ -4767,6 +5871,16 @@ export class ProcessLineWebhookUseCase {
       }
     }
 
+    const mixedBusiness = !!initialGrantV2 && await this.prepareMixedBusinessQuestions(event, requestId, routePlan, resolvedAccess, entitledFeatureKeys, valueCandidates);
+    if (mixedBusiness && multipleExistingBusinessWrites) {
+      const delivery = await this.deliverMixedBusinessWriteSelection(event, typedWrites!);
+      if (delivery === 'ok') await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+      return;
+    }
+    const semanticTurnV2 = !mixedBusiness && !!initialGrantV2 && !!routePlan.semanticSubrequests && (
+      routePlan.semanticSubrequests.length > 1 || routePlan.semanticSubrequests.every(item => ['general', 'help', 'read', 'public'].includes(item.kind))
+      || this.config.lineAiReimbursementDraftWriteEnabled && routePlan.intent === 'REIMBURSEMENT_REQUEST_START');
+    if (!semanticTurnV2) {
     // Advisor Slice A (spec §9.1 row 7 / §9.2): a routed ADVISOR_CONVERSATION whose bounded social
     // draft passes every delivery-time gate is answered HERE from the single intake call — no
     // gateway turn, no second model call. Any declined gate falls through UNCHANGED: the turn
@@ -4787,7 +5901,7 @@ export class ProcessLineWebhookUseCase {
     if (advisorDirectText) {
       this.logger.log({ msg: 'line.ai.advisor_direct_served', requestId, companyId, context: 'ProcessLineWebhookUseCase' });
       // Same ordering as the exact-greeting lane: record what was decided, then deliver.
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: advisorDirectText, intent: 'UNKNOWN',
         // The one model call that wrote this reply, as the route response already reports it — before
@@ -4876,6 +5990,8 @@ export class ProcessLineWebhookUseCase {
           requireStartConfirmation: true,
           confirmedStart,
         });
+        const mixedSubstitute = this.mixedBusinessQuestions?.get(event);
+        if (mixedSubstitute) mixedSubstitute.businessStatus = result.status === 'FORBIDDEN' ? 'denied' : result.status === 'READY_FOR_WEB' || result.status === 'CANCELLED' ? 'handled' : 'needs_user';
         this.rememberSubstituteDeliverySource(event, continuationCtx, result);
         // PRECEDENCE when BOTH a substitute workflow AND an expense draft are open: the substitute path
         // (semantic route, OR the narrow canonical fallback taken because the provider was UNAVAILABLE)
@@ -4884,7 +6000,7 @@ export class ProcessLineWebhookUseCase {
         // command deterministically handles the substitute and preserves the draft to resume later.
         const replyText = `${result.replyText}${interruption ? `\n\n${interruption}` : ''}`;
         await this.deliverCompletedReply(event, replyText, companyId, resolvedAccess);
-        await this.persistIntakeTurn({
+        await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText, intent: 'CLARIFY',
         });
@@ -4964,7 +6080,7 @@ export class ProcessLineWebhookUseCase {
       if (reimbursementMode === 'handoff' && !handoffAllowed) {
         // Canonical outcome first, then the resolved question is closed, then delivery. No CTA, no new
         // ledger question, zero writes — a denied user is never left waiting on an answer we cannot use.
-        await this.persistIntakeTurn({
+        await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: REIMBURSEMENT_HANDOFF_FORBIDDEN_REPLY,
           intent: 'MUTATION_REQUEST', refused: true,
@@ -4977,7 +6093,7 @@ export class ProcessLineWebhookUseCase {
       }
       // Fail-closed: anything short of a strong EMPLOYEE_PAID claim asks who paid before anything else.
       if (routePlan.semanticOutcome !== 'REIMBURSEMENT_CLAIM' || routePlan.fundingSource !== 'EMPLOYEE_PAID') {
-        await this.persistIntakeTurn({
+        await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: REIMBURSEMENT_PAYER_CLARIFY_REPLY, intent: 'CLARIFY',
         });
@@ -5000,7 +6116,7 @@ export class ProcessLineWebhookUseCase {
         return;
       }
       if (reimbursementMode === 'clarify_only') {
-        await this.persistIntakeTurn({
+        await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: REIMBURSEMENT_CLARIFY_ONLY_REPLY, intent: 'MUTATION_REQUEST',
         });
@@ -5013,7 +6129,7 @@ export class ProcessLineWebhookUseCase {
         return;
       }
       // handoff, allowed: the web form is still the only place the record is created.
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: REIMBURSEMENT_HANDOFF_REPLY, intent: 'MUTATION_REQUEST',
       });
@@ -5051,9 +6167,11 @@ export class ProcessLineWebhookUseCase {
         captureHints: routePlan.captureHints,
       });
       if (result.handled) {
+        const mixedContinuation = this.mixedBusinessQuestions?.get(event);
+        if (mixedContinuation) mixedContinuation.businessStatus = ['ENDED', 'CANCELLED'].includes(result.status) ? 'handled' : 'needs_user';
         this.rememberContinuationDeliverySource(event, expenseDraftCtx, result);
         await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess, undefined, true);
-        await this.persistIntakeTurn({
+        await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: result.replyTexts.join('\n'), intent: 'CLARIFY',
         });
@@ -5149,8 +6267,8 @@ export class ProcessLineWebhookUseCase {
             .filter((item) => routePlan.resolvedClarificationIds?.includes(item.id)
               && item.clarifyForIntent === 'EXPENSE_DOCUMENT_CAPTURE')
             .map((item) => item.text),
-          lineMessageId: event.lineMessageId ?? event.webhookEventId,
-          lineEventId: event.webhookEventId,
+          lineMessageId: retainedTask?.operationId ?? event.lineMessageId ?? event.webhookEventId,
+          lineEventId: retainedTask?.operationId ?? event.webhookEventId,
           // Same LINE branch rule the photo lanes use — a text note in a multi-branch company hit
           // the identical TRANSACTION_BRANCH_REQUIRED dead end.
           branchId: captureBranchId,
@@ -5169,7 +6287,7 @@ export class ProcessLineWebhookUseCase {
         // persisted and ledgered, so a later turn resolves exactly what the user was asked.
         const clarifyReply = formatTextExpenseClarifyReply(error);
         await this.deliverReply(event, clarifyReply);
-        await this.persistIntakeTurn({
+        await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: clarifyReply, intent: 'CLARIFY',
         });
@@ -5213,6 +6331,7 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
+      const mixedCapture = this.mixedBusinessQuestions?.get(event); if (mixedCapture) mixedCapture.businessStatus = 'handled';
       this.rememberReceiptDeliverySource(event, ctx, captured.expense,
         captured.categoryNameSourceId && captured.categoryName ? { id: captured.categoryNameSourceId, name: captured.categoryName } : undefined);
       const replyTexts = captured.replyTexts.length
@@ -5236,7 +6355,7 @@ export class ProcessLineWebhookUseCase {
           item: captured.expense.vendorNameSnapshot ?? captured.expense.note,
         }));
       await this.ackConsumed(capturePlan, 'evidence_capture');
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: replyTexts.join('\n'), intent: 'EVIDENCE_CAPTURE',
       });
@@ -5275,7 +6394,9 @@ export class ProcessLineWebhookUseCase {
         membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
         permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
       };
-      const correctionEvidence = buildCorrectionEvidence(normalizedText, openWaiting, routePlan.resolvedClarificationIds);
+      const correctionEvidence = buildCorrectionEvidence(event.inputEvidence ? event.messageText : normalizedText, openWaiting, routePlan.resolvedClarificationIds)
+        .map((item, index) => index === 0 && valueCandidates && 'version' in valueCandidates && valueCandidates.version === 2
+          ? { ...item, valueCandidatesV2: valueCandidates } : item);
       // S-4 (spec §5.4/§5.5): money, charges, VAT and whole lines are NOT the five-field correction
       // lane's to write — it would have answered "ยังไม่ได้แก้ยอด" and pointed at the web. They now
       // route to the draft tools, which PREVIEW the change and wait for [ยืนยัน].
@@ -5315,6 +6436,10 @@ export class ProcessLineWebhookUseCase {
               note: target.note,
             }, correctionEvidence, ['expenseDate', 'amount', 'vendorName', 'documentNumber', 'note']);
             if (checked.status === 'clarify') draftClarification = CORRECTION_DIRECTION_CLARIFY_REPLY;
+            if (checked.status === 'guidance' && checked.reason.startsWith('field_too_long:')) {
+              const [, field, limit] = checked.reason.split(':');
+              draftClarification = `ข้อมูลช่อง ${field} ยาวเกิน ${limit} ตัวอักษร กรุณาส่งค่าที่สั้นลงค่ะ ยังไม่ได้แก้ไขรายการ`;
+            }
             if (checked.status === 'applicable') {
               const fields = checked.fields;
               const amount = fields.amount?.to;
@@ -5336,7 +6461,7 @@ export class ProcessLineWebhookUseCase {
       if (draftClarification) {
         this.rememberCandidateDeliverySources(event, expenseDraftCtx, correctionCandidates, Boolean(originalIds));
         await this.deliverCompletedReply(event, draftClarification, companyId, resolvedAccess);
-        await this.persistIntakeTurn({
+        await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: draftClarification, intent: 'CLARIFY',
         });
@@ -5376,7 +6501,7 @@ export class ProcessLineWebhookUseCase {
       if (expenseDraftInterruption) reply = `${reply}\n\n${expenseDraftInterruption}`;
       if (guidanceOutcome.status === 'clarify') await this.deliverReply(event, reply);
       else await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: reply, intent: 'CORRECTION',
       });
@@ -5407,7 +6532,7 @@ export class ProcessLineWebhookUseCase {
       const expenseDraftInterruption = await interruptExpenseDraft();
       const reply = `${SIGNATURE_NEED_IMAGE_REPLY}${expenseDraftInterruption ? `\n\n${expenseDraftInterruption}` : ''}`;
       await this.deliverReply(event, reply);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: reply, intent: 'SIGNATURE_REQUEST',
       });
@@ -5420,7 +6545,7 @@ export class ProcessLineWebhookUseCase {
       if (recentCapturedExpenses.length) this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
       const clarifyReply = routePlan.clarifyQuestion ?? CLARIFY_REPLY;
       await this.deliverReply(event, clarifyReply);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: clarifyReply, intent: 'CLARIFY',
       });
@@ -5443,6 +6568,7 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
+    }
     // BUSINESS_READ_QUESTION, MUTATION_REQUEST_REFUSAL, UNSUPPORTED, or router
     // UNAVAILABLE: continue through the normal permission-checked AI turn path.
     if (!canQuery) {
@@ -5481,7 +6607,12 @@ export class ProcessLineWebhookUseCase {
       webhookEventId: event.webhookEventId,
       userContext: userCtx,
       ...(modelPolicy && { modelPolicy }),
-      messageText: normalizedText,
+      messageText: event.inputEvidence ? event.messageText : normalizedText,
+      ...await this.reliabilityContext(event),
+      ...(routePlan.semanticSubrequests ? { semanticSubrequests: routePlan.semanticSubrequests } : {}),
+      ...(retainedTask ? { retainedTaskSource: retainedTask.source } : {}),
+      ...(this.budgetGrantsV2.get(event) && event.inputEvidence ? { inputEvidence: event.inputEvidence, budgetGrantV2: this.budgetGrantsV2.get(event), contractCapabilities: ['input-evidence-v2' as const, 'budget-envelope-v2' as const] } : {}),
+      ...(this.boundConversations.has(event) && this.config.lineAiApprovedKnowledgeEnabled ? { approvedKnowledge: true, ...(routePlan.selectedKnowledgeCardIds ? { selectedKnowledgeCardIds: routePlan.selectedKnowledgeCardIds } : {}) } : {}),
       ...(conversationContext && { conversationContext }),
       ...(valueCandidates && { valueCandidates }),
       ...(aiOpenClarifications?.length && { openClarifications: aiOpenClarifications }),
@@ -5551,7 +6682,8 @@ export class ProcessLineWebhookUseCase {
       ? await this.ledger.appendTurn({
           messagingChannelId: event.messagingChannelId,
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
-          userId: identity.userId, text: normalizedText,
+          userId: identity.userId, text: turnRequest.messageText,
+          ...(this.boundConversations.has(event) && turnRequest.budgetGrantV2 ? { acceptedRequest: { request: turnRequest, ownerEpoch: this.boundConversations.get(event)!.epoch, conversationId: this.boundConversations.get(event)!.id, accessFingerprint: this.deliveryAccess.get(event)!.fingerprint } } : {}),
           ...(valueCandidates && { valueCandidates }),
           // Carried so a reclaimed turn reaches the gateway with the SAME trusted provenance the
           // live turn had — otherwise a drained E4 turn is told it is out of scope (spec §5.3).
@@ -5643,10 +6775,11 @@ export class ProcessLineWebhookUseCase {
       event.webhookEventId,
       turnRequest.messagePreviewHash,
       turnRequest.messageText.slice(0, PREVIEW_MAX_CHARS),
-      turnResponse,
+      turnResponse, event,
     ));
     await this.updateEventLog(event.webhookEventId, 'response_ready', undefined, companyId);
 
+    if (turnResponse.semanticCoverage) this.semanticDelivery.set(event, turnResponse.semanticCoverage);
     // 10. Customer-visible completion requires a confirmed LINE reply/push.
     const completionMessage = await this.timeStage(event.webhookEventId, 'render', () => this.withCompletionMenu(
       buildLineBusinessAnswerMessage(turnResponse, formatLineReply(turnResponse, this.config.webBaseUrl), this.config.webBaseUrl, companyId),
@@ -5666,9 +6799,25 @@ export class ProcessLineWebhookUseCase {
     if (hasDraftPreview && (draftPreview || !turnResponse.refused)) this.deliveryDraftPreviews.set(event, {
       context: expenseDraftCtx, chatKeyHash: chatKeyHashOf(event), requestId, previewId: draftPreview?.previewId ?? null, phase: 'PENDING',
     });
+    const bound = this.boundConversations.get(event);
+    const actionIds = [...new Set(turnResponse.sourceRefs.filter(ref => ref.module === 'reimbursements'
+      && ref.entityType === 'reimbursement_draft_action' && typeof ref.entityId === 'string').map(ref => ref.entityId!))];
+    let reimbursementMessages: LineReplyMessage[] = [];
+    if (bound && actionIds.length === 1 && turnResponse.toolsInvoked.some(name => name.startsWith('reimbursement.draft.'))) {
+      const result = await this.reimbursementDrafts.get({ ctx: expenseDraftCtx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: actionIds[0]! });
+      this.deliveryReimbursements.set(event, { context: expenseDraftCtx, result });
+      reimbursementMessages = buildReimbursementDraftMessages(result, this.config.webBaseUrl ?? '', companyId);
+      if (result.status === 'needs_fields' || result.status === 'needs_target') {
+        const options = await this.reimbursementAdapter?.readDisplayOptions({ ctx: expenseDraftCtx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: actionIds[0]! });
+        if (options) {
+          this.reimbursementOptionsDelivery.set(event, { actionId: actionIds[0]!, options });
+          reimbursementMessages.push(...buildReimbursementOptionsMessages(options));
+        }
+      }
+    }
     const delivery = await this.deliverMessages(
       event,
-      draftPreview ? [completionMessage, buildDraftUpdatePreviewCard(draftPreview)] : [completionMessage],
+      [...(draftPreview ? [completionMessage, buildDraftUpdatePreviewCard(draftPreview)] : [completionMessage]), ...reimbursementMessages],
     );
     this.emitTurnSummary({ webhookEventId: event.webhookEventId, requestId, request: turnRequest, response: turnResponse, delivery });
     if (delivery !== 'ok') {
@@ -5714,6 +6863,7 @@ export class ProcessLineWebhookUseCase {
       }
     }
 
+    if (turnResponse.semanticCoverage) await this.settleSemanticTask(event, turnResponse.semanticCoverage, actionIds);
     // 10.5 Acknowledge work only after delivery. Clarifications and uncovered
     // sub-requests are now safe to advance because the employee saw this turn.
     if (this.ledger) {
@@ -5906,7 +7056,13 @@ export class ProcessLineWebhookUseCase {
    *  clarify, capture) reports the database time it actually spent — before this, only the full AI-turn
    *  path emitted `persistence` and every intake turn looked as if it persisted nothing. Timing only:
    *  this is still best-effort memory, NOT the durable intake replay the spec asks for. */
+  private async persistBoundTurn(event: LineTextEvent | LineReceiptUploadEvent, data: Prisma.AiTurnUncheckedCreateInput) {
+    const bound = this.boundConversations.get(event);
+    return bound ? this.contextV2.createTurn(bound.owner, bound.epoch, data) : this.prisma.client.aiTurn.create({ data });
+  }
+
   private async persistIntakeTurn(input: {
+    event: LineTextEvent | LineReceiptUploadEvent;
     userId: string;
     companyId: string;
     webhookEventId: string;
@@ -5920,14 +7076,15 @@ export class ProcessLineWebhookUseCase {
   }): Promise<void> {
     try {
       await this.timeStage(input.webhookEventId, 'persistence', async () => {
-        const conversationId = `line-${input.companyId}-${input.userId}`;
-        await this.prisma.client.aiConversation.upsert({
+        const owner = this.conversationOwner(input.companyId, input.userId, input.event);
+        const conversationId = owner ? this.boundConversations.get(input.event)?.id : `line-${input.companyId}-${input.userId}`;
+        if (!conversationId) throw new Error('LINE_CONTEXT_ADMISSION_REQUIRED');
+        if (!owner) await this.prisma.client.aiConversation.upsert({
           where: { id: conversationId },
           create: { id: conversationId, companyId: input.companyId, userId: input.userId, channel: 'line' },
           update: {},
         });
-        await this.prisma.client.aiTurn.create({
-          data: {
+        await this.persistBoundTurn(input.event, {
             conversationId,
             companyId: input.companyId,
             userId: input.userId,
@@ -5941,7 +7098,6 @@ export class ProcessLineWebhookUseCase {
             replyPreview: input.replyText.slice(0, PREVIEW_MAX_CHARS),
             ...(input.modelId !== undefined && { modelId: input.modelId }),
             ...(input.durationMs !== undefined && { durationMs: input.durationMs }),
-          },
         });
       });
     } catch (err) {
@@ -5956,14 +7112,17 @@ export class ProcessLineWebhookUseCase {
     messagePreviewHash: string,
     userMessagePreview: string,
     response: LineAiTurnResponse,
+    event: LineTextEvent | LineReceiptUploadEvent,
   ): Promise<string> {
-    const conv = await this.prisma.client.aiConversation.upsert({
+    const owner = this.conversationOwner(companyId, userId, event);
+    const bound = this.boundConversations.get(event);
+    if (owner && !bound) throw new Error('LINE_CONTEXT_ADMISSION_REQUIRED');
+    const conv = owner ? { id: bound!.id } : await this.prisma.client.aiConversation.upsert({
       where: { id: `line-${companyId}-${userId}` },
       create: { id: `line-${companyId}-${userId}`, companyId, userId, channel: 'line' },
       update: {},
     });
-    const turn = await this.prisma.client.aiTurn.create({
-      data: {
+    const turn = await this.persistBoundTurn(event, {
         conversationId: conv.id,
         companyId,
         userId,
@@ -5991,7 +7150,6 @@ export class ProcessLineWebhookUseCase {
             ...(response.stageDurationsMs ? { stageDurationsMs: response.stageDurationsMs } : {}),
             ...(response.modelCallCount !== undefined ? { modelCallCount: response.modelCallCount } : {}),
           } as any,
-        },
     });
     // M-02 G4: real per-tool status/duration/errorCode when the gateway measured them; older
     // AgentCore artifacts send only `toolsInvoked`, so keep deriving those from the turn.
@@ -6113,12 +7271,24 @@ export class ProcessLineWebhookUseCase {
     } catch { /* telemetry cannot change the outcome it observes */ }
   }
 
+  private conversationOwner(companyId: string, userId: string, event: LineTextEvent | LineReceiptUploadEvent): LineConversationOwner | null {
+    const access = this.deliveryAccess.get(event);
+    if (this.config.lineAiReliabilityV2Mode !== 'on' || !this.config.lineAiReliabilityV2CompanyIds.includes(companyId)
+      || !this.config.lineAiDeliveryPlanV2Enabled || !this.config.lineAiDeliveryPlanV2WriteCompanyIds.includes(companyId)
+      || !event.messagingChannelId || (event.pushTargetId && event.pushTargetId !== event.lineUserId) || !access?.membershipId) return null;
+    return { companyId, userId, membershipId: access.membershipId, channel: 'line', channelKind: 'USER', messagingChannelId: event.messagingChannelId, chatKeyHash: chatKeyHashOf(event) };
+  }
+
   private async loadConversationContext(companyId: string, userId: string, event: LineTextEvent | LineReceiptUploadEvent): Promise<LineAiConversationContext | undefined> {
+    if (event.pushTargetId && event.pushTargetId !== event.lineUserId) return undefined;
+    const owner = this.conversationOwner(companyId, userId, event);
+    if (owner) await this.contextV2.admit(owner);
     const since = new Date(Date.now() - LINE_AI_CONTEXT_WINDOW_MINUTES * 60 * 1000);
     const rows = await this.prisma.client.aiTurn.findMany({
       where: {
         companyId,
         userId,
+        ...(owner ? { conversationId: lineConversationId(owner) } : { conversation: { channelKind: null } }),
         createdAt: { gte: since },
         status: { in: ['COMPLETED', 'REFUSED'] },
       },
@@ -6329,6 +7499,7 @@ export class ProcessLineWebhookUseCase {
     const entitledFeatureKeys = await loadEntitledFeatureKeys(this.prisma, companyId);
     this.deliveryAccess.set(event, { userId: identity.userId, companyId, membershipId: access.membershipId,
       fingerprint: resolvedLineDeliveryAccessFingerprint(identity.userId, companyId, access, entitledFeatureKeys) });
+    await this.bindConversation(event);
     if (lineAssistantDisabledFor(entitledFeatureKeys)) {
       await this.deliverReply(event, formatRefusal('feature_disabled'));
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'ai.line.query.denied', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'LOW', metadataJson: { reason: 'feature_disabled' } });
@@ -6338,7 +7509,12 @@ export class ProcessLineWebhookUseCase {
 
     const canCaptureExpense = access.permissions.includes('expense.receipt.line_upload') || access.permissions.includes('expense.receipt.upload');
     const canSubmitSignature = maySubmitSignature(access.permissions);
-    if (!canCaptureExpense && !canSubmitSignature) {
+    const canReadDocument = !!this.boundConversations.get(event) && this.config.lineAiDocumentQaEnabled
+      && access.permissions.includes('line.ai.query') && access.permissions.includes('attachment.create');
+    const canStageReimbursement = !!this.boundConversations.get(event) && this.config.lineAiReimbursementDraftWriteEnabled
+      && access.permissions.includes('line.ai.query') && access.permissions.includes('attachment.create')
+      && access.permissions.some(permission => ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.finance_review'].includes(permission));
+    if (!canCaptureExpense && !canSubmitSignature && !canReadDocument && !canStageReimbursement) {
       await this.deliverReply(event, receiptDeniedReply(access));
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_expense_receipt_line_upload' } });
       await this.updateEventLog(event.webhookEventId,
@@ -6347,7 +7523,7 @@ export class ProcessLineWebhookUseCase {
         companyId);
       return;
     }
-    if (!this.initReceiptUpload || !this.completeReceiptUpload) {
+    if ((!this.initReceiptUpload || !this.completeReceiptUpload) && !canReadDocument && !canStageReimbursement) {
       await this.deliverReply(event, ERROR_REPLY);
       await this.updateEventLog(event.webhookEventId, 'expense_module_unavailable', 'EXPENSE_MODULE_UNAVAILABLE', companyId);
       return;
@@ -6433,6 +7609,13 @@ export class ProcessLineWebhookUseCase {
 
 
 
+    const qaRoute = await this.routeDocumentQuestionBeforeCapture(event, ctx, access, captionText ?? '', media);
+    if (qaRoute?.handled) return;
+    if (!this.initReceiptUpload || !this.completeReceiptUpload) {
+      await this.deliverReply(event, ERROR_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'expense_module_unavailable', 'EXPENSE_MODULE_UNAVAILABLE', companyId); return;
+    }
+
     // A new provider message is distinct from transport retry. Only exact stored bytes prove
     // an existing capture; perceptual/OCR similarity keeps the normal duplicate review path.
     const exactIds = canCaptureExpense && media.checksumSha256
@@ -6487,7 +7670,7 @@ export class ProcessLineWebhookUseCase {
       && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
       && Boolean(this.expenseDraftConversation);
     const captionCandidates = computeValueCandidates(normalizeLineText(caption));
-    const routePlan = await this.tryRouteIntake({
+    const routePlan = qaRoute?.route ?? await this.tryRouteIntake({
       requestId,
       webhookEventId: event.webhookEventId,
       retryWebhookEventId: event.webhookEventId,
@@ -6528,7 +7711,7 @@ export class ProcessLineWebhookUseCase {
       }
       const ticketReply = await this.createLineSignatureAsset({ ctx, event, sourceEvent: event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
       await this.deliverCompletedReply(event, ticketReply, companyId, access);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูปลายเซ็น]${captionSuffix}`, replyText: ticketReply, intent: 'SIGNATURE_REQUEST',
       });
@@ -6549,7 +7732,7 @@ export class ProcessLineWebhookUseCase {
       && this.initSignatureUpload && this.createSignatureAsset) {
       const ticketReply = await this.createLineSignatureAsset({ ctx, event, sourceEvent: event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
       await this.deliverCompletedReply(event, ticketReply, companyId, access);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูปลายเซ็น]${captionSuffix}`, replyText: ticketReply, intent: 'SIGNATURE_REQUEST',
       });
@@ -6574,7 +7757,7 @@ export class ProcessLineWebhookUseCase {
         }
       }
       await this.deliverReply(event, clarifyReply);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `${parked?.pending ? mediaPreviewLabel(parked.pending) : '[ผู้ใช้ส่งรูป/ไฟล์]'}${captionSuffix}`,
         replyText: clarifyReply, intent: 'CLARIFY',
@@ -6591,7 +7774,7 @@ export class ProcessLineWebhookUseCase {
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'MUTATION_REQUEST_REFUSAL') {
       await this.deliverCompletedReply(event, MUTATION_REFUSAL_REPLY, companyId, access);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: MUTATION_REFUSAL_REPLY, intent: 'MUTATION_REQUEST', refused: true,
       });
@@ -6612,7 +7795,7 @@ export class ProcessLineWebhookUseCase {
         );
         if (created) {
           await this.deliverReply(event, MEDIA_CLARIFY_REPLY);
-          await this.persistIntakeTurn({
+          await this.persistIntakeTurn({ event,
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
             userMessagePreview: `${mediaPreviewLabel(pending)}${captionSuffix}`, replyText: MEDIA_CLARIFY_REPLY, intent: 'CLARIFY',
           });
@@ -6722,7 +7905,7 @@ export class ProcessLineWebhookUseCase {
     // clarify ("what is this picture?") is the wrong reply to a shop that needs a bigger package.
     if (ocr.errorCode === RECEIPT_QUOTA_ERROR_CODE) {
       const refusal = await this.deliverReceiptQuotaRefusal(event, companyId, identity.userId);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์เอกสารค่าใช้จ่าย]${captionSuffix}`,
         replyText: refusal, intent: 'EVIDENCE_CAPTURE', refused: true,
@@ -6785,7 +7968,7 @@ export class ProcessLineWebhookUseCase {
       if (parked.created || notStored) {
         const text = notStored ?? reply;
         await this.deliverReply(event, text);
-        await this.persistIntakeTurn({
+        await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: `${notStored ? '[ผู้ใช้ส่งรูป/ไฟล์]' : mediaPreviewLabel(parked.pending)}${captionSuffix}`,
           replyText: text, intent: 'CLARIFY', refused: true,
@@ -6856,7 +8039,7 @@ export class ProcessLineWebhookUseCase {
         );
         if (created) {
           await this.deliverReply(event, reply, buildCheckBillDecisionQuickReply());
-          await this.persistIntakeTurn({
+          await this.persistIntakeTurn({ event,
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
             userMessagePreview: `[ผู้ใช้ส่งเช็กบิล]${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
           });
@@ -6891,7 +8074,7 @@ export class ProcessLineWebhookUseCase {
           { ...(captureLink ? { captureLink } : {}) })
         : MEDIA_UNSUPPORTED_REPLY;
       await this.deliverCompletedReply(event, reply, companyId, access);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
       });
@@ -6923,7 +8106,7 @@ export class ProcessLineWebhookUseCase {
         if (link) {
           const failedReply = CAPTURE_READ_FAILED_REPLY(link);
           await this.deliverCompletedReply(event, failedReply, companyId, access);
-          await this.persistIntakeTurn({
+          await this.persistIntakeTurn({ event,
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
             userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: failedReply, intent: 'EVIDENCE_CAPTURE',
           });
@@ -6947,7 +8130,7 @@ export class ProcessLineWebhookUseCase {
         );
         if (created) {
           await this.deliverReply(event, reply);
-          await this.persistIntakeTurn({
+          await this.persistIntakeTurn({ event,
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
             userMessagePreview: `${mediaPreviewLabel(pending)}${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
           });
@@ -6976,7 +8159,7 @@ export class ProcessLineWebhookUseCase {
       // Let OCR or the user supply the document date.
       note: utilityReceipt ? `LINE utility receipt: ${utilityReceipt.receipt.period}` : 'LINE receipt upload',
       captureSource: 'LINE_UPLOAD',
-      lineCapture: { lineMessageId: event.lineMessageId, lineEventId: event.webhookEventId, chatKeyHash: chatKeyHashOf(event) },
+      lineCapture: this.captureOwnerMetadata(event),
     });
     if (intent.reusedCapture) {
       const captured = await this.expenseRepo!.findByLineMessageId(companyId, event.lineMessageId);
@@ -7183,7 +8366,7 @@ export class ProcessLineWebhookUseCase {
     ].join('\n');
     await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
     await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, intent.expenseId, access.scopes);
-    await this.persistIntakeTurn({
+    await this.persistIntakeTurn({ event,
       userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์เอกสารค่าใช้จ่าย]${captionSuffix}`, replyText: replyTexts.join('\n'), intent: 'EVIDENCE_CAPTURE',
     });
@@ -7302,7 +8485,7 @@ export class ProcessLineWebhookUseCase {
       reply = FILE_ATTEMPT_LOOKUP_FAILED_REPLY;
     }
     await this.deliverCompletedReply(event, reply, input.companyId, access);
-    await this.persistIntakeTurn({
+    await this.persistIntakeTurn({ event,
       userId: input.userId, companyId: input.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: input.normalizedText, replyText: reply, intent: 'UNKNOWN',
     });
@@ -7394,6 +8577,14 @@ export class ProcessLineWebhookUseCase {
    * lineMessageId])` on `ExpenseRecord` gives redelivery for free, and the read is the same
    * `ownerType EXPENSE` job the web PDF lane queues — one lane, one auto-split, one set of copy.
    */
+  private captureOwnerMetadata(event: LineReceiptUploadEvent) {
+    const bound = this.boundConversations.get(event);
+    return { lineMessageId: event.lineMessageId, lineEventId: event.webhookEventId, chatKeyHash: chatKeyHashOf(event),
+      pushTargetId: event.pushTargetId ?? event.lineUserId,
+      ...(bound ? { ownerBinding: { conversationId: bound.id, membershipId: bound.owner.membershipId,
+        channelId: bound.owner.messagingChannelId, ownerEpoch: bound.epoch } } : {}) };
+  }
+
   private async persistLineFileExpense(
     ctx: RequestContext,
     event: LineReceiptUploadEvent,
@@ -7416,12 +8607,7 @@ export class ProcessLineWebhookUseCase {
       // manual-entry conversation (§17.6 forbids one as error recovery).
       note: input.caption ? input.caption.slice(0, LINE_CAPTURE_NOTE_MAX_CHARS) : 'LINE document upload',
       captureSource: 'LINE_UPLOAD',
-      lineCapture: {
-        lineMessageId: event.lineMessageId, lineEventId: event.webhookEventId,
-        chatKeyHash: chatKeyHashOf(event),
-        // The chat this file arrived in, so the result can be pushed back INTO it.
-        pushTargetId: event.pushTargetId ?? event.lineUserId,
-      },
+      lineCapture: this.captureOwnerMetadata(event),
     });
     if (intent.uploadRequired !== false) await this.uploadLineMedia(intent, input.media);
     const completed = await this.completeReceiptUpload!.execute(ctx, {
@@ -7507,7 +8693,7 @@ export class ProcessLineWebhookUseCase {
     });
 
     await this.deliverCompletedReply(event, this.fileStoredReply(persisted.link), companyId, access);
-    await this.persistIntakeTurn({
+    await this.persistIntakeTurn({ event,
       userId: input.userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: `[ผู้ใช้ส่งไฟล์เอกสาร #${persisted.attachmentId}]${caption ? ` ${caption}` : ''}`,
       replyText: this.fileStoredReply(persisted.link), intent: 'EVIDENCE_CAPTURE',
@@ -7578,7 +8764,7 @@ export class ProcessLineWebhookUseCase {
       const intent = await this.initReceiptUpload!.execute(ctx, {
         ...upload, expenseDate: expense.expenseDate.toISOString(), branchId: expense.branchId ?? undefined,
         captureSource: 'LINE_UPLOAD',
-        lineCapture: { lineMessageId: event.lineMessageId, lineEventId: event.webhookEventId, chatKeyHash: chatKeyHashOf(event) },
+        lineCapture: this.captureOwnerMetadata(event),
       });
       let media: DownloadedLineMedia | null = null;
       if (intent.uploadRequired !== false) {
@@ -7644,6 +8830,270 @@ ${link}`, ctx.companyId, access);
    *  the worker to delete an object that does not exist, under a producer prefix it does not allow.
    *  What is left is a `PENDING_UPLOAD` `AttachmentObject` row holding no bytes, and it ages out of
    *  the only thing that counts it (`sumPendingBytes`, a rolling `createdAfter` window). Accepted. */
+  /** Classify the actual caption before an expense-domain side effect. No invented file question. */
+  private pendingMediaBinding(event: LineTextEvent | LineReceiptUploadEvent) {
+    const bound = this.boundConversations.get(event);
+    return bound ? { channelKind: 'USER' as const, messagingChannelId: bound.owner.messagingChannelId,
+      chatKeyHash: bound.owner.chatKeyHash, membershipId: bound.owner.membershipId, lifecycleEpoch: bound.epoch }
+      : { channelKind: null, messagingChannelId: null, chatKeyHash: null, membershipId: null };
+  }
+
+  private async routeDocumentQuestionBeforeCapture(event: LineReceiptUploadEvent, ctx: RequestContext,
+    access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>, caption: string, media: DownloadedLineMedia
+  ): Promise<{ handled?: boolean; route?: GovernedLineIntakeRoutePlan } | null> {
+    if (!this.documentQa) return null;
+    let bound = this.boundConversations.get(event);
+    const pending = await this.prisma.client.lineIntakePendingMedia.findUnique({ where: { companyId_lineMessageId: { companyId: ctx.companyId, lineMessageId: event.lineMessageId } } });
+    if (!bound && pending?.readJobId && ctx.membershipId) {
+      const owner: LineConversationOwner = { companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId, channel: 'line', channelKind: 'USER', messagingChannelId: event.messagingChannelId, chatKeyHash: chatKeyHashOf(event) };
+      const loaded = await this.contextV2.load(owner);
+      if (loaded) { bound = { owner, id: loaded.row.id, epoch: loaded.row.lifecycleEpoch }; this.boundConversations.set(event, bound); }
+    }
+    if (bound && pending?.readJobId && pending.messagingChannelId === event.messagingChannelId && pending.chatKeyHash === bound.owner.chatKeyHash
+      && pending.membershipId === bound.owner.membershipId && pending.lifecycleEpoch === bound.epoch) {
+      await this.deliverDocumentQaResult(event, pending.readJobId, { ...bound.owner, ownerEpoch: bound.epoch });
+      return { handled: true };
+    }
+    if (!bound || !(this.config.lineAiDocumentQaEnabled || this.config.lineAiReimbursementDraftWriteEnabled) || !access.permissions.includes('line.ai.query') || !caption.trim()) return null;
+    const textEvent: LineTextEvent = { ...event, messageText: caption };
+    this.boundConversations.set(textEvent, bound);
+    this.deliveryAccess.set(textEvent, this.deliveryAccess.get(event)!);
+    const route = await this.tryRouteIntake({ event: textEvent, requestId: ctx.requestId, webhookEventId: event.webhookEventId,
+      companyId: ctx.companyId, userId: ctx.userId, permissions: access.permissions, enabledFeatures: access.entitledFeatureKeys ?? [], messageText: caption,
+      attachment: { id: event.lineMessageId, mimeType: media.mimeType }, valueCandidates: await this.textValueCandidates(textEvent, caption) });
+    if (route.status === 'ROUTED' && route.intent === 'REIMBURSEMENT_REQUEST_START' && this.config.lineAiReimbursementDraftWriteEnabled
+      && route.semanticSubrequests?.some(item => item.kind === 'write') && this.budgetGrantsV2.has(textEvent)) {
+      if (!access.permissions.includes('attachment.create') || !access.permissions.some(permission => ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.finance_review'].includes(permission))) {
+        await this.deliverReply(event, 'สิทธิ์ปัจจุบันยังไม่อนุญาตเก็บไฟล์สำหรับร่างใบเบิกค่ะ ยังไม่ได้สร้างรายการ'); return { handled: true };
+      }
+      await this.stageReimbursementMedia(event, ctx, caption, media, bound, pending);
+      this.mediaTextContinuations.set(textEvent, { route, requestId: ctx.requestId });
+      await this.execute(textEvent);
+      return { handled: true };
+    }
+    if (!route.semanticSubrequests?.some(item => item.kind === 'file')) return { route };
+    if (!this.config.lineAiDocumentQaEnabled) {
+      await this.deliverReply(event, 'การอ่านไฟล์เพื่อตอบคำถามยังไม่เปิดใช้งานค่ะ ยังไม่ได้สร้างรายการ'); return { handled: true };
+    }
+    if (route.semanticSubrequests.some(item => !['file', 'general', 'help'].includes(item.kind))) {
+      await this.deliverReply(event, 'คำถามจากไฟล์และคำขอทำรายการต้องแยกงานก่อนค่ะ กรุณาระบุว่าจะอ่านเพื่อตอบคำถาม หรือเก็บเป็นหลักฐานรายการ ยังไม่ได้สร้างรายการให้');
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId); return { handled: true };
+    }
+    const grant = this.budgetGrantsV2.get(textEvent);
+    if (!grant || !textEvent.inputEvidence || !this.createUploadIntent || !this.completeAttachmentUpload) throw new Error('QA_ADMISSION_UNAVAILABLE');
+    let pages = 1;
+    if (media.mimeType === 'application/pdf') pages = (await PDFDocument.load(media.bytes, { ignoreEncryption: false })).getPageCount();
+    if (pages < 1 || pages > 20 || media.byteSize > 10 * 1024 * 1024) {
+      await this.deliverReply(event, 'ไฟล์นี้เกินขอบเขตการอ่าน กรุณาส่งไม่เกิน 20 หน้าและ 10 MiB ต่อไฟล์ ยังไม่ได้สร้างรายการให้');
+      await this.updateEventLog(event.webhookEventId, 'input_rejected', 'QA_INPUT_LIMIT', ctx.companyId); return { handled: true };
+    }
+    if (pending && (pending.userId !== bound.owner.userId || pending.channelKind !== 'USER'
+      || pending.messagingChannelId !== bound.owner.messagingChannelId || pending.chatKeyHash !== bound.owner.chatKeyHash
+      || pending.membershipId !== bound.owner.membershipId || pending.lifecycleEpoch !== bound.epoch)) {
+      await this.deliverReply(event, 'ไฟล์เดิมไม่อยู่ในบริบทแชตปัจจุบันค่ะ กรุณาส่งไฟล์ใหม่ ยังไม่ได้สร้างรายการ');
+      return { handled: true };
+    }
+    if (!await this.preserveSemanticTask(textEvent, route.semanticSubrequests)) {
+      await this.deliverReply(event, 'มีงานที่รออยู่เต็มแล้วค่ะ กรุณาเลือกทำต่อหรือยกเลิกงานเดิมก่อนเริ่มอ่านไฟล์นี้'); return { handled: true };
+    }
+    this.semanticTaskMappings.set(event, this.semanticTaskMappings.get(textEvent)!);
+    let attachmentId = pending?.attachmentId;
+    if (attachmentId) {
+      const resumed = await this.createUploadIntent.resume(ctx, attachmentId);
+      if (resumed.uploadRequired) await this.uploadLineMedia(resumed, media);
+      await this.completeAttachmentUpload.execute(ctx, { attachmentId, checksumSha256: media.checksumSha256, byteSize: media.byteSize });
+    } else {
+      const intent = await this.createUploadIntent.execute(ctx, { originalFileName: media.fileName, mimeType: media.mimeType, byteSize: media.byteSize, metadataJson: { lineDocumentQaOnly: true } });
+      attachmentId = intent.attachmentId;
+      await this.prisma.client.lineIntakePendingMedia.create({ data: { companyId: ctx.companyId, userId: ctx.userId,
+        lineMessageId: event.lineMessageId, attachmentId, caption, mimeType: media.mimeType, status: 'PENDING',
+        channelKind: 'USER', messagingChannelId: bound.owner.messagingChannelId, chatKeyHash: bound.owner.chatKeyHash,
+        membershipId: bound.owner.membershipId, lifecycleEpoch: bound.epoch, expiresAt: new Date(grant.admittedAtMs + 86400000),
+        askedQuestionJson: { kind: 'LINE_DOCUMENT_QA', webhookEventId: event.webhookEventId, lineUserId: event.lineUserId } } });
+      await this.uploadLineMedia(intent, media);
+      await this.completeAttachmentUpload.execute(ctx, { attachmentId, checksumSha256: media.checksumSha256, byteSize: media.byteSize });
+    }
+    const owner: LineDocumentQaOwner = { ...bound.owner, ownerEpoch: bound.epoch };
+    const admitted = await this.documentQa.admit({ ...owner, requestId: ctx.requestId, turnId: grant.turnKey, question: caption,
+      originalBudgetGrantV2: grant, originalInputDigest: textEvent.inputEvidence.joinedSha256,
+      questions: this.documentQaQuestions(textEvent, route.semanticSubrequests),
+      attachments: [{ attachmentId, requestedPages: Array.from({ length: pages }, (_, i) => i + 1) }] });
+    await this.prisma.client.lineIntakePendingMedia.updateMany({ where: { companyId: ctx.companyId, lineMessageId: event.lineMessageId,
+      messagingChannelId: event.messagingChannelId, lifecycleEpoch: bound.epoch }, data: { readJobId: admitted.jobId, revision: { increment: 1 } } });
+    await this.bindDocumentQaTask(event, admitted.jobId);
+    const running = this.documentQaWorker.execute(admitted.jobId);
+    const waitMs = Math.max(0, Date.parse(admitted.foregroundDeadlineAt) - 3000 - Date.now());
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([running, new Promise<void>(resolve => { timer = setTimeout(resolve, waitMs); })]);
+    if (timer) clearTimeout(timer);
+    if (!await this.deliverDocumentQaResult(event, admitted.jobId, owner)) {
+      await this.deliverDocumentQaProgress(event, admitted.jobId, 'กำลังอ่านไฟล์เพื่อตอบคำถามค่ะ เมื่ออ่านเสร็จจะตอบในแชตนี้ ยังไม่ได้สร้างรายการค่าใช้จ่ายหรือใบเบิก');
+      await this.updateEventLog(event.webhookEventId, 'document_qa_pending', undefined, ctx.companyId);
+    }
+    return { handled: true };
+  }
+
+  private async stageReimbursementMedia(event: LineReceiptUploadEvent, ctx: RequestContext, caption: string, media: DownloadedLineMedia,
+    bound: { owner: LineConversationOwner; id: string; epoch: number }, pending: { attachmentId: string; messagingChannelId: string | null; chatKeyHash: string | null; membershipId: string | null; lifecycleEpoch: number } | null): Promise<void> {
+    if (!this.createUploadIntent || !this.completeAttachmentUpload) throw new Error('LINE_ATTACHMENT_MODULE_UNAVAILABLE');
+    const binding = this.pendingMediaBinding(event);
+    if (pending && Object.entries(binding).some(([key, value]) => (pending as unknown as Record<string, unknown>)[key] !== value)) throw new Error('LINE_PENDING_MEDIA_OWNER_MISMATCH');
+    const intent = pending ? await this.createUploadIntent.resume(ctx, pending.attachmentId)
+      : await this.createUploadIntent.execute(ctx, { originalFileName: media.fileName, mimeType: media.mimeType, byteSize: media.byteSize,
+          metadataJson: { lineReimbursementOwner: bound.owner, lineReimbursementEpoch: bound.epoch } });
+    if (!pending) await this.prisma.client.lineIntakePendingMedia.create({ data: { companyId: ctx.companyId, userId: ctx.userId,
+      lineMessageId: event.lineMessageId, attachmentId: intent.attachmentId, caption, mimeType: media.mimeType, status: 'PENDING', ...binding,
+      expiresAt: new Date(Date.now() + 86400000), askedQuestionJson: { kind: 'LINE_REIMBURSEMENT_DRAFT', webhookEventId: event.webhookEventId } } });
+    if (!('uploadRequired' in intent) || intent.uploadRequired) await this.uploadLineMedia(intent, media);
+    await this.completeAttachmentUpload.execute(ctx, { attachmentId: intent.attachmentId, checksumSha256: media.checksumSha256, byteSize: media.byteSize });
+    // The attachment is retained for the reimbursement picker, never passed through expense capture.
+    await this.prisma.client.lineIntakePendingMedia.updateMany({ where: { companyId: ctx.companyId, lineMessageId: event.lineMessageId, ...binding },
+      data: { status: 'RESOLVED_RECEIPT', revision: { increment: 1 } } });
+  }
+
+  private async resumeDocumentQuestionV2(event: LineTextEvent, requestId: string, route: GovernedLineIntakeRoutePlan,
+    access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>): Promise<boolean> {
+    const bound = this.boundConversations.get(event), grant = this.budgetGrantsV2.get(event);
+    if (!bound || !grant || !event.inputEvidence || !this.config.lineAiDocumentQaEnabled
+      || !route.semanticSubrequests?.some(item => item.kind === 'file')
+      || route.semanticSubrequests.some(item => !['file', 'general', 'help'].includes(item.kind))) return false;
+    const candidates = await this.prisma.client.lineIntakePendingMedia.findMany({ where: { companyId: bound.owner.companyId,
+      userId: bound.owner.userId, ...this.pendingMediaBinding(event),
+      status: { in: ['PENDING', 'RESOLVED_RECEIPT'] }, expiresAt: { gt: new Date() }, createdAt: { gt: new Date(Date.now() - 15 * 60_000) },
+      OR: [{ readJobId: { not: null } }, { askedQuestionJson: { path: ['selectedForContinuation'], equals: true } }, { status: 'PENDING' }] }, orderBy: { createdAt: 'desc' }, take: 6 });
+    if (!candidates.length) return false;
+    const requestedIds = new Set(route.semanticSubrequests.filter(item => item.kind === 'file').flatMap(item =>
+      typeof item.requestedFilters.attachmentId === 'string' && event.messageText.includes(item.requestedFilters.attachmentId) ? [item.requestedFilters.attachmentId] : []));
+    const chosen = candidates.filter(row => (row.askedQuestionJson as { selectedForContinuation?: boolean } | null)?.selectedForContinuation === true);
+    const selectedIds = chosen.length === 1 ? (chosen[0]!.askedQuestionJson as { selectedAttachmentIds?: string[] }).selectedAttachmentIds ?? [] : [];
+    const selected = requestedIds.size ? candidates.filter(row => requestedIds.has(row.attachmentId))
+      : selectedIds.length ? candidates.filter(row => selectedIds.includes(row.attachmentId)) : candidates.length === 1 ? candidates : [];
+    if (!selected.length || selected.length > 5 || requestedIds.size && selected.length !== requestedIds.size || !requestedIds.size && selectedIds.length > 0 && selected.length !== selectedIds.length) {
+      await this.deliverReply(event, `มีไฟล์ก่อนหน้าหลายไฟล์ค่ะ กรุณาระบุรหัสไฟล์ที่ต้องการอ่าน ไม่ได้เลือกไฟล์ล่าสุดแทนให้\n${candidates.map(row => row.attachmentId).join('\n')}`);
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, bound.owner.companyId); return true;
+    }
+    const values = await this.textValueCandidates(event, event.messageText);
+    const attachments: Array<{ attachmentId: string; requestedPages: number[] }> = [];
+    for (const row of selected) {
+      const previous = row.readJobId ? await this.documentQa.getById(row.readJobId) : null;
+      if (previous && (previous.companyId !== bound.owner.companyId || previous.userId !== bound.owner.userId
+        || previous.ownerMembershipId !== bound.owner.membershipId || previous.ownerEpoch !== bound.epoch
+        || previous.messagingChannelId !== bound.owner.messagingChannelId || previous.chatKeyHash !== bound.owner.chatKeyHash
+        || !Array.isArray(previous.attachmentsJson))) return false;
+      const pageCount = (row.askedQuestionJson as { pageCount?: number } | null)?.pageCount ?? (row.mimeType === 'application/pdf' ? 0 : 1);
+      const source = previous ? (previous.attachmentsJson as any[]).find((item: any) => item.attachmentId === row.attachmentId) as { attachmentId: string; requestedPages: number[] } | undefined
+        : Number.isSafeInteger(pageCount) && pageCount > 0 && pageCount <= 20 ? { attachmentId: row.attachmentId, requestedPages: Array.from({ length: pageCount }, (_, i) => i + 1) } : undefined;
+      if (!source) return false;
+      const requestedPage = route.semanticSubrequests.find(item => item.kind === 'file'
+        && (!item.requestedFilters.attachmentId || item.requestedFilters.attachmentId === row.attachmentId))?.requestedFilters.page;
+      if (requestedPage !== undefined && (!Number.isSafeInteger(requestedPage) || Number(requestedPage) < 1 || Number(requestedPage) > 20
+        || !values?.amounts.some(candidate => candidate.value === String(requestedPage)))) {
+        await this.deliverReply(event, `เลขหน้าที่ขอสำหรับไฟล์ ${row.attachmentId} ไม่ถูกต้อง กรุณาระบุหน้า 1 ถึง 20 ค่ะ`); return true;
+      }
+      attachments.push({ attachmentId: row.attachmentId, requestedPages: requestedPage === undefined ? source.requestedPages : [Number(requestedPage)] });
+    }
+    if (!await this.preserveSemanticTask(event, route.semanticSubrequests)) {
+      await this.deliverReply(event, 'มีงานที่รออยู่เต็มแล้วค่ะ กรุณาเลือกทำต่อหรือยกเลิกงานเดิมก่อนเริ่มคำถามใหม่นี้'); return true;
+    }
+    let admitted: Awaited<ReturnType<LineDocumentQaService['admit']>>;
+    try {
+      admitted = await this.documentQa.admit({ ...bound.owner, ownerEpoch: bound.epoch, requestId, turnId: grant.turnKey,
+        question: event.messageText, originalBudgetGrantV2: grant, originalInputDigest: event.inputEvidence.joinedSha256,
+        questions: this.documentQaQuestions(event, route.semanticSubrequests), attachments });
+    } catch (error) {
+      if (!(error instanceof LineDocumentQaError) || !['QA_PAGE_OUT_OF_RANGE', 'QA_ATTACHMENT_UNAVAILABLE', 'QA_SOURCE_CHANGED'].includes(error.code)) throw error;
+      await this.deliverReply(event, error.code === 'QA_PAGE_OUT_OF_RANGE'
+        ? 'ไฟล์นี้ไม่มีหน้าที่ขอค่ะ กรุณาตรวจสอบเลขหน้า ยังไม่ได้สร้างรายการ'
+        : 'ไฟล์เดิมไม่พร้อมให้อ่านแล้วค่ะ กรุณาส่งไฟล์ใหม่ ยังไม่ได้สร้างรายการ');
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', error.code, bound.owner.companyId); return true;
+    }
+    for (const row of selected) {
+      const changed = await this.prisma.client.lineIntakePendingMedia.updateMany({ where: { id: row.id, revision: row.revision,
+        ...this.pendingMediaBinding(event) }, data: { readJobId: admitted.jobId, status: 'PENDING', caption: event.messageText,
+        askedQuestionJson: { kind: 'LINE_DOCUMENT_QA', webhookEventId: event.webhookEventId, lineUserId: event.lineUserId }, revision: { increment: 1 } } });
+      if (changed.count !== 1) throw new Error('LINE_CONTEXT_STALE_STATE');
+    }
+    await this.bindDocumentQaTask(event, admitted.jobId);
+    const running = this.documentQaWorker.execute(admitted.jobId);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([running, new Promise<void>(resolve => { timer = setTimeout(resolve, Math.max(0, Date.parse(admitted.foregroundDeadlineAt) - 3000 - Date.now())); })]);
+    if (timer) clearTimeout(timer);
+    if (!await this.deliverDocumentQaResult(event, admitted.jobId,
+      { ...bound.owner, ownerEpoch: bound.epoch })) {
+      await this.deliverDocumentQaProgress(event, admitted.jobId, 'กำลังอ่านไฟล์เดิมเพื่อตอบคำถามใหม่นี้ค่ะ ยังไม่ได้สร้างรายการ');
+      await this.updateEventLog(event.webhookEventId, 'document_qa_pending', undefined, bound.owner.companyId);
+    }
+    return true;
+  }
+
+  private async deliverDocumentQaResult(event: LineReceiptUploadEvent | LineTextEvent, jobId: string, owner: LineDocumentQaOwner): Promise<boolean> {
+    const inventory = await this.restoreDocumentQaTask(event, jobId);
+    const job = await this.documentQa.getForDelivery(jobId, owner);
+    if (!job) {
+      const terminal = await this.documentQa.getById(jobId);
+      if (!terminal || !['FAILED', 'EXPIRED', 'CANCELED'].includes(terminal.status)
+        || terminal.companyId !== owner.companyId || terminal.userId !== owner.userId || terminal.ownerMembershipId !== owner.membershipId
+        || terminal.ownerEpoch !== owner.ownerEpoch || terminal.messagingChannelId !== owner.messagingChannelId || terminal.chatKeyHash !== owner.chatKeyHash) return false;
+      const text = terminal.status === 'CANCELED' ? 'ยกเลิกงานอ่านไฟล์นี้แล้ว ยังไม่ได้สร้างรายการให้'
+        : terminal.status === 'EXPIRED' ? 'งานอ่านไฟล์นี้หมดเวลาแล้ว กรุณาส่งคำถามใหม่พร้อมไฟล์ ยังไม่ได้สร้างรายการให้'
+          : 'ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ กรุณาส่งไฟล์ที่ชัดเจนหรือเลือกหน้าใหม่ ยังไม่ได้สร้างรายการให้';
+      const coverage = inventory.map(item => ({ index: item.index, status: 'needs_user' as const, reasonCode: 'QA_NOT_COMPLETED', question: item.goal }));
+      if (coverage.length) this.semanticDelivery.set(event, coverage);
+      const remaining = inventory.filter(item => item.kind !== 'file');
+      const notice = remaining.length ? `\n\nส่วนที่ยังไม่ได้ตอบ: ${remaining.map(item => item.goal).join(' / ')} กรุณาเลือกถามต่อได้ค่ะ` : '';
+      if (await this.deliverMessages(event, [{ type: 'text', text: text + notice }]) !== 'ok') return false;
+      if (coverage.length) await this.settleSemanticTask(event as LineTextEvent, coverage);
+      await this.prisma.client.lineIntakePendingMedia.updateMany({ where: { readJobId: jobId, companyId: owner.companyId, userId: owner.userId,
+        messagingChannelId: owner.messagingChannelId, chatKeyHash: owner.chatKeyHash, lifecycleEpoch: owner.ownerEpoch }, data: { status: 'EXPIRED', revision: { increment: 1 } } });
+      await this.updateEventLog(event.webhookEventId, 'document_qa_failed', terminal.errorCode ?? undefined, owner.companyId); return true;
+    }
+    const result = parseLineDocumentQaResult(job.resultJson); if (!result) return false;
+    this.documentQaDelivery.set(event, job);
+    const failed = result.coverage.failed.map(page => `ไฟล์ ${page.attachmentId} หน้า ${page.page}: ${page.code}`).join('\n');
+    const coverage = inventory.map(item => {
+      const answer = result.questionCoverage?.find(answer => answer.subrequestIndex === item.index);
+      return item.kind === 'file' && answer?.status === 'answered'
+        ? { index: item.index, status: 'handled' as const }
+        : { index: item.index, status: 'needs_user' as const, reasonCode: item.kind === 'file' ? 'QA_QUESTION_INCOMPLETE' : 'QA_SEPARATE_CLAUSE_PENDING', question: item.goal };
+    });
+    if (coverage.length) this.semanticDelivery.set(event, coverage);
+    const remaining = inventory.filter(item => coverage.find(entry => entry.index === item.index)?.status === 'needs_user');
+    const notice = remaining.length ? `\n\nยังตอบได้ไม่ครบทุกส่วน ส่วนที่ยังรอ: ${remaining.map(item => item.goal).join(' / ')} กรุณาเลือกถามต่อได้ค่ะ` : '';
+    const text = `${result.answer}\n\nแหล่งคำตอบ: ${result.answerPageRefs.map(ref => `ไฟล์ ${ref.attachmentId} หน้า ${ref.page}`).join(', ')}\nอ่าน ${result.coverage.read.length}/${result.coverage.requested.length} หน้า${failed ? `\nหน้าที่ยังอ่านไม่ได้\n${failed}` : ''}${notice}`;
+    const delivery = await this.deliverMessages(event, [{ type: 'text', text }]);
+    if (delivery !== 'ok') return false;
+    if (coverage.length) await this.settleSemanticTask(event as LineTextEvent, coverage);
+    await this.prisma.client.lineIntakePendingMedia.updateMany({ where: { readJobId: jobId, companyId: owner.companyId, userId: owner.userId,
+      messagingChannelId: owner.messagingChannelId, chatKeyHash: owner.chatKeyHash, lifecycleEpoch: owner.ownerEpoch }, data: { status: 'RESOLVED_RECEIPT', revision: { increment: 1 } } });
+    await this.updateEventLog(event.webhookEventId, 'completed', undefined, owner.companyId); return true;
+  }
+
+  /** The existing worker tick resumes saved QA output even after new-write flags turn off. */
+  async recoverDocumentQaResults(): Promise<number> {
+    const rows = await this.prisma.client.lineIntakePendingMedia.findMany({ where: { status: 'PENDING', readJobId: { not: null },
+      askedQuestionJson: { path: ['kind'], equals: 'LINE_DOCUMENT_QA' }, expiresAt: { gt: new Date() } }, take: 20, orderBy: { createdAt: 'asc' } });
+    let delivered = 0;
+    for (const row of rows) {
+      try {
+        const target = row.askedQuestionJson as { webhookEventId?: string; lineUserId?: string };
+        if (!target.webhookEventId || !target.lineUserId || !row.messagingChannelId || !row.membershipId || !row.chatKeyHash) continue;
+        const owner: LineConversationOwner = { companyId: row.companyId, userId: row.userId, membershipId: row.membershipId,
+          channel: 'line', channelKind: 'USER', messagingChannelId: row.messagingChannelId, chatKeyHash: row.chatKeyHash };
+        const current = await this.contextV2.load(owner);
+        if (!current || current.row.lifecycleEpoch !== row.lifecycleEpoch) continue;
+        const access = await this.permissionResolver.resolveAccess(row.userId, row.companyId);
+        if (access.membershipId !== row.membershipId) continue;
+        const event: LineReceiptUploadEvent = { webhookEventId: target.webhookEventId, lineUserId: target.lineUserId, replyToken: '',
+          lineMessageId: row.lineMessageId, messagingChannelId: row.messagingChannelId, channelKind: 'USER', messageType: 'file', handoff: { userId: row.userId, companyId: row.companyId } };
+        if (chatKeyHashOf(event) !== row.chatKeyHash) continue;
+        this.boundConversations.set(event, { owner, id: current.row.id, epoch: row.lifecycleEpoch });
+        this.deliveryAccess.set(event, { userId: row.userId, companyId: row.companyId, membershipId: row.membershipId, fingerprint: resolvedLineDeliveryAccessFingerprint(row.userId, row.companyId, access, await loadEntitledFeatureKeys(this.prisma, row.companyId)) });
+        if (await this.deliverDocumentQaResult(event, row.readJobId!, { ...owner, ownerEpoch: row.lifecycleEpoch })) delivered++;
+      } catch (error) { this.logger.warn({ msg: 'line_qa_delivery_recovery_failed', id: row.id, ...safeLineErrorDetails(error) }); }
+    }
+    return delivered;
+  }
+
   private async ensurePendingMedia(
     ctx: RequestContext,
     event: LineReceiptUploadEvent,
@@ -7656,7 +9106,9 @@ ${link}`, ctx.companyId, access);
     askedQuestion: Record<string, unknown>,
   ): Promise<{ created: boolean; pending?: { id: string; attachmentId: string; mimeType: string; lineMessageId: string; createdAt: Date; askedQuestionJson?: unknown } }> {
     const key = { companyId_lineMessageId: { companyId, lineMessageId: event.lineMessageId } };
+    const binding = this.pendingMediaBinding(event);
     const redelivered = await this.prisma.client.lineIntakePendingMedia.findUnique({ where: key });
+    if (redelivered && Object.entries(binding).some(([field, value]) => ((redelivered as unknown as Record<string, unknown>)[field] ?? null) !== value)) throw new Error('LINE_PENDING_MEDIA_OWNER_MISMATCH');
     // Redelivery of the SAME message: stay silent, exactly as before.
     if (redelivered) return { created: false, pending: redelivered };
     // A DIFFERENT picture while one question is still open. Before, this opened a second row and
@@ -7664,10 +9116,10 @@ ${link}`, ctx.companyId, access);
     // more copy of the image every round. Answer the open question about the newest file instead:
     // repoint the existing row at this upload and stay silent.
     const open = await this.prisma.client.lineIntakePendingMedia.findFirst({
-      where: { companyId, userId, status: 'PENDING', expiresAt: { gt: new Date() } },
+      where: { companyId, userId, status: 'PENDING', expiresAt: { gt: new Date() }, ...binding },
       orderBy: { createdAt: 'desc' },
     });
-    if (open) return { created: false, pending: open };
+    if (open && !this.boundConversations.has(event)) return { created: false, pending: open };
     if (!this.createUploadIntent || !this.completeAttachmentUpload) throw new Error('LINE_ATTACHMENT_MODULE_UNAVAILABLE');
     // Reserve an attachment id (cheap DB intent, no bytes yet), then CLAIM the unique pending row
     // BEFORE transferring bytes. Only the race winner uploads + completes the attachment.
@@ -7678,7 +9130,8 @@ ${link}`, ctx.companyId, access);
       await this.prisma.client.lineIntakePendingMedia.create({
         data: {
           companyId, userId, lineMessageId: event.lineMessageId, attachmentId: intent.attachmentId,
-          caption, mimeType: media.mimeType, status: 'PENDING', askedQuestionJson: askedQuestion as any,
+          caption, mimeType: media.mimeType, status: 'PENDING', askedQuestionJson: { ...askedQuestion,
+            ...(this.boundConversations.has(event) ? { pageCount: media.mimeType === 'application/pdf' ? (await PDFDocument.load(media.bytes, { ignoreEncryption: false })).getPageCount() : 1 } : {}) } as any, ...binding,
           expiresAt: new Date(Date.now() + PENDING_MEDIA_TTL_MINUTES * 60 * 1000),
         },
       });
@@ -7696,6 +9149,7 @@ ${link}`, ctx.companyId, access);
       attachmentId: intent.attachmentId, checksumSha256: media.checksumSha256, byteSize: media.byteSize,
     });
     const pending = await this.prisma.client.lineIntakePendingMedia.findUnique({ where: key });
+    if (open && pending && this.boundConversations.has(event)) this.pendingMediaNotices.set(event, this.pendingMediaSelectionMessage([open, pending]));
     return { created: true, ...(pending ? { pending } : {}) };
   }
 
@@ -7854,7 +9308,7 @@ ${link}`, ctx.companyId, access);
     // §11: two classes stay plausible, so exactly one question is asked and the file waits.
     const text = question.kind === 'SUBSTITUTE_SCAN_CONFIRM' ? substituteScanConfirmQuestion(scan!) : substituteMediaQuestion(choices);
     await this.deliverReply(event, text);
-    await this.persistIntakeTurn({
+    await this.persistIntakeTurn({ event,
       userId: input.userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: `${mediaPreviewLabel(pending)}${input.captionSuffix}`, replyText: text, intent: 'CLARIFY',
     });
@@ -7889,7 +9343,7 @@ ${link}`, ctx.companyId, access);
     });
     await this.deliverCompletedReply(event, replyText, companyId, input.access);
     await this.resolvePendingRow(input.pending.id, 'RESOLVED_RECEIPT');
-    await this.persistIntakeTurn({
+    await this.persistIntakeTurn({ event,
       userId: input.userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: `[ผู้ใช้ส่งหลักฐานของงานใบรับรอง]${input.captionSuffix}`, replyText, intent: 'EVIDENCE_CAPTURE',
     });
@@ -7994,7 +9448,7 @@ ${link}`, ctx.companyId, access);
     if (answer === 'NO_RECORD') {
       await this.deliverCompletedReply(event, MEDIA_NOT_RECORDED_REPLY, ctx.companyId, access);
       await this.resolvePendingRow(pending.id, 'RESOLVED_ILLUSTRATION');
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: text, replyText: MEDIA_NOT_RECORDED_REPLY, intent: 'CLARIFY',
       });
@@ -8034,7 +9488,7 @@ ${link}`, ctx.companyId, access);
         steerToPendingDecision: await this.substituteReceiptContinuation.hasPendingIssueDecision(ctx, chatKeyHash),
       });
       await this.deliverCompletedReply(event, replyText, ctx.companyId, access);
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: text, replyText, intent: 'SIGNATURE_REQUEST',
       });
@@ -8088,7 +9542,7 @@ ${link}`, ctx.companyId, access);
         choice === 'FINAL_RECEIPT' ? buildCheckBillReceiptUploadQuickReply() : undefined,
       );
       await this.resolvePendingRow(pending.id, 'RESOLVED_ILLUSTRATION');
-      await this.persistIntakeTurn({
+      await this.persistIntakeTurn({ event,
         userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: text, replyText: reply, intent: 'CLARIFY',
       });
@@ -8180,7 +9634,7 @@ ${link}`, ctx.companyId, access);
     }
     await this.resolvePendingRow(pending.id, 'RESOLVED_RECEIPT');
     await this.recordDeliveredReceiptContinuation(event, ctx.companyId, ctx.userId, expenseId, access.scopes);
-    await this.persistIntakeTurn({
+    await this.persistIntakeTurn({ event,
       userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: text, replyText: reply, intent: 'EVIDENCE_CAPTURE',
     });
@@ -8252,7 +9706,7 @@ ${link}`, ctx.companyId, access);
     // A question is not a finished turn: same plain delivery the arrival question uses, so a
     // completion menu cannot appear next to a numbered list and be read as more choices.
     await this.deliverReply(event, question);
-    await this.persistIntakeTurn({
+    await this.persistIntakeTurn({ event,
       userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: text, replyText: question, intent: 'CLARIFY',
     });
@@ -8269,7 +9723,7 @@ ${link}`, ctx.companyId, access);
     reply: string,
   ): Promise<{ outcome: 'handled' }> {
     await this.deliverCompletedReply(event, reply, ctx.companyId, access);
-    await this.persistIntakeTurn({
+    await this.persistIntakeTurn({ event,
       userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: text, replyText: reply, intent: 'CLARIFY',
     });
@@ -8302,7 +9756,7 @@ ${link}`, ctx.companyId, access);
     // linked to a second, incompatible target.
     await this.resolvePendingRow(pending.id, 'RESOLVED_RECEIPT');
     await this.deliverCompletedReply(event, replyText, ctx.companyId, access, badge);
-    await this.persistIntakeTurn({
+    await this.persistIntakeTurn({ event,
       userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: text, replyText, intent: 'EVIDENCE_CAPTURE',
     });
@@ -8458,7 +9912,7 @@ ${link}`, ctx.companyId, access);
       data: { status: 'RESOLVED_RECEIPT' },
     });
     await this.recordDeliveredReceiptContinuation(event, companyId, userId, expenseId, access.scopes);
-    await this.persistIntakeTurn({
+    await this.persistIntakeTurn({ event,
       userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: `[ยืนยันบันทึกใบเสร็จ] ${userMessagePreview}`, replyText: reply, intent: 'EVIDENCE_CAPTURE',
     });

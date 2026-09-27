@@ -5,6 +5,7 @@ import {
   EXPENSE_PENDING_STATUSES,
   civilDate,
   civilDayRangeToUtc,
+  civilInstantDayRangeToUtc,
   isCivilDate,
   type SourceRef,
   type ToolResult,
@@ -20,7 +21,6 @@ const TIME_ZONE = 'Asia/Bangkok';
 const DEFAULT_DETAIL_LIMIT = 5;
 const MAX_DETAIL_LIMIT = 10;
 const QUERY_COUNT = 16;
-const BANGKOK_UTC_OFFSET_MS = 7 * 60 * 60 * 1_000;
 
 type MoneyGroup = { currency: string; count: number; total: string };
 type AggregateRow = { currency: string; _count: { _all: number }; _sum: Record<string, unknown> };
@@ -64,11 +64,7 @@ const DETAIL_SELECT = {
 } satisfies Prisma.ExpenseRecordSelect;
 
 function timestampRangeForBangkokDay(date: string): { gte: Date; lt: Date } {
-  const range = civilDayRangeToUtc(date, date);
-  return {
-    gte: new Date(range.gte!.getTime() - BANGKOK_UTC_OFFSET_MS),
-    lt: new Date(range.lt!.getTime() - BANGKOK_UTC_OFFSET_MS),
-  };
+  return civilInstantDayRangeToUtc(date, date) as { gte: Date; lt: Date };
 }
 
 function decimal(value: unknown): string {

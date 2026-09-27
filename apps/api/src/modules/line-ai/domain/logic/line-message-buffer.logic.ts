@@ -12,6 +12,10 @@ export type LineBufferTextItem = {
   text: string;
   /** Exact draft preview targeted by a validated LINE postback. */
   draftUpdatePreviewId?: string;
+  reimbursementDraftControl?: import('../../application/line-reimbursement-draft.service').LineReimbursementDraftControl;
+  answerDeliveryControl?: import('./line-delivery-plan.logic').LineAnswerDeliveryControl;
+  /** Frozen, API-owned coalesced input restored only by durable recovery. */
+  inputEvidence?: import('@watchdog-bms/contracts').LineAiInputEvidenceV2;
   lineMessageId?: string;
   /** LINE event timestamp (ms) — used to heal cross-POST arrival reordering. */
   timestamp: number;
@@ -167,8 +171,8 @@ export function joinedTextLength(items: LineBufferItem[]): number {
   return items.reduce((total, item) => total + textLength(item), 0);
 }
 
-export function bufferAtCapacity(items: LineBufferItem[]): boolean {
-  return items.length >= LINE_BUFFER_MAX_ITEMS || joinedTextLength(items) >= LINE_BUFFER_MAX_TEXT_CHARS;
+export function bufferAtCapacity(items: LineBufferItem[], maxTextChars = LINE_BUFFER_MAX_TEXT_CHARS): boolean {
+  return items.length >= LINE_BUFFER_MAX_ITEMS || joinedTextLength(items) >= maxTextChars;
 }
 
 /** How many of `incoming` (order-preserving prefix) still fit into `pending`. */

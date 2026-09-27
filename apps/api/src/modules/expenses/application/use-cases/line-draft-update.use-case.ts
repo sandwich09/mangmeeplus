@@ -277,7 +277,7 @@ export class LineDraftUpdateUseCase {
 
   /** Read only: delivery and double-tap recovery must never execute the edit again. */
   async appliedResult(ctx: RequestContext, chatKeyHash: string, previewId: string): Promise<LineDraftApplyOutcome> {
-    if (!this.enabled) return { status: 'blocked', reason: 'feature_disabled' };
+    // Committed receipts remain readable after new writes are disabled.
     if (!ctx.permissions.includes('expense.update')) return { status: 'blocked', reason: 'forbidden' };
     const applied = await this.previews.loadApplied(ctx.companyId, chatKeyHash);
     if (!applied || applied.companyId !== ctx.companyId || applied.userId !== ctx.userId || applied.chatKeyHash !== chatKeyHash)

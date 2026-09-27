@@ -19,10 +19,16 @@ export type ProviderInput = {
   cacheableContext?: string;
   /** Short call-site label for usage logs, e.g. 'ocr.receipt.extract'. */
   usageTag?: string;
+  /** Local-only cancellation; never serialized to the provider wire. */
+  signal?: AbortSignal;
+  /** Absolute Unix deadline carried in process memory, never as provider metadata. */
+  deadlineAt?: number;
 };
 
+export type ProviderCompletion = 'complete' | 'output_limit' | 'blocked' | 'unknown';
+
 export type ProviderOutput =
-  | { ok: true; text: string; stopReason?: 'end_turn' | 'max_tokens' | 'other' }
+  | { ok: true; text: string; completion?: ProviderCompletion; providerStopReason?: string; stopReason?: 'end_turn' | 'max_tokens' | 'other' }
   | { ok: false; error: ProviderError };
 
 // ── Item 10F: native tool-use (Bedrock Converse toolConfig / OpenAI function calling) ──
@@ -65,10 +71,13 @@ export type ProviderToolsInput = {
   cacheableContext?: string;
   /** Same contract as `ProviderInput.usageTag`. */
   usageTag?: string;
+  /** Local-only cancellation/deadline. */
+  signal?: AbortSignal;
+  deadlineAt?: number;
 };
 
 export type ProviderToolsOutput =
-  | { ok: true; text: string; toolCalls: ProviderToolCall[]; stopReason: 'tool_use' | 'end_turn' | 'max_tokens' | 'other' }
+  | { ok: true; text: string; toolCalls: ProviderToolCall[]; completion?: ProviderCompletion; providerStopReason?: string; stopReason: 'tool_use' | 'end_turn' | 'max_tokens' | 'other' }
   | { ok: false; error: ProviderError };
 
 export interface IModelProvider {

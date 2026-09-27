@@ -4,8 +4,10 @@
  * Returns ToolResult with source refs; never raw rows.
  */
 import { Injectable, Logger } from '@nestjs/common';
-import type { ToolResult, SourceRef } from '@watchdog-bms/contracts';
-import { isExpensePending } from '@watchdog-bms/contracts';
+import Decimal from 'decimal.js';
+import { createHash } from 'node:crypto';
+import type { ExpensePaymentStatus, ExpenseStatus, ToolResult, SourceRef } from '@watchdog-bms/contracts';
+import { civilInstantDayRangeToUtc, civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import { ListProductsUseCase } from '../../../inventory/application/use-cases/list-products.use-case';
 import { GetStockBalanceUseCase, GetStockReportUseCase, ListMovementsUseCase } from '../../../inventory/application/use-cases/movement-query.use-cases';
@@ -13,14 +15,17 @@ import { GetTrialBalanceUseCase, GetPnlReportUseCase, GetBalanceSheetUseCase } f
 import { ListExpensesUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
-import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import {
+  BUSINESS_READ_BASIS_VERSION,
+  appliedQuery,
+  completeResult,
+  fact,
+  periodError,
+  resolveBusinessReadPeriod,
+  sourceRefId,
+} from '../../domain/logic/business-read-source.logic';
 
 function now(): string { return new Date().toISOString(); }
-
-function money(value: string | null | undefined): number {
-  const amount = Number(String(value ?? '0').replace(/,/g, ''));
-  return Number.isFinite(amount) ? amount : 0;
-}
 
 function toCtx(ctx: ErpToolContext): RequestContext {
   return {
@@ -210,33 +215,28 @@ export function currentMonthRange(): { fromDate: string; toDate: string } {
   return { fromDate: `${today.slice(0, 8)}01`, toDate: today };
 }
 
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
-/** ponytail: 10 × 100 rows is far past what a LINE answer can use; raise it only if a real
- *  period legitimately exceeds 1000 expenses and the summary must still be exact. */
-const EXPENSE_PAGE_CAP = 10;
-
-export function resolvePeriodInput(input: { fromDate?: unknown; toDate?: unknown } | undefined): { fromDate: string; toDate: string; defaulted: boolean } {
-  const fromDate = typeof input?.fromDate === 'string' && DATE_PATTERN.test(input.fromDate) ? input.fromDate : undefined;
-  const toDate = typeof input?.toDate === 'string' && DATE_PATTERN.test(input.toDate) ? input.toDate : undefined;
-  if (fromDate || toDate) return { fromDate: fromDate ?? '1970-01-01', toDate: toDate ?? bangkokToday(), defaulted: false };
-  return { ...currentMonthRange(), defaulted: true };
+export function resolvePeriodInput(input: { periodKey?: unknown; fromDate?: unknown; toDate?: unknown } | undefined): { fromDate: string; toDate: string; defaulted: boolean; periodKey?: string } {
+  const resolved = resolveBusinessReadPeriod(input);
+  if (!resolved.ok) throw new TypeError(resolved.errorCode);
+  return resolved.period;
 }
 
-function isCivilDate(value: string): boolean {
-  if (!DATE_PATTERN.test(value)) return false;
-  const date = new Date(`${value}T00:00:00.000Z`);
-  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+function expenseCursorFingerprint(value: Record<string, unknown>): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('base64url').slice(0, 20);
 }
 
-function resolveExpensePeriodInput(input: { fromDate?: unknown; toDate?: unknown } | undefined) {
-  const hasFrom = input?.fromDate !== undefined;
-  const hasTo = input?.toDate !== undefined;
-  if (!hasFrom && !hasTo) return { ...currentMonthRange(), defaulted: true };
-  const fromDate = typeof input?.fromDate === 'string' && isCivilDate(input.fromDate) ? input.fromDate : undefined;
-  const toDate = typeof input?.toDate === 'string' && isCivilDate(input.toDate) ? input.toDate : undefined;
-  if (!fromDate || !toDate || fromDate > toDate) return { invalid: true as const };
-  return { fromDate, toDate, defaulted: false };
+function decodeExpenseCursor(cursor: string, fingerprint: string): { expenseDate: Date; id: string } | undefined {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as Record<string, unknown>;
+    if (value['v'] !== 1 || value['f'] !== fingerprint || typeof value['d'] !== 'string' || typeof value['id'] !== 'string') return undefined;
+    const expenseDate = new Date(value['d']);
+    if (!Number.isFinite(expenseDate.getTime()) || value['id'].length > 200) return undefined;
+    return { expenseDate, id: value['id'] };
+  } catch { return undefined; }
+}
+
+function encodeExpenseCursor(source: { expenseDate: Date; id: string }, fingerprint: string): string {
+  return Buffer.from(JSON.stringify({ v: 1, f: fingerprint, d: source.expenseDate.toISOString(), id: source.id })).toString('base64url');
 }
 
 @Injectable()
@@ -244,16 +244,29 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
   toolName = 'expense.list_recent';
   constructor(private readonly listExpenses: ListExpensesUseCase, private readonly prisma: PrismaService) {}
 
-  async execute(ctx: ErpToolContext, input?: { fromDate?: string; toDate?: string; branchId?: string }): Promise<ToolResult> {
-    const asOf = now();
+  async execute(ctx: ErpToolContext, input: {
+    periodKey?: string; fromDate?: string; toDate?: string; branchId?: string;
+    categoryId?: string; vendorId?: string; documentStatus?: ExpenseStatus; paymentStatus?: ExpensePaymentStatus;
+    limit?: number; cursor?: string;
+  } = {}): Promise<ToolResult> {
+    let asOf = now();
     if (!ctx.permissions.includes('expense.read') && !ctx.permissions.includes('expense.review')
       && !ctx.permissions.includes('expense.read_related') && !ctx.permissions.includes('expense.read_own')) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
-    const period = resolveExpensePeriodInput(input);
-    if ('invalid' in period) {
-      return { toolName: this.toolName, status: 'error', errorCode: 'INVALID_EXPENSE_PERIOD',
-        errorMessage: 'A complete valid expense date range is required.', sourceRefs: [], asOf };
+    const resolved = resolveBusinessReadPeriod(input);
+    if (!resolved.ok) return periodError(this.toolName, asOf, resolved);
+    const period = resolved.period;
+    const validStatuses: ExpenseStatus[] = ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION', 'CONFIRMED', 'REJECTED', 'VOIDED'];
+    const validPaymentStatuses: ExpensePaymentStatus[] = ['UNPAID', 'PARTIALLY_PAID', 'PAID', 'VOIDED'];
+    if (input.documentStatus !== undefined && !validStatuses.includes(input.documentStatus)) {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'Unsupported filter: documentStatus', sourceRefs: [], asOf };
+    }
+    if (input.paymentStatus !== undefined && !validPaymentStatuses.includes(input.paymentStatus)) {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'Unsupported filter: paymentStatus', sourceRefs: [], asOf };
+    }
+    if (input.limit !== undefined && (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 50)) {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'limit must be 1-50', sourceRefs: [], asOf };
     }
     // The model copies whatever the user said — a branch name, code, or id, typos included. Exact
     // id/name/code resolves here; anything else returns the ACTIVE branches in this user's scope
@@ -319,17 +332,25 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       }
       branchId = hit.id;
     }
-    const filter = { fromDate: period.fromDate, toDate: period.toDate, ...(branchId && { branchId }) };
-    const first = await this.listExpenses.execute(toCtx(ctx), { ...filter, page: 1, pageSize: 100 });
-    const pages = [first];
-    // A wide date range used to page until the repository ran out of rows, so one LINE question
-    // could fan out to hundreds of queries. `truncated` says the summary covers only the first
-    // EXPENSE_PAGE_CAP pages so an answer can admit the bound instead of understating the period.
-    for (let page = 2; (page - 1) * first.pageSize < first.total && page <= EXPENSE_PAGE_CAP; page++) {
-      pages.push(await this.listExpenses.execute(toCtx(ctx), { ...filter, page, pageSize: first.pageSize }));
+    const cursorFingerprint = expenseCursorFingerprint({
+      companyId: ctx.companyId, userId: ctx.userId, branchIds: ctx.branchIds ?? null,
+      period: [period.fromDate, period.toDate], branchId: branchId ?? null,
+      categoryId: input.categoryId ?? null, vendorId: input.vendorId ?? null,
+      documentStatus: input.documentStatus ?? null, paymentStatus: input.paymentStatus ?? null,
+    });
+    const cursor = input.cursor === undefined ? undefined
+      : typeof input.cursor === 'string' ? decodeExpenseCursor(input.cursor, cursorFingerprint) : undefined;
+    if (input.cursor !== undefined && !cursor) {
+      return { toolName: this.toolName, status: 'error', errorCode: 'INVALID_CURSOR', errorMessage: 'The cursor does not match this query.', sourceRefs: [], asOf };
     }
-    const truncated = EXPENSE_PAGE_CAP * first.pageSize < first.total;
-    const expenses = pages.flatMap((page) => page.data);
+    const snapshot = await this.listExpenses.readAiSummary(toCtx(ctx), {
+      fromDate: period.fromDate, toDate: period.toDate, ...(branchId && { branchId }),
+      ...(input.categoryId ? { expenseCategoryId: input.categoryId } : {}),
+      ...(input.vendorId ? { vendorCounterpartyId: input.vendorId } : {}),
+      ...(input.documentStatus ? { status: input.documentStatus } : {}),
+      ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
+    }, input.limit ?? 20, cursor);
+    asOf = snapshot.asOf.toISOString();
     const sourceRefs: SourceRef[] = [{
       label: 'รายการค่าใช้จ่าย',
       module: 'expenses',
@@ -341,31 +362,39 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       // unresolved case returned the branch catalog above and never reaches this link.
       webPath: `/companies/${ctx.companyId}/expenses${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`,
     }];
-    const summary = expenses.reduce((acc, expense) => {
-      // Rejected and voided documents are not company expenses, and rejecting leaves
-      // `outstandingAmount` untouched — counting them here reported money the company does not owe
-      // and a total it never spent. `expense.get_breakdown` already excludes them; this tool did
-      // not, so the two disagreed on the same period. `cancelledCount` is reported so an answer can
-      // say what was left out rather than silently differ from `total`.
-      if (expense.status === 'REJECTED' || expense.status === 'VOIDED') {
-        acc.cancelledCount += 1;
-        return acc;
-      }
-      const grandTotal = money(expense.grandTotalAmount);
-      acc.countedItems += 1;
-      acc.totalAmount += grandTotal;
-      // `draftAmount` counted DRAFT only and `confirmedAmount` CONFIRMED only, so everything mid
-      // review — EXTRACTING, NEEDS_REVIEW, READY_FOR_CONFIRMATION — fell out of both buckets and
-      // the work in progress read as zero. `pendingAmount` uses the shared pending set, which
-      // makes `pendingAmount + confirmedAmount` equal `totalAmount` for every status.
-      // `draftAmount` stays as the narrower "not submitted yet" figure.
-      if (isExpensePending(expense.status)) acc.pendingAmount += grandTotal;
-      if (expense.status === 'DRAFT') acc.draftAmount += grandTotal;
-      if (expense.status === 'CONFIRMED') acc.confirmedAmount += grandTotal;
-      acc.paidAmount += money(expense.paidAmount);
-      acc.unpaidAmount += money(expense.outstandingAmount);
-      return acc;
-    }, { countedItems: 0, cancelledCount: 0, totalAmount: 0, pendingAmount: 0, draftAmount: 0, confirmedAmount: 0, paidAmount: 0, unpaidAmount: 0 });
+    const soleCurrency = snapshot.byCurrency.length === 1 ? snapshot.byCurrency[0] : undefined;
+    const sumStatuses = (statuses: readonly string[]) => snapshot.byStatus
+      .filter((row) => statuses.includes(row.status) && (!soleCurrency || row.currency === soleCurrency.currency))
+      .reduce((sum, row) => sum.add(row.totalAmount), new Decimal(0)).toString();
+    const summary = {
+      countedItems: snapshot.total,
+      cancelledCount: 0,
+      totalAmount: soleCurrency?.totalAmount ?? null,
+      pendingAmount: soleCurrency ? sumStatuses(['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION']) : null,
+      draftAmount: soleCurrency ? sumStatuses(['DRAFT']) : null,
+      confirmedAmount: soleCurrency ? sumStatuses(['CONFIRMED']) : null,
+      paidAmount: soleCurrency?.paidAmount ?? null,
+      unpaidAmount: soleCurrency?.outstandingAmount ?? null,
+    };
+    const queryApplied = appliedQuery(period, {
+      branch: { mode: branchId ? 'selected' : 'all_authorized', branchId: branchId ?? null },
+      dateBasis: 'expense_incurred_date',
+      statusBasis: input.documentStatus ?? 'exclude_rejected_voided',
+      dataset: 'operational_expense_records',
+      filters: {
+        ...(input.categoryId ? { categoryId: input.categoryId } : {}),
+        ...(input.vendorId ? { vendorId: input.vendorId } : {}),
+        ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
+      },
+    });
+    const completeness = completeResult(snapshot.items.length, snapshot.hasMore);
+    completeness.rows.nextCursor = snapshot.nextCursorSource ? encodeExpenseCursor(snapshot.nextCursorSource, cursorFingerprint) : null;
+    const facts = snapshot.byCurrency.map((row) => fact({
+      id: `expense.total.${row.currency}`,
+      metric: 'expense_total', value: row.totalAmount, unit: 'money', currency: row.currency,
+      period: queryApplied.period ?? null, dateBasis: queryApplied.dateBasis, statusBasis: queryApplied.statusBasis,
+      sourceRefIds: sourceRefs.map(sourceRefId), asOf, state: row.count === 0 ? 'empty' : 'known',
+    }));
     return {
       toolName: this.toolName,
       status: 'ok',
@@ -374,15 +403,17 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
         // documents, so reporting the unfiltered repository total here made the headline number
         // disagree with every money figure under it. `summary.cancelledCount` carries the rest.
         total: summary.countedItems,
-        ...(truncated && { truncated: true }),
         // Effective period echoed so answers can state the window (defaults to current month).
         period: { fromDate: period.fromDate, toDate: period.toDate, defaultedToCurrentMonth: period.defaulted },
         ...(branchId && { branchId }),
         summary,
-        items: expenses.slice(0, 5).map((expense) => ({
+        totalsByCurrency: snapshot.byCurrency,
+        ...(snapshot.byCurrency.length > 1 ? { mixedCurrency: true } : {}),
+        queryApplied, completeness,
+        items: snapshot.items.map((expense) => ({
           id: expense.id,
           expenseNumber: expense.expenseNumber,
-          expenseDate: expense.expenseDate,
+          expenseDate: expense.expenseDate.toISOString(),
           vendorNameSnapshot: expense.vendorNameSnapshot,
           vendorDocumentNumber: expense.vendorDocumentNumber,
           status: expense.status,
@@ -394,6 +425,10 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       },
       sourceRefs,
       asOf,
+      queryApplied,
+      basisVersion: BUSINESS_READ_BASIS_VERSION,
+      facts,
+      completeness,
     };
   }
 }
@@ -405,13 +440,15 @@ export class SalesGetSalesSummaryTool implements ErpReadToolPort {
   toolName = 'sales.get_sales_summary';
   constructor(private readonly prisma: PrismaService) {}
 
-  async execute(ctx: ErpToolContext, input?: { fromDate?: string; toDate?: string; branchId?: string }): Promise<ToolResult> {
+  async execute(ctx: ErpToolContext, input: { periodKey?: string; fromDate?: string; toDate?: string; branchId?: string } = {}): Promise<ToolResult> {
     const asOf = now();
     if (!ctx.permissions.includes('crm.report.read')) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
 
-    const period = resolvePeriodInput(input);
+    const resolved = resolveBusinessReadPeriod(input);
+    if (!resolved.ok) return periodError(this.toolName, asOf, resolved);
+    const period = resolved.period;
     const branchId = typeof input?.branchId === 'string' && input.branchId ? input.branchId : undefined;
     if (branchId && ctx.branchIds && !ctx.branchIds.includes(branchId)) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
@@ -422,11 +459,8 @@ export class SalesGetSalesSummaryTool implements ErpReadToolPort {
       direction: 'RECEIVED' as any,
       status: 'RECORDED' as any,
       counterparty: { is: { type: { in: ['CUSTOMER', 'BOTH'] as any } } },
-      paidAt: {
-        gte: new Date(`${period.fromDate}T00:00:00+07:00`),
-        lte: new Date(`${period.toDate}T23:59:59.999+07:00`),
-      },
-      ...(branchIds ? { OR: [{ branchId: { in: branchIds } }, { branchId: null }] } : {}),
+      paidAt: civilInstantDayRangeToUtc(period.fromDate, period.toDate),
+      ...(branchId ? { branchId } : branchIds ? { OR: [{ branchId: { in: branchIds } }, { branchId: null }] } : {}),
     };
     const [rows, company] = await Promise.all([
       this.prisma.client.accountingPayment.groupBy({
@@ -437,12 +471,12 @@ export class SalesGetSalesSummaryTool implements ErpReadToolPort {
       }),
       this.prisma.client.company.findUnique({ where: { id: ctx.companyId }, select: { baseCurrency: true } }),
     ]);
-    const totalsByCurrency = rows.map((row) => ({
+    const baseCurrency = company?.baseCurrency ?? 'THB';
+    const totalsByCurrency = rows.length > 0 ? rows.map((row) => ({
       currency: row.currency,
       amount: String(row._sum.amount ?? '0'),
       transactionCount: row._count._all,
-    }));
-    const baseCurrency = company?.baseCurrency ?? 'THB';
+    })) : [{ currency: baseCurrency, amount: '0', transactionCount: 0 }];
     const baseTotal = totalsByCurrency.find((row) => row.currency === baseCurrency);
     const sourceRefs: SourceRef[] = [{
       label: 'ยอดรับเงินจริงจากลูกค้า',
@@ -452,6 +486,18 @@ export class SalesGetSalesSummaryTool implements ErpReadToolPort {
       permissionChecked: true,
       webPath: `/companies/${ctx.companyId}/crm-reports`,
     }];
+    const queryApplied = appliedQuery(period, {
+      branch: { mode: branchId ? 'selected' : 'all_authorized', branchId: branchId ?? null },
+      dateBasis: 'payment_paid_at', statusBasis: 'recorded_received_customer_payments',
+      dataset: 'operational_sales_cash_receipts',
+    });
+    const completeness = completeResult(0, false, totalsByCurrency.length, false);
+    const facts = totalsByCurrency.map((row) => fact({
+      id: `sales.cash_received.${row.currency}`,
+      metric: 'cash_received', value: row.amount, unit: 'money', currency: row.currency,
+      period: queryApplied.period ?? null, dateBasis: queryApplied.dateBasis, statusBasis: queryApplied.statusBasis,
+      sourceRefIds: sourceRefs.map(sourceRefId), asOf, state: row.transactionCount === 0 ? 'empty' : 'known',
+    }));
     return {
       toolName: this.toolName,
       status: 'ok',
@@ -463,9 +509,15 @@ export class SalesGetSalesSummaryTool implements ErpReadToolPort {
         basis: 'recorded_received_payments',
         period: { fromDate: period.fromDate, toDate: period.toDate, defaultedToCurrentMonth: period.defaulted },
         ...(branchId && { branchId }),
+        queryApplied,
+        completeness,
       },
       sourceRefs,
       asOf,
+      queryApplied,
+      basisVersion: BUSINESS_READ_BASIS_VERSION,
+      facts,
+      completeness,
     };
   }
 }

@@ -1,6 +1,8 @@
-import type { AiUsageEntry, ProviderError } from '@watchdog-bms/contracts';
+import { parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, publicSourceUrl, PUBLIC_LOOKUP_SYSTEM_PROMPT, type AiUsageEntry, type ProviderError } from '@watchdog-bms/contracts';
 import type { IModelProvider, ProviderInput, ProviderOutput, ProviderToolCall, ProviderToolsInput, ProviderToolsOutput } from './provider.port';
+import { parseProviderToolCalls } from './provider-output.logic';
 import { appendUsage, currentUsageCompanyId } from '../../../../common/usage/usage-context';
+import { normalizePublicLookupOutput, publicLookupExternalUnits, type PublicSearchResponse } from './public-lookup-output.logic';
 
 export type OpenAiProviderConfig = {
   apiKey: string;
@@ -19,7 +21,7 @@ type OpenAiResponse = {
   status?: string;
   incomplete_details?: { reason?: string };
   output_text?: string;
-  output?: Array<{ content?: Array<{ text?: string }> }>;
+  output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string; refusal?: string }> }>;
   usage?: OpenAiUsage;
   error?: { message?: string; type?: string; code?: string };
 };
@@ -30,7 +32,7 @@ type OpenAiToolsResponse = {
   usage?: OpenAiUsage;
   output?: Array<{
     type?: string;
-    content?: Array<{ type?: string; text?: string }>;
+    content?: Array<{ type?: string; text?: string; refusal?: string }>;
     call_id?: string;
     name?: string;
     arguments?: string;
@@ -38,16 +40,70 @@ type OpenAiToolsResponse = {
   error?: { message?: string; type?: string; code?: string };
 };
 
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+async function readJsonBounded(response: Response): Promise<unknown> {
+  const length = Number(response.headers.get('content-length'));
+  if (Number.isFinite(length) && length > MAX_RESPONSE_BYTES) throw new Error('Provider response exceeded the bounded body size.');
+  if (!response.body?.getReader) {
+    // Fetch implementations normally expose a stream. If they do not, require a declared bounded
+    // body before reading it; never fall back to an unbounded response.json().
+    if (!Number.isFinite(length) || length < 0) throw new Error('Provider response has no bounded body stream.');
+    const body = await response.text();
+    if (Buffer.byteLength(body, 'utf8') > MAX_RESPONSE_BYTES) throw new Error('Provider response exceeded the bounded body size.');
+    return JSON.parse(body);
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error('Provider response exceeded the bounded body size.');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  return JSON.parse(new TextDecoder().decode(body));
+}
+
+function isBlocked(body: OpenAiResponse | OpenAiToolsResponse): boolean {
+  return (body.output ?? []).some((item) => item.type === 'refusal'
+    || item.content?.some((content) => content.type === 'refusal' || typeof content.refusal === 'string'));
+}
+
+function incompleteError(): ProviderError {
+  return { code: 'PROVIDER_OUTPUT_INCOMPLETE', message: 'The provider did not return a complete response.', retryable: false };
+}
+
 export class OpenAiProvider implements IModelProvider {
   constructor(private readonly cfg: OpenAiProviderConfig) {}
 
   async generateText(input: ProviderInput): Promise<ProviderOutput> {
+    if (input.usageTag === 'line.public.lookup') return this.generatePublicLookup(input);
+    if (input.signal?.aborted || (input.deadlineAt !== undefined && input.deadlineAt <= Date.now())) {
+      return { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'Provider work deadline elapsed before dispatch.', retryable: false } };
+    }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.cfg.timeoutMs);
+    const remaining = input.deadlineAt === undefined ? this.cfg.timeoutMs : input.deadlineAt - Date.now();
+    const timer = setTimeout(() => controller.abort(), Math.max(0, Math.min(this.cfg.timeoutMs, remaining)));
+    const abortFromCaller = () => controller.abort(input.signal?.reason);
+    if (input.signal?.aborted) controller.abort(input.signal.reason);
+    else input.signal?.addEventListener('abort', abortFromCaller, { once: true });
     const startedAt = Date.now();
     // No OpenAI-side caching here: the context is prepended so both providers show the model the
     // same information (spec §4.4).
     const firstUserIndex = input.messages.findIndex((m) => m.role === 'user');
+    const lastUserIndex = input.messages.map((message) => message.role).lastIndexOf('user');
 
     let usage: OpenAiUsage | undefined;
     let errorCode: string | undefined;
@@ -65,7 +121,7 @@ export class OpenAiProvider implements IModelProvider {
             role: m.role,
             content: [
               { type: 'input_text', text: index === firstUserIndex && input.cacheableContext ? `${input.cacheableContext}\n${m.text}` : m.text },
-              ...(input.images ?? []).map((image) => ({
+              ...(index === lastUserIndex ? (input.images ?? []) : []).map((image) => ({
                 type: 'input_image',
                 image_url: `data:${image.mimeType};base64,${image.contentBase64}`,
               })),
@@ -75,16 +131,36 @@ export class OpenAiProvider implements IModelProvider {
         }),
         signal: controller.signal,
       });
-      const body = await response.json() as OpenAiResponse;
+      const body = await readJsonBounded(response) as OpenAiResponse;
+      usage = body.usage;
       if (!response.ok) {
         const error = this.mapHttpError(response.status, body);
         errorCode = error.code;
         return { ok: false, error };
       }
-      usage = body.usage;
+      if (isBlocked(body)) {
+        errorCode = 'PROVIDER_BLOCKED';
+        return { ok: false, error: { code: 'PROVIDER_BLOCKED', message: 'The provider blocked this response.', retryable: false } };
+      }
+      if (body.status === 'incomplete' && body.incomplete_details?.reason !== 'max_output_tokens') {
+        errorCode = 'PROVIDER_OUTPUT_INCOMPLETE';
+        return { ok: false, error: incompleteError() };
+      }
+      if (body.status !== 'completed' && body.status !== 'incomplete') {
+        errorCode = 'PROVIDER_OUTPUT_INCOMPLETE';
+        return { ok: false, error: incompleteError() };
+      }
+      const text = this.extractText(body);
+      if (!text.trim()) {
+        errorCode = 'PROVIDER_OUTPUT_INCOMPLETE';
+        return { ok: false, error: incompleteError() };
+      }
+      const completion = body.status === 'completed' ? 'complete' as const : 'output_limit' as const;
       return {
         ok: true,
-        text: this.extractText(body),
+        text,
+        completion,
+        providerStopReason: body.status === 'completed' ? 'completed' : body.incomplete_details?.reason ?? 'incomplete',
         stopReason: body.status === 'incomplete' && body.incomplete_details?.reason === 'max_output_tokens'
           ? 'max_tokens'
           : body.status === 'completed' ? 'end_turn' : 'other',
@@ -95,17 +171,63 @@ export class OpenAiProvider implements IModelProvider {
       return { ok: false, error };
     } finally {
       clearTimeout(timer);
+      input.signal?.removeEventListener('abort', abortFromCaller);
       // Reported from `finally` (Bedrock's shape) so every call yields exactly one usage entry,
       // successes and mapped errors alike.
       this.logUsage(input.usageTag, startedAt, usage, errorCode);
     }
   }
 
+  /** Same Responses adapter and budget decorator; this strict lane has no conversation history,
+   * business tools, remote URL fetches, model fallback, or provider retry. */
+  private async generatePublicLookup(input: ProviderInput): Promise<ProviderOutput> {
+    const denied = (message: string): ProviderOutput => ({ ok: false, error: { code: 'PROVIDER_ACCESS_NOT_READY', message, retryable: false } });
+    if (!['gpt-4.1-mini', 'gpt-4.1-mini-2025-04-14'].includes(this.cfg.model)
+      || input.messages.length !== 1 || input.messages[0]?.role !== 'user' || input.cacheableContext
+      || input.images?.length || input.documents?.length || input.systemPrompt !== PUBLIC_LOOKUP_SYSTEM_PROMPT
+      || !Number.isSafeInteger(input.maxTokens) || input.maxTokens! < 1 || input.maxTokens! > 4096) return denied('Public lookup contract is unavailable.');
+    let payload: any;
+    try { payload = JSON.parse(input.messages[0].text); } catch { return denied('Public lookup input is invalid.'); }
+    if (!payload || typeof payload !== 'object' || Object.keys(payload).sort().join(',') !== 'policy,request') return denied('Public lookup input is invalid.');
+    const request = parsePublicLookupRequest(payload.request), policy = request && publicLookupPolicy(request);
+    if (!request || !policy || JSON.stringify(payload.policy) !== JSON.stringify(policy)
+      || publicQueryNeedsRephrase(request.publicQuestion, [])
+      || [...request.publicQuestion.matchAll(/https?:\/\/[^\s<>"']+/gu)].some(match => !publicSourceUrl(match[0], policy))) return denied('Public question requires rephrasing.');
+    const remaining = input.deadlineAt === undefined ? this.cfg.timeoutMs : input.deadlineAt - Date.now();
+    if (input.signal?.aborted || remaining <= 0) return { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'Public lookup deadline elapsed.', retryable: false } };
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), Math.min(this.cfg.timeoutMs, remaining));
+    const abort = () => controller.abort(); input.signal?.addEventListener('abort', abort, { once: true });
+    const startedAt = Date.now(); let usage: OpenAiUsage | undefined, errorCode: string | undefined, externalUnits: number | null = null;
+    try {
+      const response = await fetch('https://api.openai.com/v1/responses', {
+        method: 'POST', headers: { Authorization: `Bearer ${this.cfg.apiKey}`, 'Content-Type': 'application/json' }, signal: controller.signal,
+        body: JSON.stringify({ model: this.cfg.model, instructions: PUBLIC_LOOKUP_SYSTEM_PROMPT,
+          input: [{ role: 'user', content: [{ type: 'input_text', text: JSON.stringify(request) }] }],
+          tools: [{ type: 'web_search', external_web_access: true, filters: { allowed_domains: policy.domains } }],
+          tool_choice: 'required', max_tool_calls: 2, include: ['web_search_call.action.sources'], store: false, max_output_tokens: input.maxTokens }),
+      });
+      const body = await readJsonBounded(response) as OpenAiResponse & PublicSearchResponse;
+      usage = body.usage; externalUnits = publicLookupExternalUnits(body);
+      if (!response.ok) { const error = this.mapHttpError(response.status, body); errorCode = error.code; return { ok: false, error: { ...error, retryable: false } }; }
+      if (isBlocked(body)) { errorCode = 'PROVIDER_BLOCKED'; return { ok: false, error: { code: 'PROVIDER_BLOCKED', message: 'Public lookup response blocked.', retryable: false } }; }
+      const result = normalizePublicLookupOutput(body, policy);
+      return { ok: true, text: JSON.stringify(result), completion: 'complete', providerStopReason: body.status ?? 'unknown', stopReason: 'end_turn' };
+    } catch (err) { const error = this.mapThrownError(err); errorCode = error.code; return { ok: false, error: { ...error, retryable: false } }; }
+    finally { clearTimeout(timer); input.signal?.removeEventListener('abort', abort); this.logUsage(input.usageTag, startedAt, usage, errorCode, externalUnits); }
+  }
+
   /** Item 10F native tool loop – Responses API function calling (`tools` / `function_call` /
    *  `function_call_output`). Mirrors the Bedrock adapter's contract. */
   async generateWithTools(input: ProviderToolsInput): Promise<ProviderToolsOutput> {
+    if (input.signal?.aborted || (input.deadlineAt !== undefined && input.deadlineAt <= Date.now())) {
+      return { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'Provider work deadline elapsed before dispatch.', retryable: false } };
+    }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.cfg.timeoutMs);
+    const remaining = input.deadlineAt === undefined ? this.cfg.timeoutMs : input.deadlineAt - Date.now();
+    const timer = setTimeout(() => controller.abort(), Math.max(0, Math.min(this.cfg.timeoutMs, remaining)));
+    const abortFromCaller = () => controller.abort(input.signal?.reason);
+    if (input.signal?.aborted) controller.abort(input.signal.reason);
+    else input.signal?.addEventListener('abort', abortFromCaller, { once: true });
 
     const startedAt = Date.now();
     const items: Array<Record<string, unknown>> = [];
@@ -151,72 +273,103 @@ export class OpenAiProvider implements IModelProvider {
         }),
         signal: controller.signal,
       });
-      const body = await response.json() as OpenAiToolsResponse;
+      const body = await readJsonBounded(response) as OpenAiToolsResponse;
+      usage = body.usage;
       if (!response.ok) {
         const error = this.mapHttpError(response.status, body as OpenAiResponse);
         errorCode = error.code;
         return { ok: false, error };
       }
-      usage = body.usage;
+      if (isBlocked(body)) {
+        errorCode = 'PROVIDER_BLOCKED';
+        return { ok: false, error: { code: 'PROVIDER_BLOCKED', message: 'The provider blocked this response.', retryable: false } };
+      }
+      if (body.status === 'incomplete' && body.incomplete_details?.reason !== 'max_output_tokens') {
+        errorCode = 'PROVIDER_OUTPUT_INCOMPLETE';
+        return { ok: false, error: incompleteError() };
+      }
+      if (body.status !== 'completed' && body.status !== 'incomplete') {
+        errorCode = 'PROVIDER_OUTPUT_INCOMPLETE';
+        return { ok: false, error: incompleteError() };
+      }
+      const outputLimited = body.status === 'incomplete';
 
-      const toolCalls: ProviderToolCall[] = [];
+      const rawCalls: Array<{ callId?: unknown; name?: unknown; arguments?: unknown }> = [];
       const textParts: string[] = [];
       for (const item of body.output ?? []) {
-        if (item.type === 'function_call' && item.call_id && item.name) {
-          let parsed: unknown = {};
-          try { parsed = JSON.parse(item.arguments ?? '{}'); } catch { parsed = {}; }
-          toolCalls.push({ toolUseId: item.call_id, name: item.name, input: parsed });
+        if (item.type === 'function_call') {
+          rawCalls.push({ callId: item.call_id, name: item.name, arguments: item.arguments });
         } else if (item.type === 'message') {
           for (const c of item.content ?? []) {
-            if (typeof c.text === 'string' && c.text) textParts.push(c.text);
+            if (c.type === 'refusal' || typeof c.refusal === 'string') {
+              errorCode = 'PROVIDER_BLOCKED';
+              return { ok: false, error: { code: 'PROVIDER_BLOCKED', message: 'The provider blocked this response.', retryable: false } };
+            }
+            if (c.type === 'output_text' && typeof c.text === 'string') textParts.push(c.text);
           }
         }
       }
-      const stopReason = toolCalls.length > 0 ? 'tool_use'
-        : body.status === 'incomplete' && body.incomplete_details?.reason === 'max_output_tokens' ? 'max_tokens'
-        : 'end_turn';
-      return { ok: true, text: textParts.join('\n'), toolCalls, stopReason };
+      if (outputLimited && rawCalls.length > 0) return { ok: true, text: textParts.join('\n'), toolCalls: [],
+        completion: 'output_limit', providerStopReason: body.incomplete_details?.reason, stopReason: 'max_tokens' };
+      const toolCalls = parseProviderToolCalls(rawCalls.map((call) => ({
+        ...call,
+        arguments: typeof call.arguments === 'string' ? call.arguments : undefined,
+      })), input.tools);
+      if (!toolCalls) {
+        errorCode = 'PROVIDER_TOOL_ARGUMENT_INVALID';
+        return { ok: false, error: { code: 'PROVIDER_TOOL_ARGUMENT_INVALID', message: 'The provider returned invalid tool arguments.', retryable: false } };
+      }
+      if (toolCalls.length === 0 && !textParts.some((part) => part.trim())) {
+        errorCode = 'PROVIDER_OUTPUT_INCOMPLETE';
+        return { ok: false, error: incompleteError() };
+      }
+      const stopReason = toolCalls.length > 0 ? 'tool_use' : outputLimited ? 'max_tokens' : 'end_turn';
+      return { ok: true, text: textParts.join('\n'), toolCalls, completion: outputLimited ? 'output_limit' : 'complete',
+        providerStopReason: outputLimited ? body.incomplete_details?.reason : 'completed', stopReason };
     } catch (err) {
       const error = this.mapThrownError(err);
       errorCode = error.code;
       return { ok: false, error };
     } finally {
       clearTimeout(timer);
+      input.signal?.removeEventListener('abort', abortFromCaller);
       this.logUsage(input.usageTag, startedAt, usage, errorCode);
     }
   }
 
-  /** Same `ai.usage` shape as the Bedrock provider, limited to the fields the API exposes, and the
-   *  same two sinks: the request-scoped collector the API meters from (metering §7.2) plus the
-   *  stdout line. The line is still emitted only for a success that carried a usage block, so
-   *  `ok:true` is never claimed for a failed call (spec §4.4) — the appended entry covers the
-   *  failures instead, with zero counts. Never throws. */
-  private logUsage(tag: string | undefined, startedAt: number, usage?: OpenAiUsage, errorCode?: string): void {
+  /** Same bounded `ai.usage` shape as Bedrock. Known counters survive provider and parser errors. */
+  private logUsage(tag: string | undefined, startedAt: number, usage?: OpenAiUsage, errorCode?: string, externalUnits?: number | null): void {
+    // Responses input_tokens includes cached tokens; the shared cost contract keeps disjoint
+    // input/cache buckets. Invalid counters stay unknown, never a fabricated free measurement.
+    if (usage && (![usage.input_tokens, usage.output_tokens, usage.input_tokens_details?.cached_tokens ?? 0]
+      .every(value => Number.isSafeInteger(value) && Number(value) >= 0)
+      || (usage.input_tokens_details?.cached_tokens ?? 0) > usage.input_tokens!)) usage = undefined;
     const entry: AiUsageEntry = {
       tag: tag ?? 'untagged',
       modelId: this.cfg.model,
       ok: !errorCode,
-      inputTokens: errorCode ? 0 : usage?.input_tokens ?? 0,
-      outputTokens: errorCode ? 0 : usage?.output_tokens ?? 0,
-      cacheReadInputTokens: errorCode ? 0 : usage?.input_tokens_details?.cached_tokens ?? 0,
+      inputTokens: (usage?.input_tokens ?? 0) - (usage?.input_tokens_details?.cached_tokens ?? 0),
+      outputTokens: usage?.output_tokens ?? 0,
+      cacheReadInputTokens: usage?.input_tokens_details?.cached_tokens ?? 0,
       // The Responses API exposes no cache-write counter; 0 keeps the entry shape uniform.
       cacheWriteInputTokens: 0,
       durationMs: Date.now() - startedAt,
+      ...(externalUnits !== undefined ? { externalUnits } : {}),
       // This provider never estimates: either the response carried counters, or the entry reports
       // zeros with no basis at all. Absent is the honest answer (spec §11.2).
-      ...(!errorCode && usage ? { usageBasis: 'PROVIDER_REPORTED' as const } : {}),
+      ...(usage ? { usageBasis: 'PROVIDER_REPORTED' as const } : {}),
     };
     try {
       appendUsage(entry);
-      if (errorCode || !usage) return;
+      if (!usage) return;
       const companyId = currentUsageCompanyId();
       console.log(JSON.stringify({
         msg: 'ai.usage',
         tag: entry.tag,
         modelId: entry.modelId,
-        ok: true,
+        ok: entry.ok,
         ...(companyId ? { companyId } : {}),
-        ...(usage.input_tokens !== undefined ? { inputTokens: usage.input_tokens } : {}),
+        ...(usage.input_tokens !== undefined ? { inputTokens: entry.inputTokens } : {}),
         ...(usage.output_tokens !== undefined ? { outputTokens: usage.output_tokens } : {}),
         ...(usage.input_tokens_details?.cached_tokens !== undefined ? { cacheReadInputTokens: usage.input_tokens_details.cached_tokens } : {}),
         durationMs: entry.durationMs,
@@ -228,7 +381,8 @@ export class OpenAiProvider implements IModelProvider {
 
   private extractText(body: OpenAiResponse): string {
     if (body.output_text) return body.output_text;
-    return body.output?.flatMap((o) => o.content ?? []).map((c) => c.text ?? '').join('') ?? '';
+    return body.output?.flatMap((o) => o.content ?? []).filter((c) => c.type === 'output_text')
+      .map((c) => c.text ?? '').join('') ?? '';
   }
 
   private mapHttpError(status: number, body: OpenAiResponse): ProviderError {

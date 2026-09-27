@@ -70,6 +70,20 @@ describe('InternalAiBudgetController auth', () => {
 });
 
 describe('POST /internal/ai/budget-step', () => {
+  it('accepts transformed v2 DTO fields while rejecting supplied legacy values', async () => {
+    const calls: unknown[] = [];
+    const authority = { reserve: async (...args: unknown[]) => { calls.push(args); return { ok: true, envelope: { version: 2 } }; } };
+    const controller = new InternalAiBudgetController(config, prismaWithParent(null).prisma, authority as never);
+    const body = { version: 2, invocation: { ordinal: 0 }, repair: false,
+      companyId: undefined, attemptKey: undefined, stepKind: undefined, ordinal: undefined, monthKey: undefined };
+    assert.deepEqual(await controller.budgetStep('workload-secret', body as never), { ok: true, envelope: { version: 2 } });
+    for (const value of ['foreign-company', null, 0]) {
+      assert.deepEqual(await controller.budgetStep('workload-secret', { ...body, companyId: value } as never),
+        { ok: false, code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' });
+    }
+    assert.equal(calls.length, 1);
+  });
+
   it('reserves the next invocation using the PARENT\'s bucket, route, model and FX — not the body', async () => {
     const { prisma, created } = prismaWithParent(parentRow);
     const controller = new InternalAiBudgetController(config, prisma);
@@ -134,5 +148,30 @@ describe('POST /internal/ai/budget-settle', () => {
     } as never);
 
     assert.deepEqual(result, { result: 'invalid-evidence' });
+  });
+});
+
+describe('versioned budget-step authority transport', () => {
+  it('authenticates before v2 reservation and sends only the invocation and explicit repair flag to the issuer', async () => {
+    let calls = 0; let received: unknown[] = [];
+    const authority = { reserve: async (...args: unknown[]) => { calls++; received = args; return { ok: true, envelope: { version: 2 } }; } } as never;
+    const controller = new InternalAiBudgetController(config, prismaWithParent(null).prisma, authority);
+    const body = { version: 2, invocation: { grant: { signature: 'synthetic' } }, repair: true } as never;
+    await assert.rejects(controller.budgetStep('wrong-secret', body), UnauthorizedException);
+    assert.equal(calls, 0);
+    assert.deepEqual(await controller.budgetStep('workload-secret', body), { ok: true, envelope: { version: 2 } });
+    assert.deepEqual(received, [(body as any).invocation, true]);
+    assert.equal(calls, 1);
+  });
+  it('rejects v2/v1 shape confusion and unavailable issuer rather than downgrading to a legacy hold', async () => {
+    let calls = 0;
+    const authority = { reserve: async () => { calls++; return { ok: true }; } } as never;
+    const controller = new InternalAiBudgetController(config, prismaWithParent(parentRow).prisma, authority);
+    for (const body of [{ version: 2, invocation: {}, companyId: 'forged' }, { invocation: {}, ...(stepBody() as Record<string, unknown>) }, { version: 3, ...(stepBody() as Record<string, unknown>) }]) {
+      assert.deepEqual(await controller.budgetStep('workload-secret', body as never), { ok: false, code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' });
+    }
+    assert.equal(calls, 0);
+    const absent = new InternalAiBudgetController(config, prismaWithParent(null).prisma);
+    assert.deepEqual(await absent.budgetStep('workload-secret', { version: 2, invocation: {} } as never), { ok: false, code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' });
   });
 });
