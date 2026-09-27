@@ -392,6 +392,7 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     'scripts/line-ai-expense-advisor/types.spec.ts',
     'scripts/line-ai-expense-advisor/scorer.spec.ts',
     'scripts/line-ai-expense-advisor/template.spec.ts',
+    'scripts/line-ai-expense-advisor/report.spec.ts',
   ] },
   {
     id: 'api-behavior',

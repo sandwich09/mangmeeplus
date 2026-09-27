@@ -56,6 +56,7 @@ import { ROLE_GRANTS } from '../../apps/api/src/modules/auth/permission-registry
 import { filterPermissionsByEntitlement } from '../../apps/api/src/modules/employee-access/domain/logic/feature-gate.logic';
 import { TIER_FEATURE_PRESETS } from '../../packages/contracts/src/menu-entitlements';
 import { renderUserText } from './template';
+import { renderReport } from './report';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const SECRETS_PATH = process.env['MANGMEE_EVAL_SECRETS_PATH'] ?? '/tmp/mangmee-latency-pilot-20260927/runtime-secrets.json';
@@ -327,29 +328,10 @@ async function main(): Promise<void> {
   const reportPath = resolve(outputDir, `${stamp}.report.md`);
   const safeManifest = { ...manifest, databaseUrl: '[redacted]', gatewayUrl: '[redacted-local]' };
   writeFileSync(evidencePath, JSON.stringify({ startedAt: now.toISOString(), sourceCommit, model, manifest: safeManifest, scores, summary, turnEvidence: result.turnEvidence, runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
-  writeFileSync(reportPath, renderReport({ sourceCommit, now, summary, scores, corpus }));
+  writeFileSync(reportPath, renderReport({ sourceCommit, now, summary, scores, corpus, turnEvidence: result.turnEvidence }));
 
   console.log(JSON.stringify({ event: 'real_run_done', evidencePath, reportPath, total: summary.total, passed: summary.passed, failed: summary.failed }));
   process.exitCode = summary.failed > 0 ? 1 : 0;
-}
-
-function renderReport(input: { sourceCommit: string; now: Date; summary: ReturnType<typeof summarizeScores>; scores: TurnScore[]; corpus: Corpus }): string {
-  const { sourceCommit, now, summary, scores, corpus } = input;
-  const byCategoryRows = Object.entries(summary.byCategory).sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
-    .map(([category, row]) => `| ${category} | ${row.passed}/${row.total} |`).join('\n');
-  const failureSections = summary.failures.map((failure) => {
-    const conversation = corpus.conversations.find((row) => row.id === failure.conversationId)!;
-    const turn = conversation.turns[failure.turnIndex]!;
-    const transcript = conversation.turns.slice(0, failure.turnIndex + 1)
-      .map((row, index) => `${index}. **user:** ${renderUserText(row.user, now)}`).join('\n');
-    return `### ${failure.conversationId} turn ${failure.turnIndex} (category ${failure.category})\n\n`
-      + `Transcript so far:\n\n${transcript}\n\nGold: \`${JSON.stringify(turn.expect)}\`\n\nReasons: ${failure.reasons.join(', ')}\n`;
-  }).join('\n');
-  return `# LINE AI expense-advisor eval report\n\n`
-    + `- Source commit: \`${sourceCommit}\`\n- Run started: ${now.toISOString()}\n- Corpus: ${corpus.conversations.length} conversations, ${scores.length} turns\n\n`
-    + `## Summary\n\n| | |\n|---|---|\n| Passed | ${summary.passed} |\n| Failed | ${summary.failed} |\n| Pass rate | ${(summary.passRate * 100).toFixed(1)}% |\n\n`
-    + `## By category (spec §3 row)\n\n| Category | Passed/Total |\n|---|---|\n${byCategoryRows}\n\n`
-    + `## Failures\n\n${failureSections || '_none_'}\n`;
 }
 
 main().catch((error) => {

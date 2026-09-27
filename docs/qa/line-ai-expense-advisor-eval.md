@@ -19,9 +19,10 @@ production permission/entitlement registries (`ROLE_GRANTS`, `SYSTEM_ROLES`, `PE
 | `scorer.ts` | Pure, model-free scoring: tool/input equivalence (period-aware; category/vendor/branch names judged by what the API RESOLVED, not raw text), fact-in-text checks (Thai amount formatting), and the 7 turn tags. Unit-tested with fake evidence. |
 | `corpus.sample.json` | 20 turns across 8 conversations covering spec §3 rows 1, 2, 3, 4, 7, 8, 10, 15, 17, 18 (plus 11 and 19 as a bonus), all 5 roles, both companies, and one 4-turn memory chain. |
 | `run-preflight.ts` | CLI: create/migrate the eval DB if needed, seed it, run every gold call through the oracle, print a coverage summary. No gateway, no model. |
-| `run-real.ts` | CLI (implemented, **not executed** by this delivery): runs the corpus through a real, already-listening gateway via `runLineReliabilityRuntime`, scores with `scorer.ts`, writes JSON evidence + a markdown report. |
+| `run-real.ts` | CLI (implemented, **not executed** by this delivery): runs the corpus through a real, already-listening gateway via `runLineReliabilityRuntime`, scores with `scorer.ts`, writes JSON evidence + a markdown report (`report.ts`). |
+| `report.ts` | Pure markdown report builder (split out of `run-real.ts` so it is unit-testable without that script's side effects): per failing turn, the transcript so far with each turn's delivered reply (Flex altText/text, truncated to ~600 chars), the tools called with their inputs, and the Gateway's semantic coverage status/reasonCode. |
 | `launch-gateway.mjs` | Spawns the compiled AI Gateway with this harness's own DB/Redis/ports (**not executed** by this delivery). |
-| `types.spec.ts`, `scorer.spec.ts`, `template.spec.ts` | `node:test` unit tests for the validator, the scorer, and the placeholder renderer, registered in `scripts/line-ai-whole-chain-acceptance.catalog.mjs`'s `reliability-contracts-evaluation-v2` group. |
+| `types.spec.ts`, `scorer.spec.ts`, `template.spec.ts`, `report.spec.ts` | `node:test` unit tests for the validator, the scorer, the placeholder renderer, and the report builder, registered in `scripts/line-ai-whole-chain-acceptance.catalog.mjs`'s `reliability-contracts-evaluation-v2` group. |
 
 ## Running preflight (no model, no gateway)
 
@@ -270,7 +271,7 @@ merge, and `scorer.spec.ts` covers the matching/tag logic with fake ambiguous re
 ## Unit tests
 
 ```bash
-node_modules/.bin/tsx --test scripts/line-ai-expense-advisor/types.spec.ts scripts/line-ai-expense-advisor/scorer.spec.ts scripts/line-ai-expense-advisor/template.spec.ts
+node_modules/.bin/tsx --test scripts/line-ai-expense-advisor/types.spec.ts scripts/line-ai-expense-advisor/scorer.spec.ts scripts/line-ai-expense-advisor/template.spec.ts scripts/line-ai-expense-advisor/report.spec.ts
 ```
 
 (`scorer.spec.ts` imports the real `resolveBusinessReadPeriod`, so `packages/contracts` must be
