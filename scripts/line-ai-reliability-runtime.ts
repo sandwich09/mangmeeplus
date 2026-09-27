@@ -39,6 +39,28 @@ export function assertIsolatedReplayDatabase(value: string): void {
     && /^\/watchdog_ai_reliability_replay_[a-z0-9_]+$/.test(url.pathname)
     && (!url.searchParams.has('schema') || url.searchParams.get('schema') === 'public'), 'REPLAY_REQUIRES_DEDICATED_LOCAL_DATABASE');
 }
+/** Fixture cleanup only, on the advisory-lock connection in the dedicated local replay database.
+ * Production append-only triggers remain installed and are active before seeds and business work.
+ * SET LOCAL cannot escape this transaction, including a failed reset. Never use a pooled session SET.
+ */
+export async function resetRuntimeFixtureDatabase(connection: { query(sql: string): Promise<{ rows: any[] }> }, databaseUrl: string): Promise<void> {
+  assertIsolatedReplayDatabase(databaseUrl);
+  const expected = decodeURIComponent(new URL(databaseUrl).pathname.slice(1));
+  const origin = async () => assert.equal((await connection.query("SELECT current_setting('session_replication_role') AS role")).rows[0]?.role, 'origin', 'REPLAY_TRIGGER_STATE_NOT_ORIGIN');
+  await connection.query('BEGIN');
+  try {
+    assert.equal((await connection.query('SELECT current_database() AS name')).rows[0]?.name, expected, 'REPLAY_DATABASE_CONNECTION_MISMATCH');
+    await origin();
+    const tables = (await connection.query("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename <> '_prisma_migrations'")).rows.map(row => row.tablename as string);
+    assert.ok(tables.length && tables.every(name => /^[A-Za-z0-9_]+$/.test(name)), 'REPLAY_MIGRATIONS_REQUIRED');
+    await connection.query('SET LOCAL session_replication_role = replica');
+    await connection.query(`TRUNCATE TABLE ${tables.map(name => `"public"."${name}"`).join(',')} CASCADE`);
+    await connection.query('SET LOCAL session_replication_role = origin');
+    await origin();
+    await connection.query('COMMIT');
+  } catch (error) { await connection.query('ROLLBACK'); throw error; }
+  await origin();
+}
 const localUrl = (value: string, protocol: string) => { const url = new URL(value); assert.ok(url.protocol === protocol && LOCAL.has(url.hostname) && !url.username && !url.password, 'REPLAY_LOCAL_SERVICE_REQUIRED'); return url; };
 
 export function runtimeDeliveryEvidence(plans: JsonRow[], outcomes: JsonRow[], receipts: Array<{ messages: unknown; at: number; receiptId: string }>): ReliabilityTurnTrace['delivery'] {
@@ -269,9 +291,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       const owner = await redis.get(redisOwnerKey);
       assert.ok(owner === redisOwner || owner === null && await redis.dbsize() === 0, 'REPLAY_REDIS_CONTAINS_OTHER_WORK');
       await redis.flushdb(); await redis.set(redisOwnerKey, redisOwner);
-      const tables = (await client.$queryRawUnsafe('SELECT tablename FROM pg_tables WHERE schemaname=\'public\'') as { tablename: string }[]).map(item => item.tablename).filter(name => name !== '_prisma_migrations');
-      assert.ok(tables.length && tables.every(name => /^[A-Za-z0-9_]+$/.test(name)), 'REPLAY_MIGRATIONS_REQUIRED');
-      await client.$executeRawUnsafe(`TRUNCATE TABLE ${tables.map(name => `"${name}"`).join(',')} CASCADE`);
+      await resetRuntimeFixtureDatabase(databaseLock, manifest.databaseUrl);
       for (const seed of snapshot.rows) { assert.ok(/^[a-z][A-Za-z0-9]*$/.test(seed.model) && typeof client[seed.model]?.create === 'function', 'REPLAY_INVALID_SEED_MODEL'); await client[seed.model].create({ data: seed.data }); }
       const entitlementRows = await client.companyFeatureEntitlement.findMany({ where: { companyId: row.fixture.company }, select: { featureKey: true, enabled: true } });
       assert.ok(entitlementRows.length, 'REPLAY_EXPLICIT_ENTITLEMENT_SEED_REQUIRED');
