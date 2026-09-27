@@ -1,0 +1,47 @@
+{
+  "assetId": "receipt-clear",
+  "fileName": "receipt-clear.png",
+  "mimeType": "image/png",
+  "sourceFields": [
+    {
+      "page": 1,
+      "field": "merchant",
+      "originalValue": "Green Bowl Synthetic Cafe"
+    },
+    {
+      "page": 1,
+      "field": "date",
+      "originalValue": "2026-09-21"
+    },
+    {
+      "page": 1,
+      "field": "subtotal",
+      "amountRole": "before_vat",
+      "originalValue": "1196.63 THB"
+    },
+    {
+      "page": 1,
+      "field": "vat",
+      "amountRole": "vat_component",
+      "originalValue": "83.87 THB"
+    },
+    {
+      "page": 1,
+      "field": "total",
+      "amountRole": "gross_total",
+      "originalValue": "1280.50 THB"
+    }
+  ],
+  "unreadable": [],
+  "partial": [],
+  "pages": 1,
+  "status": "draft",
+  "labelledBy": null,
+  "expectedZeroQaFinancialWrites": true,
+  "provenance": {
+    "kind": "synthetic",
+    "reviewedBy": null,
+    "reviewedAt": null,
+    "note": "NAT-only authored visible content; not human-certified; no customer data"
+  }
+}

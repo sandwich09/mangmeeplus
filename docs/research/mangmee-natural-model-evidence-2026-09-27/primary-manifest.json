@@ -1,0 +1,4335 @@
+{
+  "manifest": {
+    "corpus": {
+      "version": 2,
+      "seed": "mangmee-natural-owner-questions-2026-09-27-v1",
+      "status": "draft",
+      "fixtures": [
+        {
+          "id": "NAT-01",
+          "familyId": "NAT-01",
+          "split": "development",
+          "language": "th",
+          "paraphrase": false,
+          "fixedRegression": false,
+          "group": "multi_turn",
+          "capabilities": [
+            "C01",
+            "C02",
+            "C03",
+            "C04",
+            "C06",
+            "C07",
+            "C10",
+            "C11",
+            "C14",
+            "C15",
+            "C16",
+            "C18"
+          ],
+          "provenance": {
+            "kind": "synthetic",
+            "sourceId": "nat-NAT-01",
+            "consentRef": null,
+            "reviewedBy": null,
+            "reviewedAt": null
+          },
+          "fixture": {
+            "clock": "2026-09-27T03:00:00.000Z",
+            "timezone": "Asia/Bangkok",
+            "company": "w14-synthetic-company",
+            "actor": "w14-synthetic-user",
+            "channelKind": "USER",
+            "messagingChannelId": "w14-synthetic-line-channel",
+            "membership": "w14-synthetic-membership",
+            "chat": "w14-synthetic-chat",
+            "permissions": [
+              "access.employee.read",
+              "accounting.billing_note.read",
+              "accounting.credit_note.read",
+              "accounting.debit_note.read",
+              "accounting.document.read",
+              "accounting.document.read_related",
+              "accounting.invoice.read",
+              "accounting.quotation.read",
+              "accounting.receipt.read",
+              "accounting.tax_invoice.read",
+              "ai.tool.invoke",
+              "attachment.create",
+              "bank.account.read",
+              "bank.cash.read",
+              "bank.reconciliation.read",
+              "company.branch.read",
+              "company.setup.read",
+              "crm.booking.read",
+              "crm.customer.read",
+              "crm.follow_up.read",
+              "crm.inbox.read",
+              "crm.opportunity.read",
+              "crm.report.read",
+              "dashboard.read",
+              "expense.create",
+              "expense.read",
+              "expense.read_own",
+              "expense.read_related",
+              "expense.receipt.line_upload",
+              "expense.receipt.upload",
+              "expense.review",
+              "expense.update",
+              "hr.leave.read",
+              "inventory.movement.read",
+              "inventory.product.read",
+              "inventory.report.read",
+              "ledger.journal.read",
+              "ledger.period.read",
+              "ledger.report.read",
+              "line.ai.query",
+              "notification.read",
+              "procurement.ap.report",
+              "procurement.purchase_order.read",
+              "procurement.purchase_order.read_related",
+              "procurement.supplier.read",
+              "reimbursement.approve",
+              "reimbursement.create",
+              "reimbursement.finance_review",
+              "reimbursement.read",
+              "reimbursement.read_own",
+              "reimbursement.read_related",
+              "reimbursement.update_own_draft",
+              "report.catalog.read",
+              "report.dataset.read",
+              "report.query.run",
+              "tax.config.read",
+              "tax.event.read",
+              "tax.period.read",
+              "tax.profile.read",
+              "tax.report.read",
+              "tax.review_issue.read",
+              "workflow.rule.read",
+              "workflow.run.read",
+              "workflow.task.read"
+            ],
+            "branches": [
+              "branch-bkk",
+              "branch-ramintra",
+              "branch-ramkhamhaeng"
+            ],
+            "enabledFeatures": [
+              "ai_line_assistant",
+              "bank_reconciliation",
+              "bank_reconciliation.accounts",
+              "bank_reconciliation.adjustments",
+              "bank_reconciliation.cash",
+              "bank_reconciliation.import",
+              "bank_reconciliation.matching",
+              "bank_reconciliation.reconciliations",
+              "company_settings",
+              "company_settings.branches",
+              "company_settings.security",
+              "crm",
+              "crm.bookings",
+              "crm.customers",
+              "crm.followups",
+              "crm.inbox",
+              "crm.leads",
+              "crm.overview",
+              "crm.pipeline",
+              "dashboard_notifications",
+              "dashboard_notifications.preferences",
+              "dashboard_notifications.rules",
+              "double_entry_ledger",
+              "employee_access",
+              "employee_access.employees",
+              "employee_access.overview",
+              "employee_access.roles",
+              "expense_auto_post",
+              "expenses",
+              "expenses.categories",
+              "expenses.evidence",
+              "expenses.list",
+              "expenses.manual",
+              "expenses.signatures",
+              "expenses.upload",
+              "inventory",
+              "inventory.locations",
+              "inventory.movements",
+              "inventory.stock_report",
+              "line_oa",
+              "procurement",
+              "procurement.ap_aging",
+              "procurement.goods_receipts",
+              "procurement.purchase_orders",
+              "procurement.purchase_requests",
+              "procurement.supplier_payments",
+              "procurement.suppliers",
+              "procurement.vendor_bills",
+              "product_catalog",
+              "reimbursement",
+              "reports",
+              "sales_documents",
+              "thai_tax",
+              "wht_50bis",
+              "wht_pnd53",
+              "workflow_automation",
+              "workflow_automation.dead_letters",
+              "workflow_automation.rules",
+              "workflow_automation.runs",
+              "workflow_automation.tasks",
+              "workflow_automation.templates",
+              "workflow_automation.webhooks"
+            ],
+            "sourceSnapshot": "nat-NAT-01",
+            "taskRevision": null,
+            "previewRevision": null
+          },
+          "assets": [],
+          "turns": [
+            {
+              "user": "เดือนนี้ค่าไช้จ่ายไปเท่าไหร่แล้ว",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "เทียบเดือนก่อนให้หน่อย",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "อันไหนเพิ่มเยอะสุด",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "เอาเฉพาะที่ยืนยันแล้วนะ ร่างไม่เอา",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "แล้วควรเริ่มลดตรงไหนดี",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            }
+          ]
+        },
+        {
+          "id": "NAT-02",
+          "familyId": "NAT-02",
+          "split": "development",
+          "language": "th",
+          "paraphrase": false,
+          "fixedRegression": false,
+          "group": "multi_turn",
+          "capabilities": [
+            "C01",
+            "C02",
+            "C03",
+            "C04",
+            "C06",
+            "C10",
+            "C11",
+            "C14",
+            "C15",
+            "C16",
+            "C18"
+          ],
+          "provenance": {
+            "kind": "synthetic",
+            "sourceId": "nat-NAT-02",
+            "consentRef": null,
+            "reviewedBy": null,
+            "reviewedAt": null
+          },
+          "fixture": {
+            "clock": "2026-09-27T03:00:00.000Z",
+            "timezone": "Asia/Bangkok",
+            "company": "w14-synthetic-company",
+            "actor": "w14-synthetic-user",
+            "channelKind": "USER",
+            "messagingChannelId": "w14-synthetic-line-channel",
+            "membership": "w14-synthetic-membership",
+            "chat": "w14-synthetic-chat",
+            "permissions": [
+              "access.employee.read",
+              "accounting.billing_note.read",
+              "accounting.credit_note.read",
+              "accounting.debit_note.read",
+              "accounting.document.read",
+              "accounting.document.read_related",
+              "accounting.invoice.read",
+              "accounting.quotation.read",
+              "accounting.receipt.read",
+              "accounting.tax_invoice.read",
+              "ai.tool.invoke",
+              "attachment.create",
+              "bank.account.read",
+              "bank.cash.read",
+              "bank.reconciliation.read",
+              "company.branch.read",
+              "company.setup.read",
+              "crm.booking.read",
+              "crm.customer.read",
+              "crm.follow_up.read",
+              "crm.inbox.read",
+              "crm.opportunity.read",
+              "crm.report.read",
+              "dashboard.read",
+              "expense.create",
+              "expense.read",
+              "expense.read_own",
+              "expense.read_related",
+              "expense.receipt.line_upload",
+              "expense.receipt.upload",
+              "expense.review",
+              "expense.update",
+              "hr.leave.read",
+              "inventory.movement.read",
+              "inventory.product.read",
+              "inventory.report.read",
+              "ledger.journal.read",
+              "ledger.period.read",
+              "ledger.report.read",
+              "line.ai.query",
+              "notification.read",
+              "procurement.ap.report",
+              "procurement.purchase_order.read",
+              "procurement.purchase_order.read_related",
+              "procurement.supplier.read",
+              "reimbursement.approve",
+              "reimbursement.create",
+              "reimbursement.finance_review",
+              "reimbursement.read",
+              "reimbursement.read_own",
+              "reimbursement.read_related",
+              "reimbursement.update_own_draft",
+              "report.catalog.read",
+              "report.dataset.read",
+              "report.query.run",
+              "tax.config.read",
+              "tax.event.read",
+              "tax.period.read",
+              "tax.profile.read",
+              "tax.report.read",
+              "tax.review_issue.read",
+              "workflow.rule.read",
+              "workflow.run.read",
+              "workflow.task.read"
+            ],
+            "branches": [
+              "branch-bkk",
+              "branch-ramintra",
+              "branch-ramkhamhaeng"
+            ],
+            "enabledFeatures": [
+              "ai_line_assistant",
+              "bank_reconciliation",
+              "bank_reconciliation.accounts",
+              "bank_reconciliation.adjustments",
+              "bank_reconciliation.cash",
+              "bank_reconciliation.import",
+              "bank_reconciliation.matching",
+              "bank_reconciliation.reconciliations",
+              "company_settings",
+              "company_settings.branches",
+              "company_settings.security",
+              "crm",
+              "crm.bookings",
+              "crm.customers",
+              "crm.followups",
+              "crm.inbox",
+              "crm.leads",
+              "crm.overview",
+              "crm.pipeline",
+              "dashboard_notifications",
+              "dashboard_notifications.preferences",
+              "dashboard_notifications.rules",
+              "double_entry_ledger",
+              "employee_access",
+              "employee_access.employees",
+              "employee_access.overview",
+              "employee_access.roles",
+              "expense_auto_post",
+              "expenses",
+              "expenses.categories",
+              "expenses.evidence",
+              "expenses.list",
+              "expenses.manual",
+              "expenses.signatures",
+              "expenses.upload",
+              "inventory",
+              "inventory.locations",
+              "inventory.movements",
+              "inventory.stock_report",
+              "line_oa",
+              "procurement",
+              "procurement.ap_aging",
+              "procurement.goods_receipts",
+              "procurement.purchase_orders",
+              "procurement.purchase_requests",
+              "procurement.supplier_payments",
+              "procurement.suppliers",
+              "procurement.vendor_bills",
+              "product_catalog",
+              "reimbursement",
+              "reports",
+              "sales_documents",
+              "thai_tax",
+              "wht_50bis",
+              "wht_pnd53",
+              "workflow_automation",
+              "workflow_automation.dead_letters",
+              "workflow_automation.rules",
+              "workflow_automation.runs",
+              "workflow_automation.tasks",
+              "workflow_automation.templates",
+              "workflow_automation.webhooks"
+            ],
+            "sourceSnapshot": "nat-NAT-02",
+            "taskRevision": null,
+            "previewRevision": null
+          },
+          "assets": [],
+          "turns": [
+            {
+              "user": "เดือนนี้ขายได้เท่าไหร่",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "หมายถึงเงินที่ลูกค้าจ่ายมาแล้วอะ",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "แล้วเงินเข้าบัญชีจริงเท่านี้เลยมั้ย",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "งั้นกำไรเดือนนี้เหลือเท่าไร",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "สรุปสั้น ๆ ว่าตอนนี้รู้อะไรแน่บ้าง",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            }
+          ]
+        },
+        {
+          "id": "NAT-03",
+          "familyId": "NAT-03",
+          "split": "development",
+          "language": "th",
+          "paraphrase": false,
+          "fixedRegression": false,
+          "group": "multi_turn",
+          "capabilities": [
+            "C01",
+            "C02",
+            "C04",
+            "C06",
+            "C10",
+            "C11",
+            "C14",
+            "C15",
+            "C16",
+            "C18"
+          ],
+          "provenance": {
+            "kind": "synthetic",
+            "sourceId": "nat-NAT-03",
+            "consentRef": null,
+            "reviewedBy": null,
+            "reviewedAt": null
+          },
+          "fixture": {
+            "clock": "2026-09-27T03:00:00.000Z",
+            "timezone": "Asia/Bangkok",
+            "company": "w14-synthetic-company",
+            "actor": "w14-synthetic-user",
+            "channelKind": "USER",
+            "messagingChannelId": "w14-synthetic-line-channel",
+            "membership": "w14-synthetic-membership",
+            "chat": "w14-synthetic-chat",
+            "permissions": [
+              "access.employee.read",
+              "accounting.billing_note.read",
+              "accounting.credit_note.read",
+              "accounting.debit_note.read",
+              "accounting.document.read",
+              "accounting.document.read_related",
+              "accounting.invoice.read",
+              "accounting.quotation.read",
+              "accounting.receipt.read",
+              "accounting.tax_invoice.read",
+              "ai.tool.invoke",
+              "attachment.create",
+              "bank.account.read",
+              "bank.cash.read",
+              "bank.reconciliation.read",
+              "company.branch.read",
+              "company.setup.read",
+              "crm.booking.read",
+              "crm.customer.read",
+              "crm.follow_up.read",
+              "crm.inbox.read",
+              "crm.opportunity.read",
+              "crm.report.read",
+              "dashboard.read",
+              "expense.create",
+              "expense.read",
+              "expense.read_own",
+              "expense.read_related",
+              "expense.receipt.line_upload",
+              "expense.receipt.upload",
+              "expense.review",
+              "expense.update",
+              "hr.leave.read",
+              "inventory.movement.read",
+              "inventory.product.read",
+              "inventory.report.read",
+              "ledger.journal.read",
+              "ledger.period.read",
+              "ledger.report.read",
+              "line.ai.query",
+              "notification.read",
+              "procurement.ap.report",
+              "procurement.purchase_order.read",
+              "procurement.purchase_order.read_related",
+              "procurement.supplier.read",
+              "reimbursement.approve",
+              "reimbursement.create",
+              "reimbursement.finance_review",
+              "reimbursement.read",
+              "reimbursement.read_own",
+              "reimbursement.read_related",
+              "reimbursement.update_own_draft",
+              "report.catalog.read",
+              "report.dataset.read",
+              "report.query.run",
+              "tax.config.read",
+              "tax.event.read",
+              "tax.period.read",
+              "tax.profile.read",
+              "tax.report.read",
+              "tax.review_issue.read",
+              "workflow.rule.read",
+              "workflow.run.read",
+              "workflow.task.read"
+            ],
+            "branches": [
+              "branch-bkk",
+              "branch-ramintra",
+              "branch-ramkhamhaeng"
+            ],
+            "enabledFeatures": [
+              "ai_line_assistant",
+              "bank_reconciliation",
+              "bank_reconciliation.accounts",
+              "bank_reconciliation.adjustments",
+              "bank_reconciliation.cash",
+              "bank_reconciliation.import",
+              "bank_reconciliation.matching",
+              "bank_reconciliation.reconciliations",
+              "company_settings",
+              "company_settings.branches",
+              "company_settings.security",
+              "crm",
+              "crm.bookings",
+              "crm.customers",
+              "crm.followups",
+              "crm.inbox",
+              "crm.leads",
+              "crm.overview",
+              "crm.pipeline",
+              "dashboard_notifications",
+              "dashboard_notifications.preferences",
+              "dashboard_notifications.rules",
+              "double_entry_ledger",
+              "employee_access",
+              "employee_access.employees",
+              "employee_access.overview",
+              "employee_access.roles",
+              "expense_auto_post",
+              "expenses",
+              "expenses.categories",
+              "expenses.evidence",
+              "expenses.list",
+              "expenses.manual",
+              "expenses.signatures",
+              "expenses.upload",
+              "inventory",
+              "inventory.locations",
+              "inventory.movements",
+              "inventory.stock_report",
+              "line_oa",
+              "procurement",
+              "procurement.ap_aging",
+              "procurement.goods_receipts",
+              "procurement.purchase_orders",
+              "procurement.purchase_requests",
+              "procurement.supplier_payments",
+              "procurement.suppliers",
+              "procurement.vendor_bills",
+              "product_catalog",
+              "reimbursement",
+              "reports",
+              "sales_documents",
+              "thai_tax",
+              "wht_50bis",
+              "wht_pnd53",
+              "workflow_automation",
+              "workflow_automation.dead_letters",
+              "workflow_automation.rules",
+              "workflow_automation.runs",
+              "workflow_automation.tasks",
+              "workflow_automation.templates",
+              "workflow_automation.webhooks"
+            ],
+            "sourceSnapshot": "nat-NAT-03",
+            "taskRevision": null,
+            "previewRevision": null
+          },
+          "assets": [],
+          "turns": [
+            {
+              "user": "ช่วยดูรายจ่ายให้หน่อย...",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "เดือนก่อน ของร้านราม",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "รามอินทรา ที่เมื่อกี้ขึ้นมาอันแรก",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "อ้อ เอาเดือนนี้แทน แต่สาขาเดิม",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "เทียบกับสำนักงานใหญ่ด้วย ต่างกันตรงไหน",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            }
+          ]
+        },
+        {
+          "id": "NAT-04",
+          "familyId": "NAT-04",
+          "split": "development",
+          "language": "th",
+          "paraphrase": false,
+          "fixedRegression": false,
+          "group": "multi_turn",
+          "capabilities": [
+            "C01",
+            "C02",
+            "C04",
+            "C06",
+            "C10",
+            "C11",
+            "C12",
+            "C14",
+            "C15",
+            "C16",
+            "C18"
+          ],
+          "provenance": {
+            "kind": "synthetic",
+            "sourceId": "nat-NAT-04",
+            "consentRef": null,
+            "reviewedBy": null,
+            "reviewedAt": null
+          },
+          "fixture": {
+            "clock": "2026-09-27T03:00:00.000Z",
+            "timezone": "Asia/Bangkok",
+            "company": "w14-synthetic-company",
+            "actor": "w14-synthetic-user",
+            "channelKind": "USER",
+            "messagingChannelId": "w14-synthetic-line-channel",
+            "membership": "w14-synthetic-membership",
+            "chat": "w14-synthetic-chat",
+            "permissions": [
+              "access.employee.read",
+              "accounting.billing_note.read",
+              "accounting.credit_note.read",
+              "accounting.debit_note.read",
+              "accounting.document.read",
+              "accounting.document.read_related",
+              "accounting.invoice.read",
+              "accounting.quotation.read",
+              "accounting.receipt.read",
+              "accounting.tax_invoice.read",
+              "ai.tool.invoke",
+              "attachment.create",
+              "bank.account.read",
+              "bank.cash.read",
+              "bank.reconciliation.read",
+              "company.branch.read",
+              "company.setup.read",
+              "crm.booking.read",
+              "crm.customer.read",
+              "crm.follow_up.read",
+              "crm.inbox.read",
+              "crm.opportunity.read",
+              "crm.report.read",
+              "dashboard.read",
+              "expense.create",
+              "expense.read",
+              "expense.read_own",
+              "expense.read_related",
+              "expense.receipt.line_upload",
+              "expense.receipt.upload",
+              "expense.review",
+              "expense.update",
+              "hr.leave.read",
+              "inventory.movement.read",
+              "inventory.product.read",
+              "inventory.report.read",
+              "ledger.journal.read",
+              "ledger.period.read",
+              "ledger.report.read",
+              "line.ai.query",
+              "notification.read",
+              "procurement.ap.report",
+              "procurement.purchase_order.read",
+              "procurement.purchase_order.read_related",
+              "procurement.supplier.read",
+              "reimbursement.approve",
+              "reimbursement.create",
+              "reimbursement.finance_review",
+              "reimbursement.read",
+              "reimbursement.read_own",
+              "reimbursement.read_related",
+              "reimbursement.update_own_draft",
+              "report.catalog.read",
+              "report.dataset.read",
+              "report.query.run",
+              "tax.config.read",
+              "tax.event.read",
+              "tax.period.read",
+              "tax.profile.read",
+              "tax.report.read",
+              "tax.review_issue.read",
+              "workflow.rule.read",
+              "workflow.run.read",
+              "workflow.task.read"
+            ],
+            "branches": [
+              "branch-bkk",
+              "branch-ramintra",
+              "branch-ramkhamhaeng"
+            ],
+            "enabledFeatures": [
+              "ai_line_assistant",
+              "bank_reconciliation",
+              "bank_reconciliation.accounts",
+              "bank_reconciliation.adjustments",
+              "bank_reconciliation.cash",
+              "bank_reconciliation.import",
+              "bank_reconciliation.matching",
+              "bank_reconciliation.reconciliations",
+              "company_settings",
+              "company_settings.branches",
+              "company_settings.security",
+              "crm",
+              "crm.bookings",
+              "crm.customers",
+              "crm.followups",
+              "crm.inbox",
+              "crm.leads",
+              "crm.overview",
+              "crm.pipeline",
+              "dashboard_notifications",
+              "dashboard_notifications.preferences",
+              "dashboard_notifications.rules",
+              "double_entry_ledger",
+              "employee_access",
+              "employee_access.employees",
+              "employee_access.overview",
+              "employee_access.roles",
+              "expense_auto_post",
+              "expenses",
+              "expenses.categories",
+              "expenses.evidence",
+              "expenses.list",
+              "expenses.manual",
+              "expenses.signatures",
+              "expenses.upload",
+              "inventory",
+              "inventory.locations",
+              "inventory.movements",
+              "inventory.stock_report",
+              "line_oa",
+              "procurement",
+              "procurement.ap_aging",
+              "procurement.goods_receipts",
+              "procurement.purchase_orders",
+              "procurement.purchase_requests",
+              "procurement.supplier_payments",
+              "procurement.suppliers",
+              "procurement.vendor_bills",
+              "product_catalog",
+              "reimbursement",
+              "reports",
+              "sales_documents",
+              "thai_tax",
+              "wht_50bis",
+              "wht_pnd53",
+              "workflow_automation",
+              "workflow_automation.dead_letters",
+              "workflow_automation.rules",
+              "workflow_automation.runs",
+              "workflow_automation.tasks",
+              "workflow_automation.templates",
+              "workflow_automation.webhooks"
+            ],
+            "sourceSnapshot": "nat-NAT-04",
+            "taskRevision": null,
+            "previewRevision": null
+          },
+          "assets": [],
+          "turns": [
+            {
+              "user": "เดือนนี้จ่ายอะไรไปเยอะ แล้วบิลที่ฉันออกเงินเองเมื่อวานเบิกได้มั้ย",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "บิลร้านเครื่องเขียนที่ส่งไว้สองใบอะ",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "งั้นช่วยทำร่างจากใบที่สอง ซื้อของใช้ในออฟฟิศ",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "ขอเช็กยอดกับชื่อร้านก่อน ยังไม่ต้องบันทึก",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "ขอยกเลิกก่อน เดี๋ยวถามฝ่ายบัญชี",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            }
+          ]
+        },
+        {
+          "id": "NAT-05",
+          "familyId": "NAT-05",
+          "split": "development",
+          "language": "th",
+          "paraphrase": false,
+          "fixedRegression": false,
+          "group": "receipt_document",
+          "capabilities": [
+            "C01",
+            "C02",
+            "C03",
+            "C04",
+            "C06",
+            "C11",
+            "C12",
+            "C14",
+            "C15",
+            "C16",
+            "C18"
+          ],
+          "provenance": {
+            "kind": "synthetic",
+            "sourceId": "nat-NAT-05",
+            "consentRef": null,
+            "reviewedBy": null,
+            "reviewedAt": null
+          },
+          "fixture": {
+            "clock": "2026-09-27T03:00:00.000Z",
+            "timezone": "Asia/Bangkok",
+            "company": "w14-synthetic-company",
+            "actor": "w14-synthetic-user",
+            "channelKind": "USER",
+            "messagingChannelId": "w14-synthetic-line-channel",
+            "membership": "w14-synthetic-membership",
+            "chat": "w14-synthetic-chat",
+            "permissions": [
+              "access.employee.read",
+              "accounting.billing_note.read",
+              "accounting.credit_note.read",
+              "accounting.debit_note.read",
+              "accounting.document.read",
+              "accounting.document.read_related",
+              "accounting.invoice.read",
+              "accounting.quotation.read",
+              "accounting.receipt.read",
+              "accounting.tax_invoice.read",
+              "ai.tool.invoke",
+              "attachment.create",
+              "bank.account.read",
+              "bank.cash.read",
+              "bank.reconciliation.read",
+              "company.branch.read",
+              "company.setup.read",
+              "crm.booking.read",
+              "crm.customer.read",
+              "crm.follow_up.read",
+              "crm.inbox.read",
+              "crm.opportunity.read",
+              "crm.report.read",
+              "dashboard.read",
+              "expense.create",
+              "expense.read",
+              "expense.read_own",
+              "expense.read_related",
+              "expense.receipt.line_upload",
+              "expense.receipt.upload",
+              "expense.review",
+              "expense.update",
+              "hr.leave.read",
+              "inventory.movement.read",
+              "inventory.product.read",
+              "inventory.report.read",
+              "ledger.journal.read",
+              "ledger.period.read",
+              "ledger.report.read",
+              "line.ai.query",
+              "notification.read",
+              "procurement.ap.report",
+              "procurement.purchase_order.read",
+              "procurement.purchase_order.read_related",
+              "procurement.supplier.read",
+              "reimbursement.approve",
+              "reimbursement.create",
+              "reimbursement.finance_review",
+              "reimbursement.read",
+              "reimbursement.read_own",
+              "reimbursement.read_related",
+              "reimbursement.update_own_draft",
+              "report.catalog.read",
+              "report.dataset.read",
+              "report.query.run",
+              "tax.config.read",
+              "tax.event.read",
+              "tax.period.read",
+              "tax.profile.read",
+              "tax.report.read",
+              "tax.review_issue.read",
+              "workflow.rule.read",
+              "workflow.run.read",
+              "workflow.task.read"
+            ],
+            "branches": [
+              "branch-bkk",
+              "branch-ramintra",
+              "branch-ramkhamhaeng"
+            ],
+            "enabledFeatures": [
+              "ai_line_assistant",
+              "bank_reconciliation",
+              "bank_reconciliation.accounts",
+              "bank_reconciliation.adjustments",
+              "bank_reconciliation.cash",
+              "bank_reconciliation.import",
+              "bank_reconciliation.matching",
+              "bank_reconciliation.reconciliations",
+              "company_settings",
+              "company_settings.branches",
+              "company_settings.security",
+              "crm",
+              "crm.bookings",
+              "crm.customers",
+              "crm.followups",
+              "crm.inbox",
+              "crm.leads",
+              "crm.overview",
+              "crm.pipeline",
+              "dashboard_notifications",
+              "dashboard_notifications.preferences",
+              "dashboard_notifications.rules",
+              "double_entry_ledger",
+              "employee_access",
+              "employee_access.employees",
+              "employee_access.overview",
+              "employee_access.roles",
+              "expense_auto_post",
+              "expenses",
+              "expenses.categories",
+              "expenses.evidence",
+              "expenses.list",
+              "expenses.manual",
+              "expenses.signatures",
+              "expenses.upload",
+              "inventory",
+              "inventory.locations",
+              "inventory.movements",
+              "inventory.stock_report",
+              "line_oa",
+              "procurement",
+              "procurement.ap_aging",
+              "procurement.goods_receipts",
+              "procurement.purchase_orders",
+              "procurement.purchase_requests",
+              "procurement.supplier_payments",
+              "procurement.suppliers",
+              "procurement.vendor_bills",
+              "product_catalog",
+              "reimbursement",
+              "reports",
+              "sales_documents",
+              "thai_tax",
+              "wht_50bis",
+              "wht_pnd53",
+              "workflow_automation",
+              "workflow_automation.dead_letters",
+              "workflow_automation.rules",
+              "workflow_automation.runs",
+              "workflow_automation.tasks",
+              "workflow_automation.templates",
+              "workflow_automation.webhooks"
+            ],
+            "sourceSnapshot": "nat-NAT-05",
+            "taskRevision": null,
+            "previewRevision": null
+          },
+          "assets": [
+            {
+              "id": "receipt-clear",
+              "sha256": "23a09641ef60c99317f4330e95c5bb9f93daa70ed4fbe681ce16bf0864a31f3c",
+              "mimeType": "image/png",
+              "pages": 1,
+              "labelDigest": "b68b2b891b2794e7c56962f603e30d56198a461263a8bd0d19d5b2f42d72fdc3",
+              "labelledBy": null
+            }
+          ],
+          "turns": [
+            {
+              "user": "ใบนี้รวมเท่าไหร่อะ",
+              "attachmentIds": [
+                "receipt-clear"
+              ],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 120000
+              }
+            },
+            {
+              "user": "VAT ล่ะ ไม่ใช่ยอดรวมนะ",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 120000
+              }
+            },
+            {
+              "user": "ชื่อร้านกับวันที่อ่านว่าอะไร",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 120000
+              }
+            },
+            {
+              "user": "แค่ถามนะ อย่าเพิ่งลงรายจ่าย",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 120000
+              }
+            },
+            {
+              "user": "โอเค งั้นช่วยทำร่างค่าอาหารจากใบนี้ไว้ตรวจที",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 120000
+              }
+            }
+          ]
+        },
+        {
+          "id": "NAT-06",
+          "familyId": "NAT-06",
+          "split": "development",
+          "language": "th",
+          "paraphrase": false,
+          "fixedRegression": false,
+          "group": "receipt_document",
+          "capabilities": [
+            "C01",
+            "C02",
+            "C03",
+            "C04",
+            "C06",
+            "C12",
+            "C14",
+            "C15",
+            "C16",
+            "C18"
+          ],
+          "provenance": {
+            "kind": "synthetic",
+            "sourceId": "nat-NAT-06",
+            "consentRef": null,
+            "reviewedBy": null,
+            "reviewedAt": null
+          },
+          "fixture": {
+            "clock": "2026-09-27T03:00:00.000Z",
+            "timezone": "Asia/Bangkok",
+            "company": "w14-synthetic-company",
+            "actor": "w14-synthetic-user",
+            "channelKind": "USER",
+            "messagingChannelId": "w14-synthetic-line-channel",
+            "membership": "w14-synthetic-membership",
+            "chat": "w14-synthetic-chat",
+            "permissions": [
+              "access.employee.read",
+              "accounting.billing_note.read",
+              "accounting.credit_note.read",
+              "accounting.debit_note.read",
+              "accounting.document.read",
+              "accounting.document.read_related",
+              "accounting.invoice.read",
+              "accounting.quotation.read",
+              "accounting.receipt.read",
+              "accounting.tax_invoice.read",
+              "ai.tool.invoke",
+              "attachment.create",
+              "bank.account.read",
+              "bank.cash.read",
+              "bank.reconciliation.read",
+              "company.branch.read",
+              "company.setup.read",
+              "crm.booking.read",
+              "crm.customer.read",
+              "crm.follow_up.read",
+              "crm.inbox.read",
+              "crm.opportunity.read",
+              "crm.report.read",
+              "dashboard.read",
+              "expense.create",
+              "expense.read",
+              "expense.read_own",
+              "expense.read_related",
+              "expense.receipt.line_upload",
+              "expense.receipt.upload",
+              "expense.review",
+              "expense.update",
+              "hr.leave.read",
+              "inventory.movement.read",
+              "inventory.product.read",
+              "inventory.report.read",
+              "ledger.journal.read",
+              "ledger.period.read",
+              "ledger.report.read",
+              "line.ai.query",
+              "notification.read",
+              "procurement.ap.report",
+              "procurement.purchase_order.read",
+              "procurement.purchase_order.read_related",
+              "procurement.supplier.read",
+              "reimbursement.approve",
+              "reimbursement.create",
+              "reimbursement.finance_review",
+              "reimbursement.read",
+              "reimbursement.read_own",
+              "reimbursement.read_related",
+              "reimbursement.update_own_draft",
+              "report.catalog.read",
+              "report.dataset.read",
+              "report.query.run",
+              "tax.config.read",
+              "tax.event.read",
+              "tax.period.read",
+              "tax.profile.read",
+              "tax.report.read",
+              "tax.review_issue.read",
+              "workflow.rule.read",
+              "workflow.run.read",
+              "workflow.task.read"
+            ],
+            "branches": [
+              "branch-bkk",
+              "branch-ramintra",
+              "branch-ramkhamhaeng"
+            ],
+            "enabledFeatures": [
+              "ai_line_assistant",
+              "bank_reconciliation",
+              "bank_reconciliation.accounts",
+              "bank_reconciliation.adjustments",
+              "bank_reconciliation.cash",
+              "bank_reconciliation.import",
+              "bank_reconciliation.matching",
+              "bank_reconciliation.reconciliations",
+              "company_settings",
+              "company_settings.branches",
+              "company_settings.security",
+              "crm",
+              "crm.bookings",
+              "crm.customers",
+              "crm.followups",
+              "crm.inbox",
+              "crm.leads",
+              "crm.overview",
+              "crm.pipeline",
+              "dashboard_notifications",
+              "dashboard_notifications.preferences",
+              "dashboard_notifications.rules",
+              "double_entry_ledger",
+              "employee_access",
+              "employee_access.employees",
+              "employee_access.overview",
+              "employee_access.roles",
+              "expense_auto_post",
+              "expenses",
+              "expenses.categories",
+              "expenses.evidence",
+              "expenses.list",
+              "expenses.manual",
+              "expenses.signatures",
+              "expenses.upload",
+              "inventory",
+              "inventory.locations",
+              "inventory.movements",
+              "inventory.stock_report",
+              "line_oa",
+              "procurement",
+              "procurement.ap_aging",
+              "procurement.goods_receipts",
+              "procurement.purchase_orders",
+              "procurement.purchase_requests",
+              "procurement.supplier_payments",
+              "procurement.suppliers",
+              "procurement.vendor_bills",
+              "product_catalog",
+              "reimbursement",
+              "reports",
+              "sales_documents",
+              "thai_tax",
+              "wht_50bis",
+              "wht_pnd53",
+              "workflow_automation",
+              "workflow_automation.dead_letters",
+              "workflow_automation.rules",
+              "workflow_automation.runs",
+              "workflow_automation.tasks",
+              "workflow_automation.templates",
+              "workflow_automation.webhooks"
+            ],
+            "sourceSnapshot": "nat-NAT-06",
+            "taskRevision": null,
+            "previewRevision": null
+          },
+          "assets": [
+            {
+              "id": "receipt-partial",
+              "sha256": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+              "mimeType": "application/pdf",
+              "pages": 2,
+              "labelDigest": "b1f80777fa41c9769924b9c3319569dc0468b345a22e5c8145f14c42bd7dc0d2",
+              "labelledBy": null
+            },
+            {
+              "id": "document-unreadable",
+              "sha256": "37b80639d6d96436268e911c8792542c3c7e0e1e3e18fabd84b462e0f8324f01",
+              "mimeType": "application/pdf",
+              "pages": 2,
+              "labelDigest": "cf69ae2118b60b9e50551cdf56defa5418a98a263f4d8524cccc46d8d0c71894",
+              "labelledBy": null
+            }
+          ],
+          "turns": [
+            {
+              "user": "ดูหน่อย ใบนี้เขียนว่าอะไรบ้าง",
+              "attachmentIds": [
+                "receipt-partial"
+              ],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 120000
+              }
+            },
+            {
+              "user": "ส่งผิด เอาไฟล์นี้แทนอันเมื่อกี้",
+              "attachmentIds": [
+                "document-unreadable"
+              ],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 120000
+              }
+            },
+            {
+              "user": "หน้าสองเขียนว่าไง",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 120000
+              }
+            },
+            {
+              "user": "งั้นสรุปแค่หน้าที่อ่านออก",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 120000
+              }
+            },
+            {
+              "user": "ขอเทียบกับไฟล์แรกด้วย ยังอยู่มั้ย",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 120000
+              }
+            }
+          ]
+        },
+        {
+          "id": "NAT-07",
+          "familyId": "NAT-07",
+          "split": "development",
+          "language": "th",
+          "paraphrase": false,
+          "fixedRegression": false,
+          "group": "multi_turn",
+          "capabilities": [
+            "C01",
+            "C02",
+            "C04",
+            "C06",
+            "C11",
+            "C14",
+            "C15",
+            "C16",
+            "C18"
+          ],
+          "provenance": {
+            "kind": "synthetic",
+            "sourceId": "nat-NAT-07",
+            "consentRef": null,
+            "reviewedBy": null,
+            "reviewedAt": null
+          },
+          "fixture": {
+            "clock": "2026-09-27T03:00:00.000Z",
+            "timezone": "Asia/Bangkok",
+            "company": "w14-synthetic-company",
+            "actor": "w14-synthetic-user",
+            "channelKind": "USER",
+            "messagingChannelId": "w14-synthetic-line-channel",
+            "membership": "w14-synthetic-membership",
+            "chat": "w14-synthetic-chat",
+            "permissions": [
+              "access.employee.read",
+              "accounting.billing_note.read",
+              "accounting.credit_note.read",
+              "accounting.debit_note.read",
+              "accounting.document.read",
+              "accounting.document.read_related",
+              "accounting.invoice.read",
+              "accounting.quotation.read",
+              "accounting.receipt.read",
+              "accounting.tax_invoice.read",
+              "ai.tool.invoke",
+              "attachment.create",
+              "bank.account.read",
+              "bank.cash.read",
+              "bank.reconciliation.read",
+              "company.branch.read",
+              "company.setup.read",
+              "crm.booking.read",
+              "crm.customer.read",
+              "crm.follow_up.read",
+              "crm.inbox.read",
+              "crm.opportunity.read",
+              "crm.report.read",
+              "dashboard.read",
+              "expense.create",
+              "expense.read",
+              "expense.read_own",
+              "expense.read_related",
+              "expense.receipt.line_upload",
+              "expense.receipt.upload",
+              "expense.review",
+              "expense.update",
+              "hr.leave.read",
+              "inventory.movement.read",
+              "inventory.product.read",
+              "inventory.report.read",
+              "ledger.journal.read",
+              "ledger.period.read",
+              "ledger.report.read",
+              "line.ai.query",
+              "notification.read",
+              "procurement.ap.report",
+              "procurement.purchase_order.read",
+              "procurement.purchase_order.read_related",
+              "procurement.supplier.read",
+              "reimbursement.approve",
+              "reimbursement.create",
+              "reimbursement.finance_review",
+              "reimbursement.read",
+              "reimbursement.read_own",
+              "reimbursement.read_related",
+              "reimbursement.update_own_draft",
+              "report.catalog.read",
+              "report.dataset.read",
+              "report.query.run",
+              "tax.config.read",
+              "tax.event.read",
+              "tax.period.read",
+              "tax.profile.read",
+              "tax.report.read",
+              "tax.review_issue.read",
+              "workflow.rule.read",
+              "workflow.run.read",
+              "workflow.task.read"
+            ],
+            "branches": [
+              "branch-bkk",
+              "branch-ramintra",
+              "branch-ramkhamhaeng"
+            ],
+            "enabledFeatures": [
+              "ai_line_assistant",
+              "bank_reconciliation",
+              "bank_reconciliation.accounts",
+              "bank_reconciliation.adjustments",
+              "bank_reconciliation.cash",
+              "bank_reconciliation.import",
+              "bank_reconciliation.matching",
+              "bank_reconciliation.reconciliations",
+              "company_settings",
+              "company_settings.branches",
+              "company_settings.security",
+              "crm",
+              "crm.bookings",
+              "crm.customers",
+              "crm.followups",
+              "crm.inbox",
+              "crm.leads",
+              "crm.overview",
+              "crm.pipeline",
+              "dashboard_notifications",
+              "dashboard_notifications.preferences",
+              "dashboard_notifications.rules",
+              "double_entry_ledger",
+              "employee_access",
+              "employee_access.employees",
+              "employee_access.overview",
+              "employee_access.roles",
+              "expense_auto_post",
+              "expenses",
+              "expenses.categories",
+              "expenses.evidence",
+              "expenses.list",
+              "expenses.manual",
+              "expenses.signatures",
+              "expenses.upload",
+              "inventory",
+              "inventory.locations",
+              "inventory.movements",
+              "inventory.stock_report",
+              "line_oa",
+              "procurement",
+              "procurement.ap_aging",
+              "procurement.goods_receipts",
+              "procurement.purchase_orders",
+              "procurement.purchase_requests",
+              "procurement.supplier_payments",
+              "procurement.suppliers",
+              "procurement.vendor_bills",
+              "product_catalog",
+              "reimbursement",
+              "reports",
+              "sales_documents",
+              "thai_tax",
+              "wht_50bis",
+              "wht_pnd53",
+              "workflow_automation",
+              "workflow_automation.dead_letters",
+              "workflow_automation.rules",
+              "workflow_automation.runs",
+              "workflow_automation.tasks",
+              "workflow_automation.templates",
+              "workflow_automation.webhooks"
+            ],
+            "sourceSnapshot": "nat-NAT-07",
+            "taskRevision": null,
+            "previewRevision": null
+          },
+          "assets": [],
+          "turns": [
+            {
+              "user": "ช่วยจดค่าส่งของ 1,2OO เมื่อวานหน่อย",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "พิมผิด 1,200 บาท",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "แต่จ่ายสดไป 200 ที่เหลือโอน",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "วันที่จริงวันศุกร์ที่แล้ว ไม่ใช่เมื่อวาน",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "ขอดูที่จดไว้ก่อนว่าถูกยัง",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            }
+          ]
+        },
+        {
+          "id": "NAT-08",
+          "familyId": "NAT-08",
+          "split": "development",
+          "language": "th",
+          "paraphrase": false,
+          "fixedRegression": false,
+          "group": "multi_turn",
+          "capabilities": [
+            "C01",
+            "C02",
+            "C04",
+            "C06",
+            "C10",
+            "C11",
+            "C14",
+            "C15",
+            "C16",
+            "C18"
+          ],
+          "provenance": {
+            "kind": "synthetic",
+            "sourceId": "nat-NAT-08",
+            "consentRef": null,
+            "reviewedBy": null,
+            "reviewedAt": null
+          },
+          "fixture": {
+            "clock": "2026-09-27T03:00:00.000Z",
+            "timezone": "Asia/Bangkok",
+            "company": "w14-synthetic-company",
+            "actor": "w14-synthetic-user",
+            "channelKind": "USER",
+            "messagingChannelId": "w14-synthetic-line-channel",
+            "membership": "w14-synthetic-membership",
+            "chat": "w14-synthetic-chat",
+            "permissions": [
+              "access.employee.read",
+              "accounting.billing_note.read",
+              "accounting.credit_note.read",
+              "accounting.debit_note.read",
+              "accounting.document.read",
+              "accounting.document.read_related",
+              "accounting.invoice.read",
+              "accounting.quotation.read",
+              "accounting.receipt.read",
+              "accounting.tax_invoice.read",
+              "ai.tool.invoke",
+              "attachment.create",
+              "bank.account.read",
+              "bank.cash.read",
+              "bank.reconciliation.read",
+              "company.branch.read",
+              "company.setup.read",
+              "crm.booking.read",
+              "crm.customer.read",
+              "crm.follow_up.read",
+              "crm.inbox.read",
+              "crm.opportunity.read",
+              "crm.report.read",
+              "dashboard.read",
+              "expense.create",
+              "expense.read",
+              "expense.read_own",
+              "expense.read_related",
+              "expense.receipt.line_upload",
+              "expense.receipt.upload",
+              "expense.review",
+              "expense.update",
+              "hr.leave.read",
+              "inventory.movement.read",
+              "inventory.product.read",
+              "inventory.report.read",
+              "ledger.journal.read",
+              "ledger.period.read",
+              "ledger.report.read",
+              "line.ai.query",
+              "notification.read",
+              "procurement.ap.report",
+              "procurement.purchase_order.read",
+              "procurement.purchase_order.read_related",
+              "procurement.supplier.read",
+              "reimbursement.approve",
+              "reimbursement.create",
+              "reimbursement.finance_review",
+              "reimbursement.read",
+              "reimbursement.read_own",
+              "reimbursement.read_related",
+              "reimbursement.update_own_draft",
+              "report.catalog.read",
+              "report.dataset.read",
+              "report.query.run",
+              "tax.config.read",
+              "tax.event.read",
+              "tax.period.read",
+              "tax.profile.read",
+              "tax.report.read",
+              "tax.review_issue.read",
+              "workflow.rule.read",
+              "workflow.run.read",
+              "workflow.task.read"
+            ],
+            "branches": [
+              "branch-bkk",
+              "branch-ramintra",
+              "branch-ramkhamhaeng"
+            ],
+            "enabledFeatures": [
+              "ai_line_assistant",
+              "bank_reconciliation",
+              "bank_reconciliation.accounts",
+              "bank_reconciliation.adjustments",
+              "bank_reconciliation.cash",
+              "bank_reconciliation.import",
+              "bank_reconciliation.matching",
+              "bank_reconciliation.reconciliations",
+              "company_settings",
+              "company_settings.branches",
+              "company_settings.security",
+              "crm",
+              "crm.bookings",
+              "crm.customers",
+              "crm.followups",
+              "crm.inbox",
+              "crm.leads",
+              "crm.overview",
+              "crm.pipeline",
+              "dashboard_notifications",
+              "dashboard_notifications.preferences",
+              "dashboard_notifications.rules",
+              "double_entry_ledger",
+              "employee_access",
+              "employee_access.employees",
+              "employee_access.overview",
+              "employee_access.roles",
+              "expense_auto_post",
+              "expenses",
+              "expenses.categories",
+              "expenses.evidence",
+              "expenses.list",
+              "expenses.manual",
+              "expenses.signatures",
+              "expenses.upload",
+              "inventory",
+              "inventory.locations",
+              "inventory.movements",
+              "inventory.stock_report",
+              "line_oa",
+              "procurement",
+              "procurement.ap_aging",
+              "procurement.goods_receipts",
+              "procurement.purchase_orders",
+              "procurement.purchase_requests",
+              "procurement.supplier_payments",
+              "procurement.suppliers",
+              "procurement.vendor_bills",
+              "product_catalog",
+              "reimbursement",
+              "reports",
+              "sales_documents",
+              "thai_tax",
+              "wht_50bis",
+              "wht_pnd53",
+              "workflow_automation",
+              "workflow_automation.dead_letters",
+              "workflow_automation.rules",
+              "workflow_automation.runs",
+              "workflow_automation.tasks",
+              "workflow_automation.templates",
+              "workflow_automation.webhooks"
+            ],
+            "sourceSnapshot": "nat-NAT-08",
+            "taskRevision": null,
+            "previewRevision": null
+          },
+          "assets": [],
+          "turns": [
+            {
+              "user": "หาบิลร้านสมชายให้หน่อย",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "ที่ซื้ออาทิตย์ก่อนอะ",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "สมชายการช่าง อันที่ขึ้นมาเมื่อกี้",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "ถ้ามีสองใบ ขอใบยอดสูงกว่า",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "แค่เปิดดูนะ ไม่ต้องแก้อะไร",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            }
+          ]
+        },
+        {
+          "id": "NAT-09",
+          "familyId": "NAT-09",
+          "split": "development",
+          "language": "th",
+          "paraphrase": false,
+          "fixedRegression": false,
+          "group": "multi_turn",
+          "capabilities": [
+            "C01",
+            "C02",
+            "C03",
+            "C04",
+            "C06",
+            "C07",
+            "C10",
+            "C11",
+            "C14",
+            "C15",
+            "C16",
+            "C18"
+          ],
+          "provenance": {
+            "kind": "synthetic",
+            "sourceId": "nat-NAT-09",
+            "consentRef": null,
+            "reviewedBy": null,
+            "reviewedAt": null
+          },
+          "fixture": {
+            "clock": "2026-09-27T03:00:00.000Z",
+            "timezone": "Asia/Bangkok",
+            "company": "w14-synthetic-company",
+            "actor": "w14-synthetic-user",
+            "channelKind": "USER",
+            "messagingChannelId": "w14-synthetic-line-channel",
+            "membership": "w14-synthetic-membership",
+            "chat": "w14-synthetic-chat",
+            "permissions": [
+              "access.employee.read",
+              "accounting.billing_note.read",
+              "accounting.credit_note.read",
+              "accounting.debit_note.read",
+              "accounting.document.read",
+              "accounting.document.read_related",
+              "accounting.invoice.read",
+              "accounting.quotation.read",
+              "accounting.receipt.read",
+              "accounting.tax_invoice.read",
+              "ai.tool.invoke",
+              "attachment.create",
+              "bank.account.read",
+              "bank.cash.read",
+              "bank.reconciliation.read",
+              "company.branch.read",
+              "company.setup.read",
+              "crm.booking.read",
+              "crm.customer.read",
+              "crm.follow_up.read",
+              "crm.inbox.read",
+              "crm.opportunity.read",
+              "crm.report.read",
+              "dashboard.read",
+              "expense.create",
+              "expense.read",
+              "expense.read_own",
+              "expense.read_related",
+              "expense.receipt.line_upload",
+              "expense.receipt.upload",
+              "expense.review",
+              "expense.update",
+              "hr.leave.read",
+              "inventory.movement.read",
+              "inventory.product.read",
+              "inventory.report.read",
+              "ledger.journal.read",
+              "ledger.period.read",
+              "ledger.report.read",
+              "line.ai.query",
+              "notification.read",
+              "procurement.ap.report",
+              "procurement.purchase_order.read",
+              "procurement.purchase_order.read_related",
+              "procurement.supplier.read",
+              "reimbursement.approve",
+              "reimbursement.create",
+              "reimbursement.finance_review",
+              "reimbursement.read",
+              "reimbursement.read_own",
+              "reimbursement.read_related",
+              "reimbursement.update_own_draft",
+              "report.catalog.read",
+              "report.dataset.read",
+              "report.query.run",
+              "tax.config.read",
+              "tax.event.read",
+              "tax.period.read",
+              "tax.profile.read",
+              "tax.report.read",
+              "tax.review_issue.read",
+              "workflow.rule.read",
+              "workflow.run.read",
+              "workflow.task.read"
+            ],
+            "branches": [
+              "branch-bkk",
+              "branch-ramintra",
+              "branch-ramkhamhaeng"
+            ],
+            "enabledFeatures": [
+              "ai_line_assistant",
+              "bank_reconciliation",
+              "bank_reconciliation.accounts",
+              "bank_reconciliation.adjustments",
+              "bank_reconciliation.cash",
+              "bank_reconciliation.import",
+              "bank_reconciliation.matching",
+              "bank_reconciliation.reconciliations",
+              "company_settings",
+              "company_settings.branches",
+              "company_settings.security",
+              "crm",
+              "crm.bookings",
+              "crm.customers",
+              "crm.followups",
+              "crm.inbox",
+              "crm.leads",
+              "crm.overview",
+              "crm.pipeline",
+              "dashboard_notifications",
+              "dashboard_notifications.preferences",
+              "dashboard_notifications.rules",
+              "double_entry_ledger",
+              "employee_access",
+              "employee_access.employees",
+              "employee_access.overview",
+              "employee_access.roles",
+              "expense_auto_post",
+              "expenses",
+              "expenses.categories",
+              "expenses.evidence",
+              "expenses.list",
+              "expenses.manual",
+              "expenses.signatures",
+              "expenses.upload",
+              "inventory",
+              "inventory.locations",
+              "inventory.movements",
+              "inventory.stock_report",
+              "line_oa",
+              "procurement",
+              "procurement.ap_aging",
+              "procurement.goods_receipts",
+              "procurement.purchase_orders",
+              "procurement.purchase_requests",
+              "procurement.supplier_payments",
+              "procurement.suppliers",
+              "procurement.vendor_bills",
+              "product_catalog",
+              "reimbursement",
+              "reports",
+              "sales_documents",
+              "thai_tax",
+              "wht_50bis",
+              "wht_pnd53",
+              "workflow_automation",
+              "workflow_automation.dead_letters",
+              "workflow_automation.rules",
+              "workflow_automation.runs",
+              "workflow_automation.tasks",
+              "workflow_automation.templates",
+              "workflow_automation.webhooks"
+            ],
+            "sourceSnapshot": "nat-NAT-09",
+            "taskRevision": null,
+            "previewRevision": null
+          },
+          "assets": [],
+          "turns": [
+            {
+              "user": "ช่วยสรุปรายจ่ายสิงหาให้หน่อย",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "เดี๋ยวนะ VAT ในบิลคืออะไร",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "แปลว่าเอาไปขอคืนได้ทุกใบเลยปะ",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "โอเค กลับไปอันเมื่อกี้ แยกค่าของกับค่าบริการที",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "ขอแบบส่งให้หุ้นส่วนอ่านได้ สั้น ๆ",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            }
+          ]
+        },
+        {
+          "id": "NAT-10",
+          "familyId": "NAT-10",
+          "split": "development",
+          "language": "th",
+          "paraphrase": false,
+          "fixedRegression": false,
+          "group": "multi_turn",
+          "capabilities": [
+            "C01",
+            "C02",
+            "C04",
+            "C06",
+            "C10",
+            "C11",
+            "C14",
+            "C15",
+            "C16",
+            "C18"
+          ],
+          "provenance": {
+            "kind": "synthetic",
+            "sourceId": "nat-NAT-10",
+            "consentRef": null,
+            "reviewedBy": null,
+            "reviewedAt": null
+          },
+          "fixture": {
+            "clock": "2026-09-27T03:00:00.000Z",
+            "timezone": "Asia/Bangkok",
+            "company": "w14-synthetic-company",
+            "actor": "w14-synthetic-user",
+            "channelKind": "USER",
+            "messagingChannelId": "w14-synthetic-line-channel",
+            "membership": "w14-synthetic-membership",
+            "chat": "w14-synthetic-chat",
+            "permissions": [
+              "access.employee.read",
+              "accounting.billing_note.read",
+              "accounting.credit_note.read",
+              "accounting.debit_note.read",
+              "accounting.document.read",
+              "accounting.document.read_related",
+              "accounting.invoice.read",
+              "accounting.quotation.read",
+              "accounting.receipt.read",
+              "accounting.tax_invoice.read",
+              "ai.tool.invoke",
+              "attachment.create",
+              "bank.account.read",
+              "bank.cash.read",
+              "bank.reconciliation.read",
+              "company.branch.read",
+              "company.setup.read",
+              "crm.booking.read",
+              "crm.customer.read",
+              "crm.follow_up.read",
+              "crm.inbox.read",
+              "crm.opportunity.read",
+              "crm.report.read",
+              "dashboard.read",
+              "expense.create",
+              "expense.read",
+              "expense.read_own",
+              "expense.read_related",
+              "expense.receipt.line_upload",
+              "expense.receipt.upload",
+              "expense.review",
+              "expense.update",
+              "hr.leave.read",
+              "inventory.movement.read",
+              "inventory.product.read",
+              "inventory.report.read",
+              "ledger.journal.read",
+              "ledger.period.read",
+              "ledger.report.read",
+              "line.ai.query",
+              "notification.read",
+              "procurement.ap.report",
+              "procurement.purchase_order.read",
+              "procurement.purchase_order.read_related",
+              "procurement.supplier.read",
+              "reimbursement.approve",
+              "reimbursement.create",
+              "reimbursement.finance_review",
+              "reimbursement.read",
+              "reimbursement.read_own",
+              "reimbursement.read_related",
+              "reimbursement.update_own_draft",
+              "report.catalog.read",
+              "report.dataset.read",
+              "report.query.run",
+              "tax.config.read",
+              "tax.event.read",
+              "tax.period.read",
+              "tax.profile.read",
+              "tax.report.read",
+              "tax.review_issue.read",
+              "workflow.rule.read",
+              "workflow.run.read",
+              "workflow.task.read"
+            ],
+            "branches": [
+              "branch-bkk",
+              "branch-ramintra",
+              "branch-ramkhamhaeng"
+            ],
+            "enabledFeatures": [
+              "ai_line_assistant",
+              "bank_reconciliation",
+              "bank_reconciliation.accounts",
+              "bank_reconciliation.adjustments",
+              "bank_reconciliation.cash",
+              "bank_reconciliation.import",
+              "bank_reconciliation.matching",
+              "bank_reconciliation.reconciliations",
+              "company_settings",
+              "company_settings.branches",
+              "company_settings.security",
+              "crm",
+              "crm.bookings",
+              "crm.customers",
+              "crm.followups",
+              "crm.inbox",
+              "crm.leads",
+              "crm.overview",
+              "crm.pipeline",
+              "dashboard_notifications",
+              "dashboard_notifications.preferences",
+              "dashboard_notifications.rules",
+              "double_entry_ledger",
+              "employee_access",
+              "employee_access.employees",
+              "employee_access.overview",
+              "employee_access.roles",
+              "expense_auto_post",
+              "expenses",
+              "expenses.categories",
+              "expenses.evidence",
+              "expenses.list",
+              "expenses.manual",
+              "expenses.signatures",
+              "expenses.upload",
+              "inventory",
+              "inventory.locations",
+              "inventory.movements",
+              "inventory.stock_report",
+              "line_oa",
+              "procurement",
+              "procurement.ap_aging",
+              "procurement.goods_receipts",
+              "procurement.purchase_orders",
+              "procurement.purchase_requests",
+              "procurement.supplier_payments",
+              "procurement.suppliers",
+              "procurement.vendor_bills",
+              "product_catalog",
+              "reimbursement",
+              "reports",
+              "sales_documents",
+              "thai_tax",
+              "wht_50bis",
+              "wht_pnd53",
+              "workflow_automation",
+              "workflow_automation.dead_letters",
+              "workflow_automation.rules",
+              "workflow_automation.runs",
+              "workflow_automation.tasks",
+              "workflow_automation.templates",
+              "workflow_automation.webhooks"
+            ],
+            "sourceSnapshot": "nat-NAT-10",
+            "taskRevision": null,
+            "previewRevision": null
+          },
+          "assets": [],
+          "turns": [
+            {
+              "user": "เดือนนี้มีค่าน้ำค่าไฟมั้ย",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "ไม่เจอแปลว่ายังไม่ได้จ่ายใช่มั้ย",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "งั้นดูของอีกสาขาให้ที สาขาที่ฉันเข้าไม่ได้",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "เอาเฉพาะสาขาที่ฉันดูได้ก็ได้",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "แล้วรู้ได้ไงว่ารายการครบ ยังมีไฟล์ที่ไม่ได้อ่านมั้ย",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            }
+          ]
+        },
+        {
+          "id": "NAT-11",
+          "familyId": "NAT-11",
+          "split": "development",
+          "language": "th",
+          "paraphrase": false,
+          "fixedRegression": false,
+          "group": "multi_turn",
+          "capabilities": [
+            "C01",
+            "C02",
+            "C03",
+            "C04",
+            "C05",
+            "C06",
+            "C11",
+            "C14",
+            "C15",
+            "C16",
+            "C18"
+          ],
+          "provenance": {
+            "kind": "synthetic",
+            "sourceId": "nat-NAT-11",
+            "consentRef": null,
+            "reviewedBy": null,
+            "reviewedAt": null
+          },
+          "fixture": {
+            "clock": "2026-09-27T03:00:00.000Z",
+            "timezone": "Asia/Bangkok",
+            "company": "w14-synthetic-company",
+            "actor": "w14-synthetic-user",
+            "channelKind": "USER",
+            "messagingChannelId": "w14-synthetic-line-channel",
+            "membership": "w14-synthetic-membership",
+            "chat": "w14-synthetic-chat",
+            "permissions": [
+              "access.employee.read",
+              "accounting.billing_note.read",
+              "accounting.credit_note.read",
+              "accounting.debit_note.read",
+              "accounting.document.read",
+              "accounting.document.read_related",
+              "accounting.invoice.read",
+              "accounting.quotation.read",
+              "accounting.receipt.read",
+              "accounting.tax_invoice.read",
+              "ai.tool.invoke",
+              "attachment.create",
+              "bank.account.read",
+              "bank.cash.read",
+              "bank.reconciliation.read",
+              "company.branch.read",
+              "company.setup.read",
+              "crm.booking.read",
+              "crm.customer.read",
+              "crm.follow_up.read",
+              "crm.inbox.read",
+              "crm.opportunity.read",
+              "crm.report.read",
+              "dashboard.read",
+              "expense.create",
+              "expense.read",
+              "expense.read_own",
+              "expense.read_related",
+              "expense.receipt.line_upload",
+              "expense.receipt.upload",
+              "expense.review",
+              "expense.update",
+              "hr.leave.read",
+              "inventory.movement.read",
+              "inventory.product.read",
+              "inventory.report.read",
+              "ledger.journal.read",
+              "ledger.period.read",
+              "ledger.report.read",
+              "line.ai.query",
+              "notification.read",
+              "procurement.ap.report",
+              "procurement.purchase_order.read",
+              "procurement.purchase_order.read_related",
+              "procurement.supplier.read",
+              "reimbursement.approve",
+              "reimbursement.create",
+              "reimbursement.finance_review",
+              "reimbursement.read",
+              "reimbursement.read_own",
+              "reimbursement.read_related",
+              "reimbursement.update_own_draft",
+              "report.catalog.read",
+              "report.dataset.read",
+              "report.query.run",
+              "tax.config.read",
+              "tax.event.read",
+              "tax.period.read",
+              "tax.profile.read",
+              "tax.report.read",
+              "tax.review_issue.read",
+              "workflow.rule.read",
+              "workflow.run.read",
+              "workflow.task.read"
+            ],
+            "branches": [
+              "branch-bkk",
+              "branch-ramintra",
+              "branch-ramkhamhaeng"
+            ],
+            "enabledFeatures": [
+              "ai_line_assistant",
+              "bank_reconciliation",
+              "bank_reconciliation.accounts",
+              "bank_reconciliation.adjustments",
+              "bank_reconciliation.cash",
+              "bank_reconciliation.import",
+              "bank_reconciliation.matching",
+              "bank_reconciliation.reconciliations",
+              "company_settings",
+              "company_settings.branches",
+              "company_settings.security",
+              "crm",
+              "crm.bookings",
+              "crm.customers",
+              "crm.followups",
+              "crm.inbox",
+              "crm.leads",
+              "crm.overview",
+              "crm.pipeline",
+              "dashboard_notifications",
+              "dashboard_notifications.preferences",
+              "dashboard_notifications.rules",
+              "double_entry_ledger",
+              "employee_access",
+              "employee_access.employees",
+              "employee_access.overview",
+              "employee_access.roles",
+              "expense_auto_post",
+              "expenses",
+              "expenses.categories",
+              "expenses.evidence",
+              "expenses.list",
+              "expenses.manual",
+              "expenses.signatures",
+              "expenses.upload",
+              "inventory",
+              "inventory.locations",
+              "inventory.movements",
+              "inventory.stock_report",
+              "line_oa",
+              "procurement",
+              "procurement.ap_aging",
+              "procurement.goods_receipts",
+              "procurement.purchase_orders",
+              "procurement.purchase_requests",
+              "procurement.supplier_payments",
+              "procurement.suppliers",
+              "procurement.vendor_bills",
+              "product_catalog",
+              "reimbursement",
+              "reports",
+              "sales_documents",
+              "thai_tax",
+              "wht_50bis",
+              "wht_pnd53",
+              "workflow_automation",
+              "workflow_automation.dead_letters",
+              "workflow_automation.rules",
+              "workflow_automation.runs",
+              "workflow_automation.tasks",
+              "workflow_automation.templates",
+              "workflow_automation.webhooks"
+            ],
+            "sourceSnapshot": "nat-NAT-11",
+            "taskRevision": null,
+            "previewRevision": null
+          },
+          "assets": [],
+          "turns": [
+            {
+              "user": "รายจ่ายเดือนนี้สรุปให้ที ขอไม่ยาว",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "ต่อไปตอบสั้น ๆ แบบนี้นะ จำไว้ได้มั้ย",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "แต่อันเมื่อกี้ขอละเอียดหน่อย ทำไมยอดเพิ่ม",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "ตอนนี้จำอะไรเกี่ยวกับวิธีตอบฉันอยู่บ้าง",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "ลืมเรื่องตอบสั้นไปก่อน",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            }
+          ]
+        },
+        {
+          "id": "NAT-12",
+          "familyId": "NAT-12",
+          "split": "development",
+          "language": "th",
+          "paraphrase": false,
+          "fixedRegression": false,
+          "group": "multi_turn",
+          "capabilities": [
+            "C01",
+            "C02",
+            "C04",
+            "C06",
+            "C11",
+            "C14",
+            "C15",
+            "C16",
+            "C18"
+          ],
+          "provenance": {
+            "kind": "synthetic",
+            "sourceId": "nat-NAT-12",
+            "consentRef": null,
+            "reviewedBy": null,
+            "reviewedAt": null
+          },
+          "fixture": {
+            "clock": "2026-09-27T03:00:00.000Z",
+            "timezone": "Asia/Bangkok",
+            "company": "w14-synthetic-company",
+            "actor": "w14-synthetic-user",
+            "channelKind": "USER",
+            "messagingChannelId": "w14-synthetic-line-channel",
+            "membership": "w14-synthetic-membership",
+            "chat": "w14-synthetic-chat",
+            "permissions": [
+              "access.employee.read",
+              "accounting.billing_note.read",
+              "accounting.credit_note.read",
+              "accounting.debit_note.read",
+              "accounting.document.read",
+              "accounting.document.read_related",
+              "accounting.invoice.read",
+              "accounting.quotation.read",
+              "accounting.receipt.read",
+              "accounting.tax_invoice.read",
+              "ai.tool.invoke",
+              "attachment.create",
+              "bank.account.read",
+              "bank.cash.read",
+              "bank.reconciliation.read",
+              "company.branch.read",
+              "company.setup.read",
+              "crm.booking.read",
+              "crm.customer.read",
+              "crm.follow_up.read",
+              "crm.inbox.read",
+              "crm.opportunity.read",
+              "crm.report.read",
+              "dashboard.read",
+              "expense.create",
+              "expense.read",
+              "expense.read_own",
+              "expense.read_related",
+              "expense.receipt.line_upload",
+              "expense.receipt.upload",
+              "expense.review",
+              "expense.update",
+              "hr.leave.read",
+              "inventory.movement.read",
+              "inventory.product.read",
+              "inventory.report.read",
+              "ledger.journal.read",
+              "ledger.period.read",
+              "ledger.report.read",
+              "line.ai.query",
+              "notification.read",
+              "procurement.ap.report",
+              "procurement.purchase_order.read",
+              "procurement.purchase_order.read_related",
+              "procurement.supplier.read",
+              "reimbursement.approve",
+              "reimbursement.create",
+              "reimbursement.finance_review",
+              "reimbursement.read",
+              "reimbursement.read_own",
+              "reimbursement.read_related",
+              "reimbursement.update_own_draft",
+              "report.catalog.read",
+              "report.dataset.read",
+              "report.query.run",
+              "tax.config.read",
+              "tax.event.read",
+              "tax.period.read",
+              "tax.profile.read",
+              "tax.report.read",
+              "tax.review_issue.read",
+              "workflow.rule.read",
+              "workflow.run.read",
+              "workflow.task.read"
+            ],
+            "branches": [
+              "branch-bkk",
+              "branch-ramintra",
+              "branch-ramkhamhaeng"
+            ],
+            "enabledFeatures": [
+              "ai_line_assistant",
+              "bank_reconciliation",
+              "bank_reconciliation.accounts",
+              "bank_reconciliation.adjustments",
+              "bank_reconciliation.cash",
+              "bank_reconciliation.import",
+              "bank_reconciliation.matching",
+              "bank_reconciliation.reconciliations",
+              "company_settings",
+              "company_settings.branches",
+              "company_settings.security",
+              "crm",
+              "crm.bookings",
+              "crm.customers",
+              "crm.followups",
+              "crm.inbox",
+              "crm.leads",
+              "crm.overview",
+              "crm.pipeline",
+              "dashboard_notifications",
+              "dashboard_notifications.preferences",
+              "dashboard_notifications.rules",
+              "double_entry_ledger",
+              "employee_access",
+              "employee_access.employees",
+              "employee_access.overview",
+              "employee_access.roles",
+              "expense_auto_post",
+              "expenses",
+              "expenses.categories",
+              "expenses.evidence",
+              "expenses.list",
+              "expenses.manual",
+              "expenses.signatures",
+              "expenses.upload",
+              "inventory",
+              "inventory.locations",
+              "inventory.movements",
+              "inventory.stock_report",
+              "line_oa",
+              "procurement",
+              "procurement.ap_aging",
+              "procurement.goods_receipts",
+              "procurement.purchase_orders",
+              "procurement.purchase_requests",
+              "procurement.supplier_payments",
+              "procurement.suppliers",
+              "procurement.vendor_bills",
+              "product_catalog",
+              "reimbursement",
+              "reports",
+              "sales_documents",
+              "thai_tax",
+              "wht_50bis",
+              "wht_pnd53",
+              "workflow_automation",
+              "workflow_automation.dead_letters",
+              "workflow_automation.rules",
+              "workflow_automation.runs",
+              "workflow_automation.tasks",
+              "workflow_automation.templates",
+              "workflow_automation.webhooks"
+            ],
+            "sourceSnapshot": "nat-NAT-12",
+            "taskRevision": null,
+            "previewRevision": null
+          },
+          "assets": [],
+          "turns": [
+            {
+              "user": "ทำร่างค่าส่งของวันนี้สามร้อยบาทให้หน่อย",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "อันเมื่อกี้ไม่ใช่ 300 เป็น 350 นะ",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "เดี๋ยว ๆ ยกเลิกก่อน",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "เมื่อกี้เน็ตหลุด สรุปบันทึกไปยัง",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            },
+            {
+              "user": "งั้นขอดูข้อมูลเดิมก่อน อย่าเพิ่งทำใหม่",
+              "attachmentIds": [],
+              "expect": {
+                "outcomes": [
+                  "answered",
+                  "needs_input",
+                  "preview",
+                  "cancelled",
+                  "access_denied",
+                  "partial_answer"
+                ],
+                "toolInputs": [],
+                "requiredFacts": [],
+                "requiredEffects": [],
+                "forbiddenEffects": [
+                  "cross_scope_read",
+                  "duplicate_delivery",
+                  "unconfirmed_write",
+                  "final_mutation"
+                ],
+                "requiredDelivery": "ACCEPTED",
+                "maxModelCalls": 4,
+                "deadlineMs": 40000
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "repeats": 1,
+    "versions": {
+      "sourceCommit": "f9444099ee4ce88cb95d99ef192b1c6bf2fac543",
+      "schema": "f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8",
+      "prompt": "350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e",
+      "registry": "0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f",
+      "model": "95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7",
+      "price": "67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb"
+    },
+    "environment": {
+      "LINE_AI_FUSED_PLAN_SHADOW_ENABLED": "true",
+      "LINE_AI_PREPARED_SIMPLE_READ_ENABLED": "true",
+      "LINE_AI_LEDGER_ENABLED": "true",
+      "LINE_AI_RELIABILITY_V2_MODE": "on",
+      "LINE_AI_PUBLIC_LOOKUP_ENABLED": "false"
+    }
+  },
+  "model": {
+    "provider": "bedrock",
+    "modelId": "global.anthropic.claude-sonnet-4-6",
+    "region": "ap-southeast-1",
+    "transport": "local-http",
+    "runtime": "strands-local",
+    "globalApprovalRef": "DPO-2026-07-23-bedrock-global"
+  },
+  "compiledHashes": {
+    "apps/api/dist/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.js": "3e918a84e044784e70643245700859886a5013558ef7014a0c1d2f0c6cd428cb",
+    "apps/ai-gateway/dist/apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent.js": "9e2ad5fc43b79c9c8df1219481e87ddfd87024c1d95215628c34c8c1d9920103",
+    "apps/ai-gateway/dist/apps/ai-gateway/src/modules/line-ai/agents/semantic-turn-v2.js": "6fd7585b4ba24d5b8bf6604dd36874cf132f16a138ac042cab67d45a17ae3e1e"
+  },
+  "diagnosticPolicy": {
+    "mode": "natural_diagnostic",
+    "status": "draft",
+    "acceptanceEligible": false,
+    "approvalScope": "Owner approved these 60 questions in the current conversation; ERP fixture, asset labels, answers and behavior remain unreviewed.",
+    "sourceDocumentStatus": "QUESTIONS_APPROVED_ASSETS_DRAFT",
+    "exactToolGoldens": false,
+    "aggregateQualityScore": false,
+    "semanticReview": "Review actual accepted LINE wire, actual tools and durable state; old exact-tool/fact/effect scorer is not NAT correctness.",
+    "publicLookup": false,
+    "fabricatedAssistantHistory": false,
+    "limitations": {
+      "NAT-04": "MISSING_PRIOR_RECEIPTS: two earlier stationery uploads are not available. Run truthfulness/missing-evidence diagnostic only; full source-selection/reimbursement path is NOT_RUN_FIXTURE_REQUIRED.",
+      "NAT-05": "NAT-only readable synthetic PNG and draft label; owner has not certified visual labels or OCR answers. Original 225-case asset is preserved separately.",
+      "NAT-06": "NAT-only real two-page PDFs: partial page has readable text plus an obscured field; replacement page has unreadable business body and readable test marker. Labels remain unreviewed.",
+      "NAT-03": "Turn 3 ordinal must resolve only if the preceding accepted answer actually supplied that choice; no choices are seeded.",
+      "NAT-08": "Turn 3 refers to an actual preceding accepted choice, if any; two Somchai vendors and two repair bills exist in ERP.",
+      "NAT-12": "Edit/cancel coverage depends on an actual preview produced in preceding turns; none is fabricated and no button click substitutes for user text."
+    }
+  },
+  "referenceFacts": {
+    "currency": "THB",
+    "currentPeriod": "2026-09",
+    "previousPeriod": "2026-08",
+    "currentMonthIncomplete": true,
+    "authorizedBranchIds": [
+      "branch-bkk",
+      "branch-ramintra",
+      "branch-ramkhamhaeng"
+    ],
+    "excludedBranchId": "branch-secret",
+    "expense": {
+      "basis": "ExpenseRecord.grandTotalAmount; authorized branches; VOIDED excluded; DRAFT included unless confirmedOnly",
+      "augustAll": "23950.75",
+      "septemberAll": "27230.50",
+      "differenceAll": "3279.75",
+      "augustConfirmed": "23950.75",
+      "septemberConfirmed": "26330.50",
+      "differenceConfirmed": "2379.75",
+      "categories": {
+        "fuel": {
+          "august": "1800.00",
+          "september": "9200.00",
+          "difference": "7400.00"
+        },
+        "travel": {
+          "august": "18450.75",
+          "september": "2230.50",
+          "difference": "-16220.25"
+        },
+        "office": {
+          "august": "2200.00",
+          "september": "8500.00",
+          "difference": "6300.00",
+          "septemberConfirmed": "7600.00"
+        },
+        "service": {
+          "august": "1500.00",
+          "september": "7300.00",
+          "difference": "5800.00"
+        }
+      },
+      "maximumCategoryIncrease": "category-fuel",
+      "authorizedUtilityCount": 0
+    },
+    "moneyBases": {
+      "septemberIssuedInvoices": "118900.00",
+      "septemberRecordedCustomerReceipts": "374300.00",
+      "lastCompletedBankStatementBalance": "70210.35",
+      "lastCompletedBankStatementDate": "2026-09-20",
+      "draftBankStatementBalanceNotFinal": "99999.00",
+      "postedLedgerRevenue": "118900.00",
+      "profitCaveat": "No complete posted costs. A ledger result is only the seeded ledger basis, not certified whole-business profit."
+    },
+    "somchaiRepairBillsLastWeek": [
+      {
+        "id": "NAT-SOMCHAI-850",
+        "date": "2026-09-15",
+        "amount": "850.00"
+      },
+      {
+        "id": "NAT-SOMCHAI-1750",
+        "date": "2026-09-18",
+        "amount": "1750.00"
+      }
+    ],
+    "noCompletenessProof": "No data establishes that all external files, banks, or business transactions have been imported."
+  },
+  "criteria": [
+    {
+      "id": "NAT-01",
+      "title": "เริ่มจากรายจ่าย แล้วค่อยเจาะว่าตรงไหนเพิ่ม",
+      "prerequisite": "ข้อมูลค่าใช้จ่ายที่ได้รับสิทธิ์อย่างน้อยสองเดือน มีหมวดหมู่และสถานะเอกสารชัดเจน; ตรึงวันปัจจุบันของการทดสอบ การเปรียบเทียบต้องใช้ช่วงที่เทียบกันได้และเปิดเผยหากเดือนนี้ยังไม่ครบเดือน",
+      "turns": [
+        {
+          "ordinal": 1,
+          "user": "เดือนนี้ค่าไช้จ่ายไปเท่าไหร่แล้ว",
+          "behavior": "เข้าใจคำพิมพ์ผิดเล็กน้อย ตอบยอดเดือนนี้และฐานสถานะ ไม่ถามเดือนซ้ำเมื่อบริบทเพียงพอ",
+          "limitation": "ยอดต้องมาจากข้อมูลบริษัทในเดือนที่ตรึงไว้ ไม่ยืมยอดมหาศาลจากเคสทดสอบทศนิยมมาเป็นยอด SME"
+        },
+        {
+          "ordinal": 2,
+          "user": "เทียบเดือนก่อนให้หน่อย",
+          "behavior": "คงฐานเดิมและเปรียบเทียบเดือนก่อน บอกช่วงเวลาและส่วนต่างที่คำนวณได้จริง",
+          "limitation": "หากเปรียบเทียบเดือนเต็มกับเดือนที่ยังไม่จบ ต้องบอกข้อจำกัด ไม่สรุปว่าแนวโน้มแย่ลงแน่นอน"
+        },
+        {
+          "ordinal": 3,
+          "user": "อันไหนเพิ่มเยอะสุด",
+          "behavior": "อ้างผลเปรียบเทียบเมื่อกี้ แยกตามหมวดที่ข้อมูลรองรับและจัดลำดับส่วนต่าง",
+          "limitation": "ต้องอ่านรายละเอียดทั้งสองช่วง หากเครื่องมือยังรวม/จัดกลุ่มไม่ได้ให้ระบุช่องว่างและผลที่ยังหาให้ได้ ไม่ถือ legacy unsupported outcome เป็นข้อห้ามของผลิตภัณฑ์"
+        },
+        {
+          "ordinal": 4,
+          "user": "เอาเฉพาะที่ยืนยันแล้วนะ ร่างไม่เอา",
+          "behavior": "คำนวณทั้งสองช่วงใหม่ด้วยสถานะยืนยันเดียวกัน และบอกว่าขอบเขตเปลี่ยน",
+          "limitation": "“ยืนยันแล้ว” เป็นสถานะเอกสาร ไม่ได้แปลว่าจ่ายแล้ว"
+        },
+        {
+          "ordinal": 5,
+          "user": "แล้วควรเริ่มลดตรงไหนดี",
+          "behavior": "เสนอทางเลือกจากหมวด/รายการที่เห็น พร้อมแยกข้อสังเกตกับข้อเสนอ",
+          "limitation": "ยอดเพิ่มไม่ได้พิสูจน์สาเหตุ; ถ้าไม่มีจำนวนหน่วย/ราคา/บริบทให้บอกว่าต้องรู้อะไรเพิ่ม ไม่แต่งว่าเกิดจากยอดขายตก"
+        }
+      ],
+      "semanticStatus": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "id": "NAT-02",
+      "title": "ยอดขาย เงินเข้า และกำไรเป็นคนละฐาน",
+      "prerequisite": "เตรียมข้อมูลเอกสารขาย การรับชำระ และสิทธิ์รายงานแยกกัน ให้มีสถานการณ์ที่ยอดทั้งสามไม่เท่ากัน; ไม่มีการนำ cash oracle ของ `sales.get_sales_summary` ไปตีความเป็นยอดขายหรือกำไร",
+      "turns": [
+        {
+          "ordinal": 1,
+          "user": "เดือนนี้ขายได้เท่าไหร่",
+          "behavior": "ตอบจากฐานการขายที่รองรับพร้อมระบุว่าเป็นเอกสารขาย/ยอดตามนิยามใด; ถ้าระบุฐานไม่ได้ถามสั้น ๆ",
+          "limitation": "ไม่หยิบ “เงินที่รับจากลูกค้า” มาเรียกยอดขายโดยไม่บอกฐาน"
+        },
+        {
+          "ordinal": 2,
+          "user": "หมายถึงเงินที่ลูกค้าจ่ายมาแล้วอะ",
+          "behavior": "เปลี่ยนเป็นยอดรับชำระเดือนนี้ คงขอบเขตบริษัท/ช่วงเวลา",
+          "limitation": "ต้องมีรายการรับชำระและสถานะจริง ไม่รวมลูกหนี้ที่ยังไม่รับเงิน"
+        },
+        {
+          "ordinal": 3,
+          "user": "แล้วเงินเข้าบัญชีจริงเท่านี้เลยมั้ย",
+          "behavior": "อธิบายว่ารับชำระกับรายการธนาคารอาจคนละฐาน ตรวจธนาคารได้เมื่อมีข้อมูลและสิทธิ์",
+          "limitation": "ถ้าไม่มีรายการธนาคาร/การกระทบยอด ห้ามยืนยันว่ายอดตรงกัน"
+        },
+        {
+          "ordinal": 4,
+          "user": "งั้นกำไรเดือนนี้เหลือเท่าไร",
+          "behavior": "เปลี่ยนไปดูรายงานกำไรที่รองรับและมีสิทธิ์ หรือบอกข้อมูลที่ยังขาด",
+          "limitation": "ไม่เอาเงินรับหักรายจ่ายทันทีแล้วเรียกกำไร; ต้องทราบฐานรายงานและความครบของต้นทุน"
+        },
+        {
+          "ordinal": 5,
+          "user": "สรุปสั้น ๆ ว่าตอนนี้รู้อะไรแน่บ้าง",
+          "behavior": "สรุปสิ่งที่อ่านได้จริง แยกยอดขาย/รับชำระ/ธนาคาร/กำไร และส่วนที่ยังยืนยันไม่ได้",
+          "limitation": "ไม่เติมศูนย์ในฐานที่ไม่มีข้อมูล และไม่สร้างคำแนะนำบริการทางการเงิน"
+        }
+      ],
+      "semanticStatus": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "id": "NAT-03",
+      "title": "ถามไม่ครบ เปลี่ยนเดือน แล้วเจาะสาขา",
+      "prerequisite": "มีหลายสาขาที่ผู้ใช้มีสิทธิ์ และมีอย่างน้อยสองชื่อคล้ายกันสำหรับทดสอบคำย่อ; ต้องมีข้อมูลชื่อเต็มจริงใน fixture ก่อนผู้ช่วยเสนอให้เลือก",
+      "turns": [
+        {
+          "ordinal": 1,
+          "user": "ช่วยดูรายจ่ายให้หน่อย...",
+          "behavior": "ถามเป้าหมาย/ช่วงเวลาที่ยังจำเป็นให้สั้น ไม่โยนแบบฟอร์มยาวให้กรอก",
+          "limitation": "ถ้ามีนิยามค่าเริ่มต้นที่ยืนยันแล้วให้บอกและใช้ได้; ห้ามถามข้อมูลที่มีอยู่แล้ว"
+        },
+        {
+          "ordinal": 2,
+          "user": "เดือนก่อน ของร้านราม",
+          "behavior": "เข้าใจ “เดือนก่อน” และถามเลือกสาขาเพราะ “ร้านราม” ตรงหลายชื่อ",
+          "limitation": "เสนอเฉพาะสาขาที่อ่านได้จริงและได้รับสิทธิ์ ไม่เดารามอินทราเอง"
+        },
+        {
+          "ordinal": 3,
+          "user": "รามอินทรา ที่เมื่อกี้ขึ้นมาอันแรก",
+          "behavior": "ผูกกับชื่อรามอินทราที่ผู้ช่วยส่งเป็นตัวเลือกแรกสำเร็จ แล้วสรุปเดือนก่อน",
+          "limitation": "ถ้าลำดับ/ชื่อไม่ตรงหรือไม่มีตัวเลือกที่ส่งสำเร็จ ต้องยืนยันใหม่ก่อนอ่าน"
+        },
+        {
+          "ordinal": 4,
+          "user": "อ้อ เอาเดือนนี้แทน แต่สาขาเดิม",
+          "behavior": "แก้เฉพาะช่วงเวลาและรักษาสาขาที่เลือกไว้",
+          "limitation": "ไม่กลับไปรวมทั้งบริษัท และไม่ถามชื่อสาขาซ้ำ"
+        },
+        {
+          "ordinal": 5,
+          "user": "เทียบกับสำนักงานใหญ่ด้วย ต่างกันตรงไหน",
+          "behavior": "แยกผลสองสาขาแล้วเปรียบเทียบหมวดที่รองรับภายใต้สิทธิ์",
+          "limitation": "ต้องมีข้อมูลสองสาขาและช่วงเดียวกัน; ถ้าต้องอ่านหลายครั้งให้ทำเป็นขั้น ถ้ายังขาด capability ให้บันทึกช่องว่าง ไม่ลบคำขอเปรียบเทียบเงียบ ๆ"
+        }
+      ],
+      "semanticStatus": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "id": "NAT-04",
+      "title": "ถามรายจ่าย พร้อมขอร่างเบิกเงินที่สำรองเอง",
+      "prerequisite": "มีใบเสร็จที่ผู้ใช้แนบในห้องนี้ และรายการค่าใช้จ่ายที่สัมพันธ์กันตรวจได้จริง; ผู้ใช้มีสิทธิ์ร่างใบเบิก ก่อนข้อความ 3 ผู้ช่วยต้องส่งตัวเลือกที่สองซึ่งมีชื่อร้าน/วันที่/ยอดพอแยกจากใบแรก ไม่ใส่รหัสภายในลงในคำถามผู้ใช้",
+      "turns": [
+        {
+          "ordinal": 1,
+          "user": "เดือนนี้จ่ายอะไรไปเยอะ แล้วบิลที่ฉันออกเงินเองเมื่อวานเบิกได้มั้ย",
+          "behavior": "เก็บสองคำขอ: สรุปรายจ่าย และช่วยตรวจเส้นทางเบิก; ตอบส่วนที่พร้อม พร้อมถามหาบิล/ข้อมูลที่จำเป็น",
+          "limitation": "ต้องแยก “จ่ายแล้ว” จากสถานะเอกสาร และตรวจนโยบายเบิกก่อนบอกว่าเบิกได้ ไม่ตอบยอดแล้วลืมงานใบเบิก"
+        },
+        {
+          "ordinal": 2,
+          "user": "บิลร้านเครื่องเขียนที่ส่งไว้สองใบอะ",
+          "behavior": "ค้นจากหลักฐานในบทสนทนาที่ผู้ใช้เข้าถึงได้ แล้วให้เลือกเมื่อมีสองใบ",
+          "limitation": "ไม่สร้างรายการจากชื่อร้านอย่างเดียว; ถ้าไม่มีไฟล์เดิมให้บอกว่าขาดอะไร"
+        },
+        {
+          "ordinal": 3,
+          "user": "งั้นช่วยทำร่างจากใบที่สอง ซื้อของใช้ในออฟฟิศ",
+          "behavior": "ใช้ตัวเลือกที่สองซึ่งส่งสำเร็จ บันทึกวัตถุประสงค์จากผู้ใช้ และเตรียม preview เมื่อข้อมูลครบ",
+          "limitation": "ตรวจเจ้าของรายการ การใช้เบิกซ้ำ สิทธิ์ และความสัมพันธ์กับไฟล์ปัจจุบันก่อนเสนอร่าง"
+        },
+        {
+          "ordinal": 4,
+          "user": "ขอเช็กยอดกับชื่อร้านก่อน ยังไม่ต้องบันทึก",
+          "behavior": "แสดงรายละเอียดร่างและแหล่งที่มาโดยไม่สร้าง/แก้รายการการเงิน",
+          "limitation": "การแสดง preview ไม่ใช่คำยืนยันให้บันทึก"
+        },
+        {
+          "ordinal": 5,
+          "user": "ขอยกเลิกก่อน เดี๋ยวถามฝ่ายบัญชี",
+          "behavior": "ยกเลิกขั้นตอนร่างที่ค้างอย่างชัดเจน ยอดสรุปรายจ่ายที่ตอบไปยังเป็นผลอ่านเดิม",
+          "limitation": "ต้องอ่านสถานะปัจจุบัน หากเคย commit ไปแล้วห้ามบอกว่าลบ/ย้อนแล้วโดยไม่มีหลักฐาน; ไม่ submit/approve/pay"
+        }
+      ],
+      "semanticStatus": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "id": "NAT-05",
+      "title": "ถามใบเสร็จก่อน ค่อยเปลี่ยนใจให้ทำร่าง",
+      "prerequisite": "แนบ [receipt-clear.png](mangmee-ai-natural-assets-2026-09-27/receipt-clear.png) ในข้อความ 1; ไฟล์ต้องอยู่ในขอบเขตผู้ใช้และยังเปิดอ่านได้ ใช้ฉลากร่างในโฟลเดอร์ NAT เดียวกัน เป็นภาพที่มีตัวอักษรจริงและไม่แก้ asset เดิมส่วน B; ยังไม่ได้รับรองโดยคนหรือถือว่าโมเดลอ่านผ่าน",
+      "turns": [
+        {
+          "ordinal": 1,
+          "user": "ใบนี้รวมเท่าไหร่อะ",
+          "behavior": "อ่านยอดรวมของรูปที่แนบและบอกข้อจำกัดถ้าอ่านไม่ชัด",
+          "limitation": "คำถามอ่านเอกสารอย่างเดียวต้องไม่มี expense/reimbursement write"
+        },
+        {
+          "ordinal": 2,
+          "user": "VAT ล่ะ ไม่ใช่ยอดรวมนะ",
+          "behavior": "อ่านส่วน VAT จากใบเดิม แยกบทบาทจำนวนเงินชัดเจน",
+          "limitation": "ไม่คำนวณอัตราหรือสิทธิ์ภาษีแทนข้อความบนเอกสาร และไม่ยกยอดรวมมาตอบ VAT"
+        },
+        {
+          "ordinal": 3,
+          "user": "ชื่อร้านกับวันที่อ่านว่าอะไร",
+          "behavior": "ตอบเฉพาะที่มีหลักฐานบนไฟล์พร้อมระบุส่วนไม่ชัด",
+          "limitation": "ไม่ยืมชื่อ/วันที่จากใบก่อนหน้าหรือเดาจากชื่อไฟล์"
+        },
+        {
+          "ordinal": 4,
+          "user": "แค่ถามนะ อย่าเพิ่งลงรายจ่าย",
+          "behavior": "ยืนยันขอบเขตว่าเป็นการถามเนื้อหา ไม่สร้างร่างใหม่จากประโยคนี้",
+          "limitation": "ต้องตรวจว่าไม่มีผลเขียนเกิดตั้งแต่ข้อความ 1–3 ไม่อาศัยคำตอบรับปากอย่างเดียว"
+        },
+        {
+          "ordinal": 5,
+          "user": "โอเค งั้นช่วยทำร่างค่าอาหารจากใบนี้ไว้ตรวจที",
+          "behavior": "รับเป้าหมายใหม่ที่ขอร่างอย่างชัดเจน ใช้ไฟล์เดิมเมื่อยังมีสิทธิ์ และถามข้อมูลธุรกิจที่ขาด",
+          "limitation": "ต้องมีสาขา/วัน/วัตถุประสงค์ตามกติกาจริง; ห้ามตีความเป็นยืนยันเอกสารหรือจ่ายเงิน"
+        }
+      ],
+      "semanticStatus": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "id": "NAT-06",
+      "title": "ส่งผิดใบ เปลี่ยนไฟล์ และอ่านได้ไม่ครบ",
+      "prerequisite": "ข้อความ 1 แนบ [receipt-partial.pdf](mangmee-ai-natural-assets-2026-09-27/receipt-partial.pdf); ข้อความ 2 แนบ [document-unreadable.pdf](mangmee-ai-natural-assets-2026-09-27/document-unreadable.pdf) ผู้ช่วยต้องแยกสองไฟล์และแจ้งชื่อ/จำนวนหน้าที่รับรู้ได้จริง",
+      "turns": [
+        {
+          "ordinal": 1,
+          "user": "ดูหน่อย ใบนี้เขียนว่าอะไรบ้าง",
+          "behavior": "อ่านไฟล์แรกตามหน้าที่อ่านได้และระบุว่าอ่านได้บางส่วน",
+          "limitation": "ไม่กล่าวว่าอ่านครบทั้งเอกสารถ้าเลขผู้เสียภาษีหน้า 2 ถูกปิดบัง แม้รายการอื่นอ่านได้"
+        },
+        {
+          "ordinal": 2,
+          "user": "ส่งผิด เอาไฟล์นี้แทนอันเมื่อกี้",
+          "behavior": "ใช้ไฟล์ใหม่เป็นเป้าหมายของคำถามนี้ และรักษาตัวตนของไฟล์เดิมไว้สำหรับการอ้างกลับ",
+          "limitation": "คำว่า “แทน” ไม่ใช่รวมเนื้อหาสองไฟล์ ไม่ลบหลักฐานทางธุรกิจเดิม"
+        },
+        {
+          "ordinal": 3,
+          "user": "หน้าสองเขียนว่าไง",
+          "behavior": "อ้างหน้า 2 ของไฟล์ใหม่ ถ้าอ่านไม่ได้ให้บอกตรง ๆ และขอภาพที่ชัดขึ้นเฉพาะหน้า",
+          "limitation": "ห้ามเติมข้อความหน้า 2 จากไฟล์แรกหรือจากความน่าจะเป็น"
+        },
+        {
+          "ordinal": 4,
+          "user": "งั้นสรุปแค่หน้าที่อ่านออก",
+          "behavior": "สรุปเฉพาะส่วนที่อ่านได้ของไฟล์ใหม่ พร้อมบอกหน้าที่ไม่รวม",
+          "limitation": "ไม่แปลงช่องที่อ่านไม่ได้เป็นค่าว่าง/ศูนย์ที่ดูเหมือนข้อมูลจริง"
+        },
+        {
+          "ordinal": 5,
+          "user": "ขอเทียบกับไฟล์แรกด้วย ยังอยู่มั้ย",
+          "behavior": "ตรวจว่าไฟล์แรกยังเข้าถึงได้ ถ้าได้จึงเทียบส่วนที่มีหลักฐาน; ถ้าไม่ได้ขอแนบใหม่",
+          "limitation": "ไม่อ้างความจำที่ไม่มี retained source หรือสิทธิ์ปัจจุบัน และไม่มีการสร้างรายจ่าย"
+        }
+      ],
+      "semanticStatus": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "id": "NAT-07",
+      "title": "จำนวนเงินกำกวม แก้ไขข้อมูล แล้วดูร่าง",
+      "prerequisite": "ไม่มีรายการเก่าที่ถือว่าเป็นเป้าหมายโดยอัตโนมัติ ผู้ใช้กำลังเตรียมข้อมูลร่างค่าใช้จ่ายใหม่; สาขาและสิทธิ์เขียนต้องพร้อมก่อนบันทึกจริง",
+      "turns": [
+        {
+          "ordinal": 1,
+          "user": "ช่วยจดค่าส่งของ 1,2OO เมื่อวานหน่อย",
+          "behavior": "รับเจตนาขอร่าง แต่ถามยืนยันจำนวนเงิน “1,2OO” ที่มีตัว O ปนตัวเลขแบบเจาะจง",
+          "limitation": "ไม่แทน O ด้วย 0 แล้วเขียนยอดเอง ต้องรอจำนวนที่ผู้ใช้ยืนยัน"
+        },
+        {
+          "ordinal": 2,
+          "user": "พิมผิด 1,200 บาท",
+          "behavior": "แทนจำนวนเดิมด้วย 1,200 บาทจากข้อความผู้ใช้ คงวันและวัตถุประสงค์เดิม",
+          "limitation": "เป็นค่าที่ผู้ใช้แจ้ง ไม่อ้างว่าอ่านได้จากใบเสร็จ"
+        },
+        {
+          "ordinal": 3,
+          "user": "แต่จ่ายสดไป 200 ที่เหลือโอน",
+          "behavior": "แยกยอดรายจ่ายรวมจากช่องทางชำระ ไม่บวก 200 ซ้ำในยอดรวม",
+          "limitation": "หากร่าง/เครื่องมือไม่รองรับแยกช่องทาง ให้บอกข้อจำกัดและเก็บข้อมูลที่รองรับอย่างซื่อสัตย์"
+        },
+        {
+          "ordinal": 4,
+          "user": "วันที่จริงวันศุกร์ที่แล้ว ไม่ใช่เมื่อวาน",
+          "behavior": "แก้วันโดยอิงวันปัจจุบันและ timezone ของ fixture ถ้าตีความได้มากกว่าหนึ่งวันให้ยืนยันวันที่เต็ม",
+          "limitation": "ไม่ย้ายสาขา/หมวด/จำนวนเงินตามไปเอง"
+        },
+        {
+          "ordinal": 5,
+          "user": "ขอดูที่จดไว้ก่อนว่าถูกยัง",
+          "behavior": "แสดง preview ของข้อมูลล่าสุดและช่องที่ยังขาด ไม่อ้างว่าบันทึกสำเร็จหากยังไม่เกิด commit",
+          "limitation": "ต้องเห็นยอดรวม วัน และข้อมูลชำระโดยไม่สับสน; ขั้นนี้ยังไม่อนุมัติหรือจ่ายจริง"
+        }
+      ],
+      "semanticStatus": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "id": "NAT-08",
+      "title": "ชื่อร้านคล้ายกัน เลือกด้วยคำธรรมดา",
+      "prerequisite": "fixture ต้องมีร้านที่ชื่อใกล้กันสองร้านจริงภายใต้สิทธิ์ผู้ใช้ พร้อมข้อมูลที่แยกกันได้และบิลที่สัมพันธ์กัน ก่อนข้อความ 3 ผู้ช่วยต้องส่งตัวเลือก “สมชายการช่าง” และอีกชื่อหนึ่งพร้อมวันที่/สาขาที่มีหลักฐาน",
+      "turns": [
+        {
+          "ordinal": 1,
+          "user": "หาบิลร้านสมชายให้หน่อย",
+          "behavior": "ค้นตามชื่อที่รองรับในขอบเขตสิทธิ์ ไม่สร้างชื่อร้านหรือเลขบิลให้เอง",
+          "limitation": "ถ้าพบหลายร้าน/หลายบิล ให้แสดงรายละเอียดพอแยกและถามเลือก"
+        },
+        {
+          "ordinal": 2,
+          "user": "ที่ซื้ออาทิตย์ก่อนอะ",
+          "behavior": "เพิ่มช่วงเวลาโดยคงชื่อร้าน ไม่ถือว่าคำนี้เลือกได้หนึ่งใบเสมอ",
+          "limitation": "ต้องมีวันที่ของรายการจริงและนิยามสัปดาห์ที่ตรึงไว้"
+        },
+        {
+          "ordinal": 3,
+          "user": "สมชายการช่าง อันที่ขึ้นมาเมื่อกี้",
+          "behavior": "ผูกกับตัวเลือกชื่อเต็มที่ส่งสำเร็จ ถ้ายังมีหลายบิลถามต่อเฉพาะบิล",
+          "limitation": "ห้ามเลือกโดยความคล้ายของชื่อถ้าตัวเลือกที่เห็นยังไม่ชัด"
+        },
+        {
+          "ordinal": 4,
+          "user": "ถ้ามีสองใบ ขอใบยอดสูงกว่า",
+          "behavior": "เปรียบเทียบยอดของสองใบที่แสดงจริงแล้วเปิดรายละเอียดใบที่สูงกว่า",
+          "limitation": "หากยอดเท่ากัน สกุลเงินต่างกัน หรือมีมากกว่าสองใบต้องถาม ไม่สมมติผลชนะ"
+        },
+        {
+          "ordinal": 5,
+          "user": "แค่เปิดดูนะ ไม่ต้องแก้อะไร",
+          "behavior": "แสดงรายละเอียดจากใบที่เลือก ไม่เกิดผลเขียน และระบุข้อมูลที่อ่านไม่ได้",
+          "limitation": "การเปิดดูไม่ได้อนุญาตให้เปลี่ยนร้าน ยอด หรือสถานะ"
+        }
+      ],
+      "semanticStatus": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "id": "NAT-09",
+      "title": "ถามแทรกเรื่อง VAT แล้วกลับมางานเดิม",
+      "prerequisite": "มีข้อมูลค่าใช้จ่ายเดือนที่ระบุและเก็บบริบทของคำตอบที่ส่งสำเร็จแล้วได้; การอธิบายทั่วไปไม่ต้องอ่าน ERP ส่วนตัวเพิ่มโดยไม่จำเป็น บัตรความรู้เรื่อง VAT ยังต้องผ่านคนตรวจในส่วน A",
+      "turns": [
+        {
+          "ordinal": 1,
+          "user": "ช่วยสรุปรายจ่ายสิงหาให้หน่อย",
+          "behavior": "ตีความชื่อเดือนย่อในบริบทปีที่ชัดและสรุปจากข้อมูลจริง",
+          "limitation": "ถ้าปีไม่ชัดและเปลี่ยนผลอย่างมีนัยสำคัญให้ถาม ไม่เดาข้ามปี"
+        },
+        {
+          "ordinal": 2,
+          "user": "เดี๋ยวนะ VAT ในบิลคืออะไร",
+          "behavior": "ตอบแนวคิดทั่วไปแบบเข้าใจง่ายโดยไม่ทำบริบทงานรายงานหาย",
+          "limitation": "ไม่รับรองอัตราปัจจุบันหรือสิทธิ์ขอคืนเฉพาะกิจการโดยไม่มีหลักฐาน"
+        },
+        {
+          "ordinal": 3,
+          "user": "แปลว่าเอาไปขอคืนได้ทุกใบเลยปะ",
+          "behavior": "อธิบายว่าการพบ VAT ไม่พอจะสรุปสิทธิ์ ต้องตรวจคุณสมบัติ/เงื่อนไขโดยผู้รับผิดชอบ",
+          "limitation": "ห้ามรับรองการยื่นภาษีหรือกฎหมายปัจจุบัน; ไม่ทำ public lookup ในชุดนี้"
+        },
+        {
+          "ordinal": 4,
+          "user": "โอเค กลับไปอันเมื่อกี้ แยกค่าของกับค่าบริการที",
+          "behavior": "กลับไปช่วงเดือน/ฐานรายงานเดิม แยกตามหมวดที่ข้อมูลรองรับ",
+          "limitation": "ถ้าหมวดจริงไม่แมปเป็นสองกลุ่มนี้ชัด ให้ถามวิธีจัดหรือแสดงหมวดเดิม ไม่เดาจากชื่อร้านอย่างเดียว"
+        },
+        {
+          "ordinal": 5,
+          "user": "ขอแบบส่งให้หุ้นส่วนอ่านได้ สั้น ๆ",
+          "behavior": "สรุปภาษาเรียบง่ายจากผลเดิมและคงข้อจำกัดสำคัญ",
+          "limitation": "เตรียมข้อความให้ผู้ใช้เท่านั้น ไม่ส่งให้บุคคลอื่นเอง และไม่ตัด caveat จนยอดเปลี่ยนความหมาย"
+        }
+      ],
+      "semanticStatus": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "id": "NAT-10",
+      "title": "ไม่มีข้อมูล หรือไม่มีสิทธิ์ ต้องบอกให้ตรง",
+      "prerequisite": "fixture แยกสามกรณีจริง ได้แก่ รายการค้นได้ศูนย์ในขอบเขตหนึ่ง, สาขาที่ผู้ใช้ไม่มีสิทธิ์, และแหล่งข้อมูลที่ยังไม่เชื่อม/ไม่พร้อม ต้องตรวจจากผล API ไม่ใช่จากข้อความที่โมเดลแต่ง",
+      "turns": [
+        {
+          "ordinal": 1,
+          "user": "เดือนนี้มีค่าน้ำค่าไฟมั้ย",
+          "behavior": "ค้นหมวด/รายการที่รองรับแล้วบอกผลตามข้อมูลจริง",
+          "limitation": "หากค้นได้ศูนย์ต้องบอกขอบเขต ไม่สรุปว่ากิจการไม่ได้มีค่าใช้จ่ายจริง"
+        },
+        {
+          "ordinal": 2,
+          "user": "ไม่เจอแปลว่ายังไม่ได้จ่ายใช่มั้ย",
+          "behavior": "อธิบายว่าข้อมูลไม่พบยังพิสูจน์สถานะการจ่ายไม่ได้",
+          "limitation": "ไม่เปลี่ยน “ไม่มีข้อมูลในระบบ” เป็น “ยังไม่จ่าย”"
+        },
+        {
+          "ordinal": 3,
+          "user": "งั้นดูของอีกสาขาให้ที สาขาที่ฉันเข้าไม่ได้",
+          "behavior": "บอกว่าดูสาขานั้นไม่ได้และให้ทางไปขอสิทธิ์ โดยไม่เปิดเผยยอด/รายละเอียด",
+          "limitation": "ไม่ลองข้ามสิทธิ์ผ่านรายงาน เครื่องมืออื่น หรือบัญชีคนอื่น"
+        },
+        {
+          "ordinal": 4,
+          "user": "เอาเฉพาะสาขาที่ฉันดูได้ก็ได้",
+          "behavior": "กลับมาสรุปในขอบเขตสิทธิ์ปัจจุบันโดยไม่รวมสาขาต้องห้าม",
+          "limitation": "ตรวจสิทธิ์ใหม่ ไม่ใช้ข้อมูลที่จำมาจากตอนเคยมีสิทธิ์"
+        },
+        {
+          "ordinal": 5,
+          "user": "แล้วรู้ได้ไงว่ารายการครบ ยังมีไฟล์ที่ไม่ได้อ่านมั้ย",
+          "behavior": "แยกความครบของผลค้นหากับงานนำเข้า/อ่านเอกสารที่ตรวจได้",
+          "limitation": "ถ้าไม่มีข้อมูลสถานะทุกแหล่งให้บอกว่ายืนยันความครบทั้งหมดไม่ได้ ไม่แต่งว่าทุกไฟล์สำเร็จ"
+        }
+      ],
+      "semanticStatus": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "id": "NAT-11",
+      "title": "ปรับรูปแบบคำตอบโดยไม่ลืมงานธุรกิจ",
+      "prerequisite": "บทสนทนาส่วนตัวที่ผูกผู้ใช้/บริษัทถูกต้อง มีผลรายจ่ายที่ส่งสำเร็จแล้ว; การจำรูปแบบต้องเป็น preference ที่รองรับ ไม่สร้างข้อมูลโปรไฟล์ธุรกิจหรือการเงินจากการคาดเดา",
+      "turns": [
+        {
+          "ordinal": 1,
+          "user": "รายจ่ายเดือนนี้สรุปให้ที ขอไม่ยาว",
+          "behavior": "สรุปสั้นจากข้อมูลจริงโดยยังบอกฐานยอดสำคัญ",
+          "limitation": "ไม่เก็บ preference ระยะยาวเพียงเพราะมีคำขอเฉพาะครั้ง"
+        },
+        {
+          "ordinal": 2,
+          "user": "ต่อไปตอบสั้น ๆ แบบนี้นะ จำไว้ได้มั้ย",
+          "behavior": "ถ้าเป็น style key ที่รองรับให้บันทึกตามคำขอชัดเจนและแจ้งผลจริง",
+          "limitation": "ต้องตรวจ owner/สิทธิ์; ถ้าบันทึกไม่ได้ให้บอก ไม่รับปากว่า “จำแล้ว”"
+        },
+        {
+          "ordinal": 3,
+          "user": "แต่อันเมื่อกี้ขอละเอียดหน่อย ทำไมยอดเพิ่ม",
+          "behavior": "ขยายผลรายจ่ายเดิมเฉพาะครั้งนี้ แยกส่วนต่างที่สังเกตได้จากสาเหตุที่ยังไม่ทราบ",
+          "limitation": "คำขอครั้งนี้ไม่เปลี่ยน preference ถาวรเอง; ต้องมีฐานเปรียบเทียบก่อนบอกว่ายอดเพิ่ม"
+        },
+        {
+          "ordinal": 4,
+          "user": "ตอนนี้จำอะไรเกี่ยวกับวิธีตอบฉันอยู่บ้าง",
+          "behavior": "แสดงเฉพาะ preference ที่มีอยู่จริงของ owner นี้",
+          "limitation": "ไม่ปนยอดกิจการ ความสนใจส่วนตัว หรือข้อมูลผู้ใช้อื่น"
+        },
+        {
+          "ordinal": 5,
+          "user": "ลืมเรื่องตอบสั้นไปก่อน",
+          "behavior": "ลบ preference ที่ระบุและยืนยันเมื่อสำเร็จ",
+          "limitation": "ไม่ลบเอกสารธุรกิจหรือ task เดิม; หากไม่มี preference ให้บอกว่าไม่พบโดยไม่สร้างขึ้นมาก่อนลบ"
+        }
+      ],
+      "semanticStatus": "PENDING_HUMAN_REVIEW"
+    },
+    {
+      "id": "NAT-12",
+      "title": "แก้ร่าง ยกเลิก แล้วกลับมาขอดูสถานะ",
+      "prerequisite": "ผู้ใช้มีสิทธิ์ทำร่างค่าใช้จ่าย; ก่อนข้อความ 2 ผู้ช่วยต้องส่ง preview ค่าส่งของที่แยกจากรายการอื่นได้จริง โดยยังไม่ commit และต้องเก็บสถานะ/รุ่น preview หลังแก้ไขและยกเลิก",
+      "turns": [
+        {
+          "ordinal": 1,
+          "user": "ทำร่างค่าส่งของวันนี้สามร้อยบาทให้หน่อย",
+          "behavior": "เข้าใจจำนวนเงินที่เขียนเป็นคำ เตรียมร่างจากข้อมูลที่แจ้งและถามข้อมูลจำเป็นที่ยังขาด ไม่อ้างบันทึกสำเร็จล่วงหน้า",
+          "limitation": "วันและจำนวนเป็นค่าจากผู้ใช้; สาขา/วัตถุประสงค์ต้องตรงกติกาจริง"
+        },
+        {
+          "ordinal": 2,
+          "user": "อันเมื่อกี้ไม่ใช่ 300 เป็น 350 นะ",
+          "behavior": "แก้เฉพาะยอดของ preview ที่เพิ่งส่ง และแสดงรุ่นล่าสุดให้ตรวจ",
+          "limitation": "ไม่สร้างร่างซ้ำ และ preview รุ่นเก่าต้องไม่ยืนยันยอดเดิมได้"
+        },
+        {
+          "ordinal": 3,
+          "user": "เดี๋ยว ๆ ยกเลิกก่อน",
+          "behavior": "หยุดงานที่ยังไม่ commit และแจ้งสถานะที่ตรวจได้จริง",
+          "limitation": "หากผลไม่แน่นอนต้องตรวจสถานะก่อนอ้างว่ายกเลิกสำเร็จ"
+        },
+        {
+          "ordinal": 4,
+          "user": "เมื่อกี้เน็ตหลุด สรุปบันทึกไปยัง",
+          "behavior": "อ่านสถานะของงานเดิมแล้วตอบ ไม่ส่งคำสั่งสร้างซ้ำ",
+          "limitation": "ถ้าระบบยังพิสูจน์ไม่ได้ให้บอกว่ากำลังตรวจ/ยังไม่ทราบ แทนการเดาว่าสำเร็จหรือไม่สำเร็จ"
+        },
+        {
+          "ordinal": 5,
+          "user": "งั้นขอดูข้อมูลเดิมก่อน อย่าเพิ่งทำใหม่",
+          "behavior": "แสดงข้อมูล/สถานะที่ยังเรียกคืนได้ และคงคำสั่งไม่ทำใหม่",
+          "limitation": "หากร่างถูกยกเลิกหรือหมดอายุให้บอกตรง ๆ ไม่ฟื้น preview เก่าให้กลายเป็นอำนาจยืนยันใหม่"
+        }
+      ],
+      "semanticStatus": "PENDING_HUMAN_REVIEW"
+    }
+  ],
+  "sourceHashes": {
+    "intakeRouter": "0145ffe5baee09afb497ab97eb46d597295529725b2190507092a8b82c6f78ca"
+  }
+}

@@ -16,7 +16,7 @@
  */
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LINE_AI_PREPARED_PLAN_SECURITY_EVAL_CASES, LINE_TOOL_REGISTRY, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { LINE_AI_PREPARED_PLAN_SECURITY_EVAL_CASES, LINE_TOOL_REGISTRY, createLineAiInputEvidence, parseLineAiPreparedPlan, parseLineAiSemanticCoverage } from '@watchdog-bms/contracts';
 import type { LineAiPreparedPlan, LineAiTurnRequest, LineAiValueCandidates, ToolResult } from '@watchdog-bms/contracts';
 import type { AgentRunResult } from './agent-types';
 import { OrchestratorAgent } from './orchestrator.agent';
@@ -53,11 +53,13 @@ function makeConfig(over: Record<string, unknown> = {}): any {
 function makeErp(result: Partial<ToolResult> = {}) {
   const calls: string[] = [];
   const inputs: unknown[] = [];
+  const contexts: Record<string, unknown>[] = [];
   const okData = { totalSales: '12,345', transactionCount: 42, basis: 'accrual' };
   const client = {
     invoke: async (tool: any, _ctx: any, input: unknown) => {
       calls.push(tool.name);
       inputs.push(input);
+      contexts.push(_ctx);
       return {
         toolName: tool.name, status: 'ok', data: okData,
         sourceRefs: [{ label: 'ยอดขายรวม', module: tool.sourceModule, entityType: 'summary', permissionChecked: true, webPath: '/sales' }],
@@ -65,7 +67,7 @@ function makeErp(result: Partial<ToolResult> = {}) {
       };
     },
   } as any;
-  return { client, calls, inputs };
+  return { client, calls, inputs, contexts };
 }
 
 /** A capturing logger so the exact prepared-lane fallback reason can be asserted per case. */
@@ -205,6 +207,107 @@ const SECURITY: Record<string, CaseSpec> = {
     },
   },
 };
+
+async function v2Req(over: Partial<LineAiTurnRequest> = {}, plan = rawPreparedSales()): Promise<LineAiTurnRequest> {
+  const req = baseReq(over, plan);
+  const evidence = await createLineAiInputEvidence({ turnKey: 'prepared-v2-turn', parts: [{ partId: 'text',
+    rawText: req.messageText, eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now() }] });
+  assert.ok(evidence);
+  const part = evidence.inputEvidence.parts[0]!;
+  return { ...req, inputEvidence: evidence.inputEvidence,
+    // The transport validates/signs the grant; this suite proves the orchestrator never widens it.
+    budgetGrantV2: { maxTurnSlots: 2, nextOrdinal: 1 } as LineAiTurnRequest['budgetGrantV2'],
+    semanticSubrequests: [{ index: 0, kind: 'read', goal: req.messageText, requiredEvidence: [], requestedFilters: {}, dependsOn: [],
+      evidenceRefs: [{ partId: part.partId, rawSha256: part.rawSha256, startUtf16: 0, endUtf16: part.rawText.length }] }],
+  };
+}
+
+describe('v2 prepared simple-read preserves the two-call grant and semantic coverage', () => {
+  it('uses the existing guarded formatter after intake without another model call', async () => {
+    const { client, calls, inputs, contexts } = makeErp();
+    const req = await v2Req(), originalGrant = structuredClone(req.budgetGrantV2);
+    const result = await new OrchestratorAgent(client, makeConfig()).run(req);
+    assert.deepEqual(calls, ['sales.get_sales_summary']);
+    assert.deepEqual(inputs, [{ fromDate: BACKED_DATE, toDate: BACKED_DATE }]);
+    assert.equal(fetchCalls, 0);
+    assert.deepEqual(spy, { compose: 0, judge: 0, route: 0 });
+    assert.deepEqual(req.budgetGrantV2, originalGrant);
+    assert.deepEqual(contexts[0]?.inputEvidence, req.inputEvidence);
+    assert.deepEqual(contexts[0]?.budgetGrantV2, originalGrant);
+    assert.equal(result.presentation?.kind, 'answer_cards');
+    assert.match(result.replyText, /12,345/);
+    assert.deepEqual(result.semanticCoverage, [{ index: 0, status: 'handled', sourceRefIds: ['accounting-documents:summary:summary'] }]);
+    assert.ok(parseLineAiSemanticCoverage(result.semanticCoverage, req.semanticSubrequests!));
+  });
+
+  for (const [name, scenario] of Object.entries(SECURITY)) {
+    it(`${name}: retains the same security/source boundary on the v2 route`, async () => {
+      const { client, calls } = makeErp(scenario.erp);
+      const req = await v2Req(scenario.req, scenario.plan);
+      const result = await new OrchestratorAgent(client, makeConfig()).run(req);
+      assert.equal(calls.length, scenario.expectCalls);
+      assert.equal(fetchCalls, 0, 'never spend the remaining slot on an unusable plan');
+      assert.deepEqual(spy, { compose: 0, judge: 0, route: 0 });
+      assert.ok(parseLineAiSemanticCoverage(result.semanticCoverage, req.semanticSubrequests!));
+      assert.equal(result.semanticCoverage?.[0]?.status, name === 'prepared-explicit-empty' ? 'handled' : 'needs_user');
+      if (scenario.expectCalls) scenario.assertOutcome?.(result);
+      else assert.deepEqual(result.outputs, []);
+    });
+  }
+
+  for (const fault of ['extra_clause', 'dependency', 'conflicting_filter', 'entity_reference', 'missing_plan', 'disabled_family', 'flag_off', 'unbacked_date'] as const) {
+    it(`refuses ${fault} before any tool or extra model dispatch`, async () => {
+      const { client, calls } = makeErp();
+      const req = await v2Req();
+      const item = req.semanticSubrequests![0]!;
+      if (fault === 'extra_clause') req.semanticSubrequests!.push({ ...item, index: 1, kind: 'general', goal: 'Explain cash versus profit' });
+      if (fault === 'dependency') item.dependsOn = [0];
+      if (fault === 'conflicting_filter') item.requestedFilters = { fromDate: '2020-05-05' };
+      if (fault === 'entity_reference') item.entityReference = { kind: 'user_text', value: 'ใบที่สอง' };
+      if (fault === 'missing_plan') req.preparedPlan = undefined;
+      if (fault === 'unbacked_date') req.valueCandidates = undefined;
+      const result = await new OrchestratorAgent(client, makeConfig({
+        ...(fault === 'disabled_family' ? { lineAiDeterministicResponseFamilies: [] } : {}),
+        ...(fault === 'flag_off' ? { lineAiPreparedSimpleReadEnabled: false } : {}),
+      })).run(req);
+      assert.deepEqual(calls, []); assert.equal(fetchCalls, 0);
+      assert.equal(result.semanticCoverage?.length, req.semanticSubrequests!.length);
+      assert.ok(result.semanticCoverage?.every(coverage => coverage.status === 'needs_user'));
+      assert.ok(parseLineAiSemanticCoverage(result.semanticCoverage, req.semanticSubrequests!));
+      assert.deepEqual(result.sourceRefs, []);
+    });
+  }
+
+  it('does not label an unverified source as handled or display its number', async () => {
+    const { client, calls } = makeErp({ sourceRefs: [{ label: 'unverified', module: 'sales', entityType: 'summary', permissionChecked: false }] as unknown as ToolResult['sourceRefs'] });
+    const result = await new OrchestratorAgent(client, makeConfig()).run(await v2Req());
+    assert.equal(calls.length, 1); assert.equal(fetchCalls, 0);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user');
+    assertNoFabricatedNumber(result);
+  });
+
+  it('keeps the ordinary semantic fallback when the issued grant allows its control and answer', async () => {
+    const { client, calls } = makeErp();
+    const req = await v2Req();
+    req.preparedPlan = undefined;
+    req.budgetGrantV2 = { ...req.budgetGrantV2!, maxTurnSlots: 4 };
+    const responses = [
+      { calls: [{ index: 0, toolName: 'sales.get_sales_summary', input: { fromDate: BACKED_DATE, toDate: BACKED_DATE } }], questions: [] },
+      { answers: [{ index: 0, status: 'handled', text: 'รับชำระแล้ว 12,345 บาท', sourceRefIds: ['accounting-documents:summary:summary'] }] },
+    ];
+    globalThis.fetch = (async () => {
+      fetchCalls++;
+      return new Response(JSON.stringify({ status: 'completed', output_text: JSON.stringify(responses.shift()),
+        usage: { input_tokens: 12, output_tokens: 10 } }), { status: 200 });
+    }) as typeof fetch;
+    const result = await new OrchestratorAgent(client, makeConfig()).run(req);
+    assert.deepEqual(calls, ['sales.get_sales_summary']);
+    assert.equal(fetchCalls, 2);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.match(result.replyText, /12,345/);
+    assert.equal(req.budgetGrantV2.maxTurnSlots, 4);
+  });
+});
 
 describe('prepared simple-read lane — real runtime execution of every security/source case', () => {
   it('maps every corpus security case to a concrete executed scenario (no case left as a recorded gap)', () => {

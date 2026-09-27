@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "status": "draft",
+  "humanCertified": false,
+  "assets": {
+    "receipt-clear": {
+      "fileName": "receipt-clear.png",
+      "mimeType": "image/png",
+      "pages": 1,
+      "sha256": "23a09641ef60c99317f4330e95c5bb9f93daa70ed4fbe681ce16bf0864a31f3c",
+      "labelFile": "receipt-clear.label.json",
+      "labelDigest": "b68b2b891b2794e7c56962f603e30d56198a461263a8bd0d19d5b2f42d72fdc3",
+      "labelledBy": null,
+      "status": "draft"
+    },
+    "receipt-partial": {
+      "fileName": "receipt-partial.pdf",
+      "mimeType": "application/pdf",
+      "pages": 2,
+      "sha256": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+      "labelFile": "receipt-partial.label.json",
+      "labelDigest": "b1f80777fa41c9769924b9c3319569dc0468b345a22e5c8145f14c42bd7dc0d2",
+      "labelledBy": null,
+      "status": "draft"
+    },
+    "document-unreadable": {
+      "fileName": "document-unreadable.pdf",
+      "mimeType": "application/pdf",
+      "pages": 2,
+      "sha256": "37b80639d6d96436268e911c8792542c3c7e0e1e3e18fabd84b462e0f8324f01",
+      "labelFile": "document-unreadable.label.json",
+      "labelDigest": "cf69ae2118b60b9e50551cdf56defa5418a98a263f4d8524cccc46d8d0c71894",
+      "labelledBy": null,
+      "status": "draft"
+    }
+  }
+}

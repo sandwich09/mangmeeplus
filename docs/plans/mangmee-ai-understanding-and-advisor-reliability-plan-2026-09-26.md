@@ -1,11 +1,18 @@
 # Plan: แก้ความเข้าใจและความน่าเชื่อถือของน้องมั่งมี
 
 วันที่: 2026-09-26\
-สถานะ: **Specified v2.4 — implementation index + 4 normative contracts ครบ R1/R2/R3 พร้อม impact/closure gates; C13/W10 เสียงพัก; ยังไม่ implement/ทดสอบ provider/rollout จากงานนี้**\
+สถานะ: **v2.4 source implementation/default activation merge แล้ว; real-model NAT diagnostic 2026-09-27 ไม่ผ่านการรับงาน — W14/Production readiness ยังไม่ปิด**\
 Spec: [Understanding and advisor reliability](../specs/mangmee-ai-understanding-and-advisor-reliability-spec-th.md)\
 Memory: [Audit and planning state](../agent-memory/mangmee-starter-advisor-audit-2026-09-26.md)
 
 แผน §3–9 เป็นขั้นตอนของแต่ละ release; §12–15 ระบุ work packages ครบชุดและ gate ของ R1/R2/R3 ใช้ร่วมกับ [acceptance catalog](../qa/mangmee-conversation-acceptance-catalog-2026-09-26-th.md) ไม่ถือว่าจบ core fixes แล้วจบขอบเขต v2 ทั้งหมด
+
+
+## Evidence update — 2026-09-27: ผลโมเดลจริงยังไม่ผ่าน
+
+รัน NAT12/60 ด้วยโมเดลจริงและ webhook/tool จริงในระบบ local สังเคราะห์ ได้ primary evidence56ข้อ อีก4ข้อหยุดหลังPDFtimeout การรันทวนหลังแก้เก็บแยก snapshot ดู [ผลพร้อมข้อความ/payload/เวลา/ข้อบกพร่อง](../research/mangmee-natural-real-model-results-2026-09-27-th.md) การมี implementation และเปิด default ไม่ใช่ functional acceptance; checkbox ในแผนออกแบบเดิมเป็นรายการงาน ไม่ใช่สถานะ deployed ล่าสุด
+
+ต้องปิด context/current-attachment, file-read dispatch, budget/route eligibility, entity resolution, draft/control/preferences และทดสอบ actual card/actions ก่อนรับ W14 ไม่มีการ deploy หรือเปลี่ยน customer gate จากงานทดสอบนี้ Public lookup/เสียงยังพัก
 
 ## Owner update — 2026-09-27: ขั้นต่อไปของ W14
 
