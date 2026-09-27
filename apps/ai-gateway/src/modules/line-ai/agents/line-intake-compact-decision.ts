@@ -248,15 +248,17 @@ export function parseLineIntakeCompactDecision(input: {
       return reject('taskref_malformed');
     }
     const writeIntent = item['writeIntent'];
-    // A writeIntent claimed on a non-write clause is a structural inconsistency the model must
-    // never produce — reject the whole decision as before. A writeIntent VALUE the tool catalog
-    // does not support at all (C4, e.g. invoicing) is different: it must not fail the whole
-    // decision, since the clause itself (kind:'write', no writeIntent) is still perfectly valid and
-    // lets the normal write path answer honestly instead of the intake discarding the entire
-    // message. Only a value IN `WRITE_INTENTS` was ever wired to a real tool, so dropping an
-    // unrecognized one removes authority, never grants it — an unknown write still executes nothing.
-    if (writeIntent !== undefined && item['kind'] !== 'write') return reject('decision_shape_invalid');
-    const recognizedWriteIntent = WRITE_INTENTS.has(writeIntent as NonNullable<LineAiSemanticSubrequestV2['writeIntent']>)
+    // Item 4 root cause (eval T-144-b, "ช่วยอนุมัติใบเบิกของสมชายให้หน่อยค่ะ" — approving an EXISTING
+    // claim has no writeIntent value at all, since WRITE_INTENTS only covers creating/correcting one):
+    // a writeIntent VALUE the tool catalog does not support (C4) must not fail the whole decision,
+    // since the clause itself is still perfectly valid without it and lets the normal path answer
+    // honestly instead of the intake discarding the entire message. The same is true when the model
+    // also gets `kind` wrong on that same clause (e.g. `general` instead of `write`, still naming a
+    // writeIntent) — a real model confused the SHAPE of an unsupported write, not its authority, and
+    // only a value IN `WRITE_INTENTS` was ever wired to a real tool, so dropping the mismatched hint
+    // here removes authority, never grants it — an unknown write still executes nothing either way.
+    const recognizedWriteIntent = item['kind'] === 'write'
+      && WRITE_INTENTS.has(writeIntent as NonNullable<LineAiSemanticSubrequestV2['writeIntent']>)
       ? writeIntent as NonNullable<LineAiSemanticSubrequestV2['writeIntent']> : undefined;
     canonical.push({
       index, kind: item['kind'], goal: item['goal'], requiredEvidence, requestedFilters: filters, dependsOn,

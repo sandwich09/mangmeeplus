@@ -242,7 +242,11 @@ describe('LINE intake router – routeIntake', () => {
     }
   });
 
-  it('rejects a compact taskRef that does not match the current task revision', async () => {
+  it('item 4: drops (not rejects) a compact taskRef that does not match the current task revision', async () => {
+    // Old behavior failed the WHOLE route here (ROUTER_SEMANTIC_SCHEMA_INVALID) even though a taskRef
+    // grants no authority by itself — it only selects which pending question a clause continues. A
+    // stale/unverifiable one is now dropped from just that clause so the message still routes, exactly
+    // as the eval's T-105-b branch-follow-up needed (see intent-router.agent.ts's parseIntakePlan).
     const text = 'ทำต่อเลย';
     const built = await createLineAiInputEvidence({ turnKey: 'compact-stale-task', parts: [{ partId: 'part-0',
       eventIdHash: 'd'.repeat(64), acceptedAtMs: 1, rawText: text }] });
@@ -255,8 +259,31 @@ describe('LINE intake router – routeIntake', () => {
       decisionV1: { subrequests: [{ kind: 'write', goal: text, sources: [{ part: 0, whole: true }], filters: {},
         writeIntent: 'EXPENSE_DRAFT_CONTINUATION', taskRef: { taskId: 'task-1', taskRevision: 4, subrequestIndex: 0 } }] },
     })).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, taskProjection }));
-    assert.equal(plan.status, 'UNAVAILABLE');
-    assert.equal(plan.errorCode, 'ROUTER_SEMANTIC_SCHEMA_INVALID');
+    assert.equal(plan.status, 'ROUTED');
+    assert.notEqual(plan.errorCode, 'ROUTER_SEMANTIC_SCHEMA_INVALID');
+    assert.equal(plan.semanticSubrequests?.[0]?.taskRef, undefined);
+    assert.equal(plan.semanticSubrequests?.[0]?.writeIntent, 'EXPENSE_DRAFT_CONTINUATION');
+  });
+
+  it('item 4 (eval T-105-b): "แล้วที่สาขา 2 ล่ะครับ" after a completed daily-closing turn routes instead of schema-invalid', async () => {
+    // The prior daily-closing question was already fully answered, so it is no longer waiting_user/
+    // paused in taskProjection — but a real model attached its taskRef to this brand-new branch
+    // follow-up anyway, despite the router prompt saying a new read question carries none at all.
+    const text = 'แล้วที่สาขา 2 ล่ะครับ';
+    const built = await createLineAiInputEvidence({ turnKey: 'branch-followup-stale-task', parts: [{ partId: 'part-0',
+      eventIdHash: '1'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const taskProjection = { version: 2 as const, stateVersion: 1, lifecycleEpoch: 0, expiresAtMs: Date.now() + 60_000, tasks: [] };
+    const plan = await new IntentRouterAgent(modelAnswer({
+      intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9,
+      decisionV1: { subrequests: [{ kind: 'read', goal: 'สรุปรายวันสาขา 2', sources: [{ part: 0, whole: true }],
+        filters: { branchId: 'สาขา 2' }, taskRef: { taskId: 'stale-daily-closing-task', taskRevision: 1, subrequestIndex: 0 } }] },
+    })).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, taskProjection,
+      offeredToolNames: ['expense.get_daily_closing'] }));
+    assert.equal(plan.status, 'ROUTED');
+    assert.notEqual(plan.errorCode, 'ROUTER_SEMANTIC_SCHEMA_INVALID');
+    assert.equal(plan.semanticSubrequests?.[0]?.taskRef, undefined);
+    assert.equal(plan.semanticSubrequests?.[0]?.kind, 'read');
   });
 
   it('resumes a pending task from a valid compact taskRef object', async () => {

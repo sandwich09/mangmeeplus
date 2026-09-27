@@ -6,7 +6,7 @@
  * Uses model prompt when a provider is configured; fails closed when model routing is unavailable.
  */
 import { BUSINESS_DOCUMENT_REASON_CODES, LINE_CORRECTION_FIELDS, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, extractValueCandidates, hasToolFeature, hasToolPermissions, isAmbiguousDateCandidate, formatDateClarifyQuestion, lineAiRetainedTaskSourceMatchesProjection, lineAiRetainedTaskSourceText, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan, parseLineAiSemanticSubrequests, verifyLineAiRetainedTaskSource } from '@watchdog-bms/contracts';
-import type { AgentIntentPlan, LineAiConversationContext, LineAiInputEvidenceV2, LineAiOpenClarification, LineAiRetainedTaskSourceV2, LineAiTaskProjectionV2, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, LineIntakeExpenseItemHint, LineIntakeReimbursementHints, LineIntakeRouteIntent, LineIntakeRoutePlan, LineIntakeRouteRequest } from '@watchdog-bms/contracts';
+import type { AgentIntentPlan, LineAiConversationContext, LineAiInputEvidenceV2, LineAiOpenClarification, LineAiRetainedTaskSourceV2, LineAiSemanticSubrequestV2, LineAiTaskProjectionV2, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, LineIntakeExpenseItemHint, LineIntakeReimbursementHints, LineIntakeRouteIntent, LineIntakeRoutePlan, LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { Logger } from '@nestjs/common';
 import { extractJson } from '../../../common/ai/extract-json';
@@ -1197,13 +1197,25 @@ function parseIntakePlan(
       durationMs: Date.now() - compactStartedAt,
     });
     if (hasCompactDecision && !compactDecision) return null;
-    const semanticSubrequests = compactDecision?.semanticSubrequests ?? (inputEvidence
+    let semanticSubrequests = compactDecision?.semanticSubrequests ?? (inputEvidence
       ? parseLineAiSemanticSubrequests(raw['semanticSubrequests'], messageText, inputEvidence)
       : undefined);
     if (inputEvidence && !semanticSubrequests) return null;
-    if (semanticSubrequests?.some(item => item.taskRef && !taskProjection?.tasks.some(task => task.taskId === item.taskRef!.taskId
-      && task.revision === item.taskRef!.taskRevision && ['waiting_user', 'paused'].includes(task.state)
-      && task.subrequests.some(sub => sub.index === item.taskRef!.subrequestIndex && sub.kind === item.kind && ['needs_user', 'pending'].includes(sub.status))))) return null;
+    // Item 4 root cause (eval T-105-b, "แล้วที่สาขา 2 ล่ะครับ" asked right after a fully-answered
+    // daily-closing turn): the router's own prompt says a brand-new read question carries no taskRef
+    // at all, but a real model sometimes attaches a stale one anyway (e.g. echoing the prior — by then
+    // completed — turn's id). A taskRef only selects which pending question a clause continues; it
+    // grants no authority by itself, so an unverifiable one is dropped from just that one clause
+    // instead of invalidating the whole route (and every other independent clause riding with it).
+    semanticSubrequests = semanticSubrequests?.map((item): LineAiSemanticSubrequestV2 => {
+      if (!item.taskRef) return item;
+      const validTaskRef = taskProjection?.tasks.some(task => task.taskId === item.taskRef!.taskId
+        && task.revision === item.taskRef!.taskRevision && ['waiting_user', 'paused'].includes(task.state)
+        && task.subrequests.some(sub => sub.index === item.taskRef!.subrequestIndex && sub.kind === item.kind && ['needs_user', 'pending'].includes(sub.status)));
+      if (validTaskRef) return item;
+      const { taskRef: _taskRef, ...withoutTaskRef } = item;
+      return withoutTaskRef;
+    });
     if (retainedTaskSource && (semanticSubrequests?.length !== 1
       || semanticSubrequests[0]!.kind !== retainedTaskSource.semanticSubrequest.kind
       || semanticSubrequests[0]!.writeIntent !== retainedTaskSource.semanticSubrequest.writeIntent
