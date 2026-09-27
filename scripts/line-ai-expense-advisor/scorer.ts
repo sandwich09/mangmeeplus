@@ -131,24 +131,57 @@ export function callMatchesGold(actual: CapturedToolCall, gold: { tool: string; 
   return true;
 }
 
-/** A gold call is satisfied if ANY captured call matches it OR one of its `alternatives`.
- * `goldResult` is the ORACLE's own run of THIS gold call (undefined for an `alternatives` entry —
- * those fall back to raw-text dimension comparison, an accepted gap since alternatives are rare
- * and rarely name-based). */
-function goldCallSatisfied(call: GoldCall, goldResult: ToolResultLike | undefined, actualCalls: CapturedToolCall[], now: Date): boolean {
+/** The gold `total` money fact `oracle.ts`'s `singleMetricFacts` would extract for an
+ * `expense.list_recent` result — duplicated narrowly here (not imported from oracle.ts, which
+ * imports `ExpectedFact` from THIS file) rather than restructured across both files for one field. */
+function goldTotalAmountFact(goldResult: ToolResultLike | undefined): ExpectedFact | null {
+  if (!goldResult || goldResult.status !== 'ok' || !goldResult.data) return null;
+  const summary = ((goldResult.data as Record<string, unknown>)['summary'] as Record<string, unknown> | undefined) ?? {};
+  const value = summary['totalAmount'];
+  return value != null ? { kind: 'money', value: value as string | number, label: 'total' } : null;
+}
+
+/** `expense.list_recent` in its default (`single_metric`) shape asks "what's the total" —
+ * `expense.get_breakdown` for the SAME resolved period/filters answers a strictly BIGGER question
+ * (the total, broken down by category) — task item "equivalent tool for totals". Accepted only
+ * when the reply actually states the gold total: calling a different tool that never surfaces the
+ * number asked for is still a wrong answer. Deliberately NOT reversible — a `breakdown` gold call
+ * is never satisfied by a plain `list_recent` actual call (checked by the ordinary candidate match
+ * below, tool names simply differ), because a total alone cannot answer "broken down by what". */
+function breakdownSatisfiesSingleMetricTotal(
+  call: GoldCall, goldResult: ToolResultLike | undefined, actualCalls: CapturedToolCall[], deliveredText: string, now: Date,
+): boolean {
+  // 'single_metric' is expense.list_recent's own default shape (oracle.ts DEFAULT_ANSWER_SHAPE) —
+  // most gold calls never set answerShape explicitly, so treat an unset one as single_metric too.
+  if (call.tool !== 'expense.list_recent' || (call.answerShape ?? 'single_metric') !== 'single_metric') return false;
+  const totalFact = goldTotalAmountFact(goldResult);
+  if (!totalFact || !factInText(totalFact, deliveredText)) return false;
+  const goldAsListRecent = { tool: call.tool, input: call.input as Record<string, unknown>, result: goldResult };
+  return actualCalls.some((actual) => actual.tool === 'expense.get_breakdown' && callMatchesGold({ ...actual, tool: call.tool }, goldAsListRecent, now));
+}
+
+/** A gold call is satisfied if ANY captured call matches it OR one of its `alternatives` — or, for
+ * an `expense.list_recent` total, an `expense.get_breakdown` call that answered it just as well
+ * (`breakdownSatisfiesSingleMetricTotal`). `goldResult` is the ORACLE's own run of THIS gold call
+ * (undefined for an `alternatives` entry — those fall back to raw-text dimension comparison, an
+ * accepted gap since alternatives are rare and rarely name-based). */
+function goldCallSatisfied(call: GoldCall, goldResult: ToolResultLike | undefined, actualCalls: CapturedToolCall[], now: Date, deliveredText: string): boolean {
   const candidates = [{ tool: call.tool, input: call.input as Record<string, unknown>, result: goldResult }, ...(call.alternatives ?? [])
     .map((alt) => ({ tool: alt.tool, input: alt.input as Record<string, unknown>, result: undefined as ToolResultLike | undefined }))];
-  return candidates.some((candidate) => actualCalls.some((actual) => callMatchesGold(actual, candidate, now)));
+  if (candidates.some((candidate) => actualCalls.some((actual) => callMatchesGold(actual, candidate, now)))) return true;
+  return breakdownSatisfiesSingleMetricTotal(call, goldResult, actualCalls, deliveredText, now);
 }
 
 /** Every gold call must be satisfied by some captured call (R-U4: several questions in one turn
  * need several tool calls, all present — not just one of them). `goldResults[i]` is the oracle's
  * own result for `goldCalls[i]` (task item "one more scorer rule"); omit it (or leave a gap with
- * `undefined`) to fall back to raw-text comparison for any category/vendor/branch dimension. */
-export function scoreToolCalls(goldCalls: GoldCall[], actualCalls: CapturedToolCall[], now: Date, goldResults: Array<ToolResultLike | undefined> = []): CheckResult {
+ * `undefined`) to fall back to raw-text comparison for any category/vendor/branch dimension.
+ * `deliveredText` feeds only `breakdownSatisfiesSingleMetricTotal` above — every other check here
+ * compares tool calls, never reply text. */
+export function scoreToolCalls(goldCalls: GoldCall[], actualCalls: CapturedToolCall[], now: Date, goldResults: Array<ToolResultLike | undefined> = [], deliveredText = ''): CheckResult {
   const reasons: string[] = [];
   goldCalls.forEach((call, index) => {
-    if (!goldCallSatisfied(call, goldResults[index], actualCalls, now)) {
+    if (!goldCallSatisfied(call, goldResults[index], actualCalls, now, deliveredText)) {
       reasons.push(`missing_or_wrong_call:${call.tool}:${JSON.stringify(call.input)}`);
     }
   });
@@ -263,7 +296,7 @@ export function scoreTurn(
 ): TurnScore {
   const reasons: string[] = [];
   if (turn.expect.calls?.length) {
-    reasons.push(...scoreToolCalls(turn.expect.calls, evidence.toolCalls, now, goldResults).reasons);
+    reasons.push(...scoreToolCalls(turn.expect.calls, evidence.toolCalls, now, goldResults, evidence.deliveredText).reasons);
     reasons.push(...scoreFacts(expectedFacts, evidence.deliveredText).reasons);
   }
   if (turn.expect.tags) reasons.push(...scoreTags(turn.expect.tags, evidence).reasons);

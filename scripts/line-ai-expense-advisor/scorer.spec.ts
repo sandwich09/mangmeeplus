@@ -204,6 +204,44 @@ describe('scoreToolCalls', () => {
     const actual = [{ tool: 'expense.list_recent', input: { categoryId: 'category-a-fuel' }, result: { status: 'ok', data: { queryApplied: { filters: { categoryId: 'category-a-fuel' } } } } }];
     assert.equal(scoreToolCalls(gold, actual, NOW, goldResults).ok, true);
   });
+
+  describe('expense.get_breakdown as an equivalent tool for an expense.list_recent total', () => {
+    const gold = [{ tool: 'expense.list_recent', input: { fromDate: '2026-09-01', toDate: '2026-09-27' } }];
+    const goldResults = [{ status: 'ok', data: { summary: { totalAmount: '1500.00', countedItems: 3 } } }];
+
+    it('accepts it when the period/filters match and the reply states the gold total', () => {
+      const actual = [{ tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-27' } }];
+      const deliveredText = 'เดือนนี้จ่ายไปทั้งหมด 1,500.00 บาท แยกตามหมวดได้ดังนี้ ค่าน้ำมัน 500 บาท';
+      assert.equal(scoreToolCalls(gold, actual, NOW, goldResults, deliveredText).ok, true);
+    });
+
+    it('rejects it when the reply never actually states the gold total', () => {
+      const actual = [{ tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-27' } }];
+      const deliveredText = 'แยกตามหมวดได้ดังนี้ ค่าน้ำมัน 500 บาท ค่าออฟฟิศ 300 บาท';
+      assert.equal(scoreToolCalls(gold, actual, NOW, goldResults, deliveredText).ok, false);
+    });
+
+    it('rejects it when its period does not resolve to the same range as gold', () => {
+      const actual = [{ tool: 'expense.get_breakdown', input: { periodKey: '2026-08' } }];
+      const deliveredText = 'เดือนนี้จ่ายไปทั้งหมด 1,500.00 บาท';
+      assert.equal(scoreToolCalls(gold, actual, NOW, goldResults, deliveredText).ok, false);
+    });
+
+    it('is not reversible: a get_breakdown gold call is never satisfied by a plain list_recent call', () => {
+      const breakdownGold = [{ tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-27' } }];
+      const breakdownGoldResults = [{ status: 'ok', data: { totalAmount: '1500.00', byCategory: [] } }];
+      const actual = [{ tool: 'expense.list_recent', input: { fromDate: '2026-09-01', toDate: '2026-09-27' } }];
+      const deliveredText = 'เดือนนี้จ่ายไปทั้งหมด 1,500.00 บาท';
+      assert.equal(scoreToolCalls(breakdownGold, actual, NOW, breakdownGoldResults, deliveredText).ok, false);
+    });
+
+    it('does not apply when list_recent asked for a "list" shape rather than a total', () => {
+      const listShapeGold = [{ ...gold[0]!, answerShape: 'list' as const }];
+      const actual = [{ tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-27' } }];
+      const deliveredText = 'ยอดรวม 1,500.00 บาท';
+      assert.equal(scoreToolCalls(listShapeGold, actual, NOW, goldResults, deliveredText).ok, false);
+    });
+  });
 });
 
 describe('scoreTags', () => {

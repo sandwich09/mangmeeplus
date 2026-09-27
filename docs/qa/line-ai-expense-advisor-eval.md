@@ -214,6 +214,16 @@ extracts ONLY these, per the gold call's `answerShape` (default per tool: `expen
 An ambiguous/not-found result (see below) contributes NO facts — `must_ask_choice` covers that
 shape instead.
 
+### Equivalent tool for a total: `expense.get_breakdown` in place of `expense.list_recent`
+
+`expense.list_recent` in its default (`single_metric`) shape asks "what's the total" —
+`expense.get_breakdown` for the SAME resolved period/filters answers a strictly BIGGER question
+(the total, broken down by category), so `scorer.ts`'s `scoreToolCalls` accepts it too, but only
+when the reply actually states the gold total (`goldTotalAmountFact` + `factInText`) — calling a
+different tool that never surfaces the number asked for is still a wrong answer. This is
+deliberately NOT reversible: a `breakdown` gold call is never satisfied by a plain `list_recent`
+actual call, because a total alone cannot answer "broken down by what".
+
 ## Category/vendor/branch name equivalence
 
 The model may send `"น้ำมัน"` where gold says `"ค่าน้ำมัน"` — comparing that text would never
