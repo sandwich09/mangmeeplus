@@ -232,6 +232,24 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
     }
   });
 
+  it('item 2d: names the resolved category and vendor in the filter line, and keeps the basis line', () => {
+    const data = expenseData({
+      summary: expenseSummary({ pendingAmount: 500, draftAmount: 0, confirmedAmount: 0, totalAmount: 500 }),
+      queryApplied: { statusBasis: 'exclude_rejected_voided', filters: { categoryName: 'อาหาร', vendorName: 'ร้านสมใจ' } },
+    });
+    const th = formatPreparedSimpleRead(EXPENSE, expenseOutput(data), TH);
+    assert.equal(th.kind, 'answer');
+    if (th.kind === 'answer') {
+      assert.match(th.replyText, /\nตัวกรอง: เฉพาะหมวดอาหาร, เฉพาะร้านร้านสมใจ/);
+      // category/vendor alone never redefines what "pending" means, unlike documentStatus — the basis
+      // breakdown line must stay.
+      assert.match(th.replyText, /ฐานยอด:/);
+    }
+    const en = formatPreparedSimpleRead(EXPENSE, expenseOutput(data), EN);
+    assert.equal(en.kind, 'answer');
+    if (en.kind === 'answer') assert.match(en.replyText, /\nFilters: category อาหาร, vendor ร้านสมใจ/);
+  });
+
   it('names the branch alongside a status filter, and keeps the basis line when only the branch is filtered', () => {
     const filteredByStatusAndBranch = expenseData({
       summary: expenseSummary({ pendingAmount: 0, draftAmount: 0, confirmedAmount: 1234567.5 }),

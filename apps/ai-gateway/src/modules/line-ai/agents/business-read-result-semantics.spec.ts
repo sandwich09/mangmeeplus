@@ -107,6 +107,19 @@ describe('business-read result semantics', () => {
     }
   });
 
+  it('expense.get_breakdown: shapes a fact per group so a breakdown question has something to compose from', async () => {
+    const output = await specialist('expense.get_breakdown', { status: 'ok', data: {
+      totalCount: 10, totalAmount: '5000.00',
+      byCategory: [{ categoryId: 'c1', category: 'อาหาร', currency: 'THB', count: 6, totalAmount: '3000.00' }],
+      byBranch: [{ branchId: null, branch: 'ส่วนกลาง (ไม่ระบุสาขา)', currency: 'THB', count: 10, totalAmount: '5000.00' }],
+      byVendor: [{ vendorId: 'v1', vendor: 'ร้านสมใจ', currency: 'THB', count: 4, totalAmount: '2000.00', linked: true }],
+    } }).run(ctx, intent('expense.get_breakdown'), 1);
+    assert.equal(output.status, 'SUCCEEDED');
+    assert.ok(output.facts.some((f) => f.label === 'หมวด' && f.value.includes('อาหาร') && f.value.includes('3,000.00')), 'category group');
+    assert.ok(output.facts.some((f) => f.label === 'สาขา' && f.value.includes('ส่วนกลาง')), 'branch group');
+    assert.ok(output.facts.some((f) => f.label === 'ร้าน' && f.value.includes('สมใจ') && f.value.includes('2,000.00')), 'vendor group');
+  });
+
   it('annotates explicit empty model data and deterministically rejects an unavailable rewrite', async () => {
     let payload: any;
     const fallback = '• สินค้าที่พบ: 0 รายการ';

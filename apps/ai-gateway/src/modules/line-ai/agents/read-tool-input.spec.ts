@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { conversationReadCandidates } from './read-tool-input';
+import { conversationReadCandidates, nameFilterGroundedInText } from './read-tool-input';
 
 const context = (turns: any[]) => ({ windowMinutes: 15, maxTurns: 15, recentTurns: turns });
 
@@ -27,5 +27,23 @@ describe('bounded conversational read candidates', () => {
     const history = context([{ at: '2026-09-27T04:00:00.000Z', userMessagePreview: 'ค่าใช้จ่ายเดือนนี้', userMessagePreviewComplete: true }]);
     assert.equal(conversationReadCandidates(history, { amounts: [], dates: [{ isoDate: '2026-01-02' } as any] }), undefined);
     assert.equal(conversationReadCandidates(history, { version: 2, completeness: 'overflow', dates: [], periods: [], amounts: [] } as any), undefined);
+  });
+});
+
+describe('item 2b: name filter grounding', () => {
+  it('matches after NFC + lowercase + collapsed whitespace, not only raw equality', () => {
+    assert.equal(nameFilterGroundedInText('อาหาร', 'ค่าใช้จ่ายหมวด   อาหาร   เดือนนี้'), true);
+    assert.equal(nameFilterGroundedInText('Vendor', 'the VENDOR   spent a lot'), true);
+    // NFC vs NFD: a decomposed e + combining acute accent must still match a precomposed é.
+    assert.equal(nameFilterGroundedInText('Café Vendor', 'invoice from café vendor last week'), true);
+  });
+
+  it('rejects a name the message never mentions', () => {
+    assert.equal(nameFilterGroundedInText('ร้านสมใจ', 'เดือนนี้ค่าใช้จ่ายเท่าไหร่'), false);
+  });
+
+  it('rejects an empty or whitespace-only name', () => {
+    assert.equal(nameFilterGroundedInText('', 'อะไรก็ได้'), false);
+    assert.equal(nameFilterGroundedInText('   ', 'อะไรก็ได้'), false);
   });
 });

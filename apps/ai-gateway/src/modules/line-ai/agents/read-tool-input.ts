@@ -39,6 +39,27 @@ export function conversationReadCandidates(
   return { turns, candidates: { amounts: [], dates, periods } };
 }
 
+/** NFC + lowercase + collapsed-whitespace, so spacing/case/composed-character differences between
+ *  what the model echoes and what the user actually typed never cause a false grounding mismatch. */
+function normalizeForNameGrounding(text: string): string {
+  return text.normalize('NFC').toLocaleLowerCase().replace(/\s+/gu, ' ').trim();
+}
+
+/**
+ * Spec item 2(b): a categoryName/vendorName the model sends as a tool filter is only trustworthy when
+ * the user actually typed it this turn — otherwise the model can invent a plausible-looking name and
+ * the tool would silently filter (or mis-resolve) by something nobody asked for. `name` must appear as
+ * a substring of `messageText` after normalization.
+ *
+ * P3 hook: this only grounds against the CURRENT message. `conversationReadCandidates` above is where
+ * recent-turn text would be pulled in to also ground a name the user typed earlier in the conversation
+ * — pass its turns' `userMessagePreview` text through this same normalize-and-include check.
+ */
+export function nameFilterGroundedInText(name: string, messageText: string): boolean {
+  const needle = normalizeForNameGrounding(name);
+  return needle.length > 0 && normalizeForNameGrounding(messageText).includes(needle);
+}
+
 export function canonicalizeReadToolEnums(
   meta: Pick<ToolMeta, 'inputEnumValues'>,
   raw: Record<string, unknown>,

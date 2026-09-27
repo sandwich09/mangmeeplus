@@ -527,6 +527,20 @@ describe('IntentRouterAgent – draft edit routing (S-4)', () => {
   });
 });
 
+// Spec item 2(g): expense.get_breakdown now also groups byVendor, and both expense.list_recent and
+// expense.get_breakdown accept a free-text categoryName/vendorName — the prompt must say both, or the
+// model has no way to know either exists.
+describe('IntentRouterAgent – expense breakdown/name-filter routing (item 2g)', () => {
+  it('tells the model expense.get_breakdown also groups by vendor', () => {
+    assert.match(INTENT_ROUTER_SYSTEM_PROMPT, /group the period by category, branch, or vendor/);
+  });
+
+  it('tells the model to pass a user-typed category/vendor name as categoryName/vendorName, never invented', () => {
+    assert.match(INTENT_ROUTER_SYSTEM_PROMPT, /pass that exact text as categoryName\/vendorName on expense\.list_recent or expense\.get_breakdown/);
+    assert.match(INTENT_ROUTER_SYSTEM_PROMPT, /never invent a category or vendor name the message does not contain/);
+  });
+});
+
 describe('IntentRouterAgent – intake clarifyQuestion (discovery)', () => {
   it('extracts a bounded clarifying question on the CLARIFY route', async () => {
     const router = new IntentRouterAgent({

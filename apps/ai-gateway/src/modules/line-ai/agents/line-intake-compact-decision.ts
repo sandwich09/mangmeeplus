@@ -12,7 +12,11 @@ import type {
   ToolMeta,
 } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
-import { canonicalizeReadToolEnums } from './read-tool-input';
+import { canonicalizeReadToolEnums, nameFilterGroundedInText } from './read-tool-input';
+
+// Spec item 2(b): categoryName/vendorName are free text the model must have echoed from what the user
+// typed, not a value proven by an id/date/enum shape. Checked by normalized substring, not raw equality.
+const NAME_FILTER_GROUNDING_FIELDS = new Set(['categoryName', 'vendorName']);
 
 const DECISION_KEYS = new Set(['subrequests', 'simpleRead']);
 const SUBREQUEST_KEYS = new Set([
@@ -112,6 +116,7 @@ function isGroundedFilterValue(
   if (value === null) return true;
   const literal = String(value);
   if (literal && messageText.includes(literal)) return true;
+  if (typeof value === 'string' && NAME_FILTER_GROUNDING_FIELDS.has(key) && nameFilterGroundedInText(value, messageText)) return true;
   if (typeof value === 'string' && tool.inputEnumValues?.[key]?.includes(value)) return true;
   if (key === 'fromDate') return (candidates?.periods ?? []).some((period) => period.fromDate === value);
   if (key === 'toDate') return (candidates?.periods ?? []).some((period) => period.toDate === value);

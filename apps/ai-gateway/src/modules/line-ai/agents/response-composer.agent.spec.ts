@@ -299,6 +299,15 @@ describe('ResponseComposerAgent.composeAnswer (model-composed grounded answer)',
     assert.ok(out.includes('สาขาลาดพร้าว'));
   });
 
+  it('treats an empty get_breakdown result (totalCount/byCategory/byBranch/byVendor) as explicit empty data', async () => {
+    const data = [{ tool: 'expense.get_breakdown', data: { totalCount: 0, totalAmount: '0.00', byCategory: [], byBranch: [], byVendor: [] } }];
+    const fallback = '• ไม่มีรายการค่าใช้จ่ายในช่วงนี้';
+    // The model is given a hallucination to compose from; hasEmptyResults must force the fallback
+    // regardless, proving totalCount/byCategory/byBranch/byVendor are recognized as empty markers.
+    const out = await agent.composeAnswer('แยกค่าใช้จ่ายตามหมวดเดือนนี้', data, fallback, answerProvider('มีค่าใช้จ่ายหมวดอาหาร 500 บาทค่ะ'));
+    assert.equal(out, fallback);
+  });
+
   it('falls back when a count explicitly requested by the user is omitted', async () => {
     const data = [{ tool: 'sales.get_sales_summary', data: { totalSales: '125430.50', transactionCount: 7 } }];
     const fallback = '• ยอดรับเงินจริง: 125430.50 บาท\n• จำนวนรายการ: 7 รายการ';

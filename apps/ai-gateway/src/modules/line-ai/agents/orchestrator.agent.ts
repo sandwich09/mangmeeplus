@@ -29,7 +29,11 @@ import { AiGatewayConfigService } from '../../../common/config/ai-gateway-config
 import { createProvider } from '../infrastructure/provider/provider.factory';
 import { currentBudgetGrantV2 } from '../../../common/usage/usage-context';
 import type { IModelProvider, ProviderToolCall, ProviderToolMessage, ProviderToolResult, ProviderToolSpec } from '../infrastructure/provider/provider.port';
-import { canonicalizeReadToolEnums, conversationReadCandidates } from './read-tool-input';
+import { canonicalizeReadToolEnums, conversationReadCandidates, nameFilterGroundedInText } from './read-tool-input';
+
+// Spec item 2(b): same grounding rule as the fast lane's isGroundedFilterValue — a categoryName/
+// vendorName the model proposes in the classic tool loop must also trace back to this turn's text.
+const NAME_FILTER_GROUNDING_FIELDS = new Set(['categoryName', 'vendorName']);
 
 export const ORCHESTRATOR_SYSTEM_PROMPT = `
 You are the Orchestrator Agent for MangmeePlus LINE AI.
@@ -443,19 +447,79 @@ function deterministicExpenseSummaryReply(
   };
 }
 
+/** Spec item 2(c): expense.list_recent AND expense.get_breakdown both resolve a free-text
+ *  branch/category/vendor name server-side; several matches or none must become a real
+ *  clarification instead of silently falling through to a misleading zero/empty answer. */
+export type ExpenseNameResolutionIssue = {
+  kind: 'ambiguous' | 'not_found';
+  field: 'branch' | 'category' | 'vendor';
+  requested: string;
+  names: string[];
+};
+
+const EXPENSE_NAME_FIELDS = [
+  { field: 'branch' as const, ambiguousKey: 'branchAmbiguous', unresolvedKey: 'branchUnresolved', availableKey: 'availableBranches' },
+  { field: 'category' as const, ambiguousKey: 'categoryAmbiguous', unresolvedKey: 'categoryUnresolved', availableKey: 'availableCategories' },
+  { field: 'vendor' as const, ambiguousKey: 'vendorAmbiguous', unresolvedKey: 'vendorUnresolved', availableKey: 'availableVendors' },
+];
+
+/** Reads ONE tool result's raw `data` (never a specialist's shaped facts, which do not carry these
+ *  keys through) for a branch/category/vendor ambiguity or not-found marker. */
+function expenseNameResolutionIssueFromData(data: Record<string, unknown> | undefined): ExpenseNameResolutionIssue | undefined {
+  if (!data) return undefined;
+  for (const { field, ambiguousKey, unresolvedKey, availableKey } of EXPENSE_NAME_FIELDS) {
+    const ambiguous = data[ambiguousKey], unresolved = data[unresolvedKey];
+    const requested = typeof ambiguous === 'string' ? ambiguous : typeof unresolved === 'string' ? unresolved : undefined;
+    if (requested === undefined) continue;
+    const available = Array.isArray(data[availableKey]) ? data[availableKey] as Array<Record<string, unknown>> : [];
+    const names = available.map(item => String(item['name'] ?? '').trim()).filter(Boolean).slice(0, 5);
+    return { kind: typeof ambiguous === 'string' ? 'ambiguous' : 'not_found', field, requested, names };
+  }
+  return undefined;
+}
+
+/** Same lookup across every read this turn's expense.list_recent/expense.get_breakdown outputs
+ *  carried, classic-path or fast-lane alike. */
+function expenseNameResolutionIssue(outputs: SpecialistOutput[]): ExpenseNameResolutionIssue | undefined {
+  for (const output of outputs) {
+    for (const entry of output.toolData ?? []) {
+      if (entry.tool !== 'expense.list_recent' && entry.tool !== 'expense.get_breakdown') continue;
+      const data = entry.data && typeof entry.data === 'object' && !Array.isArray(entry.data) ? entry.data as Record<string, unknown> : undefined;
+      const issue = expenseNameResolutionIssueFromData(data);
+      if (issue) return issue;
+    }
+  }
+  return undefined;
+}
+
+const EXPENSE_NAME_FIELD_TH: Record<ExpenseNameResolutionIssue['field'], string> = { branch: 'สาขา', category: 'หมวด', vendor: 'ร้าน' };
+const EXPENSE_NAME_FIELD_EN: Record<ExpenseNameResolutionIssue['field'], string> = { branch: 'branch', category: 'category', vendor: 'vendor' };
+
+/** Ambiguous -> a real clarifying question (spec: "หมายถึงร้านไหนคะ" + up to 5 options) when the
+ *  matches have distinct display names — an actual chat-answerable question. Several matches
+ *  sharing the EXACT same display name cannot be told apart in text at all (never print the
+ *  internal id/code that could): that case, like not-found, is a terminal statement pointing at
+ *  the web app, never a question, never a waiting task. */
+function expenseNameResolutionReplyText(issue: ExpenseNameResolutionIssue, english: boolean): string {
+  const th = EXPENSE_NAME_FIELD_TH[issue.field], en = EXPENSE_NAME_FIELD_EN[issue.field];
+  const uniqueNames = [...new Set(issue.names)];
+  if (issue.kind === 'ambiguous') {
+    if (uniqueNames.length > 1) {
+      return english ? `Which ${en} do you mean? ${uniqueNames.join(', ')}` : `หมายถึง${th}ไหนคะ ${uniqueNames.join(', ')}`;
+    }
+    return english
+      ? `Several records share the same ${en} name, so I could not identify which one you mean. Please select it in the web app.`
+      : `มีหลาย${th}ที่ใช้ชื่อเดียวกัน จึงยังระบุ${th}ที่ต้องการไม่ได้ค่ะ กรุณาเลือก${th}จากหน้าเว็บ`;
+  }
+  const available = uniqueNames.join(', ');
+  return english
+    ? `I could not identify the requested ${en}.${available ? ` Available: ${available}.` : ''} Please check and select it in the web app.`
+    : `ยังระบุ${th}ที่ต้องการไม่ได้ค่ะ${available ? ` ${th}ที่มี: ${available}` : ''} กรุณาตรวจสอบและเลือก${th}จากหน้าเว็บ`;
+}
+
 function expenseBranchResolutionReply(req: LineAiTurnRequest, outputs: SpecialistOutput[]): string | undefined {
-  const data = outputs.flatMap(output => output.toolData ?? [])
-    .filter(entry => entry.tool === 'expense.list_recent')
-    .map(entry => entry.data && typeof entry.data === 'object' && !Array.isArray(entry.data) ? entry.data as Record<string, unknown> : undefined)
-    .filter((value): value is Record<string, unknown> => !!value);
-  if (!data.some(item => typeof item['branchAmbiguous'] === 'string' || typeof item['branchUnresolved'] === 'string')) return undefined;
-  return /[\u0E00-\u0E7F]/u.test(req.messageText)
-    ? data.some(item => typeof item['branchAmbiguous'] === 'string')
-      ? 'มีหลายสาขาที่ใช้ชื่อเดียวกัน จึงยังระบุสาขาที่ต้องการไม่ได้ค่ะ กรุณาเลือกสาขาจากหน้าเว็บ'
-      : 'ยังระบุสาขาที่ต้องการไม่ได้ค่ะ กรุณาตรวจสอบและเลือกสาขาจากหน้าเว็บ'
-    : data.some(item => typeof item['branchAmbiguous'] === 'string')
-      ? 'Several branches share that name, so I could not identify the requested branch. Please select it in the web app.'
-      : 'I could not identify the requested branch. Please check and select it in the web app.';
+  const issue = expenseNameResolutionIssue(outputs);
+  return issue ? expenseNameResolutionReplyText(issue, !/[\u0E00-\u0E7F]/u.test(req.messageText)) : undefined;
 }
 
 const THAI_MONTH_NAMES = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
@@ -544,7 +608,7 @@ type PeriodGuard = {
   periodKeys: ReadonlySet<string>;
 };
 
-function sanitizeToolInput(meta: ToolMeta, raw: unknown, guard?: PeriodGuard): Record<string, unknown> | undefined {
+function sanitizeToolInput(meta: ToolMeta, raw: unknown, guard?: PeriodGuard, messageText?: string): Record<string, unknown> | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const canonicalRaw = canonicalizeReadToolEnums(meta, raw as Record<string, unknown>);
   if (!canonicalRaw) return undefined;
@@ -563,6 +627,9 @@ function sanitizeToolInput(meta: ToolMeta, raw: unknown, guard?: PeriodGuard): R
       if (!LOOP_PERIOD_KEY_PATTERN.test(value)) continue;
       if (guard && !guard.periodKeys.has(value)) continue;
     }
+    // Spec item 2(b): drop an ungrounded categoryName/vendorName the same way an out-of-guard date or
+    // period key is dropped above — the rest of the call still proceeds, just without that filter.
+    if (NAME_FILTER_GROUNDING_FIELDS.has(key) && messageText !== undefined && !nameFilterGroundedInText(value, messageText)) continue;
     input[key] = value;
   }
   return input;
@@ -1051,7 +1118,7 @@ export function preparedSimplePreCallCheck(
   const preparedCandidates = contextCandidates ?? req.valueCandidates;
   // Prepared lane: a proposed date MUST be deterministically backed (today or an unambiguous candidate),
   // else the sanitizer drops it and the exact-equality check below fails.
-  const toolInput = sanitizeToolInput(tool, call.input, preparedAllowedPeriods(preparedCandidates, todayIso));
+  const toolInput = sanitizeToolInput(tool, call.input, preparedAllowedPeriods(preparedCandidates, todayIso), req.messageText);
   const canonicalProposed = canonicalizeReadToolEnums(tool, call.input);
   if (!toolInput || !canonicalProposed || canonicalize(canonicalProposed) !== canonicalize(toolInput)) {
     return { ok: false, reason: 'input_sanitizer_changed' };
@@ -1398,11 +1465,22 @@ export class OrchestratorAgent {
       && output.toolCalls.length > 0
       && output.toolCalls.every((call) => call.errorCode === 'FEATURE_NOT_ENABLED')));
     const expenseSummaryRequested = plan.intents.some(intent => intent.requiredTools.includes('expense.list_recent'));
-    const expenseToolExecuted = outputs.some(output => output.toolCalls.some(call => call.name === 'expense.list_recent')
-      || (output.toolData ?? []).some(entry => entry.tool === 'expense.list_recent'));
+    // Widened to get_breakdown (item 2c) so a breakdown-only turn (requiredTools =
+    // ['expense.get_breakdown'], no list_recent call at all) still reaches the
+    // expenseBranchResolutionReply check below instead of being invisible to this whole reply
+    // path. deterministicExpense/expenseAccessForbidden below intentionally keep reading the
+    // narrower list_recent-only expenseOutputs, unaffected by this.
+    const expenseToolExecuted = outputs.some(output => output.toolCalls.some(call => call.name === 'expense.list_recent' || call.name === 'expense.get_breakdown')
+      || (output.toolData ?? []).some(entry => entry.tool === 'expense.list_recent' || entry.tool === 'expense.get_breakdown'));
     const mixedIntent = plan.intents.some(intent => intent.requiredTools.some(tool => tool !== 'expense.list_recent'));
     const expenseOutputs = outputs.filter(output => output.toolCalls.some(call => call.name === 'expense.list_recent')
       || (output.toolData ?? []).some(entry => entry.tool === 'expense.list_recent'));
+    // Widened only for the name-resolution reply below (item 2c): a breakdown-only turn's
+    // requiredTools is ['expense.get_breakdown'], never list_recent, so it would be invisible to
+    // expenseOutputs above — every OTHER use of expenseOutputs (deterministicExpense, mixedIntent,
+    // outputsForComposer) stays exactly as before.
+    const expenseOrBreakdownOutputs = outputs.filter(output => output.toolCalls.some(call => call.name === 'expense.list_recent' || call.name === 'expense.get_breakdown')
+      || (output.toolData ?? []).some(entry => entry.tool === 'expense.list_recent' || entry.tool === 'expense.get_breakdown'));
     const outputsForComposer = mixedIntent && expenseToolExecuted
       ? composableOutputs.filter(output => !output.toolCalls.some(call => call.name === 'expense.list_recent')
         && !(output.toolData ?? []).some(entry => entry.tool === 'expense.list_recent'))
@@ -1469,7 +1547,7 @@ export class OrchestratorAgent {
           asOf: outputsForComposer.find((output) => output.toolData?.length)?.asOf,
         })
         : composed.replyText;
-      const expenseLine = deterministicExpense?.replyText ?? expenseBranchResolutionReply(req, expenseOutputs) ?? (/[฀-๿]/u.test(req.messageText)
+      const expenseLine = deterministicExpense?.replyText ?? expenseBranchResolutionReply(req, expenseOrBreakdownOutputs) ?? (/[฀-๿]/u.test(req.messageText)
         ? 'ยังยืนยันยอดค่าใช้จ่ายตามช่วงและขอบเขตที่ร้องขอไม่ได้ค่ะ'
         : 'The requested expense total could not be verified.');
       replyText = `${otherReply}${otherReply ? '\n\n' : ''}${expenseLine}`;
@@ -1487,7 +1565,7 @@ export class OrchestratorAgent {
         expensePresentation = { kind: 'answer_cards', cards: [{ text: replyText,
           ...(sourceLabels.length > 0 ? { sourceLabels } : {}), ...(finalWebLinks[0] ? { webLink: finalWebLinks[0] } : {}) }] };
       } else {
-        replyText = expenseBranchResolutionReply(req, expenseOutputs)
+        replyText = expenseBranchResolutionReply(req, expenseOrBreakdownOutputs)
           ?? (!expenseMonthCoverageValid(req) || priorMonthAnchor(req) === null ? expenseClarification(req) : undefined)
           ?? (/[\u0E00-\u0E7F]/u.test(req.messageText)
           ? 'ตอนนี้ยังยืนยันยอดและรายการค่าใช้จ่ายตามช่วงและขอบเขตที่ร้องขอไม่ได้ค่ะ กรุณาตรวจสอบอีกครั้งภายหลัง'
@@ -1671,7 +1749,7 @@ export class OrchestratorAgent {
       if (used >= budget) break;
       const input = sanitizeToolInput(tool, {
         fromDate: month.fromDate, toDate: month.toDate, ...(branchId ? { branchId } : {}),
-      }, preparedAllowedPeriods(req.valueCandidates, todayIso));
+      }, preparedAllowedPeriods(req.valueCandidates, todayIso), req.messageText);
       if (!input || input['fromDate'] !== month.fromDate || input['toDate'] !== month.toDate) break;
       const output = await specialist.run(ctx, {
         ...plan.intents[0]!, requiredTools: ['expense.list_recent'],
@@ -1931,7 +2009,7 @@ export class OrchestratorAgent {
 
       const specialist = this.createSpecialist(entry.agent);
       if (!specialist) continue;
-      const toolInput = sanitizeToolInput(entry.meta, choice.input, periodGuard);
+      const toolInput = sanitizeToolInput(entry.meta, choice.input, periodGuard, req.messageText);
       if (!toolInput) return { outputs, askUser: plan.language.startsWith('en') ? 'Please specify the requested filter again.' : 'กรุณาระบุตัวกรองที่ต้องการอีกครั้ง' };
       if (choice.callTool === 'expense.list_recent') {
         if (!validExpensePeriodSelection(choice.input, toolInput, req)) return { outputs, askUser: expenseClarification(req) };
@@ -2079,7 +2157,7 @@ export class OrchestratorAgent {
         if (!entry) {
           return { call, result: { toolUseId: call.toolUseId, content: 'Tool not available for this request.', isError: true } };
         }
-        const toolInput = sanitizeToolInput(entry.meta, call.input, periodGuard);
+        const toolInput = sanitizeToolInput(entry.meta, call.input, periodGuard, req.messageText);
         if (!toolInput) return { call, result: { toolUseId: call.toolUseId, content: 'Unsupported filter value; ask the user to clarify.', isError: true } };
         if (registryName === 'expense.list_recent' && !validExpensePeriodSelection(call.input, toolInput, req)) {
           return { call, askUser: expenseClarification(req), result: { toolUseId: call.toolUseId, content: 'Expense period or branch scope is incomplete; ask the user to clarify.', isError: true } };

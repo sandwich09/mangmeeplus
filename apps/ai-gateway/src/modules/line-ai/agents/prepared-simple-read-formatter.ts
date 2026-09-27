@@ -296,17 +296,22 @@ export function formatExpenseSummary(
   // basis text below is computed from the SAME narrowed set), so with documentStatus=CONFIRMED the old
   // unconditional basis line printed "pending 0.00 (draft 0.00)" even though a draft genuinely exists —
   // it was simply excluded by the filter, not absent. Read-only reference: erp-tools.use-case.ts's
-  // expense.list_recent handler (~queryApplied). category/vendor have no resolved display name
-  // anywhere in this result or context yet; ponytail: add them here once one exists.
+  // expense.list_recent handler (~queryApplied).
   const queryApplied = data?.['queryApplied'];
   const appliedFilters = queryApplied && typeof queryApplied === 'object' && !Array.isArray(queryApplied)
     ? queryApplied as Record<string, unknown> : undefined;
   const statusBasis = appliedFilters?.['statusBasis'];
   const documentStatus = typeof statusBasis === 'string' && statusBasis !== 'exclude_rejected_voided' ? statusBasis : undefined;
-  const otherFilters = appliedFilters?.['filters'];
-  const paymentStatus = otherFilters && typeof otherFilters === 'object' && !Array.isArray(otherFilters)
-    && typeof (otherFilters as Record<string, unknown>)['paymentStatus'] === 'string'
-    ? (otherFilters as Record<string, unknown>)['paymentStatus'] as string : undefined;
+  const otherFiltersRaw = appliedFilters?.['filters'];
+  const otherFilters = otherFiltersRaw && typeof otherFiltersRaw === 'object' && !Array.isArray(otherFiltersRaw)
+    ? otherFiltersRaw as Record<string, unknown> : undefined;
+  const stringFilter = (key: string): string | undefined => typeof otherFilters?.[key] === 'string' ? otherFilters[key] as string : undefined;
+  const paymentStatus = stringFilter('paymentStatus');
+  // Spec item 2(d): the resolved display name a categoryName/vendorName input matched to — never the
+  // model's raw free-text guess — so the filter line always names the SAME category/vendor the numbers
+  // above were actually computed from.
+  const categoryName = stringFilter('categoryName');
+  const vendorName = stringFilter('vendorName');
   const hasStatusFilter = documentStatus !== undefined || paymentStatus !== undefined;
   const humanizedEnum = (key: string) => key.charAt(0) + key.slice(1).toLowerCase().replace(/_/g, ' ');
   const filterPhrases: string[] = [];
@@ -314,6 +319,8 @@ export function formatExpenseSummary(
   if (documentStatus && documentStatusLabel) filterPhrases.push(english ? `only ${humanizedEnum(documentStatus)}` : `เฉพาะที่${documentStatusLabel}`);
   const paymentStatusLabel = paymentStatus ? (EXPENSE_PAYMENT_STATUS_LABELS as Record<string, string>)[paymentStatus] : undefined;
   if (paymentStatus && paymentStatusLabel) filterPhrases.push(english ? `only ${humanizedEnum(paymentStatus)}` : `เฉพาะที่${paymentStatusLabel}`);
+  if (categoryName) filterPhrases.push(english ? `category ${categoryName}` : `เฉพาะหมวด${categoryName}`);
+  if (vendorName) filterPhrases.push(english ? `vendor ${vendorName}` : `เฉพาะร้าน${vendorName}`);
   if (ctx.branchLabel) filterPhrases.push(english ? `branch ${ctx.branchLabel}` : `เฉพาะสาขา${ctx.branchLabel}`);
   const filtersText = filterPhrases.length ? (english ? `\nFilters: ${filterPhrases.join(', ')}` : `\nตัวกรอง: ${filterPhrases.join(', ')}`) : '';
 

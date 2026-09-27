@@ -1382,6 +1382,49 @@ describe('run-level expense follow-up execution', () => {
     assert.doesNotMatch(result.replyText, /secret-code|uuid-secret|0\.00|0 รายการ/);
   });
 
+  it('item 2c: asks which vendor when a name resolves to several distinct vendors', async () => {
+    configureLoopProvider(text => expensePlan(text), [{ callTool: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', vendorName: 'สมใจ' } }]);
+    const req = makeReq('ร้านสมใจจ่ายไปเท่าไหร่เดือนสิงหาคม 2569');
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods: [periods[1]!] };
+    const erp = { invoke: async (tool: any) => ({ toolName: tool.name, status: 'ok', data: {
+      vendorAmbiguous: 'สมใจ', availableVendors: [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }],
+    }, sourceRefs: [], asOf: new Date().toISOString() }) } as any;
+    const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
+    assert.match(result.replyText, /หมายถึงร้านไหนคะ/, 'spec item 2c: the exact ambiguous-vendor question');
+    assert.match(result.replyText, /ร้านสมใจการค้า/);
+    assert.doesNotMatch(result.replyText, /\bv1\b|\bv2\b|0\.00|0 รายการ/);
+  });
+
+  it('item 2c: names the available categories when a breakdown category name is not found (widened to get_breakdown)', async () => {
+    const breakdownPlan = (messageText: string) => ({ status: 'ROUTABLE', language: 'th', intents: [{ intent: 'read_detail', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.get_breakdown'], missingContext: [] }], refusals: [], requiresHumanReview: false });
+    configureLoopProvider(text => breakdownPlan(text), [{ callTool: 'expense.get_breakdown', input: { fromDate: '2026-08-01', toDate: '2026-08-31', categoryName: 'ยานยนต์' } }]);
+    const req = makeReq('แยกค่าใช้จ่ายหมวดยานยนต์เดือนสิงหาคม 2569');
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods: [periods[1]!] };
+    const erp = { invoke: async (tool: any) => ({ toolName: tool.name, status: 'ok', data: {
+      categoryUnresolved: 'ยานยนต์', availableCategories: [{ id: 'c1', name: 'ค่าเดินทาง' }, { id: 'c2', name: 'ค่าน้ำมัน' }],
+    }, sourceRefs: [], asOf: new Date().toISOString() }) } as any;
+    const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
+    assert.match(result.replyText, /ยังระบุหมวดที่ต้องการไม่ได้/);
+    assert.match(result.replyText, /ค่าเดินทาง/);
+    assert.match(result.replyText, /ค่าน้ำมัน/);
+    assert.doesNotMatch(result.replyText, /\bc1\b|\bc2\b|0\.00|0 รายการ/);
+  });
+
+  it('item 2b: drops an ungrounded categoryName from the classic-path tool call instead of inventing a filter', async () => {
+    const inputs: Array<Record<string, unknown>> = [];
+    // The message never says "เครื่องเขียน" — a model-invented category name must not reach the ERP
+    // call. The rest of the call (fromDate/toDate) still proceeds; only the ungrounded field is dropped.
+    configureLoopProvider(text => expensePlan(text), [{ callTool: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', categoryName: 'เครื่องเขียน' } }]);
+    const req = makeReq('ค่าใช้จ่ายเดือนสิงหาคม 2569');
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods: [periods[1]!] };
+    const result = await new OrchestratorAgent(expenseErp(inputs), makeConfig()).run(req);
+    assert.deepEqual(inputs, [{ tool: 'expense.list_recent', fromDate: '2026-08-01', toDate: '2026-08-31' }]);
+    assert.equal(result.deterministicExpenseSummary, true);
+  });
+
   it('does not present an August-only result as complete when a misspelled July was also requested', async () => {
     const inputs: Array<Record<string, unknown>> = [];
     const august = periods[1]!;

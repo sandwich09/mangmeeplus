@@ -58,6 +58,34 @@ describe('compact LINE intake decision', () => {
     assert.equal(parsed?.semanticSubrequests[0]?.requestedFilters.documentStatus, 'UNKNOWN_STATUS');
   });
 
+  it('item 2b: grounds a categoryName after NFC + lowercase + collapsed whitespace, not only raw equality', async () => {
+    const text = 'เดือนนี้ค่าใช้จ่ายหมวด   อาหาร   เท่าไหร่';
+    const created = await fixture(text);
+    const candidates = extractValueCandidates(text, '2026-09-27');
+    const period = candidates.periods?.[0]!;
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: period.fromDate, toDate: period.toDate, categoryName: 'อาหาร' }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th', valueCandidates: candidates,
+    });
+    assert.ok(parsed?.preparedPlan);
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['categoryName'], 'อาหาร');
+  });
+
+  it('item 2b: rejects a vendorName the model invented that never appears in the message', async () => {
+    const text = 'เดือนนี้ค่าใช้จ่ายเท่าไหร่';
+    const created = await fixture(text);
+    const candidates = extractValueCandidates(text, '2026-09-27');
+    const period = candidates.periods?.[0]!;
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: period.fromDate, toDate: period.toDate, vendorName: 'ร้านสมใจ' }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th', valueCandidates: candidates,
+    });
+    assert.equal(parsed?.preparedPlan, undefined);
+    assert.equal(parsed?.simpleReadRejection, 'filter_not_grounded');
+  });
+
   it('does not prepare a read from dates mixed across two candidate periods', async () => {
     const text = 'เปรียบเทียบค่าใช้จ่ายเดือนนี้กับเดือนที่แล้ว';
     const created = await fixture(text);
