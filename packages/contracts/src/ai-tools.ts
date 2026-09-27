@@ -138,6 +138,9 @@ export type ToolMeta = {
   /** Exact canonical string values accepted for enum fields. Model-facing catalogs expose these
    *  values; Gateway normalization may only choose a unique case-insensitive match from this list. */
   inputEnumValues?: Readonly<Record<string, readonly string[]>>;
+  /** Inclusive character-length bounds for free-text input fields (e.g. a name the model copies
+   *  from the user's message). Enforced generically by the internal tools executor. */
+  inputLengthLimits?: Readonly<Record<string, { min: number; max: number }>>;
   /** Company features that own this tool's data, when the module-level default is not precise
    *  enough. Any one of them entitles the tool. Defaults to `TOOL_MODULE_FEATURE_KEYS[sourceModule]`. */
   featureKeys?: readonly string[];
@@ -446,7 +449,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'expense.list_recent',
-    description: 'Read expense totals and bounded records for the current month by default or an explicit date range, including dates, vendors, status, payment status, and web links. Optional branchId scopes one branch and accepts a branch id, exact branch name, or branch code; an unrecognized value returns branchUnresolved with availableBranches to re-pick from (match the user wording to a real name and retry with its id, or ask) instead of records.',
+    description: 'Read expense totals and bounded records for the current month by default or an explicit date range, including dates, vendors, status, payment status, and web links. Optional branchId scopes one branch and accepts a branch id, exact branch name, or branch code; an unrecognized value returns branchUnresolved with availableBranches to re-pick from (match the user wording to a real name and retry with its id, or ask) instead of records. Optional categoryName/vendorName resolve a free-text category or vendor name the same way: exactly one match filters by it, several matches return categoryAmbiguous/vendorAmbiguous with availableCategories/availableVendors to disambiguate, and no match returns categoryUnresolved/vendorUnresolved with the available names, instead of records.',
     businessSubjects: ['expense'],
     questionKinds: ['summary', 'list', 'detail'],
     category: 'read_summary',
@@ -456,8 +459,9 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'cfo'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'documentStatus', 'paymentStatus', 'limit', 'cursor'],
+    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'categoryName', 'vendorName', 'documentStatus', 'paymentStatus', 'limit', 'cursor'],
     inputEnumValues: { documentStatus: EXPENSE_STATUSES, paymentStatus: EXPENSE_PAYMENT_STATUSES },
+    inputLengthLimits: { categoryName: { min: 1, max: 80 }, vendorName: { min: 1, max: 80 } },
   },
   {
     name: 'expense.get_detail',
@@ -968,7 +972,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'expense.get_breakdown',
-    description: 'Read expense totals grouped by category and branch for a period.',
+    description: 'Read expense totals grouped by category, branch, and vendor (byVendor, top 10 by amount descending) for a period. Optional categoryName/vendorName resolve a free-text category or vendor name: exactly one match filters by it, several matches return categoryAmbiguous/vendorAmbiguous with availableCategories/availableVendors to disambiguate, and no match returns categoryUnresolved/vendorUnresolved with the available names, instead of a breakdown.',
     businessSubjects: ['expense'],
     questionKinds: ['summary', 'breakdown'],
     category: 'read_summary',
@@ -978,8 +982,9 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'general'],
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'documentStatus', 'paymentStatus'],
+    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'categoryName', 'vendorName', 'documentStatus', 'paymentStatus'],
     inputEnumValues: { documentStatus: EXPENSE_STATUSES, paymentStatus: EXPENSE_PAYMENT_STATUSES },
+    inputLengthLimits: { categoryName: { min: 1, max: 80 }, vendorName: { min: 1, max: 80 } },
   },
   {
     name: 'public.lookup',
