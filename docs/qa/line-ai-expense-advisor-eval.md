@@ -73,7 +73,22 @@ Both required env vars are validated with an assertion before anything else runs
 ```
 MANGMEE_EVAL_API_PORT=19291                          # must match between the two scripts
 MANGMEE_EVAL_DETERMINISTIC_RESPONSE_FAMILIES=<spec §5 R-L4 family list>
+MANGMEE_EVAL_TURN_PAUSE_MS=1500                      # sleep between turns of one conversation
+MANGMEE_EVAL_CONVERSATION_PAUSE_MS=2000              # sleep between conversations
 ```
+
+### Pacing (throttling)
+
+`run-real.ts` defaults `MANGMEE_EVAL_TURN_PAUSE_MS` to 1500 and
+`MANGMEE_EVAL_CONVERSATION_PAUSE_MS` to 2000 (override either to change the pace, or set to `0` to
+run flat out) to stay under the Bedrock account's rate limit. `replayReliabilityCorpus` (shared by
+every reliability replay, not only this eval) has no hook a caller can pause in between its
+turn/fixture loop iterations, so the pause lives one level down, inside
+`scripts/line-ai-reliability-runtime.ts`'s own `reset`/`turn` adapter methods — `reset` (once per
+conversation, skipped on the very first) sleeps `MANGMEE_EVAL_CONVERSATION_PAUSE_MS`, `turn` (once
+per turn after the first in that conversation) sleeps `MANGMEE_EVAL_TURN_PAUSE_MS`. Both env vars
+default to `0` (off) inside that shared file, so every other caller of
+`runLineReliabilityRuntime` that never sets them is unaffected.
 
 Writes `<ISO-timestamp>.evidence.json` (full `turnEvidence`, per-turn scores, summary) and
 `<ISO-timestamp>.report.md` (summary table, per-category table, a failures section with the

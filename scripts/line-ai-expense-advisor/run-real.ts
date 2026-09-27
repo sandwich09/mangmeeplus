@@ -26,6 +26,20 @@
  *   AI_GLOBAL_INFERENCE_PROFILE_APPROVED      default true (see note below)
  *   AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF  default 'mangmee-expense-advisor-eval-synthetic-only'
  *   APPROVED_AI_MODEL_IDS                     default adds 'global.anthropic.claude-sonnet-4-6'
+ *   MANGMEE_EVAL_TURN_PAUSE_MS          default 1500 — sleep between turns of the same conversation
+ *   MANGMEE_EVAL_CONVERSATION_PAUSE_MS  default 2000 — sleep between conversations
+ *   MANGMEE_EVAL_ONLY         comma-separated conversation ids, OR (with ONLY_FAILED=1) a path to a
+ *                             previous *.evidence.json — re-runs only those whole conversations
+ *                             (never a single turn: a follow-up turn needs its own history)
+ *   MANGMEE_EVAL_ONLY_FAILED  '1' to read MANGMEE_EVAL_ONLY as an evidence.json path and select
+ *                             every conversation that had a failing turn in it
+ *
+ * MANGMEE_EVAL_TURN_PAUSE_MS/MANGMEE_EVAL_CONVERSATION_PAUSE_MS: `replayReliabilityCorpus` (shared
+ * by every reliability replay, not just this eval) has no hook between its turn/fixture loop
+ * iterations for a caller to pause in — the pause is therefore implemented one level down, inside
+ * scripts/line-ai-reliability-runtime.ts's own `reset`/`turn` adapter methods (reset = between
+ * conversations, turn = between turns), reading these same two env vars but defaulting to 0/off so
+ * every OTHER caller of that shared runtime is unaffected unless it sets them itself.
  *
  * The three vars above exist to satisfy AiGatewayClient.issueLineReliabilityGrant(), which refuses
  * every turn with AI_BUDGET_UNAVAILABLE — before ever calling the Gateway — unless BOTH (a) the
@@ -80,6 +94,11 @@ process.env['AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF'] ??= 'mangmee-expense-adv
 // overrode APPROVED_AI_MODEL_IDS (??= never evaluates this when it's already set).
 process.env['APPROVED_AI_MODEL_IDS'] ??=
   'apac.anthropic.claude-3-5-sonnet-20241022-v2:0,apac.anthropic.claude-3-haiku-20240307-v1:0,global.anthropic.claude-sonnet-4-6';
+// line-ai-reliability-runtime.ts reads these same two names (default 0/off there); this is the
+// one real-mode caller that wants them on by default, to stay under the Bedrock account's
+// throttling — see the file header note.
+process.env['MANGMEE_EVAL_TURN_PAUSE_MS'] ??= '1500';
+process.env['MANGMEE_EVAL_CONVERSATION_PAUSE_MS'] ??= '2000';
 
 function sha256File(path: string): string {
   return createHash('sha256').update(readFileSync(resolve(REPO_ROOT, path))).digest('hex');

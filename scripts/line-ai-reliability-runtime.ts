@@ -253,6 +253,12 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
   const turnEvidence: RuntimeTurnEvidence[] = [];
   const runtimeDiagnostics: Array<{ scenarioId: string; repeat: number; phase: string; stage: string; error: ReturnType<typeof runtimeFailureDiagnostic> }> = [];
   let stage = 'initializing';
+  // Opt-in pacing between turns/fixtures, to stay under a Bedrock account's throttling in a real
+  // (non-fixture) replay. Both default to 0 (no pause, today's behavior) so every existing caller
+  // that never sets these is unaffected — line-ai-expense-advisor's run-real.ts sets real-mode
+  // defaults (1500ms/2000ms) for its own process before calling this function.
+  const TURN_PAUSE_MS = Number(process.env['MANGMEE_EVAL_TURN_PAUSE_MS'] ?? '0');
+  const CONVERSATION_PAUSE_MS = Number(process.env['MANGMEE_EVAL_CONVERSATION_PAUSE_MS'] ?? '0');
   const readEffects = async () => {
     const exists = await client.$queryRawUnsafe('SELECT tablename FROM pg_tables WHERE schemaname=\'public\'') as { tablename: string }[];
     const tables = new Set(exists.map(row => row.tablename)), output: Record<string, JsonRow[]> = {};
@@ -341,6 +347,9 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
     async reset(row, ordinal) {
       stage = 'quiescence';
       assert.equal(unsafeToReset, false, 'REPLAY_PREVIOUS_WORK_NOT_QUIESCENT');
+      // `app` is only set once a PREVIOUS fixture ran — i.e. this is between conversations, never
+      // before the very first one, exactly where a between-conversations pause belongs.
+      if (app && CONVERSATION_PAUSE_MS > 0) { stage = 'conversation_pause'; await delay(CONVERSATION_PAUSE_MS); }
       if (app) { await app.close(); app = undefined; } active = undefined;
       turnStates = [];
       current = row; repeat = ordinal; snapshot = manifest.snapshots[row.fixture.sourceSnapshot];
@@ -419,6 +428,8 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       app.setGlobalPrefix('v1'); app.useGlobalPipes(new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS)); await app.listen(manifest.apiPort, '127.0.0.1');
     },
     async turn(row, turnIndex) {
+      // Not before the fixture's first turn — that gap is CONVERSATION_PAUSE_MS, taken in reset().
+      if (turnIndex > 0 && TURN_PAUSE_MS > 0) { stage = 'turn_pause'; await delay(TURN_PAUSE_MS); }
       stage = `turn:${turnIndex}`;
       assert.equal(current?.id, row.id); assert.ok(snapshot && app);
       const turn = row.turns[turnIndex]!, prefix = `replay-${sha(`${row.id}:${repeat}:${turnIndex}`).slice(0, 20)}`;
