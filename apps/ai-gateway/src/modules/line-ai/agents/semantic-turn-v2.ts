@@ -71,6 +71,22 @@ function withBuddhistYears(values: Iterable<string>): Set<string> {
   return widened;
 }
 
+/** Item 2 (spec §3 row 8, "รายการที่ 3 คือร้านอะไรครับ"): a small reference ordinal or count the
+ *  customer typed themselves in THIS message ("รายการที่ 3", "อันที่ 5") is not a tool-derived fact,
+ *  but echoing it back is not fabrication either — the record it names is still grounded elsewhere
+ *  (the id resolves only via conversation-memory shownItems). Bounded to whole numbers 1-20, taken
+ *  verbatim from the raw message text, so a user-asserted AMOUNT ("5,000", any larger or decimal
+ *  figure) can never slip through as if the tool had verified it. */
+function userStatedReferenceNumbers(messageText: string): Set<string> {
+  const numbers = new Set<string>();
+  for (const token of decimals(messageText)) {
+    if (token.includes('.')) continue;
+    const value = Number(token);
+    if (Number.isInteger(value) && value >= 1 && value <= 20) numbers.add(token);
+  }
+  return numbers;
+}
+
 /**
  * C1(a)/(b) root cause: the old check used `factText(good) || JSON.stringify(good data)` — an
  * OR, not a union. `factText` only carries the ONE headline metric a tool promotes to a
@@ -78,11 +94,15 @@ function withBuddhistYears(values: Iterable<string>): Set<string> {
  * genuinely tool-derived number (per-item amounts, a paid/unpaid split, the record count, item
  * dates) was silently dropped from the allowed set and rejected. Union both instead: anything
  * really in the permission-checked result passes in any formatting (commas, `.00`/`.50`, leading
- * zeros); an invented or approximate number still matches nothing here and still fails.
+ * zeros); an invented or approximate number still matches nothing here and still fails. Item 2
+ * additionally unions in small (1-20) whole numbers the customer typed verbatim in THIS message
+ * (userStatedReferenceNumbers) — a reference ordinal/count, never a tool-derived amount.
  */
-function allowedAnswerNumbers(good: ToolResult[], facts: string): Set<string> {
+function allowedAnswerNumbers(good: ToolResult[], facts: string, messageText: string): Set<string> {
   const raw = JSON.stringify(good.map(result => ({ data: result.data, queryApplied: result.queryApplied, asOf: result.asOf })));
-  return withBuddhistYears(decimals(`${facts}\n${raw}`));
+  const allowed = withBuddhistYears(decimals(`${facts}\n${raw}`));
+  for (const token of userStatedReferenceNumbers(messageText)) allowed.add(token);
+  return allowed;
 }
 
 /** C1(c): the same SpecialistOutput shape the prepared-lane's compiled formatters already read,
@@ -469,7 +489,7 @@ export async function runSemanticTurnV2(input: {
       }
       else if (item.kind === 'read') {
         const facts = good.map(factText).filter(Boolean).join('\n');
-        const allowedNumbers = allowedAnswerNumbers(good, facts);
+        const allowedNumbers = allowedAnswerNumbers(good, facts, req.messageText);
         const offending = [...new Set(decimals(answer.text).filter(value => !allowedNumbers.has(value)))];
         if (offending.length > 0) {
           // C1(e): keep the real rejection reason and the offending values in the log — never the
