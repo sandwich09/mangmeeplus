@@ -53,6 +53,9 @@ export type TurnTags = {
   must_mention_any?: string[];
   must_not_claim?: string[];
   forbidden_tools?: string[];
+  /** The gold call resolved to an ambiguous/not-found category, vendor or branch name (task item
+   * 3): the reply must list at least two of the offered names and ask which one. */
+  must_ask_choice?: boolean;
 };
 
 export type TurnExpect = {
@@ -118,12 +121,12 @@ function validateGoldCall(call: unknown, path: string): asserts call is GoldCall
   for (const key of Object.keys(call)) assert.ok(knownKeys.has(key), `${path}.${key}: unknown field`);
 }
 
-const TAG_KEYS = new Set(['no_tool', 'must_answer', 'must_not_refuse', 'must_mention_any', 'must_not_claim', 'forbidden_tools']);
+const TAG_KEYS = new Set(['no_tool', 'must_answer', 'must_not_refuse', 'must_mention_any', 'must_not_claim', 'forbidden_tools', 'must_ask_choice']);
 
 function validateTags(tags: unknown, path: string): asserts tags is TurnTags {
   assert.ok(isPlainObject(tags), `${path}: tags must be an object`);
   for (const key of Object.keys(tags)) assert.ok(TAG_KEYS.has(key), `${path}.${key}: unknown tag`);
-  for (const key of ['no_tool', 'must_answer', 'must_not_refuse'] as const) {
+  for (const key of ['no_tool', 'must_answer', 'must_not_refuse', 'must_ask_choice'] as const) {
     if (tags[key] !== undefined) assert.equal(typeof tags[key], 'boolean', `${path}.${key}: must be boolean`);
   }
   for (const key of ['must_mention_any', 'must_not_claim', 'forbidden_tools'] as const) {

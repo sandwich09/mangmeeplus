@@ -12,6 +12,7 @@
  * All dates are relative to `now` (Asia/Bangkok), never a fixed calendar month: an eval run must
  * produce the same shape of data regardless of which day it runs on.
  */
+import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 // Relative source imports (see period.ts) — these scripts run with `tsx` before any workspace
 // package is necessarily built.
@@ -321,3 +322,26 @@ export async function applySeedRows(client: Record<string, { createMany(args: { 
  * inline in each company's own `rows` because each fixture gets a full truncate + reseed. */
 export { SHARED_ACCESS_ROWS };
 export { CATEGORIES, VENDOR_NAMES };
+
+export type PgClientLike = { query(sql: string): Promise<{ rows: Array<Record<string, unknown>> }> };
+
+/** Clears every table so a fresh `applySeedRows` pass starts from nothing — makes re-running the
+ * same script against the same database idempotent. Shared by run-preflight.ts (before its one
+ * seed) and run-real.ts's own oracle pass (before it re-seeds to resolve gold calls, ahead of
+ * `runLineReliabilityRuntime`'s SEPARATE per-fixture reset). Mirrors the truncate step of
+ * `resetRuntimeFixtureDatabase` in scripts/line-ai-reliability-runtime.ts, inlined rather than
+ * imported so this stays free of that file's whole Nest/webhook replay machinery. */
+export async function truncateAllTables(client: PgClientLike): Promise<void> {
+  await client.query('BEGIN');
+  try {
+    const tables = (await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename <> '_prisma_migrations'")).rows.map((row) => row['tablename'] as string);
+    assert.ok(tables.length > 0, 'no tables found after migrate — refusing to seed an unmigrated database');
+    await client.query('SET LOCAL session_replication_role = replica');
+    await client.query(`TRUNCATE TABLE ${tables.map((name) => `"public"."${name}"`).join(',')} CASCADE`);
+    await client.query('SET LOCAL session_replication_role = origin');
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  }
+}

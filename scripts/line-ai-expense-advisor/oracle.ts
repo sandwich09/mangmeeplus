@@ -190,6 +190,27 @@ const DEFAULT_ANSWER_SHAPE: Record<string, AnswerShape> = {
   'reimbursement.get_detail': 'detail',
 };
 
+/** `{categoryAmbiguous|vendorAmbiguous|branchAmbiguous, availableCategories|availableVendors|
+ * availableBranches}` or the `...Unresolved` equivalent (task item 3) — status stays "ok", but
+ * there is no total/count/item to require a fact about; the turn's `must_ask_choice` tag (see
+ * scorer.ts) is what checks this shape instead. */
+const CHOICE_OUTCOME_KEYS = ['categoryAmbiguous', 'vendorAmbiguous', 'branchAmbiguous', 'categoryUnresolved', 'vendorUnresolved', 'branchUnresolved'] as const;
+export function isAmbiguousOrUnresolved(data: Record<string, unknown> | undefined): boolean {
+  return !!data && CHOICE_OUTCOME_KEYS.some((key) => data[key] !== undefined);
+}
+
+/** The names offered by an ambiguous/unresolved `{available...: [{id, name, ...}]}` shape, for the
+ * `must_ask_choice` tag ("the reply lists at least two of the offered names"). */
+export function extractOfferedChoices(result: { status: string; data?: unknown }): string[] | null {
+  const data = result.data as Record<string, unknown> | undefined;
+  if (result.status !== 'ok' || !isAmbiguousOrUnresolved(data)) return null;
+  for (const key of ['availableCategories', 'availableVendors', 'availableBranches']) {
+    const list = data![key];
+    if (Array.isArray(list)) return list.map((item: Record<string, unknown>) => String(item['name'] ?? '')).filter(Boolean);
+  }
+  return [];
+}
+
 function moneyFact(data: Record<string, unknown>, key: string, label: string): ExpectedFact[] {
   return data[key] != null ? [{ kind: 'money', value: data[key] as string | number, label }] : [];
 }
@@ -259,10 +280,13 @@ function pendingApprovalsFacts(data: Record<string, unknown>): ExpectedFact[] {
 
 /** Facts a delivered reply must contain for this gold call to be considered grounded — never
  * hand-typed, always read back off the oracle's own ToolResult. Required-only per shape (task
- * follow-up 2); everything else about the result is optional and not checked. */
+ * follow-up 2); everything else about the result is optional and not checked. Empty for an
+ * ambiguous/unresolved outcome (see `isAmbiguousOrUnresolved`) — that shape is checked by the
+ * `must_ask_choice` tag instead. */
 export function extractExpectedFacts(tool: string, result: { status: string; data?: unknown }, answerShape?: AnswerShape): ExpectedFact[] {
   if (result.status !== 'ok' || !result.data) return [];
   const data = result.data as Record<string, unknown>;
+  if (isAmbiguousOrUnresolved(data)) return [];
   const shape = answerShape ?? DEFAULT_ANSWER_SHAPE[tool];
   switch (shape) {
     case 'single_metric': return singleMetricFacts(tool, data);
@@ -280,6 +304,7 @@ export function extractExpectedFacts(tool: string, result: { status: string; dat
 export function extractExpectedFactsForCall(tool: string, result: { status: string; data?: unknown }, call: Pick<GoldCall, 'answerShape' | 'groupBy'>): ExpectedFact[] {
   if (result.status !== 'ok' || !result.data) return [];
   const data = result.data as Record<string, unknown>;
+  if (isAmbiguousOrUnresolved(data)) return [];
   const shape = call.answerShape ?? DEFAULT_ANSWER_SHAPE[tool];
   if (shape === 'breakdown') return breakdownFacts(data, call.groupBy ?? 'category');
   return extractExpectedFacts(tool, result, shape);

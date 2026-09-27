@@ -26,6 +26,16 @@ describe('validateCorpus', () => {
     assert.doesNotThrow(() => validateCorpus(corpus));
   });
 
+  it('accepts a must_ask_choice tag alongside calls', () => {
+    const corpus = { version: 1, conversations: [validConversation({
+      turns: [{ user: 'ค่าน้ำมันเท่าไหร่คะ', category: '6', expect: {
+        calls: [{ tool: 'expense.list_recent', input: { categoryName: 'น้ำมัน' } }],
+        tags: { must_ask_choice: true },
+      } }],
+    })] };
+    assert.doesNotThrow(() => validateCorpus(corpus));
+  });
+
   it('accepts a tag-only turn with no calls', () => {
     const corpus = { version: 1, conversations: [validConversation({
       turns: [{ user: 'สวัสดีค่ะ', category: '19', expect: { tags: { no_tool: true, must_answer: true } } }],

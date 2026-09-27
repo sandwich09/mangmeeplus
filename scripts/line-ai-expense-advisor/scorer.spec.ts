@@ -92,6 +92,46 @@ describe('callMatchesGold', () => {
     const gold = { tool: 'expense.list_recent', input: { paymentStatus: 'UNPAID' } };
     assert.equal(callMatchesGold(actual, gold, NOW), false);
   });
+
+  describe('category/vendor/branch names: judged by what the API resolved, not by raw text', () => {
+    it('matches when gold used a name and the model used the id, but both resolved to the same category', () => {
+      const gold = { tool: 'expense.list_recent', input: { categoryName: 'น้ำมัน' }, result: { status: 'ok', data: { queryApplied: { filters: { categoryId: 'category-a-fuel' } } } } };
+      const actual = { tool: 'expense.list_recent', input: { categoryId: 'category-a-fuel' }, result: { status: 'ok', data: { queryApplied: { filters: { categoryId: 'category-a-fuel' } } } } };
+      assert.equal(callMatchesGold(actual, gold, NOW), true);
+    });
+
+    it('rejects two different paraphrases that resolved to different categories', () => {
+      const gold = { tool: 'expense.list_recent', input: { categoryName: 'ค่าน้ำมัน' }, result: { status: 'ok', data: { queryApplied: { filters: { categoryId: 'category-a-fuel' } } } } };
+      const actual = { tool: 'expense.list_recent', input: { categoryName: 'ค่าออฟฟิศ' }, result: { status: 'ok', data: { queryApplied: { filters: { categoryId: 'category-a-office' } } } } };
+      assert.equal(callMatchesGold(actual, gold, NOW), false);
+    });
+
+    it('matches a branch given by name against a branch given by id once both resolved the same branchId', () => {
+      const gold = { tool: 'expense.get_breakdown', input: { branchId: 'สาขาสีลม' }, result: { status: 'ok', data: { queryApplied: { branch: { branchId: 'branch-b-2' } } } } };
+      const actual = { tool: 'expense.get_breakdown', input: { branchId: 'branch-b-2' }, result: { status: 'ok', data: { queryApplied: { branch: { branchId: 'branch-b-2' } } } } };
+      assert.equal(callMatchesGold(actual, gold, NOW), true);
+    });
+
+    it('matches when both sides came back ambiguous, comparing the outcome kind rather than an id', () => {
+      const gold = { tool: 'expense.list_recent', input: { vendorName: 'สมใจ' }, result: { status: 'ok', data: { vendorAmbiguous: 'สมใจ', availableVendors: [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }] } } };
+      const actual = { tool: 'expense.list_recent', input: { vendorName: 'สมใจ' }, result: { status: 'ok', data: { vendorAmbiguous: 'สมใจ', availableVendors: [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }] } } };
+      assert.equal(callMatchesGold(actual, gold, NOW), true);
+    });
+
+    it('rejects gold ambiguous against actual resolved (different outcome kinds)', () => {
+      const gold = { tool: 'expense.list_recent', input: { vendorName: 'สมใจ' }, result: { status: 'ok', data: { vendorAmbiguous: 'สมใจ', availableVendors: [] } } };
+      const actual = { tool: 'expense.list_recent', input: { vendorId: 'v1' }, result: { status: 'ok', data: { queryApplied: { filters: { vendorId: 'v1' } } } } };
+      assert.equal(callMatchesGold(actual, gold, NOW), false);
+    });
+
+    it('falls back to raw text comparison when neither side has a result (e.g. a bare unit test)', () => {
+      const gold = { tool: 'expense.list_recent', input: { categoryId: 'category-a-fuel' } };
+      const actualMatch = { tool: 'expense.list_recent', input: { categoryId: 'category-a-fuel' } };
+      const actualMismatch = { tool: 'expense.list_recent', input: { categoryId: 'category-a-office' } };
+      assert.equal(callMatchesGold(actualMatch, gold, NOW), true);
+      assert.equal(callMatchesGold(actualMismatch, gold, NOW), false);
+    });
+  });
 });
 
 describe('scoreToolCalls', () => {
@@ -118,6 +158,13 @@ describe('scoreToolCalls', () => {
     assert.equal(result.ok, false);
     assert.equal(result.reasons.length, 1);
     assert.match(result.reasons[0]!, /reimbursement\.get_summary/);
+  });
+
+  it('threads goldResults[i] through to the matching name-based gold call at that index', () => {
+    const gold = [{ tool: 'expense.list_recent', input: { categoryName: 'น้ำมัน' } }];
+    const goldResults = [{ status: 'ok', data: { queryApplied: { filters: { categoryId: 'category-a-fuel' } } } }];
+    const actual = [{ tool: 'expense.list_recent', input: { categoryId: 'category-a-fuel' }, result: { status: 'ok', data: { queryApplied: { filters: { categoryId: 'category-a-fuel' } } } } }];
+    assert.equal(scoreToolCalls(gold, actual, NOW, goldResults).ok, true);
   });
 });
 
@@ -154,6 +201,29 @@ describe('scoreTags', () => {
   it('fails when a forbidden tool was called', () => {
     const result = scoreTags({ forbidden_tools: ['sales.get_sales_summary'] }, evidence({ toolCalls: [{ tool: 'sales.get_sales_summary', input: {} }] }));
     assert.equal(result.ok, false);
+  });
+
+  describe('must_ask_choice', () => {
+    const offeredChoices = ['ร้านสมใจ', 'ร้านสมใจการค้า'];
+
+    it('passes when the reply names at least two offered choices and asks which one', () => {
+      const result = scoreTags({ must_ask_choice: true }, evidence({
+        offeredChoices, deliveredText: 'หมายถึงร้านสมใจ หรือร้านสมใจการค้าคะ หมายถึงร้านไหนคะ',
+      }));
+      assert.equal(result.ok, true);
+    });
+
+    it('fails when fewer than 2 offered choices are named', () => {
+      const result = scoreTags({ must_ask_choice: true }, evidence({ offeredChoices, deliveredText: 'หมายถึงร้านสมใจใช่ไหมคะ หมายถึงร้านไหนคะ' }));
+      assert.equal(result.ok, false);
+      assert.match(result.reasons[0]!, /fewer_than_2_names_mentioned/);
+    });
+
+    it('fails when no question marker is present even though both names are mentioned', () => {
+      const result = scoreTags({ must_ask_choice: true }, evidence({ offeredChoices, deliveredText: 'มีร้านสมใจ และร้านสมใจการค้า สองร้านค่ะ' }));
+      assert.equal(result.ok, false);
+      assert.match(result.reasons[0]!, /no_question_marker/);
+    });
   });
 });
 

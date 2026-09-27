@@ -15,7 +15,10 @@
 import { resolveBusinessReadPeriod } from '../../apps/api/src/modules/line-ai/domain/logic/business-read-source.logic';
 import type { GoldCall, Turn, TurnTags } from './types';
 
-export type CapturedToolCall = { tool: string; input: Record<string, unknown> };
+/** The minimal shape of a captured/oracle `ToolResult` the scorer ever reads. */
+export type ToolResultLike = { status: string; data?: unknown };
+
+export type CapturedToolCall = { tool: string; input: Record<string, unknown>; result?: ToolResultLike };
 export type CapturedEvidence = {
   toolCalls: CapturedToolCall[];
   /** Every delivered message's user-visible text, concatenated — Flex `altText` AND any text/body
@@ -25,6 +28,10 @@ export type CapturedEvidence = {
   latencyMs: number | null;
   modelCalls: number;
   costSatang: number | null;
+  /** The names offered by an ambiguous/unresolved category/vendor/branch result this turn's tool
+   * call(s) produced (oracle.ts `extractOfferedChoices`), for the `must_ask_choice` tag. Empty/
+   * undefined when no call this turn produced that shape. */
+  offeredChoices?: string[];
 };
 
 export type CheckResult = { ok: boolean; reasons: string[] };
@@ -44,12 +51,52 @@ function canonicalizePeriod(input: Record<string, unknown>, now: Date): { fromDa
 
 /** `limit` has a real default (20) baked into ExpenseListRecentTool; an omitted gold `limit` means
  * "don't care", never "must omit it too", so it is intentionally not defaulted/compared here unless
- * gold names it explicitly (handled by the caller only checking keys gold sets). */
-const PASSTHROUGH_KEYS = ['documentStatus', 'paymentStatus', 'categoryId', 'vendorId', 'branchId', 'expenseId', 'limit'];
+ * gold names it explicitly (handled by the caller only checking keys gold sets). `categoryId`/
+ * `vendorId`/`branchId` are handled separately below (RESOLVED_DIMENSIONS), never here. */
+const PASSTHROUGH_KEYS = ['documentStatus', 'paymentStatus', 'expenseId', 'limit'];
+
+/** A gold call naming a category/vendor/branch by id OR by name (the model may say "น้ำมัน" where
+ * gold says "ค่าน้ำมัน") is judged by what the API actually RESOLVED, never by raw text equality —
+ * a branch is included because `branchId` already accepts a name today (ExpenseListRecentTool). */
+const DIMENSION_INPUT_KEYS = { category: ['categoryId', 'categoryName'], vendor: ['vendorId', 'vendorName'], branch: ['branchId'] } as const;
+type Dimension = keyof typeof DIMENSION_INPUT_KEYS;
+
+type ResolvedOutcome = { kind: 'resolved'; id: string | null } | { kind: 'ambiguous' | 'unresolved' } | { kind: 'not_applicable' };
+
+/** Reads a tool result's ACTUAL resolution for one dimension: `{<dim>Ambiguous}` /
+ * `{<dim>Unresolved}` (task item 3) short-circuit to that outcome; otherwise the resolved id comes
+ * from `queryApplied.filters.<dim>Id` (category/vendor) or `queryApplied.branch.branchId` (branch)
+ * — present on every "ok" ExpenseListRecentTool/ExpenseGetBreakdownTool result today, regardless
+ * of whether the input that produced it was an id or a name. */
+function resolvedOutcome(result: ToolResultLike | undefined, dimension: Dimension): ResolvedOutcome {
+  if (!result || result.status !== 'ok') return { kind: 'not_applicable' };
+  const data = (result.data ?? {}) as Record<string, unknown>;
+  if (data[`${dimension}Ambiguous`] !== undefined) return { kind: 'ambiguous' };
+  if (data[`${dimension}Unresolved`] !== undefined) return { kind: 'unresolved' };
+  const queryApplied = (data['queryApplied'] ?? {}) as Record<string, unknown>;
+  if (dimension === 'branch') {
+    const id = (queryApplied['branch'] as Record<string, unknown> | undefined)?.['branchId'];
+    return { kind: 'resolved', id: typeof id === 'string' ? id : null };
+  }
+  const id = (queryApplied['filters'] as Record<string, unknown> | undefined)?.[`${dimension}Id`];
+  return { kind: 'resolved', id: typeof id === 'string' ? id : null };
+}
+
+/** Two resolutions match when they are the same OUTCOME KIND (task item 3's "when either side is
+ * ambiguous or not-found, compare the outcome kind instead") — and, only when BOTH resolved to a
+ * concrete id, when that id is the same. */
+function outcomesEquivalent(a: ResolvedOutcome, b: ResolvedOutcome): boolean {
+  if (a.kind !== b.kind) return false;
+  return a.kind !== 'resolved' || b.kind !== 'resolved' || a.id === b.id;
+}
+
+function dimensionRequested(input: Record<string, unknown>, dimension: Dimension): boolean {
+  return DIMENSION_INPUT_KEYS[dimension].some((key) => input[key as string] !== undefined);
+}
 
 /** Compares an ACTUAL captured call against one GOLD call, checking only the fields gold sets
  * (permissive toward extra filters/fields the model added on its own) plus the tool name always. */
-export function callMatchesGold(actual: CapturedToolCall, gold: { tool: string; input: Record<string, unknown> }, now: Date): boolean {
+export function callMatchesGold(actual: CapturedToolCall, gold: { tool: string; input: Record<string, unknown>; result?: ToolResultLike }, now: Date): boolean {
   if (actual.tool !== gold.tool) return false;
   const goldWantsPeriod = Object.keys(gold.input).some((key) => PERIOD_KEYS.has(key));
   if (goldWantsPeriod) {
@@ -58,6 +105,18 @@ export function callMatchesGold(actual: CapturedToolCall, gold: { tool: string; 
     if (goldPeriod === 'invalid' || actualPeriod === 'invalid') return false;
     if (goldPeriod.fromDate !== actualPeriod.fromDate || goldPeriod.toDate !== actualPeriod.toDate) return false;
   }
+  for (const dimension of Object.keys(DIMENSION_INPUT_KEYS) as Dimension[]) {
+    if (!dimensionRequested(gold.input, dimension)) continue;
+    if (gold.result && actual.result) {
+      if (!outcomesEquivalent(resolvedOutcome(gold.result, dimension), resolvedOutcome(actual.result, dimension))) return false;
+      continue;
+    }
+    // No oracle/captured result supplied (e.g. a plain unit test with only raw inputs): fall back
+    // to raw text on whichever key gold used. Only correct when the model echoes the same string
+    // — a real comparison should always supply `result` so the RESOLVED path above runs instead.
+    const key = DIMENSION_INPUT_KEYS[dimension].find((candidate) => gold.input[candidate as string] !== undefined)!;
+    if (String(actual.input[key as string] ?? '') !== String(gold.input[key as string])) return false;
+  }
   for (const key of PASSTHROUGH_KEYS) {
     if (gold.input[key] === undefined) continue;
     if (String(actual.input[key] ?? '') !== String(gold.input[key])) return false;
@@ -65,22 +124,27 @@ export function callMatchesGold(actual: CapturedToolCall, gold: { tool: string; 
   return true;
 }
 
-/** A gold call is satisfied if ANY captured call matches it OR one of its `alternatives`. */
-function goldCallSatisfied(call: GoldCall, actualCalls: CapturedToolCall[], now: Date): boolean {
-  const candidates = [{ tool: call.tool, input: call.input as Record<string, unknown> }, ...(call.alternatives ?? [])
-    .map((alt) => ({ tool: alt.tool, input: alt.input as Record<string, unknown> }))];
+/** A gold call is satisfied if ANY captured call matches it OR one of its `alternatives`.
+ * `goldResult` is the ORACLE's own run of THIS gold call (undefined for an `alternatives` entry —
+ * those fall back to raw-text dimension comparison, an accepted gap since alternatives are rare
+ * and rarely name-based). */
+function goldCallSatisfied(call: GoldCall, goldResult: ToolResultLike | undefined, actualCalls: CapturedToolCall[], now: Date): boolean {
+  const candidates = [{ tool: call.tool, input: call.input as Record<string, unknown>, result: goldResult }, ...(call.alternatives ?? [])
+    .map((alt) => ({ tool: alt.tool, input: alt.input as Record<string, unknown>, result: undefined as ToolResultLike | undefined }))];
   return candidates.some((candidate) => actualCalls.some((actual) => callMatchesGold(actual, candidate, now)));
 }
 
 /** Every gold call must be satisfied by some captured call (R-U4: several questions in one turn
- * need several tool calls, all present — not just one of them). */
-export function scoreToolCalls(goldCalls: GoldCall[], actualCalls: CapturedToolCall[], now: Date): CheckResult {
+ * need several tool calls, all present — not just one of them). `goldResults[i]` is the oracle's
+ * own result for `goldCalls[i]` (task item "one more scorer rule"); omit it (or leave a gap with
+ * `undefined`) to fall back to raw-text comparison for any category/vendor/branch dimension. */
+export function scoreToolCalls(goldCalls: GoldCall[], actualCalls: CapturedToolCall[], now: Date, goldResults: Array<ToolResultLike | undefined> = []): CheckResult {
   const reasons: string[] = [];
-  for (const call of goldCalls) {
-    if (!goldCallSatisfied(call, actualCalls, now)) {
+  goldCalls.forEach((call, index) => {
+    if (!goldCallSatisfied(call, goldResults[index], actualCalls, now)) {
       reasons.push(`missing_or_wrong_call:${call.tool}:${JSON.stringify(call.input)}`);
     }
-  }
+  });
   return { ok: reasons.length === 0, reasons };
 }
 
@@ -138,8 +202,22 @@ const REFUSAL_MARKERS = [
   'ยังไม่แน่ใจว่าหมายถึงอะไร', 'ยังไม่มีเรื่อง', 'ไม่มีสิทธิ์ดูส่วนนั้น',
 ];
 
+// Thai disambiguation-question markers. Thai rarely uses "?"; a clarifying question is a distinct
+// interrogative particle/phrase instead — this list is a heuristic, like REFUSAL_MARKERS above.
+const CHOICE_QUESTION_MARKERS = ['อันไหน', 'รายการไหน', 'ใช่รายการนี้ไหม', 'หมายถึงอันไหน', 'หมายถึงร้านไหน', 'หมายถึงหมวดไหน', 'หมายถึงสาขาไหน', '?'];
+
+/** "the reply lists at least two of the offered names and asks which one" (task item 3). */
+function scoreMustAskChoice(offeredChoices: string[] | undefined, deliveredText: string): CheckResult {
+  const reasons: string[] = [];
+  const mentioned = (offeredChoices ?? []).filter((name) => deliveredText.includes(name));
+  if (mentioned.length < 2) reasons.push(`must_ask_choice_violated:fewer_than_2_names_mentioned:${mentioned.length}`);
+  if (!CHOICE_QUESTION_MARKERS.some((marker) => deliveredText.includes(marker))) reasons.push('must_ask_choice_violated:no_question_marker');
+  return { ok: reasons.length === 0, reasons };
+}
+
 export function scoreTags(tags: TurnTags, evidence: CapturedEvidence): CheckResult {
   const reasons: string[] = [];
+  if (tags.must_ask_choice) reasons.push(...scoreMustAskChoice(evidence.offeredChoices, evidence.deliveredText).reasons);
   if (tags.no_tool && evidence.toolCalls.length > 0) reasons.push(`no_tool_violated:${evidence.toolCalls.map((c) => c.tool).join(',')}`);
   if (tags.must_answer && evidence.deliveredText.trim().length === 0) reasons.push('must_answer_violated:empty_reply');
   if (tags.must_not_refuse && REFUSAL_MARKERS.some((marker) => evidence.deliveredText.includes(marker))) {
@@ -173,10 +251,12 @@ export function scoreTurn(
   evidence: CapturedEvidence,
   expectedFacts: ExpectedFact[],
   now: Date,
+  /** The oracle's own result for each of `turn.expect.calls`, same order — see `scoreToolCalls`. */
+  goldResults: Array<ToolResultLike | undefined> = [],
 ): TurnScore {
   const reasons: string[] = [];
   if (turn.expect.calls?.length) {
-    reasons.push(...scoreToolCalls(turn.expect.calls, evidence.toolCalls, now).reasons);
+    reasons.push(...scoreToolCalls(turn.expect.calls, evidence.toolCalls, now, goldResults).reasons);
     reasons.push(...scoreFacts(expectedFacts, evidence.deliveredText).reasons);
   }
   if (turn.expect.tags) reasons.push(...scoreTags(turn.expect.tags, evidence).reasons);

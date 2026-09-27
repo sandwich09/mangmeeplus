@@ -17,8 +17,8 @@ import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateCorpus, flattenTurns, type Corpus } from './types';
-import { buildCompanySeed, applySeedRows, SHARED_ACCESS_ROWS, type CompanySeed } from './seed';
-import { bootOracle, resolveGoldCallInput, extractShownItems, extractExpectedFactsForCall, gitHeadSha, type ShownItem } from './oracle';
+import { buildCompanySeed, applySeedRows, truncateAllTables, SHARED_ACCESS_ROWS, type CompanySeed, type PgClientLike } from './seed';
+import { bootOracle, resolveGoldCallInput, extractShownItems, extractExpectedFactsForCall, extractOfferedChoices, gitHeadSha, type ShownItem } from './oracle';
 import { renderUserText } from './template';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -47,29 +47,11 @@ async function ensureDatabase(adminUrl: string, name: string, requireApi: NodeJS
   }
 }
 
-/** Idempotent re-run support: preflight seeds a fresh graph every time, so a leftover previous
- * attempt (partial seed, or the same corpus re-run) must be cleared first. Mirrors the truncate
- * step of `resetRuntimeFixtureDatabase` in scripts/line-ai-reliability-runtime.ts, inlined here
- * (rather than imported) so preflight does not drag in that file's whole Nest/webhook replay
- * machinery for one 10-line helper. */
-async function truncateAllTables(databaseUrl: string, requireApi: NodeJS.Require): Promise<void> {
-  const { Client } = requireApi('pg') as { Client: new (opts: { connectionString: string }) => { connect(): Promise<void>; end(): Promise<void>; query(sql: string): Promise<{ rows: Array<{ tablename: string }> }> } };
+async function withPgClient<T>(databaseUrl: string, requireApi: NodeJS.Require, run: (client: PgClientLike) => Promise<T>): Promise<T> {
+  const { Client } = requireApi('pg') as { Client: new (opts: { connectionString: string }) => PgClientLike & { connect(): Promise<void>; end(): Promise<void> } };
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();
-  try {
-    await client.query('BEGIN');
-    const tables = (await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename <> '_prisma_migrations'")).rows.map((row) => row.tablename);
-    assert.ok(tables.length > 0, 'no tables found after migrate — refusing to seed an unmigrated database');
-    await client.query('SET LOCAL session_replication_role = replica');
-    await client.query(`TRUNCATE TABLE ${tables.map((name) => `"public"."${name}"`).join(',')} CASCADE`);
-    await client.query('SET LOCAL session_replication_role = origin');
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    await client.end();
-  }
+  try { return await run(client); } finally { await client.end(); }
 }
 
 async function main(): Promise<void> {
@@ -94,7 +76,7 @@ async function main(): Promise<void> {
   assert.ok(existsSync(compiledEntry), `compiled API entry missing after build: ${compiledEntry}`);
 
   console.log(JSON.stringify({ event: 'truncate_start' }));
-  await truncateAllTables(databaseUrl, requireApi);
+  await withPgClient(databaseUrl, requireApi, truncateAllTables);
 
   const oracle = await bootOracle({ repoRoot: REPO_ROOT, databaseUrl, redisUrl: REDIS_URL, secretsPath: SECRETS_PATH });
   try {
@@ -121,6 +103,7 @@ async function main(): Promise<void> {
     let hardErrors = 0;
     let factsExtracted = 0;
     let renderedTurns = 0;
+    let choiceResultsSeen = 0;
     const byCategory = new Map<string, { total: number; ok: number }>();
     const byToolStatus = new Map<string, number>();
     const errorDetails: Array<{ conversationId: string; turnIndex: number; tool: string; error: string }> = [];
@@ -156,6 +139,10 @@ async function main(): Promise<void> {
           const shown = extractShownItems(call.tool, result);
           if (shown.length) priorShownItems = shown;
           factsExtracted += extractExpectedFactsForCall(call.tool, result, call).length;
+          // Exercises the ambiguous/unresolved detection path (task item 3) even though today's
+          // seeded data never triggers it — proves extractOfferedChoices does not throw on a
+          // normal "ok" result, ahead of Track C's categoryName/vendorName resolution landing.
+          if (extractOfferedChoices(result)) choiceResultsSeen += 1;
         } catch (error) {
           turnOk = false;
           hardErrors += 1;
@@ -171,7 +158,7 @@ async function main(): Promise<void> {
       sourceCommit: gitHeadSha(REPO_ROOT),
       conversations: corpus.conversations.length,
       turns: flat.length,
-      dataTurns, tagOnlyTurns, hardErrors, factsExtracted, renderedTurns,
+      dataTurns, tagOnlyTurns, hardErrors, factsExtracted, renderedTurns, choiceResultsSeen,
       byCategory: Object.fromEntries(byCategory),
       byToolStatus: Object.fromEntries(byToolStatus),
       errorDetails,

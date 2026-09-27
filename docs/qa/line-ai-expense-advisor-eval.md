@@ -12,15 +12,16 @@ production permission/entitlement registries (`ROLE_GRANTS`, `SYSTEM_ROLES`, `PE
 | File | Purpose |
 |---|---|
 | `period.ts` | Resolves a relative period token (`today`, `this_month`, `last_month`, `this_month_to_date`) against a run-time clock, using the same civil-date rules the ERP tools use. |
+| `template.ts` | Renders `{{placeholder}}` absolute-date markers in a turn's `user` text (month names, Buddhist years) from the same run-time clock — used identically by `run-preflight.ts` and `run-real.ts`. |
 | `types.ts` | The corpus JSON format (types) and its structural validator, `validateCorpus`. |
-| `seed.ts` | Builds a Starter-realistic (company A) / Pro-realistic (company B) row set — permissions, roles, entitlements, branches, 5 role users with LINE identities, ≥30 expenses/company, ≥6 reimbursements/company — all dated relative to the run clock. |
-| `oracle.ts` | Boots the compiled API as a Nest application context (no HTTP, no gateway) and runs a gold tool call through the SAME tool classes `InternalToolsController` dispatches to, with a really-resolved actor context. Also resolves `$period`/`$fromShownItems` markers and extracts expected facts from a `ToolResult`. |
-| `scorer.ts` | Pure, model-free scoring: tool/input equivalence (period-aware), fact-in-text checks (Thai amount formatting), and the 6 turn tags. Unit-tested with fake evidence. |
+| `seed.ts` | Builds a Starter-realistic (company A) / Pro-realistic (company B) row set — permissions, roles, entitlements, branches, 5 role users with LINE identities, ≥30 expenses/company, ≥6 reimbursements/company — all dated relative to the run clock. Also exports `truncateAllTables` (idempotent re-run support, shared by both runners). |
+| `oracle.ts` | Boots the compiled API as a Nest application context (no HTTP, no gateway) and runs a gold tool call through the SAME tool classes `InternalToolsController` dispatches to, with a really-resolved actor context. Also resolves `$period`/`$fromShownItems` markers, extracts the REQUIRED facts for a call's answer shape, and detects an ambiguous/not-found category/vendor/branch outcome. |
+| `scorer.ts` | Pure, model-free scoring: tool/input equivalence (period-aware; category/vendor/branch names judged by what the API RESOLVED, not raw text), fact-in-text checks (Thai amount formatting), and the 7 turn tags. Unit-tested with fake evidence. |
 | `corpus.sample.json` | 20 turns across 8 conversations covering spec §3 rows 1, 2, 3, 4, 7, 8, 10, 15, 17, 18 (plus 11 and 19 as a bonus), all 5 roles, both companies, and one 4-turn memory chain. |
 | `run-preflight.ts` | CLI: create/migrate the eval DB if needed, seed it, run every gold call through the oracle, print a coverage summary. No gateway, no model. |
 | `run-real.ts` | CLI (implemented, **not executed** by this delivery): runs the corpus through a real, already-listening gateway via `runLineReliabilityRuntime`, scores with `scorer.ts`, writes JSON evidence + a markdown report. |
 | `launch-gateway.mjs` | Spawns the compiled AI Gateway with this harness's own DB/Redis/ports (**not executed** by this delivery). |
-| `types.spec.ts`, `scorer.spec.ts` | `node:test` unit tests for the validator and the scorer, registered in `scripts/line-ai-whole-chain-acceptance.catalog.mjs`'s `reliability-contracts-evaluation-v2` group. |
+| `types.spec.ts`, `scorer.spec.ts`, `template.spec.ts` | `node:test` unit tests for the validator, the scorer, and the placeholder renderer, registered in `scripts/line-ai-whole-chain-acceptance.catalog.mjs`'s `reliability-contracts-evaluation-v2` group. |
 
 ## Running preflight (no model, no gateway)
 
@@ -82,6 +83,13 @@ per (company, role) actually used by the corpus — `runLineReliabilityRuntime` 
 reseeds the whole database between every conversation, and a snapshot's `lineUserId` has to be
 that one conversation's own actor.
 
+Before starting that live replay, `run-real.ts` runs its OWN oracle pass over the same corpus
+(truncate, seed, run every gold call — same code preflight uses, then fully closed) so the
+required facts and the category/vendor/branch resolution it scores against always come from the
+GOLD call's real result, never from re-using the model's own (possibly wrong) one. Running it
+first, and closing it before the live replay opens its own Nest app / fetch patch, keeps the two
+completely non-overlapping.
+
 ## Corpus format
 
 ```jsonc
@@ -125,15 +133,99 @@ A turn's `expect` needs at least one of:
     plain `this_month` is the full calendar month (mainly useful for a fully-past month).
   - `{ "$fromShownItems": <index> }` — the id of the item at that 0-based index in the immediately
     preceding data turn's shown list (spec §4 R-M1 memory: "รายการแรก" → index 0).
+  - `categoryName`/`vendorName`/a `branchId` that is actually a name (e.g. `"สาขาสีลม"`) are plain
+    strings, but are matched by what the API RESOLVED them to, never by raw text — see "Category/
+    vendor/branch name equivalence" below.
+  - `answerShape` (one of `single_metric`, `breakdown`, `list`, `detail`, `pending_approvals`) and
+    `groupBy` (one of `category` (default), `branch`, `vendor`, only for a `breakdown` call)
+    override the per-tool default that decides which facts are REQUIRED — see "Required facts by
+    answer shape" below. Most calls never need to set these; `expense.list_recent` is the one tool
+    that answers as either `single_metric` (its default) or `list` (row 7, needs `"answerShape":
+    "list"` in gold).
   - `alternatives`: an array of other `{tool, input}` shapes that would equally correctly answer
     the same question.
-- **`tags`** — `no_tool`, `must_answer`, `must_not_refuse` (booleans), `must_mention_any`,
-  `must_not_claim`, `forbidden_tools` (string arrays, substring/exact-name checks against the
-  delivered text or the captured tool-call list).
+- **`tags`** — `no_tool`, `must_answer`, `must_not_refuse`, `must_ask_choice` (booleans),
+  `must_mention_any`, `must_not_claim`, `forbidden_tools` (string arrays, substring/exact-name
+  checks against the delivered text or the captured tool-call list). `must_ask_choice` is for a
+  gold call whose category/vendor/branch resolves ambiguously or not at all (task item 3): the
+  reply must name at least two of the offered choices and ask which one.
 
 A turn may set both (e.g. row 18, out-of-permission: the tool call IS made — the role's own
 `expense.read_own` scope is what narrows the answer — while a tag additionally requires the reply
 not to overclaim).
+
+## Absolute-date placeholders
+
+A real customer types a month name or a Buddhist-era year ("สิงหาคม 2569"), never a relative
+token — but the corpus itself must stay valid on any future run date (spec §7 R-U3). So a `user`
+string never bakes in the literal words; it holds `{{placeholder}}` markers, filled in by
+`template.ts`'s `renderUserText(text, now)` from the same Bangkok "today" every other part of this
+harness uses. `run-preflight.ts` renders every turn's text (there is no model to send it to, but
+this still proves every placeholder resolves before a real run pays for it); `run-real.ts` renders
+it into the fixture's `turns[].user` before that text ever reaches the gateway, and again when
+building a failed turn's transcript for the report — the same function, the same clock, in both.
+
+`validateCorpus` rejects any `{{...}}` key that is not one of these:
+
+| Placeholder | Example (today = 27 Sep 2026) |
+|---|---|
+| `{{this_month_th}}` | กันยายน |
+| `{{last_month_th}}` | สิงหาคม |
+| `{{this_month_abbr_th}}` | ก.ย. |
+| `{{last_month_abbr_th}}` | ส.ค. |
+| `{{this_be_year}}` | 2569 |
+| `{{this_be_year_short}}` | 69 |
+| `{{this_ce_year}}` | 2026 |
+| `{{last_month_be_year}}` | 2569 (subtracts 1 from `this_be_year` only when "this month" is January — see `template.spec.ts`'s January case) |
+| `{{today_day}}` | 27 (no zero-padding) |
+
+## Required facts by answer shape
+
+"Everything else about a result is optional and not checked" (task follow-up 2) — `oracle.ts`
+extracts ONLY these, per the gold call's `answerShape` (default per tool: `expense.list_recent` →
+`single_metric`, `expense.get_breakdown` → `breakdown`, `expense.get_detail`/
+`reimbursement.get_detail` → `detail`, `reimbursement.list_pending_approvals` →
+`pending_approvals`, `reimbursement.get_summary` → `single_metric`):
+
+| Shape | Required facts | Notes |
+|---|---|---|
+| `single_metric` | the total, the item count | `reimbursement.get_summary`'s real shape (`GetReimbursementAiSummaryUseCase`, read from source) has no one total/count pair — `totalUnpaidAmount` and `pendingApprovalCount` are the closest real fields. |
+| `breakdown` | the overall total, plus the top-3 groups' names and amounts | Top 3 from `byCategory` (default `groupBy`), `byBranch`, or `byVendor` (the new `{vendorId, vendor, currency, count, totalAmount, linked?}` group — read as soon as it is present, absent today without error). |
+| `list` | the first 3 items' amounts and vendor names | An item with no vendor snapshot contributes only its amount. |
+| `detail` | the amount, the date, the vendor | The date is matched WEAKLY (day-of-month digits only — this harness does not own the reply's Thai date formatting). A reimbursement claim has no vendor; its requester name is the closest identity fact. |
+| `pending_approvals` | the count, the total | The tool has no separate aggregate amount (`erp-reimbursement-tools.use-case.ts`, read from source) — "the total" is the sum of the (already-capped-at-10) listed items' own amounts. |
+
+An ambiguous/not-found result (see below) contributes NO facts — `must_ask_choice` covers that
+shape instead.
+
+## Category/vendor/branch name equivalence
+
+The model may send `"น้ำมัน"` where gold says `"ค่าน้ำมัน"` — comparing that text would never
+match, so a gold call naming a category, vendor, or branch (`categoryId`/`categoryName`,
+`vendorId`/`vendorName`, or a `branchId` that is itself a name — branch names already resolve
+today) is judged by what the API actually RESOLVED: `scorer.ts` reads
+`queryApplied.filters.categoryId`/`vendorId` (or `queryApplied.branch.branchId`) off BOTH the
+gold call's own oracle result and the model's captured result, and requires the same id. When
+either side comes back `{categoryAmbiguous|...}` or `{categoryUnresolved|...}` (task item 3 — the
+new output `expense.list_recent`/`get_breakdown` can return for the new `categoryName`/
+`vendorName` inputs, mirroring the existing `branchAmbiguous`/`branchUnresolved` shape), the
+comparison falls back to the OUTCOME KIND (ambiguous vs. unresolved vs. resolved) rather than an
+id. `run-real.ts` supplies both sides' results (its own independent oracle pass — see below —
+supplies gold's; the live replay's captured `ToolResult` supplies the model's); a bare unit test
+with no results falls back to raw-text comparison, which is why `scorer.spec.ts` tests both paths.
+
+`extractOfferedChoices` (`oracle.ts`) reads the offered `availableCategories`/`availableVendors`/
+`availableBranches` names for the `must_ask_choice` tag ("the reply lists at least two of the
+offered names and asks which one" — checked heuristically against a small set of Thai
+disambiguation-question markers, same spirit as the existing refusal-marker heuristic).
+
+Not exercised by the sample corpus: `categoryName`/`vendorName` resolution is Track C's work
+(`claude/mangmee-ai-advisor-tools`), not yet merged into this worktree, so a live preflight run
+never actually produces an ambiguous/unresolved category or vendor result today (`branchId`-by-
+name already works and is exercised via the shared logic in `callMatchesGold`, just not by a
+sample turn). `run-preflight.ts` still exercises the code path (`extractOfferedChoices` on every
+captured "ok" result, counted as `choiceResultsSeen`) so it is proven not to throw ahead of that
+merge, and `scorer.spec.ts` covers the matching/tag logic with fake ambiguous results.
 
 ## Known limitations / what blocked or shaped this build
 
@@ -166,19 +258,19 @@ not to overclaim).
 - **Reimbursement tools in the oracle.** `reimbursement.list_pending_approvals` and
   `reimbursement.get_summary` both take no meaningful input (`execute(ctx)` / `execute(ctx, _)`),
   so their gold `input` is always `{}`; the oracle runs them exactly like the read tools.
-  `reimbursement.get_summary`'s exact output shape was not inspected in source, so
-  `extractExpectedFacts` falls back to a generic numeric-field scan (any `amount`/`total`/`count`
-  -looking key) for it instead of a hand-mapped one.
-- **Buddhist-year phrasing (spec §7 R-U3).** The sample corpus does not include an absolute
-  Buddhist-year turn (e.g. "สิงหาคม 2569"), because an absolute month baked into a "runs on any
-  future date" corpus eventually goes stale. The format has no blocker for it — a turn's `user`
-  text is free text — but the 200-turn corpus should either author it close to its run date or the
-  format should grow an explicit (non-relative) period marker if it needs to outlive that.
+  `reimbursement.get_detail` is also wired in (task follow-up 2), for the same reason. Every
+  tool's real output shape is now read from source and mapped explicitly in `oracle.ts` (see
+  "Required facts by answer shape" above); `scanNumericFacts`' generic scan is kept only as a
+  last-resort fallback for a tool added to the roster before its own rule is.
+- **Buddhist-year phrasing (spec §7 R-U3) — solved by templating, see below.** A `user` string
+  never bakes in a literal month name or year; it uses `{{placeholder}}` markers instead, rendered
+  at run time from the real Bangkok clock (see "Absolute-date placeholders"). Three sample turns
+  now exercise this (`A-owner-payment-status` turns 1–2, `B-auditor-paraphrases` turn 1).
 
 ## Unit tests
 
 ```bash
-node_modules/.bin/tsx --test scripts/line-ai-expense-advisor/types.spec.ts scripts/line-ai-expense-advisor/scorer.spec.ts
+node_modules/.bin/tsx --test scripts/line-ai-expense-advisor/types.spec.ts scripts/line-ai-expense-advisor/scorer.spec.ts scripts/line-ai-expense-advisor/template.spec.ts
 ```
 
 (`scorer.spec.ts` imports the real `resolveBusinessReadPeriod`, so `packages/contracts` must be
