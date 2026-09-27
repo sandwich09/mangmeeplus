@@ -166,3 +166,121 @@ describe('semantic turn v2: C1(c)/(d) grounding-exhausted fallback is never a de
     assert.equal(coverage?.reasonCode, 'SEMANTIC_ANSWER_UNAVAILABLE');
   });
 });
+
+describe('item 3 (223-turn eval batch 2): a two-period comparison is answered with code-computed facts', () => {
+  const CMP_SOURCE_REF = { label: 'สรุปค่าใช้จ่ายแยกกลุ่ม', module: 'expenses', entityType: 'expense_breakdown',
+    asOf: '2026-09-27T18:20:29.656Z', permissionChecked: true as const, webPath: '/companies/company/expenses' };
+
+  function breakdownResult(fromDate: string, toDate: string, totalAmount: string, totalCount: number): ToolResult {
+    return { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-27T18:20:29.656Z', sourceRefs: [CMP_SOURCE_REF],
+      data: { period: { fromDate, toDate, defaultedToCurrentMonth: false }, totalCount, totalAmount, currency: 'THB',
+        totalsByCurrency: [{ currency: 'THB', count: totalCount, totalAmount }], mixedCurrency: false,
+        byCategory: [{ categoryId: null, category: 'ค่าบริการ', currency: 'THB', count: 3, totalAmount }],
+        byBranch: [], byVendor: [] } };
+  }
+
+  const THIS_MONTH = breakdownResult('2026-09-01', '2026-09-28', '17765', 14);
+  const LAST_MONTH = breakdownResult('2026-08-01', '2026-08-31', '40453', 14);
+
+  function cmpRequest(): LineAiTurnRequest {
+    const text = 'เดือนนี้กับเดือนที่แล้ว อันไหนจ่ายเยอะกว่ากันครับ';
+    return {
+      requestId: 'req-cmp-1', webhookEventId: 'event-cmp-1', messageText: text, messagePreviewHash: 'f'.repeat(16),
+      valueCandidates: extractValueCandidates(text, '2026-09-28'),
+      semanticSubrequests: [
+        { index: 0, kind: 'read', goal: 'ยอดรวมเดือนนี้', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: { fromDate: '2026-09-01', toDate: '2026-09-28' } },
+        { index: 1, kind: 'read', goal: 'ยอดรวมเดือนที่แล้ว', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: { fromDate: '2026-08-01', toDate: '2026-08-31' } },
+      ],
+      userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership',
+        permissions: ['expense.read'], roles: ['owner'], branchIds: [], locationIds: [], locale: 'th-TH' },
+    };
+  }
+
+  const CMP_CONTROL_CALL = JSON.stringify({ calls: [
+    { index: 0, toolName: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28' } },
+    { index: 1, toolName: 'expense.get_breakdown', input: { fromDate: '2026-08-01', toDate: '2026-08-31' } },
+  ] });
+
+  async function runCmp(composeQueue: string[]) {
+    const queue = [CMP_CONTROL_CALL, ...composeQueue];
+    const provider: IModelProvider = { async generateText(_input: ProviderInput): Promise<ProviderOutput> {
+      return { ok: true, text: queue.shift() ?? '{}' };
+    } };
+    return runSemanticTurnV2({
+      req: cmpRequest(), provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
+      publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(_meta, _ctx, args): Promise<ToolResult> {
+        return (args as { fromDate?: string }).fromDate === '2026-09-01' ? THIS_MONTH : LAST_MONTH;
+      },
+    });
+  }
+
+  it('accepts a compose answer that cites the code-computed difference and percent', async () => {
+    const answers = JSON.stringify({ answers: [
+      { index: 0, status: 'handled', text: 'เดือนนี้ 17,765.00 บาท', sourceRefIds: ['expenses:expense_breakdown:summary'] },
+      { index: 1, status: 'handled', text: 'เดือนที่แล้ว 40,453.00 บาท มากกว่าเดือนนี้ ต่างกัน -22,688.00 บาท (-56.1%)', sourceRefIds: ['expenses:expense_breakdown:summary'] },
+    ] });
+    const result = await runCmp([answers]);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.equal(result.semanticCoverage?.[1]?.status, 'handled');
+    assert.notEqual(result.semanticCoverage?.[1]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
+    assert.ok(result.replyText.includes('-22,688.00'));
+    assert.ok(result.replyText.includes('-56.1%'));
+  });
+
+  it('falls to the deterministic comparison when compose invents an ungrounded difference', async () => {
+    const answers = JSON.stringify({ answers: [
+      { index: 0, status: 'handled', text: 'เดือนนี้ 17,765.00 บาท', sourceRefIds: ['expenses:expense_breakdown:summary'] },
+      { index: 1, status: 'handled', text: 'ต่างกันประมาณ 99,999 บาท เยอะมากครับ', sourceRefIds: ['expenses:expense_breakdown:summary'] },
+    ] });
+    const result = await runCmp([answers]);
+    assert.equal(result.semanticCoverage?.[1]?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
+    assert.ok(!result.replyText.includes('99,999'), 'the invented figure must not leak through');
+    assert.ok(result.replyText.includes('-22,688.00'), result.replyText);
+    assert.ok(result.replyText.includes('ช่วง 2026-08-01'), result.replyText);
+  });
+
+  it('falls to the deterministic comparison — never the generic terminal — when compose fails entirely', async () => {
+    const result = await runCmp(['not json at all', 'still not json']);
+    for (const index of [0, 1]) {
+      const coverage = result.semanticCoverage?.[index];
+      assert.equal(coverage?.status, 'handled');
+      assert.equal(coverage?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
+      assert.notEqual(coverage?.reasonCode, 'SEMANTIC_ANSWER_UNAVAILABLE');
+    }
+    assert.ok(result.replyText.includes('-22,688.00'));
+    assert.ok(!result.replyText.includes('ดึงข้อมูลส่วนนี้ไม่ได้'), result.replyText);
+  });
+
+  it('item 3(b): grounds a code-computed category share for a single-period breakdown "why" question', async () => {
+    const text = 'ทำไมค่าบริการเดือนนี้เยอะจัง';
+    const req: LineAiTurnRequest = {
+      requestId: 'req-share-1', webhookEventId: 'event-share-1', messageText: text, messagePreviewHash: 'a'.repeat(16),
+      valueCandidates: extractValueCandidates(text, '2026-09-28'),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ทำไมค่าบริการเยอะ', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+        requestedFilters: { fromDate: '2026-09-01', toDate: '2026-09-28' } }],
+      userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership',
+        permissions: ['expense.read'], roles: ['owner'], branchIds: [], locationIds: [], locale: 'th-TH' },
+    };
+    const control = JSON.stringify({ calls: [{ index: 0, toolName: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28' } }] });
+    // ค่าบริการ 4,188.50 of a 17,765.00 total is a 23.6% share — code-computed, cited verbatim.
+    const answer = JSON.stringify({ answers: [{ index: 0, status: 'handled',
+      text: 'ค่าบริการเดือนนี้ 4,188.50 บาท คิดเป็นสัดส่วน 23.6% ของยอดรวม 17,765.00 บาท ซึ่งเป็นหมวดที่มีสัดส่วนสูงสุดค่ะ',
+      sourceRefIds: ['expenses:expense_breakdown:summary'] }] });
+    const queue = [control, answer];
+    const provider: IModelProvider = { async generateText(): Promise<ProviderOutput> { return { ok: true, text: queue.shift() ?? '{}' }; } };
+    const shareResult: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-27T18:20:29.656Z', sourceRefs: [CMP_SOURCE_REF],
+      data: { period: { fromDate: '2026-09-01', toDate: '2026-09-28', defaultedToCurrentMonth: false }, totalCount: 14, totalAmount: '17765', currency: 'THB',
+        totalsByCurrency: [{ currency: 'THB', count: 14, totalAmount: '17765' }], mixedCurrency: false,
+        byCategory: [{ categoryId: null, category: 'ค่าบริการ', currency: 'THB', count: 3, totalAmount: '4188.5' },
+          { categoryId: null, category: 'ค่าเดินทาง', currency: 'THB', count: 3, totalAmount: '3777.5' }],
+        byBranch: [], byVendor: [] } };
+    const result = await runSemanticTurnV2({
+      req, provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { return shareResult; },
+    });
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
+    assert.ok(result.replyText.includes('23.6%'));
+  });
+});
