@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "016b43c69a88dbf8596106c366651ab95bc88e43",
-  "sourceRevision": "2cb28cd7e30e495ffd7d5fc6d7fa6db62a35b5cb",
+  "sourceRevision": "b36cb7089bb47e96f9bb5e3a24e1aac5739a1b7d",
   "checkoutBranch": "claude/mangmee-ai-advisor-20260927",
   "checkoutDirty": false,
   "sourceHashes": [
@@ -169,11 +169,11 @@
     },
     {
       "path": "packages/config/src/index.ts",
-      "sha256": "1cf3dc49ced48479282c107747251639336972aaf5caf5f31ae2ad26a880cec8"
+      "sha256": "e810f30f907b1a89b0682fb700929a7ed650176e5e8c1e50505d3177037936ef"
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "511c7a31b41d747fb30524bbe6e322d4ac7041a9ff180cba3a64e89a5130c4aa"
+      "sha256": "e5f8e1d8228cd8260b0d837ae4f5aee9236a9c8286056785abc4931e0cc5bdf5"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -4592,6 +4592,7 @@
           "categoryName",
           "documentStatus",
           "fromDate",
+          "groupBy",
           "paymentStatus",
           "periodKey",
           "toDate",
@@ -4604,6 +4605,7 @@
           "categoryName",
           "documentStatus",
           "fromDate",
+          "groupBy",
           "paymentStatus",
           "periodKey",
           "toDate",
@@ -8644,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-27T16:54:08.778Z",
-  "manifestDigest": "355f1c79e93d2d75d48eba756b8185d0ffb59f7082ed191830844031a84766cd"
+  "generatedAt": "2026-09-27T18:15:54.768Z",
+  "manifestDigest": "c77f5933c5dff09df58c35ff11a33b27a933d8c5d6e50c971b204e35643f6aa4"
 }
