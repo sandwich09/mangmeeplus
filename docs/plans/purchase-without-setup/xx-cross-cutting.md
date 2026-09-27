@@ -40,7 +40,6 @@
 ```js
       // Purchase-without-setup (2026-09): not in apps/api/package.json's fixed list, so this runner executes them.
       'src/modules/access-control/domain/logic/plan-manager.logic.spec.ts',
-      'src/modules/auth/application/use-cases/issue-token.use-case.spec.ts',            // PR B (DQ8)
       'src/modules/billing/domain/billing-recipient-otp.logic.spec.ts',
       'src/modules/billing/application/billing-recipient-otp.service.spec.ts',
       'src/modules/billing/application/billing-document-resend.spec.ts',

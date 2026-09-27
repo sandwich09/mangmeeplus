@@ -7,7 +7,7 @@ Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangme
 | ลำดับ | Brief | ครอบคลุม | PR |
 |---|---|---|---|
 | 1 | [pr-a-line-liff-api.md](pr-a-line-liff-api.md) | Phase 1 ฝั่ง API/LIFF/LINE: outbound param, R-B2 ทาง (ข), `/l/` HEAD+IP, LIFF DTO/หน้า, liff/session destination, push, copy G19/G20/G25/RV33, R-C11 helper + call sites, sweep/notifications recipients | PR A |
-| 2 | [pr-b-web-console-state.md](pr-b-web-console-state.md) | Phase 1 ฝั่ง web/console: `/auth/me/companies` lockReason, contracts helper, picker/switcher/BillingPage labels, partner list/detail (label, คำเตือนต่ออายุ, guard เปิดใช้งาน, queue เปลี่ยนแพ็กเกจ), LoginPage (R-B5 ขยาย), AccountEmailOtpPanel R-B4, DQ8 session | PR B |
+| 2 | [pr-b-web-console-state.md](pr-b-web-console-state.md) | Phase 1 ฝั่ง web/console: `/auth/me/companies` lockReason, contracts helper, picker/switcher/BillingPage labels, partner list/detail (label, คำเตือนต่ออายุ, guard เปิดใช้งาน, queue เปลี่ยนแพ็กเกจ), LoginPage (R-B5 ขยาย), AccountEmailOtpPanel R-B4 (DQ8 session ตัดออก — Owner 2026-09-27 คงเดิม) | PR B |
 | 3 | [pr-c-billing-api-no-setup.md](pr-c-billing-api-no-setup.md) | Phase 2 API: schema/migration/backfill, gate removal ทุกจุด, Customer sync payload, Checkout params, recipient capture, flow OTP ผู้รับใหม่, outbox/bounce, resend (Phase 3), allowlist + pins | PR C |
 | 4 | [pr-d-web-billing-no-setup.md](pr-d-web-billing-no-setup.md) | Phase 2 web: BillingPage/return/recipient panel/profile page/fixture/e2e + Phase 5 polish ฝั่งเว็บ (cancel path, quote expiry, polling, unlock event, error map, expander) | PR D (+G) |
 | 5 | [pr-e-admin-tools.md](pr-e-admin-tools.md) | Phase 4 admin: 2 ปุ่มบนหน้าใบแจ้งหนี้ (reviewed ops), identity path + lock rule, lookup suffix, support reference (LINE + package-change-requests), permissions/audit/labels | PR E |
@@ -62,7 +62,7 @@ Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangme
 
 ### 4. ข้อที่ยังต้อง Owner ตัดสิน (มีค่าเริ่มต้น — spec §18.4/§18.5)
 
-DQ1–DQ5, DQ7 (เดิม); DQ6 แก้ค่าเริ่มต้นเป็น **ไม่แยก stream**; DQ8 + cookie 30 วันทุก role; **DQ9** permission ฟอร์ม identity ในคอนโซล (`system.identity_reconciliation.resolve`); **DQ10** เพดาน resend แอดมิน 10/วัน; **DQ11** OTP ผู้รับไม่บังคับ reauth; ข้อความ Owner-verbatim `process-line-webhook.use-case.ts:244` (G20) ต้อง sign-off ก่อน merge PR A
+DQ1–DQ5, DQ7 (เดิม); DQ6 แก้ค่าเริ่มต้นเป็น **ไม่แยก stream**; DQ8 **คงเดิม 7 วันไปก่อน (Owner 2026-09-27 — ตัดออกจาก PR B)**; **DQ9** permission ฟอร์ม identity ในคอนโซล = ค่าเริ่มต้น (Owner 2026-09-27 ยืนยันว่าแอดมินต้องแก้ได้ — System Admin มีสิทธิ์นี้อยู่แล้ว); **DQ10** เพดาน resend แอดมิน 10/วัน; **DQ11** OTP ผู้รับไม่บังคับ reauth; ข้อความ G20 (`process-line-webhook.use-case.ts:244`) **Owner sign-off แล้ว 2026-09-27** (แพ็กเกจธุรกิจ = ชุด 1,999: เมนูเหมือนแพ็กเกจอื่น + ภ.ง.ด.53 + 50 ทวิ) → PR A ใช้ข้อความที่เสนอได้
 
 ### 5. ลำดับปล่อย (xx §9)
 
