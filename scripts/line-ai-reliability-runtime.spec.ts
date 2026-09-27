@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assertIsolatedReplayDatabase, runtimeAskedSlots, runtimeDatabaseEffects, runtimeDeliveryEvidence, runtimeSourceFacts, runtimeSourceId, runtimeSemanticOutcome, instrumentRuntimeMethod, selectRuntimePostback } from './line-ai-reliability-runtime';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { assertIsolatedReplayDatabase, captureRuntimeTurnEvidence, runLineReliabilityRuntime, runtimeAttachmentMessage, runtimeFailureDiagnostic, runtimeAskedSlots, runtimeDatabaseEffects, runtimeDeliveryEvidence, runtimeSourceFacts, runtimeSourceId, runtimeSemanticOutcome, instrumentRuntimeMethod, selectRuntimePostback, type RuntimeTurnEvidence } from './line-ai-reliability-runtime';
 
 test('clarification trace keeps nested typed missing fields without guessing slots from prose', () => {
   assert.deepEqual(runtimeAskedSlots({ missingFields: ['amount'], captureHints: { missingFields: ['expenseDate', 'amount'] },
@@ -14,6 +18,23 @@ test('runtime replay refuses production, ordinary development databases and fore
   assert.doesNotThrow(() => assertIsolatedReplayDatabase('postgresql://test:test@127.0.0.1:15440/watchdog_ai_reliability_replay_smoke?schema=public'));
   for (const url of ['postgresql://test:test@db.prod/watchdog_ai_reliability_replay_smoke', 'postgresql://test:test@localhost/watchdog_bms',
     'postgresql://test:test@localhost/watchdog_ai_reliability_replay_smoke?schema=customer', 'https://localhost/watchdog_ai_reliability_replay_smoke']) assert.throws(() => assertIsolatedReplayDatabase(url), /DEDICATED_LOCAL/);
+});
+
+test('launch bootstrap refuses a truthy non-boolean before touching runtime services', async () => {
+  await assert.rejects(runLineReliabilityRuntime({ version: 2, databaseUrl: 'postgresql://test:test@127.0.0.1:15440/watchdog_ai_reliability_replay_smoke', bootstrapLaunchGates: 'true' } as any, '/unused'), /REPLAY_INVALID_LAUNCH_BOOTSTRAP_FLAG/);
+});
+
+test('PDF webhook metadata comes from verified asset bytes; image shape remains unchanged', () => {
+  const root = mkdtempSync(join(tmpdir(), 'line-replay-file-'));
+  try {
+    mkdirSync(join(root, 'docs/research'), { recursive: true });
+    const bytes = Buffer.from('synthetic ใบเสร็จ');
+    const asset = { path: 'docs/research/receipt.pdf', sha256: createHash('sha256').update(bytes).digest('hex'), mimeType: 'application/pdf' };
+    writeFileSync(join(root, asset.path), bytes);
+    assert.deepEqual(runtimeAttachmentMessage('file-a', asset, root), { type: 'file', id: 'file-a', fileName: 'receipt.pdf', fileSize: bytes.length });
+    assert.deepEqual(runtimeAttachmentMessage('image-a', { ...asset, mimeType: 'image/png' }, root), { type: 'image', id: 'image-a' });
+    assert.throws(() => runtimeAttachmentMessage('file-a', { ...asset, sha256: '0'.repeat(64) }, root), /REPLAY_ASSET_BYTES_CHANGED/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('effect evidence detects create/update/delete even when the application throws after commit', () => {
@@ -75,4 +96,35 @@ test('instrumented actual methods retain receiver and thrown effects', async () 
   assert.equal(selectRuntimePostback(message, 'ยืนยัน'), 'action=confirm&previewId=actual-current-preview');
   assert.throws(() => selectRuntimePostback(message, 'ยกเลิก'), /NOT_UNIQUELY/);
   assert.throws(() => selectRuntimePostback([message, { type: 'postback', label: 'ยืนยัน', data: 'other-preview' }], 'ยืนยัน'), /NOT_UNIQUELY/);
+});
+
+test('human evidence preserves wire, raw intake/tool results and review state without later mutation', () => {
+  const original: RuntimeTurnEvidence = {
+    scenarioId: 'NAT-01', repeat: 0, turnIndex: 0, user: 'ใบนี้เท่าไหร่', attachmentIds: ['receipt-a'], companyId: 'company-a',
+    sourceSnapshot: 'source-a', snapshotDigest: 'a'.repeat(64), acceptedAtMs: 100, modelWorkCompletedAtMs: 180,
+    receipts: [{ messages: [{ type: 'text', text: '250.00 บาท' }], at: 200, receiptId: 'sink-1', path: '/v2/bot/message/reply', payloadHash: 'b'.repeat(64) }],
+    toolResults: [{ tool: 'expense.get_detail', input: { id: 'expense-a' }, startedAtMs: 110, completedAtMs: 140, result: { status: 'ok', data: { amount: '250.00' } } as any }],
+    gatewayResponses: [{ method: 'requestLineIntakeRoute', requestId: 'request-a', startedAtMs: 105, completedAtMs: 180,
+      response: { semanticSubrequests: [{ text: 'ใบนี้เท่าไหร่' }], preparedPlan: { steps: ['read'] } } }],
+    webhookEvents: [{ status: 'completed' }], providerUsage: [{ modelId: 'actual-model', inputTokens: 200, outputTokens: 30, usageBasis: 'PROVIDER_REPORTED' }], reservations: [],
+    reviewState: { before: { draftActions: [], conversations: [], truncated: false }, after: { draftActions: [{ status: 'PREVIEW' }], conversations: [{ preferenceJson: { brevity: 'short' } }], truncated: false } },
+    delivery: { requiredBatchIds: ['batch-a'], accepted: [{ batchId: 'batch-a', wireHash: 'c'.repeat(64), acceptedAtMs: 200, receiptId: 'sink-1' }], status: 'ACCEPTED' },
+  };
+  const captured = captureRuntimeTurnEvidence(original);
+  (original.receipts[0]!.messages as any[])[0].text = 'changed';
+  (original.gatewayResponses[0]!.response as any).preparedPlan.steps.push('write');
+  (original.reviewState.after.conversations[0] as any).preferenceJson.brevity = 'long';
+  assert.equal((captured.receipts[0]!.messages as any[])[0].text, '250.00 บาท');
+  assert.deepEqual((captured.gatewayResponses[0]!.response as any).preparedPlan.steps, ['read']);
+  assert.equal((captured.reviewState.after.conversations[0] as any).preferenceJson.brevity, 'short');
+  assert.equal(captured.receipts[0]!.at - captured.acceptedAtMs, 100);
+  assert.equal((captured.toolResults[0]!.result as any).data.amount, '250.00');
+});
+
+test('failure diagnostics retain assertion and Prisma code but never arbitrary secret-bearing text', () => {
+  assert.equal(runtimeFailureDiagnostic(new Error('REPLAY_ENTITLEMENT_SEED_MISMATCH')).assertion, 'REPLAY_ENTITLEMENT_SEED_MISMATCH');
+  const diagnostic = runtimeFailureDiagnostic({ name: 'PrismaClientKnownRequestError', code: 'P2002', message: 'postgresql://user:secret@localhost/private',
+    meta: { modelName: 'User', target: ['email', 'https://secret@example.com'] } });
+  assert.deepEqual(diagnostic, { name: 'PrismaClientKnownRequestError', code: 'P2002', assertion: undefined, model: 'User', target: ['email'] });
+  assert.ok(!JSON.stringify(diagnostic).includes('secret'));
 });

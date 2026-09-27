@@ -19,6 +19,8 @@ Plan: [Work packages W00–W15](../plans/mangmee-ai-understanding-and-advisor-re
 
 Owner update 2026-09-27: เริ่มตรวจที่ส่วน C ของ [human review packet](../research/mangmee-ai-human-review-2026-09-27-th.md) ซึ่งใช้ข้อความแบบผู้ใช้ทั่วไป/ผู้ประกอบการ คำผิด คำย่อ และการถามต่อหลายรอบ ทั้ง12บทเป็น **สังเคราะห์ / development / UNREVIEWED / ยังไม่ผูกครบกับ machine oracle** ไม่ใช่บทสนทนาลูกค้าจริงหรือหลักฐานความถี่คำถาม และไม่เพิ่มยอดผ่านของ corpus225เดิม
 
+ผลทดสอบจริง 2026-09-27: ผู้ใช้อนุมัติคำถามแล้ว แต่ output/human labels ยังไม่รับรอง Primary NAT ได้56จาก60ข้อและไม่ผ่านทั้งบท; มีการรันทวนสื่อแยก snapshot ดู [evidence report](../research/mangmee-natural-real-model-results-2026-09-27-th.md) ห้ามใช้ผลชุดนี้เป็น human-approved หรือ activationEligible
+
 เลข U/N/E และ CI/DI เดิมยังเป็น technical regressions; คำถามที่ระบุ EXP/INV/preview revision หรือศัพท์ระบบไม่ใช่ตัวแทนเส้นทางหลักที่ผู้ใช้ต้องพิมพ์ Current rollout พัก C09 public-lookup success และ C13 voice; เก็บ negative controls ของการไม่เรียกบริการที่ปิดไว้
 
 | มิติที่ตรวจทุก turn และทั้งบท | พฤติกรรมที่ต้องเห็น | ตัวอย่างที่ต้องไม่ให้ผ่าน |

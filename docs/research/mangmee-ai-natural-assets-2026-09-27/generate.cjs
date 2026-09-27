@@ -1,0 +1,42 @@
+// NAT-only synthetic assets. Does not read or rewrite the frozen 225-case assets.
+const { chromium } = require('@playwright/test');
+const { writeFileSync, readFileSync } = require('node:fs');
+const { join } = require('node:path');
+const { createHash } = require('node:crypto');
+const { execFileSync } = require('node:child_process');
+const out = __dirname;
+const css = `@page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;color:#172b43;background:white;font-family:Arial,sans-serif;font-size:18px;line-height:1.6}.page{width:210mm;height:297mm;padding:22mm;break-after:page}.page:last-child{break-after:auto}h1{font-size:29px;line-height:1.3;margin:22px 0}h2{font-size:24px}.test{font-weight:bold;color:#9b321d;border:2px solid #9b321d;padding:10px;font-size:16px}.meta{color:#4c6072;font-size:16px}.row{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #ccd6df}.total{background:#e7f3ea;font-weight:bold;font-size:27px;padding:18px;margin-top:12px}.redacted{display:inline-block;background:#111;width:210px;height:25px;vertical-align:middle}.footer{margin-top:45px;color:#526174;font-size:15px}.receipt{width:760px;height:1060px;padding:52px}.muted{color:#526174}`;
+const html = body => `<!doctype html><html lang="en"><meta charset="utf-8"><style>${css}</style><body>${body}</body></html>`;
+const mark = '<div class="test">SYNTHETIC TEST DATA ONLY — NOT A VALID TAX DOCUMENT</div>';
+const receipt = html(`<main class="receipt">${mark}<h1>Green Bowl Synthetic Cafe</h1><p class="meta">Receipt: NAT-RECEIPT-001<br>Date: 2026-09-21<br>Currency: THB</p><h2>Food and beverages</h2><div class="row"><span>Meal and beverage service</span><span>1,196.63</span></div><div class="row"><span>Subtotal (before VAT)</span><span>1,196.63 THB</span></div><div class="row"><span>VAT component</span><span>83.87 THB</span></div><div class="row total"><span>TOTAL</span><span>1,280.50 THB</span></div><p class="footer">Amounts are authored synthetic fixture values.<br>No payment, reimbursement or tax entitlement is certified.<br>1,196.63 + 83.87 = 1,280.50<br>Page 1 of 1</p></main>`);
+const partial = html(`<section class="page">${mark}<h1>Synthetic Catering Receipt</h1><p>Reference: NAT-PARTIAL-001<br>Date: 2026-09-20<br>Merchant: Sample Catering Test Kitchen</p><div class="row"><span>Catering service</span><span>1,580.00 THB</span></div><div class="row total"><span>TOTAL</span><span>1,580.00 THB</span></div><p class="muted">VAT amount is not separately shown in this document.</p><p class="footer">Two-page test document. Additional readable details and one obscured field appear on page 2.<br>Page 1 of 2</p></section><section class="page">${mark}<h1>Catering detail — page 2</h1><p>Reference: NAT-PARTIAL-001</p><p>READABLE NOTE: Lunch catering for a team meeting.</p><p>Service item: Prepared lunch boxes<br>Quantity: 10 boxes<br>Delivery date: 2026-09-20</p><p>Customer tax ID: <span class="redacted"></span></p><p class="muted">The customer tax ID field is deliberately obscured. No value is encoded underneath it. Do not infer the missing value.</p><p class="footer">This page is partially readable. The note, item, quantity and delivery date remain visible.<br>Page 2 of 2</p></section>`);
+const labels = {
+ 'receipt-clear': { fileName:'receipt-clear.png', mimeType:'image/png', sourceFields:[{page:1,field:'merchant',originalValue:'Green Bowl Synthetic Cafe'},{page:1,field:'date',originalValue:'2026-09-21'},{page:1,field:'subtotal',amountRole:'before_vat',originalValue:'1196.63 THB'},{page:1,field:'vat',amountRole:'vat_component',originalValue:'83.87 THB'},{page:1,field:'total',amountRole:'gross_total',originalValue:'1280.50 THB'}], unreadable:[],partial:[] },
+ 'receipt-partial': {fileName:'receipt-partial.pdf',mimeType:'application/pdf',sourceFields:[{page:1,field:'merchant',originalValue:'Sample Catering Test Kitchen'},{page:1,field:'date',originalValue:'2026-09-20'},{page:1,field:'total',amountRole:'gross_total',originalValue:'1580.00 THB'},{page:2,field:'note',originalValue:'READABLE NOTE: Lunch catering for a team meeting.'},{page:2,field:'service_item',originalValue:'Prepared lunch boxes'},{page:2,field:'quantity',originalValue:'10 boxes'},{page:2,field:'delivery_date',originalValue:'2026-09-20'}],unknownFields:[{field:'vat',reason:'Not separately shown'},{page:2,field:'customer_tax_id',reason:'Black field contains no encoded value'}],unreadable:[],partial:[{page:2,fields:['customer_tax_id'],reason:'Only this field is obscured; other listed page-2 text is readable'}]},
+ 'document-unreadable': {fileName:'document-unreadable.pdf',mimeType:'application/pdf',sourceFields:[{page:1,field:'document_type',originalValue:'Synthetic tax document cover'},{page:1,field:'reference',originalValue:'NAT-REPLACEMENT-002'},{page:1,field:'date',originalValue:'2026-09-22'},{page:2,field:'test_marker',originalValue:'SYNTHETIC TEST DATA ONLY — PAGE 2 OF 2'}],unknownFields:[{page:2,field:'business_content',reason:'Only an intentionally degraded raster is supplied; no business text is readable'}],unreadable:[{page:2,fields:['business_content'],reason:'Business body is a degraded raster. The test marker is readable; do not call the entire page blank.'}],partial:[]}
+};
+const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+(async()=>{
+ const browser=await chromium.launch({headless:true});
+ try {
+  const page=await browser.newPage({viewport:{width:760,height:1060},deviceScaleFactor:1});
+  await page.route('**/*',route=>route.abort());
+  writeFileSync(join(out,'receipt-clear.source.html'),receipt); await page.setContent(receipt); await page.screenshot({path:join(out,'receipt-clear.png')});
+  writeFileSync(join(out,'receipt-partial.source.html'),partial); await page.setContent(partial); await page.pdf({path:join(out,'receipt-partial.pdf'),format:'A4',printBackground:true,preferCSSPageSize:true});
+  await page.setViewportSize({width:680,height:750});
+  await page.setContent('<html><body style="margin:0;background:#eee"><div style="padding:65px;font:29px/2.7 Arial;filter:blur(11px);opacity:.55">Synthetic degraded page<br>Sample content for visual noise<br>No recoverable financial fields<br>Unreadable test body only<br>Do not infer values<br>Sample content for visual noise<br>Unreadable test body only</div></body></html>');
+  const degraded=await page.screenshot();
+  const replacement=html(`<section class="page">${mark}<h1>Synthetic tax document cover</h1><p>Replacement file<br>Reference: NAT-REPLACEMENT-002<br>Date: 2026-09-22</p><p>This file replaces the earlier catering document for the current question. It is a separate two-page document.</p><p>There is no amount, VAT amount or merchant name on this cover.</p><p class="footer">Page 2 has an intentionally degraded business body. Only its test marker remains readable.<br>Page 1 of 2</p></section><section class="page"><div class="test">SYNTHETIC TEST DATA ONLY — PAGE 2 OF 2</div><img alt="Intentionally degraded business body" style="width:100%;margin-top:24px" src="data:image/png;base64,${degraded.toString('base64')}"></section>`);
+  writeFileSync(join(out,'document-unreadable.source.html'),replacement); await page.setContent(replacement); await page.pdf({path:join(out,'document-unreadable.pdf'),format:'A4',printBackground:true,preferCSSPageSize:true});
+ } finally {await browser.close();}
+ const assets={};
+ for(const[id,item]of Object.entries(labels)){
+  const path=join(out,item.fileName), bytes=readFileSync(path);
+  const pages=item.mimeType==='application/pdf'?Number(execFileSync('pdfinfo',[path],{encoding:'utf8'}).match(/^Pages:\s+(\d+)$/m)[1]):1;
+  const label={assetId:id,...item,pages,status:'draft',labelledBy:null,expectedZeroQaFinancialWrites:true,provenance:{kind:'synthetic',reviewedBy:null,reviewedAt:null,note:'NAT-only authored visible content; not human-certified; no customer data'}};
+  const labelFile=`${id}.label.json`,labelBytes=Buffer.from(JSON.stringify(label,null,2)+'\n');writeFileSync(join(out,labelFile),labelBytes);
+  assets[id]={fileName:item.fileName,mimeType:item.mimeType,pages,sha256:digest(bytes),labelFile,labelDigest:digest(labelBytes),labelledBy:null,status:'draft'};
+ }
+ writeFileSync(join(out,'manifest.json'),JSON.stringify({version:1,status:'draft',humanCertified:false,assets},null,2)+'\n');
+ console.log(JSON.stringify(assets,null,2));
+})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -1,0 +1,74 @@
+{
+  "assetId": "receipt-partial",
+  "fileName": "receipt-partial.pdf",
+  "mimeType": "application/pdf",
+  "sourceFields": [
+    {
+      "page": 1,
+      "field": "merchant",
+      "originalValue": "Sample Catering Test Kitchen"
+    },
+    {
+      "page": 1,
+      "field": "date",
+      "originalValue": "2026-09-20"
+    },
+    {
+      "page": 1,
+      "field": "total",
+      "amountRole": "gross_total",
+      "originalValue": "1580.00 THB"
+    },
+    {
+      "page": 2,
+      "field": "note",
+      "originalValue": "READABLE NOTE: Lunch catering for a team meeting."
+    },
+    {
+      "page": 2,
+      "field": "service_item",
+      "originalValue": "Prepared lunch boxes"
+    },
+    {
+      "page": 2,
+      "field": "quantity",
+      "originalValue": "10 boxes"
+    },
+    {
+      "page": 2,
+      "field": "delivery_date",
+      "originalValue": "2026-09-20"
+    }
+  ],
+  "unknownFields": [
+    {
+      "field": "vat",
+      "reason": "Not separately shown"
+    },
+    {
+      "page": 2,
+      "field": "customer_tax_id",
+      "reason": "Black field contains no encoded value"
+    }
+  ],
+  "unreadable": [],
+  "partial": [
+    {
+      "page": 2,
+      "fields": [
+        "customer_tax_id"
+      ],
+      "reason": "Only this field is obscured; other listed page-2 text is readable"
+    }
+  ],
+  "pages": 2,
+  "status": "draft",
+  "labelledBy": null,
+  "expectedZeroQaFinancialWrites": true,
+  "provenance": {
+    "kind": "synthetic",
+    "reviewedBy": null,
+    "reviewedAt": null,
+    "note": "NAT-only authored visible content; not human-certified; no customer data"
+  }
+}

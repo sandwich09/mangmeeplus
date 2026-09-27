@@ -1,0 +1,561 @@
+{
+  "version": 1,
+  "reviewKind": "independent_AI_semantic_review_not_human_acceptance",
+  "source": "/tmp/mangmee-natural-20260927/full-60.json",
+  "sourceSha256": "ea3fd00b64d6d5fcddc4e3a7a4e96a9b28effc6d6652fe3b8abc807edc504ee0",
+  "sourceCommit": "f9444099ee4ce88cb95d99ef192b1c6bf2fac543",
+  "scope": "NAT01-04; final frozen primary run only; actual accepted LINE sink wire, not native LINE certification",
+  "rubric": {
+    "PASS": "User request handled correctly under explicitly disclosed basis, with actual wire.",
+    "PARTIAL": "Useful accurate part delivered but a required interpretation/basis/clause is missing.",
+    "FAIL": "Generic refusal/retry, lost context, no answer or specific clarification where actual fixtures support the request.",
+    "BLOCKED_FIXTURE": "Successful source/preview path lacks prior receipt fixture; missing-evidence response reviewed separately and is not a pass."
+  },
+  "counts": {
+    "PARTIAL": 2,
+    "FAIL": 14,
+    "PASS": 1,
+    "BLOCKED_FIXTURE": 3
+  },
+  "notes": [
+    "NAT01T1 exact numerical answer passed but documentary status basis missing; conservatively PARTIAL against the authored criterion.",
+    "NAT02T1 PASS is limited to truthful explicitly labelled received-money basis; does not certify invoiced sales or business profit.",
+    "NAT04 does not require PAID filter merely from the word จ่าย. A claim of actual paid money would require payment evidence; expense record totals with disclosed basis are acceptable.",
+    "No status is derived from old exact-tool scorer or earlier candidate runs; no production/native LINE claim."
+  ],
+  "rows": [
+    {
+      "scenarioId": "NAT-01",
+      "turn": 1,
+      "status": "PARTIAL",
+      "user": "เดือนนี้ค่าไช้จ่ายไปเท่าไหร่แล้ว",
+      "wireQuote": "ค่าใช้จ่าย: 27,230.50 บาท (9 รายการ)",
+      "reason": "ยอด 27,230.50 บาท/9 รายการ ช่วง 1–27 ก.ย. ถูกและมีแหล่งข้อมูล แต่ไม่บอกว่ารวมร่าง 900 บาท จึงยังไม่ครบเกณฑ์ฐานสถานะใน NAT01",
+      "latencyToLastWireSeconds": 8.522,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-2d16c530-b6de-47ab-ac4a-db7bfca967b6"
+      ],
+      "tools": [
+        {
+          "tool": "expense.list_recent",
+          "input": {
+            "fromDate": "2026-09-01",
+            "toDate": "2026-09-27"
+          },
+          "status": "ok"
+        }
+      ],
+      "observedReasonCodes": [],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-01,turnIndex=0]",
+      "numericSubcheck": "PASS:27230.50_THB_9_records_current_month_to_date"
+    },
+    {
+      "scenarioId": "NAT-01",
+      "turn": 2,
+      "status": "FAIL",
+      "user": "เทียบเดือนก่อนให้หน่อย",
+      "wireQuote": "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง",
+      "reason": "ไม่เทียบเดือนก่อน ทั้งที่ seed มีทั้งสองช่วง; ไม่มี tool read และขอให้ผู้ใช้ส่งซ้ำแทน",
+      "latencyToLastWireSeconds": 13.558,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-2807d1f4-78be-43a8-8afa-f62ae1880caf"
+      ],
+      "tools": [],
+      "observedReasonCodes": [
+        "SEMANTIC_CONTROL_UNAVAILABLE"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-01,turnIndex=1]"
+    },
+    {
+      "scenarioId": "NAT-01",
+      "turn": 3,
+      "status": "FAIL",
+      "user": "อันไหนเพิ่มเยอะสุด",
+      "wireQuote": "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง",
+      "reason": "ไม่อ่าน/จัดอันดับส่วนต่างตามหมวด; ไม่ได้ตอบว่าค่าน้ำมันเพิ่มมากสุด 7,400 บาท",
+      "latencyToLastWireSeconds": 18.358,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-ea598806-7037-420f-a2e2-5d74e689ff75"
+      ],
+      "tools": [],
+      "observedReasonCodes": [
+        "SEMANTIC_CONTROL_UNAVAILABLE"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-01,turnIndex=2]"
+    },
+    {
+      "scenarioId": "NAT-01",
+      "turn": 4,
+      "status": "FAIL",
+      "user": "เอาเฉพาะที่ยืนยันแล้วนะ ร่างไม่เอา",
+      "wireQuote": "ต้องตรวจข้อมูลหรือสิทธิ์ของส่วนนี้ก่อน",
+      "reason": "คำขอกรอง CONFIRMED ที่ผู้ใช้มีสิทธิ์ถูกหยุดด้วย TOOL_INPUT_NOT_AUTHORIZED; ไม่คำนวณใหม่",
+      "latencyToLastWireSeconds": 16.919,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-0b12248e-544b-4836-af32-f9214e038f56"
+      ],
+      "tools": [],
+      "observedReasonCodes": [
+        "TOOL_INPUT_NOT_AUTHORIZED"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-01,turnIndex=3]"
+    },
+    {
+      "scenarioId": "NAT-01",
+      "turn": 5,
+      "status": "FAIL",
+      "user": "แล้วควรเริ่มลดตรงไหนดี",
+      "wireQuote": "อยากลด **อะไร** เช่น ค่าใช้จ่าย, สต็อกสินค้า, ต้นทุน",
+      "reason": "สูญเสียบริบทรายจ่าย: ถามใหม่ว่าอยากลดอะไร/ช่วงเวลาไหน ทั้งที่กำลังสนทนารายจ่ายเดือนนี้; ไม่เสนอทางเลือกจากหลักฐาน",
+      "latencyToLastWireSeconds": 17.77,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-7751c258-64e0-4f66-bfde-62b393371133"
+      ],
+      "tools": [],
+      "observedReasonCodes": [
+        "MISSING_REQUIRED_INPUT"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-01,turnIndex=4]"
+    },
+    {
+      "scenarioId": "NAT-02",
+      "turn": 1,
+      "status": "PASS",
+      "user": "เดือนนี้ขายได้เท่าไหร่",
+      "wireQuote": "ยอดรับเงินจริง: 374,300 บาท (3 รายการ)",
+      "reason": "ตอบ 374,300 บาท/3 รายการ พร้อมระบุชัดว่าเป็นยอดรับเงินจริงจากลูกค้าและช่วงเวลา จึงไม่ปลอมฐานเป็นใบแจ้งหนี้หรือกำไร; ผ่านขอบเขตคำตอบตามนิยามที่เปิดเผยเท่านั้น",
+      "latencyToLastWireSeconds": 8.269,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-6fbfca48-e6a3-4e74-aa29-80d3c6a4ad39"
+      ],
+      "tools": [
+        {
+          "tool": "sales.get_sales_summary",
+          "input": {
+            "fromDate": "2026-09-01",
+            "toDate": "2026-09-27"
+          },
+          "status": "ok"
+        }
+      ],
+      "observedReasonCodes": [],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-02,turnIndex=0]"
+    },
+    {
+      "scenarioId": "NAT-02",
+      "turn": 2,
+      "status": "FAIL",
+      "user": "หมายถึงเงินที่ลูกค้าจ่ายมาแล้วอะ",
+      "wireQuote": "ต้องการให้ระบบแสดงข้อมูลยอดรับชำระจากลูกค้าในช่วงเวลาใด และสาขาไหน",
+      "reason": "ถามช่วงเวลาและสาขาซ้ำแทนคงเดือนนี้/ขอบเขตเดิม และไม่ตอบยอดรับชำระที่เพิ่งส่งไป",
+      "latencyToLastWireSeconds": 18.401,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-da81f1fa-6497-43e4-953d-f53da081fd39"
+      ],
+      "tools": [],
+      "observedReasonCodes": [
+        "MISSING_REQUIRED_INPUT"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-02,turnIndex=1]"
+    },
+    {
+      "scenarioId": "NAT-02",
+      "turn": 3,
+      "status": "FAIL",
+      "user": "แล้วเงินเข้าบัญชีจริงเท่านี้เลยมั้ย",
+      "wireQuote": "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้",
+      "reason": "ไม่อธิบายความต่างรับชำระกับธนาคาร; อ่าน payment summary เดิมแล้วจบด้วย ANSWER_NUMBER_NOT_GROUNDED/ลิงก์เว็บ",
+      "latencyToLastWireSeconds": 14.467,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-a54e60fe-a97a-4f8b-a960-b59bb1573d9a"
+      ],
+      "tools": [
+        {
+          "tool": "sales.get_sales_summary",
+          "input": {},
+          "status": "ok"
+        }
+      ],
+      "observedReasonCodes": [
+        "ANSWER_NUMBER_NOT_GROUNDED"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-02,turnIndex=2]"
+    },
+    {
+      "scenarioId": "NAT-02",
+      "turn": 4,
+      "status": "FAIL",
+      "user": "งั้นกำไรเดือนนี้เหลือเท่าไร",
+      "wireQuote": "ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ",
+      "reason": "ไม่อ่านรายงานกำไรหรือบอกต้นทุน/ฐานที่ขาด; PREPARED_READ_UNAVAILABLE กลายเป็นคำขอให้ลองใหม่",
+      "latencyToLastWireSeconds": 8.488,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-8d671f34-249d-441a-af76-c259ffc6b18f"
+      ],
+      "tools": [],
+      "observedReasonCodes": [
+        "PREPARED_READ_UNAVAILABLE"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-02,turnIndex=3]"
+    },
+    {
+      "scenarioId": "NAT-02",
+      "turn": 5,
+      "status": "FAIL",
+      "user": "สรุปสั้น ๆ ว่าตอนนี้รู้อะไรแน่บ้าง",
+      "wireQuote": "แหล่งข้อมูล: รายการแจ้งเตือน, แดชบอร์ดสุขภาพธุรกิจ",
+      "reason": "ไม่สรุปข้อเท็จจริงจากบทสนทนา; กลับอ่าน notifications/dashboard แล้วตอบ validation fallback",
+      "latencyToLastWireSeconds": 18.194,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-d57cfa78-0745-4c76-8716-5edaa282bfb7"
+      ],
+      "tools": [
+        {
+          "tool": "notifications.list_open_alerts",
+          "input": {},
+          "status": "ok"
+        },
+        {
+          "tool": "dashboard.get_business_health_summary",
+          "input": {},
+          "status": "ok"
+        }
+      ],
+      "observedReasonCodes": [
+        "ANSWER_NUMBER_NOT_GROUNDED"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-02,turnIndex=4]"
+    },
+    {
+      "scenarioId": "NAT-03",
+      "turn": 1,
+      "status": "FAIL",
+      "user": "ช่วยดูรายจ่ายให้หน่อย...",
+      "wireQuote": "รอบนี้ระบบใช้เวลานานเกินไปจนต้องหยุดก่อน",
+      "reason": "อ่าน expense summary ได้ 27,230.50 แล้ว แต่ผู้ใช้ได้รับเพียง timeout ที่ 27.05 วินาที ไม่มีผลอ่านที่ส่งถึงผู้ใช้",
+      "latencyToLastWireSeconds": 27.049,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "NONE",
+      "receiptIds": [
+        "sink-a450a426-6cb6-45d1-b490-c7808b63be7b"
+      ],
+      "tools": [
+        {
+          "tool": "expense.list_recent",
+          "input": {},
+          "status": "ok"
+        }
+      ],
+      "observedReasonCodes": [
+        "LINE_AI_AI_TIMEOUT"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-03,turnIndex=0]"
+    },
+    {
+      "scenarioId": "NAT-03",
+      "turn": 2,
+      "status": "FAIL",
+      "user": "เดือนก่อน ของร้านราม",
+      "wireQuote": "ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้",
+      "reason": "ตีความร้านรามเป็น vendorId:ร้านราม ทำให้ค้นได้ศูนย์; ไม่เสนอรามอินทรา/รามคำแหงที่ได้รับสิทธิ์ และส่ง numeric-validation fallback",
+      "latencyToLastWireSeconds": 14.647,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-4aaf17df-6539-4e4b-ab5e-d772c6fc764b"
+      ],
+      "tools": [
+        {
+          "tool": "expense.list_recent",
+          "input": {
+            "fromDate": "2026-08-01",
+            "toDate": "2026-08-31",
+            "vendorId": "ร้านราม"
+          },
+          "status": "ok"
+        }
+      ],
+      "observedReasonCodes": [
+        "ANSWER_NUMBER_NOT_GROUNDED"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-03,turnIndex=1]"
+    },
+    {
+      "scenarioId": "NAT-03",
+      "turn": 3,
+      "status": "FAIL",
+      "user": "รามอินทรา ที่เมื่อกี้ขึ้นมาอันแรก",
+      "wireQuote": "ต้องตรวจข้อมูลหรือสิทธิ์ของส่วนนี้ก่อน",
+      "reason": "ก่อนหน้านี้ไม่มีตัวเลือกแรกส่งสำเร็จ; ควรยืนยันชื่อ/ตัวเลือกอย่างเฉพาะเจาะจง แต่ตอบตรวจสิทธิ์ทั่วไป ไม่มีการ resolve branch",
+      "latencyToLastWireSeconds": 12.786,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-e59f9001-d271-4e6c-a163-094e7557f0bf"
+      ],
+      "tools": [],
+      "observedReasonCodes": [
+        "TOOL_INPUT_NOT_AUTHORIZED"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-03,turnIndex=2]"
+    },
+    {
+      "scenarioId": "NAT-03",
+      "turn": 4,
+      "status": "FAIL",
+      "user": "อ้อ เอาเดือนนี้แทน แต่สาขาเดิม",
+      "wireQuote": "ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จ",
+      "reason": "คำแก้เดือนนี้โดยคงสาขาเดิมล้มที่ ROUTER_SEMANTIC_SCHEMA_INVALID ไม่มีการแก้เฉพาะช่วงเวลา",
+      "latencyToLastWireSeconds": 19.225,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-36edcd14-88e7-4ca8-86e5-a401a790dd7c"
+      ],
+      "tools": [],
+      "observedReasonCodes": [
+        "AI_CONTRACT_UNSUPPORTED"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-03,turnIndex=3]"
+    },
+    {
+      "scenarioId": "NAT-03",
+      "turn": 5,
+      "status": "FAIL",
+      "user": "เทียบกับสำนักงานใหญ่ด้วย ต่างกันตรงไหน",
+      "wireQuote": "ข้อมูลที่มีอยู่เป็นยอดรวมทุกสาขา ยังไม่มีข้อมูลแยกเฉพาะสำนักงานใหญ่",
+      "reason": "อ่านรายชื่อสาขาและยอดรวมทุกสาขา แต่ไม่อ่านรายจ่ายสองสาขาเพื่อเทียบ; บอกจะถามเพิ่มโดยไม่มีคำถามจริง ไม่ทำโจทย์เปรียบเทียบ",
+      "latencyToLastWireSeconds": 25.083,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-bf489d06-0209-4d01-a5af-23931b7bfb6e"
+      ],
+      "tools": [
+        {
+          "tool": "company.list_branches",
+          "input": {},
+          "status": "ok"
+        },
+        {
+          "tool": "expense.list_recent",
+          "input": {},
+          "status": "ok"
+        }
+      ],
+      "observedReasonCodes": [],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-03,turnIndex=4]"
+    },
+    {
+      "scenarioId": "NAT-04",
+      "turn": 1,
+      "status": "PARTIAL",
+      "user": "เดือนนี้จ่ายอะไรไปเยอะ แล้วบิลที่ฉันออกเงินเองเมื่อวานเบิกได้มั้ย",
+      "wireQuote": "บิลที่จ่ายเองเมื่อวาน (26 ก.ย.) — มีรายละเอียดเพิ่มเติมไหมคะ",
+      "reason": "เก็บทั้งรายจ่ายและสิทธิ์เบิก พร้อมถามรายละเอียดบิลอย่างเหมาะสมและไม่รับรองเบิกได้; แต่คำตอบรายจ่ายถูก numeric-validator ปิด แม้ tool ส่ง breakdown ครบ",
+      "latencyToLastWireSeconds": 23.048,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-0cbc2e80-e48c-4a0d-880f-9fad8f8fc457"
+      ],
+      "tools": [
+        {
+          "tool": "expense.get_breakdown",
+          "input": {
+            "fromDate": "2026-09-01",
+            "toDate": "2026-09-27"
+          },
+          "status": "ok"
+        }
+      ],
+      "observedReasonCodes": [
+        "ANSWER_NUMBER_NOT_GROUNDED",
+        "MISSING_REQUIRED_INPUT"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-04,turnIndex=0]"
+    },
+    {
+      "scenarioId": "NAT-04",
+      "turn": 2,
+      "status": "BLOCKED_FIXTURE",
+      "user": "บิลร้านเครื่องเขียนที่ส่งไว้สองใบอะ",
+      "wireQuote": "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง",
+      "reason": "ไม่มีใบเสร็จเครื่องเขียนเดิมสองใบใน fixture จึงทดสอบการค้น/เลือกจริงไม่ได้; แต่ missing-evidence diagnostic ก็ไม่ผ่าน เพราะส่งเพียง AI_GENERAL_ADMISSION_UNAVAILABLE แทนบอกไฟล์ที่ขาด",
+      "latencyToLastWireSeconds": 7.939,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-7bd38cde-1728-4709-aa14-8a7251c985d7"
+      ],
+      "tools": [],
+      "observedReasonCodes": [
+        "AI_GENERAL_ADMISSION_UNAVAILABLE"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-04,turnIndex=1]",
+      "missingEvidenceDiagnosticStatus": "FAIL",
+      "successfulReimbursementPath": "NOT_RUN_FIXTURE_REQUIRED"
+    },
+    {
+      "scenarioId": "NAT-04",
+      "turn": 3,
+      "status": "BLOCKED_FIXTURE",
+      "user": "งั้นช่วยทำร่างจากใบที่สอง ซื้อของใช้ในออฟฟิศ",
+      "wireQuote": "ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จ",
+      "reason": "ไม่มีใบที่สอง/ตัวเลือกที่ส่งสำเร็จ จึงรับรอง create-preview ไม่ได้; observed diagnostic ล้ม schema และไม่ได้ถามให้แนบ/เลือกหลักฐาน ไม่มี financial write",
+      "latencyToLastWireSeconds": 15.579,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-350c4981-e5f4-4edd-a50d-416b8e78acc9"
+      ],
+      "tools": [],
+      "observedReasonCodes": [
+        "AI_CONTRACT_UNSUPPORTED"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-04,turnIndex=2]",
+      "missingEvidenceDiagnosticStatus": "FAIL",
+      "successfulReimbursementPath": "NOT_RUN_FIXTURE_REQUIRED"
+    },
+    {
+      "scenarioId": "NAT-04",
+      "turn": 4,
+      "status": "BLOCKED_FIXTURE",
+      "user": "ขอเช็กยอดกับชื่อร้านก่อน ยังไม่ต้องบันทึก",
+      "wireQuote": "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง",
+      "reason": "ไม่มี preview/ไฟล์เก่าสำหรับแสดงชื่อร้านและยอด; ไม่สร้างข้อมูลเพิ่ม แต่ตอบ admission failure ทั่วไปแทนบอกหลักฐานที่ยังขาด",
+      "latencyToLastWireSeconds": 7.664,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-06993ded-b50b-439c-88f8-12c35c21376a"
+      ],
+      "tools": [],
+      "observedReasonCodes": [
+        "AI_GENERAL_ADMISSION_UNAVAILABLE"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-04,turnIndex=3]",
+      "missingEvidenceDiagnosticStatus": "FAIL",
+      "successfulReimbursementPath": "NOT_RUN_FIXTURE_REQUIRED"
+    },
+    {
+      "scenarioId": "NAT-04",
+      "turn": 5,
+      "status": "FAIL",
+      "user": "ขอยกเลิกก่อน เดี๋ยวถามฝ่ายบัญชี",
+      "wireQuote": "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง",
+      "reason": "คำสั่งยกเลิกไม่ต้องมีใบเสร็จจึงทดสอบได้: กลับส่ง admission failure และ task เดิมยัง waiting_user revision1 เหมือนก่อน ไม่มีผลยกเลิก",
+      "latencyToLastWireSeconds": 7.909,
+      "wirePresent": true,
+      "frozenDeliveryStatus": "ACCEPTED",
+      "receiptIds": [
+        "sink-2951e2a8-2449-489c-a6a4-fa9ea26222e6"
+      ],
+      "tools": [],
+      "observedReasonCodes": [
+        "AI_GENERAL_ADMISSION_UNAVAILABLE"
+      ],
+      "businessEffects": [],
+      "evidenceLocator": "turnEvidence[scenarioId=NAT-04,turnIndex=4]",
+      "taskStateBefore": {
+        "tasks": [
+          {
+            "kind": "read",
+            "state": "waiting_user",
+            "taskId": "51eee9d4625938af5d0b93e78c964a4001f0d5a62d6eb771cd229135a2ae6500",
+            "revision": 1,
+            "userGoal": "Read expense breakdown for this month (1–27 Sep 2026) to see what was spent the most",
+            "subrequests": [
+              {
+                "goal": "Read expense breakdown for this month (1–27 Sep 2026) to see what was spent the most",
+                "kind": "read",
+                "index": 0,
+                "status": "needs_user"
+              },
+              {
+                "goal": "User asks whether a bill they personally paid yesterday qualifies for reimbursement",
+                "kind": "help",
+                "index": 1,
+                "status": "needs_user"
+              }
+            ],
+            "deliveredQuestionRefs": [
+              "a924d643aa381d69028f273f9cabf26dca773afe393565f6495ecc6abb7d10d7",
+              "f937adb978cb01f0daba4d68f90f82dc09f8d414ed50b3070665099338b0c690"
+            ]
+          }
+        ],
+        "version": 2
+      },
+      "taskStateAfter": {
+        "tasks": [
+          {
+            "kind": "read",
+            "state": "waiting_user",
+            "taskId": "51eee9d4625938af5d0b93e78c964a4001f0d5a62d6eb771cd229135a2ae6500",
+            "revision": 1,
+            "userGoal": "Read expense breakdown for this month (1–27 Sep 2026) to see what was spent the most",
+            "subrequests": [
+              {
+                "goal": "Read expense breakdown for this month (1–27 Sep 2026) to see what was spent the most",
+                "kind": "read",
+                "index": 0,
+                "status": "needs_user"
+              },
+              {
+                "goal": "User asks whether a bill they personally paid yesterday qualifies for reimbursement",
+                "kind": "help",
+                "index": 1,
+                "status": "needs_user"
+              }
+            ],
+            "deliveredQuestionRefs": [
+              "a924d643aa381d69028f273f9cabf26dca773afe393565f6495ecc6abb7d10d7",
+              "f937adb978cb01f0daba4d68f90f82dc09f8d414ed50b3070665099338b0c690"
+            ]
+          }
+        ],
+        "version": 2
+      }
+    }
+  ]
+}

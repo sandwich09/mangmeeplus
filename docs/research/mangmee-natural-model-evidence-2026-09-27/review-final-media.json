@@ -1,0 +1,1058 @@
+{
+  "reviewType": "Final tested diagnostic evidence, independently reviewed by AI; no readiness or human-certification claim",
+  "humanReviewStatus": "UNREVIEWED",
+  "runKind": "Final capped diagnostic retest; primary and previous retest records remain separate",
+  "sourceCommit": "a9763631f985468b97a53528a6dc2db26266965b",
+  "startedAt": "2026-09-27T04:40:55.546Z",
+  "completedAt": "2026-09-27T04:43:54.999Z",
+  "compiledHashes": {
+    "apps/api/dist/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.js": "7a1d50ed4e2f1becdee3c5b9b5369affe2544f337f907e81f68da2a1e2ca3654",
+    "apps/ai-gateway/dist/apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent.js": "9e2ad5fc43b79c9c8df1219481e87ddfd87024c1d95215628c34c8c1d9920103",
+    "apps/ai-gateway/dist/apps/ai-gateway/src/modules/line-ai/agents/semantic-turn-v2.js": "6fd7585b4ba24d5b8bf6604dd36874cf132f16a138ac042cab67d45a17ae3e1e"
+  },
+  "corpusDigest": "776279a2d338916abe9e374b611184dac83e40785b350d125fb0d1f173e0176e",
+  "boundary": {
+    "runtime": "compiled_nest_api_postgres",
+    "line": "synthetic_http_sink",
+    "nativeLineVerified": false,
+    "cacheStateVerified": false,
+    "activationEligible": false
+  },
+  "inputs": {
+    "qa-final-media.json": {
+      "path": "/tmp/mangmee-natural-20260927/qa-final-media.json",
+      "sha256": "5a5a6316a762eb444c05bc642c715b255b54a046ec7a29abeb37e074340f0951"
+    },
+    "qa-final-media.manifest.json": {
+      "path": "/tmp/mangmee-natural-20260927/qa-final-media.manifest.json",
+      "sha256": "1df3460db7b7aa42b35806b6b6fd0166123fc110f9531934e551f9a4ce92c023"
+    },
+    "qa-final-provider-outputs.jsonl": {
+      "path": "/tmp/mangmee-natural-20260927/qa-final-provider-outputs.jsonl",
+      "sha256": "ee1a2ff715e1fdc5c73f840125c8fd162d47572387338105f4e1345bdac1b6d7"
+    }
+  },
+  "counts": {
+    "plannedTurns": 10,
+    "observedTurns": 6,
+    "notRunTurns": 4,
+    "NAT05Observed": 5,
+    "NAT06Observed": 1,
+    "ExpenseRecordEffects": 0,
+    "reimbursementEffects": 0,
+    "AttachmentObjectCreates": 2,
+    "AttachmentLinkCreates": 1,
+    "draftActionsObserved": 0,
+    "providerAttempts": 10,
+    "providerOkTrue": 10,
+    "documentReaderAttempts": 1
+  },
+  "resultBoundaries": {
+    "provider_ok": true,
+    "parser_valid": false,
+    "gateway_document_result": {
+      "status": "failed",
+      "errorCode": "QA_RESULT_INVALID",
+      "usage": [
+        {
+          "tag": "line.document.qa",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3709,
+          "outputTokens": 2812,
+          "cacheReadInputTokens": 0,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 27699,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "w14-synthetic-company#311e7c8c09fd521785531b5e95283e28851e87d382de72549709c414f95ed814#provider-v2#1"
+        }
+      ]
+    },
+    "document_answer_delivered": false,
+    "failure_notice_sink_accepted": true,
+    "frozen_failure_notice_delivery_status": "ACCEPTED",
+    "webhook_event_status": "delivery_pending",
+    "webhook_event_errorCode": "LINE_DELIVERY_V2_PENDING",
+    "webhook_terminal_settlement": false,
+    "replay_error": "REPLAY_TERMINAL_TIMEOUT",
+    "explanation": "Provider returned complete text; strict parser rejected it; only a failure notice was accepted by the synthetic LINE sink. Event still pending, so scenario never terminally settled. These outcomes are separate."
+  },
+  "readerContentReview": {
+    "positiveEvidence": "Raw answer identifies both selected pages; correct Sample Catering Test Kitchen /2026-09-20/1,580.00 THB, VAT not separately shown, page2 lunch catering for team meeting, Prepared lunch boxes,10boxes,delivery date and obscured customer tax ID. It identifies test-only nature and does not invent the obscured ID or a VAT amount.",
+    "limitations": "Content is raw rejected model output, not accepted structured facts, not human-certified, not delivered to the user. Page2 refers to the original partial PDF; replacement file was never sent in this run.",
+    "selectedPages": [
+      {
+        "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+        "page": 1
+      },
+      {
+        "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+        "page": 2
+      }
+    ],
+    "rawAnswer": "เอกสารนี้มี 2 หน้า เป็นใบเสร็จบริการจัดเลี้ยง (Synthetic Catering Receipt) โดยมีข้อมูลดังนี้:\n\n**หน้า 1:**\n- หมายเลขอ้างอิง: NAT-PARTIAL-001\n- วันที่: 2026-09-20\n- ร้านค้า: Sample Catering Test Kitchen\n- รายการ: Catering service — 1,580.00 THB\n- ยอดรวม (TOTAL): 1,580.00 THB\n- หมายเหตุ: VAT amount is not separately shown in this document.\n\n**หน้า 2 (Catering detail):**\n- หมายเลขอ้างอิง: NAT-PARTIAL-001\n- หมายเหตุ: Lunch catering for a team meeting.\n- รายการบริการ: Prepared lunch boxes\n- จำนวน: 10 boxes\n- วันที่จัดส่ง: 2026-09-20\n- Customer tax ID: (ถูกปิดบัง ไม่สามารถอ่านได้)\n\n⚠️ หมายเหตุสำคัญ: เอกสารนี้ระบุไว้ชัดเจนว่า \"SYNTHETIC TEST DATA ONLY — NOT A VALID TAX DOCUMENT\" คือเป็นเพียงข้อมูลทดสอบ ไม่ใช่เอกสารภาษีที่ถูกต้องตามกฎหมาย",
+    "parserAudit": "/tmp/mangmee-natural-20260927/qa-final-reader-parser-audit.json",
+    "invalidSpanCount": 7,
+    "totalSpanClaims": 13,
+    "spanFailures": [
+      {
+        "page": 1,
+        "group": "facts",
+        "index": 0,
+        "role": "document_title",
+        "claimedText": "Synthetic Catering Receipt",
+        "localSpan": {
+          "start": 57,
+          "end": 83
+        },
+        "slicedVisibleText": "hetic Catering Receipt\n\nRe",
+        "actualFirstOccurrence": 53
+      },
+      {
+        "page": 1,
+        "group": "facts",
+        "index": 1,
+        "role": "reference_number",
+        "claimedText": "Reference: NAT-PARTIAL-001",
+        "localSpan": {
+          "start": 85,
+          "end": 111
+        },
+        "slicedVisibleText": "rence: NAT-PARTIAL-001\nDat",
+        "actualFirstOccurrence": 81
+      },
+      {
+        "page": 1,
+        "group": "facts",
+        "index": 2,
+        "role": "date",
+        "claimedText": "Date: 2026-09-20",
+        "localSpan": {
+          "start": 112,
+          "end": 128
+        },
+        "slicedVisibleText": ": 2026-09-20\nMer",
+        "actualFirstOccurrence": 108
+      },
+      {
+        "page": 1,
+        "group": "facts",
+        "index": 3,
+        "role": "merchant",
+        "claimedText": "Merchant: Sample Catering Test Kitchen",
+        "localSpan": {
+          "start": 129,
+          "end": 167
+        },
+        "slicedVisibleText": "hant: Sample Catering Test Kitchen\n\nCa",
+        "actualFirstOccurrence": 125
+      },
+      {
+        "page": 1,
+        "group": "facts",
+        "index": 4,
+        "role": "line_item",
+        "claimedText": "Catering service                                          1,580.00 THB",
+        "localSpan": {
+          "start": 169,
+          "end": 239
+        },
+        "slicedVisibleText": "ring service                                          1,580.00 THB\n\nTO",
+        "actualFirstOccurrence": 165
+      },
+      {
+        "page": 1,
+        "group": "facts",
+        "index": 5,
+        "role": "total_amount",
+        "claimedText": "TOTAL                                                     1,580.00 THB",
+        "localSpan": {
+          "start": 241,
+          "end": 311
+        },
+        "slicedVisibleText": "L                                                     1,580.00 THB\n\nVA",
+        "actualFirstOccurrence": 237
+      },
+      {
+        "page": 2,
+        "group": "evidence",
+        "index": 0,
+        "role": "visible_text",
+        "claimedText": "The customer tax ID field is deliberately obscured. No value is encoded underneath it. Do not infer the missing value.",
+        "localSpan": {
+          "start": 268,
+          "end": 385
+        },
+        "slicedVisibleText": "The customer tax ID field is deliberately obscured. No value is encoded underneath it. Do not infer the missing value",
+        "actualFirstOccurrence": 268
+      }
+    ],
+    "contractRule": "parseFact/parseEvidence require visibleText.slice(localSpan.start,localSpan.end) === claimed text. Seven of thirteen claims fail: six page1 fact spans and one page2 evidence span. Example: page1 document_title supplied57..83 produces \"hetic Catering Receipt\\n\\nRe\", while the title starts53. The page2 evidence slice omits the final period. Other claims must be judged by the attached exact audit, not by page-wide generalization.",
+    "sourceReferences": [
+      "packages/contracts/src/line-document-qa.ts:255 (parseEvidence)",
+      "packages/contracts/src/line-document-qa.ts:259 (exact evidence span check)",
+      "packages/contracts/src/line-document-qa.ts:263 (parseFact)",
+      "packages/contracts/src/line-document-qa.ts:268 (exact fact span check)",
+      "packages/contracts/src/line-document-qa.ts:275 (parseLineDocumentQaResult)",
+      "packages/contracts/src/line-document-qa.ts:295 (reject invalid facts/evidence)",
+      "apps/ai-gateway/src/modules/line-ai/application/document-qa.use-case.ts:85",
+      "apps/ai-gateway/src/modules/line-ai/application/document-qa.use-case.ts:89"
+    ],
+    "capPreserved": "Observed only intake+one document-reader call for NAT06T1. Existing slot/repair bounds were not relaxed; this review performs no further provider calls or repairs.",
+    "spanFailureBreakdown": [
+      {
+        "page": 1,
+        "group": "facts",
+        "count": 6
+      },
+      {
+        "page": 2,
+        "group": "evidence",
+        "count": 1
+      }
+    ]
+  },
+  "terminalStateReview": {
+    "observed": {
+      "webhookEventId": "replay-3d22c4088d3be6636a5c-0",
+      "eventType": "message",
+      "status": "delivery_pending",
+      "errorCode": "LINE_DELIVERY_V2_PENDING",
+      "processedAt": "2026-09-27T04:42:30.087Z",
+      "createdAt": "2026-09-27T04:41:54.914Z"
+    },
+    "acceptedNoticeAtMs": 1790484150092,
+    "firstWireAtMs": 1790484115933,
+    "evidence": "The event pending marker processedAt 2026-09-27T04:42:30.087Z precedes failure notice sink acceptance at04:42:30.092Z; bundle delivery is ACCEPTED but record errors after timeout. processedAt alone does not prove terminal settlement.",
+    "supportedMechanism": "sendMessages marks delivery_pending/LINE_DELIVERY_V2_PENDING when sendMessagesV2 returns non-ok. updateEventLog explicitly excludes rows already delivery_pending and retains their replay payload. Failed-QA delivery attempts a normal document_qa_failed update after deliverMessages succeeds; the standard update cannot advance an already pending row. Runtime awaits pending-work completion plus all event processedAt and cleared payload.",
+    "uncertainty": "Artifacts do not capture which initial sendMessagesV2 non-ok branch set pending, or the intermediate claim/ack sequence. A competing/in-flight delivery is consistent with timestamps but is not independently proven. Do not claim an exact race root cause from this trace alone.",
+    "sourceReferences": [
+      "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts:4156",
+      "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts:9085",
+      "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts:9102",
+      "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts:10587",
+      "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts:10597",
+      "scripts/line-ai-reliability-runtime.ts:448"
+    ]
+  },
+  "assets": [
+    {
+      "id": "receipt-clear",
+      "path": "/Users/thawatchai/.codex/worktrees/mangmee-model-test-baseline/mangmeeplus/docs/research/mangmee-ai-natural-assets-2026-09-27/receipt-clear.png",
+      "sha256": "23a09641ef60c99317f4330e95c5bb9f93daa70ed4fbe681ce16bf0864a31f3c",
+      "mimeType": "image/png",
+      "hashVerified": true,
+      "humanCertified": false
+    },
+    {
+      "id": "receipt-partial",
+      "path": "/Users/thawatchai/.codex/worktrees/mangmee-model-test-baseline/mangmeeplus/docs/research/mangmee-ai-natural-assets-2026-09-27/receipt-partial.pdf",
+      "sha256": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+      "mimeType": "application/pdf",
+      "hashVerified": true,
+      "humanCertified": false
+    },
+    {
+      "id": "document-unreadable",
+      "path": "/Users/thawatchai/.codex/worktrees/mangmee-model-test-baseline/mangmeeplus/docs/research/mangmee-ai-natural-assets-2026-09-27/document-unreadable.pdf",
+      "sha256": "37b80639d6d96436268e911c8792542c3c7e0e1e3e18fabd84b462e0f8324f01",
+      "mimeType": "application/pdf",
+      "hashVerified": true,
+      "humanCertified": false
+    }
+  ],
+  "turns": [
+    {
+      "scenarioId": "NAT-05",
+      "turn": 1,
+      "user": "ใบนี้รวมเท่าไหร่อะ",
+      "expectedBehaviorFromUnreviewedCriteria": "อ่านยอดรวมของรูปที่แนบและบอกข้อจำกัดถ้าอ่านไม่ชัด",
+      "observed": true,
+      "reviewStatus": "NOT_ANSWERED",
+      "noteTh": "intake IMAGE อ่าน merchant/date/subtotal/VAT/total ตรงภาพและระบุเจตนาอ่านอย่างเดียว แต่ semantic kind:read ทำให้ถามอ่านหรือบันทึกซ้ำ ไม่ส่งยอดรวมจริง ไม่มี QA reader call",
+      "actualWireTexts": [
+        "ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ปกติไม่เกิน 1 นาที เสร็จแล้วน้องจะสรุปให้เลยนะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ",
+        "ต้องการให้อ่านไฟล์นี้เพื่อตอบคำถาม หรือใช้เป็นหลักฐานบันทึกค่าใช้จ่ายคะ ยังไม่ได้สร้างรายการให้ค่ะ"
+      ],
+      "receiptIds": [
+        "sink-4f4dc384-eb74-41c1-b4e4-b121ebb6b665",
+        "sink-7a70ece7-6b08-45d3-a0b7-8cddcc72ef03"
+      ],
+      "actualTraceOutcome": "needs_input",
+      "effects": [
+        {
+          "kind": "AttachmentObject.create",
+          "recordId": "cmujbzh7i002e9rk1nwuok5qb",
+          "revision": "2026-09-27T04:41:08.614",
+          "evidence": "database_snapshot",
+          "evidenceHash": "234aa6a98b63a3e92973e8414010e62314d40d2347260f9f81eb1533326fc517"
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-1334263aa721dc42c23e-0",
+          "eventType": "message",
+          "status": "clarification_required",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:41:08.665Z",
+          "createdAt": "2026-09-27T04:40:58.590Z"
+        },
+        {
+          "webhookEventId": "replay-1334263aa721dc42c23e-1",
+          "eventType": "message",
+          "status": "batched",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:41:08.667Z",
+          "createdAt": "2026-09-27T04:40:58.601Z"
+        }
+      ],
+      "delivery": {
+        "requiredBatchIds": [
+          "88e7d86d0f355ae546ec8ed6bd28374285e1781e3974fd29ce2bdba03ef9e3ea:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "88e7d86d0f355ae546ec8ed6bd28374285e1781e3974fd29ce2bdba03ef9e3ea:batch:0",
+            "wireHash": "3cdfc86e2cf7b10f138736baab2d663978006600dd1897bed0a230e823a8c5ab",
+            "acceptedAtMs": 1790484068653,
+            "receiptId": "sink-7a70ece7-6b08-45d3-a0b7-8cddcc72ef03"
+          }
+        ],
+        "status": "ACCEPTED"
+      },
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "gatewayClientResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "4372ef47-9801-4a73-9d70-1c7d01a25627",
+          "response": {
+            "status": "ROUTED",
+            "intent": "BUSINESS_READ_QUESTION",
+            "language": "th",
+            "confidence": 0.82,
+            "reason": "User is asking for the total amount on the attached receipt document — a read/lookup question about document content, not a capture or record-creation request.",
+            "documentText": "SYNTHETIC TEST DATA ONLY — NOT A VALID TAX DOCUMENT\n\n# Green Bowl Synthetic Cafe\n\nReceipt: NAT-RECEIPT-001\nDate: 2026-09-21\nCurrency: THB\n\n## Food and beverages\n\n| Item | Amount |\n|---|---|\n| Meal and beverage service | 1,196.63 |\n\n| Subtotal (before VAT) | 1,196.63 THB |\n| VAT component | 83.87 THB |\n\n**TOTAL 1,280.50 THB**\n\nAmounts are authored synthetic fixture values.\nNo payment, reimbursement or tax entitlement is certified.\n1,196.63 + 83.87 = 1,280.50\nPage 1 of 1",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "read",
+                "goal": "อ่านยอดรวมทั้งหมดจากใบเสร็จที่แนบมา",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 18,
+                    "rawSha256": "da4ea40432a584fb7e3bf6fa53c1f0d07ffcaf59e3209ccf3b128dd451bf8fa5"
+                  }
+                ]
+              }
+            ],
+            "ocrAdmission": "admitted",
+            "ocrMonthKey": "2026-09"
+          }
+        }
+      ],
+      "validationFailures": [],
+      "timingMs": {
+        "runtimeObservedWorkEnd": 9971,
+        "firstWire": 1050,
+        "lastWire": 10082
+      },
+      "providerUsage": [
+        {
+          "requestId": "4372ef47-9801-4a73-9d70-1c7d01a25627",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "requestKind": "IMAGE",
+          "usageBasis": "PROVIDER_REPORTED",
+          "inputTokens": 2346,
+          "outputTokens": 538
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-05",
+      "turn": 2,
+      "user": "VAT ล่ะ ไม่ใช่ยอดรวมนะ",
+      "expectedBehaviorFromUnreviewedCriteria": "อ่านส่วน VAT จากใบเดิม แยกบทบาทจำนวนเงินชัดเจน",
+      "observed": true,
+      "reviewStatus": "CONTEXT_LOST",
+      "noteTh": "ถาม VAT จากใบเดิม แต่ intake ถือว่าบริบทกำกวม/general และตอบ AI_GENERAL_ADMISSION_UNAVAILABLE ไม่ได้ส่ง VAT83.87",
+      "actualWireTexts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "receiptIds": [
+        "sink-f7512b0c-4522-4c22-94a8-19013a093543"
+      ],
+      "actualTraceOutcome": "temporarily_unavailable",
+      "effects": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-b2db9ab4e1b760ed2ee6-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_GENERAL_ADMISSION_UNAVAILABLE",
+          "processedAt": "2026-09-27T04:41:16.730Z",
+          "createdAt": "2026-09-27T04:41:08.767Z"
+        }
+      ],
+      "delivery": {
+        "requiredBatchIds": [
+          "005976bf056c7181634499d4e578c58e153a4bf029f0e9df448099b3cbe39974:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "005976bf056c7181634499d4e578c58e153a4bf029f0e9df448099b3cbe39974:batch:0",
+            "wireHash": "bdf6ea3a34e2cc1dbf77e4018fdb186c352417ca41cacfcd540aa8b9e3f0ec4d",
+            "acceptedAtMs": 1790484076725,
+            "receiptId": "sink-f7512b0c-4522-4c22-94a8-19013a093543"
+          }
+        ],
+        "status": "ACCEPTED"
+      },
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "gatewayClientResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "998974dd-7f65-47cc-b64c-6b06edde6c72",
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.42,
+            "reason": "The message asks about VAT (not the total), but without active drafts, recent captures, or prior context it is unclear whether this is a correction to a captured expense, a question about how VAT was ",
+            "clarifyQuestion": "ต้องการถามเรื่อง VAT ของรายการค่าใช้จ่ายที่เพิ่งบันทึกไว้ หรือต้องการแก้ไขยอด VAT ในบิลล่าสุด หรือเป็นคำถามทั่วไปเกี่ยวกับ VAT ครับ?",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "general",
+                "goal": "User is asking about VAT specifically (not the total amount) — context ambiguous between a correction, a draft question, or a general VAT query",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 22,
+                    "rawSha256": "8e085b8e260d2f55ffd8f021538424691dd561b9b56bc8bc9018950061e43493"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "validationFailures": [],
+      "timingMs": {
+        "runtimeObservedWorkEnd": 7929,
+        "firstWire": 7973,
+        "lastWire": 7973
+      },
+      "providerUsage": [
+        {
+          "requestId": "998974dd-7f65-47cc-b64c-6b06edde6c72",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "requestKind": "TEXT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "inputTokens": 1115,
+          "outputTokens": 450
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-05",
+      "turn": 3,
+      "user": "ชื่อร้านกับวันที่อ่านว่าอะไร",
+      "expectedBehaviorFromUnreviewedCriteria": "ตอบเฉพาะที่มีหลักฐานบนไฟล์พร้อมระบุส่วนไม่ชัด",
+      "observed": true,
+      "reviewStatus": "CONTEXT_LOST",
+      "noteTh": "ไม่ได้ตอบชื่อร้าน/วันที่ แม้มีค่าที่ intake อ่านได้ก่อนหน้า; generic read ไม่มีแหล่งข้อมูลและ wire กลับถามจัดประเภทภาพ",
+      "actualWireTexts": [
+        "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง\n\n↩️ รูปที่รอจำแนกยังเก็บไว้อยู่ค่ะ\n🤔 รูปนี้เป็นอะไรคะ ตอบเลขข้อได้เลยนะคะ\n1) ใบเสร็จ/เอกสารค่าใช้จ่ายรายการเดียวที่ต้องการบันทึก\n2) ภาพประกอบคำถาม ไม่ต้องบันทึก\n3) สรุปหลายรายการ (เก็บไฟล์ไว้ตรวจ แต่ยังไม่สร้างค่าใช้จ่าย)"
+      ],
+      "receiptIds": [
+        "sink-e591562d-6bb5-46d7-9d82-724856086c2f"
+      ],
+      "actualTraceOutcome": "needs_input",
+      "effects": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-dcc2bab598984ee5469d-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:41:36.478Z",
+          "createdAt": "2026-09-27T04:41:16.835Z"
+        }
+      ],
+      "delivery": {
+        "requiredBatchIds": [
+          "7933f6f2892d735c7b5c56bed2b33c115e9422e5efc1c4ad5e31b751bc5d2c11:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "7933f6f2892d735c7b5c56bed2b33c115e9422e5efc1c4ad5e31b751bc5d2c11:batch:0",
+            "wireHash": "4e8bc1d809393ca5bc464cc18ed35660cf14fd60c033ab72c0ee45098b73ef55",
+            "acceptedAtMs": 1790484096468,
+            "receiptId": "sink-e591562d-6bb5-46d7-9d82-724856086c2f"
+          }
+        ],
+        "status": "ACCEPTED"
+      },
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "gatewayClientResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "5411e250-4728-4880-b7cc-d57973bf58cf",
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.52,
+            "reason": "The user asks what the vendor name and date say, but there is no attached image or document to read them from — it is unclear what record or document they are referring to.",
+            "clarifyQuestion": "คุณถามเกี่ยวกับเอกสารไหนครับ — รูปใบเสร็จที่เพิ่งส่งมา หรือรายการที่บันทึกไว้ในระบบ?",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "read",
+                "goal": "อ่านชื่อร้านและวันที่จากเอกสารหรือรายการที่ไม่ระบุ",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 28,
+                    "rawSha256": "73d51c21771e72a8611456019593af645f9cd11510d625e2f45e6ee28012c783"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "method": "requestLineTurn",
+          "requestId": "5411e250-4728-4880-b7cc-d57973bf58cf",
+          "response": {
+            "requestId": "5411e250-4728-4880-b7cc-d57973bf58cf",
+            "replyText": "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง",
+            "sourceRefs": [],
+            "sourceLabels": [],
+            "webLinks": [],
+            "intent": "unknown",
+            "agent": "general",
+            "refused": false,
+            "toolsInvoked": [],
+            "toolCalls": [],
+            "durationMs": 7278,
+            "semanticCoverage": [
+              {
+                "index": 0,
+                "status": "needs_user",
+                "reasonCode": "SEMANTIC_CONTROL_UNAVAILABLE",
+                "question": "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง"
+              }
+            ],
+            "modelLineage": [
+              {
+                "provider": "bedrock",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "region": "ap-southeast-1",
+                "purpose": "employee_line_assistant"
+              }
+            ]
+          }
+        }
+      ],
+      "validationFailures": [],
+      "timingMs": {
+        "runtimeObservedWorkEnd": 19579,
+        "firstWire": 19646,
+        "lastWire": 19646
+      },
+      "providerUsage": [
+        {
+          "requestId": "5411e250-4728-4880-b7cc-d57973bf58cf",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "requestKind": "TEXT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "inputTokens": 1110,
+          "outputTokens": 410
+        },
+        {
+          "requestId": "5411e250-4728-4880-b7cc-d57973bf58cf",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "requestKind": "TEXT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "inputTokens": 1187,
+          "outputTokens": 401
+        },
+        {
+          "requestId": "5411e250-4728-4880-b7cc-d57973bf58cf",
+          "sourceRoute": "line-turn",
+          "usageTag": "line.loop",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "requestKind": "TEXT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "inputTokens": 4892,
+          "outputTokens": 210
+        },
+        {
+          "requestId": "5411e250-4728-4880-b7cc-d57973bf58cf",
+          "sourceRoute": "line-turn",
+          "usageTag": "line.compose",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "requestKind": "TEXT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "inputTokens": 1213,
+          "outputTokens": 187
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-05",
+      "turn": 4,
+      "user": "แค่ถามนะ อย่าเพิ่งลงรายจ่าย",
+      "expectedBehaviorFromUnreviewedCriteria": "ยืนยันขอบเขตว่าเป็นการถามเนื้อหา ไม่สร้างร่างใหม่จากประโยคนี้",
+      "observed": true,
+      "reviewStatus": "NO_WRITE_BUT_ACK_FAILED",
+      "noteTh": "ไม่มีรายจ่าย/ใบเบิก แต่ actual wire unavailable ไม่ได้รับทราบคำสั่งอ่านอย่างเดียวอย่างชัดเจน",
+      "actualWireTexts": [
+        "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง"
+      ],
+      "receiptIds": [
+        "sink-fb00c690-8a1a-4f8d-9b1c-f72ef5f9f228"
+      ],
+      "actualTraceOutcome": "temporarily_unavailable",
+      "effects": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-398416665f01520186fe-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_GENERAL_ADMISSION_UNAVAILABLE",
+          "processedAt": "2026-09-27T04:41:45.473Z",
+          "createdAt": "2026-09-27T04:41:36.615Z"
+        }
+      ],
+      "delivery": {
+        "requiredBatchIds": [
+          "5837391d183aa4f1c570f2e26f98ad46dcaa0ab9f96c53949d5cbb312ba154db:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "5837391d183aa4f1c570f2e26f98ad46dcaa0ab9f96c53949d5cbb312ba154db:batch:0",
+            "wireHash": "bdf6ea3a34e2cc1dbf77e4018fdb186c352417ca41cacfcd540aa8b9e3f0ec4d",
+            "acceptedAtMs": 1790484105466,
+            "receiptId": "sink-fb00c690-8a1a-4f8d-9b1c-f72ef5f9f228"
+          }
+        ],
+        "status": "ACCEPTED"
+      },
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "gatewayClientResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "a30082f8-7aa7-42d9-b9c6-1f4b7bfc8315",
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.72,
+            "reason": "User says 'just asking, don't record an expense yet' but has not asked any question — the actual question is missing, so clarification is needed.",
+            "clarifyQuestion": "มีคำถามอะไรอยากถามไหมคะ? หรือต้องการดูข้อมูลอะไรเป็นพิเศษ",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "general",
+                "goal": "ผู้ใช้แจ้งว่าแค่ต้องการถาม ยังไม่ให้ลงรายจ่าย — แต่ไม่มีคำถามจริงในข้อความ",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 27,
+                    "rawSha256": "14202e485f6a9a7e210a77231adafccddda935676143b02a5c80eee713d9f24c"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "validationFailures": [],
+      "timingMs": {
+        "runtimeObservedWorkEnd": 8814,
+        "firstWire": 8865,
+        "lastWire": 8865
+      },
+      "providerUsage": [
+        {
+          "requestId": "a30082f8-7aa7-42d9-b9c6-1f4b7bfc8315",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "requestKind": "TEXT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "inputTokens": 1342,
+          "outputTokens": 587
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-05",
+      "turn": 5,
+      "user": "โอเค งั้นช่วยทำร่างค่าอาหารจากใบนี้ไว้ตรวจที",
+      "expectedBehaviorFromUnreviewedCriteria": "รับเป้าหมายใหม่ที่ขอร่างอย่างชัดเจน ใช้ไฟล์เดิมเมื่อยังมีสิทธิ์ และถามข้อมูลธุรกิจที่ขาด",
+      "observed": true,
+      "reviewStatus": "NO_PREVIEW",
+      "noteTh": "รับเจตนาร่าง แต่ไม่มีไฟล์เดิมใน context จึงถามยอด/หมวดซ้ำ ไม่มี preview หรือ mutation; COMPANY_PAID ใน intake ไม่มีหลักฐานการชำระจากผู้ใช้/ภาพ",
+      "actualWireTexts": [
+        "🧾 ยังไม่สร้างรายการนะคะ กรุณาระบุยอดเงินและวัตถุประสงค์หรือหมวดค่าใช้จ่ายให้ครบ เช่น “ค่าเดินทาง 200 บาท”"
+      ],
+      "receiptIds": [
+        "sink-e7e58f5b-240c-4469-a48d-8d838ec7ff67"
+      ],
+      "actualTraceOutcome": "needs_input",
+      "effects": [],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-0f7951274b5b5822e976-0",
+          "eventType": "message",
+          "status": "clarification_required",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:41:53.262Z",
+          "createdAt": "2026-09-27T04:41:45.605Z"
+        }
+      ],
+      "delivery": {
+        "requiredBatchIds": [
+          "aff0adfef7176b43eb291bfad745748843e37b7adf0fbfc33f5e22ddaa65d177:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "aff0adfef7176b43eb291bfad745748843e37b7adf0fbfc33f5e22ddaa65d177:batch:0",
+            "wireHash": "d01f431854c3f1624b2381c6138d70284d315a579327ec7438650c68d2bd6429",
+            "acceptedAtMs": 1790484113249,
+            "receiptId": "sink-e7e58f5b-240c-4469-a48d-8d838ec7ff67"
+          }
+        ],
+        "status": "ACCEPTED"
+      },
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "gatewayClientResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "694f3b05-94da-426d-af32-6e5626581b82",
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.52,
+            "reason": "The user asks to draft a food expense from 'this document' but no image or attachment is present in the message.",
+            "clarifyQuestion": "ดูเหมือนว่ายังไม่ได้รับไฟล์หรือรูปใบเสร็จค่าอาหาร — รบกวนส่งรูปหรือไฟล์ใบนั้นมาด้วยได้เลยครับ",
+            "semanticOutcome": "BUSINESS_EXPENSE",
+            "fundingSource": "COMPANY_PAID",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "write",
+                "goal": "สร้างร่างค่าใช้จ่ายค่าอาหารจากเอกสารที่อ้างถึง",
+                "requiredEvidence": [
+                  "receipt_image"
+                ],
+                "requestedFilters": {},
+                "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 44,
+                    "rawSha256": "5a967ff3e0fc923282ff422ebdc781d7bc262e1453bc11634632d3f9893a3ca1"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "validationFailures": [],
+      "timingMs": {
+        "runtimeObservedWorkEnd": 7572,
+        "firstWire": 7665,
+        "lastWire": 7665
+      },
+      "providerUsage": [
+        {
+          "requestId": "694f3b05-94da-426d-af32-6e5626581b82",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "requestKind": "TEXT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "inputTokens": 1362,
+          "outputTokens": 433
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-06",
+      "turn": 1,
+      "user": "ดูหน่อย ใบนี้เขียนว่าอะไรบ้าง",
+      "expectedBehaviorFromUnreviewedCriteria": "อ่านไฟล์แรกตามหน้าที่อ่านได้และระบุว่าอ่านได้บางส่วน",
+      "observed": true,
+      "reviewStatus": "READER_CONTRACT_REJECTED_AND_TERMINAL_TIMEOUT",
+      "noteTh": "โมเดลอ่านข้อมูลสองหน้าและส่วนปิดบังตรงสาระของ synthetic asset แต่ localSpan7/13 ไม่ตรง visibleText จึง QA_RESULT_INVALID; sink รับข้อความแจ้งล้มเหลวแล้ว ขณะที่ event ค้างdelivery_pending จน120s timeout ไม่ใช่คำตอบเอกสารที่สำเร็จ",
+      "actualWireTexts": [
+        "ได้รับไฟล์แล้วค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ",
+        "ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ กรุณาส่งไฟล์ที่ชัดเจนหรือเลือกหน้าใหม่ ยังไม่ได้สร้างรายการให้",
+        "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: อ่านและบอกเนื้อหาของเอกสาร PDF ที่แนบมา"
+      ],
+      "receiptIds": [
+        "sink-5e47efc9-d181-4396-9f43-0f04076df744",
+        "sink-185dbc1a-b3b4-407f-ab91-102a36179ab6"
+      ],
+      "actualTraceOutcome": "needs_input",
+      "effects": [
+        {
+          "kind": "AttachmentLink.create",
+          "recordId": "cmujc0m0i00669rk14sl2j0v6",
+          "revision": "cbbaae0f23db3d9531b8b48c99bdfcd807a251821e94052c72d38c1e028202c9",
+          "evidence": "database_snapshot",
+          "evidenceHash": "66f9bdb8ee57dd4d9bddf35b2167b52aaaea52f487cdbdfe65cfece2567315b2"
+        },
+        {
+          "kind": "AttachmentObject.create",
+          "recordId": "cmujc0lyw00619rk1ekkh79f9",
+          "revision": "2026-09-27T04:42:01.431",
+          "evidence": "database_snapshot",
+          "evidenceHash": "7a779a2700d42d099cc8bea1375356d328d8284383102da36e862452bf6ca04e"
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-3d22c4088d3be6636a5c-1",
+          "eventType": "message",
+          "status": "batched",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:42:30.102Z",
+          "createdAt": "2026-09-27T04:41:54.924Z"
+        },
+        {
+          "webhookEventId": "replay-3d22c4088d3be6636a5c-0",
+          "eventType": "message",
+          "status": "delivery_pending",
+          "errorCode": "LINE_DELIVERY_V2_PENDING",
+          "processedAt": "2026-09-27T04:42:30.087Z",
+          "createdAt": "2026-09-27T04:41:54.914Z"
+        }
+      ],
+      "delivery": {
+        "requiredBatchIds": [
+          "0d25e348cdcba0211167f4864e9977a2daed46e1037d6ef0bde0dcec257a71ef:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "0d25e348cdcba0211167f4864e9977a2daed46e1037d6ef0bde0dcec257a71ef:batch:0",
+            "wireHash": "1d437e1b4e1337e6ff855698f130ff174f59bf81615522462250d818f43eacc4",
+            "acceptedAtMs": 1790484150092,
+            "receiptId": "sink-185dbc1a-b3b4-407f-ab91-102a36179ab6"
+          }
+        ],
+        "status": "ACCEPTED"
+      },
+      "draftActionsBefore": [],
+      "draftActionsAfter": [],
+      "gatewayClientResults": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "2059f10f-0ab6-4011-818b-e8999e6a1b20",
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.55,
+            "reason": "PDF attachment has unknown purpose and no image content; cannot determine if this is an expense document, business reference document, or something else entirely.",
+            "clarifyQuestion": "ไฟล์ PDF ที่แนบมานี้เป็นเอกสารประเภทไหนครับ เช่น ใบเสร็จ / ใบแจ้งหนี้ / ใบเสนอราคา หรือเอกสารอื่น?",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "file",
+                "goal": "อ่านและบอกเนื้อหาของเอกสาร PDF ที่แนบมา",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 29,
+                    "rawSha256": "361a404ee594e9544ddd94de576693b8859693d848f246539df949be417fd6fb"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "method": "requestLineDocumentQa",
+          "requestId": "qa:cmujc0m0g00659rk1wl3056vo:1:8ccdf68b-5a3a-4b3f-a192-d22b6b0c81f8",
+          "response": {
+            "status": "failed",
+            "errorCode": "QA_RESULT_INVALID"
+          }
+        }
+      ],
+      "validationFailures": [
+        "runtime_execution_failed"
+      ],
+      "timingMs": {
+        "runtimeObservedWorkEnd": 35130,
+        "firstWire": 1035,
+        "lastWire": 35194
+      },
+      "providerUsage": [
+        {
+          "requestId": "2059f10f-0ab6-4011-818b-e8999e6a1b20",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "requestKind": "TEXT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "inputTokens": 1272,
+          "outputTokens": 396
+        },
+        {
+          "requestId": "qa:cmujc0m0g00659rk1wl3056vo:1:8ccdf68b-5a3a-4b3f-a192-d22b6b0c81f8",
+          "sourceRoute": "line-document-qa",
+          "usageTag": "line.document.qa",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "requestKind": "TEXT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "inputTokens": 3709,
+          "outputTokens": 2812
+        }
+      ]
+    },
+    {
+      "scenarioId": "NAT-06",
+      "turn": 2,
+      "user": "ส่งผิด เอาไฟล์นี้แทนอันเมื่อกี้",
+      "expectedBehaviorFromUnreviewedCriteria": "ใช้ไฟล์ใหม่เป็นเป้าหมายของคำถามนี้ และรักษาตัวตนของไฟล์เดิมไว้สำหรับการอ้างกลับ",
+      "observed": false,
+      "reviewStatus": "NOT_RUN",
+      "noteTh": "ไม่ได้รันหลัง NAT06 turn1 REPLAY_TERMINAL_TIMEOUT; ไม่มีหลักฐานเรื่องไฟล์แทน/หน้า2ของไฟล์แทน/การสรุปเฉพาะหน้าหรือเทียบไฟล์"
+    },
+    {
+      "scenarioId": "NAT-06",
+      "turn": 3,
+      "user": "หน้าสองเขียนว่าไง",
+      "expectedBehaviorFromUnreviewedCriteria": "อ้างหน้า 2 ของไฟล์ใหม่ ถ้าอ่านไม่ได้ให้บอกตรง ๆ และขอภาพที่ชัดขึ้นเฉพาะหน้า",
+      "observed": false,
+      "reviewStatus": "NOT_RUN",
+      "noteTh": "ไม่ได้รันหลัง NAT06 turn1 REPLAY_TERMINAL_TIMEOUT; ไม่มีหลักฐานเรื่องไฟล์แทน/หน้า2ของไฟล์แทน/การสรุปเฉพาะหน้าหรือเทียบไฟล์"
+    },
+    {
+      "scenarioId": "NAT-06",
+      "turn": 4,
+      "user": "งั้นสรุปแค่หน้าที่อ่านออก",
+      "expectedBehaviorFromUnreviewedCriteria": "สรุปเฉพาะส่วนที่อ่านได้ของไฟล์ใหม่ พร้อมบอกหน้าที่ไม่รวม",
+      "observed": false,
+      "reviewStatus": "NOT_RUN",
+      "noteTh": "ไม่ได้รันหลัง NAT06 turn1 REPLAY_TERMINAL_TIMEOUT; ไม่มีหลักฐานเรื่องไฟล์แทน/หน้า2ของไฟล์แทน/การสรุปเฉพาะหน้าหรือเทียบไฟล์"
+    },
+    {
+      "scenarioId": "NAT-06",
+      "turn": 5,
+      "user": "ขอเทียบกับไฟล์แรกด้วย ยังอยู่มั้ย",
+      "expectedBehaviorFromUnreviewedCriteria": "ตรวจว่าไฟล์แรกยังเข้าถึงได้ ถ้าได้จึงเทียบส่วนที่มีหลักฐาน; ถ้าไม่ได้ขอแนบใหม่",
+      "observed": false,
+      "reviewStatus": "NOT_RUN",
+      "noteTh": "ไม่ได้รันหลัง NAT06 turn1 REPLAY_TERMINAL_TIMEOUT; ไม่มีหลักฐานเรื่องไฟล์แทน/หน้า2ของไฟล์แทน/การสรุปเฉพาะหน้าหรือเทียบไฟล์"
+    }
+  ],
+  "wireAudit": {
+    "artifact": "/tmp/mangmee-natural-20260927/qa-final-wire-static-audit.json",
+    "summary": {
+      "plannedTurns": 10,
+      "observedTurns": 6,
+      "missingTurns": 4,
+      "receipts": 8,
+      "messageCount": 9,
+      "messageTypes": {
+        "text": 9
+      },
+      "invalidEnvelopes": 0,
+      "issues": [],
+      "actionCount": 0,
+      "invalidActions": [],
+      "linkOccurrences": 0,
+      "uniqueLinks": []
+    },
+    "limitations": [
+      "9 plain-text messages across8 receipts; all repository envelopes valid.",
+      "No actions, quick replies, Flex cards or URLs emitted. Native display/actions/link authorization remain unexercised.",
+      "Sink ACCEPTED describes failure/clarification payloads; it is not semantic success or customer LINE acceptance."
+    ]
+  },
+  "runtimeDiagnostics": [
+    {
+      "scenarioId": "NAT-06",
+      "repeat": 0,
+      "phase": "turn",
+      "stage": "turn:0",
+      "error": {
+        "name": "Error",
+        "assertion": "REPLAY_TERMINAL_TIMEOUT"
+      }
+    }
+  ],
+  "remainingBlockers": [
+    "NAT05 document-content routing and retained-image context: extracted values never reach user; no preview.",
+    "NAT06 reader output localSpan contract compliance.",
+    "NAT06 event terminal persistence after accepted failure notice.",
+    "NAT06T2–T5 missing in this final diagnostic; replacement/reference issue from separate earlier retest is not cleared.",
+    "Human knowledge/asset approvals, repeated performance evidence and native LINE acceptance remain outside this result."
+  ],
+  "scopeAndPreservation": "No repo edits, service changes, provider calls, prompt/context overhaul or repair performed by this review. Primary f9444099 stays failed at56/60 observed; this final candidate stays failed at6/10 observed. No run is substituted for another and no readiness is inferred."
+}

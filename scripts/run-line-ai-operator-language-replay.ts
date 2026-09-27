@@ -20,6 +20,8 @@ import {
   type OperatorAvailabilityCase,
 } from './line-ai-operator-language.corpus';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { scoreReliabilityTraceBundle } from './line-ai-reliability-fixtures';
 import { summarizeReliabilityRun } from './line-ai-reliability-evaluation';
 
@@ -106,8 +108,7 @@ function payloadFromOpenAiBody(body: any): Record<string, any> {
   try { return JSON.parse(text.slice(text.lastIndexOf('\n') + 1)); } catch { return {}; }
 }
 
-const originalFetch = globalThis.fetch;
-globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+const fixtureFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
   const payload = payloadFromOpenAiBody(JSON.parse(String(init?.body ?? '{}')));
   if (Array.isArray(payload.availableTools)) {
     const name = payload.availableTools[0]?.name;
@@ -187,24 +188,30 @@ function request(messageText: string, index: number, testCase?: OperatorAvailabi
 type Failure = { id: string; expectedTools: string[]; invokedTools: string[]; reason: string };
 const same = (left: readonly string[], right: readonly string[]) => JSON.stringify([...new Set(left)].sort()) === JSON.stringify([...new Set(right)].sort());
 
-void (async () => {
-  const runtimeFlag = process.argv.indexOf('--reliability-runtime');
+export async function runOperatorLanguageReplay(argv: string[] = process.argv, runRuntime: (path: string) => Promise<Record<string, unknown>> = async (path) => {
+  const { runLineReliabilityRuntime } = await import('./line-ai-reliability-runtime');
+  return runLineReliabilityRuntime(JSON.parse(readFileSync(path, 'utf8')), process.cwd());
+}): Promise<void> {
+  const originalFetch = globalThis.fetch;
+  try {
+  const runtimeFlag = argv.indexOf('--reliability-runtime');
   if (runtimeFlag >= 0) {
-    const path = process.argv[runtimeFlag + 1];
+    const path = argv[runtimeFlag + 1];
     if (!path || path.startsWith('--')) throw new Error('RELIABILITY_RUNTIME_MANIFEST_REQUIRED');
-    const { runLineReliabilityRuntime } = await import('./line-ai-reliability-runtime');
-    const result = await runLineReliabilityRuntime(JSON.parse(readFileSync(path, 'utf8')), process.cwd());
+    const result = await runRuntime(path);
     console.log(JSON.stringify({ event: 'line_ai_reliability_runtime_replay', ...result }, null, 2));
     return;
   }
-  const evidenceFlag = process.argv.indexOf('--reliability-traces');
+  const evidenceFlag = argv.indexOf('--reliability-traces');
   if (evidenceFlag >= 0) {
-    const path = process.argv[evidenceFlag + 1];
+    const path = argv[evidenceFlag + 1];
     if (!path || path.startsWith('--')) throw new Error('RELIABILITY_TRACE_FILE_REQUIRED');
     const run = scoreReliabilityTraceBundle(JSON.parse(readFileSync(path, 'utf8')));
     console.log(JSON.stringify({ event: 'line_ai_reliability_trace_scored', run, summary: summarizeReliabilityRun(run) }, null, 2));
     return;
   }
+  // Only the legacy fixture mode may replace fetch. Runtime/traces return above with real transport intact.
+  globalThis.fetch = fixtureFetch;
   const startedAt = Date.now();
   const failures: Failure[] = [];
   for (const [index, testCase] of LINE_AI_ALL_OPERATOR_CASES.entries()) {
@@ -238,8 +245,11 @@ void (async () => {
     durationMs: Date.now() - startedAt, failures,
   }, null, 2));
   if (failures.length > 0) process.exitCode = 1;
-})().catch((error: unknown) => {
+  } finally { globalThis.fetch = originalFetch; }
+}
+
+if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) void runOperatorLanguageReplay().catch((error: unknown) => {
   const detail = error instanceof Error ? error.message : 'UNKNOWN';
   console.error(JSON.stringify({ event: 'line_ai_operator_language_local_replay_failed', errorCode: detail.split(':')[0], detail }));
   process.exitCode = 1;
-}).finally(() => { globalThis.fetch = originalFetch; });
+});

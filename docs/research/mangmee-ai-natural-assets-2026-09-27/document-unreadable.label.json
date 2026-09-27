@@ -1,0 +1,54 @@
+{
+  "assetId": "document-unreadable",
+  "fileName": "document-unreadable.pdf",
+  "mimeType": "application/pdf",
+  "sourceFields": [
+    {
+      "page": 1,
+      "field": "document_type",
+      "originalValue": "Synthetic tax document cover"
+    },
+    {
+      "page": 1,
+      "field": "reference",
+      "originalValue": "NAT-REPLACEMENT-002"
+    },
+    {
+      "page": 1,
+      "field": "date",
+      "originalValue": "2026-09-22"
+    },
+    {
+      "page": 2,
+      "field": "test_marker",
+      "originalValue": "SYNTHETIC TEST DATA ONLY — PAGE 2 OF 2"
+    }
+  ],
+  "unknownFields": [
+    {
+      "page": 2,
+      "field": "business_content",
+      "reason": "Only an intentionally degraded raster is supplied; no business text is readable"
+    }
+  ],
+  "unreadable": [
+    {
+      "page": 2,
+      "fields": [
+        "business_content"
+      ],
+      "reason": "Business body is a degraded raster. The test marker is readable; do not call the entire page blank."
+    }
+  ],
+  "partial": [],
+  "pages": 2,
+  "status": "draft",
+  "labelledBy": null,
+  "expectedZeroQaFinancialWrites": true,
+  "provenance": {
+    "kind": "synthetic",
+    "reviewedBy": null,
+    "reviewedAt": null,
+    "note": "NAT-only authored visible content; not human-certified; no customer data"
+  }
+}
