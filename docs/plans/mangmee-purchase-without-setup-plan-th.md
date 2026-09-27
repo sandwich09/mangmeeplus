@@ -252,5 +252,5 @@ Exit: ร้านไม่มีอีเมล/ที่อยู่ quote+che
 | 5 | E | [pr-e-admin-tools.md](purchase-without-setup/pr-e-admin-tools.md) | P4 admin (2 ปุ่ม, identity, lookup, reference) | หลัง C และ B |
 | ทุก PR | — | [xx-cross-cutting.md](purchase-without-setup/xx-cross-cutting.md) | ลงทะเบียนเทสต์, pins, ci.yml parity, migrations, readbacks, UAT U1–U15 + production acceptance, docs master table, release/rollback | — |
 
-สิ่งที่ยังไม่ปิดก่อนลงมือ (ไม่บล็อกการเขียนโค้ด แต่ต้องได้คำตอบก่อน merge/UAT): DQ1–DQ11 ค่าเริ่มต้น (spec §18.4), ข้อความ Owner-verbatim G20 (`process-line-webhook.use-case.ts:244`), readback `salesCompanyIds`/`LINE_WEB_HANDOFF_ENABLED` บน UAT+production (xx §6), G27 พฤติกรรม Stripe บน UAT test mode, และ "ต้องตรวจ" ท้าย brief แต่ละฉบับ (ตรวจได้เมื่อรันคำสั่งจริง)
+Owner ตอบแล้ว 2026-09-27: DQ8 คงเดิม 7 วัน (ตัดออกจาก PR B), DQ9 ใช้ค่าเริ่มต้น (แอดมินแก้ได้), G20 sign-off (แพ็กเกจธุรกิจ = ชุด 1,999); ข้ออื่นใช้ค่าเริ่มต้น. สิ่งที่ยังไม่ปิดก่อนลงมือ (ไม่บล็อกการเขียนโค้ด): readback `salesCompanyIds`/`LINE_WEB_HANDOFF_ENABLED` บน UAT+production (xx §6), G27 พฤติกรรม Stripe บน UAT test mode, และ "ต้องตรวจ" ท้าย brief แต่ละฉบับ (ตรวจได้เมื่อรันคำสั่งจริง)
 
