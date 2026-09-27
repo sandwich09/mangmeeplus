@@ -440,14 +440,33 @@ export async function runSemanticTurnV2(input: {
     else if (item.kind === 'help') {
       // Product instructions are immutable reviewed source text. Model prose cannot add a button,
       // permission or financial operation that was absent from that source.
+      // Item 6: no approved card matching this exact question is a system-side coverage gap the
+      // customer cannot resolve by answering anything — `unsupported`, never a phantom `needs_user`
+      // (R-L2/R-L3). It must still help rather than only listing unrelated read capabilities: T-116/
+      // T-118 in the eval asked about system SETUP (a new category, an approval signature) — real
+      // features (`apps/web/.../expenses/categories`, `.../expenses/signatures`) with no reviewed
+      // card yet — so name, truthfully and without inventing menu steps, that setup like that is
+      // done on the company's web app.
       answer = knowledge ? { index: item.index, status: 'handled', text: knowledge.replyText,
         sourceRefIds: knowledge.sourceRefs.map(sourceId) }
-        : { index: item.index, status: 'needs_user', reasonCode: 'SPECIFIC_PRODUCT_GUIDE_UNAVAILABLE',
-          text: `${language === 'en' ? 'A reviewed guide for this specific question is not available yet. Current capabilities:' : 'ยังไม่มีคู่มือที่ตรวจสอบแล้วสำหรับคำถามเฉพาะนี้ค่ะ ความสามารถปัจจุบันที่ยืนยันได้:'}\n${capabilityHelp}` };
+        : { index: item.index, status: 'unsupported', reasonCode: 'SPECIFIC_PRODUCT_GUIDE_UNAVAILABLE',
+          text: `${language === 'en'
+            ? 'A reviewed guide for this specific question is not available yet. System setup — such as expense categories or an approval signature — is done on the company\'s web app. Current capabilities:'
+            : 'ยังไม่มีคู่มือที่ตรวจสอบแล้วสำหรับคำถามเฉพาะนี้ค่ะ การตั้งค่าระบบ เช่น หมวดหมู่ค่าใช้จ่ายหรือลายเซ็นอนุมัติ ทำได้ที่หน้าเว็บของบริษัทค่ะ ส่วนความสามารถปัจจุบันที่ยืนยันได้:'}\n${capabilityHelp}` };
     }
     else if (['read', 'write', 'public', 'file'].includes(item.kind) && answer.status === 'handled') {
       const allowed = new Set(good.flatMap(result => result.sourceRefs.map(sourceId)));
-      if (!good.length || !answer.sourceRefIds?.length || answer.sourceRefIds.some(id => !allowed.has(id))) answer = { index: item.index, status: 'needs_user', text: 'ยังยืนยันข้อมูลของส่วนนี้จากแหล่งที่มีสิทธิ์ไม่ได้', reasonCode: 'SOURCE_COVERAGE_MISSING' };
+      if (!good.length || !answer.sourceRefIds?.length || answer.sourceRefIds.some(id => !allowed.has(id))) {
+        // Item 6: the composer's answer could not be tied to a real, permission-checked source — a
+        // system composition gap, not a customer question. Same recovery as the numeric-grounding
+        // fallback below: try the verified, model-free formatter on this item's own good tool
+        // results first; only when it cannot render this shape does it fall to the honest §8
+        // terminal — either way `unsupported`, never `needs_user` (R-L2/R-L3).
+        const fallback = deterministicReadFallback(good, language, req.userContext.locale, enabledFamilies);
+        answer = { index: item.index, status: fallback.status, text: fallback.replyText,
+          reasonCode: fallback.status === 'handled' ? 'DETERMINISTIC_FALLBACK_RENDERED' : 'SOURCE_COVERAGE_MISSING',
+          ...(fallback.sourceRefIds.length > 0 ? { sourceRefIds: fallback.sourceRefIds } : {}) };
+      }
       else if (item.kind === 'read') {
         const facts = good.map(factText).filter(Boolean).join('\n');
         const allowedNumbers = allowedAnswerNumbers(good, facts);
