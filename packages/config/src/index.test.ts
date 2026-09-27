@@ -625,11 +625,14 @@ describe('aiGatewayConfigSchema – item 10B new keys', () => {
     assert.equal(result.data?.LINE_AI_AGENT_ORCHESTRATION_ENABLED, false);
   });
 
-  it('defaults every latency/autonomy Phase 3–6 flag OFF and the family allowlist EMPTY', () => {
+  it('defaults the remaining Phase 3/6 shadow flags OFF; PREPARED_SIMPLE_READ_ENABLED and its R-L4 family allowlist default ON (owner policy 2026-09-27, no manual rollout)', () => {
     const parsed = aiGatewayConfigSchema.parse(base);
     assert.equal(parsed.LINE_AI_FUSED_PLAN_SHADOW_ENABLED, false);
-    assert.equal(parsed.LINE_AI_PREPARED_SIMPLE_READ_ENABLED, false);
-    assert.equal(parsed.LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES, '');
+    assert.equal(parsed.LINE_AI_PREPARED_SIMPLE_READ_ENABLED, true);
+    assert.equal(parsed.LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES,
+      'sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,'
+      + 'expense.get_daily_closing::single_metric,expense.list_recent::list,expense.get_breakdown::list,'
+      + 'reimbursement.list_pending_approvals::list,reimbursement.get_summary::single_metric');
     assert.equal(parsed.LINE_AI_PROVIDER_CLIENT_REUSE_ENABLED, false);
     assert.equal(parsed.LINE_AI_AGENTCORE_SESSION_AFFINITY_ENABLED, false);
     assert.equal(parsed.LINE_AI_SMALL_ROUTER_SHADOW_ENABLED, false);
@@ -747,9 +750,11 @@ describe('apiConfigSchema LINE AI latency/autonomy Phase-1 flags', () => {
     assert.equal(parsed.LINE_AI_LOADING_ON_ACCEPT_ENABLED, false);
     assert.equal(parsed.LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED, false);
     assert.equal(parsed.LINE_AI_DEBOUNCE_EXPERIMENT_SECRET, undefined);
-    // Phase 3/4 forwarding gates default off (API forwards nothing extra unless one is on).
+    // Phase 3 shadow-forwarding gate defaults off (API forwards nothing extra unless it is on).
     assert.equal(parsed.LINE_AI_FUSED_PLAN_SHADOW_ENABLED, false);
-    assert.equal(parsed.LINE_AI_PREPARED_SIMPLE_READ_ENABLED, false);
+    // Phase 4 forwarding defaults ON (owner policy 2026-09-27, spec R-L4: no manual rollout gate) —
+    // the gateway alone still decides whether to execute from the forwarded plan.
+    assert.equal(parsed.LINE_AI_PREPARED_SIMPLE_READ_ENABLED, true);
     // Substitute semantic routing defaults to the exact legacy regex-first behavior.
     assert.equal(parsed.LINE_AI_SUBSTITUTE_SEMANTIC_ROUTING_MODE, 'off');
     // Default debounce keeps multi-bubble joining while starting work after 2 seconds of quiet.

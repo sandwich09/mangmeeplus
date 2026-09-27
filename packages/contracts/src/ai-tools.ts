@@ -972,7 +972,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'expense.get_breakdown',
-    description: 'Read expense totals grouped by category, branch, and vendor (byVendor, top 10 by amount descending) for a period. Optional categoryName/vendorName resolve a free-text category or vendor name: exactly one match filters by it, several matches return categoryAmbiguous/vendorAmbiguous with availableCategories/availableVendors to disambiguate, and no match returns categoryUnresolved/vendorUnresolved with the available names, instead of a breakdown.',
+    description: 'Read expense totals grouped by category, branch, and vendor (byVendor, top 10 by amount descending) for a period. Optional categoryName/vendorName resolve a free-text category or vendor name: exactly one match filters by it, several matches return categoryAmbiguous/vendorAmbiguous with availableCategories/availableVendors to disambiguate, and no match returns categoryUnresolved/vendorUnresolved with the available names, instead of a breakdown. Optional groupBy (category, branch, or vendor; default category) is a presentation hint only — it selects which grouping the answer features first; all three groupings are still returned regardless of its value.',
     businessSubjects: ['expense'],
     questionKinds: ['summary', 'breakdown'],
     category: 'read_summary',
@@ -982,8 +982,8 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'general'],
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'categoryName', 'vendorName', 'documentStatus', 'paymentStatus'],
-    inputEnumValues: { documentStatus: EXPENSE_STATUSES, paymentStatus: EXPENSE_PAYMENT_STATUSES },
+    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'categoryName', 'vendorName', 'documentStatus', 'paymentStatus', 'groupBy'],
+    inputEnumValues: { documentStatus: EXPENSE_STATUSES, paymentStatus: EXPENSE_PAYMENT_STATUSES, groupBy: ['category', 'branch', 'vendor'] },
     inputLengthLimits: { categoryName: { min: 1, max: 80 }, vendorName: { min: 1, max: 80 } },
   },
   {

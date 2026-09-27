@@ -261,6 +261,53 @@ function formatExpenseListRecentSingleMetric(output: SpecialistOutput, ctx: Prep
     output.facts.find((fact) => fact.sourceRef)?.sourceRef, output.asOf);
 }
 
+/** Humanizes an UPPER_SNAKE enum key for an English answer (`CONFIRMED` → `Confirmed`). */
+function humanizedEnum(key: string): string {
+  return key.charAt(0) + key.slice(1).toLowerCase().replace(/_/g, ' ');
+}
+
+/** Spec R-A1's ตัวกรอง line — document/payment status, resolved category/vendor name, and branch —
+ *  read off `queryApplied` (the tool's own TRUSTED echo of what it actually applied, never the model's
+ *  raw proposed input). Shared by every `expense.list_recent`/`expense.get_breakdown`-shaped family
+ *  (today: list_recent's single_metric and list; R-L4 adds get_breakdown's list) so they never phrase
+ *  the same filters differently. `hasStatusFilter` is returned separately because only list_recent's
+ *  single-metric basis line needs it — a status filter redefines what "pending"/"confirmed" mean, so
+ *  that breakdown must hide instead of quietly disagreeing with the headline total.
+ *  Read-only reference: erp-tools.use-case.ts's expense.list_recent/get_breakdown handlers (~queryApplied). */
+function expenseFilterLine(
+  data: Record<string, unknown> | undefined,
+  ctx: PreparedFormatContext,
+  english: boolean,
+): { filtersText: string; hasStatusFilter: boolean } {
+  const queryApplied = data?.['queryApplied'];
+  const appliedFilters = queryApplied && typeof queryApplied === 'object' && !Array.isArray(queryApplied)
+    ? queryApplied as Record<string, unknown> : undefined;
+  const statusBasis = appliedFilters?.['statusBasis'];
+  const documentStatus = typeof statusBasis === 'string' && statusBasis !== 'exclude_rejected_voided' ? statusBasis : undefined;
+  const otherFiltersRaw = appliedFilters?.['filters'];
+  const otherFilters = otherFiltersRaw && typeof otherFiltersRaw === 'object' && !Array.isArray(otherFiltersRaw)
+    ? otherFiltersRaw as Record<string, unknown> : undefined;
+  const stringFilter = (key: string): string | undefined => typeof otherFilters?.[key] === 'string' ? otherFilters[key] as string : undefined;
+  const paymentStatus = stringFilter('paymentStatus');
+  // Spec item 2(d): the resolved display name a categoryName/vendorName input matched to — never the
+  // model's raw free-text guess — so the filter line always names the SAME category/vendor the numbers
+  // above were actually computed from.
+  const categoryName = stringFilter('categoryName');
+  const vendorName = stringFilter('vendorName');
+  const filterPhrases: string[] = [];
+  const documentStatusLabel = documentStatus ? (EXPENSE_STATUS_LABELS as Record<string, string>)[documentStatus] : undefined;
+  if (documentStatus && documentStatusLabel) filterPhrases.push(english ? `only ${humanizedEnum(documentStatus)}` : `เฉพาะที่${documentStatusLabel}`);
+  const paymentStatusLabel = paymentStatus ? (EXPENSE_PAYMENT_STATUS_LABELS as Record<string, string>)[paymentStatus] : undefined;
+  if (paymentStatus && paymentStatusLabel) filterPhrases.push(english ? `only ${humanizedEnum(paymentStatus)}` : `เฉพาะที่${paymentStatusLabel}`);
+  if (categoryName) filterPhrases.push(english ? `category ${categoryName}` : `เฉพาะหมวด${categoryName}`);
+  if (vendorName) filterPhrases.push(english ? `vendor ${vendorName}` : `เฉพาะร้าน${vendorName}`);
+  if (ctx.branchLabel) filterPhrases.push(english ? `branch ${ctx.branchLabel}` : `เฉพาะสาขา${ctx.branchLabel}`);
+  return {
+    filtersText: filterPhrases.length ? (english ? `\nFilters: ${filterPhrases.join(', ')}` : `\nตัวกรอง: ${filterPhrases.join(', ')}`) : '',
+    hasStatusFilter: documentStatus !== undefined || paymentStatus !== undefined,
+  };
+}
+
 /** Shared by prepared and full replies; the tool's effective period and count are authoritative. */
 export function formatExpenseSummary(
   data: Record<string, unknown> | undefined,
@@ -295,34 +342,8 @@ export function formatExpenseSummary(
   // expense.list_recent narrows `summary` itself when documentStatus/paymentStatus is applied (the
   // basis text below is computed from the SAME narrowed set), so with documentStatus=CONFIRMED the old
   // unconditional basis line printed "pending 0.00 (draft 0.00)" even though a draft genuinely exists —
-  // it was simply excluded by the filter, not absent. Read-only reference: erp-tools.use-case.ts's
-  // expense.list_recent handler (~queryApplied).
-  const queryApplied = data?.['queryApplied'];
-  const appliedFilters = queryApplied && typeof queryApplied === 'object' && !Array.isArray(queryApplied)
-    ? queryApplied as Record<string, unknown> : undefined;
-  const statusBasis = appliedFilters?.['statusBasis'];
-  const documentStatus = typeof statusBasis === 'string' && statusBasis !== 'exclude_rejected_voided' ? statusBasis : undefined;
-  const otherFiltersRaw = appliedFilters?.['filters'];
-  const otherFilters = otherFiltersRaw && typeof otherFiltersRaw === 'object' && !Array.isArray(otherFiltersRaw)
-    ? otherFiltersRaw as Record<string, unknown> : undefined;
-  const stringFilter = (key: string): string | undefined => typeof otherFilters?.[key] === 'string' ? otherFilters[key] as string : undefined;
-  const paymentStatus = stringFilter('paymentStatus');
-  // Spec item 2(d): the resolved display name a categoryName/vendorName input matched to — never the
-  // model's raw free-text guess — so the filter line always names the SAME category/vendor the numbers
-  // above were actually computed from.
-  const categoryName = stringFilter('categoryName');
-  const vendorName = stringFilter('vendorName');
-  const hasStatusFilter = documentStatus !== undefined || paymentStatus !== undefined;
-  const humanizedEnum = (key: string) => key.charAt(0) + key.slice(1).toLowerCase().replace(/_/g, ' ');
-  const filterPhrases: string[] = [];
-  const documentStatusLabel = documentStatus ? (EXPENSE_STATUS_LABELS as Record<string, string>)[documentStatus] : undefined;
-  if (documentStatus && documentStatusLabel) filterPhrases.push(english ? `only ${humanizedEnum(documentStatus)}` : `เฉพาะที่${documentStatusLabel}`);
-  const paymentStatusLabel = paymentStatus ? (EXPENSE_PAYMENT_STATUS_LABELS as Record<string, string>)[paymentStatus] : undefined;
-  if (paymentStatus && paymentStatusLabel) filterPhrases.push(english ? `only ${humanizedEnum(paymentStatus)}` : `เฉพาะที่${paymentStatusLabel}`);
-  if (categoryName) filterPhrases.push(english ? `category ${categoryName}` : `เฉพาะหมวด${categoryName}`);
-  if (vendorName) filterPhrases.push(english ? `vendor ${vendorName}` : `เฉพาะร้าน${vendorName}`);
-  if (ctx.branchLabel) filterPhrases.push(english ? `branch ${ctx.branchLabel}` : `เฉพาะสาขา${ctx.branchLabel}`);
-  const filtersText = filterPhrases.length ? (english ? `\nFilters: ${filterPhrases.join(', ')}` : `\nตัวกรอง: ${filterPhrases.join(', ')}`) : '';
+  // it was simply excluded by the filter, not absent.
+  const { filtersText, hasStatusFilter } = expenseFilterLine(data, ctx, english);
 
   const draftAmount = totals['draftAmount'];
   const pendingAmount = totals['pendingAmount'];
@@ -352,6 +373,134 @@ const ACCOUNTING_DOCUMENT_TYPE_TH: Record<string, string> = {
 function documentTypeLabel(type: string, english: boolean): string {
   if (english) return type.charAt(0) + type.slice(1).toLowerCase().replace(/_/g, ' ');
   return ACCOUNTING_DOCUMENT_TYPE_TH[type] ?? type;
+}
+
+/** R-A3: enough expense records to be useful in one LINE bubble; the rest are admitted by the
+ *  "showing N of M" line, same convention as the document-type and breakdown-group caps below. */
+const MAX_EXPENSE_LIST_LINES = 10;
+
+/**
+ * R-L4/R-A3 — `expense.list_recent` as a numbered list ("ค่าใช้จ่ายล่าสุด 10 รายการ"). States the
+ * grounded total count (the SAME `total`/countedItems basis formatExpenseSummary uses — never
+ * `items.length`, which the tool may page below it), then up to 10 numbered records (date, vendor,
+ * amount, status), a "showing N of M" note when more exist, the same filter line as the single-metric
+ * family, period, source, as-of and link.
+ */
+function formatExpenseListRecentList(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'expense.list_recent');
+  const total = data?.['total'];
+  const items = data?.['items'];
+  if (!isCount(total) || !Array.isArray(items)) return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const rows: Array<{ date: string; vendor: string; amount: string | number; status: string }> = [];
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { kind: 'unverified' };
+    const item = raw as Record<string, unknown>;
+    const date = item['expenseDate'];
+    const amount = item['grandTotalAmount'];
+    const status = item['status'];
+    if (typeof date !== 'string' || !isMoney(amount) || typeof status !== 'string') return { kind: 'unverified' };
+    const vendor = typeof item['vendorNameSnapshot'] === 'string' && item['vendorNameSnapshot']
+      ? item['vendorNameSnapshot'] as string : (english ? 'Unknown vendor' : 'ไม่ระบุร้าน');
+    rows.push({ date: date.slice(0, 10), vendor, amount, status });
+  }
+
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  const shown = rows.slice(0, MAX_EXPENSE_LIST_LINES);
+  const statusLabel = (status: string): string => english ? humanizedEnum(status) : (EXPENSE_STATUS_LABELS as Record<string, string>)[status] ?? status;
+  const itemLines = shown.map((row, index) => english
+    ? `\n${index + 1}. ${row.date} ${row.vendor} ${moneyText(row.amount)} THB (${statusLabel(row.status)})`
+    : `\n${index + 1}. ${row.date} ${row.vendor} ${moneyText(row.amount)} บาท (${statusLabel(row.status)})`).join('');
+  const moreText = total > shown.length
+    ? (english ? `\nShowing ${shown.length} of ${plural(total, 'record')}` : `\nแสดง ${shown.length} จาก ${groupThousands(String(total))} รายการ`)
+    : '';
+  const { filtersText } = expenseFilterLine(data, ctx, english);
+
+  const headline = english ? `Expenses: ${plural(total, 'record')}` : `ค่าใช้จ่าย: ${groupThousands(String(total))} รายการ`;
+  const replyText = `${headline}${itemLines}${moreText}${filtersText}`
+    + `${periodLine(ctx.proposedInput, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
+/** R-A2: enough breakdown groups to stay readable in one bubble; the rest are folded into "อื่นๆ". */
+const MAX_BREAKDOWN_GROUPS = 8;
+
+/** The three axes `expense.get_breakdown` groups by; `groupBy` (spec item 3) is a pure PRESENTATION
+ *  hint that picks which one leads the answer — the tool always computes and returns all three. */
+const BREAKDOWN_AXES = {
+  category: { dataKey: 'byCategory', nameKey: 'category', labelTh: 'หมวด', labelEn: 'category' },
+  branch: { dataKey: 'byBranch', nameKey: 'branch', labelTh: 'สาขา', labelEn: 'branch' },
+  vendor: { dataKey: 'byVendor', nameKey: 'vendor', labelTh: 'ร้าน', labelEn: 'vendor' },
+} as const;
+type BreakdownAxis = keyof typeof BREAKDOWN_AXES;
+
+function moneyNumber(value: string | number): number {
+  return typeof value === 'number' ? value : Number(value.replace(/,/g, ''));
+}
+
+/**
+ * R-L4/R-A2 — `expense.get_breakdown` as a grouped list ("แยกค่าใช้จ่ายตามหมวด"). `ctx.proposedInput`
+ * carries the validated `groupBy` the fast lane actually sent (defaulting to category, same as the
+ * tool's own default) — this only selects which of the tool's three ALREADY-COMPUTED axes leads the
+ * answer, it never re-groups anything client-side. Groups sort by amount descending with a percentage
+ * share of the tool's own `totalAmount`; the top 8 are named, the rest are folded into one "อื่นๆ" row
+ * (its amount/count are an exact sum of the tool's own per-group numbers, not an estimate), then the
+ * overall total, filter line, period, source, as-of and link — the same order as spec R-A2.
+ */
+function formatExpenseBreakdownList(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'expense.get_breakdown');
+  const totalCount = data?.['totalCount'];
+  const totalAmount = data?.['totalAmount'];
+  if (!isCount(totalCount) || !isMoney(totalAmount)) return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+
+  const requestedAxis = ctx.proposedInput?.['groupBy'];
+  const axisKey: BreakdownAxis = requestedAxis === 'branch' || requestedAxis === 'vendor' ? requestedAxis : 'category';
+  const axis = BREAKDOWN_AXES[axisKey];
+  const rawGroups = data?.[axis.dataKey];
+  if (!Array.isArray(rawGroups)) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const groups: Array<{ name: string; amount: string | number; count: number }> = [];
+  for (const raw of rawGroups) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { kind: 'unverified' };
+    const row = raw as Record<string, unknown>;
+    const name = row[axis.nameKey];
+    const amount = row['totalAmount'];
+    const count = row['count'];
+    if (typeof name !== 'string' || !name || !isMoney(amount) || !isCount(count)) return { kind: 'unverified' };
+    groups.push({ name, amount, count });
+  }
+  groups.sort((a, b) => moneyNumber(b.amount) - moneyNumber(a.amount));
+
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  const totalNumber = moneyNumber(totalAmount);
+  const percentText = (part: number): string => `${(totalNumber > 0 ? part / totalNumber * 100 : 0).toFixed(1)}%`;
+  const shown = groups.slice(0, MAX_BREAKDOWN_GROUPS);
+  const rest = groups.slice(MAX_BREAKDOWN_GROUPS);
+  const groupLine = (name: string, amount: number, count: number) => english
+    ? `\n• ${name}: ${moneyText(amount)} THB (${percentText(amount)}, ${plural(count, 'record')})`
+    : `\n• ${name}: ${moneyText(amount)} บาท (${percentText(amount)}, ${groupThousands(String(count))} รายการ)`;
+  const groupLines = shown.map((g) => groupLine(g.name, moneyNumber(g.amount), g.count)).join('');
+  const othersLine = rest.length > 0
+    ? groupLine(
+      `${english ? 'Other' : 'อื่นๆ'} (${rest.length})`,
+      rest.reduce((sum, g) => sum + moneyNumber(g.amount), 0),
+      rest.reduce((sum, g) => sum + g.count, 0),
+    )
+    : '';
+  const totalText = english
+    ? `\nTotal: ${moneyText(totalAmount)} THB (${plural(totalCount, 'record')})`
+    : `\nรวมทั้งหมด: ${moneyText(totalAmount)} บาท (${groupThousands(String(totalCount))} รายการ)`;
+  const { filtersText } = expenseFilterLine(data, ctx, english);
+
+  const axisLabel = english ? axis.labelEn : axis.labelTh;
+  const headline = english ? `Expenses by ${axisLabel}` : `ค่าใช้จ่ายแยกตาม${axisLabel}`;
+  const replyText = `${headline}${groupLines}${othersLine}${totalText}${filtersText}`
+    + `${periodLine(ctx.proposedInput, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
 /** Enough document types to be useful in one LINE bubble; the rest are admitted by the "of N types" line. */
@@ -659,6 +808,95 @@ function formatCrmCustomerSummaryList(output: SpecialistOutput, ctx: PreparedFor
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
+/** R-L4: enough pending-approval rows to be useful in one bubble — the tool itself already caps
+ *  `items` at 10 (erp-reimbursement-tools.use-case.ts), this narrows the DISPLAY further to 5. */
+const MAX_REIMBURSEMENT_APPROVAL_LINES = 5;
+
+/**
+ * R-L4 — `reimbursement.list_pending_approvals` as a numbered list ("เบิกจ่ายรออนุมัติมีอะไรบ้าง").
+ * `total` is the tool's TRUE count (computed before its own page cap), so it is always safe to state;
+ * `items` is capped at 10 by the tool, so summing only the shown rows would UNDERSTATE the real total
+ * whenever more than 10 are pending — the same anti-fabrication rule `expense.list_recent`'s
+ * `aggregationIncomplete` enforces elsewhere. A total amount is therefore only ever stated when nothing
+ * was truncated (`total` does not exceed the rows actually returned) and every shown row shares one
+ * currency; otherwise the count stands alone rather than risk an amount the tool never itself totalled.
+ */
+function formatReimbursementPendingApprovalsList(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'reimbursement.list_pending_approvals');
+  const total = data?.['total'];
+  const items = data?.['items'];
+  if (!isCount(total) || !Array.isArray(items)) return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const rows: Array<{ requester: string; date?: string; amount: string | number; currency: string }> = [];
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { kind: 'unverified' };
+    const item = raw as Record<string, unknown>;
+    const amount = item['amount'];
+    const currency = item['currency'];
+    if (!isMoney(amount) || typeof currency !== 'string' || !currency) return { kind: 'unverified' };
+    const requester = typeof item['requesterDisplayName'] === 'string' && item['requesterDisplayName']
+      ? item['requesterDisplayName'] as string : (english ? 'Unknown requester' : 'ไม่ระบุผู้ขอ');
+    const submittedAt = typeof item['submittedAt'] === 'string' ? item['submittedAt'].slice(0, 10) : undefined;
+    rows.push({ requester, date: submittedAt, amount, currency });
+  }
+
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  const moneyWithCurrency = (amount: string | number, currency: string) => `${moneyText(amount)} ${!english && currency === 'THB' ? 'บาท' : currency}`;
+  const shown = rows.slice(0, MAX_REIMBURSEMENT_APPROVAL_LINES);
+  const itemLines = shown.map((row, index) =>
+    `\n${index + 1}. ${row.requester}${row.date ? ` (${row.date})` : ''}: ${moneyWithCurrency(row.amount, row.currency)}`).join('');
+  const moreText = total > shown.length
+    ? (english ? `\nShowing ${shown.length} of ${plural(total, 'request')}` : `\nแสดง ${shown.length} จาก ${groupThousands(String(total))} รายการ`)
+    : '';
+
+  const sumGrounded = total <= items.length && rows.every((row) => row.currency === rows[0]?.currency);
+  const totalText = sumGrounded && rows[0]
+    ? (english
+      ? `, totaling ${moneyWithCurrency(rows.reduce((sum, row) => sum + moneyNumber(row.amount), 0), rows[0].currency)}`
+      : ` รวม ${moneyWithCurrency(rows.reduce((sum, row) => sum + moneyNumber(row.amount), 0), rows[0].currency)}`)
+    : '';
+  const headline = english
+    ? `Pending approvals: ${plural(total, 'request')}${totalText}`
+    : `เบิกจ่ายรออนุมัติ: ${groupThousands(String(total))} รายการ${totalText}`;
+
+  const replyText = `${headline}${itemLines}${moreText}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
+/**
+ * R-L4 — `reimbursement.get_summary` as one status metric ("ยอดเบิกจ่ายที่ยังไม่จ่าย"). The tool
+ * returns 4 counts/amounts (ReimbursementAiSummary), never a single figure, so — like
+ * `procurement.get_ap_outstanding`'s single_metric family — the answer states the headline unpaid
+ * total plus the pending/unpaid-approved/overdue counts that explain it, all read verbatim from the
+ * tool with nothing recomputed.
+ */
+function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'reimbursement.get_summary');
+  const pending = data?.['pendingApprovalCount'];
+  const unpaidApproved = data?.['unpaidApprovedCount'];
+  const overdue = data?.['overdueApprovalCount'];
+  const totalUnpaid = data?.['totalUnpaidAmount'];
+  if (!isCount(pending) || !isCount(unpaidApproved) || !isCount(overdue) || !isMoney(totalUnpaid)) return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  const overdueText = overdue > 0
+    ? (english ? ` (${plural(overdue, 'overdue request')})` : ` (เกินกำหนด ${groupThousands(String(overdue))} รายการ)`)
+    : '';
+  const headline = english
+    ? `Unpaid reimbursements: ${moneyText(totalUnpaid)} THB`
+    : `ยอดเบิกจ่ายที่ยังไม่จ่าย: ${moneyText(totalUnpaid)} บาท`;
+  const detailText = english
+    ? `\nPending approval: ${plural(pending, 'request')}; approved, unpaid: ${plural(unpaidApproved, 'request')}${overdueText}`
+    : `\nรออนุมัติ ${groupThousands(String(pending))} รายการ, อนุมัติแล้วแต่ยังไม่จ่าย ${groupThousands(String(unpaidApproved))} รายการ${overdueText}`;
+
+  const replyText = `${headline}${detailText}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
 /**
  * Authoritative deterministic terminal copy for a prepared read that did NOT reach a verified success —
  * an unavailable/error/failed source, or a success the compiled formatter could not verify. It states an
@@ -681,6 +919,10 @@ const COMPILED_FORMATTERS: ReadonlyMap<string, (output: SpecialistOutput, ctx: P
   new Map([
     [preparedFamilyKey('sales.get_sales_summary', 'single_metric'), formatSalesSummarySingleMetric],
     [preparedFamilyKey('expense.list_recent', 'single_metric'), formatExpenseListRecentSingleMetric],
+    [preparedFamilyKey('expense.list_recent', 'list'), formatExpenseListRecentList],
+    [preparedFamilyKey('expense.get_breakdown', 'list'), formatExpenseBreakdownList],
+    [preparedFamilyKey('reimbursement.list_pending_approvals', 'list'), formatReimbursementPendingApprovalsList],
+    [preparedFamilyKey('reimbursement.get_summary', 'single_metric'), formatReimbursementGetSummarySingleMetric],
     [preparedFamilyKey('accounting.get_summary', 'list'), formatAccountingSummaryList],
     [preparedFamilyKey('expense.get_daily_closing', 'single_metric'), formatExpenseDailyClosingSingleMetric],
     [preparedFamilyKey('tax.get_vat_summary', 'single_metric'), formatTaxVatSummarySingleMetric],
