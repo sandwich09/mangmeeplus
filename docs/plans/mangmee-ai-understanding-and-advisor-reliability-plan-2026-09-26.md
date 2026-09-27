@@ -7,6 +7,18 @@ Memory: [Audit and planning state](../agent-memory/mangmee-starter-advisor-audit
 
 แผน §3–9 เป็นขั้นตอนของแต่ละ release; §12–15 ระบุ work packages ครบชุดและ gate ของ R1/R2/R3 ใช้ร่วมกับ [acceptance catalog](../qa/mangmee-conversation-acceptance-catalog-2026-09-26-th.md) ไม่ถือว่าจบ core fixes แล้วจบขอบเขต v2 ทั้งหมด
 
+## Owner update — 2026-09-27: ขั้นต่อไปของ W14
+
+Implementation/default activation มีหลักฐานและ merge แล้วตาม [implementation index](mangmee-ai-implementation-index-2026-09-27.md) และ [default activation memory](../agent-memory/mangmee-ai-default-activation-2026-09-27.md); ประโยคสถานะเดิมของงานออกแบบไม่ใช่สถานะ deployed ปัจจุบัน Public lookup/C09 และเสียง/C13 พักตามผู้ใช้
+
+1. ใช้บทสนทนาภาษาธรรมชาติ NAT-01–NAT-12 ใน [human review packet](../research/mangmee-ai-human-review-2026-09-27-th.md) เป็นหน้าตรวจหลัก ผู้ตรวจดูความตั้งใจและจังหวะถาม/ตอบทีละรอบได้โดยไม่รู้ tool names หรือเลขเอกสาร
+2. ตรวจภาษาปกติ/พิมพ์ผิด/อ้างบริบท/คำแก้/คำถามลึกและการเปลี่ยนงาน พร้อม precondition ว่าผู้ใช้เห็นตัวเลือกหรือภาพใดจริง ตาม rubric ใน [acceptance catalog](../qa/mangmee-conversation-acceptance-catalog-2026-09-26-th.md) อย่าแก้คำถามให้ง่ายลงเพื่อให้ตรงคำที่ router จับได้
+3. ก่อนใช้เป็นคะแนน: ผูกแต่ละ turn กับ source snapshot, delivered option identity, current permissions, expected facts/effects/preview revision และ failure variants โดย reuse fixture schema/replay เดิม ถ้า fixture หรือผู้ตรวจยังไม่พร้อม ให้สถานะรอ ไม่ใส่ตัวเลข/ID/ผลยืนยันสมมติ
+4. เก็บ225case artifact เดิมและผลเดิมไว้ ไม่แก้ย้อนหลังเพื่อเพิ่มคะแนน แยก natural conversation revision และ technical regressions; variants ของต้นเรื่องเดียวกันต้องอยู่ family/split เดียว NAT ที่เปิดเผยให้ตรวจในแชตนี้ถือเป็น development ไม่อ้าง held-out
+5. รัน provider จริงหลังตรึงเกณฑ์ แล้วรายงานคะแนนต่อ turn และทั้งบท ความถูกต้องของตัวเลข/การทำรายการ การรับคำแก้ การถามซ้ำ การปฏิเสธผิด และเวลา โดยแยก LINE จำลอง/LINE จริง ไม่รับรองคุณภาพจาก integrity test หรือครบจำนวนเคสเท่านั้น
+
+งานรอบนี้เปลี่ยนข้อกำหนดและคำถามสำหรับตรวจโดยคน ยังไม่เปลี่ยน production behavior ไม่รันโมเดลจริง และไม่ย้ายสถานะใดเป็น human-approved
+
 ## 1. ผลลัพธ์ที่ต้องส่งมอบ
 
 ผู้ประกอบการถามด้วยภาษาปกติแล้วมั่งมีเข้าใจ ทำงานที่มีจริงตามสิทธิ์ ตอบความรู้ธุรกิจพื้นฐานได้ รักษาบริบทเมื่อถามต่อ/แก้ใจ และบอกข้อจำกัดเฉพาะเหตุโดยไม่วนส่งเว็บ ผลแต่ละช่วงต้องเห็นได้ในบทสนทนาจริงและมี trace ยืนยัน ไม่ถือว่าการแก้ prompt หรือ tests ผ่านเป็น final acceptance
