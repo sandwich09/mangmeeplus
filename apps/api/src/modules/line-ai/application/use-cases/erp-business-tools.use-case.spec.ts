@@ -350,7 +350,7 @@ describe('CompanyEmployeeDetailTool', () => {
 });
 
 describe('ExpenseGetBreakdownTool', () => {
-  function makeSource(captured: { ctx?: any; filter?: any } = {}) {
+  function makeSource(captured: { ctx?: any; filter?: any } = {}, overrides: { byVendor?: any[]; vendorHasMore?: boolean } = {}) {
     return {
       readAiBreakdown: async (ctx: any, filter: any) => {
         captured.ctx = ctx; captured.filter = filter;
@@ -362,10 +362,12 @@ describe('ExpenseGetBreakdownTool', () => {
             { branchId: 'b1', currency: 'THB', count: 2, totalAmount: '200.0000', label: 'สาขาลาดพร้าว' },
             { branchId: null, currency: 'THB', count: 1, totalAmount: '100.0000', label: null },
           ],
-          byVendor: [],
-          categoryHasMore: false, branchHasMore: false, vendorHasMore: false,
+          byVendor: overrides.byVendor ?? [],
+          categoryHasMore: false, branchHasMore: false, vendorHasMore: overrides.vendorHasMore ?? false,
         };
       },
+      listCategoryCandidates: async () => [],
+      readAiVendorCandidates: async () => [],
     } as any;
   }
 
@@ -401,6 +403,85 @@ describe('ExpenseGetBreakdownTool', () => {
     const captured: { ctx?: any } = {};
     await new ExpenseGetBreakdownTool(makeSource(captured)).execute({ ...baseCtx, permissions: ['expense.read_related'] });
     assert.deepEqual(captured.ctx.permissions, ['expense.read_related']);
+  });
+
+  // byVendor (spec §3 row 5 / plan P4.1): top 10 by amount descending, the null-vendor group
+  // labelled "ไม่ระบุร้าน", and vendorHasMore folded into the pooled completeness.groups signal.
+  describe('byVendor', () => {
+    const vendorGroup = (i: number, amount: number) => ({
+      vendorCounterpartyId: `v${i}`, currency: 'THB', count: 1, totalAmount: amount.toFixed(4), label: `ร้าน ${i}`,
+    });
+
+    it('orders vendors by amount descending and labels the no-vendor group', async () => {
+      const byVendor = [vendorGroup(1, 500), { vendorCounterpartyId: null, currency: 'THB', count: 2, totalAmount: '50.0000', label: null }, vendorGroup(2, 100)];
+      const result = await new ExpenseGetBreakdownTool(makeSource({}, { byVendor })).execute({ ...baseCtx, permissions: ['expense.read'] });
+      const data = result.data as any;
+      assert.deepEqual(data.byVendor.map((v: any) => v.vendorId), ['v1', null, 'v2']);
+      assert.equal(data.byVendor[0].vendor, 'ร้าน 1');
+      assert.equal(data.byVendor[1].vendor, 'ไม่ระบุร้าน');
+      assert.equal(data.byVendor[0].totalAmount, '500.0000');
+    });
+
+    it('surfaces vendorHasMore and folds it into the pooled completeness signal', async () => {
+      const byVendor = Array.from({ length: 10 }, (_, i) => vendorGroup(i, 1000 - i));
+      const result = await new ExpenseGetBreakdownTool(makeSource({}, { byVendor, vendorHasMore: true })).execute({ ...baseCtx, permissions: ['expense.read'] });
+      const data = result.data as any;
+      assert.equal(data.byVendor.length, 10);
+      assert.equal(data.vendorHasMore, true);
+      assert.equal(data.completeness.groups.hasMore, true);
+      assert.equal(data.completeness.groups.returned, data.byCategory.length + data.byBranch.length + data.byVendor.length);
+    });
+  });
+
+  // categoryName/vendorName resolution (spec §3 row 6): wired identically to expense.list_recent —
+  // the full match-semantics matrix (exact, contains, ambiguous, not_found, id/name conflict,
+  // read_own scoping) is covered against ExpenseListRecentTool in
+  // erp-expense-list-recent.use-case.spec.ts; these confirm expense.get_breakdown is wired to the
+  // same helper and shapes its own responses the same way.
+  describe('categoryName / vendorName resolution', () => {
+    function makeNamedSource(categories: Array<{ id: string; name: string }>, vendors: Array<{ id: string; name: string }>) {
+      const filters: any[] = [];
+      return {
+        readAiBreakdown: async (_ctx: any, filter: any) => {
+          filters.push(filter);
+          return {
+            asOf: new Date(), byCurrency: [{ currency: 'THB', count: 0, totalAmount: '0' }],
+            byCategory: [], byBranch: [], byVendor: [], categoryHasMore: false, branchHasMore: false, vendorHasMore: false,
+          };
+        },
+        listCategoryCandidates: async () => categories,
+        readAiVendorCandidates: async () => vendors,
+        filters,
+      } as any;
+    }
+
+    it('resolves an exact category name to its id', async () => {
+      const source = makeNamedSource([{ id: 'cat1', name: 'ค่าน้ำมัน' }, { id: 'cat2', name: 'ค่าไฟ' }], []);
+      const result = await new ExpenseGetBreakdownTool(source).execute({ ...baseCtx, permissions: ['expense.read'] }, { categoryName: 'ค่าน้ำมัน' } as any);
+      assert.equal(result.status, 'ok');
+      assert.equal(source.filters[0].expenseCategoryId, 'cat1');
+      assert.equal((result.data as any).queryApplied.filters.categoryName, 'ค่าน้ำมัน');
+    });
+
+    it('returns a structured ambiguity for several vendor name matches', async () => {
+      const source = makeNamedSource([], [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }]);
+      const result = await new ExpenseGetBreakdownTool(source).execute({ ...baseCtx, permissions: ['expense.read'] }, { vendorName: 'สมใจ' } as any);
+      assert.equal(result.status, 'ok');
+      assert.equal(source.filters.length, 0);
+      assert.equal((result.data as any).vendorAmbiguous, 'สมใจ');
+      assert.deepEqual((result.data as any).availableVendors, [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }]);
+    });
+
+    it('returns an input error when categoryId and categoryName disagree', async () => {
+      const source = makeNamedSource([{ id: 'cat1', name: 'ค่าน้ำมัน' }], []);
+      const result = await new ExpenseGetBreakdownTool(source).execute(
+        { ...baseCtx, permissions: ['expense.read'] },
+        { categoryId: 'cat-other', categoryName: 'ค่าน้ำมัน' } as any,
+      );
+      assert.equal(result.status, 'error');
+      assert.equal(result.errorCode, 'UNSUPPORTED_FILTER');
+      assert.equal(source.filters.length, 0);
+    });
   });
 });
 
