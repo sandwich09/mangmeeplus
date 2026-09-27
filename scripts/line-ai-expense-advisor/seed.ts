@@ -51,6 +51,12 @@ const CATEGORIES = [
 // `null` (the 7th slot below) stands for "no vendor recorded".
 const VENDOR_NAMES: Array<string | null> = ['ร้านสมใจ', 'ร้านสมใจการค้า', 'ปั๊มน้ำมัน ปตท.', 'หจก. ออฟฟิศ ซัพพลาย', 'ร้านอาหารทะเลชายทะเล', 'Grab', null];
 
+// Production auto-links a vendor counterparty on every receipt save, and the vendorName filter
+// resolves ONLY linked counterparties. Every named vendor gets a seeded, linked
+// `accountingCounterparty` EXCEPT this one, which stays snapshot-only so `get_breakdown`'s
+// byVendor has an unlinked vendor to exercise (`linked: false`).
+const UNLINKED_VENDOR_NAME = 'หจก. ออฟฟิศ ซัพพลาย';
+
 const DOCUMENT_STATUS_CYCLE = ['CONFIRMED', 'NEEDS_REVIEW', 'DRAFT', 'REJECTED', 'VOIDED'] as const;
 const PAYMENT_STATUS_CYCLE = ['PAID', 'PARTIALLY_PAID', 'UNPAID'] as const;
 
@@ -124,60 +130,103 @@ function buildUserRows(companyKey: EvalCompany, companyId: string, role: EvalRol
   return { rows, user: { userId, lineUserId, membershipId } };
 }
 
-function buildExpenseRows(companyId: string, branchIds: string[], categoryIds: string[], users: Record<EvalRole, CompanyUser>, now: Date, count: number): SeedRow[] {
+/** One linked `accountingCounterparty` per named vendor except `UNLINKED_VENDOR_NAME` (bug 2:
+ * production auto-links a vendor counterparty on every receipt save, so an expense whose vendor
+ * name was never seen as a registry row is unrealistic). Owner-created, and `type: 'VENDOR'` to
+ * match the production auto-link path (ensure-vendor-counterparty-from-expense.use-case.ts). */
+function buildVendorCounterpartyRows(companyId: string, ownerUserId: string): { rows: SeedRow[]; counterpartyIdByVendorName: Map<string, string> } {
+  const rows: SeedRow[] = [];
+  const counterpartyIdByVendorName = new Map<string, string>();
+  // Indexed by position, not `slug(name)`: these vendor names are Thai, and slug()'s
+  // a-zA-Z0-9-only pattern collapses any all-Thai string to the same single "_" — every Thai
+  // name would otherwise collide on one id.
+  VENDOR_NAMES.forEach((name, index) => {
+    if (!name || name === UNLINKED_VENDOR_NAME) return;
+    const id = `counterparty-${companyId}-${index}`;
+    rows.push({ model: 'accountingCounterparty', data: { id, companyId, type: 'VENDOR', displayName: name, createdByUserId: ownerUserId } });
+    counterpartyIdByVendorName.set(name, id);
+  });
+  return { rows, counterpartyIdByVendorName };
+}
+
+/** Per-role status plan (bug 1). Explicit rather than cyclic: "OWNER and STAFF each need >=3
+ * CONFIRMED and >=1 DRAFT per month" can't fall out of one modulo cycle without inflating the row
+ * count far past a realistic ~30-40, so each role gets a fixed list that is reused IDENTICALLY for
+ * both months (see the loop below) — every role therefore has the same guaranteed shape this month
+ * and last month. The old bug was `createdBy` reusing the same index as the this-month/prev-month
+ * split (`i % 4` vs `i % 2`): with 4 creators and a 2-way month split, STAFF/ACCOUNTANT (odd i)
+ * landed only in one month and OWNER/MANAGER (even i) only in the other. */
+const EXPENSE_STATUS_PLAN: Record<'OWNER' | 'STAFF' | 'MANAGER' | 'ACCOUNTANT', readonly (typeof DOCUMENT_STATUS_CYCLE)[number][]> = {
+  OWNER: ['CONFIRMED', 'CONFIRMED', 'CONFIRMED', 'DRAFT', 'NEEDS_REVIEW'],
+  STAFF: ['CONFIRMED', 'CONFIRMED', 'CONFIRMED', 'DRAFT', 'NEEDS_REVIEW'],
+  MANAGER: ['REJECTED', 'VOIDED', 'CONFIRMED'],
+  ACCOUNTANT: ['CONFIRMED', 'DRAFT', 'NEEDS_REVIEW'],
+};
+const EXPENSE_CREATOR_ORDER = ['OWNER', 'STAFF', 'MANAGER', 'ACCOUNTANT'] as const;
+
+function buildExpenseRows(companyId: string, branchIds: string[], categoryIds: string[], users: Record<EvalRole, CompanyUser>, now: Date): SeedRow[] {
   const today = todayCivilDate(DEFAULT_COMPANY_TIME_ZONE, now);
   const [thisYear, thisMonth] = civilPeriodKey(today).split('-').map(Number) as [number, number];
   const todayDay = Number(today.slice(8, 10));
   const prevMonth = thisMonth === 1 ? 12 : thisMonth - 1;
   const prevYear = thisMonth === 1 ? thisYear - 1 : thisYear;
   const prevMonthLength = daysInMonth(prevYear, prevMonth);
-  const creators: EvalRole[] = ['OWNER', 'STAFF', 'MANAGER', 'ACCOUNTANT'];
-  // Grouped by model, not interleaved: expenseRecord rows must all exist before any expenseLine/
-  // expensePayment row is inserted (immediate FK checks, and real-mode replays rows one at a time).
+  const { rows: counterpartyRows, counterpartyIdByVendorName } = buildVendorCounterpartyRows(companyId, users.OWNER!.userId);
+  // Grouped by model, not interleaved: counterparty rows must exist before any expenseRecord that
+  // links one, and expenseRecord rows must all exist before any expenseLine/expensePayment row
+  // (immediate FK checks, and real-mode replays rows one at a time).
   const records: SeedRow[] = [];
   const lines: SeedRow[] = [];
   const payments: SeedRow[] = [];
-  for (let i = 0; i < count; i++) {
-    const inThisMonth = i % 2 === 0;
-    const bucketIndex = Math.floor(i / 2);
-    const day = inThisMonth
-      ? 1 + (bucketIndex % Math.max(todayDay, 1)) // never in the future
-      : 1 + (bucketIndex % prevMonthLength);
-    const expenseDate = inThisMonth ? bangkokNoonUtc(thisYear, thisMonth, day) : bangkokNoonUtc(prevYear, prevMonth, day);
-    const category = CATEGORIES[i % CATEGORIES.length]!;
-    const categoryId = categoryIds[i % categoryIds.length]!;
-    const vendorNameSnapshot = VENDOR_NAMES[i % VENDOR_NAMES.length] ?? null;
-    const status = DOCUMENT_STATUS_CYCLE[i % DOCUMENT_STATUS_CYCLE.length]!;
-    // A rejected/voided/unconfirmed document is never paid in practice.
-    const paymentStatus = status === 'CONFIRMED' ? PAYMENT_STATUS_CYCLE[i % PAYMENT_STATUS_CYCLE.length]! : 'UNPAID';
-    const branchId = branchIds[i % branchIds.length]!;
-    const createdBy = users[creators[i % creators.length]!]!.userId;
-    const grandTotal = 300 + ((i * 137) % 4000) + (i % 4 === 0 ? 0.5 : 0);
-    const paidAmount = paymentStatus === 'PAID' ? grandTotal : paymentStatus === 'PARTIALLY_PAID' ? grandTotal / 2 : 0;
-    const outstandingAmount = grandTotal - paidAmount;
-    const expenseId = `expense-${companyId}-${i}`;
-    records.push({
-      model: 'expenseRecord',
-      data: {
-        id: expenseId, companyId, branchId, status, paymentStatus,
-        vendorNameSnapshot, expenseDate,
-        subtotalAmount: round2(grandTotal), taxableAmount: round2(grandTotal), grandTotalAmount: round2(grandTotal), netPayableAmount: round2(grandTotal),
-        paidAmount: round2(paidAmount), outstandingAmount: round2(outstandingAmount),
-        expenseCategoryId: categoryId, createdByUserId: createdBy,
-      },
-    });
-    lines.push({
-      model: 'expenseLine',
-      data: { id: `${expenseId}-line1`, companyId, expenseId, lineNumber: 1, description: category.name, quantity: '1', unitPrice: round2(grandTotal), lineSubtotalAmount: round2(grandTotal), lineTotalAmount: round2(grandTotal), expenseCategoryId: categoryId },
-    });
-    if (paidAmount > 0) {
-      payments.push({
-        model: 'expensePayment',
-        data: { id: `${expenseId}-payment1`, companyId, expenseId, amount: round2(paidAmount), paidAt: expenseDate, createdByUserId: createdBy },
-      });
+  let globalIndex = 0;
+  for (const inThisMonth of [true, false]) {
+    const maxDay = inThisMonth ? Math.max(todayDay, 1) : prevMonthLength; // this month: never in the future
+    // Resets every month so category/vendor/payment cycling — and therefore per-month coverage of
+    // all 5 categories and all 7 vendor slots (16 rows/month is enough for both) — doesn't depend
+    // on which month started first.
+    let monthSlot = 0;
+    for (const creator of EXPENSE_CREATOR_ORDER) {
+      for (const status of EXPENSE_STATUS_PLAN[creator]) {
+        const day = 1 + (monthSlot % maxDay);
+        const expenseDate = inThisMonth ? bangkokNoonUtc(thisYear, thisMonth, day) : bangkokNoonUtc(prevYear, prevMonth, day);
+        const category = CATEGORIES[monthSlot % CATEGORIES.length]!;
+        const categoryId = categoryIds[monthSlot % categoryIds.length]!;
+        const vendorNameSnapshot = VENDOR_NAMES[monthSlot % VENDOR_NAMES.length] ?? null;
+        const vendorCounterpartyId = vendorNameSnapshot ? counterpartyIdByVendorName.get(vendorNameSnapshot) ?? null : null;
+        // A rejected/voided/unconfirmed document is never paid in practice.
+        const paymentStatus = status === 'CONFIRMED' ? PAYMENT_STATUS_CYCLE[monthSlot % PAYMENT_STATUS_CYCLE.length]! : 'UNPAID';
+        const branchId = branchIds[globalIndex % branchIds.length]!;
+        const createdBy = users[creator]!.userId;
+        const grandTotal = 300 + ((globalIndex * 137) % 4000) + (globalIndex % 4 === 0 ? 0.5 : 0);
+        const paidAmount = paymentStatus === 'PAID' ? grandTotal : paymentStatus === 'PARTIALLY_PAID' ? grandTotal / 2 : 0;
+        const outstandingAmount = grandTotal - paidAmount;
+        const expenseId = `expense-${companyId}-${globalIndex}`;
+        records.push({
+          model: 'expenseRecord',
+          data: {
+            id: expenseId, companyId, branchId, status, paymentStatus,
+            vendorNameSnapshot, vendorCounterpartyId, expenseDate,
+            subtotalAmount: round2(grandTotal), taxableAmount: round2(grandTotal), grandTotalAmount: round2(grandTotal), netPayableAmount: round2(grandTotal),
+            paidAmount: round2(paidAmount), outstandingAmount: round2(outstandingAmount),
+            expenseCategoryId: categoryId, createdByUserId: createdBy,
+          },
+        });
+        lines.push({
+          model: 'expenseLine',
+          data: { id: `${expenseId}-line1`, companyId, expenseId, lineNumber: 1, description: category.name, quantity: '1', unitPrice: round2(grandTotal), lineSubtotalAmount: round2(grandTotal), lineTotalAmount: round2(grandTotal), expenseCategoryId: categoryId },
+        });
+        if (paidAmount > 0) {
+          payments.push({
+            model: 'expensePayment',
+            data: { id: `${expenseId}-payment1`, companyId, expenseId, amount: round2(paidAmount), paidAt: expenseDate, createdByUserId: createdBy },
+          });
+        }
+        globalIndex++;
+        monthSlot++;
+      }
     }
   }
-  return [...records, ...lines, ...payments];
+  return [...counterpartyRows, ...records, ...lines, ...payments];
 }
 
 function buildReimbursementRows(companyId: string, branchIds: string[], users: Record<EvalRole, CompanyUser>, now: Date, count: number): SeedRow[] {
@@ -298,7 +347,7 @@ export function buildCompanySeed(companyKey: EvalCompany, now = new Date()): Com
     users[role] = built.user;
   }
 
-  rows.push(...buildExpenseRows(companyId, branchIds, categoryIds, users, now, 36));
+  rows.push(...buildExpenseRows(companyId, branchIds, categoryIds, users, now));
   rows.push(...buildReimbursementRows(companyId, branchIds, users, now, 6));
 
   return { companyKey, companyId, tierKey: def.tierKey, branchIds, messagingChannelId, users, rows, categoryIds };
