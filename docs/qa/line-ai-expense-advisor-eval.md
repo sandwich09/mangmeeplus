@@ -235,6 +235,34 @@ extracts ONLY these, per the gold call's `answerShape` (default per tool: `expen
 An ambiguous/not-found result (see below) contributes NO facts — `must_ask_choice` covers that
 shape instead.
 
+### Narrowing a shape's default facts: `expect.requiredFacts` (task item 2)
+
+The table above is each shape's DEFAULT — right for a turn that asks the shape's usual question,
+too strict for a narrower follow-up. "รายการที่ 3 คือร้านอะไร" ("what's item 3?") only needs the
+vendor; requiring the amount and date too (`detail`'s default) fails a correct reply that never
+restates them. A turn's own `expect.requiredFacts` — an array of
+`'amount'|'date'|'vendor'|'count'|'total'|'groups'|'items'|'status'` — REPLACES the shape's default
+selection for that turn only:
+
+```json
+{ "user": "รายการที่ 3 คือร้านอะไรครับ", "category": "8",
+  "expect": { "calls": [{ "tool": "expense.get_detail", "input": { "expenseId": { "$fromShownItems": 2 } } }] },
+  "requiredFacts": ["vendor", "date"] }
+```
+
+Omit `requiredFacts` and a turn gets exactly the shape's own default, unchanged from before this
+field existed. Each category maps onto the SAME facts the table above already describes
+(`total`↔the overall/single total, `count`↔the item count, `groups`↔a breakdown's per-group
+name+amount, `items`↔a list's per-item amount+vendor, `amount`/`date`/`vendor`↔a detail's three
+default facts) plus one new one:
+
+- **`status`** — `detail` only. Payment AND document status, each already mapped to the Thai label
+  a reply would actually use (`ExpenseStatus`/`ExpensePaymentStatus`/`ReimbursementRequestStatus`/
+  `ReimbursementPaymentStatus`, `apps/api/prisma/schema.prisma`, read from source — e.g. `PAID` →
+  "จ่ายแล้ว", never the raw enum). Never part of `detail`'s default (adding it there would change
+  existing behavior); only required when a turn's own `requiredFacts` names it, e.g. for
+  "จ่ายหรือยัง": `"requiredFacts": ["status"]`.
+
 ### Equivalent tool for a total: `expense.get_breakdown` in place of `expense.list_recent`
 
 `expense.list_recent` in its default (`single_metric`) shape asks "what's the total" —

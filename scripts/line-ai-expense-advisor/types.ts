@@ -37,6 +37,15 @@ export type AnswerShape = (typeof ANSWER_SHAPES)[number];
 export const GROUP_BY_DIMENSIONS = ['category', 'branch', 'vendor'] as const;
 export type GroupByDimension = (typeof GROUP_BY_DIMENSIONS)[number];
 
+/** Task item 2: a turn's own `expect.requiredFacts` narrows — or, for a category the shape's
+ * default does not normally cover (`status`), REPLACES — which of the shape's facts are required.
+ * E.g. a "who's the vendor" follow-up needs `['vendor']` (maybe `['vendor','date']` if the date
+ * also identifies which item), never the shape's default `amount` too; "จ่ายหรือยัง" needs
+ * `['status']` alone. Absent: the shape's own defaults, exactly as before this field existed
+ * (oracle.ts `SHAPE_DEFAULT_CATEGORIES`). */
+export const REQUIRED_FACT_CATEGORIES = ['amount', 'date', 'vendor', 'count', 'total', 'groups', 'items', 'status'] as const;
+export type RequiredFactCategory = (typeof REQUIRED_FACT_CATEGORIES)[number];
+
 export type GoldCall = {
   tool: string;
   input: GoldInput;
@@ -61,6 +70,10 @@ export type TurnTags = {
 export type TurnExpect = {
   calls?: GoldCall[];
   tags?: TurnTags;
+  /** Narrows (or, for `status`, extends) the shape's default required facts for THIS turn only —
+   * see `RequiredFactCategory` above. Meaningless without `calls` (there is nothing to extract
+   * facts from), but validated regardless so a typo is caught even on a tag-only turn. */
+  requiredFacts?: RequiredFactCategory[];
 };
 
 export type Turn = {
@@ -155,7 +168,15 @@ function validateTurn(turn: unknown, path: string): asserts turn is Turn {
     (expect['calls'] as unknown[]).forEach((call, index) => validateGoldCall(call, `${path}.expect.calls[${index}]`));
   }
   if (hasTags) validateTags(expect['tags'], `${path}.expect.tags`);
-  const knownExpectKeys = new Set(['calls', 'tags']);
+  if (expect['requiredFacts'] !== undefined) {
+    assert.ok(Array.isArray(expect['requiredFacts']) && (expect['requiredFacts'] as unknown[]).length > 0,
+      `${path}.expect.requiredFacts: must be a non-empty array when present`);
+    for (const category of expect['requiredFacts'] as unknown[]) {
+      assert.ok((REQUIRED_FACT_CATEGORIES as readonly unknown[]).includes(category),
+        `${path}.expect.requiredFacts: "${category}" must be one of ${REQUIRED_FACT_CATEGORIES.join(', ')}`);
+    }
+  }
+  const knownExpectKeys = new Set(['calls', 'tags', 'requiredFacts']);
   for (const key of Object.keys(expect)) assert.ok(knownExpectKeys.has(key), `${path}.expect.${key}: unknown field`);
   const knownTurnKeys = new Set(['user', 'category', 'language', 'expect']);
   for (const key of Object.keys(turn)) assert.ok(knownTurnKeys.has(key), `${path}.${key}: unknown field`);

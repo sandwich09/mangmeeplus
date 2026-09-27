@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { resolvePeriodToken } from './period';
-import type { AnswerShape, GoldCall, GoldInputValue, GroupByDimension } from './types';
+import type { AnswerShape, GoldCall, GoldInputValue, GroupByDimension, RequiredFactCategory } from './types';
 import type { ExpectedFact } from './scorer';
 
 export type ShownItem = { index: number; id: string; date: string | null; label: string };
@@ -172,8 +172,8 @@ const MONEY_LEAF = /^-?\d+(\.\d+)?$/;
 function scanNumericFacts(value: unknown, keyHint: string, depth: number, out: ExpectedFact[]): void {
   if (depth > 4 || value === null || value === undefined) return;
   if (typeof value === 'number' || (typeof value === 'string' && MONEY_LEAF.test(value))) {
-    if (MONEY_KEY.test(keyHint)) out.push({ kind: 'money', value: value as string | number, label: keyHint });
-    else if (COUNT_KEY.test(keyHint)) out.push({ kind: 'count', value: value as string | number, label: keyHint });
+    if (MONEY_KEY.test(keyHint)) out.push({ kind: 'money', value: value as string | number, label: keyHint, category: 'total' });
+    else if (COUNT_KEY.test(keyHint)) out.push({ kind: 'count', value: value as string | number, label: keyHint, category: 'count' });
     return;
   }
   if (Array.isArray(value)) { for (const item of value) scanNumericFacts(item, keyHint, depth + 1, out); return; }
@@ -213,17 +213,39 @@ export function extractOfferedChoices(result: { status: string; data?: unknown }
   return [];
 }
 
-function moneyFact(data: Record<string, unknown>, key: string, label: string): ExpectedFact[] {
-  return data[key] != null ? [{ kind: 'money', value: data[key] as string | number, label }] : [];
+function moneyFact(data: Record<string, unknown>, key: string, label: string, category: RequiredFactCategory): ExpectedFact[] {
+  return data[key] != null ? [{ kind: 'money', value: data[key] as string | number, label, category }] : [];
 }
-function countFact(data: Record<string, unknown>, key: string, label: string): ExpectedFact[] {
-  return data[key] != null ? [{ kind: 'count', value: data[key] as string | number, label }] : [];
+function countFact(data: Record<string, unknown>, key: string, label: string, category: RequiredFactCategory): ExpectedFact[] {
+  return data[key] != null ? [{ kind: 'count', value: data[key] as string | number, label, category }] : [];
 }
-function textFact(data: Record<string, unknown>, key: string, label: string): ExpectedFact[] {
-  return data[key] ? [{ kind: 'text', value: String(data[key]), label }] : [];
+function textFact(data: Record<string, unknown>, key: string, label: string, category: RequiredFactCategory): ExpectedFact[] {
+  return data[key] ? [{ kind: 'text', value: String(data[key]), label, category }] : [];
 }
-function dateFact(data: Record<string, unknown>, key: string, label: string): ExpectedFact[] {
-  return data[key] ? [{ kind: 'date', value: String(data[key]), label }] : [];
+function dateFact(data: Record<string, unknown>, key: string, label: string, category: RequiredFactCategory): ExpectedFact[] {
+  return data[key] ? [{ kind: 'date', value: String(data[key]), label, category }] : [];
+}
+
+// Thai label for every ExpenseStatus/ExpensePaymentStatus/ReimbursementRequestStatus/
+// ReimbursementPaymentStatus value (apps/api/prisma/schema.prisma, read from source) — one shared
+// map, since the same word ("จ่ายแล้ว" for PAID) means the same thing regardless of which of the
+// four enums it came from. EXTRACTING has no natural customer-facing phrasing and is omitted on
+// purpose: a reply would never be asked to state it, so no fact should ever require it.
+const STATUS_LABELS_TH: Record<string, string> = {
+  DRAFT: 'ร่าง', NEEDS_REVIEW: 'รอตรวจสอบ', READY_FOR_CONFIRMATION: 'รอยืนยัน', CONFIRMED: 'ยืนยันแล้ว',
+  REJECTED: 'ถูกปฏิเสธ', VOIDED: 'ยกเลิกแล้ว', PENDING_APPROVAL: 'รออนุมัติ', APPROVED: 'อนุมัติแล้ว',
+  CANCELLED: 'ยกเลิกแล้ว', FINANCE_REVIEW: 'รอฝ่ายบัญชีตรวจสอบ', READY_FOR_PAYMENT: 'รอจ่ายเงิน',
+  UNPAID: 'ยังไม่จ่าย', PARTIALLY_PAID: 'จ่ายบางส่วน', PAID: 'จ่ายแล้ว', NOT_PAYABLE: 'ไม่ต้องจ่าย',
+};
+
+/** Payment/document status (task item 2), for a detail answer to "จ่ายหรือยัง"-style questions —
+ * in the Thai label a reply would actually use, never the raw enum value. Never part of `detail`'s
+ * DEFAULT facts (see `SHAPE_DEFAULT_CATEGORIES` below); only required when a turn's own
+ * `requiredFacts` names `'status'`. */
+function statusFact(data: Record<string, unknown>, key: string, label: string): ExpectedFact[] {
+  const raw = data[key];
+  const value = typeof raw === 'string' ? STATUS_LABELS_TH[raw] : undefined;
+  return value ? [{ kind: 'status', value, label, category: 'status' }] : [];
 }
 
 /** single metric (task follow-up 2): the total and the item count. Both `expense.list_recent`
@@ -234,10 +256,10 @@ function dateFact(data: Record<string, unknown>, key: string, label: string): Ex
  * ของฉันถึงไหนแล้ว" is asking. */
 function singleMetricFacts(tool: string, data: Record<string, unknown>): ExpectedFact[] {
   if (tool === 'reimbursement.get_summary') {
-    return [...moneyFact(data, 'totalUnpaidAmount', 'total_unpaid'), ...countFact(data, 'pendingApprovalCount', 'pending_count')];
+    return [...moneyFact(data, 'totalUnpaidAmount', 'total_unpaid', 'total'), ...countFact(data, 'pendingApprovalCount', 'pending_count', 'count')];
   }
   const summary = (data['summary'] as Record<string, unknown> | undefined) ?? {};
-  return [...moneyFact(summary, 'totalAmount', 'total'), ...countFact(summary, 'countedItems', 'count')];
+  return [...moneyFact(summary, 'totalAmount', 'total', 'total'), ...countFact(summary, 'countedItems', 'count', 'count')];
 }
 
 /** breakdown: the overall total plus the top 3 groups' names and amounts, from whichever grouping
@@ -250,8 +272,8 @@ function breakdownFacts(data: Record<string, unknown>, groupBy: GroupByDimension
   const groups = (data[groupField] as Array<Record<string, unknown>> | undefined) ?? [];
   const top3 = [...groups].sort((a, b) => Number(b['totalAmount'] ?? 0) - Number(a['totalAmount'] ?? 0)).slice(0, 3);
   return [
-    ...moneyFact(data, 'totalAmount', 'total'),
-    ...top3.flatMap((group) => [...textFact(group, nameField, 'group_name'), ...moneyFact(group, 'totalAmount', 'group_amount')]),
+    ...moneyFact(data, 'totalAmount', 'total', 'total'),
+    ...top3.flatMap((group) => [...textFact(group, nameField, 'group_name', 'groups'), ...moneyFact(group, 'totalAmount', 'group_amount', 'groups')]),
   ];
 }
 
@@ -259,16 +281,28 @@ function breakdownFacts(data: Record<string, unknown>, groupBy: GroupByDimension
  * fact for that item — the amount is still required). */
 function listFacts(data: Record<string, unknown>): ExpectedFact[] {
   const items = ((data['items'] as Array<Record<string, unknown>> | undefined) ?? []).slice(0, 3);
-  return items.flatMap((item) => [...moneyFact(item, 'grandTotalAmount', 'item_amount'), ...textFact(item, 'vendorNameSnapshot', 'item_vendor')]);
+  return items.flatMap((item) => [...moneyFact(item, 'grandTotalAmount', 'item_amount', 'items'), ...textFact(item, 'vendorNameSnapshot', 'item_vendor', 'items')]);
 }
 
-/** detail: the amount, date and vendor. A reimbursement claim has no vendor — its requester is the
- * closest identity fact a reply would actually state. */
+/** detail: the amount, date and vendor by DEFAULT (see `SHAPE_DEFAULT_CATEGORIES`) — plus payment
+ * and document status, always extracted but only REQUIRED when a turn's `requiredFacts` opts into
+ * `'status'` (task item 2: "รายการที่ 3 คือร้านอะไร" needs the vendor, never the amount; "จ่ายหรือ
+ * ยัง" needs the status, never the amount/date/vendor a totally different question would ask for).
+ * A reimbursement claim has no vendor — its requester is the closest identity fact a reply would
+ * actually state. */
 function detailFacts(tool: string, data: Record<string, unknown>): ExpectedFact[] {
   if (tool === 'reimbursement.get_detail') {
-    return [...moneyFact(data, 'amount', 'amount'), ...dateFact(data, 'incurredDate', 'date'), ...textFact(data, 'requesterDisplayName', 'requester_as_vendor')];
+    return [
+      ...moneyFact(data, 'amount', 'amount', 'amount'), ...dateFact(data, 'incurredDate', 'date', 'date'),
+      ...textFact(data, 'requesterDisplayName', 'requester_as_vendor', 'vendor'),
+      ...statusFact(data, 'paymentStatus', 'payment_status'), ...statusFact(data, 'status', 'document_status'),
+    ];
   }
-  return [...moneyFact(data, 'grandTotalAmount', 'amount'), ...dateFact(data, 'expenseDate', 'date'), ...textFact(data, 'vendorName', 'vendor')];
+  return [
+    ...moneyFact(data, 'grandTotalAmount', 'amount', 'amount'), ...dateFact(data, 'expenseDate', 'date', 'date'),
+    ...textFact(data, 'vendorName', 'vendor', 'vendor'),
+    ...statusFact(data, 'paymentStatus', 'payment_status'), ...statusFact(data, 'status', 'document_status'),
+  ];
 }
 
 /** pending approvals: the count and the total. The tool exposes no separate aggregate amount
@@ -277,7 +311,7 @@ function detailFacts(tool: string, data: Record<string, unknown>): ExpectedFact[
 function pendingApprovalsFacts(data: Record<string, unknown>): ExpectedFact[] {
   const items = (data['items'] as Array<Record<string, unknown>> | undefined) ?? [];
   const sum = items.reduce((total, item) => total + Number(item['amount'] ?? 0), 0);
-  return [...countFact(data, 'total', 'count'), ...(items.length ? [{ kind: 'money' as const, value: sum, label: 'sum_of_listed_amounts' }] : [])];
+  return [...countFact(data, 'total', 'count', 'count'), ...(items.length ? [{ kind: 'money' as const, value: sum, label: 'sum_of_listed_amounts', category: 'total' as const }] : [])];
 }
 
 // erp-expense-daily-closing.use-case.ts, read from source: a `{currency, count, total}[]` bucket
@@ -301,10 +335,30 @@ function dailyClosingFacts(data: Record<string, unknown>): ExpectedFact[] {
     if (!totals.length) continue;
     const count = totals.reduce((sum, row) => sum + Number(row['count'] ?? 0), 0);
     const amount = totals.reduce((sum, row) => sum + Number(row['total'] ?? 0), 0);
-    facts.push({ kind: 'count', value: count, label: `${key}_count` }, { kind: 'money', value: amount, label: `${key}_amount` });
+    facts.push({ kind: 'count', value: count, label: `${key}_count`, category: 'count' }, { kind: 'money', value: amount, label: `${key}_amount`, category: 'total' });
   }
-  for (const key of DAILY_CLOSING_COUNT_BUCKETS) facts.push(...countFact((data[key] as Record<string, unknown> | undefined) ?? {}, 'count', `${key}_count`));
+  for (const key of DAILY_CLOSING_COUNT_BUCKETS) facts.push(...countFact((data[key] as Record<string, unknown> | undefined) ?? {}, 'count', `${key}_count`, 'count'));
   return facts;
+}
+
+/** Which fact categories a shape requires by DEFAULT — i.e. exactly what it required before task
+ * item 2 added per-turn narrowing, unchanged. A turn's own `requiredFacts` (when present) replaces
+ * this selection entirely rather than intersecting with it, which is what lets `detail` require
+ * `status` at all: that category is never in a shape's own default list. */
+const SHAPE_DEFAULT_CATEGORIES: Record<AnswerShape, RequiredFactCategory[]> = {
+  single_metric: ['total', 'count'],
+  breakdown: ['total', 'groups'],
+  list: ['items'],
+  detail: ['amount', 'date', 'vendor'],
+  pending_approvals: ['count', 'total'],
+  daily_closing: ['count', 'total'],
+};
+
+function selectFactCategories(facts: ExpectedFact[], shape: AnswerShape, requiredFacts: readonly RequiredFactCategory[] | undefined): ExpectedFact[] {
+  const wanted = new Set(requiredFacts ?? SHAPE_DEFAULT_CATEGORIES[shape]);
+  // Every fact this file produces sets `category`; the field stays optional on the type only so a
+  // hand-written scorer.spec.ts fixture (which never goes through selection) need not set it.
+  return facts.filter((fact) => fact.category !== undefined && wanted.has(fact.category));
 }
 
 /** A reply never has to spell out a bare "0" to be truthful about having none of something — a
@@ -321,11 +375,14 @@ function dropUninformativeZeroFacts(facts: ExpectedFact[], shape: AnswerShape): 
 }
 
 /** Facts a delivered reply must contain for this gold call to be considered grounded — never
- * hand-typed, always read back off the oracle's own ToolResult. Required-only per shape (task
- * follow-up 2); everything else about the result is optional and not checked. Empty for an
- * ambiguous/unresolved outcome (see `isAmbiguousOrUnresolved`) — that shape is checked by the
- * `must_ask_choice` tag instead. */
-export function extractExpectedFacts(tool: string, result: { status: string; data?: unknown }, answerShape?: AnswerShape): ExpectedFact[] {
+ * hand-typed, always read back off the oracle's own ToolResult. Required-only per shape by
+ * default (task follow-up 2), further narrowed — or, for `status`, extended — by a turn's own
+ * `expect.requiredFacts` when present (task item 2; `selectFactCategories`/
+ * `SHAPE_DEFAULT_CATEGORIES` above). Empty for an ambiguous/unresolved outcome (see
+ * `isAmbiguousOrUnresolved`) — that shape is checked by the `must_ask_choice` tag instead. */
+export function extractExpectedFacts(
+  tool: string, result: { status: string; data?: unknown }, answerShape?: AnswerShape, requiredFacts?: readonly RequiredFactCategory[],
+): ExpectedFact[] {
   if (result.status !== 'ok' || !result.data) return [];
   const data = result.data as Record<string, unknown>;
   if (isAmbiguousOrUnresolved(data)) return [];
@@ -341,17 +398,21 @@ export function extractExpectedFacts(tool: string, result: { status: string; dat
       default: { const out: ExpectedFact[] = []; scanNumericFacts(data, '', 0, out); return out; }
     }
   })();
-  return dropUninformativeZeroFacts(facts, shape);
+  return dropUninformativeZeroFacts(selectFactCategories(facts, shape, requiredFacts), shape);
 }
 
 /** Same as `extractExpectedFacts`, but honors a gold call's own `groupBy` override for the
  * "breakdown" shape (`extractExpectedFacts` always uses "category" since it has no GoldCall to
- * read). Callers with a `GoldCall` in hand (run-preflight.ts, run-real.ts) should prefer this. */
-export function extractExpectedFactsForCall(tool: string, result: { status: string; data?: unknown }, call: Pick<GoldCall, 'answerShape' | 'groupBy'>): ExpectedFact[] {
+ * read). Callers with a `GoldCall` in hand (run-preflight.ts, run-real.ts) should prefer this.
+ * `requiredFacts` is the OWNING TURN's (never the call's — task item 2 is deliberately per-turn,
+ * since one turn's several gold calls answer one question together). */
+export function extractExpectedFactsForCall(
+  tool: string, result: { status: string; data?: unknown }, call: Pick<GoldCall, 'answerShape' | 'groupBy'>, requiredFacts?: readonly RequiredFactCategory[],
+): ExpectedFact[] {
   if (result.status !== 'ok' || !result.data) return [];
   const data = result.data as Record<string, unknown>;
   if (isAmbiguousOrUnresolved(data)) return [];
   const shape = call.answerShape ?? DEFAULT_ANSWER_SHAPE[tool];
-  if (shape === 'breakdown') return dropUninformativeZeroFacts(breakdownFacts(data, call.groupBy ?? 'category'), shape);
-  return extractExpectedFacts(tool, result, shape);
+  if (shape === 'breakdown') return dropUninformativeZeroFacts(selectFactCategories(breakdownFacts(data, call.groupBy ?? 'category'), shape, requiredFacts), shape);
+  return extractExpectedFacts(tool, result, shape, requiredFacts);
 }

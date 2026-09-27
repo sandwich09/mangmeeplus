@@ -138,7 +138,7 @@ async function main(): Promise<void> {
           byToolStatus.set(result.status, (byToolStatus.get(result.status) ?? 0) + 1);
           const shown = extractShownItems(call.tool, result);
           if (shown.length) priorShownItems = shown;
-          factsExtracted += extractExpectedFactsForCall(call.tool, result, call).length;
+          factsExtracted += extractExpectedFactsForCall(call.tool, result, call, turn.expect.requiredFacts).length;
           // Exercises the ambiguous/unresolved detection path (task item 3) even though today's
           // seeded data never triggers it — proves extractOfferedChoices does not throw on a
           // normal "ok" result, ahead of Track C's categoryName/vendorName resolution landing.

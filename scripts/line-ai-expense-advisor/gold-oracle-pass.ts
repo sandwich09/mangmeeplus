@@ -65,7 +65,7 @@ export async function collectGoldResults(
           const resolvedInput = resolveGoldCallInput(call, now, priorShownItems);
           const result = await oracle.invoke(call.tool, ctx, resolvedInput) as ToolResultLike;
           results.push(result);
-          facts.push(...extractExpectedFactsForCall(call.tool, result, call));
+          facts.push(...extractExpectedFactsForCall(call.tool, result, call, turn.expect.requiredFacts));
           resolvedCalls.push({ ...call, input: resolvedInput });
           const shown = extractShownItems(call.tool, result);
           if (shown.length) priorShownItems = shown;

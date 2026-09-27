@@ -13,7 +13,7 @@
  *    must_mention_any, must_not_claim, forbidden_tools).
  */
 import { resolveBusinessReadPeriod } from '../../apps/api/src/modules/line-ai/domain/logic/business-read-source.logic';
-import type { GoldCall, Turn, TurnTags } from './types';
+import type { GoldCall, RequiredFactCategory, Turn, TurnTags } from './types';
 
 /** The minimal shape of a captured/oracle `ToolResult` the scorer ever reads. */
 export type ToolResultLike = { status: string; data?: unknown };
@@ -204,16 +204,24 @@ export function moneyTextVariants(value: string | number): string[] {
   return [...variants];
 }
 
+/** Which of a shape's default facts, or which extra one (e.g. `detail`'s `status`, task item 2),
+ * a fact belongs to — what a turn's own `expect.requiredFacts` selects by. Optional on every
+ * variant below only so a hand-written test fixture that never goes through selection (every
+ * oracle.ts extractor always sets it) need not set it either. */
 export type ExpectedFact =
-  | { kind: 'money'; value: string | number; label?: string }
-  | { kind: 'count'; value: string | number; label?: string }
+  | { kind: 'money'; value: string | number; label?: string; category?: RequiredFactCategory }
+  | { kind: 'count'; value: string | number; label?: string; category?: RequiredFactCategory }
   /** A name copied verbatim from the source data (category, vendor, requester, ...). Exact
    * substring, no formatting variants — this harness does not paraphrase proper nouns. */
-  | { kind: 'text'; value: string; label?: string }
+  | { kind: 'text'; value: string; label?: string; category?: RequiredFactCategory }
   /** A civil date or ISO datetime string. Matched WEAKLY, on the day-of-month digits only (with
    * or without a leading zero) — this harness does not own the reply's Thai date formatting, so
    * it cannot assert the exact rendered string, only that the right day was mentioned somewhere. */
-  | { kind: 'date'; value: string; label?: string };
+  | { kind: 'date'; value: string; label?: string; category?: RequiredFactCategory }
+  /** Payment/document status (task item 2), already mapped to the Thai label a reply would
+   * actually use (e.g. "จ่ายแล้ว", never the raw enum PAID) — exact substring, like `text`. For
+   * "จ่ายหรือยัง"-style detail questions, via a turn's `requiredFacts: ['status']`. */
+  | { kind: 'status'; value: string; label?: string; category?: RequiredFactCategory };
 
 function normalizeForSearch(text: string): string {
   return text.replace(/,/g, '');
@@ -225,6 +233,7 @@ export function factInText(fact: ExpectedFact, deliveredText: string): boolean {
   if (fact.kind === 'count') return haystack.includes(String(fact.value));
   if (fact.kind === 'money') return moneyTextVariants(fact.value).some((variant) => haystack.includes(normalizeForSearch(variant)));
   if (fact.kind === 'text') return deliveredText.includes(fact.value);
+  if (fact.kind === 'status') return deliveredText.includes(fact.value);
   const day = new Date(fact.value).getUTCDate();
   if (!Number.isFinite(day)) return false;
   return haystack.includes(String(day)) || haystack.includes(String(day).padStart(2, '0'));

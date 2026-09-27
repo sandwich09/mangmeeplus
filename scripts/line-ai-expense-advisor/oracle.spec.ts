@@ -8,7 +8,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { resolveGoldCallInput, type ShownItem } from './oracle';
+import { resolveGoldCallInput, extractExpectedFacts, type ShownItem } from './oracle';
 import type { GoldCall } from './types';
 
 const NOW = new Date('2026-09-27T06:00:00.000Z'); // 13:00 Bangkok, 27 Sep 2026
@@ -48,5 +48,41 @@ describe('resolveGoldCallInput', () => {
     assert.deepEqual(resolveGoldCallInput(call, NOW, shownItems), {
       fromDate: '2026-09-27', toDate: '2026-09-27', documentStatus: 'CONFIRMED', expenseId: 'expense-company-a-15',
     });
+  });
+});
+
+describe('extractExpectedFacts: task item 2 (per-turn requiredFacts)', () => {
+  const detailData = {
+    grandTotalAmount: '2081', expenseDate: '2026-09-14T04:00:00.000Z', vendorName: 'ร้านสมใจ',
+    status: 'CONFIRMED', paymentStatus: 'PARTIALLY_PAID',
+  };
+  const detailResult = { status: 'ok', data: detailData };
+
+  it('detail defaults to amount+date+vendor, unchanged from before this feature (no status)', () => {
+    const facts = extractExpectedFacts('expense.get_detail', detailResult);
+    assert.deepEqual(new Set(facts.map((f) => f.label)), new Set(['amount', 'date', 'vendor']));
+  });
+
+  it('"รายการที่ 3 คือร้านอะไร" — requiredFacts:[\'vendor\'] narrows to just the vendor', () => {
+    const facts = extractExpectedFacts('expense.get_detail', detailResult, undefined, ['vendor']);
+    assert.deepEqual(facts.map((f) => f.label), ['vendor']);
+    assert.equal(facts[0]!.value, 'ร้านสมใจ');
+  });
+
+  it('requiredFacts:[\'vendor\',\'date\'] keeps both and drops amount', () => {
+    const facts = extractExpectedFacts('expense.get_detail', detailResult, undefined, ['vendor', 'date']);
+    assert.deepEqual(new Set(facts.map((f) => f.label)), new Set(['vendor', 'date']));
+  });
+
+  it('"จ่ายหรือยัง" — requiredFacts:[\'status\'] requires the Thai payment/document status labels, never amount/date/vendor', () => {
+    const facts = extractExpectedFacts('expense.get_detail', detailResult, undefined, ['status']);
+    assert.deepEqual(facts.map((f) => ({ kind: f.kind, value: f.value })).sort((a, b) => a.value.localeCompare(b.value)), [
+      { kind: 'status', value: 'จ่ายบางส่วน' }, { kind: 'status', value: 'ยืนยันแล้ว' },
+    ]);
+  });
+
+  it('other shapes keep their own defaults unchanged too (single_metric: total+count)', () => {
+    const facts = extractExpectedFacts('expense.list_recent', { status: 'ok', data: { summary: { totalAmount: '500', countedItems: 3 } } });
+    assert.deepEqual(new Set(facts.map((f) => f.label)), new Set(['total', 'count']));
   });
 });

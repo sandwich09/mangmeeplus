@@ -148,6 +148,31 @@ describe('validateCorpus', () => {
     const corpus = { version: 1, conversations: [validConversation({ extra: 'nope' })] };
     assert.throws(() => validateCorpus(corpus), /unknown field/);
   });
+
+  it('accepts a turn with a valid expect.requiredFacts (task item 2)', () => {
+    const corpus = { version: 1, conversations: [validConversation({
+      turns: [{ user: 'รายการที่ 3 คือร้านอะไรครับ', category: '8', expect: {
+        calls: [{ tool: 'expense.get_detail', input: { expenseId: { $fromShownItems: 2 } } }], requiredFacts: ['vendor', 'date'],
+      } }],
+    })] };
+    assert.doesNotThrow(() => validateCorpus(corpus));
+  });
+
+  it('rejects an unknown requiredFacts category', () => {
+    const corpus = { version: 1, conversations: [validConversation({
+      turns: [{ user: 'x', category: '8', expect: {
+        calls: [{ tool: 'expense.get_detail', input: {} }], requiredFacts: ['vendor', 'not-a-real-category'],
+      } }],
+    })] };
+    assert.throws(() => validateCorpus(corpus), /requiredFacts.*must be one of/);
+  });
+
+  it('rejects an empty requiredFacts array (omit the field instead)', () => {
+    const corpus = { version: 1, conversations: [validConversation({
+      turns: [{ user: 'x', category: '8', expect: { calls: [{ tool: 'expense.get_detail', input: {} }], requiredFacts: [] } }],
+    })] };
+    assert.throws(() => validateCorpus(corpus), /requiredFacts: must be a non-empty array/);
+  });
 });
 
 describe('flattenTurns', () => {

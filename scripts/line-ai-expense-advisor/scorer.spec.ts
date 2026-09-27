@@ -73,17 +73,17 @@ describe('extractExpectedFacts: a correct zero never has to be spelled out', () 
     // "มี 2 รายการที่รออนุมัติ ... ยังไม่มีรายการที่อนุมัติแล้วรอจ่าย" is a correct, complete
     // answer that never writes a literal "0" for the unpaid total — requiring it was the bug.
     const facts = extractExpectedFacts('reimbursement.get_summary', { status: 'ok', data: { totalUnpaidAmount: '0.0000', pendingApprovalCount: 2 } });
-    assert.deepEqual(facts, [{ kind: 'count', value: 2, label: 'pending_count' }]);
+    assert.deepEqual(facts, [{ kind: 'count', value: 2, label: 'pending_count', category: 'count' }]);
   });
 
   it('drops a zero-valued count fact for a shape whose primary metric is not that count (single_metric)', () => {
     const facts = extractExpectedFacts('expense.list_recent', { status: 'ok', data: { summary: { totalAmount: '500.00', countedItems: 0 } } });
-    assert.deepEqual(facts, [{ kind: 'money', value: '500.00', label: 'total' }]);
+    assert.deepEqual(facts, [{ kind: 'money', value: '500.00', label: 'total', category: 'total' }]);
   });
 
   it('keeps a zero count for pending_approvals, the one shape whose whole point IS that count', () => {
     const facts = extractExpectedFacts('reimbursement.list_pending_approvals', { status: 'ok', data: { total: 0, items: [] } });
-    assert.deepEqual(facts, [{ kind: 'count', value: 0, label: 'count' }]);
+    assert.deepEqual(facts, [{ kind: 'count', value: 0, label: 'count', category: 'count' }]);
   });
 
   it('drops a zero overall total from a breakdown, via extractExpectedFactsForCall', () => {
