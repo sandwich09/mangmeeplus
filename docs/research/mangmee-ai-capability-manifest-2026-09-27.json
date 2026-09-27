@@ -2,8 +2,8 @@
   "schemaVersion": "line-ai-capability-manifest/v1",
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
-  "baseRevision": "8b05ed33f8c8ddfcb05ca4e51c029cde06f2a464",
-  "sourceRevision": "8b05ed33f8c8ddfcb05ca4e51c029cde06f2a464",
+  "baseRevision": "702d403b85baa0d3e3c3e3cabb3258cbb819cd2f",
+  "sourceRevision": "8462caaa6f717a179cd8362c3a8d2b0e703a9819",
   "checkoutBranch": "codex/mangmee-ai-reliability-implementation-20260927",
   "checkoutDirty": true,
   "sourceHashes": [
@@ -161,7 +161,7 @@
     },
     {
       "path": "docs/plans/mangmee-ai-implementation-index-2026-09-27.md",
-      "sha256": "5e10b8b38561ed91b0de606f5378d97a18fed927e3fd5bdb9bbcc89871017a74"
+      "sha256": "047c7cc8eca47b399d87a0454669ec456e670495a0cae2ecd7bb6de40e4a825a"
     },
     {
       "path": "docs/specs/mangmee-ai-core-capability-contract-2026-09-27.md",
@@ -8636,6 +8636,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-27T00:01:14.487Z",
-  "manifestDigest": "a50578f088dc1f733e3709504924600b426f215dcd3ea0728bcc3072d5d691d8"
+  "generatedAt": "2026-09-27T00:11:23.872Z",
+  "manifestDigest": "c5ebc363efbcf1de32afa015ffb91adab769b4b11b2925b5baaf20b8bfb76e86"
 }

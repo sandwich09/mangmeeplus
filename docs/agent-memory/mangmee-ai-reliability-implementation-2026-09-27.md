@@ -1,6 +1,6 @@
 # Agent Memory: Mangmee AI reliability v2.4 implementation
 
-Status: code frozen after final Astra review; final repository/compiled verification and authorized main/develop integration in progress. No activation or release claim.
+Status: implementation and local integration verification complete; authorized main/develop integration is recorded by GitHub PR merge receipts and the task final response. Activation and deployment are not included.
 Owner: root integration; `gpt-6-astra / ultra` implementation supervision, with requested `gpt-6-luna`, `gpt-5.6-luna`, and `gpt-5.6-sol` workers at `xhigh`.
 Scope: all active R1/R2/R3 slices in [implementation index](../plans/mangmee-ai-implementation-index-2026-09-27.md), including final bug/gap/impact/dependency/consistency review and merge into main and develop. Audio and Financial Profile/Services Needs remain deferred. No deployment is included.
 
@@ -29,7 +29,7 @@ None for initial implementation. Any unavailable external service or acceptance 
 
 ## Next
 
-Finish frozen-source verification, commit implementation, run the clean-source compiled webhook proof, record final evidence, then admin-merge reviewed changes to main and develop as authorized. Historical checkpoints below are superseded by the final evidence entry.
+After the authorized branch integration, collect human-approved content/assets, real-provider paired quality/cost/latency and native LINE/browser evidence before activation. Follow the mandatory UAT/Production protocol for any later deployment. Historical checkpoints below are superseded by the final evidence entry.
 
 ## Final integration in progress — runtime collector and fresh migration
 
@@ -133,3 +133,13 @@ Local test resources: task-only Postgres `mangmee-ai-reliability-pg-20260927` at
 - Full Gateway package1367 tests passed. Full API package8620 passed with12 reported skips in legacy environment-specific suites; zero failures. Existing test doubles now model real bounded Responses, half-open civil date ranges and transactional opt-out invalidation. The separate relevant real PostgreSQL suite passes59/59 withzero skips. Actual Redis Streams37/37 passes. Counts overlap across suites and are not a unique combined total.
 - Contracts/config/API/Gateway/AgentCore builds pass. Full web typecheck and strict corpus/runtime/replay-smoke TypeScript pass. All256 migrations replayed successfully on a fresh isolated local database. Final compiled API↔Gateway HTTP proof passes using two actual settled database reservations and a deterministic provider fixture; duplicate dispatch remains blocked. Final whole-chain and clean-source webhook proof still gate Git integration.
 - Original working checkout binary diff and all32 original untracked file hashes remain unchanged. No package.json or lockfile changes. No cloud deployment, vendor request or customer message was sent.
+
+
+## Final verification and integration handoff
+
+- Frozen implementation commit `09c8fad9f082f7dd66fe72d3f9cc3615b5aa0331`; latest main docs integrated in `0e6244ac1321377830c8e075f551a5018e680c50`; replay-only cleanup correction `8462caaa6f717a179cd8362c3a8d2b0e703a9819`. No production source changed after the frozen full-package/whole-chain checks.
+- Clean-source actual compiled Nest webhook/buffer + PostgreSQL/Redis opt-out replay passes from8462caaa: expected accepted response, zero model calls, zero cost, zero financial effects. Synthetic LINE sink only; the observed1550ms is this local opt-out sample, not model or production latency.
+- That proof initially exposed the local harness TRUNCATE conflicting with immutable legal-history triggers. The test-only reset now runs on one advisory-lock connection in an explicitly named local replay database, with transaction-local fixture cleanup and asserted restoration before any seed or request. Real PostgreSQL verifies rollback restoration and rejection of UPDATE/DELETE/TRUNCATE on the production append-only table afterward. Astra reviewed the correction; no production trigger changes or privilege grants. Reproduce: `LINE_RELIABILITY_RESET_TEST_DATABASE_URL=<dedicated migrated local replay DB> pnpm exec tsx --test scripts/line-ai-reliability-runtime-reset.pg.spec.ts`. Keep this reset check separate from the parallel domain test database.
+- Complete registered runner passes all12 groups, with8 TAP group totals4/5/80/272/4/66/1712/461 and4 shell contracts. Full API8620 pass/12 reported environment skips/0 failures; full Gateway1367 pass/0 skips; relevant PostgreSQL59 and actual Redis37 pass/0 skips. Counts overlap. Builds, final type checks, fresh256 migrations and compiled HTTP budget proof pass. Runtime correction adds1 actual PG safety test plus8 collector tests and strict TypeScript.
+- Final authored corpus contains225 draft cases, six concrete source snapshots of176 Prisma rows each and95 independent fact expectations. Earlier158-row checkpoint counts are superseded; no human/provider acceptance was inferred.
+- Permanent compact evidence: [final verification](../evidence/mangmee-ai-readiness-2026-09-26/implementation-final-verification-2026-09-27.json). Flags remain off. Main/develop merge is authorized without waiting for CI; the actual merge results belong to GitHub PR metadata. Original checkout contents remain preserved.
