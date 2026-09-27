@@ -23,6 +23,22 @@
  *   MANGMEE_EVAL_CORPUS           default scripts/line-ai-expense-advisor/corpus.sample.json
  *   MANGMEE_EVAL_API_PORT         default 19291
  *   MANGMEE_EVAL_DETERMINISTIC_RESPONSE_FAMILIES  default matches spec §5 R-L4's family list
+ *   AI_GLOBAL_INFERENCE_PROFILE_APPROVED      default true (see note below)
+ *   AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF  default 'mangmee-expense-advisor-eval-synthetic-only'
+ *   APPROVED_AI_MODEL_IDS                     default adds 'global.anthropic.claude-sonnet-4-6'
+ *
+ * The three vars above exist to satisfy AiGatewayClient.issueLineReliabilityGrant(), which refuses
+ * every turn with AI_BUDGET_UNAVAILABLE — before ever calling the Gateway — unless BOTH (a) the
+ * resolved model id is in `this.config.approvedAiModelIds` (packages/config's schema default is
+ * two `apac.*` models only) and (b), when that id starts with `global.`, the API's own config also
+ * records the data-protection approval for that cross-border profile (schema default: not
+ * approved). Probing the already-running eval Gateway's own
+ * /internal/ai/line-reliability-capabilities showed it reports model
+ * `global.anthropic.claude-sonnet-4-6` — outside the default approved list AND needing (b) — so
+ * without all three vars every turn fell back to the "system is slow" LINE reply with zero Gateway
+ * requests, never reaching the model. This corpus is synthetic-only (REPLAY_SYNTHETIC_ONLY), so the
+ * approval is the eval's own, not a claim about production traffic. Override to match whatever a
+ * future Gateway build actually reports.
  */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -49,6 +65,18 @@ const REDIS_URL = process.env['MANGMEE_EVAL_REDIS_URL'] ?? 'redis://127.0.0.1:16
 const API_PORT = Number(process.env['MANGMEE_EVAL_API_PORT'] ?? '19291');
 const DETERMINISTIC_FAMILIES = process.env['MANGMEE_EVAL_DETERMINISTIC_RESPONSE_FAMILIES']
   ?? 'expense.list_recent::single_metric,expense.list_recent::list,expense.get_breakdown::list,expense.get_daily_closing::single_metric,reimbursement.list_pending_approvals::list,reimbursement.get_summary::single_metric';
+// See the file header note: the in-process API this script boots needs its own record of the
+// same global-inference-profile approval the already-running eval Gateway's model implies.
+// `runLineReliabilityRuntime` only assigns ITS OWN hardcoded env keys onto process.env (never
+// clears the rest), so setting these here, before it runs, is enough for the app it boots to see them.
+process.env['AI_GLOBAL_INFERENCE_PROFILE_APPROVED'] ??= 'true';
+process.env['AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF'] ??= 'mangmee-expense-advisor-eval-synthetic-only';
+// packages/config's schema default (two `apac.*` models) does not include the model the
+// already-running eval Gateway actually reports. Keep the default models AND add it, so a
+// Gateway still pinned to an `apac.*` model keeps working too; only applies when nothing already
+// overrode APPROVED_AI_MODEL_IDS (??= never evaluates this when it's already set).
+process.env['APPROVED_AI_MODEL_IDS'] ??=
+  'apac.anthropic.claude-3-5-sonnet-20241022-v2:0,apac.anthropic.claude-3-haiku-20240307-v1:0,global.anthropic.claude-sonnet-4-6';
 
 function sha256File(path: string): string {
   return createHash('sha256').update(readFileSync(resolve(REPO_ROOT, path))).digest('hex');
@@ -262,10 +290,26 @@ async function main(): Promise<void> {
   console.log(JSON.stringify({ event: 'real_run_start', conversations: fixtures.length, turns: flat.length, sourceCommit }));
   const result = await runLineReliabilityRuntime(manifest, REPO_ROOT);
 
+  if (result.records.some((record: { error: string | null }) => record.error) || result.runtimeDiagnostics.length) {
+    // The runtime keeps going per-fixture even after a failure (so one bad conversation does not
+    // hide the rest), but that also means the FIRST sign of trouble is buried in these two arrays
+    // rather than thrown — surface them before anything asserts on missing evidence, or the real
+    // cause (e.g. a seed/fixture mismatch a replica reset caught) is lost behind a generic assert.
+    console.error(JSON.stringify({
+      event: 'real_run_diagnostics',
+      recordErrors: result.records.filter((record: { error: string | null }) => record.error)
+        .map((record: { scenarioId: string; repeat: number; error: string | null }) => ({ scenarioId: record.scenarioId, repeat: record.repeat, error: record.error })),
+      runtimeDiagnostics: result.runtimeDiagnostics,
+    }, null, 2));
+  }
+
   const scores: TurnScore[] = [];
   for (const { conversation, turnIndex, turn } of flat) {
     const evidence = result.turnEvidence.find((row: RuntimeTurnEvidence) => row.scenarioId === conversation.id && row.turnIndex === turnIndex);
-    assert.ok(evidence, `no captured evidence for ${conversation.id}#${turnIndex}`);
+    if (!evidence) {
+      const record = result.records.find((row: { scenarioId: string }) => row.scenarioId === conversation.id);
+      throw new Error(`no captured evidence for ${conversation.id}#${turnIndex} — record error: ${record?.error ?? 'none'}; see the real_run_diagnostics line above for runtimeDiagnostics`);
+    }
     const captured = toCapturedEvidence(evidence);
     const key = turnKey(conversation.id, turnIndex);
     // Both come from collectGoldResults' independent oracle pass — never from the model's own

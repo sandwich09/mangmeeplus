@@ -20,6 +20,7 @@ import { PERMISSIONS, ROLE_GRANTS, SYSTEM_ROLES } from '../../apps/api/src/modul
 import { TIER_FEATURE_PRESETS } from '../../packages/contracts/src/menu-entitlements';
 import { ALL_FEATURE_ENTITLEMENT_KEYS } from '../../packages/contracts/src/feature-entitlements';
 import { civilPeriodKey, todayCivilDate, DEFAULT_COMPANY_TIME_ZONE } from '../../packages/contracts/src/civil-date';
+import { CURRENT_LEGAL_DOCUMENTS, LEGAL_ACCEPTANCE_STATEMENT_VERSION, legalAcceptanceStatements } from '../../packages/contracts/src/legal-acceptance';
 import { ROLES, type EvalRole, type EvalCompany } from './types';
 
 export type SeedRow = { model: string; data: Record<string, unknown> };
@@ -112,7 +113,45 @@ const SHARED_ACCESS_ROWS = buildSharedAccessRows();
  * EVERY branch of the company via explicit `SELECTED_BRANCHES` (rather than `ALL_BRANCHES`), so
  * `resolveAccess().scopes.branchIds` is always a concrete array — real-mode replay asserts it
  * deep-equals the fixture's declared `branches` list, which an unrestricted `undefined` cannot. */
-function buildUserRows(companyKey: EvalCompany, companyId: string, role: EvalRole, branchIds: string[], messagingChannelId: string): { rows: SeedRow[]; user: CompanyUser } {
+function sha256Hex(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+/** A coherent terms+privacy acceptance pair for `userId`/`membershipId`, matching every field
+ * `LegalAcceptanceService.isCoherentCurrentPair` cross-checks (same batchId/acceptedAt/locale/
+ * capacity/displayChallenge across the pair; per-row statementSha256 = sha256(statementText);
+ * documentVersion/artifactUrl taken straight from CURRENT_LEGAL_DOCUMENTS so the release-fingerprint
+ * check matches). Without this, `LineWebhookController` gates every seeded user behind the
+ * "accept terms" flex card and the AI Gateway never sees a request — see
+ * scripts/line-ai-reliability-corpus.ts's own `w14-synthetic-legal-*` rows for the pattern this
+ * mirrors. `acceptedAt` is yesterday relative to `now` so it is always in the past. */
+function buildLegalAcceptanceRows(userId: string, companyId: string, membershipId: string, role: EvalRole, now: Date): SeedRow[] {
+  const statements = legalAcceptanceStatements('th');
+  const privacyStatement = `${statements.privacy}\n${statements.deletion}`;
+  const acceptedAt = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const common = {
+    batchId: `legal-batch-${userId}`, statementVersion: LEGAL_ACCEPTANCE_STATEMENT_VERSION,
+    acceptedByUserId: userId, companyId, membershipId, actorCapacity: 'INVITED_MEMBER' as const, rolesJson: [role],
+    authProvider: 'line', sessionTokenId: null, requestId: `legal-request-${userId}`, locale: 'th',
+    displayChallenge: `legal-challenge-${userId}`, surface: 'FIRST_ACCEPTANCE' as const, userAgent: 'eval-harness-seed', acceptedAt,
+  };
+  return [
+    { model: 'legalDocumentActionRecord', data: {
+      id: `legal-terms-${userId}`, scopeRef: `user:${userId}:eval-current-release`, ...common,
+      documentType: 'TERMS_OF_USE', action: 'ACCEPTED', documentVersion: CURRENT_LEGAL_DOCUMENTS.terms.version,
+      artifactUrl: CURRENT_LEGAL_DOCUMENTS.terms.href, releaseFingerprintSha256: CURRENT_LEGAL_DOCUMENTS.terms.artifactSha256,
+      statementText: statements.terms, statementSha256: sha256Hex(statements.terms),
+    } },
+    { model: 'legalDocumentActionRecord', data: {
+      id: `legal-privacy-${userId}`, scopeRef: `user:${userId}:eval-current-release-privacy`, ...common,
+      documentType: 'PRIVACY_NOTICE', action: 'ACKNOWLEDGED', documentVersion: CURRENT_LEGAL_DOCUMENTS.privacy.version,
+      artifactUrl: CURRENT_LEGAL_DOCUMENTS.privacy.href, releaseFingerprintSha256: CURRENT_LEGAL_DOCUMENTS.privacy.artifactSha256,
+      statementText: privacyStatement, statementSha256: sha256Hex(privacyStatement),
+    } },
+  ];
+}
+
+function buildUserRows(companyKey: EvalCompany, companyId: string, role: EvalRole, branchIds: string[], messagingChannelId: string, now: Date): { rows: SeedRow[]; user: CompanyUser } {
   const userId = `user-${companyKey.toLowerCase()}-${role.toLowerCase()}`;
   // Synthetic but LINE-shaped (U + 32 hex): deterministic per (company, role), never a real id.
   const lineUserId = `U${createHash('sha1').update(`eval:${companyKey}:${role}`).digest('hex').slice(0, 32)}`;
@@ -126,6 +165,7 @@ function buildUserRows(companyKey: EvalCompany, companyId: string, role: EvalRol
     { model: 'companyMembership', data: { id: membershipId, companyId, userId, status: 'ACTIVE', branchScopeMode: 'SELECTED_BRANCHES', defaultBranchId: branchIds[0] } },
     { model: 'membershipRole', data: { membershipId, roleId: `role-${role}` } },
     ...branchIds.map((branchId): SeedRow => ({ model: 'membershipBranchScope', data: { id: `scope-${membershipId}-${branchId}`, membershipId, branchId } })),
+    ...buildLegalAcceptanceRows(userId, companyId, membershipId, role, now),
   ];
   return { rows, user: { userId, lineUserId, membershipId } };
 }
@@ -342,7 +382,7 @@ export function buildCompanySeed(companyKey: EvalCompany, now = new Date()): Com
 
   const users = {} as Record<EvalRole, CompanyUser>;
   for (const role of ROLES) {
-    const built = buildUserRows(companyKey, companyId, role, branchIds, messagingChannelId);
+    const built = buildUserRows(companyKey, companyId, role, branchIds, messagingChannelId, now);
     rows.push(...built.rows);
     users[role] = built.user;
   }
