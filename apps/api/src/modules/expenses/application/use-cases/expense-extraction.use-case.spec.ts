@@ -924,7 +924,7 @@ describe('ReceiptOcrClient failure boundary', () => {
     const config = {
       aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
       aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
-      lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
+      lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: [],
     } as any;
     let sentBody: any;
     const contentBase64 = Buffer.from('receipt').toString('base64');
@@ -951,7 +951,7 @@ describe('ReceiptOcrClient failure boundary', () => {
         id: 'attachment-1',
         mimeType: 'image/jpeg', contentBase64,
       } } as any);
-      assert.equal(sentBody.requireEvidenceV2, true, 'only the configured company enters strict evidence mode');
+      assert.equal(sentBody.requireEvidenceV2, true, 'empty rollout enables strict evidence for the authorized company');
       assert.equal(response.status, 'failed');
       assert.equal(response.errorCode, 'OCR_EVIDENCE_INVALID');
       assert.equal(response.usage?.length, 1, 'the paid usage survives API evidence rejection');

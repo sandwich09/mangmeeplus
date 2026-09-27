@@ -60,3 +60,36 @@ test('public admission creates raw evidence without a private context and reject
   assert.equal(seen.turns.length, 1); assert.equal(seen.grants.length, 1);
   assert.ok(seen.logs.some(args => args[1] === 'input_rejected'));
 });
+
+
+test('empty public rollout permits only the configured, currently authorized channel', async () => {
+  const { handler, seen, config } = fixture();
+  config.lineAiDeliveryPlanV2PublicChannelIds = [];
+  const event = { webhookEventId: 'event', lineUserId: 'Uactor', pushTargetId: 'Cgroup', channelKind: 'GROUP' as const, messagingChannelId: 'oa', replyToken: 'reply', messageText: 'อธิบายความหมายทั่วไป' };
+  await handler.execute(event);
+  assert.equal(seen.turns.length, 1);
+  await handler.execute({ ...event, messagingChannelId: 'other' });
+  assert.equal(seen.turns.length, 1, 'empty rollout never authorizes another messaging channel');
+});
+
+test('private v2 owner allows empty rollout but still requires current membership and private chat', () => {
+  const { handler, config } = fixture();
+  config.lineAiReliabilityV2CompanyIds = [];
+  config.lineAiDeliveryPlanV2WriteCompanyIds = [];
+  handler.deliveryAccess = new WeakMap();
+  const event = { lineUserId: 'Uactor', messagingChannelId: 'oa' };
+  assert.equal(handler.conversationOwner('company-1', 'actor', event), null, 'missing current access is denied');
+  handler.deliveryAccess.set(event, { membershipId: 'member' });
+  assert.equal(handler.conversationOwner('company-1', 'actor', event)?.membershipId, 'member');
+  config.lineAiReliabilityV2CompanyIds = ['other'];
+  assert.equal(handler.conversationOwner('company-1', 'actor', event), null);
+  config.lineAiReliabilityV2CompanyIds = [];
+  config.lineAiDeliveryPlanV2WriteCompanyIds = ['other'];
+  assert.equal(handler.conversationOwner('company-1', 'actor', event), null);
+  config.lineAiDeliveryPlanV2WriteCompanyIds = [];
+  const group = { ...event, pushTargetId: 'Cgroup' };
+  handler.deliveryAccess.set(group, { membershipId: 'member' });
+  assert.equal(handler.conversationOwner('company-1', 'actor', group), null);
+  config.lineAiReliabilityV2Mode = 'off';
+  assert.equal(handler.conversationOwner('company-1', 'actor', event), null);
+});

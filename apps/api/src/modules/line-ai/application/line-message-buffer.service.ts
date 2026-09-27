@@ -1,3 +1,4 @@
+import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
 import { createLineAiInputEvidence, verifyLineAiInputEvidence, LINE_AI_INPUT_EVIDENCE_LIMITS } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
 /**
@@ -250,7 +251,8 @@ export class LineMessageBufferService implements OnModuleDestroy {
     // Everything below is synchronous: no interleaving between state reads and
     // writes, which is what keeps the buffer race-free on the event loop.
     try {
-      this.appendAccepted(acceptedEnvelope, acceptedAt, legal.companyId);
+      // Keep the payer for cohort accounting, separate from private rollout scope.
+      this.appendAccepted(acceptedEnvelope, acceptedAt, legal.companyId, !!publicAdmission);
     } catch (error) {
       // The event row exists but the payload never reached memory. Mark it
       // immediately reclaimable before returning non-2xx to LINE.
@@ -397,12 +399,17 @@ export class LineMessageBufferService implements OnModuleDestroy {
     this.logger.log({ msg: 'line.ai.accepted', surface: 'employee_oa', webhookEventId });
   }
 
-  private appendAccepted(envelope: LineBufferEnvelope, acceptedAt: number, companyId?: string): void {
+  private appendAccepted(envelope: LineBufferEnvelope, acceptedAt: number, companyId?: string, publicAdmission = false): void {
     const key = `${envelope.messagingChannelId}:${envelope.chatId}:${envelope.lineUserId}`;
     let state = this.chats.get(key);
     if (!state) {
       state = {
-        reliabilityV2: this.config.lineAiReliabilityV2Mode === 'on' && this.config.lineAiDeliveryPlanV2Enabled && (!!companyId && this.config.lineAiReliabilityV2CompanyIds.includes(companyId) && this.config.lineAiDeliveryPlanV2WriteCompanyIds.includes(companyId) || this.config.lineAiDeliveryPlanV2PublicChannelIds.includes(envelope.messagingChannelId)),
+        reliabilityV2: this.config.lineAiReliabilityV2Mode === 'on' && this.config.lineAiDeliveryPlanV2Enabled
+          && (companyId && !publicAdmission
+            ? isLineAiRolloutAllowed(this.config.lineAiReliabilityV2CompanyIds, companyId)
+              && isLineAiRolloutAllowed(this.config.lineAiDeliveryPlanV2WriteCompanyIds, companyId)
+            : envelope.messagingChannelId === this.config.lineMessagingChannelId
+              && isLineAiRolloutAllowed(this.config.lineAiDeliveryPlanV2PublicChannelIds, envelope.messagingChannelId)),
         chatId: envelope.chatId,
         lineUserId: envelope.lineUserId,
         messagingChannelId: envelope.messagingChannelId,

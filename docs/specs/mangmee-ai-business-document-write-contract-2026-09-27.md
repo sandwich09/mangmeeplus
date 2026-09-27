@@ -187,7 +187,7 @@ Retention: pending payloadหมดอายุตาม COLLECTING/PREVIEW dead
 | Domain permission | `reimbursement.create`; prepareforotherต้องfinance_review | requester==actor +update_own_draft ORfinance_review; branchDRAFTalways. Replaysต้องcurrentread/operationauthorityก่อนเผยrecord |
 | Feature/package | current reimbursement entitlementสำหรับnewclaim; unknownentitlementlookupfailclosed | effectivepermissionsตามexistingfeaturegate; update_ownอาจถูกstripเมื่อoffแต่finance_reviewretained. ไม่restorestrippedpermission ไม่blockretainedread/queueทั้งmodule |
 | AI feature/opt-out | semanticproposalต้องai_line_assistant/querypermissionและopt-inตามexistingpolicy | opt-out/ownerinvalidatedหยุดnewapply; cancel/localrecoverstatusยังไม่ใช้modelและต้องไม่เปิดprivatefactsถ้าสิทธิ์หาย |
-| Rollout | new `LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED=false` default; servercapabilityavailableต่อเมื่อAPI+gateway+runtime+postbackready | offหยุดnewpreviewและuncommittedapply; appliedrecovery/read/cancelยังอยู่ ไม่ลบreceipt |
+| Rollout | `LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED=true` default per owner update 2026-09-27; servercapabilityavailableต่อเมื่อAPI+gateway+runtime+postbackready | offหยุดnewpreviewและuncommittedapply; appliedrecovery/read/cancelยังอยู่ ไม่ลบreceipt |
 | Write quiesce | `REIMBURSEMENT_WRITE_QUIESCE` ก่อนpreview/apply | same domain checkสำหรับinternaladapter; reusecode `reimbursement_upgrade_in_progress`, retryAfter60; currentcontrollerguardอย่างเดียวไม่พอ |
 | Credits/usage | reuseintake/model laneusagehold+measuredsettlementจากbudgetappendix | previewvalidator/confirm/cancel/recoveryไม่เรียกmodel ไม่คิดAIซ้ำ; no-modelconfirmไม่ต้องreserveprovidercreditใหม่ แต่domain/quiesce/opt-outยังต้องผ่าน |
 

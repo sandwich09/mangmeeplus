@@ -275,4 +275,6 @@ export class AppConfigService {
     return (this.config.APPROVED_AI_MODEL_IDS ?? DEFAULT_APPROVED_AI_MODEL_IDS)
       .split(',').map((s: string) => s.trim()).filter(Boolean);
   }
+  get aiGlobalInferenceProfileApproved(): boolean { return this.config.AI_GLOBAL_INFERENCE_PROFILE_APPROVED; }
+  get aiGlobalInferenceProfileApprovalRef(): string | undefined { return this.config.AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF; }
 }

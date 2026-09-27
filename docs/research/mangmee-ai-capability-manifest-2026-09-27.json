@@ -2,9 +2,9 @@
   "schemaVersion": "line-ai-capability-manifest/v1",
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
-  "baseRevision": "702d403b85baa0d3e3c3e3cabb3258cbb819cd2f",
-  "sourceRevision": "8462caaa6f717a179cd8362c3a8d2b0e703a9819",
-  "checkoutBranch": "codex/mangmee-ai-reliability-implementation-20260927",
+  "baseRevision": "0617d914b7174110749ad4862cc53a9a71776757",
+  "sourceRevision": "0617d914b7174110749ad4862cc53a9a71776757",
+  "checkoutBranch": "codex/mangmee-ai-default-activation-20260927",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -13,7 +13,7 @@
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/presentation/http/line-reliability-capabilities.controller.ts",
-      "sha256": "1f673cbf4d8dcc0a74fb3f602458e3189dc2760c8f58b77f1f49d1f6f279f89e"
+      "sha256": "320f87524ec68d6320b0d47407e90aa43532c011d22ccb96023cab0795a24acf"
     },
     {
       "path": "apps/api/src/modules/auth/presentation/line-webhook.controller.ts",
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "2f4a8fb07aee877437929b352bcce04f2485bd3c5c2ae5461ac2091c8cb73444"
+      "sha256": "33e5a0108d274c99c3e09299136012b12a84e03168c40167ec3267a29f13f920"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -109,7 +109,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/infrastructure/public-lookup.ts",
-      "sha256": "d3399d980873cafb798d0743b4b69a9000b880ef36b3112c51b50f9bf8aa29e0"
+      "sha256": "0458db22d4a62b11dba5cd15dfaaa4fa178b3467d9514fb090a32962cbab3a52"
     },
     {
       "path": "apps/api/src/modules/line-ai/infrastructure/reimbursement-draft-tools.ts",
@@ -161,7 +161,7 @@
     },
     {
       "path": "docs/plans/mangmee-ai-implementation-index-2026-09-27.md",
-      "sha256": "047c7cc8eca47b399d87a0454669ec456e670495a0cae2ecd7bb6de40e4a825a"
+      "sha256": "210721ea3763001603829067430fae86bad924a52eb876821d1cc06cea39538e"
     },
     {
       "path": "docs/specs/mangmee-ai-core-capability-contract-2026-09-27.md",
@@ -169,7 +169,7 @@
     },
     {
       "path": "packages/config/src/index.ts",
-      "sha256": "1d04206246983ee28d26113a1da087d8fd5be7a6d1c2efe5e3a9c3f624f265e0"
+      "sha256": "1cf3dc49ced48479282c107747251639336972aaf5caf5f31ae2ad26a880cec8"
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
@@ -266,7 +266,7 @@
   "runtimeFlags": [
     {
       "name": "LINE_AI_DRAFT_EDIT_ENABLED",
-      "defaultValue": false,
+      "defaultValue": true,
       "sourceReference": {
         "path": "packages/config/src/index.ts",
         "symbol": "apiConfigSchema.LINE_AI_DRAFT_EDIT_ENABLED"
@@ -274,7 +274,7 @@
     },
     {
       "name": "LINE_AI_RELIABILITY_V2_MODE",
-      "defaultValue": "off",
+      "defaultValue": "on",
       "sourceReference": {
         "path": "packages/config/src/index.ts",
         "symbol": "apiConfigSchema.LINE_AI_RELIABILITY_V2_MODE"
@@ -290,7 +290,7 @@
     },
     {
       "name": "LINE_AI_DELIVERY_PLAN_V2_ENABLED",
-      "defaultValue": false,
+      "defaultValue": true,
       "sourceReference": {
         "path": "packages/config/src/index.ts",
         "symbol": "apiConfigSchema.LINE_AI_DELIVERY_PLAN_V2_ENABLED"
@@ -314,7 +314,7 @@
     },
     {
       "name": "LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED",
-      "defaultValue": false,
+      "defaultValue": true,
       "sourceReference": {
         "path": "packages/config/src/index.ts",
         "symbol": "apiConfigSchema.LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED"
@@ -322,7 +322,7 @@
     },
     {
       "name": "LINE_AI_DOCUMENT_QA_ENABLED",
-      "defaultValue": false,
+      "defaultValue": true,
       "sourceReference": {
         "path": "packages/config/src/index.ts",
         "symbol": "apiConfigSchema.LINE_AI_DOCUMENT_QA_ENABLED"
@@ -330,7 +330,7 @@
     },
     {
       "name": "LINE_AI_APPROVED_KNOWLEDGE_ENABLED",
-      "defaultValue": false,
+      "defaultValue": true,
       "sourceReference": {
         "path": "packages/config/src/index.ts",
         "symbol": "apiConfigSchema.LINE_AI_APPROVED_KNOWLEDGE_ENABLED"
@@ -346,7 +346,7 @@
     },
     {
       "name": "LINE_AI_PREFERENCES_ENABLED",
-      "defaultValue": false,
+      "defaultValue": true,
       "sourceReference": {
         "path": "packages/config/src/index.ts",
         "symbol": "apiConfigSchema.LINE_AI_PREFERENCES_ENABLED"
@@ -377,6 +377,11 @@
       "crm.list_open_followups",
       "crm.search_customers",
       "dashboard.get_business_health_summary",
+      "expense.draft.add_charge",
+      "expense.draft.remove_line",
+      "expense.draft.set_header",
+      "expense.draft.set_line",
+      "expense.draft.set_vat_mode",
       "expense.explain_record",
       "expense.get_breakdown",
       "expense.get_daily_closing",
@@ -397,6 +402,9 @@
       "procurement.get_purchase_order_detail",
       "procurement.get_summary",
       "procurement.search_suppliers",
+      "reimbursement.draft.get_options",
+      "reimbursement.draft.preview_create",
+      "reimbursement.draft.preview_update",
       "reimbursement.get_detail",
       "reimbursement.get_summary",
       "reimbursement.list_pending_approvals",
@@ -418,16 +426,8 @@
     "defaultHiddenDynamicOperations": [
       "accounting.capture_receipt_evidence",
       "crm.suggest_sales_followups",
-      "expense.draft.add_charge",
-      "expense.draft.remove_line",
-      "expense.draft.set_header",
-      "expense.draft.set_line",
-      "expense.draft.set_vat_mode",
       "hr.get_leave_summary",
-      "public.lookup",
-      "reimbursement.draft.get_options",
-      "reimbursement.draft.preview_create",
-      "reimbursement.draft.preview_update"
+      "public.lookup"
     ],
     "note": "Visibility is lineToolRegistryFor() under API config schema defaults. Company entitlement, effective permissions, per-company allowlists and downstream Gateway providers remain runtime checks."
   },
@@ -1793,7 +1793,7 @@
       "runtimeFlagNames": [
         "LINE_AI_DRAFT_EDIT_ENABLED"
       ],
-      "defaultVisible": false,
+      "defaultVisible": true,
       "dataBasis": {
         "sourceModule": "expenses",
         "businessSubjects": [
@@ -1890,7 +1890,7 @@
       "runtimeFlagNames": [
         "LINE_AI_DRAFT_EDIT_ENABLED"
       ],
-      "defaultVisible": false,
+      "defaultVisible": true,
       "dataBasis": {
         "sourceModule": "expenses",
         "businessSubjects": [
@@ -1985,7 +1985,7 @@
       "runtimeFlagNames": [
         "LINE_AI_DRAFT_EDIT_ENABLED"
       ],
-      "defaultVisible": false,
+      "defaultVisible": true,
       "dataBasis": {
         "sourceModule": "expenses",
         "businessSubjects": [
@@ -2074,7 +2074,7 @@
       "runtimeFlagNames": [
         "LINE_AI_DRAFT_EDIT_ENABLED"
       ],
-      "defaultVisible": false,
+      "defaultVisible": true,
       "dataBasis": {
         "sourceModule": "expenses",
         "businessSubjects": [
@@ -2165,7 +2165,7 @@
       "runtimeFlagNames": [
         "LINE_AI_DRAFT_EDIT_ENABLED"
       ],
-      "defaultVisible": false,
+      "defaultVisible": true,
       "dataBasis": {
         "sourceModule": "expenses",
         "businessSubjects": [
@@ -4988,7 +4988,7 @@
       "runtimeFlagNames": [
         "LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED"
       ],
-      "defaultVisible": false,
+      "defaultVisible": true,
       "dataBasis": {
         "sourceModule": "reimbursements",
         "businessSubjects": [
@@ -5073,7 +5073,7 @@
       "runtimeFlagNames": [
         "LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED"
       ],
-      "defaultVisible": false,
+      "defaultVisible": true,
       "dataBasis": {
         "sourceModule": "reimbursements",
         "businessSubjects": [
@@ -5159,7 +5159,7 @@
       "runtimeFlagNames": [
         "LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED"
       ],
-      "defaultVisible": false,
+      "defaultVisible": true,
       "dataBasis": {
         "sourceModule": "reimbursements",
         "businessSubjects": [
@@ -8636,6 +8636,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-27T00:11:23.872Z",
-  "manifestDigest": "c5ebc363efbcf1de32afa015ffb91adab769b4b11b2925b5baaf20b8bfb76e86"
+  "generatedAt": "2026-09-27T02:38:47.970Z",
+  "manifestDigest": "bcbb909349f1420d1f1d64e59b27d82aa3cf0a15572476c106f1bb9d85931a85"
 }

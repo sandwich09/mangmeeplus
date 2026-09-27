@@ -1,3 +1,4 @@
+import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
@@ -347,7 +348,7 @@ export class ReceiptOcrClient {
       result = { status: 'failed', errorCode: 'OCR_JSON_PARSE_FAILED' };
     }
     const requireEvidenceV2 = request.requireEvidenceV2 === true || (this.config.lineAiReliabilityV2Mode === 'on'
-      && this.config.lineAiReliabilityV2CompanyIds.includes(request.companyId));
+      && isLineAiRolloutAllowed(this.config.lineAiReliabilityV2CompanyIds, request.companyId));
     if (requireEvidenceV2 && result.status === 'ok' && !verifyReceiptOcrEvidenceV2(result, request)) {
       result = { status: 'failed', errorCode: 'OCR_EVIDENCE_INVALID', ...(result.usage ? { usage: result.usage } : {}) };
     }
@@ -396,7 +397,7 @@ export class ReceiptOcrClient {
     const governedRequest = {
       ...request,
       requireEvidenceV2: request.requireEvidenceV2 === true || (this.config.lineAiReliabilityV2Mode === 'on'
-        && this.config.lineAiReliabilityV2CompanyIds.includes(request.companyId)),
+        && isLineAiRolloutAllowed(this.config.lineAiReliabilityV2CompanyIds, request.companyId)),
       ...(modelPolicy && { modelPolicy }), ...(hold && { budgetEnvelope: hold.envelope }),
     };
     let response: Response;

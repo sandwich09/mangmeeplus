@@ -109,6 +109,9 @@ const LINE_V2_TARIFFS: Readonly<Record<string, { provider: 'bedrock' | 'openai';
   'gpt-4.1-mini': { provider: 'openai', prices: { input: 0.4, output: 1.6, cacheRead: 0.1, cacheWrite: 0.4 }, externalUsdPerUnit: 0.01, searchContentInputTokensPerUnit: 8000 },
   'gpt-4.1-mini-2025-04-14': { provider: 'openai', prices: { input: 0.4, output: 1.6, cacheRead: 0.1, cacheWrite: 0.4 }, externalUsdPerUnit: 0.01, searchContentInputTokensPerUnit: 8000 },
   'apac.anthropic.claude-3-5-sonnet-20241022-v2:0': { provider: 'bedrock', prices: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } },
+  // Existing Sonnet tariff (ai-model-pricing.ts), exact deployed ID. The capability's conservative
+  // 200K context ceiling keeps this grant within the reviewed standard-context price tier.
+  'global.anthropic.claude-sonnet-4-6': { provider: 'bedrock', prices: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } },
   'apac.anthropic.claude-3-haiku-20240307-v1:0': { provider: 'bedrock', prices: { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 } },
 };
 
@@ -163,6 +166,10 @@ export class AiGatewayClient {
       || !this.config.approvedAiModelIds.includes(model.modelId) || modelPolicy && modelPolicy.modelId !== model.modelId
       || !Number.isSafeInteger(model.contextTokens) || model.contextTokens < 1
       || !Number.isSafeInteger(model.maxOutputTokens) || model.maxOutputTokens < 1) return null;
+    if (model.modelId.startsWith('global.') && (this.config.aiGlobalInferenceProfileApproved !== true
+      || !this.config.aiGlobalInferenceProfileApprovalRef?.trim())) return null;
+    // The authenticated gateway cannot widen the standard-context tariff into a long-context tier.
+    if (model.modelId === 'global.anthropic.claude-sonnet-4-6' && model.contextTokens > 200_000) return null;
     const reviewed = LINE_V2_TARIFFS[model.modelId];
     if (!reviewed || reviewed.provider !== model.provider) return null;
     const fx = await resolveThbPerUsd(this.prisma, this.config);
