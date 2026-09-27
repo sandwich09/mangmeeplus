@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "016b43c69a88dbf8596106c366651ab95bc88e43",
-  "sourceRevision": "5c80b50e49cb66a8a6c87dc12e9f2abbb070c2da",
+  "sourceRevision": "8c1eaa501b1102c159332850a772b3dcd7c456be",
   "checkoutBranch": "claude/mangmee-ai-advisor-20260927",
   "checkoutDirty": false,
   "sourceHashes": [
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-27T19:24:21.608Z",
+  "generatedAt": "2026-09-27T19:27:45.106Z",
   "manifestDigest": "30382ba91fa1182979e4cec78c53461112f98909352c5508a62d738fae5aa46b"
 }
