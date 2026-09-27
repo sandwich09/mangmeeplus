@@ -32,6 +32,10 @@ const KNOWN_FILTER_KEYS = new Set(LINE_TOOL_REGISTRY.flatMap((tool) => [
   ...(tool.requiredInputFields ?? []), ...(tool.optionalInputFields ?? []),
 ]));
 const RESERVED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+// ponytail: bounded to the two shapes worth naming in a repair prompt today — the observed real-world
+// failure (a malformed taskRef) versus everything else. Split further if a repair loop needs to target
+// another specific defect.
+export type CompactDecodeRejection = 'taskref_malformed' | 'decision_shape_invalid';
 export type CompactSimpleReadRejection =
   | 'not_single_independent_read'
   | 'invalid_simple_shape'
@@ -205,29 +209,42 @@ export function parseLineIntakeCompactDecision(input: {
   enabledPreparedFamilies: ReadonlySet<string>;
   language: string;
   valueCandidates?: LineAiValueCandidates;
+  /** Called once, with the specific reason, immediately before a rejecting return — so a caller can
+   *  log it and name the defect in the next repair prompt instead of retrying blind. */
+  onReject?: (reason: CompactDecodeRejection) => void;
 }): CompactDecisionResult | undefined {
-  const { raw, messageText, inputEvidence, enabledTools, enabledPreparedFamilies, language, valueCandidates } = input;
+  const { raw, messageText, inputEvidence, enabledTools, enabledPreparedFamilies, language, valueCandidates, onReject } = input;
+  const reject = (reason: CompactDecodeRejection): undefined => { onReject?.(reason); return undefined; };
   if (!plainObject(raw) || !exactKeys(raw, DECISION_KEYS) || !Array.isArray(raw['subrequests'])
-    || raw['subrequests'].length < 1 || raw['subrequests'].length > 8) return undefined;
+    || raw['subrequests'].length < 1 || raw['subrequests'].length > 8) return reject('decision_shape_invalid');
   const canonical: unknown[] = [];
   for (let index = 0; index < raw['subrequests'].length; index += 1) {
     const item = raw['subrequests'][index];
     if (!plainObject(item) || !exactKeys(item, SUBREQUEST_KEYS)
       || !SEMANTIC_KINDS.has(item['kind'] as LineAiSemanticSubrequestV2['kind'])
-      || typeof item['goal'] !== 'string' || !item['goal'].trim() || item['goal'].length > 800) return undefined;
+      || typeof item['goal'] !== 'string' || !item['goal'].trim() || item['goal'].length > 800) return reject('decision_shape_invalid');
     const refs = sourceRefs(item['sources'], inputEvidence);
     const filters = boundedFilters(item['filters']);
-    if (!refs || !filters) return undefined;
+    if (!refs || !filters) return reject('decision_shape_invalid');
     const requiredEvidence = item['requiredEvidence'] === undefined ? [] : item['requiredEvidence'];
     const dependsOn = item['dependsOn'] === undefined ? [] : item['dependsOn'];
-    if (!Array.isArray(requiredEvidence) || !Array.isArray(dependsOn)) return undefined;
+    if (!Array.isArray(requiredEvidence) || !Array.isArray(dependsOn)) return reject('decision_shape_invalid');
     const entity = item['entity'];
-    if (entity !== undefined && (typeof entity !== 'string' || !entity || entity.length > 160 || !messageText.includes(entity))) return undefined;
+    if (entity !== undefined && (typeof entity !== 'string' || !entity || entity.length > 160 || !messageText.includes(entity))) return reject('decision_shape_invalid');
+    // The one defect actually observed in production (4/4 repair attempts): the model copies the bare
+    // taskId string instead of the {taskId,taskRevision,subrequestIndex} object. Verify every field's
+    // presence and type here (not just the key set) so that specific mistake gets its own reason code
+    // rather than falling through to the shared parseLineAiSemanticSubrequests's generic rejection.
     const taskRef = item['taskRef'];
-    if (taskRef !== undefined && (!plainObject(taskRef) || !exactKeys(taskRef, TASK_REF_KEYS))) return undefined;
+    if (taskRef !== undefined && (!plainObject(taskRef) || !exactKeys(taskRef, TASK_REF_KEYS)
+      || typeof taskRef['taskId'] !== 'string' || !taskRef['taskId']
+      || typeof taskRef['taskRevision'] !== 'number' || !Number.isFinite(taskRef['taskRevision'])
+      || typeof taskRef['subrequestIndex'] !== 'number' || !Number.isInteger(taskRef['subrequestIndex']) || taskRef['subrequestIndex'] < 0)) {
+      return reject('taskref_malformed');
+    }
     const writeIntent = item['writeIntent'];
     if (writeIntent !== undefined && (item['kind'] !== 'write'
-      || !WRITE_INTENTS.has(writeIntent as NonNullable<LineAiSemanticSubrequestV2['writeIntent']>))) return undefined;
+      || !WRITE_INTENTS.has(writeIntent as NonNullable<LineAiSemanticSubrequestV2['writeIntent']>))) return reject('decision_shape_invalid');
     canonical.push({
       index, kind: item['kind'], goal: item['goal'], requiredEvidence, requestedFilters: filters, dependsOn,
       evidenceRefs: refs,
@@ -237,7 +254,7 @@ export function parseLineIntakeCompactDecision(input: {
     });
   }
   const semanticSubrequests = parseLineAiSemanticSubrequests(canonical, messageText, inputEvidence);
-  if (!semanticSubrequests) return undefined;
+  if (!semanticSubrequests) return reject('decision_shape_invalid');
   if (raw['simpleRead'] === undefined) return { semanticSubrequests };
   const simple = simpleReadPlan({ raw: raw['simpleRead'], semanticSubrequests, enabledTools, enabledPreparedFamilies, language, messageText, valueCandidates });
   const canonicalSemantic = simple.canonicalFilters

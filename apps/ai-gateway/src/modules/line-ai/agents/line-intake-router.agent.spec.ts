@@ -4,6 +4,7 @@ import { effectiveIntakeToolNames, IntentRouterAgent, LINE_INTAKE_ROUTER_SYSTEM_
 import { DisabledProvider } from '../infrastructure/provider/disabled.provider';
 import { createLineAiInputEvidence, verifyLineAiRetainedTaskSource, type BusinessDocumentClassification, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
+import { runWithUsageContext } from '../../../common/usage/usage-context';
 
 const EXPENSE_LIST_PREPARED_FAMILY = 'expense.list_recent::single_metric';
 const EXPENSE_LIST_PREPARED_FAMILIES = new Set([EXPENSE_LIST_PREPARED_FAMILY]);
@@ -256,6 +257,61 @@ describe('LINE intake router – routeIntake', () => {
     })).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, taskProjection }));
     assert.equal(plan.status, 'UNAVAILABLE');
     assert.equal(plan.errorCode, 'ROUTER_SEMANTIC_SCHEMA_INVALID');
+  });
+
+  it('resumes a pending task from a valid compact taskRef object', async () => {
+    const text = 'ทำต่อเลย';
+    const built = await createLineAiInputEvidence({ turnKey: 'compact-valid-task', parts: [{ partId: 'part-0',
+      eventIdHash: 'e'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const taskProjection = { version: 2 as const, stateVersion: 1, lifecycleEpoch: 0, expiresAtMs: Date.now() + 60_000,
+      tasks: [{ taskId: 'task-1', revision: 5, kind: 'write' as const, state: 'paused' as const, userGoal: 'บันทึกค่าใช้จ่าย',
+        subrequests: [{ index: 0, kind: 'write' as const, goal: 'บันทึกค่าใช้จ่าย', status: 'pending' as const }] }] };
+    const plan = await new IntentRouterAgent(modelAnswer({
+      intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.97,
+      decisionV1: { subrequests: [{ kind: 'write', goal: text, sources: [{ part: 0, whole: true }], filters: {},
+        writeIntent: 'EXPENSE_DRAFT_CONTINUATION', taskRef: { taskId: 'task-1', taskRevision: 5, subrequestIndex: 0 } }] },
+    })).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, taskProjection }));
+    assert.equal(plan.status, 'ROUTED');
+    assert.deepEqual(plan.semanticSubrequests?.[0]?.taskRef, { taskId: 'task-1', taskRevision: 5, subrequestIndex: 0 });
+  });
+
+  it('names the taskRef defect in the repair prompt for a bare id string, and still ends in a typed failure', async () => {
+    const text = 'ทำต่อเลย';
+    const built = await createLineAiInputEvidence({ turnKey: 'compact-string-task', parts: [{ partId: 'part-0',
+      eventIdHash: 'f'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const taskProjection = { version: 2 as const, stateVersion: 1, lifecycleEpoch: 0, expiresAtMs: Date.now() + 60_000,
+      tasks: [{ taskId: 'task-1', revision: 5, kind: 'write' as const, state: 'paused' as const, userGoal: 'บันทึกค่าใช้จ่าย',
+        subrequests: [{ index: 0, kind: 'write' as const, goal: 'บันทึกค่าใช้จ่าย', status: 'pending' as const }] }] };
+    const sentTexts: string[] = [];
+    const provider = { generateText: async (input: ProviderInput) => {
+      sentTexts.push(String((input.messages?.[0] as { text?: string } | undefined)?.text ?? ''));
+      // The model repeats its own mistake (a bare taskId string) on the repair attempt too — the decoder
+      // must reject it again, not crash or silently accept a weaker shape.
+      return { ok: true as const, text: JSON.stringify({
+        intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.97,
+        decisionV1: { subrequests: [{ kind: 'write', goal: text, sources: [{ part: 0, whole: true }], filters: {},
+          writeIntent: 'EXPENSE_DRAFT_CONTINUATION', taskRef: 'task-1' }] },
+      }) };
+    } };
+    // A repair attempt only fires inside an active-v2 budget (spare slot + repair not yet spent).
+    const plan = await runWithUsageContext({ budget: { status: 'active-v2', grant: { maxTurnSlots: 2, maxRepairs: 1 } as never,
+      inputDigest: built.inputEvidence.joinedSha256, sourceRoute: 'test', calls: 0, repairCount: 0 } }, () =>
+      new IntentRouterAgent(provider).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, taskProjection })));
+    assert.equal(sentTexts.length, 2, 'a malformed taskRef must spend exactly one repair attempt');
+    assert.doesNotMatch(sentTexts[0]!, /schemaRepair/, 'the first attempt carries no repair hint yet');
+    assert.match(sentTexts[1]!, /previous taskRef was invalid/, 'the repair attempt names the actual defect');
+    assert.equal(plan.status, 'UNAVAILABLE');
+    assert.equal(plan.errorCode, 'ROUTER_SEMANTIC_SCHEMA_INVALID');
+  });
+
+  it('shows the taskRef object shape, never a bare id, in the compact prompt', () => {
+    const prompt = intakeRouterSystemPrompt({}, false, true);
+    assert.ok(prompt.includes('"taskRef": {"taskId":"...","taskRevision":1,"subrequestIndex":0}'),
+      'the compact JSON skeleton spells out the object shape with an example');
+    assert.match(prompt, /resumableTaskRefs/, 'the rule points the model at the ready-to-copy entries');
+    assert.match(prompt, /NEW read question.*independent side question/, 'a new question is distinguished from answering the pending one');
   });
 
   it('offers exact full-part refs for Thai text and surrogate pairs without repairing invalid model evidence', async () => {

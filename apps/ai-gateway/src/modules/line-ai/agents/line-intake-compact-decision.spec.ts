@@ -113,6 +113,38 @@ describe('compact LINE intake decision', () => {
     assert.equal(parsed, undefined);
   });
 
+  it('names taskref_malformed for a bare id string, a partial object, an extra key, or a wrong-typed field', async () => {
+    const text = 'ทำต่อเลย';
+    const created = await fixture(text);
+    const validRef = { taskId: 'task-1', taskRevision: 3, subrequestIndex: 0 };
+    for (const badTaskRef of ['task-1', { taskId: 'task-1' }, { ...validRef, extra: 1 }, { ...validRef, taskRevision: '3' }]) {
+      const reasons: string[] = [];
+      const parsed = parseLineIntakeCompactDecision({
+        raw: { subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: {}, taskRef: badTaskRef }] },
+        messageText: text, inputEvidence: created.inputEvidence,
+        enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
+        onReject: (reason) => reasons.push(reason),
+      });
+      assert.equal(parsed, undefined, JSON.stringify(badTaskRef));
+      assert.deepEqual(reasons, ['taskref_malformed'], JSON.stringify(badTaskRef));
+    }
+  });
+
+  it('accepts a well-formed taskRef object and carries it through to the canonical subrequest', async () => {
+    const text = 'ทำต่อเลย';
+    const created = await fixture(text);
+    const validRef = { taskId: 'task-1', taskRevision: 3, subrequestIndex: 0 };
+    const reasons: string[] = [];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: { subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: {}, taskRef: validRef }] },
+      messageText: text, inputEvidence: created.inputEvidence,
+      enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
+      onReject: (reason) => reasons.push(reason),
+    });
+    assert.deepEqual(parsed?.semanticSubrequests[0]?.taskRef, validRef);
+    assert.deepEqual(reasons, []);
+  });
+
   it('strictly rejects malformed or conflicting compact source modes', async () => {
     const text = 'ดูค่าใช้จ่าย';
     const created = await fixture(text);
