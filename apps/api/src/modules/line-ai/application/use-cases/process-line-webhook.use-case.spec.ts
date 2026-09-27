@@ -758,7 +758,7 @@ const BASE_EVENT = Object.freeze({
 });
 
 it('fails a bound semantic turn before pending media, ERP reads, or a LINE turn when compact intake is invalid', async () => {
-  const { prisma } = makePrisma();
+  const { prisma, updates } = makePrisma();
   prisma.client.lineIntakePendingMedia.findMany = async () => { throw new Error('pending media must stay untouched'); };
   prisma.client.lineLedgerDelivery = { findMany: async () => [] };
   const h = makeUseCase(prisma, {
@@ -789,7 +789,11 @@ it('fails a bound semantic turn before pending media, ERP reads, or a LINE turn 
   assert.equal(h.intakeRequests.length, 1, 'the accepted input is classified once');
   assert.equal(h.getAiGatewayCalled(), false, 'invalid intake never reaches requestLineTurn');
   assert.equal(delivered.length, 1);
-  assert.match(delivered[0]!, /ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จ/);
+  // Schema-invalid model output is "I don't understand", never the transient "system is slow" copy.
+  assert.match(delivered[0]!, /ยังไม่แน่ใจว่าหมายถึงอะไร/);
+  // The real gateway errorCode is logged, not the generic AI_CONTRACT_UNSUPPORTED that used to hide it.
+  const logged = updates.find((u: any) => u.data?.errorCode === 'ROUTER_SEMANTIC_SCHEMA_INVALID');
+  assert.ok(logged, 'the durable row keeps the real gateway errorCode');
 });
 
 it('answers a bound general question once before two pending files can intercept it', async () => {

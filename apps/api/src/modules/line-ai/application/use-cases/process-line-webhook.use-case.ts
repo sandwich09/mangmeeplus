@@ -639,6 +639,19 @@ const isDocumentReadingCreditSpent = (errorCode?: string): boolean =>
   isAiBudgetPermanentRefusal(errorCode) || errorCode === 'OCR_MONTHLY_LIMIT_EXCEEDED';
 
 /**
+ * Spec §8: an intake route that never reached the model — the gateway call itself did not complete
+ * (`ROUTER_UNREACHABLE`, tryRouteIntake's own catch block), or our AI budget gate could not run or is
+ * exhausted — reads to the customer as "the system is slow right now", never "I don't understand
+ * you". Everything else with `status !== 'ROUTED'` (the model answered but produced an invalid or
+ * unroutable plan, e.g. `ROUTER_SEMANTIC_SCHEMA_INVALID`) is the model genuinely not making sense of
+ * the text.
+ */
+const isTransientLineAiRouteFailure = (errorCode?: string): boolean =>
+  errorCode === 'ROUTER_UNREACHABLE' || isAiBudgetRefusalCode(errorCode);
+const LINE_AI_ROUTE_TRANSIENT_REPLY = 'ขอโทษค่ะ ระบบตอบช้ากว่าปกติ ลองส่งข้อความเดิมอีกครั้งได้เลยค่ะ';
+const LINE_AI_ROUTE_UNCLEAR_REPLY = 'ขอโทษค่ะ น้องมั่งมียังไม่แน่ใจว่าหมายถึงอะไร ช่วยพิมพ์อีกแบบได้ไหมคะ เช่น "เดือนนี้จ่ายไปเท่าไหร่" หรือ "แยกค่าใช้จ่ายตามหมวด"';
+
+/**
  * §9.2/B-04: the money gate closed the read AND this picture was NOT kept. Three different ways that
  * happens, one money reason, and never a retention claim or a retry promise:
  *
@@ -5243,8 +5256,9 @@ export class ProcessLineWebhookUseCase {
         messageText: event.messageText, conversationContext, ...(candidates ? { valueCandidates: candidates } : {}) }));
       this.intakePlansV2.set(event, semanticRoutePlan);
       if (semanticRoutePlan.status !== 'ROUTED' || !semanticRoutePlan.semanticSubrequests?.length) {
-        await this.deliverReply(event, 'ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้');
-        await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_CONTRACT_UNSUPPORTED', companyId); return;
+        await this.deliverReply(event, isTransientLineAiRouteFailure(semanticRoutePlan.errorCode)
+          ? LINE_AI_ROUTE_TRANSIENT_REPLY : LINE_AI_ROUTE_UNCLEAR_REPLY);
+        await this.updateEventLog(event.webhookEventId, 'provider_unavailable', semanticRoutePlan.errorCode ?? 'AI_CONTRACT_UNSUPPORTED', companyId); return;
       }
       if (await this.resumeDocumentQuestionV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
       if (semanticRoutePlan.semanticSubrequests.every(item => ['general', 'help'].includes(item.kind))) {
@@ -5924,8 +5938,10 @@ export class ProcessLineWebhookUseCase {
     const initialGrantV2 = this.budgetGrantsV2.get(event);
     if (this.boundConversations.has(event)) {
       if (!initialGrantV2 || routePlan.status !== 'ROUTED') {
-        await this.deliverReply(event, 'ยังดำเนินการข้อความชุดนี้ไม่ได้ค่ะ ระบบตรวจสอบขอบเขตคำขอไม่สำเร็จ ยังไม่ได้ทำรายการให้');
-        await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_CONTRACT_UNSUPPORTED', companyId); return;
+        // A missing grant is a system/budget-admission gap, not a text the model failed to parse.
+        await this.deliverReply(event, !initialGrantV2 || isTransientLineAiRouteFailure(routePlan.errorCode)
+          ? LINE_AI_ROUTE_TRANSIENT_REPLY : LINE_AI_ROUTE_UNCLEAR_REPLY);
+        await this.updateEventLog(event.webhookEventId, 'provider_unavailable', routePlan.errorCode ?? 'AI_CONTRACT_UNSUPPORTED', companyId); return;
       }
       const hasPublic = routePlan.semanticSubrequests?.some(item => item.kind === 'public') === true && this.config.lineAiPublicLookupEnabled;
       const onlyGeneral = routePlan.semanticSubrequests?.every(item => ['general', 'help'].includes(item.kind)) === true;

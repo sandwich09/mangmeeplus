@@ -73,7 +73,7 @@ function makeErp(result: Partial<ToolResult> = {}) {
 /** A capturing logger so the exact prepared-lane fallback reason can be asserted per case. */
 function withLogSink(orchestrator: OrchestratorAgent) {
   const logs: any[] = [];
-  (orchestrator as any).logger = { log: (e: any) => logs.push(e), warn: () => {}, error: () => {} };
+  (orchestrator as any).logger = { log: (e: any) => logs.push(e), warn: (e: any) => logs.push(e), error: () => {} };
   return logs;
 }
 const fallbackReason = (logs: any[]): string | undefined =>

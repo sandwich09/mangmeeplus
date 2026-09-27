@@ -1189,7 +1189,7 @@ export class OrchestratorAgent {
         // The denominator for "the lane answered X of N business reads" on production: a read turn that
         // arrived with NO prepared plan at all leaves no other trace in this service, so it logs the same
         // message with its own reason. Ids and enums only — never message text.
-        this.logger.log({
+        this.logger.warn({
           msg: 'line.ai.prepared_simple_read.fallback',
           requestId: req.requestId,
           reason: 'no_prepared_plan',
@@ -1660,7 +1660,7 @@ export class OrchestratorAgent {
     // logs. It describes the MESSAGE, never a date and never the text itself.
     const periodSource = turnPeriodSource(req.valueCandidates);
     const fallback = (reason: string): null => {
-      this.logger.log({ msg: 'line.ai.prepared_simple_read.fallback', requestId: req.requestId, reason, periodSource });
+      this.logger.warn({ msg: 'line.ai.prepared_simple_read.fallback', requestId: req.requestId, reason, periodSource });
       return null;
     };
     if ((req.valueCandidates?.periods?.length ?? 0) > 1) return fallback('multiple_periods');

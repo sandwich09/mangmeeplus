@@ -846,7 +846,7 @@ describe('OrchestratorAgent – prepared-plan lanes (latency/autonomy Phases 3�
   it('Phase 4 default off: a forwarded prepared plan is ignored; the router runs and no prepared-lane log is emitted', async () => {
     const logs: any[] = [];
     const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig());
-    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: () => {} };
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: (e: any) => logs.push(e) };
     await orchestrator.run({ ...makeReq('ดูสต็อกสินค้าใกล้หมด'), intakeIntent: 'BUSINESS_READ_QUESTION', preparedPlan: preparedInventoryPlan() });
     assert.ok(!logs.some((e) => typeof e.msg === 'string' && e.msg.startsWith('line.ai.prepared_simple_read')), 'prepared lane untouched when flag off');
     assert.ok(!logs.some((e) => e.msg === 'line.ai.fused_plan.shadow'), 'no shadow when flag off');
@@ -855,7 +855,7 @@ describe('OrchestratorAgent – prepared-plan lanes (latency/autonomy Phases 3�
   it('Phase 4 on with empty family allowlist: eligibility fails on the formatter family and falls back to the router', async () => {
     const logs: any[] = [];
     const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig({ lineAiPreparedSimpleReadEnabled: true, lineAiDeterministicResponseFamilies: [] }));
-    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: () => {} };
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: (e: any) => logs.push(e) };
     const result = await orchestrator.run({ ...makeReq('ดูสต็อกสินค้าใกล้หมด'), intakeIntent: 'BUSINESS_READ_QUESTION', preparedPlan: preparedInventoryPlan() });
     const fallback = logs.find((e) => e.msg === 'line.ai.prepared_simple_read.fallback');
     assert.ok(fallback, 'the gate ran and logged a fallback');
@@ -866,7 +866,7 @@ describe('OrchestratorAgent – prepared-plan lanes (latency/autonomy Phases 3�
   it('Phase 3 shadow on: logs a best-effort comparison and still executes via the router', async () => {
     const logs: any[] = [];
     const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig({ lineAiFusedPlanShadowEnabled: true }));
-    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: () => {} };
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: (e: any) => logs.push(e) };
     await orchestrator.run({ ...makeReq('ดูสต็อกสินค้าใกล้หมด'), intakeIntent: 'BUSINESS_READ_QUESTION', preparedPlan: preparedInventoryPlan() });
     assert.ok(logs.some((e) => e.msg === 'line.ai.fused_plan.shadow'), 'shadow comparison logged');
   });
@@ -884,7 +884,7 @@ describe('prepared simple-read lane telemetry', () => {
   });
   function sink(orchestrator: OrchestratorAgent) {
     const logs: any[] = [];
-    (orchestrator as any).logger = { log: (e: any) => logs.push(e), warn: () => {}, error: () => {} };
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), warn: (e: any) => logs.push(e), error: () => {} };
     return logs;
   }
   const laneLogs = (logs: any[]) => logs.filter((e) => typeof e.msg === 'string' && e.msg.startsWith('line.ai.prepared_simple_read'));
@@ -953,7 +953,7 @@ describe('OrchestratorAgent period resolution', () => {
   });
   function sink(orchestrator: OrchestratorAgent) {
     const logs: any[] = [];
-    (orchestrator as any).logger = { log: (e: any) => logs.push(e), warn: () => {}, error: () => {} };
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), warn: (e: any) => logs.push(e), error: () => {} };
     return logs;
   }
   const laneLogs = (logs: any[]) => logs.filter((e) => typeof e.msg === 'string' && e.msg.startsWith('line.ai.prepared_simple_read'));
