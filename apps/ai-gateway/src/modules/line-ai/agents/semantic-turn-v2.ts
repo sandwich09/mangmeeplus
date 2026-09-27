@@ -14,7 +14,7 @@ import { buildCapabilityHelp } from './response-composer.agent';
 import { formatPreparedSimpleRead } from './prepared-simple-read-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
-import { canonicalizeReadToolEnums, conversationReadCandidates } from './read-tool-input';
+import { canonicalizeReadToolEnums, conversationReadCandidates, resolvePeriodKeyAlias } from './read-tool-input';
 
 const logger = new Logger('SemanticTurnV2');
 
@@ -197,7 +197,14 @@ function validInput(meta: ToolMeta, input: unknown, req: LineAiTurnRequest,
   const periods = [...(c?.periods ?? []), ...(retainedCandidates?.periods ?? []), ...(readCandidates?.periods ?? [])].filter(item => !isAmbiguousPeriodCandidate(item));
   for (const period of periods) { dates.add(period.fromDate); dates.add(period.toDate); }
   for (const key of ['fromDate', 'toDate', 'date', 'newSince', 'newUntil']) if (canonicalInput[key] !== undefined && !dates.has(String(canonicalInput[key]))) return undefined;
-  if (canonicalInput.periodKey !== undefined && !periods.some(period => period.monthKey === canonicalInput.periodKey)) return undefined;
+  if (canonicalInput.periodKey !== undefined) {
+    const rawPeriodKey = String(canonicalInput.periodKey);
+    const todayIso = (c && 'todayIso' in c ? c.todayIso : undefined) ?? retainedCandidates?.todayIso;
+    const groundedPeriodKey = periods.some(period => period.monthKey === rawPeriodKey)
+      ? rawPeriodKey : resolvePeriodKeyAlias(rawPeriodKey, todayIso);
+    if (!groundedPeriodKey) return undefined;
+    canonicalInput.periodKey = groundedPeriodKey;
+  }
   const suppliedIds = candidateIds(canonicalInput);
   if (suppliedIds.size) {
     const source = retainedCandidates ?? (c && 'version' in c && c.version === 2 ? c : undefined);
@@ -206,6 +213,10 @@ function validInput(meta: ToolMeta, input: unknown, req: LineAiTurnRequest,
   }
   return canonicalInput;
 }
+
+/** A router-decided period/window hint is a business-level guess made before any specific tool is
+ *  chosen — see the drop-vs-reject note in `bindRequestedReadFilters` below. */
+const PERIOD_WINDOW_FILTER_KEYS = new Set(['fromDate', 'toDate', 'periodKey', 'date']);
 
 function bindRequestedReadFilters(meta: ToolMeta, item: NonNullable<LineAiTurnRequest['semanticSubrequests']>[number], input: unknown,
   req: LineAiTurnRequest, retainedCandidates?: LineAiValueCandidatesV2,
@@ -219,7 +230,19 @@ function bindRequestedReadFilters(meta: ToolMeta, item: NonNullable<LineAiTurnRe
   const fields = new Set([...(meta.requiredInputFields ?? []), ...(meta.optionalInputFields ?? [])]);
   const bound = { ...normalizedControl };
   for (const [key, value] of Object.entries(filters)) {
-    if (!fields.has(key) || value === null) return undefined;
+    if (value === null) return undefined;
+    if (!fields.has(key)) {
+      // Item 3 root cause: a business-level period hint (e.g. "เดือนนี้"/"เดือนนี้มีกี่รายการ") is
+      // decided before any specific tool is chosen, so it can name a window a tool CONTROL later
+      // picks does not take at all — `reimbursement.list_pending_approvals` takes no input fields
+      // and `expense.get_daily_closing` takes only a single `date`, never fromDate/toDate. That tool
+      // already has its own honest, reported scope (a live queue, one day) — dropping only the
+      // window hint it cannot express still answers truthfully; any OTHER unsupported filter (a
+      // status, category or vendor the tool cannot honor) would silently broaden what the customer
+      // asked to narrow, so those still fail closed.
+      if (PERIOD_WINDOW_FILTER_KEYS.has(key)) continue;
+      return undefined;
+    }
     const canonicalValue = canonical(value);
     if (key in bound && canonical(bound[key]) !== canonicalValue) return undefined;
     bound[key] = value;
@@ -338,7 +361,11 @@ export async function runSemanticTurnV2(input: {
         if (seen.has(key) || questions.has(index)) continue;
         if (!meta || !normalizedInput || meta.category.startsWith('draft') && item.kind !== 'write'
           || meta.name === 'public.lookup' && item.kind !== 'public') {
-          forced.set(index, { status: 'needs_user', reasonCode: 'TOOL_INPUT_NOT_AUTHORIZED', text: 'ต้องตรวจข้อมูลหรือสิทธิ์ของส่วนนี้ก่อน ยังไม่ได้ทำรายการให้' }); continue;
+          // Item 3/R-L2: whatever remains here after root-causing the common bindable-but-mismatched
+          // shapes above (an ungrounded value, or a window field the picked tool cannot take) is a
+          // planning-side outcome, not something the customer did wrong — never phrase it as a
+          // permission problem, and never leave it `needs_user` with no real question to answer.
+          forced.set(index, { status: 'unsupported', reasonCode: 'TOOL_INPUT_NOT_AUTHORIZED', text: READ_UNAVAILABLE_TEXT[language] }); continue;
         }
         seen.add(key);
         let result: ToolResult;

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { conversationReadCandidates, nameFilterGroundedInText } from './read-tool-input';
+import { conversationReadCandidates, nameFilterGroundedInText, resolvePeriodKeyAlias } from './read-tool-input';
 
 const context = (turns: any[]) => ({ windowMinutes: 15, maxTurns: 15, recentTurns: turns });
 
@@ -45,5 +45,23 @@ describe('item 2b: name filter grounding', () => {
   it('rejects an empty or whitespace-only name', () => {
     assert.equal(nameFilterGroundedInText('', 'อะไรก็ได้'), false);
     assert.equal(nameFilterGroundedInText('   ', 'อะไรก็ได้'), false);
+  });
+});
+
+describe('item 3: periodKey alias resolution (T-009-a/T-052-a root cause)', () => {
+  it('resolves the exact invented alias the real model sent for "เดือนนิ" (this-month typo)', () => {
+    assert.equal(resolvePeriodKeyAlias('this_month', '2026-09-28'), '2026-09');
+    assert.equal(resolvePeriodKeyAlias('this_month_to_date', '2026-09-28'), '2026-09');
+    assert.equal(resolvePeriodKeyAlias('current_month', '2026-01-05'), '2026-01');
+  });
+
+  it('resolves last_month across a year boundary', () => {
+    assert.equal(resolvePeriodKeyAlias('last_month', '2026-01-15'), '2025-12');
+  });
+
+  it('never invents a value for an alias outside the closed list, or with no todayIso', () => {
+    assert.equal(resolvePeriodKeyAlias('this_week', '2026-09-28'), undefined);
+    assert.equal(resolvePeriodKeyAlias('2026-09', '2026-09-28'), undefined);
+    assert.equal(resolvePeriodKeyAlias('this_month', undefined), undefined);
   });
 });

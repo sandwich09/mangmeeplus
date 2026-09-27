@@ -1,4 +1,4 @@
-import { LINE_AI_VALUE_CANDIDATES_V2_LIMITS, extractValueCandidates, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate } from '@watchdog-bms/contracts';
+import { LINE_AI_VALUE_CANDIDATES_V2_LIMITS, extractValueCandidates, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, resolvePeriodCandidates } from '@watchdog-bms/contracts';
 import type { LineAiConversationContext, LineAiValueCandidates, ToolMeta } from '@watchdog-bms/contracts';
 
 export type ConversationReadCandidates = {
@@ -58,6 +58,28 @@ function normalizeForNameGrounding(text: string): string {
 export function nameFilterGroundedInText(name: string, messageText: string): boolean {
   const needle = normalizeForNameGrounding(name);
   return needle.length > 0 && normalizeForNameGrounding(messageText).includes(needle);
+}
+
+/** Item 3 root cause: despite the router prompt explicitly forbidding it ("never invent aliases such
+ *  as this_month"), the real model sometimes sends a `periodKey` of a well-known relative-month word
+ *  instead of the tool's actual `YYYY-MM` key — e.g. `{"periodKey":"this_month"}` for "เดือนนิจ่ายไป
+ *  เทาไหร่แล้วค้า" (eval T-009-a). That value never matches any extracted candidate (least of all when
+ *  the message also typos the Thai word, so no candidate was extracted at all) and used to dead-end
+ *  the whole call as `TOOL_INPUT_NOT_AUTHORIZED`. Each alias below names an exact calendar month
+ *  computable from `todayIso` alone — exactly as deterministic as the candidate the extractor would
+ *  have produced had the message spelled the Thai phrase correctly — so resolving it is not
+ *  "inventing" a period. Bounded to month-shaped aliases only: a `periodKey` field is only ever a
+ *  calendar month (`LineAiPeriodCandidate.monthKey`); "today"/"this_week" are expressed via
+ *  fromDate/toDate instead and are not this field's concern. */
+const PERIOD_KEY_ALIASES: Record<string, string> = {
+  this_month: 'เดือนนี้', current_month: 'เดือนนี้', this_month_to_date: 'เดือนนี้',
+  last_month: 'เดือนที่แล้ว', previous_month: 'เดือนที่แล้ว',
+};
+
+export function resolvePeriodKeyAlias(periodKey: string, todayIso: string | undefined): string | undefined {
+  const phrase = PERIOD_KEY_ALIASES[periodKey];
+  if (!phrase || !todayIso) return undefined;
+  return resolvePeriodCandidates(phrase, todayIso).find(candidate => candidate.kind === 'month')?.monthKey;
 }
 
 export function canonicalizeReadToolEnums(
