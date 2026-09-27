@@ -273,12 +273,16 @@ describe('IntentRouterAgent – model routing', () => {
     assert.equal(plan.refusals[0]?.reason, 'tool_unavailable');
   });
 
-	  it('passes bounded conversation context to model routing payloads', async () => {
+	  it('passes bounded conversation context to model routing payloads, spec §4 R-M3 recentReads included', async () => {
 	    const context = {
 	      windowMinutes: 15,
 	      maxTurns: 15,
 	      lastTurnAt: '2026-07-05T10:00:00.000Z',
 	      recentTurns: [{ at: '2026-07-05T10:00:00.000Z', userMessagePreview: 'ดูสินค้าใกล้หมด', assistantReplyPreview: 'มี 2 รายการ', intent: 'READ_DETAIL', agent: 'inventory', refused: false }],
+	      // Spec §4 R-M3: the model must see this to resolve "อันที่สองล่ะ" below — the whole point of
+	      // this test is proving conversationContext reaches the payload byte-for-byte, unfiltered.
+	      recentReads: [{ tool: 'expense.list_recent', answerShape: 'list', asOf: '2026-08-25T09:00:00.000Z',
+	        shownItems: [{ ordinal: 1, id: 'e1', label: 'ร้านหนึ่ง', date: '2026-08-01' }, { ordinal: 2, id: 'e2', label: 'ร้านสอง', date: '2026-08-02' }] }],
 	    };
 	    const payloads: any[] = [];
 	    const router = new IntentRouterAgent({
