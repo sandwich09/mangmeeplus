@@ -388,6 +388,10 @@
                   }
                 }
               }
+            ],
+            "requiredFacts": [
+              "vendor",
+              "date"
             ]
           }
         }
@@ -610,6 +614,10 @@
                   }
                 }
               }
+            ],
+            "requiredFacts": [
+              "vendor",
+              "date"
             ]
           }
         },
@@ -629,6 +637,10 @@
                   }
                 }
               }
+            ],
+            "requiredFacts": [
+              "amount",
+              "date"
             ]
           }
         },
@@ -1524,6 +1536,10 @@
                   }
                 }
               }
+            ],
+            "requiredFacts": [
+              "status",
+              "date"
             ]
           }
         },
@@ -1543,6 +1559,10 @@
                   }
                 }
               }
+            ],
+            "requiredFacts": [
+              "status",
+              "date"
             ]
           }
         }
@@ -3049,6 +3069,10 @@
                   }
                 }
               }
+            ],
+            "requiredFacts": [
+              "vendor",
+              "date"
             ]
           }
         }
@@ -3156,6 +3180,10 @@
                   }
                 }
               }
+            ],
+            "requiredFacts": [
+              "status",
+              "date"
             ]
           }
         }
@@ -3290,6 +3318,10 @@
                   }
                 }
               }
+            ],
+            "requiredFacts": [
+              "amount",
+              "date"
             ]
           }
         }
@@ -5567,6 +5599,10 @@
                   }
                 }
               }
+            ],
+            "requiredFacts": [
+              "vendor",
+              "date"
             ]
           }
         }
