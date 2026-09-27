@@ -14,6 +14,7 @@ import { InventoryGetStockBalanceTool, InventoryListLowStockTool, InventorySearc
 import { NotificationsListOpenAlertsTool } from './erp-dashboard-tools.use-case';
 import { WorkflowListAssignedTasksTool, WorkflowListRecentFailuresTool, WorkflowSummarizeRuleHealthTool } from './erp-workflow-tools.use-case';
 import { ExpenseGetDailyClosingTool } from './erp-expense-daily-closing.use-case';
+import { mergeVendorBreakdownGroups, type VendorBreakdownRawGroup } from '../../../expenses/infrastructure/prisma-expense.repository';
 
 const baseCtx = { companyId: 'c1', userId: 'u1', locale: 'th-TH' } as any;
 
@@ -409,16 +410,18 @@ describe('ExpenseGetBreakdownTool', () => {
   // labelled "ไม่ระบุร้าน", and vendorHasMore folded into the pooled completeness.groups signal.
   describe('byVendor', () => {
     const vendorGroup = (i: number, amount: number) => ({
-      vendorCounterpartyId: `v${i}`, currency: 'THB', count: 1, totalAmount: amount.toFixed(4), label: `ร้าน ${i}`,
+      vendorCounterpartyId: `v${i}`, currency: 'THB', count: 1, totalAmount: amount.toFixed(4), label: `ร้าน ${i}`, linked: true,
     });
 
     it('orders vendors by amount descending and labels the no-vendor group', async () => {
-      const byVendor = [vendorGroup(1, 500), { vendorCounterpartyId: null, currency: 'THB', count: 2, totalAmount: '50.0000', label: null }, vendorGroup(2, 100)];
+      const byVendor = [vendorGroup(1, 500), { vendorCounterpartyId: null, currency: 'THB', count: 2, totalAmount: '50.0000', label: null, linked: false }, vendorGroup(2, 100)];
       const result = await new ExpenseGetBreakdownTool(makeSource({}, { byVendor })).execute({ ...baseCtx, permissions: ['expense.read'] });
       const data = result.data as any;
       assert.deepEqual(data.byVendor.map((v: any) => v.vendorId), ['v1', null, 'v2']);
       assert.equal(data.byVendor[0].vendor, 'ร้าน 1');
+      assert.equal(data.byVendor[0].linked, true);
       assert.equal(data.byVendor[1].vendor, 'ไม่ระบุร้าน');
+      assert.equal(data.byVendor[1].linked, false);
       assert.equal(data.byVendor[0].totalAmount, '500.0000');
     });
 
@@ -430,6 +433,94 @@ describe('ExpenseGetBreakdownTool', () => {
       assert.equal(data.vendorHasMore, true);
       assert.equal(data.completeness.groups.hasMore, true);
       assert.equal(data.completeness.groups.returned, data.byCategory.length + data.byBranch.length + data.byVendor.length);
+    });
+  });
+
+  // 2026-09-27 review: "ไม่ระบุร้าน" was misleading — a reimbursement projection (never linked to a
+  // counterparty, CON-4) and an older snapshot-only expense both HAVE a real vendor name. These
+  // test the repository's merge logic directly (mergeVendorBreakdownGroups), since the tool-level
+  // fakes above bypass the repository and can't exercise it.
+  describe('mergeVendorBreakdownGroups (repository merge, spec §3 row 5 review)', () => {
+    const raw = (over: Partial<VendorBreakdownRawGroup>): VendorBreakdownRawGroup => ({
+      vendorCounterpartyId: null, vendorNameSnapshot: null, currency: 'THB', count: 1, totalAmount: '100.0000', ...over,
+    });
+
+    it('a linked vendor keeps its counterparty id and is marked linked', () => {
+      const { vendorPage } = mergeVendorBreakdownGroups([raw({ vendorCounterpartyId: 'v1', vendorNameSnapshot: 'ร้านเดิม' })], 500, 10);
+      assert.deepEqual(vendorPage, [{ vendorCounterpartyId: 'v1', snapshotLabel: null, currency: 'THB', count: 1, totalAmount: '100.0000' }]);
+    });
+
+    it('an unlinked snapshot-only vendor is labelled from its snapshot, not "ไม่ระบุร้าน"', () => {
+      const { vendorPage } = mergeVendorBreakdownGroups([raw({ vendorNameSnapshot: '  ร้านเก่าไม่ผูกคู่ค้า  ' })], 500, 10);
+      assert.equal(vendorPage[0]!.vendorCounterpartyId, null);
+      assert.equal(vendorPage[0]!.snapshotLabel, 'ร้านเก่าไม่ผูกคู่ค้า');
+    });
+
+    it('a reimbursement projection keeps its "เบิกคืนพนักงาน: …" snapshot as an unlinked label', () => {
+      const { vendorPage } = mergeVendorBreakdownGroups([raw({ vendorNameSnapshot: 'เบิกคืนพนักงาน: สมชาย ใจดี' })], 500, 10);
+      assert.equal(vendorPage[0]!.vendorCounterpartyId, null);
+      assert.equal(vendorPage[0]!.snapshotLabel, 'เบิกคืนพนักงาน: สมชาย ใจดี');
+    });
+
+    it('only a row with neither an id nor a snapshot becomes the "unknown" group', () => {
+      const { vendorPage } = mergeVendorBreakdownGroups([raw({ vendorNameSnapshot: null }), raw({ vendorNameSnapshot: '   ' })], 500, 10);
+      // Both rows have no real name (one null, one whitespace-only) and share the currency, so
+      // they merge into ONE unknown row, not two.
+      assert.equal(vendorPage.length, 1);
+      assert.equal(vendorPage[0]!.vendorCounterpartyId, null);
+      assert.equal(vendorPage[0]!.snapshotLabel, null);
+      assert.equal(vendorPage[0]!.count, 2);
+    });
+
+    it('merges every snapshot variant of one linked vendor into its single canonical row', () => {
+      const { vendorPage } = mergeVendorBreakdownGroups([
+        raw({ vendorCounterpartyId: 'v1', vendorNameSnapshot: 'ร้านสมใจ', totalAmount: '100.0000', count: 1 }),
+        raw({ vendorCounterpartyId: 'v1', vendorNameSnapshot: 'ร้านสมใจ (สาขา 2)', totalAmount: '50.0000', count: 2 }),
+      ], 500, 10);
+      assert.equal(vendorPage.length, 1);
+      assert.equal(vendorPage[0]!.vendorCounterpartyId, 'v1');
+      assert.equal(vendorPage[0]!.totalAmount, '150.0000');
+      assert.equal(vendorPage[0]!.count, 3);
+    });
+
+    it('keeps currencies separate for the same vendor', () => {
+      const { vendorPage } = mergeVendorBreakdownGroups([
+        raw({ vendorCounterpartyId: 'v1', currency: 'THB', totalAmount: '100.0000' }),
+        raw({ vendorCounterpartyId: 'v1', currency: 'USD', totalAmount: '10.0000' }),
+      ], 500, 10);
+      assert.equal(vendorPage.length, 2);
+    });
+
+    it('ranks the merged (not raw) rows by amount descending', () => {
+      const { vendorPage } = mergeVendorBreakdownGroups([
+        // Split across two snapshot rows, a linked vendor's TRUE total (250) outranks a bigger
+        // single raw row (200) only once the two are merged first.
+        raw({ vendorCounterpartyId: 'v1', vendorNameSnapshot: 'A', totalAmount: '150.0000' }),
+        raw({ vendorCounterpartyId: 'v2', vendorNameSnapshot: 'B', totalAmount: '200.0000' }),
+        raw({ vendorCounterpartyId: 'v1', vendorNameSnapshot: 'A (2)', totalAmount: '100.0000' }),
+      ], 500, 10);
+      assert.deepEqual(vendorPage.map((v) => v.vendorCounterpartyId), ['v1', 'v2']);
+      assert.equal(vendorPage[0]!.totalAmount, '250.0000');
+    });
+
+    it('sets vendorHasMore when the raw fetch hits the fetch bound, even with 10 or fewer merged vendors', () => {
+      const rows = Array.from({ length: 6 }, (_, i) => raw({ vendorCounterpartyId: `v${i}`, totalAmount: '10.0000' }));
+      const { vendorHasMore, vendorPage } = mergeVendorBreakdownGroups(rows, 5, 10);
+      assert.equal(vendorHasMore, true);
+      assert.equal(vendorPage.length, 5);
+    });
+
+    it('sets vendorHasMore when the merged population exceeds the display cap, even under the fetch bound', () => {
+      const rows = Array.from({ length: 12 }, (_, i) => raw({ vendorCounterpartyId: `v${i}`, totalAmount: `${12 - i}.0000` }));
+      const { vendorHasMore, vendorPage } = mergeVendorBreakdownGroups(rows, 500, 10);
+      assert.equal(vendorHasMore, true);
+      assert.equal(vendorPage.length, 10);
+    });
+
+    it('does not set vendorHasMore when everything fits', () => {
+      const rows = [raw({ vendorCounterpartyId: 'v1' })];
+      const { vendorHasMore } = mergeVendorBreakdownGroups(rows, 500, 10);
+      assert.equal(vendorHasMore, false);
     });
   });
 

@@ -461,6 +461,7 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
         byVendor: snapshot.byVendor.map((group) => ({
           vendorId: group.vendorCounterpartyId,
           vendor: group.label ?? (group.vendorCounterpartyId ?? 'ไม่ระบุร้าน'),
+          linked: group.linked,
           currency: group.currency, count: group.count, totalAmount: group.totalAmount,
         })),
         vendorHasMore: snapshot.vendorHasMore,

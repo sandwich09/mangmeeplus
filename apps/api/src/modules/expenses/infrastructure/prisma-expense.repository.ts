@@ -96,6 +96,80 @@ export function expenseDecimalToString(value: { toString(): string } | null | un
   return value?.toString() ?? '0';
 }
 
+export type VendorBreakdownRawGroup = {
+  vendorCounterpartyId: string | null;
+  vendorNameSnapshot: string | null;
+  currency: string;
+  count: number;
+  /** Exact decimal string, already through `expenseDecimalToString` — this function never touches
+   *  a raw Prisma Decimal so it stays testable with plain objects. */
+  totalAmount: string;
+};
+
+export type VendorBreakdownMergedGroup = {
+  vendorCounterpartyId: string | null;
+  /** The vendor's display text when it is NOT linked to a counterparty: the trimmed
+   *  `vendorNameSnapshot` (e.g. a reimbursement projection's "เบิกคืนพนักงาน: <employee>", or an
+   *  older expense that only ever captured a snapshot). Null only when the row has neither an id
+   *  nor a snapshot — the caller renders that as "ไม่ระบุร้าน". A linked row's real display name
+   *  comes from the counterparty catalog, looked up by `vendorCounterpartyId` afterward. */
+  snapshotLabel: string | null;
+  currency: string;
+  count: number;
+  totalAmount: string;
+};
+
+/**
+ * Merges raw (vendorCounterpartyId, vendorNameSnapshot, currency) groups into one row per
+ * (effective vendor, currency), then ranks and pages the merged population — never the raw one.
+ *
+ * A counterparty id is the merge key when present, so every snapshot variant of one linked vendor
+ * (its `vendorNameSnapshot` can differ row to row) collapses back into a single row. Otherwise the
+ * trimmed snapshot text is the key, which is how a reimbursement projection ("เบิกคืนพนักงาน: …",
+ * never auto-linked — CON-4) and an older snapshot-only expense keep their real vendor identity
+ * instead of collapsing into "unknown". A row with neither an id nor a snapshot text is the one
+ * genuinely unknown population, merged under its own key. Currency is always part of the key —
+ * amounts never sum across currencies.
+ *
+ * `vendorHasMore` is true when EITHER the raw fetch itself hit `rawGroups.length > vendorFetchLimit`
+ * (the merge may be missing sub-groups the caller never fetched) OR the merged, deduplicated
+ * population is larger than `vendorGroupLimit` (the usual "more than the top N" signal).
+ */
+export function mergeVendorBreakdownGroups(
+  rawGroups: readonly VendorBreakdownRawGroup[],
+  vendorFetchLimit: number,
+  vendorGroupLimit: number,
+): { vendorPage: VendorBreakdownMergedGroup[]; vendorHasMore: boolean } {
+  const rawHasMore = rawGroups.length > vendorFetchLimit;
+  const merged = new Map<string, { vendorCounterpartyId: string | null; snapshotLabel: string | null; currency: string; count: number; totalAmount: Decimal }>();
+  for (const row of rawGroups.slice(0, vendorFetchLimit)) {
+    const trimmedSnapshot = row.vendorNameSnapshot?.trim() || null;
+    const mergeKey = `${row.currency}::${row.vendorCounterpartyId ?? (trimmedSnapshot ? `snap:${trimmedSnapshot}` : 'unknown')}`;
+    const amount = new Decimal(row.totalAmount);
+    const existing = merged.get(mergeKey);
+    if (existing) {
+      existing.count += row.count;
+      existing.totalAmount = existing.totalAmount.add(amount);
+    } else {
+      merged.set(mergeKey, {
+        vendorCounterpartyId: row.vendorCounterpartyId,
+        snapshotLabel: row.vendorCounterpartyId ? null : trimmedSnapshot,
+        currency: row.currency, count: row.count, totalAmount: amount,
+      });
+    }
+  }
+  const sorted = [...merged.values()].sort((a, b) => b.totalAmount.comparedTo(a.totalAmount));
+  const vendorPage = sorted.slice(0, vendorGroupLimit).map((row) => ({
+    vendorCounterpartyId: row.vendorCounterpartyId, snapshotLabel: row.snapshotLabel,
+    currency: row.currency, count: row.count,
+    // .toFixed(4), not expenseDecimalToString/.toString(): decimal.js normalises away trailing
+    // zeros on every add(), so a merged sum would otherwise drift from the "18,4" column scale
+    // every other amount in this response keeps (e.g. "150" instead of "150.0000").
+    totalAmount: row.totalAmount.toFixed(4),
+  }));
+  return { vendorPage, vendorHasMore: rawHasMore || sorted.length > vendorGroupLimit };
+}
+
 /** View-only ABAC for people persisted as actors on an expense or its source claim. */
 export function expenseRelatedToUserWhere(userId: string): Prisma.ExpenseRecordWhereInput {
   return {
@@ -1019,7 +1093,17 @@ export class PrismaExpenseRepository {
 
   /** Exact aggregate population is independent from the bounded category/branch/vendor display
    *  groups. Vendor is capped at 10, not `groupLimit` (spec §3 row 5): it feeds a ranked "top
-   *  vendor" answer, not the fuller category/branch breakdown. */
+   *  vendor" answer, not the fuller category/branch breakdown.
+   *
+   *  Vendor grouping merges TWO different "no linked counterparty" populations that a plain
+   *  `vendorCounterpartyId`-only group can't tell apart: a reimbursement projection (vendor
+   *  `เบิกคืนพนักงาน: <employee>`, never auto-linked — CON-4) and an older expense that only ever
+   *  captured `vendorNameSnapshot`. Both HAVE a real vendor name; only a row with neither an id nor
+   *  a snapshot is genuinely "ไม่ระบุร้าน". The raw groupBy therefore also splits on
+   *  `vendorNameSnapshot`, over-fetches (`vendorFetchLimit`) because that column is far less
+   *  bounded than a real counterparty catalog, and `mergeVendorBreakdownGroups` — id wins as the
+   *  key when present, so every snapshot variant of one linked vendor collapses back into its
+   *  canonical name — runs in code before the top-10 ranking, which is computed AFTER merging. */
   async readAiExpenseBreakdown(
     filter: AiExpenseReadFilter,
     scope: AiExpenseReadScope,
@@ -1029,16 +1113,17 @@ export class PrismaExpenseRepository {
     byCurrency: Array<{ currency: string; count: number; totalAmount: string }>;
     byCategory: Array<{ expenseCategoryId: string | null; currency: string; count: number; totalAmount: string; label: string | null }>;
     byBranch: Array<{ branchId: string | null; currency: string; count: number; totalAmount: string; label: string | null }>;
-    byVendor: Array<{ vendorCounterpartyId: string | null; currency: string; count: number; totalAmount: string; label: string | null }>;
+    byVendor: Array<{ vendorCounterpartyId: string | null; currency: string; count: number; totalAmount: string; label: string | null; linked: boolean }>;
     categoryHasMore: boolean;
     branchHasMore: boolean;
     vendorHasMore: boolean;
   }> {
     const where = this.aiExpenseWhere(filter, scope);
     const vendorGroupLimit = 10;
+    const vendorFetchLimit = 500;
     return this.prisma.client.$transaction(async (tx) => {
       const stamp = await tx.$queryRaw<Array<{ asOf: Date }>>`SELECT transaction_timestamp() AS "asOf"`;
-      const [totals, categoryGroups, branchGroups, vendorGroups, company] = await Promise.all([
+      const [totals, categoryGroups, branchGroups, vendorRawGroups, company] = await Promise.all([
         tx.expenseRecord.groupBy({ by: ['currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true } }),
         tx.expenseRecord.groupBy({
           by: ['expenseCategoryId', 'currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true },
@@ -1049,14 +1134,22 @@ export class PrismaExpenseRepository {
           orderBy: [{ _sum: { grandTotalAmount: 'desc' } }, { branchId: 'asc' }, { currency: 'asc' }], take: groupLimit + 1,
         }),
         tx.expenseRecord.groupBy({
-          by: ['vendorCounterpartyId', 'currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true },
-          orderBy: [{ _sum: { grandTotalAmount: 'desc' } }, { vendorCounterpartyId: 'asc' }, { currency: 'asc' }], take: vendorGroupLimit + 1,
+          by: ['vendorCounterpartyId', 'vendorNameSnapshot', 'currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true },
+          orderBy: [{ _sum: { grandTotalAmount: 'desc' } }, { vendorCounterpartyId: 'asc' }, { vendorNameSnapshot: 'asc' }, { currency: 'asc' }],
+          take: vendorFetchLimit + 1,
         }),
         tx.company.findUnique({ where: { id: filter.companyId }, select: { baseCurrency: true } }),
       ]);
       const categoryPage = categoryGroups.slice(0, groupLimit);
       const branchPage = branchGroups.slice(0, groupLimit);
-      const vendorPage = vendorGroups.slice(0, vendorGroupLimit);
+      const { vendorPage, vendorHasMore } = mergeVendorBreakdownGroups(
+        vendorRawGroups.map((row) => ({
+          vendorCounterpartyId: row.vendorCounterpartyId, vendorNameSnapshot: row.vendorNameSnapshot,
+          currency: row.currency, count: row._count._all, totalAmount: expenseDecimalToString(row._sum.grandTotalAmount),
+        })),
+        vendorFetchLimit, vendorGroupLimit,
+      );
+
       const [categories, branches, vendors] = await Promise.all([
         tx.expenseCategory.findMany({
           where: { companyId: filter.companyId, id: { in: categoryPage.map((group) => group.expenseCategoryId).filter((id): id is string => Boolean(id)) } },
@@ -1091,13 +1184,14 @@ export class PrismaExpenseRepository {
           label: group.branchId ? branchNames.get(group.branchId) ?? null : null,
         })),
         byVendor: vendorPage.map((group) => ({
-          vendorCounterpartyId: group.vendorCounterpartyId, currency: group.currency, count: group._count._all,
-          totalAmount: expenseDecimalToString(group._sum.grandTotalAmount),
-          label: group.vendorCounterpartyId ? vendorNames.get(group.vendorCounterpartyId) ?? null : null,
+          vendorCounterpartyId: group.vendorCounterpartyId, currency: group.currency, count: group.count,
+          totalAmount: group.totalAmount,
+          label: group.vendorCounterpartyId ? vendorNames.get(group.vendorCounterpartyId) ?? null : group.snapshotLabel,
+          linked: group.vendorCounterpartyId !== null,
         })),
         categoryHasMore: categoryGroups.length > groupLimit,
         branchHasMore: branchGroups.length > groupLimit,
-        vendorHasMore: vendorGroups.length > vendorGroupLimit,
+        vendorHasMore,
       };
     }, { isolationLevel: 'RepeatableRead', maxWait: 1_000, timeout: 5_000 });
   }
