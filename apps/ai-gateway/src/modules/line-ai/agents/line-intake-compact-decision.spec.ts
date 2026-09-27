@@ -291,4 +291,46 @@ describe('compact LINE intake decision', () => {
     assert.equal(guessed?.preparedPlan, undefined, 'e2 was never shown this chat — never grounded by messageText or memory');
     assert.equal(guessed?.simpleReadRejection, 'filter_not_grounded');
   });
+
+  it('C4: keeps a write clause whose writeIntent no tool supports (e.g. invoicing) instead of failing the whole decision', async () => {
+    const text = 'ช่วยออกใบแจ้งหนี้ให้ลูกค้าหน่อยค่ะ';
+    const created = await fixture(text);
+    const reasons: string[] = [];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: { subrequests: [{ kind: 'write', goal: 'ออกใบแจ้งหนี้ให้ลูกค้า', sources: [{ part: 0, whole: true }], filters: {}, writeIntent: 'create_invoice' }] },
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
+      onReject: (reason) => reasons.push(reason),
+    });
+    // The old behavior failed the whole decision here (ROUTER_SEMANTIC_SCHEMA_INVALID, zero coverage).
+    assert.deepEqual(reasons, []);
+    assert.equal(parsed?.semanticSubrequests.length, 1);
+    assert.equal(parsed?.semanticSubrequests[0]?.kind, 'write');
+    assert.equal(parsed?.semanticSubrequests[0]?.writeIntent, undefined);
+  });
+
+  it('C4: still keeps a recognized writeIntent on a write clause', async () => {
+    const text = 'ขอเบิกค่ารถ 200 บาท';
+    const created = await fixture(text);
+    const parsed = parseLineIntakeCompactDecision({
+      raw: { subrequests: [{ kind: 'write', goal: text, sources: [{ part: 0, whole: true }], filters: {}, writeIntent: 'REIMBURSEMENT_REQUEST_START' }] },
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
+    });
+    assert.equal(parsed?.semanticSubrequests[0]?.writeIntent, 'REIMBURSEMENT_REQUEST_START');
+  });
+
+  it('still rejects a writeIntent claimed on a non-write clause (structural inconsistency, not an unsupported value)', async () => {
+    const text = 'ดูค่าใช้จ่ายเดือนนี้';
+    const created = await fixture(text);
+    const reasons: string[] = [];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: { subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: {}, writeIntent: 'REIMBURSEMENT_REQUEST_START' }] },
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
+      onReject: (reason) => reasons.push(reason),
+    });
+    assert.equal(parsed, undefined);
+    assert.deepEqual(reasons, ['decision_shape_invalid']);
+  });
 });

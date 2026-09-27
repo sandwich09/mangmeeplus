@@ -286,14 +286,22 @@ export function parseLineIntakeCompactDecision(input: {
       return reject('taskref_malformed');
     }
     const writeIntent = item['writeIntent'];
-    if (writeIntent !== undefined && (item['kind'] !== 'write'
-      || !WRITE_INTENTS.has(writeIntent as NonNullable<LineAiSemanticSubrequestV2['writeIntent']>))) return reject('decision_shape_invalid');
+    // A writeIntent claimed on a non-write clause is a structural inconsistency the model must
+    // never produce — reject the whole decision as before. A writeIntent VALUE the tool catalog
+    // does not support at all (C4, e.g. invoicing) is different: it must not fail the whole
+    // decision, since the clause itself (kind:'write', no writeIntent) is still perfectly valid and
+    // lets the normal write path answer honestly instead of the intake discarding the entire
+    // message. Only a value IN `WRITE_INTENTS` was ever wired to a real tool, so dropping an
+    // unrecognized one removes authority, never grants it — an unknown write still executes nothing.
+    if (writeIntent !== undefined && item['kind'] !== 'write') return reject('decision_shape_invalid');
+    const recognizedWriteIntent = WRITE_INTENTS.has(writeIntent as NonNullable<LineAiSemanticSubrequestV2['writeIntent']>)
+      ? writeIntent as NonNullable<LineAiSemanticSubrequestV2['writeIntent']> : undefined;
     canonical.push({
       index, kind: item['kind'], goal: item['goal'], requiredEvidence, requestedFilters: filters, dependsOn,
       evidenceRefs: refs,
       ...(entity !== undefined ? { entityReference: { kind: 'user_text', value: entity } } : {}),
       ...(taskRef !== undefined ? { taskRef } : {}),
-      ...(writeIntent !== undefined ? { writeIntent } : {}),
+      ...(recognizedWriteIntent !== undefined ? { writeIntent: recognizedWriteIntent } : {}),
     });
   }
   const semanticSubrequests = parseLineAiSemanticSubrequests(canonical, messageText, inputEvidence);

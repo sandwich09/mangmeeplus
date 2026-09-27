@@ -427,10 +427,14 @@ describe('LineAiTurnUseCase -> OrchestratorAgent -> real v2 provider path', () =
       apiResults: expenseSummary });
 
     assert.equal(run.response.errorCode, undefined);
-    assert.equal(run.response.semanticCoverage?.[0]?.status, 'needs_user');
+    // C1(d): a grounding failure is a system outcome, not a customer question — `unsupported`
+    // (never `needs_user`, which would leave a phantom wait no answer could ever resolve). No
+    // deterministic family is enabled in this harness's plain config object, so it falls through
+    // to the honest §8 terminal rather than a rendered fallback.
+    assert.equal(run.response.semanticCoverage?.[0]?.status, 'unsupported');
     assert.equal(run.response.semanticCoverage?.[0]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
     assert.doesNotMatch(run.response.replyText, /999/);
-    assert.match(run.response.replyText, /ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้/);
+    assert.match(run.response.replyText, /ดึงข้อมูลส่วนนี้ไม่ได้/);
     assert.equal(run.response.semanticCoverage?.[1]?.status, 'handled');
   });
 });
