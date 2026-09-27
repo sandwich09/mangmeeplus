@@ -76,6 +76,7 @@ function seedRows(): RuntimeSourceSnapshot['rows'] {
   insertBefore('expenseRecord', [
     ...['office', 'service', 'utilities'].map((key, index) => ({ model: 'expenseCategory', data: {
       id: `nat-category-${key}`, companyId, name: ['ค่าอุปกรณ์สำนักงาน', 'ค่าบริการ', 'ค่าน้ำค่าไฟ'][index],
+      accountHintKey: ['expense.office_supplies', 'expense.professional_fees', 'expense.utilities'][index],
       status: 'ACTIVE', sortOrder: 30 + index,
     } })),
     ...[['repair', 'สมชายการช่าง'], ['office', 'สมชายเครื่องเขียน']].map(([key, displayName]) => ({ model: 'accountingCounterparty', data: {

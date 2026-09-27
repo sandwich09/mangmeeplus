@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { AUTHORED_CORPUS, CORPUS_JSON_PATH, assertFrozenArtifact } from './line-ai-reliability-corpus';
 import { reliabilityDigest, validateReliabilityCorpus } from './line-ai-reliability-fixtures';
@@ -132,4 +135,48 @@ test('manifest selection is isolated, denies unknown IDs and forces no public se
   manifest.snapshots['nat-NAT-01']!.rows[0]!.data.displayName = 'mutation test';
   assert.notEqual(snapshot.rows[0]!.data.displayName, 'mutation test');
   assert.throws(() => buildNaturalConversationRuntimeManifest({ ...options, scenarioIds: ['UNKNOWN'] }), /UNKNOWN_OR_DUPLICATE_NAT_SCENARIO/);
+});
+
+
+test('new NAT categories carry the required registered accounting hint without claiming reviewed posting authority', () => {
+  const hints = { 'nat-category-office': 'expense.office_supplies', 'nat-category-service': 'expense.professional_fees',
+    'nat-category-utilities': 'expense.utilities' };
+  for (const [id, accountHintKey] of Object.entries(hints)) {
+    const row = snapshot.rows.find(row => row.model === 'expenseCategory' && row.data.id === id)!;
+    assert.equal(row.data.accountHintKey, accountHintKey);
+    assert.equal(row.data.ledgerAccountCode, undefined);
+    assert.equal(row.data.ledgerAccountReviewedByUserId, undefined);
+  }
+});
+
+// Explicit opt-in, destructive only inside the same guarded isolated local replay database.
+// Uses real generated Prisma validation and DB constraints before any paid model call.
+test('all distinct NAT row sets seed through real Prisma and PostgreSQL', {
+  skip: !process.env.NAT_SEED_DATABASE_URL && 'Set NAT_SEED_DATABASE_URL to the dedicated local replay DB for the seed-only check',
+}, async () => {
+  const { resetRuntimeFixtureDatabase, assertIsolatedReplayDatabase } = await import('./line-ai-reliability-runtime');
+  const { PrismaClient } = await import('../apps/api/src/generated/prisma/client');
+  const apiRequire = createRequire(resolve(dirname(fileURLToPath(import.meta.url)), '../apps/api/package.json'));
+  const { PrismaPg } = apiRequire('@prisma/adapter-pg');
+  const { Client } = apiRequire('pg');
+  const databaseUrl = process.env.NAT_SEED_DATABASE_URL!;
+  assertIsolatedReplayDatabase(databaseUrl);
+  const connection = new Client({ connectionString: databaseUrl });
+  const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
+  await connection.connect();
+  try {
+    assert.equal((await connection.query("SELECT pg_try_advisory_lock(hashtext('line-reliability-runtime-reset')) AS locked")).rows[0]?.locked, true, 'REPLAY_DATABASE_ALREADY_IN_USE');
+    const distinct = new Map(Object.values(NATURAL_SOURCE_SNAPSHOT_MANIFEST.snapshots).map(value => [reliabilityDigest(value.rows), value.rows]));
+    assert.equal(distinct.size, 1, 'All twelve snapshots currently share the same real ERP rows');
+    for (const rows of distinct.values()) {
+      await resetRuntimeFixtureDatabase(connection, databaseUrl);
+      for (const [index, seed] of rows.entries()) {
+        try { await (client as unknown as Record<string, { create(input: unknown): Promise<unknown> }>)[seed.model]!.create({ data: seed.data }); }
+        catch (error) { throw new Error(`NAT_SEED_FAILED:${index}:${seed.model}:${seed.data.id}`, { cause: error }); }
+      }
+      assert.equal(await client.expenseRecord.count(), expenses.length);
+      assert.equal(await client.expensePayment.count(), 3);
+      assert.equal(await client.companyMembership.count({ where: { status: 'ACTIVE' } }), 1);
+    }
+  } finally { await client.$disconnect(); await connection.end(); }
 });
