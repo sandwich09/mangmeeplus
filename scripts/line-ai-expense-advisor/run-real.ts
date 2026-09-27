@@ -61,11 +61,11 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runLineReliabilityRuntime, type ReliabilityRuntimeManifest, type RuntimeSourceSnapshot, type RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 import { reliabilityDigest, type ReliabilityFixture } from '../line-ai-reliability-fixtures';
-import { validateCorpus, flattenTurns, selectConversations, parseFailedConversationIds, type Corpus, type EvalCompany, type Turn } from './types';
+import { validateCorpus, flattenTurns, selectConversations, parseFailedConversationIds, type Corpus, type EvalCompany } from './types';
 import { buildCompanySeed, type CompanySeed } from './seed';
-import { scoreTurn, summarizeScores, type CapturedEvidence, type ToolResultLike, type TurnScore } from './scorer';
-import { collectGoldResults, turnKey } from './gold-oracle-pass';
-import { extractOfferedChoices, gitHeadSha } from './oracle';
+import { summarizeScores, type TurnScore } from './scorer';
+import { collectGoldResults, scoreAllTurns } from './gold-oracle-pass';
+import { gitHeadSha } from './oracle';
 import { ROLE_GRANTS } from '../../apps/api/src/modules/auth/permission-registry';
 import { filterPermissionsByEntitlement } from '../../apps/api/src/modules/employee-access/domain/logic/feature-gate.logic';
 import { TIER_FEATURE_PRESETS } from '../../packages/contracts/src/menu-entitlements';
@@ -121,39 +121,8 @@ function resolveSubsetSelection(): SubsetSelection | null {
   return { onlyIds: only.split(',').map((id) => id.trim()).filter(Boolean), description: 'an explicit MANGMEE_EVAL_ONLY list' };
 }
 
-/** Every text a delivered LINE message could carry a fact in: a plain text bubble's `text`, and a
- * Flex message's `altText` plus any `text` node inside its `contents` tree. */
-function extractDeliveredText(messages: unknown): string {
-  const parts: string[] = [];
-  const visit = (value: unknown, depth: number): void => {
-    if (!value || typeof value !== 'object' || depth > 12) return;
-    if (Array.isArray(value)) { for (const item of value) visit(item, depth + 1); return; }
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      if ((key === 'text' || key === 'altText') && typeof child === 'string') parts.push(child);
-      else visit(child, depth + 1);
-    }
-  };
-  visit(messages, 0);
-  return parts.join('\n');
-}
-
-function toCapturedEvidence(evidence: RuntimeTurnEvidence): CapturedEvidence {
-  // `result` rides along on each captured call — the "one more scorer rule" category/vendor/branch
-  // name-resolution equivalence check (scorer.ts resolvedOutcome) reads it directly off here.
-  const toolCalls = evidence.toolResults.map((call) => ({ tool: call.tool, input: call.input as Record<string, unknown>, result: call.result as ToolResultLike | undefined }));
-  const deliveredText = evidence.receipts.map((receipt) => extractDeliveredText(receipt.messages)).join('\n');
-  const lastReceiptAt = evidence.receipts.length ? Math.max(...evidence.receipts.map((receipt) => receipt.at)) : null;
-  const usage = evidence.providerUsage as Array<{ costSatang: number | null; usageBasis: string }>;
-  const costSatang = usage.length && usage.every((row) => row.usageBasis === 'PROVIDER_REPORTED')
-    ? usage.reduce((sum, row) => sum + (row.costSatang ?? 0), 0) : null;
-  const offeredChoices = toolCalls.flatMap((call) => (call.result ? extractOfferedChoices(call.result) ?? [] : []));
-  return {
-    toolCalls, deliveredText,
-    latencyMs: lastReceiptAt !== null ? lastReceiptAt - evidence.acceptedAtMs : null,
-    modelCalls: usage.length, costSatang,
-    offeredChoices,
-  };
-}
+// toCapturedEvidence/extractDeliveredText moved to gold-oracle-pass.ts, alongside scoreAllTurns
+// (shared with run-rescore.ts — the same evidence shape, the same scoring loop, T-068's fix once).
 
 /** One RuntimeSourceSnapshot per (company, role) actually used by the corpus: real-mode resets and
  * reseeds the WHOLE database between every fixture, so each conversation's actor needs a snapshot
@@ -286,27 +255,15 @@ async function main(): Promise<void> {
     }, null, 2));
   }
 
-  const scores: TurnScore[] = [];
-  for (const { conversation, turnIndex, turn } of flat) {
-    const evidence = result.turnEvidence.find((row: RuntimeTurnEvidence) => row.scenarioId === conversation.id && row.turnIndex === turnIndex);
-    if (!evidence) {
-      const record = result.records.find((row: { scenarioId: string }) => row.scenarioId === conversation.id);
-      throw new Error(`no captured evidence for ${conversation.id}#${turnIndex} — record error: ${record?.error ?? 'none'}; see the real_run_diagnostics line above for runtimeDiagnostics`);
-    }
-    const captured = toCapturedEvidence(evidence);
-    const key = turnKey(conversation.id, turnIndex);
-    // All three come from collectGoldResults' independent oracle pass — never from the model's own
-    // (possibly wrong) captured result, per "never hand-type expected numbers, always the oracle".
-    const expectedFacts = goldPass.factsByTurn.get(key) ?? [];
-    const goldResults = goldPass.resultsByTurn.get(key) ?? [];
-    // T-068 bug: turn.expect.calls still carries the RAW corpus literal (e.g. an unresolved
-    // `{ $fromShownItems: 2 }`), which scoreToolCalls would compare as the literal string
-    // "[object Object]" against the model's resolved id — always failing even when the model
-    // called the exact right tool. Score against the SAME resolved input the oracle actually ran.
-    const resolvedCalls = goldPass.resolvedCallsByTurn.get(key);
-    const turnForScoring: Turn = resolvedCalls ? { ...turn, expect: { ...turn.expect, calls: resolvedCalls } } : turn;
-    scores.push(scoreTurn({ conversationId: conversation.id, turnIndex }, turnForScoring, captured, expectedFacts, now, goldResults));
+  // Checked up front, with the richer (live-replay-only) diagnostic pointer: scoreAllTurns itself
+  // throws a plainer "no captured evidence" error, since run-rescore.ts's offline pass has no
+  // `result.records`/`runtimeDiagnostics` to point at.
+  for (const { conversation, turnIndex } of flat) {
+    if (result.turnEvidence.some((row: RuntimeTurnEvidence) => row.scenarioId === conversation.id && row.turnIndex === turnIndex)) continue;
+    const record = result.records.find((row: { scenarioId: string }) => row.scenarioId === conversation.id);
+    throw new Error(`no captured evidence for ${conversation.id}#${turnIndex} — record error: ${record?.error ?? 'none'}; see the real_run_diagnostics line above for runtimeDiagnostics`);
   }
+  const scores: TurnScore[] = scoreAllTurns(flat, result.turnEvidence, goldPass, now);
   const summary = summarizeScores(scores);
 
   const stamp = now.toISOString().replace(/[:.]/g, '-');

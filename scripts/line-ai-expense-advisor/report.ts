@@ -66,10 +66,19 @@ export function renderReport(input: {
   /** Task item "re-run a subset": present only when MANGMEE_EVAL_ONLY selected fewer than the
    * corpus's full conversation list — the report must say so, never look like a full run. */
   subset?: { onlyIds: string[]; description: string };
+  /** run-rescore.ts (task item "offline rescore"): present when this report re-scores a PREVIOUS
+   * run's saved turnEvidence against the current scorer/corpus, rather than a fresh model run —
+   * the report must say so just as plainly as a subset run. */
+  rescoredFrom?: { evidencePath: string; sourceCommit: string; startedAt: string };
 }): string {
-  const { sourceCommit, now, summary, scores, corpus, turnEvidence, subset } = input;
+  const { sourceCommit, now, summary, scores, corpus, turnEvidence, subset, rescoredFrom } = input;
   const subsetBanner = subset
     ? `> **Subset run — not the full corpus.** ${corpus.conversations.length} conversation(s) selected from ${subset.description}: ${subset.onlyIds.join(', ')}\n\n`
+    : '';
+  const rescoredBanner = rescoredFrom
+    ? `> **Rescored — no model calls made.** Re-scored \`${rescoredFrom.evidencePath}\` (originally run at `
+      + `${rescoredFrom.startedAt} from commit \`${rescoredFrom.sourceCommit}\`) against the CURRENT scorer/corpus `
+      + `(commit \`${sourceCommit}\`).\n\n`
     : '';
   const byCategoryRows = Object.entries(summary.byCategory).sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
     .map(([category, row]) => `| ${category} | ${row.passed}/${row.total} |`).join('\n');
@@ -96,6 +105,7 @@ export function renderReport(input: {
   return `# LINE AI expense-advisor eval report\n\n`
     + `- Source commit: \`${sourceCommit}\`\n- Run started: ${now.toISOString()}\n- Corpus: ${corpus.conversations.length} conversations, ${scores.length} turns\n\n`
     + subsetBanner
+    + rescoredBanner
     + `## Summary\n\n| | |\n|---|---|\n| Passed | ${summary.passed} |\n| Failed | ${summary.failed} |\n| Pass rate | ${(summary.passRate * 100).toFixed(1)}% |\n\n`
     + `## By category (spec §3 row)\n\n| Category | Passed/Total |\n|---|---|\n${byCategoryRows}\n\n`
     + `## Failures\n\n${failureSections || '_none_'}\n`;

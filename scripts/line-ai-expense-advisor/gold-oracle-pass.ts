@@ -20,11 +20,75 @@
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { buildCompanySeed, applySeedRows, truncateAllTables, SHARED_ACCESS_ROWS, type CompanySeed, type PgClientLike } from './seed';
-import { bootOracle, resolveGoldCallInput, extractShownItems, extractExpectedFactsForCall, type ShownItem } from './oracle';
-import type { ExpectedFact, ToolResultLike } from './scorer';
-import type { Corpus, EvalCompany, GoldCall } from './types';
+import { bootOracle, resolveGoldCallInput, extractShownItems, extractExpectedFactsForCall, extractOfferedChoices } from './oracle';
+import type { ShownItem } from './oracle';
+import { scoreTurn, type CapturedEvidence, type ExpectedFact, type ToolResultLike, type TurnScore } from './scorer';
+import type { Conversation, Corpus, EvalCompany, GoldCall, Turn } from './types';
+import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 
 export const turnKey = (conversationId: string, turnIndex: number): string => `${conversationId}#${turnIndex}`;
+
+/** Every text a delivered LINE message could carry a fact in: a plain text bubble's `text`, and a
+ * Flex message's `altText` plus any `text` node inside its `contents` tree. */
+function extractDeliveredText(messages: unknown): string {
+  const parts: string[] = [];
+  const visit = (value: unknown, depth: number): void => {
+    if (!value || typeof value !== 'object' || depth > 12) return;
+    if (Array.isArray(value)) { for (const item of value) visit(item, depth + 1); return; }
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if ((key === 'text' || key === 'altText') && typeof child === 'string') parts.push(child);
+      else visit(child, depth + 1);
+    }
+  };
+  visit(messages, 0);
+  return parts.join('\n');
+}
+
+/** Shared by run-real.ts (evidence just captured from a live replay) and run-rescore.ts (the SAME
+ * shape read back from a saved `*.evidence.json`) — scoring must treat both identically. */
+export function toCapturedEvidence(evidence: RuntimeTurnEvidence): CapturedEvidence {
+  // `result` rides along on each captured call — the "one more scorer rule" category/vendor/branch
+  // name-resolution equivalence check (scorer.ts resolvedOutcome) reads it directly off here.
+  const toolCalls = evidence.toolResults.map((call) => ({ tool: call.tool, input: call.input as Record<string, unknown>, result: call.result as ToolResultLike | undefined }));
+  const deliveredText = evidence.receipts.map((receipt) => extractDeliveredText(receipt.messages)).join('\n');
+  const lastReceiptAt = evidence.receipts.length ? Math.max(...evidence.receipts.map((receipt) => receipt.at)) : null;
+  const usage = evidence.providerUsage as Array<{ costSatang: number | null; usageBasis: string }>;
+  const costSatang = usage.length && usage.every((row) => row.usageBasis === 'PROVIDER_REPORTED')
+    ? usage.reduce((sum, row) => sum + (row.costSatang ?? 0), 0) : null;
+  const offeredChoices = toolCalls.flatMap((call) => (call.result ? extractOfferedChoices(call.result) ?? [] : []));
+  return {
+    toolCalls, deliveredText,
+    latencyMs: lastReceiptAt !== null ? lastReceiptAt - evidence.acceptedAtMs : null,
+    modelCalls: usage.length, costSatang,
+    offeredChoices,
+  };
+}
+
+/** Scores every flattened turn against a captured `turnEvidence` list and a `GoldOraclePass` —
+ * the exact loop run-real.ts's live replay and run-rescore.ts's offline pass both need, so a
+ * scoring-behavior change (e.g. T-068's resolved-input fix) cannot land in one and not the other. */
+export function scoreAllTurns(
+  flat: ReadonlyArray<{ conversation: Conversation; turnIndex: number; turn: Turn }>,
+  turnEvidenceList: readonly RuntimeTurnEvidence[],
+  goldPass: GoldOraclePass,
+  now: Date,
+): TurnScore[] {
+  return flat.map(({ conversation, turnIndex, turn }) => {
+    const evidence = turnEvidenceList.find((row) => row.scenarioId === conversation.id && row.turnIndex === turnIndex);
+    if (!evidence) throw new Error(`no captured evidence for ${conversation.id}#${turnIndex}`);
+    const captured = toCapturedEvidence(evidence);
+    const key = turnKey(conversation.id, turnIndex);
+    // All three come from collectGoldResults' independent oracle pass — never from the model's own
+    // (possibly wrong) captured result, per "never hand-type expected numbers, always the oracle".
+    const expectedFacts = goldPass.factsByTurn.get(key) ?? [];
+    const goldResults = goldPass.resultsByTurn.get(key) ?? [];
+    // T-068: score against the RESOLVED input the oracle actually ran, never turn.expect.calls'
+    // raw corpus literal (e.g. an unresolved `{ $fromShownItems: 2 }`) — see this file's header.
+    const resolvedCalls = goldPass.resolvedCallsByTurn.get(key);
+    const turnForScoring: Turn = resolvedCalls ? { ...turn, expect: { ...turn.expect, calls: resolvedCalls } } : turn;
+    return scoreTurn({ conversationId: conversation.id, turnIndex }, turnForScoring, captured, expectedFacts, now, goldResults);
+  });
+}
 
 export type GoldOraclePass = {
   resultsByTurn: Map<string, Array<ToolResultLike | undefined>>;
