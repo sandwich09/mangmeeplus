@@ -515,6 +515,53 @@ describe('OrchestratorAgent', () => {
     assert.ok(prepared.replyText.includes(`\nข้อมูล ณ ${todayDay} ${thaiMonth} ${thaiYear}`));
   });
 
+  it('item 1 (spec §3 row 7): a list-shape prepared read serves the compiled numbered-list formatter, not the single-metric summary', async () => {
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+    const currentMonthStart = `${today.slice(0, 7)}-01`;
+    const erpTools = {
+      invoke: async (tool: any) => ({
+        toolName: tool.name,
+        status: 'ok',
+        data: {
+          total: 2,
+          period: { fromDate: currentMonthStart, toDate: today, defaultedToCurrentMonth: true },
+          // Same summary shape the single-metric family reads (incl. the basis-line amounts), so a
+          // real bug that reruns the single-metric formatter on a list-shape read would still show up.
+          summary: { totalAmount: 1200, countedItems: 2, cancelledCount: 0, pendingAmount: 0, draftAmount: 0, confirmedAmount: 1200 },
+          items: [
+            { id: 'e1', expenseDate: '2026-08-05T10:00:00.000Z', vendorNameSnapshot: 'ร้านสมใจ', status: 'CONFIRMED', grandTotalAmount: '500.00' },
+            { id: 'e2', expenseDate: '2026-08-02T10:00:00.000Z', vendorNameSnapshot: 'ร้านใจดี', status: 'READY_FOR_CONFIRMATION', grandTotalAmount: '700.00' },
+          ],
+        },
+        sourceRefs: [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, webPath: '/companies/company-1/expenses' }],
+        asOf: new Date().toISOString(),
+      }),
+    } as any;
+    const req = makeReq('ขอดูรายการล่าสุดหน่อยครับ');
+    req.userContext.permissions.push('expense.read');
+    const preparedPlan = parseLineAiPreparedPlan({
+      version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'list',
+      intentPlan: {
+        status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+        intents: [{ intent: 'read_detail', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }],
+      },
+      proposedCalls: [{ toolName: 'expense.list_recent', input: {} }],
+    });
+    assert.ok(preparedPlan);
+    const result = await new OrchestratorAgent(erpTools, makeConfig({
+      lineAiPreparedSimpleReadEnabled: true,
+      lineAiDeterministicResponseFamilies: ['expense.list_recent::list'],
+    })).run({ ...req, preparedPlan, intakeIntent: 'BUSINESS_READ_QUESTION', actorDelegations: { 'expense.list_recent': ['test-delegation'] } });
+    // The compiled expense.list_recent::list formatter's numbered rows must be served...
+    assert.match(result.replyText, /\n1\. 2026-08-05 ร้านสมใจ 500\.00 บาท \(ยืนยันแล้ว\)/);
+    assert.match(result.replyText, /\n2\. 2026-08-02 ร้านใจดี 700\.00 บาท \(พร้อมยืนยัน\)/);
+    // ...never the single-metric "basis" line (R-A3 lists never carry it; R-A1 basis is single-metric only).
+    assert.ok(!result.replyText.includes('ฐานยอด'), 'must not fall back to the single-metric summary reply');
+    assert.equal(result.presentation?.cards[0]?.text, result.replyText);
+    // deliveredExpenseSummary (R-M2) is a single-metric-only memory proof; a list reply must never set it.
+    assert.equal(result.deterministicExpenseSummary, undefined);
+  });
+
   it('expense query with unavailable tool does not fall back to accounting no-data copy', async () => {
     const erpTools = {
       invoke: async (tool: any) => ({

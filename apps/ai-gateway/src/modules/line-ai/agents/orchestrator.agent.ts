@@ -1867,7 +1867,11 @@ export class OrchestratorAgent {
       });
       if (formatted.kind === 'answer') {
         this.logger.log({ msg: 'line.ai.prepared_simple_read.served', requestId: req.requestId, tool: call.toolName, answerShape, periodSource });
-        const expenseSummary = tool.name === 'expense.list_recent' ? deterministicExpenseSummaryReply(req, [output]) : undefined;
+        // Spec §3 row 7: a `list`-shape prepared read must keep the compiled
+        // expense.list_recent::list formatter's reply (`formatted` above) — the deterministic
+        // single-metric summary below is a totals-only reply and must never override a list answer.
+        const expenseSummary = tool.name === 'expense.list_recent' && answerShape === 'single_metric'
+          ? deterministicExpenseSummaryReply(req, [output]) : undefined;
         return this.buildPreparedAnswerResult(singlePlan, output, formatted, startMs, expenseSummary);
       }
     }
