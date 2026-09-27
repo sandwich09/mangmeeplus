@@ -343,6 +343,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
   { id: 'reliability-gateway-v2', cwd: 'apps/ai-gateway', command: '../../node_modules/.bin/tsx', args: ['--test',
     'src/agentcore/runtime.spec.ts',
     'src/modules/line-ai/agents/approved-knowledge.spec.ts',
+    'src/modules/line-ai/agents/line-intake-compact-decision.spec.ts',
+    'src/modules/line-ai/agents/read-tool-input.spec.ts',
     'src/modules/line-ai/application/document-qa.integration.spec.ts',
     'src/modules/line-ai/application/use-cases/line-ai-turn-v2.integration.spec.ts',
       'src/modules/line-ai/agents/semantic-retained-source.spec.ts',
