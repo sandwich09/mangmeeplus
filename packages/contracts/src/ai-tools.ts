@@ -93,6 +93,11 @@ export type ToolQueryApplied = {
   statusBasis: string;
   dataset: string;
   filters?: Record<string, string | number | boolean | null | readonly string[]>;
+  /** Item 1 (spec R-A1 row 18): the caller's own effective read scope, from the SAME permission
+   *  logic that already narrows the query (never inferred downstream) — 'company' when the caller
+   *  can read every record, 'related' when narrowed to records tied to the caller's own relation,
+   *  'own' when narrowed to only the caller's own records. Omitted keeps existing tools byte-identical. */
+  accessScope?: 'own' | 'related' | 'company';
 };
 
 export type ToolResult<TData = unknown> = {

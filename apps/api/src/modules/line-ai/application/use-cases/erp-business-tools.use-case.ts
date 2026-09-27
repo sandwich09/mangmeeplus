@@ -408,6 +408,9 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
       ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
     });
     asOf = snapshot.asOf.toISOString();
+    // Item 1 (spec R-A1 row 18): `readAiBreakdown` now echoes the scope it already applied; an
+    // older test double or caller that predates this field simply reads as company-wide, unchanged.
+    const accessScope = (snapshot as { accessScope?: 'own' | 'related' | 'company' }).accessScope ?? 'company';
     const totalCount = snapshot.byCurrency.reduce((sum, row) => sum + row.count, 0);
     const soleCurrency = snapshot.byCurrency.length === 1 ? snapshot.byCurrency[0] : undefined;
 
@@ -419,6 +422,7 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
       branch: { mode: input.branchId ? 'selected' : 'all_authorized', branchId: input.branchId ?? null },
       dateBasis: 'expense_incurred_date', statusBasis: input.documentStatus ?? 'exclude_rejected_voided',
       dataset: 'operational_expense_records',
+      accessScope,
       filters: {
         ...(categoryId ? { categoryId } : {}),
         ...(categoryFilter.name ? { categoryName: categoryFilter.name } : {}),

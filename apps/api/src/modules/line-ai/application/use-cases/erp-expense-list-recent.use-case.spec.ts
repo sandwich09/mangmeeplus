@@ -189,6 +189,27 @@ describe('ExpenseListRecentTool', () => {
     assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses');
   });
 
+  // Item 1 (spec R-A1 row 18, eval: 15 turns): the tool echoes whatever `accessScope`
+  // `ListExpensesUseCase.readAiSummary` reports into `queryApplied.accessScope`, so the formatter/
+  // model can state "only your own records" instead of a bare own-scoped total looking company-wide.
+  it('echoes a non-company accessScope from readAiSummary into queryApplied', async () => {
+    const listExpenses = {
+      readAiSummary: async () => ({
+        asOf: new Date('2026-08-31T12:00:00.000Z'), total: 0,
+        byCurrency: [{ currency: 'THB', count: 0, totalAmount: '0', paidAmount: '0', outstandingAmount: '0' }],
+        byStatus: [], items: [], hasMore: false, nextCursorSource: null, accessScope: 'own',
+      }),
+    } as any;
+    const result = await new ExpenseListRecentTool(listExpenses, fakePrisma()).execute(baseCtx);
+    assert.equal((result.data as any).queryApplied.accessScope, 'own');
+    assert.equal((result as any).queryApplied.accessScope, 'own');
+  });
+
+  it('defaults to company scope when the use case predates accessScope (old test doubles/callers)', async () => {
+    const result = await makeTool([expense({})]).execute(baseCtx);
+    assert.equal((result.data as any).queryApplied.accessScope, 'company');
+  });
+
   // A branch-scoped answer used to link to the bare expenses page, so the web landed on every
   // branch and disagreed with the figures the user had just read.
   it('carries the branch filter into the web link', async () => {

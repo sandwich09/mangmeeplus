@@ -173,6 +173,21 @@ describe('reimbursement related-view ABAC', () => {
     assert.deepEqual(received.scopes, { branchIds: ['branch-1'] });
   });
 
+  // Item 1 (spec R-A1 row 18, eval: 15 turns): the summary now states its own own/related/company
+  // scope, the same classification requesterUserId/relatedUserId above already derive.
+  it('reports accessScope alongside the summary: related, own, and company', async () => {
+    const repoFor = () => ({ findPolicy: async () => null, listRequests: async () => [] } as any);
+    const audit = { log: async () => undefined } as any;
+    const related = await new GetReimbursementAiSummaryUseCase(repoFor(), audit).execute(ctx());
+    assert.equal(related.accessScope, 'related');
+    const own = await new GetReimbursementAiSummaryUseCase(repoFor(), audit)
+      .execute(ctx({ permissions: ['reimbursement.read_own'] }));
+    assert.equal(own.accessScope, 'own');
+    const company = await new GetReimbursementAiSummaryUseCase(repoFor(), audit)
+      .execute(ctx({ permissions: ['reimbursement.read', 'reimbursement.read_own'] }));
+    assert.equal(company.accessScope, 'company');
+  });
+
   it('pushes branch scope into the finance queue query', async () => {
     let received: any;
     const useCase = new ListFinanceQueueUseCase({

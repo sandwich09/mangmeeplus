@@ -266,19 +266,31 @@ function humanizedEnum(key: string): string {
   return key.charAt(0) + key.slice(1).toLowerCase().replace(/_/g, ' ');
 }
 
+/** Item 1 (spec R-A1 row 18): state the scope whenever it is not company-wide, so a STAFF/related
+ *  reader with a correct own/related-only total is never left thinking it is the whole company's.
+ *  Read from the tool's own TRUSTED `accessScope` echo (never inferred here) — set by the same
+ *  permission logic that already narrows the query (`aiReadScope` in expense-draft.use-case.ts, and
+ *  its reimbursement/daily-closing equivalents). */
+function scopeLine(accessScope: unknown, english: boolean): string {
+  if (accessScope === 'own') return english ? '\nScope: only your own records' : '\nขอบเขต: เฉพาะรายการของคุณ';
+  if (accessScope === 'related') return english ? '\nScope: only records related to you' : '\nขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ';
+  return '';
+}
+
 /** Spec R-A1's ตัวกรอง line — document/payment status, resolved category/vendor name, and branch —
  *  read off `queryApplied` (the tool's own TRUSTED echo of what it actually applied, never the model's
  *  raw proposed input). Shared by every `expense.list_recent`/`expense.get_breakdown`-shaped family
  *  (today: list_recent's single_metric and list; R-L4 adds get_breakdown's list) so they never phrase
  *  the same filters differently. `hasStatusFilter` is returned separately because only list_recent's
  *  single-metric basis line needs it — a status filter redefines what "pending"/"confirmed" mean, so
- *  that breakdown must hide instead of quietly disagreeing with the headline total.
+ *  that breakdown must hide instead of quietly disagreeing with the headline total. `scopeText` is
+ *  item 1's own/related access-scope line (see `scopeLine`).
  *  Read-only reference: erp-tools.use-case.ts's expense.list_recent/get_breakdown handlers (~queryApplied). */
 function expenseFilterLine(
   data: Record<string, unknown> | undefined,
   ctx: PreparedFormatContext,
   english: boolean,
-): { filtersText: string; hasStatusFilter: boolean } {
+): { filtersText: string; hasStatusFilter: boolean; scopeText: string } {
   const queryApplied = data?.['queryApplied'];
   const appliedFilters = queryApplied && typeof queryApplied === 'object' && !Array.isArray(queryApplied)
     ? queryApplied as Record<string, unknown> : undefined;
@@ -305,6 +317,7 @@ function expenseFilterLine(
   return {
     filtersText: filterPhrases.length ? (english ? `\nFilters: ${filterPhrases.join(', ')}` : `\nตัวกรอง: ${filterPhrases.join(', ')}`) : '',
     hasStatusFilter: documentStatus !== undefined || paymentStatus !== undefined,
+    scopeText: scopeLine(appliedFilters?.['accessScope'], english),
   };
 }
 
@@ -343,7 +356,7 @@ export function formatExpenseSummary(
   // basis text below is computed from the SAME narrowed set), so with documentStatus=CONFIRMED the old
   // unconditional basis line printed "pending 0.00 (draft 0.00)" even though a draft genuinely exists —
   // it was simply excluded by the filter, not absent.
-  const { filtersText, hasStatusFilter } = expenseFilterLine(data, ctx, english);
+  const { filtersText, hasStatusFilter, scopeText } = expenseFilterLine(data, ctx, english);
 
   const draftAmount = totals['draftAmount'];
   const pendingAmount = totals['pendingAmount'];
@@ -359,7 +372,7 @@ export function formatExpenseSummary(
 
   const localizedAsOf = ctx.asOfLabel ?? thaiExpenseAsOfLabel(asOf);
   const asOfText = english ? asOfLine(asOf, true) : localizedAsOf ? asOfLine(asOf, false, localizedAsOf) : '';
-  const replyText = `${label}: ${amount}${countText}${filtersText}${basisText}${cancelledText}${periodLine(undefined, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfText}`;
+  const replyText = `${label}: ${amount}${countText}${filtersText}${scopeText}${basisText}${cancelledText}${periodLine(undefined, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfText}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -392,6 +405,13 @@ function formatExpenseListRecentList(output: SpecialistOutput, ctx: PreparedForm
   const items = data?.['items'];
   if (!isCount(total) || !Array.isArray(items)) return { kind: 'unverified' };
   if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+  // Item 2: a "list" answer still states the FILTERED SET's own total amount, not only its items
+  // (R-A1) — the same summary.totalAmount formatExpenseSummary already requires, so a mixed-currency
+  // set (no single total) stays honestly unverified here too rather than a list with no aggregate.
+  const summary = data?.['summary'];
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return { kind: 'unverified' };
+  const totalAmount = (summary as Record<string, unknown>)['totalAmount'];
+  if (!isMoney(totalAmount)) return { kind: 'unverified' };
 
   const english = isEnglish(ctx);
   const rows: Array<{ date: string; vendor: string; amount: string | number; status: string }> = [];
@@ -416,10 +436,12 @@ function formatExpenseListRecentList(output: SpecialistOutput, ctx: PreparedForm
   const moreText = total > shown.length
     ? (english ? `\nShowing ${shown.length} of ${plural(total, 'record')}` : `\nแสดง ${shown.length} จาก ${groupThousands(String(total))} รายการ`)
     : '';
-  const { filtersText } = expenseFilterLine(data, ctx, english);
+  const { filtersText, scopeText } = expenseFilterLine(data, ctx, english);
 
-  const headline = english ? `Expenses: ${plural(total, 'record')}` : `ค่าใช้จ่าย: ${groupThousands(String(total))} รายการ`;
-  const replyText = `${headline}${itemLines}${moreText}${filtersText}`
+  const headline = english
+    ? `Expenses: ${moneyText(totalAmount)} THB (${plural(total, 'record')})`
+    : `ค่าใช้จ่าย: ${moneyText(totalAmount)} บาท (${groupThousands(String(total))} รายการ)`;
+  const replyText = `${headline}${itemLines}${moreText}${filtersText}${scopeText}`
     + `${periodLine(ctx.proposedInput, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
@@ -494,11 +516,11 @@ function formatExpenseBreakdownList(output: SpecialistOutput, ctx: PreparedForma
   const totalText = english
     ? `\nTotal: ${moneyText(totalAmount)} THB (${plural(totalCount, 'record')})`
     : `\nรวมทั้งหมด: ${moneyText(totalAmount)} บาท (${groupThousands(String(totalCount))} รายการ)`;
-  const { filtersText } = expenseFilterLine(data, ctx, english);
+  const { filtersText, scopeText } = expenseFilterLine(data, ctx, english);
 
   const axisLabel = english ? axis.labelEn : axis.labelTh;
   const headline = english ? `Expenses by ${axisLabel}` : `ค่าใช้จ่ายแยกตาม${axisLabel}`;
-  const replyText = `${headline}${groupLines}${othersLine}${totalText}${filtersText}`
+  const replyText = `${headline}${groupLines}${othersLine}${totalText}${filtersText}${scopeText}`
     + `${periodLine(ctx.proposedInput, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
@@ -656,8 +678,11 @@ function formatExpenseDailyClosingSingleMetric(output: SpecialistOutput, ctx: Pr
   const honestyText = english
     ? `\n(From entries recorded in the system${asOfHere ? `, up to ${asOfHere.time}` : ''} — not bank money in/out)`
     : `\n(จากรายการที่บันทึกในระบบ${asOfHere ? ` ถึง ${asOfHere.time}` : ''} — ไม่ใช่ยอดเงินเข้าออกธนาคาร)`;
+  // Item 1: this tool has no `queryApplied` wrapper, so its own scope echo rides `data.accessScope`
+  // directly (see erp-expense-daily-closing.use-case.ts's `accessClauses`).
+  const scopeText = scopeLine(data?.['accessScope'], english);
 
-  const replyText = `${headline}${settledText}${blockerText}${sourceText}${asOfLine(output.asOf, english)}${honestyText}`;
+  const replyText = `${headline}${settledText}${blockerText}${scopeText}${sourceText}${asOfLine(output.asOf, english)}${honestyText}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -892,8 +917,11 @@ function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx
   const detailText = english
     ? `\nPending approval: ${plural(pending, 'request')}; approved, unpaid: ${plural(unpaidApproved, 'request')}${overdueText}`
     : `\nรออนุมัติ ${groupThousands(String(pending))} รายการ, อนุมัติแล้วแต่ยังไม่จ่าย ${groupThousands(String(unpaidApproved))} รายการ${overdueText}`;
+  // Item 1: this tool has no `queryApplied` wrapper either, so its scope echo also rides
+  // `data.accessScope` directly (see GetReimbursementAiSummaryUseCase's own own/related/company check).
+  const scopeText = scopeLine(data?.['accessScope'], english);
 
-  const replyText = `${headline}${detailText}${sourceText}${asOfLine(output.asOf, english)}`;
+  const replyText = `${headline}${detailText}${scopeText}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 

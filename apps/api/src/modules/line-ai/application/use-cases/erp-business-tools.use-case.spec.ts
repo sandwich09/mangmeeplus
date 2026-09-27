@@ -406,6 +406,25 @@ describe('ExpenseGetBreakdownTool', () => {
     assert.deepEqual(captured.ctx.permissions, ['expense.read_related']);
   });
 
+  // Item 1 (spec R-A1 row 18, eval: 15 turns): echoes readAiBreakdown's own accessScope into
+  // queryApplied so the answer can state "only your own records" instead of a bare own-scoped total.
+  it('echoes a non-company accessScope from readAiBreakdown into queryApplied', async () => {
+    const source = {
+      readAiBreakdown: async () => ({
+        asOf: new Date('2026-07-31T00:00:00Z'), byCurrency: [], byCategory: [], byBranch: [], byVendor: [],
+        categoryHasMore: false, branchHasMore: false, vendorHasMore: false, accessScope: 'related',
+      }),
+      listCategoryCandidates: async () => [], readAiVendorCandidates: async () => [],
+    } as any;
+    const result = await new ExpenseGetBreakdownTool(source).execute({ ...baseCtx, permissions: ['expense.read_related'] });
+    assert.equal((result.data as any).queryApplied.accessScope, 'related');
+  });
+
+  it('defaults to company scope when the use case predates accessScope', async () => {
+    const result = await new ExpenseGetBreakdownTool(makeSource()).execute({ ...baseCtx, permissions: ['expense.read'] });
+    assert.equal((result.data as any).queryApplied.accessScope, 'company');
+  });
+
   // byVendor (spec §3 row 5 / plan P4.1): top 10 by amount descending, the null-vendor group
   // labelled "ไม่ระบุร้าน", and vendorHasMore folded into the pooled completeness.groups signal.
   describe('byVendor', () => {
@@ -678,6 +697,17 @@ describe('ExpenseGetDailyClosingTool', () => {
     assert.equal((await tool.execute(dailyClosingCtx, { date: '2026-02-30' })).errorCode, 'INVALID_DATE');
     assert.equal((await tool.execute(dailyClosingCtx, { date: '2026-08-16', branchId: 'b2' })).status, 'forbidden');
     assert.equal(calls.groupBy.length, 0);
+  });
+
+  // Item 1 (spec R-A1 row 18, eval: 15 turns): this tool computes its own own/related/company
+  // classification (no queryApplied wrapper here), so accessScope rides `data.accessScope` directly.
+  it('reports accessScope: own for a read_own-only caller, company for a full reader', async () => {
+    const own = await new ExpenseGetDailyClosingTool(makeDailyClosingPrisma().prisma)
+      .execute({ ...dailyClosingCtx, permissions: ['expense.read_own'] }, { date: '2026-08-16' });
+    assert.equal((own.data as any).accessScope, 'own');
+    const company = await new ExpenseGetDailyClosingTool(makeDailyClosingPrisma().prisma)
+      .execute(dailyClosingCtx, { date: '2026-08-16' });
+    assert.equal((company.data as any).accessScope, 'company');
   });
 
   it('returns one repeatable-read, bounded, multi-currency daily-closing snapshot', async () => {
