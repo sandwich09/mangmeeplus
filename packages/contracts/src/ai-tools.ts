@@ -608,7 +608,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'expense.get_daily_closing',
-    description: 'Read a one-day operational expense-closing checklist only: occurred, paid, outstanding, due, overdue, review, evidence, duplicate, and bounded details by currency. Do not use for week, month, or date-range totals.',
+    description: 'Read a one-day operational expense-closing checklist only: occurred, paid, outstanding, due, overdue, review, evidence, duplicate, and bounded details by currency. Do not use for week, month, or date-range totals. This alone already answers a general "what do I need to do/check today", "สรุปวันนี้", or "closing วันนี้" question — never also call notifications.list_open_alerts, dashboard.get_business_health_summary, or reimbursement.list_pending_approvals for that same question. Call reimbursement.list_pending_approvals as a separate, additional read only when the user explicitly names pending/รออนุมัติ approvals.',
     businessSubjects: ['expense'],
     questionKinds: ['summary', 'list', 'breakdown'],
     category: 'read_summary',

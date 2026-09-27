@@ -357,4 +357,45 @@ describe('compact LINE intake decision', () => {
     assert.ok(parsed?.preparedPlan);
     assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['paymentStatus'], 'UNPAID');
   });
+
+  it('item 4 (eval T-102/T-103): daily-closing fast lane accepts an implicit "today" with no date filter at all', async () => {
+    const text = 'วันนี้มีอะไรต้องทำบ้างคะ';
+    const created = await fixture(text);
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, {}, { subrequest: 0, tool: 'expense.get_daily_closing', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.95 }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: new Set(['expense.get_daily_closing::single_metric']), language: 'th',
+    });
+    assert.ok(parsed?.preparedPlan);
+    assert.deepEqual(parsed.preparedPlan.proposedCalls[0]?.input, {});
+  });
+
+  it('item 4 (eval T-104): grounds an explicit daily-closing "date" filter against a real today candidate', async () => {
+    const text = 'closing วันนี้เป็นไงบ้างคะ';
+    const created = await fixture(text);
+    const candidates = extractValueCandidates(text, '2026-09-27');
+    // "วันนี้" extracts as a one-day PERIOD (fromDate === toDate), never a `dates` candidate.
+    const today = candidates.periods?.[0]?.fromDate;
+    assert.equal(today, '2026-09-27');
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { date: today }, { subrequest: 0, tool: 'expense.get_daily_closing', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.95 }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: new Set(['expense.get_daily_closing::single_metric']), language: 'th', valueCandidates: candidates,
+    });
+    assert.ok(parsed?.preparedPlan);
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['date'], today);
+  });
+
+  it('item 4: rejects a daily-closing "date" the message never grounds', async () => {
+    const text = 'closing วันนี้เป็นไงบ้างคะ';
+    const created = await fixture(text);
+    const candidates = extractValueCandidates(text, '2026-09-27');
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { date: '2026-08-15' }, { subrequest: 0, tool: 'expense.get_daily_closing', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.95 }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: new Set(['expense.get_daily_closing::single_metric']), language: 'th', valueCandidates: candidates,
+    });
+    assert.equal(parsed?.preparedPlan, undefined);
+    assert.equal(parsed?.simpleReadRejection, 'filter_not_grounded');
+  });
 });
