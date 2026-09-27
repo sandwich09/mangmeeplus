@@ -1,3 +1,4 @@
+import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
 import { Injectable } from '@nestjs/common';
 import { parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, type ToolResult } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../common/config/app-config.service';
@@ -15,7 +16,7 @@ export class PublicLookupAdmissionTool {
     const unavailable = (code: string): ToolResult => ({ ...base, status: 'unavailable', errorCode: code });
     if (!ctx.permissions.includes('ai.tool.invoke')) return { ...base, status: 'forbidden', errorCode: 'FORBIDDEN' };
     if (!this.config.lineAiPublicLookupEnabled || this.config.lineAiReliabilityV2Mode !== 'on'
-      || !this.config.lineAiReliabilityV2CompanyIds.includes(ctx.companyId)) return unavailable('PUBLIC_POLICY_UNAVAILABLE');
+      || !isLineAiRolloutAllowed(this.config.lineAiReliabilityV2CompanyIds, ctx.companyId)) return unavailable('PUBLIC_POLICY_UNAVAILABLE');
     const request = parsePublicLookupRequest(raw);
     if (!request) return unavailable('PUBLIC_QUERY_REQUIRES_REPHRASE');
     const policy = publicLookupPolicy(request);

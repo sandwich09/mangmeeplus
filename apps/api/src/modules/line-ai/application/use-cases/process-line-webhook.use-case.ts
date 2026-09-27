@@ -1,3 +1,4 @@
+import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
 import { validateLineAiSourceRefV2, parseLineAiSemanticCoverage, parseLineAiSemanticSubrequests, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import { PDFDocument } from 'pdf-lib';
 import { LineDocumentQaError, LineDocumentQaService, type LineDocumentQaJobRow, type LineDocumentQaOwner } from '../line-document-qa.service';
@@ -2156,9 +2157,9 @@ export class ProcessLineWebhookUseCase {
         capabilities: {
           approvedKnowledge: !!input.event && this.boundConversations.has(input.event) && this.config.lineAiApprovedKnowledgeEnabled,
           fusedPlan: this.config.lineAiFusedPlanShadowEnabled || this.config.lineAiPreparedSimpleReadEnabled,
-          // PRIMARY only — 'shadow' is an inert NO-GO that must stay byte-identical to 'off' (no substitute
-          // capability, so the router is never even offered the semantic route it could not safely act on).
-          substituteSemantic: this.config.lineAiSubstituteSemanticRoutingMode === 'primary',
+          // Bound v2 uses semantic substitute routing; legacy shadow/off remain inert.
+          substituteSemantic: (!!input.event && this.boundConversations.has(input.event))
+            || this.config.lineAiSubstituteSemanticRoutingMode === 'primary',
           // clarify_only/handoff only — 'shadow' is inert like 'off' (the router is never offered the route).
           reimbursementSemantic: (!!input.event && this.boundConversations.has(input.event) && this.config.lineAiReimbursementDraftWriteEnabled)
             || this.config.lineAiReimbursementSemanticMode === 'clarify_only'
@@ -4659,7 +4660,7 @@ export class ProcessLineWebhookUseCase {
   async preflightPublicGeneral(event: { lineUserId: string; messagingChannelId: string; chatId: string; channelKind?: 'USER'|'GROUP'|'ROOM' }, existingPlan = false) {
     if (!existingPlan && (this.config.lineAiReliabilityV2Mode !== 'on' || !this.config.lineAiDeliveryPlanV2Enabled)
       || event.messagingChannelId !== this.config.lineMessagingChannelId
-      || !this.config.lineAiDeliveryPlanV2PublicChannelIds.includes(event.messagingChannelId)) return null;
+      || !isLineAiRolloutAllowed(this.config.lineAiDeliveryPlanV2PublicChannelIds, event.messagingChannelId)) return null;
     await this.launchGate.assertLaunchRouteOpen('ai_line_assistant');
     const channels = await this.prisma.client.lineChannelBinding.findMany({ where: { messagingChannelId: event.messagingChannelId, status: 'ACTIVE', company: { status: 'ACTIVE' } }, select: { id: true, companyId: true, updatedAt: true }, take: 2 });
     if (channels.length !== 1) return null;
@@ -5367,7 +5368,7 @@ export class ProcessLineWebhookUseCase {
     };
     if (editCapabilityQuestion) {
       let waitingForEarlierWork = openWaiting.length > 0 || activeExpenseDrafts.length > 0;
-      if (!waitingForEarlierWork && this.config.lineAiSubstituteSemanticRoutingMode === 'primary'
+      if (!waitingForEarlierWork && (this.boundConversations.has(event) || this.config.lineAiSubstituteSemanticRoutingMode === 'primary')
         && this.substituteReceiptContinuation) {
         const state = await this.substituteReceiptContinuation.substituteContext(expenseDraftCtx, {
           chatKeyHash: chatKeyHashOf(event), recentCandidateCount: recentCapturedExpenses.length,
@@ -7273,8 +7274,8 @@ export class ProcessLineWebhookUseCase {
 
   private conversationOwner(companyId: string, userId: string, event: LineTextEvent | LineReceiptUploadEvent): LineConversationOwner | null {
     const access = this.deliveryAccess.get(event);
-    if (this.config.lineAiReliabilityV2Mode !== 'on' || !this.config.lineAiReliabilityV2CompanyIds.includes(companyId)
-      || !this.config.lineAiDeliveryPlanV2Enabled || !this.config.lineAiDeliveryPlanV2WriteCompanyIds.includes(companyId)
+    if (this.config.lineAiReliabilityV2Mode !== 'on' || !isLineAiRolloutAllowed(this.config.lineAiReliabilityV2CompanyIds, companyId)
+      || !this.config.lineAiDeliveryPlanV2Enabled || !isLineAiRolloutAllowed(this.config.lineAiDeliveryPlanV2WriteCompanyIds, companyId)
       || !event.messagingChannelId || (event.pushTargetId && event.pushTargetId !== event.lineUserId) || !access?.membershipId) return null;
     return { companyId, userId, membershipId: access.membershipId, channel: 'line', channelKind: 'USER', messagingChannelId: event.messagingChannelId, chatKeyHash: chatKeyHashOf(event) };
   }

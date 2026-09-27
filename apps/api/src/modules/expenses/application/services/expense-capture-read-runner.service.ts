@@ -1,3 +1,4 @@
+import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
 import { createHash, randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
@@ -331,7 +332,7 @@ export class ExpenseCaptureReadRunnerService {
     // pages that WERE read are worth more to the reviewer than a job that reports only a pause.
     if (!pausedReason) {
       const fieldEvidenceV2 = this.config.lineAiReliabilityV2Mode === 'on'
-        && this.config.lineAiReliabilityV2CompanyIds.includes(job.companyId);
+        && isLineAiRolloutAllowed(this.config.lineAiReliabilityV2CompanyIds, job.companyId);
       const savedWindows = Object.values(checkpoint.windows);
       // Old long-page checkpoints indexed windows after silently clipping page tails. Their wN
       // identities cannot be applied to the complete window plan, nor upgraded by inference.

@@ -122,12 +122,21 @@ describe('W00 executable capability manifest', () => {
       'unclassified missing handlers/providers or evidence replay adapters must fail parity');
   });
 
-  it('keeps draft, public, QA, knowledge and preference gates off by default and honors registry visibility flags', () => {
+  it('enables built-in gates by default, defers public lookup and honors explicit registry visibility flags', () => {
     const shape = apiConfigSchema.shape as Record<string, { parse(value: unknown): unknown }>;
     for (const name of [
       'LINE_AI_DRAFT_EDIT_ENABLED', 'LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED', 'LINE_AI_DOCUMENT_QA_ENABLED',
       'LINE_AI_APPROVED_KNOWLEDGE_ENABLED', 'LINE_AI_PUBLIC_LOOKUP_ENABLED', 'LINE_AI_PREFERENCES_ENABLED',
-    ]) assert.equal(shape[name]!.parse(undefined), false, `${name} default`);
+    ]) assert.equal(shape[name]!.parse(undefined), name !== 'LINE_AI_PUBLIC_LOOKUP_ENABLED', `${name} default`);
+
+    const configuredNames = new Set(lineToolRegistryFor({
+      draftEditEnabled: shape['LINE_AI_DRAFT_EDIT_ENABLED']!.parse(undefined) === true,
+      reimbursementDraftWriteEnabled: shape['LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED']!.parse(undefined) === true,
+      publicLookupEnabled: shape['LINE_AI_PUBLIC_LOOKUP_ENABLED']!.parse(undefined) === true,
+    }).map(meta => meta.name));
+    assert.equal(configuredNames.has('public.lookup'), false);
+    assert.equal(configuredNames.has('reimbursement.draft.preview_create'), true);
+    assert.ok(LINE_TOOL_REGISTRY.filter(tool => tool.category === 'draft_update').every(meta => configuredNames.has(meta.name)));
 
     const defaultNames = new Set(lineToolRegistryFor().map(meta => meta.name));
     assert.equal(defaultNames.has('public.lookup'), false);

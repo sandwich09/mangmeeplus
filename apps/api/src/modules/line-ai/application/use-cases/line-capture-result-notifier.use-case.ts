@@ -1,3 +1,4 @@
+import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
 import { LineConversationContextService, type LineConversationOwner } from '../line-conversation-context.service';
 import { LineLedgerDeliveryService } from '../line-ledger-delivery.service';
 import { buildLineDeliveryPlan, deliveryHash, parseLineDeliveryPlan, type DeliveryPlanV2 } from '../../domain/logic/line-delivery-plan.logic';
@@ -133,7 +134,7 @@ export class LineCaptureResultNotifierUseCase {
     const privateAccess = await this.resolveRecipient(companyId, owner);
     if (!privateAccess) return skipped(owner.linePushTargetId?.startsWith('C') || owner.linePushTargetId?.startsWith('R') ? 'GROUP_PRIVATE_DELIVERY_BLOCKED' : 'NO_RECIPIENT_ACCESS');
     if (event && owner.ownerBinding && this.config.lineAiReliabilityV2Mode === 'on' && this.config.lineAiDeliveryPlanV2Enabled
-      && this.config.lineAiReliabilityV2CompanyIds.includes(companyId) && this.config.lineAiDeliveryPlanV2WriteCompanyIds.includes(companyId)) {
+      && isLineAiRolloutAllowed(this.config.lineAiReliabilityV2CompanyIds, companyId) && isLineAiRolloutAllowed(this.config.lineAiDeliveryPlanV2WriteCompanyIds, companyId)) {
       const binding = owner.ownerBinding;
       const fullOwner: LineConversationOwner = { companyId, userId: owner.createdByUserId, membershipId: binding.membershipId, channel: 'line', channelKind: 'USER', messagingChannelId: binding.channelId, chatKeyHash: owner.lineChatKeyHash ?? '' };
       const context = await this.contexts.load(fullOwner);

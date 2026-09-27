@@ -1,3 +1,4 @@
+import { aiGatewayConfigSchema } from '@watchdog-bms/config';
 /**
  * AgentCore Runtime entry point – item 10B Phase 8.
  * Exposes GET /ping and POST /invocations per AgentCore HTTP protocol.
@@ -554,6 +555,8 @@ async function handleInvocation(
   // question. Report the flag from this separately deployed process without running the model.
   if (typeof body === 'object' && body !== null
     && (body as Record<string, unknown>)['lineDraftEditCapabilityProbe'] === true) {
+    const draftEdit = aiGatewayConfigSchema.shape.LINE_AI_DRAFT_EDIT_ENABLED.safeParse(process.env['LINE_AI_DRAFT_EDIT_ENABLED']);
+    if (!draftEdit.success) { json(res, 503, { error: 'LINE_DRAFT_EDIT_CONFIG_INVALID' }); return; }
     const sourceCommit = process.env['GIT_SHA'];
     const artifactSha256 = process.env['AGENTCORE_ARTIFACT_SHA256'];
     const serviceVersion = process.env['SERVICE_VERSION'];
@@ -564,7 +567,7 @@ async function handleInvocation(
       turnId: (body as Record<string, unknown>)['turnId'],
       replyText: '', plan: { status: 'UNROUTABLE', intents: [] }, durationMs: 0, refused: false,
       sourceRefs: [], webLinks: [], toolsInvoked: [],
-      lineDraftEditEnabled: process.env['LINE_AI_DRAFT_EDIT_ENABLED'] === 'true',
+      lineDraftEditEnabled: draftEdit.data,
       ...(runtimeIdentity ? { runtimeIdentity } : {}),
     });
     return;

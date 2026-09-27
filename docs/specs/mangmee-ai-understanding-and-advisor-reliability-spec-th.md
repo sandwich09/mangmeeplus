@@ -7,6 +7,20 @@
 
 เริ่มอ่านภาพรวมที่ §15 (17 ด้านในขอบเขต + C13 เสียงที่พักไว้), สัญญาระบบที่ §16–20 และ [ชุดรับงาน](../qa/mangmee-conversation-acceptance-catalog-2026-09-26-th.md) ส่วน §1–14 เก็บเหตุผล หลักฐาน และกติกาพื้นฐานที่ยังใช้ต่อ
 
+## Owner update — 2026-09-27: เปิดความสามารถพื้นฐานโดยไม่ตั้ง flag เพิ่ม
+
+ข้อกำหนดนี้แทนที่ค่าเริ่มต้น OFF/empty-denies ของ reliability v2 ใน spec/plan/appendices เดิม ตามคำสั่งผู้ใช้หลัง implementation merge:
+
+- Reliability v2, durable delivery, reimbursement DRAFT, document Q&A, approved-knowledge reader และ explicit preferences เปิดตามค่าเริ่มต้น รวม terminal replay และ draft edit ที่เป็น dependency ไม่ต้องเพิ่ม secret หรือรายชื่อบริษัทเพื่อเริ่มใช้
+- รายชื่อบริษัท/ช่องทางเป็น **optional rollout restriction**: ไม่กำหนดหรือว่าง = ไม่จำกัด cohort; ถ้ากำหนดต้อง match ID จริงแบบ exact; ค่า malformed/wildcard ต้องไม่ผ่าน parser ค่านี้ไม่ให้สิทธิ์เข้าถึงข้อมูล ไม่มี owner/channel จริงต้องไม่ผ่าน
+- Explicit `off`/`false` ยังใช้หยุดรับงานใหม่ได้; readers/recovery ของผลเดิมยังทำงานตาม contract เดิม ปิด flag ไม่ย้อนรายการที่ยืนยันแล้ว
+- Public web lookup **ยังปิดตามค่าเริ่มต้นและยังไม่อยู่ใน rollout นี้** (C09/W09 พักเพิ่ม; rollout ปัจจุบัน 16 จาก 18 capability IDs โดย C13 เสียงยังพัก) การตอบความรู้ธุรกิจทั่วไปที่ไม่ค้นเว็บยังทำได้ เสียงและ Financial Profile/Services Needs ยังพัก
+- Permission, current membership/tenant/channel, entitlement, consent, source evidence, model/provider readiness, budget และ preview/confirm ยังบังคับเหมือนเดิม การเปิด approved-knowledge reader ไม่เปลี่ยนเนื้อหา DRAFT เป็น APPROVED
+- API, Gateway และ AgentCore ต้องใช้ defaults ตรงกัน ไม่มี direct-env consumer ที่ทำให้ความสามารถปิดเงียบเมื่อไม่ได้ตั้งค่า โหมด maintenance ต้องยังปิด customer/model dispatch
+- ต้องทดสอบ unset defaults, explicit OFF, restricted cohort, missing owner/channel, source/permission boundaries, receipt field evidence และ delivery/recovery รวมถึง manifest parity ก่อน merge
+
+นี่เป็นนโยบายค่าเริ่มต้นของ source ที่ deploy ครั้งถัดไป ไม่ใช่หลักฐานว่า Production deploy/quality acceptance ผ่านแล้ว Release protocol และหลักฐานผู้ให้บริการจริงยังใช้เหมือนเดิม
+
 ## 1. เป้าหมายและหลักฐานตั้งต้น
 
 ผู้ใช้ต้องพูดภาษาธรรมชาติ พิมพ์ผิด พูดสั้น ถามต่อ และแก้ความเข้าใจของมั่งมีได้ โดยมั่งมีเข้าใจงานที่ต้องการ ตอบส่วนที่ทำได้ ใช้ข้อมูลตามสิทธิ์ และบอกข้อจำกัดตรงสาเหตุ ไม่ตอบว่าอยู่นอกขอบเขตหรือส่งไปเว็บเพียงเพราะจับคำไม่ตรง
