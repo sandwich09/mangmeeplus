@@ -6,6 +6,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import Decimal from 'decimal.js';
 import { ExpenseListRecentTool } from './erp-tools.use-case';
+import {
+  CATEGORY_NAME_STRIP_PREFIXES,
+  VENDOR_NAME_STRIP_PREFIXES,
+  normalizeNameQuery,
+  resolveNameCandidate,
+} from '../../domain/logic/business-read-source.logic';
 
 const baseCtx = { companyId: 'c1', userId: 'u1', locale: 'th-TH', permissions: ['expense.read'] } as any;
 
@@ -309,5 +315,219 @@ describe('ExpenseListRecentTool', () => {
     assert.equal(calls.length, 1);
     assert.equal((result.data as any).completeness.rows.hasMore, false);
     assert.equal((result.data as any).completeness.rows.nextCursor, null);
+  });
+
+  // categoryName/vendorName resolution (spec §3 row 6, plan P4.2): same exact-then-contains match
+  // as the branch lookup above, reusing the shared `applyNameFilter`/`resolveNameCandidate` helper
+  // (unit-tested on its own below).
+  describe('categoryName / vendorName resolution', () => {
+    /** Same tool, wired for name resolution: captures the repository filter and lets each test
+     *  supply its own candidate catalog. `vendorRoster` additionally simulates the repository's
+     *  createdByUserId ABAC scoping (the real enforcement lives in
+     *  PrismaExpenseRepository.readAiVendorCandidates / aiExpenseWhere) so a read_own caller here
+     *  proves the SAME rule the repository enforces, not just that the tool calls through. */
+    function makeNameResolutionTool(options: {
+      categories?: Array<{ id: string; name: string }>;
+      vendors?: Array<{ id: string; name: string }>;
+      vendorRoster?: Array<{ id: string; name: string; createdByUserId: string }>;
+    }) {
+      const filters: any[] = [];
+      const listExpenses = {
+        readAiSummary: async (_ctx: unknown, filter: any) => {
+          filters.push(filter);
+          return {
+            asOf: new Date('2026-08-31T12:00:00.000Z'), total: 0,
+            byCurrency: [{ currency: 'THB', count: 0, totalAmount: '0', paidAmount: '0', outstandingAmount: '0' }],
+            byStatus: [], items: [], hasMore: false, nextCursorSource: null,
+          };
+        },
+        listCategoryCandidates: async () => options.categories ?? [],
+        readAiVendorCandidates: async (ctx: { userId: string; permissions: string[] }) => {
+          if (!options.vendorRoster) return options.vendors ?? [];
+          const canReadAll = ctx.permissions.includes('expense.read') || ctx.permissions.includes('expense.review');
+          const visible = canReadAll ? options.vendorRoster : options.vendorRoster.filter((row) => row.createdByUserId === ctx.userId);
+          return visible.map(({ id, name }) => ({ id, name }));
+        },
+      } as any;
+      return { tool: new ExpenseListRecentTool(listExpenses, fakePrisma()), filters };
+    }
+
+    it('resolves an exact category name to its id and echoes it in queryApplied.filters', async () => {
+      const { tool, filters } = makeNameResolutionTool({ categories: [{ id: 'cat1', name: 'ค่าน้ำมัน' }, { id: 'cat2', name: 'ค่าน้ำมันรถ' }] });
+      const result = await tool.execute(baseCtx, { categoryName: 'ค่าน้ำมัน' } as any);
+
+      assert.equal(filters[0]?.expenseCategoryId, 'cat1');
+      assert.equal((result.data as any).queryApplied.filters.categoryName, 'ค่าน้ำมัน');
+    });
+
+    // Confirms the real call site passes CATEGORY_NAME_STRIP_PREFIXES through, not just the pure
+    // resolveNameCandidate helper tested in isolation elsewhere.
+    it('strips a leading "หมวด" from a categoryName the same way through the real tool', async () => {
+      const { tool, filters } = makeNameResolutionTool({ categories: [{ id: 'cat1', name: 'ค่าเดินทาง' }, { id: 'cat2', name: 'ค่าน้ำมัน' }] });
+      const result = await tool.execute(baseCtx, { categoryName: 'หมวดค่าเดินทาง' } as any);
+
+      assert.equal(filters[0]?.expenseCategoryId, 'cat1');
+      assert.equal((result.data as any).queryApplied.filters.categoryName, 'ค่าเดินทาง');
+    });
+
+    it('resolves a vendor name that only appears as a substring of one candidate', async () => {
+      const { tool, filters } = makeNameResolutionTool({ vendors: [{ id: 'v1', name: 'ร้านสมใจการค้า' }] });
+      const result = await tool.execute(baseCtx, { vendorName: 'สมใจ' } as any);
+
+      assert.equal(filters[0]?.vendorCounterpartyId, 'v1');
+      assert.equal((result.data as any).queryApplied.filters.vendorName, 'ร้านสมใจการค้า');
+    });
+
+    it('prefers an exact match over a broader contains match on another candidate', async () => {
+      const { tool, filters } = makeNameResolutionTool({ vendors: [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }] });
+      const result = await tool.execute(baseCtx, { vendorName: 'ร้านสมใจ' } as any);
+
+      assert.equal(result.status, 'ok');
+      assert.equal(filters[0]?.vendorCounterpartyId, 'v1');
+    });
+
+    it('returns a structured ambiguity for similar vendor names instead of aggregating them', async () => {
+      const { tool, filters } = makeNameResolutionTool({ vendors: [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }] });
+      const result = await tool.execute(baseCtx, { vendorName: 'สมใจ' } as any);
+
+      assert.equal(filters.length, 0);
+      assert.equal((result.data as any).vendorAmbiguous, 'สมใจ');
+      assert.deepEqual((result.data as any).availableVendors, [
+        { id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' },
+      ]);
+    });
+
+    it('returns a not-found result listing the available categories instead of records', async () => {
+      const { tool, filters } = makeNameResolutionTool({ categories: [{ id: 'cat1', name: 'ค่าน้ำมัน' }, { id: 'cat2', name: 'ค่าไฟ' }] });
+      const result = await tool.execute(baseCtx, { categoryName: 'ค่าเช่า' } as any);
+
+      assert.equal(filters.length, 0);
+      assert.equal((result.data as any).categoryUnresolved, 'ค่าเช่า');
+      assert.deepEqual((result.data as any).availableCategories, [{ id: 'cat1', name: 'ค่าน้ำมัน' }, { id: 'cat2', name: 'ค่าไฟ' }]);
+    });
+
+    it('returns an input error when vendorId and vendorName resolve to different vendors', async () => {
+      const { tool, filters } = makeNameResolutionTool({ vendors: [{ id: 'v1', name: 'ร้านสมใจ' }] });
+      const result = await tool.execute(baseCtx, { vendorId: 'v-other', vendorName: 'ร้านสมใจ' } as any);
+
+      assert.equal(result.status, 'error');
+      assert.equal(result.errorCode, 'UNSUPPORTED_FILTER');
+      assert.equal(filters.length, 0);
+    });
+
+    it('accepts an id and name that resolve to the same vendor', async () => {
+      const { tool, filters } = makeNameResolutionTool({ vendors: [{ id: 'v1', name: 'ร้านสมใจ' }] });
+      const result = await tool.execute(baseCtx, { vendorId: 'v1', vendorName: 'ร้านสมใจ' } as any);
+
+      assert.equal(result.status, 'ok');
+      assert.equal(filters[0]?.vendorCounterpartyId, 'v1');
+    });
+
+    // Owner requirement (spec §3 row 6 scope note): a read_own caller must not learn a vendor name
+    // from someone else's expense. The roster fake above simulates the repository's
+    // createdByUserId scoping so this test proves the RULE, not just that the tool calls through.
+    it('a read_own caller cannot resolve a vendor that exists only on someone else\'s expense', async () => {
+      const roster = [
+        { id: 'v1', name: 'ร้านของฉัน', createdByUserId: 'u1' },
+        { id: 'v2', name: 'ร้านของคนอื่น', createdByUserId: 'u2' },
+      ];
+      const { tool, filters } = makeNameResolutionTool({ vendorRoster: roster });
+      const result = await tool.execute({ ...baseCtx, permissions: ['expense.read_own'] }, { vendorName: 'ร้านของคนอื่น' } as any);
+
+      assert.equal(filters.length, 0);
+      assert.equal((result.data as any).vendorUnresolved, 'ร้านของคนอื่น');
+      assert.deepEqual((result.data as any).availableVendors, [{ id: 'v1', name: 'ร้านของฉัน' }]);
+    });
+
+    it('a read_own caller resolves a vendor that exists on their own expense', async () => {
+      const roster = [
+        { id: 'v1', name: 'ร้านของฉัน', createdByUserId: 'u1' },
+        { id: 'v2', name: 'ร้านของคนอื่น', createdByUserId: 'u2' },
+      ];
+      const { tool, filters } = makeNameResolutionTool({ vendorRoster: roster });
+      const result = await tool.execute({ ...baseCtx, permissions: ['expense.read_own'] }, { vendorName: 'ร้านของฉัน' } as any);
+
+      assert.equal(result.status, 'ok');
+      assert.equal(filters[0]?.vendorCounterpartyId, 'v1');
+    });
+  });
+});
+
+describe('normalizeNameQuery / resolveNameCandidate (Thai-safe name matching helper)', () => {
+  it('folds case and trims, so a differently-cased or padded query still matches', () => {
+    assert.equal(normalizeNameQuery('  Starbucks  '), 'starbucks');
+  });
+
+  // U+3300 is a standard NFC/NFKC divergence example: NFKC expands every CJK compatibility
+  // ideograph into its multi-character reading; NFC leaves it untouched. Thai vowel/tone marks
+  // such as U+0E33 (SARA AM) have the same kind of NFKC-only decomposition, which is why the
+  // resolver must never switch to NFKC — it would silently rewrite real Thai names.
+  it('uses NFC, not NFKC', () => {
+    assert.equal(normalizeNameQuery('㌀'), '㌀'.normalize('NFC'));
+    assert.notEqual(normalizeNameQuery('㌀'), '㌀'.normalize('NFKC'));
+  });
+
+  it('matches an exact name over a broader contains match', () => {
+    const candidates = [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }];
+    assert.deepEqual(resolveNameCandidate('ร้านสมใจ', candidates), { kind: 'resolved', id: 'v1', name: 'ร้านสมใจ' });
+  });
+
+  it('falls back to a contains match when nothing matches exactly', () => {
+    const candidates = [{ id: 'v1', name: 'ร้านสมใจการค้า' }];
+    assert.deepEqual(resolveNameCandidate('สมใจ', candidates), { kind: 'resolved', id: 'v1', name: 'ร้านสมใจการค้า' });
+  });
+
+  it('returns ambiguous for several equally-good contains matches, capped at 10', () => {
+    const candidates = Array.from({ length: 12 }, (_, i) => ({ id: `v${i}`, name: `ร้านสมใจ ${i}` }));
+    const result = resolveNameCandidate('สมใจ', candidates);
+    assert.equal(result.kind, 'ambiguous');
+    if (result.kind === 'ambiguous') assert.equal(result.matches.length, 10);
+  });
+
+  it('returns not_found with up to 10 available names when nothing matches', () => {
+    const candidates = Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, name: `หมวด ${i}` }));
+    const result = resolveNameCandidate('ไม่มีจริง', candidates);
+    assert.equal(result.kind, 'not_found');
+    if (result.kind === 'not_found') assert.equal(result.available.length, 10);
+  });
+
+  // 2026-09-27 review: relaxed matching. Stages (a) exact and (b) forward-contains are unchanged
+  // (tested above); these cover the two NEW fallback stages, tried only when (a)+(b) find nothing:
+  // (c) strip a leading category/vendor word from the query, then repeat (a)+(b); (d) reverse
+  // contains (the query contains the candidate), for candidates 2+ characters.
+  describe('relaxed fallback stages (c) strip-prefix and (d) reverse-contains', () => {
+    it('(d) resolves a longer phrase to the one category name it contains', () => {
+      // "ค่าน้ำมันรถ" names no category on its own; "น้ำมัน" (2+ chars) is the only candidate name
+      // that is a substring of it, and "ค่าไฟ" is not, so this is unambiguous.
+      const candidates = [{ id: 'cat1', name: 'น้ำมัน' }, { id: 'cat2', name: 'ค่าไฟ' }];
+      assert.deepEqual(
+        resolveNameCandidate('ค่าน้ำมันรถ', candidates, CATEGORY_NAME_STRIP_PREFIXES),
+        { kind: 'resolved', id: 'cat1', name: 'น้ำมัน' },
+      );
+    });
+
+    it('(c) strips a leading "หมวด" from the query and resolves the remainder exactly', () => {
+      const candidates = [{ id: 'cat1', name: 'ค่าเดินทาง' }, { id: 'cat2', name: 'ค่าน้ำมัน' }];
+      assert.deepEqual(
+        resolveNameCandidate('หมวดค่าเดินทาง', candidates, CATEGORY_NAME_STRIP_PREFIXES),
+        { kind: 'resolved', id: 'cat1', name: 'ค่าเดินทาง' },
+      );
+    });
+
+    // Regression: an exact match at stage (a) must still short-circuit everything below it, with
+    // strip prefixes engaged exactly as the real vendorName call site passes them.
+    it('still resolves "ร้านสมใจ" exactly when "ร้านสมใจการค้า" also exists', () => {
+      const candidates = [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }];
+      assert.deepEqual(
+        resolveNameCandidate('ร้านสมใจ', candidates, VENDOR_NAME_STRIP_PREFIXES),
+        { kind: 'resolved', id: 'v1', name: 'ร้านสมใจ' },
+      );
+    });
+
+    it('still reports "สมใจ" as ambiguous between the same two vendors', () => {
+      const candidates = [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }];
+      const result = resolveNameCandidate('สมใจ', candidates, VENDOR_NAME_STRIP_PREFIXES);
+      assert.equal(result.kind, 'ambiguous');
+    });
   });
 });

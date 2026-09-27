@@ -16,7 +16,10 @@ import type { RequestContext } from '../../../auth/domain/models/request-context
 import { ListExpensesUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
 import {
   BUSINESS_READ_BASIS_VERSION,
+  CATEGORY_NAME_STRIP_PREFIXES,
+  VENDOR_NAME_STRIP_PREFIXES,
   appliedQuery,
+  applyNameFilter,
   completeResult,
   fact,
   periodError,
@@ -349,7 +352,8 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
 
   async execute(ctx: ErpToolContext, input: {
     periodKey?: string; fromDate?: string; toDate?: string; branchId?: string;
-    categoryId?: string; vendorId?: string; documentStatus?: ExpenseStatus; paymentStatus?: ExpensePaymentStatus;
+    categoryId?: string; vendorId?: string; categoryName?: string; vendorName?: string;
+    documentStatus?: ExpenseStatus; paymentStatus?: ExpensePaymentStatus;
   } = {}): Promise<ToolResult> {
     let asOf = now();
     const canReadAll = ctx.permissions.includes('expense.read') || ctx.permissions.includes('expense.review');
@@ -366,11 +370,40 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
     if (input.paymentStatus !== undefined && !(EXPENSE_PAYMENT_STATUSES as readonly string[]).includes(input.paymentStatus)) {
       return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'Unsupported filter: paymentStatus', sourceRefs: [], asOf };
     }
+    // categoryName/vendorName resolution (spec §3 row 6): same exact-then-contains match as
+    // list_recent, applied before the repository read so an ambiguous/unresolved name never
+    // silently aggregates over the wrong (or every) category/vendor.
+    const requestedCategoryName = typeof input?.categoryName === 'string' && input.categoryName.trim() ? input.categoryName.trim() : undefined;
+    const requestedVendorName = typeof input?.vendorName === 'string' && input.vendorName.trim() ? input.vendorName.trim() : undefined;
+    const categoryCandidates = requestedCategoryName ? await this.listExpenses.listCategoryCandidates(ctx.companyId) : [];
+    const categoryFilter = applyNameFilter(input.categoryId, requestedCategoryName, categoryCandidates, CATEGORY_NAME_STRIP_PREFIXES);
+    if (categoryFilter.status === 'conflict') {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'categoryId and categoryName resolve to different categories', sourceRefs: [], asOf };
+    }
+    if (categoryFilter.status === 'ambiguous') {
+      return { toolName: this.toolName, status: 'ok', data: { categoryAmbiguous: requestedCategoryName, availableCategories: categoryFilter.matches }, sourceRefs: [], asOf };
+    }
+    if (categoryFilter.status === 'not_found') {
+      return { toolName: this.toolName, status: 'ok', data: { categoryUnresolved: requestedCategoryName, availableCategories: categoryFilter.available }, sourceRefs: [], asOf };
+    }
+    const vendorCandidates = requestedVendorName ? await this.listExpenses.readAiVendorCandidates(toCtx(ctx), input.branchId) : [];
+    const vendorFilter = applyNameFilter(input.vendorId, requestedVendorName, vendorCandidates, VENDOR_NAME_STRIP_PREFIXES);
+    if (vendorFilter.status === 'conflict') {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'vendorId and vendorName resolve to different vendors', sourceRefs: [], asOf };
+    }
+    if (vendorFilter.status === 'ambiguous') {
+      return { toolName: this.toolName, status: 'ok', data: { vendorAmbiguous: requestedVendorName, availableVendors: vendorFilter.matches }, sourceRefs: [], asOf };
+    }
+    if (vendorFilter.status === 'not_found') {
+      return { toolName: this.toolName, status: 'ok', data: { vendorUnresolved: requestedVendorName, availableVendors: vendorFilter.available }, sourceRefs: [], asOf };
+    }
+    const categoryId = categoryFilter.id;
+    const vendorId = vendorFilter.id;
     const snapshot = await this.listExpenses.readAiBreakdown(toCtx(ctx), {
       fromDate: period.fromDate, toDate: period.toDate,
       ...(input.branchId ? { branchId: input.branchId } : {}),
-      ...(input.categoryId ? { expenseCategoryId: input.categoryId } : {}),
-      ...(input.vendorId ? { vendorCounterpartyId: input.vendorId } : {}),
+      ...(categoryId ? { expenseCategoryId: categoryId } : {}),
+      ...(vendorId ? { vendorCounterpartyId: vendorId } : {}),
       ...(input.documentStatus ? { status: input.documentStatus } : {}),
       ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
     });
@@ -387,12 +420,18 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
       dateBasis: 'expense_incurred_date', statusBasis: input.documentStatus ?? 'exclude_rejected_voided',
       dataset: 'operational_expense_records',
       filters: {
-        ...(input.categoryId ? { categoryId: input.categoryId } : {}),
-        ...(input.vendorId ? { vendorId: input.vendorId } : {}),
+        ...(categoryId ? { categoryId } : {}),
+        ...(categoryFilter.name ? { categoryName: categoryFilter.name } : {}),
+        ...(vendorId ? { vendorId } : {}),
+        ...(vendorFilter.name ? { vendorName: vendorFilter.name } : {}),
         ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
       },
     });
-    const completeness = completeResult(0, false, snapshot.byCategory.length + snapshot.byBranch.length, snapshot.categoryHasMore || snapshot.branchHasMore);
+    const completeness = completeResult(
+      0, false,
+      snapshot.byCategory.length + snapshot.byBranch.length + snapshot.byVendor.length,
+      snapshot.categoryHasMore || snapshot.branchHasMore || snapshot.vendorHasMore,
+    );
     const facts = snapshot.byCurrency.map((row) => fact({
       id: `expense.breakdown.total.${row.currency}`, metric: 'expense_total', value: row.totalAmount,
       unit: 'money', currency: row.currency, period: queryApplied.period ?? null,
@@ -419,6 +458,13 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
           branch: group.label ?? (group.branchId ?? 'ส่วนกลาง (ไม่ระบุสาขา)'),
           currency: group.currency, count: group.count, totalAmount: group.totalAmount,
         })),
+        byVendor: snapshot.byVendor.map((group) => ({
+          vendorId: group.vendorCounterpartyId,
+          vendor: group.label ?? (group.vendorCounterpartyId ?? 'ไม่ระบุร้าน'),
+          linked: group.linked,
+          currency: group.currency, count: group.count, totalAmount: group.totalAmount,
+        })),
+        vendorHasMore: snapshot.vendorHasMore,
         queryApplied,
         completeness,
       },

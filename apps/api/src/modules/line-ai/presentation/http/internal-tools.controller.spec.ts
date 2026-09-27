@@ -642,6 +642,30 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
     }
   });
 
+  it('rejects a categoryName/vendorName outside its declared length before adapter dispatch', async () => {
+    for (const name of ['expense.list_recent', 'expense.get_breakdown']) {
+      const { controller, events } = build({ permissions: [AI, 'expense.read'] });
+      let executed = false;
+      const entry = { ...registryEntry(name, 'read_summary'), optionalInputFields: ['categoryName', 'vendorName'],
+        inputLengthLimits: { categoryName: { min: 1, max: 80 }, vendorName: { min: 1, max: 80 } } };
+      controller.toolMap.set(name, { execute: async () => { executed = true; return { toolName: name, status: 'ok', sourceRefs: [], asOf: new Date().toISOString() }; } });
+      const result = await withRegistryEntry(entry, () => controller.invoke('secret', DELEGATION, {
+        toolName: name, context: CONTEXT, input: { categoryName: '' },
+      }));
+      assert.equal(result.status, 'error');
+      assert.equal(result.errorCode, 'UNSUPPORTED_FILTER');
+      assert.equal(executed, false);
+      assert.equal(events.some((event: any) => event.metadataJson?.invalidLengthFields?.includes('categoryName')), true);
+
+      const tooLong = await withRegistryEntry(entry, () => controller.invoke('secret', DELEGATION, {
+        toolName: name, context: CONTEXT, input: { vendorName: 'x'.repeat(81) },
+      }));
+      assert.equal(tooLong.status, 'error');
+      assert.equal(tooLong.errorCode, 'UNSUPPORTED_FILTER');
+      assert.equal(executed, false);
+    }
+  });
+
   it('denies a registry-known tool whose category is not in the LINE-allowed set', async () => {
     const { controller, events } = build({ permissions: [AI] });
 
