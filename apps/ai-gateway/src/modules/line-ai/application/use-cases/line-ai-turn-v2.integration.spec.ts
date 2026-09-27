@@ -36,6 +36,7 @@ type Scenario = {
   apiResults?: Record<string, Record<string, unknown>>;
   permissions?: string[];
   reimbursementDraftWriteEnabled?: boolean;
+  selectedKnowledgeCardIds?: string[];
 };
 
 function response(body: unknown, status = 200): Response {
@@ -89,7 +90,7 @@ async function makeScenario(scenario: Scenario) {
     aiToolPolicyEnforced: true, aiToolAuditEnabled: true, aiFinalMutationEnabled: false,
     aiMaxToolCalls: 8, lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'strands-local',
     lineAiDraftEditEnabled: false, lineAiReimbursementDraftWriteEnabled: scenario.reimbursementDraftWriteEnabled === true, lineAiPublicLookupEnabled: true,
-    lineAiApprovedKnowledgeEnabled: false,
+    lineAiApprovedKnowledgeEnabled: !!scenario.selectedKnowledgeCardIds,
   } as any;
   const erp = new ErpToolClient(config, new ToolPolicyEnforcerService(config));
   const useCase = new LineAiTurnUseCase(erp, new OrchestratorAgent(erp, config), config, {} as any);
@@ -108,6 +109,8 @@ async function makeScenario(scenario: Scenario) {
       locale: 'th-TH', chatKeyHash: CHAT,
     },
     conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: new Date().toISOString(), userMessagePreview: HISTORY }] },
+    ...(scenario.selectedKnowledgeCardIds ? { approvedKnowledge: true, selectedKnowledgeCardIds: scenario.selectedKnowledgeCardIds,
+      entitledFeatureKeys: ['expenses'] } : {}),
   } as any;
 
   const originalFetch = globalThis.fetch;
@@ -398,10 +401,13 @@ it('does not let model-authored product buttons escape the reviewed-help boundar
 
 it('answers pure help from the deterministic guide boundary without control or composition', async () => {
   const run = await makeScenario({ messageText: 'รายการยืนยันแล้ว แปลว่าจ่ายเงินแล้วหรือยัง',
-    subrequests: [{ kind: 'help', goal: 'อธิบายสถานะยืนยันและชำระเงินของมั่งมี' }], answers: [] });
-  assert.equal(run.response.semanticCoverage?.[0]?.status, 'needs_user');
-  assert.equal(run.response.semanticCoverage?.[0]?.reasonCode, 'SPECIFIC_PRODUCT_GUIDE_UNAVAILABLE');
-  assert.match(run.response.replyText, /ยังไม่มีคู่มือที่ตรวจสอบแล้ว/);
+    subrequests: [{ kind: 'help', goal: 'อธิบายสถานะยืนยันและชำระเงินของมั่งมี' }],
+    selectedKnowledgeCardIds: ['expense.status'], answers: [] });
+  assert.equal(run.response.semanticCoverage?.[0]?.status, 'handled');
+  assert.equal(run.response.semanticCoverage?.[0]?.reasonCode, undefined);
+  assert.match(run.response.replyText, /เอกสารที่ยืนยันแล้วอาจยังไม่จ่ายเงิน/);
+  assert.equal(run.response.sourceRefs[0]?.entityType, 'approved_product_help');
+  assert.equal(run.response.sourceRefs[0]?.permissionChecked, true);
   assert.deepEqual(run.steps, []);
   assert.deepEqual(run.providerRequests, []);
   assert.deepEqual(run.usage, []);
