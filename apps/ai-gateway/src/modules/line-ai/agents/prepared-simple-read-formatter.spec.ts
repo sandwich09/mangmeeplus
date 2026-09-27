@@ -175,8 +175,11 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
     const filtered = formatPreparedSimpleRead(EXPENSE, filteredOutput, { ...TH, proposedInput: { documentStatus: 'CONFIRMED' } });
     assert.equal(filtered.kind, 'answer');
     if (filtered.kind === 'answer') {
+      // toolData.input/proposedInput are the model's PROPOSED filter, not the tool's own confirmation
+      // (queryApplied) — absent that, the basis line still shows and no filters line is invented.
       assert.match(filtered.replyText, /ฐานยอด: รวมรายการรอดำเนินการ 0\.00 บาท \(ในนั้นเป็นร่าง 0\.00 บาท\) และรายการยืนยันแล้ว 400\.00 บาท/);
       assert.doesNotMatch(filtered.replyText, /ฐานสถานะ:/);
+      assert.doesNotMatch(filtered.replyText, /ตัวกรอง:/);
     }
     const allStatuses = expenseOutput(expenseData({
       total: 3, summary: expenseSummary({ countedItems: 3, totalAmount: 420, pendingAmount: 100, draftAmount: 20, confirmedAmount: 300 }),
@@ -188,12 +191,63 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
     if (mismatchedRequest.kind === 'answer') {
       assert.match(mismatchedRequest.replyText, /ฐานยอด: รวมรายการรอดำเนินการ 100\.00 บาท \(ในนั้นเป็นร่าง 20\.00 บาท\) และรายการยืนยันแล้ว 300\.00 บาท/);
       assert.doesNotMatch(mismatchedRequest.replyText, /ฐานสถานะ:/);
+      assert.doesNotMatch(mismatchedRequest.replyText, /ตัวกรอง:/);
     }
     const incompleteSummary = expenseSummary({ totalAmount: 900, draftAmount: 900, confirmedAmount: 0 });
     delete incompleteSummary['pendingAmount'];
     const incomplete = formatPreparedSimpleRead(EXPENSE, expenseOutput(expenseData({ summary: incompleteSummary })), TH);
     assert.equal(incomplete.kind, 'answer');
     if (incomplete.kind === 'answer') assert.doesNotMatch(incomplete.replyText, /ฐานยอด:/);
+  });
+
+  it('states the applied filter and drops the now-misleading basis line (documentStatus=CONFIRMED)', () => {
+    const data = expenseData({
+      total: 2, summary: expenseSummary({ countedItems: 2, totalAmount: 400, pendingAmount: 0, draftAmount: 0, confirmedAmount: 400 }),
+      queryApplied: { statusBasis: 'CONFIRMED', filters: {} },
+    });
+    const th = formatPreparedSimpleRead(EXPENSE, expenseOutput(data), TH);
+    assert.equal(th.kind, 'answer');
+    if (th.kind === 'answer') {
+      assert.match(th.replyText, /\nตัวกรอง: เฉพาะที่ยืนยันแล้ว/);
+      assert.doesNotMatch(th.replyText, /ฐานยอด:/);
+    }
+    const en = formatPreparedSimpleRead(EXPENSE, expenseOutput(data), EN);
+    assert.equal(en.kind, 'answer');
+    if (en.kind === 'answer') {
+      assert.match(en.replyText, /\nFilters: only Confirmed/);
+      assert.doesNotMatch(en.replyText, /Amount basis:/);
+    }
+  });
+
+  it('states the applied payment-status filter and drops the basis line (paymentStatus=UNPAID)', () => {
+    const data = expenseData({
+      total: 1, summary: expenseSummary({ countedItems: 1, totalAmount: 900, pendingAmount: 900, draftAmount: 0, confirmedAmount: 0 }),
+      queryApplied: { statusBasis: 'exclude_rejected_voided', filters: { paymentStatus: 'UNPAID' } },
+    });
+    const r = formatPreparedSimpleRead(EXPENSE, expenseOutput(data), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') {
+      assert.match(r.replyText, /\nตัวกรอง: เฉพาะที่ยังไม่ชำระ/);
+      assert.doesNotMatch(r.replyText, /ฐานยอด:/);
+    }
+  });
+
+  it('names the branch alongside a status filter, and keeps the basis line when only the branch is filtered', () => {
+    const filteredByStatusAndBranch = expenseData({
+      summary: expenseSummary({ pendingAmount: 0, draftAmount: 0, confirmedAmount: 1234567.5 }),
+      queryApplied: { statusBasis: 'CONFIRMED', filters: {} },
+    });
+    const r = formatPreparedSimpleRead(EXPENSE, expenseOutput(filteredByStatusAndBranch), { ...TH, branchLabel: 'ลาดพร้าว' });
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') assert.match(r.replyText, /\nตัวกรอง: เฉพาะที่ยืนยันแล้ว, เฉพาะสาขาลาดพร้าว/);
+
+    const branchOnly = expenseData({ summary: expenseSummary({ pendingAmount: 900, draftAmount: 900, confirmedAmount: 26330.5, totalAmount: 27230.5 }) });
+    const branchResult = formatPreparedSimpleRead(EXPENSE, expenseOutput(branchOnly), { ...TH, branchLabel: 'ลาดพร้าว' });
+    assert.equal(branchResult.kind, 'answer');
+    if (branchResult.kind === 'answer') {
+      assert.match(branchResult.replyText, /\nตัวกรอง: เฉพาะสาขาลาดพร้าว/);
+      assert.match(branchResult.replyText, /ฐานยอด: รวมรายการรอดำเนินการ 900\.00 บาท/);
+    }
   });
 
   it('renders an exact Decimal beyond Number safe precision without losing a satang', () => {

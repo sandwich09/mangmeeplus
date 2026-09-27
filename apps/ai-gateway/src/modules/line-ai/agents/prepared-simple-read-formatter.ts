@@ -12,6 +12,7 @@
  * `unverified` when the output does not match the family's exact shape, so the caller falls back to an
  * honest terminal without claiming success. No provider, no tool re-invocation.
  */
+import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS } from '@watchdog-bms/contracts';
 import type { LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { aggregationIncomplete, appliedPeriod } from '../domain/logic/business-read-result-semantics';
@@ -291,13 +292,38 @@ export function formatExpenseSummary(
     ? (english ? `\nExcludes ${plural(cancelled, 'rejected or voided record')}`
       : `\nไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ ${groupThousands(String(cancelled))} รายการ`)
     : '';
+  // expense.list_recent narrows `summary` itself when documentStatus/paymentStatus is applied (the
+  // basis text below is computed from the SAME narrowed set), so with documentStatus=CONFIRMED the old
+  // unconditional basis line printed "pending 0.00 (draft 0.00)" even though a draft genuinely exists —
+  // it was simply excluded by the filter, not absent. Read-only reference: erp-tools.use-case.ts's
+  // expense.list_recent handler (~queryApplied). category/vendor have no resolved display name
+  // anywhere in this result or context yet; ponytail: add them here once one exists.
+  const queryApplied = data?.['queryApplied'];
+  const appliedFilters = queryApplied && typeof queryApplied === 'object' && !Array.isArray(queryApplied)
+    ? queryApplied as Record<string, unknown> : undefined;
+  const statusBasis = appliedFilters?.['statusBasis'];
+  const documentStatus = typeof statusBasis === 'string' && statusBasis !== 'exclude_rejected_voided' ? statusBasis : undefined;
+  const otherFilters = appliedFilters?.['filters'];
+  const paymentStatus = otherFilters && typeof otherFilters === 'object' && !Array.isArray(otherFilters)
+    && typeof (otherFilters as Record<string, unknown>)['paymentStatus'] === 'string'
+    ? (otherFilters as Record<string, unknown>)['paymentStatus'] as string : undefined;
+  const hasStatusFilter = documentStatus !== undefined || paymentStatus !== undefined;
+  const humanizedEnum = (key: string) => key.charAt(0) + key.slice(1).toLowerCase().replace(/_/g, ' ');
+  const filterPhrases: string[] = [];
+  const documentStatusLabel = documentStatus ? (EXPENSE_STATUS_LABELS as Record<string, string>)[documentStatus] : undefined;
+  if (documentStatus && documentStatusLabel) filterPhrases.push(english ? `only ${humanizedEnum(documentStatus)}` : `เฉพาะที่${documentStatusLabel}`);
+  const paymentStatusLabel = paymentStatus ? (EXPENSE_PAYMENT_STATUS_LABELS as Record<string, string>)[paymentStatus] : undefined;
+  if (paymentStatus && paymentStatusLabel) filterPhrases.push(english ? `only ${humanizedEnum(paymentStatus)}` : `เฉพาะที่${paymentStatusLabel}`);
+  if (ctx.branchLabel) filterPhrases.push(english ? `branch ${ctx.branchLabel}` : `เฉพาะสาขา${ctx.branchLabel}`);
+  const filtersText = filterPhrases.length ? (english ? `\nFilters: ${filterPhrases.join(', ')}` : `\nตัวกรอง: ${filterPhrases.join(', ')}`) : '';
+
   const draftAmount = totals['draftAmount'];
   const pendingAmount = totals['pendingAmount'];
   const confirmedAmount = totals['confirmedAmount'];
   const validBasisAmount = (value: unknown): value is string | number => typeof value === 'number'
     ? Number.isFinite(value)
     : typeof value === 'string' && PLAIN_DECIMAL.test(value.replace(/,/g, ''));
-  const basisText = validBasisAmount(pendingAmount) && validBasisAmount(draftAmount) && validBasisAmount(confirmedAmount)
+  const basisText = !hasStatusFilter && validBasisAmount(pendingAmount) && validBasisAmount(draftAmount) && validBasisAmount(confirmedAmount)
     ? english
       ? `\nAmount basis: includes ${moneyText(pendingAmount)} THB pending (including ${moneyText(draftAmount)} THB draft) and ${moneyText(confirmedAmount)} THB confirmed`
       : `\nฐานยอด: รวมรายการรอดำเนินการ ${moneyText(pendingAmount)} บาท (ในนั้นเป็นร่าง ${moneyText(draftAmount)} บาท) และรายการยืนยันแล้ว ${moneyText(confirmedAmount)} บาท`
@@ -305,7 +331,7 @@ export function formatExpenseSummary(
 
   const localizedAsOf = ctx.asOfLabel ?? thaiExpenseAsOfLabel(asOf);
   const asOfText = english ? asOfLine(asOf, true) : localizedAsOf ? asOfLine(asOf, false, localizedAsOf) : '';
-  const replyText = `${label}: ${amount}${countText}${basisText}${cancelledText}${periodLine(undefined, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfText}`;
+  const replyText = `${label}: ${amount}${countText}${filtersText}${basisText}${cancelledText}${periodLine(undefined, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfText}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
