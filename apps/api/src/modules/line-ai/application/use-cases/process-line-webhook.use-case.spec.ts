@@ -3,7 +3,7 @@ import { lineMessagingCredentialsFixture } from '../../../../common/config/line-
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { canAdvertiseReceiptCapture, createLineAiInputEvidence, LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
-import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatBudgetMediaNotStoredReply, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, lineIntakeOfferedToolNames, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages } from './process-line-webhook.use-case';
+import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatBudgetMediaNotStoredReply, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, lineIntakeOfferedToolNames, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages, validLineAiReadMemoryEntries } from './process-line-webhook.use-case';
 import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 import { filterPermissionsByEntitlement } from '../../../employee-access/domain/logic/feature-gate.logic';
 import { ROLE_GRANTS } from '../../../auth/permission-registry';
@@ -1034,6 +1034,53 @@ describe('toAiTurnIntent (free-form model intent → AiTurn enum)', () => {
     assert.equal(toAiTurnIntent('transfer_funds', 'mutation_blocked'), 'MUTATION_REQUEST');
     assert.equal(toAiTurnIntent('weather', 'feature_disabled'), 'UNSUPPORTED_MODULE');
     assert.equal(toAiTurnIntent('x', 'forbidden_permission'), 'FORBIDDEN');
+  });
+});
+
+describe('validLineAiReadMemoryEntries (spec §4 R-M2)', () => {
+  const entry = (over: Record<string, unknown> = {}) => ({
+    tool: 'expense.list_recent', answerShape: 'list', asOf: '2026-09-27T09:00:00.000Z', ...over,
+  });
+
+  it('accepts a well-formed entry with every optional field, and an entry with none of them', () => {
+    const full = entry({
+      period: { fromDate: '2026-08-01', toDate: '2026-08-31' }, documentStatus: 'CONFIRMED', paymentStatus: 'UNPAID',
+      categoryId: 'c1', categoryName: 'อาหาร', vendorId: 'v1', vendorName: 'ร้านสมใจ', branchId: 'b1', branchName: 'สาขาลาดพร้าว',
+      groupBy: 'category', shownItems: [{ ordinal: 1, id: 'e1', label: 'ร้านสมใจ', date: '2026-08-05', kind: 'category' }],
+    });
+    assert.deepEqual(validLineAiReadMemoryEntries([full]), [full]);
+    const minimal = entry();
+    assert.deepEqual(validLineAiReadMemoryEntries([minimal]), [minimal]);
+  });
+
+  it('rejects a missing/invalid tool, answerShape, or asOf', () => {
+    assert.equal(validLineAiReadMemoryEntries([entry({ tool: '' })]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([entry({ tool: 42 })]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([entry({ answerShape: 'both' })]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([entry({ asOf: 'not-a-date' })]), undefined);
+  });
+
+  it('spec R-M6: rejects an entry carrying any field outside LineAiReadMemory\'s own known list (e.g. an amount)', () => {
+    assert.equal(validLineAiReadMemoryEntries([entry({ amount: '500.00' })]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([entry({ totalAmount: 500 })]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([{ ...entry(), shownItems: [{ ordinal: 1, id: 'e1', label: 'ร้าน', amount: '500.00' }] }]), undefined);
+  });
+
+  it('rejects a malformed shownItems entry (bad ordinal, missing id/label, or an unknown kind)', () => {
+    assert.equal(validLineAiReadMemoryEntries([{ ...entry(), shownItems: [{ ordinal: 0, id: 'e1', label: 'x' }] }]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([{ ...entry(), shownItems: [{ ordinal: 1, id: '', label: 'x' }] }]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([{ ...entry(), shownItems: [{ ordinal: 1, id: 'e1', label: '' }] }]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([{ ...entry(), shownItems: [{ ordinal: 1, id: 'e1', label: 'x', kind: 'other' }] }]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([{ ...entry(), shownItems: Array.from({ length: 11 }, (_, i) => ({ ordinal: i + 1, id: `e${i}`, label: 'x' })) }]), undefined);
+  });
+
+  it('rejects a malformed period or an unknown groupBy', () => {
+    assert.equal(validLineAiReadMemoryEntries([entry({ period: { fromDate: '2026-08-01' } })]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([entry({ groupBy: 'region' })]), undefined);
+  });
+
+  it('drops the whole batch when any one entry is invalid', () => {
+    assert.equal(validLineAiReadMemoryEntries([entry(), entry({ tool: '' })]), undefined);
   });
 });
 

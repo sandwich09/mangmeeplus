@@ -142,7 +142,7 @@ import { FEATURE_TEMPORARILY_UNAVAILABLE, loadEntitledFeatureKeys } from '../../
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
-import type { AiBudgetScope, BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, PlanTermLockReason, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFallbackReason, ReceiptOcrFieldResult, ReceiptOcrResponse, RequestContext } from '@watchdog-bms/contracts';
+import type { AiBudgetScope, BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, PlanTermLockReason, LineAiReadMemory, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFallbackReason, ReceiptOcrFieldResult, ReceiptOcrResponse, RequestContext } from '@watchdog-bms/contracts';
 import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, extractValueCandidatesV2, mapThaiDigits, todayCivilDate, hasToolFeature, hasToolPermissions, lineToolRegistryFor, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, LINE_CLARIFICATION_SOURCE_MAX_BYTES, type LedgerEntry, type LedgerSubRequestInput } from '../line-ai-ledger.service';
 import { LineAiBudgetDeadlineExceededError } from '../line-ai-budget-authority.service';
@@ -1092,6 +1092,44 @@ export function chatKeyHashOf(event: { lineUserId: string; pushTargetId?: string
   return hashMessagePreview(event.pushTargetId ?? event.lineUserId);
 }
 
+const READ_MEMORY_SHOWN_ITEM_KEYS = new Set(['ordinal', 'id', 'label', 'date', 'kind']);
+function validLineAiReadMemoryShownItem(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return typeof item['ordinal'] === 'number' && Number.isSafeInteger(item['ordinal']) && item['ordinal'] >= 1
+    && typeof item['id'] === 'string' && item['id'].length > 0 && item['id'].length <= 200
+    && typeof item['label'] === 'string' && item['label'].length > 0 && item['label'].length <= 200
+    && (item['date'] === undefined || typeof item['date'] === 'string')
+    && (item['kind'] === undefined || item['kind'] === 'category' || item['kind'] === 'branch' || item['kind'] === 'vendor')
+    && Object.keys(item).every(key => READ_MEMORY_SHOWN_ITEM_KEYS.has(key));
+}
+
+const READ_MEMORY_STRING_FIELDS = ['documentStatus', 'paymentStatus', 'categoryId', 'categoryName', 'vendorId', 'vendorName', 'branchId', 'branchName'] as const;
+const READ_MEMORY_ENTRY_KEYS = new Set(['tool', 'period', ...READ_MEMORY_STRING_FIELDS, 'groupBy', 'answerShape', 'shownItems', 'asOf']);
+
+/** Spec §4 R-M2: defense in depth on `readMemory` this same service wrote into `lineTurnOutcome` — a
+ *  malformed entry, or one carrying any field outside LineAiReadMemory's own known list (an `amount`
+ *  would already fail here, R-M6), drops the WHOLE stored batch for that turn rather than admit a
+ *  half-trusted one into the model's prompt. */
+export function validLineAiReadMemoryEntries(raw: readonly unknown[]): LineAiReadMemory[] | undefined {
+  for (const value of raw) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const entry = value as Record<string, unknown>;
+    if (typeof entry['tool'] !== 'string' || !entry['tool']
+      || (entry['answerShape'] !== 'single_metric' && entry['answerShape'] !== 'list')
+      || typeof entry['asOf'] !== 'string' || !Number.isFinite(Date.parse(entry['asOf']))) return undefined;
+    const period = entry['period'];
+    if (period !== undefined && (!period || typeof period !== 'object' || Array.isArray(period)
+      || typeof (period as Record<string, unknown>)['fromDate'] !== 'string' || typeof (period as Record<string, unknown>)['toDate'] !== 'string')) return undefined;
+    if (READ_MEMORY_STRING_FIELDS.some(key => entry[key] !== undefined && typeof entry[key] !== 'string')) return undefined;
+    if (entry['groupBy'] !== undefined && entry['groupBy'] !== 'category' && entry['groupBy'] !== 'branch' && entry['groupBy'] !== 'vendor') return undefined;
+    const shownItems = entry['shownItems'];
+    if (shownItems !== undefined && (!Array.isArray(shownItems) || shownItems.length > 10 || !shownItems.every(validLineAiReadMemoryShownItem))) return undefined;
+    if (!Object.keys(entry).every(key => READ_MEMORY_ENTRY_KEYS.has(key))) return undefined;
+  }
+  return raw as LineAiReadMemory[];
+}
+
 /** Shape label recorded on the durable outcome, using the same vocabulary the presentation manifest
  *  in `scripts/line-ai-latency-autonomy.corpus.ts` pins, so an ops row and a corpus row read alike. */
 export function presentationKindOf(messages: LineReplyMessage[]): string {
@@ -1829,7 +1867,7 @@ export class ProcessLineWebhookUseCase {
   private readonly budgetGrantsV2 = new WeakMap<object, AiBudgetGrantV2>();
   private readonly deliveryAccess = new WeakMap<object, { userId: string; companyId: string; membershipId: string; fingerprint: string; allowDuringSupportPause?: boolean }>();
   private readonly deliveryDenialNotified = new WeakSet<object>();
-  private readonly deliverySources = new WeakMap<object, { requestId: string; ids: string[] | null; expenseSummary?: LineAiConversationContext['deliveredExpenseSummary']; expenseCriterionConfirmation?: boolean }>();
+  private readonly deliverySources = new WeakMap<object, { requestId: string; ids: string[] | null; expenseSummary?: LineAiConversationContext['deliveredExpenseSummary']; expenseCriterionConfirmation?: boolean; recentReads?: LineAiConversationContext['recentReads'] }>();
   private readonly deliveryDraftPreviews = new WeakMap<object, { context: RequestContext; chatKeyHash: string; requestId: string; previewId: string | null; phase: 'PENDING' | 'APPLIED' }>();
   private readonly deliveryReceiptSources = new WeakMap<object, { context: RequestContext; chatKeyHash: string;
     records: Map<string, string | null>; categories: Map<string, string | null>; draftChoices?: LineExpenseDraftRouteContext[] }>();
@@ -4650,6 +4688,15 @@ export class ProcessLineWebhookUseCase {
             statusBasis: sources.expenseSummary.statusBasis, continuationOfPrior: sources.expenseSummary.continuationOfPrior === true,
             ranges: sources.expenseSummary.ranges,
           } } : {}),
+        // Spec §4 R-M2: same access-proof shape as expenseSummary above, so loadConversationContext's
+        // existing identity/chat/recipient re-check (§4 R-M7: none of this survives a scope change)
+        // covers this too without a second verification path.
+        ...(access && sources?.recentReads?.length && sources.ids?.length && !this.deliveryDraftPreviews.has(event)
+          && !this.deliveryReceiptSources.has(event) && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event) ? { readMemory: {
+            userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
+            fingerprint: access.fingerprint, chatKeyHash: chatKeyHashOf(event), recipientHash,
+            entries: sources.recentReads,
+          } } : {}),
       };
       const outcome = await this.prisma.client.lineTurnOutcome.upsert({
         where: { webhookEventId },
@@ -6840,8 +6887,14 @@ export class ProcessLineWebhookUseCase {
       ? await this.readEvidence.deliveredExpenseSummaryForTurn(turnRequest, turnResponse).catch(() => undefined) : undefined;
     const expenseCriterionConfirmation = evidenceIds?.length === 0 && this.readEvidence.isReadFreeExpenseCriterionConfirmation
       ? await this.readEvidence.isReadFreeExpenseCriterionConfirmation(turnRequest, turnResponse).catch(() => false) : false;
+    // Spec §4 R-M2: computed here (request-scoped access to this turn's OWN evidence, same as
+    // expenseSummary above) but only usable by a FUTURE turn once loadConversationContext reads it
+    // back from the delivery-confirmed lineTurnOutcome row (recordTurnOutcome persists it below).
+    const recentReads = evidenceIds && this.readEvidence.recentReadsForTurn
+      ? await this.readEvidence.recentReadsForTurn(turnRequest, turnResponse).catch(() => undefined) : undefined;
     this.deliverySources.set(event, { requestId, ids: evidenceIds, ...(expenseSummary ? { expenseSummary } : {}),
-      ...(expenseCriterionConfirmation ? { expenseCriterionConfirmation: true } : {}) });
+      ...(expenseCriterionConfirmation ? { expenseCriterionConfirmation: true } : {}),
+      ...(recentReads?.length ? { recentReads } : {}) });
 
     // 9. Persist the turn + audit FIRST, so a LINE delivery failure can never lose the record.
     if (turnResponse.refusalReason === 'mutation_blocked') {
@@ -7423,6 +7476,7 @@ export class ProcessLineWebhookUseCase {
       };
     });
     let deliveredExpenseSummary: LineAiConversationContext['deliveredExpenseSummary'];
+    let recentReads: LineAiReadMemory[] | undefined;
     const current = this.deliveryAccess.get(event);
     const chatKeyHash = chatKeyHashOf(event);
     if (current && typeof this.prisma.client.lineTurnOutcome?.findMany === 'function') {
@@ -7459,11 +7513,33 @@ export class ProcessLineWebhookUseCase {
       const distinctScopes = new Set(sorted.map(item => JSON.stringify(item.descriptor.ranges
         .map(range => [range.fromDate, range.toDate, range.branchId]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))))));
       if (sorted.length && (distinctScopes.size === 1 || sorted[0]!.descriptor.continuationOfPrior)) deliveredExpenseSummary = sorted[0]!.descriptor;
+
+      // Spec §4 R-M2: same `outcomes` fetch, same identity/chat/recipient proof as expenseSummary
+      // above — but unlike it, every DISTINCT delivered turn's entries count (not just the latest),
+      // newest turn first, until the 3-entry cap. R-M7: `current`/chatKeyHash are already gated by
+      // conversationOwner()/deliveryAccess above, so a group/room chat never reaches this block.
+      const provedReads = outcomes.flatMap(outcome => {
+        const root = outcome.authorizationJson as Record<string, unknown> | null;
+        const saved = root?.['readMemory'] as Record<string, unknown> | undefined;
+        if (!outcome.deliveredAt || !saved || saved['userId'] !== userId || saved['companyId'] !== companyId
+          || saved['membershipId'] !== current.membershipId
+          || saved['fingerprint'] !== current.fingerprint || saved['chatKeyHash'] !== chatKeyHash
+          || saved['recipientHash'] !== lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? '')
+          || !Array.isArray(saved['entries']) || saved['entries'].length === 0 || saved['entries'].length > LINE_READ_EVIDENCE_MAX) return [];
+        const entries = validLineAiReadMemoryEntries(saved['entries']);
+        if (!entries) return [];
+        const deliveredAt = outcome.deliveredAt instanceof Date ? outcome.deliveredAt : new Date(String(outcome.deliveredAt));
+        if (!Number.isFinite(deliveredAt.getTime())) return [];
+        return [{ at: deliveredAt, entries }];
+      });
+      const flattenedReads = provedReads.sort((a, b) => b.at.getTime() - a.at.getTime()).flatMap(item => item.entries).slice(0, 3);
+      if (flattenedReads.length) recentReads = flattenedReads;
     }
     return {
       windowMinutes: LINE_AI_CONTEXT_WINDOW_MINUTES,
       maxTurns: LINE_AI_CONTEXT_MAX_TURNS,
       lastTurnAt: recentTurns.at(-1)?.at,
+      ...(recentReads ? { recentReads } : {}),
       recentTurns,
       ...(deliveredExpenseSummary ? { deliveredExpenseSummary } : {}),
     };
