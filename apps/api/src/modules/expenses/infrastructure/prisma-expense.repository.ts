@@ -1017,7 +1017,9 @@ export class PrismaExpenseRepository {
     }, { isolationLevel: 'RepeatableRead', maxWait: 1_000, timeout: 5_000 });
   }
 
-  /** Exact aggregate population is independent from the bounded category/branch display groups. */
+  /** Exact aggregate population is independent from the bounded category/branch/vendor display
+   *  groups. Vendor is capped at 10, not `groupLimit` (spec §3 row 5): it feeds a ranked "top
+   *  vendor" answer, not the fuller category/branch breakdown. */
   async readAiExpenseBreakdown(
     filter: AiExpenseReadFilter,
     scope: AiExpenseReadScope,
@@ -1027,13 +1029,16 @@ export class PrismaExpenseRepository {
     byCurrency: Array<{ currency: string; count: number; totalAmount: string }>;
     byCategory: Array<{ expenseCategoryId: string | null; currency: string; count: number; totalAmount: string; label: string | null }>;
     byBranch: Array<{ branchId: string | null; currency: string; count: number; totalAmount: string; label: string | null }>;
+    byVendor: Array<{ vendorCounterpartyId: string | null; currency: string; count: number; totalAmount: string; label: string | null }>;
     categoryHasMore: boolean;
     branchHasMore: boolean;
+    vendorHasMore: boolean;
   }> {
     const where = this.aiExpenseWhere(filter, scope);
+    const vendorGroupLimit = 10;
     return this.prisma.client.$transaction(async (tx) => {
       const stamp = await tx.$queryRaw<Array<{ asOf: Date }>>`SELECT transaction_timestamp() AS "asOf"`;
-      const [totals, categoryGroups, branchGroups, company] = await Promise.all([
+      const [totals, categoryGroups, branchGroups, vendorGroups, company] = await Promise.all([
         tx.expenseRecord.groupBy({ by: ['currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true } }),
         tx.expenseRecord.groupBy({
           by: ['expenseCategoryId', 'currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true },
@@ -1043,11 +1048,16 @@ export class PrismaExpenseRepository {
           by: ['branchId', 'currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true },
           orderBy: [{ _sum: { grandTotalAmount: 'desc' } }, { branchId: 'asc' }, { currency: 'asc' }], take: groupLimit + 1,
         }),
+        tx.expenseRecord.groupBy({
+          by: ['vendorCounterpartyId', 'currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true },
+          orderBy: [{ _sum: { grandTotalAmount: 'desc' } }, { vendorCounterpartyId: 'asc' }, { currency: 'asc' }], take: vendorGroupLimit + 1,
+        }),
         tx.company.findUnique({ where: { id: filter.companyId }, select: { baseCurrency: true } }),
       ]);
       const categoryPage = categoryGroups.slice(0, groupLimit);
       const branchPage = branchGroups.slice(0, groupLimit);
-      const [categories, branches] = await Promise.all([
+      const vendorPage = vendorGroups.slice(0, vendorGroupLimit);
+      const [categories, branches, vendors] = await Promise.all([
         tx.expenseCategory.findMany({
           where: { companyId: filter.companyId, id: { in: categoryPage.map((group) => group.expenseCategoryId).filter((id): id is string => Boolean(id)) } },
           select: { id: true, name: true },
@@ -1056,9 +1066,14 @@ export class PrismaExpenseRepository {
           where: { companyId: filter.companyId, id: { in: branchPage.map((group) => group.branchId).filter((id): id is string => Boolean(id)) } },
           select: { id: true, name: true },
         }),
+        tx.accountingCounterparty.findMany({
+          where: { companyId: filter.companyId, id: { in: vendorPage.map((group) => group.vendorCounterpartyId).filter((id): id is string => Boolean(id)) } },
+          select: { id: true, displayName: true },
+        }),
       ]);
       const categoryNames = new Map(categories.map((row) => [row.id, row.name]));
       const branchNames = new Map(branches.map((row) => [row.id, row.name]));
+      const vendorNames = new Map(vendors.map((row) => [row.id, row.displayName]));
       return {
         asOf: stamp[0]?.asOf ?? new Date(),
         byCurrency: totals.length > 0 ? totals.map((group) => ({
@@ -1075,8 +1090,14 @@ export class PrismaExpenseRepository {
           totalAmount: expenseDecimalToString(group._sum.grandTotalAmount),
           label: group.branchId ? branchNames.get(group.branchId) ?? null : null,
         })),
+        byVendor: vendorPage.map((group) => ({
+          vendorCounterpartyId: group.vendorCounterpartyId, currency: group.currency, count: group._count._all,
+          totalAmount: expenseDecimalToString(group._sum.grandTotalAmount),
+          label: group.vendorCounterpartyId ? vendorNames.get(group.vendorCounterpartyId) ?? null : null,
+        })),
         categoryHasMore: categoryGroups.length > groupLimit,
         branchHasMore: branchGroups.length > groupLimit,
+        vendorHasMore: vendorGroups.length > vendorGroupLimit,
       };
     }, { isolationLevel: 'RepeatableRead', maxWait: 1_000, timeout: 5_000 });
   }

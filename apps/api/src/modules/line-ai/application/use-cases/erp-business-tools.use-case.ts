@@ -392,7 +392,11 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
         ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
       },
     });
-    const completeness = completeResult(0, false, snapshot.byCategory.length + snapshot.byBranch.length, snapshot.categoryHasMore || snapshot.branchHasMore);
+    const completeness = completeResult(
+      0, false,
+      snapshot.byCategory.length + snapshot.byBranch.length + snapshot.byVendor.length,
+      snapshot.categoryHasMore || snapshot.branchHasMore || snapshot.vendorHasMore,
+    );
     const facts = snapshot.byCurrency.map((row) => fact({
       id: `expense.breakdown.total.${row.currency}`, metric: 'expense_total', value: row.totalAmount,
       unit: 'money', currency: row.currency, period: queryApplied.period ?? null,
@@ -419,6 +423,12 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
           branch: group.label ?? (group.branchId ?? 'ส่วนกลาง (ไม่ระบุสาขา)'),
           currency: group.currency, count: group.count, totalAmount: group.totalAmount,
         })),
+        byVendor: snapshot.byVendor.map((group) => ({
+          vendorId: group.vendorCounterpartyId,
+          vendor: group.label ?? (group.vendorCounterpartyId ?? 'ไม่ระบุร้าน'),
+          currency: group.currency, count: group.count, totalAmount: group.totalAmount,
+        })),
+        vendorHasMore: snapshot.vendorHasMore,
         queryApplied,
         completeness,
       },

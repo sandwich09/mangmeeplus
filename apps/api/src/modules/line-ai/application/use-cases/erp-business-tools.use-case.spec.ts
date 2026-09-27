@@ -84,7 +84,7 @@ describe('§3.3 default period: current month (daily closing: today)', () => {
   it('expense.get_breakdown reads the current month', async () => {
     const source = { readAiBreakdown: async () => ({
       asOf: new Date(), byCurrency: [{ currency: 'THB', count: 0, totalAmount: '0' }],
-      byCategory: [], byBranch: [], categoryHasMore: false, branchHasMore: false,
+      byCategory: [], byBranch: [], byVendor: [], categoryHasMore: false, branchHasMore: false, vendorHasMore: false,
     }) } as any;
     const result = await new ExpenseGetBreakdownTool(source).execute({ ...baseCtx, permissions: ['expense.read'] });
     assert.deepEqual((result.data as any).period, { ...month(), defaultedToCurrentMonth: true });
@@ -362,7 +362,8 @@ describe('ExpenseGetBreakdownTool', () => {
             { branchId: 'b1', currency: 'THB', count: 2, totalAmount: '200.0000', label: 'สาขาลาดพร้าว' },
             { branchId: null, currency: 'THB', count: 1, totalAmount: '100.0000', label: null },
           ],
-          categoryHasMore: false, branchHasMore: false,
+          byVendor: [],
+          categoryHasMore: false, branchHasMore: false, vendorHasMore: false,
         };
       },
     } as any;
