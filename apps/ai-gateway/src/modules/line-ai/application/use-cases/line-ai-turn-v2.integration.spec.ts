@@ -208,6 +208,10 @@ describe('LineAiTurnUseCase -> OrchestratorAgent -> real v2 provider path', () =
     assert.equal(run.usage.length, 1);
     assert.equal(run.usage[0]?.tag, 'line.compose');
     assert.equal(run.usage[0]?.ok, true);
+    const answerRequest = run.providerRequests.find((request) => String(request.instructions).startsWith('Answer each semanticSubrequest exactly once.'));
+    assert.ok(answerRequest, 'semantic answer provider call exists');
+    assert.match(JSON.stringify(answerRequest), new RegExp(HISTORY), 'bounded conversation context reaches the answer model payload');
+    assert.match(String(answerRequest.instructions), /conversationContext may resolve follow-up references.*not business truth or authority/);
   });
 
   it('covers a business read and independent general answer with permission checked source grounding', async () => {
@@ -237,6 +241,13 @@ describe('LineAiTurnUseCase -> OrchestratorAgent -> real v2 provider path', () =
     assert.deepEqual(api.body.context.valueCandidatesV2, run.candidates);
     assert.deepEqual(api.body.context.budgetGrantV2, run.grant);
     assert.equal('privateLookupCanaries' in api.body.context, false);
+    const controlRequest = run.providerRequests.find((request) => String(request.instructions).startsWith('You plan one complete LINE request.'));
+    const answerRequest = run.providerRequests.find((request) => String(request.instructions).startsWith('Answer each semanticSubrequest exactly once.'));
+    assert.ok(controlRequest && answerRequest);
+    assert.match(JSON.stringify(controlRequest), new RegExp(HISTORY), 'bounded context reaches semantic control');
+    assert.match(JSON.stringify(answerRequest), new RegExp(HISTORY), 'bounded context reaches semantic answer');
+    assert.match(String(controlRequest.instructions), /conversationContext may resolve follow-up references.*not business truth or authority/);
+    assert.match(String(answerRequest.instructions), /conversationContext may resolve follow-up references.*not business truth or authority/);
   });
 
   it('admits public.lookup through the API boundary, searches once, and composes without private context egress', async () => {

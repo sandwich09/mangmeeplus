@@ -291,10 +291,21 @@ export function formatExpenseSummary(
     ? (english ? `\nExcludes ${plural(cancelled, 'rejected or voided record')}`
       : `\nไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ ${groupThousands(String(cancelled))} รายการ`)
     : '';
+  const draftAmount = totals['draftAmount'];
+  const pendingAmount = totals['pendingAmount'];
+  const confirmedAmount = totals['confirmedAmount'];
+  const validBasisAmount = (value: unknown): value is string | number => typeof value === 'number'
+    ? Number.isFinite(value)
+    : typeof value === 'string' && PLAIN_DECIMAL.test(value.replace(/,/g, ''));
+  const basisText = validBasisAmount(pendingAmount) && validBasisAmount(draftAmount) && validBasisAmount(confirmedAmount)
+    ? english
+      ? `\nAmount basis: includes ${moneyText(pendingAmount)} THB pending (including ${moneyText(draftAmount)} THB draft) and ${moneyText(confirmedAmount)} THB confirmed`
+      : `\nฐานยอด: รวมรายการรอดำเนินการ ${moneyText(pendingAmount)} บาท (ในนั้นเป็นร่าง ${moneyText(draftAmount)} บาท) และรายการยืนยันแล้ว ${moneyText(confirmedAmount)} บาท`
+    : '';
 
   const localizedAsOf = ctx.asOfLabel ?? thaiExpenseAsOfLabel(asOf);
   const asOfText = english ? asOfLine(asOf, true) : localizedAsOf ? asOfLine(asOf, false, localizedAsOf) : '';
-  const replyText = `${label}: ${amount}${countText}${cancelledText}${periodLine(undefined, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfText}`;
+  const replyText = `${label}: ${amount}${countText}${basisText}${cancelledText}${periodLine(undefined, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfText}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 

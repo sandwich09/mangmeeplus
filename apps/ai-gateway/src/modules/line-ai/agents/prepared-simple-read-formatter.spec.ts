@@ -155,6 +155,47 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
     if (r.kind === 'answer') assert.match(r.replyText, /^Expenses: 9,000\.00 THB \(8 records\)/);
   });
 
+  it('states that the default total includes drafts instead of implying confirmed-only spend', () => {
+    const data = expenseData({ total: 3, summary: expenseSummary({
+      countedItems: 3, totalAmount: 27230.5, pendingAmount: 900, draftAmount: 900, confirmedAmount: 26330.5,
+    }) });
+    const th = formatPreparedSimpleRead(EXPENSE, expenseOutput(data), TH);
+    const en = formatPreparedSimpleRead(EXPENSE, expenseOutput(data), EN);
+    assert.equal(th.kind, 'answer');
+    assert.equal(en.kind, 'answer');
+    if (th.kind === 'answer') assert.match(th.replyText, /ฐานยอด: รวมรายการรอดำเนินการ 900\.00 บาท \(ในนั้นเป็นร่าง 900\.00 บาท\) และรายการยืนยันแล้ว 26,330\.50 บาท/);
+    if (en.kind === 'answer') assert.match(en.replyText, /Amount basis: includes 900\.00 THB pending \(including 900\.00 THB draft\) and 26,330\.50 THB confirmed/);
+  });
+
+  it('derives the basis from returned summary values, not the requested status filter', () => {
+    const filteredOutput = expenseOutput(expenseData({
+      total: 2, summary: expenseSummary({ countedItems: 2, totalAmount: 400, pendingAmount: 0, draftAmount: 0, confirmedAmount: 400 }),
+    }));
+    filteredOutput.toolData![0]!.input = { documentStatus: 'CONFIRMED' };
+    const filtered = formatPreparedSimpleRead(EXPENSE, filteredOutput, { ...TH, proposedInput: { documentStatus: 'CONFIRMED' } });
+    assert.equal(filtered.kind, 'answer');
+    if (filtered.kind === 'answer') {
+      assert.match(filtered.replyText, /ฐานยอด: รวมรายการรอดำเนินการ 0\.00 บาท \(ในนั้นเป็นร่าง 0\.00 บาท\) และรายการยืนยันแล้ว 400\.00 บาท/);
+      assert.doesNotMatch(filtered.replyText, /ฐานสถานะ:/);
+    }
+    const allStatuses = expenseOutput(expenseData({
+      total: 3, summary: expenseSummary({ countedItems: 3, totalAmount: 420, pendingAmount: 100, draftAmount: 20, confirmedAmount: 300 }),
+    }));
+    allStatuses.toolData![0]!.input = { documentStatus: 'CONFIRMED' };
+    const mismatchedRequest = formatPreparedSimpleRead(EXPENSE, allStatuses,
+      { ...TH, proposedInput: { documentStatus: 'CONFIRMED' } });
+    assert.equal(mismatchedRequest.kind, 'answer');
+    if (mismatchedRequest.kind === 'answer') {
+      assert.match(mismatchedRequest.replyText, /ฐานยอด: รวมรายการรอดำเนินการ 100\.00 บาท \(ในนั้นเป็นร่าง 20\.00 บาท\) และรายการยืนยันแล้ว 300\.00 บาท/);
+      assert.doesNotMatch(mismatchedRequest.replyText, /ฐานสถานะ:/);
+    }
+    const incompleteSummary = expenseSummary({ totalAmount: 900, draftAmount: 900, confirmedAmount: 0 });
+    delete incompleteSummary['pendingAmount'];
+    const incomplete = formatPreparedSimpleRead(EXPENSE, expenseOutput(expenseData({ summary: incompleteSummary })), TH);
+    assert.equal(incomplete.kind, 'answer');
+    if (incomplete.kind === 'answer') assert.doesNotMatch(incomplete.replyText, /ฐานยอด:/);
+  });
+
   it('renders an exact Decimal beyond Number safe precision without losing a satang', () => {
     const r = formatPreparedSimpleRead(EXPENSE, expenseOutput(expenseData({
       total: 1,
@@ -197,7 +238,10 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
       total: 0, items: [], summary: expenseSummary({ countedItems: 0, totalAmount: 0, confirmedAmount: 0, paidAmount: 0 }),
     })), TH);
     assert.equal(r.kind, 'answer');
-    if (r.kind === 'answer') assert.match(r.replyText, /^ค่าใช้จ่าย: 0\.00 บาท \(0 รายการ\)/);
+    if (r.kind === 'answer') {
+      assert.match(r.replyText, /^ค่าใช้จ่าย: 0\.00 บาท \(0 รายการ\)/);
+      assert.match(r.replyText, /ฐานยอด: รวมรายการรอดำเนินการ 0\.00 บาท \(ในนั้นเป็นร่าง 0\.00 บาท\) และรายการยืนยันแล้ว 0\.00 บาท/);
+    }
   });
 
   it('renders satang precision, not the float noise of a summed JS number', () => {

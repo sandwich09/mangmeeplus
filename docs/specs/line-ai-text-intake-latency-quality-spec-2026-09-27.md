@@ -1,0 +1,297 @@
+# LINE AI Text Intake Latency Without Quality Loss Spec
+
+## 1. Status and decision
+
+Status: source implementation and focused checks complete on 2026-09-27; frozen real-model comparison remains pending. This spec narrows the current text-intake output and fixes first-intake context ordering. It does not authorize deployment, a model change, or a new product module.
+
+The implementation decision is:
+
+1. Keep one semantic model call for ordinary text intake.
+2. Ask the provider for one compact, evidence-bound decision instead of duplicating the same read inside `semanticSubrequests` and a full nested `preparedPlan`.
+3. Decode that private provider response on the AI Gateway and expand it into the existing canonical `LineIntakeRoutePlan`, `LineAiSemanticSubrequestV2[]`, and `LineAiPreparedPlan` contracts.
+4. Load the authorized bounded conversation/task snapshot before the first intake call and reuse that one result; do not prefetch source-specific private ERP rows for every turn.
+5. Keep permissions, entitlements, tenant/branch scope, source evidence, source-state rechecks, task revision checks, and final-mutation boundaries unchanged.
+
+This path is the default text behavior after the code version is deployed. It does not add an opt-in flag or secret. Rollback is a code-version rollback. The existing configured model remains unchanged until same-model quality evidence passes.
+
+## 2. Product goal and user journey
+
+For a short text question such as `เดือนนี้ค่าไช้จ่ายไปเท่าไหร่แล้ว`, the user should receive a grounded answer as soon as the permission-checked ERP read completes. The assistant must still understand natural Thai, typos, follow-ups, corrections, negation, relative dates, compound requests, pending work, and references such as “อันเมื่อกี้”.
+
+The target journey is:
+
+```text
+durable LINE acceptance
+  -> existing buffer/coalescing boundary
+  -> resolve current identity, tenant, membership, permissions and branch scope
+  -> load one bounded, revisioned pre-intake context snapshot
+  -> one semantic intake model call using compact provider-only output
+  -> strict decoder expands canonical semantic inventory and optional prepared read
+  -> existing permission/entitlement/delegation/tool-input checks
+  -> permission-checked ERP tool
+  -> existing deterministic grounded formatter with source/basis/completeness
+  -> existing delivery and task-state commit
+```
+
+For ambiguous, compound, write, file, analytical, or unsupported requests, the decoder preserves every clause and the existing full path remains responsible for answering, clarifying, or refusing it. A fast failure is not a successful latency result.
+
+## 3. Evidence and diagnosis
+
+The frozen real-provider evidence is `docs/research/mangmee-natural-model-evidence-2026-09-27/primary.json`.
+
+NAT-01 turn 1 records:
+
+| Boundary | Observed |
+| --- | ---: |
+| accepted to intake HTTP start | 1,148 ms |
+| intake provider call | 7,132 ms |
+| intake output | 592 tokens |
+| ERP tool | 22 ms at captured tool boundary; 27 ms in turn response |
+| gateway turn after intake | 48 ms HTTP; 34 ms internal |
+| accepted to model/tool completion | 8,458 ms |
+| accepted to sink receipt | 8,522 ms |
+
+The 1,148 ms before intake is consistent with the frozen runner's 1,000 ms debounce cohort plus roughly 148 ms of admission and request preparation. It is not evidence of a slow ERP read. This change does not remove the existing coalescing boundary; the benchmark must report it separately.
+
+The intake response repeats the same decision in three places:
+
+- outer route: `BUSINESS_READ_QUESTION`, language, confidence and reason;
+- canonical semantic item: kind, goal, requested filters and full evidence reference including a 64-character hash;
+- full prepared plan: language, intent, subject, agent, tool name, filters, response mode and answer shape.
+
+The observed bottleneck boundary is the provider call: its 7,132 ms includes network, queueing, prefill and generation, and the trace has no time-to-first-token split. The 592-token response proves the returned object is broad, but does not prove how much of 7,132 ms each provider phase consumed. A second captured read used the prompt cache and still spent about 6,988 ms in the provider call; those two samples show that cache alone did not meet the goal, not a general performance benchmark. Compact output is therefore a measured hypothesis that requires same-model A/B evidence, not a confirmed root cause. `maxTokens: 4096` is only a ceiling and is not itself the cause. Lowering that ceiling alone risks truncation and is forbidden by this spec.
+
+There is also a correctness-ordering gap in `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts`: the reliability-v2 early intake runs before `loadConversationContext`, open clarifications, recent correction candidates, active drafts, and pending-media resolution are loaded. Its result is cached in `intakePlansV2` and reused by the later call that supplies those fields. This means the only semantic model call can be based on less context than the later code appears to pass.
+
+## 4. Scope
+
+### 4.1 Definite implementation scope
+
+- text-only LINE intake under the existing reliability-v2 path;
+- provider-only compact semantic decision and strict decoder;
+- server expansion to the existing canonical route, semantic inventory, and prepared simple-read plan;
+- first-intake context ordering and single pre-intake snapshot use;
+- focused contract, router, webhook-ordering, and compatibility tests;
+- same-model local synthetic benchmark and held-out semantic comparison;
+- observability for compact decode outcome, fallback reason, provider tokens, provider duration, and successful end-to-end duration.
+
+### 4.2 Explicitly deferred existing gaps
+
+- image/PDF read quality, evidence-span failures, and delivery recovery;
+- voice;
+- public lookup;
+- new financial-advisor behavior or modules;
+- model downgrade or default-model change;
+- reimbursement writer, approval, payment, ledger posting, tax filing, permissions changes, or any other final mutation;
+- new debounce policy;
+- UAT/Production deployment or customer-gate changes;
+- unrelated NAT failures listed in `docs/research/mangmee-natural-real-model-results-2026-09-27-th.md`.
+
+Passing this scoped change must not be reported as closing those gaps.
+
+## 5. Compatibility and ownership boundaries
+
+The compact shape is private to the provider response inside the AI Gateway. No API, AgentCore, tool, ledger, delivery, or persisted task consumer receives it.
+
+The decoder emits the existing canonical types:
+
+- `LineIntakeRoutePlan`;
+- `LineAiSemanticSubrequestV2[]`;
+- optional `LineAiPreparedPlan` version 1;
+- existing route-specific fields such as capture/correction/reimbursement hints and `advisorAnswer`.
+
+The existing legacy provider response remains decodable when the compact field is absent, so replay fixtures and version skew keep working. A response containing both compact and legacy semantic/prepared representations is rejected as ambiguous rather than choosing one silently.
+
+AI Gateway remains separate from ERP core. It proposes and decodes. The API and tool executor continue to own tenant, membership, permission, entitlement, delegation, branch scope, authoritative state, audit, source evidence, and final mutation.
+
+No dependency or `package.json` change is required.
+
+## 6. Pre-intake context snapshot
+
+### 6.1 Authorization before loading
+
+The snapshot is loaded only after all existing identity, company, membership, legal, feature, permission and branch-scope gates have passed. Group/room restrictions remain unchanged.
+
+The pre-intake snapshot contains only the bounded read-only state needed to classify safely:
+
+- `conversationContext` from the current authorized personal chat window;
+- `taskProjection` with owner-bound lifecycle epoch and task revisions;
+- `responsePreferences` when already enabled;
+- deterministic value/date/period candidates from accepted evidence;
+- bounded current pending-task/file metadata already present in owner/revisioned state.
+
+Private ERP correction candidates, active expense records and other source-specific enrichment load only after the semantic route requires that source and only through their existing permission/scope checks. A general question must not prefetch those records. Where a write/correction needs source-specific selection that was not in the pre-intake snapshot, the existing domain path resolves it from current state or asks; it must not guess or make a second intake call.
+
+It is context, never authority or business truth. Historical reply text remains excluded as today; current business facts must still come from ERP tools.
+
+### 6.2 One semantic snapshot
+
+The first and only intake call receives the complete bounded classification snapshot: current accepted evidence, authorized conversation context, revisioned task state and deterministic value candidates. “Complete” here means complete for semantic classification; it does not mean preloading private ERP rows for every turn. The code must not call intake once with less than this snapshot and then satisfy a later call from that cache.
+
+Within intake, `taskRef` is valid only when it exactly matches the offered task id, revision, subrequest index, state and kind. Pending-file references must be from the latest offered task projection and current pending row. If a revision changes before dispatch, the existing CAS/source-current checks refuse or ask again; the code must not silently retarget to the newest file or record.
+
+After the semantic inventory is persisted, a downstream request may load the newly committed task projection for its own contract. That is a new state boundary, not a second semantic classification snapshot.
+
+## 7. Compact provider-only decision
+
+### 7.1 Shape
+
+Text intake continues to return outer route fields and route-specific hints. Instead of returning canonical `semanticSubrequests` plus a nested `preparedPlan`, the prompt asks for one `decisionV1` object:
+
+```json
+{
+  "intent": "BUSINESS_READ_QUESTION",
+  "language": "th",
+  "confidence": 0.97,
+  "reason": "one short sentence",
+  "decisionV1": {
+    "subrequests": [
+      {
+        "kind": "read",
+        "goal": "ดูยอดค่าใช้จ่ายรวมเดือนนี้",
+        "sources": [{ "part": 0, "whole": true }],
+        "filters": { "fromDate": "2026-09-01", "toDate": "2026-09-27" }
+      }
+    ],
+    "simpleRead": {
+      "subrequest": 0,
+      "tool": "expense.list_recent",
+      "subject": "expense",
+      "agent": "accounting",
+      "answerShape": "single_metric",
+      "confidence": 0.93
+    }
+  }
+}
+```
+
+Optional subrequest members preserve current meaning:
+
+- `requiredEvidence`;
+- `dependsOn`, using earlier array indexes only;
+- `entity`, exact user text only; the decoder maps it to canonical `entityReference: {kind:"user_text", value}`;
+- `taskRef`, selected exactly from the offered projection;
+- `writeIntent`, only for an explicit write clause;
+- multiple `sources` for a clause crossing accepted input parts.
+
+`sources` identify only parts offered in this request. A whole-part reference expands from the server-provided `fullPartRef`. A narrower reference carries an exact `quote`; the decoder locates it within that offered part and accepts it only when the occurrence is unique. It then builds canonical UTF-16 offsets and copies the server-held SHA-256. The model never supplies a hash. Missing, normalized, non-unique, or cross-part text is invalid and triggers the existing bounded repair/failure behavior.
+
+Array order becomes the canonical contiguous `index`; the model does not repeat indexes. Omitted `requiredEvidence` and `dependsOn` expand to empty arrays. `filters` is required and may be empty. No clause may be omitted because it is unsupported, blocked, negated, quoted, general, help, file, public, read, or write.
+
+### 7.2 Single source of tool and filter intent
+
+For an eligible simple read, `simpleRead.subrequest` points to exactly one `kind=read` item. The decoder copies that item's `filters` to both:
+
+- canonical `semanticSubrequests[index].requestedFilters`; and
+- canonical `preparedPlan.proposedCalls[0].input`.
+
+This makes filter equality structural rather than asking the model to repeat it.
+
+The decoder expands `simpleRead` into the existing prepared plan by using only current allowlists:
+
+- tool must be in the currently offered enabled catalog and have category `read_summary`, `read_detail`, or `report`;
+- subject must be one of that tool's `businessSubjects`;
+- agent must be one of that tool's `supportedAgents`;
+- canonical intent is derived from the registered tool category;
+- every filter key must be in that tool's current required/optional input fields;
+- every value must satisfy existing bounded input checks and amount/date/period membership rules;
+- answer shape must be supported by the existing deterministic formatter family;
+- confidence remains veto-only and must meet the existing simple-plan floor;
+- outer intent must be the trusted `BUSINESS_READ_QUESTION`;
+- there must be exactly one independent read, with no entity ambiguity, task ambiguity, write clause, attachment, open unresolved choice, mixed intent, comparison, or analysis requiring the full path.
+
+The decoder never invents a tool, filter, value, subject, agent, date, branch, company, tenant, permission, scope, id, or evidence reference.
+
+### 7.3 Failure behavior
+
+- Invalid semantic coverage or invalid evidence reference: use the existing single bounded schema-repair attempt, then return typed unavailable status. No tool runs.
+- A globally unknown/reserved filter key or malformed filter value invalidates the compact decision: use the bounded repair attempt, then return typed unavailable. This prevents an unsupported constraint from entering the full path as an unfiltered/default query.
+- Unknown/disabled tool, incompatible subject/agent, a registry-known filter unsupported by the selected tool, ungrounded value, low confidence, unsupported formatter, or ineligible simple shape: reject `simpleRead` with a typed decoder fallback reason and preserve the valid canonical semantic inventory for the existing full path. No prepared tool runs before fallback.
+- Conflicting compact and legacy representations: reject the intake response as ambiguous. No tool runs.
+- Missing context or ambiguous referent: keep `taskRef`/entity ambiguity unresolved and ask; never bind “latest” by guess.
+- A negated or unclear write stays clarification/refusal with zero write. A compact read proposal can never upgrade a write or mixed clause into the read lane.
+
+Decoder logs contain request id, bounded outcome/rejection enum, subrequest count and decoder duration. Existing provider usage telemetry remains the source for token counts and provider duration. Neither log contains raw user text, quotes, filters with sensitive values, or model output.
+
+## 8. Existing behavior that must remain intact
+
+- Multiple intents and dependencies remain complete and ordered.
+- General stable business questions that need no ERP data remain natural through the existing general/advisor composition path; this change adds no keyword router or narrow whitelist for them.
+- Capability help remains permission/entitlement scoped.
+- Relative dates use deterministic Bangkok-time candidates from accepted input. The model selects; code does not compute an unoffered period.
+- Corrections and pending work use exact owner/revision references.
+- Read answers retain canonical tool results, `queryApplied`, date basis, status basis, completeness, source refs, source labels and as-of time.
+- Draft, confirmed, paid and unpaid amounts remain distinct. An expense total is not silently restated as paid, profit or cash.
+- Permission denied, feature disabled, source changed, empty, unknown and partial remain distinct outcomes.
+- Every final write remains behind its existing source-module preview/confirm/state gates.
+
+## 9. Latency and quality gates
+
+The desired 2–4 second text answer is an aspiration to test, not a guarantee and not an acceptance shortcut.
+
+Report these separately for every measured turn:
+
+- accepted-to-intake start;
+- intake provider duration;
+- intake input, cache-read/cache-write and output tokens;
+- decoder duration and outcome;
+- tool duration;
+- gateway turn duration;
+- delivery duration;
+- accepted-to-successful sink receipt;
+- model/tool call counts;
+- exact semantic, filter, tool, source, basis and effect outcome.
+
+Initial same-model pilot: frozen baseline commit `abdf93b9f93fc21f4e5b79f92cd147e0bf3dd74d` versus reviewed candidate, Bedrock Sonnet 4.6, synthetic local services/sink, NAT-01 and NAT-02, four provider turns total: one prompt for each scenario on baseline and the same two prompts on candidate. The subsequent held-out matrix must include:
+
+- typo and paraphrase simple reads;
+- relative dates and Bangkok boundaries;
+- multi-clause read/general/write mixes;
+- negated and ambiguous writes;
+- follow-up referents and corrected prior wording;
+- multiple pending tasks/files and stale revisions;
+- permission, feature and branch-scope changes;
+- unknown tool/filter/malformed compact payloads;
+- general questions needing no ERP read;
+- empty, partial, unknown and source-changed tool results.
+
+Acceptance requires all of the following:
+
+1. every candidate main question passes its golden rubric independently of baseline; comparison also records regressions in route, complete clause inventory, filters, task/file references, permission result, tool calls, source/basis, effects and delivered content;
+2. zero unexpected mutation and zero prepared tool call on any decoder rejection;
+3. every successful simple read uses the same canonical downstream plan/result contract as baseline;
+4. median and p95 are reported from successful comparable turns; failures are counted separately and never improve latency;
+5. simple-read provider output tokens materially decrease; no hard token ceiling is lowered to manufacture the result;
+6. the 2–4 second goal is claimed only if successful accepted-to-delivery observations actually fall there under the stated environment;
+7. all focused tests, type checks and frozen evidence hashes pass.
+
+For NAT-01 the delivered answer must state the applied expense basis. The current default total includes pending statuses and confirmed records while excluding rejected/voided records; the pending amount includes the draft component. The candidate must state that the pending basis includes the 900-baht draft amount and state the confirmed component. It may use confirmed-only only when the user explicitly requests that basis or the authoritative tool contract changes and reports it. A silent confirmed-only reinterpretation is a failure.
+
+If correctness, completion rate, permission behavior, source honesty, or mutation safety regresses, the candidate fails even when faster.
+
+## 10. Observability, rollout and rollback
+
+Add or reuse structured observations for:
+
+- compact decode outcome: `prepared`, `semantic_only`, or `invalid`;
+- bounded compact simple-read rejection enum when canonical semantics remain usable;
+- subrequest count and decoder duration;
+- provider/decoder/tool/turn/delivery durations and token counts;
+- canonical prepared-plan version and executed lane from the service that knows it.
+
+Do not log raw text or the compact payload.
+
+No deployment is included. After source review and local evidence, normal UAT/Production protocol remains mandatory. Rollback is deploy of the previous code version. Canonical downstream contracts and persisted task state do not require migration or cleanup. The legacy decoder remains for wire/version compatibility, not as a second provider call.
+
+## 11. Acceptance checklist
+
+- [ ] Product journey and exclusions match this spec.
+- [ ] Compact response is private to AI Gateway and canonical downstream contracts remain compatible.
+- [ ] First intake receives the current authorized/revisioned context and is not reused from a partial call.
+- [ ] Compound, negation, ambiguity, correction, relative date, task/file reference and source evidence survive expansion.
+- [ ] Unknown tool/filter/malformed output causes visible typed fallback before any tool.
+- [ ] Tenant, branch, permission, entitlement, delegation, audit, source-state and final-mutation checks remain active.
+- [ ] General no-tool questions remain natural without keyword routing.
+- [ ] Focused tests and type checks pass.
+- [ ] Same-model pilot and held-out evidence report successful latency and quality without counting failures as wins.
+- [ ] No new dependency, secret, opt-in flag, public lookup, voice or advisor module is added.

@@ -8,6 +8,8 @@ it('answers an admitted private general/help turn without private ERP prefetch o
   const event: any = { webhookEventId: 'evt', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply', messageText: 'ทำไมท้องฟ้าเป็นสีฟ้า', inputEvidence: { joinedSha256: 'digest' } };
   const owner = { companyId: 'company', userId: 'user', membershipId: 'member', chatKeyHash: 'chat' };
   const grant = { turnKey: 'turn' }, calls: string[] = [];
+  const conversationContext = { windowMinutes: 15, maxTurns: 15,
+    recentTurns: [{ at: new Date().toISOString(), userMessagePreview: 'กำไรคืออะไร', assistantReplyPreview: 'กำไรคือรายได้หักค่าใช้จ่าย' }] };
   const route = { status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', semanticSubrequests: [{ index: 0, kind: 'general', goal: 'sky', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
   const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
   Object.assign(flow, {
@@ -22,14 +24,14 @@ it('answers an admitted private general/help turn without private ERP prefetch o
       assert.equal(original, grant); assert.equal(lane, 'general'); assert.deepEqual(profiles, ['line-answer/2']); return grant;
     }, requestLineTurn: async (request: any) => {
       calls.push('answer'); assert.equal(request.messageText, event.messageText); assert.equal(request.inputEvidence, event.inputEvidence);
-      assert.equal(request.conversationContext, undefined);
+      assert.equal(request.conversationContext, conversationContext);
       return { replyText: 'อากาศกระเจิงแสงสีน้ำเงิน', webLinks: [], sourceLabels: [], toolsInvoked: [], sourceRefs: [], refused: false, semanticCoverage: [{ index: 0, status: 'handled' }] };
     } },
     ledger: { appendTurn: async ({ acceptedRequest }: any) => { calls.push('durable'); assert.equal(acceptedRequest.request.budgetGrantV2, grant); return 'ledger'; }, ack: async () => calls.push('ack') },
     persistTurn: async () => { calls.push('persist'); }, updateEventLog: async () => undefined,
     deliverMessages: async (_event: any, messages: any[]) => { calls.push('accepted'); assert.match(messages[0].text, /อากาศ/); return 'ok'; },
   });
-  await flow.deliverPureGeneralV2(event, 'request', route, { permissions: ['line.ai.query'], roles: [], scopes: {} }, [], undefined);
+  await flow.deliverPureGeneralV2(event, 'request', route, { permissions: ['line.ai.query'], roles: [], scopes: {} }, [], undefined, conversationContext);
   assert.deepEqual(calls, ['durable', 'answer', 'persist', 'accepted', 'ack']);
 });
 

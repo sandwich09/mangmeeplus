@@ -3414,7 +3414,7 @@ export class ProcessLineWebhookUseCase {
   /** Already classified from full input, without reading expense/context repositories. */
   private async deliverPureGeneralV2(event: LineTextEvent, requestId: string, route: GovernedLineIntakeRoutePlan,
     access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>, features: ReadonlySet<string> | readonly string[] | null,
-    candidates: LineAiTurnRequest['valueCandidates']): Promise<void> {
+    candidates: LineAiTurnRequest['valueCandidates'], conversationContext?: LineAiConversationContext): Promise<void> {
     const bound = this.boundConversations.get(event), initial = this.budgetGrantsV2.get(event);
     if (!bound || !initial || !event.inputEvidence || !route.semanticSubrequests?.length) throw new Error('AI_CONTRACT_UNSUPPORTED');
     const grant = await this.aiGateway.narrowLineReliabilityGrant(initial, 'general', ['line-answer/2']);
@@ -3438,6 +3438,7 @@ export class ProcessLineWebhookUseCase {
       inputEvidence: event.inputEvidence, budgetGrantV2: grant, contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'],
       semanticSubrequests: route.semanticSubrequests, ...await this.reliabilityContext(event),
       ...(candidates ? { valueCandidates: candidates } : {}), intakeIntent: route.intent,
+      ...(conversationContext ? { conversationContext } : {}),
       ...(features ? { entitledFeatureKeys: [...features] } : {}),
       ...(this.config.lineAiApprovedKnowledgeEnabled ? { approvedKnowledge: true, selectedKnowledgeCardIds: route.selectedKnowledgeCardIds } : {}) };
     const ledgerId = await this.ledger?.appendTurn({ messagingChannelId: event.messagingChannelId, companyId: bound.owner.companyId,
@@ -5191,20 +5192,26 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    // V2 classifies from accepted input and bounded task state before any private ERP prefetch.
-    if (canQuery && this.boundConversations.has(event)) {
+    // V2 classifies once from accepted input plus the authorized, bounded chat/task snapshot before
+    // pending-media/draft interceptors can consume or write. Source-specific ERP candidates stay below
+    // this point and are loaded only for a route that needs their existing domain flow.
+    const boundSemanticV2 = canQuery && this.boundConversations.has(event);
+    let conversationContext: LineAiConversationContext | undefined = boundSemanticV2
+      ? await this.loadConversationContext(companyId, identity.userId, event) : undefined;
+    let semanticRoutePlan: GovernedLineIntakeRoutePlan | undefined;
+    if (boundSemanticV2) {
       const candidates = await this.textValueCandidates(event, event.messageText);
-      const earlyRoute = await this.tryRouteIntake({ event, requestId, webhookEventId: event.webhookEventId,
+      semanticRoutePlan = await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({ event, requestId, webhookEventId: event.webhookEventId,
         companyId, userId: identity.userId, permissions: resolvedAccess.permissions, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : [],
-        messageText: event.messageText, ...(candidates ? { valueCandidates: candidates } : {}) });
-      this.intakePlansV2.set(event, earlyRoute);
-      if (earlyRoute.status !== 'ROUTED' || !earlyRoute.semanticSubrequests?.length) {
+        messageText: event.messageText, conversationContext, ...(candidates ? { valueCandidates: candidates } : {}) }));
+      this.intakePlansV2.set(event, semanticRoutePlan);
+      if (semanticRoutePlan.status !== 'ROUTED' || !semanticRoutePlan.semanticSubrequests?.length) {
         await this.deliverReply(event, 'ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้');
         await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_CONTRACT_UNSUPPORTED', companyId); return;
       }
-      if (await this.resumeDocumentQuestionV2(event, requestId, earlyRoute, resolvedAccess)) return;
-      if (earlyRoute.semanticSubrequests.every(item => ['general', 'help'].includes(item.kind))) {
-        await this.deliverPureGeneralV2(event, requestId, earlyRoute, resolvedAccess, entitledFeatureKeys, candidates); return;
+      if (await this.resumeDocumentQuestionV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
+      if (semanticRoutePlan.semanticSubrequests.every(item => ['general', 'help'].includes(item.kind))) {
+        await this.deliverPureGeneralV2(event, requestId, semanticRoutePlan, resolvedAccess, entitledFeatureKeys, candidates, conversationContext); return;
       }
     }
 
@@ -5329,7 +5336,9 @@ export class ProcessLineWebhookUseCase {
       // re-ask about THAT file instead of asking the customer to send one.
     }
 
-    const conversationContext = canQuery ? await this.loadConversationContext(companyId, identity.userId, event) : undefined;
+    if (!boundSemanticV2 && canQuery) {
+      conversationContext = await this.loadConversationContext(companyId, identity.userId, event);
+    }
     const valueCandidates = await this.textValueCandidates(event, normalizedText);
     // Item 10F: chatKey = groupId ?? roomId ?? userId (same as the buffer); open waiting_user
     // ledger entries ride the turn as DATA so the model can complete the ORIGINAL request.
@@ -5837,7 +5846,7 @@ export class ProcessLineWebhookUseCase {
     // One busy-wait budget for the WHOLE live turn (intake + gateway turn share it), so a turn
     // queued behind an in-flight media turn waits for the lease instead of bouncing the user.
     const busyWaitDeadlineMs = Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS;
-    let routePlan = await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({
+    let routePlan = semanticRoutePlan ?? await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({
       event, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : [],
       requestId,
       webhookEventId: event.webhookEventId,

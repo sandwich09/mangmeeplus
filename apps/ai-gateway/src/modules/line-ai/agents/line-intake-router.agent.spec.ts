@@ -40,14 +40,88 @@ function documentClassification(overrides: Partial<BusinessDocumentClassificatio
 describe('LINE intake router – routeIntake', () => {
   it('requires consistent canonical simple-read filters and preserves candidate month-to-date bounds', () => {
     const prompt = intakeRouterSystemPrompt({ fusedPlan: true }, false, true);
-    assert.match(prompt, /requestedFilters and preparedPlan\.proposedCalls\[0\]\.input MUST carry the same canonical business filter keys and exact scalar values/);
+    assert.match(prompt, /decisionV1 is the provider-only compact form/);
+    assert.match(prompt, /Put each business filter only in subrequests\[0\]\.filters; the server copies it to the canonical tool input/);
     assert.match(prompt, /EITHER periodKey OR the complete fromDate\/toDate pair, never both/);
-    assert.match(prompt, /month-to-date or spending so far/);
-    assert.match(prompt, /end clamped to today; do not widen it to the whole month through periodKey/);
-    assert.match(prompt, /omit preparedPlan and retain the full semantic request for normal planning/);
-    assert.match(prompt, /never overrides evidence or source validation/);
+    assert.match(prompt, /month-to-date\/spending-so-far/);
+    assert.match(prompt, /copy the candidate's clamped fromDate\/toDate/);
+    assert.match(prompt, /Omit simpleRead for compound, ambiguous, dependent, entity\/task-referenced/);
+    assert.match(prompt, /simpleRead never grants permission/);
+    assert.doesNotMatch(prompt, /semanticSubrequests\[0\]\.requestedFilters and preparedPlan/);
+
+    const imageCompatibilityPrompt = intakeRouterSystemPrompt({ fusedPlan: true }, true, true);
+    assert.match(imageCompatibilityPrompt, /semanticSubrequests\[0\]\.requestedFilters and preparedPlan\.proposedCalls\[0\]\.input MUST carry the same canonical business filter keys and exact scalar values/);
+    assert.match(imageCompatibilityPrompt, /COPY that fullPartRef object verbatim/);
     assert.doesNotMatch(intakeRouterSystemPrompt({ fusedPlan: true }, false, false), /same canonical business filter/);
-    assert.doesNotMatch(intakeRouterSystemPrompt({}, false, true), /same canonical business filter/);
+  });
+
+  it('never exposes compact prepared execution when fused planning is off', async () => {
+    const text = 'ดูค่าใช้จ่าย';
+    const built = await createLineAiInputEvidence({ turnKey: 'compact-cap-off', parts: [{ partId: 'part-0',
+      eventIdHash: 'a'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const plan = await new IntentRouterAgent(modelAnswer({
+      intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.97,
+      decisionV1: {
+        subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: {} }],
+        simpleRead: { subrequest: 0, tool: 'expense.list_recent', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.96 },
+      },
+    })).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence }));
+    assert.equal(plan.status, 'ROUTED');
+    assert.equal(plan.preparedPlan, undefined);
+    assert.equal(plan.semanticSubrequests?.length, 1);
+  });
+
+  it('keeps compact semantics but strips prepared execution from an outer CLARIFY route', async () => {
+    const text = 'ดูค่าใช้จ่ายของสาขานั้น';
+    const built = await createLineAiInputEvidence({ turnKey: 'compact-clarify', parts: [{ partId: 'part-0',
+      eventIdHash: 'b'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const plan = await new IntentRouterAgent(modelAnswer({
+      intent: 'CLARIFY', language: 'th', confidence: 0.7, clarifyQuestion: 'หมายถึงสาขาใดคะ',
+      decisionV1: {
+        subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: {} }],
+        simpleRead: { subrequest: 0, tool: 'expense.list_recent', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.96 },
+      },
+    })).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true } }));
+    assert.equal(plan.intent, 'CLARIFY');
+    assert.equal(plan.preparedPlan, undefined);
+    assert.equal(plan.clarifyQuestion, 'หมายถึงสาขาใดคะ');
+  });
+
+  it('rejects compact output that also carries either legacy planning field', async () => {
+    const text = 'ดูค่าใช้จ่าย';
+    const built = await createLineAiInputEvidence({ turnKey: 'compact-conflict', parts: [{ partId: 'part-0',
+      eventIdHash: 'c'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const compact = { subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: {} }] };
+    for (const legacy of [
+      { semanticSubrequests: [] },
+      { preparedPlan: { version: 1 } },
+    ]) {
+      const plan = await new IntentRouterAgent(modelAnswer({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.97,
+        decisionV1: compact, ...legacy })).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence,
+          capabilities: { fusedPlan: true } }));
+      assert.equal(plan.status, 'UNAVAILABLE');
+      assert.equal(plan.errorCode, 'ROUTER_SEMANTIC_SCHEMA_INVALID');
+    }
+  });
+
+  it('rejects a compact taskRef that does not match the current task revision', async () => {
+    const text = 'ทำต่อเลย';
+    const built = await createLineAiInputEvidence({ turnKey: 'compact-stale-task', parts: [{ partId: 'part-0',
+      eventIdHash: 'd'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const taskProjection = { version: 2 as const, stateVersion: 1, lifecycleEpoch: 0, expiresAtMs: Date.now() + 60_000,
+      tasks: [{ taskId: 'task-1', revision: 5, kind: 'write' as const, state: 'paused' as const, userGoal: 'บันทึกค่าใช้จ่าย',
+        subrequests: [{ index: 0, kind: 'write' as const, goal: 'บันทึกค่าใช้จ่าย', status: 'pending' as const }] }] };
+    const plan = await new IntentRouterAgent(modelAnswer({
+      intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.97,
+      decisionV1: { subrequests: [{ kind: 'write', goal: text, sources: [{ part: 0, whole: true }], filters: {},
+        writeIntent: 'EXPENSE_DRAFT_CONTINUATION', taskRef: { taskId: 'task-1', taskRevision: 4, subrequestIndex: 0 } }] },
+    })).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, taskProjection }));
+    assert.equal(plan.status, 'UNAVAILABLE');
+    assert.equal(plan.errorCode, 'ROUTER_SEMANTIC_SCHEMA_INVALID');
   });
 
   it('offers exact full-part refs for Thai text and surrogate pairs without repairing invalid model evidence', async () => {
@@ -68,7 +142,7 @@ describe('LINE intake router – routeIntake', () => {
         assert.equal(payload.inputEvidenceParts[0].rawText, rawText);
         assert.deepEqual(payload.inputEvidenceParts[0].fullPartRef, expectedRef);
         assert.ok(input.systemPrompt);
-        assert.match(input.systemPrompt, /COPY that fullPartRef object verbatim/);
+        assert.match(input.systemPrompt, /Never write hashes or offsets; the server derives them from current inputEvidenceParts/);
         return { ok: true as const, text: JSON.stringify(answer(payload.inputEvidenceParts[0].fullPartRef)) };
       } }).routeIntake(request);
       assert.equal(accepted.status, 'ROUTED');

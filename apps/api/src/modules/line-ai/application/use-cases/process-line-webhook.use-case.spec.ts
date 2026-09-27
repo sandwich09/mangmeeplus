@@ -2,7 +2,7 @@ import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { createLineAiInputEvidence, LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatBudgetMediaNotStoredReply, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages } from './process-line-webhook.use-case';
 import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
@@ -703,6 +703,80 @@ const BASE_EVENT = Object.freeze({
   replyToken: 'reply-1',
   messageText: 'ดู dashboard',
   messagingChannelId: 'msg-channel-1',
+});
+
+it('fails a bound semantic turn before pending media, ERP reads, or a LINE turn when compact intake is invalid', async () => {
+  const { prisma } = makePrisma();
+  prisma.client.lineIntakePendingMedia.findMany = async () => { throw new Error('pending media must stay untouched'); };
+  prisma.client.lineLedgerDelivery = { findMany: async () => [] };
+  const h = makeUseCase(prisma, {
+    permissions: ['line.ai.query'],
+    config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
+      lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] },
+    intakeRouteFn: () => ({ status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
+      errorCode: 'ROUTER_SEMANTIC_SCHEMA_INVALID' }),
+    aiGatewayFn: () => assert.fail('invalid compact intake must not start the LINE turn'),
+  });
+  const event: any = { ...BASE_EVENT, webhookEventId: 'compact-invalid-boundary', messageText: 'ดูรายจ่ายตามเงื่อนไขที่ไม่รองรับ' };
+  const evidence = await createLineAiInputEvidence({ turnKey: 'compact-invalid-boundary', parts: [{ partId: 'part-0',
+    eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] });
+  assert.ok(evidence);
+  event.inputEvidence = evidence.inputEvidence;
+  const flow = h.useCase as any;
+  const delivered: string[] = [];
+  flow.sendMessages = async (_event: unknown, messages: Array<{ text?: string }>) => {
+    delivered.push(...messages.flatMap((message) => message.text ? [message.text] : [])); return 'ok';
+  };
+  flow.contextV2 = {
+    admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+    projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }),
+  };
+  flow.prepareTextGrantV2 = async () => ({ turnKey: evidence.inputEvidence.turnKey });
+  flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [] });
+  await h.useCase.execute(event);
+  assert.equal(h.intakeRequests.length, 1, 'the accepted input is classified once');
+  assert.equal(h.getAiGatewayCalled(), false, 'invalid intake never reaches requestLineTurn');
+  assert.equal(delivered.length, 1);
+  assert.match(delivered[0]!, /ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จ/);
+});
+
+it('answers a bound general question once before two pending files can intercept it', async () => {
+  const { prisma } = makePrisma();
+  let pendingReads = 0;
+  prisma.client.lineIntakePendingMedia.findMany = async () => { pendingReads += 1; return [{ id: 'file-1' }, { id: 'file-2' }]; };
+  prisma.client.lineLedgerDelivery = { findMany: async () => [] };
+  const h = makeUseCase(prisma, {
+    permissions: ['line.ai.query'],
+    config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
+      lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] },
+    intakeRouteFn: () => ({ status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 0.98,
+      semanticSubrequests: [{ index: 0, kind: 'general', goal: 'อธิบายกำไรขั้นต้น', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] }),
+    aiGatewayFn: (request) => ({ requestId: request.requestId, replyText: 'กำไรขั้นต้นคือรายได้หักต้นทุนขาย', intent: 'casual_conversation',
+      agent: 'general', durationMs: 1, webLinks: [], sourceLabels: [], sourceRefs: [], toolsInvoked: [], refused: false,
+      semanticCoverage: [{ index: 0, status: 'handled' }] }),
+  });
+  const event: any = { ...BASE_EVENT, webhookEventId: 'general-before-two-files', messageText: 'กำไรขั้นต้นคืออะไร' };
+  const evidence = await createLineAiInputEvidence({ turnKey: 'general-before-two-files', parts: [{ partId: 'part-0',
+    eventIdHash: 'b'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] });
+  assert.ok(evidence); event.inputEvidence = evidence.inputEvidence;
+  const flow = h.useCase as any, grant = { turnKey: evidence.inputEvidence.turnKey };
+  const context = { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: new Date().toISOString(), userMessagePreview: 'กำไรคืออะไร' }] };
+  const delivered: string[] = [];
+  flow.contextV2 = { admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+    projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }),
+    createTurn: async (_owner: unknown, _epoch: number, data: unknown) => ({ id: 'turn-1', data }) };
+  flow.prepareTextGrantV2 = async (acceptedEvent: object) => { flow.budgetGrantsV2.set(acceptedEvent, grant); return grant; };
+  flow.loadConversationContext = async () => context;
+  flow.aiGateway.narrowLineReliabilityGrant = async () => grant;
+  flow.sendMessages = async (_event: unknown, messages: Array<{ text?: string }>) => {
+    delivered.push(...messages.flatMap((message) => message.text ? [message.text] : [])); return 'ok';
+  };
+  await h.useCase.execute(event);
+  assert.equal(h.intakeRequests.length, 1, 'the same intake result is reused downstream');
+  assert.equal(h.aiGatewayRequests.length, 1);
+  assert.equal(h.aiGatewayRequests[0].conversationContext, context);
+  assert.equal(pendingReads, 0, 'a general question does not enumerate or consume pending private files');
+  assert.match(delivered.join('\n'), /กำไรขั้นต้น/);
 });
 
 describe('AP22 live actor delivery fence', () => {
