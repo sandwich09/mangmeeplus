@@ -348,6 +348,7 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     'src/modules/line-ai/application/document-qa.integration.spec.ts',
     'src/modules/line-ai/application/use-cases/line-ai-turn-v2.integration.spec.ts',
       'src/modules/line-ai/agents/semantic-retained-source.spec.ts',
+    'src/modules/line-ai/agents/semantic-turn-v2-grounding.spec.ts',
     'src/modules/line-ai/domain/logic/business-read-result-semantics.spec.ts',
     'src/modules/line-ai/infrastructure/provider/public-lookup.spec.ts',
     'src/modules/line-ai/presentation/http/line-reliability-capabilities.controller.spec.ts',

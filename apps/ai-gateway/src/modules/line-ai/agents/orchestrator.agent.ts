@@ -1193,7 +1193,10 @@ export class OrchestratorAgent {
       return runSemanticTurnV2({ req,
         provider: createProvider(this.config, { modelId: req.modelPolicy?.modelId }), invoke: (meta, context, args) => this.erpTools.invoke(meta, context, args),
         draftEditEnabled: this.config.lineAiDraftEditEnabled, reimbursementDraftEnabled: this.config.lineAiReimbursementDraftWriteEnabled,
-        publicLookupEnabled: this.config.lineAiPublicLookupEnabled, approvedKnowledgeEnabled: this.config.lineAiApprovedKnowledgeEnabled });
+        publicLookupEnabled: this.config.lineAiPublicLookupEnabled, approvedKnowledgeEnabled: this.config.lineAiApprovedKnowledgeEnabled,
+        // C1(c): same compiled-formatter allowlist the prepared lane uses, reused only to render a
+        // full-path read's own already-fetched result when the model's answer fails grounding twice.
+        enabledDeterministicFamilies: activePreparedFamilies(this.config.lineAiDeterministicResponseFamilies) });
     }
     const startMs = Date.now();
     const knowledgeRequest = req as LineAiTurnRequest & { approvedKnowledge?: boolean; selectedKnowledgeCardIds?: string[] };
