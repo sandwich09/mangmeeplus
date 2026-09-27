@@ -1188,6 +1188,7 @@ function parseIntakePlan(
     const compactDecision = inputEvidence && hasCompactDecision
       ? parseLineIntakeCompactDecision({ raw: raw['decisionV1'], messageText, inputEvidence, enabledTools,
         enabledPreparedFamilies, language: compactLanguage, valueCandidates: readValueCandidates ?? valueCandidates,
+        recentReads: conversationContext?.recentReads,
         onReject: (reason) => { compactRejection = reason; } })
       : undefined;
     if (hasCompactDecision) observeCompact?.({

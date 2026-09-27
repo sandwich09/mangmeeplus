@@ -7,7 +7,7 @@ import { runSemanticTurnV2 } from './semantic-turn-v2';
  * all data via ErpToolClient.
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiSemanticCoverageV2, LineAiSemanticSubrequestV2, LineAiPeriodCandidate, LineAiPreparedPlan, LineAiValueCandidates, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta, PublicLookupResult } from '@watchdog-bms/contracts';
+import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiSemanticCoverageV2, LineAiSemanticSubrequestV2, LineAiPeriodCandidate, LineAiPreparedPlan, LineAiReadMemory, LineAiValueCandidates, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta, PublicLookupResult } from '@watchdog-bms/contracts';
 import { LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, hasToolPermissions, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, isBusinessIntakeIntent, mapThaiDigits, parseLineAiPreparedPlan, parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, resolvePeriodCandidates, unresolvedMonthName } from '@watchdog-bms/contracts';
 import { extractJson } from '../../../common/ai/extract-json';
 import type { AgentRunResult } from './agent-types';
@@ -34,6 +34,16 @@ import { canonicalizeReadToolEnums, conversationReadCandidates, nameFilterGround
 // Spec item 2(b): same grounding rule as the fast lane's isGroundedFilterValue — a categoryName/
 // vendorName the model proposes in the classic tool loop must also trace back to this turn's text.
 const NAME_FILTER_GROUNDING_FIELDS = new Set(['categoryName', 'vendorName']);
+
+// Spec §4 R-M5: a *_detail tool's own record id is an opaque internal identifier a customer never
+// reads out loud, so unlike a name/date it can never be grounded in the message text at all — the
+// ONLY acceptable provenance is a shownItems entry the customer was actually shown this chat
+// (ordinal reference, R-M4). reimbursement.get_detail is included alongside the explicitly named
+// expense.get_detail: both are the exact same "one record by internal id" shape and risk.
+const RECORD_ID_GROUNDING_FIELD: Readonly<Record<string, string>> = {
+  'expense.get_detail': 'expenseId',
+  'reimbursement.get_detail': 'reimbursementId',
+};
 
 export const ORCHESTRATOR_SYSTEM_PROMPT = `
 You are the Orchestrator Agent for MangmeePlus LINE AI.
@@ -619,7 +629,7 @@ type PeriodGuard = {
   periodKeys: ReadonlySet<string>;
 };
 
-function sanitizeToolInput(meta: ToolMeta, raw: unknown, guard?: PeriodGuard, messageText?: string): Record<string, unknown> | undefined {
+function sanitizeToolInput(meta: ToolMeta, raw: unknown, guard?: PeriodGuard, messageText?: string, recentReads?: readonly LineAiReadMemory[]): Record<string, unknown> | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const canonicalRaw = canonicalizeReadToolEnums(meta, raw as Record<string, unknown>);
   if (!canonicalRaw) return undefined;
@@ -640,7 +650,14 @@ function sanitizeToolInput(meta: ToolMeta, raw: unknown, guard?: PeriodGuard, me
     }
     // Spec item 2(b): drop an ungrounded categoryName/vendorName the same way an out-of-guard date or
     // period key is dropped above — the rest of the call still proceeds, just without that filter.
-    if (NAME_FILTER_GROUNDING_FIELDS.has(key) && messageText !== undefined && !nameFilterGroundedInText(value, messageText)) continue;
+    // Spec §4 R-M5: a value equal to the SAME field on a recentReads entry is grounded too — this is
+    // what lets a follow-up that names no new category/vendor keep the inherited one.
+    if (NAME_FILTER_GROUNDING_FIELDS.has(key) && messageText !== undefined && !nameFilterGroundedInText(value, messageText)
+      && !(recentReads ?? []).some((entry) => (entry as unknown as Record<string, unknown>)[key] === value)) continue;
+    // Spec §4 R-M5: expenseId/reimbursementId are accepted ONLY when the exact id appears in some
+    // recentReads entry's shownItems — never merely a resemblance, never the message text.
+    if (RECORD_ID_GROUNDING_FIELD[meta.name] === key
+      && !(recentReads ?? []).some((entry) => entry.shownItems?.some((item) => item.id === value))) continue;
     input[key] = value;
   }
   return input;
@@ -1129,7 +1146,7 @@ export function preparedSimplePreCallCheck(
   const preparedCandidates = contextCandidates ?? req.valueCandidates;
   // Prepared lane: a proposed date MUST be deterministically backed (today or an unambiguous candidate),
   // else the sanitizer drops it and the exact-equality check below fails.
-  const toolInput = sanitizeToolInput(tool, call.input, preparedAllowedPeriods(preparedCandidates, todayIso), req.messageText);
+  const toolInput = sanitizeToolInput(tool, call.input, preparedAllowedPeriods(preparedCandidates, todayIso), req.messageText, req.conversationContext?.recentReads);
   const canonicalProposed = canonicalizeReadToolEnums(tool, call.input);
   if (!toolInput || !canonicalProposed || canonicalize(canonicalProposed) !== canonicalize(toolInput)) {
     return { ok: false, reason: 'input_sanitizer_changed' };
@@ -2020,7 +2037,7 @@ export class OrchestratorAgent {
 
       const specialist = this.createSpecialist(entry.agent);
       if (!specialist) continue;
-      const toolInput = sanitizeToolInput(entry.meta, choice.input, periodGuard, req.messageText);
+      const toolInput = sanitizeToolInput(entry.meta, choice.input, periodGuard, req.messageText, req.conversationContext?.recentReads);
       if (!toolInput) return { outputs, askUser: plan.language.startsWith('en') ? 'Please specify the requested filter again.' : 'กรุณาระบุตัวกรองที่ต้องการอีกครั้ง' };
       if (choice.callTool === 'expense.list_recent') {
         if (!validExpensePeriodSelection(choice.input, toolInput, req)) return { outputs, askUser: expenseClarification(req) };
@@ -2168,7 +2185,7 @@ export class OrchestratorAgent {
         if (!entry) {
           return { call, result: { toolUseId: call.toolUseId, content: 'Tool not available for this request.', isError: true } };
         }
-        const toolInput = sanitizeToolInput(entry.meta, call.input, periodGuard, req.messageText);
+        const toolInput = sanitizeToolInput(entry.meta, call.input, periodGuard, req.messageText, req.conversationContext?.recentReads);
         if (!toolInput) return { call, result: { toolUseId: call.toolUseId, content: 'Unsupported filter value; ask the user to clarify.', isError: true } };
         if (registryName === 'expense.list_recent' && !validExpensePeriodSelection(call.input, toolInput, req)) {
           return { call, askUser: expenseClarification(req), result: { toolUseId: call.toolUseId, content: 'Expense period or branch scope is incomplete; ask the user to clarify.', isError: true } };

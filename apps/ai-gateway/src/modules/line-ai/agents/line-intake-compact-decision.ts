@@ -7,6 +7,7 @@ import {
 import type {
   LineAiInputEvidenceV2,
   LineAiPreparedPlan,
+  LineAiReadMemory,
   LineAiSemanticSubrequestV2,
   LineAiValueCandidates,
   ToolMeta,
@@ -106,31 +107,63 @@ function boundedFilters(value: unknown): Record<string, string | number | boolea
   return filters;
 }
 
+// Spec §4 R-M5: a value the API already proved it applied (queryApplied, never the model's own prior
+// input) is grounded the same way a current-message/valueCandidates match is — this is what lets a
+// follow-up naming no period or filter of its own still pass this same check. Only the string filter
+// fields memory carries at all are looked up; fromDate/toDate/periodKey go through
+// recentReadsPeriodMatch below (a pair, not a single field) exactly like valueCandidates.periods does.
+const RECENT_READS_STRING_FIELDS = new Set(['documentStatus', 'paymentStatus', 'categoryId', 'categoryName', 'vendorId', 'vendorName', 'branchId', 'branchName', 'groupBy']);
+
+function recentReadsFilterValue(key: string, value: string, recentReads: readonly LineAiReadMemory[] | undefined): boolean {
+  if (!RECENT_READS_STRING_FIELDS.has(key)) return false;
+  return (recentReads ?? []).some((entry) => (entry as unknown as Record<string, unknown>)[key] === value);
+}
+
+// Spec §4 R-M5: expense.get_detail/reimbursement.get_detail's own record id is an opaque internal
+// identifier — never groundable in message text at all — so the ONLY acceptable provenance is a
+// shownItems entry the customer was actually shown this chat (ordinal reference, R-M4).
+const RECORD_ID_GROUNDING_FIELD: Readonly<Record<string, string>> = {
+  'expense.get_detail': 'expenseId',
+  'reimbursement.get_detail': 'reimbursementId',
+};
+
 function isGroundedFilterValue(
   key: string,
   value: string | number | boolean | null,
   messageText: string,
   tool: ToolMeta,
   candidates?: LineAiValueCandidates,
+  recentReads?: readonly LineAiReadMemory[],
 ): boolean {
   if (value === null) return true;
+  if (RECORD_ID_GROUNDING_FIELD[tool.name] === key) {
+    return typeof value === 'string' && (recentReads ?? []).some((entry) => entry.shownItems?.some((item) => item.id === value));
+  }
   const literal = String(value);
   if (literal && messageText.includes(literal)) return true;
   if (typeof value === 'string' && NAME_FILTER_GROUNDING_FIELDS.has(key) && nameFilterGroundedInText(value, messageText)) return true;
   if (typeof value === 'string' && tool.inputEnumValues?.[key]?.includes(value)) return true;
-  if (key === 'fromDate') return (candidates?.periods ?? []).some((period) => period.fromDate === value);
-  if (key === 'toDate') return (candidates?.periods ?? []).some((period) => period.toDate === value);
+  if (typeof value === 'string' && recentReadsFilterValue(key, value, recentReads)) return true;
+  if (key === 'fromDate') return (candidates?.periods ?? []).some((period) => period.fromDate === value)
+    || (recentReads ?? []).some((entry) => entry.period?.fromDate === value);
+  if (key === 'toDate') return (candidates?.periods ?? []).some((period) => period.toDate === value)
+    || (recentReads ?? []).some((entry) => entry.period?.toDate === value);
   if (key === 'periodKey') return (candidates?.periods ?? []).some((period) => period.monthKey === value);
   // A boolean or numeric default that the user did not select is still invented model input.
   return false;
 }
 
-function periodSelectionGrounded(filters: Record<string, string | number | boolean | null>, candidates?: LineAiValueCandidates): boolean {
+function periodSelectionGrounded(
+  filters: Record<string, string | number | boolean | null>,
+  candidates?: LineAiValueCandidates,
+  recentReads?: readonly LineAiReadMemory[],
+): boolean {
   const fromDate = filters['fromDate'], toDate = filters['toDate'], periodKey = filters['periodKey'];
   if (periodKey !== undefined && (fromDate !== undefined || toDate !== undefined)) return false;
   if ((fromDate === undefined) !== (toDate === undefined)) return false;
   if (fromDate !== undefined && toDate !== undefined) {
-    return (candidates?.periods ?? []).some((period) => period.fromDate === fromDate && period.toDate === toDate);
+    return (candidates?.periods ?? []).some((period) => period.fromDate === fromDate && period.toDate === toDate)
+      || (recentReads ?? []).some((entry) => entry.period?.fromDate === fromDate && entry.period?.toDate === toDate);
   }
   if (periodKey !== undefined) return (candidates?.periods ?? []).some((period) => period.monthKey === periodKey);
   return true;
@@ -148,8 +181,9 @@ function simpleReadPlan(input: {
   language: string;
   messageText: string;
   valueCandidates?: LineAiValueCandidates;
+  recentReads?: readonly LineAiReadMemory[];
 }): { preparedPlan?: LineAiPreparedPlan; canonicalFilters?: Record<string, string | number | boolean | null>; rejection?: CompactSimpleReadRejection } {
-  const { raw, semanticSubrequests, enabledTools, enabledPreparedFamilies, language, messageText, valueCandidates } = input;
+  const { raw, semanticSubrequests, enabledTools, enabledPreparedFamilies, language, messageText, valueCandidates, recentReads } = input;
   const only = semanticSubrequests[0];
   if (semanticSubrequests.length !== 1 || !only || only.kind !== 'read' || only.dependsOn.length
     || only.entityReference || only.taskRef || only.writeIntent || only.requiredEvidence.length) {
@@ -176,12 +210,12 @@ function simpleReadPlan(input: {
   const canonicalFilters = canonicalizeReadToolEnums(tool, only.requestedFilters) as Record<string, string | number | boolean | null> | undefined;
   if (!canonicalFilters) return { rejection: 'filter_not_grounded' };
   const allowedFilters = new Set([...(tool.requiredInputFields ?? []), ...(tool.optionalInputFields ?? [])]);
-  if (!periodSelectionGrounded(canonicalFilters, valueCandidates)) return { rejection: 'filter_not_grounded' };
+  if (!periodSelectionGrounded(canonicalFilters, valueCandidates, recentReads)) return { rejection: 'filter_not_grounded' };
   for (const [key, value] of Object.entries(canonicalFilters)) {
     if (!allowedFilters.has(key)) {
       return { rejection: 'filter_not_supported' };
     }
-    if (!isGroundedFilterValue(key, value, messageText, tool, valueCandidates)) return { rejection: 'filter_not_grounded' };
+    if (!isGroundedFilterValue(key, value, messageText, tool, valueCandidates, recentReads)) return { rejection: 'filter_not_grounded' };
   }
   if ((tool.requiredInputFields ?? []).some((key) => canonicalFilters[key] === undefined)) {
     return { rejection: 'required_filter_missing' };
@@ -214,11 +248,15 @@ export function parseLineIntakeCompactDecision(input: {
   enabledPreparedFamilies: ReadonlySet<string>;
   language: string;
   valueCandidates?: LineAiValueCandidates;
+  /** Spec §4 R-M5: at most 3, newest first — the same recentReads the router prompt shows the model
+   *  (item 3/R-M3), re-checked here so a filter the model claims to have inherited must actually match
+   *  a memory entry, never merely be asserted. */
+  recentReads?: readonly LineAiReadMemory[];
   /** Called once, with the specific reason, immediately before a rejecting return — so a caller can
    *  log it and name the defect in the next repair prompt instead of retrying blind. */
   onReject?: (reason: CompactDecodeRejection) => void;
 }): CompactDecisionResult | undefined {
-  const { raw, messageText, inputEvidence, enabledTools, enabledPreparedFamilies, language, valueCandidates, onReject } = input;
+  const { raw, messageText, inputEvidence, enabledTools, enabledPreparedFamilies, language, valueCandidates, recentReads, onReject } = input;
   const reject = (reason: CompactDecodeRejection): undefined => { onReject?.(reason); return undefined; };
   if (!plainObject(raw) || !exactKeys(raw, DECISION_KEYS) || !Array.isArray(raw['subrequests'])
     || raw['subrequests'].length < 1 || raw['subrequests'].length > 8) return reject('decision_shape_invalid');
@@ -261,7 +299,7 @@ export function parseLineIntakeCompactDecision(input: {
   const semanticSubrequests = parseLineAiSemanticSubrequests(canonical, messageText, inputEvidence);
   if (!semanticSubrequests) return reject('decision_shape_invalid');
   if (raw['simpleRead'] === undefined) return { semanticSubrequests };
-  const simple = simpleReadPlan({ raw: raw['simpleRead'], semanticSubrequests, enabledTools, enabledPreparedFamilies, language, messageText, valueCandidates });
+  const simple = simpleReadPlan({ raw: raw['simpleRead'], semanticSubrequests, enabledTools, enabledPreparedFamilies, language, messageText, valueCandidates, recentReads });
   const canonicalSemantic = simple.canonicalFilters
     ? semanticSubrequests.map((item, index) => index === 0 ? { ...item, requestedFilters: simple.canonicalFilters! } : item)
     : semanticSubrequests;

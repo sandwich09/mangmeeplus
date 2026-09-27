@@ -251,4 +251,44 @@ describe('compact LINE intake decision', () => {
     assert.equal(parsed?.preparedPlan, undefined);
     assert.equal(parsed?.simpleReadRejection, 'not_single_independent_read');
   });
+
+  it('spec §4 R-M5: a filter equal to a recentReads applied value is grounded, even with no period/filter words of its own', async () => {
+    const text = 'แล้วหมวดนี้ล่ะ';
+    const created = await fixture(text);
+    const recentReads = [{
+      tool: 'expense.list_recent', answerShape: 'single_metric' as const, asOf: '2026-09-27T09:00:00.000Z',
+      period: { fromDate: '2026-08-01', toDate: '2026-08-31' }, categoryId: 'c1', categoryName: 'อาหาร',
+    }];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: '2026-08-01', toDate: '2026-08-31', categoryId: 'c1' }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th', recentReads,
+    });
+    assert.ok(parsed?.preparedPlan, 'a period and categoryId equal to the remembered read are both grounded');
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['categoryId'], 'c1');
+  });
+
+  it('spec §4 R-M5: expense.get_detail\'s expenseId is grounded only by a recentReads shownItems id', async () => {
+    const text = 'รายการแรกจ่ายหรือยัง';
+    const created = await fixture(text);
+    const detailFamilies = new Set(['expense.get_detail::single_metric']);
+    const recentReads = [{
+      tool: 'expense.list_recent', answerShape: 'list' as const, asOf: '2026-09-27T09:00:00.000Z',
+      shownItems: [{ ordinal: 1, id: 'e1', label: 'ร้านสมใจ', date: '2026-08-05' }],
+    }];
+    const grounded = parseLineIntakeCompactDecision({
+      raw: decision(text, { expenseId: 'e1' }, { subrequest: 0, tool: 'expense.get_detail', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.96 }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: detailFamilies, language: 'th', recentReads,
+    });
+    assert.ok(grounded?.preparedPlan, 'e1 is in the newest recentReads entry\'s shownItems');
+
+    const guessed = parseLineIntakeCompactDecision({
+      raw: decision(text, { expenseId: 'e2' }, { subrequest: 0, tool: 'expense.get_detail', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.96 }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: detailFamilies, language: 'th', recentReads,
+    });
+    assert.equal(guessed?.preparedPlan, undefined, 'e2 was never shown this chat — never grounded by messageText or memory');
+    assert.equal(guessed?.simpleReadRejection, 'filter_not_grounded');
+  });
 });

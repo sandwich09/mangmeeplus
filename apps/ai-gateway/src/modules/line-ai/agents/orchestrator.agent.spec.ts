@@ -1425,6 +1425,46 @@ describe('run-level expense follow-up execution', () => {
     assert.equal(result.deterministicExpenseSummary, true);
   });
 
+  it('spec §4 R-M5: keeps a categoryName the message never states when it matches conversationContext.recentReads', async () => {
+    const inputs: Array<Record<string, unknown>> = [];
+    configureLoopProvider(text => expensePlan(text), [{ callTool: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', categoryName: 'เครื่องเขียน' } }]);
+    const req = makeReq('เดือนนี้เท่าไหร่');
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods: [periods[1]!] };
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: [{
+      tool: 'expense.list_recent', answerShape: 'single_metric', asOf: '2026-08-25T09:00:00.000Z', categoryName: 'เครื่องเขียน',
+    }] };
+    await new OrchestratorAgent(expenseErp(inputs), makeConfig()).run(req);
+    assert.deepEqual(inputs, [{ tool: 'expense.list_recent', fromDate: '2026-08-01', toDate: '2026-08-31', categoryName: 'เครื่องเขียน' }]);
+  });
+
+  it('spec §4 R-M5: expense.get_detail\'s expenseId is accepted only from conversationContext.recentReads shownItems', async () => {
+    const detailPlan = (messageText: string) => ({ status: 'ROUTABLE', language: 'th', intents: [{ intent: 'read_detail', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.get_detail'], missingContext: [] }], refusals: [], requiresHumanReview: false });
+    const inputs: Array<Record<string, unknown>> = [];
+    const erp = { invoke: async (tool: any, _ctx: unknown, input: Record<string, unknown> = {}) => {
+      inputs.push({ tool: tool.name, ...input });
+      return { toolName: tool.name, status: 'ok', data: { id: 'e1', vendorName: 'ร้านสมใจ', expenseDate: '2026-08-05T10:00:00.000Z', grandTotalAmount: '500.00' },
+        sourceRefs: [{ label: 'ค่าใช้จ่าย', module: 'expenses', entityType: 'expense', permissionChecked: true, webPath: '/companies/company-1/expenses/e1' }], asOf: new Date().toISOString() };
+    } } as any;
+    const recentReads = [{ tool: 'expense.list_recent', answerShape: 'list' as const, asOf: '2026-08-25T09:00:00.000Z',
+      shownItems: [{ ordinal: 1, id: 'e1', label: 'ร้านสมใจ', date: '2026-08-05' }] }];
+
+    configureLoopProvider(text => detailPlan(text), [{ callTool: 'expense.get_detail', input: { expenseId: 'e1' } }]);
+    const grounded = makeReq('รายการแรกจ่ายหรือยัง');
+    grounded.userContext.permissions.push('expense.read');
+    grounded.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads };
+    await new OrchestratorAgent(erp, makeConfig()).run(grounded);
+    assert.deepEqual(inputs, [{ tool: 'expense.get_detail', expenseId: 'e1' }], 'e1 is in shownItems, so the call proceeds with it');
+
+    inputs.length = 0;
+    configureLoopProvider(text => detailPlan(text), [{ callTool: 'expense.get_detail', input: { expenseId: 'e2' } }]);
+    const guessed = makeReq('รายการแรกจ่ายหรือยัง');
+    guessed.userContext.permissions.push('expense.read');
+    guessed.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads };
+    await new OrchestratorAgent(erp, makeConfig()).run(guessed);
+    assert.deepEqual(inputs, [{ tool: 'expense.get_detail' }], 'e2 was never shown this chat, so expenseId is dropped from the call like any other ungrounded field — the API itself then fails the now-missing-required-field call');
+  });
+
   it('does not present an August-only result as complete when a misspelled July was also requested', async () => {
     const inputs: Array<Record<string, unknown>> = [];
     const august = periods[1]!;
