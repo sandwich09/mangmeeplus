@@ -1,6 +1,6 @@
 # Agent Memory: Mangmee AI expense advisor (takeover of the stopped Codex filter-context work)
 
-Status: PLANNING — research fan-out running; spec + plan next; no code changed yet.
+Status: IMPLEMENTING — P1 (review defects), P2 (fast lane, tool integration) and P4 (tools) merged on this branch; P3 (conversation memory) next; answer-composition fixes (Track D) in progress; eval harness live (real model).
 Owner: thawatchai (solo admin). Controller: Claude (main thread) — briefs, reviews bug/gap/impact, delegates implementation to lower-model subagents; push/PR/merge/owner comms stay in the main thread.
 Scope: LINE AI "น้องมั่งมี" as an expense advisor inside the customer's enabled package. Today the sold tiers are STARTER/BASIC/PRO (same preset: expenses + reimbursements) and ENTERPRISE (+ WHT PND53 / 50 bis). Sales documents and reports are not sold and stay out of scope.
 Base: branch `claude/mangmee-ai-advisor-20260927` from d78114f5 (the Codex branch `codex/line-ai-filter-context-20260927`, 5 commits on develop abdf93b9, never pushed). Worktree `/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus-ai-advisor-20260927`.
@@ -23,6 +23,11 @@ Known defects at takeover (verified 2026-09-27 review, see persistent memory `ai
 8. d78114f5 fragilities: earlier-message periods accepted without clarification; status reset prompt-only; period anchored to reply save time; legacy prompt leak.
 
 Open questions: none blocking.
-Artifacts: (to come) spec, plan, eval corpus, evidence.
-Verification: (to come)
+Artifacts:
+- Spec `docs/specs/mangmee-ai-expense-advisor-spec-th.md`, plan `docs/plans/mangmee-ai-expense-advisor-plan-th.md`.
+- Branches: main `claude/mangmee-ai-advisor-20260927`; tools `-tools` (merged); eval harness `-eval` (seed, corpus 223-turn tuning, oracle, scorer, runners, production AI profile); compose fixes `-compose` (in progress). Run worktree `mangmeeplus-ai-advisor-evalrun` (detached; builds + runs the eval gateway on :19205, API :19291, DB `watchdog_ai_reliability_replay_expense_advisor`, Redis db 13).
+- Held-out corpus (71 turns) kept OUTSIDE the repo until the final measurement.
+Verification:
+- Real-model baseline on P1+tools with production AI settings (sample corpus, 20 turns): 9/20. Fast lane correct every time (6.2–6.9 s). Failure clusters: C1 full-path answers rejected by numeric grounding (7), C2 control round unavailable after a filtered follow-up, C3 ordinal references (needs P3 memory), C4 out-of-package request → schema invalid. Full-path latency 11–24 s.
+- Harness facts: the eval must mirror production's AI env (fast lane, coverage critic, tool-use loop were off by default); seeded users need legal-acceptance records; the eval API must approve the global Sonnet profile.
 Next: collect research → write spec + plan → fix defects 1–8 → build eval corpus + runner → baseline → iterate → merge.
