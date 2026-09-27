@@ -4084,18 +4084,27 @@ export class ProcessLineWebhookUseCase {
     const previewProof = authorization.kind === 'PRIVATE' ? authorization.proofs.find(p => p.kind === 'EXPENSE_EDIT_PREVIEW') : undefined;
     const reimbursementControlIndex = reimbursement?.status === 'preview' ? messages.findIndex(m => m.type === 'flex' && JSON.stringify(m.contents).includes('reimbursement_draft_confirm')) : -1;
     const controlIndex = draft?.phase === 'PENDING' ? messages.findIndex(m => m.type === 'flex' && JSON.stringify(m.contents).includes('action=draft-update-confirm')) : -1;
-    const items = messages.map(message => {
+    const items: Array<Omit<DeliveryPlanV2['answer']['items'][number], 'id'>> = messages.map(message => {
       const text = message.type === 'text' ? message.text : message.type === 'flex' ? message.canonicalText : null;
       if (!text) throw new Error('LINE_PLAN_CANONICAL_TEXT_REQUIRED');
       return { kind: 'answer' as const, text, required: true, sourceProofIds: authorization.kind === 'PRIVATE' ? authorization.proofs.map(p => p.id) : [] };
     });
+    const pending = (this.semanticDelivery.get(event) ?? []).filter(item => item.status === 'needs_user');
+    const qaResult = parseLineDocumentQaResult(this.documentQaDelivery.get(event)?.resultJson);
+    const failedPages = qaResult?.coverage.failed ?? [];
+    const attachmentIds = [...new Set(qaResult?.coverage.requested.map(page => page.attachmentId) ?? [])];
+    const pendingSubrequestIds = [...pending.map(item => String(item.index)),
+      ...failedPages.map(page => `file:${page.attachmentId}:page:${page.page}`)];
+    if (pendingSubrequestIds.length) items.push({ kind: 'limitation', required: true, sourceProofIds: [],
+      text: ['ส่วนที่ยังไม่เสร็จ:', ...pending.map(item => `ข้อ ${item.index + 1}: ${item.question}`),
+        ...failedPages.map(page => `ยังอ่านเอกสารแนบลำดับที่ ${attachmentIds.indexOf(page.attachmentId) + 1} หน้า ${page.page} ไม่สำเร็จ`)].join('\n') });
     const financialControlIndex = reimbursementControlIndex >= 0 ? reimbursementControlIndex : controlIndex;
     const control = reimbursement?.status === 'preview' && reimbursementControlIndex >= 0
       ? { kind: 'REIMBURSEMENT_DRAFT_CONFIRM' as const, actionId: reimbursement.preview.actionId, previewRevision: reimbursement.preview.previewRevision, confirmationDigest: reimbursement.preview.confirmationDigest, expiresAt: reimbursement.preview.expiresAt, requiredItemIds: items.map((_x, i) => `${planId}:item:${i}`) }
       : controlIndex >= 0 && previewProof && draft?.previewId ? { kind: 'EXPENSE_EDIT_CONFIRM' as const, previewId: draft.previewId, previewRevision: String(previewProof.previewRevision), expiresAt, requiredItemIds: items.map((_x, i) => `${planId}:item:${i}`) } : null;
     const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: outcomeId, createdAt: log.createdAt.toISOString(), readyAt: now.toISOString(), expiresAt,
       firstDispatchDeadlineAt: new Date(this.documentQaDelivery.get(event)?.jobDeadlineAt.getTime() ?? (log.budgetAuthorityJson as { grant?: { finalDeadlineAtMs?: number } } | null)?.grant?.finalDeadlineAtMs ?? log.createdAt.getTime() + 40_000).toISOString(), authorization, control, businessResult: reimbursement?.status === 'applied' ? { kind: 'REIMBURSEMENT_DRAFT', operationKey: String(reimbursement.receipt.actionId), committedAt: String(reimbursement.receipt.committedAt), recordIds: [String(reimbursement.receipt.requestId)], resultingRevisions: [String(reimbursement.receipt.appliedRequestUpdatedAt)] } : null,
-      answer: { status: this.semanticDelivery.get(event)?.some(item => item.status === 'needs_user') || (parseLineDocumentQaResult(this.documentQaDelivery.get(event)?.resultJson)?.coverage.failed.length ?? 0) > 0 ? 'PARTIAL' : 'COMPLETE', pendingSubrequestIds: (this.semanticDelivery.get(event) ?? []).filter(item => item.status === 'needs_user').map(item => String(item.index)), items }, ...(control ? { controlMessage: messages[financialControlIndex]! } : {}) });
+      answer: { status: pendingSubrequestIds.length ? 'PARTIAL' : 'COMPLETE', pendingSubrequestIds, items }, ...(control ? { controlMessage: messages[financialControlIndex]! } : {}) });
     const saved = await this.deliveryPlans.savePlan({ kind: 'WEBHOOK', id: outcomeId }, plan, new Date(log.createdAt.getTime() + this.config.aiDataRetentionDays * 86400000), now, event.webhookEventId);
     if (!saved) return 'failed_other';
     return this.replayDeliveryPlan(saved.id, event, 2);

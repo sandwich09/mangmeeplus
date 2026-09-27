@@ -2,6 +2,7 @@ import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Prisma } from '../../../../generated/prisma/client';
 import { ProcessLineWebhookUseCase } from './process-line-webhook.use-case';
+import { parseLineDeliveryPlan, type DeliveryPlanV2 } from '../../domain/logic/line-delivery-plan.logic';
 
 it('answers an admitted private general/help turn without private ERP prefetch or touching four waiting tasks', async () => {
   const event: any = { webhookEventId: 'evt', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply', messageText: 'ทำไมท้องฟ้าเป็นสีฟ้า', inputEvidence: { joinedSha256: 'digest' } };
@@ -79,4 +80,52 @@ for (const scenario of [
   assert.equal(replies.length, 1); assert.ok(replies[0]!.trim()); assert.ok(!replies[0]!.includes('UNVERIFIED ANSWER'));
   if (scenario.kind === 'grant') assert.doesNotMatch(replies[0]!, /budget|งบประมาณ/i, 'failed admission alone does not establish exhausted budget');
   assert.deepEqual(tasks, originalTasks); assert.equal(flow.semanticDelivery.has(event), false); assert.equal(flow.deliverySources.has(event), false);
+});
+
+for (const scenario of [
+  { name: 'handled', coverage: [{ index: 0, status: 'handled' }], pending: [], pages: false },
+  { name: 'denied and unsupported are terminal dispositions', coverage: [{ index: 0, status: 'denied' }, { index: 1, status: 'unsupported' }], pending: [], pages: false },
+  { name: 'actual clarification', coverage: [{ index: 0, status: 'needs_user', question: 'ต้องตรวจข้อมูลหรือสิทธิ์ของส่วนนี้ก่อน ยังไม่ได้ทำรายการให้' }], pending: ['0'], pages: false },
+  { name: 'mixed handled and pending clauses', coverage: [{ index: 0, status: 'handled' }, { index: 1, status: 'needs_user', question: 'ต้องการใช้สาขาใด' }], pending: ['1'], pages: false },
+  { name: 'historical QA failed page without indexed coverage', coverage: [], pending: ['file:attachment:page:2'], pages: true },
+  { name: 'QA failed page and pending clause', coverage: [{ index: 0, status: 'needs_user', question: 'ยังตอบคำถามจากหน้าที่เลือกไม่ได้' }], pending: ['0', 'file:attachment:page:2'], pages: true },
+]) it(`frozen webhook delivery preserves ${scenario.name} through the real plan validator`, async () => {
+  const event: any = { webhookEventId: 'partial-event', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply' };
+  const createdAt = new Date(), calls: string[] = [], wire: string[] = [];
+  const originalCoverage = structuredClone(scenario.coverage);
+  let saved: DeliveryPlanV2 | undefined;
+  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  const qa = { version: 1, readerVersion: 'line-document-qa/1', answer: 'อ่านหน้าแรกได้', answerPageRefs: [{ attachmentId: 'attachment', page: 1 }],
+    pages: [{ attachmentId: 'attachment', page: 1, visibleText: 'ข้อความต้นทาง', facts: [], evidence: [] }],
+    coverage: { requested: [{ attachmentId: 'attachment', page: 1 }, { attachmentId: 'attachment', page: 2 }],
+      read: [{ attachmentId: 'attachment', page: 1 }], failed: [{ attachmentId: 'attachment', page: 2, code: 'UNREADABLE' }] } };
+  Object.assign(flow, {
+    config: { aiDataRetentionDays: 30 }, semanticDelivery: new WeakMap([[event, scenario.coverage]]),
+    documentQaDelivery: new WeakMap(scenario.pages ? [[event, { resultJson: qa, jobDeadlineAt: new Date(createdAt.getTime() + 40_000) }]] : []),
+    deliveryReimbursements: new WeakMap(), deliveryDraftPreviews: new WeakMap(),
+    persistSemanticTaskCompletion: async () => { calls.push('persist-pending-state'); },
+    webhookPlanAuthorization: async (_event: any, expiresAt: string) => ({ v: 2, kind: 'PRIVATE', issuedAt: createdAt.toISOString(), expiresAt,
+      actor: { userId: 'user', companyId: 'company', membershipId: 'member', requestId: 'request', accessFingerprint: 'fingerprint',
+        channelId: 'oa', channel: 'line', channelKind: 'USER', recipientHash: 'recipient', chatKeyHash: 'chat', conversationId: 'line-v2:conversation', ownerEpoch: 0 }, proofs: [] }),
+    prisma: { client: { lineTurnOutcome: { findUnique: async () => null }, lineWebhookEventLog: { findUnique: async () => ({ createdAt }) } } },
+    deliveryPlans: { savePlan: async (_owner: unknown, plan: DeliveryPlanV2) => {
+      assert.ok(parseLineDeliveryPlan(plan), 'actual plan must meet unchanged coverage and frozen-wire validation');
+      calls.push('save-plan'); saved = plan; return { id: plan.planId };
+    } },
+    replayDeliveryPlan: async (id: string) => {
+      assert.equal(id, saved!.planId); calls.push('replay');
+      wire.push(...saved!.batches.flatMap(batch => batch.primary.messages.map(message => message.type === 'text' ? message.text : '')));
+      return 'ok';
+    },
+  });
+  const answer = 'คำตอบหรือคำอธิบายขอบเขตที่ตรวจสอบแล้ว';
+  assert.equal(await flow.sendMessagesV2(event, [{ type: 'text', text: answer }]), 'ok');
+  assert.deepEqual(calls, ['persist-pending-state', 'save-plan', 'replay']);
+  assert.deepEqual(saved!.answer.pendingSubrequestIds, scenario.pending);
+  assert.equal(saved!.answer.status, scenario.pending.length ? 'PARTIAL' : 'COMPLETE');
+  assert.equal(saved!.answer.items.filter(item => item.kind === 'limitation').length, scenario.pending.length ? 1 : 0);
+  assert.equal(saved!.answer.items[0]!.text, answer); assert.equal(wire[0], answer);
+  for (const item of scenario.coverage) if (item.status === 'needs_user') assert.ok(wire.join('\n').includes(item.question!));
+  if (scenario.pages) { assert.match(wire.join('\n'), /ยังอ่านเอกสารแนบลำดับที่ 1 หน้า 2 ไม่สำเร็จ/); assert.doesNotMatch(wire.join('\n'), /attachment/); }
+  assert.deepEqual(scenario.coverage, originalCoverage, 'transport must not promote pending or denied work to handled');
 });
