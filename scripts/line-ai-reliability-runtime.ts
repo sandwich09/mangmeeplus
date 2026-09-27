@@ -205,6 +205,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
   const { ExpenseCaptureReadRunnerService } = requireApi(resolve(compiled, 'modules/expenses/application/services/expense-capture-read-runner.service.js'));
   const { LineCaptureResultNotifierUseCase } = requireApi(resolve(compiled, 'modules/line-ai/application/use-cases/line-capture-result-notifier.use-case.js'));
   const { ProcessLineWebhookUseCase } = requireApi(resolve(compiled, 'modules/line-ai/application/use-cases/process-line-webhook.use-case.js'));
+  const { AppConfigService } = requireApi(resolve(compiled, 'common/config/app-config.service.js'));
   const { AppModule } = requireApi(resolve(compiled, 'app.module.js'));
   const originalFetch = globalThis.fetch;
   let app: any, client: any, current: ReliabilityFixture | undefined, snapshot: RuntimeSourceSnapshot | undefined, repeat = 0, unsafeToReset = false;
@@ -349,7 +350,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       while (Date.now() < deadline) {
         const events = await client.lineWebhookEventLog.findMany({ where: { webhookEventId: { in: active.eventIds } } });
         // Same durable QA worker used by the ordinary scheduled drain; no re-created jobs/grants.
-        if (process.env.LINE_AI_DOCUMENT_QA_ENABLED === 'true') { await app.get(LineDocumentQaWorker).drain(); await app.get(ProcessLineWebhookUseCase).recoverDocumentQaResults(); }
+        if (app.get(AppConfigService).lineAiDocumentQaEnabled) { await app.get(LineDocumentQaWorker).drain(); await app.get(ProcessLineWebhookUseCase).recoverDocumentQaResults(); }
         await app.get(ExpenseCaptureReadRunnerService).drain(); await app.get(LineCaptureResultNotifierUseCase).execute();
         if (!await pendingWork() && events.length === active.eventIds.length && events.every((event: any) => event.processedAt && !event.payloadJson)) { settled = true; break; }
         await delay(50);

@@ -2,7 +2,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { HttpException } from '@nestjs/common';
 import type { LineAiTurnRequest } from '@watchdog-bms/contracts';
-import { AI_BUDGET_PROFILE_TABLE_DIGEST_V2, AI_BUDGET_STEP_BOUNDS, createLineAiInputEvidence } from '@watchdog-bms/contracts';
+import { AI_BUDGET_ESTIMATOR_VERSION_V2, AI_BUDGET_PROFILE_TABLE_DIGEST_V2, AI_BUDGET_STEP_BOUNDS, createLineAiInputEvidence } from '@watchdog-bms/contracts';
 import { __resetCompanyAiBudgetCache } from '../application/company-ai-usage-meter';
 import { aiBudgetAttemptHash } from '../application/company-ai-budget-reservation';
 import { AiGatewayClient, AiGatewayRequestError } from './ai-gateway.client';
@@ -135,6 +135,50 @@ describe('AiGatewayClient draft-edit capability probe', () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+});
+
+describe('AiGatewayClient deployed Sonnet 4.6 grant admission', () => {
+  it('pins the exact existing tariff only after the approved serving model proves v2 readiness', async () => {
+    const modelId = 'global.anthropic.claude-sonnet-4-6';
+    const config = { aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'workload-secret',
+      approvedAiModelIds: [modelId], aiGlobalInferenceProfileApproved: true,
+      aiGlobalInferenceProfileApprovalRef: 'synthetic-approved-resolution', aiThbPerUsd: 33 };
+    const model = { provider: 'bedrock', modelId, region: 'ap-southeast-1', contextTokens: 200_000, maxOutputTokens: 64_000 };
+    const capability = { ready: true, inputContractVersion: 2, providerOutputVersion: 2, budgetContractVersion: 2,
+      profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, estimatorVersion: AI_BUDGET_ESTIMATOR_VERSION_V2, model };
+    const input = { owner: { owner: { companyId: 'company-1' } } } as any;
+    let issued: any;
+    const authority = { issue: async (value: unknown) => { issued = value; return { signature: 'issued-after-admission' }; } };
+    const client = new AiGatewayClient(config as any, {} as any, undefined, governedPrisma(), authority as any);
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (url, init) => {
+      assert.match(String(url), /line-reliability-capabilities$/u);
+      assert.equal((init?.headers as Record<string, string>)['X-Internal-Secret'], 'workload-secret');
+      return new Response(JSON.stringify(capability), { status: 200 });
+    }) as typeof fetch;
+    try {
+      assert.deepEqual(await client.issueLineReliabilityGrant('deployed-model', input), { signature: 'issued-after-admission' });
+      assert.deepEqual(issued.model, { provider: 'bedrock', modelId, region: 'ap-southeast-1' });
+      assert.equal(issued.modelContextTokens, 200_000);
+      assert.equal(issued.modelMaxOutputTokens, 64_000);
+      assert.deepEqual(issued.tariff.usdPerMTok, { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 });
+      assert.equal(issued.tariff.thbPerUsd, 33);
+      for (const patch of [{ aiGlobalInferenceProfileApproved: false }, { aiGlobalInferenceProfileApprovalRef: '' },
+        { aiGlobalInferenceProfileApprovalRef: '  ' }, { approvedAiModelIds: [] }]) {
+        issued = undefined;
+        const denied = new AiGatewayClient({ ...config, ...patch } as any, {} as any, undefined, governedPrisma(), authority as any);
+        assert.equal(await denied.issueLineReliabilityGrant('denied-model', input), null);
+        assert.equal(issued, undefined);
+      }
+      for (const patch of [{ ready: false }, { model: { ...model, provider: 'openai' } },
+        { model: { ...model, contextTokens: 1_000_000 } }, { budgetContractVersion: 1 }]) {
+        issued = undefined;
+        globalThis.fetch = (async () => new Response(JSON.stringify({ ...capability, ...patch }), { status: 200 })) as typeof fetch;
+        assert.equal(await client.issueLineReliabilityGrant('denied-capability', input), null);
+        assert.equal(issued, undefined);
+      }
+    } finally { globalThis.fetch = original; }
   });
 });
 

@@ -1417,3 +1417,34 @@ describe('LineMessageBufferService – API end-to-end trace (latency/autonomy §
     assert.deepEqual(h.loadingCalls, ['user-1', 'user-1', 'user-1'], 'batch2 re-showed processing-start loading (not suppressed)');
   });
 });
+
+
+describe('v2 buffer rollout admission', () => {
+  it('uses private-company restrictions or the public channel, without a public-list bypass', async () => {
+    const cases = [
+      { name: 'private unrestricted', companyId: 'company-1', expected: true },
+      { name: 'private reliability restriction', companyId: 'company-1', companyIds: ['other'], expected: false },
+      { name: 'private delivery restriction', companyId: 'company-1', writeIds: ['other'], expected: false },
+      { name: 'explicit off', companyId: 'company-1', mode: 'off', expected: false },
+      { name: 'delivery off', companyId: 'company-1', deliveryEnabled: false, expected: false },
+      { name: 'public unrestricted', publicChat: true, companyId: 'payer', companyIds: ['other'], expected: true },
+      { name: 'public restricted', publicChat: true, companyId: 'payer', publicIds: ['other'], expected: false },
+      { name: 'public wrong primary channel', publicChat: true, companyId: 'payer', primaryChannel: 'other', expected: false },
+    ];
+    for (const sample of cases) {
+      const { service } = makeHarness({ preflightImpl: async () => ({ status: 'continue', companyId: sample.companyId }) });
+      const subject = service as any;
+      Object.assign(subject.config, {
+        lineAiReliabilityV2Mode: sample.mode ?? 'on', lineAiDeliveryPlanV2Enabled: sample.deliveryEnabled ?? true,
+        lineAiReliabilityV2CompanyIds: sample.companyIds ?? [], lineAiDeliveryPlanV2WriteCompanyIds: sample.writeIds ?? [],
+        lineAiDeliveryPlanV2PublicChannelIds: sample.publicIds ?? [], lineMessagingChannelId: sample.primaryChannel ?? 'ch-1',
+      });
+      // Inspect the admitted state before any dispatch; this test never invokes an AI provider.
+      subject.scheduleFlush = () => {};
+      const envelope = textEnv(`rollout-${sample.name}`, 'คำถามทดสอบ', sample.publicChat ? { chatId: 'group-1' } : {});
+      await service.enqueue(envelope);
+      assert.equal([...subject.chats.values()][0]?.reliabilityV2, sample.expected, sample.name);
+      subject.chats.clear();
+    }
+  });
+});

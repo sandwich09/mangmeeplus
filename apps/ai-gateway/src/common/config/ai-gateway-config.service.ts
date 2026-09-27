@@ -48,6 +48,8 @@ export class AiGatewayConfigService {
   get approvedAiModelIds(): string[] { return this.config.APPROVED_AI_MODEL_IDS.split(',').map((value) => value.trim()).filter(Boolean); }
   get approvedAiProviders(): string[] { return this.config.APPROVED_AI_PROVIDERS.split(',').map((value) => value.trim()).filter(Boolean); }
   get approvedAiRegions(): string[] { return this.config.APPROVED_AI_REGIONS.split(',').map((value) => value.trim()).filter(Boolean); }
+  get aiGlobalInferenceProfileApproved(): boolean { return this.config.AI_GLOBAL_INFERENCE_PROFILE_APPROVED; }
+  get aiGlobalInferenceProfileApprovalRef(): string | undefined { return this.config.AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF; }
   get aiGatewayEnabled(): boolean { return this.config.AI_GATEWAY_ENABLED; }
   get aiAgentRegistryEnabled(): boolean { return this.config.AI_AGENT_REGISTRY_ENABLED; }
   get aiToolPolicyEnforced(): boolean { return this.config.AI_TOOL_POLICY_ENFORCED; }

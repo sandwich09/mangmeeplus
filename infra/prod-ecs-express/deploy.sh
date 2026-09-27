@@ -1689,6 +1689,9 @@ api_container_json() {
     --arg lineAccountLinkQrImageUrl "${LINE_ACCOUNT_LINK_QR_IMAGE_URL:-}" \
     --arg crmAutoReplyEnabled "$SERVING_CRM_AUTO_REPLY_ENABLED" \
     --arg aiEnabled "$SERVING_AI_ENABLED" \
+    --arg approvedAiModelIds "$APPROVED_AI_MODEL_IDS" \
+    --arg globalProfileApproved "${AI_GLOBAL_INFERENCE_PROFILE_APPROVED:-false}" \
+    --arg globalProfileApprovalRef "${AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF:-}" \
     --arg lineWebLoginEnabled "$SERVING_LINE_WEB_LOGIN_ENABLED" \
     --arg lineWebHandoffEnabled "$SERVING_LINE_WEB_HANDOFF_ENABLED" \
     --arg lineAiExactGreetingEnabled "$SERVING_LINE_AI_EXACT_GREETING_ENABLED" \
@@ -1797,6 +1800,9 @@ api_container_json() {
         {name:"NEXT_PUBLIC_LINE_ACCOUNT_LINK_QR_IMAGE_URL", value:$lineAccountLinkQrImageUrl},
         {name:"AI_GATEWAY_INTERNAL_URL", value:$aiGatewayUrl},
         {name:"AI_GATEWAY_ENABLED", value:$aiEnabled},
+        {name:"APPROVED_AI_MODEL_IDS", value:$approvedAiModelIds},
+        {name:"AI_GLOBAL_INFERENCE_PROFILE_APPROVED", value:$globalProfileApproved},
+        {name:"AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF", value:$globalProfileApprovalRef},
         {name:"LINE_AI_LEDGER_ENABLED", value:$aiEnabled},
         {name:"LINE_WEB_LOGIN_ENABLED", value:$lineWebLoginEnabled},
         {name:"LINE_WEB_HANDOFF_ENABLED", value:$lineWebHandoffEnabled},

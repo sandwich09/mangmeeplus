@@ -22,11 +22,15 @@ export class LineReliabilityCapabilitiesController {
     const modelId = body?.modelPolicy?.modelId ?? (provider === 'openai' ? this.config.openAiModel : this.config.bedrockModelId);
     const region = provider === 'openai' ? this.config.openAiProcessingRegion : this.config.bedrockRegion;
     const capacity = typeof modelId === 'string' ? REVIEWED_LINE_MODEL_CAPACITY[modelId] : undefined;
+    const globalProfileAllowed = this.config.aiGlobalInferenceProfileApproved === true
+      && !!this.config.aiGlobalInferenceProfileApprovalRef?.trim();
     const runtime = budgetRuntime as unknown as { AI_BUDGET_V2_SUPPORTED?: boolean };
     const ready = runtime.AI_BUDGET_V2_SUPPORTED === true
       && (provider === 'bedrock' || provider === 'openai' && !!this.config.openAiApiKey)
       && typeof modelId === 'string' && !!region && !!capacity
-      && (provider === 'bedrock' ? modelId.startsWith('apac.anthropic.') : modelId.startsWith('gpt-4.1-mini'))
+      && (provider === 'bedrock'
+        ? modelId.startsWith('apac.anthropic.') || modelId.startsWith('global.anthropic.') && globalProfileAllowed
+        : modelId.startsWith('gpt-4.1-mini'))
       && this.config.approvedAiProviders.includes(provider)
       && this.config.approvedAiModelIds.includes(modelId)
       && this.config.approvedAiRegions.includes(region)

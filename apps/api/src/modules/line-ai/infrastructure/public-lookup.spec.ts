@@ -22,3 +22,18 @@ describe('API public.lookup admission', () => {
     assert.equal((await tool.execute(ctx, { ...query, rawHistory: 'private' })).errorCode, 'PUBLIC_QUERY_REQUIRES_REPHRASE');
   });
 });
+
+
+it('empty rollout does not enable public lookup unless the feature is explicitly enabled', async () => {
+  let reads = 0;
+  const cfg = { lineAiPublicLookupEnabled: false, lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: [] as string[] };
+  const tool = new PublicLookupAdmissionTool(cfg as never, { client: { company: { findUnique: async () => { reads++; return { name: 'Secret Shop', status: 'ACTIVE' }; } } } } as never);
+  assert.equal((await tool.execute(ctx, query)).errorCode, 'PUBLIC_POLICY_UNAVAILABLE');
+  assert.equal(reads, 0);
+  cfg.lineAiPublicLookupEnabled = true;
+  assert.equal((await tool.execute(ctx, query)).status, 'ok');
+  assert.equal(reads, 1);
+  cfg.lineAiReliabilityV2CompanyIds = ['other'];
+  assert.equal((await tool.execute(ctx, query)).errorCode, 'PUBLIC_POLICY_UNAVAILABLE');
+  assert.equal(reads, 1);
+});

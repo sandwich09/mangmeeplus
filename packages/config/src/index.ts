@@ -8,7 +8,8 @@ const envBoolean = z.preprocess((value) => {
 }, z.boolean());
 
 // Reliability v2 readers and writers must parse the same rollout contract in both services.
-// Empty means nobody is admitted. Wildcards, blank entries and malformed IDs never broaden it.
+// Empty adds no rollout restriction; current owner/channel authorization still applies.
+// Nonempty lists are exact restrictions; wildcards and malformed IDs are rejected.
 const lineAiIdAllowlist = z.string().default('').transform((value, ctx) => {
   if (value.trim() === '') return [];
   const ids = value.split(',').map((entry) => entry.trim());
@@ -19,17 +20,22 @@ const lineAiIdAllowlist = z.string().default('').transform((value, ctx) => {
   return [...new Set(ids)];
 });
 
+/** Rollout restriction only; callers must still enforce current access and channel binding. */
+export function isLineAiRolloutAllowed(ids: readonly string[], id: string): boolean {
+  return id.trim().length > 0 && (ids.length === 0 || ids.includes(id));
+}
+
 const lineAiReliabilityConfigShape = {
-  LINE_AI_RELIABILITY_V2_MODE: z.enum(['off', 'shadow', 'on']).default('off'),
+  LINE_AI_RELIABILITY_V2_MODE: z.enum(['off', 'shadow', 'on']).default('on'),
   LINE_AI_RELIABILITY_V2_COMPANY_IDS: lineAiIdAllowlist,
-  LINE_AI_DELIVERY_PLAN_V2_ENABLED: envBoolean.default(false),
+  LINE_AI_DELIVERY_PLAN_V2_ENABLED: envBoolean.default(true),
   LINE_AI_DELIVERY_PLAN_V2_WRITE_COMPANY_IDS: lineAiIdAllowlist,
   LINE_AI_DELIVERY_PLAN_V2_PUBLIC_CHANNEL_IDS: lineAiIdAllowlist,
-  LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED: envBoolean.default(false),
-  LINE_AI_DOCUMENT_QA_ENABLED: envBoolean.default(false),
-  LINE_AI_APPROVED_KNOWLEDGE_ENABLED: envBoolean.default(false),
+  LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED: envBoolean.default(true),
+  LINE_AI_DOCUMENT_QA_ENABLED: envBoolean.default(true),
+  LINE_AI_APPROVED_KNOWLEDGE_ENABLED: envBoolean.default(true),
   LINE_AI_PUBLIC_LOOKUP_ENABLED: envBoolean.default(false),
-  LINE_AI_PREFERENCES_ENABLED: envBoolean.default(false),
+  LINE_AI_PREFERENCES_ENABLED: envBoolean.default(true),
 };
 
 // ─── Base (all services) ───────────────────────────────────────────────────────
@@ -333,15 +339,9 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // reply gets — and when that terminal text is longer than a Flex body can hold, the full text still
   // ships as text and the card is appended after it, so turning this on can never truncate a reply.
   LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED: envBoolean.default(false),
-  // Durable terminal-outcome replay (uat-correctness-latency §8.3, reliability §6/E3). Default OFF is
-  // byte-identical to today: no LineTurnOutcome row is written or read, an in-turn delivery failure
-  // still only marks the event `delivery_pending`, and the orphan sweep selects exactly the rows it
-  // selects now. ON, the exact rendered LINE message array is persisted BEFORE the first send attempt
-  // and the sweep PUSHES those stored bytes on a retry instead of re-routing the input — which is the
-  // point: re-routing can compute a different answer for the same question. The write is FAIL-CLOSED
-  // when this is on: an outcome that cannot be recorded is not sent, because a delivered-but-
-  // unrecorded turn is the one case a later replay could contradict.
-  LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED: envBoolean.default(false),
+  // Persist exact terminal outcomes before send and replay saved bytes by default.
+  // An explicit false retains the legacy path; persistence failure stays fail-closed.
+  LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED: envBoolean.default(true),
   // Flex→text delivery fallback (§14.3, reliability R4/E4). Default OFF is byte-identical: a LINE 400
   // that rejects a Flex payload takes the same push path a rejected reply token takes and, when that
   // fails too, ends as `delivery_pending`. ON, the payload is re-sent ONCE as each Flex message's own
@@ -352,10 +352,9 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // Durable multi-turn expense draft collection. Default off until recorded LINE OA UAT passes.
   LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED: envBoolean.default(false),
   // S-4 (draft-control spec §8): editing a captured draft over LINE — preview card, confirm
-  // postback, apply. OFF is byte-for-byte today's behaviour: the five `draft_update` tools are
-  // absent from the catalog the model is offered, the executor refuses the category, and the
-  // webhook renders no preview card. Default off until the recorded UAT J1–J4 pass.
-  LINE_AI_DRAFT_EDIT_ENABLED: envBoolean.default(false),
+  // postback, apply. Enabled by default; explicit OFF removes the tools from the catalog,
+  // refuses execution and suppresses preview cards. Permission and confirmation gates remain.
+  LINE_AI_DRAFT_EDIT_ENABLED: envBoolean.default(true),
   // Item 10F: LINE AI turn ledger on Redis Streams (ADR 0010; fail-open, default off)
   LINE_AI_LEDGER_ENABLED: envBoolean.default(false),
   LINE_AI_LEDGER_MAXLEN: z.coerce.number().int().positive().default(200),
@@ -548,7 +547,7 @@ export const aiGatewayConfigSchema = baseConfigSchema.extend({
   // Same switch as the API's, read here so the five `draft_update` tools are absent from the
   // catalog the model is offered when it is off — "refused later" would still have advertised an
   // ability this deployment does not have. Both containers carry it (deploy.sh).
-  LINE_AI_DRAFT_EDIT_ENABLED: envBoolean.default(false),
+  LINE_AI_DRAFT_EDIT_ENABLED: envBoolean.default(true),
   // Exact family allowlist (comma-separated; empty = none enabled). Only families with a verified
   // deterministic formatter + fixed fixture and passed blind pairwise eval belong here.
   LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: z.string().default(''),

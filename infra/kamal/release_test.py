@@ -390,6 +390,56 @@ class Contracts(unittest.TestCase):
         self.assertEqual(out['ai-gateway']['AGENTCORE_EXPECTED_SOURCE_COMMIT'],'a'*40)
         self.assertNotIn('DATABASE_URL',settings['api-web'])
 
+    def test_full_release_inherits_only_missing_api_model_approval_from_effective_gateway(self):
+        keys=('APPROVED_AI_MODEL_IDS','AI_GLOBAL_INFERENCE_PROFILE_APPROVED','AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF')
+        approval=dict(zip(keys,('global.anthropic.claude-sonnet-4-6','true','synthetic-resolution')))
+        captured={s:{} for s in m.SERVICES};captured['ai-gateway'].update(approval)
+        settings={s:{} for s in m.SERVICES}
+        out=m.make_overrides(target('production'),'a'*40,'b'*64,settings,captured)
+        self.assertEqual({k:out['api-web'][k] for k in keys},approval)
+        self.assertEqual(captured['api-web'],{},'captured evidence must not be rewritten')
+        self.assertEqual(settings['api-web'],{},'tracked input must not be rewritten')
+        # The final Gateway override is authoritative, not its stale captured predecessor.
+        settings['ai-gateway']['AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF']='synthetic-new-resolution'
+        out=m.make_overrides(target('production'),'a'*40,'b'*64,settings,captured)
+        self.assertEqual(out['api-web'][keys[2]],'synthetic-new-resolution')
+        # Explicit restrictions are never broadened, whether captured or newly configured.
+        captured['api-web'].update(APPROVED_AI_MODEL_IDS='apac.anthropic.claude-3-haiku-20240307-v1:0',
+            AI_GLOBAL_INFERENCE_PROFILE_APPROVED='false')
+        settings['api-web']['AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF']=''
+        out=m.make_overrides(target('production'),'a'*40,'b'*64,settings,captured)
+        self.assertNotIn(keys[0],out['api-web']);self.assertNotIn(keys[1],out['api-web'])
+        self.assertEqual(out['api-web'][keys[2]],'')
+        # No captured approval or hotfix context means no synthesized approval.
+        settings={s:{} for s in m.SERVICES}
+        for snapshot in (None,{s:{} for s in m.SERVICES}):
+            out=m.make_overrides(target('production'),'a'*40,'b'*64,settings,snapshot)
+            self.assertFalse(any(k in out['api-web'] for k in keys))
+        maintenance={s:{} for s in m.SERVICES}
+        maintenance['ai-gateway']={'AI_GLOBAL_INFERENCE_PROFILE_APPROVED':'false'}
+        out=m.make_overrides(target('production'),'a'*40,'b'*64,settings,maintenance)
+        self.assertEqual(out['api-web'][keys[1]],'false')
+        self.assertNotIn(keys[2],out['api-web'])
+
+    def test_ecs_api_generator_carries_the_existing_model_approval_without_new_secrets(self):
+        # Execute only the real JSON-rendering function; all external secret resolution is a
+        # synthetic local stub. Sourcing deploy.sh itself would perform cloud operations.
+        source=(m.ROOT/'infra/prod-ecs-express/deploy.sh').read_text()
+        body=source.split('api_container_json() {',1)[1].split('\n}\n',1)[0]
+        script='set -e\nnormalize_url() { printf "%s" "$1"; }\nsecret_arn() { printf "synthetic-reference"; }\n'
+        script+='api_container_json() {'+body+'\n}\napi_container_json synthetic:image https://app.invalid http://gateway.invalid/v1\n'
+        keys=('APPROVED_AI_MODEL_IDS','AI_GLOBAL_INFERENCE_PROFILE_APPROVED','AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF')
+        for values in [('global.anthropic.claude-sonnet-4-6','true','synthetic-resolution'),
+                       ('apac.anthropic.claude-3-5-sonnet-20241022-v2:0','','')]:
+            env={'PATH':os.environ['PATH'],'POSTMARK_DEPLOYMENT':'{"environment":{},"secrets":{}}',
+                **dict(zip(keys,values))}
+            result=subprocess.run(['bash','-c',script],env=env,text=True,capture_output=True,check=True)
+            rendered=json.loads(result.stdout)
+            actual={row['name']:row['value'] for row in rendered['environment']}
+            self.assertEqual(actual[keys[0]],values[0]);self.assertEqual(actual[keys[1]],values[1] or 'false')
+            self.assertEqual(actual[keys[2]],values[2])
+            self.assertFalse(any(row['name'] in keys for row in rendered['secrets']))
+
     def test_native_routing_no_fixed_application_port(self):
         for kind in ('dev','production'):
             for service in m.SERVICES:
