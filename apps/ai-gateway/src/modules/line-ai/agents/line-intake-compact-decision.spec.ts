@@ -315,4 +315,46 @@ describe('compact LINE intake decision', () => {
     assert.equal(parsed?.semanticSubrequests[0]?.kind, 'general');
     assert.equal(parsed?.semanticSubrequests[0]?.writeIntent, undefined);
   });
+
+  it('item 1 (eval T-001#0): rejects a PAID filter the model attached to a plain total-spending question', async () => {
+    const text = 'เดือนนี้จ่ายไปเท่าไหร่แล้วคะ';
+    const created = await fixture(text);
+    const candidates = extractValueCandidates(text, '2026-09-27');
+    const period = candidates.periods?.[0]!;
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: period.fromDate, toDate: period.toDate, paymentStatus: 'PAID' }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th', valueCandidates: candidates,
+    });
+    assert.equal(parsed?.preparedPlan, undefined);
+    assert.equal(parsed?.simpleReadRejection, 'filter_not_grounded');
+  });
+
+  it('item 1: allows PAID when the message explicitly contrasts payment state (จ่ายแล้วจริงๆ)', async () => {
+    const text = 'เดือนนี้ที่จ่ายแล้วจริงๆ เท่าไหร่คะ';
+    const created = await fixture(text);
+    const candidates = extractValueCandidates(text, '2026-09-27');
+    const period = candidates.periods?.[0]!;
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: period.fromDate, toDate: period.toDate, paymentStatus: 'PAID' }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th', valueCandidates: candidates,
+    });
+    assert.ok(parsed?.preparedPlan);
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['paymentStatus'], 'PAID');
+  });
+
+  it('item 1: allows UNPAID when the message explicitly contrasts payment state (ยังไม่จ่าย)', async () => {
+    const text = 'เดือนนี้ที่ยังไม่จ่ายมีเท่าไหร่คะ';
+    const created = await fixture(text);
+    const candidates = extractValueCandidates(text, '2026-09-27');
+    const period = candidates.periods?.[0]!;
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: period.fromDate, toDate: period.toDate, paymentStatus: 'UNPAID' }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th', valueCandidates: candidates,
+    });
+    assert.ok(parsed?.preparedPlan);
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['paymentStatus'], 'UNPAID');
+  });
 });

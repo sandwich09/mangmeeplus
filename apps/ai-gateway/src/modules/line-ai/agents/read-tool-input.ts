@@ -60,6 +60,23 @@ export function nameFilterGroundedInText(name: string, messageText: string): boo
   return needle.length > 0 && normalizeForNameGrounding(messageText).includes(needle);
 }
 
+/** Item 1 (223-turn eval batch 2, T-001#0): "จ่ายไป/ใช้ไป/ใช้จ่ายไป/เสียไปเท่าไหร่" is a plain TOTAL
+ *  spending question — it contains the verb "จ่าย" but names no payment STATE, so it must carry no
+ *  paymentStatus filter at all. A paymentStatus value is grounded only by an explicit contrast:
+ *  PAID needs "จ่ายแล้ว/ชำระแล้ว/จ่ายจริง"; UNPAID needs "ยังไม่จ่าย/ค้างจ่าย/ยังไม่ชำระ". The generic
+ *  enum-membership check (any listed value is "grounded") cannot tell these apart — both are valid
+ *  enum members — so paymentStatus needs this word-level check instead. PARTIALLY_PAID/VOIDED are
+ *  outside this eval's scope and keep using the ordinary enum-membership check. */
+const PAYMENT_STATE_WORDS: Partial<Record<string, RegExp>> = {
+  PAID: /จ่ายแล้ว|ชำระแล้ว|จ่ายจริง|\bpaid\b/iu,
+  UNPAID: /ยังไม่จ่าย|ค้างจ่าย|ยังไม่ชำระ|\bunpaid\b|\bnot\s+paid\b/iu,
+};
+
+export function paymentStatusGroundedInText(value: string, messageText: string): boolean {
+  const pattern = PAYMENT_STATE_WORDS[value];
+  return !pattern || pattern.test(messageText);
+}
+
 /** Item 3 root cause: despite the router prompt explicitly forbidding it ("never invent aliases such
  *  as this_month"), the real model sometimes sends a `periodKey` of a well-known relative-month word
  *  instead of the tool's actual `YYYY-MM` key — e.g. `{"periodKey":"this_month"}` for "เดือนนิจ่ายไป
