@@ -281,7 +281,7 @@ describe('IntentRouterAgent – model routing', () => {
 	      recentTurns: [{ at: '2026-07-05T10:00:00.000Z', userMessagePreview: 'ดูสินค้าใกล้หมด', assistantReplyPreview: 'มี 2 รายการ', intent: 'READ_DETAIL', agent: 'inventory', refused: false }],
 	      // Spec §4 R-M3: the model must see this to resolve "อันที่สองล่ะ" below — the whole point of
 	      // this test is proving conversationContext reaches the payload byte-for-byte, unfiltered.
-	      recentReads: [{ tool: 'expense.list_recent', answerShape: 'list', asOf: '2026-08-25T09:00:00.000Z',
+	      recentReads: [{ tool: 'expense.list_recent', answerShape: 'list' as const, asOf: '2026-08-25T09:00:00.000Z',
 	        shownItems: [{ ordinal: 1, id: 'e1', label: 'ร้านหนึ่ง', date: '2026-08-01' }, { ordinal: 2, id: 'e2', label: 'ร้านสอง', date: '2026-08-02' }] }],
 	    };
 	    const payloads: any[] = [];

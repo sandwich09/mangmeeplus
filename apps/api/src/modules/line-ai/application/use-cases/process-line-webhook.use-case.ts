@@ -28,7 +28,7 @@ import { LineMessagingCredentialsService } from '../../../../common/config/line-
  * 7. Persist turn
  */
 import { HttpException, Inject, forwardRef, Injectable, Logger, Optional, ForbiddenException, ConflictException, ServiceUnavailableException } from '@nestjs/common';
-import { LineReadEvidenceService } from '../line-read-evidence.service';
+import { LINE_READ_EVIDENCE_MAX, LineReadEvidenceService } from '../line-read-evidence.service';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
